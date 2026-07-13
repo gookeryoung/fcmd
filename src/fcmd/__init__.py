@@ -42,12 +42,20 @@ __all__ = [
     "TaskSpec",
     "TaskStatus",
     "TaskTimeoutError",
+    "ToolExitCode",
+    "ToolSpec",
+    "clear_tool_registry",
     "cmd",
     "describe_injection",
+    "get_tool",
     "graph",
+    "list_subcommands",
+    "list_tools",
     "run",
     "run_command",
+    "run_tool",
     "task",
+    "tool",
 ]
 
 # 懒加载映射：属性名 -> (模块路径, 符号名)
@@ -68,11 +76,19 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "TaskSpec": ("fcmd.task", "TaskSpec"),
     "TaskStatus": ("fcmd.task", "TaskStatus"),
     "TaskTimeoutError": ("fcmd.errors", "TaskTimeoutError"),
+    "ToolExitCode": ("fcmd.apis.toolkit", "ToolExitCode"),
+    "ToolSpec": ("fcmd.apis.toolkit", "ToolSpec"),
     "cmd": ("fcmd.task", "cmd"),
+    "clear_tool_registry": ("fcmd.apis.toolkit", "clear_tool_registry"),
     "describe_injection": ("fcmd.context", "describe_injection"),
+    "get_tool": ("fcmd.apis.toolkit", "get_tool"),
+    "list_subcommands": ("fcmd.apis.toolkit", "list_subcommands"),
+    "list_tools": ("fcmd.apis.toolkit", "list_tools"),
     "run": ("fcmd.executors", "run"),
     "run_command": ("fcmd.command", "run_command"),
+    "run_tool": ("fcmd.apis.toolkit", "run_tool"),
     "task": ("fcmd.task", "task"),
+    "tool": ("fcmd.apis.toolkit", "tool"),
 }
 
 # Strategy 是 Literal 类型别名，从 executors 导入

@@ -1,15 +1,16 @@
 """API 验证脚本。"""
+
 from __future__ import annotations
 
 import fcmd as fx
 
 
-@fx.task
+@fx.task  # type: ignore[not-callable]
 def extract() -> list[int]:
     return [1, 2, 3]
 
 
-@fx.task
+@fx.task  # type: ignore[not-callable]
 def double(extract: list[int]) -> list[int]:
     return [x * 2 for x in extract]
 
