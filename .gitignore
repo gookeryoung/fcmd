@@ -1,35 +1,31 @@
-# Python-generated files
 __pycache__/
-*.py[oc]
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
 build/
 dist/
-wheels/
-*.egg-info
+.eggs/
+*.whl
 
-# Virtual environments
-.venv
-
-# 测试与覆盖率
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
+.venv/
+venv/
+env/
 .tox/
-
-# 工具缓存
-.ruff_cache/
-.pyrefly_cache/
 .mypy_cache/
-.uv-cache/
+.pytest_cache/
+.ruff_cache/
+.pyrefly/
 
-# IDE
 .idea/
-*_profile.html
+.vscode/
+*.swp
+*.swo
 
-# 环境变量与凭证（勿提交）
 .env
-.env.*
+.env.local
+.coverage
+htmlcov/
 
-# Sphinx 文档构建输出
-docs/_build/
-.trae/refs
+# Trae 工作目录
+.trae/ref/
