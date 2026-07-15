@@ -28,8 +28,9 @@ import sys
 from collections.abc import Sequence
 
 from fcmd import __version__
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.apis.toolkit import _TOOL_REGISTRY, build_tool_graph, run_tool
 from fcmd.console import get_console
+from fcmd.errors import FcmdError
 
 __all__ = ["FcmdApp", "main"]
 
@@ -42,6 +43,9 @@ _TOOL_MODULES: dict[str, str] = {}
 
 # 发现标志：True 表示已扫描过 fcmd.cli 包
 _TOOLS_DISCOVERED = False
+
+# 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
+_BUILTIN_COMMANDS: tuple[str, ...] = ("graph",)
 
 
 def _ensure_tools_discovered() -> None:
@@ -108,6 +112,10 @@ class FcmdApp:
             get_console().print(f"fcmd [bold cyan]{__version__}[/bold cyan]")
             return 0
 
+        # 内建命令（graph/info/...）优先于工具路由
+        if first in _BUILTIN_COMMANDS:
+            return self._run_builtin(first, self._argv[1:])
+
         rest = self._argv[1:]
         resolved = self._resolve_tool(first)
         if resolved is None:
@@ -115,6 +123,64 @@ class FcmdApp:
             return 1
 
         return self._run_tool(resolved, rest)
+
+    # ------------------------------------------------------------------ #
+    # 内建命令
+    # ------------------------------------------------------------------ #
+    def _run_builtin(self, name: str, argv: list[str]) -> int:
+        """分发内建命令。"""
+        if name == "graph":
+            return self._builtin_graph(argv)
+        get_console().print(f"[red]错误:[/red] 未知内建命令 {name!r}")
+        return 1
+
+    def _builtin_graph(self, argv: list[str]) -> int:
+        """``fcmd graph <tool> <subcommand> [--format=mermaid|layers|describe]``。
+
+        可视化工具子命令的 DAG 执行计划，不执行任务。
+
+        格式：
+        - ``mermaid``（默认）：Mermaid graph 定义，可粘贴到 mermaid.live
+        - ``layers``：拓扑分层列表（每层可并行）
+        - ``describe``：人类可读多行摘要（Graph.describe）
+        """
+        parser = argparse.ArgumentParser(
+            prog="fcmd graph",
+            description="可视化工具子命令的 DAG 执行计划",
+        )
+        parser.add_argument("tool", help="工具名（如 pymake）")
+        parser.add_argument("subcommand", nargs="?", default=None, help="目标子命令（如 tc/all）")
+        parser.add_argument(
+            "--format",
+            choices=("mermaid", "layers", "describe"),
+            default="mermaid",
+            help="输出格式（默认 mermaid）",
+        )
+        if not argv:
+            parser.print_help()
+            return 1
+        parsed = parser.parse_args(argv)
+
+        resolved = self._resolve_tool(parsed.tool)
+        if resolved is None:
+            self._print_unknown_tool(parsed.tool)
+            return 1
+
+        try:
+            graph = build_tool_graph(resolved, parsed.subcommand)
+        except FcmdError as e:
+            get_console().print(f"[red]错误:[/red] {e}")
+            return 1
+
+        if parsed.format == "mermaid":
+            get_console().print(graph.to_mermaid(), end="")
+        elif parsed.format == "layers":
+            layers = graph.layers()
+            for idx, layer in enumerate(layers, 1):
+                get_console().print(f"Layer {idx}: {layer}")
+        else:  # describe
+            get_console().print(graph.describe())
+        return 0
 
     # ------------------------------------------------------------------ #
     # 工具列表 (rich)
@@ -148,6 +214,7 @@ class FcmdApp:
         console.print("  [cyan]fcmd pymake[/cyan]              # 查看 pymake 子命令")
         console.print("  [cyan]fcmd pymake b[/cyan]            # 构建项目")
         console.print("  [cyan]fcmd pymake tc[/cyan]           # 类型检查（聚合）")
+        console.print("  [cyan]fcmd graph pymake tc[/cyan]     # 可视化 DAG（Mermaid）")
         console.print("  [cyan]fcmd --version[/cyan]           # 查看版本")
 
     def _aliases_for(self, canonical: str) -> list[str]:

@@ -30,6 +30,7 @@ from __future__ import annotations
 __all__ = [
     "ToolExitCode",
     "ToolSpec",
+    "build_tool_graph",
     "clear_tool_registry",
     "get_tool",
     "list_subcommands",
@@ -579,6 +580,46 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
         return ToolExitCode.INTERRUPTED.value
 
     return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
+
+
+def build_tool_graph(name: str, target: str | None) -> Graph:
+    """构建工具的 DAG（不执行），用于可视化与内省。
+
+    复用 :func:`_collect_with_deps` 的 BFS 依赖收集与 :func:`_build_task_spec`
+    的 TaskSpec 构建，但不调用 :func:`run`，仅返回 :class:`Graph`。
+
+    Parameters
+    ----------
+    name:
+        工具名（必须在注册表中）
+    target:
+        目标子命令名；``None`` 表示包含工具的全部子命令（含 hidden，
+        便于完整可视化 DAG）
+
+    Returns
+    -------
+    Graph
+        构建好的任务图。target 非 None 时含 target 及其传递依赖；
+        target 为 None 时含工具全部子命令
+
+    Raises
+    ------
+    FcmdError
+        工具或子命令未注册时
+    """
+    if name not in _TOOL_REGISTRY:
+        raise FcmdError(f"工具 {name!r} 未注册")
+    subs = _TOOL_REGISTRY[name]
+    if target is not None and target not in subs:
+        raise FcmdError(f"工具 {name!r} 没有子命令 {target!r}")
+    if target is None:
+        # 包含全部子命令（含 hidden），便于完整可视化
+        selected: list[ToolSpec] = list(subs.values())
+    else:
+        chain = _collect_with_deps(name, target)
+        selected = [subs[sc] for sc in chain if sc in subs]
+    task_specs: list[TaskSpec[Any]] = [_build_task_spec(spec, {}) for spec in selected]
+    return Graph.from_specs(task_specs, defaults=GraphDefaults())
 
 
 def _print_subcommands(name: str) -> None:

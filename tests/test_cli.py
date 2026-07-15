@@ -331,3 +331,143 @@ class TestToolDiscovery:
         # 仅访问模块，不调用 run()
         assert main_mod._TOOLS_DISCOVERED is False
         assert main_mod._TOOL_MODULES == {}
+
+
+# ---------------------------------------------------------------------- #
+# fcmd graph 内建命令测试
+# ---------------------------------------------------------------------- #
+class TestBuiltinGraph:
+    """``fcmd graph`` 内建命令测试。"""
+
+    def test_graph_pymake_tc_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake tc 默认输出 Mermaid 图。"""
+        app = FcmdApp(["graph", "pymake", "tc"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "graph TD" in out
+        # tc 依赖 c + pyrefly_check + lint
+        assert "tc" in out
+        assert "c" in out
+        assert "lint" in out
+
+    def test_graph_pymake_all_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake all 输出全套流程 DAG。"""
+        app = FcmdApp(["graph", "pymake", "all"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "graph TD" in out
+        for name in ("c", "b", "t", "tc"):
+            assert name in out, f"DAG 应包含 {name!r}"
+
+    def test_graph_format_layers(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake tc --format=layers 输出分层列表。"""
+        app = FcmdApp(["graph", "pymake", "tc", "--format=layers"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "Layer" in out
+        # tc 有依赖，至少 2 层
+        assert "Layer 1" in out
+        assert "Layer 2" in out
+
+    def test_graph_format_describe(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake tc --format=describe 输出摘要。"""
+        app = FcmdApp(["graph", "pymake", "tc", "--format=describe"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "Graph(tasks=" in out
+        assert "Layer" in out
+
+    def test_graph_unknown_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph unknown_tool 返回 1。"""
+        app = FcmdApp(["graph", "nonexistent_tool", "x"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "未知工具" in out
+
+    def test_graph_unknown_subcommand(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake unknown 返回 1。"""
+        app = FcmdApp(["graph", "pymake", "unknown_subcommand"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "没有子命令" in out
+
+    def test_graph_no_args_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph 无参数打印帮助并返回 1。"""
+        app = FcmdApp(["graph"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "tool" in out
+
+    def test_graph_pm_alias_works(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pm tc 别名路由正常。"""
+        app = FcmdApp(["graph", "pm", "tc"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "graph TD" in out
+
+    def test_graph_single_command_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake b（单任务）输出单节点图。"""
+        app = FcmdApp(["graph", "pymake", "b"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "graph TD" in out
+        assert "b" in out
+
+    def test_graph_no_subcommand_shows_all(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake（无子命令）输出全部子命令的 DAG。"""
+        app = FcmdApp(["graph", "pymake"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "graph TD" in out
+        # 全部子命令都应出现
+        for name in ("b", "c", "t", "tc", "all"):
+            assert name in out, f"全量 DAG 应包含 {name!r}"
+
+    def test_run_builtin_unknown_name(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """_run_builtin 收到未知内建命令名时返回 1（防御路径）。"""
+        app = FcmdApp()
+        assert app._run_builtin("nonexistent_builtin", []) == 1
+        out = capsys.readouterr().out
+        assert "未知内建命令" in out
+
+
+# ---------------------------------------------------------------------- #
+# build_tool_graph 直接 API 测试
+# ---------------------------------------------------------------------- #
+class TestBuildToolGraph:
+    """``build_tool_graph`` 公共 API 测试。"""
+
+    def test_unknown_tool_raises(self) -> None:
+        """未注册工具抛 FcmdError。"""
+        from fcmd.apis.toolkit import build_tool_graph
+        from fcmd.errors import FcmdError
+
+        with pytest.raises(FcmdError, match="未注册"):
+            build_tool_graph("nonexistent_tool_xyz", None)
+
+    def test_unknown_subcommand_raises(self) -> None:
+        """未注册子命令抛 FcmdError。"""
+        from fcmd.apis.toolkit import build_tool_graph
+        from fcmd.errors import FcmdError
+
+        with pytest.raises(FcmdError, match="没有子命令"):
+            build_tool_graph("pymake", "nonexistent_sub_xyz")
+
+    def test_none_target_includes_all_subcommands(self) -> None:
+        """target=None 时包含全部子命令。"""
+        from fcmd.apis.toolkit import build_tool_graph
+
+        graph = build_tool_graph("pymake", None)
+        names = set(graph.names)
+        # 至少包含主要子命令
+        assert {"b", "c", "t", "tc"}.issubset(names)
+
+    def test_target_with_deps_includes_upstream(self) -> None:
+        """target=tc 时包含 tc 及其上游依赖。"""
+        from fcmd.apis.toolkit import build_tool_graph
+
+        graph = build_tool_graph("pymake", "tc")
+        names = set(graph.names)
+        assert "tc" in names
+        # tc 依赖 c / pyrefly_check / lint，应一并包含
+        assert "c" in names

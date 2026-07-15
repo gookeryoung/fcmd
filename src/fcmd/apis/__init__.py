@@ -5,6 +5,7 @@ from __future__ import annotations
 from fcmd.apis.toolkit import (
     ToolExitCode,
     ToolSpec,
+    build_tool_graph,
     clear_tool_registry,
     get_tool,
     list_subcommands,
@@ -16,6 +17,7 @@ from fcmd.apis.toolkit import (
 __all__ = [
     "ToolExitCode",
     "ToolSpec",
+    "build_tool_graph",
     "clear_tool_registry",
     "get_tool",
     "list_subcommands",
