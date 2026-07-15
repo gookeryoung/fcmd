@@ -31,6 +31,9 @@ from pathlib import Path
 import fcmd
 from fcmd.apis import run_tool
 
+# 工具别名：fcmd pm <args> 等价于 fcmd pymake <args>
+__tool_aliases__: list[str] = ["pm"]
+
 # ============================================================================
 # 单任务别名 (cmd 任务)
 # ============================================================================

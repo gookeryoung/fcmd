@@ -3,6 +3,13 @@
 通过 ``fcmd <tool> [command] [options]`` 调用所有工具，
 工具定义在 ``fcmd.cli`` 包中，每个模块用 ``@fx.tool`` 装饰器注册。
 
+工具发现
+--------
+``fcmd.cli`` 包下每个非 ``main`` / 非 ``_`` 前缀的模块即一个工具，
+模块名即工具名。模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
+首次调用 ``FcmdApp.run()`` 时用 ``pkgutil.iter_modules`` 扫描并导入所有
+工具模块，``import fcmd`` 冷启动不受影响。
+
 用法
 ----
     fcmd                  # 列出所有可用工具
@@ -16,6 +23,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import importlib
+import pkgutil
 import sys
 from collections.abc import Sequence
 
@@ -26,16 +34,47 @@ from fcmd.console import get_console
 __all__ = ["FcmdApp", "main"]
 
 
-# 工具别名 → 规范名
-_TOOL_ALIASES: dict[str, str] = {
-    "pymake": "pymake",
-    "pm": "pymake",
-}
+# 工具别名 → 规范名（由 _ensure_tools_discovered 懒填充）
+_TOOL_ALIASES: dict[str, str] = {}
 
-# 规范工具名 → 模块路径
-_TOOL_MODULES: dict[str, str] = {
-    "pymake": "fcmd.cli.pymake",
-}
+# 规范工具名 → 模块路径（由 _ensure_tools_discovered 懒填充）
+_TOOL_MODULES: dict[str, str] = {}
+
+# 发现标志：True 表示已扫描过 fcmd.cli 包
+_TOOLS_DISCOVERED = False
+
+
+def _ensure_tools_discovered() -> None:
+    """首次调用时扫描 ``fcmd.cli`` 包，发现工具模块并填充注册表。
+
+    幂等：后续调用直接返回。用 ``setdefault`` 填充，不覆盖测试通过
+    ``monkeypatch.setitem`` 注入的键。扫描时导入模块以读取
+    ``__tool_aliases__`` 并触发 ``@fx.tool`` 注册。
+    """
+    global _TOOLS_DISCOVERED  # noqa: PLW0603
+    if _TOOLS_DISCOVERED:
+        return
+    _TOOLS_DISCOVERED = True
+
+    # 懒导入 fcmd.cli 以访问 __path__，避免 import fcmd 时触发
+    import fcmd.cli as cli_pkg
+
+    for _finder, name, _ispkg in pkgutil.iter_modules(cli_pkg.__path__):
+        # 排除入口模块、私有模块、包自身
+        if name.startswith("_") or name == "main":
+            continue
+        module_path = f"fcmd.cli.{name}"
+        tool_name = name
+        _TOOL_MODULES.setdefault(tool_name, module_path)
+        _TOOL_ALIASES.setdefault(tool_name, tool_name)
+        try:
+            mod = importlib.import_module(module_path)
+        except ImportError:
+            continue
+        # 读取模块声明的别名
+        aliases = getattr(mod, "__tool_aliases__", ())
+        for alias in aliases:
+            _TOOL_ALIASES.setdefault(alias, tool_name)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -59,6 +98,7 @@ class FcmdApp:
 
     def run(self) -> int:
         """主入口，返回退出码。"""
+        _ensure_tools_discovered()
         if not self._argv or self._argv[0] in ("--help", "-h"):
             self._list_tools()
             return 0
