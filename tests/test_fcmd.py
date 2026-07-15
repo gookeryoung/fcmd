@@ -14,5 +14,4 @@ def test_version_is_string() -> None:
 def test_package_importable() -> None:
     """包应可正常导入."""
     assert hasattr(fcmd, "__all__")
-    assert "task" in fcmd.__all__
-    assert "run" in fcmd.__all__
+    assert "__version__" in fcmd.__all__

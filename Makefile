@@ -28,8 +28,8 @@ cov: ## 运行测试并检查覆盖率
 	uv run pytest -m "not slow" --cov=$(PACKAGE) --cov-fail-under=$(COV_THRESHOLD)
 
 lint: ## 代码风格检查 (ruff)
-	uv run ruff check src tests
-	uv run ruff format --check src tests
+	uv run ruff check .
+	uv run ruff format --check .
 
 typecheck: ## 类型检查 (pyrefly)
 	uv run pyrefly check
@@ -55,5 +55,5 @@ pub:  ## 推送到pypi
 	uvx twine upload ./dist/**
 
 push: ## 推送代码到所有远程仓库
-	@set -e; for remote in $$(git remote); do echo "推送 $$remote..."; git push $$remote; git push $$remote --tags; done
+	@uv run python -c "import subprocess as sp; [print(f'\u63a8\u9001 {r}...',flush=True) or (sp.run(['git','push',r],check=True) and sp.run(['git','push',r,'--tags'],check=True)) for r in sp.check_output(['git','remote'],text=True).split()]"
 
