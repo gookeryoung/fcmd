@@ -4,8 +4,8 @@
 
 示例
 ----
-    fcmd writefile w note.txt "Hello World"
-    fcmd writefile w data.json '{"a": 1}' --encoding utf-8
+    fcmd writefile note.txt "Hello World"
+    fcmd writefile data.json '{"a": 1}' --encoding utf-8
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 import fcmd
 
 
-@fcmd.tool("writefile", subcommand="w", help="写入文本内容到文件")
+@fcmd.tool("writefile", help="写入文本内容到文件")
 def write_file_run(path: str, content: str, encoding: str = "utf-8") -> None:
     """写入文本内容到文件。
 

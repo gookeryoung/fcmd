@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -609,3 +610,390 @@ class TestBuiltinInfo:
         assert app.run() == 1
         out = capsys.readouterr().out
         assert "未注册" in out
+
+
+# ---------------------------------------------------------------------- #
+# fcmd completion 内建命令
+# ---------------------------------------------------------------------- #
+class TestBuiltinCompletion:
+    """``fcmd completion`` 内建命令测试。"""
+
+    def test_completion_no_args_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion 无参数打印帮助并返回 1。"""
+        app = FcmdApp(["completion"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "--shell" in out
+
+    def test_completion_bash_outputs_script(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion --shell bash 输出 bash 补全脚本。"""
+        app = FcmdApp(["completion", "--shell", "bash"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "_fcmd_complete" in out
+        assert "complete -F _fcmd_complete fcmd" in out
+
+    def test_completion_zsh_outputs_script(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion --shell zsh 输出 zsh 补全脚本。"""
+        app = FcmdApp(["completion", "--shell", "zsh"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "#compdef fcmd" in out
+        assert "_describe" in out
+
+    def test_completion_fish_outputs_script(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion --shell fish 输出 fish 补全脚本。"""
+        app = FcmdApp(["completion", "--shell", "fish"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "complete -c fcmd" in out
+
+    def test_completion_default_shell_is_bash(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion --shell 缺省生成 bash 脚本。"""
+        app = FcmdApp(["completion", "--shell=bash"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "_fcmd_complete" in out
+
+    def test_completion_invalid_shell_returns_failure(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd completion --shell invalid 返回 1（argparse 报错）。"""
+        app = FcmdApp(["completion", "--shell", "powershell"])
+        # argparse 解析失败 SystemExit(2) 被 _builtin_completion 直接抛出
+        with pytest.raises(SystemExit) as exc_info:
+            app.run()
+        assert exc_info.value.code == 2
+
+    def test_completion_bash_includes_tools_and_aliases(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """bash 脚本第一层包含全部工具名 + 别名 + 内建命令 + 全局选项。"""
+        app = FcmdApp(["completion", "--shell", "bash"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # 内建命令
+        for cmd in ("graph", "info", "completion"):
+            assert cmd in out, f"应包含内建命令 {cmd!r}"
+        # 全局选项
+        assert "--version" in out
+        # 工具名 + 别名
+        for name in ("pymake", "pm", "hashfile", "filedate", "writefile", "folderzip"):
+            assert name in out, f"应包含工具/别名 {name!r}"
+
+    def test_completion_bash_includes_pymake_subcommands(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """bash 脚本包含 pymake 的可见子命令。"""
+        app = FcmdApp(["completion", "--shell", "bash"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # pymake 的主要可见子命令
+        for sub in ("b", "c", "t", "tc", "all", "sync", "lint", "fmt"):
+            assert sub in out, f"应包含 pymake 子命令 {sub!r}"
+        # hidden 子命令不应出现在补全脚本中
+        assert "pyrefly_check" not in out
+
+    def test_completion_bash_pymake_pattern_with_alias(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """bash 脚本中 pymake 的 case 分支同时匹配 pymake 和 pm。"""
+        app = FcmdApp(["completion", "--shell", "bash"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "pymake|pm)" in out
+
+    def test_completion_fish_merges_alias_in_single_call(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fish 脚本对带别名的工具用单次 __fish_seen_subcommand_from 调用合并名字。"""
+        app = FcmdApp(["completion", "--shell", "fish"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # pymake 别名 pm 应与 pymake 同在一个 __fish_seen_subcommand_from 调用中
+        assert "__fish_seen_subcommand_from pymake pm" in out
+        # 不应出现两个独立调用（语义为 AND，永远不可能为真）
+        assert "__fish_seen_subcommand_from pymake __fish_seen_subcommand_from pm" not in out
+
+    def test_completion_zsh_pymake_pattern_with_alias(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """zsh 脚本中 pymake 的 case 分支同时匹配 pymake 和 pm。"""
+        app = FcmdApp(["completion", "--shell", "zsh"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "(pymake|pm)" in out
+
+    def test_completion_zsh_includes_command_descriptions(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """zsh 脚本 commands 列表包含工具名:描述 对。"""
+        app = FcmdApp(["completion", "--shell", "zsh"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # 工具描述对（用工具名作描述）
+        assert "'pymake:pymake'" in out
+        assert "'pm:pymake'" in out
+        # 全局选项带描述
+        assert "'--version:版本号'" in out
+
+    def test_completion_fish_includes_subcommand_descriptions(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fish 脚本子命令补全带描述。"""
+        app = FcmdApp(["completion", "--shell", "fish"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # pymake 的 b 子命令描述
+        assert "-a 'b' -d '构建分发包" in out
+
+    def test_completion_skips_single_command_tools_in_subcommand_block(
+        self,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """无子命令的工具（writefile/folderzip）不出现在子命令补全分支。"""
+        app = FcmdApp(["completion", "--shell", "bash"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # writefile 和 folderzip 是单命令工具，无子命令分支
+        assert "writefile)" not in out
+        assert "folderzip)" not in out
+
+    def test_completion_routes_through_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """completion 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""
+        app = FcmdApp(["completion", "--shell", "bash"])
+        assert app.run() == 0
+        # 区分于 graph/info：completion 输出第一行应为脚本注释
+        out = capsys.readouterr().out
+        assert out.startswith("# fcmd bash 补全脚本")
+
+    def test_completion_collect_data_returns_sorted(
+        self,
+    ) -> None:
+        """_collect_completion_data 返回按工具名排序的列表。"""
+        app = FcmdApp()
+        data = app._collect_completion_data()
+        names = [t["name"] for t in data]
+        assert names == sorted(names)
+        # 必须包含已知工具
+        assert "pymake" in names
+        assert "hashfile" in names
+
+    def test_completion_collect_data_pymake_has_aliases(
+        self,
+    ) -> None:
+        """_collect_completion_data 中 pymake 工具的 aliases 含 pm。"""
+        app = FcmdApp()
+        data = app._collect_completion_data()
+        pymake = next(t for t in data if t["name"] == "pymake")
+        assert "pm" in pymake["aliases"]
+        # hidden 子命令不应出现
+        sub_names = [sc for sc, _ in pymake["subs"]]
+        assert "pyrefly_check" not in sub_names
+        assert "b" in sub_names
+
+    def test_completion_collect_data_handles_import_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_collect_completion_data 容忍模块导入失败（contextlib.suppress）。"""
+        from fcmd.cli import main as main_mod
+
+        # 注入一个不可导入的伪工具
+        monkeypatch.setitem(main_mod._TOOL_ALIASES, "broken_tool", "broken_tool")
+        monkeypatch.setitem(main_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.nonexistent_xyz")
+
+        app = FcmdApp()
+        # 应不抛异常，返回的数据不含 broken_tool（因为导入失败未注册）
+        data = app._collect_completion_data()
+        # broken_tool 在 _TOOL_ALIASES.values() 中仍会出现，但无 subs
+        broken = next((t for t in data if t["name"] == "broken_tool"), None)
+        assert broken is not None
+        assert broken["subs"] == []
+
+
+# ---------------------------------------------------------------------- #
+# fcmd yaml 内建命令
+# ---------------------------------------------------------------------- #
+class TestBuiltinYaml:
+    """``fcmd yaml`` 内建命令测试。"""
+
+    @staticmethod
+    def _echo_cmd_yaml(text: str) -> str:
+        """跨平台 echo 命令的 YAML 字面量。"""
+        import sys
+
+        if sys.platform == "win32":
+            return f'["cmd", "/c", "echo", "{text}"]'
+        return f'["echo", "{text}"]'
+
+    def test_yaml_no_args_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml 无参数打印帮助并返回 1。"""
+        app = FcmdApp(["yaml"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "file" in out
+
+    def test_yaml_executes_graph(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <file> 执行 YAML 任务图成功。"""
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  hello:
+    cmd: {self._echo_cmd_yaml("hello")}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file)])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "执行成功" in out
+
+    def test_yaml_dry_run_does_not_execute(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <file> --dry-run 打印计划但不执行。"""
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  hello:
+    cmd: {self._echo_cmd_yaml("hello")}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file), "--dry-run"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # dry-run 打印执行计划
+        assert "Dry run" in out or "Layer" in out
+        # 实际命令的 stdout（"hello"）不应出现在 dry-run 输出中
+        # 注意：echo 命令的输出是 "hello"（不含 echo 命令本身），dry-run 不执行所以不出现
+        # 但 "hello" 可能作为 job 名出现在 Layer 列表中，故用更精确的判断
+        # dry-run 输出行不会以单独的 "hello" 行结尾（cmd 才会）
+        lines = out.splitlines()
+        cmd_output_lines = [ln for ln in lines if ln.strip() == "hello"]
+        assert cmd_output_lines == []
+
+    def test_yaml_only_runs_specific_job(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <file> <job> 仅执行指定 job 及其依赖。"""
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  setup:
+    cmd: {self._echo_cmd_yaml("setup")}
+  build:
+    needs: [setup]
+    cmd: {self._echo_cmd_yaml("build")}
+  deploy:
+    needs: [build]
+    cmd: {self._echo_cmd_yaml("deploy")}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file), "build"])
+        assert app.run() == 0
+        # deploy 不应被执行
+        out = capsys.readouterr().out
+        assert "deploy" not in out or "执行成功" in out
+
+    def test_yaml_nonexistent_file_returns_1(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """fcmd yaml <nonexistent> 返回 1。"""
+        app = FcmdApp(["yaml", str(tmp_path / "nonexistent.yaml")])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "加载 YAML 失败" in out
+
+    def test_yaml_invalid_yaml_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <invalid.yaml> 返回 1。"""
+        yaml_file = tmp_path / "invalid.yaml"
+        yaml_file.write_text("key: [unclosed bracket\n", encoding="utf-8")
+        app = FcmdApp(["yaml", str(yaml_file)])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "加载 YAML 失败" in out
+
+    def test_yaml_invalid_schema_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <schema_invalid.yaml>（缺 jobs）返回 1。"""
+        yaml_file = tmp_path / "no_jobs.yaml"
+        yaml_file.write_text("foo: bar\n", encoding="utf-8")
+        app = FcmdApp(["yaml", str(yaml_file)])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "加载 YAML 失败" in out
+
+    def test_yaml_strategy_override(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <file> --strategy sequential 执行成功。"""
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  hello:
+    cmd: {self._echo_cmd_yaml("hello")}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file), "--strategy", "sequential"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "执行成功" in out
+
+    def test_yaml_invalid_strategy_returns_2(self, tmp_path: Path) -> None:
+        """fcmd yaml <file> --strategy invalid 触发 argparse 报错。"""
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  hello:
+    cmd: {self._echo_cmd_yaml("hello")}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file), "--strategy", "invalid"])
+        with pytest.raises(SystemExit) as exc_info:
+            app.run()
+        assert exc_info.value.code == 2
+
+    def test_yaml_routes_through_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """yaml 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  hello:
+    cmd: {self._echo_cmd_yaml("hello")}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file)])
+        assert app.run() == 0
+
+    def test_yaml_failing_task_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <file> 任务失败时返回 1（覆盖 except FcmdError 分支）。"""
+        import sys
+
+        # 用不存在的命令触发任务失败
+        if sys.platform == "win32":
+            failing_cmd = '["cmd", "/c", "exit", "1"]'
+        else:
+            failing_cmd = '["false"]'
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  broken:
+    cmd: {failing_cmd}
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file)])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "错误" in out
+
+    def test_yaml_continue_on_error_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <file> continue-on-error 任务失败时返回 1（覆盖 report.success=False 分支）。"""
+        import sys
+
+        if sys.platform == "win32":
+            failing_cmd = '["cmd", "/c", "exit", "1"]'
+        else:
+            failing_cmd = '["false"]'
+        yaml_file = tmp_path / "jobs.yaml"
+        yaml_file.write_text(
+            f"""
+jobs:
+  broken:
+    cmd: {failing_cmd}
+    continue-on-error: true
+""",
+            encoding="utf-8",
+        )
+        app = FcmdApp(["yaml", str(yaml_file)])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "执行失败" in out

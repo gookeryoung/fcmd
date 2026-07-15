@@ -3,8 +3,8 @@
 验证 ``fcmd.cli`` 包下 4 个参考 pyflowx 实现的工具：
 - ``hashfile``：文件/目录哈希计算（f/d 子命令）
 - ``filedate``：文件日期前缀处理（add/clear 子命令）
-- ``writefile``：文本写入文件（w 子命令）
-- ``folderzip``：子文件夹批量压缩（z 子命令）
+- ``writefile``：文本写入文件（单命令工具）
+- ``folderzip``：子文件夹批量压缩（单命令工具）
 """
 
 from __future__ import annotations
@@ -56,15 +56,15 @@ class TestToolsRegistration:
         assert "add" in subs
         assert "clear" in subs
 
-    def test_writefile_subcommand(self) -> None:
-        """writefile 应有 w 子命令。"""
+    def test_writefile_single_command(self) -> None:
+        """writefile 是单命令工具（无子命令）。"""
         subs = fx.list_subcommands("writefile")
-        assert "w" in subs
+        assert subs == []
 
-    def test_folderzip_subcommand(self) -> None:
-        """folderzip 应有 z 子命令。"""
+    def test_folderzip_single_command(self) -> None:
+        """folderzip 是单命令工具（无子命令）。"""
         subs = fx.list_subcommands("folderzip")
-        assert "z" in subs
+        assert subs == []
 
 
 # ---------------------------------------------------------------------- #
@@ -286,16 +286,16 @@ class TestWritefile:
     """``writefile`` 工具测试。"""
 
     def test_writefile_via_run_tool(self, tmp_path: Path) -> None:
-        """fcmd writefile w <path> <content> 写入文件。"""
+        """fcmd writefile <path> <content> 写入文件。"""
         f = tmp_path / "note.txt"
-        code = run_tool("writefile", ["w", str(f), "Hello World"])
+        code = run_tool("writefile", [str(f), "Hello World"])
         assert code == 0
         assert f.read_text(encoding="utf-8") == "Hello World"
 
     def test_writefile_custom_encoding(self, tmp_path: Path) -> None:
-        """fcmd writefile w --encoding 指定编码。"""
+        """fcmd writefile --encoding 指定编码。"""
         f = tmp_path / "note.txt"
-        code = run_tool("writefile", ["w", str(f), "中文内容", "--encoding", "utf-8"])
+        code = run_tool("writefile", [str(f), "中文内容", "--encoding", "utf-8"])
         assert code == 0
         assert f.read_text(encoding="utf-8") == "中文内容"
 
@@ -304,7 +304,7 @@ class TestWritefile:
         f = tmp_path / "sub" / "dir" / "note.txt"
         # Path.write_text 不自动创建父目录，需手动建
         f.parent.mkdir(parents=True)
-        code = run_tool("writefile", ["w", str(f), "nested"])
+        code = run_tool("writefile", [str(f), "nested"])
         assert code == 0
         assert f.read_text(encoding="utf-8") == "nested"
 
@@ -312,7 +312,7 @@ class TestWritefile:
         """writefile 覆盖已有文件。"""
         f = tmp_path / "note.txt"
         f.write_text("old", encoding="utf-8")
-        code = run_tool("writefile", ["w", str(f), "new"])
+        code = run_tool("writefile", [str(f), "new"])
         assert code == 0
         assert f.read_text(encoding="utf-8") == "new"
 
@@ -344,13 +344,13 @@ class TestFolderzip:
             assert any("b.txt" in n for n in names)
 
     def test_folderzip_via_run_tool(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd folderzip z --directory <dir> 压缩全部子文件夹。"""
+        """fcmd folderzip --directory <dir> 压缩全部子文件夹。"""
         (tmp_path / "dir1").mkdir()
         (tmp_path / "dir1" / "a.txt").write_text("a", encoding="utf-8")
         (tmp_path / "dir2").mkdir()
         (tmp_path / "dir2" / "b.txt").write_text("b", encoding="utf-8")
 
-        code = run_tool("folderzip", ["z", "--directory", str(tmp_path)])
+        code = run_tool("folderzip", ["--directory", str(tmp_path)])
         assert code == 0
         out = capsys.readouterr().out
         assert "dir1.zip" in out
@@ -365,7 +365,7 @@ class TestFolderzip:
         (tmp_path / "__pycache__").mkdir()
         (tmp_path / "__pycache__" / "c.pyc").write_bytes(b"c")
 
-        code = run_tool("folderzip", ["z", "--directory", str(tmp_path)])
+        code = run_tool("folderzip", ["--directory", str(tmp_path)])
         assert code == 0
         out = capsys.readouterr().out
         assert "real.zip" in out
@@ -375,14 +375,14 @@ class TestFolderzip:
 
     def test_folderzip_nonexistent_dir(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """folderzip 不存在的目录打印提示。"""
-        code = run_tool("folderzip", ["z", "--directory", str(tmp_path / "nonexistent")])
+        code = run_tool("folderzip", ["--directory", str(tmp_path / "nonexistent")])
         assert code == 0  # 函数返回 None，run_tool 视为成功
         out = capsys.readouterr().out
         assert "目录不存在" in out
 
     def test_folderzip_empty_dir(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """folderzip 空目录不产生压缩包。"""
-        code = run_tool("folderzip", ["z", "--directory", str(tmp_path)])
+        code = run_tool("folderzip", ["--directory", str(tmp_path)])
         assert code == 0
         out = capsys.readouterr().out
         # 空目录无子文件夹，不打印压缩完成

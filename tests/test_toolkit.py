@@ -1040,7 +1040,7 @@ def test_run_tool_single_command_no_argv() -> None:
 
 
 def test_run_tool_single_command_with_argv() -> None:
-    """单命令工具有 argv 时（非选项开头）走子命令路径返回 FAILURE。"""
+    """单命令工具透传 argv 给 parser，无法识别的参数返回 FAILURE。"""
 
     @tool("solo", cmd=_echo_cmd())
     def s() -> None:
@@ -1061,16 +1061,28 @@ def test_run_tool_single_command_with_options() -> None:
     assert code == ToolExitCode.SUCCESS.value
 
 
-def test_run_tool_help_system_exit() -> None:
-    """--help 触发 SystemExit（argparse 默认行为）。"""
+def test_run_tool_single_command_with_positional_args(tmp_path: Path) -> None:
+    """单命令工具带位置参数：argv 透传给 parser，位置参数正确解析。"""
+
+    @tool("writer")
+    def writer(path: str, content: str) -> None:
+        Path(path).write_text(content, encoding="utf-8")
+
+    f = tmp_path / "out.txt"
+    code = run_tool("writer", [str(f), "hello"])
+    assert code == ToolExitCode.SUCCESS.value
+    assert f.read_text(encoding="utf-8") == "hello"
+
+
+def test_run_tool_help_returns_success() -> None:
+    """--help 由 run_tool 捕获 SystemExit 并返回 SUCCESS。"""
 
     @tool("demo", subcommand="a")
     def a(name: str) -> None:
         pass
 
-    with pytest.raises(SystemExit) as exc_info:
-        run_tool("demo", ["a", "--help"])
-    assert exc_info.value.code == 0
+    code = run_tool("demo", ["a", "--help"])
+    assert code == ToolExitCode.SUCCESS.value
 
 
 def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:

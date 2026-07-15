@@ -42,11 +42,11 @@ def archive_folder(folder: Path) -> None:
 
 
 # ============================================================================
-# CLI 子命令
+# CLI 入口
 # ============================================================================
 
 
-@fcmd.tool("folderzip", subcommand="z", help="压缩当前目录下所有子文件夹为 zip")
+@fcmd.tool("folderzip", help="压缩当前目录下所有子文件夹为 zip")
 def zip_folders(directory: str = ".") -> None:
     """压缩目录下的所有子文件夹为 zip。
 

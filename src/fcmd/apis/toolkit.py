@@ -509,10 +509,10 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
 
     subs = _TOOL_REGISTRY[name]
 
-    # 无 subcommand 的单命令工具：target=None
-    if None in subs and not argv:
-        target = None
-        argv_rest: list[str] = []
+    # 纯单命令工具（仅有 None 子命令）：target=None，全部 argv 透传给 parser
+    if None in subs and len(subs) == 1:
+        target: str | None = None
+        argv_rest: list[str] = list(argv)
     elif argv and not argv[0].startswith("-"):
         target = argv[0]
         argv_rest = list(argv[1:])
@@ -538,7 +538,11 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
     else:
         parser = _build_parser_for_tool(target_spec)
 
-    parsed = parser.parse_args(argv_rest)
+    try:
+        parsed = parser.parse_args(argv_rest)
+    except SystemExit as e:
+        # argparse 解析失败（unrecognized args / --help）时 raise SystemExit
+        return ToolExitCode.SUCCESS.value if e.code == 0 else ToolExitCode.FAILURE.value
     variables: dict[str, Any] = {k: v for k, v in vars(parsed).items() if v is not None}
 
     # 收集 target 及其传递依赖，构建 TaskSpec 列表

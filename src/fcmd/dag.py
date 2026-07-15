@@ -21,7 +21,7 @@ import inspect
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .context import is_context_annotation
 from .errors import CycleError, DuplicateTaskError, MissingDependencyError
@@ -224,6 +224,32 @@ class Graph:
         graph._validate_references()
         graph.validate()
         return graph
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> Graph:
+        """从 YAML 文件加载任务图（GitHub Actions 风格，简化版）。
+
+        Parameters
+        ----------
+        path:
+            YAML 文件路径。
+
+        Returns
+        -------
+        Graph
+            解析后的任务图，支持 ``jobs``/``needs``/``cmd``/``run``/
+            ``env``/``cwd``/``timeout``/``retry``/``strategy``/``defaults``
+            等字段。不支持 ``strategy.matrix`` 矩阵扇出与 ``if`` 条件。
+
+        Raises
+        ------
+        ValueError
+            YAML 结构不符合 schema 时。
+        """
+        from fcmd.yaml_loader import load_yaml
+
+        # pyrefly 在 src-layout 下将 fcmd.dag 与本模块识别为不同类型，cast 绕过。
+        return cast("Graph", load_yaml(path))
 
     # ------------------------------------------------------------------ #
     # 校验

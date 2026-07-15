@@ -47,7 +47,7 @@ _TOOL_MODULES: dict[str, str] = {}
 _TOOLS_DISCOVERED = False
 
 # 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
-_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info")
+_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml")
 
 
 def _ensure_tools_discovered() -> None:
@@ -135,6 +135,10 @@ class FcmdApp:
             return self._builtin_graph(argv)
         if name == "info":
             return self._builtin_info(argv)
+        if name == "completion":
+            return self._builtin_completion(argv)
+        if name == "yaml":
+            return self._builtin_yaml(argv)
         get_console().print(f"[red]错误:[/red] 未知内建命令 {name!r}")
         return 1
 
@@ -339,6 +343,249 @@ class FcmdApp:
         if spec.needs:
             return "aggregate"
         return "fn"
+
+    # ------------------------------------------------------------------ #
+    # completion 内建命令
+    # ------------------------------------------------------------------ #
+    def _builtin_completion(self, argv: list[str]) -> int:
+        """``fcmd completion --shell bash|zsh|fish``。
+
+        生成 shell 补全脚本到 stdout，可重定向安装::
+
+            eval "$(fcmd completion --shell bash)"       # bash
+            eval "$(fcmd completion --shell zsh)"         # zsh
+            fcmd completion --shell fish | source         # fish
+
+        脚本为静态生成（嵌入当前工具/子命令名），新增工具后需重新生成。
+        """
+        parser = argparse.ArgumentParser(
+            prog="fcmd completion",
+            description="生成 shell 补全脚本",
+        )
+        parser.add_argument(
+            "--shell",
+            choices=("bash", "zsh", "fish"),
+            default="bash",
+            help="目标 shell（默认 bash）",
+        )
+        if not argv:
+            parser.print_help()
+            return 1
+        parsed = parser.parse_args(argv)
+
+        # 收集所有工具数据：触发模块导入以填充注册表
+        tools_data = self._collect_completion_data()
+
+        if parsed.shell == "bash":
+            script = self._gen_bash_script(tools_data)
+        elif parsed.shell == "zsh":
+            script = self._gen_zsh_script(tools_data)
+        else:
+            script = self._gen_fish_script(tools_data)
+        sys.stdout.write(script)
+        return 0
+
+    def _collect_completion_data(self) -> list[dict[str, Any]]:
+        """收集全部工具的补全数据：名称、别名、子命令列表。"""
+        from fcmd.apis.toolkit import _TOOL_REGISTRY
+
+        # 触发全部工具模块导入
+        for _tool_name, module_path in list(_TOOL_MODULES.items()):
+            with contextlib.suppress(ImportError):
+                importlib.import_module(module_path)
+
+        result: list[dict[str, Any]] = []
+        for tool_name in sorted(set(_TOOL_ALIASES.values())):
+            aliases = self._aliases_for(tool_name)
+            subs: list[tuple[str, str]] = []
+            registry = _TOOL_REGISTRY.get(tool_name, {})
+            for sc, spec in sorted(
+                ((sc, spec) for sc, spec in registry.items() if sc is not None and not spec.hidden),
+                key=lambda x: str(x[0]),
+            ):
+                subs.append((str(sc), spec.help or ""))
+            result.append({"name": tool_name, "aliases": aliases, "subs": subs})
+        return result
+
+    @staticmethod
+    def _gen_bash_script(tools_data: list[dict[str, Any]]) -> str:
+        """生成 bash 补全脚本。"""
+        # 第一层：内建命令 + 工具名 + 别名 + 全局选项
+        first_words: list[str] = [*list(_BUILTIN_COMMANDS), "--version", "-V"]
+        for tool in tools_data:
+            first_words.append(tool["name"])
+            first_words.extend(tool["aliases"])
+        first_words_str = " ".join(first_words)
+
+        # 每个工具的子命令 case 分支
+        case_branches: list[str] = []
+        for tool in tools_data:
+            if not tool["subs"]:
+                continue
+            # 工具名 + 别名共用同一组子命令
+            names = [tool["name"]] + tool["aliases"]
+            pattern = "|".join(names)
+            subs_str = " ".join(sc for sc, _ in tool["subs"])
+            case_branches.append(
+                f'            {pattern})\n                COMPREPLY=($(compgen -W "{subs_str}" -- "$cur")) ;;'
+            )
+        case_body = "\n".join(case_branches) if case_branches else "            *) ;;"
+
+        return (
+            "# fcmd bash 补全脚本\n"
+            '# 安装: eval "$(fcmd completion --shell bash)"\n'
+            "_fcmd_complete() {\n"
+            '    local cur="${COMP_WORDS[COMP_CWORD]}"\n'
+            "    if [ $COMP_CWORD -eq 1 ]; then\n"
+            f'        COMPREPLY=($(compgen -W "{first_words_str}" -- "$cur"))\n'
+            "    elif [ $COMP_CWORD -ge 2 ]; then\n"
+            '        local tool="${COMP_WORDS[1]}"\n'
+            '        case "$tool" in\n'
+            f"{case_body}\n"
+            "        esac\n"
+            "    fi\n"
+            "}\n"
+            "complete -F _fcmd_complete fcmd\n"
+        )
+
+    @staticmethod
+    def _gen_zsh_script(tools_data: list[dict[str, Any]]) -> str:
+        """生成 zsh 补全脚本。"""
+        # 第一层命令列表
+        cmd_lines: list[str] = []
+        for cmd in _BUILTIN_COMMANDS:
+            cmd_lines.append(f"'{cmd}'")
+        for tool in tools_data:
+            desc = tool["name"]
+            cmd_lines.append(f"'{tool['name']}:{desc}'")
+            for alias in tool["aliases"]:
+                cmd_lines.append(f"'{alias}:{desc}'")
+        cmd_lines.append("'--version:版本号'")
+        commands_str = "\n        ".join(cmd_lines)
+
+        # 子命令分支
+        sub_blocks: list[str] = []
+        for tool in tools_data:
+            if not tool["subs"]:
+                continue
+            names = [tool["name"]] + tool["aliases"]
+            pattern = "|".join(names)
+            sub_lines = []
+            for sc, help_text in tool["subs"]:
+                sub_lines.append(f"'{sc}:{help_text}'")
+            subs_str = "\n                ".join(sub_lines)
+            sub_blocks.append(
+                f"            ({pattern})\n"
+                f"                local -a subs=({subs_str})\n"
+                f"                _describe 'subcommand' subs ;;"
+            )
+        sub_body = "\n".join(sub_blocks) if sub_blocks else "            (*) ;;"
+
+        return (
+            "#compdef fcmd\n"
+            "# fcmd zsh 补全脚本\n"
+            '# 安装: eval "$(fcmd completion --shell zsh)"\n'
+            "_fcmd() {\n"
+            "    local -a commands\n"
+            "    commands=(\n"
+            f"        {commands_str}\n"
+            "    )\n"
+            "    _arguments -C \\\n"
+            "        '1: :->cmd' \\\n"
+            "        '*::arg:->args'\n"
+            "    case $state in\n"
+            "        cmd)\n"
+            "            _describe 'command' commands ;;\n"
+            "        args)\n"
+            "            case ${words[1]} in\n"
+            f"{sub_body}\n"
+            "            esac ;;\n"
+            "    esac\n"
+            "}\n"
+            '_fcmd "$@"\n'
+        )
+
+    @staticmethod
+    def _gen_fish_script(tools_data: list[dict[str, Any]]) -> str:
+        """生成 fish 补全脚本。"""
+        lines: list[str] = ["# fcmd fish 补全脚本", "# 安装: fcmd completion --shell fish | source"]
+        # 第一层
+        for cmd in _BUILTIN_COMMANDS:
+            lines.append(f"complete -c fcmd -f -n '__fish_use_subcommand' -a '{cmd}'")
+        for tool in tools_data:
+            lines.append(f"complete -c fcmd -f -n '__fish_use_subcommand' -a '{tool['name']}'")
+            for alias in tool["aliases"]:
+                lines.append(f"complete -c fcmd -f -n '__fish_use_subcommand' -a '{alias}'")
+        # 子命令层
+        for tool in tools_data:
+            if not tool["subs"]:
+                continue
+            names = [tool["name"]] + tool["aliases"]
+            seen_cond = "__fish_seen_subcommand_from " + " ".join(names)
+            for sc, help_text in tool["subs"]:
+                lines.append(f"complete -c fcmd -f -n '{seen_cond}' -a '{sc}' -d '{help_text}'")
+        return "\n".join(lines) + "\n"
+
+    # ------------------------------------------------------------------ #
+    # yaml 内建命令
+    # ------------------------------------------------------------------ #
+    def _builtin_yaml(self, argv: list[str]) -> int:
+        """``fcmd yaml <file> [job] [--dry-run] [--strategy S] [--verbose]``。
+
+        从 YAML 文件加载 GitHub Actions 风格任务图并执行。
+
+        - ``fcmd yaml deploy.yaml``：执行全部 jobs
+        - ``fcmd yaml deploy.yaml build``：仅执行 build 及其依赖
+        - ``fcmd yaml deploy.yaml --dry-run``：打印执行计划不执行
+        - ``fcmd yaml deploy.yaml --strategy thread``：覆盖执行策略
+        """
+        parser = argparse.ArgumentParser(
+            prog="fcmd yaml",
+            description="从 YAML 文件加载并执行任务图",
+        )
+        parser.add_argument("file", help="YAML 文件路径")
+        parser.add_argument("job", nargs="?", default=None, help="仅执行该 job 及其依赖（默认全部）")
+        parser.add_argument("--dry-run", action="store_true", help="打印执行计划不执行")
+        parser.add_argument(
+            "--strategy",
+            choices=("sequential", "thread", "async", "dependency"),
+            default="dependency",
+            help="执行策略（默认 dependency）",
+        )
+        parser.add_argument("--verbose", action="store_true", help="打印详细执行过程")
+        if not argv:
+            parser.print_help()
+            return 1
+        parsed = parser.parse_args(argv)
+
+        from fcmd.errors import FcmdError
+        from fcmd.executors import run
+        from fcmd.yaml_loader import load_yaml
+
+        try:
+            graph = load_yaml(parsed.file)
+        except (OSError, ValueError) as e:
+            get_console().print(f"[red]错误:[/red] 加载 YAML 失败: {e}")
+            return 1
+
+        only = [parsed.job] if parsed.job else None
+        try:
+            report = run(
+                graph,
+                strategy=parsed.strategy,
+                dry_run=parsed.dry_run,
+                verbose=parsed.verbose,
+                only=only,
+            )
+        except FcmdError as e:
+            get_console().print(f"[red]错误:[/red] {e}")
+            return 1
+
+        if report.success:
+            get_console().print("[green]YAML 任务图执行成功[/green]")
+            return 0
+        get_console().print("[red]YAML 任务图执行失败[/red]")
+        return 1
 
     def _list_tools(self) -> None:
         """rich 表格列出所有可用工具。"""
