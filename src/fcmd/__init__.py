@@ -44,6 +44,7 @@ __all__ = [
     "TaskTimeoutError",
     "ToolExitCode",
     "ToolSpec",
+    "__version__",
     "clear_tool_registry",
     "cmd",
     "describe_injection",

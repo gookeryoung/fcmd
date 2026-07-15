@@ -8,7 +8,7 @@ from typing import List
 
 import pytest
 
-import fcmd as fcmd
+import fcmd
 from fcmd.apis.toolkit import (
     _TOOL_REGISTRY,
     ToolExitCode,

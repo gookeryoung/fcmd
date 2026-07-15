@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-import fcmd as fcmd
+import fcmd
 from fcmd.errors import TaskFailedError
 from fcmd.task import RetryPolicy, TaskEvent, TaskSpec, TaskStatus, task
 
