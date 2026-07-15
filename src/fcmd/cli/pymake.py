@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import fcmd as fx
+import fcmd
 from fcmd.apis import run_tool
 
 # ============================================================================
@@ -23,12 +23,12 @@ from fcmd.apis import run_tool
 # ============================================================================
 
 
-@fx.tool("pymake", subcommand="b", help="构建项目 (python --version)", cmd=["python", "--version"])
+@fcmd.tool("pymake", subcommand="b", help="构建项目 (python --version)", cmd=["python", "--version"])
 def b(cwd: Path = Path()) -> None:
     """构建项目。"""
 
 
-@fx.tool(
+@fcmd.tool(
     "pymake",
     subcommand="c",
     help="清理构建产物 (清空 __pycache__)",
@@ -42,7 +42,7 @@ def c(cwd: Path = Path()) -> None:
     """清理构建产物。"""
 
 
-@fx.tool(
+@fcmd.tool(
     "pymake",
     subcommand="t",
     help="运行测试 (pytest)",
@@ -52,7 +52,7 @@ def t(cwd: Path = Path()) -> None:
     """运行测试。"""
 
 
-@fx.tool("pymake", subcommand="lint", help="代码检查 (ruff check)", cmd=["python", "-m", "ruff", "check", "--fix"])
+@fcmd.tool("pymake", subcommand="lint", help="代码检查 (ruff check)", cmd=["python", "-m", "ruff", "check", "--fix"])
 def lint(cwd: Path = Path()) -> None:
     """代码检查。"""
 
@@ -62,7 +62,7 @@ def lint(cwd: Path = Path()) -> None:
 # ============================================================================
 
 
-@fx.tool(
+@fcmd.tool(
     "pymake",
     subcommand="pyrefly_check",
     help="pyrefly 类型检查",
@@ -73,7 +73,7 @@ def pyrefly_check(cwd: Path = Path()) -> None:
     """pyrefly 类型检查（内部 job）。"""
 
 
-@fx.tool(
+@fcmd.tool(
     "pymake",
     subcommand="git_add_all",
     help="git add -A",
@@ -90,7 +90,7 @@ def git_add_all(cwd: Path = Path()) -> None:
 # ============================================================================
 
 
-@fx.tool(
+@fcmd.tool(
     "pymake",
     subcommand="tc",
     help="类型检查 (清理 + pyrefly + lint)",
@@ -101,7 +101,7 @@ def tc(cwd: Path = Path()) -> None:
     """类型检查（聚合）。"""
 
 
-@fx.tool(
+@fcmd.tool(
     "pymake",
     subcommand="all",
     help="全套流程 (清理 + 构建 + 测试 + 类型检查)",

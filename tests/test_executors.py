@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-import fcmd as fx
+import fcmd as fcmd
 from fcmd.errors import TaskFailedError
 from fcmd.task import RetryPolicy, TaskEvent, TaskSpec, TaskStatus, task
 
@@ -27,8 +27,8 @@ def test_run_sequential_simple() -> None:
     def double(extract: list[int]) -> list[int]:
         return [x * 2 for x in extract]
 
-    graph = fx.graph(extract, double)
-    report = fx.run(graph, strategy="sequential")
+    graph = fcmd.graph(extract, double)
+    report = fcmd.run(graph, strategy="sequential")
     assert report.success
     assert report["extract"] == [1, 2, 3]
     assert report["double"] == [2, 4, 6]
@@ -54,8 +54,8 @@ def test_run_thread_strategy() -> None:
     def c(a: str, b: str) -> str:
         return f"{a}+{b}"
 
-    graph = fx.graph(a, b, c)
-    report = fx.run(graph, strategy="thread")
+    graph = fcmd.graph(a, b, c)
+    report = fcmd.run(graph, strategy="thread")
     assert report.success
     assert report["c"] == "a+b"
 
@@ -71,8 +71,8 @@ def test_run_async_strategy() -> None:
     def b(a: int) -> int:
         return a + 5
 
-    graph = fx.graph(a, b)
-    report = fx.run(graph, strategy="async")
+    graph = fcmd.graph(a, b)
+    report = fcmd.run(graph, strategy="async")
     assert report.success
     assert report["b"] == 15
 
@@ -88,8 +88,8 @@ def test_run_dependency_strategy_default() -> None:
     def y(x: int) -> int:
         return x + 1
 
-    graph = fx.graph(x, y)
-    report = fx.run(graph)  # 默认 dependency
+    graph = fcmd.graph(x, y)
+    report = fcmd.run(graph)  # 默认 dependency
     assert report.success
     assert report["y"] == 2
 
@@ -113,8 +113,8 @@ def test_run_diamond_dependency() -> None:
     def d(b: int, c: int) -> int:
         return b + c
 
-    graph = fx.graph(a, b, c, d)
-    report = fx.run(graph)
+    graph = fcmd.graph(a, b, c, d)
+    report = fcmd.run(graph)
     assert report.success
     assert report["d"] == (10 * 2) + (10 + 3)
 
@@ -131,8 +131,8 @@ def test_run_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
         executed.append("a")
         return 1
 
-    graph = fx.graph(a)
-    report = fx.run(graph, dry_run=True)
+    graph = fcmd.graph(a)
+    report = fcmd.run(graph, dry_run=True)
     assert report.success
     assert len(report) == 0
     assert executed == []
@@ -147,8 +147,8 @@ def test_run_verbose(capsys: pytest.CaptureFixture[str]) -> None:
     def a() -> int:
         return 42
 
-    graph = fx.graph(a)
-    report = fx.run(graph, verbose=True)
+    graph = fcmd.graph(a)
+    report = fcmd.run(graph, verbose=True)
     assert report.success
     captured = capsys.readouterr()
     combined = captured.out + captured.err
@@ -174,8 +174,8 @@ def test_run_auto_dep_injection() -> None:
     def load(transform: list[int]) -> int:
         return sum(transform)
 
-    graph = fx.graph(extract, transform, load)
-    report = fx.run(graph)
+    graph = fcmd.graph(extract, transform, load)
+    report = fcmd.run(graph)
     assert report["load"] == 60
 
 
@@ -185,8 +185,8 @@ def test_run_cmd_task() -> None:
         spec = TaskSpec(name="hi", cmd=["cmd", "/c", "echo", "hello"])
     else:
         spec = TaskSpec(name="hi", cmd=["echo", "hello"])
-    graph = fx.graph(spec)
-    report = fx.run(graph)
+    graph = fcmd.graph(spec)
+    report = fcmd.run(graph)
     assert report.success
     assert report["hi"] is None
 
@@ -205,8 +205,8 @@ def test_run_soft_dependency_with_default() -> None:
         soft_depends_on=("optional",),
         defaults={"optional": 100},
     )
-    graph = fx.graph(spec)
-    report = fx.run(graph)
+    graph = fcmd.graph(spec)
+    report = fcmd.run(graph)
     assert report["main"] == 200
 
 
@@ -222,8 +222,8 @@ def test_run_soft_dependency_with_upstream_value() -> None:
         fn=lambda upstream: upstream + 1,
         soft_depends_on=("upstream",),
     )
-    graph = fx.graph(upstream, spec)
-    report = fx.run(graph)
+    graph = fcmd.graph(upstream, spec)
+    report = fcmd.run(graph)
     assert report["downstream"] == 43
 
 
@@ -241,9 +241,9 @@ def test_run_failure_propagation() -> None:
     def downstream(boom: None) -> int:
         return 1
 
-    graph = fx.graph(boom, downstream)
+    graph = fcmd.graph(boom, downstream)
     with pytest.raises(TaskFailedError) as exc_info:
-        fx.run(graph, strategy="sequential")
+        fcmd.run(graph, strategy="sequential")
     assert exc_info.value.task == "boom"
     assert isinstance(exc_info.value.cause, ValueError)
     assert exc_info.value.attempts == 1
@@ -273,8 +273,8 @@ def test_run_continue_on_error() -> None:
         call_log.append("independent")
         return 99
 
-    graph = fx.graph(boom_soft, independent)
-    report = fx.run(graph)
+    graph = fcmd.graph(boom_soft, independent)
+    report = fcmd.run(graph)
     assert report.success is False
     assert "boom_soft" in report.failed_tasks()
     assert "independent" in report.succeeded_tasks()
@@ -293,8 +293,8 @@ def test_run_retry_then_success() -> None:
             raise RuntimeError("not yet")
         return "ok"
 
-    graph = fx.graph(flaky)
-    report = fx.run(graph, strategy="sequential")
+    graph = fcmd.graph(flaky)
+    report = fcmd.run(graph, strategy="sequential")
     assert report.success
     assert report["flaky"] == "ok"
     assert attempts["n"] == 3
@@ -309,9 +309,9 @@ def test_run_retry_exhausted() -> None:
         attempts["n"] += 1
         raise RuntimeError("always")
 
-    graph = fx.graph(always_fail)
+    graph = fcmd.graph(always_fail)
     with pytest.raises(TaskFailedError) as exc_info:
-        fx.run(graph, strategy="sequential")
+        fcmd.run(graph, strategy="sequential")
     assert exc_info.value.attempts == 2
     assert attempts["n"] == 2
 
@@ -332,8 +332,8 @@ def test_run_allow_upstream_skip() -> None:
         allow_upstream_skip=True,
     )
 
-    graph = fx.graph(skipped, downstream_spec)
-    report = fx.run(graph, strategy="sequential")
+    graph = fcmd.graph(skipped, downstream_spec)
+    report = fcmd.run(graph, strategy="sequential")
     # downstream 应被允许执行（但因 skipped 未注入值，且 fn 需要 skipped 参数，
     # 此处应通过 build_call_args 注入 None）
     # 注意：allow_upstream_skip=True 跳过 _upstream_skip_reason，但 fn 仍执行
@@ -352,8 +352,8 @@ def test_run_conditions_skip() -> None:
         executed.append("skipped")
         return 1
 
-    graph = fx.graph(skipped)
-    report = fx.run(graph, strategy="sequential")
+    graph = fcmd.graph(skipped)
+    report = fcmd.run(graph, strategy="sequential")
     assert "skipped" in report.skipped_tasks()
     assert executed == []
 
@@ -368,9 +368,9 @@ def test_run_timeout() -> None:
         )
     else:
         spec = TaskSpec(name="slow", cmd=["sleep", "10"], timeout=0.3)
-    graph = fx.graph(spec)
+    graph = fcmd.graph(spec)
     with pytest.raises(TaskFailedError) as exc_info:
-        fx.run(graph, strategy="sequential")
+        fcmd.run(graph, strategy="sequential")
     # cmd 任务超时被 command.run_command 包装为 RuntimeError，executors 不再转 TaskTimeoutError
     # 仅验证失败发生即可
     assert exc_info.value.task == "slow"
@@ -392,8 +392,8 @@ def test_run_async_fn_dependency() -> None:
         await asyncio.sleep(0.01)
         return fetch + 1
 
-    graph = fx.graph(fetch, process)
-    report = fx.run(graph, strategy="async")
+    graph = fcmd.graph(fetch, process)
+    report = fcmd.run(graph, strategy="async")
     assert report.success
     assert report["process"] == 101
 
@@ -416,8 +416,8 @@ def test_run_only_filter() -> None:
     def unrelated() -> int:
         return 999
 
-    graph = fx.graph(extract, double, unrelated)
-    report = fx.run(graph, only=["double"])
+    graph = fcmd.graph(extract, double, unrelated)
+    report = fcmd.run(graph, only=["double"])
     assert "extract" in report.results
     assert "double" in report.results
     assert "unrelated" not in report.results
@@ -430,8 +430,8 @@ def test_run_tags_filter() -> None:
     spec_b = TaskSpec(name="b", fn=lambda a: a + 1, depends_on=("a",), tags=("test",))
     spec_c = TaskSpec(name="c", fn=lambda: 999, tags=("other",))
 
-    graph = fx.graph(spec_a, spec_b, spec_c)
-    report = fx.run(graph, tags=["test"])
+    graph = fcmd.graph(spec_a, spec_b, spec_c)
+    report = fcmd.run(graph, tags=["test"])
     # b 带 test 标签，a 作为 b 的上游硬依赖被包含
     assert "a" in report.results
     assert "b" in report.results
@@ -444,8 +444,8 @@ def test_run_only_and_tags_union() -> None:
     spec_b = TaskSpec(name="b", fn=lambda: 2, tags=("build",))
     spec_c = TaskSpec(name="c", fn=lambda: 3, tags=("other",))
 
-    graph = fx.graph(spec_a, spec_b, spec_c)
-    report = fx.run(graph, only=["b"], tags=["test"])
+    graph = fcmd.graph(spec_a, spec_b, spec_c)
+    report = fcmd.run(graph, only=["b"], tags=["test"])
     assert "a" in report.results
     assert "b" in report.results
     assert "c" not in report.results
@@ -462,8 +462,8 @@ def test_run_on_event_callback() -> None:
     def a() -> int:
         return 1
 
-    graph = fx.graph(a)
-    report = fx.run(graph, strategy="sequential", on_event=events.append)
+    graph = fcmd.graph(a)
+    report = fcmd.run(graph, strategy="sequential", on_event=events.append)
     assert report.success
     statuses = [e.status for e in events]
     assert TaskStatus.RUNNING in statuses
@@ -484,8 +484,8 @@ def test_run_fn_with_cwd(tmp_path: object) -> None:
     def pwd() -> str:
         return str(Path.cwd())
 
-    graph = fx.graph(pwd)
-    report = fx.run(graph, strategy="sequential")
+    graph = fcmd.graph(pwd)
+    report = fcmd.run(graph, strategy="sequential")
     assert report.success
     assert report["pwd"] == str(cwd_path)
 
@@ -500,8 +500,8 @@ def test_run_fn_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
     def get_env() -> str:
         return os.environ.get("FCMD_TEST_FN_ENV", "")
 
-    graph = fx.graph(get_env)
-    report = fx.run(graph, strategy="thread")
+    graph = fcmd.graph(get_env)
+    report = fcmd.run(graph, strategy="thread")
     assert report.success
     assert report["get_env"] == "hello"
     # 执行后恢复
@@ -515,8 +515,8 @@ def test_run_soft_dependency_no_default_injects_none() -> None:
         fn=lambda optional: optional + 1 if optional is not None else -1,
         soft_depends_on=("optional",),
     )
-    graph = fx.graph(spec)
-    report = fx.run(graph)
+    graph = fcmd.graph(spec)
+    report = fcmd.run(graph)
     assert report["main2"] == -1
 
 
@@ -530,9 +530,9 @@ def test_run_verbose_with_failure(capsys: pytest.CaptureFixture[str]) -> None:
     def boom() -> None:
         raise ValueError("kaboom")
 
-    graph = fx.graph(boom)
+    graph = fcmd.graph(boom)
     with pytest.raises(TaskFailedError):
-        fx.run(graph, strategy="sequential", verbose=True)
+        fcmd.run(graph, strategy="sequential", verbose=True)
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "失败" in combined
@@ -543,8 +543,8 @@ def test_run_verbose_with_skip(capsys: pytest.CaptureFixture[str]) -> None:
     from fcmd.task import TaskSpec
 
     spec = TaskSpec(name="skip_me", fn=lambda: 1, conditions=(lambda _: False,))
-    graph = fx.graph(spec)
-    fx.run(graph, strategy="sequential", verbose=True)
+    graph = fcmd.graph(spec)
+    fcmd.run(graph, strategy="sequential", verbose=True)
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "跳过" in combined
@@ -566,8 +566,8 @@ def test_run_upstream_fail_skips_downstream() -> None:
         fn=lambda _: 1,
         depends_on=("boom",),
     )
-    graph = fx.graph(boom, downstream_spec)
-    report = fx.run(graph, strategy="sequential")
+    graph = fcmd.graph(boom, downstream_spec)
+    report = fcmd.run(graph, strategy="sequential")
     assert report.success is False
     assert "boom" in report.failed_tasks()
     assert "downstream" in report.skipped_tasks()
@@ -584,9 +584,9 @@ def test_run_async_timeout() -> None:
         await asyncio.sleep(10)
         return 1
 
-    graph = fx.graph(slow)
+    graph = fcmd.graph(slow)
     with pytest.raises(TaskFailedError) as exc_info:
-        fx.run(graph, strategy="async")
+        fcmd.run(graph, strategy="async")
     assert exc_info.value.task == "slow"
 
 
@@ -600,7 +600,7 @@ def test_run_thread_strategy_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
     def get_val() -> str:
         return os.environ.get("FCMD_THREAD_ENV", "")
 
-    graph = fx.graph(get_val)
-    report = fx.run(graph, strategy="thread")
+    graph = fcmd.graph(get_val)
+    report = fcmd.run(graph, strategy="thread")
     assert report.success
     assert report["get_val"] == "thread_val"

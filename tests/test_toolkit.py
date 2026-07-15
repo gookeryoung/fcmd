@@ -8,7 +8,7 @@ from typing import List
 
 import pytest
 
-import fcmd as fx
+import fcmd as fcmd
 from fcmd.apis.toolkit import (
     _TOOL_REGISTRY,
     ToolExitCode,
@@ -1211,14 +1211,14 @@ def test_run_tool_missing_dependency_in_chain() -> None:
 # ---------------------------------------------------------------------- #
 def test_fx_tool_decorator_accessible() -> None:
     """fx.tool 通过懒加载可访问。"""
-    assert fx.tool is tool
+    assert fcmd.tool is tool
 
 
 def test_fx_run_tool_accessible() -> None:
     """fx.run_tool 通过懒加载可访问。"""
-    assert fx.run_tool is run_tool
+    assert fcmd.run_tool is run_tool
 
 
 def test_fx_tool_spec_accessible() -> None:
     """fx.ToolSpec 通过懒加载可访问。"""
-    assert fx.ToolSpec is ToolSpec
+    assert fcmd.ToolSpec is ToolSpec
