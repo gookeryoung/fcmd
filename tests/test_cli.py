@@ -471,3 +471,141 @@ class TestBuildToolGraph:
         assert "tc" in names
         # tc 依赖 c / pyrefly_check / lint，应一并包含
         assert "c" in names
+
+
+# ---------------------------------------------------------------------- #
+# fcmd info 内建命令测试
+# ---------------------------------------------------------------------- #
+class TestBuiltinInfo:
+    """``fcmd info`` 内建命令测试。"""
+
+    def test_info_no_args_shows_overview(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info 无参数列出内建命令与工具概览。"""
+        app = FcmdApp(["info"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "内建命令" in out
+        assert "fcmd graph" in out
+        assert "fcmd info" in out
+        assert "pymake" in out
+
+    def test_info_tool_shows_subcommands(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info pymake 列出 pymake 的全部子命令。"""
+        app = FcmdApp(["info", "pymake"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "pymake" in out
+        # 应包含主要子命令
+        for name in ("b", "c", "t", "tc", "all"):
+            assert name in out, f"info 应列出子命令 {name!r}"
+        # 应标记 hidden 子命令
+        assert "hidden" in out
+
+    def test_info_subcommand_shows_full_spec(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info pymake tc 展示 tc 的完整 ToolSpec 字段。"""
+        app = FcmdApp(["info", "pymake", "tc"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "pymake" in out
+        assert "tc" in out
+        # 关键字段
+        assert "help" in out
+        assert "needs" in out
+        assert "strategy" in out
+        assert "cmd" in out
+        assert "hidden" in out
+        # tc 是聚合任务（有 needs，无 cmd）
+        assert "aggregate" in out
+
+    def test_info_cmd_subcommand_shows_cmd(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info pymake b 展示 cmd 任务的命令。"""
+        app = FcmdApp(["info", "pymake", "b"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "uv build" in out
+        assert "cmd" in out
+
+    def test_info_unknown_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info unknown_tool 返回 1。"""
+        app = FcmdApp(["info", "nonexistent_tool"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "未知工具" in out
+
+    def test_info_unknown_subcommand(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info pymake unknown 返回 1。"""
+        app = FcmdApp(["info", "pymake", "unknown_subcommand"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "没有子命令" in out
+
+    def test_info_pm_alias_works(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info pm 别名路由正常。"""
+        app = FcmdApp(["info", "pm"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "pymake" in out
+
+    def test_info_overview_shows_subcommand_count(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info 概览显示子命令数量（含 hidden 标注）。"""
+        app = FcmdApp(["info"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # pymake 有 hidden 子命令，应显示 "(+N hidden)"
+        assert "hidden" in out
+
+    def test_info_subcommand_marked_hidden(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info pymake 展示 hidden 子命令时带标记。"""
+        app = FcmdApp(["info", "pymake"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # pyrefly_check 是 hidden 子命令
+        assert "pyrefly_check" in out
+
+    def test_spec_kind_classification(self) -> None:
+        """_spec_kind 正确分类 cmd / aggregate / fn。"""
+        from fcmd.apis.toolkit import get_tool
+
+        # cmd 任务
+        b_spec = get_tool("pymake", "b")
+        assert FcmdApp._spec_kind(b_spec) == "cmd"
+        # aggregate 任务（tc 有 needs 无 cmd 无函数逻辑）
+        tc_spec = get_tool("pymake", "tc")
+        assert FcmdApp._spec_kind(tc_spec) == "aggregate"
+        # fn 任务（c 有函数逻辑无 cmd 无 needs）
+        c_spec = get_tool("pymake", "c")
+        assert FcmdApp._spec_kind(c_spec) == "fn"
+
+    def test_info_tool_import_failure(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """fcmd info <tool> 模块导入失败时返回 1（覆盖 _load_tool_subs ImportError）。"""
+        from fcmd.cli import main as main_mod
+
+        # 注入伪工具：在 _TOOL_ALIASES 和 _TOOL_MODULES 中注册一个不可导入的模块
+        monkeypatch.setitem(main_mod._TOOL_ALIASES, "broken_tool", "broken_tool")
+        monkeypatch.setitem(main_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.nonexistent_module_xyz")
+
+        app = FcmdApp(["info", "broken_tool"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "加载工具" in out
+        assert "失败" in out
+
+    def test_info_tool_not_in_registry(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """fcmd info <tool> 工具解析成功但未注册时返回 1（覆盖 _load_tool_subs 未注册路径）。"""
+        from fcmd.cli import main as main_mod
+
+        # 注入伪工具：在 _TOOL_ALIASES 中注册，但不在 _TOOL_MODULES 也不在 _TOOL_REGISTRY
+        monkeypatch.setitem(main_mod._TOOL_ALIASES, "ghost_tool", "ghost_tool")
+
+        app = FcmdApp(["info", "ghost_tool"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "未注册" in out
