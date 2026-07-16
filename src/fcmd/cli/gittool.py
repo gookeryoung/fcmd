@@ -1,11 +1,12 @@
 """gittool - Git 执行工具。
 
-提供添加提交/初始化/清理/推送/拉取子命令。
+提供添加提交/初始化/初始化子目录/清理/推送/拉取子命令。
 
 示例
 ----
     fcmd gittool a -m "feat: 新功能"   # 添加并提交
     fcmd gittool i                       # 初始化并提交
+    fcmd gittool isub                    # 初始化所有子目录的 Git 仓库
     fcmd gittool c                       # 清理未跟踪文件并查看状态
     fcmd gittool p                       # 推送
     fcmd gittool pl                      # 拉取
@@ -13,6 +14,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import fcmd
@@ -21,6 +23,7 @@ from fcmd.models import run_command
 __all__ = [
     "git_add_commit",
     "git_init_add_commit",
+    "git_init_sub_dirs",
     "has_files",
     "not_has_git_repo",
 ]
@@ -109,6 +112,29 @@ def git_init_add_commit(message: str = "init commit") -> None:
         run_command(["git", "commit", "-m", message])
     else:
         print("没有文件需要提交")
+
+
+@fcmd.tool("gittool", subcommand="isub", help="初始化子目录 Git 仓库")
+def git_init_sub_dirs(message: str = "init commit") -> None:
+    """遍历当前目录的子目录，对每个子目录执行 git init + add + commit。
+
+    跳过非目录文件。每个子目录独立初始化为 Git 仓库。
+
+    Parameters
+    ----------
+    message:
+        提交信息（默认 ``init commit``）
+    """
+    cwd = Path.cwd()
+    sub_dirs = sorted(d for d in cwd.iterdir() if d.is_dir())
+    if not sub_dirs:
+        print("当前目录无子目录")
+        return
+    for subdir in sub_dirs:
+        subprocess.run(["git", "init"], cwd=subdir, check=False, capture_output=True, text=True)
+        subprocess.run(["git", "add", "."], cwd=subdir, check=False, capture_output=True, text=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=subdir, check=False, capture_output=True, text=True)
+        print(f"已初始化: {subdir.name}")
 
 
 # ============================================================================
