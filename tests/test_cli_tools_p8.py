@@ -362,6 +362,11 @@ class TestGittool:
     ) -> None:
         """gittool i 初始化并提交。"""
         monkeypatch.chdir(tmp_path)
+        # CI 环境可能未配置全局 git user，通过环境变量设置（不依赖 .git/config）
+        monkeypatch.setenv("GIT_AUTHOR_NAME", "test")
+        monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@test.com")
+        monkeypatch.setenv("GIT_COMMITTER_NAME", "test")
+        monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@test.com")
         (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
         code = run_tool("gittool", ["i"])
         assert code == 0
