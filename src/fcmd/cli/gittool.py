@@ -13,10 +13,10 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import fcmd
+from fcmd.models import run_command
 
 __all__ = [
     "git_add_commit",
@@ -48,22 +48,6 @@ EXCLUDE_CMDS: list[str] = [arg for d in EXCLUDE_DIRS for arg in ["-e", d]]
 # ============================================================================
 
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """执行命令并返回结果，输出透传到当前终端。
-
-    Parameters
-    ----------
-    cmd:
-        命令列表
-
-    Returns
-    -------
-    subprocess.CompletedProcess[str]
-        命令执行结果
-    """
-    return subprocess.run(cmd, check=False, text=True)
-
-
 def not_has_git_repo() -> bool:
     """检查当前目录没有 Git 仓库。
 
@@ -84,12 +68,7 @@ def has_files() -> bool:
     bool
         有未提交更改时返回 ``True``
     """
-    result = subprocess.run(
-        ["git", "status", "--porcelain"],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
+    result = run_command(["git", "status", "--porcelain"], capture=True)
     return bool(result.stdout.strip())
 
 
@@ -110,8 +89,8 @@ def git_add_commit(message: str = "chore: update") -> None:
     if not has_files():
         print("没有文件需要提交")
         return
-    _run(["git", "add", "."])
-    _run(["git", "commit", "-m", message])
+    run_command(["git", "add", "."])
+    run_command(["git", "commit", "-m", message])
 
 
 @fcmd.tool("gittool", subcommand="i", help="初始化并提交")
@@ -124,10 +103,10 @@ def git_init_add_commit(message: str = "init commit") -> None:
         提交信息（默认 ``init commit``）
     """
     if not_has_git_repo():
-        _run(["git", "init"])
+        run_command(["git", "init"])
     if has_files():
-        _run(["git", "add", "."])
-        _run(["git", "commit", "-m", message])
+        run_command(["git", "add", "."])
+        run_command(["git", "commit", "-m", message])
     else:
         print("没有文件需要提交")
 

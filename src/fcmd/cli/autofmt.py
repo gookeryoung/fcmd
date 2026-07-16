@@ -5,41 +5,20 @@
 示例
 ----
     fcmd autofmt fmt                       # 格式化当前目录
-    fcmd autofmt fmt src                   # 格式化指定目录
+    fcmd autofmt fmt --target src          # 格式化指定目录
     fcmd autofmt lint                      # 检查当前目录
-    fcmd autofmt lint src --fix            # 检查并自动修复
+    fcmd autofmt lint --target src --fix   # 检查并自动修复
 """
 
 from __future__ import annotations
 
-import subprocess
-
 import fcmd
+from fcmd.models import run_command
 
 __all__ = [
     "fmt",
     "lint",
 ]
-
-# ============================================================================
-# 私有辅助函数
-# ============================================================================
-
-
-def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """执行命令并返回结果（不抛异常，输出透传到终端）。
-
-    Parameters
-    ----------
-    cmd:
-        命令列表
-
-    Returns
-    -------
-    subprocess.CompletedProcess[str]
-        命令执行结果
-    """
-    return subprocess.run(cmd, check=False, text=True)
 
 
 # ============================================================================
@@ -56,7 +35,7 @@ def fmt(target: str = ".") -> None:
     target:
         目标路径（默认：当前目录）
     """
-    _run(["ruff", "format", target])
+    run_command(["ruff", "format", target])
     print(f"ruff format 完成: {target}")
 
 
@@ -74,5 +53,5 @@ def lint(target: str = ".", fix: bool = False) -> None:
     cmd = ["ruff", "check", target]
     if fix:
         cmd.extend(["--fix", "--unsafe-fixes"])
-    _run(cmd)
+    run_command(cmd)
     print(f"ruff check 完成: {target}")

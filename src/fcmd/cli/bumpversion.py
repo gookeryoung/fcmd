@@ -16,11 +16,11 @@
 from __future__ import annotations
 
 import re
-import subprocess
 from pathlib import Path
 from typing import Literal
 
 import fcmd
+from fcmd.models import BumpPart, IgnoreSpec, Version, parse_version, run_command, should_ignore
 
 __all__ = [
     "BumpVersionType",
@@ -54,33 +54,15 @@ _INIT_VERSION_PATTERN = re.compile(
     re.MULTILINE,
 )
 
-# 扫描时忽略的目录名
-_IGNORE_DIRS: frozenset[str] = frozenset(
-    {".venv", "venv", ".git", "__pycache__", ".tox", "node_modules", "build", "dist", ".eggs"}
+# 扫描时忽略的目录（用 IgnoreSpec 统一描述，供 should_ignore 使用）
+_IGNORE_SPEC: IgnoreSpec = IgnoreSpec.from_iterable(
+    [".venv", "venv", ".git", "__pycache__", ".tox", "node_modules", "build", "dist", ".eggs"]
 )
-
-_VALID_PARTS: frozenset[str] = frozenset({"patch", "minor", "major"})
 
 
 # ============================================================================
 # 私有辅助函数
 # ============================================================================
-
-
-def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """执行命令并返回结果（不抛异常）。
-
-    Parameters
-    ----------
-    cmd:
-        命令列表
-
-    Returns
-    -------
-    subprocess.CompletedProcess[str]
-        命令执行结果
-    """
-    return subprocess.run(cmd, check=False, capture_output=True, text=True)
 
 
 def _get_pattern_for_file(file_name: str) -> re.Pattern[str] | None:
@@ -101,28 +83,6 @@ def _get_pattern_for_file(file_name: str) -> re.Pattern[str] | None:
     if file_name == "__init__.py":
         return _INIT_VERSION_PATTERN
     return None
-
-
-def _calculate_new_version(major: int, minor: int, patch: int, part: BumpVersionType) -> str:
-    """计算新版本号。
-
-    Parameters
-    ----------
-    major, minor, patch:
-        当前版本号三元组
-    part:
-        递增部分（``patch``/``minor``/``major``）
-
-    Returns
-    -------
-    str
-        新版本号字符串
-    """
-    if part == "major":
-        return f"{major + 1}.0.0"
-    if part == "minor":
-        return f"{major}.{minor + 1}.0"
-    return f"{major}.{minor}.{patch + 1}"
 
 
 def _build_replacement_string(original_match: str, new_version: str, file_name: str) -> str:
@@ -149,8 +109,8 @@ def _build_replacement_string(original_match: str, new_version: str, file_name: 
     return f"{prefix}{quote_char}{new_version}{quote_char}"
 
 
-def _read_version_tuple(file_path: Path) -> tuple[int, int, int] | None:
-    """从文件中读取版本号，返回 (major, minor, patch) 元组；未找到返回 None。
+def _read_version(file_path: Path) -> Version | None:
+    """从文件中读取版本号，返回 Version 对象；未找到返回 None。
 
     Parameters
     ----------
@@ -159,8 +119,8 @@ def _read_version_tuple(file_path: Path) -> tuple[int, int, int] | None:
 
     Returns
     -------
-    tuple[int, int, int] | None
-        版本号元组；读取失败或未匹配返回 None
+    Version | None
+        版本号对象；读取失败或未匹配返回 None
     """
     pattern = _get_pattern_for_file(file_path.name)
     if pattern is None:
@@ -171,11 +131,7 @@ def _read_version_tuple(file_path: Path) -> tuple[int, int, int] | None:
     except (OSError, UnicodeDecodeError):
         return None
 
-    match = pattern.search(content)
-    if not match:
-        return None
-
-    return int(match.group("major")), int(match.group("minor")), int(match.group("patch"))
+    return parse_version(content)
 
 
 def _write_version_to_file(file_path: Path, new_version: str) -> bool:
@@ -204,7 +160,7 @@ def _write_version_to_file(file_path: Path, new_version: str) -> bool:
         return False
 
     match = pattern.search(content)
-    if not match:  # pragma: no cover - 调用方已通过 _read_version_tuple 验证
+    if not match:  # pragma: no cover - 调用方已通过 _read_version 验证
         return False
 
     replacement = _build_replacement_string(match.group(0), new_version, file_path.name)
@@ -235,7 +191,7 @@ def _collect_version_files(root: Path) -> set[Path]:
     all_files: set[Path] = set()
     for pattern in ("__init__.py", "pyproject.toml"):
         for file in root.rglob(pattern):
-            if not any(ignore_dir in file.parts for ignore_dir in _IGNORE_DIRS):
+            if not should_ignore(file, _IGNORE_SPEC):
                 all_files.add(file)
     return all_files
 
@@ -262,18 +218,16 @@ def bump_file_version(file_path: Path, part: BumpVersionType = "patch") -> str |
     str | None
         更新后的新版本号；文件中未找到版本号或读取失败时返回 None
     """
-    version_tuple = _read_version_tuple(file_path)
-    if version_tuple is None:
+    version = _read_version(file_path)
+    if version is None:
         print(f"文件 {file_path} 中未找到版本号模式")
         return None
 
-    major, minor, patch = version_tuple
-    new_version = _calculate_new_version(major, minor, patch, part)
-
-    if not _write_version_to_file(file_path, new_version):  # pragma: no cover - _read_version_tuple 已验证
+    new_version = version.bump(BumpPart(part))
+    if not _write_version_to_file(file_path, str(new_version)):  # pragma: no cover - _read_version 已验证
         return None
 
-    return new_version
+    return str(new_version)
 
 
 @fcmd.tool("bumpversion", help="版本号自动管理")
@@ -299,8 +253,11 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
     str | None
         更新后的新版本号；未找到版本号文件时返回 None
     """
-    if part not in _VALID_PARTS:
-        print(f"无效的版本部分 {part!r}，必须是 {sorted(_VALID_PARTS)} 之一")
+    try:
+        bump_part = BumpPart(part)
+    except ValueError:
+        valid_parts = [p.value for p in BumpPart]
+        print(f"无效的版本部分 {part!r}，必须是 {valid_parts}")
         return None
 
     all_files = _collect_version_files(Path.cwd())
@@ -314,9 +271,9 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
         print(f"  - {file.relative_to(cwd)}")
 
     # 阶段 1：读取所有文件版本号，取最大值作为基准
-    versions: list[tuple[int, int, int]] = []
+    versions: list[Version] = []
     for file in sorted(all_files):
-        v = _read_version_tuple(file)
+        v = _read_version(file)
         if v is not None:
             versions.append(v)
 
@@ -324,22 +281,22 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
         print("未能从任何文件读取版本号")
         return None
 
-    major, minor, patch = max(versions)
-    new_version = _calculate_new_version(major, minor, patch, part)
-    print(f"基准版本: {major}.{minor}.{patch} -> 新版本: {new_version}")
+    base_version = max(versions, key=lambda v: (v.major, v.minor, v.patch))
+    new_version = base_version.bump(bump_part)
+    print(f"基准版本: {base_version.major}.{base_version.minor}.{base_version.patch} -> 新版本: {new_version}")
 
     # 阶段 2：统一写入新版本号到所有文件
     for file in sorted(all_files):
-        _write_version_to_file(file, new_version)
+        _write_version_to_file(file, str(new_version))
 
     # 阶段 3：git add (按文件名) + commit + tag
     relative_files = [str(file.relative_to(cwd)) for file in sorted(all_files)]
-    _run(["git", "add", *relative_files])
-    _run(["git", "commit", "-m", f"bump version to {new_version}"])
+    run_command(["git", "add", *relative_files])
+    run_command(["git", "commit", "-m", f"bump version to {new_version}"])
 
     if not no_tag:
         tag_name = f"v{new_version}"
-        _run(["git", "tag", "-a", tag_name, "-m", f"Release {tag_name}"])
+        run_command(["git", "tag", "-a", tag_name, "-m", f"Release {tag_name}"])
         print(f"已创建标签: {tag_name}")
 
-    return new_version
+    return str(new_version)

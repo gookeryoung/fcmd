@@ -29,24 +29,25 @@ from fcmd.cli.packtool import (
     pack_source,
     pack_wheel,
 )
+from fcmd.models import CommandResult
 
 
 # ============================================================================ #
-# 测试辅助：创建 fake _run 函数（避免 lambda ARG005）
+# 测试辅助：创建 fake run_command 函数（避免 lambda ARG005）
 # ============================================================================ #
 def _recording_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``_run`` 函数，返回成功结果。"""
+    """创建记录调用的 fake ``run_command`` 函数，返回成功结果。"""
 
-    def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
     return run
 
 
-def _success_run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """总是返回成功结果的 fake ``_run`` 函数。"""
-    return subprocess.CompletedProcess(cmd, 0, "", "")
+def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
+    """总是返回成功结果的 fake ``run_command`` 函数。"""
+    return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
 
 # ============================================================================ #
@@ -213,7 +214,7 @@ class TestPacktoolDeps:
     ) -> None:
         """pack_dependencies 调用 pip install --target。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.packtool._run", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.packtool.run_command", _recording_run(calls))
 
         lib_dir = tmp_path / "libs"
         pack_dependencies(["requests", "flask"], lib_dir)
@@ -231,7 +232,7 @@ class TestPacktoolDeps:
     ) -> None:
         """fcmd packtool deps <packages> 通过 run_tool 调用。"""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.cli.packtool._run", _success_run)
+        monkeypatch.setattr("fcmd.cli.packtool.run_command", _success_run)
         code = run_tool("packtool", ["deps", "requests"])
         assert code == 0
 
@@ -247,7 +248,7 @@ class TestPacktoolWheel:
     ) -> None:
         """pack_wheel 调用 pip wheel。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.packtool._run", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.packtool.run_command", _recording_run(calls))
 
         project_dir = tmp_path / "project"
         project_dir.mkdir()
@@ -426,27 +427,6 @@ class TestPacktoolClean:
 # ============================================================================ #
 class TestPacktoolBranches:
     """packtool 补充分支测试。"""
-
-    def test_run_calls_subprocess(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """_run 内部调用 subprocess.run（check=False, text=True）。"""
-        import fcmd.cli.packtool as packtool_mod
-
-        captured: dict[str, Any] = {}
-
-        def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            captured["cmd"] = cmd
-            captured["kwargs"] = kwargs
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-
-        monkeypatch.setattr(packtool_mod.subprocess, "run", fake_run)
-        result = packtool_mod._run(["pip", "list"])
-        assert result.returncode == 0
-        assert captured["cmd"] == ["pip", "list"]
-        assert captured["kwargs"]["check"] is False
-        assert captured["kwargs"]["text"] is True
 
     def test_normalize_arch_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 未知架构返回原值。"""

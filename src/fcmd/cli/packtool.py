@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import platform
 import shutil
-import subprocess
 import urllib.request
 import zipfile
 from pathlib import Path
 
 import fcmd
+from fcmd.models import IgnoreSpec, run_command, should_ignore, to_shutil_ignore
 
 __all__ = [
     "clean_build_dir",
@@ -39,24 +39,26 @@ __all__ = [
 # 配置
 # ============================================================================
 
-# 打包源码时忽略的模式（支持 glob 通配符，用于 shutil.ignore_patterns）
-_IGNORE_PATTERNS: list[str] = [
-    "__pycache__",
-    "*.pyc",
-    "*.pyo",
-    ".git",
-    ".venv",
-    ".idea",
-    ".vscode",
-    "*.egg-info",
-    "dist",
-    "build",
-    ".pytest_cache",
-    ".tox",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".pyrefly_cache",
-]
+# 打包源码时忽略的规则（目录名 + glob 模式）
+IGNORE_SPEC: IgnoreSpec = IgnoreSpec.from_iterable(
+    [
+        "__pycache__",
+        "*.pyc",
+        "*.pyo",
+        ".git",
+        ".venv",
+        ".idea",
+        ".vscode",
+        "*.egg-info",
+        "dist",
+        "build",
+        ".pytest_cache",
+        ".tox",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".pyrefly_cache",
+    ]
+)
 
 # 嵌入式 Python 版本映射（短版本 -> 完整版本）
 _VERSION_MAP: dict[str, str] = {
@@ -71,22 +73,6 @@ _VERSION_MAP: dict[str, str] = {
 # ============================================================================
 # 私有辅助函数
 # ============================================================================
-
-
-def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    """执行命令并返回结果（不抛异常，输出透传到终端）。
-
-    Parameters
-    ----------
-    cmd:
-        命令列表
-
-    Returns
-    -------
-    subprocess.CompletedProcess[str]
-        命令执行结果
-    """
-    return subprocess.run(cmd, check=False, text=True)
 
 
 def _normalize_arch() -> str:
@@ -135,19 +121,19 @@ def pack_source(project_dir: Path = Path(), output_dir: Path = Path(".pypack")) 
         shutil.copytree(
             src_subdir,
             source_dir / "src",
-            ignore=shutil.ignore_patterns(*_IGNORE_PATTERNS),
+            ignore=to_shutil_ignore(IGNORE_SPEC),
             dirs_exist_ok=True,
         )
     else:
         for item in project_dir.iterdir():
-            if item.name in _IGNORE_PATTERNS or item.name.startswith("."):
+            if should_ignore(Path(item.name), IGNORE_SPEC) or item.name.startswith("."):
                 continue
             dst_item = source_dir / item.name
             if item.is_dir():
                 shutil.copytree(
                     item,
                     dst_item,
-                    ignore=shutil.ignore_patterns(*_IGNORE_PATTERNS),
+                    ignore=to_shutil_ignore(IGNORE_SPEC),
                     dirs_exist_ok=True,
                 )
             else:
@@ -179,7 +165,7 @@ def pack_dependencies(packages: list[str], lib_dir: Path = Path("libs")) -> None
         *packages,
     ]
 
-    _run(cmd)
+    run_command(cmd)
     print(f"依赖打包完成: {lib_dir}")
 
 
@@ -205,7 +191,7 @@ def pack_wheel(project_dir: Path = Path(), output_dir: Path = Path("dist")) -> N
         str(project_dir),
     ]
 
-    _run(cmd)
+    run_command(cmd)
     print(f"Wheel 打包完成: {output_dir}")
 
 

@@ -15,10 +15,10 @@
 from __future__ import annotations
 
 import fnmatch
-import subprocess
 from pathlib import Path
 
 import fcmd
+from fcmd.models import run_command
 
 __all__ = [
     "pip_download",
@@ -45,24 +45,6 @@ _PROTECTED_PACKAGES: frozenset[str] = frozenset({"fcmd"})
 # ============================================================================
 
 
-def _run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
-    """执行命令并返回结果。
-
-    Parameters
-    ----------
-    cmd:
-        命令列表
-    capture:
-        是否捕获输出（``True`` 时不透传到终端）
-
-    Returns
-    -------
-    subprocess.CompletedProcess[str]
-        命令执行结果
-    """
-    return subprocess.run(cmd, check=False, capture_output=capture, text=True)
-
-
 def _get_installed_packages() -> list[str]:
     """获取当前环境中所有已安装的包名。
 
@@ -71,7 +53,7 @@ def _get_installed_packages() -> list[str]:
     list[str]
         已安装包名列表
     """
-    result = _run(["pip", "list", "--format=freeze"], capture=True)
+    result = run_command(["pip", "list", "--format=freeze"], capture=True)
     packages: list[str] = []
     for line in result.stdout.strip().split("\n"):
         if line and "==" in line:
@@ -134,7 +116,7 @@ def pip_install(packages: list[str]) -> None:
     packages:
         包名列表
     """
-    _run(["pip", "install", *packages])
+    run_command(["pip", "install", *packages])
     print(f"安装完成: {', '.join(packages)}")
 
 
@@ -155,7 +137,7 @@ def pip_uninstall(packages: list[str]) -> None:
     if not packages_to_uninstall:
         return
 
-    _run(["pip", "uninstall", "-y", *packages_to_uninstall])
+    run_command(["pip", "uninstall", "-y", *packages_to_uninstall])
 
 
 @fcmd.tool("piptool", subcommand="r", help="重装包")
@@ -174,9 +156,9 @@ def pip_reinstall(packages: list[str], offline: bool = False) -> None:
         print("所有指定的包均为受保护包，跳过重装")
         return
 
-    _run(["pip", "uninstall", "-y", *safe_ps])
+    run_command(["pip", "uninstall", "-y", *safe_ps])
     options = ["--no-index", "--find-links", "."] if offline else []
-    _run(["pip", "install", *options, *safe_ps])
+    run_command(["pip", "install", *options, *safe_ps])
 
 
 @fcmd.tool("piptool", subcommand="d", help="下载包")
@@ -191,19 +173,19 @@ def pip_download(packages: list[str], offline: bool = False) -> None:
         离线模式（从本地 ``./`` 查找包）
     """
     options = ["--no-index", "--find-links", "."] if offline else []
-    _run(["pip", "download", *packages, *options, "-d", PACKAGE_DIR])
+    run_command(["pip", "download", *packages, *options, "-d", PACKAGE_DIR])
 
 
 @fcmd.tool("piptool", subcommand="up", help="升级 pip")
 def pip_upgrade() -> None:
     """升级 pip 到最新版本。"""
-    _run(["python", "-m", "pip", "install", "--upgrade", "pip"])
+    run_command(["python", "-m", "pip", "install", "--upgrade", "pip"])
     print("pip 升级完成")
 
 
 @fcmd.tool("piptool", subcommand="f", help="导出依赖")
 def pip_freeze() -> None:
     """冻结依赖到 ``requirements.txt``。"""
-    result = _run(["pip", "freeze", "--exclude-editable"], capture=True)
+    result = run_command(["pip", "freeze", "--exclude-editable"], capture=True)
     Path(REQUIREMENTS_FILE).write_text(result.stdout, encoding="utf-8")
     print(f"依赖已导出到 {REQUIREMENTS_FILE}")

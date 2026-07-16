@@ -34,33 +34,34 @@ from fcmd.cli.piptool import (
     pip_upgrade,
 )
 from fcmd.cli.taskkill import kill_process, taskkill_run
+from fcmd.models import CommandResult
 
 
 # ============================================================================ #
-# 测试辅助：创建 fake _run 函数（避免 lambda ARG005）
+# 测试辅助：创建 fake run_command 函数（避免 lambda ARG005）
 # ============================================================================ #
-def _fake_run(result: subprocess.CompletedProcess[str]) -> Any:
-    """创建总是返回 ``result`` 的 fake ``_run`` 函数。"""
+def _fake_run(result: CommandResult) -> Any:
+    """创建总是返回 ``result`` 的 fake ``run_command`` 函数。"""
 
-    def run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
         return result
 
     return run
 
 
 def _recording_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``_run`` 函数，返回成功结果。"""
+    """创建记录调用的 fake ``run_command`` 函数，返回成功结果。"""
 
-    def run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
         calls.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
     return run
 
 
-def _success_run(cmd: list[str], *, capture: bool = False) -> subprocess.CompletedProcess[str]:
-    """总是返回成功结果的 fake ``_run`` 函数。"""
-    return subprocess.CompletedProcess(cmd, 0, "", "")
+def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
+    """总是返回成功结果的 fake ``run_command`` 函数。"""
+    return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
 
 def _recording_subprocess_run(calls: list[list[str]]) -> Any:
@@ -132,21 +133,21 @@ class TestPiptoolHelpers:
 
     def test_get_installed_packages(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_get_installed_packages 解析 pip list 输出。"""
-        fake_result = subprocess.CompletedProcess(
-            args=["pip", "list"],
+        fake_result = CommandResult(
+            cmd=["pip", "list"],
             returncode=0,
             stdout="requests==2.31.0\nflask==3.0.0\n",
             stderr="",
         )
-        monkeypatch.setattr("fcmd.cli.piptool._run", _fake_run(fake_result))
+        monkeypatch.setattr("fcmd.cli.piptool.run_command", _fake_run(fake_result))
         result = _get_installed_packages()
         assert "requests" in result
         assert "flask" in result
 
     def test_get_installed_packages_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_get_installed_packages 空输出返回空列表。"""
-        fake_result = subprocess.CompletedProcess(args=["pip", "list"], returncode=0, stdout="", stderr="")
-        monkeypatch.setattr("fcmd.cli.piptool._run", _fake_run(fake_result))
+        fake_result = CommandResult(cmd=["pip", "list"], returncode=0, stdout="", stderr="")
+        monkeypatch.setattr("fcmd.cli.piptool.run_command", _fake_run(fake_result))
         assert _get_installed_packages() == []
 
     def test_expand_wildcard_no_pattern(self) -> None:
@@ -175,7 +176,7 @@ class TestPiptoolCommands:
         """pip_install 调用 pip install。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_install(["requests", "flask"])
@@ -191,7 +192,7 @@ class TestPiptoolCommands:
         """pip_uninstall 跳过受保护包。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         monkeypatch.setattr("fcmd.cli.piptool._expand_wildcard_packages", lambda p: [p])
@@ -208,7 +209,7 @@ class TestPiptoolCommands:
         """pip_uninstall 正常卸载。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         monkeypatch.setattr("fcmd.cli.piptool._expand_wildcard_packages", lambda p: [p])
@@ -223,7 +224,7 @@ class TestPiptoolCommands:
         """pip_reinstall 全是受保护包时跳过。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_reinstall(["fcmd"])
@@ -238,7 +239,7 @@ class TestPiptoolCommands:
         """pip_reinstall 正常重装。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_reinstall(["requests"])
@@ -252,7 +253,7 @@ class TestPiptoolCommands:
         """pip_reinstall 离线模式添加 --no-index。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_reinstall(["requests"], offline=True)
@@ -272,7 +273,7 @@ class TestPiptoolCommands:
         """pip_download 下载到 packages 目录。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_download(["requests"])
@@ -285,7 +286,7 @@ class TestPiptoolCommands:
         """pip_download 离线模式。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_download(["requests"], offline=True)
@@ -300,7 +301,7 @@ class TestPiptoolCommands:
         """pip_upgrade 升级 pip。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _recording_run(calls),
         )
         pip_upgrade()
@@ -316,13 +317,13 @@ class TestPiptoolCommands:
     ) -> None:
         """pip_freeze 导出依赖到 requirements.txt。"""
         monkeypatch.chdir(tmp_path)
-        fake_result = subprocess.CompletedProcess(
-            args=["pip", "freeze"],
+        fake_result = CommandResult(
+            cmd=["pip", "freeze"],
             returncode=0,
             stdout="requests==2.31.0\nflask==3.0.0\n",
             stderr="",
         )
-        monkeypatch.setattr("fcmd.cli.piptool._run", _fake_run(fake_result))
+        monkeypatch.setattr("fcmd.cli.piptool.run_command", _fake_run(fake_result))
         pip_freeze()
         content = (tmp_path / "requirements.txt").read_text(encoding="utf-8")
         assert "requests==2.31.0" in content
@@ -340,7 +341,7 @@ class TestPiptoolRunTool:
     ) -> None:
         """fcmd piptool i <packages> 通过 run_tool 调用。"""
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _success_run,
         )
         code = run_tool("piptool", ["i", "requests"])
@@ -355,7 +356,7 @@ class TestPiptoolRunTool:
     ) -> None:
         """fcmd piptool up 通过 run_tool 调用。"""
         monkeypatch.setattr(
-            "fcmd.cli.piptool._run",
+            "fcmd.cli.piptool.run_command",
             _success_run,
         )
         code = run_tool("piptool", ["up"])
