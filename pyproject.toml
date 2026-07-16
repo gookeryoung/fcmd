@@ -1,6 +1,6 @@
 [project]
 name = "fcmd"
-version = "0.1.0"
+version = "0.1.1"
 description = "极速 Python 工具集应用：DAG 任务调度 + 组合 CLI"
 readme = "README.md"
 requires-python = ">=3.8"
