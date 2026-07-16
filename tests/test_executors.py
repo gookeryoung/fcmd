@@ -358,6 +358,7 @@ def test_run_conditions_skip() -> None:
     assert executed == []
 
 
+@pytest.mark.slow
 def test_run_timeout() -> None:
     """超时抛 TaskFailedError，cause 为 TaskTimeoutError。"""
     if sys.platform == "win32":

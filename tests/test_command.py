@@ -140,6 +140,7 @@ def test_run_command_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------- #
 # timeout
 # ---------------------------------------------------------------------- #
+@pytest.mark.slow
 def test_run_command_timeout() -> None:
     """命令超时抛 RuntimeError。"""
     if sys.platform == "win32":

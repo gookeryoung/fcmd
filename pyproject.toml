@@ -25,7 +25,6 @@ dependencies = [
 
 [project.scripts]
 fcmd = "fcmd.cli.main:main"
-pymake = "fcmd.cli.pymake:main"
 
 [project.optional-dependencies]
 lint = ["pyrefly>=1.1.1", "ruff>=0.8.0"]
