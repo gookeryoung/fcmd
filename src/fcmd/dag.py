@@ -239,7 +239,9 @@ class Graph:
         Graph
             解析后的任务图，支持 ``jobs``/``needs``/``cmd``/``run``/
             ``env``/``cwd``/``timeout``/``retry``/``strategy``/``defaults``
-            等字段。不支持 ``strategy.matrix`` 矩阵扇出与 ``if`` 条件。
+            等字段，以及 ``if`` 条件判断与 ``matrix`` 矩阵扇出
+            （由 :mod:`fcmd.conditions` 与 :mod:`fcmd.yaml_loader` 提供）。
+            schema 细节见 :mod:`fcmd.yaml_loader`。
 
         Raises
         ------

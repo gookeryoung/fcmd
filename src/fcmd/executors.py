@@ -43,7 +43,7 @@ import inspect
 import logging
 import threading
 import time
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from dataclasses import replace as dc_replace
 from datetime import datetime
@@ -906,18 +906,3 @@ async def _async_drive(
 ) -> None:
     for idx, layer in enumerate(layers, 1):
         await AsyncLayerRunner.execute(layer, graph, ctx, idx)
-
-
-# 流式执行迭代器（保留接口，P0 不实现）
-def run_iter(  # noqa: PLR0913
-    graph: Graph,
-    strategy: Strategy = "dependency",
-    *,
-    max_workers: int | None = None,
-    verbose: bool = False,
-    on_event: EventCallback | None = None,
-    only: Iterable[str] | None = None,
-    tags: Iterable[str] | None = None,
-) -> Iterator[tuple[str, TaskResult[Any]]]:
-    """流式执行图（P1 阶段实现）。"""
-    raise NotImplementedError("run_iter 将在 P1 阶段实现。")
