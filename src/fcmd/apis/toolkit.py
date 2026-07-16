@@ -449,9 +449,8 @@ def _add_optional_arg(
     elif annotation is Path:
         kwargs["type"] = Path
     elif _is_literal_annotation(annotation):
-        choices = _literal_choices(annotation)
-        if choices:
-            kwargs["choices"] = list(choices)
+        # _is_literal_annotation 为 True 时 __args__ 一定存在且非空
+        kwargs["choices"] = list(_literal_choices(annotation))
     elif _is_list_annotation(annotation):
         inner = _list_inner_type(annotation)
         kwargs["nargs"] = "*"
@@ -495,10 +494,8 @@ def _add_positional_arg(
     elif annotation is Path:
         parser.add_argument(pname, type=Path, help=pname)
     elif _is_literal_annotation(annotation):
-        choices = _literal_choices(annotation)
-        kwargs = {"help": pname}
-        if choices:
-            kwargs["choices"] = list(choices)
+        # _is_literal_annotation 为 True 时 __args__ 一定存在且非空
+        kwargs = {"help": pname, "choices": list(_literal_choices(annotation))}
         parser.add_argument(pname, **kwargs)
     else:
         parser.add_argument(pname, help=pname)

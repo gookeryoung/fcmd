@@ -24,6 +24,7 @@ from fcmd.apis.toolkit import (
     _list_inner_type,
     _literal_choices,
     _resolve_hints,
+    build_tool_graph,
     clear_tool_registry,
     get_tool,
     list_subcommands,
@@ -31,6 +32,7 @@ from fcmd.apis.toolkit import (
     run_tool,
     tool,
 )
+from fcmd.errors import FcmdError
 from fcmd.task import RetryPolicy, TaskSpec
 
 
@@ -1349,3 +1351,161 @@ def test_resolve_hints_per_param_fallback_str_eval() -> None:
     assert hints["y"] is int
     # z: "undefined_name"（str）→ eval 失败，保留字符串
     assert hints["z"] == "undefined_name"
+
+
+# ---------------------------------------------------------------------- #
+# P15a: build_tool_graph 公共 API
+# ---------------------------------------------------------------------- #
+def test_build_tool_graph_unknown_tool() -> None:
+    """未注册工具抛 FcmdError。"""
+    with pytest.raises(FcmdError, match="未注册"):
+        build_tool_graph("nope", None)
+
+
+def test_build_tool_graph_unknown_subcommand() -> None:
+    """未注册子命令抛 FcmdError。"""
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    with pytest.raises(FcmdError, match="没有子命令"):
+        build_tool_graph("demo", "ghost")
+
+
+def test_build_tool_graph_all_subcommands() -> None:
+    """target=None 返回全部子命令（含 hidden）。"""
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    @tool("demo", subcommand="b", cmd=_echo_cmd(), hidden=True)
+    def b() -> None:
+        pass
+
+    graph = build_tool_graph("demo", None)
+    assert len(graph) == 2
+    assert "a" in graph
+    assert "b" in graph  # hidden 也包含
+
+
+def test_build_tool_graph_target_with_deps() -> None:
+    """target 指定子命令时返回 target 及其传递依赖。"""
+
+    @tool("demo", subcommand="c", cmd=_echo_cmd())
+    def c() -> None:
+        pass
+
+    @tool("demo", subcommand="b", needs=["c"], cmd=_echo_cmd())
+    def b() -> None:
+        pass
+
+    @tool("demo", subcommand="a", needs=["b"], cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    graph = build_tool_graph("demo", "a")
+    # a + b + c 三个任务
+    assert len(graph) == 3
+    assert "a" in graph
+    assert "b" in graph
+    assert "c" in graph
+
+
+# ---------------------------------------------------------------------- #
+# P15b: _print_subcommands 无可见子命令分支
+# ---------------------------------------------------------------------- #
+def test_run_tool_no_visible_subcommands(capsys: pytest.CaptureFixture[str]) -> None:
+    """工具仅有 hidden 子命令且无 argv 时打印"无可见子命令"并返回 SUCCESS。"""
+
+    @tool("demo", subcommand="secret", hidden=True, cmd=_echo_cmd())
+    def s() -> None:
+        pass
+
+    code = run_tool("demo", [])
+    assert code == ToolExitCode.SUCCESS.value
+    captured = capsys.readouterr()
+    assert "无可见子命令" in captured.out
+
+
+# ---------------------------------------------------------------------- #
+# P15c: run_tool 混合 None 单命令 + 命名子命令
+# ---------------------------------------------------------------------- #
+def test_run_tool_mixed_none_and_named_with_options() -> None:
+    """工具同时有 None 单命令和命名子命令，argv 以 - 开头时走 None 单命令分支。"""
+
+    @tool("demo", cmd=_echo_cmd())
+    def s() -> None:
+        pass
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    # argv 以 - 开头 → 第二个条件 False → 第三个条件 None in subs True → target=None
+    code = run_tool("demo", ["--dry-run"])
+    assert code == ToolExitCode.SUCCESS.value
+
+
+def test_run_tool_mixed_none_and_named_empty_argv() -> None:
+    """工具同时有 None 单命令和命名子命令，argv 为空时走 None 单命令分支。"""
+
+    @tool("demo", cmd=_echo_cmd())
+    def s() -> None:
+        pass
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    # argv 为空 → 第二个条件 False → 第三个条件 None in subs True → target=None
+    code = run_tool("demo", [])
+    assert code == ToolExitCode.SUCCESS.value
+
+
+# ---------------------------------------------------------------------- #
+# P15d: TaskFailedError report=None 分支
+# ---------------------------------------------------------------------- #
+def test_run_tool_task_failed_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """TaskFailedError 不带 report 时不打印失败任务诊断（report is None 分支）。"""
+    from fcmd.apis import toolkit
+    from fcmd.errors import TaskFailedError
+
+    def boom(_graph: object, **_kwargs: object) -> None:
+        # report 默认 None，触发 632->636 跳转（不进入 for 循环）
+        raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
+
+    monkeypatch.setattr(toolkit, "run", boom)
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    code = run_tool("demo", ["a"])
+    assert code == ToolExitCode.FAILURE.value
+
+
+# ---------------------------------------------------------------------- #
+# P15e: list 非标准内部类型分支
+# ---------------------------------------------------------------------- #
+def test_build_parser_positional_list_unknown_inner() -> None:
+    """positional list[bool] 等非标准内部类型走默认分支（无 type 转换）。"""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    _add_positional_arg(parser, "items", List[bool])
+    # bool 不是 Path/int/float/str，kwargs 不含 type，argparse 默认按 str 解析
+    args = parser.parse_args(["true", "false"])
+    assert args.items == ["true", "false"]
+
+
+def test_build_parser_optional_list_unknown_inner() -> None:
+    """optional list[bool] 等非标准内部类型走默认分支（无 type 转换）。"""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    _add_optional_arg(parser, "items", List[bool], None)
+    # bool 不是 Path/int/float/str，kwargs 不含 type，argparse 默认按 str 解析
+    args = parser.parse_args(["--items", "true", "false"])
+    assert args.items == ["true", "false"]
