@@ -79,50 +79,65 @@ class TestClr:
     """clr 工具测试。"""
 
     def test_clear_screen_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Windows 下 clear_screen 调用 cls。"""
+        """Windows 下 clear_screen 调用 cls（shell=True）。"""
         monkeypatch.setattr(sys, "platform", "win32")
-        captured: list[list[str]] = []
+        captured: list[tuple[Any, dict[str, Any]]] = []
 
-        def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            captured.append(cmd)
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.append((cmd, kwargs))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
         result = clear_screen()
         assert result == 0
-        assert captured[0] == ["cls"]
+        # Windows 传字符串 cmd="cls" + shell=True
+        assert captured[0][0] == "cls"
+        assert captured[0][1].get("shell") is True
 
     def test_clear_screen_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Linux 下 clear_screen 调用 clear。"""
+        """Linux 下 clear_screen 调用 clear（shell=False）。"""
         monkeypatch.setattr(sys, "platform", "linux")
-        captured: list[list[str]] = []
+        captured: list[tuple[Any, dict[str, Any]]] = []
 
-        def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            captured.append(cmd)
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.append((cmd, kwargs))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
         result = clear_screen()
         assert result == 0
-        assert captured[0] == ["clear"]
+        # Linux 传字符串 cmd="clear" + shell=False
+        assert captured[0][0] == "clear"
+        assert captured[0][1].get("shell") is False
 
     def test_clear_screen_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """clear_screen 失败时返回非零退出码（不抛异常）。"""
         monkeypatch.setattr(sys, "platform", "linux")
 
-        def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
         monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
         assert clear_screen() == 1
 
+    def test_clear_screen_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """clear_screen 命令未找到时抛 RuntimeError（含命令名）。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            raise FileNotFoundError(2, "系统找不到指定的文件。")
+
+        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
+        with pytest.raises(RuntimeError, match="清屏命令未找到: clear"):
+            clear_screen()
+
     def test_clr_via_run_tool(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """fcmd clr 通过 run_tool 调用。"""
+        """fcmd clr 通过 run_tool 调用（fn 任务，mock subprocess.run）。"""
 
-        def fake_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)

@@ -627,9 +627,7 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
             err_console = get_console()
             err_console.print("[red]执行失败[/red]")
             if e.report is not None:
-                for fname in e.report.failed_tasks():
-                    r = e.report.result_of(fname)
-                    err_console.print(f"  [yellow]{fname}[/yellow]: {r.status.value} error={r.error!r}")
+                _print_task_summary(e.report, force=True)
         return ToolExitCode.FAILURE.value
     except FcmdError as e:
         if verbose:
@@ -637,6 +635,9 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
         return ToolExitCode.FAILURE.value
     except KeyboardInterrupt:
         return ToolExitCode.INTERRUPTED.value
+
+    if verbose and not variables.get("dry_run", False):
+        _print_task_summary(report)
 
     return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
 
@@ -679,6 +680,48 @@ def build_tool_graph(name: str, target: str | None) -> Graph:
         selected = [subs[sc] for sc in chain if sc in subs]
     task_specs: list[TaskSpec[Any]] = [_build_task_spec(spec, {}) for spec in selected]
     return Graph.from_specs(task_specs, defaults=GraphDefaults())
+
+
+def _print_task_summary(report: Any, *, force: bool = False) -> None:
+    """打印任务执行汇总表（多任务场景）。
+
+    单任务时不打印，避免冗余；多任务时按完成顺序列出各任务的状态与耗时，
+    便于定位瓶颈与优化。``force=True`` 时即使单任务也打印（用于失败诊断）。
+    """
+    from rich.table import Table
+
+    if not force and len(report.results) <= 1:
+        return
+    if not report.results:
+        return
+    console = get_console()
+    table = Table(title="执行汇总", show_header=True, header_style="bold", show_lines=False)
+    table.add_column("任务", style="cyan", no_wrap=True)
+    table.add_column("状态", no_wrap=True, justify="center")
+    table.add_column("耗时", no_wrap=True, justify="right")
+    table.add_column("重试", no_wrap=True, justify="right")
+    total = 0.0
+    for name, r in report.results.items():
+        dur = r.duration
+        if dur is not None:
+            total += dur
+            dur_str = f"{dur:.3f}s"
+        else:
+            dur_str = "-"
+        status_map = {
+            "success": "[green]成功[/green]",
+            "failed": "[red]失败[/red]",
+            "skipped": "[yellow]跳过[/yellow]",
+            "running": "[cyan]运行中[/cyan]",
+            "pending": "[dim]待执行[/dim]",
+        }
+        status_str = status_map.get(r.status.value, r.status.value)
+        attempts_str = str(r.attempts) if r.attempts > 1 else "-"
+        table.add_row(name, status_str, dur_str, attempts_str)
+    # 合计行
+    if total > 0:
+        table.add_row("[bold]合计[/bold]", "", f"[bold]{total:.3f}s[/bold]", "")
+    console.print(table)
 
 
 def _print_subcommands(name: str) -> None:

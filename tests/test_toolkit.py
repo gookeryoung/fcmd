@@ -1506,6 +1506,157 @@ def test_build_parser_optional_list_unknown_inner() -> None:
 
     parser = argparse.ArgumentParser()
     _add_optional_arg(parser, "items", List[bool], None)
-    # bool 不是 Path/int/float/str，kwargs 不含 type，argparse 默认按 str 解析
+    # bool 不是 Path/int/float/str，kwargs 不含 type 转换，argparse 默认按 str 解析
     args = parser.parse_args(["--items", "true", "false"])
     assert args.items == ["true", "false"]
+
+
+# ---------------------------------------------------------------------- #
+# P18: 执行汇总表（_print_task_summary）
+# ----------------------------------------------------------------------
+def test_print_task_summary_single_task_no_output(capsys: pytest.CaptureFixture[str]) -> None:
+    """单任务时不打印汇总表。"""
+    from fcmd.apis.toolkit import _print_task_summary
+    from fcmd.report import RunReport
+    from fcmd.task import TaskResult, TaskStatus
+
+    spec = TaskSpec(name="solo", cmd=["echo"])
+    result = TaskResult(spec=spec, status=TaskStatus.SUCCESS, attempts=1)
+    report = RunReport()
+    report.results["solo"] = result
+
+    _print_task_summary(report)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> None:
+    """多任务时打印汇总表，含任务名/状态/耗时/重试。"""
+    from datetime import datetime, timedelta
+
+    from fcmd.apis.toolkit import _print_task_summary
+    from fcmd.report import RunReport
+    from fcmd.task import TaskResult, TaskStatus
+
+    spec_a = TaskSpec(name="a", cmd=["echo"])
+    spec_b = TaskSpec(name="b", cmd=["echo"])
+    now = datetime.now()
+    r_a = TaskResult(spec=spec_a, status=TaskStatus.SUCCESS, attempts=1)
+    r_a.started_at = now
+    r_a.finished_at = now + timedelta(seconds=0.5)
+    r_b = TaskResult(spec=spec_b, status=TaskStatus.FAILED, attempts=3, error=RuntimeError("boom"))
+    r_b.started_at = now
+    r_b.finished_at = now + timedelta(seconds=1.2)
+
+    report = RunReport(success=False)
+    report.results["a"] = r_a
+    report.results["b"] = r_b
+
+    _print_task_summary(report)
+    captured = capsys.readouterr()
+    # 汇总表标题
+    assert "执行汇总" in captured.out
+    # 任务名
+    assert "a" in captured.out
+    assert "b" in captured.out
+    # 合计行
+    assert "合计" in captured.out
+    assert "1.700s" in captured.out
+
+
+def test_print_task_summary_skipped_task(capsys: pytest.CaptureFixture[str]) -> None:
+    """跳过的任务在汇总表中显示状态为跳过，耗时为 -。"""
+    from fcmd.apis.toolkit import _print_task_summary
+    from fcmd.report import RunReport
+    from fcmd.task import TaskResult, TaskStatus
+
+    spec_a = TaskSpec(name="a", cmd=["echo"])
+    spec_b = TaskSpec(name="b", cmd=["echo"])
+    r_a = TaskResult(spec=spec_a, status=TaskStatus.SUCCESS, attempts=1)
+    r_b = TaskResult(spec=spec_b, status=TaskStatus.SKIPPED, reason="上游失败")
+
+    report = RunReport()
+    report.results["a"] = r_a
+    report.results["b"] = r_b
+
+    _print_task_summary(report)
+    captured = capsys.readouterr()
+    assert "执行汇总" in captured.out
+    assert "跳过" in captured.out
+
+
+def test_run_tool_summary_on_success_multi_tasks(capsys: pytest.CaptureFixture[str]) -> None:
+    """多任务成功时打印汇总表。"""
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    @tool("demo", subcommand="b", cmd=_echo_cmd())
+    def b() -> None:
+        pass
+
+    @tool("demo", subcommand="agg", needs=["a", "b"], strategy="sequential")
+    def agg() -> None:
+        pass
+
+    code = run_tool("demo", ["agg"])
+    assert code == ToolExitCode.SUCCESS.value
+    captured = capsys.readouterr()
+    assert "执行汇总" in captured.out
+
+
+def test_run_tool_no_summary_on_dry_run(capsys: pytest.CaptureFixture[str]) -> None:
+    """dry-run 模式不打印汇总表。"""
+
+    @tool("demo", subcommand="a", cmd=_echo_cmd())
+    def a() -> None:
+        pass
+
+    @tool("demo", subcommand="b", cmd=_echo_cmd())
+    def b() -> None:
+        pass
+
+    @tool("demo", subcommand="agg", needs=["a", "b"])
+    def agg() -> None:
+        pass
+
+    code = run_tool("demo", ["agg", "--dry-run"])
+    assert code == ToolExitCode.SUCCESS.value
+    captured = capsys.readouterr()
+    assert "执行汇总" not in captured.out
+
+
+def test_run_tool_no_summary_on_single_task(capsys: pytest.CaptureFixture[str]) -> None:
+    """单任务不打印汇总表。"""
+
+    @tool("solo", cmd=_echo_cmd())
+    def s() -> None:
+        pass
+
+    code = run_tool("solo", [])
+    assert code == ToolExitCode.SUCCESS.value
+    captured = capsys.readouterr()
+    assert "执行汇总" not in captured.out
+
+
+def test_run_tool_summary_on_failure_multi_tasks(capsys: pytest.CaptureFixture[str]) -> None:
+    """多任务失败时打印汇总表（含失败任务）。"""
+
+    @tool("demo", subcommand="a", cmd=_fail_cmd())
+    def a() -> None:
+        pass
+
+    @tool("demo", subcommand="b", cmd=_echo_cmd())
+    def b() -> None:
+        pass
+
+    @tool("demo", subcommand="agg", needs=["a", "b"], strategy="sequential")
+    def agg() -> None:
+        pass
+
+    code = run_tool("demo", ["agg"])
+    assert code == ToolExitCode.FAILURE.value
+    captured = capsys.readouterr()
+    assert "执行汇总" in captured.out
+    assert "执行失败" in captured.out
