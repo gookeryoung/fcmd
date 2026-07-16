@@ -38,10 +38,18 @@ from fcmd.task import RetryPolicy, TaskSpec
 
 @pytest.fixture(autouse=True)
 def _clean_registry():
-    """每个测试前后清空注册表，避免污染。"""
+    """每个测试前后恢复注册表到测试前状态，避免污染其他测试文件。
+
+    保存当前 _TOOL_REGISTRY 快照，测试前清空（让测试从干净状态开始），
+    测试后恢复快照（保留其他测试文件通过模块级 import 注册的工具如 pymake）。
+    """
+    import copy
+
+    saved = copy.deepcopy(_TOOL_REGISTRY)
     clear_tool_registry()
     yield
     clear_tool_registry()
+    _TOOL_REGISTRY.update(saved)
 
 
 # ---------------------------------------------------------------------- #

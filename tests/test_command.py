@@ -194,3 +194,37 @@ def test_run_command_os_error() -> None:
     spec = TaskSpec(name="x", cmd=["this_does_not_exist_xyz"], cwd=Path("nonexistent_path_xyz"))
     with pytest.raises(RuntimeError):
         spec.effective_fn()
+
+
+def test_run_command_callable_verbose_with_cwd(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """verbose 模式 callable 命令 + cwd 打印工作目录（覆盖 command.py 第 43 行）。"""
+    spec = TaskSpec(name="x", cmd=lambda: 1, verbose=True, cwd=tmp_path)
+    spec.effective_fn()
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "工作目录" in combined
+
+
+def test_run_command_timeout_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """命令超时抛 RuntimeError（mock subprocess.run 避免 slow 标记，覆盖第 84-85 行）。"""
+    import subprocess as sp
+
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        raise sp.TimeoutExpired(cmd="test", timeout=0.5)
+
+    monkeypatch.setattr("fcmd.command.subprocess.run", fake_run)
+    spec = TaskSpec(name="x", cmd=["echo", "hi"], timeout=0.5)
+    with pytest.raises(RuntimeError, match="超时"):
+        spec.effective_fn()
+
+
+def test_run_command_os_error_generic(monkeypatch: pytest.MonkeyPatch) -> None:
+    """命令执行触发非 FileNotFoundError 的 OSError 包装为 RuntimeError（覆盖第 86-87 行）。"""
+
+    def fake_run(*_args: object, **_kwargs: object) -> None:
+        raise OSError("boom")
+
+    monkeypatch.setattr("fcmd.command.subprocess.run", fake_run)
+    spec = TaskSpec(name="x", cmd=["echo", "hi"])
+    with pytest.raises(RuntimeError, match="执行异常"):
+        spec.effective_fn()
