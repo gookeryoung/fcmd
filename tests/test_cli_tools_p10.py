@@ -338,6 +338,7 @@ class TestReadVersion:
 
     def test_read_invalid_encoding(self, tmp_path: Path) -> None:
         """无效编码返回 None。"""
+
         f = tmp_path / "pyproject.toml"
         f.write_bytes(b'\xff\xfeversion = "1.0.0"')
         assert _read_version(f) is None
