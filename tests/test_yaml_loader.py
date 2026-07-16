@@ -618,3 +618,343 @@ jobs:
         assert report.result_of("build").status.value == "success"
         # deploy 不在 only 范围内，不在报告中
         assert "deploy" not in report
+
+
+# ---------------------------------------------------------------------- #
+# if 条件字段
+# ---------------------------------------------------------------------- #
+class TestIfCondition:
+    """YAML ``if`` 字段解析为 conditions 元组测试。"""
+
+    def test_if_field_becomes_conditions(self) -> None:
+        """if 字段被解析为 conditions 元组。"""
+        graph = parse_yaml_string("""
+jobs:
+  a:
+    cmd: ["echo", "a"]
+  b:
+    needs: [a]
+    if: "failure()"
+    cmd: ["echo", "b"]
+""")
+        spec = graph.spec("b")
+        assert len(spec.conditions) == 1
+        # Condition 函数名包含 if 表达式
+        cond_name = spec.conditions[0].__name__
+        assert "failure()" in cond_name
+
+    def test_if_success_condition_passes(self) -> None:
+        """if: success() 在上游全成功时通过。"""
+        echo = _echo_cmd
+        graph = parse_yaml_string(f"""
+jobs:
+  a:
+    cmd: {echo("a")}
+  b:
+    needs: [a]
+    if: "success()"
+    cmd: {echo("b")}
+""")
+        from fcmd.executors import run
+
+        report = run(graph, strategy="sequential")
+        assert report.success
+        assert report.result_of("b").status.value == "success"
+
+    def test_if_failure_skips_on_success(self) -> None:
+        """if: failure() 在上游成功时跳过本任务。"""
+        echo = _echo_cmd
+        graph = parse_yaml_string(f"""
+jobs:
+  a:
+    cmd: {echo("a")}
+  notify:
+    needs: [a]
+    if: "failure()"
+    cmd: {echo("notify")}
+""")
+        from fcmd.executors import run
+
+        report = run(graph, strategy="sequential")
+        assert report.success
+        # notify 应被跳过（上游成功，failure() 返回 False）
+        assert report.result_of("notify").status.value == "skipped"
+
+    def test_if_failure_runs_on_upstream_failure(self) -> None:
+        """if: failure() 配合 allow_upstream_skip 在上游失败时执行。"""
+        echo = _echo_cmd
+        graph = parse_yaml_string(f"""
+jobs:
+  failing:
+    cmd: ["python", "-c", "import sys; sys.exit(1)"]
+    continue-on-error: true
+  notify:
+    needs: [failing]
+    if: "failure()"
+    allow-upstream-skip: true
+    cmd: {echo("notifying")}
+""")
+        from fcmd.executors import run
+
+        report = run(graph, strategy="sequential")
+        # notify 应执行（上游失败，failure() 返回 True，且 allow_upstream_skip=True）
+        assert report.result_of("notify").status.value == "success"
+
+    def test_if_always_runs_regardless_of_upstream(self) -> None:
+        """if: always() 配合 allow_upstream_skip 总是执行。"""
+        echo = _echo_cmd
+        graph = parse_yaml_string(f"""
+jobs:
+  failing:
+    cmd: ["python", "-c", "import sys; sys.exit(1)"]
+    continue-on-error: true
+  cleanup:
+    needs: [failing]
+    if: "always()"
+    allow-upstream-skip: true
+    cmd: {echo("cleanup")}
+""")
+        from fcmd.executors import run
+
+        report = run(graph, strategy="sequential")
+        assert report.result_of("cleanup").status.value == "success"
+
+    def test_if_with_ctx_comparison(self) -> None:
+        """if: ctx.X == 'Y' 基于上游返回值跳过。"""
+        echo = _echo_cmd
+        graph = parse_yaml_string(f"""
+jobs:
+  upstream:
+    cmd: ["python", "-c", "print('skip')"]
+  downstream:
+    needs: [upstream]
+    if: "ctx.upstream == 'run'"
+    cmd: {echo("downstream")}
+""")
+        from fcmd.executors import run
+
+        report = run(graph, strategy="sequential")
+        # downstream 应被跳过（upstream 返回 'skip' != 'run'）
+        assert report.result_of("downstream").status.value == "skipped"
+
+    def test_if_invalid_expr_raises(self) -> None:
+        """if 表达式语法错误抛 ValueError。"""
+        with pytest.raises(ValueError, match="if 表达式错误"):
+            parse_yaml_string("""
+jobs:
+  a:
+    cmd: ["echo", "a"]
+    if: "not not"
+""")
+
+    def test_if_invalid_function_raises(self) -> None:
+        """if 表达式含不支持的函数抛 ValueError（在执行时）。"""
+        # 解析阶段不抛（ast.parse 通过），执行时抛
+        graph = parse_yaml_string("""
+jobs:
+  a:
+    cmd: ["echo", "a"]
+    if: "unknown_func()"
+""")
+        spec = graph.spec("a")
+        assert len(spec.conditions) == 1
+        # 执行条件函数会抛 ConditionError，被 should_execute 视为不满足
+        should, _ = spec.should_execute({})
+        assert should is False
+
+
+# ---------------------------------------------------------------------- #
+# matrix 矩阵展开
+# ---------------------------------------------------------------------- #
+class TestMatrixExpansion:
+    """YAML ``matrix`` 字段笛卡尔积展开测试。"""
+
+    def test_matrix_single_key_multiple_values(self) -> None:
+        """单键多值展开为多个任务。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8", "3.9"]
+    cmd: ["echo", "test"]
+""")
+        assert "test(py-3.8)" in graph
+        assert "test(py-3.9)" in graph
+        # 原任务名不存在
+        assert "test" not in graph
+
+    def test_matrix_multiple_keys_cartesian(self) -> None:
+        """多键笛卡尔积展开。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8", "3.9"]
+      os: ["linux", "windows"]
+    cmd: ["echo", "test"]
+""")
+        for py in ("3.8", "3.9"):
+            for os_name in ("linux", "windows"):
+                name = f"test(py-{py})(os-{os_name})"
+                assert name in graph, f"任务 {name!r} 未展开"
+
+    def test_matrix_var_substitution_in_cmd(self) -> None:
+        """matrix 变量在 cmd 列表中替换。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8", "3.9"]
+    cmd: ["echo", "${{ matrix.py }}"]
+""")
+        spec_38 = graph.spec("test(py-3.8)")
+        assert spec_38.cmd == ["echo", "3.8"]
+        spec_39 = graph.spec("test(py-3.9)")
+        assert spec_39.cmd == ["echo", "3.9"]
+
+    def test_matrix_var_substitution_in_run(self) -> None:
+        """matrix 变量在 run shell 字符串中替换。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8"]
+    run: "echo ${{ matrix.py }}"
+""")
+        spec = graph.spec("test(py-3.8)")
+        assert spec.cmd == "echo 3.8"
+
+    def test_matrix_var_substitution_in_env(self) -> None:
+        """matrix 变量在 env 值中替换。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8"]
+    cmd: ["echo", "test"]
+    env: {PYTHON_VERSION: "${{ matrix.py }}"}
+""")
+        spec = graph.spec("test(py-3.8)")
+        assert spec.env == {"PYTHON_VERSION": "3.8"}
+
+    def test_matrix_var_substitution_in_cwd(self) -> None:
+        """matrix 变量在 cwd 中替换。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8"]
+    cmd: ["echo", "test"]
+    cwd: "/tmp/${{ matrix.py }}"
+""")
+        spec = graph.spec("test(py-3.8)")
+        assert spec.cwd == Path("/tmp/3.8")
+
+    def test_matrix_var_substitution_in_tags(self) -> None:
+        """matrix 变量在 tags 中替换。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8"]
+    cmd: ["echo", "test"]
+    tags: ["py-${{ matrix.py }}"]
+""")
+        spec = graph.spec("test(py-3.8)")
+        assert spec.tags == ("py-3.8",)
+
+    def test_matrix_not_mapping_raises(self) -> None:
+        """matrix 非映射抛 ValueError。"""
+        with pytest.raises(ValueError, match="matrix 必须是映射"):
+            parse_yaml_string("""
+jobs:
+  test:
+    matrix: "not a mapping"
+    cmd: ["echo", "test"]
+""")
+
+    def test_matrix_empty(self) -> None:
+        """空 matrix 等价于无 matrix（单任务，无后缀）。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix: {}
+    cmd: ["echo", "test"]
+""")
+        assert "test" in graph
+        assert len(graph) == 1
+
+    def test_matrix_with_needs(self) -> None:
+        """matrix 任务的 needs 引用非 matrix 任务。"""
+        graph = parse_yaml_string("""
+jobs:
+  setup:
+    cmd: ["echo", "setup"]
+  test:
+    needs: [setup]
+    matrix:
+      py: ["3.8", "3.9"]
+    cmd: ["echo", "test"]
+""")
+        assert graph.dependencies("test(py-3.8)") == ("setup",)
+        assert graph.dependencies("test(py-3.9)") == ("setup",)
+
+
+# ---------------------------------------------------------------------- #
+# if + matrix 组合
+# ---------------------------------------------------------------------- #
+class TestIfWithMatrix:
+    """if 条件与 matrix 展开组合测试。"""
+
+    def test_matrix_job_with_if(self) -> None:
+        """matrix 任务的 if 条件应用到每个展开任务。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8", "3.9"]
+    if: "always()"
+    cmd: ["echo", "test"]
+""")
+        for py in ("3.8", "3.9"):
+            name = f"test(py-{py})"
+            spec = graph.spec(name)
+            assert len(spec.conditions) == 1
+
+    def test_matrix_job_with_if_and_var_substitution(self) -> None:
+        """matrix 任务同时有 if 和变量替换。"""
+        graph = parse_yaml_string("""
+jobs:
+  test:
+    matrix:
+      py: ["3.8", "3.9"]
+    if: "success()"
+    cmd: ["echo", "${{ matrix.py }}"]
+""")
+        spec = graph.spec("test(py-3.8)")
+        assert spec.cmd == ["echo", "3.8"]
+        assert len(spec.conditions) == 1
+
+
+# ---------------------------------------------------------------------- #
+# matrix 端到端执行
+# ---------------------------------------------------------------------- #
+class TestMatrixExecution:
+    """matrix 展开后端到端执行测试。"""
+
+    def test_execute_matrix_jobs(self) -> None:
+        """matrix 任务展开后可执行。"""
+        from fcmd.executors import run
+
+        echo = _echo_cmd
+        graph = parse_yaml_string(f"""
+jobs:
+  test:
+    matrix:
+      py: ["3.8", "3.9"]
+    cmd: {echo("${{ matrix.py }}")}
+""")
+        report = run(graph, strategy="sequential")
+        assert report.success
+        assert report.result_of("test(py-3.8)").status.value == "success"
+        assert report.result_of("test(py-3.9)").status.value == "success"

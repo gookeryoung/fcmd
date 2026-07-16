@@ -97,14 +97,19 @@ Strategy = Literal["sequential", "thread", "async", "dependency"]
 class _ExecContext:
     """执行上下文：捆绑 run() 调用链中共享的状态，减少参数传递。
 
-    将 context/report/on_event 打包为单一参数，使调用链中每个函数的参数数 ≤5。
-    frozen=True 保证调用链中不可意外替换整体引用，但不阻止对
+    将 context/statuses/report/on_event 打包为单一参数，使调用链中每个函数
+    的参数数 ≤5。frozen=True 保证调用链中不可意外替换整体引用，但不阻止对
     context/report 等可变属性的内部修改（如 ``ctx.context[name] = value``）。
+
+    statuses 单独维护上游任务状态映射（``{task_name: status_value}``），
+    供 ``conditions`` 模块的状态检查函数（``success()``/``failure()``/
+    ``always()``）通过 :data:`fcmd.task.Context` 的 ``__status__`` 键访问。
     """
 
     context: dict[str, Any]
     report: RunReport
     on_event: EventCallback | None
+    statuses: dict[str, str]
 
 
 # ---------------------------------------------------------------------- #
@@ -150,16 +155,29 @@ def _emit_running(on_event: EventCallback | None, spec: TaskSpec[Any]) -> None:
 def _build_context(
     spec: TaskSpec[Any],
     global_context: Mapping[str, Any],
+    global_statuses: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """构建本任务的上下文：硬依赖 + 软依赖（含默认值回退）。
+    """构建本任务的上下文：硬依赖 + 软依赖（含默认值回退）+ 上游状态。
 
     硬依赖：若上游 SKIPPED/FAILED 则不注入（本任务通常也会被跳过）。
     软依赖：上游成功则注入其值；否则注入 ``spec.defaults`` 中的默认值（或 ``None``）。
+    上游状态：通过 ``__status__`` 键注入，仅含本任务的硬依赖状态，
+    供 ``conditions`` 模块的状态检查函数（``success()``/``failure()``/
+    ``always()``）访问。
     """
-    # 快速路径：无依赖任务直接返回空 dict，跳过两个空元组遍历。
-    if not spec.depends_on and not spec.soft_depends_on:
+    # 快速路径：无依赖且无状态查询需求时直接返回空 dict。
+    has_deps = bool(spec.depends_on) or bool(spec.soft_depends_on)
+    needs_status = bool(spec.conditions) and global_statuses is not None
+    if not has_deps and not needs_status:
         return {}
     ctx: dict[str, Any] = {}
+    if needs_status:
+        # 仅注入本任务硬依赖的状态，避免泄漏无关任务状态。
+        ctx["__status__"] = {
+            dep: global_statuses[dep]  # type: ignore[index]
+            for dep in spec.depends_on
+            if dep in global_statuses  # type: ignore[operator]
+        }
     for dep in spec.depends_on:
         if dep in global_context:
             ctx[dep] = global_context[dep]
@@ -478,8 +496,9 @@ def _store_result(
     spec: TaskSpec[Any],
     ctx: _ExecContext,
 ) -> None:
-    """存储任务结果到 context/report 并触发事件。"""
+    """存储任务结果到 context/statuses/report 并触发事件。"""
     ctx.context[spec.name] = result.value
+    ctx.statuses[spec.name] = result.status.value
     ctx.report.results[spec.name] = result
     _emit(ctx.on_event, result)
 
@@ -500,7 +519,7 @@ class SequentialLayerRunner:
         to_run, specs = _filter_and_sort(layer, graph)
         for name in to_run:
             spec = specs[name]
-            task_ctx = _build_context(spec, ctx.context)
+            task_ctx = _build_context(spec, ctx.context, ctx.statuses)
             result = SyncTaskRunner.run(spec, task_ctx, layer_idx, ctx)
             _store_result(result, spec, ctx)
 
@@ -520,10 +539,11 @@ class ThreadedLayerRunner:
         if not to_run:
             return
         context_snapshot = dict(ctx.context)
+        statuses_snapshot = dict(ctx.statuses)
 
         def _run_threaded_task(name: str) -> tuple[dict[str, Any], TaskResult[Any]]:
             spec = specs[name]
-            task_ctx = _build_context(spec, context_snapshot)
+            task_ctx = _build_context(spec, context_snapshot, statuses_snapshot)
             return task_ctx, SyncTaskRunner.run(spec, task_ctx, layer_idx, ctx)
 
         future_to_name: dict[concurrent.futures.Future[tuple[dict[str, Any], TaskResult[Any]]], str] = {
@@ -551,10 +571,11 @@ class AsyncLayerRunner:
         if not to_run:
             return
         context_snapshot = dict(ctx.context)
+        statuses_snapshot = dict(ctx.statuses)
 
         async def _run_async_task(name: str) -> tuple[dict[str, Any], TaskResult[Any]]:
             spec = specs[name]
-            task_ctx = _build_context(spec, context_snapshot)
+            task_ctx = _build_context(spec, context_snapshot, statuses_snapshot)
             result = await AsyncTaskRunner.run(spec, task_ctx, layer_idx, ctx)
             return task_ctx, result
 
@@ -624,7 +645,7 @@ class DependencyRunner:
 
         async def _run_task(name: str) -> TaskResult[Any]:
             spec = all_specs[name]
-            task_ctx = _build_context(spec, ctx.context)
+            task_ctx = _build_context(spec, ctx.context, ctx.statuses)
             result = await AsyncTaskRunner.run(spec, task_ctx, None, ctx)
             _store_result(result, spec, ctx)
             return result
@@ -812,11 +833,12 @@ def run(  # noqa: PLR0913
         extra={"run_id": report.run_id, "strategy": strategy, "total_tasks": len(graph)},
     )
 
-    # 打包执行上下文：将 context/report/on_event 捆绑为单一参数传递给调用链。
+    # 打包执行上下文：将 context/statuses/report/on_event 捆绑为单一参数传递给调用链。
     ctx = _ExecContext(
         context=context,
         report=report,
         on_event=effective_callback,
+        statuses={},
     )
 
     try:
