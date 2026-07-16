@@ -604,3 +604,221 @@ def test_run_thread_strategy_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
     report = fcmd.run(graph, strategy="thread")
     assert report.success
     assert report["get_val"] == "thread_val"
+
+
+# ---------------------------------------------------------------------- #
+# P16: executors.py 未覆盖分支补测
+# ---------------------------------------------------------------------- #
+def test_run_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RetryPolicy(delay>0) 同步重试时调用 time.sleep（覆盖 line 400）。"""
+    sleep_calls: list[float] = []
+    original_sleep = time.sleep
+
+    def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+        original_sleep(0)  # 实际不等待，仅记录调用
+
+    monkeypatch.setattr("fcmd.executors.time.sleep", fake_sleep)
+
+    attempts = {"n": 0}
+
+    @task(retry=RetryPolicy(max_attempts=2, delay=0.01))
+    def flaky() -> str:
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise RuntimeError("not yet")
+        return "ok"
+
+    graph = fcmd.graph(flaky)
+    report = fcmd.run(graph, strategy="sequential")
+    assert report.success
+    assert report["flaky"] == "ok"
+    assert attempts["n"] == 2
+    # 第 1 次失败后 wait>0 触发 time.sleep
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] > 0
+
+
+def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RetryPolicy(delay>0) 异步重试时调用 asyncio.sleep（覆盖 lines 433-435）。"""
+    sleep_calls: list[float] = []
+
+    async def fake_async_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("fcmd.executors.asyncio.sleep", fake_async_sleep)
+
+    attempts = {"n": 0}
+
+    @task(retry=RetryPolicy(max_attempts=2, delay=0.01))
+    async def flaky() -> str:
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise RuntimeError("not yet")
+        return "ok"
+
+    graph = fcmd.graph(flaky)
+    report = fcmd.run(graph, strategy="async")
+    assert report.success
+    assert report["flaky"] == "ok"
+    assert attempts["n"] == 2
+    assert len(sleep_calls) == 1
+    assert sleep_calls[0] > 0
+
+
+def test_run_async_retry_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RetryPolicy 默认 delay=0 时异步重试不调用 asyncio.sleep（覆盖 434->425 分支）。"""
+    sleep_calls: list[float] = []
+
+    async def fake_async_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr("fcmd.executors.asyncio.sleep", fake_async_sleep)
+
+    attempts = {"n": 0}
+
+    @task(retry=RetryPolicy(max_attempts=2))  # 默认 delay=0
+    async def flaky() -> str:
+        attempts["n"] += 1
+        if attempts["n"] < 2:
+            raise RuntimeError("not yet")
+        return "ok"
+
+    graph = fcmd.graph(flaky)
+    report = fcmd.run(graph, strategy="async")
+    assert report.success
+    assert report["flaky"] == "ok"
+    assert attempts["n"] == 2
+    # delay=0 时 wait_seconds 返回 0，不调用 asyncio.sleep
+    assert len(sleep_calls) == 0
+
+
+def test_run_async_conditions_skip() -> None:
+    """async 策略下条件不满足的任务被 SKIPPED（覆盖 AsyncTaskRunner line 415）。"""
+    executed: list[str] = []
+
+    @task(conditions=(lambda _: False,))
+    async def skipped() -> int:
+        executed.append("skipped")
+        return 1
+
+    graph = fcmd.graph(skipped)
+    report = fcmd.run(graph, strategy="async")
+    assert "skipped" in report.skipped_tasks()
+    assert executed == []
+
+
+def test_run_async_sync_fn_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """async 策略下同步 fn 任务带 env 走 env_context 路径（覆盖 lines 467-468）。"""
+    import os
+
+    monkeypatch.delenv("FCMD_ASYNC_ENV", raising=False)
+
+    @task(env={"FCMD_ASYNC_ENV": "async_val"})
+    def get_val() -> str:
+        return os.environ.get("FCMD_ASYNC_ENV", "")
+
+    graph = fcmd.graph(get_val)
+    report = fcmd.run(graph, strategy="async")
+    assert report.success
+    assert report["get_val"] == "async_val"
+
+
+def test_run_dependency_fail_cancels_others() -> None:
+    """dependency 策略下任务失败取消其他飞行中任务（覆盖 lines 679-682）。"""
+    cancelled: list[str] = []
+
+    @task
+    async def slow() -> int:
+        try:
+            await asyncio.sleep(10)
+            return 1
+        except asyncio.CancelledError:
+            cancelled.append("slow")
+            raise
+
+    @task
+    async def boom() -> int:
+        raise RuntimeError("fail immediately")
+
+    graph = fcmd.graph(slow, boom)
+    with pytest.raises(TaskFailedError) as exc_info:
+        fcmd.run(graph, strategy="dependency")
+    assert exc_info.value.task == "boom"
+    # slow 被取消（fail-fast 取消飞行中任务）
+    assert "slow" in cancelled
+
+
+def test_run_verbose_with_on_event() -> None:
+    """verbose=True 同时传 on_event 回调（覆盖 line 707 on_event 调用）。"""
+    events: list[TaskEvent] = []
+
+    def on_event(event: TaskEvent) -> None:
+        events.append(event)
+
+    @task
+    def simple() -> int:
+        return 42
+
+    graph = fcmd.graph(simple)
+    fcmd.run(graph, strategy="sequential", verbose=True, on_event=on_event)
+    # on_event 被调用，收到事件
+    assert len(events) > 0
+    assert any(e.task == "simple" for e in events)
+
+
+def test_run_subgraph_filter_no_match() -> None:
+    """tags 不匹配时返回空 report（覆盖 line 731）。"""
+
+    @task(tags=("alpha",))
+    def simple() -> int:
+        return 1
+
+    graph = fcmd.graph(simple)
+    report = fcmd.run(graph, strategy="sequential", tags=["nonexistent_tag"])
+    assert report.success
+    assert len(report.results) == 0
+
+
+def test_run_multi_dep_context_injection() -> None:
+    """多依赖任务的 _build_context 循环多次（覆盖 line 182->181 跳转）。"""
+
+    @task
+    def a() -> int:
+        return 10
+
+    @task
+    def b() -> int:
+        return 20
+
+    @task
+    def c(a: int, b: int) -> int:
+        return a + b
+
+    graph = fcmd.graph(a, b, c)
+    report = fcmd.run(graph, strategy="sequential")
+    assert report.success
+    assert report["c"] == 30
+
+
+def test_verbose_callback_pending_event(capsys: pytest.CaptureFixture[str]) -> None:
+    """verbose 回调收到 PENDING 事件时不匹配任何分支，直接调用 on_event（覆盖 705->708）。"""
+    from fcmd.executors import _make_verbose_callback
+
+    events: list[TaskEvent] = []
+    callback = _make_verbose_callback(events.append)
+    # PENDING 状态不匹配 RUNNING/SUCCESS/FAILED/SKIPPED 任何分支
+    callback(
+        TaskEvent(
+            task="x",
+            status=TaskStatus.PENDING,
+            attempts=0,
+            error=None,
+            duration=None,
+            reason=None,
+        )
+    )
+    # on_event 仍被调用
+    assert len(events) == 1
+    assert events[0].task == "x"
+    assert events[0].status == TaskStatus.PENDING

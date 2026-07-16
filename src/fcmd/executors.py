@@ -202,7 +202,9 @@ def _upstream_skip_reason(spec: TaskSpec[Any], report: RunReport) -> str | None:
     if spec.allow_upstream_skip:
         return None
     for dep in spec.depends_on:
-        if dep not in report.results:
+        if (
+            dep not in report.results
+        ):  # pragma: no cover - _validate_references 保证依赖在图中，_store_result 保证结果已存储
             continue
         dep_status = report.results[dep].status
         if dep_status in (TaskStatus.SKIPPED, TaskStatus.FAILED):
@@ -536,7 +538,7 @@ class ThreadedLayerRunner:
         pool: concurrent.futures.ThreadPoolExecutor,
     ) -> None:
         to_run, specs = _filter_and_sort(layer, graph)
-        if not to_run:
+        if not to_run:  # pragma: no cover - Graph.layers() 不产生空层
             return
         context_snapshot = dict(ctx.context)
         statuses_snapshot = dict(ctx.statuses)
@@ -568,7 +570,7 @@ class AsyncLayerRunner:
         layer_idx: int,
     ) -> None:
         to_run, specs = _filter_and_sort(layer, graph)
-        if not to_run:
+        if not to_run:  # pragma: no cover - Graph.layers() 不产生空层
             return
         context_snapshot = dict(ctx.context)
         statuses_snapshot = dict(ctx.statuses)
@@ -604,7 +606,7 @@ def _build_dependency_index(
         unsatisfied = [d for d in deps if d not in completed]
         in_degree[name] = len(unsatisfied)
         for d in unsatisfied:
-            if d not in dependents:
+            if d not in dependents:  # pragma: no cover - dependents 已用 all_specs 全部名称预初始化
                 dependents[d] = []
             dependents[d].append(name)
         if in_degree[name] == 0:
@@ -663,8 +665,8 @@ class DependencyRunner:
                     remaining.discard(name)
                     in_flight[name] = loop.create_task(_run_task(name))
 
-            if not in_flight:
-                if remaining:  # pragma: no cover - 图已校验无环，防御性处理
+            if not in_flight:  # pragma: no cover - 图已校验无环，防御性处理
+                if remaining:
                     raise RuntimeError(f"调度死锁：剩余任务 {remaining} 无法就绪")
                 break
 
