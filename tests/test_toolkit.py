@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List
+from typing import Any, List, Literal
 
 import pytest
 
@@ -13,12 +13,16 @@ from fcmd.apis.toolkit import (
     _TOOL_REGISTRY,
     ToolExitCode,
     ToolSpec,
+    _add_optional_arg,
+    _add_positional_arg,
     _build_task_spec,
     _collect_with_deps,
     _has_function_logic,
     _is_aggregate,
     _is_list_annotation,
+    _is_literal_annotation,
     _list_inner_type,
+    _literal_choices,
     _resolve_hints,
     clear_tool_registry,
     get_tool,
@@ -1234,3 +1238,114 @@ def test_fx_run_tool_accessible() -> None:
 def test_fx_tool_spec_accessible() -> None:
     """fx.ToolSpec 通过懒加载可访问。"""
     assert fcmd.ToolSpec is ToolSpec
+
+
+# ---------------------------------------------------------------------- #
+# P14b: Literal → choices 与 _resolve_hints 逐参数回退
+# ---------------------------------------------------------------------- #
+def test_is_literal_annotation_true() -> None:
+    """Literal 注解识别为 True。"""
+    assert _is_literal_annotation(Literal["a", "b"]) is True
+
+
+def test_is_literal_annotation_false() -> None:
+    """非 Literal 注解识别为 False。"""
+    assert _is_literal_annotation(int) is False
+    assert _is_literal_annotation(str) is False
+    assert _is_literal_annotation(List[int]) is False
+
+
+def test_literal_choices_extracts_args() -> None:
+    """_literal_choices 提取 Literal 的 __args__。"""
+    assert _literal_choices(Literal["a", "b"]) == ("a", "b")
+    assert _literal_choices(Literal[1, 2, 3]) == (1, 2, 3)
+
+
+def test_literal_choices_empty() -> None:
+    """非 Literal 注解返回空元组。"""
+    assert _literal_choices(int) == ()
+
+
+def test_build_parser_optional_literal() -> None:
+    """optional Literal 参数转 choices，合法值可解析。"""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    _add_optional_arg(parser, "mode", Literal["a", "b"], "a")
+    args = parser.parse_args(["--mode", "b"])
+    assert args.mode == "b"
+    # 默认值
+    args_default = parser.parse_args([])
+    assert args_default.mode == "a"
+
+
+def test_build_parser_optional_literal_invalid_choice() -> None:
+    """optional Literal 参数非法值 argparse 报错。"""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    _add_optional_arg(parser, "mode", Literal["a", "b"], "a")
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--mode", "c"])
+
+
+def test_build_parser_positional_literal() -> None:
+    """positional Literal 参数转 choices，合法值可解析。"""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    _add_positional_arg(parser, "mode", Literal["a", "b"])
+    args = parser.parse_args(["a"])
+    assert args.mode == "a"
+
+
+def test_build_parser_positional_literal_invalid_choice() -> None:
+    """positional Literal 参数非法值 argparse 报错。"""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    _add_positional_arg(parser, "mode", Literal["a", "b"])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["c"])
+
+
+def test_resolve_hints_per_param_fallback() -> None:
+    """get_type_hints 失败时逐参数回退：无注解跳过、非 str 注解直接保留。
+
+    用 ``compile(dont_inherit=True)`` 创建不带 ``__future__`` 注解的函数，
+    再注入 ``'int | str'`` 返回注解使 ``get_type_hints`` 在 Python 3.8 抛
+    ``TypeError``（PEP 604 不支持）。逐参数回退时：无注解参数跳过（line 383），
+    非 str 注解（类型对象）直接保留（lines 385-386）。
+    """
+    # dont_inherit=True 避免 __future__ annotations 传染，y: int 存储类型对象
+    code = compile("def f(x, y: int):\n    pass\n", "<test>", "exec", dont_inherit=True)
+    ns: dict[str, Any] = {}
+    exec(code, ns)
+    f = ns["f"]
+    # 注入触发 TypeError 的返回注解（int | str 在 3.8 eval 抛 TypeError）
+    f.__annotations__["return"] = "int | str"
+    hints = _resolve_hints(f)
+    # x 无注解 → 跳过
+    assert "x" not in hints
+    # y: int（非 str 对象）→ 直接保留
+    assert hints["y"] is int
+
+
+def test_resolve_hints_per_param_fallback_str_eval() -> None:
+    """get_type_hints 失败时 str 注解 eval：成功保留结果、失败保留字符串。
+
+    构造带 ``__future__`` 注解的函数，返回类型 ``int | str`` 在 Python 3.8
+    导致 ``get_type_hints`` 失败。逐参数回退时：str 注解 eval 成功保留求值
+    结果（lines 387-389），str 注解 eval 失败保留字符串（line 392）。
+    """
+    ns: dict[str, Any] = {}
+    exec(
+        "from __future__ import annotations\ndef f(y: int, z: undefined_name) -> int | str:\n    pass\n",
+        ns,
+    )
+    f = ns["f"]
+    hints = _resolve_hints(f)
+    # y: "int"（str）→ eval 成功
+    assert hints["y"] is int
+    # z: "undefined_name"（str）→ eval 失败，保留字符串
+    assert hints["z"] == "undefined_name"

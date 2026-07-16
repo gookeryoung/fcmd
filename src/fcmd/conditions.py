@@ -12,7 +12,7 @@ if 表达式
 - 上下文访问：``ctx.NAME``（依赖任务的返回值）
 - 环境变量：``vars.NAME``
 - 字面量：字符串 / 数字 / 布尔 / ``None``
-- 比较：``==`` / ``!=``
+- 比较：``==`` / ``!=`` / ``<`` / ``>`` / ``<=`` / ``>=`` / ``in`` / ``not in``
 - 逻辑：``not`` / ``and`` / ``or`` / 括号
 
 状态检查依赖执行器在上下文中注入的 ``__status__`` 键，值为
@@ -189,20 +189,47 @@ def _eval_unaryop(node: ast.UnaryOp, context: Context) -> Any:
 
 
 def _eval_compare(node: ast.Compare, context: Context) -> Any:
-    """求值比较运算 ``==`` / ``!=``（支持链式比较 ``a == b == c``）。"""
+    """求值比较运算（支持链式比较 ``a < b < c``）。
+
+    支持的操作符：``==`` / ``!=`` / ``<`` / ``>`` / ``<=`` / ``>=`` /
+    ``in`` / ``not in``。混合类型比较（如 ``1 < "a"``）抛
+    :class:`ConditionError`。
+    """
     left = _eval_node(node.left, context)
     for op, comparator in zip(node.ops, node.comparators):
         right = _eval_node(comparator, context)
-        if isinstance(op, ast.Eq):
-            if left != right:
-                return False
-        elif isinstance(op, ast.NotEq):
-            if left == right:
-                return False
-        else:
-            raise ConditionError(f"不支持的比较运算: {type(op).__name__}")
+        if not _compare_op(op, left, right):
+            return False
         left = right
     return True
+
+
+def _compare_op(op: ast.cmpop, left: Any, right: Any) -> bool:
+    """执行单个比较运算。
+
+    混合类型比较（如 ``1 < "a"``）的 :class:`TypeError` 被包装为
+    :class:`ConditionError`，便于调用方统一处理。
+    """
+    handler = _COMPARE_OPS.get(type(op))
+    if handler is None:
+        raise ConditionError(f"不支持的比较运算: {type(op).__name__}")
+    try:
+        return handler(left, right)
+    except TypeError as exc:
+        raise ConditionError(f"比较运算类型错误: {exc}") from exc
+
+
+# 比较运算符映射（白名单）
+_COMPARE_OPS: dict[type[ast.cmpop], Any] = {
+    ast.Eq: lambda left, right: left == right,
+    ast.NotEq: lambda left, right: left != right,
+    ast.Lt: lambda left, right: left < right,
+    ast.Gt: lambda left, right: left > right,
+    ast.LtE: lambda left, right: left <= right,
+    ast.GtE: lambda left, right: left >= right,
+    ast.In: lambda left, right: left in right,
+    ast.NotIn: lambda left, right: left not in right,
+}
 
 
 def _eval_call(node: ast.Call, context: Context) -> Any:
@@ -239,6 +266,16 @@ def _eval_name(node: ast.Name) -> Any:
     raise ConditionError(f"不支持的标识符: {node.id}")
 
 
+def _eval_list(node: ast.List, context: Context) -> list[Any]:
+    """求值列表字面量 ``[a, b, c]``（用于 ``in`` / ``not in`` 成员检查）。"""
+    return [_eval_node(e, context) for e in node.elts]
+
+
+def _eval_tuple(node: ast.Tuple, context: Context) -> tuple[Any, ...]:
+    """求值元组字面量 ``(a, b, c)``（用于 ``in`` / ``not in`` 成员检查）。"""
+    return tuple(_eval_node(e, context) for e in node.elts)
+
+
 # AST 节点处理器映射（白名单）；Constant/Name 无需 context，用 lambda 适配签名
 _NODE_HANDLERS: dict[type[ast.AST], Any] = {
     ast.BoolOp: _eval_boolop,
@@ -248,6 +285,8 @@ _NODE_HANDLERS: dict[type[ast.AST], Any] = {
     ast.Attribute: _eval_attribute,
     ast.Name: lambda n, _: _eval_name(n),
     ast.Constant: lambda n, _: n.value,
+    ast.List: _eval_list,
+    ast.Tuple: _eval_tuple,
 }
 
 

@@ -363,11 +363,34 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
 # argparse parser 构建（函数签名 → argparse 参数）
 # ---------------------------------------------------------------------- #
 def _resolve_hints(func: Callable[..., Any]) -> dict[str, Any]:
-    """解析函数的类型注解（处理 from __future__ import annotations 的字符串注解）。"""
+    """解析函数的类型注解（处理 from __future__ import annotations 的字符串注解）。
+
+    Python 3.8 下 ``typing.get_type_hints`` 对 PEP 604 (``X | Y``) 和
+    PEP 585 (``list[X]``) 泛型语法会抛 :class:`TypeError`，导致整个函数的
+    注解解析失败。本函数在 ``get_type_hints`` 失败时逐参数回退：用 ``eval``
+    求值字符串注解（类型注解是开发者代码，非用户输入，安全），单个参数失败
+    不影响其他参数，失败参数保留字符串形式供下游处理。
+    """
     try:
         return typing.get_type_hints(func)
     except Exception:
-        return {}
+        # get_type_hints 整体失败（如返回类型用了 X|Y），逐参数 eval 回退
+        sig = inspect.signature(func)
+        globalns = getattr(func, "__globals__", {})
+        hints: dict[str, Any] = {}
+        for pname, param in sig.parameters.items():
+            if param.annotation is inspect.Parameter.empty:
+                continue
+            if not isinstance(param.annotation, str):
+                hints[pname] = param.annotation
+                continue
+            try:
+                # 类型注解求值是 typing.get_type_hints 的标准做法，非用户输入
+                hints[pname] = eval(param.annotation, globalns)
+            except Exception:
+                # eval 失败（如 list[X] 在 3.8），保留字符串供下游处理
+                hints[pname] = param.annotation
+        return hints
 
 
 def _is_list_annotation(annotation: Any) -> bool:
@@ -391,13 +414,31 @@ def _list_inner_type(annotation: Any) -> Any:
     return None
 
 
+def _is_literal_annotation(annotation: Any) -> bool:
+    """判断注解是否为 ``Literal[X, Y, ...]`` 类型。"""
+    origin = getattr(annotation, "__origin__", None)
+    return origin is typing.Literal
+
+
+def _literal_choices(annotation: Any) -> tuple[Any, ...]:
+    """提取 ``Literal[X, Y, ...]`` 的选项值元组。"""
+    return getattr(annotation, "__args__", ())
+
+
 def _add_optional_arg(
     parser: argparse.ArgumentParser,
     pname: str,
     annotation: Any,
     default: Any,
 ) -> None:
-    """添加 --name 选项（有默认值的参数）。"""
+    """添加 --name 选项（有默认值的参数）。
+
+    支持的注解类型：
+    - ``bool``（默认 ``False``）→ ``store_true``
+    - ``int`` / ``float`` / ``str`` / ``Path`` → 对应 ``type``
+    - ``Literal[X, Y, ...]`` → ``choices``（argparse 自动校验取值）
+    - ``list[X]`` / ``List[X]`` → ``nargs="*"`` + 对应 ``type``
+    """
     cli_name = f"--{pname.replace('_', '-')}"
     if annotation is bool or (isinstance(default, bool) and default is False):
         parser.add_argument(cli_name, action="store_true", default=False, help=pname)
@@ -407,6 +448,10 @@ def _add_optional_arg(
         kwargs["type"] = annotation
     elif annotation is Path:
         kwargs["type"] = Path
+    elif _is_literal_annotation(annotation):
+        choices = _literal_choices(annotation)
+        if choices:
+            kwargs["choices"] = list(choices)
     elif _is_list_annotation(annotation):
         inner = _list_inner_type(annotation)
         kwargs["nargs"] = "*"
@@ -426,7 +471,13 @@ def _add_positional_arg(
     pname: str,
     annotation: Any,
 ) -> None:
-    """添加 positional 参数（无默认值的参数）。"""
+    """添加 positional 参数（无默认值的参数）。
+
+    支持的注解类型：
+    - ``int`` / ``float`` / ``str`` / ``Path`` → 对应 ``type``
+    - ``Literal[X, Y, ...]`` → ``choices``
+    - ``list[X]`` / ``List[X]`` → ``nargs="+"`` + 对应 ``type``
+    """
     if _is_list_annotation(annotation):
         inner = _list_inner_type(annotation)
         kwargs: dict[str, Any] = {"nargs": "+", "help": pname}
@@ -443,6 +494,12 @@ def _add_positional_arg(
         parser.add_argument(pname, type=annotation, help=pname)
     elif annotation is Path:
         parser.add_argument(pname, type=Path, help=pname)
+    elif _is_literal_annotation(annotation):
+        choices = _literal_choices(annotation)
+        kwargs = {"help": pname}
+        if choices:
+            kwargs["choices"] = list(choices)
+        parser.add_argument(pname, **kwargs)
     else:
         parser.add_argument(pname, help=pname)
 
@@ -456,6 +513,7 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
     - ``bool`` 且默认 ``False`` → ``store_true``
     - ``list[X]`` / ``List[X]`` → ``nargs="+"`` (positional) 或 ``nargs="*"`` (optional)
     - ``int`` / ``float`` / ``str`` / ``Path`` → 对应 ``type``
+    - ``Literal[X, Y, ...]`` → ``choices``（argparse 自动校验取值）
     """
     hints = _resolve_hints(spec.func)
     sig = inspect.signature(spec.func)

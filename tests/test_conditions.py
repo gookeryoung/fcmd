@@ -182,6 +182,88 @@ class TestParseIfLogic:
 
 
 # ============================================================================ #
+# parse_if: 比较运算符
+# ============================================================================ #
+class TestParseIfComparison:
+    """``<`` / ``>`` / ``<=`` / ``>=`` / ``in`` / ``not in`` 比较运算测试。"""
+
+    def test_less_than(self) -> None:
+        """``ctx.x < 5`` 数值小于比较。"""
+        cond = parse_if("ctx.x < 5")
+        assert cond({"x": 3}) is True
+        assert cond({"x": 5}) is False
+        assert cond({"x": 7}) is False
+
+    def test_greater_than(self) -> None:
+        """``ctx.x > 5`` 数值大于比较。"""
+        cond = parse_if("ctx.x > 5")
+        assert cond({"x": 7}) is True
+        assert cond({"x": 5}) is False
+
+    def test_less_equal(self) -> None:
+        """``ctx.x <= 5`` 数值小于等于比较。"""
+        cond = parse_if("ctx.x <= 5")
+        assert cond({"x": 5}) is True
+        assert cond({"x": 6}) is False
+
+    def test_greater_equal(self) -> None:
+        """``ctx.x >= 5`` 数值大于等于比较。"""
+        cond = parse_if("ctx.x >= 5")
+        assert cond({"x": 5}) is True
+        assert cond({"x": 4}) is False
+
+    def test_in_string(self) -> None:
+        """``ctx.x in 'abc'`` 字符串成员检查。"""
+        cond = parse_if("ctx.x in 'abc'")
+        assert cond({"x": "a"}) is True
+        assert cond({"x": "d"}) is False
+
+    def test_in_list(self) -> None:
+        """``ctx.x in ['a', 'b']`` 列表成员检查。"""
+        cond = parse_if("ctx.x in ['a', 'b']")
+        assert cond({"x": "a"}) is True
+        assert cond({"x": "c"}) is False
+
+    def test_in_tuple(self) -> None:
+        """``ctx.x in ('a', 'b')`` 元组成员检查。"""
+        cond = parse_if("ctx.x in ('a', 'b')")
+        assert cond({"x": "a"}) is True
+        assert cond({"x": "c"}) is False
+
+    def test_not_in_tuple(self) -> None:
+        """``ctx.x not in ('a', 'b')`` 元组非成员检查。"""
+        cond = parse_if("ctx.x not in ('a', 'b')")
+        assert cond({"x": "c"}) is True
+        assert cond({"x": "a"}) is False
+
+    def test_not_in_string(self) -> None:
+        """``ctx.x not in 'abc'`` 字符串非成员检查。"""
+        cond = parse_if("ctx.x not in 'abc'")
+        assert cond({"x": "d"}) is True
+        assert cond({"x": "a"}) is False
+
+    def test_chained_less_than(self) -> None:
+        """链式比较 ``ctx.x < ctx.y < 10``。"""
+        cond = parse_if("ctx.x < ctx.y < 10")
+        assert cond({"x": 3, "y": 7}) is True
+        assert cond({"x": 3, "y": 15}) is False
+        assert cond({"x": 8, "y": 7}) is False
+
+    def test_compare_with_logic(self) -> None:
+        """比较运算与逻辑组合：``ctx.x > 0 and ctx.x < 10``。"""
+        cond = parse_if("ctx.x > 0 and ctx.x < 10")
+        assert cond({"x": 5}) is True
+        assert cond({"x": 0}) is False
+        assert cond({"x": 10}) is False
+
+    def test_mixed_type_compare_raises(self) -> None:
+        """混合类型比较（int < str）抛 ConditionError。"""
+        cond = parse_if("ctx.x < 'a'")
+        with pytest.raises(ConditionError, match="比较运算类型错误"):
+            cond({"x": 3})
+
+
+# ============================================================================ #
 # parse_if: 错误场景
 # ============================================================================ #
 class TestParseIfErrors:
@@ -229,8 +311,8 @@ class TestParseIfErrors:
             cond({})
 
     def test_unsupported_compare_op_raises(self) -> None:
-        """不支持的比较运算抛 ConditionError。"""
-        cond = parse_if("ctx.x < 5")
+        """不支持的比较运算（``is``）抛 ConditionError。"""
+        cond = parse_if("ctx.x is None")
         with pytest.raises(ConditionError, match="不支持的比较运算"):
             cond({"x": 3})
 

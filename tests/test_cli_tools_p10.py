@@ -322,6 +322,7 @@ class TestReadVersion:
     def test_read_with_prerelease(self, tmp_path: Path) -> None:
         """读取带预发布标记的版本号。"""
         f = tmp_path / "pyproject.toml"
+
         f.write_text('version = "1.2.3-alpha.1"\n', encoding="utf-8")
         assert _read_version(f) == Version(1, 2, 3, prerelease="alpha.1")
 
