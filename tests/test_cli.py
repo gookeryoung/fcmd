@@ -1224,3 +1224,93 @@ class TestBuiltinDoctor:
         finally:
             main_mod._TOOL_MODULES.clear()
             main_mod._TOOL_MODULES.update(original_modules)
+
+
+# ---------------------------------------------------------------------- #
+# 边界分支补覆盖（P25）
+# ---------------------------------------------------------------------- #
+class TestCoverageGaps:
+    """覆盖 main.py 预先存在的未覆盖分支。"""
+
+    def test_discovery_continues_on_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``_ensure_tools_discovered`` 在工具模块导入失败时 continue 跳过。
+
+        覆盖 main.py L79-80：扫描时某模块 import_module 抛 ImportError，跳过该模块
+        的别名注册，继续处理下一个模块。
+        """
+        from fcmd.cli import main as main_mod
+
+        original_import = main_mod.importlib.import_module
+
+        def fake_import(name: str) -> object:
+            if name == "fcmd.cli.pymake":
+                raise ImportError("simulated pymake load failure")
+            return original_import(name)
+
+        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
+        monkeypatch.setattr(main_mod.importlib, "import_module", fake_import)
+
+        main_mod._ensure_tools_discovered()
+
+        # pymake 在 _TOOL_MODULES（setdefault 在 import 前），但 import 失败
+        assert "pymake" in main_mod._TOOL_MODULES
+        # pm 别名未被注册（import 失败跳过 __tool_aliases__ 读取）
+        assert "pm" not in main_mod._TOOL_ALIASES
+        # 其他工具不受影响
+        assert "clr" in main_mod._TOOL_MODULES
+
+    def test_info_overview_with_unregistered_tool(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``_info_overview`` 遇到不在 ``_TOOL_MODULES`` 的工具名时不报错。
+
+        覆盖 main.py L274->277（``if tool_name in _TOOL_MODULES`` false 分支跳过
+        import）与 L875（``_tool_description`` 在工具不在 ``_TOOL_REGISTRY`` 时
+        返回空串）。
+        """
+        from fcmd.cli import main as main_mod
+
+        # 注入假工具名到 _TOOL_ALIASES，但不在 _TOOL_MODULES 也不在 _TOOL_REGISTRY
+        monkeypatch.setitem(main_mod._TOOL_ALIASES, "ghost_tool_xyz", "ghost_tool_xyz")
+
+        app = main_mod.FcmdApp(["info"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "ghost_tool_xyz" in out
+
+    def test_info_subcommand_single_command_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """``_info_subcommand`` 对单命令工具（``spec.subcommand is None``）输出 ``(single)``。
+
+        覆盖 main.py L318->320（三元表达式 false 分支 ``spec.subcommand is None``）。
+        CLI 路径无法触发此分支（单命令工具的 subs 键为 None，用户传入的子命令名
+        为字符串，``subs.get(字符串)`` 返回 None 走错误路径），故直接单元测试。
+        """
+        from fcmd.apis.toolkit import ToolSpec
+        from fcmd.cli import main as main_mod
+
+        def _fake_func() -> None:
+            """dummy."""
+
+        spec = ToolSpec(name="dummy", subcommand=None, func=_fake_func, help="单命令工具")
+        app = main_mod.FcmdApp([])
+        main_mod.FcmdApp._info_subcommand(app, "dummy", spec)
+        out = capsys.readouterr().out
+        assert "(single)" in out
+        assert "单命令工具" in out
+
+    def test_print_unknown_tool_no_suggestion(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """``_print_unknown_tool`` 在无相似工具名时不打印建议。
+
+        覆盖 main.py L898->900（``if suggestions`` false 分支）。"zzz" 与所有工具名
+        相似度 < 0.5，``difflib.get_close_matches`` 返回空列表。
+        """
+        from fcmd.cli import main as main_mod
+
+        app = main_mod.FcmdApp([])
+        main_mod.FcmdApp._print_unknown_tool(app, "zzz")
+        out = capsys.readouterr().out
+        assert "未知工具" in out
+        assert "是否想用" not in out  # 无建议
+        assert "查看可用工具列表" in out

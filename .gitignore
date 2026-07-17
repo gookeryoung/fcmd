@@ -14,6 +14,7 @@ wheels/
 .coverage.*
 htmlcov/
 coverage.xml
+*,cover
 .tox/
 
 # 工具缓存
