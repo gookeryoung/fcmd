@@ -694,17 +694,17 @@ def _make_verbose_callback(on_event: EventCallback | None) -> EventCallback:
     def _verbose_callback(event: TaskEvent) -> None:
         dur = f" ({event.duration:.3f}s)" if event.duration is not None else ""
         if event.status == TaskStatus.RUNNING:
-            console.print(f"[cyan]▸[/cyan] [bold]{event.task!r}[/bold] 开始执行...")
+            console.print(f"[cyan]>[/cyan] [bold]{event.task!r}[/bold] 开始执行...")
         elif event.status == TaskStatus.SUCCESS:
-            console.print(f"[green]✓[/green] [bold]{event.task!r}[/bold] 成功[dim]{dur}[/dim]")
+            console.print(f"[green]OK[/green] [bold]{event.task!r}[/bold] 成功[dim]{dur}[/dim]")
         elif event.status == TaskStatus.FAILED:
             err = f": {event.error}" if event.error else ""
             console.print(
-                f"[red]✗[/red] [bold]{event.task!r}[/bold] 失败[dim]{dur} (尝试 {event.attempts} 次)[/dim][red]{err}[/red]"
+                f"[red]X[/red] [bold]{event.task!r}[/bold] 失败[dim]{dur} (尝试 {event.attempts} 次)[/dim][red]{err}[/red]"
             )
         elif event.status == TaskStatus.SKIPPED:
             reason = f" ({event.reason})" if event.reason else ""
-            console.print(f"[yellow]○[/yellow] [bold]{event.task!r}[/bold] 跳过[dim]{reason}[/dim]")
+            console.print(f"[yellow]-[/yellow] [bold]{event.task!r}[/bold] 跳过[dim]{reason}[/dim]")
         if on_event is not None:
             on_event(event)
 

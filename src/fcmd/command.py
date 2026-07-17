@@ -38,7 +38,7 @@ def run_command(spec: TaskSpec[Any]) -> Any:  # noqa: PLR0912
         name = getattr(cmd, "__name__", "callable")
         if verbose:
             console = get_console()
-            console.print(f"[cyan]▸[/cyan] 执行可调用命令: [bold]{name}[/bold]")
+            console.print(f"[cyan]>[/cyan] 执行可调用命令: [bold]{name}[/bold]")
             if cwd is not None:
                 console.print(f"  [dim]工作目录: {cwd}[/dim]")
         try:
@@ -58,7 +58,7 @@ def run_command(spec: TaskSpec[Any]) -> Any:  # noqa: PLR0912
 
     console = get_console() if verbose else None
     if verbose and console is not None:
-        console.print(f"[cyan]▸[/cyan] {verb}: [bold]{cmd_str}[/bold]")
+        console.print(f"[cyan]>[/cyan] {verb}: [bold]{cmd_str}[/bold]")
         if cwd is not None:
             console.print(f"  [dim]工作目录: {cwd}[/dim]")
 
