@@ -78,7 +78,7 @@ def image_resize(
     output_path: Path,
     width: int,
     height: int | None = None,
-    stretch: bool = False,
+    keep_ratio: bool = True,
 ) -> None:
     """调整图片尺寸。
 
@@ -91,21 +91,21 @@ def image_resize(
     width:
         目标宽度
     height:
-        目标高度（``stretch=False`` 时仅作上限，``None`` 表示按宽度等比）
-    stretch:
-        是否拉伸到指定尺寸（不保持宽高比，默认 ``False``）
+        目标高度（``keep_ratio=True`` 时仅作上限，``None`` 表示按宽度等比）
+    keep_ratio:
+        是否保持宽高比（默认 ``True``，``--no-keep-ratio`` 拉伸到指定尺寸）
     """
     if not _require_pil():
         return
 
     img = Image.open(input_path)
-    if stretch:
+    if keep_ratio:
+        target_height = height if height is not None else width
+        img.thumbnail((width, target_height))
+    else:
         if height is None:
             height = width
         img = img.resize((width, height))
-    else:
-        target_height = height if height is not None else width
-        img.thumbnail((width, target_height))
     _save_image(img, output_path)
     print(f"调整尺寸完成: {output_path} ({img.size[0]}x{img.size[1]})")
 
@@ -375,7 +375,7 @@ def image_info(input_path: Path, json: bool = False) -> None:
 def image_exif(
     input_path: Path,
     output_path: Path | None = None,
-    hide: bool = False,
+    show: bool = True,
     set: list[str] | None = None,
     clear: bool = False,
 ) -> None:
@@ -386,9 +386,9 @@ def image_exif(
     input_path:
         输入图片路径
     output_path:
-        输出路径（``None`` 时原地覆盖；仅 ``hide=False`` 时可省略）
-    hide:
-        不打印 EXIF 标签（默认 ``False`` 即打印）
+        输出路径（``None`` 时原地覆盖；仅 ``show=True`` 时可省略）
+    show:
+        是否打印 EXIF 标签（默认 ``True``，``--no-show`` 静默）
     set:
         设置标签，格式 ``["KEY=VALUE", ...]``（KEY 为数字标签号）
     clear:
@@ -400,7 +400,7 @@ def image_exif(
     img = Image.open(input_path)
     exif = img.getexif()
 
-    if not hide:
+    if show:
         _print_exif(exif)
 
     modified = _apply_exif_modifications(exif, set, clear)

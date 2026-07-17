@@ -224,14 +224,28 @@ class TestImagetoolCommands:
         captured = capsys.readouterr().out
         assert "调整尺寸完成" in captured
 
-    def test_image_resize_stretch(self, sample_image: Path, tmp_path: Path) -> None:
-        """resize 拉伸模式（stretch + 不传 height 时 height=width）。"""
+    def test_image_resize_no_keep_ratio(self, sample_image: Path, tmp_path: Path) -> None:
+        """resize 拉伸模式（--no-keep-ratio + 不传 height 时 height=width）。"""
         out = tmp_path / "resized.png"
         code = run_tool(
             "imagetool",
-            ["r", str(sample_image), str(out), "30", "--stretch"],
+            ["r", str(sample_image), str(out), "30", "--no-keep-ratio"],
         )
         assert code == 0
+
+    def test_image_resize_with_height_via_cli(
+        self, sample_image: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """resize 通过 CLI 传 --height 30x20 拉伸到指定尺寸（回归 int|None 解包）。"""
+        out = tmp_path / "resized.png"
+        code = run_tool(
+            "imagetool",
+            ["r", str(sample_image), str(out), "30", "--height", "20", "--no-keep-ratio"],
+        )
+        assert code == 0
+        captured = capsys.readouterr().out
+        # 应输出 30x20（int 解包成功）
+        assert "30x20" in captured
 
     def test_image_crop(self, sample_image: Path, tmp_path: Path) -> None:
         """crop 子命令裁剪图片。"""
@@ -296,9 +310,9 @@ class TestImagetoolCommands:
         assert '"format"' in out
         assert '"width"' in out
 
-    def test_image_exif_hide_only(self, sample_image: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """exif 子命令 --hide 不打印且不修改时不输出保存提示。"""
-        code = run_tool("imagetool", ["e", str(sample_image), "--hide"])
+    def test_image_exif_no_show(self, sample_image: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """exif 子命令 --no-show 不打印且不修改时不输出保存提示。"""
+        code = run_tool("imagetool", ["e", str(sample_image), "--no-show"])
         assert code == 0
         out = capsys.readouterr().out
         # 无修改时不应保存
@@ -317,7 +331,7 @@ class TestImagetoolCommands:
         out = tmp_path / "exif.jpg"
         code = run_tool(
             "imagetool",
-            ["e", str(sample_image), "--output-path", str(out), "--hide", "--set", "271=FCMD"],
+            ["e", str(sample_image), "--output-path", str(out), "--no-show", "--set", "271=FCMD"],
         )
         assert code == 0
         captured = capsys.readouterr().out
@@ -646,12 +660,12 @@ class TestEdgeCases:
         assert code == 0
         assert out.exists()
 
-    def test_image_resize_stretch_with_height_direct(self, sample_image: Path, tmp_path: Path) -> None:
-        """resize stretch 模式显式传 height（直接调用绕过 CLI int|None 限制）。"""
+    def test_image_resize_no_keep_ratio_with_height_direct(self, sample_image: Path, tmp_path: Path) -> None:
+        """resize 拉伸模式显式传 height（直接调用绕过 CLI int|None 限制）。"""
         from fcmd.cli.imagetool import image_resize
 
         out = tmp_path / "out.png"
-        image_resize(sample_image, out, width=30, height=20, stretch=True)
+        image_resize(sample_image, out, width=30, height=20, keep_ratio=False)
         assert out.exists()
 
     def test_image_histogram_grayscale(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -414,6 +414,44 @@ def _list_inner_type(annotation: Any) -> Any:
     return None
 
 
+def _unwrap_optional(annotation: Any) -> Any:
+    """从 ``X | None`` / ``Optional[X]`` 注解中提取非 None 类型 X。
+
+    Python 3.8 下 ``int | None`` 字符串注解无法被 ``eval`` 求值（PEP 604 需 3.10+），
+    本函数同时处理实际 typing 对象（``typing.Union[X, None]``）和字符串形式
+    （``"int | None"`` / ``"Optional[int]"``），提取其中的非 None 类型。
+
+    非 Optional 注解原样返回。
+    """
+    # 实际 typing 对象：typing.Union[X, None] 或 types.UnionType (3.10+)
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union:
+        args = [a for a in typing.get_args(annotation) if a is not type(None)]
+        if len(args) == 1:
+            return args[0]
+        return annotation
+    # 字符串注解
+    if isinstance(annotation, str):
+        ann = annotation.strip()
+        # "Optional[X]"
+        if ann.startswith("Optional[") and ann.endswith("]"):
+            inner = ann[len("Optional[") : -1].strip()
+            return _annotation_str_to_type(inner)
+        # "X | None" / "None | X" / "X | None | Y" (多参数不处理)
+        if "|" in ann:
+            parts = [p.strip() for p in ann.split("|")]
+            non_none = [p for p in parts if p != "None"]
+            if len(non_none) == 1:
+                return _annotation_str_to_type(non_none[0])
+    return annotation
+
+
+def _annotation_str_to_type(ann_str: str) -> Any:
+    """将基本类型名字符串映射到实际类型对象，未识别的返回原字符串。"""
+    type_map = {"int": int, "float": float, "str": str, "bool": bool, "Path": Path, "pathlib.Path": Path}
+    return type_map.get(ann_str, ann_str)
+
+
 def _is_literal_annotation(annotation: Any) -> bool:
     """判断注解是否为 ``Literal[X, Y, ...]`` 类型。"""
     origin = getattr(annotation, "__origin__", None)
@@ -434,15 +472,25 @@ def _add_optional_arg(
     """添加 --name 选项（有默认值的参数）。
 
     支持的注解类型：
-    - ``bool``（默认 ``False``）→ ``store_true``
+    - ``bool``（默认 ``False``）→ ``--name`` store_true 启用
+    - ``bool``（默认 ``True``）→ ``--no-name`` store_false 关闭
     - ``int`` / ``float`` / ``str`` / ``Path`` → 对应 ``type``
+    - ``X | None`` / ``Optional[X]`` → 自动解包为 ``X``
     - ``Literal[X, Y, ...]`` → ``choices``（argparse 自动校验取值）
     - ``list[X]`` / ``List[X]`` → ``nargs="*"`` + 对应 ``type``
     """
-    cli_name = f"--{pname.replace('_', '-')}"
-    if annotation is bool or (isinstance(default, bool) and default is False):
-        parser.add_argument(cli_name, action="store_true", default=False, help=pname)
+    annotation = _unwrap_optional(annotation)
+    if annotation is bool or (isinstance(default, bool) and default is True):
+        if isinstance(default, bool) and default is True:
+            cli_name = f"--no-{pname.replace('_', '-')}"
+            # dest=pname 保留原参数名：argparse 默认会把 --no-keep-ratio 映射到
+            # no_keep_ratio 属性，导致函数调用时找不到 keep_ratio 形参。
+            parser.add_argument(cli_name, dest=pname, action="store_false", default=True, help=f"关闭 {pname}")
+        else:
+            cli_name = f"--{pname.replace('_', '-')}"
+            parser.add_argument(cli_name, action="store_true", default=False, help=pname)
         return
+    cli_name = f"--{pname.replace('_', '-')}"
     kwargs: dict[str, Any] = {"default": default, "help": pname}
     if annotation in (int, float, str):
         kwargs["type"] = annotation
@@ -474,9 +522,11 @@ def _add_positional_arg(
 
     支持的注解类型：
     - ``int`` / ``float`` / ``str`` / ``Path`` → 对应 ``type``
+    - ``X | None`` / ``Optional[X]`` → 自动解包为 ``X``
     - ``Literal[X, Y, ...]`` → ``choices``
     - ``list[X]`` / ``List[X]`` → ``nargs="+"`` + 对应 ``type``
     """
+    annotation = _unwrap_optional(annotation)
     if _is_list_annotation(annotation):
         inner = _list_inner_type(annotation)
         kwargs: dict[str, Any] = {"nargs": "+", "help": pname}
@@ -507,7 +557,9 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
     函数签名映射规则：
     - 有默认值 → ``--name`` 选项
     - 无默认值 → positional 参数
-    - ``bool`` 且默认 ``False`` → ``store_true``
+    - ``bool`` 且默认 ``False`` → ``--name`` store_true 启用
+    - ``bool`` 且默认 ``True`` → ``--no-name`` store_false 关闭
+    - ``X | None`` / ``Optional[X]`` → 自动解包为 ``X``
     - ``list[X]`` / ``List[X]`` → ``nargs="+"`` (positional) 或 ``nargs="*"`` (optional)
     - ``int`` / ``float`` / ``str`` / ``Path`` → 对应 ``type``
     - ``Literal[X, Y, ...]`` → ``choices``（argparse 自动校验取值）

@@ -15,6 +15,7 @@ from fcmd.apis.toolkit import (
     ToolSpec,
     _add_optional_arg,
     _add_positional_arg,
+    _annotation_str_to_type,
     _build_task_spec,
     _collect_with_deps,
     _has_function_logic,
@@ -24,6 +25,7 @@ from fcmd.apis.toolkit import (
     _list_inner_type,
     _literal_choices,
     _resolve_hints,
+    _unwrap_optional,
     build_tool_graph,
     clear_tool_registry,
     get_tool,
@@ -659,6 +661,93 @@ def test_build_parser_bool_store_true() -> None:
     assert args_off.verbose is False
     args_on = parser.parse_args(["--verbose"])
     assert args_on.verbose is True
+
+
+def test_build_parser_bool_default_true_store_false() -> None:
+    """bool 默认 True 时通过 --no-name store_false 关闭。"""
+
+    @tool("demo", subcommand="a")
+    def a(keep: bool = True) -> None:
+        pass
+
+    from fcmd.apis.toolkit import _build_parser_for_tool
+
+    parser = _build_parser_for_tool(get_tool("demo", "a"))
+    # 默认 True
+    args_default = parser.parse_args([])
+    assert args_default.keep is True
+    # --no-keep 关闭
+    args_off = parser.parse_args(["--no-keep"])
+    assert args_off.keep is False
+
+
+def test_unwrap_optional_typing_union() -> None:
+    """typing.Union[X, None] 解包为 X。"""
+    from typing import Optional, Union
+
+    assert _unwrap_optional(Union[int, None]) is int
+    assert _unwrap_optional(Optional[str]) is str
+    # Union[X, Y, None] 多参数不处理
+    multi = _unwrap_optional(Union[int, str, None])
+    assert multi is Union[int, str, None]
+
+
+def test_unwrap_optional_str_pep604() -> None:
+    """字符串注解 'X | None' / 'None | X' 解包为对应类型。"""
+    assert _unwrap_optional("int | None") is int
+    assert _unwrap_optional("None | int") is int
+    assert _unwrap_optional("str | None") is str
+    assert _unwrap_optional("Path | None") is Path
+
+
+def test_unwrap_optional_str_optional_form() -> None:
+    """字符串注解 'Optional[X]' 解包为对应类型。"""
+    assert _unwrap_optional("Optional[int]") is int
+    assert _unwrap_optional("Optional[Path]") is Path
+    assert _unwrap_optional("Optional[ Unknown ]") == "Unknown"
+
+
+def test_unwrap_optional_non_optional_passthrough() -> None:
+    """非 Optional 注解原样返回。"""
+    assert _unwrap_optional(int) is int
+    assert _unwrap_optional("int") == "int"
+    assert _unwrap_optional("list[str]") == "list[str]"
+    # 多参数字符串 'X | Y' 不处理（无 None）
+    assert _unwrap_optional("int | str") == "int | str"
+
+
+def test_annotation_str_to_type_mapping() -> None:
+    """基本类型名字符串映射到实际类型。"""
+    assert _annotation_str_to_type("int") is int
+    assert _annotation_str_to_type("float") is float
+    assert _annotation_str_to_type("str") is str
+    assert _annotation_str_to_type("bool") is bool
+    assert _annotation_str_to_type("Path") is Path
+    assert _annotation_str_to_type("pathlib.Path") is Path
+    # 未识别返回原字符串
+    assert _annotation_str_to_type("Unknown") == "Unknown"
+
+
+def test_build_parser_optional_int_none_via_cli() -> None:
+    """int | None 默认值通过 CLI 自动解包为 int 类型。
+
+    回归测试：Python 3.8 下 'int | None' 字符串注解无法被 get_type_hints 求值，
+    之前 --height 传入的 '20' 会保持为字符串；现在通过 _unwrap_optional 自动解包为 int。
+    """
+
+    @tool("demo", subcommand="a")
+    def a(input_path: Path, width: int, height: int | None = None) -> None:
+        pass
+
+    from fcmd.apis.toolkit import _build_parser_for_tool
+
+    parser = _build_parser_for_tool(get_tool("demo", "a"))
+    args = parser.parse_args([str(Path("/tmp/x")), "30", "--height", "20"])
+    assert args.height == 20
+    assert isinstance(args.height, int)
+    # 不传 --height 时为 None
+    args_default = parser.parse_args([str(Path("/tmp/x")), "30"])
+    assert args_default.height is None
 
 
 def test_build_parser_optional_list_nargs_star() -> None:
