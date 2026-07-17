@@ -997,3 +997,230 @@ jobs:
         assert app.run() == 1
         out = capsys.readouterr().out
         assert "执行失败" in out
+
+
+class TestBuiltinEnv:
+    """``fcmd env`` 内建命令测试。"""
+
+    def test_env_runs_returns_0(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd env 返回 0 并输出环境信息标题。"""
+        app = FcmdApp(["env"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "环境信息" in out
+
+    def test_env_shows_fcmd_version(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含 fcmd 版本。"""
+        app = FcmdApp(["env"])
+        app.run()
+        out = capsys.readouterr().out
+        from fcmd import __version__
+
+        assert __version__ in out
+
+    def test_env_shows_python_version(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含 Python 版本。"""
+        app = FcmdApp(["env"])
+        app.run()
+        out = capsys.readouterr().out
+        import sys
+
+        assert f"{sys.version_info.major}.{sys.version_info.minor}" in out
+
+    def test_env_shows_optional_deps(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含可选依赖状态表格。"""
+        app = FcmdApp(["env"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "可选依赖" in out
+        assert "PIL" in out or "fitz" in out  # 至少出现一个可选依赖包名
+
+    def test_env_json_output(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd env --json 输出有效 JSON，含必要字段。"""
+        import json as json_mod
+
+        app = FcmdApp(["env", "--json"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        data = json_mod.loads(out)
+        assert "fcmd_version" in data
+        assert "python_version" in data
+        assert "platform" in data
+        assert "tool_count" in data
+        assert "subcommand_total" in data
+        assert "optional_deps" in data
+        assert isinstance(data["optional_deps"], list)
+
+    def test_env_routes_through_run_builtin(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd env 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""
+        app = FcmdApp(["env"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "环境信息" in out
+
+    def test_env_shows_tool_count(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含已注册工具数。"""
+        app = FcmdApp(["env"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "已注册工具数" in out
+        assert "已注册子命令" in out
+
+    def test_env_optional_deps_table_renders(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """可选依赖表格渲染（覆盖 rich Table 分支）。"""
+        app = FcmdApp(["env"])
+        app.run()
+        out = capsys.readouterr().out
+        # 表格至少包含 extra / 包名 / 状态 / 版本 四列标题
+        assert "extra" in out
+        assert "状态" in out
+
+    def test_env_empty_optional_deps(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """可选依赖为空时打印 (无)（覆盖空列表分支）。"""
+
+        def fake_deps(_self: object) -> list[dict[str, object]]:
+            return []
+
+        monkeypatch.setattr(FcmdApp, "_collect_optional_deps_status", fake_deps)
+        app = FcmdApp(["env"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "(无)" in out
+
+
+class TestBuiltinDoctor:
+    """``fcmd doctor`` 内建命令测试。"""
+
+    def test_doctor_runs_returns_int(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd doctor 返回 0（全通过）或 1（有失败），不抛异常。"""
+        app = FcmdApp(["doctor"])
+        code = app.run()
+        assert code in (0, 1)
+        out = capsys.readouterr().out
+        assert "环境诊断" in out
+
+    def test_doctor_checks_python_version(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含 Python 版本检查项。"""
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "Python 版本" in out
+
+    def test_doctor_checks_fcmd_core(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含 fcmd 核心导入检查项。"""
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "fcmd 核心导入" in out
+
+    def test_doctor_checks_tool_modules(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含工具模块扫描检查项。"""
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "工具模块扫描" in out
+
+    def test_doctor_checks_optional_deps(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含可选依赖检查项。"""
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "可选依赖" in out
+
+    def test_doctor_checks_path_commands(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含 PATH 命令检查项。"""
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "PATH:" in out
+
+    def test_doctor_shows_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出包含诊断结果汇总。"""
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "诊断结果" in out
+
+    def test_doctor_all_pass_returns_0(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """所有检查通过时返回 0（mock 可选依赖全装、PATH 命令全找到）。"""
+
+        # 让 _collect_optional_deps_status 返回全部已安装
+        def fake_deps(self_app: object) -> list[dict[str, object]]:
+            return [
+                {"extra": "img", "package": "PIL", "installed": True, "version": "10.0"},
+                {"extra": "pdf", "package": "fitz", "installed": True, "version": "1.0"},
+                {"extra": "pdf", "package": "pypdf", "installed": True, "version": "1.0"},
+                {"extra": "ocr", "package": "pytesseract", "installed": True, "version": "1.0"},
+            ]
+
+        monkeypatch.setattr(FcmdApp, "_collect_optional_deps_status", fake_deps)
+        # 让 shutil.which 全部返回非 None
+        monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")
+
+        app = FcmdApp(["doctor"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "全部通过" in out
+
+    def test_doctor_failed_check_returns_1(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """有检查失败时返回 1（mock shutil.which 返回 None 触发 PATH FAIL）。"""
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        app = FcmdApp(["doctor"])
+        assert app.run() == 1
+        out = capsys.readouterr().out
+        assert "项失败" in out
+
+    def test_doctor_fail_shows_fix_hint(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """FAIL 项输出修复建议。"""
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        app = FcmdApp(["doctor"])
+        app.run()
+        out = capsys.readouterr().out
+        assert "修复:" in out
+
+    def test_doctor_routes_through_run_builtin(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd doctor 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""
+        app = FcmdApp(["doctor"])
+        code = app.run()
+        assert code in (0, 1)
+        out = capsys.readouterr().out
+        assert "环境诊断" in out
+
+    def test_doctor_tool_module_failure_counted(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """工具模块导入失败时计入失败项。"""
+        # 注入一个不存在的模块路径触发 ImportError
+        from fcmd.cli import main as main_mod
+
+        original_modules = main_mod._TOOL_MODULES.copy()
+        main_mod._TOOL_MODULES["__fake_broken__"] = "fcmd.cli.__nonexistent_module__"
+        try:
+            app = FcmdApp(["doctor"])
+            code = app.run()
+            out = capsys.readouterr().out
+            assert "__fake_broken__" in out
+            assert code == 1
+        finally:
+            main_mod._TOOL_MODULES.clear()
+            main_mod._TOOL_MODULES.update(original_modules)

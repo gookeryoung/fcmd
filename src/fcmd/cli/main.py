@@ -27,6 +27,7 @@ import importlib
 import pkgutil
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 from fcmd import __version__
@@ -47,7 +48,7 @@ _TOOL_MODULES: dict[str, str] = {}
 _TOOLS_DISCOVERED = False
 
 # 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
-_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml")
+_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor")
 
 
 def _ensure_tools_discovered() -> None:
@@ -129,7 +130,7 @@ class FcmdApp:
     # ------------------------------------------------------------------ #
     # 内建命令
     # ------------------------------------------------------------------ #
-    def _run_builtin(self, name: str, argv: list[str]) -> int:
+    def _run_builtin(self, name: str, argv: list[str]) -> int:  # noqa: PLR0911
         """分发内建命令。"""
         if name == "graph":
             return self._builtin_graph(argv)
@@ -139,6 +140,10 @@ class FcmdApp:
             return self._builtin_completion(argv)
         if name == "yaml":
             return self._builtin_yaml(argv)
+        if name == "env":
+            return self._builtin_env(argv)
+        if name == "doctor":
+            return self._builtin_doctor(argv)
         get_console().print(f"[red]错误:[/red] 未知内建命令 {name!r}")
         return 1
 
@@ -587,6 +592,237 @@ class FcmdApp:
         get_console().print("[red]YAML 任务图执行失败[/red]")
         return 1
 
+    def _builtin_env(self, argv: list[str]) -> int:
+        """``fcmd env``。
+
+        展示当前运行环境信息（只读，用于调试与问题排查）：
+
+        - fcmd 版本与安装路径
+        - Python 版本、平台、解释器路径
+        - 已注册工具数与子命令总数
+        - 可选依赖（img/pdf/ocr）的安装状态与版本
+        """
+        parser = argparse.ArgumentParser(
+            prog="fcmd env",
+            description="展示当前运行环境信息",
+        )
+        parser.add_argument("--json", action="store_true", help="以 JSON 格式输出")
+        # argv 非空但首参数为 --help 时 argparse 自动处理；空 argv 时打印信息（env 无必需参数）
+        parsed = parser.parse_args(argv) if argv else parser.parse_args([])
+
+        import platform
+        import sys as _sys
+
+        from fcmd import __version__ as fcmd_version
+
+        # 触发全部工具模块导入以统计准确数字
+        for _tool_name, module_path in list(_TOOL_MODULES.items()):
+            with contextlib.suppress(ImportError):
+                importlib.import_module(module_path)
+
+        tool_count = len(set(_TOOL_ALIASES.values()))
+        subcommand_total = sum(len(subs) for subs in _TOOL_REGISTRY.values())
+
+        optional_deps = self._collect_optional_deps_status()
+
+        fcmd_pkg_path = str(Path(__file__).parent.parent)
+        cli_pkg_path = str(Path(__file__).parent)
+
+        if parsed.json:
+            import json as json_mod
+
+            data = {
+                "fcmd_version": fcmd_version,
+                "fcmd_path": fcmd_pkg_path,
+                "cli_path": cli_pkg_path,
+                "python_version": _sys.version,
+                "python_executable": _sys.executable,
+                "platform": _sys.platform,
+                "platform_info": platform.platform(),
+                "tool_count": tool_count,
+                "subcommand_total": subcommand_total,
+                "optional_deps": optional_deps,
+            }
+            sys.stdout.write(json_mod.dumps(data, ensure_ascii=False, indent=2))
+            return 0
+
+        console = get_console()
+        console.print(f"[bold cyan]fcmd v{fcmd_version}[/bold cyan] 环境信息\n")
+
+        console.print("[bold]项目[/bold]")
+        console.print(f"  fcmd 版本     [cyan]{fcmd_version}[/cyan]")
+        console.print(f"  fcmd 路径     [dim]{fcmd_pkg_path}[/dim]")
+        console.print(f"  工具发现路径  [dim]{cli_pkg_path}[/dim]")
+
+        console.print("\n[bold]运行时[/bold]")
+        console.print(f"  Python 版本   [cyan]{_sys.version.split()[0]}[/cyan]")
+        console.print(f"  平台         [cyan]{_sys.platform}[/cyan]")
+        console.print(f"  平台信息     [dim]{platform.platform()}[/dim]")
+        console.print(f"  解释器       [dim]{_sys.executable}[/dim]")
+
+        console.print("\n[bold]工具[/bold]")
+        console.print(f"  已注册工具数  [cyan]{tool_count}[/cyan]")
+        console.print(f"  已注册子命令  [cyan]{subcommand_total}[/cyan]")
+
+        console.print("\n[bold]可选依赖[/bold]")
+        if not optional_deps:
+            console.print("  [dim](无)[/dim]")
+        else:
+            from rich.table import Table
+
+            table = Table(show_header=True, header_style="bold", show_lines=False)
+            table.add_column("extra", style="cyan", no_wrap=True)
+            table.add_column("包名", no_wrap=True)
+            table.add_column("状态", justify="center", no_wrap=True)
+            table.add_column("版本")
+            for dep in optional_deps:
+                status_str = "[green]已安装[/green]" if dep["installed"] else "[red]未安装[/red]"
+                table.add_row(dep["extra"], dep["package"], status_str, dep.get("version", ""))
+            console.print(table)
+
+        console.print("\n[dim]提示: 运行 'fcmd doctor' 进行环境健康检查[/dim]")
+        return 0
+
+    def _builtin_doctor(self, argv: list[str]) -> int:
+        """``fcmd doctor``。
+
+        环境健康诊断（只读，输出 OK/FAIL 状态表格）：
+
+        - Python 版本 ≥ 3.8
+        - fcmd 核心模块导入正常
+        - 工具模块全部可正常导入（统计失败数）
+        - 可选依赖（img/pdf/ocr）状态
+        - PATH 中的常用外部命令（git/uv/python）可用性
+
+        退出码：全部通过返回 0，有失败项返回 1。
+        """
+        parser = argparse.ArgumentParser(
+            prog="fcmd doctor",
+            description="环境健康诊断",
+        )
+        parser.parse_args(argv) if argv else parser.parse_args([])
+
+        checks: list[dict[str, Any]] = []
+
+        # 1. Python 版本 ≥ 3.8
+        py_ok = sys.version_info >= (3, 8)
+        checks.append(
+            {
+                "item": "Python 版本 ≥ 3.8",
+                "ok": py_ok,
+                "detail": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                "fix": "升级 Python 至 3.8+" if not py_ok else "",
+            }
+        )
+
+        # 2. fcmd 核心模块导入
+        try:
+            import fcmd  # noqa: F401
+
+            core_ok = True
+            core_detail = ""
+        except ImportError as e:  # pragma: no cover - fcmd 已导入才能执行到此处，分支不可达
+            core_ok = False
+            core_detail = str(e)
+        checks.append(
+            {
+                "item": "fcmd 核心导入",
+                "ok": core_ok,
+                "detail": core_detail,
+                "fix": "重装 fcmd: pip install --force-reinstall fcmd" if not core_ok else "",
+            }
+        )
+
+        # 3. 工具模块全部可导入
+        _ensure_tools_discovered()
+        failed_tools: list[str] = []
+        for tool_name, module_path in list(_TOOL_MODULES.items()):
+            try:
+                importlib.import_module(module_path)
+            except ImportError:
+                failed_tools.append(tool_name)
+        tool_total = len(_TOOL_MODULES)
+        tool_ok = not failed_tools
+        checks.append(
+            {
+                "item": "工具模块扫描",
+                "ok": tool_ok,
+                "detail": f"{tool_total} 个工具" + (f"，失败: {', '.join(failed_tools)}" if failed_tools else ""),
+                "fix": "检查失败工具模块的依赖与语法" if failed_tools else "",
+            }
+        )
+
+        # 4. 可选依赖检查
+        optional_deps = self._collect_optional_deps_status()
+        for dep in optional_deps:
+            checks.append(
+                {
+                    "item": f"可选依赖 {dep['extra']} ({dep['package']})",
+                    "ok": dep["installed"],
+                    "detail": dep.get("version", "") or "未安装",
+                    "fix": f"pip install fcmd[{dep['extra']}]" if not dep["installed"] else "",
+                }
+            )
+
+        # 5. PATH 中的常用外部命令
+        import shutil
+
+        for cmd in ("git", "uv", "python", "pip"):
+            cmd_path = shutil.which(cmd)
+            checks.append(
+                {
+                    "item": f"PATH: {cmd}",
+                    "ok": cmd_path is not None,
+                    "detail": cmd_path or "未找到",
+                    "fix": f"安装 {cmd} 并加入 PATH" if cmd_path is None else "",
+                }
+            )
+
+        # 输出
+        from rich.table import Table
+
+        console = get_console()
+        console.print("[bold cyan]fcmd 环境诊断[/bold cyan]\n")
+        table = Table(show_header=True, header_style="bold", show_lines=False)
+        table.add_column("检查项", style="cyan", no_wrap=True)
+        table.add_column("状态", justify="center", no_wrap=True)
+        table.add_column("详情")
+        for c in checks:
+            status = "[green]OK[/green]" if c["ok"] else "[red]FAIL[/red]"
+            detail = c["detail"]
+            if not c["ok"] and c["fix"]:
+                detail = f"{detail}\n[dim]修复: {c['fix']}[/dim]"
+            table.add_row(c["item"], status, detail)
+        console.print(table)
+
+        passed = sum(1 for c in checks if c["ok"])
+        total = len(checks)
+        if passed == total:
+            console.print(f"\n[green]诊断结果: {passed}/{total} 全部通过[/green]")
+            return 0
+        console.print(f"\n[red]诊断结果: {passed}/{total} 通过，{total - passed} 项失败[/red]")
+        return 1
+
+    def _collect_optional_deps_status(self) -> list[dict[str, Any]]:
+        """收集可选依赖的安装状态与版本。
+
+        返回列表，每项包含 extra / package / installed / version（已安装时）。
+        """
+        deps: list[dict[str, Any]] = []
+        for extra, package in (
+            ("img", "PIL"),
+            ("pdf", "fitz"),
+            ("pdf", "pypdf"),
+            ("ocr", "pytesseract"),
+        ):
+            try:
+                mod = __import__(package)
+                version = getattr(mod, "__version__", "")
+                deps.append({"extra": extra, "package": package, "installed": True, "version": version})
+            except ImportError:
+                deps.append({"extra": extra, "package": package, "installed": False, "version": ""})
+        return deps
+
     def _list_tools(self) -> None:
         """rich 表格列出所有可用工具。"""
         from rich.panel import Panel
@@ -618,6 +854,8 @@ class FcmdApp:
         console.print("  [cyan]fcmd pymake tc[/cyan]           # 类型检查（聚合）")
         console.print("  [cyan]fcmd info pymake[/cyan]         # 查看 pymake 元信息")
         console.print("  [cyan]fcmd graph pymake tc[/cyan]     # 可视化 DAG（Mermaid）")
+        console.print("  [cyan]fcmd env[/cyan]                 # 查看环境信息")
+        console.print("  [cyan]fcmd doctor[/cyan]              # 环境健康诊断")
         console.print("  [cyan]fcmd --version[/cyan]           # 查看版本")
 
     def _aliases_for(self, canonical: str) -> list[str]:
