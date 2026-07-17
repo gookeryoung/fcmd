@@ -687,9 +687,9 @@ def test_unwrap_optional_typing_union() -> None:
 
     assert _unwrap_optional(Union[int, None]) is int
     assert _unwrap_optional(Optional[str]) is str
-    # Union[X, Y, None] 多参数不处理
+    # Union[X, Y, None] 多参数不处理（原样返回）
     multi = _unwrap_optional(Union[int, str, None])
-    assert multi is Union[int, str, None]
+    assert multi == Union[int, str, None]
 
 
 def test_unwrap_optional_str_pep604() -> None:
@@ -714,6 +714,16 @@ def test_unwrap_optional_non_optional_passthrough() -> None:
     assert _unwrap_optional("list[str]") == "list[str]"
     # 多参数字符串 'X | Y' 不处理（无 None）
     assert _unwrap_optional("int | str") == "int | str"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="PEP 604 X|Y 语法需 Python 3.10+")
+def test_unwrap_optional_pep604_union_type() -> None:
+    """Python 3.10+ 的 X | None（types.UnionType）解包为 X。"""
+    annotation = int | None  # type: ignore[operator]
+    assert _unwrap_optional(annotation) is int
+    # 多参数 X | Y | None 不处理
+    multi = _unwrap_optional(int | str | None)  # type: ignore[operator]
+    assert multi == int | str | None  # type: ignore[operator]
 
 
 def test_annotation_str_to_type_mapping() -> None:

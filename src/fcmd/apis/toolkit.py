@@ -44,6 +44,7 @@ import ast
 import enum
 import inspect
 import textwrap
+import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -425,7 +426,13 @@ def _unwrap_optional(annotation: Any) -> Any:
     """
     # 实际 typing 对象：typing.Union[X, None] 或 types.UnionType (3.10+)
     origin = typing.get_origin(annotation)
-    if origin is typing.Union:
+    # Python 3.10+ 的 X | None 是 types.UnionType（origin 为 types.UnionType）
+    # Python 3.8/3.9 的 Optional[X] 是 typing.Union（origin 为 typing.Union）
+    # 注意：origin 对字符串/普通类型返回 None，必须用 `is not None` 守卫，
+    # 否则 Python 3.8 下 `origin is getattr(types, "UnionType", None)` 退化为
+    # `None is None` → True，字符串注解会被误判为 Union 并原样返回。
+    union_type = getattr(types, "UnionType", None)
+    if origin is typing.Union or (union_type is not None and origin is union_type):
         args = [a for a in typing.get_args(annotation) if a is not type(None)]
         if len(args) == 1:
             return args[0]

@@ -538,6 +538,7 @@ class TestEnvdev:
     def test_install_docker_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """Linux 平台调用 apt install docker + usermod。"""
         monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("fcmd.cli.envdev.getpass.getuser", lambda: "testuser")
         calls: list[list[str]] = []
         monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
 
