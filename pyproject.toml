@@ -51,4 +51,4 @@ packages = ["src/fcmd"]
 "src/fcmd/py.typed" = "fcmd/py.typed"
 
 [dependency-groups]
-dev = ["fcmd[lint,test]"]
+dev = ["fcmd[lint,test,office]"]

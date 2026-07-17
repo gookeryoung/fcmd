@@ -48,7 +48,7 @@ _TOOL_MODULES: dict[str, str] = {}
 _TOOLS_DISCOVERED = False
 
 # 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
-_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor")
+_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor", "profiler")
 
 
 def _ensure_tools_discovered() -> None:
@@ -144,6 +144,8 @@ class FcmdApp:
             return self._builtin_env(argv)
         if name == "doctor":
             return self._builtin_doctor(argv)
+        if name == "profiler":
+            return self._builtin_profiler(argv)
         get_console().print(f"[red]错误:[/red] 未知内建命令 {name!r}")
         return 1
 
@@ -802,6 +804,219 @@ class FcmdApp:
             return 0
         console.print(f"\n[red]诊断结果: {passed}/{total} 通过，{total - passed} 项失败[/red]")
         return 1
+
+    # ------------------------------------------------------------------ #
+    # profiler 内建命令
+    # ------------------------------------------------------------------ #
+    def _builtin_profiler(self, argv: list[str]) -> int:
+        """``fcmd profiler <script.py> [args] [-E html|text] [-o FILE] [--no-browser]``。
+
+        分析包含 ``fx.run()`` 调用的 Python 脚本，生成工作流执行性能剖面报告。
+
+        工作原理：
+        1. 注入 hook 捕获 ``fcmd.run()`` 调用的 ``Graph`` 与 ``RunReport``
+        2. 用 ``runpy`` 以 ``__main__`` 身份执行目标脚本
+        3. 从捕获的 report + graph 构建 :class:`ProfileReport`，输出 HTML 或文本
+
+        示例::
+
+            fcmd profiler workflow.py              # 生成 HTML 并打开浏览器
+            fcmd profiler workflow.py -- t         # 传参 t 给脚本
+            fcmd profiler workflow.py -E text      # 输出纯文本到 stdout
+            fcmd profiler workflow.py -o rep.html  # 指定输出文件
+            fcmd profiler workflow.py --no-browser # 不打开浏览器
+        """
+        parser = argparse.ArgumentParser(
+            prog="fcmd profiler",
+            description="分析包含 fcmd.run() 调用的脚本，生成性能剖面报告",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog=(
+                "示例:\n"
+                "  fcmd profiler workflow.py              # 生成 HTML 并打开浏览器\n"
+                "  fcmd profiler workflow.py -- t         # 传参 t 给脚本\n"
+                "  fcmd profiler workflow.py -E text      # 输出纯文本到 stdout\n"
+                "  fcmd profiler workflow.py -o rep.html  # 指定输出文件\n"
+            ),
+        )
+        parser.add_argument("script", help="要分析的 Python 脚本路径")
+        parser.add_argument(
+            "-E",
+            "--export",
+            choices=("html", "text"),
+            default="html",
+            help="导出格式（默认 html）",
+        )
+        parser.add_argument("--no-browser", action="store_true", help="不自动打开浏览器（仅 HTML 有效）")
+        parser.add_argument("-o", "--output", help="输出文件路径（默认 <script>_profile.html）")
+
+        if not argv:
+            parser.print_help()
+            return 1
+
+        parsed, script_args = parser.parse_known_args(argv)
+        # ``--`` 之后的参数全部传给脚本（argparse 已消费 ``--``，此处显式重取确保正确）
+        if "--" in argv:
+            sep_idx = argv.index("--")
+            script_args = list(argv[sep_idx + 1 :])
+
+        script_path = Path(parsed.script).resolve()
+        if not script_path.is_file():
+            get_console().print(f"[red]错误:[/red] 脚本不存在: {script_path}")
+            return 2
+
+        # 注入 hook 捕获 run() 调用
+        captured = self._inject_run_hook()
+
+        get_console().print(f"[bold]正在分析:[/bold] {script_path}")
+        if script_args:
+            get_console().print(f"[dim]脚本参数:[/dim] {script_args}")
+        get_console().print("[dim]" + "-" * 60 + "[/dim]")
+
+        # 执行目标脚本
+        try:
+            self._run_target_script(script_path, script_args)
+        except SystemExit:
+            # 脚本调用了 sys.exit，属正常情况
+            pass
+        except Exception as e:
+            get_console().print(f"[yellow]警告:[/yellow] 脚本执行抛出异常: {e}")
+
+        # 还原 hook
+        captured["_restore"]()
+
+        report = captured.get("report")
+        graph = captured.get("graph")
+        if report is None or graph is None:
+            get_console().print("[red]错误:[/red] 未捕获到 fcmd.run() 调用，无法生成性能报告")
+            get_console().print("[dim]请确保脚本通过 fcmd.run() 执行任务流图[/dim]")
+            return 1
+
+        # 生成报告
+        from fcmd.profiling import ProfileReport
+
+        profile = ProfileReport.from_report(report, graph)
+        self._output_profile(
+            profile,
+            export=parsed.export,
+            output=parsed.output,
+            script_stem=script_path.stem,
+            no_browser=parsed.no_browser,
+        )
+        return 0
+
+    def _inject_run_hook(self) -> dict[str, Any]:
+        """注入 hook 捕获 ``fcmd.run()`` 调用。
+
+        同时 patch 三处引用：
+
+        * ``fcmd.executors.run`` —— 实际实现
+        * ``fcmd.run`` —— 顶层包导出的引用（用户脚本 ``fx.run()`` 常用入口）
+        * ``RunReport.__init__`` —— 捕获 ``run()`` 内部创建的 report 实例，
+          用于 ``run()`` 抛 ``TaskFailedError`` 时仍能拿到已填充的 report。
+
+        另外修复懒加载属性被 import 系统遮蔽的问题：当 ``from fcmd.task import X``
+        执行时，import 系统会把 ``fcmd.__dict__["task"]`` 设为 *module*（而非
+        ``__getattr__`` 应返回的 ``task`` 函数），导致脚本中 ``@fx.task`` 报
+        ``'module' object is not callable``。此处遍历 ``_LAZY_ATTRS``，将
+        ``__dict__`` 中为 module 的属性覆盖为正确的函数/类。
+
+        返回字典含 ``graph`` / ``report``（执行后填充）与 ``_restore`` 还原函数。
+        """
+        import types
+
+        import fcmd as fcmd_mod
+        from fcmd import executors as executors_mod
+        from fcmd.report import RunReport
+
+        # 修复懒加载属性被 import 系统遮蔽：将 __dict__ 中为 module 的属性
+        # 覆盖为 _LAZY_ATTRS 指定的函数/类。此修复不需要还原（修复的是
+        # Python import 系统的副作用，还原反而会重新引入 bug）。
+        lazy_attrs = getattr(fcmd_mod, "_LAZY_ATTRS", {})
+        for attr_name, (module_path, symbol_name) in lazy_attrs.items():
+            current = fcmd_mod.__dict__.get(attr_name)
+            if isinstance(current, types.ModuleType):
+                module = importlib.import_module(module_path)
+                fcmd_mod.__dict__[attr_name] = getattr(module, symbol_name)
+
+        captured: dict[str, Any] = {}
+        original_exec_run = executors_mod.run
+        has_top_run = "run" in fcmd_mod.__dict__
+        original_top_run = fcmd_mod.__dict__.get("run")
+        original_report_init = RunReport.__init__
+        capture_enabled = [False]
+
+        def patched_report_init(self_obj: RunReport, *args: Any, **kwargs: Any) -> None:
+            original_report_init(self_obj, *args, **kwargs)
+            if capture_enabled[0]:
+                captured["report"] = self_obj
+
+        RunReport.__init__ = patched_report_init  # type: ignore[assignment]
+
+        def patched_run(graph: Any, *args: Any, **kwargs: Any) -> Any:
+            captured["graph"] = graph
+            capture_enabled[0] = True
+            try:
+                report = original_exec_run(graph, *args, **kwargs)
+                captured["report"] = report
+                return report
+            finally:
+                capture_enabled[0] = False
+
+        executors_mod.run = patched_run  # type: ignore[assignment]
+        fcmd_mod.run = patched_run  # pyrefly: ignore [missing-attribute]
+
+        def _restore() -> None:
+            executors_mod.run = original_exec_run  # type: ignore[assignment]
+            if has_top_run:
+                fcmd_mod.run = original_top_run  # type: ignore[assignment]
+            else:
+                del fcmd_mod.__dict__["run"]
+            RunReport.__init__ = original_report_init  # type: ignore[assignment]
+
+        captured["_restore"] = _restore
+        return captured
+
+    @staticmethod
+    def _run_target_script(script: Path, script_args: list[str]) -> None:
+        """以 ``__main__`` 身份执行目标脚本。"""
+        import runpy
+
+        sys.argv = [str(script), *script_args]
+        script_dir = str(script.parent.resolve())
+        if script_dir not in sys.path:
+            sys.path.insert(0, script_dir)
+        runpy.run_path(str(script), run_name="__main__")
+
+    @staticmethod
+    def _output_profile(
+        profile: Any,
+        export: str,
+        output: str | None,
+        script_stem: str,
+        no_browser: bool,
+    ) -> None:
+        """输出性能报告到 stdout 或文件。"""
+        if export == "text":
+            sys.stdout.write(profile.describe())
+            sys.stdout.write("\n")
+            return
+
+        # HTML 格式
+        html = profile.to_html()
+        if output:
+            out_path = Path(output)
+        else:
+            out_path = Path.cwd() / f"{script_stem}_profile.html"
+        out_path.write_text(html, encoding="utf-8")
+        get_console().print(f"[green]HTML 报告已生成:[/green] {out_path}")
+
+        if not no_browser:
+            import webbrowser
+
+            try:
+                webbrowser.open(f"file:///{out_path.resolve().as_posix()}")
+            except Exception as e:
+                get_console().print(f"[yellow]警告:[/yellow] 无法打开浏览器: {e}")
 
     def _collect_optional_deps_status(self) -> list[dict[str, Any]]:
         """收集可选依赖的安装状态与版本。

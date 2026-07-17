@@ -510,7 +510,7 @@ test = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "fcmd", extra = ["lint", "test"] },
+    { name = "fcmd", extra = ["lint", "office", "test"] },
 ]
 
 [package.metadata]
@@ -538,7 +538,7 @@ requires-dist = [
 provides-extras = ["img", "pdf", "ocr", "office", "lint", "test", "dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "fcmd", extras = ["lint", "test"] }]
+dev = [{ name = "fcmd", extras = ["lint", "test", "office"] }]
 
 [[package]]
 name = "filelock"
