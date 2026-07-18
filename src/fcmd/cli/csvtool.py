@@ -1,6 +1,6 @@
 """csvtool - CSV 处理工具。
 
-基于标准库 ``csv``/``json`` 提供 CSV 文件预览、与 JSON 互转、按列筛选能力。
+基于标准库 ``csv``/``json`` 提供 CSV 文件预览、与 JSON 互转、按列筛选、多文件合并能力。
 
 示例
 ----
@@ -11,6 +11,8 @@
     fcmd csvtool to-json data.csv --indent 4      # 4 空格缩进
     fcmd csvtool from-json data.json --output out.csv
     fcmd csvtool select data.csv name age         # 按列筛选并重排
+    fcmd csvtool merge a.csv b.csv c.csv          # 多 CSV 合并（列并集）
+    fcmd csvtool merge a.csv b.csv --mode intersection --output out.csv
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ __all__ = [
     "csv_to_json",
     "format_table",
     "json_to_csv",
+    "merge_csvs",
     "read_csv",
     "select_columns",
     "write_csv",
@@ -195,6 +198,84 @@ def select_columns(rows: list[list[str]], header: list[str], columns: list[str])
     return (list(columns), new_rows)
 
 
+def _merge_headers_union(headers: list[list[str]]) -> list[str]:
+    """计算 union 模式的合并表头（保持首次出现顺序）。"""
+    merged: list[str] = []
+    seen: set[str] = set()
+    for h in headers:
+        for col in h:
+            if col not in seen:
+                seen.add(col)
+                merged.append(col)
+    return merged
+
+
+def _merge_headers_intersection(headers: list[list[str]]) -> list[str]:
+    """计算 intersection 模式的合并表头（按第一个 CSV 顺序，仅保留共有列）。"""
+    if not headers[0]:
+        return []
+    common: set[str] = set(headers[0])
+    for h in headers[1:]:
+        common &= set(h)
+    return [col for col in headers[0] if col in common]
+
+
+def merge_csvs(files: list[Path], mode: str = "union") -> tuple[list[str], list[list[str]]]:
+    """合并多个 CSV 文件。
+
+    ``union`` 模式取所有 CSV 列的并集（保持首次出现顺序），缺失列填空字符串；
+    ``intersection`` 模式取列交集（以第一个 CSV 的列顺序为准，仅保留所有 CSV 共有的列）。
+    两种模式均保留所有行（纵向拼接）。
+
+    Parameters
+    ----------
+    files:
+        CSV 文件路径列表（至少 2 个）
+    mode:
+        合并模式（``"union"`` 或 ``"intersection"``，默认 ``"union"``）
+
+    Returns
+    -------
+    tuple
+        ``(merged_header, merged_rows)``
+
+    Raises
+    ------
+    ValueError
+        ``files`` 少于 2 个，或 ``mode`` 无效
+    FileNotFoundError
+        任一文件不存在
+    """
+    if len(files) < 2:
+        raise ValueError("合并至少需要 2 个 CSV 文件")
+    if mode not in ("union", "intersection"):
+        raise ValueError(f"不支持的合并模式: {mode}（可选: union/intersection）")
+
+    # 读取所有 CSV（首行视为表头）
+    headers: list[list[str]] = []
+    all_rows: list[list[list[str]]] = []
+    for f in files:
+        header, rows = read_csv(f, has_header=True)
+        headers.append(header if header is not None else [])
+        all_rows.append(rows)
+
+    # 计算合并后的表头
+    if mode == "union":
+        merged_header = _merge_headers_union(headers)
+    else:  # intersection
+        merged_header = _merge_headers_intersection(headers)
+
+    # 重排每个 CSV 的行到 merged_header 顺序
+    merged_rows: list[list[str]] = []
+    for header, rows in zip(headers, all_rows):
+        index_map = {name: idx for idx, name in enumerate(header)}
+        indices: list[int | None] = [index_map.get(col) for col in merged_header]
+        for row in rows:
+            merged_rows.append([row[i] if i is not None and i < len(row) else "" for i in indices])
+
+    return (merged_header, merged_rows)
+
+
 def format_table(header: list[str] | None, rows: list[list[str]], max_width: int = _MAX_COL_WIDTH) -> str:
     """格式化为对齐的文本表格输出。
 
@@ -339,3 +420,32 @@ def csvtool_select(file: Path, columns: list[str], output: str = "") -> None:
         print(f"筛选完成: {file} -> {output}（{len(new_rows)} 行）")
     else:
         print(format_table(new_header, new_rows))
+
+
+@fcmd.tool("csvtool", subcommand="merge", help="合并多个 CSV")
+def csvtool_merge(files: list[Path], mode: str = "union", output: str = "") -> None:
+    """合并多个 CSV 文件。
+
+    ``union`` 模式取所有 CSV 列的并集，缺失列填空字符串；
+    ``intersection`` 模式取列交集，仅保留所有 CSV 共有的列。
+    两种模式均保留所有行（纵向拼接）。
+
+    Parameters
+    ----------
+    files:
+        CSV 文件路径列表（至少 2 个）
+    mode:
+        合并模式（``"union"`` 或 ``"intersection"``，默认 ``"union"``）
+    output:
+        输出 CSV 路径（默认: 打印到标准输出）
+    """
+    try:
+        header, rows = merge_csvs(files, mode=mode)
+    except (ValueError, FileNotFoundError) as e:
+        print(str(e))
+        return
+    if output:
+        write_csv(Path(output), rows, header=header)
+        print(f"合并完成: {len(files)} 个文件 -> {output}（{len(rows)} 行）")
+    else:
+        print(format_table(header, rows))

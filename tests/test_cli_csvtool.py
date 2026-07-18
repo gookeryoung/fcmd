@@ -1,10 +1,11 @@
 """csvtool 工具测试。
 
 验证 ``fcmd.cli.csvtool`` 模块：
-- 工具注册与四子命令结构（show/to-json/from-json/select）
+- 工具注册与五子命令结构（show/to-json/from-json/select/merge）
 - ``read_csv``/``write_csv`` 基础读写
 - ``csv_to_json``/``json_to_csv`` 双向转换
 - ``select_columns`` 列筛选与重排
+- ``merge_csvs`` 多文件合并（union/intersection）
 - ``format_table`` 表格对齐输出
 - CLI 子命令端到端
 """
@@ -21,6 +22,7 @@ from fcmd.cli.csvtool import (
     csv_to_json,
     format_table,
     json_to_csv,
+    merge_csvs,
     read_csv,
     select_columns,
     write_csv,
@@ -53,9 +55,9 @@ class TestRegistration:
         assert "csvtool" in list_tools()
 
     def test_subcommands(self) -> None:
-        """csvtool 有 show/to-json/from-json/select 四个子命令。"""
+        """csvtool 有 show/to-json/from-json/select/merge 五个子命令。"""
         subs = list_subcommands("csvtool")
-        assert set(subs) == {"show", "to-json", "from-json", "select"}
+        assert set(subs) == {"show", "to-json", "from-json", "select", "merge"}
 
 
 # ============================================================================ #
@@ -244,6 +246,142 @@ class TestSelectColumns:
 
 
 # ============================================================================ #
+# merge_csvs
+# ============================================================================ #
+class TestMergeCsvs:
+    """merge_csvs 多文件合并测试。"""
+
+    def test_union_basic(self, tmp_path: Path) -> None:
+        """union 模式：列并集，缺失填空。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "name,age\nAlice,30\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "name,city\nBob,LA\n")
+        header, rows = merge_csvs([a, b], mode="union")
+        assert header == ["name", "age", "city"]
+        assert rows == [["Alice", "30", ""], ["Bob", "", "LA"]]
+
+    def test_union_default_mode(self, tmp_path: Path) -> None:
+        """默认模式为 union。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x,y\n1,2\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "y,z\n3,4\n")
+        header, rows = merge_csvs([a, b])
+        assert header == ["x", "y", "z"]
+        assert rows == [["1", "2", ""], ["", "3", "4"]]
+
+    def test_union_preserves_first_occurrence_order(self, tmp_path: Path) -> None:
+        """union 保持列首次出现顺序。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "b,a\n2,1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "c,b\n3,2\n")
+        header, _ = merge_csvs([a, b], mode="union")
+        # 第一个 CSV 中 b 在 a 前，c 仅第二个 CSV 有
+        assert header == ["b", "a", "c"]
+
+    def test_intersection_basic(self, tmp_path: Path) -> None:
+        """intersection 模式：列交集，按第一个 CSV 顺序。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "name,age,city\nAlice,30,NYC\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "city,name,phone\nLA,Bob,123\n")
+        header, rows = merge_csvs([a, b], mode="intersection")
+        # 交集为 {name, city}，按第一个 CSV 顺序：name, city
+        assert header == ["name", "city"]
+        assert rows == [["Alice", "NYC"], ["Bob", "LA"]]
+
+    def test_intersection_no_common(self, tmp_path: Path) -> None:
+        """intersection 无公共列时表头为空。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "y\n2\n")
+        header, rows = merge_csvs([a, b], mode="intersection")
+        assert header == []
+        assert rows == [[], []]
+
+    def test_intersection_first_csv_empty(self, tmp_path: Path) -> None:
+        """intersection 第一个 CSV 为空文件时表头为空。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "")  # 空文件
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "x\n1\n")
+        header, rows = merge_csvs([a, b], mode="intersection")
+        assert header == []
+        # 第二个 CSV 的 1 行数据保留，但列被清空
+        assert rows == [[]]
+
+    def test_intersection_preserves_first_order(self, tmp_path: Path) -> None:
+        """intersection 顺序以第一个 CSV 为准。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "c,b,a\n3,2,1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "a,c\n1,3\n")
+        header, _ = merge_csvs([a, b], mode="intersection")
+        # 交集为 {c, a}（b 不在第二个 CSV 中），按第一个 CSV 顺序 c, a
+        assert header == ["c", "a"]
+
+    def test_too_few_files(self, tmp_path: Path) -> None:
+        """少于 2 个文件抛 ValueError。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        with pytest.raises(ValueError, match="合并至少需要 2 个 CSV 文件"):
+            merge_csvs([a])
+        with pytest.raises(ValueError, match="合并至少需要 2 个 CSV 文件"):
+            merge_csvs([])
+
+    def test_invalid_mode(self, tmp_path: Path) -> None:
+        """无效 mode 抛 ValueError。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "y\n2\n")
+        with pytest.raises(ValueError, match="不支持的合并模式"):
+            merge_csvs([a, b], mode="concat")
+
+    def test_nonexistent_file(self, tmp_path: Path) -> None:
+        """任一文件不存在抛 FileNotFoundError。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        with pytest.raises(FileNotFoundError, match="文件不存在"):
+            merge_csvs([a, tmp_path / "no.csv"])
+
+    def test_empty_csv(self, tmp_path: Path) -> None:
+        """空 CSV 处理：表头为空列表，行不参与。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "")  # 空文件
+        header, rows = merge_csvs([a, b], mode="union")
+        assert header == ["x"]
+        assert rows == [["1"]]
+
+    def test_ragged_row_padded(self, tmp_path: Path) -> None:
+        """行长不足补空字符串。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "a,b,c\n1,2,3\n1,2\n")  # 第二行只有 2 列
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "a,b,c\n4,5,6\n")
+        header, rows = merge_csvs([a, b], mode="union")
+        assert header == ["a", "b", "c"]
+        assert rows == [["1", "2", "3"], ["1", "2", ""], ["4", "5", "6"]]
+
+    def test_three_files_union(self, tmp_path: Path) -> None:
+        """三个文件 union 合并。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "a\n1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "b\n2\n")
+        c = tmp_path / "c.csv"
+        _write_csv_bytes(c, "c\n3\n")
+        header, rows = merge_csvs([a, b, c], mode="union")
+        assert header == ["a", "b", "c"]
+        assert rows == [["1", "", ""], ["", "2", ""], ["", "", "3"]]
+
+
+# ============================================================================ #
 # format_table
 # ============================================================================ #
 class TestFormatTable:
@@ -423,5 +561,65 @@ class TestCLISubcommands:
     def test_select_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """select 文件不存在提示。"""
         code = run_tool("csvtool", ["select", str(tmp_path / "no.csv"), "x"])
+        assert code == 0
+        assert "文件不存在" in capsys.readouterr().out
+
+    def test_merge_union_print(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """merge union 默认打印到标准输出。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "name,age\nAlice,30\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "name,city\nBob,LA\n")
+        code = run_tool("csvtool", ["merge", str(a), str(b)])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "name" in out
+        assert "Alice" in out
+        assert "Bob" in out
+        assert "LA" in out
+
+    def test_merge_intersection_print(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """merge --mode intersection 打印交集。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "name,age,city\nAlice,30,NYC\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "city,name\nLA,Bob\n")
+        code = run_tool("csvtool", ["merge", str(a), str(b), "--mode", "intersection"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "name" in out
+        assert "city" in out
+        # age 列被排除
+        assert "age" not in out
+        assert "30" not in out
+
+    def test_merge_to_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """merge --output 输出到文件。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        b = tmp_path / "b.csv"
+        _write_csv_bytes(b, "y\n2\n")
+        out_csv = tmp_path / "out.csv"
+        code = run_tool("csvtool", ["merge", str(a), str(b), "--output", str(out_csv)])
+        assert code == 0
+        text = out_csv.read_text(encoding="utf-8")
+        assert "x,y" in text
+        assert "1," in text
+        assert ",2" in text
+        assert "合并完成" in capsys.readouterr().out
+
+    def test_merge_too_few_files(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """merge 仅 1 个文件提示错误。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        code = run_tool("csvtool", ["merge", str(a)])
+        assert code == 0
+        assert "合并至少需要 2" in capsys.readouterr().out
+
+    def test_merge_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """merge 文件不存在提示。"""
+        a = tmp_path / "a.csv"
+        _write_csv_bytes(a, "x\n1\n")
+        code = run_tool("csvtool", ["merge", str(a), str(tmp_path / "no.csv")])
         assert code == 0
         assert "文件不存在" in capsys.readouterr().out
