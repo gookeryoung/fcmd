@@ -1,10 +1,11 @@
 """archivex 工具测试。
 
 验证 ``fcmd.cli.archivex`` 模块：
-- 工具注册与两子命令结构（extract/list）
+- 工具注册与三子命令结构（extract/list/create）
 - ``detect_format`` 格式检测（7 种格式 + 不支持）
 - ``extract_archive`` 解压（zip/tar/gz/bz2/xz 走 stdlib，7z/rar 走 mock）
 - ``list_archive`` 列出内容（同上）
+- ``create_archive`` 创建归档（zip/tar/gz/bz2/xz + 目录/文件模式 + 忽略规则）
 - CLI 子命令端到端（含 ``--output``、不存在文件、不支持格式）
 """
 
@@ -25,6 +26,7 @@ import pytest
 from fcmd.apis.toolkit import list_subcommands, run_tool
 from fcmd.cli.archivex import (
     _strip_compression_ext,
+    create_archive,
     detect_format,
     extract_archive,
     list_archive,
@@ -64,9 +66,9 @@ class TestRegistration:
         assert "archivex" in list_tools()
 
     def test_subcommands(self) -> None:
-        """archivex 有 extract/list 两个子命令。"""
+        """archivex 有 extract/list/create 三个子命令。"""
         subs = list_subcommands("archivex")
-        assert set(subs) == {"extract", "list"}
+        assert set(subs) == {"extract", "list", "create"}
 
 
 # ============================================================================ #
@@ -340,6 +342,260 @@ class TestListArchive:
 
 
 # ============================================================================ #
+# create_archive
+# ============================================================================ #
+class TestCreateArchive:
+    """create_archive 创建归档测试。"""
+
+    def test_create_zip_directory(self, tmp_path: Path) -> None:
+        """目录打包为 zip 并往返验证。"""
+        src = tmp_path / "src"
+        (src / "sub").mkdir(parents=True)
+        (src / "a.txt").write_text("hello", encoding="utf-8")
+        (src / "sub" / "b.txt").write_text("world", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        create_archive(src, output)
+        assert output.is_file()
+        # 往返验证：解压后内容一致
+        extract_dir = tmp_path / "extracted"
+        extract_archive(output, extract_dir)
+        assert (extract_dir / "a.txt").read_text(encoding="utf-8") == "hello"
+        assert (extract_dir / "sub" / "b.txt").read_text(encoding="utf-8") == "world"
+
+    def test_create_tar_gz_directory(self, tmp_path: Path) -> None:
+        """目录打包为 tar.gz 并往返验证。"""
+        src = tmp_path / "src"
+        (src / "sub").mkdir(parents=True)
+        (src / "a.txt").write_text("hello", encoding="utf-8")
+        (src / "sub" / "b.txt").write_text("world", encoding="utf-8")
+        output = tmp_path / "out.tar.gz"
+        create_archive(src, output)
+        assert output.is_file()
+        # tar 归档内文件名正确（POSIX 分隔符）
+        with tarfile.open(output, "r:gz") as tf:
+            names = tf.getnames()
+        assert "a.txt" in names
+        assert "sub/b.txt" in names
+
+    def test_create_tar_bz2_directory(self, tmp_path: Path) -> None:
+        """目录打包为 tar.bz2。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.tar.bz2"
+        create_archive(src, output)
+        assert output.is_file()
+        with tarfile.open(output, "r:bz2") as tf:
+            assert "a.txt" in tf.getnames()
+
+    def test_create_tar_xz_directory(self, tmp_path: Path) -> None:
+        """目录打包为 tar.xz。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.tar.xz"
+        create_archive(src, output)
+        assert output.is_file()
+        with tarfile.open(output, "r:xz") as tf:
+            assert "a.txt" in tf.getnames()
+
+    def test_create_tar_plain_directory(self, tmp_path: Path) -> None:
+        """目录打包为 .tar（无压缩）。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.tar"
+        create_archive(src, output)
+        assert output.is_file()
+        with tarfile.open(output, "r:") as tf:
+            assert "a.txt" in tf.getnames()
+
+    def test_create_tgz_short_ext(self, tmp_path: Path) -> None:
+        """`.tgz` 短扩展名等价于 `.tar.gz`。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.tgz"
+        create_archive(src, output)
+        with tarfile.open(output, "r:gz") as tf:
+            assert "a.txt" in tf.getnames()
+
+    def test_create_zip_single_file(self, tmp_path: Path) -> None:
+        """单文件打包为 zip。"""
+        src = tmp_path / "data.txt"
+        src.write_text("hello", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        create_archive(src, output)
+        with zipfile.ZipFile(output) as zf:
+            assert zf.namelist() == ["data.txt"]
+            assert zf.read("data.txt").decode("utf-8") == "hello"
+
+    def test_create_tar_single_file(self, tmp_path: Path) -> None:
+        """单文件打包为 tar.gz。"""
+        src = tmp_path / "data.txt"
+        src.write_text("hello", encoding="utf-8")
+        output = tmp_path / "out.tar.gz"
+        create_archive(src, output)
+        with tarfile.open(output, "r:gz") as tf:
+            assert tf.getnames() == ["data.txt"]
+
+    def test_create_gz_single_file(self, tmp_path: Path) -> None:
+        """单文件压缩为 .gz 并往返验证。"""
+        src = tmp_path / "data.txt"
+        src.write_text("hello", encoding="utf-8")
+        output = tmp_path / "data.txt.gz"
+        create_archive(src, output)
+        # 解压回原始内容
+        extract_dir = tmp_path / "extracted"
+        extract_archive(output, extract_dir)
+        assert (extract_dir / "data.txt").read_text(encoding="utf-8") == "hello"
+
+    def test_create_bz2_single_file(self, tmp_path: Path) -> None:
+        """单文件压缩为 .bz2。"""
+        src = tmp_path / "data.txt"
+        src.write_text("hello", encoding="utf-8")
+        output = tmp_path / "data.txt.bz2"
+        create_archive(src, output)
+        with bz2.open(output, "rb") as f:
+            assert f.read().decode("utf-8") == "hello"
+
+    def test_create_xz_single_file(self, tmp_path: Path) -> None:
+        """单文件压缩为 .xz。"""
+        src = tmp_path / "data.txt"
+        src.write_text("hello", encoding="utf-8")
+        output = tmp_path / "data.txt.xz"
+        create_archive(src, output)
+        with lzma.open(output, "rb") as f:
+            assert f.read().decode("utf-8") == "hello"
+
+    def test_create_directory_to_single_file_format_raises(self, tmp_path: Path) -> None:
+        """目录压缩为单文件格式（gz/bz2/xz）抛 ValueError。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        for ext in (".gz", ".bz2", ".xz"):
+            output = tmp_path / f"out{ext}"
+            with pytest.raises(ValueError, match="目录无法压缩为单文件格式"):
+                create_archive(src, output)
+
+    def test_create_7z_unsupported(self, tmp_path: Path) -> None:
+        """7z 格式不支持创建。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.7z"
+        with pytest.raises(ValueError, match="create 不支持格式 7z"):
+            create_archive(src, output)
+
+    def test_create_rar_unsupported(self, tmp_path: Path) -> None:
+        """rar 格式不支持创建。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.rar"
+        with pytest.raises(ValueError, match="create 不支持格式 rar"):
+            create_archive(src, output)
+
+    def test_create_unsupported_ext_raises(self, tmp_path: Path) -> None:
+        """不支持的扩展名抛 ValueError（detect_format）。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.xyz"
+        with pytest.raises(ValueError, match="不支持的归档格式"):
+            create_archive(src, output)
+
+    def test_create_source_not_found(self, tmp_path: Path) -> None:
+        """源不存在抛 FileNotFoundError。"""
+        output = tmp_path / "out.zip"
+        with pytest.raises(FileNotFoundError, match="源路径不存在"):
+            create_archive(tmp_path / "missing", output)
+
+    def test_create_creates_parent_dir(self, tmp_path: Path) -> None:
+        """输出路径的父目录不存在时自动创建。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "deep" / "nested" / "out.zip"
+        create_archive(src, output)
+        assert output.is_file()
+
+    def test_create_applies_ignore_dirs(self, tmp_path: Path) -> None:
+        """默认跳过 _common.IGNORE_DIRS 中的目录。"""
+        src = tmp_path / "src"
+        (src / ".git").mkdir(parents=True)
+        (src / "a.txt").write_text("keep", encoding="utf-8")
+        (src / ".git" / "config").write_text("skip", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        create_archive(src, output)
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+        assert "a.txt" in names
+        assert all(".git" not in n for n in names)
+
+    def test_create_applies_ignore_ext(self, tmp_path: Path) -> None:
+        """默认跳过 _common.IGNORE_EXT 中的扩展名（如 .pyc）。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("keep", encoding="utf-8")
+        (src / "b.pyc").write_bytes(b"\x00\x00pyc")
+        output = tmp_path / "out.zip"
+        create_archive(src, output)
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+        assert "a.txt" in names
+        assert "b.pyc" not in names
+
+    def test_create_applies_ignore_dirs_glob(self, tmp_path: Path) -> None:
+        """通配模式 ``*.egg-info`` 命中目录被跳过。"""
+        src = tmp_path / "src"
+        (src / "fcmd.egg-info").mkdir(parents=True)
+        (src / "a.txt").write_text("keep", encoding="utf-8")
+        (src / "fcmd.egg-info" / "PKG-INFO").write_text("skip", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        create_archive(src, output)
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+        assert "a.txt" in names
+        assert all("egg-info" not in n for n in names)
+
+    def test_create_custom_ignore_dirs(self, tmp_path: Path) -> None:
+        """自定义 ignore_dirs 集合。"""
+        src = tmp_path / "src"
+        (src / "skipme").mkdir(parents=True)
+        (src / "a.txt").write_text("keep", encoding="utf-8")
+        (src / "skipme" / "b.txt").write_text("skip", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        create_archive(src, output, ignore_dirs={"skipme"})
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+        assert "a.txt" in names
+        assert all("skipme" not in n for n in names)
+
+    def test_create_custom_ignore_ext(self, tmp_path: Path) -> None:
+        """自定义 ignore_ext 集合。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("keep", encoding="utf-8")
+        (src / "b.log").write_text("skip", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        create_archive(src, output, ignore_ext={".log"})
+        with zipfile.ZipFile(output) as zf:
+            names = zf.namelist()
+        assert "a.txt" in names
+        assert "b.log" not in names
+
+    def test_create_empty_directory_zip(self, tmp_path: Path) -> None:
+        """空目录打包为 zip（无文件）。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        output = tmp_path / "out.zip"
+        create_archive(src, output)
+        with zipfile.ZipFile(output) as zf:
+            assert zf.namelist() == []
+
+
+# ============================================================================ #
 # CLI 子命令端到端
 # ============================================================================ #
 class TestCLISubcommands:
@@ -433,3 +689,70 @@ class TestCLISubcommands:
         assert code == 0
         captured = capsys.readouterr()
         assert "（空归档）" in captured.out
+
+    def test_create_zip_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """create 子命令打包目录为 zip。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("hello", encoding="utf-8")
+        output = tmp_path / "out.zip"
+        code = run_tool("archivex", ["create", str(src), str(output)])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "创建完成" in captured.out
+        assert output.is_file()
+        with zipfile.ZipFile(output) as zf:
+            assert "a.txt" in zf.namelist()
+
+    def test_create_tar_gz_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """create 子命令打包目录为 tar.gz。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.tar.gz"
+        code = run_tool("archivex", ["create", str(src), str(output)])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "创建完成" in captured.out
+        assert output.is_file()
+
+    def test_create_gz_single_file_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """create 子命令压缩单文件为 .gz。"""
+        src = tmp_path / "data.txt"
+        src.write_text("hello", encoding="utf-8")
+        output = tmp_path / "data.txt.gz"
+        code = run_tool("archivex", ["create", str(src), str(output)])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "创建完成" in captured.out
+        assert output.is_file()
+
+    def test_create_source_not_found_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """create 源不存在时提示。"""
+        output = tmp_path / "out.zip"
+        code = run_tool("archivex", ["create", str(tmp_path / "missing"), str(output)])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "源路径不存在" in captured.out
+
+    def test_create_unsupported_format_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """create 不支持的格式时提示。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.7z"
+        code = run_tool("archivex", ["create", str(src), str(output)])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "create 不支持格式 7z" in captured.out
+
+    def test_create_directory_to_gz_cli(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """create 目录压缩为 .gz 时提示（需用 tar.gz）。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "a.txt").write_text("data", encoding="utf-8")
+        output = tmp_path / "out.gz"
+        code = run_tool("archivex", ["create", str(src), str(output)])
+        assert code == 0
+        captured = capsys.readouterr()
+        assert "目录无法压缩为单文件格式" in captured.out
