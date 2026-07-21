@@ -1,14 +1,18 @@
-"""P11 新工具测试：clr / packtool。
+"""packtool 工具测试。
 
-验证 ``fcmd.cli`` 包下 2 个参考 pyflowx 实现的工具：
-- ``clr``：跨平台清屏（单命令）
-- ``packtool``：Python 打包工具（src/deps/wheel/embed/zip/clean 子命令）
+验证 ``fcmd.cli.packtool`` 模块：
+- 工具注册
+- src 子命令（源码打包）
+- deps 子命令（依赖打包）
+- wheel 子命令（wheel 打包）
+- embed 子命令（嵌入式 Python 安装）
+- zip 子命令（zip 包打包）
+- clean 子命令（构建目录清理）
+- CLI 调度
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -16,10 +20,8 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.clr
 import fcmd.cli.packtool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.clr import clear_screen
 from fcmd.cli.packtool import (
     _normalize_arch,
     clean_build_dir,
@@ -54,95 +56,18 @@ def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) 
 # 注册验证
 # ============================================================================ #
 class TestToolsRegistration:
-    """2 个新工具的注册验证。"""
+    """packtool 工具的注册验证。"""
 
     def test_all_tools_registered(self) -> None:
-        """2 个新工具应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("clr", "packtool"):
+        """packtool 应在 _TOOL_REGISTRY 中注册。"""
+        for name in ("packtool",):
             assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
-
-    def test_clr_single_command(self) -> None:
-        """clr 是单命令工具。"""
-        assert fx.list_subcommands("clr") == []
 
     def test_packtool_subcommands(self) -> None:
         """packtool 应有 6 个子命令。"""
         subs = fx.list_subcommands("packtool")
         for name in ("src", "deps", "wheel", "embed", "zip", "clean"):
             assert name in subs, f"子命令 {name!r} 未注册"
-
-
-# ============================================================================ #
-# clr 测试
-# ============================================================================ #
-class TestClr:
-    """clr 工具测试。"""
-
-    def test_clear_screen_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Windows 下 clear_screen 调用 cls（shell=True）。"""
-        monkeypatch.setattr(sys, "platform", "win32")
-        captured: list[tuple[Any, dict[str, Any]]] = []
-
-        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            captured.append((cmd, kwargs))
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
-        result = clear_screen()
-        assert result == 0
-        # Windows 传字符串 cmd="cls" + shell=True
-        assert captured[0][0] == "cls"
-        assert captured[0][1].get("shell") is True
-
-    def test_clear_screen_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Linux 下 clear_screen 调用 clear（shell=False）。"""
-        monkeypatch.setattr(sys, "platform", "linux")
-        captured: list[tuple[Any, dict[str, Any]]] = []
-
-        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            captured.append((cmd, kwargs))
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
-        result = clear_screen()
-        assert result == 0
-        # Linux 传字符串 cmd="clear" + shell=False
-        assert captured[0][0] == "clear"
-        assert captured[0][1].get("shell") is False
-
-    def test_clear_screen_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """clear_screen 失败时返回非零退出码（不抛异常）。"""
-        monkeypatch.setattr(sys, "platform", "linux")
-
-        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(cmd, 1, "", "")
-
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
-        assert clear_screen() == 1
-
-    def test_clear_screen_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """clear_screen 命令未找到时抛 RuntimeError（含命令名）。"""
-        monkeypatch.setattr(sys, "platform", "linux")
-
-        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            raise FileNotFoundError(2, "系统找不到指定的文件。")
-
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
-        with pytest.raises(RuntimeError, match="清屏命令未找到: clear"):
-            clear_screen()
-
-    def test_clr_via_run_tool(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """fcmd clr 通过 run_tool 调用（fn 任务，mock subprocess.run）。"""
-
-        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(cmd, 0, "", "")
-
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
-        code = run_tool("clr", [])
-        assert code == 0
 
 
 # ============================================================================ #

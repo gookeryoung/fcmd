@@ -1,27 +1,22 @@
-"""P9 新工具测试：piptool / taskkill / folderback。
+"""piptool 工具测试。
 
-验证 ``fcmd.cli`` 包下 3 个参考 pyflowx 实现的工具：
-- ``piptool``：pip 包管理（i/u/r/d/up/f 子命令）
-- ``taskkill``：进程终止（单命令，跨平台）
-- ``folderback``：文件夹备份（单命令）
+验证 ``fcmd.cli.piptool`` 模块：
+- 工具注册
+- 辅助函数
+- 命令构造
+- CLI 调度
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
-import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import fcmd as fx
-import fcmd.cli.folderback
 import fcmd.cli.piptool
-import fcmd.cli.taskkill
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.folderback import backup_folder, remove_old_backups, zip_target
 from fcmd.cli.piptool import (
     _expand_wildcard_packages,
     _filter_protected_packages,
@@ -33,7 +28,6 @@ from fcmd.cli.piptool import (
     pip_uninstall,
     pip_upgrade,
 )
-from fcmd.cli.taskkill import kill_process, taskkill_run
 from fcmd.models import CommandResult
 
 
@@ -64,30 +58,15 @@ def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) 
     return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
 
-def _recording_subprocess_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``subprocess.run`` 函数。"""
-
-    def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(args[0])
-        return subprocess.CompletedProcess(args[0], 0, "", "")
-
-    return run
-
-
-def _subprocess_run_success(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    """总是返回成功结果的 fake ``subprocess.run`` 函数。"""
-    return subprocess.CompletedProcess(args[0], 0, "", "")
-
-
 # ============================================================================ #
 # 注册验证
 # ============================================================================ #
 class TestToolsRegistration:
-    """3 个新工具的注册验证。"""
+    """piptool 工具的注册验证。"""
 
     def test_all_tools_registered(self) -> None:
-        """3 个新工具应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("piptool", "taskkill", "folderback"):
+        """piptool 应在 _TOOL_REGISTRY 中注册。"""
+        for name in ("piptool",):
             assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
 
     def test_piptool_subcommands(self) -> None:
@@ -95,14 +74,6 @@ class TestToolsRegistration:
         subs = fx.list_subcommands("piptool")
         for name in ("i", "u", "r", "d", "up", "f"):
             assert name in subs, f"子命令 {name!r} 未注册"
-
-    def test_taskkill_single_command(self) -> None:
-        """taskkill 是单命令工具。"""
-        assert fx.list_subcommands("taskkill") == []
-
-    def test_folderback_single_command(self) -> None:
-        """folderback 是单命令工具。"""
-        assert fx.list_subcommands("folderback") == []
 
 
 # ============================================================================ #
@@ -363,197 +334,3 @@ class TestPiptoolRunTool:
         assert code == 0
         out = capsys.readouterr().out
         assert "升级完成" in out
-
-
-# ============================================================================ #
-# taskkill 测试
-# ============================================================================ #
-class TestTaskkill:
-    """taskkill 工具测试。"""
-
-    def test_kill_process_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """kill_process 返回 0 表示终止信号已发送。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _subprocess_run_success)
-        assert kill_process("chrome.exe") == 0
-
-    def test_kill_process_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """kill_process 返回 1 表示未找到匹配进程。"""
-
-        def run_not_found(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(args[0], 1, "", "")
-
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", run_not_found)
-        assert kill_process("nonexistent") == 1
-
-    def test_kill_process_windows_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Windows 下 kill_process 用 taskkill。"""
-        monkeypatch.setattr(sys, "platform", "win32")
-        captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
-        kill_process("chrome.exe")
-        assert captured[0][0] == "taskkill"
-        assert "/f" in captured[0]
-        assert "/im" in captured[0]
-        assert "chrome.exe*" in captured[0]
-
-    def test_kill_process_linux_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Linux 下 kill_process 用 pkill。"""
-        monkeypatch.setattr(sys, "platform", "linux")
-        captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
-        kill_process("python")
-        assert captured[0][0] == "pkill"
-        assert "-f" in captured[0]
-        assert "python*" in captured[0]
-
-    def test_taskkill_run_multiple(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """taskkill_run 批量终止进程。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.kill_process", lambda *_: 0)
-        taskkill_run(["chrome.exe", "python"])
-        out = capsys.readouterr().out
-        assert "chrome.exe" in out
-        assert "python" in out
-        assert "已发送终止信号" in out
-
-    def test_taskkill_run_not_found(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """taskkill_run 未找到进程时打印提示。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.kill_process", lambda *_: 1)
-        taskkill_run(["nonexistent"])
-        out = capsys.readouterr().out
-        assert "未找到匹配进程" in out
-
-    def test_taskkill_via_run_tool(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """fcmd taskkill <names> 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.kill_process", lambda *_: 0)
-        code = run_tool("taskkill", ["chrome.exe"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "chrome.exe" in out
-
-
-# ============================================================================ #
-# folderback 测试
-# ============================================================================ #
-class TestFolderback:
-    """folderback 工具测试。"""
-
-    def test_remove_old_backups_no_files(self, tmp_path: Path) -> None:
-        """remove_old_backups 无备份文件时不操作。"""
-        remove_old_backups("test", tmp_path, max_zip=3)
-        # 无异常即通过
-
-    def test_remove_old_backups_under_limit(self, tmp_path: Path) -> None:
-        """remove_old_backups 备份数不超过限制时不删除。"""
-        for i in range(3):
-            (tmp_path / f"test_2023010{i}_120000.zip").write_text("", encoding="utf-8")
-        remove_old_backups("test", tmp_path, max_zip=5)
-        zips = list(tmp_path.glob("*.zip"))
-        assert len(zips) == 3
-
-    def test_remove_old_backups_over_limit(self, tmp_path: Path) -> None:
-        """remove_old_backups 超出限制时删除最旧的。"""
-        for i in range(5):
-            (tmp_path / f"test_2023010{i}_120000.zip").write_text("", encoding="utf-8")
-        remove_old_backups("test", tmp_path, max_zip=2)
-        zips = sorted(tmp_path.glob("*.zip"))
-        assert len(zips) == 2
-        # 保留最新的两个（03 和 04）
-        names = [z.name for z in zips]
-        assert "test_20230103_120000.zip" in names
-        assert "test_20230104_120000.zip" in names
-
-    def test_zip_target_creates_zip(self, tmp_path: Path) -> None:
-        """zip_target 创建 zip 文件。"""
-        src = tmp_path / "project"
-        src.mkdir()
-        (src / "a.txt").write_text("hello", encoding="utf-8")
-        (src / "subdir").mkdir()
-        (src / "subdir" / "b.txt").write_text("world", encoding="utf-8")
-        dst = tmp_path / "backup"
-        dst.mkdir()
-
-        zip_target(src, dst, max_zip=5)
-
-        zips = list(dst.glob("*.zip"))
-        assert len(zips) == 1
-        # 验证 zip 内容
-        with zipfile.ZipFile(zips[0]) as zf:
-            names = zf.namelist()
-            assert any("a.txt" in n for n in names)
-            assert any("b.txt" in n for n in names)
-
-    def test_backup_folder_src_not_exist(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """backup_folder 源不存在时打印提示。"""
-        backup_folder(src=str(tmp_path / "nonexistent"), dst=str(tmp_path / "backup"))
-        out = capsys.readouterr().out
-        assert "不存在" in out
-
-    def test_backup_folder_creates_dst(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """backup_folder 自动创建目标目录。"""
-        src = tmp_path / "project"
-        src.mkdir()
-        (src / "a.txt").write_text("hello", encoding="utf-8")
-        dst = tmp_path / "backup"
-
-        backup_folder(src=str(src), dst=str(dst), max_zip=3)
-
-        out = capsys.readouterr().out
-        assert "创建目标文件夹" in out
-        assert "备份完成" in out
-        zips = list(dst.glob("*.zip"))
-        assert len(zips) == 1
-
-    def test_backup_folder_default_src(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """backup_folder 默认备份当前目录。"""
-        src = tmp_path / "project"
-        src.mkdir()
-        (src / "a.txt").write_text("hello", encoding="utf-8")
-        monkeypatch.chdir(src)
-        dst = tmp_path / "backup"
-
-        backup_folder(dst=str(dst), max_zip=3)
-
-        out = capsys.readouterr().out
-        assert "备份完成" in out
-
-    def test_backup_folder_via_run_tool(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """fcmd folderback 通过 run_tool 调用。"""
-        src = tmp_path / "project"
-        src.mkdir()
-        (src / "a.txt").write_text("hello", encoding="utf-8")
-        dst = tmp_path / "backup"
-
-        code = run_tool("folderback", ["--src", str(src), "--dst", str(dst), "--max-zip", "3"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "备份完成" in out

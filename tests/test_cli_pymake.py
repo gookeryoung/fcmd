@@ -1,4 +1,4 @@
-"""pymake 模块测试（@fx.tool 注册验证 + CLI 调度）。
+"""pymake 工具测试。
 
 验证 ``fcmd.cli.pymake`` 模块通过 ``@fx.tool`` 装饰器注册的子命令集合：
 - 单任务别名（b/sync/c/t/tf/lint/fmt/fmtc/bumpmi/bumpma/doc/tox）

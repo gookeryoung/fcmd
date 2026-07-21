@@ -1,11 +1,9 @@
-"""P22 迁移工具测试：dockercmd / lscalc.
+"""lscalc 工具测试。
 
-验证 ``fcmd.cli`` 包下 2 个参考 pyflowx 实现的工具：
-- ``dockercmd``：Docker 镜像仓库登录（login 子命令）
-- ``lscalc``：LS-DYNA 计算（run / mpi / status 子命令）
-
-外部命令（docker / ls-dyna_mpp / mpirun / tasklist / pgrep）通过
-``monkeypatch`` 替换 ``fcmd.cli.<tool>.run_command`` 为 stub，避免真实调用。
+验证 ``fcmd.cli.lscalc`` 模块：
+- 工具注册
+- run / mpi 子命令（命令构造 + 成功/失败分支）
+- status 子命令（Windows tasklist / POSIX pgrep 跨平台分支）
 """
 
 from __future__ import annotations
@@ -17,10 +15,8 @@ from typing import Callable
 import pytest
 
 import fcmd as fx
-import fcmd.cli.dockercmd  # 触发 @fx.tool 注册
 import fcmd.cli.lscalc
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.dockercmd import _DEFAULT_REGISTRY, docker_login
 from fcmd.cli.lscalc import (
     _DEFAULT_NCPU,
     check_ls_dyna_status,
@@ -65,17 +61,6 @@ def _stub_failure_with_stderr(
     return _stub
 
 
-def _stub_success_with_stdout(
-    stdout: str,
-) -> Callable[[list[str]], CommandResult]:
-    """构造带 stdout 的成功 stub。"""
-
-    def _stub(_cmd: list[str], **_kwargs: object) -> CommandResult:
-        return _make_result(returncode=0, stdout=stdout)
-
-    return _stub
-
-
 def _stub_returncode_with_stdout(
     returncode: int,
     stdout: str,
@@ -92,122 +77,17 @@ def _stub_returncode_with_stdout(
 # 注册验证
 # ---------------------------------------------------------------------- #
 class TestToolsRegistration:
-    """2 个新工具的注册验证。"""
+    """lscalc 注册验证。"""
 
     def test_all_tools_registered(self) -> None:
-        """dockercmd 与 lscalc 应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("dockercmd", "lscalc"):
-            assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
-
-    def test_dockercmd_subcommands(self) -> None:
-        """dockercmd 应有 login 子命令。"""
-        subs = fx.list_subcommands("dockercmd")
-        assert "login" in subs
+        """lscalc 应在 _TOOL_REGISTRY 中注册。"""
+        assert "lscalc" in _TOOL_REGISTRY
 
     def test_lscalc_subcommands(self) -> None:
         """lscalc 应有 run / mpi / status 子命令。"""
         subs = fx.list_subcommands("lscalc")
         for name in ("run", "mpi", "status"):
             assert name in subs, f"子命令 {name!r} 未注册"
-
-
-# ---------------------------------------------------------------------- #
-# dockercmd 工具测试
-# ---------------------------------------------------------------------- #
-class TestDockercmd:
-    """``dockercmd`` 工具测试。"""
-
-    def test_default_registry_is_tencent(self) -> None:
-        """_DEFAULT_REGISTRY 为腾讯云镜像仓库。"""
-        assert _DEFAULT_REGISTRY == "ccr.ccs.tencentyun.com"
-
-    def test_login_success_with_default_username(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """docker_login 默认使用当前系统用户名登录腾讯云。"""
-        captured: dict[str, list[str]] = {}
-
-        def fake_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-            captured["cmd"] = cmd
-            return _make_result(returncode=0)
-
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
-        docker_login()
-        out = capsys.readouterr().out
-        assert "已登录镜像仓库" in out
-        assert _DEFAULT_REGISTRY in out
-        # 默认 registry 是腾讯云
-        assert _DEFAULT_REGISTRY in captured["cmd"]
-        # 默认 username = getpass.getuser()，应出现在 --username 后
-        assert "--username" in captured["cmd"]
-        idx = captured["cmd"].index("--username")
-        assert captured["cmd"][idx + 1]  # 非空用户名
-
-    def test_login_with_custom_username(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """docker_login 接受自定义 username。"""
-        captured: dict[str, list[str]] = {}
-
-        def fake_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-            captured["cmd"] = cmd
-            return _make_result(returncode=0)
-
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
-        docker_login(username="admin")
-        out = capsys.readouterr().out
-        assert "admin" in out
-        idx = captured["cmd"].index("--username")
-        assert captured["cmd"][idx + 1] == "admin"
-
-    def test_login_with_custom_registry(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """docker_login 接受自定义 registry。"""
-        captured: dict[str, list[str]] = {}
-
-        def fake_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-            captured["cmd"] = cmd
-            return _make_result(returncode=0)
-
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
-        docker_login(username="admin", registry="registry.example.com")
-        out = capsys.readouterr().out
-        assert "registry.example.com" in out
-        assert "registry.example.com" in captured["cmd"]
-
-    def test_login_failure_prints_message(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """docker_login 失败时打印失败消息。"""
-
-        def fake_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-            return _make_result(returncode=1, stderr="Login Failed")
-
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
-        docker_login(username="admin")
-        out = capsys.readouterr().out
-        assert "登录失败" in out
-
-    def test_login_via_run_tool(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """fcmd dockercmd login 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", _stub_success)
-        code = run_tool("dockercmd", ["login", "--username", "admin"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "已登录" in out
 
 
 # ---------------------------------------------------------------------- #
