@@ -84,5 +84,10 @@ packages = ["src/fcmd"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/fcmd/py.typed" = "fcmd/py.typed"
 
+# fspack 打包入口：fcmd 为 src layout，detect_entry 只扫顶层 *.py 无法识别，
+# 需显式声明入口脚本（相对项目目录）。主入口 fcmd 统一路由所有子工具。
+[tool.fspack.entries]
+fcmd = "src/fcmd/cli/main.py"
+
 [dependency-groups]
 dev = ["fcmd[lint,test,office]"]
