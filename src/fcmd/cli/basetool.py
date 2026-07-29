@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import html as html_lib
 import urllib.parse
 
@@ -75,7 +76,7 @@ def base64_decode(text: str) -> str:
     """
     try:
         return base64.b64decode(text, validate=True).decode("utf-8")
-    except Exception as exc:
+    except (binascii.Error, UnicodeDecodeError) as exc:
         raise ValueError(f"Base64 解码失败: {exc}") from exc
 
 
@@ -117,7 +118,7 @@ def url_decode(text: str) -> str:
     """
     try:
         return urllib.parse.unquote(text, errors="strict")
-    except Exception as exc:
+    except UnicodeDecodeError as exc:
         raise ValueError(f"URL 解码失败: {exc}") from exc
 
 
