@@ -85,7 +85,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-24 个工具模块，按用途分组：
+54 个工具模块，按用途分组：
 
 ### 项目构建与发布
 
@@ -104,9 +104,44 @@ fcmd completion --shell fish | source         # fish
 | `writefile` | - | 写入文本内容到文件 |
 | `filedate` | - | 文件日期前缀处理（添加/清除） |
 | `filelevel` | - | 文件等级标记重命名（PUB/NOR/INT/CON/CLA） |
+| `filerename` | - | 文件批量重命名（前缀/后缀/序号/替换） |
+| `filesearch` | - | 文件名/内容搜索（支持正则与通配符） |
 | `folderback` | - | 文件夹备份（自动清理旧备份） |
 | `folderzip` | - | 压缩当前目录下所有子文件夹 |
 | `hashfile` | - | 文件哈希计算（md5/sha256/sha1，支持目录批量） |
+| `pathtool` | - | 路径处理（拆分/拼接/规范化/相对路径） |
+| `archivex` | - | 归档解压（zip/tar/gz/bz2，跨平台） |
+| `zipencrypt` | - | ZIP 加密（AES/ZipCrypto，批量） |
+
+### 文本与编码
+
+| 工具 | 别名 | 说明 |
+|------|------|------|
+| `txttool` | - | 文本处理（大小写/去重/排序/统计/截断） |
+| `asciitool` | - | ASCII 码表（char/code/table） |
+| `basetool` | - | 编码解码（Base64/URL/HTML/Hex） |
+| `casetool` | - | 命名风格转换（camel/snake/kebab/pascal） |
+| `colortool` | - | 颜色换算（RGB/HEX/HSL/HSV） |
+| `convtool` | - | 单位换算（长度/重量/温度/面积等） |
+| `csvtool` | - | CSV 处理（pretty/extract/filter/sort） |
+| `hashtool` | - | 字符串哈希（md5/sha1/sha256/sha512） |
+| `idtool` | - | ID 生成（UUID/雪花/时间戳） |
+| `jsontool` | - | JSON 处理（pretty/get/keys/validate） |
+| `mathtool` | - | 数学计算（eval/sqrt/pow/factorial） |
+| `padtool` | - | 文本对齐（left/right/center/justify） |
+| `randtool` | - | 随机生成（数字/字符串/选择/洗牌） |
+| `regextool` | - | 正则表达式（match/find/replace/split） |
+| `stattool` | - | 统计工具（mean/median/variance/quantile） |
+| `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
+| `timetool` | - | 时间工具（convert/format/timezone） |
+| `urltool` | - | URL 解析（编码/解码/拆分/拼接） |
+
+### 数据格式
+
+| 工具 | 别名 | 说明 |
+|------|------|------|
+| `xmltool` | - | XML 处理（pretty/get/keys/validate） |
+| `yamtool` | - | YAML 处理（pretty/get/keys/validate） |
 
 ### 多媒体（可选依赖）
 
@@ -126,6 +161,10 @@ fcmd completion --shell fish | source         # fish
 | `clr` | - | 跨平台清屏 |
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
 | `reseticoncache` | - | 重置 Windows 图标缓存（仅 Windows） |
+| `iptool` | - | IP 地址工具（本机 IP/公网 IP/子网计算） |
+| `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
+| `lscalc` | - | LS-DYNA 计算（run/mpi/status） |
+| `dockercmd` | - | Docker 操作（login/push/pull，镜像仓库通用） |
 
 ### 开发环境
 
@@ -135,6 +174,7 @@ fcmd completion --shell fish | source         # fish
 | `envdev` | - | 开发环境镜像源配置（Python/Conda/Rust，Linux 专用操作跳过） |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |
+| `codetool` | - | 代码统计（行数/字符数/空行/注释行） |
 
 查看任意工具的子命令与字段详情：
 
