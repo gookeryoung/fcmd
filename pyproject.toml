@@ -65,7 +65,7 @@ randtool = "fcmd.cli.randtool:main"
 regextool = "fcmd.cli.regextool:main"
 reseticoncache = "fcmd.cli.reseticoncache:main"
 screenshot = "fcmd.cli.screenshot:main"
-setenv = "fcmd.cli.setenv:main"
+setenvt = "fcmd.cli.setenv:main"
 stattool = "fcmd.cli.stattool:main"
 sshcopyid = "fcmd.cli.sshcopyid:main"
 sysinfo = "fcmd.cli.sysinfo:main"
@@ -81,8 +81,17 @@ yamtool = "fcmd.cli.yamtool:main"
 zipencrypt = "fcmd.cli.zipencrypt:main"
 
 [project.optional-dependencies]
-img = ["pillow>=10.4.0"]
-pdf = ["pymupdf>=1.24.11", "pypdf>=5.9.0"]
+# 多版本约束：Win7 最高仅支持 Python 3.8.10，PEP 508 无法表达 OS 版本，
+# 以 python_version<'3.9' 作为 Win7 代理。Python 3.9+ 装高版本享新特性。
+img = [
+    "pillow>=9.5.0,<10; python_version < '3.9'",
+    "pillow>=10.4.0; python_version >= '3.9'",
+]
+pdf = [
+    "pymupdf>=1.23.8,<1.24; python_version < '3.9'",
+    "pymupdf>=1.24.11; python_version >= '3.9'",
+    "pypdf>=5.9.0",
+]
 ocr = ["pytesseract>=0.3.13", "fcmd[img]"]
 office = ["fcmd[img,pdf,ocr]"]
 lint = ["pyrefly>=1.1.1", "ruff>=0.8.0"]
