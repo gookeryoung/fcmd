@@ -99,15 +99,18 @@ def image_resize(
         return
 
     img = Image.open(input_path)
-    if keep_ratio:
-        target_height = height if height is not None else width
-        img.thumbnail((width, target_height))
-    else:
-        if height is None:
-            height = width
-        img = img.resize((width, height))
-    _save_image(img, output_path)
-    print(f"调整尺寸完成: {output_path} ({img.size[0]}x{img.size[1]})")
+    try:
+        if keep_ratio:
+            target_height = height if height is not None else width
+            img.thumbnail((width, target_height))
+        else:
+            if height is None:
+                height = width
+            img = img.resize((width, height))
+        _save_image(img, output_path)
+        print(f"调整尺寸完成: {output_path} ({img.size[0]}x{img.size[1]})")
+    finally:
+        img.close()
 
 
 @fcmd.tool("imagetool", subcommand="c", help="裁剪图片")
@@ -134,9 +137,12 @@ def image_crop(  # noqa: PLR0913
         return
 
     img = Image.open(input_path)
-    cropped = img.crop((left, top, right, bottom))
-    _save_image(cropped, output_path)
-    print(f"裁剪完成: {output_path} ({right - left}x{bottom - top})")
+    try:
+        cropped = img.crop((left, top, right, bottom))
+        _save_image(cropped, output_path)
+        print(f"裁剪完成: {output_path} ({right - left}x{bottom - top})")
+    finally:
+        img.close()
 
 
 @fcmd.tool("imagetool", subcommand="ro", help="旋转图片")
@@ -163,9 +169,12 @@ def image_rotate(
         return
 
     img = Image.open(input_path)
-    rotated = img.rotate(degrees, expand=expand)
-    _save_image(rotated, output_path)
-    print(f"旋转完成: {output_path} ({degrees}度)")
+    try:
+        rotated = img.rotate(degrees, expand=expand)
+        _save_image(rotated, output_path)
+        print(f"旋转完成: {output_path} ({degrees}度)")
+    finally:
+        img.close()
 
 
 @fcmd.tool("imagetool", subcommand="fl", help="翻转图片")
@@ -189,10 +198,13 @@ def image_flip(
         return
 
     img = Image.open(input_path)
-    method = Image.Transpose.FLIP_LEFT_RIGHT if direction == "horizontal" else Image.Transpose.FLIP_TOP_BOTTOM
-    flipped = img.transpose(method)
-    _save_image(flipped, output_path)
-    print(f"翻转完成: {output_path} ({direction})")
+    try:
+        method = Image.Transpose.FLIP_LEFT_RIGHT if direction == "horizontal" else Image.Transpose.FLIP_TOP_BOTTOM
+        flipped = img.transpose(method)
+        _save_image(flipped, output_path)
+        print(f"翻转完成: {output_path} ({direction})")
+    finally:
+        img.close()
 
 
 @fcmd.tool("imagetool", subcommand="cv", help="格式转换")
@@ -219,9 +231,12 @@ def image_convert(
         return
 
     img = Image.open(input_path)
-    _save_image(img, output_path, fmt=format, quality=quality)
-    actual_fmt = format or output_path.suffix.lstrip(".").upper()
-    print(f"格式转换完成: {output_path} ({actual_fmt})")
+    try:
+        _save_image(img, output_path, fmt=format, quality=quality)
+        actual_fmt = format or output_path.suffix.lstrip(".").upper()
+        print(f"格式转换完成: {output_path} ({actual_fmt})")
+    finally:
+        img.close()
 
 
 @fcmd.tool("imagetool", subcommand="wm", help="添加文字水印")
@@ -253,22 +268,26 @@ def image_watermark(  # noqa: PLR0913
     if not _require_pil():
         return
 
-    img = Image.open(input_path).convert("RGBA")
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
+    img = Image.open(input_path)
+    try:
+        img = img.convert("RGBA")
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
 
-    font = _load_font(font_size)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    text_w = int(bbox[2] - bbox[0])
-    text_h = int(bbox[3] - bbox[1])
-    margin = 10
-    x, y = _resolve_position(position, img.size, text_w, text_h, margin)
+        font = _load_font(font_size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = int(bbox[2] - bbox[0])
+        text_h = int(bbox[3] - bbox[1])
+        margin = 10
+        x, y = _resolve_position(position, img.size, text_w, text_h, margin)
 
-    alpha = int(255 * max(0.0, min(1.0, opacity)))
-    draw.text((x, y), text, font=font, fill=(255, 255, 255, alpha))
-    result = Image.alpha_composite(img, overlay)
-    _save_image(result, output_path)
-    print(f"水印添加完成: {output_path}")
+        alpha = int(255 * max(0.0, min(1.0, opacity)))
+        draw.text((x, y), text, font=font, fill=(255, 255, 255, alpha))
+        result = Image.alpha_composite(img, overlay)
+        _save_image(result, output_path)
+        print(f"水印添加完成: {output_path}")
+    finally:
+        img.close()
 
 
 def _load_font(size: int) -> Any:
@@ -322,12 +341,15 @@ def image_compress(
         return
 
     img = Image.open(input_path)
-    fmt = input_path.suffix.lstrip(".").upper()
-    _save_image(img, output_path, fmt=fmt, quality=quality)
-    in_size = input_path.stat().st_size
-    out_size = output_path.stat().st_size
-    ratio = (1 - out_size / in_size) * 100 if in_size > 0 else 0.0
-    print(f"压缩完成: {output_path} (原 {in_size}B → 新 {out_size}B, 节省 {ratio:.1f}%)")
+    try:
+        fmt = input_path.suffix.lstrip(".").upper()
+        _save_image(img, output_path, fmt=fmt, quality=quality)
+        in_size = input_path.stat().st_size
+        out_size = output_path.stat().st_size
+        ratio = (1 - out_size / in_size) * 100 if in_size > 0 else 0.0
+        print(f"压缩完成: {output_path} (原 {in_size}B → 新 {out_size}B, 节省 {ratio:.1f}%)")
+    finally:
+        img.close()
 
 
 # ---------------------------------------------------------------------- #
@@ -348,27 +370,30 @@ def image_info(input_path: Path, json: bool = False) -> None:
         return
 
     img = Image.open(input_path)
-    exif = img.getexif()
-    exif_count = len(exif) if exif else 0
+    try:
+        exif = img.getexif()
+        exif_count = len(exif) if exif else 0
 
-    import json as json_mod
+        import json as json_mod
 
-    data = {
-        "path": str(input_path),
-        "format": img.format,
-        "mode": img.mode,
-        "width": img.size[0],
-        "height": img.size[1],
-        "exif_tags": exif_count,
-    }
-    if json:
-        print(json_mod.dumps(data, ensure_ascii=False, indent=2))
-    else:
-        print(f"文件: {data['path']}")
-        print(f"格式: {data['format']}")
-        print(f"模式: {data['mode']}")
-        print(f"尺寸: {data['width']}x{data['height']}")
-        print(f"EXIF 标签数: {data['exif_tags']}")
+        data = {
+            "path": str(input_path),
+            "format": img.format,
+            "mode": img.mode,
+            "width": img.size[0],
+            "height": img.size[1],
+            "exif_tags": exif_count,
+        }
+        if json:
+            print(json_mod.dumps(data, ensure_ascii=False, indent=2))
+        else:
+            print(f"文件: {data['path']}")
+            print(f"格式: {data['format']}")
+            print(f"模式: {data['mode']}")
+            print(f"尺寸: {data['width']}x{data['height']}")
+            print(f"EXIF 标签数: {data['exif_tags']}")
+    finally:
+        img.close()
 
 
 @fcmd.tool("imagetool", subcommand="e", help="读取/修改 EXIF")
@@ -398,14 +423,17 @@ def image_exif(
         return
 
     img = Image.open(input_path)
-    exif = img.getexif()
+    try:
+        exif = img.getexif()
 
-    if show:
-        _print_exif(exif)
+        if show:
+            _print_exif(exif)
 
-    modified = _apply_exif_modifications(exif, set, clear)
-    if modified:
-        _save_exif(img, exif, output_path if output_path is not None else input_path)
+        modified = _apply_exif_modifications(exif, set, clear)
+        if modified:
+            _save_exif(img, exif, output_path if output_path is not None else input_path)
+    finally:
+        img.close()
 
 
 def _print_exif(exif: Any) -> None:
@@ -467,22 +495,25 @@ def image_histogram(
         return
 
     img = Image.open(input_path)
-    hist = img.histogram()
-    buckets = 8
+    try:
+        hist = img.histogram()
+        buckets = 8
 
-    if channel == "luminance":
-        gray = img.convert("L")
-        gray_hist = gray.histogram()
-        print("亮度直方图 (8 桶):")
-        _print_histogram_buckets(gray_hist, buckets, "L")
-    else:
-        print("RGB 直方图 (8 桶):")
-        if len(hist) == 256:
-            _print_histogram_buckets(hist, buckets, "L")
+        if channel == "luminance":
+            gray = img.convert("L")
+            gray_hist = gray.histogram()
+            print("亮度直方图 (8 桶):")
+            _print_histogram_buckets(gray_hist, buckets, "L")
         else:
-            for idx, name in enumerate(("R", "G", "B")):
-                start = idx * 256
-                _print_histogram_buckets(hist[start : start + 256], buckets, name)
+            print("RGB 直方图 (8 桶):")
+            if len(hist) == 256:
+                _print_histogram_buckets(hist, buckets, "L")
+            else:
+                for idx, name in enumerate(("R", "G", "B")):
+                    start = idx * 256
+                    _print_histogram_buckets(hist[start : start + 256], buckets, name)
+    finally:
+        img.close()
 
 
 def _print_histogram_buckets(channel_hist: list[int], buckets: int, name: str) -> None:
@@ -515,21 +546,25 @@ def image_colors(
     if not _require_pil():
         return
 
-    img = Image.open(input_path).convert("RGB")
-    quantized = img.quantize(colors=count)
-    palette = quantized.getpalette()
-    if palette is None:  # pragma: no cover - quantize() 总会生成调色板，防御性守卫
-        print("无法提取调色板")
-        return
+    img = Image.open(input_path)
+    try:
+        img = img.convert("RGB")
+        quantized = img.quantize(colors=count)
+        palette = quantized.getpalette()
+        if palette is None:  # pragma: no cover - quantize() 总会生成调色板，防御性守卫
+            print("无法提取调色板")
+            return
 
-    actual_count = len(palette) // 3
-    print(f"主色调 (前 {min(count, actual_count)} 色):")
-    for i in range(min(count, actual_count)):
-        r = palette[i * 3]
-        g = palette[i * 3 + 1]
-        b = palette[i * 3 + 2]
-        hex_color = f"#{r:02X}{g:02X}{b:02X}"
-        print(f"  {i + 1}. {hex_color}  rgb({r}, {g}, {b})")
+        actual_count = len(palette) // 3
+        print(f"主色调 (前 {min(count, actual_count)} 色):")
+        for i in range(min(count, actual_count)):
+            r = palette[i * 3]
+            g = palette[i * 3 + 1]
+            b = palette[i * 3 + 2]
+            hex_color = f"#{r:02X}{g:02X}{b:02X}"
+            print(f"  {i + 1}. {hex_color}  rgb({r}, {g}, {b})")
+    finally:
+        img.close()
 
 
 def main() -> None:

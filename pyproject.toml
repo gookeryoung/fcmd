@@ -81,18 +81,9 @@ yamtool = "fcmd.cli.yamtool:main"
 zipencrypt = "fcmd.cli.zipencrypt:main"
 
 [project.optional-dependencies]
-# 多版本约束：Win7 最高仅支持 Python 3.8.10，PEP 508 无法表达 OS 版本，
-# 以 python_version<'3.9' 作为 Win7 代理。Python 3.9+ 装高版本享新特性。
-# PyMuPDF 1.23+ 的 mupdfcpp64.dll 链接了 Win7 UCRT 不支持的函数，
-# 在 Win7 SP1 上触发 STATUS_STACK_BUFFER_OVERRUN (c0000417) 崩溃，
-# 故 Win7 代理分支锁定 1.22 系列（最后版本 1.22.5，2023-06 发布）。
-img = [
-    "pillow>=9.5.0,<10; python_version < '3.9'",
-    "pillow>=10.4.0; python_version >= '3.9'",
-]
+img = ["pillow>=9.5.0,<10"]
 pdf = [
-    "pymupdf>=1.22.0,<1.23; python_version < '3.9'",
-    "pymupdf>=1.24.11; python_version >= '3.9'",
+    "pymupdf>=1.22.0,<1.23", # PyMuPDF 1.23+ 的 mupdfcpp64.dll 链接了 Win7 UCRT 不支持的函数
     "pypdf>=5.9.0",
 ]
 ocr = ["pytesseract>=0.3.13", "fcmd[img]"]

@@ -143,10 +143,12 @@ def pdf_compress(input_path: Path, output_path: Path = Path("compressed.pdf")) -
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path), garbage=4, deflate=True, clean=True)
-    doc.close()
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+    finally:
+        doc.close()
 
     original_size = input_path.stat().st_size
     new_size = output_path.stat().st_size
@@ -243,11 +245,12 @@ def pdf_extract_text(input_path: Path, output_path: Path = Path("output.txt")) -
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    text = ""
-    for page in doc:
-        text += str(page.get_text()) + "\n\n"
-    doc.close()
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    try:
+        parts = [str(page.get_text()) + "\n\n" for page in doc]
+    finally:
+        doc.close()
+    text = "".join(parts)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(text, encoding="utf-8")
@@ -268,23 +271,23 @@ def pdf_extract_images(input_path: Path, output_dir: Path = Path("images")) -> N
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     output_dir.mkdir(parents=True, exist_ok=True)
 
     image_count = 0
-    # pyrefly: ignore [bad-argument-type]
-    for page_num, page in enumerate(doc):
-        images = page.get_images(full=True)
-        for img_idx, img in enumerate(images):
-            xref = img[0]
-            base_image = doc.extract_image(xref)
-            image_data = base_image["image"]
-            image_ext = base_image["ext"]
-            image_path = output_dir / f"page_{page_num + 1}_img_{img_idx + 1}.{image_ext}"
-            image_path.write_bytes(image_data)
-            image_count += 1
-
-    doc.close()
+    try:
+        for page_num, page in enumerate(doc):
+            images = page.get_images(full=True)
+            for img_idx, img in enumerate(images):
+                xref = img[0]
+                base_image = doc.extract_image(xref)
+                image_data = base_image["image"]
+                image_ext = base_image["ext"]
+                image_path = output_dir / f"page_{page_num + 1}_img_{img_idx + 1}.{image_ext}"
+                image_path.write_bytes(image_data)
+                image_count += 1
+    finally:
+        doc.close()
     print(f"图片提取完成: {output_dir} (共 {image_count} 张)")
 
 
@@ -308,18 +311,20 @@ def pdf_add_watermark(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    for page in doc:
-        rect = page.rect
-        text_width = fitz.get_text_length(text, fontsize=48)
-        x = (rect.width - text_width) / 2
-        y = rect.height / 2
-        # fitz insert_text 的 rotate 仅接受 0/90/180/270，用 0 输出水平水印
-        page.insert_text((x, y), text, fontsize=48, rotate=0, color=(0, 0, 0))
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    try:
+        for page in doc:
+            rect = page.rect
+            text_width = fitz.get_text_length(text, fontsize=48)
+            x = (rect.width - text_width) / 2
+            y = rect.height / 2
+            # fitz insert_text 的 rotate 仅接受 0/90/180/270，用 0 输出水平水印
+            page.insert_text((x, y), text, fontsize=48, rotate=0, color=(0, 0, 0))
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path))
-    doc.close()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(output_path))
+    finally:
+        doc.close()
     print(f"水印添加完成: {output_path}")
 
 
@@ -343,13 +348,15 @@ def pdf_rotate(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    for page in doc:
-        page.set_rotation(rotation)
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    try:
+        for page in doc:
+            page.set_rotation(rotation)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path))
-    doc.close()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(output_path))
+    finally:
+        doc.close()
     print(f"旋转完成: {output_path}")
 
 
@@ -373,22 +380,24 @@ def pdf_crop(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     left, top, right, bottom = margins
 
-    for page in doc:
-        rect = page.rect
-        new_rect = fitz.Rect(
-            rect.x0 + left,
-            rect.y0 + top,
-            rect.x1 - right,
-            rect.y1 - bottom,
-        )
-        page.set_cropbox(new_rect)
+    try:
+        for page in doc:
+            rect = page.rect
+            new_rect = fitz.Rect(
+                rect.x0 + left,
+                rect.y0 + top,
+                rect.x1 - right,
+                rect.y1 - bottom,
+            )
+            page.set_cropbox(new_rect)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path))
-    doc.close()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(output_path))
+    finally:
+        doc.close()
     print(f"裁剪完成: {output_path}")
 
 
@@ -404,19 +413,17 @@ def pdf_info(input_path: Path) -> None:
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    print(f"文件: {input_path}")
-    print(f"页数: {doc.page_count}")
-    # pyrefly: ignore [missing-attribute]
-    print(f"标题: {doc.metadata.get('title', 'N/A')}")
-    # pyrefly: ignore [missing-attribute]
-    print(f"作者: {doc.metadata.get('author', 'N/A')}")
-    # pyrefly: ignore [missing-attribute]
-    print(f"创建日期: {doc.metadata.get('creationDate', 'N/A')}")
-    # pyrefly: ignore [missing-attribute]
-    print(f"修改日期: {doc.metadata.get('modDate', 'N/A')}")
-    print(f"文件大小: {input_path.stat().st_size / 1024:.1f} KB")
-    doc.close()
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    try:
+        print(f"文件: {input_path}")
+        print(f"页数: {doc.page_count}")
+        print(f"标题: {doc.metadata.get('title', 'N/A')}")
+        print(f"作者: {doc.metadata.get('author', 'N/A')}")
+        print(f"创建日期: {doc.metadata.get('creationDate', 'N/A')}")
+        print(f"修改日期: {doc.metadata.get('modDate', 'N/A')}")
+        print(f"文件大小: {input_path.stat().st_size / 1024:.1f} KB")
+    finally:
+        doc.close()
 
 
 @fcmd.tool("pdftool", subcommand="ocr", help="PDF OCR 识别")
@@ -449,23 +456,27 @@ def pdf_ocr(  # pragma: no cover - 需系统级 tesseract 可执行文件，测�
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    new_doc = fitz.open()
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    new_doc = fitz.open()  # pyrefly: ignore [missing-attribute]
+    try:
+        for page in doc:
+            pix = page.get_pixmap()
+            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            try:
+                ocr_text = pytesseract.image_to_string(img, lang=lang)
+            finally:
+                img.close()
 
-    for page in doc:
-        pix = page.get_pixmap()
-        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-        ocr_text = pytesseract.image_to_string(img, lang=lang)
+            new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
+            new_page.insert_image(new_page.rect, pixmap=pix)
+            text_rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
+            new_page.insert_textbox(text_rect, ocr_text, fontname="china-ss", fontsize=11)
 
-        new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
-        new_page.insert_image(new_page.rect, pixmap=pix)
-        text_rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
-        new_page.insert_textbox(text_rect, ocr_text, fontname="china-ss", fontsize=11)  # pyrefly: ignore [bad-argument-type]
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    new_doc.save(str(output_path))
-    new_doc.close()
-    doc.close()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        new_doc.save(str(output_path))
+    finally:
+        new_doc.close()
+        doc.close()
     print(f"OCR 识别完成: {output_path}")
 
 
@@ -519,16 +530,16 @@ def pdf_to_images(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # pyrefly: ignore [bad-argument-type]
-    for page_num, page in enumerate(doc):
-        pix = page.get_pixmap(dpi=dpi)
-        image_path = output_dir / f"{input_path.stem}_page_{page_num + 1}.png"
-        pix.save(str(image_path))
-
-    doc.close()
+    try:
+        for page_num, page in enumerate(doc):
+            pix = page.get_pixmap(dpi=dpi)
+            image_path = output_dir / f"{input_path.stem}_page_{page_num + 1}.png"
+            pix.save(str(image_path))
+    finally:
+        doc.close()
     print(f"转换完成: {output_dir}")
 
 
@@ -548,10 +559,12 @@ def pdf_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> No
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    doc.save(str(output_path), garbage=4, deflate=True, clean=True)
-    doc.close()
+    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+    finally:
+        doc.close()
     print(f"修复完成: {output_path}")
 
 

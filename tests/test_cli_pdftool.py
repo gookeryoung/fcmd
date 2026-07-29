@@ -38,7 +38,7 @@ def sample_pdf(tmp_path: Path) -> Path:
     """生成 2 页测试 PDF（用 ASCII 内容避免中文字体提取问题）。"""
     import fitz
 
-    doc = fitz.open()
+    doc = fitz.open()  # pyrefly: ignore [missing-attribute]
     for text in ("Page one content", "Page two content"):
         page = doc.new_page(width=200, height=300)
         page.insert_text((20, 50), text, fontsize=12)
@@ -53,7 +53,7 @@ def sample_pdf_with_image(tmp_path: Path, sample_image: Path) -> Path:
     """生成包含 1 张图片的 PDF。"""
     import fitz
 
-    doc = fitz.open()
+    doc = fitz.open()  # pyrefly: ignore [missing-attribute]
     page = doc.new_page(width=300, height=400)
     page.insert_image(fitz.Rect(20, 20, 120, 120), filename=str(sample_image))
     p = tmp_path / "with_image.pdf"
