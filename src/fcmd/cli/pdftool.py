@@ -16,6 +16,7 @@ OCR 子命令额外依赖 ``fcmd[ocr]`` extra 中的 ``pytesseract``。
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,34 +44,30 @@ if TYPE_CHECKING:
     import fitz  # PyMuPDF
     import pypdf
 
-try:
-    import fitz  # PyMuPDF
-
-    HAS_PYMUPDF = True
-except ImportError:  # pragma: no cover - 仅在未安装 pymupdf 时触发
-    HAS_PYMUPDF = False
-
-try:
-    import pypdf
-
-    HAS_PYPDF = True
-except ImportError:  # pragma: no cover - 仅在未安装 pypdf 时触发
-    HAS_PYPDF = False
+# 用 find_spec 检查依赖是否安装（不触发实际导入，避免工具发现时加载重型 PDF 库）
+HAS_PYMUPDF = importlib.util.find_spec("fitz") is not None
+HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
 
 
 def _require_pymupdf() -> bool:
-    """PyMuPDF 未安装时打印提示，返回是否可用。"""
+    """PyMuPDF 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PYMUPDF:
         print("未安装 PyMuPDF 库，请安装: pip install fcmd[pdf]")
         return False
+    global fitz  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载 55ms 的 fitz
+    import fitz
+
     return True
 
 
 def _require_pypdf() -> bool:
-    """pypdf 未安装时打印提示，返回是否可用。"""
+    """pypdf 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PYPDF:
         print("未安装 pypdf 库，请安装: pip install fcmd[pdf]")
         return False
+    global pypdf  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载 pypdf
+    import pypdf
+
     return True
 
 
