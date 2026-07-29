@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import PureWindowsPath
 
 import fcmd
 
@@ -30,10 +30,15 @@ def _system_taskkill_path() -> str:
     entry script（``pip install`` 生成于 Python Scripts 目录）在 PATH 中
     优先于 ``C:\\Windows\\System32\\taskkill.exe``，导致 ``subprocess.run``
     递归调用 fcmd taskkill 自身，指数级进程爆炸直至系统资源耗尽。
+
+    使用 ``PureWindowsPath`` 而非 ``Path``：本模块仅在 ``sys.platform == 'win32'``
+    分支调用，但 CI 在 Linux 上运行时会 monkeypatch ``sys.platform``，此时
+    ``Path`` 会退化为 ``PosixPath``，把 ``C:\\Windows`` 当作单一组件用 ``/``
+    拼接，产生混合分隔符路径。``PureWindowsPath`` 跨平台一致使用反斜杠。
     """
     # Windows 环境变量大小写不敏感，SystemRoot 是系统约定写法
     system_root = os.environ.get("SystemRoot", r"C:\Windows")  # noqa: SIM112
-    return str(Path(system_root) / "System32" / "taskkill.exe")
+    return str(PureWindowsPath(system_root) / "System32" / "taskkill.exe")
 
 
 def kill_process(process_name: str) -> int:
