@@ -88,5 +88,29 @@ class TestResetIconCache:
         captured = capsys.readouterr()
         assert "图标缓存已重置" in captured.out
         # 应调用 taskkill、del（IconCache.db）、del（iconcache*）、start explorer
-        assert any("taskkill" in c for c in calls)
+        assert any(any("taskkill" in arg for arg in c) for c in calls)
         assert any("start" in c and "explorer.exe" in c for c in calls)
+
+    def test_windows_taskkill_uses_absolute_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Windows 下 taskkill 必须用系统绝对路径，避免递归调用 fcmd entry。
+
+        回归测试：曾因 ``taskkill`` 与系统 taskkill.exe 同名，subprocess.run
+        递归调用 fcmd entry 导致进程爆炸。修复后必须使用系统绝对路径。
+        """
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setenv("SystemRoot", r"C:\Windows")
+        local_appdata = tmp_path / "AppData" / "Local"
+        local_appdata.mkdir(parents=True)
+        monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.reseticoncache.run_command", _recording_run(calls))
+
+        fcmd.cli.reseticoncache.reset_icon_cache_run()
+        # 找到 taskkill 调用，首元素必须是绝对路径
+        taskkill_calls = [c for c in calls if "taskkill" in " ".join(c)]
+        assert taskkill_calls, "应至少调用一次 taskkill"
+        for call in taskkill_calls:
+            assert call[0].endswith("taskkill.exe")
+            assert "\\" in call[0]
+            assert call[0] != "taskkill"

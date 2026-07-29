@@ -10,8 +10,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import fcmd
 
@@ -21,10 +23,24 @@ __all__ = [
 ]
 
 
+def _system_taskkill_path() -> str:
+    """返回系统 ``taskkill.exe`` 绝对路径。
+
+    必须使用绝对路径调用系统 taskkill.exe，避免 fcmd 自身注册的 ``taskkill``
+    entry script（``pip install`` 生成于 Python Scripts 目录）在 PATH 中
+    优先于 ``C:\\Windows\\System32\\taskkill.exe``，导致 ``subprocess.run``
+    递归调用 fcmd taskkill 自身，指数级进程爆炸直至系统资源耗尽。
+    """
+    # Windows 环境变量大小写不敏感，SystemRoot 是系统约定写法
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")  # noqa: SIM112
+    return str(Path(system_root) / "System32" / "taskkill.exe")
+
+
 def kill_process(process_name: str) -> int:
     """终止匹配名称的进程（跨平台）。
 
-    Windows 使用 ``taskkill /f /im <name>*``，
+    Windows 使用 ``taskkill /f /fi "imagename eq <name>*"``（``/FI`` 过滤器
+    支持通配符，兼容 Win7；``/IM <name>*`` 部分通配符仅在 Win10+ 支持），
     Linux/macOS 使用 ``pkill -f <name>*``。
 
     Parameters
@@ -39,7 +55,8 @@ def kill_process(process_name: str) -> int:
         其他值表示终止失败。
     """
     if sys.platform == "win32":
-        cmd = ["taskkill", "/f", "/im", f"{process_name}*"]
+        # 用 /FI 过滤器替代 /IM 通配符：Win7 的 /IM 不支持部分通配符
+        cmd = [_system_taskkill_path(), "/f", "/fi", f"imagename eq {process_name}*"]
     else:
         cmd = ["pkill", "-f", f"{process_name}*"]
 

@@ -20,6 +20,18 @@ from fcmd.models import run_command
 __all__ = ["reset_icon_cache_run"]
 
 
+def _system_taskkill_path() -> str:
+    """返回系统 ``taskkill.exe`` 绝对路径。
+
+    避免递归调用 fcmd 自身注册的 ``taskkill`` entry script（与系统
+    ``taskkill.exe`` 同名，PATH 顺序不确定时可能递归）。详见
+    ``fcmd.cli.taskkill._system_taskkill_path``。
+    """
+    # Windows 环境变量大小写不敏感，SystemRoot 是系统约定写法
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")  # noqa: SIM112
+    return str(Path(system_root) / "System32" / "taskkill.exe")
+
+
 @fcmd.tool("reseticoncache", help="重置 Windows 图标缓存")
 def reset_icon_cache_run() -> None:
     """重置 Windows 图标缓存。
@@ -40,7 +52,7 @@ def reset_icon_cache_run() -> None:
     explorer_cache_dir = Path(local_app_data) / "Microsoft" / "Windows" / "Explorer"
 
     print("正在终止 explorer 进程...")
-    run_command(["taskkill", "/f", "/im", "explorer.exe"])
+    run_command([_system_taskkill_path(), "/f", "/im", "explorer.exe"])
 
     if icon_cache_db.exists():
         print(f"删除图标缓存: {icon_cache_db}")

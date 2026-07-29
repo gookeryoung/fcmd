@@ -75,15 +75,34 @@ class TestTaskkill:
         assert kill_process("nonexistent") == 1
 
     def test_kill_process_windows_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Windows 下 kill_process 用 taskkill。"""
+        """Windows 下 kill_process 用系统 taskkill.exe 绝对路径 + /FI 过滤器。"""
         monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setenv("SystemRoot", r"C:\Windows")
         captured: list[list[str]] = []
         monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
         kill_process("chrome.exe")
-        assert captured[0][0] == "taskkill"
+        # 必须使用绝对路径，避免递归调用 fcmd 自身的 taskkill entry script
+        assert captured[0][0] == r"C:\Windows\System32\taskkill.exe"
         assert "/f" in captured[0]
-        assert "/im" in captured[0]
-        assert "chrome.exe*" in captured[0]
+        # 用 /FI 过滤器替代 /IM 通配符（Win7 兼容）
+        assert "/fi" in captured[0]
+        assert "imagename eq chrome.exe*" in captured[0]
+
+    def test_kill_process_windows_no_recursive_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Windows 下 kill_process 不会调用 fcmd 自身的 taskkill entry script。
+
+        回归测试：曾因 ``taskkill`` 与系统 taskkill.exe 同名，subprocess.run
+        递归调用 fcmd entry 导致进程爆炸。修复后必须使用系统绝对路径。
+        """
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setenv("SystemRoot", r"C:\Windows")
+        captured: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
+        kill_process("explorer")
+        # 命令首元素必须是绝对路径，不能是裸 "taskkill"（会触发 PATH 查找）
+        assert captured[0][0].endswith("taskkill.exe")
+        assert "\\" in captured[0][0]
+        assert captured[0][0] != "taskkill"
 
     def test_kill_process_linux_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Linux 下 kill_process 用 pkill。"""
