@@ -40,7 +40,6 @@ def sample_pdf(tmp_path: Path) -> Path:
 
     doc = fitz.open()
     for text in ("Page one content", "Page two content"):
-        # pyrefly: ignore [missing-attribute]
         page = doc.new_page(width=200, height=300)
         page.insert_text((20, 50), text, fontsize=12)
     p = tmp_path / "sample.pdf"
@@ -55,7 +54,6 @@ def sample_pdf_with_image(tmp_path: Path, sample_image: Path) -> Path:
     import fitz
 
     doc = fitz.open()
-    # pyrefly: ignore [missing-attribute]
     page = doc.new_page(width=300, height=400)
     page.insert_image(fitz.Rect(20, 20, 120, 120), filename=str(sample_image))
     p = tmp_path / "with_image.pdf"

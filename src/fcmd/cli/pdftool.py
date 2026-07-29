@@ -281,7 +281,6 @@ def pdf_extract_images(input_path: Path, output_dir: Path = Path("images")) -> N
             image_data = base_image["image"]
             image_ext = base_image["ext"]
             image_path = output_dir / f"page_{page_num + 1}_img_{img_idx + 1}.{image_ext}"
-            # pyrefly: ignore [bad-argument-type]
             image_path.write_bytes(image_data)
             image_count += 1
 
@@ -458,10 +457,10 @@ def pdf_ocr(  # pragma: no cover - 需系统级 tesseract 可执行文件，测�
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         ocr_text = pytesseract.image_to_string(img, lang=lang)
 
-        new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)  # pyrefly: ignore [missing-attribute]
+        new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
         new_page.insert_image(new_page.rect, pixmap=pix)
         text_rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
-        new_page.insert_textbox(text_rect, ocr_text, fontname="china-ss", fontsize=11)
+        new_page.insert_textbox(text_rect, ocr_text, fontname="china-ss", fontsize=11)  # pyrefly: ignore [bad-argument-type]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     new_doc.save(str(output_path))

@@ -1358,12 +1358,8 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
 ]
 
 
-@pytest.mark.parametrize(
-    "tool_name, module_path", _MAIN_ENTRY_TOOLS, ids=[t[0] for t in _MAIN_ENTRY_TOOLS]
-)
-def test_tool_main_delegates_run_tool_main(
-    tool_name: str, module_path: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+@pytest.mark.parametrize("tool_name, module_path", _MAIN_ENTRY_TOOLS, ids=[t[0] for t in _MAIN_ENTRY_TOOLS])
+def test_tool_main_delegates_run_tool_main(tool_name: str, module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """``<tool>.main()`` 委托 ``run_tool_main`` 并传入正确工具名。
 
     验证各工具模块的 ``main()`` 入口正确绑定工具名，等价于 ``fcmd <tool> <args>``。
