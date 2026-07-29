@@ -81,9 +81,10 @@ yamtool = "fcmd.cli.yamtool:main"
 zipencrypt = "fcmd.cli.zipencrypt:main"
 
 [project.optional-dependencies]
-img = ["pillow>=9.5.0,<10"]
+img = ["pillow>=9.5.0,<10; python_version < '3.12'", "pillow>=10; python_version >= '3.12'"]
 pdf = [
-    "pymupdf>=1.22.0,<1.23", # PyMuPDF 1.23+ 的 mupdfcpp64.dll 链接了 Win7 UCRT 不支持的函数
+    "pymupdf>=1.22.0,<1.23; python_version < '3.12'", # PyMuPDF 1.23+ 的 mupdfcpp64.dll 链接了 Win7 UCRT 不支持的函数
+    "pymupdf>=1.23; python_version >= '3.12'",
     "pypdf>=5.9.0",
 ]
 ocr = ["pytesseract>=0.3.13", "fcmd[img]"]
