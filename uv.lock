@@ -437,7 +437,7 @@ dev = [
     { name = "pillow", version = "11.3.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version == '3.9.*'" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.10'" },
     { name = "prek" },
-    { name = "pymupdf", version = "1.23.26", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
+    { name = "pymupdf", version = "1.22.5", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
     { name = "pymupdf", version = "1.26.5", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version == '3.9.*'" },
     { name = "pymupdf", version = "1.28.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.10'" },
     { name = "pypdf", version = "5.9.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
@@ -481,7 +481,7 @@ office = [
     { name = "pillow", version = "9.5.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
     { name = "pillow", version = "11.3.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version == '3.9.*'" },
     { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.10'" },
-    { name = "pymupdf", version = "1.23.26", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
+    { name = "pymupdf", version = "1.22.5", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
     { name = "pymupdf", version = "1.26.5", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version == '3.9.*'" },
     { name = "pymupdf", version = "1.28.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.10'" },
     { name = "pypdf", version = "5.9.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
@@ -489,7 +489,7 @@ office = [
     { name = "pytesseract" },
 ]
 pdf = [
-    { name = "pymupdf", version = "1.23.26", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
+    { name = "pymupdf", version = "1.22.5", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
     { name = "pymupdf", version = "1.26.5", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version == '3.9.*'" },
     { name = "pymupdf", version = "1.28.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.10'" },
     { name = "pypdf", version = "5.9.0", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.9'" },
@@ -522,7 +522,7 @@ requires-dist = [
     { name = "pillow", marker = "python_full_version < '3.9' and extra == 'img'", specifier = ">=9.5.0,<10" },
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.4.5" },
     { name = "pymupdf", marker = "python_full_version >= '3.9' and extra == 'pdf'", specifier = ">=1.24.11" },
-    { name = "pymupdf", marker = "python_full_version < '3.9' and extra == 'pdf'", specifier = ">=1.23.8,<1.24" },
+    { name = "pymupdf", marker = "python_full_version < '3.9' and extra == 'pdf'", specifier = ">=1.22.0,<1.23" },
     { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5.9.0" },
     { name = "pyrefly", marker = "extra == 'lint'", specifier = ">=1.1.1" },
     { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.13" },
@@ -1071,46 +1071,37 @@ wheels = [
 
 [[package]]
 name = "pymupdf"
-version = "1.23.26"
+version = "1.22.5"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 resolution-markers = [
     "python_full_version < '3.9'",
 ]
-dependencies = [
-    { name = "pymupdfb", marker = "python_full_version < '3.9'" },
-]
-sdist = { url = "https://mirrors.aliyun.com/pypi/packages/c5/47/ebd9cdc09d82462533f69f983c7f57ebbf01e68adb111a3c49acacde2540/PyMuPDF-1.23.26.tar.gz", hash = "sha256:a904261b317b761b0aa2bd2c1f6cd25d25aa4258be67a90c02a878efc5dca649" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/f6/6a/199e6b76f1cca112510171df0949af1fcf43536812441866e7c9e1d7b01e/PyMuPDF-1.22.5.tar.gz", hash = "sha256:5ec8d5106752297529d0d68d46cfc4ce99914aabd99be843f1599a1842d63fe9" }
 wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/b2/a5/8fcde41b77a2b978b3b609767820822068310f04e3bd39f2f3ffedced7ba/PyMuPDF-1.23.26-cp310-none-macosx_10_9_x86_64.whl", hash = "sha256:645a05321aecc8c45739f71f0eb574ce33138d19189582ffa5241fea3a8e2549" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/38/0f/e4299ce5fc313742dfa798d83ac9691bfdd33e2851016126e2a9333fa447/PyMuPDF-1.23.26-cp310-none-macosx_11_0_arm64.whl", hash = "sha256:2dfc9e010669ae92fade6fb72aaea49ebe3b8dcd7ee4dcbbe50115abcaa4d3fe" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/00/d4/365907e1b2401e86a01b96a0124d2bf1b9c6b019ded1325ca3f019b285ad/PyMuPDF-1.23.26-cp310-none-manylinux2014_aarch64.whl", hash = "sha256:734ee380b3abd038602be79114194a3cb74ac102b7c943bcb333104575922c50" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/7b/36/d5c900e302cb220558b046fea8f4eeed740578351e47cf3a8abc6169447b/PyMuPDF-1.23.26-cp310-none-manylinux2014_x86_64.whl", hash = "sha256:b22f8d854f8196ad5b20308c1cebad3d5189ed9f0988acbafa043947ea7e6c55" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/70/23/0b3e467aba9ce14124b22b2bc5ffdf9067981372337585b5c055f0520899/PyMuPDF-1.23.26-cp310-none-win32.whl", hash = "sha256:cc0f794e3466bc96b5bf79d42fbc1551428751e3fef38ebc10ac70396b676144" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/11/c3/487544356045e9b4b67c54a1268ecc868808ff405736824b647b16cd06aa/PyMuPDF-1.23.26-cp310-none-win_amd64.whl", hash = "sha256:2eb701247d8e685a24e45899d1175f01a3ce5fc792a4431c91fbb68633b29298" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/e6/3e/ba4632c10eb4bdaa074de45d4c51603dddc95dc849a0e51d85f11d4c5b65/PyMuPDF-1.23.26-cp311-none-macosx_10_9_x86_64.whl", hash = "sha256:e2804a64bb57da414781e312fb0561f6be67658ad57ed4a73dce008b23fc70a6" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/5d/06/82fc8201522989b7bbf0c1d86da6a133c589d02c6cd1bc14da1dd5f2109f/PyMuPDF-1.23.26-cp311-none-macosx_11_0_arm64.whl", hash = "sha256:97b40bb22e3056874634617a90e0ed24a5172cf71791b9e25d1d91c6743bc567" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/56/19/86414064deb4b8662fb8cd52dd6afa0b56990d5114afa64597f041c185ee/PyMuPDF-1.23.26-cp311-none-manylinux2014_aarch64.whl", hash = "sha256:fab8833559bc47ab26ce736f915b8fc1dd37c108049b90396f7cd5e1004d7593" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/23/67/1eefac0bc228c80c58456a6bfc04310874e7c0aa0ede73c7ea3a829cad42/PyMuPDF-1.23.26-cp311-none-manylinux2014_x86_64.whl", hash = "sha256:f25aafd3e7fb9d7761a22acf2b67d704f04cc36d4dc33a3773f0eb3f4ec3606f" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/3e/18/03324982153a1d982584397f443cfadf6928740ea2430744bbb36d5a65d4/PyMuPDF-1.23.26-cp311-none-win32.whl", hash = "sha256:05e672ed3e82caca7ef02a88ace30130b1dd392a1190f03b2b58ffe7aa331400" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/cf/28/a50440fd3cdb263c1843bf166d48fc68d219ff7dccff7b854f19426ef4ee/PyMuPDF-1.23.26-cp311-none-win_amd64.whl", hash = "sha256:92b3c4dd4d0491d495f333be2d41f4e1c155a409bc9d04b5ff29655dccbf4655" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/bb/ef/e2566f524ef5a3d8c62f51afd16bd1a042fc812ab3cc3b987a125d322f89/PyMuPDF-1.23.26-cp312-none-macosx_10_9_x86_64.whl", hash = "sha256:a217689ede18cc6991b4e6a78afee8a440b3075d53b9dec4ba5ef7487d4547e9" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/4b/6b/6f6bcd072e90cc0f8e563916222edc36c7adc0d7b5768d996c57652d7b54/PyMuPDF-1.23.26-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:42ad2b819b90ce1947e11b90ec5085889df0a2e3aa0207bc97ecacfc6157cabc" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/19/07/40f7b3420e8bba1b20a22ddb361fac3b4994427aa113ca628abf2f7dc341/PyMuPDF-1.23.26-cp312-none-manylinux2014_aarch64.whl", hash = "sha256:99607649f89a02bba7d8ebe96e2410664316adc95e9337f7dfeff6a154f93049" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/95/5e/e5e01b772d4765937b9d0fe6d51124de58c39a7ec8eb06d99f87a73bb05b/PyMuPDF-1.23.26-cp312-none-manylinux2014_x86_64.whl", hash = "sha256:bb42d4b8407b4de7cb58c28f01449f16f32a6daed88afb41108f1aeb3552bdd4" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/eb/0f/cd6382cde48faf60d4a712e60bc202f7fa5813e849bfd0b454163e1439cb/PyMuPDF-1.23.26-cp312-none-win32.whl", hash = "sha256:c40d044411615e6f0baa7d3d933b3032cf97e168c7fa77d1be8a46008c109aee" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/2d/4e/2dd13cb8d8a4153ba6b6e990c9059f1481afdaf00a5d2c718b16ef106fe5/PyMuPDF-1.23.26-cp312-none-win_amd64.whl", hash = "sha256:3f876533aa7f9a94bcd9a0225ce72571b7808260903fec1d95c120bc842fb52d" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/2a/dc/b67ee1aaeb9750640325f74e8baf8e92e612cfd76dfeb5413f50be931ce3/PyMuPDF-1.23.26-cp38-none-macosx_10_9_x86_64.whl", hash = "sha256:52df831d46beb9ff494f5fba3e5d069af6d81f49abf6b6e799ee01f4f8fa6799" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/0b/bc/9684e70d63bf0f356191f6195018bb63e86b2ae08f95a894c2f76c1c090c/PyMuPDF-1.23.26-cp38-none-macosx_11_0_arm64.whl", hash = "sha256:0bbb0cf6593e53524f3fc26fb5e6ead17c02c64791caec7c4afe61b677dedf80" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/03/eb/41cca9aa7b460ffc539f04a4b18cbd2d0afc983f665392d3736d9f3a0874/PyMuPDF-1.23.26-cp38-none-manylinux2014_aarch64.whl", hash = "sha256:5ef4360f20015673c20cf59b7e19afc97168795188c584254ed3778cde43ce77" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/46/64/d1a7a05751c43cbb8813861622c1acfb0be1f269a7ca7ee6d9256dfbe240/PyMuPDF-1.23.26-cp38-none-manylinux2014_x86_64.whl", hash = "sha256:d7cd88842b2e7f4c71eef4d87c98c35646b80b60e6375392d7ce40e519261f59" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/9e/dd/8e6628adc47900c82077575952519084c30c32fc8e1f762dd8f71fcc9469/PyMuPDF-1.23.26-cp38-none-win32.whl", hash = "sha256:6577e2f473625e2d0df5f5a3bf1e4519e94ae749733cc9937994d1b256687bfa" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/ac/0a/f0f24f49cfadd91bc558ec8bd42853705bfd45702c4e32a01a2d2095a05f/PyMuPDF-1.23.26-cp38-none-win_amd64.whl", hash = "sha256:fbe1a3255b2cd0d769b2da2c4efdd0c0f30d4961a1aac02c0f75cf951b337aa4" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/ce/f5/d55cee40c6170c903c3d3bd4eeefe941f7b17a0f6d21bc38a85b90a0733f/PyMuPDF-1.23.26-cp39-none-macosx_10_9_x86_64.whl", hash = "sha256:73fce034f2afea886a59ead2d0caedf27e2b2a8558b5da16d0286882e0b1eb82" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/1e/ce/64983e30ac5354e738a30ba9efecde21023b58744e9b66090f0fa525bf65/PyMuPDF-1.23.26-cp39-none-macosx_11_0_arm64.whl", hash = "sha256:b3de8618b7cb5b36db611083840b3bcf09b11a893e2d8262f4e042102c7e65de" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/2f/a9/4d9645924fa718acb3a39450ddd68322043894b0a290f5f04894535ae4bf/PyMuPDF-1.23.26-cp39-none-manylinux2014_aarch64.whl", hash = "sha256:879e7f5ad35709d8760ab6103c3d5dac8ab8043a856ab3653fd324af7358ee87" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/18/cd/e5b9ca2ec2041124f3d5339d653bd47c09b7a263b111ca74748630b394e8/PyMuPDF-1.23.26-cp39-none-manylinux2014_x86_64.whl", hash = "sha256:deee96c2fd415ded7b5070d8d5b2c60679aee6ed0e28ac0d2cb998060d835c2c" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/e5/ee/96e44180c7be69d9cb12356153dee89b6ece186e5a6be523096e193f6680/PyMuPDF-1.23.26-cp39-none-win32.whl", hash = "sha256:9f7f4ef99dd8ac97fb0b852efa3dcbee515798078b6c79a6a13c7b1e7c5d41a4" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/93/d6/b4f03823a84bdb89d81fecab3b0eb12b28d3c5168c5430e5545681712b36/PyMuPDF-1.23.26-cp39-none-win_amd64.whl", hash = "sha256:ba9a54552c7afb9ec85432c765e2fa9a81413acfaa7d70db7c9b528297749e5b" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/f8/11/571dbc09d4291fa3c70a432dc1e2630f6e556984ced09ff6bd8b7f709067/PyMuPDF-1.22.5-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:640b8e4cb116dd87a3c854e49808a4f63625e663a7bc5b1efc971db5b4775367" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/6e/fc/707bd3ad8e81e4e72db8803a24d43f78ddbb0ecca62b365f7f0ad8010279/PyMuPDF-1.22.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:17efbbf0e2d99d24cfc302fac512928eb294f10b7b67d597d04dafd012812e4e" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/fa/7f/fd1f0de71b6645d1d74e24d606a18fc8785e5a391e73da6540db349403d3/PyMuPDF-1.22.5-cp310-cp310-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9bc9b9bf0f2beea3911750d2d66247608be8cbad33b7a050cacec9e4c105a1ca" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/73/4f/8960304e81695659d5ac1d669bc90f90a1785f2a66f9781243f139c99004/PyMuPDF-1.22.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:e7734a32a91eea4b502b8f9d2915cdba0a372226e14fb983876d763110dcefef" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/3f/ce/542d6c7afab56fac74a851ccf1bdf7b6ee6a74568b584629d3ce4c334c6b/PyMuPDF-1.22.5-cp310-cp310-win32.whl", hash = "sha256:c2fd70ca9961f7871810dce1b7d0a42a69eb8ff2d786621123952bd505a6867e" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/aa/11/a2471ff50ce0a34eee2803df4882d8ac4497dd5f19c43ebbc9920a1cb4f5/PyMuPDF-1.22.5-cp310-cp310-win_amd64.whl", hash = "sha256:add310c96df6933cfb4ce3821c9c7b5c133e8aa609a4c9416e1c7af546163488" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/05/cf/c1f221571dd1c43baaea9e0c27797c88406af7eadedc09876682d9ce857c/PyMuPDF-1.22.5-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:017aaba511526facfc928e9d95d2c10d28a2821b05b9039bf422031a7da8584e" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/b5/f7/016c23f678b96821f8708a7b8db67dc784d8ef635668188b9864246a7754/PyMuPDF-1.22.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:6fe5e44a14864d921fb96669a82f9635846806176f77f1d73c61feb84ebf4d84" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/7b/05/e8eb60448483b6ba7deea936a8cc0e98be9120521a3bdac7371b718ecca8/PyMuPDF-1.22.5-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2e74d766f79e41e10c51865233042ab2cc4612ca7942812dca0603f4d0f8f73d" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/c2/ce/d9b515a5533da2d917f3eae2286b394fd9d813178360e374374f63844b65/PyMuPDF-1.22.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:fe8175452fcc99a0af6429d8acd87682a3a70c5879d73532c7327f71ce508a35" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/6f/bb/62d17402feb10babe33955b7b17967c7a83abd102aa6fac49893e10a8e48/PyMuPDF-1.22.5-cp311-cp311-win32.whl", hash = "sha256:42f59f4999d7f8b35c850050bd965e98c081a7d9b92d5f9dcf30203b30d06876" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/89/7c/e9d2259ec46547bfe4956fde5c4e42c1421acd20c4bcf2da772b4888bb6f/PyMuPDF-1.22.5-cp311-cp311-win_amd64.whl", hash = "sha256:3d71c47aa14b73f2df7d03be8c547a05df6c6898d8c63a0f752b26f206eefd3c" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/01/f2/c1481c1cc179b9a501a60a1b00906b0e1bdb5fa22034d6f4c91d93c505ad/PyMuPDF-1.22.5-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:64ae9f81b8fe0a3e6386a24887a92736793479c5918ecac3b7deac2d02abf1f2" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/a8/33/9db75b5524622b1ccaf3967f06a9231598f7f9e479ef71050fc5df6f99d1/PyMuPDF-1.22.5-cp38-cp38-macosx_11_0_arm64.whl", hash = "sha256:7562436dadf8382e59ac3739fbbf9d5b2d807fafc7f28cb884863430e0de6505" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/f1/6c/0587311487c5bf2113e9e87745f080c76ea41d8c1b02e319cfc4fc454813/PyMuPDF-1.22.5-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d0c22046e5f2cf0d72f9809a967340db1b238fefe58322896bc7c3f3d1d10b42" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/ca/dd/3301dba92880ed2b0f283074320d1d00ba9afe5d98334239b8a1ba519563/PyMuPDF-1.22.5-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:efa601dc4116c17a6b09255b031b5a1891e3ac18b50ec536452a725a6b75db8d" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/d6/69/cb4c6098f3baf819737f40faf31ca5b1776890295759e0cbb2adf0e11b36/PyMuPDF-1.22.5-cp38-cp38-win32.whl", hash = "sha256:3d0fe749e648f5245059d5f771fb50c1a988a1d2e82268b56377b2176a9fee5d" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/93/79/50c050f2f0fd03d69e06e7ab65b265505367f0d89edc941a129a9801cbc9/PyMuPDF-1.22.5-cp38-cp38-win_amd64.whl", hash = "sha256:4fbc5bfe6ecc53929e3fd0db9846fb7da084ddb4b1fc1063857245fa783974d9" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/27/aa/b3dc8a0a51e689b4952cb9d7d622da2490d7b4323532a55945edb625b97d/PyMuPDF-1.22.5-cp39-cp39-macosx_10_9_x86_64.whl", hash = "sha256:87b36e0797ab7fbb7ef594c7a6e0febc7ffb4101a42ea796726a8288391a3769" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/7e/27/80686d2bcff6b43663f9bccbdc39f320120163b40874f22efa9a7e5a0892/PyMuPDF-1.22.5-cp39-cp39-macosx_11_0_arm64.whl", hash = "sha256:01119edb7e4c3dd8c154d237b8ac927bd359eea8d31468f9a89aa308b5bca04e" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/12/5c/98a9e7f81c47b666527fd0aaf90bf8e5c2f19b536fd6fa1b0fb4c831105b/PyMuPDF-1.22.5-cp39-cp39-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:fde02fcb387863873b56730f4b9f65515d87c92c12299f0f0a74b3ccdfe35062" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/4e/e6/3346b61912592be1b5cba3b4b4fd3b5225e8e84a7a37e84466c22fee5ee6/PyMuPDF-1.22.5-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:30c55814bbf6461aef9b34cb524d1d14857d5ec6ccfbb78ecfb1d07dfc40eeb8" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/74/f1/ff6bb8480c5103d9834ab39861c361b7da5251bc289b9496be23dc93a40c/PyMuPDF-1.22.5-cp39-cp39-win32.whl", hash = "sha256:0542178c3a399282903705a8cc298e7f33f4770605e0a9db344aff5d375bcf0b" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/91/6c/2441a32bbb6339003645a61bdd982f0cae0c33dd61484d0641dd1617d904/PyMuPDF-1.22.5-cp39-cp39-win_amd64.whl", hash = "sha256:f8ca46a6987e14f58ec8dfda2d2376bacd113c1fec5f58bebf90838bb4408ab9" },
 ]
 
 [[package]]
@@ -1151,19 +1142,6 @@ wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/2e/5d/1a03f53eb0449900469335fcfc742ca28e3ba159b7d650e0921d50b8b308/pymupdf-1.28.0-cp310-abi3-win_amd64.whl", hash = "sha256:e01e90fd86abfeb37ceb921eddb951f988a11d45ff6ce6b7664f2039849068ec" },
     { url = "https://mirrors.aliyun.com/pypi/packages/72/f6/1e52ce243ca792254f6223b4017c5667194c146ce9b88baf37bc5eb3d1c9/pymupdf-1.28.0-cp313-abi3-pyemscripten_2025_0_wasm32.whl", hash = "sha256:74c6d00ba2a9aad3a635db73b07c15db462b480741d831a34a75a56535ebc22b" },
     { url = "https://mirrors.aliyun.com/pypi/packages/62/b1/46b5b3d8ef3cc71114667cf10c4d8b33f39af97253af32e9a0986775b638/pymupdf-1.28.0-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:b3e1399c7a64c6914239116a369efcdaac4cfb9e838bde2656d7accc4a85c72d" },
-]
-
-[[package]]
-name = "pymupdfb"
-version = "1.23.22"
-source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
-wheels = [
-    { url = "https://mirrors.aliyun.com/pypi/packages/70/f1/2ba669bbc8221ec7b39d7536bd6d5fd0daf7efb5b9d98458462432e3c1ef/PyMuPDFb-1.23.22-py3-none-macosx_10_9_x86_64.whl", hash = "sha256:9085a1e2fbf16f2820f9f7ad3d25e85f81d9b9eb0409110c1670d4cf5a27a678" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/7f/40/f02986ac1c9f580bdf90e405ae29b216fd6b481be04ec7b9a70b6b502cf1/PyMuPDFb-1.23.22-py3-none-macosx_11_0_arm64.whl", hash = "sha256:01016dd33220cef4ecaf929d09fd27a584dc3ec3e5c9f4112dfe63613ea35135" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/d1/c1/00a293fb4dfe1dd0bf1f579bd34150f6d34a685b8dc933fab73861ba01c1/PyMuPDFb-1.23.22-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:cf50e814db91f2a2325219302fbac229a23682c372cf8232aabd51ea3f18210e" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/65/33/4a3732db87ca2ea72ad6b3496f921b25d040f4ac853da1932d8cceb5cc33/PyMuPDFb-1.23.22-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:3ffa713ad18e816e584c8a5f569995c32d22f8ac76ab6e4a61f2d2983c4b73d9" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/1d/f8/0eee323d45c41231cd7af667e6ca0672eb7b649213b8a056139bea2fb715/PyMuPDFb-1.23.22-py3-none-win32.whl", hash = "sha256:d00e372452845aea624659c302d25e935052269fd3aafe26948301576d6f2ee8" },
-    { url = "https://mirrors.aliyun.com/pypi/packages/a7/79/2822a5c60909fdacaa1bc455c91e2b2dec9fc79537860b538f09ccad229d/PyMuPDFb-1.23.22-py3-none-win_amd64.whl", hash = "sha256:7c9c157281fdee9f296e666a323307dbf74cb38f017921bb131fa7bfcd39c2bd" },
 ]
 
 [[package]]
