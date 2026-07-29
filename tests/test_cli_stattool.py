@@ -338,3 +338,44 @@ class TestStattoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "2" in out  # mean([1,2,3]) = 2
+
+    @pytest.mark.parametrize(
+        "subcommand",
+        ["median", "stddev", "variance", "summarize"],
+    )
+    def test_nonexistent_file(
+        self,
+        subcommand: str,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """子命令文件不存在时打印错误且不输出结果。"""
+        code = run_tool("stattool", [subcommand, str(tmp_path / "no.txt")])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "文件不存在" in out
+
+    @pytest.mark.parametrize(
+        ("subcommand", "data", "expected"),
+        [
+            ("mean", "", "平均值 计算失败"),
+            ("median", "", "中位数 计算失败"),
+            ("variance", "42\n", "方差 计算失败"),
+            ("summarize", "", "统计摘要 计算失败"),
+        ],
+    )
+    def test_stat_failure(
+        self,
+        subcommand: str,
+        data: str,
+        expected: str,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """数据导致统计函数失败时打印错误且不输出结果。"""
+        path = tmp_path / "data.txt"
+        _write_data(path, data)
+        code = run_tool("stattool", [subcommand, str(path)])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert expected in out

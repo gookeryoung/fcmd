@@ -248,3 +248,17 @@ class TestUrltoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "URL 缺少 scheme" in out
+
+    def test_query_empty_url(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """query 空 URL 异常提示。"""
+        code = run_tool("urltool", ["query", "", "a"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "URL 不能为空" in out
+
+    def test_addquery_empty_url(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """addquery 空 URL 异常提示。"""
+        code = run_tool("urltool", ["addquery", "", "k", "v"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "URL 不能为空" in out
