@@ -353,3 +353,13 @@ class TestTimetoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "12:30:00" in out
+
+    def test_convert_invalid_from_tz(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """convert --from-tz 无效时区名打印错误。"""
+        code = run_tool(
+            "timetool",
+            ["convert", "12:30:00", "UTC", "--from-tz", "Invalid/Zone", "--format", "%H:%M:%S"],
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "无效或不可用的时区" in out

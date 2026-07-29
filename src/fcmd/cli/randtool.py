@@ -70,7 +70,7 @@ def generate_password(
     Raises
     ------
     ValueError
-        ``length`` 不足 4 或字符集为空时
+        ``length`` 不足 4 时
     """
     if length < 4:
         raise ValueError(f"length 必须大于等于 4，当前: {length}")
@@ -80,8 +80,6 @@ def generate_password(
         pools.append(_SYMBOLS)
 
     full_pool = "".join(pools)
-    if not full_pool:
-        raise ValueError("字符集为空（无法生成密码）")
 
     # 先确保每类至少 1 个字符
     result: list[str] = [secrets.choice(pool) for pool in pools]
@@ -145,13 +143,11 @@ def generate_string(
     Raises
     ------
     ValueError
-        ``length`` 小于等于 0 或 ``chars`` 为空串（显式传入空串）时
+        ``length`` 小于等于 0 时
     """
     if length <= 0:
         raise ValueError(f"length 必须大于 0，当前: {length}")
     pool = chars if chars else (string.ascii_letters + string.digits)
-    if not pool:
-        raise ValueError("字符集不能为空")
     return "".join(secrets.choice(pool) for _ in range(length))
 
 
