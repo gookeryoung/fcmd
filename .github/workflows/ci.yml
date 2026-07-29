@@ -57,7 +57,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync dependencies
-        run: uv sync --frozen --extra test --python ${{ matrix.python-version }}
+        run: uv sync --frozen --extra test,office --python ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run pytest -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing

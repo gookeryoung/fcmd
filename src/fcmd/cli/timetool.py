@@ -55,7 +55,7 @@ else:  # pragma: no cover (测试环境单版本)
         """3.8 不支持命名时区，仅接受 ``UTC``。"""
         if name.upper() == "UTC":
             return timezone.utc
-        raise ValueError(f"命名时区需要 Python 3.9+ 或 backports.zoneinfo，当前不支持: {name}")
+        raise ValueError(f"无效或不可用的时区（命名时区需要 Python 3.9+ 或 backports.zoneinfo）: {name}")
 
 
 # ============================================================================

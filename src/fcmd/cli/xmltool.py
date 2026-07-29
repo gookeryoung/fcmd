@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import copy
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -27,6 +28,43 @@ __all__ = [
     "validate_xml",
     "write_xml",
 ]
+
+
+# ============================================================================
+# 内部工具
+# ============================================================================
+
+
+def _indent_fallback(element: ET.Element, space: str) -> None:  # pragma: no cover
+    """Python 3.8 缩进 fallback（``ET.indent`` 在 3.9+ 才有）。
+
+    参考 Python 官方文档的缩进实现，递归地为元素添加换行与缩进空格。
+    """
+
+    def _do_indent(elem: ET.Element, level: int) -> None:
+        s = "\n" + space * level
+        if len(elem):
+            if not elem.text or not elem.text.isspace():
+                elem.text = s + space
+            for child in elem:
+                _do_indent(child, level + 1)
+            if not child.tail or not child.tail.isspace():
+                child.tail = s
+        elif level and (not elem.tail or not elem.tail.isspace()):
+            elem.tail = s
+
+    _do_indent(element, 0)
+
+
+def _indent_xml(element: ET.Element, space: str = "  ") -> None:
+    """给 XML 元素树添加缩进（兼容 Python 3.8）。
+
+    Python 3.9+ 用 ``ET.indent``，3.8 用 ``_indent_fallback``。
+    """
+    if sys.version_info >= (3, 9):
+        ET.indent(element, space=space)
+        return
+    _indent_fallback(element, space)  # pragma: no cover
 
 
 # ============================================================================
@@ -73,7 +111,7 @@ def write_xml(filepath: Path, element: ET.Element, indent: int = 2) -> None:
     """
     filepath.parent.mkdir(parents=True, exist_ok=True)
     clone = copy.deepcopy(element)
-    ET.indent(clone, space=" " * indent)
+    _indent_xml(clone, " " * indent)
     tree = ET.ElementTree(clone)
     tree.write(filepath, encoding="utf-8", xml_declaration=True)
 
@@ -94,7 +132,7 @@ def pretty_xml(element: ET.Element, indent: int = 2) -> str:
         多行 XML 文本
     """
     clone = copy.deepcopy(element)
-    ET.indent(clone, space=" " * indent)
+    _indent_xml(clone, " " * indent)
     return ET.tostring(clone, encoding="unicode")
 
 

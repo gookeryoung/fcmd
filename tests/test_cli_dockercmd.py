@@ -73,6 +73,8 @@ class TestDockercmd:
             return _make_result(returncode=0)
 
         monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
+        # tox passenv 不含 USERNAME/LOGNAME/USER，getpass.getuser() 会抛 OSError
+        monkeypatch.setattr("fcmd.cli.dockercmd.getpass.getuser", lambda: "testuser")
         docker_login()
         out = capsys.readouterr().out
         assert "已登录镜像仓库" in out
