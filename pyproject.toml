@@ -109,5 +109,8 @@ packages = ["src/fcmd"]
 [tool.fspack.entries]
 fcmd = "src/fcmd/cli/main.py"
 
+[tool.fspack]
+extras = ["img", "pdf", "ocr", "office"]
+
 [dependency-groups]
 dev = ["fcmd[lint,test,office]"]
