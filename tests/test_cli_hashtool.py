@@ -79,7 +79,7 @@ class TestHashMd5:
     def test_unicode(self) -> None:
         """Unicode 字符串。"""
         # 中文 UTF-8 编码后的 MD5
-        assert hash_md5("中") == hashlib.md5("中".encode("utf-8")).hexdigest()
+        assert hash_md5("中") == hashlib.md5("中".encode()).hexdigest()
 
     def test_deterministic(self) -> None:
         """相同输入相同输出。"""
@@ -209,5 +209,5 @@ class TestHashtoolCLI:
         code = run_tool("hashtool", ["md5", "中文"])
         assert code == 0
         out = capsys.readouterr().out
-        expected = hashlib.md5("中文".encode("utf-8")).hexdigest()
+        expected = hashlib.md5("中文".encode()).hexdigest()
         assert expected in out

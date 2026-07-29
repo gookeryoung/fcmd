@@ -125,9 +125,7 @@ def add_query_param(url: str, key: str, value: str) -> str:
     params = urllib.parse.parse_qsl(parsed.query)
     params.append((key, value))
     new_query = urllib.parse.urlencode(params)
-    return urllib.parse.urlunsplit(
-        (parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment)
-    )
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, new_query, parsed.fragment))
 
 
 def get_base_url(url: str) -> str:

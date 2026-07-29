@@ -122,13 +122,13 @@ def rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
     delta = cmax - cmin
 
     # 亮度
-    l = (cmax + cmin) / 2
+    light = (cmax + cmin) / 2
 
     # 饱和度
     if delta == 0:
         s = 0.0
     else:
-        s = delta / (1 - abs(2 * l - 1)) if (1 - abs(2 * l - 1)) != 0 else 0.0
+        s = delta / (1 - abs(2 * light - 1)) if (1 - abs(2 * light - 1)) != 0 else 0.0
 
     # 色相
     if delta == 0:
@@ -143,10 +143,10 @@ def rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
     if h < 0:
         h += 360
 
-    return (round(h, 2), round(s * 100, 2), round(l * 100, 2))
+    return (round(h, 2), round(s * 100, 2), round(light * 100, 2))
 
 
-def hsl_to_rgb(h: float, s: float, l: float) -> tuple[int, int, int]:
+def hsl_to_rgb(h: float, s: float, light: float) -> tuple[int, int, int]:
     """HSL 转 RGB。
 
     Parameters
@@ -155,7 +155,7 @@ def hsl_to_rgb(h: float, s: float, l: float) -> tuple[int, int, int]:
         色相（0-360 度）
     s:
         饱和度（0-100 百分比）
-    l:
+    light:
         亮度（0-100 百分比）
 
     Returns
@@ -166,19 +166,19 @@ def hsl_to_rgb(h: float, s: float, l: float) -> tuple[int, int, int]:
     Raises
     ------
     ValueError
-        ``h``/``s``/``l`` 超出范围时
+        ``h``/``s``/``light`` 超出范围时
     """
     if not 0 <= h <= 360:
         raise ValueError(f"h 须在 0-360 范围: {h}")
     if not 0 <= s <= 100:
         raise ValueError(f"s 须在 0-100 范围: {s}")
-    if not 0 <= l <= 100:
-        raise ValueError(f"l 须在 0-100 范围: {l}")
+    if not 0 <= light <= 100:
+        raise ValueError(f"l 须在 0-100 范围: {light}")
 
     # 归一化到 [0, 1]
     hn = h / 360
     sn = s / 100
-    ln = l / 100
+    ln = light / 100
 
     c = (1 - abs(2 * ln - 1)) * sn
     x = c * (1 - abs((hn * 6) % 2 - 1))
@@ -264,18 +264,18 @@ def rgb2hsl_cmd(r: int, g: int, b: int) -> None:
         蓝色分量（0-255）
     """
     try:
-        h, s, l = rgb_to_hsl(r, g, b)
+        h, s, light = rgb_to_hsl(r, g, b)
     except ValueError as exc:
         print(str(exc))
         return
-    print(f"{h} {s} {l}")
+    print(f"{h} {s} {light}")
 
 
 @fcmd.tool("colortool", subcommand="hsl2rgb", help="HSL 转 RGB")
-def hsl2rgb_cmd(h: float, s: float, l: float) -> None:
+def hsl2rgb_cmd(h: float, s: float, light: float) -> None:
     """HSL 转 RGB。
 
-    用法：``fcmd colortool hsl2rgb <h> <s> <l>``
+    用法：``fcmd colortool hsl2rgb <h> <s> <light>``
 
     Parameters
     ----------
@@ -283,11 +283,11 @@ def hsl2rgb_cmd(h: float, s: float, l: float) -> None:
         色相（0-360 度）
     s:
         饱和度（0-100 百分比）
-    l:
+    light:
         亮度（0-100 百分比）
     """
     try:
-        r, g, b = hsl_to_rgb(h, s, l)
+        r, g, b = hsl_to_rgb(h, s, light)
     except ValueError as exc:
         print(str(exc))
         return

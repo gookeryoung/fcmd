@@ -127,39 +127,39 @@ class TestRgbToHsl:
 
     def test_red(self) -> None:
         """红色 (255,0,0) → H(0) S(100) L(50)。"""
-        h, s, l = rgb_to_hsl(255, 0, 0)
+        h, s, light = rgb_to_hsl(255, 0, 0)
         assert abs(h - 0) < 0.01
         assert abs(s - 100) < 0.01
-        assert abs(l - 50) < 0.01
+        assert abs(light - 50) < 0.01
 
     def test_green(self) -> None:
         """绿色 (0,255,0) → H(120) S(100) L(50)。"""
-        h, s, l = rgb_to_hsl(0, 255, 0)
+        h, s, light = rgb_to_hsl(0, 255, 0)
         assert abs(h - 120) < 0.01
         assert abs(s - 100) < 0.01
-        assert abs(l - 50) < 0.01
+        assert abs(light - 50) < 0.01
 
     def test_blue(self) -> None:
         """蓝色 (0,0,255) → H(240) S(100) L(50)。"""
-        h, s, l = rgb_to_hsl(0, 0, 255)
+        h, s, light = rgb_to_hsl(0, 0, 255)
         assert abs(h - 240) < 0.01
         assert abs(s - 100) < 0.01
-        assert abs(l - 50) < 0.01
+        assert abs(light - 50) < 0.01
 
     def test_gray(self) -> None:
         """灰色 (128,128,128) → S(0)。"""
-        h, s, l = rgb_to_hsl(128, 128, 128)
+        _h, s, _light = rgb_to_hsl(128, 128, 128)
         assert s == 0  # 灰度饱和度为 0
 
     def test_black(self) -> None:
         """黑色 (0,0,0) → L(0)。"""
-        h, s, l = rgb_to_hsl(0, 0, 0)
-        assert l == 0
+        _h, _s, light = rgb_to_hsl(0, 0, 0)
+        assert light == 0
 
     def test_white(self) -> None:
         """白色 (255,255,255) → L(100)。"""
-        h, s, l = rgb_to_hsl(255, 255, 255)
-        assert l == 100
+        _h, _s, light = rgb_to_hsl(255, 255, 255)
+        assert light == 100
 
     def test_out_of_range(self) -> None:
         """超出范围抛 ValueError。"""
