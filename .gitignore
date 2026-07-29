@@ -14,7 +14,6 @@ wheels/
 .coverage.*
 htmlcov/
 coverage.xml
-*,cover
 .tox/
 
 # 工具缓存
@@ -33,3 +32,4 @@ coverage.xml
 
 # Sphinx 文档构建输出
 docs/_build/
+.trae/ref

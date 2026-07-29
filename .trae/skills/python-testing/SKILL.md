@@ -5,7 +5,7 @@ description: "Python 测试技能：pytest fixture、参数化、mock、覆盖�
 
 # Python 测试
 
-自包含的 pytest 测试指南：fixture 设计、参数化、mock 策略、异常断言、覆盖率、pytest-qt GUI 测试。所有示例遵循 `rule-11-python-standards.md`（类型注解、中文 docstring、`from __future__ import annotations`）。
+自包含的 pytest 测试指南：fixture 设计、参数化、mock 策略、异常断言、覆盖率、pytest-qt GUI 测试。所有示例遵循 `python-standards` SKILL（类型注解、中文 docstring、`from __future__ import annotations`）。
 
 ## 何时调用
 
@@ -24,6 +24,7 @@ description: "Python 测试技能：pytest fixture、参数化、mock、覆盖�
 
 ```
 tests/
+├── __init__.py                 # 可选：让 tests 成为包，便于跨模块共享 fixture
 ├── conftest.py                 # 根 conftest：全局 fixture、autouse 钩子
 ├── unit/                       # 单元测试（快、隔离）
 │   ├── __init__.py
@@ -32,9 +33,11 @@ tests/
 ├── integration/               # 集成测试（多组件协作，标 @pytest.mark.slow）
 │   ├── __init__.py
 │   └── test_pipeline.py
-└── gui/                        # GUI 测试（标 @pytest.mark.gui，仅 GUI 项目）
-    ├── __init__.py
-    └── test_main_window.py
+├── gui/                        # GUI 测试（标 @pytest.mark.gui，仅 GUI 项目）
+│   ├── __init__.py
+│   └── test_main_window.py
+└── fixtures/                   # 测试数据（JSON/CSV/二进制）
+    └── sample.json
 ```
 
 要点：
@@ -59,17 +62,7 @@ def test_validate_non_empty_rejects_blank_string() -> None:
 
 ### 标记注册
 
-`pytest.ini` 注册标记，配合 `--strict-markers` 在拼写错误时直接失败。
-
-```ini
-[pytest]
-addopts = -ra --strict-markers --strict-config
-asyncio_default_fixture_loop_scope = function
-markers =
-    slow: marks tests as slow (deselect with '-m "not slow"')
-    gui: marks tests requiring Qt/GUI (deselect with '-m "not gui"')
-testpaths = tests
-```
+`pytest.ini` 的 `markers` 字段注册标记，配合 `--strict-markers` 在拼写错误时直接失败。完整 `pytest.ini` 示例见下文「测试配置文件」章节。
 
 要点：
 - `slow`：慢测试（I/O、网络、集成），默认 `-m "not slow"` 跳过。
