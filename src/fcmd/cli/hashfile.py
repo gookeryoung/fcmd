@@ -137,3 +137,14 @@ def hash_dir_cmd(directory: str, algorithm: str = "sha256") -> None:
         哈希算法（``md5``/``sha256``/``sha1``，默认 ``sha256``）
     """
     hash_directory(directory, algorithm)
+
+
+def main() -> None:
+    """``hashfile`` 入口：等价于 ``fcmd hashfile <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("hashfile")
+
+
+if __name__ == "__main__":
+    main()

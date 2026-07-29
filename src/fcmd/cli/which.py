@@ -55,3 +55,14 @@ def which_run(commands: list[str]) -> None:
             print(f"{command} -> 未找到")
         else:
             print(f"{command} -> {path}")
+
+
+def main() -> None:
+    """``which`` 入口：等价于 ``fcmd which <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("which")
+
+
+if __name__ == "__main__":
+    main()

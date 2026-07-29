@@ -524,3 +524,14 @@ def archivex_create(source: Path, output: Path) -> None:
         print(str(e))
         return
     print(f"创建完成: {source} -> {output}")
+
+
+def main() -> None:
+    """``archivex`` 入口：等价于 ``fcmd archivex <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("archivex")
+
+
+if __name__ == "__main__":
+    main()

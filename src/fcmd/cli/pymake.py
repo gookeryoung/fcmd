@@ -25,11 +25,9 @@
 from __future__ import annotations
 
 import shutil
-import sys
 from pathlib import Path
 
 import fcmd
-from fcmd.apis import run_tool
 
 # 工具别名：fcmd pm <args> 等价于 fcmd pymake <args>
 __tool_aliases__: list[str] = ["pm"]
@@ -313,7 +311,9 @@ def all_(cwd: Path = Path()) -> None:
 
 def main() -> None:
     """``pymake`` 入口：等价于 ``fcmd pymake <args>``。"""
-    sys.exit(run_tool("pymake", sys.argv[1:]))
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("pymake")
 
 
 if __name__ == "__main__":

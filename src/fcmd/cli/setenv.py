@@ -35,3 +35,14 @@ def setenv_run(name: str, value: str, default: bool = False) -> None:
     else:
         os.environ[name] = value
     print(f"环境变量 {name} 已设置")
+
+
+def main() -> None:
+    """``setenv`` 入口：等价于 ``fcmd setenv <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("setenv")
+
+
+if __name__ == "__main__":
+    main()

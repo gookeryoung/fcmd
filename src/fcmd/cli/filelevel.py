@@ -137,3 +137,14 @@ def process_files_level(files: list[Path], level: int = 0) -> None:
     """
     for target in files:
         process_file_level(target, level)
+
+
+def main() -> None:
+    """``filelevel`` 入口：等价于 ``fcmd filelevel <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("filelevel")
+
+
+if __name__ == "__main__":
+    main()

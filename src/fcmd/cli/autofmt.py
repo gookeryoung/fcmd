@@ -55,3 +55,14 @@ def lint(target: str = ".", fix: bool = False) -> None:
         cmd.extend(["--fix", "--unsafe-fixes"])
     run_command(cmd)
     print(f"ruff check 完成: {target}")
+
+
+def main() -> None:
+    """``autofmt`` 入口：等价于 ``fcmd autofmt <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("autofmt")
+
+
+if __name__ == "__main__":
+    main()

@@ -208,3 +208,14 @@ def filerename_case(files: list[Path], mode: str = "lower", preview: bool = Fals
             print(f"文件不存在: {filepath}")
             continue
         change_case(filepath, mode, preview)
+
+
+def main() -> None:
+    """``filerename`` 入口：等价于 ``fcmd filerename <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("filerename")
+
+
+if __name__ == "__main__":
+    main()

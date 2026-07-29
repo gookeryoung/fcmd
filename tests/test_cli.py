@@ -1314,3 +1314,71 @@ class TestCoverageGaps:
         assert "未知工具" in out
         assert "是否想用" not in out  # 无建议
         assert "查看可用工具列表" in out
+
+
+# ---------------------------------------------------------------------- #
+# 工具模块 main() 入口测试
+# ---------------------------------------------------------------------- #
+# (工具名, 模块路径) 列表：每个工具模块的 main() 应委托 run_tool_main 并传入工具名
+_MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
+    ("archivex", "fcmd.cli.archivex"),
+    ("autofmt", "fcmd.cli.autofmt"),
+    ("bumpversion", "fcmd.cli.bumpversion"),
+    ("clr", "fcmd.cli.clr"),
+    ("csvtool", "fcmd.cli.csvtool"),
+    ("dockercmd", "fcmd.cli.dockercmd"),
+    ("envdev", "fcmd.cli.envdev"),
+    ("filedate", "fcmd.cli.filedate"),
+    ("filelevel", "fcmd.cli.filelevel"),
+    ("filerename", "fcmd.cli.filerename"),
+    ("filesearch", "fcmd.cli.filesearch"),
+    ("folderback", "fcmd.cli.folderback"),
+    ("folderzip", "fcmd.cli.folderzip"),
+    ("gittool", "fcmd.cli.gittool"),
+    ("hashfile", "fcmd.cli.hashfile"),
+    ("imagetool", "fcmd.cli.imagetool"),
+    ("jsontool", "fcmd.cli.jsontool"),
+    ("lscalc", "fcmd.cli.lscalc"),
+    ("packtool", "fcmd.cli.packtool"),
+    ("pathtool", "fcmd.cli.pathtool"),
+    ("pdftool", "fcmd.cli.pdftool"),
+    ("piptool", "fcmd.cli.piptool"),
+    ("portcheck", "fcmd.cli.portcheck"),
+    ("pymake", "fcmd.cli.pymake"),
+    ("reseticoncache", "fcmd.cli.reseticoncache"),
+    ("screenshot", "fcmd.cli.screenshot"),
+    ("setenv", "fcmd.cli.setenv"),
+    ("sshcopyid", "fcmd.cli.sshcopyid"),
+    ("sysinfo", "fcmd.cli.sysinfo"),
+    ("taskkill", "fcmd.cli.taskkill"),
+    ("textdiff", "fcmd.cli.textdiff"),
+    ("which", "fcmd.cli.which"),
+    ("writefile", "fcmd.cli.writefile"),
+    ("zipencrypt", "fcmd.cli.zipencrypt"),
+]
+
+
+@pytest.mark.parametrize(
+    "tool_name, module_path", _MAIN_ENTRY_TOOLS, ids=[t[0] for t in _MAIN_ENTRY_TOOLS]
+)
+def test_tool_main_delegates_run_tool_main(
+    tool_name: str, module_path: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``<tool>.main()`` 委托 ``run_tool_main`` 并传入正确工具名。
+
+    验证各工具模块的 ``main()`` 入口正确绑定工具名，等价于 ``fcmd <tool> <args>``。
+    通过 monkeypatch 替换 ``run_tool_main`` 避免触发真实命令执行与 ``SystemExit``。
+    """
+    import importlib
+
+    from fcmd.cli import _common
+
+    mod = importlib.import_module(module_path)
+    captured: dict[str, str] = {}
+
+    def _fake_run_tool_main(name: str) -> None:
+        captured["name"] = name
+
+    monkeypatch.setattr(_common, "run_tool_main", _fake_run_tool_main)
+    mod.main()
+    assert captured["name"] == tool_name

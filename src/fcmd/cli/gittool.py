@@ -172,3 +172,14 @@ def p() -> None:
 @fcmd.tool("gittool", subcommand="pl", help="拉取", cmd=["git", "pull"])
 def pl() -> None:
     """从远程仓库拉取代码。"""
+
+
+def main() -> None:
+    """``gittool`` 入口：等价于 ``fcmd gittool <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("gittool")
+
+
+if __name__ == "__main__":
+    main()

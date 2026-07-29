@@ -53,3 +53,14 @@ def clear_screen_run() -> None:
     Windows 调用 ``cls``，Linux/macOS 调用 ``clear``。
     """
     clear_screen()
+
+
+def main() -> None:
+    """``clr`` 入口：等价于 ``fcmd clr <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("clr")
+
+
+if __name__ == "__main__":
+    main()

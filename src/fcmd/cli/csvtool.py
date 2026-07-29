@@ -449,3 +449,14 @@ def csvtool_merge(files: list[Path], mode: str = "union", output: str = "") -> N
         print(f"合并完成: {len(files)} 个文件 -> {output}（{len(rows)} 行）")
     else:
         print(format_table(header, rows))
+
+
+def main() -> None:
+    """``csvtool`` 入口：等价于 ``fcmd csvtool <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("csvtool")
+
+
+if __name__ == "__main__":
+    main()

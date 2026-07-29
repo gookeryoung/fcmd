@@ -42,3 +42,14 @@ def docker_login(username: str = "", registry: str = _DEFAULT_REGISTRY) -> None:
         print(f"登录失败: {registry} (用户: {user})")
         return
     print(f"已登录镜像仓库: {registry} (用户: {user})")
+
+
+def main() -> None:
+    """``dockercmd`` 入口：等价于 ``fcmd dockercmd <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("dockercmd")
+
+
+if __name__ == "__main__":
+    main()

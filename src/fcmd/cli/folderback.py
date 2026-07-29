@@ -93,3 +93,14 @@ def backup_folder(src: str = ".", dst: str = "./backup", max_zip: int = 5) -> No
         print(f"创建目标文件夹: {dst_path}")
 
     zip_target(src_path, dst_path, max_zip)
+
+
+def main() -> None:
+    """``folderback`` 入口：等价于 ``fcmd folderback <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("folderback")
+
+
+if __name__ == "__main__":
+    main()

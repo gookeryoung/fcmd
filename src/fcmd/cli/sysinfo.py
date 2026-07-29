@@ -110,3 +110,14 @@ def sysinfo_run() -> None:
     包括 Python 版本、平台、架构、内存、磁盘、CPU 核心数等，用于环境诊断与 bug 报告。
     """
     print_sysinfo()
+
+
+def main() -> None:
+    """``sysinfo`` 入口：等价于 ``fcmd sysinfo <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("sysinfo")
+
+
+if __name__ == "__main__":
+    main()

@@ -84,3 +84,14 @@ def ssh_copy_id(  # noqa: PLR0913
         print(f"部署失败，可手动执行: ssh-copy-id -p {port} {username}@{hostname}")
         return
     print(f"SSH 密钥已部署到 {username}@{hostname}:{port}")
+
+
+def main() -> None:
+    """``sshcopyid`` 入口：等价于 ``fcmd sshcopyid <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("sshcopyid")
+
+
+if __name__ == "__main__":
+    main()

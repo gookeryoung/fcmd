@@ -300,3 +300,14 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
         print(f"已创建标签: {tag_name}")
 
     return str(new_version)
+
+
+def main() -> None:
+    """``bumpversion`` 入口：等价于 ``fcmd bumpversion <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("bumpversion")
+
+
+if __name__ == "__main__":
+    main()

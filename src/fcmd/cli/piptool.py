@@ -189,3 +189,14 @@ def pip_freeze() -> None:
     result = run_command(["pip", "freeze", "--exclude-editable"], capture=True)
     Path(REQUIREMENTS_FILE).write_text(result.stdout, encoding="utf-8")
     print(f"依赖已导出到 {REQUIREMENTS_FILE}")
+
+
+def main() -> None:
+    """``piptool`` 入口：等价于 ``fcmd piptool <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("piptool")
+
+
+if __name__ == "__main__":
+    main()

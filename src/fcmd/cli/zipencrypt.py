@@ -149,3 +149,14 @@ def zip_encrypt(directory: str, password: str, replace: bool = False) -> None:
     print(f"开始加密 {len(entries)} 个文件/目录...")
     success_count = sum(1 for entry in entries if _make_archive(entry, password, tool, replace))
     print(f"加密完成: {success_count}/{len(entries)} 成功")
+
+
+def main() -> None:
+    """``zipencrypt`` 入口：等价于 ``fcmd zipencrypt <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("zipencrypt")
+
+
+if __name__ == "__main__":
+    main()

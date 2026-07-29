@@ -70,3 +70,14 @@ def zip_folders(directory: str = ".") -> None:
 
     for dir_path in dirs:
         archive_folder(dir_path)
+
+
+def main() -> None:
+    """``folderzip`` 入口：等价于 ``fcmd folderzip <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("folderzip")
+
+
+if __name__ == "__main__":
+    main()

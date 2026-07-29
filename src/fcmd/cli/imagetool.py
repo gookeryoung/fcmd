@@ -530,3 +530,14 @@ def image_colors(
         b = palette[i * 3 + 2]
         hex_color = f"#{r:02X}{g:02X}{b:02X}"
         print(f"  {i + 1}. {hex_color}  rgb({r}, {g}, {b})")
+
+
+def main() -> None:
+    """``imagetool`` 入口：等价于 ``fcmd imagetool <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("imagetool")
+
+
+if __name__ == "__main__":
+    main()

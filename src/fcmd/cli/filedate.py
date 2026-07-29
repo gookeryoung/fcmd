@@ -72,11 +72,14 @@ def remove_date_prefix(filepath: Path) -> Path:
     """
     stem = filepath.stem
     new_stem = DATE_PATTERN.sub("", stem)
-    if new_stem != stem:
-        new_path = filepath.with_name(new_stem + filepath.suffix)
-        filepath.rename(new_path)
-        return new_path
-    return filepath
+
+    if new_stem == stem:
+        print(f"{filepath} 无日期前缀")
+        return filepath
+
+    new_path = filepath.with_name(new_stem + filepath.suffix)
+    filepath.rename(new_path)
+    return new_path
 
 
 def add_date_prefix(filepath: Path) -> Path:
@@ -159,3 +162,14 @@ def process_files_date_clear(files: list[Path]) -> None:
         文件路径列表
     """
     process_files_date(files, clear=True)
+
+
+def main() -> None:
+    """``filedate`` 入口：等价于 ``fcmd filedate <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("filedate")
+
+
+if __name__ == "__main__":
+    main()

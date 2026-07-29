@@ -554,3 +554,14 @@ def pdf_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> No
     doc.save(str(output_path), garbage=4, deflate=True, clean=True)
     doc.close()
     print(f"修复完成: {output_path}")
+
+
+def main() -> None:
+    """``pdftool`` 入口：等价于 ``fcmd pdftool <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("pdftool")
+
+
+if __name__ == "__main__":
+    main()

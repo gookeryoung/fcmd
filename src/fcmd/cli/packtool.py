@@ -264,3 +264,14 @@ def clean_build_dir(build_dir: Path = Path(".pypack")) -> None:
         print(f"清理完成: {build_dir}")
     else:
         print(f"目录不存在: {build_dir}")
+
+
+def main() -> None:
+    """``packtool`` 入口：等价于 ``fcmd packtool <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("packtool")
+
+
+if __name__ == "__main__":
+    main()

@@ -67,3 +67,14 @@ def taskkill_run(process_names: list[str]) -> None:
             print(f"  已发送终止信号: {name}")
         else:
             print(f"  未找到匹配进程或终止失败 (returncode={returncode}): {name}")
+
+
+def main() -> None:
+    """``taskkill`` 入口：等价于 ``fcmd taskkill <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("taskkill")
+
+
+if __name__ == "__main__":
+    main()

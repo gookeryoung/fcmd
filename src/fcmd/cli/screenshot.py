@@ -122,3 +122,14 @@ def take_screenshot_area(filename: str | None = None) -> None:
     else:
         _take_linux_screenshot(output_path, area=True)
     print(f"截图已保存: {output_path}")
+
+
+def main() -> None:
+    """``screenshot`` 入口：等价于 ``fcmd screenshot <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("screenshot")
+
+
+if __name__ == "__main__":
+    main()

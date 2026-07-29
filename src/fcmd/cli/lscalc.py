@@ -115,3 +115,14 @@ def check_ls_dyna_status() -> None:
         print(f"运行中的 LS-DYNA 进程 PID: {result.stdout.strip()}")
     else:
         print("没有运行中的 LS-DYNA 进程")
+
+
+def main() -> None:
+    """``lscalc`` 入口：等价于 ``fcmd lscalc <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("lscalc")
+
+
+if __name__ == "__main__":
+    main()

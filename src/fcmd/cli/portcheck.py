@@ -121,3 +121,14 @@ def scan_ports_cmd(start: int, end: int, host: str = "127.0.0.1") -> None:
         目标主机（默认 ``127.0.0.1``）
     """
     scan_ports(start, end, host)
+
+
+def main() -> None:
+    """``portcheck`` 入口：等价于 ``fcmd portcheck <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("portcheck")
+
+
+if __name__ == "__main__":
+    main()

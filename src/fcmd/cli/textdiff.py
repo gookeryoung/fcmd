@@ -230,3 +230,14 @@ def textdiff_dir(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = T
         print(f"目录不存在: {dir2}")
         return
     print(compare_directories(dir1, dir2, pattern, recursive))
+
+
+def main() -> None:
+    """``textdiff`` 入口：等价于 ``fcmd textdiff <args>``。"""
+    from fcmd.cli._common import run_tool_main
+
+    run_tool_main("textdiff")
+
+
+if __name__ == "__main__":
+    main()
