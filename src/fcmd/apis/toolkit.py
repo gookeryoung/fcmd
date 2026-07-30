@@ -273,13 +273,12 @@ def main(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         import functools
-        import sys
 
         @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            from fcmd.apis import run_tool
+        def wrapper(*_args: Any, **_kwargs: Any) -> Any:
+            from fcmd.cli._common import run_tool_main
 
-            sys.exit(run_tool(tool_name, sys.argv[1:]))
+            run_tool_main(tool_name)
 
         return wrapper
 
