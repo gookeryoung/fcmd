@@ -1,6 +1,6 @@
 """console 模块测试。
 
-覆盖 Win7/8 检测、Console 懒加载缓存、legacy 模式宽度收紧逻辑。
+覆盖 Win7/8 检测、Console 懒加载缓存、legacy 模式宽度收紧与 ASCII 强制逻辑。
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class TestGetConsoleLegacyWindows:
     """Win7/8 下 Console 初始化参数。"""
 
     def test_legacy_windows_passes_width_and_legacy_flag(self) -> None:
-        """Win7 下显式传 legacy_windows=True 和 width=cols-2。"""
+        """Win7 下显式传 legacy_windows=True/ascii_only=True/width=cols-2。"""
         captured: dict[str, object] = {}
 
         class FakeConsole:
@@ -95,6 +95,7 @@ class TestGetConsoleLegacyWindows:
             console.get_console()
 
         assert captured.get("legacy_windows") is True
+        assert captured.get("ascii_only") is True
         # cols=80 → 80-2=78
         assert captured.get("width") == 78
 
@@ -113,6 +114,8 @@ class TestGetConsoleLegacyWindows:
             console.get_console()
 
         assert captured.get("width") == 1
+        # ascii_only 在 OSError 之外的路径下也应保留
+        assert captured.get("ascii_only") is True
 
     def test_legacy_windows_oserror_omits_width(self) -> None:
         """非交互环境（stdout 重定向）下不传 width，由 rich 自行 fallback。"""
@@ -127,12 +130,13 @@ class TestGetConsoleLegacyWindows:
         ), mock.patch("rich.console.Console", FakeConsole):
             console.get_console()
 
-        # legacy_windows 仍传入，但 width 未设置
+        # legacy_windows/ascii_only 仍传入，但 width 未设置
         assert captured.get("legacy_windows") is True
+        assert captured.get("ascii_only") is True
         assert "width" not in captured
 
     def test_modern_windows_no_extra_kwargs(self) -> None:
-        """Win10+ 下不传 legacy_windows/width，保持默认行为。"""
+        """Win10+ 下不传 legacy_windows/ascii_only/width，保持默认行为。"""
         captured: dict[str, object] = {}
 
         class FakeConsole:
