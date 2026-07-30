@@ -30,15 +30,19 @@ __all__ = [
 
 # git clean -xfd 排除的目录（编辑器/项目缓存等）
 EXCLUDE_DIRS: list[str] = [
+    # IDE 相关
     ".vscode",
     ".idea",
     ".editorconfig",
     ".trae",
     ".qoder",
+    # 项目相关
     ".venv",
     ".git",
+    # 缓存相关
     ".ruff_cache",
     ".tox",
+    # 依赖相关
     "node_modules",
 ]
 
