@@ -1,7 +1,8 @@
 ---
-name: "rule-09-git提交规则"
 alwaysApply: true
+scene: git_message
 ---
+
 
 ## 提交信息格式
 

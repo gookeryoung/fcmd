@@ -66,4 +66,4 @@ alwaysApply: true
 
 ## 收尾
 
-仅所有阶段交付后执行：输出总结（交付物、关键决策、遗留事项）→ 自动 `git add`（按文件名）+ `git commit`（遵循 `rule-09-git提交规则.md` 风格）+ `git push`（分支已跟踪远程时）→ 更新 memory。验收未满足则回「收集」继续，不停下询问。
+仅所有阶段交付后执行：输出总结（交付物、关键决策、遗留事项）→ 自动 `git add`（按文件名）+ `git commit`（遵循 `git-commit-message.md` 风格）+ `git push`（分支已跟踪远程时）→ 更新 memory。验收未满足则回「收集」继续，不停下询问。

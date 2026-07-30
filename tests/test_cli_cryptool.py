@@ -17,19 +17,14 @@ import pytest
 
 from fcmd.apis.toolkit import list_subcommands, list_tools, run_tool
 from fcmd.cli.cryptool import (
+    _cryptool,
     _decrypt_bytes,
     _encrypt_bytes,
     _parse_key,
-    decrypt,
-    decrypt_with_password,
-    derive_keys,
-    encrypt,
-    encrypt_with_password,
-    generate_key,
 )
 
 # 固定密钥与密码，避免随机干扰错误分支测试
-_KEY = generate_key()
+_KEY = _cryptool.random_key
 _PASSWORD = "test-password-123"
 _SALT = b"0123456789abcdef"  # 16 字节固定盐
 
@@ -58,41 +53,41 @@ class TestKeyManagement:
 
     def test_generate_key_is_base64(self) -> None:
         """生成的密钥为 url-safe base64 编码的 64 字节。"""
-        key = generate_key()
+        key = _cryptool.random_key
         raw = base64.urlsafe_b64decode(key.encode("ascii"))
         assert len(raw) == 64
 
     def test_generate_key_unique(self) -> None:
         """两次生成的密钥不同（随机性）。"""
-        assert generate_key() != generate_key()
+        assert _cryptool.random_key != _cryptool.random_key
 
     def test_derive_keys_length(self) -> None:
         """派生密钥各 32 字节。"""
-        enc_key, mac_key = derive_keys("password", _SALT)
+        enc_key, mac_key = _cryptool.get_derive_keys("password", _SALT)
         assert len(enc_key) == 32
         assert len(mac_key) == 32
 
     def test_derive_keys_deterministic(self) -> None:
         """相同密码与盐派生出相同密钥。"""
-        k1 = derive_keys("password", _SALT)
-        k2 = derive_keys("password", _SALT)
+        k1 = _cryptool.get_derive_keys("password", _SALT)
+        k2 = _cryptool.get_derive_keys("password", _SALT)
         assert k1 == k2
 
     def test_derive_keys_different_password(self) -> None:
         """不同密码派生出不同密钥。"""
-        k1 = derive_keys("password1", _SALT)
-        k2 = derive_keys("password2", _SALT)
+        k1 = _cryptool.get_derive_keys("password1", _SALT)
+        k2 = _cryptool.get_derive_keys("password2", _SALT)
         assert k1 != k2
 
     def test_derive_keys_different_salt(self) -> None:
         """不同盐派生出不同密钥。"""
-        k1 = derive_keys("password", b"0123456789abcdef")
-        k2 = derive_keys("password", b"fedcba9876543210")
+        k1 = _cryptool.get_derive_keys("password", b"0123456789abcdef")
+        k2 = _cryptool.get_derive_keys("password", b"fedcba9876543210")
         assert k1 != k2
 
     def test_derive_keys_enc_mac_distinct(self) -> None:
         """加密密钥与 MAC 密钥不同。"""
-        enc_key, mac_key = derive_keys("password", _SALT)
+        enc_key, mac_key = _cryptool.get_derive_keys("password", _SALT)
         assert enc_key != mac_key
 
 
@@ -105,59 +100,59 @@ class TestEncryptWithKey:
     def test_round_trip_basic(self) -> None:
         """基本往返一致。"""
         enc_key, mac_key = _parse_key(_KEY)
-        token = encrypt("hello", enc_key, mac_key)
-        assert decrypt(token, enc_key, mac_key) == "hello"
+        token = _cryptool.encrypt("hello", enc_key, mac_key)
+        assert _cryptool.decrypt(token, enc_key, mac_key) == "hello"
 
     @pytest.mark.parametrize("text", ["", "a", "hello", "中文测试", "hello world!", "a" * 100, "x" * 32])
     def test_round_trip_various(self, text: str) -> None:
         """多种文本往返一致。"""
         enc_key, mac_key = _parse_key(_KEY)
-        token = encrypt(text, enc_key, mac_key)
-        assert decrypt(token, enc_key, mac_key) == text
+        token = _cryptool.encrypt(text, enc_key, mac_key)
+        assert _cryptool.decrypt(token, enc_key, mac_key) == text
 
     def test_ciphertext_differs_from_plaintext(self) -> None:
         """密文不等于明文。"""
         enc_key, mac_key = _parse_key(_KEY)
-        token = encrypt("hello", enc_key, mac_key)
+        token = _cryptool.encrypt("hello", enc_key, mac_key)
         assert "hello" not in token
 
     def test_ciphertext_random_nonce(self) -> None:
         """相同明文两次加密产生不同密文（随机 nonce）。"""
         enc_key, mac_key = _parse_key(_KEY)
-        t1 = encrypt("hello", enc_key, mac_key)
-        t2 = encrypt("hello", enc_key, mac_key)
+        t1 = _cryptool.encrypt("hello", enc_key, mac_key)
+        t2 = _cryptool.encrypt("hello", enc_key, mac_key)
         assert t1 != t2
 
     def test_decrypt_wrong_key_raises(self) -> None:
         """用错误密钥解密抛 ValueError。"""
         enc_key, mac_key = _parse_key(_KEY)
-        token = encrypt("hello", enc_key, mac_key)
-        other_key = generate_key()
+        token = _cryptool.encrypt("hello", enc_key, mac_key)
+        other_key = _cryptool.random_key
         wrong_enc, wrong_mac = _parse_key(other_key)
         with pytest.raises(ValueError, match="认证失败"):
-            decrypt(token, wrong_enc, wrong_mac)
+            _cryptool.decrypt(token, wrong_enc, wrong_mac)
 
     def test_decrypt_tampered_ciphertext_raises(self) -> None:
         """篡改密文后认证失败。"""
         enc_key, mac_key = _parse_key(_KEY)
-        token = encrypt("hello", enc_key, mac_key)
+        token = _cryptool.encrypt("hello", enc_key, mac_key)
         # 篡改 base64 中的一个字符
         tampered = token[:-1] + ("A" if token[-1] != "A" else "B")
         with pytest.raises(ValueError):
-            decrypt(tampered, enc_key, mac_key)
+            _cryptool.decrypt(tampered, enc_key, mac_key)
 
     def test_decrypt_invalid_base64_raises(self) -> None:
         """非 base64 输入抛 ValueError。"""
         enc_key, mac_key = _parse_key(_KEY)
         with pytest.raises(ValueError, match="无效的 base64 格式"):
-            decrypt("!!!not base64!!!", enc_key, mac_key)
+            _cryptool.decrypt("!!!not base64!!!", enc_key, mac_key)
 
     def test_decrypt_short_ciphertext_raises(self) -> None:
         """过短密文抛 ValueError。"""
         enc_key, mac_key = _parse_key(_KEY)
         short = base64.urlsafe_b64encode(b"tooshort").decode("ascii")
         with pytest.raises(ValueError, match="密文过短"):
-            decrypt(short, enc_key, mac_key)
+            _cryptool.decrypt(short, enc_key, mac_key)
 
 
 # ============================================================================ #
@@ -168,43 +163,43 @@ class TestEncryptWithPassword:
 
     def test_round_trip_basic(self) -> None:
         """基本往返一致。"""
-        blob = encrypt_with_password("hello", _PASSWORD)
-        assert decrypt_with_password(blob, _PASSWORD) == "hello"
+        blob = _cryptool.encrypt_with_password("hello", _PASSWORD)
+        assert _cryptool.decrypt_with_password(blob, _PASSWORD) == "hello"
 
     @pytest.mark.parametrize("text", ["", "a", "hello", "中文测试", "hello world!", "a" * 100, "x" * 32])
     def test_round_trip_various(self, text: str) -> None:
         """多种文本往返一致。"""
-        blob = encrypt_with_password(text, _PASSWORD)
-        assert decrypt_with_password(blob, _PASSWORD) == text
+        blob = _cryptool.encrypt_with_password(text, _PASSWORD)
+        assert _cryptool.decrypt_with_password(blob, _PASSWORD) == text
 
     def test_ciphertext_random_salt(self) -> None:
         """相同明文+密码两次加密产生不同密文（随机盐）。"""
-        b1 = encrypt_with_password("hello", _PASSWORD)
-        b2 = encrypt_with_password("hello", _PASSWORD)
+        b1 = _cryptool.encrypt_with_password("hello", _PASSWORD)
+        b2 = _cryptool.encrypt_with_password("hello", _PASSWORD)
         assert b1 != b2
 
     def test_decrypt_wrong_password_raises(self) -> None:
         """错误密码解密抛 ValueError。"""
-        blob = encrypt_with_password("hello", _PASSWORD)
+        blob = _cryptool.encrypt_with_password("hello", _PASSWORD)
         with pytest.raises(ValueError, match="认证失败"):
-            decrypt_with_password(blob, "wrong-password")
+            _cryptool.decrypt_with_password(blob, "wrong-password")
 
     def test_decrypt_invalid_base64_raises(self) -> None:
         """非 base64 输入抛 ValueError。"""
         with pytest.raises(ValueError, match="无效的 base64 格式"):
-            decrypt_with_password("!!!not base64!!!", _PASSWORD)
+            _cryptool.decrypt_with_password("!!!not base64!!!", _PASSWORD)
 
     def test_decrypt_short_ciphertext_raises(self) -> None:
         """过短密文抛 ValueError。"""
         short = base64.urlsafe_b64encode(b"tooshort").decode("ascii")
         with pytest.raises(ValueError, match="密文过短"):
-            decrypt_with_password(short, _PASSWORD)
+            _cryptool.decrypt_with_password(short, _PASSWORD)
 
     def test_password_blob_longer_than_key_blob(self) -> None:
         """密码模式密文比密钥模式多 16 字节盐。"""
         enc_key, mac_key = _parse_key(_KEY)
-        key_blob = encrypt("hello", enc_key, mac_key)
-        pwd_blob = encrypt_with_password("hello", _PASSWORD)
+        key_blob = _cryptool.encrypt("hello", enc_key, mac_key)
+        pwd_blob = _cryptool.encrypt_with_password("hello", _PASSWORD)
         key_raw = base64.urlsafe_b64decode(key_blob)
         pwd_raw = base64.urlsafe_b64decode(pwd_blob)
         assert len(pwd_raw) == len(key_raw) + 16  # 多 16 字节盐
@@ -283,6 +278,23 @@ class TestInternals:
         decrypted = _ctr_crypt(encrypted, enc_key, nonce)
         assert decrypted == data
 
+    def test_decrypt_non_utf8_plaintext_raises(self) -> None:
+        """解密结果非有效 UTF-8 时抛 ValueError。
+
+        通过 ``_encrypt_bytes`` 直接加密非 UTF-8 字节序列，绕过 ``encrypt`` 的 UTF-8 编码，
+        使 ``decrypt`` 在 MAC 验证通过后于 ``_decode_utf8`` 处失败。
+        """
+        import base64 as _b64
+
+        from fcmd.cli.cryptool import _encrypt_bytes
+
+        enc_key, mac_key = _parse_key(_KEY)
+        # 0xff 0xfe 不是合法 UTF-8 序列开头
+        blob = _encrypt_bytes(b"\xff\xfe\x00\x01", enc_key, mac_key)
+        token = _b64.urlsafe_b64encode(blob).decode("ascii")
+        with pytest.raises(ValueError, match="解密成功但非有效 UTF-8 文本"):
+            _cryptool.decrypt(token, enc_key, mac_key)
+
 
 # ============================================================================ #
 # CLI 子命令测试
@@ -302,7 +314,8 @@ class TestCryptoolCLI:
         """密钥模式加密产生 base64 密文。"""
         code = run_tool("cryptool", ["encrypt", "hello", "--key", _KEY, "--quiet"])
         assert code == 0
-        token = capsys.readouterr().out.strip()
+        out = capsys.readouterr().out.strip()
+        token = out.split("加密结果: ", 1)[-1]
         assert token  # 非空
         base64.urlsafe_b64decode(token.encode("ascii"))  # 可解码为 base64
 
@@ -310,14 +323,15 @@ class TestCryptoolCLI:
         """密码模式加密产生 base64 密文。"""
         code = run_tool("cryptool", ["encrypt", "hello", "--password", "mypass", "--quiet"])
         assert code == 0
-        blob = capsys.readouterr().out.strip()
+        out = capsys.readouterr().out.strip()
+        blob = out.split("加密结果: ", 1)[-1]
         assert blob
         base64.urlsafe_b64decode(blob.encode("ascii"))
 
     def test_decrypt_with_key(self, capsys: pytest.CaptureFixture[str]) -> None:
         """密钥模式解密还原明文。"""
         enc_key, mac_key = _parse_key(_KEY)
-        token = encrypt("hello", enc_key, mac_key)
+        token = _cryptool.encrypt("hello", enc_key, mac_key)
         code = run_tool("cryptool", ["decrypt", token, "--key", _KEY, "--quiet"])
         assert code == 0
         out = capsys.readouterr().out
@@ -325,7 +339,7 @@ class TestCryptoolCLI:
 
     def test_decrypt_with_password(self, capsys: pytest.CaptureFixture[str]) -> None:
         """密码模式解密还原明文。"""
-        blob = encrypt_with_password("hello", "mypass")
+        blob = _cryptool.encrypt_with_password("hello", "mypass")
         code = run_tool("cryptool", ["decrypt", blob, "--password", "mypass", "--quiet"])
         assert code == 0
         out = capsys.readouterr().out
@@ -354,7 +368,7 @@ class TestCryptoolCLI:
 
     def test_decrypt_wrong_password(self, capsys: pytest.CaptureFixture[str]) -> None:
         """错误密码提示认证失败。"""
-        blob = encrypt_with_password("hello", "correct")
+        blob = _cryptool.encrypt_with_password("hello", "correct")
         code = run_tool("cryptool", ["decrypt", blob, "--password", "wrong", "--quiet"])
         assert code == 0
         out = capsys.readouterr().out
@@ -369,8 +383,44 @@ class TestCryptoolCLI:
 
     def test_encrypt_unicode(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Unicode 文本加解密。"""
-        blob = encrypt_with_password("中文测试", "pw")
+        blob = _cryptool.encrypt_with_password("中文测试", "pw")
         code = run_tool("cryptool", ["decrypt", blob, "--password", "pw", "--quiet"])
         assert code == 0
         out = capsys.readouterr().out
         assert "中文测试" in out
+
+    def test_encrypt_with_env_password(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--env 从 FCMD_CRYPT_PASSWORD 读取密码加密。"""
+        monkeypatch.setenv("FCMD_CRYPT_PASSWORD", "env-pwd")
+        monkeypatch.delenv("FCMD_CRYPT_KEY", raising=False)
+        code = run_tool("cryptool", ["encrypt", "hello", "--env", "--quiet"])
+        assert code == 0
+        out = capsys.readouterr().out.strip()
+        blob = out.split("加密结果: ", 1)[-1]
+        # 用相同密码解密应还原明文
+        assert _cryptool.decrypt_with_password(blob, "env-pwd") == "hello"
+
+    def test_decrypt_with_env_password(
+        self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--env 从 FCMD_CRYPT_PASSWORD 读取密码解密。"""
+        blob = _cryptool.encrypt_with_password("hello", "env-pwd")
+        monkeypatch.setenv("FCMD_CRYPT_PASSWORD", "env-pwd")
+        monkeypatch.delenv("FCMD_CRYPT_KEY", raising=False)
+        code = run_tool("cryptool", ["decrypt", blob, "--env", "--quiet"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "hello" in out
+
+    def test_encrypt_with_env_key(self, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
+        """--env 从 FCMD_CRYPT_KEY 读取密钥加密。"""
+        monkeypatch.setenv("FCMD_CRYPT_KEY", _KEY)
+        monkeypatch.delenv("FCMD_CRYPT_PASSWORD", raising=False)
+        code = run_tool("cryptool", ["encrypt", "hello", "--env", "--quiet"])
+        assert code == 0
+        out = capsys.readouterr().out.strip()
+        token = out.split("加密结果: ", 1)[-1]
+        enc_key, mac_key = _parse_key(_KEY)
+        assert _cryptool.decrypt(token, enc_key, mac_key) == "hello"
