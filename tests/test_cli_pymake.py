@@ -385,7 +385,7 @@ class TestPymakeCleanFn:
         (src_pycache / "x.pyc").write_text("")
         (tests_pycache / "y.pyc").write_text("")
         monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.c()
+        fcmd.cli.pymake.clean()
         assert not src_pycache.exists()
         assert not tests_pycache.exists()
 
@@ -398,7 +398,7 @@ class TestPymakeCleanFn:
         for d in ("build", "dist", "htmlcov", ".tox", ".ruff_cache", ".pyrefly_cache", ".mypy_cache", ".pytest_cache"):
             (tmp_path / d).mkdir()
         monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.c()
+        fcmd.cli.pymake.clean()
         for d in ("build", "dist", "htmlcov", ".tox", ".ruff_cache", ".pyrefly_cache", ".mypy_cache", ".pytest_cache"):
             assert not (tmp_path / d).exists(), f"{d} 应被清理"
 
@@ -412,7 +412,7 @@ class TestPymakeCleanFn:
         egg.mkdir(parents=True)
         (egg / "PKG-INFO").write_text("")
         monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.c()
+        fcmd.cli.pymake.clean()
         assert not egg.exists()
 
     def test_c_idempotent_on_clean_dir(
@@ -422,7 +422,7 @@ class TestPymakeCleanFn:
     ) -> None:
         """c 在已清理的目录上运行不应报错。"""
         monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.c()  # 不抛异常即可
+        fcmd.cli.pymake.clean()  # 不抛异常即可
 
 
 # ---------------------------------------------------------------------- #
