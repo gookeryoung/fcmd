@@ -92,18 +92,18 @@ def detect_format(filepath: Path) -> str:  # noqa: PLR0911
         if name.endswith(ext):
             if ext == ".zip":
                 return "zip"
-            elif ext in _TAR_EXTS:
+            if ext in _TAR_EXTS:
                 return "tar"
-            elif ext == ".gz":
+            if ext == ".gz":
                 return "gz"
-            elif ext == ".bz2":
+            if ext == ".bz2":
                 return "bz2"
-            elif ext == ".xz":
+            if ext == ".xz":
                 return "xz"
-            elif ext == ".7z":
+            if ext == ".7z":
                 return "7z"
-            else:  # ext == ".rar"
-                return "rar"
+            # ext == ".rar"
+            return "rar"
     raise ValueError(f"不支持的归档格式: {filepath.name}")
 
 

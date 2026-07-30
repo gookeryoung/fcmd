@@ -68,7 +68,6 @@ class ToolExitCode(enum.IntEnum):
 
 def _noop() -> None:
     """聚合任务的占位函数。"""
-    return None
 
 
 # ---------------------------------------------------------------------- #
@@ -507,17 +506,24 @@ def _add_optional_arg(
         # _is_literal_annotation 为 True 时 __args__ 一定存在且非空
         kwargs["choices"] = list(_literal_choices(annotation))
     elif _is_list_annotation(annotation):
-        inner = _list_inner_type(annotation)
         kwargs["nargs"] = "*"
-        if inner in (Path, "Path", "pathlib.Path"):
-            kwargs["type"] = Path
-        elif inner in (int, "int"):
-            kwargs["type"] = int
-        elif inner in (float, "float"):
-            kwargs["type"] = float
-        elif inner in (str, "str"):
-            kwargs["type"] = str
+        inner_type = _resolve_list_inner_type(_list_inner_type(annotation))
+        if inner_type is not None:
+            kwargs["type"] = inner_type
     parser.add_argument(cli_name, **kwargs)
+
+
+def _resolve_list_inner_type(inner: Any) -> type | None:
+    """将 list 注解的内部类型（类型对象或字符串注解）映射为 argparse ``type``。"""
+    if inner in (Path, "Path", "pathlib.Path"):
+        return Path
+    if inner in (int, "int"):
+        return int
+    if inner in (float, "float"):
+        return float
+    if inner in (str, "str"):
+        return str
+    return None
 
 
 def _add_positional_arg(
@@ -599,45 +605,30 @@ def _add_global_options(parser: argparse.ArgumentParser) -> None:
     )
 
 
-# ---------------------------------------------------------------------- #
-# run_tool 主入口
-# ---------------------------------------------------------------------- #
-def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
-    """运行工具：解析 argv、构建 DAG、执行并返回退出码。
+def _resolve_tool_target(
+    name: str, subs: dict[str | None, ToolSpec], argv: Sequence[str]
+) -> tuple[str | None, list[str]] | int:
+    """确定工具子命令 ``target`` 与剩余参数 ``argv_rest``。
 
-    Parameters
-    ----------
-    name:
-        工具名（必须在注册表中）
-    argv:
-        命令行参数（不含工具名本身），如 ``["b", "--dry-run"]``
-
-    Returns
-    -------
-    int
-        :class:`ToolExitCode` 值（0=成功 / 1=失败 / 130=中断）
+    纯单命令工具（仅有 None 子命令）透传全部 argv；否则取 argv[0] 为 target
+    （非 ``-`` 开头时），或回退到 None 子命令；无匹配时列出子命令。
     """
-    if name not in _TOOL_REGISTRY:
-        get_console().print(f"[red]错误:[/red] 工具 {name!r} 未注册")
-        return ToolExitCode.FAILURE.value
-
-    subs = _TOOL_REGISTRY[name]
-
     # 纯单命令工具（仅有 None 子命令）：target=None，全部 argv 透传给 parser
     if None in subs and len(subs) == 1:
-        target: str | None = None
-        argv_rest: list[str] = list(argv)
-    elif argv and not argv[0].startswith("-"):
-        target = argv[0]
-        argv_rest = list(argv[1:])
-    elif None in subs:
-        target = None
-        argv_rest = list(argv)
-    else:
-        # 列出工具的所有子命令
-        _print_subcommands(name)
-        return ToolExitCode.SUCCESS.value
+        return None, list(argv)
+    if argv and not argv[0].startswith("-"):
+        return argv[0], list(argv[1:])
+    if None in subs:
+        return None, list(argv)
+    # 列出工具的所有子命令
+    _print_subcommands(name)
+    return ToolExitCode.SUCCESS.value
 
+
+def _parse_tool_args(
+    name: str, target: str | None, argv_rest: list[str], subs: dict[str | None, ToolSpec]
+) -> tuple[dict[str, Any], ToolSpec] | int:
+    """校验 target、构建 parser 解析 ``argv_rest``，返回变量字典与 ``target_spec``。"""
     if target is not None and target not in subs:
         get_console().print(f"[red]错误:[/red] 工具 {name!r} 没有子命令 {target!r}")
         _print_subcommands(name)
@@ -658,8 +649,12 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
         # argparse 解析失败（unrecognized args / --help）时 raise SystemExit
         return ToolExitCode.SUCCESS.value if e.code == 0 else ToolExitCode.FAILURE.value
     variables: dict[str, Any] = {k: v for k, v in vars(parsed).items() if v is not None}
+    return variables, target_spec
 
-    # 收集 target 及其传递依赖，构建 TaskSpec 列表
+
+def _execute_tool_tasks(name: str, target: str | None, variables: dict[str, Any], target_spec: ToolSpec) -> int:
+    """收集依赖、构建 DAG 并执行，返回退出码。"""
+    subs = _TOOL_REGISTRY[name]
     chain = _collect_with_deps(name, target)
     task_specs: list[TaskSpec[Any]] = []
     for sc in chain:
@@ -699,6 +694,46 @@ def run_tool(name: str, argv: Sequence[str]) -> int:  # noqa: PLR0911, PLR0912
         _print_task_summary(report)
 
     return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
+
+
+# ---------------------------------------------------------------------- #
+# run_tool 主入口
+# ---------------------------------------------------------------------- #
+def run_tool(name: str, argv: Sequence[str]) -> int:
+    """运行工具：解析 argv、构建 DAG、执行并返回退出码。
+
+    Parameters
+    ----------
+    name:
+        工具名（必须在注册表中）
+    argv:
+        命令行参数（不含工具名本身），如 ``["b", "--dry-run"]``
+
+    Returns
+    -------
+    int
+        :class:`ToolExitCode` 值（0=成功 / 1=失败 / 130=中断）
+    """
+    if name not in _TOOL_REGISTRY:
+        get_console().print(f"[red]错误:[/red] 工具 {name!r} 未注册")
+        return ToolExitCode.FAILURE.value
+
+    subs = _TOOL_REGISTRY[name]
+
+    # 1. 路由解析：确定 target（子命令）与 argv_rest
+    resolved = _resolve_tool_target(name, subs, argv)
+    if isinstance(resolved, int):
+        return resolved
+    target, argv_rest = resolved
+
+    # 2. 参数解析：构建 parser，解析 argv_rest
+    parsed = _parse_tool_args(name, target, argv_rest, subs)
+    if isinstance(parsed, int):
+        return parsed
+    variables, target_spec = parsed
+
+    # 3. 构建图并执行
+    return _execute_tool_tasks(name, target, variables, target_spec)
 
 
 def build_tool_graph(name: str, target: str | None) -> Graph:

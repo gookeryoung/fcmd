@@ -430,7 +430,6 @@ def _env_and_cwd(
 # ---------------------------------------------------------------------- #
 def _task_noop() -> None:
     """task(cmd=...) 形式下的占位 fn（cmd 任务执行期不调用 fn）。"""
-    return None
 
 
 def task(  # noqa: PLR0913
