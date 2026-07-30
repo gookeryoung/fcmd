@@ -14,10 +14,16 @@ rich 的 ``ascii_only`` 自动推断依赖 ``sys.stdout.encoding``，但 Python 
 使 Windows 下 ``sys.stdout.encoding`` 默认为 ``'utf-8'``（WriteConsoleW），导致 rich
 误判以为可输出 Unicode box 字符，实际被点阵字体渲染为乱码。本模块在 Win7/8 下
 显式传 ``ascii_only=True`` 强制 rich 用 ASCII box 字符（``+``/``-``/``|``）。
+
+旧版 rich 兼容：``ascii_only`` 参数在 rich 13.x 早期版本不存在（Win7 + Python 3.8
+环境下 pip 通常只能装到 13.0~13.4）。通过 ``inspect.signature`` 检测 Console 是否
+支持该参数；不支持时降级 monkey-patch ``rich.box.BOXES`` 把所有 box 字符表替换为
+``box.ASCII``，达到等价效果。
 """
 
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from typing import TYPE_CHECKING, Any
@@ -49,6 +55,29 @@ def _is_legacy_windows() -> bool:
         return False
 
 
+def _force_ascii_box() -> None:
+    """旧版 rich 降级：把 ``rich.box`` 模块所有 Box 实例常量替换为 ``box.ASCII``。
+
+    ``ascii_only`` 参数在 rich 13.x 早期版本不存在。Win7 conhost 点阵字体
+    不支持 box-drawing 字符，直接 monkey-patch ``rich.box`` 模块的所有
+    Box 实例常量（ROUNDED/SQUARE/HEAVY/DOUBLE 等），让 Table/Panel 等组件
+    渲染时使用 ``box.ASCII`` 的 ``+``/``-``/``|`` 纯 ASCII 字符。
+
+    副作用范围：仅 Win7/8 + 旧版 rich 触发，影响当前进程内所有 rich
+    Table/Panel 渲染。fcmd 单进程场景下可接受。
+    """
+    from rich import box
+
+    ascii_box = box.ASCII
+    # 遍历模块级 Box 实例常量（ROUNDED/SQUARE/HEAVY/DOUBLE 等），全部替换为 ASCII
+    for name in dir(box):
+        if name.startswith("_"):
+            continue
+        value = getattr(box, name)
+        if isinstance(value, box.Box):
+            setattr(box, name, ascii_box)
+
+
 def get_console() -> Console:
     """获取全局 rich Console 实例（懒加载）。
 
@@ -57,10 +86,12 @@ def get_console() -> Console:
     Win7/8 下显式传入：
 
     - ``legacy_windows=True``：使用 ``SetConsoleTextAttribute`` 着色（非 VT 序列）。
-    - ``ascii_only=True``：强制 rich 用 ASCII box 字符。Win7 conhost 默认点阵字体
-      不支持 box-drawing 字符；rich 的 ``ascii_only`` 自动推断依赖
+    - ``ascii_only=True``（若 rich 支持）：强制 rich 用 ASCII box 字符。Win7 conhost
+      默认点阵字体不支持 box-drawing 字符；rich 的 ``ascii_only`` 自动推断依赖
       ``sys.stdout.encoding``，但 PEP 528 使其在 Windows 下默认为 ``'utf-8'``，
       导致 rich 误判输出 Unicode box 字符被点阵字体渲染为方块/乱码。
+    - 旧版 rich 降级：若 ``Console.__init__`` 不接受 ``ascii_only``（rich 13.x 早期），
+      调用 ``_force_ascii_box`` monkey-patch ``rich.box.BOXES`` 替换为 ASCII box。
     - ``width=cols-2``：rich 在 legacy 模式下默认渲染宽度为 ``columns - 1``，但
       conhost 最后一列自动换行行为使该余量不足以容纳表格右边框，故额外让 1 列
       （总余量 2 列）避免超出窗口。
@@ -75,7 +106,13 @@ def get_console() -> Console:
         kwargs: dict[str, Any] = {}
         if _is_legacy_windows():
             kwargs["legacy_windows"] = True
-            kwargs["ascii_only"] = True
+            # ascii_only 是 rich 13.x 中后期引入的参数，早期版本（13.0~13.4）
+            # 不支持，通过签名检测兼容；不支持时降级 monkey-patch box.BOXES
+            sig = inspect.signature(Console.__init__)
+            if "ascii_only" in sig.parameters:
+                kwargs["ascii_only"] = True
+            else:
+                _force_ascii_box()
             try:
                 # os.get_terminal_size(1) 返回 srWindow 可视宽度（非 buffer 宽度）
                 cols = os.get_terminal_size(1).columns

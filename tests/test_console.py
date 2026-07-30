@@ -1,10 +1,12 @@
 """console 模块测试。
 
-覆盖 Win7/8 检测、Console 懒加载缓存、legacy 模式宽度收紧与 ASCII 强制逻辑。
+覆盖 Win7/8 检测、Console 懒加载缓存、legacy 模式宽度收紧、ASCII 强制逻辑
+与旧版 rich（无 ``ascii_only`` 参数）的 monkey-patch 降级。
 """
 
 from __future__ import annotations
 
+import inspect
 import sys
 from collections.abc import Iterator
 from unittest import mock
@@ -77,21 +79,41 @@ class TestGetConsoleCache:
         assert c1 is c2
 
 
+def _make_fake_console(captured: dict[str, object]) -> type:
+    """构造一个记录 kwargs 的 FakeConsole，签名仅 (self, **kwargs)。
+
+    FakeConsole 自身不声明 ``ascii_only`` 参数，使 ``inspect.signature``
+    在测试中可通过 mock 返回不同签名以验证两条分支。
+    """
+
+    class FakeConsole:
+        def __init__(self, **kwargs: object) -> None:
+            captured.update(kwargs)
+
+    return FakeConsole
+
+
+def _make_sig(include_ascii: bool) -> inspect.Signature:
+    """构造 Console.__init__ 的假签名，控制是否包含 ``ascii_only`` 参数。"""
+    params = [inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+    if include_ascii:
+        params.append(inspect.Parameter("ascii_only", inspect.Parameter.KEYWORD_ONLY, default=False))
+    return inspect.Signature(params)
+
+
 class TestGetConsoleLegacyWindows:
     """Win7/8 下 Console 初始化参数。"""
 
     def test_legacy_windows_passes_width_and_legacy_flag(self) -> None:
-        """Win7 下显式传 legacy_windows=True/ascii_only=True/width=cols-2。"""
+        """Win7 + 支持 ascii_only 的 rich：传 legacy_windows/ascii_only/width。"""
         captured: dict[str, object] = {}
-
-        class FakeConsole:
-            def __init__(self, **kwargs: object) -> None:
-                captured.update(kwargs)
-
+        FakeConsole = _make_fake_console(captured)
         fake_size = mock.Mock(columns=80)
         with mock.patch.object(console, "_is_legacy_windows", return_value=True), mock.patch(
             "os.get_terminal_size", return_value=fake_size
-        ), mock.patch("rich.console.Console", FakeConsole):
+        ), mock.patch("rich.console.Console", FakeConsole), mock.patch.object(
+            console.inspect, "signature", return_value=_make_sig(include_ascii=True)
+        ):
             console.get_console()
 
         assert captured.get("legacy_windows") is True
@@ -102,15 +124,13 @@ class TestGetConsoleLegacyWindows:
     def test_legacy_windows_min_width_floor(self) -> None:
         """极窄终端（cols=2）下 width 下限为 1，避免负值/零值。"""
         captured: dict[str, object] = {}
-
-        class FakeConsole:
-            def __init__(self, **kwargs: object) -> None:
-                captured.update(kwargs)
-
+        FakeConsole = _make_fake_console(captured)
         fake_size = mock.Mock(columns=2)
         with mock.patch.object(console, "_is_legacy_windows", return_value=True), mock.patch(
             "os.get_terminal_size", return_value=fake_size
-        ), mock.patch("rich.console.Console", FakeConsole):
+        ), mock.patch("rich.console.Console", FakeConsole), mock.patch.object(
+            console.inspect, "signature", return_value=_make_sig(include_ascii=True)
+        ):
             console.get_console()
 
         assert captured.get("width") == 1
@@ -120,14 +140,12 @@ class TestGetConsoleLegacyWindows:
     def test_legacy_windows_oserror_omits_width(self) -> None:
         """非交互环境（stdout 重定向）下不传 width，由 rich 自行 fallback。"""
         captured: dict[str, object] = {}
-
-        class FakeConsole:
-            def __init__(self, **kwargs: object) -> None:
-                captured.update(kwargs)
-
+        FakeConsole = _make_fake_console(captured)
         with mock.patch.object(console, "_is_legacy_windows", return_value=True), mock.patch(
             "os.get_terminal_size", side_effect=OSError("not a tty")
-        ), mock.patch("rich.console.Console", FakeConsole):
+        ), mock.patch("rich.console.Console", FakeConsole), mock.patch.object(
+            console.inspect, "signature", return_value=_make_sig(include_ascii=True)
+        ):
             console.get_console()
 
         # legacy_windows/ascii_only 仍传入，但 width 未设置
@@ -135,20 +153,58 @@ class TestGetConsoleLegacyWindows:
         assert captured.get("ascii_only") is True
         assert "width" not in captured
 
+    def test_legacy_windows_old_rich_falls_back_to_force_ascii_box(self) -> None:
+        """旧版 rich（无 ascii_only 参数）：调用 _force_ascii_box 且 kwargs 不含 ascii_only。"""
+        captured: dict[str, object] = {}
+        FakeConsole = _make_fake_console(captured)
+        with mock.patch.object(console, "_is_legacy_windows", return_value=True), mock.patch(
+            "os.get_terminal_size", side_effect=OSError("not a tty")
+        ), mock.patch("rich.console.Console", FakeConsole), mock.patch.object(
+            console.inspect, "signature", return_value=_make_sig(include_ascii=False)
+        ), mock.patch.object(console, "_force_ascii_box") as mock_force:
+            console.get_console()
+
+        # legacy_windows 仍传入；ascii_only 不在 kwargs（旧版 rich 不支持）
+        assert captured.get("legacy_windows") is True
+        assert "ascii_only" not in captured
+        # 降级路径被调用一次
+        mock_force.assert_called_once_with()
+
     def test_modern_windows_no_extra_kwargs(self) -> None:
         """Win10+ 下不传 legacy_windows/ascii_only/width，保持默认行为。"""
         captured: dict[str, object] = {}
-
-        class FakeConsole:
-            def __init__(self, **kwargs: object) -> None:
-                captured.update(kwargs)
-
+        FakeConsole = _make_fake_console(captured)
         with mock.patch.object(console, "_is_legacy_windows", return_value=False), mock.patch(
             "rich.console.Console", FakeConsole
         ):
             console.get_console()
 
         assert captured == {}
+
+
+class TestForceAsciiBox:
+    """``_force_ascii_box`` 旧版 rich 降级 monkey-patch。"""
+
+    def test_replaces_all_boxes_with_ascii(self) -> None:
+        """所有 Box 实例常量被替换为 box.ASCII。"""
+        from rich import box
+
+        # 保存原始值（仅 Box 实例常量，跳过类型/函数）
+        original = {
+            name: getattr(box, name)
+            for name in dir(box)
+            if not name.startswith("_") and isinstance(getattr(box, name), box.Box)
+        }
+        try:
+            console._force_ascii_box()
+            # 所有 Box 常量应被替换为 box.ASCII
+            assert original, "应至少有一个 Box 常量"
+            for name in original:
+                assert getattr(box, name) is box.ASCII, f"{name} 未被替换为 ASCII"
+        finally:
+            # 恢复原始值，避免影响其他测试
+            for name, value in original.items():
+                setattr(box, name, value)
 
 
 class TestPrintVerbose:
