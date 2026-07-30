@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Generator, Generic, List, Mapping, Union, cast
+from typing import Any, Callable, Coroutine, Generator, Generic, List, Literal, Mapping, Union, cast
 
 from fcmd._compat import TypeVar
 
@@ -61,6 +61,7 @@ __all__ = [
     "Context",
     "EventCallback",
     "RetryPolicy",
+    "RunConfig",
     "TaskCmd",
     "TaskEvent",
     "TaskFn",
@@ -135,6 +136,45 @@ class RetryPolicy:
         base = self.delay * (self.backoff ** max(0, attempt - 1))
         jitter = random.uniform(0, self.jitter) if self.jitter > 0 else 0.0
         return base + jitter
+
+
+# ---------------------------------------------------------------------- #
+# RunConfig：run() 函数的执行配置打包
+# ---------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class RunConfig:
+    """图执行的配置集合。打包 :func:`fcmd.run` 的除 ``graph`` 之外的所有参数，
+    使函数签名从 8 参数收敛为 2 参数（``graph`` + ``config``）。
+
+    所有字段均可作为 :func:`fcmd.run` 的关键字参数直接传入；当同时提供
+    ``config`` 对象与关键字参数时，关键字参数覆盖 ``config`` 中的同名字段。
+
+    参数
+    ----
+    strategy:
+        执行策略：``"dependency"``（默认，依赖驱动无层屏障，最大并行度）/
+        ``"sequential"`` / ``"thread"`` / ``"async"``（层屏障模型）。
+    max_workers:
+        ``"thread"`` 策略的线程池大小。默认 ``min(32, len(layer))``。
+    dry_run:
+        若为 ``True``，仅打印执行计划并返回空报告，不实际执行任务。
+    verbose:
+        若为 ``True``，打印任务生命周期到 stdout。
+    on_event:
+        可选回调，在每次任务状态转换时调用。
+    only:
+        只运行指定任务名及其传递依赖。与 ``tags`` 取并集。
+    tags:
+        只运行匹配任意标签的任务及其传递依赖。与 ``only`` 取并集。
+    """
+
+    strategy: Literal["sequential", "thread", "async", "dependency"] = "dependency"
+    max_workers: int | None = None
+    dry_run: bool = False
+    verbose: bool = False
+    on_event: EventCallback | None = None
+    only: tuple[str, ...] | None = None
+    tags: tuple[str, ...] | None = None
 
 
 # ---------------------------------------------------------------------- #
@@ -328,7 +368,7 @@ class TaskSpec(Generic[T]):
         实际执行逻辑位于 :mod:`fcmd.command`，避免 :class:`TaskSpec`
         作为纯数据结构混入命令执行逻辑。
         """
-        from .command import run_command
+        from fcmd.command import run_command
 
         spec = self
 

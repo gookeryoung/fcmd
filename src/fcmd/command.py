@@ -12,8 +12,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, List, Union, cast
 
+from .apis.task import TaskSpec
 from .console import get_console
-from .task import TaskSpec
 
 __all__ = ["run_command"]
 

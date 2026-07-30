@@ -53,10 +53,11 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from fcmd.console import get_console
-from fcmd.dag import Graph, GraphDefaults
-from fcmd.errors import FcmdError, TaskFailedError
 from fcmd.executors import run
-from fcmd.task import RetryPolicy, TaskSpec
+
+from .dag import Graph, GraphDefaults
+from .errors import FcmdError, TaskFailedError
+from .task import RetryPolicy, TaskSpec
 
 
 class ToolExitCode(enum.IntEnum):

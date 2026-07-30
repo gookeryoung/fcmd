@@ -59,7 +59,7 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-from fcmd.task import Condition, Context
+from fcmd.apis.task import Condition, Context
 
 # matrix 变量占位符正则：${{ matrix.NAME }}（允许中间空白）
 _MATRIX_VAR_PATTERN = re.compile(r"\$\{\{\s*matrix\.(\w+)\s*\}\}")

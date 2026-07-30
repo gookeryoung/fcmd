@@ -39,7 +39,7 @@ def inject_run_hook() -> dict[str, Any]:
 
     import fcmd as fcmd_mod
     from fcmd import executors as executors_mod
-    from fcmd.report import RunReport
+    from fcmd.apis.report import RunReport
 
     # 修复懒加载属性被 import 系统遮蔽：将 __dict__ 中为 module 的属性
     # 覆盖为 _LAZY_ATTRS 指定的函数/类。此修复不需要还原（修复的是

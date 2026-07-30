@@ -49,12 +49,12 @@ from dataclasses import replace as dc_replace
 from datetime import datetime
 from typing import Any, Awaitable, Literal, cast
 
+from .apis.context import build_call_args, describe_injection
+from .apis.dag import Graph
+from .apis.errors import TaskFailedError, TaskTimeoutError
+from .apis.report import RunReport
+from .apis.task import EventCallback, RunConfig, TaskEvent, TaskResult, TaskSpec, TaskStatus
 from .console import get_console
-from .context import build_call_args, describe_injection
-from .dag import Graph
-from .errors import TaskFailedError, TaskTimeoutError
-from .report import RunReport
-from .task import EventCallback, TaskEvent, TaskResult, TaskSpec, TaskStatus
 
 logger = logging.getLogger(__name__)
 
@@ -768,16 +768,30 @@ def _dispatch_strategy(
 
 def run(  # noqa: PLR0913
     graph: Graph,
-    strategy: Strategy = "dependency",
+    strategy: Strategy | None = None,
     *,
+    config: RunConfig | None = None,
     max_workers: int | None = None,
-    dry_run: bool = False,
-    verbose: bool = False,
+    dry_run: bool | None = None,
+    verbose: bool | None = None,
     on_event: EventCallback | None = None,
     only: Iterable[str] | None = None,
     tags: Iterable[str] | None = None,
 ) -> RunReport:
     """执行图并返回 :class:`RunReport`。
+
+    支持两种调用方式：
+
+    1. 关键字参数平铺（传统方式，向后兼容）::
+
+        fx.run(graph, "thread", dry_run=True, verbose=True)
+
+    2. 通过 :class:`RunConfig` 打包配置（推荐用于参数较多的场景）::
+
+        cfg = RunConfig(strategy="thread", dry_run=True, verbose=True)
+        fx.run(graph, config=cfg)
+
+    同时使用时，关键字参数覆盖 ``config`` 中的同名字段。
 
     参数
     ----
@@ -786,6 +800,8 @@ def run(  # noqa: PLR0913
     strategy:
         执行策略: ``"dependency"``（默认，依赖驱动无层屏障，最大并行度）/
         ``"sequential"`` / ``"thread"`` / ``"async"``（层屏障模型）。
+    config:
+        :class:`RunConfig` 打包配置对象。显式关键字参数优先级更高。
     max_workers:
         ``"thread"`` 的线程池大小。默认 ``min(32, len(layer))``。
     dry_run:
@@ -806,6 +822,21 @@ def run(  # noqa: PLR0913
     TaskFailedError
         任何任务耗尽重试后仍失败时（除非 ``continue_on_error=True``）。
     """
+    # 合并配置：优先级 显式关键字参数 > config 字段 > 原始默认值
+    if strategy is None:
+        strategy = config.strategy if config is not None else "dependency"
+    if dry_run is None:
+        dry_run = config.dry_run if config is not None else False
+    if verbose is None:
+        verbose = config.verbose if config is not None else False
+    if max_workers is None and config is not None:
+        max_workers = config.max_workers
+    if on_event is None and config is not None:
+        on_event = config.on_event
+    if only is None and config is not None and config.only is not None:
+        only = list(config.only)
+    if tags is None and config is not None and config.tags is not None:
+        tags = list(config.tags)
     if dry_run:
         layers = graph.layers()
         _print_dry_run(graph, layers)

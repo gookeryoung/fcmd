@@ -35,6 +35,7 @@ __all__ = [
     "MissingDependencyError",
     "ProfileReport",
     "RetryPolicy",
+    "RunConfig",
     "RunReport",
     "Strategy",
     "TaskCmd",
@@ -67,30 +68,31 @@ __all__ = [
 
 # 懒加载映射：属性名 -> (模块路径, 符号名)
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
-    "Context": ("fcmd.context", "Context"),
-    "CycleError": ("fcmd.errors", "CycleError"),
-    "DuplicateTaskError": ("fcmd.errors", "DuplicateTaskError"),
-    "FcmdError": ("fcmd.errors", "FcmdError"),
-    "Graph": ("fcmd.dag", "Graph"),
-    "GraphDefaults": ("fcmd.dag", "GraphDefaults"),
-    "InjectionError": ("fcmd.errors", "InjectionError"),
-    "MissingDependencyError": ("fcmd.errors", "MissingDependencyError"),
-    "ProfileReport": ("fcmd.profiling", "ProfileReport"),
-    "RetryPolicy": ("fcmd.task", "RetryPolicy"),
-    "RunReport": ("fcmd.report", "RunReport"),
-    "TaskCmd": ("fcmd.task", "TaskCmd"),
-    "TaskFailedError": ("fcmd.errors", "TaskFailedError"),
-    "TaskResult": ("fcmd.task", "TaskResult"),
-    "TaskProfile": ("fcmd.profiling", "TaskProfile"),
-    "TaskSpec": ("fcmd.task", "TaskSpec"),
-    "TaskStatus": ("fcmd.task", "TaskStatus"),
-    "TaskTimeoutError": ("fcmd.errors", "TaskTimeoutError"),
+    "Context": ("fcmd.apis.context", "Context"),
+    "CycleError": ("fcmd.apis.errors", "CycleError"),
+    "DuplicateTaskError": ("fcmd.apis.errors", "DuplicateTaskError"),
+    "FcmdError": ("fcmd.apis.errors", "FcmdError"),
+    "Graph": ("fcmd.apis.dag", "Graph"),
+    "GraphDefaults": ("fcmd.apis.dag", "GraphDefaults"),
+    "InjectionError": ("fcmd.apis.errors", "InjectionError"),
+    "MissingDependencyError": ("fcmd.apis.errors", "MissingDependencyError"),
+    "ProfileReport": ("fcmd.apis.profiling", "ProfileReport"),
+    "RetryPolicy": ("fcmd.apis.task", "RetryPolicy"),
+    "RunConfig": ("fcmd.apis.task", "RunConfig"),
+    "RunReport": ("fcmd.apis.report", "RunReport"),
+    "TaskCmd": ("fcmd.apis.task", "TaskCmd"),
+    "TaskFailedError": ("fcmd.apis.errors", "TaskFailedError"),
+    "TaskResult": ("fcmd.apis.task", "TaskResult"),
+    "TaskProfile": ("fcmd.apis.profiling", "TaskProfile"),
+    "TaskSpec": ("fcmd.apis.task", "TaskSpec"),
+    "TaskStatus": ("fcmd.apis.task", "TaskStatus"),
+    "TaskTimeoutError": ("fcmd.apis.errors", "TaskTimeoutError"),
     "ToolExitCode": ("fcmd.apis.toolkit", "ToolExitCode"),
     "ToolSpec": ("fcmd.apis.toolkit", "ToolSpec"),
     "build_tool_graph": ("fcmd.apis.toolkit", "build_tool_graph"),
-    "cmd": ("fcmd.task", "cmd"),
+    "cmd": ("fcmd.apis.task", "cmd"),
     "clear_tool_registry": ("fcmd.apis.toolkit", "clear_tool_registry"),
-    "describe_injection": ("fcmd.context", "describe_injection"),
+    "describe_injection": ("fcmd.apis.context", "describe_injection"),
     "get_tool": ("fcmd.apis.toolkit", "get_tool"),
     "list_subcommands": ("fcmd.apis.toolkit", "list_subcommands"),
     "list_tools": ("fcmd.apis.toolkit", "list_tools"),
@@ -100,7 +102,7 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "run": ("fcmd.executors", "run"),
     "run_command": ("fcmd.command", "run_command"),
     "run_tool": ("fcmd.apis.toolkit", "run_tool"),
-    "task": ("fcmd.task", "task"),
+    "task": ("fcmd.apis.task", "task"),
     "tool": ("fcmd.apis.toolkit", "tool"),
 }
 
@@ -149,6 +151,6 @@ def graph(
     ... def double(extract: list[int]) -> list[int]: return [x * 2 for x in extract]
     >>> g = fx.graph(extract, double)  # double 自动依赖 extract
     """
-    from fcmd.dag import Graph, GraphDefaults
+    from fcmd.apis.dag import Graph, GraphDefaults
 
     return Graph.from_specs(specs, defaults=defaults or GraphDefaults(), namespace=namespace)

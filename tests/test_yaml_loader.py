@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.dag import Graph
+from fcmd.apis.dag import Graph
 from fcmd.yaml_loader import load_yaml, parse_yaml_string
 
 

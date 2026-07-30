@@ -90,6 +90,8 @@ from typing import Any
 
 import yaml  # type: ignore[import-not-found]
 
+from fcmd.apis.dag import Graph, GraphDefaults
+from fcmd.apis.task import RetryPolicy, TaskSpec
 from fcmd.conditions import (
     ConditionError,
     expand_matrix,
@@ -97,8 +99,6 @@ from fcmd.conditions import (
     parse_if,
     substitute_matrix_vars,
 )
-from fcmd.dag import Graph, GraphDefaults
-from fcmd.task import RetryPolicy, TaskSpec
 
 
 def _safe_load(text: str) -> Any:

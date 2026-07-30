@@ -31,12 +31,12 @@ from pathlib import Path
 from typing import Any
 
 from fcmd import __version__
+from fcmd.apis.errors import FcmdError
 from fcmd.apis.toolkit import _TOOL_REGISTRY, build_tool_graph, run_tool
 from fcmd.cli._common import _BUILTIN_COMMANDS
 from fcmd.cli._completion_scripts import gen_bash_script, gen_fish_script, gen_zsh_script
 from fcmd.cli._profiler_helpers import inject_run_hook, output_profile, run_target_script
 from fcmd.console import get_console
-from fcmd.errors import FcmdError
 
 __all__ = ["FcmdApp", "main"]
 
@@ -446,7 +446,7 @@ class FcmdApp:
             return 1
         parsed = parser.parse_args(argv)
 
-        from fcmd.errors import FcmdError
+        from fcmd.apis.errors import FcmdError
         from fcmd.executors import run
         from fcmd.yaml_loader import load_yaml
 
@@ -773,7 +773,7 @@ class FcmdApp:
             return 1
 
         # 生成报告
-        from fcmd.profiling import ProfileReport
+        from fcmd.apis.profiling import ProfileReport
 
         profile = ProfileReport.from_report(report, graph)
         output_profile(
