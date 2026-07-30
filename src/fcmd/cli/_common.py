@@ -5,7 +5,11 @@
 
 from __future__ import annotations
 
-__all__ = ["IGNORE_DIRS", "IGNORE_EXT", "run_tool_main"]
+__all__ = ["IGNORE_DIRS", "IGNORE_EXT", "_BUILTIN_COMMANDS", "run_tool_main"]
+
+# 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
+# 放在此处供 main.py / _completion_scripts.py 共享，避免循环导入
+_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor", "profiler")
 
 # 文件遍历时跳过的目录名（跨工具共享）
 IGNORE_DIRS: set[str] = {

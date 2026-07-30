@@ -32,6 +32,9 @@ from typing import Any
 
 from fcmd import __version__
 from fcmd.apis.toolkit import _TOOL_REGISTRY, build_tool_graph, run_tool
+from fcmd.cli._common import _BUILTIN_COMMANDS
+from fcmd.cli._completion_scripts import gen_bash_script, gen_fish_script, gen_zsh_script
+from fcmd.cli._profiler_helpers import inject_run_hook, output_profile, run_target_script
 from fcmd.console import get_console
 from fcmd.errors import FcmdError
 
@@ -46,9 +49,6 @@ _TOOL_MODULES: dict[str, str] = {}
 
 # 发现标志：True 表示已扫描过 fcmd.cli 包
 _TOOLS_DISCOVERED = False
-
-# 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
-_BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "env", "doctor", "profiler")
 
 
 def _ensure_tools_discovered() -> None:
@@ -384,11 +384,11 @@ class FcmdApp:
         tools_data = self._collect_completion_data()
 
         if parsed.shell == "bash":
-            script = self._gen_bash_script(tools_data)
+            script = gen_bash_script(tools_data)
         elif parsed.shell == "zsh":
-            script = self._gen_zsh_script(tools_data)
+            script = gen_zsh_script(tools_data)
         else:
-            script = self._gen_fish_script(tools_data)
+            script = gen_fish_script(tools_data)
         sys.stdout.write(script)
         return 0
 
@@ -413,125 +413,6 @@ class FcmdApp:
                 subs.append((str(sc), spec.help or ""))
             result.append({"name": tool_name, "aliases": aliases, "subs": subs})
         return result
-
-    @staticmethod
-    def _gen_bash_script(tools_data: list[dict[str, Any]]) -> str:
-        """生成 bash 补全脚本。"""
-        # 第一层：内建命令 + 工具名 + 别名 + 全局选项
-        first_words: list[str] = [*list(_BUILTIN_COMMANDS), "--version", "-V"]
-        for tool in tools_data:
-            first_words.append(tool["name"])
-            first_words.extend(tool["aliases"])
-        first_words_str = " ".join(first_words)
-
-        # 每个工具的子命令 case 分支
-        case_branches: list[str] = []
-        for tool in tools_data:
-            if not tool["subs"]:
-                continue
-            # 工具名 + 别名共用同一组子命令
-            names = [tool["name"]] + tool["aliases"]
-            pattern = "|".join(names)
-            subs_str = " ".join(sc for sc, _ in tool["subs"])
-            case_branches.append(
-                f'            {pattern})\n                COMPREPLY=($(compgen -W "{subs_str}" -- "$cur")) ;;'
-            )
-        case_body = "\n".join(case_branches) if case_branches else "            *) ;;"
-
-        return (
-            "# fcmd bash 补全脚本\n"
-            '# 安装: eval "$(fcmd completion --shell bash)"\n'
-            "_fcmd_complete() {\n"
-            '    local cur="${COMP_WORDS[COMP_CWORD]}"\n'
-            "    if [ $COMP_CWORD -eq 1 ]; then\n"
-            f'        COMPREPLY=($(compgen -W "{first_words_str}" -- "$cur"))\n'
-            "    elif [ $COMP_CWORD -ge 2 ]; then\n"
-            '        local tool="${COMP_WORDS[1]}"\n'
-            '        case "$tool" in\n'
-            f"{case_body}\n"
-            "        esac\n"
-            "    fi\n"
-            "}\n"
-            "complete -F _fcmd_complete fcmd\n"
-        )
-
-    @staticmethod
-    def _gen_zsh_script(tools_data: list[dict[str, Any]]) -> str:
-        """生成 zsh 补全脚本。"""
-        # 第一层命令列表
-        cmd_lines: list[str] = []
-        for cmd in _BUILTIN_COMMANDS:
-            cmd_lines.append(f"'{cmd}'")
-        for tool in tools_data:
-            desc = tool["name"]
-            cmd_lines.append(f"'{tool['name']}:{desc}'")
-            for alias in tool["aliases"]:
-                cmd_lines.append(f"'{alias}:{desc}'")
-        cmd_lines.append("'--version:版本号'")
-        commands_str = "\n        ".join(cmd_lines)
-
-        # 子命令分支
-        sub_blocks: list[str] = []
-        for tool in tools_data:
-            if not tool["subs"]:
-                continue
-            names = [tool["name"]] + tool["aliases"]
-            pattern = "|".join(names)
-            sub_lines = []
-            for sc, help_text in tool["subs"]:
-                sub_lines.append(f"'{sc}:{help_text}'")
-            subs_str = "\n                ".join(sub_lines)
-            sub_blocks.append(
-                f"            ({pattern})\n"
-                f"                local -a subs=({subs_str})\n"
-                f"                _describe 'subcommand' subs ;;"
-            )
-        sub_body = "\n".join(sub_blocks) if sub_blocks else "            (*) ;;"
-
-        return (
-            "#compdef fcmd\n"
-            "# fcmd zsh 补全脚本\n"
-            '# 安装: eval "$(fcmd completion --shell zsh)"\n'
-            "_fcmd() {\n"
-            "    local -a commands\n"
-            "    commands=(\n"
-            f"        {commands_str}\n"
-            "    )\n"
-            "    _arguments -C \\\n"
-            "        '1: :->cmd' \\\n"
-            "        '*::arg:->args'\n"
-            "    case $state in\n"
-            "        cmd)\n"
-            "            _describe 'command' commands ;;\n"
-            "        args)\n"
-            "            case ${words[1]} in\n"
-            f"{sub_body}\n"
-            "            esac ;;\n"
-            "    esac\n"
-            "}\n"
-            '_fcmd "$@"\n'
-        )
-
-    @staticmethod
-    def _gen_fish_script(tools_data: list[dict[str, Any]]) -> str:
-        """生成 fish 补全脚本。"""
-        lines: list[str] = ["# fcmd fish 补全脚本", "# 安装: fcmd completion --shell fish | source"]
-        # 第一层
-        for cmd in _BUILTIN_COMMANDS:
-            lines.append(f"complete -c fcmd -f -n '__fish_use_subcommand' -a '{cmd}'")
-        for tool in tools_data:
-            lines.append(f"complete -c fcmd -f -n '__fish_use_subcommand' -a '{tool['name']}'")
-            for alias in tool["aliases"]:
-                lines.append(f"complete -c fcmd -f -n '__fish_use_subcommand' -a '{alias}'")
-        # 子命令层
-        for tool in tools_data:
-            if not tool["subs"]:
-                continue
-            names = [tool["name"]] + tool["aliases"]
-            seen_cond = "__fish_seen_subcommand_from " + " ".join(names)
-            for sc, help_text in tool["subs"]:
-                lines.append(f"complete -c fcmd -f -n '{seen_cond}' -a '{sc}' -d '{help_text}'")
-        return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------------ #
     # yaml 内建命令
@@ -865,7 +746,7 @@ class FcmdApp:
             return 2
 
         # 注入 hook 捕获 run() 调用
-        captured = self._inject_run_hook()
+        captured = inject_run_hook()
 
         get_console().print(f"[bold]正在分析:[/bold] {script_path}")
         if script_args:
@@ -874,7 +755,7 @@ class FcmdApp:
 
         # 执行目标脚本
         try:
-            self._run_target_script(script_path, script_args)
+            run_target_script(script_path, script_args)
         except SystemExit:
             # 脚本调用了 sys.exit，属正常情况
             pass
@@ -895,7 +776,7 @@ class FcmdApp:
         from fcmd.profiling import ProfileReport
 
         profile = ProfileReport.from_report(report, graph)
-        self._output_profile(
+        output_profile(
             profile,
             export=parsed.export,
             output=parsed.output,
@@ -903,120 +784,6 @@ class FcmdApp:
             no_browser=parsed.no_browser,
         )
         return 0
-
-    def _inject_run_hook(self) -> dict[str, Any]:
-        """注入 hook 捕获 ``fcmd.run()`` 调用。
-
-        同时 patch 三处引用：
-
-        * ``fcmd.executors.run`` —— 实际实现
-        * ``fcmd.run`` —— 顶层包导出的引用（用户脚本 ``fx.run()`` 常用入口）
-        * ``RunReport.__init__`` —— 捕获 ``run()`` 内部创建的 report 实例，
-          用于 ``run()`` 抛 ``TaskFailedError`` 时仍能拿到已填充的 report。
-
-        另外修复懒加载属性被 import 系统遮蔽的问题：当 ``from fcmd.task import X``
-        执行时，import 系统会把 ``fcmd.__dict__["task"]`` 设为 *module*（而非
-        ``__getattr__`` 应返回的 ``task`` 函数），导致脚本中 ``@fx.task`` 报
-        ``'module' object is not callable``。此处遍历 ``_LAZY_ATTRS``，将
-        ``__dict__`` 中为 module 的属性覆盖为正确的函数/类。
-
-        返回字典含 ``graph`` / ``report``（执行后填充）与 ``_restore`` 还原函数。
-        """
-        import types
-
-        import fcmd as fcmd_mod
-        from fcmd import executors as executors_mod
-        from fcmd.report import RunReport
-
-        # 修复懒加载属性被 import 系统遮蔽：将 __dict__ 中为 module 的属性
-        # 覆盖为 _LAZY_ATTRS 指定的函数/类。此修复不需要还原（修复的是
-        # Python import 系统的副作用，还原反而会重新引入 bug）。
-        lazy_attrs = getattr(fcmd_mod, "_LAZY_ATTRS", {})
-        for attr_name, (module_path, symbol_name) in lazy_attrs.items():
-            current = fcmd_mod.__dict__.get(attr_name)
-            if isinstance(current, types.ModuleType):
-                module = importlib.import_module(module_path)
-                fcmd_mod.__dict__[attr_name] = getattr(module, symbol_name)
-
-        captured: dict[str, Any] = {}
-        original_exec_run = executors_mod.run
-        has_top_run = "run" in fcmd_mod.__dict__
-        original_top_run = fcmd_mod.__dict__.get("run")
-        original_report_init = RunReport.__init__
-        capture_enabled = [False]
-
-        def patched_report_init(self_obj: RunReport, *args: Any, **kwargs: Any) -> None:
-            original_report_init(self_obj, *args, **kwargs)
-            if capture_enabled[0]:
-                captured["report"] = self_obj
-
-        RunReport.__init__ = patched_report_init  # type: ignore[assignment]
-
-        def patched_run(graph: Any, *args: Any, **kwargs: Any) -> Any:
-            captured["graph"] = graph
-            capture_enabled[0] = True
-            try:
-                report = original_exec_run(graph, *args, **kwargs)
-                captured["report"] = report
-                return report
-            finally:
-                capture_enabled[0] = False
-
-        executors_mod.run = patched_run  # type: ignore[assignment]
-        fcmd_mod.run = patched_run  # pyrefly: ignore [missing-attribute]
-
-        def _restore() -> None:
-            executors_mod.run = original_exec_run  # type: ignore[assignment]
-            if has_top_run:
-                fcmd_mod.run = original_top_run  # type: ignore[assignment]
-            else:
-                del fcmd_mod.__dict__["run"]
-            RunReport.__init__ = original_report_init  # type: ignore[assignment]
-
-        captured["_restore"] = _restore
-        return captured
-
-    @staticmethod
-    def _run_target_script(script: Path, script_args: list[str]) -> None:
-        """以 ``__main__`` 身份执行目标脚本。"""
-        import runpy
-
-        sys.argv = [str(script), *script_args]
-        script_dir = str(script.parent.resolve())
-        if script_dir not in sys.path:
-            sys.path.insert(0, script_dir)
-        runpy.run_path(str(script), run_name="__main__")
-
-    @staticmethod
-    def _output_profile(
-        profile: Any,
-        export: str,
-        output: str | None,
-        script_stem: str,
-        no_browser: bool,
-    ) -> None:
-        """输出性能报告到 stdout 或文件。"""
-        if export == "text":
-            sys.stdout.write(profile.describe())
-            sys.stdout.write("\n")
-            return
-
-        # HTML 格式
-        html = profile.to_html()
-        if output:
-            out_path = Path(output)
-        else:
-            out_path = Path.cwd() / f"{script_stem}_profile.html"
-        out_path.write_text(html, encoding="utf-8")
-        get_console().print(f"[green]HTML 报告已生成:[/green] {out_path}")
-
-        if not no_browser:
-            import webbrowser
-
-            try:
-                webbrowser.open(f"file:///{out_path.resolve().as_posix()}")
-            except Exception as e:
-                get_console().print(f"[yellow]警告:[/yellow] 无法打开浏览器: {e}")
 
     def _collect_optional_deps_status(self) -> list[dict[str, Any]]:
         """收集可选依赖的安装状态与版本。

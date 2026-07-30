@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from fcmd.cli._profiler_helpers import inject_run_hook, output_profile, run_target_script
 from fcmd.cli.main import FcmdApp
 
 # ---------------------------------------------------------------------- #
@@ -297,9 +298,8 @@ fx.run(g)
 # 内部辅助方法
 # ---------------------------------------------------------------------- #
 def test_inject_run_hook_captures_graph_and_report() -> None:
-    """_inject_run_hook 注入后调用 run 能捕获 graph + report。"""
-    app = FcmdApp([])
-    captured = app._inject_run_hook()
+    """inject_run_hook 注入后调用 run 能捕获 graph + report。"""
+    captured = inject_run_hook()
 
     import fcmd as fx
 
@@ -322,8 +322,7 @@ def test_inject_run_hook_restore_reverts_patches() -> None:
 
     original = executors_mod.run
 
-    app = FcmdApp([])
-    captured = app._inject_run_hook()
+    captured = inject_run_hook()
     assert executors_mod.run is not original
 
     captured["_restore"]()
@@ -333,7 +332,7 @@ def test_inject_run_hook_restore_reverts_patches() -> None:
 def test_output_profile_text_writes_to_stdout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """_output_profile export=text 写 stdout。"""
+    """output_profile export=text 写 stdout。"""
     from datetime import datetime
 
     from fcmd.dag import Graph
@@ -354,7 +353,7 @@ def test_output_profile_text_writes_to_stdout(
     )
     profile = ProfileReport.from_report(report, graph)
 
-    FcmdApp._output_profile(profile, export="text", output=None, script_stem="x", no_browser=True)
+    output_profile(profile, export="text", output=None, script_stem="x", no_browser=True)
 
     out = capsys.readouterr().out
     assert "fcmd 性能剖面报告" in out
@@ -363,7 +362,7 @@ def test_output_profile_text_writes_to_stdout(
 def test_output_profile_html_writes_file(
     tmp_path: Path,
 ) -> None:
-    """_output_profile export=html 写入文件。"""
+    """output_profile export=html 写入文件。"""
     from datetime import datetime
 
     from fcmd.dag import Graph
@@ -385,23 +384,23 @@ def test_output_profile_html_writes_file(
     profile = ProfileReport.from_report(report, graph)
 
     out_file = tmp_path / "out.html"
-    FcmdApp._output_profile(profile, export="html", output=str(out_file), script_stem="x", no_browser=True)
+    output_profile(profile, export="html", output=str(out_file), script_stem="x", no_browser=True)
     assert out_file.is_file()
     assert "<!DOCTYPE html>" in out_file.read_text(encoding="utf-8")
 
 
 def test_run_target_script_executes_with_main(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """_run_target_script 以 __main__ 身份执行脚本。"""
+    """run_target_script 以 __main__ 身份执行脚本。"""
     script = _write_script(tmp_path, "exec.py", "print('hello_from_script')\n")
-    FcmdApp._run_target_script(script, [])
+    run_target_script(script, [])
     out = capsys.readouterr().out
     assert "hello_from_script" in out
 
 
 def test_run_target_script_sets_sys_argv(tmp_path: Path) -> None:
-    """_run_target_script 设置 sys.argv[0] 为脚本路径。"""
+    """run_target_script 设置 sys.argv[0] 为脚本路径。"""
     script = _write_script(tmp_path, "argv.py", "import sys\nprint(sys.argv[0])\n")
-    FcmdApp._run_target_script(script, ["a", "b"])
+    run_target_script(script, ["a", "b"])
     # 无需断言——只要不抛异常即可（print 输出已用 capsys 捕获但本测试不验证）
 
 
@@ -413,7 +412,7 @@ def test_run_target_script_adds_script_dir_to_path(tmp_path: Path) -> None:
     script.write_text("import sys\nprint('ok')\n", encoding="utf-8")
     original_path = list(sys.path)
     try:
-        FcmdApp._run_target_script(script, [])
+        run_target_script(script, [])
         assert str(sub.resolve()) in sys.path
     finally:
         sys.path[:] = original_path
