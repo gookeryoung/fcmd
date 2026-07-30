@@ -43,35 +43,35 @@ class TestIsLegacyWindows:
     def test_windows7_returns_true(self) -> None:
         """Win7（major=6）判定为 legacy。"""
         with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
-            sys, "getwindowsversion", return_value=mock.Mock(major=6, minor=1)
+            sys, "getwindowsversion", return_value=mock.Mock(major=6, minor=1), create=True
         ):
             assert console._is_legacy_windows() is True
 
     def test_windows8_returns_true(self) -> None:
         """Win8（major=6, minor=2）判定为 legacy。"""
         with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
-            sys, "getwindowsversion", return_value=mock.Mock(major=6, minor=2)
+            sys, "getwindowsversion", return_value=mock.Mock(major=6, minor=2), create=True
         ):
             assert console._is_legacy_windows() is True
 
     def test_windows10_returns_false(self) -> None:
         """Win10（major=10）非 legacy。"""
         with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
-            sys, "getwindowsversion", return_value=mock.Mock(major=10, build=19041)
+            sys, "getwindowsversion", return_value=mock.Mock(major=10, build=19041), create=True
         ):
             assert console._is_legacy_windows() is False
 
     def test_windows11_returns_false(self) -> None:
         """Win11（major=10, build=22000）非 legacy。"""
         with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
-            sys, "getwindowsversion", return_value=mock.Mock(major=10, build=22000)
+            sys, "getwindowsversion", return_value=mock.Mock(major=10, build=22000), create=True
         ):
             assert console._is_legacy_windows() is False
 
     def test_getwindowsversion_missing_returns_false(self) -> None:
         """``getwindowsversion`` 不存在时安全降级为 False。"""
         with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
-            sys, "getwindowsversion", side_effect=AttributeError
+            sys, "getwindowsversion", side_effect=AttributeError, create=True
         ):
             assert console._is_legacy_windows() is False
 
@@ -499,7 +499,9 @@ class TestConsoleLegacyWindows:
         """legacy 模式下 kernel32 加载失败时禁用颜色。"""
         buf = io.StringIO()
         buf.isatty = lambda: True  # type: ignore[method-assign]
-        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(ctypes, "WinDLL", side_effect=OSError):
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
+            ctypes, "WinDLL", side_effect=OSError, create=True
+        ):
             c = Console(legacy_windows=True, file=buf)
         assert c._color_enabled is False
 
@@ -519,7 +521,9 @@ class TestEnableVtMode:
 
     def test_windows_load_failure_returns_false(self) -> None:
         """Win10+ 但 kernel32 加载失败时返回 False。"""
-        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(ctypes, "WinDLL", side_effect=OSError):
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
+            ctypes, "WinDLL", side_effect=OSError, create=True
+        ):
             assert console._enable_vt_mode() is False
 
     def test_windows_success_returns_true(self) -> None:
@@ -528,7 +532,9 @@ class TestEnableVtMode:
         fake_kernel.GetStdHandle.return_value = 1
         fake_kernel.GetConsoleMode.return_value = 1
         fake_kernel.SetConsoleMode.return_value = 1
-        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(ctypes, "WinDLL", return_value=fake_kernel):
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
+            ctypes, "WinDLL", return_value=fake_kernel, create=True
+        ):
             assert console._enable_vt_mode() is True
         # 验证设置了 VT 标志
         args = fake_kernel.SetConsoleMode.call_args
@@ -539,7 +545,9 @@ class TestEnableVtMode:
         """GetConsoleMode 失败时返回 False。"""
         fake_kernel = mock.Mock()
         fake_kernel.GetConsoleMode.return_value = 0  # 失败
-        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(ctypes, "WinDLL", return_value=fake_kernel):
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(
+            ctypes, "WinDLL", return_value=fake_kernel, create=True
+        ):
             assert console._enable_vt_mode() is False
 
 
