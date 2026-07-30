@@ -42,6 +42,7 @@ class TestPymakeRegistration:
             "sync",
             "c",
             "t",
+            "tn",
             "tf",
             "ts",
             "cov",
@@ -100,6 +101,7 @@ class TestPymakeCmdTasks:
             ("sync", "uv"),
             ("c", "gitt"),
             ("t", "pytest"),
+            ("tn", "pytest"),
             ("tf", "pytest"),
             ("ts", "pytest"),
             ("lint", "ruff"),
@@ -140,6 +142,14 @@ class TestPymakeCmdTasks:
         spec = get_tool("pymake", "t")
         assert spec.cmd is not None
         assert "-m" in spec.cmd
+        assert "not slow" in spec.cmd
+
+    def test_tn_cmd_uses_parallel(self) -> None:
+        """tn 应使用 -n 8 并行执行。"""
+        spec = get_tool("pymake", "tn")
+        assert spec.cmd is not None
+        assert "-n" in spec.cmd
+        assert "8" in spec.cmd
         assert "not slow" in spec.cmd
 
     def test_tf_cmd_has_x_flag(self) -> None:
@@ -230,10 +240,10 @@ class TestPymakeHybridTasks:
         assert spec.cmd is not None
         assert "patch" in spec.cmd
 
-    def test_bump_needs_git_add_all(self) -> None:
-        """bump 应依赖 git_add_all。"""
+    def test_bump_has_no_needs(self) -> None:
+        """bump 是纯 cmd 任务（无依赖）。"""
         spec = get_tool("pymake", "bump")
-        assert "git_add_all" in spec.needs
+        assert spec.needs == ()
 
 
 # ---------------------------------------------------------------------- #
@@ -286,8 +296,8 @@ class TestPymakeAggregateJobs:
     @pytest.mark.parametrize(
         ("sub", "expected_needs"),
         [
-            ("chk", ("c", "pyrefly_check", "lint", "fmt", "tf")),
-            ("tc", ("c", "pyrefly_check", "lint", "fmt")),
+            ("chk", ("pyrefly_check", "lint", "fmt", "tf")),
+            ("tc", ("pyrefly_check", "lint", "fmt")),
             ("push", ("chk", "c", "git_push", "git_push_tags")),
             ("upload", ("twine_publish",)),
         ],
@@ -336,8 +346,7 @@ class TestPymakeCliDispatch:
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        # tc 依赖 c + pyrefly_check + lint + fmt
-        assert "c" in out
+        # tc 依赖 pyrefly_check + lint + fmt
         assert "lint" in out
         assert "pyrefly_check" in out
         assert "fmt" in out
@@ -348,22 +357,20 @@ class TestPymakeCliDispatch:
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        # chk 依赖 c + pyrefly_check + lint + fmt + tf
-        assert "c" in out
+        # chk 依赖 pyrefly_check + lint + fmt + tf
         assert "lint" in out
         assert "pyrefly_check" in out
         assert "fmt" in out
         assert "tf" in out
 
     def test_pymake_bump_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd pymake bump --dry-run 打印版本升级执行计划。"""
+        """fcmd pymake bump --dry-run 打印版本升级执行计划（单任务）。"""
         code = run_tool("pymake", ["bump", "--dry-run"])
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        # bump → git_add_all → chk → (c, pyrefly_check, lint, fmt, tf)
+        # bump 是纯 cmd 任务（无依赖），执行计划仅含 bump
         assert "bump" in out
-        assert "git_add_all" in out
 
     def test_pymake_cov_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd pymake cov --dry-run 打印覆盖率测试执行计划。"""

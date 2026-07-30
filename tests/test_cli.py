@@ -346,9 +346,8 @@ class TestBuiltinGraph:
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "graph TD" in out
-        # tc 依赖 c + pyrefly_check + lint + fmt
+        # tc 依赖 pyrefly_check + lint + fmt
         assert "tc" in out
-        assert "c" in out
         assert "lint" in out
 
     def test_graph_pymake_chk_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -357,8 +356,8 @@ class TestBuiltinGraph:
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "graph TD" in out
-        # chk 依赖 c + pyrefly_check + lint + fmt + tf
-        for name in ("c", "chk", "lint", "pyrefly_check", "fmt", "tf"):
+        # chk 依赖 pyrefly_check + lint + fmt + tf
+        for name in ("chk", "lint", "pyrefly_check", "fmt", "tf"):
             assert name in out, f"DAG 应包含 {name!r}"
 
     def test_graph_format_layers(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -471,8 +470,9 @@ class TestBuildToolGraph:
         graph = build_tool_graph("pymake", "tc")
         names = set(graph.names)
         assert "tc" in names
-        # tc 依赖 c / pyrefly_check / lint，应一并包含
-        assert "c" in names
+        # tc 依赖 pyrefly_check / lint / fmt，应一并包含
+        assert "pyrefly_check" in names
+        assert "lint" in names
 
 
 # ---------------------------------------------------------------------- #

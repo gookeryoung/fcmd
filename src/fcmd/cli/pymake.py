@@ -60,7 +60,6 @@ def build(cwd: Path = Path()) -> None:
     subcommand="bump",
     help="升级 patch 版本号 (bump-my-version bump patch)",
     cmd=["uvx", "bump-my-version", "bump", "patch", "--tag"],
-    needs=["git_add_all"],
 )
 def bump_patch(cwd: Path = Path()) -> None:
     """升级 patch 版本号（内部 job）。"""
@@ -163,7 +162,7 @@ def _pyrefly_check(cwd: Path = Path()) -> None:
     "pymake",
     subcommand="chk",
     help="类型检查 (清理 + pyrefly + lint + test_fast)",
-    needs=["c", "pyrefly_check", "lint", "fmt", "tf"],
+    needs=["pyrefly_check", "lint", "fmt", "tf"],
     strategy="thread",
 )
 def check(cwd: Path = Path()) -> None:
@@ -174,7 +173,7 @@ def check(cwd: Path = Path()) -> None:
     "pymake",
     subcommand="tc",
     help="类型检查 (清理 + pyrefly + lint)",
-    needs=["c", "pyrefly_check", "lint", "fmt"],
+    needs=["pyrefly_check", "lint", "fmt"],
     strategy="thread",
 )
 def type_check(cwd: Path = Path()) -> None:
