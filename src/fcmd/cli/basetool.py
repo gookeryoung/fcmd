@@ -20,6 +20,7 @@ import base64
 import binascii
 import html as html_lib
 import urllib.parse
+from collections.abc import Callable
 
 import fcmd
 
@@ -203,80 +204,57 @@ def hex_decode(text: str) -> str:
 # ============================================================================
 
 
-@fcmd.tool("basetool", subcommand="base64", help="Base64 编解码")
-def base64_cmd(text: str, decode: bool = False) -> None:
-    """Base64 编码或解码字符串。
+def _codec_cmd(
+    text: str,
+    decode: bool,
+    encode_fn: Callable[[str], str],
+    decode_fn: Callable[[str], str],
+) -> None:
+    """编解码子命令通用模板：尝试解码或编码，捕获 ValueError 并打印结果。
 
     Parameters
     ----------
     text:
         待处理的字符串
     decode:
-        解码模式（默认 ``False`` 为编码）
+        解码模式为 ``True`` 时调用 *decode_fn*，否则调用 *encode_fn*
+    encode_fn:
+        编码函数
+    decode_fn:
+        解码函数（须将底层异常包装为 ``ValueError``）
     """
     try:
-        result = base64_decode(text) if decode else base64_encode(text)
+        result = decode_fn(text) if decode else encode_fn(text)
     except ValueError as exc:
         print(str(exc))
         return
     print(result)
+
+
+@fcmd.tool("basetool", subcommand="base64", help="Base64 编解码")
+def base64_cmd(text: str, decode: bool = False) -> None:
+    """Base64 编码或解码字符串。"""
+    _codec_cmd(text, decode, base64_encode, base64_decode)
 
 
 @fcmd.tool("basetool", subcommand="url", help="URL 编解码")
 def url_cmd(text: str, decode: bool = False) -> None:
-    """URL 编码或解码字符串。
-
-    Parameters
-    ----------
-    text:
-        待处理的字符串
-    decode:
-        解码模式（默认 ``False`` 为编码）
-    """
-    try:
-        result = url_decode(text) if decode else url_encode(text)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(result)
+    """URL 编码或解码字符串。"""
+    _codec_cmd(text, decode, url_encode, url_decode)
 
 
 @fcmd.tool("basetool", subcommand="html", help="HTML 转义与反转义")
 def html_cmd(text: str, decode: bool = False) -> None:
-    """HTML 转义或反转义字符串。
-
-    Parameters
-    ----------
-    text:
-        待处理的字符串
-    decode:
-        解码模式（默认 ``False`` 为转义）
-    """
-    result = html_decode(text) if decode else html_encode(text)
-    print(result)
+    """HTML 转义或反转义字符串。"""
+    print(html_decode(text) if decode else html_encode(text))
 
 
 @fcmd.tool("basetool", subcommand="hex", help="十六进制编解码")
 def hex_cmd(text: str, decode: bool = False) -> None:
-    """十六进制编码或解码字符串。
-
-    Parameters
-    ----------
-    text:
-        待处理的字符串
-    decode:
-        解码模式（默认 ``False`` 为编码）
-    """
-    try:
-        result = hex_decode(text) if decode else hex_encode(text)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(result)
+    """十六进制编码或解码字符串。"""
+    _codec_cmd(text, decode, hex_encode, hex_decode)
 
 
 @fcmd.main("basetool")
 def main() -> None:
     pass
-
-
