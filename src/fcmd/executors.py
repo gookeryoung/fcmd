@@ -552,11 +552,21 @@ class ThreadedLayerRunner:
             pool.submit(_run_threaded_task, name): name for name in to_run
         }
         completed: dict[str, tuple[dict[str, Any], TaskResult[Any]]] = {}
-        for fut in concurrent.futures.as_completed(future_to_name):
-            name = future_to_name[fut]
-            completed[name] = fut.result()
-        for name, (_, result) in completed.items():
-            _store_result(result, specs[name], ctx)
+        try:
+            for fut in concurrent.futures.as_completed(future_to_name):
+                name = future_to_name[fut]
+                completed[name] = fut.result()
+        except BaseException:
+            # fail-fast：首个任务失败时取消同层其他未完成的 future（对齐 DependencyRunner 语义）。
+            # 注意：正在运行的任务无法中断（Python 线程限制），仅取消排队中的任务；
+            # 已完成的任务结果仍需存储（finally 块）。
+            for other in future_to_name:
+                if not other.done():
+                    other.cancel()
+            raise
+        finally:
+            for name, (_, result) in completed.items():
+                _store_result(result, specs[name], ctx)
 
 
 class AsyncLayerRunner:

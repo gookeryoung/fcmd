@@ -750,6 +750,52 @@ def test_run_dependency_fail_cancels_others() -> None:
     assert "slow" in cancelled
 
 
+def test_run_thread_strategy_fail_fast_cancels_pending() -> None:
+    """thread 策略下首个任务失败时取消排队中的任务（fail-fast，对齐 DependencyRunner）。
+
+    max_workers=1 时 a_fail 先执行（字母序），失败后 b_slow 被 cancel（不执行 3 秒）。
+    """
+
+    @task
+    def a_fail() -> None:
+        raise RuntimeError("fail immediately")
+
+    @task
+    def b_slow() -> None:
+        time.sleep(3.0)
+        # b_slow 不应执行（被 cancel）
+
+    graph = fcmd.graph(a_fail, b_slow)
+    start = time.time()
+    with pytest.raises(TaskFailedError):
+        fcmd.run(graph, strategy="thread", max_workers=1)
+    elapsed = time.time() - start
+    # fail-fast 应在 2 秒内返回（b_slow 被 cancel，不执行 3 秒 sleep）
+    assert elapsed < 2.0, f"fail-fast 应在 2 秒内返回，实际 {elapsed:.1f} 秒"
+
+
+def test_run_thread_strategy_fail_fast_stores_completed_results() -> None:
+    """thread 策略 fail-fast 时已完成任务的结果仍被存储（通过 on_event 验证）。"""
+    events: list[TaskEvent] = []
+
+    def on_event(event: TaskEvent) -> None:
+        events.append(event)
+
+    @task
+    def a_ok() -> str:
+        return "done"
+
+    @task
+    def b_fail() -> None:
+        raise RuntimeError("fail")
+
+    graph = fcmd.graph(a_ok, b_fail)
+    with pytest.raises(TaskFailedError):
+        fcmd.run(graph, strategy="thread", on_event=on_event)
+    # a_ok 已完成，应观察到 SUCCESS 事件（结果被存储）
+    assert any(e.task == "a_ok" and e.status == TaskStatus.SUCCESS for e in events)
+
+
 def test_run_verbose_with_on_event() -> None:
     """verbose=True 同时传 on_event 回调（覆盖 line 707 on_event 调用）。"""
     events: list[TaskEvent] = []
