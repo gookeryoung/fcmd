@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import threading
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
@@ -28,10 +27,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Generator, Generic, List, Mapping, Union, cast
 
-if sys.version_info >= (3, 13):
-    from typing import TypeVar
-else:
-    from typing_extensions import TypeVar  # pragma: no cover
+from fcmd._compat import TypeVar
 
 T = TypeVar("T", default=Any)
 
