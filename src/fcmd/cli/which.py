@@ -60,5 +60,3 @@ def which_run(commands: list[str]) -> None:
 @fcmd.main("which")
 def main() -> None:
     pass
-
-

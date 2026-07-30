@@ -75,5 +75,3 @@ def zip_folders(directory: str = ".") -> None:
 @fcmd.main("folderzip")
 def main() -> None:
     pass
-
-

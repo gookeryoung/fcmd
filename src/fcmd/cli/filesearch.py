@@ -272,5 +272,3 @@ def filesearch_content(
 @fcmd.main("filesearch")
 def main() -> None:
     pass
-
-

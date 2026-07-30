@@ -306,5 +306,3 @@ def html_cmd(text: str, decode: bool = False) -> None:
 @fcmd.main("codetool")
 def main() -> None:
     pass
-
-

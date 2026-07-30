@@ -165,5 +165,3 @@ def random_cmd(length: int = 16) -> None:
 @fcmd.main("idtool")
 def main() -> None:
     pass
-
-

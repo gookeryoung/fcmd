@@ -213,5 +213,3 @@ def filerename_case(files: list[Path], mode: str = "lower", preview: bool = Fals
 @fcmd.main("filerename")
 def main() -> None:
     pass
-
-

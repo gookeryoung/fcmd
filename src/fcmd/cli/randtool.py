@@ -267,5 +267,3 @@ def bytes_cmd(length: int, encoding: str = "hex") -> None:
 @fcmd.main("randtool")
 def main() -> None:
     pass
-
-

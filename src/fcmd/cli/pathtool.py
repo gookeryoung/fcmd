@@ -216,5 +216,3 @@ def pathtool_diff(p1: Path, p2: Path) -> None:
 @fcmd.main("pathtool")
 def main() -> None:
     pass
-
-

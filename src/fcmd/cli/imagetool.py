@@ -570,5 +570,3 @@ def image_colors(
 @fcmd.main("imagetool")
 def main() -> None:
     pass
-
-

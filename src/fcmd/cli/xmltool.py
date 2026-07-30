@@ -337,5 +337,3 @@ def xml_validate_cmd(file: Path) -> None:
 @fcmd.main("xmltool")
 def main() -> None:
     pass
-
-

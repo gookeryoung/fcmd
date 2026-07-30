@@ -94,5 +94,3 @@ def taskkill_run(process_names: list[str]) -> None:
 @fcmd.main("taskkill")
 def main() -> None:
     pass
-
-

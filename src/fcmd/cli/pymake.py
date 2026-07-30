@@ -32,19 +32,68 @@ import fcmd
 # 工具别名：fcmd pm <args> 等价于 fcmd pymake <args>
 __tool_aliases__: list[str] = ["pm"]
 
+# 构建命令映射
+_BUILD_COMMANDS: dict[str, list[str]] = {
+    "uv": ["uv", "build"],
+    "hatchling": ["hatchling", "build"],
+    "pip": ["pip", "wheel", "."],
+}
+
 # ============================================================================
-# 单任务别名 (cmd 任务)
+# 构建相关
 # ============================================================================
 
 
 @fcmd.tool("pymake", subcommand="b", help="构建分发包 (uv build)", cmd=["uv", "build"])
-def b(cwd: Path = Path()) -> None:
+def build(cwd: Path = Path()) -> None:
     """构建分发包 (wheel + sdist)。"""
 
 
-@fcmd.tool("pymake", subcommand="sync", help="同步开发依赖 (uv sync --extra dev)", cmd=["uv", "sync", "--extra", "dev"])
-def sync(cwd: Path = Path()) -> None:
-    """同步开发依赖。"""
+@fcmd.tool(
+    "pymake",
+    subcommand="bumpversion",
+    help="升级 patch 版本号 (bump-my-version bump patch)",
+    cmd=["uvx", "bump-my-version", "bump", "patch", "--tag"],
+    needs=["git_add_all"],
+    hidden=True,
+)
+def bumpversion(cwd: Path = Path()) -> None:
+    """升级 patch 版本号（内部 job）。"""
+
+
+@fcmd.tool(
+    "pymake",
+    subcommand="bump",
+    help="升级 patch 版本号 (类型检查 + add + bumpversion)",
+    needs=["bumpversion"],
+)
+def bump_patch(cwd: Path = Path()) -> None:
+    """升级 patch 版本号（聚合）。"""
+
+
+@fcmd.tool(
+    "pymake",
+    subcommand="bumpma",
+    help="升级主版本号 (bump-my-version bump major)",
+    cmd=["uvx", "bump-my-version", "bump", "major", "--tag"],
+)
+def bump_major(cwd: Path = Path()) -> None:
+    """升级主版本号 (major)。"""
+
+
+@fcmd.tool(
+    "pymake",
+    subcommand="bumpmi",
+    help="升级次版本号 (bump-my-version bump minor)",
+    cmd=["uvx", "bump-my-version", "bump", "minor", "--tag"],
+)
+def bump_minor(cwd: Path = Path()) -> None:
+    """升级次版本号 (minor)。"""
+
+
+# ============================================================================
+# 清理相关
+# ============================================================================
 
 
 @fcmd.tool(
@@ -52,7 +101,7 @@ def sync(cwd: Path = Path()) -> None:
     subcommand="c",
     help="清理构建产物与缓存目录",
 )
-def c(cwd: Path = Path()) -> None:  # noqa: ARG001  cwd 由框架处理，签名保留以驱动 CLI
+def clean(cwd: Path = Path()) -> None:  # noqa: ARG001  cwd 由框架处理，签名保留以驱动 CLI
     """清理构建产物与缓存目录。
 
     清理目标：build/、dist/、htmlcov/、.tox/、.ruff_cache/、.pyrefly_cache/、
@@ -77,24 +126,39 @@ def c(cwd: Path = Path()) -> None:  # noqa: ARG001  cwd 由框架处理，签名
             shutil.rmtree(p, ignore_errors=True)
 
 
+# ============================================================================
+# 文档相关
+# ============================================================================
+
+
+@fcmd.tool(
+    "pymake",
+    subcommand="doc",
+    help="构建 Sphinx 文档",
+    cmd=["sphinx-build", "-b", "html", "docs", "docs/_build/html"],
+)
+def build_docs(cwd: Path = Path()) -> None:
+    """构建 Sphinx 文档。"""
+
+
+@fcmd.tool("pymake", subcommand="sync", help="同步开发依赖 (uv sync --extra dev)", cmd=["uv", "sync", "--extra", "dev"])
+def sync(cwd: Path = Path()) -> None:
+    """同步开发依赖。"""
+
+
 @fcmd.tool(
     "pymake",
     subcommand="t",
     help="运行测试 (pytest)",
     cmd=["pytest", "-m", "not slow", "--color=yes", "--durations=10"],
 )
-def t(cwd: Path = Path()) -> None:
+def test(cwd: Path = Path()) -> None:
     """运行测试（不含 slow 标记）。"""
 
 
-@fcmd.tool(
-    "pymake",
-    subcommand="tf",
-    help="快速测试 (遇到失败立即停止)",
-    cmd=["pytest", "-m", "not slow", "--color=yes", "-x", "--durations=10"],
-)
-def tf(cwd: Path = Path()) -> None:
-    """快速测试（首个失败即停止）。"""
+# ============================================================================
+# 检查相关
+# ============================================================================
 
 
 @fcmd.tool(
@@ -113,7 +177,7 @@ def lint(cwd: Path = Path()) -> None:
     help="代码格式化 (ruff format)",
     cmd=["ruff", "format", "src", "tests"],
 )
-def fmt(cwd: Path = Path()) -> None:
+def format(cwd: Path = Path()) -> None:
     """代码格式化。"""
 
 
@@ -123,48 +187,8 @@ def fmt(cwd: Path = Path()) -> None:
     help="格式化检查 (ruff format --check，不修改文件)",
     cmd=["ruff", "format", "--check", "src", "tests"],
 )
-def fmtc(cwd: Path = Path()) -> None:
+def format_check(cwd: Path = Path()) -> None:
     """格式化检查（不修改文件）。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="bumpmi",
-    help="升级次版本号 (bump-my-version bump minor)",
-    cmd=["uvx", "bump-my-version", "bump", "minor", "--tag"],
-)
-def bumpmi(cwd: Path = Path()) -> None:
-    """升级次版本号 (minor)。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="bumpma",
-    help="升级主版本号 (bump-my-version bump major)",
-    cmd=["uvx", "bump-my-version", "bump", "major", "--tag"],
-)
-def bumpma(cwd: Path = Path()) -> None:
-    """升级主版本号 (major)。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="doc",
-    help="构建 Sphinx 文档",
-    cmd=["sphinx-build", "-b", "html", "docs", "docs/_build/html"],
-)
-def doc(cwd: Path = Path()) -> None:
-    """构建 Sphinx 文档。"""
-
-
-@fcmd.tool("pymake", subcommand="tox", help="多版本测试 (tox -p auto)", cmd=["uvx", "tox", "-p", "auto"])
-def tox(cwd: Path = Path()) -> None:
-    """多版本测试。"""
-
-
-# ============================================================================
-# 内部 job (hidden, 不暴露为 subcommand)
-# ============================================================================
 
 
 @fcmd.tool(
@@ -178,6 +202,26 @@ def pyrefly_check(cwd: Path = Path()) -> None:
     """pyrefly 类型检查（内部 job）。"""
 
 
+# ============================================================================
+# 测试相关
+# ============================================================================
+
+
+@fcmd.tool(
+    "pymake",
+    subcommand="tf",
+    help="快速测试 (遇到失败立即停止)",
+    cmd=["pytest", "-m", "not slow", "--color=yes", "-x", "--durations=10"],
+)
+def test_fast(cwd: Path = Path()) -> None:
+    """快速测试（首个失败即停止）。"""
+
+
+@fcmd.tool("pymake", subcommand="tox", help="多版本测试 (tox -p auto)", cmd=["uvx", "tox", "-p", "auto"])
+def tox_auto(cwd: Path = Path()) -> None:
+    """多版本测试。"""
+
+
 @fcmd.tool(
     "pymake",
     subcommand="test_coverage",
@@ -188,18 +232,6 @@ def pyrefly_check(cwd: Path = Path()) -> None:
 )
 def test_coverage(cwd: Path = Path()) -> None:
     """测试并生成覆盖率（内部 job）。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="bumpversion",
-    help="升级 patch 版本号 (bump-my-version bump patch)",
-    cmd=["uvx", "bump-my-version", "bump", "patch", "--tag"],
-    needs=["git_add_all"],
-    hidden=True,
-)
-def bumpversion(cwd: Path = Path()) -> None:
-    """升级 patch 版本号（内部 job）。"""
 
 
 @fcmd.tool(
@@ -269,22 +301,12 @@ def cov(cwd: Path = Path()) -> None:
 
 @fcmd.tool(
     "pymake",
-    subcommand="bump",
-    help="升级 patch 版本号 (类型检查 + add + bumpversion)",
-    needs=["bumpversion"],
-)
-def bump(cwd: Path = Path()) -> None:
-    """升级 patch 版本号（聚合）。"""
-
-
-@fcmd.tool(
-    "pymake",
     subcommand="p",
     help="推送代码 (清理 + push + push tags)",
     needs=["c", "git_push", "git_push_tags"],
     strategy="thread",
 )
-def p(cwd: Path = Path()) -> None:
+def push(cwd: Path = Path()) -> None:
     """推送代码（聚合）。"""
 
 
@@ -294,7 +316,7 @@ def p(cwd: Path = Path()) -> None:
     help="发布到 PyPI (twine upload)",
     needs=["twine_publish"],
 )
-def pb(cwd: Path = Path()) -> None:
+def publish_pypi(cwd: Path = Path()) -> None:
     """发布到 PyPI（聚合）。"""
 
 
@@ -311,6 +333,4 @@ def all_(cwd: Path = Path()) -> None:
 
 @fcmd.main("pymake")
 def main() -> None:
-    pass
-
-
+    """pymake 主程序."""

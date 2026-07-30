@@ -294,5 +294,3 @@ def time_convert_cmd(
 @fcmd.main("timetool")
 def main() -> None:
     pass
-
-

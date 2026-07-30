@@ -247,5 +247,3 @@ def justify_cmd(text: str, width: int = 20) -> None:
 @fcmd.main("padtool")
 def main() -> None:
     pass
-
-

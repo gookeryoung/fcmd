@@ -179,5 +179,3 @@ def sha512_cmd(text: str) -> None:
 @fcmd.main("hashtool")
 def main() -> None:
     pass
-
-

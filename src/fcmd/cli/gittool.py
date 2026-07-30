@@ -177,5 +177,3 @@ def pl() -> None:
 @fcmd.main("gittool")
 def main() -> None:
     pass
-
-

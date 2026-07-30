@@ -243,5 +243,3 @@ def split_cmd(pattern: str, text: str) -> None:
 @fcmd.main("regextool")
 def main() -> None:
     pass
-
-

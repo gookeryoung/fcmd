@@ -169,9 +169,7 @@ class TestSolverAutoDetection:
         result = _find_solver(["lsdyna", "lsdyna.exe"])
         assert result == str(lsdyna_home / "lsdyna.exe")
 
-    def test_find_solver_lsdyna_home_priority_over_path(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
+    def test_find_solver_lsdyna_home_priority_over_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """_find_solver 优先在 LSDYNA_HOME 中搜索，然后才是 PATH。"""
         lsdyna_home = tmp_path / "lsdyna_install"
         lsdyna_home.mkdir()

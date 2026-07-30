@@ -239,5 +239,3 @@ def factorial_cmd(n: int) -> None:
 @fcmd.main("mathtool")
 def main() -> None:
     pass
-
-

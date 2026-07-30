@@ -34,5 +34,3 @@ def write_file_run(path: str, content: str, encoding: str = "utf-8") -> None:
 @fcmd.main("writefile")
 def main() -> None:
     pass
-
-

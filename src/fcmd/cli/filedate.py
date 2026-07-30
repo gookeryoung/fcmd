@@ -167,5 +167,3 @@ def process_files_date_clear(files: list[Path]) -> None:
 @fcmd.main("filedate")
 def main() -> None:
     pass
-
-

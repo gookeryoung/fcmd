@@ -211,5 +211,3 @@ def txt_case_cmd(path: str, mode: str = "upper") -> None:
 @fcmd.main("txttool")
 def main() -> None:
     pass
-
-

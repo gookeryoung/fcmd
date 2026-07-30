@@ -353,5 +353,3 @@ def check_ls_dyna_status() -> None:
 @fcmd.main("lscalc")
 def main() -> None:
     pass
-
-

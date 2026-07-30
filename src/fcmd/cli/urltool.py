@@ -242,5 +242,3 @@ def baseurl_cmd(url: str) -> None:
 @fcmd.main("urltool")
 def main() -> None:
     pass
-
-

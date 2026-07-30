@@ -115,5 +115,3 @@ def sysinfo_run() -> None:
 @fcmd.main("sysinfo")
 def main() -> None:
     pass
-
-

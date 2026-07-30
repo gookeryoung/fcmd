@@ -339,5 +339,3 @@ def summarize_cmd(file: Path) -> None:
 @fcmd.main("stattool")
 def main() -> None:
     pass
-
-
