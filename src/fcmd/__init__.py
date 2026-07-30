@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__version__ = "0.1.8"
+__version__ = "0.1.9"
 
 __all__ = [
     "Context",
