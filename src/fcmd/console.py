@@ -9,16 +9,20 @@ Win7/8 兼容：旧版 Windows conhost 不支持 VT 序列，rich 自动进入 l
 本模块显式检测 Win7/8 并额外收紧渲染宽度，规避该 conhost 限制。
 
 Win7/8 乱码修复：conhost 默认使用点阵字体（Raster Fonts），不支持 box-drawing
-字符（圆角边框、阴影线等），rich 默认的 ROUNDED/SQUARE 边框会渲染为方块/乱码。
-rich 的 ``ascii_only`` 自动推断依赖 ``sys.stdout.encoding``，但 Python 3.6+ PEP 528
-使 Windows 下 ``sys.stdout.encoding`` 默认为 ``'utf-8'``（WriteConsoleW），导致 rich
-误判以为可输出 Unicode box 字符，实际被点阵字体渲染为乱码。本模块在 Win7/8 下
-显式传 ``ascii_only=True`` 强制 rich 用 ASCII box 字符（``+``/``-``/``|``）。
+字符（圆角边框 ``╭─╮``、阴影线 ``░▒▓``、双线 ``═╣`` 等），rich 默认的
+ROUNDED/SQUARE 边框会渲染为方块/乱码。rich 的 ``ascii_only`` 自动推断依赖
+``sys.stdout.encoding``，但 Python 3.6+ PEP 528 使 Windows 下
+``sys.stdout.encoding`` 默认为 ``'utf-8'``（WriteConsoleW），导致 rich 误判以为
+可输出 Unicode box 字符，实际被点阵字体渲染为乱码。
 
-旧版 rich 兼容：``ascii_only`` 参数在 rich 13.x 早期版本不存在（Win7 + Python 3.8
-环境下 pip 通常只能装到 13.0~13.4）。通过 ``inspect.signature`` 检测 Console 是否
-支持该参数；不支持时降级 monkey-patch ``rich.box.BOXES`` 把所有 box 字符表替换为
-``box.ASCII``，达到等价效果。
+修复策略（三层兜底，跨所有 rich 版本）：
+
+1. ``legacy_windows=True``：切到 ``SetConsoleTextAttribute`` 着色路径。
+2. ``ascii_only=True``（若 rich 支持）：rich 13.x 中后期引入的参数，通过
+   ``inspect.signature`` 检测；旧版 rich 不支持时跳过。
+3. ``file=_AsciiBoxStream(sys.stdout)``：包装 stdout 拦截 ``write``，把所有
+   box-drawing 字符 replace 为 ASCII（``+``/``-``/``|``）。对 rich 透明，
+   不依赖 rich 内部 API，是旧版 rich（box monkey-patch 失效）的最终兜底。
 """
 
 from __future__ import annotations
@@ -34,6 +38,186 @@ if TYPE_CHECKING:
 __all__ = ["get_console", "print_verbose"]
 
 _console: Console | None = None
+
+
+# box-drawing 字符到 ASCII 的映射表（str.translate 用）。
+# 覆盖 Unicode "Box Drawing" (U+2500-U+257F) 和 "Block Elements" (U+2580-U+259F)
+# 以及 rich 常用的装饰字符。Win7 conhost 点阵字体不支持这些字符。
+_BOX_TO_ASCII = str.maketrans(
+    {
+        # 圆角边框 ROUNDED
+        "╭": "+",
+        "╮": "+",
+        "╰": "+",
+        "╯": "+",
+        # 直角边框 SQUARE
+        "┌": "+",
+        "┐": "+",
+        "└": "+",
+        "┘": "+",
+        # T 型连接
+        "├": "+",
+        "┤": "+",
+        "┬": "+",
+        "┴": "+",
+        "┼": "+",
+        # 水平/垂直线
+        "─": "-",
+        "│": "|",
+        # 双线 DOUBLE
+        "═": "=",
+        "║": "|",
+        "╔": "+",
+        "╗": "+",
+        "╚": "+",
+        "╝": "+",
+        "╠": "+",
+        "╣": "+",
+        "╦": "+",
+        "╩": "+",
+        "╬": "+",
+        # 粗线 HEAVY
+        "━": "=",
+        "┃": "|",
+        "┏": "+",
+        "┓": "+",
+        "┗": "+",
+        "┛": "+",
+        "┣": "+",
+        "┫": "+",
+        "┳": "+",
+        "┻": "+",
+        "╋": "+",
+        # 双线圆角
+        "╓": "+",
+        "╖": "+",
+        "╙": "+",
+        "╜": "+",
+        "╟": "+",
+        "╢": "+",
+        "╤": "+",
+        "╧": "+",
+        "╨": "+",
+        "╥": "+",
+        "╞": "+",
+        "╡": "+",
+        "╪": "+",
+        "╫": "+",
+        # 虚线/点线
+        "╌": "-",
+        "╍": "=",
+        "╎": "|",
+        "╏": "|",
+        "┄": "-",
+        "┅": "=",
+        "┆": "|",
+        "┇": "|",
+        "┈": "-",
+        "┉": "=",
+        "┊": "|",
+        "┋": "|",
+        # Block Elements 阴影块
+        "░": " ",
+        "▒": " ",
+        "▓": "#",
+        "█": "#",
+        "▀": "#",
+        "▄": "#",
+        "▌": "#",
+        "▐": "#",
+        "▖": "#",
+        "▗": "#",
+        "▘": "#",
+        "▝": "#",
+        "▙": "#",
+        "▚": "#",
+        "▛": "#",
+        "▜": "#",
+        "▞": "#",
+        "▟": "#",
+        # 其他装饰字符
+        "•": "*",
+        "·": ".",
+        "●": "*",
+        "○": "o",
+        "■": "#",
+        "□": "#",
+        "◆": "*",
+        "◇": "*",
+        "►": ">",
+        "◄": "<",
+        "▲": "^",
+        "▼": "v",
+    }
+)
+
+
+class _AsciiBoxStream:
+    """拦截 stream ``write``，把 box-drawing 字符替换为 ASCII。
+
+    Win7 conhost 默认点阵字体不支持 box-drawing 字符。rich 在 legacy_windows
+    模式下直接 ``file.write`` 输出 Unicode box 字符，``ascii_only`` 参数和
+    ``box`` 模块 monkey-patch 在旧版 rich 上可能失效。本类包装 stdout，
+    在 ``write`` 时用 ``str.translate`` 把 box 字符 replace 为 ASCII，
+    对 rich 透明，跨所有 rich 版本生效。
+
+    保留中文等非 box Unicode 字符，仅替换 box-drawing 区块。
+    """
+
+    def __init__(self, stream: Any) -> None:
+        self._stream = stream
+
+    def write(self, text: Any) -> int:
+        """写入文本，box-drawing 字符被替换为 ASCII 后转发给底层 stream。"""
+        if isinstance(text, str) and text:
+            text = text.translate(_BOX_TO_ASCII)
+        return self._stream.write(text)
+
+    def flush(self) -> Any:
+        return self._stream.flush()
+
+    def isatty(self) -> bool:
+        return self._stream.isatty()
+
+    def fileno(self) -> int:
+        return self._stream.fileno()
+
+    @property
+    def encoding(self) -> str:
+        return self._stream.encoding
+
+    @property
+    def errors(self) -> str:
+        return self._stream.errors
+
+    @property
+    def mode(self) -> str:
+        return self._stream.mode
+
+    @property
+    def buffer(self) -> Any:
+        return self._stream.buffer
+
+    @property
+    def line_buffering(self) -> bool:
+        return self._stream.line_buffering
+
+    @property
+    def newlines(self) -> Any:
+        return self._stream.newlines
+
+    def writable(self) -> bool:
+        return self._stream.writable()
+
+    def readable(self) -> bool:
+        return self._stream.readable()
+
+    def seekable(self) -> bool:
+        return self._stream.seekable()
+
+    def __getattr__(self, name: str) -> Any:
+        """其他属性/方法委托底层 stream。"""
+        return getattr(self._stream, name)
 
 
 def _is_legacy_windows() -> bool:
@@ -55,29 +239,6 @@ def _is_legacy_windows() -> bool:
         return False
 
 
-def _force_ascii_box() -> None:
-    """旧版 rich 降级：把 ``rich.box`` 模块所有 Box 实例常量替换为 ``box.ASCII``。
-
-    ``ascii_only`` 参数在 rich 13.x 早期版本不存在。Win7 conhost 点阵字体
-    不支持 box-drawing 字符，直接 monkey-patch ``rich.box`` 模块的所有
-    Box 实例常量（ROUNDED/SQUARE/HEAVY/DOUBLE 等），让 Table/Panel 等组件
-    渲染时使用 ``box.ASCII`` 的 ``+``/``-``/``|`` 纯 ASCII 字符。
-
-    副作用范围：仅 Win7/8 + 旧版 rich 触发，影响当前进程内所有 rich
-    Table/Panel 渲染。fcmd 单进程场景下可接受。
-    """
-    from rich import box
-
-    ascii_box = box.ASCII
-    # 遍历模块级 Box 实例常量（ROUNDED/SQUARE/HEAVY/DOUBLE 等），全部替换为 ASCII
-    for name in dir(box):
-        if name.startswith("_"):
-            continue
-        value = getattr(box, name)
-        if isinstance(value, box.Box):
-            setattr(box, name, ascii_box)
-
-
 def get_console() -> Console:
     """获取全局 rich Console 实例（懒加载）。
 
@@ -86,12 +247,10 @@ def get_console() -> Console:
     Win7/8 下显式传入：
 
     - ``legacy_windows=True``：使用 ``SetConsoleTextAttribute`` 着色（非 VT 序列）。
-    - ``ascii_only=True``（若 rich 支持）：强制 rich 用 ASCII box 字符。Win7 conhost
-      默认点阵字体不支持 box-drawing 字符；rich 的 ``ascii_only`` 自动推断依赖
-      ``sys.stdout.encoding``，但 PEP 528 使其在 Windows 下默认为 ``'utf-8'``，
-      导致 rich 误判输出 Unicode box 字符被点阵字体渲染为方块/乱码。
-    - 旧版 rich 降级：若 ``Console.__init__`` 不接受 ``ascii_only``（rich 13.x 早期），
-      调用 ``_force_ascii_box`` monkey-patch ``rich.box.BOXES`` 替换为 ASCII box。
+    - ``file=_AsciiBoxStream(sys.stdout)``：包装 stdout 拦截 box-drawing 字符，
+      replace 为 ASCII。对 rich 透明，跨所有 rich 版本，是旧版 rich 的最终兜底。
+    - ``ascii_only=True``（若 rich 支持）：rich 13.x 中后期参数，通过
+      ``inspect.signature`` 检测；与 stdout 包装形成双保险。
     - ``width=cols-2``：rich 在 legacy 模式下默认渲染宽度为 ``columns - 1``，但
       conhost 最后一列自动换行行为使该余量不足以容纳表格右边框，故额外让 1 列
       （总余量 2 列）避免超出窗口。
@@ -106,13 +265,13 @@ def get_console() -> Console:
         kwargs: dict[str, Any] = {}
         if _is_legacy_windows():
             kwargs["legacy_windows"] = True
-            # ascii_only 是 rich 13.x 中后期引入的参数，早期版本（13.0~13.4）
-            # 不支持，通过签名检测兼容；不支持时降级 monkey-patch box.BOXES
+            # 包装 stdout 拦截 box 字符：跨所有 rich 版本的最终兜底
+            kwargs["file"] = _AsciiBoxStream(sys.stdout)
+            # ascii_only 是 rich 13.x 中后期引入的参数，旧版不支持；
+            # 通过签名检测兼容，不支持时跳过（stdout 包装已兜底）
             sig = inspect.signature(Console.__init__)
             if "ascii_only" in sig.parameters:
                 kwargs["ascii_only"] = True
-            else:
-                _force_ascii_box()
             try:
                 # os.get_terminal_size(1) 返回 srWindow 可视宽度（非 buffer 宽度）
                 cols = os.get_terminal_size(1).columns

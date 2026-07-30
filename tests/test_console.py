@@ -1,7 +1,7 @@
 """console 模块测试。
 
 覆盖 Win7/8 检测、Console 懒加载缓存、legacy 模式宽度收紧、ASCII 强制逻辑
-与旧版 rich（无 ``ascii_only`` 参数）的 monkey-patch 降级。
+（``ascii_only`` 参数 + ``_AsciiBoxStream`` stdout 包装双保险）。
 """
 
 from __future__ import annotations
@@ -104,8 +104,8 @@ def _make_sig(include_ascii: bool) -> inspect.Signature:
 class TestGetConsoleLegacyWindows:
     """Win7/8 下 Console 初始化参数。"""
 
-    def test_legacy_windows_passes_width_and_legacy_flag(self) -> None:
-        """Win7 + 支持 ascii_only 的 rich：传 legacy_windows/ascii_only/width。"""
+    def test_legacy_windows_passes_all_kwargs(self) -> None:
+        """Win7 + 支持 ascii_only 的 rich：传 legacy_windows/ascii_only/width/file。"""
         captured: dict[str, object] = {}
         FakeConsole = _make_fake_console(captured)
         fake_size = mock.Mock(columns=80)
@@ -120,6 +120,9 @@ class TestGetConsoleLegacyWindows:
         assert captured.get("ascii_only") is True
         # cols=80 → 80-2=78
         assert captured.get("width") == 78
+        # file 是 _AsciiBoxStream 包装
+        file_obj = captured.get("file")
+        assert isinstance(file_obj, console._AsciiBoxStream)
 
     def test_legacy_windows_min_width_floor(self) -> None:
         """极窄终端（cols=2）下 width 下限为 1，避免负值/零值。"""
@@ -148,30 +151,31 @@ class TestGetConsoleLegacyWindows:
         ):
             console.get_console()
 
-        # legacy_windows/ascii_only 仍传入，但 width 未设置
+        # legacy_windows/ascii_only/file 仍传入，但 width 未设置
         assert captured.get("legacy_windows") is True
         assert captured.get("ascii_only") is True
         assert "width" not in captured
+        assert isinstance(captured.get("file"), console._AsciiBoxStream)
 
-    def test_legacy_windows_old_rich_falls_back_to_force_ascii_box(self) -> None:
-        """旧版 rich（无 ascii_only 参数）：调用 _force_ascii_box 且 kwargs 不含 ascii_only。"""
+    def test_legacy_windows_old_rich_omits_ascii_only_but_keeps_file(self) -> None:
+        """旧版 rich（无 ascii_only）：kwargs 不含 ascii_only，但 file 包装仍生效。"""
         captured: dict[str, object] = {}
         FakeConsole = _make_fake_console(captured)
         with mock.patch.object(console, "_is_legacy_windows", return_value=True), mock.patch(
             "os.get_terminal_size", side_effect=OSError("not a tty")
         ), mock.patch("rich.console.Console", FakeConsole), mock.patch.object(
             console.inspect, "signature", return_value=_make_sig(include_ascii=False)
-        ), mock.patch.object(console, "_force_ascii_box") as mock_force:
+        ):
             console.get_console()
 
-        # legacy_windows 仍传入；ascii_only 不在 kwargs（旧版 rich 不支持）
+        # legacy_windows/file 仍传入；ascii_only 不在 kwargs（旧版 rich 不支持）
         assert captured.get("legacy_windows") is True
         assert "ascii_only" not in captured
-        # 降级路径被调用一次
-        mock_force.assert_called_once_with()
+        # file 包装是最终兜底，跨所有 rich 版本生效
+        assert isinstance(captured.get("file"), console._AsciiBoxStream)
 
     def test_modern_windows_no_extra_kwargs(self) -> None:
-        """Win10+ 下不传 legacy_windows/ascii_only/width，保持默认行为。"""
+        """Win10+ 下不传 legacy_windows/ascii_only/width/file，保持默认行为。"""
         captured: dict[str, object] = {}
         FakeConsole = _make_fake_console(captured)
         with mock.patch.object(console, "_is_legacy_windows", return_value=False), mock.patch(
@@ -182,29 +186,189 @@ class TestGetConsoleLegacyWindows:
         assert captured == {}
 
 
-class TestForceAsciiBox:
-    """``_force_ascii_box`` 旧版 rich 降级 monkey-patch。"""
+class TestAsciiBoxStream:
+    """``_AsciiBoxStream`` box 字符拦截。"""
 
-    def test_replaces_all_boxes_with_ascii(self) -> None:
-        """所有 Box 实例常量被替换为 box.ASCII。"""
-        from rich import box
+    def test_write_translates_box_chars(self) -> None:
+        """box-drawing 字符被替换为 ASCII。"""
+        received: list[str] = []
 
-        # 保存原始值（仅 Box 实例常量，跳过类型/函数）
-        original = {
-            name: getattr(box, name)
-            for name in dir(box)
-            if not name.startswith("_") and isinstance(getattr(box, name), box.Box)
-        }
-        try:
-            console._force_ascii_box()
-            # 所有 Box 常量应被替换为 box.ASCII
-            assert original, "应至少有一个 Box 常量"
-            for name in original:
-                assert getattr(box, name) is box.ASCII, f"{name} 未被替换为 ASCII"
-        finally:
-            # 恢复原始值，避免影响其他测试
-            for name, value in original.items():
-                setattr(box, name, value)
+        class FakeStream:
+            encoding = "utf-8"
+            errors = "strict"
+
+            def write(self, text: str) -> int:
+                received.append(text)
+                return len(text)
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return True
+
+        stream = console._AsciiBoxStream(FakeStream())
+        # 圆角边框 + 双线 + 阴影块
+        stream.write("╭───╮│ │╰───╯")
+        stream.write("═╣░▒▓█")
+
+        assert received[0] == "+---+| |+---+"
+        # ░▒ 各映射为空格，▓█ 各映射为 #
+        assert received[1] == "=+  ##"
+
+    def test_write_preserves_chinese(self) -> None:
+        """中文字符等非 box Unicode 保留不替换。"""
+        received: list[str] = []
+
+        class FakeStream:
+            encoding = "utf-8"
+            errors = "strict"
+
+            def write(self, text: str) -> int:
+                received.append(text)
+                return len(text)
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return False
+
+        stream = console._AsciiBoxStream(FakeStream())
+        stream.write("╭─中文测试─╮")
+
+        assert received[0] == "+-中文测试-+"
+
+    def test_write_non_string_passes_through(self) -> None:
+        """非字符串（如 bytes）原样转发，不调用 translate。"""
+        received: list[object] = []
+
+        class FakeStream:
+            encoding = "utf-8"
+            errors = "strict"
+
+            def write(self, text: object) -> int:
+                received.append(text)
+                return 0 if text is None else 1
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return False
+
+        stream = console._AsciiBoxStream(FakeStream())
+        # bytes 不是 str，应原样转发
+        stream.write(b"bytes")  # type: ignore[arg-type]
+        assert received[0] == b"bytes"
+
+    def test_write_empty_string_skips_translate(self) -> None:
+        """空字符串跳过 translate，原样转发（性能优化）。"""
+        received: list[str] = []
+
+        class FakeStream:
+            encoding = "utf-8"
+            errors = "strict"
+
+            def write(self, text: str) -> int:
+                received.append(text)
+                return 0
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return False
+
+        stream = console._AsciiBoxStream(FakeStream())
+        stream.write("")
+        assert received[0] == ""
+
+    def test_properties_delegate_to_underlying_stream(self) -> None:
+        """encoding/errors/mode/buffer 等属性委托底层 stream。"""
+
+        class FakeStream:
+            encoding = "utf-8"
+            errors = "replace"
+            mode = "w"
+            line_buffering = True
+            newlines = "\n"
+            buffer = b"fake-buffer"
+
+            def write(self, _text: str) -> int:
+                return 0
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return True
+
+            def fileno(self) -> int:
+                return 1
+
+            def writable(self) -> bool:
+                return True
+
+            def readable(self) -> bool:
+                return False
+
+            def seekable(self) -> bool:
+                return False
+
+        stream = console._AsciiBoxStream(FakeStream())
+        assert stream.encoding == "utf-8"
+        assert stream.errors == "replace"
+        assert stream.mode == "w"
+        assert stream.line_buffering is True
+        assert stream.newlines == "\n"
+        assert stream.buffer == b"fake-buffer"
+        assert stream.isatty() is True
+        assert stream.fileno() == 1
+        assert stream.writable() is True
+        assert stream.readable() is False
+        assert stream.seekable() is False
+
+    def test_getattr_delegates_unknown_attrs(self) -> None:
+        """未知属性通过 __getattr__ 委托底层 stream。"""
+
+        class FakeStream:
+            custom_attr = "custom-value"
+            encoding = "utf-8"
+            errors = "strict"
+
+            def write(self, _text: str) -> int:
+                return 0
+
+            def flush(self) -> None:
+                pass
+
+            def isatty(self) -> bool:
+                return False
+
+        stream = console._AsciiBoxStream(FakeStream())
+        assert stream.custom_attr == "custom-value"
+
+    def test_flush_delegates(self) -> None:
+        """flush 调用转发给底层 stream。"""
+        flush_called = [False]
+
+        class FakeStream:
+            encoding = "utf-8"
+            errors = "strict"
+
+            def write(self, _text: str) -> int:
+                return 0
+
+            def flush(self) -> None:
+                flush_called[0] = True
+
+            def isatty(self) -> bool:
+                return False
+
+        stream = console._AsciiBoxStream(FakeStream())
+        stream.flush()
+        assert flush_called[0] is True
 
 
 class TestPrintVerbose:
