@@ -440,16 +440,16 @@ class TestBuildToolGraph:
 
     def test_unknown_tool_raises(self) -> None:
         """未注册工具抛 FcmdError。"""
+        from fcmd.apis.errors import FcmdError
         from fcmd.apis.toolkit import build_tool_graph
-        from fcmd.errors import FcmdError
 
         with pytest.raises(FcmdError, match="未注册"):
             build_tool_graph("nonexistent_tool_xyz", None)
 
     def test_unknown_subcommand_raises(self) -> None:
         """未注册子命令抛 FcmdError。"""
+        from fcmd.apis.errors import FcmdError
         from fcmd.apis.toolkit import build_tool_graph
-        from fcmd.errors import FcmdError
 
         with pytest.raises(FcmdError, match="没有子命令"):
             build_tool_graph("pymake", "nonexistent_sub_xyz")

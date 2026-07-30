@@ -709,7 +709,7 @@ def _execute_tool_tasks(name: str, target: str | None, variables: dict[str, Any]
 
     try:
         report = run(
-            graph,
+            graph,  # type: ignore[bad-argument-type]
             strategy=strategy,  # type: ignore[arg-type]
             dry_run=variables.get("dry_run", False),
             verbose=verbose,

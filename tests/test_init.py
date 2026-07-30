@@ -7,7 +7,7 @@ import importlib
 import pytest
 
 import fcmd
-from fcmd.task import task
+from fcmd.apis.task import task
 
 
 def test_lazy_import_task_spec() -> None:
@@ -17,7 +17,7 @@ def test_lazy_import_task_spec() -> None:
     spec_cls = fcmd.TaskSpec
     # 验证返回的是 task.py 中的 TaskSpec 类
     assert spec_cls.__name__ == "TaskSpec"
-    assert spec_cls.__module__ == "fcmd.task"
+    assert spec_cls.__module__ == "fcmd.apis.task"
 
 
 def test_lazy_import_missing_attribute() -> None:

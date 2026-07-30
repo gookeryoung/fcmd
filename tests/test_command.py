@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.task import TaskSpec
+from fcmd.apis.task import TaskSpec
 
 
 # ---------------------------------------------------------------------- #

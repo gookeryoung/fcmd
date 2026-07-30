@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from fcmd.report import RunReport
-from fcmd.task import TaskResult, TaskSpec, TaskStatus
+from fcmd.apis.report import RunReport
+from fcmd.apis.task import TaskResult, TaskSpec, TaskStatus
 
 
 def _fn() -> int:

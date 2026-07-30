@@ -9,8 +9,8 @@ import time
 import pytest
 
 import fcmd
-from fcmd.errors import TaskFailedError
-from fcmd.task import RetryPolicy, TaskEvent, TaskSpec, TaskStatus, task
+from fcmd.apis.errors import TaskFailedError
+from fcmd.apis.task import RetryPolicy, TaskEvent, TaskSpec, TaskStatus, task
 
 
 # ---------------------------------------------------------------------- #
@@ -541,7 +541,7 @@ def test_run_verbose_with_failure(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_run_verbose_with_skip(capsys: pytest.CaptureFixture[str]) -> None:
     """verbose 模式下任务跳过打印黄色标记。"""
-    from fcmd.task import TaskSpec
+    from fcmd.apis.task import TaskSpec
 
     spec = TaskSpec(name="skip_me", fn=lambda: 1, conditions=(lambda _: False,))
     graph = fcmd.graph(spec)
@@ -556,7 +556,7 @@ def test_run_verbose_with_skip(capsys: pytest.CaptureFixture[str]) -> None:
 # ---------------------------------------------------------------------- #
 def test_run_upstream_fail_skips_downstream() -> None:
     """上游失败（continue_on_error）后，下游硬依赖被 SKIPPED。"""
-    from fcmd.task import TaskSpec
+    from fcmd.apis.task import TaskSpec
 
     @task(continue_on_error=True)
     def boom() -> None:

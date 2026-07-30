@@ -373,7 +373,7 @@ class TaskSpec(Generic[T]):
         spec = self
 
         def _run() -> T:
-            return cast(T, run_command(spec))
+            return cast(T, run_command(spec))  # type: ignore[bad-argument-type]
 
         _run.__name__ = spec.name
         return _run  # type: ignore[return-value]

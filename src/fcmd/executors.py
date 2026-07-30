@@ -766,7 +766,7 @@ def _dispatch_strategy(
         raise ValueError(f"Unknown strategy: {strategy!r}")
 
 
-def run(  # noqa: PLR0913
+def run(  # noqa: PLR0912, PLR0913
     graph: Graph,
     strategy: Strategy | None = None,
     *,

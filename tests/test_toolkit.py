@@ -9,6 +9,8 @@ from typing import Any, List, Literal
 import pytest
 
 import fcmd
+from fcmd.apis.errors import FcmdError
+from fcmd.apis.task import RetryPolicy, TaskSpec
 from fcmd.apis.toolkit import (
     _TOOL_REGISTRY,
     ToolExitCode,
@@ -34,8 +36,6 @@ from fcmd.apis.toolkit import (
     run_tool,
     tool,
 )
-from fcmd.errors import FcmdError
-from fcmd.task import RetryPolicy, TaskSpec
 
 
 @pytest.fixture(autouse=True)
@@ -1218,7 +1218,7 @@ def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError（非 TaskFailedError）返回 FAILURE。"""
     from fcmd.apis import toolkit
-    from fcmd.errors import CycleError
+    from fcmd.apis.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
@@ -1236,7 +1236,7 @@ def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError + quiet 不打印。"""
     from fcmd.apis import toolkit
-    from fcmd.errors import CycleError
+    from fcmd.apis.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
@@ -1254,7 +1254,7 @@ def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError + quiet 不打印诊断。"""
     from fcmd.apis import toolkit
-    from fcmd.errors import TaskFailedError
+    from fcmd.apis.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
@@ -1272,9 +1272,9 @@ def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_tool_task_failed_with_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 携带 report 时打印失败任务。"""
     from fcmd.apis import toolkit
-    from fcmd.errors import TaskFailedError
-    from fcmd.report import RunReport
-    from fcmd.task import TaskResult
+    from fcmd.apis.errors import TaskFailedError
+    from fcmd.apis.report import RunReport
+    from fcmd.apis.task import TaskResult
 
     # 构造带 failed_tasks 的 report
     spec = TaskSpec(name="a", cmd=["echo"])
@@ -1577,7 +1577,7 @@ def test_run_tool_mixed_none_and_named_empty_argv() -> None:
 def test_run_tool_task_failed_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 不带 report 时不打印失败任务诊断（report is None 分支）。"""
     from fcmd.apis import toolkit
-    from fcmd.errors import TaskFailedError
+    from fcmd.apis.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         # report 默认 None，触发 632->636 跳转（不进入 for 循环）
@@ -1623,9 +1623,9 @@ def test_build_parser_optional_list_unknown_inner() -> None:
 # ----------------------------------------------------------------------
 def test_print_task_summary_single_task_no_output(capsys: pytest.CaptureFixture[str]) -> None:
     """单任务时不打印汇总表。"""
+    from fcmd.apis.report import RunReport
+    from fcmd.apis.task import TaskResult, TaskStatus
     from fcmd.apis.toolkit import _print_task_summary
-    from fcmd.report import RunReport
-    from fcmd.task import TaskResult, TaskStatus
 
     spec = TaskSpec(name="solo", cmd=["echo"])
     result = TaskResult(spec=spec, status=TaskStatus.SUCCESS, attempts=1)
@@ -1641,9 +1641,9 @@ def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> N
     """多任务时打印汇总表，含任务名/状态/耗时/重试。"""
     from datetime import datetime, timedelta
 
+    from fcmd.apis.report import RunReport
+    from fcmd.apis.task import TaskResult, TaskStatus
     from fcmd.apis.toolkit import _print_task_summary
-    from fcmd.report import RunReport
-    from fcmd.task import TaskResult, TaskStatus
 
     spec_a = TaskSpec(name="a", cmd=["echo"])
     spec_b = TaskSpec(name="b", cmd=["echo"])
@@ -1673,9 +1673,9 @@ def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> N
 
 def test_print_task_summary_skipped_task(capsys: pytest.CaptureFixture[str]) -> None:
     """跳过的任务在汇总表中显示状态为跳过，耗时为 -。"""
+    from fcmd.apis.report import RunReport
+    from fcmd.apis.task import TaskResult, TaskStatus
     from fcmd.apis.toolkit import _print_task_summary
-    from fcmd.report import RunReport
-    from fcmd.task import TaskResult, TaskStatus
 
     spec_a = TaskSpec(name="a", cmd=["echo"])
     spec_b = TaskSpec(name="b", cmd=["echo"])

@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from fcmd.task import (
+from fcmd.apis.task import (
     RetryPolicy,
     TaskResult,
     TaskSpec,

@@ -220,7 +220,7 @@ def test_profiler_restores_run_after_execution(capsys: pytest.CaptureFixture[str
     # hook 已还原，fcmd.run 应能正常工作
     import fcmd as fx
 
-    @fx.task  # pyrefly: ignore [not-callable]
+    @fx.task
     def t() -> int:
         return 42
 
@@ -303,7 +303,7 @@ def test_inject_run_hook_captures_graph_and_report() -> None:
 
     import fcmd as fx
 
-    @fx.task  # pyrefly: ignore [not-callable]
+    @fx.task
     def t() -> int:
         return 1
 
@@ -335,10 +335,10 @@ def test_output_profile_text_writes_to_stdout(
     """output_profile export=text 写 stdout。"""
     from datetime import datetime
 
-    from fcmd.dag import Graph
-    from fcmd.profiling import ProfileReport
-    from fcmd.report import RunReport
-    from fcmd.task import TaskResult, TaskSpec, TaskStatus
+    from fcmd.apis.dag import Graph
+    from fcmd.apis.profiling import ProfileReport
+    from fcmd.apis.report import RunReport
+    from fcmd.apis.task import TaskResult, TaskSpec, TaskStatus
 
     spec = TaskSpec(name="a", fn=lambda: 1)
     graph = Graph.from_specs([spec])
@@ -365,10 +365,10 @@ def test_output_profile_html_writes_file(
     """output_profile export=html 写入文件。"""
     from datetime import datetime
 
-    from fcmd.dag import Graph
-    from fcmd.profiling import ProfileReport
-    from fcmd.report import RunReport
-    from fcmd.task import TaskResult, TaskSpec, TaskStatus
+    from fcmd.apis.dag import Graph
+    from fcmd.apis.profiling import ProfileReport
+    from fcmd.apis.report import RunReport
+    from fcmd.apis.task import TaskResult, TaskSpec, TaskStatus
 
     spec = TaskSpec(name="a", fn=lambda: 1)
     graph = Graph.from_specs([spec])

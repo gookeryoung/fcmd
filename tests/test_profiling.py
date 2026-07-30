@@ -17,10 +17,10 @@ from typing import Any
 
 import pytest
 
-from fcmd.dag import Graph
-from fcmd.profiling import ProfileReport, TaskProfile
-from fcmd.report import RunReport
-from fcmd.task import TaskResult, TaskSpec, TaskStatus
+from fcmd.apis.dag import Graph
+from fcmd.apis.profiling import ProfileReport, TaskProfile
+from fcmd.apis.report import RunReport
+from fcmd.apis.task import TaskResult, TaskSpec, TaskStatus
 
 
 def _fn() -> int:
