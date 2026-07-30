@@ -35,6 +35,7 @@ __all__ = [
     "get_tool",
     "list_subcommands",
     "list_tools",
+    "main",
     "run_tool",
     "tool",
 ]
@@ -242,6 +243,47 @@ def list_subcommands(name: str, include_hidden: bool = False) -> list[str]:
 def clear_tool_registry() -> None:
     """清空注册表（测试用）。"""
     _TOOL_REGISTRY.clear()
+
+
+# ---------------------------------------------------------------------- #
+# @main 装饰器：工具模块独立入口
+# ---------------------------------------------------------------------- #
+def main(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """装饰器：将函数注册为工具模块的独立入口。
+
+    等价于 ``fcmd <tool_name> <args>`` 的快捷入口，
+    封装 ``sys.exit(run_tool(...))`` 样板代码。
+
+    Parameters
+    ----------
+    tool_name:
+        工具名（如 ``"lscalc"``），与 ``@fx.tool`` 注册的名称对应。
+
+    用法::
+
+        @fx.main("lscalc")
+        def main() -> None:
+            pass
+
+        # 等价于：
+        # def main() -> None:
+        #     from fcmd.cli._common import run_tool_main
+        #     run_tool_main("lscalc")
+    """
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        import functools
+        import sys
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            from fcmd.apis import run_tool
+
+            sys.exit(run_tool(tool_name, sys.argv[1:]))
+
+        return wrapper
+
+    return decorator
 
 
 # ---------------------------------------------------------------------- #

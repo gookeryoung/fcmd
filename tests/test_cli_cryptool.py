@@ -332,7 +332,7 @@ class TestCryptoolCLI:
         """密钥模式解密还原明文。"""
         enc_key, mac_key = _parse_key(_KEY)
         token = _cryptool.encrypt("hello", enc_key, mac_key)
-        code = run_tool("cryptool", ["decrypt", token, "--key", _KEY, "--quiet"])
+        code = run_tool("cryptool", ["decrypt", "--key", _KEY, "--quiet", "--", token])
         assert code == 0
         out = capsys.readouterr().out
         assert "hello" in out
@@ -340,7 +340,7 @@ class TestCryptoolCLI:
     def test_decrypt_with_password(self, capsys: pytest.CaptureFixture[str]) -> None:
         """密码模式解密还原明文。"""
         blob = _cryptool.encrypt_with_password("hello", "mypass")
-        code = run_tool("cryptool", ["decrypt", blob, "--password", "mypass", "--quiet"])
+        code = run_tool("cryptool", ["decrypt", "--password", "mypass", "--quiet", "--", blob])
         assert code == 0
         out = capsys.readouterr().out
         assert "hello" in out
@@ -369,7 +369,7 @@ class TestCryptoolCLI:
     def test_decrypt_wrong_password(self, capsys: pytest.CaptureFixture[str]) -> None:
         """错误密码提示认证失败。"""
         blob = _cryptool.encrypt_with_password("hello", "correct")
-        code = run_tool("cryptool", ["decrypt", blob, "--password", "wrong", "--quiet"])
+        code = run_tool("cryptool", ["decrypt", "--password", "wrong", "--quiet", "--", blob])
         assert code == 0
         out = capsys.readouterr().out
         assert "认证失败" in out
@@ -384,7 +384,7 @@ class TestCryptoolCLI:
     def test_encrypt_unicode(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Unicode 文本加解密。"""
         blob = _cryptool.encrypt_with_password("中文测试", "pw")
-        code = run_tool("cryptool", ["decrypt", blob, "--password", "pw", "--quiet"])
+        code = run_tool("cryptool", ["decrypt", "--password", "pw", "--quiet", "--", blob])
         assert code == 0
         out = capsys.readouterr().out
         assert "中文测试" in out
@@ -409,7 +409,7 @@ class TestCryptoolCLI:
         blob = _cryptool.encrypt_with_password("hello", "env-pwd")
         monkeypatch.setenv("FCMD_CRYPT_PASSWORD", "env-pwd")
         monkeypatch.delenv("FCMD_CRYPT_KEY", raising=False)
-        code = run_tool("cryptool", ["decrypt", blob, "--env", "--quiet"])
+        code = run_tool("cryptool", ["decrypt", "--env", "--quiet", "--", blob])
         assert code == 0
         out = capsys.readouterr().out
         assert "hello" in out
