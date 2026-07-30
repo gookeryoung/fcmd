@@ -180,6 +180,11 @@ class TestDisplayWidth:
         """中英混合按实际宽度累加。"""
         assert console._display_width("a中") == 3
 
+    def test_fullwidth_chars_width(self) -> None:
+        """全角字符（Fullwidth，如（））占 2 列。"""
+        assert console._display_width("（）") == 4
+        assert console._display_width("清屏（跨平台）") == 14
+
     def test_empty_string(self) -> None:
         """空字符串宽度=0。"""
         assert console._display_width("") == 0

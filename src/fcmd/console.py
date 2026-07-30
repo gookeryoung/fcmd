@@ -133,10 +133,14 @@ def _strip_markup(text: str) -> str:
 
 
 def _display_width(s: str) -> int:
-    """计算字符串在终端的显示宽度（East Asian Wide/Ambiguous 占 2 列）。"""
+    """计算字符串在终端的显示宽度。
+
+    East Asian Wide(W)/Fullwidth(F)/Ambiguous(A) 字符占 2 列，其余 1 列。
+    漏掉 F 会导致全角字符（如 ``（）``）宽度计算偏小，表格右边框错位。
+    """
     width = 0
     for ch in s:
-        if unicodedata.east_asian_width(ch) in ("W", "A"):
+        if unicodedata.east_asian_width(ch) in ("W", "F", "A"):
             width += 2
         else:
             width += 1
