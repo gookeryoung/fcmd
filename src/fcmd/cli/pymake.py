@@ -119,6 +119,7 @@ def clean(cwd: Path = Path()) -> None:  # noqa: ARG001  cwd 由框架处理，�
     ]
     for t in targets:
         shutil.rmtree(t, ignore_errors=True)
+
     for base in ("src", "tests"):
         for p in Path(base).rglob("__pycache__"):
             shutil.rmtree(p, ignore_errors=True)
@@ -139,21 +140,6 @@ def clean(cwd: Path = Path()) -> None:  # noqa: ARG001  cwd 由框架处理，�
 )
 def build_docs(cwd: Path = Path()) -> None:
     """构建 Sphinx 文档。"""
-
-
-@fcmd.tool("pymake", subcommand="sync", help="同步开发依赖 (uv sync --extra dev)", cmd=["uv", "sync", "--extra", "dev"])
-def sync(cwd: Path = Path()) -> None:
-    """同步开发依赖。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="t",
-    help="运行测试 (pytest)",
-    cmd=["pytest", "-m", "not slow", "--color=yes", "--durations=10"],
-)
-def test(cwd: Path = Path()) -> None:
-    """运行测试（不含 slow 标记）。"""
 
 
 # ============================================================================
@@ -202,9 +188,30 @@ def pyrefly_check(cwd: Path = Path()) -> None:
     """pyrefly 类型检查（内部 job）。"""
 
 
+@fcmd.tool(
+    "pymake",
+    subcommand="tc",
+    help="类型检查 (清理 + pyrefly + lint)",
+    needs=["c", "pyrefly_check", "lint", "fmt"],
+    strategy="thread",
+)
+def tc(cwd: Path = Path()) -> None:
+    """类型检查（聚合）。"""
+
+
 # ============================================================================
 # 测试相关
 # ============================================================================
+
+
+@fcmd.tool(
+    "pymake",
+    subcommand="t",
+    help="运行测试 (pytest)",
+    cmd=["pytest", "-m", "not slow", "--color=yes", "--durations=10"],
+)
+def test(cwd: Path = Path()) -> None:
+    """运行测试（不含 slow 标记）。"""
 
 
 @fcmd.tool(
@@ -246,7 +253,13 @@ def git_add_all(cwd: Path = Path()) -> None:
     """git add -A（内部 job，需先通过类型检查）。"""
 
 
-@fcmd.tool("pymake", subcommand="git_push", help="git push", cmd=["git", "push"], hidden=True)
+@fcmd.tool(
+    "pymake",
+    subcommand="git_push",
+    help="git push",
+    cmd=["git", "push"],
+    hidden=True,
+)
 def git_push(cwd: Path = Path()) -> None:
     """git push（内部 job）。"""
 
@@ -260,6 +273,11 @@ def git_push(cwd: Path = Path()) -> None:
 )
 def git_push_tags(cwd: Path = Path()) -> None:
     """git push --tags（内部 job）。"""
+
+
+@fcmd.tool("pymake", subcommand="sync", help="同步开发依赖 (uv sync --extra dev)", cmd=["uv", "sync", "--extra", "dev"])
+def sync(cwd: Path = Path()) -> None:
+    """同步开发依赖。"""
 
 
 @fcmd.tool(
@@ -280,17 +298,6 @@ def twine_publish(cwd: Path = Path()) -> None:
 
 @fcmd.tool(
     "pymake",
-    subcommand="tc",
-    help="类型检查 (清理 + pyrefly + lint)",
-    needs=["c", "pyrefly_check", "lint"],
-    strategy="thread",
-)
-def tc(cwd: Path = Path()) -> None:
-    """类型检查（聚合）。"""
-
-
-@fcmd.tool(
-    "pymake",
     subcommand="cov",
     help="测试并生成覆盖率 (清理 + 测试)",
     needs=["test_coverage"],
@@ -303,7 +310,7 @@ def cov(cwd: Path = Path()) -> None:
     "pymake",
     subcommand="p",
     help="推送代码 (清理 + push + push tags)",
-    needs=["c", "git_push", "git_push_tags"],
+    needs=["tc", "c", "git_push", "git_push_tags"],
     strategy="thread",
 )
 def push(cwd: Path = Path()) -> None:
