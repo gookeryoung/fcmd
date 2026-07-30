@@ -257,7 +257,7 @@ class FcmdApp:
 
     def _info_overview(self) -> None:
         """``fcmd info`` 无参数：列出内建命令与工具。"""
-        from rich.table import Table
+        from fcmd.console import Table
 
         console = get_console()
         console.print("[bold]内建命令:[/bold]")
@@ -288,7 +288,7 @@ class FcmdApp:
 
     def _info_tool(self, tool_name: str, subs: dict[str | None, Any]) -> None:
         """``fcmd info <tool>``：列出工具的全部子命令。"""
-        from rich.table import Table
+        from fcmd.console import Table
 
         console = get_console()
         console.print(f"[bold cyan]{tool_name}[/bold cyan] 子命令:")
@@ -333,7 +333,7 @@ class FcmdApp:
             ("env", ", ".join(f"{k}=..." for k in spec.env) if spec.env else "-"),
             ("retry", str(spec.retry) if spec.retry is not None else "-"),
         ]
-        from rich.table import Table
+        from fcmd.console import Table
 
         table = Table(show_header=False, box=None, show_lines=False)
         table.add_column("字段", style="bold", no_wrap=True)
@@ -551,7 +551,7 @@ class FcmdApp:
         if not optional_deps:
             console.print("  [dim](无)[/dim]")
         else:
-            from rich.table import Table
+            from fcmd.console import Table
 
             table = Table(show_header=True, header_style="bold", show_lines=False)
             table.add_column("extra", style="cyan", no_wrap=True)
@@ -662,7 +662,7 @@ class FcmdApp:
             )
 
         # 输出
-        from rich.table import Table
+        from fcmd.console import Table
 
         console = get_console()
         console.print("[bold cyan]fcmd 环境诊断[/bold cyan]\n")
@@ -806,18 +806,12 @@ class FcmdApp:
         return deps
 
     def _list_tools(self) -> None:
-        """rich 表格列出所有可用工具。"""
-        from rich.panel import Panel
-        from rich.table import Table
-        from rich.text import Text
+        """列出所有可用工具。"""
+        from fcmd.console import Table
 
         console = get_console()
-        console.print(
-            Panel(
-                Text(f"fcmd v{__version__}", style="bold cyan", justify="center"),
-                subtitle="[dim]fcmd <tool> [command] [options][/dim]",
-            )
-        )
+        console.print(f"[bold cyan]fcmd v{__version__}[/bold cyan]")
+        console.print("[dim]fcmd <tool> [command] [options][/dim]\n")
 
         table = Table(title="可用工具", show_header=True, header_style="bold", show_lines=False)
         table.add_column("命令", style="cyan", no_wrap=True)

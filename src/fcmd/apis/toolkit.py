@@ -776,13 +776,13 @@ def build_tool_graph(name: str, target: str | None) -> Graph:
     return Graph.from_specs(task_specs, defaults=GraphDefaults())
 
 
-def _print_task_summary(report: Any, *, force: bool = False) -> None:
+def _print_task_summary(report: Any, force: bool = False) -> None:
     """打印任务执行汇总表（多任务场景）。
 
     单任务时不打印，避免冗余；多任务时按完成顺序列出各任务的状态与耗时，
     便于定位瓶颈与优化。``force=True`` 时即使单任务也打印（用于失败诊断）。
     """
-    from rich.table import Table
+    from fcmd.console import Table
 
     if not force and len(report.results) <= 1:
         return
@@ -820,7 +820,7 @@ def _print_task_summary(report: Any, *, force: bool = False) -> None:
 
 def _print_subcommands(name: str) -> None:
     """打印工具的所有非 hidden 子命令。"""
-    from rich.table import Table
+    from fcmd.console import Table
 
     subs = _TOOL_REGISTRY.get(name, {})
     console = get_console()

@@ -51,9 +51,9 @@ def test_run_command_list_verbose(capsys: pytest.CaptureFixture[str]) -> None:
     else:
         spec = TaskSpec(name="x", cmd=["echo", "hi"], verbose=True)
     spec.effective_fn()
-    # verbose 模式通过 rich console 输出到 stderr
+    # verbose 模式通过 console 输出到 stderr
     captured = capsys.readouterr()
-    # rich 输出可能在 out 或 err，检查合并
+    # console 输出可能在 out 或 err，检查合并
     combined = captured.out + captured.err
     assert "echo" in combined or "hi" in combined
 

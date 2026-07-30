@@ -1067,7 +1067,7 @@ class TestBuiltinEnv:
         assert "已注册子命令" in out
 
     def test_env_optional_deps_table_renders(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """可选依赖表格渲染（覆盖 rich Table 分支）。"""
+        """可选依赖表格渲染（覆盖 Table 分支）。"""
         app = FcmdApp(["env"])
         app.run()
         out = capsys.readouterr().out

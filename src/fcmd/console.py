@@ -1,234 +1,191 @@
-"""rich 显示层懒加载。
+"""轻量显示层：自实现 Console + Table，替代 rich。
 
-核心模块（task/graph/executors/command）不直接 import rich，通过本模块统一访问，
-确保冷启动时 rich 仅在首次输出时才加载，满足 < 100ms 冷启动目标。
+核心模块（task/graph/executors/command）不直接依赖外部显示库，通过本模块
+统一访问，确保冷启动时零外部依赖、< 100ms 冷启动目标。
 
-Win7/8 兼容：旧版 Windows conhost 不支持 VT 序列，rich 自动进入 legacy 模式后
-宽度为 ``os.get_terminal_size().columns - 1``。但 conhost 最后一列写入触发自动换行
-的边界行为，使 rich 减 1 的余量在部分场景仍不足以容纳表格右边框，导致超出窗口。
-本模块显式检测 Win7/8 并额外收紧渲染宽度，规避该 conhost 限制。
+支持能力（覆盖项目内全部调用点）：
 
-Win7/8 乱码修复：conhost 默认使用点阵字体（Raster Fonts），不支持 box-drawing
-字符（圆角边框 ``╭─╮``、阴影线 ``░▒▓``、双线 ``═╣`` 等），rich 默认的
-ROUNDED/SQUARE 边框会渲染为方块/乱码。rich 的 ``ascii_only`` 自动推断依赖
-``sys.stdout.encoding``，但 Python 3.6+ PEP 528 使 Windows 下
-``sys.stdout.encoding`` 默认为 ``'utf-8'``（WriteConsoleW），导致 rich 误判以为
-可输出 Unicode box 字符，实际被点阵字体渲染为乱码。
+- ``Console.print(*args, **kwargs)``：解析 rich 风格 markup 子集
+  （``[cyan]``/``[red]``/``[green]``/``[yellow]``/``[bold]``/``[dim]``/
+  ``[magenta]``/``[bold cyan]`` 等），按当前环境着色输出。
+- ``Table``：``add_column`` / ``add_row``，ASCII 边框（``+``/``-``/``|``）
+  或无边框（``box=None``）渲染，支持 ``style`` / ``justify`` / ``no_wrap``
+  列选项（``no_wrap`` 当前忽略，仅签名兼容）。
 
-修复策略（三层兜底，跨所有 rich 版本）：
+着色策略：
 
-1. ``legacy_windows=True``：切到 ``SetConsoleTextAttribute`` 着色路径。
-2. ``ascii_only=True``（若 rich 支持）：rich 13.x 中后期引入的参数，通过
-   ``inspect.signature`` 检测；旧版 rich 不支持时跳过。
-3. ``file=_AsciiBoxStream(sys.stdout)``：包装 stdout 拦截 ``write``，把所有
-   box-drawing 字符 replace 为 ASCII（``+``/``-``/``|``）。对 rich 透明，
-   不依赖 rich 内部 API，是旧版 rich（box monkey-patch 失效）的最终兜底。
+- 非 tty（重定向、IDE 管道、测试 capsys）：纯文本输出，无颜色码。
+- 非 Windows tty：ANSI 转义码。
+- Win10+ tty：启用 VT 处理后用 ANSI 转义码。
+- Win7/8 conhost（不支持 VT 序列）：``ctypes SetConsoleTextAttribute`` 16色。
+
+Win7/8 兼容性：移除 rich 后，box-drawing 字符乱码问题自动消失（自实现
+Table 仅用 ASCII ``+``/``-``/``|``）。保留 ``_is_legacy_windows`` 用于
+颜色路径切换（VT vs SetConsoleTextAttribute）。
 """
 
 from __future__ import annotations
 
-import inspect
-import os
+import ctypes
+import re
 import sys
-from typing import TYPE_CHECKING, Any
+import unicodedata
+from typing import Any
 
-if TYPE_CHECKING:
-    from rich.console import Console
-
-__all__ = ["get_console", "print_verbose"]
+__all__ = ["Console", "Table", "get_console", "print_verbose"]
 
 _console: Console | None = None
 
 
-# box-drawing 字符到 ASCII 的映射表（str.translate 用）。
-# 覆盖 Unicode "Box Drawing" (U+2500-U+257F) 和 "Block Elements" (U+2580-U+259F)
-# 以及 rich 常用的装饰字符。Win7 conhost 点阵字体不支持这些字符。
-_BOX_TO_ASCII = str.maketrans(
-    {
-        # 圆角边框 ROUNDED
-        "╭": "+",
-        "╮": "+",
-        "╰": "+",
-        "╯": "+",
-        # 直角边框 SQUARE
-        "┌": "+",
-        "┐": "+",
-        "└": "+",
-        "┘": "+",
-        # T 型连接
-        "├": "+",
-        "┤": "+",
-        "┬": "+",
-        "┴": "+",
-        "┼": "+",
-        # 水平/垂直线
-        "─": "-",
-        "│": "|",
-        # 双线 DOUBLE
-        "═": "=",
-        "║": "|",
-        "╔": "+",
-        "╗": "+",
-        "╚": "+",
-        "╝": "+",
-        "╠": "+",
-        "╣": "+",
-        "╦": "+",
-        "╩": "+",
-        "╬": "+",
-        # 粗线 HEAVY
-        "━": "=",
-        "┃": "|",
-        "┏": "+",
-        "┓": "+",
-        "┗": "+",
-        "┛": "+",
-        "┣": "+",
-        "┫": "+",
-        "┳": "+",
-        "┻": "+",
-        "╋": "+",
-        # 双线圆角
-        "╓": "+",
-        "╖": "+",
-        "╙": "+",
-        "╜": "+",
-        "╟": "+",
-        "╢": "+",
-        "╤": "+",
-        "╧": "+",
-        "╨": "+",
-        "╥": "+",
-        "╞": "+",
-        "╡": "+",
-        "╪": "+",
-        "╫": "+",
-        # 虚线/点线
-        "╌": "-",
-        "╍": "=",
-        "╎": "|",
-        "╏": "|",
-        "┄": "-",
-        "┅": "=",
-        "┆": "|",
-        "┇": "|",
-        "┈": "-",
-        "┉": "=",
-        "┊": "|",
-        "┋": "|",
-        # Block Elements 阴影块
-        "░": " ",
-        "▒": " ",
-        "▓": "#",
-        "█": "#",
-        "▀": "#",
-        "▄": "#",
-        "▌": "#",
-        "▐": "#",
-        "▖": "#",
-        "▗": "#",
-        "▘": "#",
-        "▝": "#",
-        "▙": "#",
-        "▚": "#",
-        "▛": "#",
-        "▜": "#",
-        "▞": "#",
-        "▟": "#",
-        # 其他装饰字符
-        "•": "*",
-        "·": ".",
-        "●": "*",
-        "○": "o",
-        "■": "#",
-        "□": "#",
-        "◆": "*",
-        "◇": "*",
-        "►": ">",
-        "◄": "<",
-        "▲": "^",
-        "▼": "v",
-    }
-)
+# ---------------------------------------------------------------------- #
+# markup 解析
+# ---------------------------------------------------------------------- #
+
+# 匹配 [tag] 或 [/tag] 或 [/]
+_TAG_RE = re.compile(r"\[(/?)\s*([^\]]+?)\s*\]")
+
+# ANSI 前景色码（标准 8 色 + bright 变体）
+_ANSI_FG = {
+    "black": "30",
+    "red": "31",
+    "green": "32",
+    "yellow": "33",
+    "blue": "34",
+    "magenta": "35",
+    "cyan": "36",
+    "white": "37",
+    "bright_black": "90",
+    "bright_red": "91",
+    "bright_green": "92",
+    "bright_yellow": "93",
+    "bright_blue": "94",
+    "bright_magenta": "95",
+    "bright_cyan": "96",
+    "bright_white": "97",
+}
+
+# ANSI 属性码
+_ANSI_ATTR = {
+    "bold": "1",
+    "dim": "2",
+    "italic": "3",
+    "underline": "4",
+    "blink": "5",
+}
+
+# Win16 前景色位掩码（FOREGROUND_RED/GREEN/BLUE/INTENSITY）
+_WIN_FG = {
+    "black": 0,
+    "red": 4,
+    "green": 2,
+    "yellow": 6,
+    "blue": 1,
+    "magenta": 5,
+    "cyan": 3,
+    "white": 7,
+}
+
+_ANSI_RESET = "\033[0m"
 
 
-class _AsciiBoxStream:
-    """拦截 stream ``write``，把 box-drawing 字符替换为 ASCII。
+def _parse_markup(text: str) -> list[tuple[str, frozenset[str]]]:
+    """解析 rich 风格 markup，返回 ``[(text_segment, styles_set), ...]``。
 
-    Win7 conhost 默认点阵字体不支持 box-drawing 字符。rich 在 legacy_windows
-    模式下直接 ``file.write`` 输出 Unicode box 字符，``ascii_only`` 参数和
-    ``box`` 模块 monkey-patch 在旧版 rich 上可能失效。本类包装 stdout，
-    在 ``write`` 时用 ``str.translate`` 把 box 字符 replace 为 ASCII，
-    对 rich 透明，跨所有 rich 版本生效。
+    标签语法：
 
-    保留中文等非 box Unicode 字符，仅替换 box-drawing 区块。
+    - ``[cyan]text[/cyan]``：应用 cyan 颜色
+    - ``[bold cyan]text[/bold cyan]``：叠加 bold + cyan
+    - ``[/]``：闭合最近一个开标签
+
+    样式栈模型：开标签压入样式集合，闭标签弹出。当前生效样式 = 栈中所有
+    集合的并集（支持 ``[bold][cyan]...[/cyan][/bold]`` 嵌套叠加）。
+
+    闭标签按栈顺序弹出（不按名称精确匹配），对项目内成对使用的调用点足够。
     """
+    pos = 0
+    stack: list[frozenset[str]] = []
+    current: frozenset[str] = frozenset()
+    out: list[tuple[str, frozenset[str]]] = []
 
-    def __init__(self, stream: Any) -> None:
-        self._stream = stream
+    for m in _TAG_RE.finditer(text):
+        if m.start() > pos:
+            out.append((text[pos : m.start()], current))
+        pos = m.end()
+        is_close = m.group(1) == "/"
+        tag = m.group(2).strip()
+        if is_close:
+            if stack:
+                stack.pop()
+                current = frozenset().union(*stack) if stack else frozenset()
+        else:
+            new_styles = frozenset(tag.split())
+            stack.append(new_styles)
+            current = current | new_styles
 
-    def write(self, text: Any) -> int:
-        """写入文本，box-drawing 字符被替换为 ASCII 后转发给底层 stream。"""
-        if isinstance(text, str) and text:
-            text = text.translate(_BOX_TO_ASCII)
-        return self._stream.write(text)
+    if pos < len(text):
+        out.append((text[pos:], current))
+    return out
 
-    def flush(self) -> Any:
-        return self._stream.flush()
 
-    def isatty(self) -> bool:
-        return self._stream.isatty()
+def _strip_markup(text: str) -> str:
+    """移除所有 markup 标签，返回纯文本（用于计算可见宽度）。"""
+    return _TAG_RE.sub("", text)
 
-    def fileno(self) -> int:
-        return self._stream.fileno()
 
-    @property
-    def encoding(self) -> str:
-        return self._stream.encoding
+def _display_width(s: str) -> int:
+    """计算字符串在终端的显示宽度（East Asian Wide/Ambiguous 占 2 列）。"""
+    width = 0
+    for ch in s:
+        if unicodedata.east_asian_width(ch) in ("W", "A"):
+            width += 2
+        else:
+            width += 1
+    return width
 
-    @property
-    def errors(self) -> str:
-        return self._stream.errors
 
-    @property
-    def mode(self) -> str:
-        return self._stream.mode
+def _styles_to_ansi(styles: frozenset[str]) -> str:
+    """把样式集合转为 ANSI 转义码（如 ``\\033[1;36m`` 表示 bold+cyan）。"""
+    codes: list[str] = []
+    for s in styles:
+        if s in _ANSI_FG:
+            codes.append(_ANSI_FG[s])
+        elif s in _ANSI_ATTR:
+            codes.append(_ANSI_ATTR[s])
+    if not codes:
+        return ""
+    return f"\033[{';'.join(codes)}m"
 
-    @property
-    def buffer(self) -> Any:
-        return self._stream.buffer
 
-    @property
-    def line_buffering(self) -> bool:
-        return self._stream.line_buffering
+def _styles_to_win_attr(styles: frozenset[str]) -> int:
+    """把样式集合转为 Win16 前景色位掩码（FOREGROUND_* 或运算结果）。
 
-    @property
-    def newlines(self) -> Any:
-        return self._stream.newlines
+    返回值：颜色位（低 4 bit 的 RGB 部分）与 FOREGROUND_INTENSITY(8) 的或运算
+    结果。无样式时返回 7（默认白前景）以支持恢复默认颜色。
+    """
+    attr = 7  # 默认白前景
+    for s in styles:
+        if s in _WIN_FG:
+            # 替换颜色位（低 3 bit RGB），保留强度位
+            attr = (attr & 8) | _WIN_FG[s]
+        elif s == "bold":
+            attr |= 8  # FOREGROUND_INTENSITY
+        # dim/italic/underline 等在 Win16 无对应，忽略
+    return attr
 
-    def writable(self) -> bool:
-        return self._stream.writable()
 
-    def readable(self) -> bool:
-        return self._stream.readable()
-
-    def seekable(self) -> bool:
-        return self._stream.seekable()
-
-    def __getattr__(self, name: str) -> Any:
-        """其他属性/方法委托底层 stream。"""
-        return getattr(self._stream, name)
+# ---------------------------------------------------------------------- #
+# Win7/8 legacy 检测
+# ---------------------------------------------------------------------- #
 
 
 def _is_legacy_windows() -> bool:
     """检测是否为旧版 Windows（Win7/8，conhost 不支持 VT 序列）。
 
     Win10 1607 起 conhost 支持 ANSI VT 序列处理；Win7/8 的 conhost 不支持，
-    rich 会自动进入 legacy 模式（``SetConsoleTextAttribute`` + ``file.write``）。
-    显式检测 Win7/8 以便 ``get_console`` 应用额外的宽度兼容余量。
+    需要通过 ``SetConsoleTextAttribute`` 着色。
 
     Returns:
-        True 表示运行在 Win7/8 conhost 下，需要兼容处理。
+        True 表示运行在 Win7/8 conhost 下，需要 legacy 着色路径。
     """
     if sys.platform != "win32":
         return False
@@ -239,51 +196,336 @@ def _is_legacy_windows() -> bool:
         return False
 
 
+def _enable_vt_mode() -> bool:
+    """Win10+ 启用 console VT 处理，返回是否成功。
+
+    非Windows 平台返回 True（无需启用）。失败时返回 False，调用方回退到
+    无颜色输出。
+    """
+    if sys.platform != "win32":
+        return True
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        new_mode = mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if not kernel32.SetConsoleMode(handle, new_mode):
+            return False
+    except (OSError, AttributeError):
+        return False
+    else:
+        return True
+
+
+# ---------------------------------------------------------------------- #
+# Table
+# ---------------------------------------------------------------------- #
+
+
+class Table:
+    """轻量 ASCII 表格，兼容 rich ``Table`` 的常用子集。
+
+    支持的构造参数（与 rich ``Table`` 签名兼容）：
+
+    - ``title``：表格标题（可选）。
+    - ``show_header``：是否显示表头行（默认 True）。
+    - ``header_style``：表头样式（如 ``"bold"``）。
+    - ``show_lines``：是否显示行间分隔线（当前固定不显示，签名兼容）。
+    - ``box``：边框样式，``None`` 表示无边框（对齐输出），非 None 表示
+      ASCII 边框（``+``/``-``/``|``）。
+
+    列选项（``add_column``）：``style``（列样式）、``justify``（对齐：
+    left/center/right）、``no_wrap``（当前忽略）。
+    """
+
+    def __init__(
+        self,
+        *,
+        title: str | None = None,
+        show_header: bool = True,
+        header_style: str | None = None,
+        show_lines: bool = False,  # noqa: ARG002 签名兼容，当前不绘制行间分隔
+        box: Any = "ascii",
+    ) -> None:
+        self.title = title
+        self.show_header = show_header
+        self.header_style = header_style or ""
+        self.box = box
+        self._columns: list[dict[str, Any]] = []
+        self._rows: list[tuple[str, ...]] = []
+
+    def add_column(
+        self,
+        header: str,
+        *,
+        style: str | None = None,
+        no_wrap: bool = False,  # noqa: ARG002 签名兼容，当前忽略
+        justify: str = "left",
+    ) -> None:
+        """添加列定义。"""
+        self._columns.append({"header": header, "style": style, "justify": justify})
+
+    def add_row(self, *cells: Any) -> None:
+        """添加一行数据（自动转 str）。"""
+        self._rows.append(tuple(str(c) for c in cells))
+
+    def _col_widths(self) -> list[int]:
+        """计算每列最大可见宽度（含表头）。"""
+        widths = []
+        for i, col in enumerate(self._columns):
+            w = _display_width(_strip_markup(col["header"]))
+            for row in self._rows:
+                if i < len(row):
+                    w = max(w, _display_width(_strip_markup(row[i])))
+            widths.append(w)
+        return widths
+
+    @staticmethod
+    def _pad(text: str, width: int, justify: str) -> str:
+        """按显示宽度填充对齐（保留 markup 标签，按纯文本宽度计算）。"""
+        visible = _strip_markup(text)
+        pad = width - _display_width(visible)
+        if pad <= 0:
+            return text
+        if justify == "right":
+            return " " * pad + text
+        if justify == "center":
+            left = pad // 2
+            right = pad - left
+            return " " * left + text + " " * right
+        return text + " " * pad  # left
+
+    def _render_no_box(self) -> str:
+        """无边框渲染：列间两空格分隔。"""
+        widths = self._col_widths()
+        lines: list[str] = []
+        if self.title:
+            lines.append(self.title)
+            lines.append("")
+        if self.show_header:
+            parts = [
+                self._pad(
+                    f"[{self.header_style}]{col['header']}[/{self.header_style}]"
+                    if self.header_style
+                    else col["header"],
+                    widths[i],
+                    col["justify"],
+                )
+                for i, col in enumerate(self._columns)
+            ]
+            lines.append("  ".join(parts))
+        for row in self._rows:
+            parts = [
+                self._pad(row[i] if i < len(row) else "", widths[i], self._columns[i]["justify"])
+                for i in range(len(self._columns))
+            ]
+            lines.append("  ".join(parts))
+        return "\n".join(lines)
+
+    def _render_boxed(self) -> str:
+        """ASCII 边框渲染：``+``/``-``/``|``。"""
+        widths = self._col_widths()
+        sep = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
+        lines: list[str] = []
+        if self.title:
+            lines.append(self.title)
+            lines.append("")
+        lines.append(sep)
+        if self.show_header:
+            parts = [
+                self._pad(
+                    f"[{self.header_style}]{col['header']}[/{self.header_style}]"
+                    if self.header_style
+                    else col["header"],
+                    widths[i],
+                    col["justify"],
+                )
+                for i, col in enumerate(self._columns)
+            ]
+            lines.append("| " + " | ".join(parts) + " |")
+            lines.append(sep)
+        for row in self._rows:
+            parts = [
+                self._pad(row[i] if i < len(row) else "", widths[i], self._columns[i]["justify"])
+                for i in range(len(self._columns))
+            ]
+            lines.append("| " + " | ".join(parts) + " |")
+        lines.append(sep)
+        return "\n".join(lines)
+
+    def __str__(self) -> str:
+        """渲染表格为字符串。"""
+        if not self._columns:
+            return self.title or ""
+        if self.box is None:
+            return self._render_no_box()
+        return self._render_boxed()
+
+
+# ---------------------------------------------------------------------- #
+# Console
+# ---------------------------------------------------------------------- #
+
+
+class Console:
+    """轻量 Console，支持 rich 风格 markup 子集着色。
+
+    构造参数（与 rich ``Console`` 部分签名兼容，便于平滑迁移）：
+
+    - ``legacy_windows``：强制使用 ``SetConsoleTextAttribute`` 着色（Win7/8）。
+    - ``ascii_only``：签名兼容，当前忽略（自实现 Table 仅用 ASCII，无 box-drawing）。
+    - ``width``：渲染宽度（当前忽略，由终端决定）。
+    - ``file``：输出流，默认 ``sys.stdout``。
+
+    ``print`` 方法接受 ``end`` / ``sep`` / ``style`` 关键字，其他 rich
+    关键字（``highlight`` / ``justify`` / ``soft_wrap`` / ``overflow`` /
+    ``no_wrap`` 等）签名兼容但当前忽略。
+    """
+
+    def __init__(
+        self,
+        *,
+        legacy_windows: bool = False,
+        ascii_only: bool = False,  # noqa: ARG002 签名兼容，当前忽略
+        width: int | None = None,  # noqa: ARG002 签名兼容，当前忽略
+        file: Any = None,
+    ) -> None:
+        # file=None 表示运行时动态解析 sys.stdout，确保 pytest capsys 能捕获
+        self._file = file
+        self._explicit_file = file is not None
+        self._legacy = legacy_windows
+        self._color_enabled = self._detect_color()
+        self._kernel32: Any = None
+        if self._legacy and self._color_enabled:
+            try:
+                self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+            except (OSError, AttributeError):
+                self._color_enabled = False
+
+    @property
+    def _out(self) -> Any:
+        """当前输出流：显式传入时用传入值，否则动态取 sys.stdout。
+
+        动态解析确保 pytest capsys 等运行时替换 stdout 的场景能正确捕获输出，
+        而非持有构造时的旧 stdout 引用。
+        """
+        return self._file if self._explicit_file else sys.stdout
+
+    def _detect_color(self) -> bool:
+        """检测是否应启用颜色输出。"""
+        out = self._out
+        try:
+            is_tty = bool(out.isatty())
+        except (AttributeError, ValueError):
+            is_tty = False
+        if not is_tty:
+            return False
+        if sys.platform != "win32":
+            return True
+        if self._legacy:
+            return True  # Win7/8 用 SetConsoleTextAttribute
+        return _enable_vt_mode()
+
+    def _apply_win_color(self, styles: frozenset[str]) -> None:
+        """Win7/8 legacy 模式：调用 SetConsoleTextAttribute 切换颜色。"""
+        if self._kernel32 is None:
+            return
+        attr = _styles_to_win_attr(styles)
+        try:
+            handle = self._kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            self._kernel32.SetConsoleTextAttribute(handle, attr)
+        except (OSError, AttributeError):
+            pass
+
+    def _render_text(self, text: str) -> str:
+        """解析 markup 并按 ANSI 模式渲染（返回带转义码的字符串）。
+
+        legacy 模式下由 ``_write_legacy`` 直接处理样式切换；此方法仅用于
+        非 legacy 路径。
+        """
+        if not self._color_enabled:
+            return _strip_markup(text)
+        segments = _parse_markup(text)
+        buf: list[str] = []
+        prev: frozenset[str] = frozenset()
+        for seg_text, styles in segments:
+            if styles != prev:
+                code = _styles_to_ansi(styles)
+                if code:
+                    buf.append(code)
+                elif prev:
+                    buf.append(_ANSI_RESET)
+                prev = styles
+            buf.append(seg_text)
+        if prev:
+            buf.append(_ANSI_RESET)
+        return "".join(buf)
+
+    def _write_legacy(self, text: str, end: str) -> None:
+        """Win7/8 legacy 模式输出：逐段切换 SetConsoleTextAttribute。"""
+        segments = _parse_markup(text)
+        prev: frozenset[str] = frozenset()
+        out = self._out
+        for seg_text, styles in segments:
+            if styles != prev:
+                self._apply_win_color(styles)
+                prev = styles
+            if seg_text:
+                out.write(seg_text)
+        # 恢复默认颜色
+        if prev:
+            self._apply_win_color(frozenset())
+        out.write(end)
+
+    def print(self, *args: Any, **kwargs: Any) -> None:
+        """输出到 console，支持 rich 风格 markup。
+
+        支持的关键字参数：``end``（默认 ``\\n``）、``sep``（默认空格）、
+        ``style``（整体样式）。其他 rich 关键字签名兼容但忽略。
+
+        若首个参数是 :class:`Table` 实例，渲染表格后输出。
+        """
+        end = kwargs.pop("end", "\n")
+        sep = kwargs.pop("sep", " ")
+        style = kwargs.pop("style", None)
+        # 其余 kwargs（highlight/justify/soft_wrap/overflow/no_wrap 等）忽略
+
+        if len(args) == 1 and isinstance(args[0], Table):
+            text = str(args[0])
+        else:
+            text = sep.join(str(a) for a in args)
+            if style:
+                text = f"[{style}]{text}[/{style}]"
+
+        if self._legacy and self._color_enabled:
+            self._write_legacy(text, end)
+        else:
+            self._out.write(self._render_text(text) + end)
+
+
+# ---------------------------------------------------------------------- #
+# 模块级 API
+# ---------------------------------------------------------------------- #
+
+
 def get_console() -> Console:
-    """获取全局 rich Console 实例（懒加载）。
+    """获取全局 Console 实例（懒加载单例）。
 
-    首次调用时导入 rich 并创建 Console，后续直接返回缓存实例。
-
-    Win7/8 下显式传入：
-
-    - ``legacy_windows=True``：使用 ``SetConsoleTextAttribute`` 着色（非 VT 序列）。
-    - ``file=_AsciiBoxStream(sys.stdout)``：包装 stdout 拦截 box-drawing 字符，
-      replace 为 ASCII。对 rich 透明，跨所有 rich 版本，是旧版 rich 的最终兜底。
-    - ``ascii_only=True``（若 rich 支持）：rich 13.x 中后期参数，通过
-      ``inspect.signature`` 检测；与 stdout 包装形成双保险。
-    - ``width=cols-2``：rich 在 legacy 模式下默认渲染宽度为 ``columns - 1``，但
-      conhost 最后一列自动换行行为使该余量不足以容纳表格右边框，故额外让 1 列
-      （总余量 2 列）避免超出窗口。
-
-    非交互环境（stdout 重定向、IDE 管道等 ``os.get_terminal_size`` 失败的场景）
-    不传宽度，由 rich 自行 fallback。
+    Win7/8 下使用 ``SetConsoleTextAttribute`` 着色（legacy_windows=True）；
+    其他平台用 ANSI 转义码。
     """
     global _console  # noqa: PLW0603
     if _console is None:
-        from rich.console import Console
-
         kwargs: dict[str, Any] = {}
         if _is_legacy_windows():
             kwargs["legacy_windows"] = True
-            # 包装 stdout 拦截 box 字符：跨所有 rich 版本的最终兜底
-            kwargs["file"] = _AsciiBoxStream(sys.stdout)
-            # ascii_only 是 rich 13.x 中后期引入的参数，旧版不支持；
-            # 通过签名检测兼容，不支持时跳过（stdout 包装已兜底）
-            sig = inspect.signature(Console.__init__)
-            if "ascii_only" in sig.parameters:
-                kwargs["ascii_only"] = True
-            try:
-                # os.get_terminal_size(1) 返回 srWindow 可视宽度（非 buffer 宽度）
-                cols = os.get_terminal_size(1).columns
-                # 显式传 width 时 rich 的 size 属性直接使用 _width（不再减 legacy_windows），
-                # 故传入 cols-2 等价于默认 cols-1 再额外让 1 列给 conhost 余量
-                kwargs["width"] = max(cols - 2, 1)
-            except (OSError, ValueError):
-                pass
         _console = Console(**kwargs)
     return _console
 
 
 def print_verbose(*args: Any, **kwargs: Any) -> None:
-    """verbose 模式输出辅助（通过 rich console）。"""
+    """verbose 模式输出辅助（委托全局 Console）。"""
     get_console().print(*args, **kwargs)

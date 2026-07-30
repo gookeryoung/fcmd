@@ -688,7 +688,7 @@ class DependencyRunner:
 # 公共 API
 # ---------------------------------------------------------------------- #
 def _make_verbose_callback(on_event: EventCallback | None) -> EventCallback:
-    """包装 on_event 回调，在 verbose 模式下用 rich 打印任务生命周期。"""
+    """包装 on_event 回调，在 verbose 模式下打印任务生命周期。"""
     console = get_console()
 
     def _verbose_callback(event: TaskEvent) -> None:
