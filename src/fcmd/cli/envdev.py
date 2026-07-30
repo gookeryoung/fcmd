@@ -393,11 +393,9 @@ def install_linux_docker() -> None:
     print("Docker 安装完成（需重新登录以生效 docker 用户组）")
 
 
+@fcmd.main("envdev")
 def main() -> None:
     """``envdev`` 入口：等价于 ``fcmd envdev <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("envdev")
 
 
 if __name__ == "__main__":

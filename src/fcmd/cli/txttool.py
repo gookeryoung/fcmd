@@ -208,11 +208,9 @@ def txt_case_cmd(path: str, mode: str = "upper") -> None:
         print(str(exc))
 
 
+@fcmd.main("txttool")
 def main() -> None:
     """``txttool`` 入口：等价于 ``fcmd txttool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("txttool")
 
 
 if __name__ == "__main__":

@@ -240,11 +240,9 @@ def split_cmd(pattern: str, text: str) -> None:
         print(part)
 
 
+@fcmd.main("regextool")
 def main() -> None:
     """``regextool`` 入口：等价于 ``fcmd regextool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("regextool")
 
 
 if __name__ == "__main__":

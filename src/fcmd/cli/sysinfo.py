@@ -112,11 +112,9 @@ def sysinfo_run() -> None:
     print_sysinfo()
 
 
+@fcmd.main("sysinfo")
 def main() -> None:
     """``sysinfo`` 入口：等价于 ``fcmd sysinfo <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("sysinfo")
 
 
 if __name__ == "__main__":

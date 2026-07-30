@@ -213,11 +213,9 @@ def pathtool_diff(p1: Path, p2: Path) -> None:
         print("仅路径 2: (无)")
 
 
+@fcmd.main("pathtool")
 def main() -> None:
     """``pathtool`` 入口：等价于 ``fcmd pathtool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("pathtool")
 
 
 if __name__ == "__main__":

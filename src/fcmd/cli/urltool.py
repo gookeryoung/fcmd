@@ -239,11 +239,9 @@ def baseurl_cmd(url: str) -> None:
     print(result)
 
 
+@fcmd.main("urltool")
 def main() -> None:
     """``urltool`` 入口：等价于 ``fcmd urltool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("urltool")
 
 
 if __name__ == "__main__":

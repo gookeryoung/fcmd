@@ -191,11 +191,9 @@ def pip_freeze() -> None:
     print(f"依赖已导出到 {REQUIREMENTS_FILE}")
 
 
+@fcmd.main("piptool")
 def main() -> None:
     """``piptool`` 入口：等价于 ``fcmd piptool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("piptool")
 
 
 if __name__ == "__main__":

@@ -321,11 +321,9 @@ def yaml_validate_cmd(file: Path) -> None:
     print(f"语法校验通过: {file}")
 
 
+@fcmd.main("yamtool")
 def main() -> None:
     """``yamtool`` 入口：等价于 ``fcmd yamtool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("yamtool")
 
 
 if __name__ == "__main__":

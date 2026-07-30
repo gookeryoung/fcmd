@@ -275,11 +275,9 @@ def hex_cmd(text: str, decode: bool = False) -> None:
     print(result)
 
 
+@fcmd.main("basetool")
 def main() -> None:
     """``basetool`` 入口：等价于 ``fcmd basetool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("basetool")
 
 
 if __name__ == "__main__":

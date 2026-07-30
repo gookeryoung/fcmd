@@ -303,11 +303,9 @@ def html_cmd(text: str, decode: bool = False) -> None:
     print(unescape_html(text) if decode else escape_html(text))
 
 
+@fcmd.main("codetool")
 def main() -> None:
     """``codetool`` 入口：等价于 ``fcmd codetool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("codetool")
 
 
 if __name__ == "__main__":

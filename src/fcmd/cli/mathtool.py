@@ -236,11 +236,9 @@ def factorial_cmd(n: int) -> None:
         print(str(exc))
 
 
+@fcmd.main("mathtool")
 def main() -> None:
     """``mathtool`` 入口：等价于 ``fcmd mathtool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("mathtool")
 
 
 if __name__ == "__main__":

@@ -67,11 +67,9 @@ def reset_icon_cache_run() -> None:
     print("图标缓存已重置")
 
 
+@fcmd.main("reseticoncache")
 def main() -> None:
     """``reseticoncache`` 入口：等价于 ``fcmd reseticoncache <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("reseticoncache")
 
 
 if __name__ == "__main__":

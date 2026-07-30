@@ -244,11 +244,9 @@ def justify_cmd(text: str, width: int = 20) -> None:
         print(str(exc))
 
 
+@fcmd.main("padtool")
 def main() -> None:
     """``padtool`` 入口：等价于 ``fcmd padtool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("padtool")
 
 
 if __name__ == "__main__":

@@ -190,11 +190,9 @@ def kebab_cmd(text: str) -> None:
     print(to_kebab(text))
 
 
+@fcmd.main("casetool")
 def main() -> None:
     """``casetool`` 入口：等价于 ``fcmd casetool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("casetool")
 
 
 if __name__ == "__main__":

@@ -179,11 +179,9 @@ def table_cmd(start: int = _PRINTABLE_START, end: int = _PRINTABLE_END) -> None:
         print(f"{entry['code']:>3}  {entry['hex']}  {entry['char']}")
 
 
+@fcmd.main("asciitool")
 def main() -> None:
     """``asciitool`` 入口：等价于 ``fcmd asciitool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("asciitool")
 
 
 if __name__ == "__main__":

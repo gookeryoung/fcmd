@@ -294,11 +294,9 @@ def hsl2rgb_cmd(h: float, s: float, light: float) -> None:
     print(f"{r} {g} {b}")
 
 
+@fcmd.main("colortool")
 def main() -> None:
     """``colortool`` 入口：等价于 ``fcmd colortool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("colortool")
 
 
 if __name__ == "__main__":

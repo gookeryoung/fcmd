@@ -273,11 +273,9 @@ def jsontool_sort(file: Path, output: str = "") -> None:
         print(pretty_json(sorted_data))
 
 
+@fcmd.main("jsontool")
 def main() -> None:
     """``jsontool`` 入口：等价于 ``fcmd jsontool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("jsontool")
 
 
 if __name__ == "__main__":

@@ -334,11 +334,9 @@ def xml_validate_cmd(file: Path) -> None:
     print(f"良构校验通过: {file}")
 
 
+@fcmd.main("xmltool")
 def main() -> None:
     """``xmltool`` 入口：等价于 ``fcmd xmltool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("xmltool")
 
 
 if __name__ == "__main__":

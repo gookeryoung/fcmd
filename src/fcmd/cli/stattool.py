@@ -336,11 +336,9 @@ def summarize_cmd(file: Path) -> None:
             print(f"{key}: {value:.4f}")
 
 
+@fcmd.main("stattool")
 def main() -> None:
     """``stattool`` 入口：等价于 ``fcmd stattool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("stattool")
 
 
 if __name__ == "__main__":

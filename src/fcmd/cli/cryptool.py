@@ -349,11 +349,9 @@ def decrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         print(f"解密结果: {result}")
 
 
+@fcmd.main("cryptool")
 def main() -> None:
     """``cryptool`` 入口：等价于 ``fcmd cryptool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("cryptool")
 
 
 if __name__ == "__main__":

@@ -269,11 +269,9 @@ def filesearch_content(
         print(f"{path}:{lineno}:{line}")
 
 
+@fcmd.main("filesearch")
 def main() -> None:
     """``filesearch`` 入口：等价于 ``fcmd filesearch <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("filesearch")
 
 
 if __name__ == "__main__":

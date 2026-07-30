@@ -203,11 +203,9 @@ def validate_cmd(ip: str) -> None:
         print(f"无效: {ip}")
 
 
+@fcmd.main("iptool")
 def main() -> None:
     """``iptool`` 入口：等价于 ``fcmd iptool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("iptool")
 
 
 if __name__ == "__main__":

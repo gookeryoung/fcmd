@@ -164,11 +164,9 @@ def process_files_date_clear(files: list[Path]) -> None:
     process_files_date(files, clear=True)
 
 
+@fcmd.main("filedate")
 def main() -> None:
     """``filedate`` 入口：等价于 ``fcmd filedate <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("filedate")
 
 
 if __name__ == "__main__":

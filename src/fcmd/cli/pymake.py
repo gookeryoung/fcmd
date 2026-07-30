@@ -309,11 +309,9 @@ def all_(cwd: Path = Path()) -> None:
     """全套流程（聚合）。"""
 
 
+@fcmd.main("pymake")
 def main() -> None:
     """``pymake`` 入口：等价于 ``fcmd pymake <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("pymake")
 
 
 if __name__ == "__main__":

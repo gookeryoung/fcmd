@@ -291,11 +291,9 @@ def time_convert_cmd(
     print(format_time(converted, format))
 
 
+@fcmd.main("timetool")
 def main() -> None:
     """``timetool`` 入口：等价于 ``fcmd timetool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("timetool")
 
 
 if __name__ == "__main__":

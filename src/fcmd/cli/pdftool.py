@@ -565,11 +565,9 @@ def pdf_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> No
     print(f"修复完成: {output_path}")
 
 
+@fcmd.main("pdftool")
 def main() -> None:
     """``pdftool`` 入口：等价于 ``fcmd pdftool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("pdftool")
 
 
 if __name__ == "__main__":

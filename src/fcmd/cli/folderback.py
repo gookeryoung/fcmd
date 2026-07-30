@@ -95,11 +95,9 @@ def backup_folder(src: str = ".", dst: str = "./backup", max_zip: int = 5) -> No
     zip_target(src_path, dst_path, max_zip)
 
 
+@fcmd.main("folderback")
 def main() -> None:
     """``folderback`` 入口：等价于 ``fcmd folderback <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("folderback")
 
 
 if __name__ == "__main__":

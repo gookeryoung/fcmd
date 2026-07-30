@@ -175,11 +175,9 @@ def head_cmd(url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
         print(f"请求失败: {exc}")
 
 
+@fcmd.main("nettool")
 def main() -> None:
     """``nettool`` 入口：等价于 ``fcmd nettool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("nettool")
 
 
 if __name__ == "__main__":

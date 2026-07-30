@@ -176,11 +176,9 @@ def sha512_cmd(text: str) -> None:
     print(hash_sha512(text))
 
 
+@fcmd.main("hashtool")
 def main() -> None:
     """``hashtool`` 入口：等价于 ``fcmd hashtool <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("hashtool")
 
 
 if __name__ == "__main__":

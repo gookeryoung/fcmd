@@ -31,11 +31,9 @@ def write_file_run(path: str, content: str, encoding: str = "utf-8") -> None:
     Path(path).write_text(content, encoding=encoding)
 
 
+@fcmd.main("writefile")
 def main() -> None:
     """``writefile`` 入口：等价于 ``fcmd writefile <args>``。"""
-    from fcmd.cli._common import run_tool_main
-
-    run_tool_main("writefile")
 
 
 if __name__ == "__main__":
