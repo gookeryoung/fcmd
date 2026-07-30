@@ -346,18 +346,19 @@ class TestBuiltinGraph:
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "graph TD" in out
-        # tc 依赖 c + pyrefly_check + lint
+        # tc 依赖 c + pyrefly_check + lint + fmt
         assert "tc" in out
         assert "c" in out
         assert "lint" in out
 
-    def test_graph_pymake_all_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pymake all 输出全套流程 DAG。"""
-        app = FcmdApp(["graph", "pymake", "all"])
+    def test_graph_pymake_chk_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake chk 输出类型检查聚合 DAG。"""
+        app = FcmdApp(["graph", "pymake", "chk"])
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "graph TD" in out
-        for name in ("c", "b", "t", "tc"):
+        # chk 依赖 c + pyrefly_check + lint + fmt + tf
+        for name in ("c", "chk", "lint", "pyrefly_check", "fmt", "tf"):
             assert name in out, f"DAG 应包含 {name!r}"
 
     def test_graph_format_layers(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -565,17 +566,18 @@ class TestBuiltinInfo:
 
     def test_spec_kind_classification(self) -> None:
         """_spec_kind 正确分类 cmd / aggregate / fn。"""
+        import fcmd.cli.writefile  # noqa: F401  触发 fn 任务注册
         from fcmd.apis.toolkit import get_tool
 
-        # cmd 任务
+        # cmd 任务（pymake.b 有 cmd）
         b_spec = get_tool("pymake", "b")
         assert FcmdApp._spec_kind(b_spec) == "cmd"
-        # aggregate 任务（tc 有 needs 无 cmd 无函数逻辑）
+        # aggregate 任务（pymake.tc 有 needs 无 cmd）
         tc_spec = get_tool("pymake", "tc")
         assert FcmdApp._spec_kind(tc_spec) == "aggregate"
-        # fn 任务（c 有函数逻辑无 cmd 无 needs）
-        c_spec = get_tool("pymake", "c")
-        assert FcmdApp._spec_kind(c_spec) == "fn"
+        # fn 任务（writefile 有函数逻辑无 cmd 无 needs）
+        writefile_spec = get_tool("writefile")
+        assert FcmdApp._spec_kind(writefile_spec) == "fn"
 
     def test_info_tool_import_failure(
         self,

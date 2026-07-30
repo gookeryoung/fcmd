@@ -1,17 +1,16 @@
 """pymake 工具测试。
 
 验证 ``fcmd.cli.pymake`` 模块通过 ``@fx.tool`` 装饰器注册的子命令集合：
-- 单任务别名（b/sync/c/t/tf/lint/fmt/fmtc/bumpmi/bumpma/doc/tox）
-- 内部 hidden job（pyrefly_check/test_coverage/bumpversion/git_add_all/git_push/git_push_tags/twine_publish）
-- 聚合 job（tc/cov/bump/p/pb/all）
+- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox）
+- cmd + needs 混合任务（cov/bump）
+- 聚合任务（chk/tc/push/upload）
+- 内部 hidden job（fmt/fmtc/pyrefly_check/git_add_all/git_push/git_push_tags/twine_publish）
 - CLI 调度（dry-run 验证执行计划）
-- fn 任务（c 清理函数）实际执行
 """
 
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -31,8 +30,12 @@ class TestPymakeRegistration:
         """pymake 应在 _TOOL_REGISTRY 中注册。"""
         assert "pymake" in _TOOL_REGISTRY
 
+    def test_tool_aliases(self) -> None:
+        """pymake 应注册 pm 别名。"""
+        assert fcmd.cli.pymake.__tool_aliases__ == ["pm"]
+
     def test_visible_subcommands(self) -> None:
-        """可见子命令应包含核心构建/测试/检查命令。"""
+        """可见子命令应包含核心构建/测试/检查/发布命令。"""
         subs = fx.list_subcommands("pymake")
         for name in (
             "b",
@@ -40,19 +43,18 @@ class TestPymakeRegistration:
             "c",
             "t",
             "tf",
+            "ts",
+            "cov",
             "lint",
-            "fmt",
-            "fmtc",
+            "chk",
+            "tc",
             "bumpmi",
             "bumpma",
+            "bump",
             "doc",
             "tox",
-            "tc",
-            "cov",
-            "bump",
-            "p",
-            "pb",
-            "all",
+            "push",
+            "upload",
         ):
             assert name in subs, f"可见子命令应包含 {name!r}"
 
@@ -60,9 +62,9 @@ class TestPymakeRegistration:
         """hidden 子命令不应出现在可见列表中。"""
         subs = fx.list_subcommands("pymake")
         for name in (
+            "fmt",
+            "fmtc",
             "pyrefly_check",
-            "test_coverage",
-            "bumpversion",
             "git_add_all",
             "git_push",
             "git_push_tags",
@@ -74,9 +76,9 @@ class TestPymakeRegistration:
         """include_hidden=True 时 hidden 子命令应出现。"""
         subs = fx.list_subcommands("pymake", include_hidden=True)
         for name in (
+            "fmt",
+            "fmtc",
             "pyrefly_check",
-            "test_coverage",
-            "bumpversion",
             "git_add_all",
             "git_push",
             "git_push_tags",
@@ -86,24 +88,27 @@ class TestPymakeRegistration:
 
 
 # ---------------------------------------------------------------------- #
-# 单任务别名 cmd 验证
+# 单 cmd 任务验证
 # ---------------------------------------------------------------------- #
 class TestPymakeCmdTasks:
-    """单任务别名（有 cmd）的 cmd 内容验证。"""
+    """单 cmd 任务（无 needs）的 cmd 内容验证。"""
 
     @pytest.mark.parametrize(
         ("sub", "cmd_fragment"),
         [
             ("b", "uv"),
             ("sync", "uv"),
+            ("c", "gitt"),
             ("t", "pytest"),
             ("tf", "pytest"),
+            ("ts", "pytest"),
             ("lint", "ruff"),
             ("fmt", "ruff"),
             ("fmtc", "ruff"),
             ("bumpmi", "bump-my-version"),
             ("bumpma", "bump-my-version"),
             ("tox", "tox"),
+            ("doc", "sphinx-build"),
         ],
     )
     def test_cmd_has_expected_fragment(self, sub: str, cmd_fragment: str) -> None:
@@ -116,6 +121,12 @@ class TestPymakeCmdTasks:
         """b 应为 uv build。"""
         spec = get_tool("pymake", "b")
         assert spec.cmd == ("uv", "build")
+
+    def test_c_cmd_is_gitt_clean(self) -> None:
+        """c 应为 gitt c（cmd 任务，非 fn 任务）。"""
+        spec = get_tool("pymake", "c")
+        assert spec.cmd == ("gitt", "c")
+        assert spec.needs == ()
 
     def test_sync_cmd_uses_extra_dev(self) -> None:
         """sync 应使用 --extra dev。"""
@@ -137,6 +148,14 @@ class TestPymakeCmdTasks:
         assert spec.cmd is not None
         assert "-x" in spec.cmd
 
+    def test_ts_cmd_uses_slow_marker(self) -> None:
+        """ts 应使用 -m slow。"""
+        spec = get_tool("pymake", "ts")
+        assert spec.cmd is not None
+        assert "-m" in spec.cmd
+        assert "slow" in spec.cmd
+        assert "not slow" not in spec.cmd
+
     def test_lint_cmd_has_fix(self) -> None:
         """lint 应有 --fix。"""
         spec = get_tool("pymake", "lint")
@@ -149,12 +168,14 @@ class TestPymakeCmdTasks:
         assert spec.cmd is not None
         assert "format" in spec.cmd
         assert "--check" not in spec.cmd
+        assert spec.hidden is True
 
     def test_fmtc_cmd_has_check(self) -> None:
         """fmtc 应有 --check（仅检查不修改）。"""
         spec = get_tool("pymake", "fmtc")
         assert spec.cmd is not None
         assert "--check" in spec.cmd
+        assert spec.hidden is True
 
     def test_bumpmi_cmd_uses_minor(self) -> None:
         """bumpmi 应使用 minor。"""
@@ -168,11 +189,51 @@ class TestPymakeCmdTasks:
         assert spec.cmd is not None
         assert "major" in spec.cmd
 
-    def test_c_is_fn_task_not_cmd(self) -> None:
-        """c 是 fn 任务（无 cmd，有函数体）。"""
-        spec = get_tool("pymake", "c")
-        assert spec.cmd is None
-        assert spec.needs == ()
+    def test_doc_cmd_uses_sphinx_build(self) -> None:
+        """doc 应执行 sphinx-build html。"""
+        spec = get_tool("pymake", "doc")
+        assert spec.cmd is not None
+        assert "sphinx-build" in spec.cmd
+        assert "-b" in spec.cmd
+        assert "html" in spec.cmd
+
+    def test_tox_cmd_uses_uvx(self) -> None:
+        """tox 应通过 uvx 调用。"""
+        spec = get_tool("pymake", "tox")
+        assert spec.cmd is not None
+        assert "uvx" in spec.cmd
+        assert "tox" in spec.cmd
+
+
+# ---------------------------------------------------------------------- #
+# cmd + needs 混合任务验证
+# ---------------------------------------------------------------------- #
+class TestPymakeHybridTasks:
+    """cmd + needs 混合任务验证（既有命令又有依赖）。"""
+
+    def test_cov_cmd_has_coverage_flags(self) -> None:
+        """cov 应包含 --cov=fcmd 与 --cov-fail-under=95。"""
+        spec = get_tool("pymake", "cov")
+        assert spec.cmd is not None
+        assert "--cov=fcmd" in spec.cmd
+        assert "--cov-fail-under=95" in spec.cmd
+        assert spec.hidden is False
+
+    def test_cov_needs_c(self) -> None:
+        """cov 应依赖 c（先清理）。"""
+        spec = get_tool("pymake", "cov")
+        assert "c" in spec.needs
+
+    def test_bump_cmd_uses_patch(self) -> None:
+        """bump 应使用 patch。"""
+        spec = get_tool("pymake", "bump")
+        assert spec.cmd is not None
+        assert "patch" in spec.cmd
+
+    def test_bump_needs_git_add_all(self) -> None:
+        """bump 应依赖 git_add_all。"""
+        spec = get_tool("pymake", "bump")
+        assert "git_add_all" in spec.needs
 
 
 # ---------------------------------------------------------------------- #
@@ -188,35 +249,11 @@ class TestPymakeHiddenJobs:
         assert "pyrefly" in spec.cmd
         assert spec.hidden is True
 
-    def test_test_coverage_cmd(self) -> None:
-        """test_coverage 应使用 --cov=fcmd --cov-fail-under=95。"""
-        spec = get_tool("pymake", "test_coverage")
-        assert spec.cmd is not None
-        assert "--cov=fcmd" in spec.cmd
-        assert "--cov-fail-under=95" in spec.cmd
-        assert spec.hidden is True
-
-    def test_test_coverage_needs_c(self) -> None:
-        """test_coverage 应依赖 c（先清理）。"""
-        spec = get_tool("pymake", "test_coverage")
-        assert "c" in spec.needs
-
-    def test_bumpversion_cmd_uses_patch(self) -> None:
-        """bumpversion 应使用 patch。"""
-        spec = get_tool("pymake", "bumpversion")
-        assert spec.cmd is not None
-        assert "patch" in spec.cmd
-        assert spec.hidden is True
-
-    def test_bumpversion_needs_git_add_all(self) -> None:
-        """bumpversion 应依赖 git_add_all。"""
-        spec = get_tool("pymake", "bumpversion")
-        assert "git_add_all" in spec.needs
-
-    def test_git_add_all_needs_tc(self) -> None:
-        """git_add_all 应依赖 tc（先通过类型检查）。"""
+    def test_git_add_all_cmd_and_needs_chk(self) -> None:
+        """git_add_all 应为 git add -A，并依赖 chk（先通过类型检查）。"""
         spec = get_tool("pymake", "git_add_all")
-        assert "tc" in spec.needs
+        assert spec.cmd == ("git", "add", "-A")
+        assert spec.needs == ("chk",)
         assert spec.hidden is True
 
     def test_git_push_cmd(self) -> None:
@@ -241,20 +278,18 @@ class TestPymakeHiddenJobs:
 
 
 # ---------------------------------------------------------------------- #
-# 聚合 job 验证
+# 聚合任务验证
 # ---------------------------------------------------------------------- #
 class TestPymakeAggregateJobs:
-    """聚合任务（有 needs 无 cmd 无函数逻辑）验证。"""
+    """聚合任务（有 needs 无 cmd）验证。"""
 
     @pytest.mark.parametrize(
         ("sub", "expected_needs"),
         [
-            ("tc", ("c", "pyrefly_check", "lint")),
-            ("cov", ("test_coverage",)),
-            ("bump", ("bumpversion",)),
-            ("p", ("c", "git_push", "git_push_tags")),
-            ("pb", ("twine_publish",)),
-            ("all", ("c", "b", "t", "tc")),
+            ("chk", ("c", "pyrefly_check", "lint", "fmt", "tf")),
+            ("tc", ("c", "pyrefly_check", "lint", "fmt")),
+            ("push", ("chk", "c", "git_push", "git_push_tags")),
+            ("upload", ("twine_publish",)),
         ],
     )
     def test_aggregate_needs(self, sub: str, expected_needs: tuple[str, ...]) -> None:
@@ -263,26 +298,17 @@ class TestPymakeAggregateJobs:
         for dep in expected_needs:
             assert dep in spec.needs, f"{sub} 应依赖 {dep!r}: {spec.needs}"
 
-    @pytest.mark.parametrize("sub", ["tc", "cov", "bump", "p", "pb", "all"])
+    @pytest.mark.parametrize("sub", ["chk", "tc", "push", "upload"])
     def test_aggregate_has_no_cmd(self, sub: str) -> None:
         """聚合任务应无 cmd。"""
         spec = get_tool("pymake", sub)
         assert spec.cmd is None, f"{sub} 应为聚合任务（无 cmd）"
 
-    def test_tc_strategy_is_thread(self) -> None:
-        """tc 应使用 thread 策略（c/pyrefly/lint 可并行）。"""
-        spec = get_tool("pymake", "tc")
+    @pytest.mark.parametrize("sub", ["chk", "tc", "push"])
+    def test_aggregate_strategy_is_thread(self, sub: str) -> None:
+        """chk/tc/push 应使用 thread 策略（依赖可并行）。"""
+        spec = get_tool("pymake", sub)
         assert spec.strategy == "thread"
-
-    def test_p_strategy_is_thread(self) -> None:
-        """p 应使用 thread 策略（push + push tags 可并行）。"""
-        spec = get_tool("pymake", "p")
-        assert spec.strategy == "thread"
-
-    def test_all_strategy_is_dependency(self) -> None:
-        """all 应使用 dependency 策略（最大化并行）。"""
-        spec = get_tool("pymake", "all")
-        assert spec.strategy == "dependency"
 
 
 # ---------------------------------------------------------------------- #
@@ -310,20 +336,24 @@ class TestPymakeCliDispatch:
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        # tc 依赖 c + pyrefly_check + lint
+        # tc 依赖 c + pyrefly_check + lint + fmt
         assert "c" in out
         assert "lint" in out
         assert "pyrefly_check" in out
+        assert "fmt" in out
 
-    def test_pymake_all_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd pymake all --dry-run 打印全套流程执行计划。"""
-        code = run_tool("pymake", ["all", "--dry-run"])
+    def test_pymake_chk_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd pymake chk --dry-run 打印聚合执行计划（含 tf）。"""
+        code = run_tool("pymake", ["chk", "--dry-run"])
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        # all 依赖 c + b + t + tc
-        for name in ("b", "c", "t", "tc"):
-            assert name in out, f"all 执行计划应包含 {name!r}"
+        # chk 依赖 c + pyrefly_check + lint + fmt + tf
+        assert "c" in out
+        assert "lint" in out
+        assert "pyrefly_check" in out
+        assert "fmt" in out
+        assert "tf" in out
 
     def test_pymake_bump_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd pymake bump --dry-run 打印版本升级执行计划。"""
@@ -331,8 +361,9 @@ class TestPymakeCliDispatch:
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        # bump → bumpversion → git_add_all → tc → (c, pyrefly_check, lint)
-        assert "bumpversion" in out
+        # bump → git_add_all → chk → (c, pyrefly_check, lint, fmt, tf)
+        assert "bump" in out
+        assert "git_add_all" in out
 
     def test_pymake_cov_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd pymake cov --dry-run 打印覆盖率测试执行计划。"""
@@ -340,15 +371,26 @@ class TestPymakeCliDispatch:
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        assert "test_coverage" in out
+        # cov 直接是 cmd 任务，依赖 c
+        assert "cov" in out
+        assert "c" in out
 
-    def test_pymake_p_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd pymake p --dry-run 打印推送执行计划。"""
-        code = run_tool("pymake", ["p", "--dry-run"])
+    def test_pymake_push_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd pymake push --dry-run 打印推送执行计划。"""
+        code = run_tool("pymake", ["push", "--dry-run"])
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
         assert "git_push" in out
+        assert "git_push_tags" in out
+
+    def test_pymake_upload_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd pymake upload --dry-run 打印 PyPI 发布执行计划。"""
+        code = run_tool("pymake", ["upload", "--dry-run"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "Dry run" in out
+        assert "twine_publish" in out
 
     def test_pymake_unknown_subcommand(self) -> None:
         """fcmd pymake unknown 返回 FAILURE。"""
@@ -364,65 +406,6 @@ class TestPymakeCliDispatch:
         """pm 别名路由到 pymake。"""
         app = FcmdApp(["pm", "t", "--dry-run"])
         assert app.run() == 0
-
-
-# ---------------------------------------------------------------------- #
-# fn 任务实际执行测试（c 清理函数）
-# ---------------------------------------------------------------------- #
-class TestPymakeCleanFn:
-    """``c`` fn 任务的实际执行测试（验证清理逻辑）。"""
-
-    def test_c_removes_pycache_dirs(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """c 应清理 src/tests 下的 __pycache__ 目录。"""
-        src_pycache = tmp_path / "src" / "__pycache__"
-        tests_pycache = tmp_path / "tests" / "__pycache__"
-        src_pycache.mkdir(parents=True)
-        tests_pycache.mkdir(parents=True)
-        (src_pycache / "x.pyc").write_text("")
-        (tests_pycache / "y.pyc").write_text("")
-        monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.clean()
-        assert not src_pycache.exists()
-        assert not tests_pycache.exists()
-
-    def test_c_removes_build_and_cache_dirs(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """c 应清理 build/dist/htmlcov 等缓存目录。"""
-        for d in ("build", "dist", "htmlcov", ".tox", ".ruff_cache", ".pyrefly_cache", ".mypy_cache", ".pytest_cache"):
-            (tmp_path / d).mkdir()
-        monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.clean()
-        for d in ("build", "dist", "htmlcov", ".tox", ".ruff_cache", ".pyrefly_cache", ".mypy_cache", ".pytest_cache"):
-            assert not (tmp_path / d).exists(), f"{d} 应被清理"
-
-    def test_c_removes_egg_info(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """c 应清理 src/tests 下的 *.egg-info。"""
-        egg = tmp_path / "src" / "fcmd.egg-info"
-        egg.mkdir(parents=True)
-        (egg / "PKG-INFO").write_text("")
-        monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.clean()
-        assert not egg.exists()
-
-    def test_c_idempotent_on_clean_dir(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """c 在已清理的目录上运行不应报错。"""
-        monkeypatch.chdir(tmp_path)
-        fcmd.cli.pymake.clean()  # 不抛异常即可
 
 
 # ---------------------------------------------------------------------- #

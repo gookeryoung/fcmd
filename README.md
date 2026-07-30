@@ -324,7 +324,7 @@ pip install -e fcmd[dev]      # 安装开发依赖（lint + test + office + prek
 fcmd pymake tc                # 类型检查（pyrefly + ruff）
 fcmd pymake t                 # 运行测试
 fcmd pymake cov               # 测试 + 覆盖率
-fcmd pymake all               # 全套流程（清理 + 构建 + 测试 + 类型检查）
+fcmd pymake chk               # 类型检查聚合（清理 + pyrefly + lint + fmt + test_fast）
 ```
 
 工具链独立配置文件：`ruff.toml` / `pyrefly.toml` / `pytest.ini` / `.coveragerc` / `.bumpversion.toml` / `uv.toml` / `.pre-commit-config.yaml`。`pyproject.toml` 仅含项目元数据。

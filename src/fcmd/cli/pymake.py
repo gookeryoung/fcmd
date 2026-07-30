@@ -6,20 +6,20 @@
 子命令分组
 ----------
 - 构建：``b`` (uv build)、``sync`` (uv sync)
-- 测试：``t`` (pytest)、``tf`` (快速失败)、``cov`` (覆盖率聚合)
-- 检查：``check`` (类型检查聚合)、``lint`` (ruff check)、``fmt`` / ``fmtc`` (ruff format)
-- 发布：``bump`` / ``bumpmi`` / ``bumpma`` (版本号)、``p`` (推送)、``pb`` (发布 PyPI)
+- 测试：``t`` (pytest)、``tf`` (快速失败)、``cov`` (覆盖率测试)、``ts`` (slow 测试)
+- 检查：``chk`` (类型检查聚合，含 test_fast)、``tc`` (类型检查，不含 test_fast)、``lint`` (ruff check)、``fmt`` / ``fmtc`` (ruff format，hidden)
+- 发布：``bump`` / ``bumpmi`` / ``bumpma`` (版本号)、``push`` (推送)、``upload`` (发布 PyPI)
 - 文档：``doc`` (sphinx-build)
-- 其他：``tox`` (多版本测试)、``all`` (全套流程)
+- 其他：``tox`` (多版本测试)
 
 示例
 ----
     pymake b          # 构建 (uv build)
     pymake t          # 运行测试
-    pymake check         # 类型检查（聚合：c + pyrefly_check + lint + test_fast，thread 策略）
+    pymake chk        # 类型检查（聚合：c + pyrefly_check + lint + fmt + tf，thread 策略）
     pymake cov        # 测试并生成覆盖率
     pymake bump       # 升级 patch 版本号
-    pymake all        # 全套流程（清理 + 构建 + 测试 + 类型检查）
+    pymake push       # 推送代码（清理 + check + push + push tags）
 """
 
 from __future__ import annotations
@@ -198,6 +198,16 @@ def test(cwd: Path = Path()) -> None:
 
 @fcmd.tool(
     "pymake",
+    subcommand="tn",
+    help="运行测试 (pytest)",
+    cmd=["pytest", "-n", "8", "-m", "not slow", "--color=yes", "--durations=10"],
+)
+def test_n_cpu(cwd: Path = Path()) -> None:
+    """运行测试（不含 slow 标记，使用多 CPU 核心）。"""
+
+
+@fcmd.tool(
+    "pymake",
     subcommand="cov",
     help="测试并生成覆盖率",
     cmd=[
@@ -240,7 +250,7 @@ def tox_auto(cwd: Path = Path()) -> None:
     subcommand="git_add_all",
     help="git add -A",
     cmd=["git", "add", "-A"],
-    needs=["check"],
+    needs=["chk"],
     hidden=True,
 )
 def _git_add_all(cwd: Path = Path()) -> None:
@@ -293,8 +303,8 @@ def _twine_publish(cwd: Path = Path()) -> None:
 @fcmd.tool(
     "pymake",
     subcommand="push",
-    help="推送代码 (清理 + push + push tags)",
-    needs=["check", "c", "git_push", "git_push_tags"],
+    help="推送代码 (清理 + check + push + push tags)",
+    needs=["chk", "c", "git_push", "git_push_tags"],
     strategy="thread",
 )
 def push(cwd: Path = Path()) -> None:
