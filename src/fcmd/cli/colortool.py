@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import fcmd
 
 __all__ = [
@@ -208,94 +211,65 @@ def hsl_to_rgb(h: float, s: float, light: float) -> tuple[int, int, int]:
 # ============================================================================
 
 
-@fcmd.tool("colortool", subcommand="hex2rgb", help="HEX 转 RGB")
-def hex2rgb_cmd(hex_color: str) -> None:
-    """十六进制颜色转 RGB。
+def _color_cmd(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """执行颜色转换函数，捕获 ValueError 并返回格式化结果或 ``None``。
 
     Parameters
     ----------
-    hex_color:
-        十六进制颜色字符串（``#RRGGBB`` 或 ``RRGGBB``）
+    fn:
+        颜色转换函数（须在参数非法时抛 ``ValueError``）
+    *args:
+        位置参数
+    **kwargs:
+        关键字参数
+
+    Returns
+    -------
+    Any
+        转换结果，失败时返回 ``None``
     """
     try:
-        r, g, b = hex_to_rgb(hex_color)
+        return fn(*args, **kwargs)
     except ValueError as exc:
         print(str(exc))
-        return
-    print(f"{r} {g} {b}")
+        return None
+
+
+@fcmd.tool("colortool", subcommand="hex2rgb", help="HEX 转 RGB")
+def hex2rgb_cmd(hex_color: str) -> None:
+    """十六进制颜色转 RGB。"""
+    result = _color_cmd(hex_to_rgb, hex_color)
+    if result is not None:
+        r, g, b = result
+        print(f"{r} {g} {b}")
 
 
 @fcmd.tool("colortool", subcommand="rgb2hex", help="RGB 转 HEX")
 def rgb2hex_cmd(r: int, g: int, b: int) -> None:
-    """RGB 转十六进制颜色。
-
-    用法：``fcmd colortool rgb2hex <r> <g> <b>``
-
-    Parameters
-    ----------
-    r:
-        红色分量（0-255）
-    g:
-        绿色分量（0-255）
-    b:
-        蓝色分量（0-255）
-    """
-    try:
-        result = rgb_to_hex(r, g, b)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(result)
+    """RGB 转十六进制颜色。"""
+    result = _color_cmd(rgb_to_hex, r, g, b)
+    if result is not None:
+        print(result)
 
 
 @fcmd.tool("colortool", subcommand="rgb2hsl", help="RGB 转 HSL")
 def rgb2hsl_cmd(r: int, g: int, b: int) -> None:
-    """RGB 转 HSL。
-
-    用法：``fcmd colortool rgb2hsl <r> <g> <b>``
-
-    Parameters
-    ----------
-    r:
-        红色分量（0-255）
-    g:
-        绿色分量（0-255）
-    b:
-        蓝色分量（0-255）
-    """
-    try:
-        h, s, light = rgb_to_hsl(r, g, b)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(f"{h} {s} {light}")
+    """RGB 转 HSL。"""
+    result = _color_cmd(rgb_to_hsl, r, g, b)
+    if result is not None:
+        h, s, light = result
+        print(f"{h} {s} {light}")
 
 
 @fcmd.tool("colortool", subcommand="hsl2rgb", help="HSL 转 RGB")
 def hsl2rgb_cmd(h: float, s: float, light: float) -> None:
-    """HSL 转 RGB。
-
-    用法：``fcmd colortool hsl2rgb <h> <s> <light>``
-
-    Parameters
-    ----------
-    h:
-        色相（0-360 度）
-    s:
-        饱和度（0-100 百分比）
-    light:
-        亮度（0-100 百分比）
-    """
-    try:
-        r, g, b = hsl_to_rgb(h, s, light)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(f"{r} {g} {b}")
+    """HSL 转 RGB。"""
+    result = _color_cmd(hsl_to_rgb, h, s, light)
+    if result is not None:
+        r, g, b = result
+        print(f"{r} {g} {b}")
 
 
 @fcmd.main("colortool")
 def main() -> None:
     pass
-
-

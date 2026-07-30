@@ -16,6 +16,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import fcmd
 
 __all__ = [
@@ -253,73 +256,42 @@ def convert_datasize(
 # ============================================================================
 
 
-@fcmd.tool("convtool", subcommand="length", help="长度换算")
-def length_cmd(value: float, from_unit: str, to_unit: str) -> None:
-    """长度换算。
-
-    用法：``fcmd convtool length <value> <from> <to>``
+def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> None:
+    """执行换算函数并打印结果，捕获 ValueError 作为错误信息输出。
 
     Parameters
     ----------
-    value:
-        待换算的数值
-    from_unit:
-        源单位（m/km/cm/mm/mile/ft/in/yd）
-    to_unit:
-        目标单位
+    fn:
+        换算函数（须在单位非法时抛 ``ValueError``）
+    *args:
+        位置参数
+    **kwargs:
+        关键字参数
     """
     try:
-        result = convert_length(value, from_unit, to_unit)
+        result = fn(*args, **kwargs)
     except ValueError as exc:
         print(str(exc))
         return
     print(result)
+
+
+@fcmd.tool("convtool", subcommand="length", help="长度换算")
+def length_cmd(value: float, from_unit: str, to_unit: str) -> None:
+    """长度换算。用法：``fcmd convtool length <value> <from> <to>``"""
+    _print_conversion(convert_length, value, from_unit, to_unit)
 
 
 @fcmd.tool("convtool", subcommand="weight", help="重量换算")
 def weight_cmd(value: float, from_unit: str, to_unit: str) -> None:
-    """重量换算。
-
-    用法：``fcmd convtool weight <value> <from> <to>``
-
-    Parameters
-    ----------
-    value:
-        待换算的数值
-    from_unit:
-        源单位（g/kg/mg/t/lb/oz）
-    to_unit:
-        目标单位
-    """
-    try:
-        result = convert_weight(value, from_unit, to_unit)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(result)
+    """重量换算。用法：``fcmd convtool weight <value> <from> <to>``"""
+    _print_conversion(convert_weight, value, from_unit, to_unit)
 
 
 @fcmd.tool("convtool", subcommand="temp", help="温度换算")
 def temp_cmd(value: float, from_unit: str, to_unit: str) -> None:
-    """温度换算。
-
-    用法：``fcmd convtool temp <value> <from> <to>``
-
-    Parameters
-    ----------
-    value:
-        待换算的数值
-    from_unit:
-        源单位（C/F/K）
-    to_unit:
-        目标单位
-    """
-    try:
-        result = convert_temperature(value, from_unit, to_unit)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(result)
+    """温度换算。用法：``fcmd convtool temp <value> <from> <to>``"""
+    _print_conversion(convert_temperature, value, from_unit, to_unit)
 
 
 @fcmd.tool("convtool", subcommand="datasize", help="数据大小换算")
@@ -329,31 +301,10 @@ def datasize_cmd(
     to_unit: str,
     base: str = "binary",
 ) -> None:
-    """数据大小换算。
-
-    用法：``fcmd convtool datasize <value> <from> <to> [--base binary|decimal]``
-
-    Parameters
-    ----------
-    value:
-        待换算的数值
-    from_unit:
-        源单位（B/KB/MB/GB/TB/PB）
-    to_unit:
-        目标单位
-    base:
-        进制基础（``binary``=1024，默认；``decimal``=1000）
-    """
-    try:
-        result = convert_datasize(value, from_unit, to_unit, base)
-    except ValueError as exc:
-        print(str(exc))
-        return
-    print(result)
+    """数据大小换算。用法：``fcmd convtool datasize <value> <from> <to> [--base binary|decimal]``"""
+    _print_conversion(convert_datasize, value, from_unit, to_unit, base=base)
 
 
 @fcmd.main("convtool")
 def main() -> None:
     pass
-
-
