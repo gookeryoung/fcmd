@@ -24,6 +24,14 @@ from fcmd.cli.timetool import (
     to_unix,
 )
 
+# 框架日志关键词：verbose 模式下 _make_verbose_callback 打印的状态行含这些中文标记
+_FRAMEWORK_MARKERS = ("开始执行", "成功", "失败", "跳过", "错误:")
+
+
+def _extract_user_lines(out: str) -> list[str]:
+    """从 run_tool 输出中提取用户数据行，过滤框架 verbose 状态行。"""
+    return [line for line in out.splitlines() if line and not any(marker in line for marker in _FRAMEWORK_MARKERS)]
+
 
 def _named_tz_available(name: str) -> bool:
     """检查命名时区在当前平台是否可用（Windows 默认无 tzdata 包时不可用）。"""
@@ -243,7 +251,7 @@ class TestTimetoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         # 输出应仅为 4 位年份
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         assert any(line.isdigit() and len(line) == 4 for line in lines)
 
     def test_parse_valid(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -273,7 +281,7 @@ class TestTimetoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         # 输出应包含数字
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         assert any(any(c.isdigit() for c in line) for line in lines)
 
     def test_unix_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:

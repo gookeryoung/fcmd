@@ -22,10 +22,24 @@ from fcmd.cli.randtool import (
     generate_string,
 )
 
-
 # ============================================================================ #
 # 工具注册
 # ============================================================================ #
+
+# 框架日志关键词：verbose 模式下 _make_verbose_callback 打印的状态行含这些中文标记
+_FRAMEWORK_MARKERS = ("开始执行", "成功", "失败", "跳过", "错误:")
+
+
+def _extract_user_lines(out: str) -> list[str]:
+    """从 run_tool 输出中提取用户数据行，过滤框架 verbose 状态行。
+
+    框架 verbose 回调会输出类似 ``> 'password' 开始执行...`` 的状态行，
+    其特征为行内含中文状态标记（开始执行/成功/失败/跳过/错误）。
+    直接用 ``startswith('>')`` 过滤会与随机密码以 ``>`` 开头冲突。
+    """
+    return [line for line in out.splitlines() if line and not any(marker in line for marker in _FRAMEWORK_MARKERS)]
+
+
 class TestRegistration:
     """工具注册与子命令结构测试。"""
 
@@ -227,8 +241,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["password"])
         assert code == 0
         out = capsys.readouterr().out
-        # 提取密码行（框架含前缀/后缀）
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         assert any(len(line) == 16 for line in lines)
 
     def test_password_custom_length(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -236,7 +249,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["password", "--length", "24"])
         assert code == 0
         out = capsys.readouterr().out
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         assert any(len(line) == 24 for line in lines)
 
     def test_password_no_symbols(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -244,7 +257,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["password", "--no-symbols"])
         assert code == 0
         out = capsys.readouterr().out
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         symbol_set = set("!@#$%^&*()-_=+[]{}<>?")
         # 至少有一行不含符号
         assert any(not any(c in symbol_set for c in line) for line in lines)
@@ -261,8 +274,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["number", "1", "100"])
         assert code == 0
         out = capsys.readouterr().out
-        # 提取数字行
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         assert any(line.lstrip("-").isdigit() and 1 <= int(line) <= 100 for line in lines)
 
     def test_number_single_value(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -284,7 +296,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["string"])
         assert code == 0
         out = capsys.readouterr().out
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         assert any(len(line) == 16 for line in lines)
 
     def test_string_custom_chars(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -292,7 +304,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["string", "--length", "20", "--chars", "AB"])
         assert code == 0
         out = capsys.readouterr().out
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         # 至少有一行全部由 A/B 组成且长度 20
         assert any(len(line) == 20 and all(c in "AB" for c in line) for line in lines)
 
@@ -308,7 +320,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["bytes", "16"])
         assert code == 0
         out = capsys.readouterr().out
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         # 16 字节 hex = 32 字符
         assert any(len(line) == 32 and re.fullmatch(r"[0-9a-f]+", line) for line in lines)
 
@@ -317,7 +329,7 @@ class TestRandtoolCLI:
         code = run_tool("randtool", ["bytes", "16", "--encoding", "base64"])
         assert code == 0
         out = capsys.readouterr().out
-        lines = [line for line in out.splitlines() if line and not line.startswith(">") and not line.startswith("OK")]
+        lines = _extract_user_lines(out)
         # 至少有一行可被 base64 解码
         assert any(self._is_valid_base64(line) for line in lines)
 

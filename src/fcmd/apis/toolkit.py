@@ -275,9 +275,7 @@ def main(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
 
         @functools.wraps(func)
         def wrapper(*_args: Any, **_kwargs: Any) -> Any:
-            import fcmd.apis.toolkit as _tk
-
-            sys.exit(_tk.run_tool(tool_name, sys.argv[1:]))
+            sys.exit(run_tool(tool_name, sys.argv[1:]))
 
         return wrapper
 
