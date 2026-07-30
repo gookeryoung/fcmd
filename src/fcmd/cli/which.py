@@ -59,8 +59,6 @@ def which_run(commands: list[str]) -> None:
 
 @fcmd.main("which")
 def main() -> None:
-    """``which`` 入口：等价于 ``fcmd which <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

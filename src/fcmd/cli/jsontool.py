@@ -275,8 +275,6 @@ def jsontool_sort(file: Path, output: str = "") -> None:
 
 @fcmd.main("jsontool")
 def main() -> None:
-    """``jsontool`` 入口：等价于 ``fcmd jsontool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

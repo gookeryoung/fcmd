@@ -354,8 +354,6 @@ def datasize_cmd(
 
 @fcmd.main("convtool")
 def main() -> None:
-    """``convtool`` 入口：等价于 ``fcmd convtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

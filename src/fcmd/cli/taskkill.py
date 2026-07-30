@@ -93,8 +93,6 @@ def taskkill_run(process_names: list[str]) -> None:
 
 @fcmd.main("taskkill")
 def main() -> None:
-    """``taskkill`` 入口：等价于 ``fcmd taskkill <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

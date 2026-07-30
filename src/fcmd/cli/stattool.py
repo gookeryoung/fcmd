@@ -338,8 +338,6 @@ def summarize_cmd(file: Path) -> None:
 
 @fcmd.main("stattool")
 def main() -> None:
-    """``stattool`` 入口：等价于 ``fcmd stattool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

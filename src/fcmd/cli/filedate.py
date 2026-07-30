@@ -166,8 +166,6 @@ def process_files_date_clear(files: list[Path]) -> None:
 
 @fcmd.main("filedate")
 def main() -> None:
-    """``filedate`` 入口：等价于 ``fcmd filedate <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

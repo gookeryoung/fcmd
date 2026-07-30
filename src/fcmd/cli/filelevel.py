@@ -141,8 +141,6 @@ def process_files_level(files: list[Path], level: int = 0) -> None:
 
 @fcmd.main("filelevel")
 def main() -> None:
-    """``filelevel`` 入口：等价于 ``fcmd filelevel <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

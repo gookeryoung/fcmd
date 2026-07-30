@@ -153,8 +153,6 @@ def zip_encrypt(directory: str, password: str, replace: bool = False) -> None:
 
 @fcmd.main("zipencrypt")
 def main() -> None:
-    """``zipencrypt`` 入口：等价于 ``fcmd zipencrypt <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

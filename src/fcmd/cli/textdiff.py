@@ -234,8 +234,6 @@ def textdiff_dir(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = T
 
 @fcmd.main("textdiff")
 def main() -> None:
-    """``textdiff`` 入口：等价于 ``fcmd textdiff <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

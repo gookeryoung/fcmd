@@ -1380,27 +1380,27 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
 
 
 @pytest.mark.parametrize("tool_name, module_path", _MAIN_ENTRY_TOOLS, ids=[t[0] for t in _MAIN_ENTRY_TOOLS])
-def test_tool_main_delegates_run_tool_main(tool_name: str, module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """``<tool>.main()`` 委托 ``run_tool_main`` 并传入正确工具名。
+def test_tool_main_delegates_run_tool(tool_name: str, module_path: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``<tool>.main()`` 通过 ``@fcmd.main`` 委托 ``run_tool`` 并传入正确工具名。
 
     验证各工具模块的 ``main()`` 入口正确绑定工具名，等价于 ``fcmd <tool> <args>``。
-    支持两种模式：
-    - 旧模式：``run_tool_main(name)``
-    - 新模式：``@fcmd.main(name)`` 装饰器 → ``run_tool_main(name)``
-    通过 monkeypatch 替换 ``run_tool_main`` 避免触发真实命令执行与 ``SystemExit``。
+    通过 monkeypatch 替换 ``toolkit.run_tool`` 避免触发真实命令执行与 ``SystemExit``。
     """
     import importlib
 
-    from fcmd.cli import _common
+    from fcmd.apis import toolkit as _toolkit
 
     mod = importlib.import_module(module_path)
     captured: dict[str, str] = {}
 
-    def _fake_run_tool_main(name: str) -> None:
+    def _fake_run_tool(name: str, _args: list[str]) -> int:
         captured["name"] = name
+        return 0
 
-    monkeypatch.setattr(_common, "run_tool_main", _fake_run_tool_main)
-    mod.main()
+    monkeypatch.setattr(_toolkit, "run_tool", _fake_run_tool)
+    with pytest.raises(SystemExit) as exc_info:
+        mod.main()
+    assert exc_info.value.code == 0
     assert captured["name"] == tool_name
 
 
@@ -1420,48 +1420,54 @@ class TestMainDecorator:
 
         assert callable(my_main)
 
-    def test_main_decorator_preserves_name(self) -> None:
-        """装饰器保留原函数名与 docstring。"""
+    def test_main_decorator_auto_docstring(self) -> None:
+        """装饰器自动生成统一格式的中文文档字符串。"""
         import fcmd as fx
-
-        @fx.main("test_tool")
-        def my_main() -> None:
-            """这是我的入口函数。"""
-
-        assert my_main.__name__ == "my_main"
-        assert my_main.__doc__ == "这是我的入口函数。"
-
-    def test_main_decorator_calls_run_tool_main(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """装饰器内部调用 run_tool_main 并传入正确工具名。"""
-        import fcmd as fx
-        from fcmd.cli import _common
-
-        captured: dict[str, str] = {}
-
-        def _fake_run_tool_main(name: str) -> None:
-            captured["name"] = name
-
-        monkeypatch.setattr(_common, "run_tool_main", _fake_run_tool_main)
 
         @fx.main("my_tool")
         def my_main() -> None:
             pass
 
-        my_main()
+        expected = "``my_tool`` 入口：等价于 ``fcmd my_tool <args>``。"
+        assert my_main.__doc__ == expected
+
+    def test_main_decorator_calls_run_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """装饰器内部调用 run_tool 并传入正确工具名。"""
+        import fcmd as fx
+        from fcmd.apis import toolkit as _toolkit
+
+        captured: dict[str, str] = {}
+
+        def _fake_run_tool(name: str, _args: list[str]) -> int:
+            captured["name"] = name
+            return 0
+
+        monkeypatch.setattr(_toolkit, "run_tool", _fake_run_tool)
+
+        @fx.main("my_tool")
+        def my_main() -> None:
+            pass
+
+        with pytest.raises(SystemExit) as exc_info:
+            my_main()
+        assert exc_info.value.code == 0
         assert captured["name"] == "my_tool"
 
     def test_lscalc_main_uses_decorator(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """lscalc.main() 使用 @fcmd.main 装饰器并绑定正确工具名。"""
-        from fcmd.cli import _common
+        from fcmd.apis import toolkit as _toolkit
 
         captured: dict[str, str] = {}
 
-        def _fake_run_tool_main(name: str) -> None:
+        def _fake_run_tool(name: str, _args: list[str]) -> int:
             captured["name"] = name
+            return 0
 
-        monkeypatch.setattr(_common, "run_tool_main", _fake_run_tool_main)
+        monkeypatch.setattr(_toolkit, "run_tool", _fake_run_tool)
 
         from fcmd.cli.lscalc import main
 
-        main()
+        with pytest.raises(SystemExit) as exc_info:
+            main()
+        assert exc_info.value.code == 0
         assert captured["name"] == "lscalc"

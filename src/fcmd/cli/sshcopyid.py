@@ -88,8 +88,6 @@ def ssh_copy_id(  # noqa: PLR0913
 
 @fcmd.main("sshcopyid")
 def main() -> None:
-    """``sshcopyid`` 入口：等价于 ``fcmd sshcopyid <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -266,8 +266,6 @@ def bytes_cmd(length: int, encoding: str = "hex") -> None:
 
 @fcmd.main("randtool")
 def main() -> None:
-    """``randtool`` 入口：等价于 ``fcmd randtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

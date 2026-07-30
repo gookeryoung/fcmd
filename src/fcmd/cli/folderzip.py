@@ -74,8 +74,6 @@ def zip_folders(directory: str = ".") -> None:
 
 @fcmd.main("folderzip")
 def main() -> None:
-    """``folderzip`` 入口：等价于 ``fcmd folderzip <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

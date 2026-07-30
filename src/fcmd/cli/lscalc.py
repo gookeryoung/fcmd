@@ -352,8 +352,6 @@ def check_ls_dyna_status() -> None:
 
 @fcmd.main("lscalc")
 def main() -> None:
-    """``lscalc`` 入口：等价于 ``fcmd lscalc <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

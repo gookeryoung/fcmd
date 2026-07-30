@@ -69,8 +69,6 @@ def reset_icon_cache_run() -> None:
 
 @fcmd.main("reseticoncache")
 def main() -> None:
-    """``reseticoncache`` 入口：等价于 ``fcmd reseticoncache <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

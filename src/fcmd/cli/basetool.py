@@ -277,8 +277,6 @@ def hex_cmd(text: str, decode: bool = False) -> None:
 
 @fcmd.main("basetool")
 def main() -> None:
-    """``basetool`` 入口：等价于 ``fcmd basetool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

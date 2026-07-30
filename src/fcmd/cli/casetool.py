@@ -192,8 +192,6 @@ def kebab_cmd(text: str) -> None:
 
 @fcmd.main("casetool")
 def main() -> None:
-    """``casetool`` 入口：等价于 ``fcmd casetool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

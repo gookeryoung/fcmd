@@ -114,8 +114,6 @@ def sysinfo_run() -> None:
 
 @fcmd.main("sysinfo")
 def main() -> None:
-    """``sysinfo`` 入口：等价于 ``fcmd sysinfo <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

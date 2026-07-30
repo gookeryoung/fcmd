@@ -293,8 +293,6 @@ def time_convert_cmd(
 
 @fcmd.main("timetool")
 def main() -> None:
-    """``timetool`` 入口：等价于 ``fcmd timetool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

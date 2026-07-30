@@ -46,8 +46,6 @@ def docker_login(username: str = "", registry: str = _DEFAULT_REGISTRY) -> None:
 
 @fcmd.main("dockercmd")
 def main() -> None:
-    """``dockercmd`` 入口：等价于 ``fcmd dockercmd <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -241,8 +241,6 @@ def baseurl_cmd(url: str) -> None:
 
 @fcmd.main("urltool")
 def main() -> None:
-    """``urltool`` 入口：等价于 ``fcmd urltool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

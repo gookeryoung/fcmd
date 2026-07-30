@@ -336,8 +336,6 @@ def xml_validate_cmd(file: Path) -> None:
 
 @fcmd.main("xmltool")
 def main() -> None:
-    """``xmltool`` 入口：等价于 ``fcmd xmltool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

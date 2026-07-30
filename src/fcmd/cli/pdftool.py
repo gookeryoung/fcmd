@@ -567,8 +567,6 @@ def pdf_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> No
 
 @fcmd.main("pdftool")
 def main() -> None:
-    """``pdftool`` 入口：等价于 ``fcmd pdftool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

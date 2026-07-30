@@ -57,8 +57,6 @@ def clear_screen_run() -> None:
 
 @fcmd.main("clr")
 def main() -> None:
-    """``clr`` 入口：等价于 ``fcmd clr <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -176,8 +176,6 @@ def pl() -> None:
 
 @fcmd.main("gittool")
 def main() -> None:
-    """``gittool`` 入口：等价于 ``fcmd gittool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -205,8 +205,6 @@ def validate_cmd(ip: str) -> None:
 
 @fcmd.main("iptool")
 def main() -> None:
-    """``iptool`` 入口：等价于 ``fcmd iptool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

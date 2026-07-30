@@ -181,8 +181,6 @@ def table_cmd(start: int = _PRINTABLE_START, end: int = _PRINTABLE_END) -> None:
 
 @fcmd.main("asciitool")
 def main() -> None:
-    """``asciitool`` 入口：等价于 ``fcmd asciitool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

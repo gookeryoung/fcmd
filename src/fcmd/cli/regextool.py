@@ -242,8 +242,6 @@ def split_cmd(pattern: str, text: str) -> None:
 
 @fcmd.main("regextool")
 def main() -> None:
-    """``regextool`` 入口：等价于 ``fcmd regextool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

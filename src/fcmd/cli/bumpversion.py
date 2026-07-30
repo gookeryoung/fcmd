@@ -304,8 +304,6 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
 
 @fcmd.main("bumpversion")
 def main() -> None:
-    """``bumpversion`` 入口：等价于 ``fcmd bumpversion <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

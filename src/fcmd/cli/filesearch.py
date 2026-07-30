@@ -271,8 +271,6 @@ def filesearch_content(
 
 @fcmd.main("filesearch")
 def main() -> None:
-    """``filesearch`` 入口：等价于 ``fcmd filesearch <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

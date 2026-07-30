@@ -311,8 +311,6 @@ def all_(cwd: Path = Path()) -> None:
 
 @fcmd.main("pymake")
 def main() -> None:
-    """``pymake`` 入口：等价于 ``fcmd pymake <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

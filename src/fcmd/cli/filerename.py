@@ -212,8 +212,6 @@ def filerename_case(files: list[Path], mode: str = "lower", preview: bool = Fals
 
 @fcmd.main("filerename")
 def main() -> None:
-    """``filerename`` 入口：等价于 ``fcmd filerename <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -323,8 +323,6 @@ def yaml_validate_cmd(file: Path) -> None:
 
 @fcmd.main("yamtool")
 def main() -> None:
-    """``yamtool`` 入口：等价于 ``fcmd yamtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

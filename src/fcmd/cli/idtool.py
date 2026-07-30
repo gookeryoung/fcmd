@@ -164,8 +164,6 @@ def random_cmd(length: int = 16) -> None:
 
 @fcmd.main("idtool")
 def main() -> None:
-    """``idtool`` 入口：等价于 ``fcmd idtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

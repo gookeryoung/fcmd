@@ -33,8 +33,6 @@ def write_file_run(path: str, content: str, encoding: str = "utf-8") -> None:
 
 @fcmd.main("writefile")
 def main() -> None:
-    """``writefile`` 入口：等价于 ``fcmd writefile <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

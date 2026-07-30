@@ -305,8 +305,6 @@ def html_cmd(text: str, decode: bool = False) -> None:
 
 @fcmd.main("codetool")
 def main() -> None:
-    """``codetool`` 入口：等价于 ``fcmd codetool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

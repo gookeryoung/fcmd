@@ -210,8 +210,6 @@ def txt_case_cmd(path: str, mode: str = "upper") -> None:
 
 @fcmd.main("txttool")
 def main() -> None:
-    """``txttool`` 入口：等价于 ``fcmd txttool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

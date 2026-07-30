@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-__all__ = ["IGNORE_DIRS", "IGNORE_EXT", "_BUILTIN_COMMANDS", "run_tool_main"]
+__all__ = ["IGNORE_DIRS", "IGNORE_EXT", "_BUILTIN_COMMANDS"]
 
 # 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
 # 放在此处供 main.py / _completion_scripts.py 共享，避免循环导入
@@ -31,17 +31,3 @@ IGNORE_DIRS: set[str] = {
 
 # 文件遍历时跳过的扩展名（压缩包等）
 IGNORE_EXT: set[str] = {".zip", ".rar", ".7z", ".tar", ".gz", ".pyc", ".pyo"}
-
-
-def run_tool_main(tool_name: str) -> None:
-    """工具模块独立入口：等价于 ``fcmd <tool_name> <args>``。
-
-    供各工具模块的 ``main()`` 调用，统一封装 ``sys.exit(run_tool(...))`` 样板，
-    避免 30+ 个模块重复同一段代码。在函数内部局部导入 ``run_tool`` 与 ``sys``，
-    不影响模块冷启动导入开销。
-    """
-    import sys
-
-    from fcmd.apis import run_tool
-
-    sys.exit(run_tool(tool_name, sys.argv[1:]))

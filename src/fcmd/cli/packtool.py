@@ -268,8 +268,6 @@ def clean_build_dir(build_dir: Path = Path(".pypack")) -> None:
 
 @fcmd.main("packtool")
 def main() -> None:
-    """``packtool`` 入口：等价于 ``fcmd packtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

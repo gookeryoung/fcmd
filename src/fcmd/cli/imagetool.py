@@ -569,8 +569,6 @@ def image_colors(
 
 @fcmd.main("imagetool")
 def main() -> None:
-    """``imagetool`` 入口：等价于 ``fcmd imagetool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

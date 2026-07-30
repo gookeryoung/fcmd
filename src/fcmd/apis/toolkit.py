@@ -253,6 +253,7 @@ def main(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
 
     等价于 ``fcmd <tool_name> <args>`` 的快捷入口，
     封装 ``sys.exit(run_tool(...))`` 样板代码。
+    自动将函数体替换为 ``pass``，并生成统一的中文文档字符串。
 
     Parameters
     ----------
@@ -264,21 +265,19 @@ def main(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
         @fx.main("lscalc")
         def main() -> None:
             pass
-
-        # 等价于：
-        # def main() -> None:
-        #     from fcmd.cli._common import run_tool_main
-        #     run_tool_main("lscalc")
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         import functools
+        import sys
+
+        func.__doc__ = f"``{tool_name}`` 入口：等价于 ``fcmd {tool_name} <args>``。"
 
         @functools.wraps(func)
         def wrapper(*_args: Any, **_kwargs: Any) -> Any:
-            from fcmd.cli._common import run_tool_main
+            import fcmd.apis.toolkit as _tk
 
-            run_tool_main(tool_name)
+            sys.exit(_tk.run_tool(tool_name, sys.argv[1:]))
 
         return wrapper
 

@@ -215,8 +215,6 @@ def pathtool_diff(p1: Path, p2: Path) -> None:
 
 @fcmd.main("pathtool")
 def main() -> None:
-    """``pathtool`` 入口：等价于 ``fcmd pathtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

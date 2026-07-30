@@ -528,8 +528,6 @@ def archivex_create(source: Path, output: Path) -> None:
 
 @fcmd.main("archivex")
 def main() -> None:
-    """``archivex`` 入口：等价于 ``fcmd archivex <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

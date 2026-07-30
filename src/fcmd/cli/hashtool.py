@@ -178,8 +178,6 @@ def sha512_cmd(text: str) -> None:
 
 @fcmd.main("hashtool")
 def main() -> None:
-    """``hashtool`` 入口：等价于 ``fcmd hashtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -39,8 +39,6 @@ def setenv_run(name: str, value: str, default: bool = False) -> None:
 
 @fcmd.main("setenv")
 def main() -> None:
-    """``setenv`` 入口：等价于 ``fcmd setenv <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

@@ -126,8 +126,6 @@ def take_screenshot_area(filename: str | None = None) -> None:
 
 @fcmd.main("screenshot")
 def main() -> None:
-    """``screenshot`` 入口：等价于 ``fcmd screenshot <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

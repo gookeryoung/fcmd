@@ -395,8 +395,6 @@ def install_linux_docker() -> None:
 
 @fcmd.main("envdev")
 def main() -> None:
-    """``envdev`` 入口：等价于 ``fcmd envdev <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

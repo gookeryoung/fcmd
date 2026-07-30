@@ -238,8 +238,6 @@ def factorial_cmd(n: int) -> None:
 
 @fcmd.main("mathtool")
 def main() -> None:
-    """``mathtool`` 入口：等价于 ``fcmd mathtool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

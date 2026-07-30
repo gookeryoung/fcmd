@@ -177,8 +177,6 @@ def head_cmd(url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
 
 @fcmd.main("nettool")
 def main() -> None:
-    """``nettool`` 入口：等价于 ``fcmd nettool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

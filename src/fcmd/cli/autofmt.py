@@ -59,8 +59,6 @@ def lint(target: str = ".", fix: bool = False) -> None:
 
 @fcmd.main("autofmt")
 def main() -> None:
-    """``autofmt`` 入口：等价于 ``fcmd autofmt <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()

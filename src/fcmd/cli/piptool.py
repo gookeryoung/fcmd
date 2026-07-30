@@ -193,8 +193,6 @@ def pip_freeze() -> None:
 
 @fcmd.main("piptool")
 def main() -> None:
-    """``piptool`` 入口：等价于 ``fcmd piptool <args>``。"""
+    pass
 
 
-if __name__ == "__main__":
-    main()
