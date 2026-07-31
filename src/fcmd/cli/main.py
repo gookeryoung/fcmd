@@ -390,6 +390,7 @@ class FcmdApp:
         else:
             script = gen_fish_script(tools_data)
         sys.stdout.write(script)
+        sys.stdout.flush()
         return 0
 
     def _collect_completion_data(self) -> list[dict[str, Any]]:
@@ -527,6 +528,7 @@ class FcmdApp:
                 "optional_deps": optional_deps,
             }
             sys.stdout.write(json_mod.dumps(data, ensure_ascii=False, indent=2))
+            sys.stdout.flush()
             return 0
 
         console = get_console()

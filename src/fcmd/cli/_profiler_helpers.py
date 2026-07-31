@@ -112,6 +112,7 @@ def output_profile(
     if export == "text":
         sys.stdout.write(profile.describe())
         sys.stdout.write("\n")
+        sys.stdout.flush()
         return
 
     # HTML 格式

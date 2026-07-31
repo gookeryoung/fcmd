@@ -484,6 +484,19 @@ class Console:
             self._apply_win_color(frozenset())
         out.write(end)
 
+    @staticmethod
+    def _flush(out: Any) -> None:
+        """安全 flush 输出流。
+
+        PyInstaller/fspacker 打包后通过管道调用时，stdout 为全缓冲；
+        若不在每次 print 后 flush，缓冲区内容在进程退出前不会写出，
+        导致管道接收端看不到任何输出（``fcmd ... | less`` 等场景显示为空）。
+        rich Console 默认每次 print 后 flush，自实现需对齐此行为。
+        """
+        flush = getattr(out, "flush", None)
+        if callable(flush):
+            flush()
+
     def print(self, *args: Any, **kwargs: Any) -> None:
         """输出到 console，支持 rich 风格 markup。
 
@@ -504,10 +517,13 @@ class Console:
             if style:
                 text = f"[{style}]{text}[/{style}]"
 
+        out = self._out
         if self._legacy and self._color_enabled:
             self._write_legacy(text, end)
         else:
-            self._out.write(self._render_text(text) + end)
+            out.write(self._render_text(text) + end)
+        # 对齐 rich 默认行为：每次 print 后 flush，避免管道场景下输出丢失。
+        self._flush(out)
 
 
 # ---------------------------------------------------------------------- #
