@@ -142,3 +142,7 @@ def process_files_level(files: list[Path], level: int = 0) -> None:
 @fcmd.main("filelevel")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

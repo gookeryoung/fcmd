@@ -305,3 +305,7 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
 @fcmd.main("bumpversion")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

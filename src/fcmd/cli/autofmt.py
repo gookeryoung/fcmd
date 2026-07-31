@@ -60,3 +60,7 @@ def lint(target: str = ".", fix: bool = False) -> None:
 @fcmd.main("autofmt")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

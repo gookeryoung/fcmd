@@ -89,3 +89,7 @@ def ssh_copy_id(  # noqa: PLR0913
 @fcmd.main("sshcopyid")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

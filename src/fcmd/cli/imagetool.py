@@ -570,3 +570,7 @@ def image_colors(
 @fcmd.main("imagetool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

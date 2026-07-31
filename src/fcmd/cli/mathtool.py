@@ -239,3 +239,7 @@ def factorial_cmd(n: int) -> None:
 @fcmd.main("mathtool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

@@ -454,3 +454,7 @@ def csvtool_merge(files: list[Path], mode: str = "union", output: str = "") -> N
 @fcmd.main("csvtool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

@@ -276,3 +276,7 @@ def jsontool_sort(file: Path, output: str = "") -> None:
 @fcmd.main("jsontool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

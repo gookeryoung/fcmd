@@ -194,3 +194,7 @@ def pip_freeze() -> None:
 @fcmd.main("piptool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

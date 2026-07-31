@@ -235,3 +235,7 @@ def textdiff_dir(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = T
 @fcmd.main("textdiff")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

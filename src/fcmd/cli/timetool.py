@@ -294,3 +294,7 @@ def time_convert_cmd(
 @fcmd.main("timetool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

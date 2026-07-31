@@ -324,3 +324,7 @@ def yaml_validate_cmd(file: Path) -> None:
 @fcmd.main("yamtool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

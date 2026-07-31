@@ -258,3 +258,7 @@ def hex_cmd(text: str, decode: bool = False) -> None:
 @fcmd.main("basetool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

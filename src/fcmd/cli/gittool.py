@@ -181,3 +181,7 @@ def pl() -> None:
 @fcmd.main("gittool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

@@ -273,3 +273,7 @@ def hsl2rgb_cmd(h: float, s: float, light: float) -> None:
 @fcmd.main("colortool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

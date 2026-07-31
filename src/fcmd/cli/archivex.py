@@ -529,3 +529,7 @@ def archivex_create(source: Path, output: Path) -> None:
 @fcmd.main("archivex")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

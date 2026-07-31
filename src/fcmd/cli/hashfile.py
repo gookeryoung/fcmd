@@ -142,3 +142,7 @@ def hash_dir_cmd(directory: str, algorithm: str = "sha256") -> None:
 @fcmd.main("hashfile")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

@@ -272,3 +272,7 @@ def filesearch_content(
 @fcmd.main("filesearch")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

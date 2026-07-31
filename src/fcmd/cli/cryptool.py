@@ -352,3 +352,7 @@ def decrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
 @fcmd.main("cryptool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

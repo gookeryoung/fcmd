@@ -306,3 +306,7 @@ def html_cmd(text: str, decode: bool = False) -> None:
 @fcmd.main("codetool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

@@ -243,3 +243,7 @@ def split_cmd(pattern: str, text: str) -> None:
 @fcmd.main("regextool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

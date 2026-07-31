@@ -98,3 +98,7 @@ def backup_folder(src: str = ".", dst: str = "./backup", max_zip: int = 5) -> No
 @fcmd.main("folderback")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

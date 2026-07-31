@@ -58,3 +58,7 @@ def clear_screen_run() -> None:
 @fcmd.main("clr")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

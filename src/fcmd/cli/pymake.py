@@ -323,3 +323,7 @@ def publish_pypi(cwd: Path = Path()) -> None:
 @fcmd.main("pymake")
 def main() -> None:
     """pymake 主程序."""
+
+
+if __name__ == "__main__":
+    main()

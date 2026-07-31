@@ -206,3 +206,7 @@ def validate_cmd(ip: str) -> None:
 @fcmd.main("iptool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

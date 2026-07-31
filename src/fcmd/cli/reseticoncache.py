@@ -70,3 +70,7 @@ def reset_icon_cache_run() -> None:
 @fcmd.main("reseticoncache")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

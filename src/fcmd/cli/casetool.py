@@ -193,3 +193,7 @@ def kebab_cmd(text: str) -> None:
 @fcmd.main("casetool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

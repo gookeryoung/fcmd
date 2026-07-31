@@ -40,3 +40,7 @@ def setenv_run(name: str, value: str, default: bool = False) -> None:
 @fcmd.main("setenv")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

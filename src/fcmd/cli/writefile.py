@@ -34,3 +34,7 @@ def write_file_run(path: str, content: str, encoding: str = "utf-8") -> None:
 @fcmd.main("writefile")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

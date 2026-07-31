@@ -115,3 +115,7 @@ def sysinfo_run() -> None:
 @fcmd.main("sysinfo")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

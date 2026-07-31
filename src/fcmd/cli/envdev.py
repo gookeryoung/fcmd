@@ -396,3 +396,7 @@ def install_linux_docker() -> None:
 @fcmd.main("envdev")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

@@ -178,3 +178,7 @@ def head_cmd(url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
 @fcmd.main("nettool")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()

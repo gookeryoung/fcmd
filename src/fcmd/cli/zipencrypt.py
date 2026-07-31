@@ -154,3 +154,7 @@ def zip_encrypt(directory: str, password: str, replace: bool = False) -> None:
 @fcmd.main("zipencrypt")
 def main() -> None:
     pass
+
+
+if __name__ == "__main__":
+    main()
