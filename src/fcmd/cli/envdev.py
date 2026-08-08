@@ -9,9 +9,7 @@
     fcmd envdev setup-python                      # 配置 Python 镜像源（默认清华）
     fcmd envdev setup-python --mirror aliyun      # 配置阿里云镜像源
     fcmd envdev setup-conda --mirror ustc         # 配置 Conda 镜像源
-    fcmd envdev setup-rust --mirror tsinghua      # 配置 Rust 镜像源
-    fcmd envdev download-rustup                   # 下载 Rustup 安装脚本
-    fcmd envdev install-rust --version stable     # 安装 Rust 工具链
+    fcmd envdev rust --mirror tsinghua nightly    # 配置 Rust 环境
 """
 
 from __future__ import annotations
@@ -26,15 +24,12 @@ import fcmd
 from fcmd.models import run_command
 
 __all__ = [
-    "download_rustup_script",
     "install_linux_docker",
     "install_linux_fonts",
     "install_linux_qt_libs",
-    "install_rust_toolchain",
     "setup_conda_mirror",
     "setup_linux_system_mirror",
     "setup_python_mirror",
-    "setup_rust_mirror",
 ]
 
 # ============================================================================
@@ -235,8 +230,11 @@ def setup_conda_mirror(mirror: str = "tsinghua") -> None:
     print(f"Conda 镜像源已配置: {mirror} -> {config_path}")
 
 
-@fcmd.tool("envdev", subcommand="setup-rust", help="配置 Rust 镜像源")
-def setup_rust_mirror(mirror: str = "tsinghua") -> None:
+# ============================================================================
+# Rust 工具链安装
+# ============================================================================
+@fcmd.tool("envdev", subcommand="setup-rust", help="配置 Rust 镜像源", hidden=True)
+def _setup_rust_mirror(mirror: str = "tsinghua") -> None:
     """配置 Rust 镜像源（设置环境变量 + 写入 cargo config + 创建 sccache 目录）。
 
     设置 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` / ``RUST_SCCACHE_DIR``
@@ -271,13 +269,8 @@ def setup_rust_mirror(mirror: str = "tsinghua") -> None:
     print(f"Rust 镜像源已配置: {mirror} -> {config_path}")
 
 
-# ============================================================================
-# Rust 工具链安装
-# ============================================================================
-
-
-@fcmd.tool("envdev", subcommand="download-rustup", help="下载 Rustup 安装脚本")
-def download_rustup_script() -> None:
+@fcmd.tool("envdev", subcommand="download-rustup", help="下载 Rustup 安装脚本", hidden=True)
+def _download_rustup() -> None:
     """下载 Rustup 安装脚本（跨平台，已安装 rustup 时跳过）。
 
     Linux 下载 ``rustup-init.sh``，Windows 下载 ``rustup-init.exe``。
@@ -304,8 +297,8 @@ def download_rustup_script() -> None:
         run_command(["curl", "-fsSL", _RUSTUP_DOWNLOAD_URL_LINUX, "-o", "rustup-init.sh"])
 
 
-@fcmd.tool("envdev", subcommand="install-rust", help="安装 Rust 工具链")
-def install_rust_toolchain(version: str = "stable") -> None:
+@fcmd.tool("envdev", subcommand="install-rust", help="安装 Rust 工具链", hidden=True)
+def _install_rust_toolchain(version: str = "stable") -> None:
     """安装 Rust 工具链（rustup 未安装时跳过）。
 
     Parameters
@@ -319,6 +312,42 @@ def install_rust_toolchain(version: str = "stable") -> None:
 
     run_command(["rustup", "toolchain", "install", version])
     print(f"Rust 工具链 {version} 安装完成")
+
+
+@fcmd.tool("envdev", subcommand="rust", help="配置 Rust 环境")
+def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
+    """配置 Rust 环境（设置环境变量 + 写入 cargo config + 创建 sccache 目录）。
+
+    设置 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` / ``RUST_SCCACHE_DIR``
+    等环境变量，写入 ``~/.cargo/config.toml``，并创建 sccache 缓存目录。
+    """
+    _setup_rust_mirror(mirror)
+    _download_rustup()
+    _install_rust_toolchain(rust_version)
+
+
+# ============================================================================
+# JavaScript 工具链安装
+# ============================================================================
+
+
+@fcmd.tool("envdev", subcommand="js-bun", help="配置 Bun 环境变量")
+def install_js_bun() -> None:
+    """安装 Bun.js（已安装 Bun.js 时跳过）。
+
+    安装 Bun.js 后，将 Bun.js 的 ``bin`` 目录添加到 ``PATH`` 环境变量中。
+    """
+    if shutil.which("bun") is not None:
+        print("bun 环境变量已配置，跳过安装")
+        return
+
+    print("更新系统包...")
+    run_command(["sudo", "apt", "update"])
+    run_command(["sudo", "apt", "install", "-y", "curl", "zip", "unzip"])
+
+    print("下载 Bun.js...")
+    run_command(["bash", "-c", "curl -fsSL https://bun.sh/install | bash"])
+    print("Bun.js 安装完成")
 
 
 # ============================================================================
