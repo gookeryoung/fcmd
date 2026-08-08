@@ -1,6 +1,6 @@
 """envdev - 开发环境镜像源配置工具。
 
-配置 Python / Conda / Rust 镜像源（Linux 还会安装 Qt 库、中文字体、Docker）。
+配置 Python / Conda / Rust / Bun 镜像源（Linux 还会安装 Qt 库、中文字体、Docker）。
 所有镜像源参数互不影响，可单独使用。Linux 专用操作（系统镜像/Qt/字体/Docker）
 在非 Linux 平台上由函数内部跳过。
 
@@ -9,7 +9,8 @@
     fcmd envdev setup-python                      # 配置 Python 镜像源（默认清华）
     fcmd envdev setup-python --mirror aliyun      # 配置阿里云镜像源
     fcmd envdev setup-conda --mirror ustc         # 配置 Conda 镜像源
-    fcmd envdev rust --mirror tsinghua nightly    # 配置 Rust 环境
+    fcmd envdev rust --mirror tsinghua nightly    # 配置 Rust 环境（镜像源 + 下载 + 安装）
+    fcmd envdev js-bun                            # 配置 Bun 环境（镜像源 + 安装）
 """
 
 from __future__ import annotations
@@ -27,9 +28,11 @@ __all__ = [
     "install_linux_docker",
     "install_linux_fonts",
     "install_linux_qt_libs",
+    "setup_bun_env",
     "setup_conda_mirror",
     "setup_linux_system_mirror",
     "setup_python_mirror",
+    "setup_rust_env",
 ]
 
 # ============================================================================
@@ -157,6 +160,9 @@ _INSTALL_MIRROR_SCRIPT: str = "sudo bash /tmp/linuxmirrors.sh"
 
 _RUSTUP_DOWNLOAD_URL_LINUX: str = "https://mirrors.aliyun.com/repo/rust/rustup-init.sh"
 _RUSTUP_DOWNLOAD_URL_WINDOWS: str = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
+
+_BUN_NPM_REGISTRY: str = "https://registry.npmmirror.com"
+_BUN_INSTALL_SCRIPT_URL: str = "https://bun.sh/install"
 
 
 # ============================================================================
@@ -315,11 +321,19 @@ def _install_rust_toolchain(version: str = "stable") -> None:
 
 
 @fcmd.tool("envdev", subcommand="rust", help="配置 Rust 环境")
-def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
-    """配置 Rust 环境（设置环境变量 + 写入 cargo config + 创建 sccache 目录）。
+def setup_rust_env(mirror: str = "tsinghua", rust_version: str = "stable") -> None:
+    """配置 Rust 环境（镜像源 + 下载 rustup + 安装工具链）。
 
-    设置 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` / ``RUST_SCCACHE_DIR``
-    等环境变量，写入 ``~/.cargo/config.toml``，并创建 sccache 缓存目录。
+    依次执行：配置 Rust 镜像源（环境变量 + ``~/.cargo/config.toml`` + sccache 目录）、
+    下载 Rustup 安装脚本（已安装 rustup 时跳过）、安装指定版本工具链
+    （rustup 未安装时跳过）。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：tsinghua/ustc/aliyun（默认 tsinghua）
+    rust_version:
+        Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
     """
     _setup_rust_mirror(mirror)
     _download_rustup()
@@ -331,23 +345,55 @@ def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="js-bun", help="配置 Bun 环境变量")
-def install_js_bun() -> None:
-    """安装 Bun.js（已安装 Bun.js 时跳过）。
+@fcmd.tool("envdev", subcommand="setup-bun", help="配置 Bun 镜像源", hidden=True)
+def _setup_bun_mirror() -> None:
+    """配置 Bun npm 镜像源（设置环境变量 + 写入 ``~/.bunfig.toml``）。
 
-    安装 Bun.js 后，将 Bun.js 的 ``bin`` 目录添加到 ``PATH`` 环境变量中。
+    设置 ``BUN_CONFIG_REGISTRY`` 环境变量，并写入 bunfig.toml 指向 npmmirror。
+    """
+    os.environ["BUN_CONFIG_REGISTRY"] = _BUN_NPM_REGISTRY
+
+    config_path = Path.home() / ".bunfig.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    content = f'[install]\nregistry = "{_BUN_NPM_REGISTRY}"\n'
+    config_path.write_text(content, encoding="utf-8")
+    print(f"Bun 镜像源已配置: {_BUN_NPM_REGISTRY} -> {config_path}")
+
+
+@fcmd.tool("envdev", subcommand="install-bun", help="安装 Bun", hidden=True)
+def _install_bun() -> None:
+    """安装 Bun.js（已安装时跳过）。
+
+    Linux/macOS 通过官方脚本安装（Linux 先安装 curl/zip/unzip 依赖）；
+    Windows 提示使用 PowerShell 安装命令。
     """
     if shutil.which("bun") is not None:
-        print("bun 环境变量已配置，跳过安装")
+        print("bun 已安装，跳过安装")
         return
 
-    print("更新系统包...")
-    run_command(["sudo", "apt", "update"])
-    run_command(["sudo", "apt", "install", "-y", "curl", "zip", "unzip"])
+    if sys.platform == "win32":
+        print("Windows 请使用 PowerShell 执行: irm bun.sh/install.ps1 | iex")
+        return
 
-    print("下载 Bun.js...")
-    run_command(["bash", "-c", "curl -fsSL https://bun.sh/install | bash"])
+    if sys.platform.startswith("linux"):
+        print("更新系统包...")
+        run_command(["sudo", "apt", "update"])
+        run_command(["sudo", "apt", "install", "-y", "curl", "zip", "unzip"])
+
+    print("下载并安装 Bun.js...")
+    run_command(["bash", "-c", f"curl -fsSL {_BUN_INSTALL_SCRIPT_URL} | bash"])
     print("Bun.js 安装完成")
+
+
+@fcmd.tool("envdev", subcommand="js-bun", help="配置 Bun 环境")
+def setup_bun_env() -> None:
+    """配置 Bun 环境（配置 npm 镜像源 + 安装 Bun.js）。
+
+    依次执行：配置 Bun npm 镜像源（环境变量 + ``~/.bunfig.toml``）、
+    安装 Bun.js（已安装时跳过）。
+    """
+    _setup_bun_mirror()
+    _install_bun()
 
 
 # ============================================================================
