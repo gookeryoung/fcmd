@@ -395,6 +395,7 @@ class SyncTaskRunner:
                 _mark_success(result, value)
                 return result
             except Exception as exc:
+                # 用户提供的任务函数可抛任意异常，宽捕获用于重试/失败处理边界
                 if _handle_failure(spec, result, exc, layer_idx, ctx):
                     return result
                 wait = spec.retry.wait_seconds(result.attempts)
@@ -430,6 +431,7 @@ class AsyncTaskRunner:
                 _mark_success(result, value)
                 return result
             except Exception as exc:
+                # 异步任务函数可抛任意异常，宽捕获用于重试/失败处理边界
                 if _handle_failure(spec, result, exc, layer_idx, ctx):
                     return result
                 wait = spec.retry.wait_seconds(result.attempts)

@@ -762,6 +762,7 @@ class FcmdApp:
             # 脚本调用了 sys.exit，属正常情况
             pass
         except Exception as e:
+            # 用户脚本可抛任意异常，宽捕获防止单个脚本失败影响主流程
             get_console().print(f"[yellow]警告:[/yellow] 脚本执行抛出异常: {e}")
 
         # 还原 hook

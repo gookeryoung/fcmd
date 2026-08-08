@@ -59,8 +59,8 @@ def which_run(commands: list[str]) -> None:
 
 @fcmd.main("which")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     main()

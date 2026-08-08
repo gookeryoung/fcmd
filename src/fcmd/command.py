@@ -29,6 +29,7 @@ def _run_callable_command(cmd: Any, verbose: bool, cwd: Path | None) -> Any:
     try:
         return cmd()
     except Exception as e:
+        # 用户提供的可调用对象可抛任意异常，包装为 RuntimeError 统一上报
         raise RuntimeError(f"可调用命令执行异常: {name}: {e}") from e
 
 

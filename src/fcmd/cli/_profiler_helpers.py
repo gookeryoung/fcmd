@@ -130,4 +130,5 @@ def output_profile(
         try:
             webbrowser.open(f"file:///{out_path.resolve().as_posix()}")
         except Exception as e:
+            # webbrowser.open 可抛 OS 级或 webbrowser.Error，属非关键功能
             get_console().print(f"[yellow]警告:[/yellow] 无法打开浏览器: {e}")
