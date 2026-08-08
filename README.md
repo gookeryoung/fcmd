@@ -155,7 +155,7 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU） |
-| `portcheck` | - | 端口检查与扫描（纯 socket，跨平台） |
+| `portcheck` | - | 端口检查与扫描（socket 检测占用，lsof/netstat 查询占用进程，跨平台） |
 | `taskkill` | - | 按名称终止进程（Windows taskkill / Unix pkill） |
 | `which` | - | 查找可执行命令路径 |
 | `clr` | - | 跨平台清屏 |
