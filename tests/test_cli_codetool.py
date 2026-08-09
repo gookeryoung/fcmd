@@ -153,6 +153,11 @@ class TestHex:
         with pytest.raises(ValueError):
             decode_hex("xyz")
 
+    def test_decode_odd_length_raises(self) -> None:
+        """奇数长度十六进制应抛出 ValueError。"""
+        with pytest.raises(ValueError):
+            decode_hex("abc")
+
 
 # ---------------------------------------------------------------------- #
 # ROT13
@@ -217,6 +222,16 @@ class TestHtml:
         """空字符串。"""
         assert escape_html("") == ""
         assert unescape_html("") == ""
+
+    def test_unescape_named_entities(self) -> None:
+        """命名实体反转义。"""
+        assert unescape_html("&amp;") == "&"
+        assert unescape_html("&lt;") == "<"
+
+    def test_unescape_numeric_entities(self) -> None:
+        """数字实体反转义。"""
+        assert unescape_html("&#65;") == "A"
+        assert unescape_html("&#x41;") == "A"
 
 
 # ---------------------------------------------------------------------- #

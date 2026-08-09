@@ -119,7 +119,7 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `txttool` | - | 文本处理（大小写/去重/排序/统计/截断） |
 | `asciitool` | - | ASCII 码表（char/code/table） |
-| `basetool` | - | 编码解码（Base64/URL/HTML/Hex） |
+| `codetool` | - | 编解码（Base64/URL/HTML/Hex/ROT13） |
 | `casetool` | - | 命名风格转换（camel/snake/kebab/pascal） |
 | `colortool` | - | 颜色换算（RGB/HEX/HSL/HSV） |
 | `convtool` | - | 单位换算（长度/重量/温度/面积等） |
@@ -174,7 +174,6 @@ fcmd completion --shell fish | source         # fish
 | `envdev` | - | 开发环境镜像源配置（Python/Conda/Rust，Linux 专用操作跳过） |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |
-| `codetool` | - | 代码统计（行数/字符数/空行/注释行） |
 
 查看任意工具的子命令与字段详情：
 

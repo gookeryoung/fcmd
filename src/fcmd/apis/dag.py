@@ -362,9 +362,8 @@ class Graph:
     def subgraph_with_deps(self, names: Iterable[str]) -> Graph:
         """返回包含 ``names`` 及其所有传递依赖的新图。
 
-        与 :meth:`subgraph_by_names` 不同，本方法会沿 ``depends_on`` 和
-        ``soft_depends_on`` 向上遍历，确保被选中的任务所需的上游全部包含在内，
-        使子图可独立执行。
+        沿 ``depends_on`` 和 ``soft_depends_on`` 向上遍历，确保被选中
+        任务所需的上游全部包含在内，使子图可独立执行。
 
         参数
         ----

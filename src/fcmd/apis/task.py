@@ -64,7 +64,6 @@ __all__ = [
     "RunConfig",
     "TaskCmd",
     "TaskEvent",
-    "TaskFn",
     "TaskResult",
     "TaskSpec",
     "TaskStatus",

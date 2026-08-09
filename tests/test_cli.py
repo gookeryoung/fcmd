@@ -1326,7 +1326,6 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("archivex", "fcmd.cli.archivex"),
     ("asciitool", "fcmd.cli.asciitool"),
     ("autofmt", "fcmd.cli.autofmt"),
-    ("basetool", "fcmd.cli.basetool"),
     ("bumpversion", "fcmd.cli.bumpversion"),
     ("casetool", "fcmd.cli.casetool"),
     ("clr", "fcmd.cli.clr"),
