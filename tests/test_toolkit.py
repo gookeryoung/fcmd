@@ -257,7 +257,7 @@ def test_collect_with_deps_single() -> None:
     def a() -> None:
         pass
 
-    assert _collect_with_deps("demo", "a") == ["a"]
+    assert _collect_with_deps(_TOOL_REGISTRY["demo"], "a") == ["a"]
 
 
 def test_collect_with_deps_chain() -> None:
@@ -275,12 +275,12 @@ def test_collect_with_deps_chain() -> None:
     def c() -> None:
         pass
 
-    assert _collect_with_deps("demo", "a") == ["c", "b", "a"]
+    assert _collect_with_deps(_TOOL_REGISTRY["demo"], "a") == ["c", "b", "a"]
 
 
 def test_collect_with_deps_unknown_tool() -> None:
-    """工具未注册时返回 [target]。"""
-    assert _collect_with_deps("nope", "a") == ["a"]
+    """subs 为空时返回 [target]。"""
+    assert _collect_with_deps({}, "a") == ["a"]
 
 
 def test_collect_with_deps_diamond() -> None:
@@ -302,7 +302,7 @@ def test_collect_with_deps_diamond() -> None:
     def d() -> None:
         pass
 
-    chain = _collect_with_deps("demo", "a")
+    chain = _collect_with_deps(_TOOL_REGISTRY["demo"], "a")
     # d 在最前，a 在最后，b/c 顺序由 BFS 决定
     assert chain[0] == "d"
     assert chain[-1] == "a"
@@ -1200,12 +1200,12 @@ def test_run_tool_help_returns_success() -> None:
 
 def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
     """KeyboardInterrupt 返回 INTERRUPTED。"""
-    from fcmd.apis import toolkit
+    from fcmd.apis import _tool_exec
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(toolkit, "run", boom)
+    monkeypatch.setattr(_tool_exec, "run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1217,13 +1217,13 @@ def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError（非 TaskFailedError）返回 FAILURE。"""
-    from fcmd.apis import toolkit
+    from fcmd.apis import _tool_exec
     from fcmd.apis.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
 
-    monkeypatch.setattr(toolkit, "run", boom)
+    monkeypatch.setattr(_tool_exec, "run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1235,13 +1235,13 @@ def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError + quiet 不打印。"""
-    from fcmd.apis import toolkit
+    from fcmd.apis import _tool_exec
     from fcmd.apis.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
 
-    monkeypatch.setattr(toolkit, "run", boom)
+    monkeypatch.setattr(_tool_exec, "run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1253,13 +1253,13 @@ def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError + quiet 不打印诊断。"""
-    from fcmd.apis import toolkit
+    from fcmd.apis import _tool_exec
     from fcmd.apis.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
 
-    monkeypatch.setattr(toolkit, "run", boom)
+    monkeypatch.setattr(_tool_exec, "run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1271,7 +1271,7 @@ def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_task_failed_with_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 携带 report 时打印失败任务。"""
-    from fcmd.apis import toolkit
+    from fcmd.apis import _tool_exec
     from fcmd.apis.errors import TaskFailedError
     from fcmd.apis.report import RunReport
     from fcmd.apis.task import TaskResult
@@ -1287,7 +1287,7 @@ def test_run_tool_task_failed_with_report(monkeypatch: pytest.MonkeyPatch) -> No
         err.report = report
         raise err
 
-    monkeypatch.setattr(toolkit, "run", boom)
+    monkeypatch.setattr(_tool_exec, "run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
@@ -1576,14 +1576,14 @@ def test_run_tool_mixed_none_and_named_empty_argv() -> None:
 # ---------------------------------------------------------------------- #
 def test_run_tool_task_failed_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 不带 report 时不打印失败任务诊断（report is None 分支）。"""
-    from fcmd.apis import toolkit
+    from fcmd.apis import _tool_exec
     from fcmd.apis.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         # report 默认 None，触发 632->636 跳转（不进入 for 循环）
         raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
 
-    monkeypatch.setattr(toolkit, "run", boom)
+    monkeypatch.setattr(_tool_exec, "run", boom)
 
     @tool("demo", subcommand="a", cmd=_echo_cmd())
     def a() -> None:
