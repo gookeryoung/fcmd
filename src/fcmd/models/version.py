@@ -41,18 +41,9 @@ _VERSION_PATTERN = re.compile(
 class Version:
     """语义版本号（不可变值对象，PEP 440 兼容）。
 
-    Attributes
-    ----------
-    major:
-        主版本号
-    minor:
-        次版本号
-    patch:
-        修订号
-    prerelease:
-        预发布标记（如 ``alpha.1``），无则为空字符串
-    buildmetadata:
-        构建元数据（如 ``build.1``），无则为空字符串
+    字段含主版本号 ``major``、次版本号 ``minor``、修订号 ``patch``，
+    可选预发布标记 ``prerelease``（如 ``alpha.1``）与构建元数据
+    ``buildmetadata``（如 ``build.1``），无则为空字符串。
     """
 
     major: int

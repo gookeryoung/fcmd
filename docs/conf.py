@@ -63,6 +63,10 @@ intersphinx_mapping = {
 language = "zh_CN"
 master_doc = "index"
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+# fcmd 顶层包通过 __getattr__ 聚合子模块符号，autodoc 会同时索引 fcmd.X 与
+# fcmd.apis.Y.X，导致交叉引用多目标与重复对象描述警告。这些警告不影响文档
+# 功能（Sphinx 自动选首个目标），且 RTD 配置 fail_on_warning: false，此处抑制。
+suppress_warnings = ["ref.python", "duplicate_object"]
 source_suffix = {
     ".rst": "restructuredtext",
     ".md": "markdown",

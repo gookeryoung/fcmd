@@ -64,7 +64,7 @@ fcmd doctor            # 诊断环境问题
 
 ## 内建命令
 
-`fcmd` 自带 6 个内建命令（不通过 `@fx.tool` 注册）：
+`fcmd` 自带 7 个内建命令（不通过 `@fx.tool` 注册）：
 
 | 命令 | 说明 |
 |------|------|
@@ -74,6 +74,7 @@ fcmd doctor            # 诊断环境问题
 | `fcmd yaml <file> [job]` | 从 YAML 加载任务图并执行（支持 `--dry-run`/`--strategy`） |
 | `fcmd env [--json]` | 展示运行环境（fcmd 版本、Python、平台、工具数、可选依赖） |
 | `fcmd doctor` | 诊断环境问题（Python 版本、核心模块、工具模块、可选依赖、PATH 命令） |
+| `fcmd profiler <script.py> [args] [-E html\|text] [-o FILE] [--no-browser]` | 分析含 `fx.run()` 的脚本，生成性能剖面报告（HTML/文本） |
 
 shell 补全安装：
 
@@ -135,6 +136,7 @@ fcmd completion --shell fish | source         # fish
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
 | `timetool` | - | 时间工具（convert/format/timezone） |
 | `urltool` | - | URL 解析（编码/解码/拆分/拼接） |
+| `cryptool` | - | 文本对称加密（genkey/encrypt/decrypt，PBKDF2 + HMAC-SHA256 CTR + Encrypt-then-MAC） |
 
 ### 数据格式
 

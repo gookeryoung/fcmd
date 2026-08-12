@@ -30,13 +30,8 @@ class IgnoreSpec:
     """文件忽略规则（不可变值对象）。
 
     组合目录名与 glob 模式，统一描述文件遍历时的跳过规则。
-
-    Attributes
-    ----------
-    dirs:
-        跳过的目录名集合（如 ``.git``/``__pycache__``）
-    patterns:
-        跳过的 glob 模式元组（如 ``*.pyc``/``*.egg-info``）
+    字段含 ``dirs``（跳过的目录名集合，如 ``.git``/``__pycache__``）与
+    ``patterns``（跳过的 glob 模式元组，如 ``*.pyc``/``*.egg-info``）。
     """
 
     dirs: frozenset[str] = frozenset()

@@ -24,17 +24,8 @@ class CommandResult:
     """命令执行结果（不可变值对象）。
 
     封装 ``subprocess.run`` 的返回值，提供类型安全的访问接口。
-
-    Attributes
-    ----------
-    cmd:
-        执行的命令列表
-    returncode:
-        退出码（``0`` 表示成功）
-    stdout:
-        标准输出（``capture=False`` 时为空字符串）
-    stderr:
-        标准错误（``capture=False`` 时为空字符串）
+    字段含 ``cmd``（命令列表）、``returncode``（退出码，``0`` 表示成功）、
+    ``stdout``/``stderr``（标准输出/错误，``capture=False`` 时为空字符串）。
     """
 
     cmd: list[str]
