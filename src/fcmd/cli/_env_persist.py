@@ -42,10 +42,12 @@ def _persist_env_windows(name: str, value: str) -> None:  # pragma: no cover - �
         winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, value)
 
     # 广播 WM_SETTINGCHANGE，通知已运行进程刷新环境块（否则新终端才生效）。
+    # getattr 取 windll 避免 Linux 下 pyrefly 报 missing-attribute（windll 仅 Windows 存在）
     hwnd_broadcast = 0xFFFF  # HWND_BROADCAST
     wm_settingchange = 0x001A
     smto_abortifhung = 0x0002
-    ctypes.windll.user32.SendMessageTimeoutW(
+    windll = getattr(ctypes, "windll")  # noqa: B009 - 跨平台动态访问，非安全访问用途
+    windll.user32.SendMessageTimeoutW(
         hwnd_broadcast,
         wm_settingchange,
         0,
