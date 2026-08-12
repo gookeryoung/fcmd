@@ -587,106 +587,11 @@ class FcmdApp:
         )
         parser.parse_args(argv) if argv else parser.parse_args([])
 
-        checks: list[dict[str, Any]] = []
-
-        # 1. Python 版本 ≥ 3.8
-        py_ok = sys.version_info >= (3, 8)
-        checks.append(
-            {
-                "item": "Python 版本 ≥ 3.8",
-                "ok": py_ok,
-                "detail": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-                "fix": "升级 Python 至 3.8+" if not py_ok else "",
-            }
-        )
-
-        # 2. fcmd 核心模块导入
-        try:
-            import fcmd  # noqa: F401
-
-            core_ok = True
-            core_detail = ""
-        except ImportError as e:  # pragma: no cover - fcmd 已导入才能执行到此处，分支不可达
-            core_ok = False
-            core_detail = str(e)
-        checks.append(
-            {
-                "item": "fcmd 核心导入",
-                "ok": core_ok,
-                "detail": core_detail,
-                "fix": "重装 fcmd: pip install --force-reinstall fcmd" if not core_ok else "",
-            }
-        )
-
-        # 3. 工具模块全部可导入
         _ensure_tools_discovered()
-        failed_tools: list[str] = []
-        for tool_name, module_path in list(_TOOL_MODULES.items()):
-            try:
-                importlib.import_module(module_path)
-            except ImportError:
-                failed_tools.append(tool_name)
-        tool_total = len(_TOOL_MODULES)
-        tool_ok = not failed_tools
-        checks.append(
-            {
-                "item": "工具模块扫描",
-                "ok": tool_ok,
-                "detail": f"{tool_total} 个工具" + (f"，失败: {', '.join(failed_tools)}" if failed_tools else ""),
-                "fix": "检查失败工具模块的依赖与语法" if failed_tools else "",
-            }
-        )
+        from fcmd.cli._doctor_helpers import collect_doctor_checks, render_doctor_report
 
-        # 4. 可选依赖检查
-        optional_deps = self._collect_optional_deps_status()
-        for dep in optional_deps:
-            checks.append(
-                {
-                    "item": f"可选依赖 {dep['extra']} ({dep['package']})",
-                    "ok": dep["installed"],
-                    "detail": dep.get("version", "") or "未安装",
-                    "fix": f"pip install fcmd[{dep['extra']}]" if not dep["installed"] else "",
-                }
-            )
-
-        # 5. PATH 中的常用外部命令
-        import shutil
-
-        for cmd in ("git", "uv", "python", "pip"):
-            cmd_path = shutil.which(cmd)
-            checks.append(
-                {
-                    "item": f"PATH: {cmd}",
-                    "ok": cmd_path is not None,
-                    "detail": cmd_path or "未找到",
-                    "fix": f"安装 {cmd} 并加入 PATH" if cmd_path is None else "",
-                }
-            )
-
-        # 输出
-        from fcmd.console import Table
-
-        console = get_console()
-        console.print("[bold cyan]fcmd 环境诊断[/bold cyan]\n")
-        table = Table(show_header=True, header_style="bold", show_lines=False)
-        table.add_column("检查项", style="cyan", no_wrap=True)
-        table.add_column("状态", justify="center", no_wrap=True)
-        table.add_column("详情")
-        for c in checks:
-            status = "[green]OK[/green]" if c["ok"] else "[red]FAIL[/red]"
-            detail = c["detail"]
-            if not c["ok"] and c["fix"]:
-                detail = f"{detail}\n[dim]修复: {c['fix']}[/dim]"
-            table.add_row(c["item"], status, detail)
-        console.print(table)
-
-        passed = sum(1 for c in checks if c["ok"])
-        total = len(checks)
-        if passed == total:
-            console.print(f"\n[green]诊断结果: {passed}/{total} 全部通过[/green]")
-            return 0
-        console.print(f"\n[red]诊断结果: {passed}/{total} 通过，{total - passed} 项失败[/red]")
-        return 1
+        checks = collect_doctor_checks(_TOOL_MODULES)
+        return render_doctor_report(checks)
 
     # ------------------------------------------------------------------ #
     # profiler 内建命令
@@ -789,24 +694,13 @@ class FcmdApp:
         return 0
 
     def _collect_optional_deps_status(self) -> list[dict[str, Any]]:
-        """收集可选依赖的安装状态与版本。
+        """收集可选依赖的安装状态与版本（委托 :mod:`fcmd.cli._env_helpers`）。
 
         返回列表，每项包含 extra / package / installed / version（已安装时）。
         """
-        deps: list[dict[str, Any]] = []
-        for extra, package in (
-            ("img", "PIL"),
-            ("pdf", "fitz"),
-            ("pdf", "pypdf"),
-            ("ocr", "pytesseract"),
-        ):
-            try:
-                mod = __import__(package)
-                version = getattr(mod, "__version__", "")
-                deps.append({"extra": extra, "package": package, "installed": True, "version": version})
-            except ImportError:
-                deps.append({"extra": extra, "package": package, "installed": False, "version": ""})
-        return deps
+        from fcmd.cli._env_helpers import collect_optional_deps_status
+
+        return collect_optional_deps_status()
 
     def _list_tools(self) -> None:
         """列出所有可用工具。"""
