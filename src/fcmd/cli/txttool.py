@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "convert_case",
@@ -205,7 +206,7 @@ def txt_case_cmd(path: str, mode: str = "upper") -> None:
     try:
         print(convert_case(text, mode))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.main("txttool")

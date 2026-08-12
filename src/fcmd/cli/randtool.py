@@ -20,6 +20,7 @@ import secrets
 import string
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "generate_bytes",
@@ -205,7 +206,7 @@ def password_cmd(
     try:
         print(generate_password(length, symbols))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("randtool", subcommand="number", help="生成随机整数")
@@ -224,7 +225,7 @@ def number_cmd(min_val: int, max_val: int) -> None:
     try:
         print(generate_number(min_val, max_val))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("randtool", subcommand="string", help="生成自定义字符集随机字符串")
@@ -244,7 +245,7 @@ def string_cmd(
     try:
         print(generate_string(length, chars))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("randtool", subcommand="bytes", help="生成随机字节")
@@ -261,7 +262,7 @@ def bytes_cmd(length: int, encoding: str = "hex") -> None:
     try:
         print(generate_bytes(length, encoding))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.main("randtool")

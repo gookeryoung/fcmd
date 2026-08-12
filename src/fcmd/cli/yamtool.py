@@ -20,6 +20,7 @@ from typing import Any
 import yaml  # type: ignore[import-not-found]
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "get_yaml",
@@ -229,7 +230,7 @@ def _read_or_print(filepath: Path) -> Any | None:
     try:
         return read_yaml(filepath)
     except FileNotFoundError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return None
     except yaml.YAMLError as exc:
         print(f"YAML 解析失败: {exc}")
@@ -272,7 +273,7 @@ def yaml_get_cmd(file: Path, path: str) -> None:
     try:
         result = get_yaml(data, path)
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     if isinstance(result, (dict, list)):
         print(pretty_yaml(result), end="")
@@ -295,7 +296,7 @@ def yaml_keys_cmd(file: Path) -> None:
     try:
         keys = keys_yaml(data)
     except TypeError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     for key in keys:
         print(key)
@@ -313,7 +314,7 @@ def yaml_validate_cmd(file: Path) -> None:
     try:
         validate_yaml(file)
     except FileNotFoundError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     except yaml.YAMLError as exc:
         print(f"语法校验失败: {exc}")

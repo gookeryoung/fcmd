@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "find_all",
@@ -169,7 +170,7 @@ def match_cmd(pattern: str, text: str) -> None:
     try:
         result = match_pattern(pattern, text)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     if result is None:
         print("未匹配")
@@ -192,7 +193,7 @@ def find_cmd(pattern: str, text: str) -> None:
     try:
         matches = find_all(pattern, text)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     if not matches:
         print("未匹配")
@@ -217,7 +218,7 @@ def replace_cmd(pattern: str, replacement: str, text: str) -> None:
     try:
         print(replace_pattern(pattern, replacement, text))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("regextool", subcommand="split", help="按正则分割")
@@ -234,7 +235,7 @@ def split_cmd(pattern: str, text: str) -> None:
     try:
         parts = split_pattern(pattern, text)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     for part in parts:
         print(part)

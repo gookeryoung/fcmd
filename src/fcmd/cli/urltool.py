@@ -15,6 +15,7 @@ from __future__ import annotations
 import urllib.parse
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "add_query_param",
@@ -173,7 +174,7 @@ def parse_cmd(url: str) -> None:
     try:
         parts = parse_url(url)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     for key, value in parts.items():
         print(f"{key}: {value}")
@@ -193,7 +194,7 @@ def query_cmd(url: str, key: str) -> None:
     try:
         value = get_query_param(url, key)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     if value is None:
         print(f"参数不存在: {key}")
@@ -217,7 +218,7 @@ def addquery_cmd(url: str, key: str, value: str) -> None:
     try:
         result = add_query_param(url, key, value)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(result)
 
@@ -234,7 +235,7 @@ def baseurl_cmd(url: str) -> None:
     try:
         result = get_base_url(url)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(result)
 

@@ -20,6 +20,7 @@ from collections.abc import Callable
 from typing import Any
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "convert_datasize",
@@ -271,7 +272,7 @@ def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> No
     try:
         result = fn(*args, **kwargs)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(result)
 

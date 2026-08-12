@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "convert_timezone",
@@ -280,13 +281,13 @@ def time_convert_cmd(
         try:
             src_tz = _resolve_tz(from_tz)
         except ValueError as exc:
-            print(str(exc))
+            get_console().print(f"[red]错误:[/red] {exc}")
             return
         dt = dt.replace(tzinfo=src_tz)
     try:
         converted = convert_timezone(dt, target_tz)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(format_time(converted, format))
 

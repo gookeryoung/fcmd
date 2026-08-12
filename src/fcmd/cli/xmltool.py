@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "extract_xml",
@@ -249,7 +250,7 @@ def _read_or_print(filepath: Path) -> ET.Element | None:
     try:
         return read_xml(filepath)
     except FileNotFoundError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return None
     except ET.ParseError as exc:
         print(f"XML 解析失败: {exc}")
@@ -305,7 +306,7 @@ def xml_extract_cmd(file: Path, xpath: str) -> None:
     try:
         values = extract_xml(root, xpath)
     except ET.ParseError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     if not values:
         print(f"无命中: {xpath}")
@@ -326,7 +327,7 @@ def xml_validate_cmd(file: Path) -> None:
     try:
         validate_xml(file)
     except FileNotFoundError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     except ET.ParseError as exc:
         print(f"良构校验失败: {exc}")

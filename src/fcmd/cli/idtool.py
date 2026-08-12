@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "generate_random_string",
@@ -129,7 +130,7 @@ def uuid_cmd(version: int = 4) -> None:
     try:
         print(generate_uuid(version))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("idtool", subcommand="timestamp", help="生成时间戳")
@@ -144,7 +145,7 @@ def timestamp_cmd(fmt: str = "iso") -> None:
     try:
         print(generate_timestamp(fmt))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("idtool", subcommand="random", help="生成随机字符串")
@@ -159,7 +160,7 @@ def random_cmd(length: int = 16) -> None:
     try:
         print(generate_random_string(length))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.main("idtool")

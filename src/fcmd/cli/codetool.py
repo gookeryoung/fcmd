@@ -21,6 +21,7 @@ import html
 import urllib.parse
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "decode_base64",
@@ -238,7 +239,7 @@ def base64_cmd(text: str, decode: bool = False) -> None:
         try:
             print(decode_base64(text))
         except (binascii.Error, UnicodeDecodeError) as exc:
-            print(f"Base64 解码失败: {exc}")
+            get_console().print(f"[red]错误:[/red] Base64 解码失败: {exc}")
     else:
         print(encode_base64(text))
 
@@ -272,7 +273,7 @@ def hex_cmd(text: str, decode: bool = False) -> None:
         try:
             print(decode_hex(text))
         except (ValueError, UnicodeDecodeError) as exc:
-            print(f"Hex 解码失败: {exc}")
+            get_console().print(f"[red]错误:[/red] Hex 解码失败: {exc}")
     else:
         print(encode_hex(text))
 

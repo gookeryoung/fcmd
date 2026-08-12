@@ -16,6 +16,7 @@ from __future__ import annotations
 import ipaddress
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "parse_ip",
@@ -160,7 +161,7 @@ def parse_cmd(ip: str) -> None:
     try:
         info = parse_ip(ip)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     for key, value in info.items():
         print(f"{key}: {value}")
@@ -182,7 +183,7 @@ def subnet_cmd(ip: str, prefix: int) -> None:
     try:
         info = subnet_info(ip, prefix)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     for key, value in info.items():
         print(f"{key}: {value}")

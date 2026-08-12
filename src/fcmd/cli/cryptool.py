@@ -40,6 +40,7 @@ import hmac
 import os
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = ["Cryptool"]
 
@@ -299,7 +300,7 @@ def encrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         key = os.getenv("FCMD_CRYPT_KEY") or ""
 
     if not password and not key:
-        print("请指定 --password 或 --key")
+        get_console().print("[red]错误:[/red] 请指定 --password 或 --key")
         return
 
     try:
@@ -309,7 +310,7 @@ def encrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         else:
             result = _cryptool.encrypt_with_password(text, password)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     else:
         print(f"加密结果: {result}")
@@ -335,7 +336,7 @@ def decrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         key = os.getenv("FCMD_CRYPT_KEY") or ""
 
     if not password and not key:
-        print("请指定 --password 或 --key")
+        get_console().print("[red]错误:[/red] 请指定 --password 或 --key")
         return
 
     try:
@@ -345,7 +346,7 @@ def decrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         else:
             result = _cryptool.decrypt_with_password(text, password)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     else:
         print(f"解密结果: {result}")

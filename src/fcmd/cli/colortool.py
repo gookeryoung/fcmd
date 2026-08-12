@@ -20,6 +20,7 @@ from collections.abc import Callable
 from typing import Any
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "hex_to_rgb",
@@ -231,7 +232,7 @@ def _color_cmd(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     try:
         return fn(*args, **kwargs)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return None
 
 

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "align_center",
@@ -190,7 +191,7 @@ def left_cmd(text: str, width: int = 20) -> None:
     try:
         print(align_left(text, width))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("padtool", subcommand="right", help="右对齐文本")
@@ -207,7 +208,7 @@ def right_cmd(text: str, width: int = 20) -> None:
     try:
         print(align_right(text, width))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("padtool", subcommand="center", help="居中对齐文本")
@@ -224,7 +225,7 @@ def center_cmd(text: str, width: int = 20) -> None:
     try:
         print(align_center(text, width))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("padtool", subcommand="justify", help="两端对齐文本")
@@ -241,7 +242,7 @@ def justify_cmd(text: str, width: int = 20) -> None:
     try:
         print(align_justify(text, width))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.main("padtool")

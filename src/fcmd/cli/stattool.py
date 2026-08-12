@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "load_numbers",
@@ -222,7 +223,7 @@ def _load_or_print(filepath: Path) -> list[float] | None:
     try:
         return load_numbers(filepath)
     except FileNotFoundError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return None
     except ValueError as exc:
         print(f"数据解析失败: {exc}")

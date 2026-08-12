@@ -18,6 +18,7 @@ import math
 import operator as op
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "eval_expr",
@@ -187,7 +188,7 @@ def eval_cmd(expr: str) -> None:
     try:
         result = eval_expr(expr)
     except (ValueError, ZeroDivisionError) as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(result)
 
@@ -204,7 +205,7 @@ def sqrt_cmd(x: float) -> None:
     try:
         print(sqrt(x))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.tool("mathtool", subcommand="pow", help="幂运算")
@@ -233,7 +234,7 @@ def factorial_cmd(n: int) -> None:
     try:
         print(factorial(n))
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
 
 
 @fcmd.main("mathtool")

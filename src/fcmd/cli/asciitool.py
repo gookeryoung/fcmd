@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import fcmd
+from fcmd.console import get_console
 
 __all__ = [
     "build_ascii_table",
@@ -133,7 +134,7 @@ def char_cmd(char: str) -> None:
     try:
         code = char_to_code(char)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(f"char: {char}")
     print(f"code: {code}")
@@ -152,7 +153,7 @@ def code_cmd(code: int) -> None:
     try:
         char = code_to_char(code)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     print(f"code: {code}")
     print(f"hex: 0x{code:02X}")
@@ -173,7 +174,7 @@ def table_cmd(start: int = _PRINTABLE_START, end: int = _PRINTABLE_END) -> None:
     try:
         entries = build_ascii_table(start, end)
     except ValueError as exc:
-        print(str(exc))
+        get_console().print(f"[red]错误:[/red] {exc}")
         return
     for entry in entries:
         print(f"{entry['code']:>3}  {entry['hex']}  {entry['char']}")
