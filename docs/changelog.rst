@@ -3,6 +3,17 @@
 
 遵循 `Keep a Changelog <https://keepachangelog.com/>`_ 风格，版本倒序排列。
 
+v0.2.3 (2026-08-12)
+-------------------
+
+- ``feat``: 新增 3 个 CLI 工具：``inifile``（INI 读写，configparser）、``tomltool``（TOML 解析，3.11+ tomllib / 3.8-3.10 回退 tomli）、``calcdate``（日期计算 add/workdays/diff/compare）
+- ``refactor``: 拆分 ``executors.py``，抽取 Runner 抽象与 LayerRunner 系列，简化 ``_dispatch_strategy``
+- ``refactor``: 拆分 ``toolkit.py``，参数解析移至 ``apis/_tool_args.py``，执行逻辑移至 ``apis/_tool_exec.py``
+- ``refactor``: 拆分 ``main.py`` 内建命令纯函数辅助到 ``cli/_env_helpers.py`` 与 ``cli/_doctor_helpers.py``
+- ``refactor``: 审计异常处理模式，统一 CLI 错误打印格式
+- ``perf``: 建立性能基线（cold start / tool discovery / DAG / tool exec），工具发现耗时从 126ms 降至 63ms
+- ``chore``: 死代码扫描清理，复测性能基线对比
+
 v0.2.2 (2026-08-12)
 -------------------
 

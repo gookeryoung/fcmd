@@ -91,7 +91,7 @@ CLI
    │   ├── profiling.py     # 性能剖面
    │   └── errors.py        # 异常层次
    ├── models/              # 命令/文件过滤/版本等模型
-   └── cli/                 # CLI 入口与 54 个工具模块
+   └── cli/                 # CLI 入口与 57 个工具模块
        ├── main.py          # FcmdApp 主入口与 7 个内建命令
        ├── _common.py       # 共享常量（_BUILTIN_COMMANDS 等）
        ├── _completion_scripts.py  # shell 补全生成

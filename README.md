@@ -7,7 +7,7 @@
 - **极速冷启动**（< 100ms）：三层懒加载，核心模块零外部依赖
 - **DAG 任务调度**：四种执行策略（sequential/thread/async/dependency）
 - **组合 API 简洁**：`@fx.task` 装饰器 + 自动依赖推断 + `@fx.tool` CLI 工具
-- **纯 CLI（rich 增强）**：彩色输出、表格、进度条
+- **纯 CLI（自实现 Console）**：ASCII 表格、彩色输出、Win7/8 兼容
 - **便捷脚本模式**：`fcmd pymake b` 一键调用
 - **YAML 编排**：GitHub Actions 风格的 `jobs`/`needs`/`matrix`/`if` 任务图
 - **零配置工具发现**：`fcmd/cli/` 下的模块自动注册为 CLI 子命令
@@ -86,7 +86,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-54 个工具模块，按用途分组：
+57 个工具模块，按用途分组：
 
 ### 项目构建与发布
 
@@ -135,6 +135,7 @@ fcmd completion --shell fish | source         # fish
 | `stattool` | - | 统计工具（mean/median/variance/quantile） |
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
 | `timetool` | - | 时间工具（convert/format/timezone） |
+| `calcdate` | - | 日期计算（add/workdays/diff/compare） |
 | `urltool` | - | URL 解析（编码/解码/拆分/拼接） |
 | `cryptool` | - | 文本对称加密（genkey/encrypt/decrypt，PBKDF2 + HMAC-SHA256 CTR + Encrypt-then-MAC） |
 
@@ -144,6 +145,8 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `xmltool` | - | XML 处理（pretty/get/keys/validate） |
 | `yamtool` | - | YAML 处理（pretty/get/keys/validate） |
+| `inifile` | - | INI 处理（get/set/list/keys，基于 configparser） |
+| `tomltool` | - | TOML 处理（get/keys/format/validate，3.11+ 用 tomllib，3.8-3.10 回退 tomli） |
 
 ### 多媒体（可选依赖）
 
