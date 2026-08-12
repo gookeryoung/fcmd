@@ -16,12 +16,12 @@
 from __future__ import annotations
 
 import getpass
-import os
 import shutil
 import sys
 from pathlib import Path
 
 import fcmd
+from fcmd.cli._env_persist import persist_env
 from fcmd.models import run_command
 
 __all__ = [
@@ -184,10 +184,11 @@ def _pip_config_path() -> Path:
 
 @fcmd.tool("envdev", subcommand="setup-python", help="配置 Python 镜像源")
 def setup_python_mirror(mirror: str = "aliyun") -> None:
-    """配置 Python 镜像源（设置环境变量 + 写入 pip 配置文件）。
+    """配置 Python 镜像源（持久化环境变量 + 写入 pip 配置文件）。
 
-    设置 ``PIP_INDEX_URL`` / ``PIP_TRUSTED_HOSTS`` / ``UV_INDEX_URL`` /
-    ``UV_PYTHON_INSTALL_MIRROR`` 等环境变量，并写入 pip 配置文件。
+    通过 :func:`persist_env` 持久化 ``PIP_INDEX_URL`` / ``PIP_TRUSTED_HOSTS`` /
+    ``UV_INDEX_URL`` / ``UV_PYTHON_INSTALL_MIRROR`` 等环境变量（Windows 写注册表，
+    Linux/macOS 写 ``~/.profile``，同时更新当前进程），并写入 pip 配置文件。
 
     Parameters
     ----------
@@ -202,12 +203,12 @@ def setup_python_mirror(mirror: str = "aliyun") -> None:
     trusted_host = _PIP_TRUSTED_HOSTS[mirror]
 
     print(f"配置 Python 镜像源: {mirror}")
-    os.environ["PIP_INDEX_URL"] = index_url
-    os.environ["PIP_TRUSTED_HOSTS"] = trusted_host
-    os.environ["UV_INDEX_URL"] = index_url
-    os.environ["UV_PYTHON_INSTALL_MIRROR"] = _UV_PYTHON_INSTALL_MIRROR
-    os.environ["UV_HTTP_TIMEOUT"] = "600"
-    os.environ["UV_LINK_MODE"] = "copy"
+    persist_env("PIP_INDEX_URL", index_url)
+    persist_env("PIP_TRUSTED_HOSTS", trusted_host)
+    persist_env("UV_INDEX_URL", index_url)
+    persist_env("UV_PYTHON_INSTALL_MIRROR", _UV_PYTHON_INSTALL_MIRROR)
+    persist_env("UV_HTTP_TIMEOUT", "600")
+    persist_env("UV_LINK_MODE", "copy")
 
     config_path = _pip_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -242,10 +243,11 @@ def setup_conda_mirror(mirror: str = "aliyun") -> None:
 # ============================================================================
 @fcmd.tool("envdev", subcommand="setup-rust", help="配置 Rust 镜像源", hidden=True)
 def _setup_rust_mirror(mirror: str = "aliyun") -> None:
-    """配置 Rust 镜像源（设置环境变量 + 写入 cargo config + 创建 sccache 目录）。
+    """配置 Rust 镜像源（持久化环境变量 + 写入 cargo config + 创建 sccache 目录）。
 
-    设置 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` / ``RUST_SCCACHE_DIR``
-    等环境变量，写入 ``~/.cargo/config.toml``，并创建 sccache 缓存目录。
+    通过 :func:`persist_env` 持久化 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` /
+    ``RUST_SCCACHE_DIR`` 等环境变量，写入 ``~/.cargo/config.toml``，并创建
+    sccache 缓存目录。
 
     Parameters
     ----------
@@ -257,10 +259,10 @@ def _setup_rust_mirror(mirror: str = "aliyun") -> None:
         return
 
     mirrors = _RUSTUP_MIRRORS[mirror]
-    os.environ["RUSTUP_DIST_SERVER"] = mirrors["RUSTUP_DIST_SERVER"]
-    os.environ["RUSTUP_UPDATE_ROOT"] = mirrors["RUSTUP_UPDATE_ROOT"]
-    os.environ["RUST_SCCACHE_DIR"] = str(_RUST_SCCACHE_DIR)
-    os.environ["RUST_SCCACHE_CACHE_SIZE"] = _RUST_SCCACHE_CACHE_SIZE
+    persist_env("RUSTUP_DIST_SERVER", mirrors["RUSTUP_DIST_SERVER"])
+    persist_env("RUSTUP_UPDATE_ROOT", mirrors["RUSTUP_UPDATE_ROOT"])
+    persist_env("RUST_SCCACHE_DIR", str(_RUST_SCCACHE_DIR))
+    persist_env("RUST_SCCACHE_CACHE_SIZE", _RUST_SCCACHE_CACHE_SIZE)
 
     _RUST_SCCACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -348,11 +350,12 @@ def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None
 
 @fcmd.tool("envdev", subcommand="setup-bun", help="配置 Bun 镜像源", hidden=True)
 def _setup_bun_mirror() -> None:
-    """配置 Bun npm 镜像源（设置环境变量 + 写入 ``~/.bunfig.toml``）。
+    """配置 Bun npm 镜像源（持久化环境变量 + 写入 ``~/.bunfig.toml``）。
 
-    设置 ``BUN_CONFIG_REGISTRY`` 环境变量，并写入 bunfig.toml 指向 npmmirror。
+    通过 :func:`persist_env` 持久化 ``BUN_CONFIG_REGISTRY`` 环境变量，
+    并写入 bunfig.toml 指向 npmmirror。
     """
-    os.environ["BUN_CONFIG_REGISTRY"] = _BUN_NPM_REGISTRY
+    persist_env("BUN_CONFIG_REGISTRY", _BUN_NPM_REGISTRY)
 
     config_path = Path.home() / ".bunfig.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)

@@ -36,6 +36,23 @@ def _recording_run(calls: list[list[str]]) -> Any:
     return run
 
 
+@pytest.fixture(autouse=True)
+def _fake_persist_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """将 envdev.persist_env 替换为只更新 os.environ 的假实现。
+
+    避免测试在 Windows 上真正写入注册表 ``HKCU\\Environment``（污染真实环境），
+    同时保留 ``os.environ`` 更新以维持既有断言。返回记录字典供断言持久化调用。
+    """
+    recorded: dict[str, str] = {}
+
+    def fake_persist(name: str, value: str) -> None:
+        recorded[name] = value
+        os.environ[name] = value
+
+    monkeypatch.setattr("fcmd.cli.envdev.persist_env", fake_persist)
+    return recorded
+
+
 # ============================================================================ #
 # 注册验证
 # ============================================================================ #
@@ -82,9 +99,13 @@ class TestEnvdev:
     """envdev 工具测试。"""
 
     def test_setup_python_mirror(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
     ) -> None:
-        """配置 Python 镜像源（设置环境变量 + 写入 pip 配置文件）。"""
+        """配置 Python 镜像源（持久化环境变量 + 写入 pip 配置文件）。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("PIP_INDEX_URL", raising=False)
         monkeypatch.delenv("UV_INDEX_URL", raising=False)
@@ -92,7 +113,10 @@ class TestEnvdev:
         fcmd.cli.envdev.setup_python_mirror("aliyun")
         captured = capsys.readouterr()
         assert "Python 镜像源已配置" in captured.out
+        # 环境变量已持久化（persist_env 被调用）且当前进程可见
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
         assert os.environ["PIP_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
+        assert "UV_INDEX_URL" in _fake_persist_env
         assert "UV_INDEX_URL" in os.environ
         # 配置文件已写入
         if sys.platform.startswith("linux"):
