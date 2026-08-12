@@ -303,7 +303,7 @@ def _twine_publish(cwd: Path = Path()) -> None:
     "pymake",
     subcommand="push",
     help="推送代码 (清理 + check + push + push tags)",
-    needs=["chk", "c", "git_push", "git_push_tags"],
+    needs=["git_push", "git_push_tags"],
     strategy="thread",
 )
 def push(cwd: Path = Path()) -> None:
