@@ -183,7 +183,7 @@ def _pip_config_path() -> Path:
 
 
 @fcmd.tool("envdev", subcommand="setup-python", help="配置 Python 镜像源")
-def setup_python_mirror(mirror: str = "tsinghua") -> None:
+def setup_python_mirror(mirror: str = "aliyun") -> None:
     """配置 Python 镜像源（设置环境变量 + 写入 pip 配置文件）。
 
     设置 ``PIP_INDEX_URL`` / ``PIP_TRUSTED_HOSTS`` / ``UV_INDEX_URL`` /
@@ -192,7 +192,7 @@ def setup_python_mirror(mirror: str = "tsinghua") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/aliyun/huaweicloud/ustc/zju（默认 tsinghua）
+        镜像源名称：tsinghua/aliyun/huaweicloud/ustc/zju（默认 aliyun）
     """
     if mirror not in _PIP_INDEX_URLS:
         print(f"未知 Python 镜像源: {mirror}")
@@ -201,6 +201,7 @@ def setup_python_mirror(mirror: str = "tsinghua") -> None:
     index_url = _PIP_INDEX_URLS[mirror]
     trusted_host = _PIP_TRUSTED_HOSTS[mirror]
 
+    print(f"配置 Python 镜像源: {mirror}")
     os.environ["PIP_INDEX_URL"] = index_url
     os.environ["PIP_TRUSTED_HOSTS"] = trusted_host
     os.environ["UV_INDEX_URL"] = index_url
@@ -216,13 +217,13 @@ def setup_python_mirror(mirror: str = "tsinghua") -> None:
 
 
 @fcmd.tool("envdev", subcommand="setup-conda", help="配置 Conda 镜像源")
-def setup_conda_mirror(mirror: str = "tsinghua") -> None:
+def setup_conda_mirror(mirror: str = "aliyun") -> None:
     """配置 Conda 镜像源（写入 ~/.condarc）。
 
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/bsfu/aliyun（默认 tsinghua）
+        镜像源名称：tsinghua/ustc/bsfu/aliyun（默认 aliyun）
     """
     if mirror not in _CONDA_MIRROR_URLS:
         print(f"未知 Conda 镜像源: {mirror}")
@@ -240,7 +241,7 @@ def setup_conda_mirror(mirror: str = "tsinghua") -> None:
 # Rust 工具链安装
 # ============================================================================
 @fcmd.tool("envdev", subcommand="setup-rust", help="配置 Rust 镜像源", hidden=True)
-def _setup_rust_mirror(mirror: str = "tsinghua") -> None:
+def _setup_rust_mirror(mirror: str = "aliyun") -> None:
     """配置 Rust 镜像源（设置环境变量 + 写入 cargo config + 创建 sccache 目录）。
 
     设置 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` / ``RUST_SCCACHE_DIR``
@@ -249,7 +250,7 @@ def _setup_rust_mirror(mirror: str = "tsinghua") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun（默认 tsinghua）
+        镜像源名称：tsinghua/ustc/aliyun（默认 aliyun）
     """
     if mirror not in _RUSTUP_MIRRORS:
         print(f"未知 Rust 镜像源: {mirror}")
@@ -321,7 +322,7 @@ def _install_rust_toolchain(version: str = "stable") -> None:
 
 
 @fcmd.tool("envdev", subcommand="rust", help="配置 Rust 环境")
-def setup_rust_env(mirror: str = "tsinghua", rust_version: str = "stable") -> None:
+def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
     """配置 Rust 环境（镜像源 + 下载 rustup + 安装工具链）。
 
     依次执行：配置 Rust 镜像源（环境变量 + ``~/.cargo/config.toml`` + sccache 目录）、
@@ -331,7 +332,7 @@ def setup_rust_env(mirror: str = "tsinghua", rust_version: str = "stable") -> No
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun（默认 tsinghua）
+        镜像源名称：tsinghua/ustc/aliyun（默认 aliyun）
     rust_version:
         Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
     """
