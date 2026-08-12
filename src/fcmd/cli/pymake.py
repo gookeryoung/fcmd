@@ -303,11 +303,15 @@ def _twine_publish(cwd: Path = Path()) -> None:
     "pymake",
     subcommand="push",
     help="推送代码 (清理 + check + push + push tags)",
-    needs=["git_push", "git_push_tags"],
+    needs=["chk", "c", "git_push", "git_push_tags"],
     strategy="thread",
 )
 def push(cwd: Path = Path()) -> None:
-    """推送代码（聚合）。"""
+    """推送代码（聚合）。
+
+    依赖 ``chk``（类型检查聚合）+ ``c``（清理工作区）+ ``git_push`` + ``git_push_tags``，
+    与 help 文案「清理 + check + push + push tags」一致。
+    """
 
 
 @fcmd.tool(

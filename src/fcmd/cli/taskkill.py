@@ -74,8 +74,8 @@ def kill_process(process_name: str) -> int:
 def taskkill_run(process_names: list[str]) -> None:
     """按名称终止进程（跨平台）。
 
-    Windows 使用 ``taskkill /f /im <name>*``，
-    Linux/macOS 使用 ``pkill -f <name>*``。
+    Windows 使用 ``taskkill /f /fi "imagename eq <name>*"``（``/FI`` 过滤器
+    支持通配符，兼容 Win7），Linux/macOS 使用 ``pkill -f <name>*``。
 
     Parameters
     ----------
@@ -93,7 +93,7 @@ def taskkill_run(process_names: list[str]) -> None:
 
 @fcmd.main("taskkill")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":

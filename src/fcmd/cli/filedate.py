@@ -166,7 +166,7 @@ def process_files_date_clear(files: list[Path]) -> None:
 
 @fcmd.main("filedate")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":

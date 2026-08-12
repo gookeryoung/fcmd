@@ -181,7 +181,7 @@ def table_cmd(start: int = _PRINTABLE_START, end: int = _PRINTABLE_END) -> None:
 
 @fcmd.main("asciitool")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":

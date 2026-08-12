@@ -288,7 +288,7 @@ def scan_ports_cmd(start: int, end: int, host: str = "127.0.0.1") -> None:
 
 @fcmd.main("portcheck")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":  # pragma: no cover

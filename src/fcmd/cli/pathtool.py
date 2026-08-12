@@ -215,7 +215,7 @@ def pathtool_diff(p1: Path, p2: Path) -> None:
 
 @fcmd.main("pathtool")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":

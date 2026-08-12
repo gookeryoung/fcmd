@@ -97,7 +97,7 @@ def backup_folder(src: str = ".", dst: str = "./backup", max_zip: int = 5) -> No
 
 @fcmd.main("folderback")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":

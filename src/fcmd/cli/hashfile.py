@@ -141,7 +141,7 @@ def hash_dir_cmd(directory: str, algorithm: str = "sha256") -> None:
 
 @fcmd.main("hashfile")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":

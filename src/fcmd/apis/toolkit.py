@@ -1,7 +1,7 @@
 """@fx.tool 装饰器：argparse 驱动 CLI + DAG 编排。
 
 本模块是 ``@fx.tool`` 框架的实现，属于 :mod:`fcmd.apis` 包的共性接口层。
-替代手写 argparse 模板，用 .py 装饰器统一描述工具：函数签名 → argparse
+替代手写 argparse 模板，用 ``@fx.tool`` 装饰器统一描述工具：函数签名 → argparse
 自动生成 CLI，函数体即任务逻辑，``needs``/``strategy``/``cmd`` 表达 DAG。
 
 示例

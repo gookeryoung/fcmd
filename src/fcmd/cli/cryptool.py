@@ -60,7 +60,7 @@ _KEY_BYTES = 32  # 加密密钥 / MAC 密钥长度
 
 
 class Cryptool:
-    """加密密工具。"""
+    """加密工具。"""
 
     @property
     def random_key(self) -> str:
@@ -291,6 +291,8 @@ def encrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         加密密码（与 ``key`` 二选一）
     key:
         加密密钥（与 ``password`` 二选一）
+    env:
+        为 ``True`` 时从 ``FCMD_CRYPT_PASSWORD`` / ``FCMD_CRYPT_KEY`` 环境变量读取（默认 ``False``）
     """
     if env:
         password = os.getenv("FCMD_CRYPT_PASSWORD") or ""
@@ -325,8 +327,8 @@ def decrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
         解密密码（与 ``key`` 二选一）
     key:
         加密密钥（与 ``password`` 二选一）
-    use_env:
-        是否从环境变量中获取密码和密钥（默认 False）
+    env:
+        为 ``True`` 时从 ``FCMD_CRYPT_PASSWORD`` / ``FCMD_CRYPT_KEY`` 环境变量读取（默认 ``False``）
     """
     if env:
         password = os.getenv("FCMD_CRYPT_PASSWORD") or ""
@@ -351,7 +353,7 @@ def decrypt_cmd(text: str, password: str = "", key: str = "", env: bool = False)
 
 @fcmd.main("cryptool")
 def main() -> None:
-    pass
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 
 
 if __name__ == "__main__":
