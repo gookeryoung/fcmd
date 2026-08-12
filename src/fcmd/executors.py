@@ -12,17 +12,21 @@
 
 架构
 ----
-本模块按职责分层：
+本模块按职责分层拆分：
 
 * :mod:`fcmd._task_runner` —— **任务级**执行器与共享状态
   (:class:`fcmd._task_runner._ExecContext` / 线程池 / 跳过重试失败处理 /
   :class:`fcmd._task_runner.SyncTaskRunner` /
-  :class:`fcmd._task_runner.AsyncTaskRunner`)。
-* 本模块 —— **层级/依赖调度**与公共 :func:`run` 入口：
-  :class:`SequentialLayerRunner` / :class:`ThreadedLayerRunner` /
-  :class:`AsyncLayerRunner` （层屏障模型）与 :class:`DependencyRunner`
-  （依赖驱动，增量就绪集 ``in_degree`` 计数器 + ``dependents`` 反向邻接表，
-  大图 10k+ 任务调度开销从 O(N²) 降至 O(N)）。
+  :class:`fcmd._task_runner.AsyncTaskRunner` / :func:`_store_result`)。
+* :mod:`fcmd._layer_runner` —— **层屏障模型**调度
+  (:class:`fcmd._layer_runner.SequentialLayerRunner` /
+  :class:`fcmd._layer_runner.ThreadedLayerRunner` /
+  :class:`fcmd._layer_runner.AsyncLayerRunner` + 驱动函数)。
+* :mod:`fcmd._dependency_runner` —— **依赖驱动调度**
+  (:class:`fcmd._dependency_runner.DependencyRunner`，增量就绪集
+  ``in_degree`` 计数器 + ``dependents`` 反向邻接表，大图 10k+ 任务
+  调度开销从 O(N²) 降至 O(N))。
+* 本模块 —— 公共 :func:`run` 入口与策略派发。
 
 所有策略共享统一异步内核，支持：
 * :class:`RetryPolicy`（max_attempts/delay/backoff/jitter/retry_on）
@@ -35,252 +39,25 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import replace as dc_replace
 from typing import Any, Literal
 
-from ._task_runner import (
-    AsyncTaskRunner,
-    SyncTaskRunner,
-    _build_context,
-    _emit,
-    _ExecContext,
-    _shutdown_thread_pool,
-)
+from ._dependency_runner import DependencyRunner
+from ._layer_runner import _async_drive, _drive_sequential, _drive_threaded
+from ._task_runner import _ExecContext, _shutdown_thread_pool
 from .apis.context import describe_injection
 from .apis.dag import Graph
 from .apis.errors import TaskFailedError
 from .apis.report import RunReport
-from .apis.task import EventCallback, RunConfig, TaskEvent, TaskResult, TaskSpec, TaskStatus
+from .apis.task import EventCallback, RunConfig, TaskEvent, TaskStatus
 from .console import get_console
 
 logger = logging.getLogger(__name__)
 
 # 观察者回调类型。
 Strategy = Literal["sequential", "thread", "async", "dependency"]
-
-
-# ---------------------------------------------------------------------- #
-# 共享辅助：结果存储
-# ---------------------------------------------------------------------- #
-def _filter_and_sort(
-    layer: list[str],
-    graph: Graph,
-) -> tuple[list[str], dict[str, TaskSpec[Any]]]:
-    """返回待运行列表与 specs 映射。
-
-    预构建 ``{name: spec}`` 映射，供调用方复用，消除 runner 内的重复 ``resolved_spec`` 调用。
-    """
-    specs: dict[str, TaskSpec[Any]] = {}
-    to_run: list[str] = []
-    for name in layer:
-        spec = graph.resolved_spec(name)
-        specs[name] = spec
-        to_run.append(name)
-    return to_run, specs
-
-
-def _store_result(
-    result: TaskResult[Any],
-    spec: TaskSpec[Any],
-    ctx: _ExecContext,
-) -> None:
-    """存储任务结果到 context/statuses/report 并触发事件。"""
-    ctx.context[spec.name] = result.value
-    ctx.statuses[spec.name] = result.status.value
-    ctx.report.results[spec.name] = result
-    _emit(ctx.on_event, result)
-
-
-# ---------------------------------------------------------------------- #
-# 层执行器
-# ---------------------------------------------------------------------- #
-class SequentialLayerRunner:
-    """逐个运行某层的任务。"""
-
-    @staticmethod
-    def execute(
-        layer: list[str],
-        graph: Graph,
-        ctx: _ExecContext,
-        layer_idx: int,
-    ) -> None:
-        to_run, specs = _filter_and_sort(layer, graph)
-        for name in to_run:
-            spec = specs[name]
-            task_ctx = _build_context(spec, ctx.context, ctx.statuses)
-            result = SyncTaskRunner.run(spec, task_ctx, layer_idx, ctx)
-            _store_result(result, spec, ctx)
-
-
-class ThreadedLayerRunner:
-    """在线程池中并发运行某层的任务。"""
-
-    @staticmethod
-    def execute(
-        layer: list[str],
-        graph: Graph,
-        ctx: _ExecContext,
-        layer_idx: int,
-        pool: concurrent.futures.ThreadPoolExecutor,
-    ) -> None:
-        to_run, specs = _filter_and_sort(layer, graph)
-        if not to_run:  # pragma: no cover - Graph.layers() 不产生空层
-            return
-        context_snapshot = dict(ctx.context)
-        statuses_snapshot = dict(ctx.statuses)
-
-        def _run_threaded_task(name: str) -> tuple[dict[str, Any], TaskResult[Any]]:
-            spec = specs[name]
-            task_ctx = _build_context(spec, context_snapshot, statuses_snapshot)
-            return task_ctx, SyncTaskRunner.run(spec, task_ctx, layer_idx, ctx)
-
-        future_to_name: dict[concurrent.futures.Future[tuple[dict[str, Any], TaskResult[Any]]], str] = {
-            pool.submit(_run_threaded_task, name): name for name in to_run
-        }
-        completed: dict[str, tuple[dict[str, Any], TaskResult[Any]]] = {}
-        try:
-            for fut in concurrent.futures.as_completed(future_to_name):
-                name = future_to_name[fut]
-                completed[name] = fut.result()
-        except BaseException:
-            # fail-fast：首个任务失败时取消同层其他未完成的 future（对齐 DependencyRunner 语义）。
-            # 注意：正在运行的任务无法中断（Python 线程限制），仅取消排队中的任务；
-            # 已完成的任务结果仍需存储（finally 块）。
-            for other in future_to_name:
-                if not other.done():
-                    other.cancel()
-            raise
-        finally:
-            for name, (_, result) in completed.items():
-                _store_result(result, specs[name], ctx)
-
-
-class AsyncLayerRunner:
-    """在事件循环上并发运行某层的任务。"""
-
-    @staticmethod
-    async def execute(
-        layer: list[str],
-        graph: Graph,
-        ctx: _ExecContext,
-        layer_idx: int,
-    ) -> None:
-        to_run, specs = _filter_and_sort(layer, graph)
-        if not to_run:  # pragma: no cover - Graph.layers() 不产生空层
-            return
-        context_snapshot = dict(ctx.context)
-        statuses_snapshot = dict(ctx.statuses)
-
-        async def _run_async_task(name: str) -> tuple[dict[str, Any], TaskResult[Any]]:
-            spec = specs[name]
-            task_ctx = _build_context(spec, context_snapshot, statuses_snapshot)
-            result = await AsyncTaskRunner.run(spec, task_ctx, layer_idx, ctx)
-            return task_ctx, result
-
-        results = await asyncio.gather(*[_run_async_task(name) for name in to_run])
-        for name, (_, result) in zip(to_run, results):
-            _store_result(result, specs[name], ctx)
-
-
-def _build_dependency_index(
-    remaining: set[str],
-    all_specs: Mapping[str, TaskSpec[Any]],
-    completed: set[str],
-) -> tuple[dict[str, int], dict[str, list[str]], set[str]]:
-    """构建增量就绪集索引：in_degree 计数器 + dependents 反向邻接表 + 初始 ready 集合。
-
-    用于 :class:`DependencyRunner` 替代每轮 O(N) 扫描 ``remaining``。
-    每轮调度开销从 O(N*D) 降至 O(D_out)，大图（10k+ 任务）显著加速。
-    """
-    in_degree: dict[str, int] = {}
-    dependents: dict[str, list[str]] = {name: [] for name in all_specs}
-    ready: set[str] = set()
-    for name in remaining:
-        spec = all_specs[name]
-        # 软依赖可能不在图中（由 defaults 提供默认值），不计入就绪计数。
-        deps = (*spec.depends_on, *(d for d in spec.soft_depends_on if d in all_specs))
-        unsatisfied = [d for d in deps if d not in completed]
-        in_degree[name] = len(unsatisfied)
-        for d in unsatisfied:
-            if d not in dependents:  # pragma: no cover - dependents 已用 all_specs 全部名称预初始化
-                dependents[d] = []
-            dependents[d].append(name)
-        if in_degree[name] == 0:
-            ready.add(name)
-    return in_degree, dependents, ready
-
-
-class DependencyRunner:
-    """依赖驱动调度：任务在硬/软依赖完成后立即启动，无层屏障。
-
-    所有任务通过 asyncio 并发调度。同步任务卸载到线程池。
-
-    本类直接调用模块级共享辅助函数（:func:`_store_result`），职责清晰。
-    """
-
-    @staticmethod
-    async def execute(
-        graph: Graph,
-        ctx: _ExecContext,
-    ) -> None:
-        all_names = list(graph.all_specs().keys())
-        all_specs: dict[str, TaskSpec[Any]] = {name: graph.resolved_spec(name) for name in all_names}
-
-        # 事件驱动调度：跟踪 completed / in_flight / remaining。
-        completed: set[str] = set()
-        in_flight: dict[str, asyncio.Task[TaskResult[Any]]] = {}
-        remaining: set[str] = set(all_names)
-
-        # 增量就绪集：用 in_degree 计数器 + dependents 反向邻接表替代每轮 O(N) 扫描。
-        in_degree, dependents, ready = _build_dependency_index(remaining, all_specs, completed)
-
-        def _on_complete(name: str) -> None:
-            """任务完成后，递减其依赖者的 in_degree，新就绪的加入 ready 集合。"""
-            for dependent in dependents.get(name, ()):
-                in_degree[dependent] -= 1
-                if in_degree[dependent] == 0:
-                    ready.add(dependent)
-
-        async def _run_task(name: str) -> TaskResult[Any]:
-            spec = all_specs[name]
-            task_ctx = _build_context(spec, ctx.context, ctx.statuses)
-            result = await AsyncTaskRunner.run(spec, task_ctx, None, ctx)
-            _store_result(result, spec, ctx)
-            return result
-
-        loop = asyncio.get_running_loop()
-
-        # 主循环：调度就绪任务 → 等待完成 → 更新 completed → 重复。
-        # fail-fast：首个异常即取消剩余任务并抛出（匹配 gather 语义）。
-        while remaining or in_flight:
-            # 调度所有就绪任务
-            if ready:
-                to_schedule = list(ready)
-                ready.clear()
-                for name in to_schedule:
-                    remaining.discard(name)
-                    in_flight[name] = loop.create_task(_run_task(name))
-
-            if not in_flight:  # pragma: no cover - 图已校验无环，防御性处理
-                if remaining:
-                    raise RuntimeError(f"调度死锁：剩余任务 {remaining} 无法就绪")
-                break
-
-            done, _ = await asyncio.wait(in_flight.values(), return_when=asyncio.FIRST_COMPLETED)
-            for task in done:
-                done_name = next(n for n, t in in_flight.items() if t is task)
-                del in_flight[done_name]
-                completed.add(done_name)
-                _on_complete(done_name)
-                exc = task.exception()
-                if exc is not None:
-                    for t in in_flight.values():
-                        if not t.done():
-                            t.cancel()
-                    raise exc
 
 
 # ---------------------------------------------------------------------- #
@@ -339,18 +116,21 @@ def _dispatch_strategy(
     ctx: _ExecContext,
     max_workers: int | None,
 ) -> None:
-    """按策略派发执行。"""
+    """按策略派发执行。
+
+    ``dependency`` 走依赖驱动路径（无层屏障）；其余三者走层屏障模型，
+    共享一次 ``graph.layers()`` 调用。
+    """
+    if strategy == "dependency":
+        asyncio.run(DependencyRunner.execute(graph, ctx))
+        return
+    layers = graph.layers()
     if strategy == "sequential":
-        layers = graph.layers()
         _drive_sequential(graph, layers, ctx)
     elif strategy == "thread":
-        layers = graph.layers()
         _drive_threaded(graph, layers, ctx, max_workers)
     elif strategy == "async":
-        layers = graph.layers()
         asyncio.run(_async_drive(graph, layers, ctx))
-    elif strategy == "dependency":
-        asyncio.run(DependencyRunner.execute(graph, ctx))
     else:  # pragma: no cover - Strategy Literal 已穷尽所有取值
         raise ValueError(f"Unknown strategy: {strategy!r}")
 
@@ -504,35 +284,3 @@ def _print_dry_run(graph: Graph, layers: list[list[str]]) -> None:
         console.print(f"  [dim]Layer {idx}:[/dim] {layer}")
         for name in layer:
             console.print(f"    [cyan]-[/cyan] {describe_injection(graph.resolved_spec(name))}")
-
-
-def _drive_sequential(
-    graph: Graph,
-    layers: list[list[str]],
-    ctx: _ExecContext,
-) -> None:
-    for idx, layer in enumerate(layers, 1):
-        SequentialLayerRunner.execute(layer, graph, ctx, idx)
-
-
-def _drive_threaded(
-    graph: Graph,
-    layers: list[list[str]],
-    ctx: _ExecContext,
-    max_workers: int | None,
-) -> None:
-    # 线程池在整个 run() 内复用，避免逐层创建/销毁线程的开销。
-    max_layer_size = max((len(layer) for layer in layers), default=1)
-    pool_workers = max_workers or max(1, min(32, max_layer_size))
-    with concurrent.futures.ThreadPoolExecutor(max_workers=pool_workers) as pool:
-        for idx, layer in enumerate(layers, 1):
-            ThreadedLayerRunner.execute(layer, graph, ctx, idx, pool)
-
-
-async def _async_drive(
-    graph: Graph,
-    layers: list[list[str]],
-    ctx: _ExecContext,
-) -> None:
-    for idx, layer in enumerate(layers, 1):
-        await AsyncLayerRunner.execute(layer, graph, ctx, idx)

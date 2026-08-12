@@ -447,3 +447,18 @@ def _submit_sync_task(
 
     # 复用模块级线程池，避免每次 asyncio.run() 创建新线程池的开销。
     return loop.run_in_executor(_get_thread_pool(), fn_call)
+
+
+# ---------------------------------------------------------------------- #
+# 共享辅助：结果存储
+# ---------------------------------------------------------------------- #
+def _store_result(
+    result: TaskResult[Any],
+    spec: TaskSpec[Any],
+    ctx: _ExecContext,
+) -> None:
+    """存储任务结果到 context/statuses/report 并触发事件。"""
+    ctx.context[spec.name] = result.value
+    ctx.statuses[spec.name] = result.status.value
+    ctx.report.results[spec.name] = result
+    _emit(ctx.on_event, result)
