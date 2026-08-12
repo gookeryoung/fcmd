@@ -619,7 +619,7 @@ def test_run_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
         sleep_calls.append(seconds)
         original_sleep(0)  # 实际不等待，仅记录调用
 
-    monkeypatch.setattr("fcmd.executors.time.sleep", fake_sleep)
+    monkeypatch.setattr("fcmd._task_runner.time.sleep", fake_sleep)
 
     attempts = {"n": 0}
 
@@ -641,13 +641,13 @@ def test_run_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RetryPolicy(delay>0) 异步重试时调用 asyncio.sleep（覆盖 lines 433-435）。"""
+    """RetryPolicy(delay>0) 异步重试时调用 asyncio.sleep（覆盖 AsyncTaskRunner 重试等待）。"""
     sleep_calls: list[float] = []
 
     async def fake_async_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
-    monkeypatch.setattr("fcmd.executors.asyncio.sleep", fake_async_sleep)
+    monkeypatch.setattr("fcmd._task_runner.asyncio.sleep", fake_async_sleep)
 
     attempts = {"n": 0}
 
@@ -668,13 +668,13 @@ def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_async_retry_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RetryPolicy 默认 delay=0 时异步重试不调用 asyncio.sleep（覆盖 434->425 分支）。"""
+    """RetryPolicy 默认 delay=0 时异步重试不调用 asyncio.sleep（覆盖 AsyncTaskRunner 重试等待分支）。"""
     sleep_calls: list[float] = []
 
     async def fake_async_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
-    monkeypatch.setattr("fcmd.executors.asyncio.sleep", fake_async_sleep)
+    monkeypatch.setattr("fcmd._task_runner.asyncio.sleep", fake_async_sleep)
 
     attempts = {"n": 0}
 
