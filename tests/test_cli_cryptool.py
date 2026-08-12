@@ -24,7 +24,9 @@ from fcmd.cli.cryptool import (
 )
 
 # 固定密钥与密码，避免随机干扰错误分支测试
-_KEY = _cryptool.random_key
+# 注：曾用 _cryptool.random_key（@property 每次生成新随机串），但 urlsafe base64
+# 有 1/64 概率以 "-" 开头，被 argparse 误判为选项导致 flaky；改用确定性 64 字节密钥
+_KEY = base64.urlsafe_b64encode(bytes(range(64))).decode("ascii")
 _PASSWORD = "test-password-123"
 _SALT = b"0123456789abcdef"  # 16 字节固定盐
 
