@@ -16,16 +16,16 @@
 
 * :mod:`fcmd._task_runner` —— **任务级**执行器与共享状态
   (:class:`fcmd._task_runner._ExecContext` / 线程池 / 跳过重试失败处理 /
-  :class:`fcmd._task_runner.SyncTaskRunner` /
-  :class:`fcmd._task_runner.AsyncTaskRunner` / :func:`_store_result`)。
+  :func:`fcmd._task_runner._run_sync_task` /
+  :func:`fcmd._task_runner._run_async_task` / :func:`_store_result`)。
 * :mod:`fcmd._layer_runner` —— **层屏障模型**调度
-  (:class:`fcmd._layer_runner.SequentialLayerRunner` /
-  :class:`fcmd._layer_runner.ThreadedLayerRunner` /
-  :class:`fcmd._layer_runner.AsyncLayerRunner` + 驱动函数)。
+  (:func:`fcmd._layer_runner._run_layer_sequential` /
+  :func:`fcmd._layer_runner._run_layer_threaded` /
+  :func:`fcmd._layer_runner._run_layer_async` + 驱动函数)。
 * :mod:`fcmd._dependency_runner` —— **依赖驱动调度**
-  (:class:`fcmd._dependency_runner.DependencyRunner`，增量就绪集
-  ``in_degree`` 计数器 + ``dependents`` 反向邻接表，大图 10k+ 任务
-  调度开销从 O(N²) 降至 O(N))。
+  (:func:`fcmd._dependency_runner._run_dependency`，基于标准库
+  :class:`graphlib.TopologicalSorter` 增量就绪接口，大图 10k+ 任务
+  调度开销 O(N))。
 * 本模块 —— 公共 :func:`run` 入口与策略派发。
 
 所有策略共享统一异步内核，支持：
@@ -44,7 +44,7 @@ from collections.abc import Iterable
 from dataclasses import replace as dc_replace
 from typing import Any, Literal
 
-from ._dependency_runner import DependencyRunner
+from ._dependency_runner import _run_dependency
 from ._layer_runner import _async_drive, _drive_sequential, _drive_threaded
 from ._task_runner import _ExecContext, _shutdown_thread_pool
 from .apis.context import describe_injection
@@ -122,7 +122,7 @@ def _dispatch_strategy(
     共享一次 ``graph.layers()`` 调用。
     """
     if strategy == "dependency":
-        asyncio.run(DependencyRunner.execute(graph, ctx))
+        asyncio.run(_run_dependency(graph, ctx))
         return
     layers = graph.layers()
     if strategy == "sequential":

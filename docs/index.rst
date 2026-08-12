@@ -29,7 +29,7 @@ fcmd
 
 可选依赖按需安装：``fcmd[img]`` (Pillow)、``fcmd[pdf]`` (PyMuPDF + pypdf)、
 ``fcmd[ocr]`` (pytesseract)、``fcmd[office]`` (img + pdf + ocr)。
-要求 Python ≥ 3.8。
+要求 Python ≥ 3.9。
 
 快速上手
 ========

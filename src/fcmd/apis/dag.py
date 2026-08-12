@@ -1,7 +1,7 @@
 """DAG 构建、校验、分层与可视化。
 
-使用自实现的 Kahn 算法进行拓扑排序。图以增量方式构建并即时校验，
-使配置错误在构建时（而非执行时）快速失败。
+使用标准库 :class:`graphlib.TopologicalSorter` 进行分层拓扑排序。图以增量方式
+构建并即时校验，使配置错误在构建时（而非执行时）快速失败。
 
 支持：
 * 图级默认值 :class:`GraphDefaults`，TaskSpec 字段为 ``None`` 时回退。
@@ -23,49 +23,35 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
+from graphlib import CycleError as _GraphCycleError
+from graphlib import TopologicalSorter
+
 from .context import is_context_annotation
 from .errors import CycleError, DuplicateTaskError, MissingDependencyError
 from .task import RetryPolicy, TaskSpec
 
 
 def _topological_layers(deps: Mapping[str, tuple[str, ...]]) -> tuple[list[list[str]], list[str] | None]:
-    """Kahn 算法分层拓扑排序。
+    """分层拓扑排序（基于标准库 :class:`graphlib.TopologicalSorter`）。
 
     返回 ``(layers, cycle_nodes)``：无环时 ``cycle_nodes`` 为 ``None``；
-    有环时为参与环的未处理节点列表（非精确环路径，仅指示存在环）。
+    有环时 ``layers`` 为空列表，``cycle_nodes`` 为参与环的节点列表
+    （由 :class:`graphlib.CycleError` 提供，比手算入度残量更精确）。
     """
-    # 入度（依赖数）与反向邻接表
-    in_degree: dict[str, int] = {}
-    dependents: dict[str, list[str]] = {}
-    for name, d in deps.items():
-        in_degree[name] = len(d)
-        dependents.setdefault(name, [])
-    for name, d in deps.items():
-        for dep in d:
-            if dep in dependents:
-                dependents[dep].append(name)
-
-    # 初始层：入度为 0 的节点
-    current = sorted(name for name, deg in in_degree.items() if deg == 0)
+    sorter = TopologicalSorter({name: tuple(d) for name, d in deps.items()})
+    try:
+        sorter.prepare()
+    except _GraphCycleError as exc:
+        # graphlib 在 args[1] 提供环节点列表；防御性回退到全部节点名。
+        cycle = exc.args[1] if len(exc.args) > 1 and exc.args[1] else list(deps)
+        return [], list(cycle)
     layers: list[list[str]] = []
-    processed = 0
-
-    while current:
-        layers.append(current)
-        nxt: list[str] = []
-        for node in current:
-            for dependent in dependents[node]:
-                in_degree[dependent] -= 1
-                if in_degree[dependent] == 0:
-                    nxt.append(dependent)
-            processed += 1
-        nxt.sort()
-        current = nxt
-
-    if processed < len(deps):
-        cycle_nodes = [name for name, deg in in_degree.items() if deg > 0]
-        return layers, cycle_nodes
-
+    while sorter.is_active():
+        # sorted 保证分层顺序确定（与原实现一致）。
+        layer = sorted(sorter.get_ready())
+        layers.append(layer)
+        for node in layer:
+            sorter.done(node)
     return layers, None
 
 

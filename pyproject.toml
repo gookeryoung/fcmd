@@ -3,13 +3,12 @@ name = "fcmd"
 version = "0.2.4"
 description = "极速 Python 工具集应用：DAG 任务调度 + 组合 CLI"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "fcmd" }]
 keywords = ["cli", "dag", "scheduler", "task", "workflow", "tools"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

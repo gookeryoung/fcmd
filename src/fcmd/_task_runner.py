@@ -8,10 +8,10 @@
   跨 ``run()`` 调用复用，避免 ``asyncio.run()`` 每次重建线程池的开销。
 * 无状态辅助（:func:`_is_async_fn` / :func:`_emit` / :func:`_emit_running`
   / :func:`_build_context`）—— 异步判定、观察者事件触发、任务上下文构建。
-* 任务级跳过/重试/失败处理（:func:`_prepare_for_execution` /
+* :func:`_prepare_for_execution` /
   :func:`_should_retry` / :func:`_mark_success` / :func:`_finalize_failure`
-  / :func:`_handle_failure`）—— 上游跳过预检、条件跳过、重试决策、失败收尾。
-* :class:`SyncTaskRunner` / :class:`AsyncTaskRunner` —— 同步/异步任务执行器，
+  / :func:`_handle_failure` —— 上游跳过预检、条件跳过、重试决策、失败收尾。
+* :func:`_run_sync_task` / :func:`_run_async_task` —— 同步/异步任务执行器，
   调用上述模块级函数消除重复代码。
 
 本模块自包含，不依赖 :mod:`fcmd.executors`，由后者按策略派发调用。
@@ -337,80 +337,74 @@ def _handle_failure(
 # ---------------------------------------------------------------------- #
 # 任务执行器：同步 / 异步（调用模块级跳过/重试函数）
 # ---------------------------------------------------------------------- #
-class SyncTaskRunner:
-    """同步任务执行器：带重试与跳过预检。"""
+def _run_sync_task(
+    spec: TaskSpec[Any],
+    task_ctx: Mapping[str, Any],
+    layer_idx: int | None,
+    ctx: _ExecContext,
+) -> TaskResult[Any]:
+    """同步执行单个任务：带重试与跳过预检。"""
+    skipped = _prepare_for_execution(spec, task_ctx, ctx.report, ctx.on_event)
+    if skipped is not None:
+        return skipped
 
-    @staticmethod
-    def run(
-        spec: TaskSpec[Any],
-        task_ctx: Mapping[str, Any],
-        layer_idx: int | None,
-        ctx: _ExecContext,
-    ) -> TaskResult[Any]:
-        skipped = _prepare_for_execution(spec, task_ctx, ctx.report, ctx.on_event)
-        if skipped is not None:
-            return skipped
+    result: TaskResult[Any] = TaskResult(spec=spec)
+    result.started_at = datetime.now()
+    args, kwargs = build_call_args(spec, task_ctx)
 
-        result: TaskResult[Any] = TaskResult(spec=spec)
-        result.started_at = datetime.now()
-        args, kwargs = build_call_args(spec, task_ctx)
+    _emit_running(ctx.on_event, spec)
 
-        _emit_running(ctx.on_event, spec)
-
-        while True:
-            result.attempts += 1
-            try:
-                # 快速路径：无 env/cwd 时直接调用，跳过上下文管理器创建开销。
-                if spec.env is None and spec.cwd is None:
+    while True:
+        result.attempts += 1
+        try:
+            # 快速路径：无 env/cwd 时直接调用，跳过上下文管理器创建开销。
+            if spec.env is None and spec.cwd is None:
+                value = spec.effective_fn(*args, **kwargs)
+            else:
+                with spec.env_context():
                     value = spec.effective_fn(*args, **kwargs)
-                else:
-                    with spec.env_context():
-                        value = spec.effective_fn(*args, **kwargs)
-                _mark_success(result, value)
+            _mark_success(result, value)
+            return result
+        except Exception as exc:
+            # 用户提供的任务函数可抛任意异常，宽捕获用于重试/失败处理边界
+            if _handle_failure(spec, result, exc, layer_idx, ctx):
                 return result
-            except Exception as exc:
-                # 用户提供的任务函数可抛任意异常，宽捕获用于重试/失败处理边界
-                if _handle_failure(spec, result, exc, layer_idx, ctx):
-                    return result
-                wait = spec.retry.wait_seconds(result.attempts)
-                if wait > 0:
-                    time.sleep(wait)
+            wait = spec.retry.wait_seconds(result.attempts)
+            if wait > 0:
+                time.sleep(wait)
 
 
-class AsyncTaskRunner:
-    """异步任务执行器：在事件循环上运行同步或异步任务，带重试与跳过预检。"""
+async def _run_async_task(
+    spec: TaskSpec[Any],
+    task_ctx: Mapping[str, Any],
+    layer_idx: int | None,
+    ctx: _ExecContext,
+) -> TaskResult[Any]:
+    """异步执行单个任务（同步任务卸载到线程池）：带重试与跳过预检。"""
+    skipped = _prepare_for_execution(spec, task_ctx, ctx.report, ctx.on_event)
+    if skipped is not None:
+        return skipped
 
-    @staticmethod
-    async def run(
-        spec: TaskSpec[Any],
-        task_ctx: Mapping[str, Any],
-        layer_idx: int | None,
-        ctx: _ExecContext,
-    ) -> TaskResult[Any]:
-        skipped = _prepare_for_execution(spec, task_ctx, ctx.report, ctx.on_event)
-        if skipped is not None:
-            return skipped
+    result: TaskResult[Any] = TaskResult(spec=spec)
+    result.started_at = datetime.now()
+    args, kwargs = build_call_args(spec, task_ctx)
+    loop = asyncio.get_running_loop()
 
-        result: TaskResult[Any] = TaskResult(spec=spec)
-        result.started_at = datetime.now()
-        args, kwargs = build_call_args(spec, task_ctx)
-        loop = asyncio.get_running_loop()
+    _emit_running(ctx.on_event, spec)
 
-        _emit_running(ctx.on_event, spec)
-
-        while True:
-            result.attempts += 1
-            try:
-                value = await _execute_async_task(spec, args, kwargs, loop)
-                _mark_success(result, value)
+    while True:
+        result.attempts += 1
+        try:
+            value = await _execute_async_task(spec, args, kwargs, loop)
+            _mark_success(result, value)
+            return result
+        except Exception as exc:
+            # 异步任务函数可抛任意异常，宽捕获用于重试/失败处理边界
+            if _handle_failure(spec, result, exc, layer_idx, ctx):
                 return result
-            except Exception as exc:
-                # 异步任务函数可抛任意异常，宽捕获用于重试/失败处理边界
-                if _handle_failure(spec, result, exc, layer_idx, ctx):
-                    return result
-                wait = spec.retry.wait_seconds(result.attempts)
-                if wait > 0:
-                    await asyncio.sleep(wait)
+            wait = spec.retry.wait_seconds(result.attempts)
+            if wait > 0:
+                await asyncio.sleep(wait)
 
 
 async def _execute_async_task(

@@ -3,10 +3,17 @@
 
 遵循 `Keep a Changelog <https://keepachangelog.com/>`_ 风格，版本倒序排列。
 
+[Unreleased]
+------------
+
+- ``refactor``: 调度引擎采用标准库 ``graphlib.TopologicalSorter`` 替换两处自实现的 Kahn 拓扑排序（``dag._topological_layers`` 与 ``_dependency_runner`` 的增量就绪集簿记），消除"造轮子"
+- ``refactor``: 6 个无状态单方法 Runner 类（``SyncTaskRunner``/``AsyncTaskRunner``/三个 ``LayerRunner``/``DependencyRunner``）收敛为模块级函数；``_filter_and_sort`` 重命名为 ``_build_spec_map`` 并去除冗余 ``to_run``
+- ``chore``: 放弃 Python 3.8 支持（已 EOL），最低版本提升至 3.9；同步更新 CI 矩阵、tox envlist、ruff/pyrefly 目标版本与文档
+
 v0.2.3 (2026-08-12)
 -------------------
 
-- ``feat``: 新增 3 个 CLI 工具：``inifile``（INI 读写，configparser）、``tomltool``（TOML 解析，3.11+ tomllib / 3.8-3.10 回退 tomli）、``calcdate``（日期计算 add/workdays/diff/compare）
+- ``feat``: 新增 3 个 CLI 工具：``inifile``（INI 读写，configparser）、``tomltool``（TOML 解析，3.11+ tomllib / 3.9-3.10 回退 tomli）、``calcdate``（日期计算 add/workdays/diff/compare）
 - ``refactor``: 拆分 ``executors.py``，抽取 Runner 抽象与 LayerRunner 系列，简化 ``_dispatch_strategy``
 - ``refactor``: 拆分 ``toolkit.py``，参数解析移至 ``apis/_tool_args.py``，执行逻辑移至 ``apis/_tool_exec.py``
 - ``refactor``: 拆分 ``main.py`` 内建命令纯函数辅助到 ``cli/_env_helpers.py`` 与 ``cli/_doctor_helpers.py``

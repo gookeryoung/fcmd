@@ -592,7 +592,7 @@ def test_run_async_timeout() -> None:
 
 
 def test_run_thread_strategy_with_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """thread 策略下 fn 任务带 env（覆盖 SyncTaskRunner env_context 路径）。"""
+    """thread 策略下 fn 任务带 env（覆盖 _run_sync_task env_context 路径）。"""
     import os
 
     monkeypatch.delenv("FCMD_THREAD_ENV", raising=False)
@@ -641,7 +641,7 @@ def test_run_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RetryPolicy(delay>0) 异步重试时调用 asyncio.sleep（覆盖 AsyncTaskRunner 重试等待）。"""
+    """RetryPolicy(delay>0) 异步重试时调用 asyncio.sleep（覆盖 _run_async_task 重试等待）。"""
     sleep_calls: list[float] = []
 
     async def fake_async_sleep(seconds: float) -> None:
@@ -668,7 +668,7 @@ def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_async_retry_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
-    """RetryPolicy 默认 delay=0 时异步重试不调用 asyncio.sleep（覆盖 AsyncTaskRunner 重试等待分支）。"""
+    """RetryPolicy 默认 delay=0 时异步重试不调用 asyncio.sleep（覆盖 _run_async_task 重试等待分支）。"""
     sleep_calls: list[float] = []
 
     async def fake_async_sleep(seconds: float) -> None:
@@ -695,7 +695,7 @@ def test_run_async_retry_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_async_conditions_skip() -> None:
-    """async 策略下条件不满足的任务被 SKIPPED（覆盖 AsyncTaskRunner line 415）。"""
+    """async 策略下条件不满足的任务被 SKIPPED（覆盖 _run_async_task 条件跳过分支）。"""
     executed: list[str] = []
 
     @task(conditions=(lambda _: False,))
@@ -751,7 +751,7 @@ def test_run_dependency_fail_cancels_others() -> None:
 
 
 def test_run_thread_strategy_fail_fast_cancels_pending() -> None:
-    """thread 策略下首个任务失败时取消排队中的任务（fail-fast，对齐 DependencyRunner）。
+    """thread 策略下首个任务失败时取消排队中的任务（fail-fast，对齐 _run_dependency）。
 
     max_workers=1 时 a_fail 先执行（字母序），失败后 b_slow 被 cancel（不执行 3 秒）。
     """
