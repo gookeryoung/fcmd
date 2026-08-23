@@ -1,10 +1,11 @@
 """envdev 工具测试。
 
 验证 ``fcmd.cli.envdev`` 模块：
-- 工具注册
-- setup_python_mirror / setup_conda_mirror 镜像源配置
-- _setup_rust_mirror / _download_rustup / _install_rust_toolchain Rust 工具链
-- _setup_bun_mirror / _install_bun / setup_bun_env Bun 工具链
+- 工具注册（语言级一键命令公开，细粒度步骤命令隐藏）
+- setup_python_env / setup_python_mirror / setup_conda_mirror Python 环境
+- _setup_rust_mirror / _download_rustup / _install_rust_toolchain / setup_rust_env Rust 工具链
+- _setup_bun_mirror / _install_bun / setup_js_env JavaScript 工具链
+- setup_all_env 一键编排
 - setup_linux_system_mirror / install_linux_qt_libs / install_linux_fonts / install_linux_docker Linux 专用
 """
 
@@ -65,29 +66,26 @@ class TestToolsRegistration:
             assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
 
     def test_envdev_public_subcommands(self) -> None:
-        """envdev 公开子命令应注册（编排器 + 单命令）。"""
+        """envdev 公开子命令应注册（语言级一键命令）。"""
         subs = fx.list_subcommands("envdev")
-        for name in (
-            "setup-python",
-            "setup-conda",
-            "rust",
-            "js-bun",
-            "setup-linux-mirror",
-            "install-qt-libs",
-            "install-fonts",
-            "install-docker",
-        ):
+        for name in ("python", "js", "rust", "all"):
             assert name in subs, f"公开子命令 {name!r} 未注册"
 
     def test_envdev_hidden_subcommands(self) -> None:
-        """envdev 隐藏子命令应注册（镜像源/下载/安装明细步骤）。"""
+        """envdev 隐藏子命令应注册（镜像源/下载/安装明细步骤 + Linux 专用）。"""
         subs = fx.list_subcommands("envdev", include_hidden=True)
         for name in (
+            "setup-python",
+            "setup-conda",
             "setup-rust",
             "download-rustup",
             "install-rust",
             "setup-bun",
             "install-bun",
+            "setup-linux-mirror",
+            "install-qt-libs",
+            "install-fonts",
+            "install-docker",
         ):
             assert name in subs, f"隐藏子命令 {name!r} 未注册"
 
@@ -244,6 +242,45 @@ class TestEnvdev:
         captured = capsys.readouterr()
         assert captured.out == ""
 
+    def test_setup_python_env_orchestration(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """setup_python_env 依次调用 pip 与 Conda 镜像源配置。"""
+        calls: list[str] = []
+        monkeypatch.setattr("fcmd.cli.envdev.setup_python_mirror", lambda m: calls.append(f"pip:{m}"))
+        monkeypatch.setattr("fcmd.cli.envdev.setup_conda_mirror", lambda m: calls.append(f"conda:{m}"))
+
+        fcmd.cli.envdev.setup_python_env(mirror="ustc")
+        assert calls == ["pip:ustc", "conda:ustc"]
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
+    def test_setup_all_env_orchestration(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """setup_all_env 依次调用 Python/JS/Rust 一键命令与 Linux 专用步骤。"""
+        calls: list[str] = []
+        monkeypatch.setattr("fcmd.cli.envdev.setup_python_env", lambda m: calls.append(f"python:{m}"))
+        monkeypatch.setattr("fcmd.cli.envdev.setup_js_env", lambda: calls.append("js"))
+        monkeypatch.setattr("fcmd.cli.envdev.setup_rust_env", lambda m, v: calls.append(f"rust:{m}:{v}"))
+        monkeypatch.setattr("fcmd.cli.envdev.setup_linux_system_mirror", lambda: calls.append("linux-mirror"))
+        monkeypatch.setattr("fcmd.cli.envdev.install_linux_qt_libs", lambda: calls.append("qt"))
+        monkeypatch.setattr("fcmd.cli.envdev.install_linux_fonts", lambda: calls.append("fonts"))
+        monkeypatch.setattr("fcmd.cli.envdev.install_linux_docker", lambda: calls.append("docker"))
+
+        fcmd.cli.envdev.setup_all_env(mirror="tsinghua", rust_version="nightly")
+        assert calls == [
+            "python:tsinghua",
+            "js",
+            "rust:tsinghua:nightly",
+            "linux-mirror",
+            "qt",
+            "fonts",
+            "docker",
+        ]
+        captured = capsys.readouterr()
+        assert captured.out == ""
+
     def test_setup_bun_mirror(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -297,15 +334,15 @@ class TestEnvdev:
         assert any("apt" in c and "install" in c for c in calls)
         assert any(c[0] == "bash" for c in calls)
 
-    def test_setup_bun_env_orchestration(
+    def test_setup_js_env_orchestration(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """setup_bun_env 依次调用镜像源配置与安装。"""
+        """setup_js_env 依次调用镜像源配置与安装。"""
         calls: list[str] = []
         monkeypatch.setattr("fcmd.cli.envdev._setup_bun_mirror", lambda: calls.append("mirror"))
         monkeypatch.setattr("fcmd.cli.envdev._install_bun", lambda: calls.append("install"))
 
-        fcmd.cli.envdev.setup_bun_env()
+        fcmd.cli.envdev.setup_js_env()
         assert calls == ["mirror", "install"]
 
     def test_linux_mirror_non_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

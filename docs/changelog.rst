@@ -6,6 +6,7 @@
 [Unreleased]
 ------------
 
+- ``refactor(envdev)``: 子命令按语言精简为 ``python``/``js``/``rust``/``all`` 四个一键命令，细粒度步骤命令（setup-\*/install-\*）转为隐藏子命令
 - ``refactor``: 调度引擎采用标准库 ``graphlib.TopologicalSorter`` 替换两处自实现的 Kahn 拓扑排序（``dag._topological_layers`` 与 ``_dependency_runner`` 的增量就绪集簿记），消除"造轮子"
 - ``refactor``: 6 个无状态单方法 Runner 类（``SyncTaskRunner``/``AsyncTaskRunner``/三个 ``LayerRunner``/``DependencyRunner``）收敛为模块级函数；``_filter_and_sort`` 重命名为 ``_build_spec_map`` 并去除冗余 ``to_run``
 - ``chore``: 放弃 Python 3.8 支持（已 EOL），最低版本提升至 3.9；同步更新 CI 矩阵、tox envlist、ruff/pyrefly 目标版本与文档

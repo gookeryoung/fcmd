@@ -1,16 +1,15 @@
 """envdev - 开发环境镜像源配置工具。
 
-配置 Python / Conda / Rust / Bun 镜像源（Linux 还会安装 Qt 库、中文字体、Docker）。
-所有镜像源参数互不影响，可单独使用。Linux 专用操作（系统镜像/Qt/字体/Docker）
-在非 Linux 平台上由函数内部跳过。
+按语言一键配置开发环境（镜像源 + 工具链安装），Linux 上额外配置系统镜像源、
+Qt 依赖库、中文字体与 Docker。细粒度步骤命令（setup-* / install-*）为隐藏
+子命令，可单独调用也可由一键命令编排。
 
 示例
 ----
-    fcmd envdev setup-python                      # 配置 Python 镜像源（默认清华）
-    fcmd envdev setup-python --mirror aliyun      # 配置阿里云镜像源
-    fcmd envdev setup-conda --mirror ustc         # 配置 Conda 镜像源
-    fcmd envdev rust --mirror tsinghua nightly    # 配置 Rust 环境（镜像源 + 下载 + 安装）
-    fcmd envdev js-bun                            # 配置 Bun 环境（镜像源 + 安装）
+    fcmd envdev python --mirror tsinghua          # 一键配置 Python 环境（pip/uv + Conda）
+    fcmd envdev js                                # 一键配置 JavaScript 环境（Bun）
+    fcmd envdev rust --mirror tsinghua nightly    # 一键配置 Rust 环境（镜像源 + 工具链）
+    fcmd envdev all                               # 一键配置所有环境
 """
 
 from __future__ import annotations
@@ -28,9 +27,11 @@ __all__ = [
     "install_linux_docker",
     "install_linux_fonts",
     "install_linux_qt_libs",
-    "setup_bun_env",
+    "setup_all_env",
     "setup_conda_mirror",
+    "setup_js_env",
     "setup_linux_system_mirror",
+    "setup_python_env",
     "setup_python_mirror",
     "setup_rust_env",
 ]
@@ -178,11 +179,11 @@ def _pip_config_path() -> Path:
 
 
 # ============================================================================
-# 镜像源配置子命令
+# 镜像源配置子命令（隐藏，供语言级一键命令编排）
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="setup-python", help="配置 Python 镜像源")
+@fcmd.tool("envdev", subcommand="setup-python", help="配置 Python 镜像源", hidden=True)
 def setup_python_mirror(mirror: str = "aliyun") -> None:
     """配置 Python 镜像源（持久化环境变量 + 写入 pip 配置文件）。
 
@@ -217,7 +218,7 @@ def setup_python_mirror(mirror: str = "aliyun") -> None:
     print(f"Python 镜像源已配置: {mirror} -> {config_path}")
 
 
-@fcmd.tool("envdev", subcommand="setup-conda", help="配置 Conda 镜像源")
+@fcmd.tool("envdev", subcommand="setup-conda", help="配置 Conda 镜像源", hidden=True)
 def setup_conda_mirror(mirror: str = "aliyun") -> None:
     """配置 Conda 镜像源（写入 ~/.condarc）。
 
@@ -236,6 +237,29 @@ def setup_conda_mirror(mirror: str = "aliyun") -> None:
     content = "show_channel_urls: true\nchannels:\n  - " + "\n  - ".join(urls) + "\n  - defaults\n"
     config_path.write_text(content, encoding="utf-8")
     print(f"Conda 镜像源已配置: {mirror} -> {config_path}")
+
+
+# ============================================================================
+# 语言级一键命令
+# ============================================================================
+
+
+@fcmd.tool("envdev", subcommand="python", help="一键配置 Python 环境")
+def setup_python_env(mirror: str = "aliyun") -> None:
+    """一键配置 Python 开发环境（pip/uv 镜像源 + Conda 镜像源）。
+
+    依次执行：配置 pip/uv 镜像源（环境变量 + pip 配置文件）、
+    配置 Conda 镜像源（``~/.condarc``）。pip 与 Conda 支持的镜像源列表不同，
+    不支持的步骤会打印提示并跳过（如 ``huaweicloud`` 仅 pip 支持）。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/ustc/zju，
+        Conda 支持 tsinghua/ustc/bsfu/aliyun（默认 aliyun）
+    """
+    setup_python_mirror(mirror)
+    setup_conda_mirror(mirror)
 
 
 # ============================================================================
@@ -323,9 +347,9 @@ def _install_rust_toolchain(version: str = "stable") -> None:
     print(f"Rust 工具链 {version} 安装完成")
 
 
-@fcmd.tool("envdev", subcommand="rust", help="配置 Rust 环境")
+@fcmd.tool("envdev", subcommand="rust", help="一键配置 Rust 环境")
 def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
-    """配置 Rust 环境（镜像源 + 下载 rustup + 安装工具链）。
+    """一键配置 Rust 开发环境（镜像源 + 下载 rustup + 安装工具链）。
 
     依次执行：配置 Rust 镜像源（环境变量 + ``~/.cargo/config.toml`` + sccache 目录）、
     下载 Rustup 安装脚本（已安装 rustup 时跳过）、安装指定版本工具链
@@ -389,9 +413,9 @@ def _install_bun() -> None:
     print("Bun.js 安装完成")
 
 
-@fcmd.tool("envdev", subcommand="js-bun", help="配置 Bun 环境")
-def setup_bun_env() -> None:
-    """配置 Bun 环境（配置 npm 镜像源 + 安装 Bun.js）。
+@fcmd.tool("envdev", subcommand="js", help="一键配置 JavaScript 环境")
+def setup_js_env() -> None:
+    """一键配置 JavaScript 开发环境（Bun npm 镜像源 + 安装 Bun.js）。
 
     依次执行：配置 Bun npm 镜像源（环境变量 + ``~/.bunfig.toml``）、
     安装 Bun.js（已安装时跳过）。
@@ -401,11 +425,11 @@ def setup_bun_env() -> None:
 
 
 # ============================================================================
-# Linux 专用子命令
+# Linux 专用子命令（隐藏，供 all 一键命令编排）
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="setup-linux-mirror", help="配置 Linux 系统镜像源")
+@fcmd.tool("envdev", subcommand="setup-linux-mirror", help="配置 Linux 系统镜像源", hidden=True)
 def setup_linux_system_mirror() -> None:
     """下载并安装 Linux 系统镜像源（仅 Linux，已配置国内镜像时跳过）。
 
@@ -449,7 +473,7 @@ def install_linux_qt_libs() -> None:
     print("Qt 依赖库安装完成")
 
 
-@fcmd.tool("envdev", subcommand="install-fonts", help="安装中文字体")
+@fcmd.tool("envdev", subcommand="install-fonts", help="安装中文字体", hidden=True)
 def install_linux_fonts() -> None:
     """安装中文字体（仅 Linux）。"""
     if not sys.platform.startswith("linux"):
@@ -470,6 +494,31 @@ def install_linux_docker() -> None:
     run_command(["sudo", "apt", "install", "-y", "docker-compose-v2"])
     run_command(["sudo", "usermod", "-aG", "docker", getpass.getuser()])
     print("Docker 安装完成（需重新登录以生效 docker 用户组）")
+
+
+@fcmd.tool("envdev", subcommand="all", help="一键配置所有环境")
+def setup_all_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
+    """一键配置所有开发环境（Python + JavaScript + Rust + Linux 系统依赖）。
+
+    依次执行：一键配置 Python 环境（pip/uv + Conda 镜像源）、JavaScript 环境
+    （Bun）、Rust 环境（镜像源 + 工具链）；Linux 平台额外配置系统镜像源、
+    安装 Qt 依赖库、中文字体与 Docker（非 Linux 平台自动跳过并打印提示）。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：Python/JS/Rust 各自支持列表不同，不支持的步骤打印提示跳过
+        （默认 aliyun，三者均支持）
+    rust_version:
+        Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
+    """
+    setup_python_env(mirror)
+    setup_js_env()
+    setup_rust_env(mirror, rust_version)
+    setup_linux_system_mirror()
+    install_linux_qt_libs()
+    install_linux_fonts()
+    install_linux_docker()
 
 
 @fcmd.main("envdev")

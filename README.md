@@ -176,7 +176,7 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `gittool` | - | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
-| `envdev` | - | 开发环境镜像源配置（Python/Conda/Rust，Linux 专用操作跳过） |
+| `envdev` | - | 开发环境一键配置（python/js/rust/all，镜像源 + 工具链，Linux 含系统依赖） |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |
 
