@@ -1,6 +1,6 @@
 """zipencrypt 工具测试。
 
-验证 ``fcmd.cli.zipencrypt`` 模块：
+验证 ``fcmd.cli.archive.zipencrypt`` 模块：
 - 工具注册与单命令结构
 - ``_get_valid_entries`` 过滤逻辑（文件 + 非隐藏目录）
 - ``_detect_encrypt_tool`` 工具检测（7z/zip/rar/none）
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.zipencrypt import (
+from fcmd.cli.archive.zipencrypt import (
     _build_encrypt_cmd,
     _create_unencrypted_zip,
     _detect_encrypt_tool,
@@ -108,13 +108,15 @@ class TestDetectEncryptTool:
 
     def test_detect_7z(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """7z 可用时优先返回 7z。"""
-        monkeypatch.setattr("fcmd.cli.zipencrypt.shutil.which", lambda cmd: "/usr/bin/7z" if cmd == "7z" else None)
+        monkeypatch.setattr(
+            "fcmd.cli.archive.zipencrypt.shutil.which", lambda cmd: "/usr/bin/7z" if cmd == "7z" else None
+        )
         assert _detect_encrypt_tool() == "7z"
 
     def test_detect_zip(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """仅 zip 可用时返回 zip。"""
         monkeypatch.setattr(
-            "fcmd.cli.zipencrypt.shutil.which",
+            "fcmd.cli.archive.zipencrypt.shutil.which",
             lambda cmd: "/usr/bin/zip" if cmd == "zip" else None,
         )
         assert _detect_encrypt_tool() == "zip"
@@ -122,20 +124,20 @@ class TestDetectEncryptTool:
     def test_detect_rar(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """仅 rar 可用时返回 rar。"""
         monkeypatch.setattr(
-            "fcmd.cli.zipencrypt.shutil.which",
+            "fcmd.cli.archive.zipencrypt.shutil.which",
             lambda cmd: "/usr/bin/rar" if cmd == "rar" else None,
         )
         assert _detect_encrypt_tool() == "rar"
 
     def test_detect_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """无任何工具时返回 None。"""
-        monkeypatch.setattr("fcmd.cli.zipencrypt.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
         assert _detect_encrypt_tool() is None
 
     def test_priority_7z_over_zip(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """7z 和 zip 都可用时优先 7z。"""
         monkeypatch.setattr(
-            "fcmd.cli.zipencrypt.shutil.which",
+            "fcmd.cli.archive.zipencrypt.shutil.which",
             lambda cmd: f"/usr/bin/{cmd}" if cmd in ("7z", "zip") else None,
         )
         assert _detect_encrypt_tool() == "7z"
@@ -223,7 +225,7 @@ class TestMakeArchive:
         """使用外部工具成功加密文件。"""
         src = tmp_path / "doc.txt"
         src.write_text("hello")
-        monkeypatch.setattr("fcmd.cli.zipencrypt.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
 
         result = _make_archive(src, "pw", "7z", replace=False)
         assert result is True
@@ -237,7 +239,7 @@ class TestMakeArchive:
         src = tmp_path / "doc.txt"
         src.write_text("hello")
         (tmp_path / "doc.zip").write_text("existing")
-        monkeypatch.setattr("fcmd.cli.zipencrypt.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
 
         result = _make_archive(src, "pw", "7z", replace=False)
         assert result is False
@@ -252,7 +254,7 @@ class TestMakeArchive:
         src.write_text("hello")
         existing = tmp_path / "doc.zip"
         existing.write_text("old")
-        monkeypatch.setattr("fcmd.cli.zipencrypt.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
 
         result = _make_archive(src, "pw", "7z", replace=True)
         assert result is True
@@ -265,7 +267,7 @@ class TestMakeArchive:
         """外部工具返回失败码时报告失败。"""
         src = tmp_path / "doc.txt"
         src.write_text("hello")
-        monkeypatch.setattr("fcmd.cli.zipencrypt.run_command", _fail_run)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _fail_run)
 
         result = _make_archive(src, "pw", "7z", replace=False)
         assert result is False
@@ -296,7 +298,7 @@ class TestMakeArchive:
         def _raise_oserror(filepath: Path, target_path: Path) -> None:
             raise OSError("disk full")
 
-        monkeypatch.setattr("fcmd.cli.zipencrypt._create_unencrypted_zip", _raise_oserror)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt._create_unencrypted_zip", _raise_oserror)
 
         result = _make_archive(src, "pw", tool=None, replace=False)
         assert result is False
@@ -345,8 +347,10 @@ class TestZipEncryptFunction:
     ) -> None:
         """mock 7z 可用 + run_command 成功，验证完整流程。"""
         _make_dir_with_files(tmp_path)
-        monkeypatch.setattr("fcmd.cli.zipencrypt.shutil.which", lambda cmd: "/usr/bin/7z" if cmd == "7z" else None)
-        monkeypatch.setattr("fcmd.cli.zipencrypt.run_command", _success_run)
+        monkeypatch.setattr(
+            "fcmd.cli.archive.zipencrypt.shutil.which", lambda cmd: "/usr/bin/7z" if cmd == "7z" else None
+        )
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
 
         zip_encrypt(str(tmp_path), "secret", replace=False)
         captured = capsys.readouterr()
@@ -362,7 +366,7 @@ class TestZipEncryptFunction:
     ) -> None:
         """无外部工具时回退到 zipfile。"""
         _make_dir_with_files(tmp_path)
-        monkeypatch.setattr("fcmd.cli.zipencrypt.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
 
         zip_encrypt(str(tmp_path), "secret", replace=False)
         captured = capsys.readouterr()
@@ -387,7 +391,7 @@ class TestRunToolEndToEnd:
     ) -> None:
         """run_tool 调用 zipencrypt 成功执行。"""
         (tmp_path / "a.txt").write_text("content")
-        monkeypatch.setattr("fcmd.cli.zipencrypt.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
 
         code = run_tool("zipencrypt", [str(tmp_path), "mypw"])
         assert code == 0
@@ -403,7 +407,7 @@ class TestRunToolEndToEnd:
         """--replace 标志透传到函数。"""
         (tmp_path / "a.txt").write_text("content")
         (tmp_path / "a.zip").write_text("old zip")
-        monkeypatch.setattr("fcmd.cli.zipencrypt.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
 
         code = run_tool("zipencrypt", [str(tmp_path), "mypw", "--replace"])
         assert code == 0

@@ -1,6 +1,6 @@
 """packtool 工具测试。
 
-验证 ``fcmd.cli.packtool`` 模块：
+验证 ``fcmd.cli.dev.packtool`` 模块：
 - 工具注册
 - src 子命令（源码打包）
 - deps 子命令（依赖打包）
@@ -20,9 +20,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.packtool
+import fcmd.cli.dev.packtool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.packtool import (
+from fcmd.cli.dev.packtool import (
     _normalize_arch,
     clean_build_dir,
     create_zip_package,
@@ -154,7 +154,7 @@ class TestPacktoolDeps:
     ) -> None:
         """pack_dependencies 调用 pip install --target。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.packtool.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.packtool.run_command", _recording_run(calls))
 
         lib_dir = tmp_path / "libs"
         pack_dependencies(["requests", "flask"], lib_dir)
@@ -172,7 +172,7 @@ class TestPacktoolDeps:
     ) -> None:
         """fcmd packtool deps <packages> 通过 run_tool 调用。"""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.cli.packtool.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.packtool.run_command", _success_run)
         code = run_tool("packtool", ["deps", "requests"])
         assert code == 0
 
@@ -188,7 +188,7 @@ class TestPacktoolWheel:
     ) -> None:
         """pack_wheel 调用 pip wheel。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.packtool.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.packtool.run_command", _recording_run(calls))
 
         project_dir = tmp_path / "project"
         project_dir.mkdir()
@@ -206,12 +206,12 @@ class TestPacktoolEmbed:
 
     def test_normalize_arch_amd64(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 返回 amd64。"""
-        monkeypatch.setattr("fcmd.cli.packtool.platform.machine", lambda: "x86_64")
+        monkeypatch.setattr("fcmd.cli.dev.packtool.platform.machine", lambda: "x86_64")
         assert _normalize_arch() == "amd64"
 
     def test_normalize_arch_arm64(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 返回 arm64。"""
-        monkeypatch.setattr("fcmd.cli.packtool.platform.machine", lambda: "aarch64")
+        monkeypatch.setattr("fcmd.cli.dev.packtool.platform.machine", lambda: "aarch64")
         assert _normalize_arch() == "arm64"
 
     def test_install_embed_python(
@@ -234,8 +234,8 @@ class TestPacktoolEmbed:
         def fake_urlretrieve(url: str, filename: Any) -> Any:
             raise AssertionError(f"不应调用 urlretrieve，但调用了: {url}")
 
-        monkeypatch.setattr("fcmd.cli.packtool.urllib.request.urlretrieve", fake_urlretrieve)
-        monkeypatch.setattr("fcmd.cli.packtool._normalize_arch", lambda: "amd64")
+        monkeypatch.setattr("fcmd.cli.dev.packtool.urllib.request.urlretrieve", fake_urlretrieve)
+        monkeypatch.setattr("fcmd.cli.dev.packtool._normalize_arch", lambda: "amd64")
 
         output_dir = tmp_path / "python"
         install_embed_python("3.10", output_dir)
@@ -265,8 +265,8 @@ class TestPacktoolEmbed:
             shutil.copy(zip_content, filename)
             return filename
 
-        monkeypatch.setattr("fcmd.cli.packtool.urllib.request.urlretrieve", fake_urlretrieve)
-        monkeypatch.setattr("fcmd.cli.packtool._normalize_arch", lambda: "amd64")
+        monkeypatch.setattr("fcmd.cli.dev.packtool.urllib.request.urlretrieve", fake_urlretrieve)
+        monkeypatch.setattr("fcmd.cli.dev.packtool._normalize_arch", lambda: "amd64")
 
         output_dir = tmp_path / "python"
         install_embed_python("3.11", output_dir)
@@ -370,7 +370,7 @@ class TestPacktoolBranches:
 
     def test_normalize_arch_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 未知架构返回原值。"""
-        monkeypatch.setattr("fcmd.cli.packtool.platform.machine", lambda: "riscv64")
+        monkeypatch.setattr("fcmd.cli.dev.packtool.platform.machine", lambda: "riscv64")
         assert _normalize_arch() == "riscv64"
 
     def test_pack_source_with_subdir_in_flat_project(

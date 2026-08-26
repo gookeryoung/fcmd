@@ -1,6 +1,6 @@
 """taskkill 工具测试。
 
-验证 ``fcmd.cli.taskkill`` 模块：
+验证 ``fcmd.cli.system.taskkill`` 模块：
 - 工具注册
 - 进程终止（跨平台）
 - CLI 调度
@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.taskkill
+import fcmd.cli.system.taskkill
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.taskkill import kill_process, taskkill_run
+from fcmd.cli.system.taskkill import kill_process, taskkill_run
 
 
 # ============================================================================ #
@@ -62,7 +62,7 @@ class TestTaskkill:
 
     def test_kill_process_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """kill_process 返回 0 表示终止信号已发送。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _subprocess_run_success)
+        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _subprocess_run_success)
         assert kill_process("chrome.exe") == 0
 
     def test_kill_process_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,7 +71,7 @@ class TestTaskkill:
         def run_not_found(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(args[0], 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", run_not_found)
+        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", run_not_found)
         assert kill_process("nonexistent") == 1
 
     def test_kill_process_windows_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,7 +79,7 @@ class TestTaskkill:
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setenv("SystemRoot", r"C:\Windows")
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
+        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _recording_subprocess_run(captured))
         kill_process("chrome.exe")
         # 必须使用绝对路径，避免递归调用 fcmd 自身的 taskkill entry script
         assert captured[0][0] == r"C:\Windows\System32\taskkill.exe"
@@ -97,7 +97,7 @@ class TestTaskkill:
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setenv("SystemRoot", r"C:\Windows")
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
+        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _recording_subprocess_run(captured))
         kill_process("explorer")
         # 命令首元素必须是绝对路径，不能是裸 "taskkill"（会触发 PATH 查找）
         assert captured[0][0].endswith("taskkill.exe")
@@ -108,7 +108,7 @@ class TestTaskkill:
         """Linux 下 kill_process 用 pkill。"""
         monkeypatch.setattr(sys, "platform", "linux")
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.taskkill.subprocess.run", _recording_subprocess_run(captured))
+        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _recording_subprocess_run(captured))
         kill_process("python")
         assert captured[0][0] == "pkill"
         assert "-f" in captured[0]
@@ -120,7 +120,7 @@ class TestTaskkill:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """taskkill_run 批量终止进程。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.kill_process", lambda *_: 0)
+        monkeypatch.setattr("fcmd.cli.system.taskkill.kill_process", lambda *_: 0)
         taskkill_run(["chrome.exe", "python"])
         out = capsys.readouterr().out
         assert "chrome.exe" in out
@@ -133,7 +133,7 @@ class TestTaskkill:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """taskkill_run 未找到进程时打印提示。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.kill_process", lambda *_: 1)
+        monkeypatch.setattr("fcmd.cli.system.taskkill.kill_process", lambda *_: 1)
         taskkill_run(["nonexistent"])
         out = capsys.readouterr().out
         assert "未找到匹配进程" in out
@@ -144,7 +144,7 @@ class TestTaskkill:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd taskkill <names> 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.taskkill.kill_process", lambda *_: 0)
+        monkeypatch.setattr("fcmd.cli.system.taskkill.kill_process", lambda *_: 0)
         code = run_tool("taskkill", ["chrome.exe"])
         assert code == 0
         out = capsys.readouterr().out

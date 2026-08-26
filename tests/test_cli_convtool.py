@@ -1,6 +1,6 @@
 """convtool 工具测试。
 
-验证 ``fcmd.cli.convtool`` 模块：
+验证 ``fcmd.cli.conv.convtool`` 模块：
 - 工具注册与四子命令结构（length/weight/temp/datasize）
 - ``convert_length``/``convert_weight``/``convert_temperature``/``convert_datasize``
 - 单位列举与错误分支
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.convtool import (
+from fcmd.cli.conv.convtool import (
     convert_datasize,
     convert_length,
     convert_temperature,

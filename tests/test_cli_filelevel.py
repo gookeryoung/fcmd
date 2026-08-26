@@ -1,6 +1,6 @@
 """filelevel 工具测试。
 
-验证 ``fcmd.cli.filelevel`` 模块：
+验证 ``fcmd.cli.fileops.filelevel`` 模块：
 - 工具注册
 - 标记移除
 - 单文件等级处理
@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.filelevel
+import fcmd.cli.fileops.filelevel
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.filelevel import (
+from fcmd.cli.fileops.filelevel import (
     process_file_level,
     process_files_level,
     remove_marks,

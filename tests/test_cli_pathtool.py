@@ -1,6 +1,6 @@
 """pathtool 工具测试。
 
-验证 ``fcmd.cli.pathtool`` 模块：
+验证 ``fcmd.cli.fileops.pathtool`` 模块：
 - 工具注册与四子命令结构（show/rel/norm/diff）
 - ``normalize_path`` 路径规范化
 - ``relative_to`` 相对路径计算（含错误分支）
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.pathtool import (
+from fcmd.cli.fileops.pathtool import (
     normalize_path,
     path_diff,
     path_parts,

@@ -1,6 +1,6 @@
 """lscalc 工具测试。
 
-验证 ``fcmd.cli.lscalc`` 模块：
+验证 ``fcmd.cli.calc.lscalc`` 模块：
 - 工具注册
 - LsDynaConfig 数据类
 - _find_solver / _get_solver_name 自动探测逻辑
@@ -18,9 +18,9 @@ from typing import Callable
 import pytest
 
 import fcmd as fx
-import fcmd.cli.lscalc
+import fcmd.cli.calc.lscalc
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.lscalc import (
+from fcmd.cli.calc.lscalc import (
     _DEFAULT_MEMORY,
     _DEFAULT_NCPU,
     LsDynaConfig,
@@ -417,7 +417,7 @@ class TestLscalcCommands:
             called.append(cmd)
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         not_existing = tmp_path / "no_such_file.k"
         run_ls_dyna_single(str(not_existing))
         out = capsys.readouterr().out
@@ -437,7 +437,7 @@ class TestLscalcCommands:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_single(str(input_file))
@@ -459,7 +459,7 @@ class TestLscalcCommands:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_single(str(input_file), precision="dp")
@@ -477,7 +477,7 @@ class TestLscalcCommands:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_single(str(input_file), memory="300m")
@@ -490,7 +490,7 @@ class TestLscalcCommands:
         tmp_path: Path,
     ) -> None:
         """run_ls_dyna_single 命令失败时打印失败消息。"""
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", _stub_failure)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", _stub_failure)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_single(str(input_file))
@@ -511,7 +511,7 @@ class TestLscalcCommands:
             called.append(cmd)
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         run_ls_dyna_mpi(str(tmp_path / "no_such_file.k"))
         out = capsys.readouterr().out
         assert "输入文件不存在" in out
@@ -530,7 +530,7 @@ class TestLscalcCommands:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_mpi(str(input_file))
@@ -555,7 +555,7 @@ class TestLscalcCommands:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_mpi(str(input_file), mpi="msmpi")
@@ -576,7 +576,7 @@ class TestLscalcCommands:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_mpi(str(input_file), precision="dp")
@@ -589,7 +589,7 @@ class TestLscalcCommands:
         tmp_path: Path,
     ) -> None:
         """run_ls_dyna_mpi 命令失败时打印失败消息。"""
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", _stub_failure)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", _stub_failure)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         run_ls_dyna_mpi(str(input_file))
@@ -603,7 +603,7 @@ class TestLscalcCommands:
         tmp_path: Path,
     ) -> None:
         """fcmd lscalc run <file> 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", _stub_success)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", _stub_success)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         code = run_tool("lscalc", ["run", str(input_file)])
@@ -618,7 +618,7 @@ class TestLscalcCommands:
         tmp_path: Path,
     ) -> None:
         """fcmd lscalc mpi <file> 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", _stub_success)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", _stub_success)
         input_file = tmp_path / "input.k"
         input_file.write_text("dummy", encoding="utf-8")
         code = run_tool("lscalc", ["mpi", str(input_file)])
@@ -650,7 +650,7 @@ class TestLscalcStatus:
                 "ls-dyna_s.exe               1234 Console                    1    100,000 K\n",
             )
 
-        monkeypatch.setattr("fcmd.cli.lscalc.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.calc.lscalc.run_command", fake_run)
         check_ls_dyna_status()
         out = capsys.readouterr().out
         assert "ls-dyna_s.exe" in out
@@ -663,7 +663,7 @@ class TestLscalcStatus:
         """Windows 上 tasklist 失败时不打印输出。"""
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(
-            "fcmd.cli.lscalc.run_command",
+            "fcmd.cli.calc.lscalc.run_command",
             lambda _c, **_kw: _make_result(returncode=1),
         )
         check_ls_dyna_status()
@@ -678,7 +678,7 @@ class TestLscalcStatus:
         """Linux/macOS 上 pgrep 找到进程时打印 PID。"""
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(
-            "fcmd.cli.lscalc.run_command",
+            "fcmd.cli.calc.lscalc.run_command",
             _stub_returncode_with_stdout(0, "1234\n5678\n"),
         )
         check_ls_dyna_status()
@@ -695,7 +695,7 @@ class TestLscalcStatus:
         """Linux/macOS 上 pgrep 无匹配时打印没有进程。"""
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(
-            "fcmd.cli.lscalc.run_command",
+            "fcmd.cli.calc.lscalc.run_command",
             _stub_returncode_with_stdout(1, ""),
         )
         check_ls_dyna_status()
@@ -710,7 +710,7 @@ class TestLscalcStatus:
         """Linux/macOS 上 pgrep 返回 0 但 stdout 为空时也视为无进程。"""
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(
-            "fcmd.cli.lscalc.run_command",
+            "fcmd.cli.calc.lscalc.run_command",
             _stub_returncode_with_stdout(0, ""),
         )
         check_ls_dyna_status()
@@ -725,7 +725,7 @@ class TestLscalcStatus:
         """fcmd lscalc status 通过 run_tool 调用（Linux 路径）。"""
         monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(
-            "fcmd.cli.lscalc.run_command",
+            "fcmd.cli.calc.lscalc.run_command",
             _stub_returncode_with_stdout(1, ""),
         )
         code = run_tool("lscalc", ["status"])

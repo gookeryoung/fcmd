@@ -1,6 +1,6 @@
 """autofmt 工具测试。
 
-验证 ``fcmd.cli.autofmt`` 模块：
+验证 ``fcmd.cli.dev.autofmt`` 模块：
 - 工具注册
 - fmt 子命令（ruff format）
 - lint 子命令（ruff check）
@@ -14,9 +14,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.autofmt
+import fcmd.cli.dev.autofmt
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.autofmt import fmt, lint
+from fcmd.cli.dev.autofmt import fmt, lint
 from fcmd.models import CommandResult
 
 
@@ -69,7 +69,7 @@ class TestAutofmt:
     ) -> None:
         """fmt 默认目标为当前目录。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
         fmt()
         assert calls[0] == ["ruff", "format", "."]
         out = capsys.readouterr().out
@@ -81,7 +81,7 @@ class TestAutofmt:
     ) -> None:
         """fmt 指定目标路径。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
         fmt("src")
         assert calls[0] == ["ruff", "format", "src"]
 
@@ -91,7 +91,7 @@ class TestAutofmt:
     ) -> None:
         """lint 默认不自动修复。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
         lint()
         assert calls[0] == ["ruff", "check", "."]
         assert "--fix" not in calls[0]
@@ -102,7 +102,7 @@ class TestAutofmt:
     ) -> None:
         """lint --fix 添加 --fix --unsafe-fixes。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
         lint("src", fix=True)
         assert "ruff" in calls[0]
         assert "check" in calls[0]
@@ -116,7 +116,7 @@ class TestAutofmt:
     ) -> None:
         """lint 指定目标路径。"""
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
         lint("tests")
         assert calls[0] == ["ruff", "check", "tests"]
 
@@ -126,7 +126,7 @@ class TestAutofmt:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd autofmt fmt 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _success_run)
         code = run_tool("autofmt", ["fmt"])
         assert code == 0
         out = capsys.readouterr().out
@@ -138,7 +138,7 @@ class TestAutofmt:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd autofmt lint --target src --fix 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.autofmt.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _success_run)
         code = run_tool("autofmt", ["lint", "--target", "src", "--fix"])
         assert code == 0
         out = capsys.readouterr().out

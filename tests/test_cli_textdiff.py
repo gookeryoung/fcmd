@@ -1,6 +1,6 @@
 """textdiff 工具测试。
 
-验证 ``fcmd.cli.textdiff`` 模块：
+验证 ``fcmd.cli.text.textdiff`` 模块：
 - 工具注册与两子命令结构（file/dir）
 - ``_read_lines`` 文本读取（utf-8/回退/二进制检测）
 - ``colorize_diff`` ANSI 着色
@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.textdiff import (
+from fcmd.cli.text.textdiff import (
     _read_lines,
     colorize_diff,
     compare_directories,

@@ -1,6 +1,6 @@
 """filerename 工具测试。
 
-验证 ``fcmd.cli.filerename`` 模块：
+验证 ``fcmd.cli.fileops.filerename`` 模块：
 - 工具注册与三子命令结构（replace/insert/case）
 - ``_safe_rename`` 安全重命名（同名跳过/目标已存在/预览模式）
 - ``replace_pattern`` 正则替换（匹配/不匹配/反向引用）
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.filerename import (
+from fcmd.cli.fileops.filerename import (
     _safe_rename,
     change_case,
     insert_text,

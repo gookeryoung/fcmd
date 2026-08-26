@@ -1,6 +1,6 @@
 """pymake 工具测试。
 
-验证 ``fcmd.cli.pymake`` 模块通过 ``@fx.tool`` 装饰器注册的子命令集合：
+验证 ``fcmd.cli.dev.pymake`` 模块通过 ``@fx.tool`` 装饰器注册的子命令集合：
 - 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox）
 - cmd + needs 混合任务（cov/bump）
 - 聚合任务（chk/tc/push/upload）
@@ -15,7 +15,7 @@ import sys
 import pytest
 
 import fcmd as fx
-import fcmd.cli.pymake  # 导入触发 @fx.tool 注册
+import fcmd.cli.dev.pymake  # 导入触发 @fx.tool 注册
 from fcmd.apis.toolkit import _TOOL_REGISTRY, get_tool, run_tool
 from fcmd.cli.main import FcmdApp
 
@@ -32,7 +32,7 @@ class TestPymakeRegistration:
 
     def test_tool_aliases(self) -> None:
         """pymake 应注册 pm 别名。"""
-        assert fcmd.cli.pymake.__tool_aliases__ == ["pm"]
+        assert fcmd.cli.dev.pymake.__tool_aliases__ == ["pm"]
 
     def test_visible_subcommands(self) -> None:
         """可见子命令应包含核心构建/测试/检查/发布命令。"""
@@ -425,12 +425,12 @@ class TestPymakeMain:
         """main() 通过 SystemExit(0) 退出（--dry-run）。"""
         monkeypatch.setattr(sys, "argv", ["pymake", "t", "--dry-run"])
         with pytest.raises(SystemExit) as exc_info:
-            fcmd.cli.pymake.main()
+            fcmd.cli.dev.pymake.main()
         assert exc_info.value.code == 0
 
     def test_main_unknown_subcommand_exits_nonzero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """main() 未知子命令通过 SystemExit(1) 退出。"""
         monkeypatch.setattr(sys, "argv", ["pymake", "unknown_subcommand"])
         with pytest.raises(SystemExit) as exc_info:
-            fcmd.cli.pymake.main()
+            fcmd.cli.dev.pymake.main()
         assert exc_info.value.code == 1

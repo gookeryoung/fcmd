@@ -1,6 +1,6 @@
 """idtool 工具测试。
 
-验证 ``fcmd.cli.idtool`` 模块：
+验证 ``fcmd.cli.crypto.idtool`` 模块：
 - 工具注册与子命令结构
 - generate_uuid（v1/v4/非法版本）
 - generate_timestamp（iso/unix/非法格式）
@@ -18,9 +18,9 @@ from datetime import datetime
 import pytest
 
 import fcmd as fx
-import fcmd.cli.idtool
+import fcmd.cli.crypto.idtool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.idtool import generate_random_string, generate_timestamp, generate_uuid
+from fcmd.cli.crypto.idtool import generate_random_string, generate_timestamp, generate_uuid
 
 # UUID 正则：8-4-4-4-12 共 36 字符
 _UUID_LENGTH = 36

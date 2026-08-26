@@ -1,6 +1,6 @@
 """jsontool 工具测试。
 
-验证 ``fcmd.cli.jsontool`` 模块：
+验证 ``fcmd.cli.data.jsontool`` 模块：
 - 工具注册与四子命令结构（pretty/minify/query/sort）
 - ``read_json``/``write_json`` 基础读写
 - ``pretty_json``/``minify_json`` 格式化与压缩
@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.jsontool import (
+from fcmd.cli.data.jsontool import (
     minify_json,
     pretty_json,
     query_json,

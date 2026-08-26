@@ -1,6 +1,6 @@
 """PDF 工具数据模型：页码表达式解析与拆分/合并规格。
 
-为 :mod:`fcmd.cli.pdftool` 提供「CLI 字符串参数 → 结构化 dataclass」的解析层，
+为 :mod:`fcmd.cli.media.pdftool` 提供「CLI 字符串参数 → 结构化 dataclass」的解析层，
 将页序、页码选择、拆分分组、合并编排等复杂语义收敛为可独立测试的纯函数模型：
 
 * :class:`PageOrder` —— 页序（正序/倒序），支持 ``f/r/forward/reverse`` 写法。

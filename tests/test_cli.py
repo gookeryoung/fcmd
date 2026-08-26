@@ -248,7 +248,7 @@ class TestToolDiscovery:
         monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
         discovery_mod.ensure_tools_discovered()
         assert "pymake" in discovery_mod._TOOL_MODULES
-        assert discovery_mod._TOOL_MODULES["pymake"] == "fcmd.cli.pymake"
+        assert discovery_mod._TOOL_MODULES["pymake"] == "fcmd.cli.dev.pymake"
 
     def test_discovery_loads_aliases_from_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """扫描时读取模块 __tool_aliases__ 并注册别名。"""
@@ -569,7 +569,7 @@ class TestBuiltinInfo:
 
     def test_spec_kind_classification(self) -> None:
         """_spec_kind 正确分类 cmd / aggregate / fn。"""
-        import fcmd.cli.writefile  # noqa: F401  触发 fn 任务注册
+        import fcmd.cli.fileops.writefile  # noqa: F401  触发 fn 任务注册
         from fcmd.apis.toolkit import get_tool
         from fcmd.cli._builtins.info_cmd import _spec_kind
 
@@ -1251,7 +1251,7 @@ class TestCoverageGaps:
         original_import = discovery_mod.importlib.import_module
 
         def fake_import(name: str) -> object:
-            if name == "fcmd.cli.pymake":
+            if name == "fcmd.cli.dev.pymake":
                 raise ImportError("simulated pymake load failure")
             return original_import(name)
 
@@ -1324,60 +1324,60 @@ class TestCoverageGaps:
 # ---------------------------------------------------------------------- #
 # (工具名, 模块路径) 列表：每个工具模块的 main() 应委托 run_tool_main 并传入工具名
 _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
-    ("archivex", "fcmd.cli.archivex"),
-    ("asciitool", "fcmd.cli.asciitool"),
-    ("autofmt", "fcmd.cli.autofmt"),
-    ("bumpversion", "fcmd.cli.bumpversion"),
-    ("casetool", "fcmd.cli.casetool"),
-    ("clr", "fcmd.cli.clr"),
-    ("codetool", "fcmd.cli.codetool"),
-    ("colortool", "fcmd.cli.colortool"),
-    ("convtool", "fcmd.cli.convtool"),
-    ("csvtool", "fcmd.cli.csvtool"),
-    ("cryptool", "fcmd.cli.cryptool"),
-    ("dockercmd", "fcmd.cli.dockercmd"),
-    ("envdev", "fcmd.cli.envdev"),
-    ("filedate", "fcmd.cli.filedate"),
-    ("filelevel", "fcmd.cli.filelevel"),
-    ("filerename", "fcmd.cli.filerename"),
-    ("filesearch", "fcmd.cli.filesearch"),
-    ("folderback", "fcmd.cli.folderback"),
-    ("folderzip", "fcmd.cli.folderzip"),
-    ("gittool", "fcmd.cli.gittool"),
-    ("hashfile", "fcmd.cli.hashfile"),
-    ("hashtool", "fcmd.cli.hashtool"),
-    ("idtool", "fcmd.cli.idtool"),
-    ("imagetool", "fcmd.cli.imagetool"),
-    ("iptool", "fcmd.cli.iptool"),
-    ("jsontool", "fcmd.cli.jsontool"),
-    ("lscalc", "fcmd.cli.lscalc"),
-    ("mathtool", "fcmd.cli.mathtool"),
-    ("nettool", "fcmd.cli.nettool"),
-    ("packtool", "fcmd.cli.packtool"),
-    ("padtool", "fcmd.cli.padtool"),
-    ("pathtool", "fcmd.cli.pathtool"),
-    ("pdftool", "fcmd.cli.pdftool"),
-    ("piptool", "fcmd.cli.piptool"),
-    ("portcheck", "fcmd.cli.portcheck"),
-    ("pymake", "fcmd.cli.pymake"),
-    ("randtool", "fcmd.cli.randtool"),
-    ("regextool", "fcmd.cli.regextool"),
-    ("reseticoncache", "fcmd.cli.reseticoncache"),
-    ("screenshot", "fcmd.cli.screenshot"),
-    ("setenv", "fcmd.cli.setenv"),
-    ("stattool", "fcmd.cli.stattool"),
-    ("sshcopyid", "fcmd.cli.sshcopyid"),
-    ("sysinfo", "fcmd.cli.sysinfo"),
-    ("taskkill", "fcmd.cli.taskkill"),
-    ("textdiff", "fcmd.cli.textdiff"),
-    ("timetool", "fcmd.cli.timetool"),
-    ("txttool", "fcmd.cli.txttool"),
-    ("urltool", "fcmd.cli.urltool"),
-    ("which", "fcmd.cli.which"),
-    ("writefile", "fcmd.cli.writefile"),
-    ("xmltool", "fcmd.cli.xmltool"),
-    ("yamtool", "fcmd.cli.yamtool"),
-    ("zipencrypt", "fcmd.cli.zipencrypt"),
+    ("archivex", "fcmd.cli.archive.archivex"),
+    ("asciitool", "fcmd.cli.text.asciitool"),
+    ("autofmt", "fcmd.cli.dev.autofmt"),
+    ("bumpversion", "fcmd.cli.dev.bumpversion"),
+    ("casetool", "fcmd.cli.conv.casetool"),
+    ("clr", "fcmd.cli.system.clr"),
+    ("codetool", "fcmd.cli.conv.codetool"),
+    ("colortool", "fcmd.cli.conv.colortool"),
+    ("convtool", "fcmd.cli.conv.convtool"),
+    ("csvtool", "fcmd.cli.data.csvtool"),
+    ("cryptool", "fcmd.cli.crypto.cryptool"),
+    ("dockercmd", "fcmd.cli.dev.dockercmd"),
+    ("envdev", "fcmd.cli.dev.envdev"),
+    ("filedate", "fcmd.cli.fileops.filedate"),
+    ("filelevel", "fcmd.cli.fileops.filelevel"),
+    ("filerename", "fcmd.cli.fileops.filerename"),
+    ("filesearch", "fcmd.cli.fileops.filesearch"),
+    ("folderback", "fcmd.cli.fileops.folderback"),
+    ("folderzip", "fcmd.cli.archive.folderzip"),
+    ("gittool", "fcmd.cli.dev.gittool"),
+    ("hashfile", "fcmd.cli.crypto.hashfile"),
+    ("hashtool", "fcmd.cli.crypto.hashtool"),
+    ("idtool", "fcmd.cli.crypto.idtool"),
+    ("imagetool", "fcmd.cli.media.imagetool"),
+    ("iptool", "fcmd.cli.net.iptool"),
+    ("jsontool", "fcmd.cli.data.jsontool"),
+    ("lscalc", "fcmd.cli.calc.lscalc"),
+    ("mathtool", "fcmd.cli.calc.mathtool"),
+    ("nettool", "fcmd.cli.net.nettool"),
+    ("packtool", "fcmd.cli.dev.packtool"),
+    ("padtool", "fcmd.cli.text.padtool"),
+    ("pathtool", "fcmd.cli.fileops.pathtool"),
+    ("pdftool", "fcmd.cli.media.pdftool"),
+    ("piptool", "fcmd.cli.dev.piptool"),
+    ("portcheck", "fcmd.cli.net.portcheck"),
+    ("pymake", "fcmd.cli.dev.pymake"),
+    ("randtool", "fcmd.cli.calc.randtool"),
+    ("regextool", "fcmd.cli.text.regextool"),
+    ("reseticoncache", "fcmd.cli.system.reseticoncache"),
+    ("screenshot", "fcmd.cli.media.screenshot"),
+    ("setenv", "fcmd.cli.system.setenv"),
+    ("stattool", "fcmd.cli.calc.stattool"),
+    ("sshcopyid", "fcmd.cli.net.sshcopyid"),
+    ("sysinfo", "fcmd.cli.system.sysinfo"),
+    ("taskkill", "fcmd.cli.system.taskkill"),
+    ("textdiff", "fcmd.cli.text.textdiff"),
+    ("timetool", "fcmd.cli.calc.timetool"),
+    ("txttool", "fcmd.cli.text.txttool"),
+    ("urltool", "fcmd.cli.conv.urltool"),
+    ("which", "fcmd.cli.system.which"),
+    ("writefile", "fcmd.cli.fileops.writefile"),
+    ("xmltool", "fcmd.cli.data.xmltool"),
+    ("yamtool", "fcmd.cli.data.yamtool"),
+    ("zipencrypt", "fcmd.cli.archive.zipencrypt"),
 ]
 
 
@@ -1467,7 +1467,7 @@ class TestMainDecorator:
 
         monkeypatch.setattr(_toolkit, "run_tool", _fake_run_tool)
 
-        from fcmd.cli.lscalc import main
+        from fcmd.cli.calc.lscalc import main
 
         with pytest.raises(SystemExit) as exc_info:
             main()

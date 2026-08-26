@@ -1,6 +1,6 @@
 """filesearch 工具测试。
 
-验证 ``fcmd.cli.filesearch`` 模块：
+验证 ``fcmd.cli.fileops.filesearch`` 模块：
 - 工具注册与两子命令结构（name/content）
 - ``is_binary_file`` 二进制检测（含 OSError 回退）
 - ``read_text_lines`` 文本读取（含二进制抛错、UnicodeDecodeError 回退）
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.filesearch import (
+from fcmd.cli.fileops.filesearch import (
     _should_skip_part,
     is_binary_file,
     read_text_lines,

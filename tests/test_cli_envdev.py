@@ -1,6 +1,6 @@
 """envdev 工具测试。
 
-验证 ``fcmd.cli.envdev`` 模块：
+验证 ``fcmd.cli.dev.envdev`` 模块：
 - 工具注册（语言级一键命令公开，细粒度步骤命令隐藏）
 - setup_python_env / setup_python_mirror / setup_conda_mirror Python 环境
 - _setup_rust_mirror / _download_rustup / _install_rust_toolchain / setup_rust_env Rust 工具链
@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.envdev
+import fcmd.cli.dev.envdev
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
 
@@ -50,7 +50,7 @@ def _fake_persist_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
         recorded[name] = value
         os.environ[name] = value
 
-    monkeypatch.setattr("fcmd.cli.envdev.persist_env", fake_persist)
+    monkeypatch.setattr("fcmd.cli.dev.envdev.persist_env", fake_persist)
     return recorded
 
 
@@ -108,7 +108,7 @@ class TestEnvdev:
         monkeypatch.delenv("PIP_INDEX_URL", raising=False)
         monkeypatch.delenv("UV_INDEX_URL", raising=False)
 
-        fcmd.cli.envdev.setup_python_mirror("aliyun")
+        fcmd.cli.dev.envdev.setup_python_mirror("aliyun")
         captured = capsys.readouterr()
         assert "Python 镜像源已配置" in captured.out
         # 环境变量已持久化（persist_env 被调用）且当前进程可见
@@ -126,7 +126,7 @@ class TestEnvdev:
 
     def test_setup_python_unknown_mirror(self, capsys: pytest.CaptureFixture[str]) -> None:
         """未知 Python 镜像源打印提示。"""
-        fcmd.cli.envdev.setup_python_mirror("unknown")
+        fcmd.cli.dev.envdev.setup_python_mirror("unknown")
         captured = capsys.readouterr()
         assert "未知" in captured.out
 
@@ -135,7 +135,7 @@ class TestEnvdev:
     ) -> None:
         """配置 Conda 镜像源（写入 ~/.condarc）。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        fcmd.cli.envdev.setup_conda_mirror("ustc")
+        fcmd.cli.dev.envdev.setup_conda_mirror("ustc")
         captured = capsys.readouterr()
         assert "Conda 镜像源已配置" in captured.out
         condarc = tmp_path / ".condarc"
@@ -144,7 +144,7 @@ class TestEnvdev:
 
     def test_setup_conda_unknown_mirror(self, capsys: pytest.CaptureFixture[str]) -> None:
         """未知 Conda 镜像源打印提示。"""
-        fcmd.cli.envdev.setup_conda_mirror("unknown")
+        fcmd.cli.dev.envdev.setup_conda_mirror("unknown")
         captured = capsys.readouterr()
         assert "未知" in captured.out
 
@@ -154,9 +154,9 @@ class TestEnvdev:
         """配置 Rust 镜像源（设置环境变量 + 写入 cargo config）。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         # _RUST_SCCACHE_DIR 是模块级常量，导入时已求值，需单独 mock
-        monkeypatch.setattr("fcmd.cli.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
+        monkeypatch.setattr("fcmd.cli.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
         monkeypatch.delenv("RUSTUP_DIST_SERVER", raising=False)
-        fcmd.cli.envdev._setup_rust_mirror("tsinghua")
+        fcmd.cli.dev.envdev._setup_rust_mirror("tsinghua")
         captured = capsys.readouterr()
         assert "Rust 镜像源已配置" in captured.out
         assert os.environ["RUSTUP_DIST_SERVER"] == "https://mirrors.tuna.tsinghua.edu.cn/rustup"
@@ -168,7 +168,7 @@ class TestEnvdev:
 
     def test_setup_rust_unknown_mirror(self, capsys: pytest.CaptureFixture[str]) -> None:
         """未知 Rust 镜像源打印提示。"""
-        fcmd.cli.envdev._setup_rust_mirror("unknown")
+        fcmd.cli.dev.envdev._setup_rust_mirror("unknown")
         captured = capsys.readouterr()
         assert "未知" in captured.out
 
@@ -176,8 +176,8 @@ class TestEnvdev:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """rustup 已安装时跳过下载。"""
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: "/usr/bin/rustup")
-        fcmd.cli.envdev._download_rustup()
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: "/usr/bin/rustup")
+        fcmd.cli.dev.envdev._download_rustup()
         captured = capsys.readouterr()
         assert "已安装" in captured.out
 
@@ -186,12 +186,12 @@ class TestEnvdev:
     ) -> None:
         """Windows 下载 rustup-init.exe。"""
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev._download_rustup()
+        fcmd.cli.dev.envdev._download_rustup()
         captured = capsys.readouterr()
         assert "rustup-init.exe" in captured.out
         assert any("powershell" in c[0] for c in calls)
@@ -199,31 +199,31 @@ class TestEnvdev:
     def test_download_rustup_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """Linux 下载 rustup-init.sh。"""
         monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev._download_rustup()
+        fcmd.cli.dev.envdev._download_rustup()
         captured = capsys.readouterr()
         assert "rustup-init.sh" in captured.out
         assert any("curl" in c[0] for c in calls)
 
     def test_install_rust_no_rustup(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """rustup 未安装时跳过工具链安装。"""
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: None)
-        fcmd.cli.envdev._install_rust_toolchain("stable")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+        fcmd.cli.dev.envdev._install_rust_toolchain("stable")
         captured = capsys.readouterr()
         assert "未安装" in captured.out
 
     def test_install_rust_success(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """rustup 已安装时调用 rustup toolchain install。"""
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: "/usr/bin/rustup")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: "/usr/bin/rustup")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev._install_rust_toolchain("nightly")
+        fcmd.cli.dev.envdev._install_rust_toolchain("nightly")
         captured = capsys.readouterr()
         assert "nightly 安装完成" in captured.out
         assert calls == [["rustup", "toolchain", "install", "nightly"]]
@@ -233,11 +233,11 @@ class TestEnvdev:
     ) -> None:
         """setup_rust_env 依次调用镜像源/下载/安装三个步骤。"""
         calls: list[str] = []
-        monkeypatch.setattr("fcmd.cli.envdev._setup_rust_mirror", lambda m: calls.append(f"mirror:{m}"))
-        monkeypatch.setattr("fcmd.cli.envdev._download_rustup", lambda: calls.append("download"))
-        monkeypatch.setattr("fcmd.cli.envdev._install_rust_toolchain", lambda v: calls.append(f"install:{v}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._setup_rust_mirror", lambda m: calls.append(f"mirror:{m}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._download_rustup", lambda: calls.append("download"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._install_rust_toolchain", lambda v: calls.append(f"install:{v}"))
 
-        fcmd.cli.envdev.setup_rust_env(mirror="ustc", rust_version="nightly")
+        fcmd.cli.dev.envdev.setup_rust_env(mirror="ustc", rust_version="nightly")
         assert calls == ["mirror:ustc", "download", "install:nightly"]
         captured = capsys.readouterr()
         assert captured.out == ""
@@ -247,10 +247,10 @@ class TestEnvdev:
     ) -> None:
         """setup_python_env 依次调用 pip 与 Conda 镜像源配置。"""
         calls: list[str] = []
-        monkeypatch.setattr("fcmd.cli.envdev.setup_python_mirror", lambda m: calls.append(f"pip:{m}"))
-        monkeypatch.setattr("fcmd.cli.envdev.setup_conda_mirror", lambda m: calls.append(f"conda:{m}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_python_mirror", lambda m: calls.append(f"pip:{m}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_conda_mirror", lambda m: calls.append(f"conda:{m}"))
 
-        fcmd.cli.envdev.setup_python_env(mirror="ustc")
+        fcmd.cli.dev.envdev.setup_python_env(mirror="ustc")
         assert calls == ["pip:ustc", "conda:ustc"]
         captured = capsys.readouterr()
         assert captured.out == ""
@@ -260,15 +260,15 @@ class TestEnvdev:
     ) -> None:
         """setup_all_env 依次调用 Python/JS/Rust 一键命令与 Linux 专用步骤。"""
         calls: list[str] = []
-        monkeypatch.setattr("fcmd.cli.envdev.setup_python_env", lambda m: calls.append(f"python:{m}"))
-        monkeypatch.setattr("fcmd.cli.envdev.setup_js_env", lambda: calls.append("js"))
-        monkeypatch.setattr("fcmd.cli.envdev.setup_rust_env", lambda m, v: calls.append(f"rust:{m}:{v}"))
-        monkeypatch.setattr("fcmd.cli.envdev.setup_linux_system_mirror", lambda: calls.append("linux-mirror"))
-        monkeypatch.setattr("fcmd.cli.envdev.install_linux_qt_libs", lambda: calls.append("qt"))
-        monkeypatch.setattr("fcmd.cli.envdev.install_linux_fonts", lambda: calls.append("fonts"))
-        monkeypatch.setattr("fcmd.cli.envdev.install_linux_docker", lambda: calls.append("docker"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_python_env", lambda m: calls.append(f"python:{m}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_js_env", lambda: calls.append("js"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_rust_env", lambda m, v: calls.append(f"rust:{m}:{v}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_linux_system_mirror", lambda: calls.append("linux-mirror"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_qt_libs", lambda: calls.append("qt"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_fonts", lambda: calls.append("fonts"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_docker", lambda: calls.append("docker"))
 
-        fcmd.cli.envdev.setup_all_env(mirror="tsinghua", rust_version="nightly")
+        fcmd.cli.dev.envdev.setup_all_env(mirror="tsinghua", rust_version="nightly")
         assert calls == [
             "python:tsinghua",
             "js",
@@ -288,7 +288,7 @@ class TestEnvdev:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("BUN_CONFIG_REGISTRY", raising=False)
 
-        fcmd.cli.envdev._setup_bun_mirror()
+        fcmd.cli.dev.envdev._setup_bun_mirror()
         captured = capsys.readouterr()
         assert "Bun 镜像源已配置" in captured.out
         assert os.environ["BUN_CONFIG_REGISTRY"] == "https://registry.npmmirror.com"
@@ -300,20 +300,20 @@ class TestEnvdev:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """bun 已安装时跳过安装。"""
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: "/usr/bin/bun")
-        fcmd.cli.envdev._install_bun()
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: "/usr/bin/bun")
+        fcmd.cli.dev.envdev._install_bun()
         captured = capsys.readouterr()
         assert "已安装" in captured.out
 
     def test_install_bun_windows(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """Windows 提示使用 PowerShell 安装。"""
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev._install_bun()
+        fcmd.cli.dev.envdev._install_bun()
         captured = capsys.readouterr()
         assert "PowerShell" in captured.out
         assert calls == []
@@ -321,12 +321,12 @@ class TestEnvdev:
     def test_install_bun_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """Linux 先安装系统依赖再下载并安装 bun。"""
         monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("fcmd.cli.envdev.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev._install_bun()
+        fcmd.cli.dev.envdev._install_bun()
         captured = capsys.readouterr()
         assert "Bun.js 安装完成" in captured.out
         # apt update + apt install + curl|bash
@@ -339,16 +339,16 @@ class TestEnvdev:
     ) -> None:
         """setup_js_env 依次调用镜像源配置与安装。"""
         calls: list[str] = []
-        monkeypatch.setattr("fcmd.cli.envdev._setup_bun_mirror", lambda: calls.append("mirror"))
-        monkeypatch.setattr("fcmd.cli.envdev._install_bun", lambda: calls.append("install"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._setup_bun_mirror", lambda: calls.append("mirror"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._install_bun", lambda: calls.append("install"))
 
-        fcmd.cli.envdev.setup_js_env()
+        fcmd.cli.dev.envdev.setup_js_env()
         assert calls == ["mirror", "install"]
 
     def test_linux_mirror_non_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """非 Linux 平台调用 setup_linux_system_mirror 打印提示。"""
         monkeypatch.setattr(sys, "platform", "win32")
-        fcmd.cli.envdev.setup_linux_system_mirror()
+        fcmd.cli.dev.envdev.setup_linux_system_mirror()
         captured = capsys.readouterr()
         assert "仅在 Linux" in captured.out
 
@@ -357,14 +357,14 @@ class TestEnvdev:
     ) -> None:
         """非 Linux 平台调用 install_linux_qt_libs 打印提示。"""
         monkeypatch.setattr(sys, "platform", "darwin")
-        fcmd.cli.envdev.install_linux_qt_libs()
+        fcmd.cli.dev.envdev.install_linux_qt_libs()
         captured = capsys.readouterr()
         assert "仅在 Linux" in captured.out
 
     def test_install_fonts_non_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """非 Linux 平台调用 install_linux_fonts 打印提示。"""
         monkeypatch.setattr(sys, "platform", "win32")
-        fcmd.cli.envdev.install_linux_fonts()
+        fcmd.cli.dev.envdev.install_linux_fonts()
         captured = capsys.readouterr()
         assert "仅在 Linux" in captured.out
 
@@ -373,7 +373,7 @@ class TestEnvdev:
     ) -> None:
         """非 Linux 平台调用 install_linux_docker 打印提示。"""
         monkeypatch.setattr(sys, "platform", "darwin")
-        fcmd.cli.envdev.install_linux_docker()
+        fcmd.cli.dev.envdev.install_linux_docker()
         captured = capsys.readouterr()
         assert "仅在 Linux" in captured.out
 
@@ -381,9 +381,9 @@ class TestEnvdev:
         """Linux 平台调用 apt install 安装 Qt 依赖。"""
         monkeypatch.setattr(sys, "platform", "linux")
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev.install_linux_qt_libs()
+        fcmd.cli.dev.envdev.install_linux_qt_libs()
         captured = capsys.readouterr()
         assert "Qt 依赖库安装完成" in captured.out
         assert any("apt" in c and "install" in c for c in calls)
@@ -392,9 +392,9 @@ class TestEnvdev:
         """Linux 平台调用 apt install 安装中文字体。"""
         monkeypatch.setattr(sys, "platform", "linux")
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev.install_linux_fonts()
+        fcmd.cli.dev.envdev.install_linux_fonts()
         captured = capsys.readouterr()
         assert "中文字体安装完成" in captured.out
         assert any("fonts-noto-cjk" in c for c in calls)
@@ -402,11 +402,11 @@ class TestEnvdev:
     def test_install_docker_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """Linux 平台调用 apt install docker + usermod。"""
         monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("fcmd.cli.envdev.getpass.getuser", lambda: "testuser")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.getpass.getuser", lambda: "testuser")
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev.install_linux_docker()
+        fcmd.cli.dev.envdev.install_linux_docker()
         captured = capsys.readouterr()
         assert "Docker 安装完成" in captured.out
         assert any("docker-compose-v2" in c for c in calls)
@@ -420,7 +420,7 @@ class TestEnvdev:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("PIP_INDEX_URL", raising=False)
 
-        fcmd.cli.envdev.setup_python_mirror("tsinghua")
+        fcmd.cli.dev.envdev.setup_python_mirror("tsinghua")
         captured = capsys.readouterr()
         assert "Python 镜像源已配置" in captured.out
         config_path = tmp_path / ".pip" / "pip.conf"
@@ -438,7 +438,7 @@ class TestEnvdev:
 
         monkeypatch.setattr(Path, "read_text", fake_read_text)
 
-        fcmd.cli.envdev.setup_linux_system_mirror()
+        fcmd.cli.dev.envdev.setup_linux_system_mirror()
         captured = capsys.readouterr()
         assert "已配置" in captured.out
 
@@ -454,9 +454,9 @@ class TestEnvdev:
         monkeypatch.setattr(Path, "read_text", fake_read_text)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev.setup_linux_system_mirror()
+        fcmd.cli.dev.envdev.setup_linux_system_mirror()
         captured = capsys.readouterr()
         assert "下载" in captured.out
         assert "安装" in captured.out
@@ -474,9 +474,9 @@ class TestEnvdev:
         monkeypatch.setattr(Path, "read_text", fake_read_text)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.envdev.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
 
-        fcmd.cli.envdev.setup_linux_system_mirror()
+        fcmd.cli.dev.envdev.setup_linux_system_mirror()
         captured = capsys.readouterr()
         assert "下载" in captured.out
         assert len(calls) == 2  # 下载 + 安装

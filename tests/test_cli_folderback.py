@@ -1,6 +1,6 @@
 """folderback 工具测试。
 
-验证 ``fcmd.cli.folderback`` 模块：
+验证 ``fcmd.cli.fileops.folderback`` 模块：
 - 工具注册
 - 旧备份清理
 - 目录压缩
@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.folderback
+import fcmd.cli.fileops.folderback
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.folderback import backup_folder, remove_old_backups, zip_target
+from fcmd.cli.fileops.folderback import backup_folder, remove_old_backups, zip_target
 
 
 # ============================================================================ #

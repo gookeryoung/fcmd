@@ -1,6 +1,6 @@
 """sshcopyid 工具测试。
 
-验证 ``fcmd.cli.sshcopyid`` 模块：
+验证 ``fcmd.cli.net.sshcopyid`` 模块：
 - 工具注册
 - ssh_copy_id 部署 SSH 公钥
 """
@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.sshcopyid
+import fcmd.cli.net.sshcopyid
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
 
@@ -60,7 +60,7 @@ class TestSshCopyId:
 
     def test_pubkey_not_exists(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """公钥文件不存在时打印提示。"""
-        fcmd.cli.sshcopyid.ssh_copy_id(
+        fcmd.cli.net.sshcopyid.ssh_copy_id(
             hostname="host", username="user", password="pass", keypath="/nonexistent/key.pub"
         )
         captured = capsys.readouterr()
@@ -74,9 +74,9 @@ class TestSshCopyId:
         key_file.write_text("ssh-rsa AAAAB3NzaC1yc2E test@example.com\n")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.sshcopyid.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.net.sshcopyid.run_command", _recording_run(calls))
 
-        fcmd.cli.sshcopyid.ssh_copy_id(hostname="host", username="user", password="pass", keypath=str(key_file))
+        fcmd.cli.net.sshcopyid.ssh_copy_id(hostname="host", username="user", password="pass", keypath=str(key_file))
         captured = capsys.readouterr()
         assert "已部署" in captured.out
         assert len(calls) == 1
@@ -88,8 +88,8 @@ class TestSshCopyId:
         """部署失败时提示手动执行。"""
         key_file = tmp_path / "id_rsa.pub"
         key_file.write_text("ssh-rsa AAAAB3NzaC1yc2E test@example.com\n")
-        monkeypatch.setattr("fcmd.cli.sshcopyid.run_command", _fail_run)
+        monkeypatch.setattr("fcmd.cli.net.sshcopyid.run_command", _fail_run)
 
-        fcmd.cli.sshcopyid.ssh_copy_id(hostname="host", username="user", password="pass", keypath=str(key_file))
+        fcmd.cli.net.sshcopyid.ssh_copy_id(hostname="host", username="user", password="pass", keypath=str(key_file))
         captured = capsys.readouterr()
         assert "手动执行" in captured.out

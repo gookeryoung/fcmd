@@ -1,6 +1,6 @@
 """writefile 工具测试。
 
-验证 ``fcmd.cli.writefile`` 模块：
+验证 ``fcmd.cli.fileops.writefile`` 模块：
 - 工具注册（单命令工具，无子命令）
 - 通过 run_tool 调用 writefile 写入文件
 - 自定义编码、父目录自动创建、覆盖写入
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fcmd as fx
-import fcmd.cli.writefile
+import fcmd.cli.fileops.writefile
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 
 

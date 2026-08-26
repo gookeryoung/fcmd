@@ -1,6 +1,6 @@
 """padtool 工具测试。
 
-验证 ``fcmd.cli.padtool`` 模块：
+验证 ``fcmd.cli.text.padtool`` 模块：
 - 工具注册与四子命令结构（left/right/center/justify）
 - ``align_left``/``align_right``/``align_center``/``align_justify``
 - 边界场景与错误分支
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.padtool import (
+from fcmd.cli.text.padtool import (
     align_center,
     align_justify,
     align_left,

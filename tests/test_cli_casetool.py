@@ -1,6 +1,6 @@
 """casetool 工具测试。
 
-验证 ``fcmd.cli.casetool`` 模块：
+验证 ``fcmd.cli.conv.casetool`` 模块：
 - 工具注册与四子命令结构（snake/camel/pascal/kebab）
 - ``to_snake``/``to_camel``/``to_pascal``/``to_kebab``
 - 多种输入格式识别与转换
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.casetool import (
+from fcmd.cli.conv.casetool import (
     to_camel,
     to_kebab,
     to_pascal,

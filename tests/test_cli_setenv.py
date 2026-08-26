@@ -1,6 +1,6 @@
 """setenv 工具测试。
 
-验证 ``fcmd.cli.setenv`` 模块：
+验证 ``fcmd.cli.system.setenv`` 模块：
 - 工具注册
 - setenv_run 环境变量设置
 """
@@ -12,7 +12,7 @@ import os
 import pytest
 
 import fcmd as fx
-import fcmd.cli.setenv
+import fcmd.cli.system.setenv
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 
 
@@ -41,19 +41,19 @@ class TestSetenv:
     def test_setenv_overwrite(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """default=False 时覆盖已有值。"""
         monkeypatch.setenv("FCMD_TEST_SETENV", "old")
-        fcmd.cli.setenv.setenv_run("FCMD_TEST_SETENV", "new")
+        fcmd.cli.system.setenv.setenv_run("FCMD_TEST_SETENV", "new")
         assert os.environ["FCMD_TEST_SETENV"] == "new"
 
     def test_setenv_default_skip(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """default=True 时不覆盖已有值。"""
         monkeypatch.setenv("FCMD_TEST_SETENV", "old")
-        fcmd.cli.setenv.setenv_run("FCMD_TEST_SETENV", "new", default=True)
+        fcmd.cli.system.setenv.setenv_run("FCMD_TEST_SETENV", "new", default=True)
         assert os.environ["FCMD_TEST_SETENV"] == "old"
 
     def test_setenv_default_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """default=True 且变量未设置时设置值。"""
         monkeypatch.delenv("FCMD_TEST_SETENV", raising=False)
-        fcmd.cli.setenv.setenv_run("FCMD_TEST_SETENV", "new", default=True)
+        fcmd.cli.system.setenv.setenv_run("FCMD_TEST_SETENV", "new", default=True)
         assert os.environ["FCMD_TEST_SETENV"] == "new"
 
     def test_setenv_via_run_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:

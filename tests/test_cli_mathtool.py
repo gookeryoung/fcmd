@@ -1,6 +1,6 @@
 """mathtool 工具测试。
 
-验证 ``fcmd.cli.mathtool`` 模块：
+验证 ``fcmd.cli.calc.mathtool`` 模块：
 - 工具注册与四子命令结构（eval/sqrt/pow/factorial）
 - ``eval_expr`` 安全求值（含 AST 解析、运算符支持、注入防护）
 - ``sqrt``/``pow_``/``factorial`` 公共函数
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.mathtool import (
+from fcmd.cli.calc.mathtool import (
     eval_expr,
     factorial,
     pow_,

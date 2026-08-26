@@ -60,7 +60,7 @@ _DAG_RUN_SCRIPT = (
 
 _TOOL_EXEC_SCRIPT = (
     "import time\n"
-    "import fcmd.cli.codetool  # noqa: F401  触发 @fcmd.tool 注册\n"
+    "import fcmd.cli.conv.codetool  # noqa: F401  触发 @fcmd.tool 注册\n"
     "from fcmd.apis.toolkit import run_tool\n"
     "t=time.perf_counter()\n"
     "run_tool('codetool', ['base64', 'hello'])\n"

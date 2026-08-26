@@ -1,6 +1,6 @@
 """sysinfo 工具测试。
 
-验证 ``fcmd.cli.sysinfo`` 模块：
+验证 ``fcmd.cli.system.sysinfo`` 模块：
 - 工具注册
 - _format_bytes 字节格式化
 - collect_sysinfo 系统信息收集
@@ -14,9 +14,9 @@ import sys
 import pytest
 
 import fcmd as fx
-import fcmd.cli.sysinfo
+import fcmd.cli.system.sysinfo
 from fcmd.apis.toolkit import run_tool
-from fcmd.cli.sysinfo import _format_bytes, collect_sysinfo, print_sysinfo
+from fcmd.cli.system.sysinfo import _format_bytes, collect_sysinfo, print_sysinfo
 
 
 # ---------------------------------------------------------------------- #

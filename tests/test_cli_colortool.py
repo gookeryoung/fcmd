@@ -1,6 +1,6 @@
 """colortool 工具测试。
 
-验证 ``fcmd.cli.colortool`` 模块：
+验证 ``fcmd.cli.conv.colortool`` 模块：
 - 工具注册与四子命令结构（hex2rgb/rgb2hex/rgb2hsl/hsl2rgb）
 - ``hex_to_rgb``/``rgb_to_hex``/``rgb_to_hsl``/``hsl_to_rgb``
 - 已知向量与往返一致性
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.colortool import (
+from fcmd.cli.conv.colortool import (
     hex_to_rgb,
     hsl_to_rgb,
     rgb_to_hex,

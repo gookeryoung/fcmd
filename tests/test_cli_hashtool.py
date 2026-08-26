@@ -1,6 +1,6 @@
 """hashtool 工具测试。
 
-验证 ``fcmd.cli.hashtool`` 模块：
+验证 ``fcmd.cli.crypto.hashtool`` 模块：
 - 工具注册与四子命令结构（md5/sha1/sha256/sha512）
 - ``hash_md5``/``hash_sha1``/``hash_sha256``/``hash_sha512``
 - 已知向量验证与往返一致
@@ -14,7 +14,7 @@ import hashlib
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.hashtool import (
+from fcmd.cli.crypto.hashtool import (
     hash_md5,
     hash_sha1,
     hash_sha256,

@@ -1,6 +1,6 @@
 """screenshot 工具测试。
 
-验证 ``fcmd.cli.screenshot`` 模块：
+验证 ``fcmd.cli.media.screenshot`` 模块：
 - 工具注册
 - get_screenshot_path 路径生成
 - take_screenshot_full / take_screenshot_area 跨平台截图
@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.screenshot
+import fcmd.cli.media.screenshot
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
 
@@ -60,7 +60,7 @@ class TestScreenshot:
     def test_get_screenshot_path_auto(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """自动生成带时间戳的文件名。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        path = fcmd.cli.screenshot.get_screenshot_path(None)
+        path = fcmd.cli.media.screenshot.get_screenshot_path(None)
         assert path.parent == tmp_path / "Pictures" / "screenshots"
         assert path.name.startswith("screenshot_")
         assert path.suffix == ".png"
@@ -68,7 +68,7 @@ class TestScreenshot:
     def test_get_screenshot_path_named(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """指定文件名时使用指定名称。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        path = fcmd.cli.screenshot.get_screenshot_path("custom.png")
+        path = fcmd.cli.media.screenshot.get_screenshot_path("custom.png")
         assert path.name == "custom.png"
 
     def test_full_screenshot_windows(
@@ -79,9 +79,9 @@ class TestScreenshot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", _recording_run(calls))
 
-        fcmd.cli.screenshot.take_screenshot_full()
+        fcmd.cli.media.screenshot.take_screenshot_full()
         captured = capsys.readouterr()
         assert "截图已保存" in captured.out
         assert any("powershell" in c[0] for c in calls)
@@ -94,9 +94,9 @@ class TestScreenshot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", _recording_run(calls))
 
-        fcmd.cli.screenshot.take_screenshot_area()
+        fcmd.cli.media.screenshot.take_screenshot_area()
         captured = capsys.readouterr()
         assert "截图已保存" in captured.out
         assert any("screencapture" in c and "-i" in c for c in calls)
@@ -107,9 +107,9 @@ class TestScreenshot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", _recording_run(calls))
 
-        fcmd.cli.screenshot.take_screenshot_full()
+        fcmd.cli.media.screenshot.take_screenshot_full()
         # gnome-screenshot 成功时不调用 scrot
         assert any("gnome-screenshot" in c for c in calls)
         assert not any("scrot" in c for c in calls)
@@ -128,9 +128,9 @@ class TestScreenshot:
                 return CommandResult(cmd=list(cmd), returncode=1, stdout="", stderr="")
             return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", fake_run)
 
-        fcmd.cli.screenshot.take_screenshot_full()
+        fcmd.cli.media.screenshot.take_screenshot_full()
         assert call_count["n"] == 2  # gnome-screenshot + scrot
 
     def test_full_screenshot_macos(
@@ -141,9 +141,9 @@ class TestScreenshot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", _recording_run(calls))
 
-        fcmd.cli.screenshot.take_screenshot_full()
+        fcmd.cli.media.screenshot.take_screenshot_full()
         captured = capsys.readouterr()
         assert "截图已保存" in captured.out
         assert any("screencapture" in c and "-x" in c for c in calls)
@@ -156,9 +156,9 @@ class TestScreenshot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", _recording_run(calls))
 
-        fcmd.cli.screenshot.take_screenshot_area()
+        fcmd.cli.media.screenshot.take_screenshot_area()
         captured = capsys.readouterr()
         assert "截图已保存" in captured.out
         assert any("powershell" in c[0] for c in calls)
@@ -171,9 +171,9 @@ class TestScreenshot:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.screenshot.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.media.screenshot.run_command", _recording_run(calls))
 
-        fcmd.cli.screenshot.take_screenshot_area()
+        fcmd.cli.media.screenshot.take_screenshot_area()
         captured = capsys.readouterr()
         assert "截图已保存" in captured.out
         assert any("gnome-screenshot" in c and "-a" in c for c in calls)

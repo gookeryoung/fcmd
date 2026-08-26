@@ -1,6 +1,6 @@
 """reseticoncache 工具测试。
 
-验证 ``fcmd.cli.reseticoncache`` 模块：
+验证 ``fcmd.cli.system.reseticoncache`` 模块：
 - 工具注册
 - reset_icon_cache_run 重置 Windows 图标缓存
 """
@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.reseticoncache
+import fcmd.cli.system.reseticoncache
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
 
@@ -57,7 +57,7 @@ class TestResetIconCache:
     def test_non_windows_skip(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """非 Windows 平台打印提示并跳过。"""
         monkeypatch.setattr(sys, "platform", "linux")
-        fcmd.cli.reseticoncache.reset_icon_cache_run()
+        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
         captured = capsys.readouterr()
         assert "仅在 Windows" in captured.out
 
@@ -65,7 +65,7 @@ class TestResetIconCache:
         """Windows 但 LOCALAPPDATA 未设置时提示并跳过。"""
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
-        fcmd.cli.reseticoncache.reset_icon_cache_run()
+        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
         captured = capsys.readouterr()
         assert "LOCALAPPDATA" in captured.out
 
@@ -82,9 +82,9 @@ class TestResetIconCache:
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.reseticoncache.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.system.reseticoncache.run_command", _recording_run(calls))
 
-        fcmd.cli.reseticoncache.reset_icon_cache_run()
+        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
         captured = capsys.readouterr()
         assert "图标缓存已重置" in captured.out
         # 应调用 taskkill、del（IconCache.db）、del（iconcache*）、start explorer
@@ -104,9 +104,9 @@ class TestResetIconCache:
         monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.reseticoncache.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.system.reseticoncache.run_command", _recording_run(calls))
 
-        fcmd.cli.reseticoncache.reset_icon_cache_run()
+        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
         # 找到 taskkill 调用，首元素必须是绝对路径
         taskkill_calls = [c for c in calls if "taskkill" in " ".join(c)]
         assert taskkill_calls, "应至少调用一次 taskkill"

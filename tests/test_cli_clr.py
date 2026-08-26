@@ -1,6 +1,6 @@
 """clr 工具测试。
 
-验证 ``fcmd.cli.clr`` 模块：
+验证 ``fcmd.cli.system.clr`` 模块：
 - 工具注册
 - 跨平台清屏（Windows 用 cls，Linux 用 clear）
 - 失败与未找到分支
@@ -16,9 +16,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.clr
+import fcmd.cli.system.clr
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.clr import clear_screen
+from fcmd.cli.system.clr import clear_screen
 
 
 # ============================================================================ #
@@ -52,7 +52,7 @@ class TestClr:
             captured.append((cmd, kwargs))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.system.clr.subprocess.run", fake_run)
         result = clear_screen()
         assert result == 0
         # Windows 传字符串 cmd="cls" + shell=True
@@ -68,7 +68,7 @@ class TestClr:
             captured.append((cmd, kwargs))
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.system.clr.subprocess.run", fake_run)
         result = clear_screen()
         assert result == 0
         # Linux 传字符串 cmd="clear" + shell=False
@@ -82,7 +82,7 @@ class TestClr:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.system.clr.subprocess.run", fake_run)
         assert clear_screen() == 1
 
     def test_clear_screen_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -92,7 +92,7 @@ class TestClr:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             raise FileNotFoundError(2, "系统找不到指定的文件。")
 
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.system.clr.subprocess.run", fake_run)
         with pytest.raises(RuntimeError, match="清屏命令未找到: clear"):
             clear_screen()
 
@@ -105,6 +105,6 @@ class TestClr:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.cli.clr.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.system.clr.subprocess.run", fake_run)
         code = run_tool("clr", [])
         assert code == 0

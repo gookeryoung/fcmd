@@ -1,6 +1,6 @@
 """pdftool 工具测试。
 
-验证 ``fcmd.cli.pdftool`` 模块：
+验证 ``fcmd.cli.media.pdftool`` 模块：
 - 工具注册
 - 各子命令通过 run_tool 调用
 - 可选依赖缺失 guard 覆盖
@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.pdftool
+import fcmd.cli.media.pdftool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.pdftool import HAS_PYMUPDF, HAS_PYPDF
+from fcmd.cli.media.pdftool import HAS_PYMUPDF, HAS_PYPDF
 
 
 # ---------------------------------------------------------------------- #
@@ -213,7 +213,7 @@ class TestPdftoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """PyMuPDF 未安装时 compress 子命令打印提示。"""
-        monkeypatch.setattr("fcmd.cli.pdftool.HAS_PYMUPDF", False)
+        monkeypatch.setattr("fcmd.cli.media.pdftool.HAS_PYMUPDF", False)
         out = tmp_path / "compressed.pdf"
         code = run_tool("pdftool", ["c", str(sample_pdf), "--output-path", str(out)])
         assert code == 0
@@ -227,7 +227,7 @@ class TestPdftoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """pypdf 未安装但 password 已传时打印提示（password 检查先于依赖检查）。"""
-        monkeypatch.setattr("fcmd.cli.pdftool.HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.cli.media.pdftool.HAS_PYPDF", False)
         code = run_tool("pdftool", ["e", str(sample_pdf), "--password", "secret"])
         assert code == 0
         out = capsys.readouterr().out
@@ -255,7 +255,7 @@ class TestPdftoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """PyMuPDF 未安装时打印提示。"""
-        monkeypatch.setattr("fcmd.cli.pdftool.HAS_PYMUPDF", False)
+        monkeypatch.setattr("fcmd.cli.media.pdftool.HAS_PYMUPDF", False)
         code = run_tool("pdftool", ["i", str(sample_pdf)])
         assert code == 0
         out = capsys.readouterr().out
@@ -269,7 +269,7 @@ class TestPdftoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """pypdf 未安装时打印提示。"""
-        monkeypatch.setattr("fcmd.cli.pdftool.HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.cli.media.pdftool.HAS_PYPDF", False)
         out = tmp_path / "merged.pdf"
         code = run_tool("pdftool", ["m", str(sample_pdf), "--output-path", str(out)])
         assert code == 0
@@ -303,7 +303,7 @@ class TestNoDepsGuards:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """PyMuPDF 未安装时各子命令打印提示。"""
-        monkeypatch.setattr("fcmd.cli.pdftool.HAS_PYMUPDF", False)
+        monkeypatch.setattr("fcmd.cli.media.pdftool.HAS_PYMUPDF", False)
         code = run_tool("pdftool", [subcommand, *args])
         assert code == 0
         assert "未安装 PyMuPDF" in capsys.readouterr().out
@@ -324,7 +324,7 @@ class TestNoDepsGuards:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """pypdf 未安装时各子命令打印提示。"""
-        monkeypatch.setattr("fcmd.cli.pdftool.HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.cli.media.pdftool.HAS_PYPDF", False)
         code = run_tool("pdftool", [subcommand, *args])
         assert code == 0
         assert "未安装 pypdf" in capsys.readouterr().out

@@ -1,6 +1,6 @@
 """xmltool 工具测试。
 
-验证 ``fcmd.cli.xmltool`` 模块：
+验证 ``fcmd.cli.data.xmltool`` 模块：
 - 工具注册与四子命令结构（pretty/minify/extract/validate）
 - ``read_xml``/``write_xml`` 基础读写
 - ``pretty_xml``/``minify_xml`` 格式化与压缩
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.xmltool import (
+from fcmd.cli.data.xmltool import (
     extract_xml,
     minify_xml,
     pretty_xml,

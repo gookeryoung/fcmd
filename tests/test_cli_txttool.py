@@ -1,6 +1,6 @@
 """txttool 工具测试。
 
-验证 ``fcmd.cli.txttool`` 模块：
+验证 ``fcmd.cli.text.txttool`` 模块：
 - 工具注册与子命令结构
 - count_text 统计行/词/字符数
 - sort_lines 排序文本行
@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.txttool
+import fcmd.cli.text.txttool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.txttool import convert_case, count_text, sort_lines, unique_lines
+from fcmd.cli.text.txttool import convert_case, count_text, sort_lines, unique_lines
 
 
 # ---------------------------------------------------------------------- #

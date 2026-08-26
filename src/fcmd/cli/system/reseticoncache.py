@@ -25,7 +25,7 @@ def _system_taskkill_path() -> str:
 
     避免递归调用 fcmd 自身注册的 ``taskkill`` entry script（与系统
     ``taskkill.exe`` 同名，PATH 顺序不确定时可能递归）。详见
-    ``fcmd.cli.taskkill._system_taskkill_path``。
+    ``fcmd.cli.system.taskkill._system_taskkill_path``。
     """
     # Windows 环境变量大小写不敏感，SystemRoot 是系统约定写法
     system_root = os.environ.get("SystemRoot", r"C:\Windows")  # noqa: SIM112

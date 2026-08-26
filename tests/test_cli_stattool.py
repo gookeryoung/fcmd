@@ -1,6 +1,6 @@
 """stattool 工具测试。
 
-验证 ``fcmd.cli.stattool`` 模块：
+验证 ``fcmd.cli.calc.stattool`` 模块：
 - 工具注册与五子命令结构（mean/median/stddev/variance/summarize）
 - ``load_numbers``/``stat_mean``/``stat_median``/``stat_stddev``/``stat_variance``/``stat_summarize``
 - CLI 子命令端到端
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.stattool import (
+from fcmd.cli.calc.stattool import (
     load_numbers,
     stat_mean,
     stat_median,

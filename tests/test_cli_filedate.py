@@ -1,6 +1,6 @@
 """filedate 工具测试。
 
-验证 ``fcmd.cli.filedate`` 模块：
+验证 ``fcmd.cli.fileops.filedate`` 模块：
 - 工具注册与子命令结构
 - DATE_PATTERN 日期前缀正则
 - get_file_timestamp / add_date_prefix / remove_date_prefix
@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.filedate  # 触发 @fx.tool 注册
+import fcmd.cli.fileops.filedate  # 触发 @fx.tool 注册
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.filedate import (
+from fcmd.cli.fileops.filedate import (
     DATE_PATTERN,
     add_date_prefix,
     get_file_timestamp,

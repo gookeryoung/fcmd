@@ -1,6 +1,6 @@
 """piptool 工具测试。
 
-验证 ``fcmd.cli.piptool`` 模块：
+验证 ``fcmd.cli.dev.piptool`` 模块：
 - 工具注册
 - 辅助函数
 - 命令构造
@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.piptool
+import fcmd.cli.dev.piptool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.piptool import (
+from fcmd.cli.dev.piptool import (
     _expand_wildcard_packages,
     _filter_protected_packages,
     _get_installed_packages,
@@ -110,7 +110,7 @@ class TestPiptoolHelpers:
             stdout="requests==2.31.0\nflask==3.0.0\n",
             stderr="",
         )
-        monkeypatch.setattr("fcmd.cli.piptool.run_command", _fake_run(fake_result))
+        monkeypatch.setattr("fcmd.cli.dev.piptool.run_command", _fake_run(fake_result))
         result = _get_installed_packages()
         assert "requests" in result
         assert "flask" in result
@@ -118,7 +118,7 @@ class TestPiptoolHelpers:
     def test_get_installed_packages_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_get_installed_packages 空输出返回空列表。"""
         fake_result = CommandResult(cmd=["pip", "list"], returncode=0, stdout="", stderr="")
-        monkeypatch.setattr("fcmd.cli.piptool.run_command", _fake_run(fake_result))
+        monkeypatch.setattr("fcmd.cli.dev.piptool.run_command", _fake_run(fake_result))
         assert _get_installed_packages() == []
 
     def test_expand_wildcard_no_pattern(self) -> None:
@@ -128,7 +128,7 @@ class TestPiptoolHelpers:
     def test_expand_wildcard_with_pattern(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_expand_wildcard_packages 展开通配符。"""
         monkeypatch.setattr(
-            "fcmd.cli.piptool._get_installed_packages",
+            "fcmd.cli.dev.piptool._get_installed_packages",
             lambda: ["requests", "flask", "django"],
         )
         result = _expand_wildcard_packages("f*")
@@ -147,7 +147,7 @@ class TestPiptoolCommands:
         """pip_install 调用 pip install。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_install(["requests", "flask"])
@@ -163,10 +163,10 @@ class TestPiptoolCommands:
         """pip_uninstall 跳过受保护包。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
-        monkeypatch.setattr("fcmd.cli.piptool._expand_wildcard_packages", lambda p: [p])
+        monkeypatch.setattr("fcmd.cli.dev.piptool._expand_wildcard_packages", lambda p: [p])
         pip_uninstall(["fcmd"])
         # 受保护包应跳过，不调用 pip uninstall
         assert not any("uninstall" in " ".join(c) for c in calls)
@@ -180,10 +180,10 @@ class TestPiptoolCommands:
         """pip_uninstall 正常卸载。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
-        monkeypatch.setattr("fcmd.cli.piptool._expand_wildcard_packages", lambda p: [p])
+        monkeypatch.setattr("fcmd.cli.dev.piptool._expand_wildcard_packages", lambda p: [p])
         pip_uninstall(["requests"])
         assert calls[0] == ["pip", "uninstall", "-y", "requests"]
 
@@ -195,7 +195,7 @@ class TestPiptoolCommands:
         """pip_reinstall 全是受保护包时跳过。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_reinstall(["fcmd"])
@@ -210,7 +210,7 @@ class TestPiptoolCommands:
         """pip_reinstall 正常重装。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_reinstall(["requests"])
@@ -224,7 +224,7 @@ class TestPiptoolCommands:
         """pip_reinstall 离线模式添加 --no-index。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_reinstall(["requests"], offline=True)
@@ -244,7 +244,7 @@ class TestPiptoolCommands:
         """pip_download 下载到 packages 目录。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_download(["requests"])
@@ -257,7 +257,7 @@ class TestPiptoolCommands:
         """pip_download 离线模式。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_download(["requests"], offline=True)
@@ -272,7 +272,7 @@ class TestPiptoolCommands:
         """pip_upgrade 升级 pip。"""
         calls: list[list[str]] = []
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _recording_run(calls),
         )
         pip_upgrade()
@@ -294,7 +294,7 @@ class TestPiptoolCommands:
             stdout="requests==2.31.0\nflask==3.0.0\n",
             stderr="",
         )
-        monkeypatch.setattr("fcmd.cli.piptool.run_command", _fake_run(fake_result))
+        monkeypatch.setattr("fcmd.cli.dev.piptool.run_command", _fake_run(fake_result))
         pip_freeze()
         content = (tmp_path / "requirements.txt").read_text(encoding="utf-8")
         assert "requests==2.31.0" in content
@@ -312,7 +312,7 @@ class TestPiptoolRunTool:
     ) -> None:
         """fcmd piptool i <packages> 通过 run_tool 调用。"""
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _success_run,
         )
         code = run_tool("piptool", ["i", "requests"])
@@ -327,7 +327,7 @@ class TestPiptoolRunTool:
     ) -> None:
         """fcmd piptool up 通过 run_tool 调用。"""
         monkeypatch.setattr(
-            "fcmd.cli.piptool.run_command",
+            "fcmd.cli.dev.piptool.run_command",
             _success_run,
         )
         code = run_tool("piptool", ["up"])

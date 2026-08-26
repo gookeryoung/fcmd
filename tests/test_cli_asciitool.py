@@ -1,6 +1,6 @@
 """asciitool 工具测试。
 
-验证 ``fcmd.cli.asciitool`` 模块：
+验证 ``fcmd.cli.text.asciitool`` 模块：
 - 工具注册与三子命令结构（char/code/table）
 - ``char_to_code``/``code_to_char``/``build_ascii_table``
 - 边界与错误分支
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.asciitool import (
+from fcmd.cli.text.asciitool import (
     build_ascii_table,
     char_to_code,
     code_to_char,

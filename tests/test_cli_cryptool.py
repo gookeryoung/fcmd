@@ -1,6 +1,6 @@
 """cryptool 工具测试。
 
-验证 ``fcmd.cli.cryptool`` 模块：
+验证 ``fcmd.cli.crypto.cryptool`` 模块：
 - 工具注册与三子命令结构（genkey/encrypt/decrypt）
 - 密钥模式与密码模式的加解密往返一致性
 - 密文格式与密钥派生正确性
@@ -16,7 +16,7 @@ import os
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.cli.cryptool import (
+from fcmd.cli.crypto.cryptool import (
     _cryptool,
     _decrypt_bytes,
     _encrypt_bytes,
@@ -264,14 +264,14 @@ class TestInternals:
 
     def test_ctr_crypt_empty(self) -> None:
         """空数据 CTR 加密返回空。"""
-        from fcmd.cli.cryptool import _ctr_crypt
+        from fcmd.cli.crypto.cryptool import _ctr_crypt
 
         result = _ctr_crypt(b"", b"\x00" * 32, b"\x00" * 16)
         assert result == b""
 
     def test_ctr_crypt_symmetric(self) -> None:
         """CTR 模式加解密对称（同一密钥+nonce 两次 XOR 还原）。"""
-        from fcmd.cli.cryptool import _ctr_crypt
+        from fcmd.cli.crypto.cryptool import _ctr_crypt
 
         enc_key = os.urandom(32)
         nonce = os.urandom(16)
@@ -288,7 +288,7 @@ class TestInternals:
         """
         import base64 as _b64
 
-        from fcmd.cli.cryptool import _encrypt_bytes
+        from fcmd.cli.crypto.cryptool import _encrypt_bytes
 
         enc_key, mac_key = _parse_key(_KEY)
         # 0xff 0xfe 不是合法 UTF-8 序列开头

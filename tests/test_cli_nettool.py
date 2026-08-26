@@ -1,6 +1,6 @@
 """nettool 工具测试。
 
-验证 ``fcmd.cli.nettool`` 模块：
+验证 ``fcmd.cli.net.nettool`` 模块：
 - 工具注册与子命令结构
 - http_get / http_post / http_head（mock urlopen）
 - HTTPError / URLError 错误处理
@@ -16,9 +16,9 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
-import fcmd.cli.nettool
+import fcmd.cli.net.nettool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.nettool import http_get, http_head, http_post
+from fcmd.cli.net.nettool import http_get, http_head, http_post
 
 # ---------------------------------------------------------------------- #
 # 辅助函数
@@ -76,31 +76,31 @@ class TestHttpGet:
 
     def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """成功 GET 请求返回响应体。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"Hello, World!"))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"Hello, World!"))
         assert http_get("http://example.com") == "Hello, World!"
 
     def test_unicode_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unicode 响应体。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen("你好世界".encode()))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen("你好世界".encode()))
         assert http_get("http://example.com") == "你好世界"
 
     def test_custom_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """自定义超时。"""
         mock_fn = _make_mock_urlopen(b"ok")
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", mock_fn)
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", mock_fn)
         assert http_get("http://example.com", timeout=10) == "ok"
 
     def test_http_error_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HTTP 错误应抛出 HTTPError。"""
         error = HTTPError("http://example.com", 404, "Not Found", Message(), None)
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         with pytest.raises(HTTPError):
             http_get("http://example.com")
 
     def test_url_error_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """网络错误应抛出 URLError。"""
         error = URLError("Name or service not known")
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         with pytest.raises(URLError):
             http_get("http://nonexistent.invalid")
 
@@ -113,23 +113,23 @@ class TestHttpPost:
 
     def test_success_with_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """带数据的 POST 请求。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"posted"))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"posted"))
         assert http_post("http://example.com", "key=value") == "posted"
 
     def test_success_empty_data(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """空数据的 POST 请求。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"ok"))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"ok"))
         assert http_post("http://example.com") == "ok"
 
     def test_unicode_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Unicode 响应体。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen("已提交".encode()))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen("已提交".encode()))
         assert http_post("http://example.com", "data") == "已提交"
 
     def test_http_error_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HTTP 错误应抛出 HTTPError。"""
         error = HTTPError("http://example.com", 500, "Internal Server Error", Message(), None)
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         with pytest.raises(HTTPError):
             http_post("http://example.com", "data")
 
@@ -143,21 +143,21 @@ class TestHttpHead:
     def test_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """成功 HEAD 请求返回响应头。"""
         headers = {"Content-Type": "text/html", "Server": "nginx"}
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"", headers))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"", headers))
         result = http_head("http://example.com")
         assert result["Content-Type"] == "text/html"
         assert result["Server"] == "nginx"
 
     def test_empty_headers(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """空响应头。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b""))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b""))
         result = http_head("http://example.com")
         assert result == {}
 
     def test_http_error_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HTTP 错误应抛出 HTTPError。"""
         error = HTTPError("http://example.com", 403, "Forbidden", Message(), None)
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         with pytest.raises(HTTPError):
             http_head("http://example.com")
 
@@ -170,7 +170,7 @@ class TestNettoolCLI:
 
     def test_get_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd nettool get <url> 打印响应体。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"Hello!"))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"Hello!"))
         code = run_tool("nettool", ["get", "http://example.com"])
         assert code == 0
         out = capsys.readouterr().out
@@ -179,7 +179,7 @@ class TestNettoolCLI:
     def test_get_error_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """GET 请求失败时打印错误。"""
         error = URLError("connection refused")
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         code = run_tool("nettool", ["get", "http://nonexistent.invalid"])
         assert code == 0
         out = capsys.readouterr().out
@@ -187,7 +187,7 @@ class TestNettoolCLI:
 
     def test_post_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd nettool post <url> --data <data> 打印响应体。"""
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"posted"))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"posted"))
         code = run_tool("nettool", ["post", "http://example.com", "--data", "key=value"])
         assert code == 0
         out = capsys.readouterr().out
@@ -196,7 +196,7 @@ class TestNettoolCLI:
     def test_post_error_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """POST 请求失败时打印错误。"""
         error = HTTPError("http://example.com", 500, "Internal Server Error", Message(), None)
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         code = run_tool("nettool", ["post", "http://example.com", "--data", "x"])
         assert code == 0
         out = capsys.readouterr().out
@@ -205,7 +205,7 @@ class TestNettoolCLI:
     def test_head_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd nettool head <url> 打印响应头。"""
         headers = {"Content-Type": "application/json"}
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_mock_urlopen(b"", headers))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_mock_urlopen(b"", headers))
         code = run_tool("nettool", ["head", "http://example.com"])
         assert code == 0
         out = capsys.readouterr().out
@@ -215,7 +215,7 @@ class TestNettoolCLI:
     def test_head_error_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """HEAD 请求失败时打印错误。"""
         error = URLError("timeout")
-        monkeypatch.setattr(fcmd.cli.nettool, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.cli.net.nettool, "urlopen", _make_error_urlopen(error))
         code = run_tool("nettool", ["head", "http://nonexistent.invalid"])
         assert code == 0
         out = capsys.readouterr().out

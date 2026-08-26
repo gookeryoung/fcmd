@@ -1,6 +1,6 @@
 """codetool 工具测试。
 
-验证 ``fcmd.cli.codetool`` 模块：
+验证 ``fcmd.cli.conv.codetool`` 模块：
 - 工具注册与子命令结构
 - Base64 / URL / Hex / ROT13 / HTML 编解码
 - 通过 run_tool 调用各子命令
@@ -14,9 +14,9 @@ import binascii
 import pytest
 
 import fcmd as fx
-import fcmd.cli.codetool
+import fcmd.cli.conv.codetool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.codetool import (
+from fcmd.cli.conv.codetool import (
     decode_base64,
     decode_hex,
     decode_url,

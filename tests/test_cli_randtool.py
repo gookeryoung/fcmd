@@ -1,6 +1,6 @@
 """randtool 工具测试。
 
-验证 ``fcmd.cli.randtool`` 模块：
+验证 ``fcmd.cli.calc.randtool`` 模块：
 - 工具注册与四子命令结构（password/number/string/bytes）
 - ``generate_password``/``generate_number``/``generate_string``/``generate_bytes``
 - CLI 子命令端到端
@@ -15,7 +15,7 @@ import string
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.randtool import (
+from fcmd.cli.calc.randtool import (
     generate_bytes,
     generate_number,
     generate_password,

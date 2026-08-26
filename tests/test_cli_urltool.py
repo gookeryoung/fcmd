@@ -1,6 +1,6 @@
 """urltool 工具测试。
 
-验证 ``fcmd.cli.urltool`` 模块：
+验证 ``fcmd.cli.conv.urltool`` 模块：
 - 工具注册与四子命令结构（parse/query/addquery/baseurl）
 - ``parse_url``/``get_query_param``/``add_query_param``/``get_base_url``
 - 错误分支
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.urltool import (
+from fcmd.cli.conv.urltool import (
     add_query_param,
     get_base_url,
     get_query_param,

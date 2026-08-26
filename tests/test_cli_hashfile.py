@@ -1,6 +1,6 @@
 """hashfile 工具测试。
 
-验证 ``fcmd.cli.hashfile`` 模块：
+验证 ``fcmd.cli.crypto.hashfile`` 模块：
 - 工具注册与子命令结构
 - compute_hash 哈希计算
 - hash_file / hash_directory 文件与目录哈希
@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.hashfile
+import fcmd.cli.crypto.hashfile
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.hashfile import compute_hash, hash_directory, hash_file
+from fcmd.cli.crypto.hashfile import compute_hash, hash_directory, hash_file
 
 
 # ---------------------------------------------------------------------- #

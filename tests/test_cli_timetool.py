@@ -1,6 +1,6 @@
 """timetool 工具测试。
 
-验证 ``fcmd.cli.timetool`` 模块：
+验证 ``fcmd.cli.calc.timetool`` 模块：
 - 工具注册与五子命令结构（now/parse/unix/fromunix/convert）
 - ``now_utc``/``now_local``/``parse_time``/``format_time``/``to_unix``/``from_unix``/``convert_timezone``
 - CLI 子命令端到端
@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.timetool import (
+from fcmd.cli.calc.timetool import (
     convert_timezone,
     format_time,
     from_unix,

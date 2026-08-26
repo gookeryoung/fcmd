@@ -1,6 +1,6 @@
 """folderzip 工具测试。
 
-验证 ``fcmd.cli.folderzip`` 模块：
+验证 ``fcmd.cli.archive.folderzip`` 模块：
 - 工具注册（单命令工具，无子命令）
 - archive_folder 单文件夹压缩
 - 通过 run_tool 调用 folderzip --directory 批量压缩
@@ -15,9 +15,9 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.cli.folderzip
+import fcmd.cli.archive.folderzip
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.folderzip import archive_folder
+from fcmd.cli.archive.folderzip import archive_folder
 
 
 # ---------------------------------------------------------------------- #

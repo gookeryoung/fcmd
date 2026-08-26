@@ -1,6 +1,6 @@
 """yamtool 工具测试。
 
-验证 ``fcmd.cli.yamtool`` 模块：
+验证 ``fcmd.cli.data.yamtool`` 模块：
 - 工具注册与四子命令结构（pretty/get/keys/validate）
 - ``read_yaml``/``write_yaml`` 基础读写
 - ``pretty_yaml`` 格式化（含 sort_keys/indent）
@@ -19,7 +19,7 @@ import pytest
 import yaml  # type: ignore[import-not-found]
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.yamtool import (
+from fcmd.cli.data.yamtool import (
     get_yaml,
     keys_yaml,
     pretty_yaml,

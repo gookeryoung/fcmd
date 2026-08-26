@@ -46,6 +46,10 @@ _TOOLS_DISCOVERED = False
 def ensure_tools_discovered() -> None:
     """首次调用时扫描 ``fcmd.cli`` 包，发现工具模块并填充注册表。
 
+    扫描两层结构：顶层模块（遗留位置）与领域子包（``fcmd.cli.<域>.<工具>``，
+    如 ``fcmd.cli.media.pdftool``）。工具名取模块名（最后一段），调用方式
+    ``fcmd <工具名>`` 不受分组影响。领域子包内部不再嵌套子包。
+
     幂等：后续调用直接返回。用 ``setdefault`` 填充，不覆盖测试通过
     ``monkeypatch.setitem`` 注入的键。扫描时导入模块以读取
     ``__tool_aliases__`` 并触发 ``@fx.tool`` 注册。
@@ -58,22 +62,45 @@ def ensure_tools_discovered() -> None:
     # 懒导入 fcmd.cli 以访问 __path__，避免 import fcmd 时触发
     import fcmd.cli as cli_pkg
 
-    for _finder, name, _ispkg in pkgutil.iter_modules(cli_pkg.__path__):
-        # 排除入口模块、私有模块、包自身
+    for _finder, name, ispkg in pkgutil.iter_modules(cli_pkg.__path__):
+        # 排除入口模块、私有模块/包（_builtins 等）
         if name.startswith("_") or name == "main":
             continue
-        module_path = f"fcmd.cli.{name}"
-        tool_name = name
-        _TOOL_MODULES.setdefault(tool_name, module_path)
-        _TOOL_ALIASES.setdefault(tool_name, tool_name)
-        try:
-            mod = importlib.import_module(module_path)
-        except ImportError:
+        if ispkg:
+            # 领域子包：工具名取子包内模块名，模块路径带域前缀
+            _discover_domain(name)
+        else:
+            _register_tool(f"fcmd.cli.{name}", name)
+
+
+def _discover_domain(domain: str) -> None:
+    """扫描单个领域子包，注册其中全部工具模块。
+
+    子包导入失败（可选依赖缺失等）时静默跳过整个域，不影响其他工具。
+    """
+    try:
+        domain_pkg = importlib.import_module(f"fcmd.cli.{domain}")
+    except ImportError:
+        return
+    for _finder, name, ispkg in pkgutil.iter_modules(domain_pkg.__path__):
+        # 域内不允许嵌套子包，私有模块不算工具
+        if ispkg or name.startswith("_"):
             continue
-        # 读取模块声明的别名
-        aliases = getattr(mod, "__tool_aliases__", ())
-        for alias in aliases:
-            _TOOL_ALIASES.setdefault(alias, tool_name)
+        _register_tool(f"fcmd.cli.{domain}.{name}", name)
+
+
+def _register_tool(module_path: str, tool_name: str) -> None:
+    """注册单个工具：填充模块映射并导入模块读取别名。"""
+    _TOOL_MODULES.setdefault(tool_name, module_path)
+    _TOOL_ALIASES.setdefault(tool_name, tool_name)
+    try:
+        mod = importlib.import_module(module_path)
+    except ImportError:
+        return
+    # 读取模块声明的别名
+    aliases = getattr(mod, "__tool_aliases__", ())
+    for alias in aliases:
+        _TOOL_ALIASES.setdefault(alias, tool_name)
 
 
 def resolve_tool(name: str) -> str | None:

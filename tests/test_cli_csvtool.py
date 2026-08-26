@@ -1,6 +1,6 @@
 """csvtool 工具测试。
 
-验证 ``fcmd.cli.csvtool`` 模块：
+验证 ``fcmd.cli.data.csvtool`` 模块：
 - 工具注册与五子命令结构（show/to-json/from-json/select/merge）
 - ``read_csv``/``write_csv`` 基础读写
 - ``csv_to_json``/``json_to_csv`` 双向转换
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.csvtool import (
+from fcmd.cli.data.csvtool import (
     csv_to_json,
     format_table,
     json_to_csv,

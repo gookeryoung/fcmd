@@ -1,6 +1,6 @@
 """bumpversion 工具测试。
 
-验证 ``fcmd.cli.bumpversion`` 模块：
+验证 ``fcmd.cli.dev.bumpversion`` 模块：
 - 工具注册
 - 辅助函数（模式匹配与替换）
 - 版本号读取/写入
@@ -18,9 +18,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.bumpversion
+import fcmd.cli.dev.bumpversion
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.bumpversion import (
+from fcmd.cli.dev.bumpversion import (
     _build_replacement_string,
     _get_pattern_for_file,
     _read_version,
@@ -250,7 +250,7 @@ class TestBumpProjectVersion:
         (src_dir / "__init__.py").write_text('__version__ = "0.1.0"\n', encoding="utf-8")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _recording_run(calls))
 
         result = bump_project_version(part="patch")
         assert result == "0.1.1"
@@ -274,7 +274,7 @@ class TestBumpProjectVersion:
         (tmp_path / "pyproject.toml").write_text('version = "1.0.0"\n', encoding="utf-8")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _recording_run(calls))
 
         result = bump_project_version(part="minor", no_tag=True)
         assert result == "1.1.0"
@@ -291,7 +291,7 @@ class TestBumpProjectVersion:
         (tmp_path / "pyproject.toml").write_text('version = "1.2.3"\n', encoding="utf-8")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _recording_run(calls))
 
         result = bump_project_version(part="major")
         assert result == "2.0.0"
@@ -304,7 +304,7 @@ class TestBumpProjectVersion:
     ) -> None:
         """无版本号文件时返回 None。"""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _success_run)
         result = bump_project_version(part="patch")
         assert result is None
         out = capsys.readouterr().out
@@ -318,7 +318,7 @@ class TestBumpProjectVersion:
     ) -> None:
         """无效 part 值返回 None。"""
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _success_run)
         # bypass type checker
         result = bump_project_version(part="invalid")  # type: ignore[arg-type]
         assert result is None
@@ -339,7 +339,7 @@ class TestBumpProjectVersion:
         (venv_dir / "__init__.py").write_text('__version__ = "9.9.9"\n', encoding="utf-8")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _recording_run(calls))
 
         result = bump_project_version(part="patch")
         # 基准版本应为 1.0.0，而非 .venv 中的 9.9.9
@@ -359,7 +359,7 @@ class TestBumpProjectVersion:
         (src_dir / "__init__.py").write_text('__version__ = "2.5.3"\n', encoding="utf-8")
 
         calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _recording_run(calls))
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _recording_run(calls))
 
         result = bump_project_version(part="patch")
         # 基准为 2.5.3，新版本为 2.5.4
@@ -374,7 +374,7 @@ class TestBumpProjectVersion:
         """fcmd bumpversion --part patch 通过 run_tool 调用。"""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "pyproject.toml").write_text('version = "0.1.0"\n', encoding="utf-8")
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _success_run)
         code = run_tool("bumpversion", ["--part", "patch"])
         assert code == 0
         out = capsys.readouterr().out
@@ -439,7 +439,7 @@ class TestBumpversionErrorBranches:
         monkeypatch.chdir(tmp_path)
         # pyproject.toml 存在但无 version 字段
         (tmp_path / "pyproject.toml").write_text('[project]\nname = "test"\n', encoding="utf-8")
-        monkeypatch.setattr("fcmd.cli.bumpversion.run_command", _success_run)
+        monkeypatch.setattr("fcmd.cli.dev.bumpversion.run_command", _success_run)
         result = bump_project_version(part="patch")
         assert result is None
         out = capsys.readouterr().out

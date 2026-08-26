@@ -1,6 +1,6 @@
 """imagetool 工具测试。
 
-验证 ``fcmd.cli.imagetool`` 模块：
+验证 ``fcmd.cli.media.imagetool`` 模块：
 - 工具注册
 - 私有辅助函数
 - 各子命令通过 run_tool 调用
@@ -16,9 +16,9 @@ from typing import Dict
 import pytest
 
 import fcmd as fx
-import fcmd.cli.imagetool
+import fcmd.cli.media.imagetool
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.imagetool import (
+from fcmd.cli.media.imagetool import (
     HAS_PIL,
     _apply_exif_modifications,
     _apply_single_exif_set,
@@ -325,7 +325,7 @@ class TestImagetoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Pillow 未安装时打印提示。"""
-        monkeypatch.setattr("fcmd.cli.imagetool.HAS_PIL", False)
+        monkeypatch.setattr("fcmd.cli.media.imagetool.HAS_PIL", False)
         out = tmp_path / "out.png"
         code = run_tool("imagetool", ["r", str(sample_image), str(out), "10"])
         assert code == 0
@@ -362,7 +362,7 @@ class TestNoDepsGuards:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Pillow 未安装时各子命令打印提示。"""
-        monkeypatch.setattr("fcmd.cli.imagetool.HAS_PIL", False)
+        monkeypatch.setattr("fcmd.cli.media.imagetool.HAS_PIL", False)
         code = run_tool("imagetool", [subcommand, *args])
         assert code == 0
         assert "未安装 Pillow" in capsys.readouterr().out
@@ -376,7 +376,7 @@ class TestEdgeCases:
 
     def test_image_resize_no_keep_ratio_with_height_direct(self, sample_image: Path, tmp_path: Path) -> None:
         """resize 拉伸模式显式传 height（直接调用绕过 CLI int|None 限制）。"""
-        from fcmd.cli.imagetool import image_resize
+        from fcmd.cli.media.imagetool import image_resize
 
         out = tmp_path / "out.png"
         image_resize(sample_image, out, width=30, height=20, keep_ratio=False)
@@ -395,7 +395,7 @@ class TestEdgeCases:
 
     def test_print_exif_with_data(self, capsys: pytest.CaptureFixture[str]) -> None:
         """_print_exif 打印有数据的 EXIF。"""
-        from fcmd.cli.imagetool import _print_exif
+        from fcmd.cli.media.imagetool import _print_exif
 
         _print_exif({271: "FCMD", 272: "Test"})
         out = capsys.readouterr().out

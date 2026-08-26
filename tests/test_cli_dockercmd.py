@@ -1,6 +1,6 @@
 """dockercmd 工具测试。
 
-验证 ``fcmd.cli.dockercmd`` 模块：
+验证 ``fcmd.cli.dev.dockercmd`` 模块：
 - 工具注册
 - docker login 子命令（默认/自定义用户名/自定义仓库/失败分支）
 """
@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 
 import fcmd as fx
-import fcmd.cli.dockercmd  # 触发 @fx.tool 注册
+import fcmd.cli.dev.dockercmd  # 触发 @fx.tool 注册
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.dockercmd import _DEFAULT_REGISTRY, docker_login
+from fcmd.cli.dev.dockercmd import _DEFAULT_REGISTRY, docker_login
 from fcmd.models import CommandResult
 
 
@@ -72,9 +72,9 @@ class TestDockercmd:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.dev.dockercmd.run_command", fake_run)
         # tox passenv 不含 USERNAME/LOGNAME/USER，getpass.getuser() 会抛 OSError
-        monkeypatch.setattr("fcmd.cli.dockercmd.getpass.getuser", lambda: "testuser")
+        monkeypatch.setattr("fcmd.cli.dev.dockercmd.getpass.getuser", lambda: "testuser")
         docker_login()
         out = capsys.readouterr().out
         assert "已登录镜像仓库" in out
@@ -98,7 +98,7 @@ class TestDockercmd:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.dev.dockercmd.run_command", fake_run)
         docker_login(username="admin")
         out = capsys.readouterr().out
         assert "admin" in out
@@ -117,7 +117,7 @@ class TestDockercmd:
             captured["cmd"] = cmd
             return _make_result(returncode=0)
 
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.dev.dockercmd.run_command", fake_run)
         docker_login(username="admin", registry="registry.example.com")
         out = capsys.readouterr().out
         assert "registry.example.com" in out
@@ -133,7 +133,7 @@ class TestDockercmd:
         def fake_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
             return _make_result(returncode=1, stderr="Login Failed")
 
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", fake_run)
+        monkeypatch.setattr("fcmd.cli.dev.dockercmd.run_command", fake_run)
         docker_login(username="admin")
         out = capsys.readouterr().out
         assert "登录失败" in out
@@ -144,7 +144,7 @@ class TestDockercmd:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd dockercmd login 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.dockercmd.run_command", _stub_success)
+        monkeypatch.setattr("fcmd.cli.dev.dockercmd.run_command", _stub_success)
         code = run_tool("dockercmd", ["login", "--username", "admin"])
         assert code == 0
         out = capsys.readouterr().out

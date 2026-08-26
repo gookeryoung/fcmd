@@ -1,6 +1,6 @@
 """gittool 工具测试。
 
-验证 ``fcmd.cli.gittool`` 模块：
+验证 ``fcmd.cli.dev.gittool`` 模块：
 - 工具注册与 cmd 子命令规格（clean/c/p/pl）
 - 状态查询（has_files / not_has_git_repo）
 - 提交（a / i 子命令）
@@ -15,9 +15,9 @@ from pathlib import Path
 
 import pytest
 
-import fcmd.cli.gittool  # 触发 @fx.tool 注册
+import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册
 from fcmd.apis.toolkit import run_tool
-from fcmd.cli.gittool import EXCLUDE_CMDS, EXCLUDE_DIRS, has_files, not_has_git_repo
+from fcmd.cli.dev.gittool import EXCLUDE_CMDS, EXCLUDE_DIRS, has_files, not_has_git_repo
 
 
 # ---------------------------------------------------------------------- #
@@ -184,7 +184,7 @@ class TestGittoolIsub:
     ) -> None:
         """无子目录时打印提示。"""
         monkeypatch.chdir(tmp_path)
-        fcmd.cli.gittool.git_init_sub_dirs()
+        fcmd.cli.dev.gittool.git_init_sub_dirs()
         captured = capsys.readouterr()
         assert "无子目录" in captured.out
 
@@ -210,9 +210,9 @@ class TestGittoolIsub:
             calls.append((cmd, cwd or Path.cwd()))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.gittool.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.dev.gittool.subprocess.run", fake_run)
 
-        fcmd.cli.gittool.git_init_sub_dirs()
+        fcmd.cli.dev.gittool.git_init_sub_dirs()
         captured = capsys.readouterr()
         assert "已初始化: proj_a" in captured.out
         assert "已初始化: proj_b" in captured.out

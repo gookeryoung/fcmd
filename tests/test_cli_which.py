@@ -1,6 +1,6 @@
 """which 工具测试。
 
-验证 ``fcmd.cli.which`` 模块：
+验证 ``fcmd.cli.system.which`` 模块：
 - 工具注册
 - find_command 命令查找
 - which_run CLI 调度
@@ -13,9 +13,9 @@ import sys
 import pytest
 
 import fcmd as fx
-import fcmd.cli.which
+import fcmd.cli.system.which
 from fcmd.apis.toolkit import run_tool
-from fcmd.cli.which import find_command, which_run
+from fcmd.cli.system.which import find_command, which_run
 
 
 # ---------------------------------------------------------------------- #

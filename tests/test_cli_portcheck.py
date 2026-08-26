@@ -1,6 +1,6 @@
 """portcheck 工具测试。
 
-验证 ``fcmd.cli.portcheck`` 模块：
+验证 ``fcmd.cli.net.portcheck`` 模块：
 - 工具注册
 - is_port_in_use 端口占用检查
 - check_port 单端口检查
@@ -18,9 +18,9 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.portcheck
+import fcmd.cli.net.portcheck
 from fcmd.apis.toolkit import run_tool
-from fcmd.cli.portcheck import (
+from fcmd.cli.net.portcheck import (
     check_port,
     get_port_occupant,
     is_port_in_use,
@@ -159,7 +159,7 @@ class TestGetPortOccupant:
             assert ":5173" in cmd
             return subprocess.CompletedProcess(cmd, 0, lsof_out, "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         occupants = get_port_occupant(5173)
         assert len(occupants) == 1
         occ = occupants[0]
@@ -178,7 +178,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         assert get_port_occupant(59999) == []
 
     def test_linux_lsof_command_not_found(
@@ -191,7 +191,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             raise FileNotFoundError(2, "lsof not found")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         # 静默吞掉，避免污染主流程
         assert get_port_occupant(59999) == []
 
@@ -206,7 +206,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 0, lsof_out, "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         assert get_port_occupant(5173) == []
 
     def test_linux_lsof_malformed_line(
@@ -224,7 +224,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 0, lsof_out, "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         occupants = get_port_occupant(5173)
         assert len(occupants) == 1
         assert occupants[0]["pid"] == "12345"
@@ -252,7 +252,7 @@ class TestGetPortOccupant:
                 return subprocess.CompletedProcess(cmd, 0, tasklist_out, "")
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         occupants = get_port_occupant(5173)
         assert len(occupants) == 1
         occ = occupants[0]
@@ -273,7 +273,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 0, "无活动连接\n", "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         assert get_port_occupant(59999) == []
 
     def test_windows_dedup_pids(
@@ -299,7 +299,7 @@ class TestGetPortOccupant:
                 return subprocess.CompletedProcess(cmd, 0, tasklist_out, "")
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         occupants = get_port_occupant(5173)
         # 去重后只有一个 PID（8080 那行被端口过滤掉）
         assert len(occupants) == 1
@@ -315,7 +315,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             raise FileNotFoundError(2, "netstat not found")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         assert get_port_occupant(5173) == []
 
     def test_windows_netstat_failure(
@@ -328,7 +328,7 @@ class TestGetPortOccupant:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 1, "", "error")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         assert get_port_occupant(5173) == []
 
     def test_windows_tasklist_not_found(
@@ -346,7 +346,7 @@ class TestGetPortOccupant:
                 raise FileNotFoundError(2, "tasklist not found")
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         occupants = get_port_occupant(5173)
         assert len(occupants) == 1
         assert occupants[0]["name"] == "<unknown>"
@@ -366,7 +366,7 @@ class TestGetPortOccupant:
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
         occupants = get_port_occupant(5173)
         assert len(occupants) == 1
         assert occupants[0]["name"] == "<unknown>"
@@ -399,7 +399,7 @@ class TestCheckPortWithDetail:
             def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
                 return subprocess.CompletedProcess(cmd, 0, lsof_out, "")
 
-            monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+            monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
             check_port(port)
             out = capsys.readouterr().out
             assert "占用" in out
@@ -422,7 +422,7 @@ class TestCheckPortWithDetail:
             def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
                 return subprocess.CompletedProcess(cmd, 1, "", "")
 
-            monkeypatch.setattr("fcmd.cli.portcheck.subprocess.run", fake_run)
+            monkeypatch.setattr("fcmd.cli.net.portcheck.subprocess.run", fake_run)
             check_port(port)
             out = capsys.readouterr().out
             assert "占用" in out
