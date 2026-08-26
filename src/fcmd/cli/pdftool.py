@@ -3,14 +3,20 @@
 提供 PDF 合并/拆分/压缩/加密/解密/提取文本/提取图片/水印/旋转/裁剪/
 信息/OCR/转图片/重排/修复 等子命令。
 
+合并支持交叉合并（多文件轮流取页）与逐文件页序/页码筛选；拆分支持
+正序/倒序、固定步长（每份页数）与自定义分组（如 ``1-2;3,4,5``）。
+页码表达式语法见 :mod:`fcmd.cli._pdf_models`。
+
 依赖 ``fcmd[pdf]`` extra 中的 ``pymupdf`` 与 ``pypdf``；
 OCR 子命令额外依赖 ``fcmd[ocr]`` extra 中的 ``pytesseract``。
 
 示例
 ----
     fcmd pdftool m a.pdf b.pdf -o merged.pdf
-    fcmd pdftool s in.pdf -o split/
-    fcmd pdftool xt in.pdf -o out.txt
+    fcmd pdftool m 01.pdf 02.pdf --mode interleave --orders f,r
+    fcmd pdftool s in.pdf -o split/ --every 2 --order reverse
+    fcmd pdftool s in.pdf --groups "1-2;3,4,5"
+    fcmd pdftool xt in.pdf -o out.txt --pages 1-3,5
     fcmd pdftool i in.pdf
 """
 
@@ -18,9 +24,11 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import fcmd
+
+from ._pdf_models import MergeSpec, PageSelection, SplitSpec
 
 __all__ = [
     "pdf_add_watermark",
@@ -71,26 +79,85 @@ def _require_pypdf() -> bool:
     return True
 
 
+def _resolve_page_indices(pages: str, page_count: int) -> tuple[int, ...] | None:
+    """解析页码筛选表达式为 0-based 页索引序列。
+
+    表达式为空/``-``/``all`` 时返回全部页；解析失败时打印错误并返回
+    ``None``（调用方据此提前返回）。
+
+    Parameters
+    ----------
+    pages:
+        页码筛选表达式（如 ``1-3,5``，语法见 :mod:`fcmd.cli._pdf_models`）
+    page_count:
+        总页数，用于越界过滤
+    """
+    try:
+        return PageSelection.parse(pages).resolve(page_count)
+    except ValueError as exc:
+        print(f"错误: {exc}")
+        return None
+
+
 @fcmd.tool("pdftool", subcommand="m", help="合并 PDF")
-def pdf_merge(input_paths: list[Path], output_path: Path = Path("merged.pdf")) -> None:
+def pdf_merge(
+    input_paths: list[Path],
+    output_path: Path = Path("merged.pdf"),
+    mode: Literal["concat", "interleave"] = "concat",
+    orders: list[str] | None = None,
+    pages: list[str] | None = None,
+) -> None:
     """合并多个 PDF 文件。
+
+    支持顺序拼接与交叉合并（``--mode interleave``，多文件轮流取页）；
+    每个文件可按位置独立指定页序（``--orders``）与页码筛选（``--pages``）。
+    示例：01.pdf 正序 + 02.pdf 倒序交叉合并::
+
+        fcmd pdftool m 01.pdf 02.pdf --mode interleave --orders f,r
 
     Parameters
     ----------
     input_paths:
-        输入 PDF 文件列表
+        输入 PDF 文件列表（不存在的文件跳过）
     output_path:
         输出文件路径（默认: ``merged.pdf``）
+    mode:
+        合并模式：``concat`` 顺序拼接（默认）/ ``interleave`` 交叉合并
+    orders:
+        各文件页序（forward/reverse 或 f/r），按位置对应输入文件，缺省正序
+    pages:
+        各文件页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pypdf():
         return
 
-    writer = pypdf.PdfWriter()
-    for input_path in input_paths:
+    # 存在性过滤须与 orders/pages 按位置同步对齐
+    order_list = list(orders or [])
+    page_list = list(pages or [])
+    kept: list[tuple[Path, str, str]] = []
+    for i, input_path in enumerate(input_paths):
         if input_path.exists():
-            reader = pypdf.PdfReader(str(input_path))
-            for page in reader.pages:
-                writer.add_page(page)
+            kept_order = order_list[i] if i < len(order_list) else "forward"
+            kept_pages = page_list[i] if i < len(page_list) else ""
+            kept.append((input_path, kept_order, kept_pages))
+
+    try:
+        spec = MergeSpec.from_cli(
+            [item[0] for item in kept],
+            mode,
+            [item[1] for item in kept],
+            [item[2] for item in kept],
+        )
+    except ValueError as exc:
+        print(f"错误: {exc}")
+        return
+
+    readers = [pypdf.PdfReader(str(item[0])) for item in kept]
+    plan = spec.resolve([len(reader.pages) for reader in readers])
+
+    writer = pypdf.PdfWriter()
+    for input_idx, page_idx in plan:
+        writer.add_page(readers[input_idx].pages[page_idx])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("wb") as f:
@@ -100,8 +167,18 @@ def pdf_merge(input_paths: list[Path], output_path: Path = Path("merged.pdf")) -
 
 
 @fcmd.tool("pdftool", subcommand="s", help="拆分 PDF")
-def pdf_split(input_path: Path, output_dir: Path = Path("split")) -> None:
-    """拆分 PDF 文件为单页。
+def pdf_split(
+    input_path: Path,
+    output_dir: Path = Path("split"),
+    order: str = "forward",
+    every: int = 1,
+    groups: str = "",
+) -> None:
+    """拆分 PDF 文件。
+
+    支持正序/倒序（``--order``）、固定步长（``--every``，每份页数）与
+    自定义分组（``--groups``，分号分隔多组页码，如 ``"1-2;3,4,5"`` 表示
+    第一份含页 1-2、第二份含页 3、4、5；非空时优先于 ``--every``）。
 
     Parameters
     ----------
@@ -109,21 +186,37 @@ def pdf_split(input_path: Path, output_dir: Path = Path("split")) -> None:
         输入 PDF 文件
     output_dir:
         输出目录（默认: ``split``）
+    order:
+        页序：forward/f 正序（默认），reverse/r 倒序
+    every:
+        固定步长，每份页数（默认 1 = 每页一份）
+    groups:
+        自定义分组表达式（分号分隔的页码选择，如 ``"1-2;3,4,5"``）
     """
     if not _require_pypdf():
+        return
+
+    try:
+        spec = SplitSpec.parse(order, every, groups)
+    except ValueError as exc:
+        print(f"错误: {exc}")
         return
 
     reader = pypdf.PdfReader(str(input_path))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for i, page in enumerate(reader.pages):
+    chunks = spec.resolve(len(reader.pages))
+    for seq, chunk in enumerate(chunks, start=1):
         writer = pypdf.PdfWriter()
-        writer.add_page(page)
-        output_file = output_dir / f"{input_path.stem}_page_{i + 1}.pdf"
+        for page_idx in chunk:
+            writer.add_page(reader.pages[page_idx])
+        # 单页份沿用 _page_N 命名（与既有行为兼容），多页份用 _part_N
+        suffix = "page" if len(chunk) == 1 else "part"
+        output_file = output_dir / f"{input_path.stem}_{suffix}_{seq}.pdf"
         with output_file.open("wb") as f:
             writer.write(f)
 
-    print(f"拆分完成: {output_dir}")
+    print(f"拆分完成: {output_dir} (共 {len(chunks)} 份)")
 
 
 @fcmd.tool("pdftool", subcommand="c", help="压缩 PDF")
@@ -229,7 +322,11 @@ def pdf_decrypt(
 
 
 @fcmd.tool("pdftool", subcommand="xt", help="提取文本")
-def pdf_extract_text(input_path: Path, output_path: Path = Path("output.txt")) -> None:
+def pdf_extract_text(
+    input_path: Path,
+    output_path: Path = Path("output.txt"),
+    pages: str = "",
+) -> None:
     """提取 PDF 文本。
 
     Parameters
@@ -238,13 +335,18 @@ def pdf_extract_text(input_path: Path, output_path: Path = Path("output.txt")) -
         输入 PDF 文件
     output_path:
         输出文件路径（默认: ``output.txt``）
+    pages:
+        页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pymupdf():
         return
 
     doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     try:
-        parts = [str(page.get_text()) + "\n\n" for page in doc]
+        indices = _resolve_page_indices(pages, doc.page_count)
+        if indices is None:
+            return
+        parts = [str(doc[i].get_text()) + "\n\n" for i in indices]
     finally:
         doc.close()
     text = "".join(parts)
@@ -255,7 +357,11 @@ def pdf_extract_text(input_path: Path, output_path: Path = Path("output.txt")) -
 
 
 @fcmd.tool("pdftool", subcommand="xi", help="提取图片")
-def pdf_extract_images(input_path: Path, output_dir: Path = Path("images")) -> None:
+def pdf_extract_images(
+    input_path: Path,
+    output_dir: Path = Path("images"),
+    pages: str = "",
+) -> None:
     """提取 PDF 图片。
 
     Parameters
@@ -264,6 +370,8 @@ def pdf_extract_images(input_path: Path, output_dir: Path = Path("images")) -> N
         输入 PDF 文件
     output_dir:
         输出目录（默认: ``images``）
+    pages:
+        页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pymupdf():
         return
@@ -271,16 +379,22 @@ def pdf_extract_images(input_path: Path, output_dir: Path = Path("images")) -> N
     doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    indices = _resolve_page_indices(pages, doc.page_count)
+    if indices is None:
+        doc.close()
+        return
+
     image_count = 0
     try:
-        for page_num, page in enumerate(doc):
+        for page_idx in indices:
+            page = doc[page_idx]
             images = page.get_images(full=True)
             for img_idx, img in enumerate(images):
                 xref = img[0]
                 base_image = doc.extract_image(xref)
                 image_data = base_image["image"]
                 image_ext = base_image["ext"]
-                image_path = output_dir / f"page_{page_num + 1}_img_{img_idx + 1}.{image_ext}"
+                image_path = output_dir / f"page_{page_idx + 1}_img_{img_idx + 1}.{image_ext}"
                 image_path.write_bytes(image_data)
                 image_count += 1
     finally:
@@ -293,6 +407,7 @@ def pdf_add_watermark(
     input_path: Path,
     output_path: Path = Path("watermarked.pdf"),
     text: str = "CONFIDENTIAL",
+    pages: str = "",
 ) -> None:
     """添加 PDF 水印。
 
@@ -304,13 +419,19 @@ def pdf_add_watermark(
         输出文件路径（默认: ``watermarked.pdf``）
     text:
         水印文字（默认: ``CONFIDENTIAL``）
+    pages:
+        页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pymupdf():
         return
 
     doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     try:
-        for page in doc:
+        indices = _resolve_page_indices(pages, doc.page_count)
+        if indices is None:
+            return
+        for page_idx in indices:
+            page = doc[page_idx]
             rect = page.rect
             text_width = fitz.get_text_length(text, fontsize=48)
             x = (rect.width - text_width) / 2
@@ -330,6 +451,7 @@ def pdf_rotate(
     input_path: Path,
     output_path: Path = Path("rotated.pdf"),
     rotation: int = 90,
+    pages: str = "",
 ) -> None:
     """旋转 PDF 页面。
 
@@ -341,14 +463,19 @@ def pdf_rotate(
         输出文件路径（默认: ``rotated.pdf``）
     rotation:
         旋转角度（默认: 90）
+    pages:
+        页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pymupdf():
         return
 
     doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     try:
-        for page in doc:
-            page.set_rotation(rotation)
+        indices = _resolve_page_indices(pages, doc.page_count)
+        if indices is None:
+            return
+        for page_idx in indices:
+            doc[page_idx].set_rotation(rotation)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(output_path))
@@ -362,6 +489,7 @@ def pdf_crop(
     input_path: Path,
     output_path: Path = Path("cropped.pdf"),
     margins: tuple[int, int, int, int] = (10, 10, 10, 10),
+    pages: str = "",
 ) -> None:
     """裁剪 PDF 页面。
 
@@ -373,6 +501,8 @@ def pdf_crop(
         输出文件路径（默认: ``cropped.pdf``）
     margins:
         边距（左, 上, 右, 下），默认 ``(10, 10, 10, 10)``
+    pages:
+        页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pymupdf():
         return
@@ -381,7 +511,11 @@ def pdf_crop(
     left, top, right, bottom = margins
 
     try:
-        for page in doc:
+        indices = _resolve_page_indices(pages, doc.page_count)
+        if indices is None:
+            return
+        for page_idx in indices:
+            page = doc[page_idx]
             rect = page.rect
             new_rect = fitz.Rect(
                 rect.x0 + left,
@@ -512,6 +646,7 @@ def pdf_to_images(
     input_path: Path,
     output_dir: Path = Path("images"),
     dpi: int = 300,
+    pages: str = "",
 ) -> None:
     """PDF 转图片。
 
@@ -523,6 +658,8 @@ def pdf_to_images(
         输出目录（默认: ``images``）
     dpi:
         DPI（默认: 300）
+    pages:
+        页码筛选表达式（如 ``1-3,5``；空/``-``/``all`` 表示全选）
     """
     if not _require_pymupdf():
         return
@@ -530,10 +667,15 @@ def pdf_to_images(
     doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    indices = _resolve_page_indices(pages, doc.page_count)
+    if indices is None:
+        doc.close()
+        return
+
     try:
-        for page_num, page in enumerate(doc):
-            pix = page.get_pixmap(dpi=dpi)
-            image_path = output_dir / f"{input_path.stem}_page_{page_num + 1}.png"
+        for page_idx in indices:
+            pix = doc[page_idx].get_pixmap(dpi=dpi)
+            image_path = output_dir / f"{input_path.stem}_page_{page_idx + 1}.png"
             pix.save(str(image_path))
     finally:
         doc.close()

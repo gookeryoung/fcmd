@@ -62,6 +62,32 @@ def sample_pdf_with_image(tmp_path: Path, sample_image: Path) -> Path:
     return p
 
 
+@pytest.fixture
+def sample_pdf_ab(tmp_path: Path) -> tuple[Path, Path]:
+    """生成两个 2 页、页文本可区分的 PDF（A1/A2 与 B1/B2）。"""
+    import fitz
+
+    paths: list[Path] = []
+    for prefix in ("A", "B"):
+        doc = fitz.open()  # pyrefly: ignore [missing-attribute]
+        for num in (1, 2):
+            page = doc.new_page(width=200, height=300)
+            page.insert_text((20, 50), f"{prefix}{num} content", fontsize=12)
+        p = tmp_path / f"{prefix.lower()}.pdf"
+        doc.save(str(p))
+        doc.close()
+        paths.append(p)
+    return paths[0], paths[1]
+
+
+def _page_texts(pdf_path: Path) -> list[str]:
+    """提取 PDF 各页文本（供页序断言）。"""
+    import pypdf
+
+    reader = pypdf.PdfReader(str(pdf_path))
+    return [(page.extract_text() or "").strip() for page in reader.pages]
+
+
 # ---------------------------------------------------------------------- #
 # 注册验证
 # ---------------------------------------------------------------------- #
@@ -302,6 +328,208 @@ class TestNoDepsGuards:
         code = run_tool("pdftool", [subcommand, *args])
         assert code == 0
         assert "未安装 pypdf" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------- #
+# 拆分/合并高级参数测试
+# ---------------------------------------------------------------------- #
+class TestSplitParams:
+    """拆分子命令的高级参数（页序/步长/分组）。"""
+
+    def test_split_default_single_pages(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """默认拆分为单页（与既有行为兼容）。"""
+        a, _ = sample_pdf_ab
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(a), "--output-dir", str(out_dir)])
+        assert code == 0
+        pages = sorted(out_dir.glob("*.pdf"))
+        assert len(pages) == 2
+        assert _page_texts(out_dir / "a_page_1.pdf") == ["A1 content"]
+
+    def test_split_every(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """固定步长拆分为多页一份。"""
+        a, _ = sample_pdf_ab
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(a), "--output-dir", str(out_dir), "--every", "2"])
+        assert code == 0
+        parts = list(out_dir.glob("*.pdf"))
+        assert len(parts) == 1
+        assert _page_texts(out_dir / "a_part_1.pdf") == ["A1 content", "A2 content"]
+
+    def test_split_reverse(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """倒序拆分：第一份为最后一页。"""
+        a, _ = sample_pdf_ab
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(a), "--output-dir", str(out_dir), "--order", "r"])
+        assert code == 0
+        assert _page_texts(out_dir / "a_page_1.pdf") == ["A2 content"]
+        assert _page_texts(out_dir / "a_page_2.pdf") == ["A1 content"]
+
+    def test_split_groups(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """自定义分组（不定步长）：1-2 一份、3 一份。"""
+        a, _ = sample_pdf_ab
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(a), "--output-dir", str(out_dir), "--groups", "1-2"])
+        assert code == 0
+        parts = list(out_dir.glob("*.pdf"))
+        assert len(parts) == 1
+        assert _page_texts(out_dir / "a_part_1.pdf") == ["A1 content", "A2 content"]
+
+    def test_split_groups_reverse(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """分组 + 倒序：组内页码倒排。"""
+        a, _ = sample_pdf_ab
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(a), "--output-dir", str(out_dir), "--order", "r", "--groups", "1-2"])
+        assert code == 0
+        assert _page_texts(out_dir / "a_part_1.pdf") == ["A2 content", "A1 content"]
+
+    def test_split_invalid_order(self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """非法页序打印错误并返回。"""
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(sample_pdf), "--output-dir", str(out_dir), "--order", "x"])
+        assert code == 0
+        assert "错误" in capsys.readouterr().out
+        assert not out_dir.exists()
+
+    def test_split_invalid_every(self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """非正步长打印错误并返回。"""
+        out_dir = tmp_path / "split"
+        code = run_tool("pdftool", ["s", str(sample_pdf), "--output-dir", str(out_dir), "--every", "0"])
+        assert code == 0
+        assert "错误" in capsys.readouterr().out
+
+
+class TestMergeParams:
+    """合并子命令的高级参数（模式/逐文件页序/页码筛选）。"""
+
+    def test_merge_default_concat(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """默认顺序拼接（与既有行为兼容）。"""
+        a, b = sample_pdf_ab
+        out = tmp_path / "merged.pdf"
+        code = run_tool("pdftool", ["m", str(a), str(b), "--output-path", str(out)])
+        assert code == 0
+        assert _page_texts(out) == ["A1 content", "A2 content", "B1 content", "B2 content"]
+
+    def test_merge_interleave_mixed_order(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """混合交叉合并：01.pdf 正序 + 02.pdf 倒序轮流取页。"""
+        a, b = sample_pdf_ab
+        out = tmp_path / "merged.pdf"
+        code = run_tool(
+            "pdftool",
+            ["m", str(a), str(b), "--output-path", str(out), "--mode", "interleave", "--orders", "f", "r"],
+        )
+        assert code == 0
+        assert _page_texts(out) == ["A1 content", "B2 content", "A2 content", "B1 content"]
+
+    def test_merge_orders_reverse(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """逐文件页序：两文件均倒序拼接。"""
+        a, b = sample_pdf_ab
+        out = tmp_path / "merged.pdf"
+        code = run_tool(
+            "pdftool",
+            ["m", str(a), str(b), "--output-path", str(out), "--orders", "r", "r"],
+        )
+        assert code == 0
+        assert _page_texts(out) == ["A2 content", "A1 content", "B2 content", "B1 content"]
+
+    def test_merge_pages_filter(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """逐文件页码筛选：a 取第 1 页、b 全选。"""
+        a, b = sample_pdf_ab
+        out = tmp_path / "merged.pdf"
+        code = run_tool(
+            "pdftool",
+            ["m", str(a), str(b), "--output-path", str(out), "--pages", "1", "-"],
+        )
+        assert code == 0
+        assert _page_texts(out) == ["A1 content", "B1 content", "B2 content"]
+
+    def test_merge_nonexistent_keeps_alignment(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """不存在的输入跳过时，orders/pages 按原始位置对齐。"""
+        a, b = sample_pdf_ab
+        nonexistent = tmp_path / "nope.pdf"
+        out = tmp_path / "merged.pdf"
+        code = run_tool(
+            "pdftool",
+            ["m", str(nonexistent), str(a), str(b), "--output-path", str(out), "--orders", "r", "r", "r"],
+        )
+        assert code == 0
+        assert _page_texts(out) == ["A2 content", "A1 content", "B2 content", "B1 content"]
+
+    def test_merge_invalid_order(self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """非法页序打印错误并返回。"""
+        out = tmp_path / "merged.pdf"
+        code = run_tool(
+            "pdftool",
+            ["m", str(sample_pdf), "--output-path", str(out), "--orders", "x"],
+        )
+        assert code == 0
+        assert "错误" in capsys.readouterr().out
+        assert not out.exists()
+
+
+class TestPageFilterParams:
+    """页码筛选参数（--pages）在各子命令的行为。"""
+
+    def test_extract_text_pages(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """提取文本仅包含筛选页。"""
+        out = tmp_path / "out.txt"
+        code = run_tool("pdftool", ["xt", str(sample_pdf), "--output-path", str(out), "--pages", "1"])
+        assert code == 0
+        content = out.read_text(encoding="utf-8")
+        assert "Page one" in content
+        assert "Page two" not in content
+
+    def test_to_images_pages(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """转图片仅输出筛选页。"""
+        out_dir = tmp_path / "imgs"
+        code = run_tool(
+            "pdftool", ["img", str(sample_pdf), "--output-dir", str(out_dir), "--dpi", "72", "--pages", "2"]
+        )
+        assert code == 0
+        pngs = list(out_dir.glob("*.png"))
+        assert len(pngs) == 1
+        assert pngs[0].name.endswith("_page_2.png")
+
+    def test_rotate_pages(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """旋转仅作用于筛选页（其余页保留）。"""
+        out = tmp_path / "rotated.pdf"
+        code = run_tool("pdftool", ["r", str(sample_pdf), "--output-path", str(out), "--pages", "1"])
+        assert code == 0
+        import fitz
+
+        doc = fitz.open(str(out))  # pyrefly: ignore [missing-attribute]
+        try:
+            assert doc.page_count == 2
+            assert doc[0].rotation == 90
+            assert doc[1].rotation == 0
+        finally:
+            doc.close()
+
+    def test_extract_images_invalid_pages(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """非法页码表达式打印错误并返回。"""
+        out_dir = tmp_path / "imgs"
+        code = run_tool("pdftool", ["xi", str(sample_pdf), "--output-dir", str(out_dir), "--pages", "x"])
+        assert code == 0
+        assert "错误" in capsys.readouterr().out
+
+    def test_watermark_pages(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """水印仅添加到筛选页（其余页保留）。"""
+        out = tmp_path / "watermarked.pdf"
+        code = run_tool("pdftool", ["w", str(sample_pdf), "--output-path", str(out), "--text", "DRAFT", "--pages", "2"])
+        assert code == 0
+        assert out.exists()
+        texts = _page_texts(out)
+        assert "DRAFT" not in texts[0]
+        assert "DRAFT" in texts[1]
+
+    def test_crop_pages(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """裁剪仅作用于筛选页（其余页保留）。"""
+        out = tmp_path / "cropped.pdf"
+        code = run_tool("pdftool", ["crop", str(sample_pdf), "--output-path", str(out), "--pages", "1"])
+        assert code == 0
+        assert out.exists()
 
 
 # ---------------------------------------------------------------------- #
