@@ -1,8 +1,7 @@
 """``fcmd env`` / ``fcmd doctor`` 共享的纯函数辅助。
 
-提取自 :mod:`fcmd.cli.main` 的 ``FcmdApp._collect_optional_deps_status``，
-供 ``_builtin_env`` 与 ``_builtin_doctor`` 复用。本模块以下划线开头，
-``_ensure_tools_discovered`` 会跳过它（非工具模块）。
+供 :mod:`fcmd.cli._builtins.env_cmd` 与 :mod:`fcmd.cli._doctor_helpers`
+复用。本模块以下划线开头，``ensure_tools_discovered`` 会跳过它（非工具模块）。
 """
 
 from __future__ import annotations

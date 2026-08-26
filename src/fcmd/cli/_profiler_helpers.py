@@ -1,8 +1,8 @@
 """``fcmd profiler`` 内建命令的辅助函数。
 
-包含 hook 注入、目标脚本执行、报告输出三块独立逻辑，从 ``FcmdApp`` 中提取
-以缩小 main.py 体积。本模块下划线开头，``_ensure_tools_discovered`` 会跳过它
-（非工具模块）。
+包含 hook 注入、目标脚本执行、报告输出三块独立逻辑，由
+:mod:`fcmd.cli._builtins.profiler_cmd` 调用。本模块下划线开头，
+``ensure_tools_discovered`` 会跳过它（非工具模块）。
 """
 
 from __future__ import annotations

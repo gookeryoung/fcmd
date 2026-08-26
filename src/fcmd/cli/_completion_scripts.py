@@ -1,9 +1,10 @@
 """shell 补全脚本生成器。
 
 为 ``fcmd completion --shell bash|zsh|fish`` 提供三种 shell 的静态补全脚本生成。
-本模块下划线开头，``_ensure_tools_discovered`` 会跳过它（非工具模块）。
+本模块下划线开头，``ensure_tools_discovered`` 会跳过它（非工具模块）。
 
-每个生成函数接收 ``tools_data``：由 ``FcmdApp._collect_completion_data`` 收集的
+每个生成函数接收 ``tools_data``：由
+:func:`fcmd.cli._builtins.completion_cmd._collect_completion_data` 收集的
 工具数据列表，每项形如::
 
     {"name": "pymake", "aliases": ["pm"], "subs": [("b", "构建分发包"), ...]}

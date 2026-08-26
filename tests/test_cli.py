@@ -135,29 +135,30 @@ def test_main_version(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------- #
 def test_tool_description_unknown_tool_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 传入未知工具名（不在 _TOOL_MODULES 且不在 _TOOL_REGISTRY）返回空串。"""
-    from fcmd.cli import main as main_mod
+    from fcmd.cli import _discovery as discovery_mod
 
-    monkeypatch.setitem(main_mod._TOOL_MODULES, "ghost", "fcmd.cli.ghost")
+    monkeypatch.setitem(discovery_mod._TOOL_MODULES, "ghost", "fcmd.cli.ghost")
     # 未知工具不在 _TOOL_REGISTRY，应返回 ""
-    assert main_mod.FcmdApp._tool_description(main_mod.FcmdApp([]), "ghost") == ""
+    assert discovery_mod.tool_description("ghost") == ""
 
 
 def test_tool_description_import_error_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 导入模块失败（ImportError）时返回空串。"""
-    from fcmd.cli import main as main_mod
+    from fcmd.cli import _discovery as discovery_mod
 
     def _raise_import_error(_name: str) -> None:
         raise ImportError("simulated")
 
-    monkeypatch.setitem(main_mod._TOOL_MODULES, "broken", "fcmd.cli.broken")
-    monkeypatch.setattr(main_mod.importlib, "import_module", _raise_import_error)
-    assert main_mod.FcmdApp._tool_description(main_mod.FcmdApp([]), "broken") == ""
+    monkeypatch.setitem(discovery_mod._TOOL_MODULES, "broken", "fcmd.cli.broken")
+    monkeypatch.setattr(discovery_mod.importlib, "import_module", _raise_import_error)
+    assert discovery_mod.tool_description("broken") == ""
 
 
 def test_tool_description_with_description_field(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 优先返回 spec.description（非空时立即返回）。"""
+    from fcmd.apis import toolkit
     from fcmd.apis.toolkit import ToolSpec
-    from fcmd.cli import main as main_mod
+    from fcmd.cli import _discovery as discovery_mod
 
     def _fake_func() -> None:
         """dummy."""
@@ -170,15 +171,16 @@ def test_tool_description_with_description_field(monkeypatch: pytest.MonkeyPatch
         help="子命令帮助",
     )
     # dummy 不在 _TOOL_MODULES，跳过导入；在 _TOOL_REGISTRY 中有 description
-    monkeypatch.setitem(main_mod._TOOL_REGISTRY, "dummy", {"x": spec})
-    result = main_mod.FcmdApp._tool_description(main_mod.FcmdApp([]), "dummy")
+    monkeypatch.setitem(toolkit._TOOL_REGISTRY, "dummy", {"x": spec})
+    result = discovery_mod.tool_description("dummy")
     assert result == "工具级描述"
 
 
 def test_tool_description_no_description_no_help(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 在 spec 无 description 且 hidden spec 无 help 时返回空串。"""
+    from fcmd.apis import toolkit
     from fcmd.apis.toolkit import ToolSpec
-    from fcmd.cli import main as main_mod
+    from fcmd.cli import _discovery as discovery_mod
 
     def _fake_func() -> None:
         """dummy."""
@@ -192,8 +194,8 @@ def test_tool_description_no_description_no_help(monkeypatch: pytest.MonkeyPatch
         help="",
         hidden=True,
     )
-    monkeypatch.setitem(main_mod._TOOL_REGISTRY, "silent", {"y": spec})
-    result = main_mod.FcmdApp._tool_description(main_mod.FcmdApp([]), "silent")
+    monkeypatch.setitem(toolkit._TOOL_REGISTRY, "silent", {"y": spec})
+    result = discovery_mod.tool_description("silent")
     assert result == ""
 
 
@@ -201,12 +203,12 @@ def test_run_tool_module_path_none_returns_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """_run_tool 在 module_path 为 None 时打印错误并返回 1。"""
-    from fcmd.cli import main as main_mod
+    from fcmd.cli import _discovery as discovery_mod
 
-    # 构造 _TOOL_ALIASES 让 _resolve_tool 返回一个不在 _TOOL_MODULES 的工具名
-    monkeypatch.setitem(main_mod._TOOL_ALIASES, "ghost", "ghost_tool")
+    # 构造 _TOOL_ALIASES 让 resolve_tool 返回一个不在 _TOOL_MODULES 的工具名
+    monkeypatch.setitem(discovery_mod._TOOL_ALIASES, "ghost", "ghost_tool")
     # _TOOL_MODULES 不含 "ghost_tool"
-    app = main_mod.FcmdApp(["ghost"])
+    app = FcmdApp(["ghost"])
     assert app.run() == 1
     out = capsys.readouterr().out
     assert "无模块映射" in out
@@ -216,15 +218,15 @@ def test_run_tool_import_error_returns_error(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """_run_tool 在 import_module 抛 ImportError 时打印错误并返回 1。"""
-    from fcmd.cli import main as main_mod
+    from fcmd.cli import _discovery as discovery_mod
 
     def _raise_import_error(_name: str) -> None:
         raise ImportError("simulated load failure")
 
-    monkeypatch.setitem(main_mod._TOOL_ALIASES, "broken", "broken_tool")
-    monkeypatch.setitem(main_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.broken_tool")
-    monkeypatch.setattr(main_mod.importlib, "import_module", _raise_import_error)
-    app = main_mod.FcmdApp(["broken"])
+    monkeypatch.setitem(discovery_mod._TOOL_ALIASES, "broken", "broken_tool")
+    monkeypatch.setitem(discovery_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.broken_tool")
+    monkeypatch.setattr(discovery_mod.importlib, "import_module", _raise_import_error)
+    app = FcmdApp(["broken"])
     assert app.run() == 1
     out = capsys.readouterr().out
     assert "加载工具" in out
@@ -234,104 +236,104 @@ def test_run_tool_import_error_returns_error(
 # 工具自动发现机制测试
 # ---------------------------------------------------------------------- #
 class TestToolDiscovery:
-    """``_ensure_tools_discovered`` 自动发现机制测试。"""
+    """``ensure_tools_discovered`` 自动发现机制测试。"""
 
     def test_discovery_finds_pymake_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """扫描后发现 pymake 工具模块。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
         # 重置发现状态，强制重新扫描
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        main_mod._ensure_tools_discovered()
-        assert "pymake" in main_mod._TOOL_MODULES
-        assert main_mod._TOOL_MODULES["pymake"] == "fcmd.cli.pymake"
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        discovery_mod.ensure_tools_discovered()
+        assert "pymake" in discovery_mod._TOOL_MODULES
+        assert discovery_mod._TOOL_MODULES["pymake"] == "fcmd.cli.pymake"
 
     def test_discovery_loads_aliases_from_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """扫描时读取模块 __tool_aliases__ 并注册别名。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        main_mod._ensure_tools_discovered()
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        discovery_mod.ensure_tools_discovered()
         # pymake.py 声明 __tool_aliases__ = ["pm"]
-        assert main_mod._TOOL_ALIASES.get("pm") == "pymake"
+        assert discovery_mod._TOOL_ALIASES.get("pm") == "pymake"
 
     def test_discovery_is_idempotent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """多次调用 _ensure_tools_discovered 不重复扫描。"""
-        from fcmd.cli import main as main_mod
+        """多次调用 ensure_tools_discovered 不重复扫描。"""
+        from fcmd.cli import _discovery as discovery_mod
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        main_mod._ensure_tools_discovered()
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        discovery_mod.ensure_tools_discovered()
         # 手动清空后再调用，不应重新填充（标志已 True）
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        main_mod._ensure_tools_discovered()
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        discovery_mod.ensure_tools_discovered()
         # 标志为 True，不会重新扫描，_TOOL_ALIASES 保持空
-        assert main_mod._TOOL_ALIASES == {}
+        assert discovery_mod._TOOL_ALIASES == {}
 
     def test_discovery_skips_main_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """discovery 不把 main 模块当作工具。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        main_mod._ensure_tools_discovered()
-        assert "main" not in main_mod._TOOL_MODULES
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        discovery_mod.ensure_tools_discovered()
+        assert "main" not in discovery_mod._TOOL_MODULES
 
     def test_discovery_skips_private_modules(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """discovery 不把 _ 前缀模块当作工具。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        main_mod._ensure_tools_discovered()
-        for name in main_mod._TOOL_MODULES:
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        discovery_mod.ensure_tools_discovered()
+        for name in discovery_mod._TOOL_MODULES:
             assert not name.startswith("_"), f"私有模块 {name!r} 不应被发现"
 
     def test_discovery_does_not_override_mock_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """discovery 用 setdefault，不覆盖测试注入的键。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
         # 预注入一个 mock 工具
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {"pymake": "mock_value"})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {"pymake": "mock_module"})
-        main_mod._ensure_tools_discovered()
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {"pymake": "mock_value"})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {"pymake": "mock_module"})
+        discovery_mod.ensure_tools_discovered()
         # setdefault 不覆盖已存在的值
-        assert main_mod._TOOL_MODULES["pymake"] == "mock_module"
-        assert main_mod._TOOL_ALIASES["pymake"] == "mock_value"
+        assert discovery_mod._TOOL_MODULES["pymake"] == "mock_module"
+        assert discovery_mod._TOOL_ALIASES["pymake"] == "mock_value"
 
     def test_run_triggers_discovery(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """FcmdApp.run() 首次调用触发 discovery。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        app = main_mod.FcmdApp(["pymake", "b", "--dry-run"])
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        app = FcmdApp(["pymake", "b", "--dry-run"])
         app.run()
-        assert main_mod._TOOLS_DISCOVERED is True
-        assert "pymake" in main_mod._TOOL_MODULES
+        assert discovery_mod._TOOLS_DISCOVERED is True
+        assert "pymake" in discovery_mod._TOOL_MODULES
 
     def test_cold_start_import_does_not_trigger_discovery(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """import fcmd 不触发 discovery（_TOOLS_DISCOVERED 保持 False）。"""
-        # 此测试验证冷启动：重新 import fcmd.cli.main 不会触发 discovery
+        # 此测试验证冷启动：import fcmd.cli._discovery 不触发扫描
         # discovery 只在 FcmdApp.run() 显式调用时触发
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
         # 模拟冷启动场景：重置标志后不调用 run()
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
         # 仅访问模块，不调用 run()
-        assert main_mod._TOOLS_DISCOVERED is False
-        assert main_mod._TOOL_MODULES == {}
+        assert discovery_mod._TOOLS_DISCOVERED is False
+        assert discovery_mod._TOOL_MODULES == {}
 
 
 # ---------------------------------------------------------------------- #
@@ -425,9 +427,10 @@ class TestBuiltinGraph:
             assert name in out, f"全量 DAG 应包含 {name!r}"
 
     def test_run_builtin_unknown_name(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """_run_builtin 收到未知内建命令名时返回 1（防御路径）。"""
-        app = FcmdApp()
-        assert app._run_builtin("nonexistent_builtin", []) == 1
+        """run_builtin 收到未知内建命令名时返回 1（防御路径）。"""
+        from fcmd.cli._builtins import run_builtin
+
+        assert run_builtin("nonexistent_builtin", []) == 1
         out = capsys.readouterr().out
         assert "未知内建命令" in out
 
@@ -568,28 +571,29 @@ class TestBuiltinInfo:
         """_spec_kind 正确分类 cmd / aggregate / fn。"""
         import fcmd.cli.writefile  # noqa: F401  触发 fn 任务注册
         from fcmd.apis.toolkit import get_tool
+        from fcmd.cli._builtins.info_cmd import _spec_kind
 
         # cmd 任务（pymake.b 有 cmd）
         b_spec = get_tool("pymake", "b")
-        assert FcmdApp._spec_kind(b_spec) == "cmd"
+        assert _spec_kind(b_spec) == "cmd"
         # aggregate 任务（pymake.tc 有 needs 无 cmd）
         tc_spec = get_tool("pymake", "tc")
-        assert FcmdApp._spec_kind(tc_spec) == "aggregate"
+        assert _spec_kind(tc_spec) == "aggregate"
         # fn 任务（writefile 有函数逻辑无 cmd 无 needs）
         writefile_spec = get_tool("writefile")
-        assert FcmdApp._spec_kind(writefile_spec) == "fn"
+        assert _spec_kind(writefile_spec) == "fn"
 
     def test_info_tool_import_failure(
         self,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """fcmd info <tool> 模块导入失败时返回 1（覆盖 _load_tool_subs ImportError）。"""
-        from fcmd.cli import main as main_mod
+        """fcmd info <tool> 模块导入失败时返回 1（覆盖 load_tool_subs ImportError）。"""
+        from fcmd.cli import _discovery as discovery_mod
 
         # 注入伪工具：在 _TOOL_ALIASES 和 _TOOL_MODULES 中注册一个不可导入的模块
-        monkeypatch.setitem(main_mod._TOOL_ALIASES, "broken_tool", "broken_tool")
-        monkeypatch.setitem(main_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.nonexistent_module_xyz")
+        monkeypatch.setitem(discovery_mod._TOOL_ALIASES, "broken_tool", "broken_tool")
+        monkeypatch.setitem(discovery_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.nonexistent_module_xyz")
 
         app = FcmdApp(["info", "broken_tool"])
         assert app.run() == 1
@@ -602,11 +606,11 @@ class TestBuiltinInfo:
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """fcmd info <tool> 工具解析成功但未注册时返回 1（覆盖 _load_tool_subs 未注册路径）。"""
-        from fcmd.cli import main as main_mod
+        """fcmd info <tool> 工具解析成功但未注册时返回 1（覆盖 load_tool_subs 未注册路径）。"""
+        from fcmd.cli import _discovery as discovery_mod
 
         # 注入伪工具：在 _TOOL_ALIASES 中注册，但不在 _TOOL_MODULES 也不在 _TOOL_REGISTRY
-        monkeypatch.setitem(main_mod._TOOL_ALIASES, "ghost_tool", "ghost_tool")
+        monkeypatch.setitem(discovery_mod._TOOL_ALIASES, "ghost_tool", "ghost_tool")
 
         app = FcmdApp(["info", "ghost_tool"])
         assert app.run() == 1
@@ -757,8 +761,9 @@ class TestBuiltinCompletion:
         self,
     ) -> None:
         """_collect_completion_data 返回按工具名排序的列表。"""
-        app = FcmdApp()
-        data = app._collect_completion_data()
+        from fcmd.cli._builtins import completion_cmd
+
+        data = completion_cmd._collect_completion_data()
         names = [t["name"] for t in data]
         assert names == sorted(names)
         # 必须包含已知工具
@@ -769,8 +774,9 @@ class TestBuiltinCompletion:
         self,
     ) -> None:
         """_collect_completion_data 中 pymake 工具的 aliases 含 pm。"""
-        app = FcmdApp()
-        data = app._collect_completion_data()
+        from fcmd.cli._builtins import completion_cmd
+
+        data = completion_cmd._collect_completion_data()
         pymake = next(t for t in data if t["name"] == "pymake")
         assert "pm" in pymake["aliases"]
         # hidden 子命令不应出现
@@ -783,15 +789,15 @@ class TestBuiltinCompletion:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """_collect_completion_data 容忍模块导入失败（contextlib.suppress）。"""
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as _discovery_mod
+        from fcmd.cli._builtins import completion_cmd
 
         # 注入一个不可导入的伪工具
-        monkeypatch.setitem(main_mod._TOOL_ALIASES, "broken_tool", "broken_tool")
-        monkeypatch.setitem(main_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.nonexistent_xyz")
+        monkeypatch.setitem(_discovery_mod._TOOL_ALIASES, "broken_tool", "broken_tool")
+        monkeypatch.setitem(_discovery_mod._TOOL_MODULES, "broken_tool", "fcmd.cli.nonexistent_xyz")
 
-        app = FcmdApp()
         # 应不抛异常，返回的数据不含 broken_tool（因为导入失败未注册）
-        data = app._collect_completion_data()
+        data = completion_cmd._collect_completion_data()
         # broken_tool 在 _TOOL_ALIASES.values() 中仍会出现，但无 subs
         broken = next((t for t in data if t["name"] == "broken_tool"), None)
         assert broken is not None
@@ -1084,10 +1090,10 @@ class TestBuiltinEnv:
     ) -> None:
         """可选依赖为空时打印 (无)（覆盖空列表分支）。"""
 
-        def fake_deps(_self: object) -> list[dict[str, object]]:
+        def fake_deps() -> list[dict[str, object]]:
             return []
 
-        monkeypatch.setattr(FcmdApp, "_collect_optional_deps_status", fake_deps)
+        monkeypatch.setattr("fcmd.cli._builtins.env_cmd.collect_optional_deps_status", fake_deps)
         app = FcmdApp(["env"])
         app.run()
         out = capsys.readouterr().out
@@ -1154,8 +1160,8 @@ class TestBuiltinDoctor:
     ) -> None:
         """所有检查通过时返回 0（mock 可选依赖全装、PATH 命令全找到）。"""
 
-        # 让 _collect_optional_deps_status 返回全部已安装
-        def fake_deps(self_app: object) -> list[dict[str, object]]:
+        # 让 collect_optional_deps_status 返回全部已安装
+        def fake_deps() -> list[dict[str, object]]:
             return [
                 {"extra": "img", "package": "PIL", "installed": True, "version": "10.0"},
                 {"extra": "pdf", "package": "fitz", "installed": True, "version": "1.0"},
@@ -1163,7 +1169,7 @@ class TestBuiltinDoctor:
                 {"extra": "ocr", "package": "pytesseract", "installed": True, "version": "1.0"},
             ]
 
-        monkeypatch.setattr(FcmdApp, "_collect_optional_deps_status", fake_deps)
+        monkeypatch.setattr("fcmd.cli._doctor_helpers.collect_optional_deps_status", fake_deps)
         # 让 shutil.which 全部返回非 None
         monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")
 
@@ -1213,10 +1219,10 @@ class TestBuiltinDoctor:
     ) -> None:
         """工具模块导入失败时计入失败项。"""
         # 注入一个不存在的模块路径触发 ImportError
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        original_modules = main_mod._TOOL_MODULES.copy()
-        main_mod._TOOL_MODULES["__fake_broken__"] = "fcmd.cli.__nonexistent_module__"
+        original_modules = discovery_mod._TOOL_MODULES.copy()
+        discovery_mod._TOOL_MODULES["__fake_broken__"] = "fcmd.cli.__nonexistent_module__"
         try:
             app = FcmdApp(["doctor"])
             code = app.run()
@@ -1224,60 +1230,59 @@ class TestBuiltinDoctor:
             assert "__fake_broken__" in out
             assert code == 1
         finally:
-            main_mod._TOOL_MODULES.clear()
-            main_mod._TOOL_MODULES.update(original_modules)
+            discovery_mod._TOOL_MODULES.clear()
+            discovery_mod._TOOL_MODULES.update(original_modules)
 
 
 # ---------------------------------------------------------------------- #
 # 边界分支补覆盖（P25）
 # ---------------------------------------------------------------------- #
 class TestCoverageGaps:
-    """覆盖 main.py 预先存在的未覆盖分支。"""
+    """覆盖拆分前 main.py 预先存在的未覆盖分支（现位于 _discovery / _builtins）。"""
 
     def test_discovery_continues_on_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``_ensure_tools_discovered`` 在工具模块导入失败时 continue 跳过。
+        """``ensure_tools_discovered`` 在工具模块导入失败时 continue 跳过。
 
-        覆盖 main.py L79-80：扫描时某模块 import_module 抛 ImportError，跳过该模块
-        的别名注册，继续处理下一个模块。
+        扫描时某模块 import_module 抛 ImportError，跳过该模块的别名注册，
+        继续处理下一个模块。
         """
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
-        original_import = main_mod.importlib.import_module
+        original_import = discovery_mod.importlib.import_module
 
         def fake_import(name: str) -> object:
             if name == "fcmd.cli.pymake":
                 raise ImportError("simulated pymake load failure")
             return original_import(name)
 
-        monkeypatch.setattr(main_mod, "_TOOLS_DISCOVERED", False)
-        monkeypatch.setattr(main_mod, "_TOOL_ALIASES", {})
-        monkeypatch.setattr(main_mod, "_TOOL_MODULES", {})
-        monkeypatch.setattr(main_mod.importlib, "import_module", fake_import)
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        monkeypatch.setattr(discovery_mod.importlib, "import_module", fake_import)
 
-        main_mod._ensure_tools_discovered()
+        discovery_mod.ensure_tools_discovered()
 
         # pymake 在 _TOOL_MODULES（setdefault 在 import 前），但 import 失败
-        assert "pymake" in main_mod._TOOL_MODULES
+        assert "pymake" in discovery_mod._TOOL_MODULES
         # pm 别名未被注册（import 失败跳过 __tool_aliases__ 读取）
-        assert "pm" not in main_mod._TOOL_ALIASES
+        assert "pm" not in discovery_mod._TOOL_ALIASES
         # 其他工具不受影响
-        assert "clr" in main_mod._TOOL_MODULES
+        assert "clr" in discovery_mod._TOOL_MODULES
 
     def test_info_overview_with_unregistered_tool(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """``_info_overview`` 遇到不在 ``_TOOL_MODULES`` 的工具名时不报错。
 
-        覆盖 main.py L274->277（``if tool_name in _TOOL_MODULES`` false 分支跳过
-        import）与 L875（``_tool_description`` 在工具不在 ``_TOOL_REGISTRY`` 时
-        返回空串）。
+        覆盖 ``import_all_tool_modules`` 对不在 ``_TOOL_MODULES`` 的工具跳过
+        import，与 ``tool_description`` 在工具不在 ``_TOOL_REGISTRY`` 时返回空串。
         """
-        from fcmd.cli import main as main_mod
+        from fcmd.cli import _discovery as discovery_mod
 
         # 注入假工具名到 _TOOL_ALIASES，但不在 _TOOL_MODULES 也不在 _TOOL_REGISTRY
-        monkeypatch.setitem(main_mod._TOOL_ALIASES, "ghost_tool_xyz", "ghost_tool_xyz")
+        monkeypatch.setitem(discovery_mod._TOOL_ALIASES, "ghost_tool_xyz", "ghost_tool_xyz")
 
-        app = main_mod.FcmdApp(["info"])
+        app = FcmdApp(["info"])
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "ghost_tool_xyz" in out
@@ -1285,33 +1290,29 @@ class TestCoverageGaps:
     def test_info_subcommand_single_command_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
         """``_info_subcommand`` 对单命令工具（``spec.subcommand is None``）输出 ``(single)``。
 
-        覆盖 main.py L318->320（三元表达式 false 分支 ``spec.subcommand is None``）。
         CLI 路径无法触发此分支（单命令工具的 subs 键为 None，用户传入的子命令名
         为字符串，``subs.get(字符串)`` 返回 None 走错误路径），故直接单元测试。
         """
         from fcmd.apis.toolkit import ToolSpec
-        from fcmd.cli import main as main_mod
+        from fcmd.cli._builtins import info_cmd
 
         def _fake_func() -> None:
             """dummy."""
 
         spec = ToolSpec(name="dummy", subcommand=None, func=_fake_func, help="单命令工具")
-        app = main_mod.FcmdApp([])
-        main_mod.FcmdApp._info_subcommand(app, "dummy", spec)
+        info_cmd._info_subcommand("dummy", spec)
         out = capsys.readouterr().out
         assert "(single)" in out
         assert "单命令工具" in out
 
     def test_print_unknown_tool_no_suggestion(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """``_print_unknown_tool`` 在无相似工具名时不打印建议。
+        """``print_unknown_tool`` 在无相似工具名时不打印建议。
 
-        覆盖 main.py L898->900（``if suggestions`` false 分支）。"zzz" 与所有工具名
-        相似度 < 0.5，``difflib.get_close_matches`` 返回空列表。
+        "zzz" 与所有工具名相似度 < 0.5，``difflib.get_close_matches`` 返回空列表。
         """
-        from fcmd.cli import main as main_mod
+        from fcmd.cli._common import print_unknown_tool
 
-        app = main_mod.FcmdApp([])
-        main_mod.FcmdApp._print_unknown_tool(app, "zzz")
+        print_unknown_tool("zzz")
         out = capsys.readouterr().out
         assert "未知工具" in out
         assert "是否想用" not in out  # 无建议

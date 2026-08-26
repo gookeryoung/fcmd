@@ -419,13 +419,14 @@ def test_run_target_script_adds_script_dir_to_path(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------- #
-# _run_builtin 分发
+# run_builtin 分发
 # ---------------------------------------------------------------------- #
 def test_builtin_dispatch_profiler(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """_run_builtin('profiler', ...) 正确分发到 _builtin_profiler。"""
-    app = FcmdApp([])
+    """run_builtin('profiler', ...) 正确分发到 profiler_cmd.run。"""
+    from fcmd.cli._builtins import run_builtin
+
     # 无参数 → 返回 1
-    assert app._run_builtin("profiler", []) == 1
+    assert run_builtin("profiler", []) == 1
 
 
 # ---------------------------------------------------------------------- #
@@ -433,7 +434,7 @@ def test_builtin_dispatch_profiler(capsys: pytest.CaptureFixture[str], tmp_path:
 # ---------------------------------------------------------------------- #
 def test_builtin_commands_includes_profiler() -> None:
     """_BUILTIN_COMMANDS 含 'profiler'。"""
-    from fcmd.cli.main import _BUILTIN_COMMANDS
+    from fcmd.cli._common import _BUILTIN_COMMANDS
 
     assert "profiler" in _BUILTIN_COMMANDS
 
@@ -464,10 +465,11 @@ sys.exit(0)
 
 
 def test_collect_optional_deps_status_with_missing_dep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """_collect_optional_deps_status 处理未安装的可选依赖。"""
+    """collect_optional_deps_status 处理未安装的可选依赖。"""
     import builtins
 
-    app = FcmdApp([])
+    from fcmd.cli._env_helpers import collect_optional_deps_status
+
     original_import = builtins.__import__
 
     def mock_import(name: str, *args: object, **kwargs: object) -> object:
@@ -477,7 +479,7 @@ def test_collect_optional_deps_status_with_missing_dep(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(builtins, "__import__", mock_import)
 
-    deps = app._collect_optional_deps_status()
+    deps = collect_optional_deps_status()
     pil_dep = next(d for d in deps if d["package"] == "PIL")
     assert pil_dep["installed"] is False
     assert pil_dep["version"] == ""

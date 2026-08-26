@@ -1,10 +1,10 @@
 """``fcmd doctor`` 纯函数辅助：检查项收集与报告渲染。
 
-提取自 :mod:`fcmd.cli.main` 的 ``FcmdApp._builtin_doctor``，将检查逻辑
-（Python 版本 / 核心导入 / 工具模块扫描 / 可选依赖 / PATH 命令）与表格
-渲染分离为纯函数，便于独立测试与复用。
+将检查逻辑（Python 版本 / 核心导入 / 工具模块扫描 / 可选依赖 / PATH 命令）
+与表格渲染分离为纯函数，由 :mod:`fcmd.cli._builtins.doctor_cmd` 调用，
+便于独立测试与复用。
 
-本模块以下划线开头，``_ensure_tools_discovered`` 会跳过它（非工具模块）。
+本模块以下划线开头，``ensure_tools_discovered`` 会跳过它（非工具模块）。
 """
 
 from __future__ import annotations
