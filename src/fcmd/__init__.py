@@ -94,20 +94,21 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "clear_tool_registry": ("fcmd.apis.toolkit", "clear_tool_registry"),
     "describe_injection": ("fcmd.apis.context", "describe_injection"),
     "get_tool": ("fcmd.apis.toolkit", "get_tool"),
+    "graph": ("fcmd.apis.dag", "graph"),
     "list_subcommands": ("fcmd.apis.toolkit", "list_subcommands"),
     "list_tools": ("fcmd.apis.toolkit", "list_tools"),
-    "load_yaml": ("fcmd.yaml_loader", "load_yaml"),
+    "load_yaml": ("fcmd.orchestration.yaml_loader", "load_yaml"),
     "main": ("fcmd.apis.toolkit", "main"),
-    "parse_yaml_string": ("fcmd.yaml_loader", "parse_yaml_string"),
-    "run": ("fcmd.executors", "run"),
-    "run_command": ("fcmd.command", "run_command"),
+    "parse_yaml_string": ("fcmd.orchestration.yaml_loader", "parse_yaml_string"),
+    "run": ("fcmd.engine.executors", "run"),
+    "run_command": ("fcmd.engine.task_command", "run_command"),
     "run_tool": ("fcmd.apis.toolkit", "run_tool"),
     "task": ("fcmd.apis.task", "task"),
     "tool": ("fcmd.apis.toolkit", "tool"),
 }
 
-# Strategy 是 Literal 类型别名，从 executors 导入
-_LAZY_ATTRS["Strategy"] = ("fcmd.executors", "Strategy")
+# Strategy 是 Literal 类型别名，从执行引擎导入
+_LAZY_ATTRS["Strategy"] = ("fcmd.engine.executors", "Strategy")
 
 
 def __getattr__(name: str) -> Any:
@@ -130,27 +131,3 @@ def __getattr__(name: str) -> Any:
 def __dir__() -> list[str]:
     """补全建议。"""
     return sorted(set(globals()) | set(__all__))
-
-
-def graph(
-    *specs: Any,
-    defaults: Any = None,
-    namespace: str | None = None,
-) -> Any:
-    """快捷构造图：等价于 ``Graph.from_specs``，接受可变参数而非列表。
-
-    对 ``depends_on`` 为空的纯 fn 任务，自动从必需参数名推断依赖
-    （匹配图中任务名的参数被加入 ``depends_on``）。
-
-    示例
-    --------
-    >>> import fcmd as fx
-    >>> @fx.task
-    ... def extract() -> list[int]: return [1, 2, 3]
-    >>> @fx.task
-    ... def double(extract: list[int]) -> list[int]: return [x * 2 for x in extract]
-    >>> g = fx.graph(extract, double)  # double 自动依赖 extract
-    """
-    from fcmd.apis.dag import Graph, GraphDefaults
-
-    return Graph.from_specs(specs, defaults=defaults or GraphDefaults(), namespace=namespace)

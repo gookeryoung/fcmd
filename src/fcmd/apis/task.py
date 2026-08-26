@@ -364,10 +364,10 @@ class TaskSpec(Generic[T]):
     def _wrap_cmd(self) -> TaskFn[Any]:
         """将 cmd 包装为可执行函数。
 
-        实际执行逻辑位于 :mod:`fcmd.command`，避免 :class:`TaskSpec`
+        实际执行逻辑位于 :mod:`fcmd.engine.task_command`，避免 :class:`TaskSpec`
         作为纯数据结构混入命令执行逻辑。
         """
-        from fcmd.command import run_command
+        from fcmd.engine.task_command import run_command
 
         spec = self
 

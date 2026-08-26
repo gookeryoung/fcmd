@@ -14,7 +14,7 @@
 * :func:`_run_sync_task` / :func:`_run_async_task` —— 同步/异步任务执行器，
   调用上述模块级函数消除重复代码。
 
-本模块自包含，不依赖 :mod:`fcmd.executors`，由后者按策略派发调用。
+本模块自包含，不依赖 :mod:`fcmd.engine.executors`，由后者按策略派发调用。
 """
 
 from __future__ import annotations
@@ -31,10 +31,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Awaitable, cast
 
-from .apis.context import build_call_args
-from .apis.errors import TaskFailedError, TaskTimeoutError
-from .apis.report import RunReport
-from .apis.task import EventCallback, TaskEvent, TaskResult, TaskSpec, TaskStatus
+from fcmd.apis.context import build_call_args
+from fcmd.apis.errors import TaskFailedError, TaskTimeoutError
+from fcmd.apis.report import RunReport
+from fcmd.apis.task import EventCallback, TaskEvent, TaskResult, TaskSpec, TaskStatus
 
 logger = logging.getLogger(__name__)
 

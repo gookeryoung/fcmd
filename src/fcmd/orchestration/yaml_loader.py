@@ -1,8 +1,8 @@
 """YAML 任务编排（GitHub Actions 风格，简化版）。
 
-从 YAML 文件加载为 :class:`~fcmd.dag.Graph`，支持 ``jobs``/``needs``/
+从 YAML 文件加载为 :class:`~fcmd.apis.dag.Graph`，支持 ``jobs``/``needs``/
 ``cmd``/``run``/``env``/``cwd``/``timeout``/``retry``/``strategy`` 等核心字段，
-以及 ``if`` 条件判断与 ``matrix`` 矩阵扇出（由 :mod:`fcmd.conditions` 提供）。
+以及 ``if`` 条件判断与 ``matrix`` 矩阵扇出（由 :mod:`fcmd.orchestration.conditions` 提供）。
 
 Schema
 ------
@@ -74,7 +74,7 @@ if 表达式
 ----------
 支持 ``success()`` / ``failure()`` / ``always()`` 状态检查，
 ``ctx.NAME == "value"`` 上下文比较，``vars.NAME`` 环境变量访问，
-``not`` / ``and`` / ``or`` 逻辑组合。详见 :mod:`fcmd.conditions`。
+``not`` / ``and`` / ``or`` 逻辑组合。详见 :mod:`fcmd.orchestration.conditions`。
 """
 
 from __future__ import annotations
@@ -92,7 +92,8 @@ import yaml  # type: ignore[import-not-found]
 
 from fcmd.apis.dag import Graph, GraphDefaults
 from fcmd.apis.task import RetryPolicy, TaskSpec
-from fcmd.conditions import (
+
+from .conditions import (
     ConditionError,
     expand_matrix,
     matrix_suffix,

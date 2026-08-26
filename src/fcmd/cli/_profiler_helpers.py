@@ -22,7 +22,7 @@ def inject_run_hook() -> dict[str, Any]:
 
     同时 patch 三处引用：
 
-    * ``fcmd.executors.run`` —— 实际实现
+    * ``fcmd.engine.executors.run`` —— 实际实现
     * ``fcmd.run`` —— 顶层包导出的引用（用户脚本 ``fx.run()`` 常用入口）
     * ``RunReport.__init__`` —— 捕获 ``run()`` 内部创建的 report 实例，
       用于 ``run()`` 抛 ``TaskFailedError`` 时仍能拿到已填充的 report。
@@ -38,8 +38,8 @@ def inject_run_hook() -> dict[str, Any]:
     import types
 
     import fcmd as fcmd_mod
-    from fcmd import executors as executors_mod
     from fcmd.apis.report import RunReport
+    from fcmd.engine import executors as executors_mod
 
     # 修复懒加载属性被 import 系统遮蔽：将 __dict__ 中为 module 的属性
     # 覆盖为 _LAZY_ATTRS 指定的函数/类。此修复不需要还原（修复的是

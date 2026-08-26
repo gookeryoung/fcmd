@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.dag import Graph
-from fcmd.yaml_loader import load_yaml, parse_yaml_string
+from fcmd.orchestration.yaml_loader import load_yaml, parse_yaml_string
 
 
 def _echo_cmd(text: str) -> list[str]:
@@ -561,7 +561,7 @@ class TestYamlExecution:
 
     def test_execute_simple_graph(self) -> None:
         """解析后的图可直接执行（cmd 任务）。"""
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         # 跨平台 echo：Windows 用 cmd /c，Unix 用 echo
         echo_cmd = '["cmd", "/c", "echo", "hello"]' if sys.platform == "win32" else '["echo", "hello"]'
@@ -575,7 +575,7 @@ jobs:
 
     def test_execute_dag_with_deps(self) -> None:
         """带依赖的 DAG 解析后按拓扑序执行。"""
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         echo = _echo_cmd
         graph = parse_yaml_string(f"""
@@ -597,7 +597,7 @@ jobs:
 
     def test_execute_with_only_filter(self) -> None:
         """only= 参数只运行指定 job 及其依赖。"""
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         echo = _echo_cmd
         graph = parse_yaml_string(f"""
@@ -655,7 +655,7 @@ jobs:
     if: "success()"
     cmd: {echo("b")}
 """)
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         report = run(graph, strategy="sequential")
         assert report.success
@@ -673,7 +673,7 @@ jobs:
     if: "failure()"
     cmd: {echo("notify")}
 """)
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         report = run(graph, strategy="sequential")
         assert report.success
@@ -694,7 +694,7 @@ jobs:
     allow-upstream-skip: true
     cmd: {echo("notifying")}
 """)
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         report = run(graph, strategy="sequential")
         # notify 应执行（上游失败，failure() 返回 True，且 allow_upstream_skip=True）
@@ -714,7 +714,7 @@ jobs:
     allow-upstream-skip: true
     cmd: {echo("cleanup")}
 """)
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         report = run(graph, strategy="sequential")
         assert report.result_of("cleanup").status.value == "success"
@@ -731,7 +731,7 @@ jobs:
     if: "ctx.upstream == 'run'"
     cmd: {echo("downstream")}
 """)
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         report = run(graph, strategy="sequential")
         # downstream 应被跳过（upstream 返回 'skip' != 'run'）
@@ -944,7 +944,7 @@ class TestMatrixExecution:
 
     def test_execute_matrix_jobs(self) -> None:
         """matrix 任务展开后可执行。"""
-        from fcmd.executors import run
+        from fcmd.engine.executors import run
 
         echo = _echo_cmd
         graph = parse_yaml_string(f"""

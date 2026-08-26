@@ -619,7 +619,7 @@ def test_run_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
         sleep_calls.append(seconds)
         original_sleep(0)  # 实际不等待，仅记录调用
 
-    monkeypatch.setattr("fcmd._task_runner.time.sleep", fake_sleep)
+    monkeypatch.setattr("fcmd.engine.task_runner.time.sleep", fake_sleep)
 
     attempts = {"n": 0}
 
@@ -647,7 +647,7 @@ def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_async_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
-    monkeypatch.setattr("fcmd._task_runner.asyncio.sleep", fake_async_sleep)
+    monkeypatch.setattr("fcmd.engine.task_runner.asyncio.sleep", fake_async_sleep)
 
     attempts = {"n": 0}
 
@@ -674,7 +674,7 @@ def test_run_async_retry_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_async_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
-    monkeypatch.setattr("fcmd._task_runner.asyncio.sleep", fake_async_sleep)
+    monkeypatch.setattr("fcmd.engine.task_runner.asyncio.sleep", fake_async_sleep)
 
     attempts = {"n": 0}
 
@@ -850,7 +850,7 @@ def test_run_multi_dep_context_injection() -> None:
 
 def test_verbose_callback_pending_event(capsys: pytest.CaptureFixture[str]) -> None:
     """verbose 回调收到 PENDING 事件时不匹配任何分支，直接调用 on_event（覆盖 705->708）。"""
-    from fcmd.executors import _make_verbose_callback
+    from fcmd.engine.executors import _make_verbose_callback
 
     events: list[TaskEvent] = []
     callback = _make_verbose_callback(events.append)

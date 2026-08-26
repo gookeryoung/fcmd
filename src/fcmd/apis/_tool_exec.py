@@ -7,7 +7,7 @@
 * 聚合判断：:func:`_has_function_logic` / :func:`_is_aggregate`。
 * TaskSpec 构建：:func:`_build_task_spec`（ToolSpec + 变量 → TaskSpec）。
 * argv 路由与解析：:func:`_resolve_tool_target` / :func:`_parse_tool_args`。
-* DAG 执行：:func:`_execute_tool_tasks`（收集依赖、构建图、调用 :func:`fcmd.executors.run`）。
+* DAG 执行：:func:`_execute_tool_tasks`（收集依赖、构建图、调用 :func:`fcmd.engine.executors.run`）。
 * 输出：:func:`_print_task_summary` / :func:`_print_subcommands`。
 
 循环导入规避
@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from fcmd.console import get_console
-from fcmd.executors import run
+from fcmd.engine.executors import run
 
 from ._tool_args import (
     ToolExitCode,

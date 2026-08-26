@@ -1,6 +1,6 @@
 """conditions 模块测试：if 表达式解析与 matrix 展开。
 
-覆盖 :mod:`fcmd.conditions` 的全部公共 API：
+覆盖 :mod:`fcmd.orchestration.conditions` 的全部公共 API：
 - :func:`parse_if` —— if 表达式解析为 Condition 函数
 - :func:`expand_matrix` —— matrix 配置笛卡尔积展开
 - :func:`substitute_matrix_vars` —— ``${{ matrix.X }}`` 占位符替换
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.conditions import (
+from fcmd.orchestration.conditions import (
     ConditionError,
     expand_matrix,
     matrix_suffix,

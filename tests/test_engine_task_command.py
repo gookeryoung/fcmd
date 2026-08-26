@@ -212,7 +212,7 @@ def test_run_command_timeout_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*_args: object, **_kwargs: object) -> None:
         raise sp.TimeoutExpired(cmd="test", timeout=0.5)
 
-    monkeypatch.setattr("fcmd.command.subprocess.run", fake_run)
+    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
     spec = TaskSpec(name="x", cmd=["echo", "hi"], timeout=0.5)
     with pytest.raises(RuntimeError, match="超时"):
         spec.effective_fn()
@@ -224,7 +224,7 @@ def test_run_command_os_error_generic(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*_args: object, **_kwargs: object) -> None:
         raise OSError("boom")
 
-    monkeypatch.setattr("fcmd.command.subprocess.run", fake_run)
+    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
     spec = TaskSpec(name="x", cmd=["echo", "hi"])
     with pytest.raises(RuntimeError, match="执行异常"):
         spec.effective_fn()

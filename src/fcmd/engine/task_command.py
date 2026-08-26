@@ -1,8 +1,10 @@
-"""命令执行器：把 :class:`~fcmd.task.TaskSpec` 的 ``cmd`` 字段（list /
+"""命令执行器：把 :class:`~fcmd.apis.task.TaskSpec` 的 ``cmd`` 字段（list /
 shell 字符串 / 可调用对象）转换为统一执行入口。
 
 本模块作为纯执行逻辑集中地，``TaskSpec`` 仅持有配置，执行逻辑位于此处，
-便于独立测试与维护。
+便于独立测试与维护。注意与 :mod:`fcmd.models.command` 区分：后者是 CLI
+工具的 subprocess 封装（返回 :class:`CommandResult`），本模块服务于
+DAG 任务执行链。
 """
 
 from __future__ import annotations
@@ -12,8 +14,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, List, Union, cast
 
-from .apis.task import TaskSpec
-from .console import get_console
+from fcmd.apis.task import TaskSpec
+from fcmd.console import get_console
 
 __all__ = ["run_command"]
 

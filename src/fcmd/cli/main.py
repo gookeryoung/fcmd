@@ -448,8 +448,8 @@ class FcmdApp:
         parsed = parser.parse_args(argv)
 
         from fcmd.apis.errors import FcmdError
-        from fcmd.executors import run
-        from fcmd.yaml_loader import load_yaml
+        from fcmd.engine.executors import run
+        from fcmd.orchestration.yaml_loader import load_yaml
 
         try:
             graph = load_yaml(parsed.file)

@@ -1,6 +1,6 @@
-"""_pdf_models 数据模型测试。
+"""PDF 数据模型测试。
 
-验证 ``fcmd.cli._pdf_models`` 模块：
+验证 ``fcmd.models.pdf`` 模块：
 - PageOrder/PageRange/PageSelection 页码表达式解析
 - SplitSpec 拆分规格（步长/分组/页序）
 - MergeSpec 合并规格（拼接/交叉/逐文件页序与筛选）
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.cli._pdf_models import (
+from fcmd.models.pdf import (
     MergeInput,
     MergeMode,
     MergeSpec,

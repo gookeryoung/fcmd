@@ -300,8 +300,8 @@ fcmd yaml deploy.yaml --strategy thread  # 覆盖执行策略
 或 Python API：
 
 ```python
-from fcmd.yaml_loader import load_yaml
-from fcmd.executors import run
+from fcmd.orchestration.yaml_loader import load_yaml
+from fcmd.engine.executors import run
 
 graph = load_yaml("deploy.yaml")
 report = run(graph, strategy="dependency")

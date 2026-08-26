@@ -5,7 +5,7 @@
 
 合并支持交叉合并（多文件轮流取页）与逐文件页序/页码筛选；拆分支持
 正序/倒序、固定步长（每份页数）与自定义分组（如 ``1-2;3,4,5``）。
-页码表达式语法见 :mod:`fcmd.cli._pdf_models`。
+页码表达式语法见 :mod:`fcmd.models.pdf`。
 
 依赖 ``fcmd[pdf]`` extra 中的 ``pymupdf`` 与 ``pypdf``；
 OCR 子命令额外依赖 ``fcmd[ocr]`` extra 中的 ``pytesseract``。
@@ -27,8 +27,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import fcmd
-
-from ._pdf_models import MergeSpec, PageSelection, SplitSpec
+from fcmd.models.pdf import MergeSpec, PageSelection, SplitSpec
 
 __all__ = [
     "pdf_add_watermark",
@@ -88,7 +87,7 @@ def _resolve_page_indices(pages: str, page_count: int) -> tuple[int, ...] | None
     Parameters
     ----------
     pages:
-        页码筛选表达式（如 ``1-3,5``，语法见 :mod:`fcmd.cli._pdf_models`）
+        页码筛选表达式（如 ``1-3,5``，语法见 :mod:`fcmd.models.pdf`）
     page_count:
         总页数，用于越界过滤
     """

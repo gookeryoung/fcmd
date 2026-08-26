@@ -318,7 +318,7 @@ def test_inject_run_hook_captures_graph_and_report() -> None:
 
 def test_inject_run_hook_restore_reverts_patches() -> None:
     """_restore 还原后 executors.run 恢复原对象。"""
-    from fcmd import executors as executors_mod
+    from fcmd.engine import executors as executors_mod
 
     original = executors_mod.run
 

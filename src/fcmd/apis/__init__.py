@@ -1,20 +1,22 @@
 """fcmd.apis —— 框架级公共 API 聚合。
 
-包含 8 个子模块：
+包含 7 个子模块：
 - task: 任务数据结构（TaskSpec、RetryPolicy、RunConfig）
-- dag: 图编排（Graph、GraphDefaults）
+- dag: 图编排（Graph、GraphDefaults、graph 快捷构造）
 - errors: 异常类型
 - report: 执行报告（RunReport、TaskResult）
 - context: 依赖注入工具
 - profiling: 性能分析（ProfileReport、TaskProfile）
 - toolkit: @fx.tool 装饰器框架（ToolSpec、build_tool_graph 等）
-- command: 命令执行器（内部使用，不对外导出）
+
+执行引擎（run/executors）位于 :mod:`fcmd.engine`，YAML 编排位于
+:mod:`fcmd.orchestration`，经顶层 ``fcmd.__init__`` 懒加载暴露。
 """
 
 from __future__ import annotations
 
 from fcmd.apis.context import Context, build_call_args, describe_injection
-from fcmd.apis.dag import Graph, GraphDefaults
+from fcmd.apis.dag import Graph, GraphDefaults, graph
 from fcmd.apis.errors import (
     CycleError,
     DuplicateTaskError,
@@ -76,6 +78,7 @@ __all__ = [
     "cmd",
     "describe_injection",
     "get_tool",
+    "graph",
     "list_subcommands",
     "list_tools",
     "run_tool",

@@ -33,9 +33,9 @@ API 参考
 ------
 
 四种执行策略（``sequential`` / ``thread`` / ``async`` / ``dependency``）
-与对应的 Runner 实现。
+与对应的 Runner 实现（位于 ``fcmd.engine`` 执行引擎包）。
 
-.. automodule:: fcmd.executors
+.. automodule:: fcmd.engine.executors
    :members:
    :undoc-members:
    :show-inheritance:
@@ -86,7 +86,7 @@ fcmd 异常层次，均继承自 :class:`fcmd.FcmdError`。
 命令执行
 --------
 
-.. automodule:: fcmd.command
+.. automodule:: fcmd.engine.task_command
    :members:
    :undoc-members:
    :show-inheritance:
@@ -94,9 +94,10 @@ fcmd 异常层次，均继承自 :class:`fcmd.FcmdError`。
 YAML 加载
 ---------
 
-GitHub Actions 风格的 ``jobs`` / ``needs`` / ``matrix`` / ``if`` 任务图加载。
+GitHub Actions 风格的 ``jobs`` / ``needs`` / ``matrix`` / ``if`` 任务图加载
+（位于 ``fcmd.orchestration`` 编排包）。
 
-.. automodule:: fcmd.yaml_loader
+.. automodule:: fcmd.orchestration.yaml_loader
    :members:
    :undoc-members:
    :show-inheritance:

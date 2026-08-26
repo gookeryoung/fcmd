@@ -12,18 +12,18 @@
 
 架构
 ----
-本模块按职责分层拆分：
+本包（:mod:`fcmd.engine`）按职责分层拆分：
 
-* :mod:`fcmd._task_runner` —— **任务级**执行器与共享状态
-  (:class:`fcmd._task_runner._ExecContext` / 线程池 / 跳过重试失败处理 /
-  :func:`fcmd._task_runner._run_sync_task` /
-  :func:`fcmd._task_runner._run_async_task` / :func:`_store_result`)。
-* :mod:`fcmd._layer_runner` —— **层屏障模型**调度
-  (:func:`fcmd._layer_runner._run_layer_sequential` /
-  :func:`fcmd._layer_runner._run_layer_threaded` /
-  :func:`fcmd._layer_runner._run_layer_async` + 驱动函数)。
-* :mod:`fcmd._dependency_runner` —— **依赖驱动调度**
-  (:func:`fcmd._dependency_runner._run_dependency`，基于标准库
+* :mod:`fcmd.engine.task_runner` —— **任务级**执行器与共享状态
+  (:class:`fcmd.engine.task_runner._ExecContext` / 线程池 / 跳过重试失败处理 /
+  :func:`fcmd.engine.task_runner._run_sync_task` /
+  :func:`fcmd.engine.task_runner._run_async_task` / :func:`_store_result`)。
+* :mod:`fcmd.engine.layer_runner` —— **层屏障模型**调度
+  (:func:`fcmd.engine.layer_runner._run_layer_sequential` /
+  :func:`fcmd.engine.layer_runner._run_layer_threaded` /
+  :func:`fcmd.engine.layer_runner._run_layer_async` + 驱动函数)。
+* :mod:`fcmd.engine.dependency_runner` —— **依赖驱动调度**
+  (:func:`fcmd.engine.dependency_runner._run_dependency`，基于标准库
   :class:`graphlib.TopologicalSorter` 增量就绪接口，大图 10k+ 任务
   调度开销 O(N))。
 * 本模块 —— 公共 :func:`run` 入口与策略派发。
@@ -44,15 +44,16 @@ from collections.abc import Iterable
 from dataclasses import replace as dc_replace
 from typing import Any, Literal
 
-from ._dependency_runner import _run_dependency
-from ._layer_runner import _async_drive, _drive_sequential, _drive_threaded
-from ._task_runner import _ExecContext, _shutdown_thread_pool
-from .apis.context import describe_injection
-from .apis.dag import Graph
-from .apis.errors import TaskFailedError
-from .apis.report import RunReport
-from .apis.task import EventCallback, RunConfig, TaskEvent, TaskStatus
-from .console import get_console
+from fcmd.apis.context import describe_injection
+from fcmd.apis.dag import Graph
+from fcmd.apis.errors import TaskFailedError
+from fcmd.apis.report import RunReport
+from fcmd.apis.task import EventCallback, RunConfig, TaskEvent, TaskStatus
+from fcmd.console import get_console
+
+from .dependency_runner import _run_dependency
+from .layer_runner import _async_drive, _drive_sequential, _drive_threaded
+from .task_runner import _ExecContext, _shutdown_thread_pool
 
 logger = logging.getLogger(__name__)
 

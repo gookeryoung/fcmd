@@ -7,6 +7,8 @@
 - ``command``：命令执行模型（``CommandResult``/``run_command``）
 - ``filefilter``：文件过滤模型（``IgnoreSpec``/``should_ignore``/``to_shutil_ignore``）
 - ``version``：版本号模型（``Version``/``BumpPart``/``parse_version``）
+- ``pdf``：PDF 页码/拆分/合并模型（``PageSelection``/``SplitSpec``/``MergeSpec``，
+  pdftool 专用，经 ``fcmd.models.pdf`` 深路径导入，不进本门面）
 """
 
 from __future__ import annotations

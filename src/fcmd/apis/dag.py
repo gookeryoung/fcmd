@@ -15,6 +15,7 @@ from __future__ import annotations
 __all__ = [
     "Graph",
     "GraphDefaults",
+    "graph",
 ]
 
 import inspect
@@ -226,15 +227,16 @@ class Graph:
             解析后的任务图，支持 ``jobs``/``needs``/``cmd``/``run``/
             ``env``/``cwd``/``timeout``/``retry``/``strategy``/``defaults``
             等字段，以及 ``if`` 条件判断与 ``matrix`` 矩阵扇出
-            （由 :mod:`fcmd.conditions` 与 :mod:`fcmd.yaml_loader` 提供）。
-            schema 细节见 :mod:`fcmd.yaml_loader`。
+            （由 :mod:`fcmd.orchestration.conditions` 与
+            :mod:`fcmd.orchestration.yaml_loader` 提供）。
+            schema 细节见 :mod:`fcmd.orchestration.yaml_loader`。
 
         Raises
         ------
         ValueError
             YAML 结构不符合 schema 时。
         """
-        from fcmd.yaml_loader import load_yaml
+        from fcmd.orchestration.yaml_loader import load_yaml
 
         # pyrefly 在 src-layout 下将 fcmd.dag 与本模块识别为不同类型，cast 绕过。
         return cast("Graph", load_yaml(path))
@@ -415,3 +417,25 @@ class Graph:
 
     def __contains__(self, name: object) -> bool:
         return name in self.specs
+
+
+def graph(
+    *specs: Any,
+    defaults: Any = None,
+    namespace: str | None = None,
+) -> Any:
+    """快捷构造图：等价于 ``Graph.from_specs``，接受可变参数而非列表。
+
+    对 ``depends_on`` 为空的纯 fn 任务，自动从必需参数名推断依赖
+    （匹配图中任务名的参数被加入 ``depends_on``）。
+
+    示例
+    --------
+    >>> import fcmd as fx
+    >>> @fx.task
+    ... def extract() -> list[int]: return [1, 2, 3]
+    >>> @fx.task
+    ... def double(extract: list[int]) -> list[int]: return [x * 2 for x in extract]
+    >>> g = fx.graph(extract, double)  # double 自动依赖 extract
+    """
+    return Graph.from_specs(specs, defaults=defaults or GraphDefaults(), namespace=namespace)

@@ -7,13 +7,13 @@
 * :func:`_run_layer_async` —— 事件循环并发运行同层任务，适合 I/O 密集异步任务。
 
 三者共享 :func:`_build_spec_map`（层任务 spec 映射预构建）与
-:func:`fcmd._task_runner._store_result`（结果存储）。
+:func:`fcmd.engine.task_runner._store_result`（结果存储）。
 
 驱动函数 :func:`_drive_sequential` / :func:`_drive_threaded` /
 :func:`_async_drive` 按层迭代调用对应执行函数，由
-:func:`fcmd.executors._dispatch_strategy` 按 ``strategy`` 派发。
+:func:`fcmd.engine.executors._dispatch_strategy` 按 ``strategy`` 派发。
 
-与 :func:`fcmd._dependency_runner._run_dependency` 的区别：本模块是**层屏障模型**——
+与 :func:`fcmd.engine.dependency_runner._run_dependency` 的区别：本模块是**层屏障模型**——
 同层任务并发，但必须整层完成后才进入下一层；依赖驱动调度无层屏障，
 任务在依赖完成后立即启动，最大化并行度。
 """
@@ -24,15 +24,16 @@ import asyncio
 import concurrent.futures
 from typing import Any
 
-from ._task_runner import (
+from fcmd.apis.dag import Graph
+from fcmd.apis.task import TaskResult, TaskSpec
+
+from .task_runner import (
     _build_context,
     _ExecContext,
     _run_async_task,
     _run_sync_task,
     _store_result,
 )
-from .apis.dag import Graph
-from .apis.task import TaskResult, TaskSpec
 
 
 def _build_spec_map(

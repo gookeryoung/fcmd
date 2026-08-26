@@ -8,7 +8,7 @@
 （``prepare`` / ``get_ready`` / ``done``）：任务完成即调用 ``done`` 释放后继，
 ``get_ready`` 返回新就绪任务，无需自维护入度计数器与反向邻接表。
 
-与 :mod:`fcmd._layer_runner` 的层屏障模型对比：本模块无层屏障，任务就绪即启动，
+与 :mod:`fcmd.engine.layer_runner` 的层屏障模型对比：本模块无层屏障，任务就绪即启动，
 最大化并行度；层模型必须整层完成后才进入下一层，适合需要确定性顺序的场景。
 
 fail-fast 语义：首个异常即取消剩余任务并抛出（匹配 ``asyncio.gather`` 语义）。
@@ -21,14 +21,15 @@ from typing import Any
 
 from graphlib import TopologicalSorter
 
-from ._task_runner import (
+from fcmd.apis.dag import Graph
+from fcmd.apis.task import TaskResult, TaskSpec
+
+from .task_runner import (
     _build_context,
     _ExecContext,
     _run_async_task,
     _store_result,
 )
-from .apis.dag import Graph
-from .apis.task import TaskResult, TaskSpec
 
 
 async def _run_dependency(

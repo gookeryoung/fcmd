@@ -20,7 +20,7 @@ if 表达式
 
 示例
 -----
-    >>> from fcmd.conditions import parse_if
+    >>> from fcmd.orchestration.conditions import parse_if
     >>> cond = parse_if("ctx.build == 'ok' and vars.CI == 'true'")
     >>> cond({"build": "ok", "__status__": {"build": "success"}})  # 需 CI 环境变量
     False
@@ -33,7 +33,7 @@ matrix 展开
 
 示例
 -----
-    >>> from fcmd.conditions import expand_matrix, substitute_matrix_vars, matrix_suffix
+    >>> from fcmd.orchestration.conditions import expand_matrix, substitute_matrix_vars, matrix_suffix
     >>> combos = expand_matrix({"py": ["3.8", "3.9"], "os": ["linux"]})
     >>> len(combos)
     2
