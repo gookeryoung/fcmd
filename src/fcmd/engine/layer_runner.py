@@ -69,7 +69,12 @@ def _run_layer_threaded(
     layer_idx: int,
     pool: concurrent.futures.ThreadPoolExecutor,
 ) -> None:
-    """在线程池中并发运行某层的任务。"""
+    """在线程池中并发运行某层的任务。
+
+    使用**迭代提交**（窗口大小等于池 worker 数），避免一次性提交全部任务时
+    worker 在主线程处理失败前已拉取后续任务，导致 ``cancel()`` 无效。
+    当某任务失败时立即停止提交新任务，并取消尚未拉取的排队任务。
+    """
     if not layer:  # pragma: no cover - Graph.layers() 不产生空层
         return
     specs = _build_spec_map(layer, graph)
@@ -81,22 +86,45 @@ def _run_layer_threaded(
         task_ctx = _build_context(spec, context_snapshot, statuses_snapshot)
         return task_ctx, _run_sync_task(spec, task_ctx, layer_idx, ctx)
 
-    future_to_name: dict[concurrent.futures.Future[tuple[dict[str, Any], TaskResult[Any]]], str] = {
-        pool.submit(_run_threaded_task, name): name for name in layer
-    }
+    # 窗口大小：不超过池 worker 数，也不超过层任务数
+    max_concurrent = min(getattr(pool, "_max_workers", 1), len(layer))
+    pending = iter(layer)
+    active: dict[concurrent.futures.Future[tuple[dict[str, Any], TaskResult[Any]]], str] = {}
     completed: dict[str, tuple[dict[str, Any], TaskResult[Any]]] = {}
+
+    # 预提交第一批（窗口大小）
     try:
-        for fut in concurrent.futures.as_completed(future_to_name):
-            name = future_to_name[fut]
-            completed[name] = fut.result()
-    except BaseException:
-        # fail-fast：首个任务失败时取消同层其他未完成的 future（对齐依赖驱动调度语义）。
-        # 注意：正在运行的任务无法中断（Python 线程限制），仅取消排队中的任务；
-        # 已完成的任务结果仍需存储（finally 块）。
-        for other in future_to_name:
-            if not other.done():
-                other.cancel()
-        raise
+        for _ in range(max_concurrent):
+            try:
+                name = next(pending)
+            except StopIteration:
+                break
+            active[pool.submit(_run_threaded_task, name)] = name
+
+        # 迭代：等待首个完成 → 存入结果 → 失败则取消剩余 → 否则提交下一个
+        while active:
+            done, _ = concurrent.futures.wait(
+                active,
+                return_when=concurrent.futures.FIRST_COMPLETED,
+            )
+            for fut in done:
+                name = active.pop(fut)
+                try:
+                    completed[name] = fut.result()
+                except BaseException:
+                    # fail-fast：取消所有尚未完成的 future（排队中的会被移除，
+                    # 正在运行的无法中断 —— 但因为我们用了窗口提交，此时最多只有
+                    # max_concurrent 个活动任务，而失败的这个已经在运行，其他排队
+                    # 的可以被 cancel；新的 pending 根本不会被提交）。
+                    for remaining in active:
+                        remaining.cancel()
+                    raise
+            # 提交下一个 pending（如果还有且没有发生失败）
+            try:
+                next_name = next(pending)
+                active[pool.submit(_run_threaded_task, next_name)] = next_name
+            except StopIteration:
+                pass
     finally:
         for name, (_, result) in completed.items():
             _store_result(result, specs[name], ctx)

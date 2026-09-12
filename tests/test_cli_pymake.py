@@ -1,11 +1,17 @@
 """pymake 工具测试。
 
 验证 ``fcmd.cli.dev.pymake`` 模块通过 ``@fx.tool`` 装饰器注册的子命令集合：
-- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox）
+- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox/push/upload）
 - cmd + needs 混合任务（cov/bump）
-- 聚合任务（chk/tc/push/upload）
-- 内部 hidden job（fmt/fmtc/pyrefly_check/git_add_all/git_push/git_push_tags/twine_publish）
+- 聚合任务（chk/tc）
+- 内部 hidden job（fmt/fmtc/pyrefly_check/upload）
 - CLI 调度（dry-run 验证执行计划）
+
+精简设计说明：
+- push 已简化为单函数（遍历所有 git remote 推送代码 + tags），不再拆成四个
+  hidden 子任务（git_add_all/git_push/git_push_tags）编排。
+- upload 已简化为 twine 单 cmd，设为 hidden（直接用 fcmd pymake push 覆盖日常发布）。
+- all 一键全套流程子命令已移除，改用 fcmd graph pymake 查看全量子命令 DAG。
 """
 
 from __future__ import annotations
@@ -55,7 +61,6 @@ class TestPymakeRegistration:
             "doc",
             "tox",
             "push",
-            "upload",
         ):
             assert name in subs, f"可见子命令应包含 {name!r}"
 
@@ -66,10 +71,7 @@ class TestPymakeRegistration:
             "fmt",
             "fmtc",
             "pyrefly_check",
-            "git_add_all",
-            "git_push",
-            "git_push_tags",
-            "twine_publish",
+            "upload",
         ):
             assert name not in subs, f"hidden 子命令 {name!r} 不应出现在可见列表"
 
@@ -80,10 +82,7 @@ class TestPymakeRegistration:
             "fmt",
             "fmtc",
             "pyrefly_check",
-            "git_add_all",
-            "git_push",
-            "git_push_tags",
-            "twine_publish",
+            "upload",
         ):
             assert name in subs, f"hidden 子命令 {name!r} 应在 include_hidden=True 时出现"
 
@@ -111,6 +110,7 @@ class TestPymakeCmdTasks:
             ("bumpma", "bump-my-version"),
             ("tox", "tox"),
             ("doc", "sphinx-build"),
+            ("upload", "twine"),
         ],
     )
     def test_cmd_has_expected_fragment(self, sub: str, cmd_fragment: str) -> None:
@@ -259,32 +259,12 @@ class TestPymakeHiddenJobs:
         assert "pyrefly" in spec.cmd
         assert spec.hidden is True
 
-    def test_git_add_all_cmd_and_needs_chk(self) -> None:
-        """git_add_all 应为 git add -A，并依赖 chk（先通过类型检查）。"""
-        spec = get_tool("pymake", "git_add_all")
-        assert spec.cmd == ("git", "add", "-A")
-        assert spec.needs == ("chk",)
+    def test_upload_is_hidden(self) -> None:
+        """upload 是 hidden（不建议直接用，日常发布走 push）。"""
+        spec = get_tool("pymake", "upload")
         assert spec.hidden is True
-
-    def test_git_push_cmd(self) -> None:
-        """git_push 应为 git push。"""
-        spec = get_tool("pymake", "git_push")
-        assert spec.cmd == ("git", "push")
-        assert spec.hidden is True
-
-    def test_git_push_tags_cmd(self) -> None:
-        """git_push_tags 应为 git push --tags。"""
-        spec = get_tool("pymake", "git_push_tags")
-        assert spec.cmd == ("git", "push", "--tags")
-        assert spec.hidden is True
-
-    def test_twine_publish_cmd(self) -> None:
-        """twine_publish 应执行 twine upload。"""
-        spec = get_tool("pymake", "twine_publish")
         assert spec.cmd is not None
         assert "twine" in spec.cmd
-        assert "upload" in spec.cmd
-        assert spec.hidden is True
 
 
 # ---------------------------------------------------------------------- #
@@ -298,8 +278,6 @@ class TestPymakeAggregateJobs:
         [
             ("chk", ("pyrefly_check", "lint", "fmt", "tf")),
             ("tc", ("pyrefly_check", "lint", "fmt")),
-            ("push", ("chk", "c", "git_push", "git_push_tags")),
-            ("upload", ("twine_publish",)),
         ],
     )
     def test_aggregate_needs(self, sub: str, expected_needs: tuple[str, ...]) -> None:
@@ -308,15 +286,15 @@ class TestPymakeAggregateJobs:
         for dep in expected_needs:
             assert dep in spec.needs, f"{sub} 应依赖 {dep!r}: {spec.needs}"
 
-    @pytest.mark.parametrize("sub", ["chk", "tc", "push", "upload"])
+    @pytest.mark.parametrize("sub", ["chk", "tc"])
     def test_aggregate_has_no_cmd(self, sub: str) -> None:
         """聚合任务应无 cmd。"""
         spec = get_tool("pymake", sub)
         assert spec.cmd is None, f"{sub} 应为聚合任务（无 cmd）"
 
-    @pytest.mark.parametrize("sub", ["chk", "tc", "push"])
+    @pytest.mark.parametrize("sub", ["chk", "tc"])
     def test_aggregate_strategy_is_thread(self, sub: str) -> None:
-        """chk/tc/push 应使用 thread 策略（依赖可并行）。"""
+        """chk/tc 应使用 thread 策略（依赖可并行）。"""
         spec = get_tool("pymake", sub)
         assert spec.strategy == "thread"
 
@@ -383,21 +361,23 @@ class TestPymakeCliDispatch:
         assert "c" in out
 
     def test_pymake_push_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd pymake push --dry-run 打印推送执行计划。"""
+        """fcmd pymake push --dry-run 打印推送执行计划（单函数任务）。"""
         code = run_tool("pymake", ["push", "--dry-run"])
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        assert "git_push" in out
-        assert "git_push_tags" in out
+        # push 现在是单函数任务（遍历多 remote 推送代码 + tags），不再依赖
+        # git_add_all/chk/git_push/git_push_tags 等 hidden 子任务
+        assert "push" in out
 
     def test_pymake_upload_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd pymake upload --dry-run 打印 PyPI 发布执行计划。"""
+        """fcmd pymake upload --dry-run 打印 PyPI 发布执行计划（单 cmd）。"""
         code = run_tool("pymake", ["upload", "--dry-run"])
         assert code == 0
         out = capsys.readouterr().out
         assert "Dry run" in out
-        assert "twine_publish" in out
+        # upload 现在是 twine 单 cmd，不再依赖 twine_publish hidden job
+        assert "upload" in out
 
     def test_pymake_unknown_subcommand(self) -> None:
         """fcmd pymake unknown 返回 FAILURE。"""

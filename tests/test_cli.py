@@ -423,7 +423,7 @@ class TestBuiltinGraph:
         out = capsys.readouterr().out
         assert "graph TD" in out
         # 全部子命令都应出现
-        for name in ("b", "c", "t", "tc", "all"):
+        for name in ("b", "c", "t", "tc"):
             assert name in out, f"全量 DAG 应包含 {name!r}"
 
     def test_run_builtin_unknown_name(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -501,7 +501,7 @@ class TestBuiltinInfo:
         out = capsys.readouterr().out
         assert "pymake" in out
         # 应包含主要子命令
-        for name in ("b", "c", "t", "tc", "all"):
+        for name in ("b", "c", "t", "tc"):
             assert name in out, f"info 应列出子命令 {name!r}"
         # 应标记 hidden 子命令
         assert "hidden" in out
@@ -689,7 +689,7 @@ class TestBuiltinCompletion:
         assert app.run() == 0
         out = capsys.readouterr().out
         # pymake 的主要可见子命令
-        for sub in ("b", "c", "t", "tc", "all", "sync", "lint", "fmt"):
+        for sub in ("b", "c", "t", "tc", "sync", "lint", "fmt"):
             assert sub in out, f"应包含 pymake 子命令 {sub!r}"
         # hidden 子命令不应出现在补全脚本中
         assert "pyrefly_check" not in out
