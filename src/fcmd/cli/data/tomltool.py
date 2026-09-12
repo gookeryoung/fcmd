@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import json
 from pathlib import Path
 from typing import Any
@@ -35,29 +34,36 @@ __all__ = [
     "validate_toml",
 ]
 
-# 模块加载时探测 TOML 库可用性（find_spec 微秒级，不触发实际导入）
-_TOMLLIB_AVAILABLE = importlib.util.find_spec("tomllib") is not None
-_TOMLI_AVAILABLE = importlib.util.find_spec("tomli") is not None
+# TOML 库可用性探测（try/except 让 pyrefly 自动豁免可选依赖导入）
+try:
+    import tomllib as _tomllib_mod  # type: ignore[import-not-found]
+except ImportError:
+    _TOMLLIB_AVAILABLE = False
+    _tomllib_mod = None
+else:
+    _TOMLLIB_AVAILABLE = True
+
+try:
+    import tomli as _tomli_mod  # pyrefly 豁免 try/except ImportError 块
+except ImportError:
+    _TOMLI_AVAILABLE = False
+    _tomli_mod = None
+else:
+    _TOMLI_AVAILABLE = True
 
 
 def _require_toml_loader() -> Any:
     """获取 TOML 解析器模块（tomllib 3.11+ 或 tomli 3.8-3.10）。
-
-    懒导入：仅在首次调用时执行实际 import，避免工具发现阶段加载开销。
 
     Raises
     ------
     ImportError
         tomllib 与 tomli 均不可用时
     """
-    if _TOMLLIB_AVAILABLE:
-        import tomllib
-
-        return tomllib
-    if _TOMLI_AVAILABLE:
-        import tomli as tomllib  # pyrefly: ignore [missing-import]
-
-        return tomllib
+    if _tomllib_mod is not None:
+        return _tomllib_mod
+    if _tomli_mod is not None:
+        return _tomli_mod
     raise ImportError("TOML 解析需要 Python 3.11+ 或安装 tomli: pip install tomli")
 
 

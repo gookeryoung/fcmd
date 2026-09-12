@@ -3,4 +3,4 @@ project-excludes = [".venv/**", "template/**", "assets/**"]
 project-includes = ["**/*.ipynb", "**/*.py*"]
 python-version   = "3.13"
 search-path      = ["src", "."]
-replace-imports-with-any = ["winreg"]
+replace-imports-with-any = ["winreg", "tomli"]
