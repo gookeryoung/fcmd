@@ -11,44 +11,15 @@
 
 执行引擎（run/executors）位于 :mod:`fcmd.engine`，YAML 编排位于
 :mod:`fcmd.orchestration`，经顶层 ``fcmd.__init__`` 懒加载暴露。
+
+本包自身也通过 ``__getattr__`` 懒加载所有子模块，使首次访问
+``fcmd.apis.toolkit`` / ``fcmd.apis.run_tool`` 等不会在父包加载时
+触发整条导入链（toolkit → _tool_exec → engine → asyncio）。
 """
 
 from __future__ import annotations
 
-from fcmd.apis.context import Context, build_call_args, describe_injection
-from fcmd.apis.dag import Graph, GraphDefaults, graph
-from fcmd.apis.errors import (
-    CycleError,
-    DuplicateTaskError,
-    FcmdError,
-    InjectionError,
-    MissingDependencyError,
-    TaskFailedError,
-    TaskTimeoutError,
-)
-from fcmd.apis.profiling import ProfileReport, TaskProfile
-from fcmd.apis.report import RunReport
-from fcmd.apis.task import (
-    RetryPolicy,
-    RunConfig,
-    TaskCmd,
-    TaskResult,
-    TaskSpec,
-    TaskStatus,
-    cmd,
-    task,
-)
-from fcmd.apis.toolkit import (
-    ToolExitCode,
-    ToolSpec,
-    build_tool_graph,
-    clear_tool_registry,
-    get_tool,
-    list_subcommands,
-    list_tools,
-    run_tool,
-    tool,
-)
+from typing import Any
 
 __all__ = [
     "Context",
@@ -72,6 +43,7 @@ __all__ = [
     "TaskTimeoutError",
     "ToolExitCode",
     "ToolSpec",
+    "_tool_exec",
     "build_call_args",
     "build_tool_graph",
     "clear_tool_registry",
@@ -84,4 +56,72 @@ __all__ = [
     "run_tool",
     "task",
     "tool",
+    "toolkit",
 ]
+
+# 懒加载映射：公共符号 / 子模块名 -> (模块路径, 符号名 或 None 表示模块自身)
+_LAZY_ATTRS: dict[str, tuple[str, str | None]] = {
+    # ---- 公共符号 ----
+    "Context": ("fcmd.apis.context", "Context"),
+    "build_call_args": ("fcmd.apis.context", "build_call_args"),
+    "describe_injection": ("fcmd.apis.context", "describe_injection"),
+    "Graph": ("fcmd.apis.dag", "Graph"),
+    "GraphDefaults": ("fcmd.apis.dag", "GraphDefaults"),
+    "graph": ("fcmd.apis.dag", "graph"),
+    "CycleError": ("fcmd.apis.errors", "CycleError"),
+    "DuplicateTaskError": ("fcmd.apis.errors", "DuplicateTaskError"),
+    "FcmdError": ("fcmd.apis.errors", "FcmdError"),
+    "InjectionError": ("fcmd.apis.errors", "InjectionError"),
+    "MissingDependencyError": ("fcmd.apis.errors", "MissingDependencyError"),
+    "TaskFailedError": ("fcmd.apis.errors", "TaskFailedError"),
+    "TaskTimeoutError": ("fcmd.apis.errors", "TaskTimeoutError"),
+    "ProfileReport": ("fcmd.apis.profiling", "ProfileReport"),
+    "TaskProfile": ("fcmd.apis.profiling", "TaskProfile"),
+    "RunReport": ("fcmd.apis.report", "RunReport"),
+    "RetryPolicy": ("fcmd.apis.task", "RetryPolicy"),
+    "RunConfig": ("fcmd.apis.task", "RunConfig"),
+    "TaskCmd": ("fcmd.apis.task", "TaskCmd"),
+    "TaskResult": ("fcmd.apis.task", "TaskResult"),
+    "TaskSpec": ("fcmd.apis.task", "TaskSpec"),
+    "TaskStatus": ("fcmd.apis.task", "TaskStatus"),
+    "cmd": ("fcmd.apis.task", "cmd"),
+    "task": ("fcmd.apis.task", "task"),
+    "ToolExitCode": ("fcmd.apis.toolkit", "ToolExitCode"),
+    "ToolSpec": ("fcmd.apis.toolkit", "ToolSpec"),
+    "build_tool_graph": ("fcmd.apis.toolkit", "build_tool_graph"),
+    "clear_tool_registry": ("fcmd.apis.toolkit", "clear_tool_registry"),
+    "get_tool": ("fcmd.apis.toolkit", "get_tool"),
+    "list_subcommands": ("fcmd.apis.toolkit", "list_subcommands"),
+    "list_tools": ("fcmd.apis.toolkit", "list_tools"),
+    "run_tool": ("fcmd.apis.toolkit", "run_tool"),
+    "tool": ("fcmd.apis.toolkit", "tool"),
+    # ---- 子模块名（供测试 from fcmd.apis import toolkit / _tool_exec）----
+    "toolkit": ("fcmd.apis.toolkit", None),
+    "_tool_exec": ("fcmd.apis._tool_exec", None),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """懒加载公共 API 符号与子模块。
+
+    首次访问时从对应模块导入并缓存到 ``globals()``，后续直接命中。
+    """
+    mapping = _LAZY_ATTRS.get(name)
+    if mapping is None:
+        raise AttributeError(f"module 'fcmd.apis' has no attribute {name!r}")
+    module_path, attr_name = mapping
+    import importlib
+
+    module = importlib.import_module(module_path)
+    if attr_name is None:
+        # 请求子模块自身（如 ``from fcmd.apis import toolkit``）
+        value = module
+    else:
+        value = getattr(module, attr_name)
+    globals()[name] = value  # 缓存到全局，后续直接命中
+    return value
+
+
+def __dir__() -> list[str]:
+    """补全建议。"""
+    return sorted(set(globals()) | set(__all__))

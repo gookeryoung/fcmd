@@ -160,6 +160,9 @@ class Graph:
             raise DuplicateTaskError(spec.name)
         self.specs[spec.name] = spec
         self.deps[spec.name] = spec.depends_on
+        # 失效缓存：specs 变更后，旧的 resolved_spec / layers 不再可靠。
+        self._resolved_cache.clear()
+        self._layers_cache = None
         self._validate_references()
         return self
 

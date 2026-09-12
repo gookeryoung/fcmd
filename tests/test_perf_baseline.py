@@ -36,7 +36,7 @@ _DISCOVERY_SCRIPT = (
     "import time\n"
     "import fcmd.cli.main as m\n"
     "t=time.perf_counter()\n"
-    "m._ensure_tools_discovered()\n"
+    "m.ensure_tools_discovered()\n"
     "print((time.perf_counter()-t)*1000)\n"
 )
 

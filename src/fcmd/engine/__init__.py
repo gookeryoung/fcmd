@@ -12,17 +12,41 @@
   可调用对象）
 
 与 :mod:`fcmd.apis`（API 定义层，"名词"：数据结构与类型）相对。
-本包顶层模块仅供人读与兼容引用；内部代码应使用深路径
-（如 ``fcmd.engine.executors``）以避免不必要的导入开销。
+本包通过 ``__getattr__`` 懒加载，避免父包加载时 eager import 整个
+``executors`` 模块（它依赖 ``fcmd.apis.toolkit → asyncio`` 整条链）。
 """
 
 from __future__ import annotations
 
-from fcmd.engine.executors import Strategy, run
-from fcmd.engine.task_command import run_command
+from typing import Any
 
 __all__ = [
     "Strategy",
     "run",
     "run_command",
 ]
+
+_LAZY_ATTRS: dict[str, tuple[str, str]] = {
+    "Strategy": ("fcmd.engine.executors", "Strategy"),
+    "run": ("fcmd.engine.executors", "run"),
+    "run_command": ("fcmd.engine.task_command", "run_command"),
+}
+
+
+def __getattr__(name: str) -> Any:
+    """懒加载执行引擎公共 API。"""
+    mapping = _LAZY_ATTRS.get(name)
+    if mapping is None:
+        raise AttributeError(f"module 'fcmd.engine' has no attribute {name!r}")
+    module_path, attr_name = mapping
+    import importlib
+
+    module = importlib.import_module(module_path)
+    value = getattr(module, attr_name)
+    globals()[name] = value  # 缓存到全局，后续直接命中
+    return value
+
+
+def __dir__() -> list[str]:
+    """补全建议。"""
+    return sorted(set(globals()) | set(__all__))

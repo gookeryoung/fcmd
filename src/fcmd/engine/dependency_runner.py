@@ -51,6 +51,8 @@ async def _run_dependency(
     sorter.prepare()
 
     in_flight: dict[str, asyncio.Task[TaskResult[Any]]] = {}
+    # 反向映射：task -> 任务名，O(1) 完成任务查找（替代 O(N) next() 扫描）。
+    _task_to_name: dict[asyncio.Task[TaskResult[Any]], str] = {}
     loop = asyncio.get_running_loop()
 
     async def _run_one(name: str) -> TaskResult[Any]:
@@ -67,7 +69,9 @@ async def _run_dependency(
     # fail-fast：首个异常即取消剩余任务并抛出（匹配 gather 语义）。
     while ready or in_flight:
         for name in ready:
-            in_flight[name] = loop.create_task(_run_one(name))
+            task = loop.create_task(_run_one(name))
+            in_flight[name] = task
+            _task_to_name[task] = name
         ready = []
 
         if not in_flight:  # pragma: no cover - 图已校验无环，防御性处理
@@ -75,7 +79,7 @@ async def _run_dependency(
 
         done, _ = await asyncio.wait(in_flight.values(), return_when=asyncio.FIRST_COMPLETED)
         for task in done:
-            done_name = next(n for n, t in in_flight.items() if t is task)
+            done_name = _task_to_name.pop(task)
             del in_flight[done_name]
             exc = task.exception()
             if exc is not None:
