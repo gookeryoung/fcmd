@@ -234,7 +234,12 @@ def test_fast(cwd: Path = Path()) -> None:
     """快速测试（首个失败即停止）。"""
 
 
-@fcmd.tool("pymake", subcommand="ts", help="测试 slow 标记的测试 (pytest -m slow)", cmd=["pytest", "-m", "slow"])
+@fcmd.tool(
+    "pymake",
+    subcommand="ts",
+    help="测试 slow 标记的测试 (pytest -m slow)",
+    cmd=["pytest", "-m", "slow", "-n", "8", "--color=yes", "--durations=10"],
+)
 def test_slow(cwd: Path = Path()) -> None:
     """测试 slow 标记的测试。"""
 
@@ -242,40 +247,6 @@ def test_slow(cwd: Path = Path()) -> None:
 @fcmd.tool("pymake", subcommand="tox", help="多版本测试 (tox -p auto)", cmd=["uvx", "tox", "-p", "auto"])
 def tox_auto(cwd: Path = Path()) -> None:
     """多版本测试。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="git_add_all",
-    help="git add -A",
-    cmd=["git", "add", "-A"],
-    needs=["chk"],
-    hidden=True,
-)
-def _git_add_all(cwd: Path = Path()) -> None:
-    """git add -A（内部 job，需先通过类型检查）。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="git_push",
-    help="git push",
-    cmd=["git", "push"],
-    hidden=True,
-)
-def _git_push(cwd: Path = Path()) -> None:
-    """git push（内部 job）。"""
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="git_push_tags",
-    help="git push --tags",
-    cmd=["git", "push", "--tags"],
-    hidden=True,
-)
-def _git_push_tags(cwd: Path = Path()) -> None:
-    """git push --tags（内部 job）。"""
 
 
 @fcmd.tool(
@@ -290,38 +261,45 @@ def sync(cwd: Path = Path()) -> None:
 
 @fcmd.tool(
     "pymake",
-    subcommand="twine_publish",
-    help="twine upload dist/*",
+    subcommand="upload",
+    help="使用 twine 发布到 PyPI",
     cmd=["uvx", "twine", "upload", "--disable-progress-bar", "dist/*"],
     hidden=True,
 )
-def _twine_publish(cwd: Path = Path()) -> None:
-    """twine upload（内部 job）。"""
+def upload(cwd: Path = Path()) -> None:
+    """使用 twine 发布到 PyPI."""
+
+
+# ============================================================================
+# 推送相关
+# ============================================================================
+
+
+def _push_all_remotes() -> None:
+    """遍历所有 git remote，逐个推送代码 + 标签。
+
+    与 Makefile ``push`` target 行为一致；任一 remote 推送失败立即抛
+    RuntimeError 阻断后续，便于 CI 检测。
+    """
+    import subprocess as sp
+
+    remotes = sp.check_output(["git", "remote"], text=True).split()
+    if not remotes:
+        raise RuntimeError("未检测到 git remote，无法推送")
+    for remote in remotes:
+        print(f"推送 {remote}...", flush=True)
+        sp.run(["git", "push", remote], check=True)
+        sp.run(["git", "push", remote, "--tags"], check=True)
 
 
 @fcmd.tool(
     "pymake",
     subcommand="push",
-    help="推送代码 (清理 + check + push + push tags)",
-    needs=["chk", "c", "git_push", "git_push_tags"],
-    strategy="thread",
+    help="推送代码到所有远程仓库",
+    cmd=_push_all_remotes,
 )
 def push(cwd: Path = Path()) -> None:
-    """推送代码（聚合）。
-
-    依赖 ``chk``（类型检查聚合）+ ``c``（清理工作区）+ ``git_push`` + ``git_push_tags``，
-    与 help 文案「清理 + check + push + push tags」一致。
-    """
-
-
-@fcmd.tool(
-    "pymake",
-    subcommand="upload",
-    help="发布到 PyPI (twine upload)",
-    needs=["twine_publish"],
-)
-def publish_pypi(cwd: Path = Path()) -> None:
-    """发布到 PyPI（聚合）。"""
+    """推送代码到所有远程仓库（含 tags）。"""
 
 
 @fcmd.main("pymake")
