@@ -13,7 +13,6 @@ ignore = [
     "RUF003",  # ambiguous unicode characters in comment
     "RUF012",  # mutable class attributes (intentional for config)
     "SIM108",  # use ternary operator
-    "UP045",
 ]
 select = [
     "ARG", # flake8-unused-arguments
