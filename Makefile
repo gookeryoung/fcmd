@@ -4,10 +4,10 @@
 PACKAGE := fcmd
 COV_THRESHOLD := 95
 
-.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check doc tox bump patch minor major push
+.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check doc tox pub bump patch minor major push
 
 help: ## 显示帮助信息
-	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z].*:.*##/ {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@uv run python -c "import re,sys;ms=[(m.group(1),m.group(2).strip()) for f in sys.argv[1:] for l in open(f,encoding='utf-8') if (m:=re.match(r'^([a-zA-Z][\w -]*):.*?##\s*(.*)',l))];[print(f'  {n:<14} {d}') for n,d in ms]" $(MAKEFILE_LIST)
 
 sync: ## 安装开发依赖
 	uv sync --extra dev
@@ -25,13 +25,13 @@ test: ## 运行测试（不含覆盖率）
 	uv run pytest -m "not slow"
 
 cov: ## 运行测试并检查覆盖率
-	uv run pytest -m "not slow" --cov=$(PACKAGE) --cov-fail-under=$(COV_THRESHOLD)
+	uv run pytest -m "not slow" --cov=$(PACKAGE) --cov-fail-under=$(COV_THRESHOLD) -n auto
 
 lint: ## 代码风格检查 (ruff)
 	uv run ruff check .
 	uv run ruff format --check .
 
-typecheck: ## 类型检查 (pyrefly, 本地平台)
+typecheck: ## 类型检查 (pyrefly)
 	uv run pyrefly check
 
 typecheck-ci: ## 类型检查 (pyrefly, CI 平台 linux — 捕获跨平台问题)
