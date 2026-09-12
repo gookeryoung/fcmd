@@ -196,7 +196,7 @@ def _eval_compare(node: ast.Compare, context: Context) -> Any:
     :class:`ConditionError`。
     """
     left = _eval_node(node.left, context)
-    for op, comparator in zip(node.ops, node.comparators):
+    for op, comparator in zip(node.ops, node.comparators, strict=True):
         right = _eval_node(comparator, context)
         if not _compare_op(op, left, right):
             return False

@@ -125,7 +125,7 @@ def path_diff(p1: Path, p2: Path) -> tuple[list[str], list[str], list[str]]:
     parts2 = list(normalize_path(p2).parts)
     # 计算公共前缀
     common: list[str] = []
-    for a, b in zip(parts1, parts2):
+    for a, b in zip(parts1, parts2, strict=False):
         if a != b:
             break
         common.append(a)

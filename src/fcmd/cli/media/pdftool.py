@@ -232,7 +232,7 @@ def pdf_compress(input_path: Path, output_path: Path = Path("compressed.pdf")) -
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(output_path), garbage=4, deflate=True, clean=True)
@@ -340,7 +340,7 @@ def pdf_extract_text(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     try:
         indices = _resolve_page_indices(pages, doc.page_count)
         if indices is None:
@@ -375,7 +375,7 @@ def pdf_extract_images(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     indices = _resolve_page_indices(pages, doc.page_count)
@@ -424,7 +424,7 @@ def pdf_add_watermark(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     try:
         indices = _resolve_page_indices(pages, doc.page_count)
         if indices is None:
@@ -468,7 +468,7 @@ def pdf_rotate(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     try:
         indices = _resolve_page_indices(pages, doc.page_count)
         if indices is None:
@@ -506,7 +506,7 @@ def pdf_crop(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     left, top, right, bottom = margins
 
     try:
@@ -543,14 +543,15 @@ def pdf_info(input_path: Path) -> None:
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     try:
         print(f"文件: {input_path}")
         print(f"页数: {doc.page_count}")
-        print(f"标题: {doc.metadata.get('title', 'N/A')}")
-        print(f"作者: {doc.metadata.get('author', 'N/A')}")
-        print(f"创建日期: {doc.metadata.get('creationDate', 'N/A')}")
-        print(f"修改日期: {doc.metadata.get('modDate', 'N/A')}")
+        meta = doc.metadata or {}
+        print(f"标题: {meta.get('title', 'N/A')}")
+        print(f"作者: {meta.get('author', 'N/A')}")
+        print(f"创建日期: {meta.get('creationDate', 'N/A')}")
+        print(f"修改日期: {meta.get('modDate', 'N/A')}")
         print(f"文件大小: {input_path.stat().st_size / 1024:.1f} KB")
     finally:
         doc.close()
@@ -586,8 +587,8 @@ def pdf_ocr(  # pragma: no cover - 需系统级 tesseract 可执行文件，测�
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
-    new_doc = fitz.open()  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
+    new_doc = fitz.open()
     try:
         for page in doc:
             pix = page.get_pixmap()
@@ -600,7 +601,7 @@ def pdf_ocr(  # pragma: no cover - 需系统级 tesseract 可执行文件，测�
             new_page = new_doc.new_page(width=page.rect.width, height=page.rect.height)
             new_page.insert_image(new_page.rect, pixmap=pix)
             text_rect = fitz.Rect(0, 0, page.rect.width, page.rect.height)
-            new_page.insert_textbox(text_rect, ocr_text, fontname="china-ss", fontsize=11)
+            new_page.insert_textbox(text_rect, str(ocr_text), fontname="china-ss", fontsize=11)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         new_doc.save(str(output_path))
@@ -663,7 +664,7 @@ def pdf_to_images(
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     indices = _resolve_page_indices(pages, doc.page_count)
@@ -697,7 +698,7 @@ def pdf_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> No
     if not _require_pymupdf():
         return
 
-    doc = fitz.open(str(input_path))  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open(str(input_path))
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(output_path), garbage=4, deflate=True, clean=True)

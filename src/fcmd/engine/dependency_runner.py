@@ -17,9 +17,8 @@ fail-fast 语义：首个异常即取消剩余任务并抛出（匹配 ``asyncio
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-
 from graphlib import TopologicalSorter
+from typing import Any
 
 from fcmd.apis.dag import Graph
 from fcmd.apis.task import TaskResult, TaskSpec

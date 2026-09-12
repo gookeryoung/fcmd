@@ -267,7 +267,7 @@ def merge_csvs(files: list[Path], mode: str = "union") -> tuple[list[str], list[
 
     # 重排每个 CSV 的行到 merged_header 顺序
     merged_rows: list[list[str]] = []
-    for header, rows in zip(headers, all_rows):
+    for header, rows in zip(headers, all_rows, strict=True):
         index_map = {name: idx for idx, name in enumerate(header)}
         indices: list[int | None] = [index_map.get(col) for col in merged_header]
         for row in rows:

@@ -1,7 +1,6 @@
 """timetool - 时间工具。
 
-基于标准库 ``datetime`` 提供时间获取、格式化、Unix 时间戳转换与时区转换。
-Python 3.9+ 自动启用 ``zoneinfo`` 支持命名时区；3.8 仅支持 UTC 与本地时区。
+基于标准库 ``datetime`` 与 ``zoneinfo`` 提供时间获取、格式化、Unix 时间戳转换与时区转换。
 
 示例
 ----
@@ -16,9 +15,9 @@ Python 3.9+ 自动启用 ``zoneinfo`` 支持命名时区；3.8 仅支持 UTC 与
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import fcmd
 from fcmd.console import get_console
@@ -36,27 +35,16 @@ __all__ = [
 # 默认时间格式
 _DEFAULT_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# zoneinfo 可用性：Python 3.9+ 标准库自带，3.8 需 backports.zoneinfo
-if sys.version_info >= (3, 9):  # pragma: no cover (测试环境单版本)
-    from zoneinfo import ZoneInfo
 
-    def _resolve_tz(name: str) -> Any:
-        """3.9+ 通过 zoneinfo 解析时区名；UTC 走捷径避免 zoneinfo 数据查询。"""
-        if name.upper() == "UTC":
-            return timezone.utc
-        try:
-            return ZoneInfo(name)
-        except KeyError as exc:
-            # ZoneInfoNotFoundError 是 KeyError 子类；统一转 ValueError 便于 CLI 捕获
-            raise ValueError(f"无效或不可用的时区: {name}") from exc
-
-else:  # pragma: no cover (测试环境单版本)
-
-    def _resolve_tz(name: str) -> Any:
-        """3.8 不支持命名时区，仅接受 ``UTC``。"""
-        if name.upper() == "UTC":
-            return timezone.utc
-        raise ValueError(f"无效或不可用的时区（命名时区需要 Python 3.9+ 或 backports.zoneinfo）: {name}")
+def _resolve_tz(name: str) -> Any:
+    """解析时区名；UTC 走捷径避免 zoneinfo 数据查询。"""
+    if name.upper() == "UTC":
+        return UTC
+    try:
+        return ZoneInfo(name)
+    except KeyError as exc:
+        # ZoneInfoNotFoundError 是 KeyError 子类；统一转 ValueError 便于 CLI 捕获
+        raise ValueError(f"无效或不可用的时区: {name}") from exc
 
 
 # ============================================================================
@@ -66,7 +54,7 @@ else:  # pragma: no cover (测试环境单版本)
 
 def now_utc() -> datetime:
     """返回当前 UTC 时间（带 tzinfo）。"""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def now_local() -> datetime:

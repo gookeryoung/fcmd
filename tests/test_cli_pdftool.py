@@ -38,7 +38,7 @@ def sample_pdf(tmp_path: Path) -> Path:
     """生成 2 页测试 PDF（用 ASCII 内容避免中文字体提取问题）。"""
     import fitz
 
-    doc = fitz.open()  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open()
     for text in ("Page one content", "Page two content"):
         page = doc.new_page(width=200, height=300)
         page.insert_text((20, 50), text, fontsize=12)
@@ -53,7 +53,7 @@ def sample_pdf_with_image(tmp_path: Path, sample_image: Path) -> Path:
     """生成包含 1 张图片的 PDF。"""
     import fitz
 
-    doc = fitz.open()  # pyrefly: ignore [missing-attribute]
+    doc = fitz.open()
     page = doc.new_page(width=300, height=400)
     page.insert_image(fitz.Rect(20, 20, 120, 120), filename=str(sample_image))
     p = tmp_path / "with_image.pdf"
@@ -69,7 +69,7 @@ def sample_pdf_ab(tmp_path: Path) -> tuple[Path, Path]:
 
     paths: list[Path] = []
     for prefix in ("A", "B"):
-        doc = fitz.open()  # pyrefly: ignore [missing-attribute]
+        doc = fitz.open()
         for num in (1, 2):
             page = doc.new_page(width=200, height=300)
             page.insert_text((20, 50), f"{prefix}{num} content", fontsize=12)
@@ -497,7 +497,7 @@ class TestPageFilterParams:
         assert code == 0
         import fitz
 
-        doc = fitz.open(str(out))  # pyrefly: ignore [missing-attribute]
+        doc = fitz.open(str(out))
         try:
             assert doc.page_count == 2
             assert doc[0].rotation == 90

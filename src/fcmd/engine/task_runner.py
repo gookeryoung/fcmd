@@ -26,10 +26,10 @@ import inspect
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Awaitable, cast
+from typing import Any, cast
 
 from fcmd.apis.context import build_call_args
 from fcmd.apis.errors import TaskFailedError, TaskTimeoutError

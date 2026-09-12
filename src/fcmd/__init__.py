@@ -18,8 +18,6 @@
     print(report["double"])  # [2, 4, 6]
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 __version__ = "0.3.1"

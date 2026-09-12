@@ -122,7 +122,7 @@ async def _run_layer_async(
         return task_ctx, result
 
     results = await asyncio.gather(*[_run_one(name) for name in layer])
-    for name, (_, result) in zip(layer, results):
+    for name, (_, result) in zip(layer, results, strict=True):
         _store_result(result, specs[name], ctx)
 
 

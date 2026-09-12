@@ -21,11 +21,10 @@ __all__ = [
 import inspect
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
-from pathlib import Path
-from typing import Any, cast
-
 from graphlib import CycleError as _GraphCycleError
 from graphlib import TopologicalSorter
+from pathlib import Path
+from typing import Any, cast
 
 from .context import is_context_annotation
 from .errors import CycleError, DuplicateTaskError, MissingDependencyError

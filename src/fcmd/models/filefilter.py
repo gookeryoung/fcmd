@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import fnmatch
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 __all__ = ["IgnoreSpec", "should_ignore", "to_shutil_ignore"]
 

@@ -20,26 +20,25 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from collections.abc import Callable, Coroutine, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Generator, Generic, List, Literal, Mapping, Union, cast
-
-from fcmd._compat import TypeVar
+from typing import Any, Literal, TypeVar, cast
 
 T = TypeVar("T", default=Any)
 
 # 任务可调用对象可以是同步或异步的。显式保留联合类型，让类型检查器理解两种形态。
-TaskFn = Union[Callable[..., T], Callable[..., Coroutine[Any, Any, T]]]
+TaskFn = Callable[..., T] | Callable[..., Coroutine[Any, Any, T]]
 
 # 跨任务结果映射。值刻意使用 ``Any``，因为不同任务返回不同类型；
 # 单任务类型由函数签名本身保留。
 Context = Mapping[str, Any]
 
 # 命令类型支持 list[str] / str / callable
-TaskCmd = Union[List[str], str, Callable[..., Any]]
+TaskCmd = list[str] | str | Callable[..., Any]
 
 # 条件判断函数类型：接收依赖上下文（可能为空映射），返回是否应执行。
 Condition = Callable[[Context], bool]
@@ -190,7 +189,7 @@ class TaskStatus(Enum):
 
 
 @dataclass
-class TaskResult(Generic[T]):
+class TaskResult[T]:
     """运行期间产生的可变单任务记录。
 
     参数
@@ -246,7 +245,7 @@ class TaskEvent:
 # TaskSpec
 # ---------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class TaskSpec(Generic[T]):
+class TaskSpec[T]:
     """单个 DAG 节点的不可变描述。
 
     参数
@@ -425,7 +424,7 @@ class TaskSpec(Generic[T]):
 def _env_and_cwd(
     env: Mapping[str, str] | None,
     cwd: Path | None,
-) -> Generator[None, None, None]:
+) -> Generator[None]:
     """临时设置环境变量与工作目录。
 
     ``os.environ`` 与 ``os.chdir`` 是进程级全局状态，在 thread/async 策略下

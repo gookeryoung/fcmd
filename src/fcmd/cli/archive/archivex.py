@@ -21,7 +21,6 @@ import gzip
 import lzma
 import shutil
 import subprocess
-import sys
 import tarfile
 import zipfile
 from pathlib import Path
@@ -190,10 +189,7 @@ def extract_archive(filepath: Path, output: Path) -> None:
     elif fmt == "tar":
         with tarfile.open(filepath) as tf:
             # Python 3.12+ 要求 filter 参数（PEP 706），低版本默认无过滤
-            if sys.version_info >= (3, 12):  # pragma: no cover
-                tf.extractall(output, filter="data")
-            else:
-                tf.extractall(output)
+            tf.extractall(output, filter="data")
     elif fmt == "gz":
         _extract_single(filepath, output, gzip.open)
     elif fmt == "bz2":

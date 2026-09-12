@@ -12,8 +12,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import fcmd
 from fcmd.console import get_console

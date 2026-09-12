@@ -8,8 +8,7 @@
 
 from __future__ import annotations
 
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -35,8 +34,6 @@ def _extract_user_lines(out: str) -> list[str]:
 
 def _named_tz_available(name: str) -> bool:
     """检查命名时区在当前平台是否可用（Windows 默认无 tzdata 包时不可用）。"""
-    if sys.version_info < (3, 9):
-        return False
     try:
         from zoneinfo import ZoneInfo
 
@@ -159,7 +156,7 @@ class TestUnixConversion:
 
     def test_to_unix_known_value(self) -> None:
         """已知 Unix 时间戳转换（2026-07-29 12:30:00 UTC = 1785328200）。"""
-        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=UTC)
         ts = to_unix(dt)
         assert ts == 1785328200
 
@@ -192,7 +189,7 @@ class TestConvertTimezone:
 
     def test_utc_to_utc(self) -> None:
         """UTC 转 UTC 保持不变。"""
-        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=UTC)
         converted = convert_timezone(dt, "UTC")
         offset = converted.utcoffset()
         assert offset is not None
@@ -202,7 +199,7 @@ class TestConvertTimezone:
     @_skip_no_shanghai
     def test_aware_to_named_tz(self) -> None:
         """aware datetime 转命名时区保持时刻。"""
-        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=UTC)
         converted = convert_timezone(dt, "Asia/Shanghai")
         # Asia/Shanghai 是 UTC+8
         assert converted.hour == 20
@@ -218,7 +215,7 @@ class TestConvertTimezone:
 
     def test_invalid_tz_raises(self) -> None:
         """无效时区名抛 ValueError（_resolve_tz 将 KeyError 统一包装）。"""
-        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2026, 7, 29, 12, 30, 0, tzinfo=UTC)
         with pytest.raises(ValueError, match="无效或不可用的时区"):
             convert_timezone(dt, "Invalid/Zone")
 

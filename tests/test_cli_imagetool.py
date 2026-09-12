@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict
 
 import pytest
 
@@ -113,7 +112,7 @@ class TestImagetoolHelpers:
     def test_apply_single_exif_set_valid(self) -> None:
         """_apply_single_exif_set 正确解析 KEY=VALUE。"""
 
-        class FakeExif(Dict[int, object]):
+        class FakeExif(dict[int, object]):
             """模拟 PIL.Exif 模拟对象。"""
 
         exif: FakeExif = FakeExif()
@@ -123,7 +122,7 @@ class TestImagetoolHelpers:
     def test_apply_single_exif_set_invalid_no_eq(self, capsys: pytest.CaptureFixture[str]) -> None:
         """缺少 = 的项被跳过并打印提示。"""
 
-        class FakeExif(Dict[int, object]):
+        class FakeExif(dict[int, object]):
             pass
 
         exif: FakeExif = FakeExif()
@@ -135,7 +134,7 @@ class TestImagetoolHelpers:
     def test_apply_single_exif_set_invalid_tag(self, capsys: pytest.CaptureFixture[str]) -> None:
         """非数字标签号被跳过并打印提示。"""
 
-        class FakeExif(Dict[int, object]):
+        class FakeExif(dict[int, object]):
             pass
 
         exif: FakeExif = FakeExif()
@@ -147,7 +146,7 @@ class TestImagetoolHelpers:
     def test_apply_exif_modifications_clear_then_set(self) -> None:
         """clear 先清空，set 再写入。"""
 
-        class FakeExif(Dict[int, object]):
+        class FakeExif(dict[int, object]):
             pass
 
         exif: FakeExif = FakeExif({1: "old"})
@@ -159,7 +158,7 @@ class TestImagetoolHelpers:
     def test_apply_exif_modifications_noop(self) -> None:
         """无 set 无 clear 返回 False。"""
 
-        class FakeExif(Dict[int, object]):
+        class FakeExif(dict[int, object]):
             pass
 
         exif: FakeExif = FakeExif({1: "old"})

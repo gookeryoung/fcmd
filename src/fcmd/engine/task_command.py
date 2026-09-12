@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from typing import Any, List, Union, cast
+from typing import Any, cast
 
 from fcmd.apis.task import TaskSpec
 from fcmd.console import get_console
@@ -69,7 +69,7 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
 
     try:
         result = subprocess.run(
-            cast(Union[str, List[str]], cmd),
+            cast(str | list[str], cmd),
             shell=not is_list,
             cwd=cwd,
             env=run_env,
@@ -120,4 +120,4 @@ def run_command(spec: TaskSpec[Any]) -> Any:
     cmd = spec.cmd
     if callable(cmd) and not isinstance(cmd, (list, str)):
         return _run_callable_command(cmd, spec.verbose, spec.cwd)
-    return _run_subprocess_command(cast(Union[str, List[str]], cmd), spec)
+    return _run_subprocess_command(cast(str | list[str], cmd), spec)

@@ -240,7 +240,7 @@ class TestRoundTrip:
         for rgb in [(255, 0, 0), (0, 255, 0), (0, 0, 255), (128, 128, 128), (255, 87, 51)]:
             hsl = rgb_to_hsl(*rgb)
             back = hsl_to_rgb(*hsl)
-            for a, b in zip(rgb, back):
+            for a, b in zip(rgb, back, strict=True):
                 assert abs(a - b) <= 1
 
 

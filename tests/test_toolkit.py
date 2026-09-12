@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, List, Literal
+from typing import Any, Literal
 
 import pytest
 
@@ -535,7 +535,7 @@ def test_resolve_hints_failure_returns_empty() -> None:
 
 def test_is_list_annotation_list_origin() -> None:
     """list[X] 注解识别。"""
-    ann = List[int]
+    ann = list[int]
     assert _is_list_annotation(ann) is True
 
 
@@ -557,8 +557,8 @@ def test_is_list_annotation_non_list() -> None:
 
 def test_list_inner_type_from_args() -> None:
     """list[X].__args__ 提取内部类型。"""
-    assert _list_inner_type(List[int]) is int
-    assert _list_inner_type(List[Path]) is Path
+    assert _list_inner_type(list[int]) is int
+    assert _list_inner_type(list[Path]) is Path
 
 
 def test_list_inner_type_from_str() -> None:
@@ -681,15 +681,14 @@ def test_build_parser_bool_default_true_store_false() -> None:
     assert args_off.keep is False
 
 
-def test_unwrap_optional_typing_union() -> None:
-    """typing.Union[X, None] 解包为 X。"""
-    from typing import Optional, Union
+def test_unwrap_optional_union_type() -> None:
+    """Union[X, None] / X | None 解包为 X。"""
 
-    assert _unwrap_optional(Union[int, None]) is int
-    assert _unwrap_optional(Optional[str]) is str
-    # Union[X, Y, None] 多参数不处理（原样返回）
-    multi = _unwrap_optional(Union[int, str, None])
-    assert multi == Union[int, str, None]
+    assert _unwrap_optional(int | None) is int
+    assert _unwrap_optional(str | None) is str
+    # X | Y | None 多参数不处理（原样返回）
+    multi = _unwrap_optional(int | str | None)
+    assert multi == int | str | None
 
 
 def test_unwrap_optional_str_pep604() -> None:
@@ -856,7 +855,7 @@ def test_build_parser_optional_list_with_default() -> None:
     from fcmd.apis.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
-    _add_optional_arg(parser, "items", List[str], ["default"])
+    _add_optional_arg(parser, "items", list[str], ["default"])
     args = parser.parse_args(["--items", "a", "b"])
     assert args.items == ["a", "b"]
 
@@ -868,7 +867,7 @@ def test_build_parser_optional_list_int() -> None:
     from fcmd.apis.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
-    _add_optional_arg(parser, "nums", List[int], [1])
+    _add_optional_arg(parser, "nums", list[int], [1])
     args = parser.parse_args(["--nums", "1", "2"])
     assert args.nums == [1, 2]
 
@@ -880,7 +879,7 @@ def test_build_parser_optional_list_float() -> None:
     from fcmd.apis.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
-    _add_optional_arg(parser, "nums", List[float], [1.0])
+    _add_optional_arg(parser, "nums", list[float], [1.0])
     args = parser.parse_args(["--nums", "1.5", "2.5"])
     assert args.nums == [1.5, 2.5]
 
@@ -892,7 +891,7 @@ def test_build_parser_optional_list_path() -> None:
     from fcmd.apis.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
-    _add_optional_arg(parser, "paths", List[Path], [Path("a")])
+    _add_optional_arg(parser, "paths", list[Path], [Path("a")])
     args = parser.parse_args(["--paths", "/tmp/x", "/tmp/y"])
     assert args.paths == [Path("/tmp/x"), Path("/tmp/y")]
 
@@ -1361,7 +1360,7 @@ def test_is_literal_annotation_false() -> None:
     """非 Literal 注解识别为 False。"""
     assert _is_literal_annotation(int) is False
     assert _is_literal_annotation(str) is False
-    assert _is_literal_annotation(List[int]) is False
+    assert _is_literal_annotation(list[int]) is False
 
 
 def test_literal_choices_extracts_args() -> None:
@@ -1601,7 +1600,7 @@ def test_build_parser_positional_list_unknown_inner() -> None:
     import argparse
 
     parser = argparse.ArgumentParser()
-    _add_positional_arg(parser, "items", List[bool])
+    _add_positional_arg(parser, "items", list[bool])
     # bool 不是 Path/int/float/str，kwargs 不含 type，argparse 默认按 str 解析
     args = parser.parse_args(["true", "false"])
     assert args.items == ["true", "false"]
@@ -1612,7 +1611,7 @@ def test_build_parser_optional_list_unknown_inner() -> None:
     import argparse
 
     parser = argparse.ArgumentParser()
-    _add_optional_arg(parser, "items", List[bool], None)
+    _add_optional_arg(parser, "items", list[bool], None)
     # bool 不是 Path/int/float/str，kwargs 不含 type 转换，argparse 默认按 str 解析
     args = parser.parse_args(["--items", "true", "false"])
     assert args.items == ["true", "false"]
