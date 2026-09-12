@@ -279,6 +279,10 @@ class TestGetLsDynaCommand:
     def test_mpp_sp_intel_mpi_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """MPP 单精度 + Intel MPI（Windows）。"""
         monkeypatch.setattr(sys, "platform", "win32")
+        # shutil.which 在模块导入时根据真实 sys.platform 设置 _winapi，
+        # 不能只 patch sys.platform 就让它走 Windows 分支——需要
+        # 同时 mock 掉 which 返回 None 让 solver 发现走回退路径。
+        monkeypatch.setattr("shutil.which", lambda _n: None)
         config = LsDynaConfig(
             input_file="test.k",
             parallel="mpp",
@@ -296,6 +300,8 @@ class TestGetLsDynaCommand:
     def test_mpp_dp_intel_mpi_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """MPP 双精度 + Intel MPI（Linux）。"""
         monkeypatch.setattr(sys, "platform", "linux")
+        # 同上——mock shutil.which 避免真实探测
+        monkeypatch.setattr("shutil.which", lambda _n: None)
         config = LsDynaConfig(
             input_file="test.k",
             parallel="mpp",
