@@ -213,12 +213,13 @@ def test_n_cpu(cwd: Path = Path()) -> None:
         "pytest",
         "-m",
         "not slow",
+        "-n",
+        "auto",
         "--cov=fcmd",
         f"--cov-fail-under={_COVERAGE_THRESHOLD}",
         "--color=yes",
         "--durations=10",
     ],
-    needs=["c"],
 )
 def test_coverage(cwd: Path = Path()) -> None:
     """测试并生成覆盖率（内部 job）。"""

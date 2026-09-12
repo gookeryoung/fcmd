@@ -229,11 +229,6 @@ class TestPymakeHybridTasks:
         assert "--cov-fail-under=95" in spec.cmd
         assert spec.hidden is False
 
-    def test_cov_needs_c(self) -> None:
-        """cov 应依赖 c（先清理）。"""
-        spec = get_tool("pymake", "cov")
-        assert "c" in spec.needs
-
     def test_bump_cmd_uses_patch(self) -> None:
         """bump 应使用 patch。"""
         spec = get_tool("pymake", "bump")
