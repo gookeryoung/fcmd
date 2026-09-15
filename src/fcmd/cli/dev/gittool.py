@@ -7,7 +7,8 @@
     fcmd gittool a -m "feat: 新功能"   # 添加并提交
     fcmd gittool i                       # 初始化并提交
     fcmd gittool isub                    # 初始化所有子目录的 Git 仓库
-    fcmd gittool c                       # 清理未跟踪文件并查看状态
+    fcmd gittool c                       # 清理未跟踪文件（保留排除目录）并查看状态
+    fcmd gittool ca                      # 清理全部未跟踪文件（含排除目录）
     fcmd gittool p                       # 推送
     fcmd gittool pl                      # 拉取
 """
@@ -166,6 +167,16 @@ def clean() -> None:
 )
 def c() -> None:
     """清理未跟踪文件并查看 Git 状态。"""
+
+
+@fcmd.tool(
+    "gittool",
+    subcommand="ca",
+    help="清理全部未跟踪文件（含排除目录）",
+    cmd=["git", "clean", "-xfd", "."],
+)
+def ca() -> None:
+    """清理全部未跟踪文件，等同于 ``git clean -xfd .``，不保留排除目录。"""
 
 
 @fcmd.tool("gittool", subcommand="p", help="推送", cmd=["git", "push"])

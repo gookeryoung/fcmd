@@ -131,6 +131,22 @@ class TestGittool:
         result = subprocess.run(["git", "log", "--oneline"], capture_output=True, text=True, check=True)
         assert "chore: update" in result.stdout
 
+    def test_gittool_ca_removes_excluded_dirs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """gittool ca 会清理 EXCLUDE_DIRS 中的目录（如 .venv）。"""
+        monkeypatch.chdir(tmp_path)
+        subprocess.run(["git", "init"], check=True, capture_output=True)
+        # 放入排除目录中的一个（.venv）以及一个普通未跟踪文件
+        (tmp_path / ".venv").mkdir()
+        (tmp_path / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin", encoding="utf-8")
+        (tmp_path / "extra.log").write_text("junk", encoding="utf-8")
+        assert (tmp_path / ".venv").is_dir()
+        assert (tmp_path / "extra.log").is_file()
+        code = run_tool("gittool", ["ca"])
+        assert code == 0
+        # 两个都应该被删除
+        assert not (tmp_path / ".venv").exists(), "ca 应删除 .venv 排除目录"
+        assert not (tmp_path / "extra.log").exists(), "ca 应删除普通未跟踪文件"
+
 
 # ---------------------------------------------------------------------- #
 # gittool cmd 子命令验证
@@ -171,6 +187,16 @@ class TestGittoolCmdSpecs:
         spec = _TOOL_REGISTRY["gittool"]["pl"]
         assert spec.cmd is not None
         assert "pull" in spec.cmd
+
+    def test_ca_is_cmd_without_exclude(self) -> None:
+        """ca 是 cmd 类型子命令，直接 git clean -xfd . 不含 -e 排除。"""
+        from fcmd.apis.toolkit import _TOOL_REGISTRY
+
+        spec = _TOOL_REGISTRY["gittool"]["ca"]
+        assert spec.cmd is not None
+        assert spec.cmd == ("git", "clean", "-xfd", ".")
+        assert "-e" not in spec.cmd
+        assert spec.hidden is not True  # ca 不是隐藏命令
 
 
 # ============================================================================ #
