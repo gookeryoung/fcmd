@@ -164,6 +164,7 @@ _RUSTUP_DOWNLOAD_URL_WINDOWS: str = "https://static.rust-lang.org/rustup/dist/x8
 
 _BUN_NPM_REGISTRY: str = "https://registry.npmmirror.com"
 _BUN_INSTALL_SCRIPT_URL: str = "https://bun.sh/install"
+_PLAYWRIGHT_DOWNLOAD_HOST: str = "https://npmmirror.com/mirrors/playwright"
 
 
 # ============================================================================
@@ -422,6 +423,8 @@ def setup_js_env() -> None:
     """
     _setup_bun_mirror()
     _install_bun()
+
+    persist_env("PLAYWRIGHT_DOWNLOAD_HOST", _PLAYWRIGHT_DOWNLOAD_HOST)
 
 
 # ============================================================================
