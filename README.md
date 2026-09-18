@@ -86,7 +86,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-57 个工具模块，按用途分组：
+58 个工具模块，按用途分组：
 
 ### 项目构建与发布
 
@@ -168,6 +168,7 @@ fcmd completion --shell fish | source         # fish
 | `reseticoncache` | - | 重置 Windows 图标缓存（仅 Windows） |
 | `iptool` | - | IP 地址工具（本机 IP/公网 IP/子网计算） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
+| `websave` | - | 网页内容保存（主页及同源相关子页面，过滤广告/静态资源） |
 | `lscalc` | - | LS-DYNA 计算（run/mpi/status） |
 | `dockercmd` | - | Docker 操作（login/push/pull，镜像仓库通用） |
 

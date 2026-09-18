@@ -1373,6 +1373,7 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("timetool", "fcmd.cli.calc.timetool"),
     ("txttool", "fcmd.cli.text.txttool"),
     ("urltool", "fcmd.cli.conv.urltool"),
+    ("websave", "fcmd.cli.net.websave"),
     ("which", "fcmd.cli.system.which"),
     ("writefile", "fcmd.cli.fileops.writefile"),
     ("xmltool", "fcmd.cli.data.xmltool"),
