@@ -4,7 +4,7 @@
 PACKAGE := fcmd
 COV_THRESHOLD := 95
 
-.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check doc tox pub bump patch minor major push
+.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check doc tox pub bump patch minor major push e2e e2e-smoke
 
 help: ## 显示帮助信息
 	@uv run python -c "import re,sys;ms=[(m.group(1),m.group(2).strip()) for f in sys.argv[1:] for l in open(f,encoding='utf-8') if (m:=re.match(r'^([a-zA-Z][\w -]*):.*?##\s*(.*)',l))];[print(f'  {n:<14} {d}') for n,d in ms]" $(MAKEFILE_LIST)
@@ -60,3 +60,9 @@ pub:  ## 推送到pypi
 push: ## 推送代码到所有远程仓库
 	@uv run python -c "import subprocess as sp; [print(f'\u63a8\u9001 {r}...',flush=True) or (sp.run(['git','push',r],check=True) and sp.run(['git','push',r,'--tags'],check=True)) for r in sp.check_output(['git','remote'],text=True).split()]"
 
+
+e2e-smoke: ## 快速 e2e 冒烟（仅 --help/入口，约 10s）
+	uv run pytest -m "e2e_smoke" -v
+
+e2e: ## 完整 e2e 测试（subprocess + tmp_path，约 30s）
+	uv run pytest -m "e2e or e2e_smoke" -v
