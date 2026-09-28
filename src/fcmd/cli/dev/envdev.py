@@ -26,10 +26,12 @@ from fcmd.models import run_command
 __all__ = [
     "install_linux_docker",
     "install_linux_fonts",
+    "install_linux_openssh",
     "install_linux_qt_libs",
     "setup_all_env",
     "setup_conda_mirror",
     "setup_js_env",
+    "setup_linux_remote",
     "setup_linux_system_mirror",
     "setup_python_env",
     "setup_python_mirror",
@@ -497,6 +499,138 @@ def install_linux_docker() -> None:
     run_command(["sudo", "apt", "install", "-y", "docker-compose-v2"])
     run_command(["sudo", "usermod", "-aG", "docker", getpass.getuser()])
     print("Docker 安装完成（需重新登录以生效 docker 用户组）")
+
+
+# ============================================================================
+# OpenSSH 服务安装
+# ============================================================================
+
+
+@fcmd.tool("envdev", subcommand="install-openssh", help="安装并启动 OpenSSH Server", hidden=True)
+def install_linux_openssh() -> None:
+    """安装 OpenSSH Server（仅 Linux），enable 并立即启动 sshd。
+
+    已安装时跳过 apt 安装，仅确保 systemd 服务处于 enable + active 状态。
+    """
+    if not sys.platform.startswith("linux"):
+        print("install_linux_openssh: 仅在 Linux 上支持")
+        return
+
+    if shutil.which("sshd") is None:
+        run_command(["sudo", "apt", "update"])
+        run_command(["sudo", "apt", "install", "-y", "openssh-server"])
+    else:
+        print("openssh-server 已安装，跳过安装")
+
+    run_command(["sudo", "systemctl", "enable", "--now", "ssh"])
+    print("OpenSSH Server 已启用（systemd 服务 ssh）")
+
+
+# ============================================================================
+# 远程桌面（xrdp + Xfce）
+# ============================================================================
+
+_GNOME_REMOTE_DESKTOP_PKGS: list[str] = [
+    "gnome-remote-desktop",
+]
+
+_XFCE_DESKTOP_PKGS: list[str] = [
+    "xfce4",
+    "xfce4-goodies",
+    "xorgxrdp",
+]
+
+_XSESSION_XFCE4: str = "xfce4-session\n"
+
+
+@fcmd.tool("envdev", subcommand="uninstall-gnome-remote", help="卸载 GNOME 远程桌面", hidden=True)
+def _uninstall_gnome_remote_desktop() -> None:
+    """禁用并卸载 GNOME 远程桌面（仅 Linux），避免与 xrdp 冲突。"""
+    if not sys.platform.startswith("linux"):
+        return
+
+    # 先检查 gnome-remote-desktop 是否存在，不存在则跳过
+    if shutil.which("gnome-remote-desktop") is None:
+        print("gnome-remote-desktop 未安装，跳过卸载")
+        return
+
+    print("禁用 gnome-remote-desktop 服务...")
+    run_command(["sudo", "systemctl", "disable", "--now", "gnome-remote-desktop"])
+    print("卸载 gnome-remote-desktop...")
+    run_command(["sudo", "apt", "purge", "-y", *_GNOME_REMOTE_DESKTOP_PKGS])
+    run_command(["sudo", "apt", "autoremove", "-y"])
+
+
+@fcmd.tool("envdev", subcommand="install-xfce", help="安装 Xfce 桌面 + xorgxrdp", hidden=True)
+def _install_xfce_desktop() -> None:
+    """安装轻量 Xfce 桌面环境及 xorgxrdp（仅 Linux），写入 ~/.xsession。"""
+    if not sys.platform.startswith("linux"):
+        return
+
+    print("更新包索引...")
+    run_command(["sudo", "apt", "update"])
+    print("安装 Xfce 桌面 + xorgxrdp...")
+    run_command(["sudo", "apt", "install", "-y", *_XFCE_DESKTOP_PKGS])
+
+    xsession = Path.home() / ".xsession"
+    xsession.write_text(_XSESSION_XFCE4, encoding="utf-8")
+    xsession.chmod(0o755)
+    print(f"已写入 {xsession}")
+
+
+@fcmd.tool("envdev", subcommand="install-xrdp", help="安装并启动 xrdp", hidden=True)
+def _install_xrdp() -> None:
+    """安装 xrdp（仅 Linux），加入 ssl-cert 用户组并 enable + now 启动。"""
+    if not sys.platform.startswith("linux"):
+        return
+
+    if shutil.which("xrdp") is None:
+        print("安装 xrdp...")
+        run_command(["sudo", "apt", "install", "-y", "xrdp"])
+    else:
+        print("xrdp 已安装，跳过安装")
+
+    run_command(["sudo", "adduser", "xrdp", "ssl-cert"])
+    run_command(["sudo", "systemctl", "enable", "--now", "xrdp"])
+    print("xrdp 已启用（systemd 服务 xrdp）")
+
+
+@fcmd.tool("envdev", subcommand="configure-lightdm", help="配置 lightdm 显示管理器", hidden=True)
+def _configure_lightdm() -> None:
+    """将 lightdm 设为默认显示管理器（仅 Linux）。
+
+    通过 ``debconf-set-selections`` 注入 lightdm 选项后，以 noninteractive
+    模式调用 ``dpkg-reconfigure lightdm``，避免交互式弹窗。最后重启 lightdm。
+    """
+    if not sys.platform.startswith("linux"):
+        return
+
+    print("将 lightdm 设为默认显示管理器...")
+    # 注入 debconf 选择，避免交互式弹窗
+    run_command(
+        ["sudo", "sh", "-c", "echo lightdm | debconf-set-selections && dpkg-reconfigure -f noninteractive lightdm"]
+    )
+    run_command(["sudo", "systemctl", "restart", "lightdm"])
+    print("lightdm 已配置并重启")
+
+
+@fcmd.tool("envdev", subcommand="remote", help="一键配置远程桌面（xrdp + Xfce）")
+def setup_linux_remote() -> None:
+    """一键配置 Linux 远程桌面（仅 Linux）。
+
+    依次执行：卸载 GNOME 远程桌面（切断冲突）、安装 Xfce + xorgxrdp
+    （轻量桌面）、安装并启动 xrdp、配置 lightdm 为默认显示管理器。
+    已安装的组件会跳过对应步骤。
+    """
+    if not sys.platform.startswith("linux"):
+        print("setup_linux_remote: 仅在 Linux 上支持")
+        return
+
+    _uninstall_gnome_remote_desktop()
+    _install_xfce_desktop()
+    _install_xrdp()
+    _configure_lightdm()
+    print("远程桌面配置完成（RDP 端口 3389，SSH 端口 22）")
 
 
 @fcmd.tool("envdev", subcommand="all", help="一键配置所有环境")

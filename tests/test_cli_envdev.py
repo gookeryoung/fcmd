@@ -66,9 +66,9 @@ class TestToolsRegistration:
             assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
 
     def test_envdev_public_subcommands(self) -> None:
-        """envdev 公开子命令应注册（语言级一键命令）。"""
+        """envdev 公开子命令应注册（语言级一键命令 + Linux 远程桌面）。"""
         subs = fx.list_subcommands("envdev")
-        for name in ("python", "js", "rust", "all"):
+        for name in ("python", "js", "rust", "remote", "all"):
             assert name in subs, f"公开子命令 {name!r} 未注册"
 
     def test_envdev_hidden_subcommands(self) -> None:
@@ -83,9 +83,14 @@ class TestToolsRegistration:
             "setup-bun",
             "install-bun",
             "setup-linux-mirror",
+            "install-openssh",
             "install-qt-libs",
             "install-fonts",
             "install-docker",
+            "uninstall-gnome-remote",
+            "install-xfce",
+            "install-xrdp",
+            "configure-lightdm",
         ):
             assert name in subs, f"隐藏子命令 {name!r} 未注册"
 
@@ -480,3 +485,206 @@ class TestEnvdev:
         captured = capsys.readouterr()
         assert "下载" in captured.out
         assert len(calls) == 2  # 下载 + 安装
+
+
+# ============================================================================ #
+# OpenSSH + 远程桌面 测试
+# ============================================================================ #
+class TestOpensshAndRemote:
+    """install_linux_openssh / setup_linux_remote 及 remote 细粒度步骤测试。"""
+
+    # ---------- install_linux_openssh ---------- #
+    def test_install_openssh_non_linux(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """非 Linux 平台调用 install_linux_openssh 打印提示。"""
+        monkeypatch.setattr(sys, "platform", "darwin")
+        fcmd.cli.dev.envdev.install_linux_openssh()
+        captured = capsys.readouterr()
+        assert "仅在 Linux" in captured.out
+
+    def test_install_openssh_already_installed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 sshd 已安装时跳过 apt，仅 enable + now。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: "/usr/sbin/sshd")
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev.install_linux_openssh()
+        captured = capsys.readouterr()
+        assert "已安装" in captured.out
+        assert len(calls) == 1
+        assert calls[0] == ["sudo", "systemctl", "enable", "--now", "ssh"]
+
+    def test_install_openssh_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 sshd 未安装时 apt update + install + enable。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev.install_linux_openssh()
+        captured = capsys.readouterr()
+        assert "OpenSSH Server 已启用" in captured.out
+        assert any("apt" in c and "update" in c for c in calls)
+        assert any("openssh-server" in c for c in calls)
+        assert calls[-1] == ["sudo", "systemctl", "enable", "--now", "ssh"]
+
+    # ---------- _uninstall_gnome_remote_desktop ---------- #
+    def test_uninstall_gnome_remote_non_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 Linux 平台静默跳过（无输出）。"""
+        monkeypatch.setattr(sys, "platform", "win32")
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+        fcmd.cli.dev.envdev._uninstall_gnome_remote_desktop()
+        assert calls == []
+
+    def test_uninstall_gnome_remote_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 gnome-remote-desktop 未安装时跳过。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev._uninstall_gnome_remote_desktop()
+        captured = capsys.readouterr()
+        assert "未安装" in captured.out
+        assert calls == []
+
+    def test_uninstall_gnome_remote_installed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 gnome-remote-desktop 已安装时 disable + purge + autoremove。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(
+            "fcmd.cli.dev.envdev.shutil.which",
+            lambda _: "/usr/libexec/gnome-remote-desktop-daemon",
+        )
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev._uninstall_gnome_remote_desktop()
+        assert any("disable" in c and "gnome-remote-desktop" in c for c in calls)
+        assert any("purge" in c and "gnome-remote-desktop" in c for c in calls)
+        assert any("autoremove" in c for c in calls)
+
+    # ---------- _install_xfce_desktop ---------- #
+    def test_install_xfce_non_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 Linux 平台静默跳过。"""
+        monkeypatch.setattr(sys, "platform", "darwin")
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+        fcmd.cli.dev.envdev._install_xfce_desktop()
+        assert calls == []
+
+    def test_install_xfce_linux(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上安装 Xfce + xorgxrdp，写入 ~/.xsession。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev._install_xfce_desktop()
+        captured = capsys.readouterr()
+        assert "已写入" in captured.out
+        assert any("apt" in c and "update" in c for c in calls)
+        assert any("xfce4" in c for c in calls)
+        xsession = tmp_path / ".xsession"
+        assert xsession.exists()
+        assert xsession.read_text(encoding="utf-8") == "xfce4-session\n"
+
+    # ---------- _install_xrdp ---------- #
+    def test_install_xrdp_non_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 Linux 平台静默跳过。"""
+        monkeypatch.setattr(sys, "platform", "win32")
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+        fcmd.cli.dev.envdev._install_xrdp()
+        assert calls == []
+
+    def test_install_xrdp_already_installed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 xrdp 已安装时跳过 apt，只 adduser + enable。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: "/usr/sbin/xrdp")
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev._install_xrdp()
+        captured = capsys.readouterr()
+        assert "已安装" in captured.out
+        assert any(c[0] == "sudo" and c[1] == "adduser" for c in calls)
+        assert any("enable" in c and "xrdp" in c for c in calls)
+
+    def test_install_xrdp_not_installed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 xrdp 未安装时 apt install + adduser + enable。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev._install_xrdp()
+        captured = capsys.readouterr()
+        assert "xrdp 已启用" in captured.out
+        assert any("install" in c and "xrdp" in c for c in calls)
+
+    # ---------- _configure_lightdm ---------- #
+    def test_configure_lightdm_non_linux(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 Linux 平台静默跳过。"""
+        monkeypatch.setattr(sys, "platform", "darwin")
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+        fcmd.cli.dev.envdev._configure_lightdm()
+        assert calls == []
+
+    def test_configure_lightdm_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """Linux 上 debconf + dpkg-reconfigure + restart lightdm。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev._configure_lightdm()
+        captured = capsys.readouterr()
+        assert "lightdm 已配置" in captured.out
+        assert any("debconf-set-selections" in " ".join(c) for c in calls)
+        assert any("restart" in c and "lightdm" in c for c in calls)
+
+    # ---------- setup_linux_remote 编排 ---------- #
+    def test_setup_remote_non_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """非 Linux 平台调用 setup_linux_remote 打印提示。"""
+        monkeypatch.setattr(sys, "platform", "win32")
+        fcmd.cli.dev.envdev.setup_linux_remote()
+        captured = capsys.readouterr()
+        assert "仅在 Linux" in captured.out
+
+    def test_setup_remote_orchestration(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Linux 上 setup_linux_remote 依次调用四个细粒度步骤。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "fcmd.cli.dev.envdev._uninstall_gnome_remote_desktop",
+            lambda: calls.append("uninstall"),
+        )
+        monkeypatch.setattr("fcmd.cli.dev.envdev._install_xfce_desktop", lambda: calls.append("xfce"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._install_xrdp", lambda: calls.append("xrdp"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev._configure_lightdm", lambda: calls.append("lightdm"))
+
+        fcmd.cli.dev.envdev.setup_linux_remote()
+        assert calls == ["uninstall", "xfce", "xrdp", "lightdm"]
+        captured = capsys.readouterr()
+        assert "远程桌面配置完成" in captured.out
