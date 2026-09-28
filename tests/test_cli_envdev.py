@@ -263,11 +263,14 @@ class TestEnvdev:
     def test_setup_all_env_orchestration(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """setup_all_env 依次调用 Python/JS/Rust 一键命令与 Linux 专用步骤。"""
+        """setup_all_env 依次调用各语言一键命令与 Linux 专用步骤。"""
         calls: list[str] = []
         monkeypatch.setattr("fcmd.cli.dev.envdev.setup_python_env", lambda m: calls.append(f"python:{m}"))
         monkeypatch.setattr("fcmd.cli.dev.envdev.setup_js_env", lambda: calls.append("js"))
         monkeypatch.setattr("fcmd.cli.dev.envdev.setup_rust_env", lambda m, v: calls.append(f"rust:{m}:{v}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_go_env", lambda **_kw: calls.append("go"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_java_env", lambda m: calls.append(f"java:{m}"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_node_env", lambda **_kw: calls.append("node"))
         monkeypatch.setattr("fcmd.cli.dev.envdev.setup_linux_system_mirror", lambda: calls.append("linux-mirror"))
         monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_qt_libs", lambda: calls.append("qt"))
         monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_fonts", lambda: calls.append("fonts"))
@@ -278,6 +281,9 @@ class TestEnvdev:
             "python:tsinghua",
             "js",
             "rust:tsinghua:nightly",
+            "go",
+            "java:tsinghua",
+            "node",
             "linux-mirror",
             "qt",
             "fonts",

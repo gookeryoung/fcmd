@@ -4,6 +4,9 @@
 Qt 依赖库、中文字体与 Docker。细粒度步骤命令（setup-* / install-*）为隐藏
 子命令，可单独调用也可由一键命令编排。
 
+本模块是门面层：语言级一键命令、Linux 专用命令、远程桌面命令在此定义；
+公共辅助提取自 :mod:`fcmd.cli.dev.envdev_core`。
+
 示例
 ----
     fcmd envdev python --mirror tsinghua          # 一键配置 Python 环境（pip/uv + Conda）
@@ -15,12 +18,23 @@ Qt 依赖库、中文字体与 Docker。细粒度步骤命令（setup-* / instal
 from __future__ import annotations
 
 import getpass
+import os
 import shutil
 import sys
 from pathlib import Path
 
 import fcmd
 from fcmd.cli._env_persist import persist_env
+from fcmd.cli.dev.envdev_core import (
+    MirrorSpec,
+    apply_mirror_config,
+    is_dry_run,
+    mirror_supported,
+    pip_config_path,
+)
+from fcmd.cli.dev.envdev_go import setup_go_env
+from fcmd.cli.dev.envdev_java import setup_java_env
+from fcmd.cli.dev.envdev_node import setup_node_env
 from fcmd.models import run_command
 
 __all__ = [
@@ -170,19 +184,7 @@ _PLAYWRIGHT_DOWNLOAD_HOST: str = "https://npmmirror.com/mirrors/playwright"
 
 
 # ============================================================================
-# 私有辅助
-# ============================================================================
-
-
-def _pip_config_path() -> Path:
-    """返回当前平台的 pip 配置文件路径。"""
-    if sys.platform.startswith("linux"):
-        return Path.home() / ".pip" / "pip.conf"
-    return Path.home() / "pip" / "pip.ini"
-
-
-# ============================================================================
-# 镜像源配置子命令（隐藏，供语言级一键命令编排）
+# Python 镜像源
 # ============================================================================
 
 
@@ -199,7 +201,7 @@ def setup_python_mirror(mirror: str = "aliyun") -> None:
     mirror:
         镜像源名称：tsinghua/aliyun/huaweicloud/ustc/zju（默认 aliyun）
     """
-    if mirror not in _PIP_INDEX_URLS:
+    if not mirror_supported(mirror, _PIP_INDEX_URLS):
         print(f"未知 Python 镜像源: {mirror}")
         return
 
@@ -207,18 +209,20 @@ def setup_python_mirror(mirror: str = "aliyun") -> None:
     trusted_host = _PIP_TRUSTED_HOSTS[mirror]
 
     print(f"配置 Python 镜像源: {mirror}")
-    persist_env("PIP_INDEX_URL", index_url)
-    persist_env("PIP_TRUSTED_HOSTS", trusted_host)
-    persist_env("UV_INDEX_URL", index_url)
-    persist_env("UV_PYTHON_INSTALL_MIRROR", _UV_PYTHON_INSTALL_MIRROR)
-    persist_env("UV_HTTP_TIMEOUT", "600")
-    persist_env("UV_LINK_MODE", "copy")
 
-    config_path = _pip_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    content = f"[global]\nindex-url = {index_url}\ntrusted-host = {trusted_host}\n"
-    config_path.write_text(content, encoding="utf-8")
-    print(f"Python 镜像源已配置: {mirror} -> {config_path}")
+    spec = MirrorSpec(
+        env_vars={
+            "PIP_INDEX_URL": index_url,
+            "PIP_TRUSTED_HOSTS": trusted_host,
+            "UV_INDEX_URL": index_url,
+            "UV_PYTHON_INSTALL_MIRROR": _UV_PYTHON_INSTALL_MIRROR,
+            "UV_HTTP_TIMEOUT": "600",
+            "UV_LINK_MODE": "copy",
+        },
+        config_path=pip_config_path(),
+        config_content=f"[global]\nindex-url = {index_url}\ntrusted-host = {trusted_host}\n",
+    )
+    apply_mirror_config(spec, persist_fn=persist_env, label="Python")
 
 
 @fcmd.tool("envdev", subcommand="setup-conda", help="配置 Conda 镜像源", hidden=True)
@@ -230,14 +234,19 @@ def setup_conda_mirror(mirror: str = "aliyun") -> None:
     mirror:
         镜像源名称：tsinghua/ustc/bsfu/aliyun（默认 aliyun）
     """
-    if mirror not in _CONDA_MIRROR_URLS:
+    if not mirror_supported(mirror, _CONDA_MIRROR_URLS):
         print(f"未知 Conda 镜像源: {mirror}")
         return
 
     urls = _CONDA_MIRROR_URLS[mirror]
     config_path = Path.home() / ".condarc"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     content = "show_channel_urls: true\nchannels:\n  - " + "\n  - ".join(urls) + "\n  - defaults\n"
+
+    if is_dry_run():
+        print(f"[dry-run] 写入配置文件: {config_path}")
+        return
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(content, encoding="utf-8")
     print(f"Conda 镜像源已配置: {mirror} -> {config_path}")
 
@@ -266,8 +275,10 @@ def setup_python_env(mirror: str = "aliyun") -> None:
 
 
 # ============================================================================
-# Rust 工具链安装
+# Rust 工具链
 # ============================================================================
+
+
 @fcmd.tool("envdev", subcommand="setup-rust", help="配置 Rust 镜像源", hidden=True)
 def _setup_rust_mirror(mirror: str = "aliyun") -> None:
     """配置 Rust 镜像源（持久化环境变量 + 写入 cargo config + 创建 sccache 目录）。
@@ -281,28 +292,30 @@ def _setup_rust_mirror(mirror: str = "aliyun") -> None:
     mirror:
         镜像源名称：tsinghua/ustc/aliyun（默认 aliyun）
     """
-    if mirror not in _RUSTUP_MIRRORS:
+    if not mirror_supported(mirror, _RUSTUP_MIRRORS):
         print(f"未知 Rust 镜像源: {mirror}")
         return
 
     mirrors = _RUSTUP_MIRRORS[mirror]
-    persist_env("RUSTUP_DIST_SERVER", mirrors["RUSTUP_DIST_SERVER"])
-    persist_env("RUSTUP_UPDATE_ROOT", mirrors["RUSTUP_UPDATE_ROOT"])
-    persist_env("RUST_SCCACHE_DIR", str(_RUST_SCCACHE_DIR))
-    persist_env("RUST_SCCACHE_CACHE_SIZE", _RUST_SCCACHE_CACHE_SIZE)
-
-    _RUST_SCCACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-    config_path = Path.home() / ".cargo" / "config.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
     registry = mirrors["TOML_REGISTRY"]
-    content = (
+    config_content = (
         f"\n[source.crates-io]\nreplace-with = '{mirror}'\n\n"
         f'[source.{mirror}]\nregistry = "sparse+{registry}"\n\n'
         f'[registries.{mirror}]\nindex = "sparse+{registry}"\n'
     )
-    config_path.write_text(content, encoding="utf-8")
-    print(f"Rust 镜像源已配置: {mirror} -> {config_path}")
+
+    spec = MirrorSpec(
+        env_vars={
+            "RUSTUP_DIST_SERVER": mirrors["RUSTUP_DIST_SERVER"],
+            "RUSTUP_UPDATE_ROOT": mirrors["RUSTUP_UPDATE_ROOT"],
+            "RUST_SCCACHE_DIR": str(_RUST_SCCACHE_DIR),
+            "RUST_SCCACHE_CACHE_SIZE": _RUST_SCCACHE_CACHE_SIZE,
+        },
+        config_path=Path.home() / ".cargo" / "config.toml",
+        config_content=config_content,
+        ensure_dirs=[_RUST_SCCACHE_DIR],
+    )
+    apply_mirror_config(spec, persist_fn=persist_env, label="Rust")
 
 
 @fcmd.tool("envdev", subcommand="download-rustup", help="下载 Rustup 安装脚本", hidden=True)
@@ -371,7 +384,7 @@ def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None
 
 
 # ============================================================================
-# JavaScript 工具链安装
+# JavaScript (Bun)
 # ============================================================================
 
 
@@ -382,13 +395,12 @@ def _setup_bun_mirror() -> None:
     通过 :func:`persist_env` 持久化 ``BUN_CONFIG_REGISTRY`` 环境变量，
     并写入 bunfig.toml 指向 npmmirror。
     """
-    persist_env("BUN_CONFIG_REGISTRY", _BUN_NPM_REGISTRY)
-
-    config_path = Path.home() / ".bunfig.toml"
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    content = f'[install]\nregistry = "{_BUN_NPM_REGISTRY}"\n'
-    config_path.write_text(content, encoding="utf-8")
-    print(f"Bun 镜像源已配置: {_BUN_NPM_REGISTRY} -> {config_path}")
+    spec = MirrorSpec(
+        env_vars={"BUN_CONFIG_REGISTRY": _BUN_NPM_REGISTRY},
+        config_path=Path.home() / ".bunfig.toml",
+        config_content=f'[install]\nregistry = "{_BUN_NPM_REGISTRY}"\n',
+    )
+    apply_mirror_config(spec, persist_fn=persist_env, label="Bun")
 
 
 @fcmd.tool("envdev", subcommand="install-bun", help="安装 Bun", hidden=True)
@@ -426,11 +438,12 @@ def setup_js_env() -> None:
     _setup_bun_mirror()
     _install_bun()
 
-    persist_env("PLAYWRIGHT_DOWNLOAD_HOST", _PLAYWRIGHT_DOWNLOAD_HOST)
+    if not is_dry_run():
+        persist_env("PLAYWRIGHT_DOWNLOAD_HOST", _PLAYWRIGHT_DOWNLOAD_HOST)
 
 
 # ============================================================================
-# Linux 专用子命令（隐藏，供 all 一键命令编排）
+# Linux 专用子命令
 # ============================================================================
 
 
@@ -501,8 +514,40 @@ def install_linux_docker() -> None:
     print("Docker 安装完成（需重新登录以生效 docker 用户组）")
 
 
+@fcmd.tool("envdev", subcommand="setup-docker-mirror", help="配置 Docker 镜像加速源", hidden=True)
+def setup_docker_mirror() -> None:
+    """配置 Docker 镜像加速源（仅 Linux）。
+
+    写入 ``/etc/docker/daemon.json`` 配置 registry-mirrors（阿里云镜像加速）。
+    Windows/macOS 提示手动在 Docker Desktop 设置中配置。
+    """
+    if not sys.platform.startswith("linux"):
+        print("Linux 专用：请在 Docker Desktop 设置 > Docker Engine 中添加 registry-mirrors")
+        return
+
+    import json as _json
+
+    _DOCKER_REGISTRY_MIRRORS: list[str] = [
+        "https://registry.cn-hangzhou.aliyuncs.com",
+        "https://docker.m.daocloud.io",
+        "https://hub-mirror.c.163.com",
+    ]
+    _DOCKER_DAEMON_PATH: Path = Path("/etc/docker/daemon.json")
+
+    new_config = {"registry-mirrors": _DOCKER_REGISTRY_MIRRORS}
+
+    if is_dry_run():
+        print(f"[dry-run] 写入 {_DOCKER_DAEMON_PATH}")
+        return
+
+    _DOCKER_DAEMON_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _DOCKER_DAEMON_PATH.write_text(_json.dumps(new_config, indent=2), encoding="utf-8")
+    run_command(["sudo", "systemctl", "restart", "docker"])
+    print(f"Docker 镜像加速已配置 -> {_DOCKER_DAEMON_PATH}")
+
+
 # ============================================================================
-# OpenSSH 服务安装
+# OpenSSH
 # ============================================================================
 
 
@@ -549,7 +594,6 @@ def _uninstall_gnome_remote_desktop() -> None:
     if not sys.platform.startswith("linux"):
         return
 
-    # 先检查 gnome-remote-desktop 是否存在，不存在则跳过
     if shutil.which("gnome-remote-desktop") is None:
         print("gnome-remote-desktop 未安装，跳过卸载")
         return
@@ -606,7 +650,6 @@ def _configure_lightdm() -> None:
         return
 
     print("将 lightdm 设为默认显示管理器...")
-    # 注入 debconf 选择，避免交互式弹窗
     run_command(
         ["sudo", "sh", "-c", "echo lightdm | debconf-set-selections && dpkg-reconfigure -f noninteractive lightdm"]
     )
@@ -635,27 +678,96 @@ def setup_linux_remote() -> None:
 
 @fcmd.tool("envdev", subcommand="all", help="一键配置所有环境")
 def setup_all_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
-    """一键配置所有开发环境（Python + JavaScript + Rust + Linux 系统依赖）。
+    """一键配置所有开发环境（Python + JavaScript + Rust + Go + Java + Node + Linux 系统依赖）。
 
-    依次执行：一键配置 Python 环境（pip/uv + Conda 镜像源）、JavaScript 环境
-    （Bun）、Rust 环境（镜像源 + 工具链）；Linux 平台额外配置系统镜像源、
-    安装 Qt 依赖库、中文字体与 Docker（非 Linux 平台自动跳过并打印提示）。
+    依次执行：一键配置各语言环境的镜像源（Python / JavaScript / Rust / Go /
+    Java / Node）；Linux 平台额外配置系统镜像源、安装 Qt 依赖库、中文字体、
+    Docker 及其镜像加速（非 Linux 平台自动跳过并打印提示）。
 
     Parameters
     ----------
     mirror:
-        镜像源名称：Python/JS/Rust 各自支持列表不同，不支持的步骤打印提示跳过
-        （默认 aliyun，三者均支持）
+        镜像源名称：各语言支持列表不同，不支持的步骤打印提示跳过
+        （默认 aliyun，Python / Rust / Java 均支持）
     rust_version:
         Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
     """
     setup_python_env(mirror)
     setup_js_env()
     setup_rust_env(mirror, rust_version)
+    setup_go_env()
+    setup_java_env(mirror)
+    setup_node_env()
     setup_linux_system_mirror()
     install_linux_qt_libs()
     install_linux_fonts()
     install_linux_docker()
+
+
+# ============================================================================
+# 环境检测
+# ============================================================================
+
+_TOOLCHAIN_CHECKS: list[tuple[str, str]] = [
+    ("python", "Python"),
+    ("pip", "pip"),
+    ("go", "Go"),
+    ("node", "Node.js"),
+    ("java", "Java"),
+    ("rustup", "Rust"),
+    ("bun", "Bun"),
+    ("docker", "Docker"),
+]
+
+_ENV_VAR_CHECKS: list[tuple[str, str, str]] = [
+    ("PIP_INDEX_URL", "Python pip", "pip config get global.index-url"),
+    ("GOPROXY", "Go", "go env GOPROXY"),
+    ("NPM_CONFIG_REGISTRY", "npm", "npm config get registry"),
+    ("RUSTUP_DIST_SERVER", "Rust", "rustup show"),
+]
+
+
+@fcmd.tool("envdev", subcommand="verify", help="检测开发环境配置状态")
+def verify_env() -> int:
+    """检测开发环境配置状态（只读）。
+
+    检查各语言工具链是否存在 + 关键镜像源环境变量是否已设置。
+    返回 0 表示全部 OK，返回 1 表示存在未配置项。
+    """
+    all_ok = True
+    missing_tools: list[str] = []
+    missing_envs: list[str] = []
+
+    print("[工具链检测]")
+    for tool, display in _TOOLCHAIN_CHECKS:
+        found = shutil.which(tool) is not None
+        status = "OK" if found else "缺失"
+        print(f"  {display:<10} {status}")
+        if not found:
+            missing_tools.append(display)
+            all_ok = False
+
+    print("\n[镜像源检测]")
+    for env_var, display, _hint in _ENV_VAR_CHECKS:
+        val = os.environ.get(env_var, "")
+        ok = bool(val)
+        status = f"已设置 ({val})" if ok else "未设置"
+        print(f"  {display:<10} {status}")
+        if not ok:
+            missing_envs.append(display)
+            all_ok = False
+
+    if all_ok:
+        print("\n全部环境检测通过 ✓")
+        return 0
+
+    print(f"\n未通过 {len(missing_tools) + len(missing_envs)} 项：")
+    if missing_tools:
+        print(f"  缺失工具: {', '.join(missing_tools)}")
+    if missing_envs:
+        print(f"  未配置镜像: {', '.join(missing_envs)}")
+    print("\n运行 'fcmd envdev all' 一键配置")
+    return 1
 
 
 @fcmd.main("envdev")
