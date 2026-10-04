@@ -38,7 +38,9 @@ jobs:
         r.check_ok()
         final = tmp_path / "final.txt"
         assert final.exists(), "final.txt 未生成"
-        lines = final.read_text(encoding="utf-8").strip().splitlines()
+        # Windows cmd 中 ``echo hello > file`` 会把 ``>`` 前的空格一并写入，
+        # 逐行 strip 后再断言，使测试不依赖 shell 的 echo 语义细节。
+        lines = [line.strip() for line in final.read_text(encoding="utf-8").strip().splitlines()]
         assert lines == ["hello", "done"]
 
     def test_single_job(self, fcmd: Callable[..., CmdResult], tmp_path: Path) -> None:
