@@ -309,6 +309,52 @@ class TestToolDiscovery:
         assert discovery_mod._TOOL_MODULES["pymake"] == "mock_module"
         assert discovery_mod._TOOL_ALIASES["pymake"] == "mock_value"
 
+    def test_discovery_survives_oserror_on_module_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """工具模块导入抛 OSError（如缺 libcairo 动态库）时跳过该工具，不中断发现流程。"""
+        import importlib as _importlib
+
+        from fcmd.cli import _discovery as discovery_mod
+
+        real_import_module = _importlib.import_module
+
+        def _fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "fcmd.cli.media.img2ico":
+                raise OSError("no library called 'libcairo-2' was found")
+            return real_import_module(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(discovery_mod.importlib, "import_module", _fake_import)
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        # 修复前：OSError 直接抛出，整个发现流程崩溃
+        discovery_mod.ensure_tools_discovered()
+        # img2ico 模块路径仍登记（注册先于导入），但模块未加载成功
+        assert discovery_mod._TOOL_MODULES["img2ico"] == "fcmd.cli.media.img2ico"
+        # 其余工具不受影响
+        assert "pymake" in discovery_mod._TOOL_MODULES
+
+    def test_load_tool_subs_oserror_returns_none(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """load_tool_subs 在模块导入抛 OSError 时打印错误并返回 None，不崩溃。"""
+        import importlib as _importlib
+
+        from fcmd.cli import _discovery as discovery_mod
+
+        real_import_module = _importlib.import_module
+
+        def _fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "fcmd.cli.media.img2ico":
+                raise OSError("no library called 'libcairo-2' was found")
+            return real_import_module(name, *args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(discovery_mod.importlib, "import_module", _fake_import)
+        monkeypatch.setitem(discovery_mod._TOOL_MODULES, "img2ico", "fcmd.cli.media.img2ico")
+        result = discovery_mod.load_tool_subs("img2ico")
+        assert result is None
+        captured = capsys.readouterr()
+        assert "libcairo-2" in captured.out
+
     def test_run_triggers_discovery(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """FcmdApp.run() 首次调用触发 discovery。"""
         from fcmd.cli import _discovery as discovery_mod
@@ -1172,6 +1218,8 @@ class TestBuiltinDoctor:
         monkeypatch.setattr("fcmd.cli._doctor_helpers.collect_optional_deps_status", fake_deps)
         # 让 shutil.which 全部返回非 None
         monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")
+        # 工具模块扫描改为注入单一已知可导入工具，避免依赖本机可选原生库（如 libcairo）
+        monkeypatch.setattr("fcmd.cli._builtins.doctor_cmd._TOOL_MODULES", {"pymake": "fcmd.cli.dev.pymake"})
 
         app = FcmdApp(["doctor"])
         assert app.run() == 0

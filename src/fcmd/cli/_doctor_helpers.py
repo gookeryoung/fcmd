@@ -70,7 +70,8 @@ def collect_doctor_checks(tool_modules: dict[str, str]) -> list[dict[str, Any]]:
     for tool_name, module_path in list(tool_modules.items()):
         try:
             importlib.import_module(module_path)
-        except ImportError:
+        except (ImportError, OSError):
+            # OSError：原生动态库缺失（如 cairosvg 缺 libcairo），计入失败而非崩溃
             failed_tools.append(tool_name)
     tool_total = len(tool_modules)
     tool_ok = not failed_tools

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import logging
 import pkgutil
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,8 @@ from fcmd.console import get_console
 
 if TYPE_CHECKING:
     from fcmd.apis.toolkit import ToolSpec
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "aliases_for",
@@ -90,12 +93,18 @@ def _discover_domain(domain: str) -> None:
 
 
 def _register_tool(module_path: str, tool_name: str) -> None:
-    """注册单个工具：填充模块映射并导入模块读取别名。"""
+    """注册单个工具：填充模块映射并导入模块读取别名。
+
+    导入失败时跳过该工具：``ImportError`` 表示可选 Python 包缺失，
+    ``OSError`` 表示原生动态库缺失（如 ``cairosvg`` 缺 ``libcairo``）。
+    两类失败均不影响其余工具的发现。
+    """
     _TOOL_MODULES.setdefault(tool_name, module_path)
     _TOOL_ALIASES.setdefault(tool_name, tool_name)
     try:
         mod = importlib.import_module(module_path)
-    except ImportError:
+    except (ImportError, OSError) as exc:
+        logger.warning("工具模块 %s 导入失败，已跳过: %s", module_path, exc)
         return
     # 读取模块声明的别名
     aliases = getattr(mod, "__tool_aliases__", ())
@@ -124,7 +133,7 @@ def import_all_tool_modules() -> None:
     单个模块导入失败（可选依赖缺失）时静默跳过，不影响其余模块。
     """
     for _tool_name, module_path in list(_TOOL_MODULES.items()):
-        with contextlib.suppress(ImportError):
+        with contextlib.suppress(ImportError, OSError):
             importlib.import_module(module_path)
 
 
@@ -136,7 +145,7 @@ def tool_description(tool_name: str) -> str:
     if tool_name in _TOOL_MODULES:
         try:
             importlib.import_module(_TOOL_MODULES[tool_name])
-        except ImportError:
+        except (ImportError, OSError):
             return ""
 
     if tool_name not in _TOOL_REGISTRY:
@@ -159,7 +168,7 @@ def load_tool_subs(tool_name: str) -> dict[str | None, ToolSpec] | None:
     if tool_name in _TOOL_MODULES:
         try:
             importlib.import_module(_TOOL_MODULES[tool_name])
-        except ImportError as e:
+        except (ImportError, OSError) as e:
             get_console().print(f"[red]错误:[/red] 加载工具 {tool_name!r} 失败: {e}")
             return None
 
