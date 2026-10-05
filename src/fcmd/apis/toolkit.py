@@ -241,6 +241,12 @@ def main(tool_name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
 
         @functools.wraps(func)
         def wrapper(*_args: Any, **_kwargs: Any) -> Any:
+            # 先调 ensure_tools_discovered()，确保 DSL 声明文件也被加载
+            # （与 FcmdApp.run() 行为一致），否则独立入口脚本
+            # 只会看到当前模块内 @tool 装饰器注册的子命令
+            from fcmd.cli._discovery import ensure_tools_discovered
+
+            ensure_tools_discovered()
             sys.exit(run_tool(tool_name, sys.argv[1:]))
 
         return wrapper
