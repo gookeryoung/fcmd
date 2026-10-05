@@ -105,11 +105,13 @@ class WhenDecl:
     参数
     ----
     cmd:
-        命令探针（shell 字符串，按 stdout 是否非空判定）；与 ``path`` 互斥
+        命令探针（shell 字符串，支持 ``{参数名}`` 插值）；与 ``path`` 互斥
     path:
-        路径探针（``~`` 展开后按存在性判定）；与 ``cmd`` 互斥
+        路径探针（支持 ``{参数名}`` 插值，``~`` 展开后按存在性判定）；与 ``cmd`` 互斥
     expect:
-        期望值：cmd 探针 ``nonempty`` / ``empty``；path 探针 ``exists`` / ``missing``
+        期望值：cmd 探针 ``nonempty``（stdout 非空）/ ``empty``（stdout 为空）/
+        ``success``（返回码 0）/ ``failure``（返回码非 0）；
+        path 探针 ``exists`` / ``missing``
     """
 
     cmd: str | None = None
@@ -492,8 +494,9 @@ def _parse_tty(name: str, table: Mapping[str, Any]) -> bool:
 # when 表内合法键（cmd/path 二选一 + expect）
 _WHEN_KEYS = frozenset({"cmd", "path", "expect"})
 
-# 探针期望值枚举（cmd → stdout 判定；path → 存在性判定）
-_WHEN_CMD_EXPECTS: frozenset[str] = frozenset({"nonempty", "empty"})
+# 探针期望值枚举（cmd → stdout 非空/为空 或 返回码 0/非 0 判定；
+# path → 存在性判定）
+_WHEN_CMD_EXPECTS: frozenset[str] = frozenset({"nonempty", "empty", "success", "failure"})
 _WHEN_PATH_EXPECTS: frozenset[str] = frozenset({"exists", "missing"})
 
 

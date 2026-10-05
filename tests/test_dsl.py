@@ -1612,6 +1612,7 @@ class TestWhenDeclParsing:
             {"cmd": "x"},  # 缺 expect
             {"cmd": "x", "expect": "exists"},  # cmd 探针用 path 枚举
             {"path": "x", "expect": "nonempty"},  # path 探针用 cmd 枚举
+            {"path": "x", "expect": "success"},  # path 探针用返回码枚举
             {"path": "x"},  # 缺 expect
         ],
     )
@@ -1650,7 +1651,7 @@ class TestWhenGuardExecution:
         from fcmd.apis._tool_exec import _build_conditions
 
         spec = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo"))
-        assert _build_conditions(spec) == ()
+        assert _build_conditions(spec, {}) == ()
 
     def test_when_injected_on_synth(self) -> None:
         """synth 注入 __dsl_when__；未声明 when 时不注入。"""
@@ -1671,7 +1672,7 @@ class TestWhenGuardExecution:
         from fcmd.apis._tool_exec import _build_conditions
 
         spec = build_tool_spec(parse_command_table("t", self._when_table()))
-        conditions = _build_conditions(spec)
+        conditions = _build_conditions(spec, {})
         assert len(conditions) == 1
         probe = conditions[0]
         # stdout 非空 → 满足 nonempty 期望
@@ -1699,7 +1700,7 @@ class TestWhenGuardExecution:
             "t", {"help": "x", "cmd": "echo", "when": {"cmd": "cmd /c exit 0", "expect": "empty"}}
         )
         spec = build_tool_spec(decl)
-        probe = _build_conditions(spec)[0]
+        probe = _build_conditions(spec, {})[0]
         monkeypatch.setattr(
             "fcmd.apis._tool_exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
@@ -1711,13 +1712,101 @@ class TestWhenGuardExecution:
         )
         assert probe({}) is False
 
+    def test_cmd_probe_returncode_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cmd 探针 expect="success"：返回码 0 时满足，与 stdout 无关。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        decl = parse_command_table(
+            "t", {"help": "x", "cmd": "echo", "when": {"cmd": "git diff --quiet", "expect": "success"}}
+        )
+        probe = _build_conditions(build_tool_spec(decl), {})[0]
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        assert probe({}) is True  # rc 0 → success 满足（stdout 为空不影响）
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "changes"),
+        )
+        assert probe({}) is False
+        reason = getattr(probe, "_reason", None)
+        assert reason is not None
+        assert "为 0" in reason
+
+    def test_cmd_probe_returncode_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cmd 探针 expect="failure"：返回码非 0 时满足。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        decl = parse_command_table(
+            "t", {"help": "x", "cmd": "echo", "when": {"cmd": "git diff --quiet", "expect": "failure"}}
+        )
+        probe = _build_conditions(build_tool_spec(decl), {})[0]
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", ""),
+        )
+        assert probe({}) is True
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        assert probe({}) is False
+        assert "非 0" in str(probe._reason)  # type: ignore[missing-attribute]
+
+    def test_cmd_probe_interpolation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cmd 探针支持 ``{参数名}`` 插值（构造时求值，reason 同步插值后命令）。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        decl = parse_command_table(
+            "t",
+            {
+                "help": "x",
+                "cmd": "echo done",
+                "args": {"branch": {"help": "分支名"}},
+                "when": {"cmd": "test -n {branch}", "expect": "nonempty"},
+            },
+        )
+        spec = build_tool_spec(decl)
+        probe = _build_conditions(spec, {"branch": "main"})[0]
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
+            captured.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "out", "")
+
+        monkeypatch.setattr("fcmd.apis._tool_exec.subprocess.run", fake_run)
+        assert probe({}) is True
+        assert captured == ["test -n main"]  # 探针已插值
+        assert "test -n main" in str(probe._reason)  # type: ignore[missing-attribute]
+
+    def test_path_probe_interpolation(self, tmp_path: Path) -> None:
+        """path 探针支持 ``{参数名}`` 插值（构造时求值，``~`` 展开语义保留）。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        marker = tmp_path / "dest"
+        decl = parse_command_table(
+            "t",
+            {
+                "help": "x",
+                "cmd": "echo",
+                "args": {"dest": {"help": "目标路径"}},
+                "when": {"path": "{dest}", "expect": "exists"},
+            },
+        )
+        probe = _build_conditions(build_tool_spec(decl), {"dest": str(marker)})[0]
+        assert probe({}) is False  # 文件未创建 → 不满足
+        marker.write_text("x", encoding="utf-8")
+        assert probe({}) is True
+        assert str(marker) in str(probe._reason)  # type: ignore[missing-attribute]
+
     def test_path_probe_closure(self, tmp_path: Path) -> None:
         """path 探针按存在性与 expect 判定。"""
         from fcmd.apis._tool_exec import _build_conditions
 
         marker = tmp_path / "marker"
         decl = parse_command_table("t", {"help": "x", "cmd": "echo", "when": {"path": str(marker), "expect": "exists"}})
-        probe = _build_conditions(build_tool_spec(decl))[0]
+        probe = _build_conditions(build_tool_spec(decl), {})[0]
         assert probe({}) is False  # 不存在 → 不满足 exists
         marker.write_text("x", encoding="utf-8")
         assert probe({}) is True
@@ -1731,7 +1820,7 @@ class TestWhenGuardExecution:
         decl = parse_command_table(
             "t", {"help": "x", "cmd": "echo", "when": {"path": str(marker), "expect": "missing"}}
         )
-        probe = _build_conditions(build_tool_spec(decl))[0]
+        probe = _build_conditions(build_tool_spec(decl), {})[0]
         assert probe({}) is True
         marker.write_text("x", encoding="utf-8")
         assert probe({}) is False

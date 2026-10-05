@@ -351,8 +351,13 @@ on = ["--fix", "--unsafe-fixes"]
 [commands.deploy.build]           # when 守卫：探针不满足 → SKIPPED（命令退出码 0）
 help = "有代码变更才构建"
 cmd = ["make", "build"]
-when = {cmd = "git status --porcelain", expect = "nonempty"}  # 探针 cmd/path 二选一
+when = {cmd = "git status --porcelain", expect = "nonempty"}  # 探针 cmd/path 二选一，支持 {参数名} 插值
 allow_upstream_skip = true        # 上游被跳过时豁免执行（默认连坐跳过）
+
+[commands.backup.files]           # 探针 expect：cmd 用 nonempty/empty/success/failure，path 用 exists/missing
+help = "目录已备份则跳过"
+cmd = ["robocopy", "{source}", "{dest}", "/mir"]
+when = {path = "{dest}", expect = "missing"}  # path 探针支持插值与 ~ 展开
 
 [commands.deploy.all]             # 聚合可声明 args：值经共享变量流入子任务插值
 help = "构建并部署"
@@ -393,7 +398,7 @@ fcmd sy                           # 别名调用
 fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值 / cwd / env / timeout / when 守卫探针 / needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值 / cwd / env / timeout / when 守卫探针（支持参数插值与返回码判定）/ needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
 
 ### DSL 逻辑边界
 

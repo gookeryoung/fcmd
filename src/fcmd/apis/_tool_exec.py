@@ -176,7 +176,7 @@ def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Ma
     return result
 
 
-def _build_conditions(spec: ToolSpec) -> tuple[Condition, ...]:
+def _build_conditions(spec: ToolSpec, variables: Mapping[str, Any]) -> tuple[Condition, ...]:
     """将 DSL ``when`` 探针声明构造为引擎条件闭包。
 
     ``__dsl_when__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入（仅声明
@@ -184,7 +184,12 @@ def _build_conditions(spec: ToolSpec) -> tuple[Condition, ...]:
     求值一次；探针自身失败（命令不存在/路径异常）由引擎
     :meth:`TaskSpec.should_execute` 捕获并视为条件不满足（SKIPPED）。
 
-    - cmd 探针：shell 执行（与 DSL str cmd 语义一致），按 stdout 是否非空判定；
+    探针目标（cmd/path）支持 ``{参数名}`` 插值——构造 TaskSpec 时求值一次，
+    与 cmd/cwd/env 模板同语义（default_env 参数取解析后的值）；插值后的
+    探针串同时用于跳过原因文案。
+
+    - cmd 探针：shell 执行（与 DSL str cmd 语义一致）。``nonempty``/``empty``
+      按 stdout 是否非空判定；``success``/``failure`` 按返回码是否为 0 判定；
     - path 探针：``~`` 展开后按存在性判定。
 
     闭包携带 ``_reason`` 属性，供引擎把跳过原因格式化为
@@ -195,18 +200,31 @@ def _build_conditions(spec: ToolSpec) -> tuple[Condition, ...]:
         return ()
 
     if when.cmd is not None:
-        probe_cmd, expects_nonempty = when.cmd, when.expect == "nonempty"
-        reason = f'命令探针 "{when.cmd}" 期望输出{"非空" if expects_nonempty else "为空"}'
+        probe_cmd = _expand_value(when.cmd, spec, variables) if "{" in when.cmd else when.cmd
+        expect = when.expect
+        if expect in ("nonempty", "empty"):
+            expects_nonempty = expect == "nonempty"
+            reason = f'命令探针 "{probe_cmd}" 期望输出{"非空" if expects_nonempty else "为空"}'
 
-        def _probe(_context: Context) -> bool:
-            result = subprocess.run(probe_cmd, shell=True, capture_output=True, text=True, check=False)
-            has_output = bool(result.stdout.strip())
-            return has_output if expects_nonempty else not has_output
+            def _probe(_context: Context) -> bool:
+                result = subprocess.run(probe_cmd, shell=True, capture_output=True, text=True, check=False)
+                has_output = bool(result.stdout.strip())
+                return has_output if expects_nonempty else not has_output
+
+        else:
+            expects_success = expect == "success"
+            reason = f'命令探针 "{probe_cmd}" 期望返回码{"为 0" if expects_success else "非 0"}'
+
+            def _probe(_context: Context) -> bool:
+                result = subprocess.run(probe_cmd, shell=True, capture_output=True, text=True, check=False)
+                ok = result.returncode == 0
+                return ok if expects_success else not ok
 
     else:
         assert when.path is not None  # 声明期校验保证 cmd/path 恰有其一
-        probe_path, expects_exists = when.path, when.expect == "exists"
-        reason = f'路径探针 "{when.path}" 期望{"存在" if expects_exists else "不存在"}'
+        probe_path = _expand_value(when.path, spec, variables) if "{" in when.path else when.path
+        expects_exists = when.expect == "exists"
+        reason = f'路径探针 "{probe_path}" 期望{"存在" if expects_exists else "不存在"}'
 
         def _probe(_context: Context) -> bool:
             return Path(probe_path).expanduser().exists() == expects_exists
@@ -246,7 +264,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
     DSL 声明 when 守卫时，三个分支统一挂引擎条件闭包（不满足 → SKIPPED）。
     """
     task_name = spec.subcommand if spec.subcommand is not None else spec.name
-    conditions = _build_conditions(spec)
+    conditions = _build_conditions(spec, variables)
 
     # cmd 任务
     if spec.cmd is not None:
