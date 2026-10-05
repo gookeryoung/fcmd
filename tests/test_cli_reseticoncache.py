@@ -1,116 +1,120 @@
-"""reseticoncache 工具测试。
+"""reseticoncache 工具测试（DSL 声明 commands/reseticoncache.toml）。
 
-验证 ``fcmd.cli.system.reseticoncache`` 模块：
-- 工具注册
-- reset_icon_cache_run 重置 Windows 图标缓存
+验证 ``fcmd reseticoncache`` 的 DSL 迁移语义：
+- 工具注册（单命令 DSL 工具，win/unix 双平台分支）
+- win.cmd 为 cmd.exe shell 链：taskkill 绝对路径（防递归回归）+ if exist
+  守卫删除 + start explorer
+- unix 分支仅打印平台提示
+- 执行走引擎 shell 路径，退出码 0
 """
 
 from __future__ import annotations
 
+import subprocess
 import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
 
 import fcmd as fx
-import fcmd.cli.system.reseticoncache
-from fcmd.apis.toolkit import _TOOL_REGISTRY
-from fcmd.models import CommandResult
+from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.dsl.decl import CommandDecl
+from fcmd.dsl.synth import select_platform_cmd
+
+ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 reseticoncache）
+
+# win.cmd shell 链关键片段（绝对路径 taskkill 防 PATH 递归调用 fcmd entry）
+_TASKKILL_SNIPPET = r"%SystemRoot%\System32\taskkill.exe /f /im explorer.exe"
+_DEL_DB_SNIPPET = r'if exist "%LOCALAPPDATA%\IconCache.db" del /a /q "%LOCALAPPDATA%\IconCache.db"'
+_DEL_GLOB_SNIPPET = r'if exist "%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache*" del /a /q "%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache*"'
+_START_SNIPPET = "start explorer.exe"
 
 
-# ============================================================================ #
+# ---------------------------------------------------------------------- #
 # 测试辅助
-# ============================================================================ #
-def _recording_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``run_command`` 函数，返回成功结果。"""
+# ---------------------------------------------------------------------- #
+def _fake_run_factory(captured: list[tuple[Any, dict[str, Any]]], returncode: int = 0):
+    """构造捕获 cmd 与 kwargs 的 subprocess.run 替身。"""
 
-    def run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-        calls.append(cmd)
-        return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
+    def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, returncode, "", "")
 
-    return run
+    return fake_run
 
 
-# ============================================================================ #
-# 注册验证
-# ============================================================================ #
-class TestToolsRegistration:
-    """reseticoncache 工具注册验证。"""
+def _builtin_decl() -> CommandDecl:
+    """从内置声明中取 reseticoncache 的 CommandDecl（供平台分支直测）。"""
+    from fcmd.dsl import builtin_tool_decls
 
-    def test_all_tools_registered(self) -> None:
-        """reseticoncache 应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("reseticoncache",):
-            assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
+    for tool in builtin_tool_decls():
+        if tool.name == "reseticoncache":
+            return tool.commands[0]
+    raise AssertionError("内置声明中未找到 reseticoncache")  # pragma: no cover
 
-    def test_reseticoncache_single_command(self) -> None:
-        """reseticoncache 是单命令工具。"""
+
+# ---------------------------------------------------------------------- #
+# 注册与声明验证
+# ---------------------------------------------------------------------- #
+class TestReseticoncacheRegistration:
+    """reseticoncache 经内置 DSL 注册。"""
+
+    def test_registered_as_dsl(self) -> None:
+        """reseticoncache 注册为内置 DSL 单命令工具。"""
+        assert "reseticoncache" in _TOOL_REGISTRY
         assert fx.list_subcommands("reseticoncache") == []
 
+    def test_win_cmd_shell_chain(self) -> None:
+        """win.cmd 为一条 cmd.exe shell 链：taskkill 绝对路径 + if exist 删除 + start。"""
+        win_cmd = select_platform_cmd(_builtin_decl(), "win32")
+        assert isinstance(win_cmd, str)
+        for snippet in (_TASKKILL_SNIPPET, _DEL_DB_SNIPPET, _DEL_GLOB_SNIPPET, _START_SNIPPET):
+            assert snippet in win_cmd
+        # 顺序：终止 explorer 在删除之前，start 在最后
+        assert win_cmd.index(_TASKKILL_SNIPPET) < win_cmd.index(_DEL_DB_SNIPPET)
+        assert win_cmd.index(_DEL_GLOB_SNIPPET) < win_cmd.index(_START_SNIPPET)
 
-# ============================================================================ #
-# reseticoncache 测试
-# ============================================================================ #
-class TestResetIconCache:
-    """reseticoncache 工具测试。"""
+    def test_taskkill_uses_absolute_path(self) -> None:
+        """回归：taskkill 必须经 %SystemRoot% 绝对路径调用，禁止裸命令名。
 
-    def test_non_windows_skip(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """非 Windows 平台打印提示并跳过。"""
-        monkeypatch.setattr(sys, "platform", "linux")
-        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
-        captured = capsys.readouterr()
-        assert "仅在 Windows" in captured.out
-
-    def test_windows_no_localappdata(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """Windows 但 LOCALAPPDATA 未设置时提示并跳过。"""
-        monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.delenv("LOCALAPPDATA", raising=False)
-        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
-        captured = capsys.readouterr()
-        assert "LOCALAPPDATA" in captured.out
-
-    def test_windows_calls_commands(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Windows 下调用 taskkill/del/start 命令序列。"""
-        monkeypatch.setattr(sys, "platform", "win32")
-        local_appdata = tmp_path / "AppData" / "Local"
-        local_appdata.mkdir(parents=True)
-        (local_appdata / "IconCache.db").write_text("fake")
-        explorer_dir = local_appdata / "Microsoft" / "Windows" / "Explorer"
-        explorer_dir.mkdir(parents=True)
-        monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
-
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.system.reseticoncache.run_command", _recording_run(calls))
-
-        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
-        captured = capsys.readouterr()
-        assert "图标缓存已重置" in captured.out
-        # 应调用 taskkill、del（IconCache.db）、del（iconcache*）、start explorer
-        assert any(any("taskkill" in arg for arg in c) for c in calls)
-        assert any("start" in c and "explorer.exe" in c for c in calls)
-
-    def test_windows_taskkill_uses_absolute_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Windows 下 taskkill 必须用系统绝对路径，避免递归调用 fcmd entry。
-
-        回归测试：曾因 ``taskkill`` 与系统 taskkill.exe 同名，subprocess.run
-        递归调用 fcmd entry 导致进程爆炸。修复后必须使用系统绝对路径。
+        fcmd 自身注册的 ``taskkill`` entry 与系统 taskkill.exe 同名，裸命令名
+        经 PATH 查找可能递归调用 fcmd 自身导致进程爆炸。
         """
-        monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setenv("SystemRoot", r"C:\Windows")
-        local_appdata = tmp_path / "AppData" / "Local"
-        local_appdata.mkdir(parents=True)
-        monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
+        win_cmd = select_platform_cmd(_builtin_decl(), "win32")
+        assert isinstance(win_cmd, str)
+        assert "%SystemRoot%\\System32\\taskkill.exe" in win_cmd
+        assert "taskkill" not in win_cmd.replace("%SystemRoot%\\System32\\taskkill.exe", "")
 
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.system.reseticoncache.run_command", _recording_run(calls))
+    def test_unix_cmd_prints_hint(self) -> None:
+        """unix 分支仅打印平台提示（与原版文案一致）。"""
+        unix_cmd = select_platform_cmd(_builtin_decl(), "linux")
+        assert unix_cmd == 'echo "reseticoncache: 仅在 Windows 上支持"'
 
-        fcmd.cli.system.reseticoncache.reset_icon_cache_run()
-        # 找到 taskkill 调用，首元素必须是绝对路径
-        taskkill_calls = [c for c in calls if "taskkill" in " ".join(c)]
-        assert taskkill_calls, "应至少调用一次 taskkill"
-        for call in taskkill_calls:
-            assert call[0].endswith("taskkill.exe")
-            assert "\\" in call[0]
-            assert call[0] != "taskkill"
+
+# ---------------------------------------------------------------------- #
+# 执行语义
+# ---------------------------------------------------------------------- #
+class TestReseticoncacheRun:
+    """``fcmd reseticoncache`` 执行语义。"""
+
+    def test_run_executes_platform_branch(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """执行走引擎 shell 路径：平台分支在注册时选定，Windows 命中重置链。
+
+        ToolSpec.cmd 在发现注册时按当前平台选定（CI 为 Linux → echo 提示分支；
+        Windows → 重置链），两者均为 str cmd shell 执行、退出码 0。
+        """
+        captured: list[tuple[Any, dict[str, Any]]] = []
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        assert run_tool("reseticoncache", []) == 0
+        cmd = captured[0][0]
+        assert isinstance(cmd, str)  # str cmd → 引擎 shell=True 执行
+        assert captured[0][1]["shell"] is True
+        if sys.platform == "win32":
+            assert _TASKKILL_SNIPPET in cmd
+            # 环境变量由 cmd.exe 运行时展开，Python 侧保持字面量
+            assert "%LOCALAPPDATA%" in cmd
+        else:
+            assert "仅在 Windows 上支持" in cmd

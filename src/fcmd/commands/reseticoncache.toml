@@ -1,0 +1,20 @@
+# reseticoncache - Windows 图标缓存重置工具（DSL 声明，原 cli/system/reseticoncache.py 迁入）
+#
+# 单命令双平台分支：win.cmd 在一条 cmd.exe shell 链中完成
+# 终止 explorer → 删除缓存 → 重启 explorer（& 顺序执行、失败不中断，与
+# 原版 run_command 忽略返回码一致；if exist 守卫删除步骤；%SystemRoot%/
+# %LOCALAPPDATA% 由 cmd.exe 原生展开，运行时才求值）。taskkill 必须用
+# %SystemRoot% 绝对路径——fcmd 自身注册的 taskkill entry 与系统 taskkill.exe
+# 同名，裸命令名经 PATH 可能递归调用自身（进程爆炸，见原模块回归记录）。
+# unix 分支仅打印提示。原版的进度/完成消息不保留：跨平台共用 message 会在
+# Linux 分支误报「已重置」。
+
+[commands.reseticoncache]
+help = "重置 Windows 图标缓存"
+description = "重置 Windows 图标缓存（仅 Windows 生效）"
+
+[commands.reseticoncache.win]
+cmd = '%SystemRoot%\System32\taskkill.exe /f /im explorer.exe & if exist "%LOCALAPPDATA%\IconCache.db" del /a /q "%LOCALAPPDATA%\IconCache.db" & if exist "%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache*" del /a /q "%LOCALAPPDATA%\Microsoft\Windows\Explorer\iconcache*" & start explorer.exe'
+
+[commands.reseticoncache.unix]
+cmd = 'echo "reseticoncache: 仅在 Windows 上支持"'

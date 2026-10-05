@@ -21,7 +21,9 @@ cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 c
 正确判定为聚合。bool 参数的 ``on`` 固定 token 经 ``__dsl_param_on__`` 属性
 传递，由 ``_tool_exec._expand_cmd_placeholders`` 在值为真时追加到 cmd 尾部。
 命令级 ``message``（post-run 完成消息）经 ``__dsl_message__`` 属性传递，由
-``_tool_exec._execute_tool_tasks`` 在任务执行成功后打印。``when`` 探针守卫经
+``_tool_exec._execute_tool_tasks`` 在任务执行成功后打印；``fail_message``
+（post-run 失败消息）经 ``__dsl_fail_message__`` 属性传递，失败时打印。
+``when`` 探针守卫经
 ``__dsl_when__`` 属性传递（仅声明 when 的命令注入），由
 ``_tool_exec._build_conditions`` 构造为引擎 ``TaskSpec.conditions`` 闭包。
 str 参数的 ``default_env`` 环境变量回退链经 ``__dsl_param_env__`` 属性传递
@@ -143,6 +145,9 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     # post-run 完成消息契约（_tool_exec 消费）：执行成功后打印的消息模板
     if decl.message:
         dsl_command.__dsl_message__ = decl.message  # type: ignore[attr-defined]
+    # post-run 失败消息契约（_tool_exec 消费）：执行失败后打印的消息模板
+    if decl.fail_message:
+        dsl_command.__dsl_fail_message__ = decl.fail_message  # type: ignore[attr-defined]
     # when 探针守卫契约（_tool_exec._build_conditions 消费）：任务执行前求值，
     # 不满足则 SKIPPED；仅声明 when 的命令注入
     if decl.when is not None:

@@ -86,7 +86,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-58 个工具（其中 57 个为 Python 模块，autofmt 等纯 exec 工具由 DSL 声明），按用途分组：
+58 个工具（其中 53 个为 Python 模块，`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache` 等纯 exec 工具由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -165,7 +165,7 @@ fcmd completion --shell fish | source         # fish
 | `which` | - | 查找可执行命令路径 |
 | `clr` | - | 跨平台清屏 |
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
-| `reseticoncache` | - | 重置 Windows 图标缓存（仅 Windows） |
+| `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
 | `iptool` | - | IP 地址工具（本机 IP/公网 IP/子网计算） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
 | `websave` | - | 网页内容保存（主页及同源相关子页面，过滤广告/静态资源） |
@@ -320,7 +320,8 @@ cmd = "echo 你好 {name} x{count}"
 cwd = "/tmp"                     # 可选：工作目录（支持 {参数名} 插值）
 timeout = 30                     # 可选：超时秒数
 env = { LANG = "zh" }            # 可选：环境变量（值支持插值）
-message = "同步完成: {name}"       # 可选：执行成功后打印的完成消息（支持插值，dry-run 不打印）
+message = "同步完成: {name}"       # 可选：执行成功后打印的完成消息（支持插值，dry-run 不打印；目标被 when 守卫跳过时不打印）
+fail_message = "同步失败"          # 可选：执行失败后打印的失败消息（支持插值，如修复提示）
 
 [commands.hello.args.name]       # 无 default → positional 参数
 help = "目标名字"
@@ -329,6 +330,13 @@ help = "目标名字"
 type = "int"                     # str(默认)/int/float/bool/path/choices/list
 default = 1                      # 有 default → --count 选项（list 无 default → positional 多值）
 help = "次数"
+
+[commands.publish]               # {参数名:content} 文件内容插值：读取文件内容（展开 ~，utf-8，去首尾空白）替换进 cmd
+help = "发布文件备注"
+cmd = ["notes-cli", "publish", "--text", "{note:content}"]
+[commands.publish.args.note]
+type = "path"                    # content 插值仅支持 type=str/path 参数
+default = "~/note.txt"
 
 [commands.pkg.install]           # list 参数：独占占位符按元素展开（无 shell 每元素一个 token）
 help = "批量安装"
@@ -398,7 +406,7 @@ fcmd sy                           # 别名调用
 fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值 / cwd / env / timeout / when 守卫探针（支持参数插值与返回码判定）/ needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值（含 `{参数名:content}` 文件内容插值） / cwd / env / timeout / when 守卫探针（支持参数插值与返回码判定）/ needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / message 与 fail_message post-run 消息 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
 
 ### DSL 逻辑边界
 
@@ -406,7 +414,7 @@ fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 
 | 类别 | 判定 | 例子 |
 |------|------|------|
-| 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退） |
+| 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退）、`sshcopyid`（when 探针 + env 插值传 SSHPASS + `{参数名:content}` 公钥内容）、`reseticoncache`（win shell 链 + unix 提示分支） |
 | 输出管道（解析/过滤命令输出） | 保留 Python | `piptool u/r`（通配符展开、受保护包过滤） |
 | 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
 | 进程内调用（无法映射为子进程） | 保留 Python | `writefile`、`setenv` |

@@ -1,0 +1,44 @@
+# sshcopyid - SSH 公钥部署工具（DSL 声明，原 cli/net/sshcopyid.py 迁入）
+#
+# 密码经 env 插值写入 SSHPASS 环境变量、sshpass -e 读取——密码不进命令行
+# argv，verbose 回显与进程列表均不可见（安全改进）。公钥内容经
+# {keypath:content} 文件内容插值嵌入远端脚本；when 路径探针在公钥缺失时
+# 跳过执行。远端脚本与原版一致：确保目录权限 + 按 key body（awk '{print $2}'）
+# 判重追加公钥，依赖 sshpass 与 ssh 命令。
+
+[commands.sshcopyid]
+help = "部署 SSH 公钥到远程服务器"
+description = "SSH 公钥部署工具（依赖 sshpass/ssh）"
+when = { path = "{keypath}", expect = "exists" }
+env = { SSHPASS = "{password}" }
+cmd = [
+  "sshpass", "-e", "ssh", "-p", "{port}",
+  "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+  "-o", "ConnectTimeout={timeout}", "{username}@{hostname}",
+  "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cd ~/.ssh && touch authorized_keys && chmod 600 authorized_keys && grep -qF \"$(echo '{keypath:content}' | awk '{print $2}')\" authorized_keys 2>/dev/null || echo '{keypath:content}' >> authorized_keys",
+]
+message = "SSH 密钥已部署到 {username}@{hostname}:{port}"
+fail_message = "部署失败，可手动执行: ssh-copy-id -p {port} {username}@{hostname}"
+
+[commands.sshcopyid.args.hostname]
+help = "远程服务器主机名或 IP 地址"
+
+[commands.sshcopyid.args.username]
+help = "远程服务器用户名"
+
+[commands.sshcopyid.args.password]
+help = "远程服务器密码（经 SSHPASS 环境变量传递，不进命令行）"
+
+[commands.sshcopyid.args.port]
+type = "int"
+help = "SSH 端口（默认 22）"
+default = 22
+
+[commands.sshcopyid.args.keypath]
+help = "公钥文件路径（默认 ~/.ssh/id_rsa.pub）"
+default = "~/.ssh/id_rsa.pub"
+
+[commands.sshcopyid.args.timeout]
+type = "int"
+help = "SSH 连接超时秒数（默认 30）"
+default = 30

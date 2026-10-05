@@ -73,6 +73,7 @@ _TOP_KEYS = frozenset(
         "needs",
         "strategy",
         "message",
+        "fail_message",
         "when",
         "tty",
         "allow_upstream_skip",
@@ -155,6 +156,10 @@ class CommandDecl:
         执行策略：``sequential`` / ``thread`` / ``async`` / ``dependency``
     message:
         执行成功后打印的完成消息（支持 ``{参数名}`` 插值）；空串表示不打印
+    fail_message:
+        执行失败后打印的提示消息（支持 ``{参数名}`` 插值），紧随失败汇总
+        输出；空串表示不打印（仅失败汇总）。用于失败时的可操作提示（如
+        sshcopyid 的「可手动执行 ssh-copy-id」）
     when:
         执行守卫探针声明（任务执行前求值，不满足则 SKIPPED）；``None`` 表示未声明
     tty:
@@ -179,6 +184,7 @@ class CommandDecl:
     needs: tuple[str, ...] = ()
     strategy: str | None = None
     message: str = ""
+    fail_message: str = ""
     when: WhenDecl | None = None
     tty: bool = False
     allow_upstream_skip: bool = False
@@ -567,6 +573,65 @@ def _check_list_cmd_placeholders(
                 )
 
 
+# 内容插值 token：``{参数名:content}`` → 运行时读取参数指向的文件内容
+# （expanduser + utf-8 + strip）替换进模板。仅 str/path 参数可声明。
+_CONTENT_TOKEN_RE = re.compile(r"\{([a-z_][a-z0-9_]*):content\}")
+
+# 允许内容插值的参数类型
+_CONTENT_PARAM_TYPES: frozenset[str] = frozenset({"str", "path"})
+
+
+def _check_content_cmd_placeholders(
+    name: str, where: str, cmd: str | tuple[str, ...] | None, args: tuple[ParamDecl, ...]
+) -> None:
+    """校验 cmd 模板中 ``{参数名:content}`` 文件内容插值的合法性。
+
+    插值目标必须是已声明的 str/path 参数（文件路径来源）；未声明参数或
+    其他类型（int/bool/list 等）声明期直接报错，避免运行时静默保持字面量。
+
+    Raises
+    ------
+    CommandDeclError
+        content 插值引用未声明参数，或参数类型不支持内容插值
+    """
+    if cmd is None:
+        return
+    text = cmd if isinstance(cmd, str) else " ".join(cmd)
+    declared = {p.name: p for p in args}
+    for match in _CONTENT_TOKEN_RE.finditer(text):
+        pname = match.group(1)
+        param = declared.get(pname)
+        if param is None:
+            raise CommandDeclError(f"命令 {name!r} 的 {where} 内容插值 {{'{pname}':content}} 引用未声明的参数")
+        if param.type not in _CONTENT_PARAM_TYPES:
+            raise CommandDeclError(
+                f"命令 {name!r} 的 {where} 内容插值 {{'{pname}':content}} 仅支持 type=str/path 参数，"
+                f"实际: {param.type!r}"
+            )
+
+
+def _parse_messages(name: str, table: Mapping[str, Any]) -> tuple[str, str]:
+    """解析并校验 post-run 消息（message / fail_message）。
+
+    Returns
+    -------
+    tuple
+        (message, fail_message)，未声明时为空串
+
+    Raises
+    ------
+    CommandDeclError
+        值类型非法
+    """
+    message = table.get("message", "")
+    if not isinstance(message, str):
+        raise CommandDeclError(f"命令 {name!r} 的 message 须是字符串")
+    fail_message = table.get("fail_message", "")
+    if not isinstance(fail_message, str):
+        raise CommandDeclError(f"命令 {name!r} 的 fail_message 须是字符串")
+    return message, fail_message
+
+
 def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool = False) -> CommandDecl:
     """解析并校验单个 ``[commands.<name>]`` 表。
 
@@ -632,15 +697,15 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
     _check_list_cmd_placeholders(name, "cmd", cmd, args)
     _check_list_cmd_placeholders(name, "win.cmd", win_cmd, args)
     _check_list_cmd_placeholders(name, "unix.cmd", unix_cmd, args)
+    _check_content_cmd_placeholders(name, "cmd", cmd, args)
+    _check_content_cmd_placeholders(name, "win.cmd", win_cmd, args)
+    _check_content_cmd_placeholders(name, "unix.cmd", unix_cmd, args)
 
     if needs and not subcommand:
         raise CommandDeclError(f"命令 {name!r} 是单命令形态，不支持 needs（needs 引用同工具其他子命令）")
 
     cwd, timeout, env = _parse_transparency(name, table)
-
-    message = table.get("message", "")
-    if not isinstance(message, str):
-        raise CommandDeclError(f"命令 {name!r} 的 message 须是字符串")
+    message, fail_message = _parse_messages(name, table)
 
     when = _parse_when(name, table.get("when"))
     allow_upstream_skip = table.get("allow_upstream_skip", False)
@@ -664,6 +729,7 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         needs=needs,
         strategy=strategy,
         message=message,
+        fail_message=fail_message,
         when=when,
         tty=tty,
         allow_upstream_skip=allow_upstream_skip,

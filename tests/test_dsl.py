@@ -1304,6 +1304,200 @@ class TestMessageDeclaration:
         assert "已向 world 问好" in capsys.readouterr().out
 
 
+class TestFailMessageDeclaration:
+    """命令级 fail_message 声明的解析、注入与失败后打印。"""
+
+    def test_fail_message_parses(self) -> None:
+        """fail_message 字段解析保留。"""
+        decl = parse_command_table("t", {"help": "x", "cmd": "echo", "fail_message": "失败 {name}"})
+        assert decl.fail_message == "失败 {name}"
+
+    def test_fail_message_default_empty(self) -> None:
+        """未声明 fail_message 时为空串。"""
+        assert parse_command_table("t", {"help": "x", "cmd": "echo"}).fail_message == ""
+
+    def test_fail_message_non_string_rejected(self) -> None:
+        """fail_message 非字符串报错。"""
+        with pytest.raises(CommandDeclError, match="fail_message 须是字符串"):
+            parse_command_table("t", {"help": "x", "cmd": "echo", "fail_message": 42})
+
+    def test_fail_message_injected_on_synth(self) -> None:
+        """synth 注入 __dsl_fail_message__；未声明时不注入。"""
+        with_fm = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo", fail_message="oops"))
+        assert getattr(with_fm.func, "__dsl_fail_message__", None) == "oops"
+        without_fm = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo"))
+        assert not hasattr(without_fm.func, "__dsl_fail_message__")
+
+    def test_fail_message_printed_on_failure(
+        self,
+        user_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_discovery: None,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """run_tool 全链路：任务失败时打印插值提示，退出码非零。"""
+        from fcmd.apis.toolkit import run_tool
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.deploy]",
+                    'help = "部署"',
+                    'cmd = "deploy {target}"',
+                    'message = "已部署 {target}"',
+                    'fail_message = "部署失败，可手动执行: deploy {target}"',
+                    "[commands.deploy.args.target]",
+                    'help = "目标"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, "", "boom"),
+        )
+        assert run_tool("deploy", ["prod"]) == 1
+        out = capsys.readouterr().out
+        assert "部署失败，可手动执行: deploy prod" in out
+        assert "已部署" not in out
+
+    def test_message_not_printed_when_target_skipped(
+        self,
+        tmp_path: Path,
+        user_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_discovery: None,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """when 守卫跳过目标任务时不打印完成消息（SKIPPED 不等于执行成功）。"""
+        from fcmd.apis.toolkit import run_tool
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.guarded]",
+                    'help = "守卫命令"',
+                    'when = { path = "{marker}", expect = "exists" }',
+                    'cmd = "echo ran {marker}"',
+                    'message = "已执行 {marker}"',
+                    "[commands.guarded.args.marker]",
+                    'help = "标记文件"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        captured: list[Any] = []
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kwargs: (captured.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
+        )
+        # 探针目标不存在 → SKIPPED → exit 0 但不打印完成消息
+        missing = tmp_path / "missing-marker.txt"
+        assert run_tool("guarded", [str(missing)]) == 0
+        assert captured == []
+        out = capsys.readouterr().out
+        assert "已执行" not in out
+        assert "条件不满足" in out
+
+
+class TestContentExpansion:
+    """``{参数名:content}`` 文件内容插值的声明校验与运行时展开。"""
+
+    def test_content_parses_with_str_param(self) -> None:
+        """str 参数的内容插值声明合法。"""
+        decl = parse_command_table("t", {"help": "x", "cmd": ["use", "{cfg:content}"], "args": {"cfg": {"help": "c"}}})
+        assert decl.cmd == ("use", "{cfg:content}")
+
+    def test_content_unknown_param_rejected(self) -> None:
+        """content 插值引用未声明参数报错。"""
+        with pytest.raises(CommandDeclError, match="引用未声明的参数"):
+            parse_command_table("t", {"help": "x", "cmd": ["use", "{cfg:content}"]})
+
+    def test_content_non_str_param_rejected(self) -> None:
+        """content 插值目标非 str/path 类型报错。"""
+        with pytest.raises(CommandDeclError, match="仅支持 type=str/path"):
+            parse_command_table(
+                "t", {"help": "x", "cmd": ["use", "{n:content}"], "args": {"n": {"help": "n", "type": "int"}}}
+            )
+
+    def test_content_validated_on_platform_cmds(self) -> None:
+        """win.cmd / unix.cmd 平台分支同样校验 content 插值。"""
+        ok = parse_command_table("t", {"help": "x", "win": {"cmd": "use {p:content}"}, "args": {"p": {"help": "p"}}})
+        assert ok.win_cmd == "use {p:content}"
+        with pytest.raises(CommandDeclError, match="引用未声明的参数"):
+            parse_command_table("t", {"help": "x", "unix": {"cmd": "use {p:content}"}})
+
+    def test_content_expanded_from_file(
+        self,
+        tmp_path: Path,
+        user_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_discovery: None,
+    ) -> None:
+        """run_tool 全链路：文件内容（去首尾空白）替换进 tuple cmd。"""
+        from fcmd.apis.toolkit import run_tool
+
+        cfg = tmp_path / "app.conf"
+        cfg.write_text("key=value\n", encoding="utf-8")
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.inject]",
+                    'help = "注入"',
+                    'cmd = ["run", "{cfg:content}"]',
+                    "[commands.inject.args.cfg]",
+                    'help = "配置路径"',
+                    'default = "x"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        captured: list[Any] = []
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kwargs: (captured.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
+        )
+        assert run_tool("inject", ["--cfg", str(cfg)]) == 0
+        assert captured[0] == ["run", "key=value"]
+
+    def test_content_read_failure_keeps_literal(
+        self,
+        tmp_path: Path,
+        user_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_discovery: None,
+    ) -> None:
+        """文件读取失败（不存在）时保持字面 token，不抛异常。"""
+        from fcmd.apis.toolkit import run_tool
+
+        missing = tmp_path / "missing.conf"
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.inject]",
+                    'help = "注入"',
+                    'cmd = ["run", "{cfg:content}"]',
+                    "[commands.inject.args.cfg]",
+                    'help = "配置路径"',
+                    'default = "x"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        captured: list[Any] = []
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kwargs: (captured.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
+        )
+        assert run_tool("inject", ["--cfg", str(missing)]) == 0
+        assert captured[0] == ["run", "{cfg:content}"]
+
+
 # ============================================================================ #
 # 多子命令形态（decl.py：parse_tool_table / ToolDecl）
 # ============================================================================ #

@@ -43,7 +43,7 @@ from ._tool_args import (
 )
 from .dag import Graph, GraphDefaults
 from .errors import FcmdError, TaskFailedError
-from .task import Condition, Context, RetryPolicy, TaskSpec
+from .task import Condition, Context, RetryPolicy, TaskSpec, TaskStatus
 
 
 # ---------------------------------------------------------------------- #
@@ -124,16 +124,46 @@ def _value_to_cmd_str(value: Any) -> str:
     return str(value)
 
 
+def _read_file_content(value: Any, token: str) -> str:
+    """读取 ``{参数名:content}`` 指向的文件内容（展开用户目录、utf-8、去首尾空白）。
+
+    Parameters
+    ----------
+    value:
+        参数值（文件路径，str 或 Path）
+    token:
+        原始插值 token（读取失败时原样返回，保持字面量不展开）
+
+    Returns
+    -------
+    str
+        文件内容（去首尾空白）；读取失败（OSError）返回原 token——由 when
+        路径探针或命令执行错误暴露问题，不在插值路径抛异常
+    """
+    try:
+        return Path(str(value)).expanduser().read_text(encoding="utf-8").strip()
+    except OSError:
+        return token
+
+
 def _expand_value(value: str, spec: ToolSpec, variables: Mapping[str, Any]) -> str:
     """将字符串值中 ``{参数名}`` 占位符替换为 CLI 解析值。
 
     仅替换 ``spec`` 签名内声明且在 ``variables`` 中有值的参数名（cmd /
     cwd / env 值共用）。字面花括号与全局变量（dry_run/quiet/strategy，
     不在签名内）不受影响。
+
+    扩展语法 ``{参数名:content}``：读取参数指向的文件内容（expanduser +
+    utf-8 + strip）替换进模板（声明期校验仅 str/path 参数可用，见
+    ``fcmd.dsl.decl._check_content_cmd_placeholders``）；读取失败保持
+    字面 token。
     """
     for pname in inspect.signature(spec.func).parameters:
         if pname in variables:
             value = value.replace("{" + pname + "}", _value_to_cmd_str(variables[pname]))
+            token = "{" + pname + ":content}"
+            if token in value:
+                value = value.replace(token, _read_file_content(variables[pname], token))
     return value
 
 
@@ -381,6 +411,27 @@ def _parse_tool_args(
     return variables, target_spec
 
 
+def _print_post_run_messages(report: Any, target_spec: ToolSpec, variables: Mapping[str, Any]) -> None:
+    """打印 DSL post-run 完成/失败消息（``__dsl_message__``/``__dsl_fail_message__``）。
+
+    按执行结果打印对应消息，支持 ``{参数名}`` 插值；dry-run 未实际执行不打印。
+    目标任务被 when 守卫跳过时不视为执行成功——不打印完成消息（SKIPPED 不影响
+    ``report.success``，需单独判定）。
+    """
+    if variables.get("dry_run", False):
+        return
+    task_name = target_spec.subcommand if target_spec.subcommand is not None else target_spec.name
+    target_result = report.results.get(task_name)
+    target_skipped = target_result is not None and target_result.status == TaskStatus.SKIPPED
+    message = getattr(target_spec.func, "__dsl_message__", None)
+    fail_message = getattr(target_spec.func, "__dsl_fail_message__", None)
+    if report.success:
+        if message and not target_skipped:
+            print(_expand_value(message, target_spec, variables))
+    elif fail_message:
+        print(_expand_value(fail_message, target_spec, variables))
+
+
 # ---------------------------------------------------------------------- #
 # 执行
 # ---------------------------------------------------------------------- #
@@ -414,6 +465,8 @@ def _execute_tool_tasks(
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
     strategy = variables.get("strategy") or target_spec.strategy or "dependency"
     verbose = not variables.get("quiet", False)
+    # DSL post-run 失败消息（__dsl_fail_message__ 由 synth 注入）：失败路径打印
+    fail_message = getattr(target_spec.func, "__dsl_fail_message__", None)
 
     try:
         report = run(
@@ -429,6 +482,8 @@ def _execute_tool_tasks(
             err_console.print("[red]执行失败[/red]")
             if e.report is not None:
                 _print_task_summary(e.report, force=True)
+        if fail_message:
+            print(_expand_value(fail_message, target_spec, variables))
         return ToolExitCode.FAILURE.value
     except FcmdError as e:
         if verbose:
@@ -440,12 +495,8 @@ def _execute_tool_tasks(
     if verbose and not variables.get("dry_run", False):
         _print_task_summary(report)
 
-    # DSL post-run 完成消息（__dsl_message__ 由 synth 注入）：执行成功后打印，
-    # 支持 {参数名} 插值；dry-run 未实际执行不打印
-    if not variables.get("dry_run", False) and report.success:
-        message = getattr(target_spec.func, "__dsl_message__", None)
-        if message:
-            print(_expand_value(message, target_spec, variables))
+    # DSL post-run 完成/失败消息
+    _print_post_run_messages(report, target_spec, variables)
 
     return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
 
