@@ -24,14 +24,14 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from .decl import CommandDecl, CommandDeclError, parse_command_table
+from .decl import CommandDeclError, ToolDecl, parse_tool_table
 
-__all__ = ["builtin_command_decls", "user_command_decls"]
+__all__ = ["builtin_tool_decls", "user_tool_decls"]
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_decls(data: Mapping[str, Any], source: str) -> list[CommandDecl]:
+def _parse_decls(data: Mapping[str, Any], source: str) -> list[ToolDecl]:
     """解析 TOML 顶层结构（``[commands]`` 表），逐条校验。
 
     坏条目 warning 跳过，不影响其余命令。
@@ -40,19 +40,19 @@ def _parse_decls(data: Mapping[str, Any], source: str) -> list[CommandDecl]:
     if not isinstance(commands, Mapping):
         logger.warning("DSL 文件 %s 的 [commands] 不是表，已跳过整个文件", source)
         return []
-    decls: list[CommandDecl] = []
+    decls: list[ToolDecl] = []
     for name, table in commands.items():
         if not isinstance(table, Mapping):
             logger.warning("DSL 命令 %s（%s）的定义不是表，已跳过", name, source)
             continue
         try:
-            decls.append(parse_command_table(name, table))
+            decls.append(parse_tool_table(name, table))
         except CommandDeclError as exc:
             logger.warning("DSL 命令定义非法（%s），已跳过: %s", source, exc)
     return decls
 
 
-def builtin_command_decls() -> list[CommandDecl]:
+def builtin_tool_decls() -> list[ToolDecl]:
     """读取包内内置 commands.toml（随 fcmd 分发的出厂命令）。
 
     内置文件属项目源码，正常不可能损坏；防御性降级（warning + 空）仅为
@@ -67,7 +67,7 @@ def builtin_command_decls() -> list[CommandDecl]:
     return _parse_decls(data, "<内置 commands.toml>")
 
 
-def user_command_decls() -> list[CommandDecl]:
+def user_tool_decls() -> list[ToolDecl]:
     """读取用户级命令定义：``${FCMD_HOME:-~/.fcmd}/commands.toml``。
 
     文件缺失返回空（未配置用户命令是常态，非警告事件）。

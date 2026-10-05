@@ -1,6 +1,7 @@
 """gittool 工具测试。
 
-验证 ``fcmd.cli.dev.gittool`` 模块：
+验证 ``gittool`` 工具（exec 型子命令 clean/c/ca/p/pl 由 ``src/fcmd/commands.toml``
+DSL 声明，与 Python 模块 a/i/isub 合并注册）：
 - 工具注册与 cmd 子命令规格（clean/c/p/pl）
 - 状态查询（has_files / not_has_git_repo）
 - 提交（a / i 子命令）
@@ -15,9 +16,13 @@ from pathlib import Path
 
 import pytest
 
-import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册
-from fcmd.apis.toolkit import run_tool
-from fcmd.cli.dev.gittool import EXCLUDE_CMDS, EXCLUDE_DIRS, has_files, not_has_git_repo
+import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册（a/i/isub/main）
+from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.cli.dev.gittool import has_files, not_has_git_repo
+
+# 触发工具发现：Python 模块扫描 + DSL 声明注册（幂等）
+ensure_tools_discovered()
 
 
 # ---------------------------------------------------------------------- #
@@ -26,13 +31,17 @@ from fcmd.cli.dev.gittool import EXCLUDE_CMDS, EXCLUDE_DIRS, has_files, not_has_
 class TestGittool:
     """``gittool`` 工具测试。"""
 
-    def test_exclude_cmds_format(self) -> None:
-        """EXCLUDE_CMDS 展开为 -e dir1 -e dir2 ... 格式。"""
-        # 应为偶数长度，每对以 -e 开头
-        assert len(EXCLUDE_CMDS) == len(EXCLUDE_DIRS) * 2
-        for i in range(0, len(EXCLUDE_CMDS), 2):
-            assert EXCLUDE_CMDS[i] == "-e"
-            assert EXCLUDE_CMDS[i + 1] in EXCLUDE_DIRS
+    def test_clean_cmd_excludes_dirs(self) -> None:
+        """clean 的 cmd 展开为 -e dir1 -e dir2 ...（排除编辑器/项目缓存目录）。"""
+        cmd = _TOOL_REGISTRY["gittool"]["clean"].cmd
+        assert cmd is not None
+        assert cmd[:3] == ("git", "clean", "-xfd")
+        # -e 成对出现，排除目录含 .venv / node_modules 等缓存
+        excludes = [cmd[i + 1] for i, item in enumerate(cmd) if item == "-e"]
+        assert len(excludes) == len(cmd) - 3 - len(excludes)
+        assert ".venv" in excludes
+        assert "node_modules" in excludes
+        assert ".git" in excludes
 
     def test_not_has_git_repo_true(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """非 git 目录返回 True。"""
@@ -132,7 +141,7 @@ class TestGittool:
         assert "chore: update" in result.stdout
 
     def test_gittool_ca_removes_excluded_dirs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """gittool ca 会清理 EXCLUDE_DIRS 中的目录（如 .venv）。"""
+        """gittool ca 会清理 .venv 等排除目录（ca 不保留任何排除项）。"""
         monkeypatch.chdir(tmp_path)
         subprocess.run(["git", "init"], check=True, capture_output=True)
         # 放入排除目录中的一个（.venv）以及一个普通未跟踪文件

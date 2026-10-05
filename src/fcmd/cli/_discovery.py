@@ -28,7 +28,7 @@ from fcmd.console import get_console
 
 if TYPE_CHECKING:
     from fcmd.apis.toolkit import ToolSpec
-    from fcmd.dsl.decl import CommandDecl
+    from fcmd.dsl.decl import ToolDecl
 
 logger = logging.getLogger(__name__)
 
@@ -85,61 +85,88 @@ def ensure_tools_discovered() -> None:
             _register_tool(f"fcmd.cli.{name}", name)
 
     # 模块扫描后注册 DSL 声明式命令（Python 工具优先级高于 DSL，
-    # 冲突时 DSL 侧跳过，见 _register_dsl_decl）
+    # 冲突时 DSL 侧跳过，见 _register_dsl_tool）
     _register_dsl_commands()
 
 
 def _register_dsl_commands() -> None:
     """加载两级 DSL 命令声明并注册（内置 → 用户，用户可覆盖内置）。"""
     # 懒导入避免 cli ↔ dsl 包级循环（dsl.entry 懒导入本模块）
-    from fcmd.dsl import builtin_command_decls, user_command_decls
+    from fcmd.dsl import builtin_tool_decls, user_tool_decls
 
-    for decl in builtin_command_decls():
-        _register_dsl_decl(decl, "builtin")
-    for decl in user_command_decls():
-        _register_dsl_decl(decl, "user")
+    for tool in builtin_tool_decls():
+        _register_dsl_tool(tool, "builtin")
+    for tool in user_tool_decls():
+        _register_dsl_tool(tool, "user")
 
 
-def _register_dsl_decl(decl: CommandDecl, source: str) -> None:
-    """注册单条 DSL 命令声明（含冲突/覆盖/幂等规则）。
+def _register_dsl_tool(tool: ToolDecl, source: str) -> None:
+    """注册单条 DSL 工具声明（含冲突/覆盖/合并/幂等规则）。
 
-    规则（优先级 Python 工具 > 用户 DSL > 内置 DSL）：
+    规则：
 
-    - 与 Python 模块工具（或任何非 DSL 已注册工具）重名：warning 跳过
-    - 用户声明覆盖内置同名声明：移除旧注册后替换
     - 同源重入（幂等保护被重置后）：跳过注册，仅补别名
+    - 用户声明覆盖内置**单命令**声明：移除旧注册后整体替换
+    - 与已注册工具（Python 模块）重名：单命令形态 warning 跳过（Python 优先）；
+      多子命令形态**逐子命令合并**（与 ``pymake``/``gittool`` 等混合工具的
+      既有 Python 子命令共存，同名子命令先注册者优先并 warning）
+    - 全新工具：单命令形态注册为子命令 ``None``；多子命令形态逐个注册，
+      工具级 description 传播到各子命令（用于工具列表页）
     """
     # 懒导入避免 cli ↔ dsl 包级循环
     from fcmd.apis.toolkit import _TOOL_REGISTRY, _register_tool
     from fcmd.dsl import build_tool_spec
 
-    existing_source = _DSL_TOOL_SOURCES.get(decl.name)
-    if decl.name in _TOOL_REGISTRY and existing_source is None:
-        logger.warning("DSL 命令 %r 与已注册的 Python 工具重名，已跳过", decl.name)
-        return
+    existing_source = _DSL_TOOL_SOURCES.get(tool.name)
     if existing_source == source:
         # 同源幂等重入：registry 已在册，仅补别名（别名表可能被重置）
-        _register_dsl_aliases(decl)
+        _register_dsl_aliases(tool)
         return
-    if existing_source is not None:
-        # 用户声明覆盖内置：移除旧注册后替换
-        _TOOL_REGISTRY.pop(decl.name, None)
-    try:
-        _register_tool(build_tool_spec(decl))
-    except ValueError as exc:
-        logger.warning("DSL 命令 %r 注册失败，已跳过: %s", decl.name, exc)
+    if existing_source is not None and tool.flat:
+        # 用户声明覆盖内置单命令声明：移除旧注册后替换
+        _TOOL_REGISTRY.pop(tool.name, None)
+    elif tool.name in _TOOL_REGISTRY:
+        if tool.flat:
+            logger.warning("DSL 命令 %r 与已注册的 Python 工具重名，已跳过", tool.name)
+            return
+        # 多子命令形态与既有工具合并：逐子命令注册，同名先注册者优先
+        for command in tool.commands:
+            if command.name in _TOOL_REGISTRY[tool.name]:
+                logger.warning("DSL 子命令 %r.%r 与已注册子命令重名，已跳过", tool.name, command.name)
+                continue
+            _register_tool(build_tool_spec(command, tool_name=tool.name, subcommand=command.name))
+        _DSL_TOOL_SOURCES[tool.name] = source
+        _register_dsl_aliases(tool)
         return
-    _DSL_TOOL_SOURCES[decl.name] = source
-    _register_dsl_aliases(decl)
+    specs = [
+        build_tool_spec(
+            command,
+            tool_name=tool.name,
+            subcommand=None if tool.flat else command.name,
+        )
+        for command in tool.commands
+    ]
+    if tool.description and not tool.flat:
+        from dataclasses import replace
+
+        specs = [replace(spec, description=tool.description) for spec in specs]
+    for spec in specs:
+        _register_tool(spec)
+    _DSL_TOOL_SOURCES[tool.name] = source
+    _register_dsl_aliases(tool)
 
 
-def _register_dsl_aliases(decl: CommandDecl) -> None:
-    """注册 DSL 命令别名（先到先得，冲突时 warning 忽略该别名）。"""
-    _TOOL_ALIASES.setdefault(decl.name, decl.name)
-    for alias in decl.aliases:
-        previous = _TOOL_ALIASES.setdefault(alias, decl.name)
-        if previous != decl.name:
-            logger.warning("DSL 命令 %r 的别名 %r 已被工具 %r 占用，忽略该别名", decl.name, alias, previous)
+def _register_dsl_aliases(tool: ToolDecl) -> None:
+    """注册 DSL 工具别名（先到先得，冲突时 warning 忽略该别名）。
+
+    单命令形态取命令声明中的 aliases；多子命令形态取工具级别名。
+    """
+    aliases = tool.commands[0].aliases if tool.flat else tool.aliases
+    _TOOL_ALIASES.setdefault(tool.name, tool.name)
+    for alias in aliases:
+        previous = _TOOL_ALIASES.setdefault(alias, tool.name)
+        if previous != tool.name:
+            logger.warning("DSL 命令 %r 的别名 %r 已被工具 %r 占用，忽略该别名", tool.name, alias, previous)
 
 
 def _discover_domain(domain: str) -> None:

@@ -2,6 +2,14 @@
 
 提供添加提交/初始化/初始化子目录/清理/推送/拉取子命令。
 
+子命令来源：纯 exec 型子命令（clean/c/ca/p/pl）由 ``src/fcmd/commands.toml``
+DSL 声明，发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
+本模块仅保留含 Python 逻辑的 fn 子命令：
+
+- ``a``：添加并提交（仅当有未提交更改时）
+- ``i``：初始化并提交
+- ``isub``：初始化所有子目录的 Git 仓库
+
 示例
 ----
     fcmd gittool a -m "feat: 新功能"   # 添加并提交
@@ -28,27 +36,6 @@ __all__ = [
     "has_files",
     "not_has_git_repo",
 ]
-
-# git clean -xfd 排除的目录（编辑器/项目缓存等）
-EXCLUDE_DIRS: list[str] = [
-    # IDE 相关
-    ".vscode",
-    ".idea",
-    ".editorconfig",
-    ".trae",
-    ".qoder",
-    # 项目相关
-    ".venv",
-    ".git",
-    # 缓存相关
-    ".ruff_cache",
-    ".tox",
-    # 依赖相关
-    "node_modules",
-]
-
-# 展开为 ``-e dir1 -e dir2 ...`` 供 git clean 使用
-EXCLUDE_CMDS: list[str] = [arg for d in EXCLUDE_DIRS for arg in ["-e", d]]
 
 
 # ============================================================================
@@ -140,53 +127,6 @@ def git_init_sub_dirs(message: str = "init commit") -> None:
         subprocess.run(["git", "add", "."], cwd=subdir, check=False, capture_output=True, text=True)
         subprocess.run(["git", "commit", "-m", message], cwd=subdir, check=False, capture_output=True, text=True)
         print(f"已初始化: {subdir.name}")
-
-
-# ============================================================================
-# cmd 子命令
-# ============================================================================
-
-
-@fcmd.tool(
-    "gittool",
-    subcommand="clean",
-    help="清理未跟踪文件",
-    cmd=["git", "clean", "-xfd", *EXCLUDE_CMDS],
-    hidden=True,
-)
-def clean() -> None:
-    """清理 Git 未跟踪文件（隐藏命令，被 c 依赖）。"""
-
-
-@fcmd.tool(
-    "gittool",
-    subcommand="c",
-    help="清理并查看状态",
-    cmd=["git", "status", "--porcelain"],
-    needs=["clean"],
-)
-def c() -> None:
-    """清理未跟踪文件并查看 Git 状态。"""
-
-
-@fcmd.tool(
-    "gittool",
-    subcommand="ca",
-    help="清理全部未跟踪文件（含排除目录）",
-    cmd=["git", "clean", "-xfd", "."],
-)
-def ca() -> None:
-    """清理全部未跟踪文件，等同于 ``git clean -xfd .``，不保留排除目录。"""
-
-
-@fcmd.tool("gittool", subcommand="p", help="推送", cmd=["git", "push"])
-def p() -> None:
-    """推送代码到远程仓库。"""
-
-
-@fcmd.tool("gittool", subcommand="pl", help="拉取", cmd=["git", "pull"])
-def pl() -> None:
-    """从远程仓库拉取代码。"""
 
 
 @fcmd.main("gittool")

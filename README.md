@@ -310,7 +310,7 @@ report = run(graph, strategy="dependency")
 
 ## 命令定义 DSL
 
-exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具（如内置的 `clr`）。两级配置：包内 `fcmd/commands.toml`（出厂命令）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置；命令名与 Python 模块工具冲突时 Python 优先）。
+exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具。两种形态：**单命令**（`[commands.<name>]`，如内置的 `clr`）与**多子命令**（`[commands.<tool>.<sub>]`，如内置的 `pymake`/`gittool` 纯 exec 子命令）。两级配置：包内 `fcmd/commands.toml`（出厂命令）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置单命令；与 Python 模块工具重名时 Python 优先，多子命令形态逐子命令合并注册）。
 
 ```toml
 # ~/.fcmd/commands.toml
@@ -334,14 +334,25 @@ help = "同步（跨平台示例）"
 win.cmd = "robocopy src dst /mir"   # 字符串 → shell 执行
 unix.cmd = ["rsync", "-a", "src/", "dst"]  # 数组 → 无 shell（注入面最小）
 aliases = ["sy"]
+
+# 多子命令形态：与 Python 模块同名的工具逐子命令合并注册
+[commands.mytool.go]
+help = "执行构建"
+cmd = ["make", "build"]
+
+[commands.mytool.all]
+help = "聚合（needs 编排，无 cmd）"
+needs = ["go"]
+strategy = "thread"              # sequential/thread/async/dependency
 ```
 
 ```bash
 fcmd hello world --count 3        # echo 你好 world x3
 fcmd sy                           # 别名调用
+fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令 exec 形态（平台分支 / 参数 / 插值 / cwd / env / timeout）；多任务编排（needs/matrix/if）属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数 / 插值 / cwd / env / timeout / needs 聚合 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
 
 ## 执行策略
 

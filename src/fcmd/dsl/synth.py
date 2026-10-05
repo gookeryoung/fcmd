@@ -14,9 +14,11 @@ DSL 声明到 :class:`~fcmd.apis._tool_args.ToolSpec` 的转换层：
 转换为真实类型注解（``Literal`` 动态构造）与 :class:`inspect.Signature`，
 零改动复用 :func:`fcmd.apis._tool_args._build_parser_for_tool` 的签名推导。
 
-合成函数无源码（``inspect.getsource`` 抛 OSError），但 exec 型命令必有
-cmd，``_is_aggregate`` 在 ``spec.cmd is not None`` 时短路返回 False，
-函数逻辑分析路径完全不会被触及。
+合成函数无源码（``inspect.getsource`` 抛 OSError），标记
+``__dsl_empty_body__`` 供 :func:`fcmd.apis._tool_exec._has_function_logic`
+识别空函数体（DSL 声明是纯 exec/聚合编排，占位函数体永不承载逻辑）：
+cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 cmd）据此
+正确判定为聚合。
 """
 
 from __future__ import annotations
@@ -25,7 +27,7 @@ import inspect
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fcmd.apis._tool_args import ToolSpec
 
@@ -116,10 +118,17 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     dsl_command.__doc__ = decl.help
     dsl_command.__signature__ = inspect.Signature(parameters)  # type: ignore[attr-defined]
     dsl_command.__annotations__ = annotations
+    dsl_command.__dsl_empty_body__ = True  # type: ignore[attr-defined]
     return dsl_command
 
 
-def build_tool_spec(decl: CommandDecl, platform: str = sys.platform) -> ToolSpec:
+def build_tool_spec(
+    decl: CommandDecl,
+    platform: str = sys.platform,
+    *,
+    tool_name: str | None = None,
+    subcommand: str | None = None,
+) -> ToolSpec:
     """CommandDecl → ToolSpec（注册进 ``_TOOL_REGISTRY`` 的形态）。
 
     Parameters
@@ -128,22 +137,39 @@ def build_tool_spec(decl: CommandDecl, platform: str = sys.platform) -> ToolSpec
         命令声明
     platform:
         平台标识（``sys.platform`` 值），默认当前平台
+    tool_name:
+        工具名；多子命令形态下与 ``decl.name``（子命令名）不同，缺省用
+        ``decl.name``
+    subcommand:
+        子命令名；``None`` 表示单命令工具
 
     Returns
     -------
     ToolSpec
-        cmd 任务型工具描述符（subcommand=None，单命令工具）
+        cmd/聚合任务型工具描述符
+
+    Raises
+    ------
+    CommandDeclError
+        该平台无可用命令
     """
     return ToolSpec(
-        name=decl.name,
-        subcommand=None,
+        name=tool_name or decl.name,
+        subcommand=subcommand,
         func=_synthesize_func(decl),
         help=decl.help,
         description=decl.description,
         hidden=decl.hidden,
-        cmd=select_platform_cmd(decl, platform),
+        cmd=None if decl.needs and not _has_any_cmd(decl) else select_platform_cmd(decl, platform),
         param_help={p.name: p.help for p in decl.args if p.help},
         cwd=decl.cwd,
         env=dict(decl.env) if decl.env else None,
         timeout=decl.timeout,
+        needs=decl.needs,
+        strategy=cast("Literal['sequential', 'thread', 'async', 'dependency'] | None", decl.strategy),
     )
+
+
+def _has_any_cmd(decl: CommandDecl) -> bool:
+    """声明是否提供了任一 cmd（含平台分支）。"""
+    return not (decl.cmd is None and decl.win_cmd is None and decl.unix_cmd is None)

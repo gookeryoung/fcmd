@@ -1,10 +1,12 @@
 """pymake 工具测试。
 
-验证 ``fcmd.cli.dev.pymake`` 模块通过 ``@fx.tool`` 装饰器注册的子命令集合：
-- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox/push/upload）
+验证 ``pymake`` 工具的子命令集合（exec 型子命令由 ``src/fcmd/commands.toml``
+DSL 声明，与 Python 模块 push 合并注册）：
+- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox）
 - cmd + needs 混合任务（cov/bump）
 - 聚合任务（chk/tc）
 - 内部 hidden job（fmt/fmtc/pyrefly_check/upload）
+- Python 模块保留子命令（push，callable cmd）
 - CLI 调度（dry-run 验证执行计划）
 
 精简设计说明：
@@ -21,9 +23,13 @@ import sys
 import pytest
 
 import fcmd as fx
-import fcmd.cli.dev.pymake  # 导入触发 @fx.tool 注册
+import fcmd.cli.dev.pymake  # 导入触发 @fx.tool 注册（push/main）
 from fcmd.apis.toolkit import _TOOL_REGISTRY, get_tool, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.cli.main import FcmdApp
+
+# 触发工具发现：Python 模块扫描 + DSL 声明注册（幂等）
+ensure_tools_discovered()
 
 
 # ---------------------------------------------------------------------- #

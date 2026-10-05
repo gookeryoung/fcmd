@@ -23,12 +23,14 @@ from fcmd.cli._common import _BUILTIN_COMMANDS
 from fcmd.dsl import (
     CommandDecl,
     CommandDeclError,
+    ToolDecl,
     build_tool_spec,
-    builtin_command_decls,
+    builtin_tool_decls,
     infer_tool_name,
     parse_command_table,
+    parse_tool_table,
     select_platform_cmd,
-    user_command_decls,
+    user_tool_decls,
 )
 from fcmd.dsl.decl import _RESERVED_NAMES, ParamDecl
 
@@ -239,19 +241,22 @@ class TestLoader:
     """内置与用户级 commands.toml 的加载。"""
 
     def test_builtin_decls_valid(self) -> None:
-        """内置 commands.toml 逐条合法且含 clr（出厂即正确 CI 门禁）。"""
-        decls = builtin_command_decls()
-        assert decls, "内置 commands.toml 不应为空"
-        names = [d.name for d in decls]
+        """内置 commands.toml 逐条合法且含 clr/pymake/gittool（出厂即正确 CI 门禁）。"""
+        tools = builtin_tool_decls()
+        assert tools, "内置 commands.toml 不应为空"
+        names = [t.name for t in tools]
         assert "clr" in names
-        for decl in decls:
-            spec = build_tool_spec(decl)  # 每条都能构造 ToolSpec（双平台）
-            assert spec.cmd is not None
+        assert "pymake" in names and "gittool" in names
+        for tool in tools:
+            for decl in tool.commands:
+                spec = build_tool_spec(decl, tool_name=tool.name, subcommand=None if tool.flat else decl.name)
+                # 聚合命令（needs 且无 cmd）合法；其余子命令必须可执行
+                assert spec.cmd is not None or spec.needs
 
     def test_user_decls_missing_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """用户配置文件缺失时返回空（非警告事件）。"""
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-        assert user_command_decls() == []
+        assert user_tool_decls() == []
 
     def test_user_decls_normal(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """FCMD_HOME 指向的正常配置文件解析出命令。"""
@@ -259,9 +264,9 @@ class TestLoader:
         home.mkdir()
         (home / "commands.toml").write_text('[commands.hello]\nhelp = "问好"\ncmd = "echo hi"\n', encoding="utf-8")
         monkeypatch.setenv("FCMD_HOME", str(home))
-        decls = user_command_decls()
+        decls = user_tool_decls()
         assert [d.name for d in decls] == ["hello"]
-        assert decls[0].cmd == "echo hi"
+        assert decls[0].commands[0].cmd == "echo hi"
 
     def test_user_decls_toml_syntax_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -272,7 +277,7 @@ class TestLoader:
         (home / "commands.toml").write_text("[commands.broken\nhelp = ", encoding="utf-8")
         monkeypatch.setenv("FCMD_HOME", str(home))
         with caplog.at_level("WARNING"):
-            assert user_command_decls() == []
+            assert user_tool_decls() == []
         assert any("解析失败" in r.message for r in caplog.records)
 
     def test_user_decls_bad_entry_skipped(
@@ -287,7 +292,7 @@ class TestLoader:
         )
         monkeypatch.setenv("FCMD_HOME", str(home))
         with caplog.at_level("WARNING"):
-            decls = user_command_decls()
+            decls = user_tool_decls()
         assert [d.name for d in decls] == ["good"]
         assert any("已跳过" in r.message for r in caplog.records)
 
@@ -297,7 +302,7 @@ class TestLoader:
         home.mkdir()
         (home / "commands.toml").write_text('commands = "oops"\n', encoding="utf-8")
         monkeypatch.setenv("FCMD_HOME", str(home))
-        assert user_command_decls() == []
+        assert user_tool_decls() == []
 
     def test_builtin_read_failure_degrades(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
@@ -308,7 +313,7 @@ class TestLoader:
         # 故障注入测试辅助（访问私有资源路径）：模拟内置资源不可读
         monkeypatch.setattr(loader_mod.resources, "files", lambda _pkg: _BrokenResource())
         with caplog.at_level("WARNING"):
-            assert builtin_command_decls() == []
+            assert builtin_tool_decls() == []
         assert any("读取失败" in r.message for r in caplog.records)
 
 
@@ -413,8 +418,8 @@ class TestDiscoveryIntegration:
         """用户声明覆盖内置同名声明：移除旧注册后替换（机制单测）。"""
         builtin_decl = CommandDecl(name="dsldemo", help="内置版", cmd="builtin-cmd")
         user_decl = CommandDecl(name="dsldemo", help="用户版", cmd="user-cmd")
-        discovery_mod._register_dsl_decl(builtin_decl, "builtin")
-        discovery_mod._register_dsl_decl(user_decl, "user")
+        discovery_mod._register_dsl_tool(ToolDecl(name="dsldemo", commands=(builtin_decl,)), "builtin")
+        discovery_mod._register_dsl_tool(ToolDecl(name="dsldemo", commands=(user_decl,)), "user")
         from fcmd.apis.toolkit import get_tool
 
         spec = get_tool("dsldemo")
@@ -425,8 +430,9 @@ class TestDiscoveryIntegration:
     def test_reregister_same_source_idempotent(self, reset_discovery: None) -> None:
         """同源重入幂等：不抛子命令冲突异常，注册不重复。"""
         decl = CommandDecl(name="dsldemo", help="x", cmd="echo x")
-        discovery_mod._register_dsl_decl(decl, "user")
-        discovery_mod._register_dsl_decl(decl, "user")  # 不应抛 ValueError
+        tool = ToolDecl(name="dsldemo", commands=(decl,))
+        discovery_mod._register_dsl_tool(tool, "user")
+        discovery_mod._register_dsl_tool(tool, "user")  # 不应抛 ValueError
         from fcmd.apis.toolkit import get_tool
 
         assert get_tool("dsldemo").cmd == "echo x"
@@ -435,8 +441,9 @@ class TestDiscoveryIntegration:
         """别名已被其他工具占用时 warning 忽略该别名。"""
         discovery_mod._TOOL_ALIASES["gitt"] = "gittool"  # 模拟已占用
         decl = CommandDecl(name="dsldemo", help="x", cmd="echo x", aliases=("gitt", "demo2"))
+        tool = ToolDecl(name="dsldemo", commands=(decl,))
         with caplog.at_level("WARNING", logger="fcmd.cli._discovery"):
-            discovery_mod._register_dsl_decl(decl, "user")
+            discovery_mod._register_dsl_tool(tool, "user")
         assert discovery_mod._TOOL_ALIASES["gitt"] == "gittool"  # 原占用者保留
         assert discovery_mod._TOOL_ALIASES["demo2"] == "dsldemo"
         assert any("gitt" in r.message and "占用" in r.message for r in caplog.records)
@@ -497,9 +504,9 @@ class TestRunToolClr:
         """把内置 clr 声明按指定平台重新注册（测试辅助，回滚由 fixture 负责）。"""
         from fcmd.apis.toolkit import _TOOL_REGISTRY
 
-        decl = next(d for d in builtin_command_decls() if d.name == "clr")
+        clr_tool = next(t for t in builtin_tool_decls() if t.name == "clr")
         _TOOL_REGISTRY.pop("clr", None)
-        _TOOL_REGISTRY["clr"] = {None: build_tool_spec(decl, platform=platform)}
+        _TOOL_REGISTRY["clr"] = {None: build_tool_spec(clr_tool.commands[0], platform=platform)}
 
     def test_clr_registered_as_dsl(self, reset_discovery: None) -> None:
         """clr 经 ensure 注册为内置 DSL 单命令工具。"""
@@ -975,3 +982,232 @@ class TestTransparency:
         assert captured["cwd"] == work_dir
         assert captured["timeout"] == 15
         assert captured["env"]["PLACE"] == "home"
+
+
+# ============================================================================ #
+# 多子命令形态（decl.py：parse_tool_table / ToolDecl）
+# ============================================================================ #
+class TestToolTableParsing:
+    """[commands.<tool>.<sub>] 多子命令形态的解析与校验。"""
+
+    @staticmethod
+    def _subs_table(**overrides: Any) -> dict[str, Any]:
+        """构造双子命令的最小工具表（cmd + 聚合形态）。"""
+        table: dict[str, Any] = {
+            "lint": {"help": "lint", "cmd": "ruff check"},
+            "chk": {"help": "聚合", "needs": ["lint"], "strategy": "thread"},
+        }
+        table.update(overrides)
+        return table
+
+    def test_parse_multi_sub_tool(self) -> None:
+        """多子命令形态解析为 flat=False 的 ToolDecl。"""
+        tool = parse_tool_table("pymakedemo", self._subs_table())
+        assert tool.name == "pymakedemo"
+        assert tool.flat is False
+        assert [c.name for c in tool.commands] == ["lint", "chk"]
+        assert tool.commands[1].needs == ("lint",)
+        assert tool.commands[1].strategy == "thread"
+
+    def test_flat_form_still_parsed(self) -> None:
+        """单命令表自动识别为 flat=True。"""
+        tool = parse_tool_table("solotool", {"help": "x", "cmd": "echo"})
+        assert tool.flat is True
+        assert tool.commands[0].name == "solotool"
+
+    def test_mixed_form_rejected(self) -> None:
+        """单命令与子命令形态混用报错。"""
+        table = self._subs_table(cmd="echo oops")
+        with pytest.raises(CommandDeclError, match="混用"):
+            parse_tool_table("mixedtool", table)
+
+    def test_sub_aliases_rejected(self) -> None:
+        """子命令声明 aliases 报错（多子命令形态的别名在工具级声明）。"""
+        table = self._subs_table(lint={"help": "lint", "cmd": "ruff", "aliases": ["l"]})
+        with pytest.raises(CommandDeclError, match="aliases"):
+            parse_tool_table("aliastool", table)
+
+    def test_tool_level_metadata(self) -> None:
+        """工具级 description/aliases 解析成功。"""
+        table = self._subs_table()
+        table["description"] = "演示工具"
+        table["aliases"] = ["demo"]
+        tool = parse_tool_table("metatable", table)
+        assert tool.description == "演示工具"
+        assert tool.aliases == ("demo",)
+
+    def test_needs_self_reference_rejected(self) -> None:
+        """needs 引用自身报错。"""
+        table = {"solo": {"help": "x", "needs": ["solo"], "strategy": "sequential"}}
+        with pytest.raises(CommandDeclError, match="自身"):
+            parse_tool_table("selfref", table)
+
+    def test_needs_missing_ref_rejected(self) -> None:
+        """needs 引用不存在的子命令报错。"""
+        table = {"a": {"help": "x", "cmd": "echo"}, "b": {"help": "y", "needs": ["ghost"]}}
+        with pytest.raises(CommandDeclError, match="ghost"):
+            parse_tool_table("missingref", table)
+
+    def test_empty_tool_rejected(self) -> None:
+        """工具表无任何子命令报错。"""
+        with pytest.raises(CommandDeclError, match="至少声明一个子命令"):
+            parse_tool_table("emptytool", {"description": "空"})
+
+    def test_tool_level_unknown_key_rejected(self) -> None:
+        """工具级未知键（非 description/aliases/子命令表）报错。"""
+        with pytest.raises(CommandDeclError, match="hepl"):
+            parse_tool_table("badtool", {"hepl": "typo", "a": {"help": "x", "cmd": "echo"}})
+
+
+# ============================================================================ #
+# needs / strategy 字段（decl.py）
+# ============================================================================ #
+class TestNeedsStrategyParsing:
+    """needs 与 strategy 的解析与约束校验。"""
+
+    def test_needs_and_strategy_parsed(self) -> None:
+        """needs 与 strategy 解析成功（子命令形态）。"""
+        decl = parse_command_table("chk", {"help": "x", "needs": ["a", "b"], "strategy": "thread"}, subcommand=True)
+        assert decl.needs == ("a", "b")
+        assert decl.strategy == "thread"
+
+    def test_aggregate_without_cmd_allowed(self) -> None:
+        """无 cmd 但有 needs 的聚合命令合法。"""
+        decl = parse_command_table("agg", {"help": "x", "needs": ["a"]}, subcommand=True)
+        assert decl.cmd is None
+        assert decl.needs == ("a",)
+
+    def test_no_cmd_and_no_needs_rejected(self) -> None:
+        """无 cmd 且无 needs 报错（须至少提供一个）。"""
+        with pytest.raises(CommandDeclError, match="至少一个"):
+            parse_command_table("orphan", {"help": "x"}, subcommand=True)
+
+    def test_needs_forbidden_in_flat_form(self) -> None:
+        """单命令形态声明 needs 报错（needs 引用同工具其他子命令）。"""
+        with pytest.raises(CommandDeclError, match="单命令形态"):
+            parse_command_table("flat", {"help": "x", "cmd": "echo", "needs": ["other"]})
+
+    def test_aggregate_args_rejected(self) -> None:
+        """聚合命令（needs 且无 cmd）声明 args 报错。"""
+        table: dict[str, Any] = {"help": "x", "needs": ["a"], "args": {"n": {"help": "数量"}}}
+        with pytest.raises(CommandDeclError, match="聚合命令"):
+            parse_command_table("aggbad", table, subcommand=True)
+
+    def test_cmd_with_needs_allowed(self) -> None:
+        """cmd + needs 混合（如 gittool c）合法。"""
+        decl = parse_command_table("c", {"help": "x", "cmd": "git status", "needs": ["clean"]}, subcommand=True)
+        assert decl.cmd == "git status"
+        assert decl.needs == ("clean",)
+
+    @pytest.mark.parametrize("bad", [42, "thread", ["a", 1], [""], {"a": 1}])
+    def test_bad_needs(self, bad: Any) -> None:
+        """needs 须是非空字符串数组。"""
+        with pytest.raises(CommandDeclError, match="needs"):
+            parse_command_table("t", {"help": "x", "cmd": "echo", "needs": bad}, subcommand=True)
+
+    @pytest.mark.parametrize("bad", ["parallel", "THREAD", 1, True])
+    def test_bad_strategy(self, bad: Any) -> None:
+        """strategy 取值超出四策略集合报错。"""
+        with pytest.raises(CommandDeclError, match="strategy"):
+            parse_command_table("t", {"help": "x", "needs": ["a"], "strategy": bad}, subcommand=True)
+
+
+# ============================================================================ #
+# 聚合 ToolSpec 合成（synth.py）与聚合判定（_tool_exec.py）
+# ============================================================================ #
+class TestAggregateSpecSynthesis:
+    """needs/strategy 经 build_tool_spec 映射，合成函数标记聚合语义。"""
+
+    def test_aggregate_spec_cmd_none(self) -> None:
+        """聚合声明（needs 无 cmd）合成 spec：cmd=None、needs/strategy/命名透传。"""
+        decl = CommandDecl(name="chk", help="聚合", needs=("lint", "fmt"), strategy="thread")
+        spec = build_tool_spec(decl, tool_name="pymakedemo", subcommand="chk")
+        assert spec.cmd is None
+        assert spec.needs == ("lint", "fmt")
+        assert spec.strategy == "thread"
+        assert spec.name == "pymakedemo"
+        assert spec.subcommand == "chk"
+
+    def test_hybrid_spec_keeps_cmd(self) -> None:
+        """cmd + needs 混合声明合成 spec：cmd 与 needs 并存（gittool c 形态）。"""
+        decl = CommandDecl(name="c", help="清理并查看", cmd=("git", "status"), needs=("clean",))
+        spec = build_tool_spec(decl, tool_name="gittooldemo", subcommand="c")
+        assert spec.cmd == ("git", "status")
+        assert spec.needs == ("clean",)
+
+    def test_synthesized_func_marked_empty_body(self) -> None:
+        """合成函数标记 __dsl_empty_body__，被 _is_aggregate 识别为无函数逻辑。"""
+        from fcmd.apis._tool_exec import _is_aggregate
+
+        decl = CommandDecl(name="chk", help="聚合", needs=("lint",), strategy="thread")
+        spec = build_tool_spec(decl, tool_name="t", subcommand="chk")
+        assert getattr(spec.func, "__dsl_empty_body__", False) is True
+        assert _is_aggregate(spec) is True
+
+    def test_plain_cmd_spec_not_aggregate(self) -> None:
+        """普通 cmd 命令的合成函数同样有标记，但 _is_aggregate 因有 cmd 返回 False。"""
+        from fcmd.apis._tool_exec import _is_aggregate
+
+        decl = CommandDecl(name="b", help="构建", cmd="uv build")
+        spec = build_tool_spec(decl, tool_name="t", subcommand="b")
+        assert _is_aggregate(spec) is False
+
+
+# ============================================================================ #
+# 合并注册规则（_discovery.py：_register_dsl_tool 多子命令形态）
+# ============================================================================ #
+class TestRegisterDslToolMerge:
+    """DSL 多子命令工具与既有注册表的合并规则。"""
+
+    @staticmethod
+    def _multi_tool(name: str, **meta: Any) -> ToolDecl:
+        """构造双子命令工具声明（cmd + 聚合，测试辅助）。"""
+        commands = (
+            CommandDecl(name="go", help="go", cmd="echo go"),
+            CommandDecl(name="agg", help="聚合", needs=("go",), strategy="thread"),
+        )
+        return ToolDecl(name=name, commands=commands, flat=False, **meta)
+
+    def test_new_multi_sub_tool_registered(self, reset_discovery: None) -> None:
+        """全新多子命令工具逐子命令注册，工具级 description 传播到各子命令。"""
+        from fcmd.apis.toolkit import get_tool
+
+        tool = self._multi_tool("mergetool", description="合并演示")
+        discovery_mod._register_dsl_tool(tool, "builtin")
+        go_spec = get_tool("mergetool", "go")
+        assert go_spec.cmd == "echo go"
+        assert go_spec.description == "合并演示"
+        agg = get_tool("mergetool", "agg")
+        assert agg.needs == ("go",) and agg.strategy == "thread"
+        assert discovery_mod._DSL_TOOL_SOURCES["mergetool"] == "builtin"
+
+    def test_merge_into_existing_python_tool(self, reset_discovery: None, caplog: pytest.LogCaptureFixture) -> None:
+        """与既有 Python 工具重名：逐子命令合并，同名子命令跳过并 warning。"""
+        from fcmd.apis.toolkit import ToolSpec, _register_tool, get_tool
+
+        def existing_fn() -> None:
+            """既有 Python 子命令占位。"""
+
+        _register_tool(ToolSpec(name="mergetool", subcommand="go", func=existing_fn, help="Python 版 go", cmd="py-go"))
+        with caplog.at_level("WARNING", logger="fcmd.cli._discovery"):
+            discovery_mod._register_dsl_tool(self._multi_tool("mergetool"), "builtin")
+        # 同名 go 保留 Python 版；agg 为 DSL 新增
+        assert get_tool("mergetool", "go").cmd == "py-go"
+        assert get_tool("mergetool", "agg").needs == ("go",)
+        assert any("go" in r.message and "重名" in r.message for r in caplog.records)
+        assert discovery_mod._DSL_TOOL_SOURCES["mergetool"] == "builtin"
+
+    def test_multi_sub_idempotent_reentry(self, reset_discovery: None) -> None:
+        """多子命令工具同源重入幂等：不抛子命令冲突异常。"""
+        tool = self._multi_tool("mergetool")
+        discovery_mod._register_dsl_tool(tool, "builtin")
+        discovery_mod._register_dsl_tool(tool, "builtin")  # 不应抛 ValueError
+        from fcmd.apis.toolkit import get_tool
+
+        assert get_tool("mergetool", "go").cmd == "echo go"
+
+    def test_tool_level_alias_registered(self, reset_discovery: None) -> None:
+        """多子命令工具级别名注册进 _TOOL_ALIASES。"""
+        tool = self._multi_tool("mergetool", aliases=("mt",))
+        discovery_mod._register_dsl_tool(tool, "builtin")
+        assert discovery_mod.resolve_tool("mt") == "mergetool"

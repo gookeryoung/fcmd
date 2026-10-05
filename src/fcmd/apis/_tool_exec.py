@@ -79,8 +79,11 @@ def _collect_with_deps(subs: dict[str | None, ToolSpec], target: str | None) -> 
 def _has_function_logic(func: Any) -> bool:
     """判断函数体是否有实际逻辑（非 pass/.../docstring）。
 
-    用 ast 分析，避免 exec 函数体。
+    用 ast 分析，避免 exec 函数体。DSL 合成函数标记 ``__dsl_empty_body__``
+    （声明式 exec/聚合编排，占位函数体永不承载逻辑），直接判定无逻辑。
     """
+    if getattr(func, "__dsl_empty_body__", False):
+        return False
     try:
         src = inspect.getsource(func)
         src = textwrap.dedent(src)
