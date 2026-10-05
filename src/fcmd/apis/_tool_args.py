@@ -75,6 +75,9 @@ class ToolSpec:
         工作目录（cmd 任务装饰器级默认）；若函数签名有 ``cwd`` 参数则被 CLI 值覆盖
     allow_upstream_skip:
         上游 SKIPPED 时本任务仍执行
+    passthrough:
+        透传 :class:`TaskSpec` 对应字段：``True`` 时 cmd 任务不捕获
+        stdout/stderr、直接透传终端（交互式命令用）
     hidden:
         不暴露为 subcommand（内部 job，仅被 needs 引用）
     env / retry / timeout:
@@ -94,6 +97,7 @@ class ToolSpec:
     strategy: Literal["sequential", "thread", "async", "dependency"] | None = None
     cwd: str | Path | None = None
     allow_upstream_skip: bool = False
+    passthrough: bool = False
     hidden: bool = False
     env: Mapping[str, str] | None = None
     retry: RetryPolicy | None = None

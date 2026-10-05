@@ -296,6 +296,9 @@ class TaskSpec[T]:
     verbose:
         是否打印详细输出。``True`` 时打印执行的命令、返回码与输出
         （仅 ``cmd``），以及任务生命周期。
+    passthrough:
+        ``True`` 时 ``cmd`` 任务不捕获 stdout/stderr，直接透传到终端，
+        供交互式命令使用（如 ``docker login`` 的密码提示需可见可输入）。
     allow_upstream_skip:
         若为 ``True``，硬依赖被 SKIPPED 时本任务仍执行（软依赖不影响）。
         适用于清理类任务。
@@ -323,6 +326,7 @@ class TaskSpec[T]:
     cwd: Path | None = None
     env: Mapping[str, str] | None = None
     verbose: bool = False
+    passthrough: bool = False
     allow_upstream_skip: bool = False
     strategy: str | None = None
     continue_on_error: bool = False

@@ -1381,7 +1381,6 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("convtool", "fcmd.cli.conv.convtool"),
     ("csvtool", "fcmd.cli.data.csvtool"),
     ("cryptool", "fcmd.cli.crypto.cryptool"),
-    ("dockercmd", "fcmd.cli.dev.dockercmd"),
     ("envdev", "fcmd.cli.dev.envdev"),
     ("filedate", "fcmd.cli.fileops.filedate"),
     ("filelevel", "fcmd.cli.fileops.filelevel"),

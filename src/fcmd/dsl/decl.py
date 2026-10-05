@@ -74,6 +74,7 @@ _TOP_KEYS = frozenset(
         "strategy",
         "message",
         "when",
+        "tty",
         "allow_upstream_skip",
     }
 )
@@ -84,8 +85,9 @@ _STRATEGIES: frozenset[str] = frozenset({"sequential", "thread", "async", "depen
 # 平台子表（win/unix）内合法键
 _PLATFORM_KEYS = frozenset({"cmd"})
 
-# 参数声明表内合法键（on 仅 type=bool：truthy 时向 cmd 追加的固定 token）
-_PARAM_KEYS = frozenset({"type", "default", "help", "choices", "on"})
+# 参数声明表内合法键（on 仅 type=bool：truthy 时向 cmd 追加的固定 token；
+# default_env 仅 type=str：CLI 值等于 default 时的环境变量回退链）
+_PARAM_KEYS = frozenset({"type", "default", "help", "choices", "on", "default_env"})
 
 
 class CommandDeclError(ValueError):
@@ -153,6 +155,9 @@ class CommandDecl:
         执行成功后打印的完成消息（支持 ``{参数名}`` 插值）；空串表示不打印
     when:
         执行守卫探针声明（任务执行前求值，不满足则 SKIPPED）；``None`` 表示未声明
+    tty:
+        ``True`` 时任务 stdout/stderr 不捕获、直接透传到终端（交互式命令，
+        如 ``docker login`` 的密码提示需可见可输入）
     allow_upstream_skip:
         硬依赖被 SKIPPED 时本任务是否仍执行（聚合链豁免场景）
     """
@@ -173,6 +178,7 @@ class CommandDecl:
     strategy: str | None = None
     message: str = ""
     when: WhenDecl | None = None
+    tty: bool = False
     allow_upstream_skip: bool = False
 
 
@@ -230,6 +236,10 @@ class ParamDecl:
     on:
         ``type="bool"`` 专用：值为真时向 cmd 尾部追加的固定 token 元组
         （如 ``["--fix", "--unsafe-fixes"]``）
+    default_env:
+        环境变量回退链（仅 ``type="str"`` 且须同时声明 ``default``）：CLI
+        解析值等于 ``default`` 时取链中第一个非空环境变量值；用于复刻
+        ``参数或动态默认`` 的 Python 语义（如 ``username or getpass.getuser()``）
     """
 
     name: str
@@ -238,6 +248,7 @@ class ParamDecl:
     help: str = ""
     choices: tuple[str, ...] = ()
     on: tuple[str, ...] = ()
+    default_env: tuple[str, ...] = ()
 
 
 def _normalize_cmd(name: str, where: str, value: Any) -> str | tuple[str, ...] | None:
@@ -326,6 +337,28 @@ def _parse_on_tokens(name: str, pname: str, ptype: str, on_raw: Any) -> tuple[st
     return tuple(on_raw)
 
 
+def _parse_default_env(name: str, pname: str, ptype: str, default: Any, raw: Any) -> tuple[str, ...]:
+    """解析并校验 str 参数的 default_env 环境变量回退链。
+
+    Raises
+    ------
+    CommandDeclError
+        非 str 类型声明 default_env / 未同时声明 default / 值不是非空
+        字符串或非空字符串数组
+    """
+    if ptype != "str":
+        raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 仅 type=str 可声明 default_env")
+    if default is None:
+        raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 声明 default_env 须同时提供 default")
+    if isinstance(raw, str) and raw:
+        return (raw,)
+    if isinstance(raw, list) and raw and all(isinstance(e, str) and e for e in raw):
+        return tuple(raw)
+    raise CommandDeclError(
+        f"命令 {name!r} 的参数 {pname!r} 的 default_env 须是非空字符串或非空字符串数组，实际: {raw!r}"
+    )
+
+
 def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamDecl:
     """解析并校验单个 ``[commands.<name>.args.<pname>]`` 表。
 
@@ -333,7 +366,8 @@ def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamD
     ------
     CommandDeclError
         声明非法（参数名 / 未知键 / 类型不支持 / bool 缺 default /
-        choices 缺失 / default 类型不匹配 / default 不在 choices 内）
+        choices 缺失 / default 类型不匹配 / default 不在 choices 内 /
+        default_env 组合非法）
     """
     if not _PARAM_NAME_RE.match(pname):
         raise CommandDeclError(f"命令 {name!r} 的参数名 {pname!r} 非法：须匹配 {_PARAM_NAME_RE.pattern}")
@@ -371,6 +405,9 @@ def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamD
 
     on_tokens = _parse_on_tokens(name, pname, ptype, table.get("on", []))
 
+    default_env_raw = table.get("default_env")
+    default_env = () if default_env_raw is None else _parse_default_env(name, pname, ptype, default, default_env_raw)
+
     return ParamDecl(
         name=pname,
         type=ptype,
@@ -378,6 +415,7 @@ def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamD
         help=help_text,
         choices=tuple(choices_raw),
         on=on_tokens,
+        default_env=default_env,
     )
 
 
@@ -430,6 +468,25 @@ def _parse_needs_strategy(name: str, table: Mapping[str, Any]) -> tuple[tuple[st
     if strategy is not None and (not isinstance(strategy, str) or strategy not in _STRATEGIES):
         raise CommandDeclError(f"命令 {name!r} 的 strategy 须是 {sorted(_STRATEGIES)} 之一，实际: {strategy!r}")
     return tuple(needs_raw), strategy
+
+
+def _parse_tty(name: str, table: Mapping[str, Any]) -> bool:
+    """解析并校验 tty 透传声明。
+
+    Returns
+    -------
+    bool
+        未声明时为 ``False``
+
+    Raises
+    ------
+    CommandDeclError
+        tty 不是布尔值
+    """
+    tty = table.get("tty", False)
+    if not isinstance(tty, bool):
+        raise CommandDeclError(f"命令 {name!r} 的 tty 须是布尔值")
+    return tty
 
 
 # when 表内合法键（cmd/path 二选一 + expect）
@@ -586,6 +643,7 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
     allow_upstream_skip = table.get("allow_upstream_skip", False)
     if not isinstance(allow_upstream_skip, bool):
         raise CommandDeclError(f"命令 {name!r} 的 allow_upstream_skip 须是布尔值")
+    tty = _parse_tty(name, table)
 
     return CommandDecl(
         name=name,
@@ -604,6 +662,7 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         strategy=strategy,
         message=message,
         when=when,
+        tty=tty,
         allow_upstream_skip=allow_upstream_skip,
     )
 

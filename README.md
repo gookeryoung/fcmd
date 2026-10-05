@@ -361,6 +361,15 @@ needs = ["build"]
 type = "str"
 default = "latest"
 
+[commands.dockercmd.login]        # tty 透传：stdout/stderr 不捕获（交互式命令）
+help = "登录 Docker 镜像仓库"
+cmd = ["docker", "login", "--username", "{username}", "{registry}"]
+tty = true                        # 密码提示可见可输入
+message = "已登录镜像仓库: {registry} (用户: {username})"
+[commands.dockercmd.login.args.username]
+default = ""
+default_env = ["USERNAME", "LOGNAME", "USER", "LNAME"]  # 值等于 default 时按链取第一个非空环境变量
+
 [commands.sync]
 help = "同步（跨平台示例）"
 win.cmd = "robocopy src dst /mir"   # 字符串 → shell 执行
@@ -384,7 +393,7 @@ fcmd sy                           # 别名调用
 fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值与 bool on 固定 token） / 插值 / cwd / env / timeout / when 守卫探针 / needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值 / cwd / env / timeout / when 守卫探针 / needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
 
 ### DSL 逻辑边界
 
@@ -392,10 +401,10 @@ fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 
 | 类别 | 判定 | 例子 |
 |------|------|------|
-| 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f` |
+| 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退） |
 | 输出管道（解析/过滤命令输出） | 保留 Python | `piptool u/r`（通配符展开、受保护包过滤） |
 | 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
-| 进程内调用（无法映射为子进程） | 保留 Python | `writefile`、`setenv`、`dockercmd`（getpass 交互） |
+| 进程内调用（无法映射为子进程） | 保留 Python | `writefile`、`setenv` |
 | 多步有状态流程 | 保留 Python | `bumpversion`、`packtool` |
 
 ## 执行策略

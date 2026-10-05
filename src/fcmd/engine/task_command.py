@@ -39,9 +39,12 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
     """通过 :func:`subprocess.run` 执行 list / shell 命令。
 
     非零返回码抛 :class:`RuntimeError`（``verbose=False`` 时附 stderr）；
-    ``cwd`` / ``env`` 通过 subprocess 参数隔离。
+    ``cwd`` / ``env`` 通过 subprocess 参数隔离。``passthrough=True`` 时不
+    捕获 stdout/stderr（透传到终端，供交互式命令使用）；此形态下 stdout/
+    stderr 为 ``None``，结果处理按缺失安全跳过。
     """
     verbose = spec.verbose
+    passthrough = spec.passthrough
     cwd = spec.cwd
     timeout = spec.timeout
 
@@ -74,7 +77,7 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
             cwd=cwd,
             env=run_env,
             timeout=timeout,
-            capture_output=not verbose,
+            capture_output=not (verbose or passthrough),
             text=True,
             check=False,
         )
@@ -95,14 +98,18 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
 def _handle_subprocess_result(
     result: subprocess.CompletedProcess[str], verbose: bool, cmd_str: str, label: str
 ) -> None:
-    """处理 subprocess 结果：成功时透传 stdout，失败时抛 :class:`RuntimeError`。"""
+    """处理 subprocess 结果：成功时透传 stdout，失败时抛 :class:`RuntimeError`。
+
+    ``capture_output=False``（verbose/passthrough）形态下 stdout/stderr 为
+    ``None``，按缺失安全跳过。
+    """
     if result.returncode == 0:
         if not verbose and result.stdout:
             print(result.stdout, end="", flush=True)  # cmd 任务透传 stdout
         return
 
     err_msg = f"{label}执行失败: `{cmd_str}`, 返回码: {result.returncode}"
-    if not verbose and result.stderr.strip():
+    if not verbose and result.stderr and result.stderr.strip():
         err_msg += f"\n{result.stderr.strip()}"
     raise RuntimeError(err_msg)
 
@@ -114,6 +121,8 @@ def run_command(spec: TaskSpec[Any]) -> Any:
     - list / str：通过 :func:`subprocess.run` 执行，非零返回码抛
       :class:`RuntimeError`（``verbose=False`` 时附 stderr）。
     - ``verbose=True`` 时通过 rich console 打印执行信息与返回码。
+    - ``verbose=True`` 或 ``passthrough=True`` 时 stdout/stderr 不捕获
+      （后者供交互式命令透传终端）。
     - ``cwd`` / ``env`` 通过 subprocess 参数隔离（进程级状态仅在 fn 任务路径
       使用，cmd 路径不依赖 ``os.chdir`` / ``os.environ``）。
     """

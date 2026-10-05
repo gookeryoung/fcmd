@@ -1,0 +1,24 @@
+# dockercmd - Docker 镜像仓库登录工具（DSL 声明，原 cli/dev/dockercmd.py 迁入）
+#
+# tty = true：stdout/stderr 不捕获、直接透传终端——docker login 的密码
+# 提示需可见可输入。username 为空时回退环境变量链（等价 getpass.getuser()
+# 的探测顺序：Windows 命中 USERNAME，POSIX 依次 LOGNAME/USER/LNAME）。
+
+[commands.dockercmd]
+description = "Docker 镜像仓库登录工具"
+
+[commands.dockercmd.login]
+help = "登录 Docker 镜像仓库"
+description = "登录 Docker 镜像仓库（默认腾讯云）"
+cmd = ["docker", "login", "--username", "{username}", "{registry}"]
+tty = true
+message = "已登录镜像仓库: {registry} (用户: {username})"
+
+[commands.dockercmd.login.args.username]
+help = "Docker 用户名（缺省回退系统用户名环境变量链）"
+default = ""
+default_env = ["USERNAME", "LOGNAME", "USER", "LNAME"]
+
+[commands.dockercmd.login.args.registry]
+help = "镜像仓库地址（默认: ccr.ccs.tencentyun.com）"
+default = "ccr.ccs.tencentyun.com"

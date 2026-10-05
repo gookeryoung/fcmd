@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import ast
 import inspect
+import os
 import subprocess
 import textwrap
 from collections.abc import Mapping, Sequence
@@ -214,6 +215,26 @@ def _build_conditions(spec: ToolSpec) -> tuple[Condition, ...]:
     return (_probe,)
 
 
+def _apply_env_defaults(variables: dict[str, Any], spec: ToolSpec) -> None:
+    """解析 DSL str 参数 ``default_env`` 环境变量回退链（就地写 ``variables``）。
+
+    ``__dsl_param_env__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
+    非 DSL 合成函数（无该属性）为空操作。CLI 解析值等于声明 default 时，
+    按链取第一个**非空**环境变量值写入 ``variables``——后续 cmd/cwd/env
+    模板插值与 post-run message 均使用解析后的值；链全空（或对应环境变量
+    未设置/为空）则保持声明 default 不变。
+    """
+    env_map: Mapping[str, tuple[tuple[str, ...], Any]] = getattr(spec.func, "__dsl_param_env__", None) or {}
+    for pname, (chain, default) in env_map.items():
+        if variables.get(pname) != default:
+            continue
+        for env_name in chain:
+            value = os.environ.get(env_name)
+            if value:
+                variables[pname] = value
+                break
+
+
 def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:
     """将 ToolSpec + 解析后的变量转为 TaskSpec。
 
@@ -252,6 +273,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
             retry=spec.retry if spec.retry is not None else RetryPolicy(),
             timeout=spec.timeout,
             allow_upstream_skip=spec.allow_upstream_skip,
+            passthrough=spec.passthrough,
             strategy=spec.strategy,
             conditions=conditions,
         )
@@ -364,7 +386,11 @@ def _execute_tool_tasks(
         if sc not in subs:
             get_console().print(f"[red]错误:[/red] 工具 {name!r} 的子命令 {sc!r} 未注册")
             return ToolExitCode.FAILURE.value
-        task_specs.append(_build_task_spec(subs[sc], variables))
+        sc_spec = subs[sc]
+        # DSL 参数环境变量回退链解析（依赖在前：链上子任务可见解析结果；
+        # 就地写 variables，post-run message 同样取解析后的值）
+        _apply_env_defaults(variables, sc_spec)
+        task_specs.append(_build_task_spec(sc_spec, variables))
 
     # 构建图并执行
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())

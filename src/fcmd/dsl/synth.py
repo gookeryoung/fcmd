@@ -23,9 +23,13 @@ cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 c
 命令级 ``message``（post-run 完成消息）经 ``__dsl_message__`` 属性传递，由
 ``_tool_exec._execute_tool_tasks`` 在任务执行成功后打印。``when`` 探针守卫经
 ``__dsl_when__`` 属性传递（仅声明 when 的命令注入），由
-``_tool_exec._build_conditions`` 构造为引擎 ``TaskSpec.conditions`` 闭包；
-``allow_upstream_skip`` 不经函数属性，直接映射 :class:`ToolSpec` 既有字段
-（引擎侧已消费，属于声明字段而非函数属性契约）。
+``_tool_exec._build_conditions`` 构造为引擎 ``TaskSpec.conditions`` 闭包。
+str 参数的 ``default_env`` 环境变量回退链经 ``__dsl_param_env__`` 属性传递
+（仅声明 default_env 的命令注入），由 ``_tool_exec._apply_env_defaults`` 在
+CLI 解析值等于声明 default 时取链中第一个非空环境变量值。
+``allow_upstream_skip`` / ``tty`` 不经函数属性，直接映射 :class:`ToolSpec`
+既有/新增声明字段（``tty`` → ``TaskSpec.passthrough``，引擎侧已消费，
+属于声明字段而非函数属性契约）。
 """
 
 from __future__ import annotations
@@ -131,6 +135,11 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     # bool on-token 契约（与 __dsl_empty_body__ 同为函数属性约定，_tool_exec
     # 消费）：{参数名: truthy 时向 cmd 尾部追加的固定 token}
     dsl_command.__dsl_param_on__ = {p.name: p.on for p in decl.args if p.on}  # type: ignore[attr-defined]
+    # 环境变量回退链契约（_tool_exec._apply_env_defaults 消费）：
+    # {参数名: (环境变量链, 声明默认值)}，仅声明 default_env 的命令注入
+    env_defaults = {p.name: (p.default_env, p.default) for p in decl.args if p.default_env}
+    if env_defaults:
+        dsl_command.__dsl_param_env__ = env_defaults  # type: ignore[attr-defined]
     # post-run 完成消息契约（_tool_exec 消费）：执行成功后打印的消息模板
     if decl.message:
         dsl_command.__dsl_message__ = decl.message  # type: ignore[attr-defined]
@@ -187,6 +196,7 @@ def build_tool_spec(
         needs=decl.needs,
         strategy=cast("Literal['sequential', 'thread', 'async', 'dependency'] | None", decl.strategy),
         allow_upstream_skip=decl.allow_upstream_skip,
+        passthrough=decl.tty,
     )
 
 

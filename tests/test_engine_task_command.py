@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -228,3 +229,67 @@ def test_run_command_os_error_generic(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = TaskSpec(name="x", cmd=["echo", "hi"])
     with pytest.raises(RuntimeError, match="执行异常"):
         spec.effective_fn()
+
+
+# ---------------------------------------------------------------------- #
+# passthrough 透传
+# ---------------------------------------------------------------------- #
+def test_run_command_passthrough_not_captured(monkeypatch: pytest.MonkeyPatch) -> None:
+    """passthrough=True 时不捕获 stdout/stderr（capture_output=False）。"""
+    import subprocess as sp
+
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd: Any, **kwargs: Any) -> sp.CompletedProcess[str]:
+        seen.update(kwargs)
+        return sp.CompletedProcess(cmd, 0, stdout=None, stderr=None)
+
+    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+    spec = TaskSpec(name="x", cmd=["docker", "login"], passthrough=True)
+    spec.effective_fn()
+    assert seen["capture_output"] is False
+
+
+def test_run_command_passthrough_success_no_stdout_print(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """passthrough 成功路径 stdout 为 None，按缺失安全跳过（不崩溃）。"""
+    import subprocess as sp
+
+    monkeypatch.setattr(
+        "fcmd.engine.task_command.subprocess.run",
+        lambda cmd, **_kwargs: sp.CompletedProcess(cmd, 0, stdout=None, stderr=None),
+    )
+    spec = TaskSpec(name="x", cmd=["docker", "login"], passthrough=True)
+    spec.effective_fn()
+    assert capsys.readouterr().out == ""
+
+
+def test_run_command_passthrough_failure_stderr_none_safe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """passthrough 失败路径 stderr 为 None，错误消息不附加 stderr 且不崩溃。"""
+    import subprocess as sp
+
+    monkeypatch.setattr(
+        "fcmd.engine.task_command.subprocess.run",
+        lambda cmd, **_kwargs: sp.CompletedProcess(cmd, 1, stdout=None, stderr=None),
+    )
+    spec = TaskSpec(name="x", cmd="docker login", passthrough=True)
+    with pytest.raises(RuntimeError, match="执行失败") as exc_info:
+        spec.effective_fn()
+    assert "None" not in str(exc_info.value)
+
+
+def test_run_command_verbose_keeps_capture_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verbose=True 同样不捕获（既有语义），passthrough 与 verbose 互不冲突。"""
+    import subprocess as sp
+
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd: Any, **kwargs: Any) -> sp.CompletedProcess[str]:
+        seen.update(kwargs)
+        return sp.CompletedProcess(cmd, 0, stdout=None, stderr=None)
+
+    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+    spec = TaskSpec(name="x", cmd=["echo", "hi"], verbose=True, passthrough=True)
+    spec.effective_fn()
+    assert seen["capture_output"] is False

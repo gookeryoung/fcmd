@@ -11,13 +11,15 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from fcmd.apis._tool_args import _build_parser_for_tool
+from fcmd.apis._tool_args import ToolSpec, _build_parser_for_tool
+from fcmd.apis._tool_exec import _apply_env_defaults, _build_task_spec
 from fcmd.cli import _discovery as discovery_mod
 from fcmd.cli._common import _BUILTIN_COMMANDS
 from fcmd.dsl import (
@@ -29,6 +31,7 @@ from fcmd.dsl import (
     infer_tool_name,
     parse_command_table,
     parse_tool_table,
+    run_named,
     select_platform_cmd,
     user_tool_decls,
 )
@@ -436,6 +439,41 @@ class TestBootstrap:
     def test_infer_tool_name(self, argv0: str, expected: str) -> None:
         """basename 去扩展推断工具名。"""
         assert infer_tool_name(argv0) == expected
+
+    def test_run_named_forwards_to_run_tool(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """run_named 按 argv[0] 推断工具名并转发 run_tool，退出码透传。"""
+        seen: dict[str, Any] = {}
+
+        def fake_run_tool(name: str, argv: list[str]) -> int:
+            seen["name"] = name
+            seen["argv"] = argv
+            return 0
+
+        monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
+        monkeypatch.setattr(discovery_mod, "resolve_tool", lambda name: name)
+        monkeypatch.setattr("fcmd.apis.toolkit.run_tool", fake_run_tool)
+        monkeypatch.setattr(sys, "argv", [r"C:\Scripts\clr.exe", "--help"])
+        with pytest.raises(SystemExit) as exc_info:
+            run_named()
+        assert exc_info.value.code == 0
+        assert seen == {"name": "clr", "argv": ["--help"]}
+        assert capsys.readouterr().out == ""
+
+    def test_run_named_unknown_tool_exits_1(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """入口名未对应已注册工具 → 打印错误并以退出码 1 终止。"""
+        monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
+        monkeypatch.setattr(discovery_mod, "resolve_tool", lambda _name: None)
+        monkeypatch.setattr(sys, "argv", ["nosuch.exe"])
+        with pytest.raises(SystemExit) as exc_info:
+            run_named()
+        assert exc_info.value.code == 1
+        out = capsys.readouterr().out
+        assert "未对应任何已注册工具" in out
+        assert "查看可用工具列表" in out
 
 
 # ============================================================================ #
@@ -1851,3 +1889,132 @@ class TestWhenGuardExecution:
         result = _parse_tool_args("t", "agg", ["--message", "x"], {"agg": spec})
         assert isinstance(result, int)
         assert result != 0
+
+
+# ============================================================================ #
+# tty 透传与 default_env 环境变量回退链
+# ============================================================================ #
+class TestTtyAndEnvDefault:
+    """命令级 tty 声明（→ TaskSpec.passthrough）与参数级 default_env。"""
+
+    # ---------------- decl 解析 ---------------- #
+    def test_parse_tty(self) -> None:
+        """tty = true 解析进 CommandDecl。"""
+        decl = parse_command_table("ttool", {"help": "h", "cmd": "echo hi", "tty": True})
+        assert decl.tty is True
+
+    def test_tty_defaults_false(self) -> None:
+        """未声明 tty 默认 False。"""
+        decl = parse_command_table("ttool", {"help": "h", "cmd": "echo hi"})
+        assert decl.tty is False
+
+    def test_tty_must_be_bool(self) -> None:
+        """tty 非布尔值报错。"""
+        with pytest.raises(CommandDeclError, match="tty 须是布尔值"):
+            parse_command_table("ttool", {"help": "h", "cmd": "echo hi", "tty": "yes"})
+
+    # ---------------- default_env 校验 ---------------- #
+    @staticmethod
+    def _env_table(arg: dict[str, Any]) -> dict[str, Any]:
+        """单参数 login 声明表（default_env 校验用）。"""
+        return {"help": "h", "cmd": "echo {username}", "args": {"username": arg}}
+
+    def test_default_env_str_and_list_forms(self) -> None:
+        """default_env 接受单字符串与非空字符串数组。"""
+        decl = parse_command_table("ttool", self._env_table({"default": "", "default_env": "USERNAME"}))
+        assert decl.args[0].default_env == ("USERNAME",)
+        decl = parse_command_table("ttool", self._env_table({"default": "", "default_env": ["USERNAME", "USER"]}))
+        assert decl.args[0].default_env == ("USERNAME", "USER")
+
+    def test_default_env_requires_str_type(self) -> None:
+        """非 str 类型声明 default_env 报错。"""
+        arg = {"type": "int", "default": 0, "default_env": "N"}
+        with pytest.raises(CommandDeclError, match="仅 type=str 可声明 default_env"):
+            parse_command_table("ttool", self._env_table(arg))
+
+    def test_default_env_requires_default(self) -> None:
+        """声明 default_env 须同时提供 default（positional 参数无默认可比对）。"""
+        arg = {"default_env": "USERNAME"}
+        with pytest.raises(CommandDeclError, match="声明 default_env 须同时提供 default"):
+            parse_command_table("ttool", self._env_table(arg))
+
+    @pytest.mark.parametrize("raw", ["", []])
+    def test_default_env_empty_rejected(self, raw: Any) -> None:
+        """default_env 空字符串/空数组报错（配置错误不应被静默忽略）。"""
+        with pytest.raises(CommandDeclError, match="default_env 须是非空字符串或非空字符串数组"):
+            parse_command_table("ttool", self._env_table({"default": "", "default_env": raw}))
+
+    # ---------------- synth 合成 ---------------- #
+    def test_synthesizes_passthrough_and_param_env(self) -> None:
+        """tty → ToolSpec.passthrough；default_env → __dsl_param_env__ 契约。"""
+        table = {
+            "help": "登录",
+            "cmd": ["docker", "login", "{username}"],
+            "tty": True,
+            "args": {"username": {"default": "", "default_env": ["USERNAME", "USER"]}},
+        }
+        spec = build_tool_spec(parse_command_table("dtool", table))
+        assert spec.passthrough is True
+        assert getattr(spec.func, "__dsl_param_env__", None) == {"username": (("USERNAME", "USER"), "")}
+
+    def test_no_default_env_no_attribute(self) -> None:
+        """未声明 default_env 不注入 __dsl_param_env__。"""
+        spec = build_tool_spec(parse_command_table("ttool", {"help": "h", "cmd": "echo hi"}))
+        assert getattr(spec.func, "__dsl_param_env__", None) is None
+
+    def test_build_task_spec_maps_passthrough(self) -> None:
+        """_build_task_spec 将 ToolSpec.passthrough 映射到 TaskSpec.passthrough。"""
+        spec = build_tool_spec(parse_command_table("ttool", {"help": "h", "cmd": "echo hi", "tty": True}))
+        assert _build_task_spec(spec, {}).passthrough is True
+
+    # ---------------- 引擎环境回退链解析 ---------------- #
+    @staticmethod
+    def _env_spec() -> ToolSpec:
+        """username 参数带 default_env 链的 ToolSpec。"""
+        table = {
+            "help": "登录",
+            "cmd": "docker login {username}",
+            "args": {"username": {"default": "", "default_env": ["USERNAME", "LOGNAME", "USER"]}},
+        }
+        return build_tool_spec(parse_command_table("etool", table))
+
+    def test_apply_env_defaults_resolves_chain(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CLI 值等于声明默认值 → 取链中第一个非空环境变量。"""
+        monkeypatch.delenv("USERNAME", raising=False)
+        monkeypatch.setenv("USER", "posixuser")
+        variables: dict[str, Any] = {"username": ""}
+        _apply_env_defaults(variables, self._env_spec())
+        assert variables["username"] == "posixuser"
+
+    def test_apply_env_defaults_skips_explicit_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CLI 显式值不等于默认值 → 不查环境变量。"""
+        monkeypatch.setenv("USER", "posixuser")
+        variables: dict[str, Any] = {"username": "admin"}
+        _apply_env_defaults(variables, self._env_spec())
+        assert variables["username"] == "admin"
+
+    def test_apply_env_defaults_chain_all_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """链上环境变量全部缺失 → 保持声明默认值。"""
+        for name in ("USERNAME", "LOGNAME", "USER"):
+            monkeypatch.delenv(name, raising=False)
+        variables: dict[str, Any] = {"username": ""}
+        _apply_env_defaults(variables, self._env_spec())
+        assert variables["username"] == ""
+
+    def test_apply_env_defaults_skips_empty_env_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """设置为空串的环境变量视为未设，继续向后回退。"""
+        monkeypatch.setenv("USERNAME", "")
+        monkeypatch.setenv("LOGNAME", "loguser")
+        variables: dict[str, Any] = {"username": ""}
+        _apply_env_defaults(variables, self._env_spec())
+        assert variables["username"] == "loguser"
+
+    def test_apply_env_defaults_noop_without_contract(self) -> None:
+        """无 __dsl_param_env__ 契约的函数（普通 Python 工具）为空操作。"""
+
+        def plain(username: str = "") -> None:
+            """普通工具函数。"""
+
+        variables: dict[str, Any] = {"username": ""}
+        _apply_env_defaults(variables, ToolSpec(name="plain", subcommand=None, func=plain))
+        assert variables["username"] == ""
