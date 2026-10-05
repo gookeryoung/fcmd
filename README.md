@@ -86,7 +86,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-58 个工具模块，按用途分组：
+58 个工具（其中 57 个为 Python 模块，autofmt 等纯 exec 工具由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -310,7 +310,7 @@ report = run(graph, strategy="dependency")
 
 ## 命令定义 DSL
 
-exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具。两种形态：**单命令**（`[commands.<name>]`，如内置的 `clr`）与**多子命令**（`[commands.<tool>.<sub>]`，如内置的 `pymake`/`gittool` 纯 exec 子命令）。两级配置：包内 `fcmd/commands/*.toml`（出厂命令，按工具拆分为多个 TOML 文件）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置单命令；与 Python 模块工具重名时 Python 优先，多子命令形态逐子命令合并注册——同名子命令先注册者优先，用户仅可新增子命令）。
+exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具。两种形态：**单命令**（`[commands.<name>]`，如内置的 `clr`）与**多子命令**（`[commands.<tool>.<sub>]`，如内置的 `pymake`/`gittool`/`autofmt` 纯 exec 子命令）。两级配置：包内 `fcmd/commands/*.toml`（出厂命令，按工具拆分为多个 TOML 文件）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置单命令；与 Python 模块工具重名时 Python 优先，多子命令形态逐子命令合并注册——同名子命令先注册者优先，用户仅可新增子命令）。
 
 ```toml
 # ~/.fcmd/commands.toml
@@ -325,9 +325,27 @@ env = { LANG = "zh" }            # 可选：环境变量（值支持插值）
 help = "目标名字"
 
 [commands.hello.args.count]
-type = "int"                     # str(默认)/int/float/bool/path/choices
-default = 1                      # 有 default → --count 选项
+type = "int"                     # str(默认)/int/float/bool/path/choices/list
+default = 1                      # 有 default → --count 选项（list 无 default → positional 多值）
 help = "次数"
+
+[commands.pkg.install]           # list 参数：独占占位符按元素展开（无 shell 每元素一个 token）
+help = "批量安装"
+cmd = ["pip", "install", "{packages}"]
+[commands.pkg.install.args.packages]
+type = "list"
+help = "包名列表"
+
+[commands.fmttool.lint]          # bool 参数 on：值为真时向 cmd 尾部追加固定 token
+help = "检查并可选自动修复"
+cmd = ["ruff", "check", "{target}"]
+[commands.fmttool.lint.args.target]
+type = "str"
+default = "."
+[commands.fmttool.lint.args.fix]
+type = "bool"
+default = false
+on = ["--fix", "--unsafe-fixes"]
 
 [commands.sync]
 help = "同步（跨平台示例）"
@@ -352,7 +370,7 @@ fcmd sy                           # 别名调用
 fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数 / 插值 / cwd / env / timeout / needs 聚合 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值与 bool on 固定 token） / 插值 / cwd / env / timeout / needs 聚合 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
 
 ## 执行策略
 

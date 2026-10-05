@@ -1,10 +1,10 @@
 """autofmt 工具测试。
 
-验证 ``fcmd.cli.dev.autofmt`` 模块：
-- 工具注册
-- fmt 子命令（ruff format）
-- lint 子命令（ruff check）
-- CLI 调度
+autofmt 为纯 DSL 声明工具（``src/fcmd/commands/autofmt.toml``，原 Python
+模块已删除）。验证：
+- 工具注册与子命令可见性
+- cmd 模板展开（fmt target / lint --fix on 固定 token）
+- parser 接受 --fix 开关
 """
 
 from __future__ import annotations
@@ -14,28 +14,25 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.dev.autofmt
+from fcmd.apis._tool_args import _build_parser_for_tool
+from fcmd.apis._tool_exec import _build_task_spec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.dev.autofmt import fmt, lint
-from fcmd.models import CommandResult
+from fcmd.cli._discovery import ensure_tools_discovered
+
+ensure_tools_discovered()
 
 
 # ============================================================================ #
-# 测试辅助：创建 fake run_command 函数（避免 lambda ARG005）
+# 测试辅助
 # ============================================================================ #
-def _recording_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``run_command`` 函数，返回成功结果。"""
+def _fake_subprocess_run(captured: list[Any]) -> Any:
+    """创建记录调用的 fake ``subprocess.run``，返回成功结果。"""
 
-    def run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-        calls.append(cmd)
-        return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
+    def run(cmd: Any, **kwargs: Any) -> Any:
+        captured.append(cmd)
+        return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     return run
-
-
-def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-    """总是返回成功结果的 fake ``run_command`` 函数。"""
-    return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
 
 # ============================================================================ #
@@ -46,8 +43,7 @@ class TestToolsRegistration:
 
     def test_all_tools_registered(self) -> None:
         """autofmt 应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("autofmt",):
-            assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
+        assert "autofmt" in _TOOL_REGISTRY, "工具 'autofmt' 未注册"
 
     def test_autofmt_subcommands(self) -> None:
         """autofmt 应有 fmt/lint 子命令。"""
@@ -57,89 +53,65 @@ class TestToolsRegistration:
 
 
 # ============================================================================ #
-# autofmt 测试
+# cmd 模板展开
 # ============================================================================ #
-class TestAutofmt:
-    """autofmt 工具测试。"""
+class TestAutofmtCmdExpansion:
+    """autofmt DSL 子命令的 cmd 模板展开。"""
 
-    def test_fmt_default_target(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """fmt 默认目标为当前目录。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
-        fmt()
-        assert calls[0] == ["ruff", "format", "."]
-        out = capsys.readouterr().out
-        assert "ruff format 完成" in out
+    def test_fmt_with_target(self) -> None:
+        """fmt 的 target 插值到 cmd。"""
+        spec = _TOOL_REGISTRY["autofmt"]["fmt"]
+        task = _build_task_spec(spec, {"target": "src"})
+        assert task.cmd == ["ruff", "format", "src"]
 
-    def test_fmt_with_target(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """fmt 指定目标路径。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
-        fmt("src")
-        assert calls[0] == ["ruff", "format", "src"]
+    def test_fmt_default_target(self) -> None:
+        """fmt 默认目标为当前目录（CLI 解析默认值后传入）。"""
+        spec = _TOOL_REGISTRY["autofmt"]["fmt"]
+        task = _build_task_spec(spec, {"target": "."})
+        assert task.cmd == ["ruff", "format", "."]
 
-    def test_lint_default_no_fix(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
+    def test_lint_default_no_fix(self) -> None:
         """lint 默认不自动修复。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
-        lint()
-        assert calls[0] == ["ruff", "check", "."]
-        assert "--fix" not in calls[0]
+        spec = _TOOL_REGISTRY["autofmt"]["lint"]
+        task = _build_task_spec(spec, {"target": ".", "fix": False})
+        assert task.cmd == ["ruff", "check", "."]
 
-    def test_lint_with_fix(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """lint --fix 添加 --fix --unsafe-fixes。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
-        lint("src", fix=True)
-        assert "ruff" in calls[0]
-        assert "check" in calls[0]
-        assert "src" in calls[0]
-        assert "--fix" in calls[0]
-        assert "--unsafe-fixes" in calls[0]
+    def test_lint_with_fix(self) -> None:
+        """lint --fix 追加 --fix --unsafe-fixes 固定 token。"""
+        spec = _TOOL_REGISTRY["autofmt"]["lint"]
+        task = _build_task_spec(spec, {"target": "src", "fix": True})
+        assert task.cmd == ["ruff", "check", "src", "--fix", "--unsafe-fixes"]
 
-    def test_lint_with_target(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """lint 指定目标路径。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _recording_run(calls))
-        lint("tests")
-        assert calls[0] == ["ruff", "check", "tests"]
+    def test_lint_parser_accepts_fix(self) -> None:
+        """lint parser 接受 --fix 开关与 --target 选项。"""
+        spec = _TOOL_REGISTRY["autofmt"]["lint"]
+        parsed = _build_parser_for_tool(spec).parse_args(["--target", "src", "--fix"])
+        assert parsed.target == "src"
+        assert parsed.fix is True
+
+
+# ============================================================================ #
+# run_tool 集成
+# ============================================================================ #
+class TestAutofmtRunTool:
+    """autofmt 通过 run_tool 集成测试。"""
 
     def test_fmt_via_run_tool(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd autofmt fmt 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _success_run)
-        code = run_tool("autofmt", ["fmt"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "ruff format 完成" in out
+        captured: list[Any] = []
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_subprocess_run(captured))
+        assert run_tool("autofmt", ["fmt"]) == 0
+        assert captured[0] == ["ruff", "format", "."]
 
-    def test_lint_via_run_tool(
+    def test_lint_fix_via_run_tool(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd autofmt lint --target src --fix 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.dev.autofmt.run_command", _success_run)
-        code = run_tool("autofmt", ["lint", "--target", "src", "--fix"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "ruff check 完成" in out
+        captured: list[Any] = []
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_subprocess_run(captured))
+        assert run_tool("autofmt", ["lint", "--target", "src", "--fix"]) == 0
+        assert captured[0] == ["ruff", "check", "src", "--fix", "--unsafe-fixes"]

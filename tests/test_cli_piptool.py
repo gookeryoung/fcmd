@@ -1,6 +1,7 @@
 """piptool 工具测试。
 
-验证 ``fcmd.cli.dev.piptool`` 模块：
+验证 ``fcmd.cli.dev.piptool`` 模块（u/r/f）与 DSL 子命令 i/up
+（``src/fcmd/commands/piptool.toml``，逐子命令合并注册）：
 - 工具注册
 - 辅助函数
 - 命令构造
@@ -16,19 +17,21 @@ import pytest
 
 import fcmd as fx
 import fcmd.cli.dev.piptool
+from fcmd.apis._tool_exec import _build_task_spec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.cli.dev.piptool import (
     _expand_wildcard_packages,
     _filter_protected_packages,
     _get_installed_packages,
     pip_download,
     pip_freeze,
-    pip_install,
     pip_reinstall,
     pip_uninstall,
-    pip_upgrade,
 )
 from fcmd.models import CommandResult
+
+ensure_tools_discovered()
 
 
 # ============================================================================ #
@@ -51,11 +54,6 @@ def _recording_run(calls: list[list[str]]) -> Any:
         return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
     return run
-
-
-def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-    """总是返回成功结果的 fake ``run_command`` 函数。"""
-    return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
 
 
 # ============================================================================ #
@@ -138,22 +136,6 @@ class TestPiptoolHelpers:
 
 class TestPiptoolCommands:
     """piptool CLI 子命令测试。"""
-
-    def test_pip_install(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """pip_install 调用 pip install。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "fcmd.cli.dev.piptool.run_command",
-            _recording_run(calls),
-        )
-        pip_install(["requests", "flask"])
-        assert calls[0] == ["pip", "install", "requests", "flask"]
-        out = capsys.readouterr().out
-        assert "安装完成" in out
 
     def test_pip_uninstall_protected(
         self,
@@ -264,22 +246,6 @@ class TestPiptoolCommands:
         assert "--no-index" in calls[0]
         assert "--find-links" in calls[0]
 
-    def test_pip_upgrade(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """pip_upgrade 升级 pip。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "fcmd.cli.dev.piptool.run_command",
-            _recording_run(calls),
-        )
-        pip_upgrade()
-        assert calls[0] == ["python", "-m", "pip", "install", "--upgrade", "pip"]
-        out = capsys.readouterr().out
-        assert "升级完成" in out
-
     def test_pip_freeze(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -302,35 +268,58 @@ class TestPiptoolCommands:
         assert "requirements.txt" in out
 
 
+class TestPiptoolDslSubcommands:
+    """piptool DSL 子命令（i/up）与合并注册测试。"""
+
+    def test_pip_i_list_expansion(self) -> None:
+        """DSL 子命令 i：list 参数独占占位符按元素展开。"""
+        spec = _TOOL_REGISTRY["piptool"]["i"]
+        task = _build_task_spec(spec, {"packages": ["requests", "flask"]})
+        assert task.cmd == ["pip", "install", "requests", "flask"]
+
+    def test_pip_up_cmd(self) -> None:
+        """DSL 子命令 up：零参 cmd。"""
+        spec = _TOOL_REGISTRY["piptool"]["up"]
+        task = _build_task_spec(spec, {})
+        assert task.cmd == ["python", "-m", "pip", "install", "--upgrade", "pip"]
+
+    def test_merged_subcommands_visible(self) -> None:
+        """合并注册后 Python 子命令（u/r/f）与 DSL 子命令（i/up）全部可见。"""
+        subs = fx.list_subcommands("piptool")
+        assert {"i", "u", "r", "f", "up"} <= set(subs)
+
+
 class TestPiptoolRunTool:
-    """piptool 通过 run_tool 集成测试。"""
+    """piptool 通过 run_tool 集成测试（DSL 子命令经引擎执行）。"""
 
     def test_pip_i_via_run_tool(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd piptool i <packages> 通过 run_tool 调用。"""
-        monkeypatch.setattr(
-            "fcmd.cli.dev.piptool.run_command",
-            _success_run,
-        )
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> Any:
+            captured.append(cmd)
+            return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
         code = run_tool("piptool", ["i", "requests"])
         assert code == 0
-        out = capsys.readouterr().out
-        assert "安装完成" in out
+        assert captured[0] == ["pip", "install", "requests"]
 
     def test_pip_up_via_run_tool(
         self,
         monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """fcmd piptool up 通过 run_tool 调用。"""
-        monkeypatch.setattr(
-            "fcmd.cli.dev.piptool.run_command",
-            _success_run,
-        )
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> Any:
+            captured.append(cmd)
+            return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
         code = run_tool("piptool", ["up"])
         assert code == 0
-        out = capsys.readouterr().out
-        assert "升级完成" in out
+        assert captured[0] == ["python", "-m", "pip", "install", "--upgrade", "pip"]

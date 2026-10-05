@@ -41,8 +41,8 @@ _PARAM_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
 # 注：cwd 允许使用（引擎有 CLI 值覆盖装饰器 cwd 的既有语义）。
 _RESERVED_PARAM_NAMES: frozenset[str] = frozenset({"dry_run", "quiet", "strategy"})
 
-# 支持的参数类型
-_PARAM_TYPES: frozenset[str] = frozenset({"str", "int", "float", "bool", "path", "choices"})
+# 支持的参数类型（list → list[str]，positional 映射 nargs，见 synth/_tool_args）
+_PARAM_TYPES: frozenset[str] = frozenset({"str", "int", "float", "bool", "path", "choices", "list"})
 
 # 命令声明顶层合法键
 _TOP_KEYS = frozenset(
@@ -69,8 +69,8 @@ _STRATEGIES: frozenset[str] = frozenset({"sequential", "thread", "async", "depen
 # 平台子表（win/unix）内合法键
 _PLATFORM_KEYS = frozenset({"cmd"})
 
-# 参数声明表内合法键
-_PARAM_KEYS = frozenset({"type", "default", "help", "choices"})
+# 参数声明表内合法键（on 仅 type=bool：truthy 时向 cmd 追加的固定 token）
+_PARAM_KEYS = frozenset({"type", "default", "help", "choices", "on"})
 
 
 class CommandDeclError(ValueError):
@@ -173,13 +173,16 @@ class ParamDecl:
     name:
         参数名（Python 标识符风格，CLI 选项自动转连字符）
     type:
-        参数类型：``str`` / ``int`` / ``float`` / ``bool`` / ``path`` / ``choices``
+        参数类型：``str`` / ``int`` / ``float`` / ``bool`` / ``path`` / ``choices`` / ``list``
     default:
         默认值（``None`` = 无默认 → positional）
     help:
         参数帮助文本
     choices:
         ``type="choices"`` 时的取值列表（全字符串）
+    on:
+        ``type="bool"`` 专用：值为真时向 cmd 尾部追加的固定 token 元组
+        （如 ``["--fix", "--unsafe-fixes"]``）
     """
 
     name: str
@@ -187,6 +190,7 @@ class ParamDecl:
     default: str | int | float | bool | None = None
     help: str = ""
     choices: tuple[str, ...] = ()
+    on: tuple[str, ...] = ()
 
 
 def _normalize_cmd(name: str, where: str, value: Any) -> str | tuple[str, ...] | None:
@@ -258,6 +262,23 @@ def _check_default_type(name: str, pname: str, ptype: str, default: Any) -> None
         raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} default 类型与 type={ptype!r} 不匹配: {default!r}")
 
 
+def _parse_on_tokens(name: str, pname: str, ptype: str, on_raw: Any) -> tuple[str, ...]:
+    """解析并校验 bool 参数的 on 固定 token。
+
+    Raises
+    ------
+    CommandDeclError
+        非 bool 类型声明 on / on 不是非空字符串数组
+    """
+    if not on_raw:
+        return ()
+    if ptype != "bool":
+        raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 仅 type=bool 可声明 on")
+    if not isinstance(on_raw, list) or not all(isinstance(t, str) and t for t in on_raw):
+        raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 的 on 须是非空字符串数组")
+    return tuple(on_raw)
+
+
 def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamDecl:
     """解析并校验单个 ``[commands.<name>.args.<pname>]`` 表。
 
@@ -294,10 +315,14 @@ def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamD
     default = table.get("default", None)
     if ptype == "bool" and default is None:
         raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 的 type=bool 须提供 default（true/false）")
+    if ptype == "list" and default is not None:
+        raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 的 type=list 不支持 default（positional 参数）")
     if default is not None:
         _check_default_type(name, pname, ptype, default)
         if ptype == "choices" and default not in choices_raw:
             raise CommandDeclError(f"命令 {name!r} 的参数 {pname!r} 的 default 须在 choices 内: {default!r}")
+
+    on_tokens = _parse_on_tokens(name, pname, ptype, table.get("on", []))
 
     return ParamDecl(
         name=pname,
@@ -305,6 +330,7 @@ def parse_param_table(name: str, pname: str, table: Mapping[str, Any]) -> ParamD
         default=default,
         help=help_text,
         choices=tuple(choices_raw),
+        on=on_tokens,
     )
 
 
@@ -357,6 +383,33 @@ def _parse_needs_strategy(name: str, table: Mapping[str, Any]) -> tuple[tuple[st
     if strategy is not None and (not isinstance(strategy, str) or strategy not in _STRATEGIES):
         raise CommandDeclError(f"命令 {name!r} 的 strategy 须是 {sorted(_STRATEGIES)} 之一，实际: {strategy!r}")
     return tuple(needs_raw), strategy
+
+
+def _check_list_cmd_placeholders(
+    name: str, where: str, cmd: str | tuple[str, ...] | None, args: tuple[ParamDecl, ...]
+) -> None:
+    """校验 tuple cmd 中 list 参数占位符形态。
+
+    无 shell 的 tuple cmd 里，list 值仅在**独占占位符项**（整项恰为
+    ``{name}``）下按元素展开；部分占位（如 ``prefix-{name}``）会被插成
+    单个带空格 token，声明期直接报错。str cmd（shell 执行）按空格拼接
+    语义合法，不校验。
+
+    Raises
+    ------
+    CommandDeclError
+        list 参数在 tuple cmd 项中以非独占形式出现
+    """
+    if not isinstance(cmd, tuple):
+        return
+    list_names = {p.name for p in args if p.type == "list"}
+    for item in cmd:
+        for pname in list_names:
+            token = "{" + pname + "}"
+            if token in item and item != token:
+                raise CommandDeclError(
+                    f"命令 {name!r} 的 {where} 项 {item!r} 对 list 参数 {pname!r} 仅支持独占占位符（整项为 {token}）"
+                )
 
 
 def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool = False) -> CommandDecl:
@@ -419,6 +472,10 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
     if not isinstance(args_raw, Mapping):
         raise CommandDeclError(f"命令 {name!r} 的 args 须是表（[commands.{name}.args.<参数名>]）")
     args = tuple(parse_param_table(name, pname, ptable) for pname, ptable in args_raw.items())
+
+    _check_list_cmd_placeholders(name, "cmd", cmd, args)
+    _check_list_cmd_placeholders(name, "win.cmd", win_cmd, args)
+    _check_list_cmd_placeholders(name, "unix.cmd", unix_cmd, args)
 
     if needs and not subcommand:
         raise CommandDeclError(f"命令 {name!r} 是单命令形态，不支持 needs（needs 引用同工具其他子命令）")

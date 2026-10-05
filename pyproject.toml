@@ -19,7 +19,7 @@ dependencies = ["pyyaml>=6.0.1"]
 fcmd           = "fcmd.cli.main:main"
 archivex       = "fcmd.cli.archive.archivex:main"
 asciitool      = "fcmd.cli.text.asciitool:main"
-autofmt        = "fcmd.cli.dev.autofmt:main"
+autofmt        = "fcmd.dsl.entry:run_named"
 bumpversion    = "fcmd.cli.dev.bumpversion:main"
 calcdate       = "fcmd.cli.calc.calcdate:main"
 casetool       = "fcmd.cli.conv.casetool:main"

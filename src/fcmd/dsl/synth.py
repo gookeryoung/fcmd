@@ -18,7 +18,8 @@ DSL 声明到 :class:`~fcmd.apis._tool_args.ToolSpec` 的转换层：
 ``__dsl_empty_body__`` 供 :func:`fcmd.apis._tool_exec._has_function_logic`
 识别空函数体（DSL 声明是纯 exec/聚合编排，占位函数体永不承载逻辑）：
 cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 cmd）据此
-正确判定为聚合。
+正确判定为聚合。bool 参数的 ``on`` 固定 token 经 ``__dsl_param_on__`` 属性
+传递，由 ``_tool_exec._expand_cmd_placeholders`` 在值为真时追加到 cmd 尾部。
 """
 
 from __future__ import annotations
@@ -35,8 +36,10 @@ from .decl import CommandDecl, CommandDeclError, ParamDecl
 
 __all__ = ["build_tool_spec", "select_platform_cmd"]
 
-# 参数类型名 → 真实类型对象（choices 特判，见 _param_annotation）
-_TYPE_MAP: dict[str, type] = {"str": str, "int": int, "float": float, "bool": bool, "path": Path}
+# 参数类型名 → 真实类型注解对象（choices 特判，见 _param_annotation；
+# list 必须是 list[str] 泛型——引擎 argparse 层按 list[X] 检测映射 nargs，
+# 裸 list 不被识别，见 _tool_args）
+_TYPE_MAP: dict[str, Any] = {"str": str, "int": int, "float": float, "bool": bool, "path": Path, "list": list[str]}
 
 
 def select_platform_cmd(decl: CommandDecl, platform: str = sys.platform) -> str | tuple[str, ...]:
@@ -119,6 +122,9 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     dsl_command.__signature__ = inspect.Signature(parameters)  # type: ignore[attr-defined]
     dsl_command.__annotations__ = annotations
     dsl_command.__dsl_empty_body__ = True  # type: ignore[attr-defined]
+    # bool on-token 契约（与 __dsl_empty_body__ 同为函数属性约定，_tool_exec
+    # 消费）：{参数名: truthy 时向 cmd 尾部追加的固定 token}
+    dsl_command.__dsl_param_on__ = {p.name: p.on for p in decl.args if p.on}  # type: ignore[attr-defined]
     return dsl_command
 
 

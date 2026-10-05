@@ -1,0 +1,25 @@
+# 内置 DSL 命令：autofmt（多子命令形态，纯 exec 型子命令）。
+#
+# 原 Python 模块 fcmd/cli/dev/autofmt.py 已整体迁入（fmt/lint 均为
+# ruff 包装）。lint 的 --fix 开关演示 bool 参数 on 固定 token 用法。
+
+[commands.autofmt.fmt]
+help = "格式化代码 (ruff format)"
+cmd = ["ruff", "format", "{target}"]
+[commands.autofmt.fmt.args.target]
+type = "str"
+default = "."
+help = "目标路径（默认：当前目录）"
+
+[commands.autofmt.lint]
+help = "代码检查 (ruff check)"
+cmd = ["ruff", "check", "{target}"]
+[commands.autofmt.lint.args.target]
+type = "str"
+default = "."
+help = "目标路径（默认：当前目录）"
+[commands.autofmt.lint.args.fix]
+type = "bool"
+default = false
+help = "自动修复问题（含 unsafe fixes）"
+on = ["--fix", "--unsafe-fixes"]

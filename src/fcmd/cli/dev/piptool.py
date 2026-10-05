@@ -1,15 +1,15 @@
 """piptool - pip 包管理工具。
 
-提供安装/卸载/重装/下载/升级 pip/冻结依赖子命令。
+提供卸载/重装/下载/导出依赖子命令（含通配符展开、受保护包过滤等逻辑，
+保留在模块内）；纯 exec 型子命令 i/up 已迁入内置 DSL
+``src/fcmd/commands/piptool.toml``，两处逐子命令合并注册。
 
 示例
 ----
-    fcmd piptool i requests flask           # 安装包
     fcmd piptool u requests                  # 卸载包
     fcmd piptool r --offline requests        # 离线重装
     fcmd piptool d requests                  # 下载包到 packages/
-    fcmd piptool up                           # 升级 pip
-    fcmd piptool f                            # 导出依赖到 requirements.txt
+    fcmd piptool f                           # 导出依赖到 requirements.txt
 """
 
 from __future__ import annotations
@@ -23,10 +23,8 @@ from fcmd.models import run_command
 __all__ = [
     "pip_download",
     "pip_freeze",
-    "pip_install",
     "pip_reinstall",
     "pip_uninstall",
-    "pip_upgrade",
 ]
 
 # ============================================================================
@@ -107,19 +105,6 @@ def _filter_protected_packages(packages: list[str]) -> list[str]:
 # ============================================================================
 
 
-@fcmd.tool("piptool", subcommand="i", help="安装包")
-def pip_install(packages: list[str]) -> None:
-    """安装包。
-
-    Parameters
-    ----------
-    packages:
-        包名列表
-    """
-    run_command(["pip", "install", *packages])
-    print(f"安装完成: {', '.join(packages)}")
-
-
 @fcmd.tool("piptool", subcommand="u", help="卸载包")
 def pip_uninstall(packages: list[str]) -> None:
     """卸载包（支持通配符，跳过受保护包）。
@@ -174,13 +159,6 @@ def pip_download(packages: list[str], offline: bool = False) -> None:
     """
     options = ["--no-index", "--find-links", "."] if offline else []
     run_command(["pip", "download", *packages, *options, "-d", PACKAGE_DIR])
-
-
-@fcmd.tool("piptool", subcommand="up", help="升级 pip")
-def pip_upgrade() -> None:
-    """升级 pip 到最新版本。"""
-    run_command(["python", "-m", "pip", "install", "--upgrade", "pip"])
-    print("pip 升级完成")
 
 
 @fcmd.tool("piptool", subcommand="f", help="导出依赖")

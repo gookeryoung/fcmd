@@ -135,14 +135,43 @@ def _expand_value(value: str, spec: ToolSpec, variables: Mapping[str, Any]) -> s
     return value
 
 
+def _collect_on_tokens(spec: ToolSpec, variables: Mapping[str, Any]) -> list[str]:
+    """收集 DSL bool 参数 ``on`` 固定 token（值为真时的参数）。
+
+    ``__dsl_param_on__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
+    非 DSL 合成函数（无该属性）返回空列表。
+    """
+    on_map: Mapping[str, tuple[str, ...]] = getattr(spec.func, "__dsl_param_on__", None) or {}
+    if not on_map:
+        return []
+    return [token for pname, tokens in on_map.items() if variables.get(pname) for token in tokens]
+
+
 def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Mapping[str, Any]) -> str | list[str]:
     """将 cmd（str 或 list）中 ``{参数名}`` 占位符替换为 CLI 解析值。
 
-    无占位符时零成本直返。
+    无占位符时零成本直返。DSL 扩展语义：
+
+    - list 参数在 list cmd 中的**独占占位符项**（整项恰为 ``{name}``）按
+      元素逐项展开（无 shell 执行下每元素一个 argv token）；
+    - bool 参数声明 ``on`` 时，值为真向 cmd 尾部追加固定 token。
     """
     if isinstance(cmd, str):
-        return _expand_value(cmd, spec, variables) if "{" in cmd else cmd
-    return [_expand_value(item, spec, variables) if "{" in item else item for item in cmd]
+        expanded = _expand_value(cmd, spec, variables) if "{" in cmd else cmd
+        on_tokens = _collect_on_tokens(spec, variables)
+        return f"{expanded} {' '.join(on_tokens)}" if on_tokens else expanded
+    sig_params = inspect.signature(spec.func).parameters
+    result: list[str] = []
+    for item in cmd:
+        if item.startswith("{") and item.endswith("}") and item[1:-1] in sig_params:
+            value = variables.get(item[1:-1])
+            if isinstance(value, (list, tuple)):
+                # list 参数独占占位符：按元素展开
+                result.extend(str(element) for element in value)
+                continue
+        result.append(_expand_value(item, spec, variables) if "{" in item else item)
+    result.extend(_collect_on_tokens(spec, variables))
+    return result
 
 
 def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:

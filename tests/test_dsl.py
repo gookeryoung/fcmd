@@ -233,6 +233,31 @@ class TestSpecSynthesis:
         parsed = parser.parse_args([])
         assert parsed is not None
 
+    def test_list_annotation_and_on_injection(self) -> None:
+        """list 类型合成 list[str] 注解；on 注入 __dsl_param_on__ 属性。"""
+        import typing
+
+        decl = CommandDecl(
+            name="t",
+            help="x",
+            cmd=("pip", "install", "{packages}"),
+            args=(
+                ParamDecl(name="packages", type="list"),
+                ParamDecl(name="fix", type="bool", default=False, on=("--fix", "--unsafe-fixes")),
+            ),
+        )
+        spec = build_tool_spec(decl)
+        hints = typing.get_type_hints(spec.func)
+        assert hints["packages"] == list[str]
+        assert spec.func.__dsl_param_on__ == {"fix": ("--fix", "--unsafe-fixes")}  # type: ignore[attr-defined]
+
+    def test_list_parser_nargs(self) -> None:
+        """list 参数经 _build_parser_for_tool 映射为多值参数。"""
+        decl = CommandDecl(name="t", help="x", cmd=("pip",), args=(ParamDecl(name="packages", type="list"),))
+        spec = build_tool_spec(decl)
+        parsed = _build_parser_for_tool(spec).parse_args(["a", "b"])
+        assert parsed.packages == ["a", "b"]
+
 
 # ============================================================================ #
 # 文件加载（loader.py）
@@ -241,12 +266,13 @@ class TestLoader:
     """内置与用户级 commands.toml 的加载。"""
 
     def test_builtin_decls_valid(self) -> None:
-        """内置命令目录 commands/*.toml 逐条合法且含 clr/pymake/gittool（出厂即正确 CI 门禁）。"""
+        """内置命令目录 commands/*.toml 逐条合法且含 clr/pymake/gittool/autofmt/piptool（出厂即正确 CI 门禁）。"""
         tools = builtin_tool_decls()
         assert tools, "内置命令目录不应为空"
         names = [t.name for t in tools]
         assert "clr" in names
         assert "pymake" in names and "gittool" in names
+        assert "autofmt" in names and "piptool" in names
         for tool in tools:
             for decl in tool.commands:
                 spec = build_tool_spec(decl, tool_name=tool.name, subcommand=None if tool.flat else decl.name)
@@ -790,6 +816,48 @@ class TestParamDeclParsing:
         with pytest.raises(CommandDeclError, match="args 须是表"):
             parse_command_table("t", {"help": "x", "cmd": "echo", "args": ["bad"]})
 
+    def test_parse_list_param(self) -> None:
+        """type=list 无 default 解析为 positional list 参数。"""
+        decl = parse_command_table("t", self._table({"packages": {"type": "list", "help": "包名列表"}}))
+        assert decl.args[0].type == "list"
+        assert decl.args[0].default is None
+
+    def test_list_rejects_default(self) -> None:
+        """type=list 不支持 default（positional 参数）。"""
+        with pytest.raises(CommandDeclError, match=r"type=list"):
+            parse_command_table("t", self._table({"x": {"type": "list", "default": ["a"]}}))
+
+    def test_on_token_parses(self) -> None:
+        """bool 参数 on 固定 token 解析保留。"""
+        decl = parse_command_table(
+            "t", self._table({"fix": {"type": "bool", "default": False, "on": ["--fix", "--unsafe-fixes"]}})
+        )
+        assert decl.args[0].on == ("--fix", "--unsafe-fixes")
+
+    def test_on_with_non_bool_rejected(self) -> None:
+        """非 bool 类型声明 on 报错。"""
+        with pytest.raises(CommandDeclError, match=r"仅 type=bool"):
+            parse_command_table("t", self._table({"x": {"type": "str", "on": ["--x"]}}))
+
+    def test_on_must_be_non_empty_string_array(self) -> None:
+        """on 含空串/非字符串报错。"""
+        with pytest.raises(CommandDeclError, match="on 须是"):
+            parse_command_table("t", self._table({"x": {"type": "bool", "default": False, "on": [""]}}))
+
+    def test_list_partial_placeholder_rejected(self) -> None:
+        """tuple cmd 中 list 参数非独占占位符（部分占位）报错。"""
+        table = {"help": "x", "cmd": ["pip", "install", "pkg-{packages}"], "args": {"packages": {"type": "list"}}}
+        with pytest.raises(CommandDeclError, match="独占占位符"):
+            parse_command_table("t", table)
+
+    def test_list_exclusive_placeholder_ok(self) -> None:
+        """tuple cmd 中 list 参数独占占位符合法；str cmd 不校验。"""
+        table = {"help": "x", "cmd": ["pip", "install", "{packages}"], "args": {"packages": {"type": "list"}}}
+        decl = parse_command_table("t", table)
+        assert decl.args[0].type == "list"
+        str_table = {"help": "x", "cmd": "pip install pkg-{packages}", "args": {"packages": {"type": "list"}}}
+        assert parse_command_table("t", str_table).args[0].type == "list"
+
 
 # ============================================================================ #
 # 参数签名合成（synth.py）与 parser 复用
@@ -937,6 +1005,70 @@ class TestInterpolation:
         # dry_run 在签名内且在 variables 中——callable cmd 必须直通不迭代
         task = _build_task_spec(spec, {"dry_run": True, "quiet": False})
         assert task.cmd is _push_all_remotes
+
+    def test_list_exclusive_placeholder_spliced(self) -> None:
+        """list 参数独占占位符按元素展开（tuple cmd，无 shell 语义）。"""
+        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+
+        decl = CommandDecl(
+            name="t", help="x", cmd=("pip", "install", "{packages}"), args=(ParamDecl(name="packages", type="list"),)
+        )
+        spec = build_tool_spec(decl)
+        result = _expand_cmd_placeholders(["pip", "install", "{packages}"], spec, {"packages": ["a", "b"]})
+        assert result == ["pip", "install", "a", "b"]
+
+    def test_on_tokens_appended_when_truthy(self) -> None:
+        """bool on 固定 token：值为真追加，值为假不追加。"""
+        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+
+        decl = CommandDecl(
+            name="t",
+            help="x",
+            cmd=("ruff", "check", "{target}"),
+            args=(
+                ParamDecl(name="target", type="str", default="."),
+                ParamDecl(name="fix", type="bool", default=False, on=("--fix", "--unsafe-fixes")),
+            ),
+        )
+        spec = build_tool_spec(decl)
+        assert _expand_cmd_placeholders(["ruff", "check", "{target}"], spec, {"target": "src", "fix": True}) == [
+            "ruff",
+            "check",
+            "src",
+            "--fix",
+            "--unsafe-fixes",
+        ]
+        assert _expand_cmd_placeholders(["ruff", "check", "{target}"], spec, {"target": "src", "fix": False}) == [
+            "ruff",
+            "check",
+            "src",
+        ]
+
+    def test_on_tokens_str_cmd_appended(self) -> None:
+        """str cmd（shell）的 on 固定 token 以空格追加到尾部。"""
+        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+
+        decl = CommandDecl(
+            name="t",
+            help="x",
+            cmd="ruff check {target}",
+            args=(
+                ParamDecl(name="target", type="str", default="."),
+                ParamDecl(name="fix", type="bool", default=False, on=("--fix",)),
+            ),
+        )
+        spec = build_tool_spec(decl)
+        assert (
+            _expand_cmd_placeholders("ruff check {target}", spec, {"target": ".", "fix": True}) == "ruff check . --fix"
+        )
+        assert _expand_cmd_placeholders("ruff check {target}", spec, {"target": ".", "fix": False}) == "ruff check ."
+
+    def test_non_dsl_func_no_on_tokens(self) -> None:
+        """非 DSL 合成函数（无 __dsl_param_on__）不受 on 逻辑影响。"""
+        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+
+        spec = self._spec("echo {name}", ("name",))
+        assert _expand_cmd_placeholders("echo {name}", spec, {"name": "x"}) == "echo x"
 
     def test_run_tool_with_interpolation(
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
