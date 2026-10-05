@@ -1208,6 +1208,65 @@ class TestTransparency:
 
 
 # ============================================================================ #
+# post-run 完成消息（decl.py message 字段 / synth __dsl_message__）
+# ============================================================================ #
+class TestMessageDeclaration:
+    """命令级 message 声明的解析、注入与执行成功后打印。"""
+
+    def test_message_parses(self) -> None:
+        """message 字段解析保留。"""
+        decl = parse_command_table("t", {"help": "x", "cmd": "echo", "message": "完成 {name}"})
+        assert decl.message == "完成 {name}"
+
+    def test_message_default_empty(self) -> None:
+        """未声明 message 时为空串。"""
+        assert parse_command_table("t", {"help": "x", "cmd": "echo"}).message == ""
+
+    def test_message_non_string_rejected(self) -> None:
+        """message 非字符串报错。"""
+        with pytest.raises(CommandDeclError, match="message 须是字符串"):
+            parse_command_table("t", {"help": "x", "cmd": "echo", "message": 42})
+
+    def test_message_injected_on_synth(self) -> None:
+        """synth 注入 __dsl_message__；未声明时不注入。"""
+        with_message = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo", message="done"))
+        assert getattr(with_message.func, "__dsl_message__", None) == "done"
+        without_message = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo"))
+        assert not hasattr(without_message.func, "__dsl_message__")
+
+    def test_message_printed_after_success(
+        self,
+        user_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_discovery: None,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """run_tool 全链路：执行成功后打印插值消息。"""
+        from fcmd.apis.toolkit import run_tool
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.hello]",
+                    'help = "问好"',
+                    'cmd = "echo hi {name}"',
+                    'message = "已向 {name} 问好"',
+                    "[commands.hello.args.name]",
+                    'help = "名字"',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        assert run_tool("hello", ["world"]) == 0
+        assert "已向 world 问好" in capsys.readouterr().out
+
+
+# ============================================================================ #
 # 多子命令形态（decl.py：parse_tool_table / ToolDecl）
 # ============================================================================ #
 class TestToolTableParsing:

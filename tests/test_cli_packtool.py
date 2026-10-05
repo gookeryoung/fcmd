@@ -1,10 +1,11 @@
 """packtool 工具测试。
 
-验证 ``fcmd.cli.dev.packtool`` 模块：
+验证 ``fcmd.cli.dev.packtool`` 模块（src/embed/zip/clean）与 DSL 子命令
+deps/wheel（``src/fcmd/commands/packtool.toml``，逐子命令合并注册）：
 - 工具注册
 - src 子命令（源码打包）
-- deps 子命令（依赖打包）
-- wheel 子命令（wheel 打包）
+- deps 子命令（依赖打包，DSL 声明）
+- wheel 子命令（wheel 打包，DSL 声明）
 - embed 子命令（嵌入式 Python 安装）
 - zip 子命令（zip 包打包）
 - clean 子命令（构建目录清理）
@@ -21,35 +22,18 @@ import pytest
 
 import fcmd as fx
 import fcmd.cli.dev.packtool
+from fcmd.apis._tool_exec import _build_task_spec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.cli.dev.packtool import (
     _normalize_arch,
     clean_build_dir,
     create_zip_package,
     install_embed_python,
-    pack_dependencies,
     pack_source,
-    pack_wheel,
 )
-from fcmd.models import CommandResult
 
-
-# ============================================================================ #
-# 测试辅助：创建 fake run_command 函数（避免 lambda ARG005）
-# ============================================================================ #
-def _recording_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``run_command`` 函数，返回成功结果。"""
-
-    def run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-        calls.append(cmd)
-        return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
-
-    return run
-
-
-def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-    """总是返回成功结果的 fake ``run_command`` 函数。"""
-    return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
+ensure_tools_discovered()
 
 
 # ============================================================================ #
@@ -143,62 +127,91 @@ class TestPacktoolSource:
         assert "源码打包完成" in out
 
 
-class TestPacktoolDeps:
-    """packtool deps 子命令测试。"""
+class TestPacktoolDslSubcommands:
+    """packtool DSL 子命令（deps/wheel）与合并注册测试。"""
 
-    def test_pack_dependencies(
+    def test_deps_list_expansion_and_message(self) -> None:
+        """DSL 子命令 deps：list 参数独占占位符按元素展开，message 注入。"""
+        spec = _TOOL_REGISTRY["packtool"]["deps"]
+        task = _build_task_spec(spec, {"packages": ["requests", "flask"], "lib_dir": "libs"})
+        assert task.cmd == [
+            "pip",
+            "install",
+            "--target",
+            "libs",
+            "--no-compile",
+            "--no-warn-script-location",
+            "requests",
+            "flask",
+        ]
+        assert getattr(spec.func, "__dsl_message__", None) == "依赖打包完成: {lib_dir}"
+
+    def test_wheel_cmd(self) -> None:
+        """DSL 子命令 wheel：path 参数插值。"""
+        spec = _TOOL_REGISTRY["packtool"]["wheel"]
+        task = _build_task_spec(spec, {"project_dir": ".", "output_dir": "dist"})
+        assert task.cmd == ["pip", "wheel", "--no-deps", "--wheel-dir", "dist", "."]
+        assert getattr(spec.func, "__dsl_message__", None) == "Wheel 打包完成: {output_dir}"
+
+    def test_merged_subcommands_visible(self) -> None:
+        """合并注册后 Python 子命令（src/embed/zip/clean）与 DSL 子命令（deps/wheel）全部可见。"""
+        subs = fx.list_subcommands("packtool")
+        assert {"src", "embed", "zip", "clean", "deps", "wheel"} <= set(subs)
+
+
+class TestPacktoolDslRunTool:
+    """packtool 通过 run_tool 集成测试（DSL 子命令经引擎执行）。"""
+
+    def test_deps_via_run_tool(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """pack_dependencies 调用 pip install --target。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.packtool.run_command", _recording_run(calls))
+        """fcmd packtool deps <packages> 通过 run_tool 调用，成功后打印 message。"""
+        captured: list[Any] = []
 
-        lib_dir = tmp_path / "libs"
-        pack_dependencies(["requests", "flask"], lib_dir)
-        assert calls[0][:3] == ["pip", "install", "--target"]
-        assert str(lib_dir) in calls[0]
-        assert "requests" in calls[0]
-        assert "flask" in calls[0]
+        def fake_run(cmd: Any, **kwargs: Any) -> Any:
+            captured.append(cmd)
+            return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        code = run_tool("packtool", ["deps", "requests"])
+        assert code == 0
+        assert captured[0][:3] == ["pip", "install", "--target"]
         out = capsys.readouterr().out
         assert "依赖打包完成" in out
 
-    def test_pack_dependencies_via_run_tool(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """fcmd packtool deps <packages> 通过 run_tool 调用。"""
-        monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.cli.dev.packtool.run_command", _success_run)
-        code = run_tool("packtool", ["deps", "requests"])
-        assert code == 0
-
-
-class TestPacktoolWheel:
-    """packtool wheel 子命令测试。"""
-
-    def test_pack_wheel(
+    def test_deps_message_absent_on_failure(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """pack_wheel 调用 pip wheel。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.dev.packtool.run_command", _recording_run(calls))
-
-        project_dir = tmp_path / "project"
-        project_dir.mkdir()
-        output_dir = tmp_path / "dist"
-        pack_wheel(project_dir, output_dir)
-        assert calls[0][:2] == ["pip", "wheel"]
-        assert "--no-deps" in calls[0]
-        assert str(output_dir) in calls[0]
+        """deps 执行失败时返回码非零且不打印完成消息。"""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kwargs: type("CP", (), {"returncode": 1, "stdout": "", "stderr": "boom"})(),
+        )
+        code = run_tool("packtool", ["deps", "requests"])
+        assert code != 0
         out = capsys.readouterr().out
-        assert "Wheel 打包完成" in out
+        assert "依赖打包完成" not in out
+
+    def test_deps_message_absent_on_dry_run(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """dry-run 下 deps 不执行也不打印完成消息。"""
+        monkeypatch.chdir(tmp_path)
+        code = run_tool("packtool", ["deps", "requests", "--dry-run"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "依赖打包完成" not in out
 
 
 class TestPacktoolEmbed:

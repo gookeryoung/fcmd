@@ -60,6 +60,7 @@ _TOP_KEYS = frozenset(
         "env",
         "needs",
         "strategy",
+        "message",
     }
 )
 
@@ -111,6 +112,8 @@ class CommandDecl:
         依赖的子命令名（引用同工具其他子命令；单命令形态禁用）
     strategy:
         执行策略：``sequential`` / ``thread`` / ``async`` / ``dependency``
+    message:
+        执行成功后打印的完成消息（支持 ``{参数名}`` 插值）；空串表示不打印
     """
 
     name: str
@@ -127,6 +130,7 @@ class CommandDecl:
     env: dict[str, str] | None = None
     needs: tuple[str, ...] = ()
     strategy: str | None = None
+    message: str = ""
 
 
 @dataclass(frozen=True)
@@ -484,6 +488,10 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
 
     cwd, timeout, env = _parse_transparency(name, table)
 
+    message = table.get("message", "")
+    if not isinstance(message, str):
+        raise CommandDeclError(f"命令 {name!r} 的 message 须是字符串")
+
     return CommandDecl(
         name=name,
         help=help_text,
@@ -499,6 +507,7 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         env=env,
         needs=needs,
         strategy=strategy,
+        message=message,
     )
 
 

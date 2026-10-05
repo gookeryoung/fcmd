@@ -320,6 +320,7 @@ cmd = "echo 你好 {name} x{count}"
 cwd = "/tmp"                     # 可选：工作目录（支持 {参数名} 插值）
 timeout = 30                     # 可选：超时秒数
 env = { LANG = "zh" }            # 可选：环境变量（值支持插值）
+message = "同步完成: {name}"       # 可选：执行成功后打印的完成消息（支持插值，dry-run 不打印）
 
 [commands.hello.args.name]       # 无 default → positional 参数
 help = "目标名字"

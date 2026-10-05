@@ -349,6 +349,13 @@ def _execute_tool_tasks(
     if verbose and not variables.get("dry_run", False):
         _print_task_summary(report)
 
+    # DSL post-run 完成消息（__dsl_message__ 由 synth 注入）：执行成功后打印，
+    # 支持 {参数名} 插值；dry-run 未实际执行不打印
+    if not variables.get("dry_run", False) and report.success:
+        message = getattr(target_spec.func, "__dsl_message__", None)
+        if message:
+            print(_expand_value(message, target_spec, variables))
+
     return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
 
 

@@ -20,6 +20,8 @@ DSL 声明到 :class:`~fcmd.apis._tool_args.ToolSpec` 的转换层：
 cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 cmd）据此
 正确判定为聚合。bool 参数的 ``on`` 固定 token 经 ``__dsl_param_on__`` 属性
 传递，由 ``_tool_exec._expand_cmd_placeholders`` 在值为真时追加到 cmd 尾部。
+命令级 ``message``（post-run 完成消息）经 ``__dsl_message__`` 属性传递，由
+``_tool_exec._execute_tool_tasks`` 在任务执行成功后打印。
 """
 
 from __future__ import annotations
@@ -125,6 +127,9 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     # bool on-token 契约（与 __dsl_empty_body__ 同为函数属性约定，_tool_exec
     # 消费）：{参数名: truthy 时向 cmd 尾部追加的固定 token}
     dsl_command.__dsl_param_on__ = {p.name: p.on for p in decl.args if p.on}  # type: ignore[attr-defined]
+    # post-run 完成消息契约（_tool_exec 消费）：执行成功后打印的消息模板
+    if decl.message:
+        dsl_command.__dsl_message__ = decl.message  # type: ignore[attr-defined]
     return dsl_command
 
 

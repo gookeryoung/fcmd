@@ -1,6 +1,8 @@
 """packtool - Python 打包工具。
 
-提供源码打包/依赖打包/wheel 构建/嵌入式 Python 安装/zip 包创建/清理子命令。
+提供源码打包/嵌入式 Python 安装/zip 包创建/清理子命令。
+纯 exec 型子命令 deps/wheel 已迁入内置 DSL ``src/fcmd/commands/packtool.toml``，
+两处逐子命令合并注册。
 
 简化说明：不解析 ``pyproject.toml`` 获取项目名，直接用项目目录名作为包名，
 避免引入 ``tomllib``/``tomli`` 依赖（rule-11 优先标准库 + 谨慎新增依赖）。
@@ -8,8 +10,8 @@
 示例
 ----
     fcmd packtool src                          # 打包当前项目源码到 .pypack/
-    fcmd packtool deps requests flask          # 打包依赖到 libs/
-    fcmd packtool wheel                        # 构建 wheel 到 dist/
+    fcmd packtool deps requests flask          # 打包依赖到 libs/（DSL 声明）
+    fcmd packtool wheel                        # 构建 wheel 到 dist/（DSL 声明）
     fcmd packtool embed --version 3.11         # 安装嵌入式 Python 3.11
     fcmd packtool zip                          # 创建 package.zip
     fcmd packtool clean                        # 清理 .pypack 目录
@@ -24,15 +26,13 @@ import zipfile
 from pathlib import Path
 
 import fcmd
-from fcmd.models import IgnoreSpec, run_command, should_ignore, to_shutil_ignore
+from fcmd.models import IgnoreSpec, should_ignore, to_shutil_ignore
 
 __all__ = [
     "clean_build_dir",
     "create_zip_package",
     "install_embed_python",
-    "pack_dependencies",
     "pack_source",
-    "pack_wheel",
 ]
 
 # ============================================================================
@@ -140,59 +140,6 @@ def pack_source(project_dir: Path = Path(), output_dir: Path = Path(".pypack")) 
                 shutil.copy2(item, dst_item)
 
     print(f"源码打包完成: {source_dir}")
-
-
-@fcmd.tool("packtool", subcommand="deps", help="打包依赖")
-def pack_dependencies(packages: list[str], lib_dir: Path = Path("libs")) -> None:
-    """打包项目依赖到指定目录（使用 ``pip install --target``）。
-
-    Parameters
-    ----------
-    packages:
-        依赖包名列表（至少一个）
-    lib_dir:
-        依赖库目录（默认：``libs``）
-    """
-    lib_dir.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        "pip",
-        "install",
-        "--target",
-        str(lib_dir),
-        "--no-compile",
-        "--no-warn-script-location",
-        *packages,
-    ]
-
-    run_command(cmd)
-    print(f"依赖打包完成: {lib_dir}")
-
-
-@fcmd.tool("packtool", subcommand="wheel", help="构建 wheel")
-def pack_wheel(project_dir: Path = Path(), output_dir: Path = Path("dist")) -> None:
-    """打包项目为 wheel 文件（使用 ``pip wheel``）。
-
-    Parameters
-    ----------
-    project_dir:
-        项目目录（默认：当前目录）
-    output_dir:
-        输出目录（默认：``dist``）
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    cmd = [
-        "pip",
-        "wheel",
-        "--no-deps",
-        "--wheel-dir",
-        str(output_dir),
-        str(project_dir),
-    ]
-
-    run_command(cmd)
-    print(f"Wheel 打包完成: {output_dir}")
 
 
 @fcmd.tool("packtool", subcommand="embed", help="安装嵌入式 Python")

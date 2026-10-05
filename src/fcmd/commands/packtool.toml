@@ -1,0 +1,34 @@
+# 内置 DSL 命令：packtool（与 Python 模块 fcmd/cli/dev/packtool.py 逐子命令合并）。
+#
+# 仅迁入纯 exec 型子命令 deps/wheel（pip 自建 --target / --wheel-dir 目录，
+# 无需预建步骤）；含 Python 逻辑的 src/embed/zip/clean 保留在模块内。
+# message 演示 post-run 完成消息（{参数名} 插值）用法。
+
+[commands.packtool.deps]
+help = "打包依赖"
+cmd = ["pip", "install", "--target", "{lib_dir}", "--no-compile", "--no-warn-script-location", "{packages}"]
+message = "依赖打包完成: {lib_dir}"
+
+[commands.packtool.deps.args.packages]
+type = "list"
+help = "依赖包名列表（至少一个）"
+
+[commands.packtool.deps.args.lib_dir]
+type = "path"
+default = "libs"
+help = "依赖库目录"
+
+[commands.packtool.wheel]
+help = "构建 wheel"
+cmd = ["pip", "wheel", "--no-deps", "--wheel-dir", "{output_dir}", "{project_dir}"]
+message = "Wheel 打包完成: {output_dir}"
+
+[commands.packtool.wheel.args.project_dir]
+type = "path"
+default = "."
+help = "项目目录"
+
+[commands.packtool.wheel.args.output_dir]
+type = "path"
+default = "dist"
+help = "输出目录"
