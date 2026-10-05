@@ -20,11 +20,14 @@ __all__ = ["infer_tool_name", "run_named"]
 def infer_tool_name(argv0: str) -> str:
     """从 argv[0] 推断工具名：取 basename 去可执行扩展。
 
+    先统一反斜杠为正斜杠再解析，确保 POSIX 系统（CI）也能正确处理
+    Windows 风格路径；正斜杠路径不受影响。
+
     Examples
     --------
     ``C:\\Scripts\\clr.exe`` / ``/usr/local/bin/clr`` / ``clr`` → ``"clr"``
     """
-    return Path(argv0).stem
+    return Path(argv0.replace("\\", "/")).stem
 
 
 def run_named() -> None:
