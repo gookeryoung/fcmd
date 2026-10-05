@@ -1980,7 +1980,9 @@ class TestTtyAndEnvDefault:
 
     def test_apply_env_defaults_resolves_chain(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """CLI 值等于声明默认值 → 取链中第一个非空环境变量。"""
-        monkeypatch.delenv("USERNAME", raising=False)
+        # 清空链中位于 USER 之前的全部变量（CI 的 Linux runner 预置 LOGNAME=runner）
+        for name in ("USERNAME", "LOGNAME"):
+            monkeypatch.delenv(name, raising=False)
         monkeypatch.setenv("USER", "posixuser")
         variables: dict[str, Any] = {"username": ""}
         _apply_env_defaults(variables, self._env_spec())
