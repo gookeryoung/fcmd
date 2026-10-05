@@ -1374,7 +1374,6 @@ class TestCoverageGaps:
 _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("archivex", "fcmd.cli.archive.archivex"),
     ("asciitool", "fcmd.cli.text.asciitool"),
-    ("autofmt", "fcmd.cli.dev.autofmt"),
     ("bumpversion", "fcmd.cli.dev.bumpversion"),
     ("casetool", "fcmd.cli.conv.casetool"),
     ("codetool", "fcmd.cli.conv.codetool"),
