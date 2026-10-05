@@ -1,7 +1,55 @@
-# 内置 DSL 命令：gittool（多子命令形态，纯 exec 型子命令）。
+# 内置 DSL 命令：gittool（多子命令形态）。
 #
-# 与 Python 模块 fcmd/cli/dev/gittool.py 合并注册：模块仅保留含逻辑的
-# a/i/isub（fn 子命令）与 main 入口。DSL 字段速查见 README「命令定义 DSL」。
+# 与 Python 模块 fcmd/cli/dev/gittool.py 合并注册：模块仅保留含遍历逻辑的
+# isub（fn 子命令）、状态探针辅助函数与 main 入口。DSL 字段速查见 README
+# 「命令定义 DSL」。
+
+# 链式内部子命令：_init → _add → _commit（needs 为 DAG 依赖边，链式保证
+# 执行顺序）；when 探针守卫复刻 Python 版「已有仓库不重复 init / 无更改
+# 不提交」语义，探针不满足 → SKIPPED（命令退出码 0）。a/i 聚合经
+# allow_upstream_skip 在上游守卫跳过时豁免继续执行。
+[commands.gittool._init]
+help = "初始化 Git 仓库（内部）"
+cmd = ["git", "init"]
+when = {path = ".git", expect = "missing"}
+hidden = true
+
+[commands.gittool._add]
+help = "暂存全部更改（内部）"
+cmd = ["git", "add", "."]
+needs = ["_init"]
+allow_upstream_skip = true
+hidden = true
+
+[commands.gittool._commit]
+help = "提交暂存更改（内部）"
+cmd = ["git", "commit", "-m", "{message}"]
+needs = ["_add"]
+when = {cmd = "git status --porcelain", expect = "nonempty"}
+allow_upstream_skip = true
+hidden = true
+[commands.gittool._commit.args.message]
+type = "str"
+default = "init commit"
+help = "提交信息"
+
+[commands.gittool.a]
+help = "添加并提交"
+needs = ["_commit"]
+strategy = "sequential"
+[commands.gittool.a.args.message]
+type = "str"
+default = "chore: update"
+help = "提交信息"
+
+[commands.gittool.i]
+help = "初始化并提交"
+needs = ["_commit"]
+strategy = "sequential"
+[commands.gittool.i.args.message]
+type = "str"
+default = "init commit"
+help = "提交信息"
 
 # 隐藏命令，被 c 通过 needs 依赖；-e 排除编辑器/项目缓存目录
 [commands.gittool.clean]

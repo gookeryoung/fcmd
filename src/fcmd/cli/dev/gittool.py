@@ -1,24 +1,25 @@
 """gittool - Git 执行工具。
 
-提供添加提交/初始化/初始化子目录/清理/推送/拉取子命令。
+提供初始化/添加提交/初始化子目录等子命令。
 
-子命令来源：纯 exec 型子命令（clean/c/ca/p/pl）由 ``src/fcmd/commands/gittool.toml``
-DSL 声明，发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
-本模块仅保留含 Python 逻辑的 fn 子命令：
+子命令来源：exec 型与守卫型子命令（a/i/clean/c/ca/p/pl）由
+``src/fcmd/commands/gittool.toml`` DSL 声明——a/i 经链式内部子命令
+``_init``/``_add``/``_commit`` + ``when`` 探针守卫编排（无仓库自动 init、
+无更改不提交），发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
+本模块仅保留含遍历逻辑的 fn 子命令与状态探针辅助函数：
 
-- ``a``：添加并提交（仅当有未提交更改时）
-- ``i``：初始化并提交
 - ``isub``：初始化所有子目录的 Git 仓库
+- ``has_files`` / ``not_has_git_repo``：仓库状态探针（公共辅助函数）
 
 示例
 ----
-    fcmd gittool a -m "feat: 新功能"   # 添加并提交
-    fcmd gittool i                       # 初始化并提交
-    fcmd gittool isub                    # 初始化所有子目录的 Git 仓库
-    fcmd gittool c                       # 清理未跟踪文件（保留排除目录）并查看状态
-    fcmd gittool ca                      # 清理全部未跟踪文件（含排除目录）
-    fcmd gittool p                       # 推送
-    fcmd gittool pl                      # 拉取
+    fcmd gittool a --message "feat: 新功能"   # 添加并提交（有更改时）
+    fcmd gittool i                             # 初始化并提交
+    fcmd gittool isub                          # 初始化所有子目录的 Git 仓库
+    fcmd gittool c                             # 清理未跟踪文件（保留排除目录）并查看状态
+    fcmd gittool ca                            # 清理全部未跟踪文件（含排除目录）
+    fcmd gittool p                             # 推送
+    fcmd gittool pl                            # 拉取
 """
 
 from __future__ import annotations
@@ -30,8 +31,6 @@ import fcmd
 from fcmd.models import run_command
 
 __all__ = [
-    "git_add_commit",
-    "git_init_add_commit",
     "git_init_sub_dirs",
     "has_files",
     "not_has_git_repo",
@@ -70,40 +69,6 @@ def has_files() -> bool:
 # ============================================================================
 # fn 子命令
 # ============================================================================
-
-
-@fcmd.tool("gittool", subcommand="a", help="添加并提交")
-def git_add_commit(message: str = "chore: update") -> None:
-    """执行 git add + git commit（仅当有未提交更改时）。
-
-    Parameters
-    ----------
-    message:
-        提交信息（默认 ``chore: update``）
-    """
-    if not has_files():
-        print("没有文件需要提交")
-        return
-    run_command(["git", "add", "."])
-    run_command(["git", "commit", "-m", message])
-
-
-@fcmd.tool("gittool", subcommand="i", help="初始化并提交")
-def git_init_add_commit(message: str = "init commit") -> None:
-    """执行 git init（若需）+ git add + git commit（若有更改）。
-
-    Parameters
-    ----------
-    message:
-        提交信息（默认 ``init commit``）
-    """
-    if not_has_git_repo():
-        run_command(["git", "init"])
-    if has_files():
-        run_command(["git", "add", "."])
-        run_command(["git", "commit", "-m", message])
-    else:
-        print("没有文件需要提交")
 
 
 @fcmd.tool("gittool", subcommand="isub", help="初始化子目录 Git 仓库")

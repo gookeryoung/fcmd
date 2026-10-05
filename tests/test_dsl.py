@@ -1369,11 +1369,18 @@ class TestNeedsStrategyParsing:
         with pytest.raises(CommandDeclError, match="单命令形态"):
             parse_command_table("flat", {"help": "x", "cmd": "echo", "needs": ["other"]})
 
-    def test_aggregate_args_rejected(self) -> None:
-        """聚合命令（needs 且无 cmd）声明 args 报错。"""
-        table: dict[str, Any] = {"help": "x", "needs": ["a"], "args": {"n": {"help": "数量"}}}
-        with pytest.raises(CommandDeclError, match="聚合命令"):
-            parse_command_table("aggbad", table, subcommand=True)
+    def test_aggregate_args_allowed(self) -> None:
+        """聚合命令（needs 且无 cmd）可声明 args（参数经共享 variables 流入子任务插值）。"""
+        table: dict[str, Any] = {
+            "help": "x",
+            "needs": ["a"],
+            "args": {"message": {"type": "str", "default": "chore: update", "help": "提交信息"}},
+        }
+        decl = parse_command_table("agg", table, subcommand=True)
+        assert decl.needs == ("a",)
+        assert len(decl.args) == 1
+        assert decl.args[0].name == "message"
+        assert decl.args[0].default == "chore: update"
 
     def test_cmd_with_needs_allowed(self) -> None:
         """cmd + needs 混合（如 gittool c）合法。"""
@@ -1493,3 +1500,354 @@ class TestRegisterDslToolMerge:
         tool = self._multi_tool("mergetool", aliases=("mt",))
         discovery_mod._register_dsl_tool(tool, "builtin")
         assert discovery_mod.resolve_tool("mt") == "mergetool"
+
+
+# ============================================================================ #
+# when 探针守卫与 allow_upstream_skip（decl.py / synth.py / _tool_exec.py）
+# ============================================================================ #
+class TestWhenDeclParsing:
+    """when 探针声明与 allow_upstream_skip 键的解析校验。"""
+
+    @staticmethod
+    def _table(**when: Any) -> dict[str, Any]:
+        """构造带 when 的最小命令表。"""
+        return {"help": "x", "cmd": "echo", "when": when}
+
+    def test_cmd_probe_parses(self) -> None:
+        """cmd 探针（nonempty/empty）解析成功。"""
+        decl = parse_command_table("t", self._table(cmd="git status --porcelain", expect="nonempty"))
+        assert decl.when is not None
+        assert decl.when.cmd == "git status --porcelain"
+        assert decl.when.path is None
+        assert decl.when.expect == "nonempty"
+        empty = parse_command_table("t", self._table(cmd="exit 0", expect="empty"))
+        assert empty.when is not None
+        assert empty.when.expect == "empty"
+
+    def test_path_probe_parses(self) -> None:
+        """path 探针（exists/missing）解析成功。"""
+        decl = parse_command_table("t", self._table(path=".git", expect="missing"))
+        assert decl.when is not None
+        assert decl.when.path == ".git"
+        assert decl.when.cmd is None
+        assert decl.when.expect == "missing"
+        exists = parse_command_table("t", self._table(path="~/.fcmd", expect="exists"))
+        assert exists.when is not None
+        assert exists.when.expect == "exists"
+
+    def test_no_when_defaults(self) -> None:
+        """未声明 when / allow_upstream_skip 时为 None / False。"""
+        decl = parse_command_table("t", {"help": "x", "cmd": "echo"})
+        assert decl.when is None
+        assert decl.allow_upstream_skip is False
+
+    def test_when_not_table_rejected(self) -> None:
+        """when 不是表报错。"""
+        with pytest.raises(CommandDeclError, match="when 须是表"):
+            parse_command_table("t", {"help": "x", "cmd": "echo", "when": "echo"})
+
+    def test_when_unknown_key_rejected(self) -> None:
+        """when 表内未知键报错。"""
+        with pytest.raises(CommandDeclError, match="未知键"):
+            parse_command_table("t", self._table(cmd="x", expect="nonempty", timeout=5))
+
+    @pytest.mark.parametrize(
+        "when",
+        [
+            {"expect": "nonempty"},  # cmd/path 均未提供
+            {"cmd": "x", "path": "y", "expect": "nonempty"},  # 同时提供
+        ],
+    )
+    def test_when_cmd_path_exclusive(self, when: dict[str, Any]) -> None:
+        """cmd 与 path 须恰有其一。"""
+        with pytest.raises(CommandDeclError, match="仅须提供 cmd 或 path 之一"):
+            parse_command_table("t", self._table(**when))
+
+    def test_when_empty_probe_rejected(self) -> None:
+        """探针目标为空字符串报错。"""
+        with pytest.raises(CommandDeclError, match="非空字符串"):
+            parse_command_table("t", self._table(cmd="", expect="nonempty"))
+
+    @pytest.mark.parametrize(
+        "when",
+        [
+            {"cmd": "x"},  # 缺 expect
+            {"cmd": "x", "expect": "exists"},  # cmd 探针用 path 枚举
+            {"path": "x", "expect": "nonempty"},  # path 探针用 cmd 枚举
+            {"path": "x"},  # 缺 expect
+        ],
+    )
+    def test_when_bad_expect_rejected(self, when: dict[str, Any]) -> None:
+        """expect 缺失或与探针类型不匹配报错。"""
+        with pytest.raises(CommandDeclError, match=r"when\.expect"):
+            parse_command_table("t", self._table(**when))
+
+    def test_allow_upstream_skip_parses(self) -> None:
+        """allow_upstream_skip 布尔值解析成功。"""
+        decl = parse_command_table("t", {"help": "x", "cmd": "echo", "allow_upstream_skip": True})
+        assert decl.allow_upstream_skip is True
+
+    @pytest.mark.parametrize("bad", [1, "true", []])
+    def test_allow_upstream_skip_bad_type(self, bad: Any) -> None:
+        """allow_upstream_skip 非布尔值报错。"""
+        with pytest.raises(CommandDeclError, match="allow_upstream_skip"):
+            parse_command_table("t", {"help": "x", "cmd": "echo", "allow_upstream_skip": bad})
+
+    def test_subcommand_underscore_prefix_allowed(self) -> None:
+        """子命令允许下划线开头（`_init` 式内部隐藏子命令约定）。"""
+        decl = parse_command_table("_init", {"help": "x", "cmd": "git init"}, subcommand=True)
+        assert decl.name == "_init"
+
+    def test_tool_name_underscore_prefix_rejected(self) -> None:
+        """工具名仍禁止下划线开头（内部命名仅限子命令）。"""
+        with pytest.raises(CommandDeclError, match="命令名"):
+            parse_command_table("_bad", {"help": "x", "cmd": "echo"})
+
+
+class TestWhenGuardExecution:
+    """when 探针闭包构造、SKIPPED 语义与 allow_upstream_skip 豁免。"""
+
+    def test_conditions_empty_without_when(self) -> None:
+        """无 when 声明的 DSL 命令 conditions 为空元组。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        spec = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo"))
+        assert _build_conditions(spec) == ()
+
+    def test_when_injected_on_synth(self) -> None:
+        """synth 注入 __dsl_when__；未声明 when 时不注入。"""
+        with_when = build_tool_spec(
+            CommandDecl(name="t", help="x", cmd="echo", when=parse_command_table("t", self._when_table()).when)
+        )
+        assert getattr(with_when.func, "__dsl_when__", None) is not None
+        without = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo"))
+        assert not hasattr(without.func, "__dsl_when__")
+
+    @staticmethod
+    def _when_table() -> dict[str, Any]:
+        """构造带 when cmd 探针的最小命令表。"""
+        return {"help": "x", "cmd": "git commit", "when": {"cmd": "git status --porcelain", "expect": "nonempty"}}
+
+    def test_cmd_probe_closure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cmd 探针按 stdout 是否非空与 expect 判定，_reason 描述探针。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        spec = build_tool_spec(parse_command_table("t", self._when_table()))
+        conditions = _build_conditions(spec)
+        assert len(conditions) == 1
+        probe = conditions[0]
+        # stdout 非空 → 满足 nonempty 期望
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, " M file\n", ""),
+        )
+        assert probe({}) is True
+        # stdout 为空 → 不满足
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        assert probe({}) is False
+        reason = getattr(probe, "_reason", None)
+        assert reason is not None
+        assert "git status --porcelain" in reason
+        assert "非空" in reason
+
+    def test_cmd_probe_empty_expect(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """cmd 探针 expect="empty"：stdout 为空时满足。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        decl = parse_command_table(
+            "t", {"help": "x", "cmd": "echo", "when": {"cmd": "cmd /c exit 0", "expect": "empty"}}
+        )
+        spec = build_tool_spec(decl)
+        probe = _build_conditions(spec)[0]
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        assert probe({}) is True
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "out", ""),
+        )
+        assert probe({}) is False
+
+    def test_path_probe_closure(self, tmp_path: Path) -> None:
+        """path 探针按存在性与 expect 判定。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        marker = tmp_path / "marker"
+        decl = parse_command_table("t", {"help": "x", "cmd": "echo", "when": {"path": str(marker), "expect": "exists"}})
+        probe = _build_conditions(build_tool_spec(decl))[0]
+        assert probe({}) is False  # 不存在 → 不满足 exists
+        marker.write_text("x", encoding="utf-8")
+        assert probe({}) is True
+        assert "marker" in str(probe._reason)  # type: ignore[missing-attribute]
+
+    def test_path_probe_missing_expect(self, tmp_path: Path) -> None:
+        """path 探针 expect="missing"：不存在时满足。"""
+        from fcmd.apis._tool_exec import _build_conditions
+
+        marker = tmp_path / "gone"
+        decl = parse_command_table(
+            "t", {"help": "x", "cmd": "echo", "when": {"path": str(marker), "expect": "missing"}}
+        )
+        probe = _build_conditions(build_tool_spec(decl))[0]
+        assert probe({}) is True
+        marker.write_text("x", encoding="utf-8")
+        assert probe({}) is False
+
+    def test_probe_exception_treated_unsatisfied(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """探针命令执行异常 → should_execute 视为条件不满足。"""
+        from fcmd.apis._tool_exec import _build_task_spec
+
+        def boom(cmd: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
+            raise FileNotFoundError(2, "命令不存在")
+
+        monkeypatch.setattr("fcmd.apis._tool_exec.subprocess.run", boom)
+        spec = build_tool_spec(parse_command_table("t", self._when_table()))
+        task = _build_task_spec(spec, {})
+        assert task.conditions
+        should_run, reason = task.should_execute({})
+        assert should_run is False
+        assert reason is not None
+
+    def test_guard_skip_exit_zero(
+        self,
+        user_home: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        reset_discovery: None,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """when 不满足：任务 SKIPPED、命令不执行、exit 0、提示条件不满足。"""
+        from fcmd.apis.toolkit import run_tool
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.pick]",
+                    'help = "按存在性执行"',
+                    'cmd = "echo picked"',
+                    f'when = {{path = "{(user_home / "no-such-marker").as_posix()}", expect = "exists"}}',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        assert run_tool("pick", []) == 0
+        assert captured == []  # 命令未执行
+        assert "条件不满足" in capsys.readouterr().out
+
+    def test_downstream_skip_and_allow_upstream_skip(
+        self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
+    ) -> None:
+        """上游守卫 SKIPPED：默认连坐下游；allow_upstream_skip 豁免照常执行。"""
+        from fcmd.apis.toolkit import run_tool
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.guardtool._gate]",
+                    'help = "闸门"',
+                    'cmd = "echo gate"',
+                    f'when = {{path = "{(user_home / "no-such-marker").as_posix()}", expect = "exists"}}',
+                    "hidden = true",
+                    "[commands.guardtool.follow]",
+                    'help = "连坐"',
+                    'cmd = "echo follow"',
+                    'needs = ["_gate"]',
+                    "[commands.guardtool.exempt]",
+                    'help = "豁免"',
+                    'cmd = "echo exempt"',
+                    'needs = ["_gate"]',
+                    "allow_upstream_skip = true",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        # follow 连坐 SKIPPED（exit 0），echo follow 不执行
+        captured.clear()
+        assert run_tool("guardtool", ["follow"]) == 0
+        assert captured == []
+        # exempt 经 allow_upstream_skip 豁免，echo exempt 照常执行
+        captured.clear()
+        assert run_tool("guardtool", ["exempt"]) == 0
+        assert captured == ["echo exempt"]
+
+    def test_dry_run_skips_probes(
+        self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
+    ) -> None:
+        """--dry-run 仅打印计划：探针不求值（引擎在任务执行前短路）。"""
+        from fcmd.apis.toolkit import run_tool
+
+        (user_home / "commands.toml").write_text(
+            "\n".join(
+                [
+                    "[commands.prober]",
+                    'help = "探针命令"',
+                    'cmd = "echo go"',
+                    'when = {cmd = "echo probe", expect = "nonempty"}',
+                ]
+            ),
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        probe_calls: list[Any] = []
+        monkeypatch.setattr(
+            "fcmd.apis._tool_exec.subprocess.run",
+            lambda cmd, **kw: probe_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        task_calls: list[Any] = []
+        monkeypatch.setattr(
+            "fcmd.engine.task_command.subprocess.run",
+            lambda cmd, **kw: task_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
+        )
+        assert run_tool("prober", ["--dry-run"]) == 0
+        assert probe_calls == []  # 探针未求值
+        assert task_calls == []  # 任务未执行
+
+    def test_aggregate_with_params_uses_full_parser(self) -> None:
+        """带参聚合：parser 复用 _build_parser_for_tool，--message 可解析。"""
+        from fcmd.apis._tool_exec import _parse_tool_args
+
+        decl = parse_command_table(
+            "agg",
+            {
+                "help": "聚合",
+                "needs": ["sub"],
+                "args": {"message": {"type": "str", "default": "chore: update", "help": "提交信息"}},
+            },
+            subcommand=True,
+        )
+        spec = build_tool_spec(decl, tool_name="t", subcommand="agg")
+        parsed = _parse_tool_args("t", "agg", ["--message", "hello"], {"agg": spec})
+        assert not isinstance(parsed, int)
+        variables, resolved = parsed
+        assert variables["message"] == "hello"
+        assert resolved is spec
+
+    def test_aggregate_without_params_keeps_bare_parser(self) -> None:
+        """无参聚合：保持裸 parser（仅全局选项），未知参数解析失败返回 FAILURE。"""
+        from fcmd.apis._tool_exec import _parse_tool_args
+
+        decl = parse_command_table("agg", {"help": "聚合", "needs": ["sub"]}, subcommand=True)
+        spec = build_tool_spec(decl, tool_name="t", subcommand="agg")
+        result = _parse_tool_args("t", "agg", ["--message", "x"], {"agg": spec})
+        assert isinstance(result, int)
+        assert result != 0

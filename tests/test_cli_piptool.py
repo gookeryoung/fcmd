@@ -1,7 +1,7 @@
 """piptool 工具测试。
 
-验证 ``fcmd.cli.dev.piptool`` 模块（u/r/f）与 DSL 子命令 i/up
-（``src/fcmd/commands/piptool.toml``，逐子命令合并注册）：
+验证 ``fcmd.cli.dev.piptool`` 模块（u/r，含通配符展开与受保护包过滤）与
+DSL 子命令 i/up/d/f（``src/fcmd/commands/piptool.toml``，逐子命令合并注册）：
 - 工具注册
 - 辅助函数
 - 命令构造
@@ -10,7 +10,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -24,8 +23,6 @@ from fcmd.cli.dev.piptool import (
     _expand_wildcard_packages,
     _filter_protected_packages,
     _get_installed_packages,
-    pip_download,
-    pip_freeze,
     pip_reinstall,
     pip_uninstall,
 )
@@ -219,57 +216,9 @@ class TestPiptoolCommands:
             "requests",
         ]
 
-    def test_pip_download(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """pip_download 下载到 packages 目录。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "fcmd.cli.dev.piptool.run_command",
-            _recording_run(calls),
-        )
-        pip_download(["requests"])
-        assert calls[0] == ["pip", "download", "requests", "-d", "packages"]
-
-    def test_pip_download_offline(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """pip_download 离线模式。"""
-        calls: list[list[str]] = []
-        monkeypatch.setattr(
-            "fcmd.cli.dev.piptool.run_command",
-            _recording_run(calls),
-        )
-        pip_download(["requests"], offline=True)
-        assert "--no-index" in calls[0]
-        assert "--find-links" in calls[0]
-
-    def test_pip_freeze(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """pip_freeze 导出依赖到 requirements.txt。"""
-        monkeypatch.chdir(tmp_path)
-        fake_result = CommandResult(
-            cmd=["pip", "freeze"],
-            returncode=0,
-            stdout="requests==2.31.0\nflask==3.0.0\n",
-            stderr="",
-        )
-        monkeypatch.setattr("fcmd.cli.dev.piptool.run_command", _fake_run(fake_result))
-        pip_freeze()
-        content = (tmp_path / "requirements.txt").read_text(encoding="utf-8")
-        assert "requests==2.31.0" in content
-        out = capsys.readouterr().out
-        assert "requirements.txt" in out
-
 
 class TestPiptoolDslSubcommands:
-    """piptool DSL 子命令（i/up）与合并注册测试。"""
+    """piptool DSL 子命令（i/up/d/f）与合并注册测试。"""
 
     def test_pip_i_list_expansion(self) -> None:
         """DSL 子命令 i：list 参数独占占位符按元素展开。"""
@@ -283,10 +232,28 @@ class TestPiptoolDslSubcommands:
         task = _build_task_spec(spec, {})
         assert task.cmd == ["python", "-m", "pip", "install", "--upgrade", "pip"]
 
+    def test_pip_d_on_token_expansion(self) -> None:
+        """DSL 子命令 d：list 独占占位符展开 + bool on-token 追加。"""
+        spec = _TOOL_REGISTRY["piptool"]["d"]
+        task = _build_task_spec(spec, {"packages": ["requests"], "offline": True})
+        assert task.cmd == ["pip", "download", "requests", "-d", "packages", "--no-index", "--find-links", "."]
+
+    def test_pip_d_default_online(self) -> None:
+        """DSL 子命令 d：offline 为假时不追加 on-token。"""
+        spec = _TOOL_REGISTRY["piptool"]["d"]
+        task = _build_task_spec(spec, {"packages": ["requests"], "offline": False})
+        assert task.cmd == ["pip", "download", "requests", "-d", "packages"]
+
+    def test_pip_f_str_cmd(self) -> None:
+        """DSL 子命令 f：str cmd 走 shell 重定向，原样透传。"""
+        spec = _TOOL_REGISTRY["piptool"]["f"]
+        task = _build_task_spec(spec, {})
+        assert task.cmd == "pip freeze --exclude-editable > requirements.txt"
+
     def test_merged_subcommands_visible(self) -> None:
-        """合并注册后 Python 子命令（u/r/f）与 DSL 子命令（i/up）全部可见。"""
+        """合并注册后 Python 子命令（u/r）与 DSL 子命令（i/up/d/f）全部可见。"""
         subs = fx.list_subcommands("piptool")
-        assert {"i", "u", "r", "f", "up"} <= set(subs)
+        assert {"i", "u", "r", "f", "up", "d"} <= set(subs)
 
 
 class TestPiptoolRunTool:
@@ -323,3 +290,22 @@ class TestPiptoolRunTool:
         code = run_tool("piptool", ["up"])
         assert code == 0
         assert captured[0] == ["python", "-m", "pip", "install", "--upgrade", "pip"]
+
+    def test_pip_f_via_run_tool(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """fcmd piptool f 通过 run_tool 执行 shell 重定向并打印完成消息。"""
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> Any:
+            captured.append(cmd)
+            return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        code = run_tool("piptool", ["f"])
+        assert code == 0
+        assert captured[0] == "pip freeze --exclude-editable > requirements.txt"
+        out = capsys.readouterr().out
+        assert "依赖已导出到 requirements.txt" in out

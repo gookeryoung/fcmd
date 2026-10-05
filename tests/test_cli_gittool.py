@@ -1,22 +1,24 @@
 """gittool 工具测试。
 
-验证 ``gittool`` 工具（exec 型子命令 clean/c/ca/p/pl 由 ``src/fcmd/commands/gittool.toml``
-DSL 声明，与 Python 模块 a/i/isub 合并注册）：
-- 工具注册与 cmd 子命令规格（clean/c/p/pl）
+验证 ``gittool`` 工具（clean/c/ca/p/pl 与链式 a/i 由 ``src/fcmd/commands/gittool.toml``
+DSL 声明，与 Python 模块 isub 合并注册；a/i 经 when 守卫链式内部子命令
+``_init``/``_add``/``_commit`` 编排）：
+- 工具注册与 cmd 子命令规格（clean/c/ca/p/pl）
 - 状态查询（has_files / not_has_git_repo）
-- 提交（a / i 子命令）
-- 推送/拉取（p / pl 子命令规格）
+- 提交（a / i 子命令：守卫跳过与链式提交）
+- DSL 链式规格（_init/_add/_commit 的 hidden/needs/守卫/豁免）
 - isub 子命令（初始化子目录 Git 仓库）
 """
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 from pathlib import Path
 
 import pytest
 
-import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册（a/i/isub/main）
+import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册（isub/main）
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.cli.dev.gittool import has_files, not_has_git_repo
@@ -72,7 +74,7 @@ class TestGittool:
     def test_gittool_a_no_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """gittool a 没有文件时打印提示。"""
+        """gittool a 无更改时守卫跳过提交，提示条件不满足。"""
         monkeypatch.chdir(tmp_path)
         subprocess.run(["git", "init"], check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], check=True, capture_output=True)
@@ -80,7 +82,7 @@ class TestGittool:
         code = run_tool("gittool", ["a"])
         assert code == 0
         out = capsys.readouterr().out
-        assert "没有文件需要提交" in out
+        assert "条件不满足" in out
 
     def test_gittool_a_commit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -118,7 +120,7 @@ class TestGittool:
     def test_gittool_i_existing_repo_no_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """gittool i 在已有仓库且无更改时打印提示。"""
+        """gittool i 在已有仓库且无更改时守卫跳过提交，提示条件不满足。"""
         monkeypatch.chdir(tmp_path)
         subprocess.run(["git", "init"], check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], check=True, capture_output=True)
@@ -126,7 +128,7 @@ class TestGittool:
         code = run_tool("gittool", ["i"])
         assert code == 0
         out = capsys.readouterr().out
-        assert "没有文件需要提交" in out
+        assert "条件不满足" in out
 
     def test_gittool_a_via_run_tool_default_message(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """gittool a 使用默认提交信息。"""
@@ -206,6 +208,62 @@ class TestGittoolCmdSpecs:
         assert spec.cmd == ("git", "clean", "-xfd", ".")
         assert "-e" not in spec.cmd
         assert spec.hidden is not True  # ca 不是隐藏命令
+
+
+# ============================================================================ #
+# gittool DSL 链式规格（a/i 守卫链）
+# ============================================================================ #
+class TestGittoolDslChain:
+    """gittool a/i 的链式内部子命令（_init/_add/_commit）规格与行为验证。"""
+
+    def test_init_guard_hidden(self) -> None:
+        """_init 是 hidden 子命令，when 路径探针守卫（.git 缺失时才执行）。"""
+        spec = _TOOL_REGISTRY["gittool"]["_init"]
+        assert spec.cmd == ("git", "init")
+        assert spec.hidden is True
+        when = spec.func.__dsl_when__  # type: ignore[missing-attribute]
+        assert when.path == ".git"
+        assert when.expect == "missing"
+
+    def test_add_needs_init_and_exempt(self) -> None:
+        """_add 依赖 _init 且豁免上游跳过（仓库已存在时仍可暂存）。"""
+        spec = _TOOL_REGISTRY["gittool"]["_add"]
+        assert "_init" in spec.needs
+        assert spec.cmd == ("git", "add", ".")
+        assert spec.allow_upstream_skip is True
+        assert spec.hidden is True
+
+    def test_commit_guard_needs_add(self) -> None:
+        """_commit 依赖 _add，when 命令探针守卫（有更改才提交）。"""
+        spec = _TOOL_REGISTRY["gittool"]["_commit"]
+        assert "_add" in spec.needs
+        assert spec.cmd == ("git", "commit", "-m", "{message}")
+        assert spec.allow_upstream_skip is True
+        assert spec.hidden is True
+        when = spec.func.__dsl_when__  # type: ignore[missing-attribute]
+        assert when.cmd == "git status --porcelain"
+        assert when.expect == "nonempty"
+
+    def test_aggregate_a_needs_commit_with_message(self) -> None:
+        """a 是聚合命令（needs _commit、无 cmd），声明 message 参数供链内插值。"""
+        spec = _TOOL_REGISTRY["gittool"]["a"]
+        assert spec.cmd is None
+        assert "_commit" in spec.needs
+        assert "message" in inspect.signature(spec.func).parameters
+
+    def test_a_inits_fresh_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """gittool a 在全新目录（无仓库）也会 init + 提交（链式共享 _init）。"""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("GIT_AUTHOR_NAME", "test")
+        monkeypatch.setenv("GIT_AUTHOR_EMAIL", "test@test.com")
+        monkeypatch.setenv("GIT_COMMITTER_NAME", "test")
+        monkeypatch.setenv("GIT_COMMITTER_EMAIL", "test@test.com")
+        (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
+        code = run_tool("gittool", ["a"])
+        assert code == 0
+        assert (tmp_path / ".git").is_dir()
+        result = subprocess.run(["git", "log", "--oneline"], capture_output=True, text=True, check=True)
+        assert "chore: update" in result.stdout
 
 
 # ============================================================================ #

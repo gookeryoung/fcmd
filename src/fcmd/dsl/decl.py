@@ -22,7 +22,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["CommandDecl", "CommandDeclError", "ParamDecl", "ToolDecl", "parse_command_table", "parse_tool_table"]
+__all__ = [
+    "CommandDecl",
+    "CommandDeclError",
+    "ParamDecl",
+    "ToolDecl",
+    "WhenDecl",
+    "parse_command_table",
+    "parse_tool_table",
+]
 
 # 保留名：DSL 命令名不得与其冲突（fcmd 自身 + 内建命令，后者被 FcmdApp 优先
 # 路由遮蔽，注册了也永远不可达）。与 fcmd.cli._common._BUILTIN_COMMANDS
@@ -33,6 +41,10 @@ _RESERVED_NAMES: frozenset[str] = frozenset(
 
 # 工具名模式：小写字母开头，允许小写字母/数字/连字符/下划线
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+# 子命令名模式：额外允许下划线开头（`_init` 式内部隐藏子命令约定，
+# 供 needs 链式编排引用，hidden 对子命令列表不可见）
+_SUB_NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]*$")
 
 # 参数名模式：小写字母/下划线开头，允许小写字母/数字/下划线
 _PARAM_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -61,6 +73,8 @@ _TOP_KEYS = frozenset(
         "needs",
         "strategy",
         "message",
+        "when",
+        "allow_upstream_skip",
     }
 )
 
@@ -76,6 +90,29 @@ _PARAM_KEYS = frozenset({"type", "default", "help", "choices", "on"})
 
 class CommandDeclError(ValueError):
     """命令声明非法（配置错误，非运行时错误）。"""
+
+
+@dataclass(frozen=True)
+class WhenDecl:
+    """执行守卫探针声明（TOML ``when`` 表的解析结果）。
+
+    任务执行前同步求值一次，不满足则任务 SKIPPED（命令退出码 0、汇总
+    记为跳过）。探针自身失败（命令不存在/路径异常）由引擎
+    :meth:`fcmd.apis.task.TaskSpec.should_execute` 捕获并视为条件不满足。
+
+    参数
+    ----
+    cmd:
+        命令探针（shell 字符串，按 stdout 是否非空判定）；与 ``path`` 互斥
+    path:
+        路径探针（``~`` 展开后按存在性判定）；与 ``cmd`` 互斥
+    expect:
+        期望值：cmd 探针 ``nonempty`` / ``empty``；path 探针 ``exists`` / ``missing``
+    """
+
+    cmd: str | None = None
+    path: str | None = None
+    expect: str = "nonempty"
 
 
 @dataclass(frozen=True)
@@ -114,6 +151,10 @@ class CommandDecl:
         执行策略：``sequential`` / ``thread`` / ``async`` / ``dependency``
     message:
         执行成功后打印的完成消息（支持 ``{参数名}`` 插值）；空串表示不打印
+    when:
+        执行守卫探针声明（任务执行前求值，不满足则 SKIPPED）；``None`` 表示未声明
+    allow_upstream_skip:
+        硬依赖被 SKIPPED 时本任务是否仍执行（聚合链豁免场景）
     """
 
     name: str
@@ -131,6 +172,8 @@ class CommandDecl:
     needs: tuple[str, ...] = ()
     strategy: str | None = None
     message: str = ""
+    when: WhenDecl | None = None
+    allow_upstream_skip: bool = False
 
 
 @dataclass(frozen=True)
@@ -389,6 +432,54 @@ def _parse_needs_strategy(name: str, table: Mapping[str, Any]) -> tuple[tuple[st
     return tuple(needs_raw), strategy
 
 
+# when 表内合法键（cmd/path 二选一 + expect）
+_WHEN_KEYS = frozenset({"cmd", "path", "expect"})
+
+# 探针期望值枚举（cmd → stdout 判定；path → 存在性判定）
+_WHEN_CMD_EXPECTS: frozenset[str] = frozenset({"nonempty", "empty"})
+_WHEN_PATH_EXPECTS: frozenset[str] = frozenset({"exists", "missing"})
+
+
+def _parse_when(name: str, value: Any) -> WhenDecl | None:
+    """解析并校验 when 探针表（cmd/path 互斥，expect 按探针类型枚举）。
+
+    Returns
+    -------
+    WhenDecl | None
+        未声明 when 时返回 ``None``
+
+    Raises
+    ------
+    CommandDeclError
+        声明非法（非表 / 未知键 / cmd 与 path 同时或均未提供 /
+        探针目标非非空字符串 / expect 缺失或取值与探针类型不匹配）
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise CommandDeclError(
+            f'命令 {name!r} 的 when 须是表（when = {{cmd = "...", expect = "..."}}），实际: {value!r}'
+        )
+    unknown = set(value) - _WHEN_KEYS
+    if unknown:
+        raise CommandDeclError(f"命令 {name!r} 的 when 表含未知键: {sorted(unknown)}")
+    cmd = value.get("cmd")
+    path = value.get("path")
+    if (cmd is None) == (path is None):
+        raise CommandDeclError(f"命令 {name!r} 的 when 须且仅须提供 cmd 或 path 之一")
+    if cmd is not None:
+        probe, expects = cmd, _WHEN_CMD_EXPECTS
+    else:
+        assert path is not None  # cmd/path 恰有其一
+        probe, expects = path, _WHEN_PATH_EXPECTS
+    if not isinstance(probe, str) or not probe:
+        raise CommandDeclError(f"命令 {name!r} 的 when 探针须是非空字符串，实际: {probe!r}")
+    expect = value.get("expect")
+    if expect not in expects:
+        raise CommandDeclError(f"命令 {name!r} 的 when.expect 须是 {sorted(expects)} 之一，实际: {expect!r}")
+    return WhenDecl(cmd=cmd, path=path, expect=str(expect))
+
+
 def _check_list_cmd_placeholders(
     name: str, where: str, cmd: str | tuple[str, ...] | None, args: tuple[ParamDecl, ...]
 ) -> None:
@@ -437,10 +528,11 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
     ------
     CommandDeclError
         声明非法（保留名 / 未知键 / 缺 help / 无任何 cmd / 值类型错误 /
-        聚合命令带 args / 单命令形态带 needs）
+        when 探针非法 / 单命令形态带 needs）
     """
-    if not _TOOL_NAME_RE.match(name):
-        raise CommandDeclError(f"命令名 {name!r} 非法：须匹配 {_TOOL_NAME_RE.pattern}")
+    name_re = _SUB_NAME_RE if subcommand else _TOOL_NAME_RE
+    if not name_re.match(name):
+        raise CommandDeclError(f"命令名 {name!r} 非法：须匹配 {name_re.pattern}")
     if not subcommand and name in _RESERVED_NAMES:
         raise CommandDeclError(f"命令名 {name!r} 是保留名（fcmd 或内建命令）")
 
@@ -483,14 +575,17 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
 
     if needs and not subcommand:
         raise CommandDeclError(f"命令 {name!r} 是单命令形态，不支持 needs（needs 引用同工具其他子命令）")
-    if needs and not has_cmd and args:
-        raise CommandDeclError(f"命令 {name!r} 是聚合命令（needs 且无 cmd），聚合命令不支持 args")
 
     cwd, timeout, env = _parse_transparency(name, table)
 
     message = table.get("message", "")
     if not isinstance(message, str):
         raise CommandDeclError(f"命令 {name!r} 的 message 须是字符串")
+
+    when = _parse_when(name, table.get("when"))
+    allow_upstream_skip = table.get("allow_upstream_skip", False)
+    if not isinstance(allow_upstream_skip, bool):
+        raise CommandDeclError(f"命令 {name!r} 的 allow_upstream_skip 须是布尔值")
 
     return CommandDecl(
         name=name,
@@ -508,6 +603,8 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         needs=needs,
         strategy=strategy,
         message=message,
+        when=when,
+        allow_upstream_skip=allow_upstream_skip,
     )
 
 

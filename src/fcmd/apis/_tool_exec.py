@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import ast
 import inspect
+import subprocess
 import textwrap
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -41,7 +42,7 @@ from ._tool_args import (
 )
 from .dag import Graph, GraphDefaults
 from .errors import FcmdError, TaskFailedError
-from .task import RetryPolicy, TaskSpec
+from .task import Condition, Context, RetryPolicy, TaskSpec
 
 
 # ---------------------------------------------------------------------- #
@@ -174,6 +175,45 @@ def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Ma
     return result
 
 
+def _build_conditions(spec: ToolSpec) -> tuple[Condition, ...]:
+    """将 DSL ``when`` 探针声明构造为引擎条件闭包。
+
+    ``__dsl_when__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入（仅声明
+    when 的 DSL 命令），非 DSL 合成函数返回空元组。探针在任务执行前同步
+    求值一次；探针自身失败（命令不存在/路径异常）由引擎
+    :meth:`TaskSpec.should_execute` 捕获并视为条件不满足（SKIPPED）。
+
+    - cmd 探针：shell 执行（与 DSL str cmd 语义一致），按 stdout 是否非空判定；
+    - path 探针：``~`` 展开后按存在性判定。
+
+    闭包携带 ``_reason`` 属性，供引擎把跳过原因格式化为
+    ``"条件不满足: <描述>"``。
+    """
+    when = getattr(spec.func, "__dsl_when__", None)
+    if when is None:
+        return ()
+
+    if when.cmd is not None:
+        probe_cmd, expects_nonempty = when.cmd, when.expect == "nonempty"
+        reason = f'命令探针 "{when.cmd}" 期望输出{"非空" if expects_nonempty else "为空"}'
+
+        def _probe(_context: Context) -> bool:
+            result = subprocess.run(probe_cmd, shell=True, capture_output=True, text=True, check=False)
+            has_output = bool(result.stdout.strip())
+            return has_output if expects_nonempty else not has_output
+
+    else:
+        assert when.path is not None  # 声明期校验保证 cmd/path 恰有其一
+        probe_path, expects_exists = when.path, when.expect == "exists"
+        reason = f'路径探针 "{when.path}" 期望{"存在" if expects_exists else "不存在"}'
+
+        def _probe(_context: Context) -> bool:
+            return Path(probe_path).expanduser().exists() == expects_exists
+
+    _probe._reason = reason  # type: ignore[attr-defined]
+    return (_probe,)
+
+
 def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:
     """将 ToolSpec + 解析后的变量转为 TaskSpec。
 
@@ -181,8 +221,11 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
       cmd 中 ``{参数名}`` 占位符替换为 CLI 解析值（DSL 声明式命令）
     - 聚合任务（有 needs 无 cmd 无函数逻辑）：fn=noop
     - fn 任务：执行函数，kwargs 按签名从 variables 取
+
+    DSL 声明 when 守卫时，三个分支统一挂引擎条件闭包（不满足 → SKIPPED）。
     """
     task_name = spec.subcommand if spec.subcommand is not None else spec.name
+    conditions = _build_conditions(spec)
 
     # cmd 任务
     if spec.cmd is not None:
@@ -210,6 +253,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
             timeout=spec.timeout,
             allow_upstream_skip=spec.allow_upstream_skip,
             strategy=spec.strategy,
+            conditions=conditions,
         )
 
     # 聚合任务
@@ -220,6 +264,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
             depends_on=spec.needs,
             allow_upstream_skip=spec.allow_upstream_skip,
             strategy=spec.strategy,
+            conditions=conditions,
         )
 
     # fn 任务
@@ -241,6 +286,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
         timeout=spec.timeout,
         allow_upstream_skip=spec.allow_upstream_skip,
         strategy=spec.strategy,
+        conditions=conditions,
     )
 
 
@@ -278,8 +324,9 @@ def _parse_tool_args(
 
     target_spec = subs[target]
 
-    # 聚合任务无 CLI 参数（函数体为空），仅保留全局选项
-    if _is_aggregate(target_spec):
+    # 聚合任务：无参签名保持裸 parser（仅全局选项，既有行为）；带参签名
+    # （DSL 聚合 args）复用完整 parser，参数经共享 variables 流入子任务插值
+    if _is_aggregate(target_spec) and not inspect.signature(target_spec.func).parameters:
         parser = argparse.ArgumentParser(prog=f"{name} {target}", description=target_spec.help)
         _add_global_options(parser)
     else:

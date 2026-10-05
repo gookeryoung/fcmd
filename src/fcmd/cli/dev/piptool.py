@@ -1,7 +1,7 @@
 """piptool - pip 包管理工具。
 
-提供卸载/重装/下载/导出依赖子命令（含通配符展开、受保护包过滤等逻辑，
-保留在模块内）；纯 exec 型子命令 i/up 已迁入内置 DSL
+提供卸载/重装子命令（含通配符展开、受保护包过滤等输出后处理逻辑，
+保留在模块内）；纯 exec 型子命令 i/up/d/f 已迁入内置 DSL
 ``src/fcmd/commands/piptool.toml``，两处逐子命令合并注册。
 
 示例
@@ -15,14 +15,11 @@
 from __future__ import annotations
 
 import fnmatch
-from pathlib import Path
 
 import fcmd
 from fcmd.models import run_command
 
 __all__ = [
-    "pip_download",
-    "pip_freeze",
     "pip_reinstall",
     "pip_uninstall",
 ]
@@ -30,9 +27,6 @@ __all__ = [
 # ============================================================================
 # 配置
 # ============================================================================
-
-PACKAGE_DIR = "packages"
-REQUIREMENTS_FILE = "requirements.txt"
 
 # 受保护包名（卸载/重装时跳过，避免破坏运行环境）
 _PROTECTED_PACKAGES: frozenset[str] = frozenset({"fcmd"})
@@ -144,29 +138,6 @@ def pip_reinstall(packages: list[str], offline: bool = False) -> None:
     run_command(["pip", "uninstall", "-y", *safe_ps])
     options = ["--no-index", "--find-links", "."] if offline else []
     run_command(["pip", "install", *options, *safe_ps])
-
-
-@fcmd.tool("piptool", subcommand="d", help="下载包")
-def pip_download(packages: list[str], offline: bool = False) -> None:
-    """下载包到 ``packages/`` 目录。
-
-    Parameters
-    ----------
-    packages:
-        包名列表
-    offline:
-        离线模式（从本地 ``./`` 查找包）
-    """
-    options = ["--no-index", "--find-links", "."] if offline else []
-    run_command(["pip", "download", *packages, *options, "-d", PACKAGE_DIR])
-
-
-@fcmd.tool("piptool", subcommand="f", help="导出依赖")
-def pip_freeze() -> None:
-    """冻结依赖到 ``requirements.txt``。"""
-    result = run_command(["pip", "freeze", "--exclude-editable"], capture=True)
-    Path(REQUIREMENTS_FILE).write_text(result.stdout, encoding="utf-8")
-    print(f"依赖已导出到 {REQUIREMENTS_FILE}")
 
 
 @fcmd.main("piptool")

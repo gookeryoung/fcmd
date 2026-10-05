@@ -348,6 +348,19 @@ type = "bool"
 default = false
 on = ["--fix", "--unsafe-fixes"]
 
+[commands.deploy.build]           # when 守卫：探针不满足 → SKIPPED（命令退出码 0）
+help = "有代码变更才构建"
+cmd = ["make", "build"]
+when = {cmd = "git status --porcelain", expect = "nonempty"}  # 探针 cmd/path 二选一
+allow_upstream_skip = true        # 上游被跳过时豁免执行（默认连坐跳过）
+
+[commands.deploy.all]             # 聚合可声明 args：值经共享变量流入子任务插值
+help = "构建并部署"
+needs = ["build"]
+[commands.deploy.all.args.tag]
+type = "str"
+default = "latest"
+
 [commands.sync]
 help = "同步（跨平台示例）"
 win.cmd = "robocopy src dst /mir"   # 字符串 → shell 执行
@@ -371,7 +384,19 @@ fcmd sy                           # 别名调用
 fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值与 bool on 固定 token） / 插值 / cwd / env / timeout / needs 聚合 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值与 bool on 固定 token） / 插值 / cwd / env / timeout / when 守卫探针 / needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+
+### DSL 逻辑边界
+
+判断一段命令逻辑能否迁入 DSL：
+
+| 类别 | 判定 | 例子 |
+|------|------|------|
+| 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f` |
+| 输出管道（解析/过滤命令输出） | 保留 Python | `piptool u/r`（通配符展开、受保护包过滤） |
+| 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
+| 进程内调用（无法映射为子进程） | 保留 Python | `writefile`、`setenv`、`dockercmd`（getpass 交互） |
+| 多步有状态流程 | 保留 Python | `bumpversion`、`packtool` |
 
 ## 执行策略
 

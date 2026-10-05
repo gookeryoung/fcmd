@@ -1,7 +1,8 @@
 # 内置 DSL 命令：piptool（与 Python 模块 fcmd/cli/dev/piptool.py 逐子命令合并）。
 #
-# 仅迁入纯 exec 型子命令 i/up；含逻辑的 u/r/f（通配符展开、受保护包过滤、
-# freeze 落盘）保留在模块内。i 的 packages 演示 list 参数独占占位符用法。
+# 仅迁入纯 exec 型子命令 i/up/d/f；含输出后处理逻辑的 u/r（通配符展开、
+# 受保护包过滤）保留在模块内。i/d 的 packages 演示 list 参数独占占位符用法；
+# d 的 offline 演示 bool 参数 on 固定 token；f 为 str cmd 走 shell 重定向。
 
 [commands.piptool.i]
 help = "安装包"
@@ -13,3 +14,20 @@ help = "包名列表"
 [commands.piptool.up]
 help = "升级 pip"
 cmd = ["python", "-m", "pip", "install", "--upgrade", "pip"]
+
+[commands.piptool.d]
+help = "下载包"
+cmd = ["pip", "download", "{packages}", "-d", "packages"]
+[commands.piptool.d.args.packages]
+type = "list"
+help = "包名列表"
+[commands.piptool.d.args.offline]
+type = "bool"
+default = false
+help = "离线模式（从本地 ./ 查找包）"
+on = ["--no-index", "--find-links", "."]
+
+[commands.piptool.f]
+help = "导出依赖"
+cmd = "pip freeze --exclude-editable > requirements.txt"
+message = "依赖已导出到 requirements.txt"
