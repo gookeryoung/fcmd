@@ -56,6 +56,7 @@ class TestToolHelp:
             "pathtool",
             "calcdate",
             "regextool",
+            "clr",
         ],
     )
     def test_tool_help_returns_0(self, fcmd: Callable[..., CmdResult], tool: str) -> None:

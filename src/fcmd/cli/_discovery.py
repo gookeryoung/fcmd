@@ -4,8 +4,13 @@
 模块名即工具名。模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
 
 首次调用 :func:`ensure_tools_discovered` 时用 ``pkgutil.iter_modules``
-扫描并导入所有工具模块，``import fcmd`` 冷启动不受影响（本模块顶层
-不执行扫描）。
+扫描并导入所有工具模块，随后加载 DSL 声明式命令（内置
+``fcmd/commands.toml`` + 用户级 ``${FCMD_HOME:-~/.fcmd}/commands.toml``）
+统一注册进 ``_TOOL_REGISTRY``。``import fcmd`` 冷启动不受影响（本模块
+顶层不执行扫描）。
+
+优先级：Python 模块工具 > 用户 DSL > 内置 DSL（代码不可被配置遮蔽，
+用户配置可覆盖出厂配置）。
 
 本模块是工具发现状态的唯一定义处；``main.py`` 与 ``_builtins/`` 下
 各内建命令均从此处查询，测试应 patch 本命名空间。
@@ -23,6 +28,7 @@ from fcmd.console import get_console
 
 if TYPE_CHECKING:
     from fcmd.apis.toolkit import ToolSpec
+    from fcmd.dsl.decl import CommandDecl
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +47,9 @@ _TOOL_ALIASES: dict[str, str] = {}
 
 # 规范工具名 → 模块路径（由 ensure_tools_discovered 懒填充）
 _TOOL_MODULES: dict[str, str] = {}
+
+# DSL 命令注册状态：{工具名: 来源}（"builtin" / "user"，由 _register_dsl_commands 懒填充）
+_DSL_TOOL_SOURCES: dict[str, str] = {}
 
 # 发现标志：True 表示已扫描过 fcmd.cli 包
 _TOOLS_DISCOVERED = False
@@ -74,6 +83,63 @@ def ensure_tools_discovered() -> None:
             _discover_domain(name)
         else:
             _register_tool(f"fcmd.cli.{name}", name)
+
+    # 模块扫描后注册 DSL 声明式命令（Python 工具优先级高于 DSL，
+    # 冲突时 DSL 侧跳过，见 _register_dsl_decl）
+    _register_dsl_commands()
+
+
+def _register_dsl_commands() -> None:
+    """加载两级 DSL 命令声明并注册（内置 → 用户，用户可覆盖内置）。"""
+    # 懒导入避免 cli ↔ dsl 包级循环（dsl.entry 懒导入本模块）
+    from fcmd.dsl import builtin_command_decls, user_command_decls
+
+    for decl in builtin_command_decls():
+        _register_dsl_decl(decl, "builtin")
+    for decl in user_command_decls():
+        _register_dsl_decl(decl, "user")
+
+
+def _register_dsl_decl(decl: CommandDecl, source: str) -> None:
+    """注册单条 DSL 命令声明（含冲突/覆盖/幂等规则）。
+
+    规则（优先级 Python 工具 > 用户 DSL > 内置 DSL）：
+
+    - 与 Python 模块工具（或任何非 DSL 已注册工具）重名：warning 跳过
+    - 用户声明覆盖内置同名声明：移除旧注册后替换
+    - 同源重入（幂等保护被重置后）：跳过注册，仅补别名
+    """
+    # 懒导入避免 cli ↔ dsl 包级循环
+    from fcmd.apis.toolkit import _TOOL_REGISTRY, _register_tool
+    from fcmd.dsl import build_tool_spec
+
+    existing_source = _DSL_TOOL_SOURCES.get(decl.name)
+    if decl.name in _TOOL_REGISTRY and existing_source is None:
+        logger.warning("DSL 命令 %r 与已注册的 Python 工具重名，已跳过", decl.name)
+        return
+    if existing_source == source:
+        # 同源幂等重入：registry 已在册，仅补别名（别名表可能被重置）
+        _register_dsl_aliases(decl)
+        return
+    if existing_source is not None:
+        # 用户声明覆盖内置：移除旧注册后替换
+        _TOOL_REGISTRY.pop(decl.name, None)
+    try:
+        _register_tool(build_tool_spec(decl))
+    except ValueError as exc:
+        logger.warning("DSL 命令 %r 注册失败，已跳过: %s", decl.name, exc)
+        return
+    _DSL_TOOL_SOURCES[decl.name] = source
+    _register_dsl_aliases(decl)
+
+
+def _register_dsl_aliases(decl: CommandDecl) -> None:
+    """注册 DSL 命令别名（先到先得，冲突时 warning 忽略该别名）。"""
+    _TOOL_ALIASES.setdefault(decl.name, decl.name)
+    for alias in decl.aliases:
+        previous = _TOOL_ALIASES.setdefault(alias, decl.name)
+        if previous != decl.name:
+            logger.warning("DSL 命令 %r 的别名 %r 已被工具 %r 占用，忽略该别名", decl.name, alias, previous)
 
 
 def _discover_domain(domain: str) -> None:

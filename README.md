@@ -308,6 +308,41 @@ graph = load_yaml("deploy.yaml")
 report = run(graph, strategy="dependency")
 ```
 
+## 命令定义 DSL
+
+exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具（如内置的 `clr`）。两级配置：包内 `fcmd/commands.toml`（出厂命令）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置；命令名与 Python 模块工具冲突时 Python 优先）。
+
+```toml
+# ~/.fcmd/commands.toml
+[commands.hello]
+help = "向某人问好"
+cmd = "echo 你好 {name} x{count}"
+cwd = "/tmp"                     # 可选：工作目录（支持 {参数名} 插值）
+timeout = 30                     # 可选：超时秒数
+env = { LANG = "zh" }            # 可选：环境变量（值支持插值）
+
+[commands.hello.args.name]       # 无 default → positional 参数
+help = "目标名字"
+
+[commands.hello.args.count]
+type = "int"                     # str(默认)/int/float/bool/path/choices
+default = 1                      # 有 default → --count 选项
+help = "次数"
+
+[commands.sync]
+help = "同步（跨平台示例）"
+win.cmd = "robocopy src dst /mir"   # 字符串 → shell 执行
+unix.cmd = ["rsync", "-a", "src/", "dst"]  # 数组 → 无 shell（注入面最小）
+aliases = ["sy"]
+```
+
+```bash
+fcmd hello world --count 3        # echo 你好 world x3
+fcmd sy                           # 别名调用
+```
+
+能力边界：单命令 exec 形态（平台分支 / 参数 / 插值 / cwd / env / timeout）；多任务编排（needs/matrix/if）属 YAML 编排的领地。
+
 ## 执行策略
 
 四种策略通过 `fx.run(graph, strategy=...)` 或 `fcmd yaml --strategy ...` 指定：

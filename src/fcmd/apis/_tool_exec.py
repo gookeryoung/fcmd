@@ -106,10 +106,47 @@ def _is_aggregate(spec: ToolSpec) -> bool:
     return not _has_function_logic(spec.func)
 
 
+def _value_to_cmd_str(value: Any) -> str:
+    """将 CLI 解析值转换为 cmd 模板插值字符串。
+
+    list → 空格连接（shell 友好）；bool → 小写 true/false；
+    Path / 其他 → ``str()``。
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value)
+    return str(value)
+
+
+def _expand_value(value: str, spec: ToolSpec, variables: Mapping[str, Any]) -> str:
+    """将字符串值中 ``{参数名}`` 占位符替换为 CLI 解析值。
+
+    仅替换 ``spec`` 签名内声明且在 ``variables`` 中有值的参数名（cmd /
+    cwd / env 值共用）。字面花括号与全局变量（dry_run/quiet/strategy，
+    不在签名内）不受影响。
+    """
+    for pname in inspect.signature(spec.func).parameters:
+        if pname in variables:
+            value = value.replace("{" + pname + "}", _value_to_cmd_str(variables[pname]))
+    return value
+
+
+def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Mapping[str, Any]) -> str | list[str]:
+    """将 cmd（str 或 list）中 ``{参数名}`` 占位符替换为 CLI 解析值。
+
+    无占位符时零成本直返。
+    """
+    if isinstance(cmd, str):
+        return _expand_value(cmd, spec, variables) if "{" in cmd else cmd
+    return [_expand_value(item, spec, variables) if "{" in item else item for item in cmd]
+
+
 def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:
     """将 ToolSpec + 解析后的变量转为 TaskSpec。
 
-    - cmd 任务：执行命令，cwd 从 ``variables["cwd"]`` 或装饰器 cwd 取
+    - cmd 任务：执行命令，cwd 从 ``variables["cwd"]`` 或装饰器 cwd 取；
+      cmd 中 ``{参数名}`` 占位符替换为 CLI 解析值（DSL 声明式命令）
     - 聚合任务（有 needs 无 cmd 无函数逻辑）：fn=noop
     - fn 任务：执行函数，kwargs 按签名从 variables 取
     """
@@ -118,14 +155,25 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
     # cmd 任务
     if spec.cmd is not None:
         cwd_value = variables.get("cwd", spec.cwd)
+        if isinstance(cwd_value, str) and "{" in cwd_value:
+            # DSL 声明的 cwd 支持 {参数名} 插值
+            cwd_value = _expand_value(cwd_value, spec, variables)
         cwd = Path(cwd_value) if cwd_value is not None else None
         cmd_value: Any = list(spec.cmd) if isinstance(spec.cmd, tuple) else spec.cmd
+        # 模板插值仅对命令模板（str/list）有意义；callable 型 cmd（如
+        # pymake push 的函数任务）直通引擎
+        if isinstance(cmd_value, (str, list)):
+            cmd_value = _expand_cmd_placeholders(cmd_value, spec, variables)
+        env = spec.env
+        if env and any("{" in v for v in env.values()):
+            # DSL 声明的 env 值支持 {参数名} 插值
+            env = {k: _expand_value(v, spec, variables) for k, v in env.items()}
         return TaskSpec(
             name=task_name,
             cmd=cmd_value,
             depends_on=spec.needs,
             cwd=cwd,
-            env=spec.env,
+            env=env,
             retry=spec.retry if spec.retry is not None else RetryPolicy(),
             timeout=spec.timeout,
             allow_upstream_skip=spec.allow_upstream_skip,

@@ -33,7 +33,7 @@ import sys
 from collections.abc import Sequence
 
 from fcmd import __version__
-from fcmd.apis.toolkit import run_tool
+from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._builtins import run_builtin
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
 from fcmd.cli._discovery import (
@@ -123,17 +123,21 @@ class FcmdApp:
         console.print("  [cyan]fcmd --version[/cyan]           # 查看版本")
 
     def _run_tool(self, tool_name: str, argv: list[str]) -> int:
-        """运行工具：importlib 懒加载模块触发 @tool 注册，再调 run_tool。"""
-        module_path = _TOOL_MODULES.get(tool_name)
-        if module_path is None:
-            get_console().print(f"[red]错误:[/red] 工具 {tool_name!r} 无模块映射")
-            return 1
+        """运行工具：importlib 懒加载模块触发 @tool 注册，再调 run_tool。
 
-        try:
-            importlib.import_module(module_path)
-        except (ImportError, OSError) as e:
-            # OSError：原生动态库缺失（如 cairosvg 缺 libcairo），与 ImportError 同样友好报错
-            get_console().print(f"[red]错误:[/red] 加载工具 {tool_name!r} 失败: {e}")
+        DSL 声明式命令无模块映射（已在 ``ensure_tools_discovered`` 时
+        注册进 ``_TOOL_REGISTRY``），直接走 ``run_tool``。
+        """
+        module_path = _TOOL_MODULES.get(tool_name)
+        if module_path is not None:
+            try:
+                importlib.import_module(module_path)
+            except (ImportError, OSError) as e:
+                # OSError：原生动态库缺失（如 cairosvg 缺 libcairo），与 ImportError 同样友好报错
+                get_console().print(f"[red]错误:[/red] 加载工具 {tool_name!r} 失败: {e}")
+                return 1
+        elif tool_name not in _TOOL_REGISTRY:
+            get_console().print(f"[red]错误:[/red] 工具 {tool_name!r} 无模块映射")
             return 1
 
         return run_tool(tool_name, argv)

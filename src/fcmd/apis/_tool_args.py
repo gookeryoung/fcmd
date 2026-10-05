@@ -79,6 +79,9 @@ class ToolSpec:
         不暴露为 subcommand（内部 job，仅被 needs 引用）
     env / retry / timeout:
         透传 :class:`TaskSpec` 对应字段
+    param_help:
+        参数名 → 帮助文本映射（DSL 声明式命令用）；``None`` 时参数帮助退化为
+        参数名（与既有签名推导行为一致）
     """
 
     name: str
@@ -95,6 +98,7 @@ class ToolSpec:
     env: Mapping[str, str] | None = None
     retry: RetryPolicy | None = None
     timeout: float | None = None
+    param_help: Mapping[str, str] | None = None
 
 
 # ---------------------------------------------------------------------- #
@@ -212,6 +216,7 @@ def _add_optional_arg(
     pname: str,
     annotation: Any,
     default: Any,
+    help_text: str | None = None,
 ) -> None:
     """添加 --name 选项（有默认值的参数）。
 
@@ -222,6 +227,8 @@ def _add_optional_arg(
     - ``X | None`` / ``Optional[X]`` → 自动解包为 ``X``
     - ``Literal[X, Y, ...]`` → ``choices``（argparse 自动校验取值）
     - ``list[X]`` / ``List[X]`` → ``nargs="*"`` + 对应 ``type``
+
+    ``help_text`` 为 DSL 声明式命令的参数帮助，``None`` 时退化为参数名。
     """
     annotation = _unwrap_optional(annotation)
     if annotation is bool or (isinstance(default, bool) and default is True):
@@ -229,13 +236,15 @@ def _add_optional_arg(
             cli_name = f"--no-{pname.replace('_', '-')}"
             # dest=pname 保留原参数名：argparse 默认会把 --no-keep-ratio 映射到
             # no_keep_ratio 属性，导致函数调用时找不到 keep_ratio 形参。
-            parser.add_argument(cli_name, dest=pname, action="store_false", default=True, help=f"关闭 {pname}")
+            parser.add_argument(
+                cli_name, dest=pname, action="store_false", default=True, help=f"关闭 {help_text or pname}"
+            )
         else:
             cli_name = f"--{pname.replace('_', '-')}"
-            parser.add_argument(cli_name, action="store_true", default=False, help=pname)
+            parser.add_argument(cli_name, action="store_true", default=False, help=help_text or pname)
         return
     cli_name = f"--{pname.replace('_', '-')}"
-    kwargs: dict[str, Any] = {"default": default, "help": pname}
+    kwargs: dict[str, Any] = {"default": default, "help": help_text or pname}
     if annotation in (int, float, str):
         kwargs["type"] = annotation
     elif annotation is Path:
@@ -268,6 +277,7 @@ def _add_positional_arg(
     parser: argparse.ArgumentParser,
     pname: str,
     annotation: Any,
+    help_text: str | None = None,
 ) -> None:
     """添加 positional 参数（无默认值的参数）。
 
@@ -276,11 +286,13 @@ def _add_positional_arg(
     - ``X | None`` / ``Optional[X]`` → 自动解包为 ``X``
     - ``Literal[X, Y, ...]`` → ``choices``
     - ``list[X]`` / ``List[X]`` → ``nargs="+"`` + 对应 ``type``
+
+    ``help_text`` 为 DSL 声明式命令的参数帮助，``None`` 时退化为参数名。
     """
     annotation = _unwrap_optional(annotation)
     if _is_list_annotation(annotation):
         inner = _list_inner_type(annotation)
-        kwargs: dict[str, Any] = {"nargs": "+", "help": pname}
+        kwargs: dict[str, Any] = {"nargs": "+", "help": help_text or pname}
         if inner in (Path, "Path", "pathlib.Path"):
             kwargs["type"] = Path
         elif inner in (int, "int"):
@@ -291,15 +303,15 @@ def _add_positional_arg(
             kwargs["type"] = str
         parser.add_argument(pname, **kwargs)
     elif annotation in (int, float, str):
-        parser.add_argument(pname, type=annotation, help=pname)
+        parser.add_argument(pname, type=annotation, help=help_text or pname)
     elif annotation is Path:
-        parser.add_argument(pname, type=Path, help=pname)
+        parser.add_argument(pname, type=Path, help=help_text or pname)
     elif _is_literal_annotation(annotation):
         # _is_literal_annotation 为 True 时 __args__ 一定存在且非空
-        kwargs = {"help": pname, "choices": list(_literal_choices(annotation))}
+        kwargs = {"help": help_text or pname, "choices": list(_literal_choices(annotation))}
         parser.add_argument(pname, **kwargs)
     else:
-        parser.add_argument(pname, help=pname)
+        parser.add_argument(pname, help=help_text or pname)
 
 
 def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
@@ -319,15 +331,16 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
     sig = inspect.signature(spec.func)
     prog = spec.name if spec.subcommand is None else f"{spec.name} {spec.subcommand}"
     description = spec.help or inspect.getdoc(spec.func) or ""
+    param_help = spec.param_help or {}
     parser = argparse.ArgumentParser(prog=prog, description=description)
     for pname, param in sig.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
         annotation = hints.get(pname, param.annotation)
         if param.default is inspect.Parameter.empty:
-            _add_positional_arg(parser, pname, annotation)
+            _add_positional_arg(parser, pname, annotation, help_text=param_help.get(pname))
         else:
-            _add_optional_arg(parser, pname, annotation, param.default)
+            _add_optional_arg(parser, pname, annotation, param.default, help_text=param_help.get(pname))
     _add_global_options(parser)
     return parser
 

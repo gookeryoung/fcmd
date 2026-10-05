@@ -1,0 +1,37 @@
+# fcmd 内置命令定义（DSL 声明式）
+#
+# 每个命令一个 [commands.<工具名>] 子表，exec 型命令无需 Python 模块。
+# 用户级定义见 ${FCMD_HOME:-~/.fcmd}/commands.toml（同名可覆盖内置）。
+#
+# 字段速查：
+#   help        必填非空，--help 与工具列表的说明
+#   description 可选，fcmd 工具列表页描述（缺省回退 help）
+#   aliases     可选，别名列表
+#   hidden      可选，布尔，对子命令列表隐藏
+#   cmd         通用命令（平台分支未命中时的回退）
+#   win.cmd     Windows（win32）命令
+#   unix.cmd    其余平台命令
+#   cwd         可选，工作目录（支持 {参数名} 插值）
+#   timeout     可选，正数秒
+#   env         可选，环境变量映射（值支持 {参数名} 插值）
+#   args.<参数名>  可选，参数声明（见下方示例）
+#
+# cmd 值：字符串 → shell 执行；数组 → 无 shell 直接执行（外部输入场景
+# 建议数组形态，注入面最小）。
+#
+# 参数声明示例（cmd = "echo 你好 {name} x{count}"）：
+#
+#     [commands.greet]
+#     help = "问好"
+#     cmd = "echo 你好 {name} x{count}"
+#     [commands.greet.args.name]
+#     help = "目标名字"                  # 无 default → positional
+#     [commands.greet.args.count]
+#     type = "int"                      # str(默认)/int/float/bool/path/choices
+#     default = 1                       # 有 default → --count 选项
+#     help = "次数"
+
+[commands.clr]
+help = "清屏（跨平台）"
+win.cmd = "cls"
+unix.cmd = ["clear"]
