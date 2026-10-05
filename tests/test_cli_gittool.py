@@ -1,6 +1,6 @@
 """gittool 工具测试。
 
-验证 ``gittool`` 工具（exec 型子命令 clean/c/ca/p/pl 由 ``src/fcmd/commands.toml``
+验证 ``gittool`` 工具（exec 型子命令 clean/c/ca/p/pl 由 ``src/fcmd/commands/gittool.toml``
 DSL 声明，与 Python 模块 a/i/isub 合并注册）：
 - 工具注册与 cmd 子命令规格（clean/c/p/pl）
 - 状态查询（has_files / not_has_git_repo）

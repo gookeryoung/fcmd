@@ -1,55 +1,8 @@
-# fcmd 内置命令定义（DSL 声明式）
-#
-# 单命令形态：每个命令一个 [commands.<工具名>] 子表，exec 型命令无需 Python 模块。
-# 多子命令形态：[commands.<工具名>.<子命令>]，与 Python 模块同名的工具逐子命令
-# 合并注册（同名子命令先注册者优先，Python 模块子命令不可被遮蔽）。
-# 用户级定义见 ${FCMD_HOME:-~/.fcmd}/commands.toml（同名可覆盖内置单命令）。
-#
-# 字段速查（子命令级）：
-#   help        必填非空，--help 与工具列表的说明
-#   description 可选，fcmd 工具列表页描述（缺省回退 help）
-#   aliases     可选，别名列表（仅单命令形态；多子命令形态的别名在工具级声明）
-#   hidden      可选，布尔，对子命令列表隐藏
-#   cmd         通用命令（平台分支未命中时的回退）
-#   win.cmd     Windows（win32）命令
-#   unix.cmd    其余平台命令
-#   cwd         可选，工作目录（支持 {参数名} 插值）
-#   timeout     可选，正数秒
-#   env         可选，环境变量映射（值支持 {参数名} 插值）
-#   needs       可选，依赖的同工具其他子命令（无 cmd 时为聚合命令）
-#   strategy    可选，执行策略：sequential/thread/async/dependency
-#   args.<参数名>  可选，参数声明（见下方示例）；聚合命令（needs 且无 cmd）不支持
-#
-# 工具级元数据（多子命令形态，写在 [commands.<工具名>] 表）：
-#   description 可选，工具描述
-#   aliases     可选，工具级别名列表
-#
-# cmd 值：字符串 → shell 执行；数组 → 无 shell 直接执行（外部输入场景
-# 建议数组形态，注入面最小）。
-#
-# 参数声明示例（cmd = "echo 你好 {name} x{count}"）：
-#
-#     [commands.greet]
-#     help = "问好"
-#     cmd = "echo 你好 {name} x{count}"
-#     [commands.greet.args.name]
-#     help = "目标名字"                  # 无 default → positional
-#     [commands.greet.args.count]
-#     type = "int"                      # str(默认)/int/float/bool/path/choices
-#     default = 1                       # 有 default → --count 选项
-#     help = "次数"
-
-[commands.clr]
-help = "清屏（跨平台）"
-win.cmd = "cls"
-unix.cmd = ["clear"]
-
-# ============================================================================ #
-# pymake：项目构建工具（多子命令形态）
+# 内置 DSL 命令：pymake（多子命令形态，纯 exec 型子命令）。
 #
 # 与 Python 模块 fcmd/cli/dev/pymake.py 合并注册：模块仅保留含逻辑的
-# push（callable cmd 遍历 git remote）与 main 入口，纯 exec 型子命令在此声明。
-# ============================================================================ #
+# push（callable cmd 遍历 git remote）与 main 入口。DSL 字段速查见
+# README「命令定义 DSL」与 fcmd/dsl/decl.py（校验权威）。
 
 [commands.pymake.b]
 help = "构建分发包 (uv build)"
@@ -215,58 +168,3 @@ hidden = true
 type = "path"
 default = "."
 help = "工作目录"
-
-# ============================================================================ #
-# gittool：Git 执行工具（多子命令形态）
-#
-# 与 Python 模块 fcmd/cli/dev/gittool.py 合并注册：模块仅保留含逻辑的
-# a/i/isub（fn 子命令）与 main 入口，纯 exec 型子命令在此声明。
-# ============================================================================ #
-
-# 隐藏命令，被 c 通过 needs 依赖；-e 排除编辑器/项目缓存目录
-[commands.gittool.clean]
-help = "清理未跟踪文件"
-cmd = [
-    "git",
-    "clean",
-    "-xfd",
-    "-e",
-    ".vscode",
-    "-e",
-    ".idea",
-    "-e",
-    ".editorconfig",
-    "-e",
-    ".trae",
-    "-e",
-    ".qoder",
-    "-e",
-    ".venv",
-    "-e",
-    ".git",
-    "-e",
-    ".ruff_cache",
-    "-e",
-    ".tox",
-    "-e",
-    "node_modules",
-]
-hidden = true
-
-# cmd + needs 混合：先清理（依赖）再查看状态（cmd）
-[commands.gittool.c]
-help = "清理并查看状态"
-cmd = ["git", "status", "--porcelain"]
-needs = ["clean"]
-
-[commands.gittool.ca]
-help = "清理全部未跟踪文件（含排除目录）"
-cmd = ["git", "clean", "-xfd", "."]
-
-[commands.gittool.p]
-help = "推送"
-cmd = ["git", "push"]
-
-[commands.gittool.pl]
-help = "拉取"
-cmd = ["git", "pull"]

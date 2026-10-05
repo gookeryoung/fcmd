@@ -1,0 +1,10 @@
+# 内置 DSL 命令：clr（单命令形态）。
+#
+# 本目录（fcmd/commands/）下所有 *.toml 按文件名排序逐文件加载，文件间
+# 同名工具先注册者优先；单文件损坏仅跳过该文件，不阻断其余命令。
+# DSL 字段速查见 README「命令定义 DSL」与 fcmd/dsl/decl.py（校验权威）。
+
+[commands.clr]
+help = "清屏（跨平台）"
+win.cmd = "cls"
+unix.cmd = ["clear"]

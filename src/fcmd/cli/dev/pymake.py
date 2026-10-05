@@ -6,8 +6,8 @@
 子命令来源
 ----------
 纯 exec 型子命令（b/bump/bumpma/bumpmi/c/doc/lint/fmt/fmtc/pyrefly_check/
-chk/tc/t/tn/cov/tf/ts/tox/sync/upload）由 ``src/fcmd/commands.toml`` DSL
-声明，发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
+chk/tc/t/tn/cov/tf/ts/tox/sync/upload）由 ``src/fcmd/commands/pymake.toml``
+DSL 声明，发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
 本模块仅保留含 Python 逻辑的子命令：
 
 - ``push``：遍历所有 git remote 推送代码 + tags（callable cmd）

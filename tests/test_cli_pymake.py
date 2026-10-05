@@ -1,6 +1,6 @@
 """pymake 工具测试。
 
-验证 ``pymake`` 工具的子命令集合（exec 型子命令由 ``src/fcmd/commands.toml``
+验证 ``pymake`` 工具的子命令集合（exec 型子命令由 ``src/fcmd/commands/pymake.toml``
 DSL 声明，与 Python 模块 push 合并注册）：
 - 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox）
 - cmd + needs 混合任务（cov/bump）

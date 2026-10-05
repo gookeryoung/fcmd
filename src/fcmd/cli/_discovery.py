@@ -5,7 +5,7 @@
 
 首次调用 :func:`ensure_tools_discovered` 时用 ``pkgutil.iter_modules``
 扫描并导入所有工具模块，随后加载 DSL 声明式命令（内置
-``fcmd/commands.toml`` + 用户级 ``${FCMD_HOME:-~/.fcmd}/commands.toml``）
+``fcmd/commands/*.toml`` + 用户级 ``${FCMD_HOME:-~/.fcmd}/commands.toml``）
 统一注册进 ``_TOOL_REGISTRY``。``import fcmd`` 冷启动不受影响（本模块
 顶层不执行扫描）。
 

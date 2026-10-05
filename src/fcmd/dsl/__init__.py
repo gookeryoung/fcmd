@@ -9,7 +9,7 @@
     win.cmd = "cls"
     unix.cmd = ["clear"]
 
-两级配置来源：包内 ``fcmd/commands.toml``（内置）与
+两级配置来源：包内 ``fcmd/commands/*.toml``（内置，按文件名拆分）与
 ``${FCMD_HOME:-~/.fcmd}/commands.toml``（用户自定义）。声明在
 ``ensure_tools_discovered`` 时统一注册进 ``_TOOL_REGISTRY``，graph/info/
 completion 等内建命令与 ``run_tool`` 执行链自动兼容。

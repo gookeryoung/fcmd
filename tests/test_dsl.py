@@ -241,9 +241,9 @@ class TestLoader:
     """内置与用户级 commands.toml 的加载。"""
 
     def test_builtin_decls_valid(self) -> None:
-        """内置 commands.toml 逐条合法且含 clr/pymake/gittool（出厂即正确 CI 门禁）。"""
+        """内置命令目录 commands/*.toml 逐条合法且含 clr/pymake/gittool（出厂即正确 CI 门禁）。"""
         tools = builtin_tool_decls()
-        assert tools, "内置 commands.toml 不应为空"
+        assert tools, "内置命令目录不应为空"
         names = [t.name for t in tools]
         assert "clr" in names
         assert "pymake" in names and "gittool" in names
@@ -307,7 +307,7 @@ class TestLoader:
     def test_builtin_read_failure_degrades(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """内置文件读取失败时防御性降级（warning + 空，不阻断启动）。"""
+        """内置命令目录读取失败时防御性降级（warning + 空，不阻断启动）。"""
         from fcmd.dsl import loader as loader_mod
 
         # 故障注入测试辅助（访问私有资源路径）：模拟内置资源不可读
@@ -316,12 +316,77 @@ class TestLoader:
             assert builtin_tool_decls() == []
         assert any("读取失败" in r.message for r in caplog.records)
 
+    def test_builtin_multi_file_sorted_merge(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """内置目录多文件按文件名排序合并；非 toml 条目与下划线前缀文件忽略。"""
+        from fcmd.dsl import loader as loader_mod
+
+        children = [
+            _FakeResource("ztool.toml", '[commands.zb]\nhelp = "z"\ncmd = "echo z"\n'),
+            _FakeResource("_draft.toml", '[commands.draft]\nhelp = "d"\ncmd = "echo d"\n'),
+            _FakeResource("notes.md", "不是 toml"),
+            _FakeResource("atool.toml", '[commands.aa]\nhelp = "a"\ncmd = "echo a"\n'),
+        ]
+        monkeypatch.setattr(loader_mod.resources, "files", lambda _pkg: _FakeResourceDir(children))
+        assert [tool.name for tool in builtin_tool_decls()] == ["aa", "zb"]
+
+    def test_builtin_single_file_broken_skipped(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """单文件损坏仅跳过该文件，其余文件命令继续加载。"""
+        from fcmd.dsl import loader as loader_mod
+
+        children = [
+            _FakeResource("a.toml", '[commands.good]\nhelp = "好"\ncmd = "echo ok"\n'),
+            _FakeResource("b.toml", "[commands.broken\nhelp = "),  # TOML 语法错误
+            _FakeResource("c.toml", error=OSError("disk unavailable")),  # I/O 错误
+        ]
+        monkeypatch.setattr(loader_mod.resources, "files", lambda _pkg: _FakeResourceDir(children))
+        with caplog.at_level("WARNING"):
+            decls = builtin_tool_decls()
+        assert [tool.name for tool in decls] == ["good"]
+        assert any("b.toml" in r.message for r in caplog.records)
+        assert any("c.toml" in r.message for r in caplog.records)
+
+
+class _FakeResource:
+    """模拟 importlib.resources 文件资源（目录加载行为测试辅助，访问私有资源路径）。"""
+
+    def __init__(self, name: str, content: str | None = None, error: OSError | None = None) -> None:
+        self._name = name
+        self._content = content
+        self._error = error
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def read_bytes(self) -> bytes:
+        if self._error is not None:
+            raise self._error
+        return (self._content or "").encode("utf-8")
+
+
+class _FakeResourceDir:
+    """模拟 importlib.resources 目录资源（按给定子条目迭代，不排序）。"""
+
+    def __init__(self, children: list[_FakeResource]) -> None:
+        self._children = children
+
+    def joinpath(self, _name: str) -> _FakeResourceDir:
+        return self
+
+    def iterdir(self) -> Iterator[_FakeResource]:
+        return iter(self._children)
+
 
 class _BrokenResource:
     """模拟读取即抛 OSError 的资源对象（故障注入）。"""
 
     def joinpath(self, _name: str) -> _BrokenResource:
         return self
+
+    def iterdir(self) -> Iterator[_BrokenResource]:
+        raise OSError("resource unavailable")
 
     def read_bytes(self) -> bytes:
         raise OSError("resource unavailable")

@@ -2,7 +2,7 @@
 
 提供添加提交/初始化/初始化子目录/清理/推送/拉取子命令。
 
-子命令来源：纯 exec 型子命令（clean/c/ca/p/pl）由 ``src/fcmd/commands.toml``
+子命令来源：纯 exec 型子命令（clean/c/ca/p/pl）由 ``src/fcmd/commands/gittool.toml``
 DSL 声明，发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
 本模块仅保留含 Python 逻辑的 fn 子命令：
 

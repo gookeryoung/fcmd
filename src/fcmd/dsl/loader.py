@@ -1,9 +1,10 @@
-"""DSL 文件定位与解析编排：内置 commands.toml + 用户级 commands.toml。
+"""DSL 文件定位与解析编排：内置命令目录 + 用户级 commands.toml。
 
 两级配置来源：
 
-* 内置：包内 ``fcmd/commands.toml``（随 fcmd 分发的出厂命令，经
-  :mod:`importlib.resources` 读取，兼容 wheel/Nuitka 等安装形态）。
+* 内置：包内 ``fcmd/commands/`` 目录下的 ``*.toml``（按文件名排序逐文件
+  加载，避免单文件臃肿；经 :mod:`importlib.resources` 读取，兼容
+  wheel/Nuitka 等安装形态）。
 * 用户级：``${FCMD_HOME:-~/.fcmd}/commands.toml``（用户自定义命令；
   ``FCMD_HOME`` 显式覆盖便于测试跨平台确定性——Windows 下 ``Path.home()``
   走 USERPROFILE 而非 HOME）。
@@ -53,18 +54,30 @@ def _parse_decls(data: Mapping[str, Any], source: str) -> list[ToolDecl]:
 
 
 def builtin_tool_decls() -> list[ToolDecl]:
-    """读取包内内置 commands.toml（随 fcmd 分发的出厂命令）。
+    """读取包内内置命令目录 ``fcmd/commands/*.toml``（按文件名排序逐文件加载）。
 
-    内置文件属项目源码，正常不可能损坏；防御性降级（warning + 空）仅为
-    不阻断启动，配套 CI 门禁测试断言其逐条合法。
+    出厂命令按工具拆分为多个 TOML 文件；文件名排序保证合并顺序确定，
+    文件间同名工具先注册者优先。目录下非 ``*.toml`` 条目忽略。
+    内置文件属项目源码，正常不可能损坏；防御性降级（warning + 跳过）
+    仅为不阻断启动，配套 CI 门禁测试断言其逐条合法。
     """
+    root = resources.files("fcmd").joinpath("commands")
     try:
-        content = resources.files("fcmd").joinpath("commands.toml").read_bytes()
-        data = tomllib.loads(content.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-        logger.warning("内置 commands.toml 读取失败，已跳过: %s", exc)
+        entries = sorted(root.iterdir(), key=lambda entry: entry.name)
+    except OSError as exc:
+        logger.warning("内置命令目录读取失败，已跳过: %s", exc)
         return []
-    return _parse_decls(data, "<内置 commands.toml>")
+    decls: list[ToolDecl] = []
+    for entry in entries:
+        if entry.name.startswith("_") or not entry.name.endswith(".toml"):
+            continue
+        try:
+            data = tomllib.loads(entry.read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+            logger.warning("内置命令文件 %s 读取失败，已跳过: %s", entry.name, exc)
+            continue
+        decls.extend(_parse_decls(data, f"<内置 {entry.name}>"))
+    return decls
 
 
 def user_tool_decls() -> list[ToolDecl]:

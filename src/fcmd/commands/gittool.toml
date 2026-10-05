@@ -1,0 +1,52 @@
+# 内置 DSL 命令：gittool（多子命令形态，纯 exec 型子命令）。
+#
+# 与 Python 模块 fcmd/cli/dev/gittool.py 合并注册：模块仅保留含逻辑的
+# a/i/isub（fn 子命令）与 main 入口。DSL 字段速查见 README「命令定义 DSL」。
+
+# 隐藏命令，被 c 通过 needs 依赖；-e 排除编辑器/项目缓存目录
+[commands.gittool.clean]
+help = "清理未跟踪文件"
+cmd = [
+    "git",
+    "clean",
+    "-xfd",
+    "-e",
+    ".vscode",
+    "-e",
+    ".idea",
+    "-e",
+    ".editorconfig",
+    "-e",
+    ".trae",
+    "-e",
+    ".qoder",
+    "-e",
+    ".venv",
+    "-e",
+    ".git",
+    "-e",
+    ".ruff_cache",
+    "-e",
+    ".tox",
+    "-e",
+    "node_modules",
+]
+hidden = true
+
+# cmd + needs 混合：先清理（依赖）再查看状态（cmd）
+[commands.gittool.c]
+help = "清理并查看状态"
+cmd = ["git", "status", "--porcelain"]
+needs = ["clean"]
+
+[commands.gittool.ca]
+help = "清理全部未跟踪文件（含排除目录）"
+cmd = ["git", "clean", "-xfd", "."]
+
+[commands.gittool.p]
+help = "推送"
+cmd = ["git", "push"]
+
+[commands.gittool.pl]
+help = "拉取"
+cmd = ["git", "pull"]
