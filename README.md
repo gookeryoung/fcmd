@@ -310,7 +310,7 @@ report = run(graph, strategy="dependency")
 
 ## 命令定义 DSL
 
-exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具。两种形态：**单命令**（`[commands.<name>]`，如内置的 `clr`）与**多子命令**（`[commands.<tool>.<sub>]`，如内置的 `pymake`/`gittool` 纯 exec 子命令）。两级配置：包内 `fcmd/commands.toml`（出厂命令）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置单命令；与 Python 模块工具重名时 Python 优先，多子命令形态逐子命令合并注册）。
+exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具。两种形态：**单命令**（`[commands.<name>]`，如内置的 `clr`）与**多子命令**（`[commands.<tool>.<sub>]`，如内置的 `pymake`/`gittool` 纯 exec 子命令）。两级配置：包内 `fcmd/commands.toml`（出厂命令）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置单命令；与 Python 模块工具重名时 Python 优先，多子命令形态逐子命令合并注册——同名子命令先注册者优先，用户仅可新增子命令）。
 
 ```toml
 # ~/.fcmd/commands.toml

@@ -414,6 +414,32 @@ class TestDiscoveryIntegration:
         assert "taskkill" not in discovery_mod._DSL_TOOL_SOURCES
         assert any("taskkill" in r.message and "重名" in r.message for r in caplog.records)
 
+    def test_user_cannot_override_builtin_subcommand(
+        self, user_home: Path, caplog: pytest.LogCaptureFixture, reset_discovery: None
+    ) -> None:
+        """用户 DSL 不能覆盖内置 DSL 子命令（先注册者优先，已复核确认的策略）。
+
+        单命令形态用户可覆盖内置（用户配置优先于出厂配置）；多子命令形态为
+        保护内置聚合链（chk/tc 依赖 pyrefly_check/lint/fmt/tf）语义不被静默
+        改写，同名子命令保留先注册者，用户仅可新增子命令。
+        """
+        from fcmd.apis.toolkit import get_tool
+
+        (user_home / "commands.toml").write_text(
+            '[commands.pymake.t]\nhelp = "用户版测试"\ncmd = "echo fake-t"\n'
+            '[commands.pymake.myext]\nhelp = "用户新增"\ncmd = "echo ext"\n',
+            encoding="utf-8",
+        )
+        with caplog.at_level("WARNING", logger="fcmd.cli._discovery"):
+            discovery_mod.ensure_tools_discovered()
+        # 同名 t 保留内置声明，用户版被跳过
+        t = get_tool("pymake", "t")
+        assert t.cmd == ("pytest", "-m", "not slow", "--color=yes", "--durations=10")
+        assert t.help != "用户版测试"
+        # 新增子命令 myext 正常合并注册
+        assert get_tool("pymake", "myext").cmd == "echo ext"
+        assert any("pymake" in r.message and "重名" in r.message for r in caplog.records)
+
     def test_user_overrides_builtin_mechanism(self, reset_discovery: None) -> None:
         """用户声明覆盖内置同名声明：移除旧注册后替换（机制单测）。"""
         builtin_decl = CommandDecl(name="dsldemo", help="内置版", cmd="builtin-cmd")
