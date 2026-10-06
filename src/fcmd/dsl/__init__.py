@@ -16,6 +16,7 @@ completion 等内建命令与 ``run_tool`` 执行链自动兼容。
 
 分层
 ----
+* :mod:`fcmd.dsl.actions` —— 内建动作注册表（``action`` 命令的进程内实现）
 * :mod:`fcmd.dsl.decl` —— 声明与校验（纯函数）
 * :mod:`fcmd.dsl.synth` —— 声明 → ToolSpec（平台选定 + 合成签名）
 * :mod:`fcmd.dsl.loader` —— 文件定位与解析编排
@@ -24,18 +25,24 @@ completion 等内建命令与 ``run_tool`` 执行链自动兼容。
 
 from __future__ import annotations
 
+from .actions import Action, action, action_names, get_action, has_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl, ToolDecl, parse_command_table, parse_tool_table
 from .entry import infer_tool_name, run_named
 from .loader import builtin_tool_decls, user_tool_decls
 from .synth import build_tool_spec, select_platform_cmd
 
 __all__ = [
+    "Action",
     "CommandDecl",
     "CommandDeclError",
     "ParamDecl",
     "ToolDecl",
+    "action",
+    "action_names",
     "build_tool_spec",
     "builtin_tool_decls",
+    "get_action",
+    "has_action",
     "infer_tool_name",
     "parse_command_table",
     "parse_tool_table",

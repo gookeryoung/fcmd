@@ -86,7 +86,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-58 个工具（其中 53 个为 Python 模块，`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache` 等纯 exec 工具由 DSL 声明），按用途分组：
+58 个工具（其中 51 个为 Python 模块，`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache` 纯 exec 工具与 `setenv`/`writefile` action 原语工具由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -383,6 +383,11 @@ message = "已登录镜像仓库: {registry} (用户: {username})"
 default = ""
 default_env = ["USERNAME", "LOGNAME", "USER", "LNAME"]  # 值等于 default 时按链取第一个非空环境变量
 
+[commands.setenv]                 # action 原语：进程内动作（fn 任务，非 subprocess）
+help = "设置环境变量"
+action = "setenv"                 # 内建动作名；参数 schema 来自动作实现签名（禁声明 args）
+message = "环境变量 {name} 已设置"
+
 [commands.sync]
 help = "同步（跨平台示例）"
 win.cmd = "robocopy src dst /mir"   # 字符串 → shell 执行
@@ -406,7 +411,7 @@ fcmd sy                           # 别名调用
 fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```
 
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值（含 `{参数名:content}` 文件内容插值） / cwd / env / timeout / when 守卫探针（支持参数插值与返回码判定）/ needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / message 与 fail_message post-run 消息 / strategy）；matrix/if 条件编排属 YAML 编排的领地。
+能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值（含 `{参数名:content}` 文件内容插值） / cwd / env / timeout / when 守卫探针（支持参数插值与返回码判定）/ needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / message 与 fail_message post-run 消息 / strategy / action 内建动作原语（进程内 fn 任务，参数 schema 来自动作实现签名））；matrix/if 条件编排属 YAML 编排的领地。
 
 ### DSL 逻辑边界
 
@@ -417,7 +422,7 @@ fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 | 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退）、`sshcopyid`（when 探针 + env 插值传 SSHPASS + `{参数名:content}` 公钥内容）、`reseticoncache`（win shell 链 + unix 提示分支） |
 | 输出管道（解析/过滤命令输出） | 保留 Python | `piptool u/r`（通配符展开、受保护包过滤） |
 | 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
-| 进程内调用（无法映射为子进程） | 保留 Python | `writefile`、`setenv` |
+| 进程内副作用（无法映射为子进程） | 副作用型动作可迁 DSL（action 原语） | `setenv`/`writefile`（已迁入 action 原语）；`nettool`/`iptool` 产出计算结果（HTTP 响应/IP 解析），非副作用型动作，保留 Python |
 | 多步有状态流程 | 保留 Python | `bumpversion`、`packtool` |
 
 ## 执行策略

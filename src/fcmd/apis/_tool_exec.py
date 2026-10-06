@@ -343,7 +343,9 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
     for pname in sig.parameters:
         if pname in variables:
             kwargs[pname] = variables[pname]
-    cwd_value = variables.get("cwd")
+    # cwd 取值与 cmd 分支对齐：CLI 变量优先，回退装饰器声明（DSL action
+    # 命令声明 cwd 时 fn 任务同样生效）
+    cwd_value = variables.get("cwd", spec.cwd)
     cwd = Path(cwd_value) if cwd_value is not None else None
     return TaskSpec(
         name=task_name,

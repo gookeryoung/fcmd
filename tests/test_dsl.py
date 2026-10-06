@@ -145,6 +145,100 @@ class TestDeclParsing:
 
 
 # ============================================================================ #
+# 内建动作原语（action）声明与校验
+# ============================================================================ #
+class TestActionDecl:
+    """命令级 ``action`` 键的解析与校验（进程内动作原语）。"""
+
+    def test_parse_action_command(self) -> None:
+        """合法 action 声明解析成功，args 为空。"""
+        decl = parse_command_table("setenv", {"help": "设置环境变量", "action": "setenv"})
+        assert decl.action == "setenv"
+        assert decl.args == ()
+        assert decl.cmd is None and decl.win_cmd is None and decl.unix_cmd is None
+
+    def test_action_no_cmd_required(self) -> None:
+        """action 命令免除「须提供 cmd」校验。"""
+        decl = parse_command_table("writefile", {"help": "写文件", "action": "writefile"})
+        assert decl.action == "writefile"
+
+    def test_unknown_action(self) -> None:
+        """未注册动作报错并列出可用动作。"""
+        with pytest.raises(CommandDeclError, match=r"未注册.*setenv"):
+            parse_command_table("bad", {"help": "x", "action": "no_such_action"})
+
+    @pytest.mark.parametrize("bad_value", ["", 42])
+    def test_bad_action_value(self, bad_value: Any) -> None:
+        """action 非非空字符串报错。"""
+        with pytest.raises(CommandDeclError, match="action 须是非空字符串"):
+            parse_command_table("bad", {"help": "x", "action": bad_value})
+
+    def test_action_none_means_undeclared(self) -> None:
+        """action = None（未声明）不报错，回退普通 cmd 命令判定。"""
+        decl = parse_command_table("bad", {"help": "x", "action": None, "cmd": "echo x"})
+        assert decl.action is None
+
+    def test_action_mutex_with_cmd(self) -> None:
+        """action 与 cmd 互斥。"""
+        with pytest.raises(CommandDeclError, match=r"action 与 cmd/win/unix 互斥"):
+            parse_command_table("bad", {"help": "x", "action": "setenv", "cmd": "echo x"})
+
+    def test_action_mutex_with_args(self) -> None:
+        """action 与 args 互斥（参数 schema 来自动作实现签名）。"""
+        with pytest.raises(CommandDeclError, match=r"action 与 args 互斥"):
+            parse_command_table("bad", {"help": "x", "action": "setenv", "args": {"name": {"type": "str"}}})
+
+    @pytest.mark.parametrize("key, value", [("timeout", 5), ("env", {"K": "v"}), ("tty", True)])
+    def test_action_mutex_with_subprocess_keys(self, key: str, value: Any) -> None:
+        """action 与 timeout/env/tty 互斥（subprocess 概念，fn 任务不消费）。"""
+        with pytest.raises(CommandDeclError, match=r"action.*互斥"):
+            parse_command_table("bad", {"help": "x", "action": "setenv", key: value})
+
+    def test_action_command_flat_detection(self) -> None:
+        """action 计入单命令形态识别（不误判为子命令表）。"""
+        tool = parse_tool_table("setenv", {"help": "设置环境变量", "action": "setenv"})
+        assert tool.flat is True
+        assert tool.commands[0].action == "setenv"
+
+
+class TestActionSynthesis:
+    """action 命令的 ToolSpec 合成与 fn 任务分发。"""
+
+    def test_build_tool_spec_action_fn_task(self) -> None:
+        """action 命令合成 fn 任务形态：cmd=None、有函数逻辑、param_help 来自注册表。"""
+        decl = parse_command_table("setenv", {"help": "设置环境变量", "action": "setenv"})
+        spec = build_tool_spec(decl)
+        assert spec.cmd is None
+        assert getattr(spec.func, "__dsl_action__", None) == "setenv"
+        assert (spec.param_help or {})["value"] == "环境变量值"
+        # 合成函数签名与实现一致（含默认值）
+        sig_params = spec.func.__signature__.parameters  # type: ignore[attr-defined]
+        assert list(sig_params) == ["name", "value", "default"]
+        assert sig_params["default"].default is False
+
+    def test_action_fn_task_dispatch_and_cwd(self) -> None:
+        """action 命令走 fn 任务分支且 cwd 声明生效（fn 分支回退 spec.cwd）。"""
+        decl = parse_command_table("writefile", {"help": "写文件", "action": "writefile", "cwd": "/tmp"})
+        spec = build_tool_spec(decl)
+        task = _build_task_spec(spec, {})
+        assert task.fn is spec.func  # fn 任务（非 cmd/聚合）
+        assert task.cwd is not None and task.cwd == Path("/tmp")
+
+    def test_action_message_contract(self) -> None:
+        """action 命令的 message 契约注入（post-run 完成消息）。"""
+        decl = parse_command_table("setenv", {"help": "x", "action": "setenv", "message": "环境变量 {name} 已设置"})
+        spec = build_tool_spec(decl)
+        assert getattr(spec.func, "__dsl_message__", None) == "环境变量 {name} 已设置"
+
+    def test_fn_task_cwd_prefers_cli_variable(self) -> None:
+        """fn 分支 cwd 取值优先 CLI 变量（与 cmd 分支语义一致）。"""
+        decl = parse_command_table("writefile", {"help": "写文件", "action": "writefile", "cwd": "/tmp"})
+        spec = build_tool_spec(decl)
+        task = _build_task_spec(spec, {"cwd": "/other"})
+        assert task.cwd == Path("/other")
+
+
+# ============================================================================ #
 # 平台命令选定与 ToolSpec 合成（synth.py）
 # ============================================================================ #
 class TestPlatformSelection:
@@ -279,8 +373,8 @@ class TestLoader:
         for tool in tools:
             for decl in tool.commands:
                 spec = build_tool_spec(decl, tool_name=tool.name, subcommand=None if tool.flat else decl.name)
-                # 聚合命令（needs 且无 cmd）合法；其余子命令必须可执行
-                assert spec.cmd is not None or spec.needs
+                # 聚合命令（needs 且无 cmd）与内建动作（fn 任务）合法；其余子命令必须可执行
+                assert spec.cmd is not None or spec.needs or getattr(spec.func, "__dsl_action__", None)
 
     def test_user_decls_missing_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """用户配置文件缺失时返回空（非警告事件）。"""
@@ -645,6 +739,33 @@ class TestRunToolDslCommand:
         app = FcmdApp(["hello"])
         assert app.run() == 0
         assert captured[0][0] == "echo hi"
+
+    def test_action_setenv_feeds_downstream_cmd_env(
+        self, user_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
+    ) -> None:
+        """链式编排端到端：action setenv 设置进程环境，下游 cmd 子任务继承。
+
+        目标命令 show 声明与 setenv 实现同名的 name/value 参数（共享 variables
+        流入 fn 任务 kwargs），cmd 写文件断言子进程真实读到环境变量。
+        """
+        out = tmp_path / "env_out.txt"
+        from fcmd.apis.toolkit import run_tool
+
+        # win 分支用 TOML 字面串（反斜杠原样）；unix 分支用 posix 路径避免
+        # 基本串中 \U 被当作转义
+        (user_home / "commands.toml").write_text(
+            '[commands.envchain.set]\nhelp = "设置变量"\naction = "setenv"\n'
+            f'[commands.envchain.show]\nhelp = "读变量写文件"\nneeds = ["set"]\n'
+            f"win.cmd = 'cmd /c echo %FCMD_CHAIN_VAR%> \"{out}\"'\n"
+            f'unix.cmd = "echo $FCMD_CHAIN_VAR > {out.as_posix()}"\n'
+            'args = { name = { type = "str" }, value = { type = "str" } }\n',
+            encoding="utf-8",
+        )
+        discovery_mod.ensure_tools_discovered()
+        monkeypatch.delenv("FCMD_CHAIN_VAR", raising=False)
+        code = run_tool("envchain", ["show", "FCMD_CHAIN_VAR", "chain_value"])
+        assert code == 0
+        assert out.read_text(encoding="utf-8").strip() == "chain_value"
 
 
 class TestRunToolClr:

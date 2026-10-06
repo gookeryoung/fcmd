@@ -32,6 +32,12 @@ CLI 解析值等于声明 default 时取链中第一个非空环境变量值。
 ``allow_upstream_skip`` / ``tty`` 不经函数属性，直接映射 :class:`ToolSpec`
 既有/新增声明字段（``tty`` → ``TaskSpec.passthrough``，引擎侧已消费，
 属于声明字段而非函数属性契约）。
+
+命令级 ``action``（内建动作原语）合成**有逻辑**的函数体（转发
+:mod:`fcmd.dsl.actions` 注册表实现，进程内执行），不标记
+``__dsl_empty_body__``——引擎判有函数逻辑 → fn 任务，kwargs 按签名从
+CLI 解析变量注入；参数 schema 拷贝自动作实现函数签名（TOML ``args``
+禁用，单一真理源），标记 ``__dsl_action__`` 供内省与测试。
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ from typing import Any, Literal, cast
 
 from fcmd.apis._tool_args import ToolSpec
 
+from .actions import Action, get_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl
 
 __all__ = ["build_tool_spec", "select_platform_cmd"]
@@ -100,6 +107,24 @@ def _param_default(param: ParamDecl) -> Any:
     return param.default
 
 
+def _inject_contracts(func: Callable[..., Any], decl: CommandDecl) -> None:
+    """注入 post-run 消息与 when 守卫函数属性契约（cmd/action 合成函数共用）。
+
+    bool on-token（``__dsl_param_on__``）与环境回退链（``__dsl_param_env__``）
+    仅 TOML args 声明存在；action 命令禁用 args，不涉及。
+    """
+    # post-run 完成消息契约（_tool_exec 消费）：执行成功后打印的消息模板
+    if decl.message:
+        func.__dsl_message__ = decl.message  # type: ignore[attr-defined]
+    # post-run 失败消息契约（_tool_exec 消费）：执行失败后打印的消息模板
+    if decl.fail_message:
+        func.__dsl_fail_message__ = decl.fail_message  # type: ignore[attr-defined]
+    # when 探针守卫契约（_tool_exec._build_conditions 消费）：任务执行前求值，
+    # 不满足则 SKIPPED；仅声明 when 的命令注入
+    if decl.when is not None:
+        func.__dsl_when__ = decl.when  # type: ignore[attr-defined]
+
+
 def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     """生成签名驱动的占位函数（cmd 任务：函数体不执行，签名仅驱动 CLI）。
 
@@ -142,17 +167,46 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     env_defaults = {p.name: (p.default_env, p.default) for p in decl.args if p.default_env}
     if env_defaults:
         dsl_command.__dsl_param_env__ = env_defaults  # type: ignore[attr-defined]
-    # post-run 完成消息契约（_tool_exec 消费）：执行成功后打印的消息模板
-    if decl.message:
-        dsl_command.__dsl_message__ = decl.message  # type: ignore[attr-defined]
-    # post-run 失败消息契约（_tool_exec 消费）：执行失败后打印的消息模板
-    if decl.fail_message:
-        dsl_command.__dsl_fail_message__ = decl.fail_message  # type: ignore[attr-defined]
-    # when 探针守卫契约（_tool_exec._build_conditions 消费）：任务执行前求值，
-    # 不满足则 SKIPPED；仅声明 when 的命令注入
-    if decl.when is not None:
-        dsl_command.__dsl_when__ = decl.when  # type: ignore[attr-defined]
+    _inject_contracts(dsl_command, decl)
     return dsl_command
+
+
+def _synthesize_action_func(decl: CommandDecl, act: Action) -> Callable[..., Any]:
+    """生成内建动作的合成函数（fn 任务形态：函数体有逻辑，引擎按 fn 任务执行）。
+
+    与 cmd 任务占位函数（``__dsl_empty_body__``，函数体不执行）不同：动作
+    合成函数的函数体转发注册表实现（进程内执行），**不标记**空函数体——
+    引擎 :func:`fcmd.apis._tool_exec._has_function_logic` 判有逻辑 → fn
+    任务，kwargs 按签名从 CLI 解析变量注入。签名/注解拷贝自动作实现函数
+    （声明期已校验参数名与保留名冲突），零改动复用 ``_build_parser_for_tool``。
+
+    Parameters
+    ----------
+    decl:
+        命令声明（``action`` 非空，声明期校验保证）
+    act:
+        已注册的动作描述符
+
+    Returns
+    -------
+    Callable
+        合成函数（标记 ``__dsl_action__`` 供内省与测试）
+    """
+    impl = act.func
+    sig = inspect.signature(impl)
+
+    def dsl_action(**kwargs: Any) -> Any:
+        """内建动作任务：转发注册表实现（进程内执行）。"""
+        return impl(**kwargs)
+
+    dsl_action.__name__ = f"_dsl_{decl.name}"
+    dsl_action.__qualname__ = f"fcmd.dsl.synth._dsl_{decl.name}"
+    dsl_action.__doc__ = decl.help
+    dsl_action.__signature__ = sig  # type: ignore[attr-defined]
+    dsl_action.__annotations__ = {pname: p.annotation for pname, p in sig.parameters.items()}  # type: ignore[attr-defined]
+    dsl_action.__dsl_action__ = act.name  # type: ignore[attr-defined]
+    _inject_contracts(dsl_action, decl)
+    return dsl_action
 
 
 def build_tool_spec(
@@ -186,15 +240,24 @@ def build_tool_spec(
     CommandDeclError
         该平台无可用命令
     """
+    act = get_action(decl.action) if decl.action else None
+    if act is not None:
+        func: Callable[..., Any] = _synthesize_action_func(decl, act)
+        param_help: dict[str, str] = dict(act.param_help)
+    else:
+        func = _synthesize_func(decl)
+        param_help = {p.name: p.help for p in decl.args if p.help}
     return ToolSpec(
         name=tool_name or decl.name,
         subcommand=subcommand,
-        func=_synthesize_func(decl),
+        func=func,
         help=decl.help,
         description=decl.description,
         hidden=decl.hidden,
-        cmd=None if decl.needs and not _has_any_cmd(decl) else select_platform_cmd(decl, platform),
-        param_help={p.name: p.help for p in decl.args if p.help},
+        # action 命令无子进程命令（fn 任务形态）；聚合命令（needs 且无 cmd）
+        # 同样置 None
+        cmd=None if act is not None or (decl.needs and not _has_any_cmd(decl)) else select_platform_cmd(decl, platform),
+        param_help=param_help,
         cwd=decl.cwd,
         env=dict(decl.env) if decl.env else None,
         timeout=decl.timeout,

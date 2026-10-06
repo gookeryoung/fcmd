@@ -1,0 +1,5 @@
+# writefile - 写入文本内容到文件（内建动作原语：进程内执行，无子进程）
+
+[commands.writefile]
+help = "写入文本内容到文件"
+action = "writefile"

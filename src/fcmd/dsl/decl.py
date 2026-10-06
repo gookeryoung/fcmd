@@ -17,10 +17,13 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
+
+from .actions import action_names, get_action, has_action
 
 __all__ = [
     "CommandDecl",
@@ -63,6 +66,7 @@ _TOP_KEYS = frozenset(
         "description",
         "aliases",
         "hidden",
+        "action",
         "cmd",
         "win",
         "unix",
@@ -130,6 +134,10 @@ class CommandDecl:
         工具名（CLI 调用名，如 ``"clr"``）
     help:
         帮助文本（必填非空，用于 --help 与工具列表）
+    action:
+        内建动作名（``action = "setenv"``）：命令在 fcmd 进程内直接执行
+        :mod:`fcmd.dsl.actions` 注册的动作实现，其函数签名即 CLI 参数
+        schema（与 ``args`` 互斥）；``None`` 表示普通 cmd/聚合命令
     win_cmd:
         Windows（``sys.platform == "win32"``）命令；``None`` 表示未提供
     unix_cmd:
@@ -171,6 +179,7 @@ class CommandDecl:
 
     name: str
     help: str
+    action: str | None = None
     win_cmd: str | tuple[str, ...] | None = None
     unix_cmd: str | tuple[str, ...] | None = None
     cmd: str | tuple[str, ...] | None = None
@@ -497,6 +506,62 @@ def _parse_tty(name: str, table: Mapping[str, Any]) -> bool:
     return tty
 
 
+def _parse_action(name: str, value: Any) -> str | None:
+    """解析并校验内建动作声明（action）。
+
+    Returns
+    -------
+    str | None
+        动作名，未声明时为 ``None``
+
+    Raises
+    ------
+    CommandDeclError
+        值不是非空字符串，或动作未注册
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise CommandDeclError(f"命令 {name!r} 的 action 须是非空字符串，实际: {value!r}")
+    if not has_action(value):
+        raise CommandDeclError(f"命令 {name!r} 的 action {value!r} 未注册（可用动作: {list(action_names())}）")
+    return value
+
+
+def _check_action_mutex(name: str, table: Mapping[str, Any], has_cmd: bool, args_raw: Mapping[str, Any]) -> None:
+    """校验 action 与 subprocess 概念键的互斥性（声明期拦截，避免不生效声明）。
+
+    Raises
+    ------
+    CommandDeclError
+        action 与 cmd/win/unix、args、timeout、env、tty 同时声明
+    """
+    if has_cmd:
+        raise CommandDeclError(f"命令 {name!r} 的 action 与 cmd/win/unix 互斥（动作在进程内执行，无子进程命令）")
+    if args_raw:
+        raise CommandDeclError(f"命令 {name!r} 的 action 与 args 互斥（参数 schema 来自动作实现签名）")
+    if table.get("timeout") is not None:
+        raise CommandDeclError(f"命令 {name!r} 的 action 与 timeout 互斥（fn 同步路径无强制超时）")
+    if table.get("env") is not None:
+        raise CommandDeclError(f"命令 {name!r} 的 action 与 env 互斥（动作在进程内执行，无子进程环境）")
+    if table.get("tty", False):
+        raise CommandDeclError(f"命令 {name!r} 的 action 与 tty 互斥（tty 是子进程透传概念）")
+
+
+def _check_action_params(name: str, action_name: str) -> None:
+    """校验动作实现签名的参数名不与全局选项保留名冲突。
+
+    Raises
+    ------
+    CommandDeclError
+        动作实现参数名命中 dry_run/quiet/strategy
+    """
+    impl = get_action(action_name).func
+    for pname in inspect.signature(impl).parameters:
+        if pname in _RESERVED_PARAM_NAMES:
+            raise CommandDeclError(f"命令 {name!r} 的动作 {action_name!r} 参数 {pname!r} 是保留名（全局选项）")
+
+
 # when 表内合法键（cmd/path 二选一 + expect）
 _WHEN_KEYS = frozenset({"cmd", "path", "expect"})
 
@@ -685,14 +750,21 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
     unix_cmd = _parse_platform_cmd(name, "unix", table.get("unix"))
     cmd = _normalize_cmd(name, "cmd", table.get("cmd"))
     has_cmd = not (win_cmd is None and unix_cmd is None and cmd is None)
+    action_name = _parse_action(name, table.get("action"))
     needs, strategy = _parse_needs_strategy(name, table)
-    if not has_cmd and not needs:
-        raise CommandDeclError(f"命令 {name!r} 须提供 win.cmd / unix.cmd / cmd 至少一个（无 cmd 时须声明 needs 聚合）")
+    if not has_cmd and action_name is None and not needs:
+        raise CommandDeclError(
+            f"命令 {name!r} 须提供 win.cmd / unix.cmd / cmd 至少一个（无 cmd 时须声明 needs 聚合或 action）"
+        )
 
     args_raw = table.get("args", {})
     if not isinstance(args_raw, Mapping):
         raise CommandDeclError(f"命令 {name!r} 的 args 须是表（[commands.{name}.args.<参数名>]）")
-    args = tuple(parse_param_table(name, pname, ptable) for pname, ptable in args_raw.items())
+    args = (
+        ()
+        if action_name is not None
+        else tuple(parse_param_table(name, pname, ptable) for pname, ptable in args_raw.items())
+    )
 
     _check_list_cmd_placeholders(name, "cmd", cmd, args)
     _check_list_cmd_placeholders(name, "win.cmd", win_cmd, args)
@@ -713,9 +785,14 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         raise CommandDeclError(f"命令 {name!r} 的 allow_upstream_skip 须是布尔值")
     tty = _parse_tty(name, table)
 
+    if action_name is not None:
+        _check_action_mutex(name, table, has_cmd=has_cmd, args_raw=args_raw)
+        _check_action_params(name, action_name)
+
     return CommandDecl(
         name=name,
         help=help_text,
+        action=action_name,
         win_cmd=win_cmd,
         unix_cmd=unix_cmd,
         cmd=cmd,
@@ -739,8 +816,8 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
 def parse_tool_table(name: str, table: Mapping[str, Any]) -> ToolDecl:
     """解析并校验 ``[commands.<name>]`` 表（自动识别单命令 / 多子命令形态）。
 
-    形态识别：表含 ``cmd`` / ``win`` / ``unix`` / ``args`` 任一键即为单命令
-    形态；否则每个表值键视为子命令表。两种形态混用报错。多子命令形态的
+    形态识别：表含 ``cmd`` / ``win`` / ``unix`` / ``args`` / ``action`` 任一键即为
+    单命令形态；否则每个表值键视为子命令表。两种形态混用报错。多子命令形态的
     工具级仅支持 ``description`` / ``aliases`` 元数据。
 
     Raises
@@ -754,7 +831,7 @@ def parse_tool_table(name: str, table: Mapping[str, Any]) -> ToolDecl:
     if name in _RESERVED_NAMES:
         raise CommandDeclError(f"命令名 {name!r} 是保留名（fcmd 或内建命令）")
 
-    has_flat_key = bool({"cmd", "win", "unix", "args"} & set(table))
+    has_flat_key = bool({"cmd", "win", "unix", "args", "action"} & set(table))
     sub_keys = [
         k
         for k, v in table.items()

@@ -615,9 +615,11 @@ class TestBuiltinInfo:
 
     def test_spec_kind_classification(self) -> None:
         """_spec_kind 正确分类 cmd / aggregate / fn。"""
-        import fcmd.cli.fileops.writefile  # noqa: F401  触发 fn 任务注册
         from fcmd.apis.toolkit import get_tool
         from fcmd.cli._builtins.info_cmd import _spec_kind
+        from fcmd.cli._discovery import ensure_tools_discovered
+
+        ensure_tools_discovered()  # 注册内置 DSL 命令（writefile 为 DSL action 工具，fn 任务）
 
         # cmd 任务（pymake.b 有 cmd）
         b_spec = get_tool("pymake", "b")
@@ -625,7 +627,7 @@ class TestBuiltinInfo:
         # aggregate 任务（pymake.tc 有 needs 无 cmd）
         tc_spec = get_tool("pymake", "tc")
         assert _spec_kind(tc_spec) == "aggregate"
-        # fn 任务（writefile 有函数逻辑无 cmd 无 needs）
+        # fn 任务（writefile 为 DSL action：有函数逻辑无 cmd 无 needs）
         writefile_spec = get_tool("writefile")
         assert _spec_kind(writefile_spec) == "fn"
 
@@ -1408,7 +1410,6 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("randtool", "fcmd.cli.calc.randtool"),
     ("regextool", "fcmd.cli.text.regextool"),
     ("screenshot", "fcmd.cli.media.screenshot"),
-    ("setenv", "fcmd.cli.system.setenv"),
     ("stattool", "fcmd.cli.calc.stattool"),
     ("sysinfo", "fcmd.cli.system.sysinfo"),
     ("taskkill", "fcmd.cli.system.taskkill"),
@@ -1418,7 +1419,6 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("urltool", "fcmd.cli.conv.urltool"),
     ("websave", "fcmd.cli.net.websave"),
     ("which", "fcmd.cli.system.which"),
-    ("writefile", "fcmd.cli.fileops.writefile"),
     ("xmltool", "fcmd.cli.data.xmltool"),
     ("yamtool", "fcmd.cli.data.yamtool"),
     ("zipencrypt", "fcmd.cli.archive.zipencrypt"),

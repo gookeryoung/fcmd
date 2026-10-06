@@ -1,0 +1,9 @@
+# setenv - 设置环境变量（内建动作原语：进程内执行，无子进程）
+
+# 语义：设置 fcmd 进程的 os.environ，链式编排（needs）中下游 cmd 任务
+# 的子进程会继承该变量；单命令调用仅影响本次进程，不做持久化。
+
+[commands.setenv]
+help = "设置环境变量"
+action = "setenv"
+message = "环境变量 {name} 已设置"
