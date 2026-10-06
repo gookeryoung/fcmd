@@ -38,23 +38,22 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Iterable
 from dataclasses import replace as dc_replace
 from typing import Any, Literal
 
+from fcmd._lazylog import LazyLogger
 from fcmd.apis.context import describe_injection
 from fcmd.apis.dag import Graph
 from fcmd.apis.errors import TaskFailedError
 from fcmd.apis.report import RunReport
 from fcmd.apis.task import EventCallback, RunConfig, TaskEvent, TaskStatus
-from fcmd.console import get_console
 
 from .dependency_runner import _run_dependency, _run_dependency_sync, _sync_chain_fast_path_ok
 from .layer_runner import _async_drive, _drive_sequential, _drive_threaded
 from .task_runner import _ExecContext, _shutdown_thread_pool
 
-logger = logging.getLogger(__name__)
+logger = LazyLogger(__name__)
 
 # 观察者回调类型。
 Strategy = Literal["sequential", "thread", "async", "dependency"]
@@ -65,6 +64,8 @@ Strategy = Literal["sequential", "thread", "async", "dependency"]
 # ---------------------------------------------------------------------- #
 def _make_verbose_callback(on_event: EventCallback | None) -> EventCallback:
     """包装 on_event 回调，在 verbose 模式下打印任务生命周期。"""
+    from fcmd.console import get_console  # 下沉导入：verbose 才需要 console（含 ctypes/re 链）
+
     console = get_console()
 
     def _verbose_callback(event: TaskEvent) -> None:
@@ -288,6 +289,8 @@ def run(  # noqa: PLR0912, PLR0913
 
 def _print_dry_run(graph: Graph, layers: list[list[str]]) -> None:
     """打印执行计划但不运行任何任务。"""
+    from fcmd.console import get_console  # 下沉导入：dry-run 才需要 console
+
     console = get_console()
     console.print(f"[bold]Dry run:[/bold] [cyan]{len(graph)}[/cyan] tasks, [cyan]{len(layers)}[/cyan] layers")
     for idx, layer in enumerate(layers, 1):

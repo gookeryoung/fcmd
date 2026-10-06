@@ -23,12 +23,15 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from graphlib import CycleError as _GraphCycleError
 from graphlib import TopologicalSorter
-from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from .context import is_context_annotation
 from .errors import CycleError, DuplicateTaskError, MissingDependencyError
 from .task import RetryPolicy, TaskSpec
+
+if TYPE_CHECKING:
+    # Path 仅用于注解（cwd 字段与 from_yaml 参数），延迟求值不付出导入成本
+    from pathlib import Path
 
 
 def _topological_layers(deps: Mapping[str, tuple[str, ...]]) -> tuple[list[list[str]], list[str] | None]:

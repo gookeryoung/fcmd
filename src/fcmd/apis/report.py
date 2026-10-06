@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import uuid4
 
 from .task import TaskResult, TaskStatus
 
@@ -32,7 +32,9 @@ class RunReport:
 
     results: dict[str, TaskResult[Any]] = field(default_factory=dict)
     success: bool = True
-    run_id: str = field(default_factory=lambda: uuid4().hex[:8])
+    # os.urandom(4).hex() 与 uuid4().hex[:8] 同为 8 位十六进制随机串；
+    # 改用 os.urandom 避免 uuid 模块导入成本（~2ms，每次 run 都要付出）。
+    run_id: str = field(default_factory=lambda: os.urandom(4).hex())
 
     # ---- 类型化访问 --------------------------------------------------- #
     def __getitem__(self, name: str) -> Any:

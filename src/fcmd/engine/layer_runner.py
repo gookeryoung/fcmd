@@ -20,8 +20,7 @@
 
 from __future__ import annotations
 
-import concurrent.futures
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fcmd.apis.dag import Graph
 from fcmd.apis.task import TaskResult, TaskSpec
@@ -33,6 +32,9 @@ from .task_runner import (
     _run_sync_task,
     _store_result,
 )
+
+if TYPE_CHECKING:
+    import concurrent.futures
 
 
 def _build_spec_map(
@@ -74,6 +76,8 @@ def _run_layer_threaded(
     worker 在主线程处理失败前已拉取后续任务，导致 ``cancel()`` 无效。
     当某任务失败时立即停止提交新任务，并取消尚未拉取的排队任务。
     """
+    import concurrent.futures  # 下沉导入：仅 thread 策略需要
+
     if not layer:  # pragma: no cover - Graph.layers() 不产生空层
         return
     specs = _build_spec_map(layer, graph)
@@ -173,6 +177,8 @@ def _drive_threaded(
     ctx: _ExecContext,
     max_workers: int | None,
 ) -> None:
+    import concurrent.futures  # 下沉导入：仅 thread 策略需要
+
     # 线程池在整个 run() 内复用，避免逐层创建/销毁线程的开销。
     max_layer_size = max((len(layer) for layer in layers), default=1)
     pool_workers = max_workers or max(1, min(32, max_layer_size))

@@ -1083,7 +1083,7 @@ def test_fast_path_fallback_wide_graph(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_fast_path_no_asyncio_import() -> None:
-    """快速路径执行链式图后 asyncio 不被导入（子进程隔离验证导入下沉）。"""
+    """快速路径执行链式图后 asyncio/logging/console 均不被导入（子进程隔离验证导入下沉）。"""
     code = (
         "import sys\n"
         "import fcmd\n"
@@ -1098,8 +1098,9 @@ def test_fast_path_no_asyncio_import() -> None:
         "\n"
         "report = fcmd.run(fcmd.graph(a, b))\n"
         "assert report.success and report['b'] == 2\n"
-        "if 'asyncio' in sys.modules:\n"
-        "    print('asyncio was imported', file=sys.stderr)\n"
+        "heavy = [m for m in ('asyncio', 'logging', 'fcmd.console', 'ctypes') if m in sys.modules]\n"
+        "if heavy:\n"
+        "    print('heavy modules were imported:', heavy, file=sys.stderr)\n"
         "    sys.exit(1)\n"
     )
     result = subprocess.run(
@@ -1109,4 +1110,4 @@ def test_fast_path_no_asyncio_import() -> None:
         timeout=60,
         check=False,
     )
-    assert result.returncode == 0, f"快速路径不应导入 asyncio\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    assert result.returncode == 0, f"快速路径不应导入重量级模块\nstdout: {result.stdout}\nstderr: {result.stderr}"

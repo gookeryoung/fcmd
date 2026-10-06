@@ -17,16 +17,17 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import threading
 from collections.abc import Callable, Coroutine, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
-from pathlib import Path
-from typing import Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from pathlib import Path
 
 T = TypeVar("T", default=Any)
 
@@ -45,8 +46,6 @@ Condition = Callable[[Context], bool]
 
 # 观察者回调类型：接收任务事件。
 EventCallback = Callable[["TaskEvent"], None]
-
-logger = logging.getLogger(__name__)
 
 # 全局锁：序列化对进程级状态（os.environ / os.chdir）的临时修改。
 # ``fn`` 任务在 thread/async 策略下并发执行时，若各自配置了不同的
@@ -436,6 +435,8 @@ def _env_and_cwd(
     模块级 :data:`_env_cwd_lock` 串行化"切换→执行→恢复"区间，确保正确性。
     无 ``env`` 且无 ``cwd`` 时直接 yield，不获取锁。
     """
+    from pathlib import Path  # 下沉导入：仅带 cwd 的任务执行路径需要
+
     if not env and cwd is None:
         yield
         return
@@ -505,6 +506,8 @@ def task(  # noqa: PLR0913
     """
 
     def _decorate(func: TaskFn[Any]) -> TaskSpec[Any]:
+        from pathlib import Path  # 下沉导入：仅声明 cwd 的任务需要
+
         spec_name = name or func.__name__
         return TaskSpec(
             name=spec_name,

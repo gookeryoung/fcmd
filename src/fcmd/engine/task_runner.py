@@ -20,9 +20,7 @@
 from __future__ import annotations
 
 import atexit
-import concurrent.futures
 import inspect
-import logging
 import threading
 import time
 from collections.abc import Awaitable, Mapping
@@ -30,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from fcmd._lazylog import LazyLogger
 from fcmd.apis.context import build_call_args
 from fcmd.apis.errors import TaskFailedError, TaskTimeoutError
 from fcmd.apis.report import RunReport
@@ -37,8 +36,9 @@ from fcmd.apis.task import EventCallback, TaskEvent, TaskResult, TaskSpec, TaskS
 
 if TYPE_CHECKING:
     import asyncio
+    import concurrent.futures
 
-logger = logging.getLogger(__name__)
+logger = LazyLogger(__name__)
 
 # 线程池复用：asyncio.run() 每次创建新事件循环，默认线程池也随之重建。
 # 模块级缓存让线程池跨 run() 调用复用，避免重复创建/销毁线程的开销。
@@ -48,6 +48,8 @@ _thread_pool_lock = threading.Lock()
 
 def _get_thread_pool() -> concurrent.futures.ThreadPoolExecutor:
     """获取复用的线程池（惰性创建）。"""
+    import concurrent.futures  # 下沉导入：仅 thread/async 策略需要线程池
+
     global _thread_pool  # noqa: PLW0603
     if _thread_pool is None:
         with _thread_pool_lock:
