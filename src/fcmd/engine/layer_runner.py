@@ -20,7 +20,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import concurrent.futures
 from typing import Any
 
@@ -137,6 +136,8 @@ async def _run_layer_async(
     layer_idx: int,
 ) -> None:
     """在事件循环上并发运行某层的任务。"""
+    import asyncio  # 下沉导入：仅 async 策略需要，sequential/thread/同步快速路径不付出导入成本
+
     if not layer:  # pragma: no cover - Graph.layers() 不产生空层
         return
     specs = _build_spec_map(layer, graph)

@@ -12,13 +12,18 @@
 最大化并行度；层模型必须整层完成后才进入下一层，适合需要确定性顺序的场景。
 
 fail-fast 语义：首个异常即取消剩余任务并抛出（匹配 ``asyncio.gather`` 语义）。
+
+同步快速路径（:func:`_sync_chain_fast_path_ok` /
+:func:`_run_dependency_sync`）：纯同步（无协程函数、无 timeout）且图层宽 ≤1
+（单点或纯链）的图按拓扑序直接顺序执行——链式图的拓扑序唯一，顺序执行与
+依赖驱动调度语义等价（无并行度可损失、fail-fast 连坐一致），可跳过
+``asyncio.run`` 与 ``import asyncio`` 的固定导入成本（~50ms）。
 """
 
 from __future__ import annotations
 
-import asyncio
 from graphlib import TopologicalSorter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fcmd.apis.dag import Graph
 from fcmd.apis.task import TaskResult, TaskSpec
@@ -26,9 +31,58 @@ from fcmd.apis.task import TaskResult, TaskSpec
 from .task_runner import (
     _build_context,
     _ExecContext,
+    _is_async_fn,
     _run_async_task,
+    _run_sync_task,
     _store_result,
 )
+
+if TYPE_CHECKING:
+    import asyncio
+
+
+def _build_predecessors(all_specs: dict[str, TaskSpec[Any]]) -> dict[str, tuple[str, ...]]:
+    """前驱映射：硬依赖 + 图内软依赖（软依赖缺失由 defaults 回退，不计入就绪计数）。"""
+    return {
+        name: (*spec.depends_on, *(d for d in spec.soft_depends_on if d in all_specs))
+        for name, spec in all_specs.items()
+    }
+
+
+def _sync_chain_fast_path_ok(graph: Graph) -> bool:
+    """判断 ``dependency`` 策略能否走同步快速路径。
+
+    条件（全部满足）：
+
+    1. 所有任务为同步函数（无协程函数）——协程必须事件循环驱动；
+    2. 无任何任务声明 ``timeout``——同步路径无法强制超时（异步路径经
+       ``asyncio.wait_for`` 实现）；
+    3. 图层宽 ≤1（单点或纯链）——拓扑序唯一，顺序执行与依赖驱动调度
+       语义等价，无并行度损失；宽 >1 的图保留线程池并行能力。
+    """
+    all_names = list(graph.all_specs().keys())
+    all_specs: dict[str, TaskSpec[Any]] = {name: graph.resolved_spec(name) for name in all_names}
+    for spec in all_specs.values():
+        if spec.timeout is not None or _is_async_fn(spec):
+            return False
+    return all(len(layer) <= 1 for layer in graph.layers())
+
+
+def _run_dependency_sync(graph: Graph, ctx: _ExecContext) -> None:
+    """同步快速路径：纯同步链式图按拓扑序直接执行（无事件循环、无线程池）。
+
+    fail-fast 语义与 :func:`_run_dependency` 一致：任务失败（耗尽重试且未
+    ``continue_on_error``）抛 :class:`~fcmd.apis.errors.TaskFailedError`，
+    后续任务不再执行。
+    """
+    all_names = list(graph.all_specs().keys())
+    all_specs: dict[str, TaskSpec[Any]] = {name: graph.resolved_spec(name) for name in all_names}
+    predecessors = _build_predecessors(all_specs)
+    for name in TopologicalSorter(predecessors).static_order():
+        spec = all_specs[name]
+        task_ctx = _build_context(spec, ctx.context, ctx.statuses)
+        result = _run_sync_task(spec, task_ctx, None, ctx)
+        _store_result(result, spec, ctx)
 
 
 async def _run_dependency(
@@ -39,14 +93,11 @@ async def _run_dependency(
 
     所有任务通过 asyncio 并发调度。同步任务卸载到线程池。
     """
+    import asyncio  # 下沉导入：纯同步链式图走 _run_dependency_sync，不付出 asyncio 导入成本
+
     all_names = list(graph.all_specs().keys())
     all_specs: dict[str, TaskSpec[Any]] = {name: graph.resolved_spec(name) for name in all_names}
-
-    # 前驱映射：硬依赖 + 图内软依赖（软依赖缺失由 defaults 回退，不计入就绪计数）。
-    predecessors = {
-        name: (*spec.depends_on, *(d for d in spec.soft_depends_on if d in all_specs))
-        for name, spec in all_specs.items()
-    }
+    predecessors = _build_predecessors(all_specs)
     sorter = TopologicalSorter(predecessors)
     sorter.prepare()
 

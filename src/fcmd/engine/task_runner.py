@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import atexit
 import concurrent.futures
 import inspect
@@ -29,12 +28,15 @@ import time
 from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fcmd.apis.context import build_call_args
 from fcmd.apis.errors import TaskFailedError, TaskTimeoutError
 from fcmd.apis.report import RunReport
 from fcmd.apis.task import EventCallback, TaskEvent, TaskResult, TaskSpec, TaskStatus
+
+if TYPE_CHECKING:
+    import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +299,9 @@ def _handle_failure(
         ``True`` 表示已 finalize（不再重试）；``False`` 表示应继续重试。
     """
     run_id = ctx.report.run_id
-    if isinstance(exc, asyncio.TimeoutError):
+    # Python 3.11+ asyncio.TimeoutError 是内建 TimeoutError 的别名，此处用内建名
+    # 使同步执行路径（含快速路径）不依赖 asyncio 模块导入。
+    if isinstance(exc, TimeoutError):
         exc = TaskTimeoutError(spec.name, spec.timeout or 0.0)
         logger.warning(
             "task %r timed out (attempt %d/%d); retrying",
@@ -381,6 +385,8 @@ async def _run_async_task(
     ctx: _ExecContext,
 ) -> TaskResult[Any]:
     """异步执行单个任务（同步任务卸载到线程池）：带重试与跳过预检。"""
+    import asyncio  # 下沉导入：仅异步执行路径需要，同步快速路径不付出 asyncio 导入成本
+
     skipped = _prepare_for_execution(spec, task_ctx, ctx.report, ctx.on_event)
     if skipped is not None:
         return skipped
@@ -414,6 +420,8 @@ async def _execute_async_task(
     loop: asyncio.AbstractEventLoop,
 ) -> Any:
     """执行异步或同步任务（带超时处理）。"""
+    import asyncio  # 下沉导入：仅异步执行路径需要，同步快速路径不付出 asyncio 导入成本
+
     # 异步任务直接 await
     if _is_async_fn(spec):
         coro = cast(Awaitable[Any], spec.effective_fn(*args, **kwargs))

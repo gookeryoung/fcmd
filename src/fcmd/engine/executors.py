@@ -38,7 +38,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Iterable
 from dataclasses import replace as dc_replace
@@ -51,7 +50,7 @@ from fcmd.apis.report import RunReport
 from fcmd.apis.task import EventCallback, RunConfig, TaskEvent, TaskStatus
 from fcmd.console import get_console
 
-from .dependency_runner import _run_dependency
+from .dependency_runner import _run_dependency, _run_dependency_sync, _sync_chain_fast_path_ok
 from .layer_runner import _async_drive, _drive_sequential, _drive_threaded
 from .task_runner import _ExecContext, _shutdown_thread_pool
 
@@ -119,10 +118,18 @@ def _dispatch_strategy(
 ) -> None:
     """按策略派发执行。
 
-    ``dependency`` 走依赖驱动路径（无层屏障）；其余三者走层屏障模型，
-    共享一次 ``graph.layers()`` 调用。
+    ``dependency`` 走依赖驱动路径（无层屏障）；纯同步链式图（宽 ≤1 且无
+    timeout）走同步快速路径，跳过 ``import asyncio`` 与事件循环的固定成本；
+    其余三者走层屏障模型，共享一次 ``graph.layers()`` 调用。``asyncio``
+    下沉到需要事件循环的分支内导入，使 ``sequential``/``thread`` 策略与
+    同步快速路径完全不付出 asyncio 导入成本（~50ms）。
     """
     if strategy == "dependency":
+        if _sync_chain_fast_path_ok(graph):
+            _run_dependency_sync(graph, ctx)
+            return
+        import asyncio
+
         asyncio.run(_run_dependency(graph, ctx))
         return
     layers = graph.layers()
@@ -131,6 +138,8 @@ def _dispatch_strategy(
     elif strategy == "thread":
         _drive_threaded(graph, layers, ctx, max_workers)
     elif strategy == "async":
+        import asyncio
+
         asyncio.run(_async_drive(graph, layers, ctx))
     else:  # pragma: no cover - Strategy Literal 已穷尽所有取值
         raise ValueError(f"Unknown strategy: {strategy!r}")

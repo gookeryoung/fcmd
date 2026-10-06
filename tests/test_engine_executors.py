@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import sys
 import time
 
@@ -647,7 +648,7 @@ def test_run_async_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_async_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
-    monkeypatch.setattr("fcmd.engine.task_runner.asyncio.sleep", fake_async_sleep)
+    monkeypatch.setattr("asyncio.sleep", fake_async_sleep)
 
     attempts = {"n": 0}
 
@@ -674,7 +675,7 @@ def test_run_async_retry_no_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_async_sleep(seconds: float) -> None:
         sleep_calls.append(seconds)
 
-    monkeypatch.setattr("fcmd.engine.task_runner.asyncio.sleep", fake_async_sleep)
+    monkeypatch.setattr("asyncio.sleep", fake_async_sleep)
 
     attempts = {"n": 0}
 
@@ -869,3 +870,243 @@ def test_verbose_callback_pending_event(capsys: pytest.CaptureFixture[str]) -> N
     assert len(events) == 1
     assert events[0].task == "x"
     assert events[0].status == TaskStatus.PENDING
+
+
+# ---------------------------------------------------------------------- #
+# dependency 同步快速路径：纯同步链式图（宽 ≤1 且无 timeout）跳过 asyncio
+# ---------------------------------------------------------------------- #
+def _spy_dependency_paths(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """包装 executors 的两条 dependency 执行路径，记录派发次数。"""
+    from fcmd.apis.dag import Graph
+    from fcmd.engine import executors as executors_mod
+    from fcmd.engine.task_runner import _ExecContext
+
+    calls: dict[str, int] = {"sync": 0, "async": 0}
+    orig_sync = executors_mod._run_dependency_sync
+    orig_async = executors_mod._run_dependency
+
+    def spy_sync(graph: Graph, ctx: _ExecContext) -> None:
+        calls["sync"] += 1
+        orig_sync(graph, ctx)
+
+    async def spy_async(graph: Graph, ctx: _ExecContext) -> None:
+        calls["async"] += 1
+        await orig_async(graph, ctx)
+
+    monkeypatch.setattr(executors_mod, "_run_dependency_sync", spy_sync)
+    monkeypatch.setattr(executors_mod, "_run_dependency", spy_async)
+    return calls
+
+
+def test_fast_path_chain_dispatches_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """纯同步链式图（宽 ≤1）派发到同步快速路径，不走 asyncio。"""
+    calls = _spy_dependency_paths(monkeypatch)
+
+    @task
+    def a() -> int:
+        return 1
+
+    @task
+    def b(a: int) -> int:
+        return a + 1
+
+    @task
+    def c(b: int) -> int:
+        return b + 1
+
+    report = fcmd.run(fcmd.graph(a, b, c))  # 默认 dependency
+    assert calls == {"sync": 1, "async": 0}
+    assert report.success
+    assert report["c"] == 3
+
+
+def test_fast_path_single_task_dispatches_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """单任务图（最常见场景）派发到同步快速路径。"""
+    calls = _spy_dependency_paths(monkeypatch)
+
+    @task
+    def solo() -> int:
+        return 42
+
+    report = fcmd.run(fcmd.graph(solo))
+    assert calls == {"sync": 1, "async": 0}
+    assert report["solo"] == 42
+
+
+def test_fast_path_execution_order_and_events() -> None:
+    """快速路径按拓扑序执行，事件序列完整（RUNNING/SUCCESS 交替）。"""
+    order: list[str] = []
+    events: list[TaskEvent] = []
+
+    @task
+    def a() -> int:
+        order.append("a")
+        return 1
+
+    @task
+    def b(a: int) -> int:
+        order.append("b")
+        return a + 1
+
+    @task
+    def c(b: int) -> int:
+        order.append("c")
+        return b + 1
+
+    report = fcmd.run(fcmd.graph(a, b, c), on_event=events.append)
+    assert order == ["a", "b", "c"]
+    assert report["c"] == 3
+    statuses = [(e.task, e.status) for e in events]
+    assert statuses == [
+        ("a", TaskStatus.RUNNING),
+        ("a", TaskStatus.SUCCESS),
+        ("b", TaskStatus.RUNNING),
+        ("b", TaskStatus.SUCCESS),
+        ("c", TaskStatus.RUNNING),
+        ("c", TaskStatus.SUCCESS),
+    ]
+
+
+def test_fast_path_fail_fast() -> None:
+    """快速路径 fail-fast：失败抛 TaskFailedError，后续任务不执行。"""
+    executed: list[str] = []
+
+    @task
+    def a() -> int:
+        executed.append("a")
+        return 1
+
+    @task
+    def boom(a: int) -> int:
+        executed.append("boom")
+        raise RuntimeError("kaboom")
+
+    @task
+    def c(boom: int) -> int:
+        executed.append("c")  # pragma: no cover - fail-fast 下不执行
+        return boom
+
+    with pytest.raises(TaskFailedError) as exc_info:
+        fcmd.run(fcmd.graph(a, boom, c))
+    assert exc_info.value.task == "boom"
+    assert executed == ["a", "boom"]
+
+
+def test_fast_path_skip_cascade() -> None:
+    """快速路径跳过连坐：上游条件跳过，下游硬依赖连坐 SKIPPED。"""
+    executed: list[str] = []
+
+    @task(conditions=(lambda _: False,))
+    def skipped() -> int:
+        executed.append("skipped")  # pragma: no cover - 条件跳过
+        return 1
+
+    downstream = TaskSpec(name="downstream", fn=lambda _: 1, depends_on=("skipped",))
+    report = fcmd.run(fcmd.graph(skipped, downstream))
+    assert "skipped" in report.skipped_tasks()
+    assert "downstream" in report.skipped_tasks()
+    assert executed == []
+
+
+def test_fast_path_retry_then_success() -> None:
+    """快速路径下 RetryPolicy 重试生效（第 3 次成功）。"""
+    attempts = {"n": 0}
+
+    @task(retry=RetryPolicy(max_attempts=3))
+    def flaky() -> str:
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise RuntimeError("not yet")
+        return "ok"
+
+    report = fcmd.run(fcmd.graph(flaky))
+    assert report.success
+    assert report["flaky"] == "ok"
+    assert attempts["n"] == 3
+
+
+def test_fast_path_fallback_async_fn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """链式图含协程函数 → 回退异步路径。"""
+    calls = _spy_dependency_paths(monkeypatch)
+
+    @task
+    async def a() -> int:
+        await asyncio.sleep(0)
+        return 1
+
+    @task
+    async def b(a: int) -> int:
+        return a + 1
+
+    report = fcmd.run(fcmd.graph(a, b))
+    assert calls == {"sync": 0, "async": 1}
+    assert report["b"] == 2
+
+
+def test_fast_path_fallback_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """任一任务声明 timeout → 回退异步路径（同步路径无法强制超时）。"""
+    calls = _spy_dependency_paths(monkeypatch)
+
+    @task
+    def a() -> int:
+        return 1
+
+    b = TaskSpec(name="b", fn=lambda a: a + 1, depends_on=("a",), timeout=30.0)
+    report = fcmd.run(fcmd.graph(a, b))
+    assert calls == {"sync": 0, "async": 1}
+    assert report["b"] == 2
+
+
+def test_fast_path_fallback_wide_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    """宽 >1 的图（菱形依赖）保留并行调度 → 回退异步路径。"""
+    calls = _spy_dependency_paths(monkeypatch)
+
+    @task
+    def a() -> int:
+        return 10
+
+    @task
+    def b(a: int) -> int:
+        return a * 2
+
+    @task
+    def c(a: int) -> int:
+        return a + 3
+
+    @task
+    def d(b: int, c: int) -> int:
+        return b + c
+
+    report = fcmd.run(fcmd.graph(a, b, c, d))
+    assert calls == {"sync": 0, "async": 1}
+    assert report["d"] == 33
+
+
+def test_fast_path_no_asyncio_import() -> None:
+    """快速路径执行链式图后 asyncio 不被导入（子进程隔离验证导入下沉）。"""
+    code = (
+        "import sys\n"
+        "import fcmd\n"
+        "\n"
+        "@fcmd.task\n"
+        "def a() -> int:\n"
+        "    return 1\n"
+        "\n"
+        "@fcmd.task\n"
+        "def b(a: int) -> int:\n"
+        "    return a + 1\n"
+        "\n"
+        "report = fcmd.run(fcmd.graph(a, b))\n"
+        "assert report.success and report['b'] == 2\n"
+        "if 'asyncio' in sys.modules:\n"
+        "    print('asyncio was imported', file=sys.stderr)\n"
+        "    sys.exit(1)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, f"快速路径不应导入 asyncio\nstdout: {result.stdout}\nstderr: {result.stderr}"
