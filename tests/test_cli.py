@@ -389,8 +389,8 @@ class TestBuiltinGraph:
     """``fcmd graph`` 内建命令测试。"""
 
     def test_graph_pymake_tc_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pymake tc 默认输出 Mermaid 图。"""
-        app = FcmdApp(["graph", "pymake", "tc"])
+        """fcmd graph pymake tc --format=mermaid 输出 Mermaid 图。"""
+        app = FcmdApp(["graph", "pymake", "tc", "--format=mermaid"])
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "graph TD" in out
@@ -398,15 +398,43 @@ class TestBuiltinGraph:
         assert "tc" in out
         assert "lint" in out
 
+    def test_graph_default_tree(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd graph pymake tc 默认输出树形依赖视图。"""
+        app = FcmdApp(["graph", "pymake", "tc"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        # tc 是根任务，依赖向下展开
+        assert out.startswith("tc")
+        assert "├── pyrefly_check" in out
+        assert "├── lint" in out
+        assert "└── fmt" in out
+
     def test_graph_pymake_chk_mermaid(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pymake chk 输出类型检查聚合 DAG。"""
-        app = FcmdApp(["graph", "pymake", "chk"])
+        """fcmd graph pymake chk --format=mermaid 输出类型检查聚合 DAG。"""
+        app = FcmdApp(["graph", "pymake", "chk", "--format=mermaid"])
         assert app.run() == 0
         out = capsys.readouterr().out
         assert "graph TD" in out
         # chk 依赖 pyrefly_check + lint + fmt + tf
         for name in ("chk", "lint", "pyrefly_check", "fmt", "tf"):
             assert name in out, f"DAG 应包含 {name!r}"
+
+    def test_graph_mermaid_node_shapes(self) -> None:
+        """mermaid 节点按任务类型造型：cmd 平行四边形 / fn 圆角。"""
+        from fcmd.apis.dag import Graph
+        from fcmd.apis.task import TaskSpec
+        from fcmd.cli._builtins.graph_cmd import _mermaid_shaped
+
+        graph = Graph.from_specs(
+            [
+                TaskSpec(name="run_cmd", cmd=["uv", "build"]),
+                TaskSpec(name="pure_fn", fn=lambda: 1, depends_on=("run_cmd",)),
+            ]
+        )
+        mermaid = _mermaid_shaped(graph)
+        assert 'run_cmd[/"run_cmd"/]' in mermaid
+        assert 'pure_fn("pure_fn")' in mermaid
+        assert "run_cmd --> pure_fn" in mermaid
 
     def test_graph_format_layers(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd graph pymake tc --format=layers 输出分层列表。"""
@@ -448,29 +476,61 @@ class TestBuiltinGraph:
         assert "tool" in out
 
     def test_graph_pm_alias_works(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pm tc 别名路由正常。"""
+        """fcmd graph pm tc 别名路由正常（默认树形视图）。"""
         app = FcmdApp(["graph", "pm", "tc"])
         assert app.run() == 0
         out = capsys.readouterr().out
-        assert "graph TD" in out
+        assert out.startswith("tc")
+        assert "└── fmt" in out
 
     def test_graph_single_command_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pymake b（单任务）输出单节点图。"""
+        """fcmd graph pymake b（单任务）输出单节点树。"""
         app = FcmdApp(["graph", "pymake", "b"])
         assert app.run() == 0
         out = capsys.readouterr().out
-        assert "graph TD" in out
-        assert "b" in out
+        assert out.strip() == "b"
 
     def test_graph_no_subcommand_shows_all(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pymake（无子命令）输出全部子命令的 DAG。"""
+        """fcmd graph pymake（无子命令）输出全部子命令的森林。"""
         app = FcmdApp(["graph", "pymake"])
         assert app.run() == 0
         out = capsys.readouterr().out
-        assert "graph TD" in out
         # 全部子命令都应出现
         for name in ("b", "c", "t", "tc"):
             assert name in out, f"全量 DAG 应包含 {name!r}"
+        # 菱形依赖折叠：tc 的依赖在 chk 子树已展开
+        assert "(已展开)" in out
+
+    def test_graph_tree_ascii_fallback(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """树形视图在 ASCII 终端降级为 ``|--``/``--`` 字符。"""
+        from fcmd import console as console_mod
+
+        monkeypatch.setattr(console_mod, "supports_unicode", lambda file=None: False)
+        app = FcmdApp(["graph", "pymake", "tc"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "|-- pyrefly_check" in out
+        assert "├──" not in out
+
+    def test_graph_layers_ascii_fallback(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """分层视图在 ASCII 终端降级为 ``|``/``v`` 连接符。"""
+        from fcmd import console as console_mod
+
+        monkeypatch.setattr(console_mod, "supports_unicode", lambda file=None: False)
+        app = FcmdApp(["graph", "pymake", "tc", "--format=layers"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "Layer 1" in out
+        assert "\n  v\n" in out
+        assert "↓" not in out
 
     def test_run_builtin_unknown_name(self, capsys: pytest.CaptureFixture[str]) -> None:
         """run_builtin 收到未知内建命令名时返回 1（防御路径）。"""

@@ -359,6 +359,150 @@ class TestTable:
 
 
 # ---------------------------------------------------------------------- #
+# Table：round box / auto 降级 / no_wrap 截断 / show_lines
+# ---------------------------------------------------------------------- #
+
+
+class TestTableBoxStyles:
+    """``Table`` 边框样式与降级。"""
+
+    def test_round_box_uses_unicode_chars(self) -> None:
+        """``box="round"`` 用圆角 Unicode 制表符渲染。"""
+        t = Table(box="round", show_header=True)
+        t.add_column("k")
+        t.add_row("v")
+        rendered = str(t)
+        assert "╭" in rendered and "╰" in rendered and "│" in rendered
+        assert "+" not in rendered and "|" not in rendered
+
+    def test_ascii_box_default(self) -> None:
+        """默认 ``box="ascii"`` 用纯 ASCII 字符渲染。"""
+        t = Table(show_header=True)
+        t.add_column("k")
+        t.add_row("v")
+        rendered = str(t)
+        assert "+" in rendered and "|" in rendered
+        assert "╭" not in rendered
+
+    def test_auto_box_unicode_terminal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``box="auto"`` 在支持 Unicode 的终端选用 round。"""
+        monkeypatch.setattr(console, "supports_unicode", lambda file=None: True)
+        t = Table(box="auto", show_header=False)
+        t.add_column("k")
+        t.add_row("v")
+        assert "╭" in str(t)
+
+    def test_auto_box_ascii_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``box="auto"`` 在不支持 Unicode 时降级为 ascii。"""
+        monkeypatch.setattr(console, "supports_unicode", lambda file=None: False)
+        t = Table(box="auto", show_header=False)
+        t.add_column("k")
+        t.add_row("v")
+        assert "+" in str(t)
+        assert "╭" not in str(t)
+
+    def test_unknown_box_falls_back_ascii(self) -> None:
+        """未知 box 值回退 ascii。"""
+        t = Table(box="invalid", show_header=False)
+        t.add_column("k")
+        t.add_row("v")
+        assert "+" in str(t)
+
+    def test_show_lines_draws_row_separators(self) -> None:
+        """``show_lines=True`` 数据行间绘制分隔线。"""
+        t = Table(show_header=False, box="ascii", show_lines=True)
+        t.add_column("k")
+        t.add_row("a")
+        t.add_row("b")
+        rendered = str(t)
+        lines = rendered.split("\n")
+        # 结构：顶线 / 行a / 分隔线 / 行b / 底线
+        assert lines[0] == "+---+"
+        assert lines[1] == "| a |"
+        assert lines[2] == "+---+"
+        assert lines[3] == "| b |"
+        assert lines[4] == lines[0]
+
+
+class TestTableNoWrapTruncation:
+    """``no_wrap`` 弹性列截断。"""
+
+    def test_no_wrap_column_truncated_to_width(self) -> None:
+        """超预算时 no_wrap 列截断并以省略号结尾。"""
+        t = Table(show_header=False, box=None, width=40)
+        t.add_column("fixed")
+        t.add_column("说明", no_wrap=True)
+        t.add_row("id", "x" * 60)
+        rendered = str(t)
+        assert "id" in rendered
+        assert "…" in rendered
+        # 每行不超过渲染预算
+        assert all(len(line) <= 40 for line in rendered.split("\n"))
+
+    def test_no_wrap_within_budget_not_truncated(self) -> None:
+        """未超预算时内容完整显示。"""
+        t = Table(show_header=False, box=None, width=80)
+        t.add_column("k")
+        t.add_column("说明", no_wrap=True)
+        t.add_row("id", "短说明")
+        rendered = str(t)
+        assert "短说明" in rendered
+        assert "…" not in rendered
+
+    def test_truncation_respects_chinese_width(self) -> None:
+        """截断按显示宽度计算（中文占 2 列）。"""
+        t = Table(show_header=False, box=None, width=20)
+        t.add_column("k")
+        t.add_column("说明", no_wrap=True)
+        t.add_row("id", "中" * 20)
+        rendered = str(t)
+        data_line = next(line for line in rendered.split("\n") if "中" in line)
+        assert len(data_line) <= 20
+
+    def test_fixed_columns_never_truncated(self) -> None:
+        """非 no_wrap 列始终完整显示。"""
+        t = Table(show_header=False, box=None, width=20)
+        t.add_column("k")
+        t.add_column("说明", no_wrap=True)
+        t.add_row("very_long_key", "y" * 40)
+        rendered = str(t)
+        assert "very_long_key" in rendered
+
+
+class TestSupportsUnicode:
+    """``supports_unicode`` 终端能力探测。"""
+
+    def test_legacy_windows_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """legacy Windows 一律返回 False。"""
+        monkeypatch.setattr(console, "_is_legacy_windows", lambda: True)
+        assert console.supports_unicode() is False
+
+    def test_stream_without_encoding_returns_true(self) -> None:
+        """无 encoding 属性的流（StringIO）按支持处理。"""
+        assert console.supports_unicode(io.StringIO()) is True
+
+    def test_utf8_stream_returns_true(self) -> None:
+        """UTF-8 流返回 True。"""
+        assert console.supports_unicode(io.TextIOWrapper(io.BytesIO(), encoding="utf-8")) is True
+
+    def test_gbk_stream_returns_false(self) -> None:
+        """ASCII 流不含 ╭（U+256D），返回 False。"""
+        assert console.supports_unicode(io.TextIOWrapper(io.BytesIO(), encoding="ascii")) is False
+
+    def test_cp437_stream_returns_false(self) -> None:
+        """cp437（IBM PC）流不含圆角制表符，返回 False。"""
+        assert console.supports_unicode(io.TextIOWrapper(io.BytesIO(), encoding="cp437")) is False
+
+    def test_invalid_encoding_name_returns_false(self) -> None:
+        """encoding 属性存在但编码名非法时返回 False（LookupError 路径）。"""
+
+        class _FakeStream:
+            encoding = "nonexistent-xyz"
+
+        assert console.supports_unicode(_FakeStream()) is False
+
+
+# ---------------------------------------------------------------------- #
 # Console.print
 # ---------------------------------------------------------------------- #
 
@@ -434,6 +578,26 @@ class TestConsolePrint:
         c = Console(file=buf)
         c.print("x", highlight=True, justify="center", soft_wrap=True, overflow="ellipsis", no_wrap=True)
         assert buf.getvalue() == "x\n"
+
+    def test_markup_false_writes_raw_text(self) -> None:
+        """``markup=False`` 原样输出，不解析 [...] 标签。"""
+        buf = io.StringIO()
+        buf.isatty = lambda: True  # type: ignore[method-assign]
+        with (
+            mock.patch.object(sys, "platform", "linux"),
+            mock.patch.object(console, "_enable_vt_mode", return_value=True),
+        ):
+            c = Console(file=buf)
+        c.print("b[/text/]", markup=False)
+        assert buf.getvalue() == "b[/text/]\n"
+
+    def test_markup_false_in_non_tty(self) -> None:
+        """``markup=False`` 非 tty 下同样原样输出。"""
+        buf = io.StringIO()
+        buf.isatty = lambda: False  # type: ignore[method-assign]
+        c = Console(file=buf)
+        c.print('b[/"b"/]', markup=False)
+        assert buf.getvalue() == 'b[/"b"/]\n'
 
     def test_ansi_color_when_tty(self) -> None:
         """tty 下 ANSI 转义码被输出（非 Windows 路径）。"""

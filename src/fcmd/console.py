@@ -8,9 +8,11 @@
 - ``Console.print(*args, **kwargs)``：解析 rich 风格 markup 子集
   （``[cyan]``/``[red]``/``[green]``/``[yellow]``/``[bold]``/``[dim]``/
   ``[magenta]``/``[bold cyan]`` 等），按当前环境着色输出。
-- ``Table``：``add_column`` / ``add_row``，ASCII 边框（``+``/``-``/``|``）
-  或无边框（``box=None``）渲染，支持 ``style`` / ``justify`` / ``no_wrap``
-  列选项（``no_wrap`` 当前忽略，仅签名兼容）。
+- ``Table``：``add_column`` / ``add_row``，支持三种边框——ASCII
+  （``+``/``-``/``|``，默认）、圆角 Unicode 制表符（``box="round"``）、
+  无边框（``box=None``）；``box="auto"`` 经 :func:`supports_unicode` 按
+  终端编码能力自动降级。支持 ``style`` / ``justify`` 列选项与
+  ``no_wrap`` 弹性列（超宽截断）、``show_lines`` 行间分隔线。
 
 着色策略：
 
@@ -28,11 +30,12 @@ from __future__ import annotations
 
 import ctypes
 import re
+import shutil
 import sys
 import unicodedata
 from typing import Any
 
-__all__ = ["Console", "Table", "get_console", "print_verbose"]
+__all__ = ["Console", "Table", "get_console", "print_verbose", "supports_unicode"]
 
 _console: Console | None = None
 
@@ -225,39 +228,110 @@ def _enable_vt_mode() -> bool:
 
 
 # ---------------------------------------------------------------------- #
+# Unicode 渲染能力探测与 box 字符集
+# ---------------------------------------------------------------------- #
+
+
+def supports_unicode(file: Any = None) -> bool:
+    """检测输出流是否支持 Unicode 制表符（round box / 树形字符）。
+
+    判定顺序：
+
+    - legacy Windows（Win7/8 conhost 不支持宽字符渲染）：返回 False。
+    - 流无 ``encoding`` 属性（如 ``io.StringIO``）：按支持处理。
+    - 用 ``╭``（U+256D，ascii / cp437 等窄编码不包含该字形；GBK /
+      UTF-8 均包含）试编码，失败则返回 False。
+
+    Parameters
+    ----------
+    file:
+        待探测的输出流；``None`` 使用 ``sys.stdout``。
+    """
+    if _is_legacy_windows():
+        return False
+    out = file if file is not None else sys.stdout
+    encoding = getattr(out, "encoding", None)
+    if not encoding:
+        return True
+    try:
+        "\u256d".encode(encoding)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
+
+
+# 边框字符集：ascii 为纯 ASCII（Win7/8 conhost 安全）；round 为圆角 Unicode
+# 制表符（``box="auto"`` 经 :func:`supports_unicode` 探测后选用）。
+_BOX_CHARS: dict[str, dict[str, str]] = {
+    "ascii": {
+        "h": "-",
+        "v": "|",
+        "top_l": "+",
+        "top_m": "+",
+        "top_r": "+",
+        "mid_l": "+",
+        "mid_m": "+",
+        "mid_r": "+",
+        "bot_l": "+",
+        "bot_m": "+",
+        "bot_r": "+",
+    },
+    "round": {
+        "h": "─",
+        "v": "│",
+        "top_l": "╭",
+        "top_m": "┬",
+        "top_r": "╮",
+        "mid_l": "├",
+        "mid_m": "┼",
+        "mid_r": "┤",
+        "bot_l": "╰",
+        "bot_m": "┴",
+        "bot_r": "╯",
+    },
+}
+
+
+# ---------------------------------------------------------------------- #
 # Table
 # ---------------------------------------------------------------------- #
 
 
 class Table:
-    """轻量 ASCII 表格，兼容 rich ``Table`` 的常用子集。
+    """轻量表格，兼容 rich ``Table`` 的常用子集。
 
     支持的构造参数（与 rich ``Table`` 签名兼容）：
 
     - ``title``：表格标题（可选）。
     - ``show_header``：是否显示表头行（默认 True）。
     - ``header_style``：表头样式（如 ``"bold"``）。
-    - ``show_lines``：是否显示行间分隔线（当前固定不显示，签名兼容）。
-    - ``box``：边框样式，``None`` 表示无边框（对齐输出），非 None 表示
-      ASCII 边框（``+``/``-``/``|``）。
+    - ``show_lines``：是否显示数据行间分隔线（默认 False）。
+    - ``box``：边框样式——``None`` 无边框（对齐输出）；``"ascii"`` 纯
+      ASCII 边框（默认，Win7/8 安全）；``"round"`` 圆角 Unicode 制表符；
+      ``"auto"`` 经 :func:`supports_unicode` 探测自动选用 round / ascii。
+    - ``width``：渲染宽度预算（列宽截断依据）；``None`` 用终端宽度。
 
     列选项（``add_column``）：``style``（列样式）、``justify``（对齐：
-    left/center/right）、``no_wrap``（当前忽略）。
+    left/center/right）、``no_wrap``（表格总宽超预算时该列截断并以
+    ``…`` 结尾，其余列保持完整）。
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 rich Table 签名兼容，参数数量对齐
         self,
         *,
         title: str | None = None,
         show_header: bool = True,
         header_style: str | None = None,
-        show_lines: bool = False,  # noqa: ARG002 签名兼容，当前不绘制行间分隔
+        show_lines: bool = False,
         box: Any = "ascii",
+        width: int | None = None,
     ) -> None:
         self.title = title
         self.show_header = show_header
         self.header_style = header_style or ""
+        self.show_lines = show_lines
         self.box = box
+        self.width = width
         self._columns: list[dict[str, Any]] = []
         self._rows: list[tuple[str, ...]] = []
 
@@ -266,18 +340,36 @@ class Table:
         header: str,
         *,
         style: str | None = None,
-        no_wrap: bool = False,  # noqa: ARG002 签名兼容，当前忽略
+        no_wrap: bool = False,
         justify: str = "left",
     ) -> None:
-        """添加列定义。"""
-        self._columns.append({"header": header, "style": style, "justify": justify})
+        """添加列定义。
+
+        ``no_wrap=True`` 表示该列在表格总宽超过渲染预算时截断（``…`` 结尾），
+        为长文本列（说明 / 别名等）预留弹性空间；其余列始终完整显示。
+        """
+        self._columns.append({"header": header, "style": style, "justify": justify, "no_wrap": no_wrap})
 
     def add_row(self, *cells: Any) -> None:
         """添加一行数据（自动转 str）。"""
         self._rows.append(tuple(str(c) for c in cells))
 
+    def _resolve_box(self) -> str:
+        """解析实际使用的边框字符集键（``auto`` 按终端能力探测）。"""
+        if self.box == "auto":
+            return "round" if supports_unicode() else "ascii"
+        if isinstance(self.box, str) and self.box in _BOX_CHARS:
+            return self.box
+        return "ascii"
+
+    def _render_width(self) -> int:
+        """渲染宽度预算：显式 ``width`` 优先，否则取终端宽度。"""
+        if self.width is not None:
+            return self.width
+        return shutil.get_terminal_size().columns
+
     def _col_widths(self) -> list[int]:
-        """计算每列最大可见宽度（含表头）。"""
+        """计算每列最终宽度（含表头；no_wrap 列超预算时收缩）。"""
         widths = []
         for i, col in enumerate(self._columns):
             w = _display_width(_strip_markup(col["header"]))
@@ -285,10 +377,52 @@ class Table:
                 if i < len(row):
                     w = max(w, _display_width(_strip_markup(row[i])))
             widths.append(w)
+        widths = self._shrink_no_wrap(widths)
         return widths
 
+    def _shrink_no_wrap(self, widths: list[int]) -> list[int]:
+        """表格总宽超预算时按自然宽度比例收缩 no_wrap 列（单列下限 4）。"""
+        flex = {i for i, col in enumerate(self._columns) if col["no_wrap"]}
+        if not flex:
+            return widths
+        if self.box is None:
+            overhead = 2 * (len(widths) - 1)
+        else:
+            overhead = 3 * len(widths) + 1
+        total = overhead + sum(widths)
+        limit = self._render_width()
+        if total <= limit:
+            return widths
+        fixed = sum(w for i, w in enumerate(widths) if i not in flex)
+        budget = max(4 * len(flex), limit - overhead - fixed)
+        flex_total = sum(widths[i] for i in flex)
+        scale = budget / flex_total
+        if scale >= 1:
+            return widths
+        return [min(w, max(4, int(w * scale))) if i in flex else w for i, w in enumerate(widths)]
+
+    def _prepare_cell(self, i: int, text: str, width: int) -> str:
+        """渲染前处理单元格：no_wrap 列超宽时截断（丢失 markup 样式）。"""
+        if self._columns[i]["no_wrap"] and _display_width(_strip_markup(text)) > width:
+            return self._truncate_visible(text, width)
+        return text
+
     @staticmethod
-    def _pad(text: str, width: int, justify: str) -> str:
+    def _truncate_visible(text: str, width: int) -> str:
+        """按显示宽度截断纯文本，超出部分以 ``…`` 结尾。"""
+        if width <= 1:
+            return "…"
+        used = 0
+        out: list[str] = []
+        for ch in _strip_markup(text):
+            w = _display_width(ch)
+            if used + w > width - 1:
+                break
+            out.append(ch)
+            used += w
+        return "".join(out) + "…"
+
+    def _pad(self, text: str, width: int, justify: str) -> str:
         """按显示宽度填充对齐（保留 markup 标签，按纯文本宽度计算）。"""
         visible = _strip_markup(text)
         pad = width - _display_width(visible)
@@ -302,6 +436,24 @@ class Table:
             return " " * left + text + " " * right
         return text + " " * pad  # left
 
+    def _row_cells(self, row: tuple[str, ...], widths: list[int]) -> list[str]:
+        """把一行数据按列宽预处理（截断）并对齐填充。"""
+        parts = []
+        for i, col in enumerate(self._columns):
+            cell = self._prepare_cell(i, row[i] if i < len(row) else "", widths[i])
+            parts.append(self._pad(cell, widths[i], col["justify"]))
+        return parts
+
+    def _header_cells(self, widths: list[int]) -> list[str]:
+        """按列宽对齐填充表头（应用 header_style）。"""
+        parts = []
+        for i, col in enumerate(self._columns):
+            header = (
+                f"[{self.header_style}]{col['header']}[/{self.header_style}]" if self.header_style else col["header"]
+            )
+            parts.append(self._pad(header, widths[i], col["justify"]))
+        return parts
+
     def _render_no_box(self) -> str:
         """无边框渲染：列间两空格分隔。"""
         widths = self._col_widths()
@@ -310,54 +462,31 @@ class Table:
             lines.append(self.title)
             lines.append("")
         if self.show_header:
-            parts = [
-                self._pad(
-                    f"[{self.header_style}]{col['header']}[/{self.header_style}]"
-                    if self.header_style
-                    else col["header"],
-                    widths[i],
-                    col["justify"],
-                )
-                for i, col in enumerate(self._columns)
-            ]
-            lines.append("  ".join(parts))
+            lines.append("  ".join(self._header_cells(widths)))
         for row in self._rows:
-            parts = [
-                self._pad(row[i] if i < len(row) else "", widths[i], self._columns[i]["justify"])
-                for i in range(len(self._columns))
-            ]
-            lines.append("  ".join(parts))
+            lines.append("  ".join(self._row_cells(row, widths)))
         return "\n".join(lines)
 
     def _render_boxed(self) -> str:
-        """ASCII 边框渲染：``+``/``-``/``|``。"""
+        """带边框渲染：ascii（``+``/``-``/``|``）或 round（圆角制表符）。"""
+        b = _BOX_CHARS[self._resolve_box()]
         widths = self._col_widths()
-        sep = "+" + "+".join("-" * (w + 2) for w in widths) + "+"
+        sep_top = b["top_l"] + b["top_m"].join(b["h"] * (w + 2) for w in widths) + b["top_r"]
+        sep_mid = b["mid_l"] + b["mid_m"].join(b["h"] * (w + 2) for w in widths) + b["mid_r"]
+        sep_bot = b["bot_l"] + b["bot_m"].join(b["h"] * (w + 2) for w in widths) + b["bot_r"]
         lines: list[str] = []
         if self.title:
             lines.append(self.title)
             lines.append("")
-        lines.append(sep)
+        lines.append(sep_top)
         if self.show_header:
-            parts = [
-                self._pad(
-                    f"[{self.header_style}]{col['header']}[/{self.header_style}]"
-                    if self.header_style
-                    else col["header"],
-                    widths[i],
-                    col["justify"],
-                )
-                for i, col in enumerate(self._columns)
-            ]
-            lines.append("| " + " | ".join(parts) + " |")
-            lines.append(sep)
-        for row in self._rows:
-            parts = [
-                self._pad(row[i] if i < len(row) else "", widths[i], self._columns[i]["justify"])
-                for i in range(len(self._columns))
-            ]
-            lines.append("| " + " | ".join(parts) + " |")
-        lines.append(sep)
+            lines.append(b["v"] + " " + f" {b['v']} ".join(self._header_cells(widths)) + " " + b["v"])
+            lines.append(sep_mid)
+        for idx, row in enumerate(self._rows):
+            lines.append(b["v"] + " " + f" {b['v']} ".join(self._row_cells(row, widths)) + " " + b["v"])
+            if self.show_lines and idx < len(self._rows) - 1:
+                lines.append(sep_mid)
+        lines.append(sep_bot)
         return "\n".join(lines)
 
     def __str__(self) -> str:
@@ -501,24 +630,30 @@ class Console:
         """输出到 console，支持 rich 风格 markup。
 
         支持的关键字参数：``end``（默认 ``\\n``）、``sep``（默认空格）、
-        ``style``（整体样式）。其他 rich 关键字签名兼容但忽略。
+        ``style``（整体样式）、``markup``（默认 True；False 表示纯文本
+        原样输出，不做 markup 解析，用于 mermaid 等含 ``[...]`` 字符的
+        内容）。其他 rich 关键字签名兼容但忽略。
 
         若首个参数是 :class:`Table` 实例，渲染表格后输出。
         """
         end = kwargs.pop("end", "\n")
         sep = kwargs.pop("sep", " ")
         style = kwargs.pop("style", None)
+        markup = kwargs.pop("markup", True)
         # 其余 kwargs（highlight/justify/soft_wrap/overflow/no_wrap 等）忽略
 
         if len(args) == 1 and isinstance(args[0], Table):
-            text = str(args[0])
+            text = str(args[0])  # 渲染结果仍含表头/单元格 markup，走正常解析
         else:
             text = sep.join(str(a) for a in args)
-            if style:
+            if style and markup:
                 text = f"[{style}]{text}[/{style}]"
 
         out = self._out
-        if self._legacy and self._color_enabled:
+        if not markup:
+            # 纯文本路径：legacy 与 ANSI 模式均原样写出（文本中无样式标签）
+            out.write(text + end)
+        elif self._legacy and self._color_enabled:
             self._write_legacy(text, end)
         else:
             out.write(self._render_text(text) + end)
