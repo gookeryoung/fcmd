@@ -1,9 +1,10 @@
 """envdev - 开发环境镜像源配置工具。
 
-子命令整合为四组操作入口：
+子命令整合为五组操作入口：
 
-- ``lang <语言>``：语言类一键配置（python/js/rust/go/java/node）
+- ``lang <语言>``：语言类一键配置（python/js/rust/go/java/node），镜像默认 ``auto`` 自动选优
 - ``app <应用>``：应用/系统类一键配置（linux-mirror/qt-libs/fonts/docker/docker-mirror/openssh/remote）
+- ``mirror``：探测教育网镜像站点（可访问性 + 访问速度排名）
 - ``check``：检测开发环境配置状态（工具链 + 镜像源，只读）
 - ``all``：一键配置所有环境
 
@@ -15,12 +16,14 @@
 
 示例
 ----
-    fcmd envdev lang python --mirror tsinghua     # 一键配置 Python 环境（pip/uv + Conda）
-    fcmd envdev lang js                           # 一键配置 JavaScript 环境（Bun）
+    fcmd envdev lang python                      # 自动探测并选用最快的 Python 镜像源
+    fcmd envdev lang python --mirror tsinghua    # 指定镜像源配置 Python 环境（pip/uv + Conda）
+    fcmd envdev lang js                          # 一键配置 JavaScript 环境（Bun）
     fcmd envdev lang rust --mirror tsinghua nightly  # 一键配置 Rust 环境（镜像源 + 工具链）
-    fcmd envdev app remote                        # 一键配置 Linux 远程桌面（xrdp + Xfce）
-    fcmd envdev check                             # 检测开发环境配置状态
-    fcmd envdev all                               # 一键配置所有环境
+    fcmd envdev mirror                           # 探测教育网镜像站点可访问性与速度
+    fcmd envdev app remote                       # 一键配置 Linux 远程桌面（xrdp + Xfce）
+    fcmd envdev check                            # 检测开发环境配置状态
+    fcmd envdev all                              # 一键配置所有环境
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ import getpass
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -41,12 +45,14 @@ from fcmd.cli.dev.envdev_core import (
     mirror_supported,
     pip_config_path,
 )
-from fcmd.cli.dev.envdev_go import setup_go_env
-from fcmd.cli.dev.envdev_java import setup_java_env
+from fcmd.cli.dev.envdev_go import _GO_PROXY_MIRRORS, setup_go_env
+from fcmd.cli.dev.envdev_java import _MAVEN_MIRRORS, setup_java_env
 from fcmd.cli.dev.envdev_node import setup_node_env
+from fcmd.cli.net.urlcheck import check_urls
 from fcmd.models import run_command
 
 __all__ = [
+    "check_cernet_mirrors",
     "check_env",
     "install_linux_docker",
     "install_linux_fonts",
@@ -193,6 +199,80 @@ _RUSTUP_DOWNLOAD_URL_WINDOWS: str = "https://static.rust-lang.org/rustup/dist/x8
 _BUN_NPM_REGISTRY: str = "https://registry.npmmirror.com"
 _BUN_INSTALL_SCRIPT_URL: str = "https://bun.sh/install"
 _PLAYWRIGHT_DOWNLOAD_HOST: str = "https://npmmirror.com/mirrors/playwright"
+
+# 教育网镜像站点列表（站名 -> 站点首页）。
+# 来源：https://help.mirrors.cernet.edu.cn/（MirrorZ，CERNET 教育网镜像帮助站）
+# 收录的参与镜像站点，供 ``envdev mirror`` 探测与镜像自动选优参考。
+_CERNET_MIRROR_SITES: dict[str, str] = {
+    "tsinghua": "https://mirrors.tuna.tsinghua.edu.cn",
+    "ustc": "https://mirrors.ustc.edu.cn",
+    "zju": "https://mirrors.zju.edu.cn",
+    "bfsu": "https://mirrors.bfsu.edu.cn",
+    "sjtu": "https://mirror.sjtu.edu.cn",
+    "nju": "https://mirror.nju.edu.cn",
+    "pku": "https://mirrors.pku.edu.cn",
+    "hit": "https://mirrors.hit.edu.cn",
+    "cqu": "https://mirrors.cqu.edu.cn",
+    "lzu": "https://mirror.lzu.edu.cn",
+}
+
+# Docker 镜像加速候选（探测可达性后按速度写入 daemon.json）
+_DOCKER_REGISTRY_MIRRORS: list[str] = [
+    "https://registry.cn-hangzhou.aliyuncs.com",
+    "https://docker.m.daocloud.io",
+    "https://hub-mirror.c.163.com",
+]
+_DOCKER_DAEMON_PATH: Path = Path("/etc/docker/daemon.json")
+
+# 各语言镜像自动选优的探测地址（镜像名 -> 实际服务 URL）
+_LANG_MIRROR_PROBE_URLS: dict[str, Callable[[], dict[str, str]]] = {
+    "python": lambda: dict(_PIP_INDEX_URLS),
+    "rust": lambda: {name: cfg["RUSTUP_DIST_SERVER"] for name, cfg in _RUSTUP_MIRRORS.items()},
+    "go": lambda: {name: url.split(",", 1)[0] for name, url in _GO_PROXY_MIRRORS.items()},
+    "java": lambda: dict(_MAVEN_MIRRORS),
+}
+
+# 镜像自动选优全部不可达时的兜底默认值（与各语言一键命令的原默认一致）
+_LANG_DEFAULT_MIRRORS: dict[str, str] = {
+    "python": "aliyun",
+    "rust": "aliyun",
+    "go": "goproxy",
+    "java": "aliyun",
+}
+
+
+def _auto_select_mirror(language: str, timeout: float = 2.0) -> str | None:
+    """并发探测语言支持的全部镜像，按可访问性与速度自动选优。
+
+    打印探测排名，返回最快可达的镜像名；全部不可达时返回 ``None``。
+    仅支持 ``_LANG_MIRROR_PROBE_URLS`` 中登记的语言（js/node 镜像固定
+    npmmirror，无可选项，不参与探测）。
+
+    Parameters
+    ----------
+    language:
+        语言名：python / rust / go / java
+    timeout:
+        单个镜像的探测超时秒数（默认 ``2``）
+
+    Returns
+    -------
+    str | None
+        最快可达的镜像名；全部不可达时返回 ``None``。
+    """
+    targets = _LANG_MIRROR_PROBE_URLS[language]()
+    name_by_url = {url: name for name, url in targets.items()}
+    results = check_urls(list(targets.values()), timeout=timeout)
+
+    print(f"[{language} 镜像自动选优]（按可访问性与访问速度排序）")
+    selected: str | None = None
+    for index, (url, ok, latency) in enumerate(results, start=1):
+        name = name_by_url[url]
+        speed = f"{latency:.0f} ms" if ok else "-"
+        print(f"  {index}. {name:<12} {url}  {'可访问' if ok else '不可访问'}  {speed}")
+        if ok and selected is None:
+            selected = name
+    return selected
 
 
 # ============================================================================
@@ -527,29 +607,35 @@ def install_linux_docker() -> None:
 def setup_docker_mirror() -> None:
     """配置 Docker 镜像加速源（仅 Linux）。
 
-    写入 ``/etc/docker/daemon.json`` 配置 registry-mirrors（阿里云镜像加速）。
-    Windows/macOS 提示手动在 Docker Desktop 设置中配置。
+    先并发探测候选加速源的可访问性与访问速度，仅将可达项按速度排序写入
+    ``/etc/docker/daemon.json`` 的 ``registry-mirrors``；全部不可达时保留
+    完整候选列表并提示。Windows/macOS 提示手动在 Docker Desktop 设置中配置。
     """
     if not sys.platform.startswith("linux"):
         print("Linux 专用：请在 Docker Desktop 设置 > Docker Engine 中添加 registry-mirrors")
         return
 
-    import json as _json
+    # 探测候选加速源，仅保留可达项并按速度排序写入
+    results = check_urls(_DOCKER_REGISTRY_MIRRORS, timeout=2.0)
+    mirrors = [url for url, ok, _latency in results if ok]
+    if mirrors:
+        print("Docker 加速源探测结果（按访问速度排序）:")
+        for url, ok, latency in results:
+            speed = f"{latency:.0f} ms" if ok else "-"
+            print(f"  {url}  {'可访问' if ok else '不可访问'}  {speed}")
+    else:
+        print("加速源探测全部不可达，保留完整候选列表")
+        mirrors = list(_DOCKER_REGISTRY_MIRRORS)
 
-    _DOCKER_REGISTRY_MIRRORS: list[str] = [
-        "https://registry.cn-hangzhou.aliyuncs.com",
-        "https://docker.m.daocloud.io",
-        "https://hub-mirror.c.163.com",
-    ]
-    _DOCKER_DAEMON_PATH: Path = Path("/etc/docker/daemon.json")
-
-    new_config = {"registry-mirrors": _DOCKER_REGISTRY_MIRRORS}
+    new_config = {"registry-mirrors": mirrors}
 
     if is_dry_run():
-        print(f"[dry-run] 写入 {_DOCKER_DAEMON_PATH}")
+        print(f"[dry-run] 写入 {_DOCKER_DAEMON_PATH}: registry-mirrors={mirrors}")
         return
 
     _DOCKER_DAEMON_PATH.parent.mkdir(parents=True, exist_ok=True)
+    import json as _json
+
     _DOCKER_DAEMON_PATH.write_text(_json.dumps(new_config, indent=2), encoding="utf-8")
     run_command(["sudo", "systemctl", "restart", "docker"])
     print(f"Docker 镜像加速已配置 -> {_DOCKER_DAEMON_PATH}")
@@ -686,6 +772,47 @@ def setup_linux_remote() -> None:
 
 
 # ============================================================================
+# 镜像站点探测（mirror）
+# ============================================================================
+
+
+@fcmd.tool("envdev", subcommand="mirror", help="探测教育网镜像站点（可访问性 + 访问速度排名）")
+def check_cernet_mirrors(timeout: float = 3.0) -> int:
+    """并发探测教育网镜像站点列表（只读，不做任何配置变更）。
+
+    站点列表取自 MirrorZ（``help.mirrors.cernet.edu.cn``，CERNET 教育网
+    镜像帮助站）收录的参与镜像站。输出按访问速度排序的探测结果，
+    供选择镜像源参考。
+
+    Parameters
+    ----------
+    timeout:
+        单个站点的探测超时秒数（默认 ``3``）
+
+    Returns
+    -------
+    int
+        存在可达站点返回 ``0``，全部不可达返回 ``1``。
+    """
+    name_by_url = {url: name for name, url in _CERNET_MIRROR_SITES.items()}
+    results = check_urls(list(_CERNET_MIRROR_SITES.values()), timeout=timeout)
+
+    print("[教育网镜像站点探测]（来源: help.mirrors.cernet.edu.cn，按访问速度排序）")
+    reachable = 0
+    for index, (url, ok, latency) in enumerate(results, start=1):
+        if ok:
+            reachable += 1
+        speed = f"{latency:.0f} ms" if ok else "-"
+        print(f"  {index}. {name_by_url[url]:<10} {url}  {'可访问' if ok else '不可访问'}  {speed}")
+
+    if reachable == 0:
+        print("\n全部镜像站点不可达，请检查网络")
+        return 1
+    print(f"\n可达 {reachable}/{len(results)} 个站点")
+    return 0
+
+
+# ============================================================================
 # 分组路由（lang / app）
 # ============================================================================
 
@@ -693,7 +820,7 @@ def setup_linux_remote() -> None:
 @fcmd.tool("envdev", subcommand="lang", help="语言类一键配置（python/js/rust/go/java/node）")
 def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一键命令
     language: Literal["python", "js", "rust", "go", "java", "node"],
-    mirror: str = "aliyun",
+    mirror: str = "auto",
     rust_version: str = "stable",
     install_nvm: bool = False,
     install_gvm: bool = False,
@@ -710,14 +837,18 @@ def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一�
     - ``java``：Maven 镜像源（可选安装 SDKMAN）
     - ``node``：npm/yarn/pnpm 镜像源（可选安装 nvm）
 
+    镜像源默认 ``auto``：配置前先并发探测该语言全部支持镜像的可访问性与
+    访问速度，自动选用最快的可达镜像；全部不可达时回退各语言默认镜像
+    （python/rust/java -> aliyun，go -> goproxy）。
+
     Parameters
     ----------
     language:
         语言名：python / js / rust / go / java / node
     mirror:
-        镜像源名称（默认 aliyun）；各语言支持列表不同，
-        不支持时打印提示跳过。注意：``go`` 原独立命令默认 goproxy，
-        经 ``lang`` 调用时默认为 aliyun（亦受支持），可用 ``--mirror goproxy`` 还原
+        镜像源名称（默认 ``auto`` 自动选优）；``auto`` 之外为显式指定，
+        各语言支持列表不同，不支持时打印提示跳过。注意：``go`` 原独立命令
+        默认 goproxy，经 ``lang`` 显式指定时亦受支持，可用 ``--mirror goproxy`` 还原
     rust_version:
         Rust 版本：stable / nightly / beta（默认 stable，仅 ``rust`` 使用）
     install_nvm:
@@ -727,6 +858,10 @@ def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一�
     install_sdkman:
         是否同时安装 SDKMAN（仅 ``java`` 使用）
     """
+    if mirror == "auto" and language in _LANG_MIRROR_PROBE_URLS:
+        mirror = _auto_select_mirror(language) or _LANG_DEFAULT_MIRRORS[language]
+        print(f"已选用镜像: {mirror}")
+
     if language == "python":
         setup_python_env(mirror)
     elif language == "js":
@@ -757,7 +892,7 @@ def setup_app_env(
     - ``qt-libs``：安装 Qt 依赖库
     - ``fonts``：安装中文字体
     - ``docker``：安装 Docker 并加入 docker 用户组
-    - ``docker-mirror``：配置 Docker 镜像加速源
+    - ``docker-mirror``：探测候选加速源可达性后写入 Docker 镜像加速配置
     - ``openssh``：安装并启动 OpenSSH Server
     - ``remote``：一键配置远程桌面（xrdp + Xfce）
 

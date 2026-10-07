@@ -22,6 +22,8 @@ import pytest
 
 import fcmd as fx
 import fcmd.cli.dev.envdev
+import fcmd.cli.dev.envdev_core
+import fcmd.cli.net.urlcheck
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
 
@@ -68,9 +70,9 @@ class TestToolsRegistration:
             assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
 
     def test_envdev_public_subcommands(self) -> None:
-        """envdev 公开子命令应注册（分组入口 lang/app/check/all）。"""
+        """envdev 公开子命令应注册（分组入口 lang/app/check/all/mirror）。"""
         subs = fx.list_subcommands("envdev")
-        assert subs == ["all", "app", "check", "lang"]
+        assert subs == ["all", "app", "check", "lang", "mirror"]
 
     def test_envdev_hidden_subcommands(self) -> None:
         """envdev 隐藏子命令应注册（镜像源/下载/安装明细步骤 + Linux 专用）。"""
@@ -784,3 +786,210 @@ class TestOpensshAndRemote:
         assert calls == ["uninstall", "xfce", "xrdp", "lightdm"]
         captured = capsys.readouterr()
         assert "远程桌面配置完成" in captured.out
+
+
+# ============================================================================ #
+# 镜像站点探测（mirror）测试
+# ============================================================================ #
+def _fake_check_urls(
+    probe: dict[str, tuple[bool, float]],
+) -> Any:
+    """根据 ``{url: (可达, 延迟)}`` 构造 check_urls 替身。
+
+    返回与 check_urls 相同签名的函数：仅对请求中的 URL 生成结果，
+    按可达优先 + 延迟升序排序。
+    """
+
+    def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
+        results = [(url, *probe[url]) for url in urls if url in probe]
+        return sorted(results, key=lambda r: (not r[1], r[2]))
+
+    return fake
+
+
+class TestCheckCernetMirrors:
+    """check_cernet_mirrors 教育网镜像站点探测测试。"""
+
+    def test_probe_mixed(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """混合可达性输出按速度排序，返回 0。"""
+        sites = fcmd.cli.dev.envdev._CERNET_MIRROR_SITES
+        urls = list(sites.values())
+        probe = {url: (True, 50.0 * (len(urls) - i)) for i, url in enumerate(urls)}
+        probe[urls[3]] = (False, fcmd.cli.net.urlcheck.unreachable_latency())
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.cli.dev.envdev.check_cernet_mirrors()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "教育网镜像站点探测" in out
+        assert "help.mirrors.cernet.edu.cn" in out
+        assert "可达" in out
+
+    def test_probe_all_unreachable(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """全部不可达时返回 1 并提示检查网络。"""
+        probe = {
+            url: (False, fcmd.cli.net.urlcheck.unreachable_latency())
+            for url in fcmd.cli.dev.envdev._CERNET_MIRROR_SITES.values()
+        }
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.cli.dev.envdev.check_cernet_mirrors()
+        assert rc == 1
+        assert "全部镜像站点不可达" in capsys.readouterr().out
+
+
+# ============================================================================ #
+# 镜像自动选优（lang mirror=auto）测试
+# ============================================================================ #
+class TestAutoMirror:
+    """setup_lang_env 镜像自动选优测试。"""
+
+    def test_auto_selects_fastest(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """默认 auto 时探测全部支持镜像并选用最快的可达镜像。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        urls = fcmd.cli.dev.envdev._PIP_INDEX_URLS
+        probe = {url: (False, fcmd.cli.net.urlcheck.unreachable_latency()) for url in urls.values()}
+        # tsinghua 最快可达，aliyun 次之
+        probe[urls["tsinghua"]] = (True, 20.0)
+        probe[urls["aliyun"]] = (True, 80.0)
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        fcmd.cli.dev.envdev.setup_lang_env(language="python")
+        out = capsys.readouterr().out
+        assert "镜像自动选优" in out
+        assert "已选用镜像: tsinghua" in out
+        assert _fake_persist_env["PIP_INDEX_URL"] == urls["tsinghua"]
+
+    def test_auto_fallback_when_all_unreachable(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """全部镜像不可达时回退语言默认镜像。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        probe = {
+            url: (False, fcmd.cli.net.urlcheck.unreachable_latency())
+            for url in fcmd.cli.dev.envdev._PIP_INDEX_URLS.values()
+        }
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        fcmd.cli.dev.envdev.setup_lang_env(language="python")
+        out = capsys.readouterr().out
+        assert "已选用镜像: aliyun" in out
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
+
+    def test_explicit_mirror_skips_probe(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """显式指定镜像时不触发探测。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        called: list[list[str]] = []
+
+        def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
+            called.append(list(urls))
+            return []
+
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", fake)
+
+        fcmd.cli.dev.envdev.setup_lang_env(language="python", mirror="ustc")
+        assert called == []
+        assert "自动选优" not in capsys.readouterr().out
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://pypi.mirrors.ustc.edu.cn/simple/"
+
+    def test_js_skips_probe(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """js 镜像固定 npmmirror，auto 时不触发探测。"""
+        called: list[list[str]] = []
+
+        def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
+            called.append(list(urls))
+            return []
+
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", fake)
+        monkeypatch.setattr("fcmd.cli.dev.envdev._setup_bun_mirror", lambda: None)
+        monkeypatch.setattr("fcmd.cli.dev.envdev._install_bun", lambda: None)
+
+        fcmd.cli.dev.envdev.setup_lang_env(language="js")
+        assert called == []
+
+
+# ============================================================================ #
+# Docker 镜像加速预探测测试
+# ============================================================================ #
+class TestDockerMirrorProbe:
+    """setup_docker_mirror 加速源预探测测试。"""
+
+    def test_writes_reachable_sorted(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """仅写入可达加速源并按速度排序。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        daemon_path = tmp_path / "etc" / "docker" / "daemon.json"
+        monkeypatch.setattr("fcmd.cli.dev.envdev._DOCKER_DAEMON_PATH", daemon_path)
+
+        candidates = fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS
+        probe = {candidates[0]: (True, 90.0), candidates[1]: (True, 30.0), candidates[2]: (False, 999.0)}
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
+
+        fcmd.cli.dev.envdev.setup_docker_mirror()
+        out = capsys.readouterr().out
+        assert "探测结果" in out
+        assert daemon_path.exists()
+        content = daemon_path.read_text(encoding="utf-8")
+        assert content.index(candidates[1]) < content.index(candidates[0])
+        assert candidates[2] not in content
+        assert any("systemctl" in " ".join(c) for c in calls)
+
+    def test_all_unreachable_keeps_full_list(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """全部不可达时保留完整候选列表。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        daemon_path = tmp_path / "etc" / "docker" / "daemon.json"
+        monkeypatch.setattr("fcmd.cli.dev.envdev._DOCKER_DAEMON_PATH", daemon_path)
+
+        probe = dict.fromkeys(fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS, (False, 999.0))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run([]))
+
+        fcmd.cli.dev.envdev.setup_docker_mirror()
+        out = capsys.readouterr().out
+        assert "全部不可达" in out
+        content = daemon_path.read_text(encoding="utf-8")
+        for url in fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS:
+            assert url in content
+
+    def test_dry_run_skips_probe_writes(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """dry-run 下探测照常执行但不写文件。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        fcmd.cli.dev.envdev_core.set_dry_run(True)
+        try:
+            daemon_path = tmp_path / "etc" / "docker" / "daemon.json"
+            monkeypatch.setattr("fcmd.cli.dev.envdev._DOCKER_DAEMON_PATH", daemon_path)
+            candidates = fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS
+            probe = {candidates[0]: (True, 30.0), candidates[1]: (False, 999.0), candidates[2]: (False, 999.0)}
+            monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+            fcmd.cli.dev.envdev.setup_docker_mirror()
+            out = capsys.readouterr().out
+            assert "[dry-run]" in out
+            assert candidates[0] in out
+            assert not daemon_path.exists()
+        finally:
+            fcmd.cli.dev.envdev_core.set_dry_run(False)

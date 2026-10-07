@@ -6,6 +6,9 @@
 [Unreleased]
 ------------
 
+- ``feat``: 新增 ``urlcheck`` 工具——URL 可访问性与访问速度检测（HEAD 优先、被拒回退 GET，收到任意 HTTP 响应判可达，并发探测 + 按延迟排序）
+- ``feat(envdev)``: 新增 ``mirror`` 子命令——探测教育网镜像站点列表（取自 MirrorZ ``help.mirrors.cernet.edu.cn``）的可访问性与速度；``lang`` 镜像参数默认 ``auto`` 自动选优（并发探测该语言支持镜像，选用最快可达项，全部不可达回退原默认）；``app docker-mirror`` 改为先探测候选加速源，仅写入可达项并按速度排序
+
 - ``refactor(envdev)``: 子命令整合为 ``lang``/``app``/``check``/``all`` 四个分组入口——语言类（python/js/rust/go/java/node）归入 ``lang``，应用/系统类（linux-mirror/qt-libs/fonts/docker/docker-mirror/openssh/remote）归入 ``app``，环境检测由 ``verify`` 更名 ``check``；细粒度步骤命令保持隐藏子命令
 - ``refactor``: 调度引擎采用标准库 ``graphlib.TopologicalSorter`` 替换两处自实现的 Kahn 拓扑排序（``dag._topological_layers`` 与 ``_dependency_runner`` 的增量就绪集簿记），消除"造轮子"
 - ``refactor``: 6 个无状态单方法 Runner 类（``SyncTaskRunner``/``AsyncTaskRunner``/三个 ``LayerRunner``/``DependencyRunner``）收敛为模块级函数；``_filter_and_sort`` 重命名为 ``_build_spec_map`` 并去除冗余 ``to_run``

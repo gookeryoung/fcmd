@@ -86,7 +86,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-58 个工具（其中 46 个为 Python 模块，`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool` 纯 exec 与 compute 工具及 `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo` action 原语工具由 DSL 声明），按用途分组：
+59 个工具（其中 47 个为 Python 模块，`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool` 纯 exec 与 compute 工具及 `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo` action 原语工具由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -168,6 +168,7 @@ fcmd completion --shell fish | source         # fish
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
 | `iptool` | - | IP 地址工具（本机 IP/公网 IP/子网计算） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
+| `urlcheck` | - | URL 可访问性与访问速度检测（HEAD/GET 探测 + 并发测速排序，供镜像源选优） |
 | `websave` | - | 网页内容保存（主页及同源相关子页面，过滤广告/静态资源） |
 | `lscalc` | - | LS-DYNA 计算（run/mpi/status） |
 | `dockercmd` | - | Docker 操作（login/push/pull，镜像仓库通用） |
@@ -177,7 +178,7 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `gittool` | - | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
-| `envdev` | - | 开发环境一键配置（分组入口 lang/app/check/all，镜像源 + 工具链，Linux 含系统依赖） |
+| `envdev` | - | 开发环境一键配置（分组入口 lang/app/mirror/check/all，镜像自动选优 + 教育网镜像探测 + 工具链，Linux 含系统依赖） |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |
 
