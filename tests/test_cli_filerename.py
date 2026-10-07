@@ -1,455 +1,221 @@
-"""filerename 工具测试。
+"""filerename 工具测试（DSL 内建动作声明 commands/filerename.toml）。
 
-验证 ``fcmd.cli.fileops.filerename`` 模块：
-- 工具注册与三子命令结构（replace/insert/case）
-- ``_safe_rename`` 安全重命名（同名跳过/目标已存在/预览模式）
-- ``replace_pattern`` 正则替换（匹配/不匹配/反向引用）
-- ``insert_text`` 位置插入（开头/中间/末尾/空文本/越界）
-- ``change_case`` 大小写转换（lower/upper/title/无效模式）
-- CLI 子命令端到端（含 ``--preview``）
+验证 ``fcmd filerename`` 的 DSL action 迁移语义：
+- 工具注册（多子命令 DSL 工具，内置声明）
+- 声明契约：``__dsl_action__`` 标记、无 cmd（fn 任务形态）
+- 执行语义：replace/insert/case 三模式、--preview、冲突跳过、多文件批量
+- 失败语义：无效正则/无效模式 → 任务失败汇总 + 退出码 1（行为变化：原版
+  打印后退出码 0）
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.fileops.filerename import (
-    _safe_rename,
-    change_case,
-    insert_text,
-    replace_pattern,
-)
-
-
-# ============================================================================ #
-# 工具注册
-# ============================================================================ #
-class TestRegistration:
-    """工具注册与子命令结构测试。"""
-
-    def test_registered(self) -> None:
-        """filerename 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
-
-        assert "filerename" in list_tools()
-
-    def test_subcommands(self) -> None:
-        """filerename 有 replace/insert/case 三个子命令。"""
-        subs = list_subcommands("filerename")
-        assert set(subs) == {"replace", "insert", "case"}
-
-
-# ============================================================================ #
-# _safe_rename
-# ============================================================================ #
-class TestSafeRename:
-    """_safe_rename 安全重命名测试。"""
-
-    def test_rename_success(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """成功重命名文件。"""
-        src = tmp_path / "old.txt"
-        src.write_text("content")
-
-        result = _safe_rename(src, "new", preview=False)
-        assert result is True
-        assert not src.exists()
-        assert (tmp_path / "new.txt").exists()
-        captured = capsys.readouterr()
-        assert "重命名" in captured.out
-
-    def test_skip_same_name(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """新主干与原主干相同时跳过。"""
-        src = tmp_path / "same.txt"
-        src.write_text("content")
-
-        result = _safe_rename(src, "same", preview=False)
-        assert result is False
-        assert src.exists()
-        capsys.readouterr()  # 消费输出
-
-    def test_skip_existing_target(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """目标文件已存在时跳过。"""
-        src = tmp_path / "a.txt"
-        src.write_text("a")
-        (tmp_path / "b.txt").write_text("existing")
-
-        result = _safe_rename(src, "b", preview=False)
-        assert result is False
-        assert src.exists()
-        captured = capsys.readouterr()
-        assert "跳过" in captured.out
-
-    def test_preview(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """预览模式不实际重命名。"""
-        src = tmp_path / "old.txt"
-        src.write_text("content")
-
-        result = _safe_rename(src, "new", preview=True)
-        assert result is True
-        assert src.exists()  # 原文件仍在
-        assert not (tmp_path / "new.txt").exists()
-        captured = capsys.readouterr()
-        assert "预览" in captured.out
-
-
-# ============================================================================ #
-# replace_pattern
-# ============================================================================ #
-class TestReplacePattern:
-    """replace_pattern 正则替换测试。"""
-
-    def test_replace_match(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """匹配并替换文件名主干。"""
-        src = tmp_path / "hello world.txt"
-        src.write_text("content")
-        pattern = re.compile(r"\s+")
-
-        result = replace_pattern(src, pattern, "_", preview=False)
-        assert result is True
-        assert (tmp_path / "hello_world.txt").exists()
-        capsys.readouterr()
-
-    def test_no_match(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """不匹配时跳过。"""
-        src = tmp_path / "nospaces.txt"
-        src.write_text("content")
-        pattern = re.compile(r"\s+")
-
-        result = replace_pattern(src, pattern, "_", preview=False)
-        assert result is False
-        assert src.exists()
-        capsys.readouterr()
-
-    def test_backreference(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """支持反向引用。"""
-        src = tmp_path / "2024_report.txt"
-        src.write_text("content")
-        pattern = re.compile(r"(\d{4})_")
-
-        result = replace_pattern(src, pattern, r"\1-", preview=False)
-        assert result is True
-        assert (tmp_path / "2024-report.txt").exists()
-        capsys.readouterr()
-
-    def test_delete_match(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """空替换字符串删除匹配部分。"""
-        src = tmp_path / "file_copy.txt"
-        src.write_text("content")
-        pattern = re.compile(r"_copy")
-
-        result = replace_pattern(src, pattern, "", preview=False)
-        assert result is True
-        assert (tmp_path / "file.txt").exists()
-        capsys.readouterr()
-
-    def test_preserves_extension(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """替换仅作用于文件名主干，保留扩展名。"""
-        src = tmp_path / "test.tar.gz"
-        src.write_text("content")
-        pattern = re.compile(r"test")
-
-        result = replace_pattern(src, pattern, "data", preview=False)
-        assert result is True
-        assert (tmp_path / "data.tar.gz").exists()
-        capsys.readouterr()
-
-
-# ============================================================================ #
-# insert_text
-# ============================================================================ #
-class TestInsertText:
-    """insert_text 位置插入测试。"""
-
-    def test_insert_at_start(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """在开头插入文本。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        result = insert_text(src, "PRE_", 0, preview=False)
-        assert result is True
-        assert (tmp_path / "PRE_file.txt").exists()
-        capsys.readouterr()
-
-    def test_insert_at_middle(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """在中间插入文本。"""
-        src = tmp_path / "report.txt"
-        src.write_text("content")
-
-        result = insert_text(src, "_v2", 3, preview=False)
-        assert result is True
-        assert (tmp_path / "rep_v2ort.txt").exists()
-        capsys.readouterr()
-
-    def test_insert_at_end(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """在末尾插入文本（position 超出长度时截断到末尾）。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        result = insert_text(src, "_end", 100, preview=False)
-        assert result is True
-        assert (tmp_path / "file_end.txt").exists()
-        capsys.readouterr()
-
-    def test_empty_text(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """空文本时跳过。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        result = insert_text(src, "", 0, preview=False)
-        assert result is False
-        assert src.exists()
-        capsys.readouterr()
-
-    def test_preserves_extension(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """插入仅作用于文件名主干，保留扩展名。"""
-        src = tmp_path / "data.csv"
-        src.write_text("content")
-
-        result = insert_text(src, "new_", 0, preview=False)
-        assert result is True
-        assert (tmp_path / "new_data.csv").exists()
-        capsys.readouterr()
-
-    def test_preview(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """预览模式不实际执行。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        result = insert_text(src, "PRE_", 0, preview=True)
-        assert result is True
-        assert src.exists()
-        assert not (tmp_path / "PRE_file.txt").exists()
-        capsys.readouterr()
-
-
-# ============================================================================ #
-# change_case
-# ============================================================================ #
-class TestChangeCase:
-    """change_case 大小写转换测试。"""
-
-    def test_to_lower(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """转小写。"""
-        src = tmp_path / "MyFile.TXT"
-        src.write_text("content")
-
-        result = change_case(src, "lower", preview=False)
-        assert result is True
-        assert (tmp_path / "myfile.TXT").exists()
-        capsys.readouterr()
-
-    def test_to_upper(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """转大写。"""
-        src = tmp_path / "myfile.txt"
-        src.write_text("content")
-
-        result = change_case(src, "upper", preview=False)
-        assert result is True
-        assert (tmp_path / "MYFILE.txt").exists()
-        capsys.readouterr()
-
-    def test_to_title(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """转标题大小写。"""
-        src = tmp_path / "hello world.txt"
-        src.write_text("content")
-
-        result = change_case(src, "title", preview=False)
-        assert result is True
-        assert (tmp_path / "Hello World.txt").exists()
-        capsys.readouterr()
-
-    def test_invalid_mode(self, tmp_path: Path) -> None:
-        """无效模式抛 ValueError。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        with pytest.raises(ValueError, match="不支持的大小写模式"):
-            change_case(src, "snake", preview=False)
-
-    def test_no_change_needed(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """已经是目标大小写时跳过。"""
-        src = tmp_path / "lower.txt"
-        src.write_text("content")
-
-        result = change_case(src, "lower", preview=False)
-        assert result is False
-        assert src.exists()
-        capsys.readouterr()
-
-    def test_preview(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """预览模式不实际执行。"""
-        src = tmp_path / "MixedCase.txt"
-        src.write_text("content")
-
-        result = change_case(src, "lower", preview=True)
-        assert result is True
-        assert src.exists()  # 原文件仍在（未重命名）
-        captured = capsys.readouterr()
-        assert "预览" in captured.out
-
-
-# ============================================================================ #
-# CLI 子命令端到端
-# ============================================================================ #
-class TestCLISubcommands:
-    """CLI 子命令端到端测试（通过 run_tool 调用）。"""
-
-    def test_run_replace_success(self, tmp_path: Path) -> None:
-        """run_tool 调用 replace 子命令成功。"""
-        src = tmp_path / "hello world.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["replace", str(src), r"\s+", "--replacement", "_"],
-        )
-        assert code == 0
-        assert (tmp_path / "hello_world.txt").exists()
-
-    def test_run_replace_preview(self, tmp_path: Path) -> None:
-        """replace --preview 不实际执行。"""
-        src = tmp_path / "old.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["replace", str(src), "old", "--replacement", "new", "--preview"],
-        )
-        assert code == 0
-        assert src.exists()
-        assert not (tmp_path / "new.txt").exists()
-
-    def test_run_replace_invalid_regex(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """replace 无效正则表达式时提示并返回。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["replace", str(src), "[invalid", "--replacement", "x"],
-        )
-        assert code == 0  # 工具内部处理，不返回错误码
-        captured = capsys.readouterr()
-        assert "无效的正则表达式" in captured.out
-
-    def test_run_replace_nonexistent_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """replace 文件不存在时提示。"""
-        code = run_tool(
-            "filerename",
-            ["replace", str(tmp_path / "noexist.txt"), "x"],
-        )
-        assert code == 0
-        captured = capsys.readouterr()
-        assert "文件不存在" in captured.out
-
-    def test_run_insert_nonexistent_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """insert 文件不存在时提示。"""
-        code = run_tool(
-            "filerename",
-            ["insert", str(tmp_path / "noexist.txt"), "PRE_"],
-        )
-        assert code == 0
-        captured = capsys.readouterr()
-        assert "文件不存在" in captured.out
-
-    def test_run_case_nonexistent_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """case 文件不存在时提示。"""
-        code = run_tool(
-            "filerename",
-            ["case", str(tmp_path / "noexist.txt"), "--mode", "lower"],
-        )
-        assert code == 0
-        captured = capsys.readouterr()
-        assert "文件不存在" in captured.out
-
-    def test_run_insert_success(self, tmp_path: Path) -> None:
-        """run_tool 调用 insert 子命令成功。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["insert", str(src), "PRE_", "--position", "0"],
-        )
-        assert code == 0
-        assert (tmp_path / "PRE_file.txt").exists()
-
-    def test_run_insert_default_position(self, tmp_path: Path) -> None:
-        """insert 默认 position=0（开头插入）。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["insert", str(src), "PRE_"],
-        )
-        assert code == 0
-        assert (tmp_path / "PRE_file.txt").exists()
-
-    def test_run_case_lower(self, tmp_path: Path) -> None:
-        """run_tool 调用 case --mode lower 成功。"""
-        src = tmp_path / "MyFile.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["case", str(src), "--mode", "lower"],
-        )
-        assert code == 0
-        assert (tmp_path / "myfile.txt").exists()
-
-    def test_run_case_upper(self, tmp_path: Path) -> None:
-        """run_tool 调用 case --mode upper 成功。"""
-        src = tmp_path / "lower.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["case", str(src), "--mode", "upper"],
-        )
-        assert code == 0
-        assert (tmp_path / "LOWER.txt").exists()
-
-    def test_run_case_invalid_mode(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """case 无效模式时提示。"""
-        src = tmp_path / "file.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["case", str(src), "--mode", "invalid"],
-        )
-        assert code == 0
-        captured = capsys.readouterr()
-        assert "不支持的模式" in captured.out
-
-    def test_run_multiple_files(self, tmp_path: Path) -> None:
-        """批量处理多个文件。"""
-        a = tmp_path / "A.txt"
-        a.write_text("a")
-        b = tmp_path / "B.txt"
-        b.write_text("b")
-
-        code = run_tool(
-            "filerename",
-            ["case", str(a), str(b), "--mode", "lower"],
-        )
-        assert code == 0
-        assert (tmp_path / "a.txt").exists()
-        assert (tmp_path / "b.txt").exists()
-
-    def test_run_replace_empty_replacement(self, tmp_path: Path) -> None:
-        """replace 不指定 --replacement 时默认为空（删除匹配）。"""
-        src = tmp_path / "file_copy.txt"
-        src.write_text("content")
-
-        code = run_tool(
-            "filerename",
-            ["replace", str(src), "_copy"],
-        )
-        assert code == 0
-        assert (tmp_path / "file.txt").exists()
+from fcmd.apis._tool_args import ToolSpec
+from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
+
+ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 filerename）
+
+
+# ---------------------------------------------------------------------- #
+# 注册与声明验证
+# ---------------------------------------------------------------------- #
+class TestFilerenameRegistration:
+    """filerename 经内置 DSL（action 原语）注册。"""
+
+    def test_registered_as_dsl_multi_subcommand(self) -> None:
+        """filerename 注册为内置 DSL 多子命令工具（replace/insert/case）。"""
+        assert set(_TOOL_REGISTRY["filerename"]) == {"replace", "insert", "case"}
+
+    def test_action_contract(self) -> None:
+        """各子命令合成函数携带 __dsl_action__ 标记，cmd 为 None（fn 任务形态）。"""
+        expected = {"replace": "filerename_replace", "insert": "filerename_insert", "case": "filerename_case"}
+        for sub, action_name in expected.items():
+            spec: ToolSpec = _TOOL_REGISTRY["filerename"][sub]
+            assert spec.cmd is None
+            assert getattr(spec.func, "__dsl_action__", None) == action_name
+            assert not getattr(spec.func, "__dsl_empty_body__", False)
+
+    def test_signature_from_action_impl(self) -> None:
+        """CLI 参数 schema 拷贝自动作实现签名（param_help 来自动作描述符）。"""
+        spec = _TOOL_REGISTRY["filerename"]["replace"]
+        params = list(spec.func.__signature__.parameters)  # type: ignore[attr-defined]
+        assert params == ["files", "pattern", "replacement", "preview"]
+        assert (spec.param_help or {}).get("preview") == "仅预览不实际执行"
+
+
+# ---------------------------------------------------------------------- #
+# replace 执行语义
+# ---------------------------------------------------------------------- #
+class TestFilerenameReplaceRun:
+    """``fcmd filerename replace`` 执行语义。"""
+
+    def test_replace_success(self, tmp_path: Path) -> None:
+        """正则替换主干，保留扩展名。"""
+        f = tmp_path / "my old file.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f), r"\s+", "--replacement", "_"]) == 0
+        assert (tmp_path / "my_old_file.txt").exists()
+        assert not f.exists()
+
+    def test_replace_preview(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--preview 仅预览不执行。"""
+        f = tmp_path / "old.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f), "old", "--replacement", "new", "--preview"]) == 0
+        assert "[预览]" in capsys.readouterr().out
+        assert f.exists()
+
+    def test_replace_no_match_keeps_file(self, tmp_path: Path) -> None:
+        """主干不匹配时不执行重命名。"""
+        f = tmp_path / "plain.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f), r"\d+", "--replacement", "x"]) == 0
+        assert f.exists()
+
+    def test_replace_backreference(self, tmp_path: Path) -> None:
+        """替换字符串支持反向引用。"""
+        f = tmp_path / "2026_report.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f), r"(\d+)_(\w+)", "--replacement", r"\2_\1"]) == 0
+        assert (tmp_path / "report_2026.txt").exists()
+
+    def test_replace_delete_match(self, tmp_path: Path) -> None:
+        """replacement 缺省为空串即删除匹配部分。"""
+        f = tmp_path / "data_draft.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f), "_draft"]) == 0
+        assert (tmp_path / "data.txt").exists()
+
+    def test_replace_skip_existing_target(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """目标已存在时跳过并提示（不覆盖）。"""
+        f1 = tmp_path / "a old.txt"
+        f2 = tmp_path / "a_old.txt"
+        f1.write_text("1", encoding="utf-8")
+        f2.write_text("2", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f1), r"\s+", "--replacement", "_"]) == 0
+        assert f1.exists()
+        assert f2.read_text(encoding="utf-8") == "2"
+        assert "跳过" in capsys.readouterr().out
+
+    def test_replace_missing_file_prints_hint(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """文件不存在时提示后继续，退出码 0（行为保持）。"""
+        assert run_tool("filerename", ["replace", str(tmp_path / "missing.txt"), "x"]) == 0
+        assert "文件不存在" in capsys.readouterr().out
+
+    def test_replace_multiple_files(self, tmp_path: Path) -> None:
+        """多文件批量替换。"""
+        f1 = tmp_path / "a b.txt"
+        f2 = tmp_path / "c d.txt"
+        f1.write_text("x", encoding="utf-8")
+        f2.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f1), str(f2), r"\s+", "--replacement", "_"]) == 0
+        assert (tmp_path / "a_b.txt").exists()
+        assert (tmp_path / "c_d.txt").exists()
+
+    def test_replace_invalid_regex_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """无效正则 → 任务失败汇总 + 退出码 1（行为变化：原版打印后退出码 0）。"""
+        f = tmp_path / "a.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["replace", str(f), "[invalid"]) == 1
+        assert "失败" in capsys.readouterr().out
+        assert f.exists()
+
+
+# ---------------------------------------------------------------------- #
+# insert 执行语义
+# ---------------------------------------------------------------------- #
+class TestFilerenameInsertRun:
+    """``fcmd filerename insert`` 执行语义。"""
+
+    def test_insert_at_start(self, tmp_path: Path) -> None:
+        """开头插入前缀。"""
+        f = tmp_path / "file.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["insert", str(f), "NEW_", "--position", "0"]) == 0
+        assert (tmp_path / "NEW_file.txt").exists()
+
+    def test_insert_in_middle(self, tmp_path: Path) -> None:
+        """中间位置插入。"""
+        f = tmp_path / "abcd.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["insert", str(f), "_v2", "--position", "2"]) == 0
+        assert (tmp_path / "ab_v2cd.txt").exists()
+
+    def test_insert_position_clamped(self, tmp_path: Path) -> None:
+        """位置超出范围自动截断到边界。"""
+        f = tmp_path / "abc.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["insert", str(f), "_end", "--position", "100"]) == 0
+        assert (tmp_path / "abc_end.txt").exists()
+
+    def test_insert_empty_text_noop(self, tmp_path: Path) -> None:
+        """空文本不执行重命名。"""
+        f = tmp_path / "keep.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["insert", str(f), ""]) == 0
+        assert f.exists()
+
+    def test_insert_preview(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--preview 仅预览不执行。"""
+        f = tmp_path / "file.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["insert", str(f), "P_", "--preview"]) == 0
+        assert "[预览]" in capsys.readouterr().out
+        assert f.exists()
+
+
+# ---------------------------------------------------------------------- #
+# case 执行语义
+# ---------------------------------------------------------------------- #
+class TestFilerenameCaseRun:
+    """``fcmd filerename case`` 执行语义。"""
+
+    def test_case_lower(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """转小写（默认模式），扩展名保留。"""
+        f = tmp_path / "File.TXT"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["case", str(f)]) == 0
+        # Windows 大小写不敏感文件系统上仅大小写不同的重命名经回显断言
+        assert "重命名: File.TXT -> file.TXT" in capsys.readouterr().out
+        assert (tmp_path / "file.TXT").exists()
+
+    def test_case_upper(self, tmp_path: Path) -> None:
+        """--mode upper 转大写。"""
+        f = tmp_path / "abc.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["case", str(f), "--mode", "upper"]) == 0
+        assert (tmp_path / "ABC.txt").exists()
+
+    def test_case_title(self, tmp_path: Path) -> None:
+        """--mode title 转标题大小写。"""
+        f = tmp_path / "my report.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["case", str(f), "--mode", "title"]) == 0
+        assert (tmp_path / "My Report.pdf").exists()
+
+    def test_case_no_change_needed(self, tmp_path: Path) -> None:
+        """已是目标大小写时静默跳过。"""
+        f = tmp_path / "abc.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["case", str(f), "--mode", "lower"]) == 0
+        assert f.exists()
+
+    def test_case_invalid_mode_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """无效模式 → 任务失败汇总 + 退出码 1（行为变化：原版打印后退出码 0）。"""
+        f = tmp_path / "abc.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["case", str(f), "--mode", "snake"]) == 1
+        assert "失败" in capsys.readouterr().out
+
+    def test_case_preview(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--preview 仅预览不执行。"""
+        f = tmp_path / "ABC.txt"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filerename", ["case", str(f), "--mode", "lower", "--preview"]) == 0
+        assert "[预览]" in capsys.readouterr().out
+        assert f.exists()

@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import inspect
 import sys
+import typing
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -194,6 +195,14 @@ def _synthesize_action_func(decl: CommandDecl, act: Action) -> Callable[..., Any
     """
     impl = act.func
     sig = inspect.signature(impl)
+    # 注解解析加固：字符串注解在实现函数自身命名空间求值（actions 模块开启
+    # ``from __future__ import annotations`` 后 inspect.signature 返回原始
+    # 字符串），不依赖合成函数模块命名空间的隐式可见性；求值失败回退原始
+    # 注解（与既有行为一致，由 _resolve_hints 二次处理）
+    try:
+        hints: dict[str, Any] = typing.get_type_hints(impl)
+    except Exception:
+        hints = {}
 
     def dsl_action(**kwargs: Any) -> Any:
         """内建动作任务：转发注册表实现（进程内执行）。"""
@@ -203,7 +212,7 @@ def _synthesize_action_func(decl: CommandDecl, act: Action) -> Callable[..., Any
     dsl_action.__qualname__ = f"fcmd.dsl.synth._dsl_{decl.name}"
     dsl_action.__doc__ = decl.help
     dsl_action.__signature__ = sig  # type: ignore[attr-defined]
-    dsl_action.__annotations__ = {pname: p.annotation for pname, p in sig.parameters.items()}  # type: ignore[attr-defined]
+    dsl_action.__annotations__ = {pname: hints.get(pname, p.annotation) for pname, p in sig.parameters.items()}  # type: ignore[attr-defined]
     dsl_action.__dsl_action__ = act.name  # type: ignore[attr-defined]
     _inject_contracts(dsl_action, decl)
     return dsl_action

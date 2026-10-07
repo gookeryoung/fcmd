@@ -1,11 +1,11 @@
-"""filelevel 工具测试。
+"""filelevel 工具测试（DSL 内建动作声明 commands/filelevel.toml）。
 
-验证 ``fcmd.cli.fileops.filelevel`` 模块：
-- 工具注册
-- 标记移除
-- 单文件等级处理
-- 批量等级处理
-- CLI 调度
+验证 ``fcmd filelevel`` 的 DSL action 迁移语义：
+- 工具注册（多子命令 DSL 工具，内置声明）
+- 声明契约：``__dsl_action__`` 标记、无 cmd（fn 任务形态）
+- 执行语义：等级标记先清后加、仅移除括号包裹的标记、批量处理
+- 失败语义：无效等级 → 任务失败汇总 + 退出码 1（行为变化：原版逐文件
+  打印后退出码 0）
 """
 
 from __future__ import annotations
@@ -14,219 +14,114 @@ from pathlib import Path
 
 import pytest
 
-import fcmd as fx
-import fcmd.cli.fileops.filelevel
+from fcmd.apis._tool_args import ToolSpec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.fileops.filelevel import (
-    process_file_level,
-    process_files_level,
-    remove_marks,
-)
+from fcmd.cli._discovery import ensure_tools_discovered
+
+ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 filelevel）
 
 
-# ============================================================================ #
-# 注册验证
-# ============================================================================ #
-class TestToolsRegistration:
-    """filelevel 工具的注册验证。"""
+# ---------------------------------------------------------------------- #
+# 注册与声明验证
+# ---------------------------------------------------------------------- #
+class TestFilelevelRegistration:
+    """filelevel 经内置 DSL（action 原语）注册。"""
 
-    def test_all_tools_registered(self) -> None:
-        """filelevel 应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("filelevel",):
-            assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
+    def test_registered_as_dsl_multi_subcommand(self) -> None:
+        """filelevel 注册为内置 DSL 多子命令工具（set）。"""
+        assert set(_TOOL_REGISTRY["filelevel"]) == {"set"}
 
-    def test_filelevel_subcommands(self) -> None:
-        """filelevel 应有 set 子命令。"""
-        subs = fx.list_subcommands("filelevel")
-        assert "set" in subs
+    def test_action_contract(self) -> None:
+        """set 子命令合成函数携带 __dsl_action__ 标记，cmd 为 None（fn 任务形态）。"""
+        spec: ToolSpec = _TOOL_REGISTRY["filelevel"]["set"]
+        assert spec.cmd is None
+        assert getattr(spec.func, "__dsl_action__", None) == "filelevel_set"
+        assert not getattr(spec.func, "__dsl_empty_body__", False)
 
-
-# ============================================================================ #
-# filelevel 测试
-# ============================================================================ #
-class TestRemoveMarks:
-    """remove_marks 函数测试。"""
-
-    def test_remove_single_mark(self) -> None:
-        """移除单个括号包裹的标记。"""
-        assert remove_marks("file(PUB).txt", ["PUB"]) == "file.txt"
-
-    def test_remove_multiple_marks(self) -> None:
-        """移除多个标记。"""
-        assert remove_marks("file(PUB)(NOR).txt", ["PUB", "NOR"]) == "file.txt"
-
-    def test_remove_mark_with_different_brackets(self) -> None:
-        """支持多种括号类型。"""
-        assert remove_marks("file[PUB].txt", ["PUB"]) == "file.txt"
-        assert remove_marks("file_PUB_.txt", ["PUB"]) == "file.txt"
-        assert remove_marks("file【PUB】.txt", ["PUB"]) == "file.txt"
-
-    def test_remove_mark_not_in_brackets(self) -> None:
-        """裸标记（无括号包裹）不移除。"""
-        assert remove_marks("filePUB.txt", ["PUB"]) == "filePUB.txt"
-
-    def test_remove_mark_not_found(self) -> None:
-        """标记不存在时原样返回。"""
-        assert remove_marks("file.txt", ["PUB"]) == "file.txt"
-
-    def test_remove_mark_at_boundary(self) -> None:
-        """标记在边界时安全处理。"""
-        # 标记在开头，左侧无括号
-        assert remove_marks("PUB_file.txt", ["PUB"]) == "PUB_file.txt"
+    def test_signature_from_action_impl(self) -> None:
+        """CLI 参数 schema 拷贝自动作实现签名：files positional + level 选项。"""
+        spec = _TOOL_REGISTRY["filelevel"]["set"]
+        params = list(spec.func.__signature__.parameters)  # type: ignore[attr-defined]
+        assert params == ["files", "level"]
+        assert spec.func.__signature__.parameters["level"].default == 0  # type: ignore[attr-defined]
 
 
-class TestProcessFileLevel:
-    """process_file_level 函数测试。"""
+# ---------------------------------------------------------------------- #
+# 执行语义
+# ---------------------------------------------------------------------- #
+class TestFilelevelRun:
+    """``fcmd filelevel set`` 执行语义。"""
 
-    def test_set_level_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """设置等级 1 (PUB)。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=1)
-        out = capsys.readouterr().out
-        assert "重命名" in out
-        assert (tmp_path / "report(PUB).pdf").exists()
-        assert not f.exists()
-
-    def test_set_level_2(self, tmp_path: Path) -> None:
-        """设置等级 2 (INT)。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=2)
-        assert (tmp_path / "report(INT).pdf").exists()
-
-    def test_set_level_3(self, tmp_path: Path) -> None:
-        """设置等级 3 (CON)。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=3)
-        assert (tmp_path / "report(CON).pdf").exists()
-
-    def test_set_level_4(self, tmp_path: Path) -> None:
-        """设置等级 4 (CLA)。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=4)
-        assert (tmp_path / "report(CLA).pdf").exists()
-
-    def test_clear_level(self, tmp_path: Path) -> None:
-        """等级 0 清除已有标记。"""
-        f = tmp_path / "report(PUB).pdf"
-        f.write_text("content")
-        process_file_level(f, level=0)
+    def test_set_level_clears_default(self, tmp_path: Path) -> None:
+        """level 缺省为 0，即清除已有等级标记。"""
+        f = tmp_path / "report(INT).pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f)]) == 0
         assert (tmp_path / "report.pdf").exists()
 
-    def test_replace_existing_level(self, tmp_path: Path) -> None:
-        """已有等级时替换为新等级。"""
+    def test_set_level_1_adds_pub(self, tmp_path: Path) -> None:
+        """level=1 添加 PUB 标记。"""
+        f = tmp_path / "report.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "1"]) == 0
+        assert (tmp_path / "report(PUB).pdf").exists()
+
+    def test_set_level_2_replaces_mark(self, tmp_path: Path) -> None:
+        """level=2 先清旧标记再加 INT。"""
         f = tmp_path / "report(PUB).pdf"
-        f.write_text("content")
-        process_file_level(f, level=3)
-        assert (tmp_path / "report(CON).pdf").exists()
-        assert not (tmp_path / "report(PUB)(CON).pdf").exists()
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "2"]) == 0
+        assert (tmp_path / "report(INT).pdf").exists()
+        assert not f.exists()
 
-    def test_invalid_level_high(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """无效等级（过高）打印提示。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=99)
-        out = capsys.readouterr().out
-        assert "无效的等级" in out
-        assert f.exists()  # 文件未被重命名
+    def test_set_level_3_con(self, tmp_path: Path) -> None:
+        """level=3 添加 CON 标记。"""
+        f = tmp_path / "a.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "3"]) == 0
+        assert (tmp_path / "a(CON).pdf").exists()
 
-    def test_invalid_level_negative(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """无效等级（负数）打印提示。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=-1)
-        out = capsys.readouterr().out
-        assert "无效的等级" in out
-
-    def test_file_not_exists(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """文件不存在时打印提示。"""
-        process_file_level(Path("nonexistent.pdf"), level=1)
-        out = capsys.readouterr().out
-        assert "文件不存在" in out
-
-    def test_no_change_when_already_correct(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """文件名无变化时不重命名。"""
-        f = tmp_path / "report.pdf"
-        f.write_text("content")
-        process_file_level(f, level=0)
-        out = capsys.readouterr().out
-        assert "重命名" not in out
+    def test_remove_only_bracket_wrapped_marks(self, tmp_path: Path) -> None:
+        """仅移除括号包裹的标记，裸字符串标记保留。"""
+        f = tmp_path / "report-PUB.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "0"]) == 0
+        # -PUB 后跟的是 . 不是右括号字符，属裸标记，保留
         assert f.exists()
 
+    def test_remove_digit_marks(self, tmp_path: Path) -> None:
+        """数字标记（1-9）一并清除。"""
+        f = tmp_path / "file(2).pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "0"]) == 0
+        assert (tmp_path / "file.pdf").exists()
 
-class TestProcessFilesLevel:
-    """process_files_level 批量处理测试。"""
+    def test_no_change_keeps_file(self, tmp_path: Path) -> None:
+        """无标记且 level=0 时文件不动。"""
+        f = tmp_path / "plain.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f)]) == 0
+        assert f.exists()
 
-    def test_batch_set_level(self, tmp_path: Path) -> None:
-        """批量设置等级。"""
+    def test_multiple_files(self, tmp_path: Path) -> None:
+        """多文件批量处理。"""
         f1 = tmp_path / "a.pdf"
         f2 = tmp_path / "b.pdf"
-        f1.write_text("1")
-        f2.write_text("2")
-        process_files_level([f1, f2], level=2)
-        assert (tmp_path / "a(INT).pdf").exists()
-        assert (tmp_path / "b(INT).pdf").exists()
+        f1.write_text("x", encoding="utf-8")
+        f2.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f1), str(f2), "--level", "4"]) == 0
+        assert (tmp_path / "a(CLA).pdf").exists()
+        assert (tmp_path / "b(CLA).pdf").exists()
 
-    def test_batch_clear_level(self, tmp_path: Path) -> None:
-        """批量清除等级。"""
-        f1 = tmp_path / "a(PUB).pdf"
-        f2 = tmp_path / "b(CON).pdf"
-        f1.write_text("1")
-        f2.write_text("2")
-        process_files_level([f1, f2], level=0)
-        assert (tmp_path / "a.pdf").exists()
-        assert (tmp_path / "b.pdf").exists()
+    def test_missing_file_prints_hint(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """文件不存在时提示后继续，退出码 0（行为保持）。"""
+        assert run_tool("filelevel", ["set", str(tmp_path / "missing.pdf")]) == 0
+        assert "文件不存在" in capsys.readouterr().out
 
-    def test_filelevel_via_run_tool(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """fcmd filelevel set <files> --level 2 通过 run_tool 调用。"""
-        monkeypatch.chdir(tmp_path)
-        f = tmp_path / "doc.pdf"
-        f.write_text("content")
-        code = run_tool("filelevel", ["set", "doc.pdf", "--level", "2"])
-        assert code == 0
-        assert (tmp_path / "doc(INT).pdf").exists()
-
-
-# ============================================================================ #
-# filelevel 循环分支补充测试
-# ============================================================================ #
-class TestFilelevelBranches:
-    """filelevel 循环分支补充测试。"""
-
-    def test_process_files_level_empty_list(self) -> None:
-        """process_files_level 空列表不报错。"""
-        process_files_level([], level=1)  # 不抛异常即可
-
-    def test_process_files_level_mixed_existence(
-        self,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """process_files_level 部分文件不存在时跳过。"""
-        f1 = tmp_path / "exists.pdf"
-        f1.write_text("content")
-        f2 = tmp_path / "missing.pdf"
-        process_files_level([f1, f2], level=2)
-        out = capsys.readouterr().out
-        assert "文件不存在" in out
-        assert (tmp_path / "exists(INT).pdf").exists()
+    def test_invalid_level_fails(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """无效等级 → 任务失败汇总 + 退出码 1（行为变化：原版逐文件打印后退出码 0）。"""
+        f = tmp_path / "a.pdf"
+        f.write_text("x", encoding="utf-8")
+        assert run_tool("filelevel", ["set", str(f), "--level", "5"]) == 1
+        assert "失败" in capsys.readouterr().out
+        assert f.exists()

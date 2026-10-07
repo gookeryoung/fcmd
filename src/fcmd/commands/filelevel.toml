@@ -1,0 +1,10 @@
+# 内置 DSL 命令：filelevel（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/fileops/filelevel.py 已迁入 fcmd/dsl/actions.py 注册表：
+# 等级标记（PUB/NOR/INT/CON/CLA）先清后加，仅移除括号包裹的标记；缺失文件
+# 打印提示后继续其余文件；指令级错误（无效等级）→ 任务失败汇总 + 退出码 1
+# （行为变化：原版逐文件打印后退出码 0）。
+
+[commands.filelevel.set]
+help = "设置文件等级"
+action = "filelevel_set"

@@ -3,7 +3,8 @@
 覆盖：
 - Action 描述符与注册表 API（action/has_action/get_action/action_names）
 - 重复注册报错
-- 内建动作 setenv/writefile 的进程内执行语义
+- 内建动作 setenv/writefile 的进程内执行语义（文件名批量操作原语语义
+  见 test_cli_filedate/filerename/filelevel/folderback）
 """
 
 from __future__ import annotations
@@ -23,11 +24,21 @@ class TestActionRegistry:
     """动作注册表 API 测试。"""
 
     def test_builtin_actions_registered(self) -> None:
-        """内建动作 setenv/writefile 已注册。"""
-        assert has_action("setenv")
-        assert has_action("writefile")
-        assert "setenv" in action_names()
-        assert "writefile" in action_names()
+        """内建动作已注册（setenv/writefile + 文件名批量操作原语）。"""
+        builtin = {
+            "setenv",
+            "writefile",
+            "dateprefix_add",
+            "dateprefix_clear",
+            "filerename_replace",
+            "filerename_insert",
+            "filerename_case",
+            "filelevel_set",
+            "folderback",
+        }
+        for name in builtin:
+            assert has_action(name), name
+            assert name in action_names()
 
     def test_unknown_action(self) -> None:
         """未注册动作 has_action 为 False，get_action 抛 KeyError。"""
