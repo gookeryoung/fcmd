@@ -89,7 +89,7 @@ class TestPiptoolRun:
     ) -> None:
         """u 通配符展开 + 受保护包过滤（模式命中 fcmd 时剔除并提示）。"""
         monkeypatch.setattr(
-            "fcmd.dsl.actions._pip_installed_packages",
+            "fcmd.dsl.actions.compute._pip_installed_packages",
             lambda: ["requests", "requests_toolbelt", "fcmd", "click"],
         )
         captured: list[list[str]] = []
@@ -104,7 +104,7 @@ class TestPiptoolRun:
         """u 多个通配符模式共享一次 pip list 采集。"""
         calls: list[int] = []
         monkeypatch.setattr(
-            "fcmd.dsl.actions._pip_installed_packages",
+            "fcmd.dsl.actions.compute._pip_installed_packages",
             lambda: calls.append(1) or ["requests", "click"],  # type: ignore[func-returns-value]
         )
         captured: list[list[str]] = []
@@ -115,7 +115,7 @@ class TestPiptoolRun:
 
     def test_u_no_match_skipped(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """u 通配符无匹配：空结果 → SKIPPED，退出码 0，不执行命令。"""
-        monkeypatch.setattr("fcmd.dsl.actions._pip_installed_packages", lambda: ["click"])
+        monkeypatch.setattr("fcmd.dsl.actions.compute._pip_installed_packages", lambda: ["click"])
         captured: list[list[str]] = []
         monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["u", "nomatch*"]) == 0
@@ -145,7 +145,7 @@ class TestPiptoolRun:
 
     def test_r_compute_runs_once(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """r 隐藏链两处声明同一 compute（as=safe），链上只计算一次（去重）。"""
-        from fcmd.dsl.actions import _filter_protected
+        from fcmd.dsl.actions.compute import _filter_protected
 
         calls: list[int] = []
 
@@ -153,7 +153,7 @@ class TestPiptoolRun:
             calls.append(1)
             return _filter_protected(packages)
 
-        monkeypatch.setattr("fcmd.dsl.actions._filter_protected", counting_filter)
+        monkeypatch.setattr("fcmd.dsl.actions.compute._filter_protected", counting_filter)
         captured: list[list[str]] = []
         monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["r", "requests"]) == 0

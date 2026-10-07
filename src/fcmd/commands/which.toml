@@ -1,6 +1,6 @@
 # 内置 DSL 命令：which（单命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/system/which.py 已迁入 fcmd/dsl/actions.py 注册表：
+# 原模块 fcmd/cli/system/which.py 已迁入 fcmd/dsl/actions/ 注册表（system 模块）：
 # 跨平台查找可执行命令路径（shutil.which），逐条回显 ``<cmd> -> <path|未
 # 找到>``（结果依赖运行时 PATH，无法静态模板化，由动作内 print 输出）。
 # 与 pathtool（路径解析计算，产出计算结果型保留 Python）的区分：which

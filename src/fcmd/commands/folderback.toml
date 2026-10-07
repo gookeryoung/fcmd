@@ -1,6 +1,6 @@
 # 内置 DSL 命令：folderback（单命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/fileops/folderback.py 已迁入 fcmd/dsl/actions.py 注册表：
+# 原模块 fcmd/cli/fileops/folderback.py 已迁入 fcmd/dsl/actions/ 注册表（system 模块）：
 # zip 压缩备份 + 时间戳命名 + 旧备份清理（保留最新 max_zip 个）。目标目录
 # 缺失自动创建；备份完成消息含计算出的目标路径（依赖运行时时间戳，无法
 # 静态模板化，由动作内 print 输出）；源目录缺失 → 任务失败汇总 + 退出码 1

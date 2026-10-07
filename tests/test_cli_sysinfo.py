@@ -14,7 +14,7 @@ import pytest
 from fcmd.apis._tool_args import ToolSpec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
-from fcmd.dsl.actions import _format_bytes
+from fcmd.dsl.actions.system import _format_bytes
 
 ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 sysinfo）
 

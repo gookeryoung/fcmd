@@ -135,7 +135,7 @@ class TestComputeActionImpls:
     ) -> None:
         """通配符按已安装包展开（大小写不敏感、保留原包名大小写），受保护包剔除并提示。"""
         monkeypatch.setattr(
-            "fcmd.dsl.actions._pip_installed_packages",
+            "fcmd.dsl.actions.compute._pip_installed_packages",
             lambda: ["Requests", "requests_toolbelt", "fcmd", "click"],
         )
         out = get_action("pip_expand").func(packages=["REQUESTS*", "fc*"])
@@ -144,7 +144,7 @@ class TestComputeActionImpls:
 
     def test_pip_expand_wildcard_no_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """通配符无匹配返回空列表（引擎侧 SKIPPED）。"""
-        monkeypatch.setattr("fcmd.dsl.actions._pip_installed_packages", lambda: ["click"])
+        monkeypatch.setattr("fcmd.dsl.actions.compute._pip_installed_packages", lambda: ["click"])
         assert get_action("pip_expand").func(packages=["nomatch*"]) == []
 
     def test_pip_expand_all_protected(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -162,7 +162,7 @@ class TestComputeActionImpls:
             return subprocess.CompletedProcess(cmd, 1, "", "boom")
 
         monkeypatch.setattr("subprocess.run", failing_run)
-        from fcmd.dsl.actions import _pip_installed_packages
+        from fcmd.dsl.actions.compute import _pip_installed_packages
 
         with pytest.raises(RuntimeError, match="pip list 失败"):
             _pip_installed_packages()

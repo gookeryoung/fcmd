@@ -1,13 +1,13 @@
 # 内置 DSL 命令：filedate（多子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/fileops/filedate.py 已迁入 fcmd/dsl/actions.py 注册表：
+# 原模块 fcmd/cli/fileops/filedate.py 已迁入 fcmd/dsl/actions/ 注册表（filenames 模块）：
 # 逐文件过程反馈（无前缀提示/重命名回显）由动作内 print 输出；缺失文件与
 # 点文件静默跳过；指令级错误（时间戳读取失败）→ 任务失败汇总 + 退出码 1。
 
 [commands.filedate.add]
-help = "添加/更新文件日期前缀"
+help   = "添加/更新文件日期前缀"
 action = "dateprefix_add"
 
 [commands.filedate.clear]
-help = "清除文件日期前缀"
+help   = "清除文件日期前缀"
 action = "dateprefix_clear"
