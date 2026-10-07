@@ -29,12 +29,18 @@
 from __future__ import annotations
 
 import getpass
+import json
+import logging
 import os
+import re
 import shutil
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
+from urllib.error import URLError
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
 
 import fcmd
 from fcmd.cli._env_persist import persist_env
@@ -51,9 +57,12 @@ from fcmd.cli.dev.envdev_node import setup_node_env
 from fcmd.cli.net.urlcheck import check_urls
 from fcmd.models import run_command
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "check_cernet_mirrors",
     "check_env",
+    "fetch_mirrorz_sites",
     "install_linux_docker",
     "install_linux_fonts",
     "install_linux_openssh",
@@ -634,9 +643,7 @@ def setup_docker_mirror() -> None:
         return
 
     _DOCKER_DAEMON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    import json as _json
-
-    _DOCKER_DAEMON_PATH.write_text(_json.dumps(new_config, indent=2), encoding="utf-8")
+    _DOCKER_DAEMON_PATH.write_text(json.dumps(new_config, indent=2), encoding="utf-8")
     run_command(["sudo", "systemctl", "restart", "docker"])
     print(f"Docker 镜像加速已配置 -> {_DOCKER_DAEMON_PATH}")
 
@@ -775,29 +782,113 @@ def setup_linux_remote() -> None:
 # 镜像站点探测（mirror）
 # ============================================================================
 
+# MirrorZ CERNET 门户入口与 JS 包内嵌站点元数据的提取模式。
+# 门户前端将参与镜像站的元数据以 ``JSON.parse('{"url":...,"abbr":...}')``
+# 形式内嵌于 JS 包，从中可动态提取完整站点列表。
+_MIRRORZ_HOME: str = "https://mirrors.cernet.edu.cn/"
+_MIRRORZ_JS_PATH_RE: str = r'src="?([^"\s>]+\.js)'
+_MIRRORZ_SITE_BLOB_RE: str = r"JSON\.parse\('(\{\"url\":.*?\})'\)"
+# 聚合门户自身也会作为站点条目出现，需剔除
+_MIRRORZ_PORTAL_URL: str = "https://mirrors.cernet.edu.cn"
+
+
+def fetch_mirrorz_sites(timeout: float = 5.0) -> dict[str, str] | None:
+    """动态拉取 MirrorZ（CERNET 教育网联合镜像站门户）收录的镜像站点列表。
+
+    流程：抓取门户入口页 -> 定位 JS 包 -> 提取内嵌站点元数据
+    （``JSON.parse('{"url":...}')`` 片段，含站名缩写与首页地址）->
+    按首页地址去重（同址多站如 TUNA.NANO/NEO 仅保留首个）。
+
+    Parameters
+    ----------
+    timeout:
+        页面与 JS 包的抓取超时秒数（默认 ``5``）
+
+    Returns
+    -------
+    dict[str, str] | None
+        ``{站名缩写(小写): 首页地址}``；任一环节失败（网络错误、页面或
+        包结构变化、解析结果为空）返回 ``None``，调用方应回退内置列表。
+    """
+    try:
+        req_headers = {"User-Agent": "Mozilla/5.0 (compatible; fcmd-envdev)"}
+        html_resp = urlopen(Request(_MIRRORZ_HOME, headers=req_headers), timeout=timeout)
+        with html_resp:
+            html = html_resp.read().decode("utf-8")
+        js_match = re.search(_MIRRORZ_JS_PATH_RE, html)
+        if js_match is None:
+            logger.warning("MirrorZ 门户页面未找到 JS 包引用")
+            return None
+        js_resp = urlopen(Request(urljoin(_MIRRORZ_HOME, js_match.group(1)), headers=req_headers), timeout=timeout)
+        with js_resp:
+            js = js_resp.read().decode("utf-8", "ignore")
+    except (URLError, TimeoutError, OSError) as exc:
+        logger.warning("拉取 MirrorZ 站点列表失败: %s", exc)
+        return None
+
+    sites: dict[str, str] = {}
+    seen_urls: set[str] = set()
+    for blob in re.findall(_MIRRORZ_SITE_BLOB_RE, js):
+        # JS 单引号字符串中的 \' 在 JSON 中非法，先还原为 '
+        raw = blob.replace("\\'", "'")
+        try:
+            data = json.loads(raw)
+            url, abbr = str(data["url"]), str(data["abbr"])
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.debug("跳过无法解析的 MirrorZ 站点片段: %s", exc)
+            continue
+        if url.rstrip("/") == _MIRRORZ_PORTAL_URL:
+            continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        sites[abbr.lower()] = url
+
+    if not sites:
+        logger.warning("MirrorZ JS 包中未解析出任何站点")
+        return None
+    return sites
+
 
 @fcmd.tool("envdev", subcommand="mirror", help="探测教育网镜像站点（可访问性 + 访问速度排名）")
-def check_cernet_mirrors(timeout: float = 3.0) -> int:
+def check_cernet_mirrors(timeout: float = 3.0, source: Literal["auto", "builtin"] = "auto") -> int:
     """并发探测教育网镜像站点列表（只读，不做任何配置变更）。
 
-    站点列表取自 MirrorZ（``help.mirrors.cernet.edu.cn``，CERNET 教育网
-    镜像帮助站）收录的参与镜像站。输出按访问速度排序的探测结果，
-    供选择镜像源参考。
+    站点列表默认（``auto``）从 MirrorZ（``mirrors.cernet.edu.cn``，CERNET
+    教育网联合镜像站门户）动态拉取；拉取失败或显式指定 ``builtin`` 时使用
+    内置列表（取自 ``help.mirrors.cernet.edu.cn`` 收录站点）。输出按访问
+    速度排序的探测结果，供选择镜像源参考。
 
     Parameters
     ----------
     timeout:
         单个站点的探测超时秒数（默认 ``3``）
+    source:
+        站点列表来源：``auto`` 动态拉取（失败回退内置） / ``builtin`` 内置列表
 
     Returns
     -------
     int
         存在可达站点返回 ``0``，全部不可达返回 ``1``。
     """
-    name_by_url = {url: name for name, url in _CERNET_MIRROR_SITES.items()}
-    results = check_urls(list(_CERNET_MIRROR_SITES.values()), timeout=timeout)
+    dynamic = False
+    if source == "auto":
+        fetched = fetch_mirrorz_sites(timeout)
+        if fetched is not None:
+            dynamic = True
+            sites = fetched
+            print(f"[站点列表] 动态拉取 MirrorZ：{len(sites)} 个站点")
+        else:
+            print("[站点列表] 动态拉取失败，回退内置列表")
+            sites = dict(_CERNET_MIRROR_SITES)
+    else:
+        sites = dict(_CERNET_MIRROR_SITES)
 
-    print("[教育网镜像站点探测]（来源: help.mirrors.cernet.edu.cn，按访问速度排序）")
+    name_by_url = {url: name for name, url in sites.items()}
+    results = check_urls(list(sites.values()), timeout=timeout)
+
+    origin = "mirrors.cernet.edu.cn 动态列表" if dynamic else "help.mirrors.cernet.edu.cn 内置列表"
+    print(f"[教育网镜像站点探测]（来源: {origin}，按访问速度排序）")
     reachable = 0
     for index, (url, ok, latency) in enumerate(results, start=1):
         if ok:

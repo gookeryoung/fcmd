@@ -17,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 
 import pytest
 
@@ -818,7 +819,7 @@ class TestCheckCernetMirrors:
         probe[urls[3]] = (False, fcmd.cli.net.urlcheck.unreachable_latency())
         monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
 
-        rc = fcmd.cli.dev.envdev.check_cernet_mirrors()
+        rc = fcmd.cli.dev.envdev.check_cernet_mirrors(source="builtin")
         assert rc == 0
         out = capsys.readouterr().out
         assert "教育网镜像站点探测" in out
@@ -833,9 +834,102 @@ class TestCheckCernetMirrors:
         }
         monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
 
-        rc = fcmd.cli.dev.envdev.check_cernet_mirrors()
+        rc = fcmd.cli.dev.envdev.check_cernet_mirrors(source="builtin")
         assert rc == 1
         assert "全部镜像站点不可达" in capsys.readouterr().out
+
+    def test_probe_dynamic_source(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """source=auto 使用动态拉取的站点列表。"""
+        dynamic_sites = {"tuna": "https://mirrors.tuna.example.edu.cn", "pku": "https://mirrors.pku.example.edu.cn"}
+        monkeypatch.setattr("fcmd.cli.dev.envdev.fetch_mirrorz_sites", lambda timeout: dict(dynamic_sites))
+        probe = dict.fromkeys(dynamic_sites.values(), (True, 10.0))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.cli.dev.envdev.check_cernet_mirrors()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "动态拉取 MirrorZ：2 个站点" in out
+        assert "动态列表" in out
+        for url in dynamic_sites.values():
+            assert url in out
+
+    def test_probe_auto_fallback_to_builtin(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """动态拉取失败时回退内置列表探测。"""
+        monkeypatch.setattr("fcmd.cli.dev.envdev.fetch_mirrorz_sites", lambda timeout: None)
+        probe = dict.fromkeys(fcmd.cli.dev.envdev._CERNET_MIRROR_SITES.values(), (True, 10.0))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.cli.dev.envdev.check_cernet_mirrors()
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "动态拉取失败，回退内置列表" in out
+        assert "内置列表" in out
+
+
+class _FakeHTTPResponse:
+    """最小 HTTP 响应替身（支持上下文管理器）。"""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self) -> _FakeHTTPResponse:
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
+class TestFetchMirrorzSites:
+    """fetch_mirrorz_sites 动态拉取测试。"""
+
+    def _patch_responses(self, monkeypatch: pytest.MonkeyPatch, payloads: list[bytes]) -> None:
+        """按顺序回放假响应（对应入口页 -> JS 包的抓取序列）。"""
+        responses = [_FakeHTTPResponse(p) for p in payloads]
+        monkeypatch.setattr("fcmd.cli.dev.envdev.urlopen", lambda req, timeout: responses.pop(0))
+
+    def test_parse_sites(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """解析内嵌站点元数据：去重、剔除门户、还原 JS 转义。"""
+        html = b"<html><script type=module src=/mirrorz.abc.js></script></html>"
+        js = (
+            b'var a=JSON.parse(\'{"url":"https://mirrors.a.example.edu.cn","abbr":"EXA"}\');'
+            b'var b=JSON.parse(\'{"url":"https://mirrors.b.example.edu.cn","abbr":"EXB"}\');'
+            b'var c=JSON.parse(\'{"url":"https://mirrors.a.example.edu.cn","abbr":"EXA.NEO"}\');'
+            b'var d=JSON.parse(\'{"url":"https://mirrors.cernet.edu.cn","abbr":"PORTAL"}\');'
+            b'var e=JSON.parse(\'{"url":"https://mirrors.c.example.edu.cn","abbr":"EX\\\'C"}\');'
+        )
+        self._patch_responses(monkeypatch, [html, js])
+
+        sites = fcmd.cli.dev.envdev.fetch_mirrorz_sites()
+        assert sites == {
+            "exa": "https://mirrors.a.example.edu.cn",
+            "exb": "https://mirrors.b.example.edu.cn",
+            "ex'c": "https://mirrors.c.example.edu.cn",
+        }
+
+    def test_html_without_js_reference(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """入口页无 JS 包引用时返回 None。"""
+        self._patch_responses(monkeypatch, [b"<html><body>hello</body></html>"])
+        assert fcmd.cli.dev.envdev.fetch_mirrorz_sites() is None
+
+    def test_js_without_site_blobs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """JS 包无站点片段时返回 None。"""
+        html = b'<html><script type=module src="/mirrorz.abc.js"></script></html>'
+        self._patch_responses(monkeypatch, [html, b"var x=1;"])
+        assert fcmd.cli.dev.envdev.fetch_mirrorz_sites() is None
+
+    def test_network_error_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """网络错误返回 None（调用方回退内置列表）。"""
+
+        def _boom(req: object, timeout: float) -> object:
+            raise URLError("connection refused")
+
+        monkeypatch.setattr("fcmd.cli.dev.envdev.urlopen", _boom)
+        assert fcmd.cli.dev.envdev.fetch_mirrorz_sites() is None
 
 
 # ============================================================================ #
