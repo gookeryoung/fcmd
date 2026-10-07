@@ -48,9 +48,10 @@ def _probe_once(url: str, method: str, timeout: float) -> tuple[bool, float] | N
     Returns
     -------
     tuple[bool, float] | None
-        ``(可访问, 延迟毫秒)``。收到任何 HTTP 响应（含 4xx/5xx）都说明
-        网络可达；``None`` 仅表示 HEAD 被服务器拒绝（如 405），
-        可回退 GET 复测。连接级错误（DNS 失败、拒绝连接、超时）判不可达。
+        ``(可访问, 延迟毫秒)``。收到成功响应（2xx/3xx）判可访问；
+        HEAD 收到 HTTP 错误响应（4xx/5xx）时返回 ``None`` 回退 GET 复测
+        （部分站点仅禁用 HEAD）；GET 收到 HTTP 错误响应判不可访问。
+        连接级错误（DNS 失败、拒绝连接、超时）判不可访问。
     """
     start = time.perf_counter()
     try:
@@ -58,12 +59,13 @@ def _probe_once(url: str, method: str, timeout: float) -> tuple[bool, float] | N
         with urlopen(req, timeout=timeout):
             pass
     except HTTPError:
-        # 已收到 HTTP 响应，测得延迟；HEAD 被拒时回退 GET 复测
+        # 成功响应之外的状态码：HEAD 可能仅被禁用（405 等），回退 GET 复测；
+        # GET 仍报错则站点当前确实不可用（如 WAF 全站拦截、502/503）
         if method == "HEAD":
             return None
-        return (True, (time.perf_counter() - start) * 1000)
+        return (False, unreachable_latency())
     except (URLError, TimeoutError, OSError):
-        # DNS 解析失败、拒绝连接、超时等连接级错误——不可达
+        # DNS 解析失败、拒绝连接、超时等连接级错误——不可访问
         return (False, unreachable_latency())
     return (True, (time.perf_counter() - start) * 1000)
 
@@ -71,9 +73,10 @@ def _probe_once(url: str, method: str, timeout: float) -> tuple[bool, float] | N
 def check_url(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[bool, float]:
     """检测单个 URL 的可访问性与响应延迟。
 
-    先发 HEAD 请求（开销最小）；服务器不接受 HEAD 时回退 GET 验证。
-    收到任何 HTTP 响应（含 4xx/5xx，如 WAF 拦截页）均视为网络可达；
-    仅 DNS 失败、拒绝连接、超时等连接级错误判不可达。
+    先发 HEAD 请求（开销最小）；HEAD 收到 HTTP 错误响应时回退 GET 验证
+    （部分站点仅禁用 HEAD，回退可避免误判）。可访问以成功响应
+    （2xx/3xx）为准；HTTP 错误响应（4xx/5xx，如 WAF 全站拦截、502/503）
+    与连接级错误（DNS 失败、拒绝连接、超时）均判不可访问。
     延迟为请求发出到响应头返回的耗时（毫秒）。
 
     Parameters
@@ -93,7 +96,7 @@ def check_url(url: str, timeout: float = _DEFAULT_TIMEOUT) -> tuple[bool, float]
     if head is not None:
         return head
     get = _probe_once(url, "GET", timeout)
-    assert get is not None  # GET 收到 HTTP 响应必返回结果（None 仅限 HEAD 被拒）
+    assert get is not None  # GET 必有最终结果（None 仅限 HEAD 被拒回退）
     return get
 
 

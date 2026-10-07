@@ -53,23 +53,23 @@ def _make_error_urlopen(error: Exception) -> Any:
     return _urlopen
 
 
-def _make_method_error_urlopen(head_error: Exception, get_ok: bool) -> Any:
+def _make_method_error_urlopen(head_error: Exception, get_error: Exception | None = None) -> Any:
     """创建按 HTTP 方法区分行为的模拟 urlopen。
 
     Parameters
     ----------
     head_error:
         HEAD 请求抛出的异常
-    get_ok:
-        GET 请求是否成功
+    get_error:
+        GET 请求抛出的异常；``None`` 表示 GET 成功
     """
 
     def _urlopen(req: Any, timeout: float = 5) -> Any:
         method = getattr(req, "method", None) or "GET"
         if method == "HEAD":
             raise head_error
-        if not get_ok:
-            raise URLError("get failed")
+        if get_error is not None:
+            raise get_error
         return _make_ok_urlopen()(req, timeout)
 
     return _urlopen
@@ -108,18 +108,29 @@ class TestCheckUrl:
     def test_head_405_fallback_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 返回 405 时回退 GET 验证。"""
         error = HTTPError("https://mirror.example.com", 405, "Method Not Allowed", Message(), None)
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_method_error_urlopen(error, get_ok=True))
+        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_method_error_urlopen(error))
         ok, latency = check_url("https://mirror.example.com")
         assert ok is True
         assert latency >= 0
 
-    def test_http_error_still_reachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """HEAD 与 GET 均收到 HTTP 错误响应（如 WAF 403）时视为网络可达。"""
+    def test_http_error_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """HEAD 与 GET 均收到 HTTP 错误响应（如 WAF 全站 403）时不可访问。"""
         error = HTTPError("https://mirror.example.com", 403, "Forbidden", Message(), None)
         monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_error_urlopen(error))
         ok, latency = check_url("https://mirror.example.com")
-        assert ok is True
-        assert latency >= 0
+        assert ok is False
+        assert latency == unreachable_latency()
+
+    def test_head_ok_but_get_error_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """HEAD 被拒回退 GET 后仍报 HTTP 错误时不可访问（GET 决定最终结果）。"""
+        head_error = HTTPError("https://mirror.example.com", 405, "Method Not Allowed", Message(), None)
+        get_error = HTTPError("https://mirror.example.com", 404, "Not Found", Message(), None)
+        monkeypatch.setattr(
+            fcmd.cli.net.urlcheck, "urlopen", _make_method_error_urlopen(head_error, get_error=get_error)
+        )
+        ok, latency = check_url("https://mirror.example.com")
+        assert ok is False
+        assert latency == unreachable_latency()
 
     def test_request_carries_user_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """探测请求携带浏览器 UA（规避镜像站 WAF 拦截默认 UA）。"""
