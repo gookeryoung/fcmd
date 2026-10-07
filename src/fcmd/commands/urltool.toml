@@ -1,0 +1,22 @@
+# 内置 DSL 命令：urltool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/conv/urltool.py 已迁入 fcmd/dsl/actions/conv2.py：
+# parse/query/addquery/baseurl 四子命令基于 urllib.parse，无子进程调用。
+# URL 为空、缺少 scheme/netloc 等非法输入抛 ValueError，动作层捕获后
+# 打印错误提示，不视为失败。
+
+[commands.urltool.parse]
+help = "解析 URL 各组成部分"
+action = "urltool_parse"
+
+[commands.urltool.query]
+help = "提取查询参数值"
+action = "urltool_query"
+
+[commands.urltool.addquery]
+help = "添加查询参数"
+action = "urltool_addquery"
+
+[commands.urltool.baseurl]
+help = "提取基础 URL"
+action = "urltool_baseurl"

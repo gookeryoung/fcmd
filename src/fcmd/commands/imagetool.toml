@@ -1,0 +1,48 @@
+# 内置 DSL 命令：imagetool（11 子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/media/imagetool.py 已迁入 fcmd/dsl/actions/media.py：
+# 全部子命令为纯 Python（Pillow），无子进程调用。
+
+[commands.imagetool.r]
+help = "调整尺寸"
+action = "imagetool_r"
+
+[commands.imagetool.c]
+help = "裁剪图片"
+action = "imagetool_c"
+
+[commands.imagetool.ro]
+help = "旋转图片"
+action = "imagetool_ro"
+
+[commands.imagetool.fl]
+help = "翻转图片"
+action = "imagetool_fl"
+
+[commands.imagetool.cv]
+help = "格式转换"
+action = "imagetool_cv"
+
+[commands.imagetool.wm]
+help = "添加文字水印"
+action = "imagetool_wm"
+
+[commands.imagetool.cp]
+help = "压缩图片"
+action = "imagetool_cp"
+
+[commands.imagetool.i]
+help = "查看图片信息"
+action = "imagetool_i"
+
+[commands.imagetool.e]
+help = "读取/修改 EXIF"
+action = "imagetool_e"
+
+[commands.imagetool.hi]
+help = "颜色直方图"
+action = "imagetool_hi"
+
+[commands.imagetool.co]
+help = "提取主色调"
+action = "imagetool_co"

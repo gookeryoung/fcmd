@@ -1,0 +1,26 @@
+# 内置 DSL 命令：csvtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/data/csvtool.py 已迁入 fcmd/dsl/actions/data.py：
+# show/to-json/from-json/select/merge 五子命令均为纯 Python（csv/json），
+# 无子进程调用。动作签名即 CLI 参数 schema；文件不存在 / 非法模式捕获
+# 后打印错误提示，不视为失败（退出码 0）。
+
+[commands.csvtool.show]
+help = "预览 CSV 前几行"
+action = "csvtool_show"
+
+[commands.csvtool.to-json]
+help = "CSV 转 JSON"
+action = "csvtool_to_json"
+
+[commands.csvtool.from-json]
+help = "JSON 转 CSV"
+action = "csvtool_from_json"
+
+[commands.csvtool.select]
+help = "按列筛选 CSV"
+action = "csvtool_select"
+
+[commands.csvtool.merge]
+help = "合并多个 CSV"
+action = "csvtool_merge"

@@ -1,0 +1,23 @@
+# 内置 DSL 命令：mathtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/calc/mathtool.py 已迁入 fcmd/dsl/actions/conv.py：
+# eval/sqrt/pow/factorial 四子命令均为纯 Python 数学计算，无子进程调用。
+# eval 使用 ast.parse 构建安全求值沙箱（仅常量 + 四则/一元运算 + 幂），
+# 杜绝代码注入；动作签名即 CLI 参数 schema；表达式语法错误 / 除零 /
+# sqrt 负数 / factorial 非负整数边界捕获后打印错误提示，不视为失败。
+
+[commands.mathtool.eval]
+help = "求值数学表达式"
+action = "mathtool_eval"
+
+[commands.mathtool.sqrt]
+help = "计算平方根"
+action = "mathtool_sqrt"
+
+[commands.mathtool.pow]
+help = "幂运算"
+action = "mathtool_pow"
+
+[commands.mathtool.factorial]
+help = "计算阶乘"
+action = "mathtool_factorial"

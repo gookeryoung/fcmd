@@ -1,0 +1,22 @@
+# 内置 DSL 命令：regextool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/text/regextool.py 已迁入 fcmd/dsl/actions/text.py：
+# match/find/replace/split 四子命令均为纯 Python（re 标准库），无子
+# 进程调用。动作签名即 CLI 参数 schema；无效正则表达式捕获后打印错误
+# 提示，不视为失败（退出码 0）。
+
+[commands.regextool.match]
+help = "匹配正则表达式"
+action = "regextool_match"
+
+[commands.regextool.find]
+help = "查找所有匹配"
+action = "regextool_find"
+
+[commands.regextool.replace]
+help = "替换匹配"
+action = "regextool_replace"
+
+[commands.regextool.split]
+help = "按正则分割"
+action = "regextool_split"

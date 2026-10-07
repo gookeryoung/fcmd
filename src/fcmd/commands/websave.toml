@@ -1,0 +1,8 @@
+# 内置 DSL 命令：websave（单命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/net/websave.py 已迁入 fcmd/dsl/actions/net.py：
+# 为纯 Python（urllib/pathlib/re），无子进程调用。
+
+[commands.websave]
+help = "保存网页内容（主页及相关子页面，含图片/CSS/JS）"
+action = "websave"

@@ -318,7 +318,7 @@ class TestToolDiscovery:
         real_import_module = _importlib.import_module
 
         def _fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "fcmd.cli.media.img2ico":
+            if name == "fcmd.cli.media.screenshot":
                 raise OSError("no library called 'libcairo-2' was found")
             return real_import_module(name, *args, **kwargs)  # type: ignore[arg-type]
 
@@ -328,8 +328,8 @@ class TestToolDiscovery:
         monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
         # 修复前：OSError 直接抛出，整个发现流程崩溃
         discovery_mod.ensure_tools_discovered()
-        # img2ico 模块路径仍登记（注册先于导入），但模块未加载成功
-        assert discovery_mod._TOOL_MODULES["img2ico"] == "fcmd.cli.media.img2ico"
+        # screenshot 模块路径仍登记（注册先于导入），但模块未加载成功
+        assert discovery_mod._TOOL_MODULES["screenshot"] == "fcmd.cli.media.screenshot"
         # 其余工具不受影响
         assert "pymake" in discovery_mod._TOOL_MODULES
 
@@ -344,13 +344,13 @@ class TestToolDiscovery:
         real_import_module = _importlib.import_module
 
         def _fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "fcmd.cli.media.img2ico":
+            if name == "fcmd.cli.media.screenshot":
                 raise OSError("no library called 'libcairo-2' was found")
             return real_import_module(name, *args, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(discovery_mod.importlib, "import_module", _fake_import)
-        monkeypatch.setitem(discovery_mod._TOOL_MODULES, "img2ico", "fcmd.cli.media.img2ico")
-        result = discovery_mod.load_tool_subs("img2ico")
+        monkeypatch.setitem(discovery_mod._TOOL_MODULES, "screenshot", "fcmd.cli.media.screenshot")
+        result = discovery_mod.load_tool_subs("screenshot")
         assert result is None
         captured = capsys.readouterr()
         assert "libcairo-2" in captured.out
@@ -1373,46 +1373,18 @@ class TestCoverageGaps:
 # 工具模块 main() 入口测试
 # ---------------------------------------------------------------------- #
 # (工具名, 模块路径) 列表：每个工具模块的 main() 应委托 run_tool_main 并传入工具名
+# 注：casetool/colortool/hashfile/hashtool/idtool/mathtool 已迁移为
+# 内置 DSL 动作（commands/*.toml + dsl/actions/*.py），CLI Python 模块已删除。
 _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("archivex", "fcmd.cli.archive.archivex"),
-    ("asciitool", "fcmd.cli.text.asciitool"),
     ("bumpversion", "fcmd.cli.dev.bumpversion"),
-    ("casetool", "fcmd.cli.conv.casetool"),
-    ("codetool", "fcmd.cli.conv.codetool"),
-    ("colortool", "fcmd.cli.conv.colortool"),
-    ("convtool", "fcmd.cli.conv.convtool"),
-    ("csvtool", "fcmd.cli.data.csvtool"),
-    ("cryptool", "fcmd.cli.crypto.cryptool"),
     ("envdev", "fcmd.cli.dev.envdev"),
-    ("filesearch", "fcmd.cli.fileops.filesearch"),
-    ("folderzip", "fcmd.cli.archive.folderzip"),
     ("gittool", "fcmd.cli.dev.gittool"),
-    ("hashfile", "fcmd.cli.crypto.hashfile"),
-    ("hashtool", "fcmd.cli.crypto.hashtool"),
-    ("idtool", "fcmd.cli.crypto.idtool"),
-    ("imagetool", "fcmd.cli.media.imagetool"),
-    ("iptool", "fcmd.cli.net.iptool"),
-    ("jsontool", "fcmd.cli.data.jsontool"),
     ("lscalc", "fcmd.cli.calc.lscalc"),
-    ("mathtool", "fcmd.cli.calc.mathtool"),
-    ("nettool", "fcmd.cli.net.nettool"),
     ("packtool", "fcmd.cli.dev.packtool"),
-    ("padtool", "fcmd.cli.text.padtool"),
-    ("pathtool", "fcmd.cli.fileops.pathtool"),
-    ("pdftool", "fcmd.cli.media.pdftool"),
     ("portcheck", "fcmd.cli.net.portcheck"),
     ("pymake", "fcmd.cli.dev.pymake"),
-    ("randtool", "fcmd.cli.calc.randtool"),
-    ("regextool", "fcmd.cli.text.regextool"),
     ("screenshot", "fcmd.cli.media.screenshot"),
-    ("stattool", "fcmd.cli.calc.stattool"),
-    ("textdiff", "fcmd.cli.text.textdiff"),
-    ("timetool", "fcmd.cli.calc.timetool"),
-    ("txttool", "fcmd.cli.text.txttool"),
-    ("urltool", "fcmd.cli.conv.urltool"),
-    ("websave", "fcmd.cli.net.websave"),
-    ("xmltool", "fcmd.cli.data.xmltool"),
-    ("yamtool", "fcmd.cli.data.yamtool"),
     ("zipencrypt", "fcmd.cli.archive.zipencrypt"),
 ]
 

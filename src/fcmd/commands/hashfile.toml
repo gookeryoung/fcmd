@@ -1,0 +1,14 @@
+# 内置 DSL 命令：hashfile（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/crypto/hashfile.py 已迁入 fcmd/dsl/actions/hashing.py：
+# f/d 两子命令均为纯 Python hashlib 分块读取，无子进程调用。d 子命令
+# 复用 _common.IGNORE_DIRS / IGNORE_EXT 跳过常见忽略目录与 .pyc 文件。
+# 动作签名即 CLI 参数 schema；单文件缺失时打印提示并返回（不视为失败）。
+
+[commands.hashfile.f]
+help = "计算单个文件哈希"
+action = "hashfile_f"
+
+[commands.hashfile.d]
+help = "计算目录下所有文件哈希"
+action = "hashfile_d"

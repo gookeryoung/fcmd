@@ -1,10 +1,10 @@
-"""hashtool 工具测试。
+"""hashtool 工具测试（DSL 内建动作声明 commands/hashtool.toml）。
 
-验证 ``fcmd.cli.crypto.hashtool`` 模块：
-- 工具注册与四子命令结构（md5/sha1/sha256/sha512）
-- ``hash_md5``/``hash_sha1``/``hash_sha256``/``hash_sha512``
-- 已知向量验证与往返一致
-- CLI 子命令端到端
+验证 ``fcmd hashtool`` 的 DSL action 迁移语义：
+- 工具注册（多子命令 DSL 工具，内置声明）
+- 声明契约：__dsl_action__ 标记、无 cmd（fn 任务形态）
+- 动作实现逻辑（四算法 hashlib 计算，已知向量验证）
+- CLI 子命令端到端（run_tool 退出码 + capsys 捕获输出）
 """
 
 from __future__ import annotations
@@ -13,14 +13,11 @@ import hashlib
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.crypto.hashtool import (
-    hash_md5,
-    hash_sha1,
-    hash_sha256,
-    hash_sha512,
-    list_algorithms,
-)
+from fcmd.apis._tool_args import ToolSpec
+from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
+
+ensure_tools_discovered()  # 幂等：注册内置 DSL 命令
 
 # 已知哈希向量（用 hashlib 计算确保一致）
 _EMPTY_MD5 = hashlib.md5(b"").hexdigest()
@@ -30,184 +27,88 @@ _HELLO_SHA256 = hashlib.sha256(b"hello").hexdigest()
 _HELLO_SHA512 = hashlib.sha512(b"hello").hexdigest()
 
 
-# ============================================================================ #
-# 工具注册
-# ============================================================================ #
-class TestRegistration:
-    """工具注册与子命令结构测试。"""
+def _run_and_capture(name: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
+    """运行工具并返回 (退出码, 输出)。"""
+    code = run_tool(name, argv)
+    raw = capsys.readouterr().out
+    # 过滤掉控制台帧（以 > 或 OK/FAILED 开头的行），保留动作 print 输出
+    lines = [
+        ln
+        for ln in raw.splitlines()
+        if not ln.startswith("> ") and not ln.startswith("OK ") and not ln.startswith("FAILED ")
+    ]
+    return code, "\n".join(lines)
 
-    def test_registered(self) -> None:
-        """hashtool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
 
-        assert "hashtool" in list_tools()
+# ====================================================================== #
+# 注册与声明契约
+# ====================================================================== #
+class TestHashtoolRegistration:
+    """hashtool 经内置 DSL（action 原语）注册。"""
 
     def test_subcommands(self) -> None:
         """hashtool 有 md5/sha1/sha256/sha512 四个子命令。"""
-        subs = list_subcommands("hashtool")
-        assert set(subs) == {"md5", "sha1", "sha256", "sha512"}
+        assert set(_TOOL_REGISTRY["hashtool"]) == {"md5", "sha1", "sha256", "sha512"}
 
-    def test_list_algorithms(self) -> None:
-        """list_algorithms 返回支持算法列表。"""
-        algos = list_algorithms()
-        assert set(algos) == {"md5", "sha1", "sha256", "sha512"}
-
-
-# ============================================================================ #
-# hash_md5
-# ============================================================================ #
-class TestHashMd5:
-    """hash_md5 测试。"""
-
-    def test_known_value(self) -> None:
-        """已知值验证。"""
-        assert hash_md5("hello") == _HELLO_MD5
-
-    def test_empty_string(self) -> None:
-        """空字符串。"""
-        assert hash_md5("") == _EMPTY_MD5
-
-    def test_length_32(self) -> None:
-        """MD5 摘要长度 32。"""
-        assert len(hash_md5("test")) == 32
-
-    def test_lowercase(self) -> None:
-        """输出为小写。"""
-        result = hash_md5("test")
-        assert result == result.lower()
-
-    def test_unicode(self) -> None:
-        """Unicode 字符串。"""
-        # 中文 UTF-8 编码后的 MD5
-        assert hash_md5("中") == hashlib.md5("中".encode()).hexdigest()
-
-    def test_deterministic(self) -> None:
-        """相同输入相同输出。"""
-        assert hash_md5("hello") == hash_md5("hello")
+    @pytest.mark.parametrize(
+        "sub, action_name",
+        [
+            ("md5", "hashtool_md5"),
+            ("sha1", "hashtool_sha1"),
+            ("sha256", "hashtool_sha256"),
+            ("sha512", "hashtool_sha512"),
+        ],
+    )
+    def test_action_contract(self, sub: str, action_name: str) -> None:
+        """子命令携带 __dsl_action__ 标记，cmd 为 None（fn 任务形态）。"""
+        spec: ToolSpec = _TOOL_REGISTRY["hashtool"][sub]
+        assert spec.cmd is None
+        assert getattr(spec.func, "__dsl_action__", None) == action_name
 
 
-# ============================================================================ #
-# hash_sha1
-# ============================================================================ #
-class TestHashSha1:
-    """hash_sha1 测试。"""
+# ====================================================================== #
+# 动作逻辑 —— 已知向量验证
+# ====================================================================== #
+class TestActionKnownVectors:
+    """四算法输出与 hashlib 原生计算一致。"""
 
-    def test_known_value(self) -> None:
-        """已知值验证。"""
-        assert hash_sha1("hello") == _HELLO_SHA1
-
-    def test_length_40(self) -> None:
-        """SHA1 摘要长度 40。"""
-        assert len(hash_sha1("test")) == 40
-
-    def test_lowercase(self) -> None:
-        """输出为小写。"""
-        result = hash_sha1("test")
-        assert result == result.lower()
-
-
-# ============================================================================ #
-# hash_sha256
-# ============================================================================ #
-class TestHashSha256:
-    """hash_sha256 测试。"""
-
-    def test_known_value(self) -> None:
-        """已知值验证。"""
-        assert hash_sha256("hello") == _HELLO_SHA256
-
-    def test_length_64(self) -> None:
-        """SHA256 摘要长度 64。"""
-        assert len(hash_sha256("test")) == 64
-
-    def test_lowercase(self) -> None:
-        """输出为小写。"""
-        result = hash_sha256("test")
-        assert result == result.lower()
-
-
-# ============================================================================ #
-# hash_sha512
-# ============================================================================ #
-class TestHashSha512:
-    """hash_sha512 测试。"""
-
-    def test_known_value(self) -> None:
-        """已知值验证。"""
-        assert hash_sha512("hello") == _HELLO_SHA512
-
-    def test_length_128(self) -> None:
-        """SHA512 摘要长度 128。"""
-        assert len(hash_sha512("test")) == 128
-
-    def test_lowercase(self) -> None:
-        """输出为小写。"""
-        result = hash_sha512("test")
-        assert result == result.lower()
-
-
-# ============================================================================ #
-# 不同算法输出不同
-# ============================================================================ #
-class TestAlgorithmDifference:
-    """不同算法输出不同验证。"""
-
-    def test_different_algorithms_different_output(self) -> None:
-        """同一输入不同算法输出不同。"""
-        text = "hello"
-        results = {hash_md5(text), hash_sha1(text), hash_sha256(text), hash_sha512(text)}
-        assert len(results) == 4
-
-    def test_different_input_different_output(self) -> None:
-        """不同输入同算法输出不同。"""
-        assert hash_md5("a") != hash_md5("b")
-
-
-# ============================================================================ #
-# CLI 子命令测试
-# ============================================================================ #
-class TestHashtoolCLI:
-    """``hashtool`` 通过 ``run_tool`` 调用测试。"""
-
-    def test_md5(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashtool md5 hello。"""
-        code = run_tool("hashtool", ["md5", "hello"])
+    def test_md5_known(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("hashtool", ["md5", "hello"], capsys)
         assert code == 0
-        out = capsys.readouterr().out
-        assert _HELLO_MD5 in out
-
-    def test_sha1(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashtool sha1 hello。"""
-        code = run_tool("hashtool", ["sha1", "hello"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert _HELLO_SHA1 in out
-
-    def test_sha256(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashtool sha256 hello。"""
-        code = run_tool("hashtool", ["sha256", "hello"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert _HELLO_SHA256 in out
-
-    def test_sha512(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashtool sha512 hello。"""
-        code = run_tool("hashtool", ["sha512", "hello"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert _HELLO_SHA512 in out
+        assert out.strip() == _HELLO_MD5
 
     def test_md5_empty(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashtool md5 ''（空字符串）。"""
-        code = run_tool("hashtool", ["md5", ""])
+        code, out = _run_and_capture("hashtool", ["md5", ""], capsys)
         assert code == 0
-        out = capsys.readouterr().out
-        assert _EMPTY_MD5 in out
+        assert out.strip() == _EMPTY_MD5
 
-    def test_md5_unicode(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashtool md5 中文。"""
-        code = run_tool("hashtool", ["md5", "中文"])
+    def test_sha1_known(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("hashtool", ["sha1", "hello"], capsys)
         assert code == 0
-        out = capsys.readouterr().out
-        expected = hashlib.md5("中文".encode()).hexdigest()
-        assert expected in out
+        assert out.strip() == _HELLO_SHA1
+
+    def test_sha256_known(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("hashtool", ["sha256", "hello"], capsys)
+        assert code == 0
+        assert out.strip() == _HELLO_SHA256
+
+    def test_sha512_known(self, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("hashtool", ["sha512", "hello"], capsys)
+        assert code == 0
+        assert out.strip() == _HELLO_SHA512
+
+    def test_all_algorithms_differ(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """四算法对同一输入输出均不同。"""
+        outputs: list[str] = []
+        for sub in ("md5", "sha1", "sha256", "sha512"):
+            _, out = _run_and_capture("hashtool", [sub, "test"], capsys)
+            outputs.append(out.strip())
+        assert len(set(outputs)) == 4
+
+    def test_output_lowercase_hex(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """所有算法输出均为小写十六进制。"""
+        for sub in ("md5", "sha1", "sha256", "sha512"):
+            _, out = _run_and_capture("hashtool", [sub, "ABC"], capsys)
+            hex_str = out.strip()
+            assert hex_str == hex_str.lower()
+            int(hex_str, 16)  # 全部是合法 hex

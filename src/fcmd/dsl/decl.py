@@ -919,15 +919,47 @@ def parse_tool_table(name: str, table: Mapping[str, Any]) -> ToolDecl:
     if name in _RESERVED_NAMES:
         raise CommandDeclError(f"命令名 {name!r} 是保留名（fcmd 或内建命令）")
 
-    has_flat_key = bool({"cmd", "win", "unix", "args", "action"} & set(table))
+    # flat 形态检测：仅用不可能与子命令名冲突的标记键（cmd/action）。
+    # win/unix/args 既可作平台子表/参数声明，也可作子命令名；值为 dict
+    # 时进一步区分：平台子表仅含 cmd 键（win.cmd/unix.cmd），子命令表含
+    # help 等命令声明键。
+    flat_scalar_keys = {"cmd", "action"}
+    platform_keys = {"win", "unix"}
+    _ARGS_KEY = "args"
+    # 子命令表必填 help 键（parse_command_table 强校验）
+    _SUB_REQUIRED_KEY = "help"
+
+    has_flat_scalar = bool(flat_scalar_keys & set(table))
+
+    def _is_flat_platform(k: str, v: Any) -> bool:
+        """win/unix 为 flat 平台子表：值是非 Mapping（标量）或仅含 cmd 键的小表。"""
+        if k not in platform_keys:
+            return False
+        if not isinstance(v, Mapping):
+            return True
+        # 值为 dict 且只含 cmd 键 → 平台子表 win.cmd / unix.cmd
+        return set(v.keys()) <= {"cmd"}
+
+    def _is_flat_args(k: str, v: Any) -> bool:
+        """args 为 flat 键：值是 Mapping（参数声明表）。"""
+        return k == _ARGS_KEY and isinstance(v, Mapping)
+
+    has_flat_any = has_flat_scalar or any(_is_flat_platform(k, v) or _is_flat_args(k, v) for k, v in table.items())
+
     sub_keys = [
+        k for k, v in table.items() if isinstance(v, Mapping) and k not in _TOP_KEYS and not _is_flat_args(k, v)
+    ]
+    # win/unix 值为 Mapping 且含 help（非平台子表）时归入子命令表
+    sub_keys.extend(
         k
         for k, v in table.items()
-        if isinstance(v, Mapping) and k not in _TOP_KEYS and k not in {"win", "unix", "args"}
-    ]
-    if has_flat_key and sub_keys:
+        if isinstance(v, Mapping) and k in platform_keys and set(v.keys()) > {"cmd"}  # 非纯平台子表（有 help 等其他键）
+    )
+    sub_keys = list(dict.fromkeys(sub_keys))  # 去重保序
+
+    if has_flat_any and sub_keys:
         raise CommandDeclError(f"命令 {name!r} 混用单命令与子命令形态（单命令表内不能嵌套子命令表: {sub_keys}）")
-    if has_flat_key:
+    if has_flat_any:
         decl = parse_command_table(name, table)
         return ToolDecl(name=name, commands=(decl,), flat=True, description=decl.description, aliases=decl.aliases)
     return _parse_tool_subs(name, table)

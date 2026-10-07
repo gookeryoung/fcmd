@@ -1,0 +1,22 @@
+# 内置 DSL 命令：randtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/calc/randtool.py 已迁入 fcmd/dsl/actions/calc.py：
+# password/number/string/bytes 四子命令均为纯 Python（secrets/base64/
+# string），无子进程调用。动作签名即 CLI 参数 schema；非法参数捕获后
+# 打印错误提示，不视为失败（退出码 0）。
+
+[commands.randtool.password]
+help = "生成强密码"
+action = "randtool_password"
+
+[commands.randtool.number]
+help = "生成随机整数"
+action = "randtool_number"
+
+[commands.randtool.string]
+help = "生成自定义字符集随机字符串"
+action = "randtool_string"
+
+[commands.randtool.bytes]
+help = "生成随机字节"
+action = "randtool_bytes"

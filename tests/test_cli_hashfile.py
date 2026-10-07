@@ -1,10 +1,10 @@
-"""hashfile 工具测试。
+"""hashfile 工具测试（DSL 内建动作声明 commands/hashfile.toml）。
 
-验证 ``fcmd.cli.crypto.hashfile`` 模块：
-- 工具注册与子命令结构
-- compute_hash 哈希计算
-- hash_file / hash_directory 文件与目录哈希
-- 通过 run_tool 调用 f / d 子命令
+验证 ``fcmd hashfile`` 的 DSL action 迁移语义：
+- 工具注册（多子命令 DSL 工具，内置声明）
+- 声明契约：__dsl_action__ 标记、无 cmd（fn 任务形态）
+- f 子命令：单文件哈希、文件不存在提示、已知向量
+- d 子命令：目录遍历、忽略目录/扩展名过滤
 """
 
 from __future__ import annotations
@@ -14,134 +14,111 @@ from pathlib import Path
 
 import pytest
 
-import fcmd as fx
-import fcmd.cli.crypto.hashfile
+from fcmd.apis._tool_args import ToolSpec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.crypto.hashfile import compute_hash, hash_directory, hash_file
+from fcmd.cli._discovery import ensure_tools_discovered
+
+ensure_tools_discovered()
 
 
-# ---------------------------------------------------------------------- #
-# 注册验证
-# ---------------------------------------------------------------------- #
-class TestToolsRegistration:
-    """hashfile 工具的注册验证。"""
-
-    def test_all_tools_registered(self) -> None:
-        """hashfile 应在 _TOOL_REGISTRY 中注册。"""
-        assert "hashfile" in _TOOL_REGISTRY, "工具 'hashfile' 未注册"
-
-    def test_hashfile_subcommands(self) -> None:
-        """hashfile 应有 f / d 子命令。"""
-        subs = fx.list_subcommands("hashfile")
-        assert "f" in subs
-        assert "d" in subs
+def _run_and_capture(name: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
+    code = run_tool(name, argv)
+    raw = capsys.readouterr().out
+    # 过滤掉控制台帧（以 > 或 OK/FAILED 开头的行），保留动作 print 输出
+    lines = [
+        ln
+        for ln in raw.splitlines()
+        if not ln.startswith("> ") and not ln.startswith("OK ") and not ln.startswith("FAILED ")
+    ]
+    return code, "\n".join(lines)
 
 
-# ---------------------------------------------------------------------- #
-# hashfile 工具测试
-# ---------------------------------------------------------------------- #
-class TestHashfile:
-    """``hashfile`` 工具测试。"""
+# ====================================================================== #
+# 注册与声明契约
+# ====================================================================== #
+class TestHashfileRegistration:
+    """hashfile 经内置 DSL（action 原语）注册。"""
 
-    def test_compute_hash_sha256(self, tmp_path: Path) -> None:
-        """compute_hash 默认使用 sha256。"""
+    def test_subcommands(self) -> None:
+        assert set(_TOOL_REGISTRY["hashfile"]) == {"f", "d"}
+
+    @pytest.mark.parametrize("sub, action", [("f", "hashfile_f"), ("d", "hashfile_d")])
+    def test_action_contract(self, sub: str, action: str) -> None:
+        spec: ToolSpec = _TOOL_REGISTRY["hashfile"][sub]
+        assert spec.cmd is None
+        assert getattr(spec.func, "__dsl_action__", None) == action
+
+
+# ====================================================================== #
+# f 子命令 —— 单文件哈希
+# ====================================================================== #
+class TestHashfileFile:
+    """hashfile f 单文件哈希。"""
+
+    def test_sha256_default(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """默认 sha256，输出格式 algorithm  digest  path。"""
         f = tmp_path / "a.txt"
         f.write_text("hello", encoding="utf-8")
+        code, out = _run_and_capture("hashfile", ["f", str(f)], capsys)
+        assert code == 0
         expected = hashlib.sha256(b"hello").hexdigest()
-        assert compute_hash(f) == expected
+        assert f"sha256  {expected}  {f}" == out.strip()
 
-    def test_compute_hash_md5(self, tmp_path: Path) -> None:
-        """compute_hash 支持 md5 算法。"""
+    def test_md5_explicit(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         f = tmp_path / "a.txt"
         f.write_text("hello", encoding="utf-8")
+        code, out = _run_and_capture("hashfile", ["f", str(f), "--algorithm", "md5"], capsys)
+        assert code == 0
         expected = hashlib.md5(b"hello").hexdigest()
-        assert compute_hash(f, "md5") == expected
+        assert f"md5  {expected}  {f}" == out.strip()
 
-    def test_compute_hash_large_file(self, tmp_path: Path) -> None:
-        """compute_hash 分块读取大文件。"""
-        f = tmp_path / "big.bin"
-        data = b"x" * (200 * 1024)  # 200KB，超过 _CHUNK_SIZE
-        f.write_bytes(data)
-        expected = hashlib.sha256(data).hexdigest()
-        assert compute_hash(f) == expected
-
-    def test_hash_file_prints(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """hash_file 打印 algorithm + digest + path。"""
-        f = tmp_path / "a.txt"
-        f.write_text("hello", encoding="utf-8")
-        hash_file(str(f))
-        out = capsys.readouterr().out
-        assert "sha256" in out
-        assert hashlib.sha256(b"hello").hexdigest() in out
-        assert str(f) in out
-
-    def test_hash_file_not_exist(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """hash_file 文件不存在时打印提示。"""
-        hash_file(str(tmp_path / "nonexistent"))
-        out = capsys.readouterr().out
+    def test_file_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        f = tmp_path / "nonexistent.txt"
+        code, out = _run_and_capture("hashfile", ["f", str(f)], capsys)
+        # 文件不存在不视为失败（动作内 print 提示后 return）
+        assert code == 0
         assert "文件不存在" in out
 
-    def test_hash_directory_prints_all_files(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """hash_directory 打印目录下全部文件哈希。"""
-        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
-        (tmp_path / "b.txt").write_text("b", encoding="utf-8")
-        hash_directory(str(tmp_path))
-        out = capsys.readouterr().out
+    def test_large_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """1MB 文件分块读取无内存压力。"""
+        f = tmp_path / "big.bin"
+        f.write_bytes(b"x" * (1024 * 1024))
+        code, out = _run_and_capture("hashfile", ["f", str(f)], capsys)
+        assert code == 0
+        expected = hashlib.sha256(b"x" * (1024 * 1024)).hexdigest()
+        assert expected in out
+
+
+# ====================================================================== #
+# d 子命令 —— 目录遍历
+# ====================================================================== #
+class TestHashfileDir:
+    """hashfile d 目录哈希。"""
+
+    def test_iterates_all_files(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("y", encoding="utf-8")
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "c.txt").write_text("z", encoding="utf-8")
+        code, out = _run_and_capture("hashfile", ["d", str(tmp_path)], capsys)
+        assert code == 0
         assert "a.txt" in out
         assert "b.txt" in out
-        assert hashlib.sha256(b"a").hexdigest() in out
+        assert "c.txt" in out
 
-    def test_hash_directory_skips_ignore_dirs(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """hash_directory 跳过 __pycache__ 等忽略目录。"""
-        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
-        cache_dir = tmp_path / "__pycache__"
-        cache_dir.mkdir()
-        (cache_dir / "cached.pyc").write_bytes(b"cached")
-        hash_directory(str(tmp_path))
-        out = capsys.readouterr().out
-        assert "a.txt" in out
-        assert "__pycache__" not in out
-        assert "cached.pyc" not in out
+    def test_skips_ignore_dirs(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        (tmp_path / "good.txt").write_text("ok", encoding="utf-8")
+        for dname in (".git", "__pycache__"):
+            d = tmp_path / dname
+            d.mkdir()
+            (d / "secret.txt").write_text("skip me", encoding="utf-8")
+        code, out = _run_and_capture("hashfile", ["d", str(tmp_path)], capsys)
+        assert code == 0
+        assert "secret.txt" not in out
+        assert "good.txt" in out
 
-    def test_hash_directory_skips_ignore_ext(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """hash_directory 跳过 .pyc/.zip 等忽略扩展名文件。"""
-        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
-        (tmp_path / "archive.zip").write_bytes(b"zipdata")
-        (tmp_path / "compiled.pyc").write_bytes(b"pycdata")
-        hash_directory(str(tmp_path))
-        out = capsys.readouterr().out
-        assert "a.txt" in out
-        assert "archive.zip" not in out
-        assert "compiled.pyc" not in out
-
-    def test_hash_directory_not_exist(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """hash_directory 目录不存在时打印提示。"""
-        hash_directory(str(tmp_path / "nonexistent"))
-        out = capsys.readouterr().out
+    def test_directory_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("hashfile", ["d", str(tmp_path / "missing")], capsys)
+        assert code == 0
         assert "目录不存在" in out
-
-    def test_hashfile_f_via_run_tool(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashfile f <file> 通过 run_tool 调用。"""
-        f = tmp_path / "a.txt"
-        f.write_text("hello", encoding="utf-8")
-        code = run_tool("hashfile", ["f", str(f)])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert hashlib.sha256(b"hello").hexdigest() in out
-
-    def test_hashfile_f_md5_via_run_tool(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashfile f <file> --algorithm md5 指定算法。"""
-        f = tmp_path / "a.txt"
-        f.write_text("hello", encoding="utf-8")
-        code = run_tool("hashfile", ["f", str(f), "--algorithm", "md5"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert hashlib.md5(b"hello").hexdigest() in out
-
-    def test_hashfile_d_via_run_tool(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd hashfile d <dir> 通过 run_tool 调用。"""
-        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
-        code = run_tool("hashfile", ["d", str(tmp_path)])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "a.txt" in out

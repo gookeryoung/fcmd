@@ -1,0 +1,20 @@
+# 内置 DSL 命令：pathtool（四子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/fileops/pathtool.py 已迁入 fcmd/dsl/actions/fileops.py：
+# show/rel/norm/diff 四子命令均为纯 Python（pathlib），无子进程调用。
+
+[commands.pathtool.show]
+help = "显示路径各部分信息"
+action = "pathtool_show"
+
+[commands.pathtool.rel]
+help = "计算相对路径"
+action = "pathtool_rel"
+
+[commands.pathtool.norm]
+help = "规范化路径"
+action = "pathtool_norm"
+
+[commands.pathtool.diff]
+help = "比较两路径差异"
+action = "pathtool_diff"

@@ -1,0 +1,23 @@
+# 内置 DSL 命令：padtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/text/padtool.py 已迁入 fcmd/dsl/actions/text.py：
+# left/right/center/justify 四子命令均为纯 Python（str.ljust/rjust/
+# center + 手动两端对齐算法），无子进程调用。动作签名即 CLI 参数
+# schema；width 为负数等非法输入捕获后打印错误提示，不视为失败
+# （退出码 0）。
+
+[commands.padtool.left]
+help = "左对齐文本"
+action = "padtool_left"
+
+[commands.padtool.right]
+help = "右对齐文本"
+action = "padtool_right"
+
+[commands.padtool.center]
+help = "居中对齐文本"
+action = "padtool_center"
+
+[commands.padtool.justify]
+help = "两端对齐文本"
+action = "padtool_justify"

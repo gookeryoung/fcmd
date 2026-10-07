@@ -1,0 +1,12 @@
+# 内置 DSL 命令：urlcheck（双子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/net/urlcheck.py 已迁入 fcmd/dsl/actions/net.py：
+# u/r 二子命令均为纯 Python（urllib/concurrent.futures），无子进程调用。
+
+[commands.urlcheck.u]
+help = "检测单个 URL 可访问性与延迟"
+action = "urlcheck_u"
+
+[commands.urlcheck.r]
+help = "批量探测 URL 并按访问速度排序"
+action = "urlcheck_r"

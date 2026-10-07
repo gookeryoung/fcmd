@@ -1,0 +1,16 @@
+# 内置 DSL 命令：iptool（三子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/net/iptool.py 已迁入 fcmd/dsl/actions/net.py：
+# parse/subnet/validate 三子命令均为纯 Python（ipaddress），无子进程调用。
+
+[commands.iptool.parse]
+help = "解析 IP 地址"
+action = "iptool_parse"
+
+[commands.iptool.subnet]
+help = "计算子网信息"
+action = "iptool_subnet"
+
+[commands.iptool.validate]
+help = "校验 IP 地址格式"
+action = "iptool_validate"

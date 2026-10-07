@@ -1,0 +1,22 @@
+# 内置 DSL 命令：casetool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/conv/casetool.py 已迁入 fcmd/dsl/actions/conv.py：
+# snake/camel/pascal/kebab 四子命令均为纯 Python 正则拆分 + 重组，
+# 无子进程调用。动作签名即 CLI 参数 schema；识别小大写边界、连字符、
+# 下划线、连续大写（HTTPServer → HTTP/Server）等多分隔风格。
+
+[commands.casetool.snake]
+help = "转 snake_case"
+action = "casetool_snake"
+
+[commands.casetool.camel]
+help = "转 camelCase"
+action = "casetool_camel"
+
+[commands.casetool.pascal]
+help = "转 PascalCase"
+action = "casetool_pascal"
+
+[commands.casetool.kebab]
+help = "转 kebab-case"
+action = "casetool_kebab"

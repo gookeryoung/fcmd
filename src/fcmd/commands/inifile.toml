@@ -1,0 +1,22 @@
+# 内置 DSL 命令：inifile（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/data/inifile.py 已迁入 fcmd/dsl/actions/data.py：
+# get/set/list/keys 四子命令均为纯 Python（configparser），无子进程
+# 调用。动作签名即 CLI 参数 schema；section/key 不存在或文件读取失败
+# 捕获后打印错误提示，不视为失败（退出码 0）。
+
+[commands.inifile.get]
+help = "获取指定 section.key 的值"
+action = "inifile_get"
+
+[commands.inifile.set]
+help = "设置 section.key 的值并写回文件"
+action = "inifile_set"
+
+[commands.inifile.list]
+help = "列出所有 section"
+action = "inifile_list"
+
+[commands.inifile.keys]
+help = "列出 section 的所有 key"
+action = "inifile_keys"

@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.data.jsontool import (
+from fcmd.dsl.actions.data import (
     minify_json,
     pretty_json,
     query_json,

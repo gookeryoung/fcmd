@@ -1,0 +1,16 @@
+# 内置 DSL 命令：nettool（三子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/net/nettool.py 已迁入 fcmd/dsl/actions/net.py：
+# get/post/head 三子命令均为纯 Python（urllib），无子进程调用。
+
+[commands.nettool.get]
+help = "HTTP GET 请求"
+action = "nettool_get"
+
+[commands.nettool.post]
+help = "HTTP POST 请求"
+action = "nettool_post"
+
+[commands.nettool.head]
+help = "HTTP HEAD 请求"
+action = "nettool_head"

@@ -1,0 +1,20 @@
+# 内置 DSL 命令：calcdate（四子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/calc/calcdate.py 已迁入 fcmd/dsl/actions/calcdate.py：
+# add/workdays/diff/compare 四子命令均为纯 Python（datetime），无子进程调用。
+
+[commands.calcdate.add]
+help = "日期加减天数"
+action = "calcdate_add"
+
+[commands.calcdate.workdays]
+help = "计算工作日数"
+action = "calcdate_workdays"
+
+[commands.calcdate.diff]
+help = "计算日期差值"
+action = "calcdate_diff"
+
+[commands.calcdate.compare]
+help = "比较日期先后"
+action = "calcdate_compare"

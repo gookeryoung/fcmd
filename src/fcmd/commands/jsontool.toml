@@ -1,0 +1,22 @@
+# 内置 DSL 命令：jsontool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/data/jsontool.py 已迁入 fcmd/dsl/actions/data.py：
+# pretty/minify/query/sort 四子命令均为纯 Python（json），无子进程
+# 调用。动作签名即 CLI 参数 schema；文件不存在 / 点路径非法捕获后
+# 打印错误提示，不视为失败（退出码 0）。
+
+[commands.jsontool.pretty]
+help = "格式化打印 JSON"
+action = "jsontool_pretty"
+
+[commands.jsontool.minify]
+help = "压缩 JSON 为单行"
+action = "jsontool_minify"
+
+[commands.jsontool.query]
+help = "按点路径查询 JSON"
+action = "jsontool_query"
+
+[commands.jsontool.sort]
+help = "按键排序 JSON"
+action = "jsontool_sort"

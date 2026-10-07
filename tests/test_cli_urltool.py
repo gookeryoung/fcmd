@@ -1,6 +1,6 @@
-"""urltool 工具测试。
+"""urltool 工具测试（DSL 内建动作声明 commands/urltool.toml）。
 
-验证 ``fcmd.cli.conv.urltool`` 模块：
+验证 ``fcmd.dsl.actions.conv2`` 模块：
 - 工具注册与四子命令结构（parse/query/addquery/baseurl）
 - ``parse_url``/``get_query_param``/``add_query_param``/``get_base_url``
 - 错误分支
@@ -12,12 +12,15 @@ from __future__ import annotations
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.conv.urltool import (
+from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.dsl.actions.conv2 import (
     add_query_param,
     get_base_url,
     get_query_param,
     parse_url,
 )
+
+ensure_tools_discovered()
 
 
 # ============================================================================ #

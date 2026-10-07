@@ -166,7 +166,7 @@ def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float 
         最快可达的镜像名；全部不可达时返回 ``None``。
     """
     # 延迟导入避免加重导入链
-    from fcmd.cli.net.urlcheck import check_urls
+    from fcmd.dsl.actions.net import check_urls
 
     name_by_url = {url: name for name, url in candidates.items()}
     results = check_urls(list(candidates.values()), timeout=timeout)

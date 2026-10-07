@@ -1,0 +1,16 @@
+# 内置 DSL 命令：cryptool（三子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/crypto/cryptool.py 已迁入 fcmd/dsl/actions/crypto.py：
+# genkey/encrypt/decrypt 三子命令均为纯 Python（hashlib/hmac/os），无子进程调用。
+
+[commands.cryptool.genkey]
+help = "生成加密密钥"
+action = "cryptool_genkey"
+
+[commands.cryptool.encrypt]
+help = "加密文本"
+action = "cryptool_encrypt"
+
+[commands.cryptool.decrypt]
+help = "解密文本"
+action = "cryptool_decrypt"

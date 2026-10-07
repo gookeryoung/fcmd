@@ -1,242 +1,134 @@
-"""casetool 工具测试。
+"""casetool 工具测试（DSL 内建动作声明 commands/casetool.toml）。
 
-验证 ``fcmd.cli.conv.casetool`` 模块：
-- 工具注册与四子命令结构（snake/camel/pascal/kebab）
-- ``to_snake``/``to_camel``/``to_pascal``/``to_kebab``
-- 多种输入格式识别与转换
-- CLI 子命令端到端
+验证 ``fcmd casetool`` 的 DSL action 迁移语义：
+- 工具注册（多子命令 DSL 工具，内置声明）
+- 声明契约：__dsl_action__ 标记、无 cmd（fn 任务形态）
+- snake/camel/pascal/kebab 四子命令对多种输入风格的转换正确性
 """
 
 from __future__ import annotations
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.conv.casetool import (
-    to_camel,
-    to_kebab,
-    to_pascal,
-    to_snake,
-)
+from fcmd.apis._tool_args import ToolSpec
+from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.cli._discovery import ensure_tools_discovered
+
+ensure_tools_discovered()
 
 
-# ============================================================================ #
-# 工具注册
-# ============================================================================ #
-class TestRegistration:
-    """工具注册与子命令结构测试。"""
+def _run_and_capture(name: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
+    code = run_tool(name, argv)
+    raw = capsys.readouterr().out
+    # 过滤掉控制台帧（以 > 或 OK/FAILED 开头的行），保留动作 print 输出
+    lines = [
+        ln
+        for ln in raw.splitlines()
+        if not ln.startswith("> ") and not ln.startswith("OK ") and not ln.startswith("FAILED ")
+    ]
+    return code, "\n".join(lines)
 
-    def test_registered(self) -> None:
-        """casetool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
 
-        assert "casetool" in list_tools()
-
+# ====================================================================== #
+# 注册与声明契约
+# ====================================================================== #
+class TestCasetoolRegistration:
     def test_subcommands(self) -> None:
-        """casetool 有 snake/camel/pascal/kebab 四个子命令。"""
-        subs = list_subcommands("casetool")
-        assert set(subs) == {"snake", "camel", "pascal", "kebab"}
+        assert set(_TOOL_REGISTRY["casetool"]) == {"snake", "camel", "pascal", "kebab"}
+
+    @pytest.mark.parametrize(
+        "sub, action",
+        [
+            ("snake", "casetool_snake"),
+            ("camel", "casetool_camel"),
+            ("pascal", "casetool_pascal"),
+            ("kebab", "casetool_kebab"),
+        ],
+    )
+    def test_action_contract(self, sub: str, action: str) -> None:
+        spec: ToolSpec = _TOOL_REGISTRY["casetool"][sub]
+        assert spec.cmd is None
+        assert getattr(spec.func, "__dsl_action__", None) == action
 
 
-# ============================================================================ #
-# to_snake
-# ============================================================================ #
-class TestToSnake:
-    """to_snake 测试。"""
-
-    def test_camel_input(self) -> None:
-        """camelCase 输入。"""
-        assert to_snake("helloWorld") == "hello_world"
-
-    def test_pascal_input(self) -> None:
-        """PascalCase 输入。"""
-        assert to_snake("HelloWorld") == "hello_world"
-
-    def test_kebab_input(self) -> None:
-        """kebab-case 输入。"""
-        assert to_snake("hello-world") == "hello_world"
-
-    def test_space_input(self) -> None:
-        """空格分隔输入。"""
-        assert to_snake("hello world") == "hello_world"
-
-    def test_mixed_input(self) -> None:
-        """混合分隔符输入。"""
-        assert to_snake("hello_world-foo bar") == "hello_world_foo_bar"
-
-    def test_acronym_input(self) -> None:
-        """含连续大写（HTTPServer → http_server）。"""
-        assert to_snake("HTTPServer") == "http_server"
-
-    def test_single_word(self) -> None:
-        """单词。"""
-        assert to_snake("hello") == "hello"
-
-    def test_empty(self) -> None:
-        """空字符串。"""
-        assert to_snake("") == ""
-
-    def test_already_snake(self) -> None:
-        """已是 snake_case 不变。"""
-        assert to_snake("hello_world") == "hello_world"
-
-    def test_numbers(self) -> None:
-        """含数字。"""
-        assert to_snake("hello2World") == "hello2_world"
-
-
-# ============================================================================ #
-# to_camel
-# ============================================================================ #
-class TestToCamel:
-    """to_camel 测试。"""
-
-    def test_snake_input(self) -> None:
-        """snake_case 输入。"""
-        assert to_camel("hello_world") == "helloWorld"
-
-    def test_pascal_input(self) -> None:
-        """PascalCase 输入（首字母转小写）。"""
-        assert to_camel("HelloWorld") == "helloWorld"
-
-    def test_kebab_input(self) -> None:
-        """kebab-case 输入。"""
-        assert to_camel("hello-world") == "helloWorld"
-
-    def test_space_input(self) -> None:
-        """空格分隔输入。"""
-        assert to_camel("hello world") == "helloWorld"
-
-    def test_single_word(self) -> None:
-        """单词首字母小写。"""
-        assert to_camel("hello") == "hello"
-        assert to_camel("Hello") == "hello"
-
-    def test_empty(self) -> None:
-        """空字符串。"""
-        assert to_camel("") == ""
-
-    def test_multiple_words(self) -> None:
-        """多词。"""
-        assert to_camel("hello world foo") == "helloWorldFoo"
-
-
-# ============================================================================ #
-# to_pascal
-# ============================================================================ #
-class TestToPascal:
-    """to_pascal 测试。"""
-
-    def test_snake_input(self) -> None:
-        """snake_case 输入。"""
-        assert to_pascal("hello_world") == "HelloWorld"
-
-    def test_camel_input(self) -> None:
-        """camelCase 输入（首字母转大写）。"""
-        assert to_pascal("helloWorld") == "HelloWorld"
-
-    def test_kebab_input(self) -> None:
-        """kebab-case 输入。"""
-        assert to_pascal("hello-world") == "HelloWorld"
-
-    def test_space_input(self) -> None:
-        """空格分隔输入。"""
-        assert to_pascal("hello world") == "HelloWorld"
-
-    def test_single_word(self) -> None:
-        """单词首字母大写。"""
-        assert to_pascal("hello") == "Hello"
-        assert to_pascal("Hello") == "Hello"
-
-    def test_empty(self) -> None:
-        """空字符串。"""
-        assert to_pascal("") == ""
-
-    def test_multiple_words(self) -> None:
-        """多词。"""
-        assert to_pascal("hello world foo") == "HelloWorldFoo"
-
-
-# ============================================================================ #
-# to_kebab
-# ============================================================================ #
-class TestToKebab:
-    """to_kebab 测试。"""
-
-    def test_camel_input(self) -> None:
-        """camelCase 输入。"""
-        assert to_kebab("helloWorld") == "hello-world"
-
-    def test_pascal_input(self) -> None:
-        """PascalCase 输入。"""
-        assert to_kebab("HelloWorld") == "hello-world"
-
-    def test_snake_input(self) -> None:
-        """snake_case 输入。"""
-        assert to_kebab("hello_world") == "hello-world"
-
-    def test_space_input(self) -> None:
-        """空格分隔输入。"""
-        assert to_kebab("hello world") == "hello-world"
-
-    def test_single_word(self) -> None:
-        """单词。"""
-        assert to_kebab("hello") == "hello"
-
-    def test_empty(self) -> None:
-        """空字符串。"""
-        assert to_kebab("") == ""
-
-    def test_acronym_input(self) -> None:
-        """含连续大写。"""
-        assert to_kebab("HTTPServer") == "http-server"
-
-
-# ============================================================================ #
-# CLI 子命令测试
-# ============================================================================ #
-class TestCasetoolCLI:
-    """``casetool`` 通过 ``run_tool`` 调用测试。"""
-
-    def test_snake(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd casetool snake。"""
-        code = run_tool("casetool", ["snake", "helloWorld"])
+# ====================================================================== #
+# snake_case
+# ====================================================================== #
+class TestCasetoolSnake:
+    @pytest.mark.parametrize(
+        "inp, expected",
+        [
+            ("HelloWorld", "hello_world"),
+            ("hello-world", "hello_world"),
+            ("hello_world", "hello_world"),
+            ("HELLO", "hello"),
+            ("HTTPServer", "http_server"),
+            ("httpServer", "http_server"),
+        ],
+    )
+    def test_convert(self, inp: str, expected: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("casetool", ["snake", inp], capsys)
         assert code == 0
-        out = capsys.readouterr().out
-        assert "hello_world" in out
-
-    def test_camel(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd casetool camel。"""
-        code = run_tool("casetool", ["camel", "hello world"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "helloWorld" in out
-
-    def test_pascal(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd casetool pascal。"""
-        code = run_tool("casetool", ["pascal", "hello-world"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "HelloWorld" in out
-
-    def test_kebab(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd casetool kebab。"""
-        code = run_tool("casetool", ["kebab", "HelloWorld"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "hello-world" in out
-
-    def test_snake_acronym(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd casetool snake HTTPServer。"""
-        code = run_tool("casetool", ["snake", "HTTPServer"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "http_server" in out
+        assert out.strip() == expected
 
     def test_empty_input(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd casetool snake ''（空字符串）。"""
-        code = run_tool("casetool", ["snake", ""])
+        code, out = _run_and_capture("casetool", ["snake", ""], capsys)
         assert code == 0
-        out = capsys.readouterr().out
-        # 空字符串输出空行
-        assert "" in out.splitlines()
+        assert out.strip() == ""
+
+
+# ====================================================================== #
+# camelCase
+# ====================================================================== #
+class TestCasetoolCamel:
+    @pytest.mark.parametrize(
+        "inp, expected",
+        [
+            ("hello world", "helloWorld"),
+            ("hello-world", "helloWorld"),
+            ("hello_world", "helloWorld"),
+            ("HelloWorld", "helloWorld"),
+        ],
+    )
+    def test_convert(self, inp: str, expected: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("casetool", ["camel", inp], capsys)
+        assert code == 0
+        assert out.strip() == expected
+
+
+# ====================================================================== #
+# PascalCase
+# ====================================================================== #
+class TestCasetoolPascal:
+    @pytest.mark.parametrize(
+        "inp, expected",
+        [
+            ("hello world", "HelloWorld"),
+            ("hello-world", "HelloWorld"),
+            ("hello_world", "HelloWorld"),
+            ("helloWorld", "HelloWorld"),
+        ],
+    )
+    def test_convert(self, inp: str, expected: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("casetool", ["pascal", inp], capsys)
+        assert code == 0
+        assert out.strip() == expected
+
+
+# ====================================================================== #
+# kebab-case
+# ====================================================================== #
+class TestCasetoolKebab:
+    @pytest.mark.parametrize(
+        "inp, expected",
+        [
+            ("HelloWorld", "hello-world"),
+            ("hello_world", "hello-world"),
+            ("hello world", "hello-world"),
+            ("hello-world", "hello-world"),
+        ],
+    )
+    def test_convert(self, inp: str, expected: str, capsys: pytest.CaptureFixture[str]) -> None:
+        code, out = _run_and_capture("casetool", ["kebab", inp], capsys)
+        assert code == 0
+        assert out.strip() == expected

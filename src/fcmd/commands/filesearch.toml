@@ -1,0 +1,12 @@
+# 内置 DSL 命令：filesearch（双子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/fileops/filesearch.py 已迁入 fcmd/dsl/actions/fileops.py：
+# name/content 二子命令均为纯 Python（pathlib/fnmatch/re），无子进程调用。
+
+[commands.filesearch.name]
+help = "按文件名 glob 搜索"
+action = "filesearch_name"
+
+[commands.filesearch.content]
+help = "按内容正则搜索"
+action = "filesearch_content"

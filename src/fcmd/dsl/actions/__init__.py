@@ -29,6 +29,10 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 * :mod:`fcmd.dsl.actions.filenames` —— 文件名批量操作（dateprefix/filerename/filelevel）
 * :mod:`fcmd.dsl.actions.system` —— 系统管理（taskkill/which/sysinfo/folderback）
 * :mod:`fcmd.dsl.actions.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
+* :mod:`fcmd.dsl.actions.hashing` —— 字符串与文件哈希（hashtool/hashfile）
+* :mod:`fcmd.dsl.actions.genid` —— ID 生成（UUID/时间戳/随机字符串，idtool）
+* :mod:`fcmd.dsl.actions.conv` —— 命名风格/颜色换算/数学计算（casetool/colortool/mathtool）
+* :mod:`fcmd.dsl.actions.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
 """
 
 from __future__ import annotations
@@ -105,7 +109,20 @@ def get_action(name: str) -> Action:
 
 
 # 子模块导入期执行 @action 装饰器完成注册（须位于注册表定义之后）
+from . import archive as archive  # noqa: E402
 from . import basic as basic  # noqa: E402
+from . import calc as calc  # noqa: E402
+from . import calcdate as calcdate  # noqa: E402
 from . import compute as compute  # noqa: E402
+from . import conv as conv  # noqa: E402
+from . import conv2 as conv2  # noqa: E402
+from . import crypto as crypto  # noqa: E402
+from . import data as data  # noqa: E402
 from . import filenames as filenames  # noqa: E402
+from . import fileops as fileops  # noqa: E402
+from . import genid as genid  # noqa: E402
+from . import hashing as hashing  # noqa: E402
+from . import media as media  # noqa: E402
+from . import net as net  # noqa: E402
 from . import system as system  # noqa: E402
+from . import text as text  # noqa: E402

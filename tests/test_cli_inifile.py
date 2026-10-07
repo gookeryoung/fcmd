@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.cli.data.inifile import (
+from fcmd.dsl.actions.data import (
     get_ini_value,
     list_ini_keys,
     list_ini_sections,

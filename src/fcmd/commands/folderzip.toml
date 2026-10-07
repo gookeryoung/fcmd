@@ -1,0 +1,8 @@
+# 内置 DSL 命令：folderzip（单命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/archive/folderzip.py 已迁入 fcmd/dsl/actions/archive.py：
+# 为纯 Python（shutil/pathlib），无子进程调用。
+
+[commands.folderzip]
+help = "压缩当前目录下所有子文件夹为 zip"
+action = "folderzip"

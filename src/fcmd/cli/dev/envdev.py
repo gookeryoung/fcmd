@@ -55,7 +55,7 @@ from fcmd.cli.dev.envdev_core import (
 from fcmd.cli.dev.envdev_go import setup_go_env
 from fcmd.cli.dev.envdev_java import setup_java_env
 from fcmd.cli.dev.envdev_node import setup_node_env
-from fcmd.cli.net.urlcheck import check_urls
+from fcmd.dsl.actions.net import check_urls
 from fcmd.models import run_command
 
 logger = logging.getLogger(__name__)

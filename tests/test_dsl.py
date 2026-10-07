@@ -776,12 +776,12 @@ class TestDiscoveryIntegration:
     ) -> None:
         """DSL 声明与 Python 模块工具重名时 warning 跳过（Python 优先）。"""
         (user_home / "commands.toml").write_text(
-            '[commands.websave]\nhelp = "伪 websave"\ncmd = "echo fake"\n', encoding="utf-8"
+            '[commands.portcheck]\nhelp = "伪 portcheck"\ncmd = "echo fake"\n', encoding="utf-8"
         )
         with caplog.at_level("WARNING", logger="fcmd.cli._discovery"):
             discovery_mod.ensure_tools_discovered()
-        assert "websave" not in discovery_mod._DSL_TOOL_SOURCES
-        assert any("websave" in r.message and "重名" in r.message for r in caplog.records)
+        assert "portcheck" not in discovery_mod._DSL_TOOL_SOURCES
+        assert any("portcheck" in r.message and "重名" in r.message for r in caplog.records)
 
     def test_user_cannot_override_builtin_subcommand(
         self, user_home: Path, caplog: pytest.LogCaptureFixture, reset_discovery: None

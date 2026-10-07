@@ -1,0 +1,26 @@
+# 内置 DSL 命令：codetool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/conv/codetool.py 已迁入 fcmd/dsl/actions/conv2.py：
+# base64/url/hex/rot13/html 五子命令均为纯 Python 编解码，无子进程调用。
+# Base64 解码（binascii.Error/UnicodeDecodeError）与 Hex 解码（ValueError）
+# 非法输入捕获后打印错误提示，不视为失败。
+
+[commands.codetool.base64]
+help = "Base64 编解码"
+action = "codetool_base64"
+
+[commands.codetool.url]
+help = "URL 编解码"
+action = "codetool_url"
+
+[commands.codetool.hex]
+help = "十六进制编解码"
+action = "codetool_hex"
+
+[commands.codetool.rot13]
+help = "ROT13 转换"
+action = "codetool_rot13"
+
+[commands.codetool.html]
+help = "HTML 转义与反转义"
+action = "codetool_html"

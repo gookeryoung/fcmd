@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.data.csvtool import (
+from fcmd.dsl.actions.data import (
     csv_to_json,
     format_table,
     json_to_csv,

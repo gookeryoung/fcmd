@@ -1,0 +1,22 @@
+# 内置 DSL 命令：yamtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/data/yamtool.py 已迁入 fcmd/dsl/actions/data.py：
+# pretty/get/keys/validate 四子命令均为纯 Python（PyYAML），无子进程
+# 调用。动作签名即 CLI 参数 schema；YAML 解析失败 / 点路径非法捕获后
+# 打印错误提示，不视为失败（退出码 0）。
+
+[commands.yamtool.pretty]
+help = "格式化打印 YAML"
+action = "yamtool_pretty"
+
+[commands.yamtool.get]
+help = "按点路径取值"
+action = "yamtool_get"
+
+[commands.yamtool.keys]
+help = "列出顶层键"
+action = "yamtool_keys"
+
+[commands.yamtool.validate]
+help = "校验 YAML 语法"
+action = "yamtool_validate"

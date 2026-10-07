@@ -1,0 +1,27 @@
+# 内置 DSL 命令：stattool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/calc/stattool.py 已迁入 fcmd/dsl/actions/calc.py：
+# mean/median/stddev/variance/summarize 五子命令均为纯 Python（statistics
+# 标准库），无子进程调用。输入数据从文本文件读取，每行一个数字；空行
+# 与 # 起始注释行自动忽略。文件缺失/数据解析失败/统计边界条件捕获后
+# 打印错误提示，不视为失败（退出码 0）。
+
+[commands.stattool.mean]
+help = "计算算术平均值"
+action = "stattool_mean"
+
+[commands.stattool.median]
+help = "计算中位数"
+action = "stattool_median"
+
+[commands.stattool.stddev]
+help = "计算样本标准差"
+action = "stattool_stddev"
+
+[commands.stattool.variance]
+help = "计算样本方差"
+action = "stattool_variance"
+
+[commands.stattool.summarize]
+help = "输出完整统计摘要"
+action = "stattool_summarize"

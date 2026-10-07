@@ -1,6 +1,6 @@
 """img2ico 工具测试。
 
-验证 ``fcmd.cli.media.img2ico`` 模块：
+验证 ``fcmd.dsl.actions.media`` 模块：
 - 工具注册与常量
 - icon_build 核心转换函数
 - CLI 子命令通过 run_tool 调用
@@ -16,7 +16,7 @@ import pytest
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 
 try:
-    from fcmd.cli.media.img2ico import (
+    from fcmd.dsl.actions.media import (
         SVG_TO_ICO_MAC_SIZES,
         SVG_TO_ICO_WIN_SIZES,
         icon_build,
@@ -200,12 +200,13 @@ class TestGenSubcommand:
         assert code == 0
         assert out.exists()
 
-    def test_gen_missing_input_error(self, tmp_path: Path) -> None:
-        """不存在的输入文件应返回失败。"""
+    def test_gen_missing_input_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """不存在的输入文件应打印错误提示（DSL action 不 raise，退出码保持 0）。"""
         missing = tmp_path / "nope.svg"
         out = tmp_path / "out.ico"
         code = run_tool("img2ico", ["gen", str(missing), str(out)])
-        assert code != 0
+        assert code == 0
+        assert "错误" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------- #

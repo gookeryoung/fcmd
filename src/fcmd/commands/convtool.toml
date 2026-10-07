@@ -1,0 +1,21 @@
+# 内置 DSL 命令：convtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/conv/convtool.py 已迁入 fcmd/dsl/actions/conv2.py：
+# length/weight/temp/datasize 四子命令为纯 Python 换算，无子进程调用。
+# 单位非法抛 ValueError，被动作层捕获后打印错误提示，不视为失败。
+
+[commands.convtool.length]
+help = "长度换算"
+action = "convtool_length"
+
+[commands.convtool.weight]
+help = "重量换算"
+action = "convtool_weight"
+
+[commands.convtool.temp]
+help = "温度换算"
+action = "convtool_temp"
+
+[commands.convtool.datasize]
+help = "数据大小换算"
+action = "convtool_datasize"

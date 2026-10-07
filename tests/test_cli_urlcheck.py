@@ -1,6 +1,6 @@
 """urlcheck 工具测试。
 
-验证 ``fcmd.cli.net.urlcheck`` 模块：
+验证 ``fcmd.dsl.actions.net`` 模块：
 - 工具注册与子命令结构（u / r）
 - check_url 可访问 / HEAD 回退 GET / 不可达
 - check_urls 并发探测 + 排序（可达优先、延迟升序）
@@ -17,9 +17,9 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
-import fcmd.cli.net.urlcheck
+import fcmd.dsl.actions.net
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.net.urlcheck import check_url, check_urls, unreachable_latency
+from fcmd.dsl.actions.net import check_url, check_urls, unreachable_latency
 
 # ---------------------------------------------------------------------- #
 # 辅助函数
@@ -100,7 +100,7 @@ class TestCheckUrl:
 
     def test_reachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 成功返回可达与非负延迟。"""
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_ok_urlopen())
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_ok_urlopen())
         ok, latency = check_url("https://mirror.example.com")
         assert ok is True
         assert 0 <= latency < 5000
@@ -108,7 +108,7 @@ class TestCheckUrl:
     def test_head_405_fallback_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 返回 405 时回退 GET 验证。"""
         error = HTTPError("https://mirror.example.com", 405, "Method Not Allowed", Message(), None)
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_method_error_urlopen(error))
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_method_error_urlopen(error))
         ok, latency = check_url("https://mirror.example.com")
         assert ok is True
         assert latency >= 0
@@ -116,7 +116,7 @@ class TestCheckUrl:
     def test_http_error_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 与 GET 均收到 HTTP 错误响应（如 WAF 全站 403）时不可访问。"""
         error = HTTPError("https://mirror.example.com", 403, "Forbidden", Message(), None)
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_error_urlopen(error))
         ok, latency = check_url("https://mirror.example.com")
         assert ok is False
         assert latency == unreachable_latency()
@@ -126,7 +126,7 @@ class TestCheckUrl:
         head_error = HTTPError("https://mirror.example.com", 405, "Method Not Allowed", Message(), None)
         get_error = HTTPError("https://mirror.example.com", 404, "Not Found", Message(), None)
         monkeypatch.setattr(
-            fcmd.cli.net.urlcheck, "urlopen", _make_method_error_urlopen(head_error, get_error=get_error)
+            fcmd.dsl.actions.net, "urlopen", _make_method_error_urlopen(head_error, get_error=get_error)
         )
         ok, latency = check_url("https://mirror.example.com")
         assert ok is False
@@ -140,7 +140,7 @@ class TestCheckUrl:
             seen.append(dict(req.headers))
             return _make_ok_urlopen()(req, timeout)
 
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _urlopen)
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _urlopen)
         check_url("https://mirror.example.com")
         ua = next((v for k, v in seen[0].items() if k.lower() == "user-agent"), "")
         assert "fcmd-urlcheck" in ua
@@ -155,7 +155,7 @@ class TestCheckUrl:
             calls.append(method)
             raise error
 
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _urlopen)
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _urlopen)
         ok, latency = check_url("https://nonexistent.invalid")
         assert ok is False
         assert latency == unreachable_latency()
@@ -185,7 +185,7 @@ class TestCheckUrls:
             ok = latency_by_url[url] != unreachable_latency()
             return ok, latency_by_url[url]
 
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "check_url", fake_check_url)
+        monkeypatch.setattr(fcmd.dsl.actions.net, "check_url", fake_check_url)
         results = check_urls(list(latency_by_url))
         assert results == [
             ("https://fast.example.com", True, 20.0),
@@ -199,7 +199,7 @@ class TestCheckUrls:
         def fake_check_url(url: str, timeout: float = 5.0) -> tuple[bool, float]:
             return False, unreachable_latency()
 
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "check_url", fake_check_url)
+        monkeypatch.setattr(fcmd.dsl.actions.net, "check_url", fake_check_url)
         results = check_urls(["https://a.example.com", "https://b.example.com"])
         assert [r[0] for r in results] == ["https://a.example.com", "https://b.example.com"]
         assert all(not r[1] for r in results)
@@ -215,7 +215,7 @@ class TestUrlcheckCLI:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """fcmd urlcheck u <url> 打印可访问与延迟。"""
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_ok_urlopen())
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_ok_urlopen())
         code = run_tool("urlcheck", ["u", "https://mirror.example.com"])
         assert code == 0
         out = capsys.readouterr().out
@@ -227,7 +227,7 @@ class TestUrlcheckCLI:
     ) -> None:
         """连接级错误（DNS/拒绝连接）时打印不可访问。"""
         error = URLError("connection refused")
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_error_urlopen(error))
         code = run_tool("urlcheck", ["u", "https://nonexistent.invalid"])
         assert code == 0
         assert "不可访问" in capsys.readouterr().out
@@ -242,7 +242,7 @@ class TestUrlcheckCLI:
                 return True, 200.0
             return False, unreachable_latency()
 
-        monkeypatch.setattr(fcmd.cli.net.urlcheck, "check_url", fake_check_url)
+        monkeypatch.setattr(fcmd.dsl.actions.net, "check_url", fake_check_url)
         code = run_tool(
             "urlcheck", ["r", "https://slow.example.com", "https://fast.example.com", "https://down.example.com"]
         )
@@ -253,5 +253,5 @@ class TestUrlcheckCLI:
 
     def test_rank_empty_direct_call(self, capsys: pytest.CaptureFixture[str]) -> None:
         """空 URL 列表直接调用时打印提示（CLI 侧由 argparse 必填参数拦截）。"""
-        fcmd.cli.net.urlcheck.check_urls_cmd([])
+        fcmd.dsl.actions.net.urlcheck_r([])
         assert "至少一个 URL" in capsys.readouterr().out

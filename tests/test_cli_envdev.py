@@ -25,7 +25,7 @@ import fcmd as fx
 import fcmd.cli.dev.envdev
 import fcmd.cli.dev.envdev_core
 import fcmd.cli.dev.envdev_go
-import fcmd.cli.net.urlcheck
+import fcmd.dsl.actions.net
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
 
@@ -849,7 +849,7 @@ class TestCheckCernetMirrors:
         sites = fcmd.cli.dev.envdev._CERNET_MIRROR_SITES
         urls = list(sites.values())
         probe = {url: (True, 50.0 * (len(urls) - i)) for i, url in enumerate(urls)}
-        probe[urls[3]] = (False, fcmd.cli.net.urlcheck.unreachable_latency())
+        probe[urls[3]] = (False, fcmd.dsl.actions.net.unreachable_latency())
         monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
 
         rc = fcmd.cli.dev.envdev.check_cernet_mirrors(source="builtin")
@@ -862,7 +862,7 @@ class TestCheckCernetMirrors:
     def test_probe_all_unreachable(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """全部不可达时返回 1 并提示检查网络。"""
         probe = {
-            url: (False, fcmd.cli.net.urlcheck.unreachable_latency())
+            url: (False, fcmd.dsl.actions.net.unreachable_latency())
             for url in fcmd.cli.dev.envdev._CERNET_MIRROR_SITES.values()
         }
         monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
@@ -983,14 +983,14 @@ class TestAutoMirror:
         pip_urls = fcmd.cli.dev.envdev._PIP_INDEX_URLS
         conda_urls = fcmd.cli.dev.envdev._CONDA_PROBE_URLS
         probe = {
-            url: (False, fcmd.cli.net.urlcheck.unreachable_latency()) for url in {**pip_urls, **conda_urls}.values()
+            url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in {**pip_urls, **conda_urls}.values()
         }
         # pip 服务：tsinghua 最快可达；conda 服务：ustc 最快可达（验证独立选优）
         probe[pip_urls["tsinghua"]] = (True, 20.0)
         probe[pip_urls["aliyun"]] = (True, 80.0)
         probe[conda_urls["ustc"]] = (True, 30.0)
         probe[conda_urls["aliyun"]] = (True, 90.0)
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
 
         fcmd.cli.dev.envdev.setup_lang_env(language="python")
         out = capsys.readouterr().out
@@ -1013,10 +1013,10 @@ class TestAutoMirror:
         """全部镜像不可达时各服务分别回退各自默认镜像。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         probe = {
-            url: (False, fcmd.cli.net.urlcheck.unreachable_latency())
+            url: (False, fcmd.dsl.actions.net.unreachable_latency())
             for url in {**fcmd.cli.dev.envdev._PIP_INDEX_URLS, **fcmd.cli.dev.envdev._CONDA_PROBE_URLS}.values()
         }
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
 
         fcmd.cli.dev.envdev.setup_lang_env(language="python")
         out = capsys.readouterr().out
@@ -1040,14 +1040,14 @@ class TestAutoMirror:
         rustup_urls = fcmd.cli.dev.envdev._RUSTUP_PROBE_URLS
         cargo_urls = fcmd.cli.dev.envdev._CARGO_PROBE_URLS
         probe = {
-            url: (False, fcmd.cli.net.urlcheck.unreachable_latency()) for url in {**rustup_urls, **cargo_urls}.values()
+            url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in {**rustup_urls, **cargo_urls}.values()
         }
         # rustup 服务：tsinghua 最快；cargo 服务：aliyun 最快（选优结果不同）
         probe[rustup_urls["tsinghua"]] = (True, 20.0)
         probe[rustup_urls["aliyun"]] = (True, 50.0)
         probe[cargo_urls["aliyun"]] = (True, 30.0)
         probe[cargo_urls["tsinghua"]] = (True, 60.0)
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
 
         fcmd.cli.dev.envdev.setup_lang_env(language="rust")
         out = capsys.readouterr().out
@@ -1061,9 +1061,9 @@ class TestAutoMirror:
         """go auto 时探测 GOPROXY 服务地址并选用最快可达镜像。"""
         monkeypatch.setattr("fcmd.cli.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
         go_urls = fcmd.cli.dev.envdev_go._GO_PROXY_PROBE_URLS
-        probe = {url: (False, fcmd.cli.net.urlcheck.unreachable_latency()) for url in go_urls.values()}
+        probe = {url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in go_urls.values()}
         probe[go_urls["ustc"]] = (True, 25.0)
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", _fake_check_urls(probe))
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
 
         fcmd.cli.dev.envdev.setup_go_env()
         out = capsys.readouterr().out
@@ -1085,7 +1085,7 @@ class TestAutoMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", fake)
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
 
         fcmd.cli.dev.envdev.setup_lang_env(language="python", mirror="ustc")
         assert called == []
@@ -1100,7 +1100,7 @@ class TestAutoMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", fake)
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
         monkeypatch.setattr("fcmd.cli.dev.envdev._setup_bun_mirror", lambda: None)
         monkeypatch.setattr("fcmd.cli.dev.envdev._install_bun", lambda: None)
 
@@ -1119,7 +1119,7 @@ class TestResolveMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", fake)
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
 
         result = fcmd.cli.dev.envdev_core.resolve_mirror("pip", "ustc", {"a": "https://a"}, "aliyun")
         assert result == "ustc"
@@ -1130,7 +1130,7 @@ class TestResolveMirror:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """探测结果为空（全部不可达）时回退默认镜像。"""
-        monkeypatch.setattr("fcmd.cli.net.urlcheck.check_urls", lambda urls, timeout=5.0, workers=8: [])
+        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", lambda urls, timeout=5.0, workers=8: [])
 
         result = fcmd.cli.dev.envdev_core.resolve_mirror("conda", "auto", {"ustc": "https://u"}, "aliyun")
         assert result == "aliyun"

@@ -1,0 +1,64 @@
+# 内置 DSL 命令：pdftool（15 子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/media/pdftool.py 已迁入 fcmd/dsl/actions/media.py：
+# 全部子命令为纯 Python（PyMuPDF / pypdf），无子进程调用。
+
+[commands.pdftool.m]
+help = "合并 PDF"
+action = "pdftool_m"
+
+[commands.pdftool.s]
+help = "拆分 PDF"
+action = "pdftool_s"
+
+[commands.pdftool.c]
+help = "压缩 PDF"
+action = "pdftool_c"
+
+[commands.pdftool.e]
+help = "加密 PDF"
+action = "pdftool_e"
+
+[commands.pdftool.d]
+help = "解密 PDF"
+action = "pdftool_d"
+
+[commands.pdftool.xt]
+help = "提取文本"
+action = "pdftool_xt"
+
+[commands.pdftool.xi]
+help = "提取图片"
+action = "pdftool_xi"
+
+[commands.pdftool.w]
+help = "添加水印"
+action = "pdftool_w"
+
+[commands.pdftool.r]
+help = "旋转 PDF"
+action = "pdftool_r"
+
+[commands.pdftool.crop]
+help = "裁剪 PDF"
+action = "pdftool_crop"
+
+[commands.pdftool.i]
+help = "查看 PDF 信息"
+action = "pdftool_i"
+
+[commands.pdftool.ocr]
+help = "PDF OCR 识别"
+action = "pdftool_ocr"
+
+[commands.pdftool.reorder]
+help = "重排 PDF 页面"
+action = "pdftool_reorder"
+
+[commands.pdftool.img]
+help = "PDF 转图片"
+action = "pdftool_img"
+
+[commands.pdftool.repair]
+help = "修复 PDF"
+action = "pdftool_repair"

@@ -1,0 +1,21 @@
+# 内置 DSL 命令：hashtool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/crypto/hashtool.py 已迁入 fcmd/dsl/actions/hashing.py：
+# 四子命令均为纯 Python hashlib 计算，无子进程调用。动作签名即 CLI
+# 参数 schema（synth 层直接拷贝），计算结果以小写十六进制字符串单行打印。
+
+[commands.hashtool.md5]
+help = "计算 MD5 哈希"
+action = "hashtool_md5"
+
+[commands.hashtool.sha1]
+help = "计算 SHA1 哈希"
+action = "hashtool_sha1"
+
+[commands.hashtool.sha256]
+help = "计算 SHA256 哈希"
+action = "hashtool_sha256"
+
+[commands.hashtool.sha512]
+help = "计算 SHA512 哈希"
+action = "hashtool_sha512"

@@ -1,0 +1,18 @@
+# 内置 DSL 命令：asciitool（多子命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/text/asciitool.py 已迁入 fcmd/dsl/actions/text.py：
+# char/code/table 三子命令均为纯 Python（ord/chr/range），无子进程调用。
+# 动作签名即 CLI 参数 schema；非法参数捕获后打印错误提示，不视为失败
+# （退出码 0）。
+
+[commands.asciitool.char]
+help = "查询字符的 ASCII 码"
+action = "asciitool_char"
+
+[commands.asciitool.code]
+help = "查询 ASCII 码对应的字符"
+action = "asciitool_code"
+
+[commands.asciitool.table]
+help = "打印 ASCII 表"
+action = "asciitool_table"
