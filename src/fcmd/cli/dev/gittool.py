@@ -6,10 +6,9 @@
 ``src/fcmd/commands/gittool.toml`` DSL 声明——a/i 经链式内部子命令
 ``_init``/``_add``/``_commit`` + ``when`` 探针守卫编排（无仓库自动 init、
 无更改不提交），发现时与本模块的子命令合并注册（见 ``fcmd.cli._discovery``）。
-本模块仅保留含遍历逻辑的 fn 子命令与状态探针辅助函数：
+本模块仅保留含遍历逻辑的 fn 子命令：
 
 - ``isub``：初始化所有子目录的 Git 仓库
-- ``has_files`` / ``not_has_git_repo``：仓库状态探针（公共辅助函数）
 
 示例
 ----
@@ -28,42 +27,8 @@ import subprocess
 from pathlib import Path
 
 import fcmd
-from fcmd.models import run_command
 
-__all__ = [
-    "git_init_sub_dirs",
-    "has_files",
-    "not_has_git_repo",
-]
-
-
-# ============================================================================
-# 私有辅助函数
-# ============================================================================
-
-
-def not_has_git_repo() -> bool:
-    """检查当前目录没有 Git 仓库。
-
-    Returns
-    -------
-    bool
-        当前目录不存在或没有 ``.git`` 目录时返回 ``True``
-    """
-    cwd = Path.cwd()
-    return not cwd.exists() or not (cwd / ".git").is_dir()
-
-
-def has_files() -> bool:
-    """检查当前 Git 仓库是否有未提交的更改。
-
-    Returns
-    -------
-    bool
-        有未提交更改时返回 ``True``
-    """
-    result = run_command(["git", "status", "--porcelain"], capture=True)
-    return bool(result.stdout.strip())
+__all__ = ["git_init_sub_dirs"]
 
 
 # ============================================================================

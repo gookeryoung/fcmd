@@ -179,23 +179,6 @@ class TestEnvdev:
         # sccache 目录已创建
         assert (tmp_path / ".cargo" / "sccache").is_dir()
 
-    def test_setup_rust_mirror_dry_run(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """dry-run 下配置 Rust 镜像源仅打印操作，不写任何文件。"""
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.setattr("fcmd.cli.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
-
-        fcmd.cli.dev.envdev_core.set_dry_run(True)
-        try:
-            fcmd.cli.dev.envdev._setup_rust_mirror("tsinghua")
-        finally:
-            fcmd.cli.dev.envdev_core.set_dry_run(False)
-
-        out = capsys.readouterr().out
-        assert "[dry-run]" in out
-        assert not (tmp_path / ".cargo" / "config.toml").exists()
-
     def test_setup_rust_unknown_mirror(self, capsys: pytest.CaptureFixture[str]) -> None:
         """未知 Rust 镜像源打印提示。"""
         fcmd.cli.dev.envdev._setup_rust_mirror("unknown")
@@ -1187,24 +1170,3 @@ class TestDockerMirrorProbe:
         content = daemon_path.read_text(encoding="utf-8")
         for url in fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS:
             assert url in content
-
-    def test_dry_run_skips_probe_writes(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """dry-run 下探测照常执行但不写文件。"""
-        monkeypatch.setattr(sys, "platform", "linux")
-        fcmd.cli.dev.envdev_core.set_dry_run(True)
-        try:
-            daemon_path = tmp_path / "etc" / "docker" / "daemon.json"
-            monkeypatch.setattr("fcmd.cli.dev.envdev._DOCKER_DAEMON_PATH", daemon_path)
-            candidates = fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS
-            probe = {candidates[0]: (True, 30.0), candidates[1]: (False, 999.0), candidates[2]: (False, 999.0)}
-            monkeypatch.setattr("fcmd.cli.dev.envdev.check_urls", _fake_check_urls(probe))
-
-            fcmd.cli.dev.envdev.setup_docker_mirror()
-            out = capsys.readouterr().out
-            assert "[dry-run]" in out
-            assert candidates[0] in out
-            assert not daemon_path.exists()
-        finally:
-            fcmd.cli.dev.envdev_core.set_dry_run(False)

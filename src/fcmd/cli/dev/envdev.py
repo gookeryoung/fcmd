@@ -47,7 +47,6 @@ from fcmd.cli._env_persist import persist_env
 from fcmd.cli.dev.envdev_core import (
     MirrorSpec,
     apply_mirror_config,
-    is_dry_run,
     mirror_supported,
     pip_config_path,
     resolve_mirror,
@@ -317,10 +316,6 @@ def setup_conda_mirror(mirror: str = "auto") -> None:
     config_path = Path.home() / ".condarc"
     content = "show_channel_urls: true\nchannels:\n  - " + "\n  - ".join(urls) + "\n  - defaults\n"
 
-    if is_dry_run():
-        print(f"[dry-run] 写入配置文件: {config_path}")
-        return
-
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(content, encoding="utf-8")
     print(f"Conda 镜像源已配置: {mirror} -> {config_path}")
@@ -379,10 +374,7 @@ def _setup_rustup_mirror(mirror: str) -> None:
     )
     apply_mirror_config(spec, persist_fn=persist_env, label="Rust rustup")
 
-    if is_dry_run():
-        print("[dry-run] Rust rustup 镜像源将配置")
-    else:
-        print(f"Rust rustup 镜像源已配置: {mirror}")
+    print(f"Rust rustup 镜像源已配置: {mirror}")
 
 
 def _setup_cargo_mirror(mirror: str) -> None:
@@ -552,9 +544,7 @@ def setup_js_env() -> None:
     """
     _setup_bun_mirror()
     _install_bun()
-
-    if not is_dry_run():
-        persist_env("PLAYWRIGHT_DOWNLOAD_HOST", _PLAYWRIGHT_DOWNLOAD_HOST)
+    persist_env("PLAYWRIGHT_DOWNLOAD_HOST", _PLAYWRIGHT_DOWNLOAD_HOST)
 
 
 # ============================================================================
@@ -654,10 +644,6 @@ def setup_docker_mirror() -> None:
         mirrors = list(_DOCKER_REGISTRY_MIRRORS)
 
     new_config = {"registry-mirrors": mirrors}
-
-    if is_dry_run():
-        print(f"[dry-run] 写入 {_DOCKER_DAEMON_PATH}: registry-mirrors={mirrors}")
-        return
 
     _DOCKER_DAEMON_PATH.parent.mkdir(parents=True, exist_ok=True)
     _DOCKER_DAEMON_PATH.write_text(json.dumps(new_config, indent=2), encoding="utf-8")

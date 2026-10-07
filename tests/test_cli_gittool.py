@@ -4,7 +4,6 @@
 DSL 声明，与 Python 模块 isub 合并注册；a/i 经 when 守卫链式内部子命令
 ``_init``/``_add``/``_commit`` 编排）：
 - 工具注册与 cmd 子命令规格（clean/c/ca/p/pl）
-- 状态查询（has_files / not_has_git_repo）
 - 提交（a / i 子命令：守卫跳过与链式提交）
 - DSL 链式规格（_init/_add/_commit 的 hidden/needs/守卫/豁免）
 - isub 子命令（初始化子目录 Git 仓库）
@@ -21,7 +20,6 @@ import pytest
 import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册（isub/main）
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
-from fcmd.cli.dev.gittool import has_files, not_has_git_repo
 
 # 触发工具发现：Python 模块扫描 + DSL 声明注册（幂等）
 ensure_tools_discovered()
@@ -44,32 +42,6 @@ class TestGittool:
         assert ".venv" in excludes
         assert "node_modules" in excludes
         assert ".git" in excludes
-
-    def test_not_has_git_repo_true(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """非 git 目录返回 True。"""
-        monkeypatch.chdir(tmp_path)
-        assert not_has_git_repo() is True
-
-    def test_not_has_git_repo_false(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """git 仓库目录返回 False。"""
-        monkeypatch.chdir(tmp_path)
-        subprocess.run(["git", "init"], check=True, capture_output=True)
-        assert not_has_git_repo() is False
-
-    def test_has_files_clean(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """干净的 git 仓库返回 False。"""
-        monkeypatch.chdir(tmp_path)
-        subprocess.run(["git", "init"], check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], check=True, capture_output=True)
-        subprocess.run(["git", "config", "user.name", "test"], check=True, capture_output=True)
-        assert has_files() is False
-
-    def test_has_files_dirty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """有未提交更改返回 True。"""
-        monkeypatch.chdir(tmp_path)
-        subprocess.run(["git", "init"], check=True, capture_output=True)
-        (tmp_path / "a.txt").write_text("hello", encoding="utf-8")
-        assert has_files() is True
 
     def test_gittool_a_no_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

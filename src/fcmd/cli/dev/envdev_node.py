@@ -12,7 +12,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.cli._env_persist import persist_env
-from fcmd.cli.dev.envdev_core import MirrorSpec, apply_mirror_config, is_dry_run
+from fcmd.cli.dev.envdev_core import MirrorSpec, apply_mirror_config
 from fcmd.models import run_command
 
 __all__ = ["setup_node_env"]
@@ -44,8 +44,6 @@ def _setup_npm_mirror() -> None:
     ``YARN_REGISTRY`` / ``PNPM_REGISTRY`` 环境变量，并调用各工具的
     ``config set registry`` 命令确保工具链级生效。
     """
-    dry = is_dry_run()
-
     spec = MirrorSpec(
         env_vars={
             "NPM_CONFIG_REGISTRY": _NPM_REGISTRY,
@@ -54,9 +52,6 @@ def _setup_npm_mirror() -> None:
         },
     )
     apply_mirror_config(spec, persist_fn=persist_env, label="npm")
-
-    if dry:
-        return
 
     # 工具链级 config set
     if shutil.which("npm") is not None:
