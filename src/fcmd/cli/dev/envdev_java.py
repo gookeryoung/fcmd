@@ -95,11 +95,10 @@ def _install_sdkman() -> None:
 
 
 # ============================================================================
-# 一键命令
+# 一键命令（由 envdev lang java 路由调用）
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="java", help="一键配置 Java 环境")
 def setup_java_env(mirror: str = "aliyun", install_sdkman: bool = False) -> None:
     """一键配置 Java 开发环境。
 

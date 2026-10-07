@@ -103,11 +103,10 @@ def _install_go_global_tools() -> None:
 
 
 # ============================================================================
-# 一键命令
+# 一键命令（由 envdev lang go 路由调用）
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="go", help="一键配置 Go 环境")
 def setup_go_env(mirror: str = "goproxy", install_gvm: bool = False) -> None:
     """一键配置 Go 开发环境。
 

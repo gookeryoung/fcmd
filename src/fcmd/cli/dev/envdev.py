@@ -1,17 +1,25 @@
 """envdev - 开发环境镜像源配置工具。
 
-按语言一键配置开发环境（镜像源 + 工具链安装），Linux 上额外配置系统镜像源、
-Qt 依赖库、中文字体与 Docker。细粒度步骤命令（setup-* / install-*）为隐藏
-子命令，可单独调用也可由一键命令编排。
+子命令整合为四组操作入口：
 
-本模块是门面层：语言级一键命令、Linux 专用命令、远程桌面命令在此定义；
-公共辅助提取自 :mod:`fcmd.cli.dev.envdev_core`。
+- ``lang <语言>``：语言类一键配置（python/js/rust/go/java/node）
+- ``app <应用>``：应用/系统类一键配置（linux-mirror/qt-libs/fonts/docker/docker-mirror/openssh/remote）
+- ``check``：检测开发环境配置状态（工具链 + 镜像源，只读）
+- ``all``：一键配置所有环境
+
+细粒度步骤命令（setup-* / install-*）为隐藏子命令，可单独调用也可由
+分组命令与一键命令编排。
+
+本模块是门面层：分组路由、语言级一键命令、Linux 专用命令、远程桌面命令
+在此定义；公共辅助提取自 :mod:`fcmd.cli.dev.envdev_core`。
 
 示例
 ----
-    fcmd envdev python --mirror tsinghua          # 一键配置 Python 环境（pip/uv + Conda）
-    fcmd envdev js                                # 一键配置 JavaScript 环境（Bun）
-    fcmd envdev rust --mirror tsinghua nightly    # 一键配置 Rust 环境（镜像源 + 工具链）
+    fcmd envdev lang python --mirror tsinghua     # 一键配置 Python 环境（pip/uv + Conda）
+    fcmd envdev lang js                           # 一键配置 JavaScript 环境（Bun）
+    fcmd envdev lang rust --mirror tsinghua nightly  # 一键配置 Rust 环境（镜像源 + 工具链）
+    fcmd envdev app remote                        # 一键配置 Linux 远程桌面（xrdp + Xfce）
+    fcmd envdev check                             # 检测开发环境配置状态
     fcmd envdev all                               # 一键配置所有环境
 """
 
@@ -22,6 +30,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Literal
 
 import fcmd
 from fcmd.cli._env_persist import persist_env
@@ -38,13 +47,16 @@ from fcmd.cli.dev.envdev_node import setup_node_env
 from fcmd.models import run_command
 
 __all__ = [
+    "check_env",
     "install_linux_docker",
     "install_linux_fonts",
     "install_linux_openssh",
     "install_linux_qt_libs",
     "setup_all_env",
+    "setup_app_env",
     "setup_conda_mirror",
     "setup_js_env",
+    "setup_lang_env",
     "setup_linux_remote",
     "setup_linux_system_mirror",
     "setup_python_env",
@@ -252,11 +264,10 @@ def setup_conda_mirror(mirror: str = "aliyun") -> None:
 
 
 # ============================================================================
-# 语言级一键命令
+# 语言级一键命令（由 lang 分组路由调用）
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="python", help="一键配置 Python 环境")
 def setup_python_env(mirror: str = "aliyun") -> None:
     """一键配置 Python 开发环境（pip/uv 镜像源 + Conda 镜像源）。
 
@@ -363,7 +374,6 @@ def _install_rust_toolchain(version: str = "stable") -> None:
     print(f"Rust 工具链 {version} 安装完成")
 
 
-@fcmd.tool("envdev", subcommand="rust", help="一键配置 Rust 环境")
 def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
     """一键配置 Rust 开发环境（镜像源 + 下载 rustup + 安装工具链）。
 
@@ -428,7 +438,6 @@ def _install_bun() -> None:
     print("Bun.js 安装完成")
 
 
-@fcmd.tool("envdev", subcommand="js", help="一键配置 JavaScript 环境")
 def setup_js_env() -> None:
     """一键配置 JavaScript 开发环境（Bun npm 镜像源 + 安装 Bun.js）。
 
@@ -480,7 +489,7 @@ def setup_linux_system_mirror() -> None:
     run_command(["bash", "-c", _INSTALL_MIRROR_SCRIPT])
 
 
-@fcmd.tool("envdev", subcommand="install-qt-libs", help="安装 Qt 依赖库")
+@fcmd.tool("envdev", subcommand="install-qt-libs", help="安装 Qt 依赖库", hidden=True)
 def install_linux_qt_libs() -> None:
     """安装 Qt 依赖库（仅 Linux）。"""
     if not sys.platform.startswith("linux"):
@@ -502,7 +511,7 @@ def install_linux_fonts() -> None:
     print("中文字体安装完成")
 
 
-@fcmd.tool("envdev", subcommand="install-docker", help="安装 Docker")
+@fcmd.tool("envdev", subcommand="install-docker", help="安装 Docker", hidden=True)
 def install_linux_docker() -> None:
     """安装 Docker（仅 Linux）。"""
     if not sys.platform.startswith("linux"):
@@ -657,7 +666,7 @@ def _configure_lightdm() -> None:
     print("lightdm 已配置并重启")
 
 
-@fcmd.tool("envdev", subcommand="remote", help="一键配置远程桌面（xrdp + Xfce）")
+@fcmd.tool("envdev", subcommand="remote", help="一键配置远程桌面（xrdp + Xfce）", hidden=True)
 def setup_linux_remote() -> None:
     """一键配置 Linux 远程桌面（仅 Linux）。
 
@@ -674,6 +683,103 @@ def setup_linux_remote() -> None:
     _install_xrdp()
     _configure_lightdm()
     print("远程桌面配置完成（RDP 端口 3389，SSH 端口 22）")
+
+
+# ============================================================================
+# 分组路由（lang / app）
+# ============================================================================
+
+
+@fcmd.tool("envdev", subcommand="lang", help="语言类一键配置（python/js/rust/go/java/node）")
+def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一键命令
+    language: Literal["python", "js", "rust", "go", "java", "node"],
+    mirror: str = "aliyun",
+    rust_version: str = "stable",
+    install_nvm: bool = False,
+    install_gvm: bool = False,
+    install_sdkman: bool = False,
+) -> None:
+    """按语言一键配置开发环境。
+
+    各语言对应的一键配置：
+
+    - ``python``：pip/uv 镜像源（环境变量 + pip 配置文件）+ Conda 镜像源
+    - ``js``：Bun npm 镜像源 + 安装 Bun.js
+    - ``rust``：Rust 镜像源 + 下载 rustup + 安装工具链
+    - ``go``：GOPROXY 镜像源（可选安装 gvm）
+    - ``java``：Maven 镜像源（可选安装 SDKMAN）
+    - ``node``：npm/yarn/pnpm 镜像源（可选安装 nvm）
+
+    Parameters
+    ----------
+    language:
+        语言名：python / js / rust / go / java / node
+    mirror:
+        镜像源名称（默认 aliyun）；各语言支持列表不同，
+        不支持时打印提示跳过。注意：``go`` 原独立命令默认 goproxy，
+        经 ``lang`` 调用时默认为 aliyun（亦受支持），可用 ``--mirror goproxy`` 还原
+    rust_version:
+        Rust 版本：stable / nightly / beta（默认 stable，仅 ``rust`` 使用）
+    install_nvm:
+        是否同时安装 nvm（仅 ``node`` 使用）
+    install_gvm:
+        是否同时安装 gvm（仅 ``go`` 使用）
+    install_sdkman:
+        是否同时安装 SDKMAN（仅 ``java`` 使用）
+    """
+    if language == "python":
+        setup_python_env(mirror)
+    elif language == "js":
+        setup_js_env()
+    elif language == "rust":
+        setup_rust_env(mirror, rust_version)
+    elif language == "go":
+        setup_go_env(mirror, install_gvm)
+    elif language == "java":
+        setup_java_env(mirror, install_sdkman)
+    else:
+        setup_node_env(install_nvm)
+
+
+@fcmd.tool(
+    "envdev",
+    subcommand="app",
+    help="应用/系统类一键配置（linux-mirror/qt-libs/fonts/docker/docker-mirror/openssh/remote）",
+)
+def setup_app_env(
+    target: Literal["linux-mirror", "qt-libs", "fonts", "docker", "docker-mirror", "openssh", "remote"],
+) -> None:
+    """按应用/系统项一键配置（多数仅 Linux 支持，非 Linux 打印提示跳过）。
+
+    各应用对应的配置：
+
+    - ``linux-mirror``：下载并安装系统镜像源（linuxmirrors）
+    - ``qt-libs``：安装 Qt 依赖库
+    - ``fonts``：安装中文字体
+    - ``docker``：安装 Docker 并加入 docker 用户组
+    - ``docker-mirror``：配置 Docker 镜像加速源
+    - ``openssh``：安装并启动 OpenSSH Server
+    - ``remote``：一键配置远程桌面（xrdp + Xfce）
+
+    Parameters
+    ----------
+    target:
+        应用/系统项名称（见上）
+    """
+    if target == "linux-mirror":
+        setup_linux_system_mirror()
+    elif target == "qt-libs":
+        install_linux_qt_libs()
+    elif target == "fonts":
+        install_linux_fonts()
+    elif target == "docker":
+        install_linux_docker()
+    elif target == "docker-mirror":
+        setup_docker_mirror()
+    elif target == "openssh":
+        install_linux_openssh()
+    else:
+        setup_linux_remote()
 
 
 @fcmd.tool("envdev", subcommand="all", help="一键配置所有环境")
@@ -727,8 +833,8 @@ _ENV_VAR_CHECKS: list[tuple[str, str, str]] = [
 ]
 
 
-@fcmd.tool("envdev", subcommand="verify", help="检测开发环境配置状态")
-def verify_env() -> int:
+@fcmd.tool("envdev", subcommand="check", help="检测开发环境配置状态")
+def check_env() -> int:
     """检测开发环境配置状态（只读）。
 
     检查各语言工具链是否存在 + 关键镜像源环境变量是否已设置。

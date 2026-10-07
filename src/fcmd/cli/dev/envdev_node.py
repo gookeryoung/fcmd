@@ -95,11 +95,10 @@ def _install_nvm() -> None:
 
 
 # ============================================================================
-# 一键命令
+# 一键命令（由 envdev lang node 路由调用）
 # ============================================================================
 
 
-@fcmd.tool("envdev", subcommand="node", help="一键配置 Node.js 环境")
 def setup_node_env(install_nvm: bool = False) -> None:
     """一键配置原生 Node.js 开发环境。
 

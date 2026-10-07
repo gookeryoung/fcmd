@@ -1,11 +1,13 @@
 """envdev 工具测试。
 
 验证 ``fcmd.cli.dev.envdev`` 模块：
-- 工具注册（语言级一键命令公开，细粒度步骤命令隐藏）
+- 工具注册（分组入口 lang/app/check/all 公开，细粒度步骤命令隐藏）
 - setup_python_env / setup_python_mirror / setup_conda_mirror Python 环境
 - _setup_rust_mirror / _download_rustup / _install_rust_toolchain / setup_rust_env Rust 工具链
 - _setup_bun_mirror / _install_bun / setup_js_env JavaScript 工具链
 - setup_all_env 一键编排
+- setup_lang_env / setup_app_env 分组路由分发
+- check_env 环境检测（工具链 + 镜像源）
 - setup_linux_system_mirror / install_linux_qt_libs / install_linux_fonts / install_linux_docker Linux 专用
 """
 
@@ -66,10 +68,9 @@ class TestToolsRegistration:
             assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
 
     def test_envdev_public_subcommands(self) -> None:
-        """envdev 公开子命令应注册（语言级一键命令 + Linux 远程桌面）。"""
+        """envdev 公开子命令应注册（分组入口 lang/app/check/all）。"""
         subs = fx.list_subcommands("envdev")
-        for name in ("python", "js", "rust", "remote", "all"):
-            assert name in subs, f"公开子命令 {name!r} 未注册"
+        assert subs == ["all", "app", "check", "lang"]
 
     def test_envdev_hidden_subcommands(self) -> None:
         """envdev 隐藏子命令应注册（镜像源/下载/安装明细步骤 + Linux 专用）。"""
@@ -87,10 +88,12 @@ class TestToolsRegistration:
             "install-qt-libs",
             "install-fonts",
             "install-docker",
+            "setup-docker-mirror",
             "uninstall-gnome-remote",
             "install-xfce",
             "install-xrdp",
             "configure-lightdm",
+            "remote",
         ):
             assert name in subs, f"隐藏子命令 {name!r} 未注册"
 
@@ -491,6 +494,93 @@ class TestEnvdev:
         captured = capsys.readouterr()
         assert "下载" in captured.out
         assert len(calls) == 2  # 下载 + 安装
+
+
+# ============================================================================ #
+# 分组路由（lang / app）测试
+# ============================================================================ #
+class TestGroupRouters:
+    """setup_lang_env / setup_app_env 分组路由分发测试。"""
+
+    def test_lang_dispatch_all_languages(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """setup_lang_env 按 language 分发到对应语言一键命令并透传参数。"""
+        calls: list[tuple[str, ...]] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_python_env", lambda m: calls.append(("python", m)))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_js_env", lambda: calls.append(("js",)))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_rust_env", lambda m, v: calls.append(("rust", m, v)))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_go_env", lambda m, g: calls.append(("go", m, g)))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_java_env", lambda m, s: calls.append(("java", m, s)))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_node_env", lambda n: calls.append(("node", n)))
+
+        fcmd.cli.dev.envdev.setup_lang_env(language="python", mirror="tsinghua")
+        fcmd.cli.dev.envdev.setup_lang_env(language="js")
+        fcmd.cli.dev.envdev.setup_lang_env(language="rust", mirror="ustc", rust_version="nightly")
+        fcmd.cli.dev.envdev.setup_lang_env(language="go", mirror="goproxy", install_gvm=True)
+        fcmd.cli.dev.envdev.setup_lang_env(language="java", mirror="huaweicloud", install_sdkman=True)
+        fcmd.cli.dev.envdev.setup_lang_env(language="node", install_nvm=True)
+
+        assert calls == [
+            ("python", "tsinghua"),
+            ("js",),
+            ("rust", "ustc", "nightly"),
+            ("go", "goproxy", True),
+            ("java", "huaweicloud", True),
+            ("node", True),
+        ]
+        assert capsys.readouterr().out == ""
+
+    def test_app_dispatch_all_targets(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """setup_app_env 按 target 分发到对应应用/系统项命令。"""
+        calls: list[str] = []
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_linux_system_mirror", lambda: calls.append("linux-mirror"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_qt_libs", lambda: calls.append("qt-libs"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_fonts", lambda: calls.append("fonts"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_docker", lambda: calls.append("docker"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_docker_mirror", lambda: calls.append("docker-mirror"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.install_linux_openssh", lambda: calls.append("openssh"))
+        monkeypatch.setattr("fcmd.cli.dev.envdev.setup_linux_remote", lambda: calls.append("remote"))
+
+        for target in ("linux-mirror", "qt-libs", "fonts", "docker", "docker-mirror", "openssh", "remote"):
+            fcmd.cli.dev.envdev.setup_app_env(target=target)  # type: ignore[arg-type]
+
+        assert calls == ["linux-mirror", "qt-libs", "fonts", "docker", "docker-mirror", "openssh", "remote"]
+        assert capsys.readouterr().out == ""
+
+
+# ============================================================================ #
+# 环境检测（check）测试
+# ============================================================================ #
+class TestCheckEnv:
+    """check_env 环境检测测试。"""
+
+    def test_check_all_ok(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """工具链齐全 + 镜像源环境变量全部设置时返回 0。"""
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: "/usr/bin/tool")
+        for var, _, _ in fcmd.cli.dev.envdev._ENV_VAR_CHECKS:
+            monkeypatch.setenv(var, "https://mirror.example.com")
+
+        rc = fcmd.cli.dev.envdev.check_env()
+        assert rc == 0
+        assert "全部环境检测通过" in capsys.readouterr().out
+
+    def test_check_missing_reports_failures(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """工具缺失 + 镜像源未设置时返回 1 并汇总未通过项。"""
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+        for var, _, _ in fcmd.cli.dev.envdev._ENV_VAR_CHECKS:
+            monkeypatch.delenv(var, raising=False)
+
+        rc = fcmd.cli.dev.envdev.check_env()
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "缺失" in out
+        assert "未通过" in out
+        assert "fcmd envdev all" in out
 
 
 # ============================================================================ #
