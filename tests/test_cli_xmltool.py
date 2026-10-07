@@ -1,6 +1,6 @@
 """xmltool 工具测试。
 
-验证 ``fcmd.cli.data.xmltool`` 模块：
+验证 ``fcmd.dsl.actions.data``（xmltool）：
 - 工具注册与四子命令结构（pretty/minify/extract/validate）
 - ``read_xml``/``write_xml`` 基础读写
 - ``pretty_xml``/``minify_xml`` 格式化与压缩

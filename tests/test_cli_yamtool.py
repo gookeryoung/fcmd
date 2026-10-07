@@ -1,6 +1,6 @@
 """yamtool 工具测试。
 
-验证 ``fcmd.cli.data.yamtool`` 模块：
+验证 ``fcmd.dsl.actions.data``（yamtool）：
 - 工具注册与四子命令结构（pretty/get/keys/validate）
 - ``read_yaml``/``write_yaml`` 基础读写
 - ``pretty_yaml`` 格式化（含 sort_keys/indent）

@@ -59,7 +59,7 @@ def ensure_tools_discovered() -> None:
     """首次调用时扫描 ``fcmd.cli`` 包，发现工具模块并填充注册表。
 
     扫描两层结构：顶层模块（遗留位置）与领域子包（``fcmd.cli.<域>.<工具>``，
-    如 ``fcmd.cli.media.pdftool``）。工具名取模块名（最后一段），调用方式
+    如 ``fcmd.cli.media.screenshot``）。工具名取模块名（最后一段），调用方式
     ``fcmd <工具名>`` 不受分组影响。领域子包内部不再嵌套子包。
 
     幂等：后续调用直接返回。用 ``setdefault`` 填充，不覆盖测试通过

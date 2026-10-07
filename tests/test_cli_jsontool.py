@@ -1,6 +1,6 @@
 """jsontool 工具测试。
 
-验证 ``fcmd.cli.data.jsontool`` 模块：
+验证 ``fcmd.dsl.actions.data``（jsontool）：
 - 工具注册与四子命令结构（pretty/minify/query/sort）
 - ``read_json``/``write_json`` 基础读写
 - ``pretty_json``/``minify_json`` 格式化与压缩
