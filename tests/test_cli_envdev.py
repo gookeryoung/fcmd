@@ -904,9 +904,13 @@ class TestFetchMirrorzSites:
     """fetch_mirrorz_sites 动态拉取测试。"""
 
     def _patch_responses(self, monkeypatch: pytest.MonkeyPatch, payloads: list[bytes]) -> None:
-        """按顺序回放假响应（对应入口页 -> JS 包的抓取序列）。"""
+        """按顺序回放假响应（对应入口页 -> JS 包的抓取序列）。
+
+        urlopen 在 fetch_mirrorz_sites 内惰性导入（避免工具发现期加载
+        ssl 链），patch 须指向定义处 ``urllib.request.urlopen``。
+        """
         responses = [_FakeHTTPResponse(p) for p in payloads]
-        monkeypatch.setattr("fcmd.cli.dev.envdev.urlopen", lambda req, timeout: responses.pop(0))
+        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: responses.pop(0))
 
     def test_parse_sites(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """解析内嵌站点元数据：去重、剔除门户、还原 JS 转义。"""
@@ -944,7 +948,7 @@ class TestFetchMirrorzSites:
         def _boom(req: object, timeout: float) -> object:
             raise URLError("connection refused")
 
-        monkeypatch.setattr("fcmd.cli.dev.envdev.urlopen", _boom)
+        monkeypatch.setattr("urllib.request.urlopen", _boom)
         assert fcmd.cli.dev.envdev.fetch_mirrorz_sites() is None
 
 

@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import platform
 import shutil
-import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -165,6 +164,10 @@ def install_embed_python(version: str = "3.10", output_dir: Path = Path("python"
     cache_file.parent.mkdir(parents=True, exist_ok=True)
 
     if not cache_file.exists():
+        # 惰性导入 ssl 链（urllib.request → http.client → ssl）：本模块被
+        # 工具发现导入，顶层导入会让每个 CLI 命令启动都付 ~37ms
+        import urllib.request
+
         print(f"正在下载嵌入式 Python {full_version}...")
         urllib.request.urlretrieve(url, cache_file)
         print(f"下载完成: {cache_file}")

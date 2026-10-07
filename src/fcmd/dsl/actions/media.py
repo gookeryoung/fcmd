@@ -20,28 +20,23 @@ from ..actions import action
 if TYPE_CHECKING:
     import fitz  # PyMuPDF
     import pypdf
-    from PIL import Image, ImageDraw, ImageFont
 
 # ============================================================================
-# 可选依赖检查（工具发现阶段不触发真正 import）
+# 可选依赖检查（find_spec 仅查定位，不触发真正 import；PIL / cairosvg 由
+# _require_pil / _require_cairosvg 首次调用时惰性导入到模块全局）
 # ============================================================================
 
-try:
-    from PIL import Image, ImageDraw, ImageFont
-
-    HAS_PIL = True
-except ImportError:  # pragma: no cover - 仅在未安装 pillow 时触发
-    HAS_PIL = False
-
-try:
-    import cairosvg  # type: ignore[import-untyped]
-
-    HAS_CAIROSVG = True
-except ImportError:  # pragma: no cover - 仅在未安装 cairosvg 时触发
-    HAS_CAIROSVG = False
-
+HAS_PIL = importlib.util.find_spec("PIL") is not None
+HAS_CAIROSVG = importlib.util.find_spec("cairosvg") is not None
 HAS_PYMUPDF = importlib.util.find_spec("fitz") is not None
 HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
+
+# PIL / cairosvg 惰性占位（_require_pil / _require_cairosvg 首次调用填充；
+# 类型为 Any，全模块对图片对象一律以 Any 传递）
+Image: Any = None
+ImageDraw: Any = None
+ImageFont: Any = None
+cairosvg: Any = None
 
 
 # ============================================================================
@@ -82,15 +77,7 @@ _MAX_RENDER_SIZE = 1024
 
 def _require_deps() -> bool:
     """检查 PIL + cairosvg 依赖，缺失时打印提示并返回 False。"""
-    missing: list[str] = []
-    if not HAS_PIL:
-        missing.append("pillow (安装: fcmd[img])")
-    if not HAS_CAIROSVG:
-        missing.append("cairosvg (安装: fcmd[svg])")
-    if missing:
-        print(f"缺少依赖: {', '.join(missing)}")
-        return False
-    return True
+    return _require_pil() and _require_cairosvg()
 
 
 def _parse_sizes(sizes: list[int] | None) -> list[tuple[int, int]] | None:
@@ -146,6 +133,10 @@ def icon_build(
     """将 SVG 转换为 ICO / ICNS 图标文件。"""
     if not input_path.exists():
         raise FileNotFoundError(f"SVG 文件不存在: {input_path}")
+
+    # 直接调用（绕过 img2ico_gen 入口）时兜底校验并填充惰性全局
+    if not _require_deps():
+        raise RuntimeError("缺少依赖: pillow (fcmd[img]) / cairosvg (fcmd[svg])")
 
     resolved_fmt = _detect_format(output_path, fmt)
     default_sizes = _default_sizes_for(resolved_fmt)
@@ -205,10 +196,30 @@ def img2ico_gen(
 
 
 def _require_pil() -> bool:
-    """Pillow 未安装时打印提示，返回是否可用。"""
+    """Pillow 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PIL:
         print("未安装 Pillow 库，请安装: pip install fcmd[img]")
         return False
+    global Image, ImageDraw, ImageFont  # 惰性导入需 global 注入模块，避免工具发现时加载
+    if Image is None:
+        from PIL import Image as _image
+        from PIL import ImageDraw as _image_draw
+        from PIL import ImageFont as _image_font
+
+        Image, ImageDraw, ImageFont = _image, _image_draw, _image_font
+    return True
+
+
+def _require_cairosvg() -> bool:
+    """cairosvg 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
+    if not HAS_CAIROSVG:
+        print("未安装 cairosvg 库，请安装: pip install fcmd[svg]")
+        return False
+    global cairosvg  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
+    if cairosvg is None:
+        import cairosvg as _cairosvg  # type: ignore[import-untyped]
+
+        cairosvg = _cairosvg
     return True
 
 
@@ -228,6 +239,7 @@ def _save_image(img: Any, output: Path, fmt: str | None = None, quality: int = 8
 
 def _load_font(size: int):
     """加载字体，优先 truetype，失败回退默认字体。"""
+    _require_pil()  # 直接调用时兜底填充惰性全局
     candidates = ("DejaVuSans.ttf", "Arial.ttf", "LiberationSans-Regular.ttf")
     for name in candidates:
         try:

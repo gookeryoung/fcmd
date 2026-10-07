@@ -247,7 +247,7 @@ class TestPacktoolEmbed:
         def fake_urlretrieve(url: str, filename: Any) -> Any:
             raise AssertionError(f"不应调用 urlretrieve，但调用了: {url}")
 
-        monkeypatch.setattr("fcmd.cli.dev.packtool.urllib.request.urlretrieve", fake_urlretrieve)
+        monkeypatch.setattr("urllib.request.urlretrieve", fake_urlretrieve)
         monkeypatch.setattr("fcmd.cli.dev.packtool._normalize_arch", lambda: "amd64")
 
         output_dir = tmp_path / "python"
@@ -278,7 +278,7 @@ class TestPacktoolEmbed:
             shutil.copy(zip_content, filename)
             return filename
 
-        monkeypatch.setattr("fcmd.cli.dev.packtool.urllib.request.urlretrieve", fake_urlretrieve)
+        monkeypatch.setattr("urllib.request.urlretrieve", fake_urlretrieve)
         monkeypatch.setattr("fcmd.cli.dev.packtool._normalize_arch", lambda: "amd64")
 
         output_dir = tmp_path / "python"

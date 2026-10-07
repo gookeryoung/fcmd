@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from fcmd.dsl.actions import action
@@ -21,6 +20,10 @@ __all__: list[str] = []
 
 def archive_folder(folder: Path) -> None:
     """压缩单个文件夹为同名 zip。"""
+    # 惰性导入：本模块被动作注册表在工具发现期导入，shutil 会连带
+    # 加载压缩相关标准库，仅在实际压缩时才需要
+    import shutil
+
     shutil.make_archive(
         str(folder.with_name(folder.name)),
         format="zip",

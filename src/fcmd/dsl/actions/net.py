@@ -17,7 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
-from urllib.request import Request, urlopen
 
 from fcmd.dsl.actions import action
 
@@ -33,6 +32,10 @@ _DEFAULT_TIMEOUT = 30
 
 def http_get(url: str, timeout: int = _DEFAULT_TIMEOUT) -> str:
     """发送 HTTP GET 请求并返回响应体。"""
+    # 惰性导入 ssl 链（urllib.request → http.client → ssl）：本模块被动作
+    # 注册表在工具发现期导入，顶层导入会让每个 CLI 命令启动都付 ~37ms
+    from urllib.request import Request, urlopen
+
     req = Request(url)
     with urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -40,6 +43,8 @@ def http_get(url: str, timeout: int = _DEFAULT_TIMEOUT) -> str:
 
 def http_post(url: str, data: str = "", timeout: int = _DEFAULT_TIMEOUT) -> str:
     """发送 HTTP POST 请求并返回响应体。"""
+    from urllib.request import Request, urlopen  # 惰性导入 ssl 链，见 http_get
+
     req = Request(url, data=data.encode("utf-8"), method="POST")
     with urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", errors="replace")
@@ -47,6 +52,8 @@ def http_post(url: str, data: str = "", timeout: int = _DEFAULT_TIMEOUT) -> str:
 
 def http_head(url: str, timeout: int = _DEFAULT_TIMEOUT) -> dict[str, str]:
     """发送 HTTP HEAD 请求并返回响应头。"""
+    from urllib.request import Request, urlopen  # 惰性导入 ssl 链，见 http_get
+
     req = Request(url, method="HEAD")
     with urlopen(req, timeout=timeout) as resp:
         return dict(resp.headers.items())
@@ -303,6 +310,8 @@ def relative_url(from_file: Path, to_file: Path) -> str:
 
 def download_asset(url: str, timeout: int = 30) -> bytes:
     """下载二进制资源（图片/CSS/JS）。"""
+    from urllib.request import Request, urlopen  # 惰性导入 ssl 链，见 http_get
+
     req = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; fcmd-websave)"})
     with urlopen(req, timeout=timeout) as resp:
         return resp.read()
@@ -552,6 +561,8 @@ def unreachable_latency() -> float:
 
 def _probe_once(url: str, method: str, timeout: float) -> tuple[bool, float] | None:
     """执行单次请求并测量延迟。"""
+    from urllib.request import Request, urlopen  # 惰性导入 ssl 链，见 http_get
+
     start = time.perf_counter()
     try:
         req = Request(url, method=method, headers={"User-Agent": _PROBE_UA})

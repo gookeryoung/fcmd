@@ -38,9 +38,6 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Literal
-from urllib.error import URLError
-from urllib.parse import urljoin
-from urllib.request import Request, urlopen
 
 import fcmd
 from fcmd.cli._env_persist import persist_env
@@ -813,6 +810,12 @@ def fetch_mirrorz_sites(timeout: float = 5.0) -> dict[str, str] | None:
         ``{站名缩写(小写): 首页地址}``；任一环节失败（网络错误、页面或
         包结构变化、解析结果为空）返回 ``None``，调用方应回退内置列表。
     """
+    # 惰性导入 ssl 链（urllib.request → http.client → ssl）：本模块被
+    # 工具发现导入，顶层导入会让每个 CLI 命令启动都付 ~37ms
+    from urllib.error import URLError
+    from urllib.parse import urljoin
+    from urllib.request import Request, urlopen
+
     try:
         req_headers = {"User-Agent": "Mozilla/5.0 (compatible; fcmd-envdev)"}
         html_resp = urlopen(Request(_MIRRORZ_HOME, headers=req_headers), timeout=timeout)

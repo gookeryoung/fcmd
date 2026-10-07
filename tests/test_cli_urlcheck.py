@@ -100,7 +100,7 @@ class TestCheckUrl:
 
     def test_reachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 成功返回可达与非负延迟。"""
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_ok_urlopen())
+        monkeypatch.setattr("urllib.request.urlopen", _make_ok_urlopen())
         ok, latency = check_url("https://mirror.example.com")
         assert ok is True
         assert 0 <= latency < 5000
@@ -108,7 +108,7 @@ class TestCheckUrl:
     def test_head_405_fallback_get(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 返回 405 时回退 GET 验证。"""
         error = HTTPError("https://mirror.example.com", 405, "Method Not Allowed", Message(), None)
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_method_error_urlopen(error))
+        monkeypatch.setattr("urllib.request.urlopen", _make_method_error_urlopen(error))
         ok, latency = check_url("https://mirror.example.com")
         assert ok is True
         assert latency >= 0
@@ -116,7 +116,7 @@ class TestCheckUrl:
     def test_http_error_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HEAD 与 GET 均收到 HTTP 错误响应（如 WAF 全站 403）时不可访问。"""
         error = HTTPError("https://mirror.example.com", 403, "Forbidden", Message(), None)
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr("urllib.request.urlopen", _make_error_urlopen(error))
         ok, latency = check_url("https://mirror.example.com")
         assert ok is False
         assert latency == unreachable_latency()
@@ -125,9 +125,7 @@ class TestCheckUrl:
         """HEAD 被拒回退 GET 后仍报 HTTP 错误时不可访问（GET 决定最终结果）。"""
         head_error = HTTPError("https://mirror.example.com", 405, "Method Not Allowed", Message(), None)
         get_error = HTTPError("https://mirror.example.com", 404, "Not Found", Message(), None)
-        monkeypatch.setattr(
-            fcmd.dsl.actions.net, "urlopen", _make_method_error_urlopen(head_error, get_error=get_error)
-        )
+        monkeypatch.setattr("urllib.request.urlopen", _make_method_error_urlopen(head_error, get_error=get_error))
         ok, latency = check_url("https://mirror.example.com")
         assert ok is False
         assert latency == unreachable_latency()
@@ -140,7 +138,7 @@ class TestCheckUrl:
             seen.append(dict(req.headers))
             return _make_ok_urlopen()(req, timeout)
 
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _urlopen)
+        monkeypatch.setattr("urllib.request.urlopen", _urlopen)
         check_url("https://mirror.example.com")
         ua = next((v for k, v in seen[0].items() if k.lower() == "user-agent"), "")
         assert "fcmd-urlcheck" in ua
@@ -155,7 +153,7 @@ class TestCheckUrl:
             calls.append(method)
             raise error
 
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _urlopen)
+        monkeypatch.setattr("urllib.request.urlopen", _urlopen)
         ok, latency = check_url("https://nonexistent.invalid")
         assert ok is False
         assert latency == unreachable_latency()
@@ -215,7 +213,7 @@ class TestUrlcheckCLI:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """fcmd urlcheck u <url> 打印可访问与延迟。"""
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_ok_urlopen())
+        monkeypatch.setattr("urllib.request.urlopen", _make_ok_urlopen())
         code = run_tool("urlcheck", ["u", "https://mirror.example.com"])
         assert code == 0
         out = capsys.readouterr().out
@@ -227,7 +225,7 @@ class TestUrlcheckCLI:
     ) -> None:
         """连接级错误（DNS/拒绝连接）时打印不可访问。"""
         error = URLError("connection refused")
-        monkeypatch.setattr(fcmd.dsl.actions.net, "urlopen", _make_error_urlopen(error))
+        monkeypatch.setattr("urllib.request.urlopen", _make_error_urlopen(error))
         code = run_tool("urlcheck", ["u", "https://nonexistent.invalid"])
         assert code == 0
         assert "不可访问" in capsys.readouterr().out

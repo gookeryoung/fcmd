@@ -715,6 +715,26 @@ class TestBootstrap:
         assert "未对应任何已注册工具" in out
         assert "查看可用工具列表" in out
 
+    def test_run_path_does_not_load_heavy_libs(self) -> None:
+        """DSL 命令全路径（entry 导入 + 工具发现）不触发重型库加载。
+
+        回归测试：迁移后每个 console script 入口统一经 dsl.entry 启动，
+        media 动作顶层 try-import cairosvg/PIL、envdev 顶层导入
+        urllib.request(→ssl) 会使所有 DSL 命令启动多付约 230ms。子进程
+        隔离断言重型库不出现在 sys.modules（模块 docstring 承诺"工具发现
+        阶段不触发重型库加载"）。
+        """
+        code = (
+            "import sys\n"
+            "import fcmd.dsl.entry\n"
+            "from fcmd.cli._discovery import ensure_tools_discovered\n"
+            "ensure_tools_discovered()\n"
+            "heavy = [m for m in ('cairosvg', 'PIL.Image', 'ssl') if m in sys.modules]\n"
+            "assert not heavy, f'工具发现阶段加载了重型库: {heavy}'\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False)
+        assert result.returncode == 0, result.stderr
+
 
 # ============================================================================ #
 # 工具发现集成（_discovery.py 集成 DSL 注册）
