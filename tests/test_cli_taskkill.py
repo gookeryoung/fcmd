@@ -1,9 +1,12 @@
-"""taskkill 工具测试。
+"""taskkill 工具测试（DSL 内建动作声明 commands/taskkill.toml）。
 
-验证 ``fcmd.cli.system.taskkill`` 模块：
-- 工具注册
-- 进程终止（跨平台）
-- CLI 调度
+验证 ``fcmd taskkill`` 的 DSL action 迁移语义：
+- 工具注册（单命令 DSL 工具，内置声明，别名 taskk）
+- 声明契约：``__dsl_action__`` 标记、无 cmd（fn 任务形态）
+- 执行语义：Windows taskkill.exe 绝对路径 + /FI 过滤器 / Unix pkill、
+  逐条目回显、未匹配提示后继续（退出码 0）
+- 回归：Windows 分支禁止裸 taskkill 命令名（防 PATH 递归调用 fcmd 自身 entry）
+- dry-run 不执行
 """
 
 from __future__ import annotations
@@ -14,138 +17,117 @@ from typing import Any
 
 import pytest
 
-import fcmd as fx
-import fcmd.cli.system.taskkill
+from fcmd.apis._tool_args import ToolSpec
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.system.taskkill import kill_process, taskkill_run
+from fcmd.cli._discovery import _TOOL_ALIASES, ensure_tools_discovered
+
+ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 taskkill）
+
+_FAKE_RUN: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
 
 
-# ============================================================================ #
-# 测试辅助：创建 fake subprocess.run 函数（避免 lambda ARG005）
-# ============================================================================ #
-def _recording_subprocess_run(calls: list[list[str]]) -> Any:
-    """创建记录调用的 fake ``subprocess.run`` 函数。"""
+def _recording_run(captured: list[list[str]]):
+    """构造记录调用参数的 subprocess.run 替身。"""
 
-    def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        calls.append(args[0])
-        return subprocess.CompletedProcess(args[0], 0, "", "")
+    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        return _FAKE_RUN
 
-    return run
+    return _run
 
 
-def _subprocess_run_success(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-    """总是返回成功结果的 fake ``subprocess.run`` 函数。"""
-    return subprocess.CompletedProcess(args[0], 0, "", "")
+# ---------------------------------------------------------------------- #
+# 注册与声明验证
+# ---------------------------------------------------------------------- #
+class TestTaskkillRegistration:
+    """taskkill 经内置 DSL（action 原语）注册。"""
+
+    def test_registered_as_dsl_single_command(self) -> None:
+        """taskkill 注册为内置 DSL 单命令工具。"""
+        assert "taskkill" in _TOOL_REGISTRY
+        assert set(_TOOL_REGISTRY["taskkill"]) == {None}
+
+    def test_alias_taskk(self) -> None:
+        """别名 taskk 指向 taskkill（pyproject 入口名保持不变）。"""
+        assert _TOOL_ALIASES.get("taskk") == "taskkill"
+
+    def test_action_contract(self) -> None:
+        """合成函数携带 __dsl_action__ 标记，cmd 为 None（fn 任务形态）。"""
+        spec: ToolSpec = _TOOL_REGISTRY["taskkill"][None]
+        assert spec.cmd is None
+        assert getattr(spec.func, "__dsl_action__", None) == "taskkill"
+        assert not getattr(spec.func, "__dsl_empty_body__", False)
+
+    def test_signature_from_action_impl(self) -> None:
+        """CLI 参数 schema 拷贝自动作实现签名：names 为多值位置参数。"""
+        spec = _TOOL_REGISTRY["taskkill"][None]
+        params = list(spec.func.__signature__.parameters)  # type: ignore[attr-defined]
+        assert params == ["names"]
 
 
-# ============================================================================ #
-# 注册验证
-# ============================================================================ #
-class TestToolsRegistration:
-    """taskkill 工具的注册验证。"""
+# ---------------------------------------------------------------------- #
+# 执行语义
+# ---------------------------------------------------------------------- #
+class TestTaskkillRun:
+    """``fcmd taskkill`` 执行语义。"""
 
-    def test_all_tools_registered(self) -> None:
-        """taskkill 应在 _TOOL_REGISTRY 中注册。"""
-        for name in ("taskkill",):
-            assert name in _TOOL_REGISTRY, f"工具 {name!r} 未注册"
-
-    def test_taskkill_single_command(self) -> None:
-        """taskkill 是单命令工具。"""
-        assert fx.list_subcommands("taskkill") == []
-
-
-# ============================================================================ #
-# taskkill 测试
-# ============================================================================ #
-class TestTaskkill:
-    """taskkill 工具测试。"""
-
-    def test_kill_process_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """kill_process 返回 0 表示终止信号已发送。"""
-        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _subprocess_run_success)
-        assert kill_process("chrome.exe") == 0
-
-    def test_kill_process_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """kill_process 返回 1 表示未找到匹配进程。"""
-
-        def run_not_found(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(args[0], 1, "", "")
-
-        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", run_not_found)
-        assert kill_process("nonexistent") == 1
-
-    def test_kill_process_windows_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Windows 下 kill_process 用系统 taskkill.exe 绝对路径 + /FI 过滤器。"""
+    def test_windows_uses_fi_filter(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """Windows 分支：系统 taskkill.exe 绝对路径 + /FI 过滤器通配符。"""
+        captured: list[list[str]] = []
         monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setenv("SystemRoot", r"C:\Windows")
-        captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _recording_subprocess_run(captured))
-        kill_process("chrome.exe")
-        # 必须使用绝对路径，避免递归调用 fcmd 自身的 taskkill entry script
-        assert captured[0][0] == r"C:\Windows\System32\taskkill.exe"
-        assert "/f" in captured[0]
-        # 用 /FI 过滤器替代 /IM 通配符（Win7 兼容）
-        assert "/fi" in captured[0]
-        assert "imagename eq chrome.exe*" in captured[0]
+        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        assert run_tool("taskkill", ["chrome.exe"]) == 0
+        assert captured[0] == [r"C:\Windows\System32\taskkill.exe", "/f", "/fi", "imagename eq chrome.exe*"]
+        assert "已发送终止信号: chrome.exe" in capsys.readouterr().out
 
-    def test_kill_process_windows_no_recursive_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Windows 下 kill_process 不会调用 fcmd 自身的 taskkill entry script。
+    def test_windows_never_calls_bare_taskkill(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """回归：命令首元素必须是绝对路径，不能是裸 ``taskkill``。
 
-        回归测试：曾因 ``taskkill`` 与系统 taskkill.exe 同名，subprocess.run
-        递归调用 fcmd entry 导致进程爆炸。修复后必须使用系统绝对路径。
+        fcmd 自身注册的 ``taskkill`` entry 与系统 taskkill.exe 同名，裸命令名
+        经 PATH 查找会递归调用 fcmd 自身，指数级进程爆炸直至资源耗尽。
         """
-        monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setenv("SystemRoot", r"C:\Windows")
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _recording_subprocess_run(captured))
-        kill_process("explorer")
-        # 命令首元素必须是绝对路径，不能是裸 "taskkill"（会触发 PATH 查找）
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        run_tool("taskkill", ["node"])
         assert captured[0][0].endswith("taskkill.exe")
-        assert "\\" in captured[0][0]
         assert captured[0][0] != "taskkill"
 
-    def test_kill_process_linux_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Linux 下 kill_process 用 pkill。"""
-        monkeypatch.setattr(sys, "platform", "linux")
+    def test_unix_uses_pkill(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Unix 分支：``pkill -f <name>*``。"""
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.cli.system.taskkill.subprocess.run", _recording_subprocess_run(captured))
-        kill_process("python")
-        assert captured[0][0] == "pkill"
-        assert "-f" in captured[0]
-        assert "python*" in captured[0]
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        assert run_tool("taskkill", ["python"]) == 0
+        assert captured[0] == ["pkill", "-f", "python*"]
 
-    def test_taskkill_run_multiple(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """taskkill_run 批量终止进程。"""
-        monkeypatch.setattr("fcmd.cli.system.taskkill.kill_process", lambda *_: 0)
-        taskkill_run(["chrome.exe", "python"])
+    def test_multiple_names(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """批量终止：逐条目执行并回显。"""
+        captured: list[list[str]] = []
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        assert run_tool("taskkill", ["chrome.exe", "python"]) == 0
+        assert len(captured) == 2
         out = capsys.readouterr().out
-        assert "chrome.exe" in out
-        assert "python" in out
-        assert "已发送终止信号" in out
+        assert "终止进程: chrome.exe" in out
+        assert "终止进程: python" in out
 
-    def test_taskkill_run_not_found(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """taskkill_run 未找到进程时打印提示。"""
-        monkeypatch.setattr("fcmd.cli.system.taskkill.kill_process", lambda *_: 1)
-        taskkill_run(["nonexistent"])
-        out = capsys.readouterr().out
-        assert "未找到匹配进程" in out
+    def test_not_found_continues(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """未匹配（返回码 1）打印提示后继续，退出码 0（与原版一致）。"""
 
-    def test_taskkill_via_run_tool(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """fcmd taskkill <names> 通过 run_tool 调用。"""
-        monkeypatch.setattr("fcmd.cli.system.taskkill.kill_process", lambda *_: 0)
-        code = run_tool("taskkill", ["chrome.exe"])
-        assert code == 0
-        out = capsys.readouterr().out
-        assert "chrome.exe" in out
+        def _run_not_found(_cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(args=["pkill"], returncode=1, stdout="", stderr="")
+
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("subprocess.run", _run_not_found)
+        assert run_tool("taskkill", ["nonexistent_proc"]) == 0
+        assert "未找到匹配进程或终止失败" in capsys.readouterr().out
+
+    def test_dry_run_skips_execution(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--dry-run 打印计划不执行：不发起 subprocess 调用。"""
+        captured: list[list[str]] = []
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        assert run_tool("taskkill", ["chrome.exe", "--dry-run"]) == 0
+        assert captured == []

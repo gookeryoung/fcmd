@@ -422,7 +422,7 @@ fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 | 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退）、`sshcopyid`（when 探针 + env 插值传 SSHPASS + `{参数名:content}` 公钥内容）、`reseticoncache`（win shell 链 + unix 提示分支） |
 | 输出管道（解析/过滤命令输出） | 保留 Python | `piptool u/r`（通配符展开、受保护包过滤） |
 | 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
-| 进程内副作用（无法映射为子进程） | 副作用型动作可迁 DSL（action 原语） | `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`（已迁入 action 原语）；`pathtool`/`filesearch`/`nettool`/`iptool` 产出计算结果（路径解析/搜索结果/HTTP 响应/IP 解析），非副作用型动作，保留 Python |
+| 进程内副作用（无法映射为子进程） | 副作用型动作可迁 DSL（action 原语） | `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`（已迁入 action 原语；taskkill 逐条目过程回显 + 绝对路径防递归，which 逐条查找回显，sysinfo 诊断信息打印，均无返回值消费）；`pathtool`/`filesearch`/`nettool`/`iptool` 产出计算结果（路径解析计算/搜索结果/HTTP 响应/IP 解析），非副作用型动作，保留 Python |
 | 多步有状态流程 | 保留 Python | `bumpversion`、`packtool` |
 
 ## 执行策略

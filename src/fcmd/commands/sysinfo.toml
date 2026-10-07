@@ -1,0 +1,10 @@
+# 内置 DSL 命令：sysinfo（单命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/system/sysinfo.py 已迁入 fcmd/dsl/actions.py 注册表：
+# 进程内收集系统信息（Python 版本/平台/架构/内存/磁盘/CPU）并格式化打印。
+# 无参数、无返回值消费，输出即副作用，符合动作原语语义（待复核）；
+# platform/shutil/resource 延迟导入（冷启动导入税），行为与原版一致。
+
+[commands.sysinfo]
+help = "收集并打印系统信息"
+action = "sysinfo"

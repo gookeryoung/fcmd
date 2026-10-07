@@ -1,0 +1,17 @@
+# 内置 DSL 命令：taskkill（单命令形态，内建动作原语）。
+#
+# 原模块 fcmd/cli/system/taskkill.py 已迁入 fcmd/dsl/actions.py 注册表：
+# 跨平台按名称终止进程（Windows taskkill /FI 过滤器 / Unix pkill），逐条目
+# 回显结果（终止进程/已发送终止信号/未匹配提示，依赖运行时返回码，无法
+# 静态模板化，由动作内 print 输出）。Windows 分支必须经 %SystemRoot% 计算
+# 系统 taskkill.exe 绝对路径，禁止裸命令名（防 PATH 递归调用 fcmd 自身
+# entry，见 actions.py _system_taskkill_path）。未匹配（pkill 返回码 1）
+# 为常见正常场景，提示后继续，退出码 0，与原版一致。
+#
+# 别名 taskk：pip 生成的 console script 入口名（避免与系统命令混淆的历史
+# 约定），DSL 声明别名保持入口名不变。
+
+[commands.taskkill]
+help = "按名称终止进程（跨平台）"
+aliases = ["taskk"]
+action = "taskkill"

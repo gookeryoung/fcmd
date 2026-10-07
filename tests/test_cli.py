@@ -1316,8 +1316,8 @@ class TestCoverageGaps:
         assert "pymake" in discovery_mod._TOOL_MODULES
         # pm 别名未被注册（import 失败跳过 __tool_aliases__ 读取）
         assert "pm" not in discovery_mod._TOOL_ALIASES
-        # 其他工具不受影响（clr 已迁移为 DSL 声明式命令，无模块映射）
-        assert "taskkill" in discovery_mod._TOOL_MODULES
+        # 其他工具不受影响（clr/taskkill 等已迁移为 DSL 声明式命令，无模块映射）
+        assert "archivex" in discovery_mod._TOOL_MODULES
 
     def test_info_overview_with_unregistered_tool(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1407,14 +1407,11 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("regextool", "fcmd.cli.text.regextool"),
     ("screenshot", "fcmd.cli.media.screenshot"),
     ("stattool", "fcmd.cli.calc.stattool"),
-    ("sysinfo", "fcmd.cli.system.sysinfo"),
-    ("taskkill", "fcmd.cli.system.taskkill"),
     ("textdiff", "fcmd.cli.text.textdiff"),
     ("timetool", "fcmd.cli.calc.timetool"),
     ("txttool", "fcmd.cli.text.txttool"),
     ("urltool", "fcmd.cli.conv.urltool"),
     ("websave", "fcmd.cli.net.websave"),
-    ("which", "fcmd.cli.system.which"),
     ("xmltool", "fcmd.cli.data.xmltool"),
     ("yamtool", "fcmd.cli.data.yamtool"),
     ("zipencrypt", "fcmd.cli.archive.zipencrypt"),
