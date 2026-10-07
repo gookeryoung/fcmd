@@ -12,7 +12,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.cli._env_persist import persist_env
-from fcmd.cli.dev.envdev_core import MirrorSpec, apply_mirror_config, mirror_supported
+from fcmd.cli.dev.envdev_core import MirrorSpec, apply_mirror_config, mirror_supported, resolve_mirror
 from fcmd.models import run_command
 
 __all__ = ["setup_go_env"]
@@ -23,6 +23,9 @@ _GO_PROXY_MIRRORS: dict[str, str] = {
     "ustc": "https://mirrors.ustc.edu.cn/goproxy/,direct",
     "goproxy_io": "https://goproxy.io,direct",
 }
+
+# GOPROXY 探测地址（去除 ",direct" 回退后缀，仅探测镜像服务本身）
+_GO_PROXY_PROBE_URLS: dict[str, str] = {name: url.split(",", 1)[0] for name, url in _GO_PROXY_MIRRORS.items()}
 
 _GOPATH_DEFAULT: str = str(Path.home() / "go")
 
@@ -40,7 +43,7 @@ _GO_GLOBAL_TOOLS: list[str] = [
 
 
 @fcmd.tool("envdev", subcommand="setup-go", help="配置 Go 镜像源", hidden=True)
-def _setup_go_mirror(mirror: str = "goproxy") -> None:
+def _setup_go_mirror(mirror: str = "auto") -> None:
     """配置 Go 镜像源（持久化 GOPROXY / GOMODCACHE / GOPATH）。
 
     通过 :func:`persist_env` 持久化 ``GOPROXY`` / ``GOMODCACHE`` / ``GOPATH``
@@ -49,8 +52,11 @@ def _setup_go_mirror(mirror: str = "goproxy") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：goproxy / aliyun / ustc / goproxy_io（默认 goproxy）
+        镜像源名称：goproxy / aliyun / ustc / goproxy_io；``auto`` 时探测
+        GOPROXY 服务各候选镜像并选用最快的可达镜像，全部不可达回退 goproxy
+        （默认 ``auto``）
     """
+    mirror = resolve_mirror("go", mirror, _GO_PROXY_PROBE_URLS, "goproxy")
     if not mirror_supported(mirror, _GO_PROXY_MIRRORS):
         print(f"未知 Go 镜像源: {mirror}")
         return
@@ -107,7 +113,7 @@ def _install_go_global_tools() -> None:
 # ============================================================================
 
 
-def setup_go_env(mirror: str = "goproxy", install_gvm: bool = False) -> None:
+def setup_go_env(mirror: str = "auto", install_gvm: bool = False) -> None:
     """一键配置 Go 开发环境。
 
     依次执行：配置 GOPROXY 镜像源、（可选）安装 gvm。
@@ -115,7 +121,8 @@ def setup_go_env(mirror: str = "goproxy", install_gvm: bool = False) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：goproxy / aliyun / ustc / goproxy_io（默认 goproxy）
+        镜像源名称：goproxy / aliyun / ustc / goproxy_io；``auto`` 按服务
+        自动选优（默认 ``auto``）
     install_gvm:
         是否同时安装 gvm（默认 False）
     """

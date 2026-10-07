@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 import fcmd
-from fcmd.cli.dev.envdev_core import MirrorSpec, apply_mirror_config, mirror_supported
+from fcmd.cli.dev.envdev_core import MirrorSpec, apply_mirror_config, mirror_supported, resolve_mirror
 from fcmd.models import run_command
 
 __all__ = ["setup_java_env"]
@@ -48,14 +48,17 @@ _MAVEN_SETTINGS_TEMPLATE: str = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 @fcmd.tool("envdev", subcommand="setup-maven", help="配置 Maven 镜像源", hidden=True)
-def _setup_maven_mirror(mirror: str = "aliyun") -> None:
+def _setup_maven_mirror(mirror: str = "auto") -> None:
     """配置 Maven 镜像源（写入 ~/.m2/settings.xml）。
 
     Parameters
     ----------
     mirror:
-        镜像源名称：aliyun / huaweicloud / ustc（默认 aliyun）
+        镜像源名称：aliyun / huaweicloud / ustc；``auto`` 时探测 Maven
+        服务各候选镜像并选用最快的可达镜像，全部不可达回退 aliyun
+        （默认 ``auto``）
     """
+    mirror = resolve_mirror("maven", mirror, _MAVEN_MIRRORS, "aliyun")
     if not mirror_supported(mirror, _MAVEN_MIRRORS):
         print(f"未知 Maven 镜像源: {mirror}")
         return
@@ -99,7 +102,7 @@ def _install_sdkman() -> None:
 # ============================================================================
 
 
-def setup_java_env(mirror: str = "aliyun", install_sdkman: bool = False) -> None:
+def setup_java_env(mirror: str = "auto", install_sdkman: bool = False) -> None:
     """一键配置 Java 开发环境。
 
     依次执行：配置 Maven 镜像源、（可选）安装 SDKMAN。
@@ -107,7 +110,8 @@ def setup_java_env(mirror: str = "aliyun", install_sdkman: bool = False) -> None
     Parameters
     ----------
     mirror:
-        镜像源名称：aliyun / huaweicloud / ustc（默认 aliyun）
+        镜像源名称：aliyun / huaweicloud / ustc；``auto`` 按服务自动选优
+        （默认 ``auto``）
     install_sdkman:
         是否同时安装 SDKMAN（默认 False）
     """

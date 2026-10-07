@@ -19,7 +19,9 @@ from pathlib import Path
 __all__ = [
     "MirrorSpec",
     "apply_mirror_config",
+    "auto_select_mirror",
     "is_dry_run",
+    "resolve_mirror",
     "set_dry_run",
 ]
 
@@ -135,6 +137,75 @@ def apply_mirror_config(
         print(f"{label} 镜像源已配置 -> {spec.config_path}")
     elif label and dry:
         print(f"{prefix}{label} 镜像源将配置 -> {spec.config_path}")
+
+
+# --------------------------------------------------------------------------- #
+# 镜像自动选优（按服务）
+# --------------------------------------------------------------------------- #
+
+
+def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float = 2.0) -> str | None:
+    """并发探测单个服务支持的全部候选镜像，按可访问性与速度自动选优。
+
+    打印探测排名，返回最快可达的镜像名；全部不可达时返回 ``None``。
+
+    Parameters
+    ----------
+    service:
+        服务名（如 ``pip`` / ``conda`` / ``rustup`` / ``cargo``），仅用于打印标签。
+    candidates:
+        ``{镜像名: 实际服务 URL}`` 候选表。注意不同服务（如 pypi 与 conda
+        频道、rustup 与 crates.io 索引）的服务地址互不相同，须传入各自
+        服务的真实地址探测。
+    timeout:
+        单个镜像的探测超时秒数（默认 ``2``）
+
+    Returns
+    -------
+    str | None
+        最快可达的镜像名；全部不可达时返回 ``None``。
+    """
+    # 延迟导入避免加重导入链
+    from fcmd.cli.net.urlcheck import check_urls
+
+    name_by_url = {url: name for name, url in candidates.items()}
+    results = check_urls(list(candidates.values()), timeout=timeout)
+
+    print(f"[{service} 镜像自动选优]（按可访问性与访问速度排序）")
+    selected: str | None = None
+    for index, (url, ok, latency) in enumerate(results, start=1):
+        name = name_by_url[url]
+        speed = f"{latency:.0f} ms" if ok else "-"
+        print(f"  {index}. {name:<12} {url}  {'可访问' if ok else '不可访问'}  {speed}")
+        if ok and selected is None:
+            selected = name
+    return selected
+
+
+def resolve_mirror(service: str, mirror: str, candidates: dict[str, str], default: str) -> str:
+    """解析镜像参数：显式指定原样返回；``auto`` 探测选优，全部不可达回退默认。
+
+    Parameters
+    ----------
+    service:
+        服务名（如 ``pip`` / ``conda`` / ``rustup`` / ``cargo``）。
+    mirror:
+        用户指定的镜像名；``auto`` 表示自动选优。
+    candidates:
+        ``{镜像名: 实际服务 URL}`` 候选表（须为该服务自身的地址）。
+    default:
+        全部候选不可达时回退的默认镜像名。
+
+    Returns
+    -------
+    str
+        最终选用的镜像名。
+    """
+    if mirror != "auto":
+        return mirror
+    selected = auto_select_mirror(service, candidates) or default
+    print(f"已选用 {service} 镜像: {selected}")
+    return selected
 
 
 # --------------------------------------------------------------------------- #

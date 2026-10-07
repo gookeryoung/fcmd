@@ -2,7 +2,8 @@
 
 子命令整合为五组操作入口：
 
-- ``lang <语言>``：语言类一键配置（python/js/rust/go/java/node），镜像默认 ``auto`` 自动选优
+- ``lang <语言>``：语言类一键配置（python/js/rust/go/java/node），镜像默认 ``auto``
+  按服务（pip/conda/rustup/cargo/go/maven）独立探测选优
 - ``app <应用>``：应用/系统类一键配置（linux-mirror/qt-libs/fonts/docker/docker-mirror/openssh/remote）
 - ``mirror``：探测教育网镜像站点（可访问性 + 访问速度排名）
 - ``check``：检测开发环境配置状态（工具链 + 镜像源，只读）
@@ -35,7 +36,6 @@ import os
 import re
 import shutil
 import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 from urllib.error import URLError
@@ -50,9 +50,10 @@ from fcmd.cli.dev.envdev_core import (
     is_dry_run,
     mirror_supported,
     pip_config_path,
+    resolve_mirror,
 )
-from fcmd.cli.dev.envdev_go import _GO_PROXY_MIRRORS, setup_go_env
-from fcmd.cli.dev.envdev_java import _MAVEN_MIRRORS, setup_java_env
+from fcmd.cli.dev.envdev_go import setup_go_env
+from fcmd.cli.dev.envdev_java import setup_java_env
 from fcmd.cli.dev.envdev_node import setup_node_env
 from fcmd.cli.net.urlcheck import check_urls
 from fcmd.models import run_command
@@ -125,17 +126,17 @@ _CONDA_MIRROR_URLS: dict[str, list[str]] = {
         "https://mirrors.ustc.edu.cn/anaconda/cloud/menpo/",
         "https://mirrors.ustc.edu.cn/anaconda/cloud/pytorch/",
     ],
-    "bsfu": [
-        "https://mirrors.bsfu.edu.cn/anaconda/pkgs/main/",
-        "https://mirrors.bsfu.edu.cn/anaconda/pkgs/free/",
-        "https://mirrors.bsfu.edu.cn/anaconda/pkgs/r/",
-        "https://mirrors.bsfu.edu.cn/anaconda/pkgs/msys2/",
-        "https://mirrors.bsfu.edu.cn/anaconda/pkgs/pro/",
-        "https://mirrors.bsfu.edu.cn/anaconda/pkgs/dev/",
-        "https://mirrors.bsfu.edu.cn/anaconda/cloud/conda-forge/",
-        "https://mirrors.bsfu.edu.cn/anaconda/cloud/bioconda/",
-        "https://mirrors.bsfu.edu.cn/anaconda/cloud/menpo/",
-        "https://mirrors.bsfu.edu.cn/anaconda/cloud/pytorch/",
+    "bfsu": [
+        "https://mirrors.bfsu.edu.cn/anaconda/pkgs/main/",
+        "https://mirrors.bfsu.edu.cn/anaconda/pkgs/free/",
+        "https://mirrors.bfsu.edu.cn/anaconda/pkgs/r/",
+        "https://mirrors.bfsu.edu.cn/anaconda/pkgs/msys2/",
+        "https://mirrors.bfsu.edu.cn/anaconda/pkgs/pro/",
+        "https://mirrors.bfsu.edu.cn/anaconda/pkgs/dev/",
+        "https://mirrors.bfsu.edu.cn/anaconda/cloud/conda-forge/",
+        "https://mirrors.bfsu.edu.cn/anaconda/cloud/bioconda/",
+        "https://mirrors.bfsu.edu.cn/anaconda/cloud/menpo/",
+        "https://mirrors.bfsu.edu.cn/anaconda/cloud/pytorch/",
     ],
     "aliyun": [
         "https://mirrors.aliyun.com/anaconda/pkgs/main/",
@@ -233,55 +234,22 @@ _DOCKER_REGISTRY_MIRRORS: list[str] = [
 ]
 _DOCKER_DAEMON_PATH: Path = Path("/etc/docker/daemon.json")
 
-# 各语言镜像自动选优的探测地址（镜像名 -> 实际服务 URL）
-_LANG_MIRROR_PROBE_URLS: dict[str, Callable[[], dict[str, str]]] = {
-    "python": lambda: dict(_PIP_INDEX_URLS),
-    "rust": lambda: {name: cfg["RUSTUP_DIST_SERVER"] for name, cfg in _RUSTUP_MIRRORS.items()},
-    "go": lambda: {name: url.split(",", 1)[0] for name, url in _GO_PROXY_MIRRORS.items()},
-    "java": lambda: dict(_MAVEN_MIRRORS),
-}
+# 各服务镜像自动选优的探测地址（服务名 -> {镜像名: 该服务实际 URL}）。
+# 注意 pip/conda/rustup/cargo 等服务在同名镜像站下的地址互不相同，且各站
+# 对不同服务的可用性也不同，选优须按服务独立探测，不可混用地址。
+_RUSTUP_PROBE_URLS: dict[str, str] = {name: cfg["RUSTUP_DIST_SERVER"] for name, cfg in _RUSTUP_MIRRORS.items()}
+_CARGO_PROBE_URLS: dict[str, str] = {name: cfg["TOML_REGISTRY"] for name, cfg in _RUSTUP_MIRRORS.items()}
+_CONDA_PROBE_URLS: dict[str, str] = {name: urls[0] for name, urls in _CONDA_MIRROR_URLS.items()}
 
-# 镜像自动选优全部不可达时的兜底默认值（与各语言一键命令的原默认一致）
-_LANG_DEFAULT_MIRRORS: dict[str, str] = {
-    "python": "aliyun",
-    "rust": "aliyun",
+# 各服务自动选优全部不可达时的兜底默认值（与各一键命令的原默认一致）
+_SERVICE_DEFAULT_MIRRORS: dict[str, str] = {
+    "pip": "aliyun",
+    "conda": "aliyun",
+    "rustup": "aliyun",
+    "cargo": "aliyun",
     "go": "goproxy",
-    "java": "aliyun",
+    "maven": "aliyun",
 }
-
-
-def _auto_select_mirror(language: str, timeout: float = 2.0) -> str | None:
-    """并发探测语言支持的全部镜像，按可访问性与速度自动选优。
-
-    打印探测排名，返回最快可达的镜像名；全部不可达时返回 ``None``。
-    仅支持 ``_LANG_MIRROR_PROBE_URLS`` 中登记的语言（js/node 镜像固定
-    npmmirror，无可选项，不参与探测）。
-
-    Parameters
-    ----------
-    language:
-        语言名：python / rust / go / java
-    timeout:
-        单个镜像的探测超时秒数（默认 ``2``）
-
-    Returns
-    -------
-    str | None
-        最快可达的镜像名；全部不可达时返回 ``None``。
-    """
-    targets = _LANG_MIRROR_PROBE_URLS[language]()
-    name_by_url = {url: name for name, url in targets.items()}
-    results = check_urls(list(targets.values()), timeout=timeout)
-
-    print(f"[{language} 镜像自动选优]（按可访问性与访问速度排序）")
-    selected: str | None = None
-    for index, (url, ok, latency) in enumerate(results, start=1):
-        name = name_by_url[url]
-        speed = f"{latency:.0f} ms" if ok else "-"
-        print(f"  {index}. {name:<12} {url}  {'可访问' if ok else '不可访问'}  {speed}")
-        if ok and selected is None:
-            selected = name
-    return selected
 
 
 # ============================================================================
@@ -290,8 +258,8 @@ def _auto_select_mirror(language: str, timeout: float = 2.0) -> str | None:
 
 
 @fcmd.tool("envdev", subcommand="setup-python", help="配置 Python 镜像源", hidden=True)
-def setup_python_mirror(mirror: str = "aliyun") -> None:
-    """配置 Python 镜像源（持久化环境变量 + 写入 pip 配置文件）。
+def setup_python_mirror(mirror: str = "auto") -> None:
+    """配置 Python（pip/uv）镜像源（持久化环境变量 + 写入 pip 配置文件）。
 
     通过 :func:`persist_env` 持久化 ``PIP_INDEX_URL`` / ``PIP_TRUSTED_HOSTS`` /
     ``UV_INDEX_URL`` / ``UV_PYTHON_INSTALL_MIRROR`` 等环境变量（Windows 写注册表，
@@ -300,8 +268,11 @@ def setup_python_mirror(mirror: str = "aliyun") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/aliyun/huaweicloud/ustc/zju（默认 aliyun）
+        镜像源名称：tsinghua/aliyun/huaweicloud/ustc/zju；``auto`` 时探测
+        pip 服务各候选镜像（pypi 地址）并选用最快的可达镜像，全部不可达
+        回退 aliyun（默认 ``auto``）
     """
+    mirror = resolve_mirror("pip", mirror, _PIP_INDEX_URLS, _SERVICE_DEFAULT_MIRRORS["pip"])
     if not mirror_supported(mirror, _PIP_INDEX_URLS):
         print(f"未知 Python 镜像源: {mirror}")
         return
@@ -327,14 +298,17 @@ def setup_python_mirror(mirror: str = "aliyun") -> None:
 
 
 @fcmd.tool("envdev", subcommand="setup-conda", help="配置 Conda 镜像源", hidden=True)
-def setup_conda_mirror(mirror: str = "aliyun") -> None:
+def setup_conda_mirror(mirror: str = "auto") -> None:
     """配置 Conda 镜像源（写入 ~/.condarc）。
 
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/bsfu/aliyun（默认 aliyun）
+        镜像源名称：tsinghua/ustc/bfsu/aliyun；``auto`` 时探测 Conda 服务
+        各候选镜像（anaconda 频道地址，与 pypi 地址不同）并选用最快的可达
+        镜像，全部不可达回退 aliyun（默认 ``auto``）
     """
+    mirror = resolve_mirror("conda", mirror, _CONDA_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["conda"])
     if not mirror_supported(mirror, _CONDA_MIRROR_URLS):
         print(f"未知 Conda 镜像源: {mirror}")
         return
@@ -357,18 +331,20 @@ def setup_conda_mirror(mirror: str = "aliyun") -> None:
 # ============================================================================
 
 
-def setup_python_env(mirror: str = "aliyun") -> None:
+def setup_python_env(mirror: str = "auto") -> None:
     """一键配置 Python 开发环境（pip/uv 镜像源 + Conda 镜像源）。
 
     依次执行：配置 pip/uv 镜像源（环境变量 + pip 配置文件）、
-    配置 Conda 镜像源（``~/.condarc``）。pip 与 Conda 支持的镜像源列表不同，
-    不支持的步骤会打印提示并跳过（如 ``huaweicloud`` 仅 pip 支持）。
+    配置 Conda 镜像源（``~/.condarc``）。pip 与 Conda 支持的镜像源列表与
+    服务地址均不同，不支持的步骤会打印提示并跳过（如 ``huaweicloud`` 仅
+    pip 支持）；``mirror=auto`` 时二者分别独立探测选优，选优结果可能不同。
 
     Parameters
     ----------
     mirror:
         镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/ustc/zju，
-        Conda 支持 tsinghua/ustc/bsfu/aliyun（默认 aliyun）
+        Conda 支持 tsinghua/ustc/bfsu/aliyun；``auto`` 按服务独立自动选优
+        （默认 ``auto``）
     """
     setup_python_mirror(mirror)
     setup_conda_mirror(mirror)
@@ -379,9 +355,67 @@ def setup_python_env(mirror: str = "aliyun") -> None:
 # ============================================================================
 
 
+def _setup_rustup_mirror(mirror: str) -> None:
+    """配置 rustup 镜像源（持久化 RUSTUP_* 环境变量 + 创建 sccache 目录）。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：tsinghua/ustc/aliyun（已由调用方解析，不含 ``auto``）
+    """
+    if not mirror_supported(mirror, _RUSTUP_MIRRORS):
+        print(f"未知 Rust 镜像源: {mirror}")
+        return
+
+    mirrors = _RUSTUP_MIRRORS[mirror]
+    spec = MirrorSpec(
+        env_vars={
+            "RUSTUP_DIST_SERVER": mirrors["RUSTUP_DIST_SERVER"],
+            "RUSTUP_UPDATE_ROOT": mirrors["RUSTUP_UPDATE_ROOT"],
+            "RUST_SCCACHE_DIR": str(_RUST_SCCACHE_DIR),
+            "RUST_SCCACHE_CACHE_SIZE": _RUST_SCCACHE_CACHE_SIZE,
+        },
+        ensure_dirs=[_RUST_SCCACHE_DIR],
+    )
+    apply_mirror_config(spec, persist_fn=persist_env, label="Rust rustup")
+
+    if is_dry_run():
+        print("[dry-run] Rust rustup 镜像源将配置")
+    else:
+        print(f"Rust rustup 镜像源已配置: {mirror}")
+
+
+def _setup_cargo_mirror(mirror: str) -> None:
+    """配置 cargo crates 镜像源（写入 ~/.cargo/config.toml）。
+
+    crates.io 索引地址与 rustup 分发地址不同，单独探测选优。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：tsinghua/ustc/aliyun（已由调用方解析，不含 ``auto``）
+    """
+    if not mirror_supported(mirror, _RUSTUP_MIRRORS):
+        print(f"未知 Rust 镜像源: {mirror}")
+        return
+
+    registry = _RUSTUP_MIRRORS[mirror]["TOML_REGISTRY"]
+    config_content = (
+        f"\n[source.crates-io]\nreplace-with = '{mirror}'\n\n"
+        f'[source.{mirror}]\nregistry = "sparse+{registry}"\n\n'
+        f'[registries.{mirror}]\nindex = "sparse+{registry}"\n'
+    )
+
+    spec = MirrorSpec(
+        config_path=Path.home() / ".cargo" / "config.toml",
+        config_content=config_content,
+    )
+    apply_mirror_config(spec, persist_fn=persist_env, label="Rust cargo")
+
+
 @fcmd.tool("envdev", subcommand="setup-rust", help="配置 Rust 镜像源", hidden=True)
-def _setup_rust_mirror(mirror: str = "aliyun") -> None:
-    """配置 Rust 镜像源（持久化环境变量 + 写入 cargo config + 创建 sccache 目录）。
+def _setup_rust_mirror(mirror: str = "auto") -> None:
+    """配置 Rust 镜像源（rustup 环境变量 + cargo 配置 + sccache 目录）。
 
     通过 :func:`persist_env` 持久化 ``RUSTUP_DIST_SERVER`` / ``RUSTUP_UPDATE_ROOT`` /
     ``RUST_SCCACHE_DIR`` 等环境变量，写入 ``~/.cargo/config.toml``，并创建
@@ -390,32 +424,13 @@ def _setup_rust_mirror(mirror: str = "aliyun") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun（默认 aliyun）
+        镜像源名称：tsinghua/ustc/aliyun；``auto`` 时 rustup 与 cargo 分别
+        独立探测选优（rustup 分发地址与 crates.io 索引地址不同，各站可达性
+        可能不一致，选优结果可能不同），全部不可达各自回退 aliyun
+        （默认 ``auto``）
     """
-    if not mirror_supported(mirror, _RUSTUP_MIRRORS):
-        print(f"未知 Rust 镜像源: {mirror}")
-        return
-
-    mirrors = _RUSTUP_MIRRORS[mirror]
-    registry = mirrors["TOML_REGISTRY"]
-    config_content = (
-        f"\n[source.crates-io]\nreplace-with = '{mirror}'\n\n"
-        f'[source.{mirror}]\nregistry = "sparse+{registry}"\n\n'
-        f'[registries.{mirror}]\nindex = "sparse+{registry}"\n'
-    )
-
-    spec = MirrorSpec(
-        env_vars={
-            "RUSTUP_DIST_SERVER": mirrors["RUSTUP_DIST_SERVER"],
-            "RUSTUP_UPDATE_ROOT": mirrors["RUSTUP_UPDATE_ROOT"],
-            "RUST_SCCACHE_DIR": str(_RUST_SCCACHE_DIR),
-            "RUST_SCCACHE_CACHE_SIZE": _RUST_SCCACHE_CACHE_SIZE,
-        },
-        config_path=Path.home() / ".cargo" / "config.toml",
-        config_content=config_content,
-        ensure_dirs=[_RUST_SCCACHE_DIR],
-    )
-    apply_mirror_config(spec, persist_fn=persist_env, label="Rust")
+    _setup_rustup_mirror(resolve_mirror("rustup", mirror, _RUSTUP_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["rustup"]))
+    _setup_cargo_mirror(resolve_mirror("cargo", mirror, _CARGO_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["cargo"]))
 
 
 @fcmd.tool("envdev", subcommand="download-rustup", help="下载 Rustup 安装脚本", hidden=True)
@@ -463,17 +478,19 @@ def _install_rust_toolchain(version: str = "stable") -> None:
     print(f"Rust 工具链 {version} 安装完成")
 
 
-def setup_rust_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
+def setup_rust_env(mirror: str = "auto", rust_version: str = "stable") -> None:
     """一键配置 Rust 开发环境（镜像源 + 下载 rustup + 安装工具链）。
 
-    依次执行：配置 Rust 镜像源（环境变量 + ``~/.cargo/config.toml`` + sccache 目录）、
-    下载 Rustup 安装脚本（已安装 rustup 时跳过）、安装指定版本工具链
-    （rustup 未安装时跳过）。
+    依次执行：配置 Rust 镜像源（rustup 环境变量 + ``~/.cargo/config.toml`` +
+    sccache 目录，``auto`` 时 rustup 与 cargo 按服务独立选优）、下载 Rustup
+    安装脚本（已安装 rustup 时跳过）、安装指定版本工具链（rustup 未安装时
+    跳过）。
 
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun（默认 aliyun）
+        镜像源名称：tsinghua/ustc/aliyun；``auto`` 按服务独立自动选优
+        （默认 ``auto``）
     rust_version:
         Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
     """
@@ -928,18 +945,20 @@ def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一�
     - ``java``：Maven 镜像源（可选安装 SDKMAN）
     - ``node``：npm/yarn/pnpm 镜像源（可选安装 nvm）
 
-    镜像源默认 ``auto``：配置前先并发探测该语言全部支持镜像的可访问性与
-    访问速度，自动选用最快的可达镜像；全部不可达时回退各语言默认镜像
-    （python/rust/java -> aliyun，go -> goproxy）。
+    镜像源默认 ``auto``：各服务（pip/conda/rustup/cargo/go/maven）在配置前
+    独立探测自身支持镜像的可访问性与速度，分别选用最快的可达镜像；全部
+    不可达时回退该服务默认镜像。注意各服务的镜像地址与支持列表互不相同，
+    选优结果可能不同（如 pip 选中 tsinghua 而 conda 选中 ustc）。
 
     Parameters
     ----------
     language:
         语言名：python / js / rust / go / java / node
     mirror:
-        镜像源名称（默认 ``auto`` 自动选优）；``auto`` 之外为显式指定，
-        各语言支持列表不同，不支持时打印提示跳过。注意：``go`` 原独立命令
-        默认 goproxy，经 ``lang`` 显式指定时亦受支持，可用 ``--mirror goproxy`` 还原
+        镜像源名称（默认 ``auto`` 按服务独立自动选优）；``auto`` 之外为
+        显式指定，各语言支持列表不同，不支持时打印提示跳过。注意：``go``
+        原独立命令默认 goproxy，经 ``lang`` 显式指定时亦受支持，
+        可用 ``--mirror goproxy`` 还原
     rust_version:
         Rust 版本：stable / nightly / beta（默认 stable，仅 ``rust`` 使用）
     install_nvm:
@@ -949,10 +968,6 @@ def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一�
     install_sdkman:
         是否同时安装 SDKMAN（仅 ``java`` 使用）
     """
-    if mirror == "auto" and language in _LANG_MIRROR_PROBE_URLS:
-        mirror = _auto_select_mirror(language) or _LANG_DEFAULT_MIRRORS[language]
-        print(f"已选用镜像: {mirror}")
-
     if language == "python":
         setup_python_env(mirror)
     elif language == "js":
@@ -1009,7 +1024,7 @@ def setup_app_env(
 
 
 @fcmd.tool("envdev", subcommand="all", help="一键配置所有环境")
-def setup_all_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
+def setup_all_env(mirror: str = "auto", rust_version: str = "stable") -> None:
     """一键配置所有开发环境（Python + JavaScript + Rust + Go + Java + Node + Linux 系统依赖）。
 
     依次执行：一键配置各语言环境的镜像源（Python / JavaScript / Rust / Go /
@@ -1019,8 +1034,8 @@ def setup_all_env(mirror: str = "aliyun", rust_version: str = "stable") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：各语言支持列表不同，不支持的步骤打印提示跳过
-        （默认 aliyun，Python / Rust / Java 均支持）
+        镜像源名称：默认 ``auto`` 时各服务（pip/conda/rustup/cargo/go/maven）
+        独立探测选优；显式指定时各语言支持列表不同，不支持的步骤打印提示跳过
     rust_version:
         Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
     """
