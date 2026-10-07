@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from fcmd.apis._tool_args import ToolSpec, _build_parser_for_tool
-from fcmd.apis._tool_exec import _apply_env_defaults, _build_task_spec
+from fcmd.apis._tool_exec import _apply_compute, _apply_env_defaults, _build_task_spec, _expand_cmd_placeholders
 from fcmd.cli import _discovery as discovery_mod
 from fcmd.cli._common import _BUILTIN_COMMANDS
 from fcmd.dsl import (
@@ -199,6 +199,152 @@ class TestActionDecl:
         tool = parse_tool_table("setenv", {"help": "设置环境变量", "action": "setenv"})
         assert tool.flat is True
         assert tool.commands[0].action == "setenv"
+
+
+# ============================================================================ #
+# 计算型动作原语（compute）声明与校验
+# ============================================================================ #
+class TestComputeDecl:
+    """命令级 ``compute`` 键的解析与校验（计算型动作原语 / 数据流注入）。"""
+
+    def test_parse_compute(self) -> None:
+        """合法 compute 声明解析成功（action + as）。"""
+        decl = parse_command_table(
+            "u",
+            {
+                "help": "卸载包",
+                "cmd": ["pip", "uninstall", "-y", "{expanded}"],
+                "args": {"packages": {"type": "list"}},
+                "compute": {"action": "pip_expand", "as": "expanded"},
+            },
+        )
+        assert decl.compute is not None
+        assert decl.compute.action == "pip_expand"
+        assert decl.compute.as_name == "expanded"
+
+    def test_compute_none_means_undeclared(self) -> None:
+        """compute 未声明（None）回退普通命令判定。"""
+        decl = parse_command_table("u", {"help": "x", "cmd": "echo x", "compute": None})
+        assert decl.compute is None
+
+    def test_unknown_compute_action(self) -> None:
+        """compute.action 未注册报错。"""
+        with pytest.raises(CommandDeclError, match=r"compute\.action.*未注册"):
+            parse_command_table("u", {"help": "x", "cmd": "echo x", "compute": {"action": "no_such", "as": "v"}})
+
+    @pytest.mark.parametrize(
+        "table, match",
+        [
+            ({"as": "v"}, "compute.action 须是非空字符串"),
+            ({"action": "", "as": "v"}, "compute.action 须是非空字符串"),
+            ({"action": "pip_filter"}, "compute.as 须是非空字符串"),
+            ({"action": "pip_filter", "as": ""}, "compute.as 须是非空字符串"),
+            ({"action": "pip_filter", "as": "1bad"}, r"compute\.as.*非法"),
+            ({"action": "pip_filter", "as": "dry_run"}, "保留名"),
+            ({"action": "pip_filter", "as": "v", "extra": 1}, "compute 表含未知键"),
+        ],
+    )
+    def test_bad_compute_table(self, table: dict[str, Any], match: str) -> None:
+        """compute 表非法（action/as 缺失或非法、未知键）报错。"""
+        with pytest.raises(CommandDeclError, match=match):
+            parse_command_table("u", {"help": "x", "cmd": "echo x", "compute": table})
+
+    def test_compute_non_mapping(self) -> None:
+        """compute 非表报错。"""
+        with pytest.raises(CommandDeclError, match="compute 须是表"):
+            parse_command_table("u", {"help": "x", "cmd": "echo x", "compute": "pip_filter"})
+
+    def test_compute_as_collides_with_arg(self) -> None:
+        """compute.as 与已声明参数重名报错。"""
+        with pytest.raises(CommandDeclError, match=r"compute\.as.*重名"):
+            parse_command_table(
+                "u",
+                {
+                    "help": "x",
+                    "cmd": "echo x",
+                    "args": {"safe": {"type": "list"}},
+                    "compute": {"action": "pip_filter", "as": "safe"},
+                },
+            )
+
+    def test_compute_mutex_with_action(self) -> None:
+        """compute 与 action 互斥（动作命令即 fn 任务，无 exec 参数注入）。"""
+        with pytest.raises(CommandDeclError, match=r"action 与 compute 互斥"):
+            parse_command_table(
+                "u",
+                {"help": "x", "action": "setenv", "compute": {"action": "pip_filter", "as": "safe"}},
+            )
+
+    def test_compute_not_counted_as_flat_key_alone(self) -> None:
+        """compute 不计入单命令形态识别键（多子命令形态可逐子声明）。"""
+        tool = parse_tool_table(
+            "mytool",
+            {
+                "go": {"help": "g", "cmd": "echo go", "compute": {"action": "pip_filter", "as": "safe"}},
+                "all": {"help": "a", "needs": ["go"]},
+            },
+        )
+        assert tool.flat is False
+
+
+class TestComputeSynthesis:
+    """compute 命令的 ToolSpec 合成与执行接线。"""
+
+    @staticmethod
+    def _u_spec() -> ToolSpec:
+        """u 形态的最小 compute 命令 spec（pip_expand → expanded）。"""
+        decl = parse_command_table(
+            "u",
+            {
+                "help": "卸载包",
+                "cmd": ["pip", "uninstall", "-y", "{expanded}"],
+                "args": {"packages": {"type": "list"}},
+                "compute": {"action": "pip_expand", "as": "expanded"},
+            },
+        )
+        return build_tool_spec(decl)
+
+    def test_build_tool_spec_compute_attr(self) -> None:
+        """合成函数携带 __dsl_compute__ 标记，cmd 保留注入变量占位符。"""
+        spec = self._u_spec()
+        assert spec.cmd == ("pip", "uninstall", "-y", "{expanded}")
+        assert getattr(spec.func, "__dsl_compute__", None) == ("pip_expand", "expanded")
+
+    def test_apply_compute_injects_return_value(self) -> None:
+        """计算动作返回值注入共享变量（具体包名不触发 pip list）。"""
+        variables: dict[str, Any] = {"packages": ["requests"]}
+        _apply_compute(variables, self._u_spec())
+        assert variables["expanded"] == ["requests"]
+
+    def test_apply_compute_dedupes_existing(self) -> None:
+        """同 as 名变量已存在时不重算（链上去重语义）。"""
+        variables: dict[str, Any] = {"packages": ["requests"], "expanded": ["preset"]}
+        _apply_compute(variables, self._u_spec())
+        assert variables["expanded"] == ["preset"]
+
+    def test_build_task_spec_empty_result_skips(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """空计算结果（fcmd 过滤后为空）挂恒假条件 → 任务 SKIPPED。"""
+        spec = self._u_spec()
+        variables: dict[str, Any] = {"packages": ["fcmd"]}
+        _apply_compute(variables, spec)
+        task = _build_task_spec(spec, variables)
+        assert task.conditions
+        assert any(getattr(c, "_reason", "") for c in task.conditions)
+
+    def test_build_task_spec_nonempty_no_skip(self) -> None:
+        """非空计算结果不附加跳过条件。"""
+        spec = self._u_spec()
+        variables: dict[str, Any] = {"packages": ["requests"]}
+        _apply_compute(variables, spec)
+        task = _build_task_spec(spec, variables)
+        assert task.conditions == ()
+
+    def test_expand_cmd_placeholders_expands_list_value(self) -> None:
+        """compute 注入的 list 值经独占占位符逐项展开。"""
+        spec = self._u_spec()
+        variables: dict[str, Any] = {"packages": ["requests", "click"], "expanded": ["requests", "click"]}
+        out = _expand_cmd_placeholders(["pip", "uninstall", "-y", "{expanded}"], spec, variables)
+        assert out == ["pip", "uninstall", "-y", "requests", "click"]
 
 
 class TestActionSynthesis:

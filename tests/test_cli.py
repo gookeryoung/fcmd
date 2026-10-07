@@ -1400,7 +1400,6 @@ _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("padtool", "fcmd.cli.text.padtool"),
     ("pathtool", "fcmd.cli.fileops.pathtool"),
     ("pdftool", "fcmd.cli.media.pdftool"),
-    ("piptool", "fcmd.cli.dev.piptool"),
     ("portcheck", "fcmd.cli.net.portcheck"),
     ("pymake", "fcmd.cli.dev.pymake"),
     ("randtool", "fcmd.cli.calc.randtool"),

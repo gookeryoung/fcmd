@@ -29,6 +29,9 @@ cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 c
 str 参数的 ``default_env`` 环境变量回退链经 ``__dsl_param_env__`` 属性传递
 （仅声明 default_env 的命令注入），由 ``_tool_exec._apply_env_defaults`` 在
 CLI 解析值等于声明 default 时取链中第一个非空环境变量值。
+命令级 ``compute``（计算型动作原语）经 ``__dsl_compute__`` 属性传递
+（仅声明 compute 的命令注入），由 ``_tool_exec._apply_compute`` 在构建任务
+前进程内执行计算动作并将返回值注入共享变量，供本命令模板插值消费。
 ``allow_upstream_skip`` / ``tty`` 不经函数属性，直接映射 :class:`ToolSpec`
 既有/新增声明字段（``tty`` → ``TaskSpec.passthrough``，引擎侧已消费，
 属于声明字段而非函数属性契约）。
@@ -168,6 +171,10 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     env_defaults = {p.name: (p.default_env, p.default) for p in decl.args if p.default_env}
     if env_defaults:
         dsl_command.__dsl_param_env__ = env_defaults  # type: ignore[attr-defined]
+    # 计算型动作契约（_tool_exec._apply_compute / _expand_value 消费）：
+    # (计算动作名, 注入变量名)，仅声明 compute 的命令注入
+    if decl.compute is not None:
+        dsl_command.__dsl_compute__ = (decl.compute.action, decl.compute.as_name)  # type: ignore[attr-defined]
     _inject_contracts(dsl_command, decl)
     return dsl_command
 

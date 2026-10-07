@@ -28,6 +28,7 @@ from .actions import action_names, get_action, has_action
 __all__ = [
     "CommandDecl",
     "CommandDeclError",
+    "ComputeDecl",
     "ParamDecl",
     "ToolDecl",
     "WhenDecl",
@@ -81,6 +82,7 @@ _TOP_KEYS = frozenset(
         "when",
         "tty",
         "allow_upstream_skip",
+        "compute",
     }
 )
 
@@ -122,6 +124,30 @@ class WhenDecl:
     cmd: str | None = None
     path: str | None = None
     expect: str = "nonempty"
+
+
+@dataclass(frozen=True)
+class ComputeDecl:
+    """计算型动作声明（TOML ``compute`` 表的解析结果）。
+
+    任务执行前在进程内先执行计算动作，返回值注入共享变量供本命令的
+    cmd/cwd/env/message 模板插值消费（``{as 名}``）；空结果（空 list 或
+    空串）任务 SKIPPED。用于「采集命令输出 → 过滤计算 → 注入 exec 参数」
+    的输出管道形态（如 piptool 的通配符展开与受保护包过滤）。
+
+    参数
+    ----
+    action:
+        计算动作名（:mod:`fcmd.dsl.actions` 注册表；输入参数按实现签名
+        从共享 CLI 变量绑定，返回值即计算结果）
+    as_name:
+        返回值注入的变量名（TOML 键 ``as``；须匹配参数名模式、不得命中
+        全局选项保留名、不得与本命令已声明参数重名）；同一条调用链上
+        同名只计算一次（首个声明者生效），消费方均须声明以获得插值白名单
+    """
+
+    action: str
+    as_name: str
 
 
 @dataclass(frozen=True)
@@ -175,6 +201,9 @@ class CommandDecl:
         如 ``docker login`` 的密码提示需可见可输入）
     allow_upstream_skip:
         硬依赖被 SKIPPED 时本任务是否仍执行（聚合链豁免场景）
+    compute:
+        计算型动作声明（任务执行前进程内计算，返回值注入模板插值）；
+        ``None`` 表示未声明
     """
 
     name: str
@@ -197,6 +226,7 @@ class CommandDecl:
     when: WhenDecl | None = None
     tty: bool = False
     allow_upstream_skip: bool = False
+    compute: ComputeDecl | None = None
 
 
 @dataclass(frozen=True)
@@ -562,6 +592,61 @@ def _check_action_params(name: str, action_name: str) -> None:
             raise CommandDeclError(f"命令 {name!r} 的动作 {action_name!r} 参数 {pname!r} 是保留名（全局选项）")
 
 
+def _parse_compute(name: str, value: Any, args: tuple[ParamDecl, ...], action_name: str | None) -> ComputeDecl | None:
+    """解析并校验计算型动作声明（compute 表：action + as 二键）。
+
+    Parameters
+    ----------
+    name:
+        命令名（错误消息上下文）
+    value:
+        原始值（未声明为 ``None``）
+    args:
+        已解析的参数声明（校验 as 名不与参数重名）
+    action_name:
+        同命令声明的 action 名（compute 与 action 互斥校验）
+
+    Returns
+    -------
+    ComputeDecl | None
+        未声明 compute 时返回 ``None``
+
+    Raises
+    ------
+    CommandDeclError
+        声明非法（非表 / 未知键 / action 未注册或非字符串 / as 缺失或
+        命名非法 / 命中保留名 / 与已声明参数重名 / 与 action 同时声明）
+    """
+    if value is None:
+        return None
+    if action_name is not None:
+        raise CommandDeclError(f"命令 {name!r} 的 action 与 compute 互斥（动作命令即 fn 任务，无 exec 参数注入）")
+    if not isinstance(value, Mapping):
+        raise CommandDeclError(
+            f'命令 {name!r} 的 compute 须是表（compute = {{action = "...", as = "..."}}），实际: {value!r}'
+        )
+    unknown = set(value) - {"action", "as"}
+    if unknown:
+        raise CommandDeclError(f"命令 {name!r} 的 compute 表含未知键: {sorted(unknown)}")
+    action_name = value.get("action")
+    if not isinstance(action_name, str) or not action_name:
+        raise CommandDeclError(f"命令 {name!r} 的 compute.action 须是非空字符串，实际: {action_name!r}")
+    if not has_action(action_name):
+        raise CommandDeclError(
+            f"命令 {name!r} 的 compute.action {action_name!r} 未注册（可用动作: {list(action_names())}）"
+        )
+    as_name = value.get("as")
+    if not isinstance(as_name, str) or not as_name:
+        raise CommandDeclError(f"命令 {name!r} 的 compute.as 须是非空字符串，实际: {as_name!r}")
+    if not _PARAM_NAME_RE.match(as_name):
+        raise CommandDeclError(f"命令 {name!r} 的 compute.as {as_name!r} 非法：须匹配 {_PARAM_NAME_RE.pattern}")
+    if as_name in _RESERVED_PARAM_NAMES:
+        raise CommandDeclError(f"命令 {name!r} 的 compute.as {as_name!r} 是保留名（全局选项）")
+    if as_name in {p.name for p in args}:
+        raise CommandDeclError(f"命令 {name!r} 的 compute.as {as_name!r} 与已声明参数重名")
+    return ComputeDecl(action=action_name, as_name=as_name)
+
+
 # when 表内合法键（cmd/path 二选一 + expect）
 _WHEN_KEYS = frozenset({"cmd", "path", "expect"})
 
@@ -789,6 +874,8 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         _check_action_mutex(name, table, has_cmd=has_cmd, args_raw=args_raw)
         _check_action_params(name, action_name)
 
+    compute = _parse_compute(name, table.get("compute"), args, action_name)
+
     return CommandDecl(
         name=name,
         help=help_text,
@@ -810,6 +897,7 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         when=when,
         tty=tty,
         allow_upstream_skip=allow_upstream_skip,
+        compute=compute,
     )
 
 

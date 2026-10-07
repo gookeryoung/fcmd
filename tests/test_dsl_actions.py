@@ -4,13 +4,15 @@
 - Action 描述符与注册表 API（action/has_action/get_action/action_names）
 - 重复注册报错
 - 内建动作 setenv/writefile 的进程内执行语义（文件名批量操作原语语义
-  见 test_cli_filedate/filerename/filelevel/folderback）
+  见 test_cli_filedate/filerename/filelevel/folderback；计算型动作语义
+  见 TestComputeActionImpls 与 test_cli_piptool）
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -24,7 +26,7 @@ class TestActionRegistry:
     """动作注册表 API 测试。"""
 
     def test_builtin_actions_registered(self) -> None:
-        """内建动作已注册（setenv/writefile + 文件名批量操作原语）。"""
+        """内建动作已注册（setenv/writefile + 文件名批量操作 + 计算型原语）。"""
         builtin = {
             "setenv",
             "writefile",
@@ -35,6 +37,11 @@ class TestActionRegistry:
             "filerename_case",
             "filelevel_set",
             "folderback",
+            "taskkill",
+            "which",
+            "sysinfo",
+            "pip_expand",
+            "pip_filter",
         }
         for name in builtin:
             assert has_action(name), name
@@ -113,3 +120,55 @@ class TestBuiltinActionImpls:
         f = tmp_path / "missing_dir" / "note.txt"
         with pytest.raises(OSError):
             get_action("writefile").func(path=str(f), content="x")
+
+
+class TestComputeActionImpls:
+    """计算型动作实现的语义（返回值被 DSL 引擎消费）。"""
+
+    def test_pip_expand_concrete_kept(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """无通配符模式原样保留（不触发 pip list 采集）。"""
+        out = get_action("pip_expand").func(packages=["requests", "click"])
+        assert out == ["requests", "click"]
+
+    def test_pip_expand_wildcard_and_protect(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """通配符按已安装包展开（大小写不敏感、保留原包名大小写），受保护包剔除并提示。"""
+        monkeypatch.setattr(
+            "fcmd.dsl.actions._pip_installed_packages",
+            lambda: ["Requests", "requests_toolbelt", "fcmd", "click"],
+        )
+        out = get_action("pip_expand").func(packages=["REQUESTS*", "fc*"])
+        assert out == ["Requests", "requests_toolbelt"]
+        assert "跳过受保护的包: fcmd" in capsys.readouterr().out
+
+    def test_pip_expand_wildcard_no_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """通配符无匹配返回空列表（引擎侧 SKIPPED）。"""
+        monkeypatch.setattr("fcmd.dsl.actions._pip_installed_packages", lambda: ["click"])
+        assert get_action("pip_expand").func(packages=["nomatch*"]) == []
+
+    def test_pip_expand_all_protected(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """仅受保护包（无通配符）→ 过滤后空列表。"""
+        assert get_action("pip_expand").func(packages=["fcmd"]) == []
+        assert "跳过受保护的包: fcmd" in capsys.readouterr().out
+
+    def test_pip_installed_packages_failure(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """pip list 非零退出抛 RuntimeError（引擎侧映射为命令失败）。"""
+        import subprocess
+
+        def failing_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess(cmd, 1, "", "boom")
+
+        monkeypatch.setattr("subprocess.run", failing_run)
+        from fcmd.dsl.actions import _pip_installed_packages
+
+        with pytest.raises(RuntimeError, match="pip list 失败"):
+            _pip_installed_packages()
+
+    def test_pip_filter_protected_only(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """pip_filter 剔除受保护包；全受保护返回空列表。"""
+        assert get_action("pip_filter").func(packages=["fcmd", "requests"]) == ["requests"]
+        assert get_action("pip_filter").func(packages=["fcmd"]) == []
+        assert "跳过受保护的包: fcmd" in capsys.readouterr().out

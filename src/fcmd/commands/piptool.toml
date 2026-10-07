@@ -1,8 +1,13 @@
-# 内置 DSL 命令：piptool（与 Python 模块 fcmd/cli/dev/piptool.py 逐子命令合并）。
+# 内置 DSL 命令：piptool（多子命令形态，Python 模块已全部迁入删除）。
 #
-# 仅迁入纯 exec 型子命令 i/up/d/f；含输出后处理逻辑的 u/r（通配符展开、
-# 受保护包过滤）保留在模块内。i/d 的 packages 演示 list 参数独占占位符用法；
-# d 的 offline 演示 bool 参数 on 固定 token；f 为 str cmd 走 shell 重定向。
+# i/up/d/f 为纯 exec 型子命令；u/r 为输出管道形态（compute 计算型动作原语：
+# 采集 pip list 输出展开通配符 / 过滤受保护包，注入 exec 参数）。r 的
+# 先卸载后安装经隐藏链 _uninstall → _install 编排（DAG 依赖边保证顺序），
+# 两处声明同一 compute（as=safe）仅为插值白名单，链上只计算一次。
+# 工具级别名 pipt 保持历史 pip 入口名不变；DSL 字段速查见 README。
+
+[commands.piptool]
+aliases = ["pipt"]
 
 [commands.piptool.i]
 help = "安装包"
@@ -31,3 +36,48 @@ on = ["--no-index", "--find-links", "."]
 help = "导出依赖"
 cmd = "pip freeze --exclude-editable > requirements.txt"
 message = "依赖已导出到 requirements.txt"
+
+# u：通配符展开 + 受保护包过滤（compute）→ pip uninstall；空展开结果 → SKIPPED
+[commands.piptool.u]
+help = "卸载包（支持通配符）"
+cmd = ["pip", "uninstall", "-y", "{expanded}"]
+[commands.piptool.u.args.packages]
+type = "list"
+help = "包名列表（支持 \"requests*\" 等通配符）"
+[commands.piptool.u.compute]
+action = "pip_expand"
+as = "expanded"
+
+# r：受保护包过滤（compute）→ 先卸载后安装；全受保护（空结果）→ SKIPPED
+[commands.piptool.r]
+help = "重装包"
+needs = ["_install"]
+[commands.piptool.r.args.packages]
+type = "list"
+help = "包名列表"
+[commands.piptool.r.args.offline]
+type = "bool"
+default = false
+help = "离线模式（从本地 ./ 查找包）"
+
+[commands.piptool._uninstall]
+help = "卸载待重装包（内部）"
+cmd = ["pip", "uninstall", "-y", "{safe}"]
+hidden = true
+[commands.piptool._uninstall.compute]
+action = "pip_filter"
+as = "safe"
+
+[commands.piptool._install]
+help = "安装包（内部）"
+cmd = ["pip", "install", "{safe}"]
+needs = ["_uninstall"]
+hidden = true
+[commands.piptool._install.compute]
+action = "pip_filter"
+as = "safe"
+[commands.piptool._install.args.offline]
+type = "bool"
+default = false
+help = "离线模式（从本地 ./ 查找包）"
+on = ["--no-index", "--find-links", "."]

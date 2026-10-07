@@ -111,6 +111,16 @@ def _is_aggregate(spec: ToolSpec) -> bool:
     return not _has_function_logic(spec.func)
 
 
+def _compute_names(spec: ToolSpec) -> tuple[str, ...]:
+    """返回 DSL 命令 compute 注入变量名（插值白名单扩展用）。
+
+    ``__dsl_compute__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
+    非 DSL 合成函数（无该属性）返回空元组。
+    """
+    compute = getattr(spec.func, "__dsl_compute__", None)
+    return (compute[1],) if compute is not None else ()
+
+
 def _value_to_cmd_str(value: Any) -> str:
     """将 CLI 解析值转换为 cmd 模板插值字符串。
 
@@ -149,16 +159,18 @@ def _read_file_content(value: Any, token: str) -> str:
 def _expand_value(value: str, spec: ToolSpec, variables: Mapping[str, Any]) -> str:
     """将字符串值中 ``{参数名}`` 占位符替换为 CLI 解析值。
 
-    仅替换 ``spec`` 签名内声明且在 ``variables`` 中有值的参数名（cmd /
-    cwd / env 值共用）。字面花括号与全局变量（dry_run/quiet/strategy，
-    不在签名内）不受影响。
+    仅替换 ``spec`` 签名内声明且在 ``variables`` 中有值的参数名，以及
+    ``compute`` 注入变量名（``__dsl_compute__`` 的 as 名，构建任务前已由
+    :func:`_apply_compute` 写入 ``variables``）（cmd / cwd / env 值共用）。
+    字面花括号与全局变量（dry_run/quiet/strategy，不在签名内）不受影响。
 
     扩展语法 ``{参数名:content}``：读取参数指向的文件内容（expanduser +
     utf-8 + strip）替换进模板（声明期校验仅 str/path 参数可用，见
     ``fcmd.dsl.decl._check_content_cmd_placeholders``）；读取失败保持
     字面 token。
     """
-    for pname in inspect.signature(spec.func).parameters:
+    names = [*inspect.signature(spec.func).parameters, *_compute_names(spec)]
+    for pname in names:
         if pname in variables:
             value = value.replace("{" + pname + "}", _value_to_cmd_str(variables[pname]))
             token = "{" + pname + ":content}"
@@ -185,9 +197,11 @@ def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Ma
     无占位符时零成本直返。DSL 扩展语义：
 
     - list 参数在 list cmd 中的**独占占位符项**（整项恰为 ``{name}``）按
-      元素逐项展开（无 shell 执行下每元素一个 argv token）；
+      元素逐项展开（无 shell 执行下每元素一个 argv token），compute 注入
+      变量名（list 值）同语义；
     - bool 参数声明 ``on`` 时，值为真向 cmd 尾部追加固定 token。
     """
+    compute_set = set(_compute_names(spec))
     if isinstance(cmd, str):
         expanded = _expand_value(cmd, spec, variables) if "{" in cmd else cmd
         on_tokens = _collect_on_tokens(spec, variables)
@@ -195,10 +209,10 @@ def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Ma
     sig_params = inspect.signature(spec.func).parameters
     result: list[str] = []
     for item in cmd:
-        if item.startswith("{") and item.endswith("}") and item[1:-1] in sig_params:
+        if item.startswith("{") and item.endswith("}") and (item[1:-1] in sig_params or item[1:-1] in compute_set):
             value = variables.get(item[1:-1])
             if isinstance(value, (list, tuple)):
-                # list 参数独占占位符：按元素展开
+                # list 值独占占位符：按元素展开
                 result.extend(str(element) for element in value)
                 continue
         result.append(_expand_value(item, spec, variables) if "{" in item else item)
@@ -283,6 +297,56 @@ def _apply_env_defaults(variables: dict[str, Any], spec: ToolSpec) -> None:
                 break
 
 
+def _apply_compute(variables: dict[str, Any], spec: ToolSpec) -> None:
+    """执行 DSL 命令的 compute 计算动作（就地写 ``variables``）。
+
+    ``__dsl_compute__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
+    非 DSL 合成函数（无该属性）为空操作。计算动作在进程内执行：输入参数
+    按实现签名从 ``variables`` 绑定，返回值写入 ``variables[as 名]`` 供
+    本命令模板插值消费；同一条调用链上同名注入变量只计算一次（调用方按
+    链序逐命令调用，首个声明者生效，消费方声明仅为获得插值白名单）。
+
+    Raises
+    ------
+    Exception
+        计算动作自身异常原样抛出（由调用方映射为命令失败）
+    """
+    compute = getattr(spec.func, "__dsl_compute__", None)
+    if compute is None:
+        return
+    action_name, as_name = compute
+    if as_name in variables:
+        return
+    from fcmd.dsl.actions import get_action  # 懒导入避免 apis → dsl 包级循环
+
+    impl = get_action(action_name).func
+    kwargs = {pname: variables[pname] for pname in inspect.signature(impl).parameters if pname in variables}
+    variables[as_name] = impl(**kwargs)
+
+
+def _compute_skip_condition(spec: ToolSpec, variables: Mapping[str, Any]) -> Condition | None:
+    """compute 空结果跳过条件：注入变量为空 list/空串时任务 SKIPPED。
+
+    Returns
+    -------
+    Condition | None
+        恒假条件闭包（携带跳过原因）；结果非空或未声明 compute 时 ``None``
+    """
+    compute = getattr(spec.func, "__dsl_compute__", None)
+    if compute is None:
+        return None
+    value = variables.get(compute[1])
+    if isinstance(value, (list, tuple, str)) and not value:
+        reason = f"计算结果为空（compute={compute[0]!r}）"
+
+        def _empty_skip(_context: Context) -> bool:
+            return False
+
+        _empty_skip._reason = reason  # type: ignore[attr-defined]
+        return _empty_skip
+    return None
+
+
 def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:
     """将 ToolSpec + 解析后的变量转为 TaskSpec。
 
@@ -295,6 +359,10 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
     """
     task_name = spec.subcommand if spec.subcommand is not None else spec.name
     conditions = _build_conditions(spec, variables)
+    # compute 空结果（空 list/空串）→ 任务 SKIPPED（三支任务统一挂条件）
+    skip_condition = _compute_skip_condition(spec, variables)
+    if skip_condition is not None:
+        conditions = (*conditions, skip_condition)
 
     # cmd 任务
     if spec.cmd is not None:
@@ -461,6 +529,13 @@ def _execute_tool_tasks(
         # DSL 参数环境变量回退链解析（依赖在前：链上子任务可见解析结果；
         # 就地写 variables，post-run message 同样取解析后的值）
         _apply_env_defaults(variables, sc_spec)
+        # DSL compute 计算动作（链序依赖在前，同 as 名只算一次；异常映射为
+        # 命令失败退出码 1）
+        try:
+            _apply_compute(variables, sc_spec)
+        except Exception as e:  # 计算动作异常统一映射为失败
+            get_console().print(f"[red]错误:[/red] 计算动作执行失败: {e}")
+            return ToolExitCode.FAILURE.value
         task_specs.append(_build_task_spec(sc_spec, variables))
 
     # 构建图并执行
