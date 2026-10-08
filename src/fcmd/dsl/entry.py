@@ -41,8 +41,19 @@ def run_named() -> None:
     ensure_tools_discovered()
     resolved = resolve_tool(name)
     if resolved is None:
+        # runpy 入口（fspack 打包包装器以 run_module(alter_sys=True) 执行本模块）
+        # 会把 argv[0] 改写为入口模块文件路径而非加载器 exe 名；此时退回从
+        # sys.executable（即 per-tool loader exe，如 img2ico.exe）推断工具名。
+        resolved = resolve_tool(infer_tool_name(sys.executable))
+    if resolved is None:
         console = get_console()
         console.print(f"[red]错误:[/red] 入口 {name!r} 未对应任何已注册工具")
         console.print("[dim]运行 'fcmd' 查看可用工具列表[/dim]")
         sys.exit(1)
     sys.exit(run_tool(resolved, sys.argv[1:]))
+
+
+if __name__ == "__main__":
+    # fspack 打包包装器经 runpy.run_module 执行本模块（无函数调用上下文），
+    # 与 fcmd.cli.main 同样需要 __main__ 守卫触发入口函数。
+    run_named()

@@ -715,11 +715,41 @@ class TestBootstrap:
         assert "未对应任何已注册工具" in out
         assert "查看可用工具列表" in out
 
+    def test_run_named_falls_back_to_executable_name(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """runpy 打包入口（argv[0] 被改写为入口模块路径）时从 sys.executable 回退推断。
+
+        回归测试：fspack 包装器以 run_module(alter_sys=True) 执行本模块，argv[0]
+        沦为 entry.py 文件路径；工具名应退回从加载器 exe（sys.executable，如
+        img2ico.exe）推断，否则打包后的单工具 exe 静默失效。
+        """
+        seen: dict[str, Any] = {}
+
+        def fake_run_tool(name: str, argv: list[str]) -> int:
+            seen["name"] = name
+            seen["argv"] = argv
+            return 0
+
+        def fake_resolve(name: str) -> str | None:
+            return name if name == "img2ico" else None
+
+        monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
+        monkeypatch.setattr(discovery_mod, "resolve_tool", fake_resolve)
+        monkeypatch.setattr("fcmd.apis.toolkit.run_tool", fake_run_tool)
+        monkeypatch.setattr(sys, "argv", [r"F:\app\dist\src\fcmd\dsl\entry.py", "gen", "in.svg"])
+        monkeypatch.setattr(sys, "executable", r"F:\app\dist\img2ico.exe")
+        with pytest.raises(SystemExit) as exc_info:
+            run_named()
+        assert exc_info.value.code == 0
+        assert seen == {"name": "img2ico", "argv": ["gen", "in.svg"]}
+        assert capsys.readouterr().out == ""
+
     def test_run_path_does_not_load_heavy_libs(self) -> None:
         """DSL 命令全路径（entry 导入 + 工具发现）不触发重型库加载。
 
         回归测试：迁移后每个 console script 入口统一经 dsl.entry 启动，
-        media 动作顶层 try-import cairosvg/PIL、envdev 顶层导入
+        media 动作顶层 eager 导入 SVG 渲染库/PIL、envdev 顶层导入
         urllib.request(→ssl) 会使所有 DSL 命令启动多付约 230ms。子进程
         隔离断言重型库不出现在 sys.modules（模块 docstring 承诺"工具发现
         阶段不触发重型库加载"）。
@@ -729,7 +759,7 @@ class TestBootstrap:
             "import fcmd.dsl.entry\n"
             "from fcmd.cli._discovery import ensure_tools_discovered\n"
             "ensure_tools_discovered()\n"
-            "heavy = [m for m in ('cairosvg', 'PIL.Image', 'ssl') if m in sys.modules]\n"
+            "heavy = [m for m in ('resvg_py', 'PIL.Image', 'ssl') if m in sys.modules]\n"
             "assert not heavy, f'工具发现阶段加载了重型库: {heavy}'\n"
         )
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False)
