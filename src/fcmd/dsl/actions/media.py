@@ -1,7 +1,7 @@
 """媒体类 DSL 动作：img2ico / imagetool / pdftool。
 
 三个工具原属 ``fcmd.cli.media`` 包，全部为纯 Python 实现（Pillow /
-cairosvg / PyMuPDF / pypdf），无子进程调用。迁移后由 ``@action`` 装饰器
+resvg-py / PyMuPDF / pypdf），无子进程调用。迁移后由 ``@action`` 装饰器
 注册，TOML 声明 ``action = "<名>"`` 直接引用；CLI 参数 schema 从动作签名
 自动推导（synth 层拷贝签名注入合成函数）。
 
@@ -22,21 +22,21 @@ if TYPE_CHECKING:
     import pypdf
 
 # ============================================================================
-# 可选依赖检查（find_spec 仅查定位，不触发真正 import；PIL / cairosvg 由
-# _require_pil / _require_cairosvg 首次调用时惰性导入到模块全局）
+# 可选依赖检查（find_spec 仅查定位，不触发真正 import；PIL / resvg_py 由
+# _require_pil / _require_resvg 首次调用时惰性导入到模块全局）
 # ============================================================================
 
 HAS_PIL = importlib.util.find_spec("PIL") is not None
-HAS_CAIROSVG = importlib.util.find_spec("cairosvg") is not None
+HAS_RESVG = importlib.util.find_spec("resvg_py") is not None
 HAS_PYMUPDF = importlib.util.find_spec("fitz") is not None
 HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
 
-# PIL / cairosvg 惰性占位（_require_pil / _require_cairosvg 首次调用填充；
+# PIL / resvg_py 惰性占位（_require_pil / _require_resvg 首次调用填充；
 # 类型为 Any，全模块对图片对象一律以 Any 传递）
 Image: Any = None
 ImageDraw: Any = None
 ImageFont: Any = None
-cairosvg: Any = None
+resvg_py: Any = None
 
 
 # ============================================================================
@@ -71,13 +71,13 @@ SVG_TO_ICO_MAC_SIZES: tuple[tuple[int, int], ...] = (
 )
 
 # 最大渲染尺寸：SVG 矢量可无损缩放，先渲染到最大需求尺寸再由 Pillow
-# 内部 resize 生成各子尺寸，避免 cairosvg 重复渲染造成性能浪费。
+# 内部 resize 生成各子尺寸，避免 SVG 渲染器重复渲染造成性能浪费。
 _MAX_RENDER_SIZE = 1024
 
 
 def _require_deps() -> bool:
-    """检查 PIL + cairosvg 依赖，缺失时打印提示并返回 False。"""
-    return _require_pil() and _require_cairosvg()
+    """检查 PIL + resvg-py 依赖，缺失时打印提示并返回 False。"""
+    return _require_pil() and _require_resvg()
 
 
 def _parse_sizes(sizes: list[int] | None) -> list[tuple[int, int]] | None:
@@ -116,11 +116,10 @@ def _resolve_format_alias(fmt: str) -> str:
 
 
 def _render_svg_to_png(svg_path: Path, max_size: int):
-    """用 cairosvg 将 SVG 渲染为 RGBA 位图。"""
+    """用 resvg-py 将 SVG 渲染为 RGBA 位图。"""
     import io
 
-    png_bytes = cairosvg.svg2png(url=str(svg_path), output_width=max_size, output_height=max_size)
-    assert isinstance(png_bytes, bytes)
+    png_bytes = bytes(resvg_py.svg_to_bytes(svg_path=str(svg_path), width=max_size, height=max_size))
     return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
 
 
@@ -136,7 +135,7 @@ def icon_build(
 
     # 直接调用（绕过 img2ico_gen 入口）时兜底校验并填充惰性全局
     if not _require_deps():
-        raise RuntimeError("缺少依赖: pillow (fcmd[img]) / cairosvg (fcmd[svg])")
+        raise RuntimeError("缺少依赖: pillow (fcmd[img]) / resvg-py (fcmd[svg])")
 
     resolved_fmt = _detect_format(output_path, fmt)
     default_sizes = _default_sizes_for(resolved_fmt)
@@ -210,16 +209,16 @@ def _require_pil() -> bool:
     return True
 
 
-def _require_cairosvg() -> bool:
-    """cairosvg 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
-    if not HAS_CAIROSVG:
-        print("未安装 cairosvg 库，请安装: pip install fcmd[svg]")
+def _require_resvg() -> bool:
+    """resvg-py 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
+    if not HAS_RESVG:
+        print("未安装 resvg-py 库，请安装: pip install fcmd[svg]")
         return False
-    global cairosvg  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
-    if cairosvg is None:
-        import cairosvg as _cairosvg  # type: ignore[import-untyped]
+    global resvg_py  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
+    if resvg_py is None:
+        import resvg_py as _resvg_py
 
-        cairosvg = _cairosvg
+        resvg_py = _resvg_py
     return True
 
 

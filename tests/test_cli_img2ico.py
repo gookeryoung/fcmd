@@ -14,17 +14,11 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-
-try:
-    from fcmd.dsl.actions.media import (
-        SVG_TO_ICO_MAC_SIZES,
-        SVG_TO_ICO_WIN_SIZES,
-        icon_build,
-    )
-except OSError as _exc:
-    # 本机缺 libcairo 原生动态库时 img2ico 无法导入，
-    # 整模块跳过（allow_module_level），避免集合错误中断整个测试套件。
-    pytest.skip(f"需要 libcairo 原生动态库: {_exc}", allow_module_level=True)
+from fcmd.dsl.actions.media import (
+    SVG_TO_ICO_MAC_SIZES,
+    SVG_TO_ICO_WIN_SIZES,
+    icon_build,
+)
 
 
 # ---------------------------------------------------------------------- #

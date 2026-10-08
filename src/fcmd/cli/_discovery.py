@@ -189,7 +189,7 @@ def _register_tool(module_path: str, tool_name: str) -> None:
     """注册单个工具：填充模块映射并导入模块读取别名。
 
     导入失败时跳过该工具：``ImportError`` 表示可选 Python 包缺失，
-    ``OSError`` 表示原生动态库缺失（如 ``cairosvg`` 缺 ``libcairo``）。
+    ``OSError`` 表示原生动态库缺失（如扩展模块加载失败）。
     两类失败均不影响其余工具的发现。
     """
     _TOOL_MODULES.setdefault(tool_name, module_path)

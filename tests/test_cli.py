@@ -310,7 +310,7 @@ class TestToolDiscovery:
         assert discovery_mod._TOOL_ALIASES["pymake"] == "mock_value"
 
     def test_discovery_survives_oserror_on_module_import(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """工具模块导入抛 OSError（如缺 libcairo 动态库）时跳过该工具，不中断发现流程。"""
+        """工具模块导入抛 OSError（如扩展模块原生库加载失败）时跳过该工具，不中断发现流程。"""
         import importlib as _importlib
 
         from fcmd.cli import _discovery as discovery_mod
@@ -1280,7 +1280,7 @@ class TestBuiltinDoctor:
         monkeypatch.setattr("fcmd.cli._doctor_helpers.collect_optional_deps_status", fake_deps)
         # 让 shutil.which 全部返回非 None
         monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")
-        # 工具模块扫描改为注入单一已知可导入工具，避免依赖本机可选原生库（如 libcairo）
+        # 工具模块扫描改为注入单一已知可导入工具，避免依赖本机可选原生扩展库
         monkeypatch.setattr("fcmd.cli._builtins.doctor_cmd._TOOL_MODULES", {"pymake": "fcmd.cli.dev.pymake"})
 
         app = FcmdApp(["doctor"])

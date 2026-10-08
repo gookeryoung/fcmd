@@ -1,7 +1,7 @@
 # 内置 DSL 命令：img2ico（单子命令形态，内建动作原语）。
 #
 # 原模块 fcmd/cli/media/img2ico.py 已迁入 fcmd/dsl/actions/media.py：
-# gen 子命令为纯 Python（Pillow + cairosvg），无子进程调用。
+# gen 子命令为纯 Python（Pillow + resvg-py），无子进程调用。
 
 [commands.img2ico.gen]
 help = "SVG 转图标文件"

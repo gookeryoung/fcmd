@@ -133,7 +133,7 @@ class FcmdApp:
             try:
                 importlib.import_module(module_path)
             except (ImportError, OSError) as e:
-                # OSError：原生动态库缺失（如 cairosvg 缺 libcairo），与 ImportError 同样友好报错
+                # OSError：原生动态库缺失，与 ImportError 同样友好报错
                 get_console().print(f"[red]错误:[/red] 加载工具 {tool_name!r} 失败: {e}")
                 return 1
         elif tool_name not in _TOOL_REGISTRY:
