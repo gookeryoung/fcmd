@@ -25,6 +25,7 @@ import fcmd as fx
 import fcmd.cli.dev.envdev
 import fcmd.cli.dev.envdev_core
 import fcmd.cli.dev.envdev_go
+import fcmd.cli.dev.envdev_java
 import fcmd.dsl.actions.net
 from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.models import CommandResult
@@ -1174,3 +1175,113 @@ class TestDockerMirrorProbe:
         content = daemon_path.read_text(encoding="utf-8")
         for url in fcmd.cli.dev.envdev._DOCKER_REGISTRY_MIRRORS:
             assert url in content
+
+
+# ============================================================================ #
+# 扩展镜像候选（华为云/腾讯云/BFSU 等）测试
+# ============================================================================ #
+class TestExpandedMirrors:
+    """新增稳定镜像候选（tencent/bfsu/huaweicloud）配置验证。"""
+
+    def test_setup_python_mirror_tencent(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """显式指定 tencent 镜像时持久化对应 index-url 并写入 pip 配置。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("PIP_INDEX_URL", raising=False)
+
+        fcmd.cli.dev.envdev.setup_python_mirror("tencent")
+        capsys.readouterr()
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.cloud.tencent.com/pypi/simple"
+        assert _fake_persist_env["PIP_TRUSTED_HOSTS"] == "mirrors.cloud.tencent.com"
+        config_path = tmp_path / ".pip" / "pip.conf"
+        assert "mirrors.cloud.tencent.com" in config_path.read_text(encoding="utf-8")
+
+    def test_setup_python_mirror_bfsu(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """显式指定 bfsu 镜像时持久化对应 index-url。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("PIP_INDEX_URL", raising=False)
+
+        fcmd.cli.dev.envdev.setup_python_mirror("bfsu")
+        capsys.readouterr()
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.bfsu.edu.cn/pypi/web/simple"
+        assert _fake_persist_env["PIP_TRUSTED_HOSTS"] == "mirrors.bfsu.edu.cn"
+
+    def test_setup_conda_mirror_huaweicloud(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 huaweicloud 镜像时写入 ~/.condarc 频道地址。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        fcmd.cli.dev.envdev.setup_conda_mirror("huaweicloud")
+        capsys.readouterr()
+        condarc = tmp_path / ".condarc"
+        content = condarc.read_text(encoding="utf-8")
+        assert "https://mirrors.huaweicloud.com/anaconda/pkgs/main/" in content
+        assert "https://mirrors.huaweicloud.com/anaconda/cloud/conda-forge/" in content
+
+    def test_setup_rust_mirror_huaweicloud(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 huaweicloud 镜像时配置 rustup 环境变量与 cargo 配置。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr("fcmd.cli.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
+        monkeypatch.delenv("RUSTUP_DIST_SERVER", raising=False)
+
+        fcmd.cli.dev.envdev._setup_rust_mirror("huaweicloud")
+        capsys.readouterr()
+        assert os.environ["RUSTUP_DIST_SERVER"] == "https://mirrors.huaweicloud.com/rustup"
+        assert os.environ["RUSTUP_UPDATE_ROOT"] == "https://mirrors.huaweicloud.com/rustup/rustup"
+        config = (tmp_path / ".cargo" / "config.toml").read_text(encoding="utf-8")
+        assert "sparse+https://mirrors.huaweicloud.com/crates.io-index/" in config
+
+    def test_setup_rust_mirror_bfsu(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 bfsu 镜像时配置 rust-static 分发地址。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.setattr("fcmd.cli.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
+        monkeypatch.delenv("RUSTUP_DIST_SERVER", raising=False)
+
+        fcmd.cli.dev.envdev._setup_rust_mirror("bfsu")
+        capsys.readouterr()
+        assert os.environ["RUSTUP_DIST_SERVER"] == "https://mirrors.bfsu.edu.cn/rust-static"
+        config = (tmp_path / ".cargo" / "config.toml").read_text(encoding="utf-8")
+        assert "replace-with = 'bfsu'" in config
+
+    def test_setup_go_mirror_tencent(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """显式指定 tencent GOPROXY 镜像时持久化对应地址。"""
+        monkeypatch.setattr("fcmd.cli.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
+        fcmd.cli.dev.envdev_go._setup_go_mirror("tencent")
+        capsys.readouterr()
+        assert os.environ["GOPROXY"] == "https://mirrors.cloud.tencent.com/goproxy/,direct"
+
+    def test_setup_go_mirror_huaweicloud(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 huaweicloud GOPROXY 镜像时持久化对应地址。"""
+        monkeypatch.setattr("fcmd.cli.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
+        fcmd.cli.dev.envdev_go._setup_go_mirror("huaweicloud")
+        capsys.readouterr()
+        assert os.environ["GOPROXY"] == "https://mirrors.huaweicloud.com/goproxy/,direct"
+
+    def test_setup_maven_mirror_tencent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 tencent Maven 镜像时写入 settings.xml。"""
+        settings_path = tmp_path / ".m2" / "settings.xml"
+        monkeypatch.setattr("fcmd.cli.dev.envdev_java._MAVEN_SETTINGS_PATH", settings_path)
+
+        fcmd.cli.dev.envdev_java._setup_maven_mirror("tencent")
+        capsys.readouterr()
+        content = settings_path.read_text(encoding="utf-8")
+        assert "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/" in content

@@ -1,7 +1,7 @@
 """envdev_go - Go 开发环境配置（镜像源 + 工具链）。
 
 配置 GOPROXY 镜像并可选安装 gvm（Go Version Manager）。
-国内主流镜像：goproxy.cn、aliyun、ustc、goproxy.io。
+国内主流镜像：goproxy.cn、aliyun、ustc、huaweicloud、tencent、goproxy.io。
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ _GO_PROXY_MIRRORS: dict[str, str] = {
     "goproxy": "https://goproxy.cn,direct",
     "aliyun": "https://mirrors.aliyun.com/goproxy/,direct",
     "ustc": "https://mirrors.ustc.edu.cn/goproxy/,direct",
+    "huaweicloud": "https://mirrors.huaweicloud.com/goproxy/,direct",
+    "tencent": "https://mirrors.cloud.tencent.com/goproxy/,direct",
     "goproxy_io": "https://goproxy.io,direct",
 }
 
@@ -52,7 +54,7 @@ def _setup_go_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：goproxy / aliyun / ustc / goproxy_io；``auto`` 时探测
+        镜像源名称：goproxy / aliyun / ustc / huaweicloud / tencent / goproxy_io；``auto`` 时探测
         GOPROXY 服务各候选镜像并选用最快的可达镜像，全部不可达回退 goproxy
         （默认 ``auto``）
     """
@@ -121,7 +123,7 @@ def setup_go_env(mirror: str = "auto", install_gvm: bool = False) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：goproxy / aliyun / ustc / goproxy_io；``auto`` 按服务
+        镜像源名称：goproxy / aliyun / ustc / huaweicloud / tencent / goproxy_io；``auto`` 按服务
         自动选优（默认 ``auto``）
     install_gvm:
         是否同时安装 gvm（默认 False）

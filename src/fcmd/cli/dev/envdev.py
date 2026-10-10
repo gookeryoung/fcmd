@@ -84,7 +84,9 @@ _PIP_INDEX_URLS: dict[str, str] = {
     "tsinghua": "https://pypi.tuna.tsinghua.edu.cn/simple",
     "aliyun": "https://mirrors.aliyun.com/pypi/simple/",
     "huaweicloud": "https://mirrors.huaweicloud.com/repository/pypi/simple/",
+    "tencent": "https://mirrors.cloud.tencent.com/pypi/simple",
     "ustc": "https://pypi.mirrors.ustc.edu.cn/simple/",
+    "bfsu": "https://mirrors.bfsu.edu.cn/pypi/web/simple",
     "zju": "https://mirrors.zju.edu.cn/pypi/simple/",
 }
 
@@ -92,7 +94,9 @@ _PIP_TRUSTED_HOSTS: dict[str, str] = {
     "tsinghua": "pypi.tuna.tsinghua.edu.cn",
     "aliyun": "mirrors.aliyun.com",
     "huaweicloud": "mirrors.huaweicloud.com",
+    "tencent": "mirrors.cloud.tencent.com",
     "ustc": "pypi.mirrors.ustc.edu.cn",
+    "bfsu": "mirrors.bfsu.edu.cn",
     "zju": "mirrors.zju.edu.cn",
 }
 
@@ -146,6 +150,16 @@ _CONDA_MIRROR_URLS: dict[str, list[str]] = {
         "https://mirrors.aliyun.com/anaconda/cloud/menpo/",
         "https://mirrors.aliyun.com/anaconda/cloud/pytorch/",
     ],
+    "huaweicloud": [
+        "https://mirrors.huaweicloud.com/anaconda/pkgs/main/",
+        "https://mirrors.huaweicloud.com/anaconda/pkgs/free/",
+        "https://mirrors.huaweicloud.com/anaconda/pkgs/r/",
+        "https://mirrors.huaweicloud.com/anaconda/pkgs/msys2/",
+        "https://mirrors.huaweicloud.com/anaconda/pkgs/pro/",
+        "https://mirrors.huaweicloud.com/anaconda/cloud/conda-forge/",
+        "https://mirrors.huaweicloud.com/anaconda/cloud/bioconda/",
+        "https://mirrors.huaweicloud.com/anaconda/cloud/pytorch/",
+    ],
 }
 
 _RUSTUP_MIRRORS: dict[str, dict[str, str]] = {
@@ -163,6 +177,16 @@ _RUSTUP_MIRRORS: dict[str, dict[str, str]] = {
         "RUSTUP_DIST_SERVER": "https://mirrors.ustc.edu.cn/rust-static",
         "RUSTUP_UPDATE_ROOT": "https://mirrors.ustc.edu.cn/rust-static/rustup",
         "TOML_REGISTRY": "https://mirrors.ustc.edu.cn/crates.io-index/",
+    },
+    "huaweicloud": {
+        "RUSTUP_DIST_SERVER": "https://mirrors.huaweicloud.com/rustup",
+        "RUSTUP_UPDATE_ROOT": "https://mirrors.huaweicloud.com/rustup/rustup",
+        "TOML_REGISTRY": "https://mirrors.huaweicloud.com/crates.io-index/",
+    },
+    "bfsu": {
+        "RUSTUP_DIST_SERVER": "https://mirrors.bfsu.edu.cn/rust-static",
+        "RUSTUP_UPDATE_ROOT": "https://mirrors.bfsu.edu.cn/rust-static/rustup",
+        "TOML_REGISTRY": "https://mirrors.bfsu.edu.cn/crates.io-index/",
     },
 }
 
@@ -227,6 +251,9 @@ _DOCKER_REGISTRY_MIRRORS: list[str] = [
     "https://registry.cn-hangzhou.aliyuncs.com",
     "https://docker.m.daocloud.io",
     "https://hub-mirror.c.163.com",
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+    "https://mirror.ccs.tencentyun.com",
 ]
 _DOCKER_DAEMON_PATH: Path = Path("/etc/docker/daemon.json")
 
@@ -264,7 +291,7 @@ def setup_python_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/aliyun/huaweicloud/ustc/zju；``auto`` 时探测
+        镜像源名称：tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju；``auto`` 时探测
         pip 服务各候选镜像（pypi 地址）并选用最快的可达镜像，全部不可达
         回退 aliyun（默认 ``auto``）
     """
@@ -300,7 +327,7 @@ def setup_conda_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/bfsu/aliyun；``auto`` 时探测 Conda 服务
+        镜像源名称：tsinghua/ustc/bfsu/aliyun/huaweicloud；``auto`` 时探测 Conda 服务
         各候选镜像（anaconda 频道地址，与 pypi 地址不同）并选用最快的可达
         镜像，全部不可达回退 aliyun（默认 ``auto``）
     """
@@ -334,8 +361,8 @@ def setup_python_env(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/ustc/zju，
-        Conda 支持 tsinghua/ustc/bfsu/aliyun；``auto`` 按服务独立自动选优
+        镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju，
+        Conda 支持 tsinghua/ustc/bfsu/aliyun/huaweicloud；``auto`` 按服务独立自动选优
         （默认 ``auto``）
     """
     setup_python_mirror(mirror)
@@ -353,7 +380,7 @@ def _setup_rustup_mirror(mirror: str) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun（已由调用方解析，不含 ``auto``）
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu（已由调用方解析，不含 ``auto``）
     """
     if not mirror_supported(mirror, _RUSTUP_MIRRORS):
         print(f"未知 Rust 镜像源: {mirror}")
@@ -382,7 +409,7 @@ def _setup_cargo_mirror(mirror: str) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun（已由调用方解析，不含 ``auto``）
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu（已由调用方解析，不含 ``auto``）
     """
     if not mirror_supported(mirror, _RUSTUP_MIRRORS):
         print(f"未知 Rust 镜像源: {mirror}")
@@ -413,7 +440,7 @@ def _setup_rust_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun；``auto`` 时 rustup 与 cargo 分别
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu；``auto`` 时 rustup 与 cargo 分别
         独立探测选优（rustup 分发地址与 crates.io 索引地址不同，各站可达性
         可能不一致，选优结果可能不同），全部不可达各自回退 aliyun
         （默认 ``auto``）
@@ -478,7 +505,7 @@ def setup_rust_env(mirror: str = "auto", rust_version: str = "stable") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun；``auto`` 按服务独立自动选优
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu；``auto`` 按服务独立自动选优
         （默认 ``auto``）
     rust_version:
         Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
