@@ -1,16 +1,27 @@
 """sshcopyid 工具测试（DSL 声明 commands/sshcopyid.toml）。
 
-验证 ``fcmd sshcopyid`` 的 DSL 迁移语义：
-- 工具注册（单命令 DSL 工具）与 when/message/fail_message 函数属性契约
-- env 插值传递 SSHPASS（密码经环境变量，不进命令行 argv）
-- {keypath:content} 文件内容插值嵌入远端脚本（去首尾空白）
-- when 路径探针：公钥缺失时跳过执行且不打印完成消息
-- 失败打印 fail_message 提示手动执行且退出码非零（行为变化：原版恒 exit 0）
+验证 ``fcmd sshcopyid`` 的跨平台双分支语义：
+
+- Linux / macOS 分支（unix）：shell 字符串命令，sshpass -e 从 SSHPASS 环境
+  变量读密码（密码不进命令行 argv），公钥文件通过 shell stdin 重定向
+  送进远端 cat >> authorized_keys，**公钥内容完全不插值进远端 bash
+  命令字符串**（避免 echo '{key}' 的引号断裂与 awk 判重复杂度）。
+- Windows 分支（win）：纯 ssh（无 sshpass 依赖），shell 字符串命令，
+  同样通过 stdin 重定向传公钥；tty=true 让 SSH 密码交互透传终端
+  （用户手动输一次密码）；不设置 SSHPASS 环境变量。
+
+DSL 平台级覆盖契约：
+- CommandDecl.win_cmd/win_tty/win_env 按平台覆盖顶层；
+- build_tool_spec(platform="win32") 产出 ToolSpec 的 passthrough=True、
+  env 不含 SSHPASS、cmd 是纯 ssh 命令；
+- build_tool_spec(platform="linux") 产出 ToolSpec 的 env 含 SSHPASS、
+  passthrough=False、cmd 以 sshpass -e 开头（shell 字符串）。
 """
 
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +30,8 @@ import pytest
 import fcmd as fx
 from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.dsl.decl import parse_command_table
+from fcmd.dsl.synth import build_tool_spec
 
 ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 sshcopyid）
 
@@ -43,11 +56,20 @@ def _write_key(tmp_path: Path, content: str = "ssh-rsa AAAAB3NzaC1yc2E test@exam
     return key_file
 
 
+def _load_sshcopyid_decl():
+    """直接从 toml 文件解析出 CommandDecl（绕开 _discovery 的缓存路径）。"""
+    import tomllib
+
+    toml_path = Path(__file__).resolve().parents[1] / "src" / "fcmd" / "commands" / "sshcopyid.toml"
+    table = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+    return parse_command_table("sshcopyid", table["commands"]["sshcopyid"])
+
+
 # ---------------------------------------------------------------------- #
 # 注册与声明契约
 # ---------------------------------------------------------------------- #
 class TestSshcopyidRegistration:
-    """sshcopyid 经内置 DSL 注册。"""
+    """sshcopyid 经内置 DSL 注册，平台覆盖字段合成正确。"""
 
     def test_registered_as_dsl(self) -> None:
         """sshcopyid 注册为内置 DSL 单命令工具。"""
@@ -64,46 +86,114 @@ class TestSshcopyidRegistration:
             getattr(spec.func, "__dsl_fail_message__", "")
             == "部署失败，可手动执行: ssh-copy-id -p {port} {username}@{hostname}"
         )
-        assert spec.env == {"SSHPASS": "{password}"}
+
+    def test_platform_coverage(self) -> None:
+        """DSL CommandDecl 含 unix_cmd/win_cmd + 平台级 env/tty 覆盖字段。"""
+        decl = _load_sshcopyid_decl()
+        assert decl.unix_cmd is not None
+        assert decl.win_cmd is not None
+        assert decl.unix_env == {"SSHPASS": "{password}"}
+        assert decl.win_env is None  # Windows 分支不注入 SSHPASS
+        assert decl.unix_tty is None  # Linux 分支继承顶层默认 False
+        assert decl.win_tty is True  # Windows 分支强制交互式
+
+    def test_unix_cmd_is_shell_string(self) -> None:
+        """unix.cmd 是 shell 字符串（触发 shell=True 执行 stdin 重定向）。"""
+        decl = _load_sshcopyid_decl()
+        assert isinstance(decl.unix_cmd, str)
+        assert decl.unix_cmd.startswith("sshpass -e ssh")
+
+    def test_win_cmd_is_pure_ssh_shell_string(self) -> None:
+        """win.cmd 是 shell 字符串，ssh 直接起头（无 sshpass 依赖）。"""
+        decl = _load_sshcopyid_decl()
+        assert isinstance(decl.win_cmd, str)
+        assert decl.win_cmd.startswith("ssh -p {port}")
 
 
 # ---------------------------------------------------------------------- #
-# 执行语义
+# build_tool_spec 合成层平台覆盖
+# ---------------------------------------------------------------------- #
+class TestSshcopyidBuildSpec:
+    """build_tool_spec 按平台正确选 cmd/tty/env。"""
+
+    def test_linux_platform(self) -> None:
+        """Linux：cmd 含 sshpass -e，env 注入 SSHPASS，passthrough=False。"""
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="linux")
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str) and spec.cmd.startswith("sshpass -e")
+        assert spec.env is not None and spec.env["SSHPASS"] == "{password}"
+        assert spec.passthrough is False
+
+    def test_win32_platform(self) -> None:
+        """Win32：cmd 是纯 ssh，env 不含 SSHPASS，passthrough=True。"""
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="win32")
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str) and spec.cmd.startswith("ssh -p")
+        assert "sshpass" not in spec.cmd
+        assert spec.env is None or "SSHPASS" not in spec.env
+        assert spec.passthrough is True
+
+    def test_darwin_platform_follows_unix(self) -> None:
+        """darwin 与 linux 同走 unix 分支。"""
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="darwin")
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str) and spec.cmd.startswith("sshpass -e")
+        assert spec.passthrough is False
+
+    def test_env_merge_platform_overrides_top(self) -> None:
+        """平台级 env 覆盖顶层 env 同名键（平台级优先）。"""
+        from dataclasses import replace
+
+        base = _load_sshcopyid_decl()
+        merged = replace(
+            base,
+            env={"EXIST": "top", "SSHPASS": "top_sshpass"},
+            unix_env={"SSHPASS": "plat_sshpass"},
+        )
+        spec = build_tool_spec(merged, platform="linux")
+        assert spec.env is not None
+        assert spec.env["EXIST"] == "top"  # 顶层独有键保留
+        assert spec.env["SSHPASS"] == "plat_sshpass"  # 平台级覆盖同名键
+
+
+# ---------------------------------------------------------------------- #
+# 执行语义（当前平台 = linux）
 # ---------------------------------------------------------------------- #
 class TestSshcopyidRun:
-    """``fcmd sshcopyid`` 执行语义。"""
+    """``fcmd sshcopyid`` 在当前 Linux 平台的执行语义。"""
 
     def test_success_deploys_key(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """成功部署：密码走 SSHPASS 环境变量，公钥内容嵌入远端脚本，打印完成消息。"""
+        """成功部署：密码走 SSHPASS 环境变量（不进命令行），公钥文件通过 stdin 重定向送远端。"""
         key_file = _write_key(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
         monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
         code = run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file)])
         assert code == 0
-        cmd = captured[0][0]
-        assert cmd[:2] == ["sshpass", "-e"]
-        assert "pass" not in cmd  # 密码不进 argv
-        assert cmd[3] == "-p" and cmd[4] == "22"
-        assert cmd[-2] == "user@host"
-        # 公钥内容插值进远端脚本（去首尾空白、按 key body 判重）
-        script = cmd[-1]
-        assert "ssh-rsa AAAAB3NzaC1yc2E test@example.com" in script
-        assert "grep -qF" in script and "awk '{print $2}'" in script
-        # SSHPASS 经 env 传递
-        assert captured[0][1]["env"]["SSHPASS"] == "pass"
-        assert "SSH 密钥已部署到 user@host:22" in capsys.readouterr().out
 
-    def test_content_stripped(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """公钥文件首尾空白被去除（echo 追加不带入换行导致的引号断裂）。"""
-        key_file = _write_key(tmp_path, content="  ssh-rsa AAAAB3 key\n\n")
-        captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
-        assert run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file)]) == 0
-        assert "echo 'ssh-rsa AAAAB3 key' >> authorized_keys" in captured[0][0][-1]
+        cmd = captured[0][0]
+        assert isinstance(cmd, str)  # shell 字符串模式
+        assert cmd.startswith("sshpass -e ssh")
+        assert " -p 22 " in cmd
+        assert "ConnectTimeout=30" in cmd
+        assert "user@host" in cmd
+        # stdin 重定向把公钥文件送进 ssh，远端脚本从 stdin 读 → 公钥内容不插值进远端 bash 命令
+        assert '< "' + str(key_file) + '"' in cmd
+        # 远端脚本统一 cat >> authorized_keys，不再 echo/awk 判重
+        assert "cat >> ~/.ssh/authorized_keys" in cmd
+        assert "awk" not in cmd and "grep" not in cmd
+
+        # SSHPASS 经 env 传递
+        run_kwargs = captured[0][1]
+        assert run_kwargs["env"]["SSHPASS"] == "pass"
+        # shell=True（字符串命令走 shell）
+        assert run_kwargs.get("shell") is True
+
+        assert "SSH 密钥已部署到 user@host:22" in capsys.readouterr().out
 
     def test_custom_port_and_timeout(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -119,7 +209,7 @@ class TestSshcopyidRun:
             == 0
         )
         cmd = captured[0][0]
-        assert cmd[4] == "2222"
+        assert " -p 2222 " in cmd
         assert "ConnectTimeout=5" in cmd
         assert "SSH 密钥已部署到 user@host:2222" in capsys.readouterr().out
 
@@ -158,3 +248,52 @@ class TestSshcopyidRun:
         assert run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file), "--dry-run"]) == 0
         assert captured == []
         assert "已部署" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------- #
+# Windows 分支（monkeypatch sys.platform）
+# ---------------------------------------------------------------------- #
+class TestSshcopyidWinBranch:
+    """monkeypatch sys.platform='win32' 后验证执行路径。"""
+
+    def test_win_cmd_pure_ssh_no_sshpass(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Win32 分支 subprocess.run 收到纯 ssh 命令，env 不含 SSHPASS。"""
+        monkeypatch.setattr(sys, "platform", "win32")
+        # 强制刷新 ToolSpec 缓存（_discovery 已注册过当前平台版本）
+        _update_registry_for_platform("sshcopyid", "win32")
+
+        key_file = _write_key(tmp_path)
+        captured: list[tuple[Any, dict[str, Any]]] = []
+        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        code = run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file)])
+        assert code == 0
+
+        cmd = captured[0][0]
+        assert isinstance(cmd, str)
+        assert cmd.startswith("ssh -p")
+        assert "sshpass" not in cmd
+        assert "user@host" in cmd
+        assert '< "' + str(key_file) + '"' in cmd  # stdin 重定向
+
+        run_kwargs = captured[0][1]
+        # Win32 分支不注入 SSHPASS 环境变量（env 为 None 即表示无额外注入）
+        env = run_kwargs["env"]
+        assert env is None or env.get("SSHPASS") != "pass"
+        # Win32 分支 passthrough=True → capture_output=False
+        assert run_kwargs.get("capture_output") is False
+
+
+# ---------------------------------------------------------------------- #
+# 内部：强制刷新注册表中某工具的 ToolSpec（换平台时重建）
+# ---------------------------------------------------------------------- #
+def _update_registry_for_platform(tool_name: str, platform: str) -> None:
+    """从 toml 重新 build_tool_spec（指定 platform），替换 _TOOL_REGISTRY 缓存。
+
+    _discovery 初始化时用 ``sys.platform`` 合成 ToolSpec，monkeypatch 后
+    不会自动重建；此函数强制按指定平台重建并写回注册表。
+    """
+    from fcmd.apis.toolkit import ToolSpec
+
+    decl = _load_sshcopyid_decl()
+    new_spec: ToolSpec = build_tool_spec(decl, platform=platform)
+    _TOOL_REGISTRY[tool_name] = {None: new_spec}

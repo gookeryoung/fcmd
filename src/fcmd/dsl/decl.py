@@ -89,8 +89,11 @@ _TOP_KEYS = frozenset(
 # 执行策略（与 ToolSpec.strategy 的 Literal 取值一致）
 _STRATEGIES: frozenset[str] = frozenset({"sequential", "thread", "async", "dependency"})
 
-# 平台子表（win/unix）内合法键
-_PLATFORM_KEYS = frozenset({"cmd"})
+# 平台子表（win/unix）内合法键：cmd + 可选 tty/env 平台级覆盖
+# - cmd：该平台专属命令（字符串 / 字符串数组）
+# - tty：布尔，覆盖顶层 tty；未声明（None）表示继承顶层默认 False
+# - env：字符串值映射，覆盖顶层 env 同名键；未声明（None）表示继承顶层
+_PLATFORM_KEYS = frozenset({"cmd", "tty", "env"})
 
 # 参数声明表内合法键（on 仅 type=bool：truthy 时向 cmd 追加的固定 token；
 # default_env 仅 type=str：CLI 值等于 default 时的环境变量回退链）
@@ -212,6 +215,11 @@ class CommandDecl:
     win_cmd: str | tuple[str, ...] | None = None
     unix_cmd: str | tuple[str, ...] | None = None
     cmd: str | tuple[str, ...] | None = None
+    # 平台级覆盖（None 表示未声明，合成时继承顶层）
+    win_tty: bool | None = None
+    win_env: dict[str, str] | None = None
+    unix_tty: bool | None = None
+    unix_env: dict[str, str] | None = None
     description: str = ""
     aliases: tuple[str, ...] = ()
     hidden: bool = False
@@ -326,22 +334,47 @@ def _normalize_cmd(name: str, where: str, value: Any) -> str | tuple[str, ...] |
     raise CommandDeclError(f"命令 {name!r} 的 {where} 须是字符串或非空字符串数组，实际: {value!r}")
 
 
-def _parse_platform_cmd(name: str, key: str, value: Any) -> str | tuple[str, ...] | None:
-    """解析平台子表（win/unix）：仅允许含 cmd 键的表。
+def _parse_platform_block(
+    name: str, key: str, value: Any
+) -> tuple[str | tuple[str, ...] | None, bool | None, dict[str, str] | None]:
+    """解析平台子表（win/unix）：允许含 cmd / tty / env 三个键。
+
+    Returns
+    -------
+    tuple
+        (cmd, tty, env)——任一未声明时为 ``None``（表示继承顶层）
 
     Raises
     ------
     CommandDeclError
-        子表结构非法（非表 / 含未知键 / cmd 值非法）
+        子表结构非法（非表 / 含未知键 / cmd/tty/env 值非法）
     """
     if value is None:
-        return None
+        return None, None, None
     if not isinstance(value, Mapping):
         raise CommandDeclError(f'命令 {name!r} 的 {key} 须是表（如 `{key}.cmd = "..."`），实际: {value!r}')
     unknown = set(value) - _PLATFORM_KEYS
     if unknown:
         raise CommandDeclError(f"命令 {name!r} 的 {key} 表含未知键: {sorted(unknown)}")
-    return _normalize_cmd(name, f"{key}.cmd", value.get("cmd"))
+
+    cmd = _normalize_cmd(name, f"{key}.cmd", value.get("cmd"))
+
+    # tty：布尔，未声明 None
+    tty_raw = value.get("tty", None)
+    if tty_raw is not None and not isinstance(tty_raw, bool):
+        raise CommandDeclError(f"命令 {name!r} 的 {key}.tty 须是布尔值，实际: {tty_raw!r}")
+    tty = tty_raw  # None 继承顶层
+
+    # env：字符串值映射，未声明 None
+    env_raw = value.get("env", None)
+    if env_raw is not None:
+        if not isinstance(env_raw, Mapping) or not all(isinstance(v, str) for v in env_raw.values()):
+            raise CommandDeclError(f"命令 {name!r} 的 {key}.env 须是字符串值映射，实际: {env_raw!r}")
+        env: dict[str, str] | None = dict(env_raw)
+    else:
+        env = None
+
+    return cmd, tty, env
 
 
 def _check_default_type(name: str, pname: str, ptype: str, default: Any) -> None:
@@ -831,8 +864,8 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
     if not isinstance(hidden, bool):
         raise CommandDeclError(f"命令 {name!r} 的 hidden 须是布尔值")
 
-    win_cmd = _parse_platform_cmd(name, "win", table.get("win"))
-    unix_cmd = _parse_platform_cmd(name, "unix", table.get("unix"))
+    win_cmd, win_tty, win_env = _parse_platform_block(name, "win", table.get("win"))
+    unix_cmd, unix_tty, unix_env = _parse_platform_block(name, "unix", table.get("unix"))
     cmd = _normalize_cmd(name, "cmd", table.get("cmd"))
     has_cmd = not (win_cmd is None and unix_cmd is None and cmd is None)
     action_name = _parse_action(name, table.get("action"))
@@ -883,6 +916,10 @@ def parse_command_table(name: str, table: Mapping[str, Any], *, subcommand: bool
         win_cmd=win_cmd,
         unix_cmd=unix_cmd,
         cmd=cmd,
+        win_tty=win_tty,
+        win_env=win_env,
+        unix_tty=unix_tty,
+        unix_env=unix_env,
         description=description,
         aliases=tuple(aliases_raw),
         hidden=hidden,
@@ -932,13 +969,13 @@ def parse_tool_table(name: str, table: Mapping[str, Any]) -> ToolDecl:
     has_flat_scalar = bool(flat_scalar_keys & set(table))
 
     def _is_flat_platform(k: str, v: Any) -> bool:
-        """win/unix 为 flat 平台子表：值是非 Mapping（标量）或仅含 cmd 键的小表。"""
+        """win/unix 为 flat 平台子表：值是非 Mapping（标量）或键全集 <= _PLATFORM_KEYS 的小表。"""
         if k not in platform_keys:
             return False
         if not isinstance(v, Mapping):
             return True
-        # 值为 dict 且只含 cmd 键 → 平台子表 win.cmd / unix.cmd
-        return set(v.keys()) <= {"cmd"}
+        # 值为 dict 且键全集在 _PLATFORM_KEYS 内 → 平台子表 win.{cmd,tty,env}
+        return set(v.keys()) <= _PLATFORM_KEYS
 
     def _is_flat_args(k: str, v: Any) -> bool:
         """args 为 flat 键：值是 Mapping（参数声明表）。"""
@@ -949,11 +986,11 @@ def parse_tool_table(name: str, table: Mapping[str, Any]) -> ToolDecl:
     sub_keys = [
         k for k, v in table.items() if isinstance(v, Mapping) and k not in _TOP_KEYS and not _is_flat_args(k, v)
     ]
-    # win/unix 值为 Mapping 且含 help（非平台子表）时归入子命令表
+    # win/unix 值为 Mapping 且含非平台键（如 help）时归入子命令表
     sub_keys.extend(
         k
         for k, v in table.items()
-        if isinstance(v, Mapping) and k in platform_keys and set(v.keys()) > {"cmd"}  # 非纯平台子表（有 help 等其他键）
+        if isinstance(v, Mapping) and k in platform_keys and set(v.keys()) - _PLATFORM_KEYS  # 非纯平台子表
     )
     sub_keys = list(dict.fromkeys(sub_keys))  # 去重保序
 

@@ -263,6 +263,26 @@ def build_tool_spec(
     else:
         func = _synthesize_func(decl)
         param_help = {p.name: p.help for p in decl.args if p.help}
+
+    # 平台级 tty/env 覆盖：win32 优先 win_tty/win_env，其余优先 unix_tty/unix_env；
+    # 平台级未声明（None）时继承顶层；env 做字典合并（平台级覆盖同名键）。
+    if platform == "win32":
+        plat_tty = decl.win_tty
+        plat_env = decl.win_env
+    else:
+        plat_tty = decl.unix_tty
+        plat_env = decl.unix_env
+    resolved_tty = plat_tty if plat_tty is not None else decl.tty
+    resolved_env: dict[str, str] | None
+    if plat_env is None:
+        resolved_env = dict(decl.env) if decl.env else None
+    elif decl.env is None:
+        resolved_env = dict(plat_env)
+    else:
+        merged = dict(decl.env)
+        merged.update(plat_env)  # 平台级覆盖同名键
+        resolved_env = merged
+
     return ToolSpec(
         name=tool_name or decl.name,
         subcommand=subcommand,
@@ -275,12 +295,12 @@ def build_tool_spec(
         cmd=None if act is not None or (decl.needs and not _has_any_cmd(decl)) else select_platform_cmd(decl, platform),
         param_help=param_help,
         cwd=decl.cwd,
-        env=dict(decl.env) if decl.env else None,
+        env=resolved_env,
         timeout=decl.timeout,
         needs=decl.needs,
         strategy=cast("Literal['sequential', 'thread', 'async', 'dependency'] | None", decl.strategy),
         allow_upstream_skip=decl.allow_upstream_skip,
-        passthrough=decl.tty,
+        passthrough=resolved_tty,
     )
 
 
