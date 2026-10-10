@@ -243,8 +243,30 @@ def _seed_main_module_alias(module_path: str) -> None:
 
 
 def resolve_tool(name: str) -> str | None:
-    """解析工具名，返回规范名或 None。"""
-    return _TOOL_ALIASES.get(name)
+    """解析工具名，返回规范名或 None。
+
+    解析顺序：
+    1. 精确匹配别名表（``_TOOL_ALIASES`` 直接 lookup）
+    2. 自动简化匹配：输入补 ``tool`` / ``cmd`` 后缀后作为规范名在
+       ``_TOOL_ALIASES.values()``（全部已注册工具的规范名集合）中
+       存在时，视为用户写了简写自动补全
+       （如 ``git`` → ``gittool``、``path`` → ``pathtool``）。
+       规范名集合唯一（``{values}`` 去重后），不会出现多候选歧义。
+    """
+    # 1. 精确匹配
+    direct = _TOOL_ALIASES.get(name)
+    if direct is not None:
+        return direct
+
+    # 2. 自动简化：尝试补常见后缀
+    # 在全部规范工具名集合中查找，覆盖 Python 模块工具与 DSL 声明式工具
+    canonical_names = set(_TOOL_ALIASES.values())
+    for suffix in ("tool", "cmd"):
+        candidate = name + suffix
+        if candidate in canonical_names:
+            return candidate
+
+    return None
 
 
 def tool_names() -> list[str]:
