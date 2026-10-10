@@ -28,14 +28,13 @@ from fcmd.dsl import (
     ToolDecl,
     build_tool_spec,
     builtin_tool_decls,
-    infer_tool_name,
     parse_command_table,
     parse_tool_table,
-    run_named,
     select_platform_cmd,
     user_tool_decls,
 )
 from fcmd.dsl.decl import _RESERVED_NAMES, ParamDecl
+from fcmd.dsl.entry import infer_tool_name, run_named
 
 
 # ============================================================================ #

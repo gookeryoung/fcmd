@@ -27,9 +27,13 @@ from __future__ import annotations
 
 from .actions import Action, action, action_names, get_action, has_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl, ToolDecl, parse_command_table, parse_tool_table
-from .entry import infer_tool_name, run_named
 from .loader import builtin_tool_decls, user_tool_decls
 from .synth import build_tool_spec, select_platform_cmd
+
+# entry 子模块不在包级 re-export：runpy.run_module("fcmd.dsl.entry") 等路径
+# 会先把目标模块占位进 sys.modules 再导入父包，父包 __init__ 里的
+# ``from .entry import ...`` 会触发 Python RuntimeWarning。
+# 需直接引用请从 ``fcmd.dsl.entry`` 导入。
 
 __all__ = [
     "Action",
@@ -43,10 +47,8 @@ __all__ = [
     "builtin_tool_decls",
     "get_action",
     "has_action",
-    "infer_tool_name",
     "parse_command_table",
     "parse_tool_table",
-    "run_named",
     "select_platform_cmd",
     "user_tool_decls",
 ]
