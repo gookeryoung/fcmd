@@ -289,53 +289,61 @@ def _finalize_failure(
 def _handle_failure(
     spec: TaskSpec[Any],
     result: TaskResult[Any],
-    exc: BaseException,
     layer_idx: int | None,
     ctx: _ExecContext,
 ) -> bool:
     """统一处理失败：超时转换、重试决策、finalize。
 
-    Returns
-    -------
-    bool
-        ``True`` 表示已 finalize（不再重试）；``False`` 表示应继续重试。
+    在调用方完成 ``result.attempts += 1`` 之后被调用；返回值表示调用方
+    是否应继续重试（``False``）还是已完成最终收尾（``True``）。
+
+    日志文案根据是否实际会重试动态选择，避免 ``max_attempts=1``
+    时误导性地打印 "retrying"。
     """
     run_id = ctx.report.run_id
+    exc = result.error  # 调用方已捕获异常并写入；此处读入做分类
+    assert exc is not None, "result.error 必须在调用方赋值后再调用 _handle_failure"
+
     # Python 3.11+ asyncio.TimeoutError 是内建 TimeoutError 的别名，此处用内建名
     # 使同步执行路径（含快速路径）不依赖 asyncio 模块导入。
     if isinstance(exc, TimeoutError):
         exc = TaskTimeoutError(spec.name, spec.timeout or 0.0)
-        logger.warning(
-            "task %r timed out (attempt %d/%d); retrying",
-            spec.name,
-            result.attempts,
-            spec.retry.max_attempts,
-            extra={
-                "run_id": run_id,
-                "task_name": spec.name,
-                "status": TaskStatus.FAILED.value,
-                "attempts": result.attempts,
-                "error_type": "TaskTimeoutError",
-            },
-        )
+        result.error = exc
+
+    will_retry = _should_retry(spec, result.attempts, exc)
+    extra = {
+        "run_id": run_id,
+        "task_name": spec.name,
+        "status": TaskStatus.FAILED.value,
+        "attempts": result.attempts,
+        "error_type": type(exc).__name__,
+    }
+    if isinstance(exc, TaskTimeoutError):
+        label = "timed out"
     else:
+        label = f"failed: {exc!r}"
+
+    if will_retry:
+        remaining = spec.retry.max_attempts - result.attempts
         logger.warning(
-            "task %r failed (attempt %d/%d): %r; retrying",
+            "task %r %s (attempt %d/%d); retrying (%d left)",
             spec.name,
+            label,
             result.attempts,
             spec.retry.max_attempts,
-            exc,
-            extra={
-                "run_id": run_id,
-                "task_name": spec.name,
-                "status": TaskStatus.FAILED.value,
-                "attempts": result.attempts,
-                "error_type": type(exc).__name__,
-            },
+            remaining,
+            extra=extra,
         )
-    result.error = exc
-    if _should_retry(spec, result.attempts, exc):
         return False
+
+    logger.warning(
+        "task %r %s (attempt %d/%d); giving up",
+        spec.name,
+        label,
+        result.attempts,
+        spec.retry.max_attempts,
+        extra=extra,
+    )
     _finalize_failure(result, layer_idx, ctx, spec.continue_on_error)
     return True
 
@@ -373,7 +381,8 @@ def _run_sync_task(
             return result
         except Exception as exc:
             # 用户提供的任务函数可抛任意异常，宽捕获用于重试/失败处理边界
-            if _handle_failure(spec, result, exc, layer_idx, ctx):
+            result.error = exc
+            if _handle_failure(spec, result, layer_idx, ctx):
                 return result
             wait = spec.retry.wait_seconds(result.attempts)
             if wait > 0:
@@ -408,7 +417,8 @@ async def _run_async_task(
             return result
         except Exception as exc:
             # 异步任务函数可抛任意异常，宽捕获用于重试/失败处理边界
-            if _handle_failure(spec, result, exc, layer_idx, ctx):
+            result.error = exc
+            if _handle_failure(spec, result, layer_idx, ctx):
                 return result
             wait = spec.retry.wait_seconds(result.attempts)
             if wait > 0:

@@ -454,27 +454,45 @@ def _download_rustup() -> None:
     """下载 Rustup 安装脚本（跨平台，已安装 rustup 时跳过）。
 
     Linux 下载 ``rustup-init.sh``，Windows 下载 ``rustup-init.exe``。
+    平台下载命令缺失时（Windows 无 powershell、Linux 无 curl）提示
+    手动下载并跳过。
     """
     if shutil.which("rustup") is not None:
         print("rustup 已安装，跳过下载")
         return
 
     if sys.platform == "win32":
+        if shutil.which("powershell") is None:
+            print("未找到 powershell，请手动下载 rustup-init.exe：")
+            print(f"  {_RUSTUP_DOWNLOAD_URL_WINDOWS}")
+            return
         print("下载 rustup-init.exe...")
-        run_command(
-            [
-                "powershell",
-                "-Command",
-                "Invoke-WebRequest",
-                "-Uri",
-                _RUSTUP_DOWNLOAD_URL_WINDOWS,
-                "-OutFile",
-                "rustup-init.exe",
-            ],
-        )
+        try:
+            run_command(
+                [
+                    "powershell",
+                    "-Command",
+                    "Invoke-WebRequest",
+                    "-Uri",
+                    _RUSTUP_DOWNLOAD_URL_WINDOWS,
+                    "-OutFile",
+                    "rustup-init.exe",
+                ],
+            )
+        except RuntimeError as e:
+            print(f"下载失败: {e}，请手动下载 rustup-init.exe：")
+            print(f"  {_RUSTUP_DOWNLOAD_URL_WINDOWS}")
     else:
+        if shutil.which("curl") is None:
+            print("未找到 curl，请手动下载 rustup-init.sh：")
+            print(f"  {_RUSTUP_DOWNLOAD_URL_LINUX}")
+            return
         print("下载 rustup-init.sh...")
-        run_command(["curl", "-fsSL", _RUSTUP_DOWNLOAD_URL_LINUX, "-o", "rustup-init.sh"])
+        try:
+            run_command(["curl", "-fsSL", _RUSTUP_DOWNLOAD_URL_LINUX, "-o", "rustup-init.sh"])
+        except RuntimeError as e:
+            print(f"下载失败: {e}，请手动下载 rustup-init.sh：")
+            print(f"  {_RUSTUP_DOWNLOAD_URL_LINUX}")
 
 
 @fcmd.tool("envdev", subcommand="install-rust", help="安装 Rust 工具链", hidden=True)

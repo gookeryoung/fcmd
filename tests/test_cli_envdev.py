@@ -200,7 +200,15 @@ class TestEnvdev:
     ) -> None:
         """Windows 下载 rustup-init.exe。"""
         monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+
+        def _which(name: str) -> str | None:
+            if name == "rustup":
+                return None
+            if name == "powershell":
+                return r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+            return None
+
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", _which)
 
         calls: list[list[str]] = []
         monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))
@@ -213,7 +221,15 @@ class TestEnvdev:
     def test_download_rustup_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """Linux 下载 rustup-init.sh。"""
         monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", lambda _: None)
+
+        def _which(name: str) -> str | None:
+            if name == "rustup":
+                return None
+            if name == "curl":
+                return "/usr/bin/curl"
+            return None
+
+        monkeypatch.setattr("fcmd.cli.dev.envdev.shutil.which", _which)
 
         calls: list[list[str]] = []
         monkeypatch.setattr("fcmd.cli.dev.envdev.run_command", _recording_run(calls))

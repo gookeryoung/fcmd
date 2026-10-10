@@ -48,6 +48,8 @@ def run_command(cmd: list[str], *, capture: bool = False, check: bool = False) -
     """执行命令并返回结果。
 
     统一封装 ``subprocess.run``，默认不捕获输出（透传到终端）、不抛异常。
+    找不到命令（``FileNotFoundError``）时包装为 :class:`RuntimeError`
+    并附上命令上下文，与 :mod:`fcmd.engine.task_command` 的行为对齐。
 
     Parameters
     ----------
@@ -62,13 +64,22 @@ def run_command(cmd: list[str], *, capture: bool = False, check: bool = False) -
     -------
     CommandResult
         命令执行结果
+
+    Raises
+    ------
+    RuntimeError
+        命令可执行文件不存在时抛出，消息形如 ``"命令未找到: git"``。
     """
-    result = subprocess.run(
-        cmd,
-        check=check,
-        capture_output=capture,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            cmd,
+            check=check,
+            capture_output=capture,
+            text=True,
+        )
+    except FileNotFoundError as exc:
+        label = cmd[0] if cmd else "<空命令>"
+        raise RuntimeError(f"命令未找到: {label}") from exc
     return CommandResult(
         cmd=list(cmd),
         returncode=result.returncode,
