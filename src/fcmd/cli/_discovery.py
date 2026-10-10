@@ -20,8 +20,12 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import importlib.util
 import logging
+import os
 import pkgutil
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcmd.console import get_console
@@ -194,6 +198,7 @@ def _register_tool(module_path: str, tool_name: str) -> None:
     """
     _TOOL_MODULES.setdefault(tool_name, module_path)
     _TOOL_ALIASES.setdefault(tool_name, tool_name)
+    _seed_main_module_alias(module_path)
     try:
         mod = importlib.import_module(module_path)
     except (ImportError, OSError) as exc:
@@ -203,6 +208,38 @@ def _register_tool(module_path: str, tool_name: str) -> None:
     aliases = getattr(mod, "__tool_aliases__", ())
     for alias in aliases:
         _TOOL_ALIASES.setdefault(alias, tool_name)
+
+
+def _seed_main_module_alias(module_path: str) -> None:
+    """独立入口场景下把 ``__main__`` 别名到真实模块名，防止二次导入。
+
+    独立入口（fspack 包装器 ``runpy.run_module`` / ``python -m`` / 直接执行
+    模块文件）以 ``__main__`` 身份执行工具模块：``@fx.tool`` 装饰器已在模块
+    顶层执行并注册过子命令，但真实模块名不在 ``sys.modules`` 中。若发现阶段
+    直接 ``import_module``，模块会被重新执行，装饰器再次注册同一子命令并抛出
+    ``ValueError``。此处按 ``__file__`` 匹配后预置 ``sys.modules``，使后续
+    导入命中缓存，注册表保持单一实例。
+    """
+    if module_path in sys.modules:
+        return
+    main_mod = sys.modules.get("__main__")
+    if main_mod is None:
+        return
+    main_file = getattr(main_mod, "__file__", None)
+    if not main_file:
+        return
+    try:
+        spec = importlib.util.find_spec(module_path)
+    except (ImportError, AttributeError, ValueError):
+        return
+    if spec is None or not spec.origin:
+        return
+    try:
+        same = Path(main_file).samefile(spec.origin)
+    except OSError:
+        same = os.path.normcase(str(Path(main_file).resolve())) == os.path.normcase(str(Path(spec.origin).resolve()))
+    if same:
+        sys.modules[module_path] = main_mod
 
 
 def resolve_tool(name: str) -> str | None:

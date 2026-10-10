@@ -1475,6 +1475,115 @@ def test_tool_main_delegates_run_tool(tool_name: str, module_path: str, monkeypa
 
 
 # ---------------------------------------------------------------------- #
+# 独立入口（runpy/__main__）重复注册防护测试
+# ---------------------------------------------------------------------- #
+class TestStandaloneEntryNoDuplicateRegistration:
+    """独立入口场景下工具模块不得被二次导入重复注册。
+
+    fspack 打包包装器（``_entry_<tool>.py``）以
+    ``runpy.run_module(..., run_name="__main__", alter_sys=True)`` 执行工具
+    模块：``@fcmd.tool`` 装饰器随 ``__main__`` 执行注册子命令，真实模块名
+    不在 ``sys.modules``。修复前发现阶段 ``import_module`` 会重新执行模块，
+    触发 ``ValueError: 子命令已注册``。
+    """
+
+    def test_seed_main_alias_by_file_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``__main__.__file__`` 与目标模块文件一致时，预置 sys.modules 别名。"""
+        import importlib
+        import types
+
+        from fcmd.cli import _discovery as discovery_mod
+
+        module_path = "fcmd.cli.dev.gittool"
+        real_file = importlib.import_module(module_path).__file__
+        fake_main = types.ModuleType("__main__")
+        fake_main.__file__ = real_file  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "__main__", fake_main)
+        monkeypatch.delitem(sys.modules, module_path)
+
+        discovery_mod._seed_main_module_alias(module_path)
+        assert sys.modules[module_path] is fake_main
+
+    def test_seed_main_alias_no_match_when_file_differs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``__main__.__file__`` 不一致（普通进程）时不注入别名。"""
+        import types
+
+        from fcmd.cli import _discovery as discovery_mod
+
+        module_path = "fcmd.cli.dev.gittool"
+        fake_main = types.ModuleType("__main__")
+        fake_main.__file__ = "/unrelated/other.py"  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "__main__", fake_main)
+        monkeypatch.delitem(sys.modules, module_path)
+
+        discovery_mod._seed_main_module_alias(module_path)
+        assert module_path not in sys.modules
+
+    def test_seed_main_alias_skips_when_already_imported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """模块已在 sys.modules 时不覆盖既有条目。"""
+        import types
+
+        from fcmd.cli import _discovery as discovery_mod
+
+        module_path = "fcmd.cli.dev.gittool"
+        real_mod = sys.modules[module_path]
+        fake_main = types.ModuleType("__main__")
+        fake_main.__file__ = "/unrelated/other.py"  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "__main__", fake_main)
+
+        discovery_mod._seed_main_module_alias(module_path)
+        # 既有真实模块不受影响
+        assert sys.modules[module_path] is real_mod
+
+    def test_runpy_entry_no_duplicate_registration(self) -> None:
+        """子进程复现 fspack 入口：runpy 执行 gittool 后发现阶段不二次注册。"""
+        # 模拟 _entry_gitt.py 的包装逻辑：argv[0] 为入口名、runpy 执行工具模块
+        code = (
+            "import runpy, sys\n"
+            "sys.argv = ['gitt']\n"
+            "runpy.run_module('fcmd.cli.dev.gittool', run_name='__main__', alter_sys=True)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+        # 修复前此处抛 ValueError: 工具 'gittool' 的子命令 'isub' 已注册
+        assert "Traceback" not in result.stderr
+        assert "已注册" not in result.stderr
+
+    def test_runpy_entry_with_subcommand_help(self) -> None:
+        """子进程复现 fspack 入口带子命令 --help：路由正常且退出码为 0。"""
+        code = (
+            "import runpy, sys\n"
+            "sys.argv = ['gitt', 'isub', '--help']\n"
+            "runpy.run_module('fcmd.cli.dev.gittool', run_name='__main__', alter_sys=True)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+        # isub 子命令帮助可见（__main__ 实例的注册结果被复用）
+        assert "--message" in result.stdout
+
+    def test_python_dash_m_entry_no_duplicate_registration(self) -> None:
+        """python -m 直跑工具模块同样不触发重复注册。"""
+        result = subprocess.run(
+            [sys.executable, "-m", "fcmd.cli.dev.gittool", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+        assert "Traceback" not in result.stderr
+
+
+# ---------------------------------------------------------------------- #
 # @fcmd.main 装饰器测试
 # ---------------------------------------------------------------------- #
 class TestMainDecorator:
