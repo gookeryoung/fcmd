@@ -20,6 +20,18 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _builtin_tools_registered() -> None:
+    """会话启动时注册全部内置工具（含 DSL 声明式命令），幂等。
+
+    保证任一测试文件可独立运行（单文件/IDE 单测/分片），
+    不再依赖其他测试文件导入副作用触发工具发现。
+    """
+    from fcmd.cli._discovery import ensure_tools_discovered
+
+    ensure_tools_discovered()
+
+
 class CmdResult:
     """命令执行结果的便捷包装。
 
