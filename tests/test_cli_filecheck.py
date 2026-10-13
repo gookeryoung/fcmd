@@ -198,20 +198,24 @@ class TestCheckOneFile:
         video = tmp_path / "x.mp4"
         video.write_bytes(_MP4_HEAD + b"\x01" * 8192)
 
-        def bad_stat(self: Path) -> os.stat_result:
+        def bad_stat(self: Path, *args: Any, **kwargs: Any) -> os.stat_result:
+            # pathlib 内部会以 follow_symlinks=... 等关键字调用，须兼容任意参数
             raise OSError(5, "Input/output error")
 
         monkeypatch.setattr(Path, "stat", bad_stat)
         issues = check_one_file(video, _CHUNK)
+        # Python 3.13 的 is_symlink 内部也走 stat，报"文件访问失败"；
+        # 3.12/3.14 走 lstat，报"无法获取文件信息"。两者均为错误级且含原始错误
         assert len(issues) == 1
-        assert "无法获取文件信息" in issues[0].message
+        assert issues[0].level == "错误"
+        assert "Input/output error" in issues[0].message
 
     def test_open_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """open/读取失败时报疑似坏块/文件丢失。"""
         video = tmp_path / "x.mp4"
         video.write_bytes(_MP4_HEAD + b"\x01" * 8192)
 
-        def bad_open(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        def bad_open(self: Path, *args: Any, **kwargs: Any) -> Any:
             raise OSError(5, "Input/output error")
 
         monkeypatch.setattr(Path, "open", bad_open)
