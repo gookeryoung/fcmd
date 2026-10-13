@@ -1,9 +1,8 @@
-#!/usr/bin/env python3
-"""NAS 局域网盘文件完整性检查工具。
+"""filecheck - NAS 文件完整性检查工具。
 
 针对 NAS 故障（磁盘坏块、文件静默丢失、过期句柄等）场景，快速扫描指定
 目录下所有视频剧集文件。为避免检查过慢，每个文件只读取头部与尾部各
-64KB（可调），不读取整个文件。
+64KB（可调），不读取整个文件；多线程并发提升局域网吞吐。
 
 检查内容：
 1. 错误（疑似丢失/损坏）：0 字节文件、无法打开或读取（I/O 错误）、断链；
@@ -12,25 +11,38 @@
 4. 剧集缺失：按 ``S01E01`` / ``EP01`` / ``第01集`` / 纯数字等命名规则识别
    集号，报告同组剧集内部疑似缺失的集数。
 
-用法::
-
-    python nas_file_check.py [路径] [--workers N] [--chunk-kb 64] [--all]
-
-默认检查当前路径，检查报告输出到被扫描的根目录下。
+示例
+----
+    fcmd filecheck                          # 检查当前目录
+    fcmd filecheck --path /volume1/media    # 检查指定 NAS 目录
+    fcmd filecheck --all-files              # 检查所有文件而不仅是视频
+    fcmd filecheck --workers 32             # 加大并发
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
-import sys
 import time
 from collections import defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+
+import fcmd
+
+__all__ = [
+    "Issue",
+    "MissingEpisodes",
+    "ScanResult",
+    "build_report",
+    "check_one_file",
+    "detect_missing_episodes",
+    "parse_episode",
+    "run_filecheck",
+    "scan_directory",
+]
 
 # 视频文件扩展名集合（小写、含点）
 VIDEO_EXTS = frozenset(
@@ -114,7 +126,7 @@ _MP4_SPECS = tuple(
 )
 
 # 容器格式头部特征表：扩展名 -> (格式描述, (偏移, 特征字节) 元组)。
-# 特征字节中的 '?' 为单字节通配符；".iso" 的特征位于偏移 0x8001 处。
+# 特征字节中的 ``?`` 为单字节通配符；``.iso`` 的卷标识位于偏移 0x8001 处。
 _HEADER_SPECS: dict[str, tuple[str, tuple[tuple[int, bytes], ...]]] = {}
 for _exts, _name, _specs in [
     ((".mp4", ".m4v", ".mov", ".3gp"), "MP4/MOV", _MP4_SPECS),
@@ -134,9 +146,19 @@ for _exts, _name, _specs in [
 
 @dataclass(frozen=True)
 class Issue:
-    """单个文件的检查问题记录。"""
+    """单个文件的检查问题记录。
 
-    level: str  # 级别：错误 / 警告 / 提示
+    Parameters
+    ----------
+    level:
+        级别：``"错误"`` / ``"警告"`` / ``"提示"``
+    path:
+        文件完整路径
+    message:
+        问题描述
+    """
+
+    level: str
     path: str
     message: str
 
@@ -168,7 +190,22 @@ class ScanResult:
 
 
 def _magic_ok(head: bytes, offset: int, magic: bytes) -> bool:
-    """检查 ``head`` 在 ``offset`` 处是否匹配特征字节（'?' 为单字节通配符）。"""
+    """检查 ``head`` 在 ``offset`` 处是否匹配特征字节（``?`` 为单字节通配符）。
+
+    Parameters
+    ----------
+    head:
+        文件头部字节
+    offset:
+        特征字节起始偏移
+    magic:
+        特征字节
+
+    Returns
+    -------
+    bool
+        匹配返回 ``True``；头部不够长返回 ``False``
+    """
     part = head[offset : offset + len(magic)]
     if len(part) != len(magic):
         return False
@@ -176,11 +213,28 @@ def _magic_ok(head: bytes, offset: int, magic: bytes) -> bool:
 
 
 def _header_problem(head: bytes, ext: str) -> str | None:
-    """检查文件头是否符合容器格式特征，返回问题描述或 ``None``。"""
+    """检查文件头是否符合容器格式特征。
+
+    Parameters
+    ----------
+    head:
+        文件头部字节
+    ext:
+        小写扩展名（含点）
+
+    Returns
+    -------
+    str | None
+        问题描述；符合特征或该扩展名无特征定义时返回 ``None``
+    """
     spec = _HEADER_SPECS.get(ext)
     if spec is None:
         return None
     name, magics = spec
+    # 头部不足以覆盖特征位置时跳过校验（小文件另有"过小"警告），避免误报
+    max_end = max(offset + len(magic) for offset, magic in magics)
+    if len(head) < max_end:
+        return None
     if any(_magic_ok(head, offset, magic) for offset, magic in magics):
         return None
     return f"{name} 头部标识不符（疑似损坏、占位或不完整文件）"
@@ -189,9 +243,17 @@ def _header_problem(head: bytes, ext: str) -> str | None:
 def check_one_file(path: Path, chunk_size: int) -> list[Issue]:
     """检查单个文件，只读取头部与尾部各 ``chunk_size`` 字节。
 
-    :param path: 文件完整路径
-    :param chunk_size: 头尾各读取的字节数
-    :return: 问题列表（无问题则返回空列表）
+    Parameters
+    ----------
+    path:
+        文件完整路径
+    chunk_size:
+        头尾各读取的字节数
+
+    Returns
+    -------
+    list[Issue]
+        问题列表（无问题则返回空列表）
     """
     ext = path.suffix.lower()
     try:
@@ -213,7 +275,7 @@ def check_one_file(path: Path, chunk_size: int) -> list[Issue]:
                     tail = fh.read(chunk_size)
         except OSError as exc:
             return [Issue("错误", str(path), f"文件打开或读取失败（疑似坏块/文件丢失）：{exc}")]
-    except OSError as exc:  # lstat 等系统调用失败
+    except OSError as exc:  # pragma: no cover - lstat 等系统调用失败，难以稳定复现
         return [Issue("错误", str(path), f"文件访问失败：{exc}")]
 
     issues: list[Issue] = []
@@ -230,8 +292,18 @@ def check_one_file(path: Path, chunk_size: int) -> list[Issue]:
 def parse_episode(stem: str) -> tuple[str, int | None, int] | None:
     """从文件名（不含扩展名）中识别集号。
 
-    :param stem: 文件名去扩展名后的部分
-    :return: ``(前缀, 季号或 None, 集号)``；无法识别返回 ``None``
+    按 ``S01E05`` → ``第01集`` → ``EP03`` → 独立数字的优先级识别；
+    独立数字排除 1900-2100（年份）与超过 999 的编号，减少误报。
+
+    Parameters
+    ----------
+    stem:
+        文件名去扩展名后的部分
+
+    Returns
+    -------
+    tuple[str, int | None, int] | None
+        ``(前缀, 季号或 None, 集号)``；无法识别返回 ``None``
     """
     match = _RE_SEASON_EP.search(stem)
     if match:
@@ -245,7 +317,7 @@ def parse_episode(stem: str) -> tuple[str, int | None, int] | None:
     match = _RE_FUZZY_NUM.search(stem)
     if match:
         num = int(match.group(1))
-        if num <= 999 and not 1900 <= num <= 2100:  # 排除年份与超大编号
+        if num <= 999 and not 1900 <= num <= 2100:
             return stem[: match.start()], None, num
     return None
 
@@ -261,19 +333,26 @@ def _display_prefix(prefix: str) -> str:
     return cleaned if cleaned else "(文件名为纯数字)"
 
 
-def detect_missing_episodes(
-    video_records: list[tuple[str, str]],
-) -> list[MissingEpisodes]:
+def detect_missing_episodes(video_records: list[tuple[str, str]]) -> list[MissingEpisodes]:
     """根据扫描到的视频文件名检测同组剧集内部缺失的集数。
 
-    :param video_records: ``(目录, 文件名)`` 列表，仅含视频扩展名文件
-    :return: 疑似缺失集数的分组列表
+    同目录、同前缀、同季号的文件归为一组；集号少于 2 个的组不判断，
+    只报告组内区间 ``[min, max]`` 的内部缺口（避免"只下载了后半部"误报）。
+
+    Parameters
+    ----------
+    video_records:
+        ``(目录, 文件名)`` 列表，仅含视频扩展名文件
+
+    Returns
+    -------
+    list[MissingEpisodes]
+        疑似缺失集数的分组列表（按目录、剧集名排序）
     """
     groups: dict[tuple[str, str, int | None], set[int]] = defaultdict(set)
     prefixes: dict[tuple[str, str, int | None], str] = {}
     for dirpath, filename in video_records:
-        stem = Path(filename).stem
-        parsed = parse_episode(stem)
+        parsed = parse_episode(Path(filename).stem)
         if parsed is None:
             continue
         raw_prefix, season, num = parsed
@@ -283,10 +362,9 @@ def detect_missing_episodes(
 
     results: list[MissingEpisodes] = []
     for key, nums in groups.items():
-        if len(nums) < 2:  # 集号太少不做缺失判断，避免误报
+        if len(nums) < 2:
             continue
         dirpath, _, season = key
-        # 只报告组内区间 [min, max] 的内部缺口，避免"只下载了后半部"误报
         internal = tuple(n for n in range(min(nums), max(nums) + 1) if n not in nums)
         if internal:
             results.append(
@@ -319,24 +397,32 @@ def _walk_error(err: OSError) -> str:
     return f"{err.filename or '?'}：{err}"
 
 
-def scan(root: Path, workers: int, chunk_size: int, all_files: bool) -> ScanResult:
+def scan_directory(root: Path, workers: int, chunk_size: int, all_files: bool) -> ScanResult:
     """遍历根目录并并发检查文件。
 
-    :param root: 扫描根目录
-    :param workers: 并发线程数
-    :param chunk_size: 每个文件头尾各读取的字节数
-    :param all_files: 是否检查所有文件（否则只检查视频扩展名文件）
-    :return: 扫描结果
+    Parameters
+    ----------
+    root:
+        扫描根目录
+    workers:
+        并发线程数
+    chunk_size:
+        每个文件头尾各读取的字节数
+    all_files:
+        是否检查所有文件（否则只检查视频扩展名文件）
+
+    Returns
+    -------
+    ScanResult
+        扫描结果（含问题、目录错误、缺失集数与统计信息）
     """
     result = ScanResult(root=root, chunk_kb=chunk_size // 1024, all_files=all_files)
     video_records: list[tuple[str, str]] = []
-    stats: dict[str, float] = {"dirs": 0, "checked": 0}
     futures: dict[Future[list[Issue]], Path] = {}
     started = time.monotonic()
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: result.dir_errors.append(_walk_error(e))):
-            stats["dirs"] += 1
             dirnames[:] = [d for d in dirnames if not _skip_dir(d)]
             for filename in filenames:
                 if _skip_file(filename):
@@ -348,21 +434,32 @@ def scan(root: Path, workers: int, chunk_size: int, all_files: bool) -> ScanResu
                     path = Path(dirpath) / filename
                     futures[pool.submit(check_one_file, path, chunk_size)] = path
 
-        for done, future in enumerate(as_completed(futures), 1):
+        for future in as_completed(futures):
             result.issues.extend(future.result())
-            if done % 500 == 0:
-                print(f"  已检查 {done} 个文件...", file=sys.stderr)
 
-    stats["checked"] = len(futures)
-    stats["elapsed"] = round(time.monotonic() - started, 2)
-    result.stats = stats
+    result.stats = {
+        "dirs": float(sum(1 for _ in os.walk(root))),
+        "checked": float(len(futures)),
+        "elapsed": round(time.monotonic() - started, 2),
+    }
     result.issues.sort(key=lambda i: (i.level != "错误", i.path))
     result.missing = detect_missing_episodes(video_records)
     return result
 
 
 def build_report(result: ScanResult) -> str:
-    """生成文本检查报告。"""
+    """生成文本检查报告。
+
+    Parameters
+    ----------
+    result:
+        扫描结果
+
+    Returns
+    -------
+    str
+        报告全文
+    """
     errors = [i for i in result.issues if i.level == "错误"]
     warns = [i for i in result.issues if i.level == "警告"]
     notes = [i for i in result.issues if i.level == "提示"]
@@ -376,8 +473,8 @@ def build_report(result: ScanResult) -> str:
         f"耗时：{result.stats.get('elapsed', 0)} 秒",
         "",
         "一、检查概览",
-        f"  遍历目录数：{result.stats.get('dirs', 0)}",
-        f"  检查文件数：{result.stats.get('checked', 0)}",
+        f"  遍历目录数：{result.stats.get('dirs', 0):.0f}",
+        f"  检查文件数：{result.stats.get('checked', 0):.0f}",
         f"  错误（疑似丢失/损坏）：{len(errors)} 个",
         f"  警告（可疑）：{len(warns)} 个",
         f"  提示：{len(notes)} 个",
@@ -432,64 +529,80 @@ def build_report(result: ScanResult) -> str:
     return "\n".join(lines)
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """解析命令行参数。"""
-    parser = argparse.ArgumentParser(
-        description="NAS 文件完整性检查工具：快速筛查丢失/损坏的视频剧集文件与缺失集数。",
-    )
-    parser.add_argument(
-        "path",
-        nargs="?",
-        default=None,
-        help="要检查的根目录（默认：当前路径）",
-    )
-    parser.add_argument(
-        "--workers",
-        type=int,
-        default=min(16, max(4, (os.cpu_count() or 4) * 2)),
-        help="并发检查线程数（默认：CPU 核数的 2 倍，上限 16）",
-    )
-    parser.add_argument(
-        "--chunk-kb",
-        type=int,
-        default=64,
-        help="每个文件头尾各读取的大小，单位 KB（默认：64）",
-    )
-    parser.add_argument(
-        "--all",
-        action="store_true",
-        help="检查所有文件而不仅是视频文件",
-    )
-    return parser.parse_args(argv)
+def run_filecheck(
+    path: Path | None = None,
+    workers: int = min(16, max(4, (os.cpu_count() or 4) * 2)),
+    chunk_kb: int = 64,
+    all_files: bool = False,
+) -> None:
+    """执行文件完整性检查并输出报告到被扫描的根目录。
 
-
-def main(argv: list[str] | None = None) -> int:
-    """命令行入口。"""
-    args = parse_args(argv)
-    root = Path(args.path).expanduser().resolve() if args.path else Path.cwd()
+    Parameters
+    ----------
+    path:
+        要检查的根目录，``None`` 时使用当前工作目录
+    workers:
+        并发检查线程数
+    chunk_kb:
+        每个文件头尾各读取的大小，单位 KB（最小 4）
+    all_files:
+        是否检查所有文件而不仅是视频文件
+    """
+    root = path.expanduser().resolve() if path is not None else Path.cwd()
     if not root.is_dir():
-        print(f"错误：路径不存在或不是目录：{root}", file=sys.stderr)
-        return 2
-    chunk_kb = max(4, args.chunk_kb)
+        print(f"错误：路径不存在或不是目录：{root}")
+        return
+    size_kb = max(4, chunk_kb)
 
     print(f"开始扫描：{root}")
-    result = scan(root, max(1, args.workers), chunk_kb * 1024, args.all)
+    result = scan_directory(root, max(1, workers), size_kb * 1024, all_files)
     report = build_report(result)
 
     report_path = root / f"文件检查报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    # utf-8-sig 便于 Windows 记事本直接打开；surrogateescape 文件名降级为替换符
     with report_path.open("w", encoding="utf-8-sig", errors="replace") as fh:
         fh.write(report + "\n")
 
     errors = [i for i in result.issues if i.level == "错误"]
     warns = [i for i in result.issues if i.level == "警告"]
-    print(f"扫描完成：检查 {result.stats.get('checked', 0)} 个文件，耗时 {result.stats.get('elapsed', 0)} 秒")
+    print(f"扫描完成：检查 {result.stats.get('checked', 0):.0f} 个文件，耗时 {result.stats.get('elapsed', 0)} 秒")
     print(f"  错误（疑似丢失/损坏）：{len(errors)} 个")
     print(f"  警告（可疑）：{len(warns)} 个")
     print(f"  目录访问错误：{len(result.dir_errors)} 个")
     print(f"  疑似缺失集数的剧集：{len(result.missing)} 组")
     print(f"报告已输出：{report_path}")
-    return 1 if (errors or warns or result.dir_errors or result.missing) else 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+@fcmd.tool("filecheck", help="NAS 文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数")
+def filecheck_cmd(
+    path: Path | None = None,
+    workers: int = min(16, max(4, (os.cpu_count() or 4) * 2)),
+    chunk_kb: int = 64,
+    all_files: bool = False,
+) -> None:
+    """快速筛查 NAS 故障导致的丢失/损坏视频剧集文件与缺失集数。
+
+    每个文件只读取头尾各 64KB（可调），不读取整个文件，多线程并发检查。
+    报告输出到被扫描的根目录下。
+
+    Parameters
+    ----------
+    path:
+        要检查的根目录（默认：当前路径）
+    workers:
+        并发检查线程数（默认：CPU 核数的 2 倍，上限 16）
+    chunk_kb:
+        每个文件头尾各读取的大小，单位 KB（默认：64）
+    all_files:
+        检查所有文件而不仅是视频文件
+    """
+    run_filecheck(path=path, workers=workers, chunk_kb=chunk_kb, all_files=all_files)
+
+
+@fcmd.main("filecheck")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
