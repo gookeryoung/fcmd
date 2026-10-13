@@ -103,12 +103,48 @@ class TestCheckOneFile:
         issues = check_one_file(video, _CHUNK)
         assert any(i.level == "警告" and "过小" in i.message for i in issues)
 
-    def test_header_mismatch(self, tmp_path: Path) -> None:
-        """扩展名与文件头不符时报警告。"""
+    def test_cross_container_hint(self, tmp_path: Path) -> None:
+        """扩展名与实际容器不符时报提示而非警告（播放器按内容识别）。"""
         # mkv 扩展名但写 MP4 头
         video = _make_video(tmp_path / "fake.mkv", _MP4_HEAD)
         issues = check_one_file(video, _CHUNK)
-        assert any(i.level == "警告" and "MKV/WebM" in i.message for i in issues)
+        assert len(issues) == 1
+        assert issues[0].level == "提示"
+        assert "MP4/MOV" in issues[0].message
+        assert "不符" in issues[0].message
+
+    def test_isobmff_nonwhitelist_box_no_warning(self, tmp_path: Path) -> None:
+        """ISOBMFF 非白名单 box 类型（如 msdh/moof）开头但结构合法时不报警。"""
+        head = b"\x00\x00\x00\x20moof" + b"\x00" * 28
+        video = _make_video(tmp_path / "dash.mp4", head)
+        assert check_one_file(video, _CHUNK) == []
+
+    def test_isobmff_largesize_box_no_warning(self, tmp_path: Path) -> None:
+        """ISOBMFF largesize（前 4 字节为 1，64 位长度）合法时不报警。"""
+        head = b"\x00\x00\x00\x01moov" + (200 * 1024).to_bytes(8, "big")
+        video = _make_video(tmp_path / "large.mov", head)
+        assert check_one_file(video, _CHUNK) == []
+
+    def test_isobmff_size_to_eof_no_warning(self, tmp_path: Path) -> None:
+        """ISOBMFF box 长度为 0（到文件尾）合法时不报警。"""
+        head = b"\x00\x00\x00\x00mdat" + b"\x01" * 100
+        video = _make_video(tmp_path / "raw.mp4", head)
+        assert check_one_file(video, _CHUNK) == []
+
+    def test_isobmff_oversize_box_warns(self, tmp_path: Path) -> None:
+        """ISOBMFF box 长度超过实际文件大小时报警告（疑似占位/截断）。"""
+        head = b"\x00\x00\x10\x00moof" + b"<html>404 Not Found</html>"
+        video = tmp_path / "placeholder.mp4"
+        video.write_bytes(head)
+        issues = check_one_file(video, _CHUNK)
+        assert any(i.level == "警告" and "头部标识不符" in i.message for i in issues)
+
+    def test_isobmff_nonprintable_type_warns(self, tmp_path: Path) -> None:
+        """ISOBMFF box 类型含不可打印字符时报警告。"""
+        head = b"\x00\x00\x00\x20\x00\x01\x02\x03" + b"\x00" * 24
+        video = _make_video(tmp_path / "binary.mp4", head)
+        issues = check_one_file(video, _CHUNK)
+        assert any(i.level == "警告" and "头部标识不符" in i.message for i in issues)
 
     def test_header_match_no_warning(self, tmp_path: Path) -> None:
         """AVI 通配符特征（RIFF????AVI ）匹配时不报警。"""
@@ -186,7 +222,7 @@ class TestCheckOneFile:
 
     def test_unknown_ext_no_header_check(self, tmp_path: Path) -> None:
         """无特征定义的扩展名不做头部校验。"""
-        video = _make_video(tmp_path / "data.mxf", b"RANDOMHEAD")
+        video = _make_video(tmp_path / "data.dat", b"RANDOMHEAD")
         issues = check_one_file(video, _CHUNK)
         assert all("头部标识不符" not in i.message for i in issues)
 

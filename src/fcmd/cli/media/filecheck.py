@@ -6,8 +6,9 @@
 
 检查内容：
 1. 错误（疑似丢失/损坏）：0 字节文件、无法打开或读取（I/O 错误）、断链；
-2. 警告（可疑）：文件过小、文件头与容器格式特征不符；
-3. 提示：文件尾部全为 0（疑似坏块填充或截断）；
+2. 警告（可疑）：文件过小、文件头无法识别为任何已知容器（疑似损坏/占位）；
+3. 提示：文件尾部全为 0（疑似坏块填充或截断）、扩展名与实际容器不符
+   （播放器按内容识别可正常播放）；
 4. 剧集缺失：按 ``S01E01`` / ``EP01`` / ``第01集`` / 纯数字等命名规则识别
    集号，报告同组剧集内部疑似缺失的集数。
 
@@ -108,7 +109,7 @@ _RE_EP = re.compile(r"(?:^|[^A-Za-z0-9])[Ee][Pp]?(\d{1,4})(?![0-9pP])")
 _RE_FUZZY_NUM = re.compile(r"(?:^|[\s._\-\[])(\d{1,3})(?=[\s._\-\]]|$)")
 _RE_STRIP_EDGE = re.compile(r"^[\s._\-\[\]()（）]+|[\s._\-\[\]()（）]+$")
 
-# MP4 系容器在偏移 4~8 字节处允许出现的 box 类型
+# MP4 系容器（ISOBMFF）在偏移 4~8 字节处常见 box 类型
 _MP4_SPECS = tuple(
     (4, magic)
     for magic in (
@@ -125,9 +126,12 @@ _MP4_SPECS = tuple(
     )
 )
 
+# ISOBMFF 家族扩展名：白名单未命中时可走结构校验兜底
+_ISOBMFF_EXTS = frozenset({".mp4", ".m4v", ".mov", ".3gp"})
+
 # 容器格式头部特征表：扩展名 -> (格式描述, (偏移, 特征字节) 元组)。
 # 特征字节中的 ``?`` 为单字节通配符；``.iso`` 的卷标识位于偏移 0x8001 处。
-_HEADER_SPECS: dict[str, tuple[str, tuple[tuple[int, bytes], ...]]] = {}
+_CONTAINER_SPECS: dict[str, tuple[str, tuple[tuple[int, bytes], ...]]] = {}
 for _exts, _name, _specs in [
     ((".mp4", ".m4v", ".mov", ".3gp"), "MP4/MOV", _MP4_SPECS),
     ((".mkv", ".webm"), "MKV/WebM", ((0, b"\x1a\x45\xdf\xa3"),)),
@@ -138,10 +142,16 @@ for _exts, _name, _specs in [
     ((".mpg", ".mpeg", ".vob"), "MPEG-PS", ((0, b"\x00\x00\x01\xba"), (0, b"\x00\x00\x01\xb3"))),
     ((".wmv", ".asf"), "WMV/ASF", ((0, b"\x30\x26\xb2\x75\x8e\x66\xcf\x11"),)),
     ((".rm", ".rmvb"), "RM/RMVB", ((0, b".RMF"),)),
+    ((".ogm",), "Ogg", ((0, b"OggS"),)),
+    ((".mxf",), "MXF", ((0, b"\x06\x0e\x2b\x34"),)),
     ((".iso",), "ISO", ((0x8001, b"CD001"),)),
 ]:
     for _ext in _exts:
-        _HEADER_SPECS[_ext] = (_name, _specs)
+        _CONTAINER_SPECS[_ext] = (_name, _specs)
+
+# 全部容器签名（按声明顺序、按格式名去重），用于跨容器识别：
+# 扩展名不符但内容是已知容器时降级为提示而非警告
+_ALL_SIGNATURES: tuple[tuple[str, tuple[tuple[int, bytes], ...]], ...] = tuple(dict(_CONTAINER_SPECS.values()).items())
 
 
 @dataclass(frozen=True)
@@ -212,8 +222,52 @@ def _magic_ok(head: bytes, offset: int, magic: bytes) -> bool:
     return all(p == m or m == ord("?") for p, m in zip(part, magic, strict=True))
 
 
-def _header_problem(head: bytes, ext: str) -> str | None:
-    """检查文件头是否符合容器格式特征。
+def _looks_like_isobmff(head: bytes, file_size: int) -> bool:
+    """按 ISOBMFF 结构校验文件头（不依赖具体 box 类型白名单）。
+
+    合法判定：前 4 字节为 big-endian box 长度，后 4 字节为可打印 ASCII box
+    类型；支持三种合法长度形态——普通长度（≥8）、largesize（前 4 字节为 1，
+    8~16 字节为 64 位长度）、到文件尾的 mdat（前 4 字节为 0）。声明的 box
+    长度不得超过实际文件大小（超限即疑似截断或占位内容，如 HTML 错误页）。
+
+    Parameters
+    ----------
+    head:
+        文件头部字节
+    file_size:
+        文件实际大小（字节）
+
+    Returns
+    -------
+    bool
+        结构合法返回 ``True``
+    """
+    if len(head) < 8:
+        return False
+    size = int.from_bytes(head[0:4], "big")
+    box_type = head[4:8]
+    if not all(0x20 <= b <= 0x7E for b in box_type):
+        return False
+    if size == 1:  # largesize：真实长度在 8~16 字节
+        if len(head) < 16:
+            return False
+        return int.from_bytes(head[8:16], "big") >= 16 and int.from_bytes(head[8:16], "big") <= file_size
+    if size == 0:  # 长度到文件尾（如未定长的 mdat）
+        return True
+    return 8 <= size <= file_size
+
+
+def _header_problem(head: bytes, ext: str, file_size: int) -> tuple[str, str] | None:
+    """检查文件头与容器格式，返回 ``(级别, 问题描述)`` 或 ``None``。
+
+    判定顺序（自上而下，尽量减少对可正常播放文件的误报）：
+    1. 扩展名无特征定义 → 不校验；
+    2. 头部不足以覆盖特征位置 → 跳过校验（小文件另有"过小"警告）；
+    3. 命中本扩展名容器特征 → 通过；
+    4. 命中其他已知容器特征 → **提示**（扩展名与实际容器不符，播放器按
+       内容识别可正常播放）；
+    5. ISOBMFF 家族且结构合法（非白名单 box 类型，如 msdh/PRFT 开头）→ 通过；
+    6. 以上均不满足 → **警告**（疑似损坏、占位或不完整文件）。
 
     Parameters
     ----------
@@ -224,20 +278,30 @@ def _header_problem(head: bytes, ext: str) -> str | None:
 
     Returns
     -------
-    str | None
-        问题描述；符合特征或该扩展名无特征定义时返回 ``None``
+    tuple[str, str] | None
+        ``(级别, 问题描述)``；无需报告时返回 ``None``
     """
-    spec = _HEADER_SPECS.get(ext)
+    spec = _CONTAINER_SPECS.get(ext)
     if spec is None:
         return None
-    name, magics = spec
-    # 头部不足以覆盖特征位置时跳过校验（小文件另有"过小"警告），避免误报
+    own_name, magics = spec
     max_end = max(offset + len(magic) for offset, magic in magics)
     if len(head) < max_end:
         return None
     if any(_magic_ok(head, offset, magic) for offset, magic in magics):
         return None
-    return f"{name} 头部标识不符（疑似损坏、占位或不完整文件）"
+    if len(head) >= 16:
+        for name, sigs in _ALL_SIGNATURES:
+            if name == own_name:
+                continue
+            if any(_magic_ok(head, offset, magic) for offset, magic in sigs):
+                return (
+                    "提示",
+                    f"扩展名 {ext} 与实际容器 {name} 不符（播放器按内容识别，可正常播放则无需处理）",
+                )
+    if ext in _ISOBMFF_EXTS and _looks_like_isobmff(head, file_size):
+        return None
+    return ("警告", f"{own_name} 头部标识不符（疑似损坏、占位或不完整文件）")
 
 
 def check_one_file(path: Path, chunk_size: int) -> list[Issue]:
@@ -281,9 +345,10 @@ def check_one_file(path: Path, chunk_size: int) -> list[Issue]:
     issues: list[Issue] = []
     if size < 4096:
         issues.append(Issue("警告", str(path), f"文件过小（{size} 字节），疑似不完整"))
-    problem = _header_problem(head, ext)
+    problem = _header_problem(head, ext, size)
     if problem is not None:
-        issues.append(Issue("警告", str(path), problem))
+        level, message = problem
+        issues.append(Issue(level, str(path), message))
     if len(tail) == chunk_size and tail == b"\x00" * chunk_size and size >= 2 * chunk_size:
         issues.append(Issue("提示", str(path), "文件尾部全部为 0（疑似坏块填充或截断）"))
     return issues
