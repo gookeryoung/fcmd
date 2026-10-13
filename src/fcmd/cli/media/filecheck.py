@@ -7,8 +7,8 @@
 检查内容：
 1. 错误（疑似丢失/损坏）：0 字节文件、无法打开或读取（I/O 错误）、断链；
 2. 警告（可疑）：文件过小、文件头无法识别为任何已知容器（疑似损坏/占位）；
-3. 提示：文件尾部全为 0（疑似坏块填充或截断）、扩展名与实际容器不符
-   （播放器按内容识别可正常播放）；
+3. 提示：文件尾部全为 0（疑似坏块填充或截断）；扩展名与实际容器不符但
+   内容可识别为已知容器时不作报告（播放器按内容识别可正常播放）；
 4. 剧集缺失：按 ``S01E01`` / ``EP01`` / ``第01集`` / 纯数字等命名规则识别
    集号，报告同组剧集内部疑似缺失的集数。
 
@@ -264,8 +264,8 @@ def _header_problem(head: bytes, ext: str, file_size: int) -> tuple[str, str] | 
     1. 扩展名无特征定义 → 不校验；
     2. 头部不足以覆盖特征位置 → 跳过校验（小文件另有"过小"警告）；
     3. 命中本扩展名容器特征 → 通过；
-    4. 命中其他已知容器特征 → **提示**（扩展名与实际容器不符，播放器按
-       内容识别可正常播放）；
+    4. 命中其他已知容器特征 → 通过（扩展名与实际容器不符但内容可识别，
+       播放器按内容识别可正常播放，不作报告）；
     5. ISOBMFF 家族且结构合法（非白名单 box 类型，如 msdh/PRFT 开头）→ 通过；
     6. 以上均不满足 → **警告**（疑似损坏、占位或不完整文件）。
 
@@ -290,15 +290,9 @@ def _header_problem(head: bytes, ext: str, file_size: int) -> tuple[str, str] | 
         return None
     if any(_magic_ok(head, offset, magic) for offset, magic in magics):
         return None
-    if len(head) >= 16:
-        for name, sigs in _ALL_SIGNATURES:
-            if name == own_name:
-                continue
-            if any(_magic_ok(head, offset, magic) for offset, magic in sigs):
-                return (
-                    "提示",
-                    f"扩展名 {ext} 与实际容器 {name} 不符（播放器按内容识别，可正常播放则无需处理）",
-                )
+    if len(head) >= 16 and any(_magic_ok(head, offset, magic) for _, sigs in _ALL_SIGNATURES for offset, magic in sigs):
+        # 内容可识别为已知容器（即使扩展名不符，播放器按内容识别可正常播放）
+        return None
     if ext in _ISOBMFF_EXTS and _looks_like_isobmff(head, file_size):
         return None
     return ("警告", f"{own_name} 头部标识不符（疑似损坏、占位或不完整文件）")

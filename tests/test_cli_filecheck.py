@@ -103,15 +103,14 @@ class TestCheckOneFile:
         issues = check_one_file(video, _CHUNK)
         assert any(i.level == "警告" and "过小" in i.message for i in issues)
 
-    def test_cross_container_hint(self, tmp_path: Path) -> None:
-        """扩展名与实际容器不符时报提示而非警告（播放器按内容识别）。"""
-        # mkv 扩展名但写 MP4 头
+    def test_cross_container_passes(self, tmp_path: Path) -> None:
+        """扩展名与实际容器不符但内容可识别为已知容器时不报告。"""
+        # mkv 扩展名但写 MP4 头（混后缀目录常见情况）
         video = _make_video(tmp_path / "fake.mkv", _MP4_HEAD)
-        issues = check_one_file(video, _CHUNK)
-        assert len(issues) == 1
-        assert issues[0].level == "提示"
-        assert "MP4/MOV" in issues[0].message
-        assert "不符" in issues[0].message
+        assert check_one_file(video, _CHUNK) == []
+        # mp4 扩展名但为 RM/RMVB 内容，同样不报告
+        rm_video = _make_video(tmp_path / "real.mp4", b".RMF")
+        assert check_one_file(rm_video, _CHUNK) == []
 
     def test_isobmff_nonwhitelist_box_no_warning(self, tmp_path: Path) -> None:
         """ISOBMFF 非白名单 box 类型（如 msdh/moof）开头但结构合法时不报警。"""
