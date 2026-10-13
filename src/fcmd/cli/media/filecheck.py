@@ -108,6 +108,10 @@ _RE_CN_EP = re.compile(r"第\s*(\d{1,4})\s*[集话話期回]")
 _RE_EP = re.compile(r"(?:^|[^A-Za-z0-9])[Ee][Pp]?(\d{1,4})(?![0-9pP])")
 _RE_FUZZY_NUM = re.compile(r"(?:^|[\s._\-\[])(\d{1,3})(?=[\s._\-\]]|$)")
 _RE_STRIP_EDGE = re.compile(r"^[\s._\-\[\]()（）]+|[\s._\-\[\]()（）]+$")
+# 软件版本号特征（如 ubuntu-24.04、v3.1.5）：紧跟数字后的点分 1~2 位小数字链
+_RE_VERSION_TAIL = re.compile(r"\.\d{1,2}(?:\.\d{1,2})*(?!\d|\.\d)")
+# 数字位于点分版本号链的尾部（前一字符为 "数字."）
+_RE_VERSION_HEAD = re.compile(r"\d\.$")
 
 # MP4 系容器（ISOBMFF）在偏移 4~8 字节处常见 box 类型
 _MP4_SPECS = tuple(
@@ -352,7 +356,8 @@ def parse_episode(stem: str) -> tuple[str, int | None, int] | None:
     """从文件名（不含扩展名）中识别集号。
 
     按 ``S01E05`` → ``第01集`` → ``EP03`` → 独立数字的优先级识别；
-    独立数字排除 1900-2100（年份）与超过 999 的编号，减少误报。
+    独立数字排除 1900-2100（年份）、超过 999 的编号与软件版本号
+    （如 ``ubuntu-24.04``、``v3.1.5``），减少误报。
 
     Parameters
     ----------
@@ -376,7 +381,14 @@ def parse_episode(stem: str) -> tuple[str, int | None, int] | None:
     match = _RE_FUZZY_NUM.search(stem)
     if match:
         num = int(match.group(1))
-        if num <= 999 and not 1900 <= num <= 2100:
+        # 排除软件版本号（如 ubuntu-24.04、v3.1.5）：集号前后接点分小数字链
+        # 视为版本号而非剧集（清晰度 1080p/720p 等不影响识别）
+        if (
+            num <= 999
+            and not 1900 <= num <= 2100
+            and not _RE_VERSION_TAIL.match(stem, match.end())
+            and not _RE_VERSION_HEAD.search(stem[: match.start(1)])
+        ):
             return stem[: match.start()], None, num
     return None
 

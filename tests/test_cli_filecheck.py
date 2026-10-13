@@ -266,6 +266,20 @@ class TestParseEpisode:
         assert parse_episode("Blade.Runner.2049") is None
         assert parse_episode("纪录片.2019") is None
 
+    def test_version_number_excluded(self) -> None:
+        """软件版本号（操作系统镜像等）不误报为集号。"""
+        assert parse_episode("ubuntu-24.04.3-desktop-amd64") is None
+        assert parse_episode("ubuntu-22.04") is None
+        assert parse_episode("ubuntu-24.04-desktop") is None
+        assert parse_episode("centos-7.9") is None
+        assert parse_episode("某软件 v3.1") is None
+        assert parse_episode("某软件 v3.1.5") is None
+
+    def test_episode_with_resolution_still_detected(self) -> None:
+        """清晰度后缀（1080p/720p）不阻断集号识别。"""
+        assert parse_episode("show.05.1080p") == ("show", None, 5)
+        assert parse_episode("show.12.720p") == ("show", None, 12)
+
     def test_no_episode(self) -> None:
         """无集号特征返回 None。"""
         assert parse_episode("预告片.trailer".replace(".trailer", "")) is None
@@ -331,6 +345,15 @@ class TestDetectMissingEpisodes:
         missing = detect_missing_episodes(records)
         assert len(missing) == 1
         assert missing[0].prefix == "(文件名为纯数字)"
+
+    def test_software_iso_not_grouped(self) -> None:
+        """操作系统镜像等版本文件不组成剧集组。"""
+        records = [
+            ("/m", "ubuntu-20.04.1-desktop-amd64.iso"),
+            ("/m", "ubuntu-22.04.3-desktop-amd64.iso"),
+            ("/m", "ubuntu-24.04-desktop-amd64.iso"),
+        ]
+        assert detect_missing_episodes(records) == []
 
 
 # ---------------------------------------------------------------------- #
