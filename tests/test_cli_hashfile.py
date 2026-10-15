@@ -15,22 +15,11 @@ from pathlib import Path
 import pytest
 
 from fcmd.apis._tool_args import ToolSpec
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.cli._discovery import ensure_tools_discovered
+from tests.helpers import run_and_capture as _run_and_capture
 
 ensure_tools_discovered()
-
-
-def _run_and_capture(name: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
-    code = run_tool(name, argv)
-    raw = capsys.readouterr().out
-    # 过滤掉控制台帧（以 > 或 OK/FAILED 开头的行），保留动作 print 输出
-    lines = [
-        ln
-        for ln in raw.splitlines()
-        if not ln.startswith("> ") and not ln.startswith("OK ") and not ln.startswith("FAILED ")
-    ]
-    return code, "\n".join(lines)
 
 
 # ====================================================================== #

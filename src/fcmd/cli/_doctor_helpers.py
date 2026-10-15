@@ -36,14 +36,14 @@ def collect_doctor_checks(tool_modules: dict[str, str]) -> list[dict[str, Any]]:
     """
     checks: list[dict[str, Any]] = []
 
-    # 1. Python 版本 ≥ 3.8
-    py_ok = sys.version_info >= (3, 8)
+    # 1. Python 版本 ≥ 3.13（与 pyproject requires-python 一致）
+    py_ok = sys.version_info >= (3, 13)
     checks.append(
         {
-            "item": "Python 版本 ≥ 3.8",
+            "item": "Python 版本 ≥ 3.13",
             "ok": py_ok,
             "detail": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
-            "fix": "升级 Python 至 3.8+" if not py_ok else "",
+            "fix": "升级 Python 至 3.13+" if not py_ok else "",
         }
     )
 

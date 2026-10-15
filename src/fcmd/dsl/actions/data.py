@@ -1,7 +1,7 @@
 """数据类 DSL 动作：csvtool / inifile / jsontool / tomltool / xmltool / yamtool。
 
 六个工具原属 ``fcmd.cli.data`` 包，全部为纯 Python 实现（标准库
-csv/configparser/json/xml.etree.ElementTree + 可选 yaml/tomli），无子进程
+csv/configparser/json/tomllib/xml.etree.ElementTree + 可选 yaml），无子进程
 调用。迁移至本模块后由 ``@action`` 装饰器注册，TOML 声明 ``action = "<名>"``
 直接引用；CLI 参数 schema 从动作签名自动推导（:mod:`fcmd.dsl.synth` 层拷贝）。
 
@@ -22,6 +22,7 @@ import configparser
 import copy
 import csv
 import json
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -585,40 +586,13 @@ def jsontool_sort(file: Path, output: str = "") -> None:
 # tomltool 常量与公共函数
 # ============================================================================
 
-# TOML 库可用性探测
-try:
-    import tomllib as _tomllib_mod  # type: ignore[import-not-found]
-except ImportError:
-    _tomllib_mod = None
-    _TOMLLIB_AVAILABLE = False
-else:
-    _TOMLLIB_AVAILABLE = True
-
-try:
-    import tomli as _tomli_mod  # pyrefly 豁免 try/except ImportError 块
-except ImportError:
-    _tomli_mod = None
-    _TOMLI_AVAILABLE = False
-else:
-    _TOMLI_AVAILABLE = True
-
-
-def _require_toml_loader() -> Any:
-    """获取 TOML 解析器模块（tomllib 3.11+ 或 tomli 3.8-3.10）。"""
-    if _tomllib_mod is not None:
-        return _tomllib_mod
-    if _tomli_mod is not None:
-        return _tomli_mod
-    raise ImportError("TOML 解析需要 Python 3.11+ 或安装 tomli: pip install tomli")
-
 
 def read_toml(filepath: Path) -> dict[str, Any]:
     """读取 TOML 文件并解析为字典。"""
     if not filepath.exists():
         raise FileNotFoundError(f"文件不存在: {filepath}")
-    toml_mod = _require_toml_loader()
     with filepath.open("rb") as f:
-        return toml_mod.load(f)
+        return tomllib.load(f)
 
 
 def get_toml_value(filepath: Path, key: str) -> Any:

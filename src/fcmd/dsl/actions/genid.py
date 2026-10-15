@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import secrets
-import string
 import time
 import uuid
 from datetime import datetime
@@ -11,8 +9,6 @@ from datetime import datetime
 from fcmd.dsl.actions import action
 
 __all__: list[str] = []
-
-_RANDOM_CHARS: str = string.ascii_letters + string.digits
 
 
 def _make_uuid(version: int) -> str:
@@ -31,13 +27,6 @@ def _make_timestamp(fmt: str) -> str:
     if fmt == "unix":
         return str(int(time.time()))
     raise ValueError(f"不支持的格式: {fmt}，支持: iso, unix")
-
-
-def _make_random(length: int) -> str:
-    """生成密码学安全的随机字母数字字符串。"""
-    if length <= 0:
-        raise ValueError(f"length 必须大于 0，当前: {length}")
-    return "".join(secrets.choice(_RANDOM_CHARS) for _ in range(length))
 
 
 @action("idtool_uuid", param_help={"version": "UUID 版本（1 或 4，默认 4）"})
@@ -65,8 +54,10 @@ def _idtool_timestamp(fmt: str = "iso") -> None:
 @action("idtool_random", param_help={"length": "随机字符串长度（默认 16）"})
 def _idtool_random(length: int = 16) -> None:
     """生成随机字母数字字符串。"""
+    from fcmd.dsl.actions.calc import generate_string  # 延迟导入：复用 randtool 原语
+
     try:
-        print(_make_random(length))
+        print(generate_string(length))
     except ValueError as exc:
         from fcmd.console import get_console  # 延迟导入
 

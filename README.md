@@ -30,7 +30,7 @@ pip install fcmd          # 或 uv add fcmd
 | `test` | `pip install fcmd[test]` | 开发用：pytest + cov + xdist |
 | `dev` | `pip install fcmd[dev]` | lint + test + office + prek + tox |
 
-要求 Python ≥ 3.9。
+要求 Python ≥ 3.13。
 
 ## 快速上手
 
@@ -146,7 +146,7 @@ fcmd completion --shell fish | source         # fish
 | `xmltool` | - | XML 处理（pretty/get/keys/validate） |
 | `yamtool` | - | YAML 处理（pretty/get/keys/validate） |
 | `inifile` | - | INI 处理（get/set/list/keys，基于 configparser） |
-| `tomltool` | - | TOML 处理（get/keys/format/validate，3.11+ 用 tomllib，3.9-3.10 回退 tomli） |
+| `tomltool` | - | TOML 处理（get/keys/format/validate，基于标准库 tomllib） |
 
 ### 多媒体（可选依赖）
 
@@ -237,7 +237,7 @@ CLI 参数映射规则：
 - 有默认值参数 → `--name` 选项（`amend: bool = False` → `--amend`）
 - `bool = False` → `--name`（store_true）
 - `bool = True` → `--no-name`（store_false，保留原参数名）
-- `X | None` / `Optional[X]` → 自动解包为 `X`（兼容 Python 3.9 PEP 604 字符串注解求值）
+- `X | None` / `Optional[X]` → 自动解包为 `X`（同时支持实际类型与字符串注解）
 
 ### `cmd` / `aggregate` 任务
 

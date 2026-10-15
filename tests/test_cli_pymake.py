@@ -2,7 +2,7 @@
 
 验证 ``pymake`` 工具的子命令集合（exec 型子命令由 ``src/fcmd/commands/pymake.toml``
 DSL 声明，与 Python 模块 push 合并注册）：
-- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/doc/tox）
+- 单 cmd 任务（b/sync/c/t/tf/ts/lint/bumpmi/bumpma/tox）
 - cmd + needs 混合任务（cov/bump）
 - 聚合任务（chk/tc）
 - 内部 hidden job（fmt/fmtc/pyrefly_check/upload）
@@ -64,7 +64,6 @@ class TestPymakeRegistration:
             "bumpmi",
             "bumpma",
             "bump",
-            "doc",
             "tox",
             "push",
         ):
@@ -115,7 +114,6 @@ class TestPymakeCmdTasks:
             ("bumpmi", "bump-my-version"),
             ("bumpma", "bump-my-version"),
             ("tox", "tox"),
-            ("doc", "sphinx-build"),
             ("upload", "twine"),
         ],
     )
@@ -205,14 +203,6 @@ class TestPymakeCmdTasks:
         assert spec.cmd is not None
         assert "major" in spec.cmd
 
-    def test_doc_cmd_uses_sphinx_build(self) -> None:
-        """doc 应执行 sphinx-build html。"""
-        spec = get_tool("pymake", "doc")
-        assert spec.cmd is not None
-        assert "sphinx-build" in spec.cmd
-        assert "-b" in spec.cmd
-        assert "html" in spec.cmd
-
     def test_tox_cmd_uses_uvx(self) -> None:
         """tox 应通过 uvx 调用。"""
         spec = get_tool("pymake", "tox")
@@ -228,11 +218,11 @@ class TestPymakeHybridTasks:
     """cmd + needs 混合任务验证（既有命令又有依赖）。"""
 
     def test_cov_cmd_has_coverage_flags(self) -> None:
-        """cov 应包含 --cov=fcmd 与 --cov-fail-under=95。"""
+        """cov 只带 --cov=fcmd；阈值由 .coveragerc 的 fail_under 单点定义。"""
         spec = get_tool("pymake", "cov")
         assert spec.cmd is not None
         assert "--cov=fcmd" in spec.cmd
-        assert "--cov-fail-under=95" in spec.cmd
+        assert not any(a.startswith("--cov-fail-under") for a in spec.cmd)
         assert spec.hidden is False
 
     def test_bump_cmd_uses_patch(self) -> None:

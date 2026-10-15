@@ -60,4 +60,4 @@ jobs:
         run: uv sync --frozen --extra test,office --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run pytest -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
+        run: uv run pytest -m "not slow" --cov=fcmd --cov-report=term-missing

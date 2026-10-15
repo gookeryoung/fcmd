@@ -16,11 +16,9 @@ import binascii
 import codecs
 import html
 import urllib.parse
-from collections.abc import Callable
-from typing import Any
 
 from fcmd.console import get_console
-from fcmd.dsl.actions import action
+from fcmd.dsl.actions import action, run_and_print
 
 __all__ = [
     "add_query_param",
@@ -301,16 +299,6 @@ def convert_datasize(
     return bytes_value / (factor**to_idx)
 
 
-def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> None:
-    """执行换算函数并打印结果，捕获 ValueError 作为错误信息输出。"""
-    try:
-        result = fn(*args, **kwargs)
-    except ValueError as exc:
-        get_console().print(f"[red]错误:[/red] {exc}")
-        return
-    print(result)
-
-
 # ------------------------------------------------------------------ #
 # 动作：4 个子命令
 # ------------------------------------------------------------------ #
@@ -326,7 +314,7 @@ def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> No
 )
 def _convtool_length(value: float, from_unit: str, to_unit: str) -> None:
     """长度换算。"""
-    _print_conversion(convert_length, value, from_unit, to_unit)
+    run_and_print(convert_length, value, from_unit, to_unit)
 
 
 @action(
@@ -339,7 +327,7 @@ def _convtool_length(value: float, from_unit: str, to_unit: str) -> None:
 )
 def _convtool_weight(value: float, from_unit: str, to_unit: str) -> None:
     """重量换算。"""
-    _print_conversion(convert_weight, value, from_unit, to_unit)
+    run_and_print(convert_weight, value, from_unit, to_unit)
 
 
 @action(
@@ -352,7 +340,7 @@ def _convtool_weight(value: float, from_unit: str, to_unit: str) -> None:
 )
 def _convtool_temp(value: float, from_unit: str, to_unit: str) -> None:
     """温度换算。"""
-    _print_conversion(convert_temperature, value, from_unit, to_unit)
+    run_and_print(convert_temperature, value, from_unit, to_unit)
 
 
 @action(
@@ -371,7 +359,7 @@ def _convtool_datasize(
     base: str = "binary",
 ) -> None:
     """数据大小换算。"""
-    _print_conversion(convert_datasize, value, from_unit, to_unit, base=base)
+    run_and_print(convert_datasize, value, from_unit, to_unit, base=base)
 
 
 # ======================================================================== #

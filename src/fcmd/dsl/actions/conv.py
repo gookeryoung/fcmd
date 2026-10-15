@@ -6,9 +6,8 @@ import ast
 import math
 import operator as op
 import re
-from collections.abc import Callable
 
-from fcmd.dsl.actions import action
+from fcmd.dsl.actions import action, run_and_print
 
 __all__: list[str] = []
 
@@ -248,22 +247,10 @@ def _eval_node(node: ast.AST) -> float | int:
     raise ValueError(f"不支持的语法元素: {type(node).__name__}")
 
 
-def _math_action(fn: Callable[..., object], *args: object) -> None:
-    """数学动作执行器，捕获异常并打印结果或错误。"""
-    try:
-        result = fn(*args)
-    except (ValueError, ZeroDivisionError) as exc:
-        from fcmd.console import get_console  # 延迟导入
-
-        get_console().print(f"[red]错误:[/red] {exc}")
-        return
-    print(result)
-
-
 @action("mathtool_eval", param_help={"expr": "数学表达式字符串（如 1 + 2 * 3）"})
 def _mathtool_eval(expr: str) -> None:
     """安全求值数学表达式。"""
-    _math_action(_eval_expr, expr)
+    run_and_print(_eval_expr, expr, exc=(ValueError, ZeroDivisionError))
 
 
 @action("mathtool_sqrt", param_help={"x": "待开方的数（须非负）"})
@@ -275,13 +262,13 @@ def _mathtool_sqrt(x: float) -> None:
             raise ValueError(f"sqrt 要求非负数，当前: {xv}")
         return math.sqrt(xv)
 
-    _math_action(_sqrt, x)
+    run_and_print(_sqrt, x, exc=(ValueError, ZeroDivisionError))
 
 
 @action("mathtool_pow", param_help={"base": "底数", "exp": "指数"})
 def _mathtool_pow(base: float, exp: float) -> None:
     """计算 base ** exp。"""
-    _math_action(lambda b, e: b**e, base, exp)
+    run_and_print(lambda b, e: b**e, base, exp, exc=(ValueError, ZeroDivisionError))
 
 
 @action("mathtool_factorial", param_help={"n": "非负整数"})
@@ -295,4 +282,4 @@ def _mathtool_factorial(n: int) -> None:
             raise ValueError(f"factorial 要求非负整数，当前: {nv}")
         return math.factorial(nv)
 
-    _math_action(_factorial, n)
+    run_and_print(_factorial, n, exc=(ValueError, ZeroDivisionError))

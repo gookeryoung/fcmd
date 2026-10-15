@@ -30,6 +30,8 @@ coverage.xml
 .env
 .env.*
 
-# Sphinx 文档构建输出
-docs/_build/
+# IDE / 编辑器工作目录
 .trae/
+
+# filecheck 报告输出
+文件检查报告_*.txt

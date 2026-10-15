@@ -13,7 +13,7 @@ project_name: fcmd
 project_type: cli
 use_cicd: true
 use_docker: false
-use_docs: true
+use_docs: false
 use_domestic_mirrors: true
 use_tox: true
 

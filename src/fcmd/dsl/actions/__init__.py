@@ -41,7 +41,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-__all__ = ["Action", "action", "action_names", "get_action", "has_action"]
+__all__ = ["Action", "action", "action_names", "get_action", "has_action", "run_and_print"]
 
 
 @dataclass(frozen=True)
@@ -106,6 +106,27 @@ def action_names() -> tuple[str, ...]:
 def get_action(name: str) -> Action:
     """取出动作描述符（调用方须经声明期校验，未知名抛 KeyError）。"""
     return _ACTIONS[name]
+
+
+def run_and_print(
+    fn: Callable[..., Any],
+    *args: Any,
+    exc: tuple[type[BaseException], ...] = (ValueError,),
+    **kwargs: Any,
+) -> None:
+    """执行换算/计算型动作并打印结果，``exc`` 内的异常转为错误行输出。
+
+    换算类动作的共用外壳：参数或输入非法时抛 ``ValueError``，此处捕获后以
+    ``[red]错误:[/red]`` 呈现并保持退出码 0（错误信息即结果，非任务失败）。
+    """
+    from fcmd.console import get_console  # 延迟导入避免包级循环
+
+    try:
+        result = fn(*args, **kwargs)
+    except exc as error:
+        get_console().print(f"[red]错误:[/red] {error}")
+        return
+    print(result)
 
 
 # 子模块导入期执行 @action 装饰器完成注册（须位于注册表定义之后）

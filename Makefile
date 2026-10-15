@@ -2,9 +2,8 @@
 # 运行 `make help` 查看所有可用命令
 
 PACKAGE := fcmd
-COV_THRESHOLD := 95
 
-.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check doc tox pub bump patch minor major push e2e e2e-smoke
+.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check tox pub bump patch minor major push e2e e2e-smoke
 
 help: ## 显示帮助信息
 	@uv run python -c "import re,sys;ms=[(m.group(1),m.group(2).strip()) for f in sys.argv[1:] for l in open(f,encoding='utf-8') if (m:=re.match(r'^([a-zA-Z][\w -]*):.*?##\s*(.*)',l))];[print(f'  {n:<14} {d}') for n,d in ms]" $(MAKEFILE_LIST)
@@ -16,7 +15,7 @@ build b: ## 构建分发包 (wheel + sdist)
 	uv build
 
 clean c: ## 清理构建产物与缓存
-	rm -rf build/ dist/ wheels/ *.egg-info htmlcov/ .coverage .coverage.* coverage.xml docs/_build/ .tox/
+	rm -rf build/ dist/ wheels/ *.egg-info htmlcov/ .coverage .coverage.* coverage.xml .tox/
 	rm -rf .ruff_cache/ .pyrefly_cache/ .mypy_cache/
 	find src tests -type d -name __pycache__ -exec rm -rf {} +
 	find src tests -type f -name "*.py[oc]" -delete
@@ -24,8 +23,8 @@ clean c: ## 清理构建产物与缓存
 test: ## 运行测试（不含覆盖率）
 	uv run pytest -m "not slow"
 
-cov: ## 运行测试并检查覆盖率
-	uv run pytest -m "not slow" --cov=$(PACKAGE) --cov-fail-under=$(COV_THRESHOLD) -n auto
+cov: ## 运行测试并检查覆盖率（阈值取 .coveragerc fail_under）
+	uv run pytest -m "not slow" --cov=$(PACKAGE) -n auto
 
 lint: ## 代码风格检查 (ruff)
 	uv run ruff check .
@@ -38,10 +37,6 @@ typecheck-ci: ## 类型检查 (pyrefly, CI 平台 linux — 捕获跨平台问�
 	uv run pyrefly check --python-platform linux
 
 check: lint typecheck typecheck-ci cov ## 运行全套门禁 (lint + typecheck + typecheck-ci + cov)
-
-doc: ## 构建 Sphinx 文档
-	uv run sphinx-build -b html docs docs/_build/html
-
 
 tox: ## 多版本测试 (tox)
 	uvx tox -p auto

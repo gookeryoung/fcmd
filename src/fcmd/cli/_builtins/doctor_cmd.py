@@ -15,7 +15,7 @@ def run(argv: list[str]) -> int:
 
     环境健康诊断（只读，输出 OK/FAIL 状态表格）：
 
-    - Python 版本 ≥ 3.8
+    - Python 版本 ≥ 3.13
     - fcmd 核心模块导入正常
     - 工具模块全部可正常导入（统计失败数）
     - 可选依赖（img/pdf/ocr）状态

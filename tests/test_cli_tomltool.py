@@ -9,8 +9,6 @@ import pytest
 
 from fcmd.apis.toolkit import list_subcommands, list_tools, run_tool
 from fcmd.dsl.actions.data import (
-    _TOMLI_AVAILABLE,
-    _TOMLLIB_AVAILABLE,
     format_toml,
     get_toml_value,
     keys_toml,
@@ -19,10 +17,6 @@ from fcmd.dsl.actions.data import (
 )
 
 # 模块导入即注册工具（@fcmd.tool 装饰器在导入时执行）
-
-# 跳过条件：tomllib 与 tomli 均不可用时跳过所有测试
-_TOML_AVAILABLE = _TOMLLIB_AVAILABLE or _TOMLI_AVAILABLE
-skip_no_toml = pytest.mark.skipif(not _TOML_AVAILABLE, reason="需要 tomllib(3.11+) 或 tomli")
 
 
 @pytest.fixture()
@@ -66,7 +60,6 @@ def test_tool_registered() -> None:
 # ---------------------------------------------------------------------- #
 # read_toml
 # ---------------------------------------------------------------------- #
-@skip_no_toml
 def test_read_toml_success(toml_file: Path) -> None:
     """正常读取 TOML 文件。"""
     data = read_toml(toml_file)
@@ -75,14 +68,12 @@ def test_read_toml_success(toml_file: Path) -> None:
     assert data["tool"]["ruff"]["line-length"] == 100
 
 
-@skip_no_toml
 def test_read_toml_file_not_found(tmp_path: Path) -> None:
     """文件不存在时抛 FileNotFoundError。"""
     with pytest.raises(FileNotFoundError):
         read_toml(tmp_path / "nope.toml")
 
 
-@skip_no_toml
 def test_read_toml_invalid_syntax(invalid_toml_file: Path) -> None:
     """语法错误时抛 TOMLDecodeError（ValueError 子类）。"""
     with pytest.raises(ValueError):
@@ -92,14 +83,12 @@ def test_read_toml_invalid_syntax(invalid_toml_file: Path) -> None:
 # ---------------------------------------------------------------------- #
 # get_toml_value
 # ---------------------------------------------------------------------- #
-@skip_no_toml
 def test_get_toml_value_simple(toml_file: Path) -> None:
     """获取简单键值。"""
     assert get_toml_value(toml_file, "project.name") == "myapp"
     assert get_toml_value(toml_file, "project.version") == "1.0.0"
 
 
-@skip_no_toml
 def test_get_toml_value_nested(toml_file: Path) -> None:
     """获取嵌套键值。"""
     deps = get_toml_value(toml_file, "project.dependencies")
@@ -107,14 +96,12 @@ def test_get_toml_value_nested(toml_file: Path) -> None:
     assert deps["tomli"] == "2.0"
 
 
-@skip_no_toml
 def test_get_toml_value_key_not_found(toml_file: Path) -> None:
     """键不存在时抛 KeyError。"""
     with pytest.raises(KeyError, match="不存在"):
         get_toml_value(toml_file, "project.nope")
 
 
-@skip_no_toml
 def test_get_toml_value_non_dict_path(toml_file: Path) -> None:
     """路径中间非字典时抛 KeyError。"""
     with pytest.raises(KeyError, match="不是字典"):
@@ -124,7 +111,6 @@ def test_get_toml_value_non_dict_path(toml_file: Path) -> None:
 # ---------------------------------------------------------------------- #
 # keys_toml
 # ---------------------------------------------------------------------- #
-@skip_no_toml
 def test_keys_toml(toml_file: Path) -> None:
     """列出顶层键。"""
     keys = keys_toml(toml_file)
@@ -134,7 +120,6 @@ def test_keys_toml(toml_file: Path) -> None:
 # ---------------------------------------------------------------------- #
 # format_toml
 # ---------------------------------------------------------------------- #
-@skip_no_toml
 def test_format_toml(toml_file: Path) -> None:
     """格式化为 JSON 字符串。"""
     result = format_toml(toml_file)
@@ -142,7 +127,6 @@ def test_format_toml(toml_file: Path) -> None:
     assert data["project"]["name"] == "myapp"
 
 
-@skip_no_toml
 def test_format_toml_indent(toml_file: Path) -> None:
     """指定缩进。"""
     result = format_toml(toml_file, indent=4)
@@ -152,13 +136,11 @@ def test_format_toml_indent(toml_file: Path) -> None:
 # ---------------------------------------------------------------------- #
 # validate_toml
 # ---------------------------------------------------------------------- #
-@skip_no_toml
 def test_validate_toml_success(toml_file: Path) -> None:
     """语法正确的文件不抛异常。"""
     validate_toml(toml_file)  # 不抛异常即通过
 
 
-@skip_no_toml
 def test_validate_toml_invalid(invalid_toml_file: Path) -> None:
     """语法错误时抛 ValueError。"""
     with pytest.raises(ValueError):
@@ -168,7 +150,6 @@ def test_validate_toml_invalid(invalid_toml_file: Path) -> None:
 # ---------------------------------------------------------------------- #
 # CLI 子命令测试
 # ---------------------------------------------------------------------- #
-@skip_no_toml
 def test_cli_get(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI get 子命令取值。"""
     code = run_tool("tomltool", ["get", str(toml_file), "project.name"])
@@ -177,7 +158,6 @@ def test_cli_get(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert "myapp" in captured.out
 
 
-@skip_no_toml
 def test_cli_get_nested(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI get 嵌套路径返回 JSON。"""
     code = run_tool("tomltool", ["get", str(toml_file), "project.dependencies"])
@@ -186,7 +166,6 @@ def test_cli_get_nested(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert "tomli" in captured.out
 
 
-@skip_no_toml
 def test_cli_get_key_not_found(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI get 键不存在时打印错误。"""
     code = run_tool("tomltool", ["get", str(toml_file), "project.nope"])
@@ -195,7 +174,6 @@ def test_cli_get_key_not_found(toml_file: Path, capsys: pytest.CaptureFixture[st
     assert "不存在" in captured.out
 
 
-@skip_no_toml
 def test_cli_keys(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI keys 子命令列出顶层键。"""
     code = run_tool("tomltool", ["keys", str(toml_file)])
@@ -205,7 +183,6 @@ def test_cli_keys(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert "tool" in captured.out
 
 
-@skip_no_toml
 def test_cli_format(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI format 子命令输出 JSON。"""
     code = run_tool("tomltool", ["format", str(toml_file)])
@@ -218,7 +195,6 @@ def test_cli_format(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None
     assert data["project"]["name"] == "myapp"
 
 
-@skip_no_toml
 def test_cli_validate(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI validate 子命令校验通过。"""
     code = run_tool("tomltool", ["validate", str(toml_file)])
@@ -227,14 +203,12 @@ def test_cli_validate(toml_file: Path, capsys: pytest.CaptureFixture[str]) -> No
     assert "通过" in captured.out
 
 
-@skip_no_toml
 def test_cli_validate_invalid(invalid_toml_file: Path) -> None:
     """CLI validate 语法错误时打印错误。"""
     code = run_tool("tomltool", ["validate", str(invalid_toml_file)])
     assert code == 0
 
 
-@skip_no_toml
 def test_cli_file_not_found(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """CLI 文件不存在时打印错误。"""
     code = run_tool("tomltool", ["get", str(tmp_path / "nope.toml"), "key"])

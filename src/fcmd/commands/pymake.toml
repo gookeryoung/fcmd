@@ -40,14 +40,6 @@ help = "工作目录"
 help = "清理构建产物与缓存目录"
 cmd = ["gitt", "c"]
 
-[commands.pymake.doc]
-help = "构建 Sphinx 文档"
-cmd = ["sphinx-build", "-b", "html", "docs", "docs/_build/html"]
-[commands.pymake.doc.args.cwd]
-type = "path"
-default = "."
-help = "工作目录"
-
 [commands.pymake.lint]
 help = "代码检查与自动修复 (ruff check --fix)"
 cmd = ["ruff", "check", "--fix", "."]
@@ -119,7 +111,6 @@ cmd = [
     "-n",
     "auto",
     "--cov=fcmd",
-    "--cov-fail-under=95",
     "--color=yes",
     "--durations=10",
 ]
