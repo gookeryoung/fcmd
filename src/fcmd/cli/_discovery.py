@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.console import get_console
+from fcmd.console import print_error
 
 if TYPE_CHECKING:
     from fcmd.core.toolkit import ToolSpec
@@ -40,6 +40,7 @@ __all__ = [
     "aliases_for",
     "ensure_tools_discovered",
     "import_all_tool_modules",
+    "import_tool_module",
     "load_tool_subs",
     "resolve_tool",
     "tool_description",
@@ -192,9 +193,13 @@ def _discover_domain(domain: str) -> None:
 def _register_tool(module_path: str, tool_name: str) -> None:
     """注册单个工具：填充模块映射并导入模块读取别名。
 
-    导入失败时跳过该工具：``ImportError`` 表示可选 Python 包缺失，
-    ``OSError`` 表示原生动态库缺失（如扩展模块加载失败）。
-    两类失败均不影响其余工具的发现。
+    导入失败时**保留**条目：``ImportError`` 表示可选 Python 包缺失，
+    ``OSError`` 表示原生动态库缺失（如扩展模块加载失败），两类失败均不影响
+    其余工具的发现，且保留条目以维持 ``tool_description`` /
+    ``load_tool_subs`` 的友好报错。
+
+    导入成功但未注册任何子命令的模块（如 ``envdev_core`` 等内部辅助模块）
+    不算工具，从模块映射与别名表中移除，避免泄漏到工具列表。
     """
     _TOOL_MODULES.setdefault(tool_name, module_path)
     _TOOL_ALIASES.setdefault(tool_name, tool_name)
@@ -203,6 +208,15 @@ def _register_tool(module_path: str, tool_name: str) -> None:
         mod = importlib.import_module(module_path)
     except (ImportError, OSError) as exc:
         logger.warning("工具模块 %s 导入失败，已跳过: %s", module_path, exc)
+        return
+    # 懒导入避免 cli ↔ core 包级循环
+    from fcmd.core.toolkit import _TOOL_REGISTRY
+
+    if tool_name not in _TOOL_REGISTRY:
+        # 模块已导入但无任何子命令：内部辅助模块，不算工具
+        _TOOL_MODULES.pop(tool_name, None)
+        if _TOOL_ALIASES.get(tool_name) == tool_name:
+            _TOOL_ALIASES.pop(tool_name)
         return
     # 读取模块声明的别名
     aliases = getattr(mod, "__tool_aliases__", ())
@@ -289,16 +303,30 @@ def import_all_tool_modules() -> None:
             importlib.import_module(module_path)
 
 
+def import_tool_module(tool_name: str) -> Exception | None:
+    """导入工具对应的模块，返回导入异常（未登记或成功时返回 None）。
+
+    统一 ``tool_description`` / ``load_tool_subs`` / ``main._run_tool`` 的
+    惰性导入逻辑：模块未登记时返回 None（无需导入），``ImportError``
+    表示可选 Python 包缺失，``OSError`` 表示原生库加载失败。
+    """
+    module_path = _TOOL_MODULES.get(tool_name)
+    if module_path is None:
+        return None
+    try:
+        importlib.import_module(module_path)
+    except (ImportError, OSError) as exc:
+        return exc
+    return None
+
+
 def tool_description(tool_name: str) -> str:
     """获取工具描述（从 _TOOL_REGISTRY 中已注册 ToolSpec 的 description/help）。"""
     from fcmd.core.toolkit import _TOOL_REGISTRY
 
     # 触发模块导入以注册工具
-    if tool_name in _TOOL_MODULES:
-        try:
-            importlib.import_module(_TOOL_MODULES[tool_name])
-        except (ImportError, OSError):
-            return ""
+    if import_tool_module(tool_name) is not None:
+        return ""
 
     if tool_name not in _TOOL_REGISTRY:
         return ""
@@ -317,14 +345,12 @@ def load_tool_subs(tool_name: str) -> dict[str | None, ToolSpec] | None:
     """加载工具模块并返回子命令字典，失败时打印错误并返回 None。"""
     from fcmd.core.toolkit import _TOOL_REGISTRY
 
-    if tool_name in _TOOL_MODULES:
-        try:
-            importlib.import_module(_TOOL_MODULES[tool_name])
-        except (ImportError, OSError) as e:
-            get_console().print(f"[red]错误:[/red] 加载工具 {tool_name!r} 失败: {e}")
-            return None
+    error = import_tool_module(tool_name)
+    if error is not None:
+        print_error(f"加载工具 {tool_name!r} 失败: {error}")
+        return None
 
     if tool_name not in _TOOL_REGISTRY:
-        get_console().print(f"[red]错误:[/red] 工具 {tool_name!r} 未注册")
+        print_error(f"工具 {tool_name!r} 未注册")
         return None
     return _TOOL_REGISTRY[tool_name]

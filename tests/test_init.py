@@ -57,3 +57,42 @@ def test_graph_shortcut_function() -> None:
     graph = fcmd.graph(extract, double)
     assert len(graph) == 2
     assert graph.dependencies("double") == ("extract",)
+
+
+# ---------------------------------------------------------------------- #
+# _lazyload 模板（三个包共用）
+# ---------------------------------------------------------------------- #
+def test_lazy_getattr_loads_and_caches() -> None:
+    """lazy_getattr 按映射加载符号并写入传入命名空间。"""
+    from fcmd._lazyload import lazy_getattr
+
+    namespace: dict[str, object] = {}
+    value = lazy_getattr("fcmd", {"ToolSpec": ("fcmd.core.toolkit", "ToolSpec")}, "ToolSpec", namespace)
+    assert value.__name__ == "ToolSpec"
+    assert namespace["ToolSpec"] is value
+
+
+def test_lazy_getattr_returns_submodule_when_attr_none() -> None:
+    """符号名为 None 时返回子模块自身（from pkg import submodule 语义）。"""
+    import types
+
+    from fcmd._lazyload import lazy_getattr
+
+    value = lazy_getattr("fcmd", {"console": ("fcmd.console", None)}, "console", {})
+    assert isinstance(value, types.ModuleType)
+    assert value.__name__ == "fcmd.console"
+
+
+def test_lazy_getattr_missing_raises_attribute_error() -> None:
+    """未登记属性抛 AttributeError，消息含传入的模块名。"""
+    from fcmd._lazyload import lazy_getattr
+
+    with pytest.raises(AttributeError, match=r"fcmd\.core"):
+        lazy_getattr("fcmd.core", {}, "nope", {})
+
+
+def test_lazy_dir_merges_namespace_and_all() -> None:
+    """lazy_dir 合并命名空间与 __all__ 并排序。"""
+    from fcmd._lazyload import lazy_dir
+
+    assert lazy_dir({"b": 1}, ["c", "a"]) == ["a", "b", "c"]

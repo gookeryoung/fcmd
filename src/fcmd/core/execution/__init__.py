@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from fcmd._lazyload import lazy_dir, lazy_getattr
+
 __all__ = [
     "Strategy",
     "run",
@@ -34,19 +36,10 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
 
 
 def __getattr__(name: str) -> Any:
-    """懒加载执行引擎公共 API。"""
-    mapping = _LAZY_ATTRS.get(name)
-    if mapping is None:
-        raise AttributeError(f"module 'fcmd.core.execution' has no attribute {name!r}")
-    module_path, attr_name = mapping
-    import importlib
-
-    module = importlib.import_module(module_path)
-    value = getattr(module, attr_name)
-    globals()[name] = value  # 缓存到全局，后续直接命中
-    return value
+    """懒加载执行引擎公共 API（实现见 :func:`fcmd._lazyload.lazy_getattr`）。"""
+    return lazy_getattr(__name__, _LAZY_ATTRS, name, globals())
 
 
 def __dir__() -> list[str]:
     """补全建议。"""
-    return sorted(set(globals()) | set(__all__))
+    return lazy_dir(globals(), __all__)

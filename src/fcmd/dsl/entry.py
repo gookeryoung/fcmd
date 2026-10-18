@@ -34,7 +34,7 @@ def run_named() -> None:
     """console script 通用入口：按 argv[0] 推断工具名并转发执行。"""
     # 懒导入避免 cli ↔ dsl 包级循环（_discovery 函数内懒导入本包）
     from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool
-    from fcmd.console import get_console
+    from fcmd.console import get_console, print_error
     from fcmd.core.toolkit import run_tool
 
     name = infer_tool_name(sys.argv[0])
@@ -46,9 +46,8 @@ def run_named() -> None:
         # sys.executable（即 per-tool loader exe，如 img2ico.exe）推断工具名。
         resolved = resolve_tool(infer_tool_name(sys.executable))
     if resolved is None:
-        console = get_console()
-        console.print(f"[red]错误:[/red] 入口 {name!r} 未对应任何已注册工具")
-        console.print("[dim]运行 'fcmd' 查看可用工具列表[/dim]")
+        print_error(f"入口 {name!r} 未对应任何已注册工具")
+        get_console().print("[dim]运行 'fcmd' 查看可用工具列表[/dim]")
         sys.exit(1)
     sys.exit(run_tool(resolved, sys.argv[1:]))
 

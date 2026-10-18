@@ -25,6 +25,7 @@ import zipfile
 from pathlib import Path
 
 import fcmd
+from fcmd.core.filefilter import DEFAULT_IGNORE_DIRS
 from fcmd.core.models import IgnoreSpec, should_ignore, to_shutil_ignore
 
 __all__ = [
@@ -38,26 +39,8 @@ __all__ = [
 # 配置
 # ============================================================================
 
-# 打包源码时忽略的规则（目录名 + glob 模式）
-IGNORE_SPEC: IgnoreSpec = IgnoreSpec.from_iterable(
-    [
-        "__pycache__",
-        "*.pyc",
-        "*.pyo",
-        ".git",
-        ".venv",
-        ".idea",
-        ".vscode",
-        "*.egg-info",
-        "dist",
-        "build",
-        ".pytest_cache",
-        ".tox",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".pyrefly_cache",
-    ]
-)
+# 打包源码时忽略的规则（默认忽略目录 + 字节码文件）
+IGNORE_SPEC: IgnoreSpec = IgnoreSpec.from_iterable([*DEFAULT_IGNORE_DIRS, "*.pyc", "*.pyo"])
 
 # 嵌入式 Python 版本映射（短版本 -> 完整版本）
 _VERSION_MAP: dict[str, str] = {

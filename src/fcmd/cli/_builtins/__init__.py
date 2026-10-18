@@ -16,7 +16,8 @@ from fcmd.cli._builtins import (
     profiler_cmd,
     yaml_cmd,
 )
-from fcmd.console import get_console
+from fcmd.cli._common import _BUILTIN_COMMANDS
+from fcmd.console import print_error
 
 __all__ = ["run_builtin"]
 
@@ -31,11 +32,17 @@ _HANDLERS: dict[str, object] = {
     "profiler": profiler_cmd.run,
 }
 
+# 路由表与对外声明的内建命令名单必须一致（新增/删除内建命令时漏改一处即启动报错）
+if set(_HANDLERS) != set(_BUILTIN_COMMANDS):
+    raise RuntimeError(
+        f"内建命令注册不一致: _HANDLERS={sorted(_HANDLERS)}，_BUILTIN_COMMANDS={sorted(_BUILTIN_COMMANDS)}"
+    )
+
 
 def run_builtin(name: str, argv: list[str]) -> int:
     """分发内建命令，返回退出码。未知命令打印错误返回 1。"""
     handler = _HANDLERS.get(name)
     if handler is None:
-        get_console().print(f"[red]错误:[/red] 未知内建命令 {name!r}")
+        print_error(f"未知内建命令 {name!r}")
         return 1
     return handler(argv)  # type: ignore[no-any-return]

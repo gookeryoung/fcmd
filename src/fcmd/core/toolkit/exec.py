@@ -31,7 +31,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 from fcmd.core.execution.executors import run
 
 from ..dag import Graph, GraphDefaults
@@ -458,7 +458,7 @@ def _parse_tool_args(
 ) -> tuple[dict[str, Any], ToolSpec] | int:
     """校验 target、构建 parser 解析 ``argv_rest``，返回变量字典与 ``target_spec``。"""
     if target is not None and target not in subs:
-        get_console().print(f"[red]错误:[/red] 工具 {name!r} 没有子命令 {target!r}")
+        print_error(f"工具 {name!r} 没有子命令 {target!r}")
         _print_subcommands(name, subs)
         return ToolExitCode.FAILURE.value
 
@@ -523,7 +523,7 @@ def _execute_tool_tasks(
     task_specs: list[TaskSpec[Any]] = []
     for sc in chain:
         if sc not in subs:
-            get_console().print(f"[red]错误:[/red] 工具 {name!r} 的子命令 {sc!r} 未注册")
+            print_error(f"工具 {name!r} 的子命令 {sc!r} 未注册")
             return ToolExitCode.FAILURE.value
         sc_spec = subs[sc]
         # DSL 参数环境变量回退链解析（依赖在前：链上子任务可见解析结果；
@@ -534,7 +534,7 @@ def _execute_tool_tasks(
         try:
             _apply_compute(variables, sc_spec)
         except Exception as e:  # 计算动作异常统一映射为失败
-            get_console().print(f"[red]错误:[/red] 计算动作执行失败: {e}")
+            print_error(f"计算动作执行失败: {e}")
             return ToolExitCode.FAILURE.value
         task_specs.append(_build_task_spec(sc_spec, variables))
 
@@ -564,7 +564,7 @@ def _execute_tool_tasks(
         return ToolExitCode.FAILURE.value
     except FcmdError as e:
         if verbose:
-            get_console().print(f"[red]错误:[/red] {e}")
+            print_error(str(e))
         return ToolExitCode.FAILURE.value
     except KeyboardInterrupt:
         return ToolExitCode.INTERRUPTED.value

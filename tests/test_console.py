@@ -217,3 +217,22 @@ class TestPrintVerbose:
             mock_get.return_value = fake
             console.print_verbose("hello", style="red")
             fake.print.assert_called_once_with("hello", style="red")
+
+
+class TestPrintError:
+    """``print_error`` 统一错误行格式。"""
+
+    def test_prefix_is_red_markup(self) -> None:
+        """前缀以红色 markup 传给全局 Console，正文原样。"""
+        with mock.patch.object(console, "get_console") as mock_get:
+            fake = mock.Mock()
+            mock_get.return_value = fake
+            console.print_error("boom")
+            fake.print.assert_called_once_with("[red]错误:[/red] boom")
+
+    def test_non_tty_renders_plain_text(self) -> None:
+        """非 tty 下 markup 被剥离，输出纯文本 ``错误: ...``。"""
+        c, buf = _plain_console()
+        with mock.patch.object(console, "get_console", return_value=c):
+            console.print_error("文件不存在: a.txt")
+        assert buf.getvalue() == "错误: 文件不存在: a.txt\n"

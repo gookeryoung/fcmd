@@ -92,7 +92,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-59 个工具（其中 47 个为 Python 模块，`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool` 纯 exec 与 compute 工具及 `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo` action 原语工具由 DSL 声明），按用途分组：
+61 个工具（其中 11 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -111,12 +111,12 @@ fcmd completion --shell fish | source         # fish
 | `writefile` | - | 写入文本内容到文件 |
 | `filedate` | - | 文件日期前缀处理（添加/清除） |
 | `filelevel` | - | 文件等级标记重命名（PUB/NOR/INT/CON/CLA） |
-| `filerename` | - | 文件批量重命名（前缀/后缀/序号/替换） |
+| `filerename` | - | 文件批量重命名（replace/insert/case） |
 | `filesearch` | - | 文件名/内容搜索（支持正则与通配符） |
 | `folderback` | - | 文件夹备份（自动清理旧备份） |
 | `folderzip` | - | 压缩当前目录下所有子文件夹 |
 | `hashfile` | - | 文件哈希计算（md5/sha256/sha1，支持目录批量） |
-| `pathtool` | - | 路径处理（拆分/拼接/规范化/相对路径） |
+| `pathtool` | - | 路径处理（show/rel/norm/diff） |
 | `archivex` | - | 归档解压（zip/tar/gz/bz2，跨平台） |
 | `zipencrypt` | - | ZIP AES-256 加密（pyzipper，批量；需 7-Zip/WinRAR 等支持 AES 的解压器），依赖 `fcmd[archive]` |
 | `filecheck` | - | 媒体文件完整性检查（0 字节/尾部零填充/断链/容器签名），依赖 `fcmd[filecheck]` |
@@ -125,32 +125,32 @@ fcmd completion --shell fish | source         # fish
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `txttool` | - | 文本处理（大小写/去重/排序/统计/截断） |
+| `txttool` | - | 文本处理（case/count/sort/unique） |
 | `asciitool` | - | ASCII 码表（char/code/table） |
 | `codetool` | - | 编解码（Base64/URL/HTML/Hex/ROT13） |
 | `casetool` | - | 命名风格转换（camel/snake/kebab/pascal） |
-| `colortool` | - | 颜色换算（RGB/HEX/HSL/HSV），依赖 `fcmd[color]` |
-| `convtool` | - | 单位换算（长度/重量/温度/面积等） |
-| `csvtool` | - | CSV 处理（pretty/extract/filter/sort） |
+| `colortool` | - | 颜色换算（hex2rgb/rgb2hex/rgb2hsl/hsl2rgb），依赖 `fcmd[color]` |
+| `convtool` | - | 单位换算（length/weight/temp/datasize） |
+| `csvtool` | - | CSV 处理（show/select/to-json/from-json/merge） |
 | `hashtool` | - | 字符串哈希（md5/sha1/sha256/sha512） |
-| `idtool` | - | ID 生成（UUID/雪花/时间戳） |
-| `jsontool` | - | JSON 处理（pretty/get/keys/validate） |
+| `idtool` | - | ID 生成（uuid/timestamp/random） |
+| `jsontool` | - | JSON 处理（pretty/minify/query/sort） |
 | `mathtool` | - | 数学计算（eval/sqrt/pow/factorial） |
 | `padtool` | - | 文本对齐（left/right/center/justify） |
-| `randtool` | - | 随机生成（数字/字符串/选择/洗牌） |
+| `randtool` | - | 随机生成（password/number/string/bytes） |
 | `regextool` | - | 正则表达式（match/find/replace/split） |
-| `stattool` | - | 统计工具（mean/median/variance/quantile） |
+| `stattool` | - | 统计工具（mean/median/stddev/variance/summarize） |
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
-| `timetool` | - | 时间工具（convert/format/timezone） |
+| `timetool` | - | 时间工具（now/parse/unix/fromunix/convert） |
 | `calcdate` | - | 日期计算（add/workdays/diff/compare） |
-| `urltool` | - | URL 解析（编码/解码/拆分/拼接） |
+| `urltool` | - | URL 解析（parse/query/addquery/baseurl） |
 | `cryptool` | - | 文本对称加密（genkey/encrypt/decrypt，cryptography Fernet + PBKDF2-HMAC-SHA256），依赖 `fcmd[crypto]` |
 
 ### 数据格式
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `xmltool` | - | XML 处理（pretty/get/keys/validate） |
+| `xmltool` | - | XML 处理（pretty/extract/minify/validate） |
 | `yamtool` | - | YAML 处理（pretty/get/keys/validate） |
 | `inifile` | - | INI 处理（get/set/list/keys，基于 configparser） |
 | `tomltool` | - | TOML 处理（get/keys/format/validate，基于标准库 tomllib） |
@@ -173,7 +173,7 @@ fcmd completion --shell fish | source         # fish
 | `clr` | - | 跨平台清屏 |
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
-| `iptool` | - | IP 地址工具（本机 IP/公网 IP/子网计算） |
+| `iptool` | - | IP 地址工具（parse/subnet/validate） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
 | `urlcheck` | - | URL 可访问性与访问速度检测（HEAD/GET 探测 + 并发测速排序，供镜像源选优） |
 | `websave` | - | 网页内容保存（主页及同源相关子页面，过滤广告/静态资源） |

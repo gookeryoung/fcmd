@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 from fcmd.core.errors import FcmdError
 from fcmd.core.execution.executors import run as run_graph
 from fcmd.core.orchestration.yaml_loader import load_yaml
@@ -44,7 +44,7 @@ def run(argv: list[str]) -> int:
     try:
         graph = load_yaml(parsed.file)
     except (OSError, ValueError) as e:
-        get_console().print(f"[red]错误:[/red] 加载 YAML 失败: {e}")
+        print_error(f"加载 YAML 失败: {e}")
         return 1
 
     only = [parsed.job] if parsed.job else None
@@ -57,7 +57,7 @@ def run(argv: list[str]) -> int:
             only=only,
         )
     except FcmdError as e:
-        get_console().print(f"[red]错误:[/red] {e}")
+        print_error(str(e))
         return 1
 
     if report.success:

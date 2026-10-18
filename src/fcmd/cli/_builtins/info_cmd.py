@@ -8,7 +8,7 @@ from typing import Any
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
 from fcmd.cli._discovery import aliases_for, import_all_tool_modules, load_tool_subs, resolve_tool, tool_description
 from fcmd.cli._discovery import tool_names as _tool_names
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 
 __all__ = ["run"]
 
@@ -51,7 +51,7 @@ def run(argv: list[str]) -> int:
     # 子命令详情：subcommand 可能是 None（单命令工具），用 .get 兼容
     spec = subs.get(parsed.subcommand)
     if spec is None:
-        get_console().print(f"[red]错误:[/red] 工具 {resolved!r} 没有子命令 {parsed.subcommand!r}")
+        print_error(f"工具 {resolved!r} 没有子命令 {parsed.subcommand!r}")
         return 1
     _info_subcommand(resolved, spec)
     return 0

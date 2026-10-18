@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Literal
 
 import fcmd
-from fcmd.console import get_console
+from fcmd.console import print_error
+from fcmd.core.filefilter import DEFAULT_IGNORE_SPEC
 from fcmd.core.models import BumpPart, IgnoreSpec, Version, parse_version, run_command, should_ignore
 
 __all__ = [
@@ -55,9 +56,10 @@ _INIT_VERSION_PATTERN = re.compile(
     re.MULTILINE,
 )
 
-# 扫描时忽略的目录（用 IgnoreSpec 统一描述，供 should_ignore 使用）
-_IGNORE_SPEC: IgnoreSpec = IgnoreSpec.from_iterable(
-    [".venv", "venv", ".git", "__pycache__", ".tox", "node_modules", "build", "dist", ".eggs"]
+# 扫描时忽略的目录（默认忽略规则 + 虚拟环境/构建产物目录）
+_IGNORE_SPEC: IgnoreSpec = IgnoreSpec(
+    dirs=DEFAULT_IGNORE_SPEC.dirs | {"venv", ".eggs"},
+    patterns=DEFAULT_IGNORE_SPEC.patterns,
 )
 
 
@@ -157,7 +159,7 @@ def _write_version_to_file(file_path: Path, new_version: str) -> bool:
     try:
         content = file_path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
-        get_console().print(f"[red]错误:[/red] 读取文件 {file_path} 失败: {e}")
+        print_error(f"读取文件 {file_path} 失败: {e}")
         return False
 
     match = pattern.search(content)
@@ -170,7 +172,7 @@ def _write_version_to_file(file_path: Path, new_version: str) -> bool:
     try:
         file_path.write_text(content, encoding="utf-8")
     except OSError as e:
-        get_console().print(f"[red]错误:[/red] 更新文件 {file_path} 版本号时出错: {e}")
+        print_error(f"更新文件 {file_path} 版本号时出错: {e}")
         return False
 
     return True
@@ -221,7 +223,7 @@ def bump_file_version(file_path: Path, part: BumpVersionType = "patch") -> str |
     """
     version = _read_version(file_path)
     if version is None:
-        get_console().print(f"[red]错误:[/red] 文件 {file_path} 中未找到版本号模式")
+        print_error(f"文件 {file_path} 中未找到版本号模式")
         return None
 
     new_version = version.bump(BumpPart(part))
@@ -258,7 +260,7 @@ def bump_project_version(part: BumpVersionType = "patch", no_tag: bool = False) 
         bump_part = BumpPart(part)
     except ValueError:
         valid_parts = [p.value for p in BumpPart]
-        get_console().print(f"[red]错误:[/red] 无效的版本部分 {part!r}，必须是 {valid_parts}")
+        print_error(f"无效的版本部分 {part!r}，必须是 {valid_parts}")
         return None
 
     all_files = _collect_version_files(Path.cwd())

@@ -154,6 +154,34 @@ def test_tool_description_import_error_returns_empty(monkeypatch: pytest.MonkeyP
     assert discovery_mod.tool_description("broken") == ""
 
 
+def test_import_tool_module_unregistered_returns_none() -> None:
+    """未登记的工具名无需导入，直接返回 None。"""
+    from fcmd.cli import _discovery as discovery_mod
+
+    assert discovery_mod.import_tool_module("ghost_never_registered") is None
+
+
+def test_import_tool_module_success_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """已登记且可导入的模块返回 None。"""
+    from fcmd.cli import _discovery as discovery_mod
+
+    monkeypatch.setitem(discovery_mod._TOOL_MODULES, "fake_ok", "fcmd.console")
+    assert discovery_mod.import_tool_module("fake_ok") is None
+
+
+def test_import_tool_module_returns_oserror(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OSError（原生库缺失）时返回异常对象本身，供调用方决定报错方式。"""
+    from fcmd.cli import _discovery as discovery_mod
+
+    def _raise_oserror(_name: str) -> None:
+        raise OSError("native library missing")
+
+    monkeypatch.setitem(discovery_mod._TOOL_MODULES, "fake_os", "fcmd.cli.fake_os")
+    monkeypatch.setattr(discovery_mod.importlib, "import_module", _raise_oserror)
+    error = discovery_mod.import_tool_module("fake_os")
+    assert isinstance(error, OSError)
+
+
 def test_tool_description_with_description_field(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 优先返回 spec.description（非空时立即返回）。"""
     from fcmd.cli import _discovery as discovery_mod
@@ -295,6 +323,31 @@ class TestToolDiscovery:
         discovery_mod.ensure_tools_discovered()
         for name in discovery_mod._TOOL_MODULES:
             assert not name.startswith("_"), f"私有模块 {name!r} 不应被发现"
+
+    def test_discovery_excludes_internal_envdev_modules(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """内部辅助模块（envdev_core/go/java/node）不算工具，envdev 本体保留。"""
+        from fcmd.cli import _discovery as discovery_mod
+
+        monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
+        monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        discovery_mod.ensure_tools_discovered()
+        names = discovery_mod.tool_names()
+        for leaked in ("envdev_core", "envdev_go", "envdev_java", "envdev_node"):
+            assert leaked not in names, f"内部模块 {leaked!r} 泄漏到工具列表"
+            assert leaked not in discovery_mod._TOOL_MODULES
+        assert "envdev" in names
+
+    def test_register_tool_drops_module_without_subs(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """导入成功但未注册任何子命令的模块从映射与别名表移除。"""
+        import types
+
+        from fcmd.cli import _discovery as discovery_mod
+
+        monkeypatch.setattr(discovery_mod.importlib, "import_module", lambda _name: types.SimpleNamespace())
+        discovery_mod._register_tool("fcmd.tools.dev.fake_helper", "fake_helper")
+        assert "fake_helper" not in discovery_mod._TOOL_MODULES
+        assert "fake_helper" not in discovery_mod._TOOL_ALIASES
 
     def test_discovery_does_not_override_mock_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """discovery 用 setdefault，不覆盖测试注入的键。"""

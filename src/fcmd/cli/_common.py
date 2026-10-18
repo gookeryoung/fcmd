@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import difflib
 
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 
 __all__ = ["_BUILTIN_COMMANDS", "print_unknown_tool"]
 
@@ -21,7 +21,7 @@ def print_unknown_tool(name: str) -> None:
     from fcmd.cli._discovery import _TOOL_ALIASES
 
     console = get_console()
-    console.print(f"[red]错误:[/red] 未知工具 [yellow]{name!r}[/yellow]")
+    print_error(f"未知工具 [yellow]{name!r}[/yellow]")
     suggestions = difflib.get_close_matches(name, list(_TOOL_ALIASES), n=3, cutoff=0.5)
     if suggestions:
         console.print(f"[dim]是否想用: {', '.join(suggestions)}[/dim]")

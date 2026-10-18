@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from fcmd._lazyload import lazy_dir, lazy_getattr
+
 __all__ = [
     "Context",
     "CycleError",
@@ -107,26 +109,10 @@ _LAZY_ATTRS: dict[str, tuple[str, str | None]] = {
 
 
 def __getattr__(name: str) -> Any:
-    """懒加载公共 API 符号与子模块。
-
-    首次访问时从对应模块导入并缓存到 ``globals()``，后续直接命中。
-    """
-    mapping = _LAZY_ATTRS.get(name)
-    if mapping is None:
-        raise AttributeError(f"module 'fcmd.core' has no attribute {name!r}")
-    module_path, attr_name = mapping
-    import importlib
-
-    module = importlib.import_module(module_path)
-    if attr_name is None:
-        # 请求子模块自身（如 ``from fcmd.core import toolkit``）
-        value = module
-    else:
-        value = getattr(module, attr_name)
-    globals()[name] = value  # 缓存到全局，后续直接命中
-    return value
+    """懒加载公共 API 符号与子模块（实现见 :func:`fcmd._lazyload.lazy_getattr`）。"""
+    return lazy_getattr(__name__, _LAZY_ATTRS, name, globals())
 
 
 def __dir__() -> list[str]:
     """补全建议。"""
-    return sorted(set(globals()) | set(__all__))
+    return lazy_dir(globals(), __all__)

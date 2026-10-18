@@ -28,7 +28,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 from collections.abc import Sequence
 
@@ -40,10 +39,11 @@ from fcmd.cli._discovery import (
     _TOOL_MODULES,
     aliases_for,
     ensure_tools_discovered,
+    import_tool_module,
     resolve_tool,
     tool_description,
 )
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 __all__ = ["FcmdApp", "main"]
@@ -123,21 +123,18 @@ class FcmdApp:
         console.print("  [cyan]fcmd --version[/cyan]           # 查看版本")
 
     def _run_tool(self, tool_name: str, argv: list[str]) -> int:
-        """运行工具：importlib 懒加载模块触发 @tool 注册，再调 run_tool。
+        """运行工具：导入模块触发 @tool 注册，再调 run_tool。
 
         DSL 声明式命令无模块映射（已在 ``ensure_tools_discovered`` 时
         注册进 ``_TOOL_REGISTRY``），直接走 ``run_tool``。
         """
-        module_path = _TOOL_MODULES.get(tool_name)
-        if module_path is not None:
-            try:
-                importlib.import_module(module_path)
-            except (ImportError, OSError) as e:
-                # OSError：原生动态库缺失，与 ImportError 同样友好报错
-                get_console().print(f"[red]错误:[/red] 加载工具 {tool_name!r} 失败: {e}")
-                return 1
-        elif tool_name not in _TOOL_REGISTRY:
-            get_console().print(f"[red]错误:[/red] 工具 {tool_name!r} 无模块映射")
+        error = import_tool_module(tool_name)
+        if error is not None:
+            # OSError：原生动态库缺失，与 ImportError 同样友好报错
+            print_error(f"加载工具 {tool_name!r} 失败: {error}")
+            return 1
+        if tool_name not in _TOOL_MODULES and tool_name not in _TOOL_REGISTRY:
+            print_error(f"工具 {tool_name!r} 无模块映射")
             return 1
 
         return run_tool(tool_name, argv)

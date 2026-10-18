@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from fcmd.cli._common import print_unknown_tool
 from fcmd.cli._discovery import resolve_tool
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 from fcmd.core.errors import FcmdError
 from fcmd.core.toolkit import build_tool_graph
 
@@ -56,7 +56,7 @@ def run(argv: list[str]) -> int:
     try:
         graph = build_tool_graph(resolved, parsed.subcommand)
     except FcmdError as e:
-        get_console().print(f"[red]错误:[/red] {e}")
+        print_error(str(e))
         return 1
 
     if parsed.format == "tree":

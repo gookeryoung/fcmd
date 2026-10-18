@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from fcmd.cli._profiler_helpers import inject_run_hook, output_profile, run_target_script
-from fcmd.console import get_console
+from fcmd.console import get_console, print_error
 
 __all__ = ["run"]
 
@@ -64,7 +64,7 @@ def run(argv: list[str]) -> int:
 
     script_path = Path(parsed.script).resolve()
     if not script_path.is_file():
-        get_console().print(f"[red]错误:[/red] 脚本不存在: {script_path}")
+        print_error(f"脚本不存在: {script_path}")
         return 2
 
     # 注入 hook 捕获 run() 调用
@@ -91,7 +91,7 @@ def run(argv: list[str]) -> int:
     report = captured.get("report")
     graph = captured.get("graph")
     if report is None or graph is None:
-        get_console().print("[red]错误:[/red] 未捕获到 fcmd.run() 调用，无法生成性能报告")
+        print_error("未捕获到 fcmd.run() 调用，无法生成性能报告")
         get_console().print("[dim]请确保脚本通过 fcmd.run() 执行任务流图[/dim]")
         return 1
 
