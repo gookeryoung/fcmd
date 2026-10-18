@@ -172,3 +172,68 @@ class TestComputeActionImpls:
         assert get_action("pip_filter").func(packages=["fcmd", "requests"]) == ["requests"]
         assert get_action("pip_filter").func(packages=["fcmd"]) == []
         assert "跳过受保护的包: fcmd" in capsys.readouterr().out
+
+
+class TestActionErrorGuard:
+    """action(errors=...) 统一错误捕获语义。"""
+
+    @staticmethod
+    def _cleanup(name: str) -> None:
+        """移除测试期临时注册的动作，避免污染其他用例。"""
+        from fcmd.dsl.actions import _ACTIONS
+
+        _ACTIONS.pop(name, None)
+
+    def test_errors_capture_prints_and_swallows(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """errors 内的异常转为错误行输出，函数返回 None（不抛异常）。"""
+
+        @action("_test_guarded", errors=(ValueError,))
+        def _boom(value: str) -> None:
+            raise ValueError(f"bad {value}")
+
+        try:
+            assert get_action("_test_guarded").func(value="x") is None
+        finally:
+            self._cleanup("_test_guarded")
+        assert "错误: bad x" in capsys.readouterr().out
+
+    def test_error_prefix(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """error_prefix 拼接到错误消息前。"""
+
+        @action("_test_guarded_prefix", errors=(ValueError,), error_prefix="请求失败: ")
+        def _boom() -> None:
+            raise ValueError("boom")
+
+        try:
+            get_action("_test_guarded_prefix").func()
+        finally:
+            self._cleanup("_test_guarded_prefix")
+        assert "错误: 请求失败: boom" in capsys.readouterr().out
+
+    def test_unlisted_exception_bubbles(self) -> None:
+        """未列入 errors 的异常继续冒泡（真实 bug 不被吞掉）。"""
+
+        @action("_test_guarded_bubble", errors=(ValueError,))
+        def _boom() -> None:
+            raise RuntimeError("bug")
+
+        try:
+            with pytest.raises(RuntimeError, match="bug"):
+                get_action("_test_guarded_bubble").func()
+        finally:
+            self._cleanup("_test_guarded_bubble")
+
+    def test_signature_preserved(self) -> None:
+        """包装后 inspect.signature 仍返回原函数签名（synth 签名拷贝依赖）。"""
+        import inspect
+
+        @action("_test_guarded_sig", errors=(ValueError,))
+        def _fn(name: str, count: int = 2) -> None:
+            raise ValueError(name)
+
+        try:
+            sig = inspect.signature(get_action("_test_guarded_sig").func)
+        finally:
+            self._cleanup("_test_guarded_sig")
+        assert list(sig.parameters) == ["name", "count"]
+        assert sig.parameters["count"].default == 2

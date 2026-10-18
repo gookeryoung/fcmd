@@ -12,6 +12,12 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
     def _setenv(name: str, value: str, default: bool = False) -> None:
         ...
 
+错误呈现：整段函数体处于同一 try/except、且「错误信息即结果」的动作，
+经 ``errors`` 声明预期内的用户输入错误类型，注册期由 :func:`_guarded`
+统一包装（打印 ``错误: {异常}`` 并保持退出码 0）；未列入 ``errors`` 的
+异常继续冒泡，由引擎任务失败机制捕获。分支内局部 try/except（如需自定义
+错误前缀或错误后继续执行）保留手写。
+
 约束：实现函数的参数名不得命中全局选项保留名（dry_run/quiet/strategy，
 由 :mod:`fcmd.dsl.decl` 声明期校验）。两类语义：
 
@@ -39,6 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import wraps
 from typing import Any
 
 __all__ = ["Action", "action", "action_names", "get_action", "has_action", "run_and_print"]
@@ -66,8 +73,36 @@ class Action:
 _ACTIONS: dict[str, Action] = {}
 
 
+def _guarded(
+    func: Callable[..., Any],
+    errors: tuple[type[BaseException], ...],
+    error_prefix: str,
+) -> Callable[..., Any]:
+    """包装动作实现：捕获 ``errors`` 内的异常并以 ``错误: {前缀}{异常}`` 输出。
+
+    错误信息即结果（保持退出码 0），与既有手写 try/except 语义一致；
+    未列入 ``errors`` 的异常继续冒泡，由引擎按任务失败处理。
+    ``functools.wraps`` 保留 ``__wrapped__``，``inspect.signature`` 仍返回
+    原函数签名（:mod:`fcmd.dsl.synth` 的签名拷贝依赖该语义）。
+    """
+
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return func(*args, **kwargs)
+        except errors as error:
+            print(f"错误: {error_prefix}{error}")
+            return None
+
+    return wrapper
+
+
 def action(
-    name: str, param_help: Mapping[str, str] | None = None
+    name: str,
+    param_help: Mapping[str, str] | None = None,
+    *,
+    errors: tuple[type[BaseException], ...] = (),
+    error_prefix: str = "",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """注册内建动作的装饰器（模块导入期执行，重复注册为编程错误）。
 
@@ -77,18 +112,24 @@ def action(
         动作名（TOML ``action = "<名>"`` 引用，须匹配工具名风格）
     param_help:
         参数帮助文本（``{参数名: 帮助}``）
+    errors:
+        预期内的用户输入错误类型：捕获后打印 ``错误: {异常}`` 并保持
+        退出码 0；为空表示不包装（异常照常冒泡）
+    error_prefix:
+        错误消息前缀（如 ``"请求失败: "``），仅在声明 ``errors`` 时生效
 
     Returns
     -------
     Callable
-        装饰器（原函数原样返回）
+        装饰器（返回注册的实现函数；声明 ``errors`` 时为其包装函数）
     """
 
     def deco(func: Callable[..., Any]) -> Callable[..., Any]:
         if name in _ACTIONS:
             raise ValueError(f"内建动作 {name!r} 重复注册")
-        _ACTIONS[name] = Action(name=name, func=func, param_help=dict(param_help or {}))
-        return func
+        target = _guarded(func, errors, error_prefix) if errors else func
+        _ACTIONS[name] = Action(name=name, func=target, param_help=dict(param_help or {}))
+        return target
 
     return deco
 
@@ -119,12 +160,12 @@ def run_and_print(
     换算类动作的共用外壳：参数或输入非法时抛 ``ValueError``，此处捕获后以
     ``[red]错误:[/red]`` 呈现并保持退出码 0（错误信息即结果，非任务失败）。
     """
-    from fcmd.console import get_console  # 延迟导入避免包级循环
+    from fcmd.console import print_error  # 延迟导入避免包级循环
 
     try:
         result = fn(*args, **kwargs)
     except exc as error:
-        get_console().print(f"[red]错误:[/red] {error}")
+        print_error(str(error))
         return
     print(result)
 

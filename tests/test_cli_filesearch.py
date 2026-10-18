@@ -144,6 +144,13 @@ class TestReadTextLines:
         with pytest.raises(ValueError, match="二进制文件"):
             read_text_lines(f)
 
+    def test_custom_binary_message(self, tmp_path: Path) -> None:
+        """``binary_message`` 定制二进制错误文案（textdiff 复用场景）。"""
+        f = tmp_path / "bin.dat"
+        f.write_bytes(b"abc\x00def")
+        with pytest.raises(ValueError, match="二进制文件不支持比较"):
+            read_text_lines(f, binary_message="二进制文件不支持比较")
+
     def test_utf8_decode_fallback(self, tmp_path: Path) -> None:
         """utf-8 解码失败时回退为 replace（不抛异常）。"""
         f = tmp_path / "mixed.txt"

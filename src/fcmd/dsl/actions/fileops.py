@@ -38,16 +38,24 @@ def is_binary_file(path: Path) -> bool:
     return b"\x00" in chunk
 
 
-def read_text_lines(path: Path) -> list[str]:
+def read_text_lines(path: Path, *, binary_message: str = "二进制文件") -> list[str]:
     """读取文本文件所有行（保留行尾），utf-8 失败时回退为 replace。"""
     if is_binary_file(path):
-        raise ValueError(f"二进制文件: {path}")
+        raise ValueError(f"{binary_message}: {path}")
     try:
         with path.open("r", encoding="utf-8") as f:
             return f.readlines()
     except UnicodeDecodeError:
         with path.open("r", encoding="utf-8", errors="replace") as f:
             return f.readlines()
+
+
+def _ensure_directory(directory: Path) -> None:
+    """校验目录存在且为目录，不满足时抛对应异常。"""
+    if not directory.exists():
+        raise FileNotFoundError(f"目录不存在: {directory}")
+    if not directory.is_dir():
+        raise NotADirectoryError(f"不是目录: {directory}")
 
 
 def search_by_name(
@@ -57,10 +65,7 @@ def search_by_name(
     ignore_dirs: set[str] | None = None,
 ) -> list[Path]:
     """按文件名 glob 模式递归搜索目录。"""
-    if not directory.exists():
-        raise FileNotFoundError(f"目录不存在: {directory}")
-    if not directory.is_dir():
-        raise NotADirectoryError(f"不是目录: {directory}")
+    _ensure_directory(directory)
     if ignore_dirs is None:
         spec = DEFAULT_IGNORE_SPEC
     else:
@@ -86,10 +91,7 @@ def search_by_content(
     ignore_dirs: set[str] | None = None,
 ) -> list[tuple[Path, int, str]]:
     """按文件内容正则递归搜索。"""
-    if not directory.exists():
-        raise FileNotFoundError(f"目录不存在: {directory}")
-    if not directory.is_dir():
-        raise NotADirectoryError(f"不是目录: {directory}")
+    _ensure_directory(directory)
     regex = re.compile(pattern)
     if ignore_dirs is None:
         spec = DEFAULT_IGNORE_SPEC
@@ -125,6 +127,7 @@ def search_by_content(
         "pattern": "文件名 glob 模式（fnmatch 语法，如 *.py）",
         "include_dirs": "是否同时返回匹配的目录",
     },
+    errors=(FileNotFoundError, NotADirectoryError),
 )
 def filesearch_name(
     directory: Path,
@@ -132,11 +135,7 @@ def filesearch_name(
     include_dirs: bool = False,
 ) -> None:
     """按文件名 glob 模式递归搜索目录。"""
-    try:
-        results = search_by_name(directory, pattern, include_dirs=include_dirs)
-    except (FileNotFoundError, NotADirectoryError) as exc:
-        print(f"错误: {exc}")
-        return
+    results = search_by_name(directory, pattern, include_dirs=include_dirs)
     if not results:
         print("（无匹配）")
         return
@@ -247,15 +246,12 @@ def pathtool_show(path: Path) -> None:
         "path": "目标路径",
         "base": "基准路径",
     },
+    errors=(ValueError,),
+    error_prefix="无法计算相对路径: ",
 )
 def pathtool_rel(path: Path, base: Path) -> None:
     """计算 ``path`` 相对 ``base`` 的相对路径。"""
-    try:
-        rel = relative_to(path, base)
-    except ValueError as exc:
-        print(f"错误: 无法计算相对路径: {exc}")
-        return
-    print(str(rel))
+    print(str(relative_to(path, base)))
 
 
 @action("pathtool_norm", param_help={"path": "待规范化的路径"})

@@ -29,6 +29,13 @@ from typing import Any
 
 from ..actions import action
 
+
+def _require_file(filepath: Path) -> None:
+    """校验文件存在，缺失时抛 ``FileNotFoundError``（消息含路径）。"""
+    if not filepath.exists():
+        raise FileNotFoundError(f"文件不存在: {filepath}")
+
+
 # ============================================================================
 # csvtool 常量
 # ============================================================================
@@ -44,8 +51,7 @@ _MAX_COL_WIDTH = 30
 
 def read_csv(filepath: Path, has_header: bool = True) -> tuple[list[str] | None, list[list[str]]]:
     """读取 CSV 文件，返回表头与数据行。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     with filepath.open("r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         all_rows = list(reader)
@@ -81,8 +87,7 @@ def csv_to_json(filepath: Path, indent: int = 2) -> str:
 
 def json_to_csv(filepath: Path) -> tuple[list[str], list[list[str]]]:
     """JSON 文件转 CSV 数据。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     with filepath.open("r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list):
@@ -204,14 +209,11 @@ def format_table(header: list[str] | None, rows: list[list[str]], max_width: int
         "rows": "显示的行数（默认 5）",
         "header": "首行是否为表头（默认 True，使用 --no-header 关闭）",
     },
+    errors=(FileNotFoundError,),
 )
 def csvtool_show(file: Path, rows: int = 5, header: bool = True) -> None:
     """预览 CSV 前几行（show 子命令）。"""
-    try:
-        hdr, data = read_csv(file, has_header=header)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
+    hdr, data = read_csv(file, has_header=header)
     preview_rows = data[:rows]
     print(format_table(hdr, preview_rows))
     print(f"\n共 {len(data)} 行（显示前 {len(preview_rows)} 行）")
@@ -223,15 +225,11 @@ def csvtool_show(file: Path, rows: int = 5, header: bool = True) -> None:
         "file": "CSV 文件路径",
         "indent": "JSON 缩进空格数（默认 2）",
     },
+    errors=(FileNotFoundError,),
 )
 def csvtool_to_json(file: Path, indent: int = 2) -> None:
     """CSV 转 JSON（to-json 子命令）。"""
-    try:
-        text = csv_to_json(file, indent=indent)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
-    print(text)
+    print(csv_to_json(file, indent=indent))
 
 
 @action(
@@ -240,14 +238,11 @@ def csvtool_to_json(file: Path, indent: int = 2) -> None:
         "file": "JSON 文件路径",
         "output": "输出 CSV 路径（默认: 同名 .csv 文件）",
     },
+    errors=(FileNotFoundError, ValueError),
 )
 def csvtool_from_json(file: Path, output: str = "") -> None:
     """JSON 转 CSV（from-json 子命令）。"""
-    try:
-        header, rows = json_to_csv(file)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"错误: {exc}")
-        return
+    header, rows = json_to_csv(file)
     out_path = Path(output) if output else file.with_suffix(".csv")
     write_csv(out_path, rows, header=header)
     print(f"转换完成: {file} -> {out_path}（{len(rows)} 行）")
@@ -260,22 +255,15 @@ def csvtool_from_json(file: Path, output: str = "") -> None:
         "columns": "欲保留的列名（按输出顺序）",
         "output": "输出 CSV 路径（默认: 打印到标准输出）",
     },
+    errors=(FileNotFoundError, ValueError),
 )
 def csvtool_select(file: Path, columns: list[str], output: str = "") -> None:
     """按列筛选 CSV（select 子命令）。"""
-    try:
-        header, rows = read_csv(file, has_header=True)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
+    header, rows = read_csv(file, has_header=True)
     if header is None:
         print("CSV 文件为空")
         return
-    try:
-        new_header, new_rows = select_columns(rows, header, columns)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    new_header, new_rows = select_columns(rows, header, columns)
     if output:
         write_csv(Path(output), new_rows, header=new_header)
         print(f"筛选完成: {file} -> {output}（{len(new_rows)} 行）")
@@ -290,14 +278,11 @@ def csvtool_select(file: Path, columns: list[str], output: str = "") -> None:
         "mode": "合并模式（union 或 intersection，默认 union）",
         "output": "输出 CSV 路径（默认: 打印到标准输出）",
     },
+    errors=(ValueError, FileNotFoundError),
 )
 def csvtool_merge(files: list[Path], mode: str = "union", output: str = "") -> None:
     """合并多个 CSV（merge 子命令）。"""
-    try:
-        header, rows = merge_csvs(files, mode=mode)
-    except (ValueError, FileNotFoundError) as exc:
-        print(f"错误: {exc}")
-        return
+    header, rows = merge_csvs(files, mode=mode)
     if output:
         write_csv(Path(output), rows, header=header)
         print(f"合并完成: {len(files)} 个文件 -> {output}（{len(rows)} 行）")
@@ -312,8 +297,7 @@ def csvtool_merge(files: list[Path], mode: str = "union", output: str = "") -> N
 
 def read_ini(filepath: Path) -> configparser.ConfigParser:
     """读取 INI 文件并解析为 ConfigParser 对象。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     config = configparser.ConfigParser()
     config.read(filepath, encoding="utf-8")
     return config
@@ -365,15 +349,11 @@ def list_ini_keys(filepath: Path, section: str) -> list[str]:
         "section": "section 名",
         "key": "key 名",
     },
+    errors=(FileNotFoundError, KeyError, configparser.NoOptionError, configparser.Error),
 )
 def inifile_get(file: Path, section: str, key: str) -> None:
     """获取指定 section.key 的值（get 子命令）。"""
-    try:
-        value = get_ini_value(file, section, key)
-    except (FileNotFoundError, KeyError, configparser.NoOptionError, configparser.Error) as exc:
-        print(f"错误: {exc}")
-        return
-    print(value)
+    print(get_ini_value(file, section, key))
 
 
 @action(
@@ -384,28 +364,22 @@ def inifile_get(file: Path, section: str, key: str) -> None:
         "key": "key 名",
         "value": "要设置的值",
     },
+    errors=(FileNotFoundError, configparser.Error),
 )
 def inifile_set(file: Path, section: str, key: str, value: str) -> None:
     """设置 section.key 的值并写回文件（set 子命令）。"""
-    try:
-        set_ini_value(file, section, key, value)
-    except (FileNotFoundError, configparser.Error) as exc:
-        print(f"错误: {exc}")
-        return
+    set_ini_value(file, section, key, value)
     print(f"已设置 [{section}] {key} = {value}")
 
 
 @action(
     "inifile_list",
     param_help={"file": "INI 文件路径"},
+    errors=(FileNotFoundError, configparser.Error),
 )
 def inifile_list(file: Path) -> None:
     """列出所有 section（list 子命令）。"""
-    try:
-        sections = list_ini_sections(file)
-    except (FileNotFoundError, configparser.Error) as exc:
-        print(f"错误: {exc}")
-        return
+    sections = list_ini_sections(file)
     if not sections:
         print("无 section")
         return
@@ -419,14 +393,11 @@ def inifile_list(file: Path) -> None:
         "file": "INI 文件路径",
         "section": "section 名",
     },
+    errors=(FileNotFoundError, KeyError, configparser.Error),
 )
 def inifile_keys(file: Path, section: str) -> None:
     """列出 section 的所有 key（keys 子命令）。"""
-    try:
-        keys = list_ini_keys(file, section)
-    except (FileNotFoundError, KeyError, configparser.Error) as exc:
-        print(f"错误: {exc}")
-        return
+    keys = list_ini_keys(file, section)
     if not keys:
         print(f"section {section!r} 无 key")
         return
@@ -441,8 +412,7 @@ def inifile_keys(file: Path, section: str) -> None:
 
 def read_json(filepath: Path) -> Any:
     """读取 JSON 文件并解析为 Python 对象。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     with filepath.open("r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -510,29 +480,21 @@ def sort_keys(data: Any) -> Any:
         "file": "JSON 文件路径",
         "indent": "缩进空格数（默认 2）",
     },
+    errors=(FileNotFoundError,),
 )
 def jsontool_pretty(file: Path, indent: int = 2) -> None:
     """格式化打印 JSON（pretty 子命令）。"""
-    try:
-        data = read_json(file)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
-    print(pretty_json(data, indent=indent))
+    print(pretty_json(read_json(file), indent=indent))
 
 
 @action(
     "jsontool_minify",
     param_help={"file": "JSON 文件路径"},
+    errors=(FileNotFoundError,),
 )
 def jsontool_minify(file: Path) -> None:
     """压缩 JSON 为单行（minify 子命令）。"""
-    try:
-        data = read_json(file)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
-    print(minify_json(data))
+    print(minify_json(read_json(file)))
 
 
 @action(
@@ -541,19 +503,11 @@ def jsontool_minify(file: Path) -> None:
         "file": "JSON 文件路径",
         "path": "点分路径（如 a.b.0.c）",
     },
+    errors=(FileNotFoundError, KeyError, IndexError, TypeError, ValueError),
 )
 def jsontool_query(file: Path, path: str) -> None:
     """按点路径查询 JSON（query 子命令）。"""
-    try:
-        data = read_json(file)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
-    try:
-        result = query_json(data, path)
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        print(f"错误: {exc}")
-        return
+    result = query_json(read_json(file), path)
     if isinstance(result, (dict, list)):
         print(pretty_json(result))
     else:
@@ -566,15 +520,11 @@ def jsontool_query(file: Path, path: str) -> None:
         "file": "JSON 文件路径",
         "output": "输出 JSON 路径（默认: 打印到标准输出）",
     },
+    errors=(FileNotFoundError,),
 )
 def jsontool_sort(file: Path, output: str = "") -> None:
     """按键排序 JSON（sort 子命令）。"""
-    try:
-        data = read_json(file)
-    except FileNotFoundError as exc:
-        print(f"错误: {exc}")
-        return
-    sorted_data = sort_keys(data)
+    sorted_data = sort_keys(read_json(file))
     if output:
         write_json(Path(output), sorted_data)
         print(f"排序完成: {file} -> {output}")
@@ -589,8 +539,7 @@ def jsontool_sort(file: Path, output: str = "") -> None:
 
 def read_toml(filepath: Path) -> dict[str, Any]:
     """读取 TOML 文件并解析为字典。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     with filepath.open("rb") as f:
         return tomllib.load(f)
 
@@ -636,14 +585,11 @@ def validate_toml(filepath: Path) -> None:
         "file": "TOML 文件路径",
         "key": "点分路径（如 project.name）",
     },
+    errors=(FileNotFoundError, KeyError, ImportError),
 )
 def tomltool_get(file: Path, key: str) -> None:
     """按点路径取值（get 子命令）。"""
-    try:
-        result = get_toml_value(file, key)
-    except (FileNotFoundError, KeyError, ImportError) as exc:
-        print(f"错误: {exc}")
-        return
+    result = get_toml_value(file, key)
     if isinstance(result, (dict, list)):
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
     else:
@@ -653,14 +599,11 @@ def tomltool_get(file: Path, key: str) -> None:
 @action(
     "tomltool_keys",
     param_help={"file": "TOML 文件路径"},
+    errors=(FileNotFoundError, ImportError),
 )
 def tomltool_keys(file: Path) -> None:
     """列出顶层键（keys 子命令）。"""
-    try:
-        keys = keys_toml(file)
-    except (FileNotFoundError, ImportError) as exc:
-        print(f"错误: {exc}")
-        return
+    keys = keys_toml(file)
     if not keys:
         print("无顶层键")
         return
@@ -671,28 +614,21 @@ def tomltool_keys(file: Path) -> None:
 @action(
     "tomltool_format",
     param_help={"file": "TOML 文件路径"},
+    errors=(FileNotFoundError, ImportError),
 )
 def tomltool_format(file: Path) -> None:
     """转为 JSON 格式化输出（format 子命令）。"""
-    try:
-        result = format_toml(file)
-    except (FileNotFoundError, ImportError) as exc:
-        print(f"错误: {exc}")
-        return
-    print(result)
+    print(format_toml(file))
 
 
 @action(
     "tomltool_validate",
     param_help={"file": "TOML 文件路径"},
+    errors=(FileNotFoundError, ValueError, ImportError),
 )
 def tomltool_validate(file: Path) -> None:
     """语法校验（validate 子命令）。"""
-    try:
-        validate_toml(file)
-    except (FileNotFoundError, ValueError, ImportError) as exc:
-        print(f"错误: {exc}")
-        return
+    validate_toml(file)
     print(f"语法校验通过: {file}")
 
 
@@ -708,8 +644,7 @@ def _indent_xml(element: ET.Element, space: str = "  ") -> None:
 
 def read_xml(filepath: Path) -> ET.Element:
     """读取 XML 文件并解析为根元素。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     return ET.parse(filepath).getroot()
 
 
@@ -770,8 +705,7 @@ def extract_xml(element: ET.Element, xpath: str) -> list[str]:
 
 def validate_xml(filepath: Path) -> None:
     """校验 XML 文件是否良构。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     ET.parse(filepath)
 
 
@@ -825,17 +759,14 @@ def xmltool_minify(file: Path) -> None:
         "file": "XML 文件路径",
         "xpath": "XPath 表达式（如 .//item/@id 或 .//item/title）",
     },
+    errors=(ET.ParseError,),
 )
 def xmltool_extract(file: Path, xpath: str) -> None:
     """按 XPath 提取值（extract 子命令）。"""
     root = _read_xml_or_print(file)
     if root is None:
         return
-    try:
-        values = extract_xml(root, xpath)
-    except ET.ParseError as exc:
-        print(f"错误: {exc}")
-        return
+    values = extract_xml(root, xpath)
     if not values:
         print(f"无命中: {xpath}")
         return
@@ -880,8 +811,7 @@ def _require_yaml_loader() -> Any:
 
 def read_yaml(filepath: Path) -> Any:
     """读取 YAML 文件并解析为 Python 对象。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     yaml_mod = _require_yaml_loader()
     with filepath.open("r", encoding="utf-8") as f:
         return yaml_mod.safe_load(f)
@@ -951,8 +881,7 @@ def keys_yaml(data: Any) -> list[str]:
 
 def validate_yaml(filepath: Path) -> None:
     """校验 YAML 文件是否语法正确。"""
-    if not filepath.exists():
-        raise FileNotFoundError(f"文件不存在: {filepath}")
+    _require_file(filepath)
     yaml_mod = _require_yaml_loader()
     with filepath.open("r", encoding="utf-8") as f:
         yaml_mod.safe_load(f)
@@ -985,16 +914,14 @@ def _read_yaml_or_print(filepath: Path) -> Any | None:
         "sort_keys": "是否按键名排序（默认 False）",
         "indent": "缩进空格数（默认 2）",
     },
+    errors=(ImportError,),
 )
 def yamtool_pretty(file: Path, sort_keys: bool = False, indent: int = 2) -> None:
     """格式化打印 YAML（pretty 子命令）。"""
     data = _read_yaml_or_print(file)
     if data is None:
         return
-    try:
-        print(pretty_yaml(data, sort_keys=sort_keys, indent=indent), end="")
-    except ImportError as exc:
-        print(f"错误: {exc}")
+    print(pretty_yaml(data, sort_keys=sort_keys, indent=indent), end="")
 
 
 @action(
@@ -1003,22 +930,16 @@ def yamtool_pretty(file: Path, sort_keys: bool = False, indent: int = 2) -> None
         "file": "YAML 文件路径",
         "path": "点分路径（如 a.b.0.c）",
     },
+    errors=(KeyError, IndexError, TypeError, ValueError, ImportError),
 )
 def yamtool_get(file: Path, path: str) -> None:
     """按点路径取值（get 子命令）。"""
     data = _read_yaml_or_print(file)
     if data is None:
         return
-    try:
-        result = get_yaml(data, path)
-    except (KeyError, IndexError, TypeError, ValueError) as exc:
-        print(f"错误: {exc}")
-        return
+    result = get_yaml(data, path)
     if isinstance(result, (dict, list)):
-        try:
-            print(pretty_yaml(result), end="")
-        except ImportError as exc:
-            print(f"错误: {exc}")
+        print(pretty_yaml(result), end="")
     else:
         print(result)
 
@@ -1026,18 +947,14 @@ def yamtool_get(file: Path, path: str) -> None:
 @action(
     "yamtool_keys",
     param_help={"file": "YAML 文件路径"},
+    errors=(TypeError,),
 )
 def yamtool_keys(file: Path) -> None:
     """列出顶层键（keys 子命令）。"""
     data = _read_yaml_or_print(file)
     if data is None:
         return
-    try:
-        keys = keys_yaml(data)
-    except TypeError as exc:
-        print(f"错误: {exc}")
-        return
-    for k in keys:
+    for k in keys_yaml(data):
         print(k)
 
 

@@ -87,13 +87,11 @@ def generate_bytes(length: int, encoding: str = "hex") -> str:
         "length": "密码长度（默认 16，>= 4）",
         "symbols": "是否包含符号字符",
     },
+    errors=(ValueError,),
 )
 def randtool_password(length: int = _DEFAULT_PASSWORD_LENGTH, symbols: bool = True) -> None:
     """生成强密码（password）子命令。"""
-    try:
-        print(generate_password(length, symbols))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(generate_password(length, symbols))
 
 
 @action(
@@ -102,13 +100,11 @@ def randtool_password(length: int = _DEFAULT_PASSWORD_LENGTH, symbols: bool = Tr
         "min_val": "最小值（含）",
         "max_val": "最大值（含）",
     },
+    errors=(ValueError,),
 )
 def randtool_number(min_val: int, max_val: int) -> None:
     """生成随机整数（number）子命令。"""
-    try:
-        print(generate_number(min_val, max_val))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(generate_number(min_val, max_val))
 
 
 @action(
@@ -117,13 +113,11 @@ def randtool_number(min_val: int, max_val: int) -> None:
         "length": "字符串长度（默认 16，> 0）",
         "chars": "自定义字符集（空串=字母+数字）",
     },
+    errors=(ValueError,),
 )
 def randtool_string(length: int = _DEFAULT_STRING_LENGTH, chars: str = "") -> None:
     """生成自定义字符集随机字符串（string）子命令。"""
-    try:
-        print(generate_string(length, chars))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(generate_string(length, chars))
 
 
 @action(
@@ -132,13 +126,11 @@ def randtool_string(length: int = _DEFAULT_STRING_LENGTH, chars: str = "") -> No
         "length": "字节长度（> 0）",
         "encoding": "输出编码：hex 或 base64",
     },
+    errors=(ValueError,),
 )
 def randtool_bytes(length: int, encoding: str = "hex") -> None:
     """生成随机字节（bytes）子命令。"""
-    try:
-        print(generate_bytes(length, encoding))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(generate_bytes(length, encoding))
 
 
 # ============================================================================

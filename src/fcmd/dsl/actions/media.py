@@ -75,6 +75,12 @@ SVG_TO_ICO_MAC_SIZES: tuple[tuple[int, int], ...] = (
 _MAX_RENDER_SIZE = 1024
 
 
+def _missing_dependency(package: str, extra: str) -> bool:
+    """打印可选依赖缺失提示并返回 False（供 ``_require_*`` 统一返回）。"""
+    print(f"未安装 {package} 库，请安装: pip install fcmd[{extra}]")
+    return False
+
+
 def _require_deps() -> bool:
     """检查 PIL + resvg-py 依赖，缺失时打印提示并返回 False。"""
     return _require_pil() and _require_resvg()
@@ -167,6 +173,7 @@ def icon_build(
         "format": "目标格式：win 或 mac（默认根据输出后缀推断，再默认 Windows）",
         "sizes": "自定义尺寸（不传使用格式默认）",
     },
+    errors=(FileNotFoundError, ValueError),
 )
 def img2ico_gen(
     input_path: Path,
@@ -178,11 +185,7 @@ def img2ico_gen(
     if not _require_deps():
         return
 
-    try:
-        canonical, used_sizes = icon_build(input_path, output_path, fmt=format, sizes=sizes)
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"错误: {exc}")
-        return
+    canonical, used_sizes = icon_build(input_path, output_path, fmt=format, sizes=sizes)
 
     print(f"图标已生成: {output_path}")
     print(f"格式: {canonical}")
@@ -197,8 +200,7 @@ def img2ico_gen(
 def _require_pil() -> bool:
     """Pillow 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PIL:
-        print("未安装 Pillow 库，请安装: pip install fcmd[img]")
-        return False
+        return _missing_dependency("Pillow", "img")
     global Image, ImageDraw, ImageFont  # 惰性导入需 global 注入模块，避免工具发现时加载
     if Image is None:
         from PIL import Image as _image
@@ -212,8 +214,7 @@ def _require_pil() -> bool:
 def _require_resvg() -> bool:
     """resvg-py 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_RESVG:
-        print("未安装 resvg-py 库，请安装: pip install fcmd[svg]")
-        return False
+        return _missing_dependency("resvg-py", "svg")
     global resvg_py  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     if resvg_py is None:
         import resvg_py as _resvg_py
@@ -818,8 +819,7 @@ from fcmd.core.models.pdf import MergeSpec, PageSelection, SplitSpec  # noqa: E4
 def _require_pymupdf() -> bool:
     """PyMuPDF 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PYMUPDF:
-        print("未安装 PyMuPDF 库，请安装: pip install fcmd[pdf]")
-        return False
+        return _missing_dependency("PyMuPDF", "pdf")
     global fitz  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     import fitz
 
@@ -829,8 +829,7 @@ def _require_pymupdf() -> bool:
 def _require_pypdf() -> bool:
     """pypdf 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PYPDF:
-        print("未安装 pypdf 库，请安装: pip install fcmd[pdf]")
-        return False
+        return _missing_dependency("pypdf", "pdf")
     global pypdf  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     import pypdf
 

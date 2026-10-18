@@ -161,6 +161,7 @@ def cryptool_genkey() -> None:
         "key": "加密密钥（与 password 二选一）",
         "env": "为 True 时从 FCMD_CRYPT_PASSWORD / FCMD_CRYPT_KEY 环境变量读取",
     },
+    errors=(ValueError,),
 )
 def cryptool_encrypt(text: str, password: str = "", key: str = "", env: bool = False) -> None:
     """加密文本（需指定 password 或 key，二选一）。"""
@@ -172,11 +173,7 @@ def cryptool_encrypt(text: str, password: str = "", key: str = "", env: bool = F
     if not password and not key:
         print("错误: 请指定 --password 或 --key")
         return
-    try:
-        result = _cryptool.encrypt(text, key) if key else _cryptool.encrypt_with_password(text, password)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    result = _cryptool.encrypt(text, key) if key else _cryptool.encrypt_with_password(text, password)
     print(f"加密结果: {result}")
 
 
@@ -188,6 +185,7 @@ def cryptool_encrypt(text: str, password: str = "", key: str = "", env: bool = F
         "key": "加密密钥（与 password 二选一）",
         "env": "为 True 时从 FCMD_CRYPT_PASSWORD / FCMD_CRYPT_KEY 环境变量读取",
     },
+    errors=(ValueError,),
 )
 def cryptool_decrypt(text: str, password: str = "", key: str = "", env: bool = False) -> None:
     """解密文本（需指定 password 或 key，二选一）。"""
@@ -199,9 +197,5 @@ def cryptool_decrypt(text: str, password: str = "", key: str = "", env: bool = F
     if not password and not key:
         print("错误: 请指定 --password 或 --key")
         return
-    try:
-        result = _cryptool.decrypt(text, key) if key else _cryptool.decrypt_with_password(text, password)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    result = _cryptool.decrypt(text, key) if key else _cryptool.decrypt_with_password(text, password)
     print(f"解密结果: {result}")

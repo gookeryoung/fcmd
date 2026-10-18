@@ -70,13 +70,12 @@ def http_head(url: str, timeout: int = _DEFAULT_TIMEOUT) -> dict[str, str]:
         "url": "目标 URL",
         "timeout": "超时秒数（默认 30）",
     },
+    errors=(HTTPError, URLError),
+    error_prefix="请求失败: ",
 )
 def nettool_get(url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
     """发送 HTTP GET 请求并打印响应体。"""
-    try:
-        print(http_get(url, timeout))
-    except (HTTPError, URLError) as exc:
-        print(f"错误: 请求失败: {exc}")
+    print(http_get(url, timeout))
 
 
 @action(
@@ -86,13 +85,12 @@ def nettool_get(url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
         "data": "请求体（默认空串）",
         "timeout": "超时秒数（默认 30）",
     },
+    errors=(HTTPError, URLError),
+    error_prefix="请求失败: ",
 )
 def nettool_post(url: str, data: str = "", timeout: int = _DEFAULT_TIMEOUT) -> None:
     """发送 HTTP POST 请求并打印响应体。"""
-    try:
-        print(http_post(url, data, timeout))
-    except (HTTPError, URLError) as exc:
-        print(f"错误: 请求失败: {exc}")
+    print(http_post(url, data, timeout))
 
 
 @action(
@@ -101,15 +99,13 @@ def nettool_post(url: str, data: str = "", timeout: int = _DEFAULT_TIMEOUT) -> N
         "url": "目标 URL",
         "timeout": "超时秒数（默认 30）",
     },
+    errors=(HTTPError, URLError),
+    error_prefix="请求失败: ",
 )
 def nettool_head(url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
     """发送 HTTP HEAD 请求并打印响应头。"""
-    try:
-        headers = http_head(url, timeout)
-        for key, value in headers.items():
-            print(f"{key}: {value}")
-    except (HTTPError, URLError) as exc:
-        print(f"错误: 请求失败: {exc}")
+    for key, value in http_head(url, timeout).items():
+        print(f"{key}: {value}")
 
 
 # ============================================================================
@@ -174,15 +170,10 @@ def validate_ip(ip: str) -> bool:
 # ============================================================================
 
 
-@action("iptool_parse", param_help={"ip": "IP 地址字符串（IPv4 或 IPv6）"})
+@action("iptool_parse", param_help={"ip": "IP 地址字符串（IPv4 或 IPv6）"}, errors=(ValueError,))
 def iptool_parse(ip: str) -> None:
     """解析 IP 地址并逐行打印属性。"""
-    try:
-        info = parse_ip(ip)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
-    for key, value in info.items():
+    for key, value in parse_ip(ip).items():
         print(f"{key}: {value}")
 
 
@@ -192,15 +183,11 @@ def iptool_parse(ip: str) -> None:
         "ip": "网络地址字符串",
         "prefix": "前缀长度",
     },
+    errors=(ValueError,),
 )
 def iptool_subnet(ip: str, prefix: int) -> None:
     """计算子网信息并逐行打印。"""
-    try:
-        info = subnet_info(ip, prefix)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
-    for key, value in info.items():
+    for key, value in subnet_info(ip, prefix).items():
         print(f"{key}: {value}")
 
 
@@ -531,6 +518,7 @@ def save_website(
         "depth": "爬取深度（默认 2）",
         "timeout": "请求超时秒数（默认 30）",
     },
+    errors=(HTTPError, URLError),
 )
 def websave(
     url: str,
@@ -539,10 +527,7 @@ def websave(
     timeout: int = 30,
 ) -> None:
     """保存网页内容（主页及相关子页面，含图片/CSS/JS）。"""
-    try:
-        save_website(url, output_dir, depth, timeout)
-    except (HTTPError, URLError) as exc:
-        print(f"错误: {exc}")
+    save_website(url, output_dir, depth, timeout)
 
 
 # ============================================================================

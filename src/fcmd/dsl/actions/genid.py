@@ -29,36 +29,21 @@ def _make_timestamp(fmt: str) -> str:
     raise ValueError(f"不支持的格式: {fmt}，支持: iso, unix")
 
 
-@action("idtool_uuid", param_help={"version": "UUID 版本（1 或 4，默认 4）"})
+@action("idtool_uuid", param_help={"version": "UUID 版本（1 或 4，默认 4）"}, errors=(ValueError,))
 def _idtool_uuid(version: int = 4) -> None:
     """生成 UUID 字符串。"""
-    try:
-        print(_make_uuid(version))
-    except ValueError as exc:
-        from fcmd.console import get_console  # 延迟导入
-
-        get_console().print(f"[red]错误:[/red] {exc}")
+    print(_make_uuid(version))
 
 
-@action("idtool_timestamp", param_help={"fmt": "时间戳格式（iso 或 unix，默认 iso）"})
+@action("idtool_timestamp", param_help={"fmt": "时间戳格式（iso 或 unix，默认 iso）"}, errors=(ValueError,))
 def _idtool_timestamp(fmt: str = "iso") -> None:
     """生成当前时间戳。"""
-    try:
-        print(_make_timestamp(fmt))
-    except ValueError as exc:
-        from fcmd.console import get_console  # 延迟导入
-
-        get_console().print(f"[red]错误:[/red] {exc}")
+    print(_make_timestamp(fmt))
 
 
-@action("idtool_random", param_help={"length": "随机字符串长度（默认 16）"})
+@action("idtool_random", param_help={"length": "随机字符串长度（默认 16）"}, errors=(ValueError,))
 def _idtool_random(length: int = 16) -> None:
     """生成随机字母数字字符串。"""
     from fcmd.dsl.actions.calc import generate_string  # 延迟导入：复用 randtool 原语
 
-    try:
-        print(generate_string(length))
-    except ValueError as exc:
-        from fcmd.console import get_console  # 延迟导入
-
-        get_console().print(f"[red]错误:[/red] {exc}")
+    print(generate_string(length))

@@ -22,6 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from ..actions import action
+from .fileops import read_text_lines
 
 # ============================================================================
 # asciitool 常量
@@ -81,14 +82,11 @@ def build_ascii_table(start: int = _PRINTABLE_START, end: int = _PRINTABLE_END) 
 @action(
     "asciitool_char",
     param_help={"char": "单个字符（多字符时报错）"},
+    errors=(ValueError,),
 )
 def asciitool_char(char: str) -> None:
     """查询字符的 ASCII 码并打印。"""
-    try:
-        code = char_to_code(char)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    code = char_to_code(char)
     print(f"char: {char}")
     print(f"code: {code}")
     print(f"hex: 0x{code:02X}")
@@ -97,14 +95,11 @@ def asciitool_char(char: str) -> None:
 @action(
     "asciitool_code",
     param_help={"code": "ASCII 码值（0..0x10FFFF）"},
+    errors=(ValueError,),
 )
 def asciitool_code(code: int) -> None:
     """查询 ASCII 码对应的字符并打印。"""
-    try:
-        char = code_to_char(code)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    char = code_to_char(code)
     print(f"code: {code}")
     print(f"hex: 0x{code:02X}")
     print(f"char: {char}")
@@ -116,14 +111,11 @@ def asciitool_code(code: int) -> None:
         "start": "起始码值（默认 32）",
         "end": "结束码值（默认 126，包含）",
     },
+    errors=(ValueError,),
 )
 def asciitool_table(start: int = _PRINTABLE_START, end: int = _PRINTABLE_END) -> None:
     """打印 ASCII 表（每行一条目）。"""
-    try:
-        entries = build_ascii_table(start, end)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    entries = build_ascii_table(start, end)
     for entry in entries:
         print(f"{entry['code']:>3}  {entry['hex']}  {entry['char']}")
 
@@ -203,13 +195,11 @@ def _justify_line(line: str, width: int, is_last: bool) -> str:
         "text": "待对齐的文本",
         "width": "对齐宽度（默认 20，非负）",
     },
+    errors=(ValueError,),
 )
 def padtool_left(text: str, width: int = 20) -> None:
     """左对齐文本并打印。"""
-    try:
-        print(align_left(text, width))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(align_left(text, width))
 
 
 @action(
@@ -218,13 +208,11 @@ def padtool_left(text: str, width: int = 20) -> None:
         "text": "待对齐的文本",
         "width": "对齐宽度（默认 20，非负）",
     },
+    errors=(ValueError,),
 )
 def padtool_right(text: str, width: int = 20) -> None:
     """右对齐文本并打印。"""
-    try:
-        print(align_right(text, width))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(align_right(text, width))
 
 
 @action(
@@ -233,13 +221,11 @@ def padtool_right(text: str, width: int = 20) -> None:
         "text": "待对齐的文本",
         "width": "对齐宽度（默认 20，非负）",
     },
+    errors=(ValueError,),
 )
 def padtool_center(text: str, width: int = 20) -> None:
     """居中对齐文本并打印。"""
-    try:
-        print(align_center(text, width))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(align_center(text, width))
 
 
 @action(
@@ -248,13 +234,11 @@ def padtool_center(text: str, width: int = 20) -> None:
         "text": "待对齐的文本（可多行）",
         "width": "对齐宽度（默认 20，非负）",
     },
+    errors=(ValueError,),
 )
 def padtool_justify(text: str, width: int = 20) -> None:
     """两端对齐文本并打印。"""
-    try:
-        print(align_justify(text, width))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(align_justify(text, width))
 
 
 # ============================================================================
@@ -315,14 +299,11 @@ def split_pattern(pattern: str, text: str) -> list[str]:
         "pattern": "正则表达式字符串",
         "text": "待匹配的文本",
     },
+    errors=(ValueError,),
 )
 def regextool_match(pattern: str, text: str) -> None:
     """在文本开头匹配正则表达式并打印结果。"""
-    try:
-        result = match_pattern(pattern, text)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    result = match_pattern(pattern, text)
     if result is None:
         print("未匹配")
         return
@@ -336,14 +317,11 @@ def regextool_match(pattern: str, text: str) -> None:
         "pattern": "正则表达式字符串",
         "text": "待查找的文本",
     },
+    errors=(ValueError,),
 )
 def regextool_find(pattern: str, text: str) -> None:
     """查找文本中所有匹配并逐行打印。"""
-    try:
-        matches = find_all(pattern, text)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    matches = find_all(pattern, text)
     if not matches:
         print("未匹配")
         return
@@ -358,13 +336,11 @@ def regextool_find(pattern: str, text: str) -> None:
         "replacement": "替换字符串（支持反向引用）",
         "text": "待替换的文本",
     },
+    errors=(ValueError,),
 )
 def regextool_replace(pattern: str, replacement: str, text: str) -> None:
     """替换文本中所有匹配并打印结果。"""
-    try:
-        print(replace_pattern(pattern, replacement, text))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(replace_pattern(pattern, replacement, text))
 
 
 @action(
@@ -373,14 +349,11 @@ def regextool_replace(pattern: str, replacement: str, text: str) -> None:
         "pattern": "正则表达式字符串（分隔符模式）",
         "text": "待分割的文本",
     },
+    errors=(ValueError,),
 )
 def regextool_split(pattern: str, text: str) -> None:
     """按正则分割文本并逐行打印片段。"""
-    try:
-        parts = split_pattern(pattern, text)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
+    parts = split_pattern(pattern, text)
     for part in parts:
         print(part)
 
@@ -493,16 +466,14 @@ def txttool_unique(path: str) -> None:
         "path": "目标文件路径",
         "mode": "转换模式（upper/lower/title/capitalize/swapcase，默认 upper）",
     },
+    errors=(ValueError,),
 )
 def txttool_case(path: str, mode: str = "upper") -> None:
     """转换文本文件的大小写。"""
     text = _read_text_file(path)
     if text is None:
         return
-    try:
-        print(convert_case(text, mode))
-    except ValueError as exc:
-        print(f"错误: {exc}")
+    print(convert_case(text, mode))
 
 
 # ============================================================================
@@ -517,16 +488,8 @@ _RESET = "\033[0m"
 
 
 def _read_lines(filepath: Path) -> list[str]:
-    """读取文本文件行列表（内部 helper）。"""
-    with filepath.open("rb") as f:
-        if b"\x00" in f.read(1024):
-            raise ValueError(f"二进制文件不支持比较: {filepath}")
-    try:
-        with filepath.open("r", encoding="utf-8") as f:
-            return f.readlines()
-    except UnicodeDecodeError:
-        with filepath.open("r", encoding="utf-8", errors="replace") as f:
-            return f.readlines()
+    """读取文本文件行列表（内部 helper，复用 fileops 的文本读取实现）。"""
+    return read_text_lines(filepath, binary_message="二进制文件不支持比较")
 
 
 def colorize_diff(diff_text: str) -> str:

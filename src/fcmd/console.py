@@ -27,7 +27,7 @@ from rich import box as rich_box
 from rich.console import Console as RichConsole
 from rich.table import Table as RichTable
 
-__all__ = ["Console", "Table", "get_console", "print_verbose", "supports_unicode"]
+__all__ = ["Console", "Table", "get_console", "print_error", "print_verbose", "supports_unicode"]
 
 _console: Console | None = None
 
@@ -152,6 +152,11 @@ def get_console() -> Console:
     if _console is None:
         _console = Console()
     return _console
+
+
+def print_error(message: str) -> None:
+    """输出统一格式的错误行（``错误: {message}``，前缀为红色）。"""
+    get_console().print(f"[red]错误:[/red] {message}")
 
 
 def print_verbose(*args: Any, **kwargs: Any) -> None:

@@ -17,7 +17,7 @@ import codecs
 import html
 import urllib.parse
 
-from fcmd.console import get_console
+from fcmd.console import print_error
 from fcmd.dsl.actions import action, run_and_print
 
 __all__ = [
@@ -116,7 +116,7 @@ def _codetool_base64(text: str, decode: bool = False) -> None:
         try:
             print(decode_base64(text))
         except (binascii.Error, UnicodeDecodeError) as exc:
-            get_console().print(f"[red]错误:[/red] Base64 解码失败: {exc}")
+            print_error(f"Base64 解码失败: {exc}")
     else:
         print(encode_base64(text))
 
@@ -146,7 +146,7 @@ def _codetool_hex(text: str, decode: bool = False) -> None:
         try:
             print(decode_hex(text))
         except (ValueError, UnicodeDecodeError) as exc:
-            get_console().print(f"[red]错误:[/red] Hex 解码失败: {exc}")
+            print_error(f"Hex 解码失败: {exc}")
     else:
         print(encode_hex(text))
 
@@ -425,15 +425,10 @@ def get_base_url(url: str) -> str:
 # ------------------------------------------------------------------ #
 
 
-@action("urltool_parse", param_help={"url": "待解析的 URL 字符串"})
+@action("urltool_parse", param_help={"url": "待解析的 URL 字符串"}, errors=(ValueError,))
 def _urltool_parse(url: str) -> None:
     """解析 URL 并逐行打印各组成部分。"""
-    try:
-        parts = parse_url(url)
-    except ValueError as exc:
-        get_console().print(f"[red]错误:[/red] {exc}")
-        return
-    for key, value in parts.items():
+    for key, value in parse_url(url).items():
         print(f"{key}: {value}")
 
 
@@ -443,14 +438,11 @@ def _urltool_parse(url: str) -> None:
         "url": "URL 字符串",
         "key": "查询参数名",
     },
+    errors=(ValueError,),
 )
 def _urltool_query(url: str, key: str) -> None:
     """提取 URL 查询参数值并打印。"""
-    try:
-        value = get_query_param(url, key)
-    except ValueError as exc:
-        get_console().print(f"[red]错误:[/red] {exc}")
-        return
+    value = get_query_param(url, key)
     if value is None:
         print(f"参数不存在: {key}")
         return
@@ -464,23 +456,14 @@ def _urltool_query(url: str, key: str) -> None:
         "key": "参数名",
         "value": "参数值",
     },
+    errors=(ValueError,),
 )
 def _urltool_addquery(url: str, key: str, value: str) -> None:
     """向 URL 添加查询参数并打印结果。"""
-    try:
-        result = add_query_param(url, key, value)
-    except ValueError as exc:
-        get_console().print(f"[red]错误:[/red] {exc}")
-        return
-    print(result)
+    print(add_query_param(url, key, value))
 
 
-@action("urltool_baseurl", param_help={"url": "完整 URL 字符串"})
+@action("urltool_baseurl", param_help={"url": "完整 URL 字符串"}, errors=(ValueError,))
 def _urltool_baseurl(url: str) -> None:
     """提取 URL 的基础部分（scheme://netloc）并打印。"""
-    try:
-        result = get_base_url(url)
-    except ValueError as exc:
-        get_console().print(f"[red]错误:[/red] {exc}")
-        return
-    print(result)
+    print(get_base_url(url))

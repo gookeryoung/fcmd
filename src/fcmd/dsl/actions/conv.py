@@ -173,10 +173,10 @@ def _color_action(fn_name: str, *args: object) -> None:
     except ValueError as exc:
         from rich.markup import escape
 
-        from fcmd.console import get_console  # 延迟导入
+        from fcmd.console import print_error  # 延迟导入
 
         # 错误文本可能含 ``[color]`` 等字样，必须转义后交给 markup 渲染
-        get_console().print(f"[red]错误:[/red] {escape(str(exc))}")
+        print_error(escape(str(exc)))
         return
     _print_result(result)
 
