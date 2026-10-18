@@ -1,6 +1,6 @@
 """媒体类 DSL 动作：img2ico / imagetool / pdftool。
 
-三个工具原属 ``fcmd.cli.media`` 包，全部为纯 Python 实现（Pillow /
+三个工具原属 ``fcmd.tools.media`` 包，全部为纯 Python 实现（Pillow /
 resvg-py / PyMuPDF / pypdf），无子进程调用。迁移后由 ``@action`` 装饰器
 注册，TOML 声明 ``action = "<名>"`` 直接引用；CLI 参数 schema 从动作签名
 自动推导（synth 层拷贝签名注入合成函数）。
@@ -812,7 +812,7 @@ def imagetool_co(
 # pdftool 公共逻辑
 # ============================================================================
 
-from fcmd.models.pdf import MergeSpec, PageSelection, SplitSpec  # noqa: E402
+from fcmd.core.models.pdf import MergeSpec, PageSelection, SplitSpec  # noqa: E402
 
 
 def _require_pymupdf() -> bool:

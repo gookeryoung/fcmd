@@ -1,6 +1,6 @@
 """网络工具 DSL 动作：nettool / iptool / websave / urlcheck。
 
-原模块 ``fcmd.cli.net.*`` 下四个工具均为纯 Python 实现（urllib / ipaddress
+原模块 ``fcmd.tools.net.*`` 下四个工具均为纯 Python 实现（urllib / ipaddress
 / concurrent.futures / pathlib），无子进程调用。迁移后由 ``@action`` 装饰器
 注册，TOML 声明 ``action = "<名>"`` 直接引用。
 """

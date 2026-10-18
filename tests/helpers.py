@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.apis.toolkit import run_tool
+from fcmd.core.toolkit import run_tool
 
 
 def run_and_capture(name: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:

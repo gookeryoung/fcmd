@@ -96,7 +96,7 @@ def run(argv: list[str]) -> int:
         return 1
 
     # 生成报告
-    from fcmd.apis.profiling import ProfileReport
+    from fcmd.core.profiling import ProfileReport
 
     profile = ProfileReport.from_report(report, graph)
     output_profile(

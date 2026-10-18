@@ -156,9 +156,9 @@ def test_tool_description_import_error_returns_empty(monkeypatch: pytest.MonkeyP
 
 def test_tool_description_with_description_field(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 优先返回 spec.description（非空时立即返回）。"""
-    from fcmd.apis import toolkit
-    from fcmd.apis.toolkit import ToolSpec
     from fcmd.cli import _discovery as discovery_mod
+    from fcmd.core import toolkit
+    from fcmd.core.toolkit import ToolSpec
 
     def _fake_func() -> None:
         """dummy."""
@@ -178,9 +178,9 @@ def test_tool_description_with_description_field(monkeypatch: pytest.MonkeyPatch
 
 def test_tool_description_no_description_no_help(monkeypatch: pytest.MonkeyPatch) -> None:
     """_tool_description 在 spec 无 description 且 hidden spec 无 help 时返回空串。"""
-    from fcmd.apis import toolkit
-    from fcmd.apis.toolkit import ToolSpec
     from fcmd.cli import _discovery as discovery_mod
+    from fcmd.core import toolkit
+    from fcmd.core.toolkit import ToolSpec
 
     def _fake_func() -> None:
         """dummy."""
@@ -248,7 +248,7 @@ class TestToolDiscovery:
         monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
         discovery_mod.ensure_tools_discovered()
         assert "pymake" in discovery_mod._TOOL_MODULES
-        assert discovery_mod._TOOL_MODULES["pymake"] == "fcmd.cli.dev.pymake"
+        assert discovery_mod._TOOL_MODULES["pymake"] == "fcmd.tools.dev.pymake"
 
     def test_discovery_loads_aliases_from_module(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """扫描时读取模块 __tool_aliases__ 并注册别名。"""
@@ -318,7 +318,7 @@ class TestToolDiscovery:
         real_import_module = _importlib.import_module
 
         def _fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "fcmd.cli.media.screenshot":
+            if name == "fcmd.tools.media.screenshot":
                 raise OSError("no library called 'libcairo-2' was found")
             return real_import_module(name, *args, **kwargs)  # type: ignore[arg-type]
 
@@ -329,7 +329,7 @@ class TestToolDiscovery:
         # 修复前：OSError 直接抛出，整个发现流程崩溃
         discovery_mod.ensure_tools_discovered()
         # screenshot 模块路径仍登记（注册先于导入），但模块未加载成功
-        assert discovery_mod._TOOL_MODULES["screenshot"] == "fcmd.cli.media.screenshot"
+        assert discovery_mod._TOOL_MODULES["screenshot"] == "fcmd.tools.media.screenshot"
         # 其余工具不受影响
         assert "pymake" in discovery_mod._TOOL_MODULES
 
@@ -344,12 +344,12 @@ class TestToolDiscovery:
         real_import_module = _importlib.import_module
 
         def _fake_import(name: str, *args: object, **kwargs: object) -> object:
-            if name == "fcmd.cli.media.screenshot":
+            if name == "fcmd.tools.media.screenshot":
                 raise OSError("no library called 'libcairo-2' was found")
             return real_import_module(name, *args, **kwargs)  # type: ignore[arg-type]
 
         monkeypatch.setattr(discovery_mod.importlib, "import_module", _fake_import)
-        monkeypatch.setitem(discovery_mod._TOOL_MODULES, "screenshot", "fcmd.cli.media.screenshot")
+        monkeypatch.setitem(discovery_mod._TOOL_MODULES, "screenshot", "fcmd.tools.media.screenshot")
         result = discovery_mod.load_tool_subs("screenshot")
         assert result is None
         captured = capsys.readouterr()
@@ -421,9 +421,9 @@ class TestBuiltinGraph:
 
     def test_graph_mermaid_node_shapes(self) -> None:
         """mermaid 节点按任务类型造型：cmd 平行四边形 / fn 圆角。"""
-        from fcmd.apis.dag import Graph
-        from fcmd.apis.task import TaskSpec
         from fcmd.cli._builtins.graph_cmd import _mermaid_shaped
+        from fcmd.core.dag import Graph
+        from fcmd.core.task import TaskSpec
 
         graph = Graph.from_specs(
             [
@@ -549,23 +549,23 @@ class TestBuildToolGraph:
 
     def test_unknown_tool_raises(self) -> None:
         """未注册工具抛 FcmdError。"""
-        from fcmd.apis.errors import FcmdError
-        from fcmd.apis.toolkit import build_tool_graph
+        from fcmd.core.errors import FcmdError
+        from fcmd.core.toolkit import build_tool_graph
 
         with pytest.raises(FcmdError, match="未注册"):
             build_tool_graph("nonexistent_tool_xyz", None)
 
     def test_unknown_subcommand_raises(self) -> None:
         """未注册子命令抛 FcmdError。"""
-        from fcmd.apis.errors import FcmdError
-        from fcmd.apis.toolkit import build_tool_graph
+        from fcmd.core.errors import FcmdError
+        from fcmd.core.toolkit import build_tool_graph
 
         with pytest.raises(FcmdError, match="没有子命令"):
             build_tool_graph("pymake", "nonexistent_sub_xyz")
 
     def test_none_target_includes_all_subcommands(self) -> None:
         """target=None 时包含全部子命令。"""
-        from fcmd.apis.toolkit import build_tool_graph
+        from fcmd.core.toolkit import build_tool_graph
 
         graph = build_tool_graph("pymake", None)
         names = set(graph.names)
@@ -574,7 +574,7 @@ class TestBuildToolGraph:
 
     def test_target_with_deps_includes_upstream(self) -> None:
         """target=tc 时包含 tc 及其上游依赖。"""
-        from fcmd.apis.toolkit import build_tool_graph
+        from fcmd.core.toolkit import build_tool_graph
 
         graph = build_tool_graph("pymake", "tc")
         names = set(graph.names)
@@ -675,9 +675,9 @@ class TestBuiltinInfo:
 
     def test_spec_kind_classification(self) -> None:
         """_spec_kind 正确分类 cmd / aggregate / fn。"""
-        from fcmd.apis.toolkit import get_tool
         from fcmd.cli._builtins.info_cmd import _spec_kind
         from fcmd.cli._discovery import ensure_tools_discovered
+        from fcmd.core.toolkit import get_tool
 
         ensure_tools_discovered()  # 注册内置 DSL 命令（writefile 为 DSL action 工具，fn 任务）
 
@@ -1281,7 +1281,7 @@ class TestBuiltinDoctor:
         # 让 shutil.which 全部返回非 None
         monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")
         # 工具模块扫描改为注入单一已知可导入工具，避免依赖本机可选原生扩展库
-        monkeypatch.setattr("fcmd.cli._builtins.doctor_cmd._TOOL_MODULES", {"pymake": "fcmd.cli.dev.pymake"})
+        monkeypatch.setattr("fcmd.cli._builtins.doctor_cmd._TOOL_MODULES", {"pymake": "fcmd.tools.dev.pymake"})
 
         app = FcmdApp(["doctor"])
         assert app.run() == 0
@@ -1361,7 +1361,7 @@ class TestCoverageGaps:
         original_import = discovery_mod.importlib.import_module
 
         def fake_import(name: str) -> object:
-            if name == "fcmd.cli.dev.pymake":
+            if name == "fcmd.tools.dev.pymake":
                 raise ImportError("simulated pymake load failure")
             return original_import(name)
 
@@ -1403,8 +1403,8 @@ class TestCoverageGaps:
         CLI 路径无法触发此分支（单命令工具的 subs 键为 None，用户传入的子命令名
         为字符串，``subs.get(字符串)`` 返回 None 走错误路径），故直接单元测试。
         """
-        from fcmd.apis.toolkit import ToolSpec
         from fcmd.cli._builtins import info_cmd
+        from fcmd.core.toolkit import ToolSpec
 
         def _fake_func() -> None:
             """dummy."""
@@ -1436,16 +1436,16 @@ class TestCoverageGaps:
 # 注：casetool/colortool/hashfile/hashtool/idtool/mathtool 已迁移为
 # 内置 DSL 动作（commands/*.toml + dsl/actions/*.py），CLI Python 模块已删除。
 _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
-    ("archivex", "fcmd.cli.archive.archivex"),
-    ("bumpversion", "fcmd.cli.dev.bumpversion"),
-    ("envdev", "fcmd.cli.dev.envdev"),
-    ("gittool", "fcmd.cli.dev.gittool"),
-    ("lscalc", "fcmd.cli.calc.lscalc"),
-    ("packtool", "fcmd.cli.dev.packtool"),
-    ("portcheck", "fcmd.cli.net.portcheck"),
-    ("pymake", "fcmd.cli.dev.pymake"),
-    ("screenshot", "fcmd.cli.media.screenshot"),
-    ("zipencrypt", "fcmd.cli.archive.zipencrypt"),
+    ("archivex", "fcmd.tools.archive.archivex"),
+    ("bumpversion", "fcmd.tools.dev.bumpversion"),
+    ("envdev", "fcmd.tools.dev.envdev"),
+    ("gittool", "fcmd.tools.dev.gittool"),
+    ("lscalc", "fcmd.tools.calc.lscalc"),
+    ("packtool", "fcmd.tools.dev.packtool"),
+    ("portcheck", "fcmd.tools.net.portcheck"),
+    ("pymake", "fcmd.tools.dev.pymake"),
+    ("screenshot", "fcmd.tools.media.screenshot"),
+    ("zipencrypt", "fcmd.tools.archive.zipencrypt"),
 ]
 
 
@@ -1458,7 +1458,7 @@ def test_tool_main_delegates_run_tool(tool_name: str, module_path: str, monkeypa
     """
     import importlib
 
-    from fcmd.apis import toolkit as _toolkit
+    from fcmd.core import toolkit as _toolkit
 
     mod = importlib.import_module(module_path)
     captured: dict[str, str] = {}
@@ -1494,7 +1494,7 @@ class TestStandaloneEntryNoDuplicateRegistration:
 
         from fcmd.cli import _discovery as discovery_mod
 
-        module_path = "fcmd.cli.dev.gittool"
+        module_path = "fcmd.tools.dev.gittool"
         real_file = importlib.import_module(module_path).__file__
         fake_main = types.ModuleType("__main__")
         fake_main.__file__ = real_file  # type: ignore[attr-defined]
@@ -1510,7 +1510,7 @@ class TestStandaloneEntryNoDuplicateRegistration:
 
         from fcmd.cli import _discovery as discovery_mod
 
-        module_path = "fcmd.cli.dev.gittool"
+        module_path = "fcmd.tools.dev.gittool"
         fake_main = types.ModuleType("__main__")
         fake_main.__file__ = "/unrelated/other.py"  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "__main__", fake_main)
@@ -1525,7 +1525,7 @@ class TestStandaloneEntryNoDuplicateRegistration:
 
         from fcmd.cli import _discovery as discovery_mod
 
-        module_path = "fcmd.cli.dev.gittool"
+        module_path = "fcmd.tools.dev.gittool"
         real_mod = sys.modules[module_path]
         fake_main = types.ModuleType("__main__")
         fake_main.__file__ = "/unrelated/other.py"  # type: ignore[attr-defined]
@@ -1541,7 +1541,7 @@ class TestStandaloneEntryNoDuplicateRegistration:
         code = (
             "import runpy, sys\n"
             "sys.argv = ['gitt']\n"
-            "runpy.run_module('fcmd.cli.dev.gittool', run_name='__main__', alter_sys=True)\n"
+            "runpy.run_module('fcmd.tools.dev.gittool', run_name='__main__', alter_sys=True)\n"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -1559,7 +1559,7 @@ class TestStandaloneEntryNoDuplicateRegistration:
         code = (
             "import runpy, sys\n"
             "sys.argv = ['gitt', 'isub', '--help']\n"
-            "runpy.run_module('fcmd.cli.dev.gittool', run_name='__main__', alter_sys=True)\n"
+            "runpy.run_module('fcmd.tools.dev.gittool', run_name='__main__', alter_sys=True)\n"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],
@@ -1574,7 +1574,7 @@ class TestStandaloneEntryNoDuplicateRegistration:
     def test_python_dash_m_entry_no_duplicate_registration(self) -> None:
         """python -m 直跑工具模块同样不触发重复注册。"""
         result = subprocess.run(
-            [sys.executable, "-m", "fcmd.cli.dev.gittool", "--help"],
+            [sys.executable, "-m", "fcmd.tools.dev.gittool", "--help"],
             capture_output=True,
             text=True,
             check=False,
@@ -1613,7 +1613,7 @@ class TestMainDecorator:
     def test_main_decorator_calls_run_tool(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """装饰器内部调用 run_tool 并传入正确工具名。"""
         import fcmd as fx
-        from fcmd.apis import toolkit as _toolkit
+        from fcmd.core import toolkit as _toolkit
 
         captured: dict[str, str] = {}
 
@@ -1634,7 +1634,7 @@ class TestMainDecorator:
 
     def test_lscalc_main_uses_decorator(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """lscalc.main() 使用 @fcmd.main 装饰器并绑定正确工具名。"""
-        from fcmd.apis import toolkit as _toolkit
+        from fcmd.core import toolkit as _toolkit
 
         captured: dict[str, str] = {}
 
@@ -1644,7 +1644,7 @@ class TestMainDecorator:
 
         monkeypatch.setattr(_toolkit, "run_tool", _fake_run_tool)
 
-        from fcmd.cli.calc.lscalc import main
+        from fcmd.tools.calc.lscalc import main
 
         with pytest.raises(SystemExit) as exc_info:
             main()

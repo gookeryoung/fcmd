@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
+from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.data import (
     csv_to_json,
     format_table,
@@ -50,7 +50,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """csvtool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "csvtool" in list_tools()
 

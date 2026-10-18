@@ -62,7 +62,7 @@ _TOOL_EXEC_SCRIPT = (
     "import time\n"
     "from fcmd.cli._discovery import ensure_tools_discovered\n"
     "ensure_tools_discovered()  # 工具发现/DSL 注册在计时前完成\n"
-    "from fcmd.apis.toolkit import run_tool\n"
+    "from fcmd.core.toolkit import run_tool\n"
     "t=time.perf_counter()\n"
     "run_tool('codetool', ['base64', 'hello'])\n"
     "print((time.perf_counter()-t)*1000)\n"

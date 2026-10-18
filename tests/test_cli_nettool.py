@@ -17,7 +17,7 @@ import pytest
 
 import fcmd as fx
 import fcmd.dsl.actions.net
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.net import http_get, http_head, http_post
 
 # ---------------------------------------------------------------------- #

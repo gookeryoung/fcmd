@@ -1,6 +1,6 @@
 # 内置 DSL 命令：pdftool（15 子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/media/pdftool.py 已迁入 fcmd/dsl/actions/media.py：
+# 原模块 fcmd/tools/media/pdftool.py 已迁入 fcmd/dsl/actions/media.py：
 # 全部子命令为纯 Python（PyMuPDF / pypdf），无子进程调用。
 
 [commands.pdftool.m]

@@ -33,9 +33,9 @@ def infer_tool_name(argv0: str) -> str:
 def run_named() -> None:
     """console script 通用入口：按 argv[0] 推断工具名并转发执行。"""
     # 懒导入避免 cli ↔ dsl 包级循环（_discovery 函数内懒导入本包）
-    from fcmd.apis.toolkit import run_tool
     from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool
     from fcmd.console import get_console
+    from fcmd.core.toolkit import run_tool
 
     name = infer_tool_name(sys.argv[0])
     ensure_tools_discovered()

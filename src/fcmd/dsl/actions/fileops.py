@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from fcmd.core.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
 from fcmd.dsl.actions import action
 
 __all__: list[str] = []
@@ -25,16 +26,6 @@ __all__: list[str] = []
 _BINARY_SNIFF_SIZE = 1024
 # 内容搜索单文件最大读取行数，避免大文件内存爆炸
 _MAX_LINES_PER_FILE = 100_000
-
-
-def _should_skip_part(parts: tuple[str, ...], ignore_dirs: set[str]) -> bool:
-    """判断路径组件是否命中忽略目录集合（支持 ``*.egg-info`` 通配）。"""
-    for part in parts:
-        if part in ignore_dirs:
-            return True
-        if any(fnmatch.fnmatch(part, pat) for pat in ignore_dirs if "*" in pat):
-            return True
-    return False
 
 
 def is_binary_file(path: Path) -> bool:
@@ -71,12 +62,12 @@ def search_by_name(
     if not directory.is_dir():
         raise NotADirectoryError(f"不是目录: {directory}")
     if ignore_dirs is None:
-        from fcmd.cli._common import IGNORE_DIRS
-
-        ignore_dirs = IGNORE_DIRS
+        spec = DEFAULT_IGNORE_SPEC
+    else:
+        spec = IgnoreSpec.from_iterable(ignore_dirs)
     results: list[Path] = []
     for path in directory.rglob("*"):
-        if _should_skip_part(path.parts, ignore_dirs):
+        if should_skip_parts(path.parts, spec):
             continue
         if path.is_dir():
             if include_dirs and fnmatch.fnmatch(path.name, pattern):
@@ -101,14 +92,14 @@ def search_by_content(
         raise NotADirectoryError(f"不是目录: {directory}")
     regex = re.compile(pattern)
     if ignore_dirs is None:
-        from fcmd.cli._common import IGNORE_DIRS
-
-        ignore_dirs = IGNORE_DIRS
+        spec = DEFAULT_IGNORE_SPEC
+    else:
+        spec = IgnoreSpec.from_iterable(ignore_dirs)
     results: list[tuple[Path, int, str]] = []
     for path in sorted(directory.rglob("*")):
         if not path.is_file():
             continue
-        if _should_skip_part(path.parts, ignore_dirs):
+        if should_skip_parts(path.parts, spec):
             continue
         if extension and path.suffix != extension:
             continue

@@ -14,10 +14,10 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-from fcmd.apis._tool_args import _build_parser_for_tool
-from fcmd.apis._tool_exec import _build_task_spec
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit.args import _build_parser_for_tool
+from fcmd.core.toolkit.exec import _build_task_spec
 
 ensure_tools_discovered()
 
@@ -102,7 +102,7 @@ class TestAutofmtRunTool:
     ) -> None:
         """fcmd autofmt fmt 通过 run_tool 调用。"""
         captured: list[Any] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_subprocess_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_subprocess_run(captured))
         assert run_tool("autofmt", ["fmt"]) == 0
         assert captured[0] == ["ruff", "format", "."]
 
@@ -112,6 +112,6 @@ class TestAutofmtRunTool:
     ) -> None:
         """fcmd autofmt lint --target src --fix 通过 run_tool 调用。"""
         captured: list[Any] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_subprocess_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_subprocess_run(captured))
         assert run_tool("autofmt", ["lint", "--target", "src", "--fix"]) == 0
         assert captured[0] == ["ruff", "check", "src", "--fix", "--unsafe-fixes"]

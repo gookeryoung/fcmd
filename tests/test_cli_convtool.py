@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.conv2 import (
     convert_datasize,
     convert_length,
@@ -35,7 +35,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """convtool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "convtool" in list_tools()
 

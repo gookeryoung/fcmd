@@ -1,6 +1,6 @@
 """models 包测试：command / filefilter / version。
 
-验证 ``fcmd.models`` 包下 3 个数据模型模块的正确性。
+验证 ``fcmd.core.models`` 包下 3 个数据模型模块的正确性。
 """
 
 from __future__ import annotations
@@ -11,7 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.models import (
+from fcmd.core.filefilter import (
+    DEFAULT_IGNORE_DIRS,
+    DEFAULT_IGNORE_EXTS,
+    DEFAULT_IGNORE_SPEC,
+    should_skip_parts,
+)
+from fcmd.core.models import (
     BumpPart,
     CommandResult,
     IgnoreSpec,
@@ -174,6 +180,36 @@ class TestShouldIgnore:
         assert should_ignore(Path("src/__pycache__/module.pyc"), spec)
         assert should_ignore(Path("src/module.pyc"), spec)
         assert not should_ignore(Path("src/module.py"), spec)
+
+    def test_ignore_glob_dir_in_parts(self) -> None:
+        """glob 模式对目录组件生效（如 *.egg-info 目录下的文件）。"""
+        spec = IgnoreSpec.from_iterable(["*.egg-info"])
+        assert should_ignore(Path("proj/fcmd.egg-info/PKG-INFO"), spec)
+        assert not should_ignore(Path("proj/fcmd.egg/PKG-INFO"), spec)
+
+
+# ============================================================================ #
+# 默认忽略规则测试
+# ============================================================================ #
+class TestDefaultIgnore:
+    """DEFAULT_IGNORE_* 常量与 should_skip_parts 测试。"""
+
+    def test_default_dirs(self) -> None:
+        """默认目录规则包含常见构建/缓存目录与 *.egg-info 通配。"""
+        assert ".git" in DEFAULT_IGNORE_DIRS
+        assert "__pycache__" in DEFAULT_IGNORE_DIRS
+        assert "*.egg-info" in DEFAULT_IGNORE_DIRS
+        assert "*.egg-info" in DEFAULT_IGNORE_SPEC.patterns
+
+    def test_default_exts(self) -> None:
+        """默认扩展名包含压缩包与字节码。"""
+        assert {".zip", ".gz", ".pyc", ".pyo"} <= DEFAULT_IGNORE_EXTS
+
+    def test_skip_parts_default_spec(self) -> None:
+        """未传 spec 时使用默认规则。"""
+        assert should_skip_parts(("proj", ".git", "config"))
+        assert should_skip_parts(("proj", "fcmd.egg-info", "PKG-INFO"))
+        assert not should_skip_parts(("proj", "src", "main.py"))
 
 
 # ============================================================================ #

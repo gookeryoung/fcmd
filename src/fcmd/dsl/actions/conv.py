@@ -1,4 +1,8 @@
-"""转换与计算动作：命名风格（casetool）、颜色换算（colortool）、数学（mathtool）。"""
+"""转换与计算动作：命名风格（casetool）、颜色换算（colortool）、数学（mathtool）。
+
+colortool 的颜色空间换算由 ``coloraide`` 完成（需 ``pip install fcmd[color]``），
+本模块只保留参数校验与输出格式。
+"""
 
 from __future__ import annotations
 
@@ -6,6 +10,7 @@ import ast
 import math
 import operator as op
 import re
+from typing import Any
 
 from fcmd.dsl.actions import action, run_and_print
 
@@ -74,17 +79,52 @@ def _casetool_kebab(text: str) -> None:
 
 
 # ======================================================================== #
-# colortool — 颜色换算
+# colortool — 颜色换算（coloraide）
 # ======================================================================== #
+# 惰性导入的 coloraide.Color 类（首次颜色换算时填充）
+_coloraide: Any = None
+
+
+def _require_coloraide() -> Any | None:
+    """惰性导入 ``coloraide.Color``；缺失时返回 ``None``（由调用方提示安装）。
+
+    coloraide 的色空间注册表较大，``import fcmd`` 与 DSL 启动路径不应为其付费。
+    """
+    global _coloraide  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
+    if _coloraide is not None:
+        return _coloraide
+    try:
+        from coloraide import Color
+    except ImportError:  # pragma: no cover - 由 extra 保证，缺库时给出安装提示
+        return None
+    _coloraide = Color
+    return Color
+
+
+def _color(*args: Any) -> Any:
+    """构造 coloraide ``Color``；缺少依赖时抛 ``ValueError``。"""
+    color_cls = _require_coloraide()
+    if color_cls is None:
+        raise ValueError("未安装 coloraide 库，请安装: pip install fcmd[color]")
+    return color_cls(*args)
+
+
+def _srgb_255(color: Any) -> tuple[int, int, int]:
+    """取 sRGB 分量（0-1）并量化为 0-255 整数。"""
+    r, g, b = color.convert("srgb").coords()[:3]
+    return (round(r * 255), round(g * 255), round(b * 255))
+
+
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     """十六进制颜色转 RGB 分量（0-255）。"""
     s = hex_color.strip().lstrip("#")
     if len(s) != 6:
         raise ValueError(f"HEX 颜色须为 6 位十六进制（#RRGGBB），收到: {hex_color!r}")
     try:
-        return (int(s[0:2], 16), int(s[2:4], 16), int(s[4:6], 16))
+        int(s, 16)  # 仅用于校验字符集，交给 coloraide 解析会抛无上下文的错误
     except ValueError as exc:
         raise ValueError(f"HEX 颜色含非十六进制字符: {hex_color!r}") from exc
+    return _srgb_255(_color(f"#{s}"))
 
 
 def _rgb_to_hex(r: int, g: int, b: int) -> str:
@@ -92,7 +132,7 @@ def _rgb_to_hex(r: int, g: int, b: int) -> str:
     for name, val in (("r", r), ("g", g), ("b", b)):
         if not 0 <= val <= 255:
             raise ValueError(f"{name} 分量超出 0-255 范围: {val}")
-    return f"#{r:02x}{g:02x}{b:02x}"
+    return _color("srgb", [r / 255, g / 255, b / 255]).to_string(hex=True)
 
 
 def _rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
@@ -100,27 +140,10 @@ def _rgb_to_hsl(r: int, g: int, b: int) -> tuple[float, float, float]:
     for name, val in (("r", r), ("g", g), ("b", b)):
         if not 0 <= val <= 255:
             raise ValueError(f"{name} 分量超出 0-255 范围: {val}")
-    rn, gn, bn = r / 255, g / 255, b / 255
-    cmax = max(rn, gn, bn)
-    cmin = min(rn, gn, bn)
-    delta = cmax - cmin
-    light = (cmax + cmin) / 2
-    if delta == 0:
-        s = 0.0
-    else:
-        denom = 1 - abs(2 * light - 1)
-        s = delta / denom if denom != 0 else 0.0
-    if delta == 0:
-        h = 0.0
-    elif cmax == rn:
-        h = 60 * (((gn - bn) / delta) % 6)
-    elif cmax == gn:
-        h = 60 * (((bn - rn) / delta) + 2)
-    else:
-        h = 60 * (((rn - gn) / delta) + 4)
-    if h < 0:
-        h += 360
-    return (round(h, 2), round(s * 100, 2), round(light * 100, 2))
+    h, s, light = _color("srgb", [r / 255, g / 255, b / 255]).convert("hsl").coords()[:3]
+    # 灰阶（无彩色）的色相无定义，coloraide 返回 nan；归零保证输出可读
+    hue = 0.0 if math.isnan(h) else h
+    return (round(hue, 2), round(s * 100, 2), round(light * 100, 2))
 
 
 def _hsl_to_rgb(h: float, s: float, light: float) -> tuple[int, int, int]:
@@ -131,25 +154,7 @@ def _hsl_to_rgb(h: float, s: float, light: float) -> tuple[int, int, int]:
         raise ValueError(f"s 须在 0-100 范围: {s}")
     if not 0 <= light <= 100:
         raise ValueError(f"l 须在 0-100 范围: {light}")
-    hn = h / 360
-    sn = s / 100
-    ln = light / 100
-    c = (1 - abs(2 * ln - 1)) * sn
-    x = c * (1 - abs((hn * 6) % 2 - 1))
-    m = ln - c / 2
-    if hn < 1 / 6:
-        r1, g1, b1 = c, x, 0
-    elif hn < 2 / 6:
-        r1, g1, b1 = x, c, 0
-    elif hn < 3 / 6:
-        r1, g1, b1 = 0, c, x
-    elif hn < 4 / 6:
-        r1, g1, b1 = 0, x, c
-    elif hn < 5 / 6:
-        r1, g1, b1 = x, 0, c
-    else:
-        r1, g1, b1 = c, 0, x
-    return (round((r1 + m) * 255), round((g1 + m) * 255), round((b1 + m) * 255))
+    return _srgb_255(_color("hsl", [h, s / 100, light / 100]))
 
 
 def _print_result(result: tuple[float, ...] | str) -> None:
@@ -166,9 +171,12 @@ def _color_action(fn_name: str, *args: object) -> None:
     try:
         result = fn(*args)
     except ValueError as exc:
+        from rich.markup import escape
+
         from fcmd.console import get_console  # 延迟导入
 
-        get_console().print(f"[red]错误:[/red] {exc}")
+        # 错误文本可能含 ``[color]`` 等字样，必须转义后交给 markup 渲染
+        get_console().print(f"[red]错误:[/red] {escape(str(exc))}")
         return
     _print_result(result)
 

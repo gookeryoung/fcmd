@@ -1,6 +1,6 @@
 # 内置 DSL 命令：autofmt（多子命令形态，纯 exec 型子命令）。
 #
-# 原 Python 模块 fcmd/cli/dev/autofmt.py 已整体迁入（fmt/lint 均为
+# 原 Python 模块 fcmd/tools/dev/autofmt.py 已整体迁入（fmt/lint 均为
 # ruff 包装）。lint 的 --fix 开关演示 bool 参数 on 固定 token 用法。
 
 [commands.autofmt.fmt]

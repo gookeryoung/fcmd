@@ -1,6 +1,6 @@
 # 内置 DSL 命令：mathtool（多子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/calc/mathtool.py 已迁入 fcmd/dsl/actions/conv.py：
+# 原模块 fcmd/tools/calc/mathtool.py 已迁入 fcmd/dsl/actions/conv.py：
 # eval/sqrt/pow/factorial 四子命令均为纯 Python 数学计算，无子进程调用。
 # eval 使用 ast.parse 构建安全求值沙箱（仅常量 + 四则/一元运算 + 幂），
 # 杜绝代码注入；动作签名即 CLI 参数 schema；表达式语法错误 / 除零 /

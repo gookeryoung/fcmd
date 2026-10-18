@@ -10,8 +10,8 @@ import time
 import pytest
 
 import fcmd
-from fcmd.apis.errors import TaskFailedError
-from fcmd.apis.task import RetryPolicy, TaskEvent, TaskSpec, TaskStatus, task
+from fcmd.core.errors import TaskFailedError
+from fcmd.core.task import RetryPolicy, TaskEvent, TaskSpec, TaskStatus, task
 
 
 # ---------------------------------------------------------------------- #
@@ -542,7 +542,7 @@ def test_run_verbose_with_failure(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_run_verbose_with_skip(capsys: pytest.CaptureFixture[str]) -> None:
     """verbose 模式下任务跳过打印黄色标记。"""
-    from fcmd.apis.task import TaskSpec
+    from fcmd.core.task import TaskSpec
 
     spec = TaskSpec(name="skip_me", fn=lambda: 1, conditions=(lambda _: False,))
     graph = fcmd.graph(spec)
@@ -557,7 +557,7 @@ def test_run_verbose_with_skip(capsys: pytest.CaptureFixture[str]) -> None:
 # ---------------------------------------------------------------------- #
 def test_run_upstream_fail_skips_downstream() -> None:
     """上游失败（continue_on_error）后，下游硬依赖被 SKIPPED。"""
-    from fcmd.apis.task import TaskSpec
+    from fcmd.core.task import TaskSpec
 
     @task(continue_on_error=True)
     def boom() -> None:
@@ -620,7 +620,7 @@ def test_run_retry_with_wait(monkeypatch: pytest.MonkeyPatch) -> None:
         sleep_calls.append(seconds)
         original_sleep(0)  # 实际不等待，仅记录调用
 
-    monkeypatch.setattr("fcmd.engine.task_runner.time.sleep", fake_sleep)
+    monkeypatch.setattr("fcmd.core.execution.task_runner.time.sleep", fake_sleep)
 
     attempts = {"n": 0}
 
@@ -851,7 +851,7 @@ def test_run_multi_dep_context_injection() -> None:
 
 def test_verbose_callback_pending_event(capsys: pytest.CaptureFixture[str]) -> None:
     """verbose 回调收到 PENDING 事件时不匹配任何分支，直接调用 on_event（覆盖 705->708）。"""
-    from fcmd.engine.executors import _make_verbose_callback
+    from fcmd.core.execution.executors import _make_verbose_callback
 
     events: list[TaskEvent] = []
     callback = _make_verbose_callback(events.append)
@@ -877,9 +877,9 @@ def test_verbose_callback_pending_event(capsys: pytest.CaptureFixture[str]) -> N
 # ---------------------------------------------------------------------- #
 def _spy_dependency_paths(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     """包装 executors 的两条 dependency 执行路径，记录派发次数。"""
-    from fcmd.apis.dag import Graph
-    from fcmd.engine import executors as executors_mod
-    from fcmd.engine.task_runner import _ExecContext
+    from fcmd.core.dag import Graph
+    from fcmd.core.execution import executors as executors_mod
+    from fcmd.core.execution.task_runner import _ExecContext
 
     calls: dict[str, int] = {"sync": 0, "async": 0}
     orig_sync = executors_mod._run_dependency_sync

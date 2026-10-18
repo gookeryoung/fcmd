@@ -54,7 +54,7 @@ def run(argv: list[str]) -> int:
 
 def _collect_completion_data() -> list[dict[str, Any]]:
     """收集全部工具的补全数据：名称、别名、子命令列表。"""
-    from fcmd.apis.toolkit import _TOOL_REGISTRY
+    from fcmd.core.toolkit import _TOOL_REGISTRY
 
     # 触发全部工具模块导入
     import_all_tool_modules()

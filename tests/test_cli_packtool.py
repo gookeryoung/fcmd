@@ -1,6 +1,6 @@
 """packtool 工具测试。
 
-验证 ``fcmd.cli.dev.packtool`` 模块（src/embed/zip/clean）与 DSL 子命令
+验证 ``fcmd.tools.dev.packtool`` 模块（src/embed/zip/clean）与 DSL 子命令
 deps/wheel（``src/fcmd/commands/packtool.toml``，逐子命令合并注册）：
 - 工具注册
 - src 子命令（源码打包）
@@ -21,11 +21,11 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.dev.packtool
-from fcmd.apis._tool_exec import _build_task_spec
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+import fcmd.tools.dev.packtool
 from fcmd.cli._discovery import ensure_tools_discovered
-from fcmd.cli.dev.packtool import (
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit.exec import _build_task_spec
+from fcmd.tools.dev.packtool import (
     _normalize_arch,
     clean_build_dir,
     create_zip_package,
@@ -176,7 +176,7 @@ class TestPacktoolDslRunTool:
             return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         code = run_tool("packtool", ["deps", "requests"])
         assert code == 0
         assert captured[0][:3] == ["pip", "install", "--target"]
@@ -192,7 +192,7 @@ class TestPacktoolDslRunTool:
         """deps 执行失败时返回码非零且不打印完成消息。"""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kwargs: type("CP", (), {"returncode": 1, "stdout": "", "stderr": "boom"})(),
         )
         code = run_tool("packtool", ["deps", "requests"])
@@ -219,12 +219,12 @@ class TestPacktoolEmbed:
 
     def test_normalize_arch_amd64(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 返回 amd64。"""
-        monkeypatch.setattr("fcmd.cli.dev.packtool.platform.machine", lambda: "x86_64")
+        monkeypatch.setattr("fcmd.tools.dev.packtool.platform.machine", lambda: "x86_64")
         assert _normalize_arch() == "amd64"
 
     def test_normalize_arch_arm64(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 返回 arm64。"""
-        monkeypatch.setattr("fcmd.cli.dev.packtool.platform.machine", lambda: "aarch64")
+        monkeypatch.setattr("fcmd.tools.dev.packtool.platform.machine", lambda: "aarch64")
         assert _normalize_arch() == "arm64"
 
     def test_install_embed_python(
@@ -248,7 +248,7 @@ class TestPacktoolEmbed:
             raise AssertionError(f"不应调用 urlretrieve，但调用了: {url}")
 
         monkeypatch.setattr("urllib.request.urlretrieve", fake_urlretrieve)
-        monkeypatch.setattr("fcmd.cli.dev.packtool._normalize_arch", lambda: "amd64")
+        monkeypatch.setattr("fcmd.tools.dev.packtool._normalize_arch", lambda: "amd64")
 
         output_dir = tmp_path / "python"
         install_embed_python("3.10", output_dir)
@@ -279,7 +279,7 @@ class TestPacktoolEmbed:
             return filename
 
         monkeypatch.setattr("urllib.request.urlretrieve", fake_urlretrieve)
-        monkeypatch.setattr("fcmd.cli.dev.packtool._normalize_arch", lambda: "amd64")
+        monkeypatch.setattr("fcmd.tools.dev.packtool._normalize_arch", lambda: "amd64")
 
         output_dir = tmp_path / "python"
         install_embed_python("3.11", output_dir)
@@ -383,7 +383,7 @@ class TestPacktoolBranches:
 
     def test_normalize_arch_unknown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """_normalize_arch 未知架构返回原值。"""
-        monkeypatch.setattr("fcmd.cli.dev.packtool.platform.machine", lambda: "riscv64")
+        monkeypatch.setattr("fcmd.tools.dev.packtool.platform.machine", lambda: "riscv64")
         assert _normalize_arch() == "riscv64"
 
     def test_pack_source_with_subdir_in_flat_project(

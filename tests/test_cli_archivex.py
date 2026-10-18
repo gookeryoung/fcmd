@@ -1,6 +1,6 @@
 """archivex 工具测试。
 
-验证 ``fcmd.cli.archive.archivex`` 模块：
+验证 ``fcmd.tools.archive.archivex`` 模块：
 - 工具注册与三子命令结构（extract/list/create）
 - ``detect_format`` 格式检测（7 种格式 + 不支持）
 - ``extract_archive`` 解压（zip/tar/gz/bz2/xz 走 stdlib，7z/rar 走 mock）
@@ -23,8 +23,8 @@ from typing import Literal
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
-from fcmd.cli.archive.archivex import (
+from fcmd.core.toolkit import list_subcommands, run_tool
+from fcmd.tools.archive.archivex import (
     _strip_compression_ext,
     create_archive,
     detect_format,
@@ -61,7 +61,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """archivex 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "archivex" in list_tools()
 
@@ -203,14 +203,14 @@ class TestExtractArchive:
         archive.write_bytes(b"fake 7z")
         out = tmp_path / "out"
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
         calls: list[list[str]] = []
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             calls.append(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         extract_archive(archive, out)
         assert calls and calls[0][0] == "7z"
         assert "x" in calls[0]
@@ -221,14 +221,14 @@ class TestExtractArchive:
         archive.write_bytes(b"fake rar")
         out = tmp_path / "out"
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
         calls: list[list[str]] = []
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             calls.append(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         extract_archive(archive, out)
         assert calls and calls[0][0] == "unrar"
 
@@ -236,7 +236,7 @@ class TestExtractArchive:
         """外部命令未找到时抛 FileNotFoundError。"""
         archive = tmp_path / "a.7z"
         archive.write_bytes(b"fake")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda _: None)
         with pytest.raises(FileNotFoundError, match="未找到解压命令"):
             extract_archive(archive, tmp_path / "out")
 
@@ -244,12 +244,12 @@ class TestExtractArchive:
         """外部命令失败时抛 RuntimeError。"""
         archive = tmp_path / "a.7z"
         archive.write_bytes(b"fake")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             return SimpleNamespace(returncode=1, stdout="", stderr="corrupt archive")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         with pytest.raises(RuntimeError, match="解压失败"):
             extract_archive(archive, tmp_path / "out")
 
@@ -286,12 +286,12 @@ class TestListArchive:
         """7z 列出走外部命令。"""
         archive = tmp_path / "a.7z"
         archive.write_bytes(b"fake")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             return SimpleNamespace(returncode=0, stdout="line1\nline2\n\n", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         names = list_archive(archive)
         assert names == ["line1", "line2"]
 
@@ -306,7 +306,7 @@ class TestListArchive:
         """外部命令未找到时抛 FileNotFoundError。"""
         archive = tmp_path / "a.7z"
         archive.write_bytes(b"fake")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda _: None)
         with pytest.raises(FileNotFoundError, match="未找到解压命令"):
             list_archive(archive)
 
@@ -314,12 +314,12 @@ class TestListArchive:
         """列出外部命令失败时抛 RuntimeError。"""
         archive = tmp_path / "a.7z"
         archive.write_bytes(b"fake")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             return SimpleNamespace(returncode=1, stdout="", stderr="corrupt archive")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         with pytest.raises(RuntimeError, match="列出失败"):
             list_archive(archive)
 
@@ -327,14 +327,14 @@ class TestListArchive:
         """rar 列出走 unrar 外部命令。"""
         archive = tmp_path / "a.rar"
         archive.write_bytes(b"fake rar")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
         calls: list[list[str]] = []
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             calls.append(cmd)
             return SimpleNamespace(returncode=0, stdout="file1.txt\nfile2.txt\n", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         names = list_archive(archive)
         assert calls and calls[0][0] == "unrar"
         assert "l" in calls[0]
@@ -521,7 +521,7 @@ class TestCreateArchive:
         assert output.is_file()
 
     def test_create_applies_ignore_dirs(self, tmp_path: Path) -> None:
-        """默认跳过 _common.IGNORE_DIRS 中的目录。"""
+        """默认跳过 core.filefilter.DEFAULT_IGNORE_SPEC 中的目录。"""
         src = tmp_path / "src"
         (src / ".git").mkdir(parents=True)
         (src / "a.txt").write_text("keep", encoding="utf-8")
@@ -534,7 +534,7 @@ class TestCreateArchive:
         assert all(".git" not in n for n in names)
 
     def test_create_applies_ignore_ext(self, tmp_path: Path) -> None:
-        """默认跳过 _common.IGNORE_EXT 中的扩展名（如 .pyc）。"""
+        """默认跳过 core.filefilter.DEFAULT_IGNORE_EXTS 中的扩展名（如 .pyc）。"""
         src = tmp_path / "src"
         src.mkdir()
         (src / "a.txt").write_text("keep", encoding="utf-8")
@@ -670,12 +670,12 @@ class TestCLISubcommands:
         """extract 外部命令失败时 CLI 层捕获并提示。"""
         archive = tmp_path / "a.7z"
         archive.write_bytes(b"fake")
-        monkeypatch.setattr("fcmd.cli.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.shutil.which", lambda cmd: "/usr/bin/" + cmd)
 
         def fake_run(cmd: list[str], **kwargs: object) -> SimpleNamespace:
             return SimpleNamespace(returncode=1, stdout="", stderr="corrupt")
 
-        monkeypatch.setattr("fcmd.cli.archive.archivex.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.archive.archivex.subprocess.run", fake_run)
         code = run_tool("archivex", ["extract", str(archive)])
         assert code == 0
         captured = capsys.readouterr()

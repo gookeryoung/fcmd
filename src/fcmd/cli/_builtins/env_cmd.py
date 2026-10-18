@@ -36,7 +36,7 @@ def run(argv: list[str]) -> int:
 
     # 触发全部工具模块导入以统计准确数字
     import_all_tool_modules()
-    from fcmd.apis.toolkit import _TOOL_REGISTRY
+    from fcmd.core.toolkit import _TOOL_REGISTRY
 
     tool_count = len(tool_names())
     subcommand_total = sum(len(subs) for subs in _TOOL_REGISTRY.values())

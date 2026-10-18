@@ -318,7 +318,7 @@ def test_inject_run_hook_captures_graph_and_report() -> None:
 
 def test_inject_run_hook_restore_reverts_patches() -> None:
     """_restore 还原后 executors.run 恢复原对象。"""
-    from fcmd.engine import executors as executors_mod
+    from fcmd.core.execution import executors as executors_mod
 
     original = executors_mod.run
 
@@ -335,10 +335,10 @@ def test_output_profile_text_writes_to_stdout(
     """output_profile export=text 写 stdout。"""
     from datetime import datetime
 
-    from fcmd.apis.dag import Graph
-    from fcmd.apis.profiling import ProfileReport
-    from fcmd.apis.report import RunReport
-    from fcmd.apis.task import TaskResult, TaskSpec, TaskStatus
+    from fcmd.core.dag import Graph
+    from fcmd.core.profiling import ProfileReport
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult, TaskSpec, TaskStatus
 
     spec = TaskSpec(name="a", fn=lambda: 1)
     graph = Graph.from_specs([spec])
@@ -365,10 +365,10 @@ def test_output_profile_html_writes_file(
     """output_profile export=html 写入文件。"""
     from datetime import datetime
 
-    from fcmd.apis.dag import Graph
-    from fcmd.apis.profiling import ProfileReport
-    from fcmd.apis.report import RunReport
-    from fcmd.apis.task import TaskResult, TaskSpec, TaskStatus
+    from fcmd.core.dag import Graph
+    from fcmd.core.profiling import ProfileReport
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult, TaskSpec, TaskStatus
 
     spec = TaskSpec(name="a", fn=lambda: 1)
     graph = Graph.from_specs([spec])

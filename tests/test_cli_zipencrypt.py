@@ -1,47 +1,40 @@
 """zipencrypt 工具测试。
 
-验证 ``fcmd.cli.archive.zipencrypt`` 模块：
+验证 ``fcmd.tools.archive.zipencrypt`` 模块（pyzipper AES 实现）：
 - 工具注册与单命令结构
 - ``_get_valid_entries`` 过滤逻辑（文件 + 非隐藏目录）
-- ``_detect_encrypt_tool`` 工具检测（7z/zip/rar/none）
-- ``_build_encrypt_cmd`` 命令构造（各工具参数差异）
-- ``_create_unencrypted_zip`` zipfile 回退
-- ``_make_archive`` 加密/跳过/覆盖/失败路径
+- ``_require_pyzipper`` 惰性导入与缺失降级
+- ``_write_aes_zip`` 写后可读回、AES 加密位（flag_bits / compress_type=99）
+- ``_make_archive`` 跳过/覆盖/失败清理
 - ``zip_encrypt`` 端到端（通过 run_tool 调用）
 """
 
 from __future__ import annotations
 
+import builtins
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
+import pyzipper
 
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.cli.archive.zipencrypt import (
-    _build_encrypt_cmd,
-    _create_unencrypted_zip,
-    _detect_encrypt_tool,
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.tools.archive import zipencrypt
+from fcmd.tools.archive.zipencrypt import (
     _get_valid_entries,
     _make_archive,
+    _require_pyzipper,
+    _write_aes_zip,
     zip_encrypt,
 )
-from fcmd.models import CommandResult
+
+_PASSWORD = "secret"
 
 
 # ============================================================================ #
 # 测试辅助
 # ============================================================================ #
-def _success_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-    """总是返回成功结果的 fake ``run_command``。"""
-    return CommandResult(cmd=list(cmd), returncode=0, stdout="", stderr="")
-
-
-def _fail_run(cmd: list[str], *, capture: bool = False, check: bool = False) -> CommandResult:
-    """总是返回失败结果的 fake ``run_command``。"""
-    return CommandResult(cmd=list(cmd), returncode=1, stdout="", stderr="encryption error")
-
-
 def _make_dir_with_files(base: Path) -> tuple[Path, list[Path]]:
     """创建包含文件和子目录的测试目录，返回 (目录, 条目列表)。"""
     (base / "doc.txt").write_text("hello")
@@ -56,6 +49,13 @@ def _make_dir_with_files(base: Path) -> tuple[Path, list[Path]]:
     cache_dir.mkdir()
     (cache_dir / "mod.pyc").write_text("binary")
     return base, [base / "doc.txt", base / "config.json", base / "project"]
+
+
+def _read_aes(path: Path, password: str = _PASSWORD, name: str | None = None) -> bytes:
+    """用 pyzipper 读回 AES ZIP 内容（验证加密包可正常解密）。"""
+    with pyzipper.AESZipFile(path) as zf:
+        zf.setpassword(password.encode("utf-8"))
+        return zf.read(name) if name is not None else b"".join(zf.read(n) for n in zf.namelist())
 
 
 # ============================================================================ #
@@ -101,104 +101,59 @@ class TestGetValidEntries:
 
 
 # ============================================================================ #
-# _detect_encrypt_tool
+# _require_pyzipper（惰性导入）
 # ============================================================================ #
-class TestDetectEncryptTool:
-    """_detect_encrypt_tool 工具检测测试。"""
+class TestRequirePyzipper:
+    """pyzipper 惰性导入与缺失降级。"""
 
-    def test_detect_7z(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """7z 可用时优先返回 7z。"""
-        monkeypatch.setattr(
-            "fcmd.cli.archive.zipencrypt.shutil.which", lambda cmd: "/usr/bin/7z" if cmd == "7z" else None
-        )
-        assert _detect_encrypt_tool() == "7z"
+    def test_returns_module(self) -> None:
+        """正常环境下返回 pyzipper 模块。"""
+        assert _require_pyzipper() is pyzipper
 
-    def test_detect_zip(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """仅 zip 可用时返回 zip。"""
-        monkeypatch.setattr(
-            "fcmd.cli.archive.zipencrypt.shutil.which",
-            lambda cmd: "/usr/bin/zip" if cmd == "zip" else None,
-        )
-        assert _detect_encrypt_tool() == "zip"
+    def test_missing_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """pyzipper 不可导入时返回 None（不抛错）。"""
+        monkeypatch.setattr(zipencrypt, "_pyzipper", None)
+        real_import = builtins.__import__
 
-    def test_detect_rar(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """仅 rar 可用时返回 rar。"""
-        monkeypatch.setattr(
-            "fcmd.cli.archive.zipencrypt.shutil.which",
-            lambda cmd: "/usr/bin/rar" if cmd == "rar" else None,
-        )
-        assert _detect_encrypt_tool() == "rar"
+        def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "pyzipper":
+                raise ImportError("no pyzipper")
+            return real_import(name, *args, **kwargs)
 
-    def test_detect_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """无任何工具时返回 None。"""
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
-        assert _detect_encrypt_tool() is None
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        assert _require_pyzipper() is None
 
-    def test_priority_7z_over_zip(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """7z 和 zip 都可用时优先 7z。"""
-        monkeypatch.setattr(
-            "fcmd.cli.archive.zipencrypt.shutil.which",
-            lambda cmd: f"/usr/bin/{cmd}" if cmd in ("7z", "zip") else None,
-        )
-        assert _detect_encrypt_tool() == "7z"
+    def test_missing_prints_install_hint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """缺库时 zip_encrypt 打印 extra 安装提示并返回。"""
+        (tmp_path / "a.txt").write_text("x")
+        monkeypatch.setattr(zipencrypt, "_require_pyzipper", lambda: None)
+        zip_encrypt(str(tmp_path), _PASSWORD)
+        out = capsys.readouterr().out
+        assert "pip install fcmd[archive]" in out
+        assert not (tmp_path / "a.zip").exists()
 
 
 # ============================================================================ #
-# _build_encrypt_cmd
+# _write_aes_zip
 # ============================================================================ #
-class TestBuildEncryptCmd:
-    """_build_encrypt_cmd 命令构造测试。"""
+class TestWriteAesZip:
+    """AES ZIP 写入：可读回 + 加密位。"""
 
-    def test_7z_cmd(self, tmp_path: Path) -> None:
-        """7z 命令包含 AES256 加密参数。"""
-        src = tmp_path / "file.txt"
-        dst = tmp_path / "file.zip"
-        cmd = _build_encrypt_cmd(src, dst, "secret", "7z")
-        assert cmd[0] == "7z"
-        assert cmd[1] == "a"
-        assert "-psecret" in cmd
-        assert "-mem=AES256" in cmd
-        assert str(dst) in cmd
-        assert str(src) in cmd
-
-    def test_zip_cmd(self, tmp_path: Path) -> None:
-        """zip 命令使用 -P 传密码。"""
-        src = tmp_path / "file.txt"
-        dst = tmp_path / "file.zip"
-        cmd = _build_encrypt_cmd(src, dst, "pw", "zip")
-        assert cmd[0] == "zip"
-        assert "-r" in cmd
-        assert "-Ppw" in cmd
-
-    def test_rar_cmd(self, tmp_path: Path) -> None:
-        """rar 命令使用 -p 传密码与 -m5 压缩级别。"""
-        src = tmp_path / "file.txt"
-        dst = tmp_path / "file.zip"
-        cmd = _build_encrypt_cmd(src, dst, "pw", "rar")
-        assert cmd[0] == "rar"
-        assert "-ppw" in cmd
-        assert "-m5" in cmd
-
-
-# ============================================================================ #
-# _create_unencrypted_zip
-# ============================================================================ #
-class TestCreateUnencryptedZip:
-    """_create_unencrypted_zip zipfile 回退测试。"""
-
-    def test_file_to_zip(self, tmp_path: Path) -> None:
-        """单文件写入 ZIP，arcname 仅为文件名。"""
+    def test_file_read_back(self, tmp_path: Path) -> None:
+        """写后可读回：单文件内容与 arcname 正确。"""
         src = tmp_path / "data.txt"
         src.write_text("content")
         dst = tmp_path / "data.zip"
-        _create_unencrypted_zip(src, dst)
-        assert dst.exists()
-        with zipfile.ZipFile(dst) as zf:
-            assert zf.namelist() == ["data.txt"]
-            assert zf.read("data.txt").decode() == "content"
+        _write_aes_zip(pyzipper, src, dst, _PASSWORD)
 
-    def test_dir_to_zip(self, tmp_path: Path) -> None:
-        """目录写入 ZIP，arcname 为相对路径。"""
+        with pyzipper.AESZipFile(dst) as zf:
+            assert zf.namelist() == ["data.txt"]
+        assert _read_aes(dst, name="data.txt") == b"content"
+
+    def test_dir_read_back(self, tmp_path: Path) -> None:
+        """写后可读回：目录条目为相对路径。"""
         src = tmp_path / "proj"
         src.mkdir()
         (src / "a.txt").write_text("a")
@@ -206,105 +161,99 @@ class TestCreateUnencryptedZip:
         sub.mkdir()
         (sub / "b.txt").write_text("b")
         dst = tmp_path / "proj.zip"
-        _create_unencrypted_zip(src, dst)
-        assert dst.exists()
+        _write_aes_zip(pyzipper, src, dst, _PASSWORD)
+
+        with pyzipper.AESZipFile(dst) as zf:
+            assert sorted(zf.namelist()) == ["a.txt", "sub/b.txt"]
+        assert _read_aes(dst, name="sub/b.txt") == b"b"
+
+    def test_wrong_password_fails(self, tmp_path: Path) -> None:
+        """错误密码无法解密（HMAC 校验失败）。"""
+        src = tmp_path / "data.txt"
+        src.write_text("content")
+        dst = tmp_path / "data.zip"
+        _write_aes_zip(pyzipper, src, dst, _PASSWORD)
+        with pytest.raises(RuntimeError):
+            _read_aes(dst, password="wrong", name="data.txt")
+
+    def test_aes_encryption_flags(self, tmp_path: Path) -> None:
+        """AES 加密位存在：encrypted 标志置位且压缩方法为 WinZip AES(99)。"""
+        src = tmp_path / "data.txt"
+        src.write_text("content")
+        dst = tmp_path / "data.zip"
+        _write_aes_zip(pyzipper, src, dst, _PASSWORD)
+
         with zipfile.ZipFile(dst) as zf:
-            names = sorted(zf.namelist())
-            assert names == ["a.txt", "sub/b.txt"]
+            info = zf.getinfo("data.txt")
+            assert info.flag_bits & 0x1  # 加密标志
+            assert info.compress_type == 99  # WinZip AES
+            with pytest.raises(RuntimeError, match="password"):
+                zf.read("data.txt")
+
+    def test_unicode_password(self, tmp_path: Path) -> None:
+        """非 ASCII 密码按 UTF-8 编码后可用。"""
+        src = tmp_path / "data.txt"
+        src.write_text("content")
+        dst = tmp_path / "data.zip"
+        _write_aes_zip(pyzipper, src, dst, "密码123")
+        assert _read_aes(dst, password="密码123", name="data.txt") == b"content"
 
 
 # ============================================================================ #
 # _make_archive
 # ============================================================================ #
 class TestMakeArchive:
-    """_make_archive 加密/跳过/覆盖/失败路径测试。"""
+    """_make_archive 跳过/覆盖/失败清理。"""
 
-    def test_encrypt_file_success(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """使用外部工具成功加密文件。"""
+    def test_encrypt_file_success(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """成功加密文件并回显完成。"""
         src = tmp_path / "doc.txt"
         src.write_text("hello")
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
 
-        result = _make_archive(src, "pw", "7z", replace=False)
-        assert result is True
-        captured = capsys.readouterr()
-        assert "完成" in captured.out
+        assert _make_archive(src, _PASSWORD, pyzipper, replace=False) is True
+        assert "完成" in capsys.readouterr().out
+        assert _read_aes(tmp_path / "doc.zip", name="doc.txt") == b"hello"
 
-    def test_skip_existing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """目标 ZIP 已存在且 replace=False 时跳过。"""
-        src = tmp_path / "doc.txt"
-        src.write_text("hello")
-        (tmp_path / "doc.zip").write_text("existing")
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
-
-        result = _make_archive(src, "pw", "7z", replace=False)
-        assert result is False
-        captured = capsys.readouterr()
-        assert "跳过" in captured.out
-
-    def test_replace_existing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """目标 ZIP 已存在且 replace=True 时覆盖。"""
+    def test_skip_existing_keeps_original(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """目标 ZIP 已存在且 replace=False 时跳过，原文件不被改写。"""
         src = tmp_path / "doc.txt"
         src.write_text("hello")
         existing = tmp_path / "doc.zip"
-        existing.write_text("old")
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
+        existing.write_text("existing")
 
-        result = _make_archive(src, "pw", "7z", replace=True)
-        assert result is True
-        captured = capsys.readouterr()
-        assert "覆盖" in captured.out
+        assert _make_archive(src, _PASSWORD, pyzipper, replace=False) is False
+        assert "跳过" in capsys.readouterr().out
+        assert existing.read_text() == "existing"
 
-    def test_encrypt_failure(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """外部工具返回失败码时报告失败。"""
+    def test_replace_existing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """目标 ZIP 已存在且 replace=True 时覆盖为有效 AES 包。"""
         src = tmp_path / "doc.txt"
         src.write_text("hello")
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _fail_run)
+        (tmp_path / "doc.zip").write_text("old")
 
-        result = _make_archive(src, "pw", "7z", replace=False)
-        assert result is False
-        captured = capsys.readouterr()
-        assert "加密失败" in captured.out
+        assert _make_archive(src, _PASSWORD, pyzipper, replace=True) is True
+        assert "覆盖" in capsys.readouterr().out
+        assert _read_aes(tmp_path / "doc.zip", name="doc.txt") == b"hello"
 
-    def test_unencrypted_fallback(
+    def test_failure_cleans_partial_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """tool=None 时使用 zipfile 回退（无加密）。"""
+        """写入抛 OSError 时报告失败并清理半成品文件。"""
         src = tmp_path / "doc.txt"
         src.write_text("hello")
-        # 不 mock run_command，确保 tool=None 路径不调用它
+        target = tmp_path / "doc.zip"
 
-        result = _make_archive(src, "pw", tool=None, replace=False)
-        assert result is True
-        assert (tmp_path / "doc.zip").exists()
-        with zipfile.ZipFile(tmp_path / "doc.zip") as zf:
-            assert zf.read("doc.txt").decode() == "hello"
-
-    def test_unencrypted_fallback_oserror(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """zipfile 回退抛 OSError 时报告失败。"""
-        src = tmp_path / "doc.txt"
-        src.write_text("hello")
-
-        def _raise_oserror(filepath: Path, target_path: Path) -> None:
+        def _broken(module: Any, filepath: Path, target_path: Path, password: str) -> None:
+            target_path.write_text("partial")
             raise OSError("disk full")
 
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt._create_unencrypted_zip", _raise_oserror)
+        monkeypatch.setattr(zipencrypt, "_write_aes_zip", _broken)
 
-        result = _make_archive(src, "pw", tool=None, replace=False)
-        assert result is False
-        captured = capsys.readouterr()
-        assert "加密失败" in captured.out
-        assert "disk full" in captured.out
+        assert _make_archive(src, _PASSWORD, pyzipper, replace=False) is False
+        out = capsys.readouterr().out
+        assert "加密失败" in out
+        assert "disk full" in out
+        assert not target.exists()
 
 
 # ============================================================================ #
@@ -316,65 +265,42 @@ class TestZipEncryptFunction:
     def test_empty_password(self, capsys: pytest.CaptureFixture[str]) -> None:
         """空密码时提示并返回。"""
         zip_encrypt(".", "")
-        captured = capsys.readouterr()
-        assert "密码不能为空" in captured.out
+        assert "密码不能为空" in capsys.readouterr().out
 
     def test_nonexistent_dir(self, capsys: pytest.CaptureFixture[str]) -> None:
         """目录不存在时提示并返回。"""
-        zip_encrypt("/nonexistent/path/xyz", "pw")
-        captured = capsys.readouterr()
-        assert "目录不存在" in captured.out
+        zip_encrypt("/nonexistent/path/xyz", _PASSWORD)
+        assert "目录不存在" in capsys.readouterr().out
 
     def test_not_a_dir(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """路径是文件而非目录时提示并返回。"""
         f = tmp_path / "file.txt"
         f.write_text("ok")
-        zip_encrypt(str(f), "pw")
-        captured = capsys.readouterr()
-        assert "不是目录" in captured.out
+        zip_encrypt(str(f), _PASSWORD)
+        assert "不是目录" in capsys.readouterr().out
 
     def test_empty_dir(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """空目录提示未找到目标文件。"""
-        zip_encrypt(str(tmp_path), "pw")
-        captured = capsys.readouterr()
-        assert "未找到目标文件" in captured.out
+        zip_encrypt(str(tmp_path), _PASSWORD)
+        assert "未找到目标文件" in capsys.readouterr().out
 
-    def test_full_run_with_mock(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """mock 7z 可用 + run_command 成功，验证完整流程。"""
+    def test_full_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """完整流程：3 个条目全部生成 AES 加密 ZIP。"""
         _make_dir_with_files(tmp_path)
-        monkeypatch.setattr(
-            "fcmd.cli.archive.zipencrypt.shutil.which", lambda cmd: "/usr/bin/7z" if cmd == "7z" else None
-        )
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.run_command", _success_run)
 
-        zip_encrypt(str(tmp_path), "secret", replace=False)
-        captured = capsys.readouterr()
-        assert "使用 7z" in captured.out
-        assert "开始加密 3 个" in captured.out
-        assert "3/3 成功" in captured.out
+        zip_encrypt(str(tmp_path), _PASSWORD, replace=False)
+        out = capsys.readouterr().out
+        assert "AES-256" in out
+        assert "开始加密 3 个" in out
+        assert "3/3 成功" in out
 
-    def test_full_run_unencrypted(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """无外部工具时回退到 zipfile。"""
-        _make_dir_with_files(tmp_path)
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
+        assert _read_aes(tmp_path / "doc.zip", name="doc.txt") == b"hello"
+        assert _read_aes(tmp_path / "config.zip", name="config.json") == b'{"a": 1}'
+        assert _read_aes(tmp_path / "project.zip", name="main.py") == b"print('hi')"
 
-        zip_encrypt(str(tmp_path), "secret", replace=False)
-        captured = capsys.readouterr()
-        assert "无加密 zipfile" in captured.out
-        # 验证实际生成了 zip 文件
-        assert (tmp_path / "doc.zip").exists()
-        assert (tmp_path / "config.zip").exists()
-        assert (tmp_path / "project.zip").exists()
+        # 隐藏目录与 __pycache__ 不进包
+        with pyzipper.AESZipFile(tmp_path / "project.zip") as zf:
+            assert zf.namelist() == ["main.py"]
 
 
 # ============================================================================ #
@@ -383,34 +309,32 @@ class TestZipEncryptFunction:
 class TestRunToolEndToEnd:
     """通过 run_tool 调用 zipencrypt 的端到端测试。"""
 
-    def test_run_tool_success(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        """run_tool 调用 zipencrypt 成功执行。"""
+    def test_run_tool_success(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """run_tool 调用 zipencrypt 成功执行并生成 AES 包。"""
         (tmp_path / "a.txt").write_text("content")
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
 
-        code = run_tool("zipencrypt", [str(tmp_path), "mypw"])
+        code = run_tool("zipencrypt", [str(tmp_path), _PASSWORD])
         assert code == 0
-        captured = capsys.readouterr()
-        assert "1/1 成功" in captured.out
-        assert (tmp_path / "a.zip").exists()
+        assert "1/1 成功" in capsys.readouterr().out
+        assert _read_aes(tmp_path / "a.zip", name="a.txt") == b"content"
 
-    def test_run_tool_with_replace_flag(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """--replace 标志透传到函数。"""
+    def test_run_tool_with_replace_flag(self, tmp_path: Path) -> None:
+        """--replace 标志透传到函数：旧 ZIP 被覆盖为有效 AES 包。"""
         (tmp_path / "a.txt").write_text("content")
         (tmp_path / "a.zip").write_text("old zip")
-        monkeypatch.setattr("fcmd.cli.archive.zipencrypt.shutil.which", lambda _: None)
 
-        code = run_tool("zipencrypt", [str(tmp_path), "mypw", "--replace"])
+        code = run_tool("zipencrypt", [str(tmp_path), _PASSWORD, "--replace"])
         assert code == 0
-        # 验证旧 zip 被覆盖（新 zip 是有效的 zipfile）
-        with zipfile.ZipFile(tmp_path / "a.zip") as zf:
-            assert zf.read("a.txt").decode() == "content"
+        assert _read_aes(tmp_path / "a.zip", name="a.txt") == b"content"
+
+    def test_run_tool_skips_existing_without_replace(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """默认不覆盖已存在 ZIP。"""
+        (tmp_path / "a.txt").write_text("content")
+        (tmp_path / "a.zip").write_text("old zip")
+
+        code = run_tool("zipencrypt", [str(tmp_path), _PASSWORD])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "已存在，跳过" in out
+        assert "0/1 成功" in out
+        assert (tmp_path / "a.zip").read_text() == "old zip"

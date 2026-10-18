@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.apis.dag import Graph, GraphDefaults
-from fcmd.apis.errors import CycleError, DuplicateTaskError, MissingDependencyError
-from fcmd.apis.task import RetryPolicy, TaskSpec, cmd, task
+from fcmd.core.dag import Graph, GraphDefaults
+from fcmd.core.errors import CycleError, DuplicateTaskError, MissingDependencyError
+from fcmd.core.task import RetryPolicy, TaskSpec, cmd, task
 
 
 # ---------------------------------------------------------------------- #
@@ -78,7 +78,7 @@ def test_graph_from_specs_auto_infer_skips_default_params() -> None:
 def test_graph_from_specs_auto_infer_skips_context_params() -> None:
     """Context 标注参数不推断依赖。"""
 
-    from fcmd.apis.task import Context
+    from fcmd.core.task import Context
 
     @task
     def a() -> int:

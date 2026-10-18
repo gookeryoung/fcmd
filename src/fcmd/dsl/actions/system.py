@@ -2,59 +2,53 @@
 
 from __future__ import annotations
 
-import os
 import sys
-from pathlib import Path, PureWindowsPath
+from pathlib import Path
 
 from fcmd.dsl.actions import action
 
 __all__: list[str] = []
 
 
-def _system_taskkill_path() -> str:
-    """返回系统 ``taskkill.exe`` 绝对路径。
-
-    必须使用绝对路径调用系统 taskkill.exe，避免 fcmd 自身注册的 ``taskkill``
-    entry script（``pip install`` 生成于 Python Scripts 目录）在 PATH 中
-    优先于 ``C:\\Windows\\System32\\taskkill.exe``，导致 ``subprocess.run``
-    递归调用 fcmd taskkill 自身，指数级进程爆炸直至系统资源耗尽。
-
-    使用 ``PureWindowsPath`` 而非 ``Path``：本函数仅在 ``sys.platform == 'win32'``
-    分支调用，但 CI 在 Linux 上运行时会 monkeypatch ``sys.platform``，此时
-    ``Path`` 会退化为 ``PosixPath``，把 ``C:\\Windows`` 当作单一组件用 ``/``
-    拼接，产生混合分隔符路径。``PureWindowsPath`` 跨平台一致使用反斜杠。
-    """
-    # Windows 环境变量大小写不敏感，SystemRoot 是系统约定写法
-    system_root = os.environ.get("SystemRoot", r"C:\Windows")  # noqa: SIM112
-    return str(PureWindowsPath(system_root) / "System32" / "taskkill.exe")
-
-
-@action("taskkill", param_help={"names": "进程名称列表（自动追加 * 通配符）"})
+@action("taskkill", param_help={"names": "进程名称列表（按名称前缀匹配）"})
 def _taskkill(names: list[str]) -> None:
-    """按名称终止进程（跨平台，Windows taskkill /FI 过滤器 / Unix pkill）。
+    """按名称终止进程（跨平台，基于 psutil）。
 
-    Windows 使用 ``taskkill /f /fi "imagename eq <name>*"``（``/FI`` 过滤器
-    支持通配符，兼容 Win7）；Linux/macOS 使用 ``pkill -f <name>*``。
-    逐条目回显结果；未匹配（pkill 返回码 1）为常见正常场景，打印提示后
-    继续，不视为失败。
+    逐个名称用 ``psutil.process_iter`` 匹配名称前缀，命中后先 ``terminate()``
+    给进程一个优雅退出的机会，等待 3 秒仍未退出的 ``kill()``。
+    逐条目回显；未匹配时打印提示后继续，不视为失败。
+
+    用 psutil 而非子进程 ``taskkill``/``pkill``：无需解析本地化输出，
+    也不会因 fcmd 自身注册的同名 entry script 抢占 PATH 而递归调用自身。
     """
-    import subprocess  # 延迟导入：subprocess 仅终止进程场景需要（冷启动导入税）
+    import psutil  # 延迟导入：仅终止进程场景需要（冷启动导入税）
 
-    if sys.platform == "win32":
-        # 用 /FI 过滤器替代 /IM 通配符：Win7 的 /IM 不支持部分通配符
-        prefix: tuple[str, ...] = (_system_taskkill_path(), "/f", "/fi")
-        target = "imagename eq {}*"
-    else:
-        prefix = ("pkill", "-f")
-        target = "{}*"
     for name in names:
         print(f"终止进程: {name}")
-        # pkill 返回 1 表示无匹配进程（非错误），故 check=False + 手动检查返回码
-        result = subprocess.run([*prefix, target.format(name)], check=False, capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"  已发送终止信号: {name}")
-        else:
-            print(f"  未找到匹配进程或终止失败 (returncode={result.returncode}): {name}")
+        targets = [
+            proc for proc in psutil.process_iter(["pid", "name"]) if (proc.info.get("name") or "").startswith(name)
+        ]
+        if not targets:
+            print(f"  未找到匹配进程: {name}")
+            continue
+        for proc in targets:
+            print(f"  PID={proc.pid} 名称={proc.info.get('name')} -> terminate")
+            try:
+                proc.terminate()
+            except psutil.NoSuchProcess:
+                print(f"  PID={proc.pid} 已退出")
+            except psutil.AccessDenied:
+                print(f"  PID={proc.pid} 权限不足，跳过")
+        _gone, alive = psutil.wait_procs(targets, timeout=3)
+        for proc in alive:
+            try:
+                proc.kill()
+            except psutil.NoSuchProcess:
+                continue
+            except psutil.AccessDenied:
+                print(f"  PID={proc.pid} 权限不足，无法强制终止")
+            else:
+                print(f"  PID={proc.pid} 已强制终止")
 
 
 @action("which", param_help={"commands": "要查找的命令名称列表"})
@@ -84,7 +78,9 @@ def _format_bytes(size: int) -> str:
 def _sysinfo() -> None:
     """收集并打印当前环境的系统信息（Python/平台/内存/磁盘/CPU）。"""
     import platform  # 延迟导入：platform 仅系统诊断场景需要（冷启动导入税）
-    import shutil
+    import time
+
+    import psutil
 
     info: dict[str, str] = {
         "Python 版本": sys.version.split()[0],
@@ -95,29 +91,32 @@ def _sysinfo() -> None:
         "操作系统": f"{platform.system()} {platform.release()}",
     }
 
-    # 内存信息（仅 Linux/macOS 可获取， Windows 无 resource 模块）
-    try:
-        import resource
+    mem = psutil.virtual_memory()
+    info["内存总量"] = _format_bytes(mem.total)
+    info["内存已用"] = f"{_format_bytes(mem.used)} ({mem.percent:.1f}%)"
+    info["内存可用"] = _format_bytes(mem.available)
 
-        # getrusage 返回 ru_maxrss: Linux 上单位 KB, macOS 上单位字节
-        usage = resource.getrusage(resource.RUSAGE_SELF)  # type: ignore[missing-attribute]
-        if platform.system() == "Darwin":
-            info["内存峰值"] = _format_bytes(usage.ru_maxrss)
-        else:
-            info["内存峰值"] = _format_bytes(usage.ru_maxrss * 1024)
-    except (OSError, AttributeError, ImportError):
-        pass
+    swap = psutil.swap_memory()
+    info["交换区总量"] = _format_bytes(swap.total)
+    info["交换区已用"] = _format_bytes(swap.used)
 
     # 磁盘信息（当前目录所在分区）
     try:
-        usage = shutil.disk_usage(Path.cwd())
+        usage = psutil.disk_usage(str(Path.cwd()))
+    except OSError:  # pragma: no cover - 罕见平台
+        pass
+    else:
         info["磁盘总量"] = _format_bytes(usage.total)
         info["磁盘已用"] = _format_bytes(usage.used)
         info["磁盘可用"] = _format_bytes(usage.free)
+
+    info["CPU 核心数"] = str(psutil.cpu_count() or "未知")
+    try:
+        boot_time = psutil.boot_time()
     except OSError:  # pragma: no cover - 罕见平台
         pass
-
-    info["CPU 核心数"] = str(os.cpu_count() or "未知")
+    else:
+        info["开机时间"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(boot_time))
     info["工作目录"] = str(Path.cwd())
 
     print("=" * 50)

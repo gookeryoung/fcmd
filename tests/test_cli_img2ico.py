@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.media import (
     SVG_TO_ICO_MAC_SIZES,
     SVG_TO_ICO_WIN_SIZES,

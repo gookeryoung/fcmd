@@ -2,7 +2,7 @@
 
 TOML 声明 ``action = "<名>"`` 的命令由本注册表分发执行：动作实现是普通
 Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合成函数，
-零改动复用 ``fcmd.apis._tool_args._build_parser_for_tool`` 的参数推导）。
+零改动复用 ``fcmd.core.toolkit.args._build_parser_for_tool`` 的参数推导）。
 与 cmd 任务（subprocess）不同，动作在 fcmd 进程内直接执行——无进程边界，
 异常由引擎任务失败机制统一捕获（任务失败汇总 + 退出码非零）。
 

@@ -1,6 +1,6 @@
 """归档与压缩 DSL 动作：folderzip。
 
-原模块 ``fcmd.cli.archive.folderzip`` 为纯 Python 实现（shutil / pathlib
+原模块 ``fcmd.tools.archive.folderzip`` 为纯 Python 实现（shutil / pathlib
 标准库），无子进程调用。
 """
 
@@ -43,7 +43,7 @@ def archive_folder(folder: Path) -> None:
 )
 def folderzip(directory: str = ".") -> None:
     """压缩目录下的所有子文件夹为 zip。"""
-    from fcmd.cli._common import IGNORE_DIRS, IGNORE_EXT
+    from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
 
     dir_path = Path(directory)
     if not dir_path.exists():
@@ -51,7 +51,9 @@ def folderzip(directory: str = ".") -> None:
         return
 
     dirs: list[Path] = [
-        e for e in dir_path.iterdir() if e.is_dir() and e.name not in IGNORE_DIRS and e.suffix not in IGNORE_EXT
+        e
+        for e in dir_path.iterdir()
+        if e.is_dir() and not should_skip_parts(e.parts, DEFAULT_IGNORE_SPEC) and e.suffix not in DEFAULT_IGNORE_EXTS
     ]
 
     for child in dirs:

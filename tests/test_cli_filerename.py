@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apis._tool_args import ToolSpec
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit.args import ToolSpec
 
 ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 filerename）
 

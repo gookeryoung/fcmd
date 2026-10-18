@@ -1,6 +1,6 @@
 # 内置 DSL 命令：timetool（多子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/calc/timetool.py 已迁入 fcmd/dsl/actions/calc.py：
+# 原模块 fcmd/tools/calc/timetool.py 已迁入 fcmd/dsl/actions/calc.py：
 # now/parse/unix/fromunix/convert 五子命令均为纯 Python（datetime/
 # zoneinfo 标准库），无子进程调用。now 子命令的 utc bool 开关演示
 # type=bool 参数用法；非法时间格式/无效时区捕获后打印错误提示，不

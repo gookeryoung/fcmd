@@ -20,7 +20,7 @@
 
 from typing import Any
 
-__version__ = "0.3.8"
+__version__ = "0.4.0"
 
 __all__ = [
     "Context",
@@ -66,47 +66,47 @@ __all__ = [
 
 # 懒加载映射：属性名 -> (模块路径, 符号名)
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
-    "Context": ("fcmd.apis.context", "Context"),
-    "CycleError": ("fcmd.apis.errors", "CycleError"),
-    "DuplicateTaskError": ("fcmd.apis.errors", "DuplicateTaskError"),
-    "FcmdError": ("fcmd.apis.errors", "FcmdError"),
-    "Graph": ("fcmd.apis.dag", "Graph"),
-    "GraphDefaults": ("fcmd.apis.dag", "GraphDefaults"),
-    "InjectionError": ("fcmd.apis.errors", "InjectionError"),
-    "MissingDependencyError": ("fcmd.apis.errors", "MissingDependencyError"),
-    "ProfileReport": ("fcmd.apis.profiling", "ProfileReport"),
-    "RetryPolicy": ("fcmd.apis.task", "RetryPolicy"),
-    "RunConfig": ("fcmd.apis.task", "RunConfig"),
-    "RunReport": ("fcmd.apis.report", "RunReport"),
-    "TaskCmd": ("fcmd.apis.task", "TaskCmd"),
-    "TaskFailedError": ("fcmd.apis.errors", "TaskFailedError"),
-    "TaskResult": ("fcmd.apis.task", "TaskResult"),
-    "TaskProfile": ("fcmd.apis.profiling", "TaskProfile"),
-    "TaskSpec": ("fcmd.apis.task", "TaskSpec"),
-    "TaskStatus": ("fcmd.apis.task", "TaskStatus"),
-    "TaskTimeoutError": ("fcmd.apis.errors", "TaskTimeoutError"),
-    "ToolExitCode": ("fcmd.apis.toolkit", "ToolExitCode"),
-    "ToolSpec": ("fcmd.apis.toolkit", "ToolSpec"),
-    "build_tool_graph": ("fcmd.apis.toolkit", "build_tool_graph"),
-    "cmd": ("fcmd.apis.task", "cmd"),
-    "clear_tool_registry": ("fcmd.apis.toolkit", "clear_tool_registry"),
-    "describe_injection": ("fcmd.apis.context", "describe_injection"),
-    "get_tool": ("fcmd.apis.toolkit", "get_tool"),
-    "graph": ("fcmd.apis.dag", "graph"),
-    "list_subcommands": ("fcmd.apis.toolkit", "list_subcommands"),
-    "list_tools": ("fcmd.apis.toolkit", "list_tools"),
-    "load_yaml": ("fcmd.orchestration.yaml_loader", "load_yaml"),
-    "main": ("fcmd.apis.toolkit", "main"),
-    "parse_yaml_string": ("fcmd.orchestration.yaml_loader", "parse_yaml_string"),
-    "run": ("fcmd.engine.executors", "run"),
-    "run_command": ("fcmd.engine.task_command", "run_command"),
-    "run_tool": ("fcmd.apis.toolkit", "run_tool"),
-    "task": ("fcmd.apis.task", "task"),
-    "tool": ("fcmd.apis.toolkit", "tool"),
+    "Context": ("fcmd.core.context", "Context"),
+    "CycleError": ("fcmd.core.errors", "CycleError"),
+    "DuplicateTaskError": ("fcmd.core.errors", "DuplicateTaskError"),
+    "FcmdError": ("fcmd.core.errors", "FcmdError"),
+    "Graph": ("fcmd.core.dag", "Graph"),
+    "GraphDefaults": ("fcmd.core.dag", "GraphDefaults"),
+    "InjectionError": ("fcmd.core.errors", "InjectionError"),
+    "MissingDependencyError": ("fcmd.core.errors", "MissingDependencyError"),
+    "ProfileReport": ("fcmd.core.profiling", "ProfileReport"),
+    "RetryPolicy": ("fcmd.core.task", "RetryPolicy"),
+    "RunConfig": ("fcmd.core.task", "RunConfig"),
+    "RunReport": ("fcmd.core.report", "RunReport"),
+    "TaskCmd": ("fcmd.core.task", "TaskCmd"),
+    "TaskFailedError": ("fcmd.core.errors", "TaskFailedError"),
+    "TaskResult": ("fcmd.core.task", "TaskResult"),
+    "TaskProfile": ("fcmd.core.profiling", "TaskProfile"),
+    "TaskSpec": ("fcmd.core.task", "TaskSpec"),
+    "TaskStatus": ("fcmd.core.task", "TaskStatus"),
+    "TaskTimeoutError": ("fcmd.core.errors", "TaskTimeoutError"),
+    "ToolExitCode": ("fcmd.core.toolkit", "ToolExitCode"),
+    "ToolSpec": ("fcmd.core.toolkit", "ToolSpec"),
+    "build_tool_graph": ("fcmd.core.toolkit", "build_tool_graph"),
+    "cmd": ("fcmd.core.task", "cmd"),
+    "clear_tool_registry": ("fcmd.core.toolkit", "clear_tool_registry"),
+    "describe_injection": ("fcmd.core.context", "describe_injection"),
+    "get_tool": ("fcmd.core.toolkit", "get_tool"),
+    "graph": ("fcmd.core.dag", "graph"),
+    "list_subcommands": ("fcmd.core.toolkit", "list_subcommands"),
+    "list_tools": ("fcmd.core.toolkit", "list_tools"),
+    "load_yaml": ("fcmd.core.orchestration.yaml_loader", "load_yaml"),
+    "main": ("fcmd.core.toolkit", "main"),
+    "parse_yaml_string": ("fcmd.core.orchestration.yaml_loader", "parse_yaml_string"),
+    "run": ("fcmd.core.execution.executors", "run"),
+    "run_command": ("fcmd.core.execution.task_command", "run_command"),
+    "run_tool": ("fcmd.core.toolkit", "run_tool"),
+    "task": ("fcmd.core.task", "task"),
+    "tool": ("fcmd.core.toolkit", "tool"),
 }
 
 # Strategy 是 Literal 类型别名，从执行引擎导入
-_LAZY_ATTRS["Strategy"] = ("fcmd.engine.executors", "Strategy")
+_LAZY_ATTRS["Strategy"] = ("fcmd.core.execution.executors", "Strategy")
 
 
 def __getattr__(name: str) -> Any:

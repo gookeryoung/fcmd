@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import sys
+import typing
 from pathlib import Path
 from typing import Any, Literal
 
 import pytest
 
 import fcmd
-from fcmd.apis.errors import FcmdError
-from fcmd.apis.task import RetryPolicy, TaskSpec
-from fcmd.apis.toolkit import (
+from fcmd.core.errors import FcmdError
+from fcmd.core.task import RetryPolicy, TaskSpec
+from fcmd.core.toolkit import (
     _TOOL_REGISTRY,
     ToolExitCode,
     ToolSpec,
     _add_optional_arg,
     _add_positional_arg,
-    _annotation_str_to_type,
     _build_task_spec,
     _collect_with_deps,
     _has_function_logic,
@@ -511,26 +511,25 @@ def test_build_task_spec_fn_task_cwd_from_var() -> None:
 # ---------------------------------------------------------------------- #
 # 类型注解辅助
 # ---------------------------------------------------------------------- #
-def test_resolve_hints_normal() -> None:
-    """_resolve_hints 解析普通注解。"""
+def test_resolve_hints_from_future_annotations() -> None:
+    """``from __future__ import annotations`` 的字符串注解被求值为类型对象。"""
 
-    def f(x: int, y: str) -> None:
+    def f(x: int, items: list[str], maybe: int | None) -> None:
         pass
 
     hints = _resolve_hints(f)
     assert hints["x"] is int
-    assert hints["y"] is str
+    assert hints["items"] == list[str]
+    assert hints["maybe"] == (int | None)
 
 
-def test_resolve_hints_failure_returns_empty() -> None:
-    """_resolve_hints 失败时返回空 dict。"""
+def test_resolve_hints_no_annotations() -> None:
+    """无注解函数返回空 dict。"""
 
-    class Bad:
-        pass
+    def f(x):  # type: ignore[no-untyped-def]
+        return x
 
-    # 构造无法解析的注解场景
-    hints = _resolve_hints(Bad.__init__)
-    assert isinstance(hints, dict)
+    assert _resolve_hints(f) == {}
 
 
 def test_is_list_annotation_list_origin() -> None:
@@ -539,19 +538,15 @@ def test_is_list_annotation_list_origin() -> None:
     assert _is_list_annotation(ann) is True
 
 
-def test_is_list_annotation_List_str() -> None:
-    """List[int] 字符串形式识别。"""
-    assert _is_list_annotation("List[int]") is True
-
-
-def test_is_list_annotation_list_str() -> None:
-    """list[int] 字符串形式识别。"""
-    assert _is_list_annotation("list[int]") is True
+def test_is_list_annotation_typing_list() -> None:
+    """typing.List[X] 注解识别（get_origin 归一为 list）。"""
+    assert _is_list_annotation(typing.List[int]) is True  # noqa: UP006
 
 
 def test_is_list_annotation_non_list() -> None:
-    """非 list 注解。"""
+    """非 list 注解与字符串注解均不识别（无 Python 3.8 字符串回退）。"""
     assert _is_list_annotation(int) is False
+    assert _is_list_annotation("list[int]") is False
     assert _is_list_annotation("str") is False
 
 
@@ -561,15 +556,10 @@ def test_list_inner_type_from_args() -> None:
     assert _list_inner_type(list[Path]) is Path
 
 
-def test_list_inner_type_from_str() -> None:
-    """字符串形式提取内部类型名。"""
-    assert _list_inner_type("list[int]") == "int"
-    assert _list_inner_type("List[Path]") == "Path"
-
-
 def test_list_inner_type_none() -> None:
-    """无法提取时返回 None。"""
+    """无法提取时返回 None（含字符串注解）。"""
     assert _list_inner_type(int) is None
+    assert _list_inner_type("list[int]") is None
 
 
 # ---------------------------------------------------------------------- #
@@ -582,7 +572,7 @@ def test_build_parser_positional_str() -> None:
     def a(name: str) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["hello"])
@@ -596,7 +586,7 @@ def test_build_parser_positional_int() -> None:
     def a(count: int) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["42"])
@@ -610,7 +600,7 @@ def test_build_parser_positional_list() -> None:
     def a(items: list[str]) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["a", "b", "c"])
@@ -624,7 +614,7 @@ def test_build_parser_optional_str() -> None:
     def a(name: str = "default") -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["--name", "custom"])
@@ -640,7 +630,7 @@ def test_build_parser_optional_int() -> None:
     def a(count: int = 5) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["--count", "10"])
@@ -654,7 +644,7 @@ def test_build_parser_bool_store_true() -> None:
     def a(verbose: bool = False) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args_off = parser.parse_args([])
@@ -670,7 +660,7 @@ def test_build_parser_bool_default_true_store_false() -> None:
     def a(keep: bool = True) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     # 默认 True
@@ -691,33 +681,26 @@ def test_unwrap_optional_union_type() -> None:
     assert multi == int | str | None
 
 
-def test_unwrap_optional_str_pep604() -> None:
-    """字符串注解 'X | None' / 'None | X' 解包为对应类型。"""
-    assert _unwrap_optional("int | None") is int
-    assert _unwrap_optional("None | int") is int
-    assert _unwrap_optional("str | None") is str
-    assert _unwrap_optional("Path | None") is Path
-
-
-def test_unwrap_optional_str_optional_form() -> None:
-    """字符串注解 'Optional[X]' 解包为对应类型。"""
-    assert _unwrap_optional("Optional[int]") is int
-    assert _unwrap_optional("Optional[Path]") is Path
-    assert _unwrap_optional("Optional[ Unknown ]") == "Unknown"
+def test_unwrap_optional_str_passthrough() -> None:
+    """字符串注解不再被解析（无 Python 3.8 字符串回退），原样返回。"""
+    assert _unwrap_optional("int | None") == "int | None"
+    assert _unwrap_optional("None | int") == "None | int"
+    assert _unwrap_optional("Optional[int]") == "Optional[int]"
 
 
 def test_unwrap_optional_non_optional_passthrough() -> None:
     """非 Optional 注解原样返回。"""
     assert _unwrap_optional(int) is int
+    assert _unwrap_optional(Path) is Path
     assert _unwrap_optional("int") == "int"
     assert _unwrap_optional("list[str]") == "list[str]"
-    # 多参数字符串 'X | Y' 不处理（无 None）
+    # 多参数 X | Y（无 None）不处理
+    assert _unwrap_optional(int | str) == (int | str)
     assert _unwrap_optional("int | str") == "int | str"
 
 
-@pytest.mark.skipif(sys.version_info < (3, 10), reason="PEP 604 X|Y 语法需 Python 3.10+")
 def test_unwrap_optional_pep604_union_type() -> None:
-    """Python 3.10+ 的 X | None（types.UnionType）解包为 X。"""
+    """``X | None``（types.UnionType）解包为 X。"""
     annotation = int | None  # type: ignore[operator]
     assert _unwrap_optional(annotation) is int
     # 多参数 X | Y | None 不处理
@@ -725,30 +708,18 @@ def test_unwrap_optional_pep604_union_type() -> None:
     assert multi == int | str | None  # type: ignore[operator]
 
 
-def test_annotation_str_to_type_mapping() -> None:
-    """基本类型名字符串映射到实际类型。"""
-    assert _annotation_str_to_type("int") is int
-    assert _annotation_str_to_type("float") is float
-    assert _annotation_str_to_type("str") is str
-    assert _annotation_str_to_type("bool") is bool
-    assert _annotation_str_to_type("Path") is Path
-    assert _annotation_str_to_type("pathlib.Path") is Path
-    # 未识别返回原字符串
-    assert _annotation_str_to_type("Unknown") == "Unknown"
-
-
 def test_build_parser_optional_int_none_via_cli() -> None:
     """int | None 默认值通过 CLI 自动解包为 int 类型。
 
-    回归测试：Python 3.8 下 'int | None' 字符串注解无法被 get_type_hints 求值，
-    之前 --height 传入的 '20' 会保持为字符串；现在通过 _unwrap_optional 自动解包为 int。
+    回归测试：--height 传入的 '20' 必须解析为 int 而非字符串（
+    ``X | None`` 注解需先解包才能映射到 argparse ``type``）。
     """
 
     @tool("demo", subcommand="a")
     def a(input_path: Path, width: int, height: int | None = None) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args([str(Path("/tmp/x")), "30", "--height", "20"])
@@ -769,7 +740,7 @@ def test_build_parser_optional_list_nargs_star() -> None:
     # 无默认值 list 会被当作 positional，这里测试有默认值的
     # 实际上 list[str] 无默认值会走 positional 分支，跳过此场景
 
-    from fcmd.apis.toolkit import _add_optional_arg
+    from fcmd.core.toolkit import _add_optional_arg
 
     parser = _add_optional_arg  # 仅验证函数可调用
     assert callable(parser)
@@ -782,7 +753,7 @@ def test_build_parser_global_options() -> None:
     def a() -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["--dry-run", "--quiet", "--strategy", "thread"])
@@ -798,7 +769,7 @@ def test_build_parser_path_type() -> None:
     def a(path: Path) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["/tmp/x"])
@@ -812,7 +783,7 @@ def test_build_parser_varkw_skipped() -> None:
     def a(name: str, **kwargs: object) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["hello"])
@@ -826,7 +797,7 @@ def test_build_parser_optional_path() -> None:
     def a(out: Path = Path("default.txt")) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["--out", "/tmp/x"])
@@ -852,7 +823,7 @@ def test_build_parser_optional_list_with_default() -> None:
     def a(items: list[str]) -> None:
         pass
 
-    from fcmd.apis.toolkit import _add_optional_arg
+    from fcmd.core.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
     _add_optional_arg(parser, "items", list[str], ["default"])
@@ -864,7 +835,7 @@ def test_build_parser_optional_list_int() -> None:
     """optional list[int] 参数类型转换。"""
     import argparse
 
-    from fcmd.apis.toolkit import _add_optional_arg
+    from fcmd.core.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
     _add_optional_arg(parser, "nums", list[int], [1])
@@ -876,7 +847,7 @@ def test_build_parser_optional_list_float() -> None:
     """optional list[float] 参数类型转换。"""
     import argparse
 
-    from fcmd.apis.toolkit import _add_optional_arg
+    from fcmd.core.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
     _add_optional_arg(parser, "nums", list[float], [1.0])
@@ -888,7 +859,7 @@ def test_build_parser_optional_list_path() -> None:
     """optional list[Path] 参数类型转换。"""
     import argparse
 
-    from fcmd.apis.toolkit import _add_optional_arg
+    from fcmd.core.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
     _add_optional_arg(parser, "paths", list[Path], [Path("a")])
@@ -903,7 +874,7 @@ def test_build_parser_positional_list_path() -> None:
     def a(items: list[Path]) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["/tmp/a", "/tmp/b"])
@@ -917,7 +888,7 @@ def test_build_parser_positional_list_int() -> None:
     def a(items: list[int]) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["1", "2", "3"])
@@ -931,7 +902,7 @@ def test_build_parser_positional_list_float() -> None:
     def a(items: list[float]) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["1.5", "2.5"])
@@ -945,7 +916,7 @@ def test_build_parser_positional_path() -> None:
     def a(p: Path) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["/tmp/x"])
@@ -959,7 +930,7 @@ def test_build_parser_positional_unknown_type() -> None:
     def a(custom: object) -> None:
         pass
 
-    from fcmd.apis.toolkit import _build_parser_for_tool
+    from fcmd.core.toolkit import _build_parser_for_tool
 
     parser = _build_parser_for_tool(get_tool("demo", "a"))
     args = parser.parse_args(["anything"])
@@ -970,7 +941,7 @@ def test_build_parser_optional_unknown_type() -> None:
     """optional 未知类型走默认分支（无 type 转换）。"""
     import argparse
 
-    from fcmd.apis.toolkit import _add_optional_arg
+    from fcmd.core.toolkit import _add_optional_arg
 
     parser = argparse.ArgumentParser()
     _add_optional_arg(parser, "custom", object, None)
@@ -1199,7 +1170,7 @@ def test_run_tool_help_returns_success() -> None:
 
 def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
     """KeyboardInterrupt 返回 INTERRUPTED。"""
-    from fcmd.apis import _tool_exec
+    from fcmd.core import _tool_exec
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise KeyboardInterrupt
@@ -1216,8 +1187,8 @@ def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError（非 TaskFailedError）返回 FAILURE。"""
-    from fcmd.apis import _tool_exec
-    from fcmd.apis.errors import CycleError
+    from fcmd.core import _tool_exec
+    from fcmd.core.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
@@ -1234,8 +1205,8 @@ def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """FcmdError + quiet 不打印。"""
-    from fcmd.apis import _tool_exec
-    from fcmd.apis.errors import CycleError
+    from fcmd.core import _tool_exec
+    from fcmd.core.errors import CycleError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise CycleError(["cycle"])
@@ -1252,8 +1223,8 @@ def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError + quiet 不打印诊断。"""
-    from fcmd.apis import _tool_exec
-    from fcmd.apis.errors import TaskFailedError
+    from fcmd.core import _tool_exec
+    from fcmd.core.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         raise TaskFailedError(task="a", cause=RuntimeError("boom"), attempts=1)
@@ -1270,10 +1241,10 @@ def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_run_tool_task_failed_with_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 携带 report 时打印失败任务。"""
-    from fcmd.apis import _tool_exec
-    from fcmd.apis.errors import TaskFailedError
-    from fcmd.apis.report import RunReport
-    from fcmd.apis.task import TaskResult
+    from fcmd.core import _tool_exec
+    from fcmd.core.errors import TaskFailedError
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult
 
     # 构造带 failed_tasks 的 report
     spec = TaskSpec(name="a", cmd=["echo"])
@@ -1439,24 +1410,18 @@ def test_resolve_hints_per_param_fallback() -> None:
     assert hints["y"] is int
 
 
-def test_resolve_hints_per_param_fallback_str_eval() -> None:
-    """get_type_hints 失败时 str 注解 eval：成功保留结果、失败保留字符串。
+def test_resolve_hints_unresolvable_raises() -> None:
+    """无法解析的注解直接抛错误（已删除 Python 3.8 逐参数 eval 回退）。
 
-    构造带 ``__future__`` 注解的函数，返回类型 ``int | str`` 在 Python 3.8
-    导致 ``get_type_hints`` 失败。逐参数回退时：str 注解 eval 成功保留求值
-    结果（lines 387-389），str 注解 eval 失败保留字符串（line 392）。
+    注解引用不存在的名字属开发期错误，应尽早暴露而不是静默降级为字符串。
     """
     ns: dict[str, Any] = {}
     exec(
         "from __future__ import annotations\ndef f(y: int, z: undefined_name) -> int | str:\n    pass\n",
         ns,
     )
-    f = ns["f"]
-    hints = _resolve_hints(f)
-    # y: "int"（str）→ eval 成功
-    assert hints["y"] is int
-    # z: "undefined_name"（str）→ eval 失败，保留字符串
-    assert hints["z"] == "undefined_name"
+    with pytest.raises(NameError):
+        _resolve_hints(ns["f"])
 
 
 # ---------------------------------------------------------------------- #
@@ -1575,8 +1540,8 @@ def test_run_tool_mixed_none_and_named_empty_argv() -> None:
 # ---------------------------------------------------------------------- #
 def test_run_tool_task_failed_no_report(monkeypatch: pytest.MonkeyPatch) -> None:
     """TaskFailedError 不带 report 时不打印失败任务诊断（report is None 分支）。"""
-    from fcmd.apis import _tool_exec
-    from fcmd.apis.errors import TaskFailedError
+    from fcmd.core import _tool_exec
+    from fcmd.core.errors import TaskFailedError
 
     def boom(_graph: object, **_kwargs: object) -> None:
         # report 默认 None，触发 632->636 跳转（不进入 for 循环）
@@ -1622,9 +1587,9 @@ def test_build_parser_optional_list_unknown_inner() -> None:
 # ----------------------------------------------------------------------
 def test_print_task_summary_single_task_no_output(capsys: pytest.CaptureFixture[str]) -> None:
     """单任务时不打印汇总表。"""
-    from fcmd.apis.report import RunReport
-    from fcmd.apis.task import TaskResult, TaskStatus
-    from fcmd.apis.toolkit import _print_task_summary
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult, TaskStatus
+    from fcmd.core.toolkit import _print_task_summary
 
     spec = TaskSpec(name="solo", cmd=["echo"])
     result = TaskResult(spec=spec, status=TaskStatus.SUCCESS, attempts=1)
@@ -1640,9 +1605,9 @@ def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> N
     """多任务时打印汇总表，含任务名/状态/耗时/重试。"""
     from datetime import datetime, timedelta
 
-    from fcmd.apis.report import RunReport
-    from fcmd.apis.task import TaskResult, TaskStatus
-    from fcmd.apis.toolkit import _print_task_summary
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult, TaskStatus
+    from fcmd.core.toolkit import _print_task_summary
 
     spec_a = TaskSpec(name="a", cmd=["echo"])
     spec_b = TaskSpec(name="b", cmd=["echo"])
@@ -1672,9 +1637,9 @@ def test_print_task_summary_multi_tasks(capsys: pytest.CaptureFixture[str]) -> N
 
 def test_print_task_summary_skipped_task(capsys: pytest.CaptureFixture[str]) -> None:
     """跳过的任务在汇总表中显示状态为跳过，耗时为 -。"""
-    from fcmd.apis.report import RunReport
-    from fcmd.apis.task import TaskResult, TaskStatus
-    from fcmd.apis.toolkit import _print_task_summary
+    from fcmd.core.report import RunReport
+    from fcmd.core.task import TaskResult, TaskStatus
+    from fcmd.core.toolkit import _print_task_summary
 
     spec_a = TaskSpec(name="a", cmd=["echo"])
     spec_b = TaskSpec(name="b", cmd=["echo"])

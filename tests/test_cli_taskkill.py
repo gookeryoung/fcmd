@@ -3,37 +3,83 @@
 验证 ``fcmd taskkill`` 的 DSL action 迁移语义：
 - 工具注册（单命令 DSL 工具，内置声明，别名 taskk）
 - 声明契约：``__dsl_action__`` 标记、无 cmd（fn 任务形态）
-- 执行语义：Windows taskkill.exe 绝对路径 + /FI 过滤器 / Unix pkill、
+- 执行语义（psutil 实现）：名称前缀匹配、terminate → wait_procs → kill、
   逐条目回显、未匹配提示后继续（退出码 0）
-- 回归：Windows 分支禁止裸 taskkill 命令名（防 PATH 递归调用 fcmd 自身 entry）
+- 回归：不再通过子进程调用 ``taskkill``/``pkill``（避免 PATH 递归调用 fcmd 自身）
 - dry-run 不执行
 """
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from typing import Any
 
+import psutil
 import pytest
 
-from fcmd.apis._tool_args import ToolSpec
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import _TOOL_ALIASES, ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit.args import ToolSpec
 
 ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 taskkill）
 
-_FAKE_RUN: subprocess.CompletedProcess[str] = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+
+# ---------------------------------------------------------------------- #
+# psutil 测试替身
+# ---------------------------------------------------------------------- #
+class _FakeProc:
+    """``psutil.Process`` 替身：记录 terminate/kill 调用与抛出的异常。"""
+
+    def __init__(
+        self,
+        pid: int,
+        name: str,
+        *,
+        terminate_exc: BaseException | None = None,
+        kill_exc: BaseException | None = None,
+    ) -> None:
+        self.pid = pid
+        self.info: dict[str, Any] = {"pid": pid, "name": name}
+        self.terminated = False
+        self.killed = False
+        self._terminate_exc = terminate_exc
+        self._kill_exc = kill_exc
+
+    def terminate(self) -> None:
+        if self._terminate_exc is not None:
+            raise self._terminate_exc
+        self.terminated = True
+
+    def kill(self) -> None:
+        if self._kill_exc is not None:
+            raise self._kill_exc
+        self.killed = True
 
 
-def _recording_run(captured: list[list[str]]):
-    """构造记录调用参数的 subprocess.run 替身。"""
+def _patch_psutil(
+    monkeypatch: pytest.MonkeyPatch,
+    procs: list[_FakeProc],
+    *,
+    alive: list[_FakeProc] | None = None,
+) -> None:
+    """替换 ``psutil.process_iter`` / ``psutil.wait_procs``。
 
-    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-        captured.append(cmd)
-        return _FAKE_RUN
+    ``alive`` 为 ``wait_procs`` 超时后仍未退出的进程（默认全部已退出）。
+    """
+    survivors = list(alive or [])
 
-    return _run
+    def fake_process_iter(attrs: Any = None, ad_value: Any = None) -> list[_FakeProc]:
+        assert attrs == ["pid", "name"]
+        return list(procs)
+
+    def fake_wait_procs(
+        targets: list[_FakeProc], timeout: float | None = None
+    ) -> tuple[list[_FakeProc], list[_FakeProc]]:
+        assert timeout == 3
+        gone = [proc for proc in targets if proc not in survivors]
+        return gone, survivors
+
+    monkeypatch.setattr(psutil, "process_iter", fake_process_iter)
+    monkeypatch.setattr(psutil, "wait_procs", fake_wait_procs)
 
 
 # ---------------------------------------------------------------------- #
@@ -69,65 +115,100 @@ class TestTaskkillRegistration:
 # 执行语义
 # ---------------------------------------------------------------------- #
 class TestTaskkillRun:
-    """``fcmd taskkill`` 执行语义。"""
+    """``fcmd taskkill`` 执行语义（psutil）。"""
 
-    def test_windows_uses_fi_filter(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """Windows 分支：系统 taskkill.exe 绝对路径 + /FI 过滤器通配符。"""
-        captured: list[list[str]] = []
-        monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setenv("SystemRoot", r"C:\Windows")
-        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+    def test_terminates_matching_prefix(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """按名称前缀匹配：命中进程逐个 terminate，未命中的不触碰。"""
+        hit1 = _FakeProc(101, "chrome.exe")
+        hit2 = _FakeProc(102, "chrome.exe")
+        other = _FakeProc(103, "python")
+        _patch_psutil(monkeypatch, [hit1, hit2, other])
+
         assert run_tool("taskkill", ["chrome.exe"]) == 0
-        assert captured[0] == [r"C:\Windows\System32\taskkill.exe", "/f", "/fi", "imagename eq chrome.exe*"]
-        assert "已发送终止信号: chrome.exe" in capsys.readouterr().out
 
-    def test_windows_never_calls_bare_taskkill(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """回归：命令首元素必须是绝对路径，不能是裸 ``taskkill``。
+        assert hit1.terminated and hit2.terminated
+        assert not other.terminated
+        out = capsys.readouterr().out
+        assert "终止进程: chrome.exe" in out
+        assert "PID=101 名称=chrome.exe -> terminate" in out
+        assert "PID=102 名称=chrome.exe -> terminate" in out
 
-        fcmd 自身注册的 ``taskkill`` entry 与系统 taskkill.exe 同名，裸命令名
-        经 PATH 查找会递归调用 fcmd 自身，指数级进程爆炸直至资源耗尽。
-        """
-        captured: list[list[str]] = []
-        monkeypatch.setattr(sys, "platform", "win32")
-        monkeypatch.setattr("subprocess.run", _recording_run(captured))
-        run_tool("taskkill", ["node"])
-        assert captured[0][0].endswith("taskkill.exe")
-        assert captured[0][0] != "taskkill"
+    def test_never_calls_subprocess(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """回归：不再构造子进程调用，杜绝 PATH 递归调用 fcmd 自身 entry。"""
 
-    def test_unix_uses_pkill(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Unix 分支：``pkill -f <name>*``。"""
-        captured: list[list[str]] = []
-        monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("subprocess.run", _recording_run(captured))
-        assert run_tool("taskkill", ["python"]) == 0
-        assert captured[0] == ["pkill", "-f", "python*"]
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("taskkill 不应发起子进程调用")
+
+        _patch_psutil(monkeypatch, [_FakeProc(1, "node")])
+        monkeypatch.setattr("subprocess.run", _boom)
+        monkeypatch.setattr("subprocess.Popen", _boom)
+        assert run_tool("taskkill", ["node"]) == 0
+
+    def test_no_match_continues(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """未匹配任何进程时打印提示后继续，退出码 0。"""
+        _patch_psutil(monkeypatch, [])
+        assert run_tool("taskkill", ["nonexistent_proc"]) == 0
+        out = capsys.readouterr().out
+        assert "未找到匹配进程: nonexistent_proc" in out
 
     def test_multiple_names(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """批量终止：逐条目执行并回显。"""
-        captured: list[list[str]] = []
-        monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        """批量终止：逐个名称查询并回显。"""
+        _patch_psutil(monkeypatch, [_FakeProc(1, "chrome.exe"), _FakeProc(2, "python")])
         assert run_tool("taskkill", ["chrome.exe", "python"]) == 0
-        assert len(captured) == 2
         out = capsys.readouterr().out
         assert "终止进程: chrome.exe" in out
         assert "终止进程: python" in out
 
-    def test_not_found_continues(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """未匹配（返回码 1）打印提示后继续，退出码 0（与原版一致）。"""
+    def test_alive_after_timeout_is_killed(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """等待 3 秒仍未退出的进程转入 kill。"""
+        stubborn = _FakeProc(200, "svchost")
+        _patch_psutil(monkeypatch, [stubborn], alive=[stubborn])
+        assert run_tool("taskkill", ["svchost"]) == 0
+        assert stubborn.terminated
+        assert stubborn.killed
+        assert "PID=200 已强制终止" in capsys.readouterr().out
 
-        def _run_not_found(_cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(args=["pkill"], returncode=1, stdout="", stderr="")
+    def test_terminate_no_such_process(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """terminate 时进程已退出（NoSuchProcess）不视为失败。"""
+        gone = _FakeProc(300, "chrome.exe", terminate_exc=psutil.NoSuchProcess(300))
+        _patch_psutil(monkeypatch, [gone])
+        assert run_tool("taskkill", ["chrome.exe"]) == 0
+        assert "PID=300 已退出" in capsys.readouterr().out
 
-        monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("subprocess.run", _run_not_found)
-        assert run_tool("taskkill", ["nonexistent_proc"]) == 0
-        assert "未找到匹配进程或终止失败" in capsys.readouterr().out
+    def test_terminate_access_denied(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """terminate 权限不足时提示并跳过。"""
+        guarded = _FakeProc(400, "chrome.exe", terminate_exc=psutil.AccessDenied(400))
+        _patch_psutil(monkeypatch, [guarded])
+        assert run_tool("taskkill", ["chrome.exe"]) == 0
+        assert "PID=400 权限不足，跳过" in capsys.readouterr().out
+
+    def test_kill_access_denied(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """kill 权限不足时提示无法强制终止。"""
+        guarded = _FakeProc(500, "svchost", kill_exc=psutil.AccessDenied(500))
+        _patch_psutil(monkeypatch, [guarded], alive=[guarded])
+        assert run_tool("taskkill", ["svchost"]) == 0
+        assert "PID=500 权限不足，无法强制终止" in capsys.readouterr().out
+
+    def test_kill_no_such_process_silent(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """kill 前进程已退出（NoSuchProcess）静默跳过，不打印强制终止。"""
+        vanished = _FakeProc(600, "svchost", kill_exc=psutil.NoSuchProcess(600))
+        _patch_psutil(monkeypatch, [vanished], alive=[vanished])
+        assert run_tool("taskkill", ["svchost"]) == 0
+        assert "已强制终止" not in capsys.readouterr().out
 
     def test_dry_run_skips_execution(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """--dry-run 打印计划不执行：不发起 subprocess 调用。"""
-        captured: list[list[str]] = []
-        monkeypatch.setattr(sys, "platform", "linux")
-        monkeypatch.setattr("subprocess.run", _recording_run(captured))
+        """--dry-run 打印计划不执行：不查询进程。"""
+
+        def _boom(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("dry-run 不应查询进程列表")
+
+        monkeypatch.setattr(psutil, "process_iter", _boom)
         assert run_tool("taskkill", ["chrome.exe", "--dry-run"]) == 0
-        assert captured == []

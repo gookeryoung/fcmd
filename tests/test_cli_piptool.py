@@ -14,9 +14,9 @@ from typing import Any
 
 import pytest
 
-from fcmd.apis._tool_args import ToolSpec
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import _TOOL_ALIASES, ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit.args import ToolSpec
 
 ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 piptool）
 
@@ -80,7 +80,7 @@ class TestPiptoolRun:
     def test_u_concrete_package(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """u 具体包名：无通配符不触发 pip list，直接注入 uninstall 参数。"""
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["u", "requests"]) == 0
         assert captured == [["pip", "uninstall", "-y", "requests"]]
 
@@ -93,7 +93,7 @@ class TestPiptoolRun:
             lambda: ["requests", "requests_toolbelt", "fcmd", "click"],
         )
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["u", "requests*", "fc*"]) == 0
         assert captured == [["pip", "uninstall", "-y", "requests", "requests_toolbelt"]]
         assert "跳过受保护的包: fcmd" in capsys.readouterr().out
@@ -108,7 +108,7 @@ class TestPiptoolRun:
             lambda: calls.append(1) or ["requests", "click"],  # type: ignore[func-returns-value]
         )
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["u", "requests*", "click"]) == 0
         assert len(calls) == 1
         assert captured == [["pip", "uninstall", "-y", "requests", "click"]]
@@ -117,7 +117,7 @@ class TestPiptoolRun:
         """u 通配符无匹配：空结果 → SKIPPED，退出码 0，不执行命令。"""
         monkeypatch.setattr("fcmd.dsl.actions.compute._pip_installed_packages", lambda: ["click"])
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["u", "nomatch*"]) == 0
         assert captured == []
 
@@ -126,7 +126,7 @@ class TestPiptoolRun:
     ) -> None:
         """u 仅受保护包：过滤后空结果 → SKIPPED，退出码 0。"""
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["u", "fcmd"]) == 0
         assert captured == []
         assert "跳过受保护的包: fcmd" in capsys.readouterr().out
@@ -136,7 +136,7 @@ class TestPiptoolRun:
     ) -> None:
         """r 端到端：过滤后先卸载后安装，--offline 追加 on token。"""
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["r", "requests", "--offline"]) == 0
         assert captured == [
             ["pip", "uninstall", "-y", "requests"],
@@ -155,7 +155,7 @@ class TestPiptoolRun:
 
         monkeypatch.setattr("fcmd.dsl.actions.compute._filter_protected", counting_filter)
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["r", "requests"]) == 0
         assert len(calls) == 1
         assert captured == [
@@ -166,7 +166,7 @@ class TestPiptoolRun:
     def test_r_all_protected_skipped(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """r 全受保护包：空结果 → 链上任务 SKIPPED，退出码 0。"""
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool("piptool", ["r", "fcmd"]) == 0
         assert captured == []
         assert "跳过受保护的包: fcmd" in capsys.readouterr().out
@@ -176,6 +176,6 @@ class TestPiptoolRun:
         from fcmd.cli._discovery import resolve_tool
 
         captured: list[list[str]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run(captured))
         assert run_tool(resolve_tool("pipt"), ["up"]) == 0  # type: ignore[arg-type]
         assert captured == [["python", "-m", "pip", "install", "--upgrade", "pip"]]

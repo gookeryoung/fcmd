@@ -1,6 +1,6 @@
 # 内置 DSL 命令：imagetool（11 子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/media/imagetool.py 已迁入 fcmd/dsl/actions/media.py：
+# 原模块 fcmd/tools/media/imagetool.py 已迁入 fcmd/dsl/actions/media.py：
 # 全部子命令为纯 Python（Pillow），无子进程调用。
 
 [commands.imagetool.r]

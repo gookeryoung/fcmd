@@ -1,9 +1,8 @@
 # 内置 DSL 命令：colortool（多子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/conv/colortool.py 已迁入 fcmd/dsl/actions/conv.py：
-# hex2rgb/rgb2hex/rgb2hsl/hsl2rgb 四子命令均为纯 Python 颜色空间换算
-# （HEX ↔ RGB ↔ HSL），无子进程调用。动作签名即 CLI 参数 schema；
-# 参数越界 / 非法 HEX 捕获后打印错误提示，不视为失败。
+# 实现位于 fcmd/dsl/actions/conv.py：hex2rgb/rgb2hex/rgb2hsl/hsl2rgb 四子命令
+# 均委托 coloraide 完成颜色空间换算（需 pip install fcmd[color]），无子进程调用。
+# 动作签名即 CLI 参数 schema；参数越界 / 非法 HEX 捕获后打印错误提示，不视为失败。
 
 [commands.colortool.hex2rgb]
 help = "HEX 转 RGB"

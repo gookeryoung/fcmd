@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
+from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.data import (
     minify_json,
     pretty_json,
@@ -44,7 +44,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """jsontool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "jsontool" in list_tools()
 

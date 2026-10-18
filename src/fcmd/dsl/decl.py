@@ -11,7 +11,7 @@
 
 非法声明抛 :class:`CommandDeclError`（含命令名与键名上下文，便于用户定位
 配置错误）。本模块不读文件、不注册工具——文件定位与解析编排见
-:mod:`fcmd.dsl.loader`，声明到 :class:`~fcmd.apis._tool_args.ToolSpec` 的
+:mod:`fcmd.dsl.loader`，声明到 :class:`~fcmd.core.toolkit.args.ToolSpec` 的
 转换见 :mod:`fcmd.dsl.synth`。
 """
 
@@ -110,7 +110,7 @@ class WhenDecl:
 
     任务执行前同步求值一次，不满足则任务 SKIPPED（命令退出码 0、汇总
     记为跳过）。探针自身失败（命令不存在/路径异常）由引擎
-    :meth:`fcmd.apis.task.TaskSpec.should_execute` 捕获并视为条件不满足。
+    :meth:`fcmd.core.task.TaskSpec.should_execute` 捕获并视为条件不满足。
 
     参数
     ----

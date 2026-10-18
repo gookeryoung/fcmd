@@ -1,6 +1,6 @@
 # 内置 DSL 命令：pymake（多子命令形态，纯 exec 型子命令）。
 #
-# 与 Python 模块 fcmd/cli/dev/pymake.py 合并注册：模块仅保留含逻辑的
+# 与 Python 模块 fcmd/tools/dev/pymake.py 合并注册：模块仅保留含逻辑的
 # push（callable cmd 遍历 git remote）与 main 入口。DSL 字段速查见
 # README「命令定义 DSL」与 fcmd/dsl/decl.py（校验权威）。
 

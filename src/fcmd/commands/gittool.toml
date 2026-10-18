@@ -1,6 +1,6 @@
 # 内置 DSL 命令：gittool（多子命令形态）。
 #
-# 与 Python 模块 fcmd/cli/dev/gittool.py 合并注册：模块仅保留含遍历逻辑的
+# 与 Python 模块 fcmd/tools/dev/gittool.py 合并注册：模块仅保留含遍历逻辑的
 # isub（fn 子命令）与 main 入口。DSL 字段速查见 README
 # 「命令定义 DSL」。
 

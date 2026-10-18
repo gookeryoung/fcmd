@@ -18,7 +18,7 @@ import pytest
 
 import fcmd as fx
 import fcmd.dsl.actions.net
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
 # ---------------------------------------------------------------------- #

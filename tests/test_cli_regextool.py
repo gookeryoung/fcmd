@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
+from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.text import (
     find_all,
     match_pattern,
@@ -28,7 +28,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """regextool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "regextool" in list_tools()
 

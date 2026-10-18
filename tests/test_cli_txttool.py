@@ -17,7 +17,7 @@ import pytest
 
 import fcmd as fx
 import fcmd.dsl.actions.text
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.text import convert_case, count_text, sort_lines, unique_lines
 
 

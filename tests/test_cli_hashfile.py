@@ -14,9 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apis._tool_args import ToolSpec
-from fcmd.apis.toolkit import _TOOL_REGISTRY
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.core.toolkit.args import ToolSpec
 from tests.helpers import run_and_capture as _run_and_capture
 
 ensure_tools_discovered()

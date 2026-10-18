@@ -33,7 +33,6 @@ import sys
 from collections.abc import Sequence
 
 from fcmd import __version__
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._builtins import run_builtin
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
 from fcmd.cli._discovery import (
@@ -45,6 +44,7 @@ from fcmd.cli._discovery import (
     tool_description,
 )
 from fcmd.console import get_console
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 __all__ = ["FcmdApp", "main"]
 

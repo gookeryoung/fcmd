@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from fcmd.apis.task import TaskSpec
+from fcmd.core.task import TaskSpec
 
 
 # ---------------------------------------------------------------------- #
@@ -213,7 +213,7 @@ def test_run_command_timeout_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*_args: object, **_kwargs: object) -> None:
         raise sp.TimeoutExpired(cmd="test", timeout=0.5)
 
-    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+    monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
     spec = TaskSpec(name="x", cmd=["echo", "hi"], timeout=0.5)
     with pytest.raises(RuntimeError, match="超时"):
         spec.effective_fn()
@@ -225,7 +225,7 @@ def test_run_command_os_error_generic(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(*_args: object, **_kwargs: object) -> None:
         raise OSError("boom")
 
-    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+    monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
     spec = TaskSpec(name="x", cmd=["echo", "hi"])
     with pytest.raises(RuntimeError, match="执行异常"):
         spec.effective_fn()
@@ -244,7 +244,7 @@ def test_run_command_passthrough_not_captured(monkeypatch: pytest.MonkeyPatch) -
         seen.update(kwargs)
         return sp.CompletedProcess(cmd, 0, stdout=None, stderr=None)
 
-    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+    monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
     spec = TaskSpec(name="x", cmd=["docker", "login"], passthrough=True)
     spec.effective_fn()
     assert seen["capture_output"] is False
@@ -257,7 +257,7 @@ def test_run_command_passthrough_success_no_stdout_print(
     import subprocess as sp
 
     monkeypatch.setattr(
-        "fcmd.engine.task_command.subprocess.run",
+        "fcmd.core.execution.task_command.subprocess.run",
         lambda cmd, **_kwargs: sp.CompletedProcess(cmd, 0, stdout=None, stderr=None),
     )
     spec = TaskSpec(name="x", cmd=["docker", "login"], passthrough=True)
@@ -270,7 +270,7 @@ def test_run_command_passthrough_failure_stderr_none_safe(monkeypatch: pytest.Mo
     import subprocess as sp
 
     monkeypatch.setattr(
-        "fcmd.engine.task_command.subprocess.run",
+        "fcmd.core.execution.task_command.subprocess.run",
         lambda cmd, **_kwargs: sp.CompletedProcess(cmd, 1, stdout=None, stderr=None),
     )
     spec = TaskSpec(name="x", cmd="docker login", passthrough=True)
@@ -289,7 +289,7 @@ def test_run_command_verbose_keeps_capture_disabled(monkeypatch: pytest.MonkeyPa
         seen.update(kwargs)
         return sp.CompletedProcess(cmd, 0, stdout=None, stderr=None)
 
-    monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+    monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
     spec = TaskSpec(name="x", cmd=["echo", "hi"], verbose=True, passthrough=True)
     spec.effective_fn()
     assert seen["capture_output"] is False

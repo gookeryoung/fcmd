@@ -1,6 +1,6 @@
 """filecheck 工具测试。
 
-验证 ``fcmd.cli.media.filecheck`` 模块：
+验证 ``fcmd.tools.media.filecheck`` 模块：
 - 工具注册与 run_tool 调用
 - check_one_file 文件完整性检查（0 字节/过小/头部不符/尾部全 0/断链/读取失败）
 - parse_episode 集号识别
@@ -20,14 +20,16 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-import fcmd.cli.media.filecheck
-from fcmd.apis.toolkit import run_tool
+import fcmd.tools.media.filecheck
 from fcmd.cli._discovery import tool_description
-from fcmd.cli.media.filecheck import (
+from fcmd.core.toolkit import run_tool
+from fcmd.tools.media.filecheck import (
     Issue,
     MissingEpisodes,
     ScanResult,
-    _magic_ok,
+    _fallback_ok,
+    _magic_matches_video,
+    _require_puremagic,
     build_report,
     check_one_file,
     detect_missing_episodes,
@@ -67,16 +69,71 @@ class TestToolsRegistration:
 # ---------------------------------------------------------------------- #
 # check_one_file 文件检查
 # ---------------------------------------------------------------------- #
-class TestMagicOk:
-    """``_magic_ok`` 特征字节匹配测试。"""
+class TestMagicHelpers:
+    """``puremagic`` 内容识别与极小兜底表测试。"""
 
-    def test_short_head_returns_false(self) -> None:
-        """头部不足以覆盖特征位置时返回 False。"""
-        assert _magic_ok(b"\x1a", 0, b"\x1a\x45\xdf\xa3") is False
+    def test_require_puremagic_returns_module(self) -> None:
+        """puremagic 已安装时返回模块对象。"""
+        import puremagic
 
-    def test_wildcard_byte(self) -> None:
-        """``?`` 通配单字节。"""
-        assert _magic_ok(b"RIFF\x99\x98\x97\x96AVI ", 0, b"RIFF????AVI ") is True
+        assert _require_puremagic() is puremagic
+
+    def test_mp4_head_recognized(self) -> None:
+        """MP4 ftyp 头部被识别为视频容器。"""
+        assert _magic_matches_video(_MP4_HEAD) is True
+
+    def test_mkv_head_recognized(self) -> None:
+        """MKV EBML 头被识别为视频容器。"""
+        assert _magic_matches_video(_MKV_HEAD + b"\x01" * 32) is True
+
+    def test_plain_text_not_recognized(self) -> None:
+        """普通文本头部不被识别为视频容器。"""
+        assert _magic_matches_video(b"<!DOCTYPE html><html>404 Not Found</html>") is False
+
+    def test_all_zero_head_not_recognized(self) -> None:
+        """全 0 头部不被识别（puremagic 的低置信度误判不能当命中）。"""
+        assert _magic_matches_video(b"\x00" * 64) is False
+
+    def test_missing_puremagic_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """puremagic 缺失时识别结果一律为 False（降级为不校验）。"""
+        monkeypatch.setattr(fcmd.tools.media.filecheck, "_require_puremagic", lambda: None)
+        assert _magic_matches_video(_MP4_HEAD) is False
+
+    def test_magic_string_error_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """puremagic 内部抛错时不中断扫描，仅视为未识别。"""
+
+        class _Broken:
+            @staticmethod
+            def magic_string(_head: bytes) -> list[Any]:
+                raise ValueError("bad head")
+
+        monkeypatch.setattr(fcmd.tools.media.filecheck, "_require_puremagic", _Broken)
+        assert _magic_matches_video(_MP4_HEAD) is False
+
+    def test_fallback_ts_sync_byte(self) -> None:
+        """``.ts`` 兜底：偏移 0 处的同步字节 0x47。"""
+        assert _fallback_ok(b"\x47\x40\x11\x10", ".ts") is True
+        assert _fallback_ok(b"NOTA", ".ts") is False
+
+    def test_fallback_m2ts_offset_4(self) -> None:
+        """``.m2ts`` 兜底：偏移 4 处的同步字节。"""
+        assert _fallback_ok(b"\x00\x00\x00\x00\x47\x40", ".m2ts") is True
+        assert _fallback_ok(b"\x47\x40\x00\x00\x00\x00", ".m2ts") is False
+
+    def test_fallback_mxf_ul(self) -> None:
+        """``.mxf`` 兜底：SMPTE UL 前缀。"""
+        assert _fallback_ok(b"\x06\x0e\x2b\x34\x02\x05", ".mxf") is True
+
+    def test_fallback_iso_volume_id(self) -> None:
+        """``.iso`` 兜底：偏移 0x8001 处的 CD001 卷标识。"""
+        head = bytearray(b"\x01" * 0x9000)
+        head[0x8001:0x8006] = b"CD001"
+        assert _fallback_ok(bytes(head), ".iso") is True
+        assert _fallback_ok(b"\x01" * 0x9000, ".iso") is False
+
+    def test_fallback_unknown_ext(self) -> None:
+        """未收录的扩展名不命中兜底。"""
+        assert _fallback_ok(b"RANDOMHEAD", ".dat") is False
 
 
 class TestCheckOneFile:
@@ -236,6 +293,13 @@ class TestCheckOneFile:
         issues = check_one_file(video, _CHUNK)
         assert all("头部标识不符" not in i.message for i in issues)
         assert any("过小" in i.message for i in issues)
+
+    def test_missing_puremagic_degrades_quietly(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """puremagic 缺失时降级为不做头部校验（不产生误报）。"""
+        monkeypatch.setattr(fcmd.tools.media.filecheck, "_require_puremagic", lambda: None)
+        video = _make_video(tmp_path / "garbage.mkv", b"\xff" * 64)
+        issues = check_one_file(video, _CHUNK)
+        assert all("头部标识不符" not in i.message for i in issues)
 
 
 # ---------------------------------------------------------------------- #
@@ -422,7 +486,7 @@ class TestScanDirectory:
                 onerror(OSError(13, "Permission denied", str(root / "secret")))
             yield from original_walk(top, **kwargs)
 
-        monkeypatch.setattr("fcmd.cli.media.filecheck.os.walk", walk_with_error)
+        monkeypatch.setattr("fcmd.tools.media.filecheck.os.walk", walk_with_error)
         result = scan_directory(root, workers=2, chunk_size=_CHUNK, all_files=False)
         assert len(result.dir_errors) == 1
         assert "Permission denied" in result.dir_errors[0]
@@ -513,6 +577,15 @@ class TestRunFilecheck:
         run_filecheck(path=tmp_path, workers=2, chunk_kb=1)
         reports = list(tmp_path.glob("文件检查报告_*.txt"))
         assert "头尾各 4KB" in reports[0].read_text(encoding="utf-8-sig")
+
+    def test_run_filecheck_prints_puremagic_hint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """puremagic 缺失时 run_filecheck 打印 extra 安装提示。"""
+        monkeypatch.setattr(fcmd.tools.media.filecheck, "_require_puremagic", lambda: None)
+        run_filecheck(path=tmp_path, workers=2)
+        out = capsys.readouterr().out
+        assert "pip install fcmd[filecheck]" in out
 
     def test_run_tool_filecheck(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd filecheck --path <dir> 通过 run_tool 调用并生成报告。"""

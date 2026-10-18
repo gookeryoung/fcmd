@@ -4,7 +4,7 @@
 - 工具注册与两子命令结构（name/content）
 - ``is_binary_file`` 二进制检测（含 OSError 回退）
 - ``read_text_lines`` 文本读取（含二进制抛错、UnicodeDecodeError 回退）
-- ``_should_skip_part`` 忽略目录命中（含通配模式）
+- ``should_skip_parts``（core.filefilter）忽略目录命中（含通配模式）
 - ``search_by_name`` 文件名 glob 搜索
 - ``search_by_content`` 内容正则搜索
 - CLI 子命令端到端
@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
+from fcmd.core.filefilter import IgnoreSpec, should_skip_parts
+from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.fileops import (
-    _should_skip_part,
     is_binary_file,
     read_text_lines,
     search_by_content,
@@ -34,7 +34,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """filesearch 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "filesearch" in list_tools()
 
@@ -45,30 +45,40 @@ class TestRegistration:
 
 
 # ============================================================================ #
-# _should_skip_part
+# should_skip_parts（core.filefilter 单一实现）
 # ============================================================================ #
-class TestShouldSkipPart:
-    """_should_skip_part 忽略目录命中测试。"""
+class TestShouldSkipParts:
+    """core.filefilter.should_skip_parts 忽略目录命中测试。"""
 
     def test_exact_match(self) -> None:
         """精确命中忽略目录。"""
-        assert _should_skip_part(("a", ".git", "b"), {".git"}) is True
+        spec = IgnoreSpec.from_iterable({".git"})
+        assert should_skip_parts(("a", ".git", "b"), spec) is True
 
     def test_no_match(self) -> None:
         """未命中忽略目录。"""
-        assert _should_skip_part(("a", "src", "main.py"), {".git"}) is False
+        spec = IgnoreSpec.from_iterable({".git"})
+        assert should_skip_parts(("a", "src", "main.py"), spec) is False
 
     def test_glob_pattern(self) -> None:
         """通配模式命中（如 *.egg-info）。"""
-        assert _should_skip_part(("a", "fcmd.egg-info", "PKG-INFO"), {"*.egg-info"}) is True
+        spec = IgnoreSpec.from_iterable({"*.egg-info"})
+        assert should_skip_parts(("a", "fcmd.egg-info", "PKG-INFO"), spec) is True
 
     def test_glob_no_match(self) -> None:
         """通配模式未命中。"""
-        assert _should_skip_part(("a", "fcmd.egg", "PKG-INFO"), {"*.egg-info"}) is False
+        spec = IgnoreSpec.from_iterable({"*.egg-info"})
+        assert should_skip_parts(("a", "fcmd.egg", "PKG-INFO"), spec) is False
 
     def test_empty_parts(self) -> None:
         """空组件元组不命中。"""
-        assert _should_skip_part((), {".git"}) is False
+        assert should_skip_parts((), IgnoreSpec.from_iterable({".git"})) is False
+
+    def test_default_spec(self) -> None:
+        """不传 spec 时使用默认规则。"""
+        assert should_skip_parts(("proj", ".git", "config")) is True
+        assert should_skip_parts(("proj", "fcmd.egg-info", "PKG-INFO")) is True
+        assert should_skip_parts(("proj", "src", "main.py")) is False
 
 
 # ============================================================================ #
@@ -185,7 +195,7 @@ class TestSearchByName:
         assert all(p.is_file() for p in results)
 
     def test_ignore_dirs_default(self, tmp_path: Path) -> None:
-        """默认跳过 _common.IGNORE_DIRS 中的目录。"""
+        """默认跳过 core.filefilter.DEFAULT_IGNORE_SPEC 中的目录。"""
         (tmp_path / "a.py").touch()
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "b.py").touch()
@@ -288,7 +298,7 @@ class TestSearchByContent:
         assert any(p.name == "a.txt" for p in paths)
 
     def test_ignore_dirs(self, tmp_path: Path) -> None:
-        """默认跳过 IGNORE_DIRS。"""
+        """默认跳过 DEFAULT_IGNORE_SPEC 中的目录。"""
         (tmp_path / "a.py").write_text("TODO: x\n", encoding="utf-8")
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "b.py").write_text("TODO: y\n", encoding="utf-8")

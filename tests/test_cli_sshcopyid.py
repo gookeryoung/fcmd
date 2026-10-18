@@ -28,8 +28,8 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.decl import parse_command_table
 from fcmd.dsl.synth import build_tool_spec
 
@@ -171,7 +171,7 @@ class TestSshcopyidRun:
         """成功部署：密码走 SSHPASS 环境变量（不进命令行），公钥文件通过 stdin 重定向送远端。"""
         key_file = _write_key(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
         code = run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file)])
         assert code == 0
 
@@ -201,7 +201,7 @@ class TestSshcopyidRun:
         """--port / --timeout 插值进命令行。"""
         key_file = _write_key(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
         assert (
             run_tool(
                 "sshcopyid", ["host", "user", "pass", "--port", "2222", "--timeout", "5", "--keypath", str(key_file)]
@@ -219,7 +219,7 @@ class TestSshcopyidRun:
         """公钥缺失：when 探针跳过执行，退出码 0，不打印完成/失败消息。"""
         missing = tmp_path / "no-such-key.pub"
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
         assert run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(missing)]) == 0
         assert captured == []
         out = capsys.readouterr().out
@@ -232,7 +232,9 @@ class TestSshcopyidRun:
         """部署失败：退出码 1，打印手动执行提示（行为变化：原版恒 exit 0）。"""
         key_file = _write_key(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured, returncode=1))
+        monkeypatch.setattr(
+            "fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured, returncode=1)
+        )
         assert run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file)]) == 1
         out = capsys.readouterr().out
         assert "部署失败，可手动执行: ssh-copy-id -p 22 user@host" in out
@@ -244,7 +246,7 @@ class TestSshcopyidRun:
         """--dry-run 不执行命令、不打印消息。"""
         key_file = _write_key(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
         assert run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file), "--dry-run"]) == 0
         assert captured == []
         assert "已部署" not in capsys.readouterr().out
@@ -264,7 +266,7 @@ class TestSshcopyidWinBranch:
 
         key_file = _write_key(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
         code = run_tool("sshcopyid", ["host", "user", "pass", "--keypath", str(key_file)])
         assert code == 0
 
@@ -292,7 +294,7 @@ def _update_registry_for_platform(tool_name: str, platform: str) -> None:
     _discovery 初始化时用 ``sys.platform`` 合成 ToolSpec，monkeypatch 后
     不会自动重建；此函数强制按指定平台重建并写回注册表。
     """
-    from fcmd.apis.toolkit import ToolSpec
+    from fcmd.core.toolkit import ToolSpec
 
     decl = _load_sshcopyid_decl()
     new_spec: ToolSpec = build_tool_spec(decl, platform=platform)

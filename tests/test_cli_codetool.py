@@ -14,8 +14,8 @@ import binascii
 import pytest
 
 import fcmd as fx
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.conv2 import (
     decode_base64,
     decode_hex,

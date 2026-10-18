@@ -1,6 +1,6 @@
 """计算类 DSL 动作：randtool / stattool / timetool。
 
-三个工具原属 ``fcmd.cli.calc`` 包，全部为纯 Python 实现（标准库
+三个工具原属 ``fcmd.tools.calc`` 包，全部为纯 Python 实现（标准库
 secrets / statistics / datetime / zoneinfo），无子进程调用。迁移至
 本模块后由 ``@action`` 装饰器注册，TOML 声明 ``action = "<名>"`` 直接
 引用；CLI 参数 schema 从动作签名自动推导（:mod:`fcmd.dsl.synth` 层拷贝）。

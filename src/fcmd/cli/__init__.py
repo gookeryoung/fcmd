@@ -1,14 +1,15 @@
-"""fcmd.cli —— CLI 工具层。
+"""fcmd.cli —— CLI 入口层。
 
-两层结构：
+本包只保留入口与基础设施：
 
-- 领域子包（``archive``/``calc``/``dev``/``media``/``net``）：每个内含工具模块，
-  工具名 = 模块名，经 ``@fx.tool`` 注册后以 ``fcmd <工具名>`` 调用。
-  声明式 exec 型工具已全部迁入 DSL（``fcmd/commands/*.toml`` + ``fcmd/dsl/``），
-  本包仅保留含 Python 逻辑的工具模块；原先的 ``conv``/``crypto``/``data``/
-  ``text``/``fileops`` 空壳子包已随迁移删除。
-- 基础设施模块（``_`` 前缀）：``main`` 路由、``_discovery`` 工具发现、
-  ``_builtins`` 内建命令、各共享辅助模块。
+- ``main``：命令行路由（内建命令 / 工具名 / DSL 命令）
+- ``_discovery``：扫描 :mod:`fcmd.tools` 发现工具模块并注册
+- ``_builtins``：内建命令（graph/info/completion/yaml/env/doctor/profiler）
+- ``_common`` / ``_env_*`` / ``_doctor_helpers`` / ``_profiler_helpers`` /
+  ``_completion_scripts``：共享辅助模块
+
+工具实现位于 :mod:`fcmd.tools`，声明式 exec 型命令位于
+``fcmd/commands/*.toml`` + :mod:`fcmd.dsl`。
 
 本门面不 re-export 任何工具符号，避免导入单个工具时连带触发其他工具
 的导入（保 ``import fcmd`` 冷启动 < 100ms）。

@@ -18,10 +18,10 @@ from typing import Any
 
 import pytest
 
-from fcmd.apis._tool_args import ToolSpec, _build_parser_for_tool
-from fcmd.apis._tool_exec import _apply_compute, _apply_env_defaults, _build_task_spec, _expand_cmd_placeholders
 from fcmd.cli import _discovery as discovery_mod
 from fcmd.cli._common import _BUILTIN_COMMANDS
+from fcmd.core.toolkit.args import ToolSpec, _build_parser_for_tool
+from fcmd.core.toolkit.exec import _apply_compute, _apply_env_defaults, _build_task_spec, _expand_cmd_placeholders
 from fcmd.dsl import (
     CommandDecl,
     CommandDeclError,
@@ -692,7 +692,7 @@ class TestBootstrap:
 
         monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
         monkeypatch.setattr(discovery_mod, "resolve_tool", lambda name: name)
-        monkeypatch.setattr("fcmd.apis.toolkit.run_tool", fake_run_tool)
+        monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
         monkeypatch.setattr(sys, "argv", [r"C:\Scripts\clr.exe", "--help"])
         with pytest.raises(SystemExit) as exc_info:
             run_named()
@@ -735,7 +735,7 @@ class TestBootstrap:
 
         monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
         monkeypatch.setattr(discovery_mod, "resolve_tool", fake_resolve)
-        monkeypatch.setattr("fcmd.apis.toolkit.run_tool", fake_run_tool)
+        monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
         monkeypatch.setattr(sys, "argv", [r"F:\app\dist\src\fcmd\dsl\entry.py", "gen", "in.svg"])
         monkeypatch.setattr(sys, "executable", r"F:\app\dist\img2ico.exe")
         with pytest.raises(SystemExit) as exc_info:
@@ -752,14 +752,49 @@ class TestBootstrap:
         urllib.request(→ssl) 会使所有 DSL 命令启动多付约 230ms。子进程
         隔离断言重型库不出现在 sys.modules（模块 docstring 承诺"工具发现
         阶段不触发重型库加载"）。
+
+        可选依赖库（psutil/cryptography/pyzipper/puremagic/coloraide/pypdf）
+        同理必须在动作执行期惰性导入，不得在发现阶段加载。``rich`` 允许
+        出现（CLI 控制台层），但不得由 ``import fcmd`` 触发（见
+        ``test_import_fcmd_does_not_load_heavy_libs``）。
         """
         code = (
             "import sys\n"
             "import fcmd.dsl.entry\n"
             "from fcmd.cli._discovery import ensure_tools_discovered\n"
             "ensure_tools_discovered()\n"
-            "heavy = [m for m in ('resvg_py', 'PIL.Image', 'ssl') if m in sys.modules]\n"
+            "heavy = [\n"
+            "    m\n"
+            "    for m in (\n"
+            "        'resvg_py', 'PIL.Image', 'ssl', 'fitz', 'pypdf',\n"
+            "        'psutil', 'cryptography', 'pyzipper', 'puremagic', 'coloraide',\n"
+            "    )\n"
+            "    if m in sys.modules\n"
+            "]\n"
             "assert not heavy, f'工具发现阶段加载了重型库: {heavy}'\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False)
+        assert result.returncode == 0, result.stderr
+
+    def test_import_fcmd_does_not_load_heavy_libs(self) -> None:
+        """``import fcmd`` 不加载 rich 与任何可选重型库。
+
+        ``fcmd/__init__.py`` 的懒加载映射保证核心包导入只付最低代价；
+        rich（控制台层）与 cryptography/psutil/pyzipper/puremagic/
+        coloraide/pypdf 等可选库仅在 CLI/动作路径按需加载。
+        """
+        code = (
+            "import sys\n"
+            "import fcmd\n"
+            "heavy = [\n"
+            "    m\n"
+            "    for m in (\n"
+            "        'rich', 'resvg_py', 'PIL.Image', 'ssl', 'fitz', 'pypdf',\n"
+            "        'psutil', 'cryptography', 'pyzipper', 'puremagic', 'coloraide',\n"
+            "    )\n"
+            "    if m in sys.modules\n"
+            "]\n"
+            "assert not heavy, f'import fcmd 加载了重型库: {heavy}'\n"
         )
         result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=120, check=False)
         assert result.returncode == 0, result.stderr
@@ -778,7 +813,7 @@ def reset_discovery(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     - ``_TOOL_REGISTRY`` 不整体清空（模块 import 缓存导致 Python 工具
       无法经重新 ensure 恢复），仅回滚 DSL 命令的注册到快照值。
     """
-    from fcmd.apis.toolkit import _TOOL_REGISTRY
+    from fcmd.core.toolkit import _TOOL_REGISTRY
 
     snap_registry = {name: dict(subs) for name, subs in _TOOL_REGISTRY.items()}
     monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
@@ -841,7 +876,7 @@ class TestDiscoveryIntegration:
         保护内置聚合链（chk/tc 依赖 pyrefly_check/lint/fmt/tf）语义不被静默
         改写，同名子命令保留先注册者，用户仅可新增子命令。
         """
-        from fcmd.apis.toolkit import get_tool
+        from fcmd.core.toolkit import get_tool
 
         (user_home / "commands.toml").write_text(
             '[commands.pymake.t]\nhelp = "用户版测试"\ncmd = "echo fake-t"\n'
@@ -864,7 +899,7 @@ class TestDiscoveryIntegration:
         user_decl = CommandDecl(name="dsldemo", help="用户版", cmd="user-cmd")
         discovery_mod._register_dsl_tool(ToolDecl(name="dsldemo", commands=(builtin_decl,)), "builtin")
         discovery_mod._register_dsl_tool(ToolDecl(name="dsldemo", commands=(user_decl,)), "user")
-        from fcmd.apis.toolkit import get_tool
+        from fcmd.core.toolkit import get_tool
 
         spec = get_tool("dsldemo")
         assert spec.cmd == "user-cmd"
@@ -877,7 +912,7 @@ class TestDiscoveryIntegration:
         tool = ToolDecl(name="dsldemo", commands=(decl,))
         discovery_mod._register_dsl_tool(tool, "user")
         discovery_mod._register_dsl_tool(tool, "user")  # 不应抛 ValueError
-        from fcmd.apis.toolkit import get_tool
+        from fcmd.core.toolkit import get_tool
 
         assert get_tool("dsldemo").cmd == "echo x"
 
@@ -910,12 +945,12 @@ class TestRunToolDslCommand:
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
     ) -> None:
         """run_tool 执行 DSL 命令的 cmd（str → shell=True）。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text('[commands.hello]\nhelp = "问好"\ncmd = "echo hi"\n', encoding="utf-8")
         discovery_mod.ensure_tools_discovered()
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run_factory(captured))
         code = run_tool("hello", [])
         assert code == 0
         assert captured[0][0] == "echo hi"
@@ -930,7 +965,7 @@ class TestRunToolDslCommand:
         (user_home / "commands.toml").write_text('[commands.hello]\nhelp = "问好"\ncmd = "echo hi"\n', encoding="utf-8")
         discovery_mod.ensure_tools_discovered()
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", self._fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", self._fake_run_factory(captured))
         app = FcmdApp(["hello"])
         assert app.run() == 0
         assert captured[0][0] == "echo hi"
@@ -944,7 +979,7 @@ class TestRunToolDslCommand:
         流入 fn 任务 kwargs），cmd 写文件断言子进程真实读到环境变量。
         """
         out = tmp_path / "env_out.txt"
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         # win 分支用 TOML 字面串（反斜杠原样）；unix 分支用 posix 路径避免
         # 基本串中 \U 被当作转义
@@ -973,7 +1008,7 @@ class TestRunToolClr:
     @staticmethod
     def _re_register_clr_for(platform: str) -> None:
         """把内置 clr 声明按指定平台重新注册（测试辅助，回滚由 fixture 负责）。"""
-        from fcmd.apis.toolkit import _TOOL_REGISTRY
+        from fcmd.core.toolkit import _TOOL_REGISTRY
 
         clr_tool = next(t for t in builtin_tool_decls() if t.name == "clr")
         _TOOL_REGISTRY.pop("clr", None)
@@ -1000,13 +1035,13 @@ class TestRunToolClr:
         reset_discovery: None,
     ) -> None:
         """win32 执行 cls（shell），其余平台执行 clear（无 shell）。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         discovery_mod.ensure_tools_discovered()
         self._re_register_clr_for(platform)
         captured: list[tuple[Any, dict[str, Any]]] = []
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kw: captured.append((cmd, kw)) or subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert run_tool("clr", []) == 0
@@ -1017,7 +1052,7 @@ class TestRunToolClr:
         self, monkeypatch: pytest.MonkeyPatch, reset_discovery: None, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """清屏命令非零返回码时 run_tool 返回 1（新语义：如实透传）。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         discovery_mod.ensure_tools_discovered()
         self._re_register_clr_for("linux")
@@ -1025,7 +1060,7 @@ class TestRunToolClr:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             return subprocess.CompletedProcess(cmd, 1, "", "")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         assert run_tool("clr", []) == 1
         assert "执行失败" in capsys.readouterr().out
 
@@ -1033,7 +1068,7 @@ class TestRunToolClr:
         self, monkeypatch: pytest.MonkeyPatch, reset_discovery: None, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """清屏命令不存在时友好报错（含命令名）并返回 1。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         discovery_mod.ensure_tools_discovered()
         self._re_register_clr_for("linux")
@@ -1041,13 +1076,13 @@ class TestRunToolClr:
         def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             raise FileNotFoundError(2, "系统找不到指定的文件。")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         assert run_tool("clr", []) == 1
         assert "clear" in capsys.readouterr().out
 
     def test_clr_dry_run_no_exec(self, monkeypatch: pytest.MonkeyPatch, reset_discovery: None) -> None:
         """--dry-run 仅打印不执行命令。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         discovery_mod.ensure_tools_discovered()
         self._re_register_clr_for("linux")
@@ -1057,7 +1092,7 @@ class TestRunToolClr:
             captured.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         assert run_tool("clr", ["--dry-run"]) == 0
         assert captured == []  # 未执行
 
@@ -1065,7 +1100,7 @@ class TestRunToolClr:
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
     ) -> None:
         """用户级 clr 覆盖内置声明（用户配置优先于出厂配置）。"""
-        from fcmd.apis.toolkit import get_tool
+        from fcmd.core.toolkit import get_tool
 
         (user_home / "commands.toml").write_text(
             '[commands.clr]\nhelp = "用户清屏"\ncmd = "echo user-clear"\n', encoding="utf-8"
@@ -1287,7 +1322,7 @@ class TestInterpolation:
 
     def test_str_cmd_expanded(self) -> None:
         """str cmd 的占位符替换为 CLI 值。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         spec = self._spec("echo {name} x{count}", ("name", "count"))
         result = _expand_cmd_placeholders("echo {name} x{count}", spec, {"name": "world", "count": 3})
@@ -1295,7 +1330,7 @@ class TestInterpolation:
 
     def test_list_cmd_expanded(self) -> None:
         """list cmd 逐元素替换。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         spec = self._spec("x", ("host",))
         result = _expand_cmd_placeholders(["ping", "{host}", "-c", "1"], spec, {"host": "localhost"})
@@ -1303,7 +1338,7 @@ class TestInterpolation:
 
     def test_no_placeholder_fast_path(self) -> None:
         """无 { 的 cmd 原样直返（快路径）。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         spec = self._spec("echo hi", ("name",))
         result = _expand_cmd_placeholders("echo hi", spec, {"name": "x"})
@@ -1311,7 +1346,7 @@ class TestInterpolation:
 
     def test_literal_braces_untouched(self) -> None:
         """未声明参数的花括号（如 python -c "print({})"）不受影响。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         spec = self._spec("python -c print({})", ("name",))
         result = _expand_cmd_placeholders('python -c "print({})"', spec, {"name": "x"})
@@ -1319,7 +1354,7 @@ class TestInterpolation:
 
     def test_global_vars_not_expanded(self) -> None:
         """签名外变量（dry_run 等）不展开。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         spec = self._spec("echo {dry_run}", ())
         result = _expand_cmd_placeholders("echo {dry_run}", spec, {"dry_run": True})
@@ -1329,7 +1364,7 @@ class TestInterpolation:
         """bool → true/false；list → 空格连接；Path → str。"""
         from pathlib import Path
 
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders, _value_to_cmd_str
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders, _value_to_cmd_str
 
         assert _value_to_cmd_str(True) == "true"
         assert _value_to_cmd_str(False) == "false"
@@ -1340,8 +1375,8 @@ class TestInterpolation:
 
     def test_callable_cmd_task_spec_unaffected(self) -> None:
         """callable 型 cmd（如 pymake push 的函数任务）不被插值破坏。"""
-        from fcmd.apis._tool_exec import _build_task_spec
-        from fcmd.apis.toolkit import ToolSpec
+        from fcmd.core.toolkit import ToolSpec
+        from fcmd.core.toolkit.exec import _build_task_spec
 
         def _push_all_remotes() -> None:
             """pymake push 的函数任务形态。"""
@@ -1362,7 +1397,7 @@ class TestInterpolation:
 
     def test_list_exclusive_placeholder_spliced(self) -> None:
         """list 参数独占占位符按元素展开（tuple cmd，无 shell 语义）。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         decl = CommandDecl(
             name="t", help="x", cmd=("pip", "install", "{packages}"), args=(ParamDecl(name="packages", type="list"),)
@@ -1373,7 +1408,7 @@ class TestInterpolation:
 
     def test_on_tokens_appended_when_truthy(self) -> None:
         """bool on 固定 token：值为真追加，值为假不追加。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         decl = CommandDecl(
             name="t",
@@ -1400,7 +1435,7 @@ class TestInterpolation:
 
     def test_on_tokens_str_cmd_appended(self) -> None:
         """str cmd（shell）的 on 固定 token 以空格追加到尾部。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         decl = CommandDecl(
             name="t",
@@ -1419,7 +1454,7 @@ class TestInterpolation:
 
     def test_non_dsl_func_no_on_tokens(self) -> None:
         """非 DSL 合成函数（无 __dsl_param_on__）不受 on 逻辑影响。"""
-        from fcmd.apis._tool_exec import _expand_cmd_placeholders
+        from fcmd.core.toolkit.exec import _expand_cmd_placeholders
 
         spec = self._spec("echo {name}", ("name",))
         assert _expand_cmd_placeholders("echo {name}", spec, {"name": "x"}) == "echo x"
@@ -1428,7 +1463,7 @@ class TestInterpolation:
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
     ) -> None:
         """run_tool 全链路：用户命令带参数声明与 cmd 插值。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             '[commands.greet]\nhelp = "问好"\ncmd = "echo 你好 {name} x{count}"\n'
@@ -1445,7 +1480,7 @@ class TestInterpolation:
             captured.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         assert run_tool("greet", ["world", "--count", "3"]) == 0
         assert captured[0] == "echo 你好 world x3"
 
@@ -1498,7 +1533,7 @@ class TestTransparency:
 
     def test_cwd_env_interpolation_in_task_spec(self) -> None:
         """cwd 与 env 值的 {参数名} 占位符在 TaskSpec 构建时展开。"""
-        from fcmd.apis._tool_exec import _build_task_spec
+        from fcmd.core.toolkit.exec import _build_task_spec
 
         decl = CommandDecl(
             name="t",
@@ -1516,7 +1551,7 @@ class TestTransparency:
 
     def test_timeout_passed_through(self) -> None:
         """timeout 声明透传 TaskSpec。"""
-        from fcmd.apis._tool_exec import _build_task_spec
+        from fcmd.core.toolkit.exec import _build_task_spec
 
         decl = CommandDecl(name="t", help="x", cmd="sleep 1", timeout=0.5)
         task = _build_task_spec(build_tool_spec(decl), {})
@@ -1526,7 +1561,7 @@ class TestTransparency:
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None, tmp_path: Path
     ) -> None:
         """run_tool 全链路：cwd/env/timeout 到达 subprocess（mock 断言）。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         # cwd 必须真实存在：引擎对带 cwd 的任务先 os.chdir（进程级），
         # subprocess 再按 cwd 参数执行（引擎既有行为）
@@ -1553,7 +1588,7 @@ class TestTransparency:
             captured["cmd"] = cmd
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         assert run_tool("where", ["home"]) == 0
         assert captured["cmd"] == "echo at home"
         assert captured["cwd"] == work_dir
@@ -1596,7 +1631,7 @@ class TestMessageDeclaration:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """run_tool 全链路：执行成功后打印插值消息。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             "\n".join(
@@ -1613,7 +1648,7 @@ class TestMessageDeclaration:
         )
         discovery_mod.ensure_tools_discovered()
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert run_tool("hello", ["world"]) == 0
@@ -1652,7 +1687,7 @@ class TestFailMessageDeclaration:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """run_tool 全链路：任务失败时打印插值提示，退出码非零。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             "\n".join(
@@ -1670,7 +1705,7 @@ class TestFailMessageDeclaration:
         )
         discovery_mod.ensure_tools_discovered()
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, "", "boom"),
         )
         assert run_tool("deploy", ["prod"]) == 1
@@ -1687,7 +1722,7 @@ class TestFailMessageDeclaration:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """when 守卫跳过目标任务时不打印完成消息（SKIPPED 不等于执行成功）。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             "\n".join(
@@ -1706,7 +1741,7 @@ class TestFailMessageDeclaration:
         discovery_mod.ensure_tools_discovered()
         captured: list[Any] = []
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kwargs: (captured.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
         # 探针目标不存在 → SKIPPED → exit 0 但不打印完成消息
@@ -1753,7 +1788,7 @@ class TestContentExpansion:
         reset_discovery: None,
     ) -> None:
         """run_tool 全链路：文件内容（去首尾空白）替换进 tuple cmd。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         cfg = tmp_path / "app.conf"
         cfg.write_text("key=value\n", encoding="utf-8")
@@ -1773,7 +1808,7 @@ class TestContentExpansion:
         discovery_mod.ensure_tools_discovered()
         captured: list[Any] = []
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kwargs: (captured.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
         assert run_tool("inject", ["--cfg", str(cfg)]) == 0
@@ -1787,7 +1822,7 @@ class TestContentExpansion:
         reset_discovery: None,
     ) -> None:
         """文件读取失败（不存在）时保持字面 token，不抛异常。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         missing = tmp_path / "missing.conf"
 
@@ -1807,7 +1842,7 @@ class TestContentExpansion:
         discovery_mod.ensure_tools_discovered()
         captured: list[Any] = []
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kwargs: (captured.append(cmd), subprocess.CompletedProcess(cmd, 0, "", ""))[1],
         )
         assert run_tool("inject", ["--cfg", str(missing)]) == 0
@@ -1974,7 +2009,7 @@ class TestAggregateSpecSynthesis:
 
     def test_synthesized_func_marked_empty_body(self) -> None:
         """合成函数标记 __dsl_empty_body__，被 _is_aggregate 识别为无函数逻辑。"""
-        from fcmd.apis._tool_exec import _is_aggregate
+        from fcmd.core.toolkit.exec import _is_aggregate
 
         decl = CommandDecl(name="chk", help="聚合", needs=("lint",), strategy="thread")
         spec = build_tool_spec(decl, tool_name="t", subcommand="chk")
@@ -1983,7 +2018,7 @@ class TestAggregateSpecSynthesis:
 
     def test_plain_cmd_spec_not_aggregate(self) -> None:
         """普通 cmd 命令的合成函数同样有标记，但 _is_aggregate 因有 cmd 返回 False。"""
-        from fcmd.apis._tool_exec import _is_aggregate
+        from fcmd.core.toolkit.exec import _is_aggregate
 
         decl = CommandDecl(name="b", help="构建", cmd="uv build")
         spec = build_tool_spec(decl, tool_name="t", subcommand="b")
@@ -2007,7 +2042,7 @@ class TestRegisterDslToolMerge:
 
     def test_new_multi_sub_tool_registered(self, reset_discovery: None) -> None:
         """全新多子命令工具逐子命令注册，工具级 description 传播到各子命令。"""
-        from fcmd.apis.toolkit import get_tool
+        from fcmd.core.toolkit import get_tool
 
         tool = self._multi_tool("mergetool", description="合并演示")
         discovery_mod._register_dsl_tool(tool, "builtin")
@@ -2020,7 +2055,7 @@ class TestRegisterDslToolMerge:
 
     def test_merge_into_existing_python_tool(self, reset_discovery: None, caplog: pytest.LogCaptureFixture) -> None:
         """与既有 Python 工具重名：逐子命令合并，同名子命令跳过并 warning。"""
-        from fcmd.apis.toolkit import ToolSpec, _register_tool, get_tool
+        from fcmd.core.toolkit import ToolSpec, _register_tool, get_tool
 
         def existing_fn() -> None:
             """既有 Python 子命令占位。"""
@@ -2039,7 +2074,7 @@ class TestRegisterDslToolMerge:
         tool = self._multi_tool("mergetool")
         discovery_mod._register_dsl_tool(tool, "builtin")
         discovery_mod._register_dsl_tool(tool, "builtin")  # 不应抛 ValueError
-        from fcmd.apis.toolkit import get_tool
+        from fcmd.core.toolkit import get_tool
 
         assert get_tool("mergetool", "go").cmd == "echo go"
 
@@ -2158,7 +2193,7 @@ class TestWhenGuardExecution:
 
     def test_conditions_empty_without_when(self) -> None:
         """无 when 声明的 DSL 命令 conditions 为空元组。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         spec = build_tool_spec(CommandDecl(name="t", help="x", cmd="echo"))
         assert _build_conditions(spec, {}) == ()
@@ -2179,7 +2214,7 @@ class TestWhenGuardExecution:
 
     def test_cmd_probe_closure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cmd 探针按 stdout 是否非空与 expect 判定，_reason 描述探针。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         spec = build_tool_spec(parse_command_table("t", self._when_table()))
         conditions = _build_conditions(spec, {})
@@ -2187,13 +2222,13 @@ class TestWhenGuardExecution:
         probe = conditions[0]
         # stdout 非空 → 满足 nonempty 期望
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, " M file\n", ""),
         )
         assert probe({}) is True
         # stdout 为空 → 不满足
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert probe({}) is False
@@ -2204,7 +2239,7 @@ class TestWhenGuardExecution:
 
     def test_cmd_probe_empty_expect(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cmd 探针 expect="empty"：stdout 为空时满足。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         decl = parse_command_table(
             "t", {"help": "x", "cmd": "echo", "when": {"cmd": "cmd /c exit 0", "expect": "empty"}}
@@ -2212,31 +2247,31 @@ class TestWhenGuardExecution:
         spec = build_tool_spec(decl)
         probe = _build_conditions(spec, {})[0]
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert probe({}) is True
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "out", ""),
         )
         assert probe({}) is False
 
     def test_cmd_probe_returncode_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cmd 探针 expect="success"：返回码 0 时满足，与 stdout 无关。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         decl = parse_command_table(
             "t", {"help": "x", "cmd": "echo", "when": {"cmd": "git diff --quiet", "expect": "success"}}
         )
         probe = _build_conditions(build_tool_spec(decl), {})[0]
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert probe({}) is True  # rc 0 → success 满足（stdout 为空不影响）
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "changes"),
         )
         assert probe({}) is False
@@ -2246,19 +2281,19 @@ class TestWhenGuardExecution:
 
     def test_cmd_probe_returncode_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cmd 探针 expect="failure"：返回码非 0 时满足。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         decl = parse_command_table(
             "t", {"help": "x", "cmd": "echo", "when": {"cmd": "git diff --quiet", "expect": "failure"}}
         )
         probe = _build_conditions(build_tool_spec(decl), {})[0]
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", ""),
         )
         assert probe({}) is True
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert probe({}) is False
@@ -2266,7 +2301,7 @@ class TestWhenGuardExecution:
 
     def test_cmd_probe_interpolation(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """cmd 探针支持 ``{参数名}`` 插值（构造时求值，reason 同步插值后命令）。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         decl = parse_command_table(
             "t",
@@ -2285,14 +2320,14 @@ class TestWhenGuardExecution:
             captured.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, "out", "")
 
-        monkeypatch.setattr("fcmd.apis._tool_exec.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.toolkit.exec.subprocess.run", fake_run)
         assert probe({}) is True
         assert captured == ["test -n main"]  # 探针已插值
         assert "test -n main" in str(probe._reason)  # type: ignore[missing-attribute]
 
     def test_path_probe_interpolation(self, tmp_path: Path) -> None:
         """path 探针支持 ``{参数名}`` 插值（构造时求值，``~`` 展开语义保留）。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         marker = tmp_path / "dest"
         decl = parse_command_table(
@@ -2312,7 +2347,7 @@ class TestWhenGuardExecution:
 
     def test_path_probe_closure(self, tmp_path: Path) -> None:
         """path 探针按存在性与 expect 判定。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         marker = tmp_path / "marker"
         decl = parse_command_table("t", {"help": "x", "cmd": "echo", "when": {"path": str(marker), "expect": "exists"}})
@@ -2324,7 +2359,7 @@ class TestWhenGuardExecution:
 
     def test_path_probe_missing_expect(self, tmp_path: Path) -> None:
         """path 探针 expect="missing"：不存在时满足。"""
-        from fcmd.apis._tool_exec import _build_conditions
+        from fcmd.core.toolkit.exec import _build_conditions
 
         marker = tmp_path / "gone"
         decl = parse_command_table(
@@ -2337,12 +2372,12 @@ class TestWhenGuardExecution:
 
     def test_probe_exception_treated_unsatisfied(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """探针命令执行异常 → should_execute 视为条件不满足。"""
-        from fcmd.apis._tool_exec import _build_task_spec
+        from fcmd.core.toolkit.exec import _build_task_spec
 
         def boom(cmd: Any, **kw: Any) -> subprocess.CompletedProcess[str]:
             raise FileNotFoundError(2, "命令不存在")
 
-        monkeypatch.setattr("fcmd.apis._tool_exec.subprocess.run", boom)
+        monkeypatch.setattr("fcmd.core.toolkit.exec.subprocess.run", boom)
         spec = build_tool_spec(parse_command_table("t", self._when_table()))
         task = _build_task_spec(spec, {})
         assert task.conditions
@@ -2358,7 +2393,7 @@ class TestWhenGuardExecution:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """when 不满足：任务 SKIPPED、命令不执行、exit 0、提示条件不满足。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             "\n".join(
@@ -2378,7 +2413,7 @@ class TestWhenGuardExecution:
             captured.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         assert run_tool("pick", []) == 0
         assert captured == []  # 命令未执行
         assert "条件不满足" in capsys.readouterr().out
@@ -2387,7 +2422,7 @@ class TestWhenGuardExecution:
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
     ) -> None:
         """上游守卫 SKIPPED：默认连坐下游；allow_upstream_skip 豁免照常执行。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             "\n".join(
@@ -2417,7 +2452,7 @@ class TestWhenGuardExecution:
             captured.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, "", "")
 
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
         # follow 连坐 SKIPPED（exit 0），echo follow 不执行
         captured.clear()
         assert run_tool("guardtool", ["follow"]) == 0
@@ -2431,7 +2466,7 @@ class TestWhenGuardExecution:
         self, user_home: Path, monkeypatch: pytest.MonkeyPatch, reset_discovery: None
     ) -> None:
         """--dry-run 仅打印计划：探针不求值（引擎在任务执行前短路）。"""
-        from fcmd.apis.toolkit import run_tool
+        from fcmd.core.toolkit import run_tool
 
         (user_home / "commands.toml").write_text(
             "\n".join(
@@ -2447,12 +2482,12 @@ class TestWhenGuardExecution:
         discovery_mod.ensure_tools_discovered()
         probe_calls: list[Any] = []
         monkeypatch.setattr(
-            "fcmd.apis._tool_exec.subprocess.run",
+            "fcmd.core.toolkit.exec.subprocess.run",
             lambda cmd, **kw: probe_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         task_calls: list[Any] = []
         monkeypatch.setattr(
-            "fcmd.engine.task_command.subprocess.run",
+            "fcmd.core.execution.task_command.subprocess.run",
             lambda cmd, **kw: task_calls.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""),
         )
         assert run_tool("prober", ["--dry-run"]) == 0
@@ -2461,7 +2496,7 @@ class TestWhenGuardExecution:
 
     def test_aggregate_with_params_uses_full_parser(self) -> None:
         """带参聚合：parser 复用 _build_parser_for_tool，--message 可解析。"""
-        from fcmd.apis._tool_exec import _parse_tool_args
+        from fcmd.core.toolkit.exec import _parse_tool_args
 
         decl = parse_command_table(
             "agg",
@@ -2481,7 +2516,7 @@ class TestWhenGuardExecution:
 
     def test_aggregate_without_params_keeps_bare_parser(self) -> None:
         """无参聚合：保持裸 parser（仅全局选项），未知参数解析失败返回 FAILURE。"""
-        from fcmd.apis._tool_exec import _parse_tool_args
+        from fcmd.core.toolkit.exec import _parse_tool_args
 
         decl = parse_command_table("agg", {"help": "聚合", "needs": ["sub"]}, subcommand=True)
         spec = build_tool_spec(decl, tool_name="t", subcommand="agg")

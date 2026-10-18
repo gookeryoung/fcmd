@@ -16,7 +16,7 @@ import pytest
 
 import fcmd as fx
 import fcmd.dsl.actions.archive
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.archive import archive_folder
 
 

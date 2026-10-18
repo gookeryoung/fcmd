@@ -7,14 +7,14 @@ from typing import Any
 
 import pytest
 
-from fcmd.apis.context import (
+from fcmd.core.context import (
     Context,
     build_call_args,
     describe_injection,
     is_context_annotation,
 )
-from fcmd.apis.errors import InjectionError
-from fcmd.apis.task import TaskSpec
+from fcmd.core.errors import InjectionError
+from fcmd.core.task import TaskSpec
 
 
 # ---------------------------------------------------------------------- #

@@ -17,9 +17,9 @@ from pathlib import Path
 
 import pytest
 
-import fcmd.cli.dev.gittool  # 触发 @fx.tool 注册（isub/main）
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+import fcmd.tools.dev.gittool  # 触发 @fx.tool 注册（isub/main）
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 # 触发工具发现：Python 模块扫描 + DSL 声明注册（幂等）
 ensure_tools_discovered()
@@ -139,7 +139,7 @@ class TestGittoolCmdSpecs:
 
     def test_clean_is_hidden_cmd(self) -> None:
         """clean 是 hidden 的 cmd 类型子命令。"""
-        from fcmd.apis.toolkit import _TOOL_REGISTRY
+        from fcmd.core.toolkit import _TOOL_REGISTRY
 
         spec = _TOOL_REGISTRY["gittool"]["clean"]
         assert spec.cmd is not None
@@ -150,14 +150,14 @@ class TestGittoolCmdSpecs:
 
     def test_c_needs_clean(self) -> None:
         """c 子命令依赖 clean。"""
-        from fcmd.apis.toolkit import _TOOL_REGISTRY
+        from fcmd.core.toolkit import _TOOL_REGISTRY
 
         spec = _TOOL_REGISTRY["gittool"]["c"]
         assert "clean" in spec.needs
 
     def test_p_is_cmd(self) -> None:
         """p 是 cmd 类型子命令。"""
-        from fcmd.apis.toolkit import _TOOL_REGISTRY
+        from fcmd.core.toolkit import _TOOL_REGISTRY
 
         spec = _TOOL_REGISTRY["gittool"]["p"]
         assert spec.cmd is not None
@@ -165,7 +165,7 @@ class TestGittoolCmdSpecs:
 
     def test_pl_is_cmd(self) -> None:
         """pl 是 cmd 类型子命令。"""
-        from fcmd.apis.toolkit import _TOOL_REGISTRY
+        from fcmd.core.toolkit import _TOOL_REGISTRY
 
         spec = _TOOL_REGISTRY["gittool"]["pl"]
         assert spec.cmd is not None
@@ -173,7 +173,7 @@ class TestGittoolCmdSpecs:
 
     def test_ca_is_cmd_without_exclude(self) -> None:
         """ca 是 cmd 类型子命令，直接 git clean -xfd . 不含 -e 排除。"""
-        from fcmd.apis.toolkit import _TOOL_REGISTRY
+        from fcmd.core.toolkit import _TOOL_REGISTRY
 
         spec = _TOOL_REGISTRY["gittool"]["ca"]
         assert spec.cmd is not None
@@ -249,7 +249,7 @@ class TestGittoolIsub:
     ) -> None:
         """无子目录时打印提示。"""
         monkeypatch.chdir(tmp_path)
-        fcmd.cli.dev.gittool.git_init_sub_dirs()
+        fcmd.tools.dev.gittool.git_init_sub_dirs()
         captured = capsys.readouterr()
         assert "无子目录" in captured.out
 
@@ -275,9 +275,9 @@ class TestGittoolIsub:
             calls.append((cmd, cwd or Path.cwd()))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr("fcmd.cli.dev.gittool.subprocess.run", fake_run)
+        monkeypatch.setattr("fcmd.tools.dev.gittool.subprocess.run", fake_run)
 
-        fcmd.cli.dev.gittool.git_init_sub_dirs()
+        fcmd.tools.dev.gittool.git_init_sub_dirs()
         captured = capsys.readouterr()
         assert "已初始化: proj_a" in captured.out
         assert "已初始化: proj_b" in captured.out

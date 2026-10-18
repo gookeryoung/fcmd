@@ -5,14 +5,14 @@ from __future__ import annotations
 import argparse
 from typing import TYPE_CHECKING
 
-from fcmd.apis.errors import FcmdError
-from fcmd.apis.toolkit import build_tool_graph
 from fcmd.cli._common import print_unknown_tool
 from fcmd.cli._discovery import resolve_tool
 from fcmd.console import get_console
+from fcmd.core.errors import FcmdError
+from fcmd.core.toolkit import build_tool_graph
 
 if TYPE_CHECKING:
-    from fcmd.apis.dag import Graph
+    from fcmd.core.dag import Graph
 
 __all__ = ["run"]
 

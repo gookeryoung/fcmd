@@ -1,6 +1,6 @@
 """声明 → ToolSpec：平台命令选定与合成函数签名。
 
-DSL 声明到 :class:`~fcmd.apis._tool_args.ToolSpec` 的转换层：
+DSL 声明到 :class:`~fcmd.core.toolkit.args.ToolSpec` 的转换层：
 
 * :func:`select_platform_cmd` —— 按平台从声明选定最终 cmd（win32 命中
   ``win_cmd``，其余命中 ``unix_cmd``，均缺回退 ``cmd``）。平台作为显式
@@ -12,10 +12,10 @@ DSL 声明到 :class:`~fcmd.apis._tool_args.ToolSpec` 的转换层：
 ``__signature__`` 属性、``typing.get_type_hints`` 读取 ``__annotations__``
 字典，两者均支持运行时注入——参数声明 (:class:`~fcmd.dsl.decl.ParamDecl`)
 转换为真实类型注解（``Literal`` 动态构造）与 :class:`inspect.Signature`，
-零改动复用 :func:`fcmd.apis._tool_args._build_parser_for_tool` 的签名推导。
+零改动复用 :func:`fcmd.core.toolkit.args._build_parser_for_tool` 的签名推导。
 
 合成函数无源码（``inspect.getsource`` 抛 OSError），标记
-``__dsl_empty_body__`` 供 :func:`fcmd.apis._tool_exec._has_function_logic`
+``__dsl_empty_body__`` 供 :func:`fcmd.core.toolkit.exec._has_function_logic`
 识别空函数体（DSL 声明是纯 exec/聚合编排，占位函数体永不承载逻辑）：
 cmd 任务在 ``spec.cmd is not None`` 时短路，聚合任务（needs 且无 cmd）据此
 正确判定为聚合。bool 参数的 ``on`` 固定 token 经 ``__dsl_param_on__`` 属性
@@ -52,7 +52,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from fcmd.apis._tool_args import ToolSpec
+from fcmd.core.toolkit.args import ToolSpec
 
 from .actions import Action, get_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl
@@ -184,7 +184,7 @@ def _synthesize_action_func(decl: CommandDecl, act: Action) -> Callable[..., Any
 
     与 cmd 任务占位函数（``__dsl_empty_body__``，函数体不执行）不同：动作
     合成函数的函数体转发注册表实现（进程内执行），**不标记**空函数体——
-    引擎 :func:`fcmd.apis._tool_exec._has_function_logic` 判有逻辑 → fn
+    引擎 :func:`fcmd.core.toolkit.exec._has_function_logic` 判有逻辑 → fn
     任务，kwargs 按签名从 CLI 解析变量注入。签名/注解拷贝自动作实现函数
     （声明期已校验参数名与保留名冲突），零改动复用 ``_build_parser_for_tool``。
 

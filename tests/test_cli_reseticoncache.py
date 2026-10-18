@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 
 import fcmd as fx
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.decl import CommandDecl
 from fcmd.dsl.synth import select_platform_cmd
 
@@ -107,7 +107,7 @@ class TestReseticoncacheRun:
         Windows → 重置链），两者均为 str cmd shell 执行、退出码 0。
         """
         captured: list[tuple[Any, dict[str, Any]]] = []
-        monkeypatch.setattr("fcmd.engine.task_command.subprocess.run", _fake_run_factory(captured))
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
         assert run_tool("reseticoncache", []) == 0
         cmd = captured[0][0]
         assert isinstance(cmd, str)  # str cmd → 引擎 shell=True 执行

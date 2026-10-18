@@ -96,7 +96,8 @@ def _hashfile_d(directory: str, algorithm: str = "sha256") -> None:
 
     跳过常见忽略目录（.git/__pycache__ 等）与 .pyc/.pyo 文件。
     """
-    from fcmd.cli._common import IGNORE_DIRS, IGNORE_EXT  # 延迟导入：仅目录哈希场景需要
+    # 延迟导入：仅目录哈希场景需要
+    from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
 
     if algorithm not in _FILE_ALGORITHMS:
         raise ValueError(f"不支持的哈希算法: {algorithm}，支持: {sorted(_FILE_ALGORITHMS)}")
@@ -108,9 +109,9 @@ def _hashfile_d(directory: str, algorithm: str = "sha256") -> None:
     for file_path in sorted(dir_path.rglob("*")):
         if not file_path.is_file():
             continue
-        if any(part in IGNORE_DIRS for part in file_path.parts):
+        if should_skip_parts(file_path.parts, DEFAULT_IGNORE_SPEC):
             continue
-        if file_path.suffix in IGNORE_EXT:
+        if file_path.suffix in DEFAULT_IGNORE_EXTS:
             continue
         digest = _compute_file_hash(file_path, algorithm)
         print(f"{algorithm}  {digest}  {file_path}")

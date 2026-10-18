@@ -4,13 +4,13 @@
 
 ## 特性
 
-- **极速冷启动**（< 100ms）：三层懒加载，核心模块零外部依赖
+- **极速冷启动**（< 100ms）：三层懒加载，重型依赖（Pillow/pymupdf/cryptography 等）仅在用到时导入
 - **DAG 任务调度**：四种执行策略（sequential/thread/async/dependency）
 - **组合 API 简洁**：`@fx.task` 装饰器 + 自动依赖推断 + `@fx.tool` CLI 工具
-- **纯 CLI（自实现 Console）**：ASCII 表格、彩色输出、Win7/8 兼容
+- **基于 rich 的控制台渲染**：彩色输出、表格与终端宽度自适应
 - **便捷脚本模式**：`fcmd pymake b` 一键调用
 - **YAML 编排**：GitHub Actions 风格的 `jobs`/`needs`/`matrix`/`if` 任务图
-- **零配置工具发现**：`fcmd/cli/` 下的模块自动注册为 CLI 子命令
+- **零配置工具发现**：`fcmd/tools/` 下的模块自动注册为 CLI 子命令
 
 ## 安装
 
@@ -25,10 +25,16 @@ pip install fcmd          # 或 uv add fcmd
 | `img` | `pip install fcmd[img]` | `imagetool`（Pillow） |
 | `pdf` | `pip install fcmd[pdf]` | `pdftool`（PyMuPDF + pypdf） |
 | `ocr` | `pip install fcmd[ocr]` | `pdftool ocr`（pytesseract，需系统 tesseract） |
-| `office` | `pip install fcmd[office]` | img + pdf + ocr 全家桶 |
+| `svg` | `pip install fcmd[svg]` | `img2ico` 的 SVG 输入（resvg-py） |
+| `crypto` | `pip install fcmd[crypto]` | `cryptool`（cryptography Fernet） |
+| `archive` | `pip install fcmd[archive]` | `zipencrypt`（pyzipper AES-256 ZIP） |
+| `filecheck` | `pip install fcmd[filecheck]` | `filecheck` 的容器类型识别（puremagic） |
+| `color` | `pip install fcmd[color]` | `colortool` 的颜色换算（coloraide） |
+| `office` | `pip install fcmd[office]` | img + pdf + ocr + svg 全家桶 |
+| `full` | `pip install fcmd[full]` | office + crypto + archive + filecheck + color |
 | `lint` | `pip install fcmd[lint]` | 开发用：ruff + pyrefly |
 | `test` | `pip install fcmd[test]` | 开发用：pytest + cov + xdist |
-| `dev` | `pip install fcmd[dev]` | lint + test + office + prek + tox |
+| `dev` | `pip install fcmd[dev]` | lint + test + full + prek + tox |
 
 要求 Python ≥ 3.13。
 
@@ -112,7 +118,8 @@ fcmd completion --shell fish | source         # fish
 | `hashfile` | - | 文件哈希计算（md5/sha256/sha1，支持目录批量） |
 | `pathtool` | - | 路径处理（拆分/拼接/规范化/相对路径） |
 | `archivex` | - | 归档解压（zip/tar/gz/bz2，跨平台） |
-| `zipencrypt` | - | ZIP 加密（AES/ZipCrypto，批量） |
+| `zipencrypt` | - | ZIP AES-256 加密（pyzipper，批量；需 7-Zip/WinRAR 等支持 AES 的解压器），依赖 `fcmd[archive]` |
+| `filecheck` | - | 媒体文件完整性检查（0 字节/尾部零填充/断链/容器签名），依赖 `fcmd[filecheck]` |
 
 ### 文本与编码
 
@@ -122,7 +129,7 @@ fcmd completion --shell fish | source         # fish
 | `asciitool` | - | ASCII 码表（char/code/table） |
 | `codetool` | - | 编解码（Base64/URL/HTML/Hex/ROT13） |
 | `casetool` | - | 命名风格转换（camel/snake/kebab/pascal） |
-| `colortool` | - | 颜色换算（RGB/HEX/HSL/HSV） |
+| `colortool` | - | 颜色换算（RGB/HEX/HSL/HSV），依赖 `fcmd[color]` |
 | `convtool` | - | 单位换算（长度/重量/温度/面积等） |
 | `csvtool` | - | CSV 处理（pretty/extract/filter/sort） |
 | `hashtool` | - | 字符串哈希（md5/sha1/sha256/sha512） |
@@ -137,7 +144,7 @@ fcmd completion --shell fish | source         # fish
 | `timetool` | - | 时间工具（convert/format/timezone） |
 | `calcdate` | - | 日期计算（add/workdays/diff/compare） |
 | `urltool` | - | URL 解析（编码/解码/拆分/拼接） |
-| `cryptool` | - | 文本对称加密（genkey/encrypt/decrypt，PBKDF2 + HMAC-SHA256 CTR + Encrypt-then-MAC） |
+| `cryptool` | - | 文本对称加密（genkey/encrypt/decrypt，cryptography Fernet + PBKDF2-HMAC-SHA256），依赖 `fcmd[crypto]` |
 
 ### 数据格式
 
@@ -159,9 +166,9 @@ fcmd completion --shell fish | source         # fish
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU） |
-| `portcheck` | - | 端口检查与扫描（socket 检测占用，lsof/netstat 查询占用进程，跨平台） |
-| `taskkill` | - | 按名称终止进程（Windows taskkill / Unix pkill） |
+| `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |
+| `portcheck` | - | 端口检查与扫描（socket 探测 + psutil 查询占用进程，跨平台） |
+| `taskkill` | - | 按名称终止进程（psutil terminate → kill） |
 | `which` | - | 查找可执行命令路径 |
 | `clr` | - | 跨平台清屏 |
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
@@ -218,7 +225,7 @@ report = fx.run(fx.graph(fetch, parse, save))
 
 ```python
 import fcmd
-from fcmd.models import run_command
+from fcmd.core.models import run_command
 
 @fcmd.tool("gittool", subcommand="a", help="git add + commit")
 def add_commit(message: str, amend: bool = False) -> None:
@@ -237,7 +244,7 @@ CLI 参数映射规则：
 - 有默认值参数 → `--name` 选项（`amend: bool = False` → `--amend`）
 - `bool = False` → `--name`（store_true）
 - `bool = True` → `--no-name`（store_false，保留原参数名）
-- `X | None` / `Optional[X]` → 自动解包为 `X`（同时支持实际类型与字符串注解）
+- `X | None` / `Optional[X]` → 自动解包为 `X`
 
 ### `cmd` / `aggregate` 任务
 
@@ -302,8 +309,8 @@ fcmd yaml deploy.yaml --strategy thread  # 覆盖执行策略
 或 Python API：
 
 ```python
-from fcmd.orchestration.yaml_loader import load_yaml
-from fcmd.engine.executors import run
+from fcmd.core.orchestration.yaml_loader import load_yaml
+from fcmd.core.execution.executors import run
 
 graph = load_yaml("deploy.yaml")
 report = run(graph, strategy="dependency")
@@ -431,9 +438,9 @@ fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 |------|------|------|
 | 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退）、`sshcopyid`（when 探针 + env 插值传 SSHPASS + `{参数名:content}` 公钥内容）、`reseticoncache`（win shell 链 + unix 提示分支） |
 | 输出管道（采集→计算→注入 exec 参数） | 可迁 DSL（compute 计算原语） | `piptool u/r`（`pip list` 采集 + 通配符展开/受保护包过滤注入 uninstall/install 参数；r 经 `_uninstall`/`_install` 隐藏链编排） |
-| 输出管道（计算主体为进程内逻辑，输出解析仅子步骤） | 保留 Python | `portcheck`（socket 探测主体 + lsof/netstat 占用查询回显） |
+| 输出管道（计算主体为进程内逻辑，输出解析仅子步骤） | 保留 Python | `portcheck`（socket 探测主体 + psutil 占用查询回显） |
 | 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
-| 进程内副作用（无法映射为子进程） | 副作用型动作可迁 DSL（action 原语） | `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`（已迁入 action 原语；taskkill 逐条目过程回显 + 绝对路径防递归，which 逐条查找回显，sysinfo 诊断信息打印，均无返回值消费）；`pathtool`/`filesearch`/`nettool`/`iptool` 产出计算结果（路径解析计算/搜索结果/HTTP 响应/IP 解析），非副作用型动作，保留 Python |
+| 进程内副作用（无法映射为子进程） | 副作用型动作可迁 DSL（action 原语） | `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`（已迁入 action 原语；taskkill 逐进程 terminate→kill 回显，which 逐条查找回显，sysinfo 诊断信息打印，均无返回值消费）；`pathtool`/`filesearch`/`nettool`/`iptool` 产出计算结果（路径解析计算/搜索结果/HTTP 响应/IP 解析），非副作用型动作，保留 Python |
 | 多步有状态流程 | 保留 Python | `bumpversion`、`packtool` |
 
 ## 执行策略
@@ -452,7 +459,7 @@ fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
 ```bash
 git clone <repo-url>
 cd fcmd
-pip install -e fcmd[dev]      # 安装开发依赖（lint + test + office + prek + tox）
+pip install -e ".[dev]"         # 安装开发依赖（lint + test + full + prek + tox）
 
 fcmd pymake tc                # 类型检查（pyrefly + ruff）
 fcmd pymake t                 # 运行测试
@@ -462,7 +469,28 @@ fcmd pymake chk               # 类型检查聚合（清理 + pyrefly + lint + f
 
 工具链独立配置文件：`ruff.toml` / `pyrefly.toml` / `pytest.ini` / `.coveragerc` / `.bumpversion.toml` / `uv.toml` / `.pre-commit-config.yaml`。`pyproject.toml` 仅含项目元数据。
 
-新增工具：在 `src/fcmd/cli/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。
+### 目录结构
+
+```
+src/fcmd/
+  core/          # 运行时内核：DAG、报告、执行引擎、工具注册、编排、忽略规则
+    toolkit/     #   函数签名 → argparse 的 CLI 工具基座
+    execution/   #   sequential/thread/async/dependency 四种执行器
+    orchestration/  # YAML 编排与 if 条件求值
+    models/      #   通用数据模型（含 PDF）
+  cli/           # 仅入口、工具发现、内建命令与诊断辅助
+    _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
+  tools/         # Python 实现的工具模块（自动发现）
+    archive/ calc/ dev/ media/ net/
+  dsl/           # TOML 命令定义与 action/compute 原语
+    actions/     #   内建动作（文件、文本、媒体、系统、加密等）
+  commands/      # 出厂 DSL 命令定义（*.toml）
+  console.py     # rich 控制台薄封装
+```
+
+新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。
+
+公共 API（`import fcmd as fx`）名称保持稳定；本版本（0.4.0）将原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径统一收敛到 `fcmd.core.*`，不保留兼容 shim。
 
 ## 许可证
 

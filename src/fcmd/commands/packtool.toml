@@ -1,4 +1,4 @@
-# 内置 DSL 命令：packtool（与 Python 模块 fcmd/cli/dev/packtool.py 逐子命令合并）。
+# 内置 DSL 命令：packtool（与 Python 模块 fcmd/tools/dev/packtool.py 逐子命令合并）。
 #
 # 仅迁入纯 exec 型子命令 deps/wheel（pip 自建 --target / --wheel-dir 目录，
 # 无需预建步骤）；含 Python 逻辑的 src/embed/zip/clean 保留在模块内。

@@ -11,7 +11,7 @@ from collections.abc import Callable
 
 import pytest
 
-from fcmd.apis.toolkit import _TOOL_REGISTRY
+from fcmd.core.toolkit import _TOOL_REGISTRY
 from tests.conftest import CmdResult
 
 pytestmark = [pytest.mark.e2e]

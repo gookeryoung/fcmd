@@ -23,10 +23,10 @@ import sys
 import pytest
 
 import fcmd as fx
-import fcmd.cli.dev.pymake  # 导入触发 @fx.tool 注册（push/main）
-from fcmd.apis.toolkit import _TOOL_REGISTRY, get_tool, run_tool
+import fcmd.tools.dev.pymake  # 导入触发 @fx.tool 注册（push/main）
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.cli.main import FcmdApp
+from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool, run_tool
 
 # 触发工具发现：Python 模块扫描 + DSL 声明注册（幂等）
 ensure_tools_discovered()
@@ -44,7 +44,7 @@ class TestPymakeRegistration:
 
     def test_tool_aliases(self) -> None:
         """pymake 应注册 pm 别名。"""
-        assert fcmd.cli.dev.pymake.__tool_aliases__ == ["pm"]
+        assert fcmd.tools.dev.pymake.__tool_aliases__ == ["pm"]
 
     def test_visible_subcommands(self) -> None:
         """可见子命令应包含核心构建/测试/检查/发布命令。"""
@@ -396,12 +396,12 @@ class TestPymakeMain:
         """main() 通过 SystemExit(0) 退出（--dry-run）。"""
         monkeypatch.setattr(sys, "argv", ["pymake", "t", "--dry-run"])
         with pytest.raises(SystemExit) as exc_info:
-            fcmd.cli.dev.pymake.main()
+            fcmd.tools.dev.pymake.main()
         assert exc_info.value.code == 0
 
     def test_main_unknown_subcommand_exits_nonzero(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """main() 未知子命令通过 SystemExit(1) 退出。"""
         monkeypatch.setattr(sys, "argv", ["pymake", "unknown_subcommand"])
         with pytest.raises(SystemExit) as exc_info:
-            fcmd.cli.dev.pymake.main()
+            fcmd.tools.dev.pymake.main()
         assert exc_info.value.code == 1

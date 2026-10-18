@@ -16,7 +16,7 @@ import pytest
 
 import fcmd as fx
 import fcmd.dsl.actions.media
-from fcmd.apis.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.media import (
     HAS_PIL,
     _apply_exif_modifications,

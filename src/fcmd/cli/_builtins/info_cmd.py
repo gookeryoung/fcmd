@@ -67,12 +67,12 @@ def _info_overview() -> None:
 
     console.print("\n[bold]已注册工具:[/bold]")
     table = Table(show_header=True, header_style="bold", box="auto")
-    table.add_column("工具")
-    table.add_column("别名")
-    table.add_column("子命令数", justify="right")
-    table.add_column("说明", no_wrap=True)
+    table.add_column("工具", width=16)
+    table.add_column("别名", width=10)
+    table.add_column("子命令数", justify="right", width=14)
+    table.add_column("说明")
     import_all_tool_modules()
-    from fcmd.apis.toolkit import _TOOL_REGISTRY
+    from fcmd.core.toolkit import _TOOL_REGISTRY
 
     count = 0
     for tool_name in _tool_names():
@@ -98,11 +98,11 @@ def _info_tool(tool_name: str, subs: dict[str | None, Any]) -> None:
     suffix = f" [dim](共 {total} 个，{hidden_count} hidden)[/dim]" if hidden_count else f" [dim](共 {total} 个)[/dim]"
     console.print(f"[bold cyan]{tool_name}[/bold cyan] 子命令{suffix}:")
     table = Table(show_header=True, header_style="bold", box="auto")
-    table.add_column("子命令")
-    table.add_column("类型")
-    table.add_column("needs", no_wrap=True)
-    table.add_column("strategy")
-    table.add_column("说明", no_wrap=True)
+    table.add_column("子命令", width=16)
+    table.add_column("类型", width=10)
+    table.add_column("needs")
+    table.add_column("strategy", width=12)
+    table.add_column("说明")
     # 排序：visible 在前（按名排序），hidden 在后（按名排序）
     visible = sorted((sc, spec) for sc, spec in subs.items() if sc is not None and not spec.hidden)
     hidden = sorted((sc, spec) for sc, spec in subs.items() if sc is not None and spec.hidden)

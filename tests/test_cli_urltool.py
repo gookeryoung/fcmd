@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, run_tool
 from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.conv2 import (
     add_query_param,
     get_base_url,
@@ -31,7 +31,7 @@ class TestRegistration:
 
     def test_registered(self) -> None:
         """urltool 已注册到工具表。"""
-        from fcmd.apis.toolkit import list_tools
+        from fcmd.core.toolkit import list_tools
 
         assert "urltool" in list_tools()
 

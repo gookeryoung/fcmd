@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apis.toolkit import list_subcommands, list_tools, run_tool
+from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
 from fcmd.dsl.actions.data import (
     format_toml,
     get_toml_value,
