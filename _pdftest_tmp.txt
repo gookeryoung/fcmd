@@ -1,0 +1,129 @@
+..EEEEEEEEEEEEEEEEEE..........EEEEEEEEEEEEEEEEEEE.EEEF                   [100%]
+=================================== ERRORS ====================================
+_____________ ERROR at setup of TestPdftoolCommands.test_pdf_info _____________
+E   ModuleNotFoundError: No module named 'fitz'
+___________ ERROR at setup of TestPdftoolCommands.test_pdf_compress ___________
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestPdftoolCommands.test_pdf_extract_text _________
+E   ModuleNotFoundError: No module named 'fitz'
+____________ ERROR at setup of TestPdftoolCommands.test_pdf_split _____________
+E   ModuleNotFoundError: No module named 'fitz'
+____________ ERROR at setup of TestPdftoolCommands.test_pdf_merge _____________
+E   ModuleNotFoundError: No module named 'fitz'
+_____ ERROR at setup of TestPdftoolCommands.test_pdf_encrypt_no_password ______
+E   ModuleNotFoundError: No module named 'fitz'
+__ ERROR at setup of TestPdftoolCommands.test_pdf_encrypt_decrypt_roundtrip ___
+E   ModuleNotFoundError: No module named 'fitz'
+____________ ERROR at setup of TestPdftoolCommands.test_pdf_rotate ____________
+E   ModuleNotFoundError: No module named 'fitz'
+________ ERROR at setup of TestPdftoolCommands.test_pdf_add_watermark _________
+E   ModuleNotFoundError: No module named 'fitz'
+__________ ERROR at setup of TestPdftoolCommands.test_pdf_to_images ___________
+E   ModuleNotFoundError: No module named 'fitz'
+________ ERROR at setup of TestPdftoolCommands.test_pdf_extract_images ________
+E   ModuleNotFoundError: No module named 'fitz'
+____________ ERROR at setup of TestPdftoolCommands.test_pdf_repair ____________
+E   ModuleNotFoundError: No module named 'fitz'
+_____ ERROR at setup of TestPdftoolCommands.test_pdf_compress_no_pymupdf ______
+E   ModuleNotFoundError: No module named 'fitz'
+_ ERROR at setup of TestPdftoolCommands.test_pdf_encrypt_no_password_no_pypdf _
+E   ModuleNotFoundError: No module named 'fitz'
+___________ ERROR at setup of TestPdftoolCommands.test_pdf_reorder ____________
+E   ModuleNotFoundError: No module named 'fitz'
+_____________ ERROR at setup of TestPdftoolCommands.test_pdf_crop _____________
+E   ModuleNotFoundError: No module named 'fitz'
+_______ ERROR at setup of TestPdftoolCommands.test_pdf_info_no_pymupdf ________
+E   ModuleNotFoundError: No module named 'fitz'
+________ ERROR at setup of TestPdftoolCommands.test_pdf_merge_no_pypdf ________
+E   ModuleNotFoundError: No module named 'fitz'
+______ ERROR at setup of TestSplitParams.test_split_default_single_pages ______
+E   ModuleNotFoundError: No module named 'fitz'
+_____________ ERROR at setup of TestSplitParams.test_split_every ______________
+E   ModuleNotFoundError: No module named 'fitz'
+____________ ERROR at setup of TestSplitParams.test_split_reverse _____________
+E   ModuleNotFoundError: No module named 'fitz'
+_____________ ERROR at setup of TestSplitParams.test_split_groups _____________
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestSplitParams.test_split_groups_reverse _________
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestSplitParams.test_split_invalid_order __________
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestSplitParams.test_split_invalid_every __________
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestMergeParams.test_merge_default_concat _________
+E   ModuleNotFoundError: No module named 'fitz'
+_____ ERROR at setup of TestMergeParams.test_merge_interleave_mixed_order _____
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestMergeParams.test_merge_orders_reverse _________
+E   ModuleNotFoundError: No module named 'fitz'
+__________ ERROR at setup of TestMergeParams.test_merge_pages_filter __________
+E   ModuleNotFoundError: No module named 'fitz'
+__ ERROR at setup of TestMergeParams.test_merge_nonexistent_keeps_alignment ___
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestMergeParams.test_merge_invalid_order __________
+E   ModuleNotFoundError: No module named 'fitz'
+_______ ERROR at setup of TestPageFilterParams.test_extract_text_pages ________
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestPageFilterParams.test_to_images_pages _________
+E   ModuleNotFoundError: No module named 'fitz'
+__________ ERROR at setup of TestPageFilterParams.test_rotate_pages ___________
+E   ModuleNotFoundError: No module named 'fitz'
+__ ERROR at setup of TestPageFilterParams.test_extract_images_invalid_pages ___
+E   ModuleNotFoundError: No module named 'fitz'
+_________ ERROR at setup of TestPageFilterParams.test_watermark_pages _________
+E   ModuleNotFoundError: No module named 'fitz'
+___________ ERROR at setup of TestPageFilterParams.test_crop_pages ____________
+E   ModuleNotFoundError: No module named 'fitz'
+________ ERROR at setup of TestEdgeCases.test_pdf_decrypt_no_password _________
+E   ModuleNotFoundError: No module named 'fitz'
+________ ERROR at setup of TestEdgeCases.test_pdf_decrypt_unencrypted _________
+E   ModuleNotFoundError: No module named 'fitz'
+________ ERROR at setup of TestEdgeCases.test_pdf_reorder_out_of_range ________
+E   ModuleNotFoundError: No module named 'fitz'
+================================== FAILURES ===================================
+E   AssertionError: PyMuPDF 未安装，pdf extra 测试无法运行
+    assert False is True
+f:\Dev\fcmd\tests\test_cli_pdftool.py:575: AssertionError: PyMuPDF 未安装，pdf extra 测试无法运行
+=========================== short test summary info ===========================
+FAILED tests/test_cli_pdftool.py::test_optional_deps_available - AssertionErr...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_info - ModuleN...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_compress - Mod...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_extract_text
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_split - Module...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_merge - Module...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_encrypt_no_password
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_encrypt_decrypt_roundtrip
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_rotate - Modul...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_add_watermark
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_to_images - Mo...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_extract_images
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_repair - Modul...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_compress_no_pymupdf
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_encrypt_no_password_no_pypdf
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_reorder - Modu...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_crop - ModuleN...
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_info_no_pymupdf
+ERROR tests/test_cli_pdftool.py::TestPdftoolCommands::test_pdf_merge_no_pypdf
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_default_single_pages
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_every - ModuleNo...
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_reverse - Module...
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_groups - ModuleN...
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_groups_reverse
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_invalid_order - ...
+ERROR tests/test_cli_pdftool.py::TestSplitParams::test_split_invalid_every - ...
+ERROR tests/test_cli_pdftool.py::TestMergeParams::test_merge_default_concat
+ERROR tests/test_cli_pdftool.py::TestMergeParams::test_merge_interleave_mixed_order
+ERROR tests/test_cli_pdftool.py::TestMergeParams::test_merge_orders_reverse
+ERROR tests/test_cli_pdftool.py::TestMergeParams::test_merge_pages_filter - M...
+ERROR tests/test_cli_pdftool.py::TestMergeParams::test_merge_nonexistent_keeps_alignment
+ERROR tests/test_cli_pdftool.py::TestMergeParams::test_merge_invalid_order - ...
+ERROR tests/test_cli_pdftool.py::TestPageFilterParams::test_extract_text_pages
+ERROR tests/test_cli_pdftool.py::TestPageFilterParams::test_to_images_pages
+ERROR tests/test_cli_pdftool.py::TestPageFilterParams::test_rotate_pages - Mo...
+ERROR tests/test_cli_pdftool.py::TestPageFilterParams::test_extract_images_invalid_pages
+ERROR tests/test_cli_pdftool.py::TestPageFilterParams::test_watermark_pages
+ERROR tests/test_cli_pdftool.py::TestPageFilterParams::test_crop_pages - Modu...
+ERROR tests/test_cli_pdftool.py::TestEdgeCases::test_pdf_decrypt_no_password
+ERROR tests/test_cli_pdftool.py::TestEdgeCases::test_pdf_decrypt_unencrypted
+ERROR tests/test_cli_pdftool.py::TestEdgeCases::test_pdf_reorder_out_of_range
+1 failed, 13 passed, 40 errors in 0.35s
