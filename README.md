@@ -45,11 +45,16 @@ pip install fcmd          # 或 uv add fcmd
 ```python
 import fcmd as fx
 
-@fx.task
-def extract() -> list[int]: return [1, 2, 3]
 
 @fx.task
-def double(extract: list[int]) -> list[int]: return [x * 2 for x in extract]
+def extract() -> list[int]:
+    return [1, 2, 3]
+
+
+@fx.task
+def double(extract: list[int]) -> list[int]:
+    return [x * 2 for x in extract]
+
 
 graph = fx.graph(extract, double)  # double 自动依赖 extract
 report = fx.run(graph)
@@ -205,18 +210,22 @@ fcmd info <tool> <subcommand>    # 展示 ToolSpec 完整字段
 ```python
 import fcmd as fx
 
+
 @fx.task
 def fetch() -> str:
     return "raw data"
+
 
 @fx.task
 def parse(fetch: str) -> list[str]:
     return fetch.split()
 
+
 @fx.task
 def save(parse: list[str]) -> None:
     # parse 自动依赖 fetch，save 自动依赖 parse
     ...
+
 
 report = fx.run(fx.graph(fetch, parse, save))
 ```
@@ -226,6 +235,7 @@ report = fx.run(fx.graph(fetch, parse, save))
 ```python
 import fcmd
 from fcmd.core.models import run_command
+
 
 @fcmd.tool("gittool", subcommand="a", help="git add + commit")
 def add_commit(message: str, amend: bool = False) -> None:
@@ -253,6 +263,7 @@ CLI 参数映射规则：
 ```python
 @fcmd.tool("mytool", subcommand="build", cmd=["uv", "build"], help="构建")
 def _build() -> None: ...  # 函数体可空，cmd 优先执行
+
 
 @fcmd.tool("mytool", subcommand="all", needs=["build", "test"], strategy="dependency")
 def _all() -> None: ...  # aggregate：仅声明依赖

@@ -16,7 +16,7 @@ def _fn() -> int:
     return 1
 
 
-def _make_result(  # noqa: PLR0913
+def _make_result(  # noqa: PLR0913, PLR0917
     name: str = "a",
     status: TaskStatus = TaskStatus.SUCCESS,
     value: Any = 42,

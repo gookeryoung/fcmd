@@ -4,3 +4,7 @@ project-includes = ["**/*.ipynb", "**/*.py*"]
 python-version   = "3.13"
 search-path      = ["src", "."]
 replace-imports-with-any = ["winreg"]
+
+[errors]
+# lambda 形参无法标注类型，严格模式下该规则会对全部测试 lambda 误报
+implicit-any-lambda = false

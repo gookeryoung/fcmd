@@ -335,7 +335,7 @@ def collect_asset_urls(html: str, base_url: str) -> list[str]:
     return assets
 
 
-def rewrite_html(  # noqa: PLR0913
+def rewrite_html(  # noqa: PLR0913, PLR0917
     html: str,
     base_url: str,
     page_file: Path,

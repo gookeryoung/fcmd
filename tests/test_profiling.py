@@ -33,7 +33,7 @@ def _spec(name: str, depends_on: tuple[str, ...] = ()) -> TaskSpec[Any]:
     return TaskSpec(name=name, fn=_fn, depends_on=depends_on)
 
 
-def _result(  # noqa: PLR0913
+def _result(  # noqa: PLR0913, PLR0917
     name: str,
     status: TaskStatus = TaskStatus.SUCCESS,
     duration: float | None = 0.5,
