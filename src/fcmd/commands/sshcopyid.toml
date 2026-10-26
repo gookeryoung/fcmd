@@ -7,24 +7,26 @@
 # 2) 平台分支：
 #    - Linux：sshpass -e 从 SSHPASS 环境变量读密码，**密码不进命令行 argv**
 #      （安全）；shell 重定向把公钥文件送入 ssh stdin。
-#    - Windows：OpenSSH 不带 sshpass，也无等价替代；用 ssh 交互式
-#      手动输一次密码，tty=true 让 SSH 的密码提示透传到终端；公钥文件
-#      走 cmd.exe stdin 重定向（Windows subprocess shell=True 默认
-#      用 cmd.exe，type / < file 语法均可用）。
-#      **synth 层 plink 兼容**：很多 Windows 用户 PATH 中 plink.exe
-#      （PuTTY）排在 OpenSSH ssh.exe 前面，导致本分支的
-#      ``ssh -p -o StrictHostKeyChecking=no`` 等 OpenSSH 参数被 plink
-#      拒绝（plink 用 ``-P`` 大写端口、不支持 ``-o``）。
-#      fcmd.dsl.synth.resolve_windows_openssh() 在 build_tool_spec 时
-#      检测真正的 OpenSSH 路径并替换 win.cmd 开头的裸 ``ssh``，绕过
-#      PATH 劫持；检测策略：优先 ``System32\\OpenSSH\\ssh.exe`` 标准
-#      路径，其次 ``where ssh`` + ``ssh -V`` 版本串匹配，全找不到回退
-#      裸 ssh（用户未装 OpenSSH 的边缘场景）。
-# 3) password 参数 Linux 分支消费（SSHPASS env），Win11 分支忽略。
+#    - Windows：synth 层自动检测最优 SSH 客户端，**plink 优先 → OpenSSH 次之**
+#      ：
+#      · plink（PuTTY 命令行工具）：很多 Windows 用户 PATH 中预装。
+#        synth 层检测到后，把 OpenSSH 命令模板重写为 plink 格式——
+#        追加 ``-pw {password} -batch``、``-p`` → ``-P``、去掉
+#        ``-o`` 选项。password 参数**正常生效**，完全自动部署。
+#      · OpenSSH（Windows 10/11 自带）：不支持自动传密码。synth 层
+#        只替换裸 ``ssh`` 为完整路径（避免 PATH 中 plink 劫持），
+#        ``tty=true`` 让 SSH 密码提示透传到终端。password 参数
+#        **无法自动注入**，用户需交互输入。
+#      · 都没找到：回退裸 ``ssh``（可能被 PATH 中 plink 劫持，属
+#        用户环境问题）。
+# 3) synth 层 plink/OpenSSH 检测逻辑：``resolve_windows_ssh_client()``
+#    协调 ``resolve_windows_plink()``（where plink + plink -V 含 PuTTY）
+#    与 ``resolve_windows_openssh()``（System32\\OpenSSH\\ssh.exe +
+#    ssh -V 含 OpenSSH），lru_cache 缓存，进程内只做一次检测。
 
 [commands.sshcopyid]
 help = "部署 SSH 公钥到远程服务器"
-description = "SSH 公钥部署工具（Linux: sshpass 自动密码，Windows: SSH 交互式手动输一次）"
+description = "SSH 公钥部署工具（Linux: sshpass 自动密码，Windows: plink 优先自动密码 / OpenSSH 需交互）"
 when = { path = "{keypath}", expect = "exists" }
 
 # ---- Linux / macOS 分支 ----
@@ -48,7 +50,7 @@ help = "远程服务器主机名或 IP 地址"
 help = "远程服务器用户名"
 
 [commands.sshcopyid.args.password]
-help = "远程服务器密码（Linux 经 SSHPASS 环境变量传递，不进命令行；Windows 分支忽略此参数）"
+help = "远程服务器密码（Linux 经 SSHPASS 环境变量传递，不进命令行；Windows 检测到 plink 时经 -pw 命令行参数传递，OpenSSH 分支无法自动注入需交互输入）"
 
 [commands.sshcopyid.args.port]
 type = "int"

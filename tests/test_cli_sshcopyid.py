@@ -323,10 +323,23 @@ class TestWindowsOpenSshResolution:
     """
 
     def _reset_cache(self) -> None:
-        """清除 resolve_windows_openssh 的 lru_cache（测试隔离必需）。"""
-        from fcmd.dsl.synth import resolve_windows_openssh
+        """清除三个 Windows SSH 客户端检测函数的 lru_cache（测试隔离必需）。
+
+        - resolve_windows_openssh / resolve_windows_plink：各自的检测函数
+          都有 maxsize=1 的 lru_cache，monkeypatch sys.platform 或
+          monkeypatch subprocess.run 后必须清除
+        - resolve_windows_ssh_client：协调函数也有独立缓存，且它返回的
+          (type, path) 元组依赖上述两个子函数的结果，同样要清
+        """
+        from fcmd.dsl.synth import (
+            resolve_windows_openssh,
+            resolve_windows_plink,
+            resolve_windows_ssh_client,
+        )
 
         resolve_windows_openssh.cache_clear()
+        resolve_windows_plink.cache_clear()
+        resolve_windows_ssh_client.cache_clear()
 
     # --- resolve_windows_openssh ---
 
@@ -423,12 +436,14 @@ class TestWindowsOpenSshResolution:
     # --- build_tool_spec 路径替换 ---
 
     def test_win32_build_spec_replaces_bare_ssh(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """win32 平台 build_tool_spec 发现 OpenSSH 后，把 cmd 开头裸 ``ssh`` 替换
-        为完整路径——plink 劫持场景下命令实际调用真正的 OpenSSH。"""
+        """win32 平台 build_tool_spec 发现 OpenSSH 后（且无 plink），把
+        cmd 开头裸 ``ssh`` 替换为完整路径——plink 劫持场景下命令实际
+        调用真正的 OpenSSH。"""
         self._reset_cache()
         monkeypatch.setattr(sys, "platform", "win32")
 
         fake_openssh = r"C:\Windows\System32\OpenSSH\ssh.exe"
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: None)  # 先 plink 优先，模拟无 plink
         monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: fake_openssh)
 
         decl = _load_sshcopyid_decl()
@@ -453,10 +468,11 @@ class TestWindowsOpenSshResolution:
         assert spec.cmd.startswith("sshpass -e ssh ")  # unix 分支 sshpass 前缀完整保留
 
     def test_win32_no_openssh_fallback_bare_ssh(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """win32 平台但 resolve_windows_openssh 返回 None 时，回退裸 ssh（
-        用户环境未装 OpenSSH，可能被 plink 劫持，属用户需自行处理的边缘场景）。"""
+        """win32 平台但 plink 和 OpenSSH 都找不到时，回退裸 ssh（
+        用户环境未装任何主流 SSH 客户端，属用户需自行处理的边缘场景）。"""
         self._reset_cache()
         monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: None)
         monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: None)
 
         decl = _load_sshcopyid_decl()
@@ -491,6 +507,188 @@ class TestWindowsOpenSshResolution:
         assert first == second is None
         # 缓存命中 → 第二次直接返回，calls 里只有第一次 where ssh 调用
         assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------- #
+# plink（PuTTY）检测与命令重写：resolve_windows_plink / resolve_windows_ssh_client /
+# _rewrite_openssh_cmd_as_plink / build_tool_spec plink 分支
+# ---------------------------------------------------------------------- #
+class TestWindowsPlinkResolution:
+    """plink 检测 + OpenSSH→plink 命令重写 + build_tool_spec plink 分支。
+
+    Windows OpenSSH 不支持自动传密码，plink 支持 ``-pw`` 参数。synth 层
+    优先用 plink 让 password 参数生效，无 plink 时回退 OpenSSH（交互）。
+    """
+
+    def _reset_cache(self) -> None:
+        from fcmd.dsl.synth import (
+            resolve_windows_openssh,
+            resolve_windows_plink,
+            resolve_windows_ssh_client,
+        )
+
+        resolve_windows_openssh.cache_clear()
+        resolve_windows_plink.cache_clear()
+        resolve_windows_ssh_client.cache_clear()
+
+    # --- resolve_windows_plink 检测 ---
+
+    def test_plink_non_win32_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 win32 平台直接返回 None，不做检测。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "linux")
+        from fcmd.dsl.synth import resolve_windows_plink
+
+        assert resolve_windows_plink() is None
+
+    def test_plink_found_in_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PATH 中 plink.exe 存在且 -V 含 PuTTY → 返回路径。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        plink_path = r"C:\PuTTY\plink.exe"
+
+        def fake_subprocess_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd and cmd[0] == "where":
+                return subprocess.CompletedProcess(cmd, 0, stdout=f"{plink_path}\n", stderr="")
+            if cmd and str(cmd[0]) == plink_path:
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout="", stderr="plink: PuTTY-Open Source SSH client, version 0.78\n"
+                )
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr("fcmd.dsl.synth.subprocess.run", fake_subprocess_run)
+        monkeypatch.setattr(Path, "is_file", lambda _self: True)
+
+        from fcmd.dsl.synth import resolve_windows_plink
+
+        result = resolve_windows_plink()
+        assert result == plink_path
+
+    def test_plink_version_not_putty_skipped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """某个 .exe 叫 plink 但 -V 不含 PuTTY（如被其他工具劫持）→ 跳过。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        fake_plink = r"C:\Tools\fake_plink.exe"
+
+        def fake_subprocess_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            if cmd and cmd[0] == "where":
+                return subprocess.CompletedProcess(cmd, 0, stdout=f"{fake_plink}\n", stderr="")
+            if cmd and str(cmd[0]) == fake_plink:
+                # -V 输出被劫持（不含 putty）
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="Some other tool v1.0\n")
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr("fcmd.dsl.synth.subprocess.run", fake_subprocess_run)
+        monkeypatch.setattr(Path, "is_file", lambda _self: True)
+
+        from fcmd.dsl.synth import resolve_windows_plink
+
+        assert resolve_windows_plink() is None
+
+    # --- resolve_windows_ssh_client 协调逻辑 ---
+
+    def test_plink_priority_over_openssh(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """plink 和 OpenSSH 都存在 → plink 优先。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        fake_plink = r"C:\PuTTY\plink.exe"
+        fake_openssh = r"C:\Windows\System32\OpenSSH\ssh.exe"
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: fake_plink)
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: fake_openssh)
+
+        from fcmd.dsl.synth import resolve_windows_ssh_client
+
+        assert resolve_windows_ssh_client() == ("plink", fake_plink)
+
+    def test_fallback_to_openssh_when_no_plink(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """无 plink → 回退 OpenSSH。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        fake_openssh = r"C:\Windows\System32\OpenSSH\ssh.exe"
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: None)
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: fake_openssh)
+
+        from fcmd.dsl.synth import resolve_windows_ssh_client
+
+        assert resolve_windows_ssh_client() == ("openssh", fake_openssh)
+
+    def test_ssh_client_none_when_no_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """都没找到 → 返回 None。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: None)
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: None)
+
+        from fcmd.dsl.synth import resolve_windows_ssh_client
+
+        assert resolve_windows_ssh_client() is None
+
+    # --- _rewrite_openssh_cmd_as_plink 命令重写 ---
+
+    def test_openssh_cmd_rewritten_as_plink(self) -> None:
+        """完整 OpenSSH 命令模板 → plink 模板正确转换。"""
+        from fcmd.dsl.synth import _rewrite_openssh_cmd_as_plink
+
+        openssh_tmpl = (
+            "ssh -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "
+            "-o ConnectTimeout={timeout} {username}@{hostname} "
+            '"mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys '
+            '&& chmod 600 ~/.ssh/authorized_keys" < "{keypath}"'
+        )
+        plink_path = r"C:\PuTTY\plink.exe"
+
+        result = _rewrite_openssh_cmd_as_plink(openssh_tmpl, plink_path)
+
+        # plink 路径开头
+        assert result.startswith(plink_path + " -ssh")
+        # -pw {password} -batch 被追加
+        assert "-pw {password} -batch" in result
+        # -p → -P（端口大写）
+        assert " -P {port} " in result
+        # OpenSSH 专属 -o 选项被全部去掉
+        assert "-o StrictHostKeyChecking=no" not in result
+        assert "-o UserKnownHostsFile" not in result
+        assert "-o ConnectTimeout" not in result
+        # 远端命令完整保留
+        assert "mkdir -p ~/.ssh && chmod 700 ~/.ssh" in result
+        assert "cat >> ~/.ssh/authorized_keys" in result
+        # stdin 重定向保留
+        assert '< "{keypath}"' in result
+        # 占位符保留（后续 execution 层替换）
+        assert "{username}@{hostname}" in result
+
+    # --- build_tool_spec plink 分支 ---
+
+    def test_win32_build_spec_plink_rewrites_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """win32 检测到 plink → ToolSpec.cmd 以 plink 开头，含 -pw 密码占位符。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        fake_plink = r"C:\PuTTY\plink.exe"
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: fake_plink)
+
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="win32")
+
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str)
+        # plink 重写后的命令
+        assert spec.cmd.startswith(fake_plink + " -ssh")
+        assert "-pw {password}" in spec.cmd
+        assert "-batch" in spec.cmd
+        # 端口大写 P
+        assert " -P {port} " in spec.cmd
+        # -o 选项被去掉
+        assert "-o" not in spec.cmd
+        # 远端命令和 stdin 重定向保留
+        assert "{username}@{hostname}" in spec.cmd
+        assert "mkdir -p ~/.ssh" in spec.cmd
+        assert '< "{keypath}"' in spec.cmd
 
 
 # ---------------------------------------------------------------------- #

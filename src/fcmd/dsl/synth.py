@@ -60,7 +60,13 @@ from fcmd.core.toolkit.args import ToolSpec
 from .actions import Action, get_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl
 
-__all__ = ["build_tool_spec", "resolve_windows_openssh", "select_platform_cmd"]
+__all__ = [
+    "build_tool_spec",
+    "resolve_windows_openssh",
+    "resolve_windows_plink",
+    "resolve_windows_ssh_client",
+    "select_platform_cmd",
+]
 
 # 参数类型名 → 真实类型注解对象（choices 特判，见 _param_annotation；
 # list 必须是 list[str] 泛型——引擎 argparse 层按 list[X] 检测映射 nargs，
@@ -148,7 +154,138 @@ def resolve_windows_openssh() -> str | None:
     return None
 
 
-def select_platform_cmd(decl: CommandDecl, platform: str = sys.platform) -> str | tuple[str, ...]:
+@functools.lru_cache(maxsize=1)
+def resolve_windows_plink() -> str | None:
+    """定位 Windows 上 plink.exe（PuTTY 命令行工具）的完整路径。
+
+    plink 能从命令行参数 ``-pw`` 自动传递密码（OpenSSH for Windows
+    不支持自动传密码，只能交互式输入）。本检测为 Windows 分支提供
+    密码自动注入能力——优先使用 plink 让 password 参数生效。
+
+    检测策略（与 :func:`resolve_windows_openssh` 同构，独立缓存）：
+
+    1. 用 ``where plink`` 枚举 PATH 中的 ``plink.exe``
+    2. 逐个执行 ``plink -V``，从 stderr 版本串判断是否含 "PuTTY"
+    3. 全部找不到返回 ``None``
+
+    Returns
+    -------
+    str | None
+        plink.exe 的绝对路径（带 ``.exe`` 扩展名），或 ``None`` 表示未找到
+    """
+    if sys.platform != "win32":
+        return None
+
+    candidates: list[Path] = []
+
+    try:
+        proc = subprocess.run(
+            ["where", "plink"],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        if proc.returncode == 0:
+            for raw_line in proc.stdout.strip().splitlines():
+                candidate_line = raw_line.strip()
+                if candidate_line and candidate_line.lower().endswith(".exe"):
+                    candidates.append(Path(candidate_line))
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    for plink_path in candidates:
+        if not plink_path.is_file():
+            continue
+        try:
+            result = subprocess.run(
+                [str(plink_path), "-V"],
+                capture_output=True,
+                check=False,
+                text=True,
+                timeout=3,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            version = (result.stderr or result.stdout or "").lower()
+            if "putty" in version:
+                return str(plink_path)
+        except (subprocess.TimeoutExpired, OSError):
+            continue
+
+    return None
+
+
+@functools.lru_cache(maxsize=1)
+def resolve_windows_ssh_client() -> tuple[str, str] | None:
+    """协调 plink 与 OpenSSH 的检测，返回 Windows 上最优 SSH 客户端。
+
+    优先级：**plink 优先**（支持 ``-pw`` 自动传密码，让 DSL 声明的
+    ``password`` 参数生效）→ 其次 OpenSSH（只能交互式输入密码，``tty``
+    让密码提示透传终端）→ 都找不到返回 ``None``。
+
+    Returns
+    -------
+    tuple[str, str] | None
+        ``("plink", path)`` 或 ``("openssh", path)``；``None`` 表示未找到
+        任何 SSH 客户端（调用方回退裸 ``ssh``，但裸 ``ssh`` 在 PATH 中被
+        plink 劫持会导致 OpenSSH 参数不被识别，属用户环境问题）
+    """
+    plink = resolve_windows_plink()
+    if plink is not None:
+        return ("plink", plink)
+    openssh = resolve_windows_openssh()
+    if openssh is not None:
+        return ("openssh", openssh)
+    return None
+
+
+def _rewrite_openssh_cmd_as_plink(openssh_cmd: str, plink_path: str) -> str:
+    """把 OpenSSH 命令模板字符串改写成 plink 格式。
+
+    通过结构化字符串替换（而非正则解析远端命令），保证模板占位符
+    ``{password}``/``{port}``/``{username}``/``{hostname}``/``{keypath}``
+    在后续 execution 层 ``_expand_cmd_placeholders`` 中被正确替换：
+
+    - ``ssh `` → ``plink_path -ssh -pw {password} -batch ``
+    - 去掉 OpenSSH 专属的 ``-o StrictHostKeyChecking=no`` /
+      ``-o UserKnownHostsFile=/dev/null`` / ``-o ConnectTimeout={timeout}``
+      （plink 用 ``-batch`` 禁止交互提示，不支持 ``-o``）
+    - ``-p {port}`` → ``-P {port}``（plink 端口大写）
+
+    不改动远端命令引号和 stdin 重定向（``< "{keypath}"``）——plink
+    同样支持这些语法。
+    """
+    import re as _re
+
+    cmd = openssh_cmd
+
+    # 1. ssh 开头 → plink -ssh -pw {password} -batch
+    if cmd.startswith("ssh "):
+        cmd = plink_path + " -ssh -pw {password} -batch" + cmd[3:]
+    elif cmd.startswith("sshpass "):
+        # Linux 分支不应该走到这里，但做个防御性处理
+        return cmd
+    else:
+        # 已被路径替换过（理论上 _maybe_replace_ssh_path 保证不会走到这里）
+        # 尝试提取 ssh 后的剩余部分
+        first_space = cmd.find(" ")
+        if first_space != -1:
+            rest = cmd[first_space + 1 :]
+            cmd = plink_path + " -ssh -pw {password} -batch " + rest
+        else:
+            cmd = plink_path + " -ssh -pw {password} -batch"
+
+    # 2. 去掉所有 -o <option> 选项（OpenSSH 专属，plink 不支持）
+    cmd = _re.sub(r"\s+-o\s+\S+", "", cmd)
+
+    # 3. -p {port} → -P {port}（plink 端口大写 P）
+    cmd = cmd.replace(" -p {port}", " -P {port}")
+
+    return cmd
+
+
+def select_platform_cmd(decl: CommandDecl, platform: str = sys.platform) -> str | tuple[str, ...] | None:
     """按平台选定命令：``win32`` 命中 ``win_cmd``，其余命中 ``unix_cmd``，均缺回退 ``cmd``。
 
     Parameters
@@ -394,31 +531,41 @@ def build_tool_spec(
 
 
 def _maybe_replace_ssh_path(cmd: str | tuple[str, ...] | None, platform: str) -> str | tuple[str, ...] | None:
-    """在 win32 平台上把 shell 命令开头的裸 ``ssh`` 替换为 OpenSSH 完整路径。
+    """在 win32 平台上重写 shell 命令以匹配检测到的 SSH 客户端。
 
-    plink（PuTTY 命令行工具）常被排在 Windows PATH 中 ssh.exe 前面，它
-    不识别 OpenSSH 的 ``-p`` / ``-o`` 参数。本函数检测 PATH 中真正的
-    OpenSSH 客户端位置，并在 shell 命令模板里替换掉裸 ``ssh`` 调用。
+    Windows SSH 客户端有两种常见选择，本函数按 **plink 优先 → OpenSSH 次之**
+    的策略重写命令模板：
+
+    - **plink**（PuTTY 命令行工具）：支持 ``-pw`` 参数从命令行自动传递密码
+      （OpenSSH for Windows 不支持自动传密码，只能交互式输入）。检测到 plink
+      时把 OpenSSH 命令模板**重写为 plink 格式**——替换客户端为 plink 路径、
+      去掉 OpenSSH 专属的 ``-o`` 选项、``-p`` → ``-P``、追加
+      ``-pw {password} -batch``，让 DSL 声明的 ``password`` 参数生效。
+    - **OpenSSH**（Windows 10/11 自带）：只替换裸 ``ssh`` 为完整路径
+      （避免 PATH 中 plink 抢先导致 ``-p`` / ``-o`` 等参数被拒绝），
+      不做其他改动。
+    - **都没找到**：返回原命令不变（裸 ``ssh`` 可能仍被 plink 劫持，
+      属用户环境问题）。
 
     仅处理 str 形态（shell=True 执行）的命令；tuple 形态（无 shell，
-    list 参数）不处理（ssh.exe 完整路径会被 subprocess 正确解析）。
-
-    替换策略：
-    - 命令字符串以 ``ssh `` 开头（ssh 后紧跟空格）
-    - 替换为完整路径 + 空格（如 ``"C:\\Windows\\System32\\OpenSSH\\ssh.exe "``）
-    - 如果没找到 OpenSSH，返回原命令不变
+    list 参数）不处理。
     """
     if platform != "win32" or not isinstance(cmd, str):
         return cmd
 
-    openssh = resolve_windows_openssh()
-    if openssh is None:
+    client = resolve_windows_ssh_client()
+    if client is None:
         return cmd
 
-    # 只替换开头的裸 "ssh"，不破坏字符串中间出现 ssh 的情况
-    # （如远端命令里的 ssh 关键词）
+    client_type, client_path = client
+
+    if client_type == "plink":
+        # plink 支持 -pw 自动传密码 → 重写整个命令模板为 plink 格式
+        return _rewrite_openssh_cmd_as_plink(cmd, client_path)
+
+    # OpenSSH：只替换开头的裸 "ssh" 为完整路径
     if cmd.startswith("ssh "):
-        return openssh + " " + cmd[4:]
+        return client_path + " " + cmd[4:]
     return cmd
 
 
