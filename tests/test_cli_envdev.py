@@ -841,6 +841,35 @@ def _fake_check_urls(
     return fake
 
 
+def _fake_probe_mirrors(
+    probe: dict[str, tuple[bool, float, float]],
+) -> Any:
+    """根据 ``{url: (可达, 延迟ms, 吞吐KB/s)}`` 构造 probe_mirrors 替身。
+
+    返回与 probe_mirrors 相同签名的函数：仅对请求中的 URL 生成结果，
+    按可达优先 + 综合评分降序 + 延迟升序排序。
+    """
+    from fcmd.dsl.actions.net import UrlProbe, probe_score
+
+    def fake(  # noqa: PLR0913, PLR0917
+        urls: list[str],
+        timeout: float = 5.0,
+        workers: int = 8,
+        user_agent: str = "",
+        sample_bytes: int = 131072,
+        allow_html: bool = False,
+    ) -> list[UrlProbe]:
+        results = []
+        for url in urls:
+            if url not in probe:
+                continue
+            ok, latency, throughput = probe[url]
+            results.append(UrlProbe(url, ok, latency, throughput, 131072 if ok else 0, "" if ok else "不可达"))
+        return sorted(results, key=lambda p: (not p.ok, -probe_score(p), p.latency_ms))
+
+    return fake
+
+
 class TestCheckCernetMirrors:
     """check_cernet_mirrors 教育网镜像站点探测测试。"""
 
@@ -903,17 +932,19 @@ class TestCheckCernetMirrors:
     def test_probe_service_ranks_and_recommends(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """service=指定服务时按速度输出候选排名并推荐最快镜像。"""
-        pip_urls = fcmd.tools.dev.envdev._PIP_INDEX_URLS
-        probe = dict.fromkeys(pip_urls.values(), (True, 200.0))
-        probe[pip_urls["nju"]] = (True, 12.0)
-        monkeypatch.setattr("fcmd.tools.dev.envdev.check_urls", _fake_check_urls(probe))
+        """service=指定服务时按实测吞吐输出候选排名并推荐最快镜像。"""
+        pip_urls = fcmd.tools.dev.envdev._PIP_PROBE_URLS
+        probe = dict.fromkeys(pip_urls.values(), (True, 200.0, 100.0))
+        probe[pip_urls["nju"]] = (True, 12.0, 2000.0)
+        probe[pip_urls["aliyun"]] = (True, 8.0, 120.0)
+        monkeypatch.setattr("fcmd.tools.dev.envdev.probe_mirrors", _fake_probe_mirrors(probe))
 
         rc = fcmd.tools.dev.envdev.check_cernet_mirrors(service="pip")
         assert rc == 0
         out = capsys.readouterr().out
         assert "pip 镜像测速" in out
         assert f"共 {len(pip_urls)} 个候选" in out
+        assert "吞吐" in out
         assert "推荐 pip 镜像: nju" in out
         # 排名第一应为最快项
         first_line = next(line for line in out.splitlines() if line.strip().startswith("1."))
@@ -924,8 +955,8 @@ class TestCheckCernetMirrors:
     ) -> None:
         """服务的全部候选不可达时返回 1。"""
         npm_urls = fcmd.tools.dev.envdev._NPM_PROBE_URLS
-        probe = {url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in npm_urls.values()}
-        monkeypatch.setattr("fcmd.tools.dev.envdev.check_urls", _fake_check_urls(probe))
+        probe = dict.fromkeys(npm_urls.values(), (False, 0.0, 0.0))
+        monkeypatch.setattr("fcmd.tools.dev.envdev.probe_mirrors", _fake_probe_mirrors(probe))
 
         rc = fcmd.tools.dev.envdev.check_cernet_mirrors(service="npm")
         assert rc == 1
@@ -935,10 +966,10 @@ class TestCheckCernetMirrors:
         """apply=True 时调用对应服务的配置函数并打印已应用。"""
         calls: list[str] = []
         monkeypatch.setitem(fcmd.tools.dev.envdev._MIRROR_SERVICE_APPLY, "maven", calls.append)
-        maven_urls = fcmd.tools.dev.envdev._MAVEN_MIRRORS
-        probe = dict.fromkeys(maven_urls.values(), (True, 100.0))
-        probe[maven_urls["cernet"]] = (True, 8.0)
-        monkeypatch.setattr("fcmd.tools.dev.envdev.check_urls", _fake_check_urls(probe))
+        maven_urls = fcmd.tools.dev.envdev._MAVEN_PROBE_URLS
+        probe = dict.fromkeys(maven_urls.values(), (True, 100.0, 100.0))
+        probe[maven_urls["cernet"]] = (True, 8.0, 3000.0)
+        monkeypatch.setattr("fcmd.tools.dev.envdev.probe_mirrors", _fake_probe_mirrors(probe))
 
         rc = fcmd.tools.dev.envdev.check_cernet_mirrors(service="maven", apply=True)
         assert rc == 0
@@ -1029,19 +1060,21 @@ class TestAutoMirror:
         capsys: pytest.CaptureFixture[str],
         _fake_persist_env: dict[str, str],
     ) -> None:
-        """默认 auto 时 pip 与 conda 各自探测自身服务地址并独立选用最快可达镜像。"""
+        """默认 auto 时 pip 与 conda 各自探测自身服务地址并按吞吐独立选优。
+
+        aliyun 延迟最低但吞吐被限速，不应被选中，以此验证选优以吞吐为主。
+        """
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        pip_urls = fcmd.tools.dev.envdev._PIP_INDEX_URLS
+        pip_urls = fcmd.tools.dev.envdev._PIP_PROBE_URLS
         conda_urls = fcmd.tools.dev.envdev._CONDA_PROBE_URLS
-        probe = {
-            url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in {**pip_urls, **conda_urls}.values()
-        }
-        # pip 服务：tsinghua 最快可达；conda 服务：ustc 最快可达（验证独立选优）
-        probe[pip_urls["tsinghua"]] = (True, 20.0)
-        probe[pip_urls["aliyun"]] = (True, 80.0)
-        probe[conda_urls["ustc"]] = (True, 30.0)
-        probe[conda_urls["aliyun"]] = (True, 90.0)
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
+        probe = dict.fromkeys({**pip_urls, **conda_urls}.values(), (False, 0.0, 0.0))
+        # pip 服务：aliyun 延迟最低但吞吐最低，tsinghua 应胜出
+        probe[pip_urls["tsinghua"]] = (True, 50.0, 2000.0)
+        probe[pip_urls["aliyun"]] = (True, 8.0, 120.0)
+        # conda 服务：ustc 吞吐最高，应胜出（验证按服务独立选优）
+        probe[conda_urls["ustc"]] = (True, 30.0, 1500.0)
+        probe[conda_urls["nju"]] = (True, 20.0, 300.0)
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python")
         out = capsys.readouterr().out
@@ -1049,7 +1082,7 @@ class TestAutoMirror:
         assert "[conda 镜像自动选优]" in out
         assert "已选用 pip 镜像: tsinghua" in out
         assert "已选用 conda 镜像: ustc" in out
-        assert _fake_persist_env["PIP_INDEX_URL"] == pip_urls["tsinghua"]
+        assert _fake_persist_env["PIP_INDEX_URL"] == fcmd.tools.dev.envdev._PIP_INDEX_URLS["tsinghua"]
         condarc = tmp_path / ".condarc"
         assert condarc.exists()
         assert "ustc" in condarc.read_text(encoding="utf-8")
@@ -1063,17 +1096,17 @@ class TestAutoMirror:
     ) -> None:
         """全部镜像不可达时各服务分别回退各自默认镜像。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        probe = {
-            url: (False, fcmd.dsl.actions.net.unreachable_latency())
-            for url in {**fcmd.tools.dev.envdev._PIP_INDEX_URLS, **fcmd.tools.dev.envdev._CONDA_PROBE_URLS}.values()
-        }
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
+        probe = dict.fromkeys(
+            {**fcmd.tools.dev.envdev._PIP_PROBE_URLS, **fcmd.tools.dev.envdev._CONDA_PROBE_URLS}.values(),
+            (False, 0.0, 0.0),
+        )
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python")
         out = capsys.readouterr().out
-        assert "已选用 pip 镜像: aliyun" in out
-        assert "已选用 conda 镜像: aliyun" in out
-        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.aliyun.com/pypi/simple/"
+        assert "已选用 pip 镜像: pku" in out
+        assert "已选用 conda 镜像: nju" in out
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.pku.edu.cn/pypi/web/simple"
 
     def test_rust_auto_independent_per_service(
         self,
@@ -1090,21 +1123,21 @@ class TestAutoMirror:
 
         rustup_urls = fcmd.tools.dev.envdev._RUSTUP_PROBE_URLS
         cargo_urls = fcmd.tools.dev.envdev._CARGO_PROBE_URLS
-        probe = {
-            url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in {**rustup_urls, **cargo_urls}.values()
-        }
-        # rustup 服务：tsinghua 最快；cargo 服务：aliyun 最快（选优结果不同）
-        probe[rustup_urls["tsinghua"]] = (True, 20.0)
-        probe[rustup_urls["aliyun"]] = (True, 50.0)
-        probe[cargo_urls["aliyun"]] = (True, 30.0)
-        probe[cargo_urls["tsinghua"]] = (True, 60.0)
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
+        probe = dict.fromkeys({**rustup_urls, **cargo_urls}.values(), (False, 0.0, 0.0))
+        # rustup 服务：tsinghua 吞吐最高；cargo 服务：aliyun 吞吐最高（选优结果不同）
+        probe[rustup_urls["tsinghua"]] = (True, 20.0, 1800.0)
+        probe[rustup_urls["aliyun"]] = (True, 50.0, 200.0)
+        probe[cargo_urls["aliyun"]] = (True, 30.0, 2500.0)
+        probe[cargo_urls["tsinghua"]] = (True, 60.0, 300.0)
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="rust")
         out = capsys.readouterr().out
         assert "已选用 rustup 镜像: tsinghua" in out
         assert "已选用 cargo 镜像: aliyun" in out
-        assert os.environ["RUSTUP_DIST_SERVER"] == rustup_urls["tsinghua"]
+        assert (
+            os.environ["RUSTUP_DIST_SERVER"] == fcmd.tools.dev.envdev._RUSTUP_MIRRORS["tsinghua"]["RUSTUP_DIST_SERVER"]
+        )
         config = (tmp_path / ".cargo" / "config.toml").read_text(encoding="utf-8")
         assert "replace-with = 'aliyun'" in config
 
@@ -1112,9 +1145,9 @@ class TestAutoMirror:
         """go auto 时探测 GOPROXY 服务地址并选用最快可达镜像。"""
         monkeypatch.setattr("fcmd.tools.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
         go_urls = fcmd.tools.dev.envdev_go._GO_PROXY_PROBE_URLS
-        probe = {url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in go_urls.values()}
-        probe[go_urls["goproxy"]] = (True, 25.0)
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
+        probe = dict.fromkeys(go_urls.values(), (False, 0.0, 0.0))
+        probe[go_urls["goproxy"]] = (True, 25.0, 3000.0)
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_go_env()
         out = capsys.readouterr().out
@@ -1132,11 +1165,11 @@ class TestAutoMirror:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         called: list[list[str]] = []
 
-        def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
+        def fake(urls: list[str], **_: object) -> list[object]:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", fake)
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python", mirror="ustc")
         assert called == []
@@ -1147,11 +1180,11 @@ class TestAutoMirror:
         """js 镜像默认 auto，由 npm 服务内部探测选优。"""
         called: list[list[str]] = []
 
-        def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
+        def fake(urls: list[str], **_: object) -> list[object]:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", fake)
         monkeypatch.setattr("fcmd.tools.dev.envdev._setup_bun_mirror", lambda m: None)
         monkeypatch.setattr("fcmd.tools.dev.envdev._install_bun", lambda: None)
 
@@ -1166,11 +1199,11 @@ class TestResolveMirror:
         """显式镜像名原样返回，不触发探测。"""
         called: list[list[str]] = []
 
-        def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
+        def fake(urls: list[str], **_: object) -> list[object]:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", fake)
 
         result = fcmd.tools.dev.envdev_core.resolve_mirror("pip", "ustc", {"a": "https://a"}, "aliyun")
         assert result == "ustc"
@@ -1181,7 +1214,7 @@ class TestResolveMirror:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """探测结果为空（全部不可达）时回退默认镜像。"""
-        monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", lambda urls, timeout=5.0, workers=8: [])
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", lambda urls, **_: [])
 
         result = fcmd.tools.dev.envdev_core.resolve_mirror("conda", "auto", {"ustc": "https://u"}, "aliyun")
         assert result == "aliyun"
@@ -1280,46 +1313,49 @@ class TestExpandedMirrors:
         assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.bfsu.edu.cn/pypi/web/simple"
         assert _fake_persist_env["PIP_TRUSTED_HOSTS"] == "mirrors.bfsu.edu.cn"
 
-    def test_setup_conda_mirror_huaweicloud(
+    def test_setup_conda_mirror_nju(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """显式指定 huaweicloud 镜像时写入 ~/.condarc 频道地址。"""
+        """显式指定 nju 镜像时写入 ~/.condarc 频道地址。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        fcmd.tools.dev.envdev.setup_conda_mirror("huaweicloud")
+        fcmd.tools.dev.envdev.setup_conda_mirror("nju")
         capsys.readouterr()
         condarc = tmp_path / ".condarc"
         content = condarc.read_text(encoding="utf-8")
-        assert "https://mirrors.huaweicloud.com/anaconda/pkgs/main/" in content
-        assert "https://mirrors.huaweicloud.com/anaconda/cloud/conda-forge/" in content
+        assert "https://mirror.nju.edu.cn/anaconda/pkgs/main/" in content
+        assert "https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/" in content
 
-    def test_setup_rust_mirror_huaweicloud(
+    def test_setup_rust_mirror_huaweicloud_rustup_only(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """显式指定 huaweicloud 镜像时配置 rustup 环境变量与 cargo 配置。"""
+        """huaweicloud 仅镜像 rustup 分发：配置 rustup 环境变量，cargo 提示不支持并跳过。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setattr("fcmd.tools.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
         monkeypatch.delenv("RUSTUP_DIST_SERVER", raising=False)
 
         fcmd.tools.dev.envdev._setup_rust_mirror("huaweicloud")
-        capsys.readouterr()
+        out = capsys.readouterr().out
         assert os.environ["RUSTUP_DIST_SERVER"] == "https://mirrors.huaweicloud.com/rustup"
         assert os.environ["RUSTUP_UPDATE_ROOT"] == "https://mirrors.huaweicloud.com/rustup/rustup"
-        config = (tmp_path / ".cargo" / "config.toml").read_text(encoding="utf-8")
-        assert "sparse+https://mirrors.huaweicloud.com/crates.io-index/" in config
+        # 华为云 crates.io 索引已下线，cargo 配置应跳过而非写入失效地址
+        assert "未知 Rust cargo 镜像源" in out
+        assert not (tmp_path / ".cargo" / "config.toml").exists()
 
-    def test_setup_rust_mirror_bfsu(
+    def test_setup_cargo_mirror_bfsu(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """显式指定 bfsu 镜像时配置 rust-static 分发地址。"""
+        """bfsu 仅镜像 crates.io 索引：cargo 配置写入 bfsu，rustup 提示不支持。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setattr("fcmd.tools.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
         monkeypatch.delenv("RUSTUP_DIST_SERVER", raising=False)
 
         fcmd.tools.dev.envdev._setup_rust_mirror("bfsu")
-        capsys.readouterr()
-        assert os.environ["RUSTUP_DIST_SERVER"] == "https://mirrors.bfsu.edu.cn/rust-static"
+        out = capsys.readouterr().out
+        assert "未知 Rust rustup 镜像源" in out
+        assert "RUSTUP_DIST_SERVER" not in os.environ
         config = (tmp_path / ".cargo" / "config.toml").read_text(encoding="utf-8")
         assert "replace-with = 'bfsu'" in config
+        assert "sparse+https://mirrors.bfsu.edu.cn/crates.io-index/" in config
 
     def test_setup_go_mirror_tencent(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """显式指定 tencent GOPROXY 镜像时持久化对应地址。"""

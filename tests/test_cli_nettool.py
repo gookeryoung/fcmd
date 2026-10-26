@@ -220,3 +220,131 @@ class TestNettoolCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "请求失败" in out
+
+
+# ---------------------------------------------------------------------- #
+# 镜像测速（probe_mirrors / probe_score / _probe_download）
+# ---------------------------------------------------------------------- #
+class _FakeProbeResponse:
+    """镜像测速响应替身：支持 read(size) 与 headers.get_content_type()。"""
+
+    def __init__(self, payload: bytes, content_type: str = "application/octet-stream") -> None:
+        self._payload = payload
+        self._offset = 0
+        self.headers = Message()
+        self.headers["Content-Type"] = content_type
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0:
+            size = len(self._payload) - self._offset
+        chunk = self._payload[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+    def __enter__(self) -> _FakeProbeResponse:
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
+class TestProbeMirrors:
+    """镜像测速原语测试。"""
+
+    def test_describe_http_error(self) -> None:
+        """429 判定为限速，401/403 判定为受限，其余返回状态码。"""
+        from fcmd.dsl.actions.net import _describe_http_error
+
+        assert _describe_http_error(HTTPError("u", 429, "Too Many", Message(), None)) == "限速(429)"
+        assert _describe_http_error(HTTPError("u", 403, "Forbidden", Message(), None)) == "受限(403)"
+        assert _describe_http_error(HTTPError("u", 404, "Not Found", Message(), None)) == "HTTP 404"
+
+    def test_probe_score(self) -> None:
+        """不可达为 -1；大样本按吞吐；小样本退化为延迟倒数。"""
+        from fcmd.dsl.actions.net import UrlProbe, probe_score
+
+        assert probe_score(UrlProbe("u", False, 10.0, 100.0, 0)) == -1.0
+        assert probe_score(UrlProbe("u", True, 50.0, 2048.0, 131072)) == 2048.0
+        assert probe_score(UrlProbe("u", True, 50.0, 0.0, 100)) == pytest.approx(20.0)
+
+    def test_probe_download_measures_throughput(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """读取采样字节并计算吞吐。"""
+        from fcmd.dsl.actions.net import _probe_download
+
+        payload = b"x" * 8192
+        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: _FakeProbeResponse(payload))
+        probe = _probe_download("https://mirror.example/file", 5.0, "pip/24.0", 8192)
+        assert probe.ok is True
+        assert probe.bytes_read == 8192
+        assert probe.throughput_kbps > 0
+
+    def test_probe_download_rejects_html_portal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """未声明允许 HTML 时，HTML 门户页判为不可用。"""
+        from fcmd.dsl.actions.net import _probe_download
+
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            lambda req, timeout: _FakeProbeResponse(b"<html>portal</html>", "text/html"),
+        )
+        probe = _probe_download("https://mirror.example/missing", 5.0, "cargo/1.83.0", 2048)
+        assert probe.ok is False
+        assert probe.reason == "返回网页而非构件"
+
+        allowed = _probe_download("https://mirror.example/simple/pkg/", 5.0, "pip/24.0", 2048, allow_html=True)
+        assert allowed.ok is True
+
+    def test_probe_download_http_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """HTTP 429 返回限速原因。"""
+        from fcmd.dsl.actions.net import _probe_download
+
+        error = HTTPError("https://mirror.example", 429, "Too Many", Message(), None)
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            lambda req, timeout: (_ for _ in ()).throw(error),
+        )
+        probe = _probe_download("https://mirror.example", 5.0, "pip/24.0", 2048)
+        assert probe.ok is False
+        assert probe.reason == "限速(429)"
+
+    def test_probe_download_network_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """网络错误返回超时/网络错误原因。"""
+        from fcmd.dsl.actions.net import _probe_download
+
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            lambda req, timeout: (_ for _ in ()).throw(URLError("refused")),
+        )
+        probe = _probe_download("https://mirror.example", 5.0, "pip/24.0", 2048)
+        assert probe.ok is False
+        assert probe.reason == "超时/网络错误"
+
+    def test_probe_mirrors_two_phase_and_sort(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """阶段一并发筛选，阶段二仅对延迟最低的若干候选测吞吐并排序。"""
+        from fcmd.dsl.actions.net import UrlProbe, probe_mirrors
+
+        benchmarked: list[str] = []
+
+        def fake_probe(
+            url: str, timeout: float, user_agent: str, sample_bytes: int, allow_html: bool = False
+        ) -> UrlProbe:
+            if sample_bytes > 2048:  # 阶段二
+                benchmarked.append(url)
+                return UrlProbe(url, True, 10.0, 5000.0 if url.endswith("slow-latency") else 100.0, sample_bytes)
+            if url.endswith("dead"):
+                return UrlProbe(url, False, 0.0, 0.0, 0, "超时/网络错误")
+            latency = 300.0 if url.endswith("slow-latency") else 20.0
+            return UrlProbe(url, True, latency, 0.0, 2048)
+
+        monkeypatch.setattr("fcmd.dsl.actions.net._probe_download", fake_probe)
+        urls = ["https://a/dead", "https://b/slow-latency", "https://c/normal"]
+        results = probe_mirrors(urls)
+
+        assert [p.url for p in results] == ["https://b/slow-latency", "https://c/normal", "https://a/dead"]
+        assert "https://a/dead" not in benchmarked
+        assert set(benchmarked) == {"https://b/slow-latency", "https://c/normal"}
+
+    def test_probe_mirrors_empty(self) -> None:
+        """空输入返回空列表。"""
+        from fcmd.dsl.actions.net import probe_mirrors
+
+        assert probe_mirrors([]) == []

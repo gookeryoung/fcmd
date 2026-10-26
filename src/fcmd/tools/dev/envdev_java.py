@@ -1,7 +1,7 @@
 """envdev_java - Java 开发环境配置（Maven 镜像 + JDK）。
 
 配置 Maven settings.xml 镜像仓库，并可选安装 SDKMAN（用于管理 JDK 版本）。
-国内主流 Maven 镜像：阿里云、华为云、腾讯云、中科大、教育网联合镜像。
+国内主流 Maven 镜像：阿里云、华为云、腾讯云、教育网联合镜像。
 """
 
 from __future__ import annotations
@@ -19,8 +19,14 @@ _MAVEN_MIRRORS: dict[str, str] = {
     "aliyun": "https://maven.aliyun.com/repository/public",
     "huaweicloud": "https://repo.huaweicloud.com/repository/maven",
     "tencent": "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/",
-    "ustc": "https://mirrors.ustc.edu.cn/apache/maven/repository/public",
     "cernet": "https://mirrors.cernet.edu.cn/maven/",
+}
+
+# Maven 镜像根路径普遍返回 404（不开放目录浏览），须以真实构件路径测速。
+# 使用 Maven Core 3.9.6 的 jar（约 500 KB）以便测出真实下载吞吐。
+_MAVEN_PROBE_URLS: dict[str, str] = {
+    name: f"{url.rstrip('/')}/org/apache/maven/maven-core/3.9.6/maven-core-3.9.6.jar"
+    for name, url in _MAVEN_MIRRORS.items()
 }
 
 _MAVEN_SETTINGS_PATH: Path = Path.home() / ".m2" / "settings.xml"
@@ -56,11 +62,11 @@ def _setup_maven_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：aliyun / huaweicloud / tencent / ustc / cernet；``auto`` 时探测 Maven
-        服务各候选镜像并选用最快的可达镜像，全部不可达回退 aliyun
-        （默认 ``auto``）
+        镜像源名称：aliyun / huaweicloud / tencent / cernet；``auto`` 时按真实构件下载
+        吞吐探测 Maven 服务各候选镜像并选用最快的可达镜像，全部不可达回退
+        tencent（默认 ``auto``）
     """
-    mirror = resolve_mirror("maven", mirror, _MAVEN_MIRRORS, "aliyun")
+    mirror = resolve_mirror("maven", mirror, _MAVEN_PROBE_URLS, "tencent")
     if not mirror_supported(mirror, _MAVEN_MIRRORS):
         print(f"未知 Maven 镜像源: {mirror}")
         return

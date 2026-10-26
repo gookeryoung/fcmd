@@ -97,16 +97,34 @@ def apply_mirror_config(
 # 镜像自动选优（按服务）
 # --------------------------------------------------------------------------- #
 
+# 按服务的探测 User-Agent：部分镜像站（如 NJU）会对非包管理器 UA 返回
+# 重定向循环，使用真实客户端 UA 才能得到与包管理器一致的可达性。
+_MIRROR_USER_AGENTS: dict[str, str] = {
+    "pip": "pip/24.0",
+    "conda": "conda/24.9.2",
+    "rustup": "rustup/1.27.1",
+    "cargo": "cargo/1.83.0",
+    "go": "go/1.22.0",
+    "maven": "Maven/3.9.6",
+    "npm": "npm/10.8.2 node/v20.17.0",
+}
+_MIRROR_DEFAULT_UA = "fcmd-mirror-probe/0.3.10"
+
 
 def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float = 2.0) -> str | None:
-    """并发探测单个服务支持的全部候选镜像，按可访问性与速度自动选优。
+    """并发探测单个服务支持的全部候选镜像，按实测下载速度自动选优。
 
-    打印探测排名，返回最快可达的镜像名；全部不可达时返回 ``None``。
+    两阶段测速：先并发筛选可达性（区分限速/封禁），再对候选顺序实测
+    下载吞吐，按吞吐与延迟综合排序。纯延迟排序无法识别「响应快但下载
+    被限速」的镜像，故以真实吞吐为主指标。
+
+    打印探测排名，返回评分最高的可达镜像名；全部不可达时返回 ``None``。
 
     Parameters
     ----------
     service:
-        服务名（如 ``pip`` / ``conda`` / ``rustup`` / ``cargo``），仅用于打印标签。
+        服务名（如 ``pip`` / ``conda`` / ``rustup`` / ``cargo``），用于打印标签
+        并选择对应的探测 User-Agent。
     candidates:
         ``{镜像名: 实际服务 URL}`` 候选表。注意不同服务（如 pypi 与 conda
         频道、rustup 与 crates.io 索引）的服务地址互不相同，须传入各自
@@ -117,22 +135,32 @@ def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float 
     Returns
     -------
     str | None
-        最快可达的镜像名；全部不可达时返回 ``None``。
+        综合评分最高的可达镜像名；全部不可达时返回 ``None``。
     """
     # 延迟导入避免加重导入链
-    from fcmd.dsl.actions.net import check_urls
+    from fcmd.dsl.actions.net import probe_mirrors
 
+    probes = probe_mirrors(
+        list(candidates.values()),
+        timeout=timeout,
+        user_agent=_MIRROR_USER_AGENTS.get(service, _MIRROR_DEFAULT_UA),
+        allow_html=service == "pip",
+    )
     name_by_url = {url: name for name, url in candidates.items()}
-    results = check_urls(list(candidates.values()), timeout=timeout)
 
-    print(f"[{service} 镜像自动选优]（按可访问性与访问速度排序）")
+    print(f"[{service} 镜像自动选优]（按实测下载吞吐与延迟排序）")
     selected: str | None = None
-    for index, (url, ok, latency) in enumerate(results, start=1):
-        name = name_by_url[url]
-        speed = f"{latency:.0f} ms" if ok else "-"
-        print(f"  {index}. {name:<12} {url}  {'可访问' if ok else '不可访问'}  {speed}")
-        if ok and selected is None:
-            selected = name
+    for index, probe in enumerate(probes, start=1):
+        name = name_by_url[probe.url]
+        if probe.ok:
+            print(
+                f"  {index}. {name:<12} {probe.url}  可访问  "
+                f"延迟 {probe.latency_ms:.0f} ms  吞吐 {probe.throughput_kbps:.0f} KB/s"
+            )
+            if selected is None:
+                selected = name
+        else:
+            print(f"  {index}. {name:<12} {probe.url}  不可访问（{probe.reason}）")
     return selected
 
 

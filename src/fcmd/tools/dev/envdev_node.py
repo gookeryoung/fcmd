@@ -24,8 +24,9 @@ _NPM_REGISTRY_MIRRORS: dict[str, str] = {
     "huaweicloud": "https://mirrors.huaweicloud.com/repository/npm/",
 }
 
-# 探测地址使用各 registry 都支持的 /-/ping 端点（根路径常返回 404）。
-_NPM_PROBE_URLS: dict[str, str] = {name: f"{url.rstrip('/')}/-/ping" for name, url in _NPM_REGISTRY_MIRRORS.items()}
+# 探测地址：拉取固定热门包的 metadata（lodash，约 2 MB）。
+# registry 根路径常返回 404，/-/ping 体积过小无法反映下载吞吐与限速情况。
+_NPM_PROBE_URLS: dict[str, str] = {name: f"{url.rstrip('/')}/lodash" for name, url in _NPM_REGISTRY_MIRRORS.items()}
 
 _NPM_DEFAULT: str = "npmmirror"
 

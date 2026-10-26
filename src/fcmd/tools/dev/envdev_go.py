@@ -27,10 +27,12 @@ _GO_PROXY_MIRRORS: dict[str, str] = {
     "aliyun_public": "https://proxy.golang.com.cn,direct",
 }
 
-# GOPROXY 探测地址：以真实模块版本列表路径探测。
-# Go 代理根路径普遍返回 404，仅探测根会被误判为不可达。
+# GOPROXY 探测地址：以真实模块 zip 探测。
+# Go 代理根路径普遍返回 404，版本列表体积过小无法反映下载吞吐，
+# 故使用固定模块（protobuf v1.5.4，约 350 KB）的 zip 包测速。
 _GO_PROXY_PROBE_URLS: dict[str, str] = {
-    name: f"{url.split(',', 1)[0].rstrip('/')}/github.com/pkg/errors/@v/list" for name, url in _GO_PROXY_MIRRORS.items()
+    name: f"{url.split(',', 1)[0].rstrip('/')}/github.com/golang/protobuf/@v/v1.5.4.zip"
+    for name, url in _GO_PROXY_MIRRORS.items()
 }
 
 _GOPATH_DEFAULT: str = str(Path.home() / "go")

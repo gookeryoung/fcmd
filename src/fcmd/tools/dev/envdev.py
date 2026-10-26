@@ -45,8 +45,10 @@ from typing import Literal
 import fcmd
 from fcmd.cli._env_persist import persist_env
 from fcmd.core.models import run_command
-from fcmd.dsl.actions.net import check_urls
+from fcmd.dsl.actions.net import check_urls, probe_mirrors
 from fcmd.tools.dev.envdev_core import (
+    _MIRROR_DEFAULT_UA,
+    _MIRROR_USER_AGENTS,
     MirrorSpec,
     apply_mirror_config,
     mirror_supported,
@@ -54,7 +56,7 @@ from fcmd.tools.dev.envdev_core import (
     resolve_mirror,
 )
 from fcmd.tools.dev.envdev_go import _GO_PROXY_PROBE_URLS, _setup_go_mirror, setup_go_env
-from fcmd.tools.dev.envdev_java import _MAVEN_MIRRORS, _setup_maven_mirror, setup_java_env
+from fcmd.tools.dev.envdev_java import _MAVEN_PROBE_URLS, _setup_maven_mirror, setup_java_env
 from fcmd.tools.dev.envdev_node import (
     _NPM_DEFAULT,
     _NPM_PROBE_URLS,
@@ -96,7 +98,7 @@ _PIP_INDEX_URLS: dict[str, str] = {
     "tencent": "https://mirrors.cloud.tencent.com/pypi/simple",
     "ustc": "https://pypi.mirrors.ustc.edu.cn/simple/",
     "bfsu": "https://mirrors.bfsu.edu.cn/pypi/web/simple",
-    "zju": "https://mirrors.zju.edu.cn/pypi/simple/",
+    "zju": "https://mirrors.zju.edu.cn/pypi/web/simple",
     "nju": "https://mirror.nju.edu.cn/pypi/web/simple",
     "sjtu": "https://mirror.sjtu.edu.cn/pypi/web/simple",
     "pku": "https://mirrors.pku.edu.cn/pypi/web/simple",
@@ -155,28 +157,6 @@ _CONDA_MIRROR_URLS: dict[str, list[str]] = {
         "https://mirrors.bfsu.edu.cn/anaconda/cloud/menpo/",
         "https://mirrors.bfsu.edu.cn/anaconda/cloud/pytorch/",
     ],
-    "aliyun": [
-        "https://mirrors.aliyun.com/anaconda/pkgs/main/",
-        "https://mirrors.aliyun.com/anaconda/pkgs/free/",
-        "https://mirrors.aliyun.com/anaconda/pkgs/r/",
-        "https://mirrors.aliyun.com/anaconda/pkgs/msys2/",
-        "https://mirrors.aliyun.com/anaconda/pkgs/pro/",
-        "https://mirrors.aliyun.com/anaconda/pkgs/dev/",
-        "https://mirrors.aliyun.com/anaconda/cloud/conda-forge/",
-        "https://mirrors.aliyun.com/anaconda/cloud/bioconda/",
-        "https://mirrors.aliyun.com/anaconda/cloud/menpo/",
-        "https://mirrors.aliyun.com/anaconda/cloud/pytorch/",
-    ],
-    "huaweicloud": [
-        "https://mirrors.huaweicloud.com/anaconda/pkgs/main/",
-        "https://mirrors.huaweicloud.com/anaconda/pkgs/free/",
-        "https://mirrors.huaweicloud.com/anaconda/pkgs/r/",
-        "https://mirrors.huaweicloud.com/anaconda/pkgs/msys2/",
-        "https://mirrors.huaweicloud.com/anaconda/pkgs/pro/",
-        "https://mirrors.huaweicloud.com/anaconda/cloud/conda-forge/",
-        "https://mirrors.huaweicloud.com/anaconda/cloud/bioconda/",
-        "https://mirrors.huaweicloud.com/anaconda/cloud/pytorch/",
-    ],
     "zju": [
         "https://mirrors.zju.edu.cn/anaconda/pkgs/main/",
         "https://mirrors.zju.edu.cn/anaconda/pkgs/free/",
@@ -196,16 +176,6 @@ _CONDA_MIRROR_URLS: dict[str, list[str]] = {
         "https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/",
         "https://mirror.nju.edu.cn/anaconda/cloud/bioconda/",
         "https://mirror.nju.edu.cn/anaconda/cloud/pytorch/",
-    ],
-    "sjtu": [
-        "https://mirror.sjtu.edu.cn/anaconda/pkgs/main/",
-        "https://mirror.sjtu.edu.cn/anaconda/pkgs/free/",
-        "https://mirror.sjtu.edu.cn/anaconda/pkgs/r/",
-        "https://mirror.sjtu.edu.cn/anaconda/pkgs/msys2/",
-        "https://mirror.sjtu.edu.cn/anaconda/pkgs/pro/",
-        "https://mirror.sjtu.edu.cn/anaconda/cloud/conda-forge/",
-        "https://mirror.sjtu.edu.cn/anaconda/cloud/bioconda/",
-        "https://mirror.sjtu.edu.cn/anaconda/cloud/pytorch/",
     ],
 }
 
@@ -230,16 +200,22 @@ _RUSTUP_MIRRORS: dict[str, dict[str, str]] = {
         "RUSTUP_UPDATE_ROOT": "https://mirrors.huaweicloud.com/rustup/rustup",
         "TOML_REGISTRY": "https://mirrors.huaweicloud.com/crates.io-index/",
     },
-    "bfsu": {
-        "RUSTUP_DIST_SERVER": "https://mirrors.bfsu.edu.cn/rust-static",
-        "RUSTUP_UPDATE_ROOT": "https://mirrors.bfsu.edu.cn/rust-static/rustup",
-        "TOML_REGISTRY": "https://mirrors.bfsu.edu.cn/crates.io-index/",
-    },
     "sjtu": {
         "RUSTUP_DIST_SERVER": "https://mirror.sjtu.edu.cn/rust-static",
         "RUSTUP_UPDATE_ROOT": "https://mirror.sjtu.edu.cn/rust-static/rustup",
         "TOML_REGISTRY": "https://mirror.sjtu.edu.cn/crates.io-index/",
     },
+}
+
+# crates.io 稀疏索引镜像：与 rustup 分发地址相互独立（站点可能只镜像其一）。
+# bfsu 已停止提供 rust-static 分发但 crates.io 索引仍可用；华为云 crates 索引
+# 已下线（返回门户 HTML），故不纳入。两份候选表不可互相推导。
+_CARGO_REGISTRY_MIRRORS: dict[str, str] = {
+    "tsinghua": "https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/",
+    "aliyun": "https://mirrors.aliyun.com/crates.io-index/",
+    "ustc": "https://mirrors.ustc.edu.cn/crates.io-index/",
+    "sjtu": "https://mirror.sjtu.edu.cn/crates.io-index/",
+    "bfsu": "https://mirrors.bfsu.edu.cn/crates.io-index/",
 }
 
 _RUST_SCCACHE_DIR: Path = Path.home() / ".cargo" / "sccache"
@@ -308,32 +284,43 @@ _DOCKER_REGISTRY_MIRRORS: list[str] = [
 ]
 _DOCKER_DAEMON_PATH: Path = Path("/etc/docker/daemon.json")
 
-# 各服务镜像自动选优的探测地址（服务名 -> {镜像名: 该服务实际 URL}）。
-# 注意 pip/conda/rustup/cargo 等服务在同名镜像站下的地址互不相同，且各站
-# 对不同服务的可用性也不同，选优须按服务独立探测，不可混用地址。
-_RUSTUP_PROBE_URLS: dict[str, str] = {name: cfg["RUSTUP_DIST_SERVER"] for name, cfg in _RUSTUP_MIRRORS.items()}
-_CARGO_PROBE_URLS: dict[str, str] = {name: cfg["TOML_REGISTRY"] for name, cfg in _RUSTUP_MIRRORS.items()}
-_CONDA_PROBE_URLS: dict[str, str] = {name: urls[0] for name, urls in _CONDA_MIRROR_URLS.items()}
+# 各服务镜像自动选优的探测地址（服务名 -> {镜像名: 真实构件 URL}）。
+# 镜像站普遍不开放目录浏览，站点根路径或频道根路径多为 404 / 门户 HTML /
+# 体积极小无法反映吞吐，故一律以「包管理器实际下载的文件」探测：
+# pip 取真实包索引页、conda 取 repodata.json、rustup 取发布清单、
+# cargo 取真实 crate 索引、maven 取真实构件 jar。各服务地址互不相同，
+# 选优须按服务独立探测，不可混用。
+_PIP_PROBE_URLS: dict[str, str] = {name: f"{url.rstrip('/')}/requests/" for name, url in _PIP_INDEX_URLS.items()}
+_CONDA_PROBE_URLS: dict[str, str] = {
+    name: f"{urls[0]}noarch/repodata.json" for name, urls in _CONDA_MIRROR_URLS.items()
+}
+_RUSTUP_PROBE_URLS: dict[str, str] = {
+    name: f"{cfg['RUSTUP_DIST_SERVER'].rstrip('/')}/dist/channel-rust-stable.toml"
+    for name, cfg in _RUSTUP_MIRRORS.items()
+}
+_CARGO_PROBE_URLS: dict[str, str] = {
+    name: f"{url.rstrip('/')}/se/rd/serde" for name, url in _CARGO_REGISTRY_MIRRORS.items()
+}
 
-# 各服务自动选优全部不可达时的兜底默认值（与各一键命令的原默认一致）
+# 各服务自动选优全部不可达时的兜底默认值（优先选用无需限速、覆盖稳定的站点）
 _SERVICE_DEFAULT_MIRRORS: dict[str, str] = {
-    "pip": "aliyun",
-    "conda": "aliyun",
-    "rustup": "aliyun",
-    "cargo": "aliyun",
+    "pip": "pku",
+    "conda": "nju",
+    "rustup": "tsinghua",
+    "cargo": "bfsu",
     "go": "goproxy",
-    "maven": "aliyun",
+    "maven": "tencent",
     "npm": _NPM_DEFAULT,
 }
 
 # ``mirror`` 子命令按服务测速的候选表（服务名 -> {镜像名: 该服务的测速地址}）。
 _MIRROR_SERVICE_CANDIDATES: dict[str, dict[str, str]] = {
-    "pip": _PIP_INDEX_URLS,
+    "pip": _PIP_PROBE_URLS,
     "conda": _CONDA_PROBE_URLS,
     "rustup": _RUSTUP_PROBE_URLS,
     "cargo": _CARGO_PROBE_URLS,
     "go": _GO_PROXY_PROBE_URLS,
-    "maven": _MAVEN_MIRRORS,
+    "maven": _MAVEN_PROBE_URLS,
     "npm": _NPM_PROBE_URLS,
 }
 
@@ -358,10 +345,10 @@ def setup_python_mirror(mirror: str = "auto") -> None:
     ----------
     mirror:
         镜像源名称：tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju/nju/sjtu/pku/cernet；
-        ``auto`` 时探测 pip 服务各候选镜像（pypi 地址）并选用最快的可达镜像，
-        全部不可达回退 aliyun（默认 ``auto``）
+        ``auto`` 时按实测下载吞吐探测 pip 服务各候选镜像（pypi 地址）并选用最快且
+        未限速的可达镜像，全部不可达回退 pku（默认 ``auto``）
     """
-    mirror = resolve_mirror("pip", mirror, _PIP_INDEX_URLS, _SERVICE_DEFAULT_MIRRORS["pip"])
+    mirror = resolve_mirror("pip", mirror, _PIP_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["pip"])
     if not mirror_supported(mirror, _PIP_INDEX_URLS):
         print(f"未知 Python 镜像源: {mirror}")
         return
@@ -393,9 +380,9 @@ def setup_conda_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/bfsu/aliyun/huaweicloud/zju/nju/sjtu；``auto`` 时探测
-        Conda 服务各候选镜像（anaconda 频道地址，与 pypi 地址不同）并选用最快的
-        可达镜像，全部不可达回退 aliyun（默认 ``auto``）
+        镜像源名称：tsinghua/ustc/bfsu/zju/nju；``auto`` 时探测 Conda 服务各候选镜像
+        （anaconda 频道地址，与 pypi 地址不同）并选用最快的可达镜像，全部不可达
+        回退 nju（默认 ``auto``）
     """
     mirror = resolve_mirror("conda", mirror, _CONDA_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["conda"])
     if not mirror_supported(mirror, _CONDA_MIRROR_URLS):
@@ -428,7 +415,7 @@ def setup_python_env(mirror: str = "auto") -> None:
     ----------
     mirror:
         镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju/nju/sjtu/pku/cernet，
-        Conda 支持 tsinghua/ustc/bfsu/aliyun/huaweicloud/zju/nju/sjtu；``auto`` 按服务独立自动选优
+        Conda 支持 tsinghua/ustc/bfsu/zju/nju；``auto`` 按服务独立自动选优
         （默认 ``auto``）
     """
     setup_python_mirror(mirror)
@@ -446,10 +433,10 @@ def _setup_rustup_mirror(mirror: str) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu/sjtu（已由调用方解析，不含 ``auto``）
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/sjtu（已由调用方解析，不含 ``auto``）
     """
     if not mirror_supported(mirror, _RUSTUP_MIRRORS):
-        print(f"未知 Rust 镜像源: {mirror}")
+        print(f"未知 Rust rustup 镜像源: {mirror}")
         return
 
     mirrors = _RUSTUP_MIRRORS[mirror]
@@ -475,13 +462,13 @@ def _setup_cargo_mirror(mirror: str) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu/sjtu（已由调用方解析，不含 ``auto``）
+        镜像源名称：tsinghua/ustc/aliyun/sjtu/bfsu（已由调用方解析，不含 ``auto``）
     """
-    if not mirror_supported(mirror, _RUSTUP_MIRRORS):
-        print(f"未知 Rust 镜像源: {mirror}")
+    if not mirror_supported(mirror, _CARGO_REGISTRY_MIRRORS):
+        print(f"未知 Rust cargo 镜像源: {mirror}（跳过 cargo 配置，cargo 将使用官方源）")
         return
 
-    registry = _RUSTUP_MIRRORS[mirror]["TOML_REGISTRY"]
+    registry = _CARGO_REGISTRY_MIRRORS[mirror]
     config_content = (
         f"\n[source.crates-io]\nreplace-with = '{mirror}'\n\n"
         f'[source.{mirror}]\nregistry = "sparse+{registry}"\n\n'
@@ -506,10 +493,10 @@ def _setup_rust_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu/sjtu；``auto`` 时 rustup 与 cargo 分别
-        独立探测选优（rustup 分发地址与 crates.io 索引地址不同，各站可达性
-        可能不一致，选优结果可能不同），全部不可达各自回退 aliyun
-        （默认 ``auto``）
+        镜像源名称：rustup 支持 tsinghua/ustc/aliyun/huaweicloud/sjtu，cargo 支持
+        tsinghua/ustc/aliyun/sjtu/bfsu；``auto`` 时 rustup 与 cargo 分别独立探测选优
+        （rustup 分发地址与 crates.io 索引地址不同，各站可达性可能不一致，
+        选优结果可能不同），全部不可达各自回退默认镜像（默认 ``auto``）
     """
     _setup_rustup_mirror(resolve_mirror("rustup", mirror, _RUSTUP_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["rustup"]))
     _setup_cargo_mirror(resolve_mirror("cargo", mirror, _CARGO_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["cargo"]))
@@ -1016,19 +1003,28 @@ def _probe_service_mirrors(service: str, timeout: float, apply: bool) -> int:
     """
     candidates = _MIRROR_SERVICE_CANDIDATES[service]
     name_by_url = {url: name for name, url in candidates.items()}
-    results = check_urls(list(candidates.values()), timeout=timeout)
+    results = probe_mirrors(
+        list(candidates.values()),
+        timeout=timeout,
+        user_agent=_MIRROR_USER_AGENTS.get(service, _MIRROR_DEFAULT_UA),
+        allow_html=service == "pip",
+    )
 
-    print(f"[{service} 镜像测速]（共 {len(results)} 个候选，按访问速度排序）")
+    print(f"[{service} 镜像测速]（共 {len(results)} 个候选，按实测下载吞吐与延迟排序）")
     reachable = 0
     selected: str | None = None
-    for index, (url, ok, latency) in enumerate(results, start=1):
-        if ok:
+    for index, probe in enumerate(results, start=1):
+        name = name_by_url[probe.url]
+        if probe.ok:
             reachable += 1
-        name = name_by_url[url]
-        speed = f"{latency:.0f} ms" if ok else "-"
-        print(f"  {index}. {name:<12} {url}  {'可访问' if ok else '不可访问'}  {speed}")
-        if ok and selected is None:
-            selected = name
+            print(
+                f"  {index}. {name:<12} {probe.url}  可访问  "
+                f"延迟 {probe.latency_ms:.0f} ms  吞吐 {probe.throughput_kbps:.0f} KB/s"
+            )
+            if selected is None:
+                selected = name
+        else:
+            print(f"  {index}. {name:<12} {probe.url}  不可访问（{probe.reason}）")
 
     if selected is None:
         print(f"\n{service} 镜像全部不可达，请检查网络")
