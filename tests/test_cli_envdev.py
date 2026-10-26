@@ -291,11 +291,11 @@ class TestEnvdev:
         """setup_all_env 依次调用各语言一键命令与 Linux 专用步骤。"""
         calls: list[str] = []
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_python_env", lambda m: calls.append(f"python:{m}"))
-        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_js_env", lambda: calls.append("js"))
+        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_js_env", lambda m: calls.append(f"js:{m}"))
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_rust_env", lambda m, v: calls.append(f"rust:{m}:{v}"))
-        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_go_env", lambda **_kw: calls.append("go"))
+        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_go_env", lambda m: calls.append(f"go:{m}"))
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_java_env", lambda m: calls.append(f"java:{m}"))
-        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_node_env", lambda **_kw: calls.append("node"))
+        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_node_env", lambda m: calls.append(f"node:{m}"))
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_linux_system_mirror", lambda: calls.append("linux-mirror"))
         monkeypatch.setattr("fcmd.tools.dev.envdev.install_linux_qt_libs", lambda: calls.append("qt"))
         monkeypatch.setattr("fcmd.tools.dev.envdev.install_linux_fonts", lambda: calls.append("fonts"))
@@ -304,11 +304,11 @@ class TestEnvdev:
         fcmd.tools.dev.envdev.setup_all_env(mirror="tsinghua", rust_version="nightly")
         assert calls == [
             "python:tsinghua",
-            "js",
+            "js:tsinghua",
             "rust:tsinghua:nightly",
-            "go",
+            "go:tsinghua",
             "java:tsinghua",
-            "node",
+            "node:tsinghua",
             "linux-mirror",
             "qt",
             "fonts",
@@ -324,7 +324,7 @@ class TestEnvdev:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.delenv("BUN_CONFIG_REGISTRY", raising=False)
 
-        fcmd.tools.dev.envdev._setup_bun_mirror()
+        fcmd.tools.dev.envdev._setup_bun_mirror("npmmirror")
         captured = capsys.readouterr()
         assert "Bun 镜像源已配置" in captured.out
         assert os.environ["BUN_CONFIG_REGISTRY"] == "https://registry.npmmirror.com"
@@ -375,11 +375,11 @@ class TestEnvdev:
     ) -> None:
         """setup_js_env 依次调用镜像源配置与安装。"""
         calls: list[str] = []
-        monkeypatch.setattr("fcmd.tools.dev.envdev._setup_bun_mirror", lambda: calls.append("mirror"))
+        monkeypatch.setattr("fcmd.tools.dev.envdev._setup_bun_mirror", lambda m: calls.append(f"mirror:{m}"))
         monkeypatch.setattr("fcmd.tools.dev.envdev._install_bun", lambda: calls.append("install"))
 
-        fcmd.tools.dev.envdev.setup_js_env()
-        assert calls == ["mirror", "install"]
+        fcmd.tools.dev.envdev.setup_js_env(mirror="tencent")
+        assert calls == ["mirror:tencent", "install"]
 
     def test_linux_mirror_non_linux(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """非 Linux 平台调用 setup_linux_system_mirror 打印提示。"""
@@ -530,11 +530,11 @@ class TestGroupRouters:
         """setup_lang_env 按 language 分发到对应语言一键命令并透传参数。"""
         calls: list[tuple[str, ...]] = []
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_python_env", lambda m: calls.append(("python", m)))
-        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_js_env", lambda: calls.append(("js",)))
+        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_js_env", lambda m: calls.append(("js", m)))
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_rust_env", lambda m, v: calls.append(("rust", m, v)))
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_go_env", lambda m, g: calls.append(("go", m, g)))
         monkeypatch.setattr("fcmd.tools.dev.envdev.setup_java_env", lambda m, s: calls.append(("java", m, s)))
-        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_node_env", lambda n: calls.append(("node", n)))
+        monkeypatch.setattr("fcmd.tools.dev.envdev.setup_node_env", lambda m, n: calls.append(("node", m, n)))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python", mirror="tsinghua")
         fcmd.tools.dev.envdev.setup_lang_env(language="js")
@@ -545,11 +545,11 @@ class TestGroupRouters:
 
         assert calls == [
             ("python", "tsinghua"),
-            ("js",),
+            ("js", "auto"),
             ("rust", "ustc", "nightly"),
             ("go", "goproxy", True),
             ("java", "huaweicloud", True),
-            ("node", True),
+            ("node", "auto", True),
         ]
         assert capsys.readouterr().out == ""
 
@@ -900,6 +900,53 @@ class TestCheckCernetMirrors:
         assert "动态拉取失败，回退内置列表" in out
         assert "内置列表" in out
 
+    def test_probe_service_ranks_and_recommends(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """service=指定服务时按速度输出候选排名并推荐最快镜像。"""
+        pip_urls = fcmd.tools.dev.envdev._PIP_INDEX_URLS
+        probe = dict.fromkeys(pip_urls.values(), (True, 200.0))
+        probe[pip_urls["nju"]] = (True, 12.0)
+        monkeypatch.setattr("fcmd.tools.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.tools.dev.envdev.check_cernet_mirrors(service="pip")
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "pip 镜像测速" in out
+        assert f"共 {len(pip_urls)} 个候选" in out
+        assert "推荐 pip 镜像: nju" in out
+        # 排名第一应为最快项
+        first_line = next(line for line in out.splitlines() if line.strip().startswith("1."))
+        assert "nju" in first_line
+
+    def test_probe_service_all_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """服务的全部候选不可达时返回 1。"""
+        npm_urls = fcmd.tools.dev.envdev._NPM_PROBE_URLS
+        probe = {url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in npm_urls.values()}
+        monkeypatch.setattr("fcmd.tools.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.tools.dev.envdev.check_cernet_mirrors(service="npm")
+        assert rc == 1
+        assert "npm 镜像全部不可达" in capsys.readouterr().out
+
+    def test_probe_service_apply(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """apply=True 时调用对应服务的配置函数并打印已应用。"""
+        calls: list[str] = []
+        monkeypatch.setitem(fcmd.tools.dev.envdev._MIRROR_SERVICE_APPLY, "maven", calls.append)
+        maven_urls = fcmd.tools.dev.envdev._MAVEN_MIRRORS
+        probe = dict.fromkeys(maven_urls.values(), (True, 100.0))
+        probe[maven_urls["cernet"]] = (True, 8.0)
+        monkeypatch.setattr("fcmd.tools.dev.envdev.check_urls", _fake_check_urls(probe))
+
+        rc = fcmd.tools.dev.envdev.check_cernet_mirrors(service="maven", apply=True)
+        assert rc == 0
+        assert calls == ["cernet"]
+        out = capsys.readouterr().out
+        assert "推荐 maven 镜像: cernet" in out
+        assert "已应用 maven 镜像: cernet" in out
+
 
 class _FakeHTTPResponse:
     """最小 HTTP 响应替身（支持上下文管理器）。"""
@@ -1066,13 +1113,13 @@ class TestAutoMirror:
         monkeypatch.setattr("fcmd.tools.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
         go_urls = fcmd.tools.dev.envdev_go._GO_PROXY_PROBE_URLS
         probe = {url: (False, fcmd.dsl.actions.net.unreachable_latency()) for url in go_urls.values()}
-        probe[go_urls["ustc"]] = (True, 25.0)
+        probe[go_urls["goproxy"]] = (True, 25.0)
         monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", _fake_check_urls(probe))
 
         fcmd.tools.dev.envdev.setup_go_env()
         out = capsys.readouterr().out
-        assert "已选用 go 镜像: ustc" in out
-        assert os.environ["GOPROXY"] == "https://mirrors.ustc.edu.cn/goproxy/,direct"
+        assert "已选用 go 镜像: goproxy" in out
+        assert os.environ["GOPROXY"] == "https://goproxy.cn,direct"
 
     def test_explicit_mirror_skips_probe(
         self,
@@ -1097,7 +1144,7 @@ class TestAutoMirror:
         assert _fake_persist_env["PIP_INDEX_URL"] == "https://pypi.mirrors.ustc.edu.cn/simple/"
 
     def test_js_skips_probe(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        """js 镜像固定 npmmirror，auto 时不触发探测。"""
+        """js 镜像默认 auto，由 npm 服务内部探测选优。"""
         called: list[list[str]] = []
 
         def fake(urls: list[str], timeout: float = 5.0, workers: int = 8) -> list[tuple[str, bool, float]]:
@@ -1105,10 +1152,10 @@ class TestAutoMirror:
             return []
 
         monkeypatch.setattr("fcmd.dsl.actions.net.check_urls", fake)
-        monkeypatch.setattr("fcmd.tools.dev.envdev._setup_bun_mirror", lambda: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev._setup_bun_mirror", lambda m: None)
         monkeypatch.setattr("fcmd.tools.dev.envdev._install_bun", lambda: None)
 
-        fcmd.tools.dev.envdev.setup_lang_env(language="js")
+        fcmd.tools.dev.envdev.setup_lang_env(language="js", mirror="npmmirror")
         assert called == []
 
 
@@ -1279,7 +1326,7 @@ class TestExpandedMirrors:
         monkeypatch.setattr("fcmd.tools.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
         fcmd.tools.dev.envdev_go._setup_go_mirror("tencent")
         capsys.readouterr()
-        assert os.environ["GOPROXY"] == "https://mirrors.cloud.tencent.com/goproxy/,direct"
+        assert os.environ["GOPROXY"] == "https://mirrors.cloud.tencent.com/go/,direct"
 
     def test_setup_go_mirror_huaweicloud(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1288,7 +1335,7 @@ class TestExpandedMirrors:
         monkeypatch.setattr("fcmd.tools.dev.envdev_go.persist_env", lambda n, v: os.environ.update({n: v}))
         fcmd.tools.dev.envdev_go._setup_go_mirror("huaweicloud")
         capsys.readouterr()
-        assert os.environ["GOPROXY"] == "https://mirrors.huaweicloud.com/goproxy/,direct"
+        assert os.environ["GOPROXY"] == "https://mirrors.huaweicloud.com/repository/goproxy/,direct"
 
     def test_setup_maven_mirror_tencent(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1301,3 +1348,85 @@ class TestExpandedMirrors:
         capsys.readouterr()
         content = settings_path.read_text(encoding="utf-8")
         assert "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/" in content
+
+    def test_setup_python_mirror_nju(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """显式指定 nju 镜像时持久化对应 index-url 与 trusted-host。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("PIP_INDEX_URL", raising=False)
+
+        fcmd.tools.dev.envdev.setup_python_mirror("nju")
+        capsys.readouterr()
+        assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirror.nju.edu.cn/pypi/web/simple"
+        assert _fake_persist_env["PIP_TRUSTED_HOSTS"] == "mirror.nju.edu.cn"
+
+    def test_setup_conda_mirror_zju(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 zju 镜像时写入 ~/.condarc 频道地址。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        fcmd.tools.dev.envdev.setup_conda_mirror("zju")
+        capsys.readouterr()
+        content = (tmp_path / ".condarc").read_text(encoding="utf-8")
+        assert "https://mirrors.zju.edu.cn/anaconda/pkgs/main/" in content
+        assert "https://mirrors.zju.edu.cn/anaconda/cloud/conda-forge/" in content
+
+    def test_setup_rustup_mirror_sjtu(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        _fake_persist_env: dict[str, str],
+    ) -> None:
+        """显式指定 sjtu 镜像时持久化 rust-static 分发地址。"""
+        sccache_dir = tmp_path / ".cargo" / "sccache"
+        monkeypatch.setattr("fcmd.tools.dev.envdev._RUST_SCCACHE_DIR", sccache_dir)
+        monkeypatch.delenv("RUSTUP_DIST_SERVER", raising=False)
+
+        fcmd.tools.dev.envdev._setup_rustup_mirror("sjtu")
+        capsys.readouterr()
+        assert _fake_persist_env["RUSTUP_DIST_SERVER"] == "https://mirror.sjtu.edu.cn/rust-static"
+        assert _fake_persist_env["RUSTUP_UPDATE_ROOT"] == "https://mirror.sjtu.edu.cn/rust-static/rustup"
+        assert sccache_dir.is_dir()
+
+    def test_setup_maven_mirror_cernet(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 cernet Maven 镜像时写入 settings.xml。"""
+        settings_path = tmp_path / ".m2" / "settings.xml"
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java._MAVEN_SETTINGS_PATH", settings_path)
+
+        fcmd.tools.dev.envdev_java._setup_maven_mirror("cernet")
+        capsys.readouterr()
+        assert "https://mirrors.cernet.edu.cn/maven/" in settings_path.read_text(encoding="utf-8")
+
+    def test_setup_npm_mirror_tencent(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 tencent npm 镜像时统一写入三类 registry 环境变量。"""
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda _: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.persist_env", lambda n, v: os.environ.update({n: v}))
+
+        fcmd.tools.dev.envdev_node._setup_npm_mirror("tencent")
+        capsys.readouterr()
+        registry = "https://mirrors.cloud.tencent.com/npm/"
+        assert os.environ["NPM_CONFIG_REGISTRY"] == registry
+        assert os.environ["YARN_REGISTRY"] == registry
+        assert os.environ["PNPM_REGISTRY"] == registry
+
+    def test_setup_bun_mirror_huaweicloud(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """显式指定 huaweicloud 时 Bun 使用对应 npm registry。"""
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        monkeypatch.delenv("BUN_CONFIG_REGISTRY", raising=False)
+
+        fcmd.tools.dev.envdev._setup_bun_mirror("huaweicloud")
+        capsys.readouterr()
+        assert os.environ["BUN_CONFIG_REGISTRY"] == "https://mirrors.huaweicloud.com/repository/npm/"
+        assert "huaweicloud" in (tmp_path / ".bunfig.toml").read_text(encoding="utf-8")

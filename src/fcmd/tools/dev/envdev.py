@@ -3,9 +3,9 @@
 子命令整合为五组操作入口：
 
 - ``lang <语言>``：语言类一键配置（python/js/rust/go/java/node），镜像默认 ``auto``
-  按服务（pip/conda/rustup/cargo/go/maven）独立探测选优
+  按服务（pip/conda/rustup/cargo/go/maven/npm）独立探测选优
 - ``app <应用>``：应用/系统类一键配置（linux-mirror/qt-libs/fonts/docker/docker-mirror/openssh/remote）
-- ``mirror``：探测教育网镜像站点（可访问性 + 访问速度排名）
+- ``mirror``：探测教育网镜像站点；指定 ``--service`` 时按服务测速并可选自动应用最快镜像
 - ``check``：检测开发环境配置状态（工具链 + 镜像源，只读）
 - ``all``：一键配置所有环境
 
@@ -22,6 +22,8 @@
     fcmd envdev lang js                          # 一键配置 JavaScript 环境（Bun）
     fcmd envdev lang rust --mirror tsinghua nightly  # 一键配置 Rust 环境（镜像源 + 工具链）
     fcmd envdev mirror                           # 探测教育网镜像站点可访问性与速度
+    fcmd envdev mirror --service pip             # pip 候选镜像测速并推荐最快项
+    fcmd envdev mirror --service npm --apply     # npm 测速并自动应用最快镜像
     fcmd envdev app remote                       # 一键配置 Linux 远程桌面（xrdp + Xfce）
     fcmd envdev check                            # 检测开发环境配置状态
     fcmd envdev all                              # 一键配置所有环境
@@ -36,6 +38,7 @@ import os
 import re
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -50,9 +53,15 @@ from fcmd.tools.dev.envdev_core import (
     pip_config_path,
     resolve_mirror,
 )
-from fcmd.tools.dev.envdev_go import setup_go_env
-from fcmd.tools.dev.envdev_java import setup_java_env
-from fcmd.tools.dev.envdev_node import setup_node_env
+from fcmd.tools.dev.envdev_go import _GO_PROXY_PROBE_URLS, _setup_go_mirror, setup_go_env
+from fcmd.tools.dev.envdev_java import _MAVEN_MIRRORS, _setup_maven_mirror, setup_java_env
+from fcmd.tools.dev.envdev_node import (
+    _NPM_DEFAULT,
+    _NPM_PROBE_URLS,
+    _NPM_REGISTRY_MIRRORS,
+    _setup_npm_mirror,
+    setup_node_env,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +97,10 @@ _PIP_INDEX_URLS: dict[str, str] = {
     "ustc": "https://pypi.mirrors.ustc.edu.cn/simple/",
     "bfsu": "https://mirrors.bfsu.edu.cn/pypi/web/simple",
     "zju": "https://mirrors.zju.edu.cn/pypi/simple/",
+    "nju": "https://mirror.nju.edu.cn/pypi/web/simple",
+    "sjtu": "https://mirror.sjtu.edu.cn/pypi/web/simple",
+    "pku": "https://mirrors.pku.edu.cn/pypi/web/simple",
+    "cernet": "https://mirrors.cernet.edu.cn/pypi/web/simple",
 }
 
 _PIP_TRUSTED_HOSTS: dict[str, str] = {
@@ -98,6 +111,10 @@ _PIP_TRUSTED_HOSTS: dict[str, str] = {
     "ustc": "pypi.mirrors.ustc.edu.cn",
     "bfsu": "mirrors.bfsu.edu.cn",
     "zju": "mirrors.zju.edu.cn",
+    "nju": "mirror.nju.edu.cn",
+    "sjtu": "mirror.sjtu.edu.cn",
+    "pku": "mirrors.pku.edu.cn",
+    "cernet": "mirrors.cernet.edu.cn",
 }
 
 _UV_PYTHON_INSTALL_MIRROR: str = "https://registry.npmmirror.com/-/binary/python-build-standalone"
@@ -160,6 +177,36 @@ _CONDA_MIRROR_URLS: dict[str, list[str]] = {
         "https://mirrors.huaweicloud.com/anaconda/cloud/bioconda/",
         "https://mirrors.huaweicloud.com/anaconda/cloud/pytorch/",
     ],
+    "zju": [
+        "https://mirrors.zju.edu.cn/anaconda/pkgs/main/",
+        "https://mirrors.zju.edu.cn/anaconda/pkgs/free/",
+        "https://mirrors.zju.edu.cn/anaconda/pkgs/r/",
+        "https://mirrors.zju.edu.cn/anaconda/pkgs/msys2/",
+        "https://mirrors.zju.edu.cn/anaconda/pkgs/pro/",
+        "https://mirrors.zju.edu.cn/anaconda/cloud/conda-forge/",
+        "https://mirrors.zju.edu.cn/anaconda/cloud/bioconda/",
+        "https://mirrors.zju.edu.cn/anaconda/cloud/pytorch/",
+    ],
+    "nju": [
+        "https://mirror.nju.edu.cn/anaconda/pkgs/main/",
+        "https://mirror.nju.edu.cn/anaconda/pkgs/free/",
+        "https://mirror.nju.edu.cn/anaconda/pkgs/r/",
+        "https://mirror.nju.edu.cn/anaconda/pkgs/msys2/",
+        "https://mirror.nju.edu.cn/anaconda/pkgs/pro/",
+        "https://mirror.nju.edu.cn/anaconda/cloud/conda-forge/",
+        "https://mirror.nju.edu.cn/anaconda/cloud/bioconda/",
+        "https://mirror.nju.edu.cn/anaconda/cloud/pytorch/",
+    ],
+    "sjtu": [
+        "https://mirror.sjtu.edu.cn/anaconda/pkgs/main/",
+        "https://mirror.sjtu.edu.cn/anaconda/pkgs/free/",
+        "https://mirror.sjtu.edu.cn/anaconda/pkgs/r/",
+        "https://mirror.sjtu.edu.cn/anaconda/pkgs/msys2/",
+        "https://mirror.sjtu.edu.cn/anaconda/pkgs/pro/",
+        "https://mirror.sjtu.edu.cn/anaconda/cloud/conda-forge/",
+        "https://mirror.sjtu.edu.cn/anaconda/cloud/bioconda/",
+        "https://mirror.sjtu.edu.cn/anaconda/cloud/pytorch/",
+    ],
 }
 
 _RUSTUP_MIRRORS: dict[str, dict[str, str]] = {
@@ -187,6 +234,11 @@ _RUSTUP_MIRRORS: dict[str, dict[str, str]] = {
         "RUSTUP_DIST_SERVER": "https://mirrors.bfsu.edu.cn/rust-static",
         "RUSTUP_UPDATE_ROOT": "https://mirrors.bfsu.edu.cn/rust-static/rustup",
         "TOML_REGISTRY": "https://mirrors.bfsu.edu.cn/crates.io-index/",
+    },
+    "sjtu": {
+        "RUSTUP_DIST_SERVER": "https://mirror.sjtu.edu.cn/rust-static",
+        "RUSTUP_UPDATE_ROOT": "https://mirror.sjtu.edu.cn/rust-static/rustup",
+        "TOML_REGISTRY": "https://mirror.sjtu.edu.cn/crates.io-index/",
     },
 }
 
@@ -226,7 +278,6 @@ _INSTALL_MIRROR_SCRIPT: str = "sudo bash /tmp/linuxmirrors.sh"
 _RUSTUP_DOWNLOAD_URL_LINUX: str = "https://mirrors.aliyun.com/repo/rust/rustup-init.sh"
 _RUSTUP_DOWNLOAD_URL_WINDOWS: str = "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe"
 
-_BUN_NPM_REGISTRY: str = "https://registry.npmmirror.com"
 _BUN_INSTALL_SCRIPT_URL: str = "https://bun.sh/install"
 _PLAYWRIGHT_DOWNLOAD_HOST: str = "https://npmmirror.com/mirrors/playwright"
 
@@ -272,7 +323,22 @@ _SERVICE_DEFAULT_MIRRORS: dict[str, str] = {
     "cargo": "aliyun",
     "go": "goproxy",
     "maven": "aliyun",
+    "npm": _NPM_DEFAULT,
 }
+
+# ``mirror`` 子命令按服务测速的候选表（服务名 -> {镜像名: 该服务的测速地址}）。
+_MIRROR_SERVICE_CANDIDATES: dict[str, dict[str, str]] = {
+    "pip": _PIP_INDEX_URLS,
+    "conda": _CONDA_PROBE_URLS,
+    "rustup": _RUSTUP_PROBE_URLS,
+    "cargo": _CARGO_PROBE_URLS,
+    "go": _GO_PROXY_PROBE_URLS,
+    "maven": _MAVEN_MIRRORS,
+    "npm": _NPM_PROBE_URLS,
+}
+
+# ``mirror --service ... --apply`` 时按服务应用最快镜像的配置入口。
+_MIRROR_SERVICE_APPLY: dict[str, Callable[[str], None]]
 
 
 # ============================================================================
@@ -291,9 +357,9 @@ def setup_python_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju；``auto`` 时探测
-        pip 服务各候选镜像（pypi 地址）并选用最快的可达镜像，全部不可达
-        回退 aliyun（默认 ``auto``）
+        镜像源名称：tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju/nju/sjtu/pku/cernet；
+        ``auto`` 时探测 pip 服务各候选镜像（pypi 地址）并选用最快的可达镜像，
+        全部不可达回退 aliyun（默认 ``auto``）
     """
     mirror = resolve_mirror("pip", mirror, _PIP_INDEX_URLS, _SERVICE_DEFAULT_MIRRORS["pip"])
     if not mirror_supported(mirror, _PIP_INDEX_URLS):
@@ -327,9 +393,9 @@ def setup_conda_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/bfsu/aliyun/huaweicloud；``auto`` 时探测 Conda 服务
-        各候选镜像（anaconda 频道地址，与 pypi 地址不同）并选用最快的可达
-        镜像，全部不可达回退 aliyun（默认 ``auto``）
+        镜像源名称：tsinghua/ustc/bfsu/aliyun/huaweicloud/zju/nju/sjtu；``auto`` 时探测
+        Conda 服务各候选镜像（anaconda 频道地址，与 pypi 地址不同）并选用最快的
+        可达镜像，全部不可达回退 aliyun（默认 ``auto``）
     """
     mirror = resolve_mirror("conda", mirror, _CONDA_PROBE_URLS, _SERVICE_DEFAULT_MIRRORS["conda"])
     if not mirror_supported(mirror, _CONDA_MIRROR_URLS):
@@ -361,8 +427,8 @@ def setup_python_env(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju，
-        Conda 支持 tsinghua/ustc/bfsu/aliyun/huaweicloud；``auto`` 按服务独立自动选优
+        镜像源名称：pip 支持 tsinghua/aliyun/huaweicloud/tencent/ustc/bfsu/zju/nju/sjtu/pku/cernet，
+        Conda 支持 tsinghua/ustc/bfsu/aliyun/huaweicloud/zju/nju/sjtu；``auto`` 按服务独立自动选优
         （默认 ``auto``）
     """
     setup_python_mirror(mirror)
@@ -380,7 +446,7 @@ def _setup_rustup_mirror(mirror: str) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu（已由调用方解析，不含 ``auto``）
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu/sjtu（已由调用方解析，不含 ``auto``）
     """
     if not mirror_supported(mirror, _RUSTUP_MIRRORS):
         print(f"未知 Rust 镜像源: {mirror}")
@@ -409,7 +475,7 @@ def _setup_cargo_mirror(mirror: str) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu（已由调用方解析，不含 ``auto``）
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu/sjtu（已由调用方解析，不含 ``auto``）
     """
     if not mirror_supported(mirror, _RUSTUP_MIRRORS):
         print(f"未知 Rust 镜像源: {mirror}")
@@ -440,7 +506,7 @@ def _setup_rust_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu；``auto`` 时 rustup 与 cargo 分别
+        镜像源名称：tsinghua/ustc/aliyun/huaweicloud/bfsu/sjtu；``auto`` 时 rustup 与 cargo 分别
         独立探测选优（rustup 分发地址与 crates.io 索引地址不同，各站可达性
         可能不一致，选优结果可能不同），全部不可达各自回退 aliyun
         （默认 ``auto``）
@@ -539,16 +605,29 @@ def setup_rust_env(mirror: str = "auto", rust_version: str = "stable") -> None:
 
 
 @fcmd.tool("envdev", subcommand="setup-bun", help="配置 Bun 镜像源", hidden=True)
-def _setup_bun_mirror() -> None:
+def _setup_bun_mirror(mirror: str = "auto") -> None:
     """配置 Bun npm 镜像源（持久化环境变量 + 写入 ``~/.bunfig.toml``）。
 
     通过 :func:`persist_env` 持久化 ``BUN_CONFIG_REGISTRY`` 环境变量，
-    并写入 bunfig.toml 指向 npmmirror。
+    并写入 bunfig.toml 指向所选 npm 镜像源。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：npmmirror/tencent/huaweicloud；``auto`` 时探测 npm 服务各候选
+        镜像（``/-/ping``）并选用最快的可达镜像，全部不可达回退 npmmirror
+        （默认 ``auto``）
     """
+    mirror = resolve_mirror("npm", mirror, _NPM_PROBE_URLS, _NPM_DEFAULT)
+    if not mirror_supported(mirror, _NPM_REGISTRY_MIRRORS):
+        print(f"未知 npm 镜像源: {mirror}")
+        return
+
+    registry = _NPM_REGISTRY_MIRRORS[mirror]
     spec = MirrorSpec(
-        env_vars={"BUN_CONFIG_REGISTRY": _BUN_NPM_REGISTRY},
+        env_vars={"BUN_CONFIG_REGISTRY": registry},
         config_path=Path.home() / ".bunfig.toml",
-        config_content=f'[install]\nregistry = "{_BUN_NPM_REGISTRY}"\n',
+        config_content=f'[install]\nregistry = "{registry}"\n',
     )
     apply_mirror_config(spec, persist_fn=persist_env, label="Bun")
 
@@ -578,13 +657,19 @@ def _install_bun() -> None:
     print("Bun.js 安装完成")
 
 
-def setup_js_env() -> None:
+def setup_js_env(mirror: str = "auto") -> None:
     """一键配置 JavaScript 开发环境（Bun npm 镜像源 + 安装 Bun.js）。
 
     依次执行：配置 Bun npm 镜像源（环境变量 + ``~/.bunfig.toml``）、
     安装 Bun.js（已安装时跳过）。
+
+    Parameters
+    ----------
+    mirror:
+        镜像源名称：npmmirror/tencent/huaweicloud；``auto`` 按 npm 服务自动选优
+        （默认 ``auto``）
     """
-    _setup_bun_mirror()
+    _setup_bun_mirror(mirror)
     _install_bun()
     persist_env("PLAYWRIGHT_DOWNLOAD_HOST", _PLAYWRIGHT_DOWNLOAD_HOST)
 
@@ -901,27 +986,100 @@ def fetch_mirrorz_sites(timeout: float = 5.0) -> dict[str, str] | None:
     return sites
 
 
-@fcmd.tool("envdev", subcommand="mirror", help="探测教育网镜像站点（可访问性 + 访问速度排名）")
-def check_cernet_mirrors(timeout: float = 3.0, source: Literal["auto", "builtin"] = "auto") -> int:
-    """并发探测教育网镜像站点列表（只读，不做任何配置变更）。
+_MIRROR_SERVICE_APPLY = {
+    "pip": setup_python_mirror,
+    "conda": setup_conda_mirror,
+    "rustup": _setup_rustup_mirror,
+    "cargo": _setup_cargo_mirror,
+    "go": _setup_go_mirror,
+    "maven": _setup_maven_mirror,
+    "npm": _setup_npm_mirror,
+}
 
-    站点列表默认（``auto``）从 MirrorZ（``mirrors.cernet.edu.cn``，CERNET
-    教育网联合镜像站门户）动态拉取；拉取失败或显式指定 ``builtin`` 时使用
-    内置列表（取自 ``help.mirrors.cernet.edu.cn`` 收录站点）。输出按访问
-    速度排序的探测结果，供选择镜像源参考。
+
+def _probe_service_mirrors(service: str, timeout: float, apply: bool) -> int:
+    """探测单个服务的全部候选镜像，按速度推荐最快项（可选应用配置）。
 
     Parameters
     ----------
+    service:
+        服务名（``pip`` / ``conda`` / ``rustup`` / ``cargo`` / ``go`` / ``maven`` / ``npm``）
     timeout:
-        单个站点的探测超时秒数（默认 ``3``）
-    source:
-        站点列表来源：``auto`` 动态拉取（失败回退内置） / ``builtin`` 内置列表
+        单个候选镜像的探测超时秒数
+    apply:
+        是否把推荐镜像立即写入对应服务配置
 
     Returns
     -------
     int
-        存在可达站点返回 ``0``，全部不可达返回 ``1``。
+        存在可达镜像返回 ``0``，全部不可达返回 ``1``。
     """
+    candidates = _MIRROR_SERVICE_CANDIDATES[service]
+    name_by_url = {url: name for name, url in candidates.items()}
+    results = check_urls(list(candidates.values()), timeout=timeout)
+
+    print(f"[{service} 镜像测速]（共 {len(results)} 个候选，按访问速度排序）")
+    reachable = 0
+    selected: str | None = None
+    for index, (url, ok, latency) in enumerate(results, start=1):
+        if ok:
+            reachable += 1
+        name = name_by_url[url]
+        speed = f"{latency:.0f} ms" if ok else "-"
+        print(f"  {index}. {name:<12} {url}  {'可访问' if ok else '不可访问'}  {speed}")
+        if ok and selected is None:
+            selected = name
+
+    if selected is None:
+        print(f"\n{service} 镜像全部不可达，请检查网络")
+        return 1
+
+    print(f"\n推荐 {service} 镜像: {selected}")
+    if apply:
+        _MIRROR_SERVICE_APPLY[service](selected)
+        print(f"已应用 {service} 镜像: {selected}")
+    return 0
+
+
+@fcmd.tool("envdev", subcommand="mirror", help="镜像站点探测 / 指定服务镜像测速与自动选取")
+def check_cernet_mirrors(
+    timeout: float = 3.0,
+    source: Literal["auto", "builtin"] = "auto",
+    service: Literal["", "pip", "conda", "rustup", "cargo", "go", "maven", "npm"] = "",
+    apply: bool = False,
+) -> int:
+    """并发探测教育网镜像站点，或对指定服务做镜像测速与自动选优。
+
+    默认行为（``service`` 为空）探测教育网镜像站点列表（只读，不做任何
+    配置变更）。站点列表默认（``auto``）从 MirrorZ（``mirrors.cernet.edu.cn``，
+    CERNET 教育网联合镜像站门户）动态拉取；拉取失败或显式指定 ``builtin``
+    时使用内置列表（取自 ``help.mirrors.cernet.edu.cn`` 收录站点）。输出按
+    访问速度排序的探测结果，供选择镜像源参考。
+
+    指定 ``service`` 时改为探测该服务自身的候选镜像地址（如 pip 的 pypi
+    索引、conda 的 anaconda 频道、npm 的 ``/-/ping``），按速度输出排名并
+    推荐最快可达镜像；``apply=True`` 时立即把推荐镜像写入该服务配置。
+
+    Parameters
+    ----------
+    timeout:
+        单个站点/镜像的探测超时秒数（默认 ``3``）
+    source:
+        站点列表来源：``auto`` 动态拉取（失败回退内置） / ``builtin`` 内置列表
+    service:
+        指定服务名做镜像测速：``pip`` / ``conda`` / ``rustup`` / ``cargo`` /
+        ``go`` / ``maven`` / ``npm``；空串表示探测教育网镜像站点
+    apply:
+        是否把测速推荐的最快镜像立即应用到对应服务（默认 ``False`` 只读）
+
+    Returns
+    -------
+    int
+        存在可达站点/镜像返回 ``0``，全部不可达返回 ``1``。
+    """
+    if service:
+        return _probe_service_mirrors(service, timeout, apply)
+
     dynamic = False
     if source == "auto":
         fetched = fetch_mirrorz_sites(timeout)
@@ -979,7 +1137,7 @@ def setup_lang_env(  # noqa: PLR0913, PLR0917  CLI 参数需全量透传给各�
     - ``java``：Maven 镜像源（可选安装 SDKMAN）
     - ``node``：npm/yarn/pnpm 镜像源（可选安装 nvm）
 
-    镜像源默认 ``auto``：各服务（pip/conda/rustup/cargo/go/maven）在配置前
+    镜像源默认 ``auto``：各服务（pip/conda/rustup/cargo/go/maven/npm）在配置前
     独立探测自身支持镜像的可访问性与速度，分别选用最快的可达镜像；全部
     不可达时回退该服务默认镜像。注意各服务的镜像地址与支持列表互不相同，
     选优结果可能不同（如 pip 选中 tsinghua 而 conda 选中 ustc）。
@@ -1005,7 +1163,7 @@ def setup_lang_env(  # noqa: PLR0913, PLR0917  CLI 参数需全量透传给各�
     if language == "python":
         setup_python_env(mirror)
     elif language == "js":
-        setup_js_env()
+        setup_js_env(mirror)
     elif language == "rust":
         setup_rust_env(mirror, rust_version)
     elif language == "go":
@@ -1013,7 +1171,7 @@ def setup_lang_env(  # noqa: PLR0913, PLR0917  CLI 参数需全量透传给各�
     elif language == "java":
         setup_java_env(mirror, install_sdkman)
     else:
-        setup_node_env(install_nvm)
+        setup_node_env(mirror, install_nvm)
 
 
 @fcmd.tool(
@@ -1074,11 +1232,11 @@ def setup_all_env(mirror: str = "auto", rust_version: str = "stable") -> None:
         Rust 版本：``stable`` / ``nightly`` / ``beta``（默认 ``stable``）
     """
     setup_python_env(mirror)
-    setup_js_env()
+    setup_js_env(mirror)
     setup_rust_env(mirror, rust_version)
-    setup_go_env()
+    setup_go_env(mirror)
     setup_java_env(mirror)
-    setup_node_env()
+    setup_node_env(mirror)
     setup_linux_system_mirror()
     install_linux_qt_libs()
     install_linux_fonts()

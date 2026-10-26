@@ -1,7 +1,7 @@
 """envdev_java - Java 开发环境配置（Maven 镜像 + JDK）。
 
 配置 Maven settings.xml 镜像仓库，并可选安装 SDKMAN（用于管理 JDK 版本）。
-国内主流 Maven 镜像：阿里云、华为云、腾讯云、中科大。
+国内主流 Maven 镜像：阿里云、华为云、腾讯云、中科大、教育网联合镜像。
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ _MAVEN_MIRRORS: dict[str, str] = {
     "huaweicloud": "https://repo.huaweicloud.com/repository/maven",
     "tencent": "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/",
     "ustc": "https://mirrors.ustc.edu.cn/apache/maven/repository/public",
+    "cernet": "https://mirrors.cernet.edu.cn/maven/",
 }
 
 _MAVEN_SETTINGS_PATH: Path = Path.home() / ".m2" / "settings.xml"
@@ -55,7 +56,7 @@ def _setup_maven_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：aliyun / huaweicloud / tencent / ustc；``auto`` 时探测 Maven
+        镜像源名称：aliyun / huaweicloud / tencent / ustc / cernet；``auto`` 时探测 Maven
         服务各候选镜像并选用最快的可达镜像，全部不可达回退 aliyun
         （默认 ``auto``）
     """
@@ -111,7 +112,7 @@ def setup_java_env(mirror: str = "auto", install_sdkman: bool = False) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：aliyun / huaweicloud / tencent / ustc；``auto`` 按服务自动选优
+        镜像源名称：aliyun / huaweicloud / tencent / ustc / cernet；``auto`` 按服务自动选优
         （默认 ``auto``）
     install_sdkman:
         是否同时安装 SDKMAN（默认 False）

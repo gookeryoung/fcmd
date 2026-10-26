@@ -1,7 +1,7 @@
 """envdev_go - Go 开发环境配置（镜像源 + 工具链）。
 
 配置 GOPROXY 镜像并可选安装 gvm（Go Version Manager）。
-国内主流镜像：goproxy.cn、aliyun、ustc、huaweicloud、tencent、goproxy.io。
+国内主流镜像：goproxy.cn、aliyun、huaweicloud、tencent、goproxy.io、百度、阿里云公共代理。
 """
 
 from __future__ import annotations
@@ -20,14 +20,18 @@ __all__ = ["setup_go_env"]
 _GO_PROXY_MIRRORS: dict[str, str] = {
     "goproxy": "https://goproxy.cn,direct",
     "aliyun": "https://mirrors.aliyun.com/goproxy/,direct",
-    "ustc": "https://mirrors.ustc.edu.cn/goproxy/,direct",
-    "huaweicloud": "https://mirrors.huaweicloud.com/goproxy/,direct",
-    "tencent": "https://mirrors.cloud.tencent.com/goproxy/,direct",
+    "huaweicloud": "https://mirrors.huaweicloud.com/repository/goproxy/,direct",
+    "tencent": "https://mirrors.cloud.tencent.com/go/,direct",
     "goproxy_io": "https://goproxy.io,direct",
+    "bcebos": "https://goproxy.bj.bcebos.com,direct",
+    "aliyun_public": "https://proxy.golang.com.cn,direct",
 }
 
-# GOPROXY 探测地址（去除 ",direct" 回退后缀，仅探测镜像服务本身）
-_GO_PROXY_PROBE_URLS: dict[str, str] = {name: url.split(",", 1)[0] for name, url in _GO_PROXY_MIRRORS.items()}
+# GOPROXY 探测地址：以真实模块版本列表路径探测。
+# Go 代理根路径普遍返回 404，仅探测根会被误判为不可达。
+_GO_PROXY_PROBE_URLS: dict[str, str] = {
+    name: f"{url.split(',', 1)[0].rstrip('/')}/github.com/pkg/errors/@v/list" for name, url in _GO_PROXY_MIRRORS.items()
+}
 
 _GOPATH_DEFAULT: str = str(Path.home() / "go")
 
@@ -54,9 +58,9 @@ def _setup_go_mirror(mirror: str = "auto") -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：goproxy / aliyun / ustc / huaweicloud / tencent / goproxy_io；``auto`` 时探测
-        GOPROXY 服务各候选镜像并选用最快的可达镜像，全部不可达回退 goproxy
-        （默认 ``auto``）
+        镜像源名称：goproxy / aliyun / huaweicloud / tencent / goproxy_io / bcebos /
+        aliyun_public；``auto`` 时探测 GOPROXY 服务各候选镜像并选用最快的可达镜像，
+        全部不可达回退 goproxy（默认 ``auto``）
     """
     mirror = resolve_mirror("go", mirror, _GO_PROXY_PROBE_URLS, "goproxy")
     if not mirror_supported(mirror, _GO_PROXY_MIRRORS):
@@ -123,8 +127,8 @@ def setup_go_env(mirror: str = "auto", install_gvm: bool = False) -> None:
     Parameters
     ----------
     mirror:
-        镜像源名称：goproxy / aliyun / ustc / huaweicloud / tencent / goproxy_io；``auto`` 按服务
-        自动选优（默认 ``auto``）
+        镜像源名称：goproxy / aliyun / huaweicloud / tencent / goproxy_io / bcebos /
+        aliyun_public；``auto`` 按服务自动选优（默认 ``auto``）
     install_gvm:
         是否同时安装 gvm（默认 False）
     """
