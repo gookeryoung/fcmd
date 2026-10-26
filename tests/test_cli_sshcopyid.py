@@ -310,6 +310,190 @@ class TestSshcopyidWinBranch:
 
 
 # ---------------------------------------------------------------------- #
+# OpenSSH vs plink 兼容：resolve_windows_openssh + build_tool_spec 路径替换
+# ---------------------------------------------------------------------- #
+class TestWindowsOpenSshResolution:
+    """resolve_windows_openssh 检测逻辑 + build_tool_spec 对 win32 的 ssh 路径替换。
+
+    背景：Windows 用户 PATH 中 ``plink.exe``（PuTTY）常排在 OpenSSH
+    ``ssh.exe`` 前面，导致 ``ssh -p ... -o ...`` 被 plink 执行。plink
+    不识别 ``-p``（用 ``-P`` 大写）、``-o StrictHostKeyChecking=no`` 等
+    OpenSSH 参数。修复方案：在 synth 层检测真正的 OpenSSH 路径并替换
+    shell 命令模板中的裸 ``ssh``。
+    """
+
+    def _reset_cache(self) -> None:
+        """清除 resolve_windows_openssh 的 lru_cache（测试隔离必需）。"""
+        from fcmd.dsl.synth import resolve_windows_openssh
+
+        resolve_windows_openssh.cache_clear()
+
+    # --- resolve_windows_openssh ---
+
+    def test_non_win32_platform_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 win32 平台直接返回 None，不做任何检测（Linux/macOS 不涉及 PATH plink 劫持）。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "linux")
+        from fcmd.dsl.synth import resolve_windows_openssh
+
+        assert resolve_windows_openssh() is None
+
+    def test_system32_openssh_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Windows 标准安装路径 ``System32\\OpenSSH\\ssh.exe`` 存在时直接返回。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        monkeypatch.setattr(Path, "is_file", lambda _self: True)
+
+        # ssh -V 版本检测也需要返回 OpenSSH（标准路径命中后仍需通过版本校验）
+        import subprocess as _sp
+
+        monkeypatch.setattr(
+            "fcmd.dsl.synth.subprocess.run",
+            lambda cmd, **kw: _sp.CompletedProcess(
+                cmd, 0, stdout="", stderr="OpenSSH_for_Windows_8.1p1 LibreSSL, 24 Jan 2022\n"
+            ),
+        )
+
+        from fcmd.dsl.synth import resolve_windows_openssh
+
+        result = resolve_windows_openssh()
+        # Linux 上 PosixPath 把 C:\... 路径解析时反斜杠转义丢失，
+        # 只需断言返回值含 OpenSSH\ssh.exe（核心语义）
+        assert result is not None
+        assert "OpenSSH" in result
+        assert result.lower().endswith("ssh.exe")
+
+    def test_plink_in_path_skipped_openssh_returned(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """PATH 中 plink.exe 先被命中但 ssh -V 显示 PuTTY 版本 → 跳过，
+        继续找 PATH 中的真正 OpenSSH。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        # 标准 System32 路径不存在，强制走 where ssh 分支
+        monkeypatch.setattr(Path, "is_file", lambda _self: False)
+
+        plink_path = r"C:\PuTTY\plink.exe"
+        openssh_path = r"C:\Tools\OpenSSH\ssh.exe"
+
+        def fake_subprocess_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            import subprocess as _sp
+
+            if cmd and cmd[0] == "where":
+                # where ssh 返回 PATH 中按顺序的 .exe：plink 优先
+                return _sp.CompletedProcess(cmd, 0, stdout=f"{plink_path}\n{openssh_path}\n", stderr="")
+            # ssh -V：plink 输出 PuTTY 版本，openssh 输出 OpenSSH 版本
+            if cmd and str(cmd[0]) == plink_path:
+                return _sp.CompletedProcess(
+                    cmd, 0, stdout="", stderr="plink: PuTTY-Open Source SSH client, version 0.78\n"
+                )
+            if cmd and str(cmd[0]) == openssh_path:
+                return _sp.CompletedProcess(
+                    cmd, 0, stdout="", stderr="OpenSSH_for_Windows_8.1p1 LibreSSL, 24 Jan 2022\n"
+                )
+
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr("fcmd.dsl.synth.subprocess.run", fake_subprocess_run)
+        monkeypatch.setattr(Path, "is_file", lambda _self: True)
+
+        from fcmd.dsl.synth import resolve_windows_openssh
+
+        result = resolve_windows_openssh()
+        assert result == openssh_path
+
+    def test_no_openssh_anywhere_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """全环境找不到 OpenSSH → 返回 None（裸 ssh 可能仍被 plink 劫持，属用户环境问题）。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(Path, "is_file", lambda _self: False)
+
+        def fake_subprocess_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            import subprocess as _sp
+
+            # where ssh 找不到（无 .exe）
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr("fcmd.dsl.synth.subprocess.run", fake_subprocess_run)
+
+        from fcmd.dsl.synth import resolve_windows_openssh
+
+        assert resolve_windows_openssh() is None
+
+    # --- build_tool_spec 路径替换 ---
+
+    def test_win32_build_spec_replaces_bare_ssh(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """win32 平台 build_tool_spec 发现 OpenSSH 后，把 cmd 开头裸 ``ssh`` 替换
+        为完整路径——plink 劫持场景下命令实际调用真正的 OpenSSH。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        fake_openssh = r"C:\Windows\System32\OpenSSH\ssh.exe"
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: fake_openssh)
+
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="win32")
+
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str)
+        assert spec.cmd.startswith(fake_openssh + " ")
+        assert " -p {port} " in spec.cmd  # 模板占位符保留，后续 OpenSSH 参数完整
+        assert "StrictHostKeyChecking" in spec.cmd
+
+    def test_linux_build_spec_no_replacement(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 win32 平台不做 ssh 路径替换，unix_cmd 保持原样。"""
+        monkeypatch.setattr(sys, "platform", "linux")
+        # resolve_windows_openssh 在非 win32 返回 None，不应触发替换
+
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="linux")
+
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str)
+        assert spec.cmd.startswith("sshpass -e ssh ")  # unix 分支 sshpass 前缀完整保留
+
+    def test_win32_no_openssh_fallback_bare_ssh(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """win32 平台但 resolve_windows_openssh 返回 None 时，回退裸 ssh（
+        用户环境未装 OpenSSH，可能被 plink 劫持，属用户需自行处理的边缘场景）。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_openssh", lambda: None)
+
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="win32")
+
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str)
+        assert spec.cmd.startswith("ssh -p")  # 回退裸 ssh，不替换
+
+    def test_lru_cache_prevents_repeated_detection(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """resolve_windows_openssh 的 lru_cache 生效：首次调用做检测，后续
+        直接返回缓存值（同一进程内 ssh 路径不会变化）。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        calls: list[tuple[Any, Any]] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            calls.append((cmd, kwargs))
+            import subprocess as _sp
+
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+        monkeypatch.setattr("fcmd.dsl.synth.subprocess.run", fake_run)
+        monkeypatch.setattr(Path, "is_file", lambda _self: False)
+
+        from fcmd.dsl.synth import resolve_windows_openssh
+
+        first = resolve_windows_openssh()
+        second = resolve_windows_openssh()
+
+        assert first == second is None
+        # 缓存命中 → 第二次直接返回，calls 里只有第一次 where ssh 调用
+        assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------- #
 # 内部：强制刷新注册表中某工具的 ToolSpec（换平台时重建）
 # ---------------------------------------------------------------------- #
 def _update_registry_for_platform(tool_name: str, platform: str) -> None:
