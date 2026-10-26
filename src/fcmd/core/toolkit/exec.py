@@ -125,12 +125,15 @@ def _value_to_cmd_str(value: Any) -> str:
     """将 CLI 解析值转换为 cmd 模板插值字符串。
 
     list → 空格连接（shell 友好）；bool → 小写 true/false；
-    Path / 其他 → ``str()``。
+    Path → 展开 ``~``（shell 重定向/命令中的引号内 ``~`` 不会被展开，
+    Windows cmd.exe 根本不识别 ``~``）；其他 → ``str()``。
     """
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (list, tuple)):
         return " ".join(str(item) for item in value)
+    if isinstance(value, Path):
+        return str(value.expanduser())
     return str(value)
 
 

@@ -195,6 +195,30 @@ class TestSshcopyidRun:
 
         assert "SSH 密钥已部署到 user@host:22" in capsys.readouterr().out
 
+    def test_tilde_keypath_expanded(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """默认 ``~`` keypath 在插值前展开为绝对路径。
+
+        引号内的 ``~`` 不会被 shell 展开，Windows cmd.exe 也不识别 ``~``——
+        未展开会直接报 "系统找不到指定的路径"。
+        """
+        home = tmp_path / "home"
+        key_file = home / ".ssh" / "id_rsa.pub"
+        key_file.parent.mkdir(parents=True)
+        key_file.write_text("ssh-rsa AAAAB3NzaC1yc2E test@example.com\n", encoding="utf-8")
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))  # Windows expanduser 回退
+
+        captured: list[tuple[Any, dict[str, Any]]] = []
+        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", _fake_run_factory(captured))
+        assert run_tool("sshcopyid", ["host", "user", "pass"]) == 0
+
+        cmd = captured[0][0]
+        assert '< "~' not in cmd  # 本地公钥路径已展开（远端 ~/.ssh 不受影响）
+        assert '< "' + str(key_file) + '"' in cmd
+        assert "SSH 密钥已部署到 user@host:22" in capsys.readouterr().out
+
     def test_custom_port_and_timeout(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -47,7 +47,8 @@ help = "SSH 端口（默认 22）"
 default = 22
 
 [commands.sshcopyid.args.keypath]
-help = "公钥文件路径（默认 ~/.ssh/id_rsa.pub）"
+type = "path"
+help = "公钥文件路径（默认 ~/.ssh/id_rsa.pub，插入命令前展开为绝对路径）"
 default = "~/.ssh/id_rsa.pub"
 
 [commands.sshcopyid.args.timeout]
