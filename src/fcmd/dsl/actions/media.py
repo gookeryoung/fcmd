@@ -353,7 +353,7 @@ def image_resize(
         img.close()
 
 
-def image_crop(  # noqa: PLR0913
+def image_crop(  # noqa: PLR0913, PLR0917
     input_path: Path,
     output_path: Path,
     left: int,
@@ -431,7 +431,7 @@ def image_convert(
         img.close()
 
 
-def image_watermark(  # noqa: PLR0913
+def image_watermark(  # noqa: PLR0913, PLR0917
     input_path: Path,
     output_path: Path,
     text: str,
@@ -639,7 +639,7 @@ def imagetool_r(
         "bottom": "裁剪矩形下边界",
     },
 )
-def imagetool_c(  # noqa: PLR0913
+def imagetool_c(  # noqa: PLR0913, PLR0917
     input_path: Path,
     output_path: Path,
     left: int,
@@ -717,7 +717,7 @@ def imagetool_cv(
         "font_size": "字体大小（默认 32）",
     },
 )
-def imagetool_wm(  # noqa: PLR0913
+def imagetool_wm(  # noqa: PLR0913, PLR0917
     input_path: Path,
     output_path: Path,
     text: str,

@@ -960,7 +960,7 @@ def check_cernet_mirrors(timeout: float = 3.0, source: Literal["auto", "builtin"
 
 
 @fcmd.tool("envdev", subcommand="lang", help="语言类一键配置（python/js/rust/go/java/node）")
-def setup_lang_env(  # noqa: PLR0913  CLI 参数需全量透传给各语言一键命令
+def setup_lang_env(  # noqa: PLR0913, PLR0917  CLI 参数需全量透传给各语言一键命令
     language: Literal["python", "js", "rust", "go", "java", "node"],
     mirror: str = "auto",
     rust_version: str = "stable",

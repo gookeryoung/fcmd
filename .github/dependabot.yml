@@ -21,14 +21,3 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci
-  # 前端依赖：Dependabot 的 npm 生态同时支持 pnpm-lock.yaml
-  - package-ecosystem: npm
-    directory: /frontend
-    schedule:
-      interval: weekly
-    commit-message:
-      prefix: chore
-      include: scope
-    groups:
-      frontend-dependencies:
-        patterns: ["*"]

@@ -278,7 +278,7 @@ def run_ls_dyna_single(
 
 
 @fcmd.tool("lscalc", subcommand="mpi", help="运行 LS-DYNA MPI 并行计算")
-def run_ls_dyna_mpi(  # noqa: PLR0913
+def run_ls_dyna_mpi(  # noqa: PLR0913, PLR0917
     input_file: str,
     ncpu: int = _DEFAULT_NCPU,
     precision: Literal["sp", "dp"] = "sp",
