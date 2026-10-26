@@ -596,6 +596,8 @@ _PROBE_CHUNK_BYTES = 65536
 _PROBE_BENCHMARK_LIMIT = 6
 _PROBE_SCORE_MIN_BYTES = 4096
 _PROBE_MIRROR_UA = "fcmd-mirror-probe/0.3.10"
+# 镜像探测并发数低于 urlcheck：部分镜像站 WAF 会对同源突发请求返回 403。
+_PROBE_WORKERS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -690,7 +692,7 @@ def probe_score(probe: UrlProbe) -> float:
 def probe_mirrors(  # noqa: PLR0913, PLR0917
     urls: Sequence[str],
     timeout: float = _DEFAULT_CHECK_TIMEOUT,
-    workers: int = _DEFAULT_WORKERS,
+    workers: int = _PROBE_WORKERS,
     user_agent: str = _PROBE_MIRROR_UA,
     sample_bytes: int = _PROBE_SAMPLE_BYTES,
     allow_html: bool = False,
@@ -698,13 +700,22 @@ def probe_mirrors(  # noqa: PLR0913, PLR0917
     """两阶段镜像测速：并发筛选可达性，再顺序实测下载吞吐。
 
     阶段一并发读取 ``_PROBE_QUICK_BYTES`` 字节，快速筛掉不可达 / 被限速的
-    地址并获取首字节延迟；阶段二对延迟最低的若干候选顺序读取更大样本，
-    避免并发抢带宽导致吞吐失真，最终按 :func:`probe_score` 降序返回。
+    地址并获取首字节延迟；失败项会并发重试一次，以排除偶发超时与 WAF 对
+    突发请求的误伤；阶段二对延迟最低的若干候选顺序读取更大样本，避免并发
+    抢带宽导致吞吐失真，最终按 :func:`probe_score` 降序返回。
     """
     if not urls:
         return []
     with ThreadPoolExecutor(max_workers=min(workers, len(urls))) as pool:
         quick = list(pool.map(lambda u: _probe_download(u, timeout, user_agent, _PROBE_QUICK_BYTES, allow_html), urls))
+
+    failed_urls = [p.url for p in quick if not p.ok]
+    if failed_urls:
+        with ThreadPoolExecutor(max_workers=min(workers, len(failed_urls))) as pool:
+            retried = list(
+                pool.map(lambda u: _probe_download(u, timeout, user_agent, _PROBE_QUICK_BYTES, allow_html), failed_urls)
+            )
+        quick = [next((r for r in retried if r.url == p.url and r.ok), p) for p in quick]
 
     reachable = sorted((p for p in quick if p.ok), key=lambda p: p.latency_ms)
     benchmarked: dict[str, UrlProbe] = {}

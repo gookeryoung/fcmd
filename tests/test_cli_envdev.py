@@ -1455,6 +1455,29 @@ class TestExpandedMirrors:
         assert os.environ["YARN_REGISTRY"] == registry
         assert os.environ["PNPM_REGISTRY"] == registry
 
+    def test_setup_npm_mirror_uses_resolved_executable(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Windows 的 npm.cmd 须以 which 解析出的完整路径执行，避免裸名找不到命令。"""
+        monkeypatch.setattr(
+            "fcmd.tools.dev.envdev_node.shutil.which",
+            {"npm": "C:/node/npm.cmd"}.get,
+        )
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.persist_env", lambda n, v: None)
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.run_command", lambda cmd: calls.append(list(cmd)))
+
+        fcmd.tools.dev.envdev_node._setup_npm_mirror("npmmirror")
+        capsys.readouterr()
+        assert calls[0] == ["C:/node/npm.cmd", "config", "set", "registry", "https://registry.npmmirror.com"]
+        assert calls[1] == [
+            "C:/node/npm.cmd",
+            "config",
+            "set",
+            "disturl",
+            "https://npmmirror.com/mirrors/node",
+        ]
+
     def test_setup_bun_mirror_huaweicloud(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

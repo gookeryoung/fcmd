@@ -111,7 +111,7 @@ _MIRROR_USER_AGENTS: dict[str, str] = {
 _MIRROR_DEFAULT_UA = "fcmd-mirror-probe/0.3.10"
 
 
-def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float = 2.0) -> str | None:
+def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float = 5.0) -> str | None:
     """并发探测单个服务支持的全部候选镜像，按实测下载速度自动选优。
 
     两阶段测速：先并发筛选可达性（区分限速/封禁），再对候选顺序实测
@@ -130,7 +130,8 @@ def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float 
         频道、rustup 与 crates.io 索引）的服务地址互不相同，须传入各自
         服务的真实地址探测。
     timeout:
-        单个镜像的探测超时秒数（默认 ``2``）
+        单个镜像的单次探测超时秒数（默认 ``5``，失败项会自动重试一次）。
+        超时过短会把「响应稍慢但可用」的高校镜像误判为不可达。
 
     Returns
     -------

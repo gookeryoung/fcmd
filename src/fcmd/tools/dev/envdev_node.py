@@ -73,17 +73,25 @@ def _setup_npm_mirror(mirror: str = "auto") -> None:
     )
     apply_mirror_config(spec, persist_fn=persist_env, label="npm")
 
-    # 工具链级 config set
-    if shutil.which("npm") is not None:
-        run_command(["npm", "config", "set", "registry", registry])
+    # 工具链级 config set。
+    # Windows 上 npm/yarn/pnpm 多为 .cmd 包装脚本，直接传裸命令名会触发
+    # FileNotFoundError（CreateProcess 不会补全 PATHEXT），须先用 which 解析出
+    # 完整路径再执行，否则 envdev all 会在 npm 步骤中断。
+    npm = shutil.which("npm")
+    if npm is not None:
+        run_command([npm, "config", "set", "registry", registry])
         if mirror == "npmmirror":
-            run_command(["npm", "config", "set", "disturl", "https://npmmirror.com/mirrors/node"])
+            run_command([npm, "config", "set", "disturl", "https://npmmirror.com/mirrors/node"])
+    else:
+        print("npm 未安装，仅写入镜像环境变量（安装 Node.js 后生效）")
 
-    if shutil.which("yarn") is not None:
-        run_command(["yarn", "config", "set", "registry", registry])
+    yarn = shutil.which("yarn")
+    if yarn is not None:
+        run_command([yarn, "config", "set", "registry", registry])
 
-    if shutil.which("pnpm") is not None:
-        run_command(["pnpm", "config", "set", "registry", registry])
+    pnpm = shutil.which("pnpm")
+    if pnpm is not None:
+        run_command([pnpm, "config", "set", "registry", registry])
 
 
 # ============================================================================

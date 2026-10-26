@@ -343,6 +343,25 @@ class TestProbeMirrors:
         assert "https://a/dead" not in benchmarked
         assert set(benchmarked) == {"https://b/slow-latency", "https://c/normal"}
 
+    def test_probe_mirrors_retries_transient_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """阶段一失败项重试一次，偶发超时不应把可用镜像判死。"""
+        from fcmd.dsl.actions.net import UrlProbe, probe_mirrors
+
+        calls: list[str] = []
+
+        def fake_probe(
+            url: str, timeout: float, user_agent: str, sample_bytes: int, allow_html: bool = False
+        ) -> UrlProbe:
+            calls.append(url)
+            if calls.count(url) == 1:
+                return UrlProbe(url, False, 0.0, 0.0, 0, "超时/网络错误")
+            return UrlProbe(url, True, 30.0, 1000.0 if sample_bytes > 2048 else 0.0, sample_bytes)
+
+        monkeypatch.setattr("fcmd.dsl.actions.net._probe_download", fake_probe)
+        results = probe_mirrors(["https://flaky.example"])
+        assert results[0].ok is True
+        assert calls.count("https://flaky.example") == 3  # 阶段一失败 + 重试 + 阶段二测吞吐
+
     def test_probe_mirrors_empty(self) -> None:
         """空输入返回空列表。"""
         from fcmd.dsl.actions.net import probe_mirrors
