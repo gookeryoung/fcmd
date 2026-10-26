@@ -22,7 +22,7 @@ from typing import Any
 
 from fcmd._lazyload import lazy_dir, lazy_getattr
 
-__version__ = "0.4.0"
+__version__ = "0.3.8"
 
 __all__ = [
     "Context",
