@@ -1,6 +1,5 @@
 [run]
 branch = true
-concurrency = thread
 omit = tests/*
 source = fcmd
 

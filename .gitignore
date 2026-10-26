@@ -1,6 +1,6 @@
 # Python-generated files
 __pycache__/
-*.py[oc]
+*.py[ocd]
 build/
 dist/
 wheels/
@@ -17,21 +17,76 @@ coverage.xml
 .tox/
 
 # 工具缓存
-.ruff_cache/
-.pyrefly_cache/
+.eslintcache/
 .mypy_cache/
+.pnpm-store/
+.pytmp/
+.pytest_cache/
+.pyrefly_cache/
+.ruff_cache/
 .uv-cache/
+.vitest-cache/
+
+# --- Node / frontend ---
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+frontend/.eslintcache
+frontend/package-lock.json
+*.tsbuildinfo
+package-lock.json
+
+# --- E2E（Playwright）---
+.e2e/
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e-report/
+reports/
+
+# --- Data & artifacts（绝不提交）---
+# 数据库为本地研究数据，体积可达数百 MB
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.parquet
+*.joblib
+*.pkl
+*.log
+logs/
 
 # IDE
 .idea/
 *_profile.html
 
-# 环境变量与凭证（勿提交）
+# 本地协作产物一律不入库
+.trae/*
+!.trae/rules/
+!.trae/skills/
+.claude/
+.workbuddy/
+
+# --- OS / editor ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.bak
+*backup-*.tar.gz
+pytest-of-*
+
+# --- 本地环境与凭证 ---
 .env
+.env.local
 .env.*
+# 示例配置必须入库（.env.* 会误伤它）
+!.env.example
+!deploy/.env.prod.example
 
-# IDE / 编辑器工作目录
-.trae/
-
-# filecheck 报告输出
-文件检查报告_*.txt
+# Sphinx 文档构建输出
+docs/_build/
+.preview

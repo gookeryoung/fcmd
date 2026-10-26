@@ -28,3 +28,8 @@
 *.dylib binary
 *.qrc binary
 *.qss binary
+*.joblib binary
+*.pkl binary
+*.parquet binary
+*.db binary
+*.sqlite binary

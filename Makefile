@@ -1,63 +1,80 @@
-# Makefile - fcmd 项目快捷命令
-# 运行 `make help` 查看所有可用命令
+# Makefile - fcmd project shortcuts
+# Run `make help` to list all available commands
 
 PACKAGE := fcmd
+COV_THRESHOLD := 95
+PYTEST_JOBS := 8  # pytest-xdist worker count; 8 by default on Windows to avoid handle exhaustion
 
-.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check tox pub bump patch minor major push e2e e2e-smoke
+# Override with: make push REMOTES="origin codeup"
+REMOTES = $(shell git remote)
 
-help: ## 显示帮助信息
+.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check check-docs check-fast flow gitkeep-check adr-check prek tox pub bump patch minor major push
+
+help: ## Show this help
 	@uv run python -c "import re,sys;ms=[(m.group(1),m.group(2).strip()) for f in sys.argv[1:] for l in open(f,encoding='utf-8') if (m:=re.match(r'^([a-zA-Z][\w -]*):.*?##\s*(.*)',l))];[print(f'  {n:<14} {d}') for n,d in ms]" $(MAKEFILE_LIST)
 
-sync: ## 安装开发依赖
+sync: ## Install development dependencies
 	uv sync --extra dev
 
-build b: ## 构建分发包 (wheel + sdist)
+build b: ## Build distribution packages (wheel + sdist)
 	uv build
 
-clean c: ## 清理构建产物与缓存
-	rm -rf build/ dist/ wheels/ *.egg-info htmlcov/ .coverage .coverage.* coverage.xml .tox/
+clean c: ## Remove build artifacts and caches
+	rm -rf build/ dist/ wheels/ *.egg-info htmlcov/ .coverage .coverage.* coverage.xml .pytest_cache/ .tox/
 	rm -rf .ruff_cache/ .pyrefly_cache/ .mypy_cache/
 	find src tests -type d -name __pycache__ -exec rm -rf {} +
 	find src tests -type f -name "*.py[oc]" -delete
 
-test: ## 运行测试（不含覆盖率）
-	uv run pytest -m "not slow"
+test: ## Run tests (no coverage)
+	uv run pytest -m "not slow" -n $(PYTEST_JOBS)
 
-cov: ## 运行测试并检查覆盖率（阈值取 .coveragerc fail_under）
-	uv run pytest -m "not slow" --cov=$(PACKAGE) -n auto
+cov: ## Run tests and generate an HTML coverage report
+	uv run pytest --cov --cov-report=term --cov-fail-under=$(COV_THRESHOLD) --cov-report=html -n $(PYTEST_JOBS)
+	@uv run python -c "print('Coverage report: htmlcov/index.html')"
 
-lint: ## 代码风格检查 (ruff)
+lint: ## Lint code style (ruff)
 	uv run ruff check .
 	uv run ruff format --check .
 
-typecheck: ## 类型检查 (pyrefly)
+typecheck: ## Type check (pyrefly)
 	uv run pyrefly check
 
-typecheck-ci: ## 类型检查 (pyrefly, CI 平台 linux — 捕获跨平台问题)
+typecheck-ci: ## Type check (pyrefly, CI platform linux - catch cross-platform issues)
 	uv run pyrefly check --python-platform linux
 
-check: lint typecheck typecheck-ci cov ## 运行全套门禁 (lint + typecheck + typecheck-ci + cov)
+gitkeep-check: ## 校验占位目录未被清空（空目录须有 .gitkeep）
+	@uv run python -c "import pathlib,sys;ds=[p for p in map(pathlib.Path,['docs/adr','docs/requirements','docs/_static']) if p.is_dir()];bad=[str(p) for p in ds if not any(p.iterdir())];[print('gitkeep-check: 空目录缺少 .gitkeep -> '+b) for b in bad];print('gitkeep-check: 通过') if not bad else None;sys.exit(1 if bad else 0)"
 
-tox: ## 多版本测试 (tox)
+adr-check: ## 校验 ADR 编号/命名与索引登记
+	@uv run python -c "import pathlib,re,sys;d=pathlib.Path('docs/adr');fs=[p for p in sorted(d.glob('*.md')) if p.name!='README.md'] if d.is_dir() else [];ns=[p.name for p in fs];idx=(d/'README.md').read_text(encoding='utf-8') if (d/'README.md').is_file() else '';dups=sorted({n[:4] for n in ns if sum(m[:4]==n[:4] for m in ns)>1});bad=[f'{n}: 文件名应为 NNNN-<topic>.md' for n in ns if not re.fullmatch(r'\d{4}-[\w-]+\.md',n)]+[f'编号 {x} 重复' for x in dups]+(['docs/adr/README.md 缺失'] if fs and not (d/'README.md').is_file() else [])+[f'{n}: 未登记到 docs/adr/README.md 索引' for n in ns if n not in idx];[print('adr-check: '+b) for b in bad];print(f'adr-check: 通过（{len(fs)} 个 ADR）') if not bad else None;sys.exit(1 if bad else 0)"
+
+check-docs: gitkeep-check adr-check ## L0 文档门禁（gitkeep-check + adr-check）
+check-fast: gitkeep-check adr-check lint typecheck ## L1 配置/内环门禁（gitkeep + adr + lint + typecheck）
+flow: check-fast test ## L2 代码门禁（check-fast + test）
+
+check: check-fast typecheck-ci cov ## 全量门禁（check-fast + typecheck-ci + cov）
+
+prek: ## Run pre-commit hooks on all files (prek)
+	uv run prek run -a
+
+
+tox: ## Run multi-version tests (tox)
 	uvx tox -p auto
 
 BUMP_PART := $(filter-out bump,$(MAKECMDGOALS))
 
-bump: ## 版本号 bump (默认 patch，用法: make bump [minor|major])
+bump: ## Bump version (default patch, usage: make bump [minor|major])
 	@uvx bump-my-version bump $(if $(BUMP_PART),$(firstword $(BUMP_PART)),patch) --tag
+	uv sync --extra dev
+	git add uv.lock
+	-git diff --cached --quiet || git commit -m "chore: sync uv.lock after version bump"
 
 patch minor major:
 	@:
 
-pub:  ## 推送到pypi
-	uvx twine upload ./dist/**
+pub:  ## Upload to PyPI
+	uvx twine upload dist/*.whl dist/*.tar.gz
 
-push: ## 推送代码到所有远程仓库
-	@uv run python -c "import subprocess as sp; [print(f'\u63a8\u9001 {r}...',flush=True) or (sp.run(['git','push',r],check=True) and sp.run(['git','push',r,'--tags'],check=True)) for r in sp.check_output(['git','remote'],text=True).split()]"
+push: ## Push code to all remotes (continues on failure, non-zero exit if any failed)
+	@uv run python -c "import subprocess as sp,sys; remotes='$(REMOTES)'.split(); failed=[]; [failed.append(r) for r in remotes if print(f'Pushing {r}...',flush=True) or sp.run(['git','push',r]).returncode or sp.run(['git','push',r,'--tags']).returncode]; print('Failed remotes: '+', '.join(failed) if failed else 'All remotes pushed.'); sys.exit(1 if failed else 0)"
 
-
-e2e-smoke: ## 快速 e2e 冒烟（仅 --help/入口，约 10s）
-	uv run pytest -m "e2e_smoke" -v
-
-e2e: ## 完整 e2e 测试（subprocess + tmp_path，约 30s）
-	uv run pytest -m "e2e or e2e_smoke" -v

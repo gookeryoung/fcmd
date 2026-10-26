@@ -2,8 +2,8 @@
 # See https://pre-commit.com for more information
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff 版本（独立固定，升级时同步 pyproject 的 ruff 下限）
-    rev: v0.15.21
+    # Ruff 版本 - 与 pyproject.toml 保持同步
+    rev: v0.16.8
     hooks:
       # 运行 linter
       - id: ruff
