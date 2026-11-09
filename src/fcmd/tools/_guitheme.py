@@ -356,12 +356,23 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "foreground": palette.text,
                 "focuscolor": palette.accent,
                 "indicatorbackground": palette.surface,
-                "indicatorforeground": palette.on_accent,
+                "indicatorforeground": palette.text,
+                "upperbordercolor": palette.border_strong,
+                "lowerbordercolor": palette.border,
                 "font": BODY_FONT,
             },
             {
                 "background": [("active", palette.background)],
                 "foreground": [("active", palette.accent_hover), ("disabled", palette.muted)],
+                "indicatorbackground": [
+                    ("disabled", palette.background),
+                    ("selected", palette.accent),
+                    ("pressed", palette.surface_active),
+                ],
+                "indicatorforeground": [
+                    ("disabled", palette.muted),
+                    ("selected", palette.on_accent),
+                ],
             },
         ),
         "TRadiobutton": StyleSpec(
@@ -370,12 +381,23 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "foreground": palette.text,
                 "focuscolor": palette.accent,
                 "indicatorbackground": palette.surface,
-                "indicatorforeground": palette.on_accent,
+                "indicatorforeground": palette.text,
+                "upperbordercolor": palette.border_strong,
+                "lowerbordercolor": palette.border,
                 "font": BODY_FONT,
             },
             {
                 "background": [("active", palette.background)],
                 "foreground": [("active", palette.accent_hover), ("disabled", palette.muted)],
+                "indicatorbackground": [
+                    ("disabled", palette.background),
+                    ("selected", palette.accent),
+                    ("pressed", palette.surface_active),
+                ],
+                "indicatorforeground": [
+                    ("disabled", palette.muted),
+                    ("selected", palette.on_accent),
+                ],
             },
         ),
         "TProgressbar": StyleSpec(

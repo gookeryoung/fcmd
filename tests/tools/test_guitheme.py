@@ -212,6 +212,28 @@ class TestStyleSpecs:
         assert specs["TProgressbar"].configure["troughcolor"] == palette.surface
         assert ("active", palette.accent) in specs["TScrollbar"].map["background"]
 
+    def test_check_and_radio_indicator_states_are_visible(self) -> None:
+        palette = _guitheme.PALETTE
+        specs = _guitheme.ttk_style_specs()
+        for name in ("TCheckbutton", "TRadiobutton"):
+            spec = specs[name]
+            assert spec.configure["indicatorbackground"] == palette.surface
+            assert spec.configure["indicatorforeground"] == palette.text
+            assert ("selected", palette.accent) in spec.map["indicatorbackground"]
+            assert ("selected", palette.on_accent) in spec.map["indicatorforeground"]
+            assert ("disabled", palette.background) in spec.map["indicatorbackground"]
+            assert ("disabled", palette.muted) in spec.map["indicatorforeground"]
+        # 勾选标记（深色）与选中底色（亮蓝）、未选中标记（浅色）与深色底都必须可辨。
+        assert _contrast(palette.on_accent, palette.accent) >= 4.5
+        assert _contrast(palette.text, palette.surface) >= 4.5
+
+    def test_disabled_states_remain_legible(self) -> None:
+        palette = _guitheme.PALETTE
+        specs = _guitheme.ttk_style_specs()
+        assert ("disabled", palette.border) in specs["Accent.TButton"].map["background"]
+        assert _contrast(palette.muted, palette.border) >= 3
+        assert _contrast(palette.muted, palette.surface) >= 3
+
     def test_respects_spacing(self) -> None:
         spacing = _guitheme.Spacing(lg=20, xs=5)
         specs = _guitheme.ttk_style_specs(spacing=spacing)
