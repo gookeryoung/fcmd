@@ -18,10 +18,13 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.llm import llmenv
 from fcmd.tools.llm.llmbase import (
     DEFAULT_ALIAS,
@@ -36,12 +39,78 @@ from fcmd.tools.llm.llmbase import (
 from fcmd.tools.llm.llmchat import ChatSession
 from fcmd.tools.llm.llmserve import process_alive
 
-__all__ = ["main"]
+__all__ = [
+    "ChatSettings",
+    "config_path",
+    "load_settings",
+    "resolve_geometry",
+    "save_settings",
+]
 
-_DESCRIPTION = "llmchat 的 Tk 窗口版（多轮流式对话；可选用 llmenv 登记的服务或自定义地址）"
+_DESCRIPTION = (
+    "llmchat 的 Tk 窗口版（多轮流式对话；可选用 llmenv 登记的服务或自定义地址；"
+    "窗口位置与大小记忆到 ~/.fcmd/ui/llmchatw.json）"
+)
 _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
 _CUSTOM = "自定义"
 _UNAVAILABLE = "不可用"
+
+MIN_WIDTH = 860
+MIN_HEIGHT = 620
+DEFAULT_WIDTH = 1040
+DEFAULT_HEIGHT = 780
+
+
+@dataclass
+class ChatSettings:
+    """窗口持久化设置（当前只有 geometry）。"""
+
+    geometry: str | None = None
+
+
+def config_path() -> Path:
+    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmchatw.json``。"""
+    return _guiconfig.config_path("llmchatw")
+
+
+valid_geometry = _guiconfig.valid_geometry
+
+
+def load_settings(path: Path | None = None) -> ChatSettings:
+    """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
+    raw = _guiconfig.read_settings(path or config_path())
+    settings = ChatSettings()
+    if raw is not None:
+        geometry = raw.get("geometry")
+        if isinstance(geometry, str) and valid_geometry(geometry):
+            settings.geometry = geometry
+    return settings
+
+
+def save_settings(settings: ChatSettings, path: Path | None = None) -> None:
+    """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
+    _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    clamped = _guiconfig.clamp_geometry(
+        f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    return clamped or f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}"
 
 
 def _state_available(state: ServeState) -> bool:
@@ -57,17 +126,26 @@ def _first_available(states: Sequence[ServeState]) -> ServeState | None:
 class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 聊天窗口：服务选择、参数配置、流式对话与历史管理。"""
 
-    def __init__(self) -> None:
+    def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
         from tkinter import messagebox, ttk
 
         self._tk = tk
         self._messagebox = messagebox
         self._ttk = ttk
+        self._settings_path = settings_path
+        self._settings = load_settings(settings_path)
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title("LLM 聊天客户端")
-        self.root.geometry("1040x780")
-        self.root.minsize(860, 620)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
+        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self._session: ChatSession | None = None
         self._thread: threading.Thread | None = None
@@ -165,16 +243,25 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
 
-        self._chat = self._tk.Text(box, wrap="word", state="disabled", width=88, height=18, padx=10, pady=8)
+        self._chat = self._tk.Text(
+            box,
+            wrap="word",
+            state="disabled",
+            height=18,
+            padx=10,
+            pady=8,
+            font=_guitheme.BODY_FONT,
+        )
         scrollbar = self._ttk.Scrollbar(box, orient="vertical", command=self._chat.yview)
         self._chat.configure(yscrollcommand=scrollbar.set)
         self._chat.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns", padx=(6, 0))
-        self._chat.tag_configure("user", foreground="#1f6feb", spacing1=10, spacing3=2)
-        self._chat.tag_configure("ai", foreground="#1a7f37", spacing1=2, spacing3=10)
-        self._chat.tag_configure("reason", foreground="#57606a", spacing3=4)
-        self._chat.tag_configure("info", foreground="#6e7781", spacing1=4, spacing3=4)
-        self._chat.tag_configure("error", foreground="#cf222e", spacing3=8)
+        palette = _guitheme.PALETTE
+        self._chat.tag_configure("user", foreground=palette.accent, spacing1=10, spacing3=2)
+        self._chat.tag_configure("ai", foreground=palette.success, spacing1=2, spacing3=10)
+        self._chat.tag_configure("reason", foreground=palette.muted, spacing3=4)
+        self._chat.tag_configure("info", foreground=palette.muted, spacing1=4, spacing3=4)
+        self._chat.tag_configure("error", foreground=palette.danger, spacing3=8)
 
     def _build_input(self, parent: Any) -> None:
         ttk = self._ttk
@@ -182,11 +269,19 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         box.grid(row=3, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
 
-        self._input_text = self._tk.Text(box, height=4, wrap="word", padx=8, pady=6, undo=True)
+        self._input_text = self._tk.Text(
+            box,
+            height=4,
+            wrap="word",
+            padx=8,
+            pady=6,
+            undo=True,
+            font=_guitheme.BODY_FONT,
+        )
         self._input_text.grid(row=0, column=0, columnspan=3, sticky="nsew")
         self._input_text.bind("<Control-Return>", self._on_send_shortcut)
 
-        ttk.Label(box, text="Ctrl+Enter 发送 · Enter 换行", foreground="#6e7781").grid(
+        ttk.Label(box, text="Ctrl+Enter 发送 · Enter 换行", foreground=_guitheme.PALETTE.muted).grid(
             row=1, column=0, sticky="w", pady=(6, 0)
         )
         self._stop_btn = ttk.Button(box, text="停止", command=self._stop, state="disabled", width=10)
@@ -435,14 +530,16 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         return value
 
     def _close(self) -> None:
-        """关闭窗口；生成中先确认。"""
+        """关闭窗口；生成中先确认，退出前保存窗口位置与大小。"""
         if self._running and not self._messagebox.askyesno("生成进行中", "回复仍在生成，确实退出？"):
             return
+        save_settings(ChatSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
 
 def run_gui() -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = ChatWindow()
     except ImportError as exc:

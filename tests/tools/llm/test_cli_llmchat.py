@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request
@@ -679,3 +680,47 @@ class TestChatwGuiEntry:
         monkeypatch.setattr(llmchatw, "run_gui", lambda: calls.append(True))
         llmchatw.launch_cmd()
         assert calls == [True]
+
+
+class TestChatwSettings:
+    """窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
+
+    def test_config_path_uses_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        assert llmchatw.config_path() == tmp_path / "ui" / "llmchatw.json"
+
+    def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
+        assert llmchatw.load_settings(tmp_path / "none.json") == llmchatw.ChatSettings()
+
+    def test_load_ignores_invalid_geometry(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"geometry": "bad"}', encoding="utf-8")
+        assert llmchatw.load_settings(path).geometry is None
+        path.write_text('{"geometry": 123}', encoding="utf-8")
+        assert llmchatw.load_settings(path).geometry is None
+
+    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "nested" / "ui.json"
+        llmchatw.save_settings(llmchatw.ChatSettings(geometry="1000x700+10+20"), path)
+        assert llmchatw.load_settings(path).geometry == "1000x700+10+20"
+
+    def test_save_ignores_write_error(self, tmp_path: Path) -> None:
+        blocker = tmp_path / "blocker"
+        blocker.write_text("x", encoding="utf-8")
+        llmchatw.save_settings(llmchatw.ChatSettings(geometry="1000x700"), blocker / "ui.json")
+
+    def test_resolve_geometry_keeps_visible_position(self) -> None:
+        assert llmchatw.resolve_geometry("1000x700+100+80", 1920, 1080) == "1000x700+100+80"
+
+    def test_resolve_geometry_pulls_back_offscreen(self) -> None:
+        assert llmchatw.resolve_geometry("1000x700+5000+5000", 1920, 1080) == "1000x700+920+380"
+
+    def test_resolve_geometry_enforces_minimum_size(self) -> None:
+        assert llmchatw.resolve_geometry("200x100+0+0", 1920, 1080) == "860x620+0+0"
+
+    def test_resolve_geometry_falls_back_to_default_size(self) -> None:
+        assert llmchatw.resolve_geometry(None, 1920, 1080) == "1040x780"
+        assert llmchatw.resolve_geometry("bad", 1920, 1080) == "1040x780"
+
+    def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
+        assert llmchatw.resolve_geometry(None, 800, 600) == "800x600"
