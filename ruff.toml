@@ -1,4 +1,4 @@
-extend-exclude = ["alembic", "build", "dist", "docs", "examples", "template"]
+extend-exclude = ["build", "dist"]
 line-length    = 120
 target-version = "py313"
 

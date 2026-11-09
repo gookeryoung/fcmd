@@ -116,8 +116,6 @@ class Console:
         *,
         file: Any = None,
         width: int | None = None,
-        legacy_windows: bool = False,  # noqa: ARG002 保留签名兼容
-        ascii_only: bool = False,  # noqa: ARG002 保留签名兼容
         **kwargs: Any,
     ) -> None:
         self._rich = RichConsole(file=file, width=width, **kwargs)

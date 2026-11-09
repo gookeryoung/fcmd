@@ -258,23 +258,10 @@ def _rewrite_openssh_cmd_as_plink(openssh_cmd: str, plink_path: str) -> str:
     """
     import re as _re
 
-    cmd = openssh_cmd
-
-    # 1. ssh 开头 → plink -ssh -pw {password} -batch
-    if cmd.startswith("ssh "):
-        cmd = plink_path + " -ssh -pw {password} -batch" + cmd[3:]
-    elif cmd.startswith("sshpass "):
-        # Linux 分支不应该走到这里，但做个防御性处理
-        return cmd
-    else:
-        # 已被路径替换过（理论上 _maybe_replace_ssh_path 保证不会走到这里）
-        # 尝试提取 ssh 后的剩余部分
-        first_space = cmd.find(" ")
-        if first_space != -1:
-            rest = cmd[first_space + 1 :]
-            cmd = plink_path + " -ssh -pw {password} -batch " + rest
-        else:
-            cmd = plink_path + " -ssh -pw {password} -batch"
+    # 仅处理 ssh 起头的命令；其余命令（echo/ruff/git 等）绝不能被改写成 ssh
+    if not openssh_cmd.startswith("ssh "):
+        return openssh_cmd
+    cmd = plink_path + " -ssh -pw {password} -batch" + openssh_cmd[3:]
 
     # 2. 去掉所有 -o <option> 选项（OpenSSH 专属，plink 不支持）
     cmd = _re.sub(r"\s+-o\s+\S+", "", cmd)
@@ -550,7 +537,9 @@ def _maybe_replace_ssh_path(cmd: str | tuple[str, ...] | None, platform: str) ->
     仅处理 str 形态（shell=True 执行）的命令；tuple 形态（无 shell，
     list 参数）不处理。
     """
-    if platform != "win32" or not isinstance(cmd, str):
+    # 只处理以裸 ssh 起头的 shell 命令；其他命令原样返回。
+    # （曾因缺少该守卫把所有 DSL 命令改写成 plink 调用。）
+    if platform != "win32" or not isinstance(cmd, str) or not cmd.startswith("ssh "):
         return cmd
 
     client = resolve_windows_ssh_client()
@@ -564,9 +553,7 @@ def _maybe_replace_ssh_path(cmd: str | tuple[str, ...] | None, platform: str) ->
         return _rewrite_openssh_cmd_as_plink(cmd, client_path)
 
     # OpenSSH：只替换开头的裸 "ssh" 为完整路径
-    if cmd.startswith("ssh "):
-        return client_path + " " + cmd[4:]
-    return cmd
+    return client_path + " " + cmd[4:]
 
 
 def _has_any_cmd(decl: CommandDecl) -> bool:

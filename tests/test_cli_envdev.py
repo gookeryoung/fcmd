@@ -1294,7 +1294,8 @@ class TestExpandedMirrors:
         capsys.readouterr()
         assert _fake_persist_env["PIP_INDEX_URL"] == "https://mirrors.cloud.tencent.com/pypi/simple"
         assert _fake_persist_env["PIP_TRUSTED_HOSTS"] == "mirrors.cloud.tencent.com"
-        config_path = tmp_path / ".pip" / "pip.conf"
+        # pip 配置文件路径随平台变化（Linux: ~/.pip/pip.conf，Windows: ~/pip/pip.ini）
+        config_path = fcmd.tools.dev.envdev.pip_config_path()
         assert "mirrors.cloud.tencent.com" in config_path.read_text(encoding="utf-8")
 
     def test_setup_python_mirror_bfsu(

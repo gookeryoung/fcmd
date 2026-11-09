@@ -465,19 +465,19 @@ sys.exit(0)
 
 
 def test_collect_optional_deps_status_with_missing_dep(monkeypatch: pytest.MonkeyPatch) -> None:
-    """collect_optional_deps_status 处理未安装的可选依赖。"""
-    import builtins
+    """collect_optional_deps_status 处理未安装的可选依赖（仅探测，不导入）。"""
+    import importlib.util
 
     from fcmd.cli._env_helpers import collect_optional_deps_status
 
-    original_import = builtins.__import__
+    real_find_spec = importlib.util.find_spec
 
-    def mock_import(name: str, *args: object, **kwargs: object) -> object:
+    def fake_find_spec(name: str, package: str | None = None) -> object:
         if name == "PIL":
-            raise ImportError("mocked: No module named 'PIL'")
-        return original_import(name, *args, **kwargs)  # type: ignore[arg-type]
+            return None
+        return real_find_spec(name, package)
 
-    monkeypatch.setattr(builtins, "__import__", mock_import)
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
 
     deps = collect_optional_deps_status()
     pil_dep = next(d for d in deps if d["package"] == "PIL")

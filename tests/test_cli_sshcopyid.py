@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -125,8 +126,13 @@ class TestSshcopyidBuildSpec:
         assert spec.env is not None and spec.env["SSHPASS"] == "{password}"
         assert spec.passthrough is False
 
-    def test_win32_platform(self) -> None:
-        """Win32：cmd 是纯 ssh，env 不含 SSHPASS，passthrough=True。"""
+    def test_win32_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Win32：cmd 是纯 ssh，env 不含 SSHPASS，passthrough=True。
+
+        强制「未检测到 plink/OpenSSH」，避免宿主机安装的 ssh 客户端把
+        裸 ``ssh`` 改写成完整路径（那属于 TestWindowsOpenSshResolution 覆盖）。
+        """
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_ssh_client", lambda: None)
         decl = _load_sshcopyid_decl()
         spec = build_tool_spec(decl, platform="win32")
         assert spec.cmd is not None
@@ -163,7 +169,15 @@ class TestSshcopyidBuildSpec:
 # 执行语义（当前平台 = linux）
 # ---------------------------------------------------------------------- #
 class TestSshcopyidRun:
-    """``fcmd sshcopyid`` 在当前 Linux 平台的执行语义。"""
+    """``fcmd sshcopyid`` 的 Linux 执行语义（与宿主机平台无关）。"""
+
+    @pytest.fixture(autouse=True)
+    def _linux_spec(self) -> Iterator[None]:
+        """强制按 linux 平台重建注册表，避免 Windows 宿主机改写 ssh 命令。"""
+        real_platform = sys.platform
+        _update_registry_for_platform("sshcopyid", "linux")
+        yield
+        _update_registry_for_platform("sshcopyid", real_platform)
 
     def test_success_deploys_key(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -285,6 +299,8 @@ class TestSshcopyidWinBranch:
     def test_win_cmd_pure_ssh_no_sshpass(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Win32 分支 subprocess.run 收到纯 ssh 命令，env 不含 SSHPASS。"""
         monkeypatch.setattr(sys, "platform", "win32")
+        # 宿主机可能装有 plink/OpenSSH，强制无客户端以验证裸 ssh 回退分支
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_ssh_client", lambda: None)
         # 强制刷新 ToolSpec 缓存（_discovery 已注册过当前平台版本）
         _update_registry_for_platform("sshcopyid", "win32")
 
@@ -481,6 +497,17 @@ class TestWindowsOpenSshResolution:
         assert spec.cmd is not None
         assert isinstance(spec.cmd, str)
         assert spec.cmd.startswith("ssh -p")  # 回退裸 ssh，不替换
+
+    def test_win32_plink_only_rewrites_ssh_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """回归：plink 存在时只能改写 ssh 命令，普通命令必须原样保留。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: r"C:\PuTTY\plink.exe")
+
+        decl = parse_command_table("greet", {"help": "打招呼", "cmd": "echo hello"})
+        spec = build_tool_spec(decl, platform="win32")
+
+        assert spec.cmd == "echo hello"
 
     def test_lru_cache_prevents_repeated_detection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """resolve_windows_openssh 的 lru_cache 生效：首次调用做检测，后续

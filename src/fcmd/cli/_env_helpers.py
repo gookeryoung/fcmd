@@ -6,18 +6,21 @@
 
 from __future__ import annotations
 
+import contextlib
+import importlib.metadata
+import importlib.util
 from typing import Any
 
 __all__ = ["collect_optional_deps_status"]
 
-# 可选依赖清单：(extra 分组, import 包名)
+# 可选依赖清单：(extra 分组, import 包名, 分发包名)
 # extra 对应 pyproject.toml 的 [project.optional-dependencies]
-# 包名用于 __import__ 探测安装状态与版本
-_OPTIONAL_DEPS: tuple[tuple[str, str], ...] = (
-    ("img", "PIL"),
-    ("pdf", "fitz"),
-    ("pdf", "pypdf"),
-    ("ocr", "pytesseract"),
+# import 包名用于 find_spec 探测；分发包名用于 metadata 读取版本
+_OPTIONAL_DEPS: tuple[tuple[str, str, str], ...] = (
+    ("img", "PIL", "pillow"),
+    ("pdf", "fitz", "pymupdf"),
+    ("pdf", "pypdf", "pypdf"),
+    ("ocr", "pytesseract", "pytesseract"),
 )
 
 
@@ -26,15 +29,19 @@ def collect_optional_deps_status() -> list[dict[str, Any]]:
 
     返回列表，每项包含 extra / package / installed / version（已安装时）。
 
-    用 ``__import__`` 探测而非 ``importlib.util.find_spec``，因为需要读取
-    ``__version__`` 属性；导入失败即视为未安装。
+    仅用 ``find_spec`` + ``importlib.metadata`` 探测，**不真正导入模块**：
+    ``fcmd env`` / ``fcmd doctor`` 属只读诊断，导入 PyMuPDF 等重型依赖会
+    破坏三层懒加载（且部分原生库在导入期即崩溃）。
     """
     deps: list[dict[str, Any]] = []
-    for extra, package in _OPTIONAL_DEPS:
+    for extra, package, distribution in _OPTIONAL_DEPS:
         try:
-            mod = __import__(package)
-            version = getattr(mod, "__version__", "")
-            deps.append({"extra": extra, "package": package, "installed": True, "version": version})
-        except ImportError:
-            deps.append({"extra": extra, "package": package, "installed": False, "version": ""})
+            installed = importlib.util.find_spec(package) is not None
+        except (ImportError, ValueError):
+            installed = False
+        version = ""
+        if installed:
+            with contextlib.suppress(importlib.metadata.PackageNotFoundError):
+                version = importlib.metadata.version(distribution)
+        deps.append({"extra": extra, "package": package, "installed": installed, "version": version})
     return deps
