@@ -113,6 +113,23 @@ def _fake_modules(
     return modules, style, fonts
 
 
+def _relative_luminance(color: str) -> float:
+    """按 WCAG 2 计算相对亮度（``#rrggbb``）。"""
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.03928 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def _contrast(foreground: str, background: str) -> float:
+    """两色对比度，1–21。"""
+    lighter, darker = sorted((_relative_luminance(foreground), _relative_luminance(background)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 # ============================================================================ #
 # 字体族与字号阶梯
 # ============================================================================ #
@@ -178,6 +195,23 @@ class TestStyleSpecs:
         assert specs["TCombobox"].configure["arrowcolor"] == _guitheme.PALETTE.muted
         assert ("focus", _guitheme.PALETTE.accent) in specs["TEntry"].map["bordercolor"]
 
+    def test_button_states_cover_hover_pressed_disabled(self) -> None:
+        palette = _guitheme.PALETTE
+        specs = _guitheme.ttk_style_specs()
+        assert ("active", palette.surface_hover) in specs["TButton"].map["background"]
+        assert ("pressed", palette.surface_active) in specs["TButton"].map["background"]
+        assert ("disabled", palette.muted) in specs["TButton"].map["foreground"]
+        accent = specs["Accent.TButton"].map
+        assert ("pressed", palette.accent_pressed) in accent["background"]
+        assert ("disabled", palette.border) in accent["background"]
+
+    def test_progress_and_scrollbar_use_accent_states(self) -> None:
+        palette = _guitheme.PALETTE
+        specs = _guitheme.ttk_style_specs()
+        assert specs["TProgressbar"].configure["background"] == palette.accent
+        assert specs["TProgressbar"].configure["troughcolor"] == palette.surface
+        assert ("active", palette.accent) in specs["TScrollbar"].map["background"]
+
     def test_respects_spacing(self) -> None:
         spacing = _guitheme.Spacing(lg=20, xs=5)
         specs = _guitheme.ttk_style_specs(spacing=spacing)
@@ -192,8 +226,8 @@ class TestClassicOptions:
     def test_text_colors_cover_background_foreground_cursor_and_selection(self) -> None:
         options = _guitheme.classic_options()
         palette = _guitheme.PALETTE
-        assert options["*Text.background"] == palette.surface
-        assert options["*Text.foreground"] == palette.text
+        assert options["*Text.background"] == palette.log_bg
+        assert options["*Text.foreground"] == palette.log_fg
         assert options["*Text.insertBackground"] == palette.cursor
         assert options["*Text.selectBackground"] == palette.select_bg
         assert options["*Text.selectForeground"] == palette.select_fg
@@ -204,15 +238,36 @@ class TestClassicOptions:
         palette = _guitheme.PALETTE
         assert options["*Menu.background"] == palette.surface
         assert options["*Menu.foreground"] == palette.text
-        assert options["*Menu.activeBackground"] == palette.select_bg
-        assert options["*Menu.activeForeground"] == palette.select_fg
+        assert options["*Menu.activeBackground"] == palette.accent
+        assert options["*Menu.activeForeground"] == palette.on_accent
         assert options["*Menu.font"] == _guitheme.BODY_FONT
 
     def test_follows_custom_palette(self) -> None:
-        palette = replace(_guitheme.PALETTE, surface="#010203", text="#040506")
+        palette = replace(_guitheme.PALETTE, log_bg="#010203", text="#040506")
         options = _guitheme.classic_options(palette)
         assert options["*Text.background"] == "#010203"
         assert options["*Menu.foreground"] == "#040506"
+
+
+# ============================================================================ #
+# 深色科技蓝配色
+# ============================================================================ #
+class TestPaletteContrast:
+    def test_text_contrast_is_readable(self) -> None:
+        palette = _guitheme.PALETTE
+        assert _contrast(palette.text, palette.background) >= 7
+        assert _contrast(palette.text, palette.surface) >= 7
+        assert _contrast(palette.muted, palette.background) >= 4.5
+        assert _contrast(palette.muted, palette.surface) >= 4.5
+        assert _contrast(palette.log_fg, palette.log_bg) >= 7
+        assert _contrast(palette.on_accent, palette.accent) >= 4.5
+        assert _contrast(palette.select_fg, palette.select_bg) >= 4.5
+
+    def test_background_layers_are_dark_and_distinct(self) -> None:
+        palette = _guitheme.PALETTE
+        layers = [palette.background, palette.surface, palette.surface_hover, palette.surface_active]
+        assert len(set(layers)) == len(layers)
+        assert all(_relative_luminance(color) < 0.1 for color in layers)
 
 
 # ============================================================================ #

@@ -6,8 +6,9 @@
 - 窗口侧只需在 ``Tk()`` 创建后调用 :func:`apply_theme`，删掉该调用即退回
   系统默认外观，不影响任何业务逻辑。
 - :func:`apply_theme` 幂等：重复调用只会覆盖同名样式与 option，不会叠加。
-- 深色模式与 Windows 标题栏（``dwmapi`` / DWM 属性）不在本模块范围，后续
-  若要支持，可在 :class:`Palette` 上新增 ``DARK_PALETTE`` 并保持接口不变。
+- 默认主题是深色科技蓝：深蓝灰载体 + 亮蓝强调，经典控件（Text / Menu /
+  Listbox / Entry）通过 ``option_add`` 同步为深色。Windows 标题栏
+  （``dwmapi`` / DWM 属性）不在本模块范围，后续可单独补。
 
 文件名以下划线开头，``fcmd.tools`` 的工具发现会跳过本模块。
 """
@@ -52,16 +53,17 @@ THEME_NAME: Final[str] = "clam"
 UI_FONT_CANDIDATES: Final[tuple[str, ...]] = (
     "Microsoft YaHei UI",
     "Microsoft YaHei",
+    "Segoe UI Variable Text",
+    "Segoe UI",
     "PingFang SC",
     "Noto Sans CJK SC",
-    "Segoe UI",
-    "Source Han Sans SC",
     "DejaVu Sans",
 )
 """界面字体候选，按优先级排列；Windows 中文环境首选微软雅黑 UI。"""
 
 MONO_FONT_CANDIDATES: Final[tuple[str, ...]] = (
     "Cascadia Mono",
+    "Cascadia Code",
     "Consolas",
     "JetBrains Mono",
     "Source Code Pro",
@@ -78,30 +80,41 @@ MONO_FONT: Final[str] = "FcmdMonoFont"
 
 @dataclass(frozen=True, slots=True)
 class Palette:
-    """浅色主题调色板：中性灰底色 + 单一强调色。"""
+    """深色科技蓝调色板。
 
-    background: str = "#f5f6f8"
-    surface: str = "#ffffff"
-    surface_hover: str = "#eef1f5"
-    border: str = "#d7dbe0"
-    text: str = "#1f2328"
-    muted: str = "#5b6570"
-    accent: str = "#2f6fde"
-    accent_hover: str = "#255bb8"
-    on_accent: str = "#ffffff"
-    select_bg: str = "#2f6fde"
+    背景层次：``background``（窗口底）< ``surface``（卡片/输入/日志）<
+    ``surface_hover``（hover）< ``surface_active``（按下/选中行）。
+    前景层次：``text``（正文）> ``muted``（次要说明）。``accent`` 系列用于
+    强调、选中和进度，``select_*`` 专门给 Text / Listbox 的文本选区。
+    """
+
+    background: str = "#0b1220"
+    surface: str = "#121c2b"
+    surface_hover: str = "#1a2839"
+    surface_active: str = "#22344a"
+    border: str = "#2a3a4f"
+    border_strong: str = "#3b5370"
+    text: str = "#e8eef7"
+    muted: str = "#9aa9ba"
+    accent: str = "#38a8ff"
+    accent_hover: str = "#5cbcff"
+    accent_pressed: str = "#1f86d6"
+    on_accent: str = "#06121d"
+    select_bg: str = "#2f6fa8"
     select_fg: str = "#ffffff"
-    cursor: str = "#1f2328"
+    cursor: str = "#7cd0ff"
+    log_bg: str = "#0d1622"
+    log_fg: str = "#d8e4f2"
 
 
 @dataclass(frozen=True, slots=True)
 class FontScale:
     """字号阶梯（磅），与 :class:`Palette` 一起构成主题基线。"""
 
-    small: int = 9
-    body: int = 10
-    heading: int = 12
-    title: int = 15
+    small: int = 8
+    body: int = 9
+    heading: int = 11
+    title: int = 13
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +207,7 @@ CLASSIC_OPTION_PATTERNS: Final[tuple[str, ...]] = (
     "*Menu.foreground",
     "*Menu.activeBackground",
     "*Menu.activeForeground",
+    "*Menu.selectColor",
     "*Menu.font",
     "*Menu.borderWidth",
     "*Menu.relief",
@@ -283,7 +297,7 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "relief": "flat",
             },
             {
-                "background": [("active", palette.surface_hover), ("pressed", palette.border)],
+                "background": [("active", palette.surface_hover), ("pressed", palette.surface_active)],
                 "foreground": [("disabled", palette.muted)],
             },
         ),
@@ -298,7 +312,11 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "relief": "flat",
             },
             {
-                "background": [("active", palette.accent_hover), ("pressed", palette.accent_hover)],
+                "background": [
+                    ("active", palette.accent_hover),
+                    ("pressed", palette.accent_pressed),
+                    ("disabled", palette.border),
+                ],
                 "foreground": [("disabled", palette.muted)],
             },
         ),
@@ -337,11 +355,13 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "background": palette.background,
                 "foreground": palette.text,
                 "focuscolor": palette.accent,
+                "indicatorbackground": palette.surface,
+                "indicatorforeground": palette.on_accent,
                 "font": BODY_FONT,
             },
             {
                 "background": [("active", palette.background)],
-                "foreground": [("disabled", palette.muted)],
+                "foreground": [("active", palette.accent_hover), ("disabled", palette.muted)],
             },
         ),
         "TRadiobutton": StyleSpec(
@@ -349,29 +369,32 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "background": palette.background,
                 "foreground": palette.text,
                 "focuscolor": palette.accent,
+                "indicatorbackground": palette.surface,
+                "indicatorforeground": palette.on_accent,
                 "font": BODY_FONT,
             },
             {
                 "background": [("active", palette.background)],
-                "foreground": [("disabled", palette.muted)],
+                "foreground": [("active", palette.accent_hover), ("disabled", palette.muted)],
             },
         ),
         "TProgressbar": StyleSpec(
             {
                 "background": palette.accent,
-                "troughcolor": palette.border,
+                "troughcolor": palette.surface,
                 "bordercolor": palette.border,
+                "thickness": spacing.sm,
             }
         ),
         "TScrollbar": StyleSpec(
             {
-                "background": palette.border,
+                "background": palette.border_strong,
                 "troughcolor": palette.background,
                 "bordercolor": palette.background,
                 "arrowcolor": palette.muted,
                 "gripcount": 0,
             },
-            {"background": [("active", palette.muted)]},
+            {"background": [("active", palette.accent)]},
         ),
         "Treeview": StyleSpec(
             {
@@ -404,7 +427,10 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
                 "font": BODY_FONT,
                 "padding": (spacing.md, spacing.xs),
             },
-            {"background": [("selected", palette.surface)], "foreground": [("selected", palette.text)]},
+            {
+                "background": [("selected", palette.surface)],
+                "foreground": [("selected", palette.text), ("active", palette.accent_hover)],
+            },
         ),
         "TSeparator": StyleSpec({"background": palette.border}),
     }
@@ -424,8 +450,8 @@ def classic_options(palette: Palette = PALETTE) -> dict[str, str]:
         "*insertBackground": palette.cursor,
         "*highlightBackground": palette.border,
         "*highlightColor": palette.accent,
-        "*Text.background": palette.surface,
-        "*Text.foreground": palette.text,
+        "*Text.background": palette.log_bg,
+        "*Text.foreground": palette.log_fg,
         "*Text.insertBackground": palette.cursor,
         "*Text.selectBackground": palette.select_bg,
         "*Text.selectForeground": palette.select_fg,
@@ -435,8 +461,9 @@ def classic_options(palette: Palette = PALETTE) -> dict[str, str]:
         "*Text.highlightThickness": "0",
         "*Menu.background": palette.surface,
         "*Menu.foreground": palette.text,
-        "*Menu.activeBackground": palette.select_bg,
-        "*Menu.activeForeground": palette.select_fg,
+        "*Menu.activeBackground": palette.accent,
+        "*Menu.activeForeground": palette.on_accent,
+        "*Menu.selectColor": palette.accent,
         "*Menu.font": BODY_FONT,
         "*Menu.borderWidth": "1",
         "*Menu.relief": "flat",
