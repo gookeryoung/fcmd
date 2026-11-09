@@ -507,7 +507,7 @@ def _short_filename(filename: str) -> str:
     """取展示用文件名：内置伪文件保持原样，普通路径取 basename。"""
     if filename.startswith(("<", "{", "~")):
         return filename
-    return Path(filename).name
+    return filename.replace("\\", "/").rsplit("/", 1)[-1]
 
 
 def _format_calls(ncalls: int, primitive: int) -> str:
