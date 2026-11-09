@@ -5,13 +5,14 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from fcmd.console import Console
 from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool
-from fcmd.tools.llm import llmbench, llmconvert, llmdoctor, llmenv, llmmodel, llmserve
+from fcmd.tools.llm import llmbase, llmbench, llmconvert, llmdoctor, llmenv, llmmodel, llmserve
 from fcmd.tools.llm.llmbase import (
     DEFAULT_API_KEY,
     PROFILES,
@@ -400,6 +401,99 @@ def test_convert_help_describes_parameters() -> None:
     assert "含 config.json 与 *.safetensors 的模型目录" in text
     assert "量化类型" in text
     assert "转换脚本 convert_hf_to_gguf.py" in text
+
+
+# ---------------------------------------------------------------------- #
+# 实时输出（stream_command / convert_model on_output）
+# ---------------------------------------------------------------------- #
+class _FakeStreamStdout:
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+        self._offset = 0
+        self.closed = False
+
+    def read1(self, size: int) -> bytes:
+        chunk = self._data[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeStreamProcess:
+    def __init__(self, data: bytes, returncode: int = 0, *, timeout_first: bool = False) -> None:
+        self.stdout = _FakeStreamStdout(data)
+        self.returncode = returncode
+        self.killed = False
+        self._timeout_first = timeout_first
+        self._wait_calls = 0
+
+    def wait(self, timeout: float | None = None) -> int:
+        self._wait_calls += 1
+        if self._timeout_first and self._wait_calls == 1:
+            raise subprocess.TimeoutExpired("cmd", timeout or 0)
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+
+
+def test_stream_command_splits_carriage_returns(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _FakeStreamProcess(b"loading\r 20%|##   |\r 80%|#####|\ndone\n")
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    result = llmbase.stream_command(["python", "convert.py"], on_output=seen.append)
+
+    assert result.returncode == 0
+    assert seen == ["loading", " 20%|##   |", " 80%|#####|", "done"]
+    assert process.stdout.closed is True
+
+
+def test_stream_command_timeout_kills_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _FakeStreamProcess(b"", timeout_first=True)
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        llmbase.stream_command(["python", "convert.py"], timeout=1)
+
+    assert process.killed is True
+
+
+def test_convert_model_streams_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _FakeStreamProcess(b"a\n 45%|#### |\nb\n")
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    paths = llmconvert.convert_model(_convert_plan(), on_output=seen.append)
+
+    assert paths == [Path("out.gguf")]
+    assert seen == ["a", " 45%|#### |", "b"]
+
+
+def test_convert_model_streaming_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _FakeStreamProcess(b"boom\n", returncode=1)
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    with pytest.raises(ServeError, match="boom"):
+        llmconvert.convert_model(_convert_plan(), on_output=lambda line: None)
+
+
+def test_convert_model_streaming_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _FakeStreamProcess(b"", timeout_first=True)
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    with pytest.raises(ServeError, match="超时"):
+        llmconvert.convert_model(_convert_plan(), on_output=lambda line: None)
+
+
+def test_progress_percent_parsing() -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    assert llmconvertw._progress_percent(" 45%|████▌     | 9/20") == 45
+    assert llmconvertw._progress_percent("100%|████████| 20/20") == 100
+    assert llmconvertw._progress_percent("Loading model file") is None
 
 
 # ---------------------------------------------------------------------- #

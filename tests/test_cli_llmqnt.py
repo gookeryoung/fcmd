@@ -14,11 +14,14 @@ from fcmd.tools.llm import llmbase, llmengine, llmqnt
 
 class _FakeStdout:
     def __init__(self, lines: list[str]) -> None:
-        self._lines = lines
+        self._data = "".join(lines).encode("utf-8")
+        self._offset = 0
         self.closed = False
 
-    def __iter__(self):
-        return iter(self._lines)
+    def read1(self, size: int) -> bytes:
+        chunk = self._data[self._offset : self._offset + size]
+        self._offset += len(chunk)
+        return chunk
 
     def close(self) -> None:
         self.closed = True

@@ -201,33 +201,19 @@ def run_job(
     job.output.parent.mkdir(parents=True, exist_ok=True)
     command = [str(exe), str(job.input), str(job.output), job.quant]
     try:
-        process = subprocess.Popen(
+        result = llmbase.stream_command(
             command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            timeout=timeout,
+            on_output=on_output,
             cwd=str(job.input.parent),
         )
+    except subprocess.TimeoutExpired as exc:
+        raise QuantizeError(f"{job.quant} 量化超时（{timeout:.0f}s）") from exc
     except (FileNotFoundError, PermissionError) as exc:
         raise QuantizeError(f"无法启动 llama-quantize: {exc}") from exc
 
-    try:
-        if process.stdout is not None:
-            for line in process.stdout:
-                if on_output is not None:
-                    on_output(line.rstrip())
-        returncode = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        process.kill()
-        process.wait()
-        raise QuantizeError(f"{job.quant} 量化超时（{timeout:.0f}s）") from exc
-    finally:
-        if process.stdout is not None:
-            process.stdout.close()
-
-    if returncode != 0:
-        raise QuantizeError(f"{job.quant} 量化失败（退出码 {returncode}）")
+    if result.returncode != 0:
+        raise QuantizeError(f"{job.quant} 量化失败（退出码 {result.returncode}）")
 
 
 def run_jobs(

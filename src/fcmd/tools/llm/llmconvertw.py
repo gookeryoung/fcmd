@@ -3,7 +3,8 @@
 基于 :mod:`fcmd.tools.llm.llmconvert` 的核心逻辑，提供源目录 / 输出路径选择，
 转换精度 / 量化类型 / 解释器 / 源码脚本 / 引擎 tag 配置，可预览转换计划，
 后台执行转换并显示实时日志与进度；启动时后台探测引擎、版本、GPU 与模型目录。
-转换与计划准备均在后台线程执行，界面不阻塞。
+转换与计划准备均在后台线程执行，界面不阻塞。转换脚本与量化器输出按行实时
+回显，并解析 tqdm 的百分比刷新整体进度条（``\\r`` 覆盖式更新也能即时反映）。
 
 示例
 ----
@@ -14,7 +15,9 @@ from __future__ import annotations
 
 import contextlib
 import queue
+import re
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +36,15 @@ _DESCRIPTION = (
 )
 
 _SCRIPT_PLACEHOLDER = "留空自动获取与引擎 tag 匹配的 llama.cpp 源码"
+_PERCENT_RE = re.compile(r"(\d{1,3})%\|")
+
+
+def _progress_percent(line: str) -> int | None:
+    """从 tqdm 进度行（如 `` 45%|████▌ |``）提取百分比，非进度行返回 ``None``。"""
+    match = _PERCENT_RE.search(line)
+    if match is None:
+        return None
+    return min(100, int(match.group(1)))
 
 
 def _hf_size(path: Path) -> int:
@@ -676,8 +688,26 @@ class ConvertWindow:
             if quants:
                 quant_exe = self._resolve_quant_exe(self._tag_var.get().strip() or None)
             total = 1 + len(quants)
+
+            def relay(step: int) -> Callable[[str], None]:
+                """把实时输出转为日志或整体进度（``step`` 为 0 起的步骤序号）。"""
+                last = -1
+
+                def handle(line: str) -> None:
+                    nonlocal last
+                    percent = _progress_percent(line)
+                    if percent is None:
+                        status.put(("log", line))
+                        return
+                    value = min(99, (step * 100 + percent) // total)
+                    if value >= last:
+                        last = value
+                        status.put(("progress", value))
+
+                return handle
+
             status.put(("log", f"开始转换 {plan.source.name}（共 {total} 步，可能需要较长时间）…"))
-            produced = [str(path) for path in llmconvert.convert_model(plan)]
+            produced = [str(path) for path in llmconvert.convert_model(plan, on_output=relay(0))]
             status.put(("log", f"已生成: {plan.output}"))
             status.put(("progress", 100 // total))
             for index, quant in enumerate(quants, start=1):
@@ -687,7 +717,7 @@ class ConvertWindow:
                 llmqnt.run_job(
                     llmqnt.QuantizeJob(plan.output, target, quant),
                     quant_exe,
-                    on_output=lambda line: status.put(("log", line)),
+                    on_output=relay(index),
                 )
                 produced.append(str(target))
                 status.put(("log", f"已生成: {target}"))

@@ -6,14 +6,17 @@
 
 from __future__ import annotations
 
+import codecs
+import locale
 import re
 import shlex
 import subprocess
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 ProfileName = Literal["speed", "balanced", "long", "max-context"]
 EngineVariant = Literal["cuda", "cpu"]
@@ -310,6 +313,83 @@ def run_command(cmd: Sequence[str], timeout: float = 15.0, env: dict[str, str] |
     except OSError as exc:
         return CommandResult(-1, "", str(exc))
     return CommandResult(proc.returncode, proc.stdout, proc.stderr)
+
+
+STREAM_CHUNK = 4096
+_LINE_SPLIT = re.compile(r"\r\n|\r|\n")
+
+
+def stream_command(
+    cmd: Sequence[str],
+    timeout: float = 15.0,
+    on_output: Callable[[str], None] | None = None,
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+) -> CommandResult:
+    """执行外部命令并实时逐行回调输出。
+
+    与 :func:`run_command` 一次性捕获不同，这里通过管道逐块读取，能即时收到
+    tqdm 等用 ``\\r`` 刷新进度的输出；``on_output`` 按 ``\\r`` / ``\\n`` 切分后
+    逐条回调（忽略空行）。全部输出仍会汇总到返回值的 ``stdout`` 中。
+
+    Raises
+    ------
+    subprocess.TimeoutExpired
+        命令超时，进程已被终止。
+    OSError
+        命令无法启动。
+    """
+    process = subprocess.Popen(
+        list(cmd),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=cwd,
+        env=env,
+    )
+    decoder = codecs.getincrementaldecoder(locale.getpreferredencoding(False))("replace")
+    captured: list[str] = []
+    pending = ""
+
+    def consume(text: str) -> None:
+        nonlocal pending
+        pending += text
+        parts = _LINE_SPLIT.split(pending)
+        pending = parts.pop()
+        if on_output is not None:
+            for part in parts:
+                if part:
+                    on_output(part)
+
+    def read_stream() -> None:
+        stream = process.stdout
+        if stream is None:
+            return
+        read_chunk = cast("Callable[[int], bytes]", getattr(stream, "read1", None) or stream.read)
+        while packet := read_chunk(STREAM_CHUNK):
+            text = decoder.decode(packet)
+            if text:
+                captured.append(text)
+                consume(text)
+        tail = decoder.decode(b"", final=True)
+        if tail:
+            captured.append(tail)
+            consume(tail)
+        if pending and on_output is not None:
+            on_output(pending)
+
+    reader = threading.Thread(target=read_stream, daemon=True)
+    reader.start()
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise
+    finally:
+        reader.join()
+        if process.stdout is not None:
+            process.stdout.close()
+    return CommandResult(returncode, "".join(captured), "")
 
 
 def format_returncode(code: int) -> str:

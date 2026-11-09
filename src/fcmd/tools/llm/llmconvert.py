@@ -9,15 +9,17 @@ import contextlib
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
 from fcmd.console import Table, get_console
-from fcmd.tools.llm import llmengine, llmenv
+from fcmd.tools.llm import llmbase, llmengine, llmenv
 from fcmd.tools.llm.llmbase import (
     CHUNK_SIZE,
     DEFAULT_ENGINE_TAG,
@@ -380,10 +382,30 @@ def _tail(text: str, lines: int = 6) -> str:
     return " | ".join(parts[-lines:])
 
 
-def convert_model(plan: ConvertPlan, runner: Runner = run_command) -> list[Path]:
-    """执行转换（可选再量化），返回最终产出的 GGUF 列表。"""
+def convert_model(
+    plan: ConvertPlan,
+    runner: Runner = run_command,
+    on_output: Callable[[str], None] | None = None,
+) -> list[Path]:
+    """执行转换（可选再量化），返回最终产出的 GGUF 列表。
+
+    传入 ``on_output`` 时改为逐行读取转换脚本输出（兼容 tqdm 的 ``\\r`` 进度），
+    可实时回调日志；否则沿用一次性捕获的 ``runner``。
+    """
     plan.output.parent.mkdir(parents=True, exist_ok=True)
-    result = runner(plan.convert_argv(), timeout=CONVERT_TIMEOUT)
+    if on_output is None:
+        result = runner(plan.convert_argv(), timeout=CONVERT_TIMEOUT)
+    else:
+        try:
+            result = llmbase.stream_command(
+                plan.convert_argv(),
+                timeout=CONVERT_TIMEOUT,
+                on_output=on_output,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ServeError(f"safetensors 转 GGUF 超时（{CONVERT_TIMEOUT:.0f}s）") from exc
+        except OSError as exc:
+            raise ServeError(f"无法启动转换脚本: {exc}") from exc
     if result.returncode != 0:
         output = f"{result.stderr}\n{result.stdout}"
         hint = ""
