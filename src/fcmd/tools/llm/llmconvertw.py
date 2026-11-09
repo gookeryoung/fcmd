@@ -144,11 +144,11 @@ class ConvertWindow:
         self._build_actions(outer)
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
-        config_page = ttk.Frame(self._notebook, padding=10)
         models_page = ttk.Frame(self._notebook, padding=10)
+        config_page = ttk.Frame(self._notebook, padding=10)
         log_page = ttk.Frame(self._notebook, padding=10)
-        self._notebook.add(config_page, text="转换配置")
         self._notebook.add(models_page, text="模型列表")
+        self._notebook.add(config_page, text="转换配置")
         self._notebook.add(log_page, text="输出日志")
         self._log_page = log_page
         self._build_io(config_page)
@@ -283,7 +283,7 @@ class ConvertWindow:
         """输出格式勾选区：多选量化类型，已存在的输出置为只读避免覆盖。"""
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="输出格式（勾选要生成的版本，已存在的格式只读）", padding=8)
-        box.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        box.pack(fill="x", pady=(8, 0))
         for column in range(4):
             box.columnconfigure(column, weight=1)
 
@@ -302,7 +302,7 @@ class ConvertWindow:
             variable=self._overwrite_var,
             command=self._refresh_existing,
         )
-        self._overwrite_check.grid(row=5, column=0, columnspan=4, sticky="w", padx=6, pady=(6, 0))
+        self._overwrite_check.grid(row=0, column=2, columnspan=2, sticky="w", padx=6, pady=3)
 
     def _base_output(self) -> Path | None:
         """当前表单对应的基础 GGUF 输出路径（未选择源目录时返回 None）。"""
@@ -402,7 +402,7 @@ class ConvertWindow:
     def _build_env(self, parent: Any) -> None:
         ttk = self._ttk
         box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU / 模型目录）", open_state=False)
-        box.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        box.pack(side="bottom", fill="x", pady=(8, 0))
         body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate(
             (("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"), ("models", "模型目录"))
@@ -572,7 +572,7 @@ class ConvertWindow:
 
     def _begin_task(self, target: Any) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
-        self._notebook.select(1)
+        self._notebook.select(self._log_page)
         self._messages = queue.Queue()
         self._thread = threading.Thread(target=target, daemon=True)
         self._set_running(True)
