@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.dsl.actions.data import (
+from fcmd.tools.data.database import (
     format_toml,
     get_toml_value,
     keys_toml,

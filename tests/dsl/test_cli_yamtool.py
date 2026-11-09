@@ -19,7 +19,7 @@ import pytest
 import yaml  # type: ignore[import-not-found]
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.dsl.actions.data import (
+from fcmd.tools.data.database import (
     get_yaml,
     keys_yaml,
     pretty_yaml,
