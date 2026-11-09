@@ -6,7 +6,8 @@
 ------
 - ``command``：命令执行模型（``CommandResult``/``run_command``）
 - ``filefilter``：文件过滤模型（``IgnoreSpec``/``should_ignore``/``should_skip_parts``/
-  ``to_shutil_ignore``，忽略规则唯一出处）
+  ``to_shutil_ignore``，忽略规则唯一出处；实现位于 ``fcmd.core.filefilter``，
+  经 ``fcmd.core.models`` 门面 re-export）
 - ``version``：版本号模型（``Version``/``BumpPart``/``parse_version``）
 - ``pdf``：PDF 页码/拆分/合并模型（``PageSelection``/``SplitSpec``/``MergeSpec``，
   pdftool 专用，经 ``fcmd.core.models.pdf`` 深路径导入，不进本门面）

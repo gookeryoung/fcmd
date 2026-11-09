@@ -1,7 +1,7 @@
 """fcmd CLI 主入口：FcmdApp 路由。
 
 通过 ``fcmd <tool> [command] [options]`` 调用所有工具，
-工具定义在 ``fcmd.cli`` 包中，每个模块用 ``@fx.tool`` 装饰器注册。
+工具定义在 ``fcmd.tools`` 包的领域子包中，每个模块用 ``@fx.tool`` 装饰器注册。
 
 职责划分
 --------
@@ -12,8 +12,9 @@
 
 工具发现
 --------
-``fcmd.cli`` 包下每个非 ``main`` / 非 ``_`` 前缀的模块即一个工具，
-模块名即工具名。模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
+``fcmd.tools`` 包下每个非 ``main`` / 非 ``_`` 前缀的模块即一个工具，
+领域子包（如 ``fcmd.tools.media``）内的工具取模块名为工具名。
+模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
 首次调用 ``FcmdApp.run()`` 时扫描并导入所有工具模块，
 ``import fcmd`` 冷启动不受影响。
 

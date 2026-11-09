@@ -33,7 +33,7 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 
 * :mod:`fcmd.dsl.actions.basic` —— 环境与文件基础副作用（setenv/writefile）
 * :mod:`fcmd.dsl.actions.filenames` —— 文件名批量操作（dateprefix/filerename/filelevel）
-* :mod:`fcmd.dsl.actions.fileops` —— 目录检索与路径处理（filesearch/pathtool/folderzip）
+* :mod:`fcmd.dsl.actions.fileops` —— 目录检索与路径处理（filesearch/pathtool）
 * :mod:`fcmd.dsl.actions.archive` —— 目录压缩（folderzip）
 * :mod:`fcmd.dsl.actions.system` —— 系统管理（taskkill/which/sysinfo/folderback）
 * :mod:`fcmd.dsl.actions.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
@@ -44,10 +44,10 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 * :mod:`fcmd.dsl.actions.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
 * :mod:`fcmd.dsl.actions.calcdate` —— 日期计算（calcdate）
 * :mod:`fcmd.dsl.actions.crypto` —— 加密与摘要（cryptool）
-* :mod:`fcmd.dsl.actions.data` —— 结构化数据转换（datatool）
-* :mod:`fcmd.dsl.actions.media` —— 图片处理（imagetool）
-* :mod:`fcmd.dsl.actions.net` —— 网络工具（websave/pingtool/portcheck/iptool）
-* :mod:`fcmd.dsl.actions.text` —— 文本处理（texttool/tabletool）
+* :mod:`fcmd.dsl.actions.data` —— 结构化数据转换（csvtool/jsontool/tomltool/xmltool/yamtool/inifile）
+* :mod:`fcmd.dsl.actions.media` —— 图片处理（imagetool/img2ico）
+* :mod:`fcmd.dsl.actions.net` —— 网络工具（websave/nettool/iptool/urlcheck）
+* :mod:`fcmd.dsl.actions.text` —— 文本处理（txttool/asciitool/padtool/regextool/textdiff）
 """
 
 from __future__ import annotations
