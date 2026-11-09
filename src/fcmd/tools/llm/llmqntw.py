@@ -1,7 +1,8 @@
 """llmqntw - GGUF 量化工具的 Tk 窗口版。
 
 基于 :mod:`fcmd.tools.llm.llmqnt` 的核心逻辑，提供文件选择、量化类型勾选、
-进度条与实时日志。窗口关闭后命令退出。
+进度条与实时日志。窗口启动时扫描 ``llmenv`` 已配置的模型目录，可下拉选择
+输入模型，也可手动浏览文件。窗口关闭后命令退出。
 
 示例
 ----
@@ -17,11 +18,12 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools.llm import llmqnt
+from fcmd.tools.llm import llmenv, llmmodel, llmqnt
+from fcmd.tools.llm.llmbase import ModelEntry, human_size
 
 __all__ = ["main"]
 
-_DESCRIPTION = "GGUF 量化窗口版（Tk）：选择 F16 GGUF，勾选多种量化类型批量转换"
+_DESCRIPTION = "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，勾选多种量化类型批量转换"
 
 
 class QuantizeWindow:
@@ -43,8 +45,13 @@ class QuantizeWindow:
         self.input_file: Path | None = None
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
+        self._models: list[ModelEntry] = []
+        self._scan_thread: threading.Thread | None = None
+        self._scan_results: queue.Queue[list[ModelEntry]] = queue.Queue()
+        self._running = False
 
         self._file_var = tk.StringVar(value="尚未选择输入文件")
+        self._model_var = tk.StringVar(value="")
         self._overwrite_var = tk.BooleanVar(value=False)
         self._quant_vars: dict[str, tk.BooleanVar] = {
             quant: tk.BooleanVar(value=quant in llmqnt.DEFAULT_QUANTS) for quant in llmqnt.QUANT_TYPES
@@ -52,6 +59,7 @@ class QuantizeWindow:
         self._quant_checks: dict[str, Any] = {}
         self._build_widgets()
         self._mark_existing()
+        self._refresh_models()
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -70,6 +78,15 @@ class QuantizeWindow:
         )
         self._file_btn = ttk.Button(file_row, text="选择…", command=self._select_file)
         self._file_btn.pack(side="left")
+
+        model_row = ttk.Frame(outer)
+        model_row.pack(fill="x", pady=(8, 0))
+        ttk.Label(model_row, text="已配置模型").pack(side="left")
+        self._model_box = ttk.Combobox(model_row, textvariable=self._model_var, state="disabled")
+        self._model_box.pack(side="left", fill="x", expand=True, padx=8)
+        self._model_box.bind("<<ComboboxSelected>>", self._on_model_selected)
+        self._model_btn = ttk.Button(model_row, text="刷新", command=self._refresh_models)
+        self._model_btn.pack(side="left")
 
         quant_box = ttk.LabelFrame(outer, text="量化类型", padding=8)
         quant_box.pack(fill="x", pady=(10, 0))
@@ -116,11 +133,75 @@ class QuantizeWindow:
         )
         if not path:
             return
-        self.input_file = Path(path)
-        self._file_var.set(str(self.input_file))
+        self._choose(Path(path))
+
+    def _on_model_selected(self, _event: object | None = None) -> None:
+        index = self._model_box.current()
+        if 0 <= index < len(self._models):
+            self._choose(self._models[index].path)
+
+    def _choose(self, path: Path) -> None:
+        self.input_file = path
+        self._file_var.set(str(path))
+        self._sync_model_selection(path)
         self._mark_existing()
         self._clear_log()
         self._progress["value"] = 0
+
+    def _sync_model_selection(self, path: Path) -> None:
+        """手动选文件后，若命中也同步下拉框显示。"""
+        key = llmenv.path_key(path)
+        for index, entry in enumerate(self._models):
+            if llmenv.path_key(entry.path) == key:
+                self._model_box.current(index)
+                return
+        self._model_var.set("")
+
+    # ------------------------------------------------------------------ #
+    # 已配置模型
+    # ------------------------------------------------------------------ #
+    def _refresh_models(self) -> None:
+        """后台扫描已配置模型目录，避免阻塞窗口。"""
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return
+        self._model_btn.configure(state="disabled")
+        self._model_box.configure(state="disabled", values=[])
+        self._model_var.set("正在扫描模型目录…")
+        self._scan_thread = threading.Thread(target=self._scan_models, daemon=True)
+        self._scan_thread.start()
+        self.root.after(200, self._poll_scan)
+
+    def _scan_models(self) -> None:
+        """后台线程：扫描 ``llmenv`` 解析出的模型目录。"""
+        entries: list[ModelEntry] = []
+        try:
+            roots = [root for root in llmenv.models_roots() if root.is_dir()]
+            if roots:
+                entries = llmmodel.scan_models(roots)
+        except OSError:
+            entries = []
+        self._scan_results.put(entries)
+
+    def _poll_scan(self) -> None:
+        try:
+            entries = self._scan_results.get_nowait()
+        except queue.Empty:
+            if self._scan_thread is not None and self._scan_thread.is_alive():
+                self.root.after(200, self._poll_scan)
+            return
+        self._apply_models(entries)
+
+    def _apply_models(self, entries: list[ModelEntry]) -> None:
+        self._models = entries
+        labels = [f"{entry.relative}  ({human_size(entry.size)})" for entry in entries]
+        self._model_box.configure(values=labels)
+        if labels:
+            self._model_var.set("")
+            self._model_box.configure(state="disabled" if self._running else "readonly")
+        else:
+            self._model_var.set("未发现已配置的 GGUF（用 fcmd llmenv add 登记模型目录）")
+            self._model_box.configure(state="disabled")
+        self._model_btn.configure(state="disabled" if self._running else "normal")
 
     def _mark_existing(self) -> None:
         """按当前输入文件标记已存在的量化输出。"""
@@ -228,9 +309,12 @@ class QuantizeWindow:
             self._messagebox.showwarning("失败", "部分量化任务失败，详见日志")
 
     def _set_running(self, running: bool) -> None:
+        self._running = running
         state = "disabled" if running else "normal"
         self._start_btn.configure(state=state)
         self._file_btn.configure(state=state)
+        self._model_btn.configure(state=state)
+        self._model_box.configure(state="disabled" if running or not self._models else "readonly")
         if not running:
             self._overwrite_check.configure(state="normal")
 
