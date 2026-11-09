@@ -346,7 +346,8 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     quant:
         量化类型（如 ``Q4_K_M``）；需要 ``llama-quantize``（官方 release 引擎自带）。
     script:
-        ``convert_hf_to_gguf.py`` 路径；默认取引擎目录缓存，缺失时浅克隆 llama.cpp 源码。
+        ``convert_hf_to_gguf.py`` 路径；默认按引擎 tag 下载官方源码包（失败再浅克隆），
+        网络受限时可手动 clone 后用本参数指定。
     python:
         运行转换脚本的解释器（需已安装 torch / safetensors / numpy）；缺省自动探测。
     models_root:

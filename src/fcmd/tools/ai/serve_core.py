@@ -1118,6 +1118,9 @@ CONVERT_OUTTYPES = ("f32", "f16", "bf16", "q8_0")
 CONVERT_TIMEOUT = 6 * 3600.0
 QUANTIZE_TIMEOUT = 2 * 3600.0
 CLONE_TIMEOUT = 900.0
+_SOURCE_ATTEMPTS = 5
+_SOURCE_TIMEOUT = 30.0
+_SOURCE_RETRY_DELAY = 1.0
 _BUILD_TAG_RE = re.compile(r"^b\d+$")
 
 
@@ -1170,16 +1173,112 @@ def convert_source_root(tag: str, home: Path | None = None) -> Path:
     return engines_root(home) / tag / "llama.cpp"
 
 
+def _source_archive_urls(ref: str) -> list[str]:
+    """llama.cpp 源码包地址：官方 codeload 优先，GitHub archive 兜底。
+
+    单流 zip 比 ``git clone`` 更耐受网络抖动，且官方 release 引擎包只带二进制，
+    转换脚本必须另行获取源码。
+    """
+    path = f"refs/tags/{ref}" if _BUILD_TAG_RE.fullmatch(ref) else "refs/heads/master"
+    return [
+        f"https://codeload.github.com/ggml-org/llama.cpp/zip/{path}",
+        f"https://github.com/ggml-org/llama.cpp/archive/{path}.zip",
+    ]
+
+
+def _extract_source_archive(archive: Path, repo: Path) -> bool:
+    """把源码 zip 解压为 ``repo``（去掉压缩包顶层目录），返回是否含转换脚本。"""
+    staging = repo.parent / f".{repo.name}.extract"
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        staging.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive) as bundle:
+            bundle.extractall(staging)
+        roots = [item for item in staging.iterdir() if item.is_dir()]
+        if len(roots) != 1:
+            return False
+        shutil.rmtree(repo, ignore_errors=True)
+        roots[0].replace(repo)
+        return (repo / CONVERT_SCRIPT).is_file()
+    except (OSError, zipfile.BadZipFile):
+        return False
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _download_resumable(url: str, dest: Path, opener: Opener | None = None) -> int:
+    """带 Range 续传与重试的下载，专用于体积较大的源码包。
+
+    GitHub 在部分网络下会在传输中重置连接；这里把未完成数据留在 ``.part``，
+    下次尝试用 ``Range`` 从断点续传，避免每次都从零开始。
+    """
+    from urllib.request import Request, urlopen
+
+    part = dest.with_name(dest.name + ".part")
+    part.parent.mkdir(parents=True, exist_ok=True)
+    open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
+    last_error: OSError | None = None
+    for attempt in range(_SOURCE_ATTEMPTS):
+        start = part.stat().st_size if part.is_file() else 0
+        headers = {"User-Agent": "fcmd-servetool/0.3.10"}
+        if start:
+            headers["Range"] = f"bytes={start}-"
+        try:
+            with open_fn(Request(url, headers=headers), _SOURCE_TIMEOUT) as resp:
+                status = getattr(resp, "status", 200)
+                mode = "ab" if start and status == 206 else "wb"
+                expected = getattr(resp, "headers", None)
+                total = None
+                if expected is not None:
+                    with contextlib.suppress(TypeError, ValueError):
+                        total = int(expected.get("Content-Length") or 0) + (start if mode == "ab" else 0)
+                with part.open(mode) as out:
+                    while chunk := resp.read(_CHUNK_SIZE):
+                        out.write(chunk)
+        except OSError as exc:
+            last_error = exc
+            time.sleep(_SOURCE_RETRY_DELAY * (attempt + 1))
+            continue
+        size = part.stat().st_size
+        if total and size < total:
+            last_error = OSError(f"传输中断（{size}/{total} 字节）")
+            time.sleep(_SOURCE_RETRY_DELAY * (attempt + 1))
+            continue
+        part.replace(dest)
+        return size
+    part.unlink(missing_ok=True)
+    raise ServeError(f"下载失败: {url}（重试 {_SOURCE_ATTEMPTS} 次；{last_error or '未知错误'}）")
+
+
+def _download_convert_source(ref: str, repo: Path, opener: Opener | None) -> bool:
+    """下载并解压源码包；地址不可用时逐个尝试，全部失败返回 ``False``。"""
+    archive = repo.parent / f"{repo.name}-{ref}.zip"
+    for url in _source_archive_urls(ref):
+        try:
+            _download_resumable(url, archive, opener)
+        except ServeError:
+            archive.unlink(missing_ok=True)
+            continue
+        extracted = zipfile.is_zipfile(archive) and _extract_source_archive(archive, repo)
+        archive.unlink(missing_ok=True)
+        if extracted:
+            return True
+    return False
+
+
 def ensure_convert_script(
     tag: str | None = None,
     script: Path | None = None,
     home: Path | None = None,
     runner: Runner = run_command,
+    opener: Opener | None = None,
 ) -> Path:
-    """定位转换脚本：显式 ``--script`` → ``FCMD_CONVERT_SCRIPT`` → 本地源码 → 浅克隆。
+    """定位转换脚本：显式 ``--script`` → ``FCMD_CONVERT_SCRIPT`` → 本地源码 →
+    源码包下载 → 浅克隆。
 
     现代 llama.cpp 的 ``convert_hf_to_gguf.py`` 依赖仓库内的 ``conversion`` 包与
-    ``gguf-py``，因此不能单独下载脚本，必须保留完整源码目录。
+    ``gguf-py``，因此不能单独下载脚本，必须保留完整源码目录；官方 release 引擎
+    包只有二进制，首次转换会自动获取与引擎 tag 匹配的源码。
     """
     raw = script or (
         Path(os.environ["FCMD_CONVERT_SCRIPT"]).expanduser() if os.environ.get("FCMD_CONVERT_SCRIPT") else None
@@ -1199,13 +1298,17 @@ def ensure_convert_script(
     ref = resolved if _BUILD_TAG_RE.fullmatch(resolved) else "master"
     repo = cached.parent
     repo.parent.mkdir(parents=True, exist_ok=True)
+    if _download_convert_source(ref, repo, opener):
+        return cached
+
+    shutil.rmtree(repo, ignore_errors=True)
     result = runner(
         ["git", "clone", "--depth", "1", "--branch", ref, CONVERT_REPO_URL, str(repo)],
         timeout=CLONE_TIMEOUT,
     )
     if result.returncode != 0 or not cached.is_file():
         raise ServeError(
-            f"拉取 llama.cpp 源码失败（{format_returncode(result.returncode)}）："
+            f"获取 llama.cpp 源码失败（源码包与 git clone 均不可用，{format_returncode(result.returncode)}）："
             f"{_tail(result.stderr or result.stdout) or '无输出'}；"
             f"可手动 clone {CONVERT_REPO_URL} 后用 --script 指定 convert_hf_to_gguf.py"
         )

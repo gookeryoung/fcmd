@@ -86,6 +86,18 @@ def _opener(payload: bytes = b"", status: int = 200, seen: list[Request] | None 
     return _open
 
 
+def _fail_opener(request: Request, timeout: float = 2.0) -> Any:
+    """模拟网络不可用。"""
+    raise URLError("offline")
+
+
+@pytest.fixture
+def fast_source_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """源码包下载在测试中不等待重试间隔。"""
+    monkeypatch.setattr(core, "_SOURCE_ATTEMPTS", 1)
+    monkeypatch.setattr(core, "_SOURCE_RETRY_DELAY", 0.0)
+
+
 def _zip_payload(entries: dict[str, bytes]) -> bytes:
     """构造 zip 字节流。"""
     buffer = io.BytesIO()
@@ -530,7 +542,7 @@ class TestConvert:
         cached.write_text("# cached", encoding="utf-8")
         assert core.ensure_convert_script(tag="b7", home=home) == cached
 
-    def test_ensure_script_clones(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    def test_ensure_script_clones(self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None) -> None:
         monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
         calls: list[list[str]] = []
 
@@ -541,13 +553,15 @@ class TestConvert:
             script.write_text("# cloned", encoding="utf-8")
             return CommandResult(0)
 
-        script = core.ensure_convert_script(tag="b9", home=home, runner=_run)
+        script = core.ensure_convert_script(tag="b9", home=home, runner=_run, opener=cast(Any, _fail_opener))
         assert script.read_text(encoding="utf-8") == "# cloned"
         assert calls[0][:3] == ["git", "clone", "--depth"]
         assert calls[0][calls[0].index("--branch") + 1] == "b9"
         assert calls[0][-2] == core.CONVERT_REPO_URL
 
-    def test_ensure_script_clone_master_for_custom_tag(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    def test_ensure_script_clone_master_for_custom_tag(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None
+    ) -> None:
         monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
         calls: list[list[str]] = []
 
@@ -558,15 +572,115 @@ class TestConvert:
             script.write_text("# cloned", encoding="utf-8")
             return CommandResult(0)
 
-        core.ensure_convert_script(tag="lmstudio-2.71", home=home, runner=_run)
+        core.ensure_convert_script(tag="lmstudio-2.71", home=home, runner=_run, opener=cast(Any, _fail_opener))
         assert calls[0][calls[0].index("--branch") + 1] == "master"
 
-    def test_ensure_script_clone_failure(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    def test_ensure_script_clone_failure(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None
+    ) -> None:
         monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
         with pytest.raises(ServeError, match="--script"):
             core.ensure_convert_script(
-                tag="b9", home=home, runner=lambda cmd, timeout=1.0, env=None: CommandResult(128, "", "boom")
+                tag="b9",
+                home=home,
+                runner=lambda cmd, timeout=1.0, env=None: CommandResult(128, "", "boom"),
+                opener=cast(Any, _fail_opener),
             )
+
+    def test_source_archive_urls(self) -> None:
+        tag_urls = core._source_archive_urls("b12212")
+        assert tag_urls[0] == "https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b12212"
+        assert tag_urls[1] == "https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12212.zip"
+        master_urls = core._source_archive_urls("lmstudio-2.71")
+        assert all("refs/heads/master" in url for url in master_urls)
+
+    def test_download_resumable_retries_with_range(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """首个连接被重置后从 .part 断点续传，而不是整包重下。"""
+        monkeypatch.setattr(core, "_SOURCE_RETRY_DELAY", 0.0)
+        dest = tmp_path / "src.zip"
+        dest.with_name("src.zip.part").write_bytes(b"head")
+        seen: list[Request] = []
+        calls = {"count": 0}
+
+        def _open(request: Request, timeout: float = 30.0) -> Any:
+            calls["count"] += 1
+            if calls["count"] == 1:
+                raise URLError("Recv failure")
+            seen.append(request)
+            return _FakeResponse(b"tail", 206)
+
+        size = core._download_resumable("https://example.com/src.zip", dest, cast(Any, _open))
+        assert size == len(b"headtail")
+        assert dest.read_bytes() == b"headtail"
+        assert seen[0].get_header("Range") == "bytes=4-"
+        assert not dest.with_name("src.zip.part").exists()
+
+    def test_download_resumable_gives_up(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(core, "_SOURCE_ATTEMPTS", 2)
+        monkeypatch.setattr(core, "_SOURCE_RETRY_DELAY", 0.0)
+        dest = tmp_path / "src.zip"
+        with pytest.raises(ServeError, match="重试 2 次"):
+            core._download_resumable("https://example.com/src.zip", dest, cast(Any, _fail_opener))
+        assert not dest.exists()
+        assert not dest.with_name("src.zip.part").exists()
+
+    def test_ensure_script_downloads_archive(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        """无本地源码时优先下载源码包，不执行 git clone。"""
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        payload = _zip_payload(
+            {
+                "llama.cpp-b9/convert_hf_to_gguf.py": b"# downloaded",
+                "llama.cpp-b9/gguf-py/gguf/__init__.py": b"",
+            }
+        )
+        script = core.ensure_convert_script(
+            tag="b9",
+            home=home,
+            runner=cast(Any, lambda *args, **kwargs: pytest.fail("不应 clone")),
+            opener=_opener(payload),
+        )
+        assert script == core.convert_source_root("b9", home) / core.CONVERT_SCRIPT
+        assert script.read_text(encoding="utf-8") == "# downloaded"
+        assert not (script.parent.parent / "llama.cpp-b9.zip").exists()
+
+    def test_ensure_script_archive_without_script_falls_back(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None
+    ) -> None:
+        """源码包缺少转换脚本时回退 git clone。"""
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            script = Path(cmd[-1]) / core.CONVERT_SCRIPT
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("# cloned", encoding="utf-8")
+            return CommandResult(0)
+
+        payload = _zip_payload({"llama.cpp-b9/README.md": b"nope"})
+        script = core.ensure_convert_script(tag="b9", home=home, runner=_run, opener=_opener(payload))
+        assert script.read_text(encoding="utf-8") == "# cloned"
+        assert calls
+
+    def test_ensure_script_clears_partial_checkout(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None
+    ) -> None:
+        """残留的不完整源码目录在 clone 前清理，避免 git 报目录已存在。"""
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        repo = core.convert_source_root("b9", home)
+        repo.mkdir(parents=True)
+        (repo / "partial.txt").write_text("x", encoding="utf-8")
+        seen: list[bool] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            seen.append(repo.exists())
+            script = Path(cmd[-1]) / core.CONVERT_SCRIPT
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("# cloned", encoding="utf-8")
+            return CommandResult(0)
+
+        core.ensure_convert_script(tag="b9", home=home, runner=_run, opener=cast(Any, _fail_opener))
+        assert seen == [False]
 
     def test_is_hf_dir(self, tmp_path: Path) -> None:
         source = _hf_source(tmp_path)
