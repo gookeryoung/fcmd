@@ -14,6 +14,8 @@
   :func:`_resolve_list_inner_type`）—— 按注解类型映射为 argparse 参数。
 * parser 构建（:func:`_build_parser_for_tool` / :func:`_add_global_options`）——
   从 :class:`ToolSpec` 的函数签名构建完整 argparse parser。
+* 参数帮助提取（:func:`_extract_param_help`）—— 解析函数 docstring 的
+  NumPy 风格 ``Parameters`` / ``参数`` 小节，作为 ``--help`` 中的参数说明。
 
 本模块不依赖 :mod:`fcmd.core.toolkit` 的注册表/执行/输出，由后者 import 复用。
 """
@@ -211,6 +213,54 @@ def _resolve_list_inner_type(inner: Any) -> type | None:
     return None
 
 
+_PARAM_SECTIONS = frozenset({"parameters", "参数"})
+
+
+def _extract_param_help(func: Callable[..., Any]) -> dict[str, str]:
+    """从 NumPy 风格 docstring 的 ``Parameters`` / ``参数`` 小节提取参数帮助。
+
+    条目形如 ``name:`` 后跟缩进说明，说明可跨行（拼接为一行）。遇到
+    ``Returns`` / ``Raises`` / ``示例`` 等其它小节即停止提取，避免误吞正文。
+    RST 行内标记（`` ``x`` ``）会被去掉，便于在 ``--help`` 中直接阅读。
+    """
+    lines = (inspect.getdoc(func) or "").splitlines()
+    help_map: dict[str, str] = {}
+    names: list[str] = []
+    buffer: list[str] = []
+    in_section = False
+
+    def flush() -> None:
+        if names:
+            text = "".join(buffer).strip().replace("``", "")
+            if text:
+                for name in names:
+                    help_map[name] = text
+        names.clear()
+        buffer.clear()
+
+    for index, raw in enumerate(lines):
+        text = raw.strip()
+        underline = lines[index + 1].strip() if index + 1 < len(lines) else ""
+        if text and len(underline) >= 3 and set(underline) == {"-"}:
+            flush()
+            in_section = text.lower() in _PARAM_SECTIONS
+            continue
+        if not in_section or not text or set(text) == {"-"}:
+            continue
+        if raw[:1] in (" ", "\t"):
+            buffer.append(text)
+            continue
+        flush()
+        name_part, sep, description = text.partition(":")
+        if not sep:
+            buffer.append(text)
+            continue
+        names = [item.strip() for item in name_part.split(",") if item.strip()]
+        buffer.append(description.strip())
+    flush()
+    return help_map
+
+
 def _add_positional_arg(
     parser: argparse.ArgumentParser,
     pname: str,
@@ -263,7 +313,9 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
     sig = inspect.signature(spec.func)
     prog = spec.name if spec.subcommand is None else f"{spec.name} {spec.subcommand}"
     description = spec.help or inspect.getdoc(spec.func) or ""
-    param_help = spec.param_help or {}
+    param_help = _extract_param_help(spec.func)
+    if spec.param_help:
+        param_help.update(spec.param_help)
     parser = argparse.ArgumentParser(prog=prog, description=description)
     for pname, param in sig.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):

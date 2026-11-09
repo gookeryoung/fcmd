@@ -27,7 +27,7 @@ from urllib.request import Request
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool, run_tool
 from fcmd.tools.ai import serve_core as core
 from fcmd.tools.ai import servetool
 from fcmd.tools.ai.serve_core import (
@@ -189,6 +189,15 @@ class TestRegistration:
 
     def test_alias(self) -> None:
         assert servetool.__tool_aliases__ == ["srv"]
+
+    def test_convert_help_describes_parameters(self) -> None:
+        """convert 的 --help 展示参数含义而非参数名。"""
+        from fcmd.core.toolkit import _build_parser_for_tool
+
+        text = _build_parser_for_tool(get_tool("servetool", "convert")).format_help()
+        assert "含 config.json 与 *.safetensors 的模型目录" in text
+        assert "量化类型" in text
+        assert "convert_hf_to_gguf.py 路径" in text
 
 
 class TestHelpers:

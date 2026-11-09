@@ -607,6 +607,84 @@ def test_build_parser_positional_list() -> None:
     assert args.items == ["a", "b", "c"]
 
 
+def test_build_parser_param_help_from_docstring() -> None:
+    """docstring 的 Parameters 小节成为 --help 参数说明。"""
+
+    @tool("demo", subcommand="a")
+    def a(source: Path, quant: str | None = None) -> None:
+        """转换模型。
+
+        Parameters
+        ----------
+        source:
+            含 ``config.json`` 的模型目录。
+        quant:
+            量化类型；
+            如 ``Q4_K_M``。
+        """
+
+    from fcmd.core.toolkit import _build_parser_for_tool
+
+    parser = _build_parser_for_tool(get_tool("demo", "a"))
+    text = parser.format_help()
+    assert "含 config.json 的模型目录。" in text
+    assert "量化类型；如 Q4_K_M。" in text
+
+
+def test_build_parser_param_help_chinese_heading_and_section_stop() -> None:
+    """中文「参数」标题生效，且 Returns 等后续小节不被吞入。"""
+
+    @tool("demo", subcommand="a")
+    def a(count: int = 1) -> None:
+        """示例。
+
+        参数
+        ----
+        count:
+            条目数量。
+
+        Returns
+        -------
+        无返回值。
+        """
+
+    from fcmd.core.toolkit import _build_parser_for_tool
+
+    parser = _build_parser_for_tool(get_tool("demo", "a"))
+    action = next(action for action in parser._actions if action.dest == "count")
+    assert action.help == "条目数量。"
+
+
+def test_build_parser_param_help_fallback_and_override() -> None:
+    """无 docstring 时退化为参数名；显式 param_help 覆盖 docstring。"""
+    from dataclasses import replace
+
+    from fcmd.core.toolkit import _build_parser_for_tool
+
+    @tool("demo", subcommand="plain")
+    def plain(count: int = 1) -> None:
+        pass
+
+    @tool("demo", subcommand="override")
+    def override(count: int = 1) -> None:
+        """示例。
+
+        Parameters
+        ----------
+        count:
+            docstring 文案。
+        """
+
+    plain_action = next(
+        action for action in _build_parser_for_tool(get_tool("demo", "plain"))._actions if action.dest == "count"
+    )
+    assert plain_action.help == "count"
+
+    spec = replace(get_tool("demo", "override"), param_help={"count": "显式覆盖文案。"})
+    override_action = next(action for action in _build_parser_for_tool(spec)._actions if action.dest == "count")
+    assert override_action.help == "显式覆盖文案。"
+
+
 def test_build_parser_optional_str() -> None:
     """optional str 参数。"""
 
