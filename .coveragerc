@@ -2,7 +2,8 @@
 branch = true
 omit =
     tests/*
-    */tools/llm/llm*w.py # Tk 窗口应用不纳入单元覆盖
+    # Tk 窗口应用不纳入单元覆盖
+    */tools/llm/llm*w.py
 source = fcmd
 
 [report]

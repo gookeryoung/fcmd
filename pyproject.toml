@@ -49,6 +49,7 @@
         jsont         ="fcmd.dsl.entry:run_named"
         llmbench      ="fcmd.tools.llm.llmbench:main"
         llmconvert    ="fcmd.tools.llm.llmconvert:main"
+        llmconvertw   ="fcmd.tools.llm.llmconvertw:main"
         llmdoctor     ="fcmd.tools.llm.llmdoctor:main"
         llmdown       ="fcmd.tools.llm.llmdown:main"
         llmengine     ="fcmd.tools.llm.llmengine:main"
