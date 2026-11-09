@@ -1,4 +1,7 @@
-"""llmserve - 服务生命周期：启动计划、进程拉起、健康检查、停止与日志。"""
+"""llmserve - 服务生命周期：启动计划、进程拉起、健康检查、停止与日志。
+
+独立命令：``llmserve <plan|start|stop|status|logs>``。
+"""
 
 from __future__ import annotations
 
@@ -10,6 +13,8 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import fcmd
+from fcmd.console import Table, get_console
 from fcmd.tools.llm import llmengine, llmenv, llmmodel
 from fcmd.tools.llm.llmbase import (
     DEFAULT_ALIAS,
@@ -30,6 +35,7 @@ from fcmd.tools.llm.llmbase import (
     format_command,
     format_returncode,
     http_base_url,
+    human_size,
     now_iso,
     validate_name,
 )
@@ -312,3 +318,214 @@ def read_log(name: str, lines: int = 50, home: Path | None = None) -> str:
     if not path.is_file():
         raise ServeError(f"日志不存在: {path}")
     return _tail_text(path, lines)
+
+
+def _print_plan(plan: LaunchPlan) -> None:
+    """打印启动计划与显存估算。"""
+    table = Table(title=f"启动计划: {plan.name}", box="ascii")
+    table.add_column("项目", style="cyan", no_wrap=True)
+    table.add_column("值")
+    table.add_row("引擎", f"{plan.engine.exe}（{plan.engine.tag}）")
+    table.add_row("模型", str(plan.model))
+    table.add_row(
+        "档位",
+        f"{plan.profile.name} / {plan.profile.quant} / kv {plan.effective_kv_type} / "
+        f"ctx {plan.context} / ub {plan.effective_ubatch}",
+    )
+    table.add_row("监听", http_base_url(plan.host, plan.port))
+    table.add_row("显存估算", human_size(llmmodel.plan_vram(plan)))
+    table.add_row("日志", str(plan.log))
+    get_console().print(table)
+    get_console().print("命令: " + format_command(plan.argv()))
+
+
+def _print_state(state: ServeState) -> None:
+    """打印服务状态详情。"""
+    alive = process_alive(state.pid, state.create_time)
+    table = Table(title=f"服务: {state.name}", box="ascii")
+    table.add_column("项目", style="cyan", no_wrap=True)
+    table.add_column("值")
+    table.add_row("状态", "[green]运行中[/green]" if alive else "[red]已退出[/red]")
+    table.add_row("地址", state.base_url)
+    table.add_row("模型", state.model)
+    table.add_row("档位", f"{state.profile} / ctx {state.context}")
+    table.add_row("PID", str(state.pid))
+    table.add_row("启动时间", state.started_at)
+    table.add_row("日志", state.log)
+    get_console().print(table)
+
+
+@fcmd.tool("llmserve", subcommand="plan", help="打印启动计划（命令 + 显存估算），不启动")
+def plan_cmd(  # noqa: PLR0913, PLR0917
+    name: str = DEFAULT_NAME,
+    profile: ProfileName = DEFAULT_PROFILE,
+    model: Path | None = None,
+    models_root: Path | None = None,
+    port: int = DEFAULT_PORT,
+    host: str = DEFAULT_HOST,
+    ctx: int | None = None,
+    kv_type: str | None = None,
+    ubatch: int | None = None,
+    engine_tag: str | None = None,
+    alias: str = DEFAULT_ALIAS,
+    api_key: str = DEFAULT_API_KEY,
+    threads: int = DEFAULT_THREADS,
+) -> None:
+    """打印启动计划，便于确认参数与显存占用。
+
+    Parameters
+    ----------
+    name:
+        服务名（决定状态与日志文件），默认 ``qwen``。
+    profile:
+        档位：``speed`` / ``balanced`` / ``long`` / ``max-context``。
+    model:
+        GGUF 文件或包含 GGUF 的目录；默认按档位量化在模型根目录查找。
+    models_root:
+        只在该目录查找；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
+    port:
+        监听端口（默认 8080）。
+    host:
+        监听地址（默认 127.0.0.1）。
+    ctx:
+        覆盖档位上下文长度。
+    kv_type:
+        覆盖 KV 缓存类型（``f16`` / ``q8_0`` / ``q4_0``）。
+    ubatch:
+        覆盖 ubatch。
+    engine_tag:
+        指定引擎 tag，默认 current / 最新安装。
+    alias:
+        OpenAI 模型名。
+    api_key:
+        本地 API Key。
+    threads:
+        CPU 线程数。
+    """
+    plan = make_plan(
+        name,
+        profile,
+        model=model,
+        models_root=models_root,
+        port=port,
+        host=host,
+        ctx=ctx,
+        kv_type=kv_type,
+        ubatch=ubatch,
+        engine_tag=engine_tag,
+        alias=alias,
+        api_key=api_key,
+        threads=threads,
+    )
+    _print_plan(plan)
+
+
+@fcmd.tool("llmserve", subcommand="start", help="启动推理服务（等待健康检查通过）")
+def start_cmd(  # noqa: PLR0913, PLR0917
+    name: str = DEFAULT_NAME,
+    profile: ProfileName = DEFAULT_PROFILE,
+    model: Path | None = None,
+    models_root: Path | None = None,
+    port: int = DEFAULT_PORT,
+    host: str = DEFAULT_HOST,
+    ctx: int | None = None,
+    kv_type: str | None = None,
+    ubatch: int | None = None,
+    engine_tag: str | None = None,
+    alias: str = DEFAULT_ALIAS,
+    api_key: str = DEFAULT_API_KEY,
+    threads: int = DEFAULT_THREADS,
+    wait: float = 180.0,
+) -> None:
+    """启动服务并等待 ``/health`` 就绪。
+
+    参数含义同 ``llmserve plan``；``wait`` 为等待模型加载的秒数。
+    """
+    plan = make_plan(
+        name,
+        profile,
+        model=model,
+        models_root=models_root,
+        port=port,
+        host=host,
+        ctx=ctx,
+        kv_type=kv_type,
+        ubatch=ubatch,
+        engine_tag=engine_tag,
+        alias=alias,
+        api_key=api_key,
+        threads=threads,
+    )
+    _print_plan(plan)
+    state = start_server(plan, wait_s=wait)
+    _print_state(state)
+
+
+@fcmd.tool("llmserve", subcommand="stop", help="停止推理服务并清理状态")
+def stop_cmd(name: str = DEFAULT_NAME) -> None:
+    """停止服务（进程已退出时清理残留状态）。
+
+    Parameters
+    ----------
+    name:
+        服务名，默认 ``qwen``。
+    """
+    result = stop_server(name)
+    if result.was_running:
+        get_console().print(f"已停止服务 {name}（pid={result.state.pid}）")
+    else:
+        get_console().print(f"服务 {name} 未在运行，已清理残留状态")
+
+
+@fcmd.tool("llmserve", subcommand="status", help="查看服务状态（不指定 name 时列出全部）")
+def status_cmd(name: str | None = None) -> None:
+    """查看服务进程与健康状态。
+
+    Parameters
+    ----------
+    name:
+        服务名；省略时列出全部已登记服务。
+    """
+    if name:
+        _print_state(llmenv.require_state(name))
+        return
+
+    states = llmenv.list_states()
+    if not states:
+        get_console().print("没有已登记的服务：fcmd llmserve start")
+        return
+    table = Table(title="服务列表", box="ascii")
+    table.add_column("服务", style="cyan", no_wrap=True)
+    table.add_column("状态", justify="center", no_wrap=True)
+    table.add_column("地址", no_wrap=True)
+    table.add_column("档位", no_wrap=True)
+    table.add_column("PID", justify="right", no_wrap=True)
+    for state in states:
+        alive = process_alive(state.pid, state.create_time)
+        table.add_row(
+            state.name,
+            "[green]运行中[/green]" if alive else "[red]已退出[/red]",
+            state.base_url,
+            f"{state.profile}/ctx{state.context}",
+            str(state.pid),
+        )
+    get_console().print(table)
+
+
+@fcmd.tool("llmserve", subcommand="logs", help="查看服务日志末尾若干行")
+def logs_cmd(name: str = DEFAULT_NAME, lines: int = 50) -> None:
+    """打印服务日志尾部。
+
+    Parameters
+    ----------
+    name:
+        服务名，默认 ``qwen``。
+    lines:
+        打印的行数（默认 50）。
+    """
+    get_console().print(read_log(name, lines), markup=False)
+
+
+@fcmd.main("llmserve")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行

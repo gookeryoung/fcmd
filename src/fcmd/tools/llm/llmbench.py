@@ -1,7 +1,10 @@
 """llmbench - 对任意 OpenAI 兼容服务实测延迟与 token 吞吐。
 
 只依赖 :class:`fcmd.tools.llm.llmbase.Endpoint`，不读取进程状态目录，
-因此可直接用于 vLLM、LM Studio 或远程推理服务。
+因此可直接用于 vLLM、LM Studio 或远程推理服务（独立命令需要按服务名
+定位时，才在函数内部懒导入 :mod:`fcmd.tools.llm.llmenv`）。
+
+独立命令：``llmbench [--name 服务名 | --base-url 地址]``。
 """
 
 from __future__ import annotations
@@ -11,7 +14,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from fcmd.tools.llm.llmbase import Endpoint, Opener, ServeError
+import fcmd
+from fcmd.console import Table, get_console
+from fcmd.tools.llm.llmbase import DEFAULT_ALIAS, DEFAULT_API_KEY, Endpoint, Opener, ServeError
 
 __all__ = ["BenchResult", "bench", "make_bench_prompt"]
 
@@ -102,3 +107,79 @@ def bench(  # noqa: PLR0913
     predicted = timings.get("predicted_per_second") if isinstance(timings, dict) else None
     rate = float(predicted) if isinstance(predicted, int | float) and predicted > 0 else completion_tokens / elapsed
     return BenchResult(elapsed, prompt_tokens, completion_tokens, rate)
+
+
+def _resolve_endpoint(name: str | None, base_url: str | None, api_key: str, model: str) -> Endpoint:
+    """解析被测服务：显式 ``base_url`` → ``name`` → 唯一运行中的服务。"""
+    if base_url:
+        url = base_url.strip().rstrip("/")
+        if url.endswith("/v1"):
+            url = url[: -len("/v1")]
+        return Endpoint(url, api_key, model)
+
+    from fcmd.tools.llm import llmenv
+
+    if name:
+        return llmenv.require_state(name).endpoint
+    states = llmenv.list_states()
+    if len(states) == 1:
+        return states[0].endpoint
+    if not states:
+        raise ServeError("没有已登记的服务：用 --base-url 指定地址，或先 fcmd llmserve start")
+    raise ServeError("多个服务在运行，用 --name 指定: " + ", ".join(state.name for state in states))
+
+
+@fcmd.tool("llmbench", help="对 OpenAI 兼容服务实测延迟与 token 吞吐")
+def bench_cmd(  # noqa: PLR0913, PLR0917
+    name: str | None = None,
+    base_url: str | None = None,
+    api_key: str = DEFAULT_API_KEY,
+    model: str = DEFAULT_ALIAS,
+    prompt: str = DEFAULT_PROMPT,
+    prompt_tokens: int | None = None,
+    max_tokens: int = 128,
+    timeout: float = 180.0,
+) -> None:
+    """发一次补全请求，输出延迟与吞吐。
+
+    Parameters
+    ----------
+    name:
+        服务名（读 ``~/.fcmd/serve/<name>.json``）；省略且只有一个服务时自动选用。
+    base_url:
+        OpenAI 兼容地址（如 ``http://127.0.0.1:8080``），给出时忽略 ``name``。
+    api_key:
+        ``base_url`` 模式下的 API Key。
+    model:
+        ``base_url`` 模式下的模型名。
+    prompt:
+        测试提示词。
+    prompt_tokens:
+        按目标 token 数生成填充提示（模拟长会话）；给出时忽略 ``prompt``。
+    max_tokens:
+        生成 token 上限（默认 128）。
+    timeout:
+        请求超时秒数（默认 180）。
+    """
+    endpoint = _resolve_endpoint(name, base_url, api_key, model)
+    result = bench(endpoint, prompt=prompt, prompt_tokens=prompt_tokens, max_tokens=max_tokens, timeout=timeout)
+    table = Table(title="实测", box="ascii")
+    table.add_column("指标", style="cyan", no_wrap=True)
+    table.add_column("值", justify="right", no_wrap=True)
+    table.add_row("地址", endpoint.base_url)
+    table.add_row("模型", endpoint.model)
+    table.add_row("总延迟", f"{result.latency_s:.2f} s")
+    table.add_row("输入 tokens", str(result.prompt_tokens))
+    table.add_row("输出 tokens", str(result.completion_tokens))
+    table.add_row("输出吞吐", f"{result.tokens_per_s:.2f} tok/s")
+    get_console().print(table)
+    if result.prompt_tokens < 1000:
+        get_console().print(
+            f"[yellow]提示: 输入仅 {result.prompt_tokens} tokens，短上下文吞吐偏乐观；"
+            "加 --prompt-tokens 30000 可模拟真实长会话[/yellow]"
+        )
+
+
+@fcmd.main("llmbench")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行

@@ -1,5 +1,7 @@
 """llmenv - 大模型工具的路径、配置、状态文件与客户端环境变量。
 
+独立命令：``llmenv <show|add|remove|reset|list|env>``。
+
 目录约定（``FCMD_HOME`` 默认 ``~/.fcmd``）::
 
     ${FCMD_HOME}/serve/<name>.json        服务状态（pid / 端口 / 模型 / 引擎）
@@ -18,9 +20,11 @@ import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from fcmd.tools.llm.llmbase import ServeError, ServeState, validate_name
+import fcmd
+from fcmd.console import Table, get_console
+from fcmd.tools.llm.llmbase import DEFAULT_NAME, ServeError, ServeState, validate_name
 
 __all__ = [
     "add_models_root",
@@ -257,3 +261,105 @@ def client_env(state: ServeState) -> dict[str, str]:
         "OPENAI_API_KEY": state.api_key,
         "OPENAI_MODEL": state.alias,
     }
+
+
+_ENV_SHELL = Literal["plain", "powershell", "bash"]
+
+
+@fcmd.tool("llmenv", subcommand="show", help="显示目录布局与当前生效的模型目录")
+def show_cmd() -> None:
+    """打印 ``FCMD_HOME`` 目录布局、模型目录与已登记服务数量。"""
+    table = Table(title="llmenv 目录布局", box="ascii")
+    table.add_column("项目", style="cyan", no_wrap=True)
+    table.add_column("路径")
+    table.add_row("FCMD_HOME", str(fcmd_home()))
+    table.add_row("服务状态", str(serve_dir()))
+    table.add_row("配置文件", str(config_path()))
+    table.add_row("引擎根目录", str(engines_root()))
+    table.add_row("模型目录", ", ".join(str(path) for path in models_roots()))
+    table.add_row("已登记服务", str(len(list_states())))
+    get_console().print(table)
+
+
+@fcmd.tool("llmenv", subcommand="add", help="登记一个模型目录")
+def add_cmd(path: Path) -> None:
+    """新增模型目录并落盘（重复登记忽略）。
+
+    Parameters
+    ----------
+    path:
+        要登记的模型目录。
+    """
+    add_models_root(path)
+    get_console().print(f"已登记模型目录: {path.expanduser()}")
+    if not path.expanduser().is_dir():
+        get_console().print(f"[yellow]提示: 目录当前不存在 {path.expanduser()}[/yellow]")
+    show_cmd()
+
+
+@fcmd.tool("llmenv", subcommand="remove", help="移除已登记的模型目录")
+def remove_cmd(path: Path) -> None:
+    """移除模型目录并落盘。
+
+    Parameters
+    ----------
+    path:
+        要移除的模型目录。
+    """
+    remove_models_root(path)
+    get_console().print(f"已移除模型目录: {path.expanduser()}")
+    show_cmd()
+
+
+@fcmd.tool("llmenv", subcommand="reset", help="清空模型目录配置，回到默认目录")
+def reset_cmd() -> None:
+    """清空配置文件中的模型目录列表。"""
+    reset_models_roots()
+    get_console().print("已清空模型目录配置，回到默认目录")
+    show_cmd()
+
+
+@fcmd.tool("llmenv", subcommand="list", help="列出已登记的服务状态")
+def list_cmd() -> None:
+    """列出全部可解析的服务状态文件。"""
+    states = list_states()
+    if not states:
+        get_console().print("没有已登记的服务：fcmd llmserve start")
+        return
+    table = Table(title="已登记服务", box="ascii")
+    table.add_column("服务", style="cyan", no_wrap=True)
+    table.add_column("地址", no_wrap=True)
+    table.add_column("档位", no_wrap=True)
+    table.add_column("PID", justify="right", no_wrap=True)
+    table.add_column("启动时间", no_wrap=True)
+    for state in states:
+        table.add_row(
+            state.name, state.base_url, f"{state.profile}/ctx{state.context}", str(state.pid), state.started_at
+        )
+    get_console().print(table)
+
+
+@fcmd.tool("llmenv", subcommand="env", help="输出服务的 OPENAI_* 环境变量")
+def env_cmd(name: str = DEFAULT_NAME, shell: _ENV_SHELL = "plain") -> None:
+    """按指定 shell 语法输出客户端环境变量。
+
+    Parameters
+    ----------
+    name:
+        服务名，默认 ``qwen``。
+    shell:
+        输出格式：``plain``（``KEY=VALUE``）/ ``powershell`` / ``bash``。
+    """
+    state = require_state(name)
+    for key, value in client_env(state).items():
+        if shell == "powershell":
+            get_console().print(f'$env:{key}="{value}"', markup=False)
+        elif shell == "bash":
+            get_console().print(f'export {key}="{value}"', markup=False)
+        else:
+            get_console().print(f"{key}={value}", markup=False)
+
+
+@fcmd.main("llmenv")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行

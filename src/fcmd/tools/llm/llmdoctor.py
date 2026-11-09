@@ -1,4 +1,7 @@
-"""llmdoctor - 运行环境体检：目录、GPU、CUDA、引擎、模型、端口、磁盘与 VC++ 运行库。"""
+"""llmdoctor - 运行环境体检：目录、GPU、CUDA、引擎、模型、端口、磁盘与 VC++ 运行库。
+
+独立命令：``llmdoctor [--port 8080]``。
+"""
 
 from __future__ import annotations
 
@@ -7,6 +10,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import fcmd
+from fcmd.console import Table, get_console
 from fcmd.tools.llm import llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm.llmbase import (
     DEFAULT_PORT,
@@ -175,3 +180,42 @@ def doctor(
     checks.append(_check_port(port, home))
     checks.append(_check_disk(models_root, home))
     return checks
+
+
+_STATUS_TEXT = {"ok": "[green]ok[/green]", "warn": "[yellow]warn[/yellow]", "fail": "[red]fail[/red]"}
+
+
+@fcmd.tool("llmdoctor", help="运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）")
+def doctor_cmd(
+    port: int = DEFAULT_PORT,
+    engine_tag: str | None = None,
+    models_root: Path | None = None,
+) -> None:
+    """运行环境体检并打印检查表。
+
+    Parameters
+    ----------
+    port:
+        计划使用的服务端口（默认 8080）。
+    engine_tag:
+        只体检指定引擎 tag；默认按 current / 最新安装解析。
+    models_root:
+        只体检该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
+    """
+    checks = doctor(port=port, engine_tag=engine_tag, models_root=models_root)
+    table = Table(title="llmdoctor 体检", box="ascii")
+    table.add_column("检查项", style="cyan", no_wrap=True)
+    table.add_column("状态", justify="center", no_wrap=True)
+    table.add_column("详情")
+    for check in checks:
+        table.add_row(check.name, _STATUS_TEXT[check.status], check.detail)
+    get_console().print(table)
+
+    failures = [check for check in checks if check.status == "fail"]
+    if failures:
+        raise ServeError(f"{len(failures)} 项检查失败：" + "；".join(f"{c.name}: {c.detail}" for c in failures))
+
+
+@fcmd.main("llmdoctor")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行

@@ -1,4 +1,7 @@
-"""llmconvert - HuggingFace safetensors 转 GGUF（可复用本地源码 zip、可选再量化）。"""
+"""llmconvert - HuggingFace safetensors 转 GGUF（可复用本地源码 zip、可选再量化）。
+
+独立命令：``llmconvert <源目录> [--output ...]``。
+"""
 
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
+import fcmd
+from fcmd.console import Table, get_console
 from fcmd.tools.llm import llmengine, llmenv
 from fcmd.tools.llm.llmbase import (
     CHUNK_SIZE,
@@ -406,3 +411,67 @@ def convert_model(plan: ConvertPlan, runner: Runner = run_command) -> list[Path]
     with contextlib.suppress(OSError):
         Path(plan.intermediate).unlink()
     return [plan.output]
+
+
+@fcmd.tool("llmconvert", help="HF safetensors 目录转 GGUF（可复用本地源码 zip、可选再量化）")
+def convert_cmd(  # noqa: PLR0913, PLR0917
+    source: Path,
+    output: Path | None = None,
+    outtype: str = "f16",
+    quant: str | None = None,
+    script: Path | None = None,
+    python: str | None = None,
+    models_root: Path | None = None,
+    tag: str | None = None,
+) -> None:
+    """把 HuggingFace safetensors 目录转换为 GGUF，供 llama.cpp 加载。
+
+    Parameters
+    ----------
+    source:
+        含 ``config.json`` 与 ``*.safetensors`` 的模型目录。
+    output:
+        输出 GGUF 路径；默认 ``<模型目录>/<源目录名>/<源目录名>[-<量化>].gguf``。
+    outtype:
+        转换精度（``f32``/``f16``/``bf16``/``q8_0``，默认 ``f16``）。
+    quant:
+        量化类型（如 ``Q4_K_M``）；需要 ``llama-quantize``。
+    script:
+        转换脚本 ``convert_hf_to_gguf.py`` 或本地 llama.cpp 源码 ``.zip``。
+    python:
+        运行转换脚本的解释器（需已安装 torch / safetensors / numpy）；缺省自动探测。
+    models_root:
+        默认输出位置使用的模型目录。
+    tag:
+        按指定引擎 tag 匹配 llama.cpp 源码版本；默认用 current 引擎。
+    """
+    plan = plan_convert(
+        source,
+        output=output,
+        outtype=outtype,
+        quant=quant,
+        script=script,
+        python=python or find_convert_python(),
+        models_root=models_root,
+        tag=tag,
+    )
+    table = Table(title="转换计划", box="ascii")
+    table.add_column("项", style="cyan", no_wrap=True)
+    table.add_column("值")
+    table.add_row("源目录", str(plan.source))
+    table.add_row("输出", str(plan.output))
+    if plan.quant:
+        table.add_row("中间文件", plan.intermediate)
+    table.add_row("精度", plan.outtype)
+    table.add_row("量化", plan.quant or "-")
+    table.add_row("脚本", str(plan.script))
+    table.add_row("解释器", plan.python)
+    get_console().print(table)
+
+    for path in convert_model(plan):
+        get_console().print(f"已生成: {path}")
+
+
+@fcmd.main("llmconvert")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
