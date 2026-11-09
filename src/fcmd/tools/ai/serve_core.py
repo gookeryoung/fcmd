@@ -1299,26 +1299,34 @@ def ensure_convert_script(
     runner: Runner = run_command,
     opener: Opener | None = None,
 ) -> Path:
-    """定位转换脚本：显式 ``--script`` → ``FCMD_CONVERT_SCRIPT`` → 本地源码 →
-    引擎目录已有 ``llama.cpp*.zip`` → 源码包下载 → 浅克隆。
+    """定位转换脚本：显式 ``--script``（脚本或本地源码 zip）→ ``FCMD_CONVERT_SCRIPT``
+    → 本地源码 → 引擎目录已有 ``llama.cpp*.zip`` → 源码包下载 → 浅克隆。
 
     现代 llama.cpp 的 ``convert_hf_to_gguf.py`` 依赖仓库内的 ``conversion`` 包与
     ``gguf-py``，因此不能单独下载脚本，必须保留完整源码目录；官方 release 引擎
-    包只有二进制，首次转换会自动获取与引擎 tag 匹配的源码。若引擎目录（或引擎
-    根目录）内已放好源码 zip，则校验后直接解压复用，不联网也不 clone。
+    包只有二进制，首次转换会自动获取与引擎 tag 匹配的源码。若 ``--script`` 指向
+    本地源码 zip，或引擎目录（及其根目录）内已放好 ``llama.cpp*.zip``，则校验后
+    直接解压复用，不联网也不 clone。
     """
+    root = engines_root(home)
+    resolved = tag or _current_tag(root) or DEFAULT_ENGINE_TAG
+    cached = convert_source_root(resolved, home) / CONVERT_SCRIPT
+
     raw = script or (
         Path(os.environ["FCMD_CONVERT_SCRIPT"]).expanduser() if os.environ.get("FCMD_CONVERT_SCRIPT") else None
     )
     if raw is not None:
         target = Path(raw).expanduser()
+        if target.suffix.lower() == ".zip":
+            if not target.is_file():
+                raise ServeError(f"源码压缩包不存在: {target}")
+            if not _source_archive_ready(target) or not _extract_source_archive(target, cached.parent):
+                raise ServeError(f"不是可用的 llama.cpp 源码包（缺少 {CONVERT_SCRIPT}）: {target}")
+            return cached
         if not target.is_file():
             raise ServeError(f"转换脚本不存在: {target}")
         return target
 
-    root = engines_root(home)
-    resolved = tag or _current_tag(root) or DEFAULT_ENGINE_TAG
-    cached = convert_source_root(resolved, home) / CONVERT_SCRIPT
     if cached.is_file():
         return cached
 

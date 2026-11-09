@@ -529,6 +529,25 @@ class TestConvert:
         with pytest.raises(ServeError, match="转换脚本不存在"):
             core.ensure_convert_script(script=tmp_path / "nope.py")
 
+    def test_ensure_script_accepts_local_zip(self, tmp_path: Path) -> None:
+        """--script 指向本地源码 zip 时解压使用，压缩包保留。"""
+        archive = tmp_path / "llama.cpp.zip"
+        archive.write_bytes(_zip_payload({"convert_hf_to_gguf.py": b"# from zip"}))
+        script = core.ensure_convert_script(tag="b9", script=archive, home=tmp_path / "home")
+        assert script.read_text(encoding="utf-8") == "# from zip"
+        assert archive.is_file()
+        assert script.parent.name == "llama.cpp"
+
+    def test_ensure_script_rejects_bad_zip(self, tmp_path: Path) -> None:
+        archive = tmp_path / "bad.zip"
+        archive.write_bytes(b"broken")
+        with pytest.raises(ServeError, match="不是可用的"):
+            core.ensure_convert_script(tag="b9", script=archive, home=tmp_path / "home")
+
+    def test_ensure_script_missing_zip(self, tmp_path: Path) -> None:
+        with pytest.raises(ServeError, match="源码压缩包不存在"):
+            core.ensure_convert_script(tag="b9", script=tmp_path / "nope.zip", home=tmp_path / "home")
+
     def test_ensure_script_from_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         script = tmp_path / "convert.py"
         script.write_text("", encoding="utf-8")

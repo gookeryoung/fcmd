@@ -170,8 +170,8 @@ def engine_cmd(
     tag:
         引擎 tag，如 ``b12211``；``install`` 默认用内置推荐版本。
     path:
-        ``install`` 时注册本地已编译的引擎目录（不复制文件），或直接解压本地
-        ``.zip`` 压缩包（跳过下载，压缩包保留）。
+        ``install`` 时注册本地已编译的引擎目录（不复制文件），或直接解压
+        本地 ``.zip`` 压缩包（跳过下载，压缩包保留）。
     variant:
         ``install`` 下载的官方包类型：``cuda``（含 cudart）或 ``cpu``。
     url:
@@ -321,7 +321,7 @@ def model_cmd(models_root: Path | None = None) -> None:
 @fcmd.tool(
     "servetool",
     subcommand="convert",
-    help="HF safetensors 目录转 GGUF（可选再量化）",
+    help="HF safetensors 目录转 GGUF（可复用本地源码 zip、可选再量化）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
 )
 def convert_cmd(  # noqa: PLR0913, PLR0917
@@ -346,8 +346,9 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     quant:
         量化类型（如 ``Q4_K_M``）；需要 ``llama-quantize``（官方 release 引擎自带）。
     script:
-        ``convert_hf_to_gguf.py`` 路径；默认复用引擎目录下的 ``llama.cpp*.zip`` 源码包，
-        没有则在线下载（失败再浅克隆）；网络受限可手动 clone 后用本参数指定。
+        转换脚本 ``convert_hf_to_gguf.py`` 路径，或本地 llama.cpp 源码 ``.zip``
+        （解压后使用）；默认复用引擎目录下的 ``llama.cpp*.zip``，没有则在线下载，
+        失败再浅克隆。
     python:
         运行转换脚本的解释器（需已安装 torch / safetensors / numpy）；缺省自动探测。
     models_root:
