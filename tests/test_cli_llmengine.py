@@ -2,18 +2,42 @@
 
 from __future__ import annotations
 
+import io
+import json
+import zipfile
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.llm import llmengine
-from fcmd.tools.llm.llmbase import Check, EngineInfo
+from fcmd.tools.llm import llmengine, llmenv
+from fcmd.tools.llm.llmbase import Check, EngineInfo, ServeError
 
 
 def test_tool_registered() -> None:
-    assert set(_TOOL_REGISTRY["llmengine"]) == {"list", "install", "use", "check"}
+    assert set(_TOOL_REGISTRY["llmengine"]) == {"list", "install", "use", "check", "inspect"}
+
+
+def test_engine_window_registered() -> None:
+    assert set(_TOOL_REGISTRY["llmenginew"]) == {None}
+
+
+def _make_zip(path: Path, entries: dict[str, bytes]) -> Path:
+    """写入一个 zip 离线包并返回路径。"""
+    with zipfile.ZipFile(path, "w") as bundle:
+        for name, data in entries.items():
+            bundle.writestr(name, data)
+    return path
+
+
+def _zip_bytes(entries: dict[str, bytes]) -> bytes:
+    """构造 zip 字节流。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        for name, data in entries.items():
+            bundle.writestr(name, data)
+    return buffer.getvalue()
 
 
 def test_list_without_engine(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -83,3 +107,219 @@ def test_check_reports_result(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Ca
     )
     llmengine.check_cmd()
     assert "version ok" in capsys.readouterr().out
+
+
+class TestInspectZip:
+    """zip 离线包检查。"""
+
+    def test_engine_package(self, tmp_path: Path) -> None:
+        exe = llmengine.engine_exe_name()
+        quant = llmengine.engine_exe_name("llama-quantize")
+        archive = _make_zip(
+            tmp_path / "llama-b12345-bin-win-cuda-13.5-x64.zip",
+            {f"bin/{exe}": b"exe", f"bin/{quant}": b"quant"},
+        )
+        info = llmengine.inspect_zip(archive)
+        assert info.kind == "engine"
+        assert info.usable is True
+        assert info.tag == "b12345"
+        assert info.variant == "cuda"
+        assert info.server == f"bin/{exe}"
+        assert info.quantize == f"bin/{quant}"
+        assert info.entries == 2
+        assert info.total_size == 8
+        assert info.problems == ()
+        assert info.notes == ()
+
+    def test_marker_tag_overrides_name(self, tmp_path: Path) -> None:
+        exe = llmengine.engine_exe_name()
+        archive = _make_zip(
+            tmp_path / "custom.zip",
+            {"bundle/engine.json": json.dumps({"tag": "b999"}).encode(), f"bundle/{exe}": b"exe"},
+        )
+        info = llmengine.inspect_zip(archive)
+        assert info.tag == "b999"
+
+    def test_cudart_package(self, tmp_path: Path) -> None:
+        archive = _make_zip(
+            tmp_path / "cudart-llama-bin-win-cuda-13.5-x64.zip",
+            {"cudart64_13.dll": b"dll"},
+        )
+        info = llmengine.inspect_zip(archive)
+        assert info.kind == "cudart"
+        assert info.usable is False
+        assert info.variant == "cuda"
+        assert info.notes
+
+    def test_source_package(self, tmp_path: Path) -> None:
+        archive = _make_zip(tmp_path / "llama.cpp-b9.zip", {"convert_hf_to_gguf.py": b"# script"})
+        info = llmengine.inspect_zip(archive)
+        assert info.kind == "source"
+        assert info.usable is False
+        assert info.notes
+
+    def test_unknown_package(self, tmp_path: Path) -> None:
+        archive = _make_zip(tmp_path / "random.zip", {"README.md": b"# readme"})
+        info = llmengine.inspect_zip(archive)
+        assert info.kind == "unknown"
+        assert info.problems
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        info = llmengine.inspect_zip(tmp_path / "absent.zip")
+        assert info.valid is False
+        assert info.kind == "invalid"
+        assert "文件不存在" in info.problems[0]
+
+    def test_not_a_zip(self, tmp_path: Path) -> None:
+        broken = tmp_path / "broken.zip"
+        broken.write_bytes(b"not a zip")
+        info = llmengine.inspect_zip(broken)
+        assert info.valid is False
+        assert "不是有效的 zip" in info.problems[0]
+
+    def test_deep_check_detects_crc_error(self, tmp_path: Path) -> None:
+        archive = tmp_path / "corrupt.zip"
+        payload = b"x" * 64
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+            bundle.writestr("llama-server.exe", payload)
+        data = bytearray(archive.read_bytes())
+        offset = data.find(payload)
+        assert offset >= 0
+        data[offset] ^= 0xFF
+        archive.write_bytes(bytes(data))
+        info = llmengine.inspect_zip(archive, deep=True)
+        assert info.bad_member == "llama-server.exe"
+        assert info.usable is False
+
+
+def test_inspect_zips_expands_directory(tmp_path: Path) -> None:
+    _make_zip(tmp_path / "b.zip", {"README.md": b""})
+    _make_zip(tmp_path / "a.zip", {"README.md": b""})
+    (tmp_path / "note.txt").write_text("skip", encoding="utf-8")
+    infos = llmengine.inspect_zips([tmp_path])
+    assert [info.path.name for info in infos] == ["a.zip", "b.zip"]
+
+
+def test_inspect_cmd_prints_table(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    exe = llmengine.engine_exe_name()
+    archive = _make_zip(tmp_path / "llama-b7-bin-win-cpu-x64.zip", {exe: b"exe"})
+    llmengine.inspect_cmd([archive])
+    out = capsys.readouterr().out
+    assert "zip 离线包检查" in out
+    assert "b7" in out
+    assert "cpu" in out
+
+
+def test_inspect_cmd_without_archives(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    llmengine.inspect_cmd([tmp_path])
+    assert "没有找到 zip 压缩包" in capsys.readouterr().out
+
+
+def test_install_from_archives(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    exe = llmengine.engine_exe_name()
+    engine_zip = _make_zip(tmp_path / "engine.zip", {f"bin/{exe}": b"exe"})
+    runtime_zip = _make_zip(
+        tmp_path / "cudart-llama-bin-win-cuda-13.5-x64.zip",
+        {"cudart64_13.dll": b"dll"},
+    )
+    info = llmengine.install_engine("b7", archives=[engine_zip, runtime_zip], home=home)
+    assert info.tag == "b7"
+    assert info.exe.is_file()
+    assert (llmenv.engines_root(home) / "b7" / "cudart64_13.dll").is_file()
+    assert engine_zip.is_file()
+    marker = json.loads((llmenv.engines_root(home) / "b7" / "engine.json").read_text(encoding="utf-8"))
+    assert "engine.zip" in marker["source"]
+    assert "cudart" in marker["source"]
+
+
+def test_install_from_archives_adds_runtime_to_existing_engine(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    target = llmenv.engines_root(home) / "b7"
+    target.mkdir(parents=True)
+    exe = target / llmengine.engine_exe_name()
+    exe.write_bytes(b"exe")
+    runtime_zip = _make_zip(
+        tmp_path / "cudart-llama-bin-win-cuda-13.5-x64.zip",
+        {"cudart64_13.dll": b"dll"},
+    )
+    info = llmengine.install_engine("b7", archives=[runtime_zip], home=home)
+    assert info.exe == exe
+    assert (target / "cudart64_13.dll").is_file()
+
+
+def test_install_from_archives_rejects_source_package(tmp_path: Path) -> None:
+    source_zip = _make_zip(tmp_path / "source.zip", {"convert_hf_to_gguf.py": b""})
+    with pytest.raises(ServeError, match="源码包"):
+        llmengine.install_engine("b7", archives=[source_zip], home=tmp_path / "home")
+
+
+def test_install_from_archives_rejects_invalid_package(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.zip"
+    broken.write_bytes(b"not a zip")
+    with pytest.raises(ServeError, match="离线包无效"):
+        llmengine.install_engine("b7", archives=[broken], home=tmp_path / "home")
+
+
+def test_install_from_archives_requires_engine_exe(tmp_path: Path) -> None:
+    runtime_zip = _make_zip(
+        tmp_path / "cudart-llama-bin-win-cuda-13.5-x64.zip",
+        {"cudart64_13.dll": b"dll"},
+    )
+    with pytest.raises(ServeError, match="找不到"):
+        llmengine.install_engine("b7", archives=[runtime_zip], home=tmp_path / "home")
+
+
+def test_install_cmd_rejects_path_and_zips(tmp_path: Path) -> None:
+    with pytest.raises(ServeError, match="不能同时使用"):
+        llmengine.install_cmd("b7", path=tmp_path, zips=[tmp_path / "a.zip"])
+
+
+def test_install_rejects_empty_archives(tmp_path: Path) -> None:
+    with pytest.raises(ServeError, match="未指定任何离线包"):
+        llmengine.install_engine("b7", archives=[], home=tmp_path / "home")
+
+
+def test_content_length_parsing() -> None:
+    class _Missing:
+        pass
+
+    class _Broken:
+        headers = {"Content-Length": "oops"}
+
+    assert llmengine._content_length(_Missing()) is None
+    assert llmengine._content_length(_Broken()) is None
+
+
+def test_install_reports_download_progress(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    payload = _zip_bytes({llmengine.engine_exe_name(): b"exe"})
+
+    class _Response:
+        headers = {"Content-Length": str(len(payload))}
+
+        def __init__(self) -> None:
+            self._pos = 0
+
+        def read(self, size: int) -> bytes:
+            chunk = payload[self._pos : self._pos + size]
+            self._pos += len(chunk)
+            return chunk
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    events: list[tuple[str, int, int | None]] = []
+    info = llmengine.install_engine(
+        "b8",
+        url="https://example.com/engine.zip",
+        home=home,
+        opener=cast(Any, lambda request, timeout: _Response()),
+        on_progress=lambda name, done, total: events.append((name, done, total)),
+    )
+    assert info.exe.is_file()
+    assert events[0] == ("engine.zip", 0, len(payload))
+    assert events[-1] == ("engine.zip", len(payload), len(payload))

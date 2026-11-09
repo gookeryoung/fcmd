@@ -52,6 +52,7 @@
         llmdoctor     ="fcmd.tools.llm.llmdoctor:main"
         llmdown       ="fcmd.tools.llm.llmdown:main"
         llmengine     ="fcmd.tools.llm.llmengine:main"
+        llmenginew    ="fcmd.tools.llm.llmenginew:main"
         llmenv        ="fcmd.tools.llm.llmenv:main"
         llmmodel      ="fcmd.tools.llm.llmmodel:main"
         llmqnt        ="fcmd.tools.llm.llmqnt:main"
