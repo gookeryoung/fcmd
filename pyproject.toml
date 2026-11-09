@@ -1,7 +1,7 @@
 [project]
 name = "fcmd"
 version = "0.3.10"
-description = "极速 Python 工具集应用：DAG 任务调度 + 组合 CLI"
+description = "Rapid Python tools collection"
 readme = "README.md"
 requires-python = ">=3.13"
 license = { text = "MIT" }
@@ -16,7 +16,6 @@ classifiers = [
 dependencies = ["pyyaml>=6.0.1", "rich>=13.9", "psutil>=6.0"]
 
 [project.scripts]
-# Python 模块工具（含 Python 逻辑，未迁 DSL）
 fcmd        = "fcmd.cli.main:main"
 archivex    = "fcmd.tools.archive.archivex:main"
 bumpversion = "fcmd.tools.dev.bumpversion:main"
@@ -29,8 +28,7 @@ portcheck   = "fcmd.tools.net.portcheck:main"
 pymake      = "fcmd.tools.dev.pymake:main"
 screenshot  = "fcmd.tools.media.screenshot:main"
 zipencrypt  = "fcmd.tools.archive.zipencrypt:main"
-# DSL 声明式命令（commands/*.toml）：console script 文件名即工具名，
-# 统一经 dsl.entry.run_named 按 argv[0] 推断工具名后转发
+# dsl tools
 asciitool      = "fcmd.dsl.entry:run_named"
 autofmt        = "fcmd.dsl.entry:run_named"
 calcdate       = "fcmd.dsl.entry:run_named"
