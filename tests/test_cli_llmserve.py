@@ -34,6 +34,7 @@ from fcmd.tools.llm import (
     llmenv,
     llmmodel,
     llmserve,
+    llmservew,
 )
 from fcmd.tools.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -1910,3 +1911,164 @@ class TestConvertBranches:
     def test_python_candidates_skips_empty_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PATH", os.pathsep + os.environ.get("PATH", ""))
         assert llmconvert._python_candidates()
+
+
+# ---------------------------------------------------------------------- #
+# llmservew 运行监控采样
+# ---------------------------------------------------------------------- #
+_GPU_CSV = (
+    "GPU-aaaa,0,NVIDIA RTX 5090 D,45,20480,32768,60,250.5,575.0,40,2500\n"
+    "GPU-bbbb,1,NVIDIA RTX 4090,5,1024,24576,45,30.0,450.0,[N/A],2100\n"
+)
+
+
+def _gpu_runner(gpu_csv: str, apps_csv: str = "", code: int = 0) -> llmbase.Runner:
+    """构造 nvidia-smi 替身：按查询类型返回 GPU / 进程显存 CSV。"""
+
+    def run(cmd: list[str], *args: Any, **kwargs: Any) -> CommandResult:
+        del args, kwargs
+        if any("query-compute-apps" in part for part in cmd):
+            return CommandResult(0, apps_csv, "")
+        return CommandResult(code, gpu_csv, "")
+
+    return run
+
+
+class TestServewSamples:
+    def test_parse_number(self) -> None:
+        assert llmservew._parse_number("12.5") == 12.5
+        assert llmservew._parse_number(" [N/A] ") is None
+        assert llmservew._parse_number("") is None
+        assert llmservew._parse_number("abc") is None
+
+    def test_sample_gpu_matches_process(self) -> None:
+        sample = llmservew._sample_gpu(1234, _gpu_runner(_GPU_CSV, "1234,GPU-bbbb,512\n"))
+        assert sample is not None
+        assert sample.name == "NVIDIA RTX 4090"
+        assert sample.index == "1"
+        assert sample.process_memory == 512
+        assert sample.fan is None
+
+    def test_sample_gpu_falls_back_to_largest_memory(self) -> None:
+        sample = llmservew._sample_gpu(999, _gpu_runner(_GPU_CSV))
+        assert sample is not None
+        assert sample.index == "0"
+        assert sample.process_memory is None
+
+    def test_sample_gpu_unavailable(self) -> None:
+        assert llmservew._sample_gpu(1, _gpu_runner("", code=1)) is None
+        assert llmservew._sample_gpu(1, _gpu_runner("")) is None
+        assert llmservew._parse_gpu_rows("bad,row\n") == []
+
+    def test_format_load(self) -> None:
+        sample = llmservew.LoadSample(
+            cpu=12.34,
+            cpu_freq=3200.0,
+            memory_used=8 * 1024**3,
+            memory_total=32 * 1024**3,
+            memory_percent=25.0,
+            swap_used=1024**3,
+            swap_total=4 * 1024**3,
+            process_cpu=5.5,
+            process_rss=2 * 1024**3,
+            process_threads=12,
+            process_uptime=3661.0,
+        )
+        values = llmservew._format_load(sample)
+        assert values["cpu"] == "12.3 %"
+        assert values["cpu_freq"] == "3200 MHz"
+        assert values["memory"] == "8.00 GB / 32.00 GB（25.0 %）"
+        assert values["swap"] == "1.00 GB / 4.00 GB（25.0 %）"
+        assert values["proc_cpu"] == "5.5 %"
+        assert values["proc_mem"] == "2.00 GB"
+        assert values["proc_threads"] == "12"
+        assert values["uptime"] == "1h 01m 01s"
+
+    def test_format_load_empty(self) -> None:
+        values = llmservew._format_load(llmservew.LoadSample())
+        assert values["cpu"] == "-"
+        assert values["memory"] == "-"
+        assert values["swap"] == "-"
+
+    def test_format_gpu(self) -> None:
+        gpu = llmservew.GpuSample(
+            name="NVIDIA RTX 5090 D",
+            index="0",
+            utilization=45.0,
+            memory_used=20480.0,
+            memory_total=32768.0,
+            temperature=60.0,
+            power_draw=250.0,
+            power_limit=575.0,
+            fan=40.0,
+            clock_mhz=2500.0,
+            process_memory=18432.0,
+        )
+        values = llmservew._format_gpu(gpu)
+        assert values["gpu_name"] == "NVIDIA RTX 5090 D（GPU 0）"
+        assert values["gpu_util"] == "45 %"
+        assert values["gpu_vram"] == "20.00 GB / 32.00 GB（62.5 %）"
+        assert values["gpu_proc_vram"] == "18.00 GB"
+        assert values["gpu_temp"] == "60 °C"
+        assert values["gpu_power"] == "250 / 575 W"
+        assert values["gpu_fan"] == "40 %"
+        assert values["gpu_clock"] == "2500 MHz"
+
+    def test_format_gpu_missing(self) -> None:
+        values = llmservew._format_gpu(None)
+        assert "未检测到" in values["gpu_name"]
+        assert values["gpu_util"] == "-"
+
+    def test_format_gpu_partial(self) -> None:
+        values = llmservew._format_gpu(llmservew.GpuSample(name="GPU", power_draw=100.0))
+        assert values["gpu_vram"] == "-"
+        assert values["gpu_power"] == "100 W"
+        assert values["gpu_fan"] == "-"
+
+    def test_sample_load_current_process(self) -> None:
+        import psutil
+
+        process = psutil.Process(os.getpid())
+        process.cpu_percent()
+        sample = llmservew._sample_load(os.getpid(), process)
+        assert sample.cpu is not None
+        assert sample.memory_total > 0
+        assert sample.process_rss is not None
+        assert sample.process_threads is not None
+        assert sample.process_uptime is not None
+
+    def test_sample_load_without_process(self) -> None:
+        sample = llmservew._sample_load(2**31 - 1, None)
+        assert sample.process_rss is None
+        assert sample.process_cpu is None
+
+
+class TestRateWindow:
+    def test_smooths_steady_generation(self) -> None:
+        window = llmservew.RateWindow(window=10.0)
+        assert window.update(0.0, 0.0, 0.0) == (0.0, 0.0)
+        rates = [window.update(float(second), 100.0 * second, 0.0)[0] for second in range(1, 6)]
+        assert rates == pytest.approx([100.0] * 5)
+
+    def test_window_decays_after_idle(self) -> None:
+        window = llmservew.RateWindow(window=4.0)
+        window.update(0.0, 0.0, 0.0)
+        window.update(1.0, 100.0, 0.0)
+        assert window.update(2.0, 150.0, 0.0)[0] == pytest.approx(75.0)
+        assert window.update(3.0, 150.0, 0.0)[0] == pytest.approx(50.0)
+        assert window.update(4.0, 150.0, 0.0)[0] == pytest.approx(37.5)
+        assert window.update(5.0, 150.0, 0.0)[0] == pytest.approx(12.5)
+        assert window.update(6.0, 150.0, 0.0)[0] == 0.0
+
+    def test_counter_reset(self) -> None:
+        window = llmservew.RateWindow(window=10.0)
+        window.update(0.0, 100.0, 10.0)
+        assert window.update(1.0, 200.0, 20.0) == pytest.approx((100.0, 10.0))
+        assert window.update(2.0, 5.0, 1.0) == (0.0, 0.0)
+
+    def test_prompt_rate(self) -> None:
+        window = llmservew.RateWindow(window=10.0)
+        window.update(0.0, 0.0, 0.0)
+        gen_rate, prompt_rate = window.update(2.0, 100.0, 400.0)
+        assert gen_rate == pytest.approx(50.0)
+        assert prompt_rate == pytest.approx(200.0)

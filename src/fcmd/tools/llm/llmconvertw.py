@@ -102,8 +102,8 @@ class ConvertWindow:
         self._ttk = ttk
         self.root = tk.Tk()
         self.root.title("HF 转 GGUF 转换")
-        self.root.geometry("960x820")
-        self.root.minsize(880, 760)
+        self.root.geometry("960x760")
+        self.root.minsize(880, 640)
 
         self._running = False
         self._closing = False
@@ -145,23 +145,24 @@ class ConvertWindow:
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
         config_page = ttk.Frame(self._notebook, padding=10)
+        models_page = ttk.Frame(self._notebook, padding=10)
         log_page = ttk.Frame(self._notebook, padding=10)
         self._notebook.add(config_page, text="转换配置")
+        self._notebook.add(models_page, text="模型列表")
         self._notebook.add(log_page, text="输出日志")
-        config_page.columnconfigure(0, weight=1)
-        config_page.rowconfigure(3, weight=1, minsize=170)
+        self._log_page = log_page
         self._build_io(config_page)
         self._build_params(config_page)
         self._build_formats(config_page)
-        self._build_env(config_page)
-        self._build_models(config_page)
+        self._build_env(models_page)
+        self._build_models(models_page)
         self._build_log(log_page)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     def _build_io(self, parent: Any) -> None:
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="输入 / 输出", padding=8)
-        box.grid(row=0, column=0, sticky="ew")
+        box.pack(fill="x")
         box.columnconfigure(1, weight=1)
 
         ttk.Label(box, text="源目录").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
@@ -181,7 +182,7 @@ class ConvertWindow:
         """已配置模型列表：自动识别模型目录下可转换的 HF safetensors 目录。"""
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="已配置模型（可转换的 HF safetensors 目录）", padding=8)
-        box.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        box.pack(fill="both", expand=True, pady=(8, 0))
 
         row = ttk.Frame(box)
         row.pack(side="bottom", fill="x", pady=(6, 0))
@@ -237,7 +238,7 @@ class ConvertWindow:
     def _build_params(self, parent: Any) -> None:
         ttk = self._ttk
         params = ttk.LabelFrame(parent, text="转换参数", padding=8)
-        params.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        params.pack(fill="x", pady=(8, 0))
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
 

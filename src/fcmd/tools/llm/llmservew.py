@@ -12,9 +12,12 @@
 
 from __future__ import annotations
 
+import csv
 import queue
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -47,28 +50,272 @@ __all__ = ["main"]
 _DESCRIPTION = (
     "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
     "与最佳实践提示，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
-    "查看状态与日志，并在服务运行中实时采样 /metrics 展示 token/s 与系统 CPU / 内存负载"
+    "查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，"
+    "同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标"
 )
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）与最佳实践建议"
 
+#: token 速率平滑窗口（秒）：窗口内累计 token 数 ÷ 经过时间，避免逐秒差值剧烈跳变
+RATE_WINDOW_SECONDS = 10.0
+#: ``nvidia-smi --query-gpu`` 查询字段（顺序与解析逻辑对应）
+_GPU_FIELDS = (
+    "uuid",
+    "index",
+    "name",
+    "utilization.gpu",
+    "memory.used",
+    "memory.total",
+    "temperature.gpu",
+    "power.draw",
+    "power.limit",
+    "fan.speed",
+    "clocks.sm",
+)
 
-def _sample_load(pid: int) -> tuple[str, str, str]:
-    """采样系统负载：CPU 使用率、内存占用与服务进程内存（拿不到时显示 ``-``）。"""
+
+@dataclass(frozen=True, slots=True)
+class GpuSample:
+    """一次 GPU 采样：利用率 / 显存 / 温度 / 功耗 / 风扇 / 频率（显存 MiB、功耗 W、频率 MHz）。"""
+
+    name: str
+    index: str = ""
+    utilization: float | None = None
+    memory_used: float | None = None
+    memory_total: float | None = None
+    temperature: float | None = None
+    power_draw: float | None = None
+    power_limit: float | None = None
+    fan: float | None = None
+    clock_mhz: float | None = None
+    process_memory: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LoadSample:
+    """一次系统负载采样（CPU / 内存 / 交换 / 服务进程 / GPU）。"""
+
+    cpu: float | None = None
+    cpu_freq: float | None = None
+    memory_used: int = 0
+    memory_total: int = 0
+    memory_percent: float = 0.0
+    swap_used: int = 0
+    swap_total: int = 0
+    process_cpu: float | None = None
+    process_rss: int | None = None
+    process_threads: int | None = None
+    process_uptime: float | None = None
+    gpu: GpuSample | None = None
+
+
+def _parse_number(text: str) -> float | None:
+    """解析 nvidia-smi 数值字段；``N/A`` 等非数值返回 ``None``。"""
+    raw = text.strip()
+    if not raw or raw.upper() in {"N/A", "[N/A]", "[NOT SUPPORTED]"}:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _parse_gpu_rows(text: str) -> list[tuple[str, GpuSample]]:
+    """解析 ``--query-gpu`` 的 CSV 输出为（GPU UUID, 采样）列表。"""
+    rows: list[tuple[str, GpuSample]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        fields = [field.strip() for field in next(csv.reader([line]), [])]
+        if len(fields) < len(_GPU_FIELDS):
+            continue
+        rows.append(
+            (
+                fields[0],
+                GpuSample(
+                    name=fields[2],
+                    index=fields[1],
+                    utilization=_parse_number(fields[3]),
+                    memory_used=_parse_number(fields[4]),
+                    memory_total=_parse_number(fields[5]),
+                    temperature=_parse_number(fields[6]),
+                    power_draw=_parse_number(fields[7]),
+                    power_limit=_parse_number(fields[8]),
+                    fan=_parse_number(fields[9]),
+                    clock_mhz=_parse_number(fields[10]),
+                ),
+            )
+        )
+    return rows
+
+
+def _gpu_process_memory(pid: int, runner: llmbase.Runner = llmbase.run_command) -> tuple[str | None, float | None]:
+    """查询服务进程占用的 GPU UUID 与显存（MiB）；进程未使用 GPU 时返回 ``(None, None)``。"""
+    result = runner(["nvidia-smi", "--query-compute-apps=pid,gpu_uuid,used_memory", "--format=csv,noheader,nounits"])
+    if result.returncode != 0:
+        return None, None
+    for line in result.stdout.splitlines():
+        fields = [field.strip() for field in next(csv.reader([line]), [])]
+        if len(fields) >= 3 and fields[0] == str(pid):
+            return fields[1], _parse_number(fields[2])
+    return None, None
+
+
+def _sample_gpu(pid: int, runner: llmbase.Runner = llmbase.run_command) -> GpuSample | None:
+    """采样 GPU 关键指标；无 NVIDIA GPU 或 nvidia-smi 不可用时返回 ``None``。"""
+    result = runner(["nvidia-smi", f"--query-gpu={','.join(_GPU_FIELDS)}", "--format=csv,noheader,nounits"])
+    if result.returncode != 0:
+        return None
+    rows = _parse_gpu_rows(result.stdout)
+    if not rows:
+        return None
+    uuid, process_memory = _gpu_process_memory(pid, runner)
+    chosen = next((sample for row_uuid, sample in rows if row_uuid == uuid), None)
+    if chosen is None:
+        chosen = max(rows, key=lambda item: item[1].memory_used or 0.0)[1]
+    if process_memory is None:
+        return chosen
+    return replace(chosen, process_memory=process_memory)
+
+
+def _sample_load(pid: int, process: Any | None) -> LoadSample:
+    """采样系统负载：CPU 使用率 / 频率、内存、交换、服务进程与 GPU。"""
     import psutil
 
-    cpu = f"{psutil.cpu_percent():.1f} %"
-    memory = psutil.virtual_memory()
-    used, total = int(memory.used), int(memory.total)
-    mem = f"{human_size(used)} / {human_size(total)}（{memory.percent:.1f} %）"
+    cpu = float(psutil.cpu_percent())
     try:
-        rss = int(psutil.Process(pid).memory_info().rss)
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-        proc = "-"
-    else:
-        proc = human_size(rss)
-    return cpu, mem, proc
+        freq = psutil.cpu_freq()
+    except (NotImplementedError, AttributeError):
+        freq = None
+    memory = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+    process_cpu = process_rss = process_threads = process_uptime = None
+    if process is not None:
+        try:
+            process_cpu = float(process.cpu_percent())
+            process_rss = int(process.memory_info().rss)
+            process_threads = int(process.num_threads())
+            process_uptime = max(time.time() - float(process.create_time()), 0.0)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+    return LoadSample(
+        cpu=cpu,
+        cpu_freq=float(freq.current) if freq is not None else None,
+        memory_used=int(memory.used),
+        memory_total=int(memory.total),
+        memory_percent=float(memory.percent),
+        swap_used=int(swap.used),
+        swap_total=int(swap.total),
+        process_cpu=process_cpu,
+        process_rss=process_rss,
+        process_threads=process_threads,
+        process_uptime=process_uptime,
+        gpu=_sample_gpu(pid),
+    )
+
+
+def _format_duration(seconds: float) -> str:
+    """把秒数格式化为 ``1h 02m 03s`` / ``2m 03s`` / ``45s``。"""
+    total = int(seconds)
+    hours, rest = divmod(total, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+def _format_load(sample: LoadSample) -> dict[str, str]:
+    """把系统负载采样格式化为面板显示文本。"""
+    memory = (
+        f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}（{sample.memory_percent:.1f} %）"
+        if sample.memory_total
+        else "-"
+    )
+    swap = (
+        f"{human_size(sample.swap_used)} / {human_size(sample.swap_total)}"
+        f"（{sample.swap_used / sample.swap_total * 100:.1f} %）"
+        if sample.swap_total
+        else "-"
+    )
+    return {
+        "cpu": "-" if sample.cpu is None else f"{sample.cpu:.1f} %",
+        "cpu_freq": "-" if sample.cpu_freq is None else f"{sample.cpu_freq:.0f} MHz",
+        "memory": memory,
+        "swap": swap,
+        "proc_cpu": "-" if sample.process_cpu is None else f"{sample.process_cpu:.1f} %",
+        "proc_mem": "-" if sample.process_rss is None else human_size(sample.process_rss),
+        "proc_threads": "-" if sample.process_threads is None else str(sample.process_threads),
+        "uptime": "-" if sample.process_uptime is None else _format_duration(sample.process_uptime),
+    }
+
+
+def _format_gpu(gpu: GpuSample | None) -> dict[str, str]:
+    """把 GPU 采样格式化为面板显示文本（无 GPU 时给出提示）。"""
+    if gpu is None:
+        return {
+            "gpu_name": "未检测到 NVIDIA GPU（nvidia-smi 不可用）",
+            "gpu_util": "-",
+            "gpu_vram": "-",
+            "gpu_proc_vram": "-",
+            "gpu_temp": "-",
+            "gpu_power": "-",
+            "gpu_fan": "-",
+            "gpu_clock": "-",
+        }
+    title = f"{gpu.name}（GPU {gpu.index}）" if gpu.index else gpu.name
+    vram = "-"
+    if gpu.memory_used is not None and gpu.memory_total:
+        used = human_size(int(gpu.memory_used * 1024 * 1024))
+        total = human_size(int(gpu.memory_total * 1024 * 1024))
+        vram = f"{used} / {total}（{gpu.memory_used / gpu.memory_total * 100:.1f} %）"
+    power = "-"
+    if gpu.power_draw is not None:
+        power = f"{gpu.power_draw:.0f} W"
+        if gpu.power_limit is not None:
+            power = f"{gpu.power_draw:.0f} / {gpu.power_limit:.0f} W"
+    return {
+        "gpu_name": title,
+        "gpu_util": "-" if gpu.utilization is None else f"{gpu.utilization:.0f} %",
+        "gpu_vram": vram,
+        "gpu_proc_vram": "-" if gpu.process_memory is None else human_size(int(gpu.process_memory * 1024 * 1024)),
+        "gpu_temp": "-" if gpu.temperature is None else f"{gpu.temperature:.0f} °C",
+        "gpu_power": power,
+        "gpu_fan": "-" if gpu.fan is None else f"{gpu.fan:.0f} %",
+        "gpu_clock": "-" if gpu.clock_mhz is None else f"{gpu.clock_mhz:.0f} MHz",
+    }
+
+
+class RateWindow:
+    """按时间窗口平滑 token 速率。
+
+    参考 DeepSeek Harness 的口径：用窗口内累计 token 数 ÷ 经过时间计算平均速率，
+    而不是显示两次采样间的瞬时差值，避免 1s 抖动导致数字剧烈跳变。
+    """
+
+    def __init__(self, window: float = RATE_WINDOW_SECONDS) -> None:
+        self._window = window
+        self._samples: deque[tuple[float, float, float]] = deque()
+        self._gen_rate = 0.0
+        self._prompt_rate = 0.0
+
+    def update(self, now: float, predicted: float, prompt: float) -> tuple[float, float]:
+        """记录一次采样并返回平滑后的（生成, 提示）token/s。"""
+        if self._samples and (predicted < self._samples[-1][1] or prompt < self._samples[-1][2]):
+            self._samples.clear()
+            self._gen_rate = self._prompt_rate = 0.0
+        self._samples.append((now, predicted, prompt))
+        cutoff = now - self._window
+        while len(self._samples) > 2 and self._samples[0][0] < cutoff:
+            self._samples.popleft()
+        first_time, first_predicted, first_prompt = self._samples[0]
+        span = now - first_time
+        if span >= 1.0:
+            self._gen_rate = max(predicted - first_predicted, 0.0) / span
+            self._prompt_rate = max(prompt - first_prompt, 0.0) / span
+        return self._gen_rate, self._prompt_rate
 
 
 class ServeWindow:
@@ -84,8 +331,8 @@ class ServeWindow:
         self._ttk = ttk
         self.root = tk.Tk()
         self.root.title("推理服务管理")
-        self.root.geometry("880x640")
-        self.root.minsize(780, 520)
+        self.root.geometry("900x780")
+        self.root.minsize(820, 640)
 
         self._models: list[ModelEntry] = []
         self._selected_model: Path | None = None
@@ -130,8 +377,23 @@ class ServeWindow:
         }
         self._load_vars: dict[str, tk.StringVar] = {
             "cpu": tk.StringVar(value="-"),
+            "cpu_freq": tk.StringVar(value="-"),
             "memory": tk.StringVar(value="-"),
-            "process": tk.StringVar(value="-"),
+            "swap": tk.StringVar(value="-"),
+            "proc_cpu": tk.StringVar(value="-"),
+            "proc_mem": tk.StringVar(value="-"),
+            "proc_threads": tk.StringVar(value="-"),
+            "uptime": tk.StringVar(value="-"),
+        }
+        self._gpu_vars: dict[str, tk.StringVar] = {
+            "gpu_name": tk.StringVar(value="检测中…"),
+            "gpu_util": tk.StringVar(value="-"),
+            "gpu_vram": tk.StringVar(value="-"),
+            "gpu_proc_vram": tk.StringVar(value="-"),
+            "gpu_temp": tk.StringVar(value="-"),
+            "gpu_power": tk.StringVar(value="-"),
+            "gpu_fan": tk.StringVar(value="-"),
+            "gpu_clock": tk.StringVar(value="-"),
         }
 
         self._build_widgets()
@@ -159,6 +421,7 @@ class ServeWindow:
         self._build_loaded(run_page)
         self._build_metrics(run_page)
         self._build_load(run_page)
+        self._build_gpu(run_page)
         self._build_log(run_page)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -371,7 +634,11 @@ class ServeWindow:
     def _build_metrics(self, parent: Any) -> None:
         """实时性能面板：显示 /metrics 计算的 token/s 与请求队列状态。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="实时性能（服务运行中每 1s 采样 /metrics）", padding=8)
+        box = ttk.LabelFrame(
+            parent,
+            text=f"实时性能（服务运行中每 1s 采样 /metrics，速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑）",
+            padding=8,
+        )
         box.pack(fill="x")
         for column in range(4):
             box.columnconfigure(column, weight=1)
@@ -393,18 +660,67 @@ class ServeWindow:
             ttk.Label(cell, textvariable=self._metric_vars[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
 
     def _build_load(self, parent: Any) -> None:
-        """系统负载面板：CPU / 内存 / 服务进程内存，与性能采样同频刷新。"""
+        """系统负载面板：CPU / 频率 / 内存 / 交换与服务进程关键指标。"""
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="系统负载（服务运行中每 1s 采样）", padding=8)
         box.pack(fill="x", pady=(8, 0))
-        for column in range(3):
+        items = (
+            ("CPU", "cpu"),
+            ("频率", "cpu_freq"),
+            ("内存", "memory"),
+            ("交换", "swap"),
+            ("服务 CPU", "proc_cpu"),
+            ("服务内存", "proc_mem"),
+            ("线程", "proc_threads"),
+            ("运行时长", "uptime"),
+        )
+        self._metric_grid(box, items, self._load_vars)
+
+    def _build_gpu(self, parent: Any) -> None:
+        """GPU 负载面板：利用率 / 显存 / 温度 / 功耗 / 风扇 / 频率。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(parent, text="GPU 负载（nvidia-smi，服务运行中每 1s 采样）", padding=8)
+        box.pack(fill="x", pady=(8, 0))
+        for column in range(4):
             box.columnconfigure(column, weight=1)
-        items = (("CPU 使用率", "cpu"), ("内存占用", "memory"), ("服务进程内存", "process"))
+        ttk.Label(box, text="设备:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Label(
+            box,
+            textvariable=self._gpu_vars["gpu_name"],
+            font=("", 9, "bold"),
+            wraplength=700,
+            justify="left",
+        ).grid(row=0, column=1, columnspan=3, sticky="w", pady=2)
+        items = (
+            ("使用率", "gpu_util"),
+            ("显存", "gpu_vram"),
+            ("服务显存", "gpu_proc_vram"),
+            ("温度", "gpu_temp"),
+            ("功耗", "gpu_power"),
+            ("风扇", "gpu_fan"),
+            ("核心频率", "gpu_clock"),
+        )
+        self._metric_grid(box, items, self._gpu_vars, start_row=1)
+
+    def _metric_grid(
+        self,
+        box: Any,
+        items: tuple[tuple[str, str], ...],
+        variables: dict[str, Any],
+        *,
+        columns: int = 4,
+        start_row: int = 0,
+    ) -> None:
+        """把“标签 + 数值”按网格排入面板，供系统负载与 GPU 面板复用。"""
+        ttk = self._ttk
+        for column in range(columns):
+            box.columnconfigure(column, weight=1)
         for index, (label, key) in enumerate(items):
+            row, column = divmod(index, columns)
             cell = ttk.Frame(box)
-            cell.grid(row=0, column=index, sticky="w", padx=(0, 16), pady=2)
+            cell.grid(row=start_row + row, column=column, sticky="w", padx=(0, 16), pady=2)
             ttk.Label(cell, text=label + ":").pack(side="left")
-            ttk.Label(cell, textvariable=self._load_vars[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
+            ttk.Label(cell, textvariable=variables[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
 
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
@@ -865,29 +1181,34 @@ class ServeWindow:
         self._monitor_state = None
         self._monitor_seq += 1
         self._metric_vars["monitor"].set(reason)
-        for var in self._load_vars.values():
+        for var in (*self._load_vars.values(), *self._gpu_vars.values()):
             var.set("-")
 
     def _monitor_loop(self, state: ServeState, stop: threading.Event) -> None:
-        """后台线程：每秒采样系统负载与 ``/metrics``，按两次采样的差值计算 token/s。"""
-        previous: tuple[float, llmserve.ServeMetrics] | None = None
+        """后台线程：每秒采样系统负载与 ``/metrics``，用滑动窗口计算平滑 token/s。"""
+        window = RateWindow()
+        process = self._attach_process(state.pid)
         while not stop.is_set():
             started = time.monotonic()
-            self._monitor_results.put(("load", _sample_load(state.pid)))
+            self._monitor_results.put(("load", _sample_load(state.pid, process)))
             try:
                 metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
             except ServeError as exc:
                 self._monitor_results.put(("error", str(exc)))
             else:
-                gen_rate = prompt_rate = 0.0
-                if previous is not None:
-                    elapsed = started - previous[0]
-                    if elapsed > 0:
-                        gen_rate = max(metrics.predicted_tokens - previous[1].predicted_tokens, 0.0) / elapsed
-                        prompt_rate = max(metrics.prompt_tokens - previous[1].prompt_tokens, 0.0) / elapsed
-                previous = (started, metrics)
+                gen_rate, prompt_rate = window.update(started, metrics.predicted_tokens, metrics.prompt_tokens)
                 self._monitor_results.put(("metrics", (metrics, gen_rate, prompt_rate)))
-            stop.wait(1.0)
+            stop.wait(max(0.2, 1.0 - (time.monotonic() - started)))
+
+    @staticmethod
+    def _attach_process(pid: int) -> Any | None:
+        """绑定服务进程用于 CPU / 内存 / 运行时长采样；进程已退出时返回 ``None``。"""
+        import psutil
+
+        try:
+            return psutil.Process(pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return None
 
     def _poll_metrics(self, seq: int) -> None:
         """主线程刷新性能面板（按序号丢弃已停止监控的旧回调）。"""
@@ -900,7 +1221,7 @@ class ServeWindow:
                     metrics, gen_rate, prompt_rate = cast(tuple[llmserve.ServeMetrics, float, float], payload)
                     self._apply_metrics(metrics, gen_rate, prompt_rate)
                 elif kind == "load":
-                    self._apply_load(cast(tuple[str, str, str], payload))
+                    self._apply_load(cast(LoadSample, payload))
                 else:
                     self._metric_vars["monitor"].set("采样失败: " + str(payload)[:60])
         except queue.Empty:
@@ -917,10 +1238,12 @@ class ServeWindow:
         self._metric_vars["prompt"].set(f"{metrics.prompt_tokens:.0f}")
         self._metric_vars["monitor"].set("监控中")
 
-    def _apply_load(self, load: tuple[str, str, str]) -> None:
-        """刷新 CPU / 内存 / 服务进程内存显示。"""
-        for key, value in zip(("cpu", "memory", "process"), load, strict=True):
+    def _apply_load(self, sample: LoadSample) -> None:
+        """刷新系统负载与 GPU 面板。"""
+        for key, value in _format_load(sample).items():
             self._load_vars[key].set(value)
+        for key, value in _format_gpu(sample.gpu).items():
+            self._gpu_vars[key].set(value)
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
