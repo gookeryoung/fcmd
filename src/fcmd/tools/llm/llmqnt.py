@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -63,11 +64,20 @@ DEFAULT_QUANTS: tuple[str, ...] = ("Q4_K_M", "Q5_K_M")
 #: 单个量化任务的超时秒数（与参考实现一致，1 小时）
 QUANTIZE_TIMEOUT = 3600.0
 
+#: Windows 访问冲突（llama-quantize 启动即崩溃的典型退出码）
+_ACCESS_VIOLATION = 0xC0000005
+
 _DESCRIPTION = "GGUF 量化：调用 llama-quantize 批量生成多种量化版本"
 
 
 class QuantizeError(RuntimeError):
     """量化输入、引擎或转换过程失败。"""
+
+
+def _tail(text: str, lines: int = 6) -> str:
+    """取输出的最后若干行（用于失败摘要）。"""
+    parts = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    return " | ".join(parts[-lines:])
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,8 +155,12 @@ def pending_jobs(
 def resolve_quantize_exe(explicit: Path | None = None) -> Path:
     """定位 ``llama-quantize`` 可执行文件。
 
-    查找顺序：``--quantize-exe`` → ``FCMD_LLAMA_QUANTIZE`` → 已安装引擎
-    同目录 → ``PATH``。
+    查找顺序：``--quantize-exe`` → ``FCMD_LLAMA_QUANTIZE`` → 当前引擎
+    同目录 → 其他已安装引擎 → ``PATH``。
+
+    官方 release 包不一定带 ``llama-quantize``（如 LM Studio 后端），此时不能
+    直接落到 ``PATH``：机器上可能装的是不兼容的旧版本，读取新版 GGUF 会以
+    0xC0000005 崩溃，因此优先复用其他已安装引擎自带的量化器。
 
     Raises
     ------
@@ -166,12 +180,18 @@ def resolve_quantize_exe(explicit: Path | None = None) -> Path:
             raise QuantizeError(f"FCMD_LLAMA_QUANTIZE 指向的文件不存在: {target}")
         return target
 
-    try:
+    engine = None
+    with contextlib.suppress(llmbase.ServeError):
         engine = llmengine.resolve_engine()
-    except llmbase.ServeError:
-        engine = None
     if engine is not None:
         candidate = llmengine.quantize_exe(engine)
+        if candidate is not None:
+            return candidate
+
+    for other in llmengine.list_engines():
+        if engine is not None and other.exe == engine.exe:
+            continue
+        candidate = llmengine.quantize_exe(other)
         if candidate is not None:
             return candidate
 
@@ -213,7 +233,16 @@ def run_job(
         raise QuantizeError(f"无法启动 llama-quantize: {exc}") from exc
 
     if result.returncode != 0:
-        raise QuantizeError(f"{job.quant} 量化失败（退出码 {result.returncode}）")
+        # llama-quantize 直接写目标文件，失败会留下半成品；不清掉会被后续任务当成已完成
+        with contextlib.suppress(OSError):
+            job.output.unlink()
+        crashed = result.returncode in (_ACCESS_VIOLATION, _ACCESS_VIOLATION - 2**32)
+        code = llmbase.format_returncode(result.returncode)
+        if crashed and "0x" not in code:
+            code += f" (0x{_ACCESS_VIOLATION:08X})"
+        detail = _tail(result.stdout)
+        hint = f"；{llmbase.MSVC_HINT}（{exe}）" if crashed else ""
+        raise QuantizeError(f"{job.quant} 量化失败（退出码 {code}，量化器 {exe}）：{detail or '无输出'}{hint}")
 
 
 def run_jobs(

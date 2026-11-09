@@ -1236,6 +1236,24 @@ class TestPlan:
         assert "--jinja" in argv
         assert "--api-key" in argv
 
+    def test_alias_defaults_to_model_stem(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path
+    ) -> None:
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        assert plan.alias == model_file.stem
+        argv = plan.argv()
+        assert argv[argv.index("--alias") + 1] == model_file.stem
+
+    def test_alias_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path
+    ) -> None:
+        engine = _engine_dir(tmp_path) / llmengine.engine_exe_name()
+        monkeypatch.setenv("FCMD_LLAMA_SERVER", str(engine))
+        plan = llmserve.make_plan("qwen", home=home, model=model_file, alias="gemma-4-e4b")
+        assert plan.alias == "gemma-4-e4b"
+        argv = plan.argv()
+        assert argv[argv.index("--alias") + 1] == "gemma-4-e4b"
+
     def test_ctx_override(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path) -> None:
         engine = _engine_dir(tmp_path) / llmengine.engine_exe_name()
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(engine))

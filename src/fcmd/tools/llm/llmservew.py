@@ -2,8 +2,8 @@
 
 基于 :mod:`fcmd.tools.llm.llmserve` 的核心逻辑，提供启动参数的图形化配置、
 已配置模型列表（后台扫描 ``llmenv`` 登记的模型目录，并按文件名内置能力标签
-与最佳实践提示）、启动计划预览、后台启动 / 停止、状态与日志查看，以及运行
-监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
+与最佳实践提示）、启动计划预览、后台启动 / 停止、状态与日志查看、一键在默认浏览器
+打开服务地址，以及运行监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
 系统负载（CPU / 内存 / 交换 / GPU）在窗口打开后即持续采样，服务未启动时同样可见。
 
 示例
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import csv
 import queue
+import re
 import threading
 import time
 from collections import deque
@@ -26,7 +27,6 @@ import fcmd
 from fcmd.console import print_error
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm.llmbase import (
-    DEFAULT_ALIAS,
     DEFAULT_API_KEY,
     DEFAULT_HOST,
     DEFAULT_NAME,
@@ -58,6 +58,7 @@ _DESCRIPTION = (
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）与最佳实践建议"
+_QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
 
 #: token 速率平滑窗口（秒）：窗口内累计 token 数 ÷ 经过时间，避免逐秒差值剧烈跳变
 RATE_WINDOW_SECONDS = 10.0
@@ -290,6 +291,26 @@ def _format_gpu(gpu: GpuSample | None) -> dict[str, str]:
     }
 
 
+def _probe_web_ui(base_url: str, api_key: str | None = None, *, timeout: float = 3.0) -> int | None:
+    """探测服务根路径状态码；连接失败返回 ``None``，HTTP 错误返回其状态码。
+
+    llama.cpp 的 Web UI 资源是 gzip 内嵌的，缺少 ``Accept-Encoding: gzip`` 会返回 415。
+    """
+    from urllib.error import HTTPError
+    from urllib.request import Request, urlopen
+
+    headers = {"Accept-Encoding": "gzip"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        with urlopen(Request(base_url + "/", headers=headers), timeout=timeout) as resp:
+            return int(getattr(resp, "status", 200))
+    except HTTPError as exc:
+        return int(exc.code)
+    except OSError:
+        return None
+
+
 class RateWindow:
     """按时间窗口平滑 token 速率。
 
@@ -338,6 +359,7 @@ class ServeWindow:
 
         self._models: list[ModelEntry] = []
         self._selected_model: Path | None = None
+        self._syncing_selection = False
         self._gpu_mib: int | None = None
         self._busy = False
         self._closing = False
@@ -353,14 +375,14 @@ class ServeWindow:
         self._monitor_results: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._monitor_seq = 0
 
-        self._name_var = tk.StringVar(value=DEFAULT_NAME)
+        self._name_var = tk.StringVar(value=self._default_service_name())
         self._profile_var = tk.StringVar(value=DEFAULT_PROFILE)
         self._host_var = tk.StringVar(value=DEFAULT_HOST)
         self._port_var = tk.StringVar(value=str(DEFAULT_PORT))
         self._ctx_var = tk.StringVar(value="")
         self._kv_var = tk.StringVar(value="")
         self._ubatch_var = tk.StringVar(value="")
-        self._alias_var = tk.StringVar(value=DEFAULT_ALIAS)
+        self._alias_var = tk.StringVar(value="")
         self._api_key_var = tk.StringVar(value=DEFAULT_API_KEY)
         self._threads_var = tk.StringVar(value=str(DEFAULT_THREADS))
         self._wait_var = tk.StringVar(value="180")
@@ -428,17 +450,45 @@ class ServeWindow:
         self._build_log(run_page)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
+    @staticmethod
+    def _service_names() -> list[str]:
+        """已登记的服务名列表（供服务名下拉框展示）。"""
+        try:
+            return [state.name for state in llmenv.list_states()]
+        except ServeError:
+            return []
+
+    @classmethod
+    def _default_service_name(cls) -> str:
+        """唯一运行中的服务优先作为默认服务名，避免与实际服务不一致。"""
+        try:
+            states = llmenv.list_states()
+        except ServeError:
+            return DEFAULT_NAME
+        alive = [state.name for state in states if llmserve.process_alive(state.pid, state.create_time)]
+        return alive[0] if len(alive) == 1 else DEFAULT_NAME
+
+    def _refresh_service_names(self) -> None:
+        """按最新状态文件刷新服务名下拉选项。"""
+        self._name_box.configure(values=self._service_names())
+
     def _build_params(self, parent: Any) -> None:
         ttk = self._ttk
         params = ttk.LabelFrame(parent, text="启动参数", padding=8)
         params.pack(fill="x")
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
+        self._name_box = ttk.Combobox(
+            params,
+            textvariable=self._name_var,
+            values=self._service_names(),
+        )
+        self._name_box.bind("<<ComboboxSelected>>", self._on_service_selected)
         self._pair_row(
             params,
             0,
             "服务名",
-            ttk.Entry(params, textvariable=self._name_var),
+            self._name_box,
             "档位",
             ttk.Combobox(
                 params,
@@ -481,7 +531,7 @@ class ServeWindow:
             1,
             "ubatch",
             ttk.Entry(body, textvariable=self._ubatch_var),
-            "模型别名",
+            "模型别名（留空自动）",
             ttk.Entry(body, textvariable=self._alias_var),
         )
         self._pair_row(
@@ -739,6 +789,8 @@ class ServeWindow:
         self._status_btn.pack(side="left", padx=(6, 0))
         self._logs_btn = ttk.Button(actions, text="查看日志", command=self._show_logs)
         self._logs_btn.pack(side="left", padx=(6, 0))
+        self._browser_btn = ttk.Button(actions, text="打开浏览器", command=self._open_browser)
+        self._browser_btn.pack(side="left", padx=(6, 0))
         self._clear_log_btn = ttk.Button(actions, text="清空日志", command=self._clear_log)
         self._clear_log_btn.pack(side="left", padx=(6, 0))
         self._progress = ttk.Progressbar(actions, mode="indeterminate", length=200)
@@ -759,6 +811,8 @@ class ServeWindow:
     # 模型选择
     # ------------------------------------------------------------------ #
     def _on_model_selected(self, _event: object | None = None) -> None:
+        if self._syncing_selection:
+            return
         selection = self._tree.selection()
         if not selection:
             return
@@ -776,11 +830,53 @@ class ServeWindow:
         self._tree.selection_remove(*self._tree.selection())
         self._select_model(Path(path).resolve())
 
-    def _select_model(self, path: Path) -> None:
+    def _select_model(self, path: Path, *, update_name: bool = True) -> None:
         self._selected_model = path
         self._model_var.set(str(path))
+        if update_name:
+            self._name_var.set(self._service_name_from_model(path))
         self._show_model_hint(path)
         self._log(f"已选择模型: {path}")
+
+    @classmethod
+    def _service_name_from_model(cls, path: Path) -> str:
+        """按模型文件名生成服务名：去掉量化后缀，把非法字符转为 ``-``。"""
+        stem = _QUANT_SUFFIX_RE.sub("", path.stem)
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")
+        return cleaned or DEFAULT_NAME
+
+    @staticmethod
+    def _load_state_safe(name: str) -> ServeState | None:
+        """按服务名读取状态；名称非法或状态缺失时返回 ``None``。"""
+        if not name:
+            return None
+        try:
+            return llmenv.load_state(name, missing_ok=True)
+        except ServeError:
+            return None
+
+    def _on_service_selected(self, _event: object | None = None) -> None:
+        """选中服务名后同步定位其模型，便于停止已加载的模型。"""
+        name = self._name_var.get().strip()
+        state = self._load_state_safe(name)
+        if state is None:
+            return
+        path = Path(state.model)
+        self._select_model(path, update_name=False)
+        self._sync_tree_selection(path)
+
+    def _sync_tree_selection(self, path: Path) -> None:
+        """在模型树中选中指定路径的条目（不触发服务名联动）。"""
+        key = llmenv.path_key(path)
+        self._syncing_selection = True
+        try:
+            for index, entry in enumerate(self._models):
+                if llmenv.path_key(entry.path) == key:
+                    self._tree.selection_set(str(index))
+                    self._tree.see(str(index))
+                    return
+        finally:
+            self._syncing_selection = False
 
     def _show_model_hint(self, path: Path) -> None:
         """按文件名内置标签展示推荐档位、最佳实践与客户端接入方式。"""
@@ -792,7 +888,7 @@ class ServeWindow:
         except ServeError:
             port = DEFAULT_PORT
         base = http_base_url(self._host_var.get().strip() or DEFAULT_HOST, port)
-        alias = self._alias_var.get().strip() or DEFAULT_ALIAS
+        alias = self._alias_var.get().strip() or path.stem
         self._hint_var.set(f"标签: {label} | {advice}\n接入: {base}/v1，model={alias}")
         self._log(f"  标签: {label}")
         self._log(f"  建议: {advice}")
@@ -827,10 +923,37 @@ class ServeWindow:
             roots = [root for root in llmenv.models_roots() if root.is_dir()]
             if roots:
                 entries = llmmodel.scan_models(roots)
+            entries = self._with_running_models(entries)
         except OSError:
             entries = []
         info, gpu_mib = self._collect_env_info()
         self._scan_results.put((entries, info, gpu_mib))
+
+    @staticmethod
+    def _with_running_models(entries: list[ModelEntry]) -> list[ModelEntry]:
+        """把运行中服务的模型并入清单，便于停止已加载模型时在列表中找到。"""
+        seen = {llmenv.path_key(entry.path) for entry in entries}
+        for state in llmenv.list_states():
+            path = Path(state.model)
+            key = llmenv.path_key(path)
+            if key in seen or not llmserve.process_alive(state.pid, state.create_time):
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            seen.add(key)
+            entries.append(
+                ModelEntry(
+                    root=path.parent,
+                    path=path,
+                    size=size,
+                    profiles=tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower()),
+                    tags=llmmodel.detect_model_tags(path.name),
+                )
+            )
+        entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
+        return entries
 
     def _collect_env_info(self) -> tuple[dict[str, str], int | None]:
         """收集当前引擎 tag / 可执行文件、版本与显存（MiB）。"""
@@ -868,6 +991,10 @@ class ServeWindow:
     def _apply_models(self, entries: list[ModelEntry], info: dict[str, str], gpu_mib: int | None) -> None:
         self._models = entries
         self._gpu_mib = gpu_mib
+        if self._selected_model is None:
+            state = self._load_state_safe(self._name_var.get().strip())
+            if state is not None and llmserve.process_alive(state.pid, state.create_time):
+                self._select_model(Path(state.model), update_name=False)
         self._tree.delete(*self._tree.get_children())
         for index, entry in enumerate(entries):
             self._tree.insert(
@@ -883,12 +1010,7 @@ class ServeWindow:
             )
         self._model_var.set(str(self._selected_model) if self._selected_model else _MODEL_PLACEHOLDER)
         if self._selected_model is not None:
-            key = llmenv.path_key(self._selected_model)
-            for index, entry in enumerate(entries):
-                if llmenv.path_key(entry.path) == key:
-                    self._tree.selection_set(str(index))
-                    self._tree.see(str(index))
-                    break
+            self._sync_tree_selection(self._selected_model)
         for key, var in self._info_vars.items():
             var.set(info.get(key) or "-")
         self._model_btn.configure(state="normal")
@@ -934,7 +1056,7 @@ class ServeWindow:
             ctx=self._optional_int_field(self._ctx_var, "上下文"),
             kv_type=self._kv_var.get().strip() or None,
             ubatch=self._optional_int_field(self._ubatch_var, "ubatch"),
-            alias=self._alias_var.get().strip() or DEFAULT_ALIAS,
+            alias=self._alias_var.get().strip() or None,
             api_key=self._api_key_var.get().strip() or DEFAULT_API_KEY,
             threads=self._int_field(self._threads_var, "线程数"),
         )
@@ -1035,8 +1157,11 @@ class ServeWindow:
             self._messagebox.showerror("参数错误", str(exc))
             return
         if llmenv.load_state(name, missing_ok=True) is None:
+            alive = [s.name for s in llmenv.list_states() if llmserve.process_alive(s.pid, s.create_time)]
+            hint = f"；当前运行中: {', '.join(alive)}，请在下拉框中选择" if alive else ""
             self._status_var.set(f"{name} · 未启动")
-            self._log(f"服务 {name} 未启动，无需停止")
+            self._log(f"服务 {name} 未启动，无需停止{hint}")
+            self._refresh_service_names()
             self._start_system_monitor()
             return
         self._stop_monitor("停止中…")
@@ -1101,6 +1226,7 @@ class ServeWindow:
 
     def _show_state(self, state: ServeState) -> None:
         self._status_var.set(f"{state.name} · 运行中 · {state.base_url} · pid {state.pid}")
+        self._refresh_service_names()
         self._log(f"服务已就绪: {state.base_url}（OpenAI: {state.base_url}/v1）")
         self._log(f"  模型: {state.model}")
         self._log(f"  档位: {state.profile} / ctx {state.context}")
@@ -1112,6 +1238,7 @@ class ServeWindow:
     def _show_stopped(self, result: StopResult) -> None:
         self._stop_monitor("已停止")
         self._refresh_loaded()
+        self._refresh_service_names()
         if result.was_running:
             self._status_var.set(f"{result.state.name} · 已停止")
             self._log(f"已停止服务 {result.state.name}（pid={result.state.pid}）")
@@ -1122,6 +1249,7 @@ class ServeWindow:
 
     def _refresh_status(self) -> None:
         self._refresh_loaded()
+        self._refresh_service_names()
         try:
             name = self._model_name()
         except ServeError as exc:
@@ -1147,6 +1275,58 @@ class ServeWindow:
         else:
             self._stop_monitor("服务未运行")
             self._start_system_monitor()
+
+    def _open_browser(self) -> None:
+        """在默认浏览器中打开服务地址（优先用运行中服务的实际地址，否则用表单配置）。"""
+        import webbrowser
+
+        try:
+            name = self._model_name()
+        except ServeError as exc:
+            self._messagebox.showerror("参数错误", str(exc))
+            return
+        state = llmenv.load_state(name, missing_ok=True)
+        engine = state.engine if state is not None else "（未登记）"
+        if state is not None and llmserve.process_alive(state.pid, state.create_time):
+            url = state.base_url
+            api_key = state.api_key
+        else:
+            try:
+                url = http_base_url(
+                    self._host_var.get().strip() or DEFAULT_HOST,
+                    self._int_field(self._port_var, "端口"),
+                )
+            except ServeError as exc:
+                self._messagebox.showerror("参数错误", str(exc))
+                return
+            api_key = self._api_key_var.get().strip() or DEFAULT_API_KEY
+
+        status = _probe_web_ui(url, api_key)
+        if status == 404:
+            message = (
+                f"当前服务的引擎未内置 Web UI（GET / 返回 404）: {engine}\n"
+                "LM Studio 版 llama.cpp 会移除 Web UI；请切换到带 Web UI 的官方构建后重启服务：\n"
+                "  fcmd llmengine use <tag>（如 b12212）\n"
+                f"也可直接用 OpenAI 兼容客户端访问 {url}/v1"
+            )
+            self._log(message)
+            self._messagebox.showerror("无 Web UI", message)
+            return
+        if status is None:
+            message = f"服务未就绪，无法打开 Web UI: {url}"
+            self._log(message)
+            self._messagebox.showerror("打开失败", message)
+            return
+        if status != 200:
+            message = f"服务返回 HTTP {status}，Web UI 不可用: {url}"
+            self._log(message)
+            self._messagebox.showerror("打开失败", message)
+            return
+        if webbrowser.open(url):
+            self._log(f"已在浏览器中打开: {url}")
+        else:
+            self._log(f"无法打开浏览器，请手动访问: {url}")
+            self._messagebox.showerror("打开失败", f"无法打开浏览器，请手动访问: {url}")
 
     def _show_logs(self) -> None:
         self._notebook.select(1)

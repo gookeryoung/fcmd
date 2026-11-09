@@ -272,7 +272,6 @@ class LlamaCppBackend:
             "256",
             "--no-context-shift",
             "--metrics",
-            "--no-webui",
             "--alias",
             plan.alias,
             "--host",

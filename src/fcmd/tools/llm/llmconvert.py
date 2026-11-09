@@ -42,6 +42,7 @@ __all__ = [
     "find_convert_python",
     "is_hf_safetensors_dir",
     "plan_convert",
+    "summarize_convert_line",
 ]
 
 CONVERT_SCRIPT = "convert_hf_to_gguf.py"
@@ -382,6 +383,21 @@ def _tail(text: str, lines: int = 6) -> str:
     return " | ".join(parts[-lines:])
 
 
+def summarize_convert_line(line: str) -> str:
+    """折叠转换脚本打印的整段 chat template 日志。
+
+    ``convert_hf_to_gguf.py`` 会把模型 tokenizer 里的完整 Jinja 模板（可达数千字符）
+    以 INFO 日志整行打出，在窗口日志里表现为一大片无法阅读的模板源码；这里替换为
+    长度摘要，模板原文仍完整写入 GGUF 元数据。
+    """
+    marker = "Setting chat_template to "
+    index = line.find(marker)
+    if index < 0:
+        return line
+    template = line[index + len(marker) :]
+    return f"{line[:index]}{marker}<已省略 {len(template)} 字符的 Jinja 模板，完整内容已写入 GGUF 元数据>"
+
+
 def convert_model(
     plan: ConvertPlan,
     runner: Runner = run_command,
@@ -400,7 +416,7 @@ def convert_model(
             result = llmbase.stream_command(
                 plan.convert_argv(),
                 timeout=CONVERT_TIMEOUT,
-                on_output=on_output,
+                on_output=lambda line: on_output(summarize_convert_line(line)),
             )
         except subprocess.TimeoutExpired as exc:
             raise ServeError(f"safetensors 转 GGUF 超时（{CONVERT_TIMEOUT:.0f}s）") from exc

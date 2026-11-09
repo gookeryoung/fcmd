@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-80 个工具（其中 29 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdfw`/`lscalc`/`llmbench`/`llmconvert`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`pyprof`/`screenshot`/`zipencrypt`；其余 51 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+84 个工具（其中 33 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`screenshot`/`zipencrypt`；其余 51 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -146,6 +146,8 @@ fcmd completion --shell fish | source         # fish
 | `padtool` | - | 文本对齐（left/right/center/justify） |
 | `randtool` | - | 随机生成（password/number/string/bytes） |
 | `regextool` | - | 正则表达式（match/find/replace/split） |
+| `regexvalidate` | - | 正则校验（匹配/全匹配/findall/分组与正则特征分析，支持 ignorecase/multiline/dotall） |
+| `regexvalidatew` | - | 正则校验器窗口版（Tk：实时校验、20 个典型示例、历史记录与语法帮助，设置持久化到 `~/.fcmd/ui/regexvalidate.json`） |
 | `stattool` | - | 统计工具（mean/median/stddev/variance/summarize） |
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
 | `timetool` | - | 时间工具（now/parse/unix/fromunix/convert） |
@@ -197,6 +199,8 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `llmbench` | - | OpenAI 兼容服务吞吐实测独立命令（`--name 服务名` 读本机服务状态，或 `--base-url` 直连任意兼容服务；`--prompt-tokens N` 模拟长上下文） |
+| `llmchat` | - | OpenAI 兼容服务多轮流式对话独立命令（走 `/v1/chat/completions` SSE 并维护 `messages` 历史，兼容思考型模型的 `reasoning_content` 流；`--name` 读本机服务状态或 `--base-url` 直连；`--prompt` 单次提问，省略时进入交互模式，`/clear` 清空历史、`/exit` 退出） |
+| `llmchatw` | - | `llmchat` 的 Tk 窗口版（服务下拉框读取 `llmenv` 登记服务并回填地址 / 模型 / API Key，也可填任意 OpenAI 兼容地址；流式回复在后台线程实时追加到聊天区，思考型模型的思考过程以灰色单独展示，支持停止生成、清空历史、系统提示词与 max_tokens / temperature / top_p 参数，max_tokens 默认 2048） |
 | `llmconvert` | - | HF safetensors 转 GGUF 独立命令（复用引擎目录内 `llama.cpp*.zip` 或在线源码，可选 `--quant` 再量化、`--tag` 指定源码版本） |
 | `llmconvertw` | - | `llmconvert` 的 Tk 窗口版（界面按「模型列表 / 转换配置 / 输出日志」分标签页，先选模型再配参数，避免表单堆叠；启动时后台扫描 `llmenv` 已配置的模型目录，识别并列出可转换的 HF safetensors 目录，选中即填入源目录；配置转换精度/解释器/源码脚本/引擎 tag；以勾选方式选择原始 GGUF 及多种量化格式，已生成的格式自动标注“已存在”并置为只读，除非勾选覆盖；可预览转换计划与命令，后台先转换一次基础 GGUF 再批量量化，转换脚本与量化器输出逐行实时回显，并解析 tqdm 百分比（含 `\r` 覆盖刷新）驱动整体进度条） |
 | `llmdoctor` | - | 运行环境体检独立命令（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++ 运行库） |
@@ -207,8 +211,8 @@ fcmd completion --shell fish | source         # fish
 | `llmmodel` | - | 模型扫描独立命令（`list`/`find`/`vram`；列出 GGUF、按量化定位文件、估算显存占用） |
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 共 12 种量化版本；默认 Q4_K_M/Q5_K_M，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
 | `llmqntw` | - | `llmqnt` 的 Tk 窗口版（启动时扫描 `llmenv` 已配置的模型目录，仅把未量化的 F16/BF16 原始 GGUF 列入下拉框，已量化文件选择时告警；显示当前引擎 tag/路径、量化器路径与 llama.cpp 版本；量化类型勾选、进度条与实时日志，后台线程执行不阻塞界面） |
-| `llmserve` | - | 服务生命周期独立命令（`plan`/`start`/`stop`/`status`/`logs`；打印启动计划与显存估算、拉起引擎等待 `/health`、停止进程树、查看状态与日志） |
-| `llmservew` | - | `llmserve` 的 Tk 窗口版（启动时后台扫描 `llmenv` 已配置的模型目录并列出可选 GGUF，按文件名内置能力标签（代码/推理/对话/视觉/数学/重排/嵌入，主流系列兜底为通用）并给出推荐档位与最佳实践提示；显示引擎 tag/路径、版本与 GPU；表单配置档位/端口/上下文/KV/ubatch 等参数，可预览启动计划、后台启动与停止服务、查看状态与日志、清空日志输出；服务运行中每秒采样 `/metrics`，生成/提示 token/s 按 10s 滑动窗口平滑（参考 DeepSeek Harness 的累计平均口径），并展示处理中/排队请求与 KV 使用率；系统负载面板补充 CPU 频率、内存、交换、服务进程 CPU/内存/线程/运行时长，GPU 面板展示利用率、显存、服务显存、温度、功耗、风扇与核心频率；系统负载在窗口打开后即持续采样，服务未启动时同样可见） |
+| `llmserve` | - | 服务生命周期独立命令（`plan`/`start`/`stop`/`status`/`logs`；打印启动计划与显存估算、拉起引擎等待 `/health`、停止进程树、查看状态与日志；OpenAI 模型别名默认取 GGUF 文件名，可用 `--alias` 覆盖） |
+| `llmservew` | - | `llmserve` 的 Tk 窗口版（启动时后台扫描 `llmenv` 已配置的模型目录并列出可选 GGUF，按文件名内置能力标签（代码/推理/对话/视觉/数学/重排/嵌入，主流系列兜底为通用）并给出推荐档位与最佳实践提示；显示引擎 tag/路径、版本与 GPU；表单配置档位/端口/上下文/KV/ubatch 等参数（服务名为可编辑下拉框，自动列出已登记服务并默认选中唯一运行中的服务；选择模型时服务名自动按模型文件名去掉量化后缀同步，选中服务名时自动定位其模型，运行中服务的模型始终并入模型列表并自动选中），可预览启动计划、后台启动与停止服务、查看状态与日志、清空日志输出、一键在默认浏览器打开服务地址（优先使用运行中服务的实际地址，否则用表单配置的监听地址）；服务运行中每秒采样 `/metrics`，生成/提示 token/s 按 10s 滑动窗口平滑（参考 DeepSeek Harness 的累计平均口径），并展示处理中/排队请求与 KV 使用率；系统负载面板补充 CPU 频率、内存、交换、服务进程 CPU/内存/线程/运行时长，GPU 面板展示利用率、显存、服务显存、温度、功耗、风扇与核心频率；系统负载在窗口打开后即持续采样，服务未启动时同样可见） |
 
 ### 开发环境
 

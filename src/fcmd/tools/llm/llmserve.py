@@ -21,7 +21,6 @@ import fcmd
 from fcmd.console import Table, get_console
 from fcmd.tools.llm import llmengine, llmenv, llmmodel
 from fcmd.tools.llm.llmbase import (
-    DEFAULT_ALIAS,
     DEFAULT_API_KEY,
     DEFAULT_HOST,
     DEFAULT_NAME,
@@ -223,13 +222,13 @@ def make_plan(  # noqa: PLR0913
     kv_type: str | None = None,
     ubatch: int | None = None,
     engine_tag: str | None = None,
-    alias: str = DEFAULT_ALIAS,
+    alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
     threads: int = DEFAULT_THREADS,
     home: Path | None = None,
     extra_args: Sequence[str] = (),
 ) -> LaunchPlan:
-    """解析模型与引擎，构造启动计划。"""
+    """解析模型与引擎，构造启动计划（``alias`` 省略时取模型文件名）。"""
     validate_name(name)
     prof = PROFILES.get(profile)
     if prof is None:
@@ -249,7 +248,7 @@ def make_plan(  # noqa: PLR0913
         context=ctx or prof.context,
         host=host,
         port=port,
-        alias=alias,
+        alias=alias if alias is not None else model_path.stem,
         api_key=api_key,
         threads=threads,
         engine=engine,
@@ -459,7 +458,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     kv_type: str | None = None,
     ubatch: int | None = None,
     engine_tag: str | None = None,
-    alias: str = DEFAULT_ALIAS,
+    alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
     threads: int = DEFAULT_THREADS,
 ) -> None:
@@ -488,7 +487,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     engine_tag:
         指定引擎 tag，默认 current / 最新安装。
     alias:
-        OpenAI 模型名。
+        OpenAI 模型名；省略时取模型文件名（不含 ``.gguf``）。
     api_key:
         本地 API Key。
     threads:
@@ -524,7 +523,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     kv_type: str | None = None,
     ubatch: int | None = None,
     engine_tag: str | None = None,
-    alias: str = DEFAULT_ALIAS,
+    alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
     threads: int = DEFAULT_THREADS,
     wait: float = 180.0,

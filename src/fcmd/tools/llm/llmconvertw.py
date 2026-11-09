@@ -687,6 +687,7 @@ class ConvertWindow:
             quant_exe: Path | None = None
             if quants:
                 quant_exe = self._resolve_quant_exe(self._tag_var.get().strip() or None)
+                status.put(("log", f"量化器: {quant_exe}"))
             total = 1 + len(quants)
 
             def relay(step: int) -> Callable[[str], None]:

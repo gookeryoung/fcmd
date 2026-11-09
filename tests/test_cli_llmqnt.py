@@ -148,6 +148,33 @@ class TestResolveExe:
         )
         assert llmqnt.resolve_quantize_exe() == quantize
 
+    def test_other_engine_fallback(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """当前引擎不带量化器时，复用其他已安装引擎的 llama-quantize，而不是落到 PATH。"""
+        monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
+        current_dir = tmp_path / "lmstudio"
+        current_dir.mkdir()
+        server = _write(current_dir / "llama-server.exe")
+        other_dir = tmp_path / "b12212"
+        other_dir.mkdir()
+        other_server = _write(other_dir / "llama-server.exe")
+        quantize = _write(other_dir / llmengine.engine_exe_name("llama-quantize"))
+        monkeypatch.setattr(
+            llmqnt.llmengine,
+            "resolve_engine",
+            lambda *args, **kwargs: llmbase.EngineInfo("lmstudio", server),
+        )
+        monkeypatch.setattr(
+            llmqnt.llmengine,
+            "list_engines",
+            lambda *args, **kwargs: [llmbase.EngineInfo("b12212", other_server)],
+        )
+        monkeypatch.setattr(
+            llmqnt.shutil,
+            "which",
+            lambda name: pytest.fail("有可用引擎量化器时不应回落到 PATH"),
+        )
+        assert llmqnt.resolve_quantize_exe() == quantize
+
     def test_path_fallback(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
         exe = _write(tmp_path / "llama-quantize")
@@ -156,6 +183,7 @@ class TestResolveExe:
             raise llmbase.ServeError("未安装引擎")
 
         monkeypatch.setattr(llmqnt.llmengine, "resolve_engine", _raise)
+        monkeypatch.setattr(llmqnt.llmengine, "list_engines", lambda *args, **kwargs: [])
         monkeypatch.setattr(llmqnt.shutil, "which", lambda name: str(exe))
         assert llmqnt.resolve_quantize_exe() == exe
 
@@ -166,6 +194,7 @@ class TestResolveExe:
             raise llmbase.ServeError("未安装引擎")
 
         monkeypatch.setattr(llmqnt.llmengine, "resolve_engine", _raise)
+        monkeypatch.setattr(llmqnt.llmengine, "list_engines", lambda *args, **kwargs: [])
         monkeypatch.setattr(llmqnt.shutil, "which", lambda name: None)
         with pytest.raises(llmqnt.QuantizeError, match="未找到 llama-quantize"):
             llmqnt.resolve_quantize_exe()
@@ -197,6 +226,37 @@ class TestRunJob:
 
         with pytest.raises(llmqnt.QuantizeError, match="退出码 1"):
             llmqnt.run_job(job, Path("llama-quantize"))
+
+    def test_access_violation_includes_exe_and_hint(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """访问冲突崩溃时提示实际使用的量化器与 VC++ 运行库排查方向。"""
+        source = _write(tmp_path / "model.gguf")
+        job = llmqnt.QuantizeJob(source, tmp_path / "model-Q4_K_M.gguf", "Q4_K_M")
+        process = _FakeProcess(returncode=3221225477)
+        monkeypatch.setattr(llmqnt.subprocess, "Popen", _fake_popen(process))
+        exe = tmp_path / "llama-quantize.exe"
+
+        with pytest.raises(llmqnt.QuantizeError) as excinfo:
+            llmqnt.run_job(job, exe)
+
+        message = str(excinfo.value)
+        assert "0xC0000005" in message
+        assert str(exe) in message
+        assert "MSVCP140.dll" in message
+
+    def test_failure_reports_output_and_removes_partial_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """失败时带上 llama-quantize 的真实输出，并清掉半成品避免下次被当成已完成。"""
+        source = _write(tmp_path / "model.gguf")
+        output = _write(tmp_path / "model-Q4_K_M.gguf")
+        job = llmqnt.QuantizeJob(source, output, "Q4_K_M")
+        process = _FakeProcess(lines=["error: bad tensor\n"], returncode=1)
+        monkeypatch.setattr(llmqnt.subprocess, "Popen", _fake_popen(process))
+
+        with pytest.raises(llmqnt.QuantizeError, match="bad tensor"):
+            llmqnt.run_job(job, Path("llama-quantize"))
+
+        assert output.exists() is False
 
     def test_timeout(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         source = _write(tmp_path / "model.gguf")

@@ -472,6 +472,22 @@ def test_convert_model_streams_output(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen == ["a", " 45%|#### |", "b"]
 
 
+def test_convert_model_folds_chat_template_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """转换脚本整段打印的 chat template 折叠为长度摘要，避免日志刷屏。"""
+    template = "{%- if messages[0]['role'] == 'system' %}{{ messages[0]['content'] }}{%- endif %}"
+    process = _FakeStreamProcess(f"INFO:gguf.vocab:Setting chat_template to {template}\n".encode())
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    llmconvert.convert_model(_convert_plan(), on_output=seen.append)
+
+    assert len(seen) == 1
+    assert seen[0].startswith("INFO:gguf.vocab:Setting chat_template to <已省略")
+    assert template not in seen[0]
+    assert "messages[0]" not in seen[0]
+    assert llmconvert.summarize_convert_line("loading") == "loading"
+
+
 def test_convert_model_streaming_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     process = _FakeStreamProcess(b"boom\n", returncode=1)
     monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
