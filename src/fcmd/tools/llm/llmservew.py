@@ -111,6 +111,7 @@ class ServeWindow:
         }
 
         self._build_widgets()
+        self._refresh_loaded()
         self._refresh_models()
 
     # ------------------------------------------------------------------ #
@@ -120,6 +121,8 @@ class ServeWindow:
         ttk = self._ttk
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
+        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(4, 0))
+        self._build_actions(outer)
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
         start_page = ttk.Frame(self._notebook, padding=10)
@@ -129,10 +132,9 @@ class ServeWindow:
         self._build_params(start_page)
         self._build_models(start_page)
         self._build_env(start_page)
+        self._build_loaded(run_page)
         self._build_metrics(run_page)
         self._build_log(run_page)
-        self._build_actions(outer)
-        ttk.Label(outer, textvariable=self._status_var).pack(fill="x", pady=(6, 0))
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     def _build_params(self, parent: Any) -> None:
@@ -292,6 +294,48 @@ class ServeWindow:
             ttk.Label(body, textvariable=var, wraplength=760, justify="left").grid(row=row, column=1, sticky="w")
             self._info_vars[key] = var
 
+    def _build_loaded(self, parent: Any) -> None:
+        """已加载模型：列出运行中的服务及其模型、档位与地址。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(parent, text="已加载模型（运行中的服务）", padding=6)
+        box.pack(fill="x")
+        self._loaded_tree = ttk.Treeview(
+            box,
+            columns=("name", "model", "profile", "address"),
+            show="headings",
+            height=3,
+            selectmode="browse",
+        )
+        self._loaded_tree.heading("name", text="服务")
+        self._loaded_tree.heading("model", text="已加载模型")
+        self._loaded_tree.heading("profile", text="档位 / ctx")
+        self._loaded_tree.heading("address", text="地址")
+        self._loaded_tree.column("name", width=90, stretch=False)
+        self._loaded_tree.column("model", width=360, anchor="w")
+        self._loaded_tree.column("profile", width=140, anchor="w", stretch=False)
+        self._loaded_tree.column("address", width=170, anchor="w", stretch=False)
+        self._loaded_tree.pack(fill="x")
+        self._loaded_var = self._tk.StringVar(value="无运行中的服务")
+        ttk.Label(box, textvariable=self._loaded_var).pack(fill="x", pady=(4, 0))
+
+    def _refresh_loaded(self) -> None:
+        """刷新“已加载模型”列表（只统计进程仍存活的服务）。"""
+        for item in self._loaded_tree.get_children():
+            self._loaded_tree.delete(item)
+        alive = [state for state in llmenv.list_states() if llmserve.process_alive(state.pid, state.create_time)]
+        for state in alive:
+            self._loaded_tree.insert(
+                "",
+                "end",
+                values=(
+                    state.name,
+                    Path(state.model).name,
+                    f"{state.profile} / ctx {state.context}",
+                    state.base_url,
+                ),
+            )
+        self._loaded_var.set("" if alive else "无运行中的服务")
+
     def _build_metrics(self, parent: Any) -> None:
         """实时性能面板：显示 /metrics 计算的 token/s 与请求队列状态。"""
         ttk = self._ttk
@@ -319,7 +363,7 @@ class ServeWindow:
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
         actions = ttk.Frame(outer)
-        actions.pack(fill="x", pady=(8, 0))
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
         self._preview_btn = ttk.Button(actions, text="预览计划", command=self._preview)
         self._preview_btn.pack(side="left")
         self._start_btn = ttk.Button(actions, text="启动服务", command=self._start)
@@ -508,6 +552,41 @@ class ServeWindow:
             threads=self._int_field(self._threads_var, "线程数"),
         )
 
+    @staticmethod
+    def _gpu_usage() -> tuple[int, int] | None:
+        """查询 GPU 已用 / 总显存（MiB）；nvidia-smi 不可用时返回 ``None``。"""
+        result = llmbase.run_command(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"]
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return None
+        try:
+            used, total = (int(float(item)) for item in result.stdout.strip().splitlines()[0].split(","))
+        except ValueError:
+            return None
+        return used, total
+
+    def _memory_guard(self, plan: llmbase.LaunchPlan) -> None:
+        """启动前检查显存 / 内存余量，不足时拒绝启动，避免系统过载。"""
+        estimate = llmmodel.plan_vram(plan)
+        usage = self._gpu_usage()
+        if usage is not None:
+            used, total = usage
+            label = "显存"
+            available = max(total - used, 0) * 1024 * 1024
+            self._log(f"显存占用: {used} / {total} MiB")
+        else:
+            import psutil
+
+            label = "可用内存"
+            available = int(psutil.virtual_memory().available)
+        if estimate > available:
+            raise ServeError(
+                f"{label}不足，启动可能过载：预计需要 {human_size(estimate)}，当前可用 {human_size(available)}。"
+                "请改用更小档位、减小上下文，或先停止其他服务"
+            )
+        self._log(f"资源检查通过：预计占用 {human_size(estimate)} / {label}可用 {human_size(available)}")
+
     # ------------------------------------------------------------------ #
     # 动作
     # ------------------------------------------------------------------ #
@@ -546,6 +625,12 @@ class ServeWindow:
                 raise ServeError(f"等待就绪秒数必须为正整数: {wait_s}")
         except ServeError as exc:
             self._messagebox.showerror("参数错误", str(exc))
+            return
+        try:
+            self._memory_guard(plan)
+        except ServeError as exc:
+            self._log("已取消启动：" + str(exc))
+            self._messagebox.showerror("资源不足", str(exc))
             return
         self._stop_monitor("启动中…")
         self._begin_task(self._start_work, (plan, wait_s))
@@ -625,10 +710,12 @@ class ServeWindow:
         self._log(f"  档位: {state.profile} / ctx {state.context}")
         self._log(f"  日志: {state.log}")
         self._start_monitor(state)
+        self._refresh_loaded()
         self._messagebox.showinfo("启动成功", f"服务 {state.name} 已就绪\n{state.base_url}")
 
     def _show_stopped(self, result: StopResult) -> None:
         self._stop_monitor("已停止")
+        self._refresh_loaded()
         if result.was_running:
             self._status_var.set(f"{result.state.name} · 已停止")
             self._log(f"已停止服务 {result.state.name}（pid={result.state.pid}）")
@@ -637,6 +724,7 @@ class ServeWindow:
             self._log(f"服务 {result.state.name} 未在运行，已清理残留状态")
 
     def _refresh_status(self) -> None:
+        self._refresh_loaded()
         try:
             name = self._model_name()
             state = llmenv.require_state(name)
