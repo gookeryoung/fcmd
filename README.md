@@ -100,6 +100,8 @@ fcmd completion --shell fish | source         # fish
 
 88 个工具（其中 39 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
+工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
+
 ### 项目构建与发布
 
 | 工具 | 别名 | 说明 |
@@ -142,7 +144,7 @@ fcmd completion --shell fish | source         # fish
 | `csvtool` | - | CSV 处理（show/select/to-json/from-json/merge） |
 | `hashtool` | - | 字符串哈希（md5/sha1/sha256/sha512） |
 | `idtool` | - | ID 生成（uuid/timestamp/random） |
-| `jsontool` | - | JSON 处理（pretty/minify/query/sort） |
+| `jsontool` | `jsont` | JSON 处理（pretty/minify/query/sort） |
 | `mathtool` | - | 数学计算（eval/sqrt/pow/factorial） |
 | `padtool` | - | 文本对齐（left/right/center/justify） |
 | `randtool` | - | 随机生成（password/number/string/bytes） |
@@ -179,7 +181,7 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `img2ico` | - | 图像/SVG 转 ICO/ICNS（多尺寸、质量档位、目录批量），依赖 `fcmd[img,svg]` |
 | `img2icow` | - | 图像转 ICO 转换器窗口版（Tk，单文件/目录批量、尺寸与质量可调），依赖 `fcmd[img,svg]` |
-| `imagetool` | - | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors），依赖 `fcmd[img]` |
+| `imagetool` | `imaget` | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors），依赖 `fcmd[img]` |
 | `videoconv` | - | 视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif；编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持 `*`/`**` 通配符批量），依赖系统 ffmpeg |
 | `videoconvw` | - | 视频转换器窗口版（Tk，文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断），依赖系统 ffmpeg |
 
@@ -190,8 +192,8 @@ fcmd completion --shell fish | source         # fish
 | `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |
 | `portcheck` | - | 端口检查与扫描（socket 探测 + psutil 查询占用进程，跨平台） |
-| `taskkill` | - | 按名称终止进程（psutil terminate → kill） |
-| `which` | - | 查找可执行命令路径 |
+| `taskkill` | `taskk` | 按名称终止进程（psutil terminate → kill） |
+| `which` | `wch` | 查找可执行命令路径 |
 | `clr` | - | 跨平台清屏 |
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
@@ -228,7 +230,7 @@ fcmd completion --shell fish | source         # fish
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `gittool` | - | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
+| `gittool` | `gitt` | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
 | `envdev` | - | 开发环境一键配置（分组入口 lang/app/mirror/check/all，镜像按服务（pip/conda/rustup/cargo/go/maven/npm）独立自动选优：以真实构件实测下载吞吐排序并可识别限速/门户页，避免误选「延迟低但被限速」的镜像；另含教育网镜像探测（动态拉取 MirrorZ 列表）与 `mirror --service <服务>` 测速、`--apply` 自动应用，以及工具链安装，Linux 含系统依赖） |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |

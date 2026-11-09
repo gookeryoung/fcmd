@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -433,6 +434,51 @@ class TestToolDiscovery:
         # 仅访问模块，不调用 run()
         assert discovery_mod._TOOLS_DISCOVERED is False
         assert discovery_mod._TOOL_MODULES == {}
+
+
+# ---------------------------------------------------------------------- #
+# 入口名：规范名为官方，短名为显式别名
+# ---------------------------------------------------------------------- #
+class TestEntryNames:
+    """D2 回归：规范名为官方入口，短名是显式别名，不做后缀推断。"""
+
+    @pytest.mark.parametrize(
+        ("short", "canonical"),
+        [
+            ("gitt", "gittool"),
+            ("imaget", "imagetool"),
+            ("jsont", "jsontool"),
+            ("pipt", "piptool"),
+            ("taskk", "taskkill"),
+            ("wch", "which"),
+        ],
+    )
+    def test_short_name_is_explicit_alias(self, short: str, canonical: str) -> None:
+        """短名在发现阶段显式登记，解析结果与规范名一致。"""
+        from fcmd.cli._discovery import aliases_for, resolve_tool
+
+        assert resolve_tool(canonical) == canonical
+        assert resolve_tool(short) == canonical
+        assert short in aliases_for(canonical)
+
+    def test_resolve_tool_does_not_append_suffix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """不再自动补 tool/cmd 后缀（拼写错误的命令不被静默路由）。"""
+        from fcmd.cli import _discovery as discovery_mod
+
+        monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {"fakedir": "fakedirtool"})
+        assert discovery_mod.resolve_tool("fakedir") == "fakedirtool"
+        assert discovery_mod.resolve_tool("fake") is None
+        assert discovery_mod.resolve_tool("fakedir2") is None
+
+    def test_project_scripts_expose_canonical_and_short_names(self) -> None:
+        """pyproject 同时提供规范名与短名 console script（旧入口零破坏）。"""
+        root = Path(__file__).resolve().parents[1]
+        data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        scripts = data["project"]["scripts"]
+        for name in ("gittool", "imagetool", "jsontool", "piptool", "taskkill", "which"):
+            assert name in scripts, f"缺少规范名入口 {name!r}"
+        for name in ("gitt", "imaget", "jsont", "pipt", "taskk", "wch"):
+            assert name in scripts, f"旧短名入口 {name!r} 不应移除"
 
 
 # ---------------------------------------------------------------------- #
