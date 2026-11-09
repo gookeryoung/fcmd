@@ -14,6 +14,7 @@
     llmservew  llmserve 的 Tk 窗口版                     → fcmd llmservew
     llmbench   OpenAI 兼容服务性能测试（只依赖 llmbase.Endpoint）→ fcmd llmbench
     llmconvert HF safetensors → GGUF 转换                 → fcmd llmconvert
+    llmconvertw llmconvert 的 Tk 窗口版                   → fcmd llmconvertw
     llmdoctor  运行环境体检                               → fcmd llmdoctor
 """
 
