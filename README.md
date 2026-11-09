@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-65 个工具（其中 15 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`llmdown`/`llmqnt`/`llmqntw`/`llmsrv`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+66 个工具（其中 16 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`llmdown`/`llmengine`/`llmqnt`/`llmqntw`/`llmsrv`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -190,6 +190,7 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `llmdown` | - | 大模型仓库下载（`files`/`mirror`/`download`；ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
+| `llmengine` | - | llama.cpp 引擎管理独立命令（`list`/`install`/`use`/`check`；安装或注册引擎、切换默认引擎、验证可运行，与 `llmsrv engine` 共用同一套引擎目录，可直接在命令行调用 `llmengine`） |
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 共 12 种量化版本；默认 Q4_K_M/Q5_K_M，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
 | `llmqntw` | - | `llmqnt` 的 Tk 窗口版（文件选择、量化类型勾选、进度条与实时日志，后台线程执行不阻塞界面） |
 | `llmsrv` | - | 本地大模型推理服务（`doctor`/`engine`/`config`/`model`/`convert`/`plan`/`start`/`stop`/`status`/`logs`/`bench`/`env`；模型目录多根配置与扫描（`config add/remove/reset`，`model` 列清单与各档位选中项）、HF safetensors 转 GGUF（`convert`，优先复用引擎目录下的 `llama.cpp*.zip` 源码包或 `--script` 指定的本地源码 zip，否则自动下载与引擎 tag 匹配的源码包并支持断点续传，失败回退浅克隆，可选 `llama-quantize` 量化）、llama.cpp 引擎安装与切换（`engine install` 支持 `--path` 指向本地 zip 免下载安装，目标目录已有完整 zip 时自动复用）、按档位选 GGUF 与 KV 精度（64K 档默认 `f16` KV 提速，`--kv`/`--ubatch` 可覆盖）、显存估算、VC++ 运行库检查、后台启动 + `/health` 就绪等待、进程树停止、OpenAI 兼容客户端环境变量输出；`bench --prompt-tokens N` 按长上下文实测吞吐） |

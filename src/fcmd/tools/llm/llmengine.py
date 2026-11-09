@@ -1,4 +1,7 @@
-"""llmengine - llama.cpp 引擎探测、安装、注册、切换与量化器定位。"""
+"""llmengine - llama.cpp 引擎探测、安装、注册、切换与量化器定位。
+
+独立命令：``fcmd llmengine <list|install|use|check>``。
+"""
 
 from __future__ import annotations
 
@@ -10,6 +13,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import fcmd
+from fcmd.console import Table, get_console
 from fcmd.tools.llm import llmenv
 from fcmd.tools.llm.llmbase import (
     CHUNK_SIZE,
@@ -346,3 +351,57 @@ def quantize_exe(engine: EngineInfo) -> Path | None:
         return target
     candidate = engine.exe.parent / engine_exe_name("llama-quantize")
     return candidate if candidate.is_file() else None
+
+
+# ---------------------------------------------------------------------- #
+# CLI：fcmd llmengine <list|install|use|check>
+# ---------------------------------------------------------------------- #
+@fcmd.tool("llmengine", subcommand="list", help="列出已安装引擎")
+def list_cmd() -> None:
+    """列出已安装的 llama.cpp 引擎与当前默认引擎。"""
+    infos = list_engines()
+    if not infos:
+        get_console().print(f"未安装引擎：fcmd llmengine install --tag {DEFAULT_ENGINE_TAG}")
+        return
+    table = Table(title="llama.cpp 引擎")
+    table.add_column("TAG")
+    table.add_column("当前")
+    table.add_column("可执行文件")
+    for info in infos:
+        table.add_row(info.tag, "*" if info.source == "current" else "", str(info.exe))
+    get_console().print(table)
+
+
+@fcmd.tool("llmengine", subcommand="install", help="安装或注册引擎")
+def install_cmd(
+    tag: str = DEFAULT_ENGINE_TAG,
+    variant: EngineVariant = "cuda",
+    url: str | None = None,
+    path: Path | None = None,
+) -> None:
+    """从 GitHub release 安装引擎，或注册本地引擎目录 / zip。"""
+    info = install_engine(tag, variant=variant, url=url, path=path)
+    get_console().print(f"引擎就绪: {info.tag} -> {info.exe}")
+    if not any(item.source == "current" for item in list_engines()):
+        use_engine(tag)
+
+
+@fcmd.tool("llmengine", subcommand="use", help="切换默认引擎")
+def use_cmd(tag: str) -> None:
+    """把指定 tag 设为默认引擎。"""
+    info = use_engine(tag)
+    get_console().print(f"默认引擎: {info.tag} -> {info.exe}")
+
+
+@fcmd.tool("llmengine", subcommand="check", help="验证引擎可运行")
+def check_cmd(tag: str | None = None) -> None:
+    """执行 ``llama-server --version`` 并输出体检结果。"""
+    engine = resolve_engine(tag)
+    check = check_engine(engine)
+    color = {"ok": "green", "warn": "yellow", "fail": "red"}[check.status]
+    get_console().print(f"[{color}]{check.status}[/{color}] {check.name}: {check.detail}")
+
+
+@fcmd.main("llmengine")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
