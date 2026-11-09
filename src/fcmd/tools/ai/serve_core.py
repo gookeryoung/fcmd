@@ -34,6 +34,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import zipfile
 from collections.abc import Callable, Sequence
@@ -43,6 +44,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 __all__ = [
+    "CONVERT_OUTTYPES",
     "DEFAULT_ALIAS",
     "DEFAULT_API_KEY",
     "DEFAULT_ENGINE_TAG",
@@ -56,6 +58,7 @@ __all__ = [
     "BenchResult",
     "Check",
     "CommandResult",
+    "ConvertPlan",
     "EngineInfo",
     "GpuInfo",
     "LaunchPlan",
@@ -73,18 +76,23 @@ __all__ = [
     "client_env",
     "config_path",
     "configured_roots",
+    "convert_model",
+    "convert_source_root",
     "default_models_root",
     "delete_state",
     "detect_gpu",
     "doctor",
     "engine_exe_name",
     "engines_root",
+    "ensure_convert_script",
     "estimate_vram",
     "fcmd_home",
+    "find_convert_python",
     "find_model",
     "format_command",
     "human_size",
     "install_engine",
+    "is_hf_safetensors_dir",
     "list_engines",
     "list_states",
     "load_config",
@@ -92,7 +100,9 @@ __all__ = [
     "log_path",
     "make_plan",
     "models_roots",
+    "plan_convert",
     "process_alive",
+    "quantize_exe",
     "read_log",
     "remove_models_root",
     "reset_models_roots",
@@ -805,9 +815,9 @@ def detect_gpu(runner: Runner = run_command) -> GpuInfo | None:
     return GpuInfo(name.strip(), memory_mib)
 
 
-def engine_exe_name() -> str:
+def engine_exe_name(base: str = "llama-server") -> str:
     """引擎可执行文件名（Windows 带 ``.exe``）。"""
-    return "llama-server.exe" if os.name == "nt" else "llama-server"
+    return f"{base}.exe" if os.name == "nt" else base
 
 
 def _read_marker(directory: Path) -> dict[str, Any]:
@@ -1065,6 +1075,237 @@ def check_engine(engine: EngineInfo, runner: Runner = run_command) -> Check:
         "fail",
         f"{engine.exe} --version 退出码 {format_returncode(result.returncode)}；{detail[:200]}",
     )
+
+
+# ---------------------------------------------------------------------- #
+# 模型格式转换（HF safetensors → GGUF）
+# ---------------------------------------------------------------------- #
+CONVERT_SCRIPT = "convert_hf_to_gguf.py"
+CONVERT_REPO_URL = "https://github.com/ggml-org/llama.cpp"
+CONVERT_OUTTYPES = ("f32", "f16", "bf16", "q8_0")
+CONVERT_TIMEOUT = 6 * 3600.0
+QUANTIZE_TIMEOUT = 2 * 3600.0
+CLONE_TIMEOUT = 900.0
+_BUILD_TAG_RE = re.compile(r"^b\d+$")
+
+
+@dataclass(frozen=True, slots=True)
+class ConvertPlan:
+    """一次 ``safetensors → GGUF`` 转换所需的全部参数。"""
+
+    source: Path
+    output: Path
+    outtype: str
+    script: Path
+    python: str
+    quant: str | None = None
+    quantize_exe: Path | None = None
+
+    @property
+    def intermediate(self) -> str:
+        """转换脚本直接产出的文件（量化时作为临时中间文件）。"""
+        if self.quant is None:
+            return str(self.output)
+        return str(self.output.with_name(f"{self.output.stem}-{self.outtype}.gguf"))
+
+    def convert_argv(self) -> list[str]:
+        """转换脚本命令行。"""
+        return [
+            self.python,
+            str(self.script),
+            str(self.source),
+            "--outfile",
+            self.intermediate,
+            "--outtype",
+            self.outtype,
+        ]
+
+    def quantize_argv(self) -> list[str]:
+        """量化命令行。"""
+        if self.quant is None or self.quantize_exe is None:
+            raise ServeError("未指定量化类型或缺少 llama-quantize")
+        return [str(self.quantize_exe), self.intermediate, str(self.output), self.quant]
+
+
+def is_hf_safetensors_dir(path: Path) -> bool:
+    """判断目录是否为 HuggingFace safetensors 模型目录。"""
+    target = path.expanduser()
+    return target.is_dir() and (target / "config.json").is_file() and any(target.glob("*.safetensors"))
+
+
+def convert_source_root(tag: str, home: Path | None = None) -> Path:
+    """llama.cpp 源码目录（按引擎 tag 隔离，内含转换脚本与 ``gguf-py``）。"""
+    return engines_root(home) / tag / "llama.cpp"
+
+
+def ensure_convert_script(
+    tag: str | None = None,
+    script: Path | None = None,
+    home: Path | None = None,
+    runner: Runner = run_command,
+) -> Path:
+    """定位转换脚本：显式 ``--script`` → ``FCMD_CONVERT_SCRIPT`` → 本地源码 → 浅克隆。
+
+    现代 llama.cpp 的 ``convert_hf_to_gguf.py`` 依赖仓库内的 ``conversion`` 包与
+    ``gguf-py``，因此不能单独下载脚本，必须保留完整源码目录。
+    """
+    raw = script or (
+        Path(os.environ["FCMD_CONVERT_SCRIPT"]).expanduser() if os.environ.get("FCMD_CONVERT_SCRIPT") else None
+    )
+    if raw is not None:
+        target = Path(raw).expanduser()
+        if not target.is_file():
+            raise ServeError(f"转换脚本不存在: {target}")
+        return target
+
+    root = engines_root(home)
+    resolved = tag or _current_tag(root) or DEFAULT_ENGINE_TAG
+    cached = convert_source_root(resolved, home) / CONVERT_SCRIPT
+    if cached.is_file():
+        return cached
+
+    ref = resolved if _BUILD_TAG_RE.fullmatch(resolved) else "master"
+    repo = cached.parent
+    repo.parent.mkdir(parents=True, exist_ok=True)
+    result = runner(
+        ["git", "clone", "--depth", "1", "--branch", ref, CONVERT_REPO_URL, str(repo)],
+        timeout=CLONE_TIMEOUT,
+    )
+    if result.returncode != 0 or not cached.is_file():
+        raise ServeError(
+            f"拉取 llama.cpp 源码失败（{format_returncode(result.returncode)}）："
+            f"{_tail(result.stderr or result.stdout) or '无输出'}；"
+            f"可手动 clone {CONVERT_REPO_URL} 后用 --script 指定 convert_hf_to_gguf.py"
+        )
+    return cached
+
+
+def quantize_exe(engine: EngineInfo) -> Path | None:
+    """定位 ``llama-quantize``：``FCMD_LLAMA_QUANTIZE`` → 引擎同目录。"""
+    raw = os.environ.get("FCMD_LLAMA_QUANTIZE")
+    if raw:
+        target = Path(raw).expanduser()
+        if not target.is_file():
+            raise ServeError(f"FCMD_LLAMA_QUANTIZE 指向的文件不存在: {target}")
+        return target
+    candidate = engine.exe.parent / engine_exe_name("llama-quantize")
+    return candidate if candidate.is_file() else None
+
+
+def plan_convert(  # noqa: PLR0913, PLR0917
+    source: Path,
+    output: Path | None = None,
+    outtype: str = "f16",
+    quant: str | None = None,
+    script: Path | None = None,
+    python: str | None = None,
+    models_root: Path | None = None,
+    tag: str | None = None,
+    home: Path | None = None,
+) -> ConvertPlan:
+    """构造转换计划。
+
+    默认输出到模型目录：``<models_root>/<源目录名>/<源目录名>[-<量化>].gguf``。
+    """
+    src = source.expanduser()
+    if not is_hf_safetensors_dir(src):
+        raise ServeError(f"不是 HF safetensors 目录（需要 config.json 与 *.safetensors）: {src}")
+    if outtype not in CONVERT_OUTTYPES:
+        raise ServeError(f"不支持的 outtype {outtype!r}：可选 {', '.join(CONVERT_OUTTYPES)}")
+
+    if output is None:
+        root = (models_root or models_roots(home=home)[0]).expanduser()
+        suffix = f"-{quant}" if quant else ""
+        target = root / src.name / f"{src.name}{suffix}.gguf"
+    else:
+        target = output.expanduser()
+    if target.suffix.lower() != ".gguf":
+        raise ServeError(f"输出文件必须是 .gguf: {target}")
+
+    quant_exe: Path | None = None
+    if quant:
+        quant_exe = quantize_exe(resolve_engine(tag, home))
+        if quant_exe is None:
+            raise ServeError("未找到 llama-quantize：安装官方 llama.cpp release 引擎，或用 FCMD_LLAMA_QUANTIZE 指定")
+
+    return ConvertPlan(
+        source=src.resolve(),
+        output=target.resolve(),
+        outtype=outtype,
+        script=ensure_convert_script(tag=tag, script=script, home=home),
+        python=python or os.environ.get("FCMD_CONVERT_PYTHON") or sys.executable,
+        quant=quant,
+        quantize_exe=quant_exe,
+    )
+
+
+def _python_candidates() -> list[str]:
+    """候选解释器：当前解释器 + PATH 上的 python（去重）。
+
+    ``uv run`` 会把虚拟环境放到 PATH 首位，仅看 ``shutil.which`` 找不到系统 conda
+    里的 torch，因此遍历 PATH 中的每个目录。
+    """
+    names = ("python.exe", "python3.exe") if os.name == "nt" else ("python3", "python")
+    raw = [sys.executable, shutil.which("python"), shutil.which("python3")]
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        raw.extend(str(Path(entry) / name) for name in names if (Path(entry) / name).is_file())
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for candidate in raw:
+        if not candidate:
+            continue
+        key = os.path.normcase(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(candidate)
+    return candidates
+
+
+def find_convert_python(runner: Runner = run_command) -> str:
+    """找到一个已安装 ``torch`` / ``safetensors`` / ``numpy`` 的 Python 解释器。"""
+    for candidate in _python_candidates():
+        result = runner([candidate, "-c", "import torch, safetensors, numpy"], timeout=120.0)
+        if result.returncode == 0:
+            return candidate
+    raise ServeError("未找到已安装 torch / safetensors / numpy 的 Python；请用 --python 指定")
+
+
+def _tail(text: str, lines: int = 6) -> str:
+    """取输出的最后若干行（用于错误摘要）。"""
+    parts = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    return " | ".join(parts[-lines:])
+
+
+def convert_model(plan: ConvertPlan, runner: Runner = run_command) -> list[Path]:
+    """执行转换（可选再量化），返回最终产出的 GGUF 列表。"""
+    plan.output.parent.mkdir(parents=True, exist_ok=True)
+    result = runner(plan.convert_argv(), timeout=CONVERT_TIMEOUT)
+    if result.returncode != 0:
+        output = f"{result.stderr}\n{result.stdout}"
+        hint = ""
+        if "ModuleNotFoundError" in output:
+            hint = "；请用 --python 指定已安装 torch / safetensors / numpy 的解释器"
+        raise ServeError(
+            f"safetensors 转 GGUF 失败（{format_returncode(result.returncode)}）：{_tail(output) or '无输出'}{hint}"
+        )
+    if plan.quant is None:
+        return [plan.output]
+
+    if not Path(plan.intermediate).is_file():
+        raise ServeError(f"转换命令已结束但未生成中间文件: {plan.intermediate}")
+    result = runner(plan.quantize_argv(), timeout=QUANTIZE_TIMEOUT)
+    if result.returncode != 0:
+        raise ServeError(
+            f"量化失败（{format_returncode(result.returncode)}）：{_tail(result.stderr or result.stdout) or '无输出'}"
+        )
+    if not plan.output.is_file():
+        raise ServeError(f"量化命令已结束但未生成: {plan.output}")
+    with contextlib.suppress(OSError):
+        Path(plan.intermediate).unlink()
+    return [plan.output]
 
 
 # ---------------------------------------------------------------------- #

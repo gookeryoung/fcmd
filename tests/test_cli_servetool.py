@@ -176,6 +176,7 @@ class TestRegistration:
             "doctor",
             "engine",
             "config",
+            "convert",
             "model",
             "plan",
             "start",
@@ -463,6 +464,316 @@ class TestScanModels:
         core.add_models_root(first, home)
         core.add_models_root(second, home)
         assert core.find_model("Q5_K_M", home=home) == (second / "m-Q5_K_M.gguf").resolve()
+
+
+# ---------------------------------------------------------------------- #
+# safetensors → GGUF 转换
+# ---------------------------------------------------------------------- #
+def _hf_source(tmp_path: Path) -> Path:
+    """构造最小 HF safetensors 目录。"""
+    source = tmp_path / "hf" / "Qwen3-Coder-30B-A3B-Instruct"
+    source.mkdir(parents=True)
+    (source / "config.json").write_text("{}", encoding="utf-8")
+    (source / "model-00001-of-00001.safetensors").write_bytes(b"x" * 32)
+    return source
+
+
+def _conv_runner(calls: list[list[str]], code: int = 0, stderr: str = "") -> Any:
+    """假 Runner：按命令行产出的路径写文件。"""
+
+    def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+        calls.append(list(cmd))
+        if code == 0:
+            target = Path(cmd[cmd.index("--outfile") + 1]) if "--outfile" in cmd else Path(cmd[2])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"gguf")
+        return CommandResult(code, "", stderr)
+
+    return _run
+
+
+class TestConvert:
+    def test_source_root(self, home: Path) -> None:
+        root = core.convert_source_root("b1", home)
+        assert root == home / "engines" / "llama.cpp" / "b1" / "llama.cpp"
+
+    def test_ensure_script_explicit(self, tmp_path: Path) -> None:
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        assert core.ensure_convert_script(script=script) == script
+
+    def test_ensure_script_explicit_missing(self, tmp_path: Path) -> None:
+        with pytest.raises(ServeError, match="转换脚本不存在"):
+            core.ensure_convert_script(script=tmp_path / "nope.py")
+
+    def test_ensure_script_from_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        monkeypatch.setenv("FCMD_CONVERT_SCRIPT", str(script))
+        assert core.ensure_convert_script(home=tmp_path / "home") == script
+
+    def test_ensure_script_uses_checkout(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        cached = core.convert_source_root("b7", home) / core.CONVERT_SCRIPT
+        cached.parent.mkdir(parents=True)
+        cached.write_text("# cached", encoding="utf-8")
+        assert core.ensure_convert_script(tag="b7", home=home) == cached
+
+    def test_ensure_script_clones(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            script = Path(cmd[-1]) / core.CONVERT_SCRIPT
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("# cloned", encoding="utf-8")
+            return CommandResult(0)
+
+        script = core.ensure_convert_script(tag="b9", home=home, runner=_run)
+        assert script.read_text(encoding="utf-8") == "# cloned"
+        assert calls[0][:3] == ["git", "clone", "--depth"]
+        assert calls[0][calls[0].index("--branch") + 1] == "b9"
+        assert calls[0][-2] == core.CONVERT_REPO_URL
+
+    def test_ensure_script_clone_master_for_custom_tag(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            script = Path(cmd[-1]) / core.CONVERT_SCRIPT
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_text("# cloned", encoding="utf-8")
+            return CommandResult(0)
+
+        core.ensure_convert_script(tag="lmstudio-2.71", home=home, runner=_run)
+        assert calls[0][calls[0].index("--branch") + 1] == "master"
+
+    def test_ensure_script_clone_failure(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        with pytest.raises(ServeError, match="--script"):
+            core.ensure_convert_script(
+                tag="b9", home=home, runner=lambda cmd, timeout=1.0, env=None: CommandResult(128, "", "boom")
+            )
+
+    def test_is_hf_dir(self, tmp_path: Path) -> None:
+        source = _hf_source(tmp_path)
+        assert core.is_hf_safetensors_dir(source)
+        assert not core.is_hf_safetensors_dir(tmp_path / "absent")
+        no_safetensors = tmp_path / "plain"
+        no_safetensors.mkdir()
+        (no_safetensors / "config.json").write_text("{}", encoding="utf-8")
+        assert not core.is_hf_safetensors_dir(no_safetensors)
+
+    def test_quantize_exe_from_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        binary = tmp_path / "llama-quantize"
+        binary.write_text("", encoding="utf-8")
+        monkeypatch.setenv("FCMD_LLAMA_QUANTIZE", str(binary))
+        assert core.quantize_exe(EngineInfo("t", tmp_path / "llama-server")) == binary
+
+    def test_quantize_exe_env_missing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_LLAMA_QUANTIZE", str(tmp_path / "absent"))
+        with pytest.raises(ServeError, match="FCMD_LLAMA_QUANTIZE"):
+            core.quantize_exe(EngineInfo("t", tmp_path / "llama-server"))
+
+    def test_quantize_exe_beside_engine(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
+        binary = tmp_path / core.engine_exe_name("llama-quantize")
+        binary.write_text("", encoding="utf-8")
+        assert core.quantize_exe(EngineInfo("t", tmp_path / core.engine_exe_name())) == binary
+        binary.unlink()
+        assert core.quantize_exe(EngineInfo("t", tmp_path / core.engine_exe_name())) is None
+
+    def test_plan_defaults(self, tmp_path: Path) -> None:
+        source = _hf_source(tmp_path)
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        plan = core.plan_convert(source, script=script, python="py-test", models_root=tmp_path / "models")
+        assert plan.output == (tmp_path / "models" / source.name / f"{source.name}.gguf").resolve()
+        assert plan.quant is None
+        assert plan.outtype == "f16"
+        assert plan.intermediate == str(plan.output)
+        assert plan.convert_argv() == [
+            "py-test",
+            str(script),
+            str(source.resolve()),
+            "--outfile",
+            str(plan.output),
+            "--outtype",
+            "f16",
+        ]
+
+    def test_plan_custom_output(self, tmp_path: Path) -> None:
+        source = _hf_source(tmp_path)
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        plan = core.plan_convert(source, output=tmp_path / "x" / "m.GGUF", outtype="q8_0", script=script)
+        assert plan.output.name == "m.GGUF"
+        assert plan.outtype == "q8_0"
+
+    def test_plan_rejects_bad_inputs(self, tmp_path: Path) -> None:
+        with pytest.raises(ServeError, match="不是 HF safetensors 目录"):
+            core.plan_convert(tmp_path / "absent")
+        source = _hf_source(tmp_path)
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        with pytest.raises(ServeError, match="不支持的 outtype"):
+            core.plan_convert(source, outtype="f64", script=script)
+        with pytest.raises(ServeError, match=r"必须是 \.gguf"):
+            core.plan_convert(source, output=tmp_path / "m.bin", script=script)
+
+    def test_plan_quant_needs_quantize(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        source = _hf_source(tmp_path)
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        engine = _engine_dir(tmp_path) / core.engine_exe_name()
+        monkeypatch.setenv("FCMD_LLAMA_SERVER", str(engine))
+        monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
+        with pytest.raises(ServeError, match="llama-quantize"):
+            core.plan_convert(source, quant="Q4_K_M", script=script, models_root=tmp_path / "models")
+
+    def test_plan_quant(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        source = _hf_source(tmp_path)
+        script = tmp_path / "convert.py"
+        script.write_text("", encoding="utf-8")
+        engine_dir = _engine_dir(tmp_path)
+        binary = engine_dir / core.engine_exe_name("llama-quantize")
+        binary.write_text("", encoding="utf-8")
+        monkeypatch.setenv("FCMD_LLAMA_SERVER", str(engine_dir / core.engine_exe_name()))
+        monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
+        plan = core.plan_convert(source, quant="Q4_K_M", script=script, models_root=tmp_path / "models")
+        assert plan.output.name == f"{source.name}-Q4_K_M.gguf"
+        assert plan.quantize_exe == binary
+        assert plan.intermediate == str(plan.output.with_name(f"{plan.output.stem}-f16.gguf"))
+        assert plan.quantize_argv() == [str(binary), plan.intermediate, str(plan.output), "Q4_K_M"]
+
+    def test_find_convert_python_ok(self) -> None:
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            calls.append(list(cmd))
+            return CommandResult(0)
+
+        assert core.find_convert_python(_run) == calls[0][0]
+
+    def test_find_convert_python_missing(self) -> None:
+        with pytest.raises(ServeError, match="--python"):
+            core.find_convert_python(lambda cmd, timeout=1.0, env=None: CommandResult(1, "", "no module"))
+
+    def test_quantize_argv_requires_quant(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=tmp_path,
+            output=tmp_path / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        with pytest.raises(ServeError, match="未指定量化类型"):
+            plan.quantize_argv()
+
+    def test_convert_model_success(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        calls: list[list[str]] = []
+        assert core.convert_model(plan, _conv_runner(calls)) == [plan.output]
+        assert plan.output.is_file()
+        assert len(calls) == 1
+
+    def test_convert_model_failure(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        calls: list[list[str]] = []
+        with pytest.raises(ServeError, match="safetensors 转 GGUF 失败"):
+            core.convert_model(plan, _conv_runner(calls, code=1, stderr="line1\nline2"))
+
+    def test_convert_model_missing_dependency_hint(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        runner = _conv_runner([], code=1, stderr="ModuleNotFoundError: No module named 'torch'")
+        with pytest.raises(ServeError, match="--python"):
+            core.convert_model(plan, runner)
+
+    def test_convert_model_quantizes(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m-Q4_K_M.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+            quant="Q4_K_M",
+            quantize_exe=tmp_path / "llama-quantize",
+        )
+        calls: list[list[str]] = []
+        assert core.convert_model(plan, _conv_runner(calls)) == [plan.output]
+        assert plan.output.is_file()
+        assert not Path(plan.intermediate).exists()
+        assert len(calls) == 2
+
+    def test_convert_model_missing_intermediate(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m-Q4_K_M.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+            quant="Q4_K_M",
+            quantize_exe=tmp_path / "llama-quantize",
+        )
+        with pytest.raises(ServeError, match="未生成中间文件"):
+            core.convert_model(plan, lambda cmd, timeout=1.0, env=None: CommandResult(0))
+
+    def test_convert_model_quantize_failure(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m-Q4_K_M.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+            quant="Q4_K_M",
+            quantize_exe=tmp_path / "llama-quantize",
+        )
+        calls: list[list[str]] = []
+        inner = _conv_runner(calls)
+        state = {"n": 0}
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            state["n"] += 1
+            return inner(cmd, timeout) if state["n"] == 1 else CommandResult(2, "", "quant boom")
+
+        with pytest.raises(ServeError, match="量化失败"):
+            core.convert_model(plan, _run)
+
+    def test_convert_model_missing_output(self, tmp_path: Path) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m-Q4_K_M.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+            quant="Q4_K_M",
+            quantize_exe=tmp_path / "llama-quantize",
+        )
+        intermediate = Path(plan.intermediate)
+        intermediate.parent.mkdir(parents=True, exist_ok=True)
+        intermediate.write_bytes(b"x")
+        with pytest.raises(ServeError, match="未生成"):
+            core.convert_model(plan, lambda cmd, timeout=1.0, env=None: CommandResult(0))
 
 
 # ---------------------------------------------------------------------- #
@@ -1162,6 +1473,42 @@ class TestCli:
             servetool.config_cmd("add")
         with pytest.raises(ServeError, match="--path"):
             servetool.config_cmd("remove")
+
+    def test_convert_cli(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "convert.py",
+            python="py-test",
+        )
+        monkeypatch.setattr(servetool.core, "plan_convert", lambda *args, **kwargs: plan)
+        monkeypatch.setattr(servetool.core, "convert_model", lambda p: [p.output])
+        servetool.convert_cmd(plan.source, python="py-test")
+        out = capsys.readouterr().out
+        assert "转换计划" in out
+        assert "已生成" in out
+        assert "fcmd srv start --model" in out
+        assert "中间文件" not in out
+
+    def test_convert_cli_with_quant(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m-Q4_K_M.gguf",
+            outtype="f16",
+            script=tmp_path / "convert.py",
+            python="py-test",
+            quant="Q4_K_M",
+            quantize_exe=tmp_path / "llama-quantize",
+        )
+        monkeypatch.setattr(servetool.core, "plan_convert", lambda *args, **kwargs: plan)
+        monkeypatch.setattr(servetool.core, "convert_model", lambda p: [p.output])
+        servetool.convert_cmd(plan.source, quant="Q4_K_M", python="py-test")
+        assert "中间文件" in capsys.readouterr().out
 
     def test_plan_output(
         self,

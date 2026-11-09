@@ -9,6 +9,7 @@
 * ``engine`` —— 引擎安装、注册、列表与切换（``install``/``list``/``use``）
 * ``config`` —— 模型目录配置（``show``/``add``/``remove``/``reset``）
 * ``model`` —— 扫描模型目录，列出 GGUF 与各档位选中的文件
+* ``convert`` —— HF safetensors 目录转 GGUF（可选 llama-quantize 量化）
 * ``plan`` —— 打印启动计划（命令 + 显存估算），不真正启动
 * ``start`` / ``stop`` / ``status`` / ``logs`` —— 服务生命周期
 * ``bench`` —— 对运行中的服务实测延迟与 token 吞吐
@@ -307,6 +308,68 @@ def model_cmd(models_root: Path | None = None) -> None:
 
     for root in missing:
         get_console().print(f"[yellow]提示: 配置中的目录不存在 {root}[/yellow]")
+
+
+@fcmd.tool(
+    "servetool",
+    subcommand="convert",
+    help="HF safetensors 目录转 GGUF（可选再量化）",
+    description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
+)
+def convert_cmd(  # noqa: PLR0913, PLR0917
+    source: Path,
+    output: Path | None = None,
+    outtype: str = "f16",
+    quant: str | None = None,
+    script: Path | None = None,
+    python: str | None = None,
+    models_root: Path | None = None,
+) -> None:
+    """把 HuggingFace safetensors 目录转换为 GGUF，供 llama.cpp 加载。
+
+    Parameters
+    ----------
+    source:
+        含 ``config.json`` 与 ``*.safetensors`` 的模型目录。
+    output:
+        输出 GGUF 路径；默认 ``<模型目录>/<源目录名>/<源目录名>[-<量化>].gguf``。
+    outtype:
+        转换精度（``f32``/``f16``/``bf16``/``q8_0``，默认 ``f16``）。
+    quant:
+        量化类型（如 ``Q4_K_M``）；需要 ``llama-quantize``（官方 release 引擎自带）。
+    script:
+        ``convert_hf_to_gguf.py`` 路径；默认取引擎目录缓存，缺失时浅克隆 llama.cpp 源码。
+    python:
+        运行转换脚本的解释器（需已安装 torch / safetensors / numpy）；缺省自动探测。
+    models_root:
+        默认输出位置使用的模型目录。
+    """
+    plan = core.plan_convert(
+        source,
+        output=output,
+        outtype=outtype,
+        quant=quant,
+        script=script,
+        python=python or core.find_convert_python(),
+        models_root=models_root,
+    )
+    table = Table(title="转换计划", box="ascii")
+    table.add_column("项", style="cyan", no_wrap=True)
+    table.add_column("值")
+    table.add_row("源目录", str(plan.source))
+    table.add_row("输出", str(plan.output))
+    if plan.quant:
+        table.add_row("中间文件", plan.intermediate)
+    table.add_row("精度", plan.outtype)
+    table.add_row("量化", plan.quant or "-")
+    table.add_row("脚本", str(plan.script))
+    table.add_row("解释器", plan.python)
+    get_console().print(table)
+
+    paths = core.convert_model(plan)
+    for path in paths:
+        get_console().print(f"已生成: {path}")
+    get_console().print(f"启动服务: fcmd srv start --model {paths[-1]}")
 
 
 @fcmd.tool(
