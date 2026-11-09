@@ -139,7 +139,7 @@ def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float 
         综合评分最高的可达镜像名；全部不可达时返回 ``None``。
     """
     # 延迟导入避免加重导入链
-    from fcmd.dsl.actions.net import probe_mirrors
+    from fcmd.core.shared.net import probe_mirrors
 
     probes = probe_mirrors(
         list(candidates.values()),

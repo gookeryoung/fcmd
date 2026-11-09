@@ -17,9 +17,10 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
+import fcmd.core.shared.net
 import fcmd.dsl.actions.net
+from fcmd.core.shared.net import check_url, check_urls, unreachable_latency
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.dsl.actions.net import check_url, check_urls, unreachable_latency
 
 # ---------------------------------------------------------------------- #
 # 辅助函数
@@ -183,7 +184,7 @@ class TestCheckUrls:
             ok = latency_by_url[url] != unreachable_latency()
             return ok, latency_by_url[url]
 
-        monkeypatch.setattr(fcmd.dsl.actions.net, "check_url", fake_check_url)
+        monkeypatch.setattr(fcmd.core.shared.net, "check_url", fake_check_url)
         results = check_urls(list(latency_by_url))
         assert results == [
             ("https://fast.example.com", True, 20.0),
@@ -197,7 +198,7 @@ class TestCheckUrls:
         def fake_check_url(url: str, timeout: float = 5.0) -> tuple[bool, float]:
             return False, unreachable_latency()
 
-        monkeypatch.setattr(fcmd.dsl.actions.net, "check_url", fake_check_url)
+        monkeypatch.setattr(fcmd.core.shared.net, "check_url", fake_check_url)
         results = check_urls(["https://a.example.com", "https://b.example.com"])
         assert [r[0] for r in results] == ["https://a.example.com", "https://b.example.com"]
         assert all(not r[1] for r in results)
@@ -240,7 +241,7 @@ class TestUrlcheckCLI:
                 return True, 200.0
             return False, unreachable_latency()
 
-        monkeypatch.setattr(fcmd.dsl.actions.net, "check_url", fake_check_url)
+        monkeypatch.setattr(fcmd.core.shared.net, "check_url", fake_check_url)
         code = run_tool(
             "urlcheck", ["r", "https://slow.example.com", "https://fast.example.com", "https://down.example.com"]
         )
