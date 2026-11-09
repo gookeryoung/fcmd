@@ -86,7 +86,7 @@ def parse_sizes_text(text: str) -> list[int]:
     ValueError
         未填写尺寸、包含非整数或非正数。
     """
-    from fcmd.dsl.actions.media import parse_size_tokens
+    from fcmd.tools.media.mediabase import parse_size_tokens
 
     if not text.strip():
         raise ValueError("请输入图标尺寸，例如 16,32,48,128,256")
@@ -393,7 +393,7 @@ class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         quality: str,
     ) -> None:
         """后台线程：执行转换并把进度 / 结果写入队列。"""
-        from fcmd.dsl.actions.media import convert_images
+        from fcmd.tools.media.mediabase import convert_images
 
         def progress(done: int, total: int, message: str) -> None:
             self._queue.put(("progress", done, total, message))

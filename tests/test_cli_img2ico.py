@@ -1,6 +1,6 @@
 """img2ico 工具测试。
 
-验证 ``fcmd.dsl.actions.media`` 模块：
+验证 ``fcmd.tools.media.mediabase`` 模块：
 - 工具注册与常量
 - icon_build 核心转换函数（SVG / 位图 / ICO / ICNS）
 - 尺寸解析、质量档位、输出路径语义
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.dsl.actions.media import (
+from fcmd.tools.media.mediabase import (
     IMG2ICO_IMAGE_EXTENSIONS,
     SVG_TO_ICO_MAC_SIZES,
     SVG_TO_ICO_WIN_SIZES,

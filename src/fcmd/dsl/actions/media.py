@@ -1,519 +1,18 @@
 """媒体类 DSL 动作：img2ico / imagetool。
 
-两个工具原属 ``fcmd.tools.media`` 包，全部为纯 Python 实现（Pillow /
-resvg-py），无子进程调用。迁移后由 ``@action`` 装饰器注册，TOML 声明
-``action = "<名>"`` 直接引用；CLI 参数 schema 从动作签名自动推导
-（synth 层拷贝签名注入合成函数）。
-
-外部库按需延迟导入——工具发现阶段不触发重型 PIL 库加载；动作执行期
-import 失败时打印友好提示并返回，退出码保持 0。
+业务实现统一在 :mod:`fcmd.tools.media.mediabase`；本模块只保留 ``@action``
+声明与参数转接，避免 DSL 层出现第二套图片实现。TOML 声明通过
+``action = "<名>"`` 引用这些名字。
 """
 
 from __future__ import annotations
 
-import importlib.util
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Literal
+
+from fcmd.tools.media import mediabase
 
 from ..actions import action
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-# ============================================================================
-# 可选依赖检查（find_spec 仅查定位，不触发真正 import；PIL / resvg_py 由
-# _require_pil / _require_resvg 首次调用时惰性导入到模块全局）
-# ============================================================================
-
-HAS_PIL = importlib.util.find_spec("PIL") is not None
-HAS_RESVG = importlib.util.find_spec("resvg_py") is not None
-
-# PIL / resvg_py 惰性占位（_require_pil / _require_resvg 首次调用填充；
-# 类型为 Any，全模块对图片对象一律以 Any 传递）
-Image: Any = None
-ImageDraw: Any = None
-ImageFont: Any = None
-resvg_py: Any = None
-
-
-# ============================================================================
-# img2ico 常量与配置
-# ============================================================================
-
-# Windows ICO 默认尺寸，参考 GreenFish Icon Editor 的标准：
-# 覆盖从浏览器 favicon 到高 DPI 应用图标的全部常见场景。
-SVG_TO_ICO_WIN_SIZES: tuple[tuple[int, int], ...] = (
-    (16, 16),
-    (24, 24),
-    (32, 32),
-    (40, 40),
-    (48, 48),
-    (64, 64),
-    (72, 72),
-    (96, 96),
-    (128, 128),
-    (256, 256),
-)
-
-# macOS ICNS 默认尺寸，遵循 Apple Human Interface Guidelines：
-# 对应 icp4/icp5/icp6/icp7/icp8/icp9 六种基础尺寸，Pillow 会
-# 自动追加 2x 分辨率条目（icp10/icp11/icp12/icp13/icp14/icp15）。
-SVG_TO_ICO_MAC_SIZES: tuple[tuple[int, int], ...] = (
-    (16, 16),
-    (32, 32),
-    (128, 128),
-    (256, 256),
-    (512, 512),
-    (1024, 1024),
-)
-
-# 支持的输入扩展名（SVG 由 resvg-py 渲染，其余由 Pillow 直接读取）。
-IMG2ICO_IMAGE_EXTENSIONS: tuple[str, ...] = (
-    ".png",
-    ".jpg",
-    ".jpeg",
-    ".gif",
-    ".bmp",
-    ".webp",
-    ".tiff",
-    ".tif",
-    ".svg",
-)
-
-# 重采样质量档位：low 最近邻（最快）/ medium 双线性 / high Lanczos+锐化。
-IMG2ICO_QUALITY_CHOICES: tuple[str, ...] = ("low", "medium", "high")
-
-# 最大渲染尺寸：SVG 矢量可无损缩放，先渲染到最大需求尺寸再由高质量
-# 重采样生成各子尺寸，避免逐尺寸重复渲染造成性能浪费。
-_MAX_RENDER_SIZE = 1024
-
-# 位图文件头魔数（目录批量扫描时过滤掉扩展名正确但内容无效的文件）。
-_IMAGE_MAGIC_NUMBERS: tuple[bytes, ...] = (
-    b"\xff\xd8\xff",  # JPEG
-    b"\x89PNG\r\n\x1a\n",  # PNG
-    b"GIF87a",  # GIF87a
-    b"GIF89a",  # GIF89a
-    b"BM",  # BMP
-    b"II*\x00",  # TIFF (little-endian)
-    b"MM\x00*",  # TIFF (big-endian)
-)
-
-
-def _missing_dependency(package: str, extra: str) -> bool:
-    """打印可选依赖缺失提示并返回 False（供 ``_require_*`` 统一返回）。"""
-    print(f"未安装 {package} 库，请安装: pip install fcmd[{extra}]")
-    return False
-
-
-def _require_deps() -> bool:
-    """检查 PIL + resvg-py 依赖，缺失时打印提示并返回 False。"""
-    return _require_pil() and _require_resvg()
-
-
-def normalize_quality(quality: str) -> str:
-    """把质量档位规范为 ``IMG2ICO_QUALITY_CHOICES`` 中的小写值。
-
-    Raises
-    ------
-    ValueError
-        档位不在支持列表中。
-    """
-    key = quality.strip().lower()
-    if key not in IMG2ICO_QUALITY_CHOICES:
-        raise ValueError(f"不支持的质量: {quality}，支持: {', '.join(IMG2ICO_QUALITY_CHOICES)}")
-    return key
-
-
-def parse_size_tokens(items: list[str] | None) -> list[int] | None:
-    """解析 CLI 尺寸参数：支持逗号或空格分隔，返回去重排序后的整数列表。
-
-    ``None`` 表示未指定（使用格式默认尺寸）；空列表或全空白视为非法。
-
-    Raises
-    ------
-    ValueError
-        未提供有效尺寸、包含非整数或非正数。
-    """
-    if items is None:
-        return None
-    tokens: list[str] = []
-    for item in items:
-        for piece in item.replace("，", ",").split(","):
-            tokens.extend(piece.split())
-    parts = [token for token in tokens if token]
-    if not parts:
-        raise ValueError("未提供有效的尺寸")
-    try:
-        sizes = [int(part) for part in parts]
-    except ValueError as exc:
-        raise ValueError(f"尺寸格式无效: {', '.join(parts)}，期望逗号或空格分隔的整数") from exc
-    if any(size <= 0 for size in sizes):
-        raise ValueError("尺寸必须为正整数")
-    return sorted(set(sizes))
-
-
-def _parse_sizes(sizes: list[int] | None) -> list[tuple[int, int]] | None:
-    """将整数尺寸列表转为 (w, h) 元组列表；None 输入返回 None。"""
-    if sizes is None:
-        return None
-    if any(size <= 0 for size in sizes):
-        raise ValueError("尺寸必须为正整数")
-    return [(s, s) for s in sizes]
-
-
-def _validate_format(fmt: str) -> str:
-    """校验显式格式别名并返回小写原值。"""
-    fmt_lower = fmt.strip().lower()
-    if fmt_lower not in ("win", "windows", "ico", "mac", "darwin", "icns"):
-        raise ValueError(f"不支持的格式: {fmt}，支持: win/ico, mac/icns, auto")
-    return fmt_lower
-
-
-def _detect_format(output: Path, fmt: str | None) -> str:
-    """根据显式参数或输出文件后缀推断目标格式。"""
-    if fmt is not None:
-        return _validate_format(fmt)
-
-    suffix = output.suffix.lower().lstrip(".")
-    if suffix == "ico":
-        return "ico"
-    if suffix == "icns":
-        return "icns"
-    raise ValueError("无法推断目标格式，请使用 --format win/mac 指定，或让输出路径以 .ico / .icns 结尾")
-
-
-def _default_sizes_for(fmt: str) -> tuple[tuple[int, int], ...]:
-    """返回指定格式的默认尺寸列表。"""
-    return SVG_TO_ICO_MAC_SIZES if fmt in ("mac", "darwin", "icns") else SVG_TO_ICO_WIN_SIZES
-
-
-def _resolve_format_alias(fmt: str) -> str:
-    """将格式别名统一到规范名 ``windows`` / ``mac``。"""
-    if fmt in ("win", "windows", "ico"):
-        return "windows"
-    return "mac"
-
-
-def _render_svg_to_png(svg_path: Path, max_size: int):
-    """用 resvg-py 将 SVG 渲染为 RGBA 位图（仅指定宽度，保持原始宽高比）。"""
-    import io
-
-    png_bytes = bytes(resvg_py.svg_to_bytes(svg_path=str(svg_path), width=max_size))
-    return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
-
-
-def _load_source_image(input_path: Path, max_size: int):
-    """读取 SVG / 位图输入并统一转为 RGBA。"""
-    if input_path.suffix.lower() == ".svg":
-        return _render_svg_to_png(input_path, max_size)
-    try:
-        with Image.open(input_path) as original:
-            return original.convert("RGBA")
-    except OSError as exc:
-        raise ValueError(f"无法读取图像: {input_path}") from exc
-
-
-def _looks_like_svg(path: Path) -> bool:
-    """粗略校验 SVG 文件内容（允许省略 XML 声明，直接以 ``<svg`` 开头）。"""
-    try:
-        with path.open("rb") as fh:
-            head = fh.read(512)
-    except OSError:
-        return False
-    return b"<svg" in head.lower()
-
-
-def _has_valid_magic(path: Path) -> bool:
-    """按文件头魔数校验位图格式；WebP 单独判断 RIFF....WEBP。"""
-    try:
-        with path.open("rb") as fh:
-            header = fh.read(16)
-    except OSError:
-        return False
-    if not header:
-        return False
-    if path.suffix.lower() == ".webp":
-        return header.startswith(b"RIFF") and header[8:12] == b"WEBP"
-    return any(header.startswith(magic) for magic in _IMAGE_MAGIC_NUMBERS)
-
-
-def is_supported_image(path: Path) -> bool:
-    """判断路径是否为可转换的图像文件（扩展名 + 非空 + 文件头校验）。"""
-    if not path.is_file() or path.suffix.lower() not in IMG2ICO_IMAGE_EXTENSIONS:
-        return False
-    try:
-        if path.stat().st_size == 0:
-            return False
-    except OSError:
-        return False
-    if path.suffix.lower() == ".svg":
-        return _looks_like_svg(path)
-    return _has_valid_magic(path)
-
-
-def collect_images(directory: Path) -> list[Path]:
-    """收集目录下全部受支持的图像文件（按文件名排序）。"""
-    if not directory.is_dir():
-        return []
-    return sorted(path for path in directory.iterdir() if is_supported_image(path))
-
-
-def _resize_for_icon(image: Any, size: int, quality: str):
-    """把图像按原始宽高比缩放并居中粘贴到 ``size`` 方形透明画布。
-
-    质量档位：low 最近邻；medium 双线性；high 放大用 BICUBIC + 锐化、
-    极端缩小用多步 LANCZOS、普通缩小用 LANCZOS。
-    """
-    from PIL import ImageFilter
-
-    src_width, src_height = image.size
-    ratio = min(size / src_width, size / src_height)
-    new_width = max(1, round(src_width * ratio))
-    new_height = max(1, round(src_height * ratio))
-    resampling = Image.Resampling
-
-    if quality == "low":
-        resized = image.resize((new_width, new_height), resampling.NEAREST)
-    elif quality == "medium":
-        resized = image.resize((new_width, new_height), resampling.BILINEAR)
-    elif ratio > 1:
-        # 放大小图像时用 BICUBIC，并轻微锐化补偿放大模糊
-        resized = image.resize((new_width, new_height), resampling.BICUBIC)
-        resized = resized.filter(ImageFilter.SHARPEN)
-    elif ratio < 0.25:
-        # 极端缩小：分多步 LANCZOS，避免一次性缩小的锯齿与细节丢失
-        step1 = image.resize((size * 4, size * 4), resampling.LANCZOS)
-        step2 = step1.resize((size * 2, size * 2), resampling.LANCZOS)
-        resized = step2.resize((new_width, new_height), resampling.LANCZOS)
-    elif ratio < 0.5:
-        # 重度缩小：两步 LANCZOS
-        step = image.resize((size * 2, size * 2), resampling.LANCZOS)
-        resized = step.resize((new_width, new_height), resampling.LANCZOS)
-    else:
-        resized = image.resize((new_width, new_height), resampling.LANCZOS)
-
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    canvas.paste(resized, ((size - new_width) // 2, (size - new_height) // 2), resized)
-    return canvas
-
-
-def _save_multisize_ico(icon_images: list[Any], sizes: list[int], output_path: Path) -> None:
-    """手工构造多尺寸 ICO（每个尺寸以 PNG 数据嵌入，Vista 之后的通行做法）。
-
-    Pillow 自带的 ICO 多尺寸保存会统一重采样，无法保留逐尺寸质量档位；
-    这里直接写入目录项与 PNG 数据块，确保每个尺寸都是已处理好的位图。
-    """
-    import io
-    import struct
-
-    payloads: list[tuple[bytes, int]] = []
-    for image, size in zip(icon_images, sizes, strict=True):
-        buffer = io.BytesIO()
-        image.save(buffer, format="PNG")
-        payloads.append((buffer.getvalue(), size))
-        buffer.close()
-
-    count = len(payloads)
-    header = struct.pack("<HHH", 0, 1, count)
-    offset = 6 + count * 16
-    entries: list[bytes] = []
-    blocks: list[bytes] = []
-    for data, size in payloads:
-        # ICO 目录项宽高为 1 字节，0 表示 256（及更大尺寸）
-        dimension = size if size < 256 else 0
-        entries.append(
-            struct.pack(
-                "<BBBBHHII",
-                dimension & 0xFF,
-                dimension & 0xFF,
-                0,  # 调色板颜色数（PNG 不使用）
-                0,  # 保留字段
-                1,  # 颜色平面数
-                32,  # 位深 RGBA
-                len(data),
-                offset,
-            )
-        )
-        blocks.append(data)
-        offset += len(data)
-
-    output_path.write_bytes(header + b"".join(entries) + b"".join(blocks))
-
-
-def icon_build(
-    input_path: Path,
-    output_path: Path,
-    fmt: str | None = None,
-    sizes: list[int] | None = None,
-    quality: str = "high",
-) -> tuple[str, list[tuple[int, int]]]:
-    """将 SVG / 位图转换为 ICO / ICNS 图标文件。
-
-    图像按原始宽高比缩放并居中放入透明方形画布；ICO 逐尺寸独立重采样后
-    手工写入 PNG 数据块，ICNS 由 Pillow 按尺寸表生成。
-    """
-    if not input_path.exists():
-        raise FileNotFoundError(f"输入文件不存在: {input_path}")
-    if not input_path.is_file():
-        raise ValueError(f"输入路径不是文件: {input_path}")
-    if input_path.suffix.lower() not in IMG2ICO_IMAGE_EXTENSIONS:
-        raise ValueError(
-            f"不支持的图像格式: {input_path.suffix or '(无后缀)'}，支持: {', '.join(IMG2ICO_IMAGE_EXTENSIONS)}"
-        )
-
-    # 直接调用（绕过 img2ico_gen 入口）时兜底校验并填充惰性全局
-    if not _require_deps():
-        raise RuntimeError("缺少依赖: pillow (fcmd[img]) / resvg-py (fcmd[svg])")
-
-    resolved_quality = normalize_quality(quality)
-    resolved_fmt = _detect_format(output_path, fmt)
-    default_sizes = _default_sizes_for(resolved_fmt)
-    actual_sizes = _parse_sizes(sizes) if sizes is not None else list(default_sizes)
-
-    if not actual_sizes:
-        raise ValueError("尺寸列表为空，请至少指定一个尺寸")
-
-    max_size = max(s for s, _ in actual_sizes)
-    render_size = min(max(max_size, 32), _MAX_RENDER_SIZE)
-    img = _load_source_image(input_path, render_size)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    canonical = _resolve_format_alias(resolved_fmt)
-    if canonical == "windows":
-        icon_images = [_resize_for_icon(img, size, resolved_quality) for size, _ in actual_sizes]
-        _save_multisize_ico(icon_images, [size for size, _ in actual_sizes], output_path)
-    else:
-        base_size = max(size for size, _ in actual_sizes)
-        base_image = _resize_for_icon(img, base_size, resolved_quality)
-        base_image.save(output_path, format="ICNS", sizes=actual_sizes)
-
-    return canonical, actual_sizes
-
-
-def _resolve_conversion_format(input_path: Path, output_path: Path | None, fmt: str | None) -> str:
-    """为一次转换推断目标格式（文件看后缀，目录/未指定时默认 Windows）。"""
-    if fmt is not None:
-        return _validate_format(fmt)
-    if input_path.is_file() and output_path is not None:
-        if output_path.is_dir():
-            return "win"
-        suffix = output_path.suffix.lower()
-        if suffix == ".ico":
-            return "ico"
-        if suffix == ".icns":
-            return "icns"
-        if not suffix:
-            return "win"
-        raise ValueError("无法推断目标格式，请使用 --format win/mac 指定，或让输出路径以 .ico / .icns 结尾")
-    return "win"
-
-
-def resolve_output_target(
-    input_path: Path,
-    output_path: Path | None = None,
-    fmt: str | None = None,
-) -> tuple[Path, str]:
-    """解析实际输出目标及规范格式。
-
-    - 目录输入：输出为目录（缺省 ``<输入目录>/ico_output``）
-    - 文件输入且未指定输出：同目录同名 ``.ico`` / ``.icns``
-    - 输出路径是已存在目录或无后缀路径：视为目录，内部使用输入文件名
-    """
-    resolved_fmt = _resolve_conversion_format(input_path, output_path, fmt)
-    canonical = _resolve_format_alias(resolved_fmt)
-    suffix = ".icns" if canonical == "mac" else ".ico"
-
-    if input_path.is_dir():
-        base = output_path if output_path is not None else input_path / "ico_output"
-        if base.exists() and not base.is_dir():
-            raise ValueError(f"目录输入的输出路径必须是目录: {base}")
-        return base, canonical
-
-    if output_path is None:
-        return input_path.with_suffix(suffix), canonical
-    if output_path.exists() and output_path.is_dir():
-        return output_path / f"{input_path.stem}{suffix}", canonical
-    if not output_path.suffix and not output_path.exists():
-        return output_path / f"{input_path.stem}{suffix}", canonical
-    return output_path, canonical
-
-
-def icon_build_batch(  # noqa: PLR0913, PLR0917 - 转换参数由 CLI/GUI 共用
-    input_dir: Path,
-    output_dir: Path,
-    fmt: str | None = None,
-    sizes: list[int] | None = None,
-    quality: str = "high",
-    progress: Callable[[int, int, str], None] | None = None,
-) -> tuple[str, list[Path]]:
-    """把目录内全部受支持图像批量转换为图标，返回规范格式与输出路径列表。
-
-    单个文件失败时打印跳过原因并继续处理其余文件；``progress`` 回调
-    形如 ``(已完成数, 总数, 消息)``，供 GUI 更新进度与日志。
-    """
-    resolved_quality = normalize_quality(quality)
-    canonical = _resolve_format_alias(fmt or "win")
-    suffix = ".icns" if canonical == "mac" else ".ico"
-    images = collect_images(input_dir)
-    if not images:
-        raise ValueError(f"目录中未找到受支持的图像文件: {input_dir}")
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    outputs: list[Path] = []
-    total = len(images)
-    for index, image in enumerate(images, start=1):
-        if progress is not None:
-            progress(index - 1, total, f"正在转换 {image.name}…")
-        target = output_dir / f"{image.stem}{suffix}"
-        try:
-            icon_build(image, target, fmt=canonical, sizes=sizes, quality=resolved_quality)
-        except (OSError, RuntimeError, ValueError) as exc:
-            print(f"跳过 {image.name}: {exc}")
-            continue
-        outputs.append(target)
-        if progress is not None:
-            progress(index, total, f"完成 {target.name}")
-    return canonical, outputs
-
-
-def convert_images(  # noqa: PLR0913, PLR0917 - 转换参数由 CLI/GUI 共用
-    input_path: Path,
-    output_path: Path | None = None,
-    fmt: str | None = None,
-    sizes: list[int] | None = None,
-    quality: str = "high",
-    progress: Callable[[int, int, str], None] | None = None,
-) -> tuple[str, list[Path], list[tuple[int, int]]]:
-    """文件 / 目录统一转换入口，返回（规范格式, 输出路径列表, 使用的尺寸）。
-
-    CLI 动作与 Tk GUI 共用此函数，保证两条入口的路径语义与转换结果一致。
-    """
-    if not input_path.exists():
-        raise FileNotFoundError(f"输入路径不存在: {input_path}")
-    if sizes is not None and not sizes:
-        raise ValueError("尺寸列表为空，请至少指定一个尺寸")
-
-    resolved_quality = normalize_quality(quality)
-    target, canonical = resolve_output_target(input_path, output_path, fmt)
-
-    if input_path.is_dir():
-        canonical, outputs = icon_build_batch(
-            input_path,
-            target,
-            fmt=canonical,
-            sizes=sizes,
-            quality=resolved_quality,
-            progress=progress,
-        )
-    else:
-        icon_build(input_path, target, fmt=canonical, sizes=sizes, quality=resolved_quality)
-        outputs = [target]
-        if progress is not None:
-            progress(1, 1, f"完成 {target.name}")
-
-    used_sizes = _parse_sizes(sizes) if sizes is not None else list(_default_sizes_for(canonical))
-    return canonical, outputs, used_sizes or []
 
 
 @action(
@@ -535,11 +34,11 @@ def img2ico_gen(
     quality: Literal["low", "medium", "high"] = "high",
 ) -> None:
     """图像/SVG 转 Windows ICO 或 macOS ICNS 图标（gen 子命令，支持目录批量）。"""
-    if not _require_deps():
+    if not mediabase._require_deps():
         return
 
-    parsed_sizes = parse_size_tokens(sizes)
-    canonical, outputs, used_sizes = convert_images(
+    parsed_sizes = mediabase.parse_size_tokens(sizes)
+    canonical, outputs, used_sizes = mediabase.convert_images(
         input_path,
         output_path,
         fmt=format,
@@ -558,416 +57,6 @@ def img2ico_gen(
         print(f"图标已生成: {outputs[0]}")
     print(f"格式: {canonical}")
     print(f"包含 {len(used_sizes)} 种尺寸: {', '.join(f'{w}x{h}' for w, h in used_sizes)}")
-
-
-# ============================================================================
-# imagetool 公共逻辑
-# ============================================================================
-
-
-def _require_pil() -> bool:
-    """Pillow 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
-    if not HAS_PIL:
-        return _missing_dependency("Pillow", "img")
-    global Image, ImageDraw, ImageFont  # 惰性导入需 global 注入模块，避免工具发现时加载
-    if Image is None:
-        from PIL import Image as _image
-        from PIL import ImageDraw as _image_draw
-        from PIL import ImageFont as _image_font
-
-        Image, ImageDraw, ImageFont = _image, _image_draw, _image_font
-    return True
-
-
-def _require_resvg() -> bool:
-    """resvg-py 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
-    if not HAS_RESVG:
-        return _missing_dependency("resvg-py", "svg")
-    global resvg_py  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
-    if resvg_py is None:
-        import resvg_py as _resvg_py
-
-        resvg_py = _resvg_py
-    return True
-
-
-def _save_image(img: Any, output: Path, fmt: str | None = None, quality: int = 85) -> None:
-    """保存图片，自动处理 JPEG 不支持 alpha 通道的情况。"""
-    output.parent.mkdir(parents=True, exist_ok=True)
-    save_fmt = fmt or output.suffix.lstrip(".").upper()
-    if save_fmt == "JPG":
-        save_fmt = "JPEG"
-    if save_fmt == "JPEG":
-        img = img.convert("RGB")
-    if save_fmt in ("JPEG", "WEBP"):
-        img.save(output, format=save_fmt, quality=quality)
-    else:
-        img.save(output, format=save_fmt)
-
-
-def _load_font(size: int):
-    """加载字体，优先 truetype，失败回退默认字体。"""
-    _require_pil()  # 直接调用时兜底填充惰性全局
-    candidates = ("DejaVuSans.ttf", "Arial.ttf", "LiberationSans-Regular.ttf")
-    for name in candidates:
-        try:
-            return ImageFont.truetype(name, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-def _resolve_position(
-    position: str,
-    img_size: tuple[int, int],
-    text_w: int,
-    text_h: int,
-    margin: int,
-) -> tuple[int, int]:
-    """根据位置描述符计算水印坐标。"""
-    w, h = img_size
-    pos_map = {
-        "top-left": (margin, margin),
-        "top-right": (w - text_w - margin, margin),
-        "bottom-left": (margin, h - text_h - margin),
-        "bottom-right": (w - text_w - margin, h - text_h - margin),
-        "center": ((w - text_w) // 2, (h - text_h) // 2),
-    }
-    return pos_map.get(position, pos_map["bottom-right"])
-
-
-def _print_exif(exif: Any) -> None:
-    """打印 EXIF 标签。"""
-    if exif:
-        for tag, value in exif.items():
-            print(f"  {tag}: {value}")
-    else:
-        print("  (无 EXIF 数据)")
-
-
-def _apply_exif_modifications(exif: Any, set_items: list[str] | None, clear: bool) -> bool:
-    """应用 EXIF 修改（clear + set），返回是否有改动。"""
-    if clear:
-        for tag in list(exif.keys()):
-            del exif[tag]
-    if set_items:
-        for item in set_items:
-            _apply_single_exif_set(exif, item)
-    return bool(set_items or clear)
-
-
-def _apply_single_exif_set(exif: Any, item: str) -> None:
-    """解析并应用单个 KEY=VALUE 设置项。"""
-    if "=" not in item:
-        print(f"跳过无效项 (缺少 =): {item}")
-        return
-    key_str, value = item.split("=", 1)
-    try:
-        tag = int(key_str)
-    except ValueError:
-        print(f"跳过无效标签号: {key_str}")
-        return
-    exif[tag] = value
-
-
-def _save_exif(img: Any, exif: Any, output_path: Path) -> None:
-    """保存图片与 EXIF。"""
-    exif_bytes = exif.tobytes() if exif else b""
-    img.save(output_path, exif=exif_bytes)
-    print(f"EXIF 已保存: {output_path}")
-
-
-def _print_histogram_buckets(channel_hist: list[int], buckets: int, name: str) -> None:
-    """将单通道 256 桶直方图聚合为指定桶数并打印。"""
-    bucket_size = max(1, len(channel_hist) // buckets)
-    print(f"  {name}:")
-    for i in range(buckets):
-        start = i * bucket_size
-        end = min((i + 1) * bucket_size, len(channel_hist))
-        count = sum(channel_hist[start:end])
-        slice_max = max(channel_hist[start:end] or [1])
-        bar = "#" * min(40, count * 40 // max(1, slice_max))
-        print(f"    [{start:3d}-{end:3d}] {count:>8d} {bar}")
-
-
-# ---------------------------------------------------------------------- #
-# imagetool 公共函数（原 __all__ 导出，保持签名兼容）
-# ---------------------------------------------------------------------- #
-
-
-def image_resize(
-    input_path: Path,
-    output_path: Path,
-    width: int,
-    height: int | None = None,
-    keep_ratio: bool = True,
-) -> None:
-    """调整图片尺寸。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        if keep_ratio:
-            target_height = height if height is not None else width
-            img.thumbnail((width, target_height))
-        else:
-            if height is None:
-                height = width
-            img = img.resize((width, height))
-        _save_image(img, output_path)
-        print(f"调整尺寸完成: {output_path} ({img.size[0]}x{img.size[1]})")
-    finally:
-        img.close()
-
-
-def image_crop(  # noqa: PLR0913, PLR0917
-    input_path: Path,
-    output_path: Path,
-    left: int,
-    top: int,
-    right: int,
-    bottom: int,
-) -> None:
-    """裁剪图片到指定矩形。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        cropped = img.crop((left, top, right, bottom))
-        _save_image(cropped, output_path)
-        print(f"裁剪完成: {output_path} ({right - left}x{bottom - top})")
-    finally:
-        img.close()
-
-
-def image_rotate(
-    input_path: Path,
-    output_path: Path,
-    degrees: float,
-    expand: bool = False,
-) -> None:
-    """旋转图片。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        rotated = img.rotate(degrees, expand=expand)
-        _save_image(rotated, output_path)
-        print(f"旋转完成: {output_path} ({degrees}度)")
-    finally:
-        img.close()
-
-
-def image_flip(
-    input_path: Path,
-    output_path: Path,
-    direction: str = "horizontal",
-) -> None:
-    """翻转图片。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        method = Image.Transpose.FLIP_LEFT_RIGHT if direction == "horizontal" else Image.Transpose.FLIP_TOP_BOTTOM
-        flipped = img.transpose(method)
-        _save_image(flipped, output_path)
-        print(f"翻转完成: {output_path} ({direction})")
-    finally:
-        img.close()
-
-
-def image_convert(
-    input_path: Path,
-    output_path: Path,
-    format: str | None = None,
-    quality: int = 85,
-) -> None:
-    """转换图片格式。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        _save_image(img, output_path, fmt=format, quality=quality)
-        actual_fmt = format or output_path.suffix.lstrip(".").upper()
-        print(f"格式转换完成: {output_path} ({actual_fmt})")
-    finally:
-        img.close()
-
-
-def image_watermark(  # noqa: PLR0913, PLR0917
-    input_path: Path,
-    output_path: Path,
-    text: str,
-    position: str = "bottom-right",
-    opacity: float = 0.5,
-    font_size: int = 32,
-) -> None:
-    """添加文字水印。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        img = img.convert("RGBA")
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-
-        font = _load_font(font_size)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        text_w = int(bbox[2] - bbox[0])
-        text_h = int(bbox[3] - bbox[1])
-        margin = 10
-        x, y = _resolve_position(position, img.size, text_w, text_h, margin)
-
-        alpha = int(255 * max(0.0, min(1.0, opacity)))
-        draw.text((x, y), text, font=font, fill=(255, 255, 255, alpha))
-        result = Image.alpha_composite(img, overlay)
-        _save_image(result, output_path)
-        print(f"水印添加完成: {output_path}")
-    finally:
-        img.close()
-
-
-def image_compress(
-    input_path: Path,
-    output_path: Path,
-    quality: int = 85,
-) -> None:
-    """压缩图片（重新编码以减小体积）。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        fmt = input_path.suffix.lstrip(".").upper()
-        _save_image(img, output_path, fmt=fmt, quality=quality)
-        in_size = input_path.stat().st_size
-        out_size = output_path.stat().st_size
-        ratio = (1 - out_size / in_size) * 100 if in_size > 0 else 0.0
-        print(f"压缩完成: {output_path} (原 {in_size}B → 新 {out_size}B, 节省 {ratio:.1f}%)")
-    finally:
-        img.close()
-
-
-def image_info(input_path: Path, json: bool = False) -> None:
-    """打印图片信息（尺寸/格式/模式/EXIF 摘要）。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        exif = img.getexif()
-        exif_count = len(exif) if exif else 0
-
-        import json as json_mod
-
-        data = {
-            "path": str(input_path),
-            "format": img.format,
-            "mode": img.mode,
-            "width": img.size[0],
-            "height": img.size[1],
-            "exif_tags": exif_count,
-        }
-        if json:
-            print(json_mod.dumps(data, ensure_ascii=False, indent=2))
-        else:
-            print(f"文件: {data['path']}")
-            print(f"格式: {data['format']}")
-            print(f"模式: {data['mode']}")
-            print(f"尺寸: {data['width']}x{data['height']}")
-            print(f"EXIF 标签数: {data['exif_tags']}")
-    finally:
-        img.close()
-
-
-def image_exif(
-    input_path: Path,
-    output_path: Path | None = None,
-    show: bool = True,
-    set: list[str] | None = None,
-    clear: bool = False,
-) -> None:
-    """读取或修改 EXIF 元数据。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        exif = img.getexif()
-
-        if show:
-            _print_exif(exif)
-
-        modified = _apply_exif_modifications(exif, set, clear)
-        if modified:
-            _save_exif(img, exif, output_path if output_path is not None else input_path)
-    finally:
-        img.close()
-
-
-def image_histogram(
-    input_path: Path,
-    channel: str = "rgb",
-) -> None:
-    """打印颜色直方图统计（每通道 8 桶）。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        hist = img.histogram()
-        buckets = 8
-
-        if channel == "luminance":
-            gray = img.convert("L")
-            gray_hist = gray.histogram()
-            print("亮度直方图 (8 桶):")
-            _print_histogram_buckets(gray_hist, buckets, "L")
-        else:
-            print("RGB 直方图 (8 桶):")
-            if len(hist) == 256:
-                _print_histogram_buckets(hist, buckets, "L")
-            else:
-                for idx, name in enumerate(("R", "G", "B")):
-                    start = idx * 256
-                    _print_histogram_buckets(hist[start : start + 256], buckets, name)
-    finally:
-        img.close()
-
-
-def image_colors(
-    input_path: Path,
-    count: int = 5,
-) -> None:
-    """提取并打印主色调。"""
-    if not _require_pil():
-        return
-
-    img = Image.open(input_path)
-    try:
-        img = img.convert("RGB")
-        quantized = img.quantize(colors=count)
-        palette = quantized.getpalette()
-        if palette is None:  # pragma: no cover - quantize() 总会生成调色板，防御性守卫
-            print("无法提取调色板")
-            return
-
-        actual_count = len(palette) // 3
-        print(f"主色调 (前 {min(count, actual_count)} 色):")
-        for i in range(min(count, actual_count)):
-            r = palette[i * 3]
-            g = palette[i * 3 + 1]
-            b = palette[i * 3 + 2]
-            hex_color = f"#{r:02X}{g:02X}{b:02X}"
-            print(f"  {i + 1}. {hex_color}  rgb({r}, {g}, {b})")
-    finally:
-        img.close()
 
 
 # ---------------------------------------------------------------------- #
@@ -993,7 +82,7 @@ def imagetool_r(
     keep_ratio: bool = True,
 ) -> None:
     """调整图片尺寸（r 子命令）。"""
-    image_resize(input_path, output_path, width, height, keep_ratio)
+    mediabase.image_resize(input_path, output_path, width, height, keep_ratio)
 
 
 @action(
@@ -1016,7 +105,7 @@ def imagetool_c(  # noqa: PLR0913, PLR0917
     bottom: int,
 ) -> None:
     """裁剪图片（c 子命令）。"""
-    image_crop(input_path, output_path, left, top, right, bottom)
+    mediabase.image_crop(input_path, output_path, left, top, right, bottom)
 
 
 @action(
@@ -1035,7 +124,7 @@ def imagetool_ro(
     expand: bool = False,
 ) -> None:
     """旋转图片（ro 子命令）。"""
-    image_rotate(input_path, output_path, degrees, expand)
+    mediabase.image_rotate(input_path, output_path, degrees, expand)
 
 
 @action(
@@ -1052,7 +141,7 @@ def imagetool_fl(
     direction: str = "horizontal",
 ) -> None:
     """翻转图片（fl 子命令）。"""
-    image_flip(input_path, output_path, direction)
+    mediabase.image_flip(input_path, output_path, direction)
 
 
 @action(
@@ -1071,7 +160,7 @@ def imagetool_cv(
     quality: int = 85,
 ) -> None:
     """格式转换（cv 子命令）。"""
-    image_convert(input_path, output_path, format, quality)
+    mediabase.image_convert(input_path, output_path, format, quality)
 
 
 @action(
@@ -1094,7 +183,7 @@ def imagetool_wm(  # noqa: PLR0913, PLR0917
     font_size: int = 32,
 ) -> None:
     """添加文字水印（wm 子命令）。"""
-    image_watermark(input_path, output_path, text, position, opacity, font_size)
+    mediabase.image_watermark(input_path, output_path, text, position, opacity, font_size)
 
 
 @action(
@@ -1111,7 +200,7 @@ def imagetool_cp(
     quality: int = 85,
 ) -> None:
     """压缩图片（cp 子命令）。"""
-    image_compress(input_path, output_path, quality)
+    mediabase.image_compress(input_path, output_path, quality)
 
 
 @action(
@@ -1123,7 +212,7 @@ def imagetool_cp(
 )
 def imagetool_i(input_path: Path, json: bool = False) -> None:
     """查看图片信息（i 子命令）。"""
-    image_info(input_path, json)
+    mediabase.image_info(input_path, json)
 
 
 @action(
@@ -1144,7 +233,7 @@ def imagetool_e(
     clear: bool = False,
 ) -> None:
     """读取/修改 EXIF（e 子命令）。"""
-    image_exif(input_path, output_path, show, set, clear)
+    mediabase.image_exif(input_path, output_path, show, set, clear)
 
 
 @action(
@@ -1159,7 +248,7 @@ def imagetool_hi(
     channel: str = "rgb",
 ) -> None:
     """颜色直方图（hi 子命令）。"""
-    image_histogram(input_path, channel)
+    mediabase.image_histogram(input_path, channel)
 
 
 @action(
@@ -1174,4 +263,4 @@ def imagetool_co(
     count: int = 5,
 ) -> None:
     """提取主色调（co 子命令）。"""
-    image_colors(input_path, count)
+    mediabase.image_colors(input_path, count)
