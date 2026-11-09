@@ -1,7 +1,8 @@
 """归档与压缩 DSL 动作：folderzip。
 
-原模块 ``fcmd.tools.archive.folderzip`` 为纯 Python 实现（shutil / pathlib
-标准库），无子进程调用。
+业务实现统一在 :mod:`fcmd.tools.archive.archivebase`；本模块只保留
+``@action`` 声明与参数转接。原模块 ``fcmd.tools.archive.folderzip`` 为纯
+Python 实现（shutil / pathlib 标准库），无子进程调用。
 """
 
 from __future__ import annotations
@@ -9,32 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from fcmd.dsl.actions import action
+from fcmd.tools.archive import archivebase
 
 __all__: list[str] = []
-
-
-# ============================================================================
-# 公共函数
-# ============================================================================
-
-
-def archive_folder(folder: Path) -> None:
-    """压缩单个文件夹为同名 zip。"""
-    # 惰性导入：本模块被动作注册表在工具发现期导入，shutil 会连带
-    # 加载压缩相关标准库，仅在实际压缩时才需要
-    import shutil
-
-    shutil.make_archive(
-        str(folder.with_name(folder.name)),
-        format="zip",
-        base_dir=folder,
-    )
-    print(f"压缩完成: {folder.name}.zip")
-
-
-# ============================================================================
-# DSL 动作
-# ============================================================================
 
 
 @action(
@@ -43,18 +21,10 @@ def archive_folder(folder: Path) -> None:
 )
 def folderzip(directory: str = ".") -> None:
     """压缩目录下的所有子文件夹为 zip。"""
-    from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
-
     dir_path = Path(directory)
     if not dir_path.exists():
         print(f"目录不存在: {dir_path}")
         return
 
-    dirs: list[Path] = [
-        e
-        for e in dir_path.iterdir()
-        if e.is_dir() and not should_skip_parts(e.parts, DEFAULT_IGNORE_SPEC) and e.suffix not in DEFAULT_IGNORE_EXTS
-    ]
-
-    for child in dirs:
-        archive_folder(child)
+    for child in archivebase.collect_folders(dir_path):
+        archivebase.archive_folder(child)
