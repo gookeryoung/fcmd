@@ -98,7 +98,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-86 个工具（其中 35 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`zipencrypt`；其余 51 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+88 个工具（其中 39 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 

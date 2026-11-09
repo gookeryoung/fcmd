@@ -1,9 +1,0 @@
-# 内置 DSL 命令：img2pdf（单命令形态，内建动作原语）。
-#
-# 参考 bitool_gui.img2pdf 的转换语义：多张图片按给定顺序合并为一个 PDF，
-# 支持页面尺寸、DPI 与 EXIF 方向校正。纯 Python（Pillow），无子进程调用；
-# 输入同时支持图片文件与目录（目录按文件名排序），输出默认 output.pdf。
-
-[commands.img2pdf]
-help = "图片合并为 PDF（支持文件/目录、页面尺寸与 DPI 设置）"
-action = "img2pdf_gen"

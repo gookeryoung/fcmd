@@ -1,6 +1,6 @@
 """img2pdf 工具测试。
 
-验证 ``fcmd.dsl.actions.media`` 中图片转 PDF 的核心逻辑：
+验证 ``fcmd.tools.pdf.img2pdf`` 中图片转 PDF 的核心逻辑：
 - 工具注册、页面尺寸 / DPI 规范化
 - 图片发现与排序、输出路径语义
 - RGB / 透明通道转换、固定页面排版
@@ -16,7 +16,7 @@ import pytest
 from pypdf import PdfReader
 
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.dsl.actions.media import (
+from fcmd.tools.pdf.img2pdf import (
     IMG2PDF_DEFAULT_DPI,
     IMG2PDF_IMAGE_EXTENSIONS,
     IMG2PDF_PAGE_SIZE_CHOICES,
@@ -37,10 +37,10 @@ from fcmd.dsl.actions.media import (
 # ---------------------------------------------------------------------- #
 @pytest.fixture(autouse=True)
 def _ensure_pillow() -> None:
-    """把 Pillow 惰性导入到 media 模块全局（生产路径由 _require_pil 完成）。"""
-    from fcmd.dsl.actions import media
+    """把 Pillow 惰性导入到 img2pdf 模块全局（生产路径由 _require_pil 完成）。"""
+    from fcmd.tools.pdf import img2pdf
 
-    assert media._require_pil()
+    assert img2pdf._require_pil()
 
 
 @pytest.fixture
@@ -363,9 +363,9 @@ class TestImagesToPdf:
             images_to_pdf([path], tmp_path / "out.pdf")
 
     def test_missing_dependency_raises(self, tmp_path: Path, sample_png: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.dsl.actions import media
+        from fcmd.tools.pdf import img2pdf
 
-        monkeypatch.setattr(media, "HAS_PIL", False)
+        monkeypatch.setattr(img2pdf, "HAS_PIL", False)
         with pytest.raises(RuntimeError, match="pillow"):
             images_to_pdf([sample_png], tmp_path / "out.pdf")
 
@@ -449,9 +449,9 @@ class TestCli:
         self, sample_png: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Pillow 不可用时动作打印提示并直接返回，不生成文件。"""
-        from fcmd.dsl.actions import media
+        from fcmd.tools.pdf import img2pdf
 
-        monkeypatch.setattr(media, "_require_pil", lambda: False)
+        monkeypatch.setattr(img2pdf, "_require_pil", lambda: False)
         output = tmp_path / "skip.pdf"
         code = run_tool("img2pdf", [str(sample_png), "--output-path", str(output)])
         assert code == 0

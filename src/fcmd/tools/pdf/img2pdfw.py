@@ -96,7 +96,7 @@ def normalize_page(value: str) -> str:
     ValueError
         取值不在支持列表中。
     """
-    from fcmd.dsl.actions.media import normalize_page_size
+    from fcmd.tools.pdf.img2pdf import normalize_page_size
 
     return normalize_page_size(value)
 
@@ -115,7 +115,7 @@ def parse_dpi(value: int | str) -> int:
     ValueError
         非整数或超出范围。
     """
-    from fcmd.dsl.actions.media import normalize_dpi
+    from fcmd.tools.pdf.img2pdf import normalize_dpi
 
     try:
         dpi = int(value)
@@ -412,7 +412,7 @@ class Img2PdfWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         raw_output = self._output_var.get().strip()
         output_path = Path(raw_output).expanduser() if raw_output else default_output_path(input_path)
-        from fcmd.dsl.actions.media import resolve_pdf_output
+        from fcmd.tools.pdf.img2pdf import resolve_pdf_output
 
         try:
             output_path = resolve_pdf_output(output_path)
@@ -445,7 +445,7 @@ class Img2PdfWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         normalize: bool,
     ) -> None:
         """后台线程：执行转换并把进度 / 结果写入队列。"""
-        from fcmd.dsl.actions.media import collect_pdf_images, images_to_pdf
+        from fcmd.tools.pdf.img2pdf import collect_pdf_images, images_to_pdf
 
         def progress(done: int, total: int, message: str) -> None:
             self._queue.put(("progress", done, total, message))

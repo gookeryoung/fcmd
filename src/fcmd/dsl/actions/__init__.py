@@ -45,7 +45,7 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 * :mod:`fcmd.dsl.actions.calcdate` —— 日期计算（calcdate）
 * :mod:`fcmd.dsl.actions.crypto` —— 加密与摘要（cryptool）
 * :mod:`fcmd.dsl.actions.data` —— 结构化数据转换（datatool）
-* :mod:`fcmd.dsl.actions.media` —— 图片/PDF/视频处理（pdftool/imagetool/videotool）
+* :mod:`fcmd.dsl.actions.media` —— 图片处理（imagetool）
 * :mod:`fcmd.dsl.actions.net` —— 网络工具（websave/pingtool/portcheck/iptool）
 * :mod:`fcmd.dsl.actions.text` —— 文本处理（texttool/tabletool）
 """

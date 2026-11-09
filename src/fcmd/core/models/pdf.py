@@ -1,6 +1,7 @@
 """PDF 工具数据模型：页码表达式解析与拆分/合并规格。
 
-为 DSL 命令 ``pdftool``（``fcmd/commands/pdftool.toml`` + ``fcmd/dsl/actions/media.py``）
+为 ``pdftool`` 工具（``fcmd/tools/pdf/pdftool.py`` 门面 +
+``fcmd/tools/pdf/pdfbase.py`` 公共逻辑）
 提供「CLI 字符串参数 → 结构化 dataclass」的解析层，
 将页序、页码选择、拆分分组、合并编排等复杂语义收敛为可独立测试的纯函数模型：
 
