@@ -197,7 +197,7 @@ fcmd completion --shell fish | source         # fish
 | `llmenv` | - | 路径与配置独立命令（`show`/`add`/`remove`/`reset`/`list`/`env`；打印 `FCMD_HOME` 目录布局、增删模型目录、列出服务状态、输出 `OPENAI_*` 环境变量） |
 | `llmmodel` | - | 模型扫描独立命令（`list`/`find`/`vram`；列出 GGUF、按量化定位文件、估算显存占用） |
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 共 12 种量化版本；默认 Q4_K_M/Q5_K_M，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
-| `llmqntw` | - | `llmqnt` 的 Tk 窗口版（启动时扫描 `llmenv` 已配置的模型目录并下拉选择，也可手动浏览文件；量化类型勾选、进度条与实时日志，后台线程执行不阻塞界面） |
+| `llmqntw` | - | `llmqnt` 的 Tk 窗口版（启动时扫描 `llmenv` 已配置的模型目录并下拉选择，也可手动浏览文件；显示当前引擎 tag/路径、量化器路径与 llama.cpp 版本；量化类型勾选、进度条与实时日志，后台线程执行不阻塞界面） |
 | `llmserve` | - | 服务生命周期独立命令（`plan`/`start`/`stop`/`status`/`logs`；打印启动计划与显存估算、拉起引擎等待 `/health`、停止进程树、查看状态与日志） |
 | `llmsrv` | - | 本地大模型推理服务（`doctor`/`engine`/`config`/`model`/`convert`/`plan`/`start`/`stop`/`status`/`logs`/`bench`/`env`；模型目录多根配置与扫描（`config add/remove/reset`，`model` 列清单与各档位选中项）、HF safetensors 转 GGUF（`convert`，优先复用引擎目录下的 `llama.cpp*.zip` 源码包或 `--script` 指定的本地源码 zip，否则自动下载与引擎 tag 匹配的源码包并支持断点续传，失败回退浅克隆，可选 `llama-quantize` 量化）、llama.cpp 引擎安装与切换（`engine install` 支持 `--path` 指向本地 zip 免下载安装，目标目录已有完整 zip 时自动复用）、按档位选 GGUF 与 KV 精度（64K 档默认 `f16` KV 提速，`--kv`/`--ubatch` 可覆盖）、显存估算、VC++ 运行库检查、后台启动 + `/health` 就绪等待、进程树停止、OpenAI 兼容客户端环境变量输出；`bench --prompt-tokens N` 按长上下文实测吞吐） |
 

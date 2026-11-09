@@ -2,7 +2,8 @@
 
 基于 :mod:`fcmd.tools.llm.llmqnt` 的核心逻辑，提供文件选择、量化类型勾选、
 进度条与实时日志。窗口启动时扫描 ``llmenv`` 已配置的模型目录，可下拉选择
-输入模型，也可手动浏览文件。窗口关闭后命令退出。
+输入模型，也可手动浏览文件；同时显示当前 llama.cpp 引擎、量化器与版本信息。
+窗口关闭后命令退出。
 
 示例
 ----
@@ -18,12 +19,12 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools.llm import llmenv, llmmodel, llmqnt
-from fcmd.tools.llm.llmbase import ModelEntry, human_size
+from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmqnt
+from fcmd.tools.llm.llmbase import EngineInfo, ModelEntry, human_size
 
 __all__ = ["main"]
 
-_DESCRIPTION = "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，勾选多种量化类型批量转换"
+_DESCRIPTION = "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，显示引擎/量化器版本，勾选多种量化类型批量转换"
 
 
 class QuantizeWindow:
@@ -39,19 +40,20 @@ class QuantizeWindow:
         self._ttk = ttk
         self.root = tk.Tk()
         self.root.title("GGUF 量化工具")
-        self.root.geometry("680x600")
-        self.root.minsize(560, 480)
+        self.root.geometry("680x660")
+        self.root.minsize(560, 520)
 
         self.input_file: Path | None = None
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
         self._models: list[ModelEntry] = []
         self._scan_thread: threading.Thread | None = None
-        self._scan_results: queue.Queue[list[ModelEntry]] = queue.Queue()
+        self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str]]] = queue.Queue()
         self._running = False
 
         self._file_var = tk.StringVar(value="尚未选择输入文件")
         self._model_var = tk.StringVar(value="")
+        self._info_vars: dict[str, tk.StringVar] = {}
         self._overwrite_var = tk.BooleanVar(value=False)
         self._quant_vars: dict[str, tk.BooleanVar] = {
             quant: tk.BooleanVar(value=quant in llmqnt.DEFAULT_QUANTS) for quant in llmqnt.QUANT_TYPES
@@ -87,6 +89,15 @@ class QuantizeWindow:
         self._model_box.bind("<<ComboboxSelected>>", self._on_model_selected)
         self._model_btn = ttk.Button(model_row, text="刷新", command=self._refresh_models)
         self._model_btn.pack(side="left")
+
+        info_box = ttk.LabelFrame(outer, text="环境信息", padding=8)
+        info_box.pack(fill="x", pady=(8, 0))
+        info_box.columnconfigure(1, weight=1)
+        for row, (key, label) in enumerate((("engine", "引擎"), ("quantizer", "量化器"), ("version", "版本"))):
+            ttk.Label(info_box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            var = tk.StringVar(value="检测中…")
+            ttk.Label(info_box, textvariable=var, wraplength=460, justify="left").grid(row=row, column=1, sticky="w")
+            self._info_vars[key] = var
 
         quant_box = ttk.LabelFrame(outer, text="量化类型", padding=8)
         quant_box.pack(fill="x", pady=(10, 0))
@@ -158,21 +169,23 @@ class QuantizeWindow:
         self._model_var.set("")
 
     # ------------------------------------------------------------------ #
-    # 已配置模型
+    # 已配置模型 / 引擎信息
     # ------------------------------------------------------------------ #
     def _refresh_models(self) -> None:
-        """后台扫描已配置模型目录，避免阻塞窗口。"""
+        """后台扫描已配置模型目录并探测引擎信息，避免阻塞窗口。"""
         if self._scan_thread is not None and self._scan_thread.is_alive():
             return
         self._model_btn.configure(state="disabled")
         self._model_box.configure(state="disabled", values=[])
         self._model_var.set("正在扫描模型目录…")
+        for var in self._info_vars.values():
+            var.set("检测中…")
         self._scan_thread = threading.Thread(target=self._scan_models, daemon=True)
         self._scan_thread.start()
         self.root.after(200, self._poll_scan)
 
     def _scan_models(self) -> None:
-        """后台线程：扫描 ``llmenv`` 解析出的模型目录。"""
+        """后台线程：扫描模型目录并收集 llama.cpp 引擎 / 量化器信息。"""
         entries: list[ModelEntry] = []
         try:
             roots = [root for root in llmenv.models_roots() if root.is_dir()]
@@ -180,18 +193,44 @@ class QuantizeWindow:
                 entries = llmmodel.scan_models(roots)
         except OSError:
             entries = []
-        self._scan_results.put(entries)
+        self._scan_results.put((entries, self._collect_env_info()))
+
+    def _collect_env_info(self) -> dict[str, str]:
+        """收集当前引擎 tag / 可执行文件、量化器路径与版本。"""
+        info: dict[str, str] = {"engine": "", "quantizer": "", "version": ""}
+        try:
+            engine = llmengine.resolve_engine()
+        except llmbase.ServeError as exc:
+            info["engine"] = f"未找到（{exc}）"
+        else:
+            info["engine"] = f"{engine.tag} · {engine.exe}"
+            info["version"] = self._probe_version(engine)
+        try:
+            info["quantizer"] = str(llmqnt.resolve_quantize_exe())
+        except llmqnt.QuantizeError as exc:
+            info["quantizer"] = f"未找到（{exc}）"
+        return info
+
+    @staticmethod
+    def _probe_version(engine: EngineInfo) -> str:
+        """执行 ``llama-server --version`` 取首行版本信息。"""
+        result = llmengine.run_with_engine(llmbase.run_command, [str(engine.exe), "--version"], engine)
+        output = (result.stdout or result.stderr).strip()
+        if result.returncode != 0:
+            detail = output.splitlines()[0] if output else f"退出码 {llmbase.format_returncode(result.returncode)}"
+            return f"获取失败（{detail}）"
+        return output.splitlines()[0] if output else "未知"
 
     def _poll_scan(self) -> None:
         try:
-            entries = self._scan_results.get_nowait()
+            entries, info = self._scan_results.get_nowait()
         except queue.Empty:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 self.root.after(200, self._poll_scan)
             return
-        self._apply_models(entries)
+        self._apply_models(entries, info)
 
-    def _apply_models(self, entries: list[ModelEntry]) -> None:
+    def _apply_models(self, entries: list[ModelEntry], info: dict[str, str]) -> None:
         self._models = entries
         labels = [f"{entry.relative}  ({human_size(entry.size)})" for entry in entries]
         self._model_box.configure(values=labels)
@@ -201,6 +240,8 @@ class QuantizeWindow:
         else:
             self._model_var.set("未发现已配置的 GGUF（用 fcmd llmenv add 登记模型目录）")
             self._model_box.configure(state="disabled")
+        for key, var in self._info_vars.items():
+            var.set(info.get(key) or "-")
         self._model_btn.configure(state="disabled" if self._running else "normal")
 
     def _mark_existing(self) -> None:
