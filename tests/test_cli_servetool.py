@@ -945,6 +945,48 @@ class TestEngine:
         with pytest.raises(ServeError, match="找不到"):
             core.install_engine("local", path=source, home=home)
 
+    def test_install_from_local_zip(self, home: Path, tmp_path: Path) -> None:
+        """--path 指向本地 zip 时直接解压，不联网且保留压缩包。"""
+        archive = tmp_path / "engine.zip"
+        archive.write_bytes(_zip_payload({f"bundle/{core.engine_exe_name()}": b"exe"}))
+        info = core.install_engine(
+            "local", path=archive, home=home, opener=cast(Any, lambda *a: pytest.fail("不应下载"))
+        )
+        assert info.exe.is_file()
+        assert info.source == str(archive)
+        assert archive.is_file()
+
+    def test_install_local_zip_without_exe(self, home: Path, tmp_path: Path) -> None:
+        archive = tmp_path / "empty.zip"
+        archive.write_bytes(_zip_payload({"readme.txt": b"nope"}))
+        with pytest.raises(ServeError, match="压缩包内找不到"):
+            core.install_engine("local", path=archive, home=home)
+
+    def test_install_rejects_non_zip_file(self, home: Path, tmp_path: Path) -> None:
+        archive = tmp_path / "engine.7z"
+        archive.write_bytes(b"x")
+        with pytest.raises(ServeError, match="仅支持"):
+            core.install_engine("local", path=archive, home=home)
+
+    def test_install_reuses_existing_archive(self, home: Path) -> None:
+        """目标目录内已有完整 zip 时不再重新下载。"""
+        target = core.engines_root(home) / "b9"
+        target.mkdir(parents=True)
+        (target / "engine.zip").write_bytes(_zip_payload({core.engine_exe_name(): b"exe"}))
+        info = core.install_engine(
+            "b9", url="https://example.com/engine.zip", home=home, opener=cast(Any, lambda *a: pytest.fail("不应下载"))
+        )
+        assert info.exe.is_file()
+
+    def test_install_redownloads_invalid_archive(self, home: Path) -> None:
+        """残留的不完整 zip 会被重新下载覆盖。"""
+        target = core.engines_root(home) / "b9"
+        target.mkdir(parents=True)
+        (target / "engine.zip").write_bytes(b"partial")
+        payload = _zip_payload({core.engine_exe_name(): b"exe"})
+        info = core.install_engine("b9", url="https://example.com/engine.zip", home=home, opener=_opener(payload))
+        assert info.exe.is_file()
+
     def test_install_from_url(self, home: Path) -> None:
         payload = _zip_payload({f"bundle/{core.engine_exe_name()}": b"exe"})
         info = core.install_engine("b9", url="https://example.com/engine.zip", home=home, opener=_opener(payload))

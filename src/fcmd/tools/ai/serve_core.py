@@ -983,15 +983,16 @@ def _download(url: str, dest: Path, opener: Opener | None = None) -> int:
     return total
 
 
-def _extract_zip(archive: Path, target: Path) -> None:
-    """解压 zip 到目标目录并删除压缩包。"""
+def _extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:
+    """解压 zip 到目标目录；``remove`` 为真时解压后删除压缩包。"""
     try:
         with zipfile.ZipFile(archive) as bundle:
             bundle.extractall(target)
     except (zipfile.BadZipFile, OSError) as exc:
         raise ServeError(f"解压失败: {archive}（{exc}）") from exc
     finally:
-        archive.unlink(missing_ok=True)
+        if remove:
+            archive.unlink(missing_ok=True)
 
 
 def install_engine(  # noqa: PLR0913
@@ -1005,8 +1006,9 @@ def install_engine(  # noqa: PLR0913
 ) -> EngineInfo:
     """安装或注册 llama.cpp 引擎。
 
-    ``path`` 用于注册本地已编译引擎目录（不复制文件）；否则从 GitHub release
-    下载 Windows 预编译包（``cuda`` 变体额外下载 cudart）。
+    ``path`` 为已编译引擎目录时只登记不复制；为本地 ``.zip`` 压缩包时直接解压
+    安装（压缩包保留），两种情况都不联网。否则从 GitHub release 下载 Windows
+    预编译包（``cuda`` 变体额外下载 cudart）；目标目录内已有完整 zip 时直接复用。
     """
     target = engines_root(home) / tag
     cached = _engine_exe_in(target) if target.exists() else None
@@ -1015,6 +1017,16 @@ def install_engine(  # noqa: PLR0913
 
     if path is not None:
         source = path.expanduser()
+        if source.is_file():
+            if source.suffix.lower() != ".zip":
+                raise ServeError(f"仅支持注册引擎目录或本地 .zip 压缩包: {source}")
+            target.mkdir(parents=True, exist_ok=True)
+            _extract_zip(source, target, remove=False)
+            exe = _engine_exe_in(target)
+            if exe is None:
+                raise ServeError(f"压缩包内找不到 {engine_exe_name()}: {source}")
+            _write_engine_marker(target, tag, exe, str(source))
+            return EngineInfo(tag, exe, str(source))
         if not source.is_dir():
             raise ServeError(f"引擎目录不存在: {source}")
         exe = _engine_exe_in(source)
@@ -1029,7 +1041,8 @@ def install_engine(  # noqa: PLR0913
     urls = [url] if url else [_release_url(tag, name) for name in engine_asset_names(tag, variant)]
     for item in urls:
         archive = target / (item.rsplit("/", 1)[-1] or f"{tag}.zip")
-        _download(item, archive, opener)
+        if not (archive.is_file() and zipfile.is_zipfile(archive)):
+            _download(item, archive, opener)
         _extract_zip(archive, target)
 
     exe = _engine_exe_in(target)

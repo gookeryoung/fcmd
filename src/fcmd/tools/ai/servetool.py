@@ -170,7 +170,8 @@ def engine_cmd(
     tag:
         引擎 tag，如 ``b12211``；``install`` 默认用内置推荐版本。
     path:
-        ``install`` 时注册本地已编译的引擎目录（不复制文件）。
+        ``install`` 时注册本地已编译的引擎目录（不复制文件），或直接解压本地
+        ``.zip`` 压缩包（跳过下载，压缩包保留）。
     variant:
         ``install`` 下载的官方包类型：``cuda``（含 cudart）或 ``cpu``。
     url:
@@ -200,7 +201,10 @@ def engine_cmd(
         return
 
     if path is not None:
-        get_console().print(f"注册本地引擎 {tag}: {path}")
+        if path.is_file():
+            get_console().print(f"从本地压缩包安装引擎 {tag}: {path}（跳过下载）")
+        else:
+            get_console().print(f"注册本地引擎 {tag}: {path}")
     else:
         get_console().print(f"安装引擎 {tag}（variant={variant}），下载可能耗时数分钟…")
     info = core.install_engine(tag, variant=variant, url=url, path=path)
