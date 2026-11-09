@@ -174,6 +174,40 @@ class TestFetchFiles:
         with pytest.raises(ModelToolError, match="没有文件"):
             fetch_files("Qwen/demo", "modelscope")
 
+    def test_modelscope_format_error_mapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen({"Message": "boom"}))
+        with pytest.raises(ModelToolError, match="格式异常: boom"):
+            fetch_files("Qwen/demo", "modelscope")
+
+    def test_modelscope_skips_invalid_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload = {
+            "Data": {
+                "Files": [
+                    "not-a-dict",
+                    {"Path": "dir", "Type": "tree"},
+                    {"Name": "by-name.bin", "Size": 3, "Type": "blob"},
+                    {"Path": "", "Size": 0, "Type": "blob"},
+                ]
+            }
+        }
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen(payload))
+        assert fetch_files("Qwen/demo", "modelscope") == [ModelFile("by-name.bin", 3, "")]
+
+    def test_hf_format_error_mapped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen({"data": []}))
+        with pytest.raises(ModelToolError, match="格式异常"):
+            fetch_files("Qwen/demo", "hf-mirror")
+
+    def test_hf_skips_invalid_entries(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload = [
+            "not-a-dict",
+            {"path": "sub", "type": "directory"},
+            {"path": "", "type": "file"},
+            {"path": "ok.bin", "size": 4, "type": "file", "lfs": None},
+        ]
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen(payload))
+        assert fetch_files("Qwen/demo", "hf-mirror") == [ModelFile("ok.bin", 4, "")]
+
 
 # ---------------------------------------------------------------------- #
 # 辅助函数
@@ -264,6 +298,33 @@ class TestSelectSource:
         assert selection.source == "modelscope"
         assert selection.fallback == "hf-mirror"
         assert selection.probes == ()
+
+    def test_probe_sources_uses_common_largest_file(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        manifests = {
+            "modelscope": [ModelFile("small.bin", 1), ModelFile("big.bin", 500)],
+            "hf-mirror": [ModelFile("big.bin", 500), ModelFile("other.bin", 9)],
+        }
+        probed: list[str] = []
+
+        def _probe_mirrors(urls: list[str], timeout: float = 5, user_agent: str = "") -> list[UrlProbe]:
+            probed.extend(urls)
+            return [_probe(url, throughput=float(index + 1) * 10) for index, url in enumerate(urls)]
+
+        monkeypatch.setattr("fcmd.dsl.actions.net.probe_mirrors", _probe_mirrors)
+        result = llmdown._probe_sources("Qwen/demo", manifests, None, 3.0)
+
+        assert [source for source, _ in result] == ["modelscope", "hf-mirror"]
+        assert len(probed) == 2
+        assert all("big.bin" in url for url in probed)
+
+
+class TestPrintSelection:
+    def test_reports_unavailable_probe(self, capsys: pytest.CaptureFixture[str]) -> None:
+        probes = (_probe("https://hf-mirror.com/a", ok=False),)
+        llmdown._print_selection(SourceSelection("modelscope", (ModelFile("a.bin", 1),), None, probes))
+        out = capsys.readouterr().out
+        assert "不可用（超时）" in out
+        assert "选用源" in out
 
 
 # ---------------------------------------------------------------------- #
@@ -383,6 +444,47 @@ class TestDownloadOne:
             _download_one(
                 "Qwen/demo", file, final, llmdown._part_path(final), selection, None, False, _ProgressStub(), 0, 1
             )
+
+    def test_oversized_part_restarts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        content = b"abc"
+        final = tmp_path / "a.bin"
+        part = llmdown._part_path(final)
+        part.write_bytes(b"too-long")
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _download_urlopen({"https://www.modelscope.cn/models/Qwen/demo/resolve/master/a.bin": content}),
+        )
+        file = ModelFile("a.bin", len(content))
+        progress = _ProgressStub()
+        _download_one("Qwen/demo", file, final, part, SourceSelection("modelscope", (file,)), None, False, progress, 0, 1)
+
+        assert final.read_bytes() == content
+        assert any(update.get("completed") == 0 for _, update in progress.updates)
+
+    def test_complete_part_reuses_without_download(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        content = b"abc"
+        final = tmp_path / "a.bin"
+        part = llmdown._part_path(final)
+        part.write_bytes(content)
+
+        def _unexpected(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("不应发起下载")
+
+        monkeypatch.setattr("urllib.request.urlopen", _unexpected)
+        file = ModelFile("a.bin", len(content))
+        _download_one("Qwen/demo", file, final, part, SourceSelection("modelscope", (file,)), None, False, _ProgressStub(), 0, 1)
+
+        assert final.read_bytes() == content
+
+    def test_sha256_file_reports_progress(self, tmp_path: Path) -> None:
+        path = tmp_path / "a.bin"
+        path.write_bytes(b"x" * 10)
+        progress = _ProgressStub()
+
+        digest = llmdown._sha256_file(path, progress, 0)
+
+        assert digest == hashlib.sha256(b"x" * 10).hexdigest()
+        assert progress.updates
 
 
 # ---------------------------------------------------------------------- #
