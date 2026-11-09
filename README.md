@@ -200,7 +200,7 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `llmbench` | - | OpenAI 兼容服务吞吐实测独立命令（`--name 服务名` 读本机服务状态，或 `--base-url` 直连任意兼容服务；`--prompt-tokens N` 模拟长上下文） |
 | `llmchat` | - | OpenAI 兼容服务多轮流式对话独立命令（走 `/v1/chat/completions` SSE 并维护 `messages` 历史，兼容思考型模型的 `reasoning_content` 流；`--name` 读本机服务状态或 `--base-url` 直连；`--prompt` 单次提问，省略时进入交互模式，`/clear` 清空历史、`/exit` 退出） |
-| `llmchatw` | - | `llmchat` 的 Tk 窗口版（服务下拉框读取 `llmenv` 登记服务并回填地址 / 模型 / API Key，也可填任意 OpenAI 兼容地址；流式回复在后台线程实时追加到聊天区，思考型模型的思考过程以灰色单独展示，支持停止生成、清空历史、系统提示词与 max_tokens / temperature / top_p 参数，max_tokens 默认 2048） |
+| `llmchatw` | - | `llmchat` 的 Tk 窗口版（服务下拉框读取 `llmenv` 登记服务并回填地址 / 模型 / API Key，默认选中第一个进程存活的可用服务，无可用服务时状态栏显示“不可用”；也可填任意 OpenAI 兼容地址；流式回复在后台线程实时追加到聊天区，思考型模型的思考过程以灰色单独展示，支持停止生成、清空历史、系统提示词与 max_tokens / temperature / top_p 参数，max_tokens 默认 2048） |
 | `llmconvert` | - | HF safetensors 转 GGUF 独立命令（复用引擎目录内 `llama.cpp*.zip` 或在线源码，可选 `--quant` 再量化、`--tag` 指定源码版本） |
 | `llmconvertw` | - | `llmconvert` 的 Tk 窗口版（界面按「模型列表 / 转换配置 / 输出日志」分标签页，先选模型再配参数，避免表单堆叠；启动时后台扫描 `llmenv` 已配置的模型目录，识别并列出可转换的 HF safetensors 目录，选中即填入源目录；配置转换精度/解释器/源码脚本/引擎 tag；以勾选方式选择原始 GGUF 及多种量化格式，已生成的格式自动标注“已存在”并置为只读，除非勾选覆盖；可预览转换计划与命令，后台先转换一次基础 GGUF 再批量量化，转换脚本与量化器输出逐行实时回显，并解析 tqdm 百分比（含 `\r` 覆盖刷新）驱动整体进度条） |
 | `llmdoctor` | - | 运行环境体检独立命令（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++ 运行库） |

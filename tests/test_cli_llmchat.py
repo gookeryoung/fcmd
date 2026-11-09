@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request
@@ -15,7 +16,7 @@ from urllib.request import Request
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.llm import llmchat, llmchatw
+from fcmd.tools.llm import llmchat, llmchatw, llmenv
 from fcmd.tools.llm.llmbase import DEFAULT_API_KEY, Endpoint, ServeError, ServeState
 from fcmd.tools.llm.llmchat import ChatDelta, ChatMessage, ChatSession
 
@@ -543,3 +544,106 @@ def test_chat_cmd_interactive_interrupt(monkeypatch: pytest.MonkeyPatch, capsys:
 # ---------------------------------------------------------------------- #
 def test_chatw_default_url() -> None:
     assert llmchatw._DEFAULT_URL == "http://127.0.0.1:8080"
+
+
+class _FakeVar:
+    """模拟 tk.StringVar 的读写。"""
+
+    def __init__(self, value: str = "") -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
+
+
+class _FakeBox:
+    """模拟 ttk.Combobox 的 values 配置。"""
+
+    def __init__(self) -> None:
+        self.values: list[str] = []
+
+    def configure(self, **kwargs: Any) -> None:
+        self.values = list(kwargs["values"])
+
+
+def _chat_window(states: list[ServeState], service: str = llmchatw._CUSTOM) -> Any:
+    """构造只含服务刷新所需属性的 ChatWindow 替身。"""
+    window: Any = object.__new__(llmchatw.ChatWindow)
+    window._states = states
+    window._manual_choice = False
+    window._service_var = _FakeVar(service)
+    window._url_var = _FakeVar()
+    window._model_var = _FakeVar()
+    window._api_key_var = _FakeVar()
+    window._status_var = _FakeVar("就绪")
+    window._service_box = _FakeBox()
+    appended: list[tuple[str, str]] = []
+    window._appended = appended
+    window._append = lambda tag, text: appended.append((tag, text))
+    return window
+
+
+def test_chatw_refresh_selects_first_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    dead = _state("dead")
+    alive = replace(_state("alive"), pid=1234)
+    monkeypatch.setattr(llmenv, "list_states", lambda: [dead, alive])
+    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: pid == alive.pid)
+
+    window = _chat_window([])
+    llmchatw.ChatWindow._refresh_services(window)
+
+    assert window._service_var.get() == "alive"
+    assert window._url_var.get() == alive.base_url
+    assert window._model_var.get() == alive.alias
+    assert window._status_var.get() == "已选择服务 alive"
+
+
+def test_chatw_refresh_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = _state("dead")
+    monkeypatch.setattr(llmenv, "list_states", lambda: [state])
+    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: False)
+
+    window = _chat_window([])
+    llmchatw.ChatWindow._refresh_services(window)
+
+    assert window._service_var.get() == llmchatw._CUSTOM
+    assert window._service_box.values == [llmchatw._CUSTOM, "dead"]
+    assert window._status_var.get() == "不可用"
+
+
+def test_chatw_refresh_without_services(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llmenv, "list_states", lambda: [])
+
+    window = _chat_window([])
+    llmchatw.ChatWindow._refresh_services(window)
+
+    assert window._service_box.values == [llmchatw._CUSTOM]
+    assert window._status_var.get() == "不可用"
+
+
+def test_chatw_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch) -> None:
+    alive = _state("alive")
+    monkeypatch.setattr(llmenv, "list_states", lambda: [alive])
+    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: True)
+
+    window = _chat_window([])
+    window._manual_choice = True
+    llmchatw.ChatWindow._refresh_services(window)
+
+    assert window._service_var.get() == llmchatw._CUSTOM
+    assert window._status_var.get() == "不可用"
+
+
+def test_chatw_select_unavailable_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    state = _state("dead")
+    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: False)
+
+    window = _chat_window([state], service="dead")
+    llmchatw.ChatWindow._on_service_selected(window)
+
+    assert window._url_var.get() == state.base_url
+    assert window._status_var.get() == "不可用"
+    assert window._appended[0][0] == "error"

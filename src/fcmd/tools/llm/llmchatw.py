@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import queue
 import threading
+from collections.abc import Sequence
 from typing import Any
 
 import fcmd
@@ -33,12 +34,24 @@ from fcmd.tools.llm.llmbase import (
     http_base_url,
 )
 from fcmd.tools.llm.llmchat import ChatSession
+from fcmd.tools.llm.llmserve import process_alive
 
 __all__ = ["main"]
 
 _DESCRIPTION = "llmchat 的 Tk 窗口版（多轮流式对话；可选用 llmenv 登记的服务或自定义地址）"
 _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
 _CUSTOM = "自定义"
+_UNAVAILABLE = "不可用"
+
+
+def _state_available(state: ServeState) -> bool:
+    """服务状态对应的进程仍存活即视为可用。"""
+    return process_alive(state.pid, state.create_time)
+
+
+def _first_available(states: Sequence[ServeState]) -> ServeState | None:
+    """按登记顺序返回第一个可用服务。"""
+    return next((state for state in states if _state_available(state)), None)
 
 
 class ChatWindow:
@@ -60,6 +73,7 @@ class ChatWindow:
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._running = False
+        self._manual_choice = False
         self._saw_reasoning = False
         self._answer_started = False
         self._states: list[ServeState] = []
@@ -72,7 +86,7 @@ class ChatWindow:
         self._max_tokens_var = tk.StringVar(value="2048")
         self._temperature_var = tk.StringVar(value="0.7")
         self._top_p_var = tk.StringVar(value="0.9")
-        self._status_var = tk.StringVar(value="就绪")
+        self._status_var = tk.StringVar(value=_UNAVAILABLE)
 
         self._build_widgets()
         self._refresh_services()
@@ -190,7 +204,7 @@ class ChatWindow:
     # 服务
     # ------------------------------------------------------------------ #
     def _refresh_services(self) -> None:
-        """重新读取 llmenv 登记的服务并刷新下拉框。"""
+        """重新读取 llmenv 登记的服务并刷新下拉框，默认选中第一个可用服务。"""
         try:
             self._states = llmenv.list_states()
         except OSError as exc:
@@ -198,23 +212,49 @@ class ChatWindow:
             self._append("error", f"读取服务状态失败: {exc}\n")
         names = [state.name for state in self._states]
         self._service_box.configure(values=[_CUSTOM, *names])
-        if self._service_var.get() not in [_CUSTOM, *names]:
+
+        current = self._service_var.get()
+        if current not in [_CUSTOM, *names]:
+            current = _CUSTOM
             self._service_var.set(_CUSTOM)
-        if names:
-            self._status_var.set(f"发现 {len(names)} 个已登记服务，可在下拉框选择")
+        if current == _CUSTOM and not self._manual_choice:
+            first = _first_available(self._states)
+            if first is not None:
+                current = first.name
+                self._service_var.set(current)
+
+        state = next((item for item in self._states if item.name == current), None)
+        if state is None:
+            self._status_var.set(_UNAVAILABLE)
+            return
+        self._apply_state(state)
+        if _state_available(state):
+            self._status_var.set(f"已选择服务 {state.name}")
+        else:
+            self._status_var.set(_UNAVAILABLE)
 
     def _on_service_selected(self, _event: Any = None) -> None:
-        """选中已登记服务后回填地址 / 模型 / API Key。"""
+        """选中已登记服务后回填地址 / 模型 / API Key，并提示是否可用。"""
+        self._manual_choice = True
         name = self._service_var.get()
         state = next((item for item in self._states if item.name == name), None)
         if state is None:
+            self._status_var.set(_CUSTOM)
             return
+        self._apply_state(state)
+        if _state_available(state):
+            self._append("info", f"已切换到服务 {state.name}：{state.endpoint.base_url}\n")
+            self._status_var.set(f"已选择服务 {state.name}")
+        else:
+            self._append("error", f"服务 {state.name} 不可用：{state.endpoint.base_url}\n")
+            self._status_var.set(_UNAVAILABLE)
+
+    def _apply_state(self, state: ServeState) -> None:
+        """把服务状态的地址 / 模型 / API Key 回填到表单。"""
         endpoint = state.endpoint
         self._url_var.set(endpoint.base_url)
         self._model_var.set(endpoint.model)
         self._api_key_var.set(endpoint.api_key)
-        self._append("info", f"已切换到服务 {state.name}：{endpoint.base_url}\n")
-        self._status_var.set(f"已选择服务 {state.name}")
 
     def _endpoint(self) -> Endpoint:
         """把表单值转换为接入点。"""
