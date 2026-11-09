@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-62 个工具（其中 12 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`modeltool`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+63 个工具（其中 13 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`modeltool`/`packtool`/`portcheck`/`pymake`/`screenshot`/`servetool`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -190,6 +190,7 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `modeltool` | `mdl` | 大模型仓库下载（`files`/`mirror`/`download`；ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
+| `servetool` | `srv` | 本地大模型推理服务（`doctor`/`engine`/`model`/`plan`/`start`/`stop`/`status`/`logs`/`bench`/`env`；llama.cpp 引擎安装与切换、按档位选 GGUF 与 KV 量化、显存估算、后台启动 + `/health` 就绪等待、进程树停止、OpenAI 兼容客户端环境变量输出） |
 
 ### 开发环境
 
