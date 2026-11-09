@@ -28,9 +28,12 @@ __all__ = [
     "GENERAL_TAG",
     "MODEL_TAGS",
     "ModelTag",
+    "VramFit",
     "detect_model_tags",
     "estimate_vram",
     "find_model",
+    "fit_vram",
+    "max_context",
     "model_advice",
     "plan_vram",
     "scan_models",
@@ -250,6 +253,38 @@ def estimate_vram(model_bytes: int, context: int, kv_type: str = "q8_0") -> int:
     """估算显存占用（模型权重 + KV 缓存 + 固定开销）。"""
     kv = int(context * KV_BYTES_PER_TOKEN_FP16 * KV_SCALE.get(kv_type, 1.0))
     return model_bytes + kv + VRAM_OVERHEAD_BYTES
+
+
+@dataclass(frozen=True, slots=True)
+class VramFit:
+    """模型在给定可用显存下的适配情况。"""
+
+    needed: int
+    available: int
+    max_context: int
+
+    @property
+    def ok(self) -> bool:
+        """预计占用不超过可用显存。"""
+        return self.needed <= self.available
+
+
+def max_context(model_bytes: int, gpu_bytes: int, kv_type: str = "q8_0") -> int:
+    """估算可用显存下能容纳的最大上下文（向下取整到 1K，``0`` 表示权重都放不下）。"""
+    free = gpu_bytes - model_bytes - VRAM_OVERHEAD_BYTES
+    unit = KV_BYTES_PER_TOKEN_FP16 * KV_SCALE.get(kv_type, 1.0)
+    if free <= 0 or unit <= 0:  # pragma: no cover - unit 恒为正，防御异常入参
+        return 0
+    return int(free / unit) // 1024 * 1024
+
+
+def fit_vram(model_bytes: int, gpu_bytes: int, context: int, kv_type: str = "q8_0") -> VramFit:
+    """判断模型在指定上下文 / KV 下能否放入可用显存，并给出可容纳的最大上下文。"""
+    return VramFit(
+        needed=estimate_vram(model_bytes, context, kv_type),
+        available=gpu_bytes,
+        max_context=max_context(model_bytes, gpu_bytes, kv_type),
+    )
 
 
 def plan_vram(plan: LaunchPlan) -> int:

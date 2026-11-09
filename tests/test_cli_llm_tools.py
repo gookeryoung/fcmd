@@ -239,6 +239,28 @@ def test_model_vram_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: 
     assert "预计占用" in out
 
 
+def test_max_context_fits() -> None:
+    # 32 GiB 显存、10 GiB 权重、2 GiB 固定开销，剩 20 GiB 给 q8_0 KV（96 KiB/token × 0.5）
+    assert llmmodel.max_context(10 * llmbase.GIB, 32 * llmbase.GIB, "q8_0") == 426 * 1024
+    assert llmmodel.max_context(10 * llmbase.GIB, 32 * llmbase.GIB, "f16") == 213 * 1024
+
+
+def test_max_context_weight_too_large() -> None:
+    assert llmmodel.max_context(40 * llmbase.GIB, 32 * llmbase.GIB, "q8_0") == 0
+
+
+def test_fit_vram() -> None:
+    fit = llmmodel.fit_vram(10 * llmbase.GIB, 32 * llmbase.GIB, 65536, "q8_0")
+    assert fit.ok is True
+    assert fit.needed == 15 * llmbase.GIB
+    assert fit.available == 32 * llmbase.GIB
+    assert fit.max_context == 426 * 1024
+
+    unfit = llmmodel.fit_vram(30 * llmbase.GIB, 32 * llmbase.GIB, 65536, "f16")
+    assert unfit.ok is False
+    assert unfit.max_context < 65536
+
+
 # ---------------------------------------------------------------------- #
 # llmserve
 # ---------------------------------------------------------------------- #

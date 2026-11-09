@@ -5,6 +5,8 @@
 与最佳实践提示）、启动计划预览、后台启动 / 停止、状态与日志查看、一键在默认浏览器
 打开服务地址，以及运行监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
 系统负载（CPU / 内存 / 交换 / GPU）在窗口打开后即持续采样，服务未启动时同样可见。
+模型列表按整卡与当前可用显存双重评估：整卡放不下标红并加删除线为“硬件不足”，仅当前余量不足标橙为“需释放显存”，
+运行中的模型标为“运行中”，并在提示区给出针对性建议；显存释放后自动重算。
 
 示例
 ----
@@ -50,14 +52,25 @@ __all__ = ["main"]
 
 _DESCRIPTION = (
     "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
-    "与最佳实践提示，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
+    "与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，"
+    "配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
     "查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，"
     "同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标"
     "（系统负载在服务未启动时也持续采样展示）"
 )
 
+#: 当前硬件放不下的模型行标记色（整卡显存也不够）
+_UNFIT_COLOR = "#c62828"
+#: 整卡够用但当前可用显存不足的模型行标记色（需释放显存）
+_BUSY_COLOR = "#ef6c00"
+
+_FIT_OK = "可用"
+_FIT_BUSY = "需释放显存"
+_FIT_UNSUPPORTED = "硬件不足"
+_FIT_RUNNING = "运行中"
+
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
-_HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）与最佳实践建议"
+_HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
 
 #: token 速率平滑窗口（秒）：窗口内累计 token 数 ÷ 经过时间，避免逐秒差值剧烈跳变
@@ -311,6 +324,33 @@ def _probe_web_ui(base_url: str, api_key: str | None = None, *, timeout: float =
         return None
 
 
+def _fit_advice(fit: llmmodel.VramFit, context: int, kv_type: str) -> str:
+    """按显存缺口给出降配建议（纯文本，供界面与日志复用）。"""
+    if fit.max_context >= 4096:
+        kv_hint = "" if kv_type == "q8_0" else "，或把 KV 缓存切到 q8_0"
+        return f"把上下文从 {context} 降到 {fit.max_context // 1024}K 以内{kv_hint}"
+    return "该文件仅权重就超出可用显存：改用更小量化（Q4_K_M/Q3_K_M）或更小参数量的模型；若显存被其他服务占用，先停止"
+
+
+def _busy_advice(fit: llmmodel.VramFit, context: int, kv_type: str) -> str:
+    """整卡够用但当前余量不足时的建议：优先释放显存，其次降配。"""
+    if fit.max_context >= 4096:
+        kv_hint = "" if kv_type == "q8_0" else "，或把 KV 缓存切到 q8_0"
+        return f"先停止占用显存的其他服务 / 实例；若仍需并行，把上下文从 {context} 降到 {fit.max_context // 1024}K 以内{kv_hint}"
+    return "先停止占用显存的其他服务 / 实例；释放后仍不足时换用更小量化（Q4_K_M/Q3_K_M）的文件"
+
+
+def _fit_state(total: llmmodel.VramFit | None, free: llmmodel.VramFit | None) -> str:
+    """区分两类不可用：整卡放不下（硬件不足）与仅当前余量放不下（需释放显存）。"""
+    if total is None:
+        return "-"
+    if not total.ok:
+        return _FIT_UNSUPPORTED
+    if free is not None and not free.ok:
+        return _FIT_BUSY
+    return _FIT_OK
+
+
 class RateWindow:
     """按时间窗口平滑 token 速率。
 
@@ -346,10 +386,11 @@ class ServeWindow:
 
     def __init__(self) -> None:
         import tkinter as tk
-        from tkinter import filedialog, messagebox, ttk
+        from tkinter import filedialog, font, messagebox, ttk
 
         self._tk = tk
         self._filedialog = filedialog
+        self._font = font
         self._messagebox = messagebox
         self._ttk = ttk
         self.root = tk.Tk()
@@ -361,11 +402,13 @@ class ServeWindow:
         self._selected_model: Path | None = None
         self._syncing_selection = False
         self._gpu_mib: int | None = None
+        self._gpu_free_mib: int | None = None
+        self._running_paths: set[str] = set()
         self._busy = False
         self._closing = False
 
         self._scan_thread: threading.Thread | None = None
-        self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str], int | None]] = queue.Queue()
+        self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str], int | None, int | None]] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
 
@@ -484,18 +527,20 @@ class ServeWindow:
             values=self._service_names(),
         )
         self._name_box.bind("<<ComboboxSelected>>", self._on_service_selected)
+        self._profile_box = ttk.Combobox(
+            params,
+            textvariable=self._profile_var,
+            values=tuple(PROFILES),
+            state="readonly",
+        )
+        self._profile_box.bind("<<ComboboxSelected>>", self._on_profile_changed)
         self._pair_row(
             params,
             0,
             "服务名",
             self._name_box,
             "档位",
-            ttk.Combobox(
-                params,
-                textvariable=self._profile_var,
-                values=tuple(PROFILES),
-                state="readonly",
-            ),
+            self._profile_box,
         )
         self._pair_row(
             params,
@@ -606,7 +651,7 @@ class ServeWindow:
         tree_frame.pack(fill="both", expand=True)
         self._tree = ttk.Treeview(
             tree_frame,
-            columns=("model", "size", "profiles", "tags"),
+            columns=("model", "size", "profiles", "tags", "fit"),
             show="headings",
             selectmode="browse",
             height=4,
@@ -615,10 +660,16 @@ class ServeWindow:
         self._tree.heading("size", text="大小")
         self._tree.heading("profiles", text="匹配档位")
         self._tree.heading("tags", text="标签")
-        self._tree.column("model", width=300, anchor="w")
+        self._tree.heading("fit", text="硬件")
+        self._tree.column("model", width=290, anchor="w")
         self._tree.column("size", width=90, anchor="e", stretch=False)
-        self._tree.column("profiles", width=140, anchor="w", stretch=False)
-        self._tree.column("tags", width=110, anchor="w", stretch=False)
+        self._tree.column("profiles", width=130, anchor="w", stretch=False)
+        self._tree.column("tags", width=100, anchor="w", stretch=False)
+        self._tree.column("fit", width=90, anchor="w", stretch=False)
+        self._strike_font = self._font.nametofont("TkDefaultFont").copy()
+        self._strike_font.configure(overstrike=True)
+        self._tree.tag_configure("unfit", foreground=_UNFIT_COLOR, font=self._strike_font)
+        self._tree.tag_configure("busy", foreground=_BUSY_COLOR)
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
         self._tree.pack(side="left", fill="both", expand=True)
@@ -671,6 +722,7 @@ class ServeWindow:
         for item in self._loaded_tree.get_children():
             self._loaded_tree.delete(item)
         alive = [state for state in llmenv.list_states() if llmserve.process_alive(state.pid, state.create_time)]
+        self._running_paths = {llmenv.path_key(Path(state.model)) for state in alive}
         for state in alive:
             self._loaded_tree.insert(
                 "",
@@ -820,6 +872,12 @@ class ServeWindow:
         if 0 <= index < len(self._models):
             self._select_model(self._models[index].path)
 
+    def _on_profile_changed(self, _event: object | None = None) -> None:
+        """切换档位后按新的上下文 / KV 重算模型列表的硬件适配标注。"""
+        self._render_models()
+        if self._selected_model is not None:
+            self._show_model_hint(self._selected_model)
+
     def _select_file(self) -> None:
         path = self._filedialog.askopenfilename(
             title="选择 GGUF 模型",
@@ -879,7 +937,7 @@ class ServeWindow:
             self._syncing_selection = False
 
     def _show_model_hint(self, path: Path) -> None:
-        """按文件名内置标签展示推荐档位、最佳实践与客户端接入方式。"""
+        """按文件名内置标签展示推荐档位、最佳实践、硬件适配与客户端接入方式。"""
         tags = llmmodel.detect_model_tags(path.name)
         label = " · ".join(tags) or "未识别"
         advice = llmmodel.model_advice(tags)
@@ -889,9 +947,69 @@ class ServeWindow:
             port = DEFAULT_PORT
         base = http_base_url(self._host_var.get().strip() or DEFAULT_HOST, port)
         alias = self._alias_var.get().strip() or path.stem
-        self._hint_var.set(f"标签: {label} | {advice}\n接入: {base}/v1，model={alias}")
+        hint = f"标签: {label} | {advice}\n接入: {base}/v1，model={alias}"
+        note = self._hardware_note(path)
+        if note:
+            hint += f"\n{note}"
+            self._log(f"  {note}")
+        self._hint_var.set(hint)
         self._log(f"  标签: {label}")
         self._log(f"  建议: {advice}")
+
+    def _profile_context(self) -> tuple[str, int, str]:
+        """当前表单下的档位名、上下文与 KV 类型（输入无效时回退到档位默认值）。"""
+        name = self._profile_var.get().strip() or DEFAULT_PROFILE
+        profile = PROFILES.get(name, PROFILES[DEFAULT_PROFILE])
+        try:
+            context = self._optional_int_field(self._ctx_var, "上下文") or profile.context
+        except ServeError:
+            context = profile.context
+        kv_type = self._kv_var.get().strip() or profile.kv_type
+        return name, context, kv_type if kv_type in KV_SCALE else profile.kv_type
+
+    def _fits(self, size: int) -> tuple[llmmodel.VramFit | None, llmmodel.VramFit | None]:
+        """返回（整卡能力, 当前可用）两套显存估算；未检测到 GPU 时均为 ``None``。"""
+        if self._gpu_mib is None:
+            return None, None
+        _, context, kv_type = self._profile_context()
+        total = llmmodel.fit_vram(size, self._gpu_mib * 1024 * 1024, context, kv_type)
+        free = None
+        if self._gpu_free_mib is not None:
+            free = llmmodel.fit_vram(size, self._gpu_free_mib * 1024 * 1024, context, kv_type)
+        return total, free
+
+    def _fits_for(self, path: Path) -> tuple[llmmodel.VramFit | None, llmmodel.VramFit | None]:
+        """按文件大小估算整卡 / 当前可用两套适配情况；文件不可读时均为 ``None``。"""
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return None, None
+        return self._fits(size)
+
+    def _hardware_note(self, path: Path) -> str:
+        """生成硬件适配说明，区分“硬件不足”与“需释放显存”两类情况。"""
+        if llmenv.path_key(path) in self._running_paths:
+            return "硬件: 该模型已在运行中的服务里加载"
+        if self._gpu_mib is None:
+            return "硬件: 未检测到可用 NVIDIA GPU，只能 CPU 推理（速度很慢，显存适配无法判断）"
+        total, free = self._fits_for(path)
+        if total is None:
+            return ""
+        name, context, kv_type = self._profile_context()
+        detail = f"{name} 档（ctx {context} / kv {kv_type}）"
+        if not total.ok:
+            return (
+                f"硬件不足（已标红）: {detail}预计需 {human_size(total.needed)}，整卡显存仅 "
+                f"{human_size(total.available)}，清理显存也无法运行；建议{_fit_advice(total, context, kv_type)}"
+            )
+        if free is not None and not free.ok:
+            return (
+                f"需释放显存（已标橙）: {detail}预计需 {human_size(total.needed)}，整卡 "
+                f"{human_size(total.available)} 够用，但当前可用仅 {human_size(free.available)}；"
+                f"建议{_busy_advice(free, context, kv_type)}"
+            )
+        available = free.available if free is not None else total.available
+        return f"硬件: {detail}预计占 {human_size(total.needed)} / 可用显存 {human_size(available)}"
 
     def _clear_selection(self) -> None:
         self._tree.selection_remove(*self._tree.selection())
@@ -927,7 +1045,9 @@ class ServeWindow:
         except OSError:
             entries = []
         info, gpu_mib = self._collect_env_info()
-        self._scan_results.put((entries, info, gpu_mib))
+        usage = self._gpu_usage()
+        free_mib = max(usage[1] - usage[0], 0) if usage is not None else None
+        self._scan_results.put((entries, info, gpu_mib, free_mib))
 
     @staticmethod
     def _with_running_models(entries: list[ModelEntry]) -> list[ModelEntry]:
@@ -981,22 +1101,53 @@ class ServeWindow:
 
     def _poll_scan(self) -> None:
         try:
-            entries, info, gpu_mib = self._scan_results.get_nowait()
+            entries, info, gpu_mib, free_mib = self._scan_results.get_nowait()
         except queue.Empty:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 self.root.after(200, self._poll_scan)
             return
-        self._apply_models(entries, info, gpu_mib)
+        self._apply_models(entries, info, gpu_mib, free_mib)
 
-    def _apply_models(self, entries: list[ModelEntry], info: dict[str, str], gpu_mib: int | None) -> None:
+    def _apply_models(
+        self,
+        entries: list[ModelEntry],
+        info: dict[str, str],
+        gpu_mib: int | None,
+        free_mib: int | None,
+    ) -> None:
         self._models = entries
         self._gpu_mib = gpu_mib
+        self._gpu_free_mib = free_mib
         if self._selected_model is None:
             state = self._load_state_safe(self._name_var.get().strip())
             if state is not None and llmserve.process_alive(state.pid, state.create_time):
                 self._select_model(Path(state.model), update_name=False)
+        self._render_models()
+        self._model_var.set(str(self._selected_model) if self._selected_model else _MODEL_PLACEHOLDER)
+        if self._selected_model is not None:
+            self._sync_tree_selection(self._selected_model)
+        for key, var in self._info_vars.items():
+            var.set(info.get(key) or "-")
+        self._model_btn.configure(state="normal")
+        if not entries:
+            self._log("未发现已配置的 GGUF：用 fcmd llmenv add 登记模型目录，或直接“浏览…”选择模型文件")
+
+    def _row_state(self, entry: ModelEntry) -> str:
+        """单个模型的硬件状态：运行中 > 硬件不足 > 需释放显存 > 可用。"""
+        if llmenv.path_key(entry.path) in self._running_paths:
+            return _FIT_RUNNING
+        return _fit_state(*self._fits(entry.size))
+
+    @staticmethod
+    def _state_tag(state: str) -> tuple[str, ...]:
+        """状态对应的 Treeview tag（用于行着色）。"""
+        return {_FIT_UNSUPPORTED: ("unfit",), _FIT_BUSY: ("busy",)}.get(state, ())
+
+    def _render_models(self) -> None:
+        """重建模型列表：硬件不足标红，仅当前余量不足标橙，并显示对应状态。"""
         self._tree.delete(*self._tree.get_children())
-        for index, entry in enumerate(entries):
+        for index, entry in enumerate(self._models):
+            state = self._row_state(entry)
             self._tree.insert(
                 "",
                 "end",
@@ -1006,16 +1157,39 @@ class ServeWindow:
                     human_size(entry.size),
                     ", ".join(entry.profiles) or "-",
                     " · ".join(entry.tags) or "-",
+                    state,
                 ),
+                tags=self._state_tag(state),
             )
-        self._model_var.set(str(self._selected_model) if self._selected_model else _MODEL_PLACEHOLDER)
+        self._show_basis_hint()
+
+    def _update_fit_states(self) -> None:
+        """按最新可用显存原地更新各行状态（不重建列表，保留选中项）。"""
+        for index, entry in enumerate(self._models):
+            iid = str(index)
+            if not self._tree.exists(iid):
+                continue
+            state = self._row_state(entry)
+            values = self._tree.item(iid, "values")
+            if values and values[-1] != state:
+                updated = (*values[:-1], state)
+                self._tree.item(iid, values=updated, tags=self._state_tag(state))
+        self._show_basis_hint()
+
+    def _show_basis_hint(self) -> None:
+        """未选中模型时在提示区展示硬件评估口径。"""
         if self._selected_model is not None:
-            self._sync_tree_selection(self._selected_model)
-        for key, var in self._info_vars.items():
-            var.set(info.get(key) or "-")
-        self._model_btn.configure(state="normal")
-        if not entries:
-            self._log("未发现已配置的 GGUF：用 fcmd llmenv add 登记模型目录，或直接“浏览…”选择模型文件")
+            return
+        available = self._gpu_free_mib if self._gpu_free_mib is not None else self._gpu_mib
+        if available is None:
+            self._hint_var.set("未检测到可用 NVIDIA GPU，无法评估显存适配（CPU 推理会很慢）")
+            return
+        _, context, kv_type = self._profile_context()
+        total = f"{self._gpu_mib} MiB" if self._gpu_mib is not None else "-"
+        self._hint_var.set(
+            f"硬件评估口径：整卡 {total}，当前可用 {available} MiB，上下文 {context}，KV {kv_type}；"
+            "红色=硬件不足（清理显存也放不下），橙色=需释放显存（整卡够用），选择模型可查看具体建议"
+        )
 
     # ------------------------------------------------------------------ #
     # 参数解析
@@ -1076,25 +1250,36 @@ class ServeWindow:
         return used, total
 
     def _memory_guard(self, plan: llmbase.LaunchPlan) -> None:
-        """启动前检查显存 / 内存余量，不足时拒绝启动，避免系统过载。"""
+        """启动前检查显存 / 内存余量，区分硬件上限与显存被占用两类不足。"""
         estimate = llmmodel.plan_vram(plan)
         usage = self._gpu_usage()
         if usage is not None:
             used, total = usage
-            label = "显存"
-            available = max(total - used, 0) * 1024 * 1024
             self._log(f"显存占用: {used} / {total} MiB")
-        else:
-            import psutil
+            if estimate > total * 1024 * 1024:
+                raise ServeError(
+                    f"整卡显存不足（硬件限制），清理显存也无法运行：预计需要 {human_size(estimate)}，"
+                    f"整卡仅 {human_size(total * 1024 * 1024)}。"
+                    "请改用更小量化或更小参数量的模型，或减小上下文"
+                )
+            available = max(total - used, 0) * 1024 * 1024
+            if estimate > available:
+                raise ServeError(
+                    f"当前可用显存不足（整卡 {total} MiB 够用，可能被其他服务占用）："
+                    f"预计需要 {human_size(estimate)}，当前可用 {human_size(available)}。"
+                    "请先停止其他服务 / 实例，或改用更小档位、减小上下文"
+                )
+            self._log(f"资源检查通过：预计占用 {human_size(estimate)} / 显存可用 {human_size(available)}")
+            return
+        import psutil
 
-            label = "可用内存"
-            available = int(psutil.virtual_memory().available)
+        available = int(psutil.virtual_memory().available)
         if estimate > available:
             raise ServeError(
-                f"{label}不足，启动可能过载：预计需要 {human_size(estimate)}，当前可用 {human_size(available)}。"
+                f"可用内存不足：预计需要 {human_size(estimate)}，当前可用 {human_size(available)}。"
                 "请改用更小档位、减小上下文，或先停止其他服务"
             )
-        self._log(f"资源检查通过：预计占用 {human_size(estimate)} / {label}可用 {human_size(available)}")
+        self._log(f"资源检查通过：预计占用 {human_size(estimate)} / 可用内存 {human_size(available)}")
 
     # ------------------------------------------------------------------ #
     # 动作
@@ -1120,10 +1305,16 @@ class ServeWindow:
         self._log(f"  建议: {llmmodel.model_advice(tags)}")
         self._log(f"  显存估算: {human_size(estimate)}")
         self._log("  命令: " + format_command(plan.argv()))
-        if self._gpu_mib is not None and estimate > self._gpu_mib * 1024 * 1024:
+        total, free = self._fits_for(plan.model)
+        if total is not None and not total.ok:
             self._log(
-                f"  警告: 估算 {human_size(estimate)} 超过显存 {self._gpu_mib} MiB，可能 OOM；"
-                "可改用 --profile speed 或减小上下文"
+                f"  警告: 估算 {human_size(estimate)} 超过整卡显存 {human_size(total.available)}，无法运行；"
+                f"建议{_fit_advice(total, plan.context, plan.effective_kv_type)}"
+            )
+        elif free is not None and not free.ok:
+            self._log(
+                f"  警告: 估算 {human_size(estimate)} 超过当前可用显存 {human_size(free.available)}，可能 OOM；"
+                f"建议{_busy_advice(free, plan.context, plan.effective_kv_type)}"
             )
 
     def _start(self) -> None:
@@ -1220,6 +1411,8 @@ class ServeWindow:
                 elif kind == "done":
                     self._set_busy(False)
                     self._start_system_monitor()
+                    # 启动 / 停止都会改变显存占用，任务结束后重新采样，避免沿用旧余量
+                    self._refresh_models()
         except queue.Empty:
             if self._thread is not None and self._thread.is_alive():
                 self.root.after(100, self._poll_task)
@@ -1463,11 +1656,24 @@ class ServeWindow:
         self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
 
     def _apply_load(self, sample: LoadSample) -> None:
-        """刷新系统负载与 GPU 面板。"""
+        """刷新系统负载与 GPU 面板，并同步模型列表的显存适配状态。"""
         for key, value in _format_load(sample).items():
             self._load_vars[key].set(value)
         for key, value in _format_gpu(sample.gpu).items():
             self._gpu_vars[key].set(value)
+        self._sync_free_vram(sample.gpu)
+
+    def _sync_free_vram(self, gpu: GpuSample | None) -> None:
+        """用实时 GPU 采样更新可用显存，服务停止释放显存后自动恢复为“可用”。"""
+        if gpu is None or gpu.memory_used is None or gpu.memory_total is None:
+            return
+        free_mib = int(max(gpu.memory_total - gpu.memory_used, 0))
+        if self._gpu_free_mib is not None and abs(free_mib - self._gpu_free_mib) < 256:
+            return
+        self._gpu_free_mib = free_mib
+        if self._gpu_mib is None:
+            self._gpu_mib = int(gpu.memory_total)
+        self._update_fit_states()
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy

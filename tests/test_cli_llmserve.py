@@ -2090,3 +2090,56 @@ class TestRateWindow:
         gen_rate, prompt_rate = window.update(2.0, 100.0, 400.0)
         assert gen_rate == pytest.approx(50.0)
         assert prompt_rate == pytest.approx(200.0)
+
+
+class TestServewFitAdvice:
+    def test_suggest_smaller_context(self) -> None:
+        fit = llmmodel.VramFit(needed=40, available=32, max_context=32 * 1024)
+        advice = llmservew._fit_advice(fit, 65536, "f16")
+        assert "降到 32K" in advice
+        assert "q8_0" in advice
+
+    def test_suggest_smaller_quant_when_weight_too_large(self) -> None:
+        fit = llmmodel.VramFit(needed=40, available=32, max_context=0)
+        advice = llmservew._fit_advice(fit, 65536, "q8_0")
+        assert "仅权重" in advice
+        assert "Q4_K_M" in advice
+        assert "q8_0" not in advice
+
+    def test_busy_advice_prioritizes_releasing_vram(self) -> None:
+        fit = llmmodel.VramFit(needed=40, available=10, max_context=32 * 1024)
+        advice = llmservew._busy_advice(fit, 65536, "f16")
+        assert "先停止" in advice
+        assert "32K" in advice
+        assert "q8_0" in advice
+
+    def test_busy_advice_without_room_for_context(self) -> None:
+        fit = llmmodel.VramFit(needed=40, available=10, max_context=0)
+        assert "更小量化" in llmservew._busy_advice(fit, 65536, "q8_0")
+
+
+class TestServewFitState:
+    def test_unknown_without_gpu(self) -> None:
+        assert llmservew._fit_state(None, None) == "-"
+
+    def test_hardware_unsupported(self) -> None:
+        total = llmmodel.VramFit(needed=40, available=32, max_context=0)
+        free = llmmodel.VramFit(needed=40, available=10, max_context=0)
+        assert llmservew._fit_state(total, free) == "硬件不足"
+
+    def test_needs_release(self) -> None:
+        total = llmmodel.VramFit(needed=20, available=32, max_context=100000)
+        free = llmmodel.VramFit(needed=20, available=10, max_context=20000)
+        assert llmservew._fit_state(total, free) == "需释放显存"
+
+    def test_available(self) -> None:
+        total = llmmodel.VramFit(needed=20, available=32, max_context=100000)
+        assert llmservew._fit_state(total, llmmodel.VramFit(needed=20, available=30, max_context=90000)) == "可用"
+        assert llmservew._fit_state(total, None) == "可用"
+
+    def test_state_maps_to_row_tag(self) -> None:
+        # 标签必须与中文状态一一对应，否则 Treeview 不会着色
+        assert llmservew.ServeWindow._state_tag("硬件不足") == ("unfit",)
+        assert llmservew.ServeWindow._state_tag("需释放显存") == ("busy",)
+        assert llmservew.ServeWindow._state_tag("可用") == ()
+        assert llmservew.ServeWindow._state_tag("运行中") == ()
