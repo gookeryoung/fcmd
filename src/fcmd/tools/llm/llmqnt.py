@@ -1,6 +1,6 @@
 """llmqnt - GGUF 量化工具（基于 llama-quantize）。
 
-把 F16 GGUF 按勾选的多种量化类型批量转换为量化 GGUF，供 ``llmsrv``
+把 F16 GGUF 按勾选的多种量化类型批量转换为量化 GGUF，供 ``llmserve``
 按档位加载。默认输出到输入文件同目录，命名规则为
 ``<去掉 -F16 后缀的文件名>-<量化类型>.gguf``；已存在的输出默认跳过，
 可用 ``--overwrite`` 强制重跑。
@@ -171,8 +171,8 @@ def resolve_quantize_exe(explicit: Path | None = None) -> Path:
     except llmbase.ServeError:
         engine = None
     if engine is not None:
-        candidate = engine.exe.parent / llmengine.engine_exe_name("llama-quantize")
-        if candidate.is_file():
+        candidate = llmengine.quantize_exe(engine)
+        if candidate is not None:
             return candidate
 
     found = shutil.which("llama-quantize")
@@ -180,7 +180,7 @@ def resolve_quantize_exe(explicit: Path | None = None) -> Path:
         return Path(found)
 
     raise QuantizeError(
-        "未找到 llama-quantize：安装 llama.cpp 引擎（fcmd llmsrv engine install），"
+        "未找到 llama-quantize：安装 llama.cpp 引擎（fcmd llmengine install），"
         "或用 --quantize-exe / FCMD_LLAMA_QUANTIZE 指定"
     )
 

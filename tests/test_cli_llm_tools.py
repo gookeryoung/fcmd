@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.console import Console
-from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool
 from fcmd.tools.llm import llmbench, llmconvert, llmdoctor, llmenv, llmmodel, llmserve
 from fcmd.tools.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -346,6 +346,16 @@ def test_convert_cmd_with_quant_and_python(monkeypatch: pytest.MonkeyPatch, caps
     assert "中间文件" in out
 
 
+def test_convert_help_describes_parameters() -> None:
+    """convert 的 --help 展示参数含义而非参数名。"""
+    from fcmd.core.toolkit.args import _build_parser_for_tool
+
+    text = _build_parser_for_tool(get_tool("llmconvert")).format_help()
+    assert "含 config.json 与 *.safetensors 的模型目录" in text
+    assert "量化类型" in text
+    assert "转换脚本 convert_hf_to_gguf.py" in text
+
+
 # ---------------------------------------------------------------------- #
 # llmdoctor
 # ---------------------------------------------------------------------- #
@@ -359,3 +369,35 @@ def test_doctor_cmd_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(llmdoctor, "doctor", lambda **kwargs: [Check("引擎", "fail", "未安装")])
     with pytest.raises(ServeError, match="1 项检查失败"):
         llmdoctor.doctor_cmd()
+
+
+def test_msvc_runtime_engine_local_new(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engine"
+    engine_dir.mkdir()
+    (engine_dir / "msvcp140.dll").write_bytes(b"x")
+    monkeypatch.setattr(llmdoctor, "_file_version", lambda dll: (14, 51, 36231, 0))
+    check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+    assert check.status == "ok"
+    assert "14.51" in check.detail
+
+
+def test_msvc_runtime_warns_on_old_system_dll(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engine"
+    engine_dir.mkdir()
+    system32 = tmp_path / "System32"
+    system32.mkdir()
+    (system32 / "msvcp140.dll").write_bytes(b"x")
+    monkeypatch.setenv("SYSTEMROOT", str(tmp_path))
+    monkeypatch.setattr(llmdoctor, "_file_version", lambda dll: (14, 0, 24215, 1))
+    check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+    assert check.status == "warn"
+    assert "过旧" in check.detail
+
+
+def test_msvc_runtime_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engine"
+    engine_dir.mkdir()
+    monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "nowhere"))
+    check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+    assert check.status == "warn"
+    assert "MSVCP140" in check.detail

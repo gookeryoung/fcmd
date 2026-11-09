@@ -163,7 +163,7 @@ def resolve_engine(tag: str | None = None, home: Path | None = None) -> EngineIn
     if tag:
         info = _engine_info(root / tag, tag)
         if info is None:
-            raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmsrv engine install --tag {tag}")
+            raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmengine install --tag {tag}")
         return info
 
     current = current_engine_tag(root)
@@ -182,7 +182,7 @@ def resolve_engine(tag: str | None = None, home: Path | None = None) -> EngineIn
     which = shutil.which("llama-server")
     if which:
         return EngineInfo("system", Path(which), "PATH")
-    raise ServeError("未找到 llama.cpp 引擎：先执行 fcmd llmsrv engine install --tag " + DEFAULT_ENGINE_TAG)
+    raise ServeError("未找到 llama.cpp 引擎：先执行 fcmd llmengine install --tag " + DEFAULT_ENGINE_TAG)
 
 
 def engine_asset_names(tag: str, variant: EngineVariant = "cuda") -> list[str]:
@@ -202,7 +202,7 @@ def _download(url: str, dest: Path, opener: Opener | None = None) -> int:
     """下载 URL 到文件，返回字节数。"""
     from urllib.request import Request, urlopen
 
-    req = Request(url, headers={"User-Agent": "fcmd-llmsrv/0.3.10"})
+    req = Request(url, headers={"User-Agent": "fcmd-llm/0.3.10"})
     open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
     try:
         with open_fn(req, 60.0) as resp, dest.open("wb") as out:
@@ -319,7 +319,7 @@ def use_engine(tag: str, home: Path | None = None) -> EngineInfo:
     root = llmenv.engines_root(home)
     info = _engine_info(root / tag, tag)
     if info is None:
-        raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmsrv engine install --tag {tag}")
+        raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmengine install --tag {tag}")
     root.mkdir(parents=True, exist_ok=True)
     (root / CURRENT_MARKER).write_text(
         json.dumps({"tag": tag, "updated_at": now_iso()}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

@@ -297,7 +297,9 @@ def start_server(  # noqa: PLR0913
     existing = llmenv.load_state(plan.name, home, missing_ok=True)
     if existing is not None:
         if process_alive(existing.pid, existing.create_time):
-            raise ServeError(f"服务 {plan.name!r} 已在运行（pid={existing.pid}），先执行 fcmd llmsrv stop {plan.name}")
+            raise ServeError(
+                f"服务 {plan.name!r} 已在运行（pid={existing.pid}），先执行 fcmd llmserve stop {plan.name}"
+            )
         llmenv.delete_state(plan.name, home)
 
     if port_in_use is None:
@@ -333,10 +335,17 @@ def _print_plan(plan: LaunchPlan) -> None:
         f"ctx {plan.context} / ub {plan.effective_ubatch}",
     )
     table.add_row("监听", http_base_url(plan.host, plan.port))
-    table.add_row("显存估算", human_size(llmmodel.plan_vram(plan)))
+    estimate = llmmodel.plan_vram(plan)
+    table.add_row("显存估算", human_size(estimate))
     table.add_row("日志", str(plan.log))
     get_console().print(table)
     get_console().print("命令: " + format_command(plan.argv()))
+    gpu = llmengine.detect_gpu()
+    if gpu is not None and estimate > gpu.memory_mib * 1024 * 1024:
+        get_console().print(
+            f"[yellow]警告: 估算 {human_size(estimate)} 超过显存 {gpu.memory_mib} MiB，"
+            "可能 OOM；可改用 --profile speed 或减小 --ctx[/yellow]"
+        )
 
 
 def _print_state(state: ServeState) -> None:

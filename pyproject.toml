@@ -57,7 +57,6 @@
         llmqnt        ="fcmd.tools.llm.llmqnt:main"
         llmqntw       ="fcmd.tools.llm.llmqntw:main"
         llmserve      ="fcmd.tools.llm.llmserve:main"
-        llmsrv        ="fcmd.tools.llm.llmsrv:main"
         lscalc        ="fcmd.tools.calc.lscalc:main"
         mathtool      ="fcmd.dsl.entry:run_named"
         nettool       ="fcmd.dsl.entry:run_named"

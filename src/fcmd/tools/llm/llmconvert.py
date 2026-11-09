@@ -177,7 +177,7 @@ def _download_resumable(url: str, dest: Path, opener: Opener | None = None) -> i
     last_error: OSError | None = None
     for attempt in range(_SOURCE_ATTEMPTS):
         start = part.stat().st_size if part.is_file() else 0
-        headers = {"User-Agent": "fcmd-llmsrv/0.3.10"}
+        headers = {"User-Agent": "fcmd-llm/0.3.10"}
         if start:
             headers["Range"] = f"bytes={start}-"
         try:

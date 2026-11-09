@@ -27,7 +27,6 @@ from fcmd.tools.llm.llmdown import (
     ModelToolError,
     SourceSelection,
     _download_one,
-    _human_size,
     _normalize_repo,
     download_files,
     fetch_files,
@@ -186,11 +185,6 @@ class TestHelpers:
             _normalize_repo("demo")
         with pytest.raises(ModelToolError, match="<组织>/<模型>"):
             _normalize_repo("a/b/c")
-
-    def test_human_size(self) -> None:
-        assert _human_size(0) == "0 B"
-        assert _human_size(1024) == "1.00 KB"
-        assert _human_size(1536) == "1.50 KB"
 
     def test_file_url_encodes_path(self) -> None:
         url = file_url("Qwen/demo", "hf-mirror", None, "sub/a b.bin")

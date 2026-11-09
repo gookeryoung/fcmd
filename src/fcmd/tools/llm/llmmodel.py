@@ -123,6 +123,7 @@ def list_cmd(models_root: Path | None = None) -> None:
         只扫描该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
     roots = llmenv.models_roots(models_root)
+    missing = [root for root in roots if not root.is_dir()]
     existing = [root for root in roots if root.is_dir()]
     if not existing:
         raise ServeError(f"模型目录不存在: {', '.join(str(root) for root in roots)}；先用 fcmd llmdown download 下载")
@@ -139,6 +140,19 @@ def list_cmd(models_root: Path | None = None) -> None:
     for entry in entries:
         table.add_row(entry.relative, human_size(entry.size), ", ".join(entry.profiles) or "-")
     get_console().print(table)
+
+    get_console().print("各档位将选用的模型:")
+    for name, profile in PROFILES.items():
+        matched = [entry for entry in entries if profile.quant.lower() in entry.path.name.lower()]
+        quant = f"{profile.quant:<7}"
+        if matched:
+            chosen = max(matched, key=lambda entry: entry.size)
+            get_console().print(f"  {name:<12} {quant} {chosen.path}")
+        else:
+            get_console().print(f"  {name:<12} {quant} [yellow]缺失[/yellow]")
+
+    for root in missing:
+        get_console().print(f"[yellow]提示: 配置中的目录不存在 {root}[/yellow]")
 
 
 @fcmd.tool("llmmodel", subcommand="find", help="按量化类型定位 GGUF 文件")

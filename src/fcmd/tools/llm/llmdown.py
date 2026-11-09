@@ -32,6 +32,7 @@ from urllib.parse import quote
 
 import fcmd
 from fcmd.console import Table, get_console
+from fcmd.tools.llm.llmbase import human_size
 
 if TYPE_CHECKING:
     from fcmd.dsl.actions.net import UrlProbe
@@ -113,17 +114,6 @@ class SourceSelection:
 # ---------------------------------------------------------------------- #
 # 通用辅助
 # ---------------------------------------------------------------------- #
-def _human_size(size: int) -> str:
-    """把字节数格式化为易读大小（B/KB/MB/GB/TB）。"""
-    value = float(size)
-    units = ("B", "KB", "MB", "GB", "TB")
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            return f"{value:.0f} {unit}" if unit == "B" else f"{value:.2f} {unit}"
-        value /= 1024
-    return f"{size} B"  # pragma: no cover - 循环必然返回
-
-
 def _normalize_repo(repo: str) -> str:
     """校验并规范化 ``<组织>/<模型名>`` 形式的仓库标识。"""
     cleaned = repo.strip().strip("/")
@@ -563,10 +553,10 @@ def list_files_cmd(
     table.add_column("大小", justify="right", no_wrap=True)
     table.add_column("SHA256", no_wrap=True)
     for file in selected:
-        table.add_row(file.path, _human_size(file.size), file.sha256[:12] or "-")
+        table.add_row(file.path, human_size(file.size), file.sha256[:12] or "-")
     get_console().print(table)
     total = sum(f.size for f in selected)
-    get_console().print(f"共 {len(selected)} 个文件，合计 {_human_size(total)}")
+    get_console().print(f"共 {len(selected)} 个文件，合计 {human_size(total)}")
 
 
 @fcmd.tool(
@@ -653,7 +643,7 @@ def download_cmd(  # noqa: PLR0913, PLR0917
 
     target = dest if dest is not None else Path("models") / repo
     total = sum(f.size for f in selected)
-    get_console().print(f"目标目录: {target}\n文件数: {len(selected)}  总大小: {_human_size(total)}")
+    get_console().print(f"目标目录: {target}\n文件数: {len(selected)}  总大小: {human_size(total)}")
     download_files(repo, selected, target, selection, revision, workers, verify)
 
 
