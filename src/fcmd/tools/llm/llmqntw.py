@@ -14,24 +14,83 @@ from __future__ import annotations
 
 import queue
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools import _guitheme
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmqnt
 from fcmd.tools.llm.llmbase import EngineInfo, ModelEntry, human_size
 
-__all__ = ["main"]
+__all__ = [
+    "QuantizeSettings",
+    "config_path",
+    "load_settings",
+    "resolve_geometry",
+    "save_settings",
+]
 
-_DESCRIPTION = "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，显示引擎/量化器版本，勾选多种量化类型批量转换"
+_DESCRIPTION = (
+    "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，显示引擎/量化器版本，"
+    "勾选多种量化类型批量转换；窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json"
+)
+
+MIN_WIDTH = 560
+MIN_HEIGHT = 520
+
+
+@dataclass
+class QuantizeSettings:
+    """窗口持久化设置（当前只有 geometry）。"""
+
+    geometry: str | None = None
+
+
+def config_path() -> Path:
+    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmqntw.json``。"""
+    return _guiconfig.config_path("llmqntw")
+
+
+valid_geometry = _guiconfig.valid_geometry
+
+
+def load_settings(path: Path | None = None) -> QuantizeSettings:
+    """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
+    raw = _guiconfig.read_settings(path or config_path())
+    settings = QuantizeSettings()
+    if raw is not None:
+        geometry = raw.get("geometry")
+        if isinstance(geometry, str) and valid_geometry(geometry):
+            settings.geometry = geometry
+    return settings
+
+
+def save_settings(settings: QuantizeSettings, path: Path | None = None) -> None:
+    """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
+    _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到按屏幕比例计算的尺寸。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    width, height = _guitheme.proportional_geometry(screen_width, screen_height)
+    return f"{width}x{height}"
 
 
 class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 量化窗口：构建界面并把转换任务放到后台线程执行。"""
 
-    def __init__(self) -> None:
+    def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
         from tkinter import filedialog, messagebox, ttk
 
@@ -39,11 +98,19 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._filedialog = filedialog
         self._messagebox = messagebox
         self._ttk = ttk
+        self._settings_path = settings_path
+        self._settings = load_settings(settings_path)
         self.root = tk.Tk()
         _guitheme.apply_theme(self.root)
         self.root.title("GGUF 量化工具")
-        self.root.geometry("680x660")
-        self.root.minsize(560, 520)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
+        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self.input_file: Path | None = None
         self._thread: threading.Thread | None = None
@@ -378,6 +445,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._overwrite_check.configure(state="normal")
 
     def _close(self) -> None:
+        save_settings(QuantizeSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
     # ------------------------------------------------------------------ #
