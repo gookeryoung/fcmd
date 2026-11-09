@@ -594,6 +594,70 @@ class TestConvert:
         master_urls = core._source_archive_urls("lmstudio-2.71")
         assert all("refs/heads/master" in url for url in master_urls)
 
+    def test_source_archive_ready(self, tmp_path: Path) -> None:
+        nested = tmp_path / "nested.zip"
+        nested.write_bytes(_zip_payload({"llama.cpp-b9/convert_hf_to_gguf.py": b""}))
+        flat = tmp_path / "flat.zip"
+        flat.write_bytes(_zip_payload({"convert_hf_to_gguf.py": b"", "gguf-py/gguf/__init__.py": b""}))
+        missing = tmp_path / "missing.zip"
+        missing.write_bytes(_zip_payload({"llama.cpp-b9/README.md": b""}))
+        broken = tmp_path / "broken.zip"
+        broken.write_bytes(b"not a zip")
+        assert core._source_archive_ready(nested)
+        assert core._source_archive_ready(flat)
+        assert not core._source_archive_ready(missing)
+        assert not core._source_archive_ready(broken)
+
+    def test_extract_source_archive_flat(self, tmp_path: Path) -> None:
+        """扁平打包（无顶层目录）的源码包也能解压到 repo。"""
+        archive = tmp_path / "flat.zip"
+        archive.write_bytes(_zip_payload({"convert_hf_to_gguf.py": b"# flat", "conversion/__init__.py": b""}))
+        repo = tmp_path / "llama.cpp"
+        assert core._extract_source_archive(archive, repo)
+        assert (repo / core.CONVERT_SCRIPT).read_text(encoding="utf-8") == "# flat"
+        assert (repo / "conversion" / "__init__.py").is_file()
+
+    def test_local_source_archives_prefers_tag(self, home: Path) -> None:
+        tag_dir = core.engines_root(home) / "b9"
+        tag_dir.mkdir(parents=True)
+        other = tag_dir / "llama.cpp-b8.zip"
+        exact = tag_dir / "llama.cpp-b9.zip"
+        plain = tag_dir / "llama.cpp.zip"
+        for item in (other, exact, plain):
+            item.write_bytes(b"x")
+        found = core._local_source_archives("b9", tag_dir / "llama.cpp")
+        assert found[:3] == [exact, plain, other]
+
+    def test_ensure_script_uses_local_archive(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None
+    ) -> None:
+        """引擎目录已有可用 llama.cpp*.zip 时直接解压，不下载也不 clone。"""
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        tag_dir = core.engines_root(home) / "b9"
+        tag_dir.mkdir(parents=True)
+        archive = tag_dir / "llama.cpp.zip"
+        archive.write_bytes(_zip_payload({"convert_hf_to_gguf.py": b"# local", "gguf-py/gguf/__init__.py": b""}))
+        script = core.ensure_convert_script(
+            tag="b9",
+            home=home,
+            runner=cast(Any, lambda *args, **kwargs: pytest.fail("不应 clone")),
+            opener=cast(Any, lambda *args, **kwargs: pytest.fail("不应下载")),
+        )
+        assert script.read_text(encoding="utf-8") == "# local"
+        assert archive.is_file()
+
+    def test_ensure_script_ignores_broken_local_archive(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, fast_source_retry: None
+    ) -> None:
+        """损坏的本地 zip 不阻止回退下载。"""
+        monkeypatch.delenv("FCMD_CONVERT_SCRIPT", raising=False)
+        tag_dir = core.engines_root(home) / "b9"
+        tag_dir.mkdir(parents=True)
+        (tag_dir / "llama.cpp.zip").write_bytes(b"broken")
+        payload = _zip_payload({"convert_hf_to_gguf.py": b"# downloaded"})
+        script = core.ensure_convert_script(tag="b9", home=home, opener=_opener(payload))
+        assert script.read_text(encoding="utf-8") == "# downloaded"
+
     def test_download_resumable_retries_with_range(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """首个连接被重置后从 .part 断点续传，而不是整包重下。"""
         monkeypatch.setattr(core, "_SOURCE_RETRY_DELAY", 0.0)

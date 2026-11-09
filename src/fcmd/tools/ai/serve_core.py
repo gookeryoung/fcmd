@@ -1186,19 +1186,45 @@ def _source_archive_urls(ref: str) -> list[str]:
     ]
 
 
+def _local_source_archives(ref: str, repo: Path) -> list[Path]:
+    """引擎目录下已有的源码 zip，按 tag 精确匹配优先。"""
+    preferred = [repo.parent / f"llama.cpp-{ref}.zip", repo.parent / "llama.cpp.zip"]
+    found = [item for item in preferred if item.is_file()]
+    for folder in (repo.parent, repo.parent.parent):
+        if folder.is_dir():
+            for candidate in sorted(folder.glob("llama.cpp*.zip")):
+                if candidate.is_file() and candidate not in found:
+                    found.append(candidate)
+    return found
+
+
+def _source_archive_ready(archive: Path) -> bool:
+    """校验 zip 是否为可用源码包：含 ``convert_hf_to_gguf.py``（可带一层顶层目录）。"""
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            return any(name.rstrip("/").endswith(CONVERT_SCRIPT) and name.count("/") <= 1 for name in bundle.namelist())
+    except (OSError, zipfile.BadZipFile):
+        return False
+
+
 def _extract_source_archive(archive: Path, repo: Path) -> bool:
-    """把源码 zip 解压为 ``repo``（去掉压缩包顶层目录），返回是否含转换脚本。"""
+    """把源码 zip 解压为 ``repo``（兼容带顶层目录与扁平打包），返回是否含转换脚本。"""
     staging = repo.parent / f".{repo.name}.extract"
     shutil.rmtree(staging, ignore_errors=True)
     try:
         staging.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive) as bundle:
             bundle.extractall(staging)
-        roots = [item for item in staging.iterdir() if item.is_dir()]
-        if len(roots) != 1:
-            return False
-        shutil.rmtree(repo, ignore_errors=True)
-        roots[0].replace(repo)
+        entries = list(staging.iterdir())
+        roots = [item for item in entries if item.is_dir()]
+        if len(roots) == 1 and len(entries) == 1:
+            shutil.rmtree(repo, ignore_errors=True)
+            roots[0].replace(repo)
+        else:
+            shutil.rmtree(repo, ignore_errors=True)
+            repo.mkdir(parents=True)
+            for item in entries:
+                item.replace(repo / item.name)
         return (repo / CONVERT_SCRIPT).is_file()
     except (OSError, zipfile.BadZipFile):
         return False
@@ -1274,11 +1300,12 @@ def ensure_convert_script(
     opener: Opener | None = None,
 ) -> Path:
     """定位转换脚本：显式 ``--script`` → ``FCMD_CONVERT_SCRIPT`` → 本地源码 →
-    源码包下载 → 浅克隆。
+    引擎目录已有 ``llama.cpp*.zip`` → 源码包下载 → 浅克隆。
 
     现代 llama.cpp 的 ``convert_hf_to_gguf.py`` 依赖仓库内的 ``conversion`` 包与
     ``gguf-py``，因此不能单独下载脚本，必须保留完整源码目录；官方 release 引擎
-    包只有二进制，首次转换会自动获取与引擎 tag 匹配的源码。
+    包只有二进制，首次转换会自动获取与引擎 tag 匹配的源码。若引擎目录（或引擎
+    根目录）内已放好源码 zip，则校验后直接解压复用，不联网也不 clone。
     """
     raw = script or (
         Path(os.environ["FCMD_CONVERT_SCRIPT"]).expanduser() if os.environ.get("FCMD_CONVERT_SCRIPT") else None
@@ -1298,6 +1325,9 @@ def ensure_convert_script(
     ref = resolved if _BUILD_TAG_RE.fullmatch(resolved) else "master"
     repo = cached.parent
     repo.parent.mkdir(parents=True, exist_ok=True)
+    for archive in _local_source_archives(ref, repo):
+        if _source_archive_ready(archive) and _extract_source_archive(archive, repo):
+            return cached
     if _download_convert_source(ref, repo, opener):
         return cached
 
