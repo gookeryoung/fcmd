@@ -65,8 +65,8 @@ class ServeWindow:
         self._ttk = ttk
         self.root = tk.Tk()
         self.root.title("推理服务管理")
-        self.root.geometry("900x820")
-        self.root.minsize(760, 700)
+        self.root.geometry("880x640")
+        self.root.minsize(780, 520)
 
         self._models: list[ModelEntry] = []
         self._selected_model: Path | None = None
@@ -118,31 +118,31 @@ class ServeWindow:
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=12)
+        outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
-        self._build_params(outer)
-        self._build_models(outer)
-        self._build_env(outer)
-        self._build_metrics(outer)
+        self._notebook = ttk.Notebook(outer)
+        self._notebook.pack(fill="both", expand=True)
+        start_page = ttk.Frame(self._notebook, padding=10)
+        run_page = ttk.Frame(self._notebook, padding=10)
+        self._notebook.add(start_page, text="启动配置")
+        self._notebook.add(run_page, text="运行监控")
+        self._build_params(start_page)
+        self._build_models(start_page)
+        self._build_env(start_page)
+        self._build_metrics(run_page)
+        self._build_log(run_page)
         self._build_actions(outer)
-        self._build_log(outer)
         ttk.Label(outer, textvariable=self._status_var).pack(fill="x", pady=(6, 0))
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
-    def _build_params(self, outer: Any) -> None:
+    def _build_params(self, parent: Any) -> None:
         ttk = self._ttk
-        params = ttk.LabelFrame(outer, text="启动参数", padding=8)
+        params = ttk.LabelFrame(parent, text="启动参数", padding=8)
         params.pack(fill="x")
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
-
-        def add_row(row: int, label: str, widget: Any, right_label: str, right_widget: Any) -> None:
-            ttk.Label(params, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
-            widget.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=3)
-            ttk.Label(params, text=right_label).grid(row=row, column=2, sticky="w", padx=(0, 6), pady=3)
-            right_widget.grid(row=row, column=3, sticky="ew", pady=3)
-
-        add_row(
+        self._pair_row(
+            params,
             0,
             "服务名",
             ttk.Entry(params, textvariable=self._name_var),
@@ -154,45 +154,97 @@ class ServeWindow:
                 state="readonly",
             ),
         )
-        add_row(
+        self._pair_row(
+            params,
             1,
             "监听地址",
             ttk.Entry(params, textvariable=self._host_var),
             "端口",
             ttk.Entry(params, textvariable=self._port_var),
         )
-        add_row(
+        self._pair_row(
+            params,
             2,
-            "上下文（留空=档位）",
-            ttk.Entry(params, textvariable=self._ctx_var),
-            "KV（留空=档位）",
-            ttk.Combobox(params, textvariable=self._kv_var, values=("", *KV_SCALE), state="readonly"),
-        )
-        add_row(
-            3,
-            "ubatch（留空=档位）",
-            ttk.Entry(params, textvariable=self._ubatch_var),
             "线程数",
             ttk.Entry(params, textvariable=self._threads_var),
-        )
-        add_row(
-            4,
-            "模型别名",
-            ttk.Entry(params, textvariable=self._alias_var),
-            "API Key",
-            ttk.Entry(params, textvariable=self._api_key_var),
-        )
-        add_row(
-            5,
-            "等待就绪（秒）",
-            ttk.Entry(params, textvariable=self._wait_var),
             "",
             ttk.Label(params, text=""),
         )
 
-    def _build_models(self, outer: Any) -> None:
+        advanced, body = self._collapsible(parent, "高级参数（留空回落档位默认）", open_state=False)
+        advanced.pack(fill="x", pady=(8, 0))
+        body.columnconfigure(1, weight=1)
+        body.columnconfigure(3, weight=1)
+        self._pair_row(
+            body,
+            0,
+            "上下文",
+            ttk.Entry(body, textvariable=self._ctx_var),
+            "KV",
+            ttk.Combobox(body, textvariable=self._kv_var, values=("", *KV_SCALE), state="readonly"),
+        )
+        self._pair_row(
+            body,
+            1,
+            "ubatch",
+            ttk.Entry(body, textvariable=self._ubatch_var),
+            "模型别名",
+            ttk.Entry(body, textvariable=self._alias_var),
+        )
+        self._pair_row(
+            body,
+            2,
+            "API Key",
+            ttk.Entry(body, textvariable=self._api_key_var),
+            "等待就绪（秒）",
+            ttk.Entry(body, textvariable=self._wait_var),
+        )
+
+    def _pair_row(  # noqa: PLR0913, PLR0917
+        self,
+        target: Any,
+        row: int,
+        label: str,
+        widget: Any,
+        right_label: str,
+        right_widget: Any,
+    ) -> None:
+        """在目标 Frame 的第 ``row`` 行放置两组“标签 + 输入控件”。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="已配置模型（llmenv 登记的模型目录）", padding=8)
+        ttk.Label(target, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
+        widget.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=3)
+        if right_label:
+            ttk.Label(target, text=right_label).grid(row=row, column=2, sticky="w", padx=(0, 6), pady=3)
+        right_widget.grid(row=row, column=3, sticky="ew", pady=3)
+
+    def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
+        """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
+        ttk = self._ttk
+        container = ttk.Frame(parent)
+        header = ttk.Frame(container)
+        header.pack(fill="x")
+        body = ttk.Frame(container, padding=(6, 4, 0, 0))
+        state = {"open": open_state}
+
+        def render() -> None:
+            if state["open"]:
+                body.pack(fill="x")
+            else:
+                body.pack_forget()
+            button.configure(text=("▼ " if state["open"] else "▶ ") + title)
+
+        def flip() -> None:
+            state["open"] = not state["open"]
+            render()
+
+        button = ttk.Button(header, text="", style="Toolbutton", command=flip)
+        button.pack(fill="x", anchor="w")
+        render()
+        return container, body
+
+    def _build_models(self, parent: Any) -> None:
+        ttk = self._ttk
+        box = ttk.LabelFrame(parent, text="已配置模型（llmenv 登记的模型目录）", padding=8)
         box.pack(fill="both", expand=True, pady=(8, 0))
 
         tree_frame = ttk.Frame(box)
@@ -202,14 +254,14 @@ class ServeWindow:
             columns=("model", "size", "profiles"),
             show="headings",
             selectmode="browse",
-            height=6,
+            height=7,
         )
         self._tree.heading("model", text="模型")
         self._tree.heading("size", text="大小")
         self._tree.heading("profiles", text="匹配档位")
-        self._tree.column("model", width=460, anchor="w")
-        self._tree.column("size", width=100, anchor="e", stretch=False)
-        self._tree.column("profiles", width=160, anchor="w", stretch=False)
+        self._tree.column("model", width=320, anchor="w")
+        self._tree.column("size", width=90, anchor="e", stretch=False)
+        self._tree.column("profiles", width=140, anchor="w", stretch=False)
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
         self._tree.pack(side="left", fill="both", expand=True)
@@ -228,23 +280,23 @@ class ServeWindow:
         self._clear_btn = ttk.Button(row, text="清除选择", command=self._clear_selection)
         self._clear_btn.pack(side="left", padx=(6, 0))
 
-    def _build_env(self, outer: Any) -> None:
+    def _build_env(self, parent: Any) -> None:
         tk = self._tk
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="环境信息", padding=8)
+        box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU）", open_state=False)
         box.pack(fill="x", pady=(8, 0))
-        box.columnconfigure(1, weight=1)
+        body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"))):
-            ttk.Label(box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
             var = tk.StringVar(value="检测中…")
-            ttk.Label(box, textvariable=var, wraplength=700, justify="left").grid(row=row, column=1, sticky="w")
+            ttk.Label(body, textvariable=var, wraplength=760, justify="left").grid(row=row, column=1, sticky="w")
             self._info_vars[key] = var
 
-    def _build_metrics(self, outer: Any) -> None:
+    def _build_metrics(self, parent: Any) -> None:
         """实时性能面板：显示 /metrics 计算的 token/s 与请求队列状态。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="实时性能（服务运行中每 1s 采样 /metrics）", padding=8)
-        box.pack(fill="x", pady=(8, 0))
+        box = ttk.LabelFrame(parent, text="实时性能（服务运行中每 1s 采样 /metrics）", padding=8)
+        box.pack(fill="x")
         for column in range(4):
             box.columnconfigure(column, weight=1)
         items = (
@@ -283,14 +335,14 @@ class ServeWindow:
         self._progress = ttk.Progressbar(actions, mode="indeterminate", length=200)
         self._progress.pack(side="right")
 
-    def _build_log(self, outer: Any) -> None:
+    def _build_log(self, parent: Any) -> None:
         tk = self._tk
         ttk = self._ttk
-        log_frame = ttk.LabelFrame(outer, text="输出日志", padding=6)
+        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=6)
         log_frame.pack(fill="both", expand=True, pady=(8, 0))
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
-        self._log_text = tk.Text(log_frame, wrap="none", state="disabled", yscrollcommand=scrollbar.set, height=12)
+        self._log_text = tk.Text(log_frame, wrap="none", state="disabled", yscrollcommand=scrollbar.set, height=10)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
 
@@ -512,6 +564,7 @@ class ServeWindow:
 
     def _begin_task(self, target: Any, args: tuple[Any, ...]) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
+        self._notebook.select(1)
         self._messages = queue.Queue()
         self._thread = threading.Thread(target=target, args=args, daemon=True)
         self._set_busy(True)
@@ -605,6 +658,7 @@ class ServeWindow:
             self._stop_monitor("服务未运行")
 
     def _show_logs(self) -> None:
+        self._notebook.select(1)
         try:
             name = self._model_name()
             content = llmserve.read_log(name, 50)
@@ -644,7 +698,11 @@ class ServeWindow:
         """停止采样线程并更新状态（重复调用安全）。"""
         if self._monitor_stop is not None:
             self._monitor_stop.set()
+        thread = self._monitor_thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1.5)
         self._monitor_stop = None
+        self._monitor_thread = None
         self._monitor_state = None
         self._monitor_seq += 1
         self._metric_vars["monitor"].set(reason)
