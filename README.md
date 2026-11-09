@@ -514,14 +514,14 @@ src/fcmd/
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
   tools/         # Python 实现的工具模块（自动发现）
-    archive/ calc/ dev/ media/ net/ ui/
+    archive/ calc/ dev/ media/ net/ system/
   dsl/           # TOML 命令定义与 action/compute 原语
     actions/     #   内建动作（文件、文本、媒体、系统、加密等）
   commands/      # 出厂 DSL 命令定义（*.toml）
   console.py     # rich 控制台薄封装
 ```
 
-新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。
+新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。目录按功能域划分；图形界面版命名为 `<工具名>w.py` 并放在其核心逻辑所在域（如 `llm/llmconvertw.py`、`media/img2icow.py`）。
 
 公共 API（`import fcmd as fx`）名称保持稳定；原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径已统一收敛到 `fcmd.core.*`，不保留兼容 shim。
 

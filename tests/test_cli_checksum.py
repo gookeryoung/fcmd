@@ -1,6 +1,6 @@
 """checksum 工具测试。
 
-验证 ``fcmd.tools.ui.checksum`` 模块：
+验证 ``fcmd.tools.system.checksum`` 模块：
 - 工具注册
 - 算法规范化 / 字符串与文件摘要计算
 - 期望值比较与结果文本生成
@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.ui import checksum
-from fcmd.tools.ui.checksum import (
+from fcmd.tools.system import checksum
+from fcmd.tools.system.checksum import (
     ALGORITHMS,
     ChecksumSettings,
     calculate_file_checksum,

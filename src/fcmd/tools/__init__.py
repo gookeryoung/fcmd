@@ -1,6 +1,6 @@
 """fcmd.tools —— Python 实现的工具模块集合。
 
-领域子包（``archive``/``calc``/``dev``/``llm``/``media``/``net``/``ui``）内的模块即工具，
+领域子包（``archive``/``calc``/``dev``/``llm``/``media``/``net``/``system``）内的模块即工具，
 由 :mod:`fcmd.cli._discovery` 用 ``pkgutil.iter_modules`` 扫描并按
 ``@fx.tool`` 注册为顶层命令（工具名 = 模块名，调用方式 ``fcmd <工具名>``）。
 

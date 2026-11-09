@@ -1,6 +1,6 @@
 """alarmclock 工具测试。
 
-验证 ``fcmd.tools.ui.alarmclock`` 模块：
+验证 ``fcmd.tools.system.alarmclock`` 模块：
 - 工具注册
 - 时间解析 / 下次触发时刻 / 剩余时长格式化
 - ``AlarmState`` 设定、取消、到点判定与重复顺延
@@ -18,8 +18,8 @@ from typing import Any
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.ui import alarmclock
-from fcmd.tools.ui.alarmclock import (
+from fcmd.tools.system import alarmclock
+from fcmd.tools.system.alarmclock import (
     DIGITAL_BORDER_COLORS,
     AlarmSettings,
     AlarmState,

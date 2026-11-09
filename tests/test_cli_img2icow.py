@@ -1,6 +1,6 @@
 """img2icow 工具测试。
 
-验证 ``fcmd.tools.ui.img2icow`` 模块：
+验证 ``fcmd.tools.media.img2icow`` 模块：
 - 工具注册
 - 尺寸文本解析 / 质量档位规范化
 - 设置文件读写与异常回退
@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.ui import img2icow
-from fcmd.tools.ui.img2icow import (
+from fcmd.tools.media import img2icow
+from fcmd.tools.media.img2icow import (
     DEFAULT_QUALITY,
     DEFAULT_SIZES_TEXT,
     Img2IcoSettings,
