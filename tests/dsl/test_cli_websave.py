@@ -1,6 +1,6 @@
 """websave 工具测试。
 
-验证 ``fcmd.dsl.actions.net`` 模块：
+验证 ``fcmd.tools.net.netbase`` 模块：
 - 工具注册（单命令工具，无子命令）
 - 同源判断与相关链接过滤（广告/静态资源/跨域）
 - 链接提取与页面保存
@@ -18,7 +18,7 @@ from urllib.error import HTTPError
 import pytest
 
 import fcmd as fx
-import fcmd.dsl.actions.net
+import fcmd.tools.net.netbase
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
@@ -46,7 +46,7 @@ class TestHelperFunctions:
 
     def test_is_same_origin(self) -> None:
         """is_same_origin 正确判断同源。"""
-        from fcmd.dsl.actions.net import is_same_origin
+        from fcmd.tools.net.netbase import is_same_origin
 
         assert is_same_origin("https://example.com", "https://example.com/page")
         assert not is_same_origin("https://example.com", "https://other.com")
@@ -54,7 +54,7 @@ class TestHelperFunctions:
 
     def test_is_relevant_url(self) -> None:
         """is_relevant_url 过滤广告、静态资源与跨域链接。"""
-        from fcmd.dsl.actions.net import is_relevant_url
+        from fcmd.tools.net.netbase import is_relevant_url
 
         base = "https://example.com"
         assert is_relevant_url(base, "https://example.com/about")
@@ -64,7 +64,7 @@ class TestHelperFunctions:
 
     def test_extract_links(self) -> None:
         """extract_links 提取绝对链接并跳过锚点/邮件/电话链接。"""
-        from fcmd.dsl.actions.net import extract_links
+        from fcmd.tools.net.netbase import extract_links
 
         html = """
         <a href="/page1">Page 1</a>
@@ -78,7 +78,7 @@ class TestHelperFunctions:
 
     def test_save_page(self, tmp_path: Path) -> None:
         """save_page 按 URL 路径映射为本地 HTML 文件。"""
-        from fcmd.dsl.actions.net import save_page
+        from fcmd.tools.net.netbase import save_page
 
         save_page("https://example.com", "<h1>root</h1>", tmp_path)
         assert (tmp_path / "index.html").read_text(encoding="utf-8") == "<h1>root</h1>"
@@ -100,14 +100,14 @@ class TestWebsave:
     def mock_http_get(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         """模拟 http_get 函数。"""
         mock = MagicMock()
-        monkeypatch.setattr(fcmd.dsl.actions.net, "http_get", mock)
+        monkeypatch.setattr(fcmd.tools.net.netbase, "http_get", mock)
         return mock
 
     def test_save_website_basic(
         self, tmp_path: Path, mock_http_get: MagicMock, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """深度 1 仅保存主页，广告链接不爬取。"""
-        from fcmd.dsl.actions.net import save_website
+        from fcmd.tools.net.netbase import save_website
 
         mock_http_get.return_value = """
         <html><body>
@@ -124,7 +124,7 @@ class TestWebsave:
 
     def test_save_website_with_depth(self, tmp_path: Path, mock_http_get: MagicMock) -> None:
         """深度 2 时爬取同源子页面。"""
-        from fcmd.dsl.actions.net import save_website
+        from fcmd.tools.net.netbase import save_website
 
         def fake_get(url: str, timeout: int = 30) -> str:
             if url == "https://example.com":
@@ -142,7 +142,7 @@ class TestWebsave:
 
     def test_save_website_dedup(self, tmp_path: Path, mock_http_get: MagicMock) -> None:
         """同一子页面被多个父页面引用时只爬取一次。"""
-        from fcmd.dsl.actions.net import save_website
+        from fcmd.tools.net.netbase import save_website
 
         pages = {
             "https://example.com": '<a href="/a">A</a><a href="/b">B</a>',
@@ -161,7 +161,7 @@ class TestWebsave:
         self, tmp_path: Path, mock_http_get: MagicMock, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """请求失败时打印警告并继续。"""
-        from fcmd.dsl.actions.net import save_website
+        from fcmd.tools.net.netbase import save_website
 
         mock_http_get.side_effect = HTTPError("https://example.com", 404, "Not Found", Message(), None)
         save_website("https://example.com", str(tmp_path), depth=1)
@@ -188,7 +188,7 @@ class TestRewrite:
 
     def test_rewrite_html_keeps_query(self, tmp_path: Path) -> None:
         """JS 缓存规避链接（``style.css?time=``）改写后保留查询串。"""
-        from fcmd.dsl.actions.net import rewrite_html
+        from fcmd.tools.net.netbase import rewrite_html
 
         html = (
             'document.write(\'<link rel="stylesheet" type="text/css" '
@@ -202,7 +202,7 @@ class TestRewrite:
 
     def test_rewrite_css_urls(self, tmp_path: Path) -> None:
         """CSS ``url()`` 引用改写为本地相对路径。"""
-        from fcmd.dsl.actions.net import rewrite_css
+        from fcmd.tools.net.netbase import rewrite_css
 
         css = (
             '@import url("base.css");\n'
@@ -227,19 +227,19 @@ class TestDownloadAssets:
     def mock_http_get(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         """模拟 http_get 函数。"""
         mock = MagicMock()
-        monkeypatch.setattr(fcmd.dsl.actions.net, "http_get", mock)
+        monkeypatch.setattr(fcmd.tools.net.netbase, "http_get", mock)
         return mock
 
     @pytest.fixture
     def mock_download_asset(self, monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         """模拟 download_asset 函数。"""
         mock = MagicMock()
-        monkeypatch.setattr(fcmd.dsl.actions.net, "download_asset", mock)
+        monkeypatch.setattr(fcmd.tools.net.netbase, "download_asset", mock)
         return mock
 
     def test_css_recursive_download(self, tmp_path: Path, mock_download_asset: MagicMock) -> None:
         """CSS 内 ``url()`` 引用的图片一并下载，且 CSS 改写为本地引用。"""
-        from fcmd.dsl.actions.net import download_assets_recursive
+        from fcmd.tools.net.netbase import download_assets_recursive
 
         def fake_download(url: str, timeout: int = 30) -> bytes:
             if url == "https://example.com/css/style.css":
@@ -260,7 +260,7 @@ class TestDownloadAssets:
 
     def test_asset_failure_marked(self, tmp_path: Path, mock_download_asset: MagicMock) -> None:
         """下载失败以 ``None`` 标记缓存，不重复尝试。"""
-        from fcmd.dsl.actions.net import download_assets_recursive
+        from fcmd.tools.net.netbase import download_assets_recursive
 
         mock_download_asset.side_effect = HTTPError("https://example.com/x.png", 404, "Not Found", Message(), None)
         cache: dict[str, Path | None] = {}
@@ -273,7 +273,7 @@ class TestDownloadAssets:
         self, tmp_path: Path, mock_http_get: MagicMock, mock_download_asset: MagicMock
     ) -> None:
         """页面中的图片下载到 assets 并改写为本地路径。"""
-        from fcmd.dsl.actions.net import save_website
+        from fcmd.tools.net.netbase import save_website
 
         mock_http_get.return_value = (
             '<html><body><img src="/logo.png" alt="logo"><a href="/subpage">Sub</a></body></html>'
@@ -290,7 +290,7 @@ class TestDownloadAssets:
         self, tmp_path: Path, mock_http_get: MagicMock, mock_download_asset: MagicMock
     ) -> None:
         """下载失败的资源保持原始引用，不写入本地映射。"""
-        from fcmd.dsl.actions.net import save_website
+        from fcmd.tools.net.netbase import save_website
 
         mock_http_get.return_value = '<img src="/broken.png">'
         mock_download_asset.side_effect = HTTPError("https://example.com/broken.png", 404, "Not Found", Message(), None)
@@ -308,7 +308,7 @@ class TestUrlMapping:
 
     def test_url_to_file_path_with_query(self, tmp_path: Path) -> None:
         """查询串被清洗为文件名片段并保留扩展名。"""
-        from fcmd.dsl.actions.net import url_to_file_path
+        from fcmd.tools.net.netbase import url_to_file_path
 
         page = url_to_file_path("https://example.com/a.html?x=1&y=2", tmp_path)
         assert page == tmp_path / "a_x_1_y_2.html"
@@ -318,7 +318,7 @@ class TestUrlMapping:
 
     def test_asset_to_file_path(self, tmp_path: Path) -> None:
         """资源路径按主机分目录；空路径落为 index，查询串被清洗。"""
-        from fcmd.dsl.actions.net import asset_to_file_path
+        from fcmd.tools.net.netbase import asset_to_file_path
 
         assert asset_to_file_path("https://cdn.example.com:8443/", tmp_path) == (
             tmp_path / "assets" / "cdn.example.com_8443" / "index"
@@ -330,7 +330,7 @@ class TestCollectAssetUrls:
     """``collect_asset_urls`` 过滤与去重测试。"""
 
     def test_filters_ads_cross_origin_and_inline(self) -> None:
-        from fcmd.dsl.actions.net import collect_asset_urls
+        from fcmd.tools.net.netbase import collect_asset_urls
 
         html = """
         <img src="">
@@ -363,7 +363,7 @@ class TestDownloadAsset:
     """``download_asset`` 直接下载测试。"""
 
     def test_download_asset_reads_bytes(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.dsl.actions.net import download_asset
+        from fcmd.tools.net.netbase import download_asset
 
         class _Response:
             def __enter__(self) -> _Response:
@@ -386,7 +386,7 @@ class TestRewriteBranches:
     """``rewrite_html`` / ``rewrite_css`` 的边界分支。"""
 
     def test_rewrite_html_link_and_background_branches(self, tmp_path: Path) -> None:
-        from fcmd.dsl.actions.net import rewrite_html
+        from fcmd.tools.net.netbase import rewrite_html
 
         html = (
             '<a href="mailto:x@y.com">m</a>'
@@ -420,7 +420,7 @@ class TestRewriteBranches:
         assert "url(/nope.png)" in rewritten
 
     def test_rewrite_css_skips_unknown_and_keeps_query(self, tmp_path: Path) -> None:
-        from fcmd.dsl.actions.net import rewrite_css
+        from fcmd.tools.net.netbase import rewrite_css
 
         css = (
             ".a { background: url(/missing.png); }\n"
@@ -440,7 +440,7 @@ class TestDownloadAssetsRecursiveBranches:
     """CSS 递归下载的去重与内联过滤。"""
 
     def test_dedup_cached_and_inline_refs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.dsl.actions.net import download_assets_recursive
+        from fcmd.tools.net.netbase import download_assets_recursive
 
         calls: list[str] = []
 
@@ -459,7 +459,7 @@ class TestDownloadAssetsRecursiveBranches:
                 return css.encode("utf-8")
             return b"PNG"
 
-        monkeypatch.setattr("fcmd.dsl.actions.net.download_asset", _fake_download)
+        monkeypatch.setattr("fcmd.tools.net.netbase.download_asset", _fake_download)
 
         cache: dict[str, Path | None] = {}
         download_assets_recursive(["https://example.com/a.css"], tmp_path, cache)
