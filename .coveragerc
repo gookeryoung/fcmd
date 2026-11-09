@@ -2,8 +2,7 @@
 branch = true
 omit =
     tests/*
-    # Tk 窗口层依赖图形环境，逻辑复用 llmqnt，不纳入单元覆盖
-    */tools/llm/llmqntw.py
+    */tools/llm/llm*w.py # Tk 窗口应用不纳入单元覆盖
 source = fcmd
 
 [report]
