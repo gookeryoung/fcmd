@@ -2,7 +2,7 @@
 
 基于 :mod:`fcmd.tools.llm.llmserve` 的核心逻辑，提供启动参数的图形化配置、
 已配置模型列表（后台扫描 ``llmenv`` 登记的模型目录，并按文件名内置能力标签
-与最佳实践提示）、启动计划预览、后台启动 / 停止、状态与日志查看、一键在默认浏览器
+与最佳实践提示）、启动计划预览、后台启动 / 停止（一次停止全部已登记服务）、状态与日志查看、一键在默认浏览器
 打开服务地址，以及运行监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
 系统负载（CPU / 内存 / 交换 / GPU）在窗口打开后即持续采样，服务未启动时同样可见。
 模型列表按整卡与当前可用显存双重评估：整卡放不下标红并加删除线为“硬件不足”，仅当前余量不足标橙为“需释放显存”，
@@ -835,7 +835,7 @@ class ServeWindow:
         self._preview_btn.pack(side="left")
         self._start_btn = ttk.Button(actions, text="启动服务", command=self._start)
         self._start_btn.pack(side="left", padx=(6, 0))
-        self._stop_btn = ttk.Button(actions, text="停止服务", command=self._stop)
+        self._stop_btn = ttk.Button(actions, text="停止全部服务", command=self._stop)
         self._stop_btn.pack(side="left", padx=(6, 0))
         self._status_btn = ttk.Button(actions, text="刷新状态", command=self._refresh_status)
         self._status_btn.pack(side="left", padx=(6, 0))
@@ -1339,24 +1339,23 @@ class ServeWindow:
         self._begin_task(self._start_work, (plan, wait_s))
 
     def _stop(self) -> None:
+        """停止所有已登记的服务，无需先选择服务名。"""
         if self._busy:
             self._log("已有任务正在进行，请等待完成")
             return
         try:
-            name = self._model_name()
+            names = tuple(state.name for state in llmenv.list_states())
         except ServeError as exc:
-            self._messagebox.showerror("参数错误", str(exc))
+            self._messagebox.showerror("停止失败", str(exc))
             return
-        if llmenv.load_state(name, missing_ok=True) is None:
-            alive = [s.name for s in llmenv.list_states() if llmserve.process_alive(s.pid, s.create_time)]
-            hint = f"；当前运行中: {', '.join(alive)}，请在下拉框中选择" if alive else ""
-            self._status_var.set(f"{name} · 未启动")
-            self._log(f"服务 {name} 未启动，无需停止{hint}")
+        if not names:
+            self._status_var.set("无已登记服务")
+            self._log("没有已登记的服务，无需停止")
             self._refresh_service_names()
             self._start_system_monitor()
             return
         self._stop_monitor("停止中…")
-        self._begin_task(self._stop_work, (name,))
+        self._begin_task(self._stop_work, (names,))
 
     def _begin_task(self, target: Any, args: tuple[Any, ...]) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
@@ -1380,18 +1379,20 @@ class ServeWindow:
         finally:
             status.put(("done", None))
 
-    def _stop_work(self, name: str) -> None:
+    def _stop_work(self, names: tuple[str, ...]) -> None:
+        """后台线程：依次停止所有服务，收集成功结果与失败原因。"""
         assert self._messages is not None
         status = self._messages
-        status.put(("log", f"正在停止服务 {name}…"))
-        try:
-            result = llmserve.stop_server(name)
-        except ServeError as exc:
-            status.put(("error", f"停止失败: {exc}"))
-        else:
-            status.put(("stopped", result))
-        finally:
-            status.put(("done", None))
+        results: list[StopResult] = []
+        failures: list[str] = []
+        for name in names:
+            status.put(("log", f"正在停止服务 {name}…"))
+            try:
+                results.append(llmserve.stop_server(name))
+            except ServeError as exc:
+                failures.append(f"{name}: {exc}")
+        status.put(("stopped", (results, failures)))
+        status.put(("done", None))
 
     def _poll_task(self) -> None:
         """主线程轮询队列，刷新日志与状态。"""
@@ -1407,7 +1408,8 @@ class ServeWindow:
                 elif kind == "state":
                     self._show_state(cast(ServeState, payload))
                 elif kind == "stopped":
-                    self._show_stopped(cast(StopResult, payload))
+                    results, failures = cast(tuple[list[StopResult], list[str]], payload)
+                    self._show_stopped(results, failures)
                 elif kind == "done":
                     self._set_busy(False)
                     self._start_system_monitor()
@@ -1428,16 +1430,26 @@ class ServeWindow:
         self._refresh_loaded()
         self._messagebox.showinfo("启动成功", f"服务 {state.name} 已就绪\n{state.base_url}")
 
-    def _show_stopped(self, result: StopResult) -> None:
+    def _show_stopped(self, results: list[StopResult], failures: list[str]) -> None:
+        """汇总本次“停止所有服务”的结果并刷新界面状态。"""
         self._stop_monitor("已停止")
         self._refresh_loaded()
         self._refresh_service_names()
-        if result.was_running:
-            self._status_var.set(f"{result.state.name} · 已停止")
-            self._log(f"已停止服务 {result.state.name}（pid={result.state.pid}）")
+        stopped = [result.state.name for result in results if result.was_running]
+        cleaned = [result.state.name for result in results if not result.was_running]
+        for name in stopped:
+            self._log(f"已停止服务 {name}")
+        if cleaned:
+            self._log(f"服务未在运行，已清理残留状态: {', '.join(cleaned)}")
+        for failure in failures:
+            self._log(f"停止失败: {failure}")
+        if failures:
+            self._status_var.set(f"停止完成 · {len(stopped)} 个已停止 · {len(failures)} 个失败")
+            self._messagebox.showerror("停止失败", "\n".join(failures))
+        elif stopped:
+            self._status_var.set(f"已停止 {len(stopped)} 个服务")
         else:
-            self._status_var.set(f"{result.state.name} · 未运行（已清理状态）")
-            self._log(f"服务 {result.state.name} 未在运行，已清理残留状态")
+            self._status_var.set("无运行中的服务（已清理残留状态）")
         self._start_system_monitor()
 
     def _refresh_status(self) -> None:
