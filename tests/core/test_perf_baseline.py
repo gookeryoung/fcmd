@@ -103,7 +103,7 @@ def _measure(script: str, runs: int = _RUNS, warmup: int = _WARMUP) -> list[floa
             capture_output=True,
             text=True,
             check=True,
-            cwd=str(Path(__file__).resolve().parent.parent),
+            cwd=str(Path(__file__).resolve().parents[2]),
         )
         # 子进程可能向 stdout 打印业务输出（如 run_tool 的工具日志），
         # 脚本末尾 print 的耗时始终在最后一行，取末行解析。

@@ -61,7 +61,7 @@ def _load_sshcopyid_decl():
     """直接从 toml 文件解析出 CommandDecl（绕开 _discovery 的缓存路径）。"""
     import tomllib
 
-    toml_path = Path(__file__).resolve().parents[1] / "src" / "fcmd" / "commands" / "sshcopyid.toml"
+    toml_path = Path(__file__).resolve().parents[2] / "src" / "fcmd" / "commands" / "sshcopyid.toml"
     table = tomllib.loads(toml_path.read_text(encoding="utf-8"))
     return parse_command_table("sshcopyid", table["commands"]["sshcopyid"])
 

@@ -472,7 +472,7 @@ class TestEntryNames:
 
     def test_project_scripts_expose_canonical_and_short_names(self) -> None:
         """pyproject 同时提供规范名与短名 console script（旧入口零破坏）。"""
-        root = Path(__file__).resolve().parents[1]
+        root = Path(__file__).resolve().parents[2]
         data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         scripts = data["project"]["scripts"]
         for name in ("gittool", "imagetool", "jsontool", "piptool", "taskkill", "which"):
