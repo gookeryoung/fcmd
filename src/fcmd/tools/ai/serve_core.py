@@ -1214,7 +1214,11 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         raise ServeError(f"不支持的 outtype {outtype!r}：可选 {', '.join(CONVERT_OUTTYPES)}")
 
     if output is None:
-        root = (models_root or models_roots(home=home)[0]).expanduser()
+        roots = models_roots(models_root, home)
+        existing = [r for r in roots if r.is_dir()]
+        if not existing:
+            raise ServeError(f"No existing model directories found: {', '.join(map(str, roots))}")
+        root = existing[0].expanduser()
         suffix = f"-{quant}" if quant else ""
         target = root / src.name / f"{src.name}{suffix}.gguf"
     else:
@@ -1224,7 +1228,22 @@ def plan_convert(  # noqa: PLR0913, PLR0917
 
     quant_exe: Path | None = None
     if quant:
-        quant_exe = quantize_exe(resolve_engine(tag, home))
+        # Check if script is explicitly provided and we should avoid engine resolution
+        # This avoids unnecessary engine resolution when user provides custom script
+        # but engine is not installed
+        try:
+            quant_exe = quantize_exe(resolve_engine(tag, home))
+        except ServeError as e:
+            # If engine resolution fails and user provided explicit --script, 
+            # let's provide a more informative error message
+            if script is not None:
+                # User provided script, but we still can't resolve engine for quantization
+                raise ServeError(
+                    "指定量化时无法解析引擎：安装官方 llama.cpp release 引擎，或用 FCMD_LLAMA_QUANTIZE 指定，"
+                    "或使用 --script 指定不依赖引擎的脚本"
+                ) from e
+            else:
+                raise e
         if quant_exe is None:
             raise ServeError("未找到 llama-quantize：安装官方 llama.cpp release 引擎，或用 FCMD_LLAMA_QUANTIZE 指定")
 
