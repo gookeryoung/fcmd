@@ -1809,3 +1809,18 @@ def test_run_tool_summary_on_failure_multi_tasks(capsys: pytest.CaptureFixture[s
     captured = capsys.readouterr()
     assert "执行汇总" in captured.out
     assert "执行失败" in captured.out
+
+
+def test_action_resolver_registered_by_dsl() -> None:
+    from fcmd import dsl
+    from fcmd.core import hooks
+
+    assert hooks.resolve_action("writefile") is dsl.get_action("writefile")
+
+
+def test_resolve_action_requires_registered_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.core import hooks
+
+    monkeypatch.setattr(hooks, "_action_resolver", None)
+    with pytest.raises(RuntimeError, match="动作解析器未注册"):
+        hooks.resolve_action("writefile")

@@ -21,6 +21,7 @@
 from typing import Any
 
 from fcmd._lazyload import lazy_dir, lazy_getattr
+from fcmd.core.hooks import register_discovery_hook
 
 __version__ = "0.3.10"
 
@@ -109,6 +110,16 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
 
 # Strategy 是 Literal 类型别名，从执行引擎导入
 _LAZY_ATTRS["Strategy"] = ("fcmd.core.execution.executors", "Strategy")
+
+
+def _ensure_discovery() -> None:
+    """组合根接线：把工具发现实现注册给 core，避免 core→cli 反向依赖。"""
+    from fcmd.cli._discovery import ensure_tools_discovered
+
+    ensure_tools_discovered()
+
+
+register_discovery_hook(_ensure_discovery)
 
 
 def __getattr__(name: str) -> Any:

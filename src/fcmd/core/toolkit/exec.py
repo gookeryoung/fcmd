@@ -320,9 +320,9 @@ def _apply_compute(variables: dict[str, Any], spec: ToolSpec) -> None:
     action_name, as_name = compute
     if as_name in variables:
         return
-    from fcmd.dsl.actions import get_action  # 懒导入避免 apis → dsl 包级循环
+    from fcmd.core.hooks import resolve_action  # 经钩子反转 core → dsl 依赖
 
-    impl = get_action(action_name).func
+    impl = resolve_action(action_name).func
     kwargs = {pname: variables[pname] for pname in inspect.signature(impl).parameters if pname in variables}
     variables[as_name] = impl(**kwargs)
 
