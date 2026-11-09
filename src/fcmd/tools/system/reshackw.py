@@ -16,10 +16,7 @@
 
 from __future__ import annotations
 
-import json
-import os
 import queue
-import re
 import sys
 import threading
 from dataclasses import dataclass, field
@@ -29,6 +26,7 @@ from typing import Any, cast
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig
 from fcmd.tools.system.reshack import (
     RT_BITMAP,
     RT_ICON,
@@ -93,17 +91,13 @@ _ZOOM_STEP_DELAY_MS = 100
 
 _TEXT_RESOURCE_TYPES = frozenset({4, 5, 6, 9, 10, 11, 16, 17, 23, 24})
 
-_GEOMETRY_RE = re.compile(r"^\d+x\d+([+-]\d+[+-]\d+)?$")
-
 
 # ---------------------------------------------------------------------- #
 # 配置持久化
 # ---------------------------------------------------------------------- #
 def config_path() -> Path:
     """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/reshackw.json``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "ui" / "reshackw.json"
+    return _guiconfig.config_path("reshackw")
 
 
 @dataclass
@@ -115,11 +109,7 @@ class ReshackSettings:
     geometry: str | None = None
 
 
-def valid_geometry(text: str | None) -> str | None:
-    """校验 Tk geometry 字符串（``WxH`` 或 ``WxH+X+Y``），非法时返回 ``None``。"""
-    if text is not None and _GEOMETRY_RE.fullmatch(text):
-        return text
-    return None
+valid_geometry = _guiconfig.valid_geometry
 
 
 def add_recent_file(files: list[str], path: Path, limit: int = RECENT_LIMIT) -> list[str]:
@@ -131,12 +121,8 @@ def add_recent_file(files: list[str], path: Path, limit: int = RECENT_LIMIT) -> 
 
 def load_settings(path: Path | None = None) -> ReshackSettings:
     """读取设置文件；文件缺失、JSON 损坏或字段非法时逐项回退默认值。"""
-    file = path or config_path()
-    try:
-        raw = json.loads(file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ReshackSettings()
-    if not isinstance(raw, dict):
+    raw = _guiconfig.read_settings(path or config_path())
+    if raw is None:
         return ReshackSettings()
 
     settings = ReshackSettings()
@@ -154,17 +140,12 @@ def load_settings(path: Path | None = None) -> ReshackSettings:
 
 def save_settings(settings: ReshackSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略。"""
-    file = path or config_path()
     payload = {
         "file_path": settings.file_path,
         "recent_files": settings.recent_files,
         "geometry": settings.geometry,
     }
-    try:
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
+    _guiconfig.write_settings(payload, path or config_path())
 
 
 # ---------------------------------------------------------------------- #

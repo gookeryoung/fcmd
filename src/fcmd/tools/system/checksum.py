@@ -17,14 +17,12 @@ Blake2b / Blake2s，计算输入字符串或所选文件的十六进制摘要；
 from __future__ import annotations
 
 import hashlib
-import json
-import os
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig
 
 __all__ = [
     "ALGORITHMS",
@@ -60,17 +58,13 @@ MIN_HEIGHT = 440
 # 文件哈希分块大小（64 KB）
 CHUNK_SIZE = 64 * 1024
 
-_GEOMETRY_RE = re.compile(r"^\d+x\d+([+-]\d+[+-]\d+)?$")
-
 
 # ---------------------------------------------------------------------- #
 # 配置持久化
 # ---------------------------------------------------------------------- #
 def config_path() -> Path:
     """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/checksum.json``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "ui" / "checksum.json"
+    return _guiconfig.config_path("checksum")
 
 
 @dataclass
@@ -82,21 +76,13 @@ class ChecksumSettings:
     geometry: str | None = None
 
 
-def valid_geometry(text: str | None) -> str | None:
-    """校验 Tk geometry 字符串（``WxH`` 或 ``WxH+X+Y``），非法时返回 ``None``。"""
-    if text is not None and _GEOMETRY_RE.fullmatch(text):
-        return text
-    return None
+valid_geometry = _guiconfig.valid_geometry
 
 
 def load_settings(path: Path | None = None) -> ChecksumSettings:
     """读取设置文件；文件缺失、JSON 损坏或字段类型不符时回退默认值。"""
-    file = path or config_path()
-    try:
-        raw = json.loads(file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ChecksumSettings()
-    if not isinstance(raw, dict):
+    raw = _guiconfig.read_settings(path or config_path())
+    if raw is None:
         return ChecksumSettings()
 
     algorithm = raw.get("algorithm")
@@ -116,17 +102,12 @@ def load_settings(path: Path | None = None) -> ChecksumSettings:
 
 def save_settings(settings: ChecksumSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略（不影响窗口关闭）。"""
-    file = path or config_path()
     payload = {
         "algorithm": settings.algorithm,
         "compare": settings.compare,
         "geometry": settings.geometry,
     }
-    try:
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
+    _guiconfig.write_settings(payload, path or config_path())
 
 
 # ---------------------------------------------------------------------- #

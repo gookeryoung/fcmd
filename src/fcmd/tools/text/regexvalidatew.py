@@ -15,14 +15,12 @@
 
 from __future__ import annotations
 
-import json
-import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig
 from fcmd.tools.text.regexvalidate import (
     PatternValidationError,
     RegexValidator,
@@ -59,8 +57,6 @@ MIN_HEIGHT = 540
 MAX_HISTORY_ITEMS = 20
 HISTORY_DELAY_MS = 1000
 MONO_FONT = ("Consolas", 10)
-
-_GEOMETRY_RE = re.compile(r"^\d+x\d+([+-]\d+[+-]\d+)?$")
 
 
 @dataclass(frozen=True)
@@ -158,9 +154,7 @@ REGEX_HELP_TEXT = """常用元字符
 # ---------------------------------------------------------------------- #
 def config_path() -> Path:
     """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/regexvalidate.json``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "ui" / "regexvalidate.json"
+    return _guiconfig.config_path("regexvalidate")
 
 
 @dataclass(frozen=True)
@@ -214,11 +208,7 @@ class RegexValidateSettings:
     geometry: str | None = None
 
 
-def valid_geometry(text: str | None) -> str | None:
-    """校验 Tk geometry 字符串（``WxH`` 或 ``WxH+X+Y``），非法时返回 ``None``。"""
-    if text is not None and _GEOMETRY_RE.fullmatch(text):
-        return text
-    return None
+valid_geometry = _guiconfig.valid_geometry
 
 
 def history_label(index: int, entry: RegexHistoryEntry) -> str:
@@ -245,12 +235,8 @@ def push_history(
 
 def load_settings(path: Path | None = None) -> RegexValidateSettings:
     """读取设置文件；文件缺失、JSON 损坏或字段类型不符时逐项回退默认值。"""
-    file = path or config_path()
-    try:
-        raw = json.loads(file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return RegexValidateSettings()
-    if not isinstance(raw, dict):
+    raw = _guiconfig.read_settings(path or config_path())
+    if raw is None:
         return RegexValidateSettings()
 
     settings = RegexValidateSettings()
@@ -279,7 +265,6 @@ def load_settings(path: Path | None = None) -> RegexValidateSettings:
 
 def save_settings(settings: RegexValidateSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略（不影响窗口关闭）。"""
-    file = path or config_path()
     payload = {
         "pattern": settings.pattern,
         "test_string": settings.test_string,
@@ -289,11 +274,7 @@ def save_settings(settings: RegexValidateSettings, path: Path | None = None) -> 
         "history": [entry.to_dict() for entry in settings.history],
         "geometry": settings.geometry,
     }
-    try:
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
+    _guiconfig.write_settings(payload, path or config_path())
 
 
 # ---------------------------------------------------------------------- #

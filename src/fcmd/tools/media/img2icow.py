@@ -17,10 +17,7 @@
 from __future__ import annotations
 
 import contextlib
-import json
-import os
 import queue
-import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime
@@ -29,6 +26,7 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig
 
 __all__ = [
     "DEFAULT_SIZES_TEXT",
@@ -57,17 +55,13 @@ DEFAULT_GEOMETRY = "880x640+260+160"
 MIN_WIDTH = 760
 MIN_HEIGHT = 560
 
-_GEOMETRY_RE = re.compile(r"^\d+x\d+([+-]\d+[+-]\d+)?$")
-
 
 # ---------------------------------------------------------------------- #
 # 配置持久化
 # ---------------------------------------------------------------------- #
 def config_path() -> Path:
     """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/img2icow.json``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "ui" / "img2icow.json"
+    return _guiconfig.config_path("img2icow")
 
 
 @dataclass
@@ -81,11 +75,7 @@ class Img2IcoSettings:
     geometry: str | None = None
 
 
-def valid_geometry(text: str | None) -> str | None:
-    """校验 Tk geometry 字符串（``WxH`` 或 ``WxH+X+Y``），非法时返回 ``None``。"""
-    if text is not None and _GEOMETRY_RE.fullmatch(text):
-        return text
-    return None
+valid_geometry = _guiconfig.valid_geometry
 
 
 def parse_sizes_text(text: str) -> list[int]:
@@ -122,12 +112,8 @@ def normalize_quality(name: str) -> str:
 
 def load_settings(path: Path | None = None) -> Img2IcoSettings:
     """读取设置文件；文件缺失、JSON 损坏或字段非法时逐项回退默认值。"""
-    file = path or config_path()
-    try:
-        raw = json.loads(file.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return Img2IcoSettings()
-    if not isinstance(raw, dict):
+    raw = _guiconfig.read_settings(path or config_path())
+    if raw is None:
         return Img2IcoSettings()
 
     settings = Img2IcoSettings()
@@ -155,7 +141,6 @@ def load_settings(path: Path | None = None) -> Img2IcoSettings:
 
 def save_settings(settings: Img2IcoSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略（不影响窗口关闭）。"""
-    file = path or config_path()
     payload = {
         "input_path": settings.input_path,
         "output_path": settings.output_path,
@@ -163,11 +148,7 @@ def save_settings(settings: Img2IcoSettings, path: Path | None = None) -> None:
         "quality": settings.quality,
         "geometry": settings.geometry,
     }
-    try:
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        return
+    _guiconfig.write_settings(payload, path or config_path())
 
 
 # ---------------------------------------------------------------------- #
