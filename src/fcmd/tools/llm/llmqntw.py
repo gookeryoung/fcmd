@@ -1,9 +1,9 @@
 """llmqntw - GGUF 量化工具的 Tk 窗口版。
 
 基于 :mod:`fcmd.tools.llm.llmqnt` 的核心逻辑，提供文件选择、量化类型勾选、
-进度条与实时日志。窗口启动时扫描 ``llmenv`` 已配置的模型目录，可下拉选择
-输入模型，也可手动浏览文件；同时显示当前 llama.cpp 引擎、量化器与版本信息。
-窗口关闭后命令退出。
+进度条与实时日志。窗口启动时扫描 ``llmenv`` 已配置的模型目录，下拉框只列出
+未量化的 F16 / BF16 原始 GGUF（已量化文件不再作为输入），也可手动浏览文件；
+同时显示当前 llama.cpp 引擎、量化器与版本信息。窗口关闭后命令退出。
 
 示例
 ----
@@ -83,7 +83,7 @@ class QuantizeWindow:
 
         model_row = ttk.Frame(outer)
         model_row.pack(fill="x", pady=(8, 0))
-        ttk.Label(model_row, text="已配置模型").pack(side="left")
+        ttk.Label(model_row, text="已配置模型（未量化）").pack(side="left")
         self._model_box = ttk.Combobox(model_row, textvariable=self._model_var, state="disabled")
         self._model_box.pack(side="left", fill="x", expand=True, padx=8)
         self._model_box.bind("<<ComboboxSelected>>", self._on_model_selected)
@@ -152,12 +152,24 @@ class QuantizeWindow:
             self._choose(self._models[index].path)
 
     def _choose(self, path: Path) -> None:
+        if self._is_quantized(path):
+            self._messagebox.showwarning(
+                "已是量化版",
+                f"{path.name} 已包含量化标记，重复量化只会损失质量。\n请选择 F16 / BF16 等原始 GGUF 作为输入。",
+            )
+            return
         self.input_file = path
         self._file_var.set(str(path))
         self._sync_model_selection(path)
         self._mark_existing()
         self._clear_log()
         self._progress["value"] = 0
+
+    @staticmethod
+    def _is_quantized(path: Path) -> bool:
+        """文件名是否带量化标记（已是量化版，不再作为量化输入）。"""
+        name = path.name.lower()
+        return any(quant.lower() in name for quant in llmqnt.QUANT_TYPES)
 
     def _sync_model_selection(self, path: Path) -> None:
         """手动选文件后，若命中也同步下拉框显示。"""
@@ -231,14 +243,18 @@ class QuantizeWindow:
         self._apply_models(entries, info)
 
     def _apply_models(self, entries: list[ModelEntry], info: dict[str, str]) -> None:
-        self._models = entries
-        labels = [f"{entry.relative}  ({human_size(entry.size)})" for entry in entries]
+        usable = [entry for entry in entries if not self._is_quantized(entry.path)]
+        self._models = usable
+        labels = [f"{entry.relative}  ({human_size(entry.size)})" for entry in usable]
         self._model_box.configure(values=labels)
         if labels:
             self._model_var.set("")
             self._model_box.configure(state="disabled" if self._running else "readonly")
         else:
-            self._model_var.set("未发现已配置的 GGUF（用 fcmd llmenv add 登记模型目录）")
+            if entries:
+                self._model_var.set(f"已配置的 {len(entries)} 个模型均为量化版，请选择 F16 / BF16 原始 GGUF")
+            else:
+                self._model_var.set("未发现已配置的 GGUF（用 fcmd llmenv add 登记模型目录）")
             self._model_box.configure(state="disabled")
         for key, var in self._info_vars.items():
             var.set(info.get(key) or "-")
