@@ -1844,7 +1844,8 @@ def _file_version(dll: Path) -> tuple[int, int, int, int] | None:
     import ctypes
     from ctypes import wintypes
 
-    windll = getattr(ctypes, "windll", None)
+    # windll 仅 Windows 存在；标 Any 避免 Linux 下 pyrefly 把 getattr 默认值推成 NoneType
+    windll: Any = getattr(ctypes, "windll", None)
     if windll is None:
         return None
     result: tuple[int, int, int, int] | None = None
@@ -1906,7 +1907,8 @@ def doctor(
         checks.append(Check("推理引擎", "fail", str(exc)))
     else:
         checks.append(check_engine(engine, runner))
-        checks.append(_check_msvc_runtime(engine))
+        if os.name == "nt":
+            checks.append(_check_msvc_runtime(engine))
 
     profile = PROFILES[DEFAULT_PROFILE]
     try:
