@@ -19,6 +19,7 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guitheme
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmqnt
 from fcmd.tools.llm.llmbase import EngineInfo, ModelEntry, human_size
 
@@ -39,6 +40,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._messagebox = messagebox
         self._ttk = ttk
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title("GGUF 量化工具")
         self.root.geometry("680x660")
         self.root.minsize(560, 520)
@@ -394,7 +396,8 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
 
 def run_gui() -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = QuantizeWindow()
     except ImportError as exc:
