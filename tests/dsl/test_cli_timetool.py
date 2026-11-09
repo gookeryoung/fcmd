@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.dsl.actions.calc import (
+from fcmd.tools.calc.calcbase import (
     convert_timezone,
     format_time,
     from_unix,

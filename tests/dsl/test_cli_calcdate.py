@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.dsl.actions.calcdate import (
+from fcmd.tools.calc.calcdatebase import (
     add_days,
     compare_dates,
     count_workdays,

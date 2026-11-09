@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.dsl.actions.calc import (
+from fcmd.tools.calc.calcbase import (
     load_numbers,
     stat_mean,
     stat_median,

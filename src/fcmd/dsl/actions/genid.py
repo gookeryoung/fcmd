@@ -44,6 +44,6 @@ def _idtool_timestamp(fmt: str = "iso") -> None:
 @action("idtool_random", param_help={"length": "随机字符串长度（默认 16）"}, errors=(ValueError,))
 def _idtool_random(length: int = 16) -> None:
     """生成随机字母数字字符串。"""
-    from fcmd.dsl.actions.calc import generate_string  # 延迟导入：复用 randtool 原语
+    from fcmd.tools.calc.calcbase import generate_string  # 延迟导入：复用 randtool 原语
 
     print(generate_string(length))

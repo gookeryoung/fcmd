@@ -1,62 +1,15 @@
-"""日期计算 DSL 动作：calcdate（基于 datetime 标准库，无子进程调用）。"""
+"""日期计算 DSL 动作：calcdate。
+
+业务实现统一在 :mod:`fcmd.tools.calc.calcdatebase`；本模块只保留 ``@action``
+声明与参数转接，避免 DSL 层出现第二套日期实现。
+"""
 
 from __future__ import annotations
 
-from datetime import date, timedelta
-
 from fcmd.dsl.actions import action
+from fcmd.tools.calc import calcdatebase
 
 __all__: list[str] = []
-
-
-# ============================================================================
-# 公共函数
-# ============================================================================
-
-
-def parse_date(date_str: str) -> date:
-    """解析 ISO 8601 日期字符串（``YYYY-MM-DD``）。"""
-    return date.fromisoformat(date_str)
-
-
-def add_days(date_str: str, days: int) -> str:
-    """日期加减天数，返回新日期字符串。"""
-    d = parse_date(date_str)
-    result = d + timedelta(days=days)
-    return result.isoformat()
-
-
-def count_workdays(start_str: str, end_str: str) -> int:
-    """计算两个日期之间的工作日数（含首尾，排除周六周日）。"""
-    start = parse_date(start_str)
-    end = parse_date(end_str)
-    if start > end:
-        start, end = end, start
-    count = 0
-    current = start
-    while current <= end:
-        if current.weekday() < 5:
-            count += 1
-        current += timedelta(days=1)
-    return count
-
-
-def date_diff(date1_str: str, date2_str: str) -> int:
-    """计算两个日期的差值（``date2 - date1`` 的天数）。"""
-    d1 = parse_date(date1_str)
-    d2 = parse_date(date2_str)
-    return (d2 - d1).days
-
-
-def compare_dates(date1_str: str, date2_str: str) -> str:
-    """比较两个日期的先后关系，返回 before/equal/after。"""
-    d1 = parse_date(date1_str)
-    d2 = parse_date(date2_str)
-    if d1 < d2:
-        return "before"
-    if d1 > d2:
-        return "after"
-    return "equal"
 
 
 # ============================================================================
@@ -74,7 +27,7 @@ def compare_dates(date1_str: str, date2_str: str) -> str:
 def calcdate_add(date: str, days: int) -> None:
     """日期加减天数并打印结果。"""
     try:
-        result = add_days(date, days)
+        result = calcdatebase.add_days(date, days)
     except ValueError as exc:
         print(f"错误: {exc}")
         return
@@ -91,7 +44,7 @@ def calcdate_add(date: str, days: int) -> None:
 def calcdate_workdays(start: str, end: str) -> None:
     """计算两个日期之间的工作日数（排除周末）。"""
     try:
-        result = count_workdays(start, end)
+        result = calcdatebase.count_workdays(start, end)
     except ValueError as exc:
         print(f"错误: {exc}")
         return
@@ -108,7 +61,7 @@ def calcdate_workdays(start: str, end: str) -> None:
 def calcdate_diff(date1: str, date2: str) -> None:
     """计算两个日期的差值天数（date2 - date1）。"""
     try:
-        result = date_diff(date1, date2)
+        result = calcdatebase.date_diff(date1, date2)
     except ValueError as exc:
         print(f"错误: {exc}")
         return
@@ -125,7 +78,7 @@ def calcdate_diff(date1: str, date2: str) -> None:
 def calcdate_compare(date1: str, date2: str) -> None:
     """比较两个日期的先后关系。"""
     try:
-        result = compare_dates(date1, date2)
+        result = calcdatebase.compare_dates(date1, date2)
     except ValueError as exc:
         print(f"错误: {exc}")
         return

@@ -15,7 +15,7 @@ import string
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.dsl.actions.calc import (
+from fcmd.tools.calc.calcbase import (
     generate_bytes,
     generate_number,
     generate_password,
