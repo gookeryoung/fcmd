@@ -22,7 +22,7 @@ pip install fcmd          # 或 uv add fcmd
 
 | Extra | 安装命令 | 提供的工具/能力 |
 |-------|---------|---------------|
-| `img` | `pip install fcmd[img]` | `imagetool`（Pillow） |
+| `img` | `pip install fcmd[img]` | `imagetool` / `img2pdf` / `img2pdfw`（Pillow） |
 | `pdf` | `pip install fcmd[pdf]` | `pdftool`（PyMuPDF + pypdf） |
 | `ocr` | `pip install fcmd[ocr]` | `pdftool ocr`（pytesseract，需系统 tesseract） |
 | `svg` | `pip install fcmd[svg]` | `img2ico` 的 SVG 输入（resvg-py） |
@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-77 个工具（其中 27 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`lscalc`/`llmbench`/`llmconvert`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+79 个工具（其中 28 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdfw`/`lscalc`/`llmbench`/`llmconvert`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 51 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -167,6 +167,8 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `img2ico` | - | 图像/SVG 转 ICO/ICNS（多尺寸、质量档位、目录批量），依赖 `fcmd[img,svg]` |
 | `img2icow` | - | 图像转 ICO 转换器窗口版（Tk，单文件/目录批量、尺寸与质量可调），依赖 `fcmd[img,svg]` |
+| `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正），依赖 `fcmd[img]` |
+| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志），依赖 `fcmd[img]` |
 | `imagetool` | - | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors），依赖 `fcmd[img]` |
 | `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr 等 15 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]` |
 
