@@ -87,7 +87,6 @@ class EngineWindow:
         outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(4, 0))
-        self._build_actions(outer)
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
         install_page = ttk.Frame(self._notebook, padding=10)
@@ -97,6 +96,7 @@ class EngineWindow:
         self._build_online(install_page)
         self._build_offline(install_page)
         self._build_env(install_page)
+        self._build_actions(manage_page)
         self._build_engines(manage_page)
         self._build_log(manage_page)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
@@ -174,9 +174,9 @@ class EngineWindow:
         self._tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-    def _build_actions(self, outer: Any) -> None:
+    def _build_actions(self, page: Any) -> None:
         ttk = self._ttk
-        actions = ttk.Frame(outer)
+        actions = ttk.Frame(page)
         actions.pack(side="bottom", fill="x", pady=(8, 0))
         for text, command in (
             ("刷新", self._refresh_all),

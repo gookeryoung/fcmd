@@ -285,8 +285,11 @@ def list_cmd(models_root: Path | None = None) -> None:
     table.add_column("文件", style="cyan", no_wrap=True)
     table.add_column("大小", justify="right", no_wrap=True)
     table.add_column("匹配档位")
+    table.add_column("标签", style="magenta")
     for entry in entries:
-        table.add_row(entry.relative, human_size(entry.size), ", ".join(entry.profiles) or "-")
+        table.add_row(
+            entry.relative, human_size(entry.size), ", ".join(entry.profiles) or "-", ", ".join(entry.tags) or "-"
+        )
     get_console().print(table)
 
     get_console().print("各档位将选用的模型:")
