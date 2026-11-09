@@ -9,7 +9,7 @@ import pytest
 
 import fcmd as fx
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.llm import llmcore, llmqnt
+from fcmd.tools.llm import llmbase, llmengine, llmqnt
 
 
 class _FakeStdout:
@@ -137,11 +137,11 @@ class TestResolveExe:
         engine_dir = tmp_path / "engine"
         engine_dir.mkdir()
         server = _write(engine_dir / "llama-server.exe")
-        quantize = _write(engine_dir / llmcore.engine_exe_name("llama-quantize"))
+        quantize = _write(engine_dir / llmengine.engine_exe_name("llama-quantize"))
         monkeypatch.setattr(
-            llmqnt.llmcore,
+            llmqnt.llmengine,
             "resolve_engine",
-            lambda *args, **kwargs: llmcore.EngineInfo("b1", server),
+            lambda *args, **kwargs: llmbase.EngineInfo("b1", server),
         )
         assert llmqnt.resolve_quantize_exe() == quantize
 
@@ -150,9 +150,9 @@ class TestResolveExe:
         exe = _write(tmp_path / "llama-quantize")
 
         def _raise(*args: object, **kwargs: object) -> None:
-            raise llmcore.ServeError("未安装引擎")
+            raise llmbase.ServeError("未安装引擎")
 
-        monkeypatch.setattr(llmqnt.llmcore, "resolve_engine", _raise)
+        monkeypatch.setattr(llmqnt.llmengine, "resolve_engine", _raise)
         monkeypatch.setattr(llmqnt.shutil, "which", lambda name: str(exe))
         assert llmqnt.resolve_quantize_exe() == exe
 
@@ -160,9 +160,9 @@ class TestResolveExe:
         monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
 
         def _raise(*args: object, **kwargs: object) -> None:
-            raise llmcore.ServeError("未安装引擎")
+            raise llmbase.ServeError("未安装引擎")
 
-        monkeypatch.setattr(llmqnt.llmcore, "resolve_engine", _raise)
+        monkeypatch.setattr(llmqnt.llmengine, "resolve_engine", _raise)
         monkeypatch.setattr(llmqnt.shutil, "which", lambda name: None)
         with pytest.raises(llmqnt.QuantizeError, match="未找到 llama-quantize"):
             llmqnt.resolve_quantize_exe()

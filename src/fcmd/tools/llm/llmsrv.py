@@ -33,8 +33,8 @@ from typing import Literal
 
 import fcmd
 from fcmd.console import Table, get_console
-from fcmd.tools.llm import llmcore as core
-from fcmd.tools.llm.llmcore import (
+from fcmd.tools.llm import llmbase, llmbench, llmconvert, llmdoctor, llmengine, llmenv, llmmodel, llmserve
+from fcmd.tools.llm.llmbase import (
     DEFAULT_ALIAS,
     DEFAULT_API_KEY,
     DEFAULT_ENGINE_TAG,
@@ -60,7 +60,7 @@ _STATUS_TEXT = {"ok": "[green]ok[/green]", "warn": "[yellow]warn[/yellow]", "fai
 
 def _print_plan(plan: LaunchPlan) -> None:
     """打印启动计划与显存估算。"""
-    estimate = core.plan_vram(plan)
+    estimate = llmmodel.plan_vram(plan)
     table = Table(title=f"启动计划: {plan.name}", box="ascii")
     table.add_column("项目", style="cyan", no_wrap=True)
     table.add_column("值")
@@ -71,17 +71,17 @@ def _print_plan(plan: LaunchPlan) -> None:
         f"{plan.profile.name} / {plan.profile.quant} / kv {plan.effective_kv_type} / "
         f"ctx {plan.context} / ub {plan.effective_ubatch}",
     )
-    table.add_row("监听", core.http_base_url(plan.host, plan.port))
+    table.add_row("监听", llmbase.http_base_url(plan.host, plan.port))
     table.add_row("模型别名", plan.alias)
-    table.add_row("显存估算", core.human_size(estimate))
+    table.add_row("显存估算", llmbase.human_size(estimate))
     table.add_row("日志", str(plan.log))
     get_console().print(table)
-    get_console().print("命令: " + core.format_command(plan.argv()))
+    get_console().print("命令: " + llmbase.format_command(plan.argv()))
 
-    gpu = core.detect_gpu()
+    gpu = llmengine.detect_gpu()
     if gpu is not None and estimate > gpu.memory_mib * 1024 * 1024:
         get_console().print(
-            f"[yellow]警告: 估算 {core.human_size(estimate)} 超过显存 {gpu.memory_mib} MiB，"
+            f"[yellow]警告: 估算 {llmbase.human_size(estimate)} 超过显存 {gpu.memory_mib} MiB，"
             "可能 OOM；可改用 --profile speed 或减小 --ctx[/yellow]"
         )
 
@@ -103,9 +103,9 @@ def _print_state(state: ServeState, status: str) -> None:
 
 
 def _state_status(state: ServeState) -> str:
-    if not core.process_alive(state.pid, state.create_time):
+    if not llmserve.process_alive(state.pid, state.create_time):
         return "[red]已退出[/red]"
-    if core.check_health(state.host, state.port, state.api_key):
+    if llmserve.check_health(state.host, state.port, state.api_key):
         return "[green]运行中[/green]"
     return "[yellow]启动中/无响应[/yellow]"
 
@@ -132,7 +132,7 @@ def doctor_cmd(
     models_root:
         只体检该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
-    checks = core.doctor(port=port, engine_tag=engine_tag, models_root=models_root)
+    checks = llmdoctor.doctor(port=port, engine_tag=engine_tag, models_root=models_root)
     table = Table(title="llmsrv 体检", box="ascii")
     table.add_column("检查项", style="cyan", no_wrap=True)
     table.add_column("状态", justify="center", no_wrap=True)
@@ -176,7 +176,7 @@ def engine_cmd(
         ``install`` 时直接指定 zip 资产地址（非 Windows 或自定义构建用）。
     """
     if action == "list":
-        infos = core.list_engines()
+        infos = llmengine.list_engines()
         if not infos:
             get_console().print("未安装任何引擎：fcmd llmsrv engine install")
             return
@@ -194,7 +194,7 @@ def engine_cmd(
         raise ServeError(f"请用 --tag 指定引擎版本，推荐 {DEFAULT_ENGINE_TAG}")
 
     if action == "use":
-        info = core.use_engine(tag)
+        info = llmengine.use_engine(tag)
         get_console().print(f"已切换默认引擎: {info.tag} -> {info.exe}")
         return
 
@@ -205,10 +205,10 @@ def engine_cmd(
             get_console().print(f"注册本地引擎 {tag}: {path}")
     else:
         get_console().print(f"安装引擎 {tag}（variant={variant}），下载可能耗时数分钟…")
-    info = core.install_engine(tag, variant=variant, url=url, path=path)
+    info = llmengine.install_engine(tag, variant=variant, url=url, path=path)
     get_console().print(f"引擎就绪: {info.tag} -> {info.exe}")
-    if not any(item.source == "current" for item in core.list_engines()):
-        core.use_engine(tag)
+    if not any(item.source == "current" for item in llmengine.list_engines()):
+        llmengine.use_engine(tag)
         get_console().print(f"已设为默认引擎: {tag}")
 
 
@@ -233,15 +233,15 @@ def config_cmd(action: _CONFIG_ACTION, path: Path | None = None) -> None:
             raise ServeError(f"action={action} 需要用 --path 指定模型目录")
         target = path.expanduser()
         if action == "add":
-            core.add_models_root(target)
+            llmenv.add_models_root(target)
             get_console().print(f"已登记模型目录: {target}")
             if not target.is_dir():
                 get_console().print(f"[yellow]提示: 目录当前不存在 {target}[/yellow]")
         else:
-            core.remove_models_root(target)
+            llmenv.remove_models_root(target)
             get_console().print(f"已移除模型目录: {target}")
     elif action == "reset":
-        core.reset_models_roots()
+        llmenv.reset_models_roots()
         get_console().print("已清空模型目录配置，回到默认目录")
     _print_roots()
 
@@ -251,19 +251,19 @@ def _print_roots() -> None:
     env = os.environ.get("FCMD_MODELS")
     if env:
         source = "FCMD_MODELS（覆盖配置文件）"
-    elif core.configured_roots():
-        source = f"配置文件 {core.config_path()}"
+    elif llmenv.configured_roots():
+        source = f"配置文件 {llmenv.config_path()}"
     else:
         source = "默认目录（未配置）"
 
-    roots = core.models_roots()
+    roots = llmenv.models_roots()
     table = Table(title=f"模型目录（来源: {source}）", box="ascii")
     table.add_column("目录", style="cyan", no_wrap=True)
     table.add_column("状态", justify="center", no_wrap=True)
     table.add_column("GGUF", justify="right", no_wrap=True)
     for root in roots:
         exists = root.is_dir()
-        count = len(core.scan_models([root])) if exists else 0
+        count = len(llmmodel.scan_models([root])) if exists else 0
         table.add_row(str(root), "[green]存在[/green]" if exists else "[red]不存在[/red]", str(count))
     get_console().print(table)
     get_console().print("增删目录: fcmd llmsrv config add --path D:/models（remove / reset 同理）")
@@ -283,7 +283,7 @@ def model_cmd(models_root: Path | None = None) -> None:
     models_root:
         只扫描指定目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
-    roots = core.models_roots(models_root)
+    roots = llmenv.models_roots(models_root)
     missing = [root for root in roots if not root.is_dir()]
     existing = [root for root in roots if root.is_dir()]
     if not existing:
@@ -291,7 +291,7 @@ def model_cmd(models_root: Path | None = None) -> None:
             f"模型目录不存在: {', '.join(str(root) for root in roots)}；先用 fcmd llmdown download 下载 GGUF"
         )
 
-    entries = core.scan_models(existing)
+    entries = llmmodel.scan_models(existing)
     if not entries:
         raise ServeError(
             f"{', '.join(str(root) for root in existing)} 下没有 .gguf 文件；先用 fcmd llmdown download 下载"
@@ -303,7 +303,7 @@ def model_cmd(models_root: Path | None = None) -> None:
     table.add_column("大小", justify="right", no_wrap=True)
     table.add_column("匹配档位")
     for entry in entries:
-        table.add_row(str(entry.root), entry.relative, core.human_size(entry.size), ", ".join(entry.profiles) or "-")
+        table.add_row(str(entry.root), entry.relative, llmbase.human_size(entry.size), ", ".join(entry.profiles) or "-")
     get_console().print(table)
 
     get_console().print("各档位将选用的模型:")
@@ -356,13 +356,13 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     models_root:
         默认输出位置使用的模型目录。
     """
-    plan = core.plan_convert(
+    plan = llmconvert.plan_convert(
         source,
         output=output,
         outtype=outtype,
         quant=quant,
         script=script,
-        python=python or core.find_convert_python(),
+        python=python or llmconvert.find_convert_python(),
         models_root=models_root,
     )
     table = Table(title="转换计划", box="ascii")
@@ -378,7 +378,7 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     table.add_row("解释器", plan.python)
     get_console().print(table)
 
-    paths = core.convert_model(plan)
+    paths = llmconvert.convert_model(plan)
     for path in paths:
         get_console().print(f"已生成: {path}")
     get_console().print(f"启动服务: fcmd llmsrv start --model {paths[-1]}")
@@ -436,7 +436,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     threads:
         CPU 线程数（默认 8）。
     """
-    plan = core.make_plan(
+    plan = llmserve.make_plan(
         name,
         profile,
         model=model,
@@ -509,7 +509,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     wait:
         等待模型加载与健康检查的秒数（默认 180）。
     """
-    plan = core.make_plan(
+    plan = llmserve.make_plan(
         name,
         profile,
         model=model,
@@ -525,7 +525,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
         threads=threads,
     )
     _print_plan(plan)
-    state = core.start_server(plan, wait_s=wait)
+    state = llmserve.start_server(plan, wait_s=wait)
     _print_state(state, "[green]运行中[/green]")
     get_console().print("接入 dsh / pi: fcmd llmsrv env（--shell powershell|bash）")
 
@@ -544,7 +544,7 @@ def stop_cmd(name: str = DEFAULT_NAME) -> None:
     name:
         服务名，默认 ``qwen``。
     """
-    result = core.stop_server(name)
+    result = llmserve.stop_server(name)
     if result.was_running:
         get_console().print(f"已停止服务 {name}（pid={result.state.pid}）")
     else:
@@ -566,11 +566,11 @@ def status_cmd(name: str | None = None) -> None:
         服务名；省略时列出全部已登记服务。
     """
     if name:
-        state = core.require_state(name)
+        state = llmenv.require_state(name)
         _print_state(state, _state_status(state))
         return
 
-    states = core.list_states()
+    states = llmenv.list_states()
     if not states:
         get_console().print("没有已登记的服务：fcmd llmsrv start")
         return
@@ -603,7 +603,7 @@ def logs_cmd(name: str = DEFAULT_NAME, lines: int = 50) -> None:
     lines:
         打印的行数（默认 50）。
     """
-    get_console().print(core.read_log(name, lines), markup=False)
+    get_console().print(llmserve.read_log(name, lines), markup=False)
 
 
 @fcmd.tool(
@@ -614,7 +614,7 @@ def logs_cmd(name: str = DEFAULT_NAME, lines: int = 50) -> None:
 )
 def bench_cmd(
     name: str = DEFAULT_NAME,
-    prompt: str = core.DEFAULT_PROMPT,
+    prompt: str = llmbench.DEFAULT_PROMPT,
     prompt_tokens: int | None = None,
     max_tokens: int = 128,
     timeout: float = 180.0,
@@ -634,10 +634,12 @@ def bench_cmd(
     timeout:
         请求超时秒数（默认 180）。
     """
-    state = core.require_state(name)
-    if not core.process_alive(state.pid, state.create_time):
+    state = llmenv.require_state(name)
+    if not llmserve.process_alive(state.pid, state.create_time):
         raise ServeError(f"服务 {name!r} 未在运行：fcmd llmsrv start")
-    result = core.bench(state, prompt=prompt, prompt_tokens=prompt_tokens, max_tokens=max_tokens, timeout=timeout)
+    result = llmbench.bench(
+        state.endpoint, prompt=prompt, prompt_tokens=prompt_tokens, max_tokens=max_tokens, timeout=timeout
+    )
     table = Table(title=f"实测: {name}", box="ascii")
     table.add_column("指标", style="cyan", no_wrap=True)
     table.add_column("值", justify="right", no_wrap=True)
@@ -669,8 +671,8 @@ def env_cmd(name: str = DEFAULT_NAME, shell: _ENV_SHELL = "plain") -> None:
     shell:
         输出格式：``plain``（``KEY=VALUE``）/ ``powershell`` / ``bash``。
     """
-    state = core.require_state(name)
-    for key, value in core.client_env(state).items():
+    state = llmenv.require_state(name)
+    for key, value in llmenv.client_env(state).items():
         if shell == "powershell":
             get_console().print(f'$env:{key}="{value}"', markup=False)
         elif shell == "bash":

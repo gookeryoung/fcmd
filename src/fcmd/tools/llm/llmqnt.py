@@ -24,7 +24,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.console import Table, get_console
-from fcmd.tools.llm import llmcore
+from fcmd.tools.llm import llmbase, llmengine
 
 __all__ = [
     "DEFAULT_QUANTS",
@@ -167,11 +167,11 @@ def resolve_quantize_exe(explicit: Path | None = None) -> Path:
         return target
 
     try:
-        engine = llmcore.resolve_engine()
-    except llmcore.ServeError:
+        engine = llmengine.resolve_engine()
+    except llmbase.ServeError:
         engine = None
     if engine is not None:
-        candidate = engine.exe.parent / llmcore.engine_exe_name("llama-quantize")
+        candidate = engine.exe.parent / llmengine.engine_exe_name("llama-quantize")
         if candidate.is_file():
             return candidate
 
