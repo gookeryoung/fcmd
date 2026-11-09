@@ -87,6 +87,11 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     return f"{width}x{height}"
 
 
+def _fit_wraplength(width: int) -> int:
+    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
+    return max(width - 8, 120)
+
+
 class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 量化窗口：构建界面并把转换任务放到后台线程执行。"""
 
@@ -165,7 +170,12 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         for row, (key, label) in enumerate((("engine", "引擎"), ("quantizer", "量化器"), ("version", "版本"))):
             ttk.Label(info_box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
             var = tk.StringVar(value="检测中…")
-            ttk.Label(info_box, textvariable=var, wraplength=460, justify="left").grid(row=row, column=1, sticky="w")
+            value_label = ttk.Label(info_box, textvariable=var, justify="left")
+            value_label.grid(row=row, column=1, sticky="we")
+            value_label.bind(
+                "<Configure>",
+                lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+            )
             self._info_vars[key] = var
 
         quant_box = ttk.LabelFrame(outer, text="量化类型", padding=8)
@@ -197,7 +207,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         log_frame.pack(fill="both", expand=True, pady=(10, 0))
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
-        self._log_text = tk.Text(log_frame, wrap="none", state="disabled", yscrollcommand=scrollbar.set)
+        self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
 

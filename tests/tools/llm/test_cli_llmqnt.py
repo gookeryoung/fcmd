@@ -423,3 +423,7 @@ class TestQntwSettings:
     def test_resolve_geometry_falls_back_to_proportional(self) -> None:
         assert llmqntw.resolve_geometry(None, 1920, 1080) == "806x778"
         assert llmqntw.resolve_geometry("bad", 1920, 1080) == "806x778"
+
+    def test_fit_wraplength_tracks_width(self) -> None:
+        assert llmqntw._fit_wraplength(600) == 592
+        assert llmqntw._fit_wraplength(80) == 120
