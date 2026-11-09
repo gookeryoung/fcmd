@@ -51,7 +51,7 @@ _DESCRIPTION = (
 )
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
-_HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入）与最佳实践建议"
+_HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）与最佳实践建议"
 
 
 def _sample_load(pid: int) -> tuple[str, str, str]:

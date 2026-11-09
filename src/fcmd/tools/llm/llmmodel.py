@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
@@ -23,7 +24,146 @@ from fcmd.tools.llm.llmbase import (
     human_size,
 )
 
-__all__ = ["estimate_vram", "find_model", "plan_vram", "scan_models"]
+__all__ = [
+    "GENERAL_TAG",
+    "MODEL_TAGS",
+    "ModelTag",
+    "detect_model_tags",
+    "estimate_vram",
+    "find_model",
+    "model_advice",
+    "plan_vram",
+    "scan_models",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTag:
+    """模型能力标签：文件名关键词、推荐档位与最佳实践建议。"""
+
+    name: str
+    keywords: tuple[str, ...]
+    profile: str
+    hint: str
+
+
+#: 兜底标签：没有具体能力关键词但命中主流模型系列时使用
+GENERAL_TAG = "通用"
+
+#: 内置能力标签（按展示顺序排列；具体能力可命中多个，“通用”仅作兜底）
+MODEL_TAGS: dict[str, ModelTag] = {
+    "代码": ModelTag(
+        "代码",
+        ("coder", "code", "codestral"),
+        "balanced",
+        "代码补全/改码建议 temperature 0.2、top_p 0.95；仓库级长上下文用 long 档",
+    ),
+    "推理": ModelTag(
+        "推理",
+        ("reasoning", "think", "qwq", "deepseek-r1", "-r1-", "r1-distill", "magistral"),
+        "long",
+        "推理模型会输出思考链：用 long/max-context 档，temperature 0.6、top_p 0.95，等待就绪放宽到 300s 以上",
+    ),
+    "对话": ModelTag(
+        "对话",
+        ("instruct", "chat", "-it-", "sft", "dpo", "assistant"),
+        "balanced",
+        "通用对话建议 temperature 0.7、top_p 0.9；多轮长会话关注 KV 使用率",
+    ),
+    "视觉": ModelTag(
+        "视觉",
+        ("vision", "llava", "minicpm-v", "internvl", "-vl-", "vl-", "pixtral", "molmo", "paligemma"),
+        "balanced",
+        "多模态需要配套 mmproj：llama-server 须加 --mmproj；当前启动器未注入，仅文本可用",
+    ),
+    "数学": ModelTag(
+        "数学",
+        ("math", "minerva"),
+        "balanced",
+        "数学解题建议 temperature 0.2，并在提示中要求逐步推导与自检",
+    ),
+    "重排": ModelTag(
+        "重排",
+        ("rerank",),
+        "balanced",
+        "重排模型需开启 --reranking，客户端调用 /v1/rerank，不要用于 /v1/chat/completions",
+    ),
+    "嵌入": ModelTag(
+        "嵌入",
+        ("embed", "bge-m3", "gte-", "e5-", "jina", "mxbai", "stella"),
+        "balanced",
+        "嵌入模型不是对话模型：llama-server 需开启 --embeddings，客户端调用 /v1/embeddings",
+    ),
+    GENERAL_TAG: ModelTag(
+        GENERAL_TAG,
+        (
+            "qwen",
+            "llama",
+            "mistral",
+            "mixtral",
+            "gemma",
+            "deepseek",
+            "glm",
+            "kimi",
+            "moonshot",
+            "minimax",
+            "phi-",
+            "yi-",
+            "baichuan",
+            "internlm",
+            "hunyuan",
+            "ernie",
+            "nemotron",
+            "granite",
+            "olmo",
+            "exaone",
+            "seed-oss",
+            "gpt-oss",
+            "command-r",
+            "falcon",
+            "mamba",
+            "rwkv",
+            "smollm",
+            "stablelm",
+            "zephyr",
+            "vicuna",
+            "wizard",
+            "dolphin",
+            "hermes",
+            "solar",
+            "openchat",
+            "orca",
+            "tulu",
+        ),
+        "balanced",
+        "主流通用模型：balanced 档起步，temperature 0.7、top_p 0.9；启动器已开启 --jinja，"
+        "客户端直接用 /v1/chat/completions；长文档再升 long 档",
+    ),
+}
+
+
+def detect_model_tags(name: str) -> tuple[str, ...]:
+    """识别模型能力标签：具体能力优先；都没有但命中主流系列时兜底为“通用”。"""
+    lowered = name.lower()
+    specific = tuple(
+        tag.name
+        for tag in MODEL_TAGS.values()
+        if tag.name != GENERAL_TAG and any(keyword in lowered for keyword in tag.keywords)
+    )
+    if specific:
+        return specific
+    general = MODEL_TAGS[GENERAL_TAG]
+    return (GENERAL_TAG,) if any(keyword in lowered for keyword in general.keywords) else ()
+
+
+def model_advice(tags: Sequence[str]) -> str:
+    """按能力标签生成推荐档位与最佳实践建议；未识别标签时给出通用建议。"""
+    hits = [MODEL_TAGS[name] for name in tags if name in MODEL_TAGS]
+    if not hits:
+        return "未识别能力标签：按 balanced 档起步，观察 tok/s 与 KV 使用率后再调档"
+    profiles = dict.fromkeys(tag.profile for tag in hits)
+    parts = [f"推荐档位 {'/'.join(profiles)}", *(f"{tag.name}: {tag.hint}" for tag in hits)]
+    return "；".join(parts)
 
 
 def scan_models(
@@ -50,7 +190,15 @@ def scan_models(
                 continue
             seen.add(key)
             profiles = tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower())
-            entries.append(ModelEntry(root=root, path=resolved, size=size, profiles=profiles))
+            entries.append(
+                ModelEntry(
+                    root=root,
+                    path=resolved,
+                    size=size,
+                    profiles=profiles,
+                    tags=detect_model_tags(path.name),
+                )
+            )
     entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
     return entries
 

@@ -59,8 +59,8 @@ class EngineWindow:
         self._ttk = ttk
         self.root = tk.Tk()
         self.root.title("llama.cpp 引擎管理")
-        self.root.geometry("880x780")
-        self.root.minsize(720, 640)
+        self.root.geometry("880x640")
+        self.root.minsize(780, 520)
 
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
@@ -73,7 +73,7 @@ class EngineWindow:
         self._variant_var = tk.StringVar(value="cuda")
         self._offline_var = tk.StringVar(value=_OFFLINE_PLACEHOLDER)
         self._deep_var = tk.BooleanVar(value=False)
-        self._progress_var = tk.StringVar(value="就绪")
+        self._status_var = tk.StringVar(value="就绪")
         self._info_vars: dict[str, tk.StringVar] = {}
 
         self._build_widgets()
@@ -84,59 +84,69 @@ class EngineWindow:
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=12)
+        outer = ttk.Frame(self.root, padding=10)
         outer.pack(fill="both", expand=True)
-        self._build_env(outer)
-        self._build_online(outer)
-        self._build_offline(outer)
-        self._build_engines(outer)
-        self._build_progress(outer)
-        self._build_log(outer)
+        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(4, 0))
+        self._build_actions(outer)
+        self._notebook = ttk.Notebook(outer)
+        self._notebook.pack(fill="both", expand=True)
+        install_page = ttk.Frame(self._notebook, padding=10)
+        manage_page = ttk.Frame(self._notebook, padding=10)
+        self._notebook.add(install_page, text="安装配置")
+        self._notebook.add(manage_page, text="引擎列表 / 日志")
+        self._build_online(install_page)
+        self._build_offline(install_page)
+        self._build_env(install_page)
+        self._build_engines(manage_page)
+        self._build_log(manage_page)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
-    def _build_env(self, outer: Any) -> None:
+    def _build_env(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="环境信息", padding=8)
-        box.pack(fill="x")
-        box.columnconfigure(1, weight=1)
+        box, body = self._collapsible(page, "环境信息（当前引擎 / 根目录 / 已安装）", open_state=False)
+        box.pack(side="bottom", fill="x", pady=(8, 0))
+        body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("current", "当前引擎"), ("root", "引擎根目录"), ("installed", "已安装"))):
-            ttk.Label(box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
             var = self._tk.StringVar(value="检测中…")
-            ttk.Label(box, textvariable=var, wraplength=700, justify="left").grid(row=row, column=1, sticky="w")
+            ttk.Label(body, textvariable=var, wraplength=760, justify="left").grid(row=row, column=1, sticky="w")
             self._info_vars[key] = var
 
-    def _build_online(self, outer: Any) -> None:
+    def _build_online(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="在线下载（GitHub release）", padding=8)
-        box.pack(fill="x", pady=(8, 0))
-        ttk.Label(box, text="TAG").pack(side="left")
-        entry = ttk.Entry(box, textvariable=self._tag_var, width=14)
-        entry.pack(side="left", padx=(6, 16))
+        box = ttk.LabelFrame(page, text="在线下载（GitHub release）", padding=8)
+        box.pack(fill="x")
+        box.columnconfigure(1, weight=1)
+        ttk.Label(box, text="TAG").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
+        entry = ttk.Entry(box, textvariable=self._tag_var)
+        entry.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=3)
         entry.bind("<KeyRelease>", self._mark_tag_edited)
-        ttk.Label(box, text="变体").pack(side="left")
-        ttk.Combobox(box, textvariable=self._variant_var, values=list(_VARIANTS), state="readonly", width=8).pack(
-            side="left", padx=(6, 16)
+        ttk.Label(box, text="变体").grid(row=0, column=2, sticky="w", padx=(0, 6), pady=3)
+        ttk.Combobox(box, textvariable=self._variant_var, values=list(_VARIANTS), state="readonly", width=8).grid(
+            row=0, column=3, sticky="w", pady=3
         )
         button = ttk.Button(box, text="在线安装", command=self._online_install)
-        button.pack(side="left")
+        button.grid(row=0, column=4, padx=(12, 0), pady=3)
         self._buttons.append(button)
-        ttk.Label(box, text="cuda 变体自动下载引擎包 + cudart 运行库").pack(side="left", padx=8)
+        ttk.Label(box, text="cuda 变体自动下载引擎包 + cudart 运行库").grid(row=1, column=1, columnspan=4, sticky="w")
 
-    def _build_offline(self, outer: Any) -> None:
+    def _build_offline(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="离线包（zip）", padding=8)
+        box = ttk.LabelFrame(page, text="离线包（zip）", padding=8)
         box.pack(fill="x", pady=(8, 0))
+        box.columnconfigure(0, weight=1)
 
         row = ttk.Frame(box)
-        row.pack(fill="x")
-        ttk.Entry(row, textvariable=self._offline_var, state="readonly").pack(side="left", fill="x", expand=True)
+        row.grid(row=0, column=0, sticky="ew")
+        row.columnconfigure(0, weight=1)
+        ttk.Entry(row, textvariable=self._offline_var, state="readonly").grid(row=0, column=0, sticky="ew")
         zip_btn = ttk.Button(row, text="选择 zip…", command=self._select_zip)
-        zip_btn.pack(side="left", padx=(8, 0))
+        zip_btn.grid(row=0, column=1, padx=(8, 0))
         dir_btn = ttk.Button(row, text="选择目录…", command=self._select_dir)
-        dir_btn.pack(side="left", padx=(6, 0))
+        dir_btn.grid(row=0, column=2, padx=(6, 0))
 
         actions = ttk.Frame(box)
-        actions.pack(fill="x", pady=(8, 0))
+        actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         ttk.Checkbutton(actions, text="深度 CRC 校验（大包较慢）", variable=self._deep_var).pack(side="left")
         install_btn = ttk.Button(actions, text="安装离线包", command=self._offline_install)
         install_btn.pack(side="right")
@@ -144,14 +154,14 @@ class EngineWindow:
         check_btn.pack(side="right", padx=(0, 8))
         self._buttons.extend([zip_btn, dir_btn, install_btn, check_btn])
 
-    def _build_engines(self, outer: Any) -> None:
+    def _build_engines(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="已安装引擎", padding=8)
-        box.pack(fill="both", expand=True, pady=(8, 0))
+        box = ttk.LabelFrame(page, text="已安装引擎", padding=6)
+        box.pack(fill="both", expand=True)
         body = ttk.Frame(box)
         body.pack(fill="both", expand=True)
         columns = ("tag", "current", "exe")
-        self._tree = ttk.Treeview(body, columns=columns, show="headings", height=5)
+        self._tree = ttk.Treeview(body, columns=columns, show="headings", height=6)
         for column, title, width, stretch in (
             ("tag", "TAG", 110, False),
             ("current", "当前", 50, False),
@@ -164,34 +174,56 @@ class EngineWindow:
         self._tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        actions = ttk.Frame(box)
-        actions.pack(fill="x", pady=(6, 0))
+    def _build_actions(self, outer: Any) -> None:
+        ttk = self._ttk
+        actions = ttk.Frame(outer)
+        actions.pack(side="bottom", fill="x", pady=(8, 0))
         for text, command in (
             ("刷新", self._refresh_all),
             ("设为默认", self._use_selected),
             ("检查运行", self._check_selected),
         ):
             button = ttk.Button(actions, text=text, command=command)
-            button.pack(side="left", padx=(0, 8))
+            button.pack(side="left", padx=(0, 6))
             self._buttons.append(button)
+        ttk.Button(actions, text="清空日志", command=self._clear_log).pack(side="left", padx=(0, 6))
+        self._progress = ttk.Progressbar(actions, mode="determinate", maximum=100, length=200)
+        self._progress.pack(side="right")
 
-    def _build_progress(self, outer: Any) -> None:
+    def _build_log(self, page: Any) -> None:
         ttk = self._ttk
-        row = ttk.Frame(outer)
-        row.pack(fill="x", pady=(8, 0))
-        self._progress = ttk.Progressbar(row, mode="determinate", maximum=100, length=260)
-        self._progress.pack(side="left")
-        ttk.Label(row, textvariable=self._progress_var).pack(side="left", padx=8)
-
-    def _build_log(self, outer: Any) -> None:
-        ttk = self._ttk
-        box = ttk.LabelFrame(outer, text="输出日志", padding=6)
+        box = ttk.LabelFrame(page, text="输出日志", padding=6)
         box.pack(fill="both", expand=True, pady=(8, 0))
         scrollbar = ttk.Scrollbar(box)
         scrollbar.pack(side="right", fill="y")
-        self._log_text = self._tk.Text(box, wrap="none", state="disabled", yscrollcommand=scrollbar.set)
+        self._log_text = self._tk.Text(box, wrap="none", state="disabled", yscrollcommand=scrollbar.set, height=10)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
+
+    def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
+        """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
+        ttk = self._ttk
+        container = ttk.Frame(parent)
+        header = ttk.Frame(container)
+        header.pack(fill="x")
+        body = ttk.Frame(container, padding=(6, 4, 0, 0))
+        state = {"open": open_state}
+
+        def render() -> None:
+            if state["open"]:
+                body.pack(fill="x")
+            else:
+                body.pack_forget()
+            button.configure(text=("▼ " if state["open"] else "▶ ") + title)
+
+        def flip() -> None:
+            state["open"] = not state["open"]
+            render()
+
+        button = ttk.Button(header, text="", style="Toolbutton", command=flip)
+        button.pack(fill="x", anchor="w")
+        render()
+        return container, body
 
     # ------------------------------------------------------------------ #
     # 引擎列表与信息
@@ -371,10 +403,11 @@ class EngineWindow:
             self._log("已有任务正在进行，请等待完成")
             return
         self._running = True
+        self._notebook.select(1)
         self._set_buttons(False)
         self._progress.configure(mode="determinate")
         self._progress["value"] = 0
-        self._progress_var.set(label)
+        self._status_var.set(label)
         self._log(f"== {label} ==")
         messages: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._messages = messages
@@ -416,19 +449,19 @@ class EngineWindow:
                 self._progress.stop()
                 self._progress.configure(mode="determinate")
             self._progress["value"] = min(100.0, done * 100.0 / total)
-            self._progress_var.set(f"{name}: {human_size(done)} / {human_size(total)}")
+            self._status_var.set(f"{name}: {human_size(done)} / {human_size(total)}")
         else:
             if str(self._progress["mode"]) != "indeterminate":
                 self._progress.configure(mode="indeterminate")
                 self._progress.start(12)
-            self._progress_var.set(f"{name}: {human_size(done)}")
+            self._status_var.set(f"{name}: {human_size(done)}")
 
     def _finish(self, ok: bool, message: str, tag: str | None, notify: bool) -> None:
         self._running = False
         self._progress.stop()
         self._progress.configure(mode="determinate")
         self._progress["value"] = 100 if ok else 0
-        self._progress_var.set("完成" if ok else "失败")
+        self._status_var.set("完成" if ok else "失败")
         self._set_buttons(True)
         if tag:
             self._tag_var.set(tag)
@@ -448,6 +481,8 @@ class EngineWindow:
             button.configure(state=state)
 
     def _close(self) -> None:
+        if self._running and not self._messagebox.askyesno("任务进行中", "安装 / 检查任务仍在执行，确实退出？"):
+            return
         self.root.destroy()
 
     # ------------------------------------------------------------------ #
@@ -457,6 +492,12 @@ class EngineWindow:
         self._log_text.configure(state="normal")
         self._log_text.insert("end", message + "\n")
         self._log_text.see("end")
+        self._log_text.configure(state="disabled")
+
+    def _clear_log(self) -> None:
+        """清空输出日志区域。"""
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
         self._log_text.configure(state="disabled")
 
 

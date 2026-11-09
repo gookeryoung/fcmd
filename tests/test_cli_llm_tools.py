@@ -167,6 +167,51 @@ def test_model_list_entries(
     assert "speed" in out
 
 
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf", ("代码", "对话")),
+        ("DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf", ("推理",)),
+        ("Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf", ("对话", "视觉")),
+        ("Qwen2.5-Math-7B-Instruct-Q4_K_M.gguf", ("对话", "数学")),
+        ("bge-reranker-v2-m3-Q4_K_M.gguf", ("重排",)),
+        ("nomic-embed-text-Q8_0.gguf", ("嵌入",)),
+        ("Qwen3.8-27B-Q4_K_M.gguf", ("通用",)),
+        ("Meta-Llama-3.1-8B-Q4_K_M.gguf", ("通用",)),
+        ("gemma-3-27b-it-Q4_K_M.gguf", ("对话",)),
+        ("Mistral-7B-v0.3-Q4_K_M.gguf", ("通用",)),
+        ("gpt-oss-20b-Q4_K_M.gguf", ("通用",)),
+        ("custom-model.gguf", ()),
+    ],
+)
+def test_detect_model_tags(name: str, expected: tuple[str, ...]) -> None:
+    assert llmmodel.detect_model_tags(name) == expected
+
+
+def test_model_advice_known_tags() -> None:
+    advice = llmmodel.model_advice(("代码",))
+    assert "推荐档位 balanced" in advice
+    assert "temperature 0.2" in advice
+
+
+def test_model_advice_unknown_tags() -> None:
+    advice = llmmodel.model_advice(("不存在的标签",))
+    assert "未识别" in advice
+    assert "balanced" in advice
+
+
+def test_model_advice_general_tag() -> None:
+    advice = llmmodel.model_advice((llmmodel.GENERAL_TAG,))
+    assert "推荐档位 balanced" in advice
+    assert "/v1/chat/completions" in advice
+
+
+def test_scan_models_fills_tags(tmp_path: Path) -> None:
+    (tmp_path / "qwen3-coder-instruct-Q4_K_M.gguf").write_bytes(b"x" * 16)
+    entries = llmmodel.scan_models([tmp_path])
+    assert entries[0].tags == ("代码", "对话")
+
+
 def test_model_find(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     monkeypatch.setattr(llmmodel, "find_model", lambda *args, **kwargs: Path("D:/models/x.gguf"))
     llmmodel.find_cmd("Q4_K_M")

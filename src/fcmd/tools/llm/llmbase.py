@@ -110,6 +110,7 @@ class ModelEntry:
     path: Path
     size: int
     profiles: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
 
     @property
     def relative(self) -> str:
