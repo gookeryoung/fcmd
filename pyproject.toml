@@ -16,6 +16,7 @@
     version="0.3.10"
 
     [project.scripts]
+        alarmclock    ="fcmd.tools.ui.alarmclock:main"
         archivex      ="fcmd.tools.archive.archivex:main"
         asciitool     ="fcmd.dsl.entry:run_named"
         autofmt       ="fcmd.dsl.entry:run_named"

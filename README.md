@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-73 个工具（其中 23 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`llmbench`/`llmconvert`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+74 个工具（其中 24 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`llmbench`/`llmconvert`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -171,6 +171,7 @@ fcmd completion --shell fish | source         # fish
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
+| `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |
 | `portcheck` | - | 端口检查与扫描（socket 探测 + psutil 查询占用进程，跨平台） |
 | `taskkill` | - | 按名称终止进程（psutil terminate → kill） |
@@ -191,7 +192,7 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `llmbench` | - | OpenAI 兼容服务吞吐实测独立命令（`--name 服务名` 读本机服务状态，或 `--base-url` 直连任意兼容服务；`--prompt-tokens N` 模拟长上下文） |
 | `llmconvert` | - | HF safetensors 转 GGUF 独立命令（复用引擎目录内 `llama.cpp*.zip` 或在线源码，可选 `--quant` 再量化、`--tag` 指定源码版本） |
-| `llmconvertw` | - | `llmconvert` 的 Tk 窗口版（启动时后台扫描 `llmenv` 已配置的模型目录，识别并列出可转换的 HF safetensors 目录，选中即填入源目录；配置转换精度/解释器/源码脚本/引擎 tag；以勾选方式选择原始 GGUF 及多种量化格式，已生成的格式自动标注“已存在”并置为只读，除非勾选覆盖；可预览转换计划与命令，后台先转换一次基础 GGUF 再批量量化，实时显示日志与进度） |
+| `llmconvertw` | - | `llmconvert` 的 Tk 窗口版（界面按「模型列表 / 转换配置 / 输出日志」分标签页，先选模型再配参数，避免表单堆叠；启动时后台扫描 `llmenv` 已配置的模型目录，识别并列出可转换的 HF safetensors 目录，选中即填入源目录；配置转换精度/解释器/源码脚本/引擎 tag；以勾选方式选择原始 GGUF 及多种量化格式，已生成的格式自动标注“已存在”并置为只读，除非勾选覆盖；可预览转换计划与命令，后台先转换一次基础 GGUF 再批量量化，实时显示日志与进度） |
 | `llmdoctor` | - | 运行环境体检独立命令（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++ 运行库） |
 | `llmdown` | - | 大模型仓库下载（`files`/`mirror`/`download`；ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
 | `llmengine` | - | llama.cpp 引擎管理独立命令（`list`/`install`/`use`/`check`/`inspect`；安装或注册引擎、切换默认引擎、验证可运行、检查 zip 离线包类型/内容/CRC 完整性；`install --zips` 可一次解压引擎包 + cudart 运行库包） |
@@ -510,7 +511,7 @@ src/fcmd/
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
   tools/         # Python 实现的工具模块（自动发现）
-    archive/ calc/ dev/ media/ net/
+    archive/ calc/ dev/ media/ net/ ui/
   dsl/           # TOML 命令定义与 action/compute 原语
     actions/     #   内建动作（文件、文本、媒体、系统、加密等）
   commands/      # 出厂 DSL 命令定义（*.toml）
