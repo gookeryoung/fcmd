@@ -8,9 +8,12 @@
 
     ${FCMD_HOME}/serve/<name>.json        服务状态（pid / 端口 / 模型 / 引擎）
     ${FCMD_HOME}/serve/logs/<name>.log    引擎日志（追加写）
+    ${FCMD_HOME}/serve/config.json        持久化配置（模型目录列表）
     ${FCMD_HOME}/engines/llama.cpp/<tag>/ 引擎目录（含 llama-server）
 
-模型默认根目录：``FCMD_MODELS`` → Windows 下存在的 ``D:/models`` → ``${FCMD_HOME}/models``。
+模型目录解析优先级：显式 ``--models-root`` → ``FCMD_MODELS`` → ``config.json`` 的
+``models_roots``（可多个）→ Windows 下存在的 ``D:/models`` → ``${FCMD_HOME}/models``。
+多个根目录会被递归扫描，同名量化按文件大小取最大者。
 
 示例
 ----
@@ -57,15 +60,19 @@ __all__ = [
     "GpuInfo",
     "LaunchPlan",
     "LlamaCppBackend",
+    "ModelEntry",
     "Profile",
     "ProfileName",
     "ServeError",
     "ServeState",
     "StopResult",
+    "add_models_root",
     "bench",
     "check_engine",
     "check_health",
     "client_env",
+    "config_path",
+    "configured_roots",
     "default_models_root",
     "delete_state",
     "detect_gpu",
@@ -80,14 +87,20 @@ __all__ = [
     "install_engine",
     "list_engines",
     "list_states",
+    "load_config",
     "load_state",
     "log_path",
     "make_plan",
+    "models_roots",
     "process_alive",
     "read_log",
+    "remove_models_root",
+    "reset_models_roots",
     "resolve_engine",
     "run_command",
+    "save_config",
     "save_state",
+    "scan_models",
     "serve_dir",
     "start_server",
     "state_path",
@@ -176,6 +189,24 @@ class Check:
     name: str
     status: CheckStatus
     detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class ModelEntry:
+    """扫描到的一个本地 GGUF 模型。"""
+
+    root: Path
+    path: Path
+    size: int
+    profiles: tuple[str, ...] = ()
+
+    @property
+    def relative(self) -> str:
+        """相对模型根目录的路径（跨盘时退化为绝对路径）。"""
+        try:
+            return str(self.path.relative_to(self.root))
+        except ValueError:  # pragma: no cover - path 必然位于 root 之下
+            return str(self.path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -416,13 +447,105 @@ def engines_root(home: Path | None = None) -> Path:
 
 
 def default_models_root() -> Path:
-    """模型根目录：``FCMD_MODELS`` → Windows 的 ``D:/models`` → ``${FCMD_HOME}/models``。"""
-    raw = os.environ.get("FCMD_MODELS")
-    if raw:
-        return Path(raw).expanduser()
+    """兜底模型根目录：Windows 的 ``D:/models``，否则 ``${FCMD_HOME}/models``。"""
     if os.name == "nt" and Path("D:/").exists():
         return Path("D:/models")
     return fcmd_home() / "models"
+
+
+def config_path(home: Path | None = None) -> Path:
+    """持久化配置文件路径（``${FCMD_HOME}/serve/config.json``）。"""
+    return serve_dir(home) / "config.json"
+
+
+def load_config(home: Path | None = None) -> dict[str, Any]:
+    """读取配置；缺失或损坏时返回空字典。"""
+    path = config_path(home)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_config(data: dict[str, Any], home: Path | None = None) -> Path:
+    """写入配置文件（自动创建目录）。"""
+    path = config_path(home)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _path_key(path: Path) -> str:
+    """用于去重的路径键（Windows 大小写不敏感）。"""
+    return os.path.normcase(str(Path(path).resolve()))
+
+
+def configured_roots(home: Path | None = None) -> list[Path]:
+    """配置文件中登记的模型目录（保持登记顺序并去重）。"""
+    raw = load_config(home).get("models_roots")
+    if not isinstance(raw, list):
+        return []
+    roots: list[Path] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str) or not item.strip():
+            continue
+        path = Path(item.strip()).expanduser()
+        key = _path_key(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(path)
+    return roots
+
+
+def models_roots(explicit: Path | None = None, home: Path | None = None) -> list[Path]:
+    """解析实际使用的模型目录列表。
+
+    优先级：``explicit``（``--models-root``）→ ``FCMD_MODELS`` → 配置文件 → 默认目录。
+    """
+    if explicit is not None:
+        return [explicit.expanduser()]
+    raw = os.environ.get("FCMD_MODELS")
+    if raw:
+        return [Path(raw).expanduser()]
+    roots = configured_roots(home)
+    return roots or [default_models_root()]
+
+
+def _save_roots(roots: Sequence[Path], home: Path | None) -> list[Path]:
+    save_config({"models_roots": [str(p) for p in roots]}, home)
+    return list(roots)
+
+
+def add_models_root(path: Path, home: Path | None = None) -> list[Path]:
+    """新增一个模型目录并落盘（重复登记忽略）。"""
+    roots = configured_roots(home)
+    key = _path_key(path)
+    if any(_path_key(item) == key for item in roots):
+        return roots
+    return _save_roots([*roots, path.expanduser()], home)
+
+
+def remove_models_root(path: Path, home: Path | None = None) -> list[Path]:
+    """移除一个已登记的模型目录。"""
+    roots = configured_roots(home)
+    key = _path_key(path)
+    remaining = [item for item in roots if _path_key(item) != key]
+    if len(remaining) == len(roots):
+        raise ServeError(f"配置中没有模型目录: {path}")
+    return _save_roots(remaining, home)
+
+
+def reset_models_roots(home: Path | None = None) -> list[Path]:
+    """清空配置中的模型目录，回到默认解析。"""
+    path = config_path(home)
+    with contextlib.suppress(FileNotFoundError):
+        path.unlink()
+    return [default_models_root()]
 
 
 def save_state(state: ServeState, home: Path | None = None) -> Path:
@@ -576,15 +699,45 @@ def stop_server(
 # ---------------------------------------------------------------------- #
 # 模型与显存估算
 # ---------------------------------------------------------------------- #
+def scan_models(
+    roots: Sequence[Path] | None = None,
+    home: Path | None = None,
+) -> list[ModelEntry]:
+    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj、跨目录去重、按大小降序）。"""
+    entries: list[ModelEntry] = []
+    seen: set[str] = set()
+    for raw_root in models_roots(home=home) if roots is None else roots:
+        root = raw_root.expanduser()
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*.gguf"):
+            if "mmproj" in path.name.lower():
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:  # pragma: no cover - 扫描期间文件被删除
+                continue
+            resolved = path.resolve()
+            key = _path_key(resolved)
+            if key in seen:
+                continue
+            seen.add(key)
+            profiles = tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower())
+            entries.append(ModelEntry(root=root, path=resolved, size=size, profiles=profiles))
+    entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
+    return entries
+
+
 def find_model(
     quant: str,
     models_root: Path | None = None,
     model: Path | None = None,
+    home: Path | None = None,
 ) -> Path:
     """定位指定量化档位的 GGUF 文件。
 
-    ``model`` 可为 GGUF 文件或目录（覆盖 ``models_root``）；未指定时在模型根目录
-    递归查找文件名包含 ``quant`` 的 GGUF（忽略 mmproj 与分片以外的文件）。
+    ``model`` 可为 GGUF 文件或目录（覆盖模型目录配置）；未指定时在所有已配置的
+    模型目录中递归查找文件名包含 ``quant`` 的 GGUF（忽略 mmproj），同名取最大。
     """
     if model is not None:
         target = model.expanduser()
@@ -594,25 +747,28 @@ def find_model(
             return target.resolve()
         if not target.is_dir():
             raise ServeError(f"模型路径不存在: {target}")
-        root = target
+        roots = [target]
     else:
-        root = (models_root or default_models_root()).expanduser()
-        if not root.is_dir():
+        roots = models_roots(models_root, home)
+        existing = [root for root in roots if root.is_dir()]
+        if not existing:
             raise ServeError(
-                f"模型目录不存在: {root}；先下载模型："
-                f"fcmd mdl download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {root}"
+                f"模型目录不存在: {', '.join(str(root) for root in roots)}；先下载模型："
+                f"fcmd mdl download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {roots[0]}"
             )
+        roots = existing
 
-    candidates = [p for p in root.rglob("*.gguf") if "mmproj" not in p.name.lower()]
-    matched = [p for p in candidates if quant.lower() in p.name.lower()]
+    entries = scan_models(roots)
+    matched = [entry for entry in entries if quant.lower() in entry.path.name.lower()]
     if not matched:
-        available = sorted({p.name for p in candidates})[:5]
+        available = sorted({entry.path.name for entry in entries})[:5]
         hint = f"；已发现: {', '.join(available)}" if available else ""
         raise ServeError(
-            f"在 {root} 未找到量化 {quant} 的 GGUF{hint}；"
-            f"可执行 fcmd mdl download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {root}"
+            f"在 {', '.join(str(root) for root in roots)} 未找到量化 {quant} 的 GGUF{hint}；"
+            f"可执行 fcmd mdl download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* "
+            f"--dest {roots[0]}"
         )
-    return max(matched, key=lambda p: p.stat().st_size).resolve()
+    return max(matched, key=lambda entry: entry.size).path
 
 
 def estimate_vram(model_bytes: int, context: int, kv_type: str = "q8_0") -> int:
@@ -1203,7 +1359,8 @@ def _check_port(port: int, home: Path | None) -> Check:
 
 
 def _check_disk(models_root: Path | None, home: Path | None) -> Check:
-    root = models_root or default_models_root()
+    roots = models_roots(models_root, home)
+    root = roots[0]
     target = root if root.is_dir() else _home(home)
     try:
         usage = shutil.disk_usage(target)

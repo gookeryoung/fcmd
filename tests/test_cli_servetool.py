@@ -175,6 +175,7 @@ class TestRegistration:
         assert {
             "doctor",
             "engine",
+            "config",
             "model",
             "plan",
             "start",
@@ -328,7 +329,7 @@ class TestModel:
 
     def test_default_models_root_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "m"))
-        assert core.default_models_root() == tmp_path / "m"
+        assert core.models_roots() == [tmp_path / "m"]
 
     def test_estimate_vram(self) -> None:
         f16 = core.estimate_vram(10, 65536, "f16")
@@ -342,6 +343,126 @@ class TestModel:
         expected = core.estimate_vram(model_file.stat().st_size, plan.context, plan.profile.kv_type)
         assert core.plan_vram(plan) == expected
         assert plan.base_url == "http://127.0.0.1:8080"
+
+
+# ---------------------------------------------------------------------- #
+# 模型目录配置与扫描
+# ---------------------------------------------------------------------- #
+class TestModelsConfig:
+    def test_config_path(self, home: Path) -> None:
+        assert core.config_path(home) == home / "serve" / "config.json"
+
+    def test_load_missing(self, home: Path) -> None:
+        assert core.load_config(home) == {}
+
+    def test_load_corrupt(self, home: Path) -> None:
+        path = core.config_path(home)
+        path.parent.mkdir(parents=True)
+        path.write_text("{not json", encoding="utf-8")
+        assert core.load_config(home) == {}
+        path.write_text("[]", encoding="utf-8")
+        assert core.load_config(home) == {}
+
+    def test_save_and_load(self, home: Path) -> None:
+        written = core.save_config({"models_roots": ["D:/models"]}, home)
+        assert written == core.config_path(home)
+        assert core.load_config(home) == {"models_roots": ["D:/models"]}
+
+    def test_configured_roots_filters_invalid(self, home: Path) -> None:
+        root = home.parent / "models"
+        core.save_config({"models_roots": ["", "  ", 3, str(root), str(root), str(root / "sub")]}, home)
+        assert core.configured_roots(home) == [root, root / "sub"]
+
+    def test_configured_roots_non_list(self, home: Path) -> None:
+        core.save_config({"models_roots": "D:/models"}, home)
+        assert core.configured_roots(home) == []
+
+    def test_models_roots_precedence(self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path) -> None:
+        configured = tmp_path / "configured"
+        core.save_config({"models_roots": [str(configured)]}, home)
+        assert core.models_roots(home=home) == [configured]
+        assert core.models_roots(tmp_path / "explicit", home) == [tmp_path / "explicit"]
+        monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "env"))
+        assert core.models_roots(home=home) == [tmp_path / "env"]
+        assert core.models_roots(tmp_path / "explicit", home) == [tmp_path / "explicit"]
+
+    def test_models_roots_default(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        monkeypatch.delenv("FCMD_MODELS", raising=False)
+        assert core.models_roots(home=home) == [core.default_models_root()]
+
+    def test_add_dedupes(self, home: Path) -> None:
+        a = home.parent / "a"
+        b = home.parent / "b"
+        assert core.add_models_root(a, home) == [a]
+        assert core.add_models_root(a, home) == [a]
+        assert core.add_models_root(b, home) == [a, b]
+        assert core.configured_roots(home) == [a, b]
+
+    def test_remove(self, home: Path) -> None:
+        a = home.parent / "a"
+        b = home.parent / "b"
+        core.add_models_root(a, home)
+        core.add_models_root(b, home)
+        assert core.remove_models_root(a, home) == [b]
+        with pytest.raises(ServeError, match="配置中没有模型目录"):
+            core.remove_models_root(a, home)
+
+    def test_reset(self, home: Path) -> None:
+        core.add_models_root(home.parent / "a", home)
+        assert core.reset_models_roots(home) == [core.default_models_root()]
+        assert core.configured_roots(home) == []
+
+    def test_reset_without_config(self, home: Path) -> None:
+        assert core.reset_models_roots(home) == [core.default_models_root()]
+
+
+class TestScanModels:
+    def test_multi_root_and_profiles(self, tmp_path: Path) -> None:
+        first = tmp_path / "r1"
+        second = tmp_path / "r2"
+        small = first / "repo" / "Model-Q4_K_M.gguf"
+        large = second / "Model-Q5_K_M.gguf"
+        for path, payload in ((small, b"a" * 10), (large, b"b" * 100)):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+
+        entries = core.scan_models([first, second])
+        assert [entry.path for entry in entries] == [large.resolve(), small.resolve()]
+        assert entries[0].profiles == ("balanced", "long")
+        assert entries[1].profiles == ("speed", "max-context")
+        assert entries[0].relative == "Model-Q5_K_M.gguf"
+        assert entries[1].relative == str(Path("repo") / "Model-Q4_K_M.gguf")
+
+    def test_ignores_mmproj_and_missing_roots(self, tmp_path: Path) -> None:
+        root = tmp_path / "models"
+        root.mkdir()
+        (root / "mmproj-Q5_K_M.gguf").write_bytes(b"x")
+        assert core.scan_models([root, tmp_path / "missing"]) == []
+
+    def test_dedupes_nested_roots(self, tmp_path: Path) -> None:
+        root = tmp_path / "models"
+        nested = root / "repo"
+        nested.mkdir(parents=True)
+        (nested / "m-Q5_K_M.gguf").write_bytes(b"x")
+        assert len(core.scan_models([root, nested])) == 1
+
+    def test_uses_configured_roots(self, home: Path, tmp_path: Path) -> None:
+        root = tmp_path / "models"
+        root.mkdir()
+        (root / "m-Q5_K_M.gguf").write_bytes(b"x")
+        core.add_models_root(root, home)
+        assert [entry.path for entry in core.scan_models(home=home)] == [(root / "m-Q5_K_M.gguf").resolve()]
+
+    def test_find_model_across_roots_picks_largest(self, tmp_path: Path, home: Path) -> None:
+        first = tmp_path / "r1"
+        second = tmp_path / "r2"
+        for root, payload in ((first, b"a" * 10), (second, b"b" * 100)):
+            root.mkdir()
+            (root / "m-Q5_K_M.gguf").write_bytes(payload)
+        assert core.find_model("Q5_K_M", models_root=first) == (first / "m-Q5_K_M.gguf").resolve()
+        core.add_models_root(first, home)
+        core.add_models_root(second, home)
+        assert core.find_model("Q5_K_M", home=home) == (second / "m-Q5_K_M.gguf").resolve()
 
 
 # ---------------------------------------------------------------------- #
@@ -966,6 +1087,81 @@ class TestCli:
         empty.mkdir()
         with pytest.raises(ServeError, match=r"没有 \.gguf"):
             servetool.model_cmd(models_root=empty)
+
+    def test_model_shows_profile_selection(self, model_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        servetool.model_cmd(models_root=model_file.parent.parent)
+        out = capsys.readouterr().out
+        assert "各档位将选用的模型" in out
+        assert "balanced" in out
+        assert "缺失" in out
+
+    def test_model_warns_missing_configured_root(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(home))
+        core.add_models_root(model_file.parent.parent, home)
+        core.add_models_root(home.parent / "absent", home)
+        servetool.model_cmd()
+        out = capsys.readouterr().out
+        assert "Q5_K_M.gguf" in out
+        assert "配置中的目录不存在" in out
+
+    def test_config_show(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(home))
+        core.add_models_root(model_file.parent.parent, home)
+        servetool.config_cmd("show")
+        out = capsys.readouterr().out
+        assert "模型目录（来源: 配置文件" in out
+        assert "Q5_K_M" not in out
+
+    def test_config_show_env_override(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(home))
+        monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "env-models"))
+        servetool.config_cmd("show")
+        out = capsys.readouterr().out
+        assert "FCMD_MODELS（覆盖配置文件）" in out
+
+    def test_config_add_and_warn(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(home))
+        servetool.config_cmd("add", path=tmp_path / "new-models")
+        out = capsys.readouterr().out
+        assert "已登记模型目录" in out
+        assert "目录当前不存在" in out
+        assert core.configured_roots(home) == [tmp_path / "new-models"]
+
+    def test_config_remove(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(home))
+        core.add_models_root(tmp_path / "a", home)
+        servetool.config_cmd("remove", path=tmp_path / "a")
+        assert "已移除模型目录" in capsys.readouterr().out
+        assert core.configured_roots(home) == []
+
+    def test_config_reset(
+        self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(home))
+        core.add_models_root(tmp_path / "a", home)
+        servetool.config_cmd("reset")
+        assert "已清空模型目录配置" in capsys.readouterr().out
+        assert core.configured_roots(home) == []
+
+    def test_config_requires_path(self) -> None:
+        with pytest.raises(ServeError, match="--path"):
+            servetool.config_cmd("add")
+        with pytest.raises(ServeError, match="--path"):
+            servetool.config_cmd("remove")
 
     def test_plan_output(
         self,

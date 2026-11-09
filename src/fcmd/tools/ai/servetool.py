@@ -7,7 +7,8 @@
 ------
 * ``doctor`` —— 环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / 显存预算）
 * ``engine`` —— 引擎安装、注册、列表与切换（``install``/``list``/``use``）
-* ``model`` —— 列出本地 GGUF 与匹配档位
+* ``config`` —— 模型目录配置（``show``/``add``/``remove``/``reset``）
+* ``model`` —— 扫描模型目录，列出 GGUF 与各档位选中的文件
 * ``plan`` —— 打印启动计划（命令 + 显存估算），不真正启动
 * ``start`` / ``stop`` / ``status`` / ``logs`` —— 服务生命周期
 * ``bench`` —— 对运行中的服务实测延迟与 token 吞吐
@@ -25,6 +26,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -52,6 +54,7 @@ __all__ = ["main"]
 __tool_aliases__ = ["srv"]
 
 _ENGINE_ACTION = Literal["install", "list", "use"]
+_CONFIG_ACTION = Literal["show", "add", "remove", "reset"]
 _ENV_SHELL = Literal["plain", "powershell", "bash"]
 _STATUS_TEXT = {"ok": "[green]ok[/green]", "warn": "[yellow]warn[/yellow]", "fail": "[red]fail[/red]"}
 
@@ -124,7 +127,7 @@ def doctor_cmd(
     engine_tag:
         只体检指定引擎 tag；默认按 current / 最新安装解析。
     models_root:
-        模型根目录，默认 ``FCMD_MODELS`` 或 ``D:/models``。
+        只体检该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
     checks = core.doctor(port=port, engine_tag=engine_tag, models_root=models_root)
     table = Table(title="servetool 体检", box="ascii")
@@ -204,33 +207,106 @@ def engine_cmd(
 
 @fcmd.tool(
     "servetool",
+    subcommand="config",
+    help="模型目录配置（show/add/remove/reset）",
+    description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
+)
+def config_cmd(action: _CONFIG_ACTION, path: Path | None = None) -> None:
+    """查看或修改持久化的模型目录列表。
+
+    Parameters
+    ----------
+    action:
+        ``show`` 查看；``add`` 新增；``remove`` 移除；``reset`` 清空回到默认。
+    path:
+        ``add`` / ``remove`` 时的模型目录。
+    """
+    if action in ("add", "remove"):
+        if path is None:
+            raise ServeError(f"action={action} 需要用 --path 指定模型目录")
+        target = path.expanduser()
+        if action == "add":
+            core.add_models_root(target)
+            get_console().print(f"已登记模型目录: {target}")
+            if not target.is_dir():
+                get_console().print(f"[yellow]提示: 目录当前不存在 {target}[/yellow]")
+        else:
+            core.remove_models_root(target)
+            get_console().print(f"已移除模型目录: {target}")
+    elif action == "reset":
+        core.reset_models_roots()
+        get_console().print("已清空模型目录配置，回到默认目录")
+    _print_roots()
+
+
+def _print_roots() -> None:
+    """打印当前生效的模型目录、来源与 GGUF 数量。"""
+    env = os.environ.get("FCMD_MODELS")
+    if env:
+        source = "FCMD_MODELS（覆盖配置文件）"
+    elif core.configured_roots():
+        source = f"配置文件 {core.config_path()}"
+    else:
+        source = "默认目录（未配置）"
+
+    roots = core.models_roots()
+    table = Table(title=f"模型目录（来源: {source}）", box="ascii")
+    table.add_column("目录", style="cyan", no_wrap=True)
+    table.add_column("状态", justify="center", no_wrap=True)
+    table.add_column("GGUF", justify="right", no_wrap=True)
+    for root in roots:
+        exists = root.is_dir()
+        count = len(core.scan_models([root])) if exists else 0
+        table.add_row(str(root), "[green]存在[/green]" if exists else "[red]不存在[/red]", str(count))
+    get_console().print(table)
+    get_console().print("增删目录: fcmd srv config add --path D:/models（remove / reset 同理）")
+
+
+@fcmd.tool(
+    "servetool",
     subcommand="model",
-    help="列出本地 GGUF 模型与匹配档位",
+    help="扫描模型目录，列出本地 GGUF 与匹配档位",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
 )
 def model_cmd(models_root: Path | None = None) -> None:
-    """列出模型根目录下的 GGUF 文件。
+    """扫描所有已配置的模型目录，列出 GGUF 文件与被选中的档位。
 
     Parameters
     ----------
     models_root:
-        模型根目录，默认 ``FCMD_MODELS`` 或 ``D:/models``。
+        只扫描指定目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
-    root = (models_root or core.default_models_root()).expanduser()
-    if not root.is_dir():
-        raise ServeError(f"模型目录不存在: {root}；先用 fcmd mdl download 下载 GGUF")
-    files = sorted(root.rglob("*.gguf"))
-    if not files:
-        raise ServeError(f"{root} 下没有 .gguf 文件；先用 fcmd mdl download 下载")
+    roots = core.models_roots(models_root)
+    missing = [root for root in roots if not root.is_dir()]
+    existing = [root for root in roots if root.is_dir()]
+    if not existing:
+        raise ServeError(f"模型目录不存在: {', '.join(str(root) for root in roots)}；先用 fcmd mdl download 下载 GGUF")
 
-    table = Table(title=f"本地模型（{root}）", box="ascii")
-    table.add_column("文件", style="cyan", no_wrap=True)
+    entries = core.scan_models(existing)
+    if not entries:
+        raise ServeError(f"{', '.join(str(root) for root in existing)} 下没有 .gguf 文件；先用 fcmd mdl download 下载")
+
+    table = Table(title=f"本地模型（{len(entries)} 个 / {len(existing)} 个目录）", box="ascii")
+    table.add_column("目录", style="cyan", no_wrap=True)
+    table.add_column("文件", no_wrap=True)
     table.add_column("大小", justify="right", no_wrap=True)
     table.add_column("匹配档位")
-    for item in files:
-        matched = [name for name, prof in PROFILES.items() if prof.quant.lower() in item.name.lower()]
-        table.add_row(str(item.relative_to(root)), core.human_size(item.stat().st_size), ", ".join(matched) or "-")
+    for entry in entries:
+        table.add_row(str(entry.root), entry.relative, core.human_size(entry.size), ", ".join(entry.profiles) or "-")
     get_console().print(table)
+
+    get_console().print("各档位将选用的模型:")
+    for name in PROFILES:
+        quant = PROFILES[name].quant
+        matched = [entry for entry in entries if quant.lower() in entry.path.name.lower()]
+        if matched:
+            chosen = max(matched, key=lambda entry: entry.size)
+            get_console().print(f"  {name:<12} {quant:<7} {chosen.path}")
+        else:
+            get_console().print(f"  {name:<12} {quant:<7} [yellow]缺失[/yellow]")
+
+    for root in missing:
+        get_console().print(f"[yellow]提示: 配置中的目录不存在 {root}[/yellow]")
 
 
 @fcmd.tool(
@@ -263,7 +339,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     model:
         GGUF 文件或包含 GGUF 的目录；默认按档位量化在模型根目录查找。
     models_root:
-        模型根目录，默认 ``FCMD_MODELS`` 或 ``D:/models``。
+        只在该目录查找；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     port:
         监听端口（默认 8080）。
     host:
@@ -326,7 +402,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     model:
         GGUF 文件或包含 GGUF 的目录；默认按档位量化在模型根目录查找。
     models_root:
-        模型根目录，默认 ``FCMD_MODELS`` 或 ``D:/models``。
+        只在该目录查找；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     port:
         监听端口（默认 8080）。
     host:
