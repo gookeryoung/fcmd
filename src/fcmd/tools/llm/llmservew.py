@@ -4,6 +4,7 @@
 已配置模型列表（后台扫描 ``llmenv`` 登记的模型目录，并按文件名内置能力标签
 与最佳实践提示）、启动计划预览、后台启动 / 停止、状态与日志查看，以及运行
 监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
+系统负载（CPU / 内存 / 交换 / GPU）在窗口打开后即持续采样，服务未启动时同样可见。
 
 示例
 ----
@@ -52,6 +53,7 @@ _DESCRIPTION = (
     "与最佳实践提示，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
     "查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，"
     "同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标"
+    "（系统负载在服务未启动时也持续采样展示）"
 )
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
@@ -399,6 +401,7 @@ class ServeWindow:
         self._build_widgets()
         self._refresh_loaded()
         self._refresh_models()
+        self._start_system_monitor()
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -662,7 +665,7 @@ class ServeWindow:
     def _build_load(self, parent: Any) -> None:
         """系统负载面板：CPU / 频率 / 内存 / 交换与服务进程关键指标。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="系统负载（服务运行中每 1s 采样）", padding=8)
+        box = ttk.LabelFrame(parent, text="系统负载（每 1s 采样；服务运行时额外显示服务进程指标）", padding=8)
         box.pack(fill="x", pady=(8, 0))
         items = (
             ("CPU", "cpu"),
@@ -679,7 +682,7 @@ class ServeWindow:
     def _build_gpu(self, parent: Any) -> None:
         """GPU 负载面板：利用率 / 显存 / 温度 / 功耗 / 风扇 / 频率。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="GPU 负载（nvidia-smi，服务运行中每 1s 采样）", padding=8)
+        box = ttk.LabelFrame(parent, text="GPU 负载（nvidia-smi，每 1s 采样；服务运行时额外显示服务显存）", padding=8)
         box.pack(fill="x", pady=(8, 0))
         for column in range(4):
             box.columnconfigure(column, weight=1)
@@ -1031,6 +1034,11 @@ class ServeWindow:
         except ServeError as exc:
             self._messagebox.showerror("参数错误", str(exc))
             return
+        if llmenv.load_state(name, missing_ok=True) is None:
+            self._status_var.set(f"{name} · 未启动")
+            self._log(f"服务 {name} 未启动，无需停止")
+            self._start_system_monitor()
+            return
         self._stop_monitor("停止中…")
         self._begin_task(self._stop_work, (name,))
 
@@ -1086,6 +1094,7 @@ class ServeWindow:
                     self._show_stopped(cast(StopResult, payload))
                 elif kind == "done":
                     self._set_busy(False)
+                    self._start_system_monitor()
         except queue.Empty:
             if self._thread is not None and self._thread.is_alive():
                 self.root.after(100, self._poll_task)
@@ -1109,15 +1118,21 @@ class ServeWindow:
         else:
             self._status_var.set(f"{result.state.name} · 未运行（已清理状态）")
             self._log(f"服务 {result.state.name} 未在运行，已清理残留状态")
+        self._start_system_monitor()
 
     def _refresh_status(self) -> None:
         self._refresh_loaded()
         try:
             name = self._model_name()
-            state = llmenv.require_state(name)
         except ServeError as exc:
-            self._status_var.set("状态：未启动")
-            self._log(str(exc))
+            self._messagebox.showerror("参数错误", str(exc))
+            return
+        state = llmenv.load_state(name, missing_ok=True)
+        if state is None:
+            self._status_var.set(f"{name} · 未启动")
+            self._log(f"服务 {name} 未启动（尚无状态文件，持续显示系统负载）")
+            self._stop_monitor("服务未运行")
+            self._start_system_monitor()
             return
         alive = llmserve.process_alive(state.pid, state.create_time)
         self._status_var.set(f"{state.name} · {'运行中' if alive else '已退出'} · {state.base_url} · pid {state.pid}")
@@ -1131,6 +1146,7 @@ class ServeWindow:
             self._start_monitor(state)
         else:
             self._stop_monitor("服务未运行")
+            self._start_system_monitor()
 
     def _show_logs(self) -> None:
         self._notebook.select(1)
@@ -1169,6 +1185,22 @@ class ServeWindow:
         self._log(f"已开始实时性能采样: {state.base_url}/metrics")
         self.root.after(300, lambda: self._poll_metrics(seq))
 
+    def _start_system_monitor(self) -> None:
+        """服务未运行时仅采样系统负载，保证窗口打开即可看到 CPU / 内存 / GPU 使用情况。"""
+        if self._closing:
+            return
+        if self._monitor_thread is not None and self._monitor_thread.is_alive():
+            return
+        stop = threading.Event()
+        self._monitor_stop = stop
+        self._monitor_state = None
+        self._monitor_seq += 1
+        seq = self._monitor_seq
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(None, stop), daemon=True)
+        self._monitor_thread.start()
+        self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
+        self.root.after(300, lambda: self._poll_metrics(seq))
+
     def _stop_monitor(self, reason: str = "未监控") -> None:
         """停止采样线程并更新状态（重复调用安全）。"""
         if self._monitor_stop is not None:
@@ -1184,20 +1216,24 @@ class ServeWindow:
         for var in (*self._load_vars.values(), *self._gpu_vars.values()):
             var.set("-")
 
-    def _monitor_loop(self, state: ServeState, stop: threading.Event) -> None:
-        """后台线程：每秒采样系统负载与 ``/metrics``，用滑动窗口计算平滑 token/s。"""
+    def _monitor_loop(self, state: ServeState | None, stop: threading.Event) -> None:
+        """后台线程：每秒采样系统负载；服务运行时额外采样 ``/metrics``。"""
         window = RateWindow()
-        process = self._attach_process(state.pid)
+        process = self._attach_process(state.pid) if state is not None else None
+        pid = state.pid if state is not None else 0
         while not stop.is_set():
             started = time.monotonic()
-            self._monitor_results.put(("load", _sample_load(state.pid, process)))
-            try:
-                metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
-            except ServeError as exc:
-                self._monitor_results.put(("error", str(exc)))
+            self._monitor_results.put(("load", _sample_load(pid, process)))
+            if state is None:
+                self._monitor_results.put(("idle", None))
             else:
-                gen_rate, prompt_rate = window.update(started, metrics.predicted_tokens, metrics.prompt_tokens)
-                self._monitor_results.put(("metrics", (metrics, gen_rate, prompt_rate)))
+                try:
+                    metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
+                except ServeError as exc:
+                    self._monitor_results.put(("error", str(exc)))
+                else:
+                    gen_rate, prompt_rate = window.update(started, metrics.predicted_tokens, metrics.prompt_tokens)
+                    self._monitor_results.put(("metrics", (metrics, gen_rate, prompt_rate)))
             stop.wait(max(0.2, 1.0 - (time.monotonic() - started)))
 
     @staticmethod
@@ -1222,6 +1258,8 @@ class ServeWindow:
                     self._apply_metrics(metrics, gen_rate, prompt_rate)
                 elif kind == "load":
                     self._apply_load(cast(LoadSample, payload))
+                elif kind == "idle":
+                    self._apply_idle()
                 else:
                     self._metric_vars["monitor"].set("采样失败: " + str(payload)[:60])
         except queue.Empty:
@@ -1237,6 +1275,12 @@ class ServeWindow:
         self._metric_vars["predicted"].set(f"{metrics.predicted_tokens:.0f}")
         self._metric_vars["prompt"].set(f"{metrics.prompt_tokens:.0f}")
         self._metric_vars["monitor"].set("监控中")
+
+    def _apply_idle(self) -> None:
+        """服务未运行：清空服务相关指标，仅保留系统负载采样。"""
+        for key in ("gen_rate", "prompt_rate", "processing", "deferred", "kv", "predicted", "prompt"):
+            self._metric_vars[key].set("-")
+        self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
 
     def _apply_load(self, sample: LoadSample) -> None:
         """刷新系统负载与 GPU 面板。"""
