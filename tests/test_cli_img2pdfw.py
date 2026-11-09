@@ -1,6 +1,6 @@
 """img2pdfw 工具测试。
 
-验证 ``fcmd.tools.media.img2pdfw`` 模块：
+验证 ``fcmd.tools.pdf.img2pdfw`` 模块：
 - 工具注册
 - 设置文件读写与异常回退
 - 页面尺寸显示 / DPI 解析 / 默认输出路径
@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.media import img2pdfw
-from fcmd.tools.media.img2pdfw import (
+from fcmd.tools.pdf import img2pdfw
+from fcmd.tools.pdf.img2pdfw import (
     DEFAULT_DPI,
     Img2PdfSettings,
     config_path,

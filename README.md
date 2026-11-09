@@ -165,16 +165,21 @@ fcmd completion --shell fish | source         # fish
 | `inifile` | - | INI 处理（get/set/list/keys，基于 configparser） |
 | `tomltool` | - | TOML 处理（get/keys/format/validate，基于标准库 tomllib） |
 
+### PDF（可选依赖）
+
+| 工具 | 别名 | 说明 |
+|------|------|------|
+| `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正），依赖 `fcmd[img]` |
+| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志），依赖 `fcmd[img]` |
+| `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr 等 15 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]` |
+
 ### 多媒体（可选依赖）
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `img2ico` | - | 图像/SVG 转 ICO/ICNS（多尺寸、质量档位、目录批量），依赖 `fcmd[img,svg]` |
 | `img2icow` | - | 图像转 ICO 转换器窗口版（Tk，单文件/目录批量、尺寸与质量可调），依赖 `fcmd[img,svg]` |
-| `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正），依赖 `fcmd[img]` |
-| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志），依赖 `fcmd[img]` |
 | `imagetool` | - | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors），依赖 `fcmd[img]` |
-| `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr 等 15 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]` |
 | `videoconv` | - | 视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif；编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持 `*`/`**` 通配符批量），依赖系统 ffmpeg |
 | `videoconvw` | - | 视频转换器窗口版（Tk，文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断），依赖系统 ffmpeg |
 
@@ -526,7 +531,7 @@ src/fcmd/
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
   tools/         # Python 实现的工具模块（自动发现）
-    archive/ calc/ dev/ media/ net/ system/
+    archive/ calc/ dev/ llm/ media/ net/ pdf/ system/ text/
   dsl/           # TOML 命令定义与 action/compute 原语
     actions/     #   内建动作（文件、文本、媒体、系统、加密等）
   commands/      # 出厂 DSL 命令定义（*.toml）
