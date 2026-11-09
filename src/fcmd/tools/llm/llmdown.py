@@ -1,4 +1,4 @@
-"""modeltool - 大模型仓库下载工具。
+"""llmdown - 大模型仓库下载工具。
 
 面向 Qwen 等大模型权重仓库，支持两个国内可用源：
 
@@ -12,10 +12,10 @@
 
 示例
 ----
-    fcmd modeltool files Qwen/Qwen3-Coder-30B-A3B-Instruct
-    fcmd modeltool mirror Qwen/Qwen3-Coder-30B-A3B-Instruct
-    fcmd modeltool download Qwen/Qwen3-Coder-30B-A3B-Instruct --dest D:/models
-    fcmd mdl download Qwen/Qwen3-Coder-30B-A3B-Instruct --include "*.safetensors"
+    fcmd llmdown files Qwen/Qwen3-Coder-30B-A3B-Instruct
+    fcmd llmdown mirror Qwen/Qwen3-Coder-30B-A3B-Instruct
+    fcmd llmdown download Qwen/Qwen3-Coder-30B-A3B-Instruct --dest D:/models
+    fcmd llmdown download Qwen/Qwen3-Coder-30B-A3B-Instruct --include "*.safetensors"
 """
 
 from __future__ import annotations
@@ -45,11 +45,9 @@ __all__ = [
     "select_source",
 ]
 
-__tool_aliases__ = ["mdl"]
-
 SourceName = Literal["auto", "modelscope", "hf-mirror"]
 
-_UA = "fcmd-modeltool/0.3.10"
+_UA = "fcmd-llmdown/0.3.10"
 _SOURCES: tuple[str, str] = ("modelscope", "hf-mirror")
 _DEFAULT_REVISION = {"modelscope": "master", "hf-mirror": "main"}
 _API_URL = {
@@ -526,7 +524,7 @@ def download_files(  # noqa: PLR0913, PLR0917
 # CLI 子命令
 # ---------------------------------------------------------------------- #
 @fcmd.tool(
-    "modeltool",
+    "llmdown",
     subcommand="files",
     help="列出模型仓库文件清单（auto 时两源测速选优）",
     description="大模型仓库下载：清单 / 多源测速 / 断点续传下载",
@@ -572,7 +570,7 @@ def list_files_cmd(
 
 
 @fcmd.tool(
-    "modeltool",
+    "llmdown",
     subcommand="mirror",
     help="对两源同名文件实测下载吞吐并排名",
     description="大模型仓库下载：清单 / 多源测速 / 断点续传下载",
@@ -610,7 +608,7 @@ def mirror_cmd(repo: str, revision: str | None = None) -> None:
 
 
 @fcmd.tool(
-    "modeltool",
+    "llmdown",
     subcommand="download",
     help="下载模型仓库（多源选优 + 进度速度 + 断点续传）",
     description="大模型仓库下载：清单 / 多源测速 / 断点续传下载",
@@ -659,7 +657,7 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     download_files(repo, selected, target, selection, revision, workers, verify)
 
 
-@fcmd.main("modeltool")
+@fcmd.main("llmdown")
 def main() -> None:
     pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 

@@ -1,4 +1,4 @@
-"""servetool - 本地大模型推理服务编排（llama.cpp / OpenAI 兼容）。
+"""llmsrv - 本地大模型推理服务编排（llama.cpp / OpenAI 兼容）。
 
 把「下载模型 → 装引擎 → 起服务 → 接入客户端」收成一条命令链，
 供 dsh / pi 等 OpenAI 兼容编码 Agent 使用。
@@ -17,12 +17,12 @@
 
 示例
 ----
-    fcmd srv doctor
-    fcmd srv engine install --tag b12211
-    fcmd srv start --profile balanced
-    fcmd srv env --shell powershell
-    fcmd srv bench
-    fcmd srv stop
+    fcmd llmsrv doctor
+    fcmd llmsrv engine install --tag b12211
+    fcmd llmsrv start --profile balanced
+    fcmd llmsrv env --shell powershell
+    fcmd llmsrv bench
+    fcmd llmsrv stop
 """
 
 from __future__ import annotations
@@ -33,8 +33,8 @@ from typing import Literal
 
 import fcmd
 from fcmd.console import Table, get_console
-from fcmd.tools.ai import serve_core as core
-from fcmd.tools.ai.serve_core import (
+from fcmd.tools.llm import llmcore as core
+from fcmd.tools.llm.llmcore import (
     DEFAULT_ALIAS,
     DEFAULT_API_KEY,
     DEFAULT_ENGINE_TAG,
@@ -51,8 +51,6 @@ from fcmd.tools.ai.serve_core import (
 )
 
 __all__ = ["main"]
-
-__tool_aliases__ = ["srv"]
 
 _ENGINE_ACTION = Literal["install", "list", "use"]
 _CONFIG_ACTION = Literal["show", "add", "remove", "reset"]
@@ -113,7 +111,7 @@ def _state_status(state: ServeState) -> str:
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="doctor",
     help="环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -135,7 +133,7 @@ def doctor_cmd(
         只体检该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
     checks = core.doctor(port=port, engine_tag=engine_tag, models_root=models_root)
-    table = Table(title="servetool 体检", box="ascii")
+    table = Table(title="llmsrv 体检", box="ascii")
     table.add_column("检查项", style="cyan", no_wrap=True)
     table.add_column("状态", justify="center", no_wrap=True)
     table.add_column("详情")
@@ -149,7 +147,7 @@ def doctor_cmd(
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="engine",
     help="引擎安装/注册/列表/切换（install/list/use）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -180,7 +178,7 @@ def engine_cmd(
     if action == "list":
         infos = core.list_engines()
         if not infos:
-            get_console().print("未安装任何引擎：fcmd srv engine install")
+            get_console().print("未安装任何引擎：fcmd llmsrv engine install")
             return
         table = Table(title="已安装引擎", box="ascii")
         table.add_column("tag", style="cyan", no_wrap=True)
@@ -215,7 +213,7 @@ def engine_cmd(
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="config",
     help="模型目录配置（show/add/remove/reset）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -268,11 +266,11 @@ def _print_roots() -> None:
         count = len(core.scan_models([root])) if exists else 0
         table.add_row(str(root), "[green]存在[/green]" if exists else "[red]不存在[/red]", str(count))
     get_console().print(table)
-    get_console().print("增删目录: fcmd srv config add --path D:/models（remove / reset 同理）")
+    get_console().print("增删目录: fcmd llmsrv config add --path D:/models（remove / reset 同理）")
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="model",
     help="扫描模型目录，列出本地 GGUF 与匹配档位",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -289,11 +287,15 @@ def model_cmd(models_root: Path | None = None) -> None:
     missing = [root for root in roots if not root.is_dir()]
     existing = [root for root in roots if root.is_dir()]
     if not existing:
-        raise ServeError(f"模型目录不存在: {', '.join(str(root) for root in roots)}；先用 fcmd mdl download 下载 GGUF")
+        raise ServeError(
+            f"模型目录不存在: {', '.join(str(root) for root in roots)}；先用 fcmd llmdown download 下载 GGUF"
+        )
 
     entries = core.scan_models(existing)
     if not entries:
-        raise ServeError(f"{', '.join(str(root) for root in existing)} 下没有 .gguf 文件；先用 fcmd mdl download 下载")
+        raise ServeError(
+            f"{', '.join(str(root) for root in existing)} 下没有 .gguf 文件；先用 fcmd llmdown download 下载"
+        )
 
     table = Table(title=f"本地模型（{len(entries)} 个 / {len(existing)} 个目录）", box="ascii")
     table.add_column("目录", style="cyan", no_wrap=True)
@@ -319,7 +321,7 @@ def model_cmd(models_root: Path | None = None) -> None:
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="convert",
     help="HF safetensors 目录转 GGUF（可复用本地源码 zip、可选再量化）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -379,11 +381,11 @@ def convert_cmd(  # noqa: PLR0913, PLR0917
     paths = core.convert_model(plan)
     for path in paths:
         get_console().print(f"已生成: {path}")
-    get_console().print(f"启动服务: fcmd srv start --model {paths[-1]}")
+    get_console().print(f"启动服务: fcmd llmsrv start --model {paths[-1]}")
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="plan",
     help="打印启动计划（命令 + 显存估算），不启动",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -453,7 +455,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="start",
     help="启动推理服务（等待健康检查通过）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -525,11 +527,11 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     _print_plan(plan)
     state = core.start_server(plan, wait_s=wait)
     _print_state(state, "[green]运行中[/green]")
-    get_console().print("接入 dsh / pi: fcmd srv env（--shell powershell|bash）")
+    get_console().print("接入 dsh / pi: fcmd llmsrv env（--shell powershell|bash）")
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="stop",
     help="停止推理服务并清理状态",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -550,7 +552,7 @@ def stop_cmd(name: str = DEFAULT_NAME) -> None:
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="status",
     help="查看服务状态（不指定 name 时列出全部）",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -570,7 +572,7 @@ def status_cmd(name: str | None = None) -> None:
 
     states = core.list_states()
     if not states:
-        get_console().print("没有已登记的服务：fcmd srv start")
+        get_console().print("没有已登记的服务：fcmd llmsrv start")
         return
     table = Table(title="服务列表", box="ascii")
     table.add_column("服务", style="cyan", no_wrap=True)
@@ -586,7 +588,7 @@ def status_cmd(name: str | None = None) -> None:
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="logs",
     help="查看服务日志末尾若干行",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -605,7 +607,7 @@ def logs_cmd(name: str = DEFAULT_NAME, lines: int = 50) -> None:
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="bench",
     help="对运行中的服务实测延迟与 token 吞吐",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -634,7 +636,7 @@ def bench_cmd(
     """
     state = core.require_state(name)
     if not core.process_alive(state.pid, state.create_time):
-        raise ServeError(f"服务 {name!r} 未在运行：fcmd srv start")
+        raise ServeError(f"服务 {name!r} 未在运行：fcmd llmsrv start")
     result = core.bench(state, prompt=prompt, prompt_tokens=prompt_tokens, max_tokens=max_tokens, timeout=timeout)
     table = Table(title=f"实测: {name}", box="ascii")
     table.add_column("指标", style="cyan", no_wrap=True)
@@ -652,7 +654,7 @@ def bench_cmd(
 
 
 @fcmd.tool(
-    "servetool",
+    "llmsrv",
     subcommand="env",
     help="输出 dsh/pi 需要的 OPENAI_* 环境变量",
     description="本地大模型推理服务：引擎/模型/进程/健康检查/接入 OpenAI 兼容客户端",
@@ -677,7 +679,7 @@ def env_cmd(name: str = DEFAULT_NAME, shell: _ENV_SHELL = "plain") -> None:
             get_console().print(f"{key}={value}", markup=False)
 
 
-@fcmd.main("servetool")
+@fcmd.main("llmsrv")
 def main() -> None:
     pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 

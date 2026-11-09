@@ -1,4 +1,4 @@
-"""servetool 工具测试。
+"""llmsrv 工具测试。
 
 覆盖：
 - 注册 / 别名 / 子命令
@@ -28,9 +28,9 @@ from urllib.request import Request
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool, run_tool
-from fcmd.tools.ai import serve_core as core
-from fcmd.tools.ai import servetool
-from fcmd.tools.ai.serve_core import (
+from fcmd.tools.llm import llmcore as core
+from fcmd.tools.llm import llmsrv
+from fcmd.tools.llm.llmcore import (
     DEFAULT_API_KEY,
     DEFAULT_PORT,
     PROFILES,
@@ -180,10 +180,10 @@ def _plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_fil
 # ---------------------------------------------------------------------- #
 class TestRegistration:
     def test_registered(self) -> None:
-        assert "servetool" in _TOOL_REGISTRY
+        assert "llmsrv" in _TOOL_REGISTRY
 
     def test_subcommands(self) -> None:
-        subs = set(_TOOL_REGISTRY["servetool"])
+        subs = set(_TOOL_REGISTRY["llmsrv"])
         assert {
             "doctor",
             "engine",
@@ -199,14 +199,11 @@ class TestRegistration:
             "env",
         } <= subs
 
-    def test_alias(self) -> None:
-        assert servetool.__tool_aliases__ == ["srv"]
-
     def test_convert_help_describes_parameters(self) -> None:
         """convert 的 --help 展示参数含义而非参数名。"""
         from fcmd.core.toolkit import _build_parser_for_tool
 
-        text = _build_parser_for_tool(get_tool("servetool", "convert")).format_help()
+        text = _build_parser_for_tool(get_tool("llmsrv", "convert")).format_help()
         assert "含 config.json 与 *.safetensors 的模型目录" in text
         assert "量化类型" in text
         assert "convert_hf_to_gguf.py 路径" in text
@@ -1644,7 +1641,7 @@ class TestDoctor:
 class TestCli:
     def test_doctor_ok(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "doctor", lambda **kwargs: [Check("GPU", "ok", "RTX")])
-        assert run_tool("servetool", ["doctor"]) == 0
+        assert run_tool("llmsrv", ["doctor"]) == 0
         out = capsys.readouterr().out
         assert "体检" in out
         assert "RTX" in out
@@ -1652,7 +1649,7 @@ class TestCli:
     def test_doctor_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(core, "doctor", lambda **kwargs: [Check("引擎", "fail", "crash")])
         with pytest.raises(ServeError, match="1 项检查失败"):
-            servetool.doctor_cmd()
+            llmsrv.doctor_cmd()
 
     def test_msvc_runtime_engine_local_new(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         engine_dir = tmp_path / "engine"
@@ -1685,20 +1682,20 @@ class TestCli:
 
     def test_engine_list_empty(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "list_engines", lambda home=None: [])
-        assert run_tool("servetool", ["engine", "list"]) == 0
+        assert run_tool("llmsrv", ["engine", "list"]) == 0
         assert "未安装任何引擎" in capsys.readouterr().out
 
     def test_engine_list(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         infos = [EngineInfo("b2", Path("b2/llama-server.exe"), "current"), EngineInfo("b1", Path("b1/x"))]
         monkeypatch.setattr(core, "list_engines", lambda home=None: infos)
-        servetool.engine_cmd("list")
+        llmsrv.engine_cmd("list")
         out = capsys.readouterr().out
         assert "当前" in out
         assert "b1" in out
 
     def test_engine_use(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "use_engine", lambda tag, home=None: EngineInfo(tag, Path("x")))
-        servetool.engine_cmd("use", tag="b1")
+        llmsrv.engine_cmd("use", tag="b1")
         assert "已切换默认引擎" in capsys.readouterr().out
 
     def test_engine_install_sets_default(
@@ -1708,7 +1705,7 @@ class TestCli:
         monkeypatch.setattr(core, "install_engine", lambda tag, **kwargs: EngineInfo(tag, Path("x")))
         monkeypatch.setattr(core, "list_engines", lambda home=None: [])
         monkeypatch.setattr(core, "use_engine", lambda tag, home=None: calls.append(tag) or EngineInfo(tag, Path("x")))
-        servetool.engine_cmd("install", tag="b1")
+        llmsrv.engine_cmd("install", tag="b1")
         assert calls == ["b1"]
         assert "已设为默认引擎" in capsys.readouterr().out
 
@@ -1718,36 +1715,36 @@ class TestCli:
         monkeypatch.setattr(core, "install_engine", lambda tag, **kwargs: EngineInfo(tag, Path("x")))
         monkeypatch.setattr(core, "list_engines", lambda home=None: [EngineInfo("b0", Path("y"), "current")])
         monkeypatch.setattr(core, "use_engine", lambda *a, **k: pytest.fail("不应切换"))
-        servetool.engine_cmd("install", tag="b1")
+        llmsrv.engine_cmd("install", tag="b1")
         assert "引擎就绪" in capsys.readouterr().out
 
     def test_engine_requires_tag(self) -> None:
         with pytest.raises(ServeError, match="--tag"):
-            servetool.engine_cmd("install")
+            llmsrv.engine_cmd("install")
 
     def test_model_list(self, model_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        servetool.model_cmd(models_root=model_file.parent.parent)
+        llmsrv.model_cmd(models_root=model_file.parent.parent)
         out = capsys.readouterr().out
         assert "Q5_K_M.gguf" in out
         assert "balanced" in out
 
     def test_model_list_extras(self, model_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
         (model_file.parent / "other.gguf").write_bytes(b"y")
-        servetool.model_cmd(models_root=model_file.parent.parent)
+        llmsrv.model_cmd(models_root=model_file.parent.parent)
         assert "other.gguf" in capsys.readouterr().out
 
     def test_model_missing_dir(self, tmp_path: Path) -> None:
         with pytest.raises(ServeError, match="模型目录不存在"):
-            servetool.model_cmd(models_root=tmp_path / "nope")
+            llmsrv.model_cmd(models_root=tmp_path / "nope")
 
     def test_model_empty_dir(self, tmp_path: Path) -> None:
         empty = tmp_path / "empty"
         empty.mkdir()
         with pytest.raises(ServeError, match=r"没有 \.gguf"):
-            servetool.model_cmd(models_root=empty)
+            llmsrv.model_cmd(models_root=empty)
 
     def test_model_shows_profile_selection(self, model_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        servetool.model_cmd(models_root=model_file.parent.parent)
+        llmsrv.model_cmd(models_root=model_file.parent.parent)
         out = capsys.readouterr().out
         assert "各档位将选用的模型" in out
         assert "balanced" in out
@@ -1763,7 +1760,7 @@ class TestCli:
         monkeypatch.setenv("FCMD_HOME", str(home))
         core.add_models_root(model_file.parent.parent, home)
         core.add_models_root(home.parent / "absent", home)
-        servetool.model_cmd()
+        llmsrv.model_cmd()
         out = capsys.readouterr().out
         assert "Q5_K_M.gguf" in out
         assert "配置中的目录不存在" in out
@@ -1773,7 +1770,7 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_HOME", str(home))
         core.add_models_root(model_file.parent.parent, home)
-        servetool.config_cmd("show")
+        llmsrv.config_cmd("show")
         out = capsys.readouterr().out
         assert "模型目录（来源: 配置文件" in out
         assert "Q5_K_M" not in out
@@ -1783,7 +1780,7 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_HOME", str(home))
         monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "env-models"))
-        servetool.config_cmd("show")
+        llmsrv.config_cmd("show")
         out = capsys.readouterr().out
         assert "FCMD_MODELS（覆盖配置文件）" in out
 
@@ -1791,7 +1788,7 @@ class TestCli:
         self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         monkeypatch.setenv("FCMD_HOME", str(home))
-        servetool.config_cmd("add", path=tmp_path / "new-models")
+        llmsrv.config_cmd("add", path=tmp_path / "new-models")
         out = capsys.readouterr().out
         assert "已登记模型目录" in out
         assert "目录当前不存在" in out
@@ -1802,7 +1799,7 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_HOME", str(home))
         core.add_models_root(tmp_path / "a", home)
-        servetool.config_cmd("remove", path=tmp_path / "a")
+        llmsrv.config_cmd("remove", path=tmp_path / "a")
         assert "已移除模型目录" in capsys.readouterr().out
         assert core.configured_roots(home) == []
 
@@ -1811,15 +1808,15 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_HOME", str(home))
         core.add_models_root(tmp_path / "a", home)
-        servetool.config_cmd("reset")
+        llmsrv.config_cmd("reset")
         assert "已清空模型目录配置" in capsys.readouterr().out
         assert core.configured_roots(home) == []
 
     def test_config_requires_path(self) -> None:
         with pytest.raises(ServeError, match="--path"):
-            servetool.config_cmd("add")
+            llmsrv.config_cmd("add")
         with pytest.raises(ServeError, match="--path"):
-            servetool.config_cmd("remove")
+            llmsrv.config_cmd("remove")
 
     def test_convert_cli(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1831,13 +1828,13 @@ class TestCli:
             script=tmp_path / "convert.py",
             python="py-test",
         )
-        monkeypatch.setattr(servetool.core, "plan_convert", lambda *args, **kwargs: plan)
-        monkeypatch.setattr(servetool.core, "convert_model", lambda p: [p.output])
-        servetool.convert_cmd(plan.source, python="py-test")
+        monkeypatch.setattr(llmsrv.core, "plan_convert", lambda *args, **kwargs: plan)
+        monkeypatch.setattr(llmsrv.core, "convert_model", lambda p: [p.output])
+        llmsrv.convert_cmd(plan.source, python="py-test")
         out = capsys.readouterr().out
         assert "转换计划" in out
         assert "已生成" in out
-        assert "fcmd srv start --model" in out
+        assert "fcmd llmsrv start --model" in out
         assert "中间文件" not in out
 
     def test_convert_cli_with_quant(
@@ -1852,9 +1849,9 @@ class TestCli:
             quant="Q4_K_M",
             quantize_exe=tmp_path / "llama-quantize",
         )
-        monkeypatch.setattr(servetool.core, "plan_convert", lambda *args, **kwargs: plan)
-        monkeypatch.setattr(servetool.core, "convert_model", lambda p: [p.output])
-        servetool.convert_cmd(plan.source, quant="Q4_K_M", python="py-test")
+        monkeypatch.setattr(llmsrv.core, "plan_convert", lambda *args, **kwargs: plan)
+        monkeypatch.setattr(llmsrv.core, "convert_model", lambda p: [p.output])
+        llmsrv.convert_cmd(plan.source, quant="Q4_K_M", python="py-test")
         assert "中间文件" in capsys.readouterr().out
 
     def test_plan_output(
@@ -1867,7 +1864,7 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / core.engine_exe_name()))
         monkeypatch.setattr(core, "detect_gpu", lambda runner=core.run_command: None)
-        servetool.plan_cmd(model=model_file, models_root=model_file.parent.parent)
+        llmsrv.plan_cmd(model=model_file, models_root=model_file.parent.parent)
         out = capsys.readouterr().out
         assert "启动计划" in out
         assert "--flash-attn" in out
@@ -1882,7 +1879,7 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / core.engine_exe_name()))
         monkeypatch.setattr(core, "detect_gpu", lambda runner=core.run_command: None)
-        servetool.plan_cmd(model=model_file, models_root=model_file.parent.parent, kv_type="q4_0", ubatch=512)
+        llmsrv.plan_cmd(model=model_file, models_root=model_file.parent.parent, kv_type="q4_0", ubatch=512)
         out = capsys.readouterr().out
         assert "-ctk q4_0" in out
         assert "-ub 512" in out
@@ -1897,7 +1894,7 @@ class TestCli:
     ) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / core.engine_exe_name()))
         monkeypatch.setattr(core, "detect_gpu", lambda runner=core.run_command: GpuInfo("tiny", 1024))
-        servetool.plan_cmd(model=model_file, models_root=model_file.parent.parent)
+        llmsrv.plan_cmd(model=model_file, models_root=model_file.parent.parent)
         assert "超过显存" in capsys.readouterr().out
 
     def test_start_output(
@@ -1913,40 +1910,40 @@ class TestCli:
         monkeypatch.setattr(core, "detect_gpu", lambda runner=core.run_command: None)
         state = _state(log=str(home / "serve" / "logs" / "qwen.log"))
         monkeypatch.setattr(core, "start_server", lambda plan, wait_s=180.0: state)
-        servetool.start_cmd(model=model_file, models_root=model_file.parent.parent)
+        llmsrv.start_cmd(model=model_file, models_root=model_file.parent.parent)
         out = capsys.readouterr().out
         assert "运行中" in out
-        assert "fcmd srv env" in out
+        assert "fcmd llmsrv env" in out
 
     def test_stop_messages(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "stop_server", lambda name, home=None: StopResult(_state(), True))
-        servetool.stop_cmd()
+        llmsrv.stop_cmd()
         assert "已停止服务" in capsys.readouterr().out
         monkeypatch.setattr(core, "stop_server", lambda name, home=None: StopResult(_state(), False))
-        servetool.stop_cmd()
+        llmsrv.stop_cmd()
         assert "未在运行" in capsys.readouterr().out
 
     def test_status_empty(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "list_states", lambda home=None: [])
-        assert run_tool("servetool", ["status"]) == 0
+        assert run_tool("llmsrv", ["status"]) == 0
         assert "没有已登记的服务" in capsys.readouterr().out
 
     def test_status_list(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "list_states", lambda home=None: [_state()])
         monkeypatch.setattr(core, "process_alive", lambda pid, ct=0.0: True)
         monkeypatch.setattr(core, "check_health", lambda *a, **k: True)
-        servetool.status_cmd()
+        llmsrv.status_cmd()
         assert "运行中" in capsys.readouterr().out
 
     def test_status_single_states(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "require_state", lambda name, home=None: _state())
         monkeypatch.setattr(core, "process_alive", lambda pid, ct=0.0: False)
-        servetool.status_cmd("qwen")
+        llmsrv.status_cmd("qwen")
         assert "已退出" in capsys.readouterr().out
 
         monkeypatch.setattr(core, "process_alive", lambda pid, ct=0.0: True)
         monkeypatch.setattr(core, "check_health", lambda *a, **k: False)
-        servetool.status_cmd("qwen")
+        llmsrv.status_cmd("qwen")
         assert "无响应" in capsys.readouterr().out
 
     def test_logs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -1954,7 +1951,7 @@ class TestCli:
         path = core.log_path("qwen", tmp_path / "home")
         path.parent.mkdir(parents=True)
         path.write_text("a\nb\nc", encoding="utf-8")
-        servetool.logs_cmd("qwen", lines=2)
+        llmsrv.logs_cmd("qwen", lines=2)
         out = capsys.readouterr().out
         assert "b" in out
         assert "a" not in out
@@ -1963,7 +1960,7 @@ class TestCli:
         monkeypatch.setattr(core, "require_state", lambda name, home=None: _state())
         monkeypatch.setattr(core, "process_alive", lambda pid, ct=0.0: True)
         monkeypatch.setattr(core, "bench", lambda *a, **k: BenchResult(1.5, 10, 30, 20.0))
-        servetool.bench_cmd()
+        llmsrv.bench_cmd()
         out = capsys.readouterr().out
         assert "20.00 tok/s" in out
         assert "30" in out
@@ -1979,7 +1976,7 @@ class TestCli:
             return BenchResult(10.0, 30000, 30, 3.0)
 
         monkeypatch.setattr(core, "bench", _bench)
-        servetool.bench_cmd(prompt_tokens=30000)
+        llmsrv.bench_cmd(prompt_tokens=30000)
         assert seen["prompt_tokens"] == 30000
         assert "偏乐观" not in capsys.readouterr().out
 
@@ -1987,7 +1984,7 @@ class TestCli:
         monkeypatch.setattr(core, "require_state", lambda name, home=None: _state())
         monkeypatch.setattr(core, "process_alive", lambda pid, ct=0.0: False)
         with pytest.raises(ServeError, match="未在运行"):
-            servetool.bench_cmd()
+            llmsrv.bench_cmd()
 
     def test_env_output(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1995,19 +1992,19 @@ class TestCli:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
         state = _state()
         core.save_state(state, tmp_path)
-        assert run_tool("servetool", ["env", "--shell", "powershell"]) == 0
+        assert run_tool("llmsrv", ["env", "--shell", "powershell"]) == 0
         out = capsys.readouterr().out
         assert '$env:OPENAI_BASE_URL="http://127.0.0.1:8080/v1"' in out
 
-        servetool.env_cmd(shell="bash")
+        llmsrv.env_cmd(shell="bash")
         out = capsys.readouterr().out
         assert 'export OPENAI_MODEL="qwen3-coder-30b-a3b"' in out
 
-        servetool.env_cmd(shell="plain")
+        llmsrv.env_cmd(shell="plain")
         out = capsys.readouterr().out
         assert f"OPENAI_API_KEY={DEFAULT_API_KEY}" in out
 
     def test_run_tool_env_missing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path / "home"))
         with pytest.raises(ServeError, match="未启动"):
-            servetool.env_cmd()
+            llmsrv.env_cmd()

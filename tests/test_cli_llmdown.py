@@ -1,4 +1,4 @@
-"""modeltool 工具测试。
+"""llmdown 工具测试。
 
 覆盖：
 - 工具注册与 files / mirror / download 子命令
@@ -21,8 +21,8 @@ import pytest
 import fcmd as fx
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.actions.net import UrlProbe
-from fcmd.tools.ai import modeltool
-from fcmd.tools.ai.modeltool import (
+from fcmd.tools.llm import llmdown
+from fcmd.tools.llm.llmdown import (
     ModelFile,
     ModelToolError,
     SourceSelection,
@@ -115,10 +115,10 @@ def _probe(url: str, ok: bool = True, throughput: float = 100.0) -> UrlProbe:
 # ---------------------------------------------------------------------- #
 class TestRegistration:
     def test_registered(self) -> None:
-        assert "modeltool" in _TOOL_REGISTRY
+        assert "llmdown" in _TOOL_REGISTRY
 
     def test_subcommands(self) -> None:
-        subs = fx.list_subcommands("modeltool")
+        subs = fx.list_subcommands("llmdown")
         assert {"files", "mirror", "download"} <= set(subs)
 
 
@@ -211,7 +211,7 @@ class TestHelpers:
 class TestSelectSource:
     def test_explicit_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
         files = [ModelFile("a.bin", 1)]
-        monkeypatch.setattr(modeltool, "fetch_files", lambda *a, **k: files)
+        monkeypatch.setattr(llmdown, "fetch_files", lambda *a, **k: files)
         selection = select_source("Qwen/demo", "modelscope")
         assert selection.source == "modelscope"
         assert selection.fallback is None
@@ -226,7 +226,7 @@ class TestSelectSource:
                 raise ModelToolError("不存在")
             return files
 
-        monkeypatch.setattr(modeltool, "fetch_files", _fetch)
+        monkeypatch.setattr(llmdown, "fetch_files", _fetch)
         selection = select_source("Qwen/demo")
         assert selection.source == "modelscope"
         assert selection.fallback is None
@@ -235,7 +235,7 @@ class TestSelectSource:
         def _fetch(*a: Any, **k: Any) -> list[ModelFile]:
             raise ModelToolError("不可用")
 
-        monkeypatch.setattr(modeltool, "fetch_files", _fetch)
+        monkeypatch.setattr(llmdown, "fetch_files", _fetch)
         with pytest.raises(ModelToolError, match="所有源均不可用"):
             select_source("Qwen/demo")
 
@@ -246,9 +246,9 @@ class TestSelectSource:
         def _fetch(repo: str, source: str, revision: str | None = None) -> list[ModelFile]:
             return ms_files if source == "modelscope" else hf_files
 
-        monkeypatch.setattr(modeltool, "fetch_files", _fetch)
+        monkeypatch.setattr(llmdown, "fetch_files", _fetch)
         monkeypatch.setattr(
-            modeltool,
+            llmdown,
             "_probe_sources",
             lambda *a, **k: [
                 ("hf-mirror", _probe("https://hf-mirror.com/a", throughput=900)),
@@ -264,8 +264,8 @@ class TestSelectSource:
         def _fetch(repo: str, source: str, revision: str | None = None) -> list[ModelFile]:
             return [ModelFile(f"{source}.bin", 1)]
 
-        monkeypatch.setattr(modeltool, "fetch_files", _fetch)
-        monkeypatch.setattr(modeltool, "_probe_sources", lambda *a, **k: [])
+        monkeypatch.setattr(llmdown, "fetch_files", _fetch)
+        monkeypatch.setattr(llmdown, "_probe_sources", lambda *a, **k: [])
         selection = select_source("Qwen/demo")
         assert selection.source == "modelscope"
         assert selection.fallback == "hf-mirror"
@@ -287,17 +287,17 @@ class TestDownloadOne:
         final = tmp_path / "a.bin"
         selection = SourceSelection("modelscope", (file,))
         progress = _ProgressStub()
-        _download_one("Qwen/demo", file, final, modeltool._part_path(final), selection, None, True, progress, 0, 1)
+        _download_one("Qwen/demo", file, final, llmdown._part_path(final), selection, None, True, progress, 0, 1)
 
         assert final.read_bytes() == content
-        assert not modeltool._part_path(final).exists()
+        assert not llmdown._part_path(final).exists()
         assert seen[0].get_header("Range") is None
         assert progress.removed  # 校验任务已移除
 
     def test_resume_with_range(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         content = b"hello world"
         final = tmp_path / "a.bin"
-        part = modeltool._part_path(final)
+        part = llmdown._part_path(final)
         part.write_bytes(content[:6])
         seen: list[Any] = []
         monkeypatch.setattr(
@@ -316,7 +316,7 @@ class TestDownloadOne:
     def test_server_ignores_range_restarts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         content = b"hello world"
         final = tmp_path / "a.bin"
-        part = modeltool._part_path(final)
+        part = llmdown._part_path(final)
         part.write_bytes(content[:6])
         monkeypatch.setattr(
             "urllib.request.urlopen",
@@ -344,7 +344,7 @@ class TestDownloadOne:
         selection = SourceSelection("modelscope", (file,), fallback="hf-mirror")
         final = tmp_path / "a.bin"
         _download_one(
-            "Qwen/demo", file, final, modeltool._part_path(final), selection, None, False, _ProgressStub(), 0, 1
+            "Qwen/demo", file, final, llmdown._part_path(final), selection, None, False, _ProgressStub(), 0, 1
         )
         assert final.read_bytes() == content
 
@@ -359,10 +359,10 @@ class TestDownloadOne:
         final = tmp_path / "a.bin"
         with pytest.raises(ModelToolError, match="sha256"):
             _download_one(
-                "Qwen/demo", file, final, modeltool._part_path(final), selection, None, True, _ProgressStub(), 0, 1
+                "Qwen/demo", file, final, llmdown._part_path(final), selection, None, True, _ProgressStub(), 0, 1
             )
         assert not final.exists()
-        assert not modeltool._part_path(final).exists()
+        assert not llmdown._part_path(final).exists()
 
     def test_size_mismatch(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(
@@ -374,7 +374,7 @@ class TestDownloadOne:
         final = tmp_path / "a.bin"
         with pytest.raises(ModelToolError, match="大小不符"):
             _download_one(
-                "Qwen/demo", file, final, modeltool._part_path(final), selection, None, False, _ProgressStub(), 0, 1
+                "Qwen/demo", file, final, llmdown._part_path(final), selection, None, False, _ProgressStub(), 0, 1
             )
 
     def test_all_sources_failed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -387,7 +387,7 @@ class TestDownloadOne:
         final = tmp_path / "a.bin"
         with pytest.raises(ModelToolError, match="下载失败"):
             _download_one(
-                "Qwen/demo", file, final, modeltool._part_path(final), selection, None, False, _ProgressStub(), 0, 1
+                "Qwen/demo", file, final, llmdown._part_path(final), selection, None, False, _ProgressStub(), 0, 1
             )
 
 
@@ -426,8 +426,8 @@ class TestDownloadFiles:
 class TestCli:
     def test_files_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         selection = SourceSelection("modelscope", (ModelFile("a.json", 2, "ABCDEF123456"), ModelFile("b.bin", 3)))
-        monkeypatch.setattr(modeltool, "select_source", lambda *a, **k: selection)
-        code = run_tool("modeltool", ["files", "Qwen/demo", "--include", "*.json"])
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
+        code = run_tool("llmdown", ["files", "Qwen/demo", "--include", "*.json"])
         assert code == 0
         out = capsys.readouterr().out
         assert "a.json" in out
@@ -436,9 +436,9 @@ class TestCli:
 
     def test_files_empty_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
         selection = SourceSelection("modelscope", (ModelFile("a.bin", 2),))
-        monkeypatch.setattr(modeltool, "select_source", lambda *a, **k: selection)
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
         with pytest.raises(ModelToolError, match="过滤后没有文件"):
-            modeltool.list_files_cmd("Qwen/demo", include=["*.json"])
+            llmdown.list_files_cmd("Qwen/demo", include=["*.json"])
 
     def test_mirror_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         probes = (
@@ -446,8 +446,8 @@ class TestCli:
             _probe("https://www.modelscope.cn/a", throughput=10),
         )
         selection = SourceSelection("hf-mirror", (ModelFile("a.bin", 1),), "modelscope", probes)
-        monkeypatch.setattr(modeltool, "select_source", lambda *a, **k: selection)
-        code = run_tool("modeltool", ["mirror", "Qwen/demo"])
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
+        code = run_tool("llmdown", ["mirror", "Qwen/demo"])
         assert code == 0
         out = capsys.readouterr().out
         assert "hf-mirror" in out
@@ -456,8 +456,8 @@ class TestCli:
 
     def test_mirror_no_common_file(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         selection = SourceSelection("modelscope", (ModelFile("a.bin", 1),))
-        monkeypatch.setattr(modeltool, "select_source", lambda *a, **k: selection)
-        modeltool.mirror_cmd("Qwen/demo")
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
+        llmdown.mirror_cmd("Qwen/demo")
         assert "无法同文件测速" in capsys.readouterr().out
 
     def test_download_default_dest(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -467,15 +467,15 @@ class TestCli:
         def _fake_download(repo: str, files: list[ModelFile], dest: Path, *args: Any) -> None:
             captured.update(repo=repo, files=files, dest=dest)
 
-        monkeypatch.setattr(modeltool, "select_source", lambda *a, **k: selection)
-        monkeypatch.setattr(modeltool, "download_files", _fake_download)
-        modeltool.download_cmd("Qwen/demo")
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
+        monkeypatch.setattr(llmdown, "download_files", _fake_download)
+        llmdown.download_cmd("Qwen/demo")
         assert captured["dest"] == Path("models") / "Qwen/demo"
         assert captured["files"][0].path == "a.bin"
         assert "总大小" in capsys.readouterr().out
 
     def test_download_empty_filter(self, monkeypatch: pytest.MonkeyPatch) -> None:
         selection = SourceSelection("modelscope", (ModelFile("a.bin", 2),))
-        monkeypatch.setattr(modeltool, "select_source", lambda *a, **k: selection)
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
         with pytest.raises(ModelToolError, match="过滤后没有文件"):
-            modeltool.download_cmd("Qwen/demo", include=["*.json"])
+            llmdown.download_cmd("Qwen/demo", include=["*.json"])

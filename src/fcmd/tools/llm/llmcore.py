@@ -1,6 +1,6 @@
 """本地大模型推理服务的核心逻辑（引擎 / 模型 / 状态 / 进程 / HTTP）。
 
-本模块只放**可单测的纯逻辑**，CLI 与表格输出在 :mod:`fcmd.tools.ai.servetool`。
+本模块只放**可单测的纯逻辑**，CLI 与表格输出在 :mod:`fcmd.tools.llm.llmsrv`。
 设计目标是单卡消费级 GPU 上跑 Qwen3-Coder-30B-A3B 这类 MoE 编码模型，
 优先 token 速度，供 dsh / pi 等 OpenAI 兼容客户端使用。
 
@@ -17,7 +17,7 @@
 
 示例
 ----
-    from fcmd.tools.ai import serve_core as core
+    from fcmd.tools.llm import llmcore as core
 
     plan = core.make_plan(profile="balanced")
     print(core.format_command(plan.argv()))
@@ -783,7 +783,7 @@ def find_model(
         if not existing:
             raise ServeError(
                 f"模型目录不存在: {', '.join(str(root) for root in roots)}；先下载模型："
-                f"fcmd mdl download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {roots[0]}"
+                f"fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {roots[0]}"
             )
         roots = existing
 
@@ -794,7 +794,7 @@ def find_model(
         hint = f"；已发现: {', '.join(available)}" if available else ""
         raise ServeError(
             f"在 {', '.join(str(root) for root in roots)} 未找到量化 {quant} 的 GGUF{hint}；"
-            f"可执行 fcmd mdl download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* "
+            f"可执行 fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* "
             f"--dest {roots[0]}"
         )
     return max(matched, key=lambda entry: entry.size).path
@@ -931,7 +931,7 @@ def resolve_engine(tag: str | None = None, home: Path | None = None) -> EngineIn
     if tag:
         info = _engine_info(root / tag, tag)
         if info is None:
-            raise ServeError(f"引擎 {tag!r} 未安装：fcmd srv engine install --tag {tag}")
+            raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmsrv engine install --tag {tag}")
         return info
 
     current = _current_tag(root)
@@ -950,7 +950,7 @@ def resolve_engine(tag: str | None = None, home: Path | None = None) -> EngineIn
     which = shutil.which("llama-server")
     if which:
         return EngineInfo("system", Path(which), "PATH")
-    raise ServeError("未找到 llama.cpp 引擎：先执行 fcmd srv engine install --tag " + DEFAULT_ENGINE_TAG)
+    raise ServeError("未找到 llama.cpp 引擎：先执行 fcmd llmsrv engine install --tag " + DEFAULT_ENGINE_TAG)
 
 
 def engine_asset_names(tag: str, variant: EngineVariant = "cuda") -> list[str]:
@@ -970,7 +970,7 @@ def _download(url: str, dest: Path, opener: Opener | None = None) -> int:
     """下载 URL 到文件，返回字节数。"""
     from urllib.request import Request, urlopen
 
-    req = Request(url, headers={"User-Agent": "fcmd-servetool/0.3.10"})
+    req = Request(url, headers={"User-Agent": "fcmd-llmsrv/0.3.10"})
     open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
     try:
         with open_fn(req, 60.0) as resp, dest.open("wb") as out:
@@ -1087,7 +1087,7 @@ def use_engine(tag: str, home: Path | None = None) -> EngineInfo:
     root = engines_root(home)
     info = _engine_info(root / tag, tag)
     if info is None:
-        raise ServeError(f"引擎 {tag!r} 未安装：fcmd srv engine install --tag {tag}")
+        raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmsrv engine install --tag {tag}")
     root.mkdir(parents=True, exist_ok=True)
     (root / _CURRENT_MARKER).write_text(
         json.dumps({"tag": tag, "updated_at": now_iso()}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -1252,7 +1252,7 @@ def _download_resumable(url: str, dest: Path, opener: Opener | None = None) -> i
     last_error: OSError | None = None
     for attempt in range(_SOURCE_ATTEMPTS):
         start = part.stat().st_size if part.is_file() else 0
-        headers = {"User-Agent": "fcmd-servetool/0.3.10"}
+        headers = {"User-Agent": "fcmd-llmsrv/0.3.10"}
         if start:
             headers["Range"] = f"bytes={start}-"
         try:
@@ -1678,7 +1678,7 @@ def start_server(  # noqa: PLR0913
     existing = load_state(plan.name, home, missing_ok=True)
     if existing is not None:
         if process_alive(existing.pid, existing.create_time):
-            raise ServeError(f"服务 {plan.name!r} 已在运行（pid={existing.pid}），先执行 fcmd srv stop {plan.name}")
+            raise ServeError(f"服务 {plan.name!r} 已在运行（pid={existing.pid}），先执行 fcmd llmsrv stop {plan.name}")
         delete_state(plan.name, home)
 
     if port_in_use is None:

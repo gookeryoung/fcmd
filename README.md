@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-63 个工具（其中 13 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`modeltool`/`packtool`/`portcheck`/`pymake`/`screenshot`/`servetool`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+63 个工具（其中 13 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`llmdown`/`llmsrv`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -185,12 +185,12 @@ fcmd completion --shell fish | source         # fish
 | `lscalc` | - | LS-DYNA 计算（run/mpi/status） |
 | `dockercmd` | - | Docker 操作（login/push/pull，镜像仓库通用） |
 
-### AI 与模型
+### LLM 与模型
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `modeltool` | `mdl` | 大模型仓库下载（`files`/`mirror`/`download`；ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
-| `servetool` | `srv` | 本地大模型推理服务（`doctor`/`engine`/`config`/`model`/`convert`/`plan`/`start`/`stop`/`status`/`logs`/`bench`/`env`；模型目录多根配置与扫描（`config add/remove/reset`，`model` 列清单与各档位选中项）、HF safetensors 转 GGUF（`convert`，优先复用引擎目录下的 `llama.cpp*.zip` 源码包或 `--script` 指定的本地源码 zip，否则自动下载与引擎 tag 匹配的源码包并支持断点续传，失败回退浅克隆，可选 `llama-quantize` 量化）、llama.cpp 引擎安装与切换（`engine install` 支持 `--path` 指向本地 zip 免下载安装，目标目录已有完整 zip 时自动复用）、按档位选 GGUF 与 KV 精度（64K 档默认 `f16` KV 提速，`--kv`/`--ubatch` 可覆盖）、显存估算、VC++ 运行库检查、后台启动 + `/health` 就绪等待、进程树停止、OpenAI 兼容客户端环境变量输出；`bench --prompt-tokens N` 按长上下文实测吞吐） |
+| `llmdown` | - | 大模型仓库下载（`files`/`mirror`/`download`；ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
+| `llmsrv` | - | 本地大模型推理服务（`doctor`/`engine`/`config`/`model`/`convert`/`plan`/`start`/`stop`/`status`/`logs`/`bench`/`env`；模型目录多根配置与扫描（`config add/remove/reset`，`model` 列清单与各档位选中项）、HF safetensors 转 GGUF（`convert`，优先复用引擎目录下的 `llama.cpp*.zip` 源码包或 `--script` 指定的本地源码 zip，否则自动下载与引擎 tag 匹配的源码包并支持断点续传，失败回退浅克隆，可选 `llama-quantize` 量化）、llama.cpp 引擎安装与切换（`engine install` 支持 `--path` 指向本地 zip 免下载安装，目标目录已有完整 zip 时自动复用）、按档位选 GGUF 与 KV 精度（64K 档默认 `f16` KV 提速，`--kv`/`--ubatch` 可覆盖）、显存估算、VC++ 运行库检查、后台启动 + `/health` 就绪等待、进程树停止、OpenAI 兼容客户端环境变量输出；`bench --prompt-tokens N` 按长上下文实测吞吐） |
 
 ### 开发环境
 
