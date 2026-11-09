@@ -563,7 +563,7 @@ class TestRunFilecheck:
         reports = list(tmp_path.glob("文件检查报告_*.txt"))
         assert len(reports) == 1
         content = reports[0].read_text(encoding="utf-8-sig")
-        assert "NAS 文件完整性检查报告" in content
+        assert "文件完整性检查报告" in content
         out = capsys.readouterr().out
         assert "报告已输出" in out
 

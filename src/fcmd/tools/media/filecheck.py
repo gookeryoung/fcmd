@@ -1,8 +1,9 @@
-"""filecheck - NAS 文件完整性检查工具。
+"""filecheck - 文件完整性检查工具。
 
-针对 NAS 故障（磁盘坏块、文件静默丢失、过期句柄等）场景，快速扫描指定
-目录下所有视频剧集文件。为避免检查过慢，每个文件只读取头部与尾部各
-64KB（可调），不读取整个文件；多线程并发提升局域网吞吐。
+适用于本地磁盘、移动硬盘、NAS 等存储场景，快速扫描指定目录下的文件
+（默认仅视频剧集文件）。针对磁盘故障（坏块、文件静默丢失、过期句柄等）
+场景，为避免检查过慢，每个文件只读取头部与尾部各 64KB（可调），不读取
+整个文件；多线程并发提升联网存储（如 NAS）的吞吐。
 
 检查内容：
 1. 错误（疑似丢失/损坏）：0 字节文件、无法打开或读取（I/O 错误）、断链；
@@ -19,7 +20,7 @@
 示例
 ----
     fcmd filecheck                          # 检查当前目录
-    fcmd filecheck --path /volume1/media    # 检查指定 NAS 目录
+    fcmd filecheck --path /volume1/media    # 检查指定目录
     fcmd filecheck --all-files              # 检查所有文件而不仅是视频
     fcmd filecheck --workers 32             # 加大并发
 """
@@ -618,7 +619,7 @@ def build_report(result: ScanResult) -> str:
     warns = [i for i in result.issues if i.level == "警告"]
     notes = [i for i in result.issues if i.level == "提示"]
     lines: list[str] = [
-        "NAS 文件完整性检查报告",
+        "文件完整性检查报告",
         "=" * 60,
         f"检查时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"检查根目录：{result.root}",
@@ -730,14 +731,14 @@ def run_filecheck(
     print(f"报告已输出：{report_path}")
 
 
-@fcmd.tool("filecheck", help="NAS 文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数")
+@fcmd.tool("filecheck", help="文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数")
 def filecheck_cmd(
     path: Path | None = None,
     workers: int = min(16, max(4, (os.cpu_count() or 4) * 2)),
     chunk_kb: int = 64,
     all_files: bool = False,
 ) -> None:
-    """快速筛查 NAS 故障导致的丢失/损坏视频剧集文件与缺失集数。
+    """快速筛查磁盘故障导致的丢失/损坏视频剧集文件与缺失集数。
 
     每个文件只读取头尾各 64KB（可调），不读取整个文件，多线程并发检查。
     报告输出到被扫描的根目录下。

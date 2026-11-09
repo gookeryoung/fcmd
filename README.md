@@ -125,7 +125,7 @@ fcmd completion --shell fish | source         # fish
 | `pathtool` | - | 路径处理（show/rel/norm/diff） |
 | `archivex` | - | 归档解压（zip/tar/gz/bz2，跨平台） |
 | `zipencrypt` | - | ZIP AES-256 加密（pyzipper，批量；需 7-Zip/WinRAR 等支持 AES 的解压器），依赖 `fcmd[archive]` |
-| `filecheck` | - | 媒体文件完整性检查（0 字节/尾部零填充/断链/容器签名），依赖 `fcmd[filecheck]` |
+| `filecheck` | - | 文件完整性检查（本地磁盘/移动硬盘/NAS；0 字节/尾部零填充/断链/容器签名，视频剧集场景含缺失集数检测），依赖 `fcmd[filecheck]` |
 
 ### 文本与编码
 
