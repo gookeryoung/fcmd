@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Any, cast
 
@@ -44,7 +45,8 @@ __all__ = ["main"]
 
 _DESCRIPTION = (
     "推理服务窗口版（Tk）：列出已配置的可选模型，配置档位/端口/上下文等参数，"
-    "预览启动计划，后台启动与停止 llama.cpp 服务并查看状态与日志"
+    "预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，"
+    "并在服务被调用时实时采样 /metrics 展示 token/s"
 )
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
@@ -63,18 +65,25 @@ class ServeWindow:
         self._ttk = ttk
         self.root = tk.Tk()
         self.root.title("推理服务管理")
-        self.root.geometry("860x760")
-        self.root.minsize(720, 640)
+        self.root.geometry("900x820")
+        self.root.minsize(760, 700)
 
         self._models: list[ModelEntry] = []
         self._selected_model: Path | None = None
         self._gpu_mib: int | None = None
         self._busy = False
+        self._closing = False
 
         self._scan_thread: threading.Thread | None = None
         self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str], int | None]] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
+
+        self._monitor_thread: threading.Thread | None = None
+        self._monitor_stop: threading.Event | None = None
+        self._monitor_state: ServeState | None = None
+        self._monitor_results: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._monitor_seq = 0
 
         self._name_var = tk.StringVar(value=DEFAULT_NAME)
         self._profile_var = tk.StringVar(value=DEFAULT_PROFILE)
@@ -90,6 +99,16 @@ class ServeWindow:
         self._model_var = tk.StringVar(value=_MODEL_PLACEHOLDER)
         self._status_var = tk.StringVar(value="状态：未查询")
         self._info_vars: dict[str, tk.StringVar] = {}
+        self._metric_vars: dict[str, tk.StringVar] = {
+            "gen_rate": tk.StringVar(value="0.0 tok/s"),
+            "prompt_rate": tk.StringVar(value="0.0 tok/s"),
+            "processing": tk.StringVar(value="0"),
+            "deferred": tk.StringVar(value="0"),
+            "kv": tk.StringVar(value="0.0 %"),
+            "predicted": tk.StringVar(value="0"),
+            "prompt": tk.StringVar(value="0"),
+            "monitor": tk.StringVar(value="未监控"),
+        }
 
         self._build_widgets()
         self._refresh_models()
@@ -104,6 +123,7 @@ class ServeWindow:
         self._build_params(outer)
         self._build_models(outer)
         self._build_env(outer)
+        self._build_metrics(outer)
         self._build_actions(outer)
         self._build_log(outer)
         ttk.Label(outer, textvariable=self._status_var).pack(fill="x", pady=(6, 0))
@@ -219,6 +239,30 @@ class ServeWindow:
             var = tk.StringVar(value="检测中…")
             ttk.Label(box, textvariable=var, wraplength=700, justify="left").grid(row=row, column=1, sticky="w")
             self._info_vars[key] = var
+
+    def _build_metrics(self, outer: Any) -> None:
+        """实时性能面板：显示 /metrics 计算的 token/s 与请求队列状态。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(outer, text="实时性能（服务运行中每 1s 采样 /metrics）", padding=8)
+        box.pack(fill="x", pady=(8, 0))
+        for column in range(4):
+            box.columnconfigure(column, weight=1)
+        items = (
+            ("生成速率", "gen_rate"),
+            ("提示速率", "prompt_rate"),
+            ("处理中请求", "processing"),
+            ("排队请求", "deferred"),
+            ("KV 使用率", "kv"),
+            ("累计生成 tokens", "predicted"),
+            ("累计提示 tokens", "prompt"),
+            ("采样状态", "monitor"),
+        )
+        for index, (label, key) in enumerate(items):
+            row, column = divmod(index, 4)
+            cell = ttk.Frame(box)
+            cell.grid(row=row, column=column, sticky="w", padx=(0, 16), pady=2)
+            ttk.Label(cell, text=label + ":").pack(side="left")
+            ttk.Label(cell, textvariable=self._metric_vars[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
 
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
@@ -451,6 +495,7 @@ class ServeWindow:
         except ServeError as exc:
             self._messagebox.showerror("参数错误", str(exc))
             return
+        self._stop_monitor("启动中…")
         self._begin_task(self._start_work, (plan, wait_s))
 
     def _stop(self) -> None:
@@ -462,6 +507,7 @@ class ServeWindow:
         except ServeError as exc:
             self._messagebox.showerror("参数错误", str(exc))
             return
+        self._stop_monitor("停止中…")
         self._begin_task(self._stop_work, (name,))
 
     def _begin_task(self, target: Any, args: tuple[Any, ...]) -> None:
@@ -525,9 +571,11 @@ class ServeWindow:
         self._log(f"  模型: {state.model}")
         self._log(f"  档位: {state.profile} / ctx {state.context}")
         self._log(f"  日志: {state.log}")
+        self._start_monitor(state)
         self._messagebox.showinfo("启动成功", f"服务 {state.name} 已就绪\n{state.base_url}")
 
     def _show_stopped(self, result: StopResult) -> None:
+        self._stop_monitor("已停止")
         if result.was_running:
             self._status_var.set(f"{result.state.name} · 已停止")
             self._log(f"已停止服务 {result.state.name}（pid={result.state.pid}）")
@@ -551,6 +599,10 @@ class ServeWindow:
         self._log(f"  档位: {state.profile} / ctx {state.context}")
         self._log(f"  启动时间: {state.started_at}")
         self._log(f"  日志: {state.log}")
+        if alive:
+            self._start_monitor(state)
+        else:
+            self._stop_monitor("服务未运行")
 
     def _show_logs(self) -> None:
         try:
@@ -561,6 +613,87 @@ class ServeWindow:
             return
         self._log(f"日志尾部（{name}）:")
         self._log(content)
+
+    # ------------------------------------------------------------------ #
+    # 实时性能监控（/metrics）
+    # ------------------------------------------------------------------ #
+    def _start_monitor(self, state: ServeState) -> None:
+        """启动 ``/metrics`` 采样线程；同一服务已在监控时忽略。"""
+        current = self._monitor_state
+        if (
+            self._monitor_thread is not None
+            and self._monitor_thread.is_alive()
+            and current is not None
+            and (current.host, current.port) == (state.host, state.port)
+        ):
+            self._metric_vars["monitor"].set("监控中")
+            return
+        self._stop_monitor("重新连接监控…")
+        stop = threading.Event()
+        self._monitor_stop = stop
+        self._monitor_state = state
+        self._monitor_seq += 1
+        seq = self._monitor_seq
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(state, stop), daemon=True)
+        self._monitor_thread.start()
+        self._metric_vars["monitor"].set("监控中")
+        self._log(f"已开始实时性能采样: {state.base_url}/metrics")
+        self.root.after(300, lambda: self._poll_metrics(seq))
+
+    def _stop_monitor(self, reason: str = "未监控") -> None:
+        """停止采样线程并更新状态（重复调用安全）。"""
+        if self._monitor_stop is not None:
+            self._monitor_stop.set()
+        self._monitor_stop = None
+        self._monitor_state = None
+        self._monitor_seq += 1
+        self._metric_vars["monitor"].set(reason)
+
+    def _monitor_loop(self, state: ServeState, stop: threading.Event) -> None:
+        """后台线程：每秒请求 ``/metrics``，按两次采样的差值计算 token/s。"""
+        previous: tuple[float, llmserve.ServeMetrics] | None = None
+        while not stop.is_set():
+            started = time.monotonic()
+            try:
+                metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
+            except ServeError as exc:
+                self._monitor_results.put(("error", str(exc)))
+            else:
+                gen_rate = prompt_rate = 0.0
+                if previous is not None:
+                    elapsed = started - previous[0]
+                    if elapsed > 0:
+                        gen_rate = max(metrics.predicted_tokens - previous[1].predicted_tokens, 0.0) / elapsed
+                        prompt_rate = max(metrics.prompt_tokens - previous[1].prompt_tokens, 0.0) / elapsed
+                previous = (started, metrics)
+                self._monitor_results.put(("metrics", (metrics, gen_rate, prompt_rate)))
+            stop.wait(1.0)
+
+    def _poll_metrics(self, seq: int) -> None:
+        """主线程刷新性能面板（按序号丢弃已停止监控的旧回调）。"""
+        if self._closing or seq != self._monitor_seq:
+            return
+        try:
+            while True:
+                kind, payload = self._monitor_results.get_nowait()
+                if kind == "metrics":
+                    metrics, gen_rate, prompt_rate = cast(tuple[llmserve.ServeMetrics, float, float], payload)
+                    self._apply_metrics(metrics, gen_rate, prompt_rate)
+                else:
+                    self._metric_vars["monitor"].set("采样失败: " + str(payload)[:60])
+        except queue.Empty:
+            pass
+        self.root.after(500, lambda: self._poll_metrics(seq))
+
+    def _apply_metrics(self, metrics: llmserve.ServeMetrics, gen_rate: float, prompt_rate: float) -> None:
+        self._metric_vars["gen_rate"].set(f"{gen_rate:.1f} tok/s")
+        self._metric_vars["prompt_rate"].set(f"{prompt_rate:.1f} tok/s")
+        self._metric_vars["processing"].set(f"{metrics.processing:.0f}")
+        self._metric_vars["deferred"].set(f"{metrics.deferred:.0f}")
+        self._metric_vars["kv"].set(f"{metrics.kv_usage * 100:.1f} %")
+        self._metric_vars["predicted"].set(f"{metrics.predicted_tokens:.0f}")
+        self._metric_vars["prompt"].set(f"{metrics.prompt_tokens:.0f}")
+        self._metric_vars["monitor"].set("监控中")
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -579,6 +712,8 @@ class ServeWindow:
         running = self._thread is not None and self._thread.is_alive()
         if running and not self._messagebox.askyesno("任务进行中", "启动 / 停止任务仍在执行，确实退出？"):
             return
+        self._closing = True
+        self._stop_monitor()
         self.root.destroy()
 
     # ------------------------------------------------------------------ #

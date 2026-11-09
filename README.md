@@ -199,7 +199,7 @@ fcmd completion --shell fish | source         # fish
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 共 12 种量化版本；默认 Q4_K_M/Q5_K_M，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
 | `llmqntw` | - | `llmqnt` 的 Tk 窗口版（启动时扫描 `llmenv` 已配置的模型目录，仅把未量化的 F16/BF16 原始 GGUF 列入下拉框，已量化文件选择时告警；显示当前引擎 tag/路径、量化器路径与 llama.cpp 版本；量化类型勾选、进度条与实时日志，后台线程执行不阻塞界面） |
 | `llmserve` | - | 服务生命周期独立命令（`plan`/`start`/`stop`/`status`/`logs`；打印启动计划与显存估算、拉起引擎等待 `/health`、停止进程树、查看状态与日志） |
-| `llmservew` | - | `llmserve` 的 Tk 窗口版（启动时后台扫描 `llmenv` 已配置的模型目录并列出可选 GGUF，显示引擎 tag/路径、版本与 GPU；表单配置档位/端口/上下文/KV/ubatch 等参数，可预览启动计划、后台启动与停止服务、查看状态与日志、清空日志输出） |
+| `llmservew` | - | `llmserve` 的 Tk 窗口版（启动时后台扫描 `llmenv` 已配置的模型目录并列出可选 GGUF，显示引擎 tag/路径、版本与 GPU；表单配置档位/端口/上下文/KV/ubatch 等参数，可预览启动计划、后台启动与停止服务、查看状态与日志、清空日志输出；服务运行中每秒采样 `/metrics`，实时展示生成/提示 token/s、处理中/排队请求与 KV 使用率） |
 
 ### 开发环境
 

@@ -1302,6 +1302,55 @@ class TestHealth:
         assert llmserve.check_health("127.0.0.1", 8080, None, opener=_opener(b"", status=503)) is False
 
 
+_METRICS_TEXT = """# HELP llamacpp:prompt_tokens_total Number of prompt tokens processed.
+# TYPE llamacpp:prompt_tokens_total counter
+llamacpp:prompt_tokens_total 120
+llamacpp:tokens_predicted_total{model="m"} 340
+llamacpp:requests_processing 1
+llamacpp:requests_deferred 2
+llamacpp:kv_cache_usage_ratio 0.25
+llamacpp:other_metric not-a-number
+"""
+
+
+class TestMetrics:
+    def test_parse_prometheus(self) -> None:
+        values = llmserve.parse_prometheus(_METRICS_TEXT)
+        assert values["llamacpp:prompt_tokens_total"] == 120
+        assert values["llamacpp:tokens_predicted_total"] == 340
+        assert "llamacpp:other_metric" not in values
+
+    def test_parse_metrics(self) -> None:
+        metrics = llmserve.parse_metrics(_METRICS_TEXT)
+        assert metrics == llmserve.ServeMetrics(
+            prompt_tokens=120.0,
+            predicted_tokens=340.0,
+            processing=1.0,
+            deferred=2.0,
+            kv_usage=0.25,
+        )
+
+    def test_parse_metrics_missing(self) -> None:
+        assert llmserve.parse_metrics("") == llmserve.ServeMetrics()
+
+    def test_fetch_metrics(self) -> None:
+        seen: list[Request] = []
+        metrics = llmserve.fetch_metrics(
+            "127.0.0.1", 8080, "sk-test", opener=_opener(_METRICS_TEXT.encode(), seen=seen)
+        )
+        assert metrics.predicted_tokens == 340.0
+        assert seen[0].full_url.endswith("/metrics")
+        assert seen[0].get_header("Authorization") == "Bearer sk-test"
+
+    def test_fetch_network_error(self) -> None:
+        with pytest.raises(ServeError, match="读取性能指标失败"):
+            llmserve.fetch_metrics("127.0.0.1", 8080, None, opener=_fail_opener)
+
+    def test_fetch_non_200(self) -> None:
+        with pytest.raises(ServeError, match="HTTP 503"):
+            llmserve.fetch_metrics("127.0.0.1", 8080, None, opener=_opener(b"", status=503))
+
+
 class TestProcess:
     def test_alive_current_process(self) -> None:
         pid = os.getpid()

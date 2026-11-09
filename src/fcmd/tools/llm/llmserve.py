@@ -1,6 +1,9 @@
 """llmserve - 服务生命周期：启动计划、进程拉起、健康检查、停止与日志。
 
 独立命令：``llmserve <plan|start|stop|status|logs>``。
+
+另提供 ``/metrics`` 采样辅助（:func:`fetch_metrics` / :func:`parse_metrics`），
+供 ``llmservew`` 窗口实时统计 token/s 等性能指标。
 """
 
 from __future__ import annotations
@@ -10,6 +13,7 @@ import os
 import subprocess
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -41,15 +45,94 @@ from fcmd.tools.llm.llmbase import (
 )
 
 __all__ = [
+    "ServeMetrics",
     "check_health",
+    "fetch_metrics",
     "launch",
     "make_plan",
+    "parse_metrics",
+    "parse_prometheus",
     "process_alive",
     "process_create_time",
     "read_log",
     "start_server",
     "stop_server",
 ]
+
+#: llama.cpp ``/metrics`` 中与实时性能相关的指标名
+METRIC_KEYS: dict[str, str] = {
+    "prompt_tokens": "llamacpp:prompt_tokens_total",
+    "predicted_tokens": "llamacpp:tokens_predicted_total",
+    "processing": "llamacpp:requests_processing",
+    "deferred": "llamacpp:requests_deferred",
+    "kv_usage": "llamacpp:kv_cache_usage_ratio",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ServeMetrics:
+    """``/metrics`` 采样结果（累计 token 数与当前请求队列状态）。"""
+
+    prompt_tokens: float = 0.0
+    predicted_tokens: float = 0.0
+    processing: float = 0.0
+    deferred: float = 0.0
+    kv_usage: float = 0.0
+
+
+def parse_prometheus(text: str) -> dict[str, float]:
+    """解析 Prometheus 文本格式（忽略注释 / 标签 / 非法值）。"""
+    values: dict[str, float] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, _, rest = line.partition(" ")
+        if not rest.strip():
+            continue
+        name = name.split("{", 1)[0]
+        try:
+            values[name] = float(rest.split()[0])
+        except ValueError:
+            continue
+    return values
+
+
+def parse_metrics(text: str) -> ServeMetrics:
+    """从 Prometheus 文本中提取服务性能指标（缺失的指标记为 0）。"""
+    values = parse_prometheus(text)
+    return ServeMetrics(
+        prompt_tokens=values.get(METRIC_KEYS["prompt_tokens"], 0.0),
+        predicted_tokens=values.get(METRIC_KEYS["predicted_tokens"], 0.0),
+        processing=values.get(METRIC_KEYS["processing"], 0.0),
+        deferred=values.get(METRIC_KEYS["deferred"], 0.0),
+        kv_usage=values.get(METRIC_KEYS["kv_usage"], 0.0),
+    )
+
+
+def fetch_metrics(
+    host: str,
+    port: int,
+    api_key: str | None = None,
+    *,
+    timeout: float = 2.0,
+    opener: Opener | None = None,
+) -> ServeMetrics:
+    """请求 ``/metrics`` 读取实时性能指标（失败抛 :class:`ServeError`）。"""
+    from urllib.request import Request, urlopen
+
+    url = http_base_url(host, port) + "/metrics"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    open_fn = opener or (lambda request, seconds: urlopen(request, timeout=seconds))
+    try:
+        with open_fn(Request(url, headers=headers), timeout) as resp:
+            status = getattr(resp, "status", 200)
+            payload = resp.read()
+    except OSError as exc:
+        raise ServeError(f"读取性能指标失败: {exc}") from exc
+    if status != 200:
+        raise ServeError(f"读取性能指标失败: HTTP {status}")
+    return parse_metrics(payload.decode("utf-8", errors="replace"))
 
 
 def process_create_time(pid: int) -> float:
