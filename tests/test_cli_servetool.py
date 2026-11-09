@@ -233,7 +233,9 @@ class TestHelpers:
     def test_profile_table(self) -> None:
         assert set(PROFILES) == {"speed", "balanced", "long", "max-context"}
         assert PROFILES["balanced"].quant == "Q5_K_M"
+        assert PROFILES["balanced"].kv_type == "f16"
         assert PROFILES["speed"].ubatch == 2048
+        assert PROFILES["long"].kv_type == "q8_0"
         assert PROFILES["max-context"].context == 196608
 
 
@@ -341,7 +343,7 @@ class TestModel:
 
     def test_plan_vram(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path) -> None:
         plan = _plan(tmp_path, monkeypatch, home, model_file)
-        expected = core.estimate_vram(model_file.stat().st_size, plan.context, plan.profile.kv_type)
+        expected = core.estimate_vram(model_file.stat().st_size, plan.context, plan.effective_kv_type)
         assert core.plan_vram(plan) == expected
         assert plan.base_url == "http://127.0.0.1:8080"
 
@@ -992,7 +994,7 @@ class TestPlan:
         assert plan.log == core.log_path("qwen", home)
         argv = plan.argv()
         assert argv[0] == str(plan.engine.exe)
-        for flag, value in (("-c", "65536"), ("-ctk", "q8_0"), ("-ub", "1024"), ("--port", "8080")):
+        for flag, value in (("-c", "65536"), ("-ctk", "f16"), ("-ub", "2048"), ("--port", "8080")):
             index = argv.index(flag)
             assert argv[index + 1] == value
         assert "--jinja" in argv
@@ -1005,6 +1007,28 @@ class TestPlan:
         assert plan.context == 4096
         assert plan.port == 9001
         assert plan.profile.ubatch == 2048
+
+    def test_kv_and_ubatch_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path
+    ) -> None:
+        engine = _engine_dir(tmp_path) / core.engine_exe_name()
+        monkeypatch.setenv("FCMD_LLAMA_SERVER", str(engine))
+        plan = core.make_plan("qwen", "balanced", home=home, model=model_file, kv_type="q8_0", ubatch=512)
+        assert plan.effective_kv_type == "q8_0"
+        assert plan.effective_ubatch == 512
+        argv = plan.argv()
+        assert argv[argv.index("-ctk") + 1] == "q8_0"
+        assert argv[argv.index("-ctv") + 1] == "q8_0"
+        assert argv[argv.index("-ub") + 1] == "512"
+        assert core.plan_vram(plan) == core.estimate_vram(model_file.stat().st_size, plan.context, "q8_0")
+
+    def test_invalid_kv_type(self, home: Path, model_file: Path) -> None:
+        with pytest.raises(ServeError, match="不支持的 KV"):
+            core.make_plan(home=home, model=model_file, kv_type="q8")
+
+    def test_invalid_ubatch(self, home: Path, model_file: Path) -> None:
+        with pytest.raises(ServeError, match="ubatch"):
+            core.make_plan(home=home, model=model_file, ubatch=0)
 
     def test_unknown_profile(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path
@@ -1234,6 +1258,29 @@ class TestLogAndBench:
     def test_bench_empty_choice(self) -> None:
         result = core.bench(_state(), opener=_opener(b"{}"))
         assert result.completion_tokens == 0
+
+    def test_bench_prefers_decode_timing(self) -> None:
+        payload = json.dumps(
+            {
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {"prompt_tokens": 30000, "completion_tokens": 20},
+                "timings": {"predicted_per_second": 152.5},
+            }
+        ).encode()
+        result = core.bench(_state(), opener=_opener(payload))
+        assert result.tokens_per_s == 152.5
+
+    def test_bench_prompt_tokens(self) -> None:
+        text = core.make_bench_prompt(30000)
+        assert len(text) > 100000
+        assert core.make_bench_prompt(0) == core.DEFAULT_PROMPT
+
+        payload = json.dumps({"usage": {"prompt_tokens": 30000, "completion_tokens": 10}}).encode()
+        seen: list[Request] = []
+        result = core.bench(_state(), prompt_tokens=30000, opener=_opener(payload, seen=seen))
+        body = json.loads(cast(bytes, seen[0].data))
+        assert len(body["messages"][0]["content"]) > 100000
+        assert result.prompt_tokens == 30000
 
     def test_bench_http_error(self) -> None:
         def _boom(request: Request, timeout: float = 1.0) -> Any:
@@ -1525,6 +1572,21 @@ class TestCli:
         assert "启动计划" in out
         assert "--flash-attn" in out
 
+    def test_plan_overrides_kv(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / core.engine_exe_name()))
+        monkeypatch.setattr(core, "detect_gpu", lambda runner=core.run_command: None)
+        servetool.plan_cmd(model=model_file, models_root=model_file.parent.parent, kv_type="q4_0", ubatch=512)
+        out = capsys.readouterr().out
+        assert "-ctk q4_0" in out
+        assert "-ub 512" in out
+
     def test_plan_warns_when_vram_exceeded(
         self,
         tmp_path: Path,
@@ -1605,6 +1667,21 @@ class TestCli:
         out = capsys.readouterr().out
         assert "20.00 tok/s" in out
         assert "30" in out
+        assert "偏乐观" in out
+
+    def test_bench_prompt_tokens(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        monkeypatch.setattr(core, "require_state", lambda name, home=None: _state())
+        monkeypatch.setattr(core, "process_alive", lambda pid, ct=0.0: True)
+        seen: dict[str, Any] = {}
+
+        def _bench(*args: Any, **kwargs: Any) -> BenchResult:
+            seen.update(kwargs)
+            return BenchResult(10.0, 30000, 30, 3.0)
+
+        monkeypatch.setattr(core, "bench", _bench)
+        servetool.bench_cmd(prompt_tokens=30000)
+        assert seen["prompt_tokens"] == 30000
+        assert "偏乐观" not in capsys.readouterr().out
 
     def test_bench_not_running(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(core, "require_state", lambda name, home=None: _state())

@@ -68,7 +68,11 @@ def _print_plan(plan: LaunchPlan) -> None:
     table.add_column("值")
     table.add_row("引擎", f"{plan.engine.exe}（{plan.engine.tag}）")
     table.add_row("模型", str(plan.model))
-    table.add_row("档位", f"{plan.profile.name} / {plan.profile.quant} / ctx {plan.context} / ub {plan.profile.ubatch}")
+    table.add_row(
+        "档位",
+        f"{plan.profile.name} / {plan.profile.quant} / kv {plan.effective_kv_type} / "
+        f"ctx {plan.context} / ub {plan.effective_ubatch}",
+    )
     table.add_row("监听", core.http_base_url(plan.host, plan.port))
     table.add_row("模型别名", plan.alias)
     table.add_row("显存估算", core.human_size(estimate))
@@ -386,6 +390,8 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     port: int = DEFAULT_PORT,
     host: str = DEFAULT_HOST,
     ctx: int | None = None,
+    kv_type: str | None = None,
+    ubatch: int | None = None,
     engine_tag: str | None = None,
     alias: str = DEFAULT_ALIAS,
     api_key: str = DEFAULT_API_KEY,
@@ -409,6 +415,10 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         监听地址（默认 127.0.0.1，只本机可访问）。
     ctx:
         覆盖档位上下文长度。
+    kv_type:
+        覆盖 KV 缓存类型（``f16`` / ``q8_0`` / ``q4_0``）：f16 更快但更吃显存。
+    ubatch:
+        覆盖 ubatch（默认随档位，2048 的 prefill 更快）。
     engine_tag:
         指定引擎 tag，默认 current / 最新安装。
     alias:
@@ -426,6 +436,8 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         port=port,
         host=host,
         ctx=ctx,
+        kv_type=kv_type,
+        ubatch=ubatch,
         engine_tag=engine_tag,
         alias=alias,
         api_key=api_key,
@@ -448,6 +460,8 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     port: int = DEFAULT_PORT,
     host: str = DEFAULT_HOST,
     ctx: int | None = None,
+    kv_type: str | None = None,
+    ubatch: int | None = None,
     engine_tag: str | None = None,
     alias: str = DEFAULT_ALIAS,
     api_key: str = DEFAULT_API_KEY,
@@ -472,6 +486,10 @@ def start_cmd(  # noqa: PLR0913, PLR0917
         监听地址（默认 127.0.0.1，只本机可访问）。
     ctx:
         覆盖档位上下文长度。
+    kv_type:
+        覆盖 KV 缓存类型（``f16`` / ``q8_0`` / ``q4_0``）：f16 更快但更吃显存。
+    ubatch:
+        覆盖 ubatch（默认随档位，2048 的 prefill 更快）。
     engine_tag:
         指定引擎 tag，默认 current / 最新安装。
     alias:
@@ -491,6 +509,8 @@ def start_cmd(  # noqa: PLR0913, PLR0917
         port=port,
         host=host,
         ctx=ctx,
+        kv_type=kv_type,
+        ubatch=ubatch,
         engine_tag=engine_tag,
         alias=alias,
         api_key=api_key,
@@ -587,6 +607,7 @@ def logs_cmd(name: str = DEFAULT_NAME, lines: int = 50) -> None:
 def bench_cmd(
     name: str = DEFAULT_NAME,
     prompt: str = core.DEFAULT_PROMPT,
+    prompt_tokens: int | None = None,
     max_tokens: int = 128,
     timeout: float = 180.0,
 ) -> None:
@@ -598,6 +619,8 @@ def bench_cmd(
         服务名，默认 ``qwen``。
     prompt:
         测试提示词。
+    prompt_tokens:
+        按目标 token 数生成填充提示（模拟 dsh 长会话）；给出时忽略 ``prompt``。
     max_tokens:
         生成 token 上限（默认 128）。
     timeout:
@@ -606,7 +629,7 @@ def bench_cmd(
     state = core.require_state(name)
     if not core.process_alive(state.pid, state.create_time):
         raise ServeError(f"服务 {name!r} 未在运行：fcmd srv start")
-    result = core.bench(state, prompt=prompt, max_tokens=max_tokens, timeout=timeout)
+    result = core.bench(state, prompt=prompt, prompt_tokens=prompt_tokens, max_tokens=max_tokens, timeout=timeout)
     table = Table(title=f"实测: {name}", box="ascii")
     table.add_column("指标", style="cyan", no_wrap=True)
     table.add_column("值", justify="right", no_wrap=True)
@@ -615,6 +638,11 @@ def bench_cmd(
     table.add_row("输出 tokens", str(result.completion_tokens))
     table.add_row("输出吞吐", f"{result.tokens_per_s:.2f} tok/s")
     get_console().print(table)
+    if result.prompt_tokens < 1000:
+        get_console().print(
+            f"[yellow]提示: 输入仅 {result.prompt_tokens} tokens，短上下文吞吐偏乐观；"
+            "加 --prompt-tokens 30000 可模拟 dsh 真实长会话[/yellow]"
+        )
 
 
 @fcmd.tool(

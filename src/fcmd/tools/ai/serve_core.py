@@ -98,6 +98,7 @@ __all__ = [
     "load_config",
     "load_state",
     "log_path",
+    "make_bench_prompt",
     "make_plan",
     "models_roots",
     "plan_convert",
@@ -131,6 +132,12 @@ DEFAULT_THREADS = 8
 DEFAULT_ENGINE_TAG = "b12211"
 DEFAULT_PROFILE: ProfileName = "balanced"
 DEFAULT_PROMPT = "请用一句话解释快速排序的核心思想。"
+#: bench 长上下文提示的填充片段（英文约 4 字符 1 token）
+_BENCH_FILLER = (
+    "The quick brown fox jumps over the lazy dog. "
+    "Pack my box with five dozen liquor jugs. "
+    "How vexingly quick daft zebras jump! "
+)
 
 #: 30B MoE 每 token 的 KV 缓存（FP16 约 96 KiB，q8_0 约减半）
 KV_BYTES_PER_TOKEN_FP16 = 96 * 1024
@@ -185,9 +192,9 @@ class Profile:
 
 
 PROFILES: dict[str, Profile] = {
-    "speed": Profile("speed", "Q4_K_M", 65536, "q8_0", 2048, "最大化 token 速度"),
-    "balanced": Profile("balanced", "Q5_K_M", 65536, "q8_0", 1024, "质量与速度平衡（默认）"),
-    "long": Profile("long", "Q5_K_M", 131072, "q8_0", 1024, "128K 长上下文"),
+    "speed": Profile("speed", "Q4_K_M", 65536, "f16", 2048, "最大化 token 速度"),
+    "balanced": Profile("balanced", "Q5_K_M", 65536, "f16", 2048, "质量与速度平衡（默认）"),
+    "long": Profile("long", "Q5_K_M", 131072, "q8_0", 2048, "128K 长上下文"),
     "max-context": Profile("max-context", "Q4_K_M", 196608, "q8_0", 1024, "192K 最大上下文"),
 }
 
@@ -249,11 +256,23 @@ class LaunchPlan:
     engine: EngineInfo
     log: Path
     extra_args: tuple[str, ...] = ()
+    kv_type: str | None = None
+    ubatch: int | None = None
 
     @property
     def base_url(self) -> str:
         """OpenAI 兼容服务根地址（不含 ``/v1``）。"""
         return http_base_url(self.host, self.port)
+
+    @property
+    def effective_kv_type(self) -> str:
+        """生效的 KV 缓存类型（显式覆盖优先于档位）。"""
+        return self.kv_type or self.profile.kv_type
+
+    @property
+    def effective_ubatch(self) -> int:
+        """生效的 ubatch（显式覆盖优先于档位）。"""
+        return self.ubatch or self.profile.ubatch
 
     def argv(self, backend: Backend | None = None) -> list[str]:
         """按后端生成启动参数列表。"""
@@ -337,13 +356,13 @@ class LlamaCppBackend:
             "--flash-attn",
             "on",
             "-ctk",
-            plan.profile.kv_type,
+            plan.effective_kv_type,
             "-ctv",
-            plan.profile.kv_type,
+            plan.effective_kv_type,
             "-b",
             "4096",
             "-ub",
-            str(plan.profile.ubatch),
+            str(plan.effective_ubatch),
             "-t",
             str(plan.threads),
             "--jinja",
@@ -793,7 +812,7 @@ def plan_vram(plan: LaunchPlan) -> int:
         size = plan.model.stat().st_size
     except OSError:
         size = 0
-    return estimate_vram(size, plan.context, plan.profile.kv_type)
+    return estimate_vram(size, plan.context, plan.effective_kv_type)
 
 
 # ---------------------------------------------------------------------- #
@@ -1214,11 +1233,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         raise ServeError(f"不支持的 outtype {outtype!r}：可选 {', '.join(CONVERT_OUTTYPES)}")
 
     if output is None:
-        roots = models_roots(models_root, home)
-        existing = [r for r in roots if r.is_dir()]
-        if not existing:
-            raise ServeError(f"No existing model directories found: {', '.join(map(str, roots))}")
-        root = existing[0].expanduser()
+        root = models_roots(models_root, home)[0].expanduser()
         suffix = f"-{quant}" if quant else ""
         target = root / src.name / f"{src.name}{suffix}.gguf"
     else:
@@ -1234,7 +1249,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         try:
             quant_exe = quantize_exe(resolve_engine(tag, home))
         except ServeError as e:
-            # If engine resolution fails and user provided explicit --script, 
+            # If engine resolution fails and user provided explicit --script,
             # let's provide a more informative error message
             if script is not None:
                 # User provided script, but we still can't resolve engine for quantization
@@ -1339,6 +1354,8 @@ def make_plan(  # noqa: PLR0913
     port: int = DEFAULT_PORT,
     host: str = DEFAULT_HOST,
     ctx: int | None = None,
+    kv_type: str | None = None,
+    ubatch: int | None = None,
     engine_tag: str | None = None,
     alias: str = DEFAULT_ALIAS,
     api_key: str = DEFAULT_API_KEY,
@@ -1353,6 +1370,10 @@ def make_plan(  # noqa: PLR0913
         raise ServeError(f"未知档位 {profile!r}，可选: {', '.join(PROFILES)}")
     if not 1 <= port <= 65535:
         raise ServeError(f"端口不合法: {port}")
+    if kv_type is not None and kv_type not in _KV_SCALE:
+        raise ServeError(f"不支持的 KV 类型 {kv_type!r}，可选: {', '.join(_KV_SCALE)}")
+    if ubatch is not None and ubatch < 1:
+        raise ServeError(f"ubatch 必须为正整数: {ubatch}")
     model_path = find_model(prof.quant, models_root, model)
     engine = resolve_engine(engine_tag, home)
     return LaunchPlan(
@@ -1368,6 +1389,8 @@ def make_plan(  # noqa: PLR0913
         engine=engine,
         log=log_path(name, home),
         extra_args=tuple(extra_args),
+        kv_type=kv_type,
+        ubatch=ubatch,
     )
 
 
@@ -1544,18 +1567,32 @@ def _post_json(url: str, payload: dict[str, Any], api_key: str, timeout: float, 
         raise ServeError(f"响应不是合法 JSON: {url}") from exc
 
 
-def bench(
+def make_bench_prompt(tokens: int) -> str:
+    """生成约 ``tokens`` 个 token 的测试提示，用于模拟 dsh 这类长上下文会话。"""
+    if tokens <= 0:
+        return DEFAULT_PROMPT
+    repeats = max(1, tokens * 4 // len(_BENCH_FILLER))
+    return _BENCH_FILLER * repeats + "\n请用一句话总结上面的内容。"
+
+
+def bench(  # noqa: PLR0913
     state: ServeState,
     *,
     prompt: str = DEFAULT_PROMPT,
+    prompt_tokens: int | None = None,
     max_tokens: int = 128,
     timeout: float = 180.0,
     opener: Opener | None = None,
 ) -> BenchResult:
-    """对运行中的服务发一次非流式请求，返回延迟与吞吐。"""
+    """对运行中的服务发一次非流式请求，返回延迟与吞吐。
+
+    ``prompt_tokens`` 非空时忽略 ``prompt``，改用按目标 token 数生成的填充提示，
+    以免短提示测出的吞吐（200+ tok/s）明显高于真实长会话。
+    """
+    text = make_bench_prompt(prompt_tokens) if prompt_tokens else prompt
     payload: dict[str, Any] = {
         "model": state.alias,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": text}],
         "max_tokens": max_tokens,
         "temperature": 0.2,
         "stream": False,
@@ -1574,7 +1611,12 @@ def bench(
             content = message.get("content") if isinstance(message, dict) else None
             if isinstance(content, str):
                 completion_tokens = max(len(content) // 2, 1)
-    return BenchResult(elapsed, prompt_tokens, completion_tokens, completion_tokens / elapsed)
+    # llama-server 的 timings.predicted_per_second 只衡量 decode，不含 prefill；
+    # 长上下文下用它才与 dsh 的实测吞吐可比。
+    timings = data.get("timings") if isinstance(data, dict) else None
+    predicted = timings.get("predicted_per_second") if isinstance(timings, dict) else None
+    rate = float(predicted) if isinstance(predicted, int | float) and predicted > 0 else completion_tokens / elapsed
+    return BenchResult(elapsed, prompt_tokens, completion_tokens, rate)
 
 
 # ---------------------------------------------------------------------- #
