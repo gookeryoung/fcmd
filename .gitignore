@@ -36,6 +36,7 @@ logs/
 .trae/*
 !.trae/rules/
 !.trae/skills/
+!.trae/settings.json
 .claude/
 .workbuddy/
 
