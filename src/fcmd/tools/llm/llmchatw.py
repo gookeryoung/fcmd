@@ -54,7 +54,7 @@ def _first_available(states: Sequence[ServeState]) -> ServeState | None:
     return next((state for state in states if _state_available(state)), None)
 
 
-class ChatWindow:
+class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 聊天窗口：服务选择、参数配置、流式对话与历史管理。"""
 
     def __init__(self) -> None:

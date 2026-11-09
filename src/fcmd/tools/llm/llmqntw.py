@@ -27,7 +27,7 @@ __all__ = ["main"]
 _DESCRIPTION = "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，显示引擎/量化器版本，勾选多种量化类型批量转换"
 
 
-class QuantizeWindow:
+class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 量化窗口：构建界面并把转换任务放到后台线程执行。"""
 
     def __init__(self) -> None:

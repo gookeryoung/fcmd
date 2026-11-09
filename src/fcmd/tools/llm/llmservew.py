@@ -381,7 +381,7 @@ class RateWindow:
         return self._gen_rate, self._prompt_rate
 
 
-class ServeWindow:
+class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 服务窗口：参数表单 + 模型列表 + 计划预览 + 后台启停。"""
 
     def __init__(self) -> None:

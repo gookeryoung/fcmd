@@ -46,7 +46,7 @@ _KIND_LABELS = {
 TaskFunc = Callable[[llmengine.ProgressCallback], tuple[str, str | None]]
 
 
-class EngineWindow:
+class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 引擎管理窗口：在线下载、离线包检查安装、引擎列表与体检。"""
 
     def __init__(self) -> None:

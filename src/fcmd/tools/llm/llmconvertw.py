@@ -101,7 +101,7 @@ def _find_convertible(roots: list[Path]) -> list[tuple[Path, int]]:
     return found
 
 
-class ConvertWindow:
+class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 转换窗口：参数表单 + 计划预览 + 后台转换。"""
 
     def __init__(self) -> None:
