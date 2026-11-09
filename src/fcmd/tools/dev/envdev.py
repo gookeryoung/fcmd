@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Literal
 
 import fcmd
-from fcmd.cli._env_persist import persist_env
+from fcmd.core.env_persist import persist_env
 from fcmd.core.models import run_command
 from fcmd.dsl.actions.net import check_urls, probe_mirrors
 from fcmd.tools.dev.envdev_core import (

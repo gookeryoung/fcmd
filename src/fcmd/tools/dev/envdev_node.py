@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 import fcmd
-from fcmd.cli._env_persist import persist_env
+from fcmd.core.env_persist import persist_env
 from fcmd.core.models import run_command
 from fcmd.tools.dev.envdev_core import MirrorSpec, apply_mirror_config, mirror_supported, resolve_mirror
 

@@ -1,4 +1,4 @@
-"""_env_persist - 跨平台环境变量持久化辅助（私有，不参与工具发现）。
+"""env_persist - 跨平台环境变量持久化辅助。
 
 ``os.environ[name] = value`` 仅修改当前进程的环境变量副本，进程退出即失效。
 本模块提供 :func:`persist_env`，将环境变量实质写入用户层面：

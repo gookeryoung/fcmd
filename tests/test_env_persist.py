@@ -1,6 +1,6 @@
-"""_env_persist 环境变量持久化辅助测试。
+"""env_persist 环境变量持久化辅助测试。
 
-验证 ``fcmd.cli._env_persist`` 模块：
+验证 ``fcmd.core.env_persist`` 模块：
 - persist_env 更新当前进程 os.environ
 - Windows 分支写注册表 + 广播 WM_SETTINGCHANGE
 - Linux/macOS 分支写入/更新 ~/.profile 的 export 行
@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 
-import fcmd.cli._env_persist as ep
+import fcmd.core.env_persist as ep
 
 
 class TestShellProfilePath:
