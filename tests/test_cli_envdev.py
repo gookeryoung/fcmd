@@ -27,6 +27,7 @@ import fcmd.tools.dev.envdev
 import fcmd.tools.dev.envdev_core
 import fcmd.tools.dev.envdev_go
 import fcmd.tools.dev.envdev_java
+import fcmd.tools.dev.envdev_node
 from fcmd.core.models import CommandResult
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
@@ -617,6 +618,259 @@ class TestCheckEnv:
         assert "缺失" in out
         assert "未通过" in out
         assert "fcmd envdev all" in out
+
+
+# ============================================================================ #
+# Go / Java / Node 原生环境配置测试
+# ============================================================================ #
+class _HomeStub:
+    """替换模块内 ``Path`` 的 home 桩，避免改动真实用户目录。"""
+
+    def __init__(self, home: Path) -> None:
+        self._home = home
+
+    def home(self) -> Path:
+        return self._home
+
+
+class TestGoEnv:
+    """envdev_go 镜像源与工具链安装测试。"""
+
+    def test_setup_mirror_persists_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorded: dict[str, str] = {}
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.persist_env", lambda name, value: recorded.update({name: value}))
+
+        fcmd.tools.dev.envdev_go._setup_go_mirror("aliyun")
+
+        assert recorded == {
+            "GOPROXY": "https://mirrors.aliyun.com/goproxy/,direct",
+            "GOPATH": fcmd.tools.dev.envdev_go._GOPATH_DEFAULT,
+        }
+
+    def test_setup_mirror_auto_resolves(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorded: dict[str, str] = {}
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.persist_env", lambda name, value: recorded.update({name: value}))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.resolve_mirror", lambda *args: "tencent")
+
+        fcmd.tools.dev.envdev_go._setup_go_mirror("auto")
+
+        assert recorded["GOPROXY"] == "https://mirrors.cloud.tencent.com/go/,direct"
+
+    def test_setup_mirror_unknown(self, capsys: pytest.CaptureFixture[str]) -> None:
+        fcmd.tools.dev.envdev_go._setup_go_mirror("nope")
+        assert "未知 Go 镜像源" in capsys.readouterr().out
+
+    def test_install_gvm_skips_when_present(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.shutil.which", lambda name: "/usr/bin/gvm")
+        fcmd.tools.dev.envdev_go._install_gvm()
+        assert "已安装，跳过" in capsys.readouterr().out
+
+    def test_install_gvm_windows_hint(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.Path", _HomeStub(tmp_path))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.shutil.which", lambda name: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.sys.platform", "win32")
+        fcmd.tools.dev.envdev_go._install_gvm()
+        assert "手动安装" in capsys.readouterr().out
+
+    def test_install_gvm_linux_runs_script(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.Path", _HomeStub(tmp_path))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.shutil.which", lambda name: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.sys.platform", "linux")
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.run_command", calls.append)
+
+        fcmd.tools.dev.envdev_go._install_gvm()
+
+        assert calls and "gvm-installer" in " ".join(calls[0])
+        assert "安装完成" in capsys.readouterr().out
+
+    def test_install_go_tools_skips_without_go(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.shutil.which", lambda name: None)
+        fcmd.tools.dev.envdev_go._install_go_global_tools()
+        assert "go 未安装" in capsys.readouterr().out
+
+    def test_install_go_tools_installs_all(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.shutil.which", lambda name: "/usr/bin/go")
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go.run_command", calls.append)
+
+        fcmd.tools.dev.envdev_go._install_go_global_tools()
+
+        assert len(calls) == len(fcmd.tools.dev.envdev_go._GO_GLOBAL_TOOLS)
+
+    def test_setup_go_env_installs_gvm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "fcmd.tools.dev.envdev_go._setup_go_mirror", lambda mirror: calls.append(f"mirror:{mirror}")
+        )
+        monkeypatch.setattr("fcmd.tools.dev.envdev_go._install_gvm", lambda: calls.append("gvm"))
+
+        fcmd.tools.dev.envdev_go.setup_go_env("aliyun", install_gvm=True)
+
+        assert calls == ["mirror:aliyun", "gvm"]
+
+
+class TestJavaEnv:
+    """envdev_java 镜像源与工具链安装测试。"""
+
+    def test_setup_maven_mirror_writes_settings(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        settings = tmp_path / ".m2" / "settings.xml"
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java._MAVEN_SETTINGS_PATH", settings)
+
+        fcmd.tools.dev.envdev_java._setup_maven_mirror("aliyun")
+
+        assert "https://maven.aliyun.com/repository/public" in settings.read_text(encoding="utf-8")
+        assert "Maven (aliyun) 镜像源已配置" in capsys.readouterr().out
+
+    def test_setup_maven_auto_resolves(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        settings = tmp_path / "settings.xml"
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java._MAVEN_SETTINGS_PATH", settings)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.resolve_mirror", lambda *args: "cernet")
+
+        fcmd.tools.dev.envdev_java._setup_maven_mirror("auto")
+
+        assert "mirrors.cernet.edu.cn/maven" in settings.read_text(encoding="utf-8")
+
+    def test_setup_maven_unknown(self, capsys: pytest.CaptureFixture[str]) -> None:
+        fcmd.tools.dev.envdev_java._setup_maven_mirror("nope")
+        assert "未知 Maven 镜像源" in capsys.readouterr().out
+
+    def test_install_sdkman_skips_when_present(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        (tmp_path / ".sdkman").mkdir()
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.Path", _HomeStub(tmp_path))
+        fcmd.tools.dev.envdev_java._install_sdkman()
+        assert "已安装，跳过" in capsys.readouterr().out
+
+    def test_install_sdkman_windows_hint(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.Path", _HomeStub(tmp_path))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.sys.platform", "win32")
+        fcmd.tools.dev.envdev_java._install_sdkman()
+        assert "手动安装" in capsys.readouterr().out
+
+    def test_install_sdkman_linux_runs_script(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.Path", _HomeStub(tmp_path))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.sys.platform", "linux")
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java.run_command", calls.append)
+
+        fcmd.tools.dev.envdev_java._install_sdkman()
+
+        assert calls and "get.sdkman.io" in " ".join(calls[0])
+        assert "安装完成" in capsys.readouterr().out
+
+    def test_setup_java_env_installs_sdkman(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "fcmd.tools.dev.envdev_java._setup_maven_mirror", lambda mirror: calls.append(f"mirror:{mirror}")
+        )
+        monkeypatch.setattr("fcmd.tools.dev.envdev_java._install_sdkman", lambda: calls.append("sdkman"))
+
+        fcmd.tools.dev.envdev_java.setup_java_env("aliyun", install_sdkman=True)
+
+        assert calls == ["mirror:aliyun", "sdkman"]
+
+
+class TestNodeEnv:
+    """envdev_node 镜像源与工具链安装测试。"""
+
+    def test_setup_npm_mirror_configures_tools(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorded: dict[str, str] = {}
+        calls: list[list[str]] = []
+        monkeypatch.setattr(
+            "fcmd.tools.dev.envdev_node.persist_env", lambda name, value: recorded.update({name: value})
+        )
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.run_command", calls.append)
+
+        fcmd.tools.dev.envdev_node._setup_npm_mirror("npmmirror")
+
+        assert recorded["NPM_CONFIG_REGISTRY"] == "https://registry.npmmirror.com"
+        assert calls == [
+            ["/usr/bin/npm", "config", "set", "registry", "https://registry.npmmirror.com"],
+            ["/usr/bin/npm", "config", "set", "disturl", "https://npmmirror.com/mirrors/node"],
+            ["/usr/bin/yarn", "config", "set", "registry", "https://registry.npmmirror.com"],
+            ["/usr/bin/pnpm", "config", "set", "registry", "https://registry.npmmirror.com"],
+        ]
+
+    def test_setup_npm_other_registry_skips_disturl(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.persist_env", lambda name, value: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda name: f"/usr/bin/{name}")
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.run_command", calls.append)
+
+        fcmd.tools.dev.envdev_node._setup_npm_mirror("tencent")
+
+        assert len(calls) == 3
+        assert all("disturl" not in cmd for cmd in calls)
+
+    def test_setup_npm_without_tools(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.persist_env", lambda name, value: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda name: None)
+
+        fcmd.tools.dev.envdev_node._setup_npm_mirror("npmmirror")
+
+        assert "npm 未安装" in capsys.readouterr().out
+
+    def test_setup_npm_unknown(self, capsys: pytest.CaptureFixture[str]) -> None:
+        fcmd.tools.dev.envdev_node._setup_npm_mirror("nope")
+        assert "未知 npm 镜像源" in capsys.readouterr().out
+
+    def test_install_nvm_skips_when_present(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda name: "/usr/bin/nvm")
+        fcmd.tools.dev.envdev_node._install_nvm()
+        assert "已安装，跳过" in capsys.readouterr().out
+
+    def test_install_nvm_windows_hint(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.Path", _HomeStub(tmp_path))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda name: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.sys.platform", "win32")
+        fcmd.tools.dev.envdev_node._install_nvm()
+        assert "手动安装" in capsys.readouterr().out
+
+    def test_install_nvm_linux_runs_script(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.Path", _HomeStub(tmp_path))
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.shutil.which", lambda name: None)
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.sys.platform", "linux")
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node.run_command", calls.append)
+
+        fcmd.tools.dev.envdev_node._install_nvm()
+
+        assert calls and "nvm-sh" in " ".join(calls[0])
+        assert "安装完成" in capsys.readouterr().out
+
+    def test_setup_node_env_installs_nvm(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "fcmd.tools.dev.envdev_node._setup_npm_mirror", lambda mirror: calls.append(f"mirror:{mirror}")
+        )
+        monkeypatch.setattr("fcmd.tools.dev.envdev_node._install_nvm", lambda: calls.append("nvm"))
+
+        fcmd.tools.dev.envdev_node.setup_node_env("npmmirror", install_nvm=True)
+
+        assert calls == ["mirror:npmmirror", "nvm"]
 
 
 # ============================================================================ #

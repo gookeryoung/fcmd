@@ -387,6 +387,35 @@ class TestPymakeCliDispatch:
 
 
 # ---------------------------------------------------------------------- #
+# push 多 remote 推送测试
+# ---------------------------------------------------------------------- #
+class TestPushAllRemotes:
+    """``_push_all_remotes`` 遍历 remote 推送代码与 tags。"""
+
+    def test_no_remote_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: "")
+        with pytest.raises(RuntimeError, match="未检测到 git remote"):
+            fcmd.tools.dev.pymake._push_all_remotes()
+
+    def test_pushes_each_remote(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        calls: list[list[str]] = []
+        monkeypatch.setattr("subprocess.check_output", lambda *args, **kwargs: "origin codeup\n")
+        monkeypatch.setattr("subprocess.run", lambda cmd, check=False: calls.append(cmd))
+
+        fcmd.tools.dev.pymake._push_all_remotes()
+
+        assert calls == [
+            ["git", "push", "origin"],
+            ["git", "push", "origin", "--tags"],
+            ["git", "push", "codeup"],
+            ["git", "push", "codeup", "--tags"],
+        ]
+        out = capsys.readouterr().out
+        assert "推送 origin..." in out
+        assert "推送 codeup..." in out
+
+
+# ---------------------------------------------------------------------- #
 # main() 入口测试
 # ---------------------------------------------------------------------- #
 class TestPymakeMain:

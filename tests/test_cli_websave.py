@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from email.message import Message
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 from urllib.error import HTTPError
 
@@ -284,3 +285,211 @@ class TestDownloadAssets:
         assert img_file.read_bytes() == b"\x89PNG"
         html = (tmp_path / "index.html").read_text(encoding="utf-8")
         assert "assets/example.com/logo.png" in html
+
+    def test_save_website_skips_failed_asset(
+        self, tmp_path: Path, mock_http_get: MagicMock, mock_download_asset: MagicMock
+    ) -> None:
+        """下载失败的资源保持原始引用，不写入本地映射。"""
+        from fcmd.dsl.actions.net import save_website
+
+        mock_http_get.return_value = '<img src="/broken.png">'
+        mock_download_asset.side_effect = HTTPError("https://example.com/broken.png", 404, "Not Found", Message(), None)
+        save_website("https://example.com", str(tmp_path), depth=1)
+
+        html = (tmp_path / "index.html").read_text(encoding="utf-8")
+        assert 'src="/broken.png"' in html
+
+
+# ---------------------------------------------------------------------- #
+# URL 映射 / 资源收集 / 下载
+# ---------------------------------------------------------------------- #
+class TestUrlMapping:
+    """URL 到本地路径的映射测试。"""
+
+    def test_url_to_file_path_with_query(self, tmp_path: Path) -> None:
+        """查询串被清洗为文件名片段并保留扩展名。"""
+        from fcmd.dsl.actions.net import url_to_file_path
+
+        page = url_to_file_path("https://example.com/a.html?x=1&y=2", tmp_path)
+        assert page == tmp_path / "a_x_1_y_2.html"
+
+        search = url_to_file_path("https://example.com/search?q=a b", tmp_path)
+        assert search == tmp_path / "search_q_a_b.html"
+
+    def test_asset_to_file_path(self, tmp_path: Path) -> None:
+        """资源路径按主机分目录；空路径落为 index，查询串被清洗。"""
+        from fcmd.dsl.actions.net import asset_to_file_path
+
+        assert asset_to_file_path("https://cdn.example.com:8443/", tmp_path) == (
+            tmp_path / "assets" / "cdn.example.com_8443" / "index"
+        )
+        assert asset_to_file_path("https://example.com/img.png?v=1", tmp_path).name == "img_v_1.png"
+
+
+class TestCollectAssetUrls:
+    """``collect_asset_urls`` 过滤与去重测试。"""
+
+    def test_filters_ads_cross_origin_and_inline(self) -> None:
+        from fcmd.dsl.actions.net import collect_asset_urls
+
+        html = """
+        <img src="">
+        <img src="#frag">
+        <img src="javascript:void(0)">
+        <img src="data:image/png;base64,xxx">
+        <img src="/ad.banner.png">
+        <img src="/pic.png">
+        <link href="https://other.com/style.css">
+        <script src="/app.js"></script>
+        <script src="/app.js"></script>
+        <div style="background: url(/bg.png)"></div>
+        <div style="background: url(data:image/png;base64,xxx)"></div>
+        <div style="background: url(javascript:void(0))"></div>
+        <div style="background: url(/banner-bg.png)"></div>
+        <div style="background: url(/bg2.png?x=1)"></div>
+        """
+
+        assets = collect_asset_urls(html, "https://example.com/page")
+
+        assert assets == [
+            "https://example.com/pic.png",
+            "https://example.com/app.js",
+            "https://example.com/bg.png",
+            "https://example.com/bg2.png?x=1",
+        ]
+
+
+class TestDownloadAsset:
+    """``download_asset`` 直接下载测试。"""
+
+    def test_download_asset_reads_bytes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.dsl.actions.net import download_asset
+
+        class _Response:
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+            def read(self) -> bytes:
+                return b"PNG"
+
+        monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=30: _Response())
+        assert download_asset("https://example.com/a.png") == b"PNG"
+
+
+# ---------------------------------------------------------------------- #
+# 改写分支与镜像测速重试
+# ---------------------------------------------------------------------- #
+class TestRewriteBranches:
+    """``rewrite_html`` / ``rewrite_css`` 的边界分支。"""
+
+    def test_rewrite_html_link_and_background_branches(self, tmp_path: Path) -> None:
+        from fcmd.dsl.actions.net import rewrite_html
+
+        html = (
+            '<a href="mailto:x@y.com">m</a>'
+            '<a href="#top">t</a>'
+            '<a href="/p#sec">p</a>'
+            '<a href="https://other.com/x">x</a>'
+            '<img src="/missing.png">'
+            '<div style="background: url(/bg.png?x=1)"></div>'
+            '<div style="background: url(data:image/png;base64,xxx)"></div>'
+            '<div style="background: url(/nope.png)"></div>'
+        )
+        local_assets = {"https://example.com/bg.png?x=1": tmp_path / "assets" / "bg.png"}
+
+        rewritten = rewrite_html(
+            html,
+            "https://example.com",
+            tmp_path / "index.html",
+            local_assets,
+            tmp_path,
+            rewrite_links=True,
+        )
+
+        assert 'href="mailto:x@y.com"' in rewritten
+        assert 'href="#top"' in rewritten
+        assert 'href="p.html#sec"' in rewritten
+        assert 'href="https://other.com/x"' in rewritten
+        assert 'src="/missing.png"' in rewritten
+        assert "url(assets/bg.png?x=1)" in rewritten
+        assert "url(data:image/png" in rewritten
+        assert 'url("/nope.png")' not in rewritten
+        assert "url(/nope.png)" in rewritten
+
+    def test_rewrite_css_skips_unknown_and_keeps_query(self, tmp_path: Path) -> None:
+        from fcmd.dsl.actions.net import rewrite_css
+
+        css = (
+            ".a { background: url(/missing.png); }\n"
+            ".b { background: url(/x.png?v=2); }\n"
+            ".c { background: url(#frag); }\n"
+        )
+        local_assets: dict[str, Path | None] = {"https://example.com/x.png?v=2": tmp_path / "assets" / "x.png"}
+
+        rewritten = rewrite_css(css, "https://example.com/style.css", tmp_path / "style.css", local_assets)
+
+        assert "url(/missing.png)" in rewritten
+        assert "url(assets/x.png?v=2)" in rewritten
+        assert "url(#frag)" in rewritten
+
+
+class TestDownloadAssetsRecursiveBranches:
+    """CSS 递归下载的去重与内联过滤。"""
+
+    def test_dedup_cached_and_inline_refs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.dsl.actions.net import download_assets_recursive
+
+        calls: list[str] = []
+
+        css = (
+            ".a { background: url(/new.png); }\n"
+            ".b { background: url(/new.png); }\n"
+            ".c { background: url(data:image/png;base64,xxx); }\n"
+            ".d { background: url(#frag); }\n"
+            ".e { background: url(javascript:void(0)); }\n"
+            ".f { background: url(/ad.banner.png); }\n"
+        )
+
+        def _fake_download(url: str, timeout: int = 30) -> bytes:
+            calls.append(url)
+            if url == "https://example.com/a.css":
+                return css.encode("utf-8")
+            return b"PNG"
+
+        monkeypatch.setattr("fcmd.dsl.actions.net.download_asset", _fake_download)
+
+        cache: dict[str, Path | None] = {}
+        download_assets_recursive(["https://example.com/a.css"], tmp_path, cache)
+
+        assert calls == ["https://example.com/a.css", "https://example.com/new.png"]
+
+
+class TestProbeMirrorsRetry:
+    """``probe_mirrors`` 对失败项的并发重试。"""
+
+    def test_failed_probe_is_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.dsl.actions import net
+
+        calls: list[tuple[str, int]] = []
+
+        def _fake_probe(url: str, timeout: float, user_agent: str, sample_bytes: int, allow_html: bool = False) -> Any:
+            calls.append((url, sample_bytes))
+            attempts = sum(1 for item in calls if item == (url, net._PROBE_QUICK_BYTES))
+            ok = url == "https://ok.example" or attempts > 1
+            return net.UrlProbe(
+                url,
+                ok,
+                1.0,
+                float(sample_bytes) if ok else 0.0,
+                sample_bytes if ok else 0,
+                "" if ok else "超时",
+            )
+
+        monkeypatch.setattr(net, "_probe_download", _fake_probe)
+        results = net.probe_mirrors(["https://ok.example", "https://flaky.example"], timeout=1.0)
+
+        assert [probe.url for probe in results] == ["https://ok.example", "https://flaky.example"]
+        assert all(probe.ok for probe in results)

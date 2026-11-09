@@ -456,7 +456,9 @@ class TestDownloadOne:
         )
         file = ModelFile("a.bin", len(content))
         progress = _ProgressStub()
-        _download_one("Qwen/demo", file, final, part, SourceSelection("modelscope", (file,)), None, False, progress, 0, 1)
+        _download_one(
+            "Qwen/demo", file, final, part, SourceSelection("modelscope", (file,)), None, False, progress, 0, 1
+        )
 
         assert final.read_bytes() == content
         assert any(update.get("completed") == 0 for _, update in progress.updates)
@@ -472,7 +474,9 @@ class TestDownloadOne:
 
         monkeypatch.setattr("urllib.request.urlopen", _unexpected)
         file = ModelFile("a.bin", len(content))
-        _download_one("Qwen/demo", file, final, part, SourceSelection("modelscope", (file,)), None, False, _ProgressStub(), 0, 1)
+        _download_one(
+            "Qwen/demo", file, final, part, SourceSelection("modelscope", (file,)), None, False, _ProgressStub(), 0, 1
+        )
 
         assert final.read_bytes() == content
 
