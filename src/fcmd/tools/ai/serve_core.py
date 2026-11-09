@@ -1122,6 +1122,12 @@ _SOURCE_ATTEMPTS = 5
 _SOURCE_TIMEOUT = 30.0
 _SOURCE_RETRY_DELAY = 1.0
 _BUILD_TAG_RE = re.compile(r"^b\d+$")
+_ACCESS_VIOLATION = 0xC0000005
+_MSVC_MIN_VERSION = (14, 30)
+_MSVC_HINT = (
+    "llama-quantize 启动即崩溃通常由系统 VC++ 运行库（MSVCP140.dll）过旧导致，"
+    "请安装最新 VC++ 2015-2022 x64 运行库，或将新版 msvcp140.dll 放入引擎目录"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1486,9 +1492,13 @@ def convert_model(plan: ConvertPlan, runner: Runner = run_command) -> list[Path]
         raise ServeError(f"转换命令已结束但未生成中间文件: {plan.intermediate}")
     result = runner(plan.quantize_argv(), timeout=QUANTIZE_TIMEOUT)
     if result.returncode != 0:
-        raise ServeError(
-            f"量化失败（{format_returncode(result.returncode)}）：{_tail(result.stderr or result.stdout) or '无输出'}"
-        )
+        output = _tail(result.stderr or result.stdout) or "无输出"
+        hint = ""
+        crashed = result.returncode in (_ACCESS_VIOLATION, _ACCESS_VIOLATION - 2**32)
+        if crashed and output == "无输出":
+            exe_dir = plan.quantize_exe.parent if plan.quantize_exe else Path()
+            hint = f"；{_MSVC_HINT} {exe_dir}"
+        raise ServeError(f"量化失败（{format_returncode(result.returncode)}）：{output}{hint}")
     if not plan.output.is_file():
         raise ServeError(f"量化命令已结束但未生成: {plan.output}")
     with contextlib.suppress(OSError):
@@ -1827,6 +1837,55 @@ def _check_disk(models_root: Path | None, home: Path | None) -> Check:
     return Check("磁盘", status, f"{target.drive or target} 剩余 {free_gib:.1f} GiB")
 
 
+def _file_version(dll: Path) -> tuple[int, int, int, int] | None:
+    """读取 Windows PE 文件版本（非 Windows 或读取失败返回 ``None``）。"""
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    windll = getattr(ctypes, "windll", None)
+    if windll is None:
+        return None
+    result: tuple[int, int, int, int] | None = None
+    try:
+        version = windll.version
+        size = version.GetFileVersionInfoSizeW(str(dll), None)
+        if size:
+            buffer = ctypes.create_string_buffer(size)
+            if version.GetFileVersionInfoW(str(dll), 0, size, buffer):
+                value = wintypes.LPVOID()
+                length = wintypes.UINT()
+                if version.VerQueryValueW(buffer, "\\", ctypes.byref(value), ctypes.byref(length)):
+                    info = ctypes.cast(value, ctypes.POINTER(ctypes.c_uint32 * 13)).contents
+                    major, minor = info[2], info[3]
+                    result = (major >> 16, major & 0xFFFF, minor >> 16, minor & 0xFFFF)
+    except (AttributeError, OSError, ValueError):
+        result = None
+    return result
+
+
+def _check_msvc_runtime(engine: EngineInfo) -> Check:
+    """VC++ 运行库检查：Windows 10 自带的 14.0 版本会让新版 llama.cpp 工具崩溃。"""
+    local = engine.exe.parent / "msvcp140.dll"
+    system = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "msvcp140.dll"
+    for dll in (local, system):
+        if not dll.is_file():
+            continue
+        version = _file_version(dll)
+        if version is None:
+            continue
+        text = ".".join(str(item) for item in version)
+        if version[:2] >= _MSVC_MIN_VERSION:
+            return Check("VC++ 运行库", "ok", f"MSVCP140 {text}（{dll.parent}）")
+        return Check(
+            "VC++ 运行库",
+            "warn",
+            f"MSVCP140 {text} 过旧，量化等工具可能崩溃；{_MSVC_HINT} {engine.exe.parent}",
+        )
+    return Check("VC++ 运行库", "warn", "未找到 MSVCP140.dll，量化等工具可能无法启动；请安装最新 VC++ 运行库")
+
+
 def doctor(
     *,
     home: Path | None = None,
@@ -1847,6 +1906,7 @@ def doctor(
         checks.append(Check("推理引擎", "fail", str(exc)))
     else:
         checks.append(check_engine(engine, runner))
+        checks.append(_check_msvc_runtime(engine))
 
     profile = PROFILES[DEFAULT_PROFILE]
     try:

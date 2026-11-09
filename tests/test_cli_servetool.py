@@ -967,6 +967,28 @@ class TestConvert:
         with pytest.raises(ServeError, match="量化失败"):
             core.convert_model(plan, _run)
 
+    def test_convert_model_quantize_crash_hint(self, tmp_path: Path) -> None:
+        """0xC0000005 且无输出时提示 VC++ 运行库问题。"""
+        plan = core.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m-Q4_K_M.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+            quant="Q4_K_M",
+            quantize_exe=tmp_path / "engine" / "llama-quantize.exe",
+        )
+        calls: list[list[str]] = []
+        inner = _conv_runner(calls)
+        state = {"n": 0}
+
+        def _run(cmd: list[str], timeout: float = 1.0, env: dict[str, str] | None = None) -> CommandResult:
+            state["n"] += 1
+            return inner(cmd, timeout) if state["n"] == 1 else CommandResult(0xC0000005)
+
+        with pytest.raises(ServeError, match="MSVCP140"):
+            core.convert_model(plan, _run)
+
     def test_convert_model_missing_output(self, tmp_path: Path) -> None:
         plan = core.ConvertPlan(
             source=_hf_source(tmp_path),
@@ -1559,6 +1581,7 @@ class TestDoctor:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / core.engine_exe_name()))
         monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: False)
         monkeypatch.setattr(core.shutil, "disk_usage", lambda path: DiskUsage(100, 10, 90 * 1024**3))
+        monkeypatch.setattr(core, "_file_version", lambda dll: (14, 51, 0, 0))
         checks = core.doctor(home=home, models_root=model_file.parent.parent, runner=_doctor_runner)
         statuses = {check.name: check.status for check in checks}
         assert all(status == "ok" for status in statuses.values())
@@ -1630,6 +1653,35 @@ class TestCli:
         monkeypatch.setattr(core, "doctor", lambda **kwargs: [Check("引擎", "fail", "crash")])
         with pytest.raises(ServeError, match="1 项检查失败"):
             servetool.doctor_cmd()
+
+    def test_msvc_runtime_engine_local_new(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        engine_dir = tmp_path / "engine"
+        engine_dir.mkdir()
+        (engine_dir / "msvcp140.dll").write_bytes(b"x")
+        monkeypatch.setattr(core, "_file_version", lambda dll: (14, 51, 36231, 0))
+        check = core._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+        assert check.status == "ok"
+        assert "14.51" in check.detail
+
+    def test_msvc_runtime_warns_on_old_system_dll(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        engine_dir = tmp_path / "engine"
+        engine_dir.mkdir()
+        system32 = tmp_path / "System32"
+        system32.mkdir()
+        (system32 / "msvcp140.dll").write_bytes(b"x")
+        monkeypatch.setenv("SYSTEMROOT", str(tmp_path))
+        monkeypatch.setattr(core, "_file_version", lambda dll: (14, 0, 24215, 1))
+        check = core._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+        assert check.status == "warn"
+        assert "过旧" in check.detail
+
+    def test_msvc_runtime_missing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        engine_dir = tmp_path / "engine"
+        engine_dir.mkdir()
+        monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "nowhere"))
+        check = core._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+        assert check.status == "warn"
+        assert "MSVCP140" in check.detail
 
     def test_engine_list_empty(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setattr(core, "list_engines", lambda home=None: [])
