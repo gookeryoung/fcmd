@@ -647,3 +647,35 @@ def test_chatw_select_unavailable_service(monkeypatch: pytest.MonkeyPatch) -> No
     assert window._url_var.get() == state.base_url
     assert window._status_var.get() == "不可用"
     assert window._appended[0][0] == "error"
+
+
+# ---------------------------------------------------------------------- #
+# llmchatw GUI 入口
+# ---------------------------------------------------------------------- #
+class TestChatwGuiEntry:
+    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_window() -> None:
+            raise ImportError("no tkinter")
+
+        monkeypatch.setattr(llmchatw, "ChatWindow", fake_window)
+        llmchatw.run_gui()  # 不应抛出
+
+    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        class _Root:
+            def mainloop(self) -> None:
+                calls.append("mainloop")
+
+        class _Window:
+            root = _Root()
+
+        monkeypatch.setattr(llmchatw, "ChatWindow", _Window)
+        llmchatw.run_gui()
+        assert calls == ["mainloop"]
+
+    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+        monkeypatch.setattr(llmchatw, "run_gui", lambda: calls.append(True))
+        llmchatw.launch_cmd()
+        assert calls == [True]

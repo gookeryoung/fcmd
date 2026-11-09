@@ -2143,3 +2143,104 @@ class TestServewFitState:
         assert llmservew.ServeWindow._state_tag("需释放显存") == ("busy",)
         assert llmservew.ServeWindow._state_tag("可用") == ()
         assert llmservew.ServeWindow._state_tag("运行中") == ()
+
+
+class TestServewEdgeCases:
+    def test_parse_gpu_rows_skips_blank_lines(self) -> None:
+        assert llmservew._parse_gpu_rows("\n   \n") == []
+
+    def test_sample_gpu_when_process_query_fails(self) -> None:
+        def run(cmd: list[str], *args: Any, **kwargs: Any) -> CommandResult:
+            del args, kwargs
+            if any("query-compute-apps" in part for part in cmd):
+                return CommandResult(1, "", "")
+            return CommandResult(0, _GPU_CSV, "")
+
+        sample = llmservew._sample_gpu(1, run)
+        assert sample is not None
+        assert sample.process_memory is None
+
+    def test_sample_load_without_cpu_freq(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import psutil
+
+        def boom() -> Any:
+            raise NotImplementedError
+
+        monkeypatch.setattr(psutil, "cpu_freq", boom)
+        sample = llmservew._sample_load(2**31 - 1, None)
+        assert sample.cpu_freq is None
+
+    def test_sample_load_ignores_dead_process(self) -> None:
+        import psutil
+
+        class _DeadProcess:
+            def cpu_percent(self) -> float:
+                raise psutil.NoSuchProcess(pid=1)
+
+        sample = llmservew._sample_load(2**31 - 1, _DeadProcess())
+        assert sample.process_cpu is None
+        assert sample.process_rss is None
+
+    def test_format_duration_branches(self) -> None:
+        assert llmservew._format_duration(45) == "45s"
+        assert llmservew._format_duration(125) == "2m 05s"
+        assert llmservew._format_duration(3661) == "1h 01m 01s"
+
+    def test_format_gpu_without_power_draw(self) -> None:
+        assert llmservew._format_gpu(llmservew.GpuSample(name="GPU"))["gpu_power"] == "-"
+
+    def test_probe_web_ui_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from urllib.error import HTTPError
+
+        class _Response:
+            status = 200
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+        monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: _Response())
+        assert llmservew._probe_web_ui("http://127.0.0.1:8080") == 200
+
+        def unauthorized(request: Any, timeout: float) -> Any:
+            raise HTTPError("http://x/", 401, "unauthorized", cast(Any, None), None)
+
+        monkeypatch.setattr("urllib.request.urlopen", unauthorized)
+        assert llmservew._probe_web_ui("http://127.0.0.1:8080", "secret") == 401
+
+        def offline(request: Any, timeout: float) -> Any:
+            raise OSError("down")
+
+        monkeypatch.setattr("urllib.request.urlopen", offline)
+        assert llmservew._probe_web_ui("http://127.0.0.1:8080") is None
+
+
+class TestServewGuiEntry:
+    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_window() -> None:
+            raise ImportError("no tkinter")
+
+        monkeypatch.setattr(llmservew, "ServeWindow", fake_window)
+        llmservew.run_gui()  # 不应抛出
+
+    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        class _Root:
+            def mainloop(self) -> None:
+                calls.append("mainloop")
+
+        class _Window:
+            root = _Root()
+
+        monkeypatch.setattr(llmservew, "ServeWindow", _Window)
+        llmservew.run_gui()
+        assert calls == ["mainloop"]
+
+    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+        monkeypatch.setattr(llmservew, "run_gui", lambda: calls.append(True))
+        llmservew.launch_cmd()
+        assert calls == [True]

@@ -9,7 +9,7 @@ import pytest
 
 import fcmd as fx
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.llm import llmbase, llmengine, llmqnt
+from fcmd.tools.llm import llmbase, llmengine, llmqnt, llmqntw
 
 
 class _FakeStdout:
@@ -350,3 +350,35 @@ class TestCli:
         )
 
         assert code == 0
+
+
+# ---------------------------------------------------------------------- #
+# llmqntw GUI 入口
+# ---------------------------------------------------------------------- #
+class TestQntwGuiEntry:
+    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_window() -> None:
+            raise ImportError("no tkinter")
+
+        monkeypatch.setattr(llmqntw, "QuantizeWindow", fake_window)
+        llmqntw.run_gui()  # 不应抛出
+
+    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        class _Root:
+            def mainloop(self) -> None:
+                calls.append("mainloop")
+
+        class _Window:
+            root = _Root()
+
+        monkeypatch.setattr(llmqntw, "QuantizeWindow", _Window)
+        llmqntw.run_gui()
+        assert calls == ["mainloop"]
+
+    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+        monkeypatch.setattr(llmqntw, "run_gui", lambda: calls.append(True))
+        llmqntw.launch_cmd()
+        assert calls == [True]

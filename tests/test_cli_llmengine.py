@@ -11,7 +11,7 @@ from typing import Any, cast
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.llm import llmengine, llmenv
+from fcmd.tools.llm import llmengine, llmenginew, llmenv
 from fcmd.tools.llm.llmbase import Check, EngineInfo, ServeError
 
 
@@ -323,3 +323,35 @@ def test_install_reports_download_progress(tmp_path: Path) -> None:
     assert info.exe.is_file()
     assert events[0] == ("engine.zip", 0, len(payload))
     assert events[-1] == ("engine.zip", len(payload), len(payload))
+
+
+# ---------------------------------------------------------------------- #
+# llmenginew GUI 入口
+# ---------------------------------------------------------------------- #
+class TestEnginewGuiEntry:
+    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_window() -> None:
+            raise ImportError("no tkinter")
+
+        monkeypatch.setattr(llmenginew, "EngineWindow", fake_window)
+        llmenginew.run_gui()  # 不应抛出
+
+    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        class _Root:
+            def mainloop(self) -> None:
+                calls.append("mainloop")
+
+        class _Window:
+            root = _Root()
+
+        monkeypatch.setattr(llmenginew, "EngineWindow", _Window)
+        llmenginew.run_gui()
+        assert calls == ["mainloop"]
+
+    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+        monkeypatch.setattr(llmenginew, "run_gui", lambda: calls.append(True))
+        llmenginew.launch_cmd()
+        assert calls == [True]

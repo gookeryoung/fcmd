@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -532,6 +533,112 @@ def test_progress_percent_parsing() -> None:
     assert llmconvertw._progress_percent(" 45%|████▌     | 9/20") == 45
     assert llmconvertw._progress_percent("100%|████████| 20/20") == 100
     assert llmconvertw._progress_percent("Loading model file") is None
+
+
+def _hf_dir(path: Path) -> Path:
+    """构造一个 HF safetensors 目录（config.json + 一个权重文件）。"""
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "config.json").write_text("{}", encoding="utf-8")
+    (path / "model.safetensors").write_bytes(b"x")
+    return path
+
+
+def test_convertw_hf_size_and_stats(tmp_path: Path) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "a.safetensors").write_bytes(b"x" * 10)
+    (model / "b.safetensors").write_bytes(b"y" * 5)
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    assert llmconvertw._hf_size(model) == 15
+    assert llmconvertw._dir_stats(model).startswith("2 个 safetensors")
+
+
+def test_convertw_hf_size_skips_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    model = tmp_path / "model"
+    model.mkdir()
+    target = model / "broken.safetensors"
+    target.write_bytes(b"x")
+    real_stat = Path.stat
+
+    def fake_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise OSError("denied")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", fake_stat)
+    assert llmconvertw._hf_size(model) == 0
+
+
+def test_convertw_find_convertible_layouts(tmp_path: Path) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    direct = _hf_dir(tmp_path / "direct")
+    root = tmp_path / "root"
+    child = _hf_dir(root / "model")
+    nested = _hf_dir(root / "org" / "model")
+    (root / "README.md").write_text("x", encoding="utf-8")
+    (root / "org" / "notes.txt").write_text("x", encoding="utf-8")
+    plain = tmp_path / "plain"
+    plain.mkdir()
+
+    found = {path for path, _ in llmconvertw._find_convertible([direct, direct, root, plain, tmp_path / "missing"])}
+    assert found == {direct, child, nested}
+
+
+def test_convertw_find_convertible_skips_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    monkeypatch.setattr(llmconvertw.llmconvert, "is_hf_safetensors_dir", lambda path: False)
+    real_iterdir = Path.iterdir
+
+    def fake_iterdir(self: Path) -> Any:
+        if self == broken:
+            raise OSError("denied")
+        return real_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+    assert llmconvertw._find_convertible([broken]) == []
+
+
+class TestConvertwGuiEntry:
+    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.tools.llm import llmconvertw
+
+        def fake_window() -> None:
+            raise ImportError("no tkinter")
+
+        monkeypatch.setattr(llmconvertw, "ConvertWindow", fake_window)
+        llmconvertw.run_gui()  # 不应抛出
+
+    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.tools.llm import llmconvertw
+
+        calls: list[str] = []
+
+        class _Root:
+            def mainloop(self) -> None:
+                calls.append("mainloop")
+
+        class _Window:
+            root = _Root()
+
+        monkeypatch.setattr(llmconvertw, "ConvertWindow", _Window)
+        llmconvertw.run_gui()
+        assert calls == ["mainloop"]
+
+    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.tools.llm import llmconvertw
+
+        calls: list[bool] = []
+        monkeypatch.setattr(llmconvertw, "run_gui", lambda: calls.append(True))
+        llmconvertw.launch_cmd()
+        assert calls == [True]
 
 
 # ---------------------------------------------------------------------- #
