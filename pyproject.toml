@@ -46,6 +46,7 @@
         idtool        ="fcmd.dsl.entry:run_named"
         imaget        ="fcmd.dsl.entry:run_named"
         img2ico       ="fcmd.dsl.entry:run_named"
+        img2icow      ="fcmd.tools.ui.img2icow:main"
         inifile       ="fcmd.dsl.entry:run_named"
         iptool        ="fcmd.dsl.entry:run_named"
         jsont         ="fcmd.dsl.entry:run_named"
