@@ -130,8 +130,8 @@ class ServeWindow:
         self._notebook.add(start_page, text="启动配置")
         self._notebook.add(run_page, text="运行监控")
         self._build_params(start_page)
-        self._build_models(start_page)
         self._build_env(start_page)
+        self._build_models(start_page)
         self._build_loaded(run_page)
         self._build_metrics(run_page)
         self._build_log(run_page)
@@ -249,6 +249,18 @@ class ServeWindow:
         box = ttk.LabelFrame(parent, text="已配置模型（llmenv 登记的模型目录）", padding=8)
         box.pack(fill="both", expand=True, pady=(8, 0))
 
+        row = ttk.Frame(box)
+        row.pack(side="bottom", fill="x", pady=(6, 0))
+        ttk.Entry(row, textvariable=self._model_var, state="readonly").pack(
+            side="left", fill="x", expand=True, padx=(0, 8)
+        )
+        self._model_btn = ttk.Button(row, text="刷新", command=self._refresh_models)
+        self._model_btn.pack(side="left")
+        self._browse_btn = ttk.Button(row, text="浏览…", command=self._select_file)
+        self._browse_btn.pack(side="left", padx=(6, 0))
+        self._clear_btn = ttk.Button(row, text="清除选择", command=self._clear_selection)
+        self._clear_btn.pack(side="left", padx=(6, 0))
+
         tree_frame = ttk.Frame(box)
         tree_frame.pack(fill="both", expand=True)
         self._tree = ttk.Treeview(
@@ -256,7 +268,7 @@ class ServeWindow:
             columns=("model", "size", "profiles"),
             show="headings",
             selectmode="browse",
-            height=7,
+            height=4,
         )
         self._tree.heading("model", text="模型")
         self._tree.heading("size", text="大小")
@@ -270,23 +282,11 @@ class ServeWindow:
         yscroll.pack(side="right", fill="y")
         self._tree.bind("<<TreeviewSelect>>", self._on_model_selected)
 
-        row = ttk.Frame(box)
-        row.pack(fill="x", pady=(6, 0))
-        ttk.Entry(row, textvariable=self._model_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=(0, 8)
-        )
-        self._model_btn = ttk.Button(row, text="刷新", command=self._refresh_models)
-        self._model_btn.pack(side="left")
-        self._browse_btn = ttk.Button(row, text="浏览…", command=self._select_file)
-        self._browse_btn.pack(side="left", padx=(6, 0))
-        self._clear_btn = ttk.Button(row, text="清除选择", command=self._clear_selection)
-        self._clear_btn.pack(side="left", padx=(6, 0))
-
     def _build_env(self, parent: Any) -> None:
         tk = self._tk
         ttk = self._ttk
         box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU）", open_state=False)
-        box.pack(fill="x", pady=(8, 0))
+        box.pack(side="bottom", fill="x", pady=(8, 0))
         body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"))):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
