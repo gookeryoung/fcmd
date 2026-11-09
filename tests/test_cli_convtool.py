@@ -1,6 +1,6 @@
 """convtool 工具测试（DSL 内建动作声明 commands/convtool.toml）。
 
-验证 ``fcmd.dsl.actions.conv2`` 模块：
+验证 ``fcmd.dsl.actions.codec`` 模块：
 - 工具注册与四子命令结构（length/weight/temp/datasize）
 - ``convert_length``/``convert_weight``/``convert_temperature``/``convert_datasize``
 - 单位列举与错误分支
@@ -13,7 +13,7 @@ import pytest
 
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.dsl.actions.conv2 import (
+from fcmd.dsl.actions.codec import (
     convert_datasize,
     convert_length,
     convert_temperature,

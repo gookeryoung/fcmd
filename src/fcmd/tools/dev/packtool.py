@@ -173,13 +173,8 @@ def create_zip_package(source_dir: Path = Path(), output_file: Path = Path("pack
         输出文件（默认：``package.zip``）
     """
     output_file.parent.mkdir(parents=True, exist_ok=True)
-
-    with zipfile.ZipFile(output_file, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in source_dir.rglob("*"):
-            if file.is_file():
-                arcname = file.relative_to(source_dir)
-                zf.write(file, arcname)
-
+    # make_archive 会自动补 .zip，传入无后缀路径
+    shutil.make_archive(str(output_file.with_suffix("")), "zip", root_dir=source_dir)
     print(f"ZIP 打包完成: {output_file}")
 
 

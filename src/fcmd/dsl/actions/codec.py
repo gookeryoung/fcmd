@@ -1,12 +1,10 @@
-"""转换工具组二：编解码（codetool）、单位换算（convtool）、URL 解析（urltool）。
+"""编解码与转换 DSL 动作：codetool / convtool / urltool。
 
-原模块位置：
-- ``fcmd.cli.conv.codetool`` —— Base64 / URL / Hex / ROT13 / HTML 编解码（5 子命令）
-- ``fcmd.cli.conv.convtool`` —— 长度 / 重量 / 温度 / 数据大小换算（4 子命令）
-- ``fcmd.cli.conv.urltool`` —— URL 解析 / 查询参数 / 基础 URL 提取（4 子命令）
+* codetool —— Base64 / URL / Hex / ROT13 / HTML 编解码；
+* convtool —— 长度 / 重量 / 温度 / 数据大小换算；
+* urltool —— URL 解析 / 查询参数 / 基础 URL 提取。
 
-迁移为 DSL action：所有 CLI 子命令改为 ``@action("<tool>_<sub>", param_help={...})``，
-动作签名即 CLI 参数 schema；公共函数保持 ``__all__`` 导出不变供测试与 API 调用。
+公共函数经 ``__all__`` 导出，供测试与 API 调用。
 """
 
 from __future__ import annotations

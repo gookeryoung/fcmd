@@ -137,8 +137,8 @@ def _sysinfo() -> None:
 )
 def _folderback(src: str = ".", dst: str = "./backup", max_zip: int = 5) -> None:
     """备份文件夹到指定目录（zip 压缩），自动清理旧备份。"""
-    import time  # 延迟导入：time/zipfile 仅备份场景需要（冷启动导入税）
-    import zipfile
+    import shutil  # 延迟导入：备份场景才需要（冷启动导入税）
+    import time
 
     src_path = Path(src)
     dst_path = Path(dst)
@@ -148,12 +148,10 @@ def _folderback(src: str = ".", dst: str = "./backup", max_zip: int = 5) -> None
         dst_path.mkdir(parents=True, exist_ok=True)
         print(f"创建目标文件夹: {dst_path}")
 
-    files = [str(f) for f in src_path.rglob("*")]
     timestamp = time.strftime("_%Y%m%d_%H%M%S")
     target_path = dst_path / (src_path.stem + timestamp + ".zip")
-    with zipfile.ZipFile(target_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        for file in files:
-            zip_file.write(file, arcname=file.replace(str(src_path.parent), ""))
+    # 以源目录的父目录为 root、源目录名为 base_dir，压缩包内保留顶层目录名
+    shutil.make_archive(str(target_path.with_suffix("")), "zip", root_dir=src_path.parent, base_dir=src_path.name)
 
     # 清理旧备份：递归删除匹配源文件夹名的旧 zip，保留最新 max_zip 个
     while True:

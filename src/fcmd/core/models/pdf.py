@@ -23,6 +23,7 @@ from __future__ import annotations
 import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import batched
 from pathlib import Path
 
 __all__ = [
@@ -237,7 +238,7 @@ class SplitSpec:
                     chunks.append(resolved)
             return tuple(chunks)
         sequence = self.order.arrange(range(page_count))
-        return tuple(sequence[i : i + self.every] for i in range(0, len(sequence), self.every))
+        return tuple(batched(sequence, self.every, strict=False))
 
 
 class MergeMode(enum.Enum):

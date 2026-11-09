@@ -801,6 +801,10 @@ try:
 except ImportError:
     _yaml_mod = None
 
+# libyaml C 加速（PyYAML 官方 wheel 自带）；缺失时回退纯 Python 实现
+_YAML_LOADER = getattr(_yaml_mod, "CSafeLoader", None) if _yaml_mod else None
+_YAML_DUMPER = getattr(_yaml_mod, "CSafeDumper", None) if _yaml_mod else None
+
 
 def _require_yaml_loader() -> Any:
     """获取 yaml 模块（若不可用则抛 ImportError）。"""
@@ -814,7 +818,7 @@ def read_yaml(filepath: Path) -> Any:
     _require_file(filepath)
     yaml_mod = _require_yaml_loader()
     with filepath.open("r", encoding="utf-8") as f:
-        return yaml_mod.safe_load(f)
+        return yaml_mod.load(f, Loader=_YAML_LOADER or yaml_mod.SafeLoader)
 
 
 def write_yaml(filepath: Path, data: Any, sort_keys: bool = False) -> None:
@@ -822,9 +826,10 @@ def write_yaml(filepath: Path, data: Any, sort_keys: bool = False) -> None:
     yaml_mod = _require_yaml_loader()
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with filepath.open("w", encoding="utf-8") as f:
-        yaml_mod.safe_dump(
+        yaml_mod.dump(
             data,
             f,
+            Dumper=_YAML_DUMPER or yaml_mod.SafeDumper,
             sort_keys=sort_keys,
             indent=2,
             allow_unicode=True,
@@ -835,8 +840,9 @@ def write_yaml(filepath: Path, data: Any, sort_keys: bool = False) -> None:
 def pretty_yaml(data: Any, sort_keys: bool = False, indent: int = 2) -> str:
     """格式化为 YAML 字符串。"""
     yaml_mod = _require_yaml_loader()
-    return yaml_mod.safe_dump(
+    return yaml_mod.dump(
         data,
+        Dumper=_YAML_DUMPER or yaml_mod.SafeDumper,
         sort_keys=sort_keys,
         indent=indent,
         allow_unicode=True,

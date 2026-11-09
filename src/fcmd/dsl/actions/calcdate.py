@@ -1,11 +1,4 @@
-"""日期计算 DSL 动作：calcdate。
-
-原模块 ``fcmd.tools.calc.calcdate`` 为纯 Python 实现（datetime 标准库），
-无子进程调用。迁移后由 ``@action`` 装饰器注册。
-
-注意：``fcmd/dsl/actions/calc.py`` 已有 randtool/stattool/timetool，
-本模块仅承载 calcdate 四子命令，勿误改 calc.py。
-"""
+"""日期计算 DSL 动作：calcdate（基于 datetime 标准库，无子进程调用）。"""
 
 from __future__ import annotations
 

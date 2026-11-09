@@ -179,7 +179,7 @@ def filesearch_content(
 
 def normalize_path(path: Path) -> Path:
     """规范化路径：展开用户目录、解析为绝对路径、消除 ``..``/``.``。"""
-    return path.expanduser().absolute().resolve(strict=False)
+    return path.expanduser().resolve(strict=False)
 
 
 def relative_to(path: Path, base: Path) -> Path:

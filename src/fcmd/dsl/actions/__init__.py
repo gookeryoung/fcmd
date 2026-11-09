@@ -33,12 +33,21 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 
 * :mod:`fcmd.dsl.actions.basic` —— 环境与文件基础副作用（setenv/writefile）
 * :mod:`fcmd.dsl.actions.filenames` —— 文件名批量操作（dateprefix/filerename/filelevel）
+* :mod:`fcmd.dsl.actions.fileops` —— 目录检索与路径处理（filesearch/pathtool/folderzip）
+* :mod:`fcmd.dsl.actions.archive` —— 目录压缩（folderzip）
 * :mod:`fcmd.dsl.actions.system` —— 系统管理（taskkill/which/sysinfo/folderback）
 * :mod:`fcmd.dsl.actions.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
 * :mod:`fcmd.dsl.actions.hashing` —— 字符串与文件哈希（hashtool/hashfile）
 * :mod:`fcmd.dsl.actions.genid` —— ID 生成（UUID/时间戳/随机字符串，idtool）
 * :mod:`fcmd.dsl.actions.conv` —— 命名风格/颜色换算/数学计算（casetool/colortool/mathtool）
+* :mod:`fcmd.dsl.actions.codec` —— 编解码/单位换算/URL（codetool/convtool/urltool）
 * :mod:`fcmd.dsl.actions.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
+* :mod:`fcmd.dsl.actions.calcdate` —— 日期计算（calcdate）
+* :mod:`fcmd.dsl.actions.crypto` —— 加密与摘要（cryptool）
+* :mod:`fcmd.dsl.actions.data` —— 结构化数据转换（datatool）
+* :mod:`fcmd.dsl.actions.media` —— 图片/PDF/视频处理（pdftool/imagetool/videotool）
+* :mod:`fcmd.dsl.actions.net` —— 网络工具（websave/pingtool/portcheck/iptool）
+* :mod:`fcmd.dsl.actions.text` —— 文本处理（texttool/tabletool）
 """
 
 from __future__ import annotations
@@ -175,9 +184,9 @@ from . import archive as archive  # noqa: E402
 from . import basic as basic  # noqa: E402
 from . import calc as calc  # noqa: E402
 from . import calcdate as calcdate  # noqa: E402
+from . import codec as codec  # noqa: E402
 from . import compute as compute  # noqa: E402
 from . import conv as conv  # noqa: E402
-from . import conv2 as conv2  # noqa: E402
 from . import crypto as crypto  # noqa: E402
 from . import data as data  # noqa: E402
 from . import filenames as filenames  # noqa: E402

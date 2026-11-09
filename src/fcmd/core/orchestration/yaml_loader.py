@@ -101,14 +101,17 @@ from .conditions import (
     substitute_matrix_vars,
 )
 
+# libyaml C 加速（PyYAML 官方 wheel 自带）；缺失时回退纯 Python 实现
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
 
 def _safe_load(text: str) -> Any:
-    """调用 ``yaml.safe_load`` 并将 YAMLError 包装为 ValueError。
+    """加载 YAML（优先 libyaml C 加速），并把 YAMLError 包装为 ValueError。
 
     便于调用方统一捕获 ``ValueError`` 处理所有 YAML 解析失败场景。
     """
     try:
-        return yaml.safe_load(text)
+        return yaml.load(text, Loader=_YAML_LOADER)
     except yaml.YAMLError as exc:
         raise ValueError(f"YAML 解析失败: {exc}") from exc
 
