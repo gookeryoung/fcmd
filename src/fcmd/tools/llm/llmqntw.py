@@ -1,0 +1,277 @@
+"""llmqntw - GGUF 量化工具的 Tk 窗口版。
+
+基于 :mod:`fcmd.tools.llm.llmqnt` 的核心逻辑，提供文件选择、量化类型勾选、
+进度条与实时日志。窗口关闭后命令退出。
+
+示例
+----
+    fcmd llmqntw
+"""
+
+from __future__ import annotations
+
+import queue
+import threading
+from pathlib import Path
+from typing import Any
+
+import fcmd
+from fcmd.console import print_error
+from fcmd.tools.llm import llmqnt
+
+__all__ = ["main"]
+
+_DESCRIPTION = "GGUF 量化窗口版（Tk）：选择 F16 GGUF，勾选多种量化类型批量转换"
+
+
+class QuantizeWindow:
+    """Tk 量化窗口：构建界面并把转换任务放到后台线程执行。"""
+
+    def __init__(self) -> None:
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, ttk
+
+        self._tk = tk
+        self._filedialog = filedialog
+        self._messagebox = messagebox
+        self._ttk = ttk
+        self.root = tk.Tk()
+        self.root.title("GGUF 量化工具")
+        self.root.geometry("680x600")
+        self.root.minsize(560, 480)
+
+        self.input_file: Path | None = None
+        self._thread: threading.Thread | None = None
+        self._messages: queue.Queue[tuple[str, Any]] | None = None
+
+        self._file_var = tk.StringVar(value="尚未选择输入文件")
+        self._overwrite_var = tk.BooleanVar(value=False)
+        self._quant_vars: dict[str, tk.BooleanVar] = {
+            quant: tk.BooleanVar(value=quant in llmqnt.DEFAULT_QUANTS) for quant in llmqnt.QUANT_TYPES
+        }
+        self._quant_checks: dict[str, Any] = {}
+        self._build_widgets()
+        self._mark_existing()
+
+    # ------------------------------------------------------------------ #
+    # 界面
+    # ------------------------------------------------------------------ #
+    def _build_widgets(self) -> None:
+        tk = self._tk
+        ttk = self._ttk
+        outer = ttk.Frame(self.root, padding=12)
+        outer.pack(fill="both", expand=True)
+
+        file_row = ttk.Frame(outer)
+        file_row.pack(fill="x")
+        ttk.Label(file_row, text="输入文件").pack(side="left")
+        ttk.Entry(file_row, textvariable=self._file_var, state="readonly").pack(
+            side="left", fill="x", expand=True, padx=8
+        )
+        self._file_btn = ttk.Button(file_row, text="选择…", command=self._select_file)
+        self._file_btn.pack(side="left")
+
+        quant_box = ttk.LabelFrame(outer, text="量化类型", padding=8)
+        quant_box.pack(fill="x", pady=(10, 0))
+        for index, (quant, desc) in enumerate(llmqnt.QUANT_TYPES.items()):
+            check = ttk.Checkbutton(
+                quant_box,
+                text=f"{quant}  {desc}",
+                variable=self._quant_vars[quant],
+            )
+            check.grid(row=index // 2, column=index % 2, sticky="w", padx=6, pady=3)
+            self._quant_checks[quant] = check
+
+        options = ttk.Frame(outer)
+        options.pack(fill="x", pady=(8, 0))
+        self._overwrite_check = ttk.Checkbutton(
+            options,
+            text="覆盖已存在的量化文件",
+            variable=self._overwrite_var,
+            command=self._mark_existing,
+        )
+        self._overwrite_check.pack(side="left")
+        self._start_btn = ttk.Button(options, text="开始转换", command=self._start)
+        self._start_btn.pack(side="right")
+        self._progress = ttk.Progressbar(options, mode="determinate", maximum=100, length=240)
+        self._progress.pack(side="right", padx=8)
+
+        log_frame = ttk.LabelFrame(outer, text="输出日志", padding=6)
+        log_frame.pack(fill="both", expand=True, pady=(10, 0))
+        scrollbar = ttk.Scrollbar(log_frame)
+        scrollbar.pack(side="right", fill="y")
+        self._log_text = tk.Text(log_frame, wrap="none", state="disabled", yscrollcommand=scrollbar.set)
+        self._log_text.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=self._log_text.yview)
+
+        self.root.protocol("WM_DELETE_WINDOW", self._close)
+
+    # ------------------------------------------------------------------ #
+    # 交互
+    # ------------------------------------------------------------------ #
+    def _select_file(self) -> None:
+        path = self._filedialog.askopenfilename(
+            title="选择 F16 格式的 GGUF 文件",
+            filetypes=[("GGUF 文件", "*.gguf"), ("所有文件", "*.*")],
+        )
+        if not path:
+            return
+        self.input_file = Path(path)
+        self._file_var.set(str(self.input_file))
+        self._mark_existing()
+        self._clear_log()
+        self._progress["value"] = 0
+
+    def _mark_existing(self) -> None:
+        """按当前输入文件标记已存在的量化输出。"""
+        overwrite = self._overwrite_var.get()
+        for quant, check in self._quant_checks.items():
+            desc = llmqnt.QUANT_TYPES[quant]
+            exists = self.input_file is not None and llmqnt.output_path(self.input_file, quant).is_file()
+            check.configure(
+                text=f"{quant}  {desc}" + ("（已存在）" if exists else ""),
+                state="normal" if overwrite or not exists else "disabled",
+            )
+            if exists:
+                self._quant_vars[quant].set(True)
+
+    def _selected_quants(self) -> list[str]:
+        overwrite = self._overwrite_var.get()
+        selected: list[str] = []
+        for quant, var in self._quant_vars.items():
+            if not var.get():
+                continue
+            if not overwrite and self.input_file is not None and llmqnt.output_path(self.input_file, quant).is_file():
+                continue
+            selected.append(quant)
+        return selected
+
+    def _start(self) -> None:
+        if self._thread is not None and self._thread.is_alive():
+            self._log("已有转换任务正在进行，请等待完成")
+            return
+        if self.input_file is None or not self.input_file.is_file():
+            self._messagebox.showwarning("缺少输入", "请先选择 F16 GGUF 文件")
+            return
+        quants = self._selected_quants()
+        if not quants:
+            self._messagebox.showwarning("缺少量化类型", "请至少勾选一种尚未生成的量化类型")
+            return
+        try:
+            exe = llmqnt.resolve_quantize_exe()
+            jobs = llmqnt.plan_jobs(self.input_file, quants)
+            pending, skipped = llmqnt.pending_jobs(jobs, self._overwrite_var.get())
+        except llmqnt.QuantizeError as exc:
+            self._messagebox.showerror("无法开始转换", str(exc))
+            return
+
+        self._clear_log()
+        self._log(f"输入: {self.input_file}")
+        self._log(f"引擎: {exe}")
+        self._log(f"量化类型: {', '.join(quants)}（共 {len(pending)} 个任务）")
+        if skipped:
+            self._log(f"已存在并跳过: {', '.join(job.quant for job in skipped)}")
+        if not pending:
+            self._log("全部量化文件已存在，无需转换")
+            return
+
+        self._set_running(True)
+        self._messages = queue.Queue()
+        self._thread = threading.Thread(target=self._work, args=(pending, exe), daemon=True)
+        self._thread.start()
+        self.root.after(100, self._poll)
+
+    def _work(self, jobs: list[llmqnt.QuantizeJob], exe: Path) -> None:
+        """后台线程：逐任务执行并把消息投递回主线程。"""
+        assert self._messages is not None
+        status = self._messages
+        success = True
+        total = len(jobs)
+        for index, job in enumerate(jobs, 1):
+            status.put(("log", f"正在转换到 {job.quant} 格式…"))
+            try:
+                llmqnt.run_job(job, exe, on_output=lambda line: status.put(("log", line)))
+            except llmqnt.QuantizeError as exc:
+                success = False
+                status.put(("log", f"转换 {job.quant} 失败: {exc}"))
+            else:
+                status.put(("log", f"成功生成: {job.output}"))
+            status.put(("progress", index * 100 // total))
+        status.put(("done", success))
+
+    def _poll(self) -> None:
+        """主线程轮询队列，刷新日志 / 进度。"""
+        assert self._messages is not None
+        try:
+            while True:
+                kind, payload = self._messages.get_nowait()
+                if kind == "log":
+                    self._log(str(payload))
+                elif kind == "progress":
+                    self._progress["value"] = int(payload)
+                elif kind == "done":
+                    self._finish(bool(payload))
+        except queue.Empty:
+            pass
+        if self._thread is not None and self._thread.is_alive():
+            self.root.after(100, self._poll)
+
+    def _finish(self, success: bool) -> None:
+        self._set_running(False)
+        self._mark_existing()
+        if success:
+            self._progress["value"] = 100
+            self._log("所有量化转换完成！")
+            self._messagebox.showinfo("完成", "所有量化转换已完成")
+        else:
+            self._log("量化转换过程中出现错误，详见日志")
+            self._messagebox.showwarning("失败", "部分量化任务失败，详见日志")
+
+    def _set_running(self, running: bool) -> None:
+        state = "disabled" if running else "normal"
+        self._start_btn.configure(state=state)
+        self._file_btn.configure(state=state)
+        if not running:
+            self._overwrite_check.configure(state="normal")
+
+    def _close(self) -> None:
+        self.root.destroy()
+
+    # ------------------------------------------------------------------ #
+    # 日志
+    # ------------------------------------------------------------------ #
+    def _log(self, message: str) -> None:
+        self._log_text.configure(state="normal")
+        self._log_text.insert("end", message + "\n")
+        self._log_text.see("end")
+        self._log_text.configure(state="disabled")
+
+    def _clear_log(self) -> None:
+        self._log_text.configure(state="normal")
+        self._log_text.delete("1.0", "end")
+        self._log_text.configure(state="disabled")
+
+
+def run_gui() -> None:
+    """创建并运行 Tk 主窗口。"""
+    try:
+        window = QuantizeWindow()
+    except ImportError as exc:
+        print_error(f"tkinter 不可用，无法启动窗口版: {exc}")
+        return
+    window.root.mainloop()
+
+
+@fcmd.tool("llmqntw", help="打开 GGUF 量化窗口（Tk）", description=_DESCRIPTION)
+def launch_cmd() -> None:
+    """打开 GGUF 量化窗口。"""
+    run_gui()
+
+
+@fcmd.main("llmqntw")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
