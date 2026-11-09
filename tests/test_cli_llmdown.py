@@ -515,6 +515,27 @@ class TestDownloadFiles:
         download_files("Qwen/demo", [file], tmp_path, SourceSelection("modelscope", (file,)), workers=1)
         assert (tmp_path / "sub" / "a.bin").read_bytes() == content
 
+    def test_oversized_part_restarts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        content = b"abc"
+        final = tmp_path / "a.bin"
+        llmdown._part_path(final).write_bytes(b"too-long")
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _download_urlopen({"https://www.modelscope.cn/models/Qwen/demo/resolve/master/a.bin": content}),
+        )
+        file = ModelFile("a.bin", len(content))
+        download_files("Qwen/demo", [file], tmp_path, SourceSelection("modelscope", (file,)), workers=1)
+        assert final.read_bytes() == content
+
+    def test_failures_are_aggregated(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        def _raise(req: object, timeout: float = 60) -> Any:
+            raise URLError("down")
+
+        monkeypatch.setattr("urllib.request.urlopen", _raise)
+        file = ModelFile("a.bin", 1)
+        with pytest.raises(ModelToolError, match="1 个文件下载失败"):
+            download_files("Qwen/demo", [file], tmp_path, SourceSelection("modelscope", (file,)), workers=1)
+
 
 # ---------------------------------------------------------------------- #
 # CLI 子命令
