@@ -30,8 +30,9 @@ pip install fcmd          # 或 uv add fcmd
 | `archive` | `pip install fcmd[archive]` | `zipencrypt`（pyzipper AES-256 ZIP） |
 | `filecheck` | `pip install fcmd[filecheck]` | `filecheck` 的容器类型识别（puremagic） |
 | `color` | `pip install fcmd[color]` | `colortool` 的颜色换算（coloraide） |
+| `pe` | `pip install fcmd[pe]` | `reshack` / `reshackw` 的 PE 资源解析与写回（pefile） |
 | `office` | `pip install fcmd[office]` | img + pdf + ocr + svg 全家桶 |
-| `full` | `pip install fcmd[full]` | office + crypto + archive + filecheck + color |
+| `full` | `pip install fcmd[full]` | office + crypto + archive + filecheck + color + pe |
 | `lint` | `pip install fcmd[lint]` | 开发用：ruff + pyrefly |
 | `test` | `pip install fcmd[test]` | 开发用：pytest + cov + xdist |
 | `dev` | `pip install fcmd[dev]` | lint + test + full + prek + tox |
@@ -97,7 +98,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-84 个工具（其中 33 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`screenshot`/`zipencrypt`；其余 51 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+86 个工具（其中 35 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`zipencrypt`；其余 51 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -187,6 +188,8 @@ fcmd completion --shell fish | source         # fish
 | `clr` | - | 跨平台清屏 |
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
+| `reshack` | - | PE 资源查看与修改（list/extract/replace/export-all；Icon/Bitmap 导出自动补 ICO/BMP 头，替换前自动备份，依赖 `fcmd[pe]`） |
+| `reshackw` | - | PE 资源编辑器窗口版（Tk：资源树 + 文本/十六进制/图像预览（图像支持缩放/适应窗口、Ctrl+滚轮及右键复制/保存）+ 导出（Icon/Bitmap 自动补 ICO/BMP 头）/替换/全部导出，设置持久化到 `~/.fcmd/ui/reshackw.json`，依赖 `fcmd[pe]`） |
 | `iptool` | - | IP 地址工具（parse/subnet/validate） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
 | `urlcheck` | - | URL 可访问性与访问速度检测（HEAD/GET 探测 + 并发测速排序，供镜像源选优） |

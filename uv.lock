@@ -302,6 +302,7 @@ crypto = [
 dev = [
     { name = "coloraide" },
     { name = "cryptography" },
+    { name = "pefile" },
     { name = "pillow" },
     { name = "prek" },
     { name = "puremagic" },
@@ -326,6 +327,7 @@ filecheck = [
 full = [
     { name = "coloraide" },
     { name = "cryptography" },
+    { name = "pefile" },
     { name = "pillow" },
     { name = "puremagic" },
     { name = "pymupdf" },
@@ -356,6 +358,9 @@ pdf = [
     { name = "pymupdf" },
     { name = "pypdf" },
 ]
+pe = [
+    { name = "pefile" },
+]
 svg = [
     { name = "resvg-py" },
 ]
@@ -378,8 +383,9 @@ requires-dist = [
     { name = "cryptography", marker = "extra == 'crypto'", specifier = ">=43" },
     { name = "fcmd", extras = ["img"], marker = "extra == 'ocr'" },
     { name = "fcmd", extras = ["img", "pdf", "ocr", "svg"], marker = "extra == 'office'" },
-    { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color"], marker = "extra == 'full'" },
+    { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color", "pe"], marker = "extra == 'full'" },
     { name = "fcmd", extras = ["lint", "test", "full"], marker = "extra == 'dev'" },
+    { name = "pefile", marker = "extra == 'pe'", specifier = ">=2024.8.26" },
     { name = "pillow", marker = "extra == 'img'", specifier = ">=10" },
     { name = "prek", marker = "extra == 'dev'", specifier = ">=0.4.5" },
     { name = "psutil", specifier = ">=6.0" },
@@ -401,7 +407,7 @@ requires-dist = [
     { name = "tox", marker = "extra == 'dev'", specifier = ">=4.25.0" },
     { name = "tox-uv", marker = "extra == 'dev'", specifier = ">=1.13.1" },
 ]
-provides-extras = ["archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "svg", "test"]
+provides-extras = ["archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "pe", "svg", "test"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "fcmd", extras = ["lint", "test", "full"] }]
@@ -452,6 +458,15 @@ source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
 sdist = { url = "https://mirrors.aliyun.com/pypi/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz", hash = "sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79" }
 wheels = [
     { url = "https://mirrors.aliyun.com/pypi/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl", hash = "sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c" },
+]
+
+[[package]]
+name = "pefile"
+version = "2024.8.26"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/03/4f/2750f7f6f025a1507cd3b7218691671eecfd0bbebebe8b39aa0fe1d360b8/pefile-2024.8.26.tar.gz", hash = "sha256:3ff6c5d8b43e8c37bb6e6dd5085658d658a7a0bdcd20b6a07b1fcfc1c4e9d632" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/54/16/12b82f791c7f50ddec566873d5bdd245baa1491bac11d15ffb98aecc8f8b/pefile-2024.8.26-py3-none-any.whl", hash = "sha256:76f8b485dcd3b1bb8166f1128d395fa3d87af26360c2358fb75b80019b957c6f" },
 ]
 
 [[package]]
