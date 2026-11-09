@@ -526,16 +526,17 @@ fcmd pymake chk               # 类型检查聚合（清理 + pyrefly + lint + f
 ```
 src/fcmd/
   core/          # 运行时内核：DAG、报告、执行引擎、工具注册、编排、忽略规则
+    shared/      #   中立共享层：dsl 与 tools 共同依赖（网络探测、文本 IO）
     toolkit/     #   函数签名 → argparse 的 CLI 工具基座
     execution/   #   sequential/thread/async/dependency 四种执行器
     orchestration/  # YAML 编排与 if 条件求值
-    models/      #   通用数据模型（含 PDF）
+    models/      #   通用数据模型
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
-  tools/         # Python 实现的工具模块（自动发现）
-    archive/ calc/ dev/ llm/ media/ net/ pdf/ system/ text/
-  dsl/           # TOML 命令定义与 action/compute 原语
-    actions/     #   内建动作（文件、文本、媒体、系统、加密等）
+  tools/         # 业务实现（自动发现）
+    archive/ calc/ data/ dev/ hash/ llm/ media/ net/ pdf/ system/ text/
+  dsl/           # TOML 命令定义与 exec/compute 原语
+    actions/     #   @action 声明与参数转接（业务实现位于 tools/<域>）
   commands/      # 出厂 DSL 命令定义（*.toml）
   console.py     # rich 控制台薄封装
 ```

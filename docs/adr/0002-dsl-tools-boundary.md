@@ -29,18 +29,19 @@ DSL 最初只为「声明式编排」而生，但历史上把大量业务实现�
 | 域 | 目标实现位置 | 状态 |
 |---|---|---|
 | media | `tools/media/mediabase.py` | 完成（P2-1） |
-| archive | `tools/archive/` | 待迁移 |
-| text | `tools/text/` | 待迁移 |
-| net | `tools/net/`（通用探测已在 `core/shared/net.py`） | 待迁移 |
-| calc | `tools/calc/` | 待迁移 |
-| hash | `tools/hash/` | 待迁移 |
-| data | `tools/data/` | 待迁移 |
+| archive | `tools/archive/archivebase.py` | 完成 |
+| text | `tools/text/textbase.py` | 完成 |
+| net | `tools/net/netbase.py`（通用探测在 `core/shared/net.py`） | 完成 |
+| calc | `tools/calc/calcbase.py`、`calcdatebase.py` | 完成 |
+| hash | `tools/hash/hashbase.py` | 完成 |
+| data | `tools/data/database.py` | 完成 |
 
 ## 落地状态
 
 - P2-1：图片域完成，`dsl/actions/media.py` 仅剩声明与转接；`tools/media/img2icow.py` 复用 `mediabase` 的尺寸解析与转换函数。
 - P2-2：入口命名统一完成，短名全部为显式别名并有回归测试；后缀推断已删除。
-- 其余域的迁移按上表逐域推进，每域独立提交并跑 `make flow`。
+- P2-3：archive / text / net / calc / hash / data 六域全部迁移完成，`dsl/actions/*.py` 只保留 `@action` 声明与参数转接，无第二份实现。
+- text 域迁移时发现 `tools` 反向依赖 `dsl/actions/fileops.py` 的文本读取 helper，已下沉到 `core/shared/textio.py`（`is_binary_file` / `read_text_lines`），`fileops` 与 `textbase` 共用。
 
 ## 交接
 
