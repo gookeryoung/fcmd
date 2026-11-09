@@ -2,7 +2,8 @@
 #
 # 原模块 fcmd/tools/media/img2ico.py 已迁入 fcmd/dsl/actions/media.py：
 # gen 子命令为纯 Python（Pillow + resvg-py），无子进程调用。
+# 支持 SVG / 位图输入、目录批量转换、尺寸与质量档位自定义。
 
 [commands.img2ico.gen]
-help = "SVG 转图标文件"
+help = "图像/SVG 转图标文件（支持目录批量）"
 action = "img2ico_gen"
