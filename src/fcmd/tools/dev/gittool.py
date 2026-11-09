@@ -12,13 +12,13 @@
 
 示例
 ----
-    fcmd gittool a --message "feat: 新功能"   # 添加并提交（有更改时）
-    fcmd gittool i                             # 初始化并提交
-    fcmd gittool isub                          # 初始化所有子目录的 Git 仓库
-    fcmd gittool c                             # 清理未跟踪文件（保留排除目录）并查看状态
-    fcmd gittool ca                            # 清理全部未跟踪文件（含排除目录）
-    fcmd gittool p                             # 推送
-    fcmd gittool pl                            # 拉取
+    fcmd gitt a --message "feat: 新功能"   # 添加并提交（有更改时）
+    fcmd gitt i                           # 初始化并提交
+    fcmd gitt isub                        # 初始化所有子目录的 Git 仓库
+    fcmd gitt c                           # 清理未跟踪文件（保留排除目录）并查看状态
+    fcmd gitt ca                          # 清理全部未跟踪文件（含排除目录）
+    fcmd gitt p                           # 推送
+    fcmd gitt pl                          # 拉取
 """
 
 from __future__ import annotations
@@ -29,6 +29,9 @@ from pathlib import Path
 import fcmd
 
 __all__ = ["git_init_sub_dirs"]
+
+
+__tool_aliases__ = ["gitt"]
 
 
 # ============================================================================

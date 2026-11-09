@@ -97,7 +97,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-61 个工具（其中 11 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+62 个工具（其中 12 个为 Python 模块工具——`archivex`/`bumpversion`/`envdev`/`filecheck`/`gittool`/`lscalc`/`modeltool`/`packtool`/`portcheck`/`pymake`/`screenshot`/`zipencrypt`；其余 50 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 ### 项目构建与发布
 
@@ -184,6 +184,12 @@ fcmd completion --shell fish | source         # fish
 | `websave` | - | 网页内容保存（主页及同源相关子页面，过滤广告/静态资源） |
 | `lscalc` | - | LS-DYNA 计算（run/mpi/status） |
 | `dockercmd` | - | Docker 操作（login/push/pull，镜像仓库通用） |
+
+### AI 与模型
+
+| 工具 | 别名 | 说明 |
+|------|------|------|
+| `modeltool` | `mdl` | 大模型仓库下载（`files`/`mirror`/`download`；ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
 
 ### 开发环境
 
