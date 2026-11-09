@@ -1,8 +1,9 @@
 """llmservew - 推理服务生命周期管理的 Tk 窗口版。
 
 基于 :mod:`fcmd.tools.llm.llmserve` 的核心逻辑，提供启动参数的图形化配置、
-已配置模型列表（后台扫描 ``llmenv`` 登记的模型目录）、启动计划预览、后台
-启动 / 停止、状态与日志查看。启动与停止均在后台线程执行，界面不阻塞。
+已配置模型列表（后台扫描 ``llmenv`` 登记的模型目录，并按文件名内置能力标签
+与最佳实践提示）、启动计划预览、后台启动 / 停止、状态与日志查看，以及运行
+监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
 
 示例
 ----
@@ -44,12 +45,30 @@ from fcmd.tools.llm.llmbase import (
 __all__ = ["main"]
 
 _DESCRIPTION = (
-    "推理服务窗口版（Tk）：列出已配置的可选模型，配置档位/端口/上下文等参数，"
-    "预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，"
-    "并在服务被调用时实时采样 /metrics 展示 token/s"
+    "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
+    "与最佳实践提示，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
+    "查看状态与日志，并在服务运行中实时采样 /metrics 展示 token/s 与系统 CPU / 内存负载"
 )
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
+_HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入）与最佳实践建议"
+
+
+def _sample_load(pid: int) -> tuple[str, str, str]:
+    """采样系统负载：CPU 使用率、内存占用与服务进程内存（拿不到时显示 ``-``）。"""
+    import psutil
+
+    cpu = f"{psutil.cpu_percent():.1f} %"
+    memory = psutil.virtual_memory()
+    used, total = int(memory.used), int(memory.total)
+    mem = f"{human_size(used)} / {human_size(total)}（{memory.percent:.1f} %）"
+    try:
+        rss = int(psutil.Process(pid).memory_info().rss)
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        proc = "-"
+    else:
+        proc = human_size(rss)
+    return cpu, mem, proc
 
 
 class ServeWindow:
@@ -109,6 +128,11 @@ class ServeWindow:
             "prompt": tk.StringVar(value="0"),
             "monitor": tk.StringVar(value="未监控"),
         }
+        self._load_vars: dict[str, tk.StringVar] = {
+            "cpu": tk.StringVar(value="-"),
+            "memory": tk.StringVar(value="-"),
+            "process": tk.StringVar(value="-"),
+        }
 
         self._build_widgets()
         self._refresh_loaded()
@@ -134,6 +158,7 @@ class ServeWindow:
         self._build_models(start_page)
         self._build_loaded(run_page)
         self._build_metrics(run_page)
+        self._build_load(run_page)
         self._build_log(run_page)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -265,7 +290,7 @@ class ServeWindow:
         tree_frame.pack(fill="both", expand=True)
         self._tree = ttk.Treeview(
             tree_frame,
-            columns=("model", "size", "profiles"),
+            columns=("model", "size", "profiles", "tags"),
             show="headings",
             selectmode="browse",
             height=4,
@@ -273,14 +298,21 @@ class ServeWindow:
         self._tree.heading("model", text="模型")
         self._tree.heading("size", text="大小")
         self._tree.heading("profiles", text="匹配档位")
-        self._tree.column("model", width=320, anchor="w")
+        self._tree.heading("tags", text="标签")
+        self._tree.column("model", width=300, anchor="w")
         self._tree.column("size", width=90, anchor="e", stretch=False)
         self._tree.column("profiles", width=140, anchor="w", stretch=False)
+        self._tree.column("tags", width=110, anchor="w", stretch=False)
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
         self._tree.pack(side="left", fill="both", expand=True)
         yscroll.pack(side="right", fill="y")
         self._tree.bind("<<TreeviewSelect>>", self._on_model_selected)
+
+        self._hint_var = self._tk.StringVar(value=_HINT_PLACEHOLDER)
+        ttk.Label(box, textvariable=self._hint_var, wraplength=780, justify="left").pack(
+            side="bottom", fill="x", pady=(6, 0)
+        )
 
     def _build_env(self, parent: Any) -> None:
         tk = self._tk
@@ -360,6 +392,20 @@ class ServeWindow:
             ttk.Label(cell, text=label + ":").pack(side="left")
             ttk.Label(cell, textvariable=self._metric_vars[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
 
+    def _build_load(self, parent: Any) -> None:
+        """系统负载面板：CPU / 内存 / 服务进程内存，与性能采样同频刷新。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(parent, text="系统负载（服务运行中每 1s 采样）", padding=8)
+        box.pack(fill="x", pady=(8, 0))
+        for column in range(3):
+            box.columnconfigure(column, weight=1)
+        items = (("CPU 使用率", "cpu"), ("内存占用", "memory"), ("服务进程内存", "process"))
+        for index, (label, key) in enumerate(items):
+            cell = ttk.Frame(box)
+            cell.grid(row=0, column=index, sticky="w", padx=(0, 16), pady=2)
+            ttk.Label(cell, text=label + ":").pack(side="left")
+            ttk.Label(cell, textvariable=self._load_vars[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
+
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
         actions = ttk.Frame(outer)
@@ -414,12 +460,29 @@ class ServeWindow:
     def _select_model(self, path: Path) -> None:
         self._selected_model = path
         self._model_var.set(str(path))
+        self._show_model_hint(path)
         self._log(f"已选择模型: {path}")
+
+    def _show_model_hint(self, path: Path) -> None:
+        """按文件名内置标签展示推荐档位、最佳实践与客户端接入方式。"""
+        tags = llmmodel.detect_model_tags(path.name)
+        label = " · ".join(tags) or "未识别"
+        advice = llmmodel.model_advice(tags)
+        try:
+            port = self._int_field(self._port_var, "端口")
+        except ServeError:
+            port = DEFAULT_PORT
+        base = http_base_url(self._host_var.get().strip() or DEFAULT_HOST, port)
+        alias = self._alias_var.get().strip() or DEFAULT_ALIAS
+        self._hint_var.set(f"标签: {label} | {advice}\n接入: {base}/v1，model={alias}")
+        self._log(f"  标签: {label}")
+        self._log(f"  建议: {advice}")
 
     def _clear_selection(self) -> None:
         self._tree.selection_remove(*self._tree.selection())
         self._selected_model = None
         self._model_var.set(_MODEL_PLACEHOLDER)
+        self._hint_var.set(_HINT_PLACEHOLDER)
 
     # ------------------------------------------------------------------ #
     # 扫描模型与引擎信息
@@ -492,7 +555,12 @@ class ServeWindow:
                 "",
                 "end",
                 iid=str(index),
-                values=(entry.relative, human_size(entry.size), ", ".join(entry.profiles) or "-"),
+                values=(
+                    entry.relative,
+                    human_size(entry.size),
+                    ", ".join(entry.profiles) or "-",
+                    " · ".join(entry.tags) or "-",
+                ),
             )
         self._model_var.set(str(self._selected_model) if self._selected_model else _MODEL_PLACEHOLDER)
         if self._selected_model is not None:
@@ -606,6 +674,9 @@ class ServeWindow:
             f"ctx {plan.context} / ub {plan.effective_ubatch}"
         )
         self._log(f"  监听: {http_base_url(plan.host, plan.port)}")
+        tags = llmmodel.detect_model_tags(plan.model.name)
+        self._log(f"  标签: {' · '.join(tags) or '未识别'}")
+        self._log(f"  建议: {llmmodel.model_advice(tags)}")
         self._log(f"  显存估算: {human_size(estimate)}")
         self._log("  命令: " + format_command(plan.argv()))
         if self._gpu_mib is not None and estimate > self._gpu_mib * 1024 * 1024:
@@ -794,12 +865,15 @@ class ServeWindow:
         self._monitor_state = None
         self._monitor_seq += 1
         self._metric_vars["monitor"].set(reason)
+        for var in self._load_vars.values():
+            var.set("-")
 
     def _monitor_loop(self, state: ServeState, stop: threading.Event) -> None:
-        """后台线程：每秒请求 ``/metrics``，按两次采样的差值计算 token/s。"""
+        """后台线程：每秒采样系统负载与 ``/metrics``，按两次采样的差值计算 token/s。"""
         previous: tuple[float, llmserve.ServeMetrics] | None = None
         while not stop.is_set():
             started = time.monotonic()
+            self._monitor_results.put(("load", _sample_load(state.pid)))
             try:
                 metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
             except ServeError as exc:
@@ -825,6 +899,8 @@ class ServeWindow:
                 if kind == "metrics":
                     metrics, gen_rate, prompt_rate = cast(tuple[llmserve.ServeMetrics, float, float], payload)
                     self._apply_metrics(metrics, gen_rate, prompt_rate)
+                elif kind == "load":
+                    self._apply_load(cast(tuple[str, str, str], payload))
                 else:
                     self._metric_vars["monitor"].set("采样失败: " + str(payload)[:60])
         except queue.Empty:
@@ -840,6 +916,11 @@ class ServeWindow:
         self._metric_vars["predicted"].set(f"{metrics.predicted_tokens:.0f}")
         self._metric_vars["prompt"].set(f"{metrics.prompt_tokens:.0f}")
         self._metric_vars["monitor"].set("监控中")
+
+    def _apply_load(self, load: tuple[str, str, str]) -> None:
+        """刷新 CPU / 内存 / 服务进程内存显示。"""
+        for key, value in zip(("cpu", "memory", "process"), load, strict=True):
+            self._load_vars[key].set(value)
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
