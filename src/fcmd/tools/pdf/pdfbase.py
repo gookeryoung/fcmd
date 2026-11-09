@@ -13,7 +13,7 @@ import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from fcmd.core.models.pdf import MergeSpec, PageSelection, SplitSpec
+from fcmd.tools.pdf.models import MergeSpec, PageSelection, SplitSpec
 
 if TYPE_CHECKING:
     import fitz  # PyMuPDF
