@@ -240,6 +240,13 @@ class TestStyleSpecs:
         assert specs["Treeview"].configure["rowheight"] == 25
         assert specs["TButton"].configure["padding"] == (spacing.sm, spacing.xs)
 
+    def test_toolbutton_uses_surface_and_hover(self) -> None:
+        palette = _guitheme.PALETTE
+        spec = _guitheme.ttk_style_specs()["Toolbutton"]
+        assert spec.configure["background"] == palette.surface
+        assert spec.configure["foreground"] == palette.text
+        assert ("active", palette.surface_hover) in spec.map["background"]
+
 
 class TestClassicOptions:
     def test_covers_declared_patterns(self) -> None:
@@ -290,6 +297,12 @@ class TestPaletteContrast:
         layers = [palette.background, palette.surface, palette.surface_hover, palette.surface_active]
         assert len(set(layers)) == len(layers)
         assert all(_relative_luminance(color) < 0.1 for color in layers)
+
+    def test_semantic_colors_are_visible_on_text_and_tree_backgrounds(self) -> None:
+        palette = _guitheme.PALETTE
+        for color in (palette.success, palette.warning, palette.danger):
+            assert _contrast(color, palette.log_bg) >= 4.5
+            assert _contrast(color, palette.surface) >= 4.5
 
 
 # ============================================================================ #

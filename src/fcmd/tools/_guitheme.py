@@ -105,6 +105,9 @@ class Palette:
     cursor: str = "#7cd0ff"
     log_bg: str = "#0d1622"
     log_fg: str = "#d8e4f2"
+    success: str = "#4ade80"
+    warning: str = "#fbbf24"
+    danger: str = "#f87171"
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +185,7 @@ STYLE_NAMES: Final[tuple[str, ...]] = (
     "TNotebook",
     "TNotebook.Tab",
     "TSeparator",
+    "Toolbutton",
 )
 """本主题会覆盖的 ttk 样式名；单测据此校验键存在性，窗口可据此选中强调按钮。"""
 
@@ -455,6 +459,22 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
             },
         ),
         "TSeparator": StyleSpec({"background": palette.border}),
+        "Toolbutton": StyleSpec(
+            {
+                "background": palette.surface,
+                "foreground": palette.text,
+                "bordercolor": palette.surface,
+                "focuscolor": palette.accent,
+                "font": BODY_FONT,
+                "padding": (spacing.sm, spacing.xs),
+                "relief": "flat",
+                "anchor": "w",
+            },
+            {
+                "background": [("active", palette.surface_hover), ("pressed", palette.surface_active)],
+                "foreground": [("disabled", palette.muted)],
+            },
+        ),
     }
 
 
