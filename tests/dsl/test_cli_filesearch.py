@@ -17,10 +17,9 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.filefilter import IgnoreSpec, should_skip_parts
+from fcmd.core.shared.textio import is_binary_file, read_text_lines
 from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.dsl.actions.fileops import (
-    is_binary_file,
-    read_text_lines,
     search_by_content,
     search_by_name,
 )

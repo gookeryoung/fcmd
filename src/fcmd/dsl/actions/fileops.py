@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fcmd.core.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
+from fcmd.core.shared.textio import read_text_lines
 from fcmd.dsl.actions import action
 
 __all__: list[str] = []
@@ -22,32 +23,8 @@ __all__: list[str] = []
 # filesearch 公共逻辑
 # ============================================================================
 
-# 二进制检测读取前 1024 字节
-_BINARY_SNIFF_SIZE = 1024
 # 内容搜索单文件最大读取行数，避免大文件内存爆炸
 _MAX_LINES_PER_FILE = 100_000
-
-
-def is_binary_file(path: Path) -> bool:
-    """通过前 1024 字节是否含 ``\\x00`` 判定二进制文件。"""
-    try:
-        with path.open("rb") as f:
-            chunk = f.read(_BINARY_SNIFF_SIZE)
-    except OSError:
-        return True
-    return b"\x00" in chunk
-
-
-def read_text_lines(path: Path, *, binary_message: str = "二进制文件") -> list[str]:
-    """读取文本文件所有行（保留行尾），utf-8 失败时回退为 replace。"""
-    if is_binary_file(path):
-        raise ValueError(f"{binary_message}: {path}")
-    try:
-        with path.open("r", encoding="utf-8") as f:
-            return f.readlines()
-    except UnicodeDecodeError:
-        with path.open("r", encoding="utf-8", errors="replace") as f:
-            return f.readlines()
 
 
 def _ensure_directory(directory: Path) -> None:

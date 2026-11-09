@@ -1,6 +1,6 @@
 """regextool 工具测试。
 
-验证 ``fcmd.dsl.actions.text`` 模块：
+验证 ``fcmd.tools.text.textbase`` 模块：
 - 工具注册与四子命令结构（match/find/replace/split）
 - ``match_pattern``/``find_all``/``replace_pattern``/``split_pattern``
 - 正则错误分支与边界场景
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.dsl.actions.text import (
+from fcmd.tools.text.textbase import (
     find_all,
     match_pattern,
     replace_pattern,
