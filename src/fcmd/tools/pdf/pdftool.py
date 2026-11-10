@@ -156,14 +156,30 @@ def pdftool_xi(
 
 
 @fcmd.tool("pdftool", subcommand="w", help="添加水印")
-def pdftool_w(
+def pdftool_w(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_path: Path = Path("watermarked.pdf"),
     text: str = "CONFIDENTIAL",
     pages: str = "",
+    image: Path | None = None,
+    font_size: int = 48,
+    rotation: int = 0,
+    scale: float = 0.5,
 ) -> None:
-    """添加 PDF 水印（w 子命令）。"""
-    pdf_add_watermark(input_path, output_path, text, pages)
+    """添加 PDF 水印（w 子命令）。
+
+    Parameters
+    ----------
+    image:
+        图片水印路径；指定后忽略 text
+    font_size:
+        文本水印字号（默认 48）
+    rotation:
+        水印旋转角度，需为 90 的倍数
+    scale:
+        图片水印占页面宽/高的比例（0-1，默认 0.5）
+    """
+    pdf_add_watermark(input_path, output_path, text, pages, image, font_size, rotation, scale)
 
 
 @fcmd.tool("pdftool", subcommand="r", help="旋转 PDF")

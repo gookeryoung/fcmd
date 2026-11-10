@@ -793,6 +793,135 @@ class TestLayoutParams:
         assert not out.exists()
 
 
+class TestWatermarkFeatures:
+    """w 子命令的图片水印与字号/旋转/缩放。"""
+
+    def test_watermark_text_font_size(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """文本水印使用指定字号。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool(
+            "pdftool",
+            ["w", str(sample_pdf), "--output-path", str(out), "--text", "DRAFT", "--font-size", "20"],
+        )
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            sizes = [
+                span["size"]
+                for block in doc[0].get_text("dict")["blocks"]
+                for line in block.get("lines", [])
+                for span in line["spans"]
+                if "DRAFT" in span["text"]
+            ]
+            assert sizes
+            assert abs(sizes[0] - 20) < 1
+        finally:
+            doc.close()
+
+    def test_watermark_text_rotation(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """文本水印可按 90 度倍数旋转。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool(
+            "pdftool",
+            ["w", str(sample_pdf), "--output-path", str(out), "--rotation", "90"],
+        )
+        assert code == 0
+        assert out.exists()
+
+    def test_watermark_image(self, sample_pdf: Path, sample_image: Path, tmp_path: Path) -> None:
+        """图片水印嵌入到页面中。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool(
+            "pdftool",
+            ["w", str(sample_pdf), "--output-path", str(out), "--image", str(sample_image), "--scale", "0.4"],
+        )
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc[0].get_images()
+        finally:
+            doc.close()
+
+    def test_watermark_image_rotation(self, sample_pdf: Path, sample_image: Path, tmp_path: Path) -> None:
+        """图片水印支持 90 度旋转且不报错。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool(
+            "pdftool",
+            [
+                "w",
+                str(sample_pdf),
+                "--output-path",
+                str(out),
+                "--image",
+                str(sample_image),
+                "--rotation",
+                "90",
+            ],
+        )
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc[0].get_images()
+        finally:
+            doc.close()
+
+    def test_watermark_invalid_rotation(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """非 90 倍数旋转打印错误且不生成输出。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool("pdftool", ["w", str(sample_pdf), "--output-path", str(out), "--rotation", "45"])
+        assert code == 0
+        assert "90 的倍数" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_watermark_invalid_scale(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """缩放比例越界打印错误。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool("pdftool", ["w", str(sample_pdf), "--output-path", str(out), "--scale", "0"])
+        assert code == 0
+        assert "取值范围" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_watermark_missing_image(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """水印图片不存在时打印错误。"""
+        out = tmp_path / "wm.pdf"
+        missing = tmp_path / "missing.png"
+        code = run_tool(
+            "pdftool",
+            ["w", str(sample_pdf), "--output-path", str(out), "--image", str(missing)],
+        )
+        assert code == 0
+        assert "水印图片不存在" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_watermark_invalid_image(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """非图片文件作为水印时打印可读错误。"""
+        out = tmp_path / "wm.pdf"
+        code = run_tool(
+            "pdftool",
+            ["w", str(sample_pdf), "--output-path", str(out), "--image", str(sample_pdf)],
+        )
+        assert code == 0
+        assert "无法读取水印图片" in capsys.readouterr().out
+        assert not out.exists()
+
+
 class TestReorderFeatures:
     """reorder 子命令的删除页与插入空白页。"""
 

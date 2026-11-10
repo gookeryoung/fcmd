@@ -290,17 +290,39 @@ def pdf_extract_images(
     print(f"图片提取完成: {output_dir} (共 {image_count} 张)")
 
 
-def pdf_add_watermark(
+def pdf_add_watermark(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_path: Path = Path("watermarked.pdf"),
     text: str = "CONFIDENTIAL",
     pages: str = "",
+    image: Path | None = None,
+    font_size: int = 48,
+    rotation: int = 0,
+    scale: float = 0.5,
 ) -> None:
-    """添加 PDF 水印。"""
+    """添加文本或图片水印（提供 ``image`` 时使用图片水印）。"""
+    if rotation % 90 != 0:
+        print("错误: --rotation 必须为 90 的倍数")
+        return
+    if not 0 < scale <= 1:
+        print("错误: --scale 取值范围为 (0, 1]")
+        return
+    if image is not None and not image.is_file():
+        print(f"错误: 水印图片不存在: {image}")
+        return
     if not _require_pymupdf():
         return
 
     doc = fitz.open(str(input_path))
+    pixmap = None
+    if image is not None:
+        try:
+            pixmap = fitz.Pixmap(str(image))
+        except Exception:
+            print(f"错误: 无法读取水印图片: {image}")
+            doc.close()
+            return
+
     try:
         indices = _resolve_page_indices(pages, doc.page_count)
         if indices is None:
@@ -308,10 +330,30 @@ def pdf_add_watermark(
         for page_idx in indices:
             page = doc[page_idx]
             rect = page.rect
-            text_width = fitz.get_text_length(text, fontsize=48)
-            x = (rect.width - text_width) / 2
-            y = rect.height / 2
-            page.insert_text((x, y), text, fontsize=48, rotate=0, color=(0, 0, 0))
+            if pixmap is None:
+                text_width = fitz.get_text_length(text, fontsize=font_size)
+                x = (rect.width - text_width) / 2
+                y = rect.height / 2
+                page.insert_text(
+                    (x, y),
+                    text,
+                    fontsize=font_size,
+                    rotate=rotation,
+                    color=(0, 0, 0),
+                )
+                continue
+
+            target_width = rect.width * scale
+            target_height = target_width * pixmap.height / pixmap.width
+            if target_height > rect.height * scale:
+                target_height = rect.height * scale
+                target_width = target_height * pixmap.width / pixmap.height
+            if rotation in (90, 270):
+                target_width, target_height = target_height, target_width
+            x0 = (rect.width - target_width) / 2
+            y0 = (rect.height - target_height) / 2
+            target = fitz.Rect(x0, y0, x0 + target_width, y0 + target_height)
+            page.insert_image(target, filename=str(image), rotate=rotation, overlay=True)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         doc.save(str(output_path))
