@@ -798,3 +798,265 @@ class TestCompareTrees:
         assert statuses["link2"] == ops.COMPARE_DIFFERENT
         link2 = next(entry for entry in report.entries if entry.relative == "link2")
         assert link2.reason == "链接目标不同"
+
+
+# ============================================================================ #
+# 目录同步（计划、执行前复核、删除）
+# ============================================================================ #
+class TestSyncPlan:
+    def _write(self, path: Path, content: str, mtime: float = 1_700_000_000.0) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def _roots(self, tmp_path: Path) -> tuple[Path, Path]:
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        left.mkdir()
+        right.mkdir()
+        return left, right
+
+    def test_default_plan_copies_but_does_not_delete(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "a")
+        self._write(right / "b.txt", "b")
+        self._write(left / "c.txt", "old")
+        self._write(right / "c.txt", "newer")
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report)
+
+        assert [(item.relative, item.overwrite) for item in plan.copies] == [
+            ("a.txt", False),
+            ("c.txt", True),
+        ]
+        assert plan.deletes == []
+        assert [item.relative for item in plan.skipped] == ["b.txt"]
+        assert plan.skipped[0].skip_reason == "未勾选删除目标端多余文件"
+        assert plan.counts() == {
+            "copy": 2,
+            "copy_new": 1,
+            "copy_overwrite": 1,
+            "delete": 0,
+            "delete_dirs": 0,
+            "skipped": 1,
+            "same": 0,
+        }
+
+    def test_delete_files_requires_extra_checkbox(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(right / "extra.txt", "x")
+        (right / "extra_dir").mkdir()
+        self._write(right / "extra_dir" / "inner.txt", "y")
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report, ops.SyncOptions(delete_target_extra=True))
+
+        assert [item.relative for item in plan.deletes] == ["extra.txt"]
+        assert [item.relative for item in plan.skipped] == ["extra_dir"]
+        assert plan.skipped[0].skip_reason == "未勾选删除多余目录"
+
+    def test_delete_dirs_covers_children(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        (right / "extra_dir").mkdir()
+        self._write(right / "extra_dir" / "inner.txt", "y")
+        self._write(right / "extra.txt", "x")
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report, ops.SyncOptions(delete_target_extra=True, delete_dirs=True))
+
+        assert [item.relative for item in plan.deletes] == ["extra.txt", "extra_dir"]
+        assert all(not item.relative.startswith("extra_dir/") for item in plan.deletes)
+        assert plan.counts()["delete_dirs"] == 1
+
+    def test_directory_copy_covers_children(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "sub" / "inner.txt", "x")
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report)
+
+        assert [item.relative for item in plan.copies] == ["sub"]
+        item = plan.copies[0]
+        assert item.is_dir
+        assert item.source == left / "sub"
+        assert item.target == right / "sub"
+
+    def test_reverse_direction_swaps_source_and_delete_side(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "left-only.txt", "x")
+        self._write(right / "right-only.txt", "y")
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(
+            report,
+            ops.SyncOptions(direction=ops.SYNC_RTL, delete_target_extra=True),
+        )
+
+        assert [(item.relative, item.source, item.target) for item in plan.copies] == [
+            ("right-only.txt", right / "right-only.txt", left / "right-only.txt")
+        ]
+        assert [item.relative for item in plan.deletes] == ["left-only.txt"]
+        assert plan.deletes[0].target == left / "left-only.txt"
+
+    def test_symlink_entries_are_skipped(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "target.txt", "x")
+        try:
+            (left / "link.txt").symlink_to("target.txt")
+        except (OSError, NotImplementedError):
+            return
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report)
+
+        assert [item.relative for item in plan.skipped] == ["link.txt"]
+        assert plan.skipped[0].skip_reason == "符号链接不处理"
+
+    def test_invalid_direction_raises(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        report = ops.compare_trees(left, right)
+
+        with pytest.raises(ValueError, match="未知的同步方向"):
+            ops.build_sync_plan(report, ops.SyncOptions(direction="sideways"))
+
+
+class TestSyncRevalidate:
+    def _write(self, path: Path, content: str, mtime: float = 1_700_000_000.0) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def _overwrite_item(self, tmp_path: Path) -> tuple[Path, Path, ops.SyncItem]:
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        self._write(left / "c.txt", "old")
+        self._write(right / "c.txt", "newer")
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report)
+        return left, right, plan.copies[0]
+
+    def test_unchanged_target_passes(self, tmp_path: Path) -> None:
+        _, _, item = self._overwrite_item(tmp_path)
+
+        assert ops.revalidate_sync_item(item) is None
+
+    def test_target_mtime_change_is_skipped(self, tmp_path: Path) -> None:
+        _, right, item = self._overwrite_item(tmp_path)
+        os.utime(right / "c.txt", (1_700_000_100, 1_700_000_100))
+
+        assert ops.revalidate_sync_item(item) == "目标修改时间已变化"
+
+    def test_target_size_change_is_skipped(self, tmp_path: Path) -> None:
+        _, right, item = self._overwrite_item(tmp_path)
+        self._write(right / "c.txt", "much longer content")
+
+        reason = ops.revalidate_sync_item(item)
+
+        assert reason == "目标大小已变化"
+
+    def test_target_disappeared_is_skipped(self, tmp_path: Path) -> None:
+        _, right, item = self._overwrite_item(tmp_path)
+        (right / "c.txt").unlink()
+
+        assert ops.revalidate_sync_item(item) == "目标已不存在（预演时存在）"
+
+    def test_new_target_appearing_is_skipped(self, tmp_path: Path) -> None:
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        self._write(left / "a.txt", "a")
+        right.mkdir()
+        report = ops.compare_trees(left, right)
+        item = ops.build_sync_plan(report).copies[0]
+        self._write(right / "a.txt", "a")
+
+        assert ops.revalidate_sync_item(item) == "目标已出现，请重新预演"
+
+    def test_target_symlink_is_skipped(self, tmp_path: Path) -> None:
+        _, right, item = self._overwrite_item(tmp_path)
+        (right / "c.txt").unlink()
+        try:
+            (right / "c.txt").symlink_to("elsewhere")
+        except (OSError, NotImplementedError):
+            return
+
+        assert ops.revalidate_sync_item(item) == "目标为符号链接，未处理"
+
+    def test_delete_target_change_is_skipped(self, tmp_path: Path) -> None:
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        left.mkdir()
+        right.mkdir()
+        self._write(right / "extra.txt", "x")
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report, ops.SyncOptions(delete_target_extra=True))
+        os.utime(right / "extra.txt", (1_700_000_100, 1_700_000_100))
+
+        assert ops.revalidate_sync_item(plan.deletes[0]) == "目标修改时间已变化"
+
+    def test_batch_revalidate_splits_ready_and_skipped(self, tmp_path: Path) -> None:
+        _, right, item = self._overwrite_item(tmp_path)
+        gone = ops.SyncItem(
+            ops.SYNC_COPY,
+            "missing.txt",
+            right / "missing.txt",
+            source=tmp_path / "left" / "missing.txt",
+            overwrite=True,
+        )
+        os.utime(right / "c.txt", (1_700_000_100, 1_700_000_100))
+
+        ready, skipped = ops.revalidate_sync_items([item, gone])
+
+        assert ready == []
+        assert [entry.relative for entry, _reason in skipped] == ["c.txt", "missing.txt"]
+
+
+class TestSyncDeleteExecution:
+    def _items(self, count: int) -> list[ops.SyncItem]:
+        return [ops.SyncItem(ops.SYNC_DELETE, f"f{index}.txt", Path(f"/tmp/f{index}.txt")) for index in range(count)]
+
+    def test_deletes_stop_at_first_failure(self) -> None:
+        items = self._items(3)
+        calls: list[Path] = []
+
+        def mover(path: Path) -> Path:
+            calls.append(path)
+            if path.name == "f1.txt":
+                raise OSError("回收站不可用")
+            return path
+
+        report = ops.execute_sync_deletes(items, mover=mover)
+
+        assert report.completed == [items[0]]
+        assert report.failures == [(items[1], "回收站不可用")]
+        assert report.not_executed == [items[2]]
+        assert report.stopped
+        assert calls == [item.target for item in items[:2]]
+
+    def test_trash_unavailable_aborts_whole_batch(self) -> None:
+        items = self._items(2)
+
+        def mover(_path: Path) -> Path:
+            raise OSError("平台不支持回收站")
+
+        report = ops.execute_sync_deletes(items, mover=mover)
+
+        assert report.completed == []
+        assert report.failures[0][1] == "平台不支持回收站"
+        assert report.not_executed == [items[1]]
+
+    def test_progress_reports_completed_items(self) -> None:
+        items = self._items(2)
+        seen: list[str] = []
+
+        def progress(index: int, total: int, name: str) -> None:
+            assert total == 2
+            assert 0 < index <= total
+            seen.append(name)
+
+        report = ops.execute_sync_deletes(items, mover=lambda path: path, progress=progress)
+
+        assert len(report.completed) == 2
+        assert seen == ["f0.txt", "f1.txt"]

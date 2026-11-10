@@ -49,6 +49,9 @@ from fcmd.tools.system._cmderw_ops import (
     ITEM_FAILED,
     QUEUE_CANCELLED,
     QUEUE_RUNNING,
+    SYNC_DELETE,
+    SYNC_LTR,
+    SYNC_RTL,
     BulkRenameOptions,
     CompareOptions,
     CompareReport,
@@ -58,17 +61,24 @@ from fcmd.tools.system._cmderw_ops import (
     RenamePlan,
     RenameReport,
     RenameSource,
+    SyncDeleteReport,
+    SyncItem,
+    SyncOptions,
+    SyncPlan,
     TransferQueue,
     TrashReport,
     apply_rename_plan,
+    build_sync_plan,
     cleanup_incomplete_items,
     compare_trees,
     directory_size,
+    execute_sync_deletes,
     filter_names,
     invert_names,
     item_status_text,
     match_names,
     plan_bulk_rename,
+    revalidate_sync_items,
     trash_paths,
     undo_rename,
     validate_name,
@@ -2072,6 +2082,15 @@ class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         self.status_var = tk.StringVar(value="尚未比较")
         ttk.Label(bottom, textvariable=self.status_var, style="Muted.TLabel").pack(side="left")
         ttk.Button(bottom, text="关闭", command=self.win.destroy).pack(side="right")
+        self.sync_button = ttk.Button(bottom, text="同步…", command=self.open_sync, state="disabled")
+        self.sync_button.pack(side="right", padx=(0, spacing.xs))
+
+    def open_sync(self) -> None:
+        """带着当前比较结果进入同步预演。"""
+        if self.report is None:
+            self.status_var.set("请先执行比较，再进入同步")
+            return
+        self.app.open_sync(self.report, self._collect_options().mtime_tolerance)
 
     def set_filter(self, status: str) -> None:
         """切换类别过滤并重绘。"""
@@ -2106,6 +2125,7 @@ class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         self._running = True
         self.status_var.set("正在比较…")
         self.start_button.configure(state="disabled")
+        self.sync_button.configure(state="disabled")
 
         def task() -> CompareReport:
             return compare_trees(left_root, right_root, options, progress=self.app._progress_callback)
@@ -2113,6 +2133,7 @@ class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         def done(report: CompareReport) -> None:
             self._running = False
             self.start_button.configure(state="normal")
+            self.sync_button.configure(state="normal")
             self.report = report
             self._render(report)
             if report.errors:
@@ -2160,6 +2181,265 @@ class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         return format_size(size or 0)
 
 
+class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """同步预演与执行：复制/覆盖入传输队列，删除单独逐项执行。"""
+
+    def __init__(self, app: CmderWindow, report: CompareReport, tolerance: float = 2.0) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.report = report
+        self.tolerance = tolerance
+        self.plan: SyncPlan | None = None
+        theme = app.theme
+        spacing = theme.spacing
+        self.win = tk.Toplevel(app.root)
+        self.win.title("目录同步（预演）")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=1120, height=700)
+        self.win.minsize(860, 480)
+        frame = ttk.Frame(self.win, padding=spacing.md)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text=f"左：{report.left_root}", style="Muted.TLabel").pack(fill="x")
+        ttk.Label(frame, text=f"右：{report.right_root}", style="Muted.TLabel").pack(fill="x", pady=(0, spacing.xs))
+
+        controls = ttk.Frame(frame)
+        controls.pack(fill="x", pady=(0, spacing.xs))
+        self.direction_var = tk.StringVar(value=SYNC_LTR)
+        ttk.Radiobutton(
+            controls, text="左 → 右", value=SYNC_LTR, variable=self.direction_var, command=self.refresh_plan
+        ).pack(side="left")
+        ttk.Radiobutton(
+            controls, text="右 → 左", value=SYNC_RTL, variable=self.direction_var, command=self.refresh_plan
+        ).pack(side="left", padx=spacing.sm)
+        self.delete_var = tk.BooleanVar(value=False)
+        self.delete_dirs_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            controls, text="同时删除目标端多余文件", variable=self.delete_var, command=self._on_delete_toggle
+        ).pack(side="left", padx=(spacing.lg, 0))
+        self.delete_dirs_check = ttk.Checkbutton(
+            controls, text="允许删除多余目录及其内容", variable=self.delete_dirs_var, command=self.refresh_plan
+        )
+        self.delete_dirs_check.pack(side="left", padx=spacing.sm)
+        self.delete_dirs_check.configure(state="disabled")
+
+        note = "执行前会重新校验目标端的大小与时间，与预演不一致的项将跳过并在结果中列出。"
+        ttk.Label(frame, text=note, style="Muted.TLabel").pack(fill="x", pady=(0, spacing.xxs))
+
+        tree_frame = ttk.Frame(frame)
+        tree_frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(
+            tree_frame,
+            columns=("action", "relative", "source", "target", "note"),
+            show="headings",
+            selectmode="browse",
+        )
+        for column, title, width, anchor in (
+            ("action", "操作", 80, "w"),
+            ("relative", "相对路径", 260, "w"),
+            ("source", "源", 320, "w"),
+            ("target", "目标", 320, "w"),
+            ("note", "说明", 180, "w"),
+        ):
+            self.tree.heading(column, text=title)
+            self.tree.column(column, width=width, anchor=anchor)
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", pady=(spacing.sm, 0))
+        self.status_var = tk.StringVar(value="")
+        ttk.Label(bottom, textvariable=self.status_var, style="Muted.TLabel").pack(side="left")
+        ttk.Button(bottom, text="关闭", command=self.win.destroy).pack(side="right")
+        self.start_button = ttk.Button(bottom, text="开始执行", style="Accent.TButton", command=self.execute)
+        self.start_button.pack(side="right", padx=(0, spacing.xs))
+        ttk.Button(bottom, text="重新预演", command=self.refresh_plan).pack(side="right", padx=(0, spacing.xs))
+        self.refresh_plan()
+
+    def _on_delete_toggle(self) -> None:
+        """「删除多余文件」控制目录删除勾选框的可用性。"""
+        if self.delete_var.get():
+            self.delete_dirs_check.configure(state="normal")
+        else:
+            self.delete_dirs_var.set(False)
+            self.delete_dirs_check.configure(state="disabled")
+        self.refresh_plan()
+
+    def refresh_plan(self) -> None:
+        """按当前方向与勾选项重新生成预演。"""
+        options = SyncOptions(
+            direction=self.direction_var.get(),
+            delete_target_extra=bool(self.delete_var.get()),
+            delete_dirs=bool(self.delete_dirs_var.get()),
+            mtime_tolerance=self.tolerance,
+        )
+        self.plan = build_sync_plan(self.report, options)
+        self._render(self.plan)
+
+    def _render(self, plan: SyncPlan) -> None:
+        """重绘预演明细与汇总。"""
+        self.tree.delete(*self.tree.get_children())
+        for item in plan.copies:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    "覆盖" if item.overwrite else "复制",
+                    item.relative,
+                    str(item.source or ""),
+                    str(item.target),
+                    "目录" if item.is_dir else ("覆盖已有文件" if item.overwrite else "新建文件"),
+                ),
+            )
+        for item in plan.deletes:
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    "删除",
+                    item.relative,
+                    "",
+                    str(item.target),
+                    "目录" if item.is_dir else f"文件，{format_size(item.target_size or 0)}",
+                ),
+            )
+        for item in plan.skipped:
+            self.tree.insert(
+                "",
+                "end",
+                values=("跳过", item.relative, "", str(item.target), item.skip_reason),
+            )
+        counts = plan.counts()
+        parts = [f"将复制 {counts['copy_new']} 个文件，覆盖 {counts['copy_overwrite']} 个文件"]
+        if counts["delete"]:
+            parts.append(f"将删除 {counts['delete']} 项（目录 {counts['delete_dirs']} 个）")
+        else:
+            extra = sum(1 for item in plan.skipped if item.action == SYNC_DELETE)
+            if extra:
+                parts.append(f"目标端多余 {extra} 项（默认不删除）")
+        if counts["skipped"]:
+            parts.append(f"跳过 {counts['skipped']} 项")
+        parts.append(f"相同 {counts['same']} 项")
+        self.status_var.set("；".join(parts))
+        self.start_button.configure(state="normal" if (plan.copies or plan.deletes) else "disabled")
+
+    def execute(self) -> None:
+        """二次确认后执行；删除前再单独确认一次。"""
+        plan = self.plan
+        if plan is None or not (plan.copies or plan.deletes):
+            return
+        counts = plan.counts()
+        lines = [f"将执行以下操作（{plan.source_root} → {plan.target_root}）："]
+        if plan.copies:
+            lines.append(f"- 复制 {counts['copy_new']} 个新文件")
+            lines.append(f"- 覆盖 {counts['copy_overwrite']} 个已有文件")
+        if plan.deletes:
+            lines.append(f"- 删除 {counts['delete']} 项（已勾选，移入回收站）")
+        if plan.skipped:
+            lines.append(f"- 跳过 {counts['skipped']} 项（符号链接 / 未勾选目录等）")
+        lines += [
+            "",
+            "执行前会重新校验每个目标文件的大小与修改时间；与预演不一致的项将跳过，并在结果里单独列出。",
+        ]
+        if plan.deletes:
+            lines.append("删除不可撤销（回收站可还原）。")
+        if not self.app._messagebox.askokcancel("确认执行同步", "\n".join(lines), parent=self.win):
+            return
+        if plan.deletes and not self._confirm_deletes(plan):
+            return
+        self._run(plan)
+
+    def _confirm_deletes(self, plan: SyncPlan) -> bool:
+        """删除单独确认：逐条列出完整路径与总数。"""
+        side = "右侧" if plan.direction == SYNC_LTR else "左侧"
+        counts = plan.counts()
+        lines = ["确认删除目标端多余项", "", f"即将从{side}移入回收站以下 {len(plan.deletes)} 项：", ""]
+        for index, item in enumerate(plan.deletes, start=1):
+            kind = "目录" if item.is_dir else f"文件，{format_size(item.target_size or 0)}"
+            lines.append(f"{index}. {item.target}（{kind}）")
+        lines += [
+            "",
+            f"共 {len(plan.deletes)} 项，其中目录 {counts['delete_dirs']} 个。",
+            "删除不可撤销（回收站可还原）。",
+            "删除逐项执行；任一项失败立即停止，并汇报已完成与未执行部分。",
+            "回收站不可用时整批中止，不会改为永久删除。",
+        ]
+        return bool(self.app._messagebox.askokcancel("确认删除目标端多余项", "\n".join(lines), parent=self.win))
+
+    def _run(self, plan: SyncPlan) -> None:
+        """执行前复核，复制入队，删除逐项执行并汇报。"""
+        ready_copies, skipped_copies = revalidate_sync_items(plan.copies, mtime_tolerance=self.tolerance)
+        ready_deletes, skipped_deletes = revalidate_sync_items(plan.deletes, mtime_tolerance=self.tolerance)
+        enqueue_ok = True
+        if ready_copies:
+            items = [
+                TransferItem(source=item.source, target=item.target, overwrite=item.overwrite)
+                for item in ready_copies
+                if item.source is not None
+            ]
+            enqueue_ok = self.app.enqueue_transfer(items, plan.target_root, move=False)
+        delete_report = SyncDeleteReport()
+        if enqueue_ok and ready_deletes:
+            delete_report = execute_sync_deletes(ready_deletes)
+        self.app.refresh_both()
+        self.start_button.configure(state="disabled")
+        self.status_var.set("已执行；复制任务在传输队列中继续，完成后可重新预演")
+
+        skipped = skipped_copies + skipped_deletes
+        text = "\n".join(
+            self._copy_result_lines(ready_copies, enqueue_ok)
+            + self._delete_result_lines(plan, delete_report, enqueue_ok)
+            + self._skipped_result_lines(skipped)
+        )
+        text = text or "没有可执行的操作（全部被跳过）。"
+        if delete_report.failures:
+            self.app._messagebox.showwarning("同步结果（删除失败）", text, parent=self.win)
+        elif skipped:
+            self.app._messagebox.showwarning("同步结果（有跳过项）", text, parent=self.win)
+        else:
+            self.app._messagebox.showinfo("同步结果", text, parent=self.win)
+
+    @staticmethod
+    def _copy_result_lines(copies: list[SyncItem], enqueue_ok: bool) -> list[str]:
+        """复制入队结果行。"""
+        if not copies:
+            return []
+        if not enqueue_ok:
+            return ["复制未入队：目标与队列中未完成任务冲突"]
+        new_count = sum(1 for item in copies if not item.overwrite)
+        return [f"复制入队：{len(copies)} 项（新建 {new_count}，覆盖 {len(copies) - new_count}）"]
+
+    @staticmethod
+    def _delete_result_lines(plan: SyncPlan, report: SyncDeleteReport, enqueue_ok: bool) -> list[str]:
+        """删除执行结果行；失败与未执行都如实列出。"""
+        lines: list[str] = []
+        if not enqueue_ok and plan.deletes:
+            lines.append(f"删除未执行：{len(plan.deletes)} 项（复制未入队，未做删除）")
+        if report.completed:
+            lines.append(f"删除完成：{len(report.completed)} 项")
+        for item, error in report.failures:
+            lines.append(f"删除失败：{item.target}：{error}")
+        if report.not_executed:
+            lines.append(f"删除未执行：{len(report.not_executed)} 项（失败即停）")
+        return lines
+
+    @staticmethod
+    def _skipped_result_lines(skipped: list[tuple[SyncItem, str]]) -> list[str]:
+        """执行前校验跳过项；超出上限时提示见预演清单。"""
+        if not skipped:
+            return []
+        lines = ["", "执行前校验跳过："]
+        for item, reason in skipped[:_MAX_ERROR_DETAILS]:
+            lines.append(f"- {item.target}：{reason}")
+        if len(skipped) > _MAX_ERROR_DETAILS:
+            lines.append(f"- 其余 {len(skipped) - _MAX_ERROR_DETAILS} 项见预演清单")
+        return lines
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -2182,6 +2462,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.transfer_queue = TransferQueue()
         self._queue_dialog: TransferQueueDialog | None = None
         self._compare_dialog: CompareDialog | None = None
+        self._sync_dialog: SyncDialog | None = None
         self._queue_stopping = False
 
         self.root, self.theme = _guiwindow.create_root(
@@ -2266,6 +2547,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         tools_menu = tk.Menu(menubar, tearoff=False)
         tools_menu.add_command(label="传输队列…", command=self.show_transfer_queue)
         tools_menu.add_command(label="目录比较…\tCtrl+Shift+C", command=self.open_compare)
+        tools_menu.add_command(label="目录同步…", command=self.open_sync_from_compare)
         tools_menu.add_separator()
         tools_menu.add_command(label="搜索\tCtrl+F", command=self.open_search)
         tools_menu.add_command(label="文件哈希", command=self.hash_selected)
@@ -2769,6 +3051,22 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             dialog.win.focus_set()
             return
         self._compare_dialog = CompareDialog(self)
+
+    def open_sync_from_compare(self) -> None:
+        """菜单入口：带着已有比较结果打开同步；没有结果时先打开比较窗口。"""
+        dialog = self._compare_dialog
+        if dialog is not None and dialog.win.winfo_exists() and dialog.report is not None:
+            dialog.open_sync()
+            return
+        self.open_compare()
+        self.set_status("目录同步：请先在比较窗口执行比较")
+
+    def open_sync(self, report: CompareReport, tolerance: float = 2.0) -> None:
+        """打开同步预演窗口；已有同步窗口先关闭再按新结果重建。"""
+        dialog = self._sync_dialog
+        if dialog is not None and dialog.win.winfo_exists():
+            dialog.win.destroy()
+        self._sync_dialog = SyncDialog(self, report, tolerance)
 
     def _ensure_queue_dialog(self) -> None:
         """队列窗口不存在则创建，存在则刷新。"""

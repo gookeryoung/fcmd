@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -37,6 +38,11 @@ __all__ = [
     "QUEUE_FAILED",
     "QUEUE_PENDING",
     "QUEUE_RUNNING",
+    "SYNC_ACTION_TEXT",
+    "SYNC_COPY",
+    "SYNC_DELETE",
+    "SYNC_LTR",
+    "SYNC_RTL",
     "BulkRenameOptions",
     "CompareEntry",
     "CompareOptions",
@@ -47,20 +53,28 @@ __all__ = [
     "RenamePlan",
     "RenameReport",
     "RenameSource",
+    "SyncDeleteReport",
+    "SyncItem",
+    "SyncOptions",
+    "SyncPlan",
     "TransferQueue",
     "TrashReport",
     "apply_rename_plan",
     "build_new_name",
+    "build_sync_plan",
     "cleanup_incomplete_items",
     "cleanup_partial_target",
     "compare_trees",
     "directory_size",
+    "execute_sync_deletes",
     "filter_names",
     "invert_names",
     "item_status_text",
     "match_names",
     "matches_mask",
     "plan_bulk_rename",
+    "revalidate_sync_item",
+    "revalidate_sync_items",
     "send_to_trash",
     "split_masks",
     "trash_paths",
@@ -1017,4 +1031,327 @@ def compare_trees(
         report.entries.append(entry)
         if progress is not None:
             progress(index, total, relative)
+    return report
+
+
+# ============================================================================ #
+# 目录同步（计划、执行前复核、删除逐项执行）
+# ============================================================================ #
+SYNC_LTR = "left_to_right"
+SYNC_RTL = "right_to_left"
+SYNC_COPY = "copy"
+SYNC_DELETE = "delete"
+
+SYNC_ACTION_TEXT = {
+    SYNC_COPY: "复制",
+    SYNC_DELETE: "删除",
+}
+
+
+@dataclass(frozen=True)
+class SyncOptions:
+    """同步计划选项；删除默认关闭，目录删除需再开一层。"""
+
+    direction: str = SYNC_LTR
+    delete_target_extra: bool = False
+    delete_dirs: bool = False
+    mtime_tolerance: float = 2.0
+
+
+@dataclass
+class SyncItem:
+    """一条同步动作；``target_*`` 记录预演时的目标状态，供执行前复核。"""
+
+    action: str
+    relative: str
+    target: Path
+    source: Path | None = None
+    is_dir: bool = False
+    overwrite: bool = False
+    target_size: int | None = None
+    target_mtime: float | None = None
+    target_is_dir: bool = False
+    target_existed: bool = False
+    skip_reason: str = ""
+
+    @property
+    def action_text(self) -> str:
+        """中文动作名（跳过项带原因）。"""
+        if self.skip_reason:
+            return "跳过"
+        return SYNC_ACTION_TEXT.get(self.action, self.action)
+
+
+@dataclass
+class SyncPlan:
+    """同步预演结果：复制 / 覆盖、删除、策略跳过与相同项计数。"""
+
+    left_root: Path
+    right_root: Path
+    direction: str
+    copies: list[SyncItem] = field(default_factory=list)
+    deletes: list[SyncItem] = field(default_factory=list)
+    skipped: list[SyncItem] = field(default_factory=list)
+    same_count: int = 0
+
+    @property
+    def source_root(self) -> Path:
+        """复制来源根目录。"""
+        return self.left_root if self.direction == SYNC_LTR else self.right_root
+
+    @property
+    def target_root(self) -> Path:
+        """复制目标 / 删除所在根目录。"""
+        return self.right_root if self.direction == SYNC_LTR else self.left_root
+
+    def counts(self) -> dict[str, int]:
+        """汇总计数（新建 / 覆盖 / 删除 / 跳过 / 相同）。"""
+        new_count = sum(1 for item in self.copies if not item.overwrite)
+        return {
+            "copy": len(self.copies),
+            "copy_new": new_count,
+            "copy_overwrite": len(self.copies) - new_count,
+            "delete": len(self.deletes),
+            "delete_dirs": sum(1 for item in self.deletes if item.is_dir),
+            "skipped": len(self.skipped),
+            "same": self.same_count,
+        }
+
+
+@dataclass
+class SyncDeleteReport:
+    """删除逐项执行结果；失败即停，剩余项进入 ``not_executed``。"""
+
+    completed: list[SyncItem] = field(default_factory=list)
+    failures: list[tuple[SyncItem, str]] = field(default_factory=list)
+    not_executed: list[SyncItem] = field(default_factory=list)
+
+    @property
+    def stopped(self) -> bool:
+        """是否因失败而中止。"""
+        return bool(self.failures)
+
+
+def _safe_join(root: Path, relative: str) -> Path | None:
+    """把比较结果中的相对路径安全拼到根目录下；越界返回 ``None``。"""
+    if not relative or relative.startswith(("/", "\\")):
+        return None
+    parts = relative.replace("\\", "/").split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    return root.joinpath(*parts)
+
+
+def _covered_by(relative: str, covered: Sequence[str]) -> bool:
+    """相对路径是否已被某个整目录动作覆盖。"""
+    return any(relative.startswith(f"{prefix}/") for prefix in covered)
+
+
+def _target_state(item: SyncItem, path: Path) -> SyncItem:
+    """记录目标当前的大小 / mtime / 类型（``lstat``，不跟随符号链接）。"""
+    try:
+        info = path.lstat()
+    except OSError:
+        return item
+    item.target_existed = True
+    item.target_is_dir = stat.S_ISDIR(info.st_mode)
+    item.target_size = info.st_size
+    item.target_mtime = info.st_mtime
+    return item
+
+
+def _skip_item(action: str, relative: str, target: Path, is_dir: bool, reason: str) -> SyncItem:
+    """构造一条策略跳过项。"""
+    return SyncItem(action, relative, target, is_dir=is_dir, skip_reason=reason)
+
+
+def _entry_action(entry: CompareEntry, direction: str) -> tuple[str, bool]:
+    """按方向判定条目是复制还是删除，并取源侧目录标记。"""
+    source_is_left = direction == SYNC_LTR
+    source_is_dir = entry.left_is_dir if source_is_left else entry.right_is_dir
+    target_is_dir = entry.right_is_dir if source_is_left else entry.left_is_dir
+    if entry.status == COMPARE_DIFFERENT:
+        return SYNC_COPY, bool(source_is_dir)
+    if (entry.status == COMPARE_LEFT_ONLY) == source_is_left:
+        return SYNC_COPY, bool(source_is_dir)
+    return SYNC_DELETE, bool(target_is_dir)
+
+
+def _make_copy_item(entry: CompareEntry, options: SyncOptions, plan: SyncPlan, is_dir: bool) -> SyncItem:
+    """生成复制项或跳过项；不跟随符号链接。"""
+    source = entry.left if options.direction == SYNC_LTR else entry.right
+    target = entry.right if options.direction == SYNC_LTR else entry.left
+    target = target or _safe_join(plan.target_root, entry.relative)
+    if target is None:
+        return _skip_item(SYNC_COPY, entry.relative, plan.target_root, is_dir, "路径越出面板范围")
+    if source is None:
+        return _skip_item(SYNC_COPY, entry.relative, target, is_dir, "源端条目缺失")
+    if source.is_symlink():
+        return _skip_item(SYNC_COPY, entry.relative, target, is_dir, "符号链接不处理")
+    if target.is_symlink():
+        return _skip_item(SYNC_COPY, entry.relative, target, is_dir, "目标为符号链接，未处理")
+    item = SyncItem(
+        SYNC_COPY,
+        entry.relative,
+        target,
+        source=source,
+        is_dir=is_dir,
+        overwrite=entry.status == COMPARE_DIFFERENT or target.exists(),
+    )
+    _target_state(item, target)
+    return item
+
+
+def _make_delete_item(entry: CompareEntry, options: SyncOptions, plan: SyncPlan, is_dir: bool) -> SyncItem:
+    """生成删除项或跳过项；删除目录需额外勾选。"""
+    target = entry.right if options.direction == SYNC_LTR else entry.left
+    target = target or _safe_join(plan.target_root, entry.relative) or plan.target_root
+    if not options.delete_target_extra:
+        return _skip_item(SYNC_DELETE, entry.relative, target, is_dir, "未勾选删除目标端多余文件")
+    if is_dir and not options.delete_dirs:
+        return _skip_item(SYNC_DELETE, entry.relative, target, is_dir, "未勾选删除多余目录")
+    if target.is_symlink():
+        return _skip_item(SYNC_DELETE, entry.relative, target, is_dir, "目标为符号链接，未处理")
+    item = SyncItem(SYNC_DELETE, entry.relative, target, is_dir=is_dir)
+    _target_state(item, target)
+    return item
+
+
+def _record_item(plan: SyncPlan, item: SyncItem, covered: list[str]) -> None:
+    """把生成结果归入计划；整目录动作（含策略跳过）记入覆盖表，子项不再重复。"""
+    if item.is_dir:
+        covered.append(item.relative)
+    if item.skip_reason:
+        plan.skipped.append(item)
+        return
+    if item.action == SYNC_COPY:
+        plan.copies.append(item)
+    else:
+        plan.deletes.append(item)
+
+
+def build_sync_plan(report: CompareReport, options: SyncOptions | None = None) -> SyncPlan:
+    """把比较结果转成同步预演；只读，不修改任何文件、不跟随符号链接。"""
+    options = options or SyncOptions()
+    if options.direction not in (SYNC_LTR, SYNC_RTL):
+        raise ValueError(f"未知的同步方向: {options.direction}")
+    plan = SyncPlan(Path(report.left_root), Path(report.right_root), options.direction)
+    covered: list[str] = []
+    for entry in sorted(report.entries, key=lambda item: item.relative):
+        if entry.status == COMPARE_SAME:
+            plan.same_count += 1
+            continue
+        if _covered_by(entry.relative, covered):
+            continue
+        action, is_dir = _entry_action(entry, options.direction)
+        if action == SYNC_COPY:
+            item = _make_copy_item(entry, options, plan, is_dir)
+        else:
+            item = _make_delete_item(entry, options, plan, is_dir)
+        _record_item(plan, item, covered)
+    return plan
+
+
+def _sync_change_reason(item: SyncItem, size: int, mtime: float, tolerance: float) -> str | None:
+    """目标当前状态与预演记录不一致时返回原因。"""
+    if item.target_mtime is None:
+        return "目标缺少预演记录"
+    if abs(mtime - item.target_mtime) > tolerance:
+        return "目标修改时间已变化"
+    if not item.target_is_dir and item.target_size is not None and size != item.target_size:
+        return "目标大小已变化"
+    return None
+
+
+def _source_reason(source: Path) -> str | None:
+    """源端可用性检查：缺失 / 不可读 / 符号链接。"""
+    try:
+        info = source.lstat()
+    except FileNotFoundError:
+        return "源已不存在"
+    except OSError as exc:
+        return str(exc)
+    return "符号链接不处理" if stat.S_ISLNK(info.st_mode) else None
+
+
+def _compare_target_state(item: SyncItem, info: os.stat_result, tolerance: float) -> str | None:
+    """目标类型 / 大小 / mtime 与预演记录比较。"""
+    if stat.S_ISDIR(info.st_mode) != item.target_is_dir:
+        return "目标类型已变化"
+    return _sync_change_reason(item, info.st_size, info.st_mtime, tolerance)
+
+
+def _target_reason_for_copy(item: SyncItem, tolerance: float) -> str | None:
+    """复制前检查目标：符号链接、新增冲突、覆盖目标已变化。"""
+    if item.target.is_symlink():
+        return "目标为符号链接，未处理"
+    if not item.overwrite:
+        return "目标已出现，请重新预演" if item.target.exists() else None
+    if not item.target.exists():
+        return "目标已不存在（预演时存在）"
+    try:
+        info = item.target.lstat()
+    except OSError as exc:
+        return str(exc)
+    return _compare_target_state(item, info, tolerance)
+
+
+def _revalidate_delete(item: SyncItem, tolerance: float) -> str | None:
+    """删除前检查目标是否仍是预演时看到的那一项。"""
+    try:
+        info = item.target.lstat()
+    except FileNotFoundError:
+        return "目标已不存在"
+    except OSError as exc:
+        return str(exc)
+    if stat.S_ISLNK(info.st_mode):
+        return "符号链接不处理"
+    return _compare_target_state(item, info, tolerance)
+
+
+def revalidate_sync_item(item: SyncItem, *, mtime_tolerance: float = 2.0) -> str | None:
+    """执行前复核单项；可执行返回 ``None``，否则返回跳过原因（不静默略过）。"""
+    if item.action == SYNC_COPY:
+        if item.source is None:
+            return "源端条目缺失"
+        return _source_reason(item.source) or _target_reason_for_copy(item, mtime_tolerance)
+    return _revalidate_delete(item, mtime_tolerance)
+
+
+def revalidate_sync_items(
+    items: Sequence[SyncItem],
+    *,
+    mtime_tolerance: float = 2.0,
+) -> tuple[list[SyncItem], list[tuple[SyncItem, str]]]:
+    """批量复核，返回 (可执行项, [(跳过项, 原因)])。"""
+    ready: list[SyncItem] = []
+    skipped: list[tuple[SyncItem, str]] = []
+    for item in items:
+        reason = revalidate_sync_item(item, mtime_tolerance=mtime_tolerance)
+        if reason is None:
+            ready.append(item)
+        else:
+            skipped.append((item, reason))
+    return ready, skipped
+
+
+def execute_sync_deletes(
+    items: Sequence[SyncItem],
+    *,
+    mover: Callable[[Path], Any] = send_to_trash,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> SyncDeleteReport:
+    """逐项移入回收站；任一项失败立即停止，其余项记为未执行。"""
+    report = SyncDeleteReport()
+    total = len(items)
+    for index, item in enumerate(items):
+        try:
+            mover(item.target)
+        except (OSError, ValueError) as exc:
+            report.failures.append((item, str(exc)))
+            report.not_executed.extend(items[index + 1 :])
+            break
+        report.completed.append(item)
+        if progress is not None:
+            progress(index + 1, total, item.relative)
     return report
