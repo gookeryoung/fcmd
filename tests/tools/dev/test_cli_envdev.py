@@ -1373,9 +1373,9 @@ class TestAutoMirror:
     ) -> None:
         """rust auto 时 rustup 与 cargo 分别探测各自服务地址并独立选优。"""
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
-        monkeypatch.setattr("fcmd.tools.dev.envdev._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
-        monkeypatch.setattr("fcmd.tools.dev.envdev._download_rustup", lambda: None)
-        monkeypatch.setattr("fcmd.tools.dev.envdev._install_rust_toolchain", lambda v: None)
+        monkeypatch.setattr("fcmd.tools.dev._envdev_langs._RUST_SCCACHE_DIR", tmp_path / ".cargo" / "sccache")
+        monkeypatch.setattr("fcmd.tools.dev._envdev_langs._download_rustup", lambda: None)
+        monkeypatch.setattr("fcmd.tools.dev._envdev_langs._install_rust_toolchain", lambda v: None)
 
         rustup_urls = fcmd.tools.dev.envdev._RUSTUP_PROBE_URLS
         cargo_urls = fcmd.tools.dev.envdev._CARGO_PROBE_URLS
@@ -1441,8 +1441,8 @@ class TestAutoMirror:
             return []
 
         monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", fake)
-        monkeypatch.setattr("fcmd.tools.dev.envdev._setup_bun_mirror", lambda m: None)
-        monkeypatch.setattr("fcmd.tools.dev.envdev._install_bun", lambda: None)
+        monkeypatch.setattr("fcmd.tools.dev._envdev_langs._setup_bun_mirror", lambda m: None)
+        monkeypatch.setattr("fcmd.tools.dev._envdev_langs._install_bun", lambda: None)
 
         fcmd.tools.dev.envdev.setup_lang_env(language="js", mirror="npmmirror")
         assert called == []
