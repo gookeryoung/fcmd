@@ -20,12 +20,11 @@ import queue
 import sys
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.system.reshack import (
     RT_BITMAP,
     RT_ICON,
@@ -150,24 +149,13 @@ def save_settings(settings: ReshackSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
-    restored = _guiconfig.clamp_geometry(
+    return _guiwindow.resolve_geometry(
         saved,
         screen_width,
         screen_height,
+        default=DEFAULT_GEOMETRY,
         min_width=MIN_WIDTH,
         min_height=MIN_HEIGHT,
-    )
-    if restored is not None:
-        return restored
-    return (
-        _guiconfig.clamp_geometry(
-            DEFAULT_GEOMETRY,
-            screen_width,
-            screen_height,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-        )
-        or DEFAULT_GEOMETRY
     )
 
 
@@ -407,18 +395,14 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._fit_mode = False
         self._resize_job: str | None = None
 
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title(f"PE 资源编辑器 v{__version__}")
-        self.root.geometry(
-            resolve_geometry(
-                self._settings.geometry,
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+        self.root, self._theme = _guiwindow.create_root(
+            title=f"PE 资源编辑器 v{__version__}",
+            saved_geometry=self._settings.geometry,
+            default_geometry=DEFAULT_GEOMETRY,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self.close,
         )
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self._status_var = tk.StringVar(value="就绪")
         self._build_widgets()
@@ -535,11 +519,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         log_frame = ttk.LabelFrame(self.root, text="日志", padding=self._theme.spacing.sm)
         log_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.xs))
-        self._log_text = tk.Text(log_frame, height=5, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
-        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
-        self._log_text.configure(yscrollcommand=log_scroll.set)
-        log_scroll.pack(side="right", fill="y")
-        self._log_text.pack(side="left", fill="both", expand=True)
+        self._log_text = _guiwindow.create_log(log_frame, height=5)
 
         status = ttk.Frame(self.root)
         status.pack(fill="x", padx=self._theme.spacing.md, pady=(0, self._theme.spacing.sm))
@@ -587,11 +567,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # ------------------------------------------------------------------ #
     def _append_log(self, message: str) -> None:
         """向只读日志区追加带时间戳的一行。"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self._log_text.configure(state="normal")
-        self._log_text.insert("end", f"[{timestamp}] {message}\n")
-        self._log_text.see("end")
-        self._log_text.configure(state="disabled")
+        _guiwindow.append_log(self._log_text, message, timestamp=True)
 
     def _set_busy(self, busy: bool) -> None:
         """任务执行期间禁用工具栏按钮，避免重复提交。"""
@@ -798,9 +774,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         return self._worker is not None and self._worker.is_alive()
 
     def _start_worker(self, target: Any, args: tuple[Any, ...]) -> None:
-        self._worker = threading.Thread(target=target, args=args, daemon=True)
-        self._worker.start()
-        self.root.after(80, self._poll_queue)
+        self._worker = _guiwindow.start_worker(self.root, target, args, self._poll_queue)
 
     def _poll_queue(self) -> None:
         """在主线程消费后台事件，更新界面状态。"""
@@ -1131,15 +1105,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
 def run_gui(settings_path: Path | None = None) -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = ReshackWindow(settings_path)
-    except ImportError as exc:
-        from fcmd.console import print_error
-
-        print_error(f"tkinter 不可用，无法启动 PE 资源编辑器: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(lambda: ReshackWindow(settings_path), "PE 资源编辑器")
 
 
 @fcmd.tool("reshackw", help="打开 PE 资源编辑器窗口（Tk）", description=_DESCRIPTION)
