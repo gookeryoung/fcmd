@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -77,6 +79,40 @@ def _snapshot_actions() -> dict[str, Action]:
     from fcmd.dsl.actions import _ACTIONS
 
     return dict(_ACTIONS)
+
+
+# ---------------------------------------------------------------------- #
+# 动作子模块按需加载
+# ---------------------------------------------------------------------- #
+class TestActionLazyLoading:
+    """动作子模块按动作名懒加载（``import fcmd.dsl`` 不再拉入全部子模块依赖）。"""
+
+    def test_index_matches_registered_actions(self) -> None:
+        """``_index.ACTION_MODULES`` 与子模块实际注册的动作名一一对应。"""
+        import importlib
+        import pkgutil
+
+        import fcmd.dsl.actions as actions_pkg
+        from fcmd.dsl.actions._index import ACTION_MODULES
+
+        for mod in sorted(m.name for m in pkgutil.iter_modules(actions_pkg.__path__) if not m.name.startswith("_")):
+            importlib.import_module(f"{actions_pkg.__name__}.{mod}")
+        actual = {name: act.func.__module__.rsplit(".", 1)[1] for name, act in actions_pkg._ACTIONS.items()}
+        assert actual == ACTION_MODULES
+
+    def test_package_import_does_not_load_submodules(self) -> None:
+        """裸导入包不注册任何动作（子模块由 ``has_action`` / ``get_action`` 触发）。"""
+        script = "import fcmd.dsl.actions as a; print(len(a._ACTIONS))"
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "0", proc.stderr
+
+    def test_get_action_loads_only_own_module(self) -> None:
+        """``get_action`` 只加载动作所属子模块，不波及其他子模块。"""
+        script = "import fcmd.dsl.actions as a\na.get_action('setenv')\nprint(sorted(a._LOADED_MODULES))\n"
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "['basic']", proc.stderr
 
 
 # ---------------------------------------------------------------------- #

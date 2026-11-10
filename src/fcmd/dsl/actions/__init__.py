@@ -29,7 +29,10 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 操作中逐条目的过程反馈（预览/重命名回显/缺失跳过提示）保留 ``print``——
 内容依赖运行时逐条目结果，无法静态模板化，且是批量操作的必要反馈。
 
-子模块按类别划分（导入即注册，新增动作勿放入本模块）：
+子模块按类别划分（按需导入，新增动作勿放入本模块）。动作名 → 子模块的
+索引由 :mod:`fcmd.dsl.actions._index` 静态维护：新增动作后须执行
+``uv run python -m fcmd.dsl.actions._index`` 重新生成，否则动作在按需
+加载时定位不到（一致性测试会拦截）：
 
 * :mod:`fcmd.dsl.actions.basic` —— 环境与文件基础副作用（setenv/writefile）
 * :mod:`fcmd.dsl.actions.filenames` —— 文件名批量操作（dateprefix/filerename/filelevel）
@@ -52,10 +55,13 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import wraps
 from typing import Any
+
+from ._index import ACTION_MODULES
 
 __all__ = ["Action", "action", "action_names", "get_action", "has_action", "run_and_print"]
 
@@ -80,6 +86,24 @@ class Action:
 
 
 _ACTIONS: dict[str, Action] = {}
+
+# 已导入的动作子模块名（懒加载幂等标记）
+_LOADED_MODULES: set[str] = set()
+
+
+def _load_module(module: str) -> None:
+    """导入单个动作子模块（幂等；导入期执行 ``@action`` 完成注册）。"""
+    if module in _LOADED_MODULES:
+        return
+    _LOADED_MODULES.add(module)
+    importlib.import_module(f"{__name__}.{module}")
+
+
+def _load_action(name: str) -> None:
+    """按需加载动作名所属子模块；未知名不导入任何模块（交由调用方报错）。"""
+    module = ACTION_MODULES.get(name)
+    if module is not None:
+        _load_module(module)
 
 
 def _guarded(
@@ -144,17 +168,25 @@ def action(
 
 
 def has_action(name: str) -> bool:
-    """查询动作是否已注册（声明期校验用）。"""
+    """查询动作是否已注册（声明期校验用；按需加载所属子模块）。"""
+    _load_action(name)
     return name in _ACTIONS
 
 
 def action_names() -> tuple[str, ...]:
-    """全部已注册动作名（排序，供声明期错误提示）。"""
+    """全部已注册动作名（排序，供声明期错误提示）。
+
+    会加载全部动作子模块——仅错误提示 / 全量校验路径调用，正常命令执行
+    不触发（按需加载单个动作模块）。
+    """
+    for module in sorted(set(ACTION_MODULES.values())):
+        _load_module(module)
     return tuple(sorted(_ACTIONS))
 
 
 def get_action(name: str) -> Action:
-    """取出动作描述符（调用方须经声明期校验，未知名抛 KeyError）。"""
+    """取出动作描述符（调用方须经声明期校验，未知名抛 KeyError；按需加载子模块）。"""
+    _load_action(name)
     return _ACTIONS[name]
 
 
@@ -179,21 +211,6 @@ def run_and_print(
     print(result)
 
 
-# 子模块导入期执行 @action 装饰器完成注册（须位于注册表定义之后）
-from . import archive as archive  # noqa: E402
-from . import basic as basic  # noqa: E402
-from . import calc as calc  # noqa: E402
-from . import calcdate as calcdate  # noqa: E402
-from . import codec as codec  # noqa: E402
-from . import compute as compute  # noqa: E402
-from . import conv as conv  # noqa: E402
-from . import crypto as crypto  # noqa: E402
-from . import data as data  # noqa: E402
-from . import filenames as filenames  # noqa: E402
-from . import fileops as fileops  # noqa: E402
-from . import genid as genid  # noqa: E402
-from . import hashing as hashing  # noqa: E402
-from . import media as media  # noqa: E402
-from . import net as net  # noqa: E402
-from . import system as system  # noqa: E402
-from . import text as text  # noqa: E402
+# 子模块不再在包导入期全部加载：按动作名经 ``_index.ACTION_MODULES`` 懒导入
+# （``has_action`` / ``get_action`` / ``action_names``），避免每次
+# ``import fcmd.dsl`` 都承担 17 个子模块的传递依赖（实测约 110ms）。
