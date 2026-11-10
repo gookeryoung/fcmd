@@ -66,11 +66,6 @@ _DESCRIPTION = (
     "（系统负载在服务未启动时也持续采样展示）；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json"
 )
 
-#: 当前硬件放不下的模型行标记色（整卡显存也不够）
-_UNFIT_COLOR = _guitheme.PALETTE.danger
-#: 整卡够用但当前可用显存不足的模型行标记色（需释放显存）
-_BUSY_COLOR = _guitheme.PALETTE.warning
-
 _FIT_OK = "可用"
 _FIT_BUSY = "需释放显存"
 _FIT_UNSUPPORTED = "硬件不足"
@@ -466,7 +461,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title("推理服务管理")
         self.root.geometry(
             resolve_geometry(
@@ -543,6 +538,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         }
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._refresh_loaded()
         self._refresh_models()
         self._start_system_monitor()
@@ -747,8 +743,8 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._tree.column("fit", width=90, anchor="w", stretch=False)
         self._strike_font = self._font.nametofont("TkDefaultFont").copy()
         self._strike_font.configure(overstrike=True)
-        self._tree.tag_configure("unfit", foreground=_UNFIT_COLOR, font=self._strike_font)
-        self._tree.tag_configure("busy", foreground=_BUSY_COLOR)
+        self._tree.tag_configure("unfit", foreground=self._theme.palette.danger, font=self._strike_font)
+        self._tree.tag_configure("busy", foreground=self._theme.palette.warning)
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
         self._tree.pack(side="left", fill="both", expand=True)

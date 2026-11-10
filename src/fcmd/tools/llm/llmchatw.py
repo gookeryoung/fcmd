@@ -136,7 +136,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title("LLM 聊天客户端")
         self.root.geometry(
             resolve_geometry(
@@ -167,6 +167,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._status_var = tk.StringVar(value=_UNAVAILABLE)
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._refresh_services()
 
     # ------------------------------------------------------------------ #
@@ -256,7 +257,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._chat.configure(yscrollcommand=scrollbar.set)
         self._chat.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns", padx=(6, 0))
-        palette = _guitheme.PALETTE
+        palette = self._theme.palette
         self._chat.tag_configure("user", foreground=palette.accent, spacing1=10, spacing3=2)
         self._chat.tag_configure("ai", foreground=palette.success, spacing1=2, spacing3=10)
         self._chat.tag_configure("reason", foreground=palette.muted, spacing3=4)
@@ -281,7 +282,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._input_text.grid(row=0, column=0, columnspan=3, sticky="nsew")
         self._input_text.bind("<Control-Return>", self._on_send_shortcut)
 
-        ttk.Label(box, text="Ctrl+Enter 发送 · Enter 换行", foreground=_guitheme.PALETTE.muted).grid(
+        ttk.Label(box, text="Ctrl+Enter 发送 · Enter 换行", foreground=self._theme.palette.muted).grid(
             row=1, column=0, sticky="w", pady=(6, 0)
         )
         self._stop_btn = ttk.Button(box, text="停止", command=self._stop, state="disabled", width=10)

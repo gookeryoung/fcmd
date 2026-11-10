@@ -2292,5 +2292,8 @@ class TestServewSettings:
     def test_unfit_and_busy_markers_use_theme_semantic_colors(self) -> None:
         from fcmd.tools import _guitheme
 
-        assert _guitheme.PALETTE.danger == llmservew._UNFIT_COLOR
-        assert _guitheme.PALETTE.warning == llmservew._BUSY_COLOR
+        # 标记色改为窗口实例的 self._theme.palette，不再有模块级静态绑定。
+        assert not hasattr(llmservew, "_UNFIT_COLOR")
+        assert not hasattr(llmservew, "_BUSY_COLOR")
+        for theme in _guitheme.THEMES.values():
+            assert theme.palette.danger != theme.palette.warning

@@ -239,7 +239,7 @@ class AlarmClockWindow:
         self._tick_timer: str | None = None
 
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title(f"定时提醒 v{__version__}")
         self.root.geometry(
             resolve_geometry(
@@ -257,6 +257,7 @@ class AlarmClockWindow:
         self._status_var = tk.StringVar(value="未设置闹钟")
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._refresh_clock(datetime.now())
         self._schedule_tick()
 
@@ -269,7 +270,7 @@ class AlarmClockWindow:
     def _build_widgets(self) -> None:
         tk = self._tk
         ttk = self._ttk
-        palette = _guitheme.PALETTE
+        palette = self._theme.palette
         # 大号时钟保留经典 Label：需要每秒直改 highlight 边框颜色，ttk 样式不支持逐控件边框动画
         self._clock_label = tk.Label(
             self.root,

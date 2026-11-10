@@ -106,7 +106,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title("GGUF 量化工具")
         self.root.geometry(
             resolve_geometry(
@@ -134,6 +134,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         }
         self._quant_checks: dict[str, Any] = {}
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._mark_existing()
         self._refresh_models()
 

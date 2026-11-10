@@ -131,7 +131,7 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title("llama.cpp 引擎管理")
         self.root.geometry(
             resolve_geometry(
@@ -157,6 +157,7 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._info_vars: dict[str, tk.StringVar] = {}
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._refresh_all()
 
     # ------------------------------------------------------------------ #

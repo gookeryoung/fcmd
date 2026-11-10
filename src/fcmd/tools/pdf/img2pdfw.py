@@ -208,7 +208,7 @@ class Img2PdfWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._worker: threading.Thread | None = None
 
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title(f"图片转 PDF 转换器 v{__version__}")
         self.root.geometry(
             resolve_geometry(
@@ -228,11 +228,12 @@ class Img2PdfWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._status_var = tk.StringVar(value="就绪")
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
 
     def _build_widgets(self) -> None:
         tk = self._tk
         ttk = self._ttk
-        palette = _guitheme.PALETTE
+        palette = self._theme.palette
         self._build_menu()
 
         input_frame = ttk.LabelFrame(self.root, text="输入", padding=8)

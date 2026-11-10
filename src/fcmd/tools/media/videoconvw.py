@@ -69,10 +69,6 @@ MIN_HEIGHT = 640
 VIDEO_CODEC_CHOICES: tuple[str, ...] = ("libx264", "libx265", "libvpx-vp9", "mpeg4", "libxvid")
 AUDIO_CODEC_CHOICES: tuple[str, ...] = ("aac", "mp3", "opus", "libvorbis", "ac3", "flac")
 
-_HINT_COLOR = _guitheme.PALETTE.muted
-_STATUS_COLOR = _guitheme.PALETTE.muted
-_MUTED_COLOR = _guitheme.PALETTE.muted
-
 
 # ---------------------------------------------------------------------- #
 # 配置持久化
@@ -275,7 +271,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._closing = False
 
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title(f"视频转换器 v{__version__}")
         self.root.geometry(
             resolve_geometry(
@@ -307,6 +303,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
         self._build_menu()
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self.root.after(50, self._check_ffmpeg)
 
     # ------------------------------------------------------------------ #
@@ -346,7 +343,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         ttk.Label(
             io_frame,
             text="输出目录留空时写入输入文件所在目录，文件名为 <原名>_converted.<格式>",
-            foreground=_HINT_COLOR,
+            foreground=self._theme.palette.muted,
         ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         options_frame = ttk.LabelFrame(self.root, text="转换设置", padding=8)
@@ -454,7 +451,9 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._start_button.grid(row=0, column=0, padx=(0, 6))
         self._stop_button = ttk.Button(action_frame, text="停止", command=self._stop_conversion, state="disabled")
         self._stop_button.grid(row=0, column=1, padx=(0, 6))
-        self._status_label = ttk.Label(action_frame, textvariable=self._status_var, foreground=_STATUS_COLOR)
+        self._status_label = ttk.Label(
+            action_frame, textvariable=self._status_var, foreground=self._theme.palette.muted
+        )
         self._status_label.grid(row=0, column=2, sticky="w", padx=(8, 0))
         self._reset_button = ttk.Button(action_frame, text="重置设置", command=self._reset_settings)
         self._reset_button.grid(row=0, column=3)
@@ -478,9 +477,13 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         status_frame = ttk.Frame(self.root)
         status_frame.grid(row=5, column=0, sticky="ew", padx=12, pady=(4, 8))
         status_frame.columnconfigure(0, weight=1)
-        self._ffmpeg_label = ttk.Label(status_frame, textvariable=self._ffmpeg_var, foreground=_STATUS_COLOR)
+        self._ffmpeg_label = ttk.Label(
+            status_frame, textvariable=self._ffmpeg_var, foreground=self._theme.palette.muted
+        )
         self._ffmpeg_label.grid(row=0, column=0, sticky="w")
-        ttk.Label(status_frame, text="依赖系统 ffmpeg", foreground=_MUTED_COLOR).grid(row=0, column=1, sticky="e")
+        ttk.Label(status_frame, text="依赖系统 ffmpeg", foreground=self._theme.palette.muted).grid(
+            row=0, column=1, sticky="e"
+        )
 
         self._append_log("选择输入视频并设置转换参数后点击「开始转换」。")
 
@@ -565,11 +568,11 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         version = ffmpeg_version()
         if version:
             self._ffmpeg_var.set(f"✓ {version}")
-            self._ffmpeg_label.configure(foreground=_guitheme.PALETTE.success)
+            self._ffmpeg_label.configure(foreground=self._theme.palette.success)
             self._append_log(f"ffmpeg 可用：{version}")
         else:
             self._ffmpeg_var.set("✗ 未找到 ffmpeg，请安装并加入 PATH")
-            self._ffmpeg_label.configure(foreground=_guitheme.PALETTE.danger)
+            self._ffmpeg_label.configure(foreground=self._theme.palette.danger)
             self._append_log("警告：未找到 ffmpeg，转换功能不可用")
 
     # ------------------------------------------------------------------ #
@@ -612,7 +615,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._queue = queue.Queue()
         self._progress.configure(value=0)
         self._status_var.set("正在转换…")
-        self._status_label.configure(foreground=_STATUS_COLOR)
+        self._status_label.configure(foreground=self._theme.palette.muted)
         self._set_busy(True)
 
         self._worker = threading.Thread(
@@ -679,12 +682,12 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         if success:
             self._progress.configure(value=100)
             self._status_var.set("✓ 转换成功")
-            self._status_label.configure(foreground=_guitheme.PALETTE.success)
+            self._status_label.configure(foreground=self._theme.palette.success)
             self._append_log(f"转换成功：{output_path}")
             self._messagebox.showinfo("转换完成", f"视频已生成：\n{output_path}")
         else:
             self._status_var.set("✗ 转换失败或已取消")
-            self._status_label.configure(foreground=_guitheme.PALETTE.danger)
+            self._status_label.configure(foreground=self._theme.palette.danger)
             self._append_log("转换失败或已取消，详见日志")
             self._messagebox.showwarning("转换失败", "转换失败或已取消，详见日志与命令行输出")
 
@@ -693,7 +696,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         if self._running:
             self._cancel.set()
             self._status_var.set("正在停止…")
-            self._status_label.configure(foreground=_STATUS_COLOR)
+            self._status_label.configure(foreground=self._theme.palette.muted)
             self._append_log("已请求中止转换")
 
     def _reset_settings(self) -> None:

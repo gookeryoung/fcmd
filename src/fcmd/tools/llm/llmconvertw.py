@@ -186,7 +186,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title("HF 转 GGUF 转换")
         self.root.geometry(
             resolve_geometry(
@@ -221,6 +221,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._overwrite_var = tk.BooleanVar(value=False)
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._source_var.trace_add("write", lambda *_: self._refresh_existing())
         self._output_var.trace_add("write", lambda *_: self._refresh_existing())
         self._refresh_env()

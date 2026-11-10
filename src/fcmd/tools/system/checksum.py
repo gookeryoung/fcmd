@@ -223,7 +223,7 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._settings = load_settings(settings_path)
 
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title(f"校验和计算器 v{__version__}")
         self.root.geometry(
             resolve_geometry(
@@ -242,12 +242,13 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._compare_var = tk.StringVar()
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._toggle_compare()
 
     def _build_widgets(self) -> None:
         tk = self._tk
         ttk = self._ttk
-        palette = _guitheme.PALETTE
+        palette = self._theme.palette
         source = ttk.LabelFrame(self.root, text="数据源", padding=8)
         source.pack(fill="x", padx=12, pady=(12, 4))
 

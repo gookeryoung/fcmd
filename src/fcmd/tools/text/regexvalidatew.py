@@ -20,7 +20,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools import _guiconfig
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.text.regexvalidate import (
     PatternValidationError,
     RegexValidator,
@@ -56,7 +56,6 @@ MIN_WIDTH = 800
 MIN_HEIGHT = 540
 MAX_HISTORY_ITEMS = 20
 HISTORY_DELAY_MS = 1000
-MONO_FONT = ("Consolas", 10)
 
 
 @dataclass(frozen=True)
@@ -297,6 +296,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         self._loading = False
 
         self.root = tk.Tk()
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title(f"正则校验器 v{__version__}")
         self.root.geometry(valid_geometry(self._settings.geometry) or DEFAULT_GEOMETRY)
         self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
@@ -309,6 +309,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         self._status_var = tk.StringVar(value="校验结果：")
 
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._pattern_var.trace_add("write", self._on_change)
         self._text.bind("<KeyRelease>", self._on_change)
         if self._settings.pattern or self._settings.test_string:
@@ -317,6 +318,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
     def _build_widgets(self) -> None:
         tk = self._tk
         ttk = self._ttk
+        palette = self._theme.palette
         self._build_menu()
         self._configure_styles()
 
@@ -329,7 +331,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         pattern_frame.columnconfigure(3, weight=2)
 
         ttk.Label(pattern_frame, text="模式", width=6, anchor="w").grid(row=0, column=0, sticky="w", pady=1)
-        ttk.Entry(pattern_frame, textvariable=self._pattern_var, font=MONO_FONT).grid(
+        ttk.Entry(pattern_frame, textvariable=self._pattern_var, font=_guitheme.MONO_FONT).grid(
             row=0, column=1, columnspan=3, sticky="ew", padx=(4, 6), pady=1
         )
         ttk.Button(pattern_frame, text="语法帮助", command=self._show_help).grid(row=0, column=4, sticky="e", pady=1)
@@ -368,14 +370,14 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
             text_frame,
             height=6,
             wrap="word",
-            font=MONO_FONT,
+            font=_guitheme.MONO_FONT,
             padx=8,
             pady=6,
             undo=True,
             relief="flat",
             highlightthickness=1,
-            highlightbackground="#c8ccd4",
-            highlightcolor="#4a90e2",
+            highlightbackground=palette.border,
+            highlightcolor=palette.accent,
         )
         text_scrollbar = ttk.Scrollbar(text_frame, orient="vertical", command=self._text.yview)
         self._text.configure(yscrollcommand=text_scrollbar.set)
@@ -393,13 +395,13 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
             height=12,
             wrap="none",
             state="disabled",
-            font=MONO_FONT,
+            font=_guitheme.MONO_FONT,
             padx=8,
             pady=6,
             relief="flat",
             highlightthickness=1,
-            highlightbackground="#c8ccd4",
-            highlightcolor="#4a90e2",
+            highlightbackground=palette.border,
+            highlightcolor=palette.accent,
         )
         result_scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self._result.yview)
         result_xscrollbar = ttk.Scrollbar(result_frame, orient="horizontal", command=self._result.xview)
@@ -418,12 +420,13 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         ttk.Label(status_bar, text="输入时自动校验", style="Hint.TLabel").pack(side="right")
 
     def _configure_styles(self) -> None:
-        """定义状态栏配色，避免混用 tk/ttk 控件导致视觉不一致。"""
+        """定义状态栏配色，跟随当前主题，避免混用 tk/ttk 控件导致视觉不一致。"""
+        palette = self._theme.palette
         style = self._ttk.Style(self.root)
         style.configure("Status.TLabel", padding=(0, 2))
-        style.configure("Ok.TLabel", foreground="#1a7f37")
-        style.configure("Error.TLabel", foreground="#c62828")
-        style.configure("Hint.TLabel", foreground="#808080")
+        style.configure("Ok.TLabel", foreground=palette.success)
+        style.configure("Error.TLabel", foreground=palette.danger)
+        style.configure("Hint.TLabel", foreground=palette.muted)
 
     def _build_menu(self) -> None:
         tk = self._tk
@@ -606,6 +609,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
 
 def run_gui(settings_path: Path | None = None) -> None:
     """创建并运行 Tk 主窗口。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = RegexValidateWindow(settings_path)
     except ImportError as exc:

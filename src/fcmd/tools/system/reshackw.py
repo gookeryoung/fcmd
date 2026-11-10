@@ -409,7 +409,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._resize_job: str | None = None
 
         self.root = tk.Tk()
-        _guitheme.apply_theme(self.root)
+        self._theme = _guitheme.apply_theme(self.root)
         self.root.title(f"PE 资源编辑器 v{__version__}")
         self.root.geometry(
             resolve_geometry(
@@ -423,6 +423,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         self._status_var = tk.StringVar(value="就绪")
         self._build_widgets()
+        _guitheme.install_theme_switcher(self.root)
         self._refresh_recent_menu()
         if self._settings.file_path:
             path = Path(self._settings.file_path).expanduser()
@@ -435,7 +436,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_widgets(self) -> None:
         tk = self._tk
         ttk = self._ttk
-        palette = _guitheme.PALETTE
+        palette = self._theme.palette
         self._build_menu()
 
         toolbar = ttk.Frame(self.root)
@@ -604,7 +605,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         ):
             button.configure(state=state)
         if busy:
-            self._status_label.configure(foreground=_guitheme.PALETTE.text)
+            self._status_label.configure(foreground=self._theme.palette.text)
 
     def _refresh_recent_menu(self) -> None:
         """重建「最近打开」菜单。"""
@@ -820,7 +821,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 self._set_busy(False)
                 self._worker = None
                 self._status_var.set("操作失败")
-                self._status_label.configure(foreground=_guitheme.PALETTE.danger)
+                self._status_label.configure(foreground=self._theme.palette.danger)
                 self._append_log(f"错误：{event[1]}")
                 self._messagebox.showerror("操作失败", event[1])
                 return
@@ -1004,7 +1005,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             12,
             anchor="nw",
             text=message,
-            fill=_guitheme.PALETTE.muted,
+            fill=self._theme.palette.muted,
             width=width,
         )
 
