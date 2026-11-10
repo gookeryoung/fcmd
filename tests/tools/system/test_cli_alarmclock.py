@@ -29,6 +29,7 @@ from fcmd.tools.system.alarmclock import (
     next_border_color,
     next_occurrence,
     parse_clock,
+    resolve_geometry,
     save_settings,
     valid_geometry,
 )
@@ -227,6 +228,26 @@ class TestValidGeometry:
     @pytest.mark.parametrize("text", [None, "", "480", "480x400abc", "480 x 400"])
     def test_invalid(self, text: str | None) -> None:
         assert valid_geometry(text) is None
+
+
+class TestResolveGeometry:
+    """启动时 geometry 恢复：位置夹回屏幕、尺寸不小于下限。"""
+
+    def test_keeps_visible_position(self) -> None:
+        assert resolve_geometry("460x380+100+80", 1920, 1080) == "460x380+100+80"
+
+    def test_pulls_back_offscreen(self) -> None:
+        assert resolve_geometry("480x400+5000+5000", 1920, 1080) == "480x400+1440+680"
+
+    def test_enforces_minimum_size(self) -> None:
+        assert resolve_geometry("200x100+0+0", 1920, 1080) == "420x360+0+0"
+
+    def test_falls_back_to_default_geometry(self) -> None:
+        assert resolve_geometry(None, 1920, 1080) == "480x400+300+200"
+        assert resolve_geometry("bad", 1920, 1080) == "480x400+300+200"
+
+    def test_clamps_default_into_small_screen(self) -> None:
+        assert resolve_geometry(None, 400, 340) == "400x340+0+0"
 
 
 # ============================================================================ #

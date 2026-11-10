@@ -23,7 +23,7 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools import _guiconfig
+from fcmd.tools import _guiconfig, _guitheme
 
 __all__ = [
     "AlarmSettings",
@@ -34,6 +34,7 @@ __all__ = [
     "next_border_color",
     "next_occurrence",
     "parse_clock",
+    "resolve_geometry",
     "save_settings",
     "valid_geometry",
 ]
@@ -51,6 +52,8 @@ DELAY_STEPS = (1, 5, 10, 15, 30, 60)
 REMINDER_TITLE = "闹钟提醒！"
 REMINDER_TEXT = "⏰ 时间到！"
 DEFAULT_GEOMETRY = "480x400+300+200"
+MIN_WIDTH = 420
+MIN_HEIGHT = 360
 
 
 # ---------------------------------------------------------------------- #
@@ -99,6 +102,29 @@ def save_settings(settings: AlarmSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略（不影响窗口关闭）。"""
     payload = {"alarm": settings.alarm, "repeat": settings.repeat, "geometry": settings.geometry}
     _guiconfig.write_settings(payload, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    return (
+        _guiconfig.clamp_geometry(
+            DEFAULT_GEOMETRY,
+            screen_width,
+            screen_height,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+        )
+        or DEFAULT_GEOMETRY
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -198,9 +224,10 @@ class AlarmClockWindow:
 
     def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
-        from tkinter import messagebox
+        from tkinter import messagebox, ttk
 
         self._tk = tk
+        self._ttk = ttk
         self._messagebox = messagebox
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
@@ -212,9 +239,16 @@ class AlarmClockWindow:
         self._tick_timer: str | None = None
 
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title(f"定时提醒 v{__version__}")
-        self.root.geometry(valid_geometry(self._settings.geometry) or DEFAULT_GEOMETRY)
-        self.root.minsize(420, 360)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
+        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self._clock_var = tk.StringVar(value=datetime.now().strftime(DIGITAL_FORMAT))
@@ -234,12 +268,15 @@ class AlarmClockWindow:
 
     def _build_widgets(self) -> None:
         tk = self._tk
+        ttk = self._ttk
+        palette = _guitheme.PALETTE
+        # 大号时钟保留经典 Label：需要每秒直改 highlight 边框颜色，ttk 样式不支持逐控件边框动画
         self._clock_label = tk.Label(
             self.root,
             textvariable=self._clock_var,
             font=CLOCK_FONT,
-            fg="white",
-            bg="black",
+            fg=palette.text,
+            bg=palette.log_bg,
             padx=10,
             pady=10,
             highlightthickness=2,
@@ -248,40 +285,42 @@ class AlarmClockWindow:
         )
         self._clock_label.pack(fill="x", padx=12, pady=(12, 8))
 
-        box = tk.LabelFrame(self.root, text="时间设置", padx=8, pady=8)
+        box = ttk.LabelFrame(self.root, text="时间设置", padding=8)
         box.pack(fill="x", padx=12, pady=4)
 
-        row = tk.Frame(box)
+        row = ttk.Frame(box)
         row.pack(fill="x")
-        tk.Label(row, text="闹钟时间：").pack(side="left")
-        tk.Entry(row, textvariable=self._time_var, width=12, justify="center").pack(side="left", padx=(0, 8))
-        self._set_button = tk.Button(row, text="设置闹钟", command=self.toggle_alarm)
+        ttk.Label(row, text="闹钟时间：").pack(side="left")
+        ttk.Entry(row, textvariable=self._time_var, width=12, justify="center").pack(side="left", padx=(0, 8))
+        self._set_button = ttk.Button(row, text="设置闹钟", command=self.toggle_alarm)
         self._set_button.pack(side="right")
 
-        delay = tk.Frame(box)
+        delay = ttk.Frame(box)
         delay.pack(fill="x", pady=(8, 0))
-        tk.Label(delay, text="延时(分钟)：").pack(side="left")
+        ttk.Label(delay, text="延时(分钟)：").pack(side="left")
         for minutes in DELAY_STEPS:
-            button = tk.Button(delay, text=str(minutes), width=3, command=lambda value=minutes: self.set_delay(value))
+            button = ttk.Button(delay, text=str(minutes), width=3, command=lambda value=minutes: self.set_delay(value))
             button.pack(side="left", padx=(0, 4))
-        tk.Button(delay, text="重置", command=self.reset_time).pack(side="left")
+        ttk.Button(delay, text="重置", command=self.reset_time).pack(side="left")
 
-        options = tk.Frame(box)
+        options = ttk.Frame(box)
         options.pack(fill="x", pady=(8, 0))
-        tk.Checkbutton(options, text="重复（每天）", variable=self._repeat_var, command=self._sync_repeat).pack(
+        ttk.Checkbutton(options, text="重复（每天）", variable=self._repeat_var, command=self._sync_repeat).pack(
             side="left"
         )
 
-        self._status_label = tk.Label(
+        self._status_label = ttk.Label(
             self.root,
             textvariable=self._status_var,
-            fg="red",
-            font=("Microsoft YaHei", 10, "bold italic underline"),
+            foreground=palette.danger,
+            font=("", 10, "bold italic underline"),
         )
         self._status_label.pack(fill="x", padx=12, pady=(8, 2))
-        tk.Label(self.root, text="到点后弹窗置顶闪烁，点击「关闭提醒」结束本次提醒。", fg="#555555").pack(
-            fill="x", padx=12, pady=(0, 10)
-        )
+        ttk.Label(
+            self.root,
+            text="到点后弹窗置顶闪烁，点击「关闭提醒」结束本次提醒。",
+            foreground=palette.muted,
+        ).pack(fill="x", padx=12, pady=(0, 10))
 
     # ------------------------------------------------------------------ #
     # 时钟与状态刷新
@@ -354,6 +393,7 @@ class AlarmClockWindow:
     # ------------------------------------------------------------------ #
     def _open_reminder(self) -> None:
         tk = self._tk
+        ttk = self._ttk
         self.root.bell()
         window = tk.Toplevel(self.root)
         window.title(REMINDER_TITLE)
@@ -371,7 +411,7 @@ class AlarmClockWindow:
             bg=self._blink_color,
         )
         label.pack(padx=40, pady=(30, 10))
-        tk.Button(window, text="关闭提醒", command=self.close_reminder).pack(pady=(0, 20))
+        ttk.Button(window, text="关闭提醒", command=self.close_reminder).pack(pady=(0, 20))
         window.update_idletasks()
         window.grab_set()
         window.focus_force()
@@ -435,7 +475,8 @@ class AlarmClockWindow:
 
 
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = AlarmClockWindow(settings_path)
     except ImportError as exc:
