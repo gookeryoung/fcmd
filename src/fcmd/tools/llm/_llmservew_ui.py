@@ -145,80 +145,65 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             state="readonly",
         )
         self._profile_box.bind("<<ComboboxSelected>>", self._on_profile_changed)
-        self._pair_row(
+        _guiwindow.pair_row(
             params,
             0,
             "服务名",
             self._name_box,
             "档位",
             self._profile_box,
+            theme=self._theme,
         )
-        self._pair_row(
+        _guiwindow.pair_row(
             params,
             1,
             "监听地址",
             ttk.Entry(params, textvariable=self._host_var),
             "端口",
             ttk.Entry(params, textvariable=self._port_var),
+            theme=self._theme,
         )
-        self._pair_row(
+        _guiwindow.pair_row(
             params,
             2,
             "线程数",
             ttk.Entry(params, textvariable=self._threads_var),
             "",
             ttk.Label(params, text=""),
+            theme=self._theme,
         )
 
         advanced, body = self._collapsible(parent, "高级参数（留空回落档位默认）", open_state=False)
         advanced.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         body.columnconfigure(1, weight=1)
         body.columnconfigure(3, weight=1)
-        self._pair_row(
+        _guiwindow.pair_row(
             body,
             0,
             "上下文",
             ttk.Entry(body, textvariable=self._ctx_var),
             "KV",
             ttk.Combobox(body, textvariable=self._kv_var, values=("", *KV_SCALE), state="readonly"),
+            theme=self._theme,
         )
-        self._pair_row(
+        _guiwindow.pair_row(
             body,
             1,
             "ubatch",
             ttk.Entry(body, textvariable=self._ubatch_var),
             "模型别名（留空自动）",
             ttk.Entry(body, textvariable=self._alias_var),
+            theme=self._theme,
         )
-        self._pair_row(
+        _guiwindow.pair_row(
             body,
             2,
             "API Key",
             ttk.Entry(body, textvariable=self._api_key_var),
             "等待就绪（秒）",
             ttk.Entry(body, textvariable=self._wait_var),
+            theme=self._theme,
         )
-
-    def _pair_row(  # noqa: PLR0913, PLR0917
-        self,
-        target: Any,
-        row: int,
-        label: str,
-        widget: Any,
-        right_label: str,
-        right_widget: Any,
-    ) -> None:
-        """在目标 Frame 的第 ``row`` 行放置两组“标签 + 输入控件”。"""
-        ttk = self._ttk
-        ttk.Label(target, text=label).grid(
-            row=row, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
-        )
-        widget.grid(row=row, column=1, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs)
-        if right_label:
-            ttk.Label(target, text=right_label).grid(
-                row=row, column=2, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
-            )
-        right_widget.grid(row=row, column=3, sticky="ew", pady=self._theme.spacing.xxs)
 
     def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
         """创建可折叠分区，返回（外层容器, 内容 Frame）。"""

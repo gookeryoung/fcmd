@@ -33,6 +33,7 @@ __all__ = [
     "create_log",
     "create_root",
     "fit_wraplength",
+    "pair_row",
     "resolve_geometry",
     "run_window",
     "start_worker",
@@ -53,6 +54,31 @@ CJK_FONT_WARNING: Final[str] = (
 def fit_wraplength(width: int) -> int:
     """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
     return max(width - 8, 120)
+
+
+def pair_row(  # noqa: PLR0913, PLR0917 - 两列控件布局本就需要 6 个位置参数，与调用点顺序一致
+    target: Any,
+    row: int,
+    label: str,
+    widget: Any,
+    right_label: str,
+    right_widget: Any,
+    *,
+    theme: Theme,
+) -> None:  # pragma: no cover - 需要真实 Tk 控件
+    """在第 ``row`` 行放置两组「标签 + 输入控件」，右侧标签留空时只占位。
+
+    两个 LLM 窗口曾各复制一份同名 ``_pair_row``；间距全部来自主题，没有窗口
+    私有常量，因此收敛为直接调用。
+    """
+    from tkinter import ttk
+
+    space = theme.spacing
+    ttk.Label(target, text=label).grid(row=row, column=0, sticky="w", padx=(0, space.sm), pady=space.xxs)
+    widget.grid(row=row, column=1, sticky="ew", padx=(0, space.md), pady=space.xxs)
+    if right_label:
+        ttk.Label(target, text=right_label).grid(row=row, column=2, sticky="w", padx=(0, space.sm), pady=space.xxs)
+    right_widget.grid(row=row, column=3, sticky="ew", pady=space.xxs)
 
 
 def clamp_saved_geometry(

@@ -329,7 +329,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
 
-        self._pair_row(
+        _guiwindow.pair_row(
             params,
             0,
             "转换精度",
@@ -341,6 +341,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             ),
             "引擎 tag",
             ttk.Entry(params, textvariable=self._tag_var),
+            theme=self._theme,
         )
 
         ttk.Label(params, text="解释器").grid(
@@ -457,27 +458,6 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             )
             if exists and not overwrite:
                 self._format_vars[key].set(True)
-
-    def _pair_row(  # noqa: PLR0913, PLR0917
-        self,
-        target: Any,
-        row: int,
-        label: str,
-        widget: Any,
-        right_label: str,
-        right_widget: Any,
-    ) -> None:
-        """在目标 Frame 的第 ``row`` 行放置两组“标签 + 输入控件”。"""
-        ttk = self._ttk
-        ttk.Label(target, text=label).grid(
-            row=row, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
-        )
-        widget.grid(row=row, column=1, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs)
-        if right_label:
-            ttk.Label(target, text=right_label).grid(
-                row=row, column=2, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
-            )
-        right_widget.grid(row=row, column=3, sticky="ew", pady=self._theme.spacing.xxs)
 
     def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
         """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
