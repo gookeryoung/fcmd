@@ -1,7 +1,7 @@
 """计算域公共实现：randtool / stattool / timetool（无工具注册副作用）。
 
 三组工具全部为纯 Python 实现（标准库 secrets / statistics / datetime /
-zoneinfo），无子进程调用。DSL 层 :mod:`fcmd.dsl.actions.calc` 只保留
+zoneinfo），无子进程调用。DSL 层 :mod:`fcmd.dsl.actions.toolcmd.calc` 只保留
 ``@action`` 声明并转接本模块函数，避免出现第二套实现。
 """
 

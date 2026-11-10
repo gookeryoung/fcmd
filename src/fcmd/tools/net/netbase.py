@@ -1,6 +1,6 @@
 """网络域公共实现：nettool / iptool / websave / urlcheck（无工具注册副作用）。
 
-供 ``fcmd.dsl.actions.net`` 的 ``@action`` 声明与外部代码复用：HTTP 客户端、
+供 ``fcmd.dsl.actions.toolcmd.net`` 的 ``@action`` 声明与外部代码复用：HTTP 客户端、
 IP 解析、网页保存与 URL 可访问性检测的实现只在本模块保留一份。
 通用探测能力（``check_url`` / ``check_urls`` 等）仍由
 :mod:`fcmd.core.shared.net` 提供，本模块只做导入复用。

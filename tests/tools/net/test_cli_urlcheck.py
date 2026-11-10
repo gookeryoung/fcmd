@@ -1,6 +1,6 @@
 """urlcheck 工具测试。
 
-验证 ``fcmd.dsl.actions.net`` 模块：
+验证 ``fcmd.dsl.actions.toolcmd.net`` 模块：
 - 工具注册与子命令结构（u / r）
 - check_url 可访问 / HEAD 回退 GET / 不可达
 - check_urls 并发探测 + 排序（可达优先、延迟升序）
@@ -18,7 +18,7 @@ import pytest
 
 import fcmd as fx
 import fcmd.core.shared.net
-import fcmd.dsl.actions.net
+import fcmd.dsl.actions.toolcmd.net
 from fcmd.core.shared.net import check_url, check_urls, unreachable_latency
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
@@ -252,5 +252,5 @@ class TestUrlcheckCLI:
 
     def test_rank_empty_direct_call(self, capsys: pytest.CaptureFixture[str]) -> None:
         """空 URL 列表直接调用时打印提示（CLI 侧由 argparse 必填参数拦截）。"""
-        fcmd.dsl.actions.net.urlcheck_r([])
+        fcmd.dsl.actions.toolcmd.net.urlcheck_r([])
         assert "至少一个 URL" in capsys.readouterr().out

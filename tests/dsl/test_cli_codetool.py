@@ -1,6 +1,6 @@
 """codetool 工具测试（DSL 内建动作声明 commands/codetool.toml）。
 
-验证 ``fcmd.dsl.actions.codec`` 模块：
+验证 ``fcmd.dsl.actions.toolcmd.codec`` 模块：
 - 工具注册与子命令结构
 - Base64 / URL / Hex / ROT13 / HTML 编解码
 - 通过 run_tool 调用各子命令
@@ -16,7 +16,7 @@ import pytest
 import fcmd as fx
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.dsl.actions.codec import (
+from fcmd.dsl.actions.toolcmd.codec import (
     decode_base64,
     decode_hex,
     decode_url,

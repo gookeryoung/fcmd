@@ -1,6 +1,6 @@
 """cryptool 工具测试。
 
-验证 ``fcmd.dsl.actions.crypto`` 模块：
+验证 ``fcmd.dsl.actions.toolcmd.crypto`` 模块：
 - 工具注册与三子命令结构（genkey/encrypt/decrypt）
 - 密钥模式与密码模式的加解密往返一致性
 - 密文格式与密钥派生正确性
@@ -17,7 +17,7 @@ import base64
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.dsl.actions.crypto import (
+from fcmd.dsl.actions.toolcmd.crypto import (
     _KEY_BYTES,
     _SALT_BYTES,
     _b64decode,

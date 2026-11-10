@@ -1,6 +1,6 @@
 """timetool 工具测试。
 
-验证 ``fcmd.dsl.actions.calc`` 模块：
+验证 ``fcmd.dsl.actions.toolcmd.calc`` 模块：
 - 工具注册与五子命令结构（now/parse/unix/fromunix/convert）
 - ``now_utc``/``now_local``/``parse_time``/``format_time``/``to_unix``/``from_unix``/``convert_timezone``
 - CLI 子命令端到端

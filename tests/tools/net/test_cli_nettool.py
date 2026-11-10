@@ -16,7 +16,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
-import fcmd.dsl.actions.net
+import fcmd.dsl.actions.toolcmd.net
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.tools.net.netbase import http_get, http_head, http_post
 

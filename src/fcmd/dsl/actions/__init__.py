@@ -29,28 +29,34 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 操作中逐条目的过程反馈（预览/重命名回显/缺失跳过提示）保留 ``print``——
 内容依赖运行时逐条目结果，无法静态模板化，且是批量操作的必要反馈。
 
-子模块按类别划分（按需导入，新增动作勿放入本模块）。动作名 → 子模块的
+子模块分两层（按需导入，新增动作勿放入本模块）。动作名 → 子模块的
 索引由 :mod:`fcmd.dsl.actions._index` 静态维护：新增动作后须执行
 ``uv run python -m fcmd.dsl.actions._index`` 重新生成，否则动作在按需
-加载时定位不到（一致性测试会拦截）：
+加载时定位不到（一致性测试会拦截）。
+
+**通用动作层（包顶层）**——与具体工具无关、可被任意声明复用：
 
 * :mod:`fcmd.dsl.actions.basic` —— 环境与文件基础副作用（setenv/writefile）
 * :mod:`fcmd.dsl.actions.filenames` —— 文件名批量操作（dateprefix/filerename/filelevel）
 * :mod:`fcmd.dsl.actions.fileops` —— 目录检索与路径处理（filesearch/pathtool）
-* :mod:`fcmd.dsl.actions.archive` —— 目录压缩（folderzip）
 * :mod:`fcmd.dsl.actions.system` —— 系统管理（taskkill/which/sysinfo/folderback）
-* :mod:`fcmd.dsl.actions.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
-* :mod:`fcmd.dsl.actions.hashing` —— 字符串与文件哈希（hashtool/hashfile）
 * :mod:`fcmd.dsl.actions.genid` —— ID 生成（UUID/时间戳/随机字符串，idtool）
-* :mod:`fcmd.dsl.actions.conv` —— 命名风格/颜色换算/数学计算（casetool/colortool/mathtool）
-* :mod:`fcmd.dsl.actions.codec` —— 编解码/单位换算/URL（codetool/convtool/urltool）
-* :mod:`fcmd.dsl.actions.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
-* :mod:`fcmd.dsl.actions.calcdate` —— 日期计算（calcdate）
-* :mod:`fcmd.dsl.actions.crypto` —— 加密与摘要（cryptool）
-* :mod:`fcmd.dsl.actions.data` —— 结构化数据转换（csvtool/jsontool/tomltool/xmltool/yamtool/inifile）
-* :mod:`fcmd.dsl.actions.media` —— 图片处理（imagetool/img2ico）
-* :mod:`fcmd.dsl.actions.net` —— 网络工具（websave/nettool/iptool/urlcheck）
-* :mod:`fcmd.dsl.actions.text` —— 文本处理（txttool/asciitool/padtool/regextool/textdiff）
+
+**工具专用命令层（:mod:`fcmd.dsl.actions.toolcmd`）**——只服务单一工具域，
+本质是把 ``fcmd.tools.<域>`` 的能力包一层 CLI 外壳，模块内只提供命令：
+
+* :mod:`fcmd.dsl.actions.toolcmd.archive` —— 目录压缩（folderzip）
+* :mod:`fcmd.dsl.actions.toolcmd.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
+* :mod:`fcmd.dsl.actions.toolcmd.hashing` —— 字符串与文件哈希（hashtool/hashfile）
+* :mod:`fcmd.dsl.actions.toolcmd.conv` —— 命名风格/颜色换算/数学计算（casetool/colortool/mathtool）
+* :mod:`fcmd.dsl.actions.toolcmd.codec` —— 编解码/单位换算/URL（codetool/convtool/urltool）
+* :mod:`fcmd.dsl.actions.toolcmd.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
+* :mod:`fcmd.dsl.actions.toolcmd.calcdate` —— 日期计算（calcdate）
+* :mod:`fcmd.dsl.actions.toolcmd.crypto` —— 加密与摘要（cryptool）
+* :mod:`fcmd.dsl.actions.toolcmd.data` —— 结构化数据转换（csvtool/jsontool/tomltool/xmltool/yamtool/inifile）
+* :mod:`fcmd.dsl.actions.toolcmd.media` —— 图片处理（imagetool/img2ico）
+* :mod:`fcmd.dsl.actions.toolcmd.net` —— 网络工具（websave/nettool/iptool/urlcheck）
+* :mod:`fcmd.dsl.actions.toolcmd.text` —— 文本处理（txttool/asciitool/padtool/regextool/textdiff）
 """
 
 from __future__ import annotations

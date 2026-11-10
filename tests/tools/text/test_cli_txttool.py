@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.dsl.actions.text
+import fcmd.dsl.actions.toolcmd.text
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.tools.text.textbase import convert_case, count_text, sort_lines, unique_lines
 

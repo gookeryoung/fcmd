@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fcmd.tools.calc import calcbase
 
-from ..actions import action
+from .. import action
 
 # ============================================================================
 # randtool DSL 动作

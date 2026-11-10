@@ -1,6 +1,6 @@
 """归档域公共实现：folderzip（无工具注册副作用）。
 
-供 ``fcmd.dsl.actions.archive`` 的 ``@action`` 声明复用；目录筛选与单目录
+供 ``fcmd.dsl.actions.toolcmd.archive`` 的 ``@action`` 声明复用；目录筛选与单目录
 压缩实现只在本模块保留一份。原实现位于 DSL 动作层，迁入后命令行为不变。
 """
 

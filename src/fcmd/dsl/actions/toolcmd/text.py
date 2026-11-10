@@ -12,7 +12,7 @@ from pathlib import Path
 
 from fcmd.tools.text import textbase
 
-from ..actions import action
+from .. import action
 
 # ============================================================================
 # asciitool DSL 动作

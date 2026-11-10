@@ -14,8 +14,8 @@ import pytest
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.core.toolkit.args import ToolSpec
-from fcmd.dsl.actions import conv
-from fcmd.dsl.actions.conv import _require_coloraide
+from fcmd.dsl.actions.toolcmd import conv
+from fcmd.dsl.actions.toolcmd.conv import _require_coloraide
 from tests.helpers import run_and_capture as _run_and_capture
 
 ensure_tools_discovered()

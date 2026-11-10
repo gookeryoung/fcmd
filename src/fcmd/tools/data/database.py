@@ -2,7 +2,7 @@
 
 六类工具全部为纯 Python 实现（标准库 csv/configparser/json/tomllib/
 xml.etree.ElementTree + 可选 yaml），无子进程调用。业务实现只在本模块保留
-一份；``fcmd.dsl.actions.data`` 仅保留 ``@action`` 声明与参数转接。
+一份；``fcmd.dsl.actions.toolcmd.data`` 仅保留 ``@action`` 声明与参数转接。
 
 公共函数（无下划线前缀）保持原模块对外 API 不变，供测试 import：
 read_csv / write_csv / csv_to_json / json_to_csv / select_columns / merge_csvs /

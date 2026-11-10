@@ -90,14 +90,16 @@ class TestActionLazyLoading:
     def test_index_matches_registered_actions(self) -> None:
         """``_index.ACTION_MODULES`` 与子模块实际注册的动作名一一对应。"""
         import importlib
-        import pkgutil
 
         import fcmd.dsl.actions as actions_pkg
-        from fcmd.dsl.actions._index import ACTION_MODULES
+        from fcmd.dsl.actions._index import ACTION_MODULES, _iter_action_modules
 
-        for mod in sorted(m.name for m in pkgutil.iter_modules(actions_pkg.__path__) if not m.name.startswith("_")):
+        for mod in _iter_action_modules():
             importlib.import_module(f"{actions_pkg.__name__}.{mod}")
-        actual = {name: act.func.__module__.rsplit(".", 1)[1] for name, act in actions_pkg._ACTIONS.items()}
+        actual = {
+            name: act.func.__module__.removeprefix(f"{actions_pkg.__name__}.")
+            for name, act in actions_pkg._ACTIONS.items()
+        }
         assert actual == ACTION_MODULES
 
     def test_package_import_does_not_load_submodules(self) -> None:
@@ -171,7 +173,7 @@ class TestComputeActionImpls:
     ) -> None:
         """通配符按已安装包展开（大小写不敏感、保留原包名大小写），受保护包剔除并提示。"""
         monkeypatch.setattr(
-            "fcmd.dsl.actions.compute._pip_installed_packages",
+            "fcmd.dsl.actions.toolcmd.compute._pip_installed_packages",
             lambda: ["Requests", "requests_toolbelt", "fcmd", "click"],
         )
         out = get_action("pip_expand").func(packages=["REQUESTS*", "fc*"])
@@ -180,7 +182,7 @@ class TestComputeActionImpls:
 
     def test_pip_expand_wildcard_no_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """通配符无匹配返回空列表（引擎侧 SKIPPED）。"""
-        monkeypatch.setattr("fcmd.dsl.actions.compute._pip_installed_packages", lambda: ["click"])
+        monkeypatch.setattr("fcmd.dsl.actions.toolcmd.compute._pip_installed_packages", lambda: ["click"])
         assert get_action("pip_expand").func(packages=["nomatch*"]) == []
 
     def test_pip_expand_all_protected(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -198,7 +200,7 @@ class TestComputeActionImpls:
             return subprocess.CompletedProcess(cmd, 1, "", "boom")
 
         monkeypatch.setattr("subprocess.run", failing_run)
-        from fcmd.dsl.actions.compute import _pip_installed_packages
+        from fcmd.dsl.actions.toolcmd.compute import _pip_installed_packages
 
         with pytest.raises(RuntimeError, match="pip list 失败"):
             _pip_installed_packages()

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fcmd.tools.data import database
 
-from ..actions import action
+from .. import action
 
 # ============================================================================
 # csvtool DSL 动作

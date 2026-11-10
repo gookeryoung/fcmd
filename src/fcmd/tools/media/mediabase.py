@@ -1,6 +1,6 @@
 """媒体域公共实现：img2ico / imagetool（无工具注册副作用）。
 
-供 ``fcmd.dsl.actions.media`` 的 ``@action`` 声明、窗口版工具及外部代码复用：
+供 ``fcmd.dsl.actions.toolcmd.media`` 的 ``@action`` 声明、窗口版工具及外部代码复用：
 图标转换、图片缩放/裁剪/水印/EXIF/直方图等实现只在本模块保留一份。
 
 外部库按需延迟导入——导入本模块不触发重型 PIL / resvg 加载；执行期 import

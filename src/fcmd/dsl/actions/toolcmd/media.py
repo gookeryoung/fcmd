@@ -12,7 +12,7 @@ from typing import Literal
 
 from fcmd.tools.media import mediabase
 
-from ..actions import action
+from .. import action
 
 
 @action(
