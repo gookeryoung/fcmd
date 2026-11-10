@@ -1,6 +1,6 @@
 """日期计算公共实现：calcdate（基于 datetime 标准库，无子进程调用）。
 
-业务实现统一在本模块；DSL 层 :mod:`fcmd.dsl.actions.toolcmd.calcdate` 只保留
+业务实现统一在本模块；DSL 层 :mod:`fcmd.dsl.toolcmd.calcdate` 只保留
 ``@action`` 声明与参数转接，避免出现第二套日期实现。
 """
 

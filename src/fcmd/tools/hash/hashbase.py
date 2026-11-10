@@ -1,6 +1,6 @@
 """哈希域公共实现：hashtool / hashfile（无工具注册副作用）。
 
-供 ``fcmd.dsl.actions.toolcmd.hashing`` 的 ``@action`` 声明复用；字符串与文件哈希
+供 ``fcmd.dsl.toolcmd.hashing`` 的 ``@action`` 声明复用；字符串与文件哈希
 算法、目录遍历过滤规则只在本模块保留一份。
 """
 

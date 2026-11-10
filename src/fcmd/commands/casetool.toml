@@ -1,6 +1,6 @@
 # 内置 DSL 命令：casetool（多子命令形态，内建动作原语）。
 #
-# 原模块 fcmd/cli/conv/casetool.py 已迁入 fcmd/dsl/actions/toolcmd/conv.py：
+# 原模块 fcmd/cli/conv/casetool.py 已迁入 fcmd/dsl/toolcmd/conv.py：
 # snake/camel/pascal/kebab 四子命令均为纯 Python 正则拆分 + 重组，
 # 无子进程调用。动作签名即 CLI 参数 schema；识别小大写边界、连字符、
 # 下划线、连续大写（HTTPServer → HTTP/Server）等多分隔风格。

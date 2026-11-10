@@ -96,11 +96,8 @@ class TestActionLazyLoading:
         from fcmd.dsl.actions._index import ACTION_MODULES, _iter_action_modules
 
         for mod in _iter_action_modules():
-            importlib.import_module(f"{actions_pkg.__name__}.{mod}")
-        actual = {
-            name: act.func.__module__.removeprefix(f"{actions_pkg.__name__}.")
-            for name, act in actions_pkg._ACTIONS.items()
-        }
+            importlib.import_module(mod)
+        actual = {name: act.func.__module__ for name, act in actions_pkg._ACTIONS.items()}
         assert actual == ACTION_MODULES
 
     def test_specs_match_registered_actions(self) -> None:
@@ -114,7 +111,7 @@ class TestActionLazyLoading:
         from fcmd.dsl.actions._index import ACTION_MODULES, ACTION_SPECS, _iter_action_modules
 
         for mod in _iter_action_modules():
-            importlib.import_module(f"{actions_pkg.__name__}.{mod}")
+            importlib.import_module(mod)
         assert set(ACTION_SPECS) == set(ACTION_MODULES)
         for name in ACTION_MODULES:
             act = actions_pkg.get_action(name)
@@ -151,7 +148,7 @@ class TestActionLazyLoading:
         script = "import fcmd.dsl.actions as a\na.get_action('setenv')\nprint(sorted(a._LOADED_MODULES))\n"
         proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.strip() == "['basic']", proc.stderr
+        assert proc.stdout.strip() == "['fcmd.dsl.actions.basic']", proc.stderr
 
 
 # ---------------------------------------------------------------------- #
@@ -210,7 +207,7 @@ class TestComputeActionImpls:
     ) -> None:
         """通配符按已安装包展开（大小写不敏感、保留原包名大小写），受保护包剔除并提示。"""
         monkeypatch.setattr(
-            "fcmd.dsl.actions.toolcmd.compute._pip_installed_packages",
+            "fcmd.dsl.toolcmd.compute._pip_installed_packages",
             lambda: ["Requests", "requests_toolbelt", "fcmd", "click"],
         )
         out = get_action("pip_expand").func(packages=["REQUESTS*", "fc*"])
@@ -219,7 +216,7 @@ class TestComputeActionImpls:
 
     def test_pip_expand_wildcard_no_match(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """通配符无匹配返回空列表（引擎侧 SKIPPED）。"""
-        monkeypatch.setattr("fcmd.dsl.actions.toolcmd.compute._pip_installed_packages", lambda: ["click"])
+        monkeypatch.setattr("fcmd.dsl.toolcmd.compute._pip_installed_packages", lambda: ["click"])
         assert get_action("pip_expand").func(packages=["nomatch*"]) == []
 
     def test_pip_expand_all_protected(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -237,7 +234,7 @@ class TestComputeActionImpls:
             return subprocess.CompletedProcess(cmd, 1, "", "boom")
 
         monkeypatch.setattr("subprocess.run", failing_run)
-        from fcmd.dsl.actions.toolcmd.compute import _pip_installed_packages
+        from fcmd.dsl.toolcmd.compute import _pip_installed_packages
 
         with pytest.raises(RuntimeError, match="pip list 失败"):
             _pip_installed_packages()

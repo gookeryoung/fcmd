@@ -42,21 +42,21 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 * :mod:`fcmd.dsl.actions.system` —— 系统管理（taskkill/which/sysinfo/folderback）
 * :mod:`fcmd.dsl.actions.genid` —— ID 生成（UUID/时间戳/随机字符串，idtool）
 
-**工具专用命令层（:mod:`fcmd.dsl.actions.toolcmd`）**——只服务单一工具域，
+**工具专用命令层（:mod:`fcmd.dsl.toolcmd`）**——只服务单一工具域，
 本质是把 ``fcmd.tools.<域>`` 的能力包一层 CLI 外壳，模块内只提供命令：
 
-* :mod:`fcmd.dsl.actions.toolcmd.archive` —— 目录压缩（folderzip）
-* :mod:`fcmd.dsl.actions.toolcmd.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
-* :mod:`fcmd.dsl.actions.toolcmd.hashing` —— 字符串与文件哈希（hashtool/hashfile）
-* :mod:`fcmd.dsl.actions.toolcmd.conv` —— 命名风格/颜色换算/数学计算（casetool/colortool/mathtool）
-* :mod:`fcmd.dsl.actions.toolcmd.codec` —— 编解码/单位换算/URL（codetool/convtool/urltool）
-* :mod:`fcmd.dsl.actions.toolcmd.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
-* :mod:`fcmd.dsl.actions.toolcmd.calcdate` —— 日期计算（calcdate）
-* :mod:`fcmd.dsl.actions.toolcmd.crypto` —— 加密与摘要（cryptool）
-* :mod:`fcmd.dsl.actions.toolcmd.data` —— 结构化数据转换（csvtool/jsontool/tomltool/xmltool/yamtool/inifile）
-* :mod:`fcmd.dsl.actions.toolcmd.media` —— 图片处理（imagetool/img2ico）
-* :mod:`fcmd.dsl.actions.toolcmd.net` —— 网络工具（websave/nettool/iptool/urlcheck）
-* :mod:`fcmd.dsl.actions.toolcmd.text` —— 文本处理（txttool/asciitool/padtool/regextool/textdiff）
+* :mod:`fcmd.dsl.toolcmd.archive` —— 目录压缩（folderzip）
+* :mod:`fcmd.dsl.toolcmd.compute` —— 计算型动作（pip_expand/pip_filter，返回值进数据流）
+* :mod:`fcmd.dsl.toolcmd.hashing` —— 字符串与文件哈希（hashtool/hashfile）
+* :mod:`fcmd.dsl.toolcmd.conv` —— 命名风格/颜色换算/数学计算（casetool/colortool/mathtool）
+* :mod:`fcmd.dsl.toolcmd.codec` —— 编解码/单位换算/URL（codetool/convtool/urltool）
+* :mod:`fcmd.dsl.toolcmd.calc` —— 随机/统计/时间工具（randtool/stattool/timetool）
+* :mod:`fcmd.dsl.toolcmd.calcdate` —— 日期计算（calcdate）
+* :mod:`fcmd.dsl.toolcmd.crypto` —— 加密与摘要（cryptool）
+* :mod:`fcmd.dsl.toolcmd.data` —— 结构化数据转换（csvtool/jsontool/tomltool/xmltool/yamtool/inifile）
+* :mod:`fcmd.dsl.toolcmd.media` —— 图片处理（imagetool/img2ico）
+* :mod:`fcmd.dsl.toolcmd.net` —— 网络工具（websave/nettool/iptool/urlcheck）
+* :mod:`fcmd.dsl.toolcmd.text` —— 文本处理（txttool/asciitool/padtool/regextool/textdiff）
 """
 
 from __future__ import annotations
@@ -111,11 +111,11 @@ _LOADED_MODULES: set[str] = set()
 
 
 def _load_module(module: str) -> None:
-    """导入单个动作子模块（幂等；导入期执行 ``@action`` 完成注册）。"""
+    """导入单个动作子模块（绝对模块路径；幂等，导入期执行 ``@action`` 完成注册）。"""
     if module in _LOADED_MODULES:
         return
     _LOADED_MODULES.add(module)
-    importlib.import_module(f"{__name__}.{module}")
+    importlib.import_module(module)
 
 
 def _load_action(name: str) -> None:

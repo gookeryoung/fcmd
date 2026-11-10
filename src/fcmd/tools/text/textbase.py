@@ -1,6 +1,6 @@
 """文本域公共实现：asciitool / padtool / regextool / txttool / textdiff（无工具注册副作用）。
 
-供 ``fcmd.dsl.actions.toolcmd.text`` 的 ``@action`` 声明复用：ASCII 码查询、文本对齐、
+供 ``fcmd.dsl.toolcmd.text`` 的 ``@action`` 声明复用：ASCII 码查询、文本对齐、
 正则匹配/替换/分割、行统计与排序、文本与目录 diff 等实现只在本模块保留一份。
 
 公共函数（无下划线前缀）保持原模块对外 API 不变，供测试 import：

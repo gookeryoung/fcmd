@@ -19,8 +19,8 @@ DSL 最初只为「声明式编排」而生，但历史上把大量业务实现�
 2. 所有业务实现迁入 `tools/<域>`，一个功能域只保留一份实现。
 3. 推荐形态：
    - `tools/<域>/<域>base.py`（图片域为 `tools/media/mediabase.py`）承载纯实现，不含 `@action`；
-   - `dsl/actions/toolcmd/<域>.py` 只保留 `@action` 声明与参数转接，调用 `base` 中的函数；
-   - 与具体工具无关的通用动作（`basic` / `filenames` / `fileops` / `system` / `genid`）留在 `dsl/actions/<域>.py` 顶层；
+   - `dsl/toolcmd/<域>.py` 只保留 `@action` 声明与参数转接，调用 `base` 中的函数；
+   - 与具体工具无关的通用动作（`basic` / `filenames` / `fileops` / `system` / `genid`）留在 `dsl/actions/` 包内；
    - `tools/<域>` 下的 CLI / GUI 入口直接复用 `base`，不复制逻辑。
 4. 迁移顺序按域独立提交、可回滚，命令行为零破坏。图片域已于 P2-1 完成试点：`mediabase.py` 承载全部实现（约 925 行），`dsl/actions/media.py` 缩减为声明与转接（约 265 行）。
 5. 入口命名（D2）：工具规范名（`imagetool` / `jsontool` / `piptool` / `gittool`）为官方入口并生成同名全局脚本；历史短名（`imaget` / `jsont` / `pipt` / `gitt`）保留为显式别名，同样保留脚本。与系统命令同名的 `taskkill` / `which` 例外：不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本，规范名仍可通过 `fcmd taskkill` / `fcmd which` 访问。`resolve_tool` 只做别名精确匹配，取消 `tool` / `cmd` 后缀隐式推断。
@@ -39,10 +39,10 @@ DSL 最初只为「声明式编排」而生，但历史上把大量业务实现�
 
 ## 落地状态
 
-- P2-1：图片域完成，`dsl/actions/toolcmd/media.py` 仅剩声明与转接；`tools/media/img2icow.py` 复用 `mediabase` 的尺寸解析与转换函数。
+- P2-1：图片域完成，`dsl/toolcmd/media.py` 仅剩声明与转接；`tools/media/img2icow.py` 复用 `mediabase` 的尺寸解析与转换函数。
 - P2-2：入口命名统一完成，短名全部为显式别名并有回归测试；后缀推断已删除；`taskkill` / `which` 不再生成同名全局脚本。
-- P2-3：archive / text / net / calc / hash / data 六域全部迁移完成，`dsl/actions/toolcmd/*.py` 只保留 `@action` 声明与参数转接，无第二份实现。
-- P2-4：动作层按边界分两层——通用动作（`basic` / `filenames` / `fileops` / `system` / `genid`）留在 `dsl/actions/` 顶层，工具专用声明模块迁入 `dsl/actions/toolcmd/`；动作名 → 模块与参数签名由 `dsl/actions/_index.py` 静态表维护，声明解析与参数 schema 合成只读该表，动作实现模块仅在真正执行时导入。
+- P2-3：archive / text / net / calc / hash / data 六域全部迁移完成，`dsl/toolcmd/*.py` 只保留 `@action` 声明与参数转接，无第二份实现。
+- P2-4：动作层按边界分两层——通用动作（`basic` / `filenames` / `fileops` / `system` / `genid`）在 `dsl/actions/`，工具专用声明模块在 `dsl/toolcmd/`；两者是 `dsl` 下的平级包，目录深度均为两层。动作名 → 模块与参数签名由 `dsl/actions/_index.py` 静态表维护（表项记录绝对模块路径，懒加载直接按路径导入），声明解析与参数 schema 合成只读该表，动作实现模块仅在真正执行时导入。
 - text 域迁移时发现 `tools` 反向依赖 `dsl/actions/fileops.py` 的文本读取 helper，已下沉到 `core/shared/textio.py`（`is_binary_file` / `read_text_lines`），`fileops` 与 `textbase` 共用。
 
 ## 交接

@@ -1,6 +1,6 @@
 """folderzip 工具测试。
 
-验证 ``fcmd.tools.archive.archivebase`` 模块（由 ``fcmd.dsl.actions.toolcmd.archive`` 声明转接）：
+验证 ``fcmd.tools.archive.archivebase`` 模块（由 ``fcmd.dsl.toolcmd.archive`` 声明转接）：
 - 工具注册（单命令工具，无子命令）
 - archive_folder 单文件夹压缩
 - 通过 run_tool 调用 folderzip --directory 批量压缩
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.dsl.actions.toolcmd.archive
+import fcmd.dsl.toolcmd.archive
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.tools.archive.archivebase import archive_folder
 

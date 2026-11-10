@@ -1,6 +1,6 @@
 # 内置 DSL 命令：convtool（多子命令形态，内建动作原语）。
 #
-# 实现见 fcmd/dsl/actions/toolcmd/codec.py：
+# 实现见 fcmd/dsl/toolcmd/codec.py：
 # length/weight/temp/datasize 四子命令为纯 Python 换算，无子进程调用。
 # 单位非法抛 ValueError，被动作层捕获后打印错误提示，不视为失败。
 

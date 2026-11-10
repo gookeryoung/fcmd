@@ -1,6 +1,6 @@
 """randtool 工具测试。
 
-验证 ``fcmd.dsl.actions.toolcmd.calc`` 模块：
+验证 ``fcmd.dsl.toolcmd.calc`` 模块：
 - 工具注册与四子命令结构（password/number/string/bytes）
 - ``generate_password``/``generate_number``/``generate_string``/``generate_bytes``
 - CLI 子命令端到端

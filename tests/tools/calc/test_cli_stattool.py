@@ -1,6 +1,6 @@
 """stattool 工具测试。
 
-验证 ``fcmd.dsl.actions.toolcmd.calc`` 模块：
+验证 ``fcmd.dsl.toolcmd.calc`` 模块：
 - 工具注册与五子命令结构（mean/median/stddev/variance/summarize）
 - ``load_numbers``/``stat_mean``/``stat_median``/``stat_stddev``/``stat_variance``/``stat_summarize``
 - CLI 子命令端到端
