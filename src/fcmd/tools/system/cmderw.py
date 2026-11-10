@@ -11,9 +11,13 @@ F2 重命名、F3 查看、F4 外部编辑、F5 复制、F6 移动、F7 新建�
 :mod:`fcmd.tools.hashbase`，文件名/内容搜索走 :mod:`fcmd.dsl.actions.fileops`，
 窗口骨架、主题与设置持久化走 :mod:`fcmd.gui`。
 
-设置（左右面板标签与路径、书签、排序列、隐藏文件开关、窗口位置）保存在
+设置（左右面板标签与路径、书签、排序列、隐藏文件开关、颜色规则、窗口位置）保存在
 ``${FCMD_HOME:-~/.fcmd}/ui/cmderw.json``，下次启动自动恢复；旧配置文件缺少
-标签或书签字段时按单标签、空书签处理。
+标签、书签或颜色规则字段时按单标签、空书签、空规则处理。
+
+F 批能力：Ctrl+Q 内嵌快速查看（文本/图片/PE 与二进制，限读并提示截断），
+Ctrl+F8 只读目录树（跟随活动面板），Ctrl+Enter 命令行栏（Enter 执行、Esc 清空，
+删除类命令二次确认），「配置 → 颜色规则…」按掩码/大小/类型/时间着色。
 
 示例
 ----
@@ -41,20 +45,31 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system._cmderw_ops import (
+    COLOR_KIND_ANY,
+    COLOR_KIND_DIR,
+    COLOR_KIND_FILE,
+    COLOR_KIND_LINK,
+    COLOR_KIND_TEXT,
     COMPARE_DIFFERENT,
     COMPARE_LEFT_ONLY,
     COMPARE_RIGHT_ONLY,
     COMPARE_SAME,
     COMPARE_STATUS_TEXT,
     ITEM_FAILED,
+    PREVIEW_IMAGE,
+    PREVIEW_UNSUPPORTED,
     QUEUE_CANCELLED,
     QUEUE_RUNNING,
     SYNC_DELETE,
     SYNC_LTR,
     SYNC_RTL,
     BulkRenameOptions,
+    ColorRule,
+    ColorStyle,
+    ColorSubject,
     CompareOptions,
     CompareReport,
+    PreviewResult,
     QueueItem,
     QueueTask,
     RenameItem,
@@ -71,13 +86,19 @@ from fcmd.tools.system._cmderw_ops import (
     build_sync_plan,
     cleanup_incomplete_items,
     compare_trees,
+    destructive_command,
     directory_size,
+    dump_color_rules,
     execute_sync_deletes,
     filter_names,
     invert_names,
     item_status_text,
     match_names,
+    normalize_color,
+    parse_color_rules,
     plan_bulk_rename,
+    read_preview,
+    resolve_color_style,
     revalidate_sync_items,
     trash_paths,
     undo_rename,
@@ -158,6 +179,8 @@ _DESCRIPTION = (
     "Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 批量重命名，Space 统计大小，"
     "每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，"
     "复制/移动进入串行传输队列（逐项进度、按项取消、失败重试），"
+    "Ctrl+Shift+C 只读比较与预演式目录同步，"
+    "Ctrl+Q 快速查看、Ctrl+F8 目录树、Ctrl+Enter 命令行、配置→颜色规则，"
     "Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，"
     "复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
 )
@@ -207,6 +230,7 @@ ARCHIVE_SUFFIXES: tuple[str, ...] = (
 _HIDDEN_ATTRIBUTE = 0x2
 _MAX_PREVIEW_LINES = 500
 _MAX_ERROR_DETAILS = 10
+_QUICK_IMAGE_LIMIT = 32 * 1024 * 1024
 
 
 # ============================================================================ #
@@ -299,6 +323,7 @@ class CmderSettings:
     left_tab_index: int = 0
     right_tab_index: int = 0
     bookmarks: list[str] = field(default_factory=list)
+    color_rules: list[ColorRule] = field(default_factory=list)
 
 
 # ============================================================================ #
@@ -410,6 +435,7 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     settings.left = settings.left_tabs[settings.left_tab_index]
     settings.right = settings.right_tabs[settings.right_tab_index]
     settings.bookmarks = _bookmarks_from_raw(raw.get("bookmarks"))
+    settings.color_rules = parse_color_rules(raw.get("color_rules"))
     active = raw.get("active")
     if active in ("left", "right"):
         settings.active = cast(str, active)
@@ -439,6 +465,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "left_tab_index": left_index,
         "right_tab_index": right_index,
         "bookmarks": list(settings.bookmarks),
+        "color_rules": dump_color_rules(settings.color_rules),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -1004,6 +1031,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.entries: list[FileEntry] = []
         self._index: dict[str, FileEntry] = {}
         self._filter = ""
+        self._tk = tk
+        self._ttk = ttk
         theme = app.theme
         spacing = theme.spacing
 
@@ -1066,8 +1095,30 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.tree.bind("<KP_Subtract>", lambda _event: self._deselect_by_mask())
         self.tree.bind("<space>", lambda _event: self._show_size())
 
+        self._quick_visible = False
+        self._preview_photo: Any = None
+        self._quick_frame = ttk.Frame(self.frame)
+        quick_header = ttk.Frame(self._quick_frame)
+        quick_header.pack(fill="x")
+        self._quick_title_var = tk.StringVar(value="快速查看")
+        ttk.Label(quick_header, textvariable=self._quick_title_var, style="Muted.TLabel").pack(side="left")
+        self._quick_note_var = tk.StringVar()
+        ttk.Label(quick_header, textvariable=self._quick_note_var, style="Muted.TLabel").pack(side="right")
+        self._quick_body = ttk.Frame(self._quick_frame)
+        self._quick_body.pack(fill="both", expand=True)
+        self._quick_text = tk.Text(
+            self._quick_body,
+            height=10,
+            wrap="none",
+            state="disabled",
+            font=("Consolas", 9),
+        )
+        self._quick_image = ttk.Label(self._quick_body, anchor="center")
+        self._quick_text.pack(fill="both", expand=True)
+
         self.status_var = tk.StringVar()
-        ttk.Label(self.frame, textvariable=self.status_var, style="Muted.TLabel").pack(fill="x", pady=(spacing.xxs, 0))
+        self._status_label = ttk.Label(self.frame, textvariable=self.status_var, style="Muted.TLabel")
+        self._status_label.pack(fill="x", pady=(spacing.xxs, 0))
 
     # ------------------------------------------------------------------ #
     # 导航
@@ -1189,12 +1240,29 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.entries = entries
         self._index = {entry.name: entry for entry in entries}
         self.tree.delete(*self.tree.get_children())
+        now = time.time()
+        color_tags: dict[str, str] = {}
         for entry in entries:
             tags: list[str] = []
             if entry.is_dir:
                 tags.append("dir")
             if entry.hidden:
                 tags.append("hidden")
+            style = resolve_color_style(
+                self.app.settings.color_rules,
+                ColorSubject(
+                    name=entry.name,
+                    is_dir=entry.is_dir,
+                    is_symlink=entry.is_symlink,
+                    hidden=entry.hidden,
+                    size=entry.size,
+                    mtime=entry.mtime,
+                ),
+                now,
+            )
+            tag = self._color_tag(style, color_tags)
+            if tag:
+                tags.append(tag)
             self.tree.insert(
                 "",
                 "end",
@@ -1212,6 +1280,120 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.tree.selection_add(name)
             self.tree.see(name)
         self._update_status()
+        if self._quick_visible:
+            self.update_quick_view()
+        self.app.on_panel_refreshed(self)
+
+    def _color_tag(self, style: ColorStyle | None, cache: dict[str, str]) -> str:
+        """按合并后的颜色生成 Treeview tag；同类颜色只配置一次。"""
+        if style is None:
+            return ""
+        tag = f"color{style.foreground}{style.background}"
+        if tag not in cache:
+            if style.foreground and style.background:
+                self.tree.tag_configure(tag, foreground=style.foreground, background=style.background)
+            elif style.foreground:
+                self.tree.tag_configure(tag, foreground=style.foreground)
+            elif style.background:
+                self.tree.tag_configure(tag, background=style.background)
+            cache[tag] = tag
+        return tag
+
+    # ------------------------------------------------------------------ #
+    # 快速查看（文本 / 图片 / 二进制，限读 + 截断提示）
+    # ------------------------------------------------------------------ #
+    def toggle_quick_view(self) -> None:
+        """Ctrl+Q：显示或隐藏内嵌快速查看。"""
+        if self._quick_visible:
+            self.hide_quick_view()
+        else:
+            self.show_quick_view()
+
+    def show_quick_view(self) -> None:
+        """展开快速查看区域并预览当前选中文件。"""
+        self.app.set_active(self)
+        if not self._quick_visible:
+            self._quick_visible = True
+            self._quick_frame.pack(
+                fill="both",
+                expand=True,
+                before=self._status_label,
+                pady=(self.app.theme.spacing.xs, 0),
+            )
+        self.update_quick_view()
+
+    def hide_quick_view(self) -> None:
+        """收起快速查看并释放图片引用。"""
+        if self._quick_visible:
+            self._quick_visible = False
+            self._quick_frame.pack_forget()
+        self._preview_photo = None
+        self._quick_image.configure(image="")
+        self._set_quick_text("")
+
+    def update_quick_view(self) -> None:
+        """按当前选择刷新快速查看内容。"""
+        if not self._quick_visible:
+            return
+        selected = self.selected_entries()
+        if len(selected) != 1:
+            note = "请选择一个文件" if not selected else f"已选择 {len(selected)} 项，只预览单个文件"
+            self._show_quick_note("快速查看", note)
+            return
+        entry = selected[0]
+        self._quick_title_var.set(f"快速查看 - {entry.name}")
+        if entry.is_dir:
+            self._show_quick_note(f"快速查看 - {entry.name}", "目录不预览，双击进入")
+            return
+        result = read_preview(entry.path)
+        self._quick_note_var.set(result.note)
+        if result.kind == PREVIEW_IMAGE:
+            self._show_quick_image(entry.path, result)
+        elif result.kind == PREVIEW_UNSUPPORTED:
+            self._show_quick_text(result.note or "无法预览该类型")
+        else:
+            self._show_quick_text(result.text or "（空文件）")
+
+    def _show_quick_note(self, title: str, note: str) -> None:
+        """无文件可预览时给出明确提示，而不是空白面板。"""
+        self._quick_title_var.set(title)
+        self._quick_note_var.set(note)
+        self._show_quick_text(note)
+
+    def _show_quick_text(self, text: str) -> None:
+        """显示文本（二进制为十六进制）并隐藏图片区。"""
+        self._preview_photo = None
+        self._quick_image.pack_forget()
+        if not self._quick_text.winfo_ismapped():
+            self._quick_text.pack(fill="both", expand=True)
+        self._set_quick_text(text)
+
+    def _set_quick_text(self, text: str) -> None:
+        widget = self._quick_text
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        if text:
+            widget.insert("1.0", text)
+        widget.configure(state="disabled")
+
+    def _show_quick_image(self, path: Path, result: PreviewResult) -> None:
+        """在面板内渲染图片；Tk 不支持的格式给出明确提示。"""
+        self._quick_text.pack_forget()
+        if result.size > _QUICK_IMAGE_LIMIT:
+            self._show_quick_text(f"{result.note}\n图片超过 32 MB，未在窗口内加载，可用 F3 或外部程序查看。")
+            return
+        try:
+            photo = self._tk.PhotoImage(file=str(path))
+        except self._tk.TclError:
+            self._show_quick_text(f"{result.note}\n当前 Tk 不支持该图片格式，可用 F3 或外部程序查看。")
+            return
+        largest = max(photo.width(), photo.height())
+        if largest > 640:
+            factor = max(1, largest // 640)
+            photo = photo.subsample(factor, factor)
+        self._preview_photo = photo
+        self._quick_image.configure(image=photo)
+        self._quick_image.pack(fill="both", expand=True)
 
     def _update_status(self) -> None:
         total = len(self.entries)
@@ -1228,6 +1410,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def _on_select(self, _event: Any = None) -> None:
         self.app.set_active(self)
         self._update_status()
+        if self._quick_visible:
+            self.update_quick_view()
+        self.app.on_panel_selection(self)
 
     def _on_path_enter(self, _event: Any = None) -> None:
         try:
@@ -2440,6 +2625,360 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         return lines
 
 
+_COLOR_KIND_CHOICES: tuple[tuple[str, str], ...] = (
+    ("任意", COLOR_KIND_ANY),
+    ("文件", COLOR_KIND_FILE),
+    ("目录", COLOR_KIND_DIR),
+    ("符号链接", COLOR_KIND_LINK),
+)
+
+_HIDDEN_CHOICES: tuple[tuple[str, bool | None], ...] = (
+    ("任意", None),
+    ("仅隐藏", True),
+    ("仅可见", False),
+)
+
+
+class ColorRulesDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """颜色规则编辑器：列表顺序即优先级，靠下的规则覆盖靠上的同色属性。"""
+
+    def __init__(self, app: CmderWindow, rules: Sequence[ColorRule]) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.rules = list(rules)
+        self._editing: int | None = None
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("颜色规则")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=940, height=560)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(
+            outer,
+            text="规则按列表顺序合并：靠下的规则覆盖靠上的同色属性；留空的条件不参与匹配。"
+            "颜色格式为 #rrggbb，至少设置前景或背景之一才会生效。",
+            style="Muted.TLabel",
+            wraplength=900,
+        ).pack(fill="x", pady=(0, spacing.xs))
+
+        body = ttk.Frame(outer)
+        body.pack(fill="both", expand=True)
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True)
+        right = ttk.Frame(body, padding=(spacing.sm, 0, 0, 0))
+        right.pack(side="left", fill="y")
+
+        self._list = ttk.Treeview(
+            left,
+            columns=("order", "pattern", "cond", "colors"),
+            show="headings",
+            selectmode="browse",
+            height=15,
+        )
+        for column, title, width in (
+            ("order", "#", 40),
+            ("pattern", "掩码", 150),
+            ("cond", "条件", 300),
+            ("colors", "颜色", 210),
+        ):
+            self._list.heading(column, text=title)
+            self._list.column(column, width=width, anchor="w")
+        scrollbar = ttk.Scrollbar(left, orient="vertical", command=self._list.yview)
+        self._list.configure(yscrollcommand=scrollbar.set)
+        self._list.pack(side="top", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._list.bind("<<TreeviewSelect>>", self._on_select_rule)
+
+        actions = ttk.Frame(left)
+        actions.pack(fill="x", pady=(spacing.xs, 0))
+        ttk.Button(actions, text="新建", style="Toolbutton", command=self._new_rule).pack(side="left")
+        ttk.Button(actions, text="删除", style="Toolbutton", command=self._delete_rule).pack(side="left")
+        ttk.Button(actions, text="上移", style="Toolbutton", command=lambda: self._move(-1)).pack(side="left")
+        ttk.Button(actions, text="下移", style="Toolbutton", command=lambda: self._move(1)).pack(side="left")
+
+        self._pattern_var = tk.StringVar()
+        self._min_var = tk.StringVar()
+        self._max_var = tk.StringVar()
+        self._kind_var = tk.StringVar()
+        self._hidden_var = tk.StringVar()
+        self._newer_var = tk.StringVar()
+        self._older_var = tk.StringVar()
+        self._fg_var = tk.StringVar()
+        self._bg_var = tk.StringVar()
+
+        row = 0
+        row = self._form_entry(right, row, "掩码", self._pattern_var)
+        row = self._form_entry(right, row, "最小大小", self._min_var)
+        row = self._form_entry(right, row, "最大大小", self._max_var)
+        row = self._form_combo(right, row, "类型", self._kind_var, [text for text, _value in _COLOR_KIND_CHOICES])
+        row = self._form_combo(right, row, "隐藏属性", self._hidden_var, [text for text, _value in _HIDDEN_CHOICES])
+        row = self._form_entry(right, row, "最近天数", self._newer_var)
+        row = self._form_entry(right, row, "早于天数", self._older_var)
+        row = self._color_row(right, row, "前景", self._fg_var)
+        row = self._color_row(right, row, "背景", self._bg_var)
+        ttk.Label(
+            right,
+            text="掩码支持 * 与 ?；大小单位为字节；时间按天。",
+            style="Muted.TLabel",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(spacing.xs, 0))
+        row += 1
+        ttk.Button(right, text="添加 / 更新规则", command=self._commit_rule).grid(
+            row=row,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            pady=(spacing.xs, 0),
+        )
+
+        footer = ttk.Frame(outer)
+        footer.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(footer, text="取消", command=self.window.destroy).pack(side="right")
+        ttk.Button(footer, text="保存并关闭", style="Accent.TButton", command=self._save).pack(
+            side="right",
+            padx=(0, spacing.xs),
+        )
+
+        self._render()
+        self._new_rule()
+
+    def _form_entry(self, parent: Any, row: int, label: str, var: Any) -> int:
+        from tkinter import ttk
+
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
+        ttk.Entry(parent, textvariable=var, width=24).grid(row=row, column=1, sticky="ew", pady=2)
+        return row + 1
+
+    def _form_combo(self, parent: Any, row: int, label: str, var: Any, values: Sequence[str]) -> int:
+        from tkinter import ttk
+
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=2)
+        ttk.Combobox(parent, textvariable=var, values=list(values), state="readonly", width=22).grid(
+            row=row,
+            column=1,
+            sticky="ew",
+            pady=2,
+        )
+        return row + 1
+
+    def _color_row(self, parent: Any, row: int, label: str, var: Any) -> int:
+        from tkinter import ttk
+
+        frame = ttk.Frame(parent)
+        frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=2)
+        ttk.Label(frame, text=label, width=8).pack(side="left")
+        ttk.Entry(frame, textvariable=var, width=12).pack(side="left")
+        ttk.Button(frame, text="选择", style="Toolbutton", command=lambda: self._pick_color(var)).pack(
+            side="left",
+            padx=2,
+        )
+        ttk.Button(frame, text="清除", style="Toolbutton", command=lambda: var.set("")).pack(side="left")
+        return row + 1
+
+    @staticmethod
+    def _condition_text(rule: ColorRule) -> str:
+        parts: list[str] = []
+        if rule.kind:
+            parts.append(COLOR_KIND_TEXT.get(rule.kind, rule.kind))
+        if rule.hidden is True:
+            parts.append("仅隐藏")
+        elif rule.hidden is False:
+            parts.append("仅可见")
+        if rule.min_size is not None:
+            parts.append(f"≥{rule.min_size}B")
+        if rule.max_size is not None:
+            parts.append(f"≤{rule.max_size}B")
+        if rule.newer_days is not None:
+            parts.append(f"{rule.newer_days:g} 天内")
+        if rule.older_days is not None:
+            parts.append(f"早于 {rule.older_days:g} 天")
+        return " / ".join(parts) or "任意"
+
+    @staticmethod
+    def _color_text(rule: ColorRule) -> str:
+        parts: list[str] = []
+        if rule.foreground:
+            parts.append(f"字体 {rule.foreground}")
+        if rule.background:
+            parts.append(f"背景 {rule.background}")
+        return " / ".join(parts)
+
+    def _rule_tag(self, rule: ColorRule, cache: dict[str, str]) -> str:
+        tag = f"rule{rule.foreground}{rule.background}"
+        if tag not in cache:
+            if rule.foreground and rule.background:
+                self._list.tag_configure(tag, foreground=rule.foreground, background=rule.background)
+            elif rule.foreground:
+                self._list.tag_configure(tag, foreground=rule.foreground)
+            elif rule.background:
+                self._list.tag_configure(tag, background=rule.background)
+            cache[tag] = tag
+        return tag
+
+    def _render(self) -> None:
+        for child in self._list.get_children():
+            self._list.delete(child)
+        cache: dict[str, str] = {}
+        for index, rule in enumerate(self.rules):
+            tag = self._rule_tag(rule, cache)
+            self._list.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(index + 1, rule.pattern, self._condition_text(rule), self._color_text(rule)),
+                tags=(tag,),
+            )
+        if self._editing is not None and self._list.exists(str(self._editing)):
+            self._list.selection_set(str(self._editing))
+
+    def _on_select_rule(self, _event: Any = None) -> None:
+        selection = self._list.selection()
+        if not selection:
+            return
+        index = int(selection[0])
+        if 0 <= index < len(self.rules):
+            self._editing = index
+            self._load_rule(self.rules[index])
+
+    def _load_rule(self, rule: ColorRule) -> None:
+        self._pattern_var.set(rule.pattern)
+        self._min_var.set("" if rule.min_size is None else str(rule.min_size))
+        self._max_var.set("" if rule.max_size is None else str(rule.max_size))
+        self._kind_var.set(COLOR_KIND_TEXT.get(rule.kind, COLOR_KIND_TEXT[COLOR_KIND_ANY]))
+        self._hidden_var.set(self._hidden_text(rule.hidden))
+        self._newer_var.set("" if rule.newer_days is None else f"{rule.newer_days:g}")
+        self._older_var.set("" if rule.older_days is None else f"{rule.older_days:g}")
+        self._fg_var.set(rule.foreground)
+        self._bg_var.set(rule.background)
+
+    @staticmethod
+    def _hidden_text(value: bool | None) -> str:
+        for text, choice in _HIDDEN_CHOICES:
+            if choice is value:
+                return text
+        return "任意"
+
+    def _new_rule(self) -> None:
+        self._editing = None
+        selection = self._list.selection()
+        if selection:
+            self._list.selection_remove(*selection)
+        self._load_rule(ColorRule())
+
+    def _delete_rule(self) -> None:
+        if self._editing is None or not 0 <= self._editing < len(self.rules):
+            return
+        del self.rules[self._editing]
+        self._editing = None
+        self._render()
+        self._new_rule()
+
+    def _move(self, delta: int) -> None:
+        if self._editing is None:
+            return
+        target = self._editing + delta
+        if not 0 <= target < len(self.rules):
+            return
+        self.rules[self._editing], self.rules[target] = self.rules[target], self.rules[self._editing]
+        self._editing = target
+        self._render()
+
+    @staticmethod
+    def _optional_int(text: str) -> int | None:
+        text = text.strip()
+        if not text:
+            return None
+        try:
+            value = int(text)
+        except ValueError:
+            raise ValueError(f"大小必须是整数：{text}") from None
+        if value < 0:
+            raise ValueError("大小不能为负数")
+        return value
+
+    @staticmethod
+    def _optional_days(text: str) -> float | None:
+        text = text.strip()
+        if not text:
+            return None
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"天数必须是数字：{text}") from None
+        if value <= 0:
+            raise ValueError("天数必须大于 0")
+        return value
+
+    @staticmethod
+    def _choice_value(text: str, choices: Sequence[tuple[str, Any]], fallback: Any) -> Any:
+        for label, value in choices:
+            if label == text:
+                return value
+        return fallback
+
+    def _collect_rule(self) -> ColorRule | None:
+        try:
+            min_size = self._optional_int(self._min_var.get())
+            max_size = self._optional_int(self._max_var.get())
+            newer = self._optional_days(self._newer_var.get())
+            older = self._optional_days(self._older_var.get())
+        except ValueError as exc:
+            self.app.show_error("颜色规则", str(exc))
+            return None
+        if min_size is not None and max_size is not None and min_size > max_size:
+            self.app.show_error("颜色规则", "最小大小不能大于最大大小")
+            return None
+        if newer is not None and older is not None and newer >= older:
+            self.app.show_error("颜色规则", "「最近天数」必须小于「早于天数」")
+            return None
+        foreground = normalize_color(self._fg_var.get())
+        background = normalize_color(self._bg_var.get())
+        if (self._fg_var.get().strip() and not foreground) or (self._bg_var.get().strip() and not background):
+            self.app.show_error("颜色规则", "颜色必须为 #rrggbb 格式")
+            return None
+        if not foreground and not background:
+            self.app.show_error("颜色规则", "请至少设置前景或背景颜色")
+            return None
+        return ColorRule(
+            pattern=self._pattern_var.get().strip() or "*",
+            min_size=min_size,
+            max_size=max_size,
+            kind=self._choice_value(self._kind_var.get(), _COLOR_KIND_CHOICES, COLOR_KIND_ANY),
+            hidden=self._choice_value(self._hidden_var.get(), _HIDDEN_CHOICES, None),
+            newer_days=newer,
+            older_days=older,
+            foreground=foreground,
+            background=background,
+        )
+
+    def _commit_rule(self) -> None:
+        rule = self._collect_rule()
+        if rule is None:
+            return
+        if self._editing is None:
+            self.rules.append(rule)
+            self._editing = len(self.rules) - 1
+        else:
+            self.rules[self._editing] = rule
+        self._render()
+        self.app.set_status(f"颜色规则已更新（{len(self.rules)} 条，尚未保存）")
+
+    def _pick_color(self, var: Any) -> None:
+        from tkinter import colorchooser
+
+        _rgb, selected = colorchooser.askcolor(color=normalize_color(var.get()) or "#ffffff", parent=self.window)
+        if selected:
+            var.set(selected.lower())
+
+    def _save(self) -> None:
+        self.app.apply_color_rules(self.rules)
+        self.window.destroy()
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -2464,6 +3003,11 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._compare_dialog: CompareDialog | None = None
         self._sync_dialog: SyncDialog | None = None
         self._queue_stopping = False
+        self._tree_visible = False
+        self._tree_syncing = False
+        self._tree_loaded: set[str] = set()
+        self._command_visible = False
+        self._color_dialog: ColorRulesDialog | None = None
 
         self.root, self.theme = _guiwindow.create_root(
             title=f"cmderw - 双面板文件管理器 v{__version__}",
@@ -2478,6 +3022,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._build_menu()
         self._build_toolbar()
         self._build_panels()
+        self._build_command_bar()
         self._build_statusbar()
         self._bind_shortcuts()
 
@@ -2532,6 +3077,14 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         view_menu.add_command(label="快速过滤\tCtrl+S", command=self.focus_filter)
         view_menu.add_command(label="清除过滤\tEsc", command=self.clear_filter)
         view_menu.add_separator()
+        view_menu.add_command(label="快速查看\tCtrl+Q", command=self.toggle_quick_view)
+        self._tree_var = tk.BooleanVar(value=False)
+        view_menu.add_checkbutton(
+            label="目录树\tCtrl+F8",
+            variable=self._tree_var,
+            command=self.toggle_directory_tree,
+        )
+        view_menu.add_separator()
         view_menu.add_command(label="新建标签页\tCtrl+T", command=self.new_tab)
         view_menu.add_command(label="关闭标签页\tCtrl+W", command=self.close_tab)
         view_menu.add_command(label="下一个标签页\tCtrl+Tab", command=self.next_tab)
@@ -2553,6 +3106,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         tools_menu.add_command(label="文件哈希", command=self.hash_selected)
         tools_menu.add_command(label="属性\tAlt+Enter", command=self.show_properties)
         menubar.add_cascade(label="工具", menu=tools_menu)
+
+        config_menu = tk.Menu(menubar, tearoff=False)
+        config_menu.add_command(label="颜色规则…", command=self.open_color_rules)
+        menubar.add_cascade(label="配置", menu=config_menu)
 
         help_menu = tk.Menu(menubar, tearoff=False)
         help_menu.add_command(label="快捷键", command=self.show_shortcuts)
@@ -2632,12 +3189,49 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         )
         self._paned.add(self.left.frame, weight=1)
         self._paned.add(self.right.frame, weight=1)
+        self._build_directory_tree()
+
+    def _build_directory_tree(self) -> None:
+        """创建目录树容器；默认不加入分栏，Ctrl+F8 时才显示。"""
+        ttk = self._ttk
+        self._tree_frame = ttk.Frame(self._paned, padding=self.theme.spacing.xs)
+        self._tree = ttk.Treeview(self._tree_frame, show="tree", selectmode="browse")
+        self._tree.column("#0", width=240, minwidth=120, stretch=True)
+        scrollbar = ttk.Scrollbar(self._tree_frame, orient="vertical", command=self._tree.yview)
+        self._tree.configure(yscrollcommand=scrollbar.set)
+        self._tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._tree.tag_configure("current", foreground=self.theme.palette.accent)
+        self._tree.bind("<<TreeviewOpen>>", self._on_tree_open)
+        self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+        self._populate_tree_roots()
+
+    def _build_command_bar(self) -> None:
+        """创建命令行栏；默认隐藏，Ctrl+Enter 唤出。"""
+        ttk = self._ttk
+        spacing = self.theme.spacing
+        self._command_frame = ttk.Frame(self.root, padding=(spacing.sm, spacing.xxs))
+        self._command_frame.grid(row=2, column=0, sticky="ew")
+        ttk.Label(self._command_frame, text="命令：").pack(side="left")
+        self._command_var = self._tk.StringVar()
+        self._command_entry = ttk.Entry(self._command_frame, textvariable=self._command_var)
+        self._command_entry.pack(side="left", fill="x", expand=True, padx=(0, spacing.xs))
+        self._command_entry.bind("<Return>", self._on_command_enter)
+        self._command_entry.bind("<KP_Enter>", self._on_command_enter)
+        self._command_entry.bind("<Escape>", self._on_command_escape)
+        self._command_cwd_var = self._tk.StringVar()
+        ttk.Label(
+            self._command_frame,
+            textvariable=self._command_cwd_var,
+            style="Muted.TLabel",
+        ).pack(side="left")
+        self._command_frame.grid_remove()
 
     def _build_statusbar(self) -> None:
         ttk = self._ttk
         spacing = self.theme.spacing
         status = ttk.Frame(self.root, padding=(spacing.sm, spacing.xxs))
-        status.grid(row=2, column=0, sticky="ew")
+        status.grid(row=3, column=0, sticky="ew")
         status.grid_columnconfigure(0, weight=1)
         self.status_var = self._tk.StringVar(value="就绪")
         ttk.Label(status, textvariable=self.status_var, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
@@ -2673,6 +3267,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-d>": lambda _event: self.open_bookmarks(),
             "<Control-Shift-c>": lambda _event: self.open_compare(),
             "<Control-Shift-C>": lambda _event: self.open_compare(),
+            "<Control-q>": lambda _event: self.toggle_quick_view(),
+            "<Control-F8>": lambda _event: self.toggle_directory_tree(),
+            "<Control-Return>": lambda _event: self.focus_command_bar(),
+            "<Control-KP_Enter>": lambda _event: self.focus_command_bar(),
             "<Alt-Down>": lambda _event: self.show_history_menu(),
             "<Escape>": lambda _event: self.clear_filter(),
             "<Tab>": lambda _event: self.switch_panel(),
@@ -2684,10 +3282,12 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     # 面板与状态
     # ------------------------------------------------------------------ #
     def set_active(self, panel: FilePanel) -> None:
-        """设置活动面板并更新标题样式。"""
+        """设置活动面板并更新标题样式、目录树与命令行工作目录。"""
         self.active_side = panel.side
         self.left.set_title_active(panel is self.left)
         self.right.set_title_active(panel is self.right)
+        self.sync_tree(panel)
+        self._update_command_cwd()
 
     def active_panel(self) -> FilePanel:
         """当前活动面板。"""
@@ -2705,6 +3305,247 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def set_status(self, message: str) -> None:
         """更新底部状态文字。"""
         self.status_var.set(message)
+
+    # ------------------------------------------------------------------ #
+    # 目录树（只读，跟随活动面板）
+    # ------------------------------------------------------------------ #
+    def toggle_directory_tree(self) -> None:
+        """Ctrl+F8：显示或隐藏目录树，显示时定位到活动面板目录。"""
+        if self._tree_visible:
+            self._paned.forget(self._tree_frame)
+            self._tree_visible = False
+            self.set_status("目录树已隐藏")
+        else:
+            self._paned.insert(0, self._tree_frame, weight=0)
+            self._tree_visible = True
+            self.sync_tree(self.active_panel(), force=True)
+            self.set_status("目录树已显示（只读，单击目录定位活动面板）")
+        self._tree_var.set(self._tree_visible)
+
+    def _tree_root_paths(self) -> list[Path]:
+        """目录树根：Windows 列出存在的盘符，其他平台用根目录。"""
+        if os.name != "nt":
+            return [Path("/")]
+        roots: list[Path] = []
+        for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            root = Path(f"{letter}:\\")
+            if root.exists():
+                roots.append(root)
+        return roots
+
+    def _directory_children(self, path: Path) -> list[Path]:
+        """目录树子节点：只取可读子目录，不跟随符号链接。"""
+        try:
+            entries = list_directory(path, show_hidden=self.settings.show_hidden)
+        except OSError:
+            return []
+        return [entry.path for entry in entries if entry.is_dir and not entry.is_symlink]
+
+    def _add_tree_placeholder(self, iid: str) -> None:
+        """未展开节点先放占位子项，展开时再读取真实内容。"""
+        if not self._tree.get_children(iid):
+            self._tree.insert(iid, "end", text="…")
+
+    def _populate_tree_roots(self) -> None:
+        for root in self._tree_root_paths():
+            iid = str(root)
+            if self._tree.exists(iid):
+                continue
+            self._tree.insert("", "end", iid=iid, text=root.name or iid)
+            self._add_tree_placeholder(iid)
+
+    def _populate_tree_node(self, path: Path, *, force: bool = False) -> None:
+        """读取一层子目录；已加载节点默认跳过。"""
+        iid = str(path)
+        if not self._tree.exists(iid) or (iid in self._tree_loaded and not force):
+            return
+        for child in self._tree.get_children(iid):
+            self._tree.delete(child)
+        for child_path in self._directory_children(path):
+            child_iid = str(child_path)
+            if self._tree.exists(child_iid):
+                continue
+            self._tree.insert(iid, "end", iid=child_iid, text=child_path.name or child_iid)
+            self._add_tree_placeholder(child_iid)
+        self._tree_loaded.add(iid)
+
+    def _on_tree_open(self, _event: Any = None) -> None:
+        """展开节点时按需读取一层子目录。"""
+        iid = self._tree.focus()
+        if iid:
+            self._populate_tree_node(Path(iid))
+
+    def _ensure_tree_path(self, path: Path) -> str:
+        """确保目录及其祖先已插入树并展开，返回目标节点 iid。"""
+        chain = [*reversed(path.parents), path]
+        roots = {str(root) for root in self._tree_root_paths()}
+        start = next((index for index, item in enumerate(chain) if str(item) in roots), None)
+        if start is None:
+            return ""
+        chain = chain[start:]
+        for index, item in enumerate(chain):
+            iid = str(item)
+            if not self._tree.exists(iid):
+                parent = chain[index - 1] if index else None
+                if parent is None or not self._tree.exists(str(parent)):
+                    return ""
+                self._tree.insert(str(parent), "end", iid=iid, text=item.name or iid)
+            if index < len(chain) - 1:
+                self._populate_tree_node(item)
+                self._tree.item(iid, open=True)
+        return str(chain[-1])
+
+    def _select_tree_iid(self, iid: str) -> None:
+        self._tree_syncing = True
+        try:
+            self._tree.selection_set(iid)
+            self._tree.focus(iid)
+            self._tree.see(iid)
+        finally:
+            self._tree_syncing = False
+
+    def sync_tree(self, panel: FilePanel, *, force: bool = False) -> None:
+        """让目录树定位到面板当前目录；非活动面板默认不跟随。"""
+        if not self._tree_visible:
+            return
+        if not force and panel is not self.active_panel():
+            return
+        iid = self._ensure_tree_path(Path(panel.state.path))
+        if iid:
+            self._select_tree_iid(iid)
+
+    def _on_tree_select(self, _event: Any = None) -> None:
+        """单击目录树定位活动面板（树本身只读，不做拖放）。"""
+        if self._tree_syncing:
+            return
+        selection = self._tree.selection()
+        if not selection:
+            return
+        target = Path(selection[0])
+        if not target.is_dir():
+            return
+        panel = self.active_panel()
+        if str(target) == panel.state.path:
+            return
+        panel.set_path(target)
+
+    def on_panel_refreshed(self, panel: FilePanel) -> None:
+        """面板刷新后同步目录树与命令行工作目录（仅活动面板）。"""
+        if panel is not self.active_panel():
+            return
+        self.sync_tree(panel)
+        self._update_command_cwd()
+
+    def on_panel_selection(self, panel: FilePanel) -> None:
+        """面板选中目录时让目录树同步高亮，切换标签页同样会定位。"""
+        if not self._tree_visible or panel is not self.active_panel():
+            return
+        selected = panel.selected_entries()
+        target = selected[0].path if len(selected) == 1 and selected[0].is_dir else Path(panel.state.path)
+        iid = self._ensure_tree_path(target)
+        if iid:
+            self._select_tree_iid(iid)
+
+    # ------------------------------------------------------------------ #
+    # 命令行栏（默认隐藏，Enter 执行、Esc 清空返回）
+    # ------------------------------------------------------------------ #
+    def toggle_quick_view(self) -> None:
+        """Ctrl+Q / 菜单：切换活动面板的内嵌快速查看。"""
+        self.active_panel().toggle_quick_view()
+
+    def focus_command_bar(self) -> None:
+        """Ctrl+Enter：唤出命令行栏并聚焦。"""
+        self._command_visible = True
+        self._command_frame.grid()
+        self._update_command_cwd()
+        self._command_entry.focus_set()
+        self._command_entry.select_range(0, "end")
+
+    def hide_command_bar(self) -> None:
+        """收起命令行栏。"""
+        self._command_visible = False
+        self._command_frame.grid_remove()
+
+    def _update_command_cwd(self) -> None:
+        """命令行工作目录始终取活动面板当前路径。"""
+        self._command_cwd_var.set(f"工作目录：{self.active_panel().state.path}")
+
+    def _on_command_enter(self, _event: Any = None) -> str:
+        self.run_command()
+        return "break"
+
+    def _on_command_escape(self, _event: Any = None) -> str:
+        self._command_var.set("")
+        self.hide_command_bar()
+        self.active_panel().focus_tree()
+        return "break"
+
+    def run_command(self) -> None:
+        """在活动面板目录执行命令；删除类命令先二次确认。"""
+        command = self._command_var.get().strip()
+        if not command:
+            self.hide_command_bar()
+            return
+        cwd = Path(self.active_panel().state.path)
+        if not cwd.is_dir():
+            self.show_error("命令行", f"活动面板目录不存在：{cwd}")
+            return
+        risky = destructive_command(command)
+        if risky and not self._messagebox.askyesno(
+            "确认执行删除命令",
+            f"命令包含删除类操作（{risky}），执行后可能无法恢复。\n\n工作目录：{cwd}\n命令：{command}\n\n确定执行吗？",
+            parent=self.root,
+        ):
+            return
+        self.set_status(f"执行命令（{cwd}）：{command}")
+        self.start_worker(
+            lambda: self._run_shell(command, cwd),
+            lambda result: self._command_finished(command, result),
+            title="命令行执行",
+        )
+
+    @staticmethod
+    def _run_shell(command: str, cwd: Path) -> tuple[int, str]:
+        """后台线程执行 shell 命令，合并标准输出与错误。"""
+        completed = subprocess.run(
+            command,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=False,
+        )
+        return completed.returncode, (completed.stdout or "") + (completed.stderr or "")
+
+    def _command_finished(self, command: str, result: tuple[int, str]) -> None:
+        code, output = result
+        self.refresh_both()
+        self.set_status(f"命令结束（退出码 {code}）：{command}")
+        body = output.strip() or "（无输出）"
+        self._show_text_dialog(f"命令行输出 - 退出码 {code}", f"$ {command}\n退出码：{code}\n\n{body}")
+
+    # ------------------------------------------------------------------ #
+    # 颜色规则
+    # ------------------------------------------------------------------ #
+    def open_color_rules(self) -> None:
+        """配置 → 颜色规则…（无快捷键）。"""
+        if self._color_dialog is not None and self._color_dialog.window.winfo_exists():
+            self._color_dialog.window.lift()
+            self._color_dialog.window.focus_set()
+            return
+        self._color_dialog = ColorRulesDialog(self, self.settings.color_rules)
+        self._color_dialog.window.wait_window()
+        self._color_dialog = None
+
+    def apply_color_rules(self, rules: Sequence[ColorRule]) -> None:
+        """保存颜色规则并刷新两个面板。"""
+        self.settings.color_rules = list(rules)
+        self._store_panel_state()
+        save_settings(self.settings, self._settings_path)
+        self.left.refresh()
+        self.right.refresh()
+        self.set_status(f"颜色规则已保存：{len(rules)} 条")
 
     def refresh_both(self) -> None:
         """刷新两个面板（保留选择）。"""
@@ -3575,6 +4416,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "Ctrl+T 新建标签页    Ctrl+W 关闭标签页（至少保留一个）\n"
             "Ctrl+Tab 下一个标签页    Ctrl+Shift+Tab 上一个标签页\n"
             "Ctrl+D 书签    Alt+Down 历史记录\n"
+            "Ctrl+Q 内嵌快速查看    Ctrl+F8 显示/隐藏目录树\n"
+            "Ctrl+Enter 唤出命令行（Enter 执行、Esc 清空返回；删除类命令先确认）\n"
+            "颜色规则在 配置→颜色规则… 中设置（无快捷键）\n"
             "F5/F6 进入串行传输队列（工具→传输队列 查看进度、取消、重试失败项）\n"
             "搜索结果可直接打开所在目录、复制、移动、删除或加入面板选择"
         )
@@ -3623,11 +4467,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             return
         self._save_and_destroy()
 
-    def _save_and_destroy(self) -> None:
-        """保存面板/标签/书签状态并销毁窗口。"""
-        if self._closing:
-            return
-        self._closing = True
+    def _store_panel_state(self) -> None:
+        """把面板/标签/活动侧写回设置对象（不落盘）。"""
         self.settings.left = self.left.state
         self.settings.right = self.right.state
         self.settings.left_tabs = list(self.left.tabs)
@@ -3636,6 +4477,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.settings.right_tab_index = self.right.tab_index
         self.settings.active = self.active_side
         self.settings.show_hidden = bool(self._hidden_var.get())
+
+    def _save_and_destroy(self) -> None:
+        """保存面板/标签/书签状态并销毁窗口。"""
+        if self._closing:
+            return
+        self._closing = True
+        self._store_panel_state()
         self.settings.geometry = self.root.winfo_geometry()
         save_settings(self.settings, self._settings_path)
         self.root.destroy()

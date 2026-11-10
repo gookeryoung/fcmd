@@ -30,6 +30,7 @@ from fcmd.tools.system.cmderw import (
     DEFAULT_GEOMETRY,
     MAX_HISTORY,
     CmderSettings,
+    ColorRule,
     FileEntry,
     PanelState,
     SearchHit,
@@ -199,6 +200,22 @@ class TestSettings:
         assert loaded.right.path == str(second)
         assert loaded.bookmarks == [str(first), str(second)]
 
+    def test_save_and_load_roundtrip_keeps_color_rules(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        rules = [
+            ColorRule(pattern="*.log", kind="file", foreground="#ff0000"),
+            ColorRule(pattern="*", min_size=1024, newer_days=7, background="#00ff00"),
+        ]
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path)),
+                right=PanelState(path=str(tmp_path)),
+                color_rules=rules,
+            )
+        )
+        loaded = load_settings()
+        assert loaded.color_rules == rules
+
     def test_load_old_config_without_tabs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
         path = config_path()
@@ -213,6 +230,7 @@ class TestSettings:
         assert settings.left_tab_index == 0
         assert settings.right_tab_index == 0
         assert settings.bookmarks == []
+        assert settings.color_rules == []
 
     def test_load_invalid_tabs_and_bookmarks_fall_back(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))

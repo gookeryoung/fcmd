@@ -23,16 +23,28 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = [
+    "COLOR_KIND_ANY",
+    "COLOR_KIND_DIR",
+    "COLOR_KIND_FILE",
+    "COLOR_KIND_LINK",
+    "COLOR_KIND_TEXT",
     "COMPARE_DIFFERENT",
     "COMPARE_LEFT_ONLY",
     "COMPARE_RIGHT_ONLY",
     "COMPARE_SAME",
     "COMPARE_STATUS_TEXT",
+    "DESTRUCTIVE_COMMANDS",
     "ITEM_CANCELLED",
     "ITEM_DONE",
     "ITEM_FAILED",
     "ITEM_PENDING",
     "ITEM_RUNNING",
+    "PREVIEW_BINARY",
+    "PREVIEW_HEX_LIMIT",
+    "PREVIEW_IMAGE",
+    "PREVIEW_TEXT",
+    "PREVIEW_TEXT_LIMIT",
+    "PREVIEW_UNSUPPORTED",
     "QUEUE_CANCELLED",
     "QUEUE_DONE",
     "QUEUE_FAILED",
@@ -44,9 +56,13 @@ __all__ = [
     "SYNC_LTR",
     "SYNC_RTL",
     "BulkRenameOptions",
+    "ColorRule",
+    "ColorStyle",
+    "ColorSubject",
     "CompareEntry",
     "CompareOptions",
     "CompareReport",
+    "PreviewResult",
     "QueueItem",
     "QueueTask",
     "RenameItem",
@@ -65,14 +81,20 @@ __all__ = [
     "cleanup_incomplete_items",
     "cleanup_partial_target",
     "compare_trees",
+    "destructive_command",
     "directory_size",
+    "dump_color_rules",
     "execute_sync_deletes",
     "filter_names",
     "invert_names",
     "item_status_text",
     "match_names",
     "matches_mask",
+    "normalize_color",
+    "parse_color_rules",
     "plan_bulk_rename",
+    "read_preview",
+    "resolve_color_style",
     "revalidate_sync_item",
     "revalidate_sync_items",
     "send_to_trash",
@@ -1355,3 +1377,358 @@ def execute_sync_deletes(
         if progress is not None:
             progress(index + 1, total, item.relative)
     return report
+
+
+# ============================================================================ #
+# 快速查看（文本 / 图片 / 二进制，限读 + 截断提示）
+# ============================================================================ #
+PREVIEW_TEXT = "text"
+PREVIEW_IMAGE = "image"
+PREVIEW_BINARY = "binary"
+PREVIEW_UNSUPPORTED = "unsupported"
+
+PREVIEW_TEXT_LIMIT = 256 * 1024
+PREVIEW_HEX_LIMIT = 4096
+
+_IMAGE_MAGIC = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"\xff\xd8\xff", "jpeg"),
+    (b"BM", "bmp"),
+    (b"II*\x00", "tiff"),
+    (b"MM\x00*", "tiff"),
+    (b"\x00\x00\x01\x00", "ico"),
+)
+
+
+@dataclass(frozen=True)
+class PreviewResult:
+    """快速查看结果；``text`` 对图片为空，由 UI 负责渲染。"""
+
+    kind: str
+    text: str = ""
+    note: str = ""
+    truncated: bool = False
+    size: int = 0
+
+
+def _human_size(size: int) -> str:
+    """字节数转可读文本。"""
+    if size < 1024:
+        return f"{size} B"
+    if size < 1024 * 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size / (1024 * 1024):.1f} MB"
+
+
+def _image_kind(data: bytes, suffix: str) -> str:
+    """按魔数与扩展名识别图片格式；非图片返回空串。"""
+    for magic, name in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return name
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if suffix in {".png", ".gif", ".jpg", ".jpeg", ".bmp", ".webp", ".ico", ".tif", ".tiff"}:
+        return suffix.lstrip(".")
+    return ""
+
+
+def _decode_text(data: bytes) -> str | None:
+    """把采样字节按常见编码解码；不像文本时返回 ``None``。"""
+    if not data:
+        return ""
+    if b"\x00" in data:
+        return None
+    control = sum(1 for byte in data if byte < 9 or 13 < byte < 32)
+    if control / len(data) > 0.3:
+        return None
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
+def _hex_dump(data: bytes, limit: int) -> str:
+    """生成十六进制 + ASCII 预览。"""
+    lines = []
+    for offset in range(0, min(len(data), limit), 16):
+        row = data[offset : offset + 16]
+        hexpart = " ".join(f"{byte:02x}" for byte in row)
+        ascii_part = "".join(chr(byte) if 32 <= byte < 127 else "." for byte in row)
+        lines.append(f"{offset:08x}  {hexpart:<47}  {ascii_part}")
+    return "\n".join(lines)
+
+
+def _read_preview_source(path: Path, text_limit: int) -> PreviewResult | tuple[bytes, int]:
+    """读取预览所需的文件头；不可预览时直接返回说明。"""
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return PreviewResult(PREVIEW_UNSUPPORTED, note="文件已不存在")
+    except OSError as exc:
+        return PreviewResult(PREVIEW_UNSUPPORTED, note=str(exc))
+    if stat.S_ISLNK(info.st_mode):
+        return PreviewResult(PREVIEW_UNSUPPORTED, note="符号链接不预览（不跟随）")
+    if stat.S_ISDIR(info.st_mode):
+        return PreviewResult(PREVIEW_UNSUPPORTED, note="目录不预览")
+    try:
+        with path.open("rb") as handle:
+            data = handle.read(text_limit)
+    except OSError as exc:
+        return PreviewResult(PREVIEW_UNSUPPORTED, note=str(exc))
+    return data, info.st_size
+
+
+def _preview_payload(data: bytes, size: int, suffix: str, hex_limit: int) -> PreviewResult:
+    """按文件头判定图片/文本/二进制，并生成对应预览内容。"""
+    image = _image_kind(data, suffix)
+    if image:
+        return PreviewResult(
+            PREVIEW_IMAGE,
+            note=f"图片（{image}，{_human_size(size)}）",
+            size=size,
+        )
+    text = _decode_text(data)
+    if text is None:
+        note = "PE/可执行文件" if data.startswith(b"MZ") else "二进制文件"
+        truncated = size > len(data)
+        if truncated:
+            note += f"；已截断：仅显示前 {_human_size(len(data))}（共 {_human_size(size)}）"
+        return PreviewResult(PREVIEW_BINARY, text=_hex_dump(data, hex_limit), note=note, truncated=truncated, size=size)
+
+    truncated = size > len(data)
+    note = "文本"
+    if truncated:
+        note += f"；已截断：仅显示前 {_human_size(len(data))}（共 {_human_size(size)}）"
+    return PreviewResult(PREVIEW_TEXT, text=text, note=note, truncated=truncated, size=size)
+
+
+def read_preview(
+    path: Path,
+    *,
+    text_limit: int = PREVIEW_TEXT_LIMIT,
+    hex_limit: int = PREVIEW_HEX_LIMIT,
+) -> PreviewResult:
+    """只读预览：不跟随符号链接，最多读取 ``text_limit`` 字节。"""
+    source = _read_preview_source(path, text_limit)
+    if isinstance(source, PreviewResult):
+        return source
+    data, size = source
+    return _preview_payload(data, size, path.suffix.lower(), hex_limit)
+
+
+# ============================================================================ #
+# 颜色规则（扩展名 / 大小 / 类型属性 / 修改时间；后匹配覆盖先匹配）
+# ============================================================================ #
+COLOR_KIND_ANY = ""
+COLOR_KIND_FILE = "file"
+COLOR_KIND_DIR = "dir"
+COLOR_KIND_LINK = "link"
+COLOR_KIND_TEXT = {
+    COLOR_KIND_ANY: "任意",
+    COLOR_KIND_FILE: "文件",
+    COLOR_KIND_DIR: "目录",
+    COLOR_KIND_LINK: "符号链接",
+}
+
+_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+@dataclass(frozen=True)
+class ColorSubject:
+    """参与颜色规则匹配的条目信息。"""
+
+    name: str
+    is_dir: bool = False
+    is_symlink: bool = False
+    hidden: bool = False
+    size: int = 0
+    mtime: float = 0.0
+
+
+@dataclass(frozen=True)
+class ColorRule:
+    """一条颜色规则；空前景/背景表示不覆盖。"""
+
+    pattern: str = "*"
+    min_size: int | None = None
+    max_size: int | None = None
+    kind: str = COLOR_KIND_ANY
+    hidden: bool | None = None
+    newer_days: float | None = None
+    older_days: float | None = None
+    foreground: str = ""
+    background: str = ""
+
+    def matches(self, subject: ColorSubject, now: float) -> bool:
+        """判断条目是否命中本规则。"""
+        if not self._kind_matches(subject):
+            return False
+        if self.hidden is not None and subject.hidden != self.hidden:
+            return False
+        if not self._size_matches(subject.size):
+            return False
+        if not self._mask_matches(subject.name):
+            return False
+        return self._time_matches(subject.mtime, now)
+
+    def _kind_matches(self, subject: ColorSubject) -> bool:
+        if self.kind == COLOR_KIND_FILE:
+            return not subject.is_dir and not subject.is_symlink
+        if self.kind == COLOR_KIND_DIR:
+            return subject.is_dir
+        if self.kind == COLOR_KIND_LINK:
+            return subject.is_symlink
+        return True
+
+    def _size_matches(self, size: int) -> bool:
+        if self.min_size is not None and size < self.min_size:
+            return False
+        return self.max_size is None or size <= self.max_size
+
+    def _mask_matches(self, name: str) -> bool:
+        mask = self.pattern.strip() or "*"
+        if mask.startswith("."):
+            mask = f"*{mask}"
+        return matches_mask(name, mask)
+
+    def _time_matches(self, mtime: float, now: float) -> bool:
+        if mtime <= 0:
+            return self.newer_days is None and self.older_days is None
+        age_days = max(now - mtime, 0.0) / 86400
+        if self.newer_days is not None and age_days > self.newer_days:
+            return False
+        return self.older_days is None or age_days >= self.older_days
+
+
+@dataclass(frozen=True)
+class ColorStyle:
+    """规则合并后的颜色；空串表示沿用主题默认。"""
+
+    foreground: str = ""
+    background: str = ""
+
+
+def resolve_color_style(rules: Sequence[ColorRule], subject: ColorSubject, now: float) -> ColorStyle | None:
+    """按列表顺序合并命中规则，靠后的规则覆盖靠前的同色属性。"""
+    foreground = ""
+    background = ""
+    matched = False
+    for rule in rules:
+        if not rule.matches(subject, now):
+            continue
+        matched = True
+        foreground = rule.foreground or foreground
+        background = rule.background or background
+    if not matched or not (foreground or background):
+        return None
+    return ColorStyle(foreground, background)
+
+
+def normalize_color(value: Any) -> str:
+    """仅接受 ``#rrggbb``；其余值视为未设置，避免 Tk 颜色异常。"""
+    if not isinstance(value, str):
+        return ""
+    text = value.strip().lower()
+    return text if _COLOR_RE.match(text) else ""
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return int(value)
+
+
+def _optional_days(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        return None
+    return float(value)
+
+
+def parse_color_rules(raw: Any) -> list[ColorRule]:
+    """从 JSON 原始值解析规则；旧配置缺失或格式异常时返回空列表。"""
+    if not isinstance(raw, list):
+        return []
+    rules: list[ColorRule] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        rule = ColorRule(
+            pattern=str(item.get("pattern") or "*").strip() or "*",
+            min_size=_optional_int(item.get("min_size")),
+            max_size=_optional_int(item.get("max_size")),
+            kind=kind if kind in COLOR_KIND_TEXT else COLOR_KIND_ANY,
+            hidden=item.get("hidden") if isinstance(item.get("hidden"), bool) else None,
+            newer_days=_optional_days(item.get("newer_days")),
+            older_days=_optional_days(item.get("older_days")),
+            foreground=normalize_color(item.get("foreground")),
+            background=normalize_color(item.get("background")),
+        )
+        if rule.foreground or rule.background:
+            rules.append(rule)
+    return rules
+
+
+def dump_color_rules(rules: Sequence[ColorRule]) -> list[dict[str, Any]]:
+    """把规则转成可写入 JSON 的字典列表。"""
+    return [
+        {
+            "pattern": rule.pattern,
+            "min_size": rule.min_size,
+            "max_size": rule.max_size,
+            "kind": rule.kind,
+            "hidden": rule.hidden,
+            "newer_days": rule.newer_days,
+            "older_days": rule.older_days,
+            "foreground": rule.foreground,
+            "background": rule.background,
+        }
+        for rule in rules
+    ]
+
+
+# ============================================================================ #
+# 命令行风险识别（删除类命令执行前确认）
+# ============================================================================ #
+DESTRUCTIVE_COMMANDS = frozenset(
+    {
+        "rm",
+        "rmdir",
+        "del",
+        "erase",
+        "rd",
+        "unlink",
+        "shred",
+        "sdelete",
+        "remove-item",
+        "ri",
+        "clear-content",
+        "clc",
+        "format",
+        "mkfs",
+        "diskpart",
+        "dd",
+        "truncate",
+    }
+)
+
+
+def destructive_command(command: str) -> str | None:
+    """返回命令串中首个删除类命令名；没有则返回 ``None``。"""
+    for segment in re.split(r"&&|\|\||[;|\n]", command):
+        tokens = segment.strip().split()
+        while tokens and tokens[0] in {"sudo", "doas"}:
+            tokens.pop(0)
+        if not tokens:
+            continue
+        name = Path(tokens[0].strip("\"'")).name.casefold()
+        name = name.removesuffix(".exe")
+        if name in DESTRUCTIVE_COMMANDS:
+            return name
+        if name == "find" and "-delete" in tokens:
+            return "find -delete"
+    return None

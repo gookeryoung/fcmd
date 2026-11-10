@@ -1060,3 +1060,199 @@ class TestSyncDeleteExecution:
 
         assert len(report.completed) == 2
         assert seen == ["f0.txt", "f1.txt"]
+
+
+class TestReadPreview:
+    def test_text_preview_and_limit(self, tmp_path: Path) -> None:
+        path = tmp_path / "note.txt"
+        path.write_text("你好\nworld\n", encoding="utf-8")
+
+        result = ops.read_preview(path)
+
+        assert result.kind == ops.PREVIEW_TEXT
+        assert result.text == "你好\nworld\n"
+        assert result.truncated is False
+        assert result.size == path.stat().st_size
+
+    def test_text_truncation_is_reported(self, tmp_path: Path) -> None:
+        path = tmp_path / "big.txt"
+        path.write_text("x" * 64, encoding="utf-8")
+
+        result = ops.read_preview(path, text_limit=10)
+
+        assert result.kind == ops.PREVIEW_TEXT
+        assert result.truncated is True
+        assert result.text == "x" * 10
+        assert "已截断" in result.note
+
+    def test_binary_gets_hex_dump(self, tmp_path: Path) -> None:
+        path = tmp_path / "blob.bin"
+        path.write_bytes(b"abc\x00\x01\x02def")
+
+        result = ops.read_preview(path)
+
+        assert result.kind == ops.PREVIEW_BINARY
+        assert "00000000" in result.text
+        assert "二进制文件" in result.note
+
+    def test_pe_file_is_labeled(self, tmp_path: Path) -> None:
+        path = tmp_path / "app.exe"
+        path.write_bytes(b"MZ" + b"\x00" * 30)
+
+        result = ops.read_preview(path)
+
+        assert result.kind == ops.PREVIEW_BINARY
+        assert "PE/可执行文件" in result.note
+
+    def test_image_is_detected_by_magic(self, tmp_path: Path) -> None:
+        path = tmp_path / "pixel.dat"
+        path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+
+        result = ops.read_preview(path)
+
+        assert result.kind == ops.PREVIEW_IMAGE
+        assert "png" in result.note
+
+    def test_directory_is_unsupported(self, tmp_path: Path) -> None:
+        result = ops.read_preview(tmp_path)
+
+        assert result.kind == ops.PREVIEW_UNSUPPORTED
+        assert result.note == "目录不预览"
+
+    def test_symlink_is_not_followed(self, tmp_path: Path) -> None:
+        target = tmp_path / "target.txt"
+        target.write_text("secret", encoding="utf-8")
+        link = tmp_path / "link.txt"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            return
+
+        result = ops.read_preview(link)
+
+        assert result.kind == ops.PREVIEW_UNSUPPORTED
+        assert "符号链接" in result.note
+
+    def test_missing_file_is_unsupported(self, tmp_path: Path) -> None:
+        result = ops.read_preview(tmp_path / "nope.txt")
+
+        assert result.kind == ops.PREVIEW_UNSUPPORTED
+        assert result.note == "文件已不存在"
+
+
+class TestColorRules:
+    NOW = 1_700_000_000.0
+
+    def _subject(self, **overrides: object) -> ops.ColorSubject:
+        data: dict[str, object] = {"name": "app.log"}
+        data.update(overrides)
+        return ops.ColorSubject(**data)  # type: ignore[arg-type]
+
+    def test_pattern_size_and_kind(self) -> None:
+        rule = ops.ColorRule(pattern="*.log", min_size=10, max_size=100, kind=ops.COLOR_KIND_FILE)
+
+        assert rule.matches(self._subject(size=50), self.NOW)
+        assert not rule.matches(self._subject(size=5), self.NOW)
+        assert not rule.matches(self._subject(size=500), self.NOW)
+        assert not rule.matches(self._subject(name="app.txt", size=50), self.NOW)
+        assert not rule.matches(self._subject(name="logs", size=50, is_dir=True), self.NOW)
+
+    def test_hidden_and_symlink_attributes(self) -> None:
+        hidden_rule = ops.ColorRule(pattern="*", hidden=True)
+        link_rule = ops.ColorRule(pattern="*", kind=ops.COLOR_KIND_LINK)
+
+        assert hidden_rule.matches(self._subject(hidden=True), self.NOW)
+        assert not hidden_rule.matches(self._subject(hidden=False), self.NOW)
+        assert link_rule.matches(self._subject(is_symlink=True), self.NOW)
+        assert not link_rule.matches(self._subject(is_symlink=False), self.NOW)
+
+    def test_time_windows(self) -> None:
+        recent = self._subject(mtime=self.NOW - 3 * 86400)
+        old = self._subject(mtime=self.NOW - 30 * 86400)
+
+        assert ops.ColorRule(newer_days=7).matches(recent, self.NOW)
+        assert not ops.ColorRule(newer_days=7).matches(old, self.NOW)
+        assert ops.ColorRule(older_days=20).matches(old, self.NOW)
+        assert not ops.ColorRule(older_days=20).matches(recent, self.NOW)
+        assert not ops.ColorRule(newer_days=7).matches(self._subject(mtime=0), self.NOW)
+
+    def test_later_rules_override_earlier(self) -> None:
+        rules = [
+            ops.ColorRule(pattern="*.log", foreground="#ff0000"),
+            ops.ColorRule(pattern="app.*", foreground="#00ff00", background="#000033"),
+        ]
+
+        style = ops.resolve_color_style(rules, self._subject(), self.NOW)
+
+        assert style == ops.ColorStyle("#00ff00", "#000033")
+
+    def test_foreground_and_background_merge_independently(self) -> None:
+        rules = [
+            ops.ColorRule(pattern="*.log", background="#000033"),
+            ops.ColorRule(pattern="app.*", foreground="#00ff00"),
+        ]
+
+        style = ops.resolve_color_style(rules, self._subject(), self.NOW)
+
+        assert style == ops.ColorStyle("#00ff00", "#000033")
+
+    def test_no_match_returns_none(self) -> None:
+        rules = [ops.ColorRule(pattern="*.tmp", foreground="#ffffff")]
+
+        assert ops.resolve_color_style(rules, self._subject(), self.NOW) is None
+
+    def test_parse_and_dump_roundtrip(self) -> None:
+        rules = [
+            ops.ColorRule(
+                pattern="*.log",
+                min_size=10,
+                max_size=100,
+                kind=ops.COLOR_KIND_FILE,
+                hidden=False,
+                newer_days=7.0,
+                older_days=None,
+                foreground="#ff0000",
+                background="#000033",
+            )
+        ]
+
+        raw = ops.dump_color_rules(rules)
+
+        assert ops.parse_color_rules(raw) == rules
+
+    def test_parse_ignores_invalid_payloads(self) -> None:
+        raw = [
+            None,
+            {"pattern": "*.log"},
+            {"pattern": "*.log", "foreground": "red"},
+            {"pattern": "*.log", "foreground": "#FF0000", "background": "#000033"},
+            "not-a-dict",
+        ]
+
+        rules = ops.parse_color_rules(raw)
+
+        assert rules == [ops.ColorRule(pattern="*.log", foreground="#ff0000", background="#000033")]
+        assert ops.parse_color_rules(None) == []
+
+    def test_normalize_color(self) -> None:
+        assert ops.normalize_color(" #AABBCC ") == "#aabbcc"
+        assert ops.normalize_color("red") == ""
+        assert ops.normalize_color(123) == ""
+
+
+class TestDestructiveCommand:
+    @pytest.mark.parametrize(
+        ("command", "expected"),
+        [
+            ("rm -rf build", "rm"),
+            ("sudo rm note.txt", "rm"),
+            ("echo done && del temp.txt", "del"),
+            ("Remove-Item -Recurse old", "remove-item"),
+            ("find . -name '*.tmp' -delete", "find -delete"),
+            ("git status && ls", None),
+            ("echo 'rm is dangerous'", None),
+            ("", None),
+        ],
+    )
+    def test_detects_delete_commands(self, command: str, expected: str | None) -> None:
+        assert ops.destructive_command(command) == expected
