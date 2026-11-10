@@ -18,6 +18,8 @@ MAX_DIR_LEVELS = 2
 
 TOOLS = PACKAGE / "tools"
 
+TESTS = Path(__file__).resolve().parent
+
 
 def _iter_dirs() -> list[Path]:
     """``src/fcmd`` 下的全部目录（跳过字节码缓存）。"""
@@ -77,3 +79,26 @@ def test_domains_are_flat() -> None:
         if p.is_dir() and any(c.is_dir() and c.name != "__pycache__" for c in p.iterdir())
     )
     assert not nested, f"领域子包内嵌套了子目录: {nested}"
+
+
+def test_test_dirs_mirror_tool_domains() -> None:
+    """``tests/tools/<域>`` 与 ``src/fcmd/tools/<域>`` 一一对应。"""
+    src_domains = {p.name for p in TOOLS.iterdir() if p.is_dir() and p.name != "__pycache__"}
+    test_domains = {p.name for p in (TESTS / "tools").iterdir() if p.is_dir() and p.name != "__pycache__"}
+    assert src_domains == test_domains, (
+        f"领域测试目录与源码不镜像：缺少 {sorted(src_domains - test_domains)}，多余 {sorted(test_domains - src_domains)}"
+    )
+
+
+def test_tool_cli_tests_mirror_tool_modules() -> None:
+    """``tests/tools/test_cli_<名>.py`` 必须对应顶层工具模块 ``tools/<名>.py``。
+
+    DSL 声明式命令的测试归 ``tests/dsl``（与 ``src/fcmd/commands/*.toml`` 的
+    声明层对应），不应散落在 ``tests/tools`` 根目录，否则按目录找测试会同时
+    命中两套归属。
+    """
+    tool_modules = {p.stem for p in TOOLS.glob("*.py")}
+    stray = sorted(
+        p.name for p in (TESTS / "tools").glob("test_cli_*.py") if p.stem[len("test_cli_") :] not in tool_modules
+    )
+    assert not stray, f"tests/tools 根的 test_cli_* 无对应顶层工具模块（DSL 命令测试应放 tests/dsl）: {stray}"
