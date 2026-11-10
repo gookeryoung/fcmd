@@ -23,7 +23,7 @@ pip install fcmd          # 或 uv add fcmd
 | Extra | 安装命令 | 提供的工具/能力 |
 |-------|---------|---------------|
 | `img` | `pip install fcmd[img]` | `imagetool` / `img2pdf` / `img2pdfw`（Pillow） |
-| `pdf` | `pip install fcmd[pdf]` | `pdftool`（PyMuPDF + pypdf） |
+| `pdf` | `pip install fcmd[pdf]` | `pdftool` / `pdfcrypt` / `pdfsplit`（PyMuPDF + pypdf） |
 | `ocr` | `pip install fcmd[ocr]` | `pdftool ocr`（pytesseract，需系统 tesseract） |
 | `svg` | `pip install fcmd[svg]` | `img2ico` 的 SVG 输入（resvg-py） |
 | `crypto` | `pip install fcmd[crypto]` | `cryptool`（cryptography Fernet） |
@@ -99,7 +99,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-90 个工具（其中 41 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`docdiff`/`docdiffw`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+94 个工具（其中 45 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`docdiff`/`docdiffw`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`packtool`/`pdfcrypt`/`pdfcryptw`/`pdfsplit`/`pdfsplitw`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。例外：`taskkill` / `which` 与系统命令同名，不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本；规范名仍可通过 `fcmd taskkill` / `fcmd which` 使用。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
 
@@ -184,6 +184,10 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正），依赖 `fcmd[img]` |
 | `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志），依赖 `fcmd[img]` |
+| `pdfcrypt` | - | PDF 批量加密/解密（扫描目录、按加密状态筛选、并发处理；加密输出 `.enc.pdf`，解密输出 `.dec.pdf`），依赖 `fcmd[pdf]` |
+| `pdfcryptw` | - | PDF 加密解密窗口版（Tk，目录与密码输入、递归与并发可调、进度与日志），依赖 `fcmd[pdf]` |
+| `pdfsplit` | - | PDF 分割（按份数 / 每份页数 / 页码范围提取，支持 `1,3-5,7-` 语法），依赖 `fcmd[pdf]` |
+| `pdfsplitw` | - | PDF 分割窗口版（Tk，三种模式、进度与日志），依赖 `fcmd[pdf]` |
 | `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr/attach/compare/layout 等 18 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]`；产出文件的子命令支持目录批处理（`--recursive` / `--skip-existing` / `--silent`） |
 
 ### 办公文档（可选依赖）
