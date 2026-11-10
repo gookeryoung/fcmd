@@ -29,7 +29,7 @@ _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/�
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
 
 
-class _ServeWindowUI:
+class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """ServeWindow 的界面构建与模型列表渲染（mixin）。"""
 
     # ------------------------------------------------------------------ #

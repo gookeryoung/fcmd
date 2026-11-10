@@ -331,7 +331,7 @@ class RateWindow:
         return self._gen_rate, self._prompt_rate
 
 
-class _ServeWindowMonitor:
+class _ServeWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """ServeWindow 的实时监控方法（mixin）。"""
 
     # ------------------------------------------------------------------ #
