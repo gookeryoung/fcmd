@@ -25,6 +25,7 @@ from typing import Any
 
 import fcmd
 from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.tools.media import mediabase
 
 __all__ = [
     "DEFAULT_SIZES_TEXT",
@@ -96,17 +97,8 @@ def parse_sizes_text(text: str) -> list[int]:
 
 
 def normalize_quality(name: str) -> str:
-    """把质量档位规范为 ``low`` / ``medium`` / ``high``（忽略大小写与空白）。
-
-    Raises
-    ------
-    ValueError
-        档位不在支持列表中。
-    """
-    key = name.strip().lower()
-    if key not in QUALITY_CHOICES:
-        raise ValueError(f"不支持的质量: {name}，支持: {', '.join(QUALITY_CHOICES)}")
-    return key
+    """把质量档位规范为 ``low`` / ``medium`` / ``high``（忽略大小写与空白）。"""
+    return mediabase.normalize_quality(name)
 
 
 def load_settings(path: Path | None = None) -> Img2IcoSettings:
