@@ -1,4 +1,4 @@
-"""pdftool - PDF 处理工具（15 子命令门面）。
+"""pdftool - PDF 处理工具（18 子命令门面）。
 
 可复用的 PDF 操作实现在 :mod:`fcmd.tools.pdf.pdfbase`（无工具注册副作用），
 本模块只做子命令路由与参数转接。
@@ -8,6 +8,9 @@
     fcmd pdftool i input.pdf
     fcmd pdftool m a.pdf b.pdf --output-path merged.pdf
     fcmd pdftool s input.pdf --output-dir split --every 2
+    fcmd pdftool attach add input.pdf --files a.txt
+    fcmd pdftool compare a.pdf b.pdf --output-path diff.pdf
+    fcmd pdftool layout input.pdf --page-size a4 --orientation landscape
 """
 
 from __future__ import annotations
@@ -18,6 +21,9 @@ from typing import Literal
 import fcmd
 from fcmd.tools.pdf.pdfbase import (
     pdf_add_watermark,
+    pdf_attach_add,
+    pdf_attach_extract,
+    pdf_compare,
     pdf_compress,
     pdf_crop,
     pdf_decrypt,
@@ -25,6 +31,7 @@ from fcmd.tools.pdf.pdfbase import (
     pdf_extract_images,
     pdf_extract_text,
     pdf_info,
+    pdf_layout,
     pdf_merge,
     pdf_ocr,
     pdf_reorder,
@@ -218,6 +225,98 @@ def pdftool_img(
 def pdftool_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> None:
     """修复 PDF 文件（repair 子命令）。"""
     pdf_repair(input_path, output_path)
+
+
+@fcmd.tool("pdftool", subcommand="attach", help="管理 PDF 附件")
+def pdftool_attach(
+    action: Literal["add", "extract"],
+    input_path: Path,
+    output_path: Path | None = None,
+    files: list[Path] | None = None,
+    output_dir: Path = Path("attachments"),
+) -> None:
+    """管理 PDF 附件（attach 子命令）。
+
+    Parameters
+    ----------
+    action:
+        操作类型：add 添加附件，extract 提取附件
+    input_path:
+        输入 PDF 文件
+    output_path:
+        添加附件时的输出路径（默认 <输入名>.attached.pdf）
+    files:
+        要嵌入的附件文件列表（add 必填）
+    output_dir:
+        提取附件的目标目录（默认 attachments）
+    """
+    if action == "add":
+        target = output_path or input_path.with_suffix(".attached.pdf")
+        pdf_attach_add(input_path, target, files or [])
+    else:
+        pdf_attach_extract(input_path, output_dir)
+
+
+@fcmd.tool("pdftool", subcommand="compare", help="比较两个 PDF")
+def pdftool_compare(
+    input_path1: Path,
+    input_path2: Path,
+    output_path: Path | None = None,
+) -> None:
+    """比较两个 PDF 并输出差异高亮文件（compare 子命令）。
+
+    Parameters
+    ----------
+    input_path1:
+        基准 PDF 文件
+    input_path2:
+        比较 PDF 文件（差异高亮版以它为基准输出）
+    output_path:
+        输出路径（默认 <基准名>.diff.pdf）
+    """
+    target = output_path or input_path1.with_suffix(".diff.pdf")
+    pdf_compare(input_path1, input_path2, target)
+
+
+@fcmd.tool("pdftool", subcommand="layout", help="调整 PDF 页面布局")
+def pdftool_layout(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
+    input_path: Path,
+    output_path: Path | None = None,
+    page_size: Literal["a3", "a4", "a5", "legal", "letter"] | None = None,
+    orientation: Literal["landscape", "portrait"] | None = None,
+    margin_left: int = 0,
+    margin_right: int = 0,
+    margin_top: int = 0,
+    margin_bottom: int = 0,
+) -> None:
+    """调整 PDF 页面尺寸、方向与页边距（layout 子命令）。
+
+    Parameters
+    ----------
+    page_size:
+        目标页面尺寸：a3/a4/a5/legal/letter（默认保持原尺寸）
+    orientation:
+        页面方向：portrait 纵向、landscape 横向（默认保持原方向）
+    margin_left:
+        左边距（点，1 点 = 1/72 英寸）
+    margin_right:
+        右边距（点）
+    margin_top:
+        顶部边距（点）
+    margin_bottom:
+        底部边距（点）
+    """
+    target = output_path or input_path.with_suffix(".layout.pdf")
+    pdf_layout(
+        input_path,
+        target,
+        page_size,
+        orientation,
+        margin_left,
+        margin_right,
+        margin_top,
+        margin_bottom,
+    )
 
 
 @fcmd.main("pdftool")

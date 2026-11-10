@@ -99,9 +99,29 @@ class TestRegistration:
         assert "pdftool" in _TOOL_REGISTRY
 
     def test_pdftool_subcommands(self) -> None:
-        """pdftool 应有 15 个子命令。"""
+        """pdftool 应有 18 个子命令。"""
         subs = fx.list_subcommands("pdftool")
-        for sc in ("m", "s", "c", "e", "d", "xt", "xi", "w", "r", "crop", "i", "ocr", "reorder", "img", "repair"):
+        expected = (
+            "m",
+            "s",
+            "c",
+            "e",
+            "d",
+            "xt",
+            "xi",
+            "w",
+            "r",
+            "crop",
+            "i",
+            "ocr",
+            "reorder",
+            "img",
+            "repair",
+            "attach",
+            "compare",
+            "layout",
+        )
+        for sc in expected:
             assert sc in subs, f"子命令 {sc!r} 未注册"
 
 
@@ -293,6 +313,8 @@ class TestNoDepsGuards:
             ("crop", ["in.pdf"]),
             ("img", ["in.pdf"]),
             ("repair", ["in.pdf"]),
+            ("compare", ["a.pdf", "b.pdf"]),
+            ("layout", ["in.pdf"]),
         ],
     )
     def test_pdftool_no_pymupdf(
@@ -314,6 +336,8 @@ class TestNoDepsGuards:
             ("s", ["in.pdf"]),
             ("d", ["in.pdf", "--password", "x"]),
             ("reorder", ["in.pdf", "out.pdf", "0"]),
+            ("attach", ["add", "in.pdf"]),
+            ("attach", ["extract", "in.pdf"]),
         ],
     )
     def test_pdftool_no_pypdf(
@@ -530,6 +554,243 @@ class TestPageFilterParams:
         code = run_tool("pdftool", ["crop", str(sample_pdf), "--output-path", str(out), "--pages", "1"])
         assert code == 0
         assert out.exists()
+
+
+# ---------------------------------------------------------------------- #
+# 附件管理 / 差异比较 / 页面布局
+# ---------------------------------------------------------------------- #
+class TestAttachParams:
+    """attach 子命令（添加/提取内嵌附件）。"""
+
+    def test_attach_add_and_extract_roundtrip(self, sample_pdf: Path, sample_image: Path, tmp_path: Path) -> None:
+        """添加附件后可原样提取。"""
+        attached = tmp_path / "attached.pdf"
+        code = run_tool(
+            "pdftool",
+            ["attach", "add", str(sample_pdf), "--output-path", str(attached), "--files", str(sample_image)],
+        )
+        assert code == 0
+        assert attached.exists()
+
+        out_dir = tmp_path / "attachments"
+        code = run_tool("pdftool", ["attach", "extract", str(attached), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert (out_dir / sample_image.name).read_bytes() == sample_image.read_bytes()
+
+    def test_attach_add_default_output(self, sample_pdf: Path, sample_image: Path) -> None:
+        """未指定输出时默认生成 <输入名>.attached.pdf。"""
+        code = run_tool("pdftool", ["attach", "add", str(sample_pdf), "--files", str(sample_image)])
+        assert code == 0
+        assert (sample_pdf.parent / "sample.attached.pdf").exists()
+
+    def test_attach_add_missing_files(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """未提供附件文件时打印错误且不生成输出。"""
+        out = tmp_path / "attached.pdf"
+        code = run_tool("pdftool", ["attach", "add", str(sample_pdf), "--output-path", str(out)])
+        assert code == 0
+        assert "没有可添加的附件文件" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_attach_add_skips_nonexistent(
+        self,
+        sample_pdf: Path,
+        sample_image: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """不存在的附件被跳过，已存在的仍正常添加。"""
+        out = tmp_path / "attached.pdf"
+        missing = tmp_path / "missing.txt"
+        code = run_tool(
+            "pdftool",
+            [
+                "attach",
+                "add",
+                str(sample_pdf),
+                "--output-path",
+                str(out),
+                "--files",
+                str(missing),
+                str(sample_image),
+            ],
+        )
+        assert code == 0
+        assert "已跳过" in capsys.readouterr().out
+        assert out.exists()
+
+    def test_attach_add_preserves_existing(self, sample_pdf: Path, sample_image: Path, tmp_path: Path) -> None:
+        """再次添加附件时保留已有附件。"""
+        first = tmp_path / "first.pdf"
+        run_tool(
+            "pdftool",
+            ["attach", "add", str(sample_pdf), "--output-path", str(first), "--files", str(sample_image)],
+        )
+
+        note = tmp_path / "note.txt"
+        note.write_text("hello", encoding="utf-8")
+        second = tmp_path / "second.pdf"
+        run_tool(
+            "pdftool",
+            ["attach", "add", str(first), "--output-path", str(second), "--files", str(note)],
+        )
+
+        out_dir = tmp_path / "extracted"
+        run_tool("pdftool", ["attach", "extract", str(second), "--output-dir", str(out_dir)])
+        assert (out_dir / sample_image.name).exists()
+        assert (out_dir / "note.txt").read_text(encoding="utf-8") == "hello"
+
+    def test_attach_extract_no_attachments(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """无附件时打印提示且不创建输出目录。"""
+        out_dir = tmp_path / "attachments"
+        code = run_tool("pdftool", ["attach", "extract", str(sample_pdf), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert "没有附件" in capsys.readouterr().out
+        assert not out_dir.exists()
+
+
+class TestCompareParams:
+    """compare 子命令（差异高亮输出）。"""
+
+    def test_compare_identical(self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """相同文件无差异页、无高亮标注。"""
+        out = tmp_path / "diff.pdf"
+        code = run_tool("pdftool", ["compare", str(sample_pdf), str(sample_pdf), "--output-path", str(out)])
+        assert code == 0
+        assert "差异页 0 页" in capsys.readouterr().out
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 2
+            assert list(doc[0].annots() or []) == []
+        finally:
+            doc.close()
+
+    def test_compare_highlight_added_words(
+        self,
+        sample_pdf_ab: tuple[Path, Path],
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """文本不同时输出差异页并生成高亮标注。"""
+        a, b = sample_pdf_ab
+        out = tmp_path / "diff.pdf"
+        code = run_tool("pdftool", ["compare", str(a), str(b), "--output-path", str(out)])
+        assert code == 0
+        assert "差异页 2 页" in capsys.readouterr().out
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 2
+            assert len(list(doc[0].annots() or [])) >= 1
+        finally:
+            doc.close()
+
+    def test_compare_default_output(self, sample_pdf_ab: tuple[Path, Path]) -> None:
+        """未指定输出时默认生成 <基准名>.diff.pdf。"""
+        a, b = sample_pdf_ab
+        code = run_tool("pdftool", ["compare", str(a), str(b)])
+        assert code == 0
+        assert (a.parent / "a.diff.pdf").exists()
+
+    def test_compare_page_count_mismatch(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """页数不一致时：多出的页提示未纳入，缺少的页按全量新增高亮。"""
+        out_dir = tmp_path / "split"
+        run_tool("pdftool", ["s", str(sample_pdf), "--output-dir", str(out_dir)])
+        first = out_dir / "sample_page_1.pdf"
+
+        longer = tmp_path / "longer.pdf"
+        code = run_tool("pdftool", ["compare", str(sample_pdf), str(first), "--output-path", str(longer)])
+        assert code == 0
+        assert "未纳入输出" in capsys.readouterr().out
+
+        shorter = tmp_path / "shorter.pdf"
+        code = run_tool("pdftool", ["compare", str(first), str(sample_pdf), "--output-path", str(shorter)])
+        assert code == 0
+        assert "差异页 1 页" in capsys.readouterr().out
+
+
+class TestLayoutParams:
+    """layout 子命令（尺寸/方向/边距）。"""
+
+    def test_layout_a4_landscape(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """A4 横向输出页面尺寸为 842x595。"""
+        out = tmp_path / "layout.pdf"
+        code = run_tool(
+            "pdftool",
+            ["layout", str(sample_pdf), "--output-path", str(out), "--page-size", "a4", "--orientation", "landscape"],
+        )
+        assert code == 0
+        assert out.exists()
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 2
+            assert round(doc[0].rect.width) == 842
+            assert round(doc[0].rect.height) == 595
+        finally:
+            doc.close()
+
+    def test_layout_default_keeps_size(self, sample_pdf: Path) -> None:
+        """未指定尺寸/方向时保持原页面尺寸，默认输出 <输入名>.layout.pdf。"""
+        code = run_tool("pdftool", ["layout", str(sample_pdf)])
+        assert code == 0
+        out = sample_pdf.parent / "sample.layout.pdf"
+        assert out.exists()
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert (round(doc[0].rect.width), round(doc[0].rect.height)) == (200, 300)
+        finally:
+            doc.close()
+
+    def test_layout_margins(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """指定四边距后正常输出。"""
+        out = tmp_path / "layout.pdf"
+        code = run_tool(
+            "pdftool",
+            [
+                "layout",
+                str(sample_pdf),
+                "--output-path",
+                str(out),
+                "--page-size",
+                "a4",
+                "--margin-left",
+                "10",
+                "--margin-right",
+                "10",
+                "--margin-top",
+                "20",
+                "--margin-bottom",
+                "20",
+            ],
+        )
+        assert code == 0
+        assert out.exists()
+
+    def test_layout_margin_too_large(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """边距超过页面尺寸时打印错误且不生成输出。"""
+        out = tmp_path / "layout.pdf"
+        code = run_tool("pdftool", ["layout", str(sample_pdf), "--output-path", str(out), "--margin-left", "500"])
+        assert code == 0
+        assert "无法排版" in capsys.readouterr().out
+        assert not out.exists()
 
 
 # ---------------------------------------------------------------------- #

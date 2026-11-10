@@ -183,7 +183,7 @@ fcmd completion --shell fish | source         # fish
 |------|------|------|
 | `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正），依赖 `fcmd[img]` |
 | `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志），依赖 `fcmd[img]` |
-| `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr 等 15 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]` |
+| `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr/attach/compare/layout 等 18 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]` |
 
 ### 多媒体（可选依赖）
 

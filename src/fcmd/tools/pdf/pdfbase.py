@@ -1,7 +1,7 @@
 """pdfbase - PDF 处理公共逻辑（无工具注册副作用）。
 
 供 ``pdftool`` 子命令门面、窗口版工具及外部代码复用：依赖守卫、页码解析
-与 15 个 PDF 操作函数都在此定义，本模块不注册任何 ``@fcmd.tool``。
+与 19 个 PDF 操作函数都在此定义，本模块不注册任何 ``@fcmd.tool``。
 
 外部库按需延迟导入——导入本模块不触发重型 PDF 库加载；执行期 import
 失败时打印友好提示并返回，退出码语义由调用方决定。
@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import importlib.util
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -24,6 +25,9 @@ __all__ = [
     "HAS_PYMUPDF",
     "HAS_PYPDF",
     "pdf_add_watermark",
+    "pdf_attach_add",
+    "pdf_attach_extract",
+    "pdf_compare",
     "pdf_compress",
     "pdf_crop",
     "pdf_decrypt",
@@ -31,6 +35,7 @@ __all__ = [
     "pdf_extract_images",
     "pdf_extract_text",
     "pdf_info",
+    "pdf_layout",
     "pdf_merge",
     "pdf_ocr",
     "pdf_reorder",
@@ -493,3 +498,155 @@ def pdf_repair(input_path: Path, output_path: Path = Path("repaired.pdf")) -> No
     finally:
         doc.close()
     print(f"修复完成: {output_path}")
+
+
+# ---------------------------------------------------------------------- #
+# 附件管理
+# ---------------------------------------------------------------------- #
+def pdf_attach_add(input_path: Path, output_path: Path, files: Sequence[Path]) -> None:
+    """向 PDF 嵌入附件文件（保留原有附件）。"""
+    if not _require_pypdf():
+        return
+
+    reader = pypdf.PdfReader(str(input_path))
+    writer = pypdf.PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+
+    for name, payloads in reader.attachments.items():
+        for data in payloads:
+            writer.add_attachment(name, data)
+
+    added = 0
+    for item in files:
+        path = Path(item)
+        if not path.is_file():
+            print(f"警告: 附件不存在，已跳过: {path}")
+            continue
+        writer.add_attachment(path.name, path.read_bytes())
+        added += 1
+
+    if added == 0:
+        print("错误: 没有可添加的附件文件")
+        return
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("wb") as fh:
+        writer.write(fh)
+    print(f"附件添加完成: {output_path} (新增 {added} 个)")
+
+
+def pdf_attach_extract(input_path: Path, output_dir: Path = Path("attachments")) -> None:
+    """提取 PDF 内嵌附件到目录。"""
+    if not _require_pypdf():
+        return
+
+    reader = pypdf.PdfReader(str(input_path))
+    attachments = reader.attachments
+    if not attachments:
+        print("PDF 中没有附件")
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
+    for name, payloads in attachments.items():
+        # 附件名来自 PDF 内容，仅保留文件名部分，避免越出输出目录
+        safe_name = Path(name).name or "attachment"
+        multiple = len(payloads) > 1
+        for index, data in enumerate(payloads, start=1):
+            target = output_dir / (f"{index}_{safe_name}" if multiple else safe_name)
+            target.write_bytes(data)
+            count += 1
+    print(f"附件提取完成: {output_dir} (共 {count} 个文件)")
+
+
+# ---------------------------------------------------------------------- #
+# 差异比较与页面布局
+# ---------------------------------------------------------------------- #
+def pdf_compare(input_path1: Path, input_path2: Path, output_path: Path) -> None:
+    """比较两个 PDF 并输出差异高亮文件（以第二个文件为基准）。
+
+    逐页比对文本；仅在文本不同的页面上标出第二个文件中新增的单词，
+    第二个文件多出的页面原样保留。
+    """
+    if not _require_pymupdf():
+        return
+
+    doc1 = fitz.open(str(input_path1))
+    doc2 = fitz.open(str(input_path2))
+    diff = fitz.open()
+    extra_pages = doc1.page_count - doc2.page_count
+    changed = 0
+    try:
+        for page_idx in range(doc2.page_count):
+            diff.insert_pdf(doc2, from_page=page_idx, to_page=page_idx)
+
+            text1 = doc1[page_idx].get_text() if page_idx < doc1.page_count else ""
+            page2 = doc2[page_idx]
+            if text1 == page2.get_text():
+                continue
+
+            changed += 1
+            words1 = {w[4] for w in doc1[page_idx].get_text("words")} if page_idx < doc1.page_count else set()
+            target = diff[len(diff) - 1]
+            for word in page2.get_text("words"):
+                if word[4] not in words1:
+                    target.add_highlight_annot(fitz.Rect(word[:4]))
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        diff.save(str(output_path))
+    finally:
+        diff.close()
+        doc1.close()
+        doc2.close()
+
+    print(f"比较完成: {output_path} (差异页 {changed} 页)")
+    if extra_pages > 0:
+        print(f"提示: 第一个文件比第二个多 {extra_pages} 页，未纳入输出")
+
+
+# 常用页面尺寸（点）：1 点 = 1/72 英寸
+_PAGE_SIZES: dict[str, tuple[int, int]] = {
+    "a3": (842, 1190),
+    "a4": (595, 842),
+    "a5": (420, 595),
+    "legal": (612, 1008),
+    "letter": (612, 792),
+}
+
+
+def pdf_layout(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
+    input_path: Path,
+    output_path: Path = Path("layout.pdf"),
+    page_size: str | None = None,
+    orientation: str | None = None,
+    margin_left: int = 0,
+    margin_right: int = 0,
+    margin_top: int = 0,
+    margin_bottom: int = 0,
+) -> None:
+    """调整 PDF 页面尺寸、方向与页边距。"""
+    if not _require_pymupdf():
+        return
+
+    doc = fitz.open(str(input_path))
+    result = fitz.open()
+    try:
+        for page in doc:
+            width, height = _PAGE_SIZES.get(page_size or "", (page.rect.width, page.rect.height))
+            if orientation == "landscape":
+                width, height = height, width
+
+            box = fitz.Rect(margin_left, margin_top, width - margin_right, height - margin_bottom)
+            if box.width <= 0 or box.height <= 0:
+                print("错误: 边距超过页面尺寸，无法排版")
+                return
+
+            result.new_page(width=width, height=height).show_pdf_page(box, doc, page.number)
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        result.save(str(output_path))
+    finally:
+        result.close()
+        doc.close()
+    print(f"布局调整完成: {output_path}")
