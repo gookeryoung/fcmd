@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.tools.data.database import (
+from fcmd.tools.database import (
     extract_xml,
     minify_xml,
     pretty_xml,

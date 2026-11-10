@@ -1,6 +1,6 @@
 """数据类 DSL 动作：csvtool / inifile / jsontool / tomltool / xmltool / yamtool。
 
-业务实现统一在 :mod:`fcmd.tools.data.database`；本模块只保留 ``@action``
+业务实现统一在 :mod:`fcmd.tools.database`；本模块只保留 ``@action``
 声明与参数转接，避免 DSL 层出现第二套数据实现。TOML 声明通过
 ``action = "<名>"`` 引用这些名字。
 """
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fcmd.tools.data import database
+from fcmd.tools import database
 
 from .. import action
 

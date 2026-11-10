@@ -34,8 +34,8 @@ DSL 最初只为「声明式编排」而生，但历史上把大量业务实现�
 | text | `tools/text/textbase.py` | 完成 |
 | net | `tools/net/netbase.py`（通用探测在 `core/shared/net.py`） | 完成 |
 | calc | `tools/calc/calcbase.py`、`calcdatebase.py` | 完成 |
-| hash | `tools/hash/hashbase.py` | 完成 |
-| data | `tools/data/database.py` | 完成 |
+| hash | `tools/hashbase.py` | 完成 |
+| data | `tools/database.py` | 完成 |
 
 ## 落地状态
 

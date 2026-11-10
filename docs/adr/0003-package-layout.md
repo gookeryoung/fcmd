@@ -26,7 +26,7 @@
 
 ### D3 单文件域不构成包
 
-`tools/data/database.py` → `tools/database.py`，`tools/hash/hashbase.py` → `tools/hashbase.py`，删除 `tools/data`、`tools/hash` 两个子包。依据：单文件包只增加路径长度，不提供隔离；工具名取模块名末段，顶层模块与领域子包内模块在发现机制里等价。
+`src/fcmd/tools/data/database.py` 提为 `src/fcmd/tools/database.py`，`src/fcmd/tools/hash/hashbase.py` 提为 `src/fcmd/tools/hashbase.py`，删除 `tools/data`、`tools/hash` 两个单文件子包。依据：单文件包只增加路径长度，不提供隔离；工具名取模块名末段，顶层模块与领域子包内模块在发现机制里等价。
 
 代价：`fcmd.tools.data.database` 与 `fcmd.tools.hash.hashbase` 是半公开导入路径（README 未承诺，但被 dsl 动作与测试复用），改为 `fcmd.tools.database` / `fcmd.tools.hashbase`，不保留兼容 shim（与 README「不保留兼容 shim」口径一致）。
 
@@ -49,6 +49,7 @@
 - B0：删除 `tools/ui/` 空壳目录（无跟踪文件），由 D6 的断言防止复发。
 - B1：新增 `tests/test_layout.py`，五条断言全绿。
 - B2：`dsl/actions/toolcmd/` → `dsl/toolcmd/`；`_index` 改存绝对模块路径并重生成。
+- B4：`tools/data`、`tools/hash` 两个单文件域提为顶层模块，`_manifest_data` 布局指纹同步重生成。
 
 ## 交接
 

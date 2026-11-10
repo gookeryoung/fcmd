@@ -1,6 +1,6 @@
 """哈希工具动作：字符串哈希（hashtool）与文件哈希（hashfile）。
 
-业务实现统一在 :mod:`fcmd.tools.hash.hashbase`；本模块只保留 ``@action``
+业务实现统一在 :mod:`fcmd.tools.hashbase`；本模块只保留 ``@action``
 声明与参数转接。
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fcmd.dsl.actions import action
-from fcmd.tools.hash import hashbase
+from fcmd.tools import hashbase
 
 __all__: list[str] = []
 
