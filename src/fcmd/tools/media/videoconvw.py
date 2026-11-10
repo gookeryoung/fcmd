@@ -18,12 +18,11 @@ import contextlib
 import queue
 import threading
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,
@@ -226,24 +225,13 @@ def save_settings(settings: VideoConvSettings, path: Path | None = None) -> None
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
-    restored = _guiconfig.clamp_geometry(
+    return _guiwindow.resolve_geometry(
         saved,
         screen_width,
         screen_height,
+        default=DEFAULT_GEOMETRY,
         min_width=MIN_WIDTH,
         min_height=MIN_HEIGHT,
-    )
-    if restored is not None:
-        return restored
-    return (
-        _guiconfig.clamp_geometry(
-            DEFAULT_GEOMETRY,
-            screen_width,
-            screen_height,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-        )
-        or DEFAULT_GEOMETRY
     )
 
 
@@ -269,18 +257,14 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._running = False
         self._closing = False
 
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title(f"视频转换器 v{__version__}")
-        self.root.geometry(
-            resolve_geometry(
-                self._settings.geometry,
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+        self.root, self._theme = _guiwindow.create_root(
+            title=f"视频转换器 v{__version__}",
+            saved_geometry=self._settings.geometry,
+            default_geometry=DEFAULT_GEOMETRY,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self.close,
         )
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(4, weight=1)
 
@@ -309,19 +293,10 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
     # 界面构建
     # ------------------------------------------------------------------ #
     def _build_menu(self) -> None:
-        tk = self._tk
-        menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label="退出", command=self.close)
-        menubar.add_cascade(label="文件", menu=file_menu)
-        help_menu = tk.Menu(menubar, tearoff=False)
-        help_menu.add_command(label="关于", command=self._show_about)
-        menubar.add_cascade(label="帮助", menu=help_menu)
-        self.root.configure(menu=menubar)
+        _guiwindow.build_menu(self.root, on_close=self.close, on_about=self._show_about)
 
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        tk = self._tk
 
         io_frame = ttk.LabelFrame(self.root, text="输入与输出", padding=self._theme.spacing.sm)
         io_frame.grid(
@@ -528,11 +503,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        self._log_text = tk.Text(log_frame, height=10, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
-        self._log_text.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
-        scrollbar.grid(row=0, column=1, sticky="ns")
-        self._log_text.configure(yscrollcommand=scrollbar.set)
+        self._log_text = _guiwindow.create_log(log_frame, height=10, grid=True)
 
         status_frame = ttk.Frame(self.root)
         status_frame.grid(
@@ -597,11 +568,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _append_log(self, message: str) -> None:
         """向只读日志区追加带时间戳的一行并滚动到底部。"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self._log_text.configure(state="normal")
-        self._log_text.insert("end", f"[{timestamp}] {message}\n")
-        self._log_text.see("end")
-        self._log_text.configure(state="disabled")
+        _guiwindow.append_log(self._log_text, message, timestamp=True)
 
     def _set_busy(self, busy: bool) -> None:
         """转换期间禁用按钮，避免重复提交。"""
@@ -684,13 +651,12 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._status_label.configure(foreground=self._theme.palette.muted)
         self._set_busy(True)
 
-        self._worker = threading.Thread(
-            target=self._run_conversion,
-            args=(input_path, output_path, options),
-            daemon=True,
+        self._worker = _guiwindow.start_worker(
+            self.root,
+            self._run_conversion,
+            (input_path, output_path, options),
+            self._poll_queue,
         )
-        self._worker.start()
-        self.root.after(80, self._poll_queue)
 
     def _run_conversion(self, input_path: Path, output_path: Path, options: VideoOptions) -> None:
         """后台线程：执行转换并把事件写入队列。"""
@@ -841,15 +807,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
 def run_gui(settings_path: Path | None = None) -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = VideoConvWindow(settings_path)
-    except ImportError as exc:
-        from fcmd.console import print_error
-
-        print_error(f"tkinter 不可用，无法启动视频转换器: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(lambda: VideoConvWindow(settings_path), "视频转换器")
 
 
 @fcmd.tool("videoconvw", help="打开视频转换器窗口（Tk）", description=_DESCRIPTION)
