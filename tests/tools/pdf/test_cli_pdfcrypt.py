@@ -85,7 +85,7 @@ class TestEncryptionState:
         assert is_encrypted(encrypted_pdf) is True
 
     def test_missing_dependency(self, sample_pdf: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pdfcrypt, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfcrypt, "pypdf", None)
         with pytest.raises(RuntimeError, match="pypdf"):
             is_encrypted(sample_pdf)
@@ -111,7 +111,7 @@ class TestEncryptDecrypt:
             encrypt_pdf(encrypted_pdf, PASSWORD, tmp_path / "again.pdf")
 
     def test_encrypt_missing_dependency(self, sample_pdf: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pdfcrypt, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfcrypt, "pypdf", None)
         with pytest.raises(RuntimeError, match="pypdf"):
             encrypt_pdf(sample_pdf, PASSWORD)
@@ -138,7 +138,7 @@ class TestEncryptDecrypt:
             decrypt_pdf(sample_pdf, PASSWORD, tmp_path / "bad.pdf")
 
     def test_decrypt_missing_dependency(self, encrypted_pdf: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pdfcrypt, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfcrypt, "pypdf", None)
         with pytest.raises(RuntimeError, match="pypdf"):
             decrypt_pdf(encrypted_pdf, PASSWORD)
@@ -282,7 +282,7 @@ class TestCli:
     def test_missing_dependency(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(pdfcrypt, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfcrypt, "pypdf", None)
         code = run_tool("pdfcrypt", ["encrypt", PASSWORD, "--directory", str(tmp_path)])
         assert code == 0

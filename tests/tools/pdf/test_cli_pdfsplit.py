@@ -140,7 +140,7 @@ class TestSplitByParts:
             split_by_parts(sample_pdf, tmp_path, 0)
 
     def test_missing_dependency(self, sample_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pdfsplit, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfsplit, "pypdf", None)
         with pytest.raises(RuntimeError, match="pypdf"):
             split_by_parts(sample_pdf, tmp_path, 2)
@@ -175,7 +175,7 @@ class TestSplitBySize:
             split_by_size(sample_pdf, tmp_path, 0)
 
     def test_missing_dependency(self, sample_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pdfsplit, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfsplit, "pypdf", None)
         with pytest.raises(RuntimeError, match="pypdf"):
             split_by_size(sample_pdf, tmp_path, 2)
@@ -203,7 +203,7 @@ class TestSplitByRange:
             split_by_range(sample_pdf, tmp_path / "empty.pdf", "99")
 
     def test_missing_dependency(self, sample_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(pdfsplit, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfsplit, "pypdf", None)
         with pytest.raises(RuntimeError, match="pypdf"):
             split_by_range(sample_pdf, tmp_path / "x.pdf", "1")
@@ -274,7 +274,7 @@ class TestCli:
     def test_missing_dependency(
         self, sample_pdf: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setattr(pdfsplit, "HAS_PYPDF", False)
+        monkeypatch.setattr("fcmd.tools.pdf.pdfbase.HAS_PYPDF", False)
         monkeypatch.setattr(pdfsplit, "pypdf", None)
         code = run_tool("pdfsplit", [str(sample_pdf), "--parts", "2"])
         assert code == 0

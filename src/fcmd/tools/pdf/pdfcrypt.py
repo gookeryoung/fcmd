@@ -17,14 +17,14 @@ CLI 与 Tk 窗口版（:mod:`fcmd.tools.pdf.pdfcryptw`）共用本模块的纯�
 
 from __future__ import annotations
 
-import importlib.util
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
 import fcmd
-from fcmd.tools._deps import missing_dependency
+from fcmd.tools._deps import lazy_import
+from fcmd.tools.pdf import pdfbase
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -44,9 +44,7 @@ __all__ = [
     "validate_password",
 ]
 
-HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
-
-# pypdf 惰性占位（_require_pypdf 首次调用填充）
+# pypdf 惰性占位（_require_pypdf 首次调用填充）；可用性由 pdfbase.HAS_PYPDF 单点决定
 pypdf: Any = None
 
 DEFAULT_WORKERS: Final[int] = 4
@@ -57,14 +55,10 @@ DECRYPTED_SUFFIX: Final[str] = ".dec.pdf"
 
 def _require_pypdf() -> bool:
     """pypdf 未安装时返回 ``False``；已安装则惰性导入到模块全局。"""
-    if not HAS_PYPDF:
-        return missing_dependency("pypdf", "pdf")
     global pypdf  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     if pypdf is None:
-        import pypdf as _pypdf
-
-        pypdf = _pypdf
-    return True
+        pypdf = lazy_import("pypdf", "pypdf", "pdf", pdfbase.HAS_PYPDF)
+    return pypdf is not None
 
 
 def validate_password(password: str) -> str:

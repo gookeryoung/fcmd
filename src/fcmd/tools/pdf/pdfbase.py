@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from fcmd.tools._deps import missing_dependency
+from fcmd.tools._deps import lazy_import
 from fcmd.tools.pdf.models import MergeSpec, PageSelection, SplitSpec
 
 if TYPE_CHECKING:
@@ -52,22 +52,16 @@ HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
 
 def _require_pymupdf() -> bool:
     """PyMuPDF 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
-    if not HAS_PYMUPDF:
-        return missing_dependency("PyMuPDF", "pdf")
     global fitz  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
-    import fitz
-
-    return True
+    fitz = lazy_import("fitz", "PyMuPDF", "pdf", HAS_PYMUPDF)
+    return fitz is not None
 
 
 def _require_pypdf() -> bool:
     """pypdf 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
-    if not HAS_PYPDF:
-        return missing_dependency("pypdf", "pdf")
     global pypdf  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
-    import pypdf
-
-    return True
+    pypdf = lazy_import("pypdf", "pypdf", "pdf", HAS_PYPDF)
+    return pypdf is not None
 
 
 def _resolve_page_indices(pages: str, page_count: int) -> tuple[int, ...] | None:
