@@ -38,7 +38,7 @@
 
 ### D5 生成物就地、只重生成
 
-`cli/_manifest_data.py`（工具清单 + 布局指纹）与 `dsl/actions/_index.py`（动作 → 模块与静态签名）留在消费方包内，因为必须在 wheel 内可导入。重生成命令固定为 `uv run python -m fcmd.cli._manifest_data` 与 `uv run python -m fcmd.dsl.actions._index`，禁止手改，一致性由测试校验。
+`cli/_manifest_data.py`（工具清单 + 布局指纹 + 列表描述 + 源码内容指纹）与 `dsl/actions/_index.py`（动作 → 模块与静态签名）留在消费方包内，因为必须在 wheel 内可导入。重生成命令固定为 `uv run python -m fcmd.cli._manifest_data` 与 `uv run python -m fcmd.dsl.actions._index`，禁止手改，一致性由测试校验。
 
 ### D6 布局不变量由测试守卫
 

@@ -1,20 +1,22 @@
 """静态工具清单（生成文件，勿手改）。
 
 由 ``python -m fcmd.cli._manifest_data`` 按当前全量发现结果生成：
-工具规范名 → ``ToolEntry``（工具类型与目标）、别名表、内置 DSL 与
-Python 模块重名的工具名，以及候选工具模块布局指纹（新鲜度校验用）。
-``fcmd <tool>`` 快路径据此只加载目标工具；清单缺失 / 过期 / 与布局
-不一致时一律回退全量发现（见 :mod:`fcmd.cli._manifest`）。
+工具规范名 → ``ToolEntry``（工具类型与目标）、别名表、工具描述、
+内置 DSL 与 Python 模块重名的工具名，以及候选工具模块布局与源码
+内容指纹（新鲜度校验用）。``fcmd <tool>`` 快路径据此只加载目标工具，
+``fcmd`` 列表快路径据此直接取名字 / 别名 / 描述、不导入任何工具模块；
+清单缺失 / 过期 / 与布局或内容指纹不一致时一律回退全量发现
+（见 :mod:`fcmd.cli._manifest`）。
 """
 
 from __future__ import annotations
 
 from fcmd.cli._manifest import ToolEntry
 
-__all__ = ["ALIASES", "AMBIGUOUS", "LAYOUT", "SCHEMA", "TOOLS"]
+__all__ = ["ALIASES", "AMBIGUOUS", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "TOOLS"]
 
 # 清单格式版本（与 fcmd.cli._manifest.SCHEMA 比对，不一致即视为过期）
-SCHEMA = 1
+SCHEMA = 2
 
 TOOLS: dict[str, ToolEntry] = {
     "alarmclock": ToolEntry("alarmclock", "python", "fcmd.tools.system.alarmclock"),
@@ -130,6 +132,110 @@ ALIASES: dict[str, str] = {
     "wch": "which",
 }
 
+# 列表页描述（与 _discovery.tool_description 同口径，供列表快路径直接使用）
+DESCRIPTIONS: dict[str, str] = {
+    "alarmclock": "数字时钟 + 定时提醒（Tk）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复",
+    "archivex": "解压归档文件",
+    "asciitool": "查询字符的 ASCII 码",
+    "autofmt": "格式化代码 (ruff format)",
+    "bumpversion": "版本号自动管理",
+    "calcdate": "日期加减天数",
+    "casetool": "转 snake_case",
+    "checksum": "校验和计算器窗口版（Tk）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，计算字符串或文件的十六进制摘要，可选用期望值做忽略大小写的校验比对；设置持久化到 ~/.fcmd/ui/checksum.json",
+    "clr": "清屏（跨平台）",
+    "cmderw": "双面板文件管理器窗口版（Tk，Total Commander 风格）：左右面板独立导航与历史，F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 批量重命名，Space 统计大小，每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，复制/移动进入串行传输队列（逐项进度、按项取消、失败重试），Ctrl+Shift+C 只读比较与预演式目录同步，Ctrl+Q 快速查看、Ctrl+F8 目录树、Ctrl+Enter 命令行、配置→颜色规则，Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json",
+    "codetool": "Base64 编解码",
+    "colortool": "HEX 转 RGB",
+    "convtool": "长度换算",
+    "cryptool": "生成加密密钥",
+    "csvtool": "预览 CSV 前几行",
+    "docdiff": "对比两个 doc/docx 文件（Windows + Microsoft Word + pywin32）：调用 Word 的 CompareDocuments 生成带修订标记的对比文档，可设置标题、对比模式与是否显示变更；依赖 fcmd[win32]",
+    "docdiffw": "文档对比工具窗口版（Tk）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，依赖 Windows + Word + fcmd[win32]",
+    "dockercmd": "Docker 镜像仓库登录工具",
+    "envdev": "镜像站点探测 / 指定服务镜像测速与自动选取",
+    "envw": "环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor）：用户 / 系统 / 当前进程三作用域，搜索、新建、编辑、删除与重命名，PATH 逐条路径编辑，变量引用展开预览，JSON 备份与恢复；设置持久化到 ~/.fcmd/ui/envw.json",
+    "filecheck": "文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数",
+    "filedate": "添加/更新文件日期前缀",
+    "filelevel": "设置文件等级",
+    "filerename": "正则替换文件名主干",
+    "filesearch": "按文件名 glob 搜索",
+    "folderback": "备份文件夹",
+    "folderzip": "压缩当前目录下所有子文件夹为 zip",
+    "fonttool": "列出可安装字体",
+    "gittool": "初始化子目录 Git 仓库",
+    "hashfile": "计算单个文件哈希",
+    "hashtool": "计算 MD5 哈希",
+    "idtool": "生成 UUID",
+    "imagetool": "调整尺寸",
+    "img2ico": "图像/SVG 转图标文件（支持目录批量）",
+    "img2icow": "图像转 ICO 转换器窗口版（Tk）：支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF 单文件或目录批量转换，自定义多尺寸与质量档位，自动保持宽高比并居中透明填充；设置持久化到 ~/.fcmd/ui/img2icow.json",
+    "img2pdf": "图片合并为 PDF（支持文件/目录、页面尺寸与 DPI 设置）",
+    "img2pdfw": "图片转 PDF 转换器窗口版（Tk）：支持图片文件或目录批量、页面尺寸（A3/A4/A5/B5/letter/legal）与 DPI 设置、EXIF 方向校正；设置持久化到 ~/.fcmd/ui/img2pdfw.json",
+    "inifile": "获取指定 section.key 的值",
+    "iptool": "解析 IP 地址",
+    "jsontool": "格式化打印 JSON",
+    "llmbench": "对 OpenAI 兼容服务实测延迟与 token 吞吐",
+    "llmchat": "与 OpenAI 兼容服务多轮流式对话（CLI）",
+    "llmchatw": "llmchat 的 Tk 窗口版（多轮流式对话；可选用 llmenv 登记的服务或自定义地址；窗口位置与大小记忆到 ~/.fcmd/ui/llmchatw.json）",
+    "llmconvert": "HF safetensors 目录转 GGUF（可复用本地源码 zip、可选再量化）",
+    "llmconvertw": "HF safetensors 转 GGUF 窗口版（Tk）：启动时后台扫描 llmenv 已配置的模型目录，识别并列出可转换的 HF safetensors 目录；配置精度、解释器、源码脚本与引擎 tag，勾选多种输出格式（原始 / 量化），已生成的格式自动标记并置为只读避免覆盖；可预览转换计划，后台先转换一次再批量量化，实时显示日志与进度；窗口位置与大小记忆到 ~/.fcmd/ui/llmconvertw.json",
+    "llmdoctor": "运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）",
+    "llmdown": "大模型仓库下载：清单 / 多源测速 / 断点续传下载",
+    "llmengine": "列出已安装引擎",
+    "llmenginew": "llama.cpp 引擎窗口版（Tk）：在线下载官方预编译包，或检查并安装本地 zip 离线包（引擎包 / cudart 运行库 / 源码包），查看已安装引擎并切换默认；窗口位置与大小记忆到 ~/.fcmd/ui/llmenginew.json",
+    "llmenv": "显示目录布局与当前生效的模型目录",
+    "llmmodel": "列出模型目录中的 GGUF 文件",
+    "llmqnt": "GGUF 量化：调用 llama-quantize 批量生成多种量化版本",
+    "llmqntw": "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，显示引擎/量化器版本，勾选多种量化类型批量转换；窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json",
+    "llmserve": "打印启动计划（命令 + 显存估算），不启动",
+    "llmservew": "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标（系统负载在服务未启动时也持续采样展示）；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json",
+    "lscalc": "运行 LS-DYNA SMP 单机计算",
+    "mathtool": "求值数学表达式",
+    "mirrortool": "镜像站点探测 / 指定服务镜像测速与自动选取",
+    "mirrortoolw": "镜像搜索与配置窗口版（Tk）：按服务（pip/conda/rustup/cargo/go/maven/npm）实测下载吞吐排序并一键应用镜像，或探测 MirrorZ 教育网镜像站点；结果支持按镜像名/地址过滤，设置持久化到 ~/.fcmd/ui/mirrortoolw.json",
+    "ncmconvertw": "NCM 音乐解锁转换器窗口版（Tk）：批量添加/导入 .ncm 文件，后台逐文件解锁为 mp3/flac，进度与失败明细实时回传，设置持久化到 ~/.fcmd/ui/ncmconvertw.json，依赖 fcmd[crypto]",
+    "nettool": "HTTP GET 请求",
+    "packtool": "打包源码",
+    "padtool": "左对齐文本",
+    "pathtool": "显示路径各部分信息",
+    "pdfcrypt": "批量加密目录中的 PDF 文件",
+    "pdfcryptw": "PDF 批量加密解密窗口版（Tk）：选择目录、输入密码，一键加密或解密，支持递归子目录与并发线程；设置持久化到 ~/.fcmd/ui/pdfcryptw.json（不含密码）",
+    "pdfsplit": "分割 PDF（按份数 / 每份页数 / 页码范围）",
+    "pdfsplitw": "PDF 分割窗口版（Tk）：按份数 / 每份页数 / 页码范围三种模式分割或提取页面，进度与日志实时回传；设置持久化到 ~/.fcmd/ui/pdfsplitw.json",
+    "pdftool": "合并 PDF",
+    "piptool": "安装包",
+    "portcheck": "检查端口占用",
+    "pymake": "推送代码到所有远程仓库",
+    "pyprof": "非侵入式 Python 代码性能分析（cProfile 采集 + HTML 报告）",
+    "randtool": "生成强密码",
+    "regextool": "匹配正则表达式",
+    "regexvalidate": "正则校验（匹配/全匹配/findall/分组与特征分析，支持 ignorecase/multiline/dotall 标志）",
+    "regexvalidatew": "正则校验器窗口版（Tk）：实时校验正则与文本，展示匹配位置/捕获组/全匹配/findall，内置 20 个典型示例，支持 ignorecase/multiline/dotall 标志、历史记录与语法帮助；设置持久化到 ~/.fcmd/ui/regexvalidate.json",
+    "reseticoncache": "重置 Windows 图标缓存（仅 Windows 生效）",
+    "reshack": "列出 PE 文件中的资源",
+    "reshackw": "PE 资源编辑器窗口版（Tk）：按类型展示资源树，支持文本/十六进制/图像预览（图像可缩放/适应窗口，右键复制到剪贴板或另存为 PNG/ICO/BMP）、单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、全部导出；设置持久化到 ~/.fcmd/ui/reshackw.json，依赖 fcmd[pe]",
+    "screenshot": "全屏截图",
+    "setenv": "设置环境变量",
+    "sshcopyid": "SSH 公钥部署工具（Linux: sshpass 自动密码，Windows: plink 优先自动密码 / OpenSSH 需交互）",
+    "stattool": "计算算术平均值",
+    "sysinfo": "收集并打印系统信息",
+    "taskkill": "按名称终止进程（跨平台）",
+    "textdiff": "比较两个文本文件",
+    "timetool": "显示当前时间",
+    "tomltool": "按点路径取值",
+    "txttool": "统计行/词/字符数",
+    "urlcheck": "检测单个 URL 可访问性与延迟",
+    "urltool": "解析 URL 各组成部分",
+    "videoconv": "视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif）：编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持通配符批量，依赖系统 ffmpeg",
+    "videoconvw": "视频转换器窗口版（Tk）：文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断，设置持久化到 ~/.fcmd/ui/videoconvw.json，依赖系统 ffmpeg",
+    "websave": "保存网页内容（主页及相关子页面，含图片/CSS/JS）",
+    "which": "查找可执行命令路径（跨平台）",
+    "writefile": "写入文本内容到文件",
+    "xmltool": "格式化打印 XML",
+    "yamtool": "格式化打印 YAML",
+    "zipencrypt": "加密目录下文件为密码保护的 ZIP",
+}
+
 # 同时被 Python 模块与内置 DSL 声明（子命令须全量合并，不走快路径）
 AMBIGUOUS: frozenset[str] = frozenset(
     {
@@ -208,6 +314,9 @@ LAYOUT: tuple[str, ...] = (
     "tools/text/regexvalidatew.py",
     "tools/text/textbase.py",
 )
+
+# 工具源码 + 内置 commands/*.toml 的内容指纹（列表快路径的严格校验）
+DIGEST = "585d05b88185cf1f76e2d8817a7925ca"
 
 
 if __name__ == "__main__":  # pragma: no cover

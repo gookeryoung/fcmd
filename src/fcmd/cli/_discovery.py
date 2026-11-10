@@ -46,6 +46,7 @@ __all__ = [
     "ensure_tools_discovered",
     "import_all_tool_modules",
     "import_tool_module",
+    "list_tool_rows",
     "load_tool_subs",
     "resolve_tool",
     "resolve_tool_fast",
@@ -363,6 +364,25 @@ def _drop_module_specs(module_path: str) -> None:
 def tool_names() -> list[str]:
     """返回全部规范工具名（排序去重）。"""
     return sorted(set(_TOOL_ALIASES.values()))
+
+
+def list_tool_rows() -> list[tuple[str, list[str], str]] | None:
+    """工具列表快路径：清单严格校验通过时返回 ``(规范名, 别名, 描述)``。
+
+    列表只需要名字 / 别名 / 描述这三样静态元数据，生成清单时已固化，因此
+    无需全量发现（省去导入全部工具模块及其第三方依赖）。以下情形返回
+    ``None``，由调用方回退 :func:`ensure_tools_discovered` + 全量发现：
+
+    - 用户级 ``commands.toml`` 存在（用户声明会新增 / 覆盖列表条目）
+    - 清单缺失 / 版本不符 / 布局或内容指纹不一致（见 :mod:`fcmd.cli._manifest`）
+    """
+    home = Path(os.environ.get("FCMD_HOME", str(Path.home() / ".fcmd")))
+    if (home / "commands.toml").is_file():
+        return None
+
+    from fcmd.cli import _manifest
+
+    return _manifest.list_rows()
 
 
 def aliases_for(canonical: str) -> list[str]:

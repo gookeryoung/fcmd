@@ -23,16 +23,36 @@ _ROOT = Path(__file__).resolve().parents[2]
 # 子进程内做一次全量发现并输出对照快照（末尾一行 JSON）
 _SNAPSHOT_SCRIPT = """
 import json
-from fcmd.cli._discovery import _DSL_TOOL_SOURCES, _TOOL_ALIASES, _TOOL_MODULES, ensure_tools_discovered
+from fcmd.cli._discovery import (
+    _DSL_TOOL_SOURCES, _TOOL_ALIASES, _TOOL_MODULES, ensure_tools_discovered, tool_description,
+)
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 ensure_tools_discovered()
 registered = set(_TOOL_REGISTRY)
+canonical = sorted(set(_TOOL_ALIASES.values()))
 print(json.dumps({
     "modules": _TOOL_MODULES,
     "registered": sorted(registered),
     "dsl_builtin": sorted(name for name, source in _DSL_TOOL_SOURCES.items() if source == "builtin"),
     "aliases": {alias: target for alias, target in _TOOL_ALIASES.items() if alias != target and target in registered},
+    "descriptions": {name: tool_description(name) for name in canonical},
+}))
+"""
+
+# 子进程内对照「清单列表快路径」与「全量发现列表数据」（末尾一行 JSON）
+_LIST_ROWS_SCRIPT = """
+import json
+from fcmd.cli import _manifest
+from fcmd.cli._discovery import _TOOL_ALIASES, aliases_for, ensure_tools_discovered, tool_description
+
+rows = _manifest.list_rows()
+ensure_tools_discovered()
+canonical = sorted(set(_TOOL_ALIASES.values()))
+expected = [(name, aliases_for(name), tool_description(name)) for name in canonical]
+print(json.dumps({
+    "rows": rows,
+    "expected": expected,
 }))
 """
 
@@ -264,3 +284,111 @@ def test_missing_tool_module_returns_none() -> None:
     entry = ToolEntry("ghost", "python", "fcmd.tools.__ghost__")
     assert _discovery._load_python_tool(entry) is None
     assert "ghost" not in _discovery._TOOL_MODULES
+
+
+# ---------------------------------------------------------------------- #
+# 列表快路径（fcmd 无参）：静态元数据 + 内容指纹
+# ---------------------------------------------------------------------- #
+def test_descriptions_match_discovery(tmp_path: Path) -> None:
+    """清单描述与全量发现逐条一致（列表页文案的对照口径）。"""
+    data = _data()
+    snap = _snapshot(tmp_path)
+    assert snap["descriptions"] == data.DESCRIPTIONS
+
+
+def test_digest_matches_sources() -> None:
+    """清单内容指纹与当前源码树一致（改任一工具模块 / TOML 即过期）。"""
+    from fcmd.cli import _manifest
+
+    assert _manifest.tool_digest() == _data().DIGEST
+
+
+def test_list_rows_match_discovery(tmp_path: Path) -> None:
+    """列表快路径的 (名字, 别名, 描述) 与全量发现逐条一致。"""
+    proc = _run_py(_LIST_ROWS_SCRIPT, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["rows"] is not None, "清单严格校验未通过，列表快路径未生效"
+    assert payload["rows"] == payload["expected"]
+
+
+def _capture_listing(app: Any) -> str:
+    """执行一次列表并返回标准输出（rich 每次写入动态解析 ``sys.stdout``）。"""
+    import io
+    from contextlib import redirect_stdout
+
+    buffer = io.StringIO()
+    with redirect_stdout(buffer):
+        assert app.run() == 0
+    return buffer.getvalue()
+
+
+def test_list_output_matches_full_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``fcmd`` 列表输出（快路径）与回退全量发现的输出逐字一致。"""
+    from fcmd.cli import _discovery
+    from fcmd.cli.main import FcmdApp
+
+    fast = _capture_listing(FcmdApp([]))
+    monkeypatch.setattr(_discovery, "list_tool_rows", lambda: None)
+    slow = _capture_listing(FcmdApp([]))
+    assert fast == slow
+    assert "可用工具" in fast
+
+
+def test_user_commands_file_disables_list_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """用户级 commands.toml 存在时不走列表快路径（会新增 / 覆盖列表条目）。"""
+    from fcmd.cli._discovery import list_tool_rows
+
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    (tmp_path / "commands.toml").write_text('[commands.mine]\nhelp = "x"\ncmd = ["echo"]\n', encoding="utf-8")
+    assert list_tool_rows() is None
+
+
+def test_missing_manifest_disables_list_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清单模块不可导入时列表回退全量发现。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setitem(sys.modules, "fcmd.cli._manifest_data", None)
+    assert _manifest.list_rows() is None
+
+
+def test_schema_mismatch_disables_list_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清单版本与运行期 ``SCHEMA`` 不一致时列表回退全量发现。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "SCHEMA", _manifest.SCHEMA + 1)
+    assert _manifest.list_rows() is None
+
+
+def test_stale_digest_disables_list_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """内容指纹不一致（改了描述但没重生成清单）时回退全量发现。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "tool_digest", lambda: "stale")
+    assert _manifest.load() is not None, "布局校验仍应通过，只有列表路径需要内容指纹"
+    assert _manifest.list_rows() is None
+
+
+def test_unreadable_digest_disables_list_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """源码不可读（返回 ``None``）时列表回退全量发现。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "tool_digest", lambda: None)
+    assert _manifest.list_rows() is None
+
+
+def test_digest_unreadable_source_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """工具源码读取失败时指纹不可用（不抛异常）。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "_source_files", lambda: [("tools/ghost.py", Path("/nonexistent/ghost.py"))])
+    assert _manifest.tool_digest() is None
+
+
+def test_layout_unreadable_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``fcmd/tools`` 目录不可读时布局指纹为 ``None``（清单整体不可用）。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "_PACKAGE_ROOT", Path("/nonexistent/fcmd"))
+    assert _manifest.tool_layout() is None
+    assert _manifest.lookup("codetool") is None

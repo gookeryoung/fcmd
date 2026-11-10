@@ -18,7 +18,8 @@
 
 ``fcmd <tool>`` 先按生成清单 :mod:`fcmd.cli._manifest` 只加载目标工具；
 清单未命中 / 过期 / 与 DSL 重名时回退 :func:`fcmd.cli._discovery.ensure_tools_discovered`
-全量扫描。工具列表（无参 / ``--help``）与内建命令始终走全量发现。
+全量扫描。工具列表（无参 / ``--help``）同样优先走清单快路径，清单不可用 /
+过期或存在用户 ``commands.toml`` 时回退全量发现；内建命令始终走全量发现。
 ``import fcmd`` 冷启动不受影响。
 
 用法
@@ -75,7 +76,6 @@ class FcmdApp:
         from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool, resolve_tool_fast
 
         if first is None or first in ("--help", "-h"):
-            ensure_tools_discovered()
             self._list_tools()
             return 0
 
@@ -98,9 +98,24 @@ class FcmdApp:
         return self._run_tool(resolved, rest)
 
     def _list_tools(self) -> None:
-        """列出所有可用工具。"""
-        from fcmd.cli._discovery import _TOOL_ALIASES, aliases_for, tool_description
+        """列出所有可用工具。
+
+        优先走清单快路径（:func:`fcmd.cli._discovery.list_tool_rows`）：名字 /
+        别名 / 描述都是生成期固化的静态元数据，不需要导入工具模块。清单
+        不可用 / 过期或存在用户 ``commands.toml`` 时回退全量发现。
+        """
+        from fcmd.cli._discovery import list_tool_rows
         from fcmd.console import Table, get_console
+
+        rows = list_tool_rows()
+        if rows is None:
+            from fcmd.cli._discovery import _TOOL_ALIASES, aliases_for, ensure_tools_discovered, tool_description
+
+            ensure_tools_discovered()
+            rows = [
+                (tool_name, aliases_for(tool_name), tool_description(tool_name))
+                for tool_name in sorted(set(_TOOL_ALIASES.values()))
+            ]
 
         console = get_console()
         console.print(f"[bold cyan]fcmd v{__version__}[/bold cyan]")
@@ -111,9 +126,8 @@ class FcmdApp:
         table.add_column("别名", style="dim", no_wrap=True)
         table.add_column("说明")
 
-        for tool_name in sorted(set(_TOOL_ALIASES.values())):
-            aliases = aliases_for(tool_name)
-            table.add_row(f"fcmd {tool_name}", ", ".join(aliases), tool_description(tool_name))
+        for tool_name, aliases, description in rows:
+            table.add_row(f"fcmd {tool_name}", ", ".join(aliases), description)
 
         console.print(table)
 
