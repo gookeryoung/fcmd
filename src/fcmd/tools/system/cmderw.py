@@ -1,8 +1,9 @@
 """cmderw - 双面板文件管理器（Tk GUI，Total Commander 风格）。
 
 左右两个独立目录面板，支持键盘与鼠标操作：Tab 切换面板，Enter 进入目录，
-F2 重命名、F3 查看、F4 外部编辑、F5 复制、F6 移动、F7 新建目录、F8 删除，
-Alt+F5 打包、Alt+F9 解压，Ctrl+F 搜索，Ctrl+H 显示隐藏文件。
+F2 重命名、F3 查看、F4 外部编辑、F5 复制、F6 移动、F7 新建目录、F8 删除到
+回收站、Shift+F8 永久删除，Alt+F5 打包、Alt+F9 解压，Ctrl+F 搜索，Ctrl+S
+快速过滤，Num+/Num- 按掩码选择/取消，Space 统计选中项大小，Ctrl+H 显示隐藏文件。
 
 能力复用现有工具：打包/解压走 :mod:`fcmd.tools.archive.archivex`，文件哈希走
 :mod:`fcmd.tools.hashbase`，文件名/内容搜索走 :mod:`fcmd.dsl.actions.fileops`，
@@ -37,6 +38,14 @@ import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
+from fcmd.tools.system._cmderw_ops import (
+    TrashReport,
+    directory_size,
+    filter_names,
+    invert_names,
+    match_names,
+    trash_paths,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -56,6 +65,7 @@ __all__ = [
     "PanelState",
     "SearchHit",
     "TransferItem",
+    "TrashReport",
     "archive_stem",
     "config_path",
     "copy_entry",
@@ -67,7 +77,9 @@ __all__ = [
     "delete_entry",
     "describe_attributes",
     "describe_entry",
+    "directory_size",
     "extract_archive_to",
+    "filter_names",
     "format_hash_report",
     "format_mtime",
     "format_search_hit",
@@ -75,11 +87,13 @@ __all__ = [
     "hash_paths",
     "history_back",
     "history_forward",
+    "invert_names",
     "is_hidden",
     "is_within",
     "list_directory",
     "load_preview",
     "load_settings",
+    "match_names",
     "move_entry",
     "open_externally",
     "pack_entries",
@@ -101,7 +115,8 @@ __version__ = "0.1.0"
 
 _DESCRIPTION = (
     "双面板文件管理器窗口版（Tk，Total Commander 风格）：左右面板独立导航与历史，"
-    "F5 复制/F6 移动/F7 新建/F8 删除/F2 重命名/F3 查看，Alt+F5 打包、Alt+F9 解压，"
+    "F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，"
+    "Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Space 统计大小，Alt+F5 打包、Alt+F9 解压，"
     "复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
 )
 
@@ -888,6 +903,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.state = state
         self.entries: list[FileEntry] = []
         self._index: dict[str, FileEntry] = {}
+        self._filter = ""
         theme = app.theme
         spacing = theme.spacing
 
@@ -906,6 +922,17 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.path_entry.pack(side="left", fill="x", expand=True)
         self.path_entry.bind("<Return>", self._on_path_enter)
         self.path_entry.bind("<FocusIn>", lambda _event: app.set_active(self))
+
+        filter_bar = ttk.Frame(self.frame)
+        filter_bar.pack(fill="x", pady=(0, spacing.xs))
+        ttk.Label(filter_bar, text="过滤：").pack(side="left")
+        self.filter_var = tk.StringVar()
+        self.filter_entry = ttk.Entry(filter_bar, textvariable=self.filter_var)
+        self.filter_entry.pack(side="left", fill="x", expand=True)
+        self.filter_entry.bind("<Escape>", lambda _event: self.clear_filter())
+        self.filter_entry.bind("<Return>", lambda _event: self.focus_tree())
+        self.filter_var.trace_add("write", lambda *_args: self._on_filter_change())
+        ttk.Button(filter_bar, text="清除", width=5, style="Toolbutton", command=self.clear_filter).pack(side="left")
 
         list_frame = ttk.Frame(self.frame)
         list_frame.pack(fill="both", expand=True)
@@ -931,6 +958,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.tree.bind("<Button-3>", app.show_context_menu)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<FocusIn>", lambda _event: app.set_active(self))
+        self.tree.bind("<KP_Add>", lambda _event: app.select_by_mask())
+        self.tree.bind("<KP_Subtract>", lambda _event: app.deselect_by_mask())
+        self.tree.bind("<space>", lambda _event: app.show_selected_size())
 
         self.status_var = tk.StringVar()
         ttk.Label(self.frame, textvariable=self.status_var, style="Muted.TLabel").pack(fill="x", pady=(spacing.xxs, 0))
@@ -961,6 +991,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         previous = set(self.tree.selection())
         if select:
             previous = {select}
+        if self._filter:
+            visible = set(filter_names([entry.name for entry in entries], self._filter))
+            entries = [entry for entry in entries if entry.name in visible]
         self.entries = entries
         self._index = {entry.name: entry for entry in entries}
         self.tree.delete(*self.tree.get_children())
@@ -992,6 +1025,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         total = len(self.entries)
         file_size = sum(entry.size for entry in self.entries if not entry.is_dir)
         text = f"{total} 个对象，共 {format_size(file_size)}"
+        if self._filter:
+            text = f"过滤「{self._filter}」→ {text}"
         selected = self.selected_entries()
         if selected:
             selected_size = sum(entry.size for entry in selected if not entry.is_dir)
@@ -1089,6 +1124,41 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         children = self.tree.get_children()
         if children:
             self.tree.selection_set(children)
+
+    def _on_filter_change(self) -> None:
+        """过滤框内容变化时重绘列表（只影响显示，不切换目录）。"""
+        self._filter = self.filter_var.get().strip()
+        self.refresh()
+
+    def focus_filter(self) -> None:
+        """把焦点移到快速过滤框并全选已有内容。"""
+        self.filter_entry.focus_set()
+        self.filter_entry.select_range(0, "end")
+
+    def clear_filter(self) -> None:
+        """清空快速过滤并回到文件列表。"""
+        if self.filter_var.get():
+            self.filter_var.set("")
+        self.focus_tree()
+
+    def apply_mask_selection(self, mask: str, *, select: bool) -> int:
+        """按掩码增选（Num+）或取消选择（Num-），返回命中项数。"""
+        targets = match_names(list(self.tree.get_children()), mask)
+        if not targets:
+            return 0
+        if select:
+            self.tree.selection_add(*targets)
+        else:
+            self.tree.selection_remove(*targets)
+        self._update_status()
+        return len(targets)
+
+    def invert_selection(self) -> int:
+        """反选当前可见条目，返回新的选中数量。"""
+        targets = invert_names(list(self.tree.get_children()), self.tree.selection())
+        self.tree.selection_set(*targets)
+        self._update_status()
+        return len(targets)
 
     def focus_tree(self) -> None:
         """把键盘焦点移到文件列表。"""
@@ -1263,9 +1333,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         edit_menu = tk.Menu(menubar, tearoff=False)
         edit_menu.add_command(label="复制\tF5", command=self.copy_selected)
         edit_menu.add_command(label="移动\tF6", command=self.move_selected)
-        edit_menu.add_command(label="删除\tF8", command=self.delete_selected)
+        edit_menu.add_command(label="删除到回收站\tF8", command=self.delete_selected)
+        edit_menu.add_command(label="永久删除\tShift+F8", command=self.permanent_delete_selected)
         edit_menu.add_separator()
         edit_menu.add_command(label="全选\tCtrl+A", command=self.select_all)
+        edit_menu.add_command(label="反选\tCtrl+I", command=self.invert_selection)
+        edit_menu.add_command(label="按掩码选择…\tNum+", command=self.select_by_mask)
+        edit_menu.add_command(label="按掩码取消选择…\tNum-", command=self.deselect_by_mask)
         menubar.add_cascade(label="编辑", menu=edit_menu)
 
         view_menu = tk.Menu(menubar, tearoff=False)
@@ -1276,6 +1350,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             variable=self._hidden_var,
             command=self.toggle_hidden,
         )
+        view_menu.add_separator()
+        view_menu.add_command(label="快速过滤\tCtrl+S", command=self.focus_filter)
+        view_menu.add_command(label="清除过滤\tEsc", command=self.clear_filter)
+        view_menu.add_separator()
         view_menu.add_command(label="交换面板\tCtrl+U", command=self.swap_panels)
         view_menu.add_command(label="切换面板\tTab", command=self.switch_panel)
         menubar.add_cascade(label="显示", menu=view_menu)
@@ -1303,7 +1381,11 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         menu.add_command(label="移动到对面面板", command=self.move_selected)
         menu.add_separator()
         menu.add_command(label="重命名", command=self.rename_selected)
-        menu.add_command(label="删除", command=self.delete_selected)
+        menu.add_command(label="删除到回收站", command=self.delete_selected)
+        menu.add_command(label="永久删除", command=self.permanent_delete_selected)
+        menu.add_separator()
+        menu.add_command(label="按掩码选择…", command=self.select_by_mask)
+        menu.add_command(label="按掩码取消选择…", command=self.deselect_by_mask)
         menu.add_separator()
         menu.add_command(label="打包", command=self.pack_selected)
         menu.add_command(label="解压", command=self.unpack_selected)
@@ -1369,14 +1451,18 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<F6>": lambda _event: self.move_selected(),
             "<F7>": lambda _event: self.new_folder(),
             "<F8>": lambda _event: self.delete_selected(),
+            "<Shift-F8>": lambda _event: self.permanent_delete_selected(),
             "<Alt-F5>": lambda _event: self.pack_selected(),
             "<Alt-F9>": lambda _event: self.unpack_selected(),
             "<Alt-Return>": lambda _event: self.show_properties(),
             "<Control-f>": lambda _event: self.open_search(),
             "<Control-r>": lambda _event: self.refresh_both(),
             "<Control-h>": lambda _event: self.toggle_hidden(),
+            "<Control-s>": lambda _event: self.focus_filter(),
+            "<Control-i>": lambda _event: self.invert_selection(),
             "<Control-u>": lambda _event: self.swap_panels(),
             "<Control-a>": lambda _event: self.select_all(),
+            "<Escape>": lambda _event: self.clear_filter(),
             "<Tab>": lambda _event: self.switch_panel(),
         }
         for sequence, handler in bindings.items():
@@ -1436,6 +1522,65 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def select_all(self) -> None:
         """全选当前面板。"""
         self.active_panel().select_all()
+
+    def invert_selection(self) -> None:
+        """反选当前面板的可见条目。"""
+        count = self.active_panel().invert_selection()
+        self.set_status(f"反选后选中 {count} 项")
+
+    def select_by_mask(self) -> None:
+        """Num+：按 glob 掩码增选。"""
+        self._apply_mask(select=True)
+
+    def deselect_by_mask(self) -> None:
+        """Num-：按 glob 掩码取消选择。"""
+        self._apply_mask(select=False)
+
+    def _apply_mask(self, *, select: bool) -> None:
+        title = "按掩码选择" if select else "按掩码取消选择"
+        mask = self._simpledialog.askstring(
+            title,
+            "文件名掩码（* 与 ?，分号分隔多个）：",
+            initialvalue="*",
+            parent=self.root,
+        )
+        if not mask:
+            return
+        count = self.active_panel().apply_mask_selection(mask, select=select)
+        self.set_status(f"{title}：命中 {count} 项")
+
+    def focus_filter(self) -> None:
+        """Ctrl+S：聚焦当前面板的快速过滤框。"""
+        self.active_panel().focus_filter()
+
+    def clear_filter(self) -> None:
+        """Esc：清空当前面板的快速过滤。"""
+        self.active_panel().clear_filter()
+
+    def show_selected_size(self) -> None:
+        """Space：后台统计选中条目的总大小与文件数。"""
+        if self._busy:
+            return
+        entries = self.active_panel().selected_entries()
+        if not entries:
+            self.set_status("请先选择文件或文件夹")
+            return
+        paths = [entry.path for entry in entries]
+
+        def task() -> tuple[int, int]:
+            total_bytes = 0
+            total_files = 0
+            for path in paths:
+                size, files = directory_size(path)
+                total_bytes += size
+                total_files += files
+            return total_bytes, total_files
+
+        def done(result: tuple[int, int]) -> None:
+            total_bytes, total_files = result
+            self.set_status(f"{len(paths)} 项共 {format_size(total_bytes)}，{total_files} 个文件")
+
+        self.start_worker(task, done, title="统计大小")
 
     def reveal_path(self, path: Path) -> None:
         """在活动面板中定位到指定文件。"""
@@ -1561,11 +1706,11 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         return "overwrite" if answer else "rename"
 
     def copy_selected(self) -> None:
-        """F5 复制到对面面板目录。"""
+        """F5 复制到指定目录（默认对面面板）。"""
         self._transfer(move=False)
 
     def move_selected(self) -> None:
-        """F6 移动到对面面板目录。"""
+        """F6 移动到指定目录（默认对面面板）。"""
         self._transfer(move=True)
 
     def _transfer(self, *, move: bool) -> None:
@@ -1574,16 +1719,28 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         paths = self._selected_paths()
         if not paths:
             return
-        destination = Path(self.other_panel().state.path)
+        action = "移动" if move else "复制"
+        default_destination = self.other_panel().state.path
+        destination_text = self._simpledialog.askstring(
+            f"{action}目标",
+            f"目标目录（默认对面面板）：\n{default_destination}",
+            initialvalue=default_destination,
+            parent=self.root,
+        )
+        if destination_text is None:
+            return
+        raw = destination_text.strip() or default_destination
+        destination = Path(raw).expanduser()
+        if not destination.is_absolute():
+            destination = Path(self.active_panel().state.path) / destination
         try:
             items, skipped = plan_transfer(paths, destination, conflict="ask", chooser=self._ask_conflict)
         except (OSError, ValueError) as exc:
-            self.show_error("无法操作", str(exc))
+            self.show_error(f"无法{action}", str(exc))
             return
         if not items:
             self.set_status("没有需要操作的条目")
             return
-        action = "移动" if move else "复制"
 
         def task() -> OperationReport:
             return transfer_entries(items, move=move, progress=self._progress_callback)
@@ -1600,15 +1757,47 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.start_worker(task, done, title=f"{action} {len(items)} 项")
 
     def delete_selected(self) -> None:
-        """F8 永久删除选中条目。"""
+        """F8 移入系统回收站（可撤销）。"""
         if self._busy:
             return
         paths = self._selected_paths()
         if not paths:
             return
         confirmed = self._messagebox.askyesno(
-            "确认删除",
-            f"确定永久删除选中的 {len(paths)} 项吗？\n此操作不可撤销。",
+            "移入回收站",
+            f"确定将选中的 {len(paths)} 项移入回收站吗？",
+            parent=self.root,
+        )
+        if not confirmed:
+            return
+
+        def task() -> TrashReport:
+            return trash_paths(paths, progress=self._progress_callback)
+
+        def done(report: TrashReport) -> None:
+            self.refresh_both()
+            summary = f"移入回收站：成功 {len(report.completed)}，失败 {len(report.errors)}"
+            self.set_status(summary)
+            if report.errors:
+                details = "\n".join(f"{path.name}: {error}" for path, error in report.errors[:_MAX_ERROR_DETAILS])
+                self._messagebox.showwarning(
+                    "移入回收站（有失败）",
+                    f"{summary}\n\n{details}\n\n回收站不可用时可改用 Shift+F8 永久删除。",
+                    parent=self.root,
+                )
+
+        self.start_worker(task, done, title=f"移入回收站 {len(paths)} 项")
+
+    def permanent_delete_selected(self) -> None:
+        """Shift+F8 永久删除选中条目。"""
+        if self._busy:
+            return
+        paths = self._selected_paths()
+        if not paths:
+            return
+        confirmed = self._messagebox.askyesno(
+            "确认永久删除",
+            f"确定永久删除选中的 {len(paths)} 项吗？\n此操作不可撤销，不会进入回收站。",
             parent=self.root,
         )
         if not confirmed:
@@ -1890,9 +2079,12 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         text = (
             "Tab 切换面板    Enter 打开    Backspace 上级\n"
             "F2 重命名    F3 查看    F4 编辑    F5 复制    F6 移动\n"
-            "F7 新建目录    F8 删除    Alt+F5 打包    Alt+F9 解压\n"
-            "Ctrl+F 搜索    Ctrl+H 隐藏文件    Ctrl+R 刷新    Ctrl+U 交换面板\n"
-            "Ctrl+A 全选    Alt+Enter 属性"
+            "F7 新建目录    F8 删除到回收站    Shift+F8 永久删除\n"
+            "Alt+F5 打包    Alt+F9 解压    Space 统计大小\n"
+            "Ctrl+F 搜索    Ctrl+S 快速过滤    Esc 清除过滤\n"
+            "Ctrl+H 隐藏文件    Ctrl+R 刷新    Ctrl+U 交换面板\n"
+            "Ctrl+A 全选    Ctrl+I 反选    Num+ 按掩码选择    Num- 按掩码取消\n"
+            "Alt+Enter 属性"
         )
         self._messagebox.showinfo("快捷键", text, parent=self.root)
 
