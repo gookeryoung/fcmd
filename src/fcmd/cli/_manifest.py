@@ -230,11 +230,14 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
         "}",
         "",
         "# 同时被 Python 模块与内置 DSL 声明（子命令须全量合并，不走快路径）",
-        "AMBIGUOUS: frozenset[str] = frozenset({",
     ]
-    lines.extend(f'    "{name}",' for name in sorted(ambiguous))
+    if ambiguous:
+        lines += ["AMBIGUOUS: frozenset[str] = frozenset(", "    {"]
+        lines.extend(f'        "{name}",' for name in sorted(ambiguous))
+        lines += ["    }", ")"]
+    else:
+        lines.append("AMBIGUOUS: frozenset[str] = frozenset()")
     lines += [
-        "})",
         "",
         "# 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）",
         "LAYOUT: tuple[str, ...] = (",
