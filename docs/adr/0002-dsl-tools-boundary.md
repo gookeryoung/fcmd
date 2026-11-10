@@ -1,6 +1,6 @@
 # 0002 DSL 与 tools 的边界
 
-- 状态：已落地（P2-1 图片域试点；archive / text / net / calc / hash / data 迁移中）
+- 状态：已落地（P2-1…P2-4；media / archive / text / net / calc / hash / data 七域迁移完成）
 - 日期：2026-11-10
 
 ## 背景
