@@ -257,6 +257,24 @@ class TestFontFamily:
     def test_mono_candidates(self) -> None:
         assert _guitheme.pick_font_family(["Courier New", "Consolas"], _guitheme.MONO_FONT_CANDIDATES) == "Consolas"
 
+    def test_prefers_linux_cjk_font_over_latin(self) -> None:
+        families = ["DejaVu Sans", "Noto Sans CJK SC"]
+        assert _guitheme.pick_font_family(families) == "Noto Sans CJK SC"
+
+    def test_wenquanyi_bitmap_song_covers_x11_core_fonts(self) -> None:
+        # 未启用 Xft 的 Tk 只能看到 X11 核心字体，此时靠文泉驿位图字体显示中文。
+        families = ["nimbus sans l", "wenquanyi bitmap song"]
+        assert _guitheme.pick_font_family(families) == "wenquanyi bitmap song"
+        assert _guitheme.pick_font_family(families, _guitheme.MONO_FONT_CANDIDATES) == "wenquanyi bitmap song"
+
+
+class TestCjkDetection:
+    def test_positive_width_means_supported(self) -> None:
+        assert _guitheme.font_renders_cjk(lambda text: len(text) * 12) is True
+
+    def test_zero_width_means_missing_glyphs(self) -> None:
+        assert _guitheme.font_renders_cjk(lambda text: 0) is False
+
 
 class TestFontPlan:
     def test_includes_custom_and_tk_default_fonts(self) -> None:
@@ -634,6 +652,12 @@ class TestApplyTheme:
         assert fonts.created[_guitheme.BODY_FONT].options["family"] == "Segoe UI"
         assert fonts.created[_guitheme.MONO_FONT].options["family"] == "Consolas"
         assert fonts.created[_guitheme.HEADING_FONT].options["weight"] == "bold"
+
+    def test_keeps_created_font_objects_alive_on_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # tkinter 的 Font 对象被回收会删除具名字体，必须挂在 root 上持有引用。
+        _result, _style, _fonts, root = self._apply(monkeypatch)
+        kept = root.__dict__["_fcmd_named_fonts"]
+        assert {font.options["family"] for font in kept} == {"Segoe UI", "Consolas"}
 
     @pytest.mark.parametrize("theme_name", _THEME_IDS)
     def test_applies_each_theme(self, monkeypatch: pytest.MonkeyPatch, theme_name: str) -> None:

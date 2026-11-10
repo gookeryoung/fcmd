@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 from fcmd.tools import _guiconfig
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from tkinter import Misc
 
 __all__ = [
@@ -51,9 +51,11 @@ __all__ = [
     "Spacing",
     "Theme",
     "apply_theme",
+    "can_render_cjk",
     "classic_options",
     "enable_dpi_awareness",
     "font_plan",
+    "font_renders_cjk",
     "install_theme_switcher",
     "load_theme",
     "missing_palette_tokens",
@@ -65,6 +67,7 @@ __all__ = [
     "theme_config_path",
     "theme_names",
     "ttk_style_specs",
+    "ui_font_family",
 ]
 
 THEME_NAME: Final[str] = "clam"
@@ -77,9 +80,25 @@ UI_FONT_CANDIDATES: Final[tuple[str, ...]] = (
     "Segoe UI",
     "PingFang SC",
     "Noto Sans CJK SC",
+    "Noto Sans SC",
+    "Source Han Sans SC",
+    "Source Han Sans CN",
+    "WenQuanYi Micro Hei",
+    "WenQuanYi Zen Hei",
+    "Droid Sans Fallback",
+    "WenQuanYi Bitmap Song",
     "DejaVu Sans",
+    "Noto Sans",
+    "Liberation Sans",
+    "Ubuntu",
 )
-"""界面字体候选，按优先级排列；Windows 中文环境首选微软雅黑 UI。"""
+"""界面字体候选，按优先级排列。
+
+Windows 中文环境首选微软雅黑 UI，macOS 用苹方；Linux / WSL 依次回落到 Noto、
+思源黑体与文泉驿。末尾的 ``WenQuanYi Bitmap Song`` 是 ``xfonts-wqy`` 提供的
+X11 核心位图字体：uv 独立构建的 Python 自带未启用 Xft 的 Tk，只能看到 X11
+核心字体，此时它是唯一能显示中文的候选（见 README「WSL / Linux 中文乱码」）。
+"""
 
 MONO_FONT_CANDIDATES: Final[tuple[str, ...]] = (
     "Cascadia Mono",
@@ -87,10 +106,23 @@ MONO_FONT_CANDIDATES: Final[tuple[str, ...]] = (
     "Consolas",
     "JetBrains Mono",
     "Source Code Pro",
+    "Noto Sans Mono CJK SC",
+    "Sarasa Mono SC",
+    "WenQuanYi Micro Hei Mono",
+    "WenQuanYi Zen Hei Mono",
     "DejaVu Sans Mono",
+    "Liberation Mono",
+    "WenQuanYi Bitmap Song",
     "Courier New",
 )
-"""等宽字体候选，用于日志/代码类控件。"""
+"""等宽字体候选，用于日志/代码类控件。
+
+CJK 等宽字体排在拉丁等宽字体之后：Xft 环境下拉丁字体可通过回退显示中文，
+而只有 X11 核心字体时（Tk 未启用 Xft）仍需 ``WenQuanYi Bitmap Song`` 兜底。
+"""
+
+CJK_TEXT_SAMPLE: Final[str] = "中文测试"
+"""字体中文覆盖检测样本；Tk 缺少对应字形时 ``Font.measure`` 返回 0。"""
 
 BODY_FONT: Final[str] = "FcmdBodyFont"
 SMALL_FONT: Final[str] = "FcmdSmallFont"
@@ -455,6 +487,34 @@ def pick_font_family(
         if found is not None:
             return found
     return candidates[0]
+
+
+def font_renders_cjk(measure: Callable[[str], int]) -> bool:
+    """按字体宽度测量回调判断能否显示中文。
+
+    Tk 找不到字形时 ``Font.measure`` 返回 0，此时窗口里的中文会显示为方块
+    （WSL 下 uv 独立构建的 Python 自带未启用 Xft 的 Tk 就是这种情况）。
+    """
+    return measure(CJK_TEXT_SAMPLE) > 0
+
+
+def can_render_cjk(root: Misc) -> bool:  # pragma: no cover - 需要真实 Tk 窗口
+    """检查主题正文字体（``BODY_FONT``）能否渲染中文，供窗口启动时自检。"""
+    from tkinter import font as tkfont
+
+    body = tkfont.nametofont(BODY_FONT, root=root)
+    return font_renders_cjk(body.measure)
+
+
+def ui_font_family(root: Misc) -> str:  # pragma: no cover - 需要真实 Tk 窗口
+    """返回主题正文字体实际使用的族名，供需要自定义字号/字重的控件复用。
+
+    直接写死 ``"Microsoft YaHei"`` 之类的族名在 Linux / WSL 上不存在，会被 Tk
+    替换成不含中文字形的默认字体；需要局部放大或加粗时应基于本函数取族名。
+    """
+    from tkinter import font as tkfont
+
+    return str(tkfont.nametofont(BODY_FONT, root=root).actual("family"))
 
 
 def font_plan(scale: FontScale = FONTS) -> tuple[FontSpec, ...]:
@@ -877,8 +937,14 @@ def _apply_named_fonts(
     mono_family: str,
     scale: FontScale,
 ) -> None:
-    """创建或更新主题具名字体；已存在的（Tk 默认字体）就地 configure。"""
+    """创建或更新主题具名字体；已存在的（Tk 默认字体）就地 configure。
+
+    ``tkinter.font.Font`` 在 Python 对象被回收时会删除同名具名字体，因此新建的
+    字体必须挂在 ``root`` 上持有引用；否则 ``apply_theme`` 返回后字体立即消失，
+    ttk 样式只能回退到系统默认字体（WSL 无 Xft 时即表现为中文全部变成方块）。
+    """
     existing = set(tkfont.names(root))
+    kept = list(vars(root).get("_fcmd_named_fonts", ()))
     for spec in font_plan(scale):
         options = {
             "family": mono_family if spec.mono else ui_family,
@@ -888,7 +954,8 @@ def _apply_named_fonts(
         if spec.name in existing:
             tkfont.nametofont(spec.name, root=root).configure(**options)
         else:
-            tkfont.Font(root=root, name=spec.name, **options)
+            kept.append(tkfont.Font(root=root, name=spec.name, **options))
+    vars(root)["_fcmd_named_fonts"] = kept
 
 
 def _resolve_requested_theme(

@@ -117,6 +117,19 @@ fcmd completion --shell fish | source         # fish
 
 窗口设置统一以原子方式写入（临时文件 + 替换），并在每次有效写入前保留一份同名 `.bak` 备份。主文件缺失、损坏或顶层不是对象时，读取会自动回退到 `.bak`。
 
+#### WSL / Linux 中文乱码
+
+窗口里的中文显示为方块（乱码）时，说明当前 Python 自带的 Tk 看不到可用中文字体：uv 安装的独立构建 Python（python-build-standalone）自带 Tk 未启用 Xft，只能枚举 X11 核心字体，fontconfig 中的 Noto CJK 等 TrueType 字体对它不可见。为这种 Python 补一套 X11 核心中文字体即可：
+
+```bash
+sudo apt install xfonts-wqy   # X11 核心中文字体（文泉驿位图）
+xset fp rehash                # 让当前 X 会话重新加载字体，然后重开窗口
+```
+
+若用发行版自带的 Python（其 `python3-tk` 启用 Xft），安装 `fonts-noto-cjk` 即可正常显示中文，无需位图字体。
+
+窗口启动时会自检主题正文字体能否渲染中文，缺字时在终端输出上述修复提示。字体候选顺序为微软雅黑 → 苹方 → Noto / 思源黑体 → 文泉驿，日志等宽控件在无 Xft 时回退到文泉驿位图字体，保证中文可读。
+
 ### 项目构建与发布
 
 | 工具 | 别名 | 说明 |

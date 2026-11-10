@@ -40,6 +40,14 @@ __all__ = [
 WORKER_INTERVAL_MS: Final[int] = 80
 """后台任务轮询间隔（毫秒）：沿用各窗口原先的 80ms，避免改变事件刷新节奏。"""
 
+CJK_FONT_WARNING: Final[str] = (
+    "当前 Tk 字体后端无法显示中文，窗口文字会显示为方块。"
+    "WSL / Linux 下常见于 uv 独立构建的 Python（自带 Tk 未启用 Xft）或系统缺少中文字体。"
+    "修复：安装 X11 中文核心字体后重开窗口（sudo apt install xfonts-wqy && xset fp rehash），"
+    "或改用带 python3-tk 的系统 Python 运行 fcmd。"
+)
+"""中文缺字告警：所有窗口共用的启动自检文案。"""
+
 
 def fit_wraplength(width: int) -> int:
     """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
@@ -112,6 +120,10 @@ def create_root(  # noqa: PLR0913 - 关键字参数描述窗口骨架，显式�
 
     root = tk.Tk()
     theme = _guitheme.apply_theme(root)
+    if not _guitheme.can_render_cjk(root):
+        from fcmd.console import print_error
+
+        print_error(CJK_FONT_WARNING)
     root.title(title)
     root.geometry(
         resolve_geometry(

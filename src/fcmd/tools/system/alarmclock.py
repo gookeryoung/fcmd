@@ -239,6 +239,8 @@ class AlarmClockWindow:
         self._time_var = tk.StringVar(value=self._initial_alarm_text())
         self._repeat_var = tk.BooleanVar(value=self._settings.repeat)
         self._status_var = tk.StringVar(value="未设置闹钟")
+        # 主题正文字体族名：局部自定义字号/字重时复用，避免写死 Windows 字体导致乱码。
+        self._ui_family = _guitheme.ui_font_family(self.root)
 
         self._build_widgets()
         _guitheme.install_theme_switcher(self.root)
@@ -302,7 +304,7 @@ class AlarmClockWindow:
             self.root,
             textvariable=self._status_var,
             foreground=palette.danger,
-            font=("", 10, "bold italic underline"),
+            font=(self._ui_family, 10, "bold italic underline"),
         )
         self._status_label.pack(
             fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.sm, self._theme.spacing.xxs)
@@ -397,7 +399,7 @@ class AlarmClockWindow:
         label = tk.Label(
             window,
             text=REMINDER_TEXT,
-            font=("Microsoft YaHei", 24, "bold"),
+            font=(self._ui_family, 24, "bold"),
             fg="red",
             bg=self._blink_color,
         )
