@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmqnt
 from fcmd.tools.llm.llmbase import EngineInfo, ModelEntry, human_size
 
@@ -71,19 +71,22 @@ def save_settings(settings: QuantizeSettings, path: Path | None = None) -> None:
     _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
 
 
+def _default_geometry(screen_width: int, screen_height: int) -> str:
+    """按屏幕比例计算默认窗口尺寸。"""
+    width, height = _guitheme.proportional_geometry(screen_width, screen_height)
+    return f"{width}x{height}"
+
+
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到按屏幕比例计算的尺寸。"""
-    restored = _guiconfig.clamp_geometry(
+    return _guiwindow.resolve_geometry(
         saved,
         screen_width,
         screen_height,
+        default=_default_geometry,
         min_width=MIN_WIDTH,
         min_height=MIN_HEIGHT,
     )
-    if restored is not None:
-        return restored
-    width, height = _guitheme.proportional_geometry(screen_width, screen_height)
-    return f"{width}x{height}"
 
 
 def _fit_wraplength(width: int) -> int:
@@ -104,17 +107,14 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._ttk = ttk
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title("GGUF 量化工具")
-        self.root.geometry(
-            resolve_geometry(
-                self._settings.geometry,
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+        self.root, self._theme = _guiwindow.create_root(
+            title="GGUF 量化工具",
+            saved_geometry=self._settings.geometry,
+            default_geometry=_default_geometry,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self._close,
         )
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self.input_file: Path | None = None
         self._thread: threading.Thread | None = None
@@ -212,8 +212,6 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
-
-        self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     # ------------------------------------------------------------------ #
     # 交互
@@ -464,28 +462,15 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     # 日志
     # ------------------------------------------------------------------ #
     def _log(self, message: str) -> None:
-        self._log_text.configure(state="normal")
-        self._log_text.insert("end", message + "\n")
-        self._log_text.see("end")
-        self._log_text.configure(state="disabled")
+        _guiwindow.append_log(self._log_text, message)
 
     def _clear_log(self) -> None:
-        self._log_text.configure(state="normal")
-        self._log_text.delete("1.0", "end")
-        self._log_text.configure(state="disabled")
+        _guiwindow.clear_log(self._log_text)
 
 
 def run_gui() -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = QuantizeWindow()
-    except ImportError as exc:
-        from fcmd.console import print_error
-
-        print_error(f"tkinter 不可用，无法启动窗口版: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(QuantizeWindow, "窗口版")
 
 
 @fcmd.tool("llmqntw", help="打开 GGUF 量化窗口（Tk）", description=_DESCRIPTION)

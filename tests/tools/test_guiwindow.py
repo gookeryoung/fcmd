@@ -45,6 +45,19 @@ class TestResolveGeometry:
             == "800x600+0+0"
         )
 
+    def test_accepts_callable_default(self) -> None:
+        assert (
+            _guiwindow.resolve_geometry(
+                None,
+                1920,
+                1080,
+                default=lambda width, height: f"{width // 2}x{height // 2}",
+                min_width=560,
+                min_height=520,
+            )
+            == "960x540"
+        )
+
 
 class TestClampSavedGeometry:
     """只夹紧已保存值时，非法输入返回 ``None``。"""

@@ -62,11 +62,15 @@ def resolve_geometry(  # noqa: PLR0913 - 与 clamp_geometry 参数对齐，显�
     screen_width: int,
     screen_height: int,
     *,
-    default: str,
+    default: str | Callable[[int, int], str],
     min_width: int,
     min_height: int,
 ) -> str:
-    """优先恢复记忆的位置，越界/异常时回落到默认 geometry（同样按屏幕夹紧）。"""
+    """优先恢复记忆的位置，越界/异常时回落到默认 geometry（同样按屏幕夹紧）。
+
+    ``default`` 可以是固定字符串，也可以是 ``(屏幕宽, 屏幕高) -> geometry`` 的
+    回调，供按屏幕比例计算初始尺寸的窗口使用。
+    """
     restored = clamp_saved_geometry(
         saved,
         screen_width,
@@ -76,21 +80,22 @@ def resolve_geometry(  # noqa: PLR0913 - 与 clamp_geometry 参数对齐，显�
     )
     if restored is not None:
         return restored
+    default_text = default(screen_width, screen_height) if callable(default) else default
     clamped = clamp_saved_geometry(
-        default,
+        default_text,
         screen_width,
         screen_height,
         min_width=min_width,
         min_height=min_height,
     )
-    return clamped or default
+    return clamped or default_text
 
 
 def create_root(  # noqa: PLR0913 - 关键字参数描述窗口骨架，显式优于打包配置对象
     *,
     title: str,
     saved_geometry: str | None,
-    default_geometry: str,
+    default_geometry: str | Callable[[int, int], str],
     min_width: int,
     min_height: int,
     on_close: Callable[[], None],
