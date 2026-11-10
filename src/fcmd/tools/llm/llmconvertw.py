@@ -18,25 +18,96 @@ import queue
 import re
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.llm import llmbase, llmconvert, llmengine, llmenv, llmqnt
 from fcmd.tools.llm.llmbase import EngineInfo, ServeError, human_size
 
-__all__ = ["main"]
+__all__ = [
+    "ConvertSettings",
+    "config_path",
+    "load_settings",
+    "resolve_geometry",
+    "save_settings",
+]
 
 _DESCRIPTION = (
     "HF safetensors 转 GGUF 窗口版（Tk）：启动时后台扫描 llmenv 已配置的模型目录，"
     "识别并列出可转换的 HF safetensors 目录；配置精度、解释器、源码脚本与引擎 tag，"
     "勾选多种输出格式（原始 / 量化），已生成的格式自动标记并置为只读避免覆盖；"
-    "可预览转换计划，后台先转换一次再批量量化，实时显示日志与进度"
+    "可预览转换计划，后台先转换一次再批量量化，实时显示日志与进度；"
+    "窗口位置与大小记忆到 ~/.fcmd/ui/llmconvertw.json"
 )
 
 _SCRIPT_PLACEHOLDER = "留空自动获取与引擎 tag 匹配的 llama.cpp 源码"
 _PERCENT_RE = re.compile(r"(\d{1,3})%\|")
+
+MIN_WIDTH = 880
+MIN_HEIGHT = 640
+DEFAULT_WIDTH = 960
+DEFAULT_HEIGHT = 760
+
+
+@dataclass
+class ConvertSettings:
+    """窗口持久化设置（当前只有 geometry）。"""
+
+    geometry: str | None = None
+
+
+def config_path() -> Path:
+    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmconvertw.json``。"""
+    return _guiconfig.config_path("llmconvertw")
+
+
+valid_geometry = _guiconfig.valid_geometry
+
+
+def load_settings(path: Path | None = None) -> ConvertSettings:
+    """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
+    raw = _guiconfig.read_settings(path or config_path())
+    settings = ConvertSettings()
+    if raw is not None:
+        geometry = raw.get("geometry")
+        if isinstance(geometry, str) and valid_geometry(geometry):
+            settings.geometry = geometry
+    return settings
+
+
+def save_settings(settings: ConvertSettings, path: Path | None = None) -> None:
+    """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
+    _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    clamped = _guiconfig.clamp_geometry(
+        f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    return clamped or f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}"
+
+
+def _fit_wraplength(width: int) -> int:
+    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
+    return max(width - 8, 120)
 
 
 def _progress_percent(line: str) -> int | None:
@@ -104,7 +175,7 @@ def _find_convertible(roots: list[Path]) -> list[tuple[Path, int]]:
 class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 转换窗口：参数表单 + 计划预览 + 后台转换。"""
 
-    def __init__(self) -> None:
+    def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
         from tkinter import filedialog, messagebox, ttk
 
@@ -112,10 +183,19 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._filedialog = filedialog
         self._messagebox = messagebox
         self._ttk = ttk
+        self._settings_path = settings_path
+        self._settings = load_settings(settings_path)
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title("HF 转 GGUF 转换")
-        self.root.geometry("960x760")
-        self.root.minsize(880, 640)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
+        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self._running = False
         self._closing = False
@@ -199,8 +279,11 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         row = ttk.Frame(box)
         row.pack(side="bottom", fill="x", pady=(6, 0))
         self._models_hint_var = self._tk.StringVar(value="正在扫描模型目录…")
-        ttk.Label(box, textvariable=self._models_hint_var, wraplength=780, justify="left").pack(
-            side="bottom", fill="x", pady=(4, 0)
+        hint_label = ttk.Label(box, textvariable=self._models_hint_var, justify="left")
+        hint_label.pack(side="bottom", fill="x", pady=(4, 0))
+        hint_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
         )
         self._models_btn = ttk.Button(row, text="刷新", command=self._refresh_env)
         self._models_btn.pack(side="left")
@@ -280,16 +363,20 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._script_btn = ttk.Button(params, text="浏览…", command=self._pick_script)
         self._script_btn.grid(row=2, column=3, sticky="w", pady=3)
 
-        ttk.Label(
+        params_hint = ttk.Label(
             params,
             text=(
                 f"精度可选：{' / '.join(llmconvert.CONVERT_OUTTYPES)}；"
                 "解释器留空自动探测已安装 torch / safetensors / numpy；"
                 f"脚本可填 convert_hf_to_gguf.py 或源码 zip，{_SCRIPT_PLACEHOLDER}"
             ),
-            wraplength=860,
             justify="left",
-        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(4, 0))
+        )
+        params_hint.grid(row=3, column=0, columnspan=4, sticky="we", pady=(4, 0))
+        params_hint.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+        )
 
     def _build_formats(self, parent: Any) -> None:
         """输出格式勾选区：多选量化类型，已存在的输出置为只读避免覆盖。"""
@@ -421,7 +508,12 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         ):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
             var = self._tk.StringVar(value="检测中…")
-            ttk.Label(body, textvariable=var, wraplength=760, justify="left").grid(row=row, column=1, sticky="w")
+            value_label = ttk.Label(body, textvariable=var, justify="left")
+            value_label.grid(row=row, column=1, sticky="we")
+            value_label.bind(
+                "<Configure>",
+                lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+            )
             self._info_vars[key] = var
 
     def _build_actions(self, outer: Any) -> None:
@@ -444,7 +536,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         log_frame.pack(fill="both", expand=True)
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
-        self._log_text = tk.Text(log_frame, wrap="none", state="disabled", yscrollcommand=scrollbar.set, height=10)
+        self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
 
@@ -783,6 +875,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         if running and not self._messagebox.askyesno("任务进行中", "转换任务仍在执行，确实退出？"):
             return
         self._closing = True
+        save_settings(ConvertSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
     # ------------------------------------------------------------------ #
@@ -802,7 +895,8 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
 
 def run_gui() -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = ConvertWindow()
     except ImportError as exc:
