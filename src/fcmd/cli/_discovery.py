@@ -31,6 +31,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fcmd._lazyload import timed_import
 from fcmd._lazylog import LazyLogger
 
 if TYPE_CHECKING:
@@ -390,7 +391,7 @@ def import_tool_module(tool_name: str) -> Exception | None:
     if module_path is None:
         return None
     try:
-        importlib.import_module(module_path)
+        timed_import(module_path, f"tool:{tool_name}")
     except (ImportError, OSError) as exc:
         return exc
     return None

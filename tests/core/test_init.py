@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib
+import time
+import types
 
 import pytest
 
@@ -96,3 +98,105 @@ def test_lazy_dir_merges_namespace_and_all() -> None:
     from fcmd._lazyload import lazy_dir
 
     assert lazy_dir({"b": 1}, ["c", "a"]) == ["a", "b", "c"]
+
+
+# ---------------------------------------------------------------------- #
+# 导入耗时诊断（FCMD_IMPORT_DEBUG）
+# ---------------------------------------------------------------------- #
+def _slow_loader(delay: float) -> object:
+    """构造一个延迟返回的假模块加载器。"""
+    module = types.ModuleType("fake")
+
+    def load(_path: str) -> types.ModuleType:
+        time.sleep(delay)
+        return module
+
+    return load
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, None),
+        ("", None),
+        ("0", None),
+        ("off", None),
+        ("1", 100.0),
+        ("ON", 100.0),
+        ("250", 250.0),
+        (" 50 ", 50.0),
+        ("-5", 100.0),
+        ("abc", 100.0),
+    ],
+)
+def test_slow_import_threshold_parsing(
+    monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: float | None
+) -> None:
+    """环境变量取值到阈值的解析：关闭、布尔开关、数字与非法值回退。"""
+    from fcmd._lazyload import slow_import_threshold_ms
+
+    if raw is None:
+        monkeypatch.delenv("FCMD_IMPORT_DEBUG", raising=False)
+    else:
+        monkeypatch.setenv("FCMD_IMPORT_DEBUG", raw)
+    assert slow_import_threshold_ms() == expected
+
+
+def test_timed_import_reports_slow_import(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """开启诊断且超过阈值时向 stderr 输出模块、耗时与来源。"""
+    import fcmd._lazyload as lazyload
+
+    monkeypatch.setenv("FCMD_IMPORT_DEBUG", "5")
+    monkeypatch.setattr(lazyload, "_load_module", _slow_loader(0.01))
+    module = lazyload.timed_import("fake.slow", "unit")
+    assert module.__name__ == "fake"
+    err = capsys.readouterr().err
+    assert "slow import" in err
+    assert "fake.slow" in err
+    assert "from unit" in err
+
+
+def test_timed_import_below_threshold_is_silent(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """耗时低于阈值时不输出。"""
+    import fcmd._lazyload as lazyload
+
+    monkeypatch.setenv("FCMD_IMPORT_DEBUG", "250")
+    monkeypatch.setattr(lazyload, "_load_module", _slow_loader(0))
+    assert lazyload.timed_import("fake.fast", "unit").__name__ == "fake"
+    assert capsys.readouterr().err == ""
+
+
+def test_timed_import_disabled_is_silent(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """未开启诊断时不做计时也不输出。"""
+    import fcmd._lazyload as lazyload
+
+    monkeypatch.delenv("FCMD_IMPORT_DEBUG", raising=False)
+    monkeypatch.setattr(lazyload, "_load_module", _slow_loader(0))
+    assert lazyload.timed_import("fake.off", "unit").__name__ == "fake"
+    assert capsys.readouterr().err == ""
+
+
+def test_timed_import_propagates_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """导入异常原样抛出，不被诊断逻辑吞掉。"""
+    import fcmd._lazyload as lazyload
+
+    def boom(_path: str) -> types.ModuleType:
+        raise ModuleNotFoundError("missing")
+
+    monkeypatch.setenv("FCMD_IMPORT_DEBUG", "5")
+    monkeypatch.setattr(lazyload, "_load_module", boom)
+    with pytest.raises(ModuleNotFoundError, match="missing"):
+        lazyload.timed_import("fake.missing", "unit")
+
+
+def test_lazy_getattr_reports_origin(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """默认懒加载路径同样带上 ``包名.属性名`` 来源。"""
+    import fcmd._lazyload as lazyload
+
+    monkeypatch.setenv("FCMD_IMPORT_DEBUG", "5")
+    monkeypatch.setattr(lazyload, "_load_module", _slow_loader(0.01))
+    value = lazyload.lazy_getattr("fcmd.core", {"Demo": ("fake.module", None)}, "Demo", {})
+    assert value.__name__ == "fake"
+    assert "from fcmd.core.Demo" in capsys.readouterr().err
