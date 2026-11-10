@@ -1160,6 +1160,9 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
 
     def run_search(self) -> None:
         """启动后台搜索。"""
+        if self.app.busy:
+            self.status_var.set("已有后台任务在运行，请稍候")
+            return
         pattern = self.pattern_var.get().strip()
         if not pattern:
             self.status_var.set("搜索模式不能为空")
@@ -1395,6 +1398,11 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def other_panel(self) -> FilePanel:
         """另一个面板。"""
         return self.right if self.active_side == "left" else self.left
+
+    @property
+    def busy(self) -> bool:
+        """是否有后台任务在运行。"""
+        return self._busy
 
     def set_status(self, message: str) -> None:
         """更新底部状态文字。"""
