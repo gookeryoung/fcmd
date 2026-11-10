@@ -102,6 +102,16 @@ fcmd completion --shell fish | source         # fish
 
 工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。例外：`taskkill` / `which` 与系统命令同名，不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本；规范名仍可通过 `fcmd taskkill` / `fcmd which` 使用。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
 
+### GUI 主题
+
+所有 Tk 窗口共用一套可切换主题，内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，选择会写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`，**重新打开窗口后生效**。也可手动编辑该文件：
+
+```json
+{ "theme": "light" }
+```
+
+删除该文件、写入非法主题名或 JSON 损坏时，窗口启动会自动回退到 `dark-blue`，不会影响工具本身运行。
+
 ### 项目构建与发布
 
 | 工具 | 别名 | 说明 |

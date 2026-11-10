@@ -1,20 +1,23 @@
 """``fcmd.tools._guitheme`` 主题模块测试。
 
-覆盖纯逻辑：调色板/字号/间距配置、字体族挑选、ttk 样式键、经典控件
-``option_add`` 兜底、响应式 geometry、DPI 回退。全部用替身模块，不创建
-真实 ``Tk()``（CI 无显示环境）。
+覆盖纯逻辑：主题注册表、四套调色板完整性/对比度、持久化回退、字体族
+挑选、ttk 样式键、经典控件 ``option_add`` 兜底、响应式 geometry、DPI
+回退。全部用替身模块，不创建真实 ``Tk()``（CI 无显示环境）。
 """
 
 from __future__ import annotations
 
 import ctypes
+import json
 import types
-from dataclasses import replace
+from dataclasses import fields, replace
 from typing import Any, cast
 
 import pytest
 
 from fcmd.tools import _guitheme
+
+_THEME_IDS = list(_guitheme.THEMES)
 
 
 class _FakeTclError(Exception):
@@ -131,6 +134,114 @@ def _contrast(foreground: str, background: str) -> float:
 
 
 # ============================================================================ #
+# 主题注册表
+# ============================================================================ #
+class TestThemeRegistry:
+    def test_contains_four_builtin_themes(self) -> None:
+        assert _guitheme.theme_names() == ("dark-blue", "light", "high-contrast", "native")
+
+    def test_default_is_dark_blue(self) -> None:
+        assert _guitheme.DEFAULT_THEME_NAME == "dark-blue"
+        assert _guitheme.resolve_theme(None).name == "dark-blue"
+
+    def test_unknown_name_falls_back_to_default(self) -> None:
+        assert _guitheme.resolve_theme("does-not-exist") is _guitheme.THEMES["dark-blue"]
+        assert _guitheme.resolve_theme("") is _guitheme.THEMES["dark-blue"]
+
+    def test_aliases_and_case_folding(self) -> None:
+        assert _guitheme.resolve_theme("dark").name == "dark-blue"
+        assert _guitheme.resolve_theme("DEFAULT").name == "dark-blue"
+        assert _guitheme.resolve_theme(" contrast ").name == "high-contrast"
+        assert _guitheme.resolve_theme("LIGHT").name == "light"
+
+    def test_every_theme_has_complete_valid_palette(self) -> None:
+        for theme in _guitheme.THEMES.values():
+            assert _guitheme.missing_palette_tokens(theme.palette) == ()
+            assert theme.label
+            assert theme.description
+            for item in fields(_guitheme.Palette):
+                assert getattr(theme.palette, item.name).startswith("#")
+
+    def test_native_flag_only_on_native_theme(self) -> None:
+        assert _guitheme.THEMES["native"].native is True
+        assert all(not _guitheme.THEMES[name].native for name in _THEME_IDS if name != "native")
+
+    def test_broken_theme_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        broken = _guitheme.Theme(
+            name="broken",
+            label="损坏主题",
+            palette=object.__new__(_guitheme.Palette),
+        )
+        monkeypatch.setattr(
+            _guitheme,
+            "THEMES",
+            {"dark-blue": _guitheme.THEMES["dark-blue"], "broken": broken},
+        )
+        assert _guitheme.resolve_theme("broken").name == "dark-blue"
+
+    def test_missing_palette_tokens_reports_unset_slots(self) -> None:
+        empty = object.__new__(_guitheme.Palette)
+        assert set(_guitheme.missing_palette_tokens(empty)) == {item.name for item in fields(_guitheme.Palette)}
+
+    def test_missing_palette_tokens_reports_bad_color(self) -> None:
+        assert _guitheme.missing_palette_tokens(replace(_guitheme.PALETTE, text="not-a-color")) == ("text",)
+
+
+# ============================================================================ #
+# 主题持久化
+# ============================================================================ #
+class TestThemePersistence:
+    def test_config_path_respects_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        assert _guitheme.theme_config_path() == tmp_path / "ui" / "theme.json"
+
+    def test_missing_file_returns_default(self, tmp_path: Any) -> None:
+        assert _guitheme.read_theme_name(tmp_path / "absent.json") == "dark-blue"
+        assert _guitheme.load_theme(tmp_path / "absent.json").name == "dark-blue"
+
+    def test_corrupt_json_returns_default(self, tmp_path: Any) -> None:
+        path = tmp_path / "theme.json"
+        path.write_text("{not json", encoding="utf-8")
+        assert _guitheme.read_theme_name(path) == "dark-blue"
+
+    def test_non_object_or_non_string_value_returns_default(self, tmp_path: Any) -> None:
+        path = tmp_path / "theme.json"
+        path.write_text("[1, 2, 3]", encoding="utf-8")
+        assert _guitheme.read_theme_name(path) == "dark-blue"
+        path.write_text(json.dumps({"theme": 3}), encoding="utf-8")
+        assert _guitheme.read_theme_name(path) == "dark-blue"
+
+    def test_invalid_name_returns_default(self, tmp_path: Any) -> None:
+        path = tmp_path / "theme.json"
+        path.write_text(json.dumps({"theme": "solarized"}), encoding="utf-8")
+        assert _guitheme.read_theme_name(path) == "dark-blue"
+
+    def test_roundtrip_and_alias_normalization(self, tmp_path: Any) -> None:
+        path = tmp_path / "theme.json"
+        assert _guitheme.save_theme("light", path).name == "light"
+        assert json.loads(path.read_text(encoding="utf-8")) == {"theme": "light"}
+        assert _guitheme.read_theme_name(path) == "light"
+        assert _guitheme.load_theme(path).name == "light"
+
+        assert _guitheme.save_theme("dark", path).name == "dark-blue"
+        assert _guitheme.read_theme_name(path) == "dark-blue"
+
+    def test_save_accepts_theme_object(self, tmp_path: Any) -> None:
+        path = tmp_path / "theme.json"
+        assert _guitheme.save_theme(_guitheme.THEMES["native"], path).name == "native"
+        assert _guitheme.read_theme_name(path) == "native"
+
+    def test_save_invalid_name_writes_default(self, tmp_path: Any) -> None:
+        path = tmp_path / "theme.json"
+        assert _guitheme.save_theme("nope", path).name == "dark-blue"
+        assert _guitheme.read_theme_name(path) == "dark-blue"
+
+    def test_save_write_failure_is_silent(self, tmp_path: Any) -> None:
+        # 把文件路径指向目录，write_text 会抛 OSError，由 write_settings 吞掉。
+        assert _guitheme.save_theme("light", tmp_path).name == "light"
+
+
+# ============================================================================ #
 # 字体族与字号阶梯
 # ============================================================================ #
 class TestFontFamily:
@@ -180,6 +291,16 @@ class TestStyleSpecs:
         assert set(specs) == set(_guitheme.STYLE_NAMES)
         assert all(spec.configure for spec in specs.values())
 
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_every_theme_produces_complete_styles(self, theme_name: str) -> None:
+        theme = _guitheme.THEMES[theme_name]
+        specs = _guitheme.ttk_style_specs(theme.palette, theme.spacing)
+        assert set(specs) == set(_guitheme.STYLE_NAMES)
+        assert all(spec.configure for spec in specs.values())
+        assert specs["Title.TLabel"].configure["font"] == _guitheme.HEADING_FONT
+        assert specs["Muted.TLabel"].configure["foreground"] == theme.palette.muted
+        assert specs["Hint.TLabel"].configure["font"] == _guitheme.SMALL_FONT
+
     def test_button_variants_follow_palette(self) -> None:
         palette = replace(_guitheme.PALETTE, accent="#123456", accent_hover="#654321")
         specs = _guitheme.ttk_style_specs(palette)
@@ -203,7 +324,30 @@ class TestStyleSpecs:
         assert ("disabled", palette.muted) in specs["TButton"].map["foreground"]
         accent = specs["Accent.TButton"].map
         assert ("pressed", palette.accent_pressed) in accent["background"]
-        assert ("disabled", palette.border) in accent["background"]
+        assert ("disabled", palette.surface) in accent["background"]
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_danger_button_is_distinct_in_every_theme(self, theme_name: str) -> None:
+        theme = _guitheme.THEMES[theme_name]
+        palette = theme.palette
+        spec = _guitheme.ttk_style_specs(palette, theme.spacing)["Danger.TButton"]
+        assert spec.configure["background"] == palette.danger
+        assert spec.configure["foreground"] == palette.on_accent
+        assert ("active", palette.surface_active) in spec.map["background"]
+        assert ("pressed", palette.surface_active) in spec.map["background"]
+        assert ("disabled", palette.surface) in spec.map["background"]
+        assert ("active", palette.danger) in spec.map["foreground"]
+        assert ("disabled", palette.muted) in spec.map["foreground"]
+        assert _contrast(palette.on_accent, palette.danger) >= 4.5
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_scrollbar_thumb_is_visible_against_trough(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
+        spec = _guitheme.ttk_style_specs(palette)["TScrollbar"]
+        assert spec.configure["background"] == palette.muted
+        assert spec.configure["troughcolor"] == palette.background
+        assert ("active", palette.accent) in spec.map["background"]
+        assert _contrast(palette.muted, palette.background) >= 4.5
 
     def test_progress_and_scrollbar_use_accent_states(self) -> None:
         palette = _guitheme.PALETTE
@@ -227,12 +371,13 @@ class TestStyleSpecs:
         assert _contrast(palette.on_accent, palette.accent) >= 4.5
         assert _contrast(palette.text, palette.surface) >= 4.5
 
-    def test_disabled_states_remain_legible(self) -> None:
-        palette = _guitheme.PALETTE
-        specs = _guitheme.ttk_style_specs()
-        assert ("disabled", palette.border) in specs["Accent.TButton"].map["background"]
-        assert _contrast(palette.muted, palette.border) >= 3
-        assert _contrast(palette.muted, palette.surface) >= 3
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_disabled_states_remain_legible(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
+        specs = _guitheme.ttk_style_specs(palette)
+        assert ("disabled", palette.surface) in specs["Accent.TButton"].map["background"]
+        assert ("disabled", palette.muted) in specs["Accent.TButton"].map["foreground"]
+        assert _contrast(palette.muted, palette.surface) >= 4.5
 
     def test_respects_spacing(self) -> None:
         spacing = _guitheme.Spacing(lg=20, xs=5)
@@ -271,6 +416,25 @@ class TestClassicOptions:
         assert options["*Menu.activeForeground"] == palette.on_accent
         assert options["*Menu.font"] == _guitheme.BODY_FONT
 
+    def test_canvas_colors_follow_theme(self) -> None:
+        palette = _guitheme.PALETTE
+        options = _guitheme.classic_options()
+        assert options["*Canvas.background"] == palette.surface
+        assert options["*Canvas.highlightBackground"] == palette.border
+        assert options["*Canvas.highlightColor"] == palette.accent
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_classic_options_follow_each_theme(self, theme_name: str) -> None:
+        theme = _guitheme.THEMES[theme_name]
+        palette = theme.palette
+        options = _guitheme.classic_options(palette)
+        assert options["*Text.background"] == palette.log_bg
+        assert options["*Text.foreground"] == palette.log_fg
+        assert options["*Menu.background"] == palette.surface
+        assert options["*Listbox.background"] == palette.surface
+        assert options["*Entry.background"] == palette.surface
+        assert options["*Canvas.background"] == palette.surface
+
     def test_follows_custom_palette(self) -> None:
         palette = replace(_guitheme.PALETTE, log_bg="#010203", text="#040506")
         options = _guitheme.classic_options(palette)
@@ -279,30 +443,45 @@ class TestClassicOptions:
 
 
 # ============================================================================ #
-# 深色科技蓝配色
+# 四套主题对比度
 # ============================================================================ #
-class TestPaletteContrast:
-    def test_text_contrast_is_readable(self) -> None:
-        palette = _guitheme.PALETTE
+class TestThemeContrast:
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_text_and_muted_are_readable(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
         assert _contrast(palette.text, palette.background) >= 7
         assert _contrast(palette.text, palette.surface) >= 7
         assert _contrast(palette.muted, palette.background) >= 4.5
         assert _contrast(palette.muted, palette.surface) >= 4.5
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_accent_selection_and_log_combinations(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
         assert _contrast(palette.log_fg, palette.log_bg) >= 7
         assert _contrast(palette.on_accent, palette.accent) >= 4.5
         assert _contrast(palette.select_fg, palette.select_bg) >= 4.5
 
-    def test_background_layers_are_dark_and_distinct(self) -> None:
-        palette = _guitheme.PALETTE
-        layers = [palette.background, palette.surface, palette.surface_hover, palette.surface_active]
-        assert len(set(layers)) == len(layers)
-        assert all(_relative_luminance(color) < 0.1 for color in layers)
-
-    def test_semantic_colors_are_visible_on_text_and_tree_backgrounds(self) -> None:
-        palette = _guitheme.PALETTE
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_semantic_colors_are_visible(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
         for color in (palette.success, palette.warning, palette.danger):
             assert _contrast(color, palette.log_bg) >= 4.5
             assert _contrast(color, palette.surface) >= 4.5
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_background_layers_are_distinct(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
+        layers = [palette.background, palette.surface, palette.surface_hover, palette.surface_active]
+        assert len(set(layers)) == len(layers)
+
+    def test_dark_theme_layers_are_dark(self) -> None:
+        palette = _guitheme.THEMES["dark-blue"].palette
+        layers = [palette.background, palette.surface, palette.surface_hover, palette.surface_active]
+        assert all(_relative_luminance(color) < 0.1 for color in layers)
+
+    def test_light_and_native_backgrounds_are_light(self) -> None:
+        for name in ("light", "native"):
+            assert _relative_luminance(_guitheme.THEMES[name].palette.background) > 0.5
 
 
 # ============================================================================ #
@@ -411,13 +590,25 @@ class TestDpiAwareness:
 # apply_theme
 # ============================================================================ #
 class TestApplyTheme:
-    def test_configures_theme_styles_and_classic_options(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        modules, style, fonts = _fake_modules()
-        root = _FakeRoot()
+    def _apply(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        theme: str | _guitheme.Theme | None = _guitheme.DEFAULT_THEME_NAME,
+        root: _FakeRoot | None = None,
+        fail_theme: bool = False,
+        **kwargs: Any,
+    ) -> tuple[_guitheme.Theme, _FakeStyle, _FakeFontModule, _FakeRoot]:
+        modules, style, fonts = _fake_modules(fail_theme=fail_theme)
+        view = root or _FakeRoot()
         monkeypatch.setattr(_guitheme, "_load_tk_modules", lambda: modules)
+        result = _guitheme.apply_theme(cast(Any, view), theme, **kwargs)
+        return result, style, fonts, view
 
-        _guitheme.apply_theme(cast(Any, root))
+    def test_configures_theme_styles_and_classic_options(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result, style, fonts, root = self._apply(monkeypatch)
 
+        assert result.name == "dark-blue"
         specs = _guitheme.ttk_style_specs()
         assert style.theme == _guitheme.THEME_NAME
         assert set(style.configured) == set(_guitheme.STYLE_NAMES)
@@ -428,12 +619,46 @@ class TestApplyTheme:
         assert fonts.created[_guitheme.MONO_FONT].options["family"] == "Consolas"
         assert fonts.created[_guitheme.HEADING_FONT].options["weight"] == "bold"
 
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_applies_each_theme(self, monkeypatch: pytest.MonkeyPatch, theme_name: str) -> None:
+        theme = _guitheme.THEMES[theme_name]
+        _result, style, _fonts, root = self._apply(monkeypatch, theme=theme_name)
+        assert style.theme == (None if theme.native else _guitheme.THEME_NAME)
+        assert root.options == _guitheme.classic_options(theme.palette)
+        assert root.configured == {"background": theme.palette.background}
+
+    def test_native_keeps_system_ttk_theme(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result, style, _fonts, _root = self._apply(monkeypatch, theme="native")
+        assert result.native is True
+        assert style.theme is None
+
+    def test_none_reads_persisted_theme(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme, "load_theme", lambda: _guitheme.THEMES["light"])
+        result, _style, _fonts, root = self._apply(monkeypatch, theme=None)
+        assert result.name == "light"
+        assert root.options == _guitheme.classic_options(_guitheme.THEMES["light"].palette)
+
+    def test_explicit_overrides_are_applied(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        palette = replace(_guitheme.PALETTE, accent="#123456")
+        scale = _guitheme.FontScale(body=10)
+        spacing = _guitheme.Spacing(md=14)
+        result, _style, _fonts, _root = self._apply(
+            monkeypatch,
+            theme="light",
+            palette=palette,
+            scale=scale,
+            spacing=spacing,
+        )
+        assert result.palette.accent == "#123456"
+        assert result.fonts.body == 10
+        assert result.spacing.md == 14
+
     def test_reuses_existing_named_fonts_and_survives_theme_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         names = tuple(spec.name for spec in _guitheme.font_plan())
         modules, style, fonts = _fake_modules(existing=names, fail_theme=True)
         monkeypatch.setattr(_guitheme, "_load_tk_modules", lambda: modules)
 
-        _guitheme.apply_theme(cast(Any, _FakeRoot()))
+        _guitheme.apply_theme(cast(Any, _FakeRoot()), _guitheme.DEFAULT_THEME_NAME)
 
         assert fonts.created_calls == 0
         assert fonts.configure_calls == len(names)
@@ -446,7 +671,7 @@ class TestApplyTheme:
         root = _FakeRoot(fail_configure=True)
         monkeypatch.setattr(_guitheme, "_load_tk_modules", lambda: modules)
 
-        _guitheme.apply_theme(cast(Any, root))
+        _guitheme.apply_theme(cast(Any, root), _guitheme.DEFAULT_THEME_NAME)
 
         assert root.options == _guitheme.classic_options()
 
