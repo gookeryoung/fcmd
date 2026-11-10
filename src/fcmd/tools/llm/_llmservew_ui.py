@@ -1,0 +1,607 @@
+"""llmservew 的界面构建：控件布局与模型列表渲染（从 llmservew.py 拆出）。
+
+``ServeWindow`` 继承 ``_ServeWindowUI``；``llmservew`` 仍 re-export
+``_MODEL_PLACEHOLDER`` / ``_HINT_PLACEHOLDER`` / ``_QUANT_SUFFIX_RE`` 供其自身与测试使用。
+"""
+
+from __future__ import annotations
+
+import queue
+import re
+import threading
+from pathlib import Path
+from typing import Any
+
+from fcmd.tools import _guiwindow
+from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
+from fcmd.tools.llm._llmservew_monitor import (
+    _FIT_BUSY,
+    _FIT_RUNNING,
+    _FIT_UNSUPPORTED,
+    RATE_WINDOW_SECONDS,
+    _fit_state,
+)
+from fcmd.tools.llm.llmbase import KV_SCALE, PROFILES, ModelEntry, ServeError, human_size
+from fcmd.tools.llm.llmserve import DEFAULT_NAME
+
+_MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
+_HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"
+_QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
+
+
+class _ServeWindowUI:
+    """ServeWindow 的界面构建与模型列表渲染（mixin）。"""
+
+    # ------------------------------------------------------------------ #
+    # 界面
+    # ------------------------------------------------------------------ #
+    def _build_widgets(self) -> None:
+        ttk = self._ttk
+        outer = ttk.Frame(self.root, padding=self._theme.spacing.md)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
+        self._build_actions(outer)
+        self._notebook = ttk.Notebook(outer)
+        self._notebook.pack(fill="both", expand=True)
+        start_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        run_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        self._notebook.add(start_page, text="启动配置")
+        self._notebook.add(run_page, text="运行监控")
+        self._build_params(start_page)
+        self._build_env(start_page)
+        self._build_models(start_page)
+        self._build_loaded(run_page)
+        self._build_metrics(run_page)
+        self._build_load(run_page)
+        self._build_gpu(run_page)
+        self._build_log(run_page)
+
+    @staticmethod
+    def _service_names() -> list[str]:
+        """已登记的服务名列表（供服务名下拉框展示）。"""
+        try:
+            return [state.name for state in llmenv.list_states()]
+        except ServeError:
+            return []
+
+    @classmethod
+    def _default_service_name(cls) -> str:
+        """唯一运行中的服务优先作为默认服务名，避免与实际服务不一致。"""
+        try:
+            states = llmenv.list_states()
+        except ServeError:
+            return DEFAULT_NAME
+        alive = [state.name for state in states if llmserve.process_alive(state.pid, state.create_time)]
+        return alive[0] if len(alive) == 1 else DEFAULT_NAME
+
+    def _refresh_service_names(self) -> None:
+        """按最新状态文件刷新服务名下拉选项。"""
+        self._name_box.configure(values=self._service_names())
+
+    def _build_params(self, parent: Any) -> None:
+        ttk = self._ttk
+        params = ttk.LabelFrame(parent, text="启动参数", padding=self._theme.spacing.sm)
+        params.pack(fill="x")
+        params.columnconfigure(1, weight=1)
+        params.columnconfigure(3, weight=1)
+        self._name_box = ttk.Combobox(
+            params,
+            textvariable=self._name_var,
+            values=self._service_names(),
+        )
+        self._name_box.bind("<<ComboboxSelected>>", self._on_service_selected)
+        self._profile_box = ttk.Combobox(
+            params,
+            textvariable=self._profile_var,
+            values=tuple(PROFILES),
+            state="readonly",
+        )
+        self._profile_box.bind("<<ComboboxSelected>>", self._on_profile_changed)
+        self._pair_row(
+            params,
+            0,
+            "服务名",
+            self._name_box,
+            "档位",
+            self._profile_box,
+        )
+        self._pair_row(
+            params,
+            1,
+            "监听地址",
+            ttk.Entry(params, textvariable=self._host_var),
+            "端口",
+            ttk.Entry(params, textvariable=self._port_var),
+        )
+        self._pair_row(
+            params,
+            2,
+            "线程数",
+            ttk.Entry(params, textvariable=self._threads_var),
+            "",
+            ttk.Label(params, text=""),
+        )
+
+        advanced, body = self._collapsible(parent, "高级参数（留空回落档位默认）", open_state=False)
+        advanced.pack(fill="x", pady=(self._theme.spacing.sm, 0))
+        body.columnconfigure(1, weight=1)
+        body.columnconfigure(3, weight=1)
+        self._pair_row(
+            body,
+            0,
+            "上下文",
+            ttk.Entry(body, textvariable=self._ctx_var),
+            "KV",
+            ttk.Combobox(body, textvariable=self._kv_var, values=("", *KV_SCALE), state="readonly"),
+        )
+        self._pair_row(
+            body,
+            1,
+            "ubatch",
+            ttk.Entry(body, textvariable=self._ubatch_var),
+            "模型别名（留空自动）",
+            ttk.Entry(body, textvariable=self._alias_var),
+        )
+        self._pair_row(
+            body,
+            2,
+            "API Key",
+            ttk.Entry(body, textvariable=self._api_key_var),
+            "等待就绪（秒）",
+            ttk.Entry(body, textvariable=self._wait_var),
+        )
+
+    def _pair_row(  # noqa: PLR0913, PLR0917
+        self,
+        target: Any,
+        row: int,
+        label: str,
+        widget: Any,
+        right_label: str,
+        right_widget: Any,
+    ) -> None:
+        """在目标 Frame 的第 ``row`` 行放置两组“标签 + 输入控件”。"""
+        ttk = self._ttk
+        ttk.Label(target, text=label).grid(
+            row=row, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        widget.grid(row=row, column=1, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs)
+        if right_label:
+            ttk.Label(target, text=right_label).grid(
+                row=row, column=2, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+            )
+        right_widget.grid(row=row, column=3, sticky="ew", pady=self._theme.spacing.xxs)
+
+    def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
+        """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
+        return _guiwindow.collapsible(
+            parent,
+            title,
+            padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0),
+            open_state=open_state,
+        )
+
+    def _build_models(self, parent: Any) -> None:
+        ttk = self._ttk
+        box = ttk.LabelFrame(parent, text="已配置模型（llmenv 登记的模型目录）", padding=self._theme.spacing.sm)
+        box.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
+
+        row = ttk.Frame(box)
+        row.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
+        ttk.Entry(row, textvariable=self._model_var, state="readonly").pack(
+            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
+        )
+        self._model_btn = ttk.Button(row, text="刷新", command=self._refresh_models)
+        self._model_btn.pack(side="left")
+        self._browse_btn = ttk.Button(row, text="浏览…", command=self._select_file)
+        self._browse_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._clear_btn = ttk.Button(row, text="清除选择", command=self._clear_selection)
+        self._clear_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+
+        tree_frame = ttk.Frame(box)
+        tree_frame.pack(fill="both", expand=True)
+        self._tree = ttk.Treeview(
+            tree_frame,
+            columns=("model", "size", "profiles", "tags", "fit"),
+            show="headings",
+            selectmode="browse",
+            height=4,
+        )
+        self._tree.heading("model", text="模型")
+        self._tree.heading("size", text="大小")
+        self._tree.heading("profiles", text="匹配档位")
+        self._tree.heading("tags", text="标签")
+        self._tree.heading("fit", text="硬件")
+        self._tree.column("model", width=290, anchor="w")
+        self._tree.column("size", width=90, anchor="e", stretch=False)
+        self._tree.column("profiles", width=130, anchor="w", stretch=False)
+        self._tree.column("tags", width=100, anchor="w", stretch=False)
+        self._tree.column("fit", width=90, anchor="w", stretch=False)
+        self._strike_font = self._font.nametofont("TkDefaultFont").copy()
+        self._strike_font.configure(overstrike=True)
+        self._tree.tag_configure("unfit", foreground=self._theme.palette.danger, font=self._strike_font)
+        self._tree.tag_configure("busy", foreground=self._theme.palette.warning)
+        yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
+        self._tree.configure(yscrollcommand=yscroll.set)
+        self._tree.pack(side="left", fill="both", expand=True)
+        yscroll.pack(side="right", fill="y")
+        self._tree.bind("<<TreeviewSelect>>", self._on_model_selected)
+
+        self._hint_var = self._tk.StringVar(value=_HINT_PLACEHOLDER)
+        hint_label = ttk.Label(box, textvariable=self._hint_var, justify="left")
+        hint_label.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
+        hint_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+        )
+
+    def _build_env(self, parent: Any) -> None:
+        tk = self._tk
+        ttk = self._ttk
+        box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU）", open_state=False)
+        box.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
+        body.columnconfigure(1, weight=1)
+        for row, (key, label) in enumerate((("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"))):
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, self._theme.spacing.sm))
+            var = tk.StringVar(value="检测中…")
+            value_label = ttk.Label(body, textvariable=var, justify="left")
+            value_label.grid(row=row, column=1, sticky="we")
+            value_label.bind(
+                "<Configure>",
+                lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+            )
+            self._info_vars[key] = var
+
+    def _build_loaded(self, parent: Any) -> None:
+        """已加载模型：列出运行中的服务及其模型、档位与地址。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(parent, text="已加载模型（运行中的服务）", padding=self._theme.spacing.sm)
+        box.pack(fill="x")
+        self._loaded_tree = ttk.Treeview(
+            box,
+            columns=("name", "model", "profile", "address"),
+            show="headings",
+            height=3,
+            selectmode="browse",
+        )
+        self._loaded_tree.heading("name", text="服务")
+        self._loaded_tree.heading("model", text="已加载模型")
+        self._loaded_tree.heading("profile", text="档位 / ctx")
+        self._loaded_tree.heading("address", text="地址")
+        self._loaded_tree.column("name", width=90, stretch=False)
+        self._loaded_tree.column("model", width=360, anchor="w")
+        self._loaded_tree.column("profile", width=140, anchor="w", stretch=False)
+        self._loaded_tree.column("address", width=170, anchor="w", stretch=False)
+        self._loaded_tree.pack(fill="x")
+        self._loaded_var = self._tk.StringVar(value="无运行中的服务")
+        ttk.Label(box, textvariable=self._loaded_var).pack(fill="x", pady=(self._theme.spacing.xs, 0))
+
+    def _refresh_loaded(self) -> None:
+        """刷新“已加载模型”列表（只统计进程仍存活的服务）。"""
+        for item in self._loaded_tree.get_children():
+            self._loaded_tree.delete(item)
+        alive = [state for state in llmenv.list_states() if llmserve.process_alive(state.pid, state.create_time)]
+        self._running_paths = {llmenv.path_key(Path(state.model)) for state in alive}
+        for state in alive:
+            self._loaded_tree.insert(
+                "",
+                "end",
+                values=(
+                    state.name,
+                    Path(state.model).name,
+                    f"{state.profile} / ctx {state.context}",
+                    state.base_url,
+                ),
+            )
+        self._loaded_var.set("" if alive else "无运行中的服务")
+
+    def _build_metrics(self, parent: Any) -> None:
+        """实时性能面板：显示 /metrics 计算的 token/s 与请求队列状态。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(
+            parent,
+            text=f"实时性能（服务运行中每 1s 采样 /metrics，速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑）",
+            padding=self._theme.spacing.sm,
+        )
+        box.pack(fill="x")
+        for column in range(4):
+            box.columnconfigure(column, weight=1)
+        items = (
+            ("生成速率", "gen_rate"),
+            ("提示速率", "prompt_rate"),
+            ("处理中请求", "processing"),
+            ("排队请求", "deferred"),
+            ("KV 使用率", "kv"),
+            ("累计生成 tokens", "predicted"),
+            ("累计提示 tokens", "prompt"),
+            ("采样状态", "monitor"),
+        )
+        for index, (label, key) in enumerate(items):
+            row, column = divmod(index, 4)
+            cell = ttk.Frame(box)
+            cell.grid(
+                row=row, column=column, sticky="w", padx=(0, self._theme.spacing.lg), pady=self._theme.spacing.xxs
+            )
+            ttk.Label(cell, text=label + ":").pack(side="left")
+            ttk.Label(cell, textvariable=self._metric_vars[key], font=("", 9, "bold")).pack(
+                side="left", padx=(self._theme.spacing.xs, 0)
+            )
+
+    def _build_load(self, parent: Any) -> None:
+        """系统负载面板：CPU / 频率 / 内存 / 交换与服务进程关键指标。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(
+            parent, text="系统负载（每 1s 采样；服务运行时额外显示服务进程指标）", padding=self._theme.spacing.sm
+        )
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
+        items = (
+            ("CPU", "cpu"),
+            ("频率", "cpu_freq"),
+            ("内存", "memory"),
+            ("交换", "swap"),
+            ("服务 CPU", "proc_cpu"),
+            ("服务内存", "proc_mem"),
+            ("线程", "proc_threads"),
+            ("运行时长", "uptime"),
+        )
+        self._metric_grid(box, items, self._load_vars)
+
+    def _build_gpu(self, parent: Any) -> None:
+        """GPU 负载面板：利用率 / 显存 / 温度 / 功耗 / 风扇 / 频率。"""
+        ttk = self._ttk
+        box = ttk.LabelFrame(
+            parent,
+            text="GPU 负载（nvidia-smi，每 1s 采样；服务运行时额外显示服务显存）",
+            padding=self._theme.spacing.sm,
+        )
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
+        for column in range(4):
+            box.columnconfigure(column, weight=1)
+        ttk.Label(box, text="设备:").grid(
+            row=0, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        gpu_name_label = ttk.Label(
+            box,
+            textvariable=self._gpu_vars["gpu_name"],
+            font=("", 9, "bold"),
+            justify="left",
+        )
+        gpu_name_label.grid(row=0, column=1, columnspan=3, sticky="we", pady=self._theme.spacing.xxs)
+        gpu_name_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+        )
+        items = (
+            ("使用率", "gpu_util"),
+            ("显存", "gpu_vram"),
+            ("服务显存", "gpu_proc_vram"),
+            ("温度", "gpu_temp"),
+            ("功耗", "gpu_power"),
+            ("风扇", "gpu_fan"),
+            ("核心频率", "gpu_clock"),
+        )
+        self._metric_grid(box, items, self._gpu_vars, start_row=1)
+
+    def _metric_grid(
+        self,
+        box: Any,
+        items: tuple[tuple[str, str], ...],
+        variables: dict[str, Any],
+        *,
+        columns: int = 4,
+        start_row: int = 0,
+    ) -> None:
+        """把“标签 + 数值”按网格排入面板，供系统负载与 GPU 面板复用。"""
+        ttk = self._ttk
+        for column in range(columns):
+            box.columnconfigure(column, weight=1)
+        for index, (label, key) in enumerate(items):
+            row, column = divmod(index, columns)
+            cell = ttk.Frame(box)
+            cell.grid(
+                row=start_row + row,
+                column=column,
+                sticky="w",
+                padx=(0, self._theme.spacing.lg),
+                pady=self._theme.spacing.xxs,
+            )
+            ttk.Label(cell, text=label + ":").pack(side="left")
+            ttk.Label(cell, textvariable=variables[key], font=("", 9, "bold")).pack(
+                side="left", padx=(self._theme.spacing.xs, 0)
+            )
+
+    def _build_actions(self, outer: Any) -> None:
+        ttk = self._ttk
+        actions = ttk.Frame(outer)
+        actions.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
+        self._preview_btn = ttk.Button(actions, text="预览计划", command=self._preview)
+        self._preview_btn.pack(side="left")
+        self._start_btn = ttk.Button(actions, text="启动服务", command=self._start, style="Accent.TButton")
+        self._start_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._stop_btn = ttk.Button(actions, text="停止全部服务", command=self._stop, style="Danger.TButton")
+        self._stop_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._status_btn = ttk.Button(actions, text="刷新状态", command=self._refresh_status)
+        self._status_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._logs_btn = ttk.Button(actions, text="查看日志", command=self._show_logs)
+        self._logs_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._browser_btn = ttk.Button(actions, text="打开浏览器", command=self._open_browser)
+        self._browser_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._clear_log_btn = ttk.Button(actions, text="清空日志", command=self._clear_log)
+        self._clear_log_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._progress = ttk.Progressbar(actions, mode="indeterminate", length=200)
+        self._progress.pack(side="right")
+
+    def _build_log(self, parent: Any) -> None:
+        tk = self._tk
+        ttk = self._ttk
+        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=self._theme.spacing.sm)
+        log_frame.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
+        scrollbar = ttk.Scrollbar(log_frame)
+        scrollbar.pack(side="right", fill="y")
+        self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
+        self._log_text.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=self._log_text.yview)
+
+    # ------------------------------------------------------------------ #
+    # 扫描模型与引擎信息
+    # ------------------------------------------------------------------ #
+    def _refresh_models(self) -> None:
+        """后台扫描已配置模型目录并探测引擎 / GPU 信息，避免阻塞窗口。"""
+        if self._busy:
+            return
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return
+        self._model_btn.configure(state="disabled")
+        self._model_var.set("正在扫描模型目录…")
+        for var in self._info_vars.values():
+            var.set("检测中…")
+        self._scan_thread = threading.Thread(target=self._scan_models, daemon=True)
+        self._scan_thread.start()
+        self.root.after(200, self._poll_scan)
+
+    def _scan_models(self) -> None:
+        """后台线程：扫描模型目录并收集引擎 / GPU 信息。"""
+        entries: list[ModelEntry] = []
+        try:
+            roots = [root for root in llmenv.models_roots() if root.is_dir()]
+            if roots:
+                entries = llmmodel.scan_models(roots)
+            entries = self._with_running_models(entries)
+        except OSError:
+            entries = []
+        info, gpu_mib = self._collect_env_info()
+        usage = self._gpu_usage()
+        free_mib = max(usage[1] - usage[0], 0) if usage is not None else None
+        self._scan_results.put((entries, info, gpu_mib, free_mib))
+
+    @staticmethod
+    def _with_running_models(entries: list[ModelEntry]) -> list[ModelEntry]:
+        """把运行中服务的模型并入清单，便于停止已加载模型时在列表中找到。"""
+        seen = {llmenv.path_key(entry.path) for entry in entries}
+        for state in llmenv.list_states():
+            path = Path(state.model)
+            key = llmenv.path_key(path)
+            if key in seen or not llmserve.process_alive(state.pid, state.create_time):
+                continue
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            seen.add(key)
+            entries.append(
+                ModelEntry(
+                    root=path.parent,
+                    path=path,
+                    size=size,
+                    profiles=tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower()),
+                    tags=llmmodel.detect_model_tags(path.name),
+                )
+            )
+        entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
+        return entries
+
+    def _collect_env_info(self) -> tuple[dict[str, str], int | None]:
+        """收集当前引擎 tag / 可执行文件、版本与显存（MiB）。"""
+        info: dict[str, str] = {"engine": "", "version": "", "gpu": ""}
+        try:
+            engine = llmengine.resolve_engine()
+        except llmbase.ServeError as exc:
+            info["engine"] = f"未找到（{exc}）"
+        else:
+            info["engine"] = f"{engine.tag} · {engine.exe}"
+            info["version"] = llmengine.probe_version(engine)
+        gpu = llmengine.detect_gpu()
+        info["gpu"] = f"{gpu.name}（{gpu.memory_mib} MiB）" if gpu else "未检测到 NVIDIA GPU"
+        return info, gpu.memory_mib if gpu is not None else None
+
+    def _poll_scan(self) -> None:
+        try:
+            entries, info, gpu_mib, free_mib = self._scan_results.get_nowait()
+        except queue.Empty:
+            if self._scan_thread is not None and self._scan_thread.is_alive():
+                self.root.after(200, self._poll_scan)
+            return
+        self._apply_models(entries, info, gpu_mib, free_mib)
+
+    def _apply_models(
+        self,
+        entries: list[ModelEntry],
+        info: dict[str, str],
+        gpu_mib: int | None,
+        free_mib: int | None,
+    ) -> None:
+        self._models = entries
+        self._gpu_mib = gpu_mib
+        self._gpu_free_mib = free_mib
+        if self._selected_model is None:
+            state = self._load_state_safe(self._name_var.get().strip())
+            if state is not None and llmserve.process_alive(state.pid, state.create_time):
+                self._select_model(Path(state.model), update_name=False)
+        self._render_models()
+        self._model_var.set(str(self._selected_model) if self._selected_model else _MODEL_PLACEHOLDER)
+        if self._selected_model is not None:
+            self._sync_tree_selection(self._selected_model)
+        for key, var in self._info_vars.items():
+            var.set(info.get(key) or "-")
+        self._model_btn.configure(state="normal")
+        if not entries:
+            self._log("未发现已配置的 GGUF：用 fcmd llmenv add 登记模型目录，或直接“浏览…”选择模型文件")
+
+    def _row_state(self, entry: ModelEntry) -> str:
+        """单个模型的硬件状态：运行中 > 硬件不足 > 需释放显存 > 可用。"""
+        if llmenv.path_key(entry.path) in self._running_paths:
+            return _FIT_RUNNING
+        return _fit_state(*self._fits(entry.size))
+
+    @staticmethod
+    def _state_tag(state: str) -> tuple[str, ...]:
+        """状态对应的 Treeview tag（用于行着色）。"""
+        return {_FIT_UNSUPPORTED: ("unfit",), _FIT_BUSY: ("busy",)}.get(state, ())
+
+    def _render_models(self) -> None:
+        """重建模型列表：硬件不足标红，仅当前余量不足标橙，并显示对应状态。"""
+        self._tree.delete(*self._tree.get_children())
+        for index, entry in enumerate(self._models):
+            state = self._row_state(entry)
+            self._tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    entry.relative,
+                    human_size(entry.size),
+                    ", ".join(entry.profiles) or "-",
+                    " · ".join(entry.tags) or "-",
+                    state,
+                ),
+                tags=self._state_tag(state),
+            )
+        self._show_basis_hint()
+
+    def _update_fit_states(self) -> None:
+        """按最新可用显存原地更新各行状态（不重建列表，保留选中项）。"""
+        for index, entry in enumerate(self._models):
+            iid = str(index)
+            if not self._tree.exists(iid):
+                continue
+            state = self._row_state(entry)
+            values = self._tree.item(iid, "values")
+            if values and values[-1] != state:
+                updated = (*values[:-1], state)
+                self._tree.item(iid, values=updated, tags=self._state_tag(state))
+        self._show_basis_hint()
+
+    def _show_basis_hint(self) -> None:
+        """未选中模型时在提示区展示硬件评估口径。"""
+        if self._selected_model is not None:
+            return
+        available = self._gpu_free_mib if self._gpu_free_mib is not None else self._gpu_mib
+        if available is None:
+            self._hint_var.set("未检测到可用 NVIDIA GPU，无法评估显存适配（CPU 推理会很慢）")
+            return
+        _, context, kv_type = self._profile_context()
+        total = f"{self._gpu_mib} MiB" if self._gpu_mib is not None else "-"
+        self._hint_var.set(
+            f"硬件评估口径：整卡 {total}，当前可用 {available} MiB，上下文 {context}，KV {kv_type}；"
+            "红色=硬件不足（清理显存也放不下），橙色=需释放显存（整卡够用），选择模型可查看具体建议"
+        )
