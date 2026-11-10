@@ -610,6 +610,8 @@ uv run python -m fcmd.cli._manifest_data
 
 公共 API（`import fcmd as fx`）名称保持稳定；原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径已统一收敛到 `fcmd.core.*`，不保留兼容 shim。
 
+`fcmd.tools` 下的 `*base` 实现模块（`tools/media/mediabase.py`、`tools/text/textbase.py`、`tools/net/netbase.py` 等）是**半公开**层：模块 `__all__` 列出的名字可被外部导入复用，但**不承诺跨版本稳定**，可能随版本调整、改名或迁移；稳定承诺仅限上段 `import fcmd as fx` 暴露的公共 API。
+
 ## 许可证
 
 MIT

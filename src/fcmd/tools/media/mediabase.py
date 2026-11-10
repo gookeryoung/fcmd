@@ -3,6 +3,9 @@
 供 ``fcmd.dsl.toolcmd.media`` 的 ``@action`` 声明、窗口版工具及外部代码复用：
 图标转换、图片缩放/裁剪/水印/EXIF/直方图等实现只在本模块保留一份。
 
+半公开：公开面见 ``__all__``，可被外部导入复用但不承诺跨版本稳定（见 README
+「公共 API」一节）。
+
 外部库按需延迟导入——导入本模块不触发重型 PIL / resvg 加载；执行期 import
 失败时打印友好提示并返回，退出码语义由调用方决定。
 """
@@ -17,6 +20,28 @@ from fcmd.tools._deps import missing_dependency
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+__all__ = [
+    "collect_images",
+    "convert_images",
+    "icon_build",
+    "icon_build_batch",
+    "image_colors",
+    "image_compress",
+    "image_convert",
+    "image_crop",
+    "image_exif",
+    "image_flip",
+    "image_histogram",
+    "image_info",
+    "image_resize",
+    "image_rotate",
+    "image_watermark",
+    "is_supported_image",
+    "normalize_quality",
+    "parse_size_tokens",
+    "resolve_output_target",
+]
 
 # ============================================================================
 # 可选依赖检查（find_spec 仅查定位，不触发真正 import；PIL / resvg_py 由

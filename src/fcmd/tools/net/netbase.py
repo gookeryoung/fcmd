@@ -4,6 +4,9 @@
 IP 解析、网页保存与 URL 可访问性检测的实现只在本模块保留一份。
 通用探测能力（``check_url`` / ``check_urls`` 等）仍由
 :mod:`fcmd.core.shared.net` 提供，本模块只做导入复用。
+
+半公开：公开面见 ``__all__``，可被外部导入复用但不承诺跨版本稳定（见 README
+「公共 API」一节）。
 """
 
 from __future__ import annotations
@@ -17,6 +20,37 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
 
 from fcmd.core.shared.net import _DEFAULT_CHECK_TIMEOUT, check_url, check_urls
+
+__all__ = [
+    "asset_to_file_path",
+    "collect_asset_urls",
+    "download_asset",
+    "download_assets_recursive",
+    "extract_links",
+    "http_get",
+    "http_head",
+    "http_post",
+    "iptool_parse",
+    "iptool_subnet",
+    "iptool_validate",
+    "is_ad_url",
+    "is_relevant_url",
+    "is_same_origin",
+    "nettool_get",
+    "nettool_head",
+    "nettool_post",
+    "parse_ip",
+    "relative_url",
+    "rewrite_css",
+    "rewrite_html",
+    "save_page",
+    "save_website",
+    "subnet_info",
+    "url_to_file_path",
+    "urlcheck_r",
+    "urlcheck_u",
+    "validate_ip",
+]
 
 # ============================================================================
 # nettool 公共逻辑

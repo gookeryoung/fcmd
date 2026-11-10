@@ -9,6 +9,9 @@ align_right / align_center / align_justify（padtool）、match_pattern /
 find_all / replace_pattern / split_pattern（regextool）、count_text /
 sort_lines / unique_lines / convert_case（txttool）、colorize_diff /
 compare_files / compare_directories（textdiff）。
+
+半公开：公开面见 ``__all__``，可被外部导入复用但不承诺跨版本稳定（见 README
+「公共 API」一节）。
 """
 
 from __future__ import annotations
@@ -20,6 +23,44 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fcmd.core.shared.textio import read_text_lines
+
+__all__ = [
+    "align_center",
+    "align_justify",
+    "align_left",
+    "align_right",
+    "asciitool_char",
+    "asciitool_code",
+    "asciitool_table",
+    "build_ascii_table",
+    "char_to_code",
+    "code_to_char",
+    "colorize_diff",
+    "compare_directories",
+    "compare_files",
+    "convert_case",
+    "count_text",
+    "find_all",
+    "match_pattern",
+    "padtool_center",
+    "padtool_justify",
+    "padtool_left",
+    "padtool_right",
+    "regextool_find",
+    "regextool_match",
+    "regextool_replace",
+    "regextool_split",
+    "replace_pattern",
+    "sort_lines",
+    "split_pattern",
+    "textdiff_dir",
+    "textdiff_file",
+    "txttool_case",
+    "txttool_count",
+    "txttool_sort",
+    "txttool_unique",
+    "unique_lines",
+]
 
 # ============================================================================
 # asciitool 常量
