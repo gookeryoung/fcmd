@@ -22,8 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.console import print_error
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 
 __all__ = [
     "AlarmSettings",
@@ -106,24 +105,13 @@ def save_settings(settings: AlarmSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
-    restored = _guiconfig.clamp_geometry(
+    return _guiwindow.resolve_geometry(
         saved,
         screen_width,
         screen_height,
+        default=DEFAULT_GEOMETRY,
         min_width=MIN_WIDTH,
         min_height=MIN_HEIGHT,
-    )
-    if restored is not None:
-        return restored
-    return (
-        _guiconfig.clamp_geometry(
-            DEFAULT_GEOMETRY,
-            screen_width,
-            screen_height,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-        )
-        or DEFAULT_GEOMETRY
     )
 
 
@@ -238,18 +226,14 @@ class AlarmClockWindow:
         self._blink_timer: str | None = None
         self._tick_timer: str | None = None
 
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title(f"定时提醒 v{__version__}")
-        self.root.geometry(
-            resolve_geometry(
-                self._settings.geometry,
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+        self.root, self._theme = _guiwindow.create_root(
+            title=f"定时提醒 v{__version__}",
+            saved_geometry=self._settings.geometry,
+            default_geometry=DEFAULT_GEOMETRY,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self.close,
         )
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self._clock_var = tk.StringVar(value=datetime.now().strftime(DIGITAL_FORMAT))
         self._time_var = tk.StringVar(value=self._initial_alarm_text())
@@ -488,13 +472,7 @@ class AlarmClockWindow:
 
 def run_gui(settings_path: Path | None = None) -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = AlarmClockWindow(settings_path)
-    except ImportError as exc:
-        print_error(f"tkinter 不可用，无法启动定时提醒窗口: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(lambda: AlarmClockWindow(settings_path), "定时提醒窗口")
 
 
 @fcmd.tool("alarmclock", help="打开定时提醒窗口（Tk）", description=_DESCRIPTION)
