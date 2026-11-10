@@ -33,19 +33,7 @@ import sys
 from collections.abc import Sequence
 
 from fcmd import __version__
-from fcmd.cli._builtins import run_builtin
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
-from fcmd.cli._discovery import (
-    _TOOL_ALIASES,
-    _TOOL_MODULES,
-    aliases_for,
-    ensure_tools_discovered,
-    import_tool_module,
-    resolve_tool,
-    tool_description,
-)
-from fcmd.console import get_console, print_error
-from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 __all__ = ["FcmdApp", "main"]
 
@@ -71,19 +59,28 @@ class FcmdApp:
         self._argv: list[str] = list(argv) if argv is not None else sys.argv[1:]
 
     def run(self) -> int:
-        """主入口，返回退出码。"""
-        ensure_tools_discovered()
-        if not self._argv or self._argv[0] in ("--help", "-h"):
-            self._list_tools()
+        """主入口，返回退出码。
+
+        ``--version`` 在工具发现之前直接返回：避免为打印版本号触发 88 个
+        工具模块导入与 182 条 DSL 命令注册（约 280ms）。
+        """
+        first = self._argv[0] if self._argv else None
+        if first in ("--version", "-V"):
+            print(f"fcmd {__version__}")
             return 0
 
-        first = self._argv[0]
-        if first in ("--version", "-V"):
-            get_console().print(f"fcmd [bold cyan]{__version__}[/bold cyan]")
+        from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool
+
+        ensure_tools_discovered()
+
+        if first is None or first in ("--help", "-h"):
+            self._list_tools()
             return 0
 
         # 内建命令（graph/info/...）优先于工具路由
         if first in _BUILTIN_COMMANDS:
+            from fcmd.cli._builtins import run_builtin
+
             return run_builtin(first, self._argv[1:])
 
         rest = self._argv[1:]
@@ -96,7 +93,8 @@ class FcmdApp:
 
     def _list_tools(self) -> None:
         """列出所有可用工具。"""
-        from fcmd.console import Table
+        from fcmd.cli._discovery import _TOOL_ALIASES, aliases_for, tool_description
+        from fcmd.console import Table, get_console
 
         console = get_console()
         console.print(f"[bold cyan]fcmd v{__version__}[/bold cyan]")
@@ -129,6 +127,10 @@ class FcmdApp:
         DSL 声明式命令无模块映射（已在 ``ensure_tools_discovered`` 时
         注册进 ``_TOOL_REGISTRY``），直接走 ``run_tool``。
         """
+        from fcmd.cli._discovery import _TOOL_MODULES, import_tool_module
+        from fcmd.console import print_error
+        from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+
         error = import_tool_module(tool_name)
         if error is not None:
             # OSError：原生动态库缺失，与 ImportError 同样友好报错

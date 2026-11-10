@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import difflib
 
-from fcmd.console import get_console, print_error
-
 __all__ = ["_BUILTIN_COMMANDS", "print_unknown_tool"]
 
 # 内建命令名（不通过 @fx.tool 注册，由 FcmdApp 直接处理）
@@ -19,6 +17,7 @@ _BUILTIN_COMMANDS: tuple[str, ...] = ("graph", "info", "completion", "yaml", "en
 def print_unknown_tool(name: str) -> None:
     """打印未知工具错误 + 模糊匹配建议。"""
     from fcmd.cli._discovery import _TOOL_ALIASES
+    from fcmd.console import get_console, print_error
 
     console = get_console()
     print_error(f"未知工具 [yellow]{name!r}[/yellow]")
