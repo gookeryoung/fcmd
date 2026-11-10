@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -625,3 +626,175 @@ class TestQueueCleanup:
 
         assert failures == [(target, "权限不足")]
         assert task.cleanup_errors == [(target, "权限不足")]
+
+
+# ============================================================================ #
+# 目录比较（只读）
+# ============================================================================ #
+class TestCompareTrees:
+    def _write(self, path: Path, content: str, mtime: float = 1_700_000_000.0) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        os.utime(path, (mtime, mtime))
+        return path
+
+    def _roots(self, tmp_path: Path) -> tuple[Path, Path]:
+        left = tmp_path / "left"
+        right = tmp_path / "right"
+        left.mkdir()
+        right.mkdir()
+        return left, right
+
+    def test_classifies_same_different_and_single_side(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "same.txt", "abc")
+        self._write(right / "same.txt", "abc")
+        self._write(left / "size.txt", "abc")
+        self._write(right / "size.txt", "abcdef")
+        self._write(left / "only-left.txt", "x")
+        self._write(right / "only-right.txt", "y")
+
+        report = ops.compare_trees(left, right)
+        statuses = {entry.relative: entry.status for entry in report.entries}
+
+        assert statuses["same.txt"] == ops.COMPARE_SAME
+        assert statuses["size.txt"] == ops.COMPARE_DIFFERENT
+        assert statuses["only-left.txt"] == ops.COMPARE_LEFT_ONLY
+        assert statuses["only-right.txt"] == ops.COMPARE_RIGHT_ONLY
+        assert report.counts()["different"] == 1
+        assert report.counts()["total"] == 4
+        diff = next(entry for entry in report.entries if entry.relative == "size.txt")
+        assert diff.reason == "大小不同"
+        assert (diff.left_size, diff.right_size) == (3, 6)
+
+    def test_mtime_within_tolerance_is_same(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "abc", mtime=1_700_000_000)
+        self._write(right / "a.txt", "abc", mtime=1_700_000_001.5)
+
+        assert ops.compare_trees(left, right).entries[0].status == ops.COMPARE_SAME
+
+    def test_mtime_beyond_tolerance_is_different(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "abc", mtime=1_700_000_000)
+        self._write(right / "a.txt", "abc", mtime=1_700_000_010)
+
+        entry = ops.compare_trees(left, right).entries[0]
+
+        assert entry.status == ops.COMPARE_DIFFERENT
+        assert entry.reason == "修改时间不同"
+
+    def test_recursive_differences_and_directory_entry(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "sub" / "inner.txt", "one")
+        self._write(right / "sub" / "inner.txt", "three")
+
+        report = ops.compare_trees(left, right)
+        statuses = {entry.relative: entry.status for entry in report.entries}
+
+        assert statuses["sub"] == ops.COMPARE_SAME
+        assert statuses["sub/inner.txt"] == ops.COMPARE_DIFFERENT
+
+    def test_non_recursive_skips_children(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "sub" / "inner.txt", "one")
+        self._write(right / "sub" / "inner.txt", "one")
+
+        report = ops.compare_trees(left, right, ops.CompareOptions(recursive=False))
+
+        assert [entry.relative for entry in report.entries] == ["sub"]
+        assert report.entries[0].status == ops.COMPARE_SAME
+
+    def test_hidden_entries_are_skipped_by_default(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / ".hidden", "x")
+        self._write(right / ".hidden", "yy")
+        self._write(left / "visible.txt", "x")
+        self._write(right / "visible.txt", "x")
+
+        default_entries = ops.compare_trees(left, right).entries
+        assert [entry.relative for entry in default_entries] == ["visible.txt"]
+
+        with_hidden = ops.compare_trees(left, right, ops.CompareOptions(include_hidden=True))
+        statuses = {entry.relative: entry.status for entry in with_hidden.entries}
+        assert statuses[".hidden"] == ops.COMPARE_DIFFERENT
+
+    def test_deep_compare_detects_same_size_different_content(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "abc")
+        self._write(right / "a.txt", "abd")
+
+        shallow = ops.compare_trees(left, right).entries[0]
+        assert shallow.status == ops.COMPARE_SAME
+
+        deep = ops.compare_trees(left, right, ops.CompareOptions(deep=True)).entries[0]
+        assert deep.status == ops.COMPARE_DIFFERENT
+        assert deep.reason == "内容不同"
+
+    def test_type_mismatch_between_file_and_directory(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "item", "file")
+        (right / "item").mkdir()
+
+        entry = ops.compare_trees(left, right).entries[0]
+
+        assert entry.status == ops.COMPARE_DIFFERENT
+        assert entry.reason == "类型不同"
+
+    def test_missing_root_raises(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        with pytest.raises(ValueError, match="右侧目录不存在"):
+            ops.compare_trees(left, right / "missing")
+
+    def test_filtered_and_progress(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "x")
+        self._write(right / "b.txt", "y")
+        seen: list[str] = []
+
+        def progress(done: int, total: int, name: str) -> None:
+            assert 0 < done <= total
+            seen.append(name)
+
+        report = ops.compare_trees(left, right, progress=progress)
+
+        assert seen == ["a.txt", "b.txt"]
+        assert [entry.relative for entry in report.filtered(ops.COMPARE_LEFT_ONLY)] == ["a.txt"]
+        assert [entry.relative for entry in report.filtered("all")] == ["a.txt", "b.txt"]
+        assert report.filtered(None) == report.entries
+
+    def test_symlinks_are_not_followed(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret", encoding="utf-8")
+        try:
+            (left / "linkdir").symlink_to(outside)
+        except (OSError, NotImplementedError):
+            return
+        (right / "linkdir").mkdir()
+
+        report = ops.compare_trees(left, right)
+        statuses = {entry.relative: entry.status for entry in report.entries}
+
+        assert statuses["linkdir"] == ops.COMPARE_DIFFERENT
+        assert "linkdir/secret.txt" not in statuses
+        assert all("outside" not in str(entry.left or "") for entry in report.entries)
+
+    def test_symlink_targets_compared_without_following(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        try:
+            (left / "link").symlink_to("target.txt")
+            (right / "link").symlink_to("target.txt")
+            (left / "link2").symlink_to("one.txt")
+            (right / "link2").symlink_to("two.txt")
+        except (OSError, NotImplementedError):
+            return
+
+        report = ops.compare_trees(left, right)
+        statuses = {entry.relative: entry.status for entry in report.entries}
+
+        assert statuses["link"] == ops.COMPARE_SAME
+        assert statuses["link2"] == ops.COMPARE_DIFFERENT
+        link2 = next(entry for entry in report.entries if entry.relative == "link2")
+        assert link2.reason == "链接目标不同"

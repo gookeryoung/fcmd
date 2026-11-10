@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import os
 import re
 import shutil
@@ -21,6 +22,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = [
+    "COMPARE_DIFFERENT",
+    "COMPARE_LEFT_ONLY",
+    "COMPARE_RIGHT_ONLY",
+    "COMPARE_SAME",
+    "COMPARE_STATUS_TEXT",
     "ITEM_CANCELLED",
     "ITEM_DONE",
     "ITEM_FAILED",
@@ -32,6 +38,9 @@ __all__ = [
     "QUEUE_PENDING",
     "QUEUE_RUNNING",
     "BulkRenameOptions",
+    "CompareEntry",
+    "CompareOptions",
+    "CompareReport",
     "QueueItem",
     "QueueTask",
     "RenameItem",
@@ -44,6 +53,7 @@ __all__ = [
     "build_new_name",
     "cleanup_incomplete_items",
     "cleanup_partial_target",
+    "compare_trees",
     "directory_size",
     "filter_names",
     "invert_names",
@@ -767,3 +777,244 @@ class TransferQueue:
             return None, [f"{task.label} 没有失败项"]
         triples = [(item.source, item.target, True if overwrite_existing else item.overwrite) for item in failed]
         return self.add(task.destination, triples, move=task.move)
+
+
+# ============================================================================ #
+# 目录比较（只读，不跟随符号链接，不写任何文件）
+# ============================================================================ #
+COMPARE_LEFT_ONLY = "left_only"
+COMPARE_RIGHT_ONLY = "right_only"
+COMPARE_DIFFERENT = "different"
+COMPARE_SAME = "same"
+
+COMPARE_STATUS_TEXT = {
+    COMPARE_LEFT_ONLY: "仅左侧",
+    COMPARE_RIGHT_ONLY: "仅右侧",
+    COMPARE_DIFFERENT: "内容不同",
+    COMPARE_SAME: "相同",
+}
+
+
+@dataclass(frozen=True)
+class CompareOptions:
+    """比较口径：递归、隐藏项、时间容差与深度哈希。"""
+
+    recursive: bool = True
+    include_hidden: bool = False
+    mtime_tolerance: float = 2.0
+    deep: bool = False
+
+
+@dataclass(frozen=True)
+class CompareEntry:
+    """一条比较结果；路径始终位于两侧根目录之内。"""
+
+    relative: str
+    status: str
+    left: Path | None = None
+    right: Path | None = None
+    left_size: int | None = None
+    right_size: int | None = None
+    left_mtime: float | None = None
+    right_mtime: float | None = None
+    left_is_dir: bool = False
+    right_is_dir: bool = False
+    reason: str = ""
+
+
+@dataclass
+class CompareReport:
+    """比较结果：逐条差异与无法读取的错误。"""
+
+    left_root: Path
+    right_root: Path
+    entries: list[CompareEntry] = field(default_factory=list)
+    errors: list[tuple[Path, str]] = field(default_factory=list)
+
+    def counts(self) -> dict[str, int]:
+        """按类别计数，额外给出 ``total``。"""
+        result = dict.fromkeys(COMPARE_STATUS_TEXT, 0)
+        for entry in self.entries:
+            result[entry.status] = result.get(entry.status, 0) + 1
+        result["total"] = len(self.entries)
+        return result
+
+    def filtered(self, status: str | None) -> list[CompareEntry]:
+        """按类别过滤；``None`` / 空串 / ``all`` 返回全部。"""
+        if status in (None, "", "all"):
+            return list(self.entries)
+        return [entry for entry in self.entries if entry.status == status]
+
+
+@dataclass(frozen=True)
+class _CompareNode:
+    path: Path
+    is_dir: bool
+    is_symlink: bool
+    size: int
+    mtime: float
+
+
+def _is_hidden_name(name: str) -> bool:
+    """隐藏口径：名称以点开头。"""
+    return name.startswith(".")
+
+
+def _collect_nodes(
+    root: Path,
+    options: CompareOptions,
+    errors: list[tuple[Path, str]],
+) -> dict[str, _CompareNode]:
+    """收集相对路径到节点信息的映射；不跟随符号链接、不越出根目录。"""
+    nodes: dict[str, _CompareNode] = {}
+    stack: list[tuple[Path, str]] = [(root, "")]
+    while stack:
+        directory, prefix = stack.pop()
+        try:
+            with os.scandir(directory) as scanned:
+                items = list(scanned)
+        except OSError as exc:
+            errors.append((directory, str(exc)))
+            continue
+        for item in items:
+            name = item.name
+            if not options.include_hidden and _is_hidden_name(name):
+                continue
+            relative = f"{prefix}{name}"
+            try:
+                is_symlink = item.is_symlink()
+                is_dir = item.is_dir(follow_symlinks=False)
+                stat = item.stat(follow_symlinks=False)
+            except OSError as exc:
+                errors.append((Path(item.path), str(exc)))
+                continue
+            nodes[relative] = _CompareNode(Path(item.path), is_dir, is_symlink, stat.st_size, stat.st_mtime)
+            if is_dir and not is_symlink and options.recursive:
+                stack.append((Path(item.path), f"{relative}/"))
+    return nodes
+
+
+def _hash_file(path: Path) -> str:
+    """流式 SHA256；只读打开，不产生临时文件。"""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _compare_symlinks(
+    left: _CompareNode,
+    right: _CompareNode,
+    errors: list[tuple[Path, str]],
+) -> tuple[bool, str] | None:
+    """任一侧是符号链接时返回比较结果；两侧都不是时返回 ``None``。"""
+    if not (left.is_symlink or right.is_symlink):
+        return None
+    if not (left.is_symlink and right.is_symlink):
+        return False, "符号链接与普通条目"
+    try:
+        same_link = left.path.readlink() == right.path.readlink()
+    except OSError as exc:
+        errors.append((left.path, str(exc)))
+        return False, "符号链接无法读取"
+    return (same_link, "" if same_link else "链接目标不同")
+
+
+def _compare_files(
+    left: _CompareNode,
+    right: _CompareNode,
+    options: CompareOptions,
+    errors: list[tuple[Path, str]],
+) -> tuple[bool, str]:
+    """比较两个普通文件，返回 (是否相同, 不同原因)。"""
+    if left.size != right.size:
+        return False, "大小不同"
+    if options.deep:
+        try:
+            if _hash_file(left.path) == _hash_file(right.path):
+                return True, ""
+        except OSError as exc:
+            errors.append((left.path, str(exc)))
+            return False, "无法读取内容"
+        return False, "内容不同"
+    if abs(left.mtime - right.mtime) > options.mtime_tolerance:
+        return False, "修改时间不同"
+    return True, ""
+
+
+def _compare_nodes(
+    left: _CompareNode,
+    right: _CompareNode,
+    options: CompareOptions,
+    errors: list[tuple[Path, str]],
+) -> tuple[bool, str]:
+    """比较同相对路径的两个节点，返回 (是否相同, 不同原因)。"""
+    link_result = _compare_symlinks(left, right, errors)
+    if link_result is not None:
+        return link_result
+    if left.is_dir != right.is_dir:
+        return False, "类型不同"
+    if left.is_dir:
+        return True, ""
+    return _compare_files(left, right, options, errors)
+
+
+def compare_trees(
+    left_root: Path,
+    right_root: Path,
+    options: CompareOptions | None = None,
+    *,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> CompareReport:
+    """只读比较两个目录树；任何情况下都不写文件、不跟随符号链接。"""
+    options = options or CompareOptions()
+    report = CompareReport(left_root=Path(left_root), right_root=Path(right_root))
+    for label, root in (("左", report.left_root), ("右", report.right_root)):
+        if not root.is_dir():
+            raise ValueError(f"{label}侧目录不存在: {root}")
+    left_nodes = _collect_nodes(report.left_root, options, report.errors)
+    right_nodes = _collect_nodes(report.right_root, options, report.errors)
+    keys = sorted(set(left_nodes) | set(right_nodes))
+    total = len(keys)
+    for index, relative in enumerate(keys, start=1):
+        left = left_nodes.get(relative)
+        right = right_nodes.get(relative)
+        if left is None:
+            assert right is not None
+            entry = CompareEntry(
+                relative,
+                COMPARE_RIGHT_ONLY,
+                right=right.path,
+                right_size=right.size,
+                right_mtime=right.mtime,
+                right_is_dir=right.is_dir,
+            )
+        elif right is None:
+            entry = CompareEntry(
+                relative,
+                COMPARE_LEFT_ONLY,
+                left=left.path,
+                left_size=left.size,
+                left_mtime=left.mtime,
+                left_is_dir=left.is_dir,
+            )
+        else:
+            same, reason = _compare_nodes(left, right, options, report.errors)
+            entry = CompareEntry(
+                relative,
+                COMPARE_SAME if same else COMPARE_DIFFERENT,
+                left=left.path,
+                right=right.path,
+                left_size=left.size,
+                right_size=right.size,
+                left_mtime=left.mtime,
+                right_mtime=right.mtime,
+                left_is_dir=left.is_dir,
+                right_is_dir=right.is_dir,
+                reason=reason,
+            )
+        report.entries.append(entry)
+        if progress is not None:
+            progress(index, total, relative)
+    return report

@@ -41,10 +41,17 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system._cmderw_ops import (
+    COMPARE_DIFFERENT,
+    COMPARE_LEFT_ONLY,
+    COMPARE_RIGHT_ONLY,
+    COMPARE_SAME,
+    COMPARE_STATUS_TEXT,
     ITEM_FAILED,
     QUEUE_CANCELLED,
     QUEUE_RUNNING,
     BulkRenameOptions,
+    CompareOptions,
+    CompareReport,
     QueueItem,
     QueueTask,
     RenameItem,
@@ -55,6 +62,7 @@ from fcmd.tools.system._cmderw_ops import (
     TrashReport,
     apply_rename_plan,
     cleanup_incomplete_items,
+    compare_trees,
     directory_size,
     filter_names,
     invert_names,
@@ -1979,6 +1987,179 @@ class TransferQueueDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖�
         self.app.retry_queue_items(task.task_id, None)
 
 
+class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """只读目录比较：选项 + 结果表，不修改任何文件、不跟随符号链接。"""
+
+    def __init__(self, app: CmderWindow) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.left_root = app.left.state.path
+        self.right_root = app.right.state.path
+        self.report: CompareReport | None = None
+        self._filter = "all"
+        self._running = False
+        theme = app.theme
+        spacing = theme.spacing
+        self.win = tk.Toplevel(app.root)
+        self.win.title("目录比较（只读）")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=1040, height=640)
+        self.win.minsize(780, 440)
+        frame = ttk.Frame(self.win, padding=spacing.md)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text=f"左：{self.left_root}", style="Muted.TLabel").pack(fill="x")
+        ttk.Label(frame, text=f"右：{self.right_root}", style="Muted.TLabel").pack(fill="x", pady=(0, spacing.xs))
+
+        options = ttk.Frame(frame)
+        options.pack(fill="x", pady=(0, spacing.xs))
+        self.recursive_var = tk.BooleanVar(value=True)
+        self.hidden_var = tk.BooleanVar(value=False)
+        self.deep_var = tk.BooleanVar(value=False)
+        self.tolerance_var = tk.StringVar(value="2.0")
+        ttk.Checkbutton(options, text="递归子目录", variable=self.recursive_var).pack(side="left")
+        ttk.Checkbutton(options, text="包含隐藏项", variable=self.hidden_var).pack(side="left", padx=spacing.sm)
+        ttk.Checkbutton(options, text="深度比较（逐字节哈希）", variable=self.deep_var).pack(
+            side="left", padx=(0, spacing.sm)
+        )
+        ttk.Label(options, text="时间容差（秒）").pack(side="left")
+        ttk.Entry(options, textvariable=self.tolerance_var, width=6).pack(side="left", padx=(spacing.xxs, spacing.sm))
+        self.start_button = ttk.Button(options, text="开始比较", style="Accent.TButton", command=self.start_compare)
+        self.start_button.pack(side="left")
+
+        filters = ttk.Frame(frame)
+        filters.pack(fill="x", pady=(0, spacing.xxs))
+        for value, label in (
+            ("all", "全部"),
+            (COMPARE_LEFT_ONLY, "仅左侧"),
+            (COMPARE_RIGHT_ONLY, "仅右侧"),
+            (COMPARE_DIFFERENT, "内容不同"),
+            (COMPARE_SAME, "相同"),
+        ):
+            ttk.Button(
+                filters,
+                text=label,
+                style="Toolbutton",
+                command=lambda selected=value: self.set_filter(selected),
+            ).pack(side="left", padx=(0, spacing.xxs))
+
+        tree_frame = ttk.Frame(frame)
+        tree_frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(
+            tree_frame,
+            columns=("relative", "left", "right", "status", "reason"),
+            show="headings",
+            selectmode="browse",
+        )
+        for column, title, width, anchor in (
+            ("relative", "相对路径", 380, "w"),
+            ("left", "左侧", 110, "e"),
+            ("right", "右侧", 110, "e"),
+            ("status", "类别", 100, "w"),
+            ("reason", "说明", 260, "w"),
+        ):
+            self.tree.heading(column, text=title)
+            self.tree.column(column, width=width, anchor=anchor)
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        bottom = ttk.Frame(frame)
+        bottom.pack(fill="x", pady=(spacing.sm, 0))
+        self.status_var = tk.StringVar(value="尚未比较")
+        ttk.Label(bottom, textvariable=self.status_var, style="Muted.TLabel").pack(side="left")
+        ttk.Button(bottom, text="关闭", command=self.win.destroy).pack(side="right")
+
+    def set_filter(self, status: str) -> None:
+        """切换类别过滤并重绘。"""
+        self._filter = status
+        if self.report is not None:
+            self._render(self.report)
+
+    def _collect_options(self) -> CompareOptions:
+        """读取界面选项；非法容差回退 2 秒。"""
+        try:
+            tolerance = float(self.tolerance_var.get())
+        except ValueError:
+            tolerance = 2.0
+        return CompareOptions(
+            recursive=bool(self.recursive_var.get()),
+            include_hidden=bool(self.hidden_var.get()),
+            deep=bool(self.deep_var.get()),
+            mtime_tolerance=max(tolerance, 0.0),
+        )
+
+    def start_compare(self) -> None:
+        """后台执行只读比较，完成后在结果表展示。"""
+        if self._running:
+            self.status_var.set("比较进行中…")
+            return
+        if self.app._busy:
+            self.status_var.set("已有后台任务在运行，请稍后再比较")
+            return
+        options = self._collect_options()
+        left_root = Path(self.left_root)
+        right_root = Path(self.right_root)
+        self._running = True
+        self.status_var.set("正在比较…")
+        self.start_button.configure(state="disabled")
+
+        def task() -> CompareReport:
+            return compare_trees(left_root, right_root, options, progress=self.app._progress_callback)
+
+        def done(report: CompareReport) -> None:
+            self._running = False
+            self.start_button.configure(state="normal")
+            self.report = report
+            self._render(report)
+            if report.errors:
+                details = "\n".join(f"{path}: {message}" for path, message in report.errors[:_MAX_ERROR_DETAILS])
+                self.app._messagebox.showwarning(
+                    "比较完成（有读取失败）",
+                    f"共 {len(report.errors)} 项无法读取：\n\n{details}",
+                    parent=self.win,
+                )
+
+        self.app.start_worker(task, done, title="目录比较")
+
+    def _render(self, report: CompareReport) -> None:
+        """按当前过滤条件重绘结果并更新汇总。"""
+        self.tree.delete(*self.tree.get_children())
+        for entry in report.filtered(self._filter):
+            self.tree.insert(
+                "",
+                "end",
+                values=(
+                    entry.relative,
+                    self._side_text(entry.left, entry.left_size, entry.left_is_dir),
+                    self._side_text(entry.right, entry.right_size, entry.right_is_dir),
+                    COMPARE_STATUS_TEXT.get(entry.status, entry.status),
+                    entry.reason,
+                ),
+            )
+        counts = report.counts()
+        summary = (
+            f"共 {counts['total']} 项：仅左侧 {counts[COMPARE_LEFT_ONLY]}，"
+            f"仅右侧 {counts[COMPARE_RIGHT_ONLY]}，内容不同 {counts[COMPARE_DIFFERENT]}，"
+            f"相同 {counts[COMPARE_SAME]}"
+        )
+        if report.errors:
+            summary += f"；读取失败 {len(report.errors)} 项"
+        self.status_var.set(summary)
+
+    @staticmethod
+    def _side_text(path: Path | None, size: int | None, is_dir: bool) -> str:
+        """侧栏展示：目录显示「目录」，文件显示大小。"""
+        if path is None:
+            return ""
+        if is_dir:
+            return "目录"
+        return format_size(size or 0)
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -2000,6 +2181,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._toolbar_buttons: list[Any] = []
         self.transfer_queue = TransferQueue()
         self._queue_dialog: TransferQueueDialog | None = None
+        self._compare_dialog: CompareDialog | None = None
         self._queue_stopping = False
 
         self.root, self.theme = _guiwindow.create_root(
@@ -2083,6 +2265,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
         tools_menu = tk.Menu(menubar, tearoff=False)
         tools_menu.add_command(label="传输队列…", command=self.show_transfer_queue)
+        tools_menu.add_command(label="目录比较…\tCtrl+Shift+C", command=self.open_compare)
         tools_menu.add_separator()
         tools_menu.add_command(label="搜索\tCtrl+F", command=self.open_search)
         tools_menu.add_command(label="文件哈希", command=self.hash_selected)
@@ -2206,6 +2389,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-Shift-Tab>": lambda _event: self.previous_tab(),
             "<Control-ISO_Left_Tab>": lambda _event: self.previous_tab(),
             "<Control-d>": lambda _event: self.open_bookmarks(),
+            "<Control-Shift-c>": lambda _event: self.open_compare(),
+            "<Control-Shift-C>": lambda _event: self.open_compare(),
             "<Alt-Down>": lambda _event: self.show_history_menu(),
             "<Escape>": lambda _event: self.clear_filter(),
             "<Tab>": lambda _event: self.switch_panel(),
@@ -2574,6 +2759,16 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def show_transfer_queue(self) -> None:
         """打开并聚焦传输队列窗口。"""
         self._ensure_queue_dialog()
+
+    def open_compare(self) -> None:
+        """Ctrl+Shift+C：只读比较左右面板当前目录（已有窗口则前置）。"""
+        dialog = self._compare_dialog
+        if dialog is not None and dialog.win.winfo_exists():
+            dialog.win.deiconify()
+            dialog.win.lift()
+            dialog.win.focus_set()
+            return
+        self._compare_dialog = CompareDialog(self)
 
     def _ensure_queue_dialog(self) -> None:
         """队列窗口不存在则创建，存在则刷新。"""
