@@ -7,3 +7,4 @@
 | [0001](0001-layering.md) | 分层与依赖方向 | 已落地（P1） |
 | [0002](0002-dsl-tools-boundary.md) | DSL 与 tools 的边界 | 已落地（P2-1…P2-4） |
 | [0003](0003-package-layout.md) | 包内目录结构与布局不变量 | 已落地（B0–B4） |
+| [0004](0004-refactor-backlog.md) | 重构待办的触发条件 | 生效（M4 / M7 暂缓） |
