@@ -36,7 +36,9 @@ from typing import Any
 
 import fcmd
 from fcmd.core.env_persist import shell_profile_path
-from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 
 __all__ = [
     "ALL_SCOPES",

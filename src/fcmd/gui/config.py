@@ -6,7 +6,7 @@ regexvalidatew、docdiffw）的设置文件统一位于
 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``，读写流程与 geometry 校验完全一致。
 本模块收敛这部分骨架，各工具只保留设置 dataclass 与字段级解析。
 
-文件名以下划线开头，``fcmd.tools`` 的工具发现会跳过本模块。
+本模块位于 :mod:`fcmd.gui`，不参与 :mod:`fcmd.tools` 的工具发现。
 """
 
 from __future__ import annotations

@@ -5,7 +5,7 @@
 窗口位置、构建菜单栏、只读日志区、启动后台 daemon 线程。
 
 本模块收敛上述部分；后台事件（进度 / 完成 / 错误）的语义与状态更新差异较大，
-轮询逻辑仍留在各窗口。文件名以下划线开头，``fcmd.tools`` 的工具发现会跳过本模块。
+轮询逻辑仍留在各窗口。本模块位于 :mod:`fcmd.gui`，不参与 :mod:`fcmd.tools` 的工具发现。
 """
 
 from __future__ import annotations
@@ -14,13 +14,14 @@ import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from tkinter import Misc, Tk
 
-    from fcmd.tools._guitheme import Theme
+    from fcmd.gui.theme import Theme
 
 __all__ = [
     "WORKER_INTERVAL_MS",

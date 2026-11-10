@@ -14,6 +14,7 @@
 ```
 core            基础能力（toolkit / execution / orchestration / models / context / dag / task / profiling / report / env_persist / filefilter）
 core/shared     中立共享层：dsl 与 tools 都向下依赖
+gui             展示基座（tkinter 窗口骨架 / 主题 / UI 设置持久化），只依赖标准库
 tools/<域>      业务实现（每域一份实现，含 CLI / GUI 入口）
 dsl             声明解析、exec / compute 原语、动作注册表门面
 cli             组合根：参数解析、工具发现、内建命令
@@ -21,10 +22,11 @@ cli             组合根：参数解析、工具发现、内建命令
 
 依赖规则：
 
-1. `core` 只依赖标准库与自身，不得 import `tools` / `dsl` / `cli`。
+1. `core` 只依赖标准库与自身，不得 import `gui` / `tools` / `dsl` / `cli`。
 2. `core/shared` 只依赖 `core` 与标准库；`dsl` 与 `tools` 均可依赖它。
-3. `tools` 与 `dsl` 之间不互相 import：业务实现放 `tools`，`dsl/actions` 只做声明与转接。
-4. `cli` 是唯一组合根，可依赖以上全部层。
+3. `gui` 只依赖标准库（tkinter），不得 import `core` / `tools` / `dsl` / `cli`；`tools` 的窗口模块依赖 `gui`。
+4. `tools` 与 `dsl` 之间不互相 import：业务实现放 `tools`，`dsl/actions` 与 `dsl/toolcmd` 只做声明与转接。
+5. `cli` 是唯一组合根，可依赖以上全部层。
 
 依赖反转（D4 配套）：
 

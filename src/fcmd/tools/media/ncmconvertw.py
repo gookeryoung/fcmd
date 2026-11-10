@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

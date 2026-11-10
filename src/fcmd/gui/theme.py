@@ -12,7 +12,7 @@
 - 经典控件（Text / Menu / Listbox / Entry / Canvas）通过 ``option_add``
   同步主题色。Windows 标题栏（``dwmapi`` / DWM 属性）不在本模块范围。
 
-文件名以下划线开头，``fcmd.tools`` 的工具发现会跳过本模块。
+本模块位于 :mod:`fcmd.gui`，不参与 :mod:`fcmd.tools` 的工具发现。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from fcmd.tools import _guiconfig
+from fcmd.gui import config as _guiconfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping

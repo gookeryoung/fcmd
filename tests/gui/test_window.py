@@ -1,4 +1,4 @@
-"""``fcmd.tools._guiwindow`` 的单元测试：共享骨架中的纯逻辑部分。"""
+"""``fcmd.gui.window`` 的单元测试：共享骨架中的纯逻辑部分。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from fcmd.tools import _guiwindow
+from fcmd.gui import window as _guiwindow
 
 
 class TestResolveGeometry:

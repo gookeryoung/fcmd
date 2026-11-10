@@ -2290,7 +2290,7 @@ class TestServewSettings:
         assert llmservew.resolve_geometry(None, 800, 600) == "800x600"
 
     def test_unfit_and_busy_markers_use_theme_semantic_colors(self) -> None:
-        from fcmd.tools import _guitheme
+        from fcmd.gui import theme as _guitheme
 
         # 标记色改为窗口实例的 self._theme.palette，不再有模块级静态绑定。
         assert not hasattr(llmservew, "_UNFIT_COLOR")

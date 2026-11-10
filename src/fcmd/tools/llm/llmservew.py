@@ -23,7 +23,9 @@ from pathlib import Path
 from typing import Any, cast, override
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmservew_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
     RATE_WINDOW_SECONDS,

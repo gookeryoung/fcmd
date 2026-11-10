@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fcmd.tools import _guiwindow
+from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmservew_monitor import (
     _FIT_BUSY,

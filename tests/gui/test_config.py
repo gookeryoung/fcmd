@@ -1,11 +1,11 @@
-"""``fcmd.tools._guiconfig`` 共享设置骨架测试（geometry 夹紧与设置读写）。"""
+"""``fcmd.gui.config`` 共享设置骨架测试（geometry 夹紧与设置读写）。"""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from fcmd.tools import _guiconfig
+from fcmd.gui import config as _guiconfig
 
 
 class TestClampGeometry:

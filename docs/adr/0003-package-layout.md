@@ -1,6 +1,6 @@
 # 0003 包内目录结构与布局不变量
 
-- 状态：决策已生效（B0 / B1 / B2 落地；B3 / B4 见交接）
+- 状态：决策已全部落地（B0–B4）
 - 日期：2026-11-10
 
 ## 背景
@@ -50,6 +50,7 @@
 - B1：新增 `tests/test_layout.py`，五条断言全绿。
 - B2：`dsl/actions/toolcmd/` → `dsl/toolcmd/`；`_index` 改存绝对模块路径并重生成。
 - B4：`tools/data`、`tools/hash` 两个单文件域提为顶层模块，`_manifest_data` 布局指纹同步重生成。
+- B5：`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`，测试镜像迁至 `tests/gui/`；布局指纹不含下划线模块，清单无需重生成。
 
 ## 交接
 

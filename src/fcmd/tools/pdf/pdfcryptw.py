@@ -21,7 +21,9 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 from fcmd.tools.pdf.pdfcrypt import (
     DEFAULT_WORKERS,
     MIN_PASSWORD_LENGTH,

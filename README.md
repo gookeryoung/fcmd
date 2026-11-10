@@ -130,6 +130,16 @@ xset fp rehash                # 让当前 X 会话重新加载字体，然后重
 
 窗口启动时会自检主题正文字体能否渲染中文，缺字时在终端输出上述修复提示。字体候选顺序为微软雅黑 → 苹方 → Noto / 思源黑体 → 文泉驿，日志等宽控件在无 Xft 时回退到文泉驿位图字体，保证中文可读。
 
+字体不随 fcmd 打包（避免发行包膨胀），需要时用 `fonttool` 按需安装到当前用户字体目录：
+
+```bash
+fcmd fonttool install          # 安装 Cascadia Code + Noto Sans SC（下载并校验 SHA256）
+fcmd fonttool status           # 查看安装状态与字体目录
+fcmd fonttool remove --all-managed
+```
+
+Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使用；uv 独立构建的 Python 自带 Tk 未启用 Xft，装完 TTF 仍看不到时按上面的 `xfonts-wqy` 方案兜底，或改用系统 Python 运行 fcmd。
+
 ### 项目构建与发布
 
 | 工具 | 别名 | 说明 |
@@ -231,6 +241,7 @@ xset fp rehash                # 让当前 X 会话重新加载字体，然后重
 |------|------|------|
 | `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
 | `envw` | - | 环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor：用户/系统/当前进程作用域、搜索、新建/编辑/删除/重命名、PATH 逐条路径编辑、变量引用展开预览、JSON 备份恢复，设置持久化到 `~/.fcmd/ui/envw.json`） |
+| `fonttool` | - | 推荐字体按需安装与管理（list/status/install/remove）：默认 Cascadia Code + Noto Sans SC，下载后校验 SHA256 并保存 OFL 许可证，安装到当前用户字体目录，不内置进发行包 |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |
 | `portcheck` | - | 端口检查与扫描（socket 探测 + psutil 查询占用进程，跨平台） |
 | `taskkill` | `taskk` | 按名称终止进程（psutil terminate → kill）；与系统命令同名，仅 `taskk` 生成全局脚本 |
@@ -577,10 +588,12 @@ src/fcmd/
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
     _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
     _manifest_data.py  # 生成文件，勿手改
+  gui/           # Tk 展示基座：窗口骨架 / 主题 / UI 设置持久化（不参与工具发现）
   tools/         # 业务实现（自动发现）
-    archive/ calc/ data/ dev/ hash/ llm/ media/ net/ pdf/ system/ text/
+    archive/ calc/ dev/ llm/ media/ net/ office/ pdf/ system/ text/
   dsl/           # TOML 命令定义与 exec/compute 原语
-    actions/     #   @action 声明与参数转接（业务实现位于 tools/<域>）
+    actions/     #   通用动作：@action 声明与参数转接（业务实现位于 tools/<域>）
+    toolcmd/     #   工具专用动作声明：一域一模块，只做参数转接
   commands/      # 出厂 DSL 命令定义（*.toml）
   console.py     # rich 控制台薄封装
 ```

@@ -23,7 +23,9 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmconvert, llmengine, llmenv, llmqnt
 from fcmd.tools.llm.llmbase import ServeError, human_size
 

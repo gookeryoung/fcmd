@@ -19,7 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme, _guiwindow
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 from fcmd.tools.text.regexvalidate import (
     PatternValidationError,
     RegexValidator,

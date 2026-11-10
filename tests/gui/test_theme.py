@@ -1,4 +1,4 @@
-"""``fcmd.tools._guitheme`` 主题模块测试。
+"""``fcmd.gui.theme`` 主题模块测试。
 
 覆盖纯逻辑：主题注册表、四套调色板完整性/对比度、持久化回退、字体族
 挑选、ttk 样式键、经典控件 ``option_add`` 兜底、响应式 geometry、DPI
@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from fcmd.tools import _guitheme
+from fcmd.gui import theme as _guitheme
 
 _THEME_IDS = list(_guitheme.THEMES)
 

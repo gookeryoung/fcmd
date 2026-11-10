@@ -16,6 +16,7 @@ alwaysApply: false
 
 ## 分层与导入
 
+- 共享窗口骨架、主题与 UI 设置持久化在 `fcmd/gui/`（`window.py` / `theme.py` / `config.py`），窗口只引用它，不复制骨架。
 - 窗口类只管界面与事件；业务逻辑放同域核心模块或纯函数，禁止复制 CLI 实现，纯函数必须可单测。
 - 禁止顶层导入 `tkinter` 与重依赖；在 `Window.__init__` 惰性导入并保存 `_tk` / `_ttk` / `_messagebox`，可选依赖进 extras。
 - `run_gui()` 捕获 `ImportError`，用 `fcmd.console.print_error` 提示后返回。
