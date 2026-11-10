@@ -30,6 +30,7 @@ from fcmd.tools.text.regexvalidatew import (
     history_label,
     load_settings,
     push_history,
+    resolve_geometry,
     save_settings,
     valid_geometry,
 )
@@ -141,6 +142,23 @@ class TestValidGeometry:
     @pytest.mark.parametrize("text", [None, "", "720", "720x480abc", "720 x 480"])
     def test_invalid(self, text: str | None) -> None:
         assert valid_geometry(text) is None
+
+
+class TestResolveGeometry:
+    """启动时的 geometry 恢复：可见范围夹紧与默认回落。"""
+
+    def test_keeps_visible_position(self) -> None:
+        assert resolve_geometry("920x680+100+80", 1920, 1080) == "920x680+100+80"
+
+    def test_pulls_offscreen_back(self) -> None:
+        assert resolve_geometry("920x680+5000+5000", 1920, 1080) == "920x680+1000+400"
+
+    def test_falls_back_to_default(self) -> None:
+        assert resolve_geometry(None, 1920, 1080) == DEFAULT_GEOMETRY
+        assert resolve_geometry("bad", 1920, 1080) == DEFAULT_GEOMETRY
+
+    def test_enforces_minimum_size(self) -> None:
+        assert resolve_geometry("200x100+0+0", 1920, 1080) == "800x540+0+0"
 
 
 # ============================================================================ #

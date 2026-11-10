@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.text.regexvalidate import (
     PatternValidationError,
     RegexValidator,
@@ -38,6 +38,7 @@ __all__ = [
     "history_label",
     "load_settings",
     "push_history",
+    "resolve_geometry",
     "save_settings",
     "valid_geometry",
 ]
@@ -209,6 +210,18 @@ class RegexValidateSettings:
 valid_geometry = _guiconfig.valid_geometry
 
 
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到默认 geometry（按屏幕夹紧）。"""
+    return _guiwindow.resolve_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        default=DEFAULT_GEOMETRY,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+
+
 def history_label(index: int, entry: RegexHistoryEntry) -> str:
     """生成历史下拉项文本：序号 + 截断后的正则。"""
     pattern = entry.pattern
@@ -294,12 +307,14 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         self._history_job: str | None = None
         self._loading = False
 
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title(f"正则校验器 v{__version__}")
-        self.root.geometry(valid_geometry(self._settings.geometry) or DEFAULT_GEOMETRY)
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root, self._theme = _guiwindow.create_root(
+            title=f"正则校验器 v{__version__}",
+            saved_geometry=self._settings.geometry,
+            default_geometry=DEFAULT_GEOMETRY,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self.close,
+        )
 
         self._pattern_var = tk.StringVar(value=self._settings.pattern)
         self._ignorecase_var = tk.BooleanVar(value=self._settings.ignorecase)
@@ -465,16 +480,12 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         style.configure("Hint.TLabel", foreground=palette.muted)
 
     def _build_menu(self) -> None:
-        tk = self._tk
-        menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label="退出", command=self.close)
-        menubar.add_cascade(label="文件", menu=file_menu)
-        help_menu = tk.Menu(menubar, tearoff=False)
-        help_menu.add_command(label="语法帮助", command=self._show_help)
-        help_menu.add_command(label="关于", command=self._show_about)
-        menubar.add_cascade(label="帮助", menu=help_menu)
-        self.root.configure(menu=menubar)
+        _guiwindow.build_menu(
+            self.root,
+            on_close=self.close,
+            on_about=self._show_about,
+            help_items=(("语法帮助", self._show_help),),
+        )
 
     # ------------------------------------------------------------------ #
     # 交互
@@ -645,15 +656,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
 
 def run_gui(settings_path: Path | None = None) -> None:
     """创建并运行 Tk 主窗口。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = RegexValidateWindow(settings_path)
-    except ImportError as exc:
-        from fcmd.console import print_error
-
-        print_error(f"tkinter 不可用，无法启动正则校验器: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(lambda: RegexValidateWindow(settings_path), "正则校验器")
 
 
 @fcmd.tool("regexvalidatew", help="打开正则校验器窗口（Tk）", description=_DESCRIPTION)
