@@ -211,14 +211,24 @@ def pdftool_reorder(input_path: Path, output_path: Path, order: list[int]) -> No
 
 
 @fcmd.tool("pdftool", subcommand="img", help="PDF 转图片")
-def pdftool_img(
+def pdftool_img(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_dir: Path = Path("images"),
     dpi: int = 300,
     pages: str = "",
+    image_format: Literal["png", "jpg", "jpeg"] = "png",
+    quality: int = 90,
 ) -> None:
-    """PDF 转图片（img 子命令）。"""
-    pdf_to_images(input_path, output_dir, dpi, pages)
+    """PDF 转图片（img 子命令）。
+
+    Parameters
+    ----------
+    image_format:
+        输出格式：png（默认）/jpg/jpeg
+    quality:
+        JPEG 质量（1-100，默认 90；PNG 忽略）
+    """
+    pdf_to_images(input_path, output_dir, dpi, pages, image_format, quality)
 
 
 @fcmd.tool("pdftool", subcommand="repair", help="修复 PDF")

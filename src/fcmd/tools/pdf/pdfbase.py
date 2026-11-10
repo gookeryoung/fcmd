@@ -458,14 +458,29 @@ def pdf_reorder(input_path: Path, output_path: Path, order: list[int]) -> None:
     print(f"重排完成: {output_path}")
 
 
-def pdf_to_images(
+def pdf_to_images(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_dir: Path = Path("images"),
     dpi: int = 300,
     pages: str = "",
+    image_format: str = "png",
+    quality: int = 90,
 ) -> None:
-    """PDF 转图片。"""
+    """PDF 转图片。
+
+    ``image_format`` 支持 png/jpg/jpeg，``quality`` 仅对 JPEG 生效。
+    """
     if not _require_pymupdf():
+        return
+
+    fmt = image_format.lower().lstrip(".")
+    if fmt == "jpeg":
+        fmt = "jpg"
+    if fmt not in {"png", "jpg"}:
+        print(f"错误: 不支持的图片格式 {image_format!r}（可选 png/jpg/jpeg）")
+        return
+    if not 1 <= quality <= 100:
+        print("错误: --quality 取值范围为 1-100")
         return
 
     doc = fitz.open(str(input_path))
@@ -479,8 +494,8 @@ def pdf_to_images(
     try:
         for page_idx in indices:
             pix = doc[page_idx].get_pixmap(dpi=dpi)
-            image_path = output_dir / f"{input_path.stem}_page_{page_idx + 1}.png"
-            pix.save(str(image_path))
+            image_path = output_dir / f"{input_path.stem}_page_{page_idx + 1}.{fmt}"
+            pix.save(str(image_path), jpg_quality=quality)
     finally:
         doc.close()
     print(f"转换完成: {output_dir}")

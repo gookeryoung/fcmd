@@ -16,7 +16,7 @@ import pytest
 import fcmd as fx
 import fcmd.tools.pdf.pdftool
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.pdf.pdfbase import HAS_PYMUPDF, HAS_PYPDF
+from fcmd.tools.pdf.pdfbase import HAS_PYMUPDF, HAS_PYPDF, pdf_to_images
 
 
 # ---------------------------------------------------------------------- #
@@ -791,6 +791,51 @@ class TestLayoutParams:
         assert code == 0
         assert "无法排版" in capsys.readouterr().out
         assert not out.exists()
+
+
+class TestToImagesFormat:
+    """img 子命令的格式与质量参数。"""
+
+    def test_to_images_jpeg(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """jpeg 格式输出 .jpg 且文件头为 JPEG。"""
+        out_dir = tmp_path / "jpgs"
+        code = run_tool(
+            "pdftool",
+            [
+                "img",
+                str(sample_pdf),
+                "--output-dir",
+                str(out_dir),
+                "--dpi",
+                "72",
+                "--image-format",
+                "jpeg",
+                "--quality",
+                "60",
+            ],
+        )
+        assert code == 0
+        images = sorted(out_dir.glob("*.jpg"))
+        assert len(images) == 2
+        assert images[0].read_bytes()[:2] == b"\xff\xd8"
+
+    def test_to_images_invalid_format(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """不支持的格式打印错误且不生成输出。"""
+        out_dir = tmp_path / "bad"
+        pdf_to_images(sample_pdf, out_dir, image_format="gif")
+        assert "不支持的图片格式" in capsys.readouterr().out
+        assert not out_dir.exists()
+
+    def test_to_images_invalid_quality(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """质量超出 1-100 时打印错误。"""
+        out_dir = tmp_path / "bad"
+        pdf_to_images(sample_pdf, out_dir, quality=0)
+        assert "取值范围为 1-100" in capsys.readouterr().out
+        assert not out_dir.exists()
 
 
 # ---------------------------------------------------------------------- #
