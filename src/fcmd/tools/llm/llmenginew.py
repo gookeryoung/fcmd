@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import fcmd
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.llm import llmengine, llmenv
 from fcmd.tools.llm.llmbase import DEFAULT_ENGINE_TAG, EngineInfo, EngineVariant, ServeError, human_size
 
@@ -92,23 +92,14 @@ def save_settings(settings: EngineSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
-    restored = _guiconfig.clamp_geometry(
+    return _guiwindow.resolve_geometry(
         saved,
         screen_width,
         screen_height,
+        default=f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
         min_width=MIN_WIDTH,
         min_height=MIN_HEIGHT,
     )
-    if restored is not None:
-        return restored
-    clamped = _guiconfig.clamp_geometry(
-        f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
-        screen_width,
-        screen_height,
-        min_width=MIN_WIDTH,
-        min_height=MIN_HEIGHT,
-    )
-    return clamped or f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}"
 
 
 def _fit_wraplength(width: int) -> int:
@@ -129,17 +120,14 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._ttk = ttk
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title("llama.cpp 引擎管理")
-        self.root.geometry(
-            resolve_geometry(
-                self._settings.geometry,
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+        self.root, self._theme = _guiwindow.create_root(
+            title="llama.cpp 引擎管理",
+            saved_geometry=self._settings.geometry,
+            default_geometry=f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self._close,
         )
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
@@ -179,7 +167,6 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._build_actions(manage_page)
         self._build_engines(manage_page)
         self._build_log(manage_page)
-        self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     def _build_env(self, page: Any) -> None:
         ttk = self._ttk
@@ -581,29 +568,16 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # 日志
     # ------------------------------------------------------------------ #
     def _log(self, message: str) -> None:
-        self._log_text.configure(state="normal")
-        self._log_text.insert("end", message + "\n")
-        self._log_text.see("end")
-        self._log_text.configure(state="disabled")
+        _guiwindow.append_log(self._log_text, message)
 
     def _clear_log(self) -> None:
         """清空输出日志区域。"""
-        self._log_text.configure(state="normal")
-        self._log_text.delete("1.0", "end")
-        self._log_text.configure(state="disabled")
+        _guiwindow.clear_log(self._log_text)
 
 
 def run_gui() -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = EngineWindow()
-    except ImportError as exc:
-        from fcmd.console import print_error
-
-        print_error(f"tkinter 不可用，无法启动窗口版: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(EngineWindow, "窗口版")
 
 
 @fcmd.tool("llmenginew", help="打开 llama.cpp 引擎管理窗口（Tk）", description=_DESCRIPTION)
