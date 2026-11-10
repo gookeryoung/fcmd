@@ -278,34 +278,38 @@ class AlarmClockWindow:
             font=CLOCK_FONT,
             fg=palette.text,
             bg=palette.log_bg,
-            padx=10,
-            pady=10,
+            padx=self._theme.spacing.md,
+            pady=self._theme.spacing.md,
             highlightthickness=2,
             highlightbackground=self._border_color,
             highlightcolor=self._border_color,
         )
-        self._clock_label.pack(fill="x", padx=12, pady=(12, 8))
+        self._clock_label.pack(
+            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.sm)
+        )
 
-        box = ttk.LabelFrame(self.root, text="时间设置", padding=8)
-        box.pack(fill="x", padx=12, pady=4)
+        box = ttk.LabelFrame(self.root, text="时间设置", padding=self._theme.spacing.sm)
+        box.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
 
         row = ttk.Frame(box)
         row.pack(fill="x")
         ttk.Label(row, text="闹钟时间：").pack(side="left")
-        ttk.Entry(row, textvariable=self._time_var, width=12, justify="center").pack(side="left", padx=(0, 8))
-        self._set_button = ttk.Button(row, text="设置闹钟", command=self.toggle_alarm)
+        ttk.Entry(row, textvariable=self._time_var, width=12, justify="center").pack(
+            side="left", padx=(0, self._theme.spacing.sm)
+        )
+        self._set_button = ttk.Button(row, text="设置闹钟", command=self.toggle_alarm, style="Accent.TButton")
         self._set_button.pack(side="right")
 
         delay = ttk.Frame(box)
-        delay.pack(fill="x", pady=(8, 0))
+        delay.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         ttk.Label(delay, text="延时(分钟)：").pack(side="left")
         for minutes in DELAY_STEPS:
             button = ttk.Button(delay, text=str(minutes), width=3, command=lambda value=minutes: self.set_delay(value))
-            button.pack(side="left", padx=(0, 4))
+            button.pack(side="left", padx=(0, self._theme.spacing.xs))
         ttk.Button(delay, text="重置", command=self.reset_time).pack(side="left")
 
         options = ttk.Frame(box)
-        options.pack(fill="x", pady=(8, 0))
+        options.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         ttk.Checkbutton(options, text="重复（每天）", variable=self._repeat_var, command=self._sync_repeat).pack(
             side="left"
         )
@@ -316,12 +320,14 @@ class AlarmClockWindow:
             foreground=palette.danger,
             font=("", 10, "bold italic underline"),
         )
-        self._status_label.pack(fill="x", padx=12, pady=(8, 2))
+        self._status_label.pack(
+            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.sm, self._theme.spacing.xxs)
+        )
         ttk.Label(
             self.root,
             text="到点后弹窗置顶闪烁，点击「关闭提醒」结束本次提醒。",
             foreground=palette.muted,
-        ).pack(fill="x", padx=12, pady=(0, 10))
+        ).pack(fill="x", padx=self._theme.spacing.md, pady=(0, self._theme.spacing.md))
 
     # ------------------------------------------------------------------ #
     # 时钟与状态刷新
@@ -370,12 +376,12 @@ class AlarmClockWindow:
         self._state.repeat = bool(self._repeat_var.get())
         target = self._state.arm(clock, datetime.now())
         self._time_var.set(target.strftime(DIGITAL_FORMAT))
-        self._set_button.configure(text="取消闹钟")
+        self._set_button.configure(text="取消闹钟", style="Danger.TButton")
         self._status_var.set(f"已设置闹钟: {target.strftime(DIGITAL_FORMAT)}")
 
     def _cancel_alarm(self) -> None:
         self._state.cancel()
-        self._set_button.configure(text="设置闹钟")
+        self._set_button.configure(text="设置闹钟", style="Accent.TButton")
         self._status_var.set("闹钟已取消")
 
     def set_delay(self, minutes: int) -> None:
@@ -411,8 +417,13 @@ class AlarmClockWindow:
             fg="red",
             bg=self._blink_color,
         )
-        label.pack(padx=40, pady=(30, 10))
-        ttk.Button(window, text="关闭提醒", command=self.close_reminder).pack(pady=(0, 20))
+        label.pack(
+            padx=self._theme.spacing.xl + self._theme.spacing.lg,
+            pady=(self._theme.spacing.xl + self._theme.spacing.xs + self._theme.spacing.xxs, self._theme.spacing.md),
+        )
+        ttk.Button(window, text="关闭提醒", command=self.close_reminder).pack(
+            pady=(0, self._theme.spacing.lg + self._theme.spacing.xs)
+        )
         window.update_idletasks()
         window.grab_set()
         window.focus_force()
@@ -451,7 +462,7 @@ class AlarmClockWindow:
             self._time_var.set(self._state.target.strftime(DIGITAL_FORMAT))
             self._status_var.set(f"下次提醒: {self._state.target.strftime(DIGITAL_FORMAT)}")
         else:
-            self._set_button.configure(text="设置闹钟")
+            self._set_button.configure(text="设置闹钟", style="Accent.TButton")
             self._status_var.set("闹钟已关闭")
 
     # ------------------------------------------------------------------ #

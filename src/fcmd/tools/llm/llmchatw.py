@@ -175,7 +175,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=(12, 10))
+        outer = ttk.Frame(self.root, padding=(self._theme.spacing.md, self._theme.spacing.md))
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=1)
         outer.rowconfigure(2, weight=1)
@@ -185,52 +185,86 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._build_chat(outer)
         self._build_input(outer)
 
-        status = ttk.Label(outer, textvariable=self._status_var, anchor="w", relief="sunken", padding=(8, 4))
-        status.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        status = ttk.Label(
+            outer,
+            textvariable=self._status_var,
+            anchor="w",
+            relief="sunken",
+            padding=(self._theme.spacing.sm, self._theme.spacing.xs),
+        )
+        status.grid(row=4, column=0, sticky="ew", pady=(self._theme.spacing.sm, 0))
         self.root.protocol("WM_DELETE_WINDOW", self._close)
 
     def _build_connection(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="连接", padding=(10, 8))
-        box.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        box = ttk.LabelFrame(parent, text="连接", padding=(self._theme.spacing.md, self._theme.spacing.sm))
+        box.grid(row=0, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
         box.columnconfigure(1, weight=3)
         box.columnconfigure(4, weight=2)
 
-        ttk.Label(box, text="服务").grid(row=0, column=0, sticky="e", padx=(0, 6), pady=3)
+        ttk.Label(box, text="服务").grid(
+            row=0, column=0, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         self._service_box = ttk.Combobox(box, textvariable=self._service_var, state="readonly", width=22)
-        self._service_box.grid(row=0, column=1, sticky="ew", padx=(0, 6), pady=3)
+        self._service_box.grid(
+            row=0, column=1, sticky="ew", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         self._service_box.bind("<<ComboboxSelected>>", self._on_service_selected)
         self._refresh_btn = ttk.Button(box, text="刷新", command=self._refresh_services, width=8)
-        self._refresh_btn.grid(row=0, column=2, sticky="w", padx=(0, 18), pady=3)
-
-        ttk.Label(box, text="模型").grid(row=0, column=3, sticky="e", padx=(0, 6), pady=3)
-        ttk.Entry(box, textvariable=self._model_var).grid(row=0, column=4, sticky="ew", pady=3)
-
-        ttk.Label(box, text="地址").grid(row=1, column=0, sticky="e", padx=(0, 6), pady=3)
-        ttk.Entry(box, textvariable=self._url_var).grid(row=1, column=1, columnspan=4, sticky="ew", pady=3)
-
-        ttk.Label(box, text="API Key").grid(row=2, column=0, sticky="e", padx=(0, 6), pady=3)
-        ttk.Entry(box, textvariable=self._api_key_var, show="*").grid(
-            row=2, column=1, sticky="ew", padx=(0, 18), pady=3
+        self._refresh_btn.grid(
+            row=0,
+            column=2,
+            sticky="w",
+            padx=(0, self._theme.spacing.lg + self._theme.spacing.xxs),
+            pady=self._theme.spacing.xxs,
         )
-        ttk.Label(box, text="系统提示").grid(row=2, column=3, sticky="e", padx=(0, 6), pady=3)
-        ttk.Entry(box, textvariable=self._system_var).grid(row=2, column=4, sticky="ew", pady=3)
+
+        ttk.Label(box, text="模型").grid(
+            row=0, column=3, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Entry(box, textvariable=self._model_var).grid(row=0, column=4, sticky="ew", pady=self._theme.spacing.xxs)
+
+        ttk.Label(box, text="地址").grid(
+            row=1, column=0, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Entry(box, textvariable=self._url_var).grid(
+            row=1, column=1, columnspan=4, sticky="ew", pady=self._theme.spacing.xxs
+        )
+
+        ttk.Label(box, text="API Key").grid(
+            row=2, column=0, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Entry(box, textvariable=self._api_key_var, show="*").grid(
+            row=2,
+            column=1,
+            sticky="ew",
+            padx=(0, self._theme.spacing.lg + self._theme.spacing.xxs),
+            pady=self._theme.spacing.xxs,
+        )
+        ttk.Label(box, text="系统提示").grid(
+            row=2, column=3, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Entry(box, textvariable=self._system_var).grid(row=2, column=4, sticky="ew", pady=self._theme.spacing.xxs)
 
     def _build_params(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="生成参数", padding=(10, 8))
-        box.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        box = ttk.LabelFrame(parent, text="生成参数", padding=(self._theme.spacing.md, self._theme.spacing.sm))
+        box.grid(row=1, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
         box.columnconfigure(6, weight=1)
 
-        ttk.Label(box, text="max_tokens").grid(row=0, column=0, sticky="e", padx=(0, 6))
+        ttk.Label(box, text="max_tokens").grid(row=0, column=0, sticky="e", padx=(0, self._theme.spacing.sm))
         ttk.Spinbox(box, from_=1, to=131072, increment=64, textvariable=self._max_tokens_var, width=9).grid(
             row=0, column=1, sticky="w"
         )
-        ttk.Label(box, text="temperature").grid(row=0, column=2, sticky="e", padx=(18, 6))
+        ttk.Label(box, text="temperature").grid(
+            row=0, column=2, sticky="e", padx=(self._theme.spacing.lg + self._theme.spacing.xxs, self._theme.spacing.sm)
+        )
         ttk.Spinbox(box, from_=0.0, to=2.0, increment=0.1, textvariable=self._temperature_var, width=9).grid(
             row=0, column=3, sticky="w"
         )
-        ttk.Label(box, text="top_p").grid(row=0, column=4, sticky="e", padx=(18, 6))
+        ttk.Label(box, text="top_p").grid(
+            row=0, column=4, sticky="e", padx=(self._theme.spacing.lg + self._theme.spacing.xxs, self._theme.spacing.sm)
+        )
         ttk.Spinbox(box, from_=0.0, to=1.0, increment=0.05, textvariable=self._top_p_var, width=9).grid(
             row=0, column=5, sticky="w"
         )
@@ -239,8 +273,8 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._clear_btn.grid(row=0, column=7, sticky="e")
 
     def _build_chat(self, parent: Any) -> None:
-        box = self._ttk.LabelFrame(parent, text="对话", padding=(10, 8))
-        box.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
+        box = self._ttk.LabelFrame(parent, text="对话", padding=(self._theme.spacing.md, self._theme.spacing.sm))
+        box.grid(row=2, column=0, sticky="nsew", pady=(0, self._theme.spacing.sm))
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
 
@@ -249,14 +283,14 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
             wrap="word",
             state="disabled",
             height=18,
-            padx=10,
-            pady=8,
+            padx=self._theme.spacing.md,
+            pady=self._theme.spacing.sm,
             font=_guitheme.BODY_FONT,
         )
         scrollbar = self._ttk.Scrollbar(box, orient="vertical", command=self._chat.yview)
         self._chat.configure(yscrollcommand=scrollbar.set)
         self._chat.grid(row=0, column=0, sticky="nsew")
-        scrollbar.grid(row=0, column=1, sticky="ns", padx=(6, 0))
+        scrollbar.grid(row=0, column=1, sticky="ns", padx=(self._theme.spacing.sm, 0))
         palette = self._theme.palette
         self._chat.tag_configure("user", foreground=palette.accent, spacing1=10, spacing3=2)
         self._chat.tag_configure("ai", foreground=palette.success, spacing1=2, spacing3=10)
@@ -266,7 +300,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
 
     def _build_input(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="输入", padding=(10, 8))
+        box = ttk.LabelFrame(parent, text="输入", padding=(self._theme.spacing.md, self._theme.spacing.sm))
         box.grid(row=3, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
 
@@ -274,8 +308,8 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
             box,
             height=4,
             wrap="word",
-            padx=8,
-            pady=6,
+            padx=self._theme.spacing.sm,
+            pady=self._theme.spacing.sm,
             undo=True,
             font=_guitheme.BODY_FONT,
         )
@@ -283,12 +317,18 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._input_text.bind("<Control-Return>", self._on_send_shortcut)
 
         ttk.Label(box, text="Ctrl+Enter 发送 · Enter 换行", foreground=self._theme.palette.muted).grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
+            row=1, column=0, sticky="w", pady=(self._theme.spacing.sm, 0)
         )
-        self._stop_btn = ttk.Button(box, text="停止", command=self._stop, state="disabled", width=10)
-        self._stop_btn.grid(row=1, column=1, sticky="e", padx=(8, 0), pady=(6, 0))
-        self._send_btn = ttk.Button(box, text="发送", command=self._send, width=10)
-        self._send_btn.grid(row=1, column=2, sticky="e", padx=(8, 0), pady=(6, 0))
+        self._stop_btn = ttk.Button(
+            box, text="停止", command=self._stop, state="disabled", width=10, style="Danger.TButton"
+        )
+        self._stop_btn.grid(
+            row=1, column=1, sticky="e", padx=(self._theme.spacing.sm, 0), pady=(self._theme.spacing.sm, 0)
+        )
+        self._send_btn = ttk.Button(box, text="发送", command=self._send, width=10, style="Accent.TButton")
+        self._send_btn.grid(
+            row=1, column=2, sticky="e", padx=(self._theme.spacing.sm, 0), pady=(self._theme.spacing.sm, 0)
+        )
         self._input_text.focus_set()
 
     def _on_send_shortcut(self, _event: Any) -> str:

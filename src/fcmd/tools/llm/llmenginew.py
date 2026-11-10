@@ -165,13 +165,13 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=10)
+        outer = ttk.Frame(self.root, padding=self._theme.spacing.md)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(4, 0))
+        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
-        install_page = ttk.Frame(self._notebook, padding=10)
-        manage_page = ttk.Frame(self._notebook, padding=10)
+        install_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        manage_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
         self._notebook.add(install_page, text="安装配置")
         self._notebook.add(manage_page, text="引擎列表 / 日志")
         self._build_online(install_page)
@@ -185,10 +185,10 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_env(self, page: Any) -> None:
         ttk = self._ttk
         box, body = self._collapsible(page, "环境信息（当前引擎 / 根目录 / 已安装）", open_state=False)
-        box.pack(side="bottom", fill="x", pady=(8, 0))
+        box.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("current", "当前引擎"), ("root", "引擎根目录"), ("installed", "已安装"))):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, self._theme.spacing.sm))
             var = self._tk.StringVar(value="检测中…")
             value_label = ttk.Label(body, textvariable=var, justify="left")
             value_label.grid(row=row, column=1, sticky="we")
@@ -200,26 +200,30 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _build_online(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(page, text="在线下载（GitHub release）", padding=8)
+        box = ttk.LabelFrame(page, text="在线下载（GitHub release）", padding=self._theme.spacing.sm)
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
-        ttk.Label(box, text="TAG").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        entry = ttk.Entry(box, textvariable=self._tag_var)
-        entry.grid(row=0, column=1, sticky="ew", padx=(0, 12), pady=3)
-        entry.bind("<KeyRelease>", self._mark_tag_edited)
-        ttk.Label(box, text="变体").grid(row=0, column=2, sticky="w", padx=(0, 6), pady=3)
-        ttk.Combobox(box, textvariable=self._variant_var, values=list(_VARIANTS), state="readonly", width=8).grid(
-            row=0, column=3, sticky="w", pady=3
+        ttk.Label(box, text="TAG").grid(
+            row=0, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
         )
-        button = ttk.Button(box, text="在线安装", command=self._online_install)
-        button.grid(row=0, column=4, padx=(12, 0), pady=3)
+        entry = ttk.Entry(box, textvariable=self._tag_var)
+        entry.grid(row=0, column=1, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs)
+        entry.bind("<KeyRelease>", self._mark_tag_edited)
+        ttk.Label(box, text="变体").grid(
+            row=0, column=2, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Combobox(box, textvariable=self._variant_var, values=list(_VARIANTS), state="readonly", width=8).grid(
+            row=0, column=3, sticky="w", pady=self._theme.spacing.xxs
+        )
+        button = ttk.Button(box, text="在线安装", command=self._online_install, style="Accent.TButton")
+        button.grid(row=0, column=4, padx=(self._theme.spacing.md, 0), pady=self._theme.spacing.xxs)
         self._buttons.append(button)
         ttk.Label(box, text="cuda 变体自动下载引擎包 + cudart 运行库").grid(row=1, column=1, columnspan=4, sticky="w")
 
     def _build_offline(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(page, text="离线包（zip）", padding=8)
-        box.pack(fill="x", pady=(8, 0))
+        box = ttk.LabelFrame(page, text="离线包（zip）", padding=self._theme.spacing.sm)
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         box.columnconfigure(0, weight=1)
 
         row = ttk.Frame(box)
@@ -227,22 +231,22 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         row.columnconfigure(0, weight=1)
         ttk.Entry(row, textvariable=self._offline_var, state="readonly").grid(row=0, column=0, sticky="ew")
         zip_btn = ttk.Button(row, text="选择 zip…", command=self._select_zip)
-        zip_btn.grid(row=0, column=1, padx=(8, 0))
+        zip_btn.grid(row=0, column=1, padx=(self._theme.spacing.sm, 0))
         dir_btn = ttk.Button(row, text="选择目录…", command=self._select_dir)
-        dir_btn.grid(row=0, column=2, padx=(6, 0))
+        dir_btn.grid(row=0, column=2, padx=(self._theme.spacing.sm, 0))
 
         actions = ttk.Frame(box)
-        actions.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        actions.grid(row=1, column=0, sticky="ew", pady=(self._theme.spacing.sm, 0))
         ttk.Checkbutton(actions, text="深度 CRC 校验（大包较慢）", variable=self._deep_var).pack(side="left")
         install_btn = ttk.Button(actions, text="安装离线包", command=self._offline_install)
         install_btn.pack(side="right")
         check_btn = ttk.Button(actions, text="检查", command=self._check_offline)
-        check_btn.pack(side="right", padx=(0, 8))
+        check_btn.pack(side="right", padx=(0, self._theme.spacing.sm))
         self._buttons.extend([zip_btn, dir_btn, install_btn, check_btn])
 
     def _build_engines(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(page, text="已安装引擎", padding=6)
+        box = ttk.LabelFrame(page, text="已安装引擎", padding=self._theme.spacing.sm)
         box.pack(fill="both", expand=True)
         body = ttk.Frame(box)
         body.pack(fill="both", expand=True)
@@ -263,23 +267,25 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_actions(self, page: Any) -> None:
         ttk = self._ttk
         actions = ttk.Frame(page)
-        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        actions.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         for text, command in (
             ("刷新", self._refresh_all),
             ("设为默认", self._use_selected),
             ("检查运行", self._check_selected),
         ):
             button = ttk.Button(actions, text=text, command=command)
-            button.pack(side="left", padx=(0, 6))
+            button.pack(side="left", padx=(0, self._theme.spacing.sm))
             self._buttons.append(button)
-        ttk.Button(actions, text="清空日志", command=self._clear_log).pack(side="left", padx=(0, 6))
+        ttk.Button(actions, text="清空日志", command=self._clear_log).pack(
+            side="left", padx=(0, self._theme.spacing.sm)
+        )
         self._progress = ttk.Progressbar(actions, mode="determinate", maximum=100, length=200)
         self._progress.pack(side="right")
 
     def _build_log(self, page: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(page, text="输出日志", padding=6)
-        box.pack(fill="both", expand=True, pady=(8, 0))
+        box = ttk.LabelFrame(page, text="输出日志", padding=self._theme.spacing.sm)
+        box.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
         scrollbar = ttk.Scrollbar(box)
         scrollbar.pack(side="right", fill="y")
         self._log_text = self._tk.Text(box, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
@@ -292,7 +298,7 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         container = ttk.Frame(parent)
         header = ttk.Frame(container)
         header.pack(fill="x")
-        body = ttk.Frame(container, padding=(6, 4, 0, 0))
+        body = ttk.Frame(container, padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0))
         state = {"open": open_state}
 
         def render() -> None:

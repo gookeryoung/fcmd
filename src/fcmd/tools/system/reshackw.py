@@ -440,15 +440,15 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._build_menu()
 
         toolbar = ttk.Frame(self.root)
-        toolbar.pack(fill="x", padx=10, pady=(10, 4))
+        toolbar.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.xs))
         self._open_button = ttk.Button(toolbar, text="打开…", command=self._choose_file, style="Accent.TButton")
         self._open_button.pack(side="left")
         self._export_button = ttk.Button(toolbar, text="导出…", command=self._export_selected)
-        self._export_button.pack(side="left", padx=(6, 0))
-        self._replace_button = ttk.Button(toolbar, text="替换…", command=self._replace_selected)
-        self._replace_button.pack(side="left", padx=(6, 0))
+        self._export_button.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._replace_button = ttk.Button(toolbar, text="替换…", command=self._replace_selected, style="Danger.TButton")
+        self._replace_button.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._export_all_button = ttk.Button(toolbar, text="全部导出…", command=self._export_all)
-        self._export_all_button.pack(side="left", padx=(6, 0))
+        self._export_all_button.pack(side="left", padx=(self._theme.spacing.sm, 0))
 
         # PanedWindow 保留经典控件（ttk 无对应分隔容器），仅按色板上色
         paned = tk.PanedWindow(
@@ -459,9 +459,9 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             borderwidth=0,
             background=palette.surface,
         )
-        paned.pack(fill="both", expand=True, padx=10, pady=4)
+        paned.pack(fill="both", expand=True, padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
 
-        tree_frame = ttk.LabelFrame(paned, text="资源", padding=6)
+        tree_frame = ttk.LabelFrame(paned, text="资源", padding=self._theme.spacing.sm)
         self._tree = ttk.Treeview(
             tree_frame,
             columns=("type", "size", "language"),
@@ -483,7 +483,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         paned.add(tree_frame, minsize=320)
 
-        preview_frame = ttk.LabelFrame(paned, text="预览", padding=6)
+        preview_frame = ttk.LabelFrame(paned, text="预览", padding=self._theme.spacing.sm)
         self._notebook = ttk.Notebook(preview_frame)
         text_container = ttk.Frame(self._notebook)
         self._text_preview = tk.Text(text_container, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
@@ -498,18 +498,18 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._hex_preview.pack(side="left", fill="both", expand=True)
         image_container = ttk.Frame(self._notebook)
         zoom_bar = ttk.Frame(image_container)
-        zoom_bar.pack(fill="x", pady=(0, 4))
+        zoom_bar.pack(fill="x", pady=(0, self._theme.spacing.xs))
         ttk.Label(zoom_bar, text="缩放").pack(side="left")
         self._zoom_out_button = ttk.Button(zoom_bar, text="－", width=3, command=self._zoom_out_image)
-        self._zoom_out_button.pack(side="left", padx=(6, 0))
+        self._zoom_out_button.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._zoom_label = ttk.Label(zoom_bar, text="100%", width=7)
         self._zoom_label.pack(side="left")
         self._zoom_in_button = ttk.Button(zoom_bar, text="＋", width=3, command=self._zoom_in_image)
         self._zoom_in_button.pack(side="left")
         self._zoom_reset_button = ttk.Button(zoom_bar, text="1:1", command=self._reset_zoom_image)
-        self._zoom_reset_button.pack(side="left", padx=(6, 0))
+        self._zoom_reset_button.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._zoom_fit_button = ttk.Button(zoom_bar, text="适应", command=self._fit_image)
-        self._zoom_fit_button.pack(side="left", padx=(6, 0))
+        self._zoom_fit_button.pack(side="left", padx=(self._theme.spacing.sm, 0))
 
         # 图像预览 Canvas 不做主题化，只把浅灰底换成深色底，避免影响图像本身判读
         self._image_canvas = tk.Canvas(image_container, background=palette.log_bg, highlightthickness=0)
@@ -534,8 +534,8 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._notebook.pack(fill="both", expand=True)
         paned.add(preview_frame, minsize=420)
 
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=6)
-        log_frame.pack(fill="x", padx=10, pady=(4, 4))
+        log_frame = ttk.LabelFrame(self.root, text="日志", padding=self._theme.spacing.sm)
+        log_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.xs))
         self._log_text = tk.Text(log_frame, height=5, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
         log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
         self._log_text.configure(yscrollcommand=log_scroll.set)
@@ -543,7 +543,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._log_text.pack(side="left", fill="both", expand=True)
 
         status = ttk.Frame(self.root)
-        status.pack(fill="x", padx=10, pady=(0, 8))
+        status.pack(fill="x", padx=self._theme.spacing.md, pady=(0, self._theme.spacing.sm))
         self._status_label = ttk.Label(status, textvariable=self._status_var, anchor="w")
         self._status_label.pack(side="left", fill="x", expand=True)
 

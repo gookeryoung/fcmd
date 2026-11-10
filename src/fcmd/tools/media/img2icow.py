@@ -222,19 +222,23 @@ class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         palette = self._theme.palette
         self._build_menu()
 
-        input_frame = ttk.LabelFrame(self.root, text="输入", padding=8)
-        input_frame.pack(fill="x", padx=12, pady=(12, 4))
+        input_frame = ttk.LabelFrame(self.root, text="输入", padding=self._theme.spacing.sm)
+        input_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.xs))
         ttk.Label(input_frame, text="图像/目录：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(input_frame, textvariable=self._input_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Entry(input_frame, textvariable=self._input_var).pack(
+            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
+        )
         self._browse_input_dir_button = ttk.Button(input_frame, text="目录…", command=self._browse_input_dir)
         self._browse_input_dir_button.pack(side="right")
         self._browse_input_file_button = ttk.Button(input_frame, text="文件…", command=self._browse_input_file)
-        self._browse_input_file_button.pack(side="right", padx=(0, 4))
+        self._browse_input_file_button.pack(side="right", padx=(0, self._theme.spacing.xs))
 
-        output_frame = ttk.LabelFrame(self.root, text="输出", padding=8)
-        output_frame.pack(fill="x", padx=12, pady=4)
+        output_frame = ttk.LabelFrame(self.root, text="输出", padding=self._theme.spacing.sm)
+        output_frame.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
         ttk.Label(output_frame, text="输出路径：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(output_frame, textvariable=self._output_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Entry(output_frame, textvariable=self._output_var).pack(
+            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
+        )
         self._browse_output_button = ttk.Button(output_frame, text="浏览…", command=self._browse_output)
         self._browse_output_button.pack(side="right")
         ttk.Label(
@@ -242,12 +246,14 @@ class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             text="留空时：单文件输出到同目录，目录输入输出到 ico_output/",
             foreground=palette.muted,
             anchor="w",
-        ).pack(side="bottom", fill="x", pady=(6, 0))
+        ).pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
 
-        options_frame = ttk.LabelFrame(self.root, text="选项", padding=8)
-        options_frame.pack(fill="x", padx=12, pady=4)
+        options_frame = ttk.LabelFrame(self.root, text="选项", padding=self._theme.spacing.sm)
+        options_frame.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
         ttk.Label(options_frame, text="图标尺寸：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(options_frame, textvariable=self._sizes_var).pack(side="left", fill="x", expand=True, padx=(0, 16))
+        ttk.Entry(options_frame, textvariable=self._sizes_var).pack(
+            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.lg)
+        )
         ttk.Label(options_frame, text="质量：", anchor="w").pack(side="left")
         quality_combo = ttk.Combobox(
             options_frame,
@@ -256,27 +262,31 @@ class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             state="readonly",
             width=10,
         )
-        quality_combo.pack(side="left", padx=(4, 0))
+        quality_combo.pack(side="left", padx=(self._theme.spacing.xs, 0))
 
         action_frame = ttk.Frame(self.root)
-        action_frame.pack(fill="x", padx=12, pady=(4, 0))
+        action_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, 0))
         self._convert_button = ttk.Button(
             action_frame,
             text="开始转换",
             command=self._start_conversion,
             style="Accent.TButton",
-            padding=(18, 4),
+            padding=(self._theme.spacing.lg + self._theme.spacing.xxs, self._theme.spacing.xs),
         )
         self._convert_button.pack(side="right")
         ttk.Label(action_frame, textvariable=self._status_var, anchor="w").pack(side="left", fill="x", expand=True)
 
         progress_frame = ttk.Frame(self.root)
-        progress_frame.pack(fill="x", padx=12, pady=(8, 4))
+        progress_frame.pack(
+            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.sm, self._theme.spacing.xs)
+        )
         self._progress = self._ttk.Progressbar(progress_frame, mode="determinate", maximum=1, value=0)
         self._progress.pack(fill="x")
 
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=8)
-        log_frame.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        log_frame = ttk.LabelFrame(self.root, text="日志", padding=self._theme.spacing.sm)
+        log_frame.pack(
+            fill="both", expand=True, padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.md)
+        )
         self._log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
         scrollbar = self._ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
         self._log_text.configure(yscrollcommand=scrollbar.set)

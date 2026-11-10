@@ -324,30 +324,42 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         ttk = self._ttk
         tk = self._tk
 
-        io_frame = ttk.LabelFrame(self.root, text="输入与输出", padding=8)
-        io_frame.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 4))
+        io_frame = ttk.LabelFrame(self.root, text="输入与输出", padding=self._theme.spacing.sm)
+        io_frame.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=self._theme.spacing.md,
+            pady=(self._theme.spacing.md, self._theme.spacing.xs),
+        )
         io_frame.columnconfigure(1, weight=1)
 
         ttk.Label(io_frame, text="输入视频：").grid(row=0, column=0, sticky="w")
-        ttk.Entry(io_frame, textvariable=self._input_var).grid(row=0, column=1, sticky="ew", padx=(4, 8))
+        ttk.Entry(io_frame, textvariable=self._input_var).grid(
+            row=0, column=1, sticky="ew", padx=(self._theme.spacing.xs, self._theme.spacing.sm)
+        )
         self._browse_input_button = ttk.Button(io_frame, text="浏览…", command=self._browse_input)
         self._browse_input_button.grid(row=0, column=2)
 
-        ttk.Label(io_frame, text="输出目录：").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(io_frame, text="输出目录：").grid(row=1, column=0, sticky="w", pady=(self._theme.spacing.sm, 0))
         ttk.Entry(io_frame, textvariable=self._output_dir_var).grid(
-            row=1, column=1, sticky="ew", padx=(4, 8), pady=(6, 0)
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(self._theme.spacing.xs, self._theme.spacing.sm),
+            pady=(self._theme.spacing.sm, 0),
         )
         self._browse_output_button = ttk.Button(io_frame, text="浏览…", command=self._browse_output_dir)
-        self._browse_output_button.grid(row=1, column=2, pady=(6, 0))
+        self._browse_output_button.grid(row=1, column=2, pady=(self._theme.spacing.sm, 0))
 
         ttk.Label(
             io_frame,
             text="输出目录留空时写入输入文件所在目录，文件名为 <原名>_converted.<格式>",
             foreground=self._theme.palette.muted,
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(self._theme.spacing.sm, 0))
 
-        options_frame = ttk.LabelFrame(self.root, text="转换设置", padding=8)
-        options_frame.grid(row=1, column=0, sticky="ew", padx=12, pady=4)
+        options_frame = ttk.LabelFrame(self.root, text="转换设置", padding=self._theme.spacing.sm)
+        options_frame.grid(row=1, column=0, sticky="ew", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
         for column in (1, 3):
             options_frame.columnconfigure(column, weight=1)
 
@@ -358,14 +370,20 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             values=OUTPUT_FORMAT_CHOICES,
             state="readonly",
             width=12,
-        ).grid(row=0, column=1, sticky="w", padx=(4, 16), pady=2)
+        ).grid(
+            row=0,
+            column=1,
+            sticky="w",
+            padx=(self._theme.spacing.xs, self._theme.spacing.lg),
+            pady=self._theme.spacing.xxs,
+        )
         ttk.Label(options_frame, text="视频编码器：").grid(row=0, column=2, sticky="w")
         ttk.Combobox(
             options_frame,
             textvariable=self._video_codec_var,
             values=VIDEO_CODEC_CHOICES,
             width=14,
-        ).grid(row=0, column=3, sticky="w", padx=(4, 0), pady=2)
+        ).grid(row=0, column=3, sticky="w", padx=(self._theme.spacing.xs, 0), pady=self._theme.spacing.xxs)
 
         ttk.Label(options_frame, text="音频编码器：").grid(row=1, column=0, sticky="w")
         ttk.Combobox(
@@ -373,7 +391,13 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             textvariable=self._audio_codec_var,
             values=AUDIO_CODEC_CHOICES,
             width=12,
-        ).grid(row=1, column=1, sticky="w", padx=(4, 16), pady=2)
+        ).grid(
+            row=1,
+            column=1,
+            sticky="w",
+            padx=(self._theme.spacing.xs, self._theme.spacing.lg),
+            pady=self._theme.spacing.xxs,
+        )
         ttk.Label(options_frame, text="视频比特率 (kbps)：").grid(row=1, column=2, sticky="w")
         ttk.Spinbox(
             options_frame,
@@ -382,7 +406,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             increment=100,
             textvariable=self._video_bitrate_var,
             width=12,
-        ).grid(row=1, column=3, sticky="w", padx=(4, 0), pady=2)
+        ).grid(row=1, column=3, sticky="w", padx=(self._theme.spacing.xs, 0), pady=self._theme.spacing.xxs)
 
         ttk.Label(options_frame, text="音频比特率 (kbps)：").grid(row=2, column=0, sticky="w")
         ttk.Spinbox(
@@ -392,7 +416,13 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             increment=32,
             textvariable=self._audio_bitrate_var,
             width=12,
-        ).grid(row=2, column=1, sticky="w", padx=(4, 16), pady=2)
+        ).grid(
+            row=2,
+            column=1,
+            sticky="w",
+            padx=(self._theme.spacing.xs, self._theme.spacing.lg),
+            pady=self._theme.spacing.xxs,
+        )
         ttk.Label(options_frame, text="帧率 (0=源帧率)：").grid(row=2, column=2, sticky="w")
         ttk.Spinbox(
             options_frame,
@@ -401,7 +431,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             increment=1,
             textvariable=self._frame_rate_var,
             width=12,
-        ).grid(row=2, column=3, sticky="w", padx=(4, 0), pady=2)
+        ).grid(row=2, column=3, sticky="w", padx=(self._theme.spacing.xs, 0), pady=self._theme.spacing.xxs)
 
         ttk.Label(options_frame, text="分辨率缩放：").grid(row=3, column=0, sticky="w")
         ttk.Spinbox(
@@ -411,7 +441,13 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             increment=0.1,
             textvariable=self._scale_var,
             width=12,
-        ).grid(row=3, column=1, sticky="w", padx=(4, 16), pady=2)
+        ).grid(
+            row=3,
+            column=1,
+            sticky="w",
+            padx=(self._theme.spacing.xs, self._theme.spacing.lg),
+            pady=self._theme.spacing.xxs,
+        )
         ttk.Label(options_frame, text="CRF 质量 (0-51)：").grid(row=3, column=2, sticky="w")
         ttk.Spinbox(
             options_frame,
@@ -420,7 +456,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             increment=1,
             textvariable=self._crf_var,
             width=12,
-        ).grid(row=3, column=3, sticky="w", padx=(4, 0), pady=2)
+        ).grid(row=3, column=3, sticky="w", padx=(self._theme.spacing.xs, 0), pady=self._theme.spacing.xxs)
 
         ttk.Label(options_frame, text="编码预设：").grid(row=4, column=0, sticky="w")
         ttk.Combobox(
@@ -429,43 +465,68 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             values=PRESETS,
             state="readonly",
             width=12,
-        ).grid(row=4, column=1, sticky="w", padx=(4, 16), pady=2)
+        ).grid(
+            row=4,
+            column=1,
+            sticky="w",
+            padx=(self._theme.spacing.xs, self._theme.spacing.lg),
+            pady=self._theme.spacing.xxs,
+        )
         ttk.Checkbutton(options_frame, text="移除音轨", variable=self._remove_audio_var).grid(
-            row=4, column=2, columnspan=2, sticky="w", pady=2
+            row=4, column=2, columnspan=2, sticky="w", pady=self._theme.spacing.xxs
         )
 
         ttk.Label(options_frame, text="外部音轨：").grid(row=5, column=0, sticky="w")
         ttk.Entry(options_frame, textvariable=self._audio_file_var).grid(
-            row=5, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=2
+            row=5,
+            column=1,
+            columnspan=2,
+            sticky="ew",
+            padx=(self._theme.spacing.xs, self._theme.spacing.sm),
+            pady=self._theme.spacing.xxs,
         )
         self._browse_audio_button = ttk.Button(options_frame, text="浏览…", command=self._browse_audio_file)
-        self._browse_audio_button.grid(row=5, column=3, sticky="w", pady=2)
+        self._browse_audio_button.grid(row=5, column=3, sticky="w", pady=self._theme.spacing.xxs)
 
         action_frame = ttk.Frame(self.root)
-        action_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 0))
+        action_frame.grid(row=2, column=0, sticky="ew", padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, 0))
         action_frame.columnconfigure(2, weight=1)
 
         self._start_button = ttk.Button(
             action_frame, text="开始转换", command=self._start_conversion, style="Accent.TButton"
         )
-        self._start_button.grid(row=0, column=0, padx=(0, 6))
-        self._stop_button = ttk.Button(action_frame, text="停止", command=self._stop_conversion, state="disabled")
-        self._stop_button.grid(row=0, column=1, padx=(0, 6))
+        self._start_button.grid(row=0, column=0, padx=(0, self._theme.spacing.sm))
+        self._stop_button = ttk.Button(
+            action_frame, text="停止", command=self._stop_conversion, state="disabled", style="Danger.TButton"
+        )
+        self._stop_button.grid(row=0, column=1, padx=(0, self._theme.spacing.sm))
         self._status_label = ttk.Label(
             action_frame, textvariable=self._status_var, foreground=self._theme.palette.muted
         )
-        self._status_label.grid(row=0, column=2, sticky="w", padx=(8, 0))
+        self._status_label.grid(row=0, column=2, sticky="w", padx=(self._theme.spacing.sm, 0))
         self._reset_button = ttk.Button(action_frame, text="重置设置", command=self._reset_settings)
         self._reset_button.grid(row=0, column=3)
 
         progress_frame = ttk.Frame(self.root)
-        progress_frame.grid(row=3, column=0, sticky="ew", padx=12, pady=(8, 4))
+        progress_frame.grid(
+            row=3,
+            column=0,
+            sticky="ew",
+            padx=self._theme.spacing.md,
+            pady=(self._theme.spacing.sm, self._theme.spacing.xs),
+        )
         progress_frame.columnconfigure(0, weight=1)
         self._progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
         self._progress.grid(row=0, column=0, sticky="ew")
 
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=8)
-        log_frame.grid(row=4, column=0, sticky="nsew", padx=12, pady=(4, 4))
+        log_frame = ttk.LabelFrame(self.root, text="日志", padding=self._theme.spacing.sm)
+        log_frame.grid(
+            row=4,
+            column=0,
+            sticky="nsew",
+            padx=self._theme.spacing.md,
+            pady=(self._theme.spacing.xs, self._theme.spacing.xs),
+        )
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
         self._log_text = tk.Text(log_frame, height=10, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
@@ -475,7 +536,13 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._log_text.configure(yscrollcommand=scrollbar.set)
 
         status_frame = ttk.Frame(self.root)
-        status_frame.grid(row=5, column=0, sticky="ew", padx=12, pady=(4, 8))
+        status_frame.grid(
+            row=5,
+            column=0,
+            sticky="ew",
+            padx=self._theme.spacing.md,
+            pady=(self._theme.spacing.xs, self._theme.spacing.sm),
+        )
         status_frame.columnconfigure(0, weight=1)
         self._ffmpeg_label = ttk.Label(
             status_frame, textvariable=self._ffmpeg_var, foreground=self._theme.palette.muted

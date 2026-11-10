@@ -249,33 +249,41 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         tk = self._tk
         ttk = self._ttk
         palette = self._theme.palette
-        source = ttk.LabelFrame(self.root, text="数据源", padding=8)
-        source.pack(fill="x", padx=12, pady=(12, 4))
+        source = ttk.LabelFrame(self.root, text="数据源", padding=self._theme.spacing.sm)
+        source.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.xs))
 
         string_row = ttk.Frame(source)
         string_row.pack(fill="x")
         ttk.Label(string_row, text="字符串：", width=8, anchor="w").pack(side="left")
         string_entry = ttk.Entry(string_row, textvariable=self._string_var)
-        string_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        string_entry.pack(side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm))
         string_entry.bind("<Return>", lambda _event: self._compute_string())
-        ttk.Button(string_row, text="计算", command=self._compute_string).pack(side="right")
+        ttk.Button(string_row, text="计算", command=self._compute_string, style="Accent.TButton").pack(side="right")
 
         file_row = ttk.Frame(source)
-        file_row.pack(fill="x", pady=(8, 0))
+        file_row.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         ttk.Label(file_row, text="文件：", width=8, anchor="w").pack(side="left")
-        ttk.Entry(file_row, textvariable=self._file_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Entry(file_row, textvariable=self._file_var).pack(
+            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
+        )
         ttk.Button(file_row, text="浏览…", command=self._browse_file).pack(side="right")
-        ttk.Button(file_row, text="计算", command=self._compute_file).pack(side="right", padx=(0, 4))
+        ttk.Button(file_row, text="计算", command=self._compute_file).pack(
+            side="right", padx=(0, self._theme.spacing.xs)
+        )
 
-        algorithm = ttk.LabelFrame(self.root, text="算法", padding=8)
-        algorithm.pack(fill="x", padx=12, pady=4)
+        algorithm = ttk.LabelFrame(self.root, text="算法", padding=self._theme.spacing.sm)
+        algorithm.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
         for index, name in enumerate(ALGORITHMS):
             ttk.Radiobutton(algorithm, text=name, value=name, variable=self._algorithm_var).grid(
-                row=index // 4, column=index % 4, sticky="w", padx=(0, 16), pady=2
+                row=index // 4,
+                column=index % 4,
+                sticky="w",
+                padx=(0, self._theme.spacing.lg),
+                pady=self._theme.spacing.xxs,
             )
 
-        comparison = ttk.LabelFrame(self.root, text="比较校验", padding=8)
-        comparison.pack(fill="x", padx=12, pady=4)
+        comparison = ttk.LabelFrame(self.root, text="比较校验", padding=self._theme.spacing.sm)
+        comparison.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
         ttk.Checkbutton(
             comparison,
             text="启用比较（忽略大小写）",
@@ -283,10 +291,12 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             command=self._toggle_compare,
         ).pack(side="left")
         self._compare_entry = ttk.Entry(comparison, textvariable=self._compare_var)
-        self._compare_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self._compare_entry.pack(side="left", fill="x", expand=True, padx=(self._theme.spacing.sm, 0))
 
-        result = ttk.LabelFrame(self.root, text="结果", padding=8)
-        result.pack(fill="both", expand=True, padx=12, pady=(4, 12))
+        result = ttk.LabelFrame(self.root, text="结果", padding=self._theme.spacing.sm)
+        result.pack(
+            fill="both", expand=True, padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.md)
+        )
         self._result = tk.Text(result, height=6, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
         self._result.tag_configure("pass", foreground=palette.success)
         self._result.tag_configure("fail", foreground=palette.danger)

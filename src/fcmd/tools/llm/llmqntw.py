@@ -144,32 +144,32 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     def _build_widgets(self) -> None:
         tk = self._tk
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=12)
+        outer = ttk.Frame(self.root, padding=self._theme.spacing.md)
         outer.pack(fill="both", expand=True)
 
         file_row = ttk.Frame(outer)
         file_row.pack(fill="x")
         ttk.Label(file_row, text="输入文件").pack(side="left")
         ttk.Entry(file_row, textvariable=self._file_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=8
+            side="left", fill="x", expand=True, padx=self._theme.spacing.sm
         )
         self._file_btn = ttk.Button(file_row, text="选择…", command=self._select_file)
         self._file_btn.pack(side="left")
 
         model_row = ttk.Frame(outer)
-        model_row.pack(fill="x", pady=(8, 0))
+        model_row.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         ttk.Label(model_row, text="已配置模型（未量化）").pack(side="left")
         self._model_box = ttk.Combobox(model_row, textvariable=self._model_var, state="disabled")
-        self._model_box.pack(side="left", fill="x", expand=True, padx=8)
+        self._model_box.pack(side="left", fill="x", expand=True, padx=self._theme.spacing.sm)
         self._model_box.bind("<<ComboboxSelected>>", self._on_model_selected)
         self._model_btn = ttk.Button(model_row, text="刷新", command=self._refresh_models)
         self._model_btn.pack(side="left")
 
-        info_box = ttk.LabelFrame(outer, text="环境信息", padding=8)
-        info_box.pack(fill="x", pady=(8, 0))
+        info_box = ttk.LabelFrame(outer, text="环境信息", padding=self._theme.spacing.sm)
+        info_box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         info_box.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("engine", "引擎"), ("quantizer", "量化器"), ("version", "版本"))):
-            ttk.Label(info_box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(info_box, text=label).grid(row=row, column=0, sticky="nw", padx=(0, self._theme.spacing.sm))
             var = tk.StringVar(value="检测中…")
             value_label = ttk.Label(info_box, textvariable=var, justify="left")
             value_label.grid(row=row, column=1, sticky="we")
@@ -179,19 +179,21 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             )
             self._info_vars[key] = var
 
-        quant_box = ttk.LabelFrame(outer, text="量化类型", padding=8)
-        quant_box.pack(fill="x", pady=(10, 0))
+        quant_box = ttk.LabelFrame(outer, text="量化类型", padding=self._theme.spacing.sm)
+        quant_box.pack(fill="x", pady=(self._theme.spacing.md, 0))
         for index, (quant, desc) in enumerate(llmqnt.QUANT_TYPES.items()):
             check = ttk.Checkbutton(
                 quant_box,
                 text=f"{quant}  {desc}",
                 variable=self._quant_vars[quant],
             )
-            check.grid(row=index // 2, column=index % 2, sticky="w", padx=6, pady=3)
+            check.grid(
+                row=index // 2, column=index % 2, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs
+            )
             self._quant_checks[quant] = check
 
         options = ttk.Frame(outer)
-        options.pack(fill="x", pady=(8, 0))
+        options.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         self._overwrite_check = ttk.Checkbutton(
             options,
             text="覆盖已存在的量化文件",
@@ -199,13 +201,13 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             command=self._mark_existing,
         )
         self._overwrite_check.pack(side="left")
-        self._start_btn = ttk.Button(options, text="开始转换", command=self._start)
+        self._start_btn = ttk.Button(options, text="开始转换", command=self._start, style="Accent.TButton")
         self._start_btn.pack(side="right")
         self._progress = ttk.Progressbar(options, mode="determinate", maximum=100, length=240)
-        self._progress.pack(side="right", padx=8)
+        self._progress.pack(side="right", padx=self._theme.spacing.sm)
 
-        log_frame = ttk.LabelFrame(outer, text="输出日志", padding=6)
-        log_frame.pack(fill="both", expand=True, pady=(10, 0))
+        log_frame = ttk.LabelFrame(outer, text="输出日志", padding=self._theme.spacing.sm)
+        log_frame.pack(fill="both", expand=True, pady=(self._theme.spacing.md, 0))
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
         self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set)

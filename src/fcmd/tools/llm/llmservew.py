@@ -548,14 +548,14 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=10)
+        outer = ttk.Frame(self.root, padding=self._theme.spacing.md)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(4, 0))
+        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         self._build_actions(outer)
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
-        start_page = ttk.Frame(self._notebook, padding=10)
-        run_page = ttk.Frame(self._notebook, padding=10)
+        start_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        run_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
         self._notebook.add(start_page, text="启动配置")
         self._notebook.add(run_page, text="运行监控")
         self._build_params(start_page)
@@ -592,7 +592,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def _build_params(self, parent: Any) -> None:
         ttk = self._ttk
-        params = ttk.LabelFrame(parent, text="启动参数", padding=8)
+        params = ttk.LabelFrame(parent, text="启动参数", padding=self._theme.spacing.sm)
         params.pack(fill="x")
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
@@ -635,7 +635,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         )
 
         advanced, body = self._collapsible(parent, "高级参数（留空回落档位默认）", open_state=False)
-        advanced.pack(fill="x", pady=(8, 0))
+        advanced.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         body.columnconfigure(1, weight=1)
         body.columnconfigure(3, weight=1)
         self._pair_row(
@@ -674,11 +674,15 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     ) -> None:
         """在目标 Frame 的第 ``row`` 行放置两组“标签 + 输入控件”。"""
         ttk = self._ttk
-        ttk.Label(target, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
-        widget.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=3)
+        ttk.Label(target, text=label).grid(
+            row=row, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        widget.grid(row=row, column=1, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs)
         if right_label:
-            ttk.Label(target, text=right_label).grid(row=row, column=2, sticky="w", padx=(0, 6), pady=3)
-        right_widget.grid(row=row, column=3, sticky="ew", pady=3)
+            ttk.Label(target, text=right_label).grid(
+                row=row, column=2, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+            )
+        right_widget.grid(row=row, column=3, sticky="ew", pady=self._theme.spacing.xxs)
 
     def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
         """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
@@ -686,7 +690,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         container = ttk.Frame(parent)
         header = ttk.Frame(container)
         header.pack(fill="x")
-        body = ttk.Frame(container, padding=(6, 4, 0, 0))
+        body = ttk.Frame(container, padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0))
         state = {"open": open_state}
 
         def render() -> None:
@@ -707,20 +711,20 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def _build_models(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="已配置模型（llmenv 登记的模型目录）", padding=8)
-        box.pack(fill="both", expand=True, pady=(8, 0))
+        box = ttk.LabelFrame(parent, text="已配置模型（llmenv 登记的模型目录）", padding=self._theme.spacing.sm)
+        box.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
 
         row = ttk.Frame(box)
-        row.pack(side="bottom", fill="x", pady=(6, 0))
+        row.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         ttk.Entry(row, textvariable=self._model_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=(0, 8)
+            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
         )
         self._model_btn = ttk.Button(row, text="刷新", command=self._refresh_models)
         self._model_btn.pack(side="left")
         self._browse_btn = ttk.Button(row, text="浏览…", command=self._select_file)
-        self._browse_btn.pack(side="left", padx=(6, 0))
+        self._browse_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._clear_btn = ttk.Button(row, text="清除选择", command=self._clear_selection)
-        self._clear_btn.pack(side="left", padx=(6, 0))
+        self._clear_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
 
         tree_frame = ttk.Frame(box)
         tree_frame.pack(fill="both", expand=True)
@@ -753,7 +757,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
         self._hint_var = self._tk.StringVar(value=_HINT_PLACEHOLDER)
         hint_label = ttk.Label(box, textvariable=self._hint_var, justify="left")
-        hint_label.pack(side="bottom", fill="x", pady=(6, 0))
+        hint_label.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         hint_label.bind(
             "<Configure>",
             lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
@@ -763,10 +767,10 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         tk = self._tk
         ttk = self._ttk
         box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU）", open_state=False)
-        box.pack(side="bottom", fill="x", pady=(8, 0))
+        box.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"))):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, self._theme.spacing.sm))
             var = tk.StringVar(value="检测中…")
             value_label = ttk.Label(body, textvariable=var, justify="left")
             value_label.grid(row=row, column=1, sticky="we")
@@ -779,7 +783,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def _build_loaded(self, parent: Any) -> None:
         """已加载模型：列出运行中的服务及其模型、档位与地址。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="已加载模型（运行中的服务）", padding=6)
+        box = ttk.LabelFrame(parent, text="已加载模型（运行中的服务）", padding=self._theme.spacing.sm)
         box.pack(fill="x")
         self._loaded_tree = ttk.Treeview(
             box,
@@ -798,7 +802,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._loaded_tree.column("address", width=170, anchor="w", stretch=False)
         self._loaded_tree.pack(fill="x")
         self._loaded_var = self._tk.StringVar(value="无运行中的服务")
-        ttk.Label(box, textvariable=self._loaded_var).pack(fill="x", pady=(4, 0))
+        ttk.Label(box, textvariable=self._loaded_var).pack(fill="x", pady=(self._theme.spacing.xs, 0))
 
     def _refresh_loaded(self) -> None:
         """刷新“已加载模型”列表（只统计进程仍存活的服务）。"""
@@ -825,7 +829,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         box = ttk.LabelFrame(
             parent,
             text=f"实时性能（服务运行中每 1s 采样 /metrics，速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑）",
-            padding=8,
+            padding=self._theme.spacing.sm,
         )
         box.pack(fill="x")
         for column in range(4):
@@ -843,15 +847,21 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         for index, (label, key) in enumerate(items):
             row, column = divmod(index, 4)
             cell = ttk.Frame(box)
-            cell.grid(row=row, column=column, sticky="w", padx=(0, 16), pady=2)
+            cell.grid(
+                row=row, column=column, sticky="w", padx=(0, self._theme.spacing.lg), pady=self._theme.spacing.xxs
+            )
             ttk.Label(cell, text=label + ":").pack(side="left")
-            ttk.Label(cell, textvariable=self._metric_vars[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
+            ttk.Label(cell, textvariable=self._metric_vars[key], font=("", 9, "bold")).pack(
+                side="left", padx=(self._theme.spacing.xs, 0)
+            )
 
     def _build_load(self, parent: Any) -> None:
         """系统负载面板：CPU / 频率 / 内存 / 交换与服务进程关键指标。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="系统负载（每 1s 采样；服务运行时额外显示服务进程指标）", padding=8)
-        box.pack(fill="x", pady=(8, 0))
+        box = ttk.LabelFrame(
+            parent, text="系统负载（每 1s 采样；服务运行时额外显示服务进程指标）", padding=self._theme.spacing.sm
+        )
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         items = (
             ("CPU", "cpu"),
             ("频率", "cpu_freq"),
@@ -867,18 +877,24 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def _build_gpu(self, parent: Any) -> None:
         """GPU 负载面板：利用率 / 显存 / 温度 / 功耗 / 风扇 / 频率。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="GPU 负载（nvidia-smi，每 1s 采样；服务运行时额外显示服务显存）", padding=8)
-        box.pack(fill="x", pady=(8, 0))
+        box = ttk.LabelFrame(
+            parent,
+            text="GPU 负载（nvidia-smi，每 1s 采样；服务运行时额外显示服务显存）",
+            padding=self._theme.spacing.sm,
+        )
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         for column in range(4):
             box.columnconfigure(column, weight=1)
-        ttk.Label(box, text="设备:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
+        ttk.Label(box, text="设备:").grid(
+            row=0, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         gpu_name_label = ttk.Label(
             box,
             textvariable=self._gpu_vars["gpu_name"],
             font=("", 9, "bold"),
             justify="left",
         )
-        gpu_name_label.grid(row=0, column=1, columnspan=3, sticky="we", pady=2)
+        gpu_name_label.grid(row=0, column=1, columnspan=3, sticky="we", pady=self._theme.spacing.xxs)
         gpu_name_label.bind(
             "<Configure>",
             lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
@@ -910,36 +926,44 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         for index, (label, key) in enumerate(items):
             row, column = divmod(index, columns)
             cell = ttk.Frame(box)
-            cell.grid(row=start_row + row, column=column, sticky="w", padx=(0, 16), pady=2)
+            cell.grid(
+                row=start_row + row,
+                column=column,
+                sticky="w",
+                padx=(0, self._theme.spacing.lg),
+                pady=self._theme.spacing.xxs,
+            )
             ttk.Label(cell, text=label + ":").pack(side="left")
-            ttk.Label(cell, textvariable=variables[key], font=("", 9, "bold")).pack(side="left", padx=(4, 0))
+            ttk.Label(cell, textvariable=variables[key], font=("", 9, "bold")).pack(
+                side="left", padx=(self._theme.spacing.xs, 0)
+            )
 
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
         actions = ttk.Frame(outer)
-        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        actions.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         self._preview_btn = ttk.Button(actions, text="预览计划", command=self._preview)
         self._preview_btn.pack(side="left")
-        self._start_btn = ttk.Button(actions, text="启动服务", command=self._start)
-        self._start_btn.pack(side="left", padx=(6, 0))
-        self._stop_btn = ttk.Button(actions, text="停止全部服务", command=self._stop)
-        self._stop_btn.pack(side="left", padx=(6, 0))
+        self._start_btn = ttk.Button(actions, text="启动服务", command=self._start, style="Accent.TButton")
+        self._start_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        self._stop_btn = ttk.Button(actions, text="停止全部服务", command=self._stop, style="Danger.TButton")
+        self._stop_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._status_btn = ttk.Button(actions, text="刷新状态", command=self._refresh_status)
-        self._status_btn.pack(side="left", padx=(6, 0))
+        self._status_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._logs_btn = ttk.Button(actions, text="查看日志", command=self._show_logs)
-        self._logs_btn.pack(side="left", padx=(6, 0))
+        self._logs_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._browser_btn = ttk.Button(actions, text="打开浏览器", command=self._open_browser)
-        self._browser_btn.pack(side="left", padx=(6, 0))
+        self._browser_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._clear_log_btn = ttk.Button(actions, text="清空日志", command=self._clear_log)
-        self._clear_log_btn.pack(side="left", padx=(6, 0))
+        self._clear_log_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._progress = ttk.Progressbar(actions, mode="indeterminate", length=200)
         self._progress.pack(side="right")
 
     def _build_log(self, parent: Any) -> None:
         tk = self._tk
         ttk = self._ttk
-        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=6)
-        log_frame.pack(fill="both", expand=True, pady=(8, 0))
+        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=self._theme.spacing.sm)
+        log_frame.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
         self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)

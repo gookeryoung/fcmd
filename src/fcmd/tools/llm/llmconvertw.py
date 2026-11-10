@@ -231,15 +231,15 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=10)
+        outer = ttk.Frame(self.root, padding=self._theme.spacing.md)
         outer.pack(fill="both", expand=True)
-        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(4, 0))
+        ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         self._build_actions(outer)
         self._notebook = ttk.Notebook(outer)
         self._notebook.pack(fill="both", expand=True)
-        models_page = ttk.Frame(self._notebook, padding=10)
-        config_page = ttk.Frame(self._notebook, padding=10)
-        log_page = ttk.Frame(self._notebook, padding=10)
+        models_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        config_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        log_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
         self._notebook.add(models_page, text="模型列表")
         self._notebook.add(config_page, text="转换配置")
         self._notebook.add(log_page, text="输出日志")
@@ -254,34 +254,42 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _build_io(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="输入 / 输出", padding=8)
+        box = ttk.LabelFrame(parent, text="输入 / 输出", padding=self._theme.spacing.sm)
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
 
-        ttk.Label(box, text="源目录").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=3)
-        ttk.Entry(box, textvariable=self._source_var).grid(row=0, column=1, sticky="ew", padx=(0, 8), pady=3)
+        ttk.Label(box, text="源目录").grid(
+            row=0, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Entry(box, textvariable=self._source_var).grid(
+            row=0, column=1, sticky="ew", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         self._source_btn = ttk.Button(box, text="浏览…", command=self._pick_source)
-        self._source_btn.grid(row=0, column=2, pady=3)
+        self._source_btn.grid(row=0, column=2, pady=self._theme.spacing.xxs)
 
-        ttk.Label(box, text="输出 GGUF").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
-        ttk.Entry(box, textvariable=self._output_var).grid(row=1, column=1, sticky="ew", padx=(0, 8), pady=3)
+        ttk.Label(box, text="输出 GGUF").grid(
+            row=1, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        ttk.Entry(box, textvariable=self._output_var).grid(
+            row=1, column=1, sticky="ew", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         self._output_btn = ttk.Button(box, text="另存为…", command=self._pick_output)
-        self._output_btn.grid(row=1, column=2, pady=3)
+        self._output_btn.grid(row=1, column=2, pady=self._theme.spacing.xxs)
         ttk.Label(box, text="输出留空时写入默认模型目录：<模型目录>/<源目录名>/<源目录名>[-量化].gguf").grid(
-            row=2, column=1, sticky="w", pady=(2, 0)
+            row=2, column=1, sticky="w", pady=(self._theme.spacing.xxs, 0)
         )
 
     def _build_models(self, parent: Any) -> None:
         """已配置模型列表：自动识别模型目录下可转换的 HF safetensors 目录。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="已配置模型（可转换的 HF safetensors 目录）", padding=8)
-        box.pack(fill="both", expand=True, pady=(8, 0))
+        box = ttk.LabelFrame(parent, text="已配置模型（可转换的 HF safetensors 目录）", padding=self._theme.spacing.sm)
+        box.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
 
         row = ttk.Frame(box)
-        row.pack(side="bottom", fill="x", pady=(6, 0))
+        row.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         self._models_hint_var = self._tk.StringVar(value="正在扫描模型目录…")
         hint_label = ttk.Label(box, textvariable=self._models_hint_var, justify="left")
-        hint_label.pack(side="bottom", fill="x", pady=(4, 0))
+        hint_label.pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         hint_label.bind(
             "<Configure>",
             lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
@@ -333,8 +341,8 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _build_params(self, parent: Any) -> None:
         ttk = self._ttk
-        params = ttk.LabelFrame(parent, text="转换参数", padding=8)
-        params.pack(fill="x", pady=(8, 0))
+        params = ttk.LabelFrame(parent, text="转换参数", padding=self._theme.spacing.sm)
+        params.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
 
@@ -352,17 +360,21 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             ttk.Entry(params, textvariable=self._tag_var),
         )
 
-        ttk.Label(params, text="解释器").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=3)
+        ttk.Label(params, text="解释器").grid(
+            row=1, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         ttk.Entry(params, textvariable=self._python_var).grid(
-            row=1, column=1, columnspan=2, sticky="ew", padx=(0, 12), pady=3
+            row=1, column=1, columnspan=2, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs
         )
 
-        ttk.Label(params, text="转换脚本").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=3)
+        ttk.Label(params, text="转换脚本").grid(
+            row=2, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
         ttk.Entry(params, textvariable=self._script_var).grid(
-            row=2, column=1, columnspan=2, sticky="ew", padx=(0, 8), pady=3
+            row=2, column=1, columnspan=2, sticky="ew", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
         )
         self._script_btn = ttk.Button(params, text="浏览…", command=self._pick_script)
-        self._script_btn.grid(row=2, column=3, sticky="w", pady=3)
+        self._script_btn.grid(row=2, column=3, sticky="w", pady=self._theme.spacing.xxs)
 
         params_hint = ttk.Label(
             params,
@@ -373,7 +385,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             ),
             justify="left",
         )
-        params_hint.grid(row=3, column=0, columnspan=4, sticky="we", pady=(4, 0))
+        params_hint.grid(row=3, column=0, columnspan=4, sticky="we", pady=(self._theme.spacing.xs, 0))
         params_hint.bind(
             "<Configure>",
             lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
@@ -382,18 +394,22 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_formats(self, parent: Any) -> None:
         """输出格式勾选区：多选量化类型，已存在的输出置为只读避免覆盖。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="输出格式（勾选要生成的版本，已存在的格式只读）", padding=8)
-        box.pack(fill="x", pady=(8, 0))
+        box = ttk.LabelFrame(
+            parent, text="输出格式（勾选要生成的版本，已存在的格式只读）", padding=self._theme.spacing.sm
+        )
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
         for column in range(4):
             box.columnconfigure(column, weight=1)
 
         raw_check = ttk.Checkbutton(box, text="原始 GGUF（不量化）", variable=self._format_vars["raw"])
-        raw_check.grid(row=0, column=0, sticky="w", padx=6, pady=3)
+        raw_check.grid(row=0, column=0, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs)
         self._format_checks["raw"] = raw_check
         for index, (quant, desc) in enumerate(llmqnt.QUANT_TYPES.items()):
             row, column = divmod(index, 4)
             check = ttk.Checkbutton(box, text=f"{quant}  {desc}", variable=self._format_vars[quant])
-            check.grid(row=row + 1, column=column, sticky="w", padx=6, pady=3)
+            check.grid(
+                row=row + 1, column=column, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs
+            )
             self._format_checks[quant] = check
 
         self._overwrite_check = ttk.Checkbutton(
@@ -402,7 +418,9 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             variable=self._overwrite_var,
             command=self._refresh_existing,
         )
-        self._overwrite_check.grid(row=0, column=2, columnspan=2, sticky="w", padx=6, pady=3)
+        self._overwrite_check.grid(
+            row=0, column=2, columnspan=2, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs
+        )
 
     def _base_output(self) -> Path | None:
         """当前表单对应的基础 GGUF 输出路径（未选择源目录时返回 None）。"""
@@ -468,11 +486,15 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     ) -> None:
         """在目标 Frame 的第 ``row`` 行放置两组“标签 + 输入控件”。"""
         ttk = self._ttk
-        ttk.Label(target, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6), pady=3)
-        widget.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=3)
+        ttk.Label(target, text=label).grid(
+            row=row, column=0, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+        )
+        widget.grid(row=row, column=1, sticky="ew", padx=(0, self._theme.spacing.md), pady=self._theme.spacing.xxs)
         if right_label:
-            ttk.Label(target, text=right_label).grid(row=row, column=2, sticky="w", padx=(0, 6), pady=3)
-        right_widget.grid(row=row, column=3, sticky="ew", pady=3)
+            ttk.Label(target, text=right_label).grid(
+                row=row, column=2, sticky="w", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
+            )
+        right_widget.grid(row=row, column=3, sticky="ew", pady=self._theme.spacing.xxs)
 
     def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
         """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
@@ -480,7 +502,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         container = ttk.Frame(parent)
         header = ttk.Frame(container)
         header.pack(fill="x")
-        body = ttk.Frame(container, padding=(6, 4, 0, 0))
+        body = ttk.Frame(container, padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0))
         state = {"open": open_state}
 
         def render() -> None:
@@ -502,12 +524,12 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_env(self, parent: Any) -> None:
         ttk = self._ttk
         box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU / 模型目录）", open_state=False)
-        box.pack(side="bottom", fill="x", pady=(8, 0))
+        box.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         body.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate(
             (("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"), ("models", "模型目录"))
         ):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
+            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, self._theme.spacing.sm))
             var = self._tk.StringVar(value="检测中…")
             value_label = ttk.Label(body, textvariable=var, justify="left")
             value_label.grid(row=row, column=1, sticky="we")
@@ -520,20 +542,20 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
         actions = ttk.Frame(outer)
-        actions.pack(side="bottom", fill="x", pady=(8, 0))
+        actions.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
         self._preview_btn = ttk.Button(actions, text="预览计划", command=self._preview)
         self._preview_btn.pack(side="left")
-        self._start_btn = ttk.Button(actions, text="开始转换", command=self._start)
-        self._start_btn.pack(side="left", padx=(6, 0))
+        self._start_btn = ttk.Button(actions, text="开始转换", command=self._start, style="Accent.TButton")
+        self._start_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._clear_log_btn = ttk.Button(actions, text="清空日志", command=self._clear_log)
-        self._clear_log_btn.pack(side="left", padx=(6, 0))
+        self._clear_log_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
         self._progress = ttk.Progressbar(actions, mode="determinate", maximum=100, length=200)
         self._progress.pack(side="right")
 
     def _build_log(self, parent: Any) -> None:
         tk = self._tk
         ttk = self._ttk
-        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=6)
+        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=self._theme.spacing.sm)
         log_frame.pack(fill="both", expand=True)
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")

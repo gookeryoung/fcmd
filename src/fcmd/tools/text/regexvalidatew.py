@@ -322,57 +322,92 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         self._build_menu()
         self._configure_styles()
 
-        container = ttk.Frame(self.root, padding=(8, 6, 8, 6))
+        container = ttk.Frame(
+            self.root,
+            padding=(self._theme.spacing.sm, self._theme.spacing.sm, self._theme.spacing.sm, self._theme.spacing.sm),
+        )
         container.pack(fill="both", expand=True)
 
-        pattern_frame = ttk.LabelFrame(container, text=" 正则 ", padding=(8, 4))
+        pattern_frame = ttk.LabelFrame(
+            container, text=" 正则 ", padding=(self._theme.spacing.sm, self._theme.spacing.xs)
+        )
         pattern_frame.pack(fill="x")
         pattern_frame.columnconfigure(1, weight=3)
         pattern_frame.columnconfigure(3, weight=2)
 
-        ttk.Label(pattern_frame, text="模式", width=6, anchor="w").grid(row=0, column=0, sticky="w", pady=1)
-        ttk.Entry(pattern_frame, textvariable=self._pattern_var, font=_guitheme.MONO_FONT).grid(
-            row=0, column=1, columnspan=3, sticky="ew", padx=(4, 6), pady=1
+        ttk.Label(pattern_frame, text="模式", width=6, anchor="w").grid(
+            row=0, column=0, sticky="w", pady=self._theme.spacing.hairline
         )
-        ttk.Button(pattern_frame, text="语法帮助", command=self._show_help).grid(row=0, column=4, sticky="e", pady=1)
+        ttk.Entry(pattern_frame, textvariable=self._pattern_var, font=_guitheme.MONO_FONT).grid(
+            row=0,
+            column=1,
+            columnspan=3,
+            sticky="ew",
+            padx=(self._theme.spacing.xs, self._theme.spacing.sm),
+            pady=self._theme.spacing.hairline,
+        )
+        ttk.Button(pattern_frame, text="语法帮助", command=self._show_help).grid(
+            row=0, column=4, sticky="e", pady=self._theme.spacing.hairline
+        )
 
-        ttk.Label(pattern_frame, text="示例", width=6, anchor="w").grid(row=1, column=0, sticky="w", pady=1)
+        ttk.Label(pattern_frame, text="示例", width=6, anchor="w").grid(
+            row=1, column=0, sticky="w", pady=self._theme.spacing.hairline
+        )
         self._example_combo = ttk.Combobox(pattern_frame, state="readonly")
-        self._example_combo.grid(row=1, column=1, sticky="ew", padx=(4, 6), pady=1)
+        self._example_combo.grid(
+            row=1,
+            column=1,
+            sticky="ew",
+            padx=(self._theme.spacing.xs, self._theme.spacing.sm),
+            pady=self._theme.spacing.hairline,
+        )
         self._example_combo.bind("<<ComboboxSelected>>", self._on_example_selected)
         self._update_example_combo()
 
-        ttk.Label(pattern_frame, text="历史", width=6, anchor="w").grid(row=1, column=2, sticky="w", pady=1)
+        ttk.Label(pattern_frame, text="历史", width=6, anchor="w").grid(
+            row=1, column=2, sticky="w", pady=self._theme.spacing.hairline
+        )
         self._combo = ttk.Combobox(pattern_frame, state="readonly")
-        self._combo.grid(row=1, column=3, sticky="ew", padx=(4, 0), pady=1)
+        self._combo.grid(
+            row=1, column=3, sticky="ew", padx=(self._theme.spacing.xs, 0), pady=self._theme.spacing.hairline
+        )
         self._combo.bind("<<ComboboxSelected>>", self._on_history_selected)
         self._update_history_combo()
 
-        ttk.Label(pattern_frame, text="标志", width=6, anchor="w").grid(row=2, column=0, sticky="w", pady=1)
+        ttk.Label(pattern_frame, text="标志", width=6, anchor="w").grid(
+            row=2, column=0, sticky="w", pady=self._theme.spacing.hairline
+        )
         flags_row = ttk.Frame(pattern_frame)
-        flags_row.grid(row=2, column=1, columnspan=4, sticky="w", padx=(4, 0), pady=1)
+        flags_row.grid(
+            row=2,
+            column=1,
+            columnspan=4,
+            sticky="w",
+            padx=(self._theme.spacing.xs, 0),
+            pady=self._theme.spacing.hairline,
+        )
         ttk.Checkbutton(flags_row, text="忽略大小写", variable=self._ignorecase_var, command=self._refresh).pack(
             side="left"
         )
         ttk.Checkbutton(flags_row, text="多行（^/$）", variable=self._multiline_var, command=self._refresh).pack(
-            side="left", padx=(12, 0)
+            side="left", padx=(self._theme.spacing.md, 0)
         )
         ttk.Checkbutton(flags_row, text="DOTALL（. 匹配换行）", variable=self._dotall_var, command=self._refresh).pack(
-            side="left", padx=(12, 0)
+            side="left", padx=(self._theme.spacing.md, 0)
         )
 
         # 上下分栏可拖拽：测试文本与校验结果各自按权重分配初始空间
         panes = ttk.Panedwindow(container, orient="vertical")
-        panes.pack(fill="both", expand=True, pady=(6, 0))
+        panes.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
 
-        text_frame = ttk.LabelFrame(panes, text=" 测试文本 ", padding=(6, 4))
+        text_frame = ttk.LabelFrame(panes, text=" 测试文本 ", padding=(self._theme.spacing.sm, self._theme.spacing.xs))
         self._text = tk.Text(
             text_frame,
             height=6,
             wrap="word",
             font=_guitheme.MONO_FONT,
-            padx=8,
-            pady=6,
+            padx=self._theme.spacing.sm,
+            pady=self._theme.spacing.sm,
             undo=True,
             relief="flat",
             highlightthickness=1,
@@ -389,15 +424,17 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         if self._settings.test_string:
             self._text.insert("1.0", self._settings.test_string)
 
-        result_frame = ttk.LabelFrame(panes, text=" 校验结果 ", padding=(6, 4))
+        result_frame = ttk.LabelFrame(
+            panes, text=" 校验结果 ", padding=(self._theme.spacing.sm, self._theme.spacing.xs)
+        )
         self._result = tk.Text(
             result_frame,
             height=12,
             wrap="none",
             state="disabled",
             font=_guitheme.MONO_FONT,
-            padx=8,
-            pady=6,
+            padx=self._theme.spacing.sm,
+            pady=self._theme.spacing.sm,
             relief="flat",
             highlightthickness=1,
             highlightbackground=palette.border,
@@ -414,7 +451,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         panes.add(result_frame, weight=3)
 
         status_bar = ttk.Frame(container)
-        status_bar.pack(fill="x", pady=(4, 0))
+        status_bar.pack(fill="x", pady=(self._theme.spacing.xs, 0))
         self._status_label = ttk.Label(status_bar, textvariable=self._status_var, style="Status.TLabel")
         self._status_label.pack(side="left")
         ttk.Label(status_bar, text="输入时自动校验", style="Hint.TLabel").pack(side="right")
@@ -423,7 +460,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         """定义状态栏配色，跟随当前主题，避免混用 tk/ttk 控件导致视觉不一致。"""
         palette = self._theme.palette
         style = self._ttk.Style(self.root)
-        style.configure("Status.TLabel", padding=(0, 2))
+        style.configure("Status.TLabel", padding=(0, self._theme.spacing.xxs))
         style.configure("Ok.TLabel", foreground=palette.success)
         style.configure("Error.TLabel", foreground=palette.danger)
         style.configure("Hint.TLabel", foreground=palette.muted)
@@ -562,7 +599,7 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         dialog.title("正则语法帮助")
         dialog.geometry("640x560")
         dialog.transient(self.root)
-        text = tk.Text(dialog, wrap="word", padx=12, pady=12)
+        text = tk.Text(dialog, wrap="word", padx=self._theme.spacing.md, pady=self._theme.spacing.md)
         scrollbar = tk.Scrollbar(dialog, orient="vertical", command=text.yview)
         text.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
