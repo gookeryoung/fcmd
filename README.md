@@ -99,7 +99,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-97 个工具（其中 48 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`docdiff`/`docdiffw`/`envdev`/`envw`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`mirrortool`/`ncmconvertw`/`packtool`/`pdfcrypt`/`pdfcryptw`/`pdfsplit`/`pdfsplitw`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+98 个工具（其中 49 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`docdiff`/`docdiffw`/`envdev`/`envw`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`mirrortool`/`mirrortoolw`/`ncmconvertw`/`packtool`/`pdfcrypt`/`pdfcryptw`/`pdfsplit`/`pdfsplitw`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。例外：`taskkill` / `which` 与系统命令同名，不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本；规范名仍可通过 `fcmd taskkill` / `fcmd which` 使用。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
 
@@ -285,6 +285,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `gittool` | `gitt` | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
 | `envdev` | - | 开发环境一键配置（分组入口 lang/app/mirror/check/all，镜像按服务（pip/conda/rustup/cargo/go/maven/npm）独立自动选优：以真实构件实测下载吞吐排序并可识别限速/门户页，避免误选「延迟低但被限速」的镜像；另含教育网镜像探测（动态拉取 MirrorZ 列表）与 `mirror --service <服务>` 测速、`--apply` 自动应用，以及工具链安装，Linux 含系统依赖） |
 | `mirrortool` | - | 镜像源独立入口（薄壳，实现与 `envdev mirror` 共用）：教育网镜像站点探测；`--service <服务>` 对 pip/conda/rustup/cargo/go/maven/npm 实测下载吞吐排序并推荐最快镜像，`--apply` 立即写入对应服务配置 |
+| `mirrortoolw` | - | 镜像搜索与配置窗口版（Tk）：服务镜像测速排序与一键应用、MirrorZ 教育网镜像站点探测二合一；结果按镜像名/地址实时过滤，展示延迟与实测吞吐并高亮推荐项，配置位置随服务切换提示，设置持久化到 `~/.fcmd/ui/mirrortoolw.json` |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |
 
