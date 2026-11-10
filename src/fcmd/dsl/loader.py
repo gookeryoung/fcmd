@@ -17,20 +17,32 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import tomllib
 from collections.abc import Mapping
 from functools import cache, lru_cache
-from importlib import resources
 from pathlib import Path
 from typing import Any
+
+from fcmd._lazylog import LazyLogger
 
 from .decl import CommandDeclError, ToolDecl, parse_tool_table
 
 __all__ = ["builtin_tool_decl", "builtin_tool_decls", "builtin_tool_files", "clear_decl_cache", "user_tool_decls"]
 
-logger = logging.getLogger(__name__)
+logger = LazyLogger(__name__)
+
+
+class _LazyResources:
+    """``importlib.resources`` 的延迟代理：首次 ``files()`` 才导入（约 15ms）。"""
+
+    def files(self, package: str) -> Any:
+        from importlib import resources
+
+        return resources.files(package)
+
+
+resources: Any = _LazyResources()
 
 
 def _parse_decls(data: Mapping[str, Any], source: str) -> list[ToolDecl]:
