@@ -21,13 +21,14 @@ import logging
 import os
 import tomllib
 from collections.abc import Mapping
+from functools import lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from .decl import CommandDeclError, ToolDecl, parse_tool_table
 
-__all__ = ["builtin_tool_decls", "user_tool_decls"]
+__all__ = ["builtin_tool_decls", "clear_decl_cache", "user_tool_decls"]
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +61,20 @@ def builtin_tool_decls() -> list[ToolDecl]:
     文件间同名工具先注册者优先。目录下非 ``*.toml`` 条目忽略。
     内置文件属项目源码，正常不可能损坏；防御性降级（warning + 跳过）
     仅为不阻断启动，配套 CI 门禁测试断言其逐条合法。
+
+    结果按进程缓存：同一进程内重复调用（发现、测试、工具切换）只解析一次。
     """
+    return list(_builtin_tool_decls_cached())
+
+
+@lru_cache(maxsize=1)
+def _builtin_tool_decls_cached() -> tuple[ToolDecl, ...]:
     root = resources.files("fcmd").joinpath("commands")
     try:
         entries = sorted(root.iterdir(), key=lambda entry: entry.name)
     except OSError as exc:
         logger.warning("内置命令目录读取失败，已跳过: %s", exc)
-        return []
+        return ()
     decls: list[ToolDecl] = []
     for entry in entries:
         if entry.name.startswith("_") or not entry.name.endswith(".toml"):
@@ -77,7 +85,12 @@ def builtin_tool_decls() -> list[ToolDecl]:
             logger.warning("内置命令文件 %s 读取失败，已跳过: %s", entry.name, exc)
             continue
         decls.extend(_parse_decls(data, f"<内置 {entry.name}>"))
-    return decls
+    return tuple(decls)
+
+
+def clear_decl_cache() -> None:
+    """清空内置声明缓存（供测试在替换资源目录后重新加载）。"""
+    _builtin_tool_decls_cached.cache_clear()
 
 
 def user_tool_decls() -> list[ToolDecl]:

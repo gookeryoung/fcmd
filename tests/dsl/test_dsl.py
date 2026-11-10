@@ -504,6 +504,16 @@ class TestSpecSynthesis:
 # ============================================================================ #
 # 文件加载（loader.py）
 # ============================================================================ #
+@pytest.fixture(autouse=True)
+def _clear_builtin_decl_cache() -> Iterator[None]:
+    """隔离内置声明缓存，避免故障注入测试命中上一次的解析结果。"""
+    from fcmd.dsl.loader import clear_decl_cache
+
+    clear_decl_cache()
+    yield
+    clear_decl_cache()
+
+
 class TestLoader:
     """内置与用户级 commands.toml 的加载。"""
 
