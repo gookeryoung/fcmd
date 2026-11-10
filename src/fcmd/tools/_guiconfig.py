@@ -1,7 +1,7 @@
 """GUI 工具共享的设置持久化骨架（不注册工具）。
 
-7 个 Tk 窗口工具（img2icow / videoconvw / reshackw / checksum / alarmclock /
-img2pdfw / regexvalidatew）的设置文件统一位于
+8 个 Tk 窗口工具（img2icow / videoconvw / reshackw / checksum / alarmclock /
+img2pdfw / regexvalidatew / docdiffw）的设置文件统一位于
 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``，读写流程与 geometry 校验完全一致。
 本模块收敛这部分骨架，各工具只保留设置 dataclass 与字段级解析。
 
