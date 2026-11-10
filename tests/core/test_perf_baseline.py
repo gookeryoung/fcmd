@@ -9,7 +9,8 @@
 - **tool exec**: ``run_tool`` 单工具冷执行端到端耗时（含按需导入工具模块）
 
 每项在独立子进程内测量，避免主进程 import 缓存污染；预热 1 次后取 6 次统计
-（min/median/mean/stdev）。用 ``@pytest.mark.slow`` 标记，``make check`` 默认跳过。
+（min/median/mean/stdev），工具发现基线单独采样 5 次取中位数以降低并行跑测抖动。
+用 ``@pytest.mark.slow`` 标记，``make check`` 默认跳过。
 
 直接运行 ``python tests/test_perf_baseline.py`` 生成基线报告。
 
@@ -77,6 +78,8 @@ _TOOL_EXEC_BUDGET_MS = 300.0
 # 测量次数：1 次预热（丢弃）+ 6 次统计
 _WARMUP = 1
 _RUNS = 6
+# 工具发现基线采样次数：取中位数，降低全量并行跑测时的瞬时抖动影响
+_DISCOVERY_RUNS = 5
 
 
 def _measure(script: str, runs: int = _RUNS, warmup: int = _WARMUP) -> list[float]:
@@ -133,10 +136,10 @@ def test_cold_start_baseline() -> None:
 
 @pytest.mark.slow
 def test_tool_discovery_baseline() -> None:
-    """工具发现基线：扫描 ``fcmd.cli`` 包应在 500ms 内完成。"""
-    samples = _measure(_DISCOVERY_SCRIPT)
+    """工具发现基线：5 次采样取中位数，应在 500ms 内完成。"""
+    samples = _measure(_DISCOVERY_SCRIPT, runs=_DISCOVERY_RUNS)
     print("\n" + _format_stats("discovery", samples, _DISCOVERY_BUDGET_MS))
-    assert min(samples) < _DISCOVERY_BUDGET_MS
+    assert statistics.median(samples) < _DISCOVERY_BUDGET_MS
 
 
 @pytest.mark.slow
