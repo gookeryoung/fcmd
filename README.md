@@ -99,7 +99,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-96 个工具（其中 47 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`docdiff`/`docdiffw`/`envdev`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`mirrortool`/`ncmconvertw`/`packtool`/`pdfcrypt`/`pdfcryptw`/`pdfsplit`/`pdfsplitw`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+97 个工具（其中 48 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`docdiff`/`docdiffw`/`envdev`/`envw`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`mirrortool`/`ncmconvertw`/`packtool`/`pdfcrypt`/`pdfcryptw`/`pdfsplit`/`pdfsplitw`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
 
 工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。例外：`taskkill` / `which` 与系统命令同名，不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本；规范名仍可通过 `fcmd taskkill` / `fcmd which` 使用。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
 
@@ -217,6 +217,7 @@ fcmd completion --shell fish | source         # fish
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
+| `envw` | - | 环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor：用户/系统/当前进程作用域、搜索、新建/编辑/删除/重命名、PATH 逐条路径编辑、变量引用展开预览、JSON 备份恢复，设置持久化到 `~/.fcmd/ui/envw.json`） |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |
 | `portcheck` | - | 端口检查与扫描（socket 探测 + psutil 查询占用进程，跨平台） |
 | `taskkill` | `taskk` | 按名称终止进程（psutil terminate → kill）；与系统命令同名，仅 `taskk` 生成全局脚本 |
