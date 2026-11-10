@@ -793,6 +793,52 @@ class TestLayoutParams:
         assert not out.exists()
 
 
+class TestInfoMetadata:
+    """i 子命令的元数据与详细统计。"""
+
+    def test_info_full_metadata(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """输出主题/关键词/创建者/生成器并格式化日期。"""
+        import fitz
+
+        src = tmp_path / "meta.pdf"
+        doc = fitz.open()
+        doc.new_page()
+        doc.set_metadata(
+            {
+                "title": "T",
+                "author": "A",
+                "subject": "S",
+                "keywords": "K",
+                "creator": "C",
+                "producer": "P",
+                "creationDate": "D:20260102030405",
+                "modDate": "D:20260102",
+            }
+        )
+        doc.save(str(src))
+        doc.close()
+
+        code = run_tool("pdftool", ["i", str(src)])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "主题: S" in out
+        assert "关键词: K" in out
+        assert "创建者: C" in out
+        assert "生成器: P" in out
+        assert "创建日期: 2026-01-02 03:04:05" in out
+        assert "修改日期: 2026-01-02" in out
+
+    def test_info_verbose(self, sample_pdf: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """verbose 输出 PDF 版本、加密与线性化状态。"""
+        code = run_tool("pdftool", ["i", str(sample_pdf), "--verbose"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "PDF 版本:" in out
+        assert "是否加密: 否" in out
+        assert "是否线性化:" in out
+        assert "文件大小:" in out
+
+
 class TestWatermarkFeatures:
     """w 子命令的图片水印与字号/旋转/缩放。"""
 

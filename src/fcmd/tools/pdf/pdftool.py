@@ -215,9 +215,15 @@ def pdftool_crop(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保�
 
 
 @fcmd.tool("pdftool", subcommand="i", help="查看 PDF 信息")
-def pdftool_i(input_path: Path) -> None:
-    """查看 PDF 信息（i 子命令）。"""
-    pdf_info(input_path)
+def pdftool_i(input_path: Path, verbose: bool = False) -> None:
+    """查看 PDF 信息（i 子命令）。
+
+    Parameters
+    ----------
+    verbose:
+        输出 PDF 版本、加密状态、是否线性化等详细统计
+    """
+    pdf_info(input_path, verbose)
 
 
 @fcmd.tool("pdftool", subcommand="ocr", help="PDF OCR 识别")

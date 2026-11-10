@@ -443,21 +443,67 @@ def pdf_crop(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显
     print(f"裁剪完成: {output_path}")
 
 
-def pdf_info(input_path: Path) -> None:
-    """显示 PDF 信息。"""
+def _format_pdf_date(raw: str) -> str:
+    """把 PDF 日期 ``D:YYYYMMDDHHmmSS`` 转成可读格式，无法识别时原样返回。"""
+    if not raw.startswith("D:"):
+        return raw
+    value = raw[2:].rstrip("Z").split("+")[0].split("-")[0]
+    if len(value) < 8:
+        return raw
+    year, month, day = value[0:4], value[4:6], value[6:8]
+    rest = value[8:]
+    if len(rest) >= 6:
+        return f"{year}-{month}-{day} {rest[0:2]}:{rest[2:4]}:{rest[4:6]}"
+    return f"{year}-{month}-{day}"
+
+
+def _format_file_size(size: int) -> str:
+    """把字节数格式化为 B/KB/MB。"""
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.2f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
+
+
+def pdf_info(input_path: Path, verbose: bool = False) -> None:
+    """显示 PDF 信息；``verbose=True`` 时附带版本、加密与线性化状态。"""
     if not _require_pymupdf():
         return
 
     doc = fitz.open(str(input_path))
     try:
         print(f"文件: {input_path}")
+        print(f"文件大小: {_format_file_size(input_path.stat().st_size)}")
         print(f"页数: {doc.page_count}")
+
         meta = doc.metadata or {}
-        print(f"标题: {meta.get('title', 'N/A')}")
-        print(f"作者: {meta.get('author', 'N/A')}")
-        print(f"创建日期: {meta.get('creationDate', 'N/A')}")
-        print(f"修改日期: {meta.get('modDate', 'N/A')}")
-        print(f"文件大小: {input_path.stat().st_size / 1024:.1f} KB")
+        for label, key in (
+            ("标题", "title"),
+            ("作者", "author"),
+            ("主题", "subject"),
+            ("关键词", "keywords"),
+            ("创建者", "creator"),
+            ("生成器", "producer"),
+        ):
+            value = meta.get(key)
+            if value:
+                print(f"{label}: {value}")
+
+        for label, key in (("创建日期", "creationDate"), ("修改日期", "modDate")):
+            value = meta.get(key)
+            if value:
+                print(f"{label}: {_format_pdf_date(value)}")
+
+        if verbose:
+            version = getattr(doc, "pdf_version", "N/A")
+            if callable(version):
+                version = version()
+            with input_path.open("rb") as fh:
+                linearized = b"/Linearized" in fh.read(2048)
+            print(f"PDF 版本: {version}")
+            print(f"是否加密: {'是' if doc.is_encrypted else '否'}")
+            print(f"是否线性化: {'是' if linearized else '否'}")
     finally:
         doc.close()
 
