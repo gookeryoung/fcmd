@@ -355,3 +355,47 @@ class TestEnginewGuiEntry:
         monkeypatch.setattr(llmenginew, "run_gui", lambda: calls.append(True))
         llmenginew.launch_cmd()
         assert calls == [True]
+
+
+class TestEnginewSettings:
+    """llmenginew 窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
+
+    def test_config_path_uses_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        assert llmenginew.config_path() == tmp_path / "ui" / "llmenginew.json"
+
+    def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
+        assert llmenginew.load_settings(tmp_path / "none.json") == llmenginew.EngineSettings()
+
+    def test_load_ignores_invalid_geometry(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"geometry": "bad"}', encoding="utf-8")
+        assert llmenginew.load_settings(path).geometry is None
+        path.write_text('{"geometry": 123}', encoding="utf-8")
+        assert llmenginew.load_settings(path).geometry is None
+
+    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "nested" / "ui.json"
+        llmenginew.save_settings(llmenginew.EngineSettings(geometry="900x600+10+20"), path)
+        assert llmenginew.load_settings(path).geometry == "900x600+10+20"
+
+    def test_save_ignores_write_error(self, tmp_path: Path) -> None:
+        blocker = tmp_path / "blocker"
+        blocker.write_text("x", encoding="utf-8")
+        llmenginew.save_settings(llmenginew.EngineSettings(geometry="900x600"), blocker / "ui.json")
+
+    def test_resolve_geometry_keeps_visible_position(self) -> None:
+        assert llmenginew.resolve_geometry("900x600+100+80", 1920, 1080) == "900x600+100+80"
+
+    def test_resolve_geometry_pulls_back_offscreen(self) -> None:
+        assert llmenginew.resolve_geometry("900x600+5000+5000", 1920, 1080) == "900x600+1020+480"
+
+    def test_resolve_geometry_enforces_minimum_size(self) -> None:
+        assert llmenginew.resolve_geometry("200x100+0+0", 1920, 1080) == "780x520+0+0"
+
+    def test_resolve_geometry_falls_back_to_default_size(self) -> None:
+        assert llmenginew.resolve_geometry(None, 1920, 1080) == "880x640"
+        assert llmenginew.resolve_geometry("bad", 1920, 1080) == "880x640"
+
+    def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
+        assert llmenginew.resolve_geometry(None, 800, 600) == "800x600"

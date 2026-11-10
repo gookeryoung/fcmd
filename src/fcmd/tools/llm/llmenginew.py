@@ -19,19 +19,28 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.llm import llmengine, llmenv
 from fcmd.tools.llm.llmbase import DEFAULT_ENGINE_TAG, EngineInfo, EngineVariant, ServeError, human_size
 
-__all__ = ["main"]
+__all__ = [
+    "EngineSettings",
+    "config_path",
+    "load_settings",
+    "resolve_geometry",
+    "save_settings",
+]
 
 _DESCRIPTION = (
     "llama.cpp 引擎窗口版（Tk）：在线下载官方预编译包，或检查并安装本地 zip 离线包"
-    "（引擎包 / cudart 运行库 / 源码包），查看已安装引擎并切换默认"
+    "（引擎包 / cudart 运行库 / 源码包），查看已安装引擎并切换默认；"
+    "窗口位置与大小记忆到 ~/.fcmd/ui/llmenginew.json"
 )
 
 _VARIANTS = ("cuda", "cpu")
@@ -45,11 +54,73 @@ _KIND_LABELS = {
 }
 TaskFunc = Callable[[llmengine.ProgressCallback], tuple[str, str | None]]
 
+MIN_WIDTH = 780
+MIN_HEIGHT = 520
+DEFAULT_WIDTH = 880
+DEFAULT_HEIGHT = 640
+
+
+@dataclass
+class EngineSettings:
+    """窗口持久化设置（当前只有 geometry）。"""
+
+    geometry: str | None = None
+
+
+def config_path() -> Path:
+    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmenginew.json``。"""
+    return _guiconfig.config_path("llmenginew")
+
+
+valid_geometry = _guiconfig.valid_geometry
+
+
+def load_settings(path: Path | None = None) -> EngineSettings:
+    """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
+    raw = _guiconfig.read_settings(path or config_path())
+    settings = EngineSettings()
+    if raw is not None:
+        geometry = raw.get("geometry")
+        if isinstance(geometry, str) and valid_geometry(geometry):
+            settings.geometry = geometry
+    return settings
+
+
+def save_settings(settings: EngineSettings, path: Path | None = None) -> None:
+    """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
+    _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    clamped = _guiconfig.clamp_geometry(
+        f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    return clamped or f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}"
+
+
+def _fit_wraplength(width: int) -> int:
+    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
+    return max(width - 8, 120)
+
 
 class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 引擎管理窗口：在线下载、离线包检查安装、引擎列表与体检。"""
 
-    def __init__(self) -> None:
+    def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
         from tkinter import filedialog, messagebox, ttk
 
@@ -57,10 +128,19 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._filedialog = filedialog
         self._messagebox = messagebox
         self._ttk = ttk
+        self._settings_path = settings_path
+        self._settings = load_settings(settings_path)
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title("llama.cpp 引擎管理")
-        self.root.geometry("880x640")
-        self.root.minsize(780, 520)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
+        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
@@ -109,7 +189,12 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         for row, (key, label) in enumerate((("current", "当前引擎"), ("root", "引擎根目录"), ("installed", "已安装"))):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
             var = self._tk.StringVar(value="检测中…")
-            ttk.Label(body, textvariable=var, wraplength=760, justify="left").grid(row=row, column=1, sticky="w")
+            value_label = ttk.Label(body, textvariable=var, justify="left")
+            value_label.grid(row=row, column=1, sticky="we")
+            value_label.bind(
+                "<Configure>",
+                lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+            )
             self._info_vars[key] = var
 
     def _build_online(self, page: Any) -> None:
@@ -196,7 +281,7 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         box.pack(fill="both", expand=True, pady=(8, 0))
         scrollbar = ttk.Scrollbar(box)
         scrollbar.pack(side="right", fill="y")
-        self._log_text = self._tk.Text(box, wrap="none", state="disabled", yscrollcommand=scrollbar.set, height=10)
+        self._log_text = self._tk.Text(box, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
 
@@ -483,6 +568,7 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _close(self) -> None:
         if self._running and not self._messagebox.askyesno("任务进行中", "安装 / 检查任务仍在执行，确实退出？"):
             return
+        save_settings(EngineSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
     # ------------------------------------------------------------------ #
@@ -502,7 +588,8 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
 
 def run_gui() -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = EngineWindow()
     except ImportError as exc:
