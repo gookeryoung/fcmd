@@ -38,6 +38,7 @@ from fcmd.tools.system.reshackw import (
     is_text_resource,
     load_preview_image,
     load_settings,
+    resolve_geometry,
     save_settings,
     valid_geometry,
     zoom_in,
@@ -102,6 +103,26 @@ class TestConfig:
     def test_add_recent_file(self) -> None:
         a, b, c = (str(Path("/a.exe")), str(Path("/b.exe")), str(Path("/c.exe")))
         assert add_recent_file([a, b], Path(c)) == [c, a, b]
+
+
+class TestResolveGeometry:
+    """启动时 geometry 恢复：位置夹回屏幕、尺寸不小于下限。"""
+
+    def test_keeps_visible_position(self) -> None:
+        assert resolve_geometry("1000x680+100+80", 1920, 1080) == "1000x680+100+80"
+
+    def test_pulls_back_offscreen(self) -> None:
+        assert resolve_geometry("1080x720+5000+5000", 1920, 1080) == "1080x720+840+360"
+
+    def test_enforces_minimum_size(self) -> None:
+        assert resolve_geometry("200x100+0+0", 1920, 1080) == "900x600+0+0"
+
+    def test_falls_back_to_default_geometry(self) -> None:
+        assert resolve_geometry(None, 1920, 1080) == "1080x720+180+120"
+        assert resolve_geometry("bad", 1920, 1080) == "1080x720+180+120"
+
+    def test_clamps_default_into_small_screen(self) -> None:
+        assert resolve_geometry(None, 800, 600) == "800x600+0+0"
 
     def test_add_recent_file_dedupes(self) -> None:
         a, b = str(Path("/a.exe")), str(Path("/b.exe"))

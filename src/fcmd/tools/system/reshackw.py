@@ -26,7 +26,7 @@ from typing import Any, cast
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools import _guiconfig
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.system.reshack import (
     RT_BITMAP,
     RT_ICON,
@@ -63,6 +63,7 @@ __all__ = [
     "is_text_resource",
     "load_preview_image",
     "load_settings",
+    "resolve_geometry",
     "save_settings",
     "valid_geometry",
     "zoom_in",
@@ -146,6 +147,29 @@ def save_settings(settings: ReshackSettings, path: Path | None = None) -> None:
         "geometry": settings.geometry,
     }
     _guiconfig.write_settings(payload, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    return (
+        _guiconfig.clamp_geometry(
+            DEFAULT_GEOMETRY,
+            screen_width,
+            screen_height,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+        )
+        or DEFAULT_GEOMETRY
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -385,8 +409,15 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._resize_job: str | None = None
 
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title(f"PE 资源编辑器 v{__version__}")
-        self.root.geometry(valid_geometry(self._settings.geometry) or DEFAULT_GEOMETRY)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
         self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -403,24 +434,34 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
         tk = self._tk
+        ttk = self._ttk
+        palette = _guitheme.PALETTE
         self._build_menu()
 
-        toolbar = tk.Frame(self.root)
+        toolbar = ttk.Frame(self.root)
         toolbar.pack(fill="x", padx=10, pady=(10, 4))
-        self._open_button = tk.Button(toolbar, text="打开…", command=self._choose_file)
+        self._open_button = ttk.Button(toolbar, text="打开…", command=self._choose_file, style="Accent.TButton")
         self._open_button.pack(side="left")
-        self._export_button = tk.Button(toolbar, text="导出…", command=self._export_selected)
+        self._export_button = ttk.Button(toolbar, text="导出…", command=self._export_selected)
         self._export_button.pack(side="left", padx=(6, 0))
-        self._replace_button = tk.Button(toolbar, text="替换…", command=self._replace_selected)
+        self._replace_button = ttk.Button(toolbar, text="替换…", command=self._replace_selected)
         self._replace_button.pack(side="left", padx=(6, 0))
-        self._export_all_button = tk.Button(toolbar, text="全部导出…", command=self._export_all)
+        self._export_all_button = ttk.Button(toolbar, text="全部导出…", command=self._export_all)
         self._export_all_button.pack(side="left", padx=(6, 0))
 
-        paned = tk.PanedWindow(self.root, orient="horizontal", sashwidth=6)
+        # PanedWindow 保留经典控件（ttk 无对应分隔容器），仅按色板上色
+        paned = tk.PanedWindow(
+            self.root,
+            orient="horizontal",
+            sashwidth=6,
+            sashrelief="flat",
+            borderwidth=0,
+            background=palette.surface,
+        )
         paned.pack(fill="both", expand=True, padx=10, pady=4)
 
-        tree_frame = tk.LabelFrame(paned, text="资源", padx=6, pady=6)
-        self._tree = self._ttk.Treeview(
+        tree_frame = ttk.LabelFrame(paned, text="资源", padding=6)
+        self._tree = ttk.Treeview(
             tree_frame,
             columns=("type", "size", "language"),
             show="tree headings",
@@ -434,39 +475,45 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._tree.column("size", width=80, anchor="e")
         self._tree.heading("language", text="语言")
         self._tree.column("language", width=60, anchor="e")
-        tree_scroll = tk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
+        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=tree_scroll.set)
         tree_scroll.pack(side="right", fill="y")
         self._tree.pack(side="left", fill="both", expand=True)
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         paned.add(tree_frame, minsize=320)
 
-        preview_frame = tk.LabelFrame(paned, text="预览", padx=6, pady=6)
-        self._notebook = self._ttk.Notebook(preview_frame)
-        text_container = tk.Frame(self._notebook)
-        self._text_preview = tk.Text(text_container, wrap="none", state="disabled")
+        preview_frame = ttk.LabelFrame(paned, text="预览", padding=6)
+        self._notebook = ttk.Notebook(preview_frame)
+        text_container = ttk.Frame(self._notebook)
+        self._text_preview = tk.Text(text_container, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
         self._text_preview.pack(fill="both", expand=True)
-        hex_container = tk.Frame(self._notebook)
-        self._hex_preview = tk.Text(hex_container, wrap="none", state="disabled", font="TkFixedFont")
-        self._hex_preview.pack(fill="both", expand=True)
-        image_container = tk.Frame(self._notebook)
-        zoom_bar = tk.Frame(image_container)
+        hex_container = ttk.Frame(self._notebook)
+        self._hex_preview = tk.Text(hex_container, wrap="none", state="disabled", font=_guitheme.MONO_FONT)
+        hex_v_scroll = ttk.Scrollbar(hex_container, orient="vertical", command=self._hex_preview.yview)
+        hex_h_scroll = ttk.Scrollbar(hex_container, orient="horizontal", command=self._hex_preview.xview)
+        self._hex_preview.configure(yscrollcommand=hex_v_scroll.set, xscrollcommand=hex_h_scroll.set)
+        hex_v_scroll.pack(side="right", fill="y")
+        hex_h_scroll.pack(side="bottom", fill="x")
+        self._hex_preview.pack(side="left", fill="both", expand=True)
+        image_container = ttk.Frame(self._notebook)
+        zoom_bar = ttk.Frame(image_container)
         zoom_bar.pack(fill="x", pady=(0, 4))
-        tk.Label(zoom_bar, text="缩放").pack(side="left")
-        self._zoom_out_button = tk.Button(zoom_bar, text="－", width=3, command=self._zoom_out_image)
+        ttk.Label(zoom_bar, text="缩放").pack(side="left")
+        self._zoom_out_button = ttk.Button(zoom_bar, text="－", width=3, command=self._zoom_out_image)
         self._zoom_out_button.pack(side="left", padx=(6, 0))
-        self._zoom_label = tk.Label(zoom_bar, text="100%", width=7)
+        self._zoom_label = ttk.Label(zoom_bar, text="100%", width=7)
         self._zoom_label.pack(side="left")
-        self._zoom_in_button = tk.Button(zoom_bar, text="＋", width=3, command=self._zoom_in_image)
+        self._zoom_in_button = ttk.Button(zoom_bar, text="＋", width=3, command=self._zoom_in_image)
         self._zoom_in_button.pack(side="left")
-        self._zoom_reset_button = tk.Button(zoom_bar, text="1:1", command=self._reset_zoom_image)
+        self._zoom_reset_button = ttk.Button(zoom_bar, text="1:1", command=self._reset_zoom_image)
         self._zoom_reset_button.pack(side="left", padx=(6, 0))
-        self._zoom_fit_button = tk.Button(zoom_bar, text="适应", command=self._fit_image)
+        self._zoom_fit_button = ttk.Button(zoom_bar, text="适应", command=self._fit_image)
         self._zoom_fit_button.pack(side="left", padx=(6, 0))
 
-        self._image_canvas = tk.Canvas(image_container, background="#f0f0f0", highlightthickness=0)
-        image_h_scroll = tk.Scrollbar(image_container, orient="horizontal", command=self._image_canvas.xview)
-        image_v_scroll = tk.Scrollbar(image_container, orient="vertical", command=self._image_canvas.yview)
+        # 图像预览 Canvas 不做主题化，只把浅灰底换成深色底，避免影响图像本身判读
+        self._image_canvas = tk.Canvas(image_container, background=palette.log_bg, highlightthickness=0)
+        image_h_scroll = ttk.Scrollbar(image_container, orient="horizontal", command=self._image_canvas.xview)
+        image_v_scroll = ttk.Scrollbar(image_container, orient="vertical", command=self._image_canvas.yview)
         self._image_canvas.configure(xscrollcommand=image_h_scroll.set, yscrollcommand=image_v_scroll.set)
         image_v_scroll.pack(side="right", fill="y")
         image_h_scroll.pack(side="bottom", fill="x")
@@ -486,17 +533,18 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._notebook.pack(fill="both", expand=True)
         paned.add(preview_frame, minsize=420)
 
-        log_frame = tk.LabelFrame(self.root, text="日志", padx=6, pady=6)
+        log_frame = ttk.LabelFrame(self.root, text="日志", padding=6)
         log_frame.pack(fill="x", padx=10, pady=(4, 4))
-        self._log_text = tk.Text(log_frame, height=5, wrap="word", state="disabled")
-        log_scroll = tk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
+        self._log_text = tk.Text(log_frame, height=5, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
+        log_scroll = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
         self._log_text.configure(yscrollcommand=log_scroll.set)
         log_scroll.pack(side="right", fill="y")
         self._log_text.pack(side="left", fill="both", expand=True)
 
-        status = tk.Frame(self.root)
+        status = ttk.Frame(self.root)
         status.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(status, textvariable=self._status_var, anchor="w").pack(side="left", fill="x", expand=True)
+        self._status_label = ttk.Label(status, textvariable=self._status_var, anchor="w")
+        self._status_label.pack(side="left", fill="x", expand=True)
 
         self._set_busy(False)
         self._append_log("打开 PE 文件（exe/dll/sys）后，在左侧选择资源查看预览。")
@@ -555,6 +603,8 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._export_all_button,
         ):
             button.configure(state=state)
+        if busy:
+            self._status_label.configure(foreground=_guitheme.PALETTE.text)
 
     def _refresh_recent_menu(self) -> None:
         """重建「最近打开」菜单。"""
@@ -770,6 +820,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 self._set_busy(False)
                 self._worker = None
                 self._status_var.set("操作失败")
+                self._status_label.configure(foreground=_guitheme.PALETTE.danger)
                 self._append_log(f"错误：{event[1]}")
                 self._messagebox.showerror("操作失败", event[1])
                 return
@@ -953,7 +1004,7 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             12,
             anchor="nw",
             text=message,
-            fill="#666",
+            fill=_guitheme.PALETTE.muted,
             width=width,
         )
 
@@ -1079,7 +1130,8 @@ class ReshackWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
 
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = ReshackWindow(settings_path)
     except ImportError as exc:
