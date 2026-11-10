@@ -920,6 +920,28 @@ class TestWatermarkFeatures:
         finally:
             doc.close()
 
+    def test_watermark_tall_image_fits_height(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """高瘦图片按页面高度等比收缩。"""
+        import fitz
+
+        img_path = tmp_path / "tall.png"
+        pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 50, 200), False)
+        pix.clear_with(200)
+        pix.save(str(img_path))
+
+        out = tmp_path / "wm.pdf"
+        code = run_tool(
+            "pdftool",
+            ["w", str(sample_pdf), "--output-path", str(out), "--image", str(img_path), "--scale", "1"],
+        )
+        assert code == 0
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc[0].get_images()
+        finally:
+            doc.close()
+
     def test_watermark_invalid_rotation(
         self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1029,6 +1051,39 @@ class TestReorderFeatures:
         code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "all", "--insert-blank", "0:1"])
         assert code == 0
         assert "不合法" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_reorder_malformed_insert_spec(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """非数字插入表达式打印格式错误。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "all", "--insert-blank", "abc"])
+        assert code == 0
+        assert "无效的插入空白页格式" in capsys.readouterr().out
+        assert not out.exists()
+
+    def test_reorder_skips_non_numeric_order(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """order 中的非数字项被跳过，其余页正常输出。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "bogus", "0"])
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 1
+            assert "Page one" in doc[0].get_text()
+        finally:
+            doc.close()
+
+    def test_reorder_invalid_delete(self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """非法删除表达式打印错误且不生成输出。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "all", "--delete", "abc"])
+        assert code == 0
+        assert capsys.readouterr().out
         assert not out.exists()
 
 
