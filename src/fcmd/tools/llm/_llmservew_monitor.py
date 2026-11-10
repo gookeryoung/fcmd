@@ -12,7 +12,7 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, replace
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fcmd.tools.llm import llmbase, llmmodel, llmserve
 from fcmd.tools.llm.llmbase import ServeError, ServeState, human_size
@@ -333,6 +333,23 @@ class RateWindow:
 
 class _ServeWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """ServeWindow 的实时监控方法（mixin）。"""
+
+    if TYPE_CHECKING:
+        # 宿主 ServeWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
+        root: Any
+        _closing: bool
+        _gpu_mib: int | None
+        _gpu_free_mib: int | None
+        _monitor_seq: int
+        _monitor_state: ServeState | None
+        _monitor_stop: threading.Event | None
+        _monitor_thread: threading.Thread | None
+        _monitor_results: Any
+        _log: Any
+        _metric_vars: Any
+        _load_vars: Any
+        _gpu_vars: Any
+        _update_fit_states: Any
 
     # ------------------------------------------------------------------ #
     # 实时性能监控（/metrics）

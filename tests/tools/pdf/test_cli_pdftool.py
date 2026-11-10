@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -855,9 +856,10 @@ class TestWatermarkFeatures:
 
         doc = fitz.open(str(out))
         try:
+            text_dict = cast("dict[str, Any]", doc[0].get_text("dict"))
             sizes = [
                 span["size"]
-                for block in doc[0].get_text("dict")["blocks"]
+                for block in text_dict["blocks"]
                 for line in block.get("lines", [])
                 for span in line["spans"]
                 if "DRAFT" in span["text"]
@@ -1019,7 +1021,7 @@ class TestReorderFeatures:
         doc = fitz.open(str(out))
         try:
             assert doc.page_count == 3
-            assert doc[1].get_text().strip() == ""
+            assert cast("str", doc[1].get_text()).strip() == ""
             assert "Page two" in doc[2].get_text()
         finally:
             doc.close()
@@ -1038,7 +1040,7 @@ class TestReorderFeatures:
         doc = fitz.open(str(out))
         try:
             assert doc.page_count == 2
-            assert doc[0].get_text().strip() == ""
+            assert cast("str", doc[0].get_text()).strip() == ""
             assert "Page two" in doc[1].get_text()
         finally:
             doc.close()

@@ -10,7 +10,7 @@ import queue
 import re
 import threading
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fcmd.tools import _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
@@ -31,6 +31,54 @@ _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$"
 
 class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """ServeWindow 的界面构建与模型列表渲染（mixin）。"""
+
+    if TYPE_CHECKING:
+        # 宿主 ServeWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
+        root: Any
+        _theme: Any
+        _tk: Any
+        _ttk: Any
+        _font: Any
+        _busy: bool
+        _selected_model: Path | None
+        _scan_thread: threading.Thread | None
+        _scan_results: Any
+        _fits: Any
+        _gpu_usage: Any
+        _info_vars: Any
+        _metric_vars: Any
+        _load_vars: Any
+        _gpu_vars: Any
+        _status_var: Any
+        _model_var: Any
+        _profile_var: Any
+        _ctx_var: Any
+        _kv_var: Any
+        _threads_var: Any
+        _wait_var: Any
+        _ubatch_var: Any
+        _name_var: Any
+        _host_var: Any
+        _port_var: Any
+        _alias_var: Any
+        _api_key_var: Any
+        _preview: Any
+        _profile_context: Any
+        _log: Any
+        _clear_log: Any
+        _clear_selection: Any
+        _load_state_safe: Any
+        _on_model_selected: Any
+        _on_profile_changed: Any
+        _on_service_selected: Any
+        _open_browser: Any
+        _refresh_status: Any
+        _select_file: Any
+        _select_model: Any
+        _show_logs: Any
+        _start: Any
+        _stop: Any
+        _sync_tree_selection: Any
 
     # ------------------------------------------------------------------ #
     # 界面

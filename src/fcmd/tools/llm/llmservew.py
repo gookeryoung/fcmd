@@ -20,7 +20,7 @@ import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, cast, override
 
 import fcmd
 from fcmd.tools import _guiconfig, _guitheme, _guiwindow
@@ -231,6 +231,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
     # ------------------------------------------------------------------ #
     # 模型选择
     # ------------------------------------------------------------------ #
+    @override
     def _on_model_selected(self, _event: object | None = None) -> None:
         if self._syncing_selection:
             return
@@ -241,12 +242,14 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         if 0 <= index < len(self._models):
             self._select_model(self._models[index].path)
 
+    @override
     def _on_profile_changed(self, _event: object | None = None) -> None:
         """切换档位后按新的上下文 / KV 重算模型列表的硬件适配标注。"""
         self._render_models()
         if self._selected_model is not None:
             self._show_model_hint(self._selected_model)
 
+    @override
     def _select_file(self) -> None:
         path = self._filedialog.askopenfilename(
             title="选择 GGUF 模型",
@@ -257,6 +260,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._tree.selection_remove(*self._tree.selection())
         self._select_model(Path(path).resolve())
 
+    @override
     def _select_model(self, path: Path, *, update_name: bool = True) -> None:
         self._selected_model = path
         self._model_var.set(str(path))
@@ -273,6 +277,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         return cleaned or DEFAULT_NAME
 
     @staticmethod
+    @override
     def _load_state_safe(name: str) -> ServeState | None:
         """按服务名读取状态；名称非法或状态缺失时返回 ``None``。"""
         if not name:
@@ -282,6 +287,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         except ServeError:
             return None
 
+    @override
     def _on_service_selected(self, _event: object | None = None) -> None:
         """选中服务名后同步定位其模型，便于停止已加载的模型。"""
         name = self._name_var.get().strip()
@@ -292,6 +298,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._select_model(path, update_name=False)
         self._sync_tree_selection(path)
 
+    @override
     def _sync_tree_selection(self, path: Path) -> None:
         """在模型树中选中指定路径的条目（不触发服务名联动）。"""
         key = llmenv.path_key(path)
@@ -325,6 +332,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._log(f"  标签: {label}")
         self._log(f"  建议: {advice}")
 
+    @override
     def _profile_context(self) -> tuple[str, int, str]:
         """当前表单下的档位名、上下文与 KV 类型（输入无效时回退到档位默认值）。"""
         name = self._profile_var.get().strip() or DEFAULT_PROFILE
@@ -336,6 +344,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         kv_type = self._kv_var.get().strip() or profile.kv_type
         return name, context, kv_type if kv_type in KV_SCALE else profile.kv_type
 
+    @override
     def _fits(self, size: int) -> tuple[llmmodel.VramFit | None, llmmodel.VramFit | None]:
         """返回（整卡能力, 当前可用）两套显存估算；未检测到 GPU 时均为 ``None``。"""
         if self._gpu_mib is None:
@@ -380,6 +389,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         available = free.available if free is not None else total.available
         return f"硬件: {detail}预计占 {human_size(total.needed)} / 可用显存 {human_size(available)}"
 
+    @override
     def _clear_selection(self) -> None:
         self._tree.selection_remove(*self._tree.selection())
         self._selected_model = None
@@ -431,6 +441,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         )
 
     @staticmethod
+    @override
     def _gpu_usage() -> tuple[int, int] | None:
         """查询 GPU 已用 / 总显存（MiB）；nvidia-smi 不可用时返回 ``None``。"""
         result = llmbase.run_command(
@@ -479,6 +490,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
     # ------------------------------------------------------------------ #
     # 动作
     # ------------------------------------------------------------------ #
+    @override
     def _preview(self) -> None:
         try:
             plan = self._build_plan()
@@ -512,6 +524,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
                 f"建议{_busy_advice(free, plan.context, plan.effective_kv_type)}"
             )
 
+    @override
     def _start(self) -> None:
         if self._busy:
             self._log("已有任务正在进行，请等待完成")
@@ -533,6 +546,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._stop_monitor("启动中…")
         self._begin_task(self._start_work, (plan, wait_s))
 
+    @override
     def _stop(self) -> None:
         """停止所有已登记的服务，无需先选择服务名。"""
         if self._busy:
@@ -647,6 +661,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
             self._status_var.set("无运行中的服务（已清理残留状态）")
         self._start_system_monitor()
 
+    @override
     def _refresh_status(self) -> None:
         self._refresh_loaded()
         self._refresh_service_names()
@@ -676,6 +691,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
             self._stop_monitor("服务未运行")
             self._start_system_monitor()
 
+    @override
     def _open_browser(self) -> None:
         """在默认浏览器中打开服务地址（优先用运行中服务的实际地址，否则用表单配置）。"""
         import webbrowser
@@ -728,6 +744,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
             self._log(f"无法打开浏览器，请手动访问: {url}")
             self._messagebox.showerror("打开失败", f"无法打开浏览器，请手动访问: {url}")
 
+    @override
     def _show_logs(self) -> None:
         self._notebook.select(1)
         try:
@@ -764,9 +781,11 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
     # ------------------------------------------------------------------ #
     # 日志
     # ------------------------------------------------------------------ #
+    @override
     def _log(self, message: str) -> None:
         _guiwindow.append_log(self._log_text, message)
 
+    @override
     def _clear_log(self) -> None:
         """清空输出日志区域。"""
         _guiwindow.clear_log(self._log_text)

@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from fcmd.tools._deps import missing_dependency
 from fcmd.tools.pdf.models import MergeSpec, PageSelection, SplitSpec
@@ -390,7 +390,7 @@ def pdf_rotate(
 def _auto_crop_rect(page: fitz.Page, margin: int) -> fitz.Rect:
     """按文本/图片块边界计算自动裁剪区域；无内容时返回原页面。"""
     rect = page.rect
-    boxes = page.get_text("blocks")
+    boxes = cast("list[tuple[float, float, float, float, str, int, int]]", page.get_text("blocks"))
     if not boxes:
         return rect
     x0 = max(rect.x0, min(b[0] for b in boxes) - margin)
