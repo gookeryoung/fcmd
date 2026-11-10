@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import shutil
 import sys
 from dataclasses import dataclass, field
@@ -20,16 +21,26 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = [
+    "BulkRenameOptions",
+    "RenameItem",
+    "RenamePlan",
+    "RenameReport",
+    "RenameSource",
     "TrashReport",
+    "apply_rename_plan",
+    "build_new_name",
     "directory_size",
     "filter_names",
     "invert_names",
     "match_names",
     "matches_mask",
+    "plan_bulk_rename",
     "send_to_trash",
     "split_masks",
     "trash_paths",
     "trash_root",
+    "undo_rename",
+    "validate_name",
 ]
 
 # Windows SHFileOperationW 标志（win32 分支使用）
@@ -39,6 +50,9 @@ _FOF_ALLOWUNDO = 0x0040
 _FOF_NOCONFIRMMKDIR = 0x0200
 _FOF_NOERRORUI = 0x0400
 _FO_DELETE = 3
+
+_INVALID_NAME_RE = re.compile(r'[<>:"|?*\x00-\x1f]')
+_CASE_MODES = frozenset({"keep", "lower", "upper", "title"})
 
 
 # ============================================================================ #
@@ -257,3 +271,192 @@ def _trash_windows(path: Path) -> None:
         raise OSError(f"回收站操作失败（代码 {result}）: {path}")
     if operation.fAnyOperationsAborted:
         raise OSError(f"回收站操作被中止: {path}")
+
+
+# ============================================================================ #
+# 批量重命名
+# ============================================================================ #
+def validate_name(name: str) -> str:
+    """校验新建 / 重命名名称，返回去除首尾空白后的名称。"""
+    cleaned = name.strip()
+    if not cleaned:
+        raise ValueError("名称不能为空")
+    if cleaned in (".", ".."):
+        raise ValueError("名称不能是 . 或 ..")
+    if "/" in cleaned or "\\" in cleaned:
+        raise ValueError("名称不能包含路径分隔符")
+    if _INVALID_NAME_RE.search(cleaned):
+        raise ValueError('名称不能包含 < > : " | ? * 等字符')
+    return cleaned
+
+
+@dataclass(frozen=True)
+class RenameSource:
+    """批量重命名的输入项：名称与是否为目录。"""
+
+    name: str
+    is_dir: bool = False
+
+
+@dataclass(frozen=True)
+class BulkRenameOptions:
+    """批量重命名规则（最小语法集，见 ADR 0005）。"""
+
+    find: str = ""
+    replace: str = ""
+    template: str = ""
+    start: int = 1
+    step: int = 1
+    digits: int = 3
+    case: str = "keep"
+    extension: str = ""
+
+
+@dataclass(frozen=True)
+class RenameItem:
+    """单个条目的改名预览；``status`` 取 ok / unchanged / conflict。"""
+
+    source: Path
+    new_name: str
+    status: str
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class RenamePlan:
+    """批量重命名预览计划。"""
+
+    items: tuple[RenameItem, ...]
+
+    @property
+    def changes(self) -> tuple[RenameItem, ...]:
+        """需要实际执行的条目。"""
+        return tuple(item for item in self.items if item.status == "ok")
+
+    @property
+    def conflicts(self) -> tuple[RenameItem, ...]:
+        """被拦下的条目。"""
+        return tuple(item for item in self.items if item.status == "conflict")
+
+
+@dataclass
+class RenameReport:
+    """批量改名执行 / 撤销结果，``completed`` 为 (原路径, 新路径)。"""
+
+    completed: list[tuple[Path, Path]] = field(default_factory=list)
+    errors: list[tuple[Path, str]] = field(default_factory=list)
+
+
+def build_new_name(source: RenameSource, number: int, options: BulkRenameOptions) -> str:
+    """按规则计算单个条目的新名称（不做合法性 / 冲突判断）。"""
+    if options.case not in _CASE_MODES:
+        raise ValueError(f"未知的大小写模式: {options.case}")
+    name = source.name.replace(options.find, options.replace) if options.find else source.name
+    if source.is_dir:
+        stem, suffix = name, ""
+    else:
+        suffix = Path(name).suffix
+        stem = name[: -len(suffix)] if suffix else name
+    if options.case == "lower":
+        stem = stem.lower()
+    elif options.case == "upper":
+        stem = stem.upper()
+    elif options.case == "title":
+        stem = stem.title()
+    if options.extension.strip() == "-":
+        suffix = ""
+    elif options.extension.strip():
+        suffix = "." + options.extension.strip().lstrip(".")
+    if options.template:
+        try:
+            return options.template.format(
+                name=stem,
+                ext=suffix.lstrip("."),
+                n=str(number).zfill(max(options.digits, 1)),
+            )
+        except (KeyError, IndexError, ValueError) as exc:
+            raise ValueError("模板无效（仅支持 {name} {ext} {n}，字面花括号用 {{ }}）") from exc
+    return stem + suffix
+
+
+def plan_bulk_rename(
+    directory: Path,
+    sources: Sequence[RenameSource],
+    options: BulkRenameOptions,
+) -> RenamePlan:
+    """生成预览：标记未变化、非法名、同批重名与目标已存在，冲突不可执行。"""
+    items: list[RenameItem] = []
+    seen: dict[str, int] = {}
+    for position, source in enumerate(sources, start=1):
+        path = directory / source.name
+        try:
+            new_name = build_new_name(source, options.start + (position - 1) * options.step, options)
+        except ValueError as exc:
+            items.append(RenameItem(path, source.name, "conflict", str(exc)))
+            continue
+        if new_name == source.name:
+            items.append(RenameItem(path, new_name, "unchanged", "名称未变化"))
+            continue
+        try:
+            validate_name(new_name)
+        except ValueError as exc:
+            items.append(RenameItem(path, new_name, "conflict", str(exc)))
+            continue
+        key = new_name.casefold()
+        if key in seen:
+            items.append(RenameItem(path, new_name, "conflict", f"与第 {seen[key]} 项目标同名"))
+            continue
+        seen[key] = position
+        target = directory / new_name
+        same_file = os.path.normcase(str(target)) == os.path.normcase(str(path))
+        if not same_file and (target.exists() or target.is_symlink()):
+            items.append(RenameItem(path, new_name, "conflict", "目标已存在"))
+            continue
+        items.append(RenameItem(path, new_name, "ok"))
+    return RenamePlan(tuple(items))
+
+
+def apply_rename_plan(
+    plan: RenamePlan,
+    *,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> RenameReport:
+    """执行计划中状态为 ok 的改名；冲突项一律不执行。"""
+    report = RenameReport()
+    changes = plan.changes
+    total = len(changes)
+    for index, item in enumerate(changes, start=1):
+        target = item.source.with_name(item.new_name)
+        try:
+            same_file = os.path.normcase(str(target)) == os.path.normcase(str(item.source))
+            if not same_file and (target.exists() or target.is_symlink()):
+                raise FileExistsError(f"目标已存在: {target}")
+            item.source.rename(target)
+            report.completed.append((item.source, target))
+        except (OSError, ValueError) as exc:
+            report.errors.append((item.source, str(exc)))
+        if progress is not None:
+            progress(index, total, item.source.name)
+    return report
+
+
+def undo_rename(
+    report: RenameReport,
+    *,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> RenameReport:
+    """按相反顺序撤销一次批量改名；只对本次运行内的记录有效。"""
+    result = RenameReport()
+    completed = list(reversed(report.completed))
+    total = len(completed)
+    for index, (source, target) in enumerate(completed, start=1):
+        try:
+            if source.exists() or source.is_symlink():
+                raise FileExistsError(f"原名称已被占用: {source.name}")
+            target.rename(source)
+            result.completed.append((target, source))
+        except (OSError, ValueError) as exc:
+            result.errors.append((target, str(exc)))
+        if progress is not None:
+            progress(index, total, target.name)
+    return result

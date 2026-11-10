@@ -23,7 +23,6 @@ from __future__ import annotations
 import contextlib
 import os
 import queue
-import re
 import shutil
 import subprocess
 import sys
@@ -39,12 +38,21 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system._cmderw_ops import (
+    BulkRenameOptions,
+    RenameItem,
+    RenamePlan,
+    RenameReport,
+    RenameSource,
     TrashReport,
+    apply_rename_plan,
     directory_size,
     filter_names,
     invert_names,
     match_names,
+    plan_bulk_rename,
     trash_paths,
+    undo_rename,
+    validate_name,
 )
 
 if TYPE_CHECKING:
@@ -116,7 +124,8 @@ __version__ = "0.1.0"
 _DESCRIPTION = (
     "双面板文件管理器窗口版（Tk，Total Commander 风格）：左右面板独立导航与历史，"
     "F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，"
-    "Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Space 统计大小，Alt+F5 打包、Alt+F9 解压，"
+    "Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 批量重命名，Space 统计大小，"
+    "Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，"
     "复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
 )
 
@@ -162,7 +171,6 @@ ARCHIVE_SUFFIXES: tuple[str, ...] = (
     ".rar",
 )
 
-_INVALID_NAME_RE = re.compile(r'[<>:"|?*\x00-\x1f]')
 _HIDDEN_ATTRIBUTE = 0x2
 _MAX_PREVIEW_LINES = 500
 _MAX_ERROR_DETAILS = 10
@@ -542,20 +550,6 @@ def describe_entry(entry: FileEntry) -> str:
 # ============================================================================ #
 # 文件操作
 # ============================================================================ #
-def validate_name(name: str) -> str:
-    """校验新建 / 重命名名称，返回去除首尾空白后的名称。"""
-    cleaned = name.strip()
-    if not cleaned:
-        raise ValueError("名称不能为空")
-    if cleaned in (".", ".."):
-        raise ValueError("名称不能是 . 或 ..")
-    if "/" in cleaned or "\\" in cleaned:
-        raise ValueError("名称不能包含路径分隔符")
-    if _INVALID_NAME_RE.search(cleaned):
-        raise ValueError('名称不能包含 < > : " | ? * 等字符')
-    return cleaned
-
-
 def unique_path(target: Path) -> Path:
     """目标已存在时生成 ``name (2).ext`` 形式的可用路径。"""
     if not (target.exists() or target.is_symlink()):
@@ -1125,6 +1119,18 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if children:
             self.tree.selection_set(children)
 
+    def select_names(self, names: Sequence[str], *, focus: bool = False) -> int:
+        """在可见行中选择给定名称，返回实际选中数。"""
+        visible = set(self.tree.get_children())
+        targets = [name for name in names if name in visible]
+        if targets:
+            self.tree.selection_set(*targets)
+            self.tree.see(targets[0])
+        if focus:
+            self.focus_tree()
+        self._update_status()
+        return len(targets)
+
     def _on_filter_change(self) -> None:
         """过滤框内容变化时重绘列表（只影响显示，不切换目录）。"""
         self._filter = self.filter_var.get().strip()
@@ -1186,6 +1192,206 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.app.open_entry(selected[0])
 
 
+class BulkRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """批量重命名：规则 → 预览 → 冲突拦截 → 执行 → 本次运行内撤销。"""
+
+    _CASE_CHOICES = (("keep", "保持"), ("lower", "小写"), ("upper", "大写"), ("title", "首字母大写"))
+
+    def __init__(self, app: CmderWindow, directory: Path, entries: Sequence[FileEntry]) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.directory = directory
+        self.sources = [RenameSource(entry.name, entry.is_dir) for entry in entries]
+        self._plan: RenamePlan | None = None
+        self._last_report: RenameReport | None = None
+
+        theme = app.theme
+        spacing = theme.spacing
+        self.win = tk.Toplevel(app.root)
+        self.win.title(f"批量重命名 - {directory}")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=940, height=640)
+        self.win.minsize(780, 500)
+        frame = ttk.Frame(self.win, padding=spacing.md)
+        frame.pack(fill="both", expand=True)
+
+        form = ttk.LabelFrame(
+            frame,
+            text="规则（字面替换、{name}/{ext}/{n} 占位、大小写、扩展名）",
+            padding=spacing.sm,
+        )
+        form.pack(fill="x", pady=(0, spacing.sm))
+        form.grid_columnconfigure(1, weight=1)
+        form.grid_columnconfigure(3, weight=1)
+
+        self.find_var = tk.StringVar()
+        self.replace_var = tk.StringVar()
+        self.template_var = tk.StringVar()
+        self.start_var = tk.StringVar(value="1")
+        self.step_var = tk.StringVar(value="1")
+        self.digits_var = tk.StringVar(value="3")
+        self.extension_var = tk.StringVar()
+        self.case_var = tk.StringVar(value=self._CASE_CHOICES[0][1])
+
+        ttk.Label(form, text="查找：").grid(row=0, column=0, sticky="w")
+        ttk.Entry(form, textvariable=self.find_var).grid(row=0, column=1, sticky="ew", padx=(0, spacing.sm))
+        ttk.Label(form, text="替换：").grid(row=0, column=2, sticky="w")
+        ttk.Entry(form, textvariable=self.replace_var).grid(row=0, column=3, sticky="ew")
+
+        ttk.Label(form, text="模板：").grid(row=1, column=0, sticky="w")
+        ttk.Entry(form, textvariable=self.template_var).grid(row=1, column=1, sticky="ew", padx=(0, spacing.sm))
+        ttk.Label(form, text="例：{name}_{n} 或 {name}").grid(row=1, column=2, columnspan=2, sticky="w")
+
+        ttk.Label(form, text="序号：").grid(row=2, column=0, sticky="w")
+        number_row = ttk.Frame(form)
+        number_row.grid(row=2, column=1, sticky="ew", padx=(0, spacing.sm))
+        ttk.Label(number_row, text="起始").pack(side="left")
+        ttk.Entry(number_row, textvariable=self.start_var, width=6).pack(side="left", padx=(2, spacing.sm))
+        ttk.Label(number_row, text="步长").pack(side="left")
+        ttk.Entry(number_row, textvariable=self.step_var, width=6).pack(side="left", padx=(2, spacing.sm))
+        ttk.Label(number_row, text="位数").pack(side="left")
+        ttk.Entry(number_row, textvariable=self.digits_var, width=6).pack(side="left", padx=(2, 0))
+        ttk.Label(form, text="大小写：").grid(row=2, column=2, sticky="w")
+        ttk.Combobox(
+            form,
+            textvariable=self.case_var,
+            state="readonly",
+            width=12,
+            values=[label for _, label in self._CASE_CHOICES],
+        ).grid(row=2, column=3, sticky="w")
+
+        ttk.Label(form, text="扩展名：").grid(row=3, column=0, sticky="w")
+        ttk.Entry(form, textvariable=self.extension_var).grid(row=3, column=1, sticky="ew", padx=(0, spacing.sm))
+        ttk.Label(form, text="留空不变，填 - 移除，其他值作为新扩展名").grid(row=3, column=2, columnspan=2, sticky="w")
+
+        button_row = ttk.Frame(frame)
+        button_row.pack(fill="x", pady=(0, spacing.sm))
+        ttk.Button(button_row, text="预览", style="Accent.TButton", command=self.preview).pack(side="left")
+        self.execute_button = ttk.Button(button_row, text="执行", command=self.execute, state="disabled")
+        self.execute_button.pack(side="left", padx=spacing.sm)
+        self.undo_button = ttk.Button(button_row, text="撤销上次执行", command=self.undo, state="disabled")
+        self.undo_button.pack(side="left")
+        ttk.Label(button_row, text="撤销仅本次运行有效，关闭窗口后不可用", style="Muted.TLabel").pack(
+            side="left", padx=spacing.sm
+        )
+        ttk.Button(button_row, text="关闭", command=self.win.destroy).pack(side="right")
+
+        result_frame = ttk.Frame(frame)
+        result_frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(result_frame, columns=("old", "new", "status"), show="headings")
+        self.tree.heading("old", text="原名称")
+        self.tree.heading("new", text="新名称")
+        self.tree.heading("status", text="状态")
+        self.tree.column("old", width=320)
+        self.tree.column("new", width=320)
+        self.tree.column("status", width=240)
+        scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.status_var = tk.StringVar(value=f"已选 {len(self.sources)} 项；填写规则后点“预览”")
+        ttk.Label(frame, textvariable=self.status_var, style="Muted.TLabel").pack(fill="x", pady=(spacing.xs, 0))
+
+        self.preview()
+
+    def _options(self) -> BulkRenameOptions:
+        def integer(text: str, label: str) -> int:
+            try:
+                return int(text.strip())
+            except ValueError as exc:
+                raise ValueError(f"{label}必须是整数") from exc
+
+        case = next((key for key, label in self._CASE_CHOICES if label == self.case_var.get()), "keep")
+        return BulkRenameOptions(
+            find=self.find_var.get(),
+            replace=self.replace_var.get(),
+            template=self.template_var.get().strip(),
+            start=integer(self.start_var.get(), "起始序号"),
+            step=integer(self.step_var.get(), "步长"),
+            digits=integer(self.digits_var.get(), "位数"),
+            case=case,
+            extension=self.extension_var.get().strip(),
+        )
+
+    def preview(self) -> None:
+        """按当前规则刷新预览；有冲突时禁用执行。"""
+        try:
+            options = self._options()
+        except ValueError as exc:
+            self.status_var.set(f"规则无效：{exc}")
+            return
+        self._plan = plan_bulk_rename(self.directory, self.sources, options)
+        self.tree.delete(*self.tree.get_children())
+        for item in self._plan.items:
+            self.tree.insert("", "end", values=(item.source.name, item.new_name, self._status_text(item)))
+        changes = len(self._plan.changes)
+        conflicts = len(self._plan.conflicts)
+        unchanged = len(self._plan.items) - changes - conflicts
+        self.status_var.set(f"预览：可改名 {changes} 项，未变化 {unchanged} 项，冲突 {conflicts} 项")
+        self.execute_button.configure(state="normal" if changes and not conflicts else "disabled")
+
+    @staticmethod
+    def _status_text(item: RenameItem) -> str:
+        if item.status == "ok":
+            return "将改名"
+        if item.status == "unchanged":
+            return "未变化"
+        return f"冲突：{item.note}"
+
+    def execute(self) -> None:
+        """确认后执行预览中无冲突的改名。"""
+        if self.app.busy or self._plan is None:
+            return
+        changes = self._plan.changes
+        if not changes or self._plan.conflicts:
+            return
+        if not self.app._messagebox.askyesno("批量重命名", f"确定执行 {len(changes)} 项改名吗？", parent=self.win):
+            return
+        plan = self._plan
+
+        def task() -> RenameReport:
+            return apply_rename_plan(plan, progress=self.app._progress_callback)
+
+        def done(report: RenameReport) -> None:
+            self._last_report = report if report.completed else None
+            self.app.refresh_both()
+            summary = f"改名完成：成功 {len(report.completed)}，失败 {len(report.errors)}"
+            self.status_var.set(summary)
+            self.tree.delete(*self.tree.get_children())
+            self.execute_button.configure(state="disabled")
+            self.undo_button.configure(state="normal" if self._last_report else "disabled")
+            if report.errors:
+                details = "\n".join(f"{source.name}: {error}" for source, error in report.errors[:_MAX_ERROR_DETAILS])
+                self.app._messagebox.showwarning("批量重命名（有失败）", f"{summary}\n\n{details}", parent=self.win)
+
+        self.app.start_worker(task, done, title=f"批量重命名 {len(changes)} 项")
+
+    def undo(self) -> None:
+        """撤销本次运行内最近一次执行。"""
+        if self.app.busy or self._last_report is None:
+            return
+        report = self._last_report
+
+        def task() -> RenameReport:
+            return undo_rename(report, progress=self.app._progress_callback)
+
+        def done(result: RenameReport) -> None:
+            self.app.refresh_both()
+            self.status_var.set(f"已撤销 {len(result.completed)} 项（仅本次运行有效）")
+            if result.errors:
+                details = "\n".join(f"{path.name}: {error}" for path, error in result.errors[:_MAX_ERROR_DETAILS])
+                self.app._messagebox.showwarning("撤销（有失败）", details, parent=self.win)
+            if len(result.completed) == len(report.completed):
+                self._last_report = None
+            self.undo_button.configure(state="normal" if self._last_report else "disabled")
+            self.preview()
+
+        self.app.start_worker(task, done, title=f"撤销改名 {len(report.completed)} 项")
+
+
 class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
     """文件名 / 内容搜索对话框。"""
 
@@ -1240,6 +1446,19 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         scrollbar.pack(side="right", fill="y")
         self.tree.bind("<Double-1>", self._reveal_selected)
 
+        action_bar = ttk.Frame(frame)
+        action_bar.pack(fill="x", pady=(spacing.xs, 0))
+        ttk.Button(action_bar, text="打开所在目录", command=self._reveal_selected).pack(side="left")
+        ttk.Button(action_bar, text="复制…", command=lambda: self._transfer(move=False)).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
+        ttk.Button(action_bar, text="移动…", command=lambda: self._transfer(move=True)).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
+        ttk.Button(action_bar, text="删除到回收站", command=self._delete).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(action_bar, text="加入面板选择", command=self._adopt).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(action_bar, text="关闭", command=self.win.destroy).pack(side="right")
+
         self.status_var = tk.StringVar(value="输入模式后回车或点击搜索")
         ttk.Label(frame, textvariable=self.status_var, style="Muted.TLabel").pack(fill="x", pady=(spacing.xs, 0))
 
@@ -1275,12 +1494,45 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         self.search_button.configure(state="normal")
         self.status_var.set(f"搜索失败: {message}")
 
+    def _selected_paths(self) -> list[Path]:
+        """选中结果对应的去重路径（内容搜索同一文件可能命中多行）。"""
+        paths: list[Path] = []
+        for iid in self.tree.selection():
+            path = self._hits[int(iid)].path
+            if path not in paths:
+                paths.append(path)
+        return paths
+
     def _reveal_selected(self, _event: Any = None) -> None:
-        selected = self.tree.selection()
-        if not selected:
+        paths = self._selected_paths()
+        if not paths:
+            self.status_var.set("请先选择结果")
             return
-        hit = self._hits[int(selected[0])]
-        self.app.reveal_path(hit.path)
+        self.app.reveal_path(paths[0])
+        self.win.destroy()
+
+    def _transfer(self, *, move: bool) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.status_var.set("请先选择结果")
+            return
+        if self.app.transfer_paths(paths, move=move):
+            self.win.destroy()
+
+    def _delete(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.status_var.set("请先选择结果")
+            return
+        if self.app.delete_paths(paths):
+            self.win.destroy()
+
+    def _adopt(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.status_var.set("请先选择结果")
+            return
+        self.status_var.set(self.app.adopt_paths(paths))
         self.win.destroy()
 
 
@@ -1350,6 +1602,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         edit_menu.add_command(label="移动\tF6", command=self.move_selected)
         edit_menu.add_command(label="删除到回收站\tF8", command=self.delete_selected)
         edit_menu.add_command(label="永久删除\tShift+F8", command=self.permanent_delete_selected)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="批量重命名…\tCtrl+M", command=self.bulk_rename)
         edit_menu.add_separator()
         edit_menu.add_command(label="全选\tCtrl+A", command=self.select_all)
         edit_menu.add_command(label="反选\tCtrl+I", command=self.invert_selection)
@@ -1475,6 +1729,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-h>": lambda _event: self.toggle_hidden(),
             "<Control-s>": lambda _event: self.focus_filter(),
             "<Control-i>": lambda _event: self.invert_selection(),
+            "<Control-m>": lambda _event: self.bulk_rename(),
             "<Control-u>": lambda _event: self.swap_panels(),
             "<Control-a>": lambda _event: self.select_all(),
             "<Escape>": lambda _event: self.clear_filter(),
@@ -1729,11 +1984,17 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._transfer(move=True)
 
     def _transfer(self, *, move: bool) -> None:
-        if self._busy:
-            return
         paths = self._selected_paths()
+        if paths:
+            self.transfer_paths(paths, move=move)
+
+    def transfer_paths(self, paths: Sequence[Path], *, move: bool) -> bool:
+        """通用复制 / 移动入口：弹目标框、规划并后台执行，返回是否已启动。"""
+        if self._busy:
+            self._messagebox.showinfo("请稍候", "已有后台任务在运行", parent=self.root)
+            return False
         if not paths:
-            return
+            return False
         action = "移动" if move else "复制"
         default_destination = self.other_panel().state.path
         destination_text = self._simpledialog.askstring(
@@ -1743,7 +2004,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             parent=self.root,
         )
         if destination_text is None:
-            return
+            return False
         raw = destination_text.strip() or default_destination
         destination = Path(raw).expanduser()
         if not destination.is_absolute():
@@ -1752,10 +2013,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             items, skipped = plan_transfer(paths, destination, conflict="ask", chooser=self._ask_conflict)
         except (OSError, ValueError) as exc:
             self.show_error(f"无法{action}", str(exc))
-            return
+            return False
         if not items:
             self.set_status("没有需要操作的条目")
-            return
+            return False
 
         def task() -> OperationReport:
             return transfer_entries(items, move=move, progress=self._progress_callback)
@@ -1770,26 +2031,62 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
                 self._messagebox.showwarning(f"{action}完成（有失败）", f"{summary}\n\n{details}", parent=self.root)
 
         self.start_worker(task, done, title=f"{action} {len(items)} 项")
+        return True
 
     def delete_selected(self) -> None:
         """F8 移入系统回收站（可撤销）。"""
-        if self._busy:
-            return
         paths = self._selected_paths()
+        if paths:
+            self.delete_paths(paths)
+
+    def permanent_delete_selected(self) -> None:
+        """Shift+F8 永久删除选中条目。"""
+        paths = self._selected_paths()
+        if paths:
+            self.delete_paths(paths, permanent=True)
+
+    def delete_paths(self, paths: Sequence[Path], *, permanent: bool = False) -> bool:
+        """通用删除入口：默认进回收站，``permanent`` 为永久删除；返回是否已启动。"""
+        if self._busy:
+            self._messagebox.showinfo("请稍候", "已有后台任务在运行", parent=self.root)
+            return False
         if not paths:
-            return
+            return False
+        if permanent:
+            confirmed = self._messagebox.askyesno(
+                "确认永久删除",
+                f"确定永久删除选中的 {len(paths)} 项吗？\n此操作不可撤销，不会进入回收站。",
+                parent=self.root,
+            )
+            if not confirmed:
+                return False
+
+            def task() -> OperationReport:
+                return delete_entries(paths, progress=self._progress_callback)
+
+            def done(report: OperationReport) -> None:
+                self.refresh_both()
+                summary = f"删除完成：成功 {len(report.completed)}，失败 {len(report.errors)}"
+                self.set_status(summary)
+                if report.errors:
+                    details = "\n".join(f"{path.name}: {error}" for path, error in report.errors[:_MAX_ERROR_DETAILS])
+                    self._messagebox.showwarning("删除完成（有失败）", f"{summary}\n\n{details}", parent=self.root)
+
+            self.start_worker(task, done, title=f"删除 {len(paths)} 项")
+            return True
+
         confirmed = self._messagebox.askyesno(
             "移入回收站",
             f"确定将选中的 {len(paths)} 项移入回收站吗？",
             parent=self.root,
         )
         if not confirmed:
-            return
+            return False
 
-        def task() -> TrashReport:
+        def trash_task() -> TrashReport:
             return trash_paths(paths, progress=self._progress_callback)
 
-        def done(report: TrashReport) -> None:
+        def trash_done(report: TrashReport) -> None:
             self.refresh_both()
             summary = f"移入回收站：成功 {len(report.completed)}，失败 {len(report.errors)}"
             self.set_status(summary)
@@ -1801,35 +2098,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
                     parent=self.root,
                 )
 
-        self.start_worker(task, done, title=f"移入回收站 {len(paths)} 项")
-
-    def permanent_delete_selected(self) -> None:
-        """Shift+F8 永久删除选中条目。"""
-        if self._busy:
-            return
-        paths = self._selected_paths()
-        if not paths:
-            return
-        confirmed = self._messagebox.askyesno(
-            "确认永久删除",
-            f"确定永久删除选中的 {len(paths)} 项吗？\n此操作不可撤销，不会进入回收站。",
-            parent=self.root,
-        )
-        if not confirmed:
-            return
-
-        def task() -> OperationReport:
-            return delete_entries(paths, progress=self._progress_callback)
-
-        def done(report: OperationReport) -> None:
-            self.refresh_both()
-            summary = f"删除完成：成功 {len(report.completed)}，失败 {len(report.errors)}"
-            self.set_status(summary)
-            if report.errors:
-                details = "\n".join(f"{path.name}: {error}" for path, error in report.errors[:_MAX_ERROR_DETAILS])
-                self._messagebox.showwarning("删除完成（有失败）", f"{summary}\n\n{details}", parent=self.root)
-
-        self.start_worker(task, done, title=f"删除 {len(paths)} 项")
+        self.start_worker(trash_task, trash_done, title=f"移入回收站 {len(paths)} 项")
+        return True
 
     def new_folder(self) -> None:
         """F7 新建目录。"""
@@ -1848,12 +2118,15 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.set_status(f"已创建目录 {target.name}")
 
     def rename_selected(self) -> None:
-        """F2 重命名单个条目。"""
+        """F2 重命名单个条目；多选时转到批量重命名。"""
         if self._busy:
             return
         panel = self.active_panel()
         entries = panel.selected_entries()
-        if len(entries) != 1:
+        if len(entries) > 1:
+            self.bulk_rename()
+            return
+        if not entries:
             self._messagebox.showinfo("重命名", "请选择一个文件或文件夹", parent=self.root)
             return
         entry = entries[0]
@@ -1869,6 +2142,37 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             return
         panel.refresh(select=target.name)
         self.set_status(f"已重命名为 {target.name}")
+
+    def bulk_rename(self) -> None:
+        """Ctrl+M 批量重命名选中条目。"""
+        if self._busy:
+            return
+        panel = self.active_panel()
+        entries = panel.selected_entries()
+        if not entries:
+            self._messagebox.showinfo("批量重命名", "请先选择文件或文件夹", parent=self.root)
+            return
+        BulkRenameDialog(self, Path(panel.state.path), entries)
+
+    def adopt_paths(self, paths: Sequence[Path]) -> str:
+        """把搜索结果加入活动面板选择；跨目录结果按目录统计提示。"""
+        panel = self.active_panel()
+        first_dir = paths[0].parent
+        same_dir: list[str] = []
+        skipped: dict[Path, int] = {}
+        for path in paths:
+            if path.parent == first_dir:
+                same_dir.append(path.name)
+            else:
+                skipped[path.parent] = skipped.get(path.parent, 0) + 1
+        panel.set_path(first_dir)
+        selected = panel.select_names(same_dir, focus=True)
+        message = f"已加入选择：{selected} 项（{first_dir}）"
+        if skipped:
+            details = "；".join(f"{directory}（{count} 项）" for directory, count in skipped.items())
+            message += f"；已跳过的其他目录：{details}"
+        self.set_status(message)
+        return message
 
     def pack_selected(self) -> None:
         """Alt+F5 打包选中条目。"""
@@ -2099,7 +2403,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "Ctrl+F 搜索    Ctrl+S 快速过滤    Esc 清除过滤\n"
             "Ctrl+H 隐藏文件    Ctrl+R 刷新    Ctrl+U 交换面板\n"
             "Ctrl+A 全选    Ctrl+I 反选    Num+ 按掩码选择    Num- 按掩码取消\n"
-            "Alt+Enter 属性"
+            "Ctrl+M 批量重命名    Alt+Enter 属性\n"
+            "搜索结果可直接打开所在目录、复制、移动、删除或加入面板选择"
         )
         self._messagebox.showinfo("快捷键", text, parent=self.root)
 

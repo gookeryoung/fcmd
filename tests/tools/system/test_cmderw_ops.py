@@ -202,3 +202,171 @@ class TestTrash:
         assert report.completed == [good]
         assert report.errors == [(bad, "拒绝访问")]
         assert events == [(1, 2, "good.txt"), (2, 2, "bad.txt")]
+
+
+# ============================================================================ #
+# 批量重命名
+# ============================================================================ #
+class TestBuildNewName:
+    def test_find_replace_is_literal(self) -> None:
+        source = ops.RenameSource("IMG_001.png")
+        assert ops.build_new_name(source, 1, ops.BulkRenameOptions(find="IMG", replace="photo")) == "photo_001.png"
+
+    def test_find_treats_regex_chars_literally(self) -> None:
+        source = ops.RenameSource("a.b.txt")
+        options = ops.BulkRenameOptions(find=".", replace="_")
+        assert ops.build_new_name(source, 1, options) == "a_b_txt"
+
+    @pytest.mark.parametrize(
+        ("case", "expected"),
+        [
+            ("keep", "My File.TXT"),
+            ("lower", "my file.TXT"),
+            ("upper", "MY FILE.TXT"),
+            ("title", "My File.TXT"),
+        ],
+    )
+    def test_case_applies_to_stem_only(self, case: str, expected: str) -> None:
+        assert ops.build_new_name(ops.RenameSource("My File.TXT"), 1, ops.BulkRenameOptions(case=case)) == expected
+
+    def test_unknown_case_mode(self) -> None:
+        with pytest.raises(ValueError, match="大小写"):
+            ops.build_new_name(ops.RenameSource("a.txt"), 1, ops.BulkRenameOptions(case="weird"))
+
+    @pytest.mark.parametrize(
+        ("extension", "expected"),
+        [
+            ("", "a.txt"),
+            ("-", "a"),
+            ("md", "a.md"),
+            (".tar.gz", "a.tar.gz"),
+        ],
+    )
+    def test_extension(self, extension: str, expected: str) -> None:
+        assert ops.build_new_name(ops.RenameSource("a.txt"), 1, ops.BulkRenameOptions(extension=extension)) == expected
+
+    def test_template_with_number(self) -> None:
+        options = ops.BulkRenameOptions(template="{name}_{n}", digits=3)
+        assert ops.build_new_name(ops.RenameSource("report.txt"), 7, options) == "report_007"
+
+    def test_template_with_extension(self) -> None:
+        options = ops.BulkRenameOptions(template="{n}-{name}.{ext}", digits=2, case="lower")
+        assert ops.build_new_name(ops.RenameSource("Report.TXT"), 3, options) == "03-report.TXT"
+
+    def test_template_without_extension(self) -> None:
+        options = ops.BulkRenameOptions(template="{name}.bak")
+        assert ops.build_new_name(ops.RenameSource("README"), 1, options) == "README.bak"
+
+    def test_invalid_template(self) -> None:
+        with pytest.raises(ValueError, match="模板无效"):
+            ops.build_new_name(ops.RenameSource("a.txt"), 1, ops.BulkRenameOptions(template="{unknown}"))
+
+    def test_directory_does_not_split_extension(self) -> None:
+        options = ops.BulkRenameOptions(find=".", replace="_")
+        source = ops.RenameSource("v1.2", is_dir=True)
+        assert ops.build_new_name(source, 1, options) == "v1_2"
+
+    def test_number_start_step_digits(self) -> None:
+        options = ops.BulkRenameOptions(template="{name}-{n}", start=10, step=5, digits=2)
+        assert ops.build_new_name(ops.RenameSource("a.txt"), 20, options) == "a-20"
+
+
+class TestRenamePlan:
+    def test_unchanged_entries(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        plan = ops.plan_bulk_rename(tmp_path, [ops.RenameSource("a.txt")], ops.BulkRenameOptions(find="zzz"))
+        assert plan.items[0].status == "unchanged"
+        assert plan.changes == ()
+        assert plan.conflicts == ()
+
+    def test_duplicate_targets_are_conflicts(self, tmp_path: Path) -> None:
+        for name in ("a.txt", "b.txt"):
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt"), ops.RenameSource("b.txt")],
+            ops.BulkRenameOptions(template="same"),
+        )
+        assert [item.status for item in plan.items] == ["ok", "conflict"]
+        assert "同名" in plan.items[1].note
+
+    def test_existing_target_is_conflict(self, tmp_path: Path) -> None:
+        for name in ("a.txt", "b.txt"):
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt")],
+            ops.BulkRenameOptions(template="b.txt"),
+        )
+        assert plan.items[0].status == "conflict"
+        assert plan.items[0].note == "目标已存在"
+
+    def test_invalid_name_is_conflict(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt")],
+            ops.BulkRenameOptions(template="bad:name"),
+        )
+        assert plan.items[0].status == "conflict"
+        assert "不能包含" in plan.items[0].note
+
+    def test_case_only_rename_is_allowed(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt")],
+            ops.BulkRenameOptions(case="upper"),
+        )
+        assert plan.items[0].status == "ok"
+
+    def test_apply_only_executes_ok_items(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+        (tmp_path / "b.txt").write_text("b", encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt"), ops.RenameSource("b.txt")],
+            ops.BulkRenameOptions(find=".txt", replace=".md"),
+        )
+        assert not plan.conflicts
+
+        report = ops.apply_rename_plan(plan)
+
+        assert report.errors == []
+        assert (tmp_path / "a.md").read_text(encoding="utf-8") == "a"
+        assert (tmp_path / "b.md").read_text(encoding="utf-8") == "b"
+        assert not (tmp_path / "a.txt").exists()
+
+    def test_undo_round_trip(self, tmp_path: Path) -> None:
+        for name in ("a.txt", "b.txt"):
+            (tmp_path / name).write_text(name, encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt"), ops.RenameSource("b.txt")],
+            ops.BulkRenameOptions(template="{name}.bak"),
+        )
+        report = ops.apply_rename_plan(plan)
+        assert len(report.completed) == 2
+
+        undone = ops.undo_rename(report)
+
+        assert undone.errors == []
+        assert (tmp_path / "a.txt").read_text(encoding="utf-8") == "a.txt"
+        assert (tmp_path / "b.txt").read_text(encoding="utf-8") == "b.txt"
+        assert not (tmp_path / "a.txt.bak").exists()
+
+    def test_undo_reports_occupied_source(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("a", encoding="utf-8")
+        plan = ops.plan_bulk_rename(
+            tmp_path,
+            [ops.RenameSource("a.txt")],
+            ops.BulkRenameOptions(find=".txt", replace=".md"),
+        )
+        report = ops.apply_rename_plan(plan)
+        (tmp_path / "a.txt").write_text("new", encoding="utf-8")
+
+        undone = ops.undo_rename(report)
+
+        assert undone.completed == []
+        assert "已被占用" in undone.errors[0][1]
+        assert (tmp_path / "a.md").exists()
