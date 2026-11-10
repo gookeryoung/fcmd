@@ -958,9 +958,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.tree.bind("<Button-3>", app.show_context_menu)
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<FocusIn>", lambda _event: app.set_active(self))
-        self.tree.bind("<KP_Add>", lambda _event: app.select_by_mask())
-        self.tree.bind("<KP_Subtract>", lambda _event: app.deselect_by_mask())
-        self.tree.bind("<space>", lambda _event: app.show_selected_size())
+        self.tree.bind("<KP_Add>", lambda _event: self._select_by_mask())
+        self.tree.bind("<KP_Subtract>", lambda _event: self._deselect_by_mask())
+        self.tree.bind("<space>", lambda _event: self._show_size())
 
         self.status_var = tk.StringVar()
         ttk.Label(self.frame, textvariable=self.status_var, style="Muted.TLabel").pack(fill="x", pady=(spacing.xxs, 0))
@@ -1163,6 +1163,21 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def focus_tree(self) -> None:
         """把键盘焦点移到文件列表。"""
         self.tree.focus_set()
+
+    def _select_by_mask(self) -> None:
+        """Num+：先激活本面板，再按掩码增选。"""
+        self.app.set_active(self)
+        self.app.select_by_mask()
+
+    def _deselect_by_mask(self) -> None:
+        """Num-：先激活本面板，再按掩码取消选择。"""
+        self.app.set_active(self)
+        self.app.deselect_by_mask()
+
+    def _show_size(self) -> None:
+        """Space：先激活本面板，再统计选中项大小。"""
+        self.app.set_active(self)
+        self.app.show_selected_size()
 
     def _on_activate(self, _event: Any = None) -> None:
         self.app.set_active(self)
