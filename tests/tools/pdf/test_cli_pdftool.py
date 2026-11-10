@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Any, cast
 
@@ -1176,6 +1177,373 @@ class TestToImagesFormat:
         pdf_to_images(sample_pdf, out_dir, quality=0)
         assert "取值范围为 1-100" in capsys.readouterr().out
         assert not out_dir.exists()
+
+
+# ---------------------------------------------------------------------- #
+# 目录批处理（P3）
+# ---------------------------------------------------------------------- #
+class TestBatchProcessing:
+    """目录输入、递归、跳过已存在、静默输出与目录配对。"""
+
+    @staticmethod
+    def _copy_pdfs(files: list[Path], target_dir: Path) -> Path:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for src in files:
+            shutil.copy(src, target_dir / src.name)
+        return target_dir
+
+    def test_split_directory_batch(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """目录输入：每个 PDF 拆分到独立子目录，非 PDF 文件被忽略。"""
+        a, b = sample_pdf_ab
+        src_dir = self._copy_pdfs([a, b], tmp_path / "src")
+        (src_dir / "note.txt").write_text("skip me", encoding="utf-8")
+        out_dir = tmp_path / "out"
+        code = run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert (out_dir / "a" / "a_page_1.pdf").exists()
+        assert (out_dir / "b" / "b_page_2.pdf").exists()
+        assert "批处理完成: 2/2 个文件" in capsys.readouterr().out
+
+    def test_split_directory_single_pdf_no_summary(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """目录中仅一个 PDF 时不打印批处理汇总。"""
+        src_dir = self._copy_pdfs([sample_pdf], tmp_path / "src")
+        out_dir = tmp_path / "out"
+        code = run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert (out_dir / "sample" / "sample_page_1.pdf").exists()
+        assert "批处理完成" not in capsys.readouterr().out
+
+    def test_split_recursive(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """--recursive 递归子目录；默认只处理顶层。"""
+        a, b = sample_pdf_ab
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        shutil.copy(a, src_dir / "a.pdf")
+        nested = src_dir / "nested"
+        nested.mkdir()
+        shutil.copy(b, nested / "b.pdf")
+
+        flat_out = tmp_path / "flat"
+        run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(flat_out)])
+        assert (flat_out / "a").exists()
+        assert not (flat_out / "b").exists()
+
+        deep_out = tmp_path / "deep"
+        run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(deep_out), "--recursive"])
+        assert (deep_out / "b" / "b_page_1.pdf").exists()
+
+    def test_split_skip_existing(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--skip-existing 跳过已有输出的 PDF，其余照常处理。"""
+        a, b = sample_pdf_ab
+        src_dir = self._copy_pdfs([a, b], tmp_path / "src")
+        out_dir = tmp_path / "out"
+        stale = out_dir / "a" / "stale.pdf"
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"stale")
+        code = run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(out_dir), "--skip-existing"])
+        assert code == 0
+        assert stale.read_bytes() == b"stale"
+        assert [p.name for p in (out_dir / "a").iterdir()] == ["stale.pdf"]
+        assert (out_dir / "b" / "b_page_1.pdf").exists()
+        out = capsys.readouterr().out
+        assert "跳过已存在" in out
+        assert "批处理完成: 1/2 个文件" in out
+
+    def test_split_silent(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--silent 不输出逐文件日志与汇总。"""
+        a, b = sample_pdf_ab
+        src_dir = self._copy_pdfs([a, b], tmp_path / "src")
+        out_dir = tmp_path / "out"
+        code = run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(out_dir), "--silent"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "拆分完成" not in out
+        assert "批处理完成" not in out
+        assert (out_dir / "a" / "a_page_1.pdf").exists()
+
+    def test_directory_without_pdfs(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """空目录打印错误且不产生输出。"""
+        src_dir = tmp_path / "empty"
+        src_dir.mkdir()
+        out_dir = tmp_path / "out"
+        code = run_tool("pdftool", ["s", str(src_dir), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert "目录中没有 PDF 文件" in capsys.readouterr().out
+        assert not out_dir.exists()
+
+    def test_xt_directory_batch(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """xt 目录输入：每个 PDF 输出同名 .txt。"""
+        a, b = sample_pdf_ab
+        src_dir = self._copy_pdfs([a, b], tmp_path / "src")
+        out_dir = tmp_path / "txt"
+        code = run_tool("pdftool", ["xt", str(src_dir), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert "A1 content" in (out_dir / "a.txt").read_text(encoding="utf-8")
+        assert "B2 content" in (out_dir / "b.txt").read_text(encoding="utf-8")
+
+    def test_split_single_skip_existing(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """单文件模式 --skip-existing 检测同前缀输出。"""
+        out_dir = tmp_path / "split"
+        out_dir.mkdir()
+        stale = out_dir / "sample_page_1.pdf"
+        stale.write_bytes(b"stale")
+        code = run_tool("pdftool", ["s", str(sample_pdf), "--output-dir", str(out_dir), "--skip-existing"])
+        assert code == 0
+        assert stale.read_bytes() == b"stale"
+        assert "跳过已存在" in capsys.readouterr().out
+
+    def test_xt_single_skip_existing(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """单文件模式 --skip-existing 保留已有输出。"""
+        out = tmp_path / "out.txt"
+        out.write_text("keep", encoding="utf-8")
+        code = run_tool("pdftool", ["xt", str(sample_pdf), "--output-path", str(out), "--skip-existing"])
+        assert code == 0
+        assert out.read_text(encoding="utf-8") == "keep"
+        assert "跳过已存在" in capsys.readouterr().out
+
+    def test_xt_default_output(self, sample_pdf: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """未指定输出且目标不存在时写入默认 output.txt。"""
+        monkeypatch.chdir(tmp_path)
+        code = run_tool("pdftool", ["xt", str(sample_pdf), "--skip-existing"])
+        assert code == 0
+        assert (tmp_path / "output.txt").exists()
+
+    def test_img_directory_batch(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """img 目录输入：每个 PDF 输出到以 stem 命名的子目录。"""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        shutil.copy(sample_pdf, src_dir / "p1.pdf")
+        shutil.copy(sample_pdf, src_dir / "p2.pdf")
+        out_dir = tmp_path / "imgs"
+        code = run_tool("pdftool", ["img", str(src_dir), "--output-dir", str(out_dir), "--dpi", "72"])
+        assert code == 0
+        assert sorted(p.name for p in (out_dir / "p1").glob("*.png")) == ["p1_page_1.png", "p1_page_2.png"]
+        assert (out_dir / "p2" / "p2_page_2.png").exists()
+
+    def test_img_single_skip_existing(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """img 单文件模式 --skip-existing 无匹配输出时正常转换。"""
+        out_dir = tmp_path / "imgs"
+        out_dir.mkdir()
+        (out_dir / "other.txt").write_text("x", encoding="utf-8")
+        code = run_tool(
+            "pdftool", ["img", str(sample_pdf), "--output-dir", str(out_dir), "--dpi", "72", "--skip-existing"]
+        )
+        assert code == 0
+        assert (out_dir / "sample_page_1.png").exists()
+
+    def test_xi_directory_batch(self, sample_pdf_with_image: Path, tmp_path: Path) -> None:
+        """xi 目录输入：每个 PDF 输出到以 stem 命名的子目录。"""
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        shutil.copy(sample_pdf_with_image, src_dir / "pic1.pdf")
+        shutil.copy(sample_pdf_with_image, src_dir / "pic2.pdf")
+        out_dir = tmp_path / "imgs"
+        code = run_tool("pdftool", ["xi", str(src_dir), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert list((out_dir / "pic1").glob("page_*"))
+        assert list((out_dir / "pic2").glob("page_*"))
+
+    def test_xi_single_skip_existing(
+        self, sample_pdf_with_image: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """xi 单文件模式 --skip-existing 检测已提取图片。"""
+        out_dir = tmp_path / "imgs"
+        out_dir.mkdir()
+        stale = out_dir / "page_1_img_1.png"
+        stale.write_bytes(b"stale")
+        code = run_tool("pdftool", ["xi", str(sample_pdf_with_image), "--output-dir", str(out_dir), "--skip-existing"])
+        assert code == 0
+        assert stale.read_bytes() == b"stale"
+        assert "跳过已存在" in capsys.readouterr().out
+
+    def test_compare_directory_batch(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """两个目录按同名文件配对批量比较。"""
+        a, b = sample_pdf_ab
+        dir1 = tmp_path / "v1"
+        dir2 = tmp_path / "v2"
+        dir1.mkdir()
+        dir2.mkdir()
+        shutil.copy(a, dir1 / "doc.pdf")
+        shutil.copy(b, dir2 / "doc.pdf")
+        out_dir = tmp_path / "diff"
+        code = run_tool("pdftool", ["compare", str(dir1), str(dir2), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert (out_dir / "doc.diff.pdf").exists()
+        assert "批处理完成: 1/1 个文件" not in capsys.readouterr().out
+
+    def test_compare_directory_missing_counterpart(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """第二个目录缺少同名文件时打印警告并跳过。"""
+        a, b = sample_pdf_ab
+        dir1 = tmp_path / "v1"
+        dir2 = tmp_path / "v2"
+        dir1.mkdir()
+        dir2.mkdir()
+        shutil.copy(a, dir1 / "a.pdf")
+        shutil.copy(b, dir1 / "b.pdf")
+        shutil.copy(a, dir2 / "a.pdf")
+        out_dir = tmp_path / "diff"
+        code = run_tool("pdftool", ["compare", str(dir1), str(dir2), "--output-dir", str(out_dir)])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "警告: 第二个目录缺少对应文件: b.pdf" in out
+        assert "批处理完成: 1/2 个文件" in out
+        assert (out_dir / "a.diff.pdf").exists()
+        assert not (out_dir / "b.diff.pdf").exists()
+
+    def test_compare_mixed_inputs_error(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """目录与文件混用时打印错误。"""
+        a, b = sample_pdf_ab
+        dir1 = tmp_path / "v1"
+        dir1.mkdir()
+        shutil.copy(a, dir1 / "a.pdf")
+        code = run_tool("pdftool", ["compare", str(dir1), str(b)])
+        assert code == 0
+        assert "两个输入都必须是目录" in capsys.readouterr().out
+
+    def test_compare_directory_skip_existing(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """批量比较时 --skip-existing 保留已有差异文件。"""
+        a, b = sample_pdf_ab
+        dir1 = tmp_path / "v1"
+        dir2 = tmp_path / "v2"
+        dir1.mkdir()
+        dir2.mkdir()
+        shutil.copy(a, dir1 / "doc.pdf")
+        shutil.copy(b, dir2 / "doc.pdf")
+        out_dir = tmp_path / "diff"
+        stale = out_dir / "doc.diff.pdf"
+        stale.parent.mkdir()
+        stale.write_bytes(b"stale")
+        code = run_tool(
+            "pdftool",
+            ["compare", str(dir1), str(dir2), "--output-dir", str(out_dir), "--skip-existing"],
+        )
+        assert code == 0
+        assert stale.read_bytes() == b"stale"
+        assert "跳过已存在" in capsys.readouterr().out
+
+    def test_compare_empty_directory(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """第一个目录没有 PDF 时打印错误。"""
+        dir1 = tmp_path / "v1"
+        dir2 = tmp_path / "v2"
+        dir1.mkdir()
+        dir2.mkdir()
+        shutil.copy(sample_pdf, dir2 / "doc.pdf")
+        code = run_tool("pdftool", ["compare", str(dir1), str(dir2)])
+        assert code == 0
+        assert "目录中没有 PDF 文件" in capsys.readouterr().out
+
+    def test_compare_directory_silent(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--silent 抑制警告、跳过与汇总；无已有输出时正常比较。"""
+        a, b = sample_pdf_ab
+        dir1 = tmp_path / "v1"
+        dir2 = tmp_path / "v2"
+        dir1.mkdir()
+        dir2.mkdir()
+        shutil.copy(a, dir1 / "doc.pdf")
+        shutil.copy(b, dir2 / "doc.pdf")
+        shutil.copy(a, dir1 / "extra.pdf")
+        shutil.copy(a, dir1 / "doc2.pdf")
+        shutil.copy(a, dir2 / "doc2.pdf")
+        out_dir = tmp_path / "diff"
+        stale = out_dir / "doc.diff.pdf"
+        stale.parent.mkdir()
+        stale.write_bytes(b"stale")
+        code = run_tool(
+            "pdftool",
+            [
+                "compare",
+                str(dir1),
+                str(dir2),
+                "--output-dir",
+                str(out_dir),
+                "--skip-existing",
+                "--silent",
+            ],
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "警告" not in out
+        assert "跳过已存在" not in out
+        assert "批处理完成" not in out
+        assert stale.read_bytes() == b"stale"
+        assert (out_dir / "doc2.diff.pdf").exists()
+
+    def test_compare_single_output_dir(self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path) -> None:
+        """单文件模式支持 --output-dir。"""
+        a, b = sample_pdf_ab
+        out_dir = tmp_path / "diff"
+        code = run_tool("pdftool", ["compare", str(a), str(b), "--output-dir", str(out_dir)])
+        assert code == 0
+        assert (out_dir / "a.diff.pdf").exists()
+
+    def test_compare_single_skip_existing(
+        self, sample_pdf_ab: tuple[Path, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """单文件模式 --skip-existing 保留已有差异文件。"""
+        a, b = sample_pdf_ab
+        out = tmp_path / "diff.pdf"
+        out.write_bytes(b"stale")
+        code = run_tool("pdftool", ["compare", str(a), str(b), "--output-path", str(out), "--skip-existing"])
+        assert code == 0
+        assert out.read_bytes() == b"stale"
+        assert "跳过已存在" in capsys.readouterr().out
+
+    def test_layout_directory_batch(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """layout 目录输入：每个 PDF 输出 <stem>.layout.pdf。"""
+        src_dir = self._copy_pdfs([sample_pdf], tmp_path / "src")
+        out_dir = tmp_path / "out"
+        code = run_tool("pdftool", ["layout", str(src_dir), "--output-dir", str(out_dir), "--page-size", "a4"])
+        assert code == 0
+        assert (out_dir / "sample.layout.pdf").exists()
+
+    def test_layout_recursive(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """layout --recursive 处理子目录中的 PDF。"""
+        nested = tmp_path / "src" / "nested"
+        nested.mkdir(parents=True)
+        shutil.copy(sample_pdf, nested / "doc.pdf")
+
+        flat_out = tmp_path / "flat"
+        run_tool("pdftool", ["layout", str(tmp_path / "src"), "--output-dir", str(flat_out)])
+        assert not (flat_out / "doc.layout.pdf").exists()
+
+        deep_out = tmp_path / "deep"
+        run_tool("pdftool", ["layout", str(tmp_path / "src"), "--output-dir", str(deep_out), "--recursive"])
+        assert (deep_out / "doc.layout.pdf").exists()
+
+    def test_layout_single_skip_existing(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """layout 单文件模式 --skip-existing 保留已有输出。"""
+        out = tmp_path / "out.layout.pdf"
+        out.write_bytes(b"stale")
+        code = run_tool("pdftool", ["layout", str(sample_pdf), "--output-path", str(out), "--skip-existing"])
+        assert code == 0
+        assert out.read_bytes() == b"stale"
+        assert "跳过已存在" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------- #

@@ -8,6 +8,7 @@
     fcmd pdftool i input.pdf
     fcmd pdftool m a.pdf b.pdf --output-path merged.pdf
     fcmd pdftool s input.pdf --output-dir split --every 2
+    fcmd pdftool s docs/ --output-dir split --recursive --silent
     fcmd pdftool attach add input.pdf --files a.txt
     fcmd pdftool compare a.pdf b.pdf --output-path diff.pdf
     fcmd pdftool layout input.pdf --page-size a4 --orientation landscape
@@ -15,10 +16,12 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Literal
 
 import fcmd
+from fcmd.tools.pdf._batch import expand_pdf_inputs, has_outputs, invoke, run_dir_batch, run_file_batch
 from fcmd.tools.pdf.pdfbase import (
     pdf_add_watermark,
     pdf_attach_add,
@@ -72,19 +75,22 @@ def pdftool_m(
 
 
 @fcmd.tool("pdftool", subcommand="s", help="拆分 PDF")
-def pdftool_s(
+def pdftool_s(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_dir: Path = Path("split"),
     order: str = "forward",
     every: int = 1,
     groups: str = "",
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
-    """拆分 PDF 文件（s 子命令）。
+    """拆分 PDF 文件（s 子命令）；输入为目录时每个 PDF 输出到独立子目录。
 
     Parameters
     ----------
     input_path:
-        输入 PDF 文件
+        输入 PDF 文件或目录
     output_dir:
         输出目录（默认 split）
     order:
@@ -93,8 +99,29 @@ def pdftool_s(
         固定步长，每份页数（默认 1 = 每页一份）
     groups:
         自定义分组表达式（分号分隔的页码选择，如 1-2;3,4,5）
+    recursive:
+        输入为目录时递归子目录
+    skip_existing:
+        输出子目录已存在时跳过
+    silent:
+        不输出逐文件日志
     """
-    pdf_split(input_path, output_dir, order, every, groups)
+    action = partial(pdf_split, order=order, every=every, groups=groups)
+    if input_path.is_dir():
+        run_dir_batch(
+            input_path,
+            output_dir,
+            action,
+            recursive=recursive,
+            skip_existing=skip_existing,
+            silent=silent,
+        )
+        return
+    if skip_existing and has_outputs(output_dir, f"{input_path.stem}_"):
+        if not silent:
+            print(f"跳过已存在: {output_dir}")
+        return
+    invoke(action, silent, input_path, output_dir)
 
 
 @fcmd.tool("pdftool", subcommand="c", help="压缩 PDF")
@@ -124,35 +151,88 @@ def pdftool_d(
 
 
 @fcmd.tool("pdftool", subcommand="xt", help="提取文本")
-def pdftool_xt(
+def pdftool_xt(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
-    output_path: Path = Path("output.txt"),
+    output_path: Path | None = None,
     pages: str = "",
+    output_dir: Path | None = None,
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
-    """提取 PDF 文本（xt 子命令）。
+    """提取 PDF 文本（xt 子命令）；输入为目录时批量提取。
 
     Parameters
     ----------
+    output_path:
+        输出文件（仅单文件模式；默认 output.txt）
     pages:
         页码筛选表达式（如 1-3,5；空/-/all 表示全选）
+    output_dir:
+        批处理输出目录（默认与源文件同目录）
+    recursive:
+        输入为目录时递归子目录
+    skip_existing:
+        目标文件已存在时跳过
+    silent:
+        不输出逐文件日志
     """
-    pdf_extract_text(input_path, output_path, pages)
+
+    def target_for(src: Path) -> Path:
+        if input_path.is_dir():
+            return (output_dir or src.parent) / f"{src.stem}.txt"
+        if output_path is not None:
+            return output_path
+        return Path("output.txt")
+
+    run_file_batch(
+        input_path,
+        target_for,
+        partial(pdf_extract_text, pages=pages),
+        recursive=recursive,
+        skip_existing=skip_existing,
+        silent=silent,
+    )
 
 
 @fcmd.tool("pdftool", subcommand="xi", help="提取图片")
-def pdftool_xi(
+def pdftool_xi(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_dir: Path = Path("images"),
     pages: str = "",
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
-    """提取 PDF 图片（xi 子命令）。
+    """提取 PDF 图片（xi 子命令）；输入为目录时每个 PDF 输出到独立子目录。
 
     Parameters
     ----------
     pages:
         页码筛选表达式（如 1-3,5；空/-/all 表示全选）
+    recursive:
+        输入为目录时递归子目录
+    skip_existing:
+        输出子目录已存在时跳过
+    silent:
+        不输出逐文件日志
     """
-    pdf_extract_images(input_path, output_dir, pages)
+    action = partial(pdf_extract_images, pages=pages)
+    if input_path.is_dir():
+        run_dir_batch(
+            input_path,
+            output_dir,
+            action,
+            recursive=recursive,
+            skip_existing=skip_existing,
+            silent=silent,
+        )
+        return
+    if skip_existing and has_outputs(output_dir, "page_"):
+        if not silent:
+            print(f"跳过已存在: {output_dir}")
+        return
+    invoke(action, silent, input_path, output_dir)
 
 
 @fcmd.tool("pdftool", subcommand="w", help="添加水印")
@@ -227,13 +307,32 @@ def pdftool_i(input_path: Path, verbose: bool = False) -> None:
 
 
 @fcmd.tool("pdftool", subcommand="ocr", help="PDF OCR 识别")
-def pdftool_ocr(  # pragma: no cover
+def pdftool_ocr(  # noqa: PLR0913, PLR0917  # pragma: no cover - 需系统级 tesseract
     input_path: Path,
-    output_path: Path = Path("ocr.pdf"),
+    output_path: Path | None = None,
     lang: str = "chi_sim+eng",
+    output_dir: Path | None = None,
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
-    """PDF OCR 识别（ocr 子命令）。"""
-    pdf_ocr(input_path, output_path, lang)
+    """PDF OCR 识别（ocr 子命令）；输入为目录时批量识别。"""
+
+    def target_for(src: Path) -> Path:
+        if input_path.is_dir():
+            return (output_dir or src.parent) / f"{src.stem}_ocr.pdf"
+        if output_path is not None:
+            return output_path
+        return Path("ocr.pdf")
+
+    run_file_batch(
+        input_path,
+        target_for,
+        partial(pdf_ocr, lang=lang),
+        recursive=recursive,
+        skip_existing=skip_existing,
+        silent=silent,
+    )
 
 
 @fcmd.tool("pdftool", subcommand="reorder", help="重排 PDF 页面")
@@ -266,8 +365,11 @@ def pdftool_img(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持
     pages: str = "",
     image_format: Literal["png", "jpg", "jpeg"] = "png",
     quality: int = 90,
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
-    """PDF 转图片（img 子命令）。
+    """PDF 转图片（img 子命令）；输入为目录时每个 PDF 输出到独立子目录。
 
     Parameters
     ----------
@@ -275,8 +377,35 @@ def pdftool_img(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持
         输出格式：png（默认）/jpg/jpeg
     quality:
         JPEG 质量（1-100，默认 90；PNG 忽略）
+    recursive:
+        输入为目录时递归子目录
+    skip_existing:
+        输出子目录已存在时跳过
+    silent:
+        不输出逐文件日志
     """
-    pdf_to_images(input_path, output_dir, dpi, pages, image_format, quality)
+    action = partial(
+        pdf_to_images,
+        dpi=dpi,
+        pages=pages,
+        image_format=image_format,
+        quality=quality,
+    )
+    if input_path.is_dir():
+        run_dir_batch(
+            input_path,
+            output_dir,
+            action,
+            recursive=recursive,
+            skip_existing=skip_existing,
+            silent=silent,
+        )
+        return
+    if skip_existing and has_outputs(output_dir, f"{input_path.stem}_"):
+        if not silent:
+            print(f"跳过已存在: {output_dir}")
+        return
+    invoke(action, silent, input_path, output_dir)
 
 
 @fcmd.tool("pdftool", subcommand="repair", help="修复 PDF")
@@ -315,25 +444,89 @@ def pdftool_attach(
         pdf_attach_extract(input_path, output_dir)
 
 
+def _compare_dir_batch(  # noqa: PLR0913, PLR0917 - 批处理选项显式传递
+    input_path1: Path,
+    input_path2: Path,
+    output_dir: Path | None,
+    recursive: bool,
+    skip_existing: bool,
+    silent: bool,
+) -> None:
+    """按相对路径同名配对两个目录中的 PDF 并批量比较。"""
+    counterparts = {p.relative_to(input_path2): p for p in expand_pdf_inputs(input_path2, recursive)}
+    sources = expand_pdf_inputs(input_path1, recursive)
+    if not sources:
+        print(f"错误: 目录中没有 PDF 文件: {input_path1}")
+        return
+
+    done = 0
+    for src1 in sources:
+        rel = src1.relative_to(input_path1)
+        src2 = counterparts.get(rel)
+        if src2 is None:
+            if not silent:
+                print(f"警告: 第二个目录缺少对应文件: {rel}")
+            continue
+        base = output_dir / rel.parent if output_dir is not None else src1.parent
+        target = base / f"{src1.stem}.diff.pdf"
+        if skip_existing and target.exists():
+            if not silent:
+                print(f"跳过已存在: {target}")
+            continue
+        invoke(pdf_compare, silent, src1, src2, target)
+        done += 1
+
+    if len(sources) > 1 and not silent:
+        print(f"批处理完成: {done}/{len(sources)} 个文件")
+
+
 @fcmd.tool("pdftool", subcommand="compare", help="比较两个 PDF")
-def pdftool_compare(
+def pdftool_compare(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path1: Path,
     input_path2: Path,
     output_path: Path | None = None,
+    output_dir: Path | None = None,
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
     """比较两个 PDF 并输出差异高亮文件（compare 子命令）。
+
+    两个输入均为目录时按相对路径同名配对批量比较。
 
     Parameters
     ----------
     input_path1:
-        基准 PDF 文件
+        基准 PDF 文件或目录
     input_path2:
-        比较 PDF 文件（差异高亮版以它为基准输出）
+        比较 PDF 文件或目录（差异高亮版以它为基准输出）
     output_path:
-        输出路径（默认 <基准名>.diff.pdf）
+        输出路径（单文件模式；默认 <基准名>.diff.pdf）
+    output_dir:
+        批量比较输出目录（默认与基准文件同目录）
+    recursive:
+        输入为目录时递归子目录
+    skip_existing:
+        目标文件已存在时跳过
+    silent:
+        不输出逐文件日志
     """
-    target = output_path or input_path1.with_suffix(".diff.pdf")
-    pdf_compare(input_path1, input_path2, target)
+    if input_path1.is_dir() or input_path2.is_dir():
+        if not (input_path1.is_dir() and input_path2.is_dir()):
+            print("错误: 批量比较时两个输入都必须是目录")
+            return
+        _compare_dir_batch(input_path1, input_path2, output_dir, recursive, skip_existing, silent)
+        return
+
+    if output_dir is not None:
+        target = output_dir / f"{input_path1.stem}.diff.pdf"
+    else:
+        target = output_path or input_path1.with_suffix(".diff.pdf")
+    if skip_existing and target.exists():
+        if not silent:
+            print(f"跳过已存在: {target}")
+        return
+    invoke(pdf_compare, silent, input_path1, input_path2, target)
 
 
 @fcmd.tool("pdftool", subcommand="layout", help="调整 PDF 页面布局")
@@ -346,6 +539,10 @@ def pdftool_layout(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保
     margin_right: int = 0,
     margin_top: int = 0,
     margin_bottom: int = 0,
+    output_dir: Path | None = None,
+    recursive: bool = False,
+    skip_existing: bool = False,
+    silent: bool = False,
 ) -> None:
     """调整 PDF 页面尺寸、方向与页边距（layout 子命令）。
 
@@ -363,17 +560,38 @@ def pdftool_layout(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保
         顶部边距（点）
     margin_bottom:
         底部边距（点）
+    output_dir:
+        批处理输出目录（默认与源文件同目录）
+    recursive:
+        输入为目录时递归子目录
+    skip_existing:
+        目标文件已存在时跳过
+    silent:
+        不输出逐文件日志
     """
-    target = output_path or input_path.with_suffix(".layout.pdf")
-    pdf_layout(
+
+    def target_for(src: Path) -> Path:
+        if input_path.is_dir():
+            return (output_dir or src.parent) / f"{src.stem}.layout.pdf"
+        if output_path is not None:
+            return output_path
+        return input_path.with_suffix(".layout.pdf")
+
+    run_file_batch(
         input_path,
-        target,
-        page_size,
-        orientation,
-        margin_left,
-        margin_right,
-        margin_top,
-        margin_bottom,
+        target_for,
+        partial(
+            pdf_layout,
+            page_size=page_size,
+            orientation=orientation,
+            margin_left=margin_left,
+            margin_right=margin_right,
+            margin_top=margin_top,
+            margin_bottom=margin_bottom,
+        ),
+        recursive=recursive,
+        skip_existing=skip_existing,
+        silent=silent,
     )
 
 
