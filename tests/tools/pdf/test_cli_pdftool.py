@@ -793,6 +793,50 @@ class TestLayoutParams:
         assert not out.exists()
 
 
+class TestCropAuto:
+    """crop 子命令的自动内容边界裁剪。"""
+
+    def test_crop_auto_shrinks_to_content(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """自动模式按文本边界裁剪，页面尺寸变小。"""
+        out = tmp_path / "auto.pdf"
+        code = run_tool(
+            "pdftool",
+            ["crop", str(sample_pdf), "--output-path", str(out), "--auto", "--margin", "5"],
+        )
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            rect = doc[0].rect
+            assert rect.width < 200
+            assert rect.height < 300
+            assert rect.width > 60
+        finally:
+            doc.close()
+
+    def test_crop_auto_blank_page_keeps_size(self, tmp_path: Path) -> None:
+        """无文本/图片内容时保持原页面尺寸。"""
+        import fitz
+
+        src = tmp_path / "blank.pdf"
+        doc = fitz.open()
+        doc.new_page(width=200, height=300)
+        doc.save(str(src))
+        doc.close()
+
+        out = tmp_path / "auto.pdf"
+        code = run_tool("pdftool", ["crop", str(src), "--output-path", str(out), "--auto"])
+        assert code == 0
+
+        doc = fitz.open(str(out))
+        try:
+            assert (round(doc[0].rect.width), round(doc[0].rect.height)) == (200, 300)
+        finally:
+            doc.close()
+
+
 class TestToImagesFormat:
     """img 子命令的格式与质量参数。"""
 

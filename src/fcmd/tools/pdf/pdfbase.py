@@ -345,13 +345,31 @@ def pdf_rotate(
     print(f"旋转完成: {output_path}")
 
 
-def pdf_crop(
+def _auto_crop_rect(page: fitz.Page, margin: int) -> fitz.Rect:
+    """按文本/图片块边界计算自动裁剪区域；无内容时返回原页面。"""
+    rect = page.rect
+    boxes = page.get_text("blocks")
+    if not boxes:
+        return rect
+    x0 = max(rect.x0, min(b[0] for b in boxes) - margin)
+    y0 = max(rect.y0, min(b[1] for b in boxes) - margin)
+    x1 = min(rect.x1, max(b[2] for b in boxes) + margin)
+    y1 = min(rect.y1, max(b[3] for b in boxes) + margin)
+    return fitz.Rect(x0, y0, x1, y1)
+
+
+def pdf_crop(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_path: Path = Path("cropped.pdf"),
     margins: tuple[int, int, int, int] = (10, 10, 10, 10),
     pages: str = "",
+    auto: bool = False,
+    margin: int = 10,
 ) -> None:
-    """裁剪 PDF 页面。"""
+    """裁剪 PDF 页面。
+
+    ``auto=True`` 时按文本/图片内容边界自动裁剪，``margin`` 为外扩边距（点）。
+    """
     if not _require_pymupdf():
         return
 
@@ -364,13 +382,16 @@ def pdf_crop(
             return
         for page_idx in indices:
             page = doc[page_idx]
-            rect = page.rect
-            new_rect = fitz.Rect(
-                rect.x0 + left,
-                rect.y0 + top,
-                rect.x1 - right,
-                rect.y1 - bottom,
-            )
+            if auto:
+                new_rect = _auto_crop_rect(page, margin)
+            else:
+                rect = page.rect
+                new_rect = fitz.Rect(
+                    rect.x0 + left,
+                    rect.y0 + top,
+                    rect.x1 - right,
+                    rect.y1 - bottom,
+                )
             page.set_cropbox(new_rect)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)

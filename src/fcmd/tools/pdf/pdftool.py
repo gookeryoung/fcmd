@@ -178,14 +178,24 @@ def pdftool_r(
 
 
 @fcmd.tool("pdftool", subcommand="crop", help="裁剪 PDF")
-def pdftool_crop(
+def pdftool_crop(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式
     input_path: Path,
     output_path: Path = Path("cropped.pdf"),
     margins: tuple[int, int, int, int] = (10, 10, 10, 10),
     pages: str = "",
+    auto: bool = False,
+    margin: int = 10,
 ) -> None:
-    """裁剪 PDF 页面（crop 子命令）。"""
-    pdf_crop(input_path, output_path, margins, pages)
+    """裁剪 PDF 页面（crop 子命令）。
+
+    Parameters
+    ----------
+    auto:
+        自动识别文本/图片内容边界后裁剪
+    margin:
+        自动裁剪时的外扩边距（点，默认 10）
+    """
+    pdf_crop(input_path, output_path, margins, pages, auto, margin)
 
 
 @fcmd.tool("pdftool", subcommand="i", help="查看 PDF 信息")
