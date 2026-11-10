@@ -24,6 +24,16 @@ from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.errors import FcmdError
 from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.tools.dev import pyprof
+from fcmd.tools.dev._pyprof_html import (
+    _esc,
+    _flame_json,
+    _flame_to_dict,
+    _origin_badge,
+    _render_call_table,
+    _render_cards,
+    _render_distribution,
+    _render_relation_panels,
+)
 from fcmd.tools.dev.pyprof import (
     CallRef,
     CodeProfileReport,
@@ -37,19 +47,11 @@ from fcmd.tools.dev.pyprof import (
     _build_module_stats,
     _build_time_distribution,
     _classify_origin,
-    _esc,
     _extract_call_data,
-    _flame_json,
-    _flame_to_dict,
     _format_calls,
     _format_number,
     _format_time,
-    _origin_badge,
     _parse_ncalls,
-    _render_call_table,
-    _render_cards,
-    _render_distribution,
-    _render_relation_panels,
     _short_filename,
     _sort_functions,
     _truncate,
