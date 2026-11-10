@@ -71,7 +71,9 @@ _TOOL_EXEC_SCRIPT = (
 
 # 回归断言阈值（毫秒）：目标值的 2-3 倍，仅防严重退化
 _COLD_START_BUDGET_MS = 200.0
-_DISCOVERY_BUDGET_MS = 500.0
+# 工具发现：单跑中位数约 250ms；全量并行（pytest-xdist + coverage）下 5 次采样
+# 中位数约 670ms（569-853ms），取 1000ms 留约 1.5x 余量，仍能拦住数量级回归
+_DISCOVERY_BUDGET_MS = 1000.0
 _DAG_RUN_BUDGET_MS = 300.0
 _TOOL_EXEC_BUDGET_MS = 300.0
 
@@ -136,7 +138,7 @@ def test_cold_start_baseline() -> None:
 
 @pytest.mark.slow
 def test_tool_discovery_baseline() -> None:
-    """工具发现基线：5 次采样取中位数，应在 500ms 内完成。"""
+    """工具发现基线：5 次采样取中位数，应在预算内完成。"""
     samples = _measure(_DISCOVERY_SCRIPT, runs=_DISCOVERY_RUNS)
     print("\n" + _format_stats("discovery", samples, _DISCOVERY_BUDGET_MS))
     assert statistics.median(samples) < _DISCOVERY_BUDGET_MS
