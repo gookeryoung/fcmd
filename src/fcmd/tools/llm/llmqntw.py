@@ -21,7 +21,7 @@ from typing import Any
 import fcmd
 from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmqnt
-from fcmd.tools.llm.llmbase import EngineInfo, ModelEntry, human_size
+from fcmd.tools.llm.llmbase import ModelEntry, human_size
 
 __all__ = [
     "QuantizeSettings",
@@ -290,22 +290,12 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             info["engine"] = f"未找到（{exc}）"
         else:
             info["engine"] = f"{engine.tag} · {engine.exe}"
-            info["version"] = self._probe_version(engine)
+            info["version"] = llmengine.probe_version(engine)
         try:
             info["quantizer"] = str(llmqnt.resolve_quantize_exe())
         except llmqnt.QuantizeError as exc:
             info["quantizer"] = f"未找到（{exc}）"
         return info
-
-    @staticmethod
-    def _probe_version(engine: EngineInfo) -> str:
-        """执行 ``llama-server --version`` 取首行版本信息。"""
-        result = llmengine.run_with_engine(llmbase.run_command, [str(engine.exe), "--version"], engine)
-        output = (result.stdout or result.stderr).strip()
-        if result.returncode != 0:
-            detail = output.splitlines()[0] if output else f"退出码 {llmbase.format_returncode(result.returncode)}"
-            return f"获取失败（{detail}）"
-        return output.splitlines()[0] if output else "未知"
 
     def _poll_scan(self) -> None:
         try:

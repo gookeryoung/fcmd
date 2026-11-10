@@ -12,7 +12,7 @@ import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.tools.llm import llmengine, llmenginew, llmenv
-from fcmd.tools.llm.llmbase import Check, EngineInfo, ServeError
+from fcmd.tools.llm.llmbase import Check, CommandResult, EngineInfo, ServeError
 
 
 def test_tool_registered() -> None:
@@ -399,3 +399,33 @@ class TestEnginewSettings:
 
     def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
         assert llmenginew.resolve_geometry(None, 800, 600) == "800x600"
+
+
+class TestProbeVersion:
+    """``llama-server --version`` 输出解析。"""
+
+    def test_returns_first_stdout_line(self) -> None:
+        engine = EngineInfo("b1", Path("llama-server.exe"))
+
+        def runner(cmd: list[str], **_kwargs: object) -> CommandResult:
+            assert cmd == ["llama-server.exe", "--version"]
+            return CommandResult(0, "version: 1234 (abc)\nextra\n")
+
+        assert llmengine.probe_version(engine, runner) == "version: 1234 (abc)"
+
+    def test_falls_back_to_stderr(self) -> None:
+        engine = EngineInfo("b1", Path("llama-server.exe"))
+        assert llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(0, "", "from stderr\n")) == "from stderr"
+
+    def test_reports_first_line_on_failure(self) -> None:
+        engine = EngineInfo("b1", Path("llama-server.exe"))
+        result = llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(2, "", "boom\ndetail"))
+        assert result == "获取失败（boom）"
+
+    def test_reports_exit_code_without_output(self) -> None:
+        engine = EngineInfo("b1", Path("llama-server.exe"))
+        assert llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(3)) == "获取失败（退出码 3）"
+
+    def test_reports_unknown_when_output_empty(self) -> None:
+        engine = EngineInfo("b1", Path("llama-server.exe"))
+        assert llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(0)) == "未知"

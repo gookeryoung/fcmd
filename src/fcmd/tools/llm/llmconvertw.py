@@ -25,7 +25,7 @@ from typing import Any
 import fcmd
 from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 from fcmd.tools.llm import llmbase, llmconvert, llmengine, llmenv, llmqnt
-from fcmd.tools.llm.llmbase import EngineInfo, ServeError, human_size
+from fcmd.tools.llm.llmbase import ServeError, human_size
 
 __all__ = [
     "ConvertSettings",
@@ -588,22 +588,12 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         else:
             tag = engine.tag
             info["engine"] = f"{engine.tag} · {engine.exe}"
-            info["version"] = self._probe_version(engine)
+            info["version"] = llmengine.probe_version(engine)
         gpu = llmengine.detect_gpu()
         info["gpu"] = f"{gpu.name}（{gpu.memory_mib} MiB）" if gpu else "未检测到 NVIDIA GPU"
         roots = llmenv.models_roots()
         info["models"] = " · ".join(str(path) for path in roots)
         self._scan_results.put((info, tag, _find_convertible(roots)))
-
-    @staticmethod
-    def _probe_version(engine: EngineInfo) -> str:
-        """执行 ``llama-server --version`` 取首行版本信息。"""
-        result = llmengine.run_with_engine(llmbase.run_command, [str(engine.exe), "--version"], engine)
-        output = (result.stdout or result.stderr).strip()
-        if result.returncode != 0:
-            detail = output.splitlines()[0] if output else f"退出码 {llmbase.format_returncode(result.returncode)}"
-            return f"获取失败（{detail}）"
-        return output.splitlines()[0] if output else "未知"
 
     def _poll_env(self) -> None:
         try:

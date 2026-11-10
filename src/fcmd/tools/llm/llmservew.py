@@ -37,7 +37,6 @@ from fcmd.tools.llm.llmbase import (
     DEFAULT_THREADS,
     KV_SCALE,
     PROFILES,
-    EngineInfo,
     ModelEntry,
     ProfileName,
     ServeError,
@@ -1160,20 +1159,10 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             info["engine"] = f"未找到（{exc}）"
         else:
             info["engine"] = f"{engine.tag} · {engine.exe}"
-            info["version"] = self._probe_version(engine)
+            info["version"] = llmengine.probe_version(engine)
         gpu = llmengine.detect_gpu()
         info["gpu"] = f"{gpu.name}（{gpu.memory_mib} MiB）" if gpu else "未检测到 NVIDIA GPU"
         return info, gpu.memory_mib if gpu is not None else None
-
-    @staticmethod
-    def _probe_version(engine: EngineInfo) -> str:
-        """执行 ``llama-server --version`` 取首行版本信息。"""
-        result = llmengine.run_with_engine(llmbase.run_command, [str(engine.exe), "--version"], engine)
-        output = (result.stdout or result.stderr).strip()
-        if result.returncode != 0:
-            detail = output.splitlines()[0] if output else f"退出码 {llmbase.format_returncode(result.returncode)}"
-            return f"获取失败（{detail}）"
-        return output.splitlines()[0] if output else "未知"
 
     def _poll_scan(self) -> None:
         try:

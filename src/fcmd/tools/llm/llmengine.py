@@ -49,6 +49,7 @@ __all__ = [
     "inspect_zips",
     "install_engine",
     "list_engines",
+    "probe_version",
     "quantize_exe",
     "resolve_engine",
     "run_with_engine",
@@ -316,6 +317,16 @@ def run_with_engine(runner: Runner, cmd: Sequence[str], engine: EngineInfo | Non
     if env is None:
         return runner(cmd)
     return runner(cmd, env=env)
+
+
+def probe_version(engine: EngineInfo, runner: Runner = run_command) -> str:
+    """执行 ``llama-server --version`` 取首行版本信息。"""
+    result = run_with_engine(runner, [str(engine.exe), "--version"], engine)
+    output = (result.stdout or result.stderr).strip()
+    if result.returncode != 0:
+        detail = output.splitlines()[0] if output else f"退出码 {format_returncode(result.returncode)}"
+        return f"获取失败（{detail}）"
+    return output.splitlines()[0] if output else "未知"
 
 
 def current_engine_tag(root: Path) -> str | None:
