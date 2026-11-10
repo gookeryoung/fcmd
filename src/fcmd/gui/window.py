@@ -27,6 +27,8 @@ __all__ = [
     "WORKER_INTERVAL_MS",
     "append_log",
     "build_menu",
+    "center_over_parent",
+    "centered_geometry",
     "clamp_saved_geometry",
     "clear_log",
     "collapsible",
@@ -131,6 +133,51 @@ def resolve_geometry(  # noqa: PLR0913 - 与 clamp_geometry 参数对齐，显�
         min_height=min_height,
     )
     return clamped or default_text
+
+
+def centered_geometry(  # noqa: PLR0913 - 纯几何计算，参数与父窗口/屏幕坐标一一对应
+    width: int,
+    height: int,
+    *,
+    parent_x: int,
+    parent_y: int,
+    parent_width: int,
+    parent_height: int,
+    screen_width: int,
+    screen_height: int,
+) -> str:
+    """计算在父窗口内居中的 Toplevel geometry，并夹回屏幕可见范围。"""
+    x = parent_x + (parent_width - width) // 2
+    y = parent_y + (parent_height - height) // 2
+    x = min(max(x, 0), max(screen_width - width, 0))
+    y = min(max(y, 0), max(screen_height - height, 0))
+    return f"{width}x{height}+{x}+{y}"
+
+
+def center_over_parent(window: Any, parent: Any, *, width: int, height: int) -> None:  # pragma: no cover
+    """把 Toplevel 放到父窗口中央；父窗口尚未映射时按屏幕居中。"""
+    parent_width = parent.winfo_width()
+    parent_height = parent.winfo_height()
+    if parent_width <= 1 or parent_height <= 1:
+        parent_x = 0
+        parent_y = 0
+        parent_width = parent.winfo_screenwidth()
+        parent_height = parent.winfo_screenheight()
+    else:
+        parent_x = parent.winfo_rootx()
+        parent_y = parent.winfo_rooty()
+    window.geometry(
+        centered_geometry(
+            width,
+            height,
+            parent_x=parent_x,
+            parent_y=parent_y,
+            parent_width=parent_width,
+            parent_height=parent_height,
+            screen_width=parent.winfo_screenwidth(),
+            screen_height=parent.winfo_screenheight(),
+        )
+    )
 
 
 def create_root(  # noqa: PLR0913 - 关键字参数描述窗口骨架，显式优于打包配置对象

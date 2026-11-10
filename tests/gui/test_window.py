@@ -59,6 +59,70 @@ class TestResolveGeometry:
         )
 
 
+class TestCenteredGeometry:
+    """子对话框居中：按父窗口中心定位并夹回屏幕。"""
+
+    def test_centers_in_parent(self) -> None:
+        assert (
+            _guiwindow.centered_geometry(
+                640,
+                400,
+                parent_x=220,
+                parent_y=110,
+                parent_width=1000,
+                parent_height=700,
+                screen_width=1920,
+                screen_height=1080,
+            )
+            == "640x400+400+260"
+        )
+
+    def test_clamps_to_screen_edges(self) -> None:
+        assert (
+            _guiwindow.centered_geometry(
+                640,
+                400,
+                parent_x=1200,
+                parent_y=800,
+                parent_width=1000,
+                parent_height=700,
+                screen_width=1920,
+                screen_height=1080,
+            )
+            == "640x400+1280+680"
+        )
+
+    def test_clamps_negative_parent(self) -> None:
+        assert (
+            _guiwindow.centered_geometry(
+                640,
+                400,
+                parent_x=-500,
+                parent_y=-400,
+                parent_width=1000,
+                parent_height=700,
+                screen_width=1920,
+                screen_height=1080,
+            )
+            == "640x400+0+0"
+        )
+
+    def test_dialog_larger_than_screen_stays_at_origin(self) -> None:
+        assert (
+            _guiwindow.centered_geometry(
+                2000,
+                1200,
+                parent_x=100,
+                parent_y=100,
+                parent_width=1000,
+                parent_height=700,
+                screen_width=1920,
+                screen_height=1080,
+            )
+            == "2000x1200+0+0"
+        )
+
+
 class TestClampSavedGeometry:
     """只夹紧已保存值时，非法输入返回 ``None``。"""
 
