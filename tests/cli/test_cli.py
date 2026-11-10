@@ -471,14 +471,18 @@ class TestEntryNames:
         assert discovery_mod.resolve_tool("fakedir2") is None
 
     def test_project_scripts_expose_canonical_and_short_names(self) -> None:
-        """pyproject 同时提供规范名与短名 console script（旧入口零破坏）。"""
+        """pyproject 提供规范名与短名 console script；与系统命令同名的规范名不生成脚本。"""
         root = Path(__file__).resolve().parents[2]
         data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         scripts = data["project"]["scripts"]
-        for name in ("gittool", "imagetool", "jsontool", "piptool", "taskkill", "which"):
+        for name in ("gittool", "imagetool", "jsontool", "piptool"):
             assert name in scripts, f"缺少规范名入口 {name!r}"
         for name in ("gitt", "imaget", "jsont", "pipt", "taskk", "wch"):
             assert name in scripts, f"旧短名入口 {name!r} 不应移除"
+        # taskkill / which 与系统命令同名，只保留短名脚本以免遮蔽系统命令；
+        # 规范名仍可通过 ``fcmd taskkill`` / ``fcmd which`` 访问。
+        for name in ("taskkill", "which"):
+            assert name not in scripts, f"与系统命令同名的入口 {name!r} 不应生成全局脚本"
 
 
 # ---------------------------------------------------------------------- #
