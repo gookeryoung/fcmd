@@ -215,9 +215,25 @@ def pdftool_ocr(  # pragma: no cover
 
 
 @fcmd.tool("pdftool", subcommand="reorder", help="重排 PDF 页面")
-def pdftool_reorder(input_path: Path, output_path: Path, order: list[int]) -> None:
-    """重排 PDF 页面（reorder 子命令）。"""
-    pdf_reorder(input_path, output_path, order)
+def pdftool_reorder(
+    input_path: Path,
+    output_path: Path,
+    order: list[str],
+    delete: str = "",
+    insert_blank: str = "",
+) -> None:
+    """重排 PDF 页面（reorder 子命令）。
+
+    Parameters
+    ----------
+    order:
+        新页序（0 基索引，空格分隔）；传 all 表示保持原顺序
+    delete:
+        要删除的页（1 基表达式，如 1,3-5）
+    insert_blank:
+        插入空白页，格式 位置:数量（位置 1 基，多组用逗号分隔）
+    """
+    pdf_reorder(input_path, output_path, order, delete, insert_blank)
 
 
 @fcmd.tool("pdftool", subcommand="img", help="PDF 转图片")

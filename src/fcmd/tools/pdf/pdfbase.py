@@ -460,23 +460,91 @@ def pdf_ocr(  # pragma: no cover - 需系统级 tesseract 可执行文件，测�
     print(f"OCR 识别完成: {output_path}")
 
 
-def pdf_reorder(input_path: Path, output_path: Path, order: list[int]) -> None:
-    """重排 PDF 页面顺序。"""
+def _parse_reorder_selection(order: list[str], total: int) -> list[int]:
+    """把 reorder 参数解析为页索引列表；all/keep 表示原顺序，越界与非法值跳过。"""
+    selected: list[int] = []
+    for token in (str(item).strip().lower() for item in order):
+        if token in {"all", "keep"}:
+            return list(range(total))
+        try:
+            page_num = int(token)
+        except ValueError:
+            continue
+        if 0 <= page_num < total:
+            selected.append(page_num)
+    return selected
+
+
+def _apply_blank_insertions(items: list[int | None], insert_blank: str) -> bool:
+    """按 ``位置:数量`` 表达式插入空白页占位；格式非法时打印错误并返回 False。"""
+    for spec in insert_blank.split(","):
+        clean = spec.strip()
+        if not clean:
+            continue
+        pos_text, sep, count_text = clean.partition(":")
+        try:
+            pos = int(pos_text)
+            count = int(count_text) if sep else 1
+        except ValueError:
+            print(f"错误: 无效的插入空白页格式 {clean!r}（应为 位置:数量）")
+            return False
+        if count < 1 or not 1 <= pos <= len(items) + 1:
+            print(f"错误: 插入空白页位置或数量不合法: {clean!r}")
+            return False
+        for _ in range(count):
+            items.insert(pos - 1, None)
+            pos += 1
+    return True
+
+
+def pdf_reorder(
+    input_path: Path,
+    output_path: Path,
+    order: list[str],
+    delete: str = "",
+    insert_blank: str = "",
+) -> None:
+    """重排 PDF 页面，支持删除页面与插入空白页。
+
+    ``order`` 为新页序（0 基索引），传 ``all`` 表示保持原顺序；``delete``
+    为 1 基页码表达式；``insert_blank`` 格式为 ``位置:数量``（位置 1 基）。
+    """
     if not _require_pypdf():
         return
 
     reader = pypdf.PdfReader(str(input_path))
-    writer = pypdf.PdfWriter()
+    total = len(reader.pages)
+    selected = _parse_reorder_selection(order, total)
 
-    for page_num in order:
-        if 0 <= page_num < len(reader.pages):
-            writer.add_page(reader.pages[page_num])
+    if delete:
+        removed = _resolve_page_indices(delete, total)
+        if removed is None:
+            return
+        removed_set = set(removed)
+        selected = [page_num for page_num in selected if page_num not in removed_set]
+
+    items: list[int | None] = list(selected)
+    blank_width, blank_height = 595.0, 842.0
+    if insert_blank:
+        first = reader.pages[selected[0]] if selected else None
+        if first is not None:
+            blank_width = float(first.mediabox.width)
+            blank_height = float(first.mediabox.height)
+        if not _apply_blank_insertions(items, insert_blank):
+            return
+
+    writer = pypdf.PdfWriter()
+    for item in items:
+        if item is None:
+            writer.add_blank_page(width=blank_width, height=blank_height)
+        else:
+            writer.add_page(reader.pages[item])
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("wb") as f:
         writer.write(f)
 
-    print(f"重排完成: {output_path}")
+    print(f"重排完成: {output_path} ({len(items)} 页)")
 
 
 def pdf_to_images(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，保持显式

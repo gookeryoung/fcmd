@@ -793,6 +793,70 @@ class TestLayoutParams:
         assert not out.exists()
 
 
+class TestReorderFeatures:
+    """reorder 子命令的删除页与插入空白页。"""
+
+    def test_reorder_delete_pages(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """all + --delete 按 1 基页码删除。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "all", "--delete", "1"])
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 1
+            assert "Page two" in doc[0].get_text()
+        finally:
+            doc.close()
+
+    def test_reorder_insert_blank(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """--insert-blank 在指定位置插入空白页。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "all", "--insert-blank", "2:1"])
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 3
+            assert doc[1].get_text().strip() == ""
+            assert "Page two" in doc[2].get_text()
+        finally:
+            doc.close()
+
+    def test_reorder_delete_and_insert(self, sample_pdf: Path, tmp_path: Path) -> None:
+        """重排、删除、插入可组合使用。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool(
+            "pdftool",
+            ["reorder", str(sample_pdf), str(out), "1", "0", "--delete", "1", "--insert-blank", "1:1"],
+        )
+        assert code == 0
+
+        import fitz
+
+        doc = fitz.open(str(out))
+        try:
+            assert doc.page_count == 2
+            assert doc[0].get_text().strip() == ""
+            assert "Page two" in doc[1].get_text()
+        finally:
+            doc.close()
+
+    def test_reorder_invalid_insert_spec(
+        self, sample_pdf: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """非法插入表达式打印错误且不生成输出。"""
+        out = tmp_path / "out.pdf"
+        code = run_tool("pdftool", ["reorder", str(sample_pdf), str(out), "all", "--insert-blank", "0:1"])
+        assert code == 0
+        assert "不合法" in capsys.readouterr().out
+        assert not out.exists()
+
+
 class TestCropAuto:
     """crop 子命令的自动内容边界裁剪。"""
 
