@@ -122,6 +122,26 @@ class TestValidGeometry:
         assert valid_geometry(text) is None
 
 
+class TestResolveGeometry:
+    """启动时 geometry 恢复：位置夹回屏幕、尺寸不小于下限。"""
+
+    def test_keeps_visible_position(self) -> None:
+        assert checksum.resolve_geometry("700x460+100+80", 1920, 1080) == "700x460+100+80"
+
+    def test_pulls_back_offscreen(self) -> None:
+        assert checksum.resolve_geometry("720x480+5000+5000", 1920, 1080) == "720x480+1200+600"
+
+    def test_enforces_minimum_size(self) -> None:
+        assert checksum.resolve_geometry("200x100+0+0", 1920, 1080) == "640x440+0+0"
+
+    def test_falls_back_to_default_geometry(self) -> None:
+        assert checksum.resolve_geometry(None, 1920, 1080) == "720x480+300+200"
+        assert checksum.resolve_geometry("bad", 1920, 1080) == "720x480+300+200"
+
+    def test_clamps_default_into_small_screen(self) -> None:
+        assert checksum.resolve_geometry(None, 800, 600) == "720x480+80+120"
+
+
 # ============================================================================ #
 # 摘要计算
 # ============================================================================ #

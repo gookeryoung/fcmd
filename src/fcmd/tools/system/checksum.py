@@ -22,7 +22,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools import _guiconfig
+from fcmd.tools import _guiconfig, _guitheme
 
 __all__ = [
     "ALGORITHMS",
@@ -33,6 +33,7 @@ __all__ = [
     "format_result",
     "load_settings",
     "normalize_algorithm",
+    "resolve_geometry",
     "save_settings",
     "valid_geometry",
     "verify_checksum",
@@ -108,6 +109,29 @@ def save_settings(settings: ChecksumSettings, path: Path | None = None) -> None:
         "geometry": settings.geometry,
     }
     _guiconfig.write_settings(payload, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    return (
+        _guiconfig.clamp_geometry(
+            DEFAULT_GEOMETRY,
+            screen_width,
+            screen_height,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+        )
+        or DEFAULT_GEOMETRY
+    )
 
 
 # ---------------------------------------------------------------------- #
@@ -190,16 +214,24 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
     def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
-        from tkinter import filedialog
+        from tkinter import filedialog, ttk
 
         self._tk = tk
+        self._ttk = ttk
         self._filedialog = filedialog
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
 
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title(f"校验和计算器 v{__version__}")
-        self.root.geometry(valid_geometry(self._settings.geometry) or DEFAULT_GEOMETRY)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
         self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -214,46 +246,50 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
     def _build_widgets(self) -> None:
         tk = self._tk
-        source = tk.LabelFrame(self.root, text="数据源", padx=8, pady=8)
+        ttk = self._ttk
+        palette = _guitheme.PALETTE
+        source = ttk.LabelFrame(self.root, text="数据源", padding=8)
         source.pack(fill="x", padx=12, pady=(12, 4))
 
-        string_row = tk.Frame(source)
+        string_row = ttk.Frame(source)
         string_row.pack(fill="x")
-        tk.Label(string_row, text="字符串：", width=8, anchor="w").pack(side="left")
-        string_entry = tk.Entry(string_row, textvariable=self._string_var)
+        ttk.Label(string_row, text="字符串：", width=8, anchor="w").pack(side="left")
+        string_entry = ttk.Entry(string_row, textvariable=self._string_var)
         string_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
         string_entry.bind("<Return>", lambda _event: self._compute_string())
-        tk.Button(string_row, text="计算", command=self._compute_string).pack(side="right")
+        ttk.Button(string_row, text="计算", command=self._compute_string).pack(side="right")
 
-        file_row = tk.Frame(source)
+        file_row = ttk.Frame(source)
         file_row.pack(fill="x", pady=(8, 0))
-        tk.Label(file_row, text="文件：", width=8, anchor="w").pack(side="left")
-        tk.Entry(file_row, textvariable=self._file_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        tk.Button(file_row, text="浏览…", command=self._browse_file).pack(side="right")
-        tk.Button(file_row, text="计算", command=self._compute_file).pack(side="right", padx=(0, 4))
+        ttk.Label(file_row, text="文件：", width=8, anchor="w").pack(side="left")
+        ttk.Entry(file_row, textvariable=self._file_var).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ttk.Button(file_row, text="浏览…", command=self._browse_file).pack(side="right")
+        ttk.Button(file_row, text="计算", command=self._compute_file).pack(side="right", padx=(0, 4))
 
-        algorithm = tk.LabelFrame(self.root, text="算法", padx=8, pady=8)
+        algorithm = ttk.LabelFrame(self.root, text="算法", padding=8)
         algorithm.pack(fill="x", padx=12, pady=4)
         for index, name in enumerate(ALGORITHMS):
-            tk.Radiobutton(algorithm, text=name, value=name, variable=self._algorithm_var).grid(
+            ttk.Radiobutton(algorithm, text=name, value=name, variable=self._algorithm_var).grid(
                 row=index // 4, column=index % 4, sticky="w", padx=(0, 16), pady=2
             )
 
-        comparison = tk.LabelFrame(self.root, text="比较校验", padx=8, pady=8)
+        comparison = ttk.LabelFrame(self.root, text="比较校验", padding=8)
         comparison.pack(fill="x", padx=12, pady=4)
-        tk.Checkbutton(
+        ttk.Checkbutton(
             comparison,
             text="启用比较（忽略大小写）",
             variable=self._compare_enabled_var,
             command=self._toggle_compare,
         ).pack(side="left")
-        self._compare_entry = tk.Entry(comparison, textvariable=self._compare_var)
+        self._compare_entry = ttk.Entry(comparison, textvariable=self._compare_var)
         self._compare_entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
 
-        result = tk.LabelFrame(self.root, text="结果", padx=8, pady=8)
+        result = ttk.LabelFrame(self.root, text="结果", padding=8)
         result.pack(fill="both", expand=True, padx=12, pady=(4, 12))
-        self._result = tk.Text(result, height=6, wrap="word", state="disabled")
-        scrollbar = tk.Scrollbar(result, orient="vertical", command=self._result.yview)
+        self._result = tk.Text(result, height=6, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
+        self._result.tag_configure("pass", foreground=palette.success)
+        self._result.tag_configure("fail", foreground=palette.danger)
+        scrollbar = ttk.Scrollbar(result, orient="vertical", command=self._result.yview)
         self._result.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self._result.pack(side="left", fill="both", expand=True)
@@ -274,11 +310,16 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if filename:
             self._file_var.set(filename)
 
-    def _show_result(self, text: str) -> None:
-        """把文本写入只读结果区。"""
+    def _show_result(self, text: str, *, passed: bool | None = None) -> None:
+        """把文本写入只读结果区；校验结论按通过 / 失败着色。"""
         self._result.configure(state="normal")
         self._result.delete("1.0", "end")
-        self._result.insert("1.0", text)
+        digest, newline, verdict = text.partition("\n")
+        self._result.insert("1.0", digest)
+        if newline and passed is not None:
+            self._result.insert("end", "\n" + verdict, ("pass" if passed else "fail",))
+        elif newline:
+            self._result.insert("end", "\n" + verdict)
         self._result.configure(state="disabled")
 
     def _expected(self) -> str | None:
@@ -293,7 +334,13 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if expected is not None and not expected:
             self._show_result("请输入比较值")
             return
-        self._show_result(format_result(digest, expected))
+        if expected is None:
+            self._show_result(digest)
+            return
+        self._show_result(
+            format_result(digest, expected),
+            passed=verify_checksum(digest, expected),
+        )
 
     def _compute_string(self) -> None:
         """计算字符串摘要。"""
@@ -338,7 +385,8 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
 
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = ChecksumWindow(settings_path)
     except ImportError as exc:
