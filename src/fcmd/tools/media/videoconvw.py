@@ -24,7 +24,7 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.tools import _guiconfig
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,
@@ -50,6 +50,7 @@ __all__ = [
     "load_settings",
     "parse_frame_rate",
     "parse_scale",
+    "resolve_geometry",
     "save_settings",
     "valid_geometry",
 ]
@@ -68,9 +69,9 @@ MIN_HEIGHT = 640
 VIDEO_CODEC_CHOICES: tuple[str, ...] = ("libx264", "libx265", "libvpx-vp9", "mpeg4", "libxvid")
 AUDIO_CODEC_CHOICES: tuple[str, ...] = ("aac", "mp3", "opus", "libvorbis", "ac3", "flac")
 
-_HINT_COLOR = "#666666"
-_STATUS_COLOR = "#555555"
-_MUTED_COLOR = "#888888"
+_HINT_COLOR = _guitheme.PALETTE.muted
+_STATUS_COLOR = _guitheme.PALETTE.muted
+_MUTED_COLOR = _guitheme.PALETTE.muted
 
 
 # ---------------------------------------------------------------------- #
@@ -228,6 +229,29 @@ def save_settings(settings: VideoConvSettings, path: Path | None = None) -> None
     _guiconfig.write_settings(payload, path or config_path())
 
 
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    return (
+        _guiconfig.clamp_geometry(
+            DEFAULT_GEOMETRY,
+            screen_width,
+            screen_height,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+        )
+        or DEFAULT_GEOMETRY
+    )
+
+
 # ---------------------------------------------------------------------- #
 # Tk 界面
 # ---------------------------------------------------------------------- #
@@ -251,8 +275,15 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._closing = False
 
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title(f"视频转换器 v{__version__}")
-        self.root.geometry(valid_geometry(self._settings.geometry) or DEFAULT_GEOMETRY)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
         self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self.root.columnconfigure(0, weight=1)
@@ -417,13 +448,14 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         action_frame.grid(row=2, column=0, sticky="ew", padx=12, pady=(4, 0))
         action_frame.columnconfigure(2, weight=1)
 
-        self._start_button = ttk.Button(action_frame, text="开始转换", command=self._start_conversion)
+        self._start_button = ttk.Button(
+            action_frame, text="开始转换", command=self._start_conversion, style="Accent.TButton"
+        )
         self._start_button.grid(row=0, column=0, padx=(0, 6))
         self._stop_button = ttk.Button(action_frame, text="停止", command=self._stop_conversion, state="disabled")
         self._stop_button.grid(row=0, column=1, padx=(0, 6))
-        ttk.Label(action_frame, textvariable=self._status_var, foreground=_STATUS_COLOR).grid(
-            row=0, column=2, sticky="w", padx=(8, 0)
-        )
+        self._status_label = ttk.Label(action_frame, textvariable=self._status_var, foreground=_STATUS_COLOR)
+        self._status_label.grid(row=0, column=2, sticky="w", padx=(8, 0))
         self._reset_button = ttk.Button(action_frame, text="重置设置", command=self._reset_settings)
         self._reset_button.grid(row=0, column=3)
 
@@ -437,7 +469,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         log_frame.grid(row=4, column=0, sticky="nsew", padx=12, pady=(4, 4))
         log_frame.columnconfigure(0, weight=1)
         log_frame.rowconfigure(0, weight=1)
-        self._log_text = tk.Text(log_frame, height=10, wrap="word", state="disabled")
+        self._log_text = tk.Text(log_frame, height=10, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
         self._log_text.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self._log_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
@@ -446,9 +478,8 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         status_frame = ttk.Frame(self.root)
         status_frame.grid(row=5, column=0, sticky="ew", padx=12, pady=(4, 8))
         status_frame.columnconfigure(0, weight=1)
-        ttk.Label(status_frame, textvariable=self._ffmpeg_var, foreground=_STATUS_COLOR).grid(
-            row=0, column=0, sticky="w"
-        )
+        self._ffmpeg_label = ttk.Label(status_frame, textvariable=self._ffmpeg_var, foreground=_STATUS_COLOR)
+        self._ffmpeg_label.grid(row=0, column=0, sticky="w")
         ttk.Label(status_frame, text="依赖系统 ffmpeg", foreground=_MUTED_COLOR).grid(row=0, column=1, sticky="e")
 
         self._append_log("选择输入视频并设置转换参数后点击「开始转换」。")
@@ -534,9 +565,11 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         version = ffmpeg_version()
         if version:
             self._ffmpeg_var.set(f"✓ {version}")
+            self._ffmpeg_label.configure(foreground=_guitheme.PALETTE.success)
             self._append_log(f"ffmpeg 可用：{version}")
         else:
             self._ffmpeg_var.set("✗ 未找到 ffmpeg，请安装并加入 PATH")
+            self._ffmpeg_label.configure(foreground=_guitheme.PALETTE.danger)
             self._append_log("警告：未找到 ffmpeg，转换功能不可用")
 
     # ------------------------------------------------------------------ #
@@ -579,6 +612,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._queue = queue.Queue()
         self._progress.configure(value=0)
         self._status_var.set("正在转换…")
+        self._status_label.configure(foreground=_STATUS_COLOR)
         self._set_busy(True)
 
         self._worker = threading.Thread(
@@ -645,10 +679,12 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         if success:
             self._progress.configure(value=100)
             self._status_var.set("✓ 转换成功")
+            self._status_label.configure(foreground=_guitheme.PALETTE.success)
             self._append_log(f"转换成功：{output_path}")
             self._messagebox.showinfo("转换完成", f"视频已生成：\n{output_path}")
         else:
             self._status_var.set("✗ 转换失败或已取消")
+            self._status_label.configure(foreground=_guitheme.PALETTE.danger)
             self._append_log("转换失败或已取消，详见日志")
             self._messagebox.showwarning("转换失败", "转换失败或已取消，详见日志与命令行输出")
 
@@ -657,6 +693,7 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         if self._running:
             self._cancel.set()
             self._status_var.set("正在停止…")
+            self._status_label.configure(foreground=_STATUS_COLOR)
             self._append_log("已请求中止转换")
 
     def _reset_settings(self) -> None:
@@ -734,7 +771,8 @@ class VideoConvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
 
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = VideoConvWindow(settings_path)
     except ImportError as exc:

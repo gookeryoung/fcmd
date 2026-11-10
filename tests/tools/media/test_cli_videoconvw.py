@@ -23,6 +23,7 @@ from fcmd.tools.media.videoconvw import (
     load_settings,
     parse_frame_rate,
     parse_scale,
+    resolve_geometry,
     save_settings,
     valid_geometry,
 )
@@ -144,6 +145,26 @@ class TestValidGeometry:
 
     def test_default_geometry_valid(self) -> None:
         assert valid_geometry(DEFAULT_GEOMETRY) == DEFAULT_GEOMETRY
+
+
+class TestResolveGeometry:
+    """启动时 geometry 恢复：位置夹回屏幕、尺寸不小于下限。"""
+
+    def test_keeps_visible_position(self) -> None:
+        assert resolve_geometry("960x700+100+80", 1920, 1080) == "960x700+100+80"
+
+    def test_pulls_back_offscreen(self) -> None:
+        assert resolve_geometry("980x760+5000+5000", 1920, 1080) == "980x760+940+320"
+
+    def test_enforces_minimum_size(self) -> None:
+        assert resolve_geometry("200x100+0+0", 1920, 1080) == "900x640+0+0"
+
+    def test_falls_back_to_default_geometry(self) -> None:
+        assert resolve_geometry(None, 1920, 1080) == DEFAULT_GEOMETRY
+        assert resolve_geometry("bad", 1920, 1080) == DEFAULT_GEOMETRY
+
+    def test_clamps_default_into_small_screen(self) -> None:
+        assert resolve_geometry(None, 800, 600) == "800x600+0+0"
 
 
 # ============================================================================ #
