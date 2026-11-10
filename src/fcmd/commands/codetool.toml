@@ -1,6 +1,6 @@
 # 内置 DSL 命令：codetool（多子命令形态，内建动作原语）。
 #
-# 实现见 fcmd/dsl/actions/codec.py：base64/url/hex/rot13/html 均为纯 Python
+# 实现见 fcmd/dsl/actions/toolcmd/codec.py：base64/url/hex/rot13/html 均为纯 Python
 # 编解码，无子进程调用。
 # Base64 解码（binascii.Error/UnicodeDecodeError）与 Hex 解码（ValueError）
 # 非法输入捕获后打印错误提示，不视为失败。

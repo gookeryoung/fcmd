@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import inspect
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from ..actions import action_names, get_action, has_action
+from ..actions import action_names, action_param_names, has_action
 from .errors import CommandDeclError
 from .params import _PARAM_NAME_RE, _RESERVED_PARAM_NAMES, ParamDecl, parse_param_table
 
@@ -412,13 +411,14 @@ def _check_action_mutex(name: str, table: Mapping[str, Any], has_cmd: bool, args
 def _check_action_params(name: str, action_name: str) -> None:
     """校验动作实现签名的参数名不与全局选项保留名冲突。
 
+    参数名取自 :mod:`fcmd.dsl.actions._index` 静态表，声明期不导入实现模块。
+
     Raises
     ------
     CommandDeclError
         动作实现参数名命中 dry_run/quiet/strategy
     """
-    impl = get_action(action_name).func
-    for pname in inspect.signature(impl).parameters:
+    for pname in action_param_names(action_name):
         if pname in _RESERVED_PARAM_NAMES:
             raise CommandDeclError(f"命令 {name!r} 的动作 {action_name!r} 参数 {pname!r} 是保留名（全局选项）")
 

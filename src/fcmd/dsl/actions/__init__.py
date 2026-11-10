@@ -62,14 +62,27 @@ Python 函数，其签名即 CLI 参数 schema（synth 层拷贝签名注入合�
 from __future__ import annotations
 
 import importlib
+import inspect
+import typing
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import wraps
+from pathlib import Path
 from typing import Any
 
-from ._index import ACTION_MODULES
+from ._index import ACTION_MODULES, ACTION_SPECS
 
-__all__ = ["Action", "action", "action_names", "get_action", "has_action", "run_and_print"]
+__all__ = [
+    "Action",
+    "action",
+    "action_names",
+    "action_param_help",
+    "action_param_names",
+    "action_signature",
+    "get_action",
+    "has_action",
+    "run_and_print",
+]
 
 
 @dataclass(frozen=True)
@@ -110,6 +123,57 @@ def _load_action(name: str) -> None:
     module = ACTION_MODULES.get(name)
     if module is not None:
         _load_module(module)
+
+
+# 静态注解标记 → 类型对象（``_index._ann_token`` 的逆变换；见 ACTION_SPECS）
+_ANNOTATION_BASES: dict[str, Any] = {"str": str, "int": int, "float": float, "bool": bool, "path": Path}
+
+
+def _annotation_from_token(token: str) -> Any:
+    """静态注解标记 → 类型对象；空标记表示无注解。"""
+    if not token:
+        return inspect.Parameter.empty
+    base = _ANNOTATION_BASES.get(token)
+    if base is not None:
+        return base
+    if token.startswith("list:"):
+        inner = _annotation_from_token(token.removeprefix("list:"))
+        return list[inner]
+    if token.startswith("opt:"):
+        inner = _annotation_from_token(token.removeprefix("opt:"))
+        return inner | None
+    if token.startswith("literal:"):
+        values = tuple(token.removeprefix("literal:").split("|"))
+        return typing.Literal[values]  # type: ignore[not-a-type] - 运行期按字面量集合动态构造
+    raise ValueError(f"未知的注解标记: {token!r}")
+
+
+def action_param_names(name: str) -> tuple[str, ...]:
+    """动作参数名（静态表，声明期校验用；不导入实现模块）。"""
+    return tuple(param[0] for param in ACTION_SPECS[name][1])
+
+
+def action_param_help(name: str) -> dict[str, str]:
+    """动作参数帮助文本（静态表；不导入实现模块）。"""
+    return dict(ACTION_SPECS[name][0])
+
+
+def action_signature(name: str) -> tuple[inspect.Signature, dict[str, Any]]:
+    """按静态表重建动作签名与注解（参数 schema 合成用；不导入实现模块）。"""
+    params: list[inspect.Parameter] = []
+    hints: dict[str, Any] = {}
+    for pname, token, has_default, default in ACTION_SPECS[name][1]:
+        annotation = _annotation_from_token(token)
+        params.append(
+            inspect.Parameter(
+                pname,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                default=default if has_default else inspect.Parameter.empty,
+                annotation=annotation,
+            )
+        )
+        hints[pname] = annotation
+    return inspect.Signature(params), hints
 
 
 def _guarded(
@@ -174,24 +238,20 @@ def action(
 
 
 def has_action(name: str) -> bool:
-    """查询动作是否已注册（声明期校验用；按需加载所属子模块）。"""
-    _load_action(name)
-    return name in _ACTIONS
+    """查询动作是否存在（静态映射表查询，**不导入任何子模块**）。"""
+    return name in _ACTIONS or name in ACTION_MODULES
 
 
 def action_names() -> tuple[str, ...]:
-    """全部已注册动作名（排序，供声明期错误提示）。
+    """全部动作名（排序，供声明期错误提示）。
 
-    会加载全部动作子模块——仅错误提示 / 全量校验路径调用，正常命令执行
-    不触发（按需加载单个动作模块）。
+    静态表与已注册动作的并集——只查表，不导入子模块。
     """
-    for module in sorted(set(ACTION_MODULES.values())):
-        _load_module(module)
-    return tuple(sorted(_ACTIONS))
+    return tuple(sorted(set(ACTION_MODULES) | set(_ACTIONS)))
 
 
 def get_action(name: str) -> Action:
-    """取出动作描述符（调用方须经声明期校验，未知名抛 KeyError；按需加载子模块）。"""
+    """取出动作描述符并导入其所属子模块（执行期入口；未知名抛 KeyError）。"""
     _load_action(name)
     return _ACTIONS[name]
 
@@ -217,6 +277,7 @@ def run_and_print(
     print(result)
 
 
-# 子模块不再在包导入期全部加载：按动作名经 ``_index.ACTION_MODULES`` 懒导入
-# （``has_action`` / ``get_action`` / ``action_names``），避免每次
-# ``import fcmd.dsl`` 都承担 17 个子模块的传递依赖（实测约 110ms）。
+# 子模块从不在包导入期加载：声明期只读 ``_index`` 静态表（``has_action`` /
+# ``action_names`` / ``action_param_*`` / ``action_signature``）；只有动作真正
+# 执行时 ``get_action`` 才导入其所属子模块，``import fcmd.dsl`` 与命令发现
+# 都不再承担 17 个子模块的传递依赖（含 PIL / yaml 等）。

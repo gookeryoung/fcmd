@@ -36,11 +36,12 @@ CLI 解析值等于声明 default 时取链中第一个非空环境变量值。
 既有/新增声明字段（``tty`` → ``TaskSpec.passthrough``，引擎侧已消费，
 属于声明字段而非函数属性契约）。
 
-命令级 ``action``（内建动作原语）合成**有逻辑**的函数体（转发
-:mod:`fcmd.dsl.actions` 注册表实现，进程内执行），不标记
+命令级 ``action``（内建动作原语）合成**有逻辑**的函数体（执行时才导入
+:mod:`fcmd.dsl.actions` 实现模块并转发，进程内执行），不标记
 ``__dsl_empty_body__``——引擎判有函数逻辑 → fn 任务，kwargs 按签名从
-CLI 解析变量注入；参数 schema 拷贝自动作实现函数签名（TOML ``args``
-禁用，单一真理源），标记 ``__dsl_action__`` 供内省与测试。
+CLI 解析变量注入；参数 schema 取自 :mod:`fcmd.dsl.actions._index` 静态
+签名表（声明期不导入实现模块；TOML ``args`` 禁用，单一真理源），标记
+``__dsl_action__`` 供内省与测试。
 """
 
 from __future__ import annotations
@@ -50,14 +51,13 @@ import inspect
 import os
 import subprocess
 import sys
-import typing
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from fcmd.core.toolkit.args import ToolSpec
 
-from .actions import Action, get_action
+from .actions import action_param_help, action_signature, get_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl
 
 __all__ = [
@@ -387,48 +387,40 @@ def _synthesize_func(decl: CommandDecl) -> Callable[..., Any]:
     return dsl_command
 
 
-def _synthesize_action_func(decl: CommandDecl, act: Action) -> Callable[..., Any]:
+def _synthesize_action_func(decl: CommandDecl, action_name: str) -> Callable[..., Any]:
     """生成内建动作的合成函数（fn 任务形态：函数体有逻辑，引擎按 fn 任务执行）。
 
     与 cmd 任务占位函数（``__dsl_empty_body__``，函数体不执行）不同：动作
-    合成函数的函数体转发注册表实现（进程内执行），**不标记**空函数体——
-    引擎 :func:`fcmd.core.toolkit.exec._has_function_logic` 判有逻辑 → fn
-    任务，kwargs 按签名从 CLI 解析变量注入。签名/注解拷贝自动作实现函数
-    （声明期已校验参数名与保留名冲突），零改动复用 ``_build_parser_for_tool``。
+    合成函数的函数体在**执行时**才导入动作实现模块并转发（进程内执行），
+    **不标记**空函数体——引擎 :func:`fcmd.core.toolkit.exec._has_function_logic`
+    判有逻辑 → fn 任务，kwargs 按签名从 CLI 解析变量注入。签名/注解/参数
+    帮助取自 :mod:`fcmd.dsl.actions._index` 静态表（:func:`action_signature`），
+    声明期不导入实现子模块，零改动复用 ``_build_parser_for_tool``。
 
     Parameters
     ----------
     decl:
         命令声明（``action`` 非空，声明期校验保证）
-    act:
-        已注册的动作描述符
+    action_name:
+        动作名（:mod:`fcmd.dsl.actions` 静态表键）
 
     Returns
     -------
     Callable
         合成函数（标记 ``__dsl_action__`` 供内省与测试）
     """
-    impl = act.func
-    sig = inspect.signature(impl)
-    # 注解解析加固：字符串注解在实现函数自身命名空间求值（actions 模块开启
-    # ``from __future__ import annotations`` 后 inspect.signature 返回原始
-    # 字符串），不依赖合成函数模块命名空间的隐式可见性；求值失败回退原始
-    # 注解（与既有行为一致，由 _resolve_hints 二次处理）
-    try:
-        hints: dict[str, Any] = typing.get_type_hints(impl)
-    except Exception:
-        hints = {}
+    sig, hints = action_signature(action_name)
 
     def dsl_action(**kwargs: Any) -> Any:
-        """内建动作任务：转发注册表实现（进程内执行）。"""
-        return impl(**kwargs)
+        """内建动作任务：执行时导入实现模块并转发（进程内执行）。"""
+        return get_action(action_name).func(**kwargs)
 
     dsl_action.__name__ = f"_dsl_{decl.name}"
     dsl_action.__qualname__ = f"fcmd.dsl.synth._dsl_{decl.name}"
     dsl_action.__doc__ = decl.help
     dsl_action.__signature__ = sig  # type: ignore[attr-defined]
     dsl_action.__annotations__ = {pname: hints.get(pname, p.annotation) for pname, p in sig.parameters.items()}  # type: ignore[attr-defined]
-    dsl_action.__dsl_action__ = act.name  # type: ignore[attr-defined]
+    dsl_action.__dsl_action__ = action_name  # type: ignore[attr-defined]
     _inject_contracts(dsl_action, decl)
     return dsl_action
 
@@ -464,10 +456,9 @@ def build_tool_spec(
     CommandDeclError
         该平台无可用命令
     """
-    act = get_action(decl.action) if decl.action else None
-    if act is not None:
-        func: Callable[..., Any] = _synthesize_action_func(decl, act)
-        param_help: dict[str, str] = dict(act.param_help)
+    if decl.action is not None:
+        func: Callable[..., Any] = _synthesize_action_func(decl, decl.action)
+        param_help: dict[str, str] = action_param_help(decl.action)
     else:
         func = _synthesize_func(decl)
         param_help = {p.name: p.help for p in decl.args if p.help}
@@ -492,7 +483,9 @@ def build_tool_spec(
         resolved_env = merged
 
     raw_cmd = (
-        None if act is not None or (decl.needs and not _has_any_cmd(decl)) else select_platform_cmd(decl, platform)
+        None
+        if decl.action is not None or (decl.needs and not _has_any_cmd(decl))
+        else select_platform_cmd(decl, platform)
     )
 
     return ToolSpec(

@@ -42,7 +42,7 @@ DSL 最初只为「声明式编排」而生，但历史上把大量业务实现�
 - P2-1：图片域完成，`dsl/actions/toolcmd/media.py` 仅剩声明与转接；`tools/media/img2icow.py` 复用 `mediabase` 的尺寸解析与转换函数。
 - P2-2：入口命名统一完成，短名全部为显式别名并有回归测试；后缀推断已删除；`taskkill` / `which` 不再生成同名全局脚本。
 - P2-3：archive / text / net / calc / hash / data 六域全部迁移完成，`dsl/actions/toolcmd/*.py` 只保留 `@action` 声明与参数转接，无第二份实现。
-- P2-4：动作层按边界分两层——通用动作（`basic` / `filenames` / `fileops` / `system` / `genid`）留在 `dsl/actions/` 顶层，工具专用声明模块迁入 `dsl/actions/toolcmd/`；动作名 → 模块的定位由 `dsl/actions/_index.py` 静态表维护。
+- P2-4：动作层按边界分两层——通用动作（`basic` / `filenames` / `fileops` / `system` / `genid`）留在 `dsl/actions/` 顶层，工具专用声明模块迁入 `dsl/actions/toolcmd/`；动作名 → 模块与参数签名由 `dsl/actions/_index.py` 静态表维护，声明解析与参数 schema 合成只读该表，动作实现模块仅在真正执行时导入。
 - text 域迁移时发现 `tools` 反向依赖 `dsl/actions/fileops.py` 的文本读取 helper，已下沉到 `core/shared/textio.py`（`is_binary_file` / `read_text_lines`），`fileops` 与 `textbase` 共用。
 
 ## 交接

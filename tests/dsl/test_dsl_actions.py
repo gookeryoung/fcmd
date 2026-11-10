@@ -57,6 +57,7 @@ class TestActionRegistry:
 
     def test_duplicate_registration(self) -> None:
         """同名动作重复注册报 ValueError（模块导入期编程错误）。"""
+        get_action("setenv")  # 确保所属子模块已加载并完成注册
         registry = dict(_snapshot_actions())
         with pytest.raises(ValueError, match="重复注册"):
 
@@ -102,12 +103,48 @@ class TestActionLazyLoading:
         }
         assert actual == ACTION_MODULES
 
+    def test_specs_match_registered_actions(self) -> None:
+        """``_index.ACTION_SPECS`` 与动作实现签名/注解/参数帮助完全一致。"""
+        import importlib
+        import inspect
+        import typing
+
+        import fcmd.dsl.actions as actions_pkg
+        from fcmd.dsl.actions import action_param_help, action_signature
+        from fcmd.dsl.actions._index import ACTION_MODULES, ACTION_SPECS, _iter_action_modules
+
+        for mod in _iter_action_modules():
+            importlib.import_module(f"{actions_pkg.__name__}.{mod}")
+        assert set(ACTION_SPECS) == set(ACTION_MODULES)
+        for name in ACTION_MODULES:
+            act = actions_pkg.get_action(name)
+            real_sig = inspect.signature(act.func)
+            real_hints = typing.get_type_hints(inspect.unwrap(act.func))
+            static_sig, static_hints = action_signature(name)
+            assert list(real_sig.parameters) == list(static_sig.parameters), name
+            for pname, real in real_sig.parameters.items():
+                static = static_sig.parameters[pname]
+                assert real.kind == static.kind, (name, pname)
+                assert real.default == static.default, (name, pname)
+                assert real_hints.get(pname, inspect.Parameter.empty) == static_hints[pname], (name, pname)
+            assert dict(act.param_help) == action_param_help(name), name
+
     def test_package_import_does_not_load_submodules(self) -> None:
-        """裸导入包不注册任何动作（子模块由 ``has_action`` / ``get_action`` 触发）。"""
-        script = "import fcmd.dsl.actions as a; print(len(a._ACTIONS))"
+        """裸导入包不注册、不加载任何动作子模块。"""
+        script = "import fcmd.dsl.actions as a; print(len(a._ACTIONS), len(a._LOADED_MODULES))"
         proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
         assert proc.returncode == 0, proc.stderr
-        assert proc.stdout.strip() == "0", proc.stderr
+        assert proc.stdout.strip() == "0 0", proc.stderr
+
+    def test_has_action_reads_static_table_only(self) -> None:
+        """``has_action`` 只查静态表：已知动作 True、未知动作 False，均不导入子模块。"""
+        script = (
+            "import fcmd.dsl.actions as a\n"
+            "print(a.has_action('codetool_base64'), a.has_action('no_such_action'), len(a._LOADED_MODULES))\n"
+        )
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+        assert proc.stdout.strip() == "True False 0", proc.stderr
 
     def test_get_action_loads_only_own_module(self) -> None:
         """``get_action`` 只加载动作所属子模块，不波及其他子模块。"""
