@@ -15,7 +15,10 @@
 ``fcmd.tools`` 包下每个非 ``main`` / 非 ``_`` 前缀的模块即一个工具，
 领域子包（如 ``fcmd.tools.media``）内的工具取模块名为工具名。
 模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
-首次调用 ``FcmdApp.run()`` 时扫描并导入所有工具模块，
+
+``fcmd <tool>`` 先按生成清单 :mod:`fcmd.cli._manifest` 只加载目标工具；
+清单未命中 / 过期 / 与 DSL 重名时回退 :func:`fcmd.cli._discovery.ensure_tools_discovered`
+全量扫描。工具列表（无参 / ``--help``）与内建命令始终走全量发现。
 ``import fcmd`` 冷启动不受影响。
 
 用法
@@ -61,19 +64,18 @@ class FcmdApp:
     def run(self) -> int:
         """主入口，返回退出码。
 
-        ``--version`` 在工具发现之前直接返回：避免为打印版本号触发 88 个
-        工具模块导入与 182 条 DSL 命令注册（约 280ms）。
+        顺序：``--version`` 在工具发现之前直接返回（避免为打印版本号触发
+        全量工具导入）；工具名先走静态清单快路径，未命中再回退全量发现。
         """
         first = self._argv[0] if self._argv else None
         if first in ("--version", "-V"):
             print(f"fcmd {__version__}")
             return 0
 
-        from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool
-
-        ensure_tools_discovered()
+        from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool, resolve_tool_fast
 
         if first is None or first in ("--help", "-h"):
+            ensure_tools_discovered()
             self._list_tools()
             return 0
 
@@ -81,10 +83,14 @@ class FcmdApp:
         if first in _BUILTIN_COMMANDS:
             from fcmd.cli._builtins import run_builtin
 
+            ensure_tools_discovered()
             return run_builtin(first, self._argv[1:])
 
         rest = self._argv[1:]
-        resolved = resolve_tool(first)
+        resolved = resolve_tool_fast(first)
+        if resolved is None:
+            ensure_tools_discovered()
+            resolved = resolve_tool(first)
         if resolved is None:
             print_unknown_tool(first)
             return 1

@@ -543,6 +543,8 @@ src/fcmd/
     models/      #   通用数据模型
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
+    _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
+    _manifest_data.py  # 生成文件，勿手改
   tools/         # 业务实现（自动发现）
     archive/ calc/ data/ dev/ hash/ llm/ media/ net/ pdf/ system/ text/
   dsl/           # TOML 命令定义与 exec/compute 原语
@@ -552,6 +554,14 @@ src/fcmd/
 ```
 
 新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。目录按功能域划分；图形界面版命名为 `<工具名>w.py` 并放在其核心逻辑所在域（如 `llm/llmconvertw.py`、`media/img2icow.py`）。
+
+新增 / 删除 / 改名工具或调整别名后，重新生成静态工具清单（`fcmd <tool>` 快路径据此只加载目标工具；清单缺失或过期会自动回退全量发现，功能不受影响，只影响启动速度）：
+
+```bash
+uv run python -m fcmd.cli._manifest_data
+```
+
+`tests/cli/test_tools_manifest.py` 会校验清单与实跑全量发现严格一致。
 
 公共 API（`import fcmd as fx`）名称保持稳定；原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径已统一收敛到 `fcmd.core.*`，不保留兼容 shim。
 

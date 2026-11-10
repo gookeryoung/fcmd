@@ -1,0 +1,192 @@
+"""静态工具清单（生成文件，勿手改）。
+
+由 ``python -m fcmd.cli._manifest_data`` 按当前全量发现结果生成：
+工具规范名 → ``ToolEntry``（工具类型与目标）、别名表、内置 DSL 与
+Python 模块重名的工具名，以及候选工具模块布局指纹（新鲜度校验用）。
+``fcmd <tool>`` 快路径据此只加载目标工具；清单缺失 / 过期 / 与布局
+不一致时一律回退全量发现（见 :mod:`fcmd.cli._manifest`）。
+"""
+
+from __future__ import annotations
+
+from fcmd.cli._manifest import ToolEntry
+
+__all__ = ["ALIASES", "AMBIGUOUS", "LAYOUT", "SCHEMA", "TOOLS"]
+
+# 清单格式版本（与 fcmd.cli._manifest.SCHEMA 比对，不一致即视为过期）
+SCHEMA = 1
+
+TOOLS: dict[str, ToolEntry] = {
+    "alarmclock": ToolEntry("alarmclock", "python", "fcmd.tools.system.alarmclock"),
+    "archivex": ToolEntry("archivex", "python", "fcmd.tools.archive.archivex"),
+    "asciitool": ToolEntry("asciitool", "dsl", "asciitool.toml"),
+    "autofmt": ToolEntry("autofmt", "dsl", "autofmt.toml"),
+    "bumpversion": ToolEntry("bumpversion", "python", "fcmd.tools.dev.bumpversion"),
+    "calcdate": ToolEntry("calcdate", "dsl", "calcdate.toml"),
+    "casetool": ToolEntry("casetool", "dsl", "casetool.toml"),
+    "checksum": ToolEntry("checksum", "python", "fcmd.tools.system.checksum"),
+    "clr": ToolEntry("clr", "dsl", "clr.toml"),
+    "codetool": ToolEntry("codetool", "dsl", "codetool.toml"),
+    "colortool": ToolEntry("colortool", "dsl", "colortool.toml"),
+    "convtool": ToolEntry("convtool", "dsl", "convtool.toml"),
+    "cryptool": ToolEntry("cryptool", "dsl", "cryptool.toml"),
+    "csvtool": ToolEntry("csvtool", "dsl", "csvtool.toml"),
+    "dockercmd": ToolEntry("dockercmd", "dsl", "dockercmd.toml"),
+    "envdev": ToolEntry("envdev", "python", "fcmd.tools.dev.envdev"),
+    "filecheck": ToolEntry("filecheck", "python", "fcmd.tools.media.filecheck"),
+    "filedate": ToolEntry("filedate", "dsl", "filedate.toml"),
+    "filelevel": ToolEntry("filelevel", "dsl", "filelevel.toml"),
+    "filerename": ToolEntry("filerename", "dsl", "filerename.toml"),
+    "filesearch": ToolEntry("filesearch", "dsl", "filesearch.toml"),
+    "folderback": ToolEntry("folderback", "dsl", "folderback.toml"),
+    "folderzip": ToolEntry("folderzip", "dsl", "folderzip.toml"),
+    "gittool": ToolEntry("gittool", "python", "fcmd.tools.dev.gittool"),
+    "hashfile": ToolEntry("hashfile", "dsl", "hashfile.toml"),
+    "hashtool": ToolEntry("hashtool", "dsl", "hashtool.toml"),
+    "idtool": ToolEntry("idtool", "dsl", "idtool.toml"),
+    "imagetool": ToolEntry("imagetool", "dsl", "imagetool.toml"),
+    "img2ico": ToolEntry("img2ico", "dsl", "img2ico.toml"),
+    "img2icow": ToolEntry("img2icow", "python", "fcmd.tools.media.img2icow"),
+    "img2pdf": ToolEntry("img2pdf", "python", "fcmd.tools.pdf.img2pdf"),
+    "img2pdfw": ToolEntry("img2pdfw", "python", "fcmd.tools.pdf.img2pdfw"),
+    "inifile": ToolEntry("inifile", "dsl", "inifile.toml"),
+    "iptool": ToolEntry("iptool", "dsl", "iptool.toml"),
+    "jsontool": ToolEntry("jsontool", "dsl", "jsontool.toml"),
+    "llmbench": ToolEntry("llmbench", "python", "fcmd.tools.llm.llmbench"),
+    "llmchat": ToolEntry("llmchat", "python", "fcmd.tools.llm.llmchat"),
+    "llmchatw": ToolEntry("llmchatw", "python", "fcmd.tools.llm.llmchatw"),
+    "llmconvert": ToolEntry("llmconvert", "python", "fcmd.tools.llm.llmconvert"),
+    "llmconvertw": ToolEntry("llmconvertw", "python", "fcmd.tools.llm.llmconvertw"),
+    "llmdoctor": ToolEntry("llmdoctor", "python", "fcmd.tools.llm.llmdoctor"),
+    "llmdown": ToolEntry("llmdown", "python", "fcmd.tools.llm.llmdown"),
+    "llmengine": ToolEntry("llmengine", "python", "fcmd.tools.llm.llmengine"),
+    "llmenginew": ToolEntry("llmenginew", "python", "fcmd.tools.llm.llmenginew"),
+    "llmenv": ToolEntry("llmenv", "python", "fcmd.tools.llm.llmenv"),
+    "llmmodel": ToolEntry("llmmodel", "python", "fcmd.tools.llm.llmmodel"),
+    "llmqnt": ToolEntry("llmqnt", "python", "fcmd.tools.llm.llmqnt"),
+    "llmqntw": ToolEntry("llmqntw", "python", "fcmd.tools.llm.llmqntw"),
+    "llmserve": ToolEntry("llmserve", "python", "fcmd.tools.llm.llmserve"),
+    "llmservew": ToolEntry("llmservew", "python", "fcmd.tools.llm.llmservew"),
+    "lscalc": ToolEntry("lscalc", "python", "fcmd.tools.calc.lscalc"),
+    "mathtool": ToolEntry("mathtool", "dsl", "mathtool.toml"),
+    "nettool": ToolEntry("nettool", "dsl", "nettool.toml"),
+    "packtool": ToolEntry("packtool", "python", "fcmd.tools.dev.packtool"),
+    "padtool": ToolEntry("padtool", "dsl", "padtool.toml"),
+    "pathtool": ToolEntry("pathtool", "dsl", "pathtool.toml"),
+    "pdftool": ToolEntry("pdftool", "python", "fcmd.tools.pdf.pdftool"),
+    "piptool": ToolEntry("piptool", "dsl", "piptool.toml"),
+    "portcheck": ToolEntry("portcheck", "python", "fcmd.tools.net.portcheck"),
+    "pymake": ToolEntry("pymake", "python", "fcmd.tools.dev.pymake"),
+    "pyprof": ToolEntry("pyprof", "python", "fcmd.tools.dev.pyprof"),
+    "randtool": ToolEntry("randtool", "dsl", "randtool.toml"),
+    "regextool": ToolEntry("regextool", "dsl", "regextool.toml"),
+    "regexvalidate": ToolEntry("regexvalidate", "python", "fcmd.tools.text.regexvalidate"),
+    "regexvalidatew": ToolEntry("regexvalidatew", "python", "fcmd.tools.text.regexvalidatew"),
+    "reseticoncache": ToolEntry("reseticoncache", "dsl", "reseticoncache.toml"),
+    "reshack": ToolEntry("reshack", "python", "fcmd.tools.system.reshack"),
+    "reshackw": ToolEntry("reshackw", "python", "fcmd.tools.system.reshackw"),
+    "screenshot": ToolEntry("screenshot", "python", "fcmd.tools.media.screenshot"),
+    "setenv": ToolEntry("setenv", "dsl", "setenv.toml"),
+    "sshcopyid": ToolEntry("sshcopyid", "dsl", "sshcopyid.toml"),
+    "stattool": ToolEntry("stattool", "dsl", "stattool.toml"),
+    "sysinfo": ToolEntry("sysinfo", "dsl", "sysinfo.toml"),
+    "taskkill": ToolEntry("taskkill", "dsl", "taskkill.toml"),
+    "textdiff": ToolEntry("textdiff", "dsl", "textdiff.toml"),
+    "timetool": ToolEntry("timetool", "dsl", "timetool.toml"),
+    "tomltool": ToolEntry("tomltool", "dsl", "tomltool.toml"),
+    "txttool": ToolEntry("txttool", "dsl", "txttool.toml"),
+    "urlcheck": ToolEntry("urlcheck", "dsl", "urlcheck.toml"),
+    "urltool": ToolEntry("urltool", "dsl", "urltool.toml"),
+    "videoconv": ToolEntry("videoconv", "python", "fcmd.tools.media.videoconv"),
+    "videoconvw": ToolEntry("videoconvw", "python", "fcmd.tools.media.videoconvw"),
+    "websave": ToolEntry("websave", "dsl", "websave.toml"),
+    "which": ToolEntry("which", "dsl", "which.toml"),
+    "writefile": ToolEntry("writefile", "dsl", "writefile.toml"),
+    "xmltool": ToolEntry("xmltool", "dsl", "xmltool.toml"),
+    "yamtool": ToolEntry("yamtool", "dsl", "yamtool.toml"),
+    "zipencrypt": ToolEntry("zipencrypt", "python", "fcmd.tools.archive.zipencrypt"),
+}
+
+ALIASES: dict[str, str] = {
+    "git": "gittool",
+    "gitt": "gittool",
+    "imaget": "imagetool",
+    "jsont": "jsontool",
+    "pipt": "piptool",
+    "pm": "pymake",
+    "taskk": "taskkill",
+    "wch": "which",
+}
+
+# 同时被 Python 模块与内置 DSL 声明（子命令须全量合并，不走快路径）
+AMBIGUOUS: frozenset[str] = frozenset(
+    {
+        "gittool",
+        "packtool",
+        "pymake",
+    }
+)
+
+# 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）
+LAYOUT: tuple[str, ...] = (
+    "tools/archive/archivebase.py",
+    "tools/archive/archivex.py",
+    "tools/archive/zipencrypt.py",
+    "tools/calc/calcbase.py",
+    "tools/calc/calcdatebase.py",
+    "tools/calc/lscalc.py",
+    "tools/data/database.py",
+    "tools/dev/bumpversion.py",
+    "tools/dev/envdev.py",
+    "tools/dev/envdev_core.py",
+    "tools/dev/envdev_go.py",
+    "tools/dev/envdev_java.py",
+    "tools/dev/envdev_node.py",
+    "tools/dev/gittool.py",
+    "tools/dev/packtool.py",
+    "tools/dev/pymake.py",
+    "tools/dev/pyprof.py",
+    "tools/hash/hashbase.py",
+    "tools/llm/llmbase.py",
+    "tools/llm/llmbench.py",
+    "tools/llm/llmchat.py",
+    "tools/llm/llmchatw.py",
+    "tools/llm/llmconvert.py",
+    "tools/llm/llmconvertw.py",
+    "tools/llm/llmdoctor.py",
+    "tools/llm/llmdown.py",
+    "tools/llm/llmengine.py",
+    "tools/llm/llmenginew.py",
+    "tools/llm/llmenv.py",
+    "tools/llm/llmmodel.py",
+    "tools/llm/llmqnt.py",
+    "tools/llm/llmqntw.py",
+    "tools/llm/llmserve.py",
+    "tools/llm/llmservew.py",
+    "tools/media/filecheck.py",
+    "tools/media/img2icow.py",
+    "tools/media/mediabase.py",
+    "tools/media/screenshot.py",
+    "tools/media/videoconv.py",
+    "tools/media/videoconvw.py",
+    "tools/net/netbase.py",
+    "tools/net/portcheck.py",
+    "tools/pdf/img2pdf.py",
+    "tools/pdf/img2pdfw.py",
+    "tools/pdf/models.py",
+    "tools/pdf/pdfbase.py",
+    "tools/pdf/pdftool.py",
+    "tools/system/alarmclock.py",
+    "tools/system/checksum.py",
+    "tools/system/reshack.py",
+    "tools/system/reshackw.py",
+    "tools/text/regexvalidate.py",
+    "tools/text/regexvalidatew.py",
+    "tools/text/textbase.py",
+)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    from fcmd.cli._manifest import regenerate
+
+    regenerate()

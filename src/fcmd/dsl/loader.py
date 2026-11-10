@@ -21,14 +21,14 @@ import logging
 import os
 import tomllib
 from collections.abc import Mapping
-from functools import lru_cache
+from functools import cache, lru_cache
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 from .decl import CommandDeclError, ToolDecl, parse_tool_table
 
-__all__ = ["builtin_tool_decls", "clear_decl_cache", "user_tool_decls"]
+__all__ = ["builtin_tool_decl", "builtin_tool_decls", "builtin_tool_files", "clear_decl_cache", "user_tool_decls"]
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,22 @@ def _parse_decls(data: Mapping[str, Any], source: str) -> list[ToolDecl]:
     return decls
 
 
+def builtin_tool_files() -> tuple[str, ...]:
+    """返回内置命令文件名（``*.toml``，按文件名排序，结果进程内缓存）。"""
+    return _builtin_files_cached()
+
+
+@lru_cache(maxsize=1)
+def _builtin_files_cached() -> tuple[str, ...]:
+    root = resources.files("fcmd").joinpath("commands")
+    try:
+        entries = sorted(root.iterdir(), key=lambda entry: entry.name)
+    except OSError as exc:
+        logger.warning("内置命令目录读取失败，已跳过: %s", exc)
+        return ()
+    return tuple(e.name for e in entries if not e.name.startswith("_") and e.name.endswith(".toml"))
+
+
 def builtin_tool_decls() -> list[ToolDecl]:
     """读取包内内置命令目录 ``fcmd/commands/*.toml``（按文件名排序逐文件加载）。
 
@@ -64,33 +80,47 @@ def builtin_tool_decls() -> list[ToolDecl]:
 
     结果按进程缓存：同一进程内重复调用（发现、测试、工具切换）只解析一次。
     """
-    return list(_builtin_tool_decls_cached())
+    decls: list[ToolDecl] = []
+    for file_name in _builtin_files_cached():
+        decls.extend(_decls_from_file_cached(file_name))
+    return decls
 
 
-@lru_cache(maxsize=1)
-def _builtin_tool_decls_cached() -> tuple[ToolDecl, ...]:
+def builtin_tool_decl(file_name: str, tool_name: str) -> ToolDecl | None:
+    """读取单个内置文件的声明，返回其中名为 ``tool_name`` 的工具。
+
+    供静态清单快路径使用：只解析提供目标工具的单个文件，不加载其余声明。
+    文件缺失 / 损坏 / 无该工具时返回 None（调用方回退全量发现）。
+    """
+    for decl in _decls_from_file_cached(file_name):
+        if decl.name == tool_name:
+            return decl
+    return None
+
+
+@cache
+def _decls_from_file_cached(file_name: str) -> tuple[ToolDecl, ...]:
+    """解析单个内置 TOML 文件（进程内缓存），坏文件 warning 后返回空。"""
     root = resources.files("fcmd").joinpath("commands")
     try:
-        entries = sorted(root.iterdir(), key=lambda entry: entry.name)
+        entry = next((item for item in root.iterdir() if item.name == file_name), None)
     except OSError as exc:
-        logger.warning("内置命令目录读取失败，已跳过: %s", exc)
+        logger.warning("内置命令文件 %s 读取失败，已跳过: %s", file_name, exc)
         return ()
-    decls: list[ToolDecl] = []
-    for entry in entries:
-        if entry.name.startswith("_") or not entry.name.endswith(".toml"):
-            continue
-        try:
-            data = tomllib.loads(entry.read_bytes().decode("utf-8"))
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
-            logger.warning("内置命令文件 %s 读取失败，已跳过: %s", entry.name, exc)
-            continue
-        decls.extend(_parse_decls(data, f"<内置 {entry.name}>"))
-    return tuple(decls)
+    if entry is None:
+        return ()
+    try:
+        data = tomllib.loads(entry.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        logger.warning("内置命令文件 %s 读取失败，已跳过: %s", file_name, exc)
+        return ()
+    return tuple(_parse_decls(data, f"<内置 {file_name}>"))
 
 
 def clear_decl_cache() -> None:
     """清空内置声明缓存（供测试在替换资源目录后重新加载）。"""
-    _builtin_tool_decls_cached.cache_clear()
+    _builtin_files_cached.cache_clear()
+    _decls_from_file_cached.cache_clear()
 
 
 def user_tool_decls() -> list[ToolDecl]:

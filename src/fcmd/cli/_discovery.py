@@ -14,6 +14,10 @@
 
 本模块是工具发现状态的唯一定义处；``main.py`` 与 ``_builtins/`` 下
 各内建命令均从此处查询，测试应 patch 本命名空间。
+
+``fcmd <tool>`` 的快路径 :func:`resolve_tool_fast` 也在本模块：按生成清单
+（:mod:`fcmd.cli._manifest`）只加载目标工具；清单未命中 / 过期或需要与
+DSL / 用户命令合并时返回 ``None``，由调用方回退 :func:`ensure_tools_discovered`。
 """
 
 from __future__ import annotations
@@ -21,20 +25,20 @@ from __future__ import annotations
 import contextlib
 import importlib
 import importlib.util
-import logging
 import os
 import pkgutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.console import print_error
+from fcmd._lazylog import LazyLogger
 
 if TYPE_CHECKING:
+    from fcmd.cli._manifest import ToolEntry
     from fcmd.core.toolkit import ToolSpec
     from fcmd.dsl.decl import ToolDecl
 
-logger = logging.getLogger(__name__)
+logger = LazyLogger(__name__)
 
 __all__ = [
     "aliases_for",
@@ -43,6 +47,7 @@ __all__ = [
     "import_tool_module",
     "load_tool_subs",
     "resolve_tool",
+    "resolve_tool_fast",
     "tool_description",
     "tool_names",
 ]
@@ -266,6 +271,94 @@ def resolve_tool(name: str) -> str | None:
     return _TOOL_ALIASES.get(name)
 
 
+def resolve_tool_fast(name: str) -> str | None:
+    """按静态清单快速解析单个工具，命中时只加载该工具（返回规范名）。
+
+    与 :func:`resolve_tool` 的区别：不触发 :func:`ensure_tools_discovered`
+    的全量扫描与导入，而是读生成清单
+    （:mod:`fcmd.cli._manifest`）后仅：
+    Python 工具只导入目标模块；DSL 工具只解析声明它的那一个内置 TOML。
+
+    以下情形返回 ``None``，由调用方回退 ``ensure_tools_discovered`` +
+    :func:`resolve_tool`：
+
+    - 清单缺失 / 版本或布局校验失败 / 名字未登记（含新工具未重新生成清单）
+    - 名字同时被 Python 模块与内置 DSL 声明（子命令需全量合并）
+    - 用户级 ``commands.toml`` 存在（用户声明可覆盖内置，须全量语义）
+    - 目标模块导入失败或导入后未注册任何子命令
+    """
+    from fcmd.cli import _manifest
+
+    entry = _manifest.lookup(name)
+    if entry is None or entry.name in _manifest.ambiguous_names():
+        return None
+    if entry.kind == "python":
+        resolved = _load_python_tool(entry)
+    elif entry.kind == "dsl":
+        resolved = _load_dsl_tool(entry)
+    else:
+        return None
+    if resolved is None:
+        return None
+    for alias in _manifest.aliases_for(entry.name):
+        _TOOL_ALIASES.setdefault(alias, entry.name)
+    return resolved
+
+
+def _load_python_tool(entry: ToolEntry) -> str | None:
+    """清单快路径：只导入单个 Python 工具模块并校验注册结果。"""
+    from fcmd.core.toolkit import _TOOL_REGISTRY
+
+    _seed_main_module_alias(entry.target)
+    try:
+        importlib.import_module(entry.target)
+    except (ImportError, OSError) as exc:
+        logger.debug("清单快路径导入 %s 失败，回退全量发现: %s", entry.target, exc)
+        _drop_module_specs(entry.target)
+        return None
+    if entry.name not in _TOOL_REGISTRY:
+        # 模块已导入但未注册任何子命令（内部辅助模块），清单条目失效
+        return None
+    _TOOL_MODULES.setdefault(entry.name, entry.target)
+    _TOOL_ALIASES.setdefault(entry.name, entry.name)
+    return entry.name
+
+
+def _load_dsl_tool(entry: ToolEntry) -> str | None:
+    """清单快路径：只解析声明该工具的内置 TOML 并注册。"""
+    home = Path(os.environ.get("FCMD_HOME", str(Path.home() / ".fcmd")))
+    if (home / "commands.toml").is_file():
+        # 用户声明可覆盖内置，保守起见回退全量发现
+        return None
+
+    from fcmd.core.toolkit import _TOOL_REGISTRY
+    from fcmd.dsl import builtin_tool_decl
+
+    decl = builtin_tool_decl(entry.target, entry.name)
+    if decl is None:
+        return None
+    _register_dsl_tool(decl, "builtin")
+    if entry.name not in _TOOL_REGISTRY:
+        return None
+    return entry.name
+
+
+def _drop_module_specs(module_path: str) -> None:
+    """移除某模块已注册的子命令（清单快路径导入半途失败时清理状态）。
+
+    模块导入在注册若干子命令后抛错时不会进入 ``sys.modules``，回退全量
+    发现会重新执行模块并再次注册同一子命令；先清理可避免 ``ValueError``。
+    """
+    from fcmd.core.toolkit import _TOOL_REGISTRY
+
+    for tool_name, subs in list(_TOOL_REGISTRY.items()):
+        for subcommand, spec in list(subs.items()):
+            if getattr(spec.func, "__module__", "") == module_path:
+                del subs[subcommand]
+        if not subs:
+            _TOOL_REGISTRY.pop(tool_name, None)
+
+
 def tool_names() -> list[str]:
     """返回全部规范工具名（排序去重）。"""
     return sorted(set(_TOOL_ALIASES.values()))
@@ -326,6 +419,7 @@ def tool_description(tool_name: str) -> str:
 
 def load_tool_subs(tool_name: str) -> dict[str | None, ToolSpec] | None:
     """加载工具模块并返回子命令字典，失败时打印错误并返回 None。"""
+    from fcmd.console import print_error
     from fcmd.core.toolkit import _TOOL_REGISTRY
 
     error = import_tool_module(tool_name)

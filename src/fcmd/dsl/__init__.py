@@ -31,7 +31,7 @@ from fcmd.core.hooks import register_action_resolver, register_cmd_rewriter
 
 from .actions import Action, action, action_names, get_action, has_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl, ToolDecl, parse_command_table, parse_tool_table
-from .loader import builtin_tool_decls, user_tool_decls
+from .loader import builtin_tool_decl, builtin_tool_decls, user_tool_decls
 from .synth import build_tool_spec, rewrite_ssh_cmd, select_platform_cmd
 
 # 把动作解析能力反向注册给 core（exec._apply_compute 通过钩子调用），
@@ -66,6 +66,7 @@ __all__ = [
     "action",
     "action_names",
     "build_tool_spec",
+    "builtin_tool_decl",
     "builtin_tool_decls",
     "get_action",
     "has_action",
