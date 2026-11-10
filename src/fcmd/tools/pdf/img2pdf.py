@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import fcmd
+from fcmd.tools._deps import missing_dependency
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,16 +84,10 @@ _IMAGE_MAGIC_NUMBERS: tuple[bytes, ...] = (
 _ICO_MAGIC = b"\x00\x00\x01\x00"
 
 
-def _missing_dependency(package: str, extra: str) -> bool:
-    """打印可选依赖缺失提示并返回 False（供 ``_require_*`` 统一返回）。"""
-    print(f"未安装 {package} 库，请安装: pip install fcmd[{extra}]")
-    return False
-
-
 def _require_pil() -> bool:
     """Pillow 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PIL:
-        return _missing_dependency("Pillow", "img")
+        return missing_dependency("Pillow", "img")
     global Image  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     if Image is None:
         from PIL import Image as _image

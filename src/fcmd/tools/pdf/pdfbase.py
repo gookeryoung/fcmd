@@ -13,6 +13,7 @@ import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from fcmd.tools._deps import missing_dependency
 from fcmd.tools.pdf.models import MergeSpec, PageSelection, SplitSpec
 
 if TYPE_CHECKING:
@@ -44,16 +45,10 @@ HAS_PYMUPDF = importlib.util.find_spec("fitz") is not None
 HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
 
 
-def _missing_dependency(package: str, extra: str) -> bool:
-    """打印可选依赖缺失提示并返回 False（供 ``_require_*`` 统一返回）。"""
-    print(f"未安装 {package} 库，请安装: pip install fcmd[{extra}]")
-    return False
-
-
 def _require_pymupdf() -> bool:
     """PyMuPDF 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PYMUPDF:
-        return _missing_dependency("PyMuPDF", "pdf")
+        return missing_dependency("PyMuPDF", "pdf")
     global fitz  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     import fitz
 
@@ -63,7 +58,7 @@ def _require_pymupdf() -> bool:
 def _require_pypdf() -> bool:
     """pypdf 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PYPDF:
-        return _missing_dependency("pypdf", "pdf")
+        return missing_dependency("pypdf", "pdf")
     global pypdf  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     import pypdf
 

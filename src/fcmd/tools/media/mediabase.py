@@ -13,6 +13,8 @@ import importlib.util
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fcmd.tools._deps import missing_dependency
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -93,12 +95,6 @@ _IMAGE_MAGIC_NUMBERS: tuple[bytes, ...] = (
     b"II*\x00",  # TIFF (little-endian)
     b"MM\x00*",  # TIFF (big-endian)
 )
-
-
-def _missing_dependency(package: str, extra: str) -> bool:
-    """打印可选依赖缺失提示并返回 False（供 ``_require_*`` 统一返回）。"""
-    print(f"未安装 {package} 库，请安装: pip install fcmd[{extra}]")
-    return False
 
 
 def _require_deps() -> bool:
@@ -520,7 +516,7 @@ def convert_images(  # noqa: PLR0913, PLR0917 - 转换参数由 CLI/GUI 共用
 def _require_pil() -> bool:
     """Pillow 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_PIL:
-        return _missing_dependency("Pillow", "img")
+        return missing_dependency("Pillow", "img")
     global Image, ImageDraw, ImageFont  # 惰性导入需 global 注入模块，避免工具发现时加载
     if Image is None:
         from PIL import Image as _image
@@ -534,7 +530,7 @@ def _require_pil() -> bool:
 def _require_resvg() -> bool:
     """resvg-py 未安装时打印提示，返回是否可用；已安装则惰性导入到模块全局。"""
     if not HAS_RESVG:
-        return _missing_dependency("resvg-py", "svg")
+        return missing_dependency("resvg-py", "svg")
     global resvg_py  # noqa: PLW0603 - 惰性导入需 global 注入模块，避免工具发现时加载
     if resvg_py is None:
         import resvg_py as _resvg_py
