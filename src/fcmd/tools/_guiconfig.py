@@ -10,6 +10,7 @@ img2pdfw / regexvalidatew / docdiffw）的设置文件统一位于
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -79,18 +80,48 @@ def _clamp_size(value: int, minimum: int, screen: int) -> int:
 
 
 def read_settings(path: Path) -> dict[str, Any] | None:
-    """读取设置 JSON；文件缺失、JSON 损坏或顶层非对象时返回 ``None``。"""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    return raw if isinstance(raw, dict) else None
+    """读取设置 JSON；主文件损坏时回退到 ``.bak``，均不可用时返回 ``None``。"""
+    for candidate in (path, _backup_path(path)):
+        try:
+            raw = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(raw, dict):
+            return raw
+    return None
 
 
 def write_settings(payload: Mapping[str, Any], path: Path) -> None:
-    """写入设置 JSON；父目录自动创建，写入失败静默忽略。"""
+    """写入设置 JSON；父目录自动创建，原子替换并保留一份 ``.bak`` 备份。
+
+    先写同目录临时文件再 ``os.replace``，避免写到一半中断留下半截 JSON。
+    替换前只备份可解析的旧文件，防止损坏内容覆盖最近一次有效备份。
+    写入失败静默忽略：GUI 关闭路径不应因设置落盘失败而报错。
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _backup_previous(path)
+        tmp.replace(path)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+
+
+def _backup_path(path: Path) -> Path:
+    """返回设置文件对应的备份路径（``<name>.json.bak``）。"""
+    return path.with_suffix(path.suffix + ".bak")
+
+
+def _backup_previous(path: Path) -> None:
+    """把当前设置文件内容备份到 ``.bak``；文件缺失或内容损坏时跳过。"""
+    try:
+        previous = path.read_text(encoding="utf-8")
+        json.loads(previous)
+    except (OSError, ValueError):
+        return
+    try:
+        _backup_path(path).write_text(previous, encoding="utf-8")
     except OSError:
         return
