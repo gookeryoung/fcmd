@@ -240,7 +240,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
-| `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签）、Ctrl+D 书签、Alt+Down 历史跳转，F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、Ctrl+M 批量重命名（预览与冲突拦截）、Space 统计大小，Alt+F5 打包/Alt+F9 解压、Ctrl+F 搜索（结果可直接复制/移动/删除/加入选择）、哈希与属性，复用 archivex/hashbase/fileops，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
+| `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签）、Ctrl+D 书签、Alt+Down 历史跳转，F5 复制/F6 移动进入串行传输队列（逐项进度/按项取消/失败重试），F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、Ctrl+M 批量重命名（预览与冲突拦截）、Space 统计大小，Alt+F5 打包/Alt+F9 解压、Ctrl+F 搜索（结果可直接复制/移动/删除/加入选择）、哈希与属性，复用 archivex/hashbase/fileops，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
 | `envw` | - | 环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor：用户/系统/当前进程作用域、搜索、新建/编辑/删除/重命名、PATH 逐条路径编辑、变量引用展开预览、JSON 备份恢复，设置持久化到 `~/.fcmd/ui/envw.json`） |
 | `fonttool` | - | 推荐字体按需安装与管理（list/status/install/remove）：默认 Cascadia Code + Noto Sans SC，下载后校验 SHA256 并保存 OFL 许可证，安装到当前用户字体目录，不内置进发行包 |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |

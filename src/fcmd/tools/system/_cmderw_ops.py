@@ -21,17 +21,33 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = [
+    "ITEM_CANCELLED",
+    "ITEM_DONE",
+    "ITEM_FAILED",
+    "ITEM_PENDING",
+    "ITEM_RUNNING",
+    "QUEUE_CANCELLED",
+    "QUEUE_DONE",
+    "QUEUE_FAILED",
+    "QUEUE_PENDING",
+    "QUEUE_RUNNING",
     "BulkRenameOptions",
+    "QueueItem",
+    "QueueTask",
     "RenameItem",
     "RenamePlan",
     "RenameReport",
     "RenameSource",
+    "TransferQueue",
     "TrashReport",
     "apply_rename_plan",
     "build_new_name",
+    "cleanup_incomplete_items",
+    "cleanup_partial_target",
     "directory_size",
     "filter_names",
     "invert_names",
+    "item_status_text",
     "match_names",
     "matches_mask",
     "plan_bulk_rename",
@@ -460,3 +476,294 @@ def undo_rename(
         if progress is not None:
             progress(index, total, target.name)
     return result
+
+
+# ============================================================================ #
+# 传输队列
+# ============================================================================ #
+QUEUE_PENDING = "pending"
+QUEUE_RUNNING = "running"
+QUEUE_DONE = "done"
+QUEUE_FAILED = "failed"
+QUEUE_CANCELLED = "cancelled"
+
+ITEM_PENDING = "pending"
+ITEM_RUNNING = "running"
+ITEM_DONE = "done"
+ITEM_FAILED = "failed"
+ITEM_CANCELLED = "cancelled"
+
+_TASK_STATUS_TEXT = {
+    QUEUE_PENDING: "排队中",
+    QUEUE_RUNNING: "进行中",
+    QUEUE_DONE: "已完成",
+    QUEUE_FAILED: "有失败",
+    QUEUE_CANCELLED: "已取消",
+}
+
+_ITEM_STATUS_TEXT = {
+    ITEM_PENDING: "等待",
+    ITEM_RUNNING: "传输中",
+    ITEM_DONE: "完成",
+    ITEM_FAILED: "失败",
+    ITEM_CANCELLED: "已取消",
+}
+
+
+@dataclass
+class QueueItem:
+    """队列中的单个传输项；``started`` 区分「已开始但未完成」与「从未开始」。"""
+
+    source: Path
+    target: Path
+    overwrite: bool = False
+    status: str = ITEM_PENDING
+    error: str = ""
+    started: bool = False
+    existed_before: bool = False
+    target_owned: bool = False
+
+
+@dataclass
+class QueueTask:
+    """一次复制 / 移动：同一目标目录下的一组条目。"""
+
+    task_id: int
+    destination: Path
+    move: bool
+    items: list[QueueItem] = field(default_factory=list)
+    skipped: list[Path] = field(default_factory=list)
+    status: str = QUEUE_PENDING
+    cancel_requested: bool = False
+    cleanup_errors: list[tuple[Path, str]] = field(default_factory=list)
+
+    @property
+    def action(self) -> str:
+        """中文动作名。"""
+        return "移动" if self.move else "复制"
+
+    @property
+    def total(self) -> int:
+        """条目总数。"""
+        return len(self.items)
+
+    @property
+    def done_count(self) -> int:
+        """已完成条目数。"""
+        return sum(1 for item in self.items if item.status == ITEM_DONE)
+
+    @property
+    def failed_count(self) -> int:
+        """失败条目数。"""
+        return sum(1 for item in self.items if item.status == ITEM_FAILED)
+
+    @property
+    def label(self) -> str:
+        """任务单行描述（冲突提示与队列列表共用）。"""
+        return f"#{self.task_id} {self.action} {self.total} 项 → {self.destination}"
+
+    @property
+    def status_text(self) -> str:
+        """任务状态中文文本。"""
+        return _TASK_STATUS_TEXT.get(self.status, self.status)
+
+
+def item_status_text(item: QueueItem) -> str:
+    """条目状态中文文本。"""
+    return _ITEM_STATUS_TEXT.get(item.status, item.status)
+
+
+def cleanup_partial_target(target: Path) -> str | None:
+    """删除取消后残留的目标；成功或本就无需删除返回 ``None``，失败返回错误文本。"""
+    try:
+        if target.parent == target:
+            return f"拒绝删除根目录: {target}"
+        if target.is_dir() and not target.is_symlink():
+            shutil.rmtree(target)
+        elif target.exists() or target.is_symlink():
+            target.unlink()
+    except OSError as exc:
+        return str(exc)
+    return None
+
+
+def cleanup_incomplete_items(task: QueueTask) -> list[tuple[Path, str]]:
+    """清理取消时「已开始但未完成」的目标，返回清理失败列表。
+
+    未开始（排队中被取消）的条目一律不碰；已完成条目一律不碰；目标在本项
+    开始前就存在且没有走覆盖删除的，也视为用户文件不删。
+    """
+    failures: list[tuple[Path, str]] = []
+    for item in task.items:
+        if not item.started or item.status in (ITEM_DONE, ITEM_PENDING):
+            continue
+        if item.existed_before and not item.target_owned:
+            continue
+        if item.target == item.source:
+            continue
+        if not (item.target.exists() or item.target.is_symlink()):
+            continue
+        error = cleanup_partial_target(item.target)
+        if error is not None:
+            failures.append((item.target, error))
+    task.cleanup_errors = failures
+    return failures
+
+
+class TransferQueue:
+    """串行传输队列：入队去冲突、逐项执行、按项取消、失败项可重试。"""
+
+    def __init__(self) -> None:
+        self.tasks: list[QueueTask] = []
+        self._next_id = 1
+
+    # -------------------------------------------------------------- #
+    # 入队与查询
+    # -------------------------------------------------------------- #
+    def add(
+        self,
+        destination: Path,
+        items: Sequence[tuple[Path, Path, bool]],
+        *,
+        move: bool,
+        skipped: Sequence[Path] = (),
+    ) -> tuple[QueueTask | None, list[str]]:
+        """入队；与排队中/进行中任务的目标重复时拒绝，返回可读冲突说明。"""
+        targets = [target for _source, target, _overwrite in items]
+        conflicts = self.find_conflicts(targets, move=move, destination=destination, count=len(items))
+        if conflicts:
+            return None, conflicts
+        task = QueueTask(
+            task_id=self._next_id,
+            destination=destination,
+            move=move,
+            items=[QueueItem(source=source, target=target, overwrite=overwrite) for source, target, overwrite in items],
+            skipped=list(skipped),
+        )
+        self._next_id += 1
+        self.tasks.append(task)
+        return task, []
+
+    def find_conflicts(
+        self,
+        targets: Sequence[Path],
+        *,
+        move: bool,
+        destination: Path,
+        count: int,
+    ) -> list[str]:
+        """检查目标是否与未完成任务重复，逐目标说明冲突双方与路径。"""
+        owners: dict[Path, QueueTask] = {}
+        for task in self.tasks:
+            if task.status not in (QUEUE_PENDING, QUEUE_RUNNING):
+                continue
+            for item in task.items:
+                if item.status in (ITEM_PENDING, ITEM_RUNNING):
+                    owners[item.target] = task
+        action = "移动" if move else "复制"
+        messages: list[str] = []
+        reported: set[Path] = set()
+        for target in targets:
+            owner = owners.get(target)
+            if owner is None or target in reported:
+                continue
+            reported.add(target)
+            messages.append(f"{owner.label} 与新任务（{action} {count} 项 → {destination}）都会写入 {target}")
+        return messages
+
+    def get(self, task_id: int) -> QueueTask | None:
+        """按 id 取任务。"""
+        for task in self.tasks:
+            if task.task_id == task_id:
+                return task
+        return None
+
+    def unfinished(self) -> list[QueueTask]:
+        """尚未结束的任务（排队中或进行中）。"""
+        return [task for task in self.tasks if task.status in (QUEUE_PENDING, QUEUE_RUNNING)]
+
+    def pending_task(self) -> QueueTask | None:
+        """下一个待执行任务（FIFO）。"""
+        for task in self.tasks:
+            if task.status == QUEUE_PENDING:
+                return task
+        return None
+
+    # -------------------------------------------------------------- #
+    # 执行状态迁移
+    # -------------------------------------------------------------- #
+    def begin(self, task: QueueTask) -> None:
+        """任务开始执行。"""
+        task.status = QUEUE_RUNNING
+
+    def begin_item(self, item: QueueItem) -> None:
+        """记录单项开始前的目标存在状态。"""
+        item.status = ITEM_RUNNING
+        item.started = True
+        item.existed_before = item.target.exists() or item.target.is_symlink()
+
+    def complete_item(self, item: QueueItem) -> None:
+        """单项成功。"""
+        item.status = ITEM_DONE
+        item.error = ""
+
+    def fail_item(self, item: QueueItem, error: str) -> None:
+        """单项失败，保留错误文本。"""
+        item.status = ITEM_FAILED
+        item.error = error
+
+    def finish(self, task: QueueTask) -> str:
+        """按逐项状态收尾，返回最终任务状态。"""
+        if any(item.status == ITEM_FAILED for item in task.items):
+            task.status = QUEUE_FAILED
+        elif any(item.status == ITEM_CANCELLED for item in task.items):
+            task.status = QUEUE_CANCELLED
+        else:
+            task.status = QUEUE_DONE
+        task.cancel_requested = False
+        return task.status
+
+    # -------------------------------------------------------------- #
+    # 取消与重试
+    # -------------------------------------------------------------- #
+    def cancel(self, task_id: int) -> str:
+        """请求取消：排队中立即取消，进行中在当前文件完成后停止。"""
+        task = self.get(task_id)
+        if task is None:
+            return "任务不存在"
+        if task.status == QUEUE_PENDING:
+            task.status = QUEUE_CANCELLED
+            for item in task.items:
+                item.status = ITEM_CANCELLED
+            return f"{task.label} 已取消（尚未开始）"
+        if task.status == QUEUE_RUNNING:
+            task.cancel_requested = True
+            return f"{task.label} 将在当前文件完成后停止"
+        return f"{task.label} 已结束，无需取消"
+
+    def cancel_remaining(self, task: QueueTask) -> None:
+        """把尚未开始的条目标记为取消（已开始的当前项不受影响）。"""
+        for item in task.items:
+            if item.status in (ITEM_PENDING, ITEM_RUNNING):
+                item.status = ITEM_CANCELLED
+
+    def retry_items(
+        self,
+        task_id: int,
+        items: Sequence[QueueItem] | None = None,
+        *,
+        overwrite_existing: bool = False,
+    ) -> tuple[QueueTask | None, list[str]]:
+        """把失败项重新入队；``items`` 为空时取该任务全部失败项。"""
+        task = self.get(task_id)
+        if task is None:
+            return None, ["任务不存在"]
+        failed = (
+            [item for item in items if item.status == ITEM_FAILED]
+            if items is not None
+            else [item for item in task.items if item.status == ITEM_FAILED]
+        )
+        if not failed:
+            return None, [f"{task.label} 没有失败项"]
+        triples = [(item.source, item.target, True if overwrite_existing else item.overwrite) for item in failed]
+        return self.add(task.destination, triples, move=task.move)

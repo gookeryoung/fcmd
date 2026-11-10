@@ -370,3 +370,258 @@ class TestRenamePlan:
         assert undone.completed == []
         assert "已被占用" in undone.errors[0][1]
         assert (tmp_path / "a.md").exists()
+
+
+# ============================================================================ #
+# 传输队列
+# ============================================================================ #
+class TestTransferQueue:
+    def test_add_assigns_incrementing_ids(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        first, conflicts = queue.add(tmp_path, [(tmp_path / "a.txt", tmp_path / "out" / "a.txt", False)], move=False)
+        second, conflicts2 = queue.add(tmp_path, [(tmp_path / "b.txt", tmp_path / "out" / "b.txt", False)], move=True)
+
+        assert conflicts == [] and conflicts2 == []
+        assert first is not None and second is not None
+        assert (first.task_id, second.task_id) == (1, 2)
+        assert [task.task_id for task in queue.tasks] == [1, 2]
+        assert first.action == "复制"
+        assert second.action == "移动"
+
+    def test_add_rejects_same_target_and_names_both_tasks(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        target = tmp_path / "out" / "a.txt"
+        first, _ = queue.add(tmp_path, [(tmp_path / "a.txt", target, False)], move=False)
+        assert first is not None
+
+        rejected, conflicts = queue.add(tmp_path, [(tmp_path / "b.txt", target, False)], move=True)
+
+        assert rejected is None
+        assert len(conflicts) == 1
+        message = conflicts[0]
+        assert str(target) in message
+        assert "#1" in message
+        assert "新任务" in message and "移动" in message
+        assert str(tmp_path) in message
+        assert len(queue.tasks) == 1
+
+    def test_conflict_check_ignores_finished_tasks(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        target = tmp_path / "out" / "a.txt"
+        first, _ = queue.add(tmp_path, [(tmp_path / "a.txt", target, False)], move=False)
+        assert first is not None
+        queue.cancel(first.task_id)
+
+        accepted, conflicts = queue.add(tmp_path, [(tmp_path / "b.txt", target, False)], move=False)
+
+        assert conflicts == []
+        assert accepted is not None
+
+    def test_cancel_pending_marks_all_items_cancelled(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(
+            tmp_path,
+            [(tmp_path / "a.txt", tmp_path / "a.out", False), (tmp_path / "b.txt", tmp_path / "b.out", False)],
+            move=False,
+        )
+        assert task is not None
+
+        message = queue.cancel(task.task_id)
+
+        assert "已取消（尚未开始）" in message
+        assert task.status == ops.QUEUE_CANCELLED
+        assert [item.status for item in task.items] == [ops.ITEM_CANCELLED, ops.ITEM_CANCELLED]
+
+    def test_cancel_running_stops_after_current_item(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(
+            tmp_path,
+            [
+                (tmp_path / "a.txt", tmp_path / "a.out", False),
+                (tmp_path / "b.txt", tmp_path / "b.out", False),
+            ],
+            move=False,
+        )
+        assert task is not None
+        queue.begin(task)
+        queue.begin_item(task.items[0])
+        queue.complete_item(task.items[0])
+
+        message = queue.cancel(task.task_id)
+        assert "当前文件完成后停止" in message
+        assert task.cancel_requested is True
+        assert task.items[0].status == ops.ITEM_DONE
+
+        queue.cancel_remaining(task)
+        status = queue.finish(task)
+
+        assert status == ops.QUEUE_CANCELLED
+        assert task.cancel_requested is False
+        assert task.items[0].status == ops.ITEM_DONE
+        assert task.items[1].status == ops.ITEM_CANCELLED
+
+    def test_cancel_finished_task_is_noop(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(tmp_path, [(tmp_path / "a.txt", tmp_path / "a.out", False)], move=False)
+        assert task is not None
+        queue.begin(task)
+        queue.complete_item(task.items[0])
+        queue.finish(task)
+
+        assert "无需取消" in queue.cancel(task.task_id)
+        assert queue.cancel(999) == "任务不存在"
+
+    def test_finish_marks_failed_when_any_item_failed(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(
+            tmp_path,
+            [(tmp_path / "a.txt", tmp_path / "a.out", False), (tmp_path / "b.txt", tmp_path / "b.out", False)],
+            move=False,
+        )
+        assert task is not None
+        queue.begin(task)
+        queue.complete_item(task.items[0])
+        queue.begin_item(task.items[1])
+        queue.fail_item(task.items[1], "磁盘已满")
+
+        assert queue.finish(task) == ops.QUEUE_FAILED
+        assert task.status_text == "有失败"
+        assert task.failed_count == 1
+        assert task.done_count == 1
+        assert task.items[1].error == "磁盘已满"
+
+    def test_finish_marks_done(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(tmp_path, [(tmp_path / "a.txt", tmp_path / "a.out", False)], move=False)
+        assert task is not None
+        queue.complete_item(task.items[0])
+
+        assert queue.finish(task) == ops.QUEUE_DONE
+        assert task.status_text == "已完成"
+
+    def test_retry_only_selected_failed_items(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(
+            tmp_path,
+            [(tmp_path / "a.txt", tmp_path / "a.out", False), (tmp_path / "b.txt", tmp_path / "b.out", False)],
+            move=False,
+        )
+        assert task is not None
+        queue.begin(task)
+        queue.fail_item(task.items[0], "失败 1")
+        queue.fail_item(task.items[1], "失败 2")
+
+        retry, conflicts = queue.retry_items(task.task_id, [task.items[1]])
+
+        assert conflicts == []
+        assert retry is not None
+        assert retry.task_id == 2
+        assert [item.source.name for item in retry.items] == ["b.txt"]
+        assert retry.items[0].status == ops.ITEM_PENDING
+
+    def test_retry_all_failed_items(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(
+            tmp_path,
+            [(tmp_path / "a.txt", tmp_path / "a.out", False), (tmp_path / "b.txt", tmp_path / "b.out", False)],
+            move=False,
+        )
+        assert task is not None
+        queue.fail_item(task.items[0], "失败")
+        queue.complete_item(task.items[1])
+
+        retry, _ = queue.retry_items(task.task_id)
+
+        assert retry is not None
+        assert [item.source.name for item in retry.items] == ["a.txt"]
+
+    def test_retry_without_failed_items_returns_message(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(tmp_path, [(tmp_path / "a.txt", tmp_path / "a.out", False)], move=False)
+        assert task is not None
+        queue.complete_item(task.items[0])
+
+        retry, conflicts = queue.retry_items(task.task_id)
+
+        assert retry is None
+        assert conflicts and "没有失败项" in conflicts[0]
+        assert queue.retry_items(999) == (None, ["任务不存在"])
+
+    def test_retry_can_force_overwrite(self, tmp_path: Path) -> None:
+        queue = ops.TransferQueue()
+        task, _ = queue.add(tmp_path, [(tmp_path / "a.txt", tmp_path / "a.out", False)], move=False)
+        assert task is not None
+        queue.fail_item(task.items[0], "半成品")
+
+        retry, _ = queue.retry_items(task.task_id, overwrite_existing=True)
+
+        assert retry is not None
+        assert retry.items[0].overwrite is True
+
+
+class TestQueueCleanup:
+    def test_cleanup_partial_target_removes_file_and_dir(self, tmp_path: Path) -> None:
+        file_target = tmp_path / "a.txt.part"
+        file_target.write_text("partial", encoding="utf-8")
+        dir_target = tmp_path / "dir.part"
+        dir_target.mkdir()
+        (dir_target / "child").write_text("x", encoding="utf-8")
+
+        assert ops.cleanup_partial_target(file_target) is None
+        assert ops.cleanup_partial_target(dir_target) is None
+
+        assert not file_target.exists()
+        assert not dir_target.exists()
+
+    def test_cleanup_partial_target_missing_is_none(self, tmp_path: Path) -> None:
+        assert ops.cleanup_partial_target(tmp_path / "missing") is None
+
+    def test_cleanup_partial_target_refuses_root(self) -> None:
+        message = ops.cleanup_partial_target(Path("/"))
+        assert message is not None and "拒绝删除根目录" in message
+
+    def test_cleanup_incomplete_items_only_touches_started_incomplete(self, tmp_path: Path) -> None:
+        done_target = tmp_path / "done.out"
+        pending_target = tmp_path / "pending.out"
+        failed_target = tmp_path / "failed.out"
+        user_target = tmp_path / "user.out"
+        for path in (done_target, pending_target, failed_target, user_target):
+            path.write_text("x", encoding="utf-8")
+
+        done_item = ops.QueueItem(tmp_path / "done", done_target, status=ops.ITEM_DONE, started=True)
+        pending_item = ops.QueueItem(tmp_path / "pending", pending_target, status=ops.ITEM_CANCELLED)
+        failed_item = ops.QueueItem(tmp_path / "failed", failed_target, status=ops.ITEM_FAILED, started=True)
+        user_item = ops.QueueItem(
+            tmp_path / "user",
+            user_target,
+            status=ops.ITEM_FAILED,
+            started=True,
+            existed_before=True,
+        )
+        task = ops.QueueTask(
+            task_id=1,
+            destination=tmp_path,
+            move=False,
+            items=[done_item, pending_item, failed_item, user_item],
+        )
+
+        failures = ops.cleanup_incomplete_items(task)
+
+        assert failures == []
+        assert done_target.exists()
+        assert pending_target.exists()
+        assert not failed_target.exists()
+        assert user_target.exists()
+        assert task.cleanup_errors == []
+
+    def test_cleanup_incomplete_items_reports_failures(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        target = tmp_path / "partial.out"
+        target.write_text("x", encoding="utf-8")
+        item = ops.QueueItem(tmp_path / "src", target, status=ops.ITEM_CANCELLED, started=True)
+        task = ops.QueueTask(task_id=1, destination=tmp_path, move=False, items=[item])
+        monkeypatch.setattr(ops, "cleanup_partial_target", lambda _target: "权限不足")
+
+        failures = ops.cleanup_incomplete_items(task)
+
+        assert failures == [(target, "权限不足")]
+        assert task.cleanup_errors == [(target, "权限不足")]

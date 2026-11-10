@@ -8,4 +8,4 @@
 | [0002](0002-dsl-tools-boundary.md) | DSL 与 tools 的边界 | 已落地（P2-1…P2-4） |
 | [0003](0003-package-layout.md) | 包内目录结构与布局不变量 | 已落地（B0–B4） |
 | [0004](0004-refactor-backlog.md) | 重构待办的触发条件 | 生效（M4 / M7 暂缓） |
-| [0005](0005-cmderw-totalcommander-alignment.md) | cmderw 对齐 Total Commander 的能力分期 | 生效（A/B/C 批已落地，D–F 待实施） |
+| [0005](0005-cmderw-totalcommander-alignment.md) | cmderw 对齐 Total Commander 的能力分期 | 生效（A/B/C/D 批已落地，E–F 待实施） |

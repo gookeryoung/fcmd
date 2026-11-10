@@ -41,16 +41,24 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system._cmderw_ops import (
+    ITEM_FAILED,
+    QUEUE_CANCELLED,
+    QUEUE_RUNNING,
     BulkRenameOptions,
+    QueueItem,
+    QueueTask,
     RenameItem,
     RenamePlan,
     RenameReport,
     RenameSource,
+    TransferQueue,
     TrashReport,
     apply_rename_plan,
+    cleanup_incomplete_items,
     directory_size,
     filter_names,
     invert_names,
+    item_status_text,
     match_names,
     plan_bulk_rename,
     trash_paths,
@@ -131,6 +139,7 @@ _DESCRIPTION = (
     "F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，"
     "Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 批量重命名，Space 统计大小，"
     "每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，"
+    "复制/移动进入串行传输队列（逐项进度、按项取消、失败重试），"
     "Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，"
     "复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
 )
@@ -1804,6 +1813,172 @@ class BookmarkDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 
         self.win.destroy()
 
 
+class TransferQueueDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """传输队列窗口：任务与逐项状态、失败原因、取消与重试。"""
+
+    def __init__(self, app: CmderWindow) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        theme = app.theme
+        spacing = theme.spacing
+        self.win = tk.Toplevel(app.root)
+        self.win.title("传输队列")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=1020, height=640)
+        self.win.minsize(780, 440)
+        frame = ttk.Frame(self.win, padding=spacing.md)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            frame,
+            text="队列串行执行；取消按项生效：当前文件传完后停止，已完成项保留。",
+            style="Muted.TLabel",
+        ).pack(fill="x", pady=(0, spacing.xs))
+
+        task_frame = ttk.Frame(frame)
+        task_frame.pack(fill="both", expand=True)
+        self.tasks = ttk.Treeview(
+            task_frame,
+            columns=("id", "action", "destination", "progress", "status", "detail"),
+            show="headings",
+            selectmode="browse",
+        )
+        for column, title, width in (
+            ("id", "#", 44),
+            ("action", "动作", 60),
+            ("destination", "目标目录", 320),
+            ("progress", "进度", 80),
+            ("status", "状态", 90),
+            ("detail", "说明", 320),
+        ):
+            self.tasks.heading(column, text=title)
+            self.tasks.column(column, width=width, anchor="w")
+        task_scroll = ttk.Scrollbar(task_frame, orient="vertical", command=self.tasks.yview)
+        self.tasks.configure(yscrollcommand=task_scroll.set)
+        self.tasks.pack(side="left", fill="both", expand=True)
+        task_scroll.pack(side="right", fill="y")
+        self.tasks.bind("<<TreeviewSelect>>", lambda _event: self._refresh_items())
+
+        ttk.Label(frame, text="选中任务的条目明细", style="Muted.TLabel").pack(fill="x", pady=(spacing.sm, spacing.xxs))
+        item_frame = ttk.Frame(frame)
+        item_frame.pack(fill="both", expand=True)
+        self.items = ttk.Treeview(
+            item_frame,
+            columns=("source", "target", "status", "error"),
+            show="headings",
+            selectmode="extended",
+        )
+        for column, title, width in (
+            ("source", "来源", 320),
+            ("target", "目标", 360),
+            ("status", "状态", 90),
+            ("error", "失败原因", 260),
+        ):
+            self.items.heading(column, text=title)
+            self.items.column(column, width=width, anchor="w")
+        item_scroll = ttk.Scrollbar(item_frame, orient="vertical", command=self.items.yview)
+        self.items.configure(yscrollcommand=item_scroll.set)
+        self.items.pack(side="left", fill="both", expand=True)
+        item_scroll.pack(side="right", fill="y")
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="取消选中任务", command=self.cancel_selected).pack(side="left")
+        ttk.Button(buttons, text="重试选中失败项", command=self.retry_selected).pack(side="left", padx=spacing.xs)
+        ttk.Button(buttons, text="重试全部失败项", command=self.retry_all).pack(side="left")
+        ttk.Button(buttons, text="关闭", command=self.win.destroy).pack(side="right")
+        self.refresh()
+
+    def refresh(self) -> None:
+        """重绘任务列表与当前任务的条目明细。"""
+        selection = self.tasks.selection()
+        self.tasks.delete(*self.tasks.get_children())
+        for task in self.app.transfer_queue.tasks:
+            self.tasks.insert(
+                "",
+                "end",
+                iid=str(task.task_id),
+                values=(
+                    task.task_id,
+                    task.action,
+                    str(task.destination),
+                    f"{task.done_count}/{task.total}",
+                    task.status_text,
+                    self._task_detail(task),
+                ),
+            )
+        if selection and self.tasks.exists(selection[0]):
+            self.tasks.selection_set(selection[0])
+        self._refresh_items()
+
+    @staticmethod
+    def _task_detail(task: QueueTask) -> str:
+        """任务行说明：清理失败 > 首个失败原因 > 跳过数。"""
+        if task.cleanup_errors:
+            return f"半成品清理失败 {len(task.cleanup_errors)} 项"
+        if task.failed_count:
+            first = next(item for item in task.items if item.status == ITEM_FAILED)
+            return first.error
+        if task.skipped:
+            return f"跳过 {len(task.skipped)} 项（同路径或目录自包含）"
+        return ""
+
+    def _refresh_items(self) -> None:
+        """按当前选中任务重绘明细。"""
+        selection = self.tasks.selection()
+        self.items.delete(*self.items.get_children())
+        if not selection:
+            return
+        task = self.app.transfer_queue.get(int(selection[0]))
+        if task is None:
+            return
+        for index, item in enumerate(task.items):
+            self.items.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(str(item.source), str(item.target), item_status_text(item), item.error),
+            )
+
+    def _selected_task(self) -> QueueTask | None:
+        selection = self.tasks.selection()
+        if not selection:
+            return None
+        return self.app.transfer_queue.get(int(selection[0]))
+
+    def cancel_selected(self) -> None:
+        """取消选中任务。"""
+        task = self._selected_task()
+        if task is None:
+            self.app.set_status("请先选择任务")
+            return
+        self.app.cancel_queue_task(task.task_id)
+
+    def retry_selected(self) -> None:
+        """只重试明细中选中的失败项。"""
+        task = self._selected_task()
+        if task is None:
+            self.app.set_status("请先选择任务")
+            return
+        chosen = [
+            task.items[int(iid)] for iid in self.items.selection() if iid.isdigit() and 0 <= int(iid) < task.total
+        ]
+        if not chosen:
+            self.app.set_status("请先在明细里选择失败项")
+            return
+        self.app.retry_queue_items(task.task_id, chosen)
+
+    def retry_all(self) -> None:
+        """重试选中任务的全部失败项。"""
+        task = self._selected_task()
+        if task is None:
+            self.app.set_status("请先选择任务")
+            return
+        self.app.retry_queue_items(task.task_id, None)
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -1823,6 +1998,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._on_done: Callable[[Any], None] | None = None
         self._on_error: Callable[[str], None] | None = None
         self._toolbar_buttons: list[Any] = []
+        self.transfer_queue = TransferQueue()
+        self._queue_dialog: TransferQueueDialog | None = None
+        self._queue_stopping = False
 
         self.root, self.theme = _guiwindow.create_root(
             title=f"cmderw - 双面板文件管理器 v{__version__}",
@@ -1904,6 +2082,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         menubar.add_cascade(label="显示", menu=view_menu)
 
         tools_menu = tk.Menu(menubar, tearoff=False)
+        tools_menu.add_command(label="传输队列…", command=self.show_transfer_queue)
+        tools_menu.add_separator()
         tools_menu.add_command(label="搜索\tCtrl+F", command=self.open_search)
         tools_menu.add_command(label="文件哈希", command=self.hash_selected)
         tools_menu.add_command(label="属性\tAlt+Enter", command=self.show_properties)
@@ -2332,10 +2512,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             self.transfer_paths(paths, move=move)
 
     def transfer_paths(self, paths: Sequence[Path], *, move: bool) -> bool:
-        """通用复制 / 移动入口：弹目标框、规划并后台执行，返回是否已启动。"""
-        if self._busy:
-            self._messagebox.showinfo("请稍候", "已有后台任务在运行", parent=self.root)
-            return False
+        """通用复制 / 移动入口：规划后加入传输队列，返回是否已入队。"""
         if not paths:
             return False
         action = "移动" if move else "复制"
@@ -2360,20 +2537,171 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         if not items:
             self.set_status("没有需要操作的条目")
             return False
+        return self.enqueue_transfer(items, destination, move=move, skipped=skipped)
 
-        def task() -> OperationReport:
-            return transfer_entries(items, move=move, progress=self._progress_callback)
+    def enqueue_transfer(
+        self,
+        items: Sequence[TransferItem],
+        destination: Path,
+        *,
+        move: bool,
+        skipped: Sequence[Path] = (),
+    ) -> bool:
+        """把规划结果加入队列；同队列目标冲突时整批拒绝并说明冲突双方。"""
+        task, conflicts = self.transfer_queue.add(
+            destination,
+            [(item.source, item.target, item.overwrite) for item in items],
+            move=move,
+            skipped=skipped,
+        )
+        if conflicts:
+            details = "\n".join(conflicts[:_MAX_ERROR_DETAILS])
+            self._messagebox.showwarning(
+                "目标冲突，未加入队列",
+                f"以下任务的目标路径重复：\n\n{details}",
+                parent=self.root,
+            )
+            return False
+        assert task is not None
+        self.set_status(f"已加入队列：{task.label}")
+        self._ensure_queue_dialog()
+        self._run_next_task()
+        return True
 
-        def done(report: OperationReport) -> None:
-            self.refresh_both()
-            skipped_total = len(skipped) + len(report.skipped)
-            summary = f"{action}完成：成功 {len(report.completed)}，跳过 {skipped_total}，失败 {len(report.errors)}"
-            self.set_status(summary)
-            if report.errors:
-                details = "\n".join(f"{source.name}: {error}" for source, error in report.errors[:_MAX_ERROR_DETAILS])
-                self._messagebox.showwarning(f"{action}完成（有失败）", f"{summary}\n\n{details}", parent=self.root)
+    # ------------------------------------------------------------------ #
+    # 传输队列
+    # ------------------------------------------------------------------ #
+    def show_transfer_queue(self) -> None:
+        """打开并聚焦传输队列窗口。"""
+        self._ensure_queue_dialog()
 
-        self.start_worker(task, done, title=f"{action} {len(items)} 项")
+    def _ensure_queue_dialog(self) -> None:
+        """队列窗口不存在则创建，存在则刷新。"""
+        dialog = self._queue_dialog
+        if dialog is not None and dialog.win.winfo_exists():
+            dialog.refresh()
+            return
+        self._queue_dialog = TransferQueueDialog(self)
+
+    def _refresh_queue_dialog(self) -> None:
+        """主线程刷新队列窗口（窗口已关闭则清理引用）。"""
+        dialog = self._queue_dialog
+        if dialog is None:
+            return
+        if not dialog.win.winfo_exists():
+            self._queue_dialog = None
+            return
+        dialog.refresh()
+
+    def _run_next_task(self) -> None:
+        """串行执行队首任务；已有后台任务或正在退出时不启动。"""
+        if self._busy or self._queue_stopping:
+            return
+        task = self.transfer_queue.pending_task()
+        if task is None:
+            return
+        self.transfer_queue.begin(task)
+        self._refresh_queue_dialog()
+        total = task.total
+
+        def work() -> str:
+            for index, item in enumerate(task.items, start=1):
+                if task.cancel_requested or self._queue_stopping:
+                    self.transfer_queue.cancel_remaining(task)
+                    break
+                self.transfer_queue.begin_item(item)
+                self._queue.put(("queue",))
+                self._progress_callback(index - 1, total, item.source.name)
+                try:
+                    target = item.target
+                    if target.exists() or target.is_symlink():
+                        if not item.overwrite:
+                            raise FileExistsError(f"目标已存在: {target}")
+                        item.target_owned = True
+                        delete_entry(target)
+                    if task.move:
+                        move_entry(item.source, target)
+                    else:
+                        copy_entry(item.source, target)
+                    self.transfer_queue.complete_item(item)
+                except (OSError, ValueError) as exc:
+                    self.transfer_queue.fail_item(item, str(exc))
+                self._queue.put(("queue",))
+                self._progress_callback(index, total, item.source.name)
+            status = self.transfer_queue.finish(task)
+            if status == QUEUE_CANCELLED:
+                cleanup_incomplete_items(task)
+            return status
+
+        self.start_worker(work, lambda _status: self._after_queue_task(task), title=task.label)
+
+    def _after_queue_task(self, task: QueueTask) -> None:
+        """单个任务结束后刷新界面并如实汇报失败与清理结果。"""
+        self.refresh_both()
+        self._refresh_queue_dialog()
+        if self._queue_stopping:
+            return
+        summary = f"{task.label}：{task.status_text}（成功 {task.done_count}/{task.total}"
+        if task.failed_count:
+            summary += f"，失败 {task.failed_count}"
+        skipped_total = len(task.skipped)
+        if skipped_total:
+            summary += f"，跳过 {skipped_total}"
+        summary += "）"
+        self.set_status(summary)
+        errors = [(item.source, item.error) for item in task.items if item.status == ITEM_FAILED]
+        for target, error in task.cleanup_errors:
+            errors.append((target, f"半成品清理失败：{error}"))
+        if errors:
+            details = "\n".join(f"{path}: {message}" for path, message in errors[:_MAX_ERROR_DETAILS])
+            self._messagebox.showwarning(
+                "队列任务结束（有失败）",
+                f"{summary}\n\n{details}",
+                parent=self.root,
+            )
+
+    def cancel_queue_task(self, task_id: int) -> None:
+        """取消队列任务：排队中立即取消，进行中在当前文件完成后停止。"""
+        message = self.transfer_queue.cancel(task_id)
+        self.set_status(message)
+        self._refresh_queue_dialog()
+        if not self._busy:
+            self._run_next_task()
+
+    def retry_queue_items(self, task_id: int, items: Sequence[QueueItem] | None = None) -> bool:
+        """重试失败项（``items`` 为空表示该任务全部失败项）；目标残留时先确认覆盖。"""
+        task = self.transfer_queue.get(task_id)
+        if task is None:
+            self.set_status("任务不存在")
+            return False
+        failed = (
+            [item for item in items if item.status == ITEM_FAILED]
+            if items is not None
+            else [item for item in task.items if item.status == ITEM_FAILED]
+        )
+        if not failed:
+            self.set_status(f"{task.label} 没有可重试的失败项")
+            return False
+        existing = [item for item in failed if item.target.exists() or item.target.is_symlink()]
+        overwrite = False
+        if existing:
+            confirmed = self._messagebox.askyesno(
+                "重试失败项",
+                f"有 {len(existing)} 个目标路径已存在（可能是上次未完成的半成品），重试将覆盖这些目标。\n\n继续吗？",
+                parent=self.root,
+            )
+            if not confirmed:
+                return False
+            overwrite = True
+        retry_task, conflicts = self.transfer_queue.retry_items(task_id, failed, overwrite_existing=overwrite)
+        if conflicts:
+            details = "\n".join(conflicts[:_MAX_ERROR_DETAILS])
+            self._messagebox.showwarning("目标冲突，未加入队列", details, parent=self.root)
+            return False
+        assert retry_task is not None
+        self.set_status(f"已加入重试任务：{retry_task.label}")
+        self._refresh_queue_dialog()
+        self._run_next_task()
         return True
 
     def delete_selected(self) -> None:
@@ -2720,6 +3048,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
                 self._on_error = None
                 if callback is not None:
                     callback(event[1])
+                self._run_next_task()
                 return
             elif kind == "error":
                 self._finish_worker()
@@ -2729,7 +3058,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
                 self.show_error("操作失败", str(event[1]))
                 if on_error is not None:
                     on_error(str(event[1]))
+                self._run_next_task()
                 return
+            elif kind == "queue":
+                self._refresh_queue_dialog()
         if self._busy:
             self.root.after(POLL_INTERVAL_MS, self._poll_queue)
 
@@ -2750,6 +3082,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "Ctrl+T 新建标签页    Ctrl+W 关闭标签页（至少保留一个）\n"
             "Ctrl+Tab 下一个标签页    Ctrl+Shift+Tab 上一个标签页\n"
             "Ctrl+D 书签    Alt+Down 历史记录\n"
+            "F5/F6 进入串行传输队列（工具→传输队列 查看进度、取消、重试失败项）\n"
             "搜索结果可直接打开所在目录、复制、移动、删除或加入面板选择"
         )
         self._messagebox.showinfo("快捷键", text, parent=self.root)
@@ -2763,13 +3096,42 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         )
 
     def close(self) -> None:
-        """保存设置并退出；后台任务运行时先确认。"""
+        """保存设置并退出；传输队列或后台任务未完成时先确认。"""
+        unfinished = self.transfer_queue.unfinished()
+        running = [task for task in unfinished if task.status == QUEUE_RUNNING]
+        if unfinished:
+            confirmed = self._messagebox.askyesno(
+                "传输队列未完成",
+                f"仍有 {len(unfinished)} 个传输任务未完成。\n"
+                "退出将取消它们：正在传输的当前文件会完成，其余条目不再开始。\n\n确定退出吗？",
+                parent=self.root,
+            )
+            if not confirmed:
+                return
+            self._queue_stopping = True
+            for task in unfinished:
+                self.transfer_queue.cancel(task.task_id)
+            if running:
+                self.set_status("正在停止当前传输，当前文件完成后退出…")
+                self.root.after(POLL_INTERVAL_MS, self._close_when_idle)
+                return
         if self._busy and not self._messagebox.askyesno(
             "任务进行中",
             "后台任务仍在运行，确定退出吗？",
             parent=self.root,
         ):
             return
+        self._save_and_destroy()
+
+    def _close_when_idle(self) -> None:
+        """等当前文件传完后退出，避免半成品被进程直接截断。"""
+        if self._busy:
+            self.root.after(POLL_INTERVAL_MS, self._close_when_idle)
+            return
+        self._save_and_destroy()
+
+    def _save_and_destroy(self) -> None:
+        """保存面板/标签/书签状态并销毁窗口。"""
         if self._closing:
             return
         self._closing = True
