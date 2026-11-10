@@ -19,7 +19,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import fcmd
-from fcmd.console import print_error
 from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.text.regexvalidate import (
     PatternValidationError,
@@ -650,6 +649,8 @@ def run_gui(settings_path: Path | None = None) -> None:
     try:
         window = RegexValidateWindow(settings_path)
     except ImportError as exc:
+        from fcmd.console import print_error
+
         print_error(f"tkinter 不可用，无法启动正则校验器: {exc}")
         return
     window.root.mainloop()

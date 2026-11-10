@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import fcmd
-from fcmd.console import print_error
 from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.system.reshack import (
     RT_BITMAP,
@@ -1136,6 +1135,8 @@ def run_gui(settings_path: Path | None = None) -> None:
     try:
         window = ReshackWindow(settings_path)
     except ImportError as exc:
+        from fcmd.console import print_error
+
         print_error(f"tkinter 不可用，无法启动 PE 资源编辑器: {exc}")
         return
     window.root.mainloop()

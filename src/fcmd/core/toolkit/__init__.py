@@ -57,8 +57,6 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from fcmd.console import print_error
-
 from ..dag import Graph, GraphDefaults
 from ..errors import FcmdError
 from ..task import RetryPolicy, TaskSpec
@@ -275,6 +273,8 @@ def run_tool(name: str, argv: Sequence[str]) -> int:
         :class:`ToolExitCode` 值（0=成功 / 1=失败 / 130=中断）
     """
     if name not in _TOOL_REGISTRY:
+        from fcmd.console import print_error
+
         print_error(f"工具 {name!r} 未注册")
         return ToolExitCode.FAILURE.value
 

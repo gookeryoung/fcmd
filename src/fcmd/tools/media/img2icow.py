@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.console import print_error
 from fcmd.tools import _guiconfig, _guitheme
 
 __all__ = [
@@ -512,6 +511,8 @@ def run_gui(settings_path: Path | None = None) -> None:
     try:
         window = Img2IcoWindow(settings_path)
     except ImportError as exc:
+        from fcmd.console import print_error
+
         print_error(f"tkinter 不可用，无法启动图像转 ICO 转换器: {exc}")
         return
     window.root.mainloop()

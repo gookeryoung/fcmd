@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.console import print_error
 from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
@@ -846,6 +845,8 @@ def run_gui(settings_path: Path | None = None) -> None:
     try:
         window = VideoConvWindow(settings_path)
     except ImportError as exc:
+        from fcmd.console import print_error
+
         print_error(f"tkinter 不可用，无法启动视频转换器: {exc}")
         return
     window.root.mainloop()
