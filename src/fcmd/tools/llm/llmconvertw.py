@@ -95,11 +95,6 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-def _fit_wraplength(width: int) -> int:
-    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
-    return max(width - 8, 120)
-
-
 def _progress_percent(line: str) -> int | None:
     """从 tqdm 进度行（如 `` 45%|████▌ |``）提取百分比，非进度行返回 ``None``。"""
     match = _PERCENT_RE.search(line)
@@ -278,7 +273,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         hint_label.pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         hint_label.bind(
             "<Configure>",
-            lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
         )
         self._models_btn = ttk.Button(row, text="刷新", command=self._refresh_env)
         self._models_btn.pack(side="left")
@@ -374,7 +369,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         params_hint.grid(row=3, column=0, columnspan=4, sticky="we", pady=(self._theme.spacing.xs, 0))
         params_hint.bind(
             "<Configure>",
-            lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
         )
 
     def _build_formats(self, parent: Any) -> None:
@@ -484,28 +479,12 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
         """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
-        ttk = self._ttk
-        container = ttk.Frame(parent)
-        header = ttk.Frame(container)
-        header.pack(fill="x")
-        body = ttk.Frame(container, padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0))
-        state = {"open": open_state}
-
-        def render() -> None:
-            if state["open"]:
-                body.pack(fill="x")
-            else:
-                body.pack_forget()
-            button.configure(text=("▼ " if state["open"] else "▶ ") + title)
-
-        def flip() -> None:
-            state["open"] = not state["open"]
-            render()
-
-        button = ttk.Button(header, text="", style="Toolbutton", command=flip)
-        button.pack(fill="x", anchor="w")
-        render()
-        return container, body
+        return _guiwindow.collapsible(
+            parent,
+            title,
+            padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0),
+            open_state=open_state,
+        )
 
     def _build_env(self, parent: Any) -> None:
         ttk = self._ttk
@@ -521,7 +500,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             value_label.grid(row=row, column=1, sticky="we")
             value_label.bind(
                 "<Configure>",
-                lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+                lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
             )
             self._info_vars[key] = var
 

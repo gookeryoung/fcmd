@@ -28,8 +28,10 @@ __all__ = [
     "build_menu",
     "clamp_saved_geometry",
     "clear_log",
+    "collapsible",
     "create_log",
     "create_root",
+    "fit_wraplength",
     "resolve_geometry",
     "run_window",
     "start_worker",
@@ -37,6 +39,11 @@ __all__ = [
 
 WORKER_INTERVAL_MS: Final[int] = 80
 """后台任务轮询间隔（毫秒）：沿用各窗口原先的 80ms，避免改变事件刷新节奏。"""
+
+
+def fit_wraplength(width: int) -> int:
+    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
+    return max(width - 8, 120)
 
 
 def clamp_saved_geometry(
@@ -164,6 +171,39 @@ def create_log(parent: Misc, *, height: int = 12, grid: bool = False) -> Any:  #
         scrollbar.pack(side="right", fill="y")
         text.pack(side="left", fill="both", expand=True)
     return text
+
+
+def collapsible(
+    parent: Misc,
+    title: str,
+    *,
+    padding: tuple[int, int, int, int],
+    open_state: bool = True,
+) -> tuple[Any, Any]:  # pragma: no cover - 需要真实 Tk 控件
+    """创建可折叠分区，返回（外层容器, 内容 Frame）；``padding`` 为内容区内边距。"""
+    from tkinter import ttk
+
+    container = ttk.Frame(parent)
+    header = ttk.Frame(container)
+    header.pack(fill="x")
+    body = ttk.Frame(container, padding=padding)
+    state = {"open": open_state}
+
+    def render() -> None:
+        if state["open"]:
+            body.pack(fill="x")
+        else:
+            body.pack_forget()
+        button.configure(text=("▼ " if state["open"] else "▶ ") + title)
+
+    def flip() -> None:
+        state["open"] = not state["open"]
+        render()
+
+    button = ttk.Button(header, text="", style="Toolbutton", command=flip)
+    button.pack(fill="x", anchor="w")
+    render()
+    return container, body
 
 
 def append_log(log: Any, message: str, *, timestamp: bool = False) -> None:

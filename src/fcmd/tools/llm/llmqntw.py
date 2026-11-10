@@ -89,11 +89,6 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-def _fit_wraplength(width: int) -> int:
-    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
-    return max(width - 8, 120)
-
-
 class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 量化窗口：构建界面并把转换任务放到后台线程执行。"""
 
@@ -174,7 +169,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             value_label.grid(row=row, column=1, sticky="we")
             value_label.bind(
                 "<Configure>",
-                lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+                lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
             )
             self._info_vars[key] = var
 

@@ -73,6 +73,19 @@ class TestClampSavedGeometry:
         )
 
 
+class TestFitWraplength:
+    """标签换行宽度：留 8px 余量，120px 下限。"""
+
+    def test_subtracts_margin(self) -> None:
+        assert _guiwindow.fit_wraplength(500) == 492
+
+    def test_floor_prevents_collapse(self) -> None:
+        assert _guiwindow.fit_wraplength(100) == 120
+        assert _guiwindow.fit_wraplength(127) == 120
+        assert _guiwindow.fit_wraplength(128) == 120
+        assert _guiwindow.fit_wraplength(129) == 121
+
+
 class _FakeLog:
     def __init__(self) -> None:
         self.calls: list[tuple[str, object]] = []
