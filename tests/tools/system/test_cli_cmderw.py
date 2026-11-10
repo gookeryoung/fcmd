@@ -59,8 +59,10 @@ from fcmd.tools.system.cmderw import (
     load_preview,
     load_settings,
     move_entry,
+    normalize_tab_index,
     open_externally,
     pack_entries,
+    panel_tab_title,
     parent_directory,
     plan_transfer,
     push_history,
@@ -171,6 +173,73 @@ class TestSettings:
         assert loaded.show_hidden is True
         assert loaded.geometry == "1000x700+10+20"
 
+    def test_save_and_load_roundtrip_keeps_tabs_and_bookmarks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        first = tmp_path / "first"
+        second = tmp_path / "second"
+        first.mkdir()
+        second.mkdir()
+        settings = CmderSettings(
+            left_tabs=[PanelState(path=str(first)), PanelState(path=str(second), sort_key="size")],
+            right_tabs=[PanelState(path=str(second))],
+            left_tab_index=1,
+            right_tab_index=0,
+            bookmarks=[str(first), str(second)],
+        )
+        save_settings(settings)
+        loaded = load_settings()
+        assert [tab.path for tab in loaded.left_tabs] == [str(first), str(second)]
+        assert [tab.path for tab in loaded.right_tabs] == [str(second)]
+        assert loaded.left_tab_index == 1
+        assert loaded.right_tab_index == 0
+        assert loaded.left.path == str(second)
+        assert loaded.left.sort_key == "size"
+        assert loaded.right.path == str(second)
+        assert loaded.bookmarks == [str(first), str(second)]
+
+    def test_load_old_config_without_tabs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"left": {"path": str(tmp_path)}, "right": {"path": str(tmp_path)}}),
+            encoding="utf-8",
+        )
+        settings = load_settings()
+        assert [tab.path for tab in settings.left_tabs] == [str(tmp_path)]
+        assert [tab.path for tab in settings.right_tabs] == [str(tmp_path)]
+        assert settings.left_tab_index == 0
+        assert settings.right_tab_index == 0
+        assert settings.bookmarks == []
+
+    def test_load_invalid_tabs_and_bookmarks_fall_back(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        other = tmp_path / "other"
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {"path": str(tmp_path)},
+                    "right": {"path": str(tmp_path)},
+                    "left_tabs": "bad",
+                    "right_tabs": [None, 3],
+                    "left_tab_index": "2",
+                    "right_tab_index": 7,
+                    "bookmarks": [3, "", str(tmp_path), str(tmp_path), str(other)],
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = load_settings()
+        assert [tab.path for tab in settings.left_tabs] == [str(tmp_path)]
+        assert [tab.path for tab in settings.right_tabs] == [str(tmp_path)]
+        assert settings.left_tab_index == 0
+        assert settings.right_tab_index == 0
+        assert settings.bookmarks == [str(tmp_path), str(other)]
+
     def test_load_settings_invalid_json(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
@@ -238,6 +307,29 @@ class TestSettings:
         assert resolve_geometry("bad", 1920, 1080) == DEFAULT_GEOMETRY
         tiny = resolve_geometry(None, 800, 600)
         assert "800x600" in tiny
+
+
+class TestTabHelpers:
+    """标签下标夹取与标签标题。"""
+
+    def test_normalize_tab_index_clamps(self) -> None:
+        assert normalize_tab_index(0, 3) == 0
+        assert normalize_tab_index(2, 3) == 2
+        assert normalize_tab_index(9, 3) == 2
+        assert normalize_tab_index(-1, 3) == 0
+
+    def test_normalize_tab_index_rejects_non_int(self) -> None:
+        assert normalize_tab_index("1", 3) == 0
+        assert normalize_tab_index(None, 3) == 0
+        assert normalize_tab_index(True, 3) == 0
+        assert normalize_tab_index(0, 0) == 0
+
+    def test_panel_tab_title_uses_last_component(self) -> None:
+        assert panel_tab_title("/root/fcmd") == "fcmd"
+        assert panel_tab_title("/root/fcmd/") == "fcmd"
+        assert panel_tab_title("fcmd") == "fcmd"
+        assert panel_tab_title("/") == "/"
+        assert panel_tab_title("") == ""
 
 
 # ============================================================================ #

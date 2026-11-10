@@ -4,13 +4,16 @@
 F2 重命名、F3 查看、F4 外部编辑、F5 复制、F6 移动、F7 新建目录、F8 删除到
 回收站、Shift+F8 永久删除，Alt+F5 打包、Alt+F9 解压，Ctrl+F 搜索，Ctrl+S
 快速过滤，Num+/Num- 按掩码选择/取消，Space 统计选中项大小，Ctrl+H 显示隐藏文件。
+每个面板支持多标签页（Ctrl+T 新建、Ctrl+W 关闭、Ctrl+Tab 切换，至少保留一个
+标签），Ctrl+D 管理书签，Alt+Down 从当前面板历史栈跳转。
 
 能力复用现有工具：打包/解压走 :mod:`fcmd.tools.archive.archivex`，文件哈希走
 :mod:`fcmd.tools.hashbase`，文件名/内容搜索走 :mod:`fcmd.dsl.actions.fileops`，
 窗口骨架、主题与设置持久化走 :mod:`fcmd.gui`。
 
-设置（左右面板路径与历史、排序列、隐藏文件开关、窗口位置）保存在
-``${FCMD_HOME:-~/.fcmd}/ui/cmderw.json``，下次启动自动恢复。
+设置（左右面板标签与路径、书签、排序列、隐藏文件开关、窗口位置）保存在
+``${FCMD_HOME:-~/.fcmd}/ui/cmderw.json``，下次启动自动恢复；旧配置文件缺少
+标签或书签字段时按单标签、空书签处理。
 
 示例
 ----
@@ -103,8 +106,10 @@ __all__ = [
     "load_settings",
     "match_names",
     "move_entry",
+    "normalize_tab_index",
     "open_externally",
     "pack_entries",
+    "panel_tab_title",
     "parent_directory",
     "plan_transfer",
     "push_history",
@@ -125,6 +130,7 @@ _DESCRIPTION = (
     "双面板文件管理器窗口版（Tk，Total Commander 风格）：左右面板独立导航与历史，"
     "F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，"
     "Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 批量重命名，Space 统计大小，"
+    "每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，"
     "Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，"
     "复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
 )
@@ -250,13 +256,22 @@ class PanelState:
 
 @dataclass
 class CmderSettings:
-    """双面板文件管理器的持久化设置。"""
+    """双面板文件管理器的持久化设置。
+
+    ``left``/``right`` 始终指向该面板的活动标签，``left_tabs``/``right_tabs``
+    保存全部标签的顺序，下标字段标记当前标签。
+    """
 
     left: PanelState = field(default_factory=PanelState)
     right: PanelState = field(default_factory=PanelState)
     active: str = "left"
     show_hidden: bool = False
     geometry: str | None = None
+    left_tabs: list[PanelState] = field(default_factory=list)
+    right_tabs: list[PanelState] = field(default_factory=list)
+    left_tab_index: int = 0
+    right_tab_index: int = 0
+    bookmarks: list[str] = field(default_factory=list)
 
 
 # ============================================================================ #
@@ -309,6 +324,42 @@ def _panel_from_raw(raw: object, fallback: Path) -> PanelState:
     return state
 
 
+def normalize_tab_index(index: object, count: int) -> int:
+    """把标签下标夹进 ``[0, count)``；非法值或空标签列表回退 0。"""
+    if not isinstance(index, int) or isinstance(index, bool):
+        return 0
+    if count <= 0 or index < 0:
+        return 0
+    return index if index < count else count - 1
+
+
+def panel_tab_title(path: str) -> str:
+    """标签标题：取目录名最后一段，根目录或无名称时回退完整路径。"""
+    if not path:
+        return ""
+    return Path(path).name or path
+
+
+def _tabs_from_raw(raw: object, fallback: PanelState) -> list[PanelState]:
+    """解析标签列表；缺失、非列表或全为非法项时回退为单个面板。"""
+    if not isinstance(raw, list):
+        return [fallback]
+    base = Path(fallback.path)
+    tabs = [_panel_from_raw(item, base) for item in raw if isinstance(item, dict)]
+    return tabs or [fallback]
+
+
+def _bookmarks_from_raw(raw: object) -> list[str]:
+    """解析书签列表：丢弃非字符串与空项，去重并保持原顺序。"""
+    if not isinstance(raw, list):
+        return []
+    bookmarks: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item and item not in bookmarks:
+            bookmarks.append(item)
+    return bookmarks
+
+
 def load_settings(path: Path | None = None) -> CmderSettings:
     """读取设置；文件缺失、JSON 损坏或字段非法时逐项回退默认值。"""
     fallback = default_directory()
@@ -317,12 +368,21 @@ def load_settings(path: Path | None = None) -> CmderSettings:
         return CmderSettings(
             left=PanelState(path=str(fallback)),
             right=PanelState(path=str(fallback)),
+            left_tabs=[PanelState(path=str(fallback))],
+            right_tabs=[PanelState(path=str(fallback))],
         )
 
     settings = CmderSettings(
         left=_panel_from_raw(raw.get("left"), fallback),
         right=_panel_from_raw(raw.get("right"), fallback),
     )
+    settings.left_tabs = _tabs_from_raw(raw.get("left_tabs"), settings.left)
+    settings.right_tabs = _tabs_from_raw(raw.get("right_tabs"), settings.right)
+    settings.left_tab_index = normalize_tab_index(raw.get("left_tab_index"), len(settings.left_tabs))
+    settings.right_tab_index = normalize_tab_index(raw.get("right_tab_index"), len(settings.right_tabs))
+    settings.left = settings.left_tabs[settings.left_tab_index]
+    settings.right = settings.right_tabs[settings.right_tab_index]
+    settings.bookmarks = _bookmarks_from_raw(raw.get("bookmarks"))
     active = raw.get("active")
     if active in ("left", "right"):
         settings.active = cast(str, active)
@@ -337,12 +397,21 @@ def load_settings(path: Path | None = None) -> CmderSettings:
 
 def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败时静默忽略（不影响窗口关闭）。"""
+    left_tabs = settings.left_tabs or [settings.left]
+    right_tabs = settings.right_tabs or [settings.right]
+    left_index = normalize_tab_index(settings.left_tab_index, len(left_tabs))
+    right_index = normalize_tab_index(settings.right_tab_index, len(right_tabs))
     payload = {
-        "left": settings.left.to_dict(),
-        "right": settings.right.to_dict(),
+        "left": left_tabs[left_index].to_dict(),
+        "right": right_tabs[right_index].to_dict(),
         "active": settings.active,
         "show_hidden": settings.show_hidden,
         "geometry": settings.geometry,
+        "left_tabs": [tab.to_dict() for tab in left_tabs],
+        "right_tabs": [tab.to_dict() for tab in right_tabs],
+        "left_tab_index": left_index,
+        "right_tab_index": right_index,
+        "bookmarks": list(settings.bookmarks),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -886,15 +955,25 @@ def open_externally(path: Path) -> None:
 # Tk 界面
 # ============================================================================ #
 class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
-    """单个目录面板：路径栏 + 文件列表 + 状态行。"""
+    """单个目录面板：标签栏 + 路径栏 + 文件列表 + 状态行。"""
 
-    def __init__(self, app: CmderWindow, parent: Any, side: str, state: PanelState) -> None:
+    def __init__(
+        self,
+        app: CmderWindow,
+        parent: Any,
+        side: str,
+        tabs: Sequence[PanelState],
+        tab_index: int = 0,
+    ) -> None:
         import tkinter as tk
         from tkinter import ttk
 
         self.app = app
         self.side = side
-        self.state = state
+        self.title = "左侧" if side == "left" else "右侧"
+        self.tabs = list(tabs) or [PanelState(path=str(default_directory()))]
+        self.tab_index = normalize_tab_index(tab_index, len(self.tabs))
+        self._tab_signature: tuple[int, tuple[str, ...]] | None = None
         self.entries: list[FileEntry] = []
         self._index: dict[str, FileEntry] = {}
         self._filter = ""
@@ -902,8 +981,12 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         spacing = theme.spacing
 
         self.frame = ttk.Frame(parent, padding=spacing.xs)
-        self.title_label = ttk.Label(self.frame, text="左侧" if side == "left" else "右侧", style="Title.TLabel")
+        self.title_label = ttk.Label(self.frame, text=self.title, style="Title.TLabel")
         self.title_label.pack(fill="x", pady=(0, spacing.xxs))
+
+        self._tab_bar = ttk.Frame(self.frame)
+        self._tab_bar.pack(fill="x", pady=(0, spacing.xxs))
+        self._render_tabs()
 
         top = ttk.Frame(self.frame)
         top.pack(fill="x", pady=(0, spacing.xs))
@@ -911,7 +994,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         ttk.Button(top, text="→", width=3, style="Toolbutton", command=self.go_forward).pack(side="left")
         ttk.Button(top, text="↑", width=3, style="Toolbutton", command=self.go_up).pack(side="left")
         ttk.Button(top, text="刷新", style="Toolbutton", command=self.refresh).pack(side="left", padx=(0, spacing.xs))
-        self.path_var = tk.StringVar(value=state.path)
+        self.path_var = tk.StringVar(value=self.state.path)
         self.path_entry = ttk.Entry(top, textvariable=self.path_var)
         self.path_entry.pack(side="left", fill="x", expand=True)
         self.path_entry.bind("<Return>", self._on_path_enter)
@@ -962,12 +1045,100 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     # ------------------------------------------------------------------ #
     # 导航
     # ------------------------------------------------------------------ #
+    @property
+    def state(self) -> PanelState:
+        """当前标签的面板状态。"""
+        return self.tabs[self.tab_index]
+
     def set_title_active(self, active: bool) -> None:
         """激活面板用标题样式高亮。"""
         self.title_label.configure(style="Title.TLabel" if active else "Muted.TLabel")
 
+    # ------------------------------------------------------------------ #
+    # 标签页
+    # ------------------------------------------------------------------ #
+    def _render_tabs(self) -> None:
+        """重建标签栏：当前标签高亮，末尾为新建按钮（内容未变时跳过）。"""
+        from tkinter import ttk
+
+        signature = (self.tab_index, tuple(tab.path for tab in self.tabs))
+        if signature == self._tab_signature:
+            return
+        self._tab_signature = signature
+        for child in self._tab_bar.winfo_children():
+            child.destroy()
+        spacing = self.app.theme.spacing
+        for index, tab in enumerate(self.tabs):
+            label = panel_tab_title(tab.path) or "（空）"
+            if len(label) > 24:
+                label = "…" + label[-23:]
+            ttk.Button(
+                self._tab_bar,
+                text=label,
+                style="Accent.TButton" if index == self.tab_index else "Toolbutton",
+                command=lambda i=index: self.select_tab(i),
+            ).pack(side="left", padx=(0, spacing.xxs))
+        ttk.Button(
+            self._tab_bar,
+            text="+",
+            width=3,
+            style="Toolbutton",
+            command=self.new_tab,
+        ).pack(side="left")
+
+    def select_tab(self, index: int) -> None:
+        """切换到指定标签并刷新列表。"""
+        if not 0 <= index < len(self.tabs) or index == self.tab_index:
+            return
+        self.tab_index = index
+        self.path_var.set(self.state.path)
+        self._render_tabs()
+        self.refresh()
+        self.app.set_status(f"{self.title}标签 {self.tab_index + 1}/{len(self.tabs)}：{self.state.path}")
+
+    def new_tab(self, path: str | None = None) -> None:
+        """新建标签页：默认沿用当前目录与排序方式。"""
+        source = self.state
+        target = path or source.path
+        self.tabs.append(
+            PanelState(
+                path=target,
+                sort_key=source.sort_key,
+                descending=source.descending,
+                history=[target],
+                history_index=0,
+            )
+        )
+        self.tab_index = len(self.tabs) - 1
+        self.path_var.set(self.state.path)
+        self._render_tabs()
+        self.refresh()
+        self.app.set_status(f"{self.title}新建标签 {self.tab_index + 1}/{len(self.tabs)}：{target}")
+
+    def close_tab(self) -> bool:
+        """关闭当前标签页；仅剩一个标签时保留并提示，返回是否真的关闭。"""
+        if len(self.tabs) == 1:
+            self.app.set_status(f"{self.title}至少保留一个标签页，已取消关闭")
+            return False
+        closed = self.tabs.pop(self.tab_index)
+        self.tab_index = min(self.tab_index, len(self.tabs) - 1)
+        self.path_var.set(self.state.path)
+        self._render_tabs()
+        self.refresh()
+        name = panel_tab_title(closed.path) or closed.path
+        self.app.set_status(f"已关闭标签「{name}」，当前 {self.tab_index + 1}/{len(self.tabs)}")
+        return True
+
+    def next_tab(self, delta: int = 1) -> None:
+        """在当前面板的标签间循环切换。"""
+        if len(self.tabs) <= 1:
+            self.app.set_status(f"{self.title}只有一个标签页")
+            return
+        self.select_tab((self.tab_index + delta) % len(self.tabs))
+
     def refresh(self, select: str | None = None) -> None:
         """重新读取当前目录并恢复选择。"""
+        self._render_tabs()
         directory = Path(self.state.path)
         try:
             entries = sort_entries(
@@ -1536,6 +1707,103 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         self.win.destroy()
 
 
+class BookmarkDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """书签管理：列表、添加当前目录、删除，双击打开到打开时的活动面板。"""
+
+    def __init__(self, app: CmderWindow, panel: FilePanel) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.panel = panel
+        theme = app.theme
+        spacing = theme.spacing
+        self.win = tk.Toplevel(app.root)
+        self.win.title("书签")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=680, height=440)
+        self.win.minsize(520, 320)
+        frame = ttk.Frame(self.win, padding=spacing.md)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            frame,
+            text=f"双击打开到{panel.title}（打开本对话框时的活动面板）",
+            style="Muted.TLabel",
+        ).pack(fill="x", pady=(0, spacing.xs))
+
+        list_frame = ttk.Frame(frame)
+        list_frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(list_frame, columns=("path",), show="headings", selectmode="browse")
+        self.tree.heading("path", text="路径")
+        self.tree.column("path", width=600)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.bind("<Double-1>", lambda _event: self.open_selected())
+        self.tree.bind("<Return>", lambda _event: self.open_selected())
+
+        buttons = ttk.Frame(frame)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="打开", style="Accent.TButton", command=self.open_selected).pack(side="left")
+        ttk.Button(buttons, text="添加当前目录", command=self.add_current).pack(side="left", padx=spacing.xs)
+        ttk.Button(buttons, text="删除", command=self.remove_selected).pack(side="left")
+        ttk.Button(buttons, text="关闭", command=self.win.destroy).pack(side="right")
+        self._reload()
+
+    def _reload(self) -> None:
+        """按当前书签列表重绘。"""
+        self.tree.delete(*self.tree.get_children())
+        for index, path in enumerate(self.app.settings.bookmarks):
+            self.tree.insert("", "end", iid=str(index), values=(path,))
+
+    def add_current(self) -> None:
+        """把打开本对话框时的面板目录加入书签。"""
+        path = self.panel.state.path
+        bookmarks = self.app.settings.bookmarks
+        if path in bookmarks:
+            self.app.set_status(f"书签已存在：{path}")
+            return
+        bookmarks.append(path)
+        self._reload()
+        self.tree.selection_set(str(len(bookmarks) - 1))
+        self.tree.see(str(len(bookmarks) - 1))
+        self.app.set_status(f"已添加书签：{path}")
+
+    def remove_selected(self) -> None:
+        """删除选中的书签。"""
+        selection = self.tree.selection()
+        if not selection:
+            self.app.set_status("请先选择书签")
+            return
+        index = int(selection[0])
+        bookmarks = self.app.settings.bookmarks
+        if 0 <= index < len(bookmarks):
+            removed = bookmarks.pop(index)
+            self._reload()
+            self.app.set_status(f"已删除书签：{removed}")
+
+    def open_selected(self) -> None:
+        """打开选中书签到面板；目录不存在时提示且不关闭对话框。"""
+        selection = self.tree.selection()
+        if not selection:
+            self.app.set_status("请先选择书签")
+            return
+        index = int(selection[0])
+        bookmarks = self.app.settings.bookmarks
+        if not 0 <= index < len(bookmarks):
+            return
+        path = Path(bookmarks[index])
+        if not path.is_dir():
+            self.app.show_error("无法打开书签", f"目录不存在: {path}")
+            return
+        self.panel.set_path(path)
+        self.app.set_active(self.panel)
+        self.app.set_status(f"已打开书签：{path}")
+        self.win.destroy()
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -1623,6 +1891,14 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         view_menu.add_command(label="快速过滤\tCtrl+S", command=self.focus_filter)
         view_menu.add_command(label="清除过滤\tEsc", command=self.clear_filter)
         view_menu.add_separator()
+        view_menu.add_command(label="新建标签页\tCtrl+T", command=self.new_tab)
+        view_menu.add_command(label="关闭标签页\tCtrl+W", command=self.close_tab)
+        view_menu.add_command(label="下一个标签页\tCtrl+Tab", command=self.next_tab)
+        view_menu.add_command(label="上一个标签页\tCtrl+Shift+Tab", command=self.previous_tab)
+        view_menu.add_separator()
+        view_menu.add_command(label="书签…\tCtrl+D", command=self.open_bookmarks)
+        view_menu.add_command(label="历史记录…\tAlt+Down", command=self.show_history_menu)
+        view_menu.add_separator()
         view_menu.add_command(label="交换面板\tCtrl+U", command=self.swap_panels)
         view_menu.add_command(label="切换面板\tTab", command=self.switch_panel)
         menubar.add_cascade(label="显示", menu=view_menu)
@@ -1695,8 +1971,20 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         ttk = self._ttk
         self._paned = ttk.PanedWindow(self.root, orient="horizontal")
         self._paned.grid(row=1, column=0, sticky="nsew")
-        self.left = FilePanel(self, self._paned, "left", self.settings.left)
-        self.right = FilePanel(self, self._paned, "right", self.settings.right)
+        self.left = FilePanel(
+            self,
+            self._paned,
+            "left",
+            self.settings.left_tabs or [self.settings.left],
+            self.settings.left_tab_index,
+        )
+        self.right = FilePanel(
+            self,
+            self._paned,
+            "right",
+            self.settings.right_tabs or [self.settings.right],
+            self.settings.right_tab_index,
+        )
         self._paned.add(self.left.frame, weight=1)
         self._paned.add(self.right.frame, weight=1)
 
@@ -1732,6 +2020,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-m>": lambda _event: self.bulk_rename(),
             "<Control-u>": lambda _event: self.swap_panels(),
             "<Control-a>": lambda _event: self.select_all(),
+            "<Control-t>": lambda _event: self.new_tab(),
+            "<Control-w>": lambda _event: self.close_tab(),
+            "<Control-Tab>": lambda _event: self.next_tab(),
+            "<Control-Shift-Tab>": lambda _event: self.previous_tab(),
+            "<Control-ISO_Left_Tab>": lambda _event: self.previous_tab(),
+            "<Control-d>": lambda _event: self.open_bookmarks(),
+            "<Alt-Down>": lambda _event: self.show_history_menu(),
             "<Escape>": lambda _event: self.clear_filter(),
             "<Tab>": lambda _event: self.switch_panel(),
         }
@@ -1782,6 +2077,54 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.left.set_path(Path(right_path))
         self.right.set_path(Path(left_path))
         self.set_status("已交换面板")
+
+    # ------------------------------------------------------------------ #
+    # 标签页 / 书签 / 历史
+    # ------------------------------------------------------------------ #
+    def new_tab(self) -> None:
+        """Ctrl+T：在活动面板新建标签页。"""
+        self.active_panel().new_tab()
+
+    def close_tab(self) -> None:
+        """Ctrl+W：关闭活动面板的当前标签页（至少保留一个）。"""
+        self.active_panel().close_tab()
+
+    def next_tab(self) -> None:
+        """Ctrl+Tab：切到活动面板的下一个标签页。"""
+        self.active_panel().next_tab(1)
+
+    def previous_tab(self) -> None:
+        """Ctrl+Shift+Tab：切到活动面板的上一个标签页。"""
+        self.active_panel().next_tab(-1)
+
+    def open_bookmarks(self) -> None:
+        """Ctrl+D：书签管理，打开时作用于当前活动面板。"""
+        BookmarkDialog(self, self.active_panel())
+
+    def show_history_menu(self) -> None:
+        """Alt+Down：用活动面板的历史栈弹出跳转菜单。"""
+        panel = self.active_panel()
+        history = panel.state.history
+        if not history:
+            self.set_status(f"{panel.title}暂无历史记录")
+            return
+        menu = self._tk.Menu(self.root, tearoff=False)
+        for index in range(len(history) - 1, -1, -1):
+            path = history[index]
+            marker = "● " if index == panel.state.history_index else "   "
+            menu.add_command(label=f"{marker}{index + 1}. {path}", command=lambda i=index: self._jump_history(panel, i))
+        x = panel.path_entry.winfo_rootx()
+        y = panel.path_entry.winfo_rooty() + panel.path_entry.winfo_height()
+        menu.tk_popup(x, y)
+
+    def _jump_history(self, panel: FilePanel, index: int) -> None:
+        """跳到历史栈中的指定条目（不新增历史）。"""
+        history = panel.state.history
+        if not 0 <= index < len(history):
+            return
+        panel.state.history_index = index
+        panel.set_path(Path(history[index]), push=False)
+        self.set_status(f"{panel.title}历史：{history[index]}")
 
     def toggle_hidden(self) -> None:
         """切换隐藏文件显示。"""
@@ -2404,6 +2747,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "Ctrl+H 隐藏文件    Ctrl+R 刷新    Ctrl+U 交换面板\n"
             "Ctrl+A 全选    Ctrl+I 反选    Num+ 按掩码选择    Num- 按掩码取消\n"
             "Ctrl+M 批量重命名    Alt+Enter 属性\n"
+            "Ctrl+T 新建标签页    Ctrl+W 关闭标签页（至少保留一个）\n"
+            "Ctrl+Tab 下一个标签页    Ctrl+Shift+Tab 上一个标签页\n"
+            "Ctrl+D 书签    Alt+Down 历史记录\n"
             "搜索结果可直接打开所在目录、复制、移动、删除或加入面板选择"
         )
         self._messagebox.showinfo("快捷键", text, parent=self.root)
@@ -2429,6 +2775,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._closing = True
         self.settings.left = self.left.state
         self.settings.right = self.right.state
+        self.settings.left_tabs = list(self.left.tabs)
+        self.settings.right_tabs = list(self.right.tabs)
+        self.settings.left_tab_index = self.left.tab_index
+        self.settings.right_tab_index = self.right.tab_index
         self.settings.active = self.active_side
         self.settings.show_hidden = bool(self._hidden_var.get())
         self.settings.geometry = self.root.winfo_geometry()
