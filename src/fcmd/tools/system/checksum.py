@@ -21,8 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
-from fcmd.console import print_error
-from fcmd.tools import _guiconfig, _guitheme
+from fcmd.tools import _guiconfig, _guitheme, _guiwindow
 
 __all__ = [
     "ALGORITHMS",
@@ -113,24 +112,13 @@ def save_settings(settings: ChecksumSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
-    restored = _guiconfig.clamp_geometry(
+    return _guiwindow.resolve_geometry(
         saved,
         screen_width,
         screen_height,
+        default=DEFAULT_GEOMETRY,
         min_width=MIN_WIDTH,
         min_height=MIN_HEIGHT,
-    )
-    if restored is not None:
-        return restored
-    return (
-        _guiconfig.clamp_geometry(
-            DEFAULT_GEOMETRY,
-            screen_width,
-            screen_height,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-        )
-        or DEFAULT_GEOMETRY
     )
 
 
@@ -222,18 +210,14 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
 
-        self.root = tk.Tk()
-        self._theme = _guitheme.apply_theme(self.root)
-        self.root.title(f"校验和计算器 v{__version__}")
-        self.root.geometry(
-            resolve_geometry(
-                self._settings.geometry,
-                self.root.winfo_screenwidth(),
-                self.root.winfo_screenheight(),
-            )
+        self.root, self._theme = _guiwindow.create_root(
+            title=f"校验和计算器 v{__version__}",
+            saved_geometry=self._settings.geometry,
+            default_geometry=DEFAULT_GEOMETRY,
+            min_width=MIN_WIDTH,
+            min_height=MIN_HEIGHT,
+            on_close=self.close,
         )
-        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self._algorithm_var = tk.StringVar(value=self._settings.algorithm)
         self._string_var = tk.StringVar()
@@ -397,13 +381,7 @@ class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
 def run_gui(settings_path: Path | None = None) -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guitheme.enable_dpi_awareness()
-    try:
-        window = ChecksumWindow(settings_path)
-    except ImportError as exc:
-        print_error(f"tkinter 不可用，无法启动校验和计算器: {exc}")
-        return
-    window.root.mainloop()
+    _guiwindow.run_window(lambda: ChecksumWindow(settings_path), "校验和计算器")
 
 
 @fcmd.tool("checksum", help="打开校验和计算器窗口（Tk）", description=_DESCRIPTION)
