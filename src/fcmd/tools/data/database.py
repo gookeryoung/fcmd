@@ -496,29 +496,8 @@ def pretty_yaml(data: Any, sort_keys: bool = False, indent: int = 2) -> str:
 
 
 def get_yaml(data: Any, path: str) -> Any:
-    """按点路径查询 YAML 对象。"""
-    if not path:
-        return data
-    segments = path.split(".")
-    if any(seg == "" for seg in segments):
-        raise ValueError(f"路径格式错误（含空段）: {path}")
-    current: Any = data
-    for seg in segments:
-        if isinstance(current, list):
-            try:
-                idx = int(seg)
-            except ValueError as exc:
-                raise TypeError(f"列表索引必须是整数，得到: {seg}") from exc
-            if idx < 0 or idx >= len(current):
-                raise IndexError(f"列表索引越界: {idx}（长度 {len(current)}）")
-            current = current[idx]
-        elif isinstance(current, dict):
-            if seg not in current:
-                raise KeyError(f"键不存在: {seg}")
-            current = current[seg]
-        else:
-            raise TypeError(f"无法对非容器类型 {type(current).__name__} 取子项: {seg}")
-    return current
+    """按点路径查询 YAML 对象（与 :func:`query_json` 同一套点路径语义）。"""
+    return query_json(data, path)
 
 
 def keys_yaml(data: Any) -> list[str]:
