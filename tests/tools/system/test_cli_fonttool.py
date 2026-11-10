@@ -736,8 +736,9 @@ class TestCli:
         assert "cascadia-code" in out
         assert "默认安装" in out
 
-    def test_status(self, isolated: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_status(self, isolated: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """status 输出字体目录与状态。"""
+        monkeypatch.setattr("fcmd.tools.system.fonttool.sys.platform", "linux")
         code = run_tool("fonttool", ["status"])
         out = capsys.readouterr().out
         assert code == 0
@@ -774,6 +775,7 @@ class TestCli:
         self, isolated: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """安装成功时输出结果、缓存提示与平台提示。"""
+        monkeypatch.setattr("fcmd.tools.system.fonttool.sys.platform", "linux")
         report = InstallReport(
             (InstallOutcome("cascadia-code", "Cascadia Code", Path("/fonts/x.ttf"), "installed"),),
             "已刷新系统字体缓存。",

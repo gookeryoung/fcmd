@@ -765,7 +765,10 @@ def refresh_font_cache(
     if executable is None:
         return "未找到 fc-cache；请手动执行 fc-cache -f 或重新登录后生效。"
     try:
-        execute([executable, "-f", str(target_dir)], capture_output=True, check=False, timeout=60)
+        # pyrefly 把 Windows 上的 sys.platform 视为字面量，前面的平台判断使其后的代码
+        # 被判为不可达，从而跳过 None 收窄，故此处显式 cast（运行期已由上面的判断保证）。
+        args = [cast(str, executable), "-f", str(target_dir)]
+        execute(args, capture_output=True, check=False, timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"刷新字体缓存失败: {exc}"
     return "已刷新系统字体缓存。"
