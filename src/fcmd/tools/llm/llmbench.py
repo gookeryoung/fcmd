@@ -111,22 +111,9 @@ def bench(  # noqa: PLR0913
 
 def _resolve_endpoint(name: str | None, base_url: str | None, api_key: str, model: str) -> Endpoint:
     """解析被测服务：显式 ``base_url`` → ``name`` → 唯一运行中的服务。"""
-    if base_url:
-        url = base_url.strip().rstrip("/")
-        if url.endswith("/v1"):
-            url = url[: -len("/v1")]
-        return Endpoint(url, api_key, model)
+    from fcmd.tools.llm import llmchat
 
-    from fcmd.tools.llm import llmenv
-
-    if name:
-        return llmenv.require_state(name).endpoint
-    states = llmenv.list_states()
-    if len(states) == 1:
-        return states[0].endpoint
-    if not states:
-        raise ServeError("没有已登记的服务：用 --base-url 指定地址，或先 fcmd llmserve start")
-    raise ServeError("多个服务在运行，用 --name 指定: " + ", ".join(state.name for state in states))
+    return llmchat.resolve_endpoint(name, base_url, api_key, model)
 
 
 @fcmd.tool("llmbench", help="对 OpenAI 兼容服务实测延迟与 token 吞吐")
