@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -133,6 +134,23 @@ def test_layout_fingerprint_matches_tree() -> None:
     layout = _manifest.tool_layout()
     assert layout is not None
     assert layout == frozenset(_data().LAYOUT)
+
+
+def test_project_scripts_cover_every_tool() -> None:
+    """``[project.scripts]`` 必须为每个工具（及其别名）生成全局入口。
+
+    清单与布局指纹只覆盖 ``fcmd <tool>`` 的分发，全局命令名来自
+    ``pyproject.toml``：漏写一条不会有任何运行期报错，也没有其他测试守护，
+    用户侧表现为「工具存在但命令不存在」。与系统命令同名的 ``taskkill`` /
+    ``which`` 按 ADR 0002 D2 只保留短名脚本，故显式豁免。
+    """
+    data = _data()
+    scripts = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["scripts"]
+    exempt = {"taskkill", "which"}
+    missing = sorted(set(data.TOOLS) - exempt - set(scripts))
+    assert not missing, f"工具缺少全局脚本入口: {missing}"
+    unknown = sorted(set(scripts) - set(data.TOOLS) - {"fcmd"} - set(data.ALIASES))
+    assert not unknown, f"脚本条目既不是工具也不是别名: {unknown}"
 
 
 def test_manifest_import_does_not_trigger_discovery(tmp_path: Path) -> None:
