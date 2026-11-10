@@ -4,7 +4,7 @@
 
 ## 特性
 
-- **极速冷启动**（< 100ms）：三层懒加载，重型依赖（Pillow/pymupdf/cryptography 等）仅在用到时导入
+- **极速冷启动**（< 100ms）：三层懒加载，重型依赖（Pillow/pymupdf/cryptography 等）仅在用到时导入。定位慢导入时设置 `FCMD_IMPORT_DEBUG=1`（默认 100ms 阈值）或 `FCMD_IMPORT_DEBUG=50`（毫秒），超阈值的模块与触发来源会输出到 stderr
 - **DAG 任务调度**：四种执行策略（sequential/thread/async/dependency）
 - **组合 API 简洁**：`@fx.task` 装饰器 + 自动依赖推断 + `@fx.tool` CLI 工具
 - **基于 rich 的控制台渲染**：彩色输出、表格与终端宽度自适应
@@ -112,6 +112,10 @@ fcmd completion --shell fish | source         # fish
 ```
 
 删除该文件、写入非法主题名或 JSON 损坏时，窗口启动会自动回退到 `dark-blue`，不会影响工具本身运行。
+
+`native` 沿用系统 ttk 主题（Windows 为 `vista`），系统原生按钮不接受自定义背景色，因此「强调 / 危险」按钮改用系统按钮底色 + 蓝色 / 红色文字区分语义，避免出现浅底白字；其余主题仍是填充式按钮。
+
+窗口设置统一以原子方式写入（临时文件 + 替换），并在每次有效写入前保留一份同名 `.bak` 备份。主文件缺失、损坏或顶层不是对象时，读取会自动回退到 `.bak`。
 
 ### 项目构建与发布
 

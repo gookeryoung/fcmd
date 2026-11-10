@@ -471,8 +471,31 @@ def font_plan(scale: FontScale = FONTS) -> tuple[FontSpec, ...]:
     )
 
 
-def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> dict[str, StyleSpec]:
-    """构造全部 ttk 样式定义（纯数据，便于单测与窗口侧复用）。"""
+def ttk_style_specs(
+    palette: Palette = PALETTE,
+    spacing: Spacing = SPACING,
+    *,
+    native: bool = False,
+) -> dict[str, StyleSpec]:
+    """构造全部 ttk 样式定义（纯数据，便于单测与窗口侧复用）。
+
+    ``native`` 为真表示沿用系统 ttk 主题（Windows 上是 ``vista``）。该主题的
+    ``Button.button`` 由系统原生绘制，``background`` / ``bordercolor`` 等选项
+    全部失效，只有 ``foreground`` 生效；因此强调 / 危险按钮若继续按填充色配
+    ``on_accent`` 前景，会退化成「系统浅色底 + 白字」。此时改为系统按钮底色 +
+    语义色文字，保证可读且保留原生观感；其他主题仍使用填充式按钮。
+    """
+    accent_bg = palette.surface if native else palette.accent
+    accent_fg = palette.accent if native else palette.on_accent
+    accent_active_bg = palette.surface_hover if native else palette.accent_hover
+    accent_pressed_bg = palette.surface_active if native else palette.accent_pressed
+    accent_fg_map: list[tuple[str, object]] = (
+        [("active", palette.accent_hover), ("pressed", palette.accent_pressed), ("disabled", palette.muted)]
+        if native
+        else [("disabled", palette.muted)]
+    )
+    danger_bg = palette.surface if native else palette.danger
+    danger_fg = palette.danger if native else palette.on_accent
     return {
         "TFrame": StyleSpec({"background": palette.background}),
         "TLabelframe": StyleSpec(
@@ -535,29 +558,29 @@ def ttk_style_specs(palette: Palette = PALETTE, spacing: Spacing = SPACING) -> d
         ),
         "Accent.TButton": StyleSpec(
             {
-                "background": palette.accent,
-                "foreground": palette.on_accent,
+                "background": accent_bg,
+                "foreground": accent_fg,
                 "bordercolor": palette.accent,
-                "focuscolor": palette.on_accent,
+                "focuscolor": palette.accent if native else palette.on_accent,
                 "font": BODY_FONT,
                 "padding": (spacing.sm, spacing.xs),
                 "relief": "flat",
             },
             {
                 "background": [
-                    ("active", palette.accent_hover),
-                    ("pressed", palette.accent_pressed),
+                    ("active", accent_active_bg),
+                    ("pressed", accent_pressed_bg),
                     ("disabled", palette.surface),
                 ],
-                "foreground": [("disabled", palette.muted)],
+                "foreground": accent_fg_map,
             },
         ),
         "Danger.TButton": StyleSpec(
             {
-                "background": palette.danger,
-                "foreground": palette.on_accent,
+                "background": danger_bg,
+                "foreground": danger_fg,
                 "bordercolor": palette.danger,
-                "focuscolor": palette.on_accent,
+                "focuscolor": palette.danger if native else palette.on_accent,
                 "font": BODY_FONT,
                 "padding": (spacing.sm, spacing.xs),
                 "relief": "flat",
@@ -917,7 +940,7 @@ def apply_theme(
     if not resolved.native:
         with contextlib.suppress(modules.tk.TclError):
             style.theme_use(THEME_NAME)
-    for name, spec in ttk_style_specs(resolved.palette, resolved.spacing).items():
+    for name, spec in ttk_style_specs(resolved.palette, resolved.spacing, native=resolved.native).items():
         style.configure(name, **spec.configure)
         if spec.map:
             style.map(name, **spec.map)

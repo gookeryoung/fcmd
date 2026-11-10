@@ -294,7 +294,7 @@ class TestStyleSpecs:
     @pytest.mark.parametrize("theme_name", _THEME_IDS)
     def test_every_theme_produces_complete_styles(self, theme_name: str) -> None:
         theme = _guitheme.THEMES[theme_name]
-        specs = _guitheme.ttk_style_specs(theme.palette, theme.spacing)
+        specs = _guitheme.ttk_style_specs(theme.palette, theme.spacing, native=theme.native)
         assert set(specs) == set(_guitheme.STYLE_NAMES)
         assert all(spec.configure for spec in specs.values())
         assert specs["Title.TLabel"].configure["font"] == _guitheme.HEADING_FONT
@@ -330,15 +330,31 @@ class TestStyleSpecs:
     def test_danger_button_is_distinct_in_every_theme(self, theme_name: str) -> None:
         theme = _guitheme.THEMES[theme_name]
         palette = theme.palette
-        spec = _guitheme.ttk_style_specs(palette, theme.spacing)["Danger.TButton"]
-        assert spec.configure["background"] == palette.danger
-        assert spec.configure["foreground"] == palette.on_accent
+        spec = _guitheme.ttk_style_specs(palette, theme.spacing, native=theme.native)["Danger.TButton"]
+        # native 主题的系统按钮不响应 background，危险语义只能落在文字色上。
+        expected_bg = palette.surface if theme.native else palette.danger
+        expected_fg = palette.danger if theme.native else palette.on_accent
+        assert spec.configure["background"] == expected_bg
+        assert spec.configure["foreground"] == expected_fg
         assert ("active", palette.surface_active) in spec.map["background"]
         assert ("pressed", palette.surface_active) in spec.map["background"]
         assert ("disabled", palette.surface) in spec.map["background"]
         assert ("active", palette.danger) in spec.map["foreground"]
         assert ("disabled", palette.muted) in spec.map["foreground"]
-        assert _contrast(palette.on_accent, palette.danger) >= 4.5
+        assert _contrast(expected_fg, expected_bg) >= 4.5
+
+    def test_native_buttons_use_semantic_text_instead_of_fill(self) -> None:
+        theme = _guitheme.THEMES["native"]
+        palette = theme.palette
+        specs = _guitheme.ttk_style_specs(palette, theme.spacing, native=True)
+        accent = specs["Accent.TButton"]
+        assert accent.configure["background"] == palette.surface
+        assert accent.configure["foreground"] == palette.accent
+        assert ("active", palette.accent_hover) in accent.map["foreground"]
+        assert ("pressed", palette.accent_pressed) in accent.map["foreground"]
+        assert ("disabled", palette.muted) in accent.map["foreground"]
+        # 系统原生按钮背景近似 palette.surface，语义色文字必须与它可辨。
+        assert _contrast(palette.accent, palette.surface) >= 4.5
 
     @pytest.mark.parametrize("theme_name", _THEME_IDS)
     def test_scrollbar_thumb_is_visible_against_trough(self, theme_name: str) -> None:
@@ -631,6 +647,14 @@ class TestApplyTheme:
         result, style, _fonts, _root = self._apply(monkeypatch, theme="native")
         assert result.native is True
         assert style.theme is None
+
+    def test_native_buttons_configure_semantic_foreground(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        palette = _guitheme.THEMES["native"].palette
+        _result, style, _fonts, _root = self._apply(monkeypatch, theme="native")
+        assert style.configured["Accent.TButton"]["foreground"] == palette.accent
+        assert style.configured["Accent.TButton"]["background"] == palette.surface
+        assert style.configured["Danger.TButton"]["foreground"] == palette.danger
+        assert style.configured["Danger.TButton"]["background"] == palette.surface
 
     def test_none_reads_persisted_theme(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(_guitheme, "load_theme", lambda: _guitheme.THEMES["light"])
