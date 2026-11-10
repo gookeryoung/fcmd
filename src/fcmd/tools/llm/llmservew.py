@@ -27,6 +27,7 @@ from typing import Any, cast
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.tools import _guiconfig, _guitheme
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -48,7 +49,13 @@ from fcmd.tools.llm.llmbase import (
     human_size,
 )
 
-__all__ = ["main"]
+__all__ = [
+    "ServeSettings",
+    "config_path",
+    "load_settings",
+    "resolve_geometry",
+    "save_settings",
+]
 
 _DESCRIPTION = (
     "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
@@ -56,13 +63,13 @@ _DESCRIPTION = (
     "配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
     "查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，"
     "同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标"
-    "（系统负载在服务未启动时也持续采样展示）"
+    "（系统负载在服务未启动时也持续采样展示）；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json"
 )
 
 #: 当前硬件放不下的模型行标记色（整卡显存也不够）
-_UNFIT_COLOR = "#c62828"
+_UNFIT_COLOR = _guitheme.PALETTE.danger
 #: 整卡够用但当前可用显存不足的模型行标记色（需释放显存）
-_BUSY_COLOR = "#ef6c00"
+_BUSY_COLOR = _guitheme.PALETTE.warning
 
 _FIT_OK = "可用"
 _FIT_BUSY = "需释放显存"
@@ -72,6 +79,69 @@ _FIT_RUNNING = "运行中"
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
+
+MIN_WIDTH = 820
+MIN_HEIGHT = 640
+DEFAULT_WIDTH = 900
+DEFAULT_HEIGHT = 780
+
+
+@dataclass
+class ServeSettings:
+    """窗口持久化设置（当前只有 geometry）。"""
+
+    geometry: str | None = None
+
+
+def config_path() -> Path:
+    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmservew.json``。"""
+    return _guiconfig.config_path("llmservew")
+
+
+valid_geometry = _guiconfig.valid_geometry
+
+
+def load_settings(path: Path | None = None) -> ServeSettings:
+    """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
+    raw = _guiconfig.read_settings(path or config_path())
+    settings = ServeSettings()
+    if raw is not None:
+        geometry = raw.get("geometry")
+        if isinstance(geometry, str) and valid_geometry(geometry):
+            settings.geometry = geometry
+    return settings
+
+
+def save_settings(settings: ServeSettings, path: Path | None = None) -> None:
+    """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
+    _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
+
+
+def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
+    """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
+    restored = _guiconfig.clamp_geometry(
+        saved,
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    if restored is not None:
+        return restored
+    clamped = _guiconfig.clamp_geometry(
+        f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
+        screen_width,
+        screen_height,
+        min_width=MIN_WIDTH,
+        min_height=MIN_HEIGHT,
+    )
+    return clamped or f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}"
+
+
+def _fit_wraplength(width: int) -> int:
+    """按标签当前宽度计算换行宽度：留 8px 余量，并设 120px 下限防止塌陷。"""
+    return max(width - 8, 120)
+
 
 #: token 速率平滑窗口（秒）：窗口内累计 token 数 ÷ 经过时间，避免逐秒差值剧烈跳变
 RATE_WINDOW_SECONDS = 10.0
@@ -384,7 +454,7 @@ class RateWindow:
 class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 服务窗口：参数表单 + 模型列表 + 计划预览 + 后台启停。"""
 
-    def __init__(self) -> None:
+    def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
         from tkinter import filedialog, font, messagebox, ttk
 
@@ -393,10 +463,19 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._font = font
         self._messagebox = messagebox
         self._ttk = ttk
+        self._settings_path = settings_path
+        self._settings = load_settings(settings_path)
         self.root = tk.Tk()
+        _guitheme.apply_theme(self.root)
         self.root.title("推理服务管理")
-        self.root.geometry("900x780")
-        self.root.minsize(820, 640)
+        self.root.geometry(
+            resolve_geometry(
+                self._settings.geometry,
+                self.root.winfo_screenwidth(),
+                self.root.winfo_screenheight(),
+            )
+        )
+        self.root.minsize(MIN_WIDTH, MIN_HEIGHT)
 
         self._models: list[ModelEntry] = []
         self._selected_model: Path | None = None
@@ -677,8 +756,11 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._tree.bind("<<TreeviewSelect>>", self._on_model_selected)
 
         self._hint_var = self._tk.StringVar(value=_HINT_PLACEHOLDER)
-        ttk.Label(box, textvariable=self._hint_var, wraplength=780, justify="left").pack(
-            side="bottom", fill="x", pady=(6, 0)
+        hint_label = ttk.Label(box, textvariable=self._hint_var, justify="left")
+        hint_label.pack(side="bottom", fill="x", pady=(6, 0))
+        hint_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
         )
 
     def _build_env(self, parent: Any) -> None:
@@ -690,7 +772,12 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         for row, (key, label) in enumerate((("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"))):
             ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, 8))
             var = tk.StringVar(value="检测中…")
-            ttk.Label(body, textvariable=var, wraplength=760, justify="left").grid(row=row, column=1, sticky="w")
+            value_label = ttk.Label(body, textvariable=var, justify="left")
+            value_label.grid(row=row, column=1, sticky="we")
+            value_label.bind(
+                "<Configure>",
+                lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+            )
             self._info_vars[key] = var
 
     def _build_loaded(self, parent: Any) -> None:
@@ -789,13 +876,17 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         for column in range(4):
             box.columnconfigure(column, weight=1)
         ttk.Label(box, text="设备:").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=2)
-        ttk.Label(
+        gpu_name_label = ttk.Label(
             box,
             textvariable=self._gpu_vars["gpu_name"],
             font=("", 9, "bold"),
-            wraplength=700,
             justify="left",
-        ).grid(row=0, column=1, columnspan=3, sticky="w", pady=2)
+        )
+        gpu_name_label.grid(row=0, column=1, columnspan=3, sticky="we", pady=2)
+        gpu_name_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_fit_wraplength(event.width)),
+        )
         items = (
             ("使用率", "gpu_util"),
             ("显存", "gpu_vram"),
@@ -855,7 +946,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         log_frame.pack(fill="both", expand=True, pady=(8, 0))
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
-        self._log_text = tk.Text(log_frame, wrap="none", state="disabled", yscrollcommand=scrollbar.set, height=10)
+        self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
 
@@ -1706,6 +1797,7 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             return
         self._closing = True
         self._stop_monitor()
+        save_settings(ServeSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
     # ------------------------------------------------------------------ #
@@ -1725,7 +1817,8 @@ class ServeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
 
 def run_gui() -> None:
-    """创建并运行 Tk 主窗口。"""
+    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
+    _guitheme.enable_dpi_awareness()
     try:
         window = ServeWindow()
     except ImportError as exc:
