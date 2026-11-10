@@ -126,6 +126,26 @@ class TestValidGeometry:
         assert valid_geometry(text) is None
 
 
+class TestResolveGeometry:
+    """启动时 geometry 恢复：位置夹回屏幕、尺寸不小于下限。"""
+
+    def test_keeps_visible_position(self) -> None:
+        assert img2icow.resolve_geometry("800x600+100+80", 1920, 1080) == "800x600+100+80"
+
+    def test_pulls_back_offscreen(self) -> None:
+        assert img2icow.resolve_geometry("880x640+5000+5000", 1920, 1080) == "880x640+1040+440"
+
+    def test_enforces_minimum_size(self) -> None:
+        assert img2icow.resolve_geometry("200x100+0+0", 1920, 1080) == "760x560+0+0"
+
+    def test_falls_back_to_default_geometry(self) -> None:
+        assert img2icow.resolve_geometry(None, 1920, 1080) == "880x640+260+160"
+        assert img2icow.resolve_geometry("bad", 1920, 1080) == "880x640+260+160"
+
+    def test_clamps_default_into_small_screen(self) -> None:
+        assert img2icow.resolve_geometry(None, 800, 600) == "800x600+0+0"
+
+
 # ============================================================================ #
 # 尺寸与质量解析
 # ============================================================================ #
