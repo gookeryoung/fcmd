@@ -25,16 +25,32 @@ completion 等内建命令与 ``run_tool`` 执行链自动兼容。
 
 from __future__ import annotations
 
-from fcmd.core.hooks import register_action_resolver
+import sys
+
+from fcmd.core.hooks import register_action_resolver, register_cmd_rewriter
 
 from .actions import Action, action, action_names, get_action, has_action
 from .decl import CommandDecl, CommandDeclError, ParamDecl, ToolDecl, parse_command_table, parse_tool_table
 from .loader import builtin_tool_decls, user_tool_decls
-from .synth import build_tool_spec, select_platform_cmd
+from .synth import build_tool_spec, rewrite_ssh_cmd, select_platform_cmd
 
 # 把动作解析能力反向注册给 core（exec._apply_compute 通过钩子调用），
 # 避免 core → dsl 的反向导入。
 register_action_resolver(get_action)
+
+
+def _rewrite_cmd(cmd: str) -> str:
+    """执行期命令重写钩子入口：按本机 SSH 客户端改写声明模板。
+
+    注册期不做探测（见 :func:`fcmd.dsl.synth.build_tool_spec`），core 在
+    构建 cmd 任务时经钩子调用本函数，保证 ssh 命令实际执行前已替换为
+    OpenSSH/plink 的完整路径。
+    """
+    rewritten = rewrite_ssh_cmd(cmd, sys.platform)
+    return rewritten if isinstance(rewritten, str) else cmd
+
+
+register_cmd_rewriter(_rewrite_cmd)
 
 # entry 子模块不在包级 re-export：runpy.run_module("fcmd.dsl.entry") 等路径
 # 会先把目标模块占位进 sys.modules 再导入父包，父包 __init__ 里的

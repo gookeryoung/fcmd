@@ -36,6 +36,7 @@ from fcmd.core.execution.executors import run
 
 from ..dag import Graph, GraphDefaults
 from ..errors import FcmdError, TaskFailedError
+from ..hooks import rewrite_cmd
 from ..task import Condition, Context, RetryPolicy, TaskSpec, TaskStatus
 from .args import (
     ToolExitCode,
@@ -375,6 +376,10 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
             cwd_value = _expand_value(cwd_value, spec, variables)
         cwd = Path(cwd_value) if cwd_value is not None else None
         cmd_value: Any = list(spec.cmd) if isinstance(spec.cmd, tuple) else spec.cmd
+        # 依赖本机环境的命令改写（Windows 上把裸 ssh 换成检测到的客户端路径）
+        # 推迟到执行期：探测要起子进程，放在注册期会拖慢每次工具发现。
+        if isinstance(cmd_value, str):
+            cmd_value = rewrite_cmd(cmd_value)
         # 模板插值仅对命令模板（str/list）有意义；callable 型 cmd（如
         # pymake push 的函数任务）直通引擎
         if isinstance(cmd_value, (str, list)):

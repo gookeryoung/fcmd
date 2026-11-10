@@ -32,7 +32,7 @@ import fcmd as fx
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.dsl.decl import parse_command_table
-from fcmd.dsl.synth import build_tool_spec
+from fcmd.dsl.synth import build_tool_spec, rewrite_ssh_cmd
 
 ensure_tools_discovered()  # 幂等：注册内置 DSL 命令（含 sshcopyid）
 
@@ -329,13 +329,14 @@ class TestSshcopyidWinBranch:
 # OpenSSH vs plink 兼容：resolve_windows_openssh + build_tool_spec 路径替换
 # ---------------------------------------------------------------------- #
 class TestWindowsOpenSshResolution:
-    """resolve_windows_openssh 检测逻辑 + build_tool_spec 对 win32 的 ssh 路径替换。
+    """resolve_windows_openssh 检测逻辑 + rewrite_ssh_cmd 对 win32 的 ssh 路径替换。
 
     背景：Windows 用户 PATH 中 ``plink.exe``（PuTTY）常排在 OpenSSH
     ``ssh.exe`` 前面，导致 ``ssh -p ... -o ...`` 被 plink 执行。plink
     不识别 ``-p``（用 ``-P`` 大写）、``-o StrictHostKeyChecking=no`` 等
-    OpenSSH 参数。修复方案：在 synth 层检测真正的 OpenSSH 路径并替换
-    shell 命令模板中的裸 ``ssh``。
+    OpenSSH 参数。修复方案：执行期由 :func:`fcmd.dsl.synth.rewrite_ssh_cmd`
+    检测真正的 OpenSSH 路径并替换 shell 命令模板中的裸 ``ssh``（注册期
+    ``build_tool_spec`` 只保留声明模板，避免工具发现阶段起子进程探测）。
     """
 
     def _reset_cache(self) -> None:
@@ -452,9 +453,12 @@ class TestWindowsOpenSshResolution:
     # --- build_tool_spec 路径替换 ---
 
     def test_win32_build_spec_replaces_bare_ssh(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """win32 平台 build_tool_spec 发现 OpenSSH 后（且无 plink），把
-        cmd 开头裸 ``ssh`` 替换为完整路径——plink 劫持场景下命令实际
-        调用真正的 OpenSSH。"""
+        """win32 平台的 ssh 路径替换发生在执行期，注册期只保留声明模板。
+
+        历史回归：替换曾在 ``build_tool_spec``（注册期）执行，为此每次工具
+        发现都要起 4 个子进程探测 SSH 客户端（本机实测约 200ms）。改为
+        :func:`fcmd.dsl.synth.rewrite_ssh_cmd` 在构建任务时重写后，
+        ToolSpec.cmd 保持声明模板，执行前才替换为完整路径。"""
         self._reset_cache()
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -465,11 +469,51 @@ class TestWindowsOpenSshResolution:
         decl = _load_sshcopyid_decl()
         spec = build_tool_spec(decl, platform="win32")
 
+        # 注册期：保留声明模板，不做机器相关改写
         assert spec.cmd is not None
         assert isinstance(spec.cmd, str)
-        assert spec.cmd.startswith(fake_openssh + " ")
-        assert " -p {port} " in spec.cmd  # 模板占位符保留，后续 OpenSSH 参数完整
-        assert "StrictHostKeyChecking" in spec.cmd
+        assert spec.cmd.startswith("ssh -p")
+
+        # 执行期：钩子入口把裸 ssh 替换为检测到的完整路径
+        rewritten = rewrite_ssh_cmd(spec.cmd, platform="win32")
+        assert isinstance(rewritten, str)
+        assert rewritten.startswith(fake_openssh + " ")
+        assert " -p {port} " in rewritten  # 模板占位符保留，后续 OpenSSH 参数完整
+        assert "StrictHostKeyChecking" in rewritten
+
+    def test_build_spec_does_not_probe_ssh_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """注册期禁止探测：``build_tool_spec`` 不得调用检测函数或起子进程。"""
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        def _boom(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("build_tool_spec 不得在注册期探测 SSH 客户端")
+
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_ssh_client", _boom)
+        monkeypatch.setattr("fcmd.dsl.synth.subprocess.run", _boom)
+
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="win32")
+
+        assert spec.cmd is not None
+        assert isinstance(spec.cmd, str)
+        assert spec.cmd.startswith("ssh -p")
+
+    def test_exec_build_task_spec_applies_rewrite(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """执行链构建 cmd 任务时调用重写钩子（``fcmd.dsl`` 导入即注册）。"""
+        self._reset_cache()
+        monkeypatch.setattr(sys, "platform", "win32")
+        fake_plink = r"C:\PuTTY\plink.exe"
+        monkeypatch.setattr("fcmd.dsl.synth.resolve_windows_plink", lambda: fake_plink)
+
+        import fcmd.dsl  # noqa: F401  确保 cmd 重写钩子已注册
+        from fcmd.core.toolkit.exec import _build_task_spec
+
+        decl = _load_sshcopyid_decl()
+        spec = build_tool_spec(decl, platform="win32")
+        task = _build_task_spec(spec, {})
+
+        assert isinstance(task.cmd, str)
+        assert task.cmd.startswith(fake_plink + " -ssh -pw")
 
     def test_linux_build_spec_no_replacement(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """非 win32 平台不做 ssh 路径替换，unix_cmd 保持原样。"""
@@ -689,10 +733,10 @@ class TestWindowsPlinkResolution:
         # 占位符保留（后续 execution 层替换）
         assert "{username}@{hostname}" in result
 
-    # --- build_tool_spec plink 分支 ---
+    # --- rewrite_ssh_cmd plink 分支 ---
 
     def test_win32_build_spec_plink_rewrites_cmd(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """win32 检测到 plink → ToolSpec.cmd 以 plink 开头，含 -pw 密码占位符。"""
+        """win32 检测到 plink → 执行期重写后命令以 plink 开头，含 -pw 密码占位符。"""
         self._reset_cache()
         monkeypatch.setattr(sys, "platform", "win32")
 
@@ -701,21 +745,25 @@ class TestWindowsPlinkResolution:
 
         decl = _load_sshcopyid_decl()
         spec = build_tool_spec(decl, platform="win32")
-
         assert spec.cmd is not None
         assert isinstance(spec.cmd, str)
+        # 注册期保留声明模板
+        assert spec.cmd.startswith("ssh -p")
+
+        cmd = rewrite_ssh_cmd(spec.cmd, platform="win32")
+        assert isinstance(cmd, str)
         # plink 重写后的命令
-        assert spec.cmd.startswith(fake_plink + " -ssh")
-        assert "-pw {password}" in spec.cmd
-        assert "-batch" in spec.cmd
+        assert cmd.startswith(fake_plink + " -ssh")
+        assert "-pw {password}" in cmd
+        assert "-batch" in cmd
         # 端口大写 P
-        assert " -P {port} " in spec.cmd
+        assert " -P {port} " in cmd
         # -o 选项被去掉
-        assert "-o" not in spec.cmd
+        assert "-o" not in cmd
         # 远端命令和 stdin 重定向保留
-        assert "{username}@{hostname}" in spec.cmd
-        assert "mkdir -p ~/.ssh" in spec.cmd
-        assert '< "{keypath}"' in spec.cmd
+        assert "{username}@{hostname}" in cmd
+        assert "mkdir -p ~/.ssh" in cmd
+        assert '< "{keypath}"' in cmd
 
 
 # ---------------------------------------------------------------------- #

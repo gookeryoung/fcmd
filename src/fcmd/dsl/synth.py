@@ -65,6 +65,7 @@ __all__ = [
     "resolve_windows_openssh",
     "resolve_windows_plink",
     "resolve_windows_ssh_client",
+    "rewrite_ssh_cmd",
     "select_platform_cmd",
 ]
 
@@ -494,10 +495,6 @@ def build_tool_spec(
         None if act is not None or (decl.needs and not _has_any_cmd(decl)) else select_platform_cmd(decl, platform)
     )
 
-    # Windows 路径上的 ssh 命令：用 OpenSSH 完整路径替换裸 "ssh"，
-    # 避免 PATH 中 plink.exe 抢先导致 -p / -o 等 OpenSSH 参数不被识别。
-    resolved_cmd = _maybe_replace_ssh_path(raw_cmd, platform)
-
     return ToolSpec(
         name=tool_name or decl.name,
         subcommand=subcommand,
@@ -505,7 +502,11 @@ def build_tool_spec(
         help=decl.help,
         description=decl.description,
         hidden=decl.hidden,
-        cmd=resolved_cmd,
+        # 注册期保留声明模板，不做 Windows SSH 客户端探测（见 rewrite_ssh_cmd）：
+        # 探测要起 4 个子进程（where ssh / where plink / ssh -V / plink -V），
+        # 放在注册期会让每次工具发现多付约 200ms，且让 spec 依赖本机环境。
+        # 重写在执行期由 core.toolkit.exec._build_task_spec 经钩子调用。
+        cmd=raw_cmd,
         param_help=param_help,
         cwd=decl.cwd,
         env=resolved_env,
@@ -517,8 +518,8 @@ def build_tool_spec(
     )
 
 
-def _maybe_replace_ssh_path(cmd: str | tuple[str, ...] | None, platform: str) -> str | tuple[str, ...] | None:
-    """在 win32 平台上重写 shell 命令以匹配检测到的 SSH 客户端。
+def rewrite_ssh_cmd(cmd: str | tuple[str, ...] | None, platform: str = sys.platform) -> str | tuple[str, ...] | None:
+    """在 win32 平台上重写 shell 命令以匹配检测到的 SSH 客户端（执行期调用）。
 
     Windows SSH 客户端有两种常见选择，本函数按 **plink 优先 → OpenSSH 次之**
     的策略重写命令模板：
@@ -536,6 +537,10 @@ def _maybe_replace_ssh_path(cmd: str | tuple[str, ...] | None, platform: str) ->
 
     仅处理 str 形态（shell=True 执行）的命令；tuple 形态（无 shell，
     list 参数）不处理。
+
+    探测会起子进程，因此**不在注册期调用**：``build_tool_spec`` 保留声明
+    模板，由 :func:`fcmd.core.toolkit.exec._build_task_spec` 在构建任务时
+    经 ``fcmd.core.hooks`` 的 cmd 重写钩子调用本函数。
     """
     # 只处理以裸 ssh 起头的 shell 命令；其他命令原样返回。
     # （曾因缺少该守卫把所有 DSL 命令改写成 plink 调用。）
