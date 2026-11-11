@@ -100,7 +100,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-100 个工具，全部为 Python 模块（`@fcmd.tool` 注册），按用途分组：
+108 个工具，全部为 Python 模块（`@fcmd.tool` 注册），按用途分组：
 
 工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。例外：`taskkill` / `which` 与系统命令同名，不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本；规范名仍可通过 `fcmd taskkill` / `fcmd which` 使用。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
 

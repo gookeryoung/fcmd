@@ -142,11 +142,7 @@ class FcmdApp:
         console.print("  [cyan]fcmd --version[/cyan]           # 查看版本")
 
     def _run_tool(self, tool_name: str, argv: list[str]) -> int:
-        """运行工具：导入模块触发 @tool 注册，再调 run_tool。
-
-        DSL 声明式命令无模块映射（已在 ``ensure_tools_discovered`` 时
-        注册进 ``_TOOL_REGISTRY``），直接走 ``run_tool``。
-        """
+        """运行工具：导入模块触发 @tool 注册，再调 run_tool。"""
         from fcmd.cli._discovery import _TOOL_MODULES, import_tool_module
         from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
