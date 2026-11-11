@@ -122,6 +122,43 @@ def _dir_stats(path: Path) -> str:
     return f"{count} 个 safetensors，共 {human_size(_hf_size(path))}"
 
 
+def default_output_path(source: Path, root: Path | None = None) -> Path:
+    """默认输出路径：``<模型目录>/<源目录名>/<源目录名>.gguf``。"""
+    base_root = (root or llmenv.models_roots()[0]).expanduser()
+    return base_root / source.name / f"{source.name}.gguf"
+
+
+def output_path_from_form(source_text: str, output_text: str, root: Path | None = None) -> Path | None:
+    """按表单文本解析输出路径：显式输出优先，留空时落到默认模型目录。"""
+    text = source_text.strip()
+    if not text:
+        return None
+    output = output_text.strip()
+    if output:
+        return Path(output).expanduser()
+    return default_output_path(Path(text).expanduser(), root)
+
+
+def quant_target(base: Path, quant: str) -> Path:
+    """由基础输出路径推导量化输出路径（与 llmqnt 命名口径一致）。"""
+    return base.with_name(f"{llmqnt.strip_f16_suffix(base.stem)}-{quant}.gguf")
+
+
+def format_targets(base: Path) -> dict[str, Path]:
+    """基础输出对应的全部格式路径（``raw`` 为原始 GGUF）。"""
+    return {"raw": base, **{quant: quant_target(base, quant) for quant in llmqnt.QUANT_TYPES}}
+
+
+def existing_format_keys(base: Path) -> list[str]:
+    """已存在的输出格式键（原始在前，量化按 ``QUANT_TYPES`` 顺序）。"""
+    return [key for key, path in format_targets(base).items() if path.is_file()]
+
+
+def existing_summary(base: Path) -> str:
+    """已存在输出的界面摘要（如 ``原始 GGUF、Q4_K_M``），不存在时返回空串。"""
+    return "、".join("原始 GGUF" if key == "raw" else key for key in existing_format_keys(base))
+
+
 def _find_convertible(roots: list[Path]) -> list[tuple[Path, int]]:
     """在模型目录中查找可转换的 HF safetensors 目录（含根目录及向下两层）。
 
@@ -206,8 +243,9 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         self._build_widgets()
         _guitheme.install_theme_switcher(self.root)
-        self._source_var.trace_add("write", lambda *_: self._refresh_existing())
-        self._output_var.trace_add("write", lambda *_: self._refresh_existing())
+        self._source_var.trace_add("write", lambda *_: self._refresh_output_state())
+        self._output_var.trace_add("write", lambda *_: self._refresh_output_state())
+        self._refresh_output_state()
         self._refresh_env()
 
     # ------------------------------------------------------------------ #
@@ -258,8 +296,12 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         )
         self._output_btn = ttk.Button(box, text="另存为…", command=self._pick_output)
         self._output_btn.grid(row=1, column=2, pady=self._theme.spacing.xxs)
-        ttk.Label(box, text="输出留空时写入默认模型目录：<模型目录>/<源目录名>/<源目录名>[-量化].gguf").grid(
-            row=2, column=1, sticky="w", pady=(self._theme.spacing.xxs, 0)
+        self._output_hint_var = self._tk.StringVar(value="")
+        output_hint = ttk.Label(box, textvariable=self._output_hint_var, justify="left")
+        output_hint.grid(row=2, column=1, columnspan=2, sticky="we", pady=(self._theme.spacing.xxs, 0))
+        output_hint.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
         )
 
     def _build_models(self, parent: Any) -> None:
@@ -284,17 +326,19 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         tree_frame.pack(fill="both", expand=True)
         self._tree = ttk.Treeview(
             tree_frame,
-            columns=("model", "size", "path"),
+            columns=("model", "size", "existing", "path"),
             show="headings",
             selectmode="browse",
             height=4,
         )
         self._tree.heading("model", text="模型")
         self._tree.heading("size", text="大小")
+        self._tree.heading("existing", text="输出")
         self._tree.heading("path", text="位置")
-        self._tree.column("model", width=220, anchor="w")
-        self._tree.column("size", width=90, anchor="e", stretch=False)
-        self._tree.column("path", width=430, anchor="w")
+        self._tree.column("model", width=200, anchor="w")
+        self._tree.column("size", width=80, anchor="e", stretch=False)
+        self._tree.column("existing", width=170, anchor="w", stretch=False)
+        self._tree.column("path", width=380, anchor="w")
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
         self._tree.pack(side="left", fill="both", expand=True)
@@ -309,8 +353,13 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         if 0 <= index < len(self._convertible):
             path = self._convertible[index][0]
             self._source_var.set(str(path))
-            self._status_var.set(f"状态：已选择 {path.name}（{_dir_stats(path)}）")
+            base = default_output_path(path)
+            existing = existing_summary(base)
+            detail = f"；默认输出已有：{existing}" if existing else "；默认输出尚未生成"
+            self._status_var.set(f"状态：已选择 {path.name}（{_dir_stats(path)}{detail}）")
             self._log(f"已选择可转换模型: {path}")
+            if existing:
+                self._log(f"默认输出目录已存在: {existing}（{base.parent}）")
 
     def _sync_selection(self, path: Path) -> None:
         """手动选择源目录后，若命中已配置模型则同步列表选中。"""
@@ -406,58 +455,98 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             row=0, column=2, columnspan=2, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs
         )
 
+        bottom_row = (len(llmqnt.QUANT_TYPES) + 3) // 4 + 1
+        imatrix_hint = ttk.Label(
+            box,
+            text="IQ 系列建议配合 importance matrix（imatrix）使用，未提供时质量可能明显下降",
+            justify="left",
+        )
+        imatrix_hint.grid(row=bottom_row, column=0, columnspan=4, sticky="we", padx=self._theme.spacing.sm)
+        imatrix_hint.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+        )
+
+        self._existing_var = self._tk.StringVar(value="")
+        existing_label = ttk.Label(box, textvariable=self._existing_var, justify="left")
+        existing_label.grid(
+            row=bottom_row + 1,
+            column=0,
+            columnspan=4,
+            sticky="we",
+            padx=self._theme.spacing.sm,
+            pady=(self._theme.spacing.xs, 0),
+        )
+        existing_label.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+        )
+
     def _base_output(self) -> Path | None:
         """当前表单对应的基础 GGUF 输出路径（未选择源目录时返回 None）。"""
-        source_text = self._source_var.get().strip()
-        if not source_text:
-            return None
-        output_text = self._output_var.get().strip()
-        if output_text:
-            return Path(output_text).expanduser()
-        source = Path(source_text).expanduser()
-        root = llmenv.models_roots()[0].expanduser()
-        return root / source.name / f"{source.name}.gguf"
+        return output_path_from_form(self._source_var.get(), self._output_var.get())
 
-    @staticmethod
-    def _quant_target(base: Path, quant: str) -> Path:
-        """由基础输出路径推导量化输出路径（与 llmqnt 命名口径一致）。"""
-        return base.with_name(f"{llmqnt.strip_f16_suffix(base.stem)}-{quant}.gguf")
+    def _output_hint_text(self) -> str:
+        """输出位置提示：显示实际默认目录，避免用户不清楚文件落在哪里。"""
+        base = self._base_output()
+        if base is None:
+            root = llmenv.models_roots()[0].expanduser()
+            return f"输出留空时写入默认模型目录：{root}/<源目录名>/<源目录名>[-量化].gguf"
+        if self._output_var.get().strip():
+            return f"输出文件：{base}"
+        stem = llmqnt.strip_f16_suffix(base.stem)
+        return f"默认输出目录：{base.parent}（文件名 {base.name}，量化版本为 {stem}-<量化类型>.gguf）"
+
+    def _refresh_output_state(self) -> None:
+        """刷新输出位置提示与已存在格式标记。"""
+        self._output_hint_var.set(self._output_hint_text())
+        self._refresh_existing()
 
     def _selected_formats(self) -> tuple[bool, list[str]]:
         """返回已勾选且未被只读过滤的（原始输出, 量化类型列表）。"""
         overwrite = self._overwrite_var.get()
         base = self._base_output()
+        targets = format_targets(base) if base is not None else {}
         raw = bool(self._format_vars["raw"].get())
-        if raw and not overwrite and base is not None and base.is_file():
+        if raw and not overwrite and targets and targets["raw"].is_file():
             raw = False
         quants: list[str] = []
         for quant in llmqnt.QUANT_TYPES:
             if not self._format_vars[quant].get():
                 continue
-            if not overwrite and base is not None and self._quant_target(base, quant).is_file():
+            if not overwrite and targets and targets[quant].is_file():
                 continue
             quants.append(quant)
         return raw, quants
 
     def _refresh_existing(self) -> None:
-        """识别已存在的输出格式，未勾选覆盖时勾选并置为只读。"""
+        """识别默认/指定输出位置已存在的格式，标注“已存在”并置为只读。"""
         if self._running or self._closing:
             return
         base = self._base_output()
         overwrite = self._overwrite_var.get()
+        targets = format_targets(base) if base is not None else {}
+        existing: list[str] = []
         for key, check in self._format_checks.items():
             if key == "raw":
                 label = "原始 GGUF（不量化）"
-                exists = base is not None and base.is_file()
             else:
                 label = f"{key}  {llmqnt.QUANT_TYPES[key]}"
-                exists = base is not None and self._quant_target(base, key).is_file()
+            exists = bool(targets) and targets[key].is_file()
+            if exists:
+                existing.append("原始 GGUF" if key == "raw" else key)
             check.configure(
                 text=label + ("（已存在）" if exists else ""),
                 state="normal" if overwrite or not exists else "disabled",
             )
             if exists and not overwrite:
                 self._format_vars[key].set(True)
+        if existing and not overwrite:
+            self._existing_var.set(
+                "已存在：" + "、".join(existing) + "（默认只读、不参与转换；勾选“覆盖已存在的输出文件”可重新生成）"
+            )
+        else:
+            self._existing_var.set("")
 
     def _collapsible(self, parent: Any, title: str, *, open_state: bool = True) -> Any:
         """创建可折叠分区，返回（外层容器, 内容 Frame）。"""
@@ -594,15 +683,19 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         """填充可转换模型列表，并恢复当前已选源目录的选中状态。"""
         self._convertible = convertible
         self._tree.delete(*self._tree.get_children())
+        root = llmenv.models_roots()[0].expanduser()
         for index, (path, size) in enumerate(convertible):
+            existing = existing_summary(default_output_path(path, root))
             self._tree.insert(
                 "",
                 "end",
                 iid=str(index),
-                values=(path.name, human_size(size), str(path)),
+                values=(path.name, human_size(size), f"已生成 {existing}" if existing else "未转换", str(path)),
             )
         if convertible:
-            self._models_hint_var.set(f"发现 {len(convertible)} 个可转换模型；选中后自动填入源目录")
+            self._models_hint_var.set(
+                f"发现 {len(convertible)} 个可转换模型；选中后自动填入源目录，“输出”列显示默认输出目录中已生成的格式"
+            )
         else:
             self._models_hint_var.set(
                 "未发现可转换模型（模型目录中需含 config.json 与 *.safetensors）；可用 fcmd llmenv add 登记模型目录"
@@ -626,12 +719,21 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._log("已有任务正在进行，请等待完成")
             return
         raw, quants = self._selected_formats()
+        base = self._base_output()
+        overwrite = self._overwrite_var.get()
+        existing = existing_summary(base) if base is not None else ""
         if not raw and not quants:
+            detail = f"已存在的输出：{existing}。" if existing else ""
             self._messagebox.showwarning(
                 "缺少输出格式",
-                "请至少勾选一种尚未生成的输出格式（已存在的格式默认只读，可勾选“覆盖已存在的输出文件”后重选）",
+                f"{detail}请至少勾选一种尚未生成的输出格式（已存在的格式默认只读，可勾选“覆盖已存在的输出文件”后重选）",
             )
             return
+        if base is not None and existing and not overwrite:
+            skipped = [key for key in existing_format_keys(base) if self._format_vars[key].get()]
+            if skipped:
+                names = "、".join("原始 GGUF" if key == "raw" else key for key in skipped)
+                self._log(f"已存在并跳过：{names}（勾选“覆盖已存在的输出文件”可重新生成）")
         self._begin_task(self._convert_work)
 
     def _begin_task(self, target: Any) -> None:
@@ -702,7 +804,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         if quants and not keep_base:
             status.put(("log", f"  中间文件: {plan.output}（量化完成后删除）"))
         for quant in quants:
-            status.put(("log", f"  {quant}: {ConvertWindow._quant_target(base, quant)}"))
+            status.put(("log", f"  {quant}: {quant_target(base, quant)}"))
         status.put(("log", f"  脚本: {plan.script}"))
         status.put(("log", f"  解释器: {plan.python}"))
         status.put(("log", "  转换命令: " + llmbase.format_command(plan.convert_argv())))
@@ -765,7 +867,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             status.put(("progress", 100 // total))
             for index, quant in enumerate(quants, start=1):
                 assert quant_exe is not None
-                target = self._quant_target(base, quant)
+                target = quant_target(base, quant)
                 status.put(("log", f"正在量化到 {quant}: {target.name}…"))
                 llmqnt.run_job(
                     llmqnt.QuantizeJob(plan.output, target, quant),
@@ -804,6 +906,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 elif kind == "success":
                     paths = [str(item) for item in payload]
                     self._status_var.set("状态：转换完成")
+                    self._apply_models(self._convertible)
                     self._messagebox.showinfo("转换完成", "已生成:\n" + "\n".join(paths))
                 elif kind == "done":
                     self._set_running(False)

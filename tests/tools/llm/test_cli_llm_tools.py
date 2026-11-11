@@ -623,6 +623,54 @@ def test_convertw_find_convertible_layouts(tmp_path: Path) -> None:
     assert found == {direct, child, nested}
 
 
+def test_convertw_default_output_path(tmp_path: Path) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    source = tmp_path / "Qwen3-8B"
+    source.mkdir()
+    root = tmp_path / "models"
+    assert llmconvertw.default_output_path(source, root) == root / "Qwen3-8B" / "Qwen3-8B.gguf"
+
+
+def test_convertw_output_path_from_form(tmp_path: Path) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    assert llmconvertw.output_path_from_form("", "", tmp_path) is None
+    assert llmconvertw.output_path_from_form("   ", "custom.gguf", tmp_path) is None
+
+    source = tmp_path / "model"
+    source.mkdir()
+    assert llmconvertw.output_path_from_form(str(source), "", tmp_path) == (
+        llmconvertw.default_output_path(source, tmp_path)
+    )
+    explicit = tmp_path / "custom.gguf"
+    assert llmconvertw.output_path_from_form(str(source), str(explicit), tmp_path) == explicit
+
+
+def test_convertw_quant_target_naming(tmp_path: Path) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    assert llmconvertw.quant_target(tmp_path / "model.gguf", "Q4_K_M") == tmp_path / "model-Q4_K_M.gguf"
+    assert llmconvertw.quant_target(tmp_path / "model-F16.gguf", "Q8_0") == tmp_path / "model-Q8_0.gguf"
+
+
+def test_convertw_existing_format_detection(tmp_path: Path) -> None:
+    from fcmd.tools.llm import llmconvertw
+
+    base = tmp_path / "model.gguf"
+    assert llmconvertw.existing_format_keys(base) == []
+    assert llmconvertw.existing_summary(base) == ""
+
+    base.write_bytes(b"x")
+    target = llmconvertw.quant_target(base, "Q4_K_M")
+    target.write_bytes(b"x")
+    assert llmconvertw.existing_format_keys(base) == ["raw", "Q4_K_M"]
+    assert llmconvertw.existing_summary(base) == "原始 GGUF、Q4_K_M"
+
+    base.unlink()
+    assert llmconvertw.existing_summary(base) == "Q4_K_M"
+
+
 def test_convertw_find_convertible_skips_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from fcmd.tools.llm import llmconvertw
 

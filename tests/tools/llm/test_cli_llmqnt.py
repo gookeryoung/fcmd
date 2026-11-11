@@ -104,6 +104,26 @@ class TestPlan:
         with pytest.raises(llmqnt.QuantizeError, match="不支持的量化类型"):
             llmqnt.plan_jobs(source, ["Q9_K"])
 
+    def test_iq_and_legacy_quants_supported(self, tmp_path: Path) -> None:
+        source = _write(tmp_path / "model.gguf")
+        quants = [
+            "Q4_1",
+            "Q5_1",
+            "IQ1_S",
+            "IQ1_M",
+            "IQ2_XXS",
+            "IQ2_XS",
+            "IQ2_S",
+            "IQ2_M",
+            "IQ3_XXS",
+            "IQ3_S",
+            "IQ3_M",
+            "IQ4_NL",
+            "IQ4_XS",
+        ]
+        jobs = llmqnt.plan_jobs(source, quants)
+        assert [job.quant for job in jobs] == quants
+
     def test_pending_and_skipped(self, tmp_path: Path) -> None:
         source = _write(tmp_path / "model-F16.gguf")
         _write(tmp_path / "model-Q4_K_M.gguf")

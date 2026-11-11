@@ -190,7 +190,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
                 variable=self._quant_vars[quant],
             )
             check.grid(
-                row=index // 2, column=index % 2, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs
+                row=index // 3, column=index % 3, sticky="w", padx=self._theme.spacing.sm, pady=self._theme.spacing.xxs
             )
             self._quant_checks[quant] = check
 
