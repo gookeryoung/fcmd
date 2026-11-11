@@ -91,6 +91,8 @@ TOOLS: dict[str, ToolEntry] = {
     "pdfsplit": ToolEntry("pdfsplit", "python", "fcmd.tools.pdf.pdfsplit"),
     "pdfsplitw": ToolEntry("pdfsplitw", "python", "fcmd.tools.pdf.pdfsplitw"),
     "pdftool": ToolEntry("pdftool", "python", "fcmd.tools.pdf.pdftool"),
+    "peview": ToolEntry("peview", "python", "fcmd.apps.peview.peview"),
+    "pevieww": ToolEntry("pevieww", "python", "fcmd.apps.peview.pevieww"),
     "piptool": ToolEntry("piptool", "python", "fcmd.tools.dev.piptool"),
     "portcheck": ToolEntry("portcheck", "python", "fcmd.tools.net.portcheck"),
     "pptmake": ToolEntry("pptmake", "python", "fcmd.apps.pptmake.pptmake"),
@@ -214,6 +216,8 @@ DESCRIPTIONS: dict[str, str] = {
     "pdfsplit": "分割 PDF（按份数 / 每份页数 / 页码范围）",
     "pdfsplitw": "PDF 分割窗口版（Tk）：按份数 / 每份页数 / 页码范围三种模式分割或提取页面，进度与日志实时回传；设置持久化到 ~/.fcmd/ui/pdfsplitw.json",
     "pdftool": "合并 PDF",
+    "peview": "查看 PE 文件概览",
+    "pevieww": "PE 查看器窗口版（Tk）：按分类浏览 DOS/NT/可选头、数据目录、节表、导入导出、资源、重定位、调试与签名，详情与十六进制联动；设置持久化到 ~/.fcmd/ui/pevieww.json",
     "piptool": "安装包",
     "portcheck": "检查端口占用",
     "pptmake": "PPT 模板生成器：内置十三种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿",
@@ -256,6 +260,8 @@ LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
     "apps/filesync/filesync.py",
     "apps/filesync/filesyncw.py",
+    "apps/peview/peview.py",
+    "apps/peview/pevieww.py",
     "apps/pptmake/pptmake.py",
     "apps/pptmake/pptmakew.py",
     "apps/renamer/renamer.py",
@@ -371,7 +377,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "219f0bcce53cbf949cf7bdfd1fd4bcd1"
+DIGEST = "abc1e5d99f01c561971fe255b0363cd8"
 
 
 if __name__ == "__main__":  # pragma: no cover

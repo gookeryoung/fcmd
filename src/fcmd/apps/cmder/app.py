@@ -174,6 +174,7 @@ from fcmd.apps.cmder._ops import (
     normalize_view_mode,
     open_with_command,
     parse_color_rules,
+    pevieww_command,
     read_preview,
     relative_parent_dir,
     remember_open_with,
@@ -6047,6 +6048,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._menu_command(file_menu, "view", "查看\tF3", self.view_selected)
         self._menu_command(file_menu, "edit", "编辑\tF4", self.edit_selected)
         self._menu_command(file_menu, "open_with", "打开方式…", self.open_with_selected)
+        self._menu_command(file_menu, "pe_view", "PE 查看 / 编辑…", self.pe_view_selected)
         file_menu.add_separator()
         self._menu_command(file_menu, "new_folder", "新建目录\tF7", self.new_folder)
         self._menu_command(file_menu, "rename", "重命名\tF2", self.rename_selected)
@@ -6229,6 +6231,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         menu.add_command(label="查看", command=self.view_selected)
         menu.add_command(label="编辑", command=self.edit_selected)
         menu.add_command(label="打开方式…", command=self.open_with_selected)
+        menu.add_command(label="PE 查看 / 编辑…", command=self.pe_view_selected)
         view_mode_menu = self._tk.Menu(menu, tearoff=False, postcommand=self._sync_menu_state)
         for label, mode in _VIEW_MODE_CHOICES:
             view_mode_menu.add_radiobutton(
@@ -7355,6 +7358,26 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             self._messagebox.showwarning("无法查看", str(exc), parent=self.root)
             return
         self._show_text_dialog(f"查看 - {entries[0].name}", text)
+
+    def pe_view_selected(self) -> None:
+        """用 pevieww 打开选中的 PE 文件（独立进程，不阻塞 cmder）。"""
+        panel = self.active_panel()
+        entries = panel.selected_entries()
+        if len(entries) != 1 or entries[0].is_dir:
+            self._messagebox.showinfo("PE 查看 / 编辑", "请选择一个文件", parent=self.root)
+            return
+        try:
+            command = pevieww_command(str(entries[0].path))
+        except ValueError as exc:
+            self._messagebox.showwarning("PE 查看 / 编辑", str(exc), parent=self.root)
+            return
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        try:
+            subprocess.Popen(command, **kwargs)
+        except OSError as exc:
+            self._messagebox.showwarning("无法启动 pevieww", str(exc), parent=self.root)
 
     def edit_selected(self) -> None:
         """F4 用系统默认程序编辑。"""

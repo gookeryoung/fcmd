@@ -144,6 +144,7 @@ __all__ = [
     "normalize_view_mode",
     "open_with_command",
     "parse_color_rules",
+    "pevieww_command",
     "read_preview",
     "relative_parent_dir",
     "remember_open_with",
@@ -2163,8 +2164,10 @@ _MENU_NEEDS_SELECTION = frozenset(
         "merge_parts",
     }
 )
-_MENU_ONE = frozenset({"open", "view", "edit", "open_with", "open_archive", "properties", "unpack", "rename"})
-_MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack", "split_file"})
+_MENU_ONE = frozenset(
+    {"open", "view", "edit", "open_with", "open_archive", "properties", "unpack", "rename", "pe_view"}
+)
+_MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack", "split_file", "pe_view"})
 _MENU_TWO_FILES = frozenset({"diff_text"})
 _MENU_ACTIVE_WRITE = frozenset(
     {
@@ -2331,6 +2334,7 @@ _MENU_ARCHIVE_READONLY = frozenset(
         "split_file",
         "merge_parts",
         "find_duplicates",
+        "pe_view",
     }
 )
 
@@ -2448,6 +2452,16 @@ def open_with_command(program: str, path: str) -> list[str]:
     if not target:
         raise ValueError("文件路径不能为空")
     return [name, target]
+
+
+def pevieww_command(path: str, *, executable: str | None = None) -> list[str]:
+    """构造「用 pevieww 打开 PE 文件」的独立进程命令；路径为空时抛 ``ValueError``。"""
+    import sys
+
+    target = path.strip()
+    if not target:
+        raise ValueError("文件路径不能为空")
+    return [executable or sys.executable, "-m", "fcmd.cli.main", "pevieww", "--file", target]
 
 
 # ============================================================================ #

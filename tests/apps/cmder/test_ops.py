@@ -1471,13 +1471,13 @@ class TestMenuState:
     def test_no_selection_disables_selection_actions(self) -> None:
         state = ops.menu_state(self._facts(selection_count=0, single_is_file=False))
 
-        for action in ("open", "view", "edit", "open_with", "rename", "copy", "delete", "pack", "unpack"):
+        for action in ("open", "view", "edit", "open_with", "pe_view", "rename", "copy", "delete", "pack", "unpack"):
             assert state.is_disabled(action), action
 
     def test_multi_selection_keeps_batch_actions_enabled(self) -> None:
         state = ops.menu_state(self._facts(selection_count=3, single_is_file=False))
 
-        for action in ("open", "view", "edit", "open_with", "properties", "rename", "unpack"):
+        for action in ("open", "view", "edit", "open_with", "pe_view", "properties", "rename", "unpack"):
             assert state.is_disabled(action), action
         for action in ("copy", "move", "delete", "permanent_delete", "pack", "bulk_rename"):
             assert not state.is_disabled(action), action
@@ -1485,7 +1485,7 @@ class TestMenuState:
     def test_single_directory_disables_file_only_actions(self) -> None:
         state = ops.menu_state(self._facts(selection_count=1, single_is_file=False))
 
-        for action in ("view", "edit", "open_with", "unpack"):
+        for action in ("view", "edit", "open_with", "pe_view", "unpack"):
             assert state.is_disabled(action), action
         assert not state.is_disabled("open")
 
@@ -1572,6 +1572,7 @@ class TestMenuState:
             "permanent_delete",
             "move",
             "open_with",
+            "pe_view",
             "properties",
             "hash",
             "pack",
@@ -1634,6 +1635,18 @@ class TestOpenWith:
             ops.open_with_command("", "/tmp/a.txt")
         with pytest.raises(ValueError):
             ops.open_with_command("/bin/editor", " ")
+
+    def test_pevieww_command(self) -> None:
+        assert ops.pevieww_command(" /tmp/app.exe ", executable="/usr/bin/python") == [
+            "/usr/bin/python",
+            "-m",
+            "fcmd.cli.main",
+            "pevieww",
+            "--file",
+            "/tmp/app.exe",
+        ]
+        with pytest.raises(ValueError):
+            ops.pevieww_command("  ")
 
 
 class TestBranchView:
