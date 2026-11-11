@@ -113,10 +113,11 @@ class TestResults:
     def test_sort_by_path_and_modified(self, tmp_path: Path) -> None:
         results = self._results(tmp_path)
         assert [item.path.name for item in search.sort_results(results, "path")] == ["A.txt", "b.txt"]
-        modified = sorted(results, key=lambda item: item.modified)
-        assert [item.path.name for item in search.sort_results(results, "modified")] == [
-            item.path.name for item in modified
-        ]
+        # 显式写入不同 mtime：Windows 上连续建文件可能落在同一时间戳，排序会退化成按名比较。
+        os.utime(tmp_path / "b.txt", (1_600_000_000, 1_600_000_000))
+        os.utime(tmp_path / "A.txt", (1_700_000_000, 1_700_000_000))
+        results = search.collect_results([tmp_path / "b.txt", tmp_path / "A.txt"])
+        assert [item.path.name for item in search.sort_results(results, "modified")] == ["b.txt", "A.txt"]
 
     def test_sort_columns_are_labelled(self) -> None:
         assert set(search.SORT_COLUMNS) == {"name", "size", "modified", "path"}

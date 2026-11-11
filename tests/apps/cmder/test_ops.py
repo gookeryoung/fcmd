@@ -107,7 +107,8 @@ class TestTrash:
 
     def test_trash_root_defaults_to_local_share(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-        monkeypatch.setenv("HOME", str(tmp_path))
+        # 不能只改 HOME：Windows 的 Path.home() 走 USERPROFILE，直接替换 home 才能跨平台断言。
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
         assert ops.trash_root() == tmp_path / ".local" / "share" / "Trash"
 
     def test_linux_file_writes_trashinfo(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -180,7 +181,7 @@ class TestTrash:
 
     def test_macos_moves_to_home_trash(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setattr(sys, "platform", "darwin")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
         source = tmp_path / "a.txt"
         source.write_text("x", encoding="utf-8")
 
@@ -1264,7 +1265,8 @@ class TestReadPreview:
         result = ops.read_preview(path)
 
         assert result.kind == ops.PREVIEW_TEXT
-        assert result.text == "你好\nworld\n"
+        # Windows 文本模式复制会保留 CRLF，统一折算后再比较行内容。
+        assert result.text.replace("\r\n", "\n") == "你好\nworld\n"
         assert result.truncated is False
         assert result.size == path.stat().st_size
 
