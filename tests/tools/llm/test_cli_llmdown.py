@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from email.message import Message
 from pathlib import Path
 from typing import Any
@@ -885,7 +886,7 @@ class TestFormatTimestamp:
     def test_values(self) -> None:
         assert format_timestamp(0) == "-"
         assert format_timestamp(-1) == "-"
-        assert format_timestamp(1700000000) == "2023-11-15"
+        assert format_timestamp(1700000000) == datetime.fromtimestamp(1700000000).strftime("%Y-%m-%d")
         assert format_timestamp(10**20) == "-"
 
 

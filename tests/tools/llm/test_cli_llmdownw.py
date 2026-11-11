@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -126,7 +127,8 @@ class TestFormatting:
             updated=1700000000,
             storage_size=2048,
         )
-        assert model_row(summary) == ("Qwen/demo", "文本生成、视觉问答", "1,234", "2023-11-15", "2.00 KB")
+        expected_date = datetime.fromtimestamp(1700000000).strftime("%Y-%m-%d")
+        assert model_row(summary) == ("Qwen/demo", "文本生成、视觉问答", "1,234", expected_date, "2.00 KB")
 
     def test_model_row_empty(self) -> None:
         assert model_row(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "-", "0", "-", "-")
