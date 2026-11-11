@@ -49,13 +49,13 @@ Total Commander 允许把常用的外部命令挂到开始菜单、按钮栏与�
 
 ## 落地状态
 
-- N1：已落地。纯逻辑模块 `_cmderw_commands.py`（命令模型、占位符展开、序列化容错）
+- N1：已落地。纯逻辑模块 `_commands.py`（命令模型、占位符展开、序列化容错）
   与单测；设置字段 `user_commands` 读写。
 - N2：已落地。管理对话框、菜单 / 工具栏 / 右键三处入口与执行调度。
 
 ## 交接
 
-- 占位符与命令模型全部在 `_cmderw_commands.py`，Tk 层只做上下文收集、入口重建与执行。
+- 占位符与命令模型全部在 `_commands.py`，Tk 层只做上下文收集、入口重建与执行。
 - 新增占位符时同时更新 `PLACEHOLDERS`、本 ADR 与 `TestUserCommands`，并保持
   「未知占位符报错而非空串」的口径。
 - 用户命令与命令行栏共享 `_run_shell` / `_command_finished`，不要再写第二套执行器。

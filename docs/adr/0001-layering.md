@@ -48,4 +48,4 @@ cli             组合根：参数解析、工具发现、内建命令
 
 - 后续域迁移沿用 `tools/<域>` 承载实现的模式，不得在 `dsl/actions` 保留第二份实现。
 - 新增跨层能力时先判断归属：中立能力进 `core/shared`，业务能力进 `tools/<域>`，`core` 新增对外依赖必须走 hooks 反转。
-- 测试镜像目录（`tests/{core,cli,dsl,tools/<domain>,apps}`）已随 P2-3 落地，新增测试按被测实现所在层放置。
+- 测试镜像目录（`tests/{core,cli,dsl,tools/<domain>,apps/<app>}`）已随 P2-3 落地，新增测试按被测实现所在层放置。

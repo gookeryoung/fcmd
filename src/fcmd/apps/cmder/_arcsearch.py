@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.apps.cmderw._cmderw_preview import detect_encoding
+from fcmd.apps.cmder._preview import detect_encoding
 from fcmd.dsl.actions.fileops import compile_content_pattern
 
 if TYPE_CHECKING:

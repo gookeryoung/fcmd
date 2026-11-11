@@ -9,8 +9,8 @@ from typing import Literal
 
 import pytest
 
-from fcmd.apps.cmderw import _cmderw_archwrite as archwrite
-from fcmd.apps.cmderw._cmderw_archwrite import ArchiveWriteOptions
+from fcmd.apps.cmder import _archwrite as archwrite
+from fcmd.apps.cmder._archwrite import ArchiveWriteOptions
 
 
 def make_zip(path: Path, members: dict[str, bytes]) -> Path:

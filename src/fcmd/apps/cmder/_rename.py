@@ -1,6 +1,6 @@
 """cmderw 多重命名工具：掩码求值、查找替换、大小写、计数器、预览与预设（纯逻辑）。
 
-下划线前缀使其不参与 :mod:`fcmd` 的工具发现；Tk 层 ``cmderw.py`` 只做变量绑定、
+下划线前缀使其不参与 :mod:`fcmd` 的工具发现；Tk 层 ``app.py`` 只做变量绑定、
 预览渲染与执行调度。口径见 ADR 0009。
 """
 
@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.apps.cmderw._cmderw_ops import RenameItem, RenamePlan, validate_name
+from fcmd.apps.cmder._ops import RenameItem, RenamePlan, validate_name
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -1,6 +1,6 @@
 """cmderw 双面板文件管理器测试。
 
-验证 ``fcmd.apps.cmderw`` 模块：
+验证 ``fcmd.apps.cmder`` 模块：
 - 工具注册与 GUI 启动入口
 - 设置读写、历史记录与路径解析
 - 目录读取 / 排序 / 格式化展示
@@ -23,13 +23,13 @@ from typing import Any, cast
 
 import pytest
 
-from fcmd.apps.cmderw import app as cmderw
-from fcmd.apps.cmderw._cmderw_commands import UserCommand
-from fcmd.apps.cmderw._cmderw_launch import LaunchRequest
-from fcmd.apps.cmderw._cmderw_queue import DEFAULT_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL
-from fcmd.apps.cmderw._cmderw_search import SearchFilters
-from fcmd.apps.cmderw._cmderw_tabs import FilterDefinition
-from fcmd.apps.cmderw.app import (
+from fcmd.apps.cmder import app as cmderw
+from fcmd.apps.cmder._commands import UserCommand
+from fcmd.apps.cmder._launch import LaunchRequest
+from fcmd.apps.cmder._queue import DEFAULT_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL
+from fcmd.apps.cmder._search import SearchFilters
+from fcmd.apps.cmder._tabs import FilterDefinition
+from fcmd.apps.cmder.app import (
     ARCHIVE_SUFFIXES,
     DEFAULT_GEOMETRY,
     MAX_HISTORY,

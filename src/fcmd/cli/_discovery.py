@@ -74,8 +74,9 @@ def ensure_tools_discovered() -> None:
     根包为 ``fcmd.tools``（业务工具）与 ``fcmd.apps``（独立桌面应用）。
     ``fcmd.tools`` 扫描顶层模块与领域子包（``fcmd.tools.<域>.<工具>``，
     如 ``fcmd.tools.media.screenshot``）；``fcmd.apps`` 下每个子包即一个
-    独立应用（如 ``fcmd.apps.cmderw``），导入包门面触发注册。工具名取模块
-    或应用包名（最后一段），调用方式 ``fcmd <工具名>`` 不受分组影响。
+    独立应用（如 ``fcmd.apps.cmder``），导入包门面触发注册。工具名默认取模块
+    或应用包名（最后一段），应用包可用 ``__tool_name__`` 覆盖（如 ``cmder``
+    包对外命令仍为 ``cmderw``）；调用方式 ``fcmd <工具名>`` 不受分组影响。
     领域子包内部不再嵌套子包。
 
     幂等：后续调用直接返回。用 ``setdefault`` 填充，不覆盖测试通过
@@ -179,8 +180,9 @@ def _scan_root(root: str) -> None:
     """扫描一个工具根包（``fcmd.tools`` / ``fcmd.apps``）的顶层模块与子包。
 
     ``fcmd.apps`` 下的子包按「一包一应用」处理：模块路径取包路径，导入包
-    门面（``__init__.py``）触发 ``@fcmd.tool`` 注册；``fcmd.tools`` 下的
-    子包仍按领域子包逐个模块注册。
+    门面（``__init__.py``）触发 ``@fcmd.tool`` 注册，工具名默认取包名，可由
+    包级 ``__tool_name__`` 覆盖；``fcmd.tools`` 下的子包仍按领域子包逐个
+    模块注册。
     """
     try:
         root_pkg = importlib.import_module(root)
@@ -194,12 +196,23 @@ def _scan_root(root: str) -> None:
         if ispkg:
             if root == "fcmd.apps":
                 # 应用包：整包即一个应用，导入包门面触发注册
-                _register_tool(f"{root}.{name}", name)
+                _register_app(f"{root}.{name}", name)
             else:
                 # 领域子包：工具名取子包内模块名，模块路径带域前缀
                 _discover_domain(root, name)
         else:
             _register_tool(f"{root}.{name}", name)
+
+
+def _register_app(module_path: str, package_name: str) -> None:
+    """注册一个应用包：工具名默认取包名，允许 ``__tool_name__`` 覆盖。"""
+    try:
+        pkg = importlib.import_module(module_path)
+    except (ImportError, OSError) as exc:
+        logger.warning("应用包 %s 导入失败，已跳过: %s", module_path, exc)
+        return
+    tool_name = getattr(pkg, "__tool_name__", package_name)
+    _register_tool(module_path, tool_name)
 
 
 def _discover_domain(root: str, domain: str) -> None:

@@ -41,7 +41,7 @@ cmderw 命令行栏已支持执行任意 shell 命令（`subprocess.run(shell=Tr
 
 ## 交接
 
-- 纯逻辑集中在 `_cmderw_ops`：`normalize_command_history` / `command_history_push` /
+- 纯逻辑集中在 `_ops`：`normalize_command_history` / `command_history_push` /
   `command_history_step` / `split_command_token` / `completion_mode` / `complete_token`；
   Tk 层（`CmderWindow._command_*`）只负责按键绑定、文件系统候选、状态栏提示与光标。
 - 历史按设置文件随窗口关闭保存；若将来需要跨面板共享、模糊搜索或参数补全，另开 ADR。

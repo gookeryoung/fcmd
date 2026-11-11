@@ -34,7 +34,7 @@
 
 `tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`。依据：三者只依赖标准库 tkinter，被十余个窗口复用，不属于任何业务域；`tools/` 是发现命名空间，共享代码靠 `_` 前缀躲扫描是设计破损信号。
 
-窗口本身默认与业务同域（`<tool>w.py`）；独立桌面应用（如 `cmderw`）归 `fcmd/apps/`，与 `fcmd.tools` 同为工具发现根。
+窗口本身默认与业务同域（`<tool>w.py`）；独立桌面应用（如 `cmder`，命令 `cmderw`）归 `fcmd/apps/`，与 `fcmd.tools` 同为工具发现根。
 
 ### D5 生成物就地、只重生成
 
@@ -51,11 +51,11 @@
 - B2：`dsl/actions/toolcmd/` → `dsl/toolcmd/`；`_index` 改存绝对模块路径并重生成。
 - B4：`tools/data`、`tools/hash` 两个单文件域提为顶层模块，`_manifest_data` 布局指纹同步重生成。
 - B5：`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`，测试镜像迁至 `tests/gui/`；布局指纹不含下划线模块，清单无需重生成。
-- B6：独立桌面应用 `cmderw`（含 `_cmderw_*` 实现模块）迁至 `fcmd/apps/`，测试迁至 `tests/apps/`；工具发现与静态清单的扫描根同步扩展为 `tools` + `apps`。
+- B6：独立应用包 `cmder`（命令 `cmderw`，实现模块统一 `_` 前缀）迁至 `fcmd/apps/`，测试迁至 `tests/apps/cmder/`；工具发现与静态清单的扫描根同步扩展为 `tools` + `apps`。
 
 ## 交接
 
 - 新增工具：放 `tools/<域>/<工具>.py`。只有单个模块支撑的能力不要新建子包，直接放 `tools/<工具>.py`。
-- 新增独立桌面应用：在 `apps/<应用>/` 下新建包（入口 `app.py`，`__init__.py` 只做门面与注册），无需改发现代码。
+- 新增独立桌面应用：在 `apps/<应用>/` 下新建包（入口 `app.py`，`__init__.py` 只做门面与注册），包名默认即工具名；目录名需与命令解耦时在 `__init__.py` 声明 `__tool_name__`（如 `cmder` → `cmderw`）。
 - 新增动作：通用动作进 `dsl/actions/`，工具专用声明进 `dsl/toolcmd/`，随后重生成 `_index`。
 - 改动 `tools/` 或 `apps/` 目录形状后必须重生成 `_manifest_data`，并跑 `tests/test_layout.py` 与 `tests/cli/test_tools_manifest.py`。

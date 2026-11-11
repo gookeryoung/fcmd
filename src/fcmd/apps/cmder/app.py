@@ -47,9 +47,9 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 import fcmd
-from fcmd.apps.cmderw import _cmderw_diff as diffmod
-from fcmd.apps.cmderw import _cmderw_preview as previewmod
-from fcmd.apps.cmderw._cmderw_archwrite import (
+from fcmd.apps.cmder import _diff as diffmod
+from fcmd.apps.cmder import _preview as previewmod
+from fcmd.apps.cmder._archwrite import (
     DEFAULT_COMPRESSION_LEVEL,
     ArchiveWriteOptions,
     add_paths,
@@ -60,14 +60,14 @@ from fcmd.apps.cmderw._cmderw_archwrite import (
     remove_members,
     rename_member,
 )
-from fcmd.apps.cmderw._cmderw_arcsearch import ArchiveHit, ArchiveSearchReport, search_archive
-from fcmd.apps.cmderw._cmderw_attrs import (
+from fcmd.apps.cmder._arcsearch import ArchiveHit, ArchiveSearchReport, search_archive
+from fcmd.apps.cmder._attrs import (
     AttributeChange,
     apply_attributes,
     format_timestamp,
     parse_timestamp,
 )
-from fcmd.apps.cmderw._cmderw_checksum import (
+from fcmd.apps.cmder._checksum import (
     VerifyReport,
     algorithm_for_suffix,
     build_manifest,
@@ -76,7 +76,7 @@ from fcmd.apps.cmderw._cmderw_checksum import (
     report_text,
     verify_manifest,
 )
-from fcmd.apps.cmderw._cmderw_commands import (
+from fcmd.apps.cmder._commands import (
     COMMAND_LIMIT,
     PLACEHOLDERS,
     CommandContext,
@@ -86,17 +86,17 @@ from fcmd.apps.cmderw._cmderw_commands import (
     normalize_user_commands,
     user_commands_to_json,
 )
-from fcmd.apps.cmderw._cmderw_dupes import (
+from fcmd.apps.cmder._dupes import (
     DuplicateActionReport,
     DuplicateReport,
     duplicate_paths,
     move_duplicates,
 )
-from fcmd.apps.cmderw._cmderw_dupes import (
+from fcmd.apps.cmder._dupes import (
     find_duplicates as find_duplicate_files,
 )
-from fcmd.apps.cmderw._cmderw_launch import LaunchRequest, resolve_launch
-from fcmd.apps.cmderw._cmderw_ops import (
+from fcmd.apps.cmder._launch import LaunchRequest, resolve_launch
+from fcmd.apps.cmder._ops import (
     COLOR_KIND_ANY,
     COLOR_KIND_DIR,
     COLOR_KIND_FILE,
@@ -201,7 +201,7 @@ from fcmd.apps.cmderw._cmderw_ops import (
     undo_rename,
     validate_name,
 )
-from fcmd.apps.cmderw._cmderw_queue import (
+from fcmd.apps.cmder._queue import (
     DEFAULT_QUEUE_PARALLEL,
     MAX_QUEUE_PARALLEL,
     MIN_QUEUE_PARALLEL,
@@ -209,7 +209,7 @@ from fcmd.apps.cmderw._cmderw_queue import (
     clamp_parallel,
     parallel_map,
 )
-from fcmd.apps.cmderw._cmderw_rename import (
+from fcmd.apps.cmder._rename import (
     RENAME_PRESET_LIMIT,
     RenameInput,
     RenameOptions,
@@ -221,7 +221,7 @@ from fcmd.apps.cmderw._cmderw_rename import (
     preview_to_plan,
     rename_presets_to_json,
 )
-from fcmd.apps.cmderw._cmderw_search import (
+from fcmd.apps.cmder._search import (
     SORT_COLUMNS,
     SearchFilters,
     collect_results,
@@ -230,7 +230,7 @@ from fcmd.apps.cmderw._cmderw_search import (
     parse_size,
     sort_results,
 )
-from fcmd.apps.cmderw._cmderw_split import (
+from fcmd.apps.cmder._split import (
     CHECKSUM_SUFFIX,
     MergeResult,
     SplitResult,
@@ -241,7 +241,7 @@ from fcmd.apps.cmderw._cmderw_split import (
     split_file,
     split_plan,
 )
-from fcmd.apps.cmderw._cmderw_tabs import (
+from fcmd.apps.cmder._tabs import (
     FilterDefinition,
     apply_filter_definition,
     close_other_indices,
@@ -251,7 +251,7 @@ from fcmd.apps.cmderw._cmderw_tabs import (
     tab_bar_label,
     tab_label,
 )
-from fcmd.apps.cmderw._cmderw_volumes import enumerate_volumes
+from fcmd.apps.cmder._volumes import enumerate_volumes
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.cmderw._cmderw_arcsearch import (
+from fcmd.apps.cmder._arcsearch import (
     ArchiveHit,
     format_archive_hit,
     search_archive,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fcmd.apps.cmderw._cmderw_commands import (
+from fcmd.apps.cmder._commands import (
     COMMAND_LIMIT,
     PLACEHOLDERS,
     CommandContext,

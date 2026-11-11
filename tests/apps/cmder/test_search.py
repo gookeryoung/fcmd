@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.cmderw import _cmderw_search as search
+from fcmd.apps.cmder import _search as search
 
 
 class TestParseSize:

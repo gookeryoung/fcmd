@@ -1,4 +1,4 @@
-"""``_cmderw_ops`` 纯逻辑测试：通配选择、快速过滤、目录统计与回收站。"""
+"""``_ops`` 纯逻辑测试：通配选择、快速过滤、目录统计与回收站。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from urllib.parse import quote
 
 import pytest
 
-from fcmd.apps.cmderw import _cmderw_ops as ops
-from fcmd.apps.cmderw._cmderw_rename import (
+from fcmd.apps.cmder import _ops as ops
+from fcmd.apps.cmder._rename import (
     RenameInput,
     RenameOptions,
     build_rename_preview,

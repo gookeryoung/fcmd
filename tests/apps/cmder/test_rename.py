@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.cmderw._cmderw_rename import (
+from fcmd.apps.cmder._rename import (
     RENAME_PRESET_LIMIT,
     MaskError,
     RenameInput,

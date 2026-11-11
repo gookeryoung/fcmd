@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.cmderw import _cmderw_volumes as volumes
+from fcmd.apps.cmder import _volumes as volumes
 
 
 class TestFormatBytes:

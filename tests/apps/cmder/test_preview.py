@@ -6,7 +6,7 @@ import codecs
 
 import pytest
 
-from fcmd.apps.cmderw import _cmderw_preview as preview
+from fcmd.apps.cmder import _preview as preview
 
 
 class TestDetectEncoding:
