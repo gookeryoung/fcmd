@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fcmd.apps.cmderw._cmderw_preview import detect_encoding
 from fcmd.dsl.actions.fileops import compile_content_pattern
-from fcmd.tools.system._cmderw_preview import detect_encoding
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

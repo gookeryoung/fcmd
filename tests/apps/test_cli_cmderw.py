@@ -1,6 +1,6 @@
 """cmderw 双面板文件管理器测试。
 
-验证 ``fcmd.tools.system.cmderw`` 模块：
+验证 ``fcmd.apps.cmderw`` 模块：
 - 工具注册与 GUI 启动入口
 - 设置读写、历史记录与路径解析
 - 目录读取 / 排序 / 格式化展示
@@ -23,15 +23,13 @@ from typing import Any, cast
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.gui import window as _guiwindow
-from fcmd.tools.system import cmderw
-from fcmd.tools.system._cmderw_commands import UserCommand
-from fcmd.tools.system._cmderw_launch import LaunchRequest
-from fcmd.tools.system._cmderw_queue import DEFAULT_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL
-from fcmd.tools.system._cmderw_search import SearchFilters
-from fcmd.tools.system._cmderw_tabs import FilterDefinition
-from fcmd.tools.system.cmderw import (
+from fcmd.apps.cmderw import app as cmderw
+from fcmd.apps.cmderw._cmderw_commands import UserCommand
+from fcmd.apps.cmderw._cmderw_launch import LaunchRequest
+from fcmd.apps.cmderw._cmderw_queue import DEFAULT_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL
+from fcmd.apps.cmderw._cmderw_search import SearchFilters
+from fcmd.apps.cmderw._cmderw_tabs import FilterDefinition
+from fcmd.apps.cmderw.app import (
     ARCHIVE_SUFFIXES,
     DEFAULT_GEOMETRY,
     MAX_HISTORY,
@@ -87,6 +85,8 @@ from fcmd.tools.system.cmderw import (
     unique_path,
     validate_name,
 )
+from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.gui import window as _guiwindow
 
 
 # ============================================================================ #

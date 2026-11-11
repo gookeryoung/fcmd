@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.tools.system._cmderw_dupes import (
+from fcmd.apps.cmderw._cmderw_dupes import (
     DuplicateGroup,
     DuplicateReport,
     duplicate_paths,

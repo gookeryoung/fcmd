@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.tools.system import _cmderw_checksum as checksum
+from fcmd.apps.cmderw import _cmderw_checksum as checksum
 
 SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 SHA256_HELLO = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"

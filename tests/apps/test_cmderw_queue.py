@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from fcmd.tools.system import _cmderw_queue as queue_mod
+from fcmd.apps.cmderw import _cmderw_queue as queue_mod
 
 
 class TestClampParallel:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from fcmd.tools.system._cmderw_ops import matches_mask
+from fcmd.apps.cmderw._cmderw_ops import matches_mask
 
 MAX_TAB_TITLE = 64
 MAX_MASK_LENGTH = 512

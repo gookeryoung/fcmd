@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.tools.system import _cmderw_split as splitmod
-from fcmd.tools.system._cmderw_split import (
+from fcmd.apps.cmderw import _cmderw_split as splitmod
+from fcmd.apps.cmderw._cmderw_split import (
     default_merged_name,
     discover_parts,
     merge_parts,

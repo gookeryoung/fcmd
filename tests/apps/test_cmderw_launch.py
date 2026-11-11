@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fcmd.tools.system._cmderw_launch import LaunchRequest, resolve_launch
+from fcmd.apps.cmderw._cmderw_launch import LaunchRequest, resolve_launch
 
 
 def test_resolves_existing_directories(tmp_path: Path) -> None:

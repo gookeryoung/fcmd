@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.tools.system import _cmderw_diff as diff
+from fcmd.apps.cmderw import _cmderw_diff as diff
 
 
 class TestDiffLines:

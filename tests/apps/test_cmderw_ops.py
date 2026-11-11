@@ -9,8 +9,8 @@ from urllib.parse import quote
 
 import pytest
 
-from fcmd.tools.system import _cmderw_ops as ops
-from fcmd.tools.system._cmderw_rename import (
+from fcmd.apps.cmderw import _cmderw_ops as ops
+from fcmd.apps.cmderw._cmderw_rename import (
     RenameInput,
     RenameOptions,
     build_rename_preview,

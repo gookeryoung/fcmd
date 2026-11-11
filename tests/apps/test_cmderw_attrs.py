@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.tools.system import _cmderw_attrs as attrs
+from fcmd.apps.cmderw import _cmderw_attrs as attrs
 
 
 class TestParseTimestamp:

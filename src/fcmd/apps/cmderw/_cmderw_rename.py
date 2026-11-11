@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.tools.system._cmderw_ops import RenameItem, RenamePlan, validate_name
+from fcmd.apps.cmderw._cmderw_ops import RenameItem, RenamePlan, validate_name
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

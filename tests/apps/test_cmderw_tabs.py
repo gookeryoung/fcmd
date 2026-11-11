@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.tools.system._cmderw_tabs import (
+from fcmd.apps.cmderw._cmderw_tabs import (
     MAX_SAVED_SELECTION,
     MAX_TAB_TITLE,
     FilterDefinition,
