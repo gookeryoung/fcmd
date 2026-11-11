@@ -1,5 +1,10 @@
 # 开发工作流
 
+## 仓库定位
+
+- 唯一主开发位置：Windows 下的 `F:\Dev\fcmd`。仓库不维护 WSL / Linux 本地副本，也不需要让多个工作区保持同一提交。
+- Linux 兼容性与跨平台打包只在 CI 中验证；本地门禁（`make check-fast` / `make test` / `make flow`）在 Windows 主副本上跑。
+
 ## 门禁分级（先定性，再选门禁）
 
 提交前用 `git diff --name-only` + `git status --short` 判定改动类型，**按最高级别执行**；拿不准按 L2 处理（fail-safe）。
