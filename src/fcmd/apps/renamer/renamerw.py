@@ -42,6 +42,7 @@ from fcmd.apps.renamer._core import (
     build_preview,
     collect_targets,
     execute_plan,
+    format_preview_status,
     parse_rules,
     preview_to_plan,
     rules_to_json,
@@ -503,19 +504,18 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         preview.rowconfigure(0, weight=1)
         self._preview_tree = ttk.Treeview(
             preview,
-            columns=("old", "new", "status", "note"),
+            columns=("old", "new", "status"),
             show="headings",
         )
         for column, title, width in (
             ("old", "旧名", 340),
-            ("new", "新名", 340),
-            ("status", "状态", 80),
-            ("note", "说明", 340),
+            ("new", "新名", 480),
+            ("status", "状态", 90),
         ):
             self._preview_tree.heading(column, text=title)
             self._preview_tree.column(column, width=width, anchor="w")
         self._preview_tree.grid(row=0, column=0, sticky="nsew")
-        self._preview_tree.configure(displaycolumns=("new", "status", "note"))
+        self._preview_tree.configure(displaycolumns=("new", "status"))
 
         bar = ttk.Frame(preview)
         bar.grid(row=1, column=0, sticky="ew", pady=(gap, 0))
@@ -533,7 +533,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _toggle_old_column(self) -> None:
         """按「旧名」勾选状态切换预览中的旧名列（默认隐藏）。"""
-        columns = ("old", "new", "status", "note") if self._show_old_var.get() else ("new", "status", "note")
+        columns = ("old", "new", "status") if self._show_old_var.get() else ("new", "status")
         self._preview_tree.configure(displaycolumns=columns)
 
     # ------------------------------------------------------------------ #
@@ -803,12 +803,9 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._preview_tree.insert(
                 "",
                 "end",
-                values=(item.old_name, item.new_name, STATUS_TEXT.get(item.status, item.status), item.note),
+                values=(item.old_name, item.new_name, STATUS_TEXT.get(item.status, item.status)),
             )
-        self._status_var.set(
-            f"共 {len(preview.items)} 项：可执行 {len(preview.ok)}，"
-            f"未变化 {len(preview.unchanged)}，冲突 {len(preview.conflicts)}，非法 {len(preview.invalid)}"
-        )
+        self._status_var.set(format_preview_status(preview))
 
     def _execute(self) -> None:
         self._refresh_preview()

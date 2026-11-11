@@ -12,10 +12,17 @@ from fcmd.apps.renamer._core import (
     ANCHOR_BEFORE,
     ANCHOR_END,
     RULE_KINDS,
+    STATUS_CONFLICT,
+    STATUS_INVALID,
+    STATUS_OK,
+    STATUS_UNCHANGED,
+    RenamePreview,
+    RenamePreviewItem,
     RenameRule,
     RenameTarget,
     RuleError,
     build_preview,
+    format_preview_status,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
@@ -166,3 +173,25 @@ def test_doc_example_json_matches_embedded() -> None:
 def test_help_text_mentions_all_rule_kinds() -> None:
     for kind in RULE_KINDS:
         assert kind in _examples.HELP_TEXT
+
+
+def test_format_preview_status_groups_reasons() -> None:
+    preview = RenamePreview(
+        items=(
+            RenamePreviewItem(Path("a.txt"), "a.txt", "b.txt", STATUS_OK),
+            RenamePreviewItem(Path("c.txt"), "c.txt", "c.txt", STATUS_UNCHANGED, "名称未变化"),
+            RenamePreviewItem(Path("d.txt"), "d.txt", "d.txt", STATUS_INVALID, "名称过长"),
+            RenamePreviewItem(Path("e.txt"), "e.txt", "e.txt", STATUS_INVALID, "名称过长"),
+            RenamePreviewItem(Path("f.txt"), "f.txt", "g.txt", STATUS_CONFLICT, "目标名称已存在"),
+        )
+    )
+    text = format_preview_status(preview)
+    assert text.startswith("共 5 项：可执行 1，未变化 1，冲突 1，非法 2")
+    assert "名称过长 ×2" in text
+    assert "目标名称已存在 ×1" in text
+    assert "名称未变化" not in text
+
+
+def test_format_preview_status_without_problems() -> None:
+    preview = RenamePreview(items=(RenamePreviewItem(Path("a.txt"), "a.txt", "b.txt", STATUS_OK),))
+    assert format_preview_status(preview) == "共 1 项：可执行 1，未变化 0，冲突 0，非法 0"

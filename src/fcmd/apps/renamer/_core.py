@@ -60,6 +60,7 @@ __all__ = [
     "collect_targets",
     "execute_plan",
     "format_preview",
+    "format_preview_status",
     "format_report",
     "join_name",
     "order_targets",
@@ -784,6 +785,23 @@ def _rollback(
 # ---------------------------------------------------------------------- #
 # 文本报告
 # ---------------------------------------------------------------------- #
+def format_preview_status(preview: RenamePreview) -> str:
+    """生成预览的单行状态文本；非法与冲突的原因按出现次数归并。"""
+    text = (
+        f"共 {len(preview.items)} 项：可执行 {len(preview.ok)}，"
+        f"未变化 {len(preview.unchanged)}，冲突 {len(preview.conflicts)}，"
+        f"非法 {len(preview.invalid)}"
+    )
+    reasons: dict[str, int] = {}
+    for item in preview.items:
+        if item.status in (STATUS_INVALID, STATUS_CONFLICT) and item.note:
+            reasons[item.note] = reasons.get(item.note, 0) + 1
+    if reasons:
+        detail = "，".join(f"{note} ×{count}" for note, count in reasons.items())
+        text = f"{text}；原因：{detail}"
+    return text
+
+
 def format_preview(preview: RenamePreview) -> str:
     """格式化预览：概要 + 逐项「旧名 → 新名」与状态说明。"""
     if preview.error:
