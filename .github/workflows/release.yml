@@ -60,8 +60,10 @@ jobs:
       - name: Build distributions
         run: uv build
 
+      # 幂等：重跑同一个 tag 时，已发布的文件在同一版本上是不可覆盖的，
+      # 直接 publish 会 400 中断整条流水线；--check-url 让 uv 跳过已存在文件。
       - name: Publish to PyPI (OIDC)
-        run: uv publish
+        run: uv publish --check-url https://pypi.org/simple/
 
       - name: Upload sdist & wheel artifacts
         uses: actions/upload-artifact@v7
