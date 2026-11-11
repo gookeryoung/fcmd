@@ -21,3 +21,4 @@
 | [0016](0016-llmdown-model-browser.md) | llmdown 模型浏览器：ModelScope 搜索 / 详情 / 下载管理 | 已落地（v1） |
 | [0017](0017-pptmake.md) | pptmake：PPT 模板设计器（布局 / 风格 / PPTX 导入导出） | 已落地（v1） |
 | [0018](0018-peview.md) | peview：PE 文件查看与安全编辑 | 设计中（分阶段落地） |
+| [0019](0019-filescan.md) | filescan：目录敏感内容扫描（规则表达式 / 后缀白名单 / 并行扫描 / 打码报告 / 性能基准） | 已实施 |

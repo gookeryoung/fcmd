@@ -8,7 +8,7 @@ PYTEST_JOBS := 8  # pytest-xdist worker count; 8 by default on Windows to avoid 
 # Override with: make push REMOTES="origin codeup"
 REMOTES = $(shell git remote)
 
-.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check check-docs check-fast flow gitkeep-check adr-check prek tox pub bump patch minor major push
+.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check check-docs check-fast flow gitkeep-check adr-check prek tox pub bump patch minor major push bench-filescan
 
 help: ## Show this help
 	@uv run python -c "import re,sys;ms=[(m.group(1),m.group(2).strip()) for f in sys.argv[1:] for l in open(f,encoding='utf-8') if (m:=re.match(r'^([a-zA-Z][\w -]*):.*?##\s*(.*)',l))];[print(f'  {n:<14} {d}') for n,d in ms]" $(MAKEFILE_LIST)
@@ -51,6 +51,9 @@ adr-check: ## 校验 ADR 编号/命名与索引登记
 check-docs: gitkeep-check adr-check ## L0 文档门禁（gitkeep-check + adr-check）
 check-fast: gitkeep-check adr-check lint typecheck ## L1 配置/内环门禁（gitkeep + adr + lint + typecheck）
 flow: check-fast test ## L2 代码门禁（check-fast + test）
+
+bench-filescan: ## filescan 性能基准（与基线比对，回归时非零退出）
+	uv run python tests/apps/filescan/bench_filescan.py --check
 
 check: check-fast typecheck-ci cov ## 全量门禁（check-fast + typecheck-ci + cov）
 

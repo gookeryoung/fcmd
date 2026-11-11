@@ -42,6 +42,8 @@ TOOLS: dict[str, ToolEntry] = {
     "filedate": ToolEntry("filedate", "python", "fcmd.tools.system.filedate"),
     "filelevel": ToolEntry("filelevel", "python", "fcmd.tools.system.filelevel"),
     "filerename": ToolEntry("filerename", "python", "fcmd.tools.system.filerename"),
+    "filescan": ToolEntry("filescan", "python", "fcmd.apps.filescan.filescan"),
+    "filescanw": ToolEntry("filescanw", "python", "fcmd.apps.filescan.filescanw"),
     "filesearch": ToolEntry("filesearch", "python", "fcmd.tools.system.filesearch"),
     "filesync": ToolEntry("filesync", "python", "fcmd.apps.filesync.filesync"),
     "filesyncw": ToolEntry("filesyncw", "python", "fcmd.apps.filesync.filesyncw"),
@@ -167,6 +169,8 @@ DESCRIPTIONS: dict[str, str] = {
     "filedate": "添加/更新文件日期前缀",
     "filelevel": "设置文件等级",
     "filerename": "正则替换文件名主干",
+    "filescan": "目录敏感内容扫描：关键词/正则与 and·or·not 表达式组合判定，按文件聚合命中行，默认打码，可导出文本/JSON/CSV",
+    "filescanw": "目录敏感内容扫描：规则表达式、并行扫描、按文件聚合、打码与多格式报告（Tk）",
     "filesearch": "按文件名 glob 搜索",
     "filesync": "文件夹比较与同步（参考 FreeFileSync）：compare 按时间/大小/内容比较两侧，sync 支持双向/镜像/更新三种模式，可用 --preview 预览，冲突项自动跳过",
     "filesyncw": "文件夹比较与同步窗口版（Tk）：左右目录对比（时间/大小/内容），结果表列出差异与计划动作，支持双向/镜像/更新同步与试运行，冲突项自动跳过；设置持久化到 ~/.fcmd/ui/filesyncw.json",
@@ -258,6 +262,8 @@ DESCRIPTIONS: dict[str, str] = {
 # 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）
 LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
+    "apps/filescan/filescan.py",
+    "apps/filescan/filescanw.py",
     "apps/filesync/filesync.py",
     "apps/filesync/filesyncw.py",
     "apps/peview/peview.py",
@@ -377,7 +383,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "abc1e5d99f01c561971fe255b0363cd8"
+DIGEST = "a6f18948dc79e0a0c420954e94f281d4"
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -261,6 +261,8 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `pevieww` | - | PE 查看/编辑窗口版（Tk：分类树 + 详情 + 十六进制视图，字段编辑对话框常驻风险说明并要求确认，写入前自动备份、写后自校验，设置持久化到 `~/.fcmd/ui/pevieww.json`） |
 | `filesync` | - | 文件夹比较与同步（参考 FreeFileSync）：`compare` 按时间与大小/仅大小/内容比较左右目录，`sync` 支持双向/镜像/更新三种模式；包含/排除通配符与跳过隐藏文件，`--preview` 预览，冲突项（时间相同但内容不同）自动跳过 |
 | `filesyncw` | - | 文件夹比较与同步窗口版（Tk：左右目录选择、比较/同步模式与过滤、差异表与计划动作着色、后台比较与逐项同步进度、预演不写盘、冲突跳过、JSON 配置载入/保存，设置持久化到 `~/.fcmd/ui/filesyncw.json`） |
+| `filescan` | - | 目录敏感内容扫描：关键词/正则规则与 and·or·not 表达式组合，后缀白名单（默认常见文本后缀，`--force-ext` 可强制扫描名单外后缀）、并行扫描与取消、按文件聚合命中并默认打码，支持文本/JSON/CSV 报告与规则集 JSON 导入导出 |
+| `filescanw` | - | 敏感内容扫描窗口版（Tk：目录列表与扫描选项、可编辑后缀白名单、规则表与表达式编辑、后台进度/取消、命中树与规则/路径筛选、打码导出，设置持久化到 `~/.fcmd/ui/filescanw.json`） |
 | `renamer` | - | 批量重命名（规则流水线）：`replace` 正则替换、`reorder` 用 `{0}/{1}/{name}` 重排捕获片段、`move` 把匹配文本搬到开头/结尾/锚点/指定位置，另有 `insert`/`case`/`sequence`；规则用 JSON 或 `@文件` 传入，`preview` 预览、`apply` 两阶段执行（支持互换与仅大小写改名），预览标记未变化/非法/冲突 |
 | `renamerw` | - | 批量重命名窗口版（Tk：目标文件/目录列表、规则表增删改与上下移、正则/重排/搬移/插入/大小写/计数器表单、旧名→新名预览与冲突着色、两阶段执行与本次撤销、规则 JSON 导入导出；「帮助 → 使用帮助」内置规则说明与五组典型示例，可一键载入，详见 [src/fcmd/apps/renamer/help/renamerw.md](src/fcmd/apps/renamer/help/renamerw.md)，设置持久化到 `~/.fcmd/ui/renamerw.json`） |
 | `iptool` | - | IP 地址工具（parse/subnet/validate） |
