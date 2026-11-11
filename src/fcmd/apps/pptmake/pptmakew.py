@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import contextlib
 import re
+import tempfile
+import webbrowser
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import fcmd
 from fcmd.apps.pptmake import _core as core
+from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.apps.pptmake._design import Line, Oval, Rect, Text, build_draw_list
@@ -91,7 +94,8 @@ HELP_TEXT = """1. 左侧「页面」选择要编辑的页；「布局库」双�
 4. 「文件 → 导出模板」保存 .pptmtpl.json，「文件 → 导出 PPTX」生成演示文稿。
 5. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。
 6. 预览工具栏可「适应窗口」或按比例缩放；下方缩略图点击即可跳页。
-7. 预览底部出现「文本框可能溢出」提示时，可精简文字或调整版式。"""
+7. 预览底部出现「文本框可能溢出」提示时，可精简文字或调整版式。
+8. 「文件 → 精确预览」需本机安装 LibreOffice，未安装时保持画布预览。"""
 
 
 @dataclass(slots=True)
@@ -279,6 +283,7 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         file_menu.add_separator()
         file_menu.add_command(label="导出模板…", command=self._export_template)
         file_menu.add_command(label="导出 PPTX…", command=self._export_pptx)
+        file_menu.add_command(label="精确预览（PDF）…", command=self._precise_preview)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.close)
         menubar.add_cascade(label="文件", menu=file_menu)
@@ -874,6 +879,25 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._settings.last_dir = str(target.parent)
         self._set_status(f"PPTX 已导出：{target}（{count} 页）")
         self._messagebox.showinfo("导出完成", f"已生成 {count} 页：\n{target}", parent=self.root)
+
+    def _precise_preview(self) -> None:
+        if _office.find_soffice() is None:
+            self._messagebox.showinfo(
+                "精确预览不可用",
+                "未检测到 LibreOffice（soffice）。\n当前使用画布预览；安装 LibreOffice 后可导出 PDF 精确核对版式。",
+                parent=self.root,
+            )
+            return
+        workdir = Path(tempfile.mkdtemp(prefix="pptmake-preview-"))
+        source = workdir / f"{safe_filename(self._template.name)}.pptx"
+        try:
+            count = export_pptx(self._template, source)
+            pdf = _office.convert_to_pdf(source, workdir)
+        except (core.TemplateError, _office.OfficeError) as exc:
+            self._messagebox.showerror("精确预览失败", str(exc), parent=self.root)
+            return
+        webbrowser.open(pdf.as_uri())
+        self._set_status(f"已生成精确预览：{pdf}（{count} 页）")
 
     def _show_help(self) -> None:
         self._messagebox.showinfo("使用说明", HELP_TEXT, parent=self.root)
