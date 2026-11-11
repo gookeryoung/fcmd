@@ -337,18 +337,24 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _build_widgets(self) -> None:
         ttk = self._ttk
         space = self._theme.spacing
+        gap = space.xs
+        tight = space.xxs
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(2, weight=1)
 
+        # ---- 目标：列表 + 左侧操作按钮 / 右侧选项 ----
         targets = ttk.LabelFrame(self.root, text="目标", padding=space.sm)
-        targets.grid(row=0, column=0, sticky="ew", padx=space.md, pady=(space.md, space.xs))
+        targets.grid(row=0, column=0, sticky="ew", padx=space.md, pady=(space.md, tight))
         targets.columnconfigure(0, weight=1)
         self._target_tree = ttk.Treeview(targets, columns=("name", "path"), show="headings", height=4)
         self._target_tree.heading("name", text="名称")
         self._target_tree.heading("path", text="路径")
         self._target_tree.column("name", width=220, anchor="w")
         self._target_tree.column("path", width=760, anchor="w")
-        self._target_tree.grid(row=0, column=0, columnspan=7, sticky="ew", pady=(0, space.xs))
+        self._target_tree.grid(row=0, column=0, columnspan=2, sticky="ew")
+
+        actions = ttk.Frame(targets)
+        actions.grid(row=1, column=0, sticky="w", pady=(gap, 0))
         for index, (label, command) in enumerate(
             (
                 ("添加文件…", self._add_files),
@@ -357,96 +363,102 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 ("清空", self._clear_targets),
             )
         ):
-            ttk.Button(targets, text=label, command=command).grid(
-                row=1, column=index, sticky="w", padx=(0, space.sm), pady=space.xxs
-            )
-        ttk.Checkbutton(targets, text="递归子目录", variable=self._recursive_var).grid(
-            row=1, column=4, sticky="w", padx=(space.sm, 0)
-        )
-        ttk.Checkbutton(targets, text="包含目录", variable=self._dirs_var).grid(
-            row=1, column=5, sticky="w", padx=(space.sm, 0)
-        )
-        ttk.Label(targets, text="计数器排序：").grid(row=1, column=6, sticky="e")
+            ttk.Button(actions, text=label, command=command).grid(row=0, column=index, padx=(gap if index else 0, 0))
+
+        options = ttk.Frame(targets)
+        options.grid(row=1, column=1, sticky="e", pady=(gap, 0))
+        ttk.Checkbutton(options, text="递归子目录", variable=self._recursive_var).grid(row=0, column=0)
+        ttk.Checkbutton(options, text="包含目录", variable=self._dirs_var).grid(row=0, column=1, padx=(space.md, 0))
+        ttk.Label(options, text="计数器排序").grid(row=0, column=2, padx=(space.md, tight))
         ttk.Combobox(
-            targets,
+            options,
             textvariable=self._sort_var,
             values=list(SORT_TEXT.values()),
             state="readonly",
             width=10,
-        ).grid(row=1, column=7, sticky="e")
+        ).grid(row=0, column=3)
 
-        rules = ttk.LabelFrame(self.root, text="规则（按顺序执行）", padding=space.sm)
-        rules.grid(row=1, column=0, sticky="ew", padx=space.md, pady=space.xs)
-        rules.columnconfigure(2, weight=1)
-        ttk.Label(rules, text="类型").grid(row=0, column=0, sticky="w")
+        # ---- 规则：参数一行、长文本两行、锚点/大小写一行、按钮与列表 ----
+        rules = ttk.LabelFrame(self.root, text="规则（按顺序执行；双击列表可载入表单）", padding=space.sm)
+        rules.grid(row=1, column=0, sticky="ew", padx=space.md, pady=tight)
+        rules.columnconfigure(0, weight=1)
+
+        basics = ttk.Frame(rules)
+        basics.grid(row=0, column=0, sticky="ew")
+        ttk.Label(basics, text="类型").grid(row=0, column=0, sticky="w")
         ttk.Combobox(
-            rules,
+            basics,
             textvariable=self._kind_var,
             values=list(KIND_TEXT.values()),
             state="readonly",
             width=9,
-        ).grid(row=0, column=1, sticky="w", padx=(space.xxs, space.md))
-        ttk.Label(rules, text="作用域").grid(row=0, column=2, sticky="w")
+        ).grid(row=0, column=1, sticky="w", padx=(tight, space.md))
+        ttk.Label(basics, text="作用域").grid(row=0, column=2, sticky="w")
         ttk.Combobox(
-            rules,
+            basics,
             textvariable=self._field_var,
             values=list(FIELD_TEXT.values()),
             state="readonly",
             width=9,
-        ).grid(row=0, column=3, sticky="w", padx=(space.xxs, 0))
-        ttk.Label(rules, text="正则").grid(row=1, column=0, sticky="w", pady=space.xxs)
-        ttk.Entry(rules, textvariable=self._pattern_var).grid(
-            row=1, column=1, columnspan=3, sticky="ew", padx=(space.xxs, 0), pady=space.xxs
+        ).grid(row=0, column=3, sticky="w", padx=(tight, space.md))
+        ttk.Label(basics, text="第几个匹配").grid(row=0, column=4, sticky="w")
+        ttk.Spinbox(basics, textvariable=self._occurrence_var, from_=0, to=99, width=5).grid(
+            row=0, column=5, sticky="w", padx=(tight, space.md)
         )
-        ttk.Label(rules, text="替换 / 模板").grid(row=2, column=0, sticky="w")
-        ttk.Entry(rules, textvariable=self._replacement_var).grid(
-            row=2, column=1, columnspan=3, sticky="ew", padx=(space.xxs, 0)
+        ttk.Checkbutton(basics, text="忽略大小写", variable=self._ignore_case_var).grid(row=0, column=6, sticky="w")
+        ttk.Label(basics, text="起始").grid(row=0, column=7, sticky="w", padx=(space.md, tight))
+        ttk.Spinbox(basics, textvariable=self._start_var, from_=-9999, to=9999, width=6).grid(
+            row=0, column=8, sticky="w", padx=(0, space.md)
         )
-        ttk.Label(rules, text="插入文本 / 分隔符").grid(row=3, column=0, sticky="w", pady=space.xxs)
-        ttk.Entry(rules, textvariable=self._text_var).grid(
-            row=3, column=1, columnspan=3, sticky="ew", padx=(space.xxs, 0), pady=space.xxs
+        ttk.Label(basics, text="步长").grid(row=0, column=9, sticky="w", padx=(0, tight))
+        ttk.Spinbox(basics, textvariable=self._step_var, from_=-99, to=99, width=5).grid(
+            row=0, column=10, sticky="w", padx=(0, space.md)
         )
+        ttk.Label(basics, text="位数").grid(row=0, column=11, sticky="w", padx=(0, tight))
+        ttk.Spinbox(basics, textvariable=self._digits_var, from_=1, to=32, width=5).grid(row=0, column=12, sticky="w")
 
-        ttk.Checkbutton(rules, text="忽略大小写", variable=self._ignore_case_var).grid(row=0, column=4, sticky="w")
-        ttk.Label(rules, text="第几个匹配").grid(row=0, column=5, sticky="e")
-        ttk.Spinbox(rules, textvariable=self._occurrence_var, from_=0, to=99, width=5).grid(
-            row=0, column=6, sticky="w", padx=(space.xxs, space.md)
+        texts = ttk.Frame(rules)
+        texts.grid(row=1, column=0, sticky="ew")
+        texts.columnconfigure(1, weight=1)
+        texts.columnconfigure(3, weight=1)
+        ttk.Label(texts, text="正则").grid(row=0, column=0, sticky="w", padx=(0, tight), pady=tight)
+        ttk.Entry(texts, textvariable=self._pattern_var).grid(
+            row=0, column=1, sticky="ew", padx=(0, space.md), pady=tight
         )
-        ttk.Label(rules, text="锚点").grid(row=1, column=4, sticky="w")
+        ttk.Label(texts, text="替换 / 模板").grid(row=0, column=2, sticky="w", padx=(0, tight), pady=tight)
+        ttk.Entry(texts, textvariable=self._replacement_var).grid(row=0, column=3, sticky="ew", pady=tight)
+        ttk.Label(texts, text="插入文本 / 分隔符").grid(row=1, column=0, sticky="w", padx=(0, tight), pady=tight)
+        ttk.Entry(texts, textvariable=self._text_var).grid(row=1, column=1, columnspan=3, sticky="ew", pady=tight)
+
+        placement = ttk.Frame(rules)
+        placement.grid(row=2, column=0, sticky="ew")
+        ttk.Label(placement, text="锚点").grid(row=0, column=0, sticky="w", padx=(0, tight), pady=tight)
         ttk.Combobox(
-            rules,
+            placement,
             textvariable=self._anchor_var,
             values=list(ANCHOR_TEXT.values()),
             state="readonly",
             width=9,
-        ).grid(row=1, column=5, columnspan=2, sticky="w", padx=(space.xxs, 0))
-        ttk.Label(rules, text="锚点文本").grid(row=2, column=4, sticky="w")
-        ttk.Entry(rules, textvariable=self._anchor_text_var).grid(
-            row=2, column=5, columnspan=2, sticky="ew", padx=(space.xxs, 0)
+        ).grid(row=0, column=1, sticky="w", padx=(0, space.md), pady=tight)
+        ttk.Label(placement, text="锚点文本").grid(row=0, column=2, sticky="w", padx=(0, tight), pady=tight)
+        ttk.Entry(placement, textvariable=self._anchor_text_var, width=22).grid(
+            row=0, column=3, sticky="w", padx=(0, space.md), pady=tight
         )
-        ttk.Label(rules, text="位置").grid(row=3, column=4, sticky="w")
-        ttk.Spinbox(rules, textvariable=self._position_var, from_=-9999, to=9999, width=6).grid(
-            row=3, column=5, sticky="w", padx=(space.xxs, space.md)
+        ttk.Label(placement, text="位置").grid(row=0, column=4, sticky="w", padx=(0, tight), pady=tight)
+        ttk.Spinbox(placement, textvariable=self._position_var, from_=-9999, to=9999, width=6).grid(
+            row=0, column=5, sticky="w", padx=(0, space.md), pady=tight
         )
-        ttk.Label(rules, text="大小写").grid(row=4, column=4, sticky="w")
+        ttk.Label(placement, text="大小写").grid(row=0, column=6, sticky="w", padx=(0, tight), pady=tight)
         ttk.Combobox(
-            rules,
+            placement,
             textvariable=self._mode_var,
             values=list(CASE_TEXT.values()),
             state="readonly",
             width=9,
-        ).grid(row=4, column=5, columnspan=2, sticky="w", padx=(space.xxs, 0))
-        ttk.Label(rules, text="起始").grid(row=4, column=0, sticky="w", pady=(space.xxs, 0))
-        ttk.Spinbox(rules, textvariable=self._start_var, from_=-9999, to=9999, width=6).grid(
-            row=4, column=1, sticky="w", pady=(space.xxs, 0)
-        )
-        ttk.Label(rules, text="步长").grid(row=4, column=2, sticky="e")
-        ttk.Spinbox(rules, textvariable=self._step_var, from_=-99, to=99, width=5).grid(row=4, column=3, sticky="w")
-        ttk.Label(rules, text="位数").grid(row=4, column=5, sticky="e")
-        ttk.Spinbox(rules, textvariable=self._digits_var, from_=1, to=32, width=5).grid(row=4, column=6, sticky="w")
+        ).grid(row=0, column=7, sticky="w", pady=tight)
 
-        buttons = ttk.Frame(rules)
-        buttons.grid(row=5, column=0, columnspan=7, sticky="ew", pady=(space.sm, 0))
+        rule_actions = ttk.Frame(rules)
+        rule_actions.grid(row=3, column=0, sticky="ew", pady=(gap, 0))
         for index, (label, command) in enumerate(
             (
                 ("添加规则", self._add_rule),
@@ -456,11 +468,15 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 ("下移", lambda: self._move_rule(1)),
             )
         ):
-            ttk.Button(buttons, text=label, command=command).grid(row=0, column=index, sticky="w", padx=(0, space.sm))
+            ttk.Button(rule_actions, text=label, command=command).grid(
+                row=0, column=index, padx=(gap if index else 0, 0)
+            )
+        rule_actions.columnconfigure(5, weight=1)
         ttk.Label(
-            buttons,
-            text="reorder 模板用 {0}/{1}/{name} 引用捕获组；move 留空 occurrence=0 表示搬移全部匹配",
-        ).grid(row=0, column=5, sticky="w")
+            rule_actions,
+            text="reorder 用 {0}/{1}/{name} 引用捕获组；move occurrence=0 表示全部",
+            style="Hint.TLabel",
+        ).grid(row=0, column=6, sticky="e")
 
         self._rule_tree = ttk.Treeview(rules, columns=("kind", "field", "params", "detail"), show="headings", height=4)
         for column, title, width in (
@@ -471,11 +487,12 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         ):
             self._rule_tree.heading(column, text=title)
             self._rule_tree.column(column, width=width, anchor="w")
-        self._rule_tree.grid(row=6, column=0, columnspan=7, sticky="ew", pady=(space.sm, 0))
+        self._rule_tree.grid(row=4, column=0, sticky="ew", pady=(gap, 0))
         self._rule_tree.bind("<Double-1>", lambda _event: self._load_selected_rule())
 
+        # ---- 预览：列表 + 底部操作栏（状态右对齐） ----
         preview = ttk.LabelFrame(self.root, text="预览", padding=space.sm)
-        preview.grid(row=2, column=0, sticky="nsew", padx=space.md, pady=(space.xs, space.md))
+        preview.grid(row=2, column=0, sticky="nsew", padx=space.md, pady=(tight, space.md))
         preview.columnconfigure(0, weight=1)
         preview.rowconfigure(0, weight=1)
         self._preview_tree = ttk.Treeview(
@@ -491,17 +508,15 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         ):
             self._preview_tree.heading(column, text=title)
             self._preview_tree.column(column, width=width, anchor="w")
-        self._preview_tree.grid(row=0, column=0, columnspan=4, sticky="nsew")
-        ttk.Button(preview, text="刷新预览", command=self._refresh_preview).grid(
-            row=1, column=0, sticky="w", pady=(space.sm, 0)
-        )
-        ttk.Button(preview, text="执行改名", command=self._execute).grid(
-            row=1, column=1, sticky="w", padx=(space.sm, 0), pady=(space.sm, 0)
-        )
-        ttk.Button(preview, text="撤销上次", command=self._undo).grid(
-            row=1, column=2, sticky="w", padx=(space.sm, 0), pady=(space.sm, 0)
-        )
-        ttk.Label(preview, textvariable=self._status_var).grid(row=1, column=3, sticky="e", pady=(space.sm, 0))
+        self._preview_tree.grid(row=0, column=0, sticky="nsew")
+
+        bar = ttk.Frame(preview)
+        bar.grid(row=1, column=0, sticky="ew", pady=(gap, 0))
+        ttk.Button(bar, text="刷新预览", command=self._refresh_preview).grid(row=0, column=0)
+        ttk.Button(bar, text="执行改名", command=self._execute).grid(row=0, column=1, padx=(gap, 0))
+        ttk.Button(bar, text="撤销上次", command=self._undo).grid(row=0, column=2, padx=(gap, 0))
+        bar.columnconfigure(3, weight=1)
+        ttk.Label(bar, textvariable=self._status_var).grid(row=0, column=3, sticky="e")
 
     # ------------------------------------------------------------------ #
     # 目标列表
