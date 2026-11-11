@@ -3,7 +3,10 @@
 左右两个独立目录面板，支持键盘与鼠标操作：Tab 切换面板，Enter 进入目录，
 F2 重命名、F3 查看、F4 外部编辑、F5 复制、F6 移动、F7 新建目录、F8 删除到
 回收站、Shift+F8 永久删除，Alt+F5 打包、Alt+F9 解压，Ctrl+F 搜索，Ctrl+S
-快速过滤，Num+/Num- 按掩码选择/取消，Space 统计选中项大小，Ctrl+H 显示隐藏文件。
+快速过滤，Num+/Num- 按掩码选择/取消，Space 统计选中项大小，Ctrl+H 显示隐藏文件，
+Alt+Left/Alt+Right 在面板历史中后退/前进。顶部菜单栏按 文件/选中/视图/工具/命令/
+配置/帮助 分组，菜单项与快捷键、右键菜单、工具栏调用同一套实现，并按当前选择数、
+标签数、历史边界、忙碌状态与目录可写性动态启用/禁用。
 每个面板支持多标签页（Ctrl+T 新建、Ctrl+W 关闭、Ctrl+Tab 切换，至少保留一个
 标签），Ctrl+D 管理书签，Alt+Down 从当前面板历史栈跳转。
 
@@ -69,6 +72,7 @@ from fcmd.tools.system._cmderw_ops import (
     ColorSubject,
     CompareOptions,
     CompareReport,
+    MenuFacts,
     PreviewResult,
     QueueItem,
     QueueTask,
@@ -94,6 +98,7 @@ from fcmd.tools.system._cmderw_ops import (
     invert_names,
     item_status_text,
     match_names,
+    menu_state,
     normalize_color,
     parse_color_rules,
     plan_bulk_rename,
@@ -231,6 +236,12 @@ _HIDDEN_ATTRIBUTE = 0x2
 _MAX_PREVIEW_LINES = 500
 _MAX_ERROR_DETAILS = 10
 _QUICK_IMAGE_LIMIT = 32 * 1024 * 1024
+_SORT_MENU_CHOICES: tuple[tuple[str, str, str], ...] = (
+    ("名称", "name", "name"),
+    ("扩展名", "attr", "type"),
+    ("大小", "size", "size"),
+    ("修改时间", "mtime", "mtime"),
+)
 
 
 # ============================================================================ #
@@ -1302,6 +1313,11 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     # ------------------------------------------------------------------ #
     # 快速查看（文本 / 图片 / 二进制，限读 + 截断提示）
     # ------------------------------------------------------------------ #
+    @property
+    def quick_visible(self) -> bool:
+        """快速查看当前是否展开（供菜单勾选状态同步）。"""
+        return self._quick_visible
+
     def toggle_quick_view(self) -> None:
         """Ctrl+Q：显示或隐藏内嵌快速查看。"""
         if self._quick_visible:
@@ -1501,6 +1517,13 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         children = self.tree.get_children()
         if children:
             self.tree.selection_set(children)
+
+    def clear_selection(self) -> None:
+        """取消当前目录的全部选择。"""
+        selection = self.tree.selection()
+        if selection:
+            self.tree.selection_remove(*selection)
+            self._update_status()
 
     def select_names(self, names: Sequence[str], *, focus: bool = False) -> int:
         """在可见行中选择给定名称，返回实际选中数。"""
@@ -3030,85 +3053,154 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.left.set_path(Path(self.settings.left.path))
         self.right.set_path(Path(self.settings.right.path))
         self.set_active(self.left if self.active_side == "left" else self.right)
+        self._sync_menu_state()
         self.set_status("就绪")
 
     # ------------------------------------------------------------------ #
     # 界面构建
     # ------------------------------------------------------------------ #
+    def _menu_command(self, menu: Any, key: str, label: str, command: Callable[[], None]) -> None:
+        """添加普通菜单项并登记，供展开时统一启用/禁用。"""
+        menu.add_command(label=label, command=command)
+        self._menu_items[key] = (menu, menu.index("end"))
+
+    def _menu_check(
+        self,
+        menu: Any,
+        key: str,
+        label: str,
+        variable: Any,
+        command: Callable[[], None],
+    ) -> None:
+        menu.add_checkbutton(label=label, variable=variable, command=command)
+        self._menu_items[key] = (menu, menu.index("end"))
+
+    def _menu_radio(
+        self,
+        menu: Any,
+        label: str,
+        variable: Any,
+        value: str,
+        command: Callable[[], None],
+    ) -> None:
+        menu.add_radiobutton(label=label, variable=variable, value=value, command=command)
+        self._menu_items[f"sort_{value}"] = (menu, menu.index("end"))
+
     def _build_menu(self) -> None:
         tk = self._tk
+        self._menu_items: dict[str, tuple[Any, int]] = {}
         menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label="新建目录\tF7", command=self.new_folder)
-        file_menu.add_command(label="重命名\tF2", command=self.rename_selected)
+
+        file_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._menu_command(file_menu, "open", "打开\tEnter", self.open_selected)
+        self._menu_command(file_menu, "view", "查看\tF3", self.view_selected)
+        self._menu_command(file_menu, "edit", "编辑\tF4", self.edit_selected)
         file_menu.add_separator()
-        file_menu.add_command(label="查看\tF3", command=self.view_selected)
-        file_menu.add_command(label="编辑\tF4", command=self.edit_selected)
+        self._menu_command(file_menu, "new_folder", "新建目录\tF7", self.new_folder)
+        self._menu_command(file_menu, "rename", "重命名\tF2", self.rename_selected)
+        self._menu_command(file_menu, "bulk_rename", "批量重命名…\tCtrl+M", self.bulk_rename)
         file_menu.add_separator()
-        file_menu.add_command(label="打包\tAlt+F5", command=self.pack_selected)
-        file_menu.add_command(label="解压\tAlt+F9", command=self.unpack_selected)
+        self._menu_command(file_menu, "copy", "复制到对面面板\tF5", self.copy_selected)
+        self._menu_command(file_menu, "move", "移动到对面面板\tF6", self.move_selected)
+        self._menu_command(file_menu, "delete", "删除到回收站\tF8", self.delete_selected)
+        self._menu_command(
+            file_menu,
+            "permanent_delete",
+            "永久删除\tShift+F8",
+            self.permanent_delete_selected,
+        )
+        file_menu.add_separator()
+        self._menu_command(file_menu, "properties", "属性\tAlt+Enter", self.show_properties)
+        self._menu_command(file_menu, "hash", "计算校验和…", self.hash_selected)
+        file_menu.add_separator()
+        self._menu_command(file_menu, "pack", "打包…\tAlt+F5", self.pack_selected)
+        self._menu_command(file_menu, "unpack", "解压…\tAlt+F9", self.unpack_selected)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.close)
         menubar.add_cascade(label="文件", menu=file_menu)
 
-        edit_menu = tk.Menu(menubar, tearoff=False)
-        edit_menu.add_command(label="复制\tF5", command=self.copy_selected)
-        edit_menu.add_command(label="移动\tF6", command=self.move_selected)
-        edit_menu.add_command(label="删除到回收站\tF8", command=self.delete_selected)
-        edit_menu.add_command(label="永久删除\tShift+F8", command=self.permanent_delete_selected)
-        edit_menu.add_separator()
-        edit_menu.add_command(label="批量重命名…\tCtrl+M", command=self.bulk_rename)
-        edit_menu.add_separator()
-        edit_menu.add_command(label="全选\tCtrl+A", command=self.select_all)
-        edit_menu.add_command(label="反选\tCtrl+I", command=self.invert_selection)
-        edit_menu.add_command(label="按掩码选择…\tNum+", command=self.select_by_mask)
-        edit_menu.add_command(label="按掩码取消选择…\tNum-", command=self.deselect_by_mask)
-        menubar.add_cascade(label="编辑", menu=edit_menu)
+        select_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._menu_command(select_menu, "select_all", "全选\tCtrl+A", self.select_all)
+        self._menu_command(select_menu, "clear_selection", "取消全选", self.clear_selection)
+        self._menu_command(select_menu, "invert_selection", "反选\tCtrl+I", self.invert_selection)
+        select_menu.add_separator()
+        self._menu_command(select_menu, "select_mask", "按掩码选择…\tNum+", self.select_by_mask)
+        self._menu_command(select_menu, "deselect_mask", "按掩码取消选择…\tNum-", self.deselect_by_mask)
+        menubar.add_cascade(label="选中", menu=select_menu)
 
-        view_menu = tk.Menu(menubar, tearoff=False)
-        view_menu.add_command(label="刷新\tCtrl+R", command=self.refresh_both)
+        view_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._menu_command(view_menu, "refresh", "刷新\tCtrl+R", self.refresh_both)
         self._hidden_var = tk.BooleanVar(value=self.settings.show_hidden)
-        view_menu.add_checkbutton(
-            label="显示隐藏文件\tCtrl+H",
-            variable=self._hidden_var,
-            command=self.toggle_hidden,
+        self._menu_check(view_menu, "hidden", "显示隐藏文件\tCtrl+H", self._hidden_var, self._apply_hidden)
+        view_menu.add_separator()
+        self._menu_command(view_menu, "filter", "快速过滤\tCtrl+S", self.focus_filter)
+        self._menu_command(view_menu, "clear_filter", "清除过滤\tEsc", self.clear_filter)
+        view_menu.add_separator()
+        self._quick_var = tk.BooleanVar(value=False)
+        self._menu_check(
+            view_menu,
+            "quick_view",
+            "快速查看\tCtrl+Q",
+            self._quick_var,
+            self._set_quick_from_var,
         )
-        view_menu.add_separator()
-        view_menu.add_command(label="快速过滤\tCtrl+S", command=self.focus_filter)
-        view_menu.add_command(label="清除过滤\tEsc", command=self.clear_filter)
-        view_menu.add_separator()
-        view_menu.add_command(label="快速查看\tCtrl+Q", command=self.toggle_quick_view)
         self._tree_var = tk.BooleanVar(value=False)
-        view_menu.add_checkbutton(
-            label="目录树\tCtrl+F8",
-            variable=self._tree_var,
-            command=self.toggle_directory_tree,
+        self._menu_check(
+            view_menu,
+            "directory_tree",
+            "目录树\tCtrl+F8",
+            self._tree_var,
+            self.toggle_directory_tree,
         )
         view_menu.add_separator()
-        view_menu.add_command(label="新建标签页\tCtrl+T", command=self.new_tab)
-        view_menu.add_command(label="关闭标签页\tCtrl+W", command=self.close_tab)
-        view_menu.add_command(label="下一个标签页\tCtrl+Tab", command=self.next_tab)
-        view_menu.add_command(label="上一个标签页\tCtrl+Shift+Tab", command=self.previous_tab)
+        sort_menu = tk.Menu(view_menu, tearoff=False, postcommand=self._sync_menu_state)
+        self._sort_var = tk.StringVar(value=DEFAULT_SORT_KEY)
+        for label, column, key in _SORT_MENU_CHOICES:
+            self._menu_radio(
+                sort_menu,
+                label,
+                self._sort_var,
+                key,
+                lambda column=column: self.sort_active(column),
+            )
+        view_menu.add_cascade(label="排序方式", menu=sort_menu)
         view_menu.add_separator()
-        view_menu.add_command(label="书签…\tCtrl+D", command=self.open_bookmarks)
-        view_menu.add_command(label="历史记录…\tAlt+Down", command=self.show_history_menu)
+        self._menu_command(view_menu, "up", "上级目录\tBackspace", self.go_up)
+        self._menu_command(view_menu, "back", "后退\tAlt+Left", self.go_back)
+        self._menu_command(view_menu, "forward", "前进\tAlt+Right", self.go_forward)
         view_menu.add_separator()
-        view_menu.add_command(label="交换面板\tCtrl+U", command=self.swap_panels)
-        view_menu.add_command(label="切换面板\tTab", command=self.switch_panel)
-        menubar.add_cascade(label="显示", menu=view_menu)
+        self._menu_command(view_menu, "new_tab", "新建标签页\tCtrl+T", self.new_tab)
+        self._menu_command(view_menu, "close_tab", "关闭标签页\tCtrl+W", self.close_tab)
+        self._menu_command(view_menu, "next_tab", "下一个标签页\tCtrl+Tab", self.next_tab)
+        self._menu_command(view_menu, "previous_tab", "上一个标签页\tCtrl+Shift+Tab", self.previous_tab)
+        view_menu.add_separator()
+        self._menu_command(view_menu, "swap_panel", "交换面板\tCtrl+U", self.swap_panels)
+        self._menu_command(view_menu, "switch_panel", "切换面板\tTab", self.switch_panel)
+        menubar.add_cascade(label="视图", menu=view_menu)
 
-        tools_menu = tk.Menu(menubar, tearoff=False)
-        tools_menu.add_command(label="传输队列…", command=self.show_transfer_queue)
-        tools_menu.add_command(label="目录比较…\tCtrl+Shift+C", command=self.open_compare)
-        tools_menu.add_command(label="目录同步…", command=self.open_sync_from_compare)
+        tools_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._menu_command(tools_menu, "search", "搜索\tCtrl+F", self.open_search)
+        self._menu_command(tools_menu, "compare", "目录比较…\tCtrl+Shift+C", self.open_compare)
+        self._menu_command(tools_menu, "sync", "目录同步…", self.open_sync_from_compare)
         tools_menu.add_separator()
-        tools_menu.add_command(label="搜索\tCtrl+F", command=self.open_search)
-        tools_menu.add_command(label="文件哈希", command=self.hash_selected)
-        tools_menu.add_command(label="属性\tAlt+Enter", command=self.show_properties)
+        self._menu_command(tools_menu, "queue", "传输队列…", self.show_transfer_queue)
         menubar.add_cascade(label="工具", menu=tools_menu)
 
-        config_menu = tk.Menu(menubar, tearoff=False)
-        config_menu.add_command(label="颜色规则…", command=self.open_color_rules)
+        commands_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._menu_command(
+            commands_menu,
+            "command_line",
+            "聚焦命令行栏\tCtrl+Enter",
+            self.focus_command_bar,
+        )
+        self._menu_command(commands_menu, "command_hide", "隐藏命令行栏", self.hide_command_bar)
+        commands_menu.add_separator()
+        self._menu_command(commands_menu, "bookmarks", "书签…\tCtrl+D", self.open_bookmarks)
+        self._menu_command(commands_menu, "history", "历史记录…\tAlt+Down", self.show_history_menu)
+        menubar.add_cascade(label="命令", menu=commands_menu)
+
+        config_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._menu_command(config_menu, "color_rules", "颜色规则…", self.open_color_rules)
         menubar.add_cascade(label="配置", menu=config_menu)
 
         help_menu = tk.Menu(menubar, tearoff=False)
@@ -3165,7 +3257,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             button = ttk.Button(toolbar, text=label, style="Toolbutton", command=command)
             button.pack(side="left", padx=(0, spacing.xxs))
             self._toolbar_buttons.append(button)
-        ttk.Checkbutton(toolbar, text="隐藏文件", variable=self._hidden_var, command=self.toggle_hidden).pack(
+        ttk.Checkbutton(toolbar, text="隐藏文件", variable=self._hidden_var, command=self._apply_hidden).pack(
             side="right"
         )
 
@@ -3272,6 +3364,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-Return>": lambda _event: self.focus_command_bar(),
             "<Control-KP_Enter>": lambda _event: self.focus_command_bar(),
             "<Alt-Down>": lambda _event: self.show_history_menu(),
+            "<Alt-Left>": lambda _event: self.go_back(),
+            "<Alt-Right>": lambda _event: self.go_forward(),
             "<Escape>": lambda _event: self.clear_filter(),
             "<Tab>": lambda _event: self.switch_panel(),
         }
@@ -3288,6 +3382,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.right.set_title_active(panel is self.right)
         self.sync_tree(panel)
         self._update_command_cwd()
+        self._quick_var.set(panel.quick_visible)
 
     def active_panel(self) -> FilePanel:
         """当前活动面板。"""
@@ -3305,6 +3400,44 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def set_status(self, message: str) -> None:
         """更新底部状态文字。"""
         self.status_var.set(message)
+
+    @staticmethod
+    def _directory_writable(path: Path) -> bool:
+        """菜单前置判断：目录存在且当前进程可写；真正失败仍走操作自身的报错。"""
+        try:
+            return path.is_dir() and os.access(path, os.W_OK)
+        except OSError:
+            return False
+
+    def _sync_menu_state(self) -> None:
+        """菜单展开前按活动面板状态刷新禁用项与勾选变量。"""
+        panel = self.active_panel()
+        entries = panel.selected_entries()
+        single = entries[0] if len(entries) == 1 else None
+        facts = MenuFacts(
+            entry_count=len(panel.tree.get_children()),
+            selection_count=len(entries),
+            single_is_file=bool(single and not single.is_dir),
+            busy=self._busy,
+            active_writable=self._directory_writable(Path(panel.state.path)),
+            target_writable=self._directory_writable(Path(self.other_panel().state.path)),
+            tab_count=len(panel.tabs),
+            history_index=panel.state.history_index,
+            history_length=len(panel.state.history),
+            panels_ready=Path(self.left.state.path).is_dir() and Path(self.right.state.path).is_dir(),
+            active_exists=Path(panel.state.path).is_dir(),
+            show_hidden=self.settings.show_hidden,
+            tree_visible=self._tree_visible,
+            quick_visible=panel.quick_visible,
+            sort_key=panel.state.sort_key,
+        )
+        state = menu_state(facts)
+        for key, (menu, index) in self._menu_items.items():
+            menu.entryconfigure(index, state="disabled" if state.is_disabled(key) else "normal")
+        self._hidden_var.set(state.show_hidden)
+        self._quick_var.set(state.quick_visible)
+        self._tree_var.set(state.tree_visible)
+        self._sort_var.set(state.sort_key)
 
     # ------------------------------------------------------------------ #
     # 目录树（只读，跟随活动面板）
@@ -3451,7 +3584,21 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     # ------------------------------------------------------------------ #
     def toggle_quick_view(self) -> None:
         """Ctrl+Q / 菜单：切换活动面板的内嵌快速查看。"""
-        self.active_panel().toggle_quick_view()
+        panel = self.active_panel()
+        panel.toggle_quick_view()
+        self._quick_var.set(panel.quick_visible)
+
+    def set_quick_view(self, visible: bool) -> None:
+        """按菜单勾选状态显式开关快速查看。"""
+        panel = self.active_panel()
+        if visible:
+            panel.show_quick_view()
+        else:
+            panel.hide_quick_view()
+        self._quick_var.set(panel.quick_visible)
+
+    def _set_quick_from_var(self) -> None:
+        self.set_quick_view(bool(self._quick_var.get()))
 
     def focus_command_bar(self) -> None:
         """Ctrl+Enter：唤出命令行栏并聚焦。"""
@@ -3615,10 +3762,35 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.set_status(f"{panel.title}历史：{history[index]}")
 
     def toggle_hidden(self) -> None:
-        """切换隐藏文件显示。"""
+        """Ctrl+H：切换隐藏文件显示。"""
+        self._hidden_var.set(not bool(self._hidden_var.get()))
+        self._apply_hidden()
+
+    def _apply_hidden(self) -> None:
+        """采用菜单/工具栏勾选状态，并同步设置与两个面板。"""
         self.settings.show_hidden = bool(self._hidden_var.get())
         self.refresh_both()
         self.set_status("显示隐藏文件" if self.settings.show_hidden else "隐藏隐藏文件")
+
+    def clear_selection(self) -> None:
+        """取消活动面板的全部选择。"""
+        self.active_panel().clear_selection()
+
+    def go_up(self) -> None:
+        """活动面板返回上级目录。"""
+        self.active_panel().go_up()
+
+    def go_back(self) -> None:
+        """活动面板后退到上一历史位置。"""
+        self.active_panel().go_back()
+
+    def go_forward(self) -> None:
+        """活动面板前进到下一历史位置。"""
+        self.active_panel().go_forward()
+
+    def sort_active(self, column: str) -> None:
+        """按指定列排序活动面板；选择当前列时切换升降序。"""
+        self.active_panel().sort_by(column)
 
     def select_all(self) -> None:
         """全选当前面板。"""

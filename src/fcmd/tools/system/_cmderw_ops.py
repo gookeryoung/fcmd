@@ -1,7 +1,7 @@
-"""cmderw 的纯逻辑补充：回收站删除、通配选择、快速过滤、目录统计。
+"""cmderw 的纯逻辑补充：回收站删除、通配选择、快速过滤、目录统计、菜单状态。
 
 下划线前缀使其不参与 :mod:`fcmd` 的工具发现；窗口层 ``cmderw.py`` 只做 Tk
-装配，这里保持无 UI 依赖、可单测。口径见 ADR 0005 的 D1–D3。
+装配，这里保持无 UI 依赖、可单测。口径见 ADR 0005 的 D1–D14。
 """
 
 from __future__ import annotations
@@ -62,6 +62,8 @@ __all__ = [
     "CompareEntry",
     "CompareOptions",
     "CompareReport",
+    "MenuFacts",
+    "MenuState",
     "PreviewResult",
     "QueueItem",
     "QueueTask",
@@ -90,6 +92,7 @@ __all__ = [
     "item_status_text",
     "match_names",
     "matches_mask",
+    "menu_state",
     "normalize_color",
     "parse_color_rules",
     "plan_bulk_rename",
@@ -1732,3 +1735,157 @@ def destructive_command(command: str) -> str | None:
         if name == "find" and "-delete" in tokens:
             return "find -delete"
     return None
+
+
+# ============================================================================ #
+# 顶部菜单启用状态（纯逻辑，便于无显示环境测试）
+# ============================================================================ #
+_MENU_SELECTION = frozenset(
+    {
+        "select_all",
+        "clear_selection",
+        "invert_selection",
+        "select_mask",
+        "deselect_mask",
+    }
+)
+_MENU_NEEDS_SELECTION = frozenset(
+    {
+        "copy",
+        "move",
+        "delete",
+        "permanent_delete",
+        "pack",
+        "bulk_rename",
+        "hash",
+    }
+)
+_MENU_ONE = frozenset({"open", "view", "edit", "properties", "unpack", "rename"})
+_MENU_ONE_FILE = frozenset({"view", "edit", "unpack"})
+_MENU_ACTIVE_WRITE = frozenset(
+    {
+        "new_folder",
+        "rename",
+        "bulk_rename",
+        "delete",
+        "permanent_delete",
+        "move",
+        "pack",
+    }
+)
+_MENU_TARGET_WRITE = frozenset({"copy", "move", "unpack"})
+_MENU_BUSY = frozenset(
+    {
+        "new_folder",
+        "rename",
+        "bulk_rename",
+        "copy",
+        "move",
+        "delete",
+        "permanent_delete",
+        "pack",
+        "unpack",
+        "hash",
+        "properties",
+        "refresh",
+        "search",
+        "compare",
+        "sync",
+    }
+)
+
+
+@dataclass(frozen=True)
+class MenuFacts:
+    """计算菜单启用状态所需的运行时事实。"""
+
+    entry_count: int = 0
+    selection_count: int = 0
+    single_is_file: bool = False
+    busy: bool = False
+    active_writable: bool = True
+    target_writable: bool = True
+    tab_count: int = 1
+    history_index: int = 0
+    history_length: int = 1
+    panels_ready: bool = True
+    active_exists: bool = True
+    show_hidden: bool = False
+    tree_visible: bool = False
+    quick_visible: bool = False
+    sort_key: str = "name"
+
+
+@dataclass(frozen=True)
+class MenuState:
+    """菜单项禁用集合与勾选变量应有状态。"""
+
+    disabled: frozenset[str]
+    show_hidden: bool = False
+    tree_visible: bool = False
+    quick_visible: bool = False
+    sort_key: str = "name"
+
+    def is_disabled(self, action: str) -> bool:
+        """动作是否应显示为 disabled。"""
+        return action in self.disabled
+
+
+def _selection_disabled(facts: MenuFacts) -> set[str]:
+    disabled: set[str] = set()
+    if facts.entry_count <= 0:
+        disabled |= _MENU_SELECTION
+    if facts.selection_count <= 0:
+        disabled |= _MENU_NEEDS_SELECTION | _MENU_ONE
+    elif facts.selection_count > 1:
+        disabled |= _MENU_ONE
+    if facts.selection_count == 1 and not facts.single_is_file:
+        disabled |= _MENU_ONE_FILE
+    return disabled
+
+
+def _write_disabled(facts: MenuFacts) -> set[str]:
+    disabled: set[str] = set()
+    if facts.busy:
+        disabled |= _MENU_BUSY
+    if not facts.active_writable:
+        disabled |= _MENU_ACTIVE_WRITE
+    if not facts.target_writable:
+        disabled |= _MENU_TARGET_WRITE
+    return disabled
+
+
+def _navigation_disabled(facts: MenuFacts) -> set[str]:
+    disabled: set[str] = set()
+    if facts.tab_count <= 1:
+        disabled.add("close_tab")
+    if facts.history_index <= 0:
+        disabled.add("back")
+    if facts.history_index >= facts.history_length - 1:
+        disabled.add("forward")
+    return disabled
+
+
+def _panel_disabled(facts: MenuFacts) -> set[str]:
+    disabled: set[str] = set()
+    if not facts.panels_ready:
+        disabled |= {"compare", "sync"}
+    if not facts.active_exists:
+        disabled.add("command_line")
+    return disabled
+
+
+def menu_state(facts: MenuFacts) -> MenuState:
+    """根据事实计算菜单禁用集合，并携带勾选变量应取的值。"""
+    disabled: set[str] = set()
+    disabled |= _selection_disabled(facts)
+    disabled |= _write_disabled(facts)
+    disabled |= _navigation_disabled(facts)
+    disabled |= _panel_disabled(facts)
+    return MenuState(
+        disabled=frozenset(disabled),
+        show_hidden=facts.show_hidden,
+        tree_visible=facts.tree_visible,
+        quick_visible=facts.quick_visible,
+        sort_key=facts.sort_key,
+    )

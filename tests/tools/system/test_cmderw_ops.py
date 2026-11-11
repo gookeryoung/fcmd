@@ -1256,3 +1256,84 @@ class TestDestructiveCommand:
     )
     def test_detects_delete_commands(self, command: str, expected: str | None) -> None:
         assert ops.destructive_command(command) == expected
+
+
+class TestMenuState:
+    """顶部菜单禁用状态与勾选变量映射。"""
+
+    @staticmethod
+    def _facts(**overrides: object) -> ops.MenuFacts:
+        data: dict[str, object] = {"entry_count": 5, "selection_count": 1, "single_is_file": True}
+        data.update(overrides)
+        return ops.MenuFacts(**data)  # type: ignore[arg-type]
+
+    def test_no_selection_disables_selection_actions(self) -> None:
+        state = ops.menu_state(self._facts(selection_count=0, single_is_file=False))
+
+        for action in ("open", "view", "edit", "rename", "copy", "delete", "pack", "unpack"):
+            assert state.is_disabled(action), action
+
+    def test_multi_selection_keeps_batch_actions_enabled(self) -> None:
+        state = ops.menu_state(self._facts(selection_count=3, single_is_file=False))
+
+        for action in ("open", "view", "edit", "properties", "rename", "unpack"):
+            assert state.is_disabled(action), action
+        for action in ("copy", "move", "delete", "permanent_delete", "pack", "bulk_rename"):
+            assert not state.is_disabled(action), action
+
+    def test_single_tab_disables_close_tab(self) -> None:
+        assert ops.menu_state(self._facts(tab_count=1)).is_disabled("close_tab")
+        assert not ops.menu_state(self._facts(tab_count=2)).is_disabled("close_tab")
+
+    def test_history_bounds_disable_back_and_forward(self) -> None:
+        start = ops.menu_state(self._facts(history_index=0, history_length=3))
+        assert start.is_disabled("back")
+        assert not start.is_disabled("forward")
+
+        end = ops.menu_state(self._facts(history_index=2, history_length=3))
+        assert not end.is_disabled("back")
+        assert end.is_disabled("forward")
+
+    def test_empty_panel_disables_selection_commands(self) -> None:
+        state = ops.menu_state(self._facts(entry_count=0, selection_count=0, single_is_file=False))
+
+        for action in ("select_all", "clear_selection", "invert_selection", "select_mask", "deselect_mask"):
+            assert state.is_disabled(action), action
+
+    def test_read_only_panel_disables_writes_but_not_view(self) -> None:
+        state = ops.menu_state(self._facts(active_writable=False))
+
+        for action in ("new_folder", "rename", "bulk_rename", "delete", "permanent_delete", "move", "pack"):
+            assert state.is_disabled(action), action
+        for action in ("view", "copy", "hash"):
+            assert not state.is_disabled(action), action
+
+    def test_busy_disables_long_running_actions(self) -> None:
+        state = ops.menu_state(self._facts(busy=True))
+
+        for action in ("refresh", "search", "compare", "sync", "copy", "hash"):
+            assert state.is_disabled(action), action
+        assert not state.is_disabled("switch_panel")
+
+    def test_panel_availability(self) -> None:
+        state = ops.menu_state(self._facts(panels_ready=False, active_exists=False))
+
+        assert state.is_disabled("compare")
+        assert state.is_disabled("sync")
+        assert state.is_disabled("command_line")
+
+    def test_check_states_mirror_actual_visibility(self) -> None:
+        """菜单勾选变量必须与隐藏文件/目录树/快速查看的实际状态一致。"""
+        facts = self._facts(
+            show_hidden=True,
+            tree_visible=False,
+            quick_visible=True,
+            sort_key="size",
+        )
+
+        state = ops.menu_state(facts)
+
+        assert state.show_hidden is True
+        assert state.tree_visible is False
+        assert state.quick_visible is True
+        assert state.sort_key == "size"
