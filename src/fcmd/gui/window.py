@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Final, cast
@@ -215,6 +216,9 @@ def create_root(  # noqa: PLR0913 - 关键字参数描述窗口骨架，显式�
     )
     root.minsize(min_width, min_height)
     root.protocol("WM_DELETE_WINDOW", on_close)
+    with contextlib.suppress(Exception):
+        root.update_idletasks()
+        _guitheme.apply_dark_titlebar(root, dark=_guitheme.is_dark_palette(theme.palette))
     return root, theme
 
 

@@ -37,10 +37,14 @@ from fcmd.apps.cmder.app import (
     CmderSettings,
     ColorRule,
     FileEntry,
+    PanelScanChannel,
+    PanelScanRequest,
+    PanelScanResult,
     PanelState,
     SearchHit,
     TransferItem,
     archive_browsable,
+    archive_directory_entries,
     archive_stem,
     config_path,
     copy_entry,
@@ -54,6 +58,7 @@ from fcmd.apps.cmder.app import (
     describe_entry,
     extract_archive_members,
     extract_archive_to,
+    filter_entries,
     format_hash_report,
     format_mtime,
     format_search_hit,
@@ -63,6 +68,7 @@ from fcmd.apps.cmder.app import (
     history_forward,
     is_hidden,
     is_within,
+    list_branch,
     list_directory,
     load_preview,
     load_settings,
@@ -78,9 +84,12 @@ from fcmd.apps.cmder.app import (
     rename_entry,
     resolve_geometry,
     resolve_path_input,
+    run_panel_scan,
     save_settings,
+    scan_panel_entries,
     search_paths,
     sort_entries,
+    stripe_tag,
     transfer_entries,
     unique_path,
     validate_name,
@@ -738,6 +747,143 @@ class TestListingAndFormatting:
         with pytest.raises(NotADirectoryError):
             list_directory(tmp_path / "missing")
 
+    def test_list_branch_relative_paths(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("abc", encoding="utf-8")
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "b.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "sub" / "deep").mkdir()
+        (tmp_path / "sub" / "deep" / "c.txt").write_text("y", encoding="utf-8")
+        entries, truncated = list_branch(tmp_path)
+        assert truncated is False
+        assert sorted(entry.relative for entry in entries) == sorted(
+            ["a.txt", str(Path("sub") / "b.txt"), str(Path("sub") / "deep" / "c.txt")]
+        )
+        # 分支视图只列文件，目录本身只用于递归。
+        assert all(not entry.is_dir for entry in entries)
+        sizes = {entry.relative: entry.size for entry in entries}
+        assert sizes["a.txt"] == 3
+        assert sizes[str(Path("sub") / "b.txt")] == 1
+
+    def test_list_branch_skips_hidden(self, tmp_path: Path) -> None:
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "config").write_text("x", encoding="utf-8")
+        (tmp_path / "visible.txt").write_text("x", encoding="utf-8")
+        assert [entry.relative for entry in list_branch(tmp_path)[0]] == ["visible.txt"]
+        assert sorted(entry.relative for entry in list_branch(tmp_path, show_hidden=True)[0]) == sorted(
+            [str(Path(".git") / "config"), "visible.txt"]
+        )
+
+    def test_list_branch_depth_limit(self, tmp_path: Path) -> None:
+        current = tmp_path
+        for depth in range(4):
+            current = current / f"d{depth}"
+            current.mkdir()
+        (current / "leaf.txt").write_text("x", encoding="utf-8")
+        entries, _ = list_branch(tmp_path, max_depth=2)
+        assert entries == []
+
+    def test_list_branch_truncates(self, tmp_path: Path) -> None:
+        for name in ("sub1", "sub2"):
+            (tmp_path / name).mkdir()
+            (tmp_path / name / "inner.txt").write_text("x", encoding="utf-8")
+        entries, truncated = list_branch(tmp_path, max_entries=1)
+        assert len(entries) == 1
+        assert truncated is True
+
+    def test_list_branch_missing(self, tmp_path: Path) -> None:
+        with pytest.raises(NotADirectoryError):
+            list_branch(tmp_path / "missing")
+
+    @pytest.mark.skipif(os.name == "nt", reason="Windows 创建符号链接需要额外权限")
+    def test_list_branch_does_not_follow_dir_symlink(self, tmp_path: Path) -> None:
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "inside.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "link").symlink_to(target, target_is_directory=True)
+        entries, _ = list_branch(tmp_path)
+        assert [entry.relative for entry in entries] == ["target/inside.txt"]
+
+    def test_filter_entries_text_and_definition(self, tmp_path: Path) -> None:
+        for name in ("a.txt", "b.py", "c.txt"):
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        entries = list_directory(tmp_path)
+        assert [entry.name for entry in filter_entries(entries, "txt")] == ["a.txt", "c.txt"]
+        definition = FilterDefinition(include="*.txt", exclude="c*")
+        assert [entry.name for entry in filter_entries(entries, "", definition)] == ["a.txt"]
+        assert [entry.name for entry in filter_entries(entries)] == [entry.name for entry in entries]
+
+    def test_scan_panel_entries_sorts(self, tmp_path: Path) -> None:
+        (tmp_path / "small.txt").write_text("x", encoding="utf-8")
+        (tmp_path / "large.txt").write_text("x" * 100, encoding="utf-8")
+        (tmp_path / "sub").mkdir()
+        entries, truncated = scan_panel_entries(tmp_path, sort_key="size", descending=True)
+        assert truncated is False
+        assert [entry.name for entry in entries] == ["sub", "large.txt", "small.txt"]
+
+    def test_scan_panel_entries_branch(self, tmp_path: Path) -> None:
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "inner.txt").write_text("x", encoding="utf-8")
+        entries, truncated = scan_panel_entries(tmp_path, branch_view=True)
+        assert truncated is False
+        assert [entry.relative for entry in entries] == [str(Path("sub") / "inner.txt")]
+
+    def test_archive_directory_entries_prefix(self, tmp_path: Path) -> None:
+        archive = tmp_path / "a.zip"
+        members = [
+            ArchiveMember("root/", is_dir=True),
+            ArchiveMember("root/file.txt", size=3, mtime=1.0),
+            ArchiveMember("root/sub/inner.txt", size=4),
+            ArchiveMember("root/sub/", is_dir=True),
+            ArchiveMember("other.txt"),
+        ]
+        entries = archive_directory_entries(archive, members, "root")
+        by_name = {entry.name: entry for entry in entries}
+        assert set(by_name) == {"file.txt", "sub"}
+        assert by_name["sub"].is_dir is True
+        assert by_name["sub"].archive_member == "root/sub"
+        assert by_name["file.txt"].size == 3
+
+    def test_run_panel_scan_applies_filter(self, tmp_path: Path) -> None:
+        for name in ("a.txt", "b.py"):
+            (tmp_path / name).write_text("x", encoding="utf-8")
+        request = PanelScanRequest(
+            generation=7,
+            directory=tmp_path,
+            filter_text="txt",
+            filter_definition=FilterDefinition(),
+            previous=("a.txt",),
+        )
+        result = run_panel_scan(request)
+        assert result.generation == 7
+        assert result.error is None
+        assert [entry.name for entry in result.entries] == ["a.txt"]
+        assert result.previous == ("a.txt",)
+
+    def test_run_panel_scan_reports_error(self, tmp_path: Path) -> None:
+        result = run_panel_scan(PanelScanRequest(generation=3, directory=tmp_path / "missing"))
+        assert result.generation == 3
+        assert isinstance(result.error, OSError)
+        assert result.entries == []
+
+    def test_scan_channel_drops_stale_generation(self) -> None:
+        channel = PanelScanChannel()
+        first = channel.begin()
+        channel.put(PanelScanResult(generation=first))
+        second = channel.begin()
+        channel.put(PanelScanResult(generation=second))
+        accepted = channel.drain()
+        assert [result.generation for result in accepted] == [second]
+        assert channel.empty() is True
+        assert channel.generation == second
+
+    def test_scan_channel_keeps_order_for_current_generation(self) -> None:
+        channel = PanelScanChannel()
+        generation = channel.begin()
+        channel.put(PanelScanResult(generation=generation))
+        channel.put(PanelScanResult(generation=generation))
+        assert len(channel.drain()) == 2
+        assert channel.drain() == []
+
     @pytest.mark.skipif(os.name == "nt", reason="Windows 创建符号链接需要额外权限")
     def test_list_directory_symlink(self, tmp_path: Path) -> None:
         target = tmp_path / "target.txt"
@@ -802,6 +948,9 @@ class TestListingAndFormatting:
         assert describe_attributes(hidden) == "FILE H"
         link = FileEntry(name="l", path=Path("/tmp/l"), is_symlink=True)
         assert describe_attributes(link) == "LINK"
+
+    def test_stripe_tag_alternates(self) -> None:
+        assert [stripe_tag(index) for index in range(5)] == ["", "stripe", "", "stripe", ""]
 
     def test_describe_entry(self, tmp_path: Path) -> None:
         target = tmp_path / "a.txt"

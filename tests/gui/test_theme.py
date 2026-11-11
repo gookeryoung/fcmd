@@ -426,6 +426,14 @@ class TestStyleSpecs:
         assert spec.configure["foreground"] == palette.text
         assert ("active", palette.surface_hover) in spec.map["background"]
 
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_active_treeview_draws_accent_focus_ring(self, theme_name: str) -> None:
+        theme = _guitheme.THEMES[theme_name]
+        spec = _guitheme.ttk_style_specs(theme.palette, theme.spacing, native=theme.native)["Active.Treeview"]
+        assert spec.configure["bordercolor"] == theme.palette.accent
+        assert spec.configure["background"] == theme.palette.surface
+        assert ("selected", theme.palette.select_bg) in spec.map["background"]
+
 
 class TestClassicOptions:
     def test_covers_declared_patterns(self) -> None:
@@ -516,6 +524,165 @@ class TestThemeContrast:
     def test_light_and_native_backgrounds_are_light(self) -> None:
         for name in ("light", "native"):
             assert _relative_luminance(_guitheme.THEMES[name].palette.background) > 0.5
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_stripe_layer_differs_from_surface(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
+        assert palette.stripe != palette.surface
+        # 斑马纹只做轻微分层，不能压过正文可读性。
+        assert _contrast(palette.text, palette.stripe) >= 4.5
+
+
+# ============================================================================ #
+# DPI 间距缩放
+# ============================================================================ #
+class TestDpiSpacing:
+    def test_baseline_and_invalid_values_do_not_scale(self) -> None:
+        assert _guitheme.dpi_scale(96) == 1.0
+        assert _guitheme.dpi_scale(72) == 1.0
+        assert _guitheme.dpi_scale(0) == 1.0
+        assert _guitheme.dpi_scale("bad") == 1.0
+        assert _guitheme.dpi_scale("120") == 1.25
+
+    def test_common_windows_scalings(self) -> None:
+        assert _guitheme.dpi_scale(120) == 1.25
+        assert _guitheme.dpi_scale(144) == 1.5
+        assert _guitheme.dpi_scale(192) == 2.0
+
+    def test_scale_is_capped(self) -> None:
+        assert _guitheme.dpi_scale(384) == _guitheme.MAX_SPACING_SCALE
+
+    def test_scales_every_step_and_keeps_minimum_one(self) -> None:
+        scaled = _guitheme.scale_spacing(_guitheme.SPACING, 1.25)
+        assert scaled.hairline == 1
+        assert scaled.xxs == 2
+        assert scaled.xs == 5
+        assert scaled.sm == 10
+        assert scaled.md == 15
+        assert scaled.lg == 20
+        assert scaled.xl == 30
+
+    def test_factor_one_returns_same_object(self) -> None:
+        assert _guitheme.scale_spacing(_guitheme.SPACING, 1.0) is _guitheme.SPACING
+
+    def test_fractional_steps_never_round_down_to_zero(self) -> None:
+        scaled = _guitheme.scale_spacing(_guitheme.Spacing(hairline=1, xxs=1, xs=1, sm=1, md=1, lg=1, xl=1), 1.2)
+        assert all(value == 1 for value in (scaled.hairline, scaled.xxs, scaled.xs, scaled.sm))
+
+
+# ============================================================================ #
+# 亮度与深色标题栏
+# ============================================================================ #
+class TestRelativeLuminance:
+    def test_black_and_white(self) -> None:
+        assert _guitheme.relative_luminance("#000000") == 0.0
+        assert _guitheme.relative_luminance("#ffffff") == pytest.approx(1.0)
+
+    def test_rejects_non_hex_colors(self) -> None:
+        with pytest.raises(ValueError):
+            _guitheme.relative_luminance("black")
+
+    def test_dark_palette_detection(self) -> None:
+        assert _guitheme.is_dark_palette(_guitheme.THEMES["dark-blue"].palette) is True
+        assert _guitheme.is_dark_palette(_guitheme.THEMES["high-contrast"].palette) is True
+        assert _guitheme.is_dark_palette(_guitheme.THEMES["light"].palette) is False
+        assert _guitheme.is_dark_palette(_guitheme.THEMES["native"].palette) is False
+
+    def test_invalid_palette_is_not_dark(self) -> None:
+        assert _guitheme.is_dark_palette(replace(_guitheme.PALETTE, background="nope")) is False
+
+
+class _FakeWindow:
+    def __init__(self, handle: int = 111) -> None:
+        self._handle = handle
+
+    def winfo_id(self) -> int:
+        return self._handle
+
+
+class _FakeUser32:
+    def __init__(self, parent: int = 222) -> None:
+        self._parent = parent
+        self.calls: list[int] = []
+
+    def GetParent(self, handle: int) -> int:
+        self.calls.append(handle)
+        return self._parent
+
+
+class _FakeDwmapi:
+    def __init__(self, results: tuple[int, ...] = (0,)) -> None:
+        self._results = list(results)
+        self.calls: list[tuple[int, int]] = []
+
+    def DwmSetWindowAttribute(self, handle: int, attribute: int, _value: Any, _size: int) -> int:
+        self.calls.append((handle, attribute))
+        return self._results.pop(0) if self._results else 1
+
+
+class TestDarkTitlebar:
+    def test_non_windows_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "linux")
+        monkeypatch.setattr(_guitheme, "_load_windll", lambda: pytest.fail("非 Windows 不应加载 windll"))
+        assert _guitheme.apply_dark_titlebar(_FakeWindow()) is False
+
+    def test_missing_windll_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "win32")
+        monkeypatch.setattr(_guitheme, "_load_windll", lambda: None)
+        assert _guitheme.apply_dark_titlebar(_FakeWindow()) is False
+
+    def test_uses_top_level_handle_and_attribute_20(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "win32")
+        user32, dwmapi = _FakeUser32(parent=222), _FakeDwmapi((0,))
+        monkeypatch.setattr(
+            _guitheme,
+            "_load_windll",
+            lambda: types.SimpleNamespace(user32=user32, dwmapi=dwmapi),
+        )
+        assert _guitheme.apply_dark_titlebar(_FakeWindow(handle=111)) is True
+        assert user32.calls == [111]
+        assert dwmapi.calls == [(222, 20)]
+
+    def test_falls_back_to_attribute_19(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "win32")
+        dwmapi = _FakeDwmapi((1, 0))
+        monkeypatch.setattr(
+            _guitheme,
+            "_load_windll",
+            lambda: types.SimpleNamespace(user32=_FakeUser32(), dwmapi=dwmapi),
+        )
+        assert _guitheme.apply_dark_titlebar(_FakeWindow()) is True
+        assert [attribute for _handle, attribute in dwmapi.calls] == [20, 19]
+
+    def test_all_attributes_failing_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "win32")
+        monkeypatch.setattr(
+            _guitheme,
+            "_load_windll",
+            lambda: types.SimpleNamespace(user32=_FakeUser32(), dwmapi=_FakeDwmapi((1, 1))),
+        )
+        assert _guitheme.apply_dark_titlebar(_FakeWindow(), dark=False) is False
+
+    def test_missing_dwmapi_is_silent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "win32")
+        monkeypatch.setattr(_guitheme, "_load_windll", types.SimpleNamespace)
+        assert _guitheme.apply_dark_titlebar(_FakeWindow()) is False
+
+    def test_window_without_handle_returns_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(_guitheme.sys, "platform", "win32")
+        dwmapi = _FakeDwmapi((0,))
+        monkeypatch.setattr(
+            _guitheme,
+            "_load_windll",
+            lambda: types.SimpleNamespace(user32=_FakeUser32(), dwmapi=dwmapi),
+        )
+
+        class _Broken:
+            def winfo_id(self) -> int:
+                raise AttributeError("no handle")
+
+        assert _guitheme.apply_dark_titlebar(_Broken()) is False
+        assert dwmapi.calls == []
 
 
 # ============================================================================ #
@@ -728,3 +895,27 @@ class TestApplyTheme:
         modules = _guitheme._load_tk_modules()
         assert hasattr(modules.ttk, "Style")
         assert hasattr(modules.tkfont, "families")
+
+    def test_scales_spacing_from_window_dpi(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        modules, style, _fonts = _fake_modules()
+
+        class _HiDpiRoot(_FakeRoot):
+            def winfo_fpixels(self, _value: str) -> float:
+                return 120.0
+
+        monkeypatch.setattr(_guitheme, "_load_tk_modules", lambda: modules)
+        result = _guitheme.apply_theme(cast(Any, _HiDpiRoot()), "dark-blue")
+        assert result.spacing.md == 15
+        assert style.configured["Treeview"]["rowheight"] == result.spacing.lg + result.spacing.xs
+
+    def test_explicit_spacing_is_not_dpi_scaled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        modules, _style, _fonts = _fake_modules()
+
+        class _HiDpiRoot(_FakeRoot):
+            def winfo_fpixels(self, _value: str) -> float:
+                return 144.0
+
+        monkeypatch.setattr(_guitheme, "_load_tk_modules", lambda: modules)
+        spacing = _guitheme.Spacing(md=14)
+        result = _guitheme.apply_theme(cast(Any, _HiDpiRoot()), "dark-blue", spacing=spacing)
+        assert result.spacing.md == 14

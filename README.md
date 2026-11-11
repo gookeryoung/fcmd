@@ -105,7 +105,7 @@ fcmd completion --shell fish | source         # fish
 
 ### GUI 主题
 
-所有 Tk 窗口共用一套可切换主题，内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，选择会写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`，**重新打开窗口后生效**。也可手动编辑该文件：
+所有 Tk 窗口共用一套可切换主题，内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
 
 ```json
 { "theme": "light" }
@@ -114,6 +114,8 @@ fcmd completion --shell fish | source         # fish
 删除该文件、写入非法主题名或 JSON 损坏时，窗口启动会自动回退到 `dark-blue`，不会影响工具本身运行。
 
 `native` 沿用系统 ttk 主题（Windows 为 `vista`），系统原生按钮不接受自定义背景色，因此「强调 / 危险」按钮改用系统按钮底色 + 蓝色 / 红色文字区分语义，避免出现浅底白字；其余主题仍是填充式按钮。
+
+高 DPI（125% / 150%）下间距阶梯会随 `winfo_fpixels('1i')` 按比例放大（96 DPI 为基准，上限 2 倍），避免「字变大、间距不变」；深色主题在 Windows 上同时把标题栏切到深色（`dwmapi`，失败静默）。`cmderw` 的详细列表另有斑马纹交替行与活动面板焦点环，均跟随主题热切换。
 
 窗口设置统一以原子方式写入（临时文件 + 替换），并在每次有效写入前保留一份同名 `.bak` 备份。主文件缺失、损坏或顶层不是对象时，读取会自动回退到 `.bak`。
 

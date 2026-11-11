@@ -41,9 +41,11 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
+from stat import S_ISDIR
 from typing import TYPE_CHECKING, Any, cast
 
 import fcmd
@@ -272,11 +274,15 @@ __all__ = [
     "FileEntry",
     "HashResult",
     "OperationReport",
+    "PanelScanChannel",
+    "PanelScanRequest",
+    "PanelScanResult",
     "PanelState",
     "SearchHit",
     "TransferItem",
     "TrashReport",
     "archive_browsable",
+    "archive_directory_entries",
     "archive_stem",
     "config_path",
     "copy_entry",
@@ -291,6 +297,7 @@ __all__ = [
     "directory_size",
     "extract_archive_members",
     "extract_archive_to",
+    "filter_entries",
     "filter_names",
     "format_hash_report",
     "format_mtime",
@@ -302,6 +309,7 @@ __all__ = [
     "invert_names",
     "is_hidden",
     "is_within",
+    "list_branch",
     "list_directory",
     "load_preview",
     "load_settings",
@@ -318,9 +326,12 @@ __all__ = [
     "rename_entry",
     "resolve_geometry",
     "resolve_path_input",
+    "run_panel_scan",
     "save_settings",
+    "scan_panel_entries",
     "search_paths",
     "sort_entries",
+    "stripe_tag",
     "transfer_entries",
     "unique_path",
     "validate_name",
@@ -390,16 +401,23 @@ _VIEW_MODE_CHOICES: tuple[tuple[str, str], ...] = (
 )
 
 #: 缩略图：后台线程数、单文件读取上限、主线程应用节奏、滚动防抖与网格尺寸。
-_THUMB_WORKERS = 2
+#: 解码单张约 20 ms（4 线程约 200 张/秒），主线程每 60 ms 最多创建 8 个
+#: PhotoImage（约 130 张/秒），两者相当时界面不会被一次性创建图像卡住。
+_THUMB_WORKERS = 4
 _THUMB_READ_LIMIT = 8 * 1024 * 1024
 _THUMB_POLL_MS = 60
-_THUMB_APPLY_PER_TICK = 2
+_THUMB_APPLY_PER_TICK = 8
 _THUMB_REDRAW_MS = 80
 _THUMB_TILE = THUMBNAIL_TILE_SIZE
 _THUMB_LABEL_HEIGHT = 20
 _THUMB_PAD = THUMBNAIL_GAP
 _THUMB_CELL_WIDTH = _THUMB_TILE + 2 * _THUMB_PAD
 _THUMB_CELL_HEIGHT = _THUMB_TILE + _THUMB_LABEL_HEIGHT + 2 * _THUMB_PAD
+
+#: 面板刷新：后台扫描结果轮询间隔，以及主线程每次空闲插入的行数
+#: （实测每千行约 13 ms，1000 行可让单次回调保持在 16 ms 以内）。
+_SCAN_POLL_MS = 20
+_INSERT_CHUNK = 1000
 
 
 def _decode_thumbnail_with_pillow(data: bytes, tile_size: int) -> bytes | None:
@@ -837,35 +855,266 @@ def sort_entries(
     return ordered
 
 
+def _entry_from_dir_entry(child: os.DirEntry[str]) -> FileEntry:
+    """把 ``os.scandir`` 条目转成 :class:`FileEntry`，只做必要的元数据查询。
+
+    ``DirEntry`` 在 Windows 上已缓存 ``FindFirstFile`` 的结果，读取类型、大小、
+    修改时间不会重复触发系统调用；旧实现用 ``Path.stat()`` + ``is_dir()`` +
+    ``is_symlink()``，等于对每个条目做三次独立查询。
+
+    语义与旧实现保持一致：符号链接跟随到目标判断类型、取目标大小与时间
+    （断链回退为 0），``is_symlink`` 只看链接本身，隐藏属性取目标属性。
+    """
+    is_symlink = child.is_symlink()
+    stat: os.stat_result | None = None
+    with contextlib.suppress(OSError):
+        # 普通条目用不跟随的查询（POSIX 上可命中 lstat 缓存）；符号链接
+        # 跟随目标，保持与 ``Path.stat()`` 一致的大小/时间/隐藏属性。
+        stat = child.stat() if is_symlink else child.stat(follow_symlinks=False)
+    is_dir = stat is not None and S_ISDIR(stat.st_mode)
+    return FileEntry(
+        name=child.name,
+        path=Path(child.path),
+        is_dir=is_dir,
+        is_symlink=is_symlink,
+        size=0 if is_dir else (stat.st_size if stat is not None else 0),
+        mtime=stat.st_mtime if stat is not None else 0.0,
+        hidden=is_hidden(child.name, stat),
+    )
+
+
 def list_directory(directory: Path, *, show_hidden: bool = False) -> list[FileEntry]:
     """读取目录内容（不递归），返回按默认规则排序的条目列表。"""
     if not directory.is_dir():
         raise NotADirectoryError(f"不是目录: {directory}")
     entries: list[FileEntry] = []
-    for child in directory.iterdir():
+    with os.scandir(directory) as iterator:
+        for child in iterator:
+            entry = _entry_from_dir_entry(child)
+            if entry.hidden and not show_hidden:
+                continue
+            entries.append(entry)
+    return sort_entries(entries)
+
+
+def list_branch(
+    directory: Path,
+    *,
+    show_hidden: bool = False,
+    max_depth: int = BRANCH_MAX_DEPTH,
+    max_entries: int = BRANCH_MAX_ENTRIES,
+) -> tuple[list[FileEntry], bool]:
+    """分支视图扫描：BFS 递归列出所有文件，返回 ``(条目, 是否截断)``。
+
+    隐藏项整体跳过；符号链接目录不递归；超过深度或条目上限时返回截断标记。
+    队列使用 :class:`collections.deque`，避免 ``list.pop(0)`` 的 O(n²) 搬移。
+    """
+    if not directory.is_dir():
+        raise NotADirectoryError(f"不是目录: {directory}")
+    entries: list[FileEntry] = []
+    pending: deque[tuple[Path, int]] = deque([(directory, 0)])
+    truncated = False
+    while pending:
+        if len(entries) >= max_entries:
+            truncated = True
+            break
+        current, depth = pending.popleft()
         try:
-            stat = child.stat()
+            with os.scandir(current) as iterator:
+                children = sorted(iterator, key=lambda child: child.name)
+                for child in children:
+                    entry = _entry_from_dir_entry(child)
+                    if entry.hidden and not show_hidden:
+                        continue
+                    if entry.is_dir:
+                        if not entry.is_symlink and depth < max_depth:
+                            pending.append((entry.path, depth + 1))
+                        continue
+                    entries.append(replace(entry, relative=branch_relative_path(directory, entry.path)))
         except OSError:
-            stat = None
-        hidden = is_hidden(child.name, stat)
-        if hidden and not show_hidden:
             continue
-        is_dir = child.is_dir()
-        is_link = child.is_symlink()
-        size = 0 if is_dir else (stat.st_size if stat is not None else 0)
-        mtime = stat.st_mtime if stat is not None else 0.0
+    return entries, truncated or bool(pending)
+
+
+def archive_directory_entries(
+    archive: Path,
+    members: Sequence[ArchiveMember],
+    prefix: str = "",
+) -> list[FileEntry]:
+    """把归档成员折算为当前包内目录的直接子项（归档只读浏览的数据源）。"""
+    seen_dirs: set[str] = set()
+    entries: list[FileEntry] = []
+    for member in members:
+        name = member.name.rstrip("/")
+        if not name:
+            continue
+        if prefix:
+            if not name.startswith(f"{prefix}/"):
+                continue
+            rest = name[len(prefix) + 1 :]
+        else:
+            rest = name
+        if not rest:
+            continue
+        head, sep, _tail = rest.partition("/")
+        if not head:
+            continue
+        if sep or member.is_dir:
+            if head in seen_dirs:
+                continue
+            seen_dirs.add(head)
+            entries.append(
+                FileEntry(
+                    name=head,
+                    path=archive,
+                    is_dir=True,
+                    archive_member=f"{prefix}/{head}".strip("/") if prefix else head,
+                )
+            )
+            continue
         entries.append(
             FileEntry(
-                name=child.name,
-                path=child,
-                is_dir=is_dir,
-                is_symlink=is_link,
-                size=size,
-                mtime=mtime,
-                hidden=hidden,
+                name=head,
+                path=archive,
+                size=member.size,
+                mtime=member.mtime,
+                archive_member=name,
             )
         )
-    return sort_entries(entries)
+    return entries
+
+
+def filter_entries(
+    entries: Sequence[FileEntry],
+    filter_text: str = "",
+    definition: FilterDefinition | None = None,
+) -> list[FileEntry]:
+    """按快速过滤文本与过滤定义筛出可见条目，保持原顺序。"""
+    labels = [entry.label for entry in entries]
+    if filter_text:
+        labels = filter_names(labels, filter_text)
+    if definition is not None:
+        labels = apply_filter_definition(labels, definition)
+    visible = set(labels)
+    return [entry for entry in entries if entry.label in visible]
+
+
+def scan_panel_entries(  # noqa: PLR0913 - 数据源开关由调用方逐个透传
+    directory: Path,
+    *,
+    archive: Path | None = None,
+    archive_members: Sequence[ArchiveMember] = (),
+    archive_prefix: str = "",
+    branch_view: bool = False,
+    show_hidden: bool = False,
+    sort_key: str = DEFAULT_SORT_KEY,
+    descending: bool = False,
+) -> tuple[list[FileEntry], bool]:
+    """面板数据源统一入口：归档 / 分支视图 / 普通目录，返回 ``(条目, 是否截断)``。"""
+    if archive is not None:
+        entries = archive_directory_entries(archive, archive_members, archive_prefix)
+        truncated = False
+    elif branch_view:
+        entries, truncated = list_branch(directory, show_hidden=show_hidden)
+    else:
+        entries = list_directory(directory, show_hidden=show_hidden)
+        truncated = False
+    return sort_entries(entries, sort_key=sort_key, descending=descending), truncated
+
+
+@dataclass(frozen=True)
+class PanelScanRequest:
+    """一次面板扫描请求：主线程打包参数，后台线程只读这些快照。"""
+
+    generation: int
+    directory: Path
+    archive: Path | None = None
+    archive_members: tuple[ArchiveMember, ...] = ()
+    archive_prefix: str = ""
+    branch_view: bool = False
+    show_hidden: bool = False
+    sort_key: str = DEFAULT_SORT_KEY
+    descending: bool = False
+    filter_text: str = ""
+    filter_definition: FilterDefinition | None = None
+    previous: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class PanelScanResult:
+    """后台扫描结果；``error`` 非空时其余字段无意义。"""
+
+    generation: int
+    entries: list[FileEntry] = field(default_factory=list)
+    truncated: bool = False
+    previous: tuple[str, ...] = ()
+    error: OSError | None = None
+
+
+def run_panel_scan(request: PanelScanRequest) -> PanelScanResult:
+    """执行一次面板扫描（线程内调用，不触碰 Tk），异常折算为结果里的 ``error``。"""
+    try:
+        entries, truncated = scan_panel_entries(
+            request.directory,
+            archive=request.archive,
+            archive_members=request.archive_members,
+            archive_prefix=request.archive_prefix,
+            branch_view=request.branch_view,
+            show_hidden=request.show_hidden,
+            sort_key=request.sort_key,
+            descending=request.descending,
+        )
+        entries = filter_entries(entries, request.filter_text, request.filter_definition)
+    except OSError as exc:
+        return PanelScanResult(generation=request.generation, previous=request.previous, error=exc)
+    return PanelScanResult(
+        generation=request.generation,
+        entries=entries,
+        truncated=truncated,
+        previous=request.previous,
+    )
+
+
+class PanelScanChannel:
+    """扫描结果通道：世代号 + 线程安全队列，供后台扫描与主线程轮询协作。
+
+    每次开始新扫描递增世代；轮询只返回当前世代的结果，旧世代直接丢弃，
+    连续切换目录时过期的扫描结果因此不会覆盖新目录。
+    """
+
+    __slots__ = ("_generation", "_results")
+
+    def __init__(self) -> None:
+        self._generation = 0
+        self._results: queue.Queue[PanelScanResult] = queue.Queue()
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    def begin(self) -> int:
+        """开始一次新扫描：递增世代号并返回，旧世代结果随即失效。"""
+        self._generation += 1
+        return self._generation
+
+    def put(self, result: PanelScanResult) -> None:
+        """后台线程投递结果（线程安全）。"""
+        self._results.put(result)
+
+    def drain(self) -> list[PanelScanResult]:
+        """主线程取出当前世代的结果，丢弃过期结果。"""
+        accepted: list[PanelScanResult] = []
+        while True:
+            try:
+                result = self._results.get_nowait()
+            except queue.Empty:
+                return accepted
+            if result.generation == self._generation:
+                accepted.append(result)
+
+    def empty(self) -> bool:
+        """队列是否已空（含未取出的过期结果）。"""
+        return self._results.empty()
 
 
 def _compact_number(value: float) -> str:
@@ -904,6 +1153,11 @@ def describe_attributes(entry: FileEntry) -> str:
     else:
         kind = "FILE"
     return f"{kind} H" if entry.hidden else kind
+
+
+def stripe_tag(index: int) -> str:
+    """斑马纹行 tag：奇数行返回 ``"stripe"``，偶数行返回空串（用默认背景）。"""
+    return "stripe" if index % 2 else ""
 
 
 def describe_entry(entry: FileEntry) -> str:
@@ -1404,6 +1658,19 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._restore_selection: list[str] | None = normalize_selection(self.state.selection)
         self._last_path = self.state.path
         self._branch_truncated = False
+        self._scan_channel = PanelScanChannel()
+        self._scan_executor: ThreadPoolExecutor | None = None
+        self._scan_future: Any = None
+        self._scan_poll_id: str | None = None
+        self._loading = False
+        self._pending_select: tuple[list[str], bool] | None = None
+        self._last_selection: set[str] = set()
+        self._active_panel = False
+        self._insert_entries: list[FileEntry] = []
+        self._insert_index = 0
+        self._insert_previous: set[str] = set()
+        self._insert_tags: dict[str, str] = {}
+        self._insert_poll_id: str | None = None
         self.archive: Path | None = None
         self.archive_prefix = ""
         self._archive_members: list[ArchiveMember] | None = None
@@ -1471,6 +1738,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
         self.tree.tag_configure("dir", foreground=theme.palette.accent)
         self.tree.tag_configure("hidden", foreground=theme.palette.muted)
+        self.tree.tag_configure("stripe", background=theme.palette.stripe)
         self.tree.bind("<Double-1>", self._on_activate)
         self.tree.bind("<Return>", self._on_activate)
         self.tree.bind("<BackSpace>", lambda _event: self.go_up())
@@ -1948,8 +2216,28 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         return self.tabs[self.tab_index]
 
     def set_title_active(self, active: bool) -> None:
-        """激活面板用标题样式高亮。"""
+        """激活面板用标题样式 + 列表焦点环高亮，非活动面板回落默认边框。"""
+        self._active_panel = active
         self.title_label.configure(style="Title.TLabel" if active else "Muted.TLabel")
+        palette = self.app.theme.palette
+        with contextlib.suppress(self._tk.TclError):
+            self.tree.configure(style="Active.Treeview" if active else "Treeview")
+            self._thumb_canvas.configure(
+                highlightthickness=1 if active else 0,
+                highlightbackground=palette.accent if active else palette.border,
+                highlightcolor=palette.accent,
+            )
+
+    def restyle(self, theme: _guitheme.Theme) -> None:
+        """主题热切换：重设写入调色板的行 tag、焦点环与缩略图画布背景。"""
+        self.tree.tag_configure("dir", foreground=theme.palette.accent)
+        self.tree.tag_configure("hidden", foreground=theme.palette.muted)
+        self.tree.tag_configure("stripe", background=theme.palette.stripe)
+        with contextlib.suppress(self._tk.TclError):
+            self._thumb_canvas.configure(background=theme.palette.surface)
+        self.set_title_active(self._active_panel)
+        if self._is_thumbnail_view():
+            self._request_thumb_redraw(immediate=True)
 
     # ------------------------------------------------------------------ #
     # 标签页
@@ -2087,8 +2375,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             return
         self.select_tab((self.tab_index + delta) % len(self.tabs))
 
-    def refresh(self, select: str | None = None) -> None:  # noqa: PLR0912 - 恢复选择、过滤与视图模式分支较集中
-        """重新读取当前目录并恢复选择。"""
+    def refresh(self, select: str | None = None) -> None:
+        """重新读取当前目录并恢复选择（扫描在后台线程完成，主线程分块插入）。"""
         self._invalidate_thumbnails("refresh")
         self._render_tabs()
         previous_path = self._last_path
@@ -2100,54 +2388,125 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.path_var.set(f"{self.archive}{suffix}")
         directory = Path(self.state.path)
         self._branch_truncated = False
-        try:
-            entries = self._load_entries(directory)
-        except OSError as exc:
-            self.entries = []
-            self._index = {}
-            self.tree.delete(*self.tree.get_children())
-            self.status_var.set(f"无法读取目录: {exc}")
-            self.app.set_status(f"无法读取目录: {directory}")
-            return
-        previous = set(self.tree.selection())
+        previous = set(self.tree.selection()) or set(self._last_selection)
         if select:
             previous = {select}
         elif self._restore_selection is not None:
             previous = set(self._restore_selection)
             self._restore_selection = None
-        if self._filter:
-            labels = filter_names([entry.label for entry in entries], self._filter)
-        else:
-            labels = [entry.label for entry in entries]
-        labels = apply_filter_definition(labels, self.app.settings.filter_definition)
-        visible = set(labels)
-        entries = [entry for entry in entries if entry.label in visible]
-        self.entries = entries
-        self._index = {entry.label: entry for entry in entries}
+        self._start_scan(directory, previous)
+
+    def _start_scan(self, directory: Path, previous: set[str]) -> None:
+        """提交一次后台扫描：递增世代号，作废旧世代结果与未完成的分块插入。"""
+        self._cancel_insert()
+        generation = self._scan_channel.begin()
+        old_future = self._scan_future
+        if old_future is not None and not old_future.done():
+            old_future.cancel()
+        if self._scan_executor is None:
+            self._scan_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"cmderw-scan-{self.side}")
+        request = PanelScanRequest(
+            generation=generation,
+            directory=directory,
+            archive=self.archive,
+            archive_members=tuple(self._archive_members or ()),
+            archive_prefix=self.archive_prefix,
+            branch_view=self.state.branch_view,
+            show_hidden=self.app.settings.show_hidden,
+            sort_key=self.state.sort_key,
+            descending=self.state.descending,
+            filter_text=self._filter,
+            filter_definition=self.app.settings.filter_definition,
+            previous=tuple(previous),
+        )
+        self._scan_future = self._scan_executor.submit(run_panel_scan, request)
+        self._scan_future.add_done_callback(
+            lambda future, generation=generation: self._collect_scan_result(future, generation)
+        )
+        self._loading = True
+        if self._scan_poll_id is None:
+            self._scan_poll_id = self.frame.after(_SCAN_POLL_MS, self._poll_scan)
+
+    def _collect_scan_result(self, future: Any, generation: int) -> None:
+        """后台线程回调：把结果放入通道；取消则丢弃，异常折算为错误结果。"""
+        if future.cancelled():
+            return
+        try:
+            result = future.result()
+        except Exception as exc:
+            result = PanelScanResult(generation=generation, error=OSError(str(exc)))
+        self._scan_channel.put(result)
+
+    def _poll_scan(self) -> None:
+        """主线程轮询扫描结果：只接受当前世代，连续切目录时旧结果直接丢弃。"""
+        self._scan_poll_id = None
+        for result in self._scan_channel.drain():
+            self._apply_scan_result(result)
+        future = self._scan_future
+        if (future is not None and not future.done()) or not self._scan_channel.empty():
+            self._scan_poll_id = self.frame.after(_SCAN_POLL_MS, self._poll_scan)
+
+    def _apply_scan_result(self, result: PanelScanResult) -> None:
+        """应用最新扫描结果：更新条目索引并启动分块插入。"""
+        if result.error is not None:
+            self._loading = False
+            self._cancel_insert()
+            self.entries = []
+            self._index = {}
+            self.tree.delete(*self.tree.get_children())
+            self.status_var.set(f"无法读取目录: {result.error}")
+            self.app.set_status(f"无法读取目录: {self.state.path}")
+            return
+        self._branch_truncated = result.truncated
+        self.entries = result.entries
+        self._index = {entry.label: entry for entry in result.entries}
+        self._begin_insert(result.entries, set(result.previous))
+
+    def _begin_insert(self, entries: Sequence[FileEntry], previous: set[str]) -> None:
+        """清空列表并把行插入拆块；块间让出事件循环，避免大目录冻结界面。"""
+        self._cancel_insert()
         self.tree.delete(*self.tree.get_children())
+        self._insert_entries = list(entries)
+        self._insert_index = 0
+        self._insert_previous = previous
+        self._insert_tags = {}
+        self._insert_chunk()
+
+    def _insert_chunk(self) -> None:
+        """插入一块行（约 1000 行），未完时用 ``after`` 继续下一块。"""
+        self._insert_poll_id = None
+        entries = self._insert_entries
+        start = self._insert_index
+        end = min(start + _INSERT_CHUNK, len(entries))
         now = time.time()
-        color_tags: dict[str, str] = {}
-        for entry in entries:
+        rules = self.app.settings.color_rules
+        for offset, entry in enumerate(entries[start:end]):
             tags: list[str] = []
             if entry.is_dir:
                 tags.append("dir")
             if entry.hidden:
                 tags.append("hidden")
-            style = resolve_color_style(
-                self.app.settings.color_rules,
-                ColorSubject(
-                    name=entry.name,
-                    is_dir=entry.is_dir,
-                    is_symlink=entry.is_symlink,
-                    hidden=entry.hidden,
-                    size=entry.size,
-                    mtime=entry.mtime,
-                ),
-                now,
-            )
-            tag = self._color_tag(style, color_tags)
-            if tag:
-                tags.append(tag)
+            has_background = False
+            if rules:
+                style = resolve_color_style(
+                    rules,
+                    ColorSubject(
+                        name=entry.name,
+                        is_dir=entry.is_dir,
+                        is_symlink=entry.is_symlink,
+                        hidden=entry.hidden,
+                        size=entry.size,
+                        mtime=entry.mtime,
+                    ),
+                    now,
+                )
+                tag = self._color_tag(style, self._insert_tags)
+                if tag:
+                    tags.append(tag)
+                    has_background = bool(style and style.background)
+            stripe = stripe_tag(start + offset)
+            if stripe and not has_background:
+                tags.append(stripe)
             self.tree.insert(
                 "",
                 "end",
@@ -2161,6 +2520,19 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
                 ),
                 tags=tags,
             )
+        self._insert_index = end
+        if end < len(entries):
+            self._insert_poll_id = self.tree.after(1, self._insert_chunk)
+            return
+        self._finish_insert()
+
+    def _finish_insert(self) -> None:
+        """插入完成：恢复选择、应用视图模式，并补上加载期间挂起的选择请求。"""
+        previous = self._insert_previous
+        self._insert_entries = []
+        self._insert_tags = {}
+        self._insert_previous = set()
+        self._loading = False
         existing = set(self.tree.get_children())
         for name in previous & existing:
             self.tree.selection_add(name)
@@ -2170,69 +2542,74 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self._request_thumb_redraw(immediate=True)
         if self._quick_visible:
             self.update_quick_view()
+        self._apply_pending_select()
+        self._last_selection = set(self.tree.selection())
         self.app.on_panel_refreshed(self)
 
+    def _cancel_insert(self) -> None:
+        """取消未完成的分块插入（新扫描到来或窗口关闭时）。"""
+        if self._insert_poll_id is not None:
+            with contextlib.suppress(self._tk.TclError):
+                self.tree.after_cancel(self._insert_poll_id)
+            self._insert_poll_id = None
+        self._insert_entries = []
+        self._insert_index = 0
+        self._insert_previous = set()
+        self._insert_tags = {}
+
+    def _apply_pending_select(self) -> None:
+        """应用加载期间记录的 ``select_name`` / ``select_names`` 请求。"""
+        pending = self._pending_select
+        if pending is None:
+            return
+        self._pending_select = None
+        names, focus = pending
+        visible = set(self.tree.get_children())
+        targets = [name for name in names if name in visible]
+        if targets:
+            self.tree.selection_set(*targets)
+            self.tree.see(targets[0])
+        if focus:
+            self.focus_tree()
+        self._update_status()
+
+    def shutdown_scan(self) -> None:
+        """关窗前停止扫描轮询与分块插入，并回收扫描线程。"""
+        if self._scan_poll_id is not None:
+            with contextlib.suppress(self._tk.TclError):
+                self.frame.after_cancel(self._scan_poll_id)
+            self._scan_poll_id = None
+        self._cancel_insert()
+        future = self._scan_future
+        self._scan_future = None
+        if future is not None:
+            future.cancel()
+        executor = self._scan_executor
+        self._scan_executor = None
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+
     def _load_entries(self, directory: Path) -> list[FileEntry]:
-        """读取目录并排序：压缩包 / 分支视图 / 普通目录三种来源。"""
-        if self.archive is not None:
-            entries = self._archive_entries()
-        elif self.state.branch_view:
-            entries = self._list_branch(directory)
-        else:
-            entries = list_directory(directory, show_hidden=self.app.settings.show_hidden)
-        return sort_entries(
-            entries,
+        """同步读取目录并排序（后台扫描使用 :func:`run_panel_scan`）。"""
+        entries, truncated = scan_panel_entries(
+            directory,
+            archive=self.archive,
+            archive_members=self._archive_members or (),
+            archive_prefix=self.archive_prefix,
+            branch_view=self.state.branch_view,
+            show_hidden=self.app.settings.show_hidden,
             sort_key=self.state.sort_key,
             descending=self.state.descending,
         )
+        self._branch_truncated = truncated
+        return entries
 
     def _archive_entries(self) -> list[FileEntry]:
         """把归档成员折算为当前包内目录的直接子项。"""
         archive = self.archive
         if archive is None:
             return []
-        members = self._archive_members or []
-        prefix = self.archive_prefix
-        seen_dirs: set[str] = set()
-        entries: list[FileEntry] = []
-        for member in members:
-            name = member.name.rstrip("/")
-            if not name:
-                continue
-            if prefix:
-                if not name.startswith(f"{prefix}/"):
-                    continue
-                rest = name[len(prefix) + 1 :]
-            else:
-                rest = name
-            if not rest:
-                continue
-            head, sep, _tail = rest.partition("/")
-            if not head:
-                continue
-            if sep or member.is_dir:
-                if head in seen_dirs:
-                    continue
-                seen_dirs.add(head)
-                entries.append(
-                    FileEntry(
-                        name=head,
-                        path=archive,
-                        is_dir=True,
-                        archive_member=f"{prefix}/{head}".strip("/") if prefix else head,
-                    )
-                )
-                continue
-            entries.append(
-                FileEntry(
-                    name=head,
-                    path=archive,
-                    size=member.size,
-                    mtime=member.mtime,
-                    archive_member=name,
-                )
-            )
-        return entries
+        return archive_directory_entries(archive, self._archive_members or [], self.archive_prefix)
 
     def open_archive(self, archive: Path) -> bool:
         """进入归档只读浏览；不支持或读取失败时提示并返回 ``False``。"""
@@ -2336,48 +2713,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def _list_branch(self, directory: Path) -> list[FileEntry]:
         """分支视图：递归列出所有文件，``relative`` 记录相对根目录的路径。
 
-        隐藏目录按隐藏项整体跳过；符号链接目录不递归；深度与条目数设上限，
-        超限时在状态栏给出提示而不是卡死界面。
+        扫描逻辑在模块级 :func:`list_branch`（可单测），这里只保存截断标记。
         """
-        if not directory.is_dir():
-            raise NotADirectoryError(f"不是目录: {directory}")
-        show_hidden = self.app.settings.show_hidden
-        entries: list[FileEntry] = []
-        pending: list[tuple[Path, int]] = [(directory, 0)]
-        truncated = False
-        while pending:
-            if len(entries) >= BRANCH_MAX_ENTRIES:
-                truncated = True
-                break
-            current, depth = pending.pop(0)
-            try:
-                children = sorted(current.iterdir())
-            except OSError:
-                continue
-            for child in children:
-                try:
-                    stat = child.stat()
-                except OSError:
-                    stat = None
-                hidden = is_hidden(child.name, stat)
-                if hidden and not show_hidden:
-                    continue
-                if child.is_dir():
-                    if not child.is_symlink() and depth < BRANCH_MAX_DEPTH:
-                        pending.append((child, depth + 1))
-                    continue
-                entries.append(
-                    FileEntry(
-                        name=child.name,
-                        path=child,
-                        is_symlink=child.is_symlink(),
-                        size=stat.st_size if stat is not None else 0,
-                        mtime=stat.st_mtime if stat is not None else 0.0,
-                        hidden=hidden,
-                        relative=branch_relative_path(directory, child),
-                    )
-                )
-        self._branch_truncated = truncated or bool(pending)
+        entries, truncated = list_branch(directory, show_hidden=self.app.settings.show_hidden)
+        self._branch_truncated = truncated
         return entries
 
     def _color_tag(self, style: ColorStyle | None, cache: dict[str, str]) -> str:
@@ -2587,6 +2926,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.status_var.set(text)
 
     def _on_select(self, _event: Any = None) -> None:
+        self._last_selection = set(self.tree.selection())
         self.app.set_active(self)
         self._update_status()
         if self._quick_visible:
@@ -2709,7 +3049,13 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         return [self._index[name] for name in self.tree.selection() if name in self._index]
 
     def select_name(self, name: str) -> None:
-        """按名称选中并滚动到可见位置；分支视图下按文件名回退匹配。"""
+        """按名称选中并滚动到可见位置；分支视图下按文件名回退匹配。
+
+        异步刷新尚未完成时先记下请求，等行插入完成后统一应用。
+        """
+        if self._loading:
+            self._pending_select = ([name], False)
+            return
         target = name if name in self.tree.get_children() else ""
         if not target:
             target = next(
@@ -2736,7 +3082,13 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self._update_status()
 
     def select_names(self, names: Sequence[str], *, focus: bool = False) -> int:
-        """在可见行中选择给定名称，返回实际选中数。"""
+        """在可见行中选择给定名称，返回实际选中数。
+
+        异步刷新尚未完成时先记下请求，返回请求数量，等插入完成后应用。
+        """
+        if self._loading:
+            self._pending_select = (list(names), focus)
+            return len(names)
         visible = set(self.tree.get_children())
         targets = [name for name in names if name in visible]
         if targets:
@@ -6578,12 +6930,18 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._user_command_dialog = None
 
     def save_theme_choice(self) -> None:
-        """配置 → 主题：写入设置，重新打开窗口后生效；非法值回落默认。"""
+        """配置 → 主题：立即重设样式并保存选择，无需重开窗口；非法值回落默认。"""
         chosen = _guitheme.resolve_theme(self._theme_var.get())
-        self.settings.theme = chosen.name
         self._theme_var.set(chosen.name)
+        self.theme = _guitheme.apply_theme(self.root, chosen)
+        self.settings.theme = self.theme.name
         save_settings(self.settings, self._settings_path)
-        self.set_status(f"主题已保存：{chosen.label}；重新打开窗口后生效")
+        self.left.restyle(self.theme)
+        self.right.restyle(self.theme)
+        self._tree.tag_configure("current", foreground=self.theme.palette.accent)
+        with contextlib.suppress(self._tk.TclError):
+            _guitheme.apply_dark_titlebar(self.root, dark=_guitheme.is_dark_palette(self.theme.palette))
+        self.set_status(f"主题已切换：{chosen.label}")
 
     def run_user_command(self, command: UserCommand) -> None:
         """展开占位符后在活动面板目录执行用户命令。"""
@@ -8347,6 +8705,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._closing = True
         self.left._clear_archive_state()
         self.right._clear_archive_state()
+        self.left.shutdown_scan()
+        self.right.shutdown_scan()
         self.left.shutdown_thumbnails()
         self.right.shutdown_thumbnails()
         self._store_panel_state()

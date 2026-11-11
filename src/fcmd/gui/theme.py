@@ -50,22 +50,28 @@ __all__ = [
     "Palette",
     "Spacing",
     "Theme",
+    "apply_dark_titlebar",
     "apply_theme",
     "can_render_cjk",
     "classic_options",
+    "dpi_scale",
     "enable_dpi_awareness",
     "font_plan",
     "font_renders_cjk",
     "install_theme_switcher",
+    "is_dark_palette",
     "load_theme",
     "missing_palette_tokens",
     "pick_font_family",
     "proportional_geometry",
     "read_theme_name",
+    "relative_luminance",
     "resolve_theme",
     "save_theme",
+    "scale_spacing",
     "theme_config_path",
     "theme_names",
+    "tk_dpi_scale",
     "ttk_style_specs",
     "ui_font_family",
 ]
@@ -161,6 +167,7 @@ class Palette:
     success: str = "#4ade80"
     warning: str = "#fbbf24"
     danger: str = "#f87171"
+    stripe: str = "#151f2f"
 
 
 @dataclass(frozen=True, slots=True)
@@ -249,6 +256,7 @@ _LIGHT = Theme(
         success="#15803d",
         warning="#b45309",
         danger="#b91c1c",
+        stripe="#f6f8fb",
     ),
     description="浅色底 + 蓝色强调，适合白天办公、投影与浅色桌面。",
 )
@@ -277,6 +285,7 @@ _HIGH_CONTRAST = Theme(
         success="#00ff88",
         warning="#ffb000",
         danger="#ff5555",
+        stripe="#141414",
     ),
     description="纯黑底 + 白字 + 黄色强调，优先低视力与强光环境可读性。",
 )
@@ -305,6 +314,7 @@ _NATIVE = Theme(
         success="#107c10",
         warning="#9d5d00",
         danger="#c42b1c",
+        stripe="#f4f4f4",
     ),
     native=True,
     description="浅灰系统色 + 蓝色强调，保留系统 ttk 观感，主题化收敛到字体与强调色。",
@@ -361,6 +371,7 @@ STYLE_NAMES: Final[tuple[str, ...]] = (
     "TScrollbar",
     "Treeview",
     "Treeview.Heading",
+    "Active.Treeview",
     "TNotebook",
     "TNotebook.Tab",
     "TSeparator",
@@ -775,6 +786,22 @@ def ttk_style_specs(
                 "padding": (spacing.sm, spacing.xs),
             }
         ),
+        "Active.Treeview": StyleSpec(
+            {
+                "background": palette.surface,
+                "fieldbackground": palette.surface,
+                "foreground": palette.text,
+                "font": BODY_FONT,
+                "rowheight": spacing.lg + spacing.xs,
+                "bordercolor": palette.accent,
+                "borderwidth": max(1, spacing.hairline),
+                "relief": "solid",
+            },
+            {
+                "background": [("selected", palette.select_bg)],
+                "foreground": [("selected", palette.select_fg)],
+            },
+        ),
         "TNotebook": StyleSpec({"background": palette.background, "bordercolor": palette.border}),
         "TNotebook.Tab": StyleSpec(
             {
@@ -876,6 +903,122 @@ def proportional_geometry(
 
 
 DPI_AWARENESS_PER_MONITOR: Final[int] = 2
+
+DPI_BASELINE: Final[float] = 96.0
+"""间距基准 DPI：Windows 100% 缩放时为 96。"""
+
+MAX_SPACING_SCALE: Final[float] = 2.0
+"""间距缩放上限，避免 4K 高缩放下的边缘留白过大。"""
+
+
+def dpi_scale(fpixels_per_inch: float | str) -> float:
+    """把每英寸像素数折算成相对 96 DPI 的间距缩放比（1.0–2.0）。
+
+    125% 缩放（120 ppi）返回 1.25，150%（144 ppi）返回 1.5；非法值或
+    低于基准的值统一返回 1.0，保证 100% 缩放下间距与旧版完全一致。
+    """
+    try:
+        value = float(fpixels_per_inch)
+    except (TypeError, ValueError):
+        return 1.0
+    if value <= DPI_BASELINE:
+        return 1.0
+    return min(value / DPI_BASELINE, MAX_SPACING_SCALE)
+
+
+def scale_spacing(spacing: Spacing = SPACING, factor: float = 1.0) -> Spacing:
+    """按缩放比放大间距阶梯的每个像素值（四舍五入，且不小于 1px）。
+
+    字号用磅值时 Tk 会跟随 DPI 自动放大，间距若保持固定像素就会出现
+    「字变大、间距不变」的拥挤观感；本函数让两者同步。
+    """
+    if factor == 1.0:
+        return spacing
+    return replace(
+        spacing,
+        hairline=max(1, round(spacing.hairline * factor)),
+        xxs=max(1, round(spacing.xxs * factor)),
+        xs=max(1, round(spacing.xs * factor)),
+        sm=max(1, round(spacing.sm * factor)),
+        md=max(1, round(spacing.md * factor)),
+        lg=max(1, round(spacing.lg * factor)),
+        xl=max(1, round(spacing.xl * factor)),
+    )
+
+
+def tk_dpi_scale(root: Misc) -> float:  # pragma: no cover - 需要真实 Tk 窗口
+    """按 ``winfo_fpixels('1i')`` 计算当前窗口的间距缩放比；取不到时返回 1.0。"""
+    with contextlib.suppress(Exception):
+        return dpi_scale(float(root.winfo_fpixels("1i")))
+    return 1.0
+
+
+def relative_luminance(color: str) -> float:
+    """按 WCAG 2 计算 ``#rrggbb`` 的相对亮度（0–1）；非法色值抛 ``ValueError``。"""
+    if _HEX_COLOR_RE.fullmatch(color) is None:
+        raise ValueError(f"不是 #rrggbb 颜色: {color!r}")
+
+    def channel(value: int) -> float:
+        srgb = value / 255
+        return srgb / 12.92 if srgb <= 0.03928 else ((srgb + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (int(color[index : index + 2], 16) for index in (1, 3, 5))
+    return 0.2126 * channel(red) + 0.7152 * channel(green) + 0.0722 * channel(blue)
+
+
+def is_dark_palette(palette: Palette = PALETTE) -> bool:
+    """调色板背景是否属于深色（决定 Windows 标题栏用深色还是浅色）。"""
+    try:
+        return relative_luminance(palette.background) < 0.5
+    except ValueError:
+        return False
+
+
+_DWMWA_IMMERSIVE_DARK_MODE: Final[tuple[int, ...]] = (20, 19)
+"""``DwmSetWindowAttribute`` 的深色模式属性号：Win10 20H1 起为 20，旧版本为 19。"""
+
+
+def apply_dark_titlebar(window: Any, *, dark: bool = True) -> bool:
+    """把 Windows 顶层窗口的标题栏切到深色（失败静默，不影响窗口启动）。
+
+    Tk 8.6 不提供标题栏配色，只能对系统 DWM 属性下手：属性 20 用于 Windows 10
+    20H1 及以后，19 用于更早版本。非 Windows、缺少 ``dwmapi`` 或调用失败都返回
+    ``False``，调用方可忽略返回值。
+    """
+    if sys.platform != "win32":
+        return False
+    windll = _load_windll()
+    if windll is None:
+        return False
+    handle = _top_level_handle(window, windll)
+    if handle is None:
+        return False
+    import ctypes
+
+    value = ctypes.c_int(1 if dark else 0)
+    for attribute in _DWMWA_IMMERSIVE_DARK_MODE:
+        with contextlib.suppress(AttributeError, OSError):
+            result = windll.dwmapi.DwmSetWindowAttribute(
+                handle,
+                attribute,
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            )
+            if result == 0:
+                return True
+    return False
+
+
+def _top_level_handle(window: Any, windll: Any) -> int | None:
+    """取窗口的顶层 HWND：``winfo_id`` 返回子窗口句柄，需再向上找父窗口。"""
+    with contextlib.suppress(AttributeError, TypeError, ValueError):
+        handle = int(window.winfo_id())
+        with contextlib.suppress(AttributeError, OSError):
+            parent = int(windll.user32.GetParent(handle))
+            if parent:
+                handle = parent
+        return handle or None
+    return None
 
 
 def enable_dpi_awareness() -> bool:
@@ -997,6 +1140,9 @@ def apply_theme(
         实际应用的主题；窗口侧据此获取 ``palette`` / ``spacing``。
     """
     resolved = _resolve_requested_theme(theme, palette, scale, spacing)
+    if spacing is None:
+        # 未显式指定间距时按当前窗口 DPI 缩放：96 DPI 下与旧版完全一致。
+        resolved = replace(resolved, spacing=scale_spacing(resolved.spacing, tk_dpi_scale(root)))
     modules = _load_tk_modules()
     families = tuple(modules.tkfont.families(root))
     ui_family = pick_font_family(families)
@@ -1019,10 +1165,17 @@ def apply_theme(
     return resolved
 
 
-def install_theme_switcher(root: Misc) -> None:  # pragma: no cover - 需要真实 Tk 窗口
-    """在窗口菜单栏追加“主题”菜单；选择后保存配置并提示重启生效。"""
+def install_theme_switcher(
+    root: Misc,
+    *,
+    on_apply: Callable[[Theme], None] | None = None,
+) -> None:  # pragma: no cover - 需要真实 Tk 窗口
+    """在窗口菜单栏追加“主题”菜单；选择后立即重设样式并保存配置。
+
+    ``apply_theme`` 幂等，因此切换主题不需要重开窗口。窗口若把主题色写进了
+    自建 tag / Canvas，可传 ``on_apply`` 在样式更新后再刷新这些控件。
+    """
     import tkinter as tk
-    from tkinter import messagebox
 
     try:
         menu_path = str(root.cget("menu"))
@@ -1051,11 +1204,9 @@ def install_theme_switcher(root: Misc) -> None:  # pragma: no cover - 需要真�
 
     def _choose() -> None:
         chosen = save_theme(current.get())
-        messagebox.showinfo(
-            "主题已保存",
-            f"已选择「{chosen.label}」。\n请重新打开窗口以应用新主题。",
-            parent=root,
-        )
+        applied = apply_theme(root, chosen)
+        if on_apply is not None:
+            on_apply(applied)
 
     for theme in THEMES.values():
         theme_menu.add_radiobutton(label=theme.label, value=theme.name, variable=current, command=_choose)
