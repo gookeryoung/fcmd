@@ -147,7 +147,7 @@ worker 线程调用，GUI 经队列回主线程。结果按路径排序，保证
   （留空用内置，`*` 为全部后缀）、`--include-ext`（白名单内收窄）、
   `--force-ext`（强制扫描名单外后缀）、`--exclude-ext`、`--min-size` / `--max-size`、
   `--no-skip-binary`、`--max-file-bytes`、`--workers`、`--format text|json|csv`、
-  `--output FILE`、`--raw`、`--rule ID`（可重复）、`--path SUBSTR`；
+  `--output FILE`、`--raw`、`--rule-id ID`（可重复）、`--path-filter SUBSTR`；
 - `filescan rules`：`--action list|export|validate`、`--output FILE`、`--rules FILE`。
 
 `scan` 找不到命中返回 0（扫描完成即有结论），参数或规则错误返回非 0。
