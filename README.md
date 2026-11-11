@@ -279,7 +279,8 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `llmdownw` | - | `llmdown` 的 Tk 窗口版（参考 LM Studio：左侧 ModelScope 模型列表与搜索，右侧详情 / README / 文件清单；底部配置目标目录、下载源、并发、掩码与校验，支持实时进度、停止续传；「本地管理」可打开目录并在确认后删除模型） |
 | `llmengine` | - | llama.cpp 引擎管理独立命令（`list`/`install`/`use`/`check`/`inspect`；安装或注册引擎、切换默认引擎、验证可运行、检查 zip 离线包类型/内容/CRC 完整性；`install --zips` 可一次解压引擎包 + cudart 运行库包） |
 | `llmenginew` | - | `llmengine` 的 Tk 窗口版（在线下载官方预编译包并显示实时下载进度；检查/安装本地 zip 离线包或已编译引擎目录，支持深度 CRC 校验；列出已安装引擎、切换默认引擎、后台执行 `llama-server --version` 体检） |
-| `llmenv` | - | 路径与配置独立命令（`show`/`add`/`remove`/`reset`/`list`/`env`；打印 `FCMD_HOME` 目录布局、增删模型目录、列出服务状态、输出 `OPENAI_*` 环境变量） |
+| `llmenv` | - | 路径与配置独立命令（`show`/`add`/`remove`/`reset`/`list`/`env`；打印 `FCMD_HOME` 目录布局、增删模型目录、列出服务状态、输出 `OPENAI_*` 环境变量；`FCMD_SERVE_DIR` / `FCMD_CONFIG` / `FCMD_ENGINES` 可分别覆盖服务目录、配置文件与引擎根目录） |
+| `llmenvw` | - | `llmenv` 的 Tk 窗口版（目录布局可双击编辑 `FCMD_HOME` / 服务状态目录 / 配置文件 / 引擎根目录并标注来源，覆盖写入 `~/.fcmd/ui/llmenvw.json`、启动自动恢复；模型目录支持新增 / 双击原地编辑 / 移除 / 恢复默认；「配置文件」页可直接编辑 `config.json`，保存前校验 JSON，可重新加载 / 格式化 / 恢复默认；列出已登记服务，选中后按纯文本 / PowerShell / Bash 生成 `OPENAI_*` 环境变量并一键复制） |
 | `llmmodel` | - | 模型扫描独立命令（`list`/`find`/`vram`；列出 GGUF、按量化定位文件、估算显存占用） |
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 共 12 种量化版本；默认 Q4_K_M/Q5_K_M，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
 | `llmqntw` | - | `llmqnt` 的 Tk 窗口版（启动时扫描 `llmenv` 已配置的模型目录，按 GGUF 元数据与张量类型识别精度和完整性，仅把全量 F16/BF16 等未量化模型列入下拉框并在括号中备注精度，已量化或不完整文件选择时明确拦截，避免误转或漏转；已存在输出只置灰标注、不自动勾选，切换模型时恢复默认勾选；显示当前引擎 tag/路径、量化器路径与 llama.cpp 版本；量化类型勾选、进度条与实时日志，后台线程执行不阻塞界面） |

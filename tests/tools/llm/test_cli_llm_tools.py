@@ -72,7 +72,8 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """隔离的 FCMD_HOME，避免污染用户目录。"""
     target = tmp_path / "home"
     monkeypatch.setenv("FCMD_HOME", str(target))
-    monkeypatch.delenv("FCMD_MODELS", raising=False)
+    for name in ("FCMD_MODELS", "FCMD_SERVE_DIR", "FCMD_CONFIG", "FCMD_ENGINES"):
+        monkeypatch.delenv(name, raising=False)
     return target
 
 
@@ -98,6 +99,39 @@ def test_env_show(home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.Ca
     out = capsys.readouterr().out
     assert "目录布局" in out
     assert str(home) in out
+
+
+def test_env_path_overrides(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    serve = tmp_path / "serve-override"
+    config = tmp_path / "custom-config.json"
+    engines = tmp_path / "engines-override"
+    monkeypatch.setenv("FCMD_SERVE_DIR", str(serve))
+    monkeypatch.setenv("FCMD_CONFIG", str(config))
+    monkeypatch.setenv("FCMD_ENGINES", str(engines))
+
+    assert llmenv.serve_dir() == serve
+    assert llmenv.config_path() == config
+    assert llmenv.engines_root() == engines
+    assert llmenv.state_path("qwen") == serve / "qwen.json"
+    assert llmenv.log_path("qwen") == serve / "logs" / "qwen.log"
+
+
+def test_env_path_overrides_ignore_explicit_home(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FCMD_SERVE_DIR", str(tmp_path / "ignored"))
+    monkeypatch.setenv("FCMD_CONFIG", str(tmp_path / "ignored.json"))
+    monkeypatch.setenv("FCMD_ENGINES", str(tmp_path / "ignored-engines"))
+
+    assert llmenv.serve_dir(home) == home / "serve"
+    assert llmenv.config_path(home) == home / "serve" / "config.json"
+    assert llmenv.engines_root(home) == home / "engines" / "llama.cpp"
+
+
+def test_env_path_overrides_ignore_blank(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("FCMD_SERVE_DIR", "FCMD_CONFIG", "FCMD_ENGINES"):
+        monkeypatch.setenv(name, "   ")
+    assert llmenv.serve_dir() == home / "serve"
+    assert llmenv.config_path() == home / "serve" / "config.json"
+    assert llmenv.engines_root() == home / "engines" / "llama.cpp"
 
 
 def test_env_add_remove_and_reset(home: Path, capsys: pytest.CaptureFixture[str]) -> None:

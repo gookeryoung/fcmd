@@ -7,6 +7,7 @@
 
     llmbase    公共基元与数据类型
     llmenv     路径 / 配置 / 状态文件 / 客户端环境变量     → fcmd llmenv <show|add|remove|reset|list|env>
+    llmenvw    llmenv 的 Tk 窗口版                         → fcmd llmenvw
     llmmodel   模型扫描、定位与显存估算                   → fcmd llmmodel <list|find|vram>
     llmengine  引擎安装、切换、离线包检查与量化器定位     → fcmd llmengine <list|install|use|check|inspect>
     llmenginew llmengine 的 Tk 窗口版                     → fcmd llmenginew

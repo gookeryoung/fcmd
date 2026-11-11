@@ -71,6 +71,7 @@ TOOLS: dict[str, ToolEntry] = {
     "llmengine": ToolEntry("llmengine", "python", "fcmd.tools.llm.llmengine"),
     "llmenginew": ToolEntry("llmenginew", "python", "fcmd.tools.llm.llmenginew"),
     "llmenv": ToolEntry("llmenv", "python", "fcmd.tools.llm.llmenv"),
+    "llmenvw": ToolEntry("llmenvw", "python", "fcmd.tools.llm.llmenvw"),
     "llmmodel": ToolEntry("llmmodel", "python", "fcmd.tools.llm.llmmodel"),
     "llmqnt": ToolEntry("llmqnt", "python", "fcmd.tools.llm.llmqnt"),
     "llmqntw": ToolEntry("llmqntw", "python", "fcmd.tools.llm.llmqntw"),
@@ -191,6 +192,7 @@ DESCRIPTIONS: dict[str, str] = {
     "llmengine": "列出已安装引擎",
     "llmenginew": "llama.cpp 引擎窗口版（Tk）：在线下载官方预编译包，或检查并安装本地 zip 离线包（引擎包 / cudart 运行库 / 源码包），查看已安装引擎并切换默认；窗口位置与大小记忆到 ~/.fcmd/ui/llmenginew.json",
     "llmenv": "显示目录布局与当前生效的模型目录",
+    "llmenvw": "llmenv 的 Tk 窗口版：展示并编辑 FCMD_HOME 目录布局（服务状态 / 配置 / 引擎根目录），管理模型目录（查看来源、新增 / 编辑 / 移除 / 恢复默认），直接编辑 config.json（保存前校验 JSON），列出已登记服务并按 plain / powershell / bash 生成 OPENAI_* 环境变量、一键复制；窗口位置与目录覆盖记忆到 ~/.fcmd/ui/llmenvw.json",
     "llmmodel": "列出模型目录中的 GGUF 文件",
     "llmqnt": "GGUF 量化：调用 llama-quantize 批量生成多种量化版本",
     "llmqntw": "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，按 GGUF 元数据识别全量与量化精度并检查完整性（备注在括号中，避免误转或漏转），显示引擎/量化器版本，勾选多种量化类型批量转换；窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json",
@@ -303,6 +305,7 @@ LAYOUT: tuple[str, ...] = (
     "tools/llm/llmengine.py",
     "tools/llm/llmenginew.py",
     "tools/llm/llmenv.py",
+    "tools/llm/llmenvw.py",
     "tools/llm/llmmodel.py",
     "tools/llm/llmqnt.py",
     "tools/llm/llmqntw.py",
@@ -362,7 +365,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "86b1b0585974f62da2ccf27644830cf1"
+DIGEST = "e50145ae4d7fcd307993259273d7353d"
 
 
 if __name__ == "__main__":  # pragma: no cover

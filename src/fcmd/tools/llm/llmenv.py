@@ -2,7 +2,8 @@
 
 独立命令：``llmenv <show|add|remove|reset|list|env>``。
 
-目录约定（``FCMD_HOME`` 默认 ``~/.fcmd``）::
+目录约定（``FCMD_HOME`` 默认 ``~/.fcmd``；``FCMD_SERVE_DIR`` / ``FCMD_CONFIG`` /
+``FCMD_ENGINES`` 可分别覆盖服务目录、配置文件与引擎根目录）::
 
     ${FCMD_HOME}/serve/<name>.json        服务状态（pid / 端口 / 模型 / 引擎）
     ${FCMD_HOME}/serve/logs/<name>.log    引擎日志（追加写）
@@ -63,8 +64,18 @@ def home_dir(home: Path | None = None) -> Path:
     return home if home is not None else fcmd_home()
 
 
+def _env_override(name: str) -> Path | None:
+    """读取目录覆盖环境变量（空值视为未设置）。"""
+    raw = os.environ.get(name, "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
 def serve_dir(home: Path | None = None) -> Path:
-    """服务状态目录。"""
+    """服务状态目录（``FCMD_SERVE_DIR`` 可覆盖）。"""
+    if home is None:
+        override = _env_override("FCMD_SERVE_DIR")
+        if override is not None:
+            return override
     return home_dir(home) / "serve"
 
 
@@ -79,7 +90,11 @@ def log_path(name: str, home: Path | None = None) -> Path:
 
 
 def engines_root(home: Path | None = None) -> Path:
-    """llama.cpp 引擎根目录。"""
+    """llama.cpp 引擎根目录（``FCMD_ENGINES`` 可覆盖）。"""
+    if home is None:
+        override = _env_override("FCMD_ENGINES")
+        if override is not None:
+            return override
     return home_dir(home) / "engines" / "llama.cpp"
 
 
@@ -91,7 +106,11 @@ def default_models_root() -> Path:
 
 
 def config_path(home: Path | None = None) -> Path:
-    """持久化配置文件路径（``${FCMD_HOME}/serve/config.json``）。"""
+    """持久化配置文件路径（``FCMD_CONFIG`` 可覆盖，默认 ``${FCMD_HOME}/serve/config.json``）。"""
+    if home is None:
+        override = _env_override("FCMD_CONFIG")
+        if override is not None:
+            return override
     return serve_dir(home) / "config.json"
 
 
