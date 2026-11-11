@@ -267,6 +267,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._file_var = tk.StringVar(value="-")
         self._title_var = tk.StringVar(value="选择左侧模型查看详情")
         self._subtitle_var = tk.StringVar(value="")
+        self._selected_repo_var = tk.StringVar(value="未选择模型")
         self._files_total_var = tk.StringVar(value="")
         self._meta_vars: dict[str, Any] = {}
 
@@ -280,82 +281,69 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     # 界面
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
+        """按 llmservew 的分页范式组织：底部状态栏 + 模型浏览 / 下载 / 本地管理三页。"""
         ttk = self._ttk
-        outer = ttk.Frame(self.root, padding=(self._theme.spacing.md, self._theme.spacing.md))
+        space = self._theme.spacing
+        outer = ttk.Frame(self.root, padding=space.md)
         outer.pack(fill="both", expand=True)
-        outer.columnconfigure(0, weight=1)
-        outer.rowconfigure(1, weight=1)
-
-        self._build_search(outer)
-        self._build_body(outer)
-        self._build_download(outer)
-        self._build_log(outer)
 
         status = ttk.Label(
             outer,
             textvariable=self._status_var,
             anchor="w",
             relief="sunken",
-            padding=(self._theme.spacing.sm, self._theme.spacing.xs),
+            padding=(space.sm, space.xs),
         )
-        status.grid(row=4, column=0, sticky="ew", pady=(self._theme.spacing.sm, 0))
+        status.pack(side="bottom", fill="x", pady=(space.xs, 0))
 
-    def _build_search(self, parent: Any) -> None:
+        self._pages = ttk.Notebook(outer)
+        self._pages.pack(fill="both", expand=True)
+        self._browse_page = ttk.Frame(self._pages, padding=space.md)
+        self._download_page = ttk.Frame(self._pages, padding=space.md)
+        local_page = ttk.Frame(self._pages, padding=space.md)
+        self._pages.add(self._browse_page, text="模型浏览")
+        self._pages.add(self._download_page, text="下载")
+        self._pages.add(local_page, text="本地管理")
+
+        self._build_browse(self._browse_page)
+        self._build_download(self._download_page)
+        self._build_local(local_page)
+
+    def _build_browse(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.Frame(parent)
-        box.grid(row=0, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
-        box.columnconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
+        parent.rowconfigure(1, weight=1)
+        self._build_search(parent)
 
-        ttk.Label(box, text="搜索 ModelScope").grid(row=0, column=0, sticky="w", padx=(0, self._theme.spacing.sm))
-        entry = ttk.Entry(box, textvariable=self._keyword_var)
-        entry.grid(row=0, column=1, sticky="ew", padx=(0, self._theme.spacing.sm))
-        entry.bind("<Return>", self._on_search_enter)
-        self._search_btn = ttk.Button(box, text="搜索", command=self._on_search, style="Accent.TButton", width=8)
-        self._search_btn.grid(row=0, column=2, sticky="w", padx=(0, self._theme.spacing.lg))
-
-        ttk.Label(box, text="排序").grid(row=0, column=3, sticky="w", padx=(0, self._theme.spacing.sm))
-        sort_box = ttk.Combobox(
-            box,
-            textvariable=self._sort_var,
-            values=list(_SORT_LABELS.values()),
-            state="readonly",
-            width=10,
-        )
-        sort_box.grid(row=0, column=4, sticky="w")
-        sort_box.bind("<<ComboboxSelected>>", self._on_sort_changed)
-
-        self._prev_btn = ttk.Button(
-            box, text="上一页", command=lambda: self._start_search(self._search_page - 1), width=8
-        )
-        self._prev_btn.grid(row=0, column=5, sticky="w", padx=(self._theme.spacing.lg, 0))
-        self._next_btn = ttk.Button(
-            box, text="下一页", command=lambda: self._start_search(self._search_page + 1), width=8
-        )
-        self._next_btn.grid(row=0, column=6, sticky="w", padx=(self._theme.spacing.xs, 0))
-        ttk.Label(box, textvariable=self._page_var, style="Muted.TLabel").grid(
-            row=0, column=7, sticky="w", padx=(self._theme.spacing.sm, 0)
-        )
-
-    def _build_body(self, parent: Any) -> None:
-        ttk = self._ttk
         paned = ttk.PanedWindow(parent, orient="horizontal")
-        paned.grid(row=1, column=0, sticky="nsew", pady=(0, self._theme.spacing.sm))
+        paned.grid(row=1, column=0, sticky="nsew")
+        placed = False
+
+        def place_sash(event: Any) -> None:
+            """首次布局时把分隔条固定在合适位置，避免模型列表列被挤压。"""
+            nonlocal placed
+            if not placed and event.width > 700:
+                paned.sashpos(0, max(460, min(560, event.width // 2)))
+                placed = True
+
+        paned.bind("<Configure>", place_sash)
 
         left = ttk.LabelFrame(paned, text="模型列表", padding=(self._theme.spacing.sm, self._theme.spacing.xs))
         left.columnconfigure(0, weight=1)
         left.rowconfigure(0, weight=1)
-        columns = ("repo", "tasks", "downloads", "updated", "size")
+        columns = ("repo", "tasks", "downloads", "size")
         self._models_tree = ttk.Treeview(left, columns=columns, show="headings", selectmode="browse")
         headings = {
-            "repo": ("模型", 260),
-            "tasks": ("任务", 150),
-            "downloads": ("下载", 90),
-            "updated": ("更新", 90),
-            "size": ("体积", 80),
+            "repo": ("模型", 190),
+            "tasks": ("任务", 116),
+            "downloads": ("下载", 84),
+            "size": ("体积", 76),
         }
         for key, (label, width) in headings.items():
             self._models_tree.heading(key, text=label)
-            self._models_tree.column(key, width=width, anchor="w", stretch=key in {"repo", "tasks"})
+            self._models_tree.column(
+                key, width=width, anchor="w" if key in {"repo", "tasks"} else "e", stretch=key == "repo"
+            )
         scrollbar = ttk.Scrollbar(left, orient="vertical", command=self._models_tree.yview)
         self._models_tree.configure(yscrollcommand=scrollbar.set)
         self._models_tree.grid(row=0, column=0, sticky="nsew")
@@ -366,29 +354,68 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         right = ttk.Notebook(paned)
         self._detail_tab = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
         self._files_tab = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        self._local_tab = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
         right.add(self._detail_tab, text="模型详情")
         right.add(self._files_tab, text="文件列表")
-        right.add(self._local_tab, text="本地管理")
         paned.add(right, weight=5)
-        self._notebook = right
+        self._detail_notebook = right
 
         self._build_detail(self._detail_tab)
         self._build_files(self._files_tab)
-        self._build_local(self._local_tab)
+
+    def _build_search(self, parent: Any) -> None:
+        ttk = self._ttk
+        space = self._theme.spacing
+        box = ttk.LabelFrame(parent, text="搜索 ModelScope", padding=(space.sm, space.xs))
+        box.grid(row=0, column=0, sticky="ew", pady=(0, space.sm))
+        box.columnconfigure(1, weight=1)
+
+        ttk.Label(box, text="关键字").grid(row=0, column=0, sticky="e", padx=(0, space.sm))
+        entry = ttk.Entry(box, textvariable=self._keyword_var)
+        entry.grid(row=0, column=1, sticky="ew", padx=(0, space.sm))
+        entry.bind("<Return>", self._on_search_enter)
+        self._search_btn = ttk.Button(box, text="搜索", command=self._on_search, style="Accent.TButton", width=8)
+        self._search_btn.grid(row=0, column=2, sticky="w")
+
+        nav = ttk.Frame(box)
+        nav.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(space.xs, 0))
+        ttk.Label(nav, text="排序").pack(side="left")
+        sort_box = ttk.Combobox(
+            nav,
+            textvariable=self._sort_var,
+            values=list(_SORT_LABELS.values()),
+            state="readonly",
+            width=10,
+        )
+        sort_box.pack(side="left", padx=(space.xs, space.lg))
+        sort_box.bind("<<ComboboxSelected>>", self._on_sort_changed)
+
+        ttk.Label(nav, textvariable=self._page_var, style="Muted.TLabel").pack(side="right")
+        self._next_btn = ttk.Button(
+            nav, text="下一页", command=lambda: self._start_search(self._search_page + 1), width=8
+        )
+        self._next_btn.pack(side="right", padx=(space.xs, space.sm))
+        self._prev_btn = ttk.Button(
+            nav, text="上一页", command=lambda: self._start_search(self._search_page - 1), width=8
+        )
+        self._prev_btn.pack(side="right")
 
     def _build_detail(self, parent: Any) -> None:
         ttk = self._ttk
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(3, weight=1)
+        space = self._theme.spacing
 
-        ttk.Label(parent, textvariable=self._title_var, style="Title.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(parent, textvariable=self._subtitle_var, style="Muted.TLabel").grid(
-            row=1, column=0, sticky="w", pady=(0, self._theme.spacing.sm)
+        header = ttk.Frame(parent)
+        header.pack(fill="x")
+        titles = ttk.Frame(header)
+        titles.pack(side="left", fill="x", expand=True)
+        ttk.Label(titles, textvariable=self._title_var, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(titles, textvariable=self._subtitle_var, style="Muted.TLabel").pack(anchor="w")
+        self._go_download_btn = ttk.Button(
+            header, text="前往下载", command=self._go_download, style="Accent.TButton", width=10, state="disabled"
         )
+        self._go_download_btn.pack(side="right", padx=(space.sm, 0))
 
         meta = ttk.Frame(parent)
-        meta.grid(row=2, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        meta.pack(fill="x", pady=space.sm)
         meta.columnconfigure(1, weight=1)
         meta.columnconfigure(3, weight=1)
         labels = (
@@ -410,66 +437,69 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         for index, name in enumerate(labels):
             row, column = divmod(index, 2)
             ttk.Label(meta, text=f"{name}：", style="Muted.TLabel").grid(
-                row=row, column=column * 2, sticky="e", padx=(0, self._theme.spacing.xs), pady=self._theme.spacing.xxs
+                row=row, column=column * 2, sticky="e", padx=(0, space.xs), pady=space.xxs
             )
             var = self._tk.StringVar(value="-")
             ttk.Label(meta, textvariable=var).grid(
                 row=row,
                 column=column * 2 + 1,
                 sticky="w",
-                padx=(0, self._theme.spacing.lg),
-                pady=self._theme.spacing.xxs,
+                padx=(0, space.lg),
+                pady=space.xxs,
             )
             self._meta_vars[name] = var
 
-        readme_box = ttk.LabelFrame(parent, text="README", padding=(self._theme.spacing.sm, self._theme.spacing.xs))
-        readme_box.grid(row=3, column=0, sticky="nsew")
+        readme_box = ttk.LabelFrame(parent, text="README", padding=(space.sm, space.xs))
+        readme_box.pack(fill="both", expand=True)
         readme_box.columnconfigure(0, weight=1)
         readme_box.rowconfigure(0, weight=1)
         self._readme = _guiwindow.create_log(readme_box, height=14, grid=True)
 
     def _build_files(self, parent: Any) -> None:
         ttk = self._ttk
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(0, weight=1)
+        space = self._theme.spacing
+        ttk.Label(parent, textvariable=self._files_total_var, style="Muted.TLabel").pack(
+            side="bottom", anchor="w", pady=(space.sm, 0)
+        )
+        table = ttk.Frame(parent)
+        table.pack(fill="both", expand=True)
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
         columns = ("path", "size", "sha")
-        self._files_tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="browse")
+        self._files_tree = ttk.Treeview(table, columns=columns, show="headings", selectmode="browse")
         for key, label, width, stretch in (
-            ("path", "文件", 420, True),
-            ("size", "大小", 100, False),
-            ("sha", "SHA256", 260, False),
+            ("path", "文件", 380, True),
+            ("size", "大小", 90, False),
+            ("sha", "SHA256", 116, False),
         ):
             self._files_tree.heading(key, text=label)
-            self._files_tree.column(key, width=width, anchor="w", stretch=stretch)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self._files_tree.yview)
+            self._files_tree.column(key, width=width, anchor="e" if key == "size" else "w", stretch=stretch)
+        scrollbar = ttk.Scrollbar(table, orient="vertical", command=self._files_tree.yview)
         self._files_tree.configure(yscrollcommand=scrollbar.set)
         self._files_tree.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
-        ttk.Label(parent, textvariable=self._files_total_var, style="Muted.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(self._theme.spacing.sm, 0)
-        )
 
     def _build_local(self, parent: Any) -> None:
         ttk = self._ttk
-        parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(1, weight=1)
-
+        space = self._theme.spacing
         bar = ttk.Frame(parent)
-        bar.grid(row=0, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        bar.pack(fill="x", pady=(0, space.sm))
         ttk.Button(bar, text="刷新", command=self._refresh_local, width=8).pack(side="left")
         ttk.Button(bar, text="打开目录", command=self._open_selected_local, width=10).pack(
-            side="left", padx=(self._theme.spacing.sm, 0)
+            side="left", padx=(space.sm, 0)
         )
         self._delete_btn = ttk.Button(
             bar, text="删除模型", command=self._delete_selected_local, style="Danger.TButton", width=10
         )
-        self._delete_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        ttk.Label(bar, text="仅在二次确认后删除整个模型目录", style="Hint.TLabel").pack(
-            side="left", padx=(self._theme.spacing.sm, 0)
-        )
+        self._delete_btn.pack(side="left", padx=(space.sm, 0))
+        ttk.Label(bar, text="仅在二次确认后删除整个模型目录", style="Hint.TLabel").pack(side="left", padx=(space.sm, 0))
 
+        table = ttk.Frame(parent)
+        table.pack(fill="both", expand=True)
+        table.columnconfigure(0, weight=1)
+        table.rowconfigure(0, weight=1)
         columns = ("repo", "size", "files", "status", "path")
-        self._local_tree = ttk.Treeview(parent, columns=columns, show="headings", selectmode="browse")
+        self._local_tree = ttk.Treeview(table, columns=columns, show="headings", selectmode="browse")
         for key, label, width, stretch in (
             ("repo", "仓库", 220, True),
             ("size", "大小", 90, False),
@@ -479,80 +509,94 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         ):
             self._local_tree.heading(key, text=label)
             self._local_tree.column(key, width=width, anchor="w", stretch=stretch)
-        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self._local_tree.yview)
+        scrollbar = ttk.Scrollbar(table, orient="vertical", command=self._local_tree.yview)
         self._local_tree.configure(yscrollcommand=scrollbar.set)
-        self._local_tree.grid(row=1, column=0, sticky="nsew")
-        scrollbar.grid(row=1, column=1, sticky="ns")
+        self._local_tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
         self._local_tree.bind("<Double-1>", self._on_local_double_click)
 
     def _build_download(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="下载", padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        box.grid(row=2, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
-        box.columnconfigure(1, weight=1)
-        box.columnconfigure(4, weight=1)
+        space = self._theme.spacing
 
-        ttk.Label(box, text="目标目录").grid(row=0, column=0, sticky="e", padx=(0, self._theme.spacing.sm))
-        ttk.Entry(box, textvariable=self._dest_var).grid(row=0, column=1, sticky="ew")
-        ttk.Button(box, text="浏览…", command=self._browse_dest, width=8).grid(
-            row=0, column=2, sticky="w", padx=(self._theme.spacing.sm, self._theme.spacing.lg)
+        summary = ttk.LabelFrame(parent, text="当前模型", padding=(space.sm, space.xs))
+        summary.pack(fill="x")
+        ttk.Label(summary, textvariable=self._selected_repo_var, style="Title.TLabel").pack(anchor="w")
+        ttk.Label(
+            summary,
+            text="在「模型浏览」选中模型后，到此页配置下载参数并开始下载",
+            style="Hint.TLabel",
+        ).pack(anchor="w")
+
+        settings = ttk.LabelFrame(parent, text="下载设置", padding=space.sm)
+        settings.pack(fill="x", pady=(space.sm, 0))
+        settings.columnconfigure(1, weight=1)
+        settings.columnconfigure(3, weight=1)
+
+        ttk.Label(settings, text="目标目录").grid(row=0, column=0, sticky="e", padx=(0, space.sm))
+        ttk.Entry(settings, textvariable=self._dest_var).grid(row=0, column=1, columnspan=3, sticky="ew")
+        ttk.Button(settings, text="浏览…", command=self._browse_dest, width=8).grid(
+            row=0, column=4, sticky="w", padx=(space.sm, 0)
         )
-        ttk.Label(box, text="下载源").grid(row=0, column=3, sticky="e", padx=(0, self._theme.spacing.sm))
+
+        ttk.Label(settings, text="下载源").grid(row=1, column=0, sticky="e", padx=(0, space.sm), pady=space.xs)
         ttk.Combobox(
-            box,
+            settings,
             textvariable=self._source_var,
             values=list(_SOURCE_LABELS.values()),
             state="readonly",
             width=12,
-        ).grid(row=0, column=4, sticky="w")
-
-        ttk.Label(box, text="并发").grid(
-            row=0, column=5, sticky="e", padx=(self._theme.spacing.lg, self._theme.spacing.sm)
+        ).grid(row=1, column=1, sticky="w", pady=space.xs)
+        ttk.Label(settings, text="并发").grid(row=1, column=2, sticky="e", padx=(0, space.sm), pady=space.xs)
+        ttk.Spinbox(settings, from_=1, to=_MAX_WORKERS, textvariable=self._workers_var, width=5).grid(
+            row=1, column=3, sticky="w", pady=space.xs
         )
-        ttk.Spinbox(box, from_=1, to=_MAX_WORKERS, textvariable=self._workers_var, width=5).grid(
-            row=0, column=6, sticky="w"
-        )
-        ttk.Checkbutton(box, text="校验 SHA256", variable=self._verify_var).grid(
-            row=0, column=7, sticky="w", padx=(self._theme.spacing.lg, 0)
+        ttk.Checkbutton(settings, text="校验 SHA256", variable=self._verify_var).grid(
+            row=1, column=4, sticky="w", padx=(space.sm, 0), pady=space.xs
         )
 
-        ttk.Label(box, text="包含掩码").grid(
-            row=1, column=0, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xs
+        ttk.Label(settings, text="包含掩码").grid(row=2, column=0, sticky="e", padx=(0, space.sm), pady=space.xs)
+        ttk.Entry(settings, textvariable=self._include_var).grid(
+            row=2, column=1, columnspan=3, sticky="ew", pady=space.xs
         )
-        ttk.Entry(box, textvariable=self._include_var).grid(row=1, column=1, sticky="ew", pady=self._theme.spacing.xs)
-        ttk.Label(box, text="排除掩码").grid(
-            row=1, column=3, sticky="e", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xs
+        ttk.Label(settings, text="排除掩码").grid(row=3, column=0, sticky="e", padx=(0, space.sm), pady=space.xs)
+        ttk.Entry(settings, textvariable=self._exclude_var).grid(
+            row=3, column=1, columnspan=3, sticky="ew", pady=space.xs
         )
-        ttk.Entry(box, textvariable=self._exclude_var).grid(row=1, column=4, sticky="ew", pady=self._theme.spacing.xs)
+
+        actions = ttk.Frame(parent)
+        actions.pack(fill="x", pady=(space.sm, 0))
         self._download_btn = ttk.Button(
-            box, text="下载", command=self._start_download, style="Accent.TButton", width=10
+            actions, text="下载", command=self._start_download, style="Accent.TButton", width=10
         )
-        self._download_btn.grid(row=1, column=6, sticky="e", padx=(self._theme.spacing.sm, 0))
+        self._download_btn.pack(side="left")
         self._stop_btn = ttk.Button(
-            box, text="停止", command=self._stop_download, style="Danger.TButton", state="disabled", width=8
+            actions, text="停止", command=self._stop_download, style="Danger.TButton", state="disabled", width=8
         )
-        self._stop_btn.grid(row=1, column=7, sticky="e", padx=(self._theme.spacing.sm, 0))
+        self._stop_btn.pack(side="left", padx=(space.sm, 0))
+        ttk.Button(actions, text="打开目标目录", command=self._open_download_target, width=12).pack(side="right")
 
-        ttk.Label(box, text="总进度").grid(row=2, column=0, sticky="e", padx=(0, self._theme.spacing.sm))
-        self._overall_bar = ttk.Progressbar(box, mode="determinate", maximum=1, value=0)
-        self._overall_bar.grid(row=2, column=1, columnspan=5, sticky="ew", pady=(self._theme.spacing.sm, 0))
-        ttk.Label(box, textvariable=self._progress_var, width=24, anchor="e").grid(
-            row=2, column=6, columnspan=2, sticky="e", pady=(self._theme.spacing.sm, 0)
+        progress = ttk.LabelFrame(parent, text="进度", padding=space.sm)
+        progress.pack(fill="x", pady=(space.sm, 0))
+        progress.columnconfigure(1, weight=1)
+        ttk.Label(progress, text="总进度").grid(row=0, column=0, sticky="e", padx=(0, space.sm))
+        self._overall_bar = ttk.Progressbar(progress, mode="determinate", maximum=1, value=0)
+        self._overall_bar.grid(row=0, column=1, sticky="ew")
+        ttk.Label(progress, textvariable=self._progress_var, width=24, anchor="e").grid(
+            row=0, column=2, sticky="e", padx=(space.sm, 0)
+        )
+        ttk.Label(progress, text="当前文件").grid(row=1, column=0, sticky="e", padx=(0, space.sm), pady=space.xs)
+        self._file_bar = ttk.Progressbar(progress, mode="determinate", maximum=1, value=0)
+        self._file_bar.grid(row=1, column=1, sticky="ew", pady=space.xs)
+        ttk.Label(progress, textvariable=self._file_var, width=36, anchor="e").grid(
+            row=1, column=2, sticky="e", padx=(space.sm, 0), pady=space.xs
         )
 
-        ttk.Label(box, text="当前文件").grid(row=3, column=0, sticky="e", padx=(0, self._theme.spacing.sm))
-        self._file_bar = ttk.Progressbar(box, mode="determinate", maximum=1, value=0)
-        self._file_bar.grid(row=3, column=1, columnspan=5, sticky="ew", pady=(self._theme.spacing.xs, 0))
-        ttk.Label(box, textvariable=self._file_var, width=40, anchor="e").grid(
-            row=3, column=6, columnspan=2, sticky="e", pady=(self._theme.spacing.xs, 0)
-        )
-
-    def _build_log(self, parent: Any) -> None:
-        box = self._ttk.LabelFrame(parent, text="日志", padding=(self._theme.spacing.sm, self._theme.spacing.xs))
-        box.grid(row=3, column=0, sticky="ew")
+        box = ttk.LabelFrame(parent, text="日志", padding=(space.sm, space.xs))
+        box.pack(fill="both", expand=True, pady=(space.sm, 0))
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        self._log_view = _guiwindow.create_log(box, height=5, grid=True)
+        self._log_view = _guiwindow.create_log(box, height=8, grid=True)
 
     # ------------------------------------------------------------------ #
     # 模型搜索 / 详情
@@ -613,6 +657,8 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._current_info = None
         self._current_files = ()
         self._download_btn.configure(state="disabled")
+        self._go_download_btn.configure(state="disabled")
+        self._selected_repo_var.set(repo)
         self._title_var.set(repo)
         self._subtitle_var.set("正在加载详情…")
         for var in self._meta_vars.values():
@@ -620,7 +666,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _guiwindow.clear_log(self._readme)
         self._files_tree.delete(*self._files_tree.get_children())
         self._files_total_var.set("")
-        self._notebook.select(self._detail_tab)
+        self._detail_notebook.select(self._detail_tab)
         self._status_var.set(f"正在加载 {repo} …")
         self._spawn(self._detail_worker, repo, generation)
 
@@ -644,6 +690,25 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     # ------------------------------------------------------------------ #
     # 下载
     # ------------------------------------------------------------------ #
+    def _go_download(self) -> None:
+        """从详情页跳转到下载页并聚焦下载按钮。"""
+        if not self._current_repo:
+            self._status_var.set("请先选择一个模型")
+            return
+        self._pages.select(self._download_page)
+        self._download_btn.focus_set()
+
+    def _open_download_target(self) -> None:
+        """打开当前下载目标目录（未开始时回落到目标根目录）。"""
+        target = self._download_target if self._download_target.is_dir() else self._local_root()
+        if not target.is_dir():
+            self._messagebox.showwarning("目录不存在", f"目录不存在:\n{target}")
+            return
+        try:
+            open_path(target)
+        except OSError as exc:
+            self._messagebox.showerror("打开目录失败", str(exc))
+
     def _browse_dest(self) -> None:
         """选择目标目录。"""
         from tkinter import filedialog
@@ -835,6 +900,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         values = self._local_tree.item(selection[0], "values")
         if values:
             self._keyword_var.set(str(values[0]))
+            self._pages.select(self._browse_page)
             self._load_repo(str(values[0]))
 
     # ------------------------------------------------------------------ #
@@ -891,6 +957,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
                 self._status_var.set(f"{repo} 详情加载失败")
                 self._log(f"详情加载失败 {repo}: {message}")
                 self._download_btn.configure(state="normal")
+                self._go_download_btn.configure(state="disabled")
         elif kind == "progress":
             self._on_progress(payload)
         elif kind == "download_done":
@@ -918,7 +985,8 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._search_page = result.page
         self._models_tree.delete(*self._models_tree.get_children())
         for item in result.items:
-            self._models_tree.insert("", "end", values=model_row(item))
+            repo, tasks, downloads, _updated, size = model_row(item)
+            self._models_tree.insert("", "end", values=(repo, tasks, downloads, size))
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
         self._page_var.set(f"第 {result.page} / {pages} 页（共 {result.total:,} 条）")
         self._prev_btn.configure(state="normal" if result.page > 1 else "disabled")
@@ -959,11 +1027,13 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             total = 0
             for file in files:
                 total += file.size
-                self._files_tree.insert("", "end", values=(file.path, human_size(file.size), file.sha256[:16] or "-"))
+                self._files_tree.insert("", "end", values=(file.path, human_size(file.size), file.sha256[:12] or "-"))
             self._files_total_var.set(f"共 {len(files)} 个文件，合计 {human_size(total)}（ModelScope 清单）")
         else:
             self._files_total_var.set(f"文件清单获取失败：{file_error}" if file_error else "文件清单为空")
         self._download_btn.configure(state="normal")
+        self._go_download_btn.configure(state="normal")
+        self._selected_repo_var.set(summary.repo)
         self._status_var.set(f"已加载 {summary.repo}")
 
     def _render_local(self, models: list[LocalModel]) -> None:
