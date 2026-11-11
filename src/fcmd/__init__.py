@@ -23,7 +23,7 @@ from typing import Any
 from fcmd._lazyload import lazy_dir, lazy_getattr
 from fcmd.core.hooks import register_discovery_hook
 
-__version__ = "0.3.10"
+__version__ = "0.3.11"
 
 __all__ = [
     "Context",
