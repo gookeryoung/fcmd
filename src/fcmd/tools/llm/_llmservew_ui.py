@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
+from fcmd.tools.llm._llmservew_bench import RESULT_COLUMNS, SCENARIOS
 from fcmd.tools.llm._llmservew_monitor import (
     _FIT_BUSY,
     _FIT_RUNNING,
@@ -81,6 +82,13 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _start: Any
         _stop: Any
         _sync_tree_selection: Any
+        _bench_repeat_var: Any
+        _bench_timeout_var: Any
+        _bench_tokens_var: Any
+        _bench_status_var: Any
+        _start_bench: Any
+        _stop_bench: Any
+        _clear_bench: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -95,8 +103,10 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._notebook.pack(fill="both", expand=True)
         start_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
         run_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
+        bench_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
         self._notebook.add(start_page, text="启动配置")
         self._notebook.add(run_page, text="运行监控")
+        self._notebook.add(bench_page, text="性能测试")
         self._build_params(start_page)
         self._build_env(start_page)
         self._build_models(start_page)
@@ -105,6 +115,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._build_load(run_page)
         self._build_gpu(run_page)
         self._build_log(run_page)
+        self._build_bench(bench_page)
 
     @staticmethod
     def _service_names() -> list[str]:
@@ -476,6 +487,110 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
+
+    def _build_bench(self, parent: Any) -> None:
+        """性能测试页：典型场景多选、测试参数、开始 / 停止与结果表。"""
+        ttk = self._ttk
+        space = self._theme.spacing
+        status = ttk.Label(parent, textvariable=self._bench_status_var)
+        status.pack(side="bottom", fill="x", pady=(space.xs, 0))
+
+        scenarios_box = ttk.LabelFrame(parent, text="测试场景（Ctrl / Shift 多选）", padding=space.sm)
+        scenarios_box.pack(fill="x")
+        self._bench_tree = ttk.Treeview(
+            scenarios_box,
+            columns=("label", "input", "output", "detail"),
+            show="headings",
+            selectmode="extended",
+            height=len(SCENARIOS),
+        )
+        self._bench_tree.heading("label", text="场景")
+        self._bench_tree.heading("input", text="输入")
+        self._bench_tree.heading("output", text="输出上限")
+        self._bench_tree.heading("detail", text="说明")
+        self._bench_tree.column("label", width=130, anchor="w", stretch=False)
+        self._bench_tree.column("input", width=110, anchor="e", stretch=False)
+        self._bench_tree.column("output", width=90, anchor="e", stretch=False)
+        self._bench_tree.column("detail", width=420, anchor="w")
+        for index, scenario in enumerate(SCENARIOS):
+            self._bench_tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(
+                    scenario.label,
+                    "默认短提示" if not scenario.prompt_tokens else f"约 {scenario.prompt_tokens} tok",
+                    f"{scenario.max_tokens} tok",
+                    scenario.detail,
+                ),
+            )
+        self._bench_tree.selection_set(self._bench_tree.get_children())
+        self._bench_tree.pack(fill="x")
+
+        params = ttk.LabelFrame(parent, text="测试参数", padding=space.sm)
+        params.pack(fill="x", pady=(space.sm, 0))
+        params.columnconfigure(1, weight=1)
+        params.columnconfigure(3, weight=1)
+        _guiwindow.pair_row(
+            params,
+            0,
+            "重复次数",
+            ttk.Spinbox(params, from_=1, to=20, textvariable=self._bench_repeat_var, width=8),
+            "请求超时（秒）",
+            ttk.Entry(params, textvariable=self._bench_timeout_var),
+            theme=self._theme,
+        )
+        _guiwindow.pair_row(
+            params,
+            1,
+            "输出上限（留空按场景）",
+            ttk.Entry(params, textvariable=self._bench_tokens_var),
+            "",
+            ttk.Label(params, text=""),
+            theme=self._theme,
+        )
+
+        actions = ttk.Frame(parent)
+        actions.pack(fill="x", pady=(space.sm, 0))
+        self._bench_start_btn = ttk.Button(actions, text="开始测试", command=self._start_bench, style="Accent.TButton")
+        self._bench_start_btn.pack(side="left")
+        self._bench_stop_btn = ttk.Button(
+            actions, text="停止", command=self._stop_bench, style="Danger.TButton", state="disabled"
+        )
+        self._bench_stop_btn.pack(side="left", padx=(space.sm, 0))
+        self._bench_clear_btn = ttk.Button(actions, text="清空结果", command=self._clear_bench)
+        self._bench_clear_btn.pack(side="left", padx=(space.sm, 0))
+        self._bench_progress = ttk.Progressbar(actions, mode="indeterminate", length=180)
+        self._bench_progress.pack(side="right")
+
+        result_box = ttk.LabelFrame(parent, text="测试结果", padding=space.sm)
+        result_box.pack(fill="both", expand=True, pady=(space.sm, 0))
+        self._bench_result_tree = ttk.Treeview(
+            result_box,
+            columns=RESULT_COLUMNS,
+            show="headings",
+            height=6,
+        )
+        widths = (130, 60, 90, 90, 90, 110, 120, 220)
+        for column, width in zip(RESULT_COLUMNS, widths, strict=True):
+            self._bench_result_tree.heading(column, text=column)
+            self._bench_result_tree.column(
+                column,
+                width=width,
+                anchor="e" if column not in ("场景", "状态") else "w",
+                stretch=column in ("场景", "状态"),
+            )
+        self._bench_result_tree.tag_configure("error", foreground=self._theme.palette.danger)
+        self._bench_result_tree.tag_configure("cancelled", foreground=self._theme.palette.warning)
+        ttk.Label(
+            result_box,
+            text="聚合 tok/s = 输出 tokens ÷ 墙钟（并发场景体现总吞吐）；单请求 tok/s 取服务端 decode 速率（不含 prefill）",
+            justify="left",
+        ).pack(side="bottom", fill="x", pady=(space.xs, 0))
+        yscroll = ttk.Scrollbar(result_box, orient="vertical", command=self._bench_result_tree.yview)
+        self._bench_result_tree.configure(yscrollcommand=yscroll.set)
+        self._bench_result_tree.pack(side="left", fill="both", expand=True)
+        yscroll.pack(side="right", fill="y")
 
     # ------------------------------------------------------------------ #
     # 扫描模型与引擎信息

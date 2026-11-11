@@ -15,6 +15,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import zipfile
 from collections import namedtuple
 from dataclasses import replace
@@ -26,6 +27,7 @@ from urllib.request import Request
 import pytest
 
 from fcmd.tools.llm import (
+    _llmservew_bench,
     llmbase,
     llmbench,
     llmconvert,
@@ -2297,3 +2299,141 @@ class TestServewSettings:
         assert not hasattr(llmservew, "_BUSY_COLOR")
         for theme in _guitheme.THEMES.values():
             assert theme.palette.danger != theme.palette.warning
+
+
+class TestServewBench:
+    """llmservew 性能测试页的纯逻辑：场景表、执行、结果与目标解析。"""
+
+    @staticmethod
+    def _endpoint(port: int = DEFAULT_PORT) -> llmbase.Endpoint:
+        return llmbase.Endpoint(f"http://127.0.0.1:{port}", DEFAULT_API_KEY, "test-model")
+
+    def test_scenarios_have_unique_keys_and_lookup(self) -> None:
+        keys = [scenario.key for scenario in _llmservew_bench.SCENARIOS]
+        assert len(keys) == len(set(keys))
+        long8k = _llmservew_bench.scenario_by_key("long8k")
+        assert long8k is not None
+        assert long8k.prompt_tokens == 8192
+        assert _llmservew_bench.scenario_by_key("missing") is None
+
+    def test_scenarios_cover_typical_cases(self) -> None:
+        labels = {scenario.label for scenario in _llmservew_bench.SCENARIOS}
+        assert {"短对话", "长输出", "代码补全", "长上下文 8K", "长上下文 32K", "并发吞吐 4 路"} <= labels
+
+    def test_run_scenario_sequential(self) -> None:
+        calls: list[dict[str, Any]] = []
+
+        def request(endpoint: Any, **kwargs: Any) -> llmbench.BenchResult:
+            calls.append(kwargs)
+            return llmbench.BenchResult(0.5, 10, 20, 40.0)
+
+        scenario = _llmservew_bench.scenario_by_key("short")
+        assert scenario is not None
+        result = _llmservew_bench.run_scenario(self._endpoint(), scenario, repeat=2, request=request)
+        assert result.requests == 2
+        assert result.total_prompt == 20
+        assert result.total_completion == 40
+        assert result.error is None
+        assert all(call["prompt_tokens"] is None for call in calls)
+        assert all(call["max_tokens"] == 128 for call in calls)
+
+    def test_run_scenario_uses_scenario_prompt_and_override(self) -> None:
+        seen: list[dict[str, Any]] = []
+
+        def request(endpoint: Any, **kwargs: Any) -> llmbench.BenchResult:
+            seen.append(kwargs)
+            return llmbench.BenchResult(0.1, 1024, 64, 32.0)
+
+        scenario = _llmservew_bench.scenario_by_key("code")
+        assert scenario is not None
+        result = _llmservew_bench.run_scenario(self._endpoint(), scenario, max_tokens=64, request=request)
+        assert seen[0]["prompt_tokens"] == 1024
+        assert seen[0]["max_tokens"] == 64
+        assert seen[0]["timeout"] == 180.0
+        assert result.requests == 1
+
+    def test_run_scenario_concurrent(self) -> None:
+        calls: list[int] = []
+        lock = threading.Lock()
+
+        def request(endpoint: Any, **kwargs: Any) -> llmbench.BenchResult:
+            with lock:
+                calls.append(1)
+            return llmbench.BenchResult(0.2, 10, 20, 100.0)
+
+        scenario = _llmservew_bench.scenario_by_key("concurrent4")
+        assert scenario is not None
+        result = _llmservew_bench.run_scenario(self._endpoint(), scenario, request=request)
+        assert scenario.concurrency == 4
+        assert result.requests == 4
+        assert len(calls) == 4
+
+    def test_run_scenario_records_error(self) -> None:
+        def request(endpoint: Any, **kwargs: Any) -> llmbench.BenchResult:
+            raise ServeError("boom")
+
+        result = _llmservew_bench.run_scenario(self._endpoint(), _llmservew_bench.SCENARIOS[0], request=request)
+        assert result.error == "boom"
+        assert result.requests == 0
+        assert result.cancelled is False
+
+    def test_run_scenario_cancelled_before_start(self) -> None:
+        cancel = threading.Event()
+        cancel.set()
+        called: list[bool] = []
+
+        def request(endpoint: Any, **kwargs: Any) -> llmbench.BenchResult:
+            called.append(True)
+            return llmbench.BenchResult(0.1, 1, 1, 10.0)
+
+        result = _llmservew_bench.run_scenario(
+            self._endpoint(), _llmservew_bench.SCENARIOS[0], cancel=cancel, request=request
+        )
+        assert result.cancelled is True
+        assert not called
+
+    def test_result_metrics_and_row(self) -> None:
+        scenario = _llmservew_bench.SCENARIOS[0]
+        samples = (
+            _llmservew_bench.BenchSample(0.5, 10, 20, 40.0),
+            _llmservew_bench.BenchSample(0.7, 30, 40, 60.0),
+        )
+        result = _llmservew_bench.ScenarioResult(scenario, samples, 2.0)
+        assert result.requests == 2
+        assert result.total_prompt == 40
+        assert result.total_completion == 60
+        assert result.aggregate_tps == pytest.approx(30.0)
+        assert result.mean_tps == pytest.approx(50.0)
+        row = _llmservew_bench.format_result_row(result)
+        assert row[0] == scenario.label
+        assert row[1] == "2"
+        assert row[5] == "30.0"
+        assert row[6] == "50.0"
+        assert row[-1] == "完成"
+        assert len(row) == len(_llmservew_bench.RESULT_COLUMNS)
+
+    def test_result_row_reports_error_and_cancel(self) -> None:
+        scenario = _llmservew_bench.SCENARIOS[0]
+        failed = _llmservew_bench.ScenarioResult(scenario, error="x" * 100)
+        status = _llmservew_bench.format_result_row(failed)[-1]
+        assert status.startswith("失败: ")
+        assert len(status) < 60
+        cancelled = _llmservew_bench.ScenarioResult(scenario, cancelled=True)
+        assert _llmservew_bench.format_result_row(cancelled)[-1] == "已取消"
+        assert _llmservew_bench.ScenarioResult(scenario).mean_tps == 0.0
+
+    def test_endpoint_from_states_prefers_named_and_single(self) -> None:
+        states = [_state("alpha", port=8081), _state("beta", port=8082)]
+        named = _llmservew_bench.endpoint_from_states(states, "beta", alive=lambda state: state.name == "beta")
+        assert named.base_url == "http://127.0.0.1:8082"
+        single = _llmservew_bench.endpoint_from_states(states, alive=lambda state: state.name == "alpha")
+        assert single.base_url == "http://127.0.0.1:8081"
+
+    def test_endpoint_from_states_errors(self) -> None:
+        with pytest.raises(ServeError, match="没有运行中的服务"):
+            _llmservew_bench.endpoint_from_states([_state("alpha")], alive=lambda state: False)
+        registered = [_state("alpha"), _state("beta", port=8081)]
+        with pytest.raises(ServeError, match="未在运行"):
+            _llmservew_bench.endpoint_from_states(registered, "alpha", alive=lambda state: state.name == "beta")
+        with pytest.raises(ServeError, match="多个服务在运行"):
+            _llmservew_bench.endpoint_from_states(registered, alive=lambda state: True)

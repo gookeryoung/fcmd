@@ -28,6 +28,7 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
+from fcmd.tools.llm._llmservew_bench import _ServeWindowBench
 from fcmd.tools.llm._llmservew_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
     RATE_WINDOW_SECONDS,
     GpuSample,
@@ -85,7 +86,9 @@ _DESCRIPTION = (
     "配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
     "查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，"
     "同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标"
-    "（系统负载在服务未启动时也持续采样展示）；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json"
+    "（系统负载在服务未启动时也持续采样展示）；性能测试页提供短对话 / 长输出 / 代码补全 / "
+    "长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，"
+    "后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json"
 )
 
 MIN_WIDTH = 820
@@ -137,8 +140,10 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """Tk 服务窗口：参数表单 + 模型列表 + 计划预览 + 后台启停。"""
+class ServeWindow(
+    _ServeWindowUI, _ServeWindowMonitor, _ServeWindowBench
+):  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
+    """Tk 服务窗口：参数表单 + 模型列表 + 计划预览 + 后台启停 + 性能测试。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
@@ -182,6 +187,18 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._monitor_state: ServeState | None = None
         self._monitor_results: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._monitor_seq = 0
+
+        self._bench_thread: threading.Thread | None = None
+        self._bench_stop: threading.Event | None = None
+        self._bench_results: queue.Queue[tuple[str, Any]] | None = None
+        self._bench_seq = 0
+        self._bench_running = False
+        self._bench_completed = 0
+        self._bench_total = 0
+        self._bench_repeat_var = tk.StringVar(value="1")
+        self._bench_timeout_var = tk.StringVar(value="180")
+        self._bench_tokens_var = tk.StringVar(value="")
+        self._bench_status_var = tk.StringVar(value="选择场景后点击“开始测试”")
 
         self._name_var = tk.StringVar(value=self._default_service_name())
         self._profile_var = tk.StringVar(value=DEFAULT_PROFILE)
@@ -793,6 +810,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
             return
         self._closing = True
         self._stop_monitor()
+        self._close_bench()
         save_settings(ServeSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
