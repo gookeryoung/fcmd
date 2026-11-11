@@ -22,7 +22,7 @@ pip install fcmd          # 或 uv add fcmd
 
 | Extra | 安装命令 | 提供的工具/能力 |
 |-------|---------|---------------|
-| `img` | `pip install fcmd[img]` | `imagetool` / `img2pdf` / `img2pdfw`（Pillow） |
+| `img` | - | 已随主包安装（Pillow 为常驻依赖），保留该分组仅为 `ocr` / `office` 组合引用 |
 | `pdf` | `pip install fcmd[pdf]` | `pdftool` / `pdfcrypt` / `pdfsplit`（PyMuPDF + pypdf） |
 | `ocr` | `pip install fcmd[ocr]` | `pdftool ocr`（pytesseract，需系统 tesseract） |
 | `svg` | `pip install fcmd[svg]` | `img2ico` 的 SVG 输入（resvg-py） |
@@ -31,7 +31,7 @@ pip install fcmd          # 或 uv add fcmd
 | `filecheck` | `pip install fcmd[filecheck]` | `filecheck` 的容器类型识别（puremagic） |
 | `color` | `pip install fcmd[color]` | `colortool` 的颜色换算（coloraide） |
 | `pe` | `pip install fcmd[pe]` | `reshack` / `reshackw` 的 PE 资源解析与写回（pefile） |
-| `office` | `pip install fcmd[office]` | img + pdf + ocr + svg 全家桶 |
+| `office` | `pip install fcmd[office]` | pdf + ocr + svg 全家桶 |
 | `win32` | `pip install fcmd[win32]` | `docdiff` / `docdiffw` 的 Word 自动化（pywin32，仅 Windows） |
 | `full` | `pip install fcmd[full]` | office + win32 + crypto + archive + filecheck + color + pe |
 | `lint` | `pip install fcmd[lint]` | 开发用：ruff + pyrefly |
@@ -209,8 +209,8 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正），依赖 `fcmd[img]` |
-| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志），依赖 `fcmd[img]` |
+| `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正，Pillow 随主包安装） |
+| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志） |
 | `pdfcrypt` | - | PDF 批量加密/解密（扫描目录、按加密状态筛选、并发处理；加密输出 `.enc.pdf`，解密输出 `.dec.pdf`），依赖 `fcmd[pdf]` |
 | `pdfcryptw` | - | PDF 加密解密窗口版（Tk，目录与密码输入、递归与并发可调、进度与日志），依赖 `fcmd[pdf]` |
 | `pdfsplit` | - | PDF 分割（按份数 / 每份页数 / 页码范围提取，支持 `1,3-5,7-` 语法），依赖 `fcmd[pdf]` |
@@ -228,10 +228,10 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `img2ico` | - | 图像/SVG 转 ICO/ICNS（多尺寸、质量档位、目录批量），依赖 `fcmd[img,svg]` |
-| `img2icow` | - | 图像转 ICO 转换器窗口版（Tk，单文件/目录批量、尺寸与质量可调），依赖 `fcmd[img,svg]` |
+| `img2ico` | - | 图像/SVG 转 ICO/ICNS（多尺寸、质量档位、目录批量），SVG 输入依赖 `fcmd[svg]` |
+| `img2icow` | - | 图像转 ICO 转换器窗口版（Tk，单文件/目录批量、尺寸与质量可调），SVG 输入依赖 `fcmd[svg]` |
 | `ncmconvertw` | - | NCM 音乐解锁转换器窗口版（Tk，批量添加/目录导入、后台逐文件解锁为 mp3/flac、进度与失败明细），依赖 `fcmd[crypto]` |
-| `imagetool` | `imaget` | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors），依赖 `fcmd[img]` |
+| `imagetool` | `imaget` | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors，Pillow 随主包安装） |
 | `videoconv` | - | 视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif；编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持 `*`/`**` 通配符批量），依赖系统 ffmpeg |
 | `videoconvw` | - | 视频转换器窗口版（Tk，文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断），依赖系统 ffmpeg |
 
@@ -240,7 +240,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
-| `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：顶部菜单栏按文件/选中/视图/工具/命令/配置/帮助分组、按选择数与面板状态动态启用；左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签）、Ctrl+D 书签、Alt+Down 历史跳转、Alt+Left/Alt+Right 后退/前进，F5 复制/F6 移动进入串行传输队列（逐项进度/按项取消/失败重试），Ctrl+Shift+C 只读目录比较（大小 + 2 秒 mtime 容差，可开深度哈希）与预演式目录同步（复制/覆盖入队、删除走回收站逐项执行），Ctrl+Q 内嵌快速查看（文本/图片/PE 与二进制，限读并提示截断）、Ctrl+F8 只读目录树（跟随活动面板）、视图模式（Ctrl+F1 简要 / Ctrl+F2 详细 / Ctrl+Shift+F1 缩略图，每个标签独立记忆模式与列宽，详细列顺序固定、宽度可拖拽并持久化；缩略图异步加载 + Canvas 虚拟化 + 内存 LRU，PNG/GIF/PPM 走 Tk 原生，JPEG/BMP/WebP/TIFF 需 `fcmd[img]`，未安装时显示类型徽标并提示）、Ctrl+Enter 命令行栏（删除类命令二次确认）、配置→颜色规则（按掩码/大小/类型/时间，持久化），F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、Ctrl+M 批量重命名（预览与冲突拦截）、Space 统计大小，Ctrl+H 显示隐藏文件（菜单勾选同步），Alt+F5 打包/Alt+F9 解压、Ctrl+F 搜索（结果可直接复制/移动/删除/加入选择）、哈希与属性，复用 archivex/hashbase/fileops，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
+| `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：顶部菜单栏按文件/选中/视图/工具/命令/配置/帮助分组、按选择数与面板状态动态启用；左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签）、Ctrl+D 书签、Alt+Down 历史跳转、Alt+Left/Alt+Right 后退/前进，F5 复制/F6 移动进入串行传输队列（逐项进度/按项取消/失败重试），Ctrl+Shift+C 只读目录比较（大小 + 2 秒 mtime 容差，可开深度哈希）与预演式目录同步（复制/覆盖入队、删除走回收站逐项执行），Ctrl+Q 内嵌快速查看（文本/图片/PE 与二进制，限读并提示截断）、Ctrl+F8 只读目录树（跟随活动面板）、视图模式（Ctrl+F1 简要 / Ctrl+F2 详细 / Ctrl+Shift+F1 缩略图，每个标签独立记忆模式与列宽，详细列顺序固定、宽度可拖拽并持久化；缩略图异步加载 + Canvas 虚拟化 + 内存 LRU，PNG/GIF/PPM/JPEG/BMP/WebP/TIFF/ICO 统一由 Pillow 解码，非图片、超大或解码失败的文件显示类型徽标）、Ctrl+Enter 命令行栏（删除类命令二次确认）、配置→颜色规则（按掩码/大小/类型/时间，持久化），F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、Ctrl+M 批量重命名（预览与冲突拦截）、Space 统计大小，Ctrl+H 显示隐藏文件（菜单勾选同步），Alt+F5 打包/Alt+F9 解压、Ctrl+F 搜索（结果可直接复制/移动/删除/加入选择）、哈希与属性，复用 archivex/hashbase/fileops，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
 | `envw` | - | 环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor：用户/系统/当前进程作用域、搜索、新建/编辑/删除/重命名、PATH 逐条路径编辑、变量引用展开预览、JSON 备份恢复，设置持久化到 `~/.fcmd/ui/envw.json`） |
 | `fonttool` | - | 推荐字体按需安装与管理（list/status/install/remove）：默认 Cascadia Code + Noto Sans SC，下载后校验 SHA256 并保存 OFL 许可证，安装到当前用户字体目录，不内置进发行包 |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |

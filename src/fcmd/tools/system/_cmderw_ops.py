@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import importlib
 import os
 import re
 import shutil
@@ -40,14 +39,13 @@ __all__ = [
     "COMPARE_STATUS_TEXT",
     "DEFAULT_VIEW_MODE",
     "DESTRUCTIVE_COMMANDS",
+    "IMAGE_SUFFIXES",
     "ITEM_CANCELLED",
     "ITEM_DONE",
     "ITEM_FAILED",
     "ITEM_PENDING",
     "ITEM_RUNNING",
-    "NATIVE_IMAGE_SUFFIXES",
     "PANEL_COLUMNS",
-    "PILLOW_IMAGE_SUFFIXES",
     "PREVIEW_BINARY",
     "PREVIEW_HEX_LIMIT",
     "PREVIEW_IMAGE",
@@ -68,9 +66,8 @@ __all__ = [
     "THUMBNAIL_CACHE_BYTES",
     "THUMBNAIL_CACHE_ITEMS",
     "THUMBNAIL_GAP",
+    "THUMBNAIL_IMAGE",
     "THUMBNAIL_INVALIDATION_REASONS",
-    "THUMBNAIL_NATIVE",
-    "THUMBNAIL_PILLOW",
     "THUMBNAIL_TILE_SIZE",
     "VIEW_MODES",
     "VIEW_MODE_BRIEF",
@@ -121,7 +118,6 @@ __all__ = [
     "normalize_column_widths",
     "normalize_view_mode",
     "parse_color_rules",
-    "pillow_available",
     "plan_bulk_rename",
     "read_preview",
     "resolve_color_style",
@@ -129,7 +125,6 @@ __all__ = [
     "revalidate_sync_items",
     "send_to_trash",
     "split_masks",
-    "thumbnail_backend_note",
     "thumbnail_cache_key",
     "thumbnail_columns",
     "thumbnail_plan",
@@ -1832,16 +1827,28 @@ def column_display_names(view_mode: str) -> tuple[str, ...]:
 
 
 # ============================================================================ #
-# 缩略图：格式判定、可选依赖探测、世代号、缓存与网格几何（纯逻辑）
+# 缩略图：格式判定、世代号、缓存与网格几何（纯逻辑）
 # ============================================================================ #
-THUMBNAIL_NATIVE = "native"
-THUMBNAIL_PILLOW = "pillow"
+THUMBNAIL_IMAGE = "image"
 THUMBNAIL_BADGE = "badge"
 
-#: Tk 8.6 自带可解码的图片格式（PhotoImage）。
-NATIVE_IMAGE_SUFFIXES: frozenset[str] = frozenset({".png", ".gif", ".ppm", ".pgm", ".pbm"})
-#: 只有 Pillow 可用时才解码的格式；未安装时显示类型徽标。
-PILLOW_IMAGE_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff", ".ico"})
+#: Pillow 能解码、可生成缩略图的图片格式（Pillow 为项目常驻依赖）。
+IMAGE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".png",
+        ".gif",
+        ".ppm",
+        ".pgm",
+        ".pbm",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".webp",
+        ".tif",
+        ".tiff",
+        ".ico",
+    }
+)
 
 THUMBNAIL_TILE_SIZE = 96
 THUMBNAIL_GAP = 8
@@ -1851,44 +1858,19 @@ THUMBNAIL_CACHE_BYTES = 32 * 1024 * 1024
 THUMBNAIL_INVALIDATION_REASONS: tuple[str, ...] = ("refresh", "navigate", "tab", "mode")
 
 
-def pillow_available(importer: Callable[[str], object] | None = None) -> bool:
-    """运行期探测 Pillow 是否可用；导入失败静默回落，不报错。
-
-    ``importer`` 可注入（默认 ``importlib.import_module``），便于在未安装
-    Pillow 的机器上覆盖两条路径。
-    """
-    load = importlib.import_module if importer is None else importer
-    try:
-        load("PIL.Image")
-    except (ImportError, OSError):
-        return False
-    return True
-
-
-def thumbnail_plan(name: str, has_pillow: bool) -> str:
-    """决定一张图片的缩略图来源：Tk 原生、Pillow 解码或类型徽标。"""
+def thumbnail_plan(name: str) -> str:
+    """按扩展名决定缩略图来源：图片交给 Pillow 解码，其余显示类型徽标。"""
     suffix = Path(name).suffix.casefold()
-    if suffix in NATIVE_IMAGE_SUFFIXES:
-        return THUMBNAIL_NATIVE
-    if suffix in PILLOW_IMAGE_SUFFIXES:
-        return THUMBNAIL_PILLOW if has_pillow else THUMBNAIL_BADGE
+    if suffix in IMAGE_SUFFIXES:
+        return THUMBNAIL_IMAGE
     return THUMBNAIL_BADGE
 
 
-def thumbnail_backend_note(has_pillow: bool) -> str:
-    """进入缩略图模式时给用户的后端说明。"""
-    if has_pillow:
-        return "缩略图模式：Pillow 可用，支持 JPEG/BMP/WebP/TIFF 等格式"
-    return "缩略图模式：未安装 Pillow（fcmd[img]），仅 PNG/GIF/PPM 生成缩略图，其余显示类型徽标"
-
-
-def thumbnail_unsupported_hint(name: str, has_pillow: bool) -> str:
+def thumbnail_unsupported_hint(name: str) -> str:
     """选中无法生成缩略图的文件时的提示文本。"""
     suffix = Path(name).suffix.casefold()
     label = suffix.upper() if suffix else Path(name).name
-    if has_pillow:
-        return f"{label} 不是支持的图片格式，显示类型徽标"
-    return f"{label} 需要 Pillow（fcmd[img]）才能生成缩略图，当前显示类型徽标"
+    return f"{label} 不是支持的图片格式，显示类型徽标"
 
 
 @dataclass

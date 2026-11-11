@@ -6,7 +6,7 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
-dependencies = [ "psutil>=6.0", "pyyaml>=6.0.1", "rich>=13.9" ]
+dependencies = [ "pillow>=10", "psutil>=6.0", "pyyaml>=6.0.1", "rich>=13.9" ]
 description = "Rapid Python tools collection"
 keywords = [ "cli", "dag", "scheduler", "task", "tools", "workflow" ]
 license = {text = "MIT"}

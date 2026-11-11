@@ -1394,45 +1394,22 @@ class TestViewModes:
 
 
 class TestThumbnails:
-    """缩略图的格式判定、依赖探测、世代号、缓存与网格几何。"""
+    """缩略图的格式判定、世代号、缓存与网格几何。"""
 
-    def test_pillow_probe_injected_success(self) -> None:
-        calls: list[str] = []
+    @pytest.mark.parametrize(
+        "name",
+        ["a.png", "a.GIF", "a.jpg", "a.JPEG", "a.webp", "a.bmp", "a.tif", "a.tiff", "a.ico", "a.ppm"],
+    )
+    def test_thumbnail_plan_accepts_pillow_formats(self, name: str) -> None:
+        assert ops.thumbnail_plan(name) == ops.THUMBNAIL_IMAGE
 
-        def importer(name: str) -> object:
-            calls.append(name)
-            return object()
+    @pytest.mark.parametrize("name", ["a.txt", "README", "a.png.txt", "a."])
+    def test_thumbnail_plan_falls_back_to_badge(self, name: str) -> None:
+        assert ops.thumbnail_plan(name) == ops.THUMBNAIL_BADGE
 
-        assert ops.pillow_available(importer) is True
-        assert calls == ["PIL.Image"]
-
-    def test_pillow_probe_injected_failures(self) -> None:
-        def missing(_name: str) -> object:
-            raise ImportError("no PIL")
-
-        def broken(_name: str) -> object:
-            raise OSError("dll load failed")
-
-        assert ops.pillow_available(missing) is False
-        assert ops.pillow_available(broken) is False
-
-    def test_thumbnail_plan_both_paths(self) -> None:
-        assert ops.thumbnail_plan("a.png", False) == ops.THUMBNAIL_NATIVE
-        assert ops.thumbnail_plan("a.GIF", False) == ops.THUMBNAIL_NATIVE
-        assert ops.thumbnail_plan("a.jpg", True) == ops.THUMBNAIL_PILLOW
-        assert ops.thumbnail_plan("a.JPEG", True) == ops.THUMBNAIL_PILLOW
-        assert ops.thumbnail_plan("a.webp", True) == ops.THUMBNAIL_PILLOW
-        assert ops.thumbnail_plan("a.jpg", False) == ops.THUMBNAIL_BADGE
-        assert ops.thumbnail_plan("a.webp", False) == ops.THUMBNAIL_BADGE
-        assert ops.thumbnail_plan("a.txt", True) == ops.THUMBNAIL_BADGE
-        assert ops.thumbnail_plan("README", True) == ops.THUMBNAIL_BADGE
-        assert ops.thumbnail_plan("a.png", True) == ops.THUMBNAIL_NATIVE
-
-    def test_thumbnail_messages_reflect_backend(self) -> None:
-        assert "Pillow 可用" in ops.thumbnail_backend_note(True)
-        assert "未安装 Pillow" in ops.thumbnail_backend_note(False)
-        assert "不是支持的图片格式" in ops.thumbnail_unsupported_hint("a.txt", True)
-        assert "需要 Pillow" in ops.thumbnail_unsupported_hint("a.jpg", False)
+    def test_thumbnail_unsupported_hint(self) -> None:
+        assert "TXT 不是支持的图片格式" in ops.thumbnail_unsupported_hint("a.txt")
+        assert "README 不是支持的图片格式" in ops.thumbnail_unsupported_hint("README")
 
     @pytest.mark.parametrize("reason", ops.THUMBNAIL_INVALIDATION_REASONS)
     def test_tracker_invalidates_old_generation_for_each_reason(self, reason: str) -> None:

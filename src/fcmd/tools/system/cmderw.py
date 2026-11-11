@@ -72,7 +72,6 @@ from fcmd.tools.system._cmderw_ops import (
     SYNC_RTL,
     THUMBNAIL_BADGE,
     THUMBNAIL_GAP,
-    THUMBNAIL_PILLOW,
     THUMBNAIL_TILE_SIZE,
     VIEW_MODE_BRIEF,
     VIEW_MODE_DETAILED,
@@ -117,12 +116,10 @@ from fcmd.tools.system._cmderw_ops import (
     normalize_column_widths,
     normalize_view_mode,
     parse_color_rules,
-    pillow_available,
     plan_bulk_rename,
     read_preview,
     resolve_color_style,
     revalidate_sync_items,
-    thumbnail_backend_note,
     thumbnail_cache_key,
     thumbnail_columns,
     thumbnail_plan,
@@ -273,12 +270,12 @@ _THUMB_CELL_HEIGHT = _THUMB_TILE + _THUMB_LABEL_HEIGHT + 2 * _THUMB_PAD
 
 def _decode_thumbnail_with_pillow(data: bytes, tile_size: int) -> bytes | None:
     """在后台线程用 Pillow 解码并等比缩放到 tile_size，返回 PNG 字节。"""
-    from importlib import import_module
     from io import BytesIO
 
-    image_module = import_module("PIL.Image")
+    from PIL import Image
+
     try:
-        with image_module.open(BytesIO(data)) as image:
+        with Image.open(BytesIO(data)) as image:
             image.thumbnail((tile_size, tile_size))
             converted = image if image.mode in ("RGB", "RGBA") else image.convert("RGBA")
             output = BytesIO()
@@ -288,15 +285,13 @@ def _decode_thumbnail_with_pillow(data: bytes, tile_size: int) -> bytes | None:
         return None
 
 
-def load_thumbnail_payload(path: Path, plan: str, tile_size: int = _THUMB_TILE) -> bytes | None:
-    """后台读取图片字节：最多 8 MiB；Pillow 路径先解码为 PNG，原生格式直接返回。"""
+def load_thumbnail_payload(path: Path, tile_size: int = _THUMB_TILE) -> bytes | None:
+    """后台读取图片字节：最多 8 MiB，再交给 Pillow 解码为 PNG；失败返回 None。"""
     with path.open("rb") as handle:
         data = handle.read(_THUMB_READ_LIMIT + 1)
     if len(data) > _THUMB_READ_LIMIT:
         return None
-    if plan == THUMBNAIL_PILLOW:
-        return _decode_thumbnail_with_pillow(data, tile_size)
-    return data
+    return _decode_thumbnail_with_pillow(data, tile_size)
 
 
 # ============================================================================ #
@@ -1242,7 +1237,6 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
         self._thumb_tracker = ThumbnailRequestTracker()
         self._thumb_cache = ThumbnailCache()
-        self._thumb_has_pillow = pillow_available()
         self._thumb_results: queue.Queue[tuple[int, tuple[str, int, int, int], bytes | None]] = queue.Queue()
         self._thumb_futures: dict[tuple[str, int, int, int], Any] = {}
         self._thumb_executor: ThreadPoolExecutor | None = None
@@ -1269,11 +1263,6 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
     def _is_thumbnail_view(self) -> bool:
         return self.state.view_mode == VIEW_MODE_THUMBNAILS
-
-    @property
-    def thumbnail_note(self) -> str:
-        """缩略图后端说明（Pillow 可用性）。"""
-        return thumbnail_backend_note(self._thumb_has_pillow)
 
     def _enter_thumbnail_view(self) -> None:
         """隐藏列表、显示网格，并让旧世代结果失效。"""
@@ -1396,7 +1385,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             width=2 if selected else 1,
         )
         photo: Any = self._thumb_cache.get(key)
-        plan = THUMBNAIL_BADGE if entry.is_dir else thumbnail_plan(entry.name, self._thumb_has_pillow)
+        plan = THUMBNAIL_BADGE if entry.is_dir else thumbnail_plan(entry.name)
         if photo is not None:
             self._thumb_canvas.create_image(
                 x0 + (_THUMB_TILE - int(photo.width())) // 2,
@@ -1447,15 +1436,14 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """按需提交后台读取；同一键只保留一个任务。"""
         if key in self._thumb_futures or key in self._thumb_cache:
             return
-        plan = thumbnail_plan(entry.name, self._thumb_has_pillow)
-        if plan == THUMBNAIL_BADGE:
+        if thumbnail_plan(entry.name) == THUMBNAIL_BADGE:
             return
         executor = self._thumb_executor
         if executor is None:
             executor = ThreadPoolExecutor(max_workers=_THUMB_WORKERS, thread_name_prefix="cmderw-thumb")
             self._thumb_executor = executor
         generation = self._thumb_tracker.generation
-        self._thumb_futures[key] = executor.submit(self._thumbnail_worker, entry.path, key, generation, plan)
+        self._thumb_futures[key] = executor.submit(self._thumbnail_worker, entry.path, key, generation)
         self._schedule_thumb_poll()
 
     def _thumbnail_worker(
@@ -1463,12 +1451,11 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         path: Path,
         key: tuple[str, int, int, int],
         generation: int,
-        plan: str,
     ) -> None:
         """后台线程：只读文件字节并解码，绝不触碰 Tk 对象。"""
         payload: bytes | None
         try:
-            payload = load_thumbnail_payload(path, plan, _THUMB_TILE)
+            payload = load_thumbnail_payload(path, _THUMB_TILE)
         except Exception:
             payload = None
         self._thumb_results.put((generation, key, payload))
@@ -1505,18 +1492,13 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self._schedule_thumb_poll()
 
     def _create_thumb_photo(self, payload: bytes | None) -> Any:
+        """把 Pillow 生成的 PNG 字节转成 Tk 图像；解码失败时返回 None 并显示徽标。"""
         if payload is None:
             return None
         try:
-            photo = self._tk.PhotoImage(data=payload)
+            return self._tk.PhotoImage(data=payload)
         except self._tk.TclError:
             return None
-        largest = max(photo.width(), photo.height())
-        if largest > _THUMB_TILE * 2:
-            factor = max(2, largest // _THUMB_TILE)
-            with contextlib.suppress(self._tk.TclError):
-                photo = photo.subsample(factor)
-        return photo
 
     @staticmethod
     def _thumb_photo_bytes(photo: Any) -> int:
@@ -1896,8 +1878,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             text += f" | 已选 {len(selected)} 个，{format_size(selected_size)}"
             if self._is_thumbnail_view() and len(selected) == 1 and not selected[0].is_dir:
                 entry = selected[0]
-                if thumbnail_plan(entry.name, self._thumb_has_pillow) == THUMBNAIL_BADGE:
-                    text += f" | {thumbnail_unsupported_hint(entry.name, self._thumb_has_pillow)}"
+                if thumbnail_plan(entry.name) == THUMBNAIL_BADGE:
+                    text += f" | {thumbnail_unsupported_hint(entry.name)}"
         self.status_var.set(text)
 
     def _on_select(self, _event: Any = None) -> None:
@@ -4305,8 +4287,6 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._view_var.set(panel.state.view_mode)
         label = {value: text.split("\t", 1)[0] for text, value in _VIEW_MODE_CHOICES}
         text = f"{panel.title}视图：{label.get(panel.state.view_mode, panel.state.view_mode)}"
-        if panel.state.view_mode == VIEW_MODE_THUMBNAILS:
-            text += f" | {panel.thumbnail_note}"
         self.set_status(text)
 
     def sort_active(self, column: str) -> None:
