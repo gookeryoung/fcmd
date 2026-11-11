@@ -128,4 +128,6 @@ CLI 编辑默认只预演，必须显式 `--apply` 才落盘；GUI 编辑对话�
   重解析校验、`<文件名>.backup[N]` 备份与原子替换；CLI `peview edit` 默认预演，
   `--apply` 写入，签名文件需 `--allow-signature-break`；GUI「编辑字段…」对话框
   常驻风险说明并要求勾选确认。
-- cmderw 集成与收尾：待落地。
+- cmderw 集成与收尾：已落地。cmder 文件菜单 / 右键「PE 查看 / 编辑…」以独立进程
+  启动 `pevieww --file <路径>`（归档视图内禁用），`pyproject.toml` 补 `peview` /
+  `pevieww` 入口，README 工具表与 `_manifest_data.py` 已同步重生成。
