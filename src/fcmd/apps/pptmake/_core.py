@@ -20,6 +20,8 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
 
+from fcmd.apps.pptmake._tokens import DesignTokens, TokenError, tokens_from_mapping, tokens_to_mapping
+
 __all__ = [
     "ASPECTS",
     "ASPECT_4_3",
@@ -53,6 +55,7 @@ __all__ = [
     "STYLE_TEXT",
     "TEMPLATE_SUFFIX",
     "TEMPLATE_VERSION",
+    "DesignTokens",
     "Palette",
     "SlideSpec",
     "TemplateError",
@@ -82,7 +85,7 @@ __all__ = [
     "template_to_mapping",
 ]
 
-TEMPLATE_VERSION: Final[int] = 1
+TEMPLATE_VERSION: Final[int] = 2
 TEMPLATE_SUFFIX: Final[str] = ".pptmtpl.json"
 
 # ---------------------------------------------------------------------- #
@@ -242,13 +245,14 @@ _PRESETS: Final[dict[str, Palette]] = {
 
 @dataclass(frozen=True, slots=True)
 class Theme:
-    """风格：预设名、调色板、字体与装饰样式。"""
+    """风格：预设名、调色板、字体、装饰样式与设计令牌。"""
 
     style: str = STYLE_AURORA
     palette: Palette = field(default_factory=lambda: _PRESETS[STYLE_AURORA])
     heading_font: str = DEFAULT_HEADING_FONT
     body_font: str = DEFAULT_BODY_FONT
     decor: str = DECOR_ORBS
+    tokens: DesignTokens = field(default_factory=DesignTokens)
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,6 +496,7 @@ def template_to_mapping(template: TemplateSpec) -> dict[str, Any]:
             "body_font": template.theme.body_font,
             "decor": template.theme.decor,
             "palette": {name: getattr(palette, name) for name, _label in PALETTE_FIELDS},
+            "tokens": tokens_to_mapping(template.theme.tokens),
         },
         "layouts": list(template.layouts),
         "slides": [
@@ -547,15 +552,38 @@ def _slide_from_mapping(raw: object, index: int) -> SlideSpec:
     )
 
 
+def _template_version(value: object) -> int:
+    """解析模板版本；缺失按 v1 处理，高于当前版本时拒绝加载。"""
+    if value is None:
+        return 1
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TemplateError(f"version 需为整数：{value!r}")
+    if value > TEMPLATE_VERSION:
+        raise TemplateError(f"模板版本 {value} 高于当前支持的 {TEMPLATE_VERSION}，请升级 pptmake")
+    return value
+
+
+def _theme_tokens(raw: object) -> DesignTokens:
+    """解析 ``theme.tokens``；非法令牌转成 :class:`TemplateError`。"""
+    try:
+        return tokens_from_mapping(raw)
+    except TokenError as exc:
+        raise TemplateError(str(exc)) from exc
+
+
 def template_from_mapping(raw: object) -> TemplateSpec:
     """把 JSON 字典解析成模板；字段缺失用默认值，非法值抛 :class:`TemplateError`。"""
     if not isinstance(raw, dict):
         raise TemplateError("模板根节点需为 JSON 对象")
+    version = _template_version(raw.get("version"))
     theme_raw: Any = raw.get("theme", {})
     if theme_raw is None:
         theme_raw = dict[str, Any]()
     if not isinstance(theme_raw, dict):
         raise TemplateError("theme 需为对象")
+    # v1 没有令牌层，迁移时统一补默认令牌，避免历史文件里残留的 tokens 影响结果。
+    tokens_raw = None if version < 2 else theme_raw.get("tokens")
+    tokens = _theme_tokens(tokens_raw)
     style = normalize_style(theme_raw.get("style", STYLE_AURORA))
     palette = _palette_from_mapping(
         theme_raw.get("palette"),
@@ -570,6 +598,7 @@ def template_from_mapping(raw: object) -> TemplateSpec:
         heading_font=heading_font or DEFAULT_HEADING_FONT,
         body_font=body_font or DEFAULT_BODY_FONT,
         decor=normalize_decor(theme_raw.get("decor", DECOR_ORBS)),
+        tokens=tokens,
     )
 
     layouts_raw = raw.get("layouts", LAYOUTS)

@@ -244,6 +244,81 @@ def test_summary_lines_without_author_or_description() -> None:
     assert "页面：0 页" in text
 
 
+def test_tokens_defaults_in_v2_mapping() -> None:
+    template = core.default_template()
+    assert core.TEMPLATE_VERSION == 2
+    assert template.theme.tokens == core.DesignTokens()
+    raw = core.template_to_mapping(template)["theme"]["tokens"]
+    assert raw["density"] == "comfortable"
+    assert raw["type_scale"]["body"] == 20.0
+    assert raw["semantic"]["danger"] == "#F85149"
+    assert core.template_from_mapping(core.template_to_mapping(template)) == template
+
+
+def test_v1_template_migrates_to_default_tokens() -> None:
+    template = core.template_from_mapping(
+        {
+            "version": 1,
+            "name": "旧模板",
+            "theme": {"tokens": {"density": "compact"}},
+        }
+    )
+    assert template.theme.tokens == core.DesignTokens()
+    assert template.version == core.TEMPLATE_VERSION
+
+
+def test_v2_tokens_partial_override_and_roundtrip() -> None:
+    template = core.template_from_mapping(
+        {
+            "version": 2,
+            "theme": {
+                "tokens": {
+                    "density": "compact",
+                    "decor_intensity": 0.5,
+                    "type_scale": {"body": 22},
+                    "spacing": {"line": 1.4},
+                    "radius": {"card": 8},
+                    "font_fallback": ["Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans SC"],
+                    "semantic": {"danger": "ff0000"},
+                }
+            },
+        }
+    )
+    tokens = template.theme.tokens
+    assert tokens.density == "compact"
+    assert tokens.density_scale < 1.0
+    assert tokens.decor_intensity == 0.5
+    assert tokens.type_scale.body == 22.0
+    assert tokens.type_scale.title == core.DesignTokens().type_scale.title
+    assert tokens.spacing.line == 1.4
+    assert tokens.radius.card == 8.0
+    assert tokens.font_fallback == ("Source Han Sans SC", "Noto Sans CJK SC")
+    assert tokens.semantic.danger == "#FF0000"
+    assert tokens.semantic.success == "#3FB950"
+    assert core.template_from_mapping(core.template_to_mapping(template)) == template
+
+
+@pytest.mark.parametrize(
+    ("raw", "message"),
+    [
+        ({"version": "2"}, "version 需为整数"),
+        ({"version": core.TEMPLATE_VERSION + 1}, "高于当前支持"),
+        ({"version": 2, "theme": {"tokens": []}}, "tokens 需为对象"),
+        ({"version": 2, "theme": {"tokens": {"density": "dense"}}}, "密度需为"),
+        ({"version": 2, "theme": {"tokens": {"decor_intensity": 2}}}, "装饰强度"),
+        ({"version": 2, "theme": {"tokens": {"type_scale": {"body": 4}}}}, "正文"),
+        ({"version": 2, "theme": {"tokens": {"spacing": {"line": 3}}}}, "行距倍数"),
+        ({"version": 2, "theme": {"tokens": {"radius": {"card": -1}}}}, "卡片圆角"),
+        ({"version": 2, "theme": {"tokens": {"font_fallback": []}}}, "font_fallback"),
+        ({"version": 2, "theme": {"tokens": {"font_fallback": ["", "x"]}}}, "非法字体名"),
+        ({"version": 2, "theme": {"tokens": {"semantic": {"danger": "red"}}}}, "危险"),
+    ],
+)
+def test_tokens_reject_invalid_values(raw: object, message: str) -> None:
+    with pytest.raises(core.TemplateError, match=message):
+        core.template_from_mapping(raw)
+
+
 def test_replace_slide() -> None:
     template = core.default_template()
     updated = core.replace_slide(template, 0, core.new_slide(core.LAYOUT_QUOTE))
