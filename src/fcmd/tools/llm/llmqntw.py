@@ -1,8 +1,9 @@
 """llmqntw - GGUF 量化工具的 Tk 窗口版。
 
 基于 :mod:`fcmd.tools.llm.llmqnt` 的核心逻辑，提供文件选择、量化类型勾选、
-进度条与实时日志。窗口启动时扫描 ``llmenv`` 已配置的模型目录，下拉框只列出
-未量化的 F16 / BF16 原始 GGUF（已量化文件不再作为输入），也可手动浏览文件；
+进度条与实时日志。窗口启动时扫描 ``llmenv`` 已配置的模型目录，按 GGUF 元数据
+与张量类型识别精度和完整性，下拉框只列出全量（F16 / BF16 等）且可用的模型，
+并在括号中备注精度；已量化或不完整的文件会在选择时明确拦截。也可手动浏览文件；
 同时显示当前 llama.cpp 引擎、量化器与版本信息。窗口关闭后命令退出。
 
 示例
@@ -23,6 +24,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmqnt
+from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
 from fcmd.tools.llm.llmbase import ModelEntry, human_size
 
 __all__ = [
@@ -34,8 +36,9 @@ __all__ = [
 ]
 
 _DESCRIPTION = (
-    "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，显示引擎/量化器版本，"
-    "勾选多种量化类型批量转换；窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json"
+    "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，按 GGUF 元数据识别全量与量化精度"
+    "并检查完整性（备注在括号中，避免误转或漏转），显示引擎/量化器版本，勾选多种量化类型批量转换；"
+    "窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json"
 )
 
 MIN_WIDTH = 560
@@ -117,8 +120,11 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
         self._models: list[ModelEntry] = []
+        self._precisions: dict[str, GgufPrecision] = {}
         self._scan_thread: threading.Thread | None = None
-        self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str]]] = queue.Queue()
+        self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str], dict[str, GgufPrecision]]] = (
+            queue.Queue()
+        )
         self._running = False
 
         self._file_var = tk.StringVar(value="尚未选择输入文件")
@@ -228,24 +234,25 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._choose(self._models[index].path)
 
     def _choose(self, path: Path) -> None:
-        if self._is_quantized(path):
-            self._messagebox.showwarning(
-                "已是量化版",
-                f"{path.name} 已包含量化标记，重复量化只会损失质量。\n请选择 F16 / BF16 等原始 GGUF 作为输入。",
-            )
+        precision = self._precision_for(path, refresh=True)
+        reason = quantize_input_error(precision)
+        if reason:
+            self._messagebox.showwarning("无法作为量化输入", f"{path.name}：{reason}")
             return
         self.input_file = path
         self._file_var.set(str(path))
         self._sync_model_selection(path)
         self._mark_existing()
         self._clear_log()
+        self._log(f"精度: {precision.detail}")
         self._progress["value"] = 0
 
-    @staticmethod
-    def _is_quantized(path: Path) -> bool:
-        """文件名是否带量化标记（已是量化版，不再作为量化输入）。"""
-        name = path.name.lower()
-        return any(quant.lower() in name for quant in llmqnt.QUANT_TYPES)
+    def _precision_for(self, path: Path, *, refresh: bool = False) -> GgufPrecision:
+        """取模型精度识别结果；``refresh`` 为真时重新读取 GGUF 头部。"""
+        key = llmenv.path_key(path)
+        if refresh or key not in self._precisions:
+            self._precisions[key] = detect_precision(path)
+        return self._precisions[key]
 
     def _sync_model_selection(self, path: Path) -> None:
         """手动选文件后，若命中也同步下拉框显示。"""
@@ -281,7 +288,8 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
                 entries = llmmodel.scan_models(roots)
         except OSError:
             entries = []
-        self._scan_results.put((entries, self._collect_env_info()))
+        precisions = {llmenv.path_key(entry.path): detect_precision(entry.path) for entry in entries}
+        self._scan_results.put((entries, self._collect_env_info(), precisions))
 
     def _collect_env_info(self) -> dict[str, str]:
         """收集当前引擎 tag / 可执行文件、量化器路径与版本。"""
@@ -301,24 +309,33 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
     def _poll_scan(self) -> None:
         try:
-            entries, info = self._scan_results.get_nowait()
+            entries, info, precisions = self._scan_results.get_nowait()
         except queue.Empty:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 self.root.after(200, self._poll_scan)
             return
-        self._apply_models(entries, info)
+        self._apply_models(entries, info, precisions)
 
-    def _apply_models(self, entries: list[ModelEntry], info: dict[str, str]) -> None:
-        usable = [entry for entry in entries if not self._is_quantized(entry.path)]
+    def _apply_models(
+        self,
+        entries: list[ModelEntry],
+        info: dict[str, str],
+        precisions: dict[str, GgufPrecision],
+    ) -> None:
+        self._precisions = precisions
+        usable = [entry for entry in entries if self._precision_for(entry.path).quantized is not True]
         self._models = usable
-        labels = [f"{entry.relative}  ({human_size(entry.size)})" for entry in usable]
+        labels = [
+            f"{entry.relative}（{self._precision_for(entry.path).note}）  ({human_size(entry.size)})"
+            for entry in usable
+        ]
         self._model_box.configure(values=labels)
         if labels:
             self._model_var.set("")
             self._model_box.configure(state="disabled" if self._running else "readonly")
         else:
             if entries:
-                self._model_var.set(f"已配置的 {len(entries)} 个模型均为量化版，请选择 F16 / BF16 原始 GGUF")
+                self._model_var.set(f"已配置的 {len(entries)} 个模型均不是全量精度 GGUF，请选择 F16 / BF16 原始文件")
             else:
                 self._model_var.set("未发现已配置的 GGUF（用 fcmd llmenv add 登记模型目录）")
             self._model_box.configure(state="disabled")
@@ -357,6 +374,11 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if self.input_file is None or not self.input_file.is_file():
             self._messagebox.showwarning("缺少输入", "请先选择 F16 GGUF 文件")
             return
+        precision = self._precision_for(self.input_file, refresh=True)
+        reason = quantize_input_error(precision)
+        if reason:
+            self._messagebox.showerror("无法开始转换", f"{self.input_file.name}：{reason}")
+            return
         quants = self._selected_quants()
         if not quants:
             self._messagebox.showwarning("缺少量化类型", "请至少勾选一种尚未生成的量化类型")
@@ -371,6 +393,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
         self._clear_log()
         self._log(f"输入: {self.input_file}")
+        self._log(f"精度: {precision.detail}")
         self._log(f"引擎: {exe}")
         self._log(f"量化类型: {', '.join(quants)}（共 {len(pending)} 个任务）")
         if skipped:

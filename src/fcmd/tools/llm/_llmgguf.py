@@ -17,7 +17,7 @@ from typing import BinaryIO, Literal
 
 from fcmd.tools.llm.llmbase import human_size
 
-__all__ = ["GGUF_META_LIMIT", "GgufPrecision", "detect_precision"]
+__all__ = ["GGUF_META_LIMIT", "GgufPrecision", "detect_precision", "quantize_input_error"]
 
 #: 元数据最多读取的字节数（防止异常文件导致长时间扫描）
 GGUF_META_LIMIT = 64 * 1024 * 1024
@@ -368,3 +368,16 @@ def detect_precision(path: Path) -> GgufPrecision:
             actual_bytes=actual_bytes,
         )
     return GgufPrecision(label="精度未知", quantized=None, source="unknown", actual_bytes=actual_bytes)
+
+
+def quantize_input_error(precision: GgufPrecision) -> str | None:
+    """判断能否作为量化输入；不能时返回给用户看的原因，可以时返回 ``None``。"""
+    if precision.quantized is True:
+        return f"已是量化版（{precision.label}），重复量化只会损失质量。请选择 F16 / BF16 等全量精度 GGUF。"
+    if precision.incomplete and precision.expected_bytes is not None and precision.actual_bytes is not None:
+        return (
+            "文件疑似不完整"
+            f"（{human_size(precision.actual_bytes)} / 预期 {human_size(precision.expected_bytes)}），"
+            "请重新下载后再转换。"
+        )
+    return None

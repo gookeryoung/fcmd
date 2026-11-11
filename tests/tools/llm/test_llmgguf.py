@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.tools.llm import _llmgguf
-from fcmd.tools.llm._llmgguf import detect_precision
+from fcmd.tools.llm._llmgguf import detect_precision, quantize_input_error
 
 
 def _string(value: str) -> bytes:
@@ -350,3 +350,39 @@ def test_oversized_metadata_is_rejected(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert result.source == "filename"
     assert result.label == "Q4_0 量化"
+
+
+def test_quantize_input_error_rejects_quantized_file(tmp_path: Path) -> None:
+    path = tmp_path / "model.gguf"
+    _write_gguf(path, file_type=15, tensors=[("w", (256,), 12, 0)])
+
+    error = quantize_input_error(detect_precision(path))
+
+    assert error is not None
+    assert "量化" in error
+    assert "Q4_K_M" in error
+
+
+def test_quantize_input_error_rejects_incomplete_file(tmp_path: Path) -> None:
+    path = tmp_path / "model-f16.gguf"
+    _write_gguf(path, file_type=1, tensors=[("w", (1000,), 1, 0)], data_bytes=0)
+
+    error = quantize_input_error(detect_precision(path))
+
+    assert error is not None
+    assert "不完整" in error
+    assert "预期" in error
+
+
+def test_quantize_input_error_allows_complete_full_precision(tmp_path: Path) -> None:
+    path = tmp_path / "model-f16.gguf"
+    _write_gguf(path, file_type=1, tensors=[("w", (16,), 1, 0)])
+
+    assert quantize_input_error(detect_precision(path)) is None
+
+
+def test_quantize_input_error_allows_unknown_precision(tmp_path: Path) -> None:
+    path = tmp_path / "model.gguf"
+    path.write_bytes(b"not a gguf")
+
+    assert quantize_input_error(detect_precision(path)) is None
