@@ -63,6 +63,7 @@ __all__ = [
     "format_preview_status",
     "format_report",
     "join_name",
+    "make_target",
     "order_targets",
     "parse_rules",
     "preview_to_plan",
@@ -664,6 +665,19 @@ def preview_to_plan(preview: RenamePreview, selected: Sequence[Path] | None = No
 # ---------------------------------------------------------------------- #
 # 目标收集
 # ---------------------------------------------------------------------- #
+def make_target(path: Path, *, is_dir: bool | None = None) -> RenameTarget:
+    """按路径构造目标；读取不到的元数据记为 0，目录标记按需推断。"""
+    if is_dir is None:
+        is_dir = path.is_dir()
+    try:
+        stat = path.stat()
+    except OSError:
+        mtime = ctime = 0.0
+    else:
+        mtime, ctime = stat.st_mtime, stat.st_ctime
+    return RenameTarget(path, is_dir, mtime, ctime)
+
+
 def collect_targets(
     paths: Sequence[Path],
     *,
@@ -679,13 +693,7 @@ def collect_targets(
         if key in seen:
             return
         seen.add(key)
-        try:
-            stat = path.stat()
-        except OSError:
-            mtime = ctime = 0.0
-        else:
-            mtime, ctime = stat.st_mtime, stat.st_ctime
-        collected.append(RenameTarget(path, is_dir, mtime, ctime))
+        collected.append(make_target(path, is_dir=is_dir))
 
     for path in paths:
         if path.is_dir():

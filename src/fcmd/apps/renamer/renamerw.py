@@ -1,10 +1,10 @@
 """renamerw - 批量重命名窗口版（Tk）。
 
-左侧选择目标文件 / 目录，中间编辑规则流水线（替换 / 重排 / 搬移 / 插入 /
-大小写 / 计数器），右侧预览「旧名 → 新名」与状态，确认后两阶段执行，可撤销
+上方「文件」表同时列出名称、新名与状态，下方编辑规则流水线（替换 / 重排 / 搬移
+/ 插入 / 大小写 / 计数器），规则或文件变动后自动重算；确认后两阶段执行，可撤销
 本次运行结果。规则可导出 / 导入 JSON；
 
-窗口设置（目标列表、规则、递归与排序选项、窗口位置）保存在
+窗口设置（文件列表、规则、递归与排序选项、窗口位置）保存在
 ``${FCMD_HOME:-~/.fcmd}/ui/renamerw.json``，下次启动自动恢复。
 
 示例
@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,6 +44,7 @@ from fcmd.apps.renamer._core import (
     collect_targets,
     execute_plan,
     format_preview_status,
+    make_target,
     parse_rules,
     preview_to_plan,
     rules_to_json,
@@ -303,11 +305,12 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._dirs_var = tk.BooleanVar(value=self._settings.include_dirs)
         self._sort_var = tk.StringVar(value=SORT_TEXT.get(self._settings.sort_key, SORT_TEXT[SORT_NAME]))
         self._status_var = tk.StringVar(value="就绪")
-        self._show_old_var = tk.BooleanVar(value=False)
+        self._show_old_var = tk.BooleanVar(value=True)
         self._init_rule_vars()
 
         self._build_widgets()
-        self._refresh_target_tree()
+        self._selected = self._expand_paths(self._selected)
+        self._refresh_preview()
         self._refresh_rule_tree()
         _guitheme.install_theme_switcher(self.root)
         _guiwindow.build_menu(
@@ -347,21 +350,18 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         gap = space.xs
         tight = space.xxs
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(0, weight=1)
 
-        # ---- 目标：列表 + 左侧操作按钮 / 右侧选项 ----
-        targets = ttk.LabelFrame(self.root, text="目标", padding=space.sm)
-        targets.grid(row=0, column=0, sticky="ew", padx=space.md, pady=(space.md, tight))
-        targets.columnconfigure(0, weight=1)
-        self._target_tree = ttk.Treeview(targets, columns=("name", "path"), show="headings", height=4)
-        self._target_tree.heading("name", text="名称")
-        self._target_tree.heading("path", text="路径")
-        self._target_tree.column("name", width=220, anchor="w")
-        self._target_tree.column("path", width=760, anchor="w")
-        self._target_tree.grid(row=0, column=0, columnspan=2, sticky="ew")
+        # ---- 文件：操作栏 + 名称/新名/状态一张表 + 底部操作栏 ----
+        files = ttk.LabelFrame(self.root, text="文件", padding=space.sm)
+        files.grid(row=0, column=0, sticky="nsew", padx=space.md, pady=(space.md, tight))
+        files.columnconfigure(0, weight=1)
+        files.rowconfigure(1, weight=1)
 
-        actions = ttk.Frame(targets)
-        actions.grid(row=1, column=0, sticky="w", pady=(gap, 0))
+        toolbar = ttk.Frame(files)
+        toolbar.grid(row=0, column=0, sticky="ew")
+        actions = ttk.Frame(toolbar)
+        actions.grid(row=0, column=0, sticky="w")
         for index, (label, command) in enumerate(
             (
                 ("添加文件…", self._add_files),
@@ -372,22 +372,47 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         ):
             ttk.Button(actions, text=label, command=command).grid(row=0, column=index, padx=(gap if index else 0, 0))
 
-        options = ttk.Frame(targets)
-        options.grid(row=1, column=1, sticky="e", pady=(gap, 0))
+        options = ttk.Frame(toolbar)
+        options.grid(row=0, column=1, sticky="e")
         ttk.Checkbutton(options, text="递归子目录", variable=self._recursive_var).grid(row=0, column=0)
         ttk.Checkbutton(options, text="包含目录", variable=self._dirs_var).grid(row=0, column=1, padx=(space.md, 0))
         ttk.Label(options, text="计数器排序").grid(row=0, column=2, padx=(space.md, tight))
-        ttk.Combobox(
+        sort_box = ttk.Combobox(
             options,
             textvariable=self._sort_var,
             values=list(SORT_TEXT.values()),
             state="readonly",
             width=10,
-        ).grid(row=0, column=3)
+        )
+        sort_box.grid(row=0, column=3)
+        sort_box.bind("<<ComboboxSelected>>", lambda _event: self._refresh_preview())
+
+        self._file_tree = ttk.Treeview(files, columns=("old", "new", "status"), show="headings")
+        for column, title, width in (
+            ("old", "名称", 340),
+            ("new", "新名", 460),
+            ("status", "状态", 90),
+        ):
+            self._file_tree.heading(column, text=title)
+            self._file_tree.column(column, width=width, anchor="w")
+        self._file_tree.grid(row=1, column=0, sticky="nsew", pady=(gap, 0))
+
+        bar = ttk.Frame(files)
+        bar.grid(row=2, column=0, sticky="ew", pady=(gap, 0))
+        ttk.Button(bar, text="执行改名", command=self._execute).grid(row=0, column=0)
+        ttk.Button(bar, text="撤销上次", command=self._undo).grid(row=0, column=1, padx=(gap, 0))
+        ttk.Checkbutton(
+            bar,
+            text="旧名",
+            variable=self._show_old_var,
+            command=self._toggle_old_column,
+        ).grid(row=0, column=2, padx=(gap, 0))
+        bar.columnconfigure(3, weight=1)
+        ttk.Label(bar, textvariable=self._status_var).grid(row=0, column=3, sticky="e")
 
         # ---- 规则：参数一行、长文本两行、锚点/大小写一行、按钮与列表 ----
         rules = ttk.LabelFrame(self.root, text="规则（按顺序执行；双击列表可载入表单）", padding=space.sm)
-        rules.grid(row=1, column=0, sticky="ew", padx=space.md, pady=tight)
+        rules.grid(row=1, column=0, sticky="ew", padx=space.md, pady=(tight, space.md))
         rules.columnconfigure(0, weight=1)
 
         basics = ttk.Frame(rules)
@@ -497,76 +522,72 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._rule_tree.grid(row=4, column=0, sticky="ew", pady=(gap, 0))
         self._rule_tree.bind("<Double-1>", lambda _event: self._load_selected_rule())
 
-        # ---- 预览：列表 + 底部操作栏（状态右对齐） ----
-        preview = ttk.LabelFrame(self.root, text="预览", padding=space.sm)
-        preview.grid(row=2, column=0, sticky="nsew", padx=space.md, pady=(tight, space.md))
-        preview.columnconfigure(0, weight=1)
-        preview.rowconfigure(0, weight=1)
-        self._preview_tree = ttk.Treeview(
-            preview,
-            columns=("old", "new", "status"),
-            show="headings",
-        )
-        for column, title, width in (
-            ("old", "旧名", 340),
-            ("new", "新名", 480),
-            ("status", "状态", 90),
-        ):
-            self._preview_tree.heading(column, text=title)
-            self._preview_tree.column(column, width=width, anchor="w")
-        self._preview_tree.grid(row=0, column=0, sticky="nsew")
-        self._preview_tree.configure(displaycolumns=("new", "status"))
-
-        bar = ttk.Frame(preview)
-        bar.grid(row=1, column=0, sticky="ew", pady=(gap, 0))
-        ttk.Button(bar, text="刷新预览", command=self._refresh_preview).grid(row=0, column=0)
-        ttk.Button(bar, text="执行改名", command=self._execute).grid(row=0, column=1, padx=(gap, 0))
-        ttk.Button(bar, text="撤销上次", command=self._undo).grid(row=0, column=2, padx=(gap, 0))
-        ttk.Checkbutton(
-            bar,
-            text="旧名",
-            variable=self._show_old_var,
-            command=self._toggle_old_column,
-        ).grid(row=0, column=3, padx=(gap, 0))
-        bar.columnconfigure(4, weight=1)
-        ttk.Label(bar, textvariable=self._status_var).grid(row=0, column=4, sticky="e")
-
     def _toggle_old_column(self) -> None:
-        """按「旧名」勾选状态切换预览中的旧名列（默认隐藏）。"""
+        """按「旧名」勾选状态切换文件表中的名称列（默认显示）。"""
         columns = ("old", "new", "status") if self._show_old_var.get() else ("new", "status")
-        self._preview_tree.configure(displaycolumns=columns)
+        self._file_tree.configure(displaycolumns=columns)
 
     # ------------------------------------------------------------------ #
-    # 目标列表
+    # 文件列表与目标
     # ------------------------------------------------------------------ #
-    def _refresh_target_tree(self) -> None:
-        self._target_tree.delete(*self._target_tree.get_children())
-        for index, path in enumerate(self._selected):
-            self._target_tree.insert("", "end", iid=str(index), values=(path.name, str(path)))
+    def _append_targets(self, candidates: list[Path]) -> int:
+        """把候选路径并入目标列表（按路径去重），返回新增数量。"""
+        known = {os.path.normcase(str(path)) for path in self._selected}
+        added = 0
+        for path in candidates:
+            key = os.path.normcase(str(path))
+            if key in known:
+                continue
+            known.add(key)
+            self._selected.append(path)
+            added += 1
+        return added
+
+    def _expand_paths(self, paths: list[Path]) -> list[Path]:
+        """按当前递归 / 包含目录选项把目录展开为文件，文件原样保留。"""
+        expanded: list[Path] = []
+        for path in paths:
+            if not path.is_dir():
+                expanded.append(path)
+                continue
+            try:
+                targets = collect_targets(
+                    [path],
+                    recursive=bool(self._recursive_var.get()),
+                    include_dirs=bool(self._dirs_var.get()),
+                )
+            except OSError:
+                expanded.append(path)
+                continue
+            expanded.extend(target.path for target in targets)
+        return expanded
 
     def _add_files(self) -> None:
         selected = self._filedialog.askopenfilenames(parent=self.root, title="选择待重命名文件")
         if not selected:
             return
-        self._selected.extend(Path(item) for item in selected)
-        self._refresh_target_tree()
+        self._append_targets([Path(item) for item in selected])
+        self._refresh_preview()
 
     def _add_dir(self) -> None:
-        selected = self._filedialog.askdirectory(parent=self.root, title="选择目录（按下方的递归/包含目录选项展开）")
+        selected = self._filedialog.askdirectory(parent=self.root, title="选择目录（按当前递归 / 包含目录选项展开）")
         if not selected:
             return
-        self._selected.append(Path(selected))
-        self._refresh_target_tree()
+        added = self._append_targets(self._expand_paths([Path(selected)]))
+        self._refresh_preview()
+        if not added:
+            self._status_var.set("目录中没有可添加的文件；可勾选「递归子目录」或「包含目录」后重新添加")
 
     def _remove_targets(self) -> None:
-        indexes = sorted((int(item) for item in self._target_tree.selection()), reverse=True)
+        indexes = sorted({int(iid) for iid in self._file_tree.selection()}, reverse=True)
         for index in indexes:
-            del self._selected[index]
-        self._refresh_target_tree()
+            if 0 <= index < len(self._selected):
+                del self._selected[index]
+        self._refresh_preview()
 
     def _clear_targets(self) -> None:
         self._selected.clear()
-        self._refresh_target_tree()
+        self._refresh_preview()
 
     # ------------------------------------------------------------------ #
     # 规则表
@@ -612,7 +633,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             return
         self._rules.append(rule)
         self._refresh_rule_tree()
-        self._status_var.set(f"已添加 {len(self._rules)} 条规则，点击「刷新预览」查看结果")
+        self._refresh_preview()
 
     def _update_rule(self) -> None:
         selection = self._rule_tree.selection()
@@ -627,6 +648,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             return
         self._rules[index] = rule
         self._refresh_rule_tree()
+        self._refresh_preview()
 
     def _remove_rule(self) -> None:
         indexes = sorted((self._rule_tree.index(iid) for iid in self._rule_tree.selection()), reverse=True)
@@ -634,6 +656,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             if 0 <= index < len(self._rules):
                 del self._rules[index]
         self._refresh_rule_tree()
+        self._refresh_preview()
 
     def _move_rule(self, offset: int) -> None:
         selection = self._rule_tree.selection()
@@ -645,6 +668,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             return
         self._rules[index], self._rules[target] = self._rules[target], self._rules[index]
         self._refresh_rule_tree()
+        self._refresh_preview()
         children = self._rule_tree.get_children()
         self._rule_tree.selection_set(children[target])
 
@@ -698,7 +722,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._messagebox.showerror("载入失败", str(exc), parent=self.root)
             return
         self._refresh_rule_tree()
-        self._status_var.set(f"已载入 {len(self._rules)} 条规则")
+        self._refresh_preview()
 
     def _load_rules_file(self) -> None:
         self._rules_file_action(save=False)
@@ -768,7 +792,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             return False
         self._rules = list(example.rules)
         self._refresh_rule_tree()
-        self._status_var.set(f"已载入示例「{example.name}」（{len(self._rules)} 条规则），点击「刷新预览」查看结果")
+        self._refresh_preview()
         return True
 
     # ------------------------------------------------------------------ #
@@ -777,39 +801,49 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _sort_key(self) -> str:
         return _label_value(self._sort_var.get(), SORT_TEXT, SORT_NAME)
 
-    def _refresh_preview(self) -> None:
-        self._preview_tree.delete(*self._preview_tree.get_children())
+    def _refresh_file_tree(self) -> None:
+        """无规则时只显示名称，提示规则生效后会自动预览。"""
+        self._file_tree.delete(*self._file_tree.get_children())
+        for index, path in enumerate(self._selected):
+            self._file_tree.insert("", "end", iid=str(index), values=(path.name, "", ""))
         if not self._selected:
-            self._status_var.set("请先添加目标文件或目录")
+            self._status_var.set("请先添加文件或目录")
+        else:
+            self._status_var.set(f"共 {len(self._selected)} 项，添加规则后自动预览")
+
+    def _refresh_preview(self) -> None:
+        if not self._selected or not self._rules:
+            self._preview = None
+            self._refresh_file_tree()
             return
-        if not self._rules:
-            self._status_var.set("请先添加至少一条规则")
-            return
-        try:
-            targets = collect_targets(
-                self._selected,
-                recursive=bool(self._recursive_var.get()),
-                include_dirs=bool(self._dirs_var.get()),
-            )
-            preview = build_preview(targets, self._rules, self._sort_key())
-        except (OSError, RuleError) as exc:
-            self._messagebox.showerror("预览失败", str(exc), parent=self.root)
-            return
+        preview = build_preview(
+            tuple(make_target(path) for path in self._selected),
+            self._rules,
+            self._sort_key(),
+        )
         self._preview = preview
         if preview.error:
+            self._refresh_file_tree()
             self._status_var.set(f"规则错误：{preview.error}")
             return
+        self._file_tree.delete(*self._file_tree.get_children())
+        index_by_path = {os.path.normcase(str(path)): index for index, path in enumerate(self._selected)}
         for item in preview.items:
-            self._preview_tree.insert(
+            index = index_by_path[os.path.normcase(str(item.source))]
+            self._file_tree.insert(
                 "",
                 "end",
+                iid=str(index),
                 values=(item.old_name, item.new_name, STATUS_TEXT.get(item.status, item.status)),
             )
         self._status_var.set(format_preview_status(preview))
 
     def _execute(self) -> None:
         self._refresh_preview()
-        if self._preview is None or self._preview.error:
+        if self._preview is None:
+            return
+        if self._preview.error:
+            self._messagebox.showerror("规则错误", self._preview.error, parent=self.root)
             return
         plan = preview_to_plan(self._preview)
         if not plan.changes:
@@ -826,7 +860,6 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             f"成功 {len(report.completed)} 项，失败 {len(report.errors)} 项。",
             parent=self.root,
         )
-        self._refresh_target_tree()
         self._refresh_preview()
 
     def _undo(self) -> None:
@@ -842,7 +875,6 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             f"已恢复 {len(report.completed)} 项，失败 {len(report.errors)} 项。",
             parent=self.root,
         )
-        self._refresh_target_tree()
         self._refresh_preview()
 
     def _show_about(self) -> None:

@@ -23,6 +23,7 @@ from fcmd.apps.renamer._core import (
     RuleError,
     build_preview,
     format_preview_status,
+    make_target,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
@@ -195,3 +196,12 @@ def test_format_preview_status_groups_reasons() -> None:
 def test_format_preview_status_without_problems() -> None:
     preview = RenamePreview(items=(RenamePreviewItem(Path("a.txt"), "a.txt", "b.txt", STATUS_OK),))
     assert format_preview_status(preview) == "共 1 项：可执行 1，未变化 0，冲突 0，非法 0"
+
+
+def test_make_target_marks_directories_and_tolerates_missing(tmp_path: Path) -> None:
+    directory = tmp_path / "dir"
+    directory.mkdir()
+    assert make_target(directory).is_dir is True
+    missing = make_target(tmp_path / "missing.txt")
+    assert missing.is_dir is False
+    assert (missing.mtime, missing.ctime) == (0.0, 0.0)
