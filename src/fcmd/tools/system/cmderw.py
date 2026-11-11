@@ -51,6 +51,13 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system import _cmderw_diff as diffmod
+from fcmd.tools.system import _cmderw_preview as previewmod
+from fcmd.tools.system._cmderw_attrs import (
+    AttributeChange,
+    apply_attributes,
+    format_timestamp,
+    parse_timestamp,
+)
 from fcmd.tools.system._cmderw_checksum import (
     VerifyReport,
     algorithm_for_suffix,
@@ -90,6 +97,8 @@ from fcmd.tools.system._cmderw_ops import (
     ITEM_FAILED,
     PANEL_COLUMNS,
     PREVIEW_IMAGE,
+    PREVIEW_TEXT,
+    PREVIEW_TEXT_LIMIT,
     PREVIEW_UNSUPPORTED,
     QUEUE_CANCELLED,
     QUEUE_RUNNING,
@@ -174,6 +183,14 @@ from fcmd.tools.system._cmderw_ops import (
     undo_rename,
     validate_name,
 )
+from fcmd.tools.system._cmderw_queue import (
+    DEFAULT_QUEUE_PARALLEL,
+    MAX_QUEUE_PARALLEL,
+    MIN_QUEUE_PARALLEL,
+    PauseGate,
+    clamp_parallel,
+    parallel_map,
+)
 from fcmd.tools.system._cmderw_rename import (
     RENAME_PRESET_LIMIT,
     RenameInput,
@@ -186,6 +203,16 @@ from fcmd.tools.system._cmderw_rename import (
     preview_to_plan,
     rename_presets_to_json,
 )
+from fcmd.tools.system._cmderw_search import (
+    SORT_COLUMNS,
+    SearchFilters,
+    collect_results,
+    filter_paths,
+    parse_datetime,
+    parse_size,
+    sort_results,
+)
+from fcmd.tools.system._cmderw_volumes import enumerate_volumes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -472,6 +499,7 @@ class CmderSettings:
     command_history: list[str] = field(default_factory=list)
     rename_presets: list[RenamePreset] = field(default_factory=list)
     user_commands: list[UserCommand] = field(default_factory=list)
+    queue_parallel: int = DEFAULT_QUEUE_PARALLEL
 
 
 # ============================================================================ #
@@ -602,6 +630,11 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     settings.command_history = normalize_command_history(raw.get("command_history"))
     settings.rename_presets = normalize_rename_presets(raw.get("rename_presets"))
     settings.user_commands = normalize_user_commands(raw.get("user_commands"))
+    queue_parallel = raw.get("queue_parallel")
+    if isinstance(queue_parallel, int) and not isinstance(queue_parallel, bool):
+        settings.queue_parallel = clamp_parallel(queue_parallel)
+    else:
+        settings.queue_parallel = DEFAULT_QUEUE_PARALLEL
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
@@ -634,6 +667,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "command_history": list(settings.command_history),
         "rename_presets": rename_presets_to_json(settings.rename_presets),
         "user_commands": user_commands_to_json(settings.user_commands),
+        "queue_parallel": settings.queue_parallel,
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -1223,12 +1257,15 @@ def format_hash_report(results: Sequence[HashResult], algorithm: str) -> str:
     return "\n".join(f"{algorithm}  {result.digest}  {result.path}" for result in results)
 
 
-def search_paths(
+def search_paths(  # noqa: PLR0913 - 搜索开关由对话框逐项透传
     directory: Path,
     pattern: str,
     *,
     content: bool = False,
     extension: str = "",
+    case_sensitive: bool | None = None,
+    whole_word: bool = False,
+    filters: SearchFilters | None = None,
 ) -> list[SearchHit]:
     """搜索目录（复用 fileops 的文件名 glob / 内容正则实现）。"""
     if not pattern.strip():
@@ -1237,13 +1274,22 @@ def search_paths(
         raise NotADirectoryError(f"不是目录: {directory}")
     from fcmd.dsl.actions.fileops import search_by_content, search_by_name
 
+    active = filters or SearchFilters()
     if content:
         suffix = extension.strip()
         if suffix and not suffix.startswith("."):
             suffix = f".{suffix}"
-        hits = search_by_content(directory, pattern, extension=suffix)
-        return [SearchHit(path=path, line=line, text=text) for path, line, text in hits]
-    return [SearchHit(path=path) for path in search_by_name(directory, pattern)]
+        hits = search_by_content(
+            directory,
+            pattern,
+            extension=suffix,
+            case_sensitive=case_sensitive,
+            whole_word=whole_word,
+        )
+        allowed = set(filter_paths({path for path, _line, _text in hits}, active))
+        return [SearchHit(path=path, line=line, text=text) for path, line, text in hits if path in allowed]
+    paths = search_by_name(directory, pattern, case_sensitive=case_sensitive)
+    return [SearchHit(path=path) for path in filter_paths(paths, active)]
 
 
 def format_search_hit(hit: SearchHit) -> str:
@@ -1330,6 +1376,12 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.path_entry.bind("<Return>", self._on_path_enter)
         self.path_entry.bind("<FocusIn>", lambda _event: app.set_active(self))
 
+        self.volume_button = ttk.Menubutton(top, text="卷", style="Toolbutton")
+        self.volume_menu = tk.Menu(self.volume_button, tearoff=False)
+        self.volume_menu.configure(postcommand=self._populate_volumes)
+        self.volume_button.configure(menu=self.volume_menu)
+        self.volume_button.pack(side="left", padx=(0, spacing.xs))
+
         filter_bar = ttk.Frame(self.frame)
         filter_bar.pack(fill="x", pady=(0, spacing.xs))
         ttk.Label(filter_bar, text="过滤：").pack(side="left")
@@ -1374,6 +1426,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
         self._quick_visible = False
         self._preview_photo: Any = None
+        self._quick_base_photo: Any = None
+        self._quick_factor = 1
         self._quick_frame = ttk.Frame(self.frame)
         quick_header = ttk.Frame(self._quick_frame)
         quick_header.pack(fill="x")
@@ -1381,6 +1435,50 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         ttk.Label(quick_header, textvariable=self._quick_title_var, style="Muted.TLabel").pack(side="left")
         self._quick_note_var = tk.StringVar()
         ttk.Label(quick_header, textvariable=self._quick_note_var, style="Muted.TLabel").pack(side="right")
+        self._quick_toolbar = ttk.Frame(self._quick_frame)
+        self._quick_toolbar.pack(fill="x", pady=(spacing.xxs, 0))
+        ttk.Label(self._quick_toolbar, text="编码：").pack(side="left")
+        self._quick_encoding_var = tk.StringVar(value="auto")
+        encoding_box = ttk.Combobox(
+            self._quick_toolbar,
+            textvariable=self._quick_encoding_var,
+            values=previewmod.ENCODINGS,
+            state="readonly",
+            width=10,
+        )
+        encoding_box.pack(side="left")
+        encoding_box.bind("<<ComboboxSelected>>", lambda _event: self.update_quick_view())
+        self._quick_hex_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            self._quick_toolbar,
+            text="十六进制",
+            variable=self._quick_hex_var,
+            command=self.update_quick_view,
+        ).pack(side="left", padx=(spacing.xs, 0))
+        self._quick_zoom_bar = ttk.Frame(self._quick_toolbar)
+        ttk.Button(
+            self._quick_zoom_bar,
+            text="－",
+            width=3,
+            style="Toolbutton",
+            command=lambda: self._zoom_image("out"),
+        ).pack(side="left")
+        self._quick_zoom_label_var = tk.StringVar(value="1:1")
+        ttk.Label(
+            self._quick_zoom_bar,
+            textvariable=self._quick_zoom_label_var,
+            style="Muted.TLabel",
+        ).pack(side="left", padx=spacing.xxs)
+        ttk.Button(
+            self._quick_zoom_bar,
+            text="＋",
+            width=3,
+            style="Toolbutton",
+            command=lambda: self._zoom_image("in"),
+        ).pack(side="left")
+        ttk.Button(self._quick_zoom_bar, text="适应窗口", style="Toolbutton", command=self._fit_image).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
         self._quick_body = ttk.Frame(self._quick_frame)
         self._quick_body.pack(fill="both", expand=True)
         self._quick_text = tk.Text(
@@ -2240,7 +2338,32 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         elif result.kind == PREVIEW_UNSUPPORTED:
             self._show_quick_text(result.note or "无法预览该类型")
         else:
-            self._show_quick_text(result.text or "（空文件）")
+            self._render_quick_text(path, result)
+
+    def _read_preview_bytes(self, path: Path) -> bytes:
+        """读取预览用文件头，失败时返回空字节。"""
+        try:
+            with path.open("rb") as handle:
+                return handle.read(PREVIEW_TEXT_LIMIT)
+        except OSError:
+            return b""
+
+    def _render_quick_text(self, path: Path, result: PreviewResult) -> None:
+        """按十六进制开关与所选编码渲染文本预览。"""
+        data = self._read_preview_bytes(path)
+        if self._quick_hex_var.get() or (result.kind != PREVIEW_TEXT and not previewmod.has_text_bom(data)):
+            self._show_quick_text(previewmod.hex_dump(data) or "（空文件）")
+            self._quick_note_var.set(result.note)
+            return
+        requested = self._quick_encoding_var.get()
+        encoding = previewmod.detect_encoding(data) if requested == "auto" else requested
+        try:
+            text = previewmod.decode_text(data, encoding)
+        except ValueError as exc:
+            self._show_quick_text(str(exc))
+            return
+        self._quick_note_var.set(f"{result.note} · 编码 {encoding}")
+        self._show_quick_text(text or "（空文件）")
 
     def _show_quick_note(self, title: str, note: str) -> None:
         """无文件可预览时给出明确提示，而不是空白面板。"""
@@ -2251,6 +2374,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def _show_quick_text(self, text: str) -> None:
         """显示文本（二进制为十六进制）并隐藏图片区。"""
         self._preview_photo = None
+        self._quick_base_photo = None
+        self._quick_zoom_bar.pack_forget()
         self._quick_image.pack_forget()
         if not self._quick_text.winfo_ismapped():
             self._quick_text.pack(fill="both", expand=True)
@@ -2275,13 +2400,49 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         except self._tk.TclError:
             self._show_quick_text(f"{result.note}\n当前 Tk 不支持该图片格式，可用 F3 或外部程序查看。")
             return
-        largest = max(photo.width(), photo.height())
-        if largest > 640:
-            factor = max(1, largest // 640)
-            photo = photo.subsample(factor, factor)
+        self._quick_base_photo = photo
+        self._quick_factor = self._image_fit_factor(photo.width(), photo.height())
+        self._apply_image_zoom()
+
+    def _image_viewport(self) -> tuple[int, int]:
+        """图片区当前可视尺寸；尚未布局时回退 640×480。"""
+        width, height = self._quick_image.winfo_width(), self._quick_image.winfo_height()
+        if width <= 1 or height <= 1:
+            return 640, 480
+        return width, height
+
+    def _image_fit_factor(self, width: int, height: int) -> int:
+        """图片宽高对应的适应窗口倍率。"""
+        view_width, view_height = self._image_viewport()
+        return previewmod.fit_factor(width, height, view_width, view_height)
+
+    def _apply_image_zoom(self) -> None:
+        """按当前倍率重新渲染图片并更新缩放标签。"""
+        base = self._quick_base_photo
+        if base is None:
+            return
+        photo = base if self._quick_factor <= 1 else base.subsample(self._quick_factor, self._quick_factor)
         self._preview_photo = photo
         self._quick_image.configure(image=photo)
         self._quick_image.pack(fill="both", expand=True)
+        self._quick_zoom_label_var.set(previewmod.zoom_label(self._quick_factor))
+        self._quick_zoom_bar.pack(side="right")
+
+    def _zoom_image(self, direction: str) -> None:
+        """放大 / 缩小当前图片。"""
+        if self._quick_base_photo is None:
+            return
+        factor = self._quick_factor
+        self._quick_factor = previewmod.zoom_in(factor) if direction == "in" else previewmod.zoom_out(factor)
+        self._apply_image_zoom()
+
+    def _fit_image(self) -> None:
+        """恢复为适应窗口倍率。"""
+        base = self._quick_base_photo
+        if base is None:
+            return
+        self._quick_factor = self._image_fit_factor(base.width(), base.height())
+        self._apply_image_zoom()
 
     def _update_status(self) -> None:
         total = len(self.entries)
@@ -2329,6 +2490,19 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.set_path(directory)
         if select:
             self.select_name(select)
+
+    def _populate_volumes(self) -> None:
+        """打开卷菜单前刷新盘符 / 挂载点与剩余空间。"""
+        self.volume_menu.delete(0, "end")
+        volumes = enumerate_volumes()
+        if not volumes:
+            self.volume_menu.add_command(label="未检测到可用卷", state="disabled")
+            return
+        for volume in volumes:
+            self.volume_menu.add_command(
+                label=volume.label,
+                command=lambda mount=volume.mount: self.set_path(mount),
+            )
 
     def set_path(self, path: Path, *, push: bool = True) -> None:
         """切换到指定目录，默认写入历史；压缩包浏览状态下先退出浏览。"""
@@ -3078,11 +3252,31 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         pattern_entry.bind("<Return>", lambda _event: self.run_search())
         self.content_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(form, text="内容", variable=self.content_var).pack(side="left", padx=spacing.sm)
+        self.case_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(form, text="区分大小写", variable=self.case_var).pack(side="left")
+        self.whole_word_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(form, text="整词", variable=self.whole_word_var).pack(side="left", padx=spacing.sm)
         ttk.Label(form, text="扩展名：").pack(side="left")
         self.extension_var = tk.StringVar()
         ttk.Entry(form, textvariable=self.extension_var, width=10).pack(side="left", padx=(0, spacing.sm))
         self.search_button = ttk.Button(form, text="搜索", style="Accent.TButton", command=self.run_search)
         self.search_button.pack(side="left")
+
+        filter_bar = ttk.Frame(frame)
+        filter_bar.pack(fill="x", pady=(0, spacing.xs))
+        self.min_size_var = tk.StringVar()
+        self.max_size_var = tk.StringVar()
+        self.after_var = tk.StringVar()
+        self.before_var = tk.StringVar()
+        for label, variable, width in (
+            ("最小大小", self.min_size_var, 8),
+            ("最大大小", self.max_size_var, 8),
+            ("修改从", self.after_var, 10),
+            ("修改到", self.before_var, 10),
+        ):
+            ttk.Label(filter_bar, text=f"{label}：").pack(side="left")
+            ttk.Entry(filter_bar, textvariable=variable, width=width).pack(side="left", padx=(0, spacing.xs))
+        ttk.Label(filter_bar, text="（支持 K/M/G，日期 YYYY-MM-DD）", style="Muted.TLabel").pack(side="left")
 
         result_frame = ttk.Frame(frame)
         result_frame.pack(fill="both", expand=True)
@@ -3110,6 +3304,9 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         )
         ttk.Button(action_bar, text="删除到回收站", command=self._delete).pack(side="left", padx=(spacing.xs, 0))
         ttk.Button(action_bar, text="加入面板选择", command=self._adopt).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(action_bar, text="结果面板", command=self._open_results_panel).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
         ttk.Button(action_bar, text="关闭", command=self.win.destroy).pack(side="right")
 
         self.status_var = tk.StringVar(value="输入模式后回车或点击搜索")
@@ -3124,6 +3321,19 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         if not pattern:
             self.status_var.set("搜索模式不能为空")
             return
+        try:
+            filters = SearchFilters(
+                min_size=parse_size(self.min_size_var.get()),
+                max_size=parse_size(self.max_size_var.get()),
+                modified_after=parse_datetime(self.after_var.get()),
+                modified_before=parse_datetime(self.before_var.get(), end_of_day=True),
+            )
+        except ValueError as exc:
+            self.status_var.set(str(exc))
+            return
+        if filters.min_size is not None and filters.max_size is not None and filters.min_size > filters.max_size:
+            self.status_var.set("最小大小不能大于最大大小")
+            return
         self.search_button.configure(state="disabled")
         self.status_var.set("搜索中...")
         self.app.start_search(
@@ -3131,6 +3341,9 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
             pattern,
             content=bool(self.content_var.get()),
             extension=self.extension_var.get().strip(),
+            case_sensitive=bool(self.case_var.get()),
+            whole_word=bool(self.whole_word_var.get()),
+            filters=filters,
             on_done=self._show_results,
             on_error=self._search_failed,
         )
@@ -3186,6 +3399,200 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
             self.status_var.set("请先选择结果")
             return
         self.status_var.set(self.app.adopt_paths(paths))
+        self.win.destroy()
+
+    def _open_results_panel(self) -> None:
+        if not self._hits:
+            self.status_var.set("请先执行搜索")
+            return
+        SearchResultsPanel(self.app, self._hits)
+
+
+class SearchResultsPanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """搜索结果临时面板：可排序、可多选并复用复制/移动/删除操作。"""
+
+    def __init__(self, app: CmderWindow, hits: list[SearchHit]) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.results = collect_results(hit.path for hit in hits)
+        self._visible = sort_results(self.results)
+        self._column = "name"
+        self._reverse = False
+        theme = app.theme
+        spacing = theme.spacing
+
+        self.win = tk.Toplevel(app.root)
+        self.win.title(f"搜索结果面板（{len(self.results)} 项）")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=980, height=620)
+        frame = ttk.Frame(self.win, padding=spacing.sm)
+        frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(
+            frame, columns=("name", "size", "modified", "path"), show="headings", selectmode="extended"
+        )
+        for column, width in (("name", 240), ("size", 100), ("modified", 150), ("path", 440)):
+            self.tree.heading(column, text=SORT_COLUMNS[column], command=lambda key=column: self._sort_by(key))
+            self.tree.column(column, width=width, anchor="e" if column == "size" else "w")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.tree.bind("<Double-1>", self._reveal)
+
+        actions = ttk.Frame(self.win, padding=(spacing.sm, 0, spacing.sm, spacing.sm))
+        actions.pack(fill="x")
+        ttk.Button(actions, text="打开所在目录", command=self._reveal).pack(side="left")
+        ttk.Button(actions, text="复制…", command=lambda: self._transfer(move=False)).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
+        ttk.Button(actions, text="移动…", command=lambda: self._transfer(move=True)).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
+        ttk.Button(actions, text="删除到回收站", command=self._delete).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(actions, text="加入面板选择", command=self._adopt).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(actions, text="关闭", command=self.win.destroy).pack(side="right")
+        self.status_var = tk.StringVar(value="点击表头排序；双击定位")
+        ttk.Label(actions, textvariable=self.status_var, style="Muted.TLabel").pack(side="left", padx=spacing.sm)
+        self._reload()
+
+    def _reload(self) -> None:
+        self.tree.delete(*self.tree.get_children())
+        for index, result in enumerate(self._visible):
+            self.tree.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(result.path.name, format_size(result.size), format_mtime(result.modified), str(result.path)),
+            )
+        self.status_var.set(
+            f"{len(self._visible)} 项；按 {SORT_COLUMNS[self._column]} {'降序' if self._reverse else '升序'}"
+        )
+
+    def _sort_by(self, column: str) -> None:
+        if column == self._column:
+            self._reverse = not self._reverse
+        else:
+            self._column = column
+            self._reverse = False
+        self._visible = sort_results(self.results, self._column, reverse=self._reverse)
+        self._reload()
+
+    def _selected_paths(self) -> list[Path]:
+        return [self._visible[int(iid)].path for iid in self.tree.selection()]
+
+    def _reveal(self, _event: Any = None) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.status_var.set("请先选择结果")
+            return
+        self.app.reveal_path(paths[0])
+
+    def _transfer(self, *, move: bool) -> None:
+        paths = self._selected_paths()
+        if paths and self.app.transfer_paths(paths, move=move):
+            self.win.destroy()
+
+    def _delete(self) -> None:
+        paths = self._selected_paths()
+        if paths and self.app.delete_paths(paths):
+            self.win.destroy()
+
+    def _adopt(self) -> None:
+        paths = self._selected_paths()
+        if not paths:
+            self.status_var.set("请先选择结果")
+            return
+        self.status_var.set(self.app.adopt_paths(paths))
+        self.win.destroy()
+
+
+_ATTR_READONLY_CHOICES: dict[str, bool | None] = {"保持不变": None, "只读": True, "可写": False}
+_ATTR_HIDDEN_CHOICES: dict[str, bool | None] = {"保持不变": None, "隐藏": True, "显示": False}
+
+
+class AttributeDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """批量修改修改时间 / 访问时间，Windows 下切换只读与隐藏。"""
+
+    def __init__(self, app: CmderWindow, paths: Sequence[Path]) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.paths = list(paths)
+        spacing = app.theme.spacing
+        self.win = tk.Toplevel(app.root)
+        self.win.title(f"修改时间 / 属性（{len(self.paths)} 项）")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=520, height=300)
+        frame = ttk.Frame(self.win, padding=spacing.sm)
+        frame.pack(fill="both", expand=True)
+        frame.columnconfigure(1, weight=1)
+
+        self.modified_var = tk.StringVar()
+        self.accessed_var = tk.StringVar()
+        for row, (label, variable) in enumerate((("修改时间", self.modified_var), ("访问时间", self.accessed_var))):
+            ttk.Label(frame, text=f"{label}：").grid(row=row, column=0, sticky="w", pady=spacing.xxs)
+            ttk.Entry(frame, textvariable=variable, width=24).grid(row=row, column=1, sticky="ew", pady=spacing.xxs)
+            ttk.Button(
+                frame,
+                text="现在",
+                style="Toolbutton",
+                command=lambda var=variable: var.set(format_timestamp(time.time())),
+            ).grid(row=row, column=2, padx=(spacing.xs, 0))
+            ttk.Button(frame, text="清空", style="Toolbutton", command=lambda var=variable: var.set("")).grid(
+                row=row, column=3, padx=(spacing.xs, 0)
+            )
+        ttk.Label(frame, text="留空表示保持不变；格式 YYYY-MM-DD HH:MM:SS", style="Muted.TLabel").grid(
+            row=2, column=0, columnspan=4, sticky="w", pady=(0, spacing.xs)
+        )
+
+        self.readonly_var = tk.StringVar(value="保持不变")
+        self.hidden_var = tk.StringVar(value="保持不变")
+        if sys.platform.startswith("win"):
+            for offset, (label, variable, choices) in enumerate(
+                (
+                    ("只读", self.readonly_var, _ATTR_READONLY_CHOICES),
+                    ("隐藏", self.hidden_var, _ATTR_HIDDEN_CHOICES),
+                )
+            ):
+                ttk.Label(frame, text=f"{label}：").grid(row=3 + offset, column=0, sticky="w", pady=spacing.xxs)
+                ttk.Combobox(
+                    frame,
+                    textvariable=variable,
+                    values=tuple(choices),
+                    state="readonly",
+                    width=12,
+                ).grid(row=3 + offset, column=1, sticky="w", pady=spacing.xxs)
+
+        actions = ttk.Frame(self.win, padding=(spacing.sm, 0, spacing.sm, spacing.sm))
+        actions.pack(fill="x")
+        ttk.Button(actions, text="应用", style="Accent.TButton", command=self._apply).pack(side="left")
+        ttk.Button(actions, text="取消", command=self.win.destroy).pack(side="left", padx=(spacing.xs, 0))
+        self.status_var = tk.StringVar(value=f"{len(self.paths)} 项待修改")
+        ttk.Label(actions, textvariable=self.status_var, style="Muted.TLabel").pack(side="left", padx=spacing.sm)
+
+    def _apply(self) -> None:
+        try:
+            change = AttributeChange(
+                modified=parse_timestamp(self.modified_var.get()),
+                accessed=parse_timestamp(self.accessed_var.get()),
+                readonly=_ATTR_READONLY_CHOICES[self.readonly_var.get()],
+                hidden=_ATTR_HIDDEN_CHOICES[self.hidden_var.get()],
+            )
+        except ValueError as exc:
+            self.status_var.set(str(exc))
+            return
+        if not change.active:
+            self.status_var.set("没有需要修改的属性")
+            return
+        report = apply_attributes(self.paths, change)
+        self.app.set_status(report.message())
+        if not report.ok:
+            self.app.show_error("修改属性", report.message())
+        self.app.left.refresh()
+        self.app.right.refresh()
         self.win.destroy()
 
 
@@ -3306,7 +3713,7 @@ class TransferQueueDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖�
 
         ttk.Label(
             frame,
-            text="队列串行执行；取消按项生效：当前文件传完后停止，已完成项保留。",
+            text="队列按并行上限执行；暂停后不再启动新文件。取消按项生效：当前文件传完后停止，已完成项保留。",
             style="Muted.TLabel",
         ).pack(fill="x", pady=(0, spacing.xs))
 
@@ -3358,14 +3765,28 @@ class TransferQueueDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖�
 
         buttons = ttk.Frame(frame)
         buttons.pack(fill="x", pady=(spacing.sm, 0))
-        ttk.Button(buttons, text="取消选中任务", command=self.cancel_selected).pack(side="left")
+        self.pause_button = ttk.Button(buttons, text="暂停队列", command=self.toggle_pause)
+        self.pause_button.pack(side="left")
+        ttk.Button(buttons, text="取消选中任务", command=self.cancel_selected).pack(side="left", padx=spacing.xs)
         ttk.Button(buttons, text="重试选中失败项", command=self.retry_selected).pack(side="left", padx=spacing.xs)
         ttk.Button(buttons, text="重试全部失败项", command=self.retry_all).pack(side="left")
         ttk.Button(buttons, text="关闭", command=self.win.destroy).pack(side="right")
+        self.parallel_var = tk.StringVar(value=str(app.settings.queue_parallel))
+        parallel_box = ttk.Combobox(
+            buttons,
+            textvariable=self.parallel_var,
+            values=[str(index) for index in range(MIN_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL + 1)],
+            state="readonly",
+            width=3,
+        )
+        parallel_box.pack(side="right")
+        parallel_box.bind("<<ComboboxSelected>>", lambda _event: self.change_parallel())
+        ttk.Label(buttons, text="并行：").pack(side="right", padx=(spacing.sm, 0))
         self.refresh()
 
     def refresh(self) -> None:
         """重绘任务列表与当前任务的条目明细。"""
+        self.pause_button.configure(text="恢复队列" if self.app.queue_paused else "暂停队列")
         selection = self.tasks.selection()
         self.tasks.delete(*self.tasks.get_children())
         for task in self.app.transfer_queue.tasks:
@@ -3420,6 +3841,15 @@ class TransferQueueDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖�
         if not selection:
             return None
         return self.app.transfer_queue.get(int(selection[0]))
+
+    def toggle_pause(self) -> None:
+        """暂停或恢复队列并刷新按钮文案。"""
+        self.app.toggle_queue_pause()
+        self.refresh()
+
+    def change_parallel(self) -> None:
+        """把并行下拉选择写回设置。"""
+        self.app.set_queue_parallel(int(self.parallel_var.get()))
 
     def cancel_selected(self) -> None:
         """取消选中任务。"""
@@ -4771,6 +5201,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._compare_dialog: CompareDialog | None = None
         self._sync_dialog: SyncDialog | None = None
         self._queue_stopping = False
+        self._queue_gate = PauseGate()
         self._tree_visible = False
         self._tree_syncing = False
         self._tree_loaded: set[str] = set()
@@ -4869,6 +5300,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         )
         file_menu.add_separator()
         self._menu_command(file_menu, "properties", "属性\tAlt+Enter", self.show_properties)
+        self._menu_command(file_menu, "set_attributes", "修改时间 / 属性…", self.set_attributes)
         self._menu_command(file_menu, "hash", "计算校验和…", self.hash_selected)
         self._menu_command(file_menu, "checksum_generate", "生成校验文件…", self.generate_checksum_file)
         self._menu_command(file_menu, "checksum_verify", "校验文件…", self.verify_checksum_file)
@@ -5048,6 +5480,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         menu.add_command(label="哈希", command=self.hash_selected)
         menu.add_command(label="比较文本内容…", command=self.compare_text_files)
         menu.add_command(label="属性", command=self.show_properties)
+        menu.add_command(label="修改时间 / 属性…", command=self.set_attributes)
         context_commands = [command for command in self.settings.user_commands if command.in_context]
         if context_commands:
             user_menu = self._tk.Menu(menu, tearoff=False)
@@ -6140,6 +6573,16 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             text = f"已选择 {len(entries)} 个条目\n总大小: {format_size(total)}"
         self._messagebox.showinfo("属性", text, parent=self.root)
 
+    def set_attributes(self) -> None:
+        """批量修改选中条目的时间戳与（Windows）只读 / 隐藏属性。"""
+        if self._archive_readonly():
+            return
+        entries = self.active_panel().selected_entries()
+        if not entries:
+            self._messagebox.showinfo("修改属性", "请先选择文件或文件夹", parent=self.root)
+            return
+        AttributeDialog(self, [entry.path for entry in entries])
+
     def _show_text_dialog(self, title: str, text: str) -> None:
         """只读文本窗口（查看 / 哈希结果）。"""
         tk = self._tk
@@ -6424,7 +6867,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         dialog.refresh()
 
     def _run_next_task(self) -> None:
-        """串行执行队首任务；已有后台任务或正在退出时不启动。"""
+        """按并行上限执行队首任务；已有后台任务或正在退出时不启动。"""
         if self._busy or self._queue_stopping:
             return
         task = self.transfer_queue.pending_task()
@@ -6433,31 +6876,45 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.transfer_queue.begin(task)
         self._refresh_queue_dialog()
         total = task.total
+        parallel = clamp_parallel(self.settings.queue_parallel)
+        progress_lock = threading.Lock()
+        completed = 0
+
+        def process(item: QueueItem) -> None:
+            nonlocal completed
+            while self._queue_gate.paused and not self._queue_stopping:
+                self._queue_gate.wait(0.2)
+            if task.cancel_requested or self._queue_stopping:
+                return
+            self.transfer_queue.begin_item(item)
+            self._queue.put(("queue",))
+            with progress_lock:
+                done_before = completed
+            self._progress_callback(done_before, total, item.source.name)
+            try:
+                target = item.target
+                if target.exists() or target.is_symlink():
+                    if not item.overwrite:
+                        raise FileExistsError(f"目标已存在: {target}")
+                    item.target_owned = True
+                    delete_entry(target)
+                if task.move:
+                    move_entry(item.source, target)
+                else:
+                    copy_entry(item.source, target)
+                self.transfer_queue.complete_item(item)
+            except (OSError, ValueError) as exc:
+                self.transfer_queue.fail_item(item, str(exc))
+            self._queue.put(("queue",))
+            with progress_lock:
+                completed += 1
+                done_after = completed
+            self._progress_callback(done_after, total, item.source.name)
 
         def work() -> str:
-            for index, item in enumerate(task.items, start=1):
-                if task.cancel_requested or self._queue_stopping:
-                    self.transfer_queue.cancel_remaining(task)
-                    break
-                self.transfer_queue.begin_item(item)
-                self._queue.put(("queue",))
-                self._progress_callback(index - 1, total, item.source.name)
-                try:
-                    target = item.target
-                    if target.exists() or target.is_symlink():
-                        if not item.overwrite:
-                            raise FileExistsError(f"目标已存在: {target}")
-                        item.target_owned = True
-                        delete_entry(target)
-                    if task.move:
-                        move_entry(item.source, target)
-                    else:
-                        copy_entry(item.source, target)
-                    self.transfer_queue.complete_item(item)
-                except (OSError, ValueError) as exc:
-                    self.transfer_queue.fail_item(item, str(exc))
-                self._queue.put(("queue",))
-                self._progress_callback(index, total, item.source.name)
+            parallel_map(task.items, process, parallel=parallel)
+            if task.cancel_requested or self._queue_stopping:
+                self.transfer_queue.cancel_remaining(task)
             status = self.transfer_queue.finish(task)
             if status == QUEUE_CANCELLED:
                 cleanup_incomplete_items(task)
@@ -6497,6 +6954,31 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._refresh_queue_dialog()
         if not self._busy:
             self._run_next_task()
+
+    @property
+    def queue_paused(self) -> bool:
+        """当前队列是否处于暂停状态。"""
+        return self._queue_gate.paused
+
+    def toggle_queue_pause(self) -> None:
+        """暂停 / 恢复队列：暂停后不再启动新文件，已在传输的继续。"""
+        if self._queue_gate.paused:
+            self._queue_gate.resume()
+            message = "队列已恢复"
+        else:
+            self._queue_gate.pause()
+            message = "队列已暂停（当前文件传完后不再启动新文件）"
+        self.set_status(message)
+        self._refresh_queue_dialog()
+
+    def set_queue_parallel(self, value: int) -> None:
+        """调整队列并行上限并持久化，下一个任务起生效。"""
+        parallel = clamp_parallel(value)
+        if parallel == self.settings.queue_parallel:
+            return
+        self.settings.queue_parallel = parallel
+        save_settings(self.settings, self._settings_path)
+        self.set_status(f"队列并行数：{parallel}，下一个任务起生效")
 
     def retry_queue_items(self, task_id: int, items: Sequence[QueueItem] | None = None) -> bool:
         """重试失败项（``items`` 为空表示该任务全部失败项）；目标残留时先确认覆盖。"""
@@ -6877,13 +7359,24 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         *,
         content: bool,
         extension: str,
+        case_sensitive: bool | None = None,
+        whole_word: bool = False,
+        filters: SearchFilters | None = None,
         on_done: Callable[[list[SearchHit]], None],
         on_error: Callable[[str], None],
     ) -> None:
         """供搜索对话框调用的后台搜索入口。"""
 
         def task() -> list[SearchHit]:
-            return search_paths(directory, pattern, content=content, extension=extension)
+            return search_paths(
+                directory,
+                pattern,
+                content=content,
+                extension=extension,
+                case_sensitive=case_sensitive,
+                whole_word=whole_word,
+                filters=filters,
+            )
 
         def done(hits: list[SearchHit]) -> None:
             self.set_status(f"搜索完成：{len(hits)} 个结果")

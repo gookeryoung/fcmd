@@ -14,3 +14,4 @@
 | [0008](0008-cmderw-command-line.md) | cmderw 命令行历史与补全 | 生效（K 批） |
 | [0009](0009-cmderw-multi-rename.md) | cmderw 多重命名工具（掩码 / 查找替换 / 预设） | 生效（M 批） |
 | [0010](0010-cmderw-user-commands.md) | cmderw 用户命令与外部工具入口 | 生效（N1–N2） |
+| [0011](0011-cmderw-p2-enhancements.md) | cmderw 搜索过滤、卷栏、属性、预览与队列调度 | 生效（N3–N7） |

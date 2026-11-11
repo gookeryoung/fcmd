@@ -2158,6 +2158,7 @@ _MENU_NEEDS_SELECTION = frozenset(
         "hash",
         "checksum_generate",
         "checksum_verify",
+        "set_attributes",
     }
 )
 _MENU_ONE = frozenset({"open", "view", "edit", "open_with", "open_archive", "properties", "unpack", "rename"})
@@ -2173,6 +2174,7 @@ _MENU_ACTIVE_WRITE = frozenset(
         "move",
         "pack",
         "checksum_generate",
+        "set_attributes",
     }
 )
 _MENU_TARGET_WRITE = frozenset({"copy", "move", "unpack"})
@@ -2192,6 +2194,7 @@ _MENU_BUSY = frozenset(
         "checksum_verify",
         "diff_text",
         "properties",
+        "set_attributes",
         "refresh",
         "search",
         "compare",

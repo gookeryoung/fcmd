@@ -257,6 +257,20 @@ class TestSearchByName:
         names = [p.name for p in results]
         assert names == ["a.py", "b.py", "c.py"]
 
+    def test_case_sensitive_explicit(self, tmp_path: Path) -> None:
+        """case_sensitive=True 时仅大小写完全一致的文件命中。"""
+        (tmp_path / "Alpha.PY").touch()
+        (tmp_path / "beta.py").touch()
+        results = search_by_name(tmp_path, "*.py", case_sensitive=True)
+        assert [p.name for p in results] == ["beta.py"]
+
+    def test_case_insensitive(self, tmp_path: Path) -> None:
+        """case_sensitive=False 时忽略大小写。"""
+        (tmp_path / "Alpha.PY").touch()
+        (tmp_path / "beta.py").touch()
+        results = search_by_name(tmp_path, "*.py", case_sensitive=False)
+        assert sorted(p.name for p in results) == ["Alpha.PY", "beta.py"]
+
 
 # ============================================================================ #
 # search_by_content
@@ -346,6 +360,31 @@ class TestSearchByContent:
 
         with pytest.raises(re.error):
             search_by_content(tmp_path, "(*invalid")
+
+    def test_case_insensitive(self, tmp_path: Path) -> None:
+        """case_sensitive=False 时忽略大小写。"""
+        f = tmp_path / "a.txt"
+        f.write_text("Needle\nneedle\n", encoding="utf-8")
+        assert len(search_by_content(tmp_path, "needle")) == 1
+        results = search_by_content(tmp_path, "needle", case_sensitive=False)
+        assert [lineno for _path, lineno, _line in results] == [1, 2]
+
+    def test_case_sensitive_default(self, tmp_path: Path) -> None:
+        """显式 case_sensitive=True 与默认一样区分大小写。"""
+        (tmp_path / "a.txt").write_text("NEEDLE\n", encoding="utf-8")
+        assert search_by_content(tmp_path, "needle", case_sensitive=True) == []
+
+    def test_whole_word(self, tmp_path: Path) -> None:
+        """whole_word=True 只匹配独立单词。"""
+        (tmp_path / "a.txt").write_text("cat\nconcatenate\ncat.\n", encoding="utf-8")
+        results = search_by_content(tmp_path, "cat", whole_word=True)
+        assert [lineno for _path, lineno, _line in results] == [1, 3]
+
+    def test_whole_word_case_insensitive(self, tmp_path: Path) -> None:
+        """整词与忽略大小写可以叠加。"""
+        (tmp_path / "a.txt").write_text("Cat\ncatalog\n", encoding="utf-8")
+        results = search_by_content(tmp_path, "cat", whole_word=True, case_sensitive=False)
+        assert [lineno for _path, lineno, _line in results] == [1]
 
 
 # ============================================================================ #

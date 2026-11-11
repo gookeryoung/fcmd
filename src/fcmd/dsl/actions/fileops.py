@@ -40,36 +40,50 @@ def search_by_name(
     pattern: str,
     include_dirs: bool = False,
     ignore_dirs: set[str] | None = None,
+    *,
+    case_sensitive: bool | None = None,
 ) -> list[Path]:
-    """按文件名 glob 模式递归搜索目录。"""
+    """按文件名 glob 模式递归搜索目录；``case_sensitive`` 为 ``None`` 时沿用平台默认。"""
     _ensure_directory(directory)
     if ignore_dirs is None:
         spec = DEFAULT_IGNORE_SPEC
     else:
         spec = IgnoreSpec.from_iterable(ignore_dirs)
+
+    def matches(name: str) -> bool:
+        if case_sensitive is None:
+            return fnmatch.fnmatch(name, pattern)
+        if case_sensitive:
+            return fnmatch.fnmatchcase(name, pattern)
+        return fnmatch.fnmatchcase(name.casefold(), pattern.casefold())
+
     results: list[Path] = []
     for path in directory.rglob("*"):
         if should_skip_parts(path.parts, spec):
             continue
         if path.is_dir():
-            if include_dirs and fnmatch.fnmatch(path.name, pattern):
+            if include_dirs and matches(path.name):
                 results.append(path)
             continue
-        if fnmatch.fnmatch(path.name, pattern):
+        if matches(path.name):
             results.append(path)
     results.sort(key=str)
     return results
 
 
-def search_by_content(
+def search_by_content(  # noqa: PLR0913 - 搜索开关由 CLI/GUI 直接透传
     directory: Path,
     pattern: str,
     extension: str = "",
     ignore_dirs: set[str] | None = None,
+    *,
+    case_sensitive: bool | None = None,
+    whole_word: bool = False,
 ) -> list[tuple[Path, int, str]]:
-    """按文件内容正则递归搜索。"""
+    """按文件内容正则递归搜索；支持忽略大小写与整词匹配。"""
     _ensure_directory(directory)
-    regex = re.compile(pattern)
+    expression = pattern if not whole_word else rf"\b(?:{pattern})\b"
+    regex = re.compile(expression, re.IGNORECASE if case_sensitive is False else 0)
     if ignore_dirs is None:
         spec = DEFAULT_IGNORE_SPEC
     else:

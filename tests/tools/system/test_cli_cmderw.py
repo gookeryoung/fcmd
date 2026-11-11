@@ -28,6 +28,8 @@ from fcmd.gui import window as _guiwindow
 from fcmd.tools.system import cmderw
 from fcmd.tools.system._cmderw_commands import UserCommand
 from fcmd.tools.system._cmderw_launch import LaunchRequest
+from fcmd.tools.system._cmderw_queue import DEFAULT_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL
+from fcmd.tools.system._cmderw_search import SearchFilters
 from fcmd.tools.system.cmderw import (
     ARCHIVE_SUFFIXES,
     DEFAULT_GEOMETRY,
@@ -170,6 +172,7 @@ class TestSettings:
             active="right",
             show_hidden=True,
             geometry="1000x700+10+20",
+            queue_parallel=3,
         )
         save_settings(settings)
         loaded = load_settings()
@@ -182,6 +185,7 @@ class TestSettings:
         assert loaded.active == "right"
         assert loaded.show_hidden is True
         assert loaded.geometry == "1000x700+10+20"
+        assert loaded.queue_parallel == 3
 
     def test_save_and_load_roundtrip_keeps_sync_browse(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
@@ -203,6 +207,16 @@ class TestSettings:
             encoding="utf-8",
         )
         assert load_settings().sync_browse is False
+
+    def test_queue_parallel_defaults_and_clamps(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        base = {"left": {"path": str(tmp_path)}, "right": {"path": str(tmp_path)}}
+        path.write_text(json.dumps({**base, "queue_parallel": "many"}), encoding="utf-8")
+        assert load_settings().queue_parallel == DEFAULT_QUEUE_PARALLEL
+        path.write_text(json.dumps({**base, "queue_parallel": 99}), encoding="utf-8")
+        assert load_settings().queue_parallel == MAX_QUEUE_PARALLEL
 
     def test_save_and_load_roundtrip_keeps_open_with(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
@@ -1269,6 +1283,33 @@ class TestHashSearchPreview:
             search_paths(tmp_path, "  ")
         with pytest.raises(NotADirectoryError):
             search_paths(tmp_path / "missing", "x")
+
+    def test_search_paths_case_sensitive(self, tmp_path: Path) -> None:
+        (tmp_path / "Alpha.TXT").write_text("needle", encoding="utf-8")
+        (tmp_path / "beta.txt").write_text("needle", encoding="utf-8")
+        assert [hit.path.name for hit in search_paths(tmp_path, "*.txt", case_sensitive=True)] == ["beta.txt"]
+        insensitive = search_paths(tmp_path, "*.txt", case_sensitive=False)
+        assert sorted(hit.path.name for hit in insensitive) == ["Alpha.TXT", "beta.txt"]
+
+    def test_search_paths_whole_word(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("cat\nconcatenate\n", encoding="utf-8")
+        assert [hit.line for hit in search_paths(tmp_path, "cat", content=True, whole_word=True)] == [1]
+
+    def test_search_paths_filters(self, tmp_path: Path) -> None:
+        (tmp_path / "small.txt").write_text("needle", encoding="utf-8")
+        (tmp_path / "big.txt").write_text("needle" + "x" * 2048, encoding="utf-8")
+        filters = SearchFilters(min_size=1024)
+        assert [hit.path.name for hit in search_paths(tmp_path, "*.txt", filters=filters)] == ["big.txt"]
+        content = search_paths(tmp_path, "needle", content=True, filters=filters)
+        assert [hit.path.name for hit in content] == ["big.txt"]
+
+    def test_search_paths_time_filter(self, tmp_path: Path) -> None:
+        old = tmp_path / "old.txt"
+        old.write_text("x", encoding="utf-8")
+        os.utime(old, (946684800, 946684800))
+        (tmp_path / "new.txt").write_text("x", encoding="utf-8")
+        filters = SearchFilters(modified_after=978307200)
+        assert [hit.path.name for hit in search_paths(tmp_path, "*.txt", filters=filters)] == ["new.txt"]
 
     def test_format_search_hit(self, tmp_path: Path) -> None:
         path = tmp_path / "a.txt"
