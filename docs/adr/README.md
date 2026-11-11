@@ -16,3 +16,4 @@
 | [0011](0011-cmderw-p2-enhancements.md) | cmderw 搜索过滤、卷栏、属性、预览与队列调度 | 生效（N3–N7） |
 | [0012](0012-cmderw-p3-file-tools.md) | cmderw P3 文件工具：归档写入、分卷、重复文件、包内搜索与标签交互 | 生效（P3） |
 | [0013](0013-gui-toolkit-feasibility.md) | GUI 技术路线：不自研 C++ 绑定，优先优化 Tk 路径 | 生效（研究结论） |
+| [0014](0014-batch-renamer.md) | 批量重命名：规则流水线 + 正则重排 / 搬移 | 已落地（v1） |

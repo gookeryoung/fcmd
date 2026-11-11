@@ -97,6 +97,8 @@ TOOLS: dict[str, ToolEntry] = {
     "regextool": ToolEntry("regextool", "python", "fcmd.tools.text.regextool"),
     "regexvalidate": ToolEntry("regexvalidate", "python", "fcmd.tools.text.regexvalidate"),
     "regexvalidatew": ToolEntry("regexvalidatew", "python", "fcmd.tools.text.regexvalidatew"),
+    "renamer": ToolEntry("renamer", "python", "fcmd.apps.renamer.renamer"),
+    "renamerw": ToolEntry("renamerw", "python", "fcmd.apps.renamer.renamerw"),
     "reseticoncache": ToolEntry("reseticoncache", "python", "fcmd.tools.system.reseticoncache"),
     "reshack": ToolEntry("reshack", "python", "fcmd.apps.reshack.reshack"),
     "reshackw": ToolEntry("reshackw", "python", "fcmd.apps.reshack.reshackw"),
@@ -214,6 +216,8 @@ DESCRIPTIONS: dict[str, str] = {
     "regextool": "匹配正则表达式",
     "regexvalidate": "正则校验（匹配/全匹配/findall/分组与特征分析，支持 ignorecase/multiline/dotall 标志）",
     "regexvalidatew": "正则校验器窗口版（Tk）：实时校验正则与文本，展示匹配位置/捕获组/全匹配/findall，内置 20 个典型示例，支持 ignorecase/multiline/dotall 标志、历史记录与语法帮助；设置持久化到 ~/.fcmd/ui/regexvalidate.json",
+    "renamer": "批量重命名（规则流水线）：replace 正则替换、reorder 捕获组重排、move 把匹配文本搬到开头/结尾/锚点、insert / case / sequence；规则用 JSON 或 @文件传入，preview 预览、apply 两阶段执行",
+    "renamerw": "批量重命名窗口版（Tk）：目标文件/目录选择、规则流水线编辑（正则替换、捕获组重排、匹配文本搬移、插入、大小写、计数器）、勾选前预览与冲突/非法标记、两阶段执行与撤销、规则 JSON 导入导出；设置持久化到 ~/.fcmd/ui/renamerw.json",
     "reseticoncache": "重置 Windows 图标缓存（仅 Windows 生效）",
     "reshack": "列出 PE 文件中的资源",
     "reshackw": "PE 资源编辑器窗口版（Tk）：按类型展示资源树，支持文本/十六进制/图像预览（图像可缩放/适应窗口，右键复制到剪贴板或另存为 PNG/ICO/BMP）、单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、全部导出；设置持久化到 ~/.fcmd/ui/reshackw.json，依赖 fcmd[pe]",
@@ -244,6 +248,8 @@ LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
     "apps/filesync/filesync.py",
     "apps/filesync/filesyncw.py",
+    "apps/renamer/renamer.py",
+    "apps/renamer/renamerw.py",
     "apps/reshack/reshack.py",
     "apps/reshack/reshackw.py",
     "tools/archive/archivex.py",
@@ -353,7 +359,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "d07515324c4844247028a26a52f473f0"
+DIGEST = "46ad5eebf6153166c7073f2a07dd5e61"
 
 
 if __name__ == "__main__":  # pragma: no cover
