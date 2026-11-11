@@ -148,15 +148,18 @@ class FcmdApp:
         注册进 ``_TOOL_REGISTRY``），直接走 ``run_tool``。
         """
         from fcmd.cli._discovery import _TOOL_MODULES, import_tool_module
-        from fcmd.console import print_error
         from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
         error = import_tool_module(tool_name)
         if error is not None:
             # OSError：原生动态库缺失，与 ImportError 同样友好报错
+            from fcmd.console import print_error
+
             print_error(f"加载工具 {tool_name!r} 失败: {error}")
             return 1
         if tool_name not in _TOOL_MODULES and tool_name not in _TOOL_REGISTRY:
+            from fcmd.console import print_error
+
             print_error(f"工具 {tool_name!r} 无模块映射")
             return 1
 

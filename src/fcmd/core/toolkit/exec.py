@@ -29,7 +29,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from fcmd.console import get_console, print_error
 from fcmd.core.execution.executors import run
 
 from ..dag import Graph, GraphDefaults
@@ -255,6 +254,8 @@ def _parse_tool_args(
 ) -> tuple[dict[str, Any], ToolSpec] | int:
     """校验 target、构建 parser 解析 ``argv_rest``，返回变量字典与 ``target_spec``。"""
     if target is not None and target not in subs:
+        from fcmd.console import print_error
+
         print_error(f"工具 {name!r} 没有子命令 {target!r}")
         _print_subcommands(name, subs)
         return ToolExitCode.FAILURE.value
@@ -296,6 +297,8 @@ def _execute_tool_tasks(
     task_specs: list[TaskSpec[Any]] = []
     for sc in chain:
         if sc not in subs:
+            from fcmd.console import print_error
+
             print_error(f"工具 {name!r} 的子命令 {sc!r} 未注册")
             return ToolExitCode.FAILURE.value
         sc_spec = subs[sc]
@@ -316,6 +319,8 @@ def _execute_tool_tasks(
     except TaskFailedError as e:
         # continue_on_error=False 时 run() 抛 TaskFailedError，携带 report
         if verbose:
+            from fcmd.console import get_console
+
             err_console = get_console()
             err_console.print("[red]执行失败[/red]")
             if e.report is not None:
@@ -323,6 +328,8 @@ def _execute_tool_tasks(
         return ToolExitCode.FAILURE.value
     except FcmdError as e:
         if verbose:
+            from fcmd.console import print_error
+
             print_error(str(e))
         return ToolExitCode.FAILURE.value
     except KeyboardInterrupt:
@@ -343,7 +350,7 @@ def _print_task_summary(report: Any, force: bool = False) -> None:
     单任务时不打印，避免冗余；多任务时按完成顺序列出各任务的状态与耗时，
     便于定位瓶颈与优化。``force=True`` 时即使单任务也打印（用于失败诊断）。
     """
-    from fcmd.console import Table
+    from fcmd.console import Table, get_console
 
     if not force and len(report.results) <= 1:
         return
@@ -387,7 +394,7 @@ def _print_subcommands(name: str, subs: dict[str | None, ToolSpec]) -> None:
     subs:
         工具的子命令字典，由调用方从 ``_TOOL_REGISTRY`` 取出后传入
     """
-    from fcmd.console import Table
+    from fcmd.console import Table, get_console
 
     console = get_console()
     visible = [(sc, spec) for sc, spec in subs.items() if sc is not None and not spec.hidden]

@@ -14,7 +14,6 @@ import subprocess
 from pathlib import Path
 from typing import Any, cast
 
-from fcmd.console import get_console
 from fcmd.core.task import TaskSpec
 
 __all__ = ["run_command"]
@@ -24,6 +23,8 @@ def _run_callable_command(cmd: Any, verbose: bool, cwd: Path | None) -> Any:
     """执行可调用对象，异常包装为 :class:`RuntimeError`。"""
     name = getattr(cmd, "__name__", "callable")
     if verbose:
+        from fcmd.console import get_console
+
         console = get_console()
         console.print(f"[cyan]>[/cyan] 执行可调用命令: [bold]{name}[/bold]")
         if cwd is not None:
@@ -58,8 +59,11 @@ def _run_subprocess_command(cmd: str | list[str], spec: TaskSpec[Any]) -> None:
         verb = "执行 Shell"
         label = "Shell 命令"
 
-    console = get_console() if verbose else None
-    if verbose and console is not None:
+    console = None
+    if verbose:
+        from fcmd.console import get_console
+
+        console = get_console()
         console.print(f"[cyan]>[/cyan] {verb}: [bold]{cmd_str}[/bold]")
         if cwd is not None:
             console.print(f"  [dim]工作目录: {cwd}[/dim]")
