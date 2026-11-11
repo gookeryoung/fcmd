@@ -1265,7 +1265,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._thumb_canvas.bind("<Next>", lambda _event: self._thumb_move(self._thumb_page_size()))
         self._thumb_canvas.bind("<Return>", lambda _event: self._on_activate())
         self._thumb_canvas.bind("<BackSpace>", lambda _event: self.go_up())
-        self._thumb_canvas.bind("<Button-3>", self.app.show_context_menu)
+        self._thumb_canvas.bind("<Button-3>", self._on_thumb_right_click)
 
     def _is_thumbnail_view(self) -> bool:
         return self.state.view_mode == VIEW_MODE_THUMBNAILS
@@ -1538,6 +1538,18 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def _on_thumb_double_click(self, event: Any) -> None:
         self._on_thumb_click(event)
         self._on_activate(event)
+
+    def _on_thumb_right_click(self, event: Any) -> None:
+        """缩略图右键：先选中命中的格子，再复用列表的右键菜单。"""
+        index = self._thumb_index_at(event.x, event.y)
+        if index is not None:
+            entry = self.entries[index]
+            if entry.name not in self.tree.selection():
+                self.tree.selection_set(entry.name)
+            self.tree.focus(entry.name)
+            self._update_status()
+            self._request_thumb_redraw(immediate=True)
+        self.app.show_context_menu(event)
 
     def _thumb_index_at(self, x: int, y: int) -> int | None:
         columns = self._thumb_columns()
