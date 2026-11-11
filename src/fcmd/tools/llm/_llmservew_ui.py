@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.gui import window as _guiwindow
-from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
+from fcmd.tools.llm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
 from fcmd.tools.llm._llmservew_bench import RESULT_COLUMNS, SCENARIOS
 from fcmd.tools.llm._llmservew_monitor import (
@@ -60,6 +60,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _threads_var: Any
         _wait_var: Any
         _ubatch_var: Any
+        _tune_var: Any
         _name_var: Any
         _host_var: Any
         _port_var: Any
@@ -73,6 +74,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _load_state_safe: Any
         _on_model_selected: Any
         _on_profile_changed: Any
+        _on_tune_changed: Any
         _on_service_selected: Any
         _open_browser: Any
         _refresh_status: Any
@@ -176,13 +178,20 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             ttk.Entry(params, textvariable=self._port_var),
             theme=self._theme,
         )
+        self._tune_box = ttk.Combobox(
+            params,
+            textvariable=self._tune_var,
+            values=tuple(_llmtune.TUNE_LABELS.values()),
+            state="readonly",
+        )
+        self._tune_box.bind("<<ComboboxSelected>>", self._on_tune_changed)
         _guiwindow.pair_row(
             params,
             2,
             "线程数",
             ttk.Entry(params, textvariable=self._threads_var),
-            "",
-            ttk.Label(params, text=""),
+            "调优策略",
+            self._tune_box,
             theme=self._theme,
         )
 
@@ -757,8 +766,12 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._hint_var.set("未检测到可用 NVIDIA GPU，无法评估显存适配（CPU 推理会很慢）")
             return
         _, context, kv_type = self._profile_context()
+        tune = _llmtune.LABEL_TO_TUNE.get(self._tune_var.get().strip(), "auto")
+        tuning = _llmtune.resolve(tune, context=context, model_bytes=0, gpu_mib=self._gpu_mib)
+        kv_type = tuning.kv_type or kv_type
         total = f"{self._gpu_mib} MiB" if self._gpu_mib is not None else "-"
         self._hint_var.set(
-            f"硬件评估口径：整卡 {total}，当前可用 {available} MiB，上下文 {context}，KV {kv_type}；"
-            "红色=硬件不足（清理显存也放不下），橙色=需释放显存（整卡够用），选择模型可查看具体建议"
+            f"硬件评估口径：整卡 {total}，当前可用 {available} MiB，上下文 {context}，KV {kv_type}，"
+            f"调优 {tuning.label}；红色=硬件不足（清理显存也放不下），橙色=需释放显存（整卡够用），"
+            "选择模型可查看具体建议"
         )

@@ -26,7 +26,7 @@ import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
-from fcmd.tools.llm import llmbase, llmenv, llmmodel, llmserve
+from fcmd.tools.llm import _llmtune, llmbase, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
 from fcmd.tools.llm._llmservew_bench import _ServeWindowBench
 from fcmd.tools.llm._llmservew_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
@@ -210,6 +210,7 @@ class ServeWindow(
         self._alias_var = tk.StringVar(value="")
         self._api_key_var = tk.StringVar(value=DEFAULT_API_KEY)
         self._threads_var = tk.StringVar(value=str(DEFAULT_THREADS))
+        self._tune_var = tk.StringVar(value=_llmtune.TUNE_LABELS["auto"])
         self._wait_var = tk.StringVar(value="180")
         self._model_var = tk.StringVar(value=_MODEL_PLACEHOLDER)
         self._status_var = tk.StringVar(value="状态：未查询")
@@ -357,6 +358,13 @@ class ServeWindow(
         alias = self._alias_var.get().strip() or path.stem
         precision = self._precision_for(path)
         hint = f"标签: {label} | {advice}\n精度: {precision.detail}\n接入: {base}/v1，model={alias}"
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        _, context, _ = self._profile_context()
+        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
+        hint += f"\n调优: {tuning.label} · {tuning.detail}"
         note = self._hardware_note(path)
         if note:
             hint += f"\n{note}"
@@ -365,6 +373,7 @@ class ServeWindow(
         self._log(f"  标签: {label}")
         self._log(f"  精度: {precision.detail}")
         self._log(f"  建议: {advice}")
+        self._log(f"  调优: {tuning.label} · {tuning.detail}")
 
     @override
     def _profile_context(self) -> tuple[str, int, str]:
@@ -384,6 +393,8 @@ class ServeWindow(
         if self._gpu_mib is None:
             return None, None
         _, context, kv_type = self._profile_context()
+        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
+        kv_type = tuning.kv_type or kv_type
         total = llmmodel.fit_vram(size, self._gpu_mib * 1024 * 1024, context, kv_type)
         free = None
         if self._gpu_free_mib is not None:
@@ -408,7 +419,13 @@ class ServeWindow(
         if total is None:
             return ""
         name, context, kv_type = self._profile_context()
-        detail = f"{name} 档（ctx {context} / kv {kv_type}）"
+        try:
+            size = path.stat().st_size
+        except OSError:
+            size = 0
+        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
+        kv_type = tuning.kv_type or kv_type
+        detail = f"{name} 档（ctx {context} / kv {kv_type} / {tuning.label}）"
         if not total.ok:
             return (
                 f"硬件不足（已标红）: {detail}预计需 {human_size(total.needed)}，整卡显存仅 "
@@ -457,6 +474,21 @@ class ServeWindow(
             raise ServeError("服务名不能为空")
         return llmbase.validate_name(name)
 
+    def _tune_name(self) -> str:
+        """当前下拉框对应的调优策略名（未知标签回落 auto）。"""
+        return _llmtune.LABEL_TO_TUNE.get(self._tune_var.get().strip(), "auto")
+
+    @override
+    def _on_tune_changed(self, _event: object | None = None) -> None:
+        """切换调优策略后刷新硬件适配列与提示区的生效参数说明。"""
+        self._update_fit_states()
+        if self._selected_model is not None:
+            self._show_model_hint(self._selected_model)
+            return
+        _, context, _ = self._profile_context()
+        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=0, gpu_mib=self._gpu_mib)
+        self._hint_var.set(f"调优: {tuning.label} · {tuning.detail}")
+
     def _build_plan(self) -> llmbase.LaunchPlan:
         """按表单内容构造启动计划（参数错误时抛 :class:`ServeError`）。"""
         profile = self._profile_var.get().strip()
@@ -472,6 +504,8 @@ class ServeWindow(
             alias=self._alias_var.get().strip() or None,
             api_key=self._api_key_var.get().strip() or DEFAULT_API_KEY,
             threads=self._int_field(self._threads_var, "线程数"),
+            tune=self._tune_name(),
+            gpu_mib=self._gpu_mib,
         )
 
     @staticmethod
@@ -540,6 +574,11 @@ class ServeWindow(
             f"  档位: {plan.profile.name} / {plan.profile.quant} / kv {plan.effective_kv_type} / "
             f"ctx {plan.context} / ub {plan.effective_ubatch}"
         )
+        self._log(
+            f"  调优: {plan.tuning.label} / b{plan.tuning.batch} / np{plan.tuning.parallel} / "
+            f"cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}"
+        )
+        self._log(f"  说明: {plan.tuning.detail}")
         self._log(f"  监听: {http_base_url(plan.host, plan.port)}")
         tags = llmmodel.detect_model_tags(plan.model.name)
         self._log(f"  标签: {' · '.join(tags) or '未识别'}")

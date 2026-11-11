@@ -139,6 +139,23 @@ class EngineInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class Tuning:
+    """调优策略解析后的生效值（由 ``_llmtune`` 按预设 / 硬件选择）。"""
+
+    name: str = "default"
+    label: str = "默认（现状）"
+    detail: str = "保持现有启动参数"
+    batch: int = 4096
+    ubatch: int | None = None
+    parallel: int = 1
+    cache_reuse: int = 256
+    flash_attn: str = "on"
+    kv_type: str | None = None
+    threads_http: int | None = None
+    spec_type: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class LaunchPlan:
     """一次启动所需的全部参数。"""
 
@@ -156,6 +173,7 @@ class LaunchPlan:
     extra_args: tuple[str, ...] = ()
     kv_type: str | None = None
     ubatch: int | None = None
+    tuning: Tuning = Tuning()
 
     @property
     def base_url(self) -> str:
@@ -164,13 +182,13 @@ class LaunchPlan:
 
     @property
     def effective_kv_type(self) -> str:
-        """生效的 KV 缓存类型（显式覆盖优先于档位）。"""
-        return self.kv_type or self.profile.kv_type
+        """生效的 KV 缓存类型（显式覆盖 > 调优策略 > 档位）。"""
+        return self.kv_type or self.tuning.kv_type or self.profile.kv_type
 
     @property
     def effective_ubatch(self) -> int:
-        """生效的 ubatch（显式覆盖优先于档位）。"""
-        return self.ubatch or self.profile.ubatch
+        """生效的 ubatch（显式覆盖 > 调优策略 > 档位）。"""
+        return self.ubatch or self.tuning.ubatch or self.profile.ubatch
 
     def argv(self, backend: Backend | None = None) -> list[str]:
         """按后端生成启动参数列表。"""
@@ -244,8 +262,9 @@ class LlamaCppBackend:
     name: str = "llama.cpp"
 
     def build_argv(self, plan: LaunchPlan) -> list[str]:
-        """生成 llama-server 参数（单并发 + FlashAttention + KV 量化）。"""
-        return [
+        """生成 llama-server 参数（调优策略 + FlashAttention + KV 量化）。"""
+        tuning = plan.tuning
+        args = [
             str(plan.engine.exe),
             "-m",
             str(plan.model),
@@ -254,22 +273,28 @@ class LlamaCppBackend:
             "-c",
             str(plan.context),
             "-np",
-            "1",
+            str(tuning.parallel),
             "--flash-attn",
-            "on",
+            tuning.flash_attn,
             "-ctk",
             plan.effective_kv_type,
             "-ctv",
             plan.effective_kv_type,
             "-b",
-            "4096",
+            str(tuning.batch),
             "-ub",
             str(plan.effective_ubatch),
             "-t",
             str(plan.threads),
             "--jinja",
-            "--cache-reuse",
-            "256",
+        ]
+        if tuning.cache_reuse > 0:
+            args += ["--cache-reuse", str(tuning.cache_reuse)]
+        if tuning.threads_http:
+            args += ["--threads-http", str(tuning.threads_http)]
+        if tuning.spec_type:
+            args += ["--spec-type", tuning.spec_type]
+        args += [
             "--no-context-shift",
             "--metrics",
             "--alias",
@@ -282,6 +307,7 @@ class LlamaCppBackend:
             plan.api_key,
             *plan.extra_args,
         ]
+        return args
 
 
 # ---------------------------------------------------------------------- #

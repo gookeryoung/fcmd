@@ -19,7 +19,7 @@ from typing import Any
 
 import fcmd
 from fcmd.console import Table, get_console
-from fcmd.tools.llm import llmengine, llmenv, llmmodel
+from fcmd.tools.llm import _llmtune, llmengine, llmenv, llmmodel
 from fcmd.tools.llm.llmbase import (
     DEFAULT_API_KEY,
     DEFAULT_HOST,
@@ -227,6 +227,8 @@ def make_plan(  # noqa: PLR0913
     threads: int = DEFAULT_THREADS,
     home: Path | None = None,
     extra_args: Sequence[str] = (),
+    tune: str = "default",
+    gpu_mib: int | None = None,
 ) -> LaunchPlan:
     """解析模型与引擎，构造启动计划（``alias`` 省略时取模型文件名）。"""
     validate_name(name)
@@ -241,11 +243,16 @@ def make_plan(  # noqa: PLR0913
         raise ServeError(f"ubatch 必须为正整数: {ubatch}")
     model_path = llmmodel.find_model(prof.quant, models_root, model)
     engine = llmengine.resolve_engine(engine_tag, home)
+    context = ctx or prof.context
+    if tune == "auto" and gpu_mib is None:
+        gpu = llmengine.detect_gpu()
+        gpu_mib = gpu.memory_mib if gpu is not None else None
+    tuning = _llmtune.resolve(tune, context=context, model_bytes=model_path.stat().st_size, gpu_mib=gpu_mib)
     return LaunchPlan(
         name=name,
         model=model_path,
         profile=prof,
-        context=ctx or prof.context,
+        context=context,
         host=host,
         port=port,
         alias=alias if alias is not None else model_path.stem,
@@ -256,6 +263,7 @@ def make_plan(  # noqa: PLR0913
         extra_args=tuple(extra_args),
         kv_type=kv_type,
         ubatch=ubatch,
+        tuning=tuning,
     )
 
 
@@ -416,6 +424,12 @@ def _print_plan(plan: LaunchPlan) -> None:
         f"{plan.profile.name} / {plan.profile.quant} / kv {plan.effective_kv_type} / "
         f"ctx {plan.context} / ub {plan.effective_ubatch}",
     )
+    table.add_row(
+        "调优",
+        f"{plan.tuning.label} / b{plan.tuning.batch} / np{plan.tuning.parallel} / "
+        f"cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}",
+    )
+    table.add_row("调优说明", plan.tuning.detail)
     table.add_row("监听", http_base_url(plan.host, plan.port))
     estimate = llmmodel.plan_vram(plan)
     table.add_row("显存估算", human_size(estimate))
@@ -426,7 +440,7 @@ def _print_plan(plan: LaunchPlan) -> None:
     if gpu is not None and estimate > gpu.memory_mib * 1024 * 1024:
         get_console().print(
             f"[yellow]警告: 估算 {human_size(estimate)} 超过显存 {gpu.memory_mib} MiB，"
-            "可能 OOM；可改用 --profile speed 或减小 --ctx[/yellow]"
+            "可能 OOM；可改用 --profile speed、--tune low-vram 或减小 --ctx[/yellow]"
         )
 
 
@@ -461,6 +475,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
     threads: int = DEFAULT_THREADS,
+    tune: str = "default",
 ) -> None:
     """打印启动计划，便于确认参数与显存占用。
 
@@ -492,6 +507,8 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         本地 API Key。
     threads:
         CPU 线程数。
+    tune:
+        调优策略：``auto`` / ``default`` / ``throughput`` / ``long-context`` / ``low-vram``。
     """
     plan = make_plan(
         name,
@@ -507,6 +524,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         alias=alias,
         api_key=api_key,
         threads=threads,
+        tune=tune,
     )
     _print_plan(plan)
 
@@ -526,6 +544,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
     threads: int = DEFAULT_THREADS,
+    tune: str = "default",
     wait: float = 180.0,
 ) -> None:
     """启动服务并等待 ``/health`` 就绪。
@@ -546,6 +565,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
         alias=alias,
         api_key=api_key,
         threads=threads,
+        tune=tune,
     )
     _print_plan(plan)
     state = start_server(plan, wait_s=wait)
