@@ -52,6 +52,7 @@ __all__ = [
     "ITEM_FAILED",
     "ITEM_PENDING",
     "ITEM_RUNNING",
+    "OPEN_WITH_LIMIT",
     "PANEL_COLUMNS",
     "PREVIEW_BINARY",
     "PREVIEW_HEX_LIMIT",
@@ -134,10 +135,13 @@ __all__ = [
     "menu_state",
     "normalize_color",
     "normalize_column_widths",
+    "normalize_open_with_list",
     "normalize_view_mode",
+    "open_with_command",
     "parse_color_rules",
     "plan_bulk_rename",
     "read_preview",
+    "remember_open_with",
     "resolve_color_style",
     "revalidate_sync_item",
     "revalidate_sync_items",
@@ -2240,8 +2244,8 @@ _MENU_NEEDS_SELECTION = frozenset(
         "hash",
     }
 )
-_MENU_ONE = frozenset({"open", "view", "edit", "properties", "unpack", "rename"})
-_MENU_ONE_FILE = frozenset({"view", "edit", "unpack"})
+_MENU_ONE = frozenset({"open", "view", "edit", "open_with", "properties", "unpack", "rename"})
+_MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack"})
 _MENU_ACTIVE_WRITE = frozenset(
     {
         "new_folder",
@@ -2409,3 +2413,45 @@ def browse_follow_path(current: str, step: str | None) -> str | None:
         parent = base.parent
         return None if parent == base else str(parent)
     return str(base / step)
+
+
+# ============================================================================ #
+# 打开方式：最近使用程序列表与启动命令
+# ============================================================================ #
+OPEN_WITH_LIMIT = 8
+
+
+def normalize_open_with_list(raw: object) -> list[str]:
+    """解析最近使用的程序：丢弃非字符串与空项，去重保序并截断。"""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    programs: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text and text not in programs:
+            programs.append(text)
+        if len(programs) >= OPEN_WITH_LIMIT:
+            break
+    return programs
+
+
+def remember_open_with(programs: Sequence[str], program: str) -> list[str]:
+    """把程序移到最近使用首位，去重并截断到上限。"""
+    text = program.strip()
+    recent = [item for item in programs if item != text]
+    if text:
+        recent.insert(0, text)
+    return recent[:OPEN_WITH_LIMIT]
+
+
+def open_with_command(program: str, path: str) -> list[str]:
+    """构造「用指定程序打开文件」的命令行；参数为空时抛 ``ValueError``。"""
+    name = program.strip()
+    target = path.strip()
+    if not name:
+        raise ValueError("请选择要使用的程序")
+    if not target:
+        raise ValueError("文件路径不能为空")
+    return [name, target]

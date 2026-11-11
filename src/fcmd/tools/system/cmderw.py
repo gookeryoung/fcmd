@@ -125,10 +125,13 @@ from fcmd.tools.system._cmderw_ops import (
     menu_state,
     normalize_color,
     normalize_column_widths,
+    normalize_open_with_list,
     normalize_view_mode,
+    open_with_command,
     parse_color_rules,
     plan_bulk_rename,
     read_preview,
+    remember_open_with,
     resolve_color_style,
     revalidate_sync_items,
     split_sync_selection,
@@ -406,6 +409,7 @@ class CmderSettings:
     bookmarks: list[str] = field(default_factory=list)
     color_rules: list[ColorRule] = field(default_factory=list)
     sync_browse: bool = False
+    open_with: list[str] = field(default_factory=list)
 
 
 # ============================================================================ #
@@ -529,6 +533,7 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     sync_browse = raw.get("sync_browse")
     if isinstance(sync_browse, bool):
         settings.sync_browse = sync_browse
+    settings.open_with = normalize_open_with_list(raw.get("open_with"))
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
@@ -554,6 +559,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "bookmarks": list(settings.bookmarks),
         "color_rules": dump_color_rules(settings.color_rules),
         "sync_browse": settings.sync_browse,
+        "open_with": list(settings.open_with),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -3614,6 +3620,54 @@ class ColorRulesDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（C
         self.window.destroy()
 
 
+class OpenWithDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """「打开方式」：选一个程序打开当前文件，并记住最近使用。"""
+
+    def __init__(self, app: CmderWindow, entry: FileEntry) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.entry = entry
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("打开方式")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=640, height=170)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(
+            outer,
+            text=f"用指定程序打开：{entry.name}",
+            style="Muted.TLabel",
+        ).pack(fill="x", pady=(0, spacing.xs))
+        row = ttk.Frame(outer)
+        row.pack(fill="x")
+        recent = list(app.settings.open_with)
+        self.program_var = tk.StringVar(value=recent[0] if recent else "")
+        self.combo = ttk.Combobox(row, textvariable=self.program_var, values=recent)
+        self.combo.pack(side="left", fill="x", expand=True)
+        ttk.Button(row, text="浏览…", style="Toolbutton", command=self._browse).pack(side="left", padx=(spacing.xs, 0))
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="打开", command=self._confirm).pack(side="right")
+        ttk.Button(buttons, text="取消", command=self.window.destroy).pack(side="right", padx=(0, spacing.xs))
+        self.combo.focus_set()
+
+    def _browse(self) -> None:
+        from tkinter import filedialog
+
+        chosen = filedialog.askopenfilename(title="选择程序", parent=self.window)
+        if chosen:
+            self.program_var.set(chosen)
+
+    def _confirm(self) -> None:
+        if self.app.launch_with(self.program_var.get(), self.entry.path):
+            self.window.destroy()
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -3708,6 +3762,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._menu_command(file_menu, "open", "打开\tEnter", self.open_selected)
         self._menu_command(file_menu, "view", "查看\tF3", self.view_selected)
         self._menu_command(file_menu, "edit", "编辑\tF4", self.edit_selected)
+        self._menu_command(file_menu, "open_with", "打开方式…", self.open_with_selected)
         file_menu.add_separator()
         self._menu_command(file_menu, "new_folder", "新建目录\tF7", self.new_folder)
         self._menu_command(file_menu, "rename", "重命名\tF2", self.rename_selected)
@@ -3850,6 +3905,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         menu.add_command(label="打开", command=self.open_selected)
         menu.add_command(label="查看", command=self.view_selected)
         menu.add_command(label="编辑", command=self.edit_selected)
+        menu.add_command(label="打开方式…", command=self.open_with_selected)
         view_mode_menu = self._tk.Menu(menu, tearoff=False, postcommand=self._sync_menu_state)
         for label, mode in _VIEW_MODE_CHOICES:
             view_mode_menu.add_radiobutton(
@@ -4616,6 +4672,34 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             open_externally(entries[0].path)
         except OSError as exc:
             self.show_error("无法编辑", str(exc))
+
+    def open_with_selected(self) -> None:
+        """文件 / 右键菜单：选择一个程序打开当前文件。"""
+        entries = self.active_panel().selected_entries()
+        if len(entries) != 1 or entries[0].is_dir:
+            self._messagebox.showinfo("打开方式", "请选择一个文件", parent=self.root)
+            return
+        OpenWithDialog(self, entries[0])
+
+    def launch_with(self, program: str, path: Path) -> bool:
+        """用指定程序打开文件；成功后把程序移到最近使用首位。"""
+        try:
+            command = open_with_command(program, str(path))
+        except ValueError as exc:
+            self.show_error("打开方式", str(exc))
+            return False
+        name, target = command
+        if any(sep and sep in name for sep in (os.sep, os.altsep)) and not Path(name).is_file():
+            self.show_error("打开方式", f"程序不存在：{name}")
+            return False
+        try:
+            subprocess.Popen([name, target], cwd=str(path.parent))
+        except OSError as exc:
+            self.show_error("无法打开", f"{name}\n{exc}")
+            return False
+        self.settings.open_with = remember_open_with(self.settings.open_with, name)
+        self.set_status(f"用 {Path(name).name} 打开 {path.name}")
+        return True
 
     def show_properties(self) -> None:
         """显示选中条目的属性。"""

@@ -195,6 +195,33 @@ class TestSettings:
         )
         assert load_settings().sync_browse is False
 
+    def test_save_and_load_roundtrip_keeps_open_with(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path)),
+                right=PanelState(path=str(tmp_path)),
+                open_with=["/bin/editor", "/bin/viewer"],
+            )
+        )
+        assert load_settings().open_with == ["/bin/editor", "/bin/viewer"]
+
+    def test_invalid_open_with_falls_back(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {"path": str(tmp_path)},
+                    "right": {"path": str(tmp_path)},
+                    "open_with": [3, "", "/bin/editor", "/bin/editor"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert load_settings().open_with == ["/bin/editor"]
+
     def test_save_and_load_roundtrip_keeps_tabs_and_bookmarks(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

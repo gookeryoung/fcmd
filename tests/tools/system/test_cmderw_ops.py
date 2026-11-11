@@ -1451,16 +1451,23 @@ class TestMenuState:
     def test_no_selection_disables_selection_actions(self) -> None:
         state = ops.menu_state(self._facts(selection_count=0, single_is_file=False))
 
-        for action in ("open", "view", "edit", "rename", "copy", "delete", "pack", "unpack"):
+        for action in ("open", "view", "edit", "open_with", "rename", "copy", "delete", "pack", "unpack"):
             assert state.is_disabled(action), action
 
     def test_multi_selection_keeps_batch_actions_enabled(self) -> None:
         state = ops.menu_state(self._facts(selection_count=3, single_is_file=False))
 
-        for action in ("open", "view", "edit", "properties", "rename", "unpack"):
+        for action in ("open", "view", "edit", "open_with", "properties", "rename", "unpack"):
             assert state.is_disabled(action), action
         for action in ("copy", "move", "delete", "permanent_delete", "pack", "bulk_rename"):
             assert not state.is_disabled(action), action
+
+    def test_single_directory_disables_file_only_actions(self) -> None:
+        state = ops.menu_state(self._facts(selection_count=1, single_is_file=False))
+
+        for action in ("view", "edit", "open_with", "unpack"):
+            assert state.is_disabled(action), action
+        assert not state.is_disabled("open")
 
     def test_single_tab_disables_close_tab(self) -> None:
         assert ops.menu_state(self._facts(tab_count=1)).is_disabled("close_tab")
@@ -1548,6 +1555,36 @@ class TestSyncBrowse:
         assert ops.browse_follow_path("/", ops.BROWSE_STEP_PARENT) is None
         assert ops.browse_follow_path("/x", None) is None
         assert ops.browse_follow_path("", "b") is None
+
+
+class TestOpenWith:
+    """打开方式：最近使用程序列表与启动命令。"""
+
+    def test_normalize_filters_and_dedupes(self) -> None:
+        assert ops.normalize_open_with_list([3, "", "  /bin/a  ", "/bin/a", "/bin/b"]) == ["/bin/a", "/bin/b"]
+
+    def test_normalize_rejects_non_list_and_truncates(self) -> None:
+        assert ops.normalize_open_with_list("bad") == []
+        raw = [f"/bin/p{index}" for index in range(ops.OPEN_WITH_LIMIT + 4)]
+
+        assert ops.normalize_open_with_list(raw) == raw[: ops.OPEN_WITH_LIMIT]
+
+    def test_remember_moves_to_front_and_truncates(self) -> None:
+        programs = ["/bin/a", "/bin/b"]
+
+        assert ops.remember_open_with(programs, "/bin/b") == ["/bin/b", "/bin/a"]
+        assert ops.remember_open_with(programs, "  ") == programs
+        many = [f"/bin/p{index}" for index in range(ops.OPEN_WITH_LIMIT)]
+        updated = ops.remember_open_with(many, "/bin/new")
+        assert updated[0] == "/bin/new"
+        assert len(updated) == ops.OPEN_WITH_LIMIT
+
+    def test_open_with_command(self) -> None:
+        assert ops.open_with_command(" /bin/editor ", "/tmp/a.txt") == ["/bin/editor", "/tmp/a.txt"]
+        with pytest.raises(ValueError):
+            ops.open_with_command("", "/tmp/a.txt")
+        with pytest.raises(ValueError):
+            ops.open_with_command("/bin/editor", " ")
 
 
 class TestViewModes:
