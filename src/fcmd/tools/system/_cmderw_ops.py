@@ -33,6 +33,7 @@ __all__ = [
     "COLUMN_MAX_WIDTH",
     "COLUMN_MIN_WIDTH",
     "COLUMN_SORT",
+    "COMMAND_HISTORY_LIMIT",
     "COMPARE_DIFFERENT",
     "COMPARE_LEFT_ONLY",
     "COMPARE_MODES",
@@ -95,6 +96,7 @@ __all__ = [
     "CompareEntry",
     "CompareOptions",
     "CompareReport",
+    "Completion",
     "MenuFacts",
     "MenuState",
     "PreviewResult",
@@ -122,7 +124,11 @@ __all__ = [
     "cleanup_incomplete_items",
     "cleanup_partial_target",
     "column_display_names",
+    "command_history_push",
+    "command_history_step",
     "compare_trees",
+    "complete_token",
+    "completion_mode",
     "destructive_command",
     "directory_size",
     "dump_color_rules",
@@ -136,6 +142,7 @@ __all__ = [
     "menu_state",
     "normalize_color",
     "normalize_column_widths",
+    "normalize_command_history",
     "normalize_open_with_list",
     "normalize_view_mode",
     "open_with_command",
@@ -148,6 +155,7 @@ __all__ = [
     "revalidate_sync_item",
     "revalidate_sync_items",
     "send_to_trash",
+    "split_command_token",
     "split_masks",
     "split_sync_selection",
     "sync_invert_selection",
@@ -2511,3 +2519,97 @@ def relative_parent_dir(root: Path, path: Path) -> str | None:
     except ValueError:
         return None
     return "" if relative == Path() else str(relative)
+
+
+# ============================================================================ #
+# 命令行：历史与第一个 token 补全
+# ============================================================================ #
+COMMAND_HISTORY_LIMIT = 200
+
+
+def normalize_command_history(raw: object) -> list[str]:
+    """解析持久化的命令历史：丢弃非字符串 / 空白项，保序去重并截断。"""
+    if not isinstance(raw, list):
+        return []
+    history: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in history:
+            continue
+        history.append(text)
+        if len(history) >= COMMAND_HISTORY_LIMIT:
+            break
+    return history
+
+
+def command_history_push(history: Sequence[str], command: str) -> list[str]:
+    """把成功执行的命令放到最前；空白命令不改历史，越界从最旧丢弃。"""
+    text = command.strip()
+    if not text:
+        return list(history)
+    return [text, *(item for item in history if item != text)][:COMMAND_HISTORY_LIMIT]
+
+
+def command_history_step(
+    history: Sequence[str],
+    index: int,
+    draft: str,
+    *,
+    older: bool,
+) -> tuple[str, int, str]:
+    """在历史中前后移动，返回新的 (文本, 下标, 草稿)。
+
+    index 为 -1 表示未在浏览历史：首次向上时记录草稿，向下回到最新一条
+    再按一次则恢复草稿。已在最旧 / 最新一端时保持不动。
+    """
+    if not history:
+        return draft, -1, draft
+    if older:
+        next_index = 0 if index < 0 else min(index + 1, len(history) - 1)
+        return history[next_index], next_index, draft
+    if index <= 0:
+        return draft, -1, draft
+    return history[index - 1], index - 1, draft
+
+
+@dataclass(frozen=True)
+class Completion:
+    """一次补全的结果：新 token、匹配到的候选与是否唯一。"""
+
+    token: str
+    candidates: tuple[str, ...] = ()
+    unique: bool = False
+
+
+def split_command_token(text: str) -> tuple[str, str]:
+    """把命令行拆成第一个 token 与其余部分（其余部分保留原始空白）。"""
+    stripped = text.lstrip()
+    if not stripped:
+        return "", text
+    head = stripped.split(None, 1)[0]
+    offset = text.index(head) + len(head)
+    return head, text[offset:]
+
+
+def completion_mode(token: str) -> str:
+    """补全模式：含分隔符或以 . / ~ 开头走路径，否则走命令。"""
+    if token.startswith((".", "~")) or "/" in token or "\\" in token:
+        return "path"
+    return "command"
+
+
+def complete_token(token: str, candidates: Sequence[str]) -> Completion:
+    """按候选补全 token：唯一候选补全到完整值，多候选只补公共前缀。"""
+    matches = tuple(sorted({item for item in candidates if item.startswith(token)}))
+    if not matches:
+        return Completion(token)
+    if len(matches) == 1:
+        return Completion(matches[0], matches, True)
+    prefix = ""
+    for position, char in enumerate(matches[0]):
+        if any(item[position : position + 1] != char for item in matches[1:]):
+            break
+        prefix += char
+    return Completion(prefix if len(prefix) > len(token) else token, matches)

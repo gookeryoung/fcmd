@@ -227,6 +227,35 @@ class TestSettings:
         )
         assert load_settings().open_with == ["/bin/editor"]
 
+    def test_save_and_load_roundtrip_keeps_command_history(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path)),
+                right=PanelState(path=str(tmp_path)),
+                command_history=["git status", "ls -la"],
+            )
+        )
+        assert load_settings().command_history == ["git status", "ls -la"]
+
+    def test_invalid_command_history_is_sanitized(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {"path": str(tmp_path)},
+                    "right": {"path": str(tmp_path)},
+                    "command_history": [3, "", "  ", "pwd", "pwd"],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert load_settings().command_history == ["pwd"]
+
     def test_save_and_load_roundtrip_keeps_branch_view(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
         save_settings(

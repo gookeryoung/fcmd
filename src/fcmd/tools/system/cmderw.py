@@ -115,7 +115,11 @@ from fcmd.tools.system._cmderw_ops import (
     build_sync_plan,
     cleanup_incomplete_items,
     column_display_names,
+    command_history_push,
+    command_history_step,
     compare_trees,
+    complete_token,
+    completion_mode,
     destructive_command,
     directory_size,
     dump_color_rules,
@@ -128,6 +132,7 @@ from fcmd.tools.system._cmderw_ops import (
     menu_state,
     normalize_color,
     normalize_column_widths,
+    normalize_command_history,
     normalize_open_with_list,
     normalize_view_mode,
     open_with_command,
@@ -138,6 +143,7 @@ from fcmd.tools.system._cmderw_ops import (
     remember_open_with,
     resolve_color_style,
     revalidate_sync_items,
+    split_command_token,
     split_sync_selection,
     sync_invert_selection,
     sync_item_key,
@@ -273,6 +279,7 @@ _QUICK_IMAGE_LIMIT = 32 * 1024 * 1024
 #: 分支视图：递归深度与条目上限，避免误入超深目录树时卡死界面。
 BRANCH_MAX_DEPTH = 32
 BRANCH_MAX_ENTRIES = 20000
+_COMMAND_HINT_LIMIT = 8
 _SORT_MENU_CHOICES: tuple[tuple[str, str, str], ...] = (
     ("名称", "name", "name"),
     ("扩展名", "attr", "type"),
@@ -433,6 +440,7 @@ class CmderSettings:
     color_rules: list[ColorRule] = field(default_factory=list)
     sync_browse: bool = False
     open_with: list[str] = field(default_factory=list)
+    command_history: list[str] = field(default_factory=list)
 
 
 # ============================================================================ #
@@ -560,6 +568,7 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     if isinstance(sync_browse, bool):
         settings.sync_browse = sync_browse
     settings.open_with = normalize_open_with_list(raw.get("open_with"))
+    settings.command_history = normalize_command_history(raw.get("command_history"))
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
@@ -586,6 +595,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "color_rules": dump_color_rules(settings.color_rules),
         "sync_browse": settings.sync_browse,
         "open_with": list(settings.open_with),
+        "command_history": list(settings.command_history),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -4067,6 +4077,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._tree_syncing = False
         self._tree_loaded: set[str] = set()
         self._command_visible = False
+        self._command_history_index = -1
+        self._command_draft = ""
         self._color_dialog: ColorRulesDialog | None = None
         self._sync_browse_lock = True
 
@@ -4392,6 +4404,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._command_entry.bind("<Return>", self._on_command_enter)
         self._command_entry.bind("<KP_Enter>", self._on_command_enter)
         self._command_entry.bind("<Escape>", self._on_command_escape)
+        self._command_entry.bind("<Up>", self._command_history_older)
+        self._command_entry.bind("<Down>", self._command_history_newer)
+        self._command_entry.bind("<Tab>", self._command_complete)
+        self._command_entry.bind("<KeyPress>", self._command_reset_history_cycle)
         self._command_cwd_var = self._tk.StringVar()
         ttk.Label(
             self._command_frame,
@@ -4723,6 +4739,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._command_visible = True
         self._command_frame.grid()
         self._update_command_cwd()
+        self._command_history_index = -1
+        self._command_draft = ""
         self._command_entry.focus_set()
         self._command_entry.select_range(0, "end")
 
@@ -4741,9 +4759,106 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def _on_command_escape(self, _event: Any = None) -> str:
         self._command_var.set("")
+        self._command_history_index = -1
+        self._command_draft = ""
         self.hide_command_bar()
         self.active_panel().focus_tree()
         return "break"
+
+    def _command_history_older(self, _event: Any = None) -> str:
+        """上键：在历史中向更早的命令移动。"""
+        return self._move_command_history(older=True)
+
+    def _command_history_newer(self, _event: Any = None) -> str:
+        """下键：在历史中向更新的命令移动，回到最新后恢复草稿。"""
+        return self._move_command_history(older=False)
+
+    def _move_command_history(self, *, older: bool) -> str:
+        if older and self._command_history_index < 0:
+            self._command_draft = self._command_var.get()
+        text, index, draft = command_history_step(
+            self.settings.command_history,
+            self._command_history_index,
+            self._command_draft,
+            older=older,
+        )
+        self._command_history_index = index
+        self._command_draft = draft
+        self._command_var.set(text)
+        self._command_entry.icursor("end")
+        return "break"
+
+    def _command_reset_history_cycle(self, event: Any) -> None:
+        """开始编辑时退出历史浏览，避免下次上键丢失当前草稿。"""
+        if event.keysym not in ("Up", "Down"):
+            self._command_history_index = -1
+            self._command_draft = ""
+
+    def _command_complete(self, _event: Any = None) -> str:
+        """Tab：补全第一个 token；多候选时只补公共前缀并在状态栏提示。"""
+        token, rest = split_command_token(self._command_var.get())
+        if not token:
+            return "break"
+        completion = complete_token(token, self._command_candidates(token))
+        if not completion.candidates:
+            return "break"
+        new_token = completion.token
+        if completion.unique and completion_mode(token) == "command":
+            new_token += " "
+        self._command_var.set(f"{new_token}{rest}")
+        self._command_entry.icursor(len(new_token))
+        if len(completion.candidates) > 1:
+            preview = "、".join(item.rstrip("/\\") for item in completion.candidates[:_COMMAND_HINT_LIMIT])
+            total = len(completion.candidates)
+            more = f" … 共 {total} 项" if total > _COMMAND_HINT_LIMIT else ""
+            self.set_status(f"候选：{preview}{more}")
+        return "break"
+
+    def _command_candidates(self, token: str) -> list[str]:
+        """按 token 产生补全候选：路径保留已输入前缀形式，命令合并目录名与工具名。"""
+        if completion_mode(token) == "path":
+            return self._path_candidates(token)
+        cwd = Path(self.active_panel().state.path)
+        candidates: list[str] = []
+        with contextlib.suppress(OSError):
+            candidates = [
+                entry.name
+                for entry in list_directory(cwd, show_hidden=self.settings.show_hidden)
+                if entry.name.startswith(token)
+            ]
+        from fcmd.core.toolkit import list_tools
+
+        candidates.extend(tool for tool in list_tools() if tool.startswith(token))
+        return candidates
+
+    def _path_candidates(self, token: str) -> list[str]:
+        """路径补全：按已输入目录前缀与分隔符风格生成候选（目录带结尾分隔符）。"""
+        if token == "~":
+            base_text, name_prefix = f"~{os.sep}", ""
+        else:
+            slash = max(token.rfind("/"), token.rfind("\\"))
+            base_text, name_prefix = token[: slash + 1], token[slash + 1 :]
+        if "\\" in base_text and "/" not in base_text:
+            separator = "\\"
+        elif "/" in base_text:
+            separator = "/"
+        else:
+            separator = os.sep
+        base = Path(base_text).expanduser() if base_text else Path(self.active_panel().state.path)
+        if not base.is_absolute():
+            base = Path(self.active_panel().state.path) / base
+        if not base.is_dir():
+            return []
+        candidates: list[str] = []
+        with contextlib.suppress(OSError):
+            for child in sorted(base.iterdir()):
+                if not child.name.startswith(name_prefix):
+                    continue
+                if child.name.startswith(".") and not name_prefix.startswith("."):
+                    continue
+                suffix = separator if child.is_dir() else ""
+                candidates.append(f"{base_text}{child.name}{suffix}")
+        return candidates
 
     def run_command(self) -> None:
         """在活动面板目录执行命令；删除类命令先二次确认。"""
@@ -4762,6 +4877,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             parent=self.root,
         ):
             return
+        self.settings.command_history = command_history_push(self.settings.command_history, command)
+        self._command_history_index = -1
+        self._command_draft = ""
         self.set_status(f"执行命令（{cwd}）：{command}")
         self.start_worker(
             lambda: self._run_shell(command, cwd),

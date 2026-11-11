@@ -1636,6 +1636,105 @@ class TestBranchView:
         assert ops.relative_parent_dir(root, Path("/other/a.txt")) is None
 
 
+class TestCommandLine:
+    def test_normalize_history_filters_and_dedupes(self) -> None:
+        raw = ["ls", 3, "  ", "git status", "ls", None, "pwd"]
+        assert ops.normalize_command_history(raw) == ["ls", "git status", "pwd"]
+        assert ops.normalize_command_history("ls") == []
+        assert ops.normalize_command_history(None) == []
+
+    def test_normalize_history_caps_length(self) -> None:
+        raw = [f"cmd{i}" for i in range(ops.COMMAND_HISTORY_LIMIT + 10)]
+        assert len(ops.normalize_command_history(raw)) == ops.COMMAND_HISTORY_LIMIT
+
+    def test_push_moves_command_to_front(self) -> None:
+        assert ops.command_history_push(["a", "b"], " c ") == ["c", "a", "b"]
+        assert ops.command_history_push(["a", "b"], "b") == ["b", "a"]
+        assert ops.command_history_push(["a"], "   ") == ["a"]
+
+    def test_push_caps_length(self) -> None:
+        history = [f"cmd{i}" for i in range(ops.COMMAND_HISTORY_LIMIT)]
+        pushed = ops.command_history_push(history, "new")
+        assert pushed[0] == "new"
+        assert len(pushed) == ops.COMMAND_HISTORY_LIMIT
+        assert pushed[-1] == history[-2]
+
+    def test_step_without_history_returns_draft(self) -> None:
+        assert ops.command_history_step([], -1, "draft", older=True) == ("draft", -1, "draft")
+
+    def test_step_cycles_and_restores_draft(self) -> None:
+        history = ["newest", "older", "oldest"]
+        text, index, draft = ops.command_history_step(history, -1, "draft", older=True)
+        assert (text, index, draft) == ("newest", 0, "draft")
+
+        text, index, draft = ops.command_history_step(history, index, draft, older=True)
+        assert (text, index) == ("older", 1)
+
+        text, index, draft = ops.command_history_step(history, index, draft, older=True)
+        assert (text, index) == ("oldest", 2)
+
+        text, index, draft = ops.command_history_step(history, index, draft, older=True)
+        assert (text, index) == ("oldest", 2)
+
+        text, index, draft = ops.command_history_step(history, index, draft, older=False)
+        assert (text, index) == ("older", 1)
+
+        text, index, draft = ops.command_history_step(history, index, draft, older=False)
+        assert (text, index) == ("newest", 0)
+
+        text, index, draft = ops.command_history_step(history, index, draft, older=False)
+        assert (text, index) == ("draft", -1)
+
+    def test_step_newer_without_cycle_keeps_draft(self) -> None:
+        assert ops.command_history_step(["a"], -1, "draft", older=False) == ("draft", -1, "draft")
+
+    def test_split_command_token(self) -> None:
+        assert ops.split_command_token("git status") == ("git", " status")
+        assert ops.split_command_token("   ls -la") == ("ls", " -la")
+        assert ops.split_command_token("") == ("", "")
+        assert ops.split_command_token("   ") == ("", "   ")
+
+    @pytest.mark.parametrize(
+        ("token", "expected"),
+        [
+            ("git", "command"),
+            ("./run", "path"),
+            ("~/docs", "path"),
+            ("sub/file", "path"),
+            (".hidden", "path"),
+            ("sub\\file", "path"),
+        ],
+    )
+    def test_completion_mode(self, token: str, expected: str) -> None:
+        assert ops.completion_mode(token) == expected
+
+    def test_complete_token_unique(self) -> None:
+        result = ops.complete_token("re", ["readme.md", "other.txt"])
+        assert result.token == "readme.md"
+        assert result.unique is True
+
+    def test_complete_token_common_prefix(self) -> None:
+        result = ops.complete_token("re", ["readme.md", "report.txt", "x"])
+        assert result.token == "re"
+        assert result.unique is False
+        assert result.candidates == ("readme.md", "report.txt")
+
+        result = ops.complete_token("rea", ["readme.md", "reap.txt"])
+        assert result.token == "rea"
+        result = ops.complete_token("re", ["readme.md", "reap.txt"])
+        assert result.token == "rea"
+
+    def test_complete_token_prefix_extends(self) -> None:
+        result = ops.complete_token("g", ["git-status", "git-diff"])
+        assert result.token == "git-"
+
+    def test_complete_token_no_match(self) -> None:
+        result = ops.complete_token("zz", ["a", "b"])
+        assert result.token == "zz"
+        assert result.candidates == ()
+        assert result.unique is False
+
+
 class TestViewModes:
     """视图模式与列宽的纯逻辑口径。"""
 

@@ -11,10 +11,10 @@ cmderw 命令行栏已支持执行任意 shell 命令（`subprocess.run(shell=Tr
 ## 决策
 
 1. 历史
-   - 成功执行的命令（非空、非纯空白）写入历史；连续重复命令只保留最近一次。
+   - 通过二次确认并开始执行的命令（非空、非纯空白）写入历史；连续重复命令只保留最近一次。
    - 历史持久化到 `CmderSettings.command_history`，上限 200 条，越界从最旧丢弃。
    - 上 / 下键在命令行栏内循环历史；首次按上键时暂存当前草稿，回到最新一条后再按下键
-     恢复草稿。Esc 清空输入并保留在命令行栏。
+     恢复草稿。Esc 清空输入并收起命令行栏。
    - 历史去重保序（最近的在前），读写均容错：非列表、非字符串项直接忽略。
 2. 补全
    - Tab 补全第一个 token：
@@ -33,11 +33,15 @@ cmderw 命令行栏已支持执行任意 shell 命令（`subprocess.run(shell=Tr
 
 ## 落地状态
 
-- K1：历史记录、持久化、上下键循环与草稿恢复。
-- K2：首个 token 的路径 / 命令补全、公共前缀与多候选提示。
+- K1：已完成。`CmderSettings.command_history` 持久化（容错 + 去重 + 上限 200），
+  执行后置顶，上下键循环与草稿恢复。
+- K2：已完成。Tab 补全首个 token：路径候选保留前缀形式、目录补分隔符；命令候选合并
+  当前目录条目与 `list_tools()` 工具名，唯一候选补空格，多候选补公共前缀并在状态栏
+  提示前 8 项与总数。
 
 ## 交接
 
-- 纯逻辑集中在 `_cmderw_ops`：`command_history_push` / `command_history_step` /
-  `complete_first_token`；Tk 层只负责按键绑定、状态栏提示与光标位置。
-- 历史按设置文件随窗口关闭保存；若将来需要跨面板共享或搜索，另开 ADR。
+- 纯逻辑集中在 `_cmderw_ops`：`normalize_command_history` / `command_history_push` /
+  `command_history_step` / `split_command_token` / `completion_mode` / `complete_token`；
+  Tk 层（`CmderWindow._command_*`）只负责按键绑定、文件系统候选、状态栏提示与光标。
+- 历史按设置文件随窗口关闭保存；若将来需要跨面板共享、模糊搜索或参数补全，另开 ADR。
