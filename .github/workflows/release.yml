@@ -1,8 +1,29 @@
 name: Release
 
+# 触发方式：
+#   - push v*.*.* tag：完整发布（PyPI + 多平台打包 + GitHub Release）
+#   - workflow_dispatch：默认 dry-run，只跑多平台打包并把产物上传为 Actions artifact；
+#     在 tag ref 上手动触发且关闭 dry_run 时，才会发布 PyPI / 更新 GitHub Release。
+#
+# 打包使用 fspack（https://github.com/…/fspack），在原生 runner 上构建：
+#   - Windows：mingw-w64 编译 loader，产出 Windows 便携 zip
+#   - Linux  ：gcc 编译 loader，产出 Linux 便携 zip
+#
+# 仅产出跨平台 zip：本项目是 100+ 入口的 CLI 工具集，fspack 的 nsis/deb
+# 安装器只会把「默认入口」映射成唯一命令，语义不适合本项目的多入口形态。
+#
+# CI 不运行 GUI 测试：冒烟只执行 --version / --help，不创建 Tk 窗口，
+# 因此无需 Xvfb；Tk 运行期依赖通过检查 dist/runtime 内 tkinter 文件是否齐全来验证。
+
 on:
   push:
     tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '仅构建并上传 Actions artifact，不发布 PyPI / GitHub Release'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -12,10 +33,18 @@ concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  UV_DEFAULT_INDEX: https://pypi.org/simple
+  FSPACK_VERSION: "0.6.12"
+  # 与 pyproject.toml 的 requires-python（>=3.13）保持一致。
+  PACK_PY_VERSION: "3.13.14"
+
 jobs:
-  release:
-    name: Build & Publish
-    runs-on: ubuntu-latest
+  # ===== PyPI 发布（仅 tag）=====
+  pypi:
+    name: Build & Publish PyPI
+    if: ${{ github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run) }}
+    runs-on: ubuntu-24.04
     environment: pypi
     timeout-minutes: 10
     steps:
@@ -24,6 +53,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v10.3.3
         with:
+          cache-suffix: release-pypi
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
@@ -33,12 +63,285 @@ jobs:
       - name: Publish to PyPI (OIDC)
         run: uv publish
 
-      - name: Create GitHub Release
+      - name: Upload sdist & wheel artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-pypi
+          path: dist/*
+          retention-days: 7
+          if-no-files-found: error
+
+  # ===== 多平台 fspack 打包 =====
+  pack:
+    name: Pack (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows
+            os: windows-latest
+            zip_pattern: 'fcmd-*-windows-*.zip'
+            # Windows 使用 [tool.fspack] extras 默认值（含 win32/pywin32）。
+            extras_args: ''
+          - target: linux
+            os: ubuntu-24.04
+            zip_pattern: 'fcmd-*-linux-*.zip'
+            # fspack 目前只按目标 python_version 过滤标记，遇到
+            # "pywin32>=306; sys_platform == 'win32'" 时会把 sys_platform 标记
+            # 当作 True 并剥离，导致 Linux 构建去下载 pywin32 而失败。
+            # 这里显式覆盖 extras，去掉 win32 分组。
+            extras_args: >-
+              --extra archive --extra color --extra crypto --extra filecheck
+              --extra img --extra ocr --extra office --extra pdf --extra pe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          cache-suffix: pack-${{ matrix.target }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      # windows-2025 移除了 mingw，用 choco 安装；pwsh 下写 $GITHUB_PATH
+      # 必须带 $env: 前缀，否则 PATH 不写入、后续找不到 gcc。
+      - name: Install mingw-w64 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install mingw -y --no-progress
+          Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\mingw-w64\mingw64\bin"
+
+      - name: Install gcc (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc
+
+      - name: Cache fspack assets
+        uses: actions/cache@v6
+        with:
+          path: ~/.fspack/cache/
+          key: fspack-${{ matrix.target }}-${{ env.FSPACK_VERSION }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            fspack-${{ matrix.target }}-${{ env.FSPACK_VERSION }}-
+            fspack-${{ matrix.target }}-
+
+      # fspack 的 download_wheels 依赖 pip，uv 的临时工具环境默认不含 pip，故 --with pip。
+      # 国内镜像缺少 PEP 658 .whl.metadata，追加官方 PyPI 作为 extra-index（仅 build 支持）。
+      # fspack 0.6.12 的冷缓存 + 并行 pip 下载路径会把每个 pip 子进程的
+      # "Successfully downloaded" 行误当成最终解析集（20 个依赖只装 1 个）。
+      # 先跑一次 seed 构建把所有 wheel 落到缓存，清掉错误的 deps 清单，
+      # 再正式构建时就会走「缓存命中」路径，完整安装全部依赖。
+      - name: Seed fspack dependency cache
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          FSPACK_EXTRAS: ${{ matrix.extras_args }}
+        run: |
+          set +e
+          uvx --from fspack==${{ env.FSPACK_VERSION }} --with pip fspack b . \
+            --target ${{ matrix.target }} \
+            --py-version ${{ env.PACK_PY_VERSION }} \
+            --extra-index-url https://pypi.org/simple/ \
+            $FSPACK_EXTRAS
+          seed_status=$?
+          set -e
+          rm -f ~/.fspack/cache/wheels/.deps-*.json
+          rm -rf dist
+          if [ "$seed_status" -ne 0 ]; then
+            echo "::warning::seed 构建退出码 $seed_status，继续正式构建以暴露完整错误"
+          fi
+
+      - name: Build with fspack
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+          FSPACK_EXTRAS: ${{ matrix.extras_args }}
+        run: |
+          uvx --from fspack==${{ env.FSPACK_VERSION }} --with pip fspack b . \
+            --target ${{ matrix.target }} \
+            --py-version ${{ env.PACK_PY_VERSION }} \
+            --extra-index-url https://pypi.org/simple/ \
+            $FSPACK_EXTRAS
+
+      - name: Package portable zip
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          uvx --from fspack==${{ env.FSPACK_VERSION }} fspack p . \
+            --target ${{ matrix.target }} \
+            --py-version ${{ env.PACK_PY_VERSION }} \
+            --format zip \
+            --no-build
+
+      # 依赖完整性检查：防止 fspack 冷缓存并行下载缺陷导致只装了 1 个 wheel。
+      - name: Assert dependency bundle
+        shell: bash
+        run: |
+          test -f dist/site-packages/rich/__init__.py
+          test -d dist/site-packages/PIL
+          test -d dist/site-packages/yaml
+
+      # Tk 运行期依赖检查：只查文件，不启动 GUI。
+      # Windows embed：runtime/Lib/tkinter/__init__.py
+      # Linux standalone：tkinter 纯 Python 包被压缩进 runtime/python/lib/python3XX.zip
+      - name: Assert Tk runtime bundled (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem dist/runtime -Recurse -Filter '_tkinter*' | Select-Object -First 1)) {
+            throw '运行时缺少 _tkinter 扩展'
+          }
+          if (-not (Test-Path 'dist/runtime/Lib/tkinter/__init__.py')) { throw '运行时缺少 tkinter 包' }
+          if (-not (Test-Path 'dist/runtime/Lib/tkinter/ttk.py')) { throw '运行时缺少 tkinter.ttk' }
+          Write-Host 'tkinter 运行期依赖齐全'
+
+      - name: Assert Tk runtime bundled (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -n "$(find dist/runtime -name '_tkinter*' -print -quit)"
+          if find dist/runtime -path '*/tkinter/__init__.py' -print -quit | grep -q .; then
+            echo "tkinter 包: 目录形式"
+          else
+            stdlib_zip=$(find dist/runtime -name 'python3*.zip' -print -quit)
+            test -n "$stdlib_zip"
+            python3 - "$stdlib_zip" <<'PY'
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as zf:
+              names = zf.namelist()
+          assert any(name.startswith("tkinter/__init__.") for name in names), "stdlib zip 内缺少 tkinter"
+          print("tkinter 包: stdlib zip")
+          PY
+          fi
+
+      - name: Smoke test built CLI (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = & ./dist/fcmd.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "fcmd.exe --version 退出码 $LASTEXITCODE" }
+          if ($out -notmatch '^fcmd \d+\.\d+\.\d+$') { throw "版本输出异常: $out" }
+          & ./dist/fcmd.exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "fcmd.exe --help 退出码 $LASTEXITCODE" }
+          Write-Host "OK: $out"
+
+      - name: Smoke test built CLI (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          out=$(./dist/fcmd --version)
+          echo "$out"
+          echo "$out" | grep -Eq '^fcmd [0-9]+\.[0-9]+\.[0-9]+$'
+          ./dist/fcmd --help >/dev/null
+
+      # 从最终交付的 zip 解包再跑一次，验证用户拿到的产物可直接使用。
+      - name: Smoke test portable zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem dist/release -Filter '${{ matrix.zip_pattern }}' | Select-Object -First 1
+          if (-not $archive) { throw '未找到 Windows 便携包' }
+          $tmp = Join-Path $env:RUNNER_TEMP 'fcmd-smoke'
+          Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $tmp
+          $exe = Get-ChildItem $tmp -Recurse -Filter 'fcmd.exe' | Select-Object -First 1
+          if (-not $exe) { throw '便携包内缺少 fcmd.exe' }
+          if (-not (Get-ChildItem $tmp -Recurse -Filter 'cmderw.exe' | Select-Object -First 1)) {
+            throw '便携包内缺少 cmderw.exe'
+          }
+          $out = & $exe.FullName --version
+          if ($LASTEXITCODE -ne 0) { throw "便携包 fcmd.exe --version 退出码 $LASTEXITCODE" }
+          if ($out -notmatch '^fcmd \d+\.\d+\.\d+$') { throw "版本输出异常: $out" }
+          Write-Host "OK: $($archive.Name) -> $out"
+
+      - name: Smoke test portable zip (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          archive=$(ls dist/release/${{ matrix.zip_pattern }})
+          tmp=$(mktemp -d)
+          unzip -q "$archive" -d "$tmp"
+          exe=$(find "$tmp" -type f -name fcmd | head -n 1)
+          test -n "$exe"
+          test -n "$(find "$tmp" -type f -name cmderw | head -n 1)"
+          out=$("$exe" --version)
+          echo "$out"
+          echo "$out" | grep -Eq '^fcmd [0-9]+\.[0-9]+\.[0-9]+$'
+          echo "OK: $archive -> $out"
+
+      - name: Assert artifact
+        shell: bash
+        run: |
+          ls dist/release/${{ matrix.zip_pattern }}
+          test -f "$(ls dist/release/${{ matrix.zip_pattern }} | head -n 1)"
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pack-${{ matrix.target }}-failure
+          path: dist/
+          retention-days: 3
+
+      - name: Upload release artifacts
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/release/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  # ===== 收集产物并上传到 GitHub Release =====
+  release:
+    name: Upload to GitHub Release
+    needs: [pypi, pack]
+    if: ${{ always() && !cancelled() && github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release-assets/
+          merge-multiple: true
+
+      - name: Collect release files
+        run: |
+          mkdir -p release-files/
+          find release-assets/ -type f \
+            \( -name "*.whl" -o -name "*.tar.gz" -o -name "*.zip" \) \
+            -exec cp {} release-files/ \;
+          echo "::group::Release files"
+          ls -la release-files/
+          echo "::endgroup::"
+
+      # 幂等：release 已存在则覆盖同名 asset，不存在则创建，支持重跑 tag。
+      # release job 无 checkout，gh 无法从 git remote 推断仓库，显式设置 GH_REPO。
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG_NAME" \
-            --title "Release $TAG_NAME" \
-            --generate-notes \
-            dist/*
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME 已存在，上传产物（覆盖同名 asset）..."
+            gh release upload "$TAG_NAME" release-files/* --clobber
+          else
+            gh release create "$TAG_NAME" \
+              --title "Release $TAG_NAME" \
+              --generate-notes \
+              release-files/*
+          fi
+
+      - name: Report failure (if any upstream job failed)
+        if: ${{ needs.pypi.result != 'success' || needs.pack.result != 'success' }}
+        run: |
+          echo "::error::部分 job 失败（pypi=${{ needs.pypi.result }} pack=${{ needs.pack.result }}），已成功的产物已上传到 Release。"
+          exit 1
