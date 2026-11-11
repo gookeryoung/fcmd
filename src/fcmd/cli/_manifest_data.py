@@ -97,8 +97,8 @@ TOOLS: dict[str, ToolEntry] = {
     "regexvalidate": ToolEntry("regexvalidate", "python", "fcmd.tools.text.regexvalidate"),
     "regexvalidatew": ToolEntry("regexvalidatew", "python", "fcmd.tools.text.regexvalidatew"),
     "reseticoncache": ToolEntry("reseticoncache", "dsl", "reseticoncache.toml"),
-    "reshack": ToolEntry("reshack", "python", "fcmd.tools.system.reshack"),
-    "reshackw": ToolEntry("reshackw", "python", "fcmd.tools.system.reshackw"),
+    "reshack": ToolEntry("reshack", "python", "fcmd.apps.reshack.reshack"),
+    "reshackw": ToolEntry("reshackw", "python", "fcmd.apps.reshack.reshackw"),
     "screenshot": ToolEntry("screenshot", "python", "fcmd.tools.media.screenshot"),
     "setenv": ToolEntry("setenv", "dsl", "setenv.toml"),
     "sshcopyid": ToolEntry("sshcopyid", "dsl", "sshcopyid.toml"),
@@ -248,6 +248,8 @@ AMBIGUOUS: frozenset[str] = frozenset(
 # 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）
 LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
+    "apps/reshack/reshack.py",
+    "apps/reshack/reshackw.py",
     "tools/archive/archivebase.py",
     "tools/archive/archivex.py",
     "tools/archive/zipencrypt.py",
@@ -308,15 +310,13 @@ LAYOUT: tuple[str, ...] = (
     "tools/system/checksum.py",
     "tools/system/envw.py",
     "tools/system/fonttool.py",
-    "tools/system/reshack.py",
-    "tools/system/reshackw.py",
     "tools/text/regexvalidate.py",
     "tools/text/regexvalidatew.py",
     "tools/text/textbase.py",
 )
 
 # 工具源码 + 内置 commands/*.toml 的内容指纹（列表快路径的严格校验）
-DIGEST = "5938767171015455e3a07a4f1878ed28"
+DIGEST = "866db3f33b2ccf5a0800cdc50065a701"
 
 
 if __name__ == "__main__":  # pragma: no cover

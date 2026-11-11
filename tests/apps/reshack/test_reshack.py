@@ -1,6 +1,6 @@
 """reshack 工具测试。
 
-验证 ``fcmd.tools.system.reshack``：
+验证 ``fcmd.apps.reshack.reshack``：
 - 工具注册（list/extract/replace/export-all 子命令）
 - PE 文件头识别、类型名 / 扩展名 / 大小格式化
 - 资源枚举、导出、全部导出、替换（含备份与各类失败分支）
@@ -15,9 +15,8 @@ from typing import Any
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.system import reshack
-from fcmd.tools.system.reshack import (
+from fcmd.apps.reshack import reshack
+from fcmd.apps.reshack.reshack import (
     RT_BITMAP,
     RT_ICON,
     PEError,
@@ -36,6 +35,7 @@ from fcmd.tools.system.reshack import (
     resource_extension,
     resource_type_name,
 )
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
 # ============================================================================ #

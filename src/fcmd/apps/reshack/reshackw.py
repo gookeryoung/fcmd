@@ -3,7 +3,7 @@
 交互参考 ``bitool_gui.reshack``：左侧按资源类型分组展示 PE 文件（exe/dll/sys
 等）的资源树，右侧提供文本 / 十六进制 / 图像三种预览，支持导出选中资源、
 替换资源（写入前自动备份）以及全部导出。解析与写回复用
-:mod:`fcmd.tools.system.reshack`，需安装 ``pip install fcmd[pe]``。
+:mod:`fcmd.apps.reshack.reshack`，需安装 ``pip install fcmd[pe]``。
 
 设置（上次文件、最近打开、窗口位置）保存在
 ``${FCMD_HOME:-~/.fcmd}/ui/reshackw.json``，下次启动自动恢复。
@@ -23,10 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
-from fcmd.gui import window as _guiwindow
-from fcmd.tools.system._reshackw_core import (
+from fcmd.apps.reshack._core import (
     FIT_MAX_UPSCALE,
     HEX_PREVIEW_LIMIT,
     MAX_ZOOM,
@@ -46,7 +43,7 @@ from fcmd.tools.system._reshackw_core import (
     zoom_in,
     zoom_out,
 )
-from fcmd.tools.system.reshack import (
+from fcmd.apps.reshack.reshack import (
     RT_BITMAP,
     RT_ICON,
     PEError,
@@ -58,6 +55,9 @@ from fcmd.tools.system.reshack import (
     is_pe_file,
     resource_extension,
 )
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 
 __all__ = [
     "FIT_MAX_UPSCALE",

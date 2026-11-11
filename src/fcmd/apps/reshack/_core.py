@@ -1,6 +1,6 @@
 """reshackw 的无界面逻辑：预览解码、缩放计算与剪贴板转换。
 
-从 :mod:`fcmd.tools.system.reshackw` 拆出，便于在无显示环境单独测试；
+从 :mod:`fcmd.apps.reshack.reshackw` 拆出，便于在无显示环境单独测试；
 窗口模块继续以原名 re-export，保持既有导入路径与 monkeypatch 目标不变。
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 import sys
 from typing import Any, cast
 
-from fcmd.tools.system.reshack import (
+from fcmd.apps.reshack.reshack import (
     RT_BITMAP,
     RT_ICON,
     ResourceEntry,

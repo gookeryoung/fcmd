@@ -1,6 +1,6 @@
 """reshackw 工具测试。
 
-验证 ``fcmd.tools.system.reshackw``：
+验证 ``fcmd.apps.reshack.reshackw``：
 - 设置读写（路径、最近打开、几何串）容错
 - 文本解码、十六进制预览、资源分组、默认文件名
 - 图像预览解码（BMP / ICO 包装）
@@ -17,10 +17,9 @@ from typing import Any
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.tools.system import reshackw
-from fcmd.tools.system.reshack import ResourceEntry
-from fcmd.tools.system.reshackw import (
+from fcmd.apps.reshack import reshackw
+from fcmd.apps.reshack.reshack import ResourceEntry
+from fcmd.apps.reshack.reshackw import (
     FIT_MAX_UPSCALE,
     MAX_ZOOM,
     MIN_ZOOM,
@@ -44,6 +43,7 @@ from fcmd.tools.system.reshackw import (
     zoom_in,
     zoom_out,
 )
+from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 def _resource(
