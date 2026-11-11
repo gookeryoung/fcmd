@@ -71,6 +71,17 @@ def search_by_name(
     return results
 
 
+def compile_content_pattern(
+    pattern: str,
+    *,
+    case_sensitive: bool | None = None,
+    whole_word: bool = False,
+) -> re.Pattern[str]:
+    """把内容搜索模式编译为正则，统一大小写与整词语义。"""
+    expression = pattern if not whole_word else rf"\b(?:{pattern})\b"
+    return re.compile(expression, re.IGNORECASE if case_sensitive is False else 0)
+
+
 def search_by_content(  # noqa: PLR0913 - 搜索开关由 CLI/GUI 直接透传
     directory: Path,
     pattern: str,
@@ -82,8 +93,7 @@ def search_by_content(  # noqa: PLR0913 - 搜索开关由 CLI/GUI 直接透传
 ) -> list[tuple[Path, int, str]]:
     """按文件内容正则递归搜索；支持忽略大小写与整词匹配。"""
     _ensure_directory(directory)
-    expression = pattern if not whole_word else rf"\b(?:{pattern})\b"
-    regex = re.compile(expression, re.IGNORECASE if case_sensitive is False else 0)
+    regex = compile_content_pattern(pattern, case_sensitive=case_sensitive, whole_word=whole_word)
     if ignore_dirs is None:
         spec = DEFAULT_IGNORE_SPEC
     else:

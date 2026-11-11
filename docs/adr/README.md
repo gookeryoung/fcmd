@@ -10,8 +10,9 @@
 | [0004](0004-refactor-backlog.md) | 重构待办的触发条件 | 生效（M4 / M7 暂缓） |
 | [0005](0005-cmderw-totalcommander-alignment.md) | cmderw 对齐 Total Commander 的能力分期 | 生效（A–K/M） |
 | [0006](0006-tool-list-fast-path.md) | 工具列表快路径（静态元数据 + 内容指纹回退） | 已落地 |
-| [0007](0007-cmderw-archive-browsing.md) | cmderw 压缩包内只读浏览与按需解压 | 生效（J 批） |
+| [0007](0007-cmderw-archive-browsing.md) | cmderw 压缩包内浏览与写入 | 生效（J 批 / P3-1） |
 | [0008](0008-cmderw-command-line.md) | cmderw 命令行历史与补全 | 生效（K 批） |
 | [0009](0009-cmderw-multi-rename.md) | cmderw 多重命名工具（掩码 / 查找替换 / 预设） | 生效（M 批） |
 | [0010](0010-cmderw-user-commands.md) | cmderw 用户命令与外部工具入口 | 生效（N1–N2） |
 | [0011](0011-cmderw-p2-enhancements.md) | cmderw 搜索过滤、卷栏、属性、预览与队列调度 | 生效（N3–N7） |
+| [0012](0012-cmderw-p3-file-tools.md) | cmderw P3 文件工具：归档写入、分卷、重复文件、包内搜索与标签交互 | 生效（P3） |

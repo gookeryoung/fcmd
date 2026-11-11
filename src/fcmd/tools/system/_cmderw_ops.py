@@ -2159,10 +2159,12 @@ _MENU_NEEDS_SELECTION = frozenset(
         "checksum_generate",
         "checksum_verify",
         "set_attributes",
+        "split_file",
+        "merge_parts",
     }
 )
 _MENU_ONE = frozenset({"open", "view", "edit", "open_with", "open_archive", "properties", "unpack", "rename"})
-_MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack"})
+_MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack", "split_file"})
 _MENU_TWO_FILES = frozenset({"diff_text"})
 _MENU_ACTIVE_WRITE = frozenset(
     {
@@ -2175,6 +2177,9 @@ _MENU_ACTIVE_WRITE = frozenset(
         "pack",
         "checksum_generate",
         "set_attributes",
+        "split_file",
+        "merge_parts",
+        "find_duplicates",
     }
 )
 _MENU_TARGET_WRITE = frozenset({"copy", "move", "unpack"})
@@ -2199,6 +2204,10 @@ _MENU_BUSY = frozenset(
         "search",
         "compare",
         "sync",
+        "add_to_archive",
+        "split_file",
+        "merge_parts",
+        "find_duplicates",
     }
 )
 
@@ -2216,6 +2225,9 @@ class MenuFacts:
     active_writable: bool = True
     target_writable: bool = True
     tab_count: int = 1
+    locked_tab_count: int = 0
+    tab_locked: bool = False
+    filter_defined: bool = False
     history_index: int = 0
     history_length: int = 1
     panels_ready: bool = True
@@ -2226,6 +2238,7 @@ class MenuFacts:
     sync_browse: bool = False
     branch_view: bool = False
     archive_view: bool = False
+    archive_writable: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2241,6 +2254,8 @@ class MenuState:
     sync_browse: bool = False
     branch_view: bool = False
     archive_view: bool = False
+    archive_writable: bool = False
+    tab_locked: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2279,8 +2294,10 @@ def _write_disabled(facts: MenuFacts) -> set[str]:
 
 def _navigation_disabled(facts: MenuFacts) -> set[str]:
     disabled: set[str] = set()
-    if facts.tab_count <= 1:
+    if facts.tab_count <= 1 or facts.tab_locked:
         disabled.add("close_tab")
+    if facts.tab_count - facts.locked_tab_count <= 1:
+        disabled.add("close_others")
     if facts.history_index <= 0:
         disabled.add("back")
     if facts.history_index >= facts.history_length - 1:
@@ -2311,13 +2328,25 @@ _MENU_ARCHIVE_READONLY = frozenset(
         "hash",
         "pack",
         "unpack",
+        "split_file",
+        "merge_parts",
+        "find_duplicates",
     }
 )
 
 
 def _archive_disabled(facts: MenuFacts) -> set[str]:
-    """压缩包内只读：禁用会写回磁盘或依赖真实路径的动作。"""
-    return set(_MENU_ARCHIVE_READONLY) if facts.archive_view else set()
+    """压缩包内：只读格式禁用全部写入动作，可写格式放开改名 / 删除。"""
+    disabled: set[str] = set()
+    if facts.archive_view:
+        disabled |= _MENU_ARCHIVE_READONLY
+        if facts.archive_writable:
+            disabled -= {"rename", "delete", "permanent_delete"}
+        else:
+            disabled.add("add_to_archive")
+    else:
+        disabled.add("add_to_archive")
+    return disabled
 
 
 def menu_state(facts: MenuFacts) -> MenuState:
@@ -2328,6 +2357,8 @@ def menu_state(facts: MenuFacts) -> MenuState:
     disabled |= _navigation_disabled(facts)
     disabled |= _panel_disabled(facts)
     disabled |= _archive_disabled(facts)
+    if not facts.filter_defined:
+        disabled.add("clear_filter_definition")
     return MenuState(
         disabled=frozenset(disabled),
         show_hidden=facts.show_hidden,
@@ -2336,6 +2367,8 @@ def menu_state(facts: MenuFacts) -> MenuState:
         sync_browse=facts.sync_browse,
         branch_view=facts.branch_view,
         archive_view=facts.archive_view,
+        archive_writable=facts.archive_writable,
+        tab_locked=facts.tab_locked,
         sort_key=facts.sort_key,
         view_mode=normalize_view_mode(facts.view_mode),
     )

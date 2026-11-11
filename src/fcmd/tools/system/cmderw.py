@@ -52,6 +52,18 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system import _cmderw_diff as diffmod
 from fcmd.tools.system import _cmderw_preview as previewmod
+from fcmd.tools.system._cmderw_archwrite import (
+    DEFAULT_COMPRESSION_LEVEL,
+    ArchiveWriteOptions,
+    add_paths,
+    archive_editable,
+    archive_member_names,
+    create_archive_file,
+    planned_additions,
+    remove_members,
+    rename_member,
+)
+from fcmd.tools.system._cmderw_arcsearch import ArchiveHit, ArchiveSearchReport, search_archive
 from fcmd.tools.system._cmderw_attrs import (
     AttributeChange,
     apply_attributes,
@@ -76,6 +88,15 @@ from fcmd.tools.system._cmderw_commands import (
     expand_placeholders,
     normalize_user_commands,
     user_commands_to_json,
+)
+from fcmd.tools.system._cmderw_dupes import (
+    DuplicateActionReport,
+    DuplicateReport,
+    duplicate_paths,
+    move_duplicates,
+)
+from fcmd.tools.system._cmderw_dupes import (
+    find_duplicates as find_duplicate_files,
 )
 from fcmd.tools.system._cmderw_launch import LaunchRequest, resolve_launch
 from fcmd.tools.system._cmderw_ops import (
@@ -211,6 +232,27 @@ from fcmd.tools.system._cmderw_search import (
     parse_datetime,
     parse_size,
     sort_results,
+)
+from fcmd.tools.system._cmderw_split import (
+    CHECKSUM_SUFFIX,
+    MergeResult,
+    SplitResult,
+    default_merged_name,
+    discover_parts,
+    merge_parts,
+    part_names,
+    split_file,
+    split_plan,
+)
+from fcmd.tools.system._cmderw_tabs import (
+    FilterDefinition,
+    apply_filter_definition,
+    close_other_indices,
+    normalize_filter_definition,
+    normalize_selection,
+    normalize_tab_title,
+    tab_bar_label,
+    tab_label,
 )
 from fcmd.tools.system._cmderw_volumes import enumerate_volumes
 
@@ -459,6 +501,9 @@ class PanelState:
     view_mode: str = DEFAULT_VIEW_MODE
     column_widths: dict[str, int] = field(default_factory=dict)
     branch_view: bool = False
+    title: str = ""
+    locked: bool = False
+    selection: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为设置文件中的字典。"""
@@ -471,6 +516,9 @@ class PanelState:
             "view_mode": self.view_mode,
             "column_widths": dict(self.column_widths),
             "branch_view": self.branch_view,
+            "title": self.title,
+            "locked": self.locked,
+            "selection": list(self.selection),
         }
 
 
@@ -500,6 +548,7 @@ class CmderSettings:
     rename_presets: list[RenamePreset] = field(default_factory=list)
     user_commands: list[UserCommand] = field(default_factory=list)
     queue_parallel: int = DEFAULT_QUEUE_PARALLEL
+    filter_definition: FilterDefinition = field(default_factory=FilterDefinition)
 
 
 # ============================================================================ #
@@ -554,6 +603,11 @@ def _panel_from_raw(raw: object, fallback: Path) -> PanelState:
     branch_view = data.get("branch_view")
     if isinstance(branch_view, bool):
         state.branch_view = branch_view
+    state.title = normalize_tab_title(data.get("title"))
+    locked = data.get("locked")
+    if isinstance(locked, bool):
+        state.locked = locked
+    state.selection = normalize_selection(data.get("selection"))
     return state
 
 
@@ -640,6 +694,7 @@ def load_settings(path: Path | None = None) -> CmderSettings:
         settings.geometry = _guiconfig.valid_geometry(geometry)
     theme = raw.get("theme")
     settings.theme = _guitheme.resolve_theme(theme if isinstance(theme, str) else None).name
+    settings.filter_definition = normalize_filter_definition(raw.get("filter_definition"))
     return settings
 
 
@@ -668,6 +723,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "rename_presets": rename_presets_to_json(settings.rename_presets),
         "user_commands": user_commands_to_json(settings.user_commands),
         "queue_parallel": settings.queue_parallel,
+        "filter_definition": settings.filter_definition.to_dict(),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -1341,10 +1397,11 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.title = "左侧" if side == "left" else "右侧"
         self.tabs = list(tabs) or [PanelState(path=str(default_directory()))]
         self.tab_index = normalize_tab_index(tab_index, len(self.tabs))
-        self._tab_signature: tuple[int, tuple[str, ...]] | None = None
+        self._tab_signature: tuple[int, tuple[tuple[str, str, bool], ...]] | None = None
         self.entries: list[FileEntry] = []
         self._index: dict[str, FileEntry] = {}
         self._filter = ""
+        self._restore_selection: list[str] | None = normalize_selection(self.state.selection)
         self._last_path = self.state.path
         self._branch_truncated = False
         self.archive: Path | None = None
@@ -1901,7 +1958,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """重建标签栏：当前标签高亮，末尾为新建按钮（内容未变时跳过）。"""
         from tkinter import ttk
 
-        signature = (self.tab_index, tuple(tab.path for tab in self.tabs))
+        signature = (self.tab_index, tuple((tab.path, tab.title, tab.locked) for tab in self.tabs))
         if signature == self._tab_signature:
             return
         self._tab_signature = signature
@@ -1909,9 +1966,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             child.destroy()
         spacing = self.app.theme.spacing
         for index, tab in enumerate(self.tabs):
-            label = panel_tab_title(tab.path) or "（空）"
-            if len(label) > 24:
-                label = "…" + label[-23:]
+            label = tab_bar_label(tab.path, tab.title, locked=tab.locked)
             ttk.Button(
                 self._tab_bar,
                 text=label,
@@ -1930,10 +1985,12 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """切换到指定标签并刷新列表。"""
         if not 0 <= index < len(self.tabs) or index == self.tab_index:
             return
+        self._capture_selection()
         self._capture_column_widths()
         self._invalidate_thumbnails("tab")
         self._clear_archive_state()
         self.tab_index = index
+        self._restore_selection = normalize_selection(self.state.selection)
         self.path_var.set(self.state.path)
         self._render_tabs()
         self.refresh()
@@ -1942,6 +1999,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def new_tab(self, path: str | None = None) -> None:
         """新建标签页：默认沿用当前目录、排序方式、视图模式与列宽。"""
         source = self.state
+        self._capture_selection()
         self._capture_column_widths()
         self._clear_archive_state()
         target = path or source.path
@@ -1957,13 +2015,17 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             )
         )
         self.tab_index = len(self.tabs) - 1
+        self._restore_selection = None
         self.path_var.set(self.state.path)
         self._render_tabs()
         self.refresh()
         self.app.set_status(f"{self.title}新建标签 {self.tab_index + 1}/{len(self.tabs)}：{target}")
 
     def close_tab(self) -> bool:
-        """关闭当前标签页；仅剩一个标签时保留并提示，返回是否真的关闭。"""
+        """关闭当前标签页；锁定或仅剩一个标签时保留并提示，返回是否真的关闭。"""
+        if self.state.locked:
+            self.app.set_status(f"{self.title}当前标签已锁定，请先解锁再关闭")
+            return False
         if len(self.tabs) == 1:
             self.app.set_status(f"{self.title}至少保留一个标签页，已取消关闭")
             return False
@@ -1972,12 +2034,51 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._clear_archive_state()
         closed = self.tabs.pop(self.tab_index)
         self.tab_index = min(self.tab_index, len(self.tabs) - 1)
+        self._restore_selection = None
         self.path_var.set(self.state.path)
         self._render_tabs()
         self.refresh()
-        name = panel_tab_title(closed.path) or closed.path
+        name = tab_label(closed.path, closed.title) or closed.path
         self.app.set_status(f"已关闭标签「{name}」，当前 {self.tab_index + 1}/{len(self.tabs)}")
         return True
+
+    def close_other_tabs(self) -> int:
+        """关闭其他标签页，保留当前与锁定标签；返回关闭数量。"""
+        locked = [index for index, tab in enumerate(self.tabs) if tab.locked]
+        targets = close_other_indices(len(self.tabs), self.tab_index, locked)
+        if not targets:
+            self.app.set_status(f"{self.title}没有可关闭的其他标签页")
+            return 0
+        removed = set(targets)
+        self._capture_selection()
+        self._capture_column_widths()
+        self._invalidate_thumbnails("tab")
+        kept = [index for index in range(len(self.tabs)) if index not in removed]
+        self.tab_index = kept.index(self.tab_index)
+        self.tabs = [self.tabs[index] for index in kept]
+        self._restore_selection = normalize_selection(self.state.selection)
+        self.path_var.set(self.state.path)
+        self._render_tabs()
+        self.refresh()
+        self.app.set_status(f"已关闭 {len(removed)} 个其他标签，保留 {len(self.tabs)} 个")
+        return len(removed)
+
+    def toggle_lock(self) -> bool:
+        """切换当前标签锁定状态并返回新状态。"""
+        self.state.locked = not self.state.locked
+        self._render_tabs()
+        return self.state.locked
+
+    def rename_tab(self, title: str) -> None:
+        """设置当前标签自定义名；空白名称恢复为目录名。"""
+        self.state.title = normalize_tab_title(title)
+        self._render_tabs()
+        label = tab_label(self.state.path, self.state.title) or "（空）"
+        self.app.set_status(f"标签已重命名为「{label}」")
+
+    def _capture_selection(self) -> None:
+        """把当前可见选择写入标签状态，供切换标签与重启恢复。"""
+        self.state.selection = normalize_selection(list(self.tree.selection()))
 
     def next_tab(self, delta: int = 1) -> None:
         """在当前面板的标签间循环切换。"""
@@ -1986,7 +2087,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             return
         self.select_tab((self.tab_index + delta) % len(self.tabs))
 
-    def refresh(self, select: str | None = None) -> None:
+    def refresh(self, select: str | None = None) -> None:  # noqa: PLR0912 - 恢复选择、过滤与视图模式分支较集中
         """重新读取当前目录并恢复选择。"""
         self._invalidate_thumbnails("refresh")
         self._render_tabs()
@@ -2011,9 +2112,16 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         previous = set(self.tree.selection())
         if select:
             previous = {select}
+        elif self._restore_selection is not None:
+            previous = set(self._restore_selection)
+            self._restore_selection = None
         if self._filter:
-            visible = set(filter_names([entry.label for entry in entries], self._filter))
-            entries = [entry for entry in entries if entry.label in visible]
+            labels = filter_names([entry.label for entry in entries], self._filter)
+        else:
+            labels = [entry.label for entry in entries]
+        labels = apply_filter_definition(labels, self.app.settings.filter_definition)
+        visible = set(labels)
+        entries = [entry for entry in entries if entry.label in visible]
         self.entries = entries
         self._index = {entry.label: entry for entry in entries}
         self.tree.delete(*self.tree.get_children())
@@ -2179,6 +2287,17 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if self._archive_temp is not None:
             shutil.rmtree(self._archive_temp, ignore_errors=True)
             self._archive_temp = None
+
+    def reload_archive(self) -> None:
+        """归档写入后重读成员并刷新，保持当前包内目录。"""
+        if self.archive is None:
+            return
+        try:
+            self._archive_members = read_archive_members(self.archive)
+        except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+            self.app.show_error("无法浏览", str(exc))
+            return
+        self.refresh()
 
     def preview_path(self, entry: FileEntry) -> Path | None:
         """查看用路径：包内文件先解压到临时目录，普通条目返回真实路径。"""
@@ -2521,6 +2640,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         text = str(directory)
         if text != self.state.path:
             self._invalidate_thumbnails("navigate")
+            self._restore_selection = None
         if push and text != self.state.path:
             history, index = push_history(self.state.history, self.state.history_index, text)
             self.state.history = history
@@ -3222,20 +3342,22 @@ class MultiRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（
 class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
     """文件名 / 内容搜索对话框。"""
 
-    def __init__(self, app: CmderWindow, directory: Path) -> None:
+    def __init__(self, app: CmderWindow, directory: Path, *, archive: bool = False) -> None:
         import tkinter as tk
         from tkinter import ttk
 
         self.app = app
         self.directory = directory
+        self.archive = directory if archive else None
         self._tk = tk
         self._ttk = ttk
         self._hits: list[SearchHit] = []
+        self._archive_hits: list[ArchiveHit] = []
 
         theme = app.theme
         spacing = theme.spacing
         self.win = tk.Toplevel(app.root)
-        self.win.title(f"搜索 - {directory}")
+        self.win.title(f"搜索 - {'压缩包 ' if archive else ''}{directory}")
         self.win.transient(app.root)
         _guiwindow.center_over_parent(self.win, app.root, width=900, height=560)
         self.win.minsize(700, 420)
@@ -3256,27 +3378,31 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         ttk.Checkbutton(form, text="区分大小写", variable=self.case_var).pack(side="left")
         self.whole_word_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(form, text="整词", variable=self.whole_word_var).pack(side="left", padx=spacing.sm)
-        ttk.Label(form, text="扩展名：").pack(side="left")
         self.extension_var = tk.StringVar()
-        ttk.Entry(form, textvariable=self.extension_var, width=10).pack(side="left", padx=(0, spacing.sm))
+        if archive:
+            ttk.Label(form, text="（名称用 glob，内容用正则；加密与超大成员自动跳过）").pack(side="left")
+        else:
+            ttk.Label(form, text="扩展名：").pack(side="left")
+            ttk.Entry(form, textvariable=self.extension_var, width=10).pack(side="left", padx=(0, spacing.sm))
         self.search_button = ttk.Button(form, text="搜索", style="Accent.TButton", command=self.run_search)
         self.search_button.pack(side="left")
 
-        filter_bar = ttk.Frame(frame)
-        filter_bar.pack(fill="x", pady=(0, spacing.xs))
         self.min_size_var = tk.StringVar()
         self.max_size_var = tk.StringVar()
         self.after_var = tk.StringVar()
         self.before_var = tk.StringVar()
-        for label, variable, width in (
-            ("最小大小", self.min_size_var, 8),
-            ("最大大小", self.max_size_var, 8),
-            ("修改从", self.after_var, 10),
-            ("修改到", self.before_var, 10),
-        ):
-            ttk.Label(filter_bar, text=f"{label}：").pack(side="left")
-            ttk.Entry(filter_bar, textvariable=variable, width=width).pack(side="left", padx=(0, spacing.xs))
-        ttk.Label(filter_bar, text="（支持 K/M/G，日期 YYYY-MM-DD）", style="Muted.TLabel").pack(side="left")
+        if not archive:
+            filter_bar = ttk.Frame(frame)
+            filter_bar.pack(fill="x", pady=(0, spacing.xs))
+            for label, variable, width in (
+                ("最小大小", self.min_size_var, 8),
+                ("最大大小", self.max_size_var, 8),
+                ("修改从", self.after_var, 10),
+                ("修改到", self.before_var, 10),
+            ):
+                ttk.Label(filter_bar, text=f"{label}：").pack(side="left")
+                ttk.Entry(filter_bar, textvariable=variable, width=width).pack(side="left", padx=(0, spacing.xs))
+            ttk.Label(filter_bar, text="（支持 K/M/G，日期 YYYY-MM-DD）", style="Muted.TLabel").pack(side="left")
 
         result_frame = ttk.Frame(frame)
         result_frame.pack(fill="both", expand=True)
@@ -3295,18 +3421,21 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
 
         action_bar = ttk.Frame(frame)
         action_bar.pack(fill="x", pady=(spacing.xs, 0))
-        ttk.Button(action_bar, text="打开所在目录", command=self._reveal_selected).pack(side="left")
-        ttk.Button(action_bar, text="复制…", command=lambda: self._transfer(move=False)).pack(
-            side="left", padx=(spacing.xs, 0)
-        )
-        ttk.Button(action_bar, text="移动…", command=lambda: self._transfer(move=True)).pack(
-            side="left", padx=(spacing.xs, 0)
-        )
-        ttk.Button(action_bar, text="删除到回收站", command=self._delete).pack(side="left", padx=(spacing.xs, 0))
-        ttk.Button(action_bar, text="加入面板选择", command=self._adopt).pack(side="left", padx=(spacing.xs, 0))
-        ttk.Button(action_bar, text="结果面板", command=self._open_results_panel).pack(
-            side="left", padx=(spacing.xs, 0)
-        )
+        if archive:
+            ttk.Button(action_bar, text="定位成员", command=self._reveal_selected).pack(side="left")
+        else:
+            ttk.Button(action_bar, text="打开所在目录", command=self._reveal_selected).pack(side="left")
+            ttk.Button(action_bar, text="复制…", command=lambda: self._transfer(move=False)).pack(
+                side="left", padx=(spacing.xs, 0)
+            )
+            ttk.Button(action_bar, text="移动…", command=lambda: self._transfer(move=True)).pack(
+                side="left", padx=(spacing.xs, 0)
+            )
+            ttk.Button(action_bar, text="删除到回收站", command=self._delete).pack(side="left", padx=(spacing.xs, 0))
+            ttk.Button(action_bar, text="加入面板选择", command=self._adopt).pack(side="left", padx=(spacing.xs, 0))
+            ttk.Button(action_bar, text="结果面板", command=self._open_results_panel).pack(
+                side="left", padx=(spacing.xs, 0)
+            )
         ttk.Button(action_bar, text="关闭", command=self.win.destroy).pack(side="right")
 
         self.status_var = tk.StringVar(value="输入模式后回车或点击搜索")
@@ -3320,6 +3449,19 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         pattern = self.pattern_var.get().strip()
         if not pattern:
             self.status_var.set("搜索模式不能为空")
+            return
+        if self.archive is not None:
+            self.search_button.configure(state="disabled")
+            self.status_var.set("搜索中...")
+            self.app.start_archive_search(
+                self.archive,
+                pattern,
+                content=bool(self.content_var.get()),
+                case_sensitive=bool(self.case_var.get()),
+                whole_word=bool(self.whole_word_var.get()),
+                on_done=self._show_archive_results,
+                on_error=self._search_failed,
+            )
             return
         try:
             filters = SearchFilters(
@@ -3356,6 +3498,19 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         self.search_button.configure(state="normal")
         self.status_var.set(f"找到 {len(hits)} 个结果（双击定位）")
 
+    def _show_archive_results(self, report: ArchiveSearchReport) -> None:
+        self._archive_hits = list(report.hits)
+        self.tree.delete(*self.tree.get_children())
+        for index, hit in enumerate(report.hits):
+            self.tree.insert("", "end", iid=str(index), values=(hit.member, hit.line or "", hit.text))
+        self.search_button.configure(state="normal")
+        status = f"找到 {len(report.hits)} 个结果（扫描 {report.scanned} 个成员"
+        if report.skipped:
+            status += f"，跳过 {report.skipped} 个"
+        if report.truncated:
+            status += "，结果已截断"
+        self.status_var.set(f"{status}）")
+
     def _search_failed(self, message: str) -> None:
         self.search_button.configure(state="normal")
         self.status_var.set(f"搜索失败: {message}")
@@ -3369,7 +3524,23 @@ class SearchDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
                 paths.append(path)
         return paths
 
+    def _selected_archive_members(self) -> list[str]:
+        members: list[str] = []
+        for iid in self.tree.selection():
+            member = self._archive_hits[int(iid)].member
+            if member not in members:
+                members.append(member)
+        return members
+
     def _reveal_selected(self, _event: Any = None) -> None:
+        if self.archive is not None:
+            members = self._selected_archive_members()
+            if not members:
+                self.status_var.set("请先选择结果")
+                return
+            self.app.reveal_archive_member(self.archive, members[0])
+            self.win.destroy()
+            return
         paths = self._selected_paths()
         if not paths:
             self.status_var.set("请先选择结果")
@@ -5167,6 +5338,245 @@ class OpenWithDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 
             self.window.destroy()
 
 
+class ArchiveOptionsDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """归档写入选项：压缩级别与密码（密码仅 zip 生效）。"""
+
+    def __init__(self, app: CmderWindow) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("归档写入选项")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=460, height=230)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        self.level_var = tk.StringVar(value=str(app.archive_options.level))
+        self.password_var = tk.StringVar(value=app.archive_options.password)
+        ttk.Label(outer, text="压缩级别（0–9；zip 与 tar 压缩族生效，bz2 最小为 1）").pack(fill="x")
+        ttk.Spinbox(outer, from_=0, to=9, width=6, textvariable=self.level_var).pack(anchor="w", pady=(0, spacing.xs))
+        ttk.Label(outer, text="密码（仅 zip，AES-256；留空表示不加密）").pack(fill="x")
+        ttk.Entry(outer, textvariable=self.password_var, show="*").pack(fill="x", pady=(0, spacing.xs))
+        ttk.Label(
+            outer,
+            text="已加密的 zip 改写时必须填写同一密码；tar 家族不支持密码。",
+            style="Muted.TLabel",
+        ).pack(fill="x")
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="确定", command=self._confirm).pack(side="right")
+        ttk.Button(buttons, text="取消", command=self.window.destroy).pack(side="right", padx=(0, spacing.xs))
+
+    def _confirm(self) -> None:
+        try:
+            level = int(self.level_var.get())
+        except ValueError:
+            level = self.app.archive_options.level
+        self.app.archive_options = ArchiveWriteOptions(level=level, password=self.password_var.get())
+        self.app.set_status(
+            f"归档写入选项：级别 {self.app.archive_options.level}，密码{'已设置' if self.password_var.get() else '未设置'}"
+        )
+        self.window.destroy()
+
+
+class SplitDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """分割文件：按大小或按份数二选一。"""
+
+    def __init__(self, app: CmderWindow, entry: FileEntry) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.entry = entry
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("分割文件")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=480, height=220)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(outer, text=f"分割：{entry.name}（{entry.size} 字节）", style="Muted.TLabel").pack(fill="x")
+        self.mode_var = tk.StringVar(value="size")
+        self.size_var = tk.StringVar(value="10M")
+        self.parts_var = tk.StringVar(value="2")
+        size_row = ttk.Frame(outer)
+        size_row.pack(fill="x", pady=(spacing.xs, 0))
+        ttk.Radiobutton(size_row, text="按大小", value="size", variable=self.mode_var).pack(side="left")
+        ttk.Entry(size_row, textvariable=self.size_var, width=16).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Label(size_row, text="例如 10M / 1.5g", style="Muted.TLabel").pack(side="left", padx=(spacing.xs, 0))
+        parts_row = ttk.Frame(outer)
+        parts_row.pack(fill="x", pady=(spacing.xs, 0))
+        ttk.Radiobutton(parts_row, text="按份数", value="parts", variable=self.mode_var).pack(side="left")
+        ttk.Entry(parts_row, textvariable=self.parts_var, width=8).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Label(parts_row, text="生成 .001 / .002 … 与 .sha256 校验文件", style="Muted.TLabel").pack(
+            side="left", padx=(spacing.xs, 0)
+        )
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="开始分割", command=self._confirm).pack(side="right")
+        ttk.Button(buttons, text="取消", command=self.window.destroy).pack(side="right", padx=(0, spacing.xs))
+
+    def _confirm(self) -> None:
+        try:
+            if self.mode_var.get() == "size":
+                part_size = parse_size(self.size_var.get())
+                if part_size is None:
+                    raise ValueError("请填写分卷大小")
+                self.app.start_split(self.entry.path, part_size=part_size)
+            else:
+                parts = int(self.parts_var.get())
+                self.app.start_split(self.entry.path, parts=parts)
+        except ValueError as exc:
+            self.app.show_error("无法分割", str(exc))
+            return
+        self.window.destroy()
+
+
+class DuplicateDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """重复文件结果：按组展示，保留每组第一项，可删除或移动其余副本。"""
+
+    def __init__(self, app: CmderWindow, report: DuplicateReport) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        self.report = report
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("重复文件")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=760, height=520)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        ttk.Label(
+            outer,
+            text=f"{len(report.groups)} 组重复，可回收 {report.wasted} 字节；每组第一项默认保留。",
+        ).pack(fill="x", pady=(0, spacing.xs))
+
+        tree_frame = ttk.Frame(outer)
+        tree_frame.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(tree_frame, columns=("size", "path"), show="tree headings")
+        self.tree.heading("#0", text="组")
+        self.tree.heading("size", text="大小")
+        self.tree.heading("path", text="路径")
+        self.tree.column("#0", width=100, stretch=False)
+        self.tree.column("size", width=100, anchor="e", stretch=False)
+        self.tree.column("path", width=520)
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        for index, group in enumerate(report.groups, start=1):
+            parent = self.tree.insert(
+                "",
+                "end",
+                text=f"组 {index}",
+                values=(group.size, f"{len(group.paths)} 个文件"),
+                open=index == 1,
+            )
+            for path in group.paths:
+                self.tree.insert(
+                    parent,
+                    "end",
+                    text="保留" if path == group.paths[0] else "多余",
+                    values=(group.size, str(path)),
+                )
+
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="移入回收站", command=lambda: self._delete(permanent=False)).pack(side="left")
+        ttk.Button(buttons, text="永久删除", command=lambda: self._delete(permanent=True)).pack(
+            side="left", padx=(spacing.xs, 0)
+        )
+        ttk.Button(buttons, text="移动到…", command=self._move).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(buttons, text="关闭", command=self.window.destroy).pack(side="right")
+
+    def _extras(self) -> list[Path]:
+        extras = duplicate_paths(self.report)
+        if not extras:
+            self.app._messagebox.showinfo("重复文件", "没有可处理的多余副本", parent=self.window)
+        return extras
+
+    def _delete(self, *, permanent: bool) -> None:
+        extras = self._extras()
+        if not extras:
+            return
+        self.window.destroy()
+        self.app.delete_paths(extras, permanent=permanent)
+
+    def _move(self) -> None:
+        from tkinter import filedialog
+
+        extras = self._extras()
+        if not extras:
+            return
+        destination = filedialog.askdirectory(title="移动多余副本到", parent=self.window)
+        if not destination:
+            return
+        self.window.destroy()
+        self.app.move_duplicate_files(extras, Path(destination))
+
+
+class FilterDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """定义持久化的包含 / 排除掩码过滤器。"""
+
+    def __init__(self, app: CmderWindow) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.app = app
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("定义过滤器")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=560, height=230)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        definition = app.settings.filter_definition
+        self.include_var = tk.StringVar(value=definition.include)
+        self.exclude_var = tk.StringVar(value=definition.exclude)
+        for label, variable, hint in (
+            ("包含掩码：", self.include_var, "留空表示不限制；分号分隔多个，如 *.py;*.md"),
+            ("排除掩码：", self.exclude_var, "留空表示不排除；如 test_*;*.log"),
+        ):
+            row = ttk.Frame(outer)
+            row.pack(fill="x", pady=(0, spacing.xs))
+            ttk.Label(row, text=label, width=10).pack(side="left")
+            entry = ttk.Entry(row, textvariable=variable)
+            entry.pack(side="left", fill="x", expand=True)
+            ttk.Label(row, text=hint, style="Muted.TLabel").pack(side="left", padx=(spacing.xs, 0))
+            entry.bind("<Return>", lambda _event: self._apply())
+        ttk.Label(
+            outer,
+            text="过滤仅影响列表显示，不改变磁盘上的文件；设置会持久保存并在启动时恢复。",
+            style="Muted.TLabel",
+        ).pack(fill="x", pady=(spacing.xs, 0))
+        buttons = ttk.Frame(outer)
+        buttons.pack(fill="x", pady=(spacing.sm, 0))
+        ttk.Button(buttons, text="应用", style="Accent.TButton", command=self._apply).pack(side="right")
+        ttk.Button(buttons, text="清除", command=self._clear).pack(side="right", padx=(0, spacing.xs))
+        ttk.Button(buttons, text="取消", command=self.window.destroy).pack(side="right", padx=(0, spacing.xs))
+
+    def _apply(self) -> None:
+        definition = normalize_filter_definition({"include": self.include_var.get(), "exclude": self.exclude_var.get()})
+        self.window.destroy()
+        self.app.apply_filter_definition(definition)
+
+    def _clear(self) -> None:
+        self.window.destroy()
+        self.app.apply_filter_definition(FilterDefinition())
+
+
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
@@ -5212,6 +5622,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._user_command_dialog: UserCommandsDialog | None = None
         self._user_command_menus: list[Any] = []
         self._sync_browse_lock = True
+        self.archive_options = ArchiveWriteOptions()
 
         self.root, self.theme = _guiwindow.create_root(
             title=f"cmderw - 双面板文件管理器 v{__version__}",
@@ -5308,6 +5719,11 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         file_menu.add_separator()
         self._menu_command(file_menu, "pack", "打包…\tAlt+F5", self.pack_selected)
         self._menu_command(file_menu, "unpack", "解压…\tAlt+F9", self.unpack_selected)
+        self._menu_command(file_menu, "add_to_archive", "加入压缩包…", self.add_to_archive)
+        self._menu_command(file_menu, "archive_options", "归档写入选项…", self.show_archive_options)
+        self._menu_command(file_menu, "split_file", "分割文件…", self.split_selected)
+        self._menu_command(file_menu, "merge_parts", "合并分卷…", self.merge_selected)
+        self._menu_command(file_menu, "find_duplicates", "查找重复文件…", self.find_duplicates)
         file_menu.add_separator()
         file_menu.add_command(label="退出", command=self.close)
         menubar.add_cascade(label="文件", menu=file_menu)
@@ -5327,6 +5743,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._menu_check(view_menu, "hidden", "显示隐藏文件\tCtrl+H", self._hidden_var, self._apply_hidden)
         view_menu.add_separator()
         self._menu_command(view_menu, "filter", "快速过滤\tCtrl+S", self.focus_filter)
+        self._menu_command(view_menu, "filter_definition", "定义过滤器…", self.open_filter_definition)
+        self._menu_command(view_menu, "clear_filter_definition", "清除定义过滤器", self.clear_filter_definition)
         self._menu_command(view_menu, "clear_filter", "清除过滤\tEsc", self.clear_filter)
         view_menu.add_separator()
         self._quick_var = tk.BooleanVar(value=False)
@@ -5394,6 +5812,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         view_menu.add_separator()
         self._menu_command(view_menu, "new_tab", "新建标签页\tCtrl+T", self.new_tab)
         self._menu_command(view_menu, "close_tab", "关闭标签页\tCtrl+W", self.close_tab)
+        self._menu_command(view_menu, "close_others", "关闭其他标签页", self.close_other_tabs)
+        self._lock_var = tk.BooleanVar(value=False)
+        self._menu_check(view_menu, "lock_tab", "锁定标签页", self._lock_var, self.toggle_tab_lock)
+        self._menu_command(view_menu, "rename_tab", "重命名标签页…", self.rename_tab)
         self._menu_command(view_menu, "next_tab", "下一个标签页\tCtrl+Tab", self.next_tab)
         self._menu_command(view_menu, "previous_tab", "上一个标签页\tCtrl+Shift+Tab", self.previous_tab)
         view_menu.add_separator()
@@ -5719,6 +6141,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             active_writable=self._directory_writable(Path(panel.state.path)),
             target_writable=self._directory_writable(Path(self.other_panel().state.path)),
             tab_count=len(panel.tabs),
+            locked_tab_count=sum(1 for tab in panel.tabs if tab.locked),
+            tab_locked=panel.state.locked,
+            filter_defined=self.settings.filter_definition.active,
             history_index=panel.state.history_index,
             history_length=len(panel.state.history),
             panels_ready=Path(self.left.state.path).is_dir() and Path(self.right.state.path).is_dir(),
@@ -5729,6 +6154,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             sync_browse=self.settings.sync_browse,
             branch_view=panel.state.branch_view,
             archive_view=panel.archive is not None,
+            archive_writable=panel.archive is not None and archive_editable(panel.archive),
             sort_key=panel.state.sort_key,
             view_mode=panel.state.view_mode,
         )
@@ -5740,6 +6166,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._tree_var.set(state.tree_visible)
         self._sync_var.set(state.sync_browse)
         self._branch_var.set(state.branch_view)
+        self._lock_var.set(state.tab_locked)
         self._sort_var.set(state.sort_key)
         self._view_var.set(state.view_mode)
         self._sync_user_command_state(panel)
@@ -6264,6 +6691,34 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         """Ctrl+W：关闭活动面板的当前标签页（至少保留一个）。"""
         self.active_panel().close_tab()
 
+    def close_other_tabs(self) -> None:
+        """关闭活动面板中除当前与锁定标签外的其他标签页。"""
+        self.active_panel().close_other_tabs()
+        self._sync_menu_state()
+
+    def toggle_tab_lock(self) -> None:
+        """锁定 / 解锁活动面板的当前标签页。"""
+        panel = self.active_panel()
+        locked = panel.toggle_lock()
+        label = tab_label(panel.state.path, panel.state.title) or "（空）"
+        self.set_status(f"标签「{label}」已{'锁定' if locked else '解锁'}")
+        self._sync_menu_state()
+
+    def rename_tab(self) -> None:
+        """重命名活动面板的当前标签页；留空恢复默认目录名。"""
+        panel = self.active_panel()
+        current = panel.state.title or panel_tab_title(panel.state.path)
+        title = self._simpledialog.askstring(
+            "重命名标签页",
+            "标签名称（留空恢复默认）：",
+            initialvalue=current,
+            parent=self.root,
+        )
+        if title is None:
+            return
+        panel.rename_tab(title)
+        self._sync_menu_state()
+
     def next_tab(self) -> None:
         """Ctrl+Tab：切到活动面板的下一个标签页。"""
         self.active_panel().next_tab(1)
@@ -6407,6 +6862,23 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         """Ctrl+S：聚焦当前面板的快速过滤框。"""
         self.active_panel().focus_filter()
 
+    def open_filter_definition(self) -> None:
+        """打开包含 / 排除掩码过滤器对话框。"""
+        FilterDialog(self)
+
+    def clear_filter_definition(self) -> None:
+        """清除持久化的包含 / 排除掩码过滤器。"""
+        self.apply_filter_definition(FilterDefinition())
+
+    def apply_filter_definition(self, definition: FilterDefinition) -> None:
+        """保存并应用掩码过滤器，刷新两侧列表。"""
+        self.settings.filter_definition = definition
+        save_settings(self.settings, self._settings_path)
+        self.left.refresh()
+        self.right.refresh()
+        self._sync_menu_state()
+        self.set_status(f"过滤器：{definition.describe()}")
+
     def clear_filter(self) -> None:
         """Esc：清空当前面板的快速过滤。"""
         self.active_panel().clear_filter()
@@ -6441,6 +6913,17 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         panel = self.active_panel()
         panel.set_path(path.parent)
         panel.select_name(path.name)
+
+    def reveal_archive_member(self, archive: Path, member: str) -> None:
+        """在活动面板中定位压缩包成员，必要时先进入该归档。"""
+        panel = self.active_panel()
+        if panel.archive != archive and not panel.open_archive(archive):
+            return
+        target = PurePosixPath(member)
+        parent = str(target.parent)
+        panel.archive_prefix = "" if parent == "." else parent
+        panel.refresh(select=target.name)
+        panel.focus_tree()
 
     def open_entry(self, entry: FileEntry) -> None:
         """双击 / Enter：目录进入，文件用系统默认程序打开。"""
@@ -7017,7 +7500,11 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         return True
 
     def delete_selected(self) -> None:
-        """F8 移入系统回收站（可撤销）。"""
+        """F8 移入系统回收站；可写归档内则删除选中成员。"""
+        panel = self.active_panel()
+        if panel.archive is not None:
+            self._remove_archive_members()
+            return
         if self._archive_readonly():
             return
         paths = self._selected_paths()
@@ -7025,12 +7512,267 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             self.delete_paths(paths)
 
     def permanent_delete_selected(self) -> None:
-        """Shift+F8 永久删除选中条目。"""
+        """Shift+F8 永久删除选中条目；可写归档内语义相同。"""
+        panel = self.active_panel()
+        if panel.archive is not None:
+            self._remove_archive_members()
+            return
         if self._archive_readonly():
             return
         paths = self._selected_paths()
         if paths:
             self.delete_paths(paths, permanent=True)
+
+    def _archive_write_blocked(self) -> bool:
+        """包内写入前置检查：不可写格式给出提示并返回 ``True``。"""
+        panel = self.active_panel()
+        if panel.archive is None or archive_editable(panel.archive):
+            return False
+        self.set_status("该压缩包格式为只读（仅 zip 与 tar 家族支持写入）")
+        return True
+
+    def _remove_archive_members(self) -> None:
+        """从可写归档删除选中成员，复用现有确认与后台任务框架。"""
+        panel = self.active_panel()
+        archive = panel.archive
+        if archive is None or self._archive_write_blocked():
+            return
+        if self._busy:
+            self._messagebox.showinfo("请稍候", "已有后台任务在运行", parent=self.root)
+            return
+        entries = panel.selected_entries()
+        names = [entry.archive_member for entry in entries if entry.archive_member]
+        if not names:
+            self._messagebox.showinfo("删除压缩包成员", "请选择要删除的成员", parent=self.root)
+            return
+        confirmed = self._messagebox.askyesno(
+            "删除压缩包成员",
+            f"确定从 {archive.name} 删除选中的 {len(names)} 项吗？\n目录会连同其内容一起删除。",
+            parent=self.root,
+        )
+        if not confirmed:
+            return
+        options = self.archive_options
+
+        def task() -> int:
+            return remove_members(archive, names, options=options)
+
+        def done(count: int) -> None:
+            panel.reload_archive()
+            self.set_status(f"已从 {archive.name} 删除 {count} 个成员")
+
+        self.start_worker(task, done, title=f"删除压缩包成员 {len(names)} 项")
+
+    def add_to_archive(self) -> None:
+        """把对面面板选中的文件 / 目录加入当前可写归档。"""
+        panel = self.active_panel()
+        archive = panel.archive
+        if archive is None:
+            self.set_status("请先进入一个压缩包，再添加文件")
+            return
+        if self._archive_write_blocked() or self._busy:
+            return
+        other = self.other_panel()
+        if other.archive is not None:
+            self._messagebox.showinfo(
+                "加入压缩包",
+                "请先在对面面板退出压缩包，再选择要加入的文件或目录",
+                parent=self.root,
+            )
+            return
+        sources = [entry.path for entry in other.selected_entries()]
+        if not sources:
+            self._messagebox.showinfo("加入压缩包", "请在对面面板选择要加入的文件或目录", parent=self.root)
+            return
+        prefix = panel.archive_prefix
+        options = self.archive_options
+        try:
+            additions = planned_additions(sources, prefix)
+            existing = set(archive_member_names(archive, password=options.password))
+        except (OSError, ValueError) as exc:
+            self.show_error("无法加入压缩包", str(exc))
+            return
+        conflicts = sorted(name for name in additions if name in existing)
+        replace = False
+        if conflicts:
+            details = "\n".join(conflicts[:_MAX_ERROR_DETAILS])
+            confirmed = self._messagebox.askyesno(
+                "成员已存在",
+                f"以下 {len(conflicts)} 个成员已存在，覆盖吗？\n\n{details}",
+                parent=self.root,
+            )
+            if not confirmed:
+                return
+            replace = True
+
+        def task() -> int:
+            return add_paths(archive, sources, prefix, options=options, replace=replace)
+
+        def done(count: int) -> None:
+            panel.reload_archive()
+            self.set_status(f"已加入 {count} 个文件到 {archive.name}")
+
+        self.start_worker(task, done, title=f"加入 {len(sources)} 项到 {archive.name}")
+
+    def show_archive_options(self) -> None:
+        """打开归档写入选项（压缩级别 / 密码）。"""
+        if self._busy:
+            self._messagebox.showinfo("请稍候", "已有后台任务在运行", parent=self.root)
+            return
+        ArchiveOptionsDialog(self)
+
+    def split_selected(self) -> None:
+        """文件菜单「分割文件…」：选择单个文件后打开分割选项。"""
+        if self._busy or self._archive_readonly():
+            return
+        entries = self.active_panel().selected_entries()
+        if len(entries) != 1 or entries[0].is_dir:
+            self._messagebox.showinfo("分割文件", "请选择一个文件", parent=self.root)
+            return
+        SplitDialog(self, entries[0])
+
+    def start_split(self, path: Path, *, part_size: int | None = None, parts: int | None = None) -> None:
+        """确认分卷覆盖后后台分割；校验文件随分卷一起生成。"""
+        try:
+            plan = split_plan(path.stat().st_size, part_size=part_size, parts=parts)
+        except (OSError, ValueError) as exc:
+            self.show_error("无法分割", str(exc))
+            return
+        names = part_names(path.name, len(plan))
+        existing = [name for name in names if (path.parent / name).exists()]
+        if existing and not self._messagebox.askyesno(
+            "分卷已存在",
+            f"以下 {len(existing)} 个分卷已存在，覆盖吗？\n\n" + "\n".join(existing[:_MAX_ERROR_DETAILS]),
+            parent=self.root,
+        ):
+            return
+        panel = self.active_panel()
+
+        def task() -> SplitResult:
+            return split_file(
+                path,
+                part_size=part_size,
+                parts=parts,
+                overwrite=bool(existing),
+                progress=self._progress_callback,
+            )
+
+        def done(result: SplitResult) -> None:
+            panel.refresh(select=result.parts[0].name)
+            self.set_status(f"已分割为 {len(result.parts)} 卷：{path.name}")
+
+        self.start_worker(task, done, title=f"分割 {path.name} 为 {len(plan)} 卷")
+
+    def merge_selected(self) -> None:
+        """文件菜单「合并分卷…」：单卷自动发现同组，多选按所选合并。"""
+        if self._busy or self._archive_readonly():
+            return
+        panel = self.active_panel()
+        entries = [
+            entry for entry in panel.selected_entries() if not entry.is_dir and not entry.name.endswith(CHECKSUM_SUFFIX)
+        ]
+        if not entries:
+            self._messagebox.showinfo("合并分卷", "请选择一个分卷文件（或多选同一组的分卷）", parent=self.root)
+            return
+        try:
+            parts = discover_parts(entries[0].path) if len(entries) == 1 else [entry.path for entry in entries]
+            base = default_merged_name(parts[0])
+        except (OSError, ValueError) as exc:
+            self.show_error("无法合并", str(exc))
+            return
+        output = parts[0].parent / base
+        if output.exists() and not self._messagebox.askyesno(
+            "覆盖文件",
+            f"{output.name} 已存在，合并结果将覆盖它，继续吗？",
+            parent=self.root,
+        ):
+            return
+
+        def task() -> MergeResult:
+            return merge_parts(parts, output, progress=self._progress_callback)
+
+        def done(result: MergeResult) -> None:
+            panel.refresh(select=result.output.name)
+            suffix = "（已按校验文件核对）" if result.verified else "（未找到校验文件，仅按顺序拼接）"
+            self.set_status(f"已合并 {len(parts)} 卷为 {output.name}{suffix}")
+            self._messagebox.showinfo("合并完成", f"{output}\n{suffix}", parent=self.root)
+
+        self.start_worker(task, done, title=f"合并 {len(parts)} 卷")
+
+    def find_duplicates(self) -> None:
+        """文件菜单「查找重复文件…」：选中目录优先，否则扫描当前目录。"""
+        if self._busy or self._archive_readonly():
+            return
+        panel = self.active_panel()
+        entries = panel.selected_entries()
+        roots = [entry.path for entry in entries if entry.is_dir] or [Path(panel.state.path)]
+
+        def task() -> DuplicateReport:
+            return find_duplicate_files(roots, progress=self._progress_callback)
+
+        def done(report: DuplicateReport) -> None:
+            self.set_status(f"重复文件：{len(report.groups)} 组，可回收 {report.wasted} 字节")
+            if not report.groups:
+                self._messagebox.showinfo("重复文件", "没有发现重复文件", parent=self.root)
+                return
+            DuplicateDialog(self, report)
+
+        self.start_worker(task, done, title="查找重复文件")
+
+    def move_duplicate_files(self, paths: list[Path], destination: Path) -> None:
+        """把重复副本移动到指定目录，完成后刷新两个面板。"""
+
+        def task() -> DuplicateActionReport:
+            return move_duplicates(paths, destination, progress=self._progress_callback)
+
+        def done(result: DuplicateActionReport) -> None:
+            self.refresh_both()
+            message = f"已移动 {len(result.completed)} 个文件到 {destination}"
+            if result.errors:
+                details = "\n".join(f"{path}: {error}" for path, error in result.errors[:_MAX_ERROR_DETAILS])
+                self.show_error("部分文件移动失败", f"{message}\n\n{details}")
+            else:
+                self.set_status(message)
+
+        self.start_worker(task, done, title=f"移动 {len(paths)} 个重复文件")
+
+    def _rename_archive_member(self, panel: FilePanel) -> None:
+        """重命名可写归档内的单个成员；目录按前缀整棵改名。"""
+        archive = panel.archive
+        if archive is None or self._archive_write_blocked():
+            return
+        if self._busy:
+            self._messagebox.showinfo("请稍候", "已有后台任务在运行", parent=self.root)
+            return
+        entries = panel.selected_entries()
+        if len(entries) != 1:
+            self._messagebox.showinfo("重命名", "请选择一个成员", parent=self.root)
+            return
+        entry = entries[0]
+        if not entry.archive_member:
+            return
+        name = self._simpledialog.askstring(
+            "重命名",
+            f"{entry.name} 重命名为：",
+            initialvalue=entry.name,
+            parent=self.root,
+        )
+        if not name or name == entry.name:
+            return
+        if "/" in name or "\\" in name:
+            self.show_error("无法重命名", "名称不能包含路径分隔符")
+            return
+        new_member = f"{panel.archive_prefix}/{name}" if panel.archive_prefix else name
+        options = self.archive_options
+
+        def task() -> str:
+            return rename_member(archive, entry.archive_member or "", new_member, options=options)
+
+        def done(result: str) -> None:
+            panel.reload_archive()
+            self.set_status(f"已重命名为 {result.rsplit('/', 1)[-1]}")
+
+        self.start_worker(task, done, title=f"重命名 {entry.name}")
 
     def delete_paths(self, paths: Sequence[Path], *, permanent: bool = False) -> bool:
         """通用删除入口：默认进回收站，``permanent`` 为永久删除；返回是否已启动。"""
@@ -7106,9 +7848,12 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def rename_selected(self) -> None:
         """F2 重命名单个条目；多选时转到批量重命名。"""
+        panel = self.active_panel()
+        if panel.archive is not None:
+            self._rename_archive_member(panel)
+            return
         if self._busy or self._archive_readonly():
             return
-        panel = self.active_panel()
         entries = panel.selected_entries()
         if len(entries) > 1:
             self.bulk_rename()
@@ -7189,7 +7934,18 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         ):
             return
 
+        options = self.archive_options
+        use_options = archive_editable(target) and (
+            bool(options.password) or options.level != DEFAULT_COMPRESSION_LEVEL
+        )
+        if options.password and not archive_editable(target):
+            self.show_error("无法加密", "密码仅支持 zip 与 tar 家族归档")
+            return
+
         def task() -> Path:
+            if use_options:
+                create_archive_file(target, paths, options=options)
+                return target
             return pack_entries(paths, target, progress=self._progress_callback)
 
         def done(output: Path) -> None:
@@ -7349,8 +8105,40 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.start_worker(task, done, title="校验文件")
 
     def open_search(self) -> None:
-        """Ctrl+F 打开搜索对话框。"""
-        SearchDialog(self, Path(self.active_panel().state.path))
+        """Ctrl+F 打开搜索对话框；归档视图内搜索成员名与内容。"""
+        panel = self.active_panel()
+        if panel.archive is not None:
+            SearchDialog(self, panel.archive, archive=True)
+            return
+        SearchDialog(self, Path(panel.state.path))
+
+    def start_archive_search(  # noqa: PLR0913 - 归档搜索需要透传模式、开关与回调
+        self,
+        archive: Path,
+        pattern: str,
+        *,
+        content: bool,
+        case_sensitive: bool,
+        whole_word: bool,
+        on_done: Callable[[ArchiveSearchReport], None],
+        on_error: Callable[[str], None],
+    ) -> None:
+        """供搜索对话框调用的归档内后台搜索入口。"""
+
+        def task() -> ArchiveSearchReport:
+            return search_archive(
+                archive,
+                pattern,
+                content=content,
+                case_sensitive=case_sensitive,
+                whole_word=whole_word,
+            )
+
+        def done(report: ArchiveSearchReport) -> None:
+            self.set_status(f"归档搜索完成：{len(report.hits)} 个结果")
+            on_done(report)
+
+        self.start_worker(task, done, title="归档搜索", on_error=on_error)
 
     def start_search(  # noqa: PLR0913 - 搜索对话框需要透传目录、模式、内容开关与回调
         self,
@@ -7539,6 +8327,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def _store_panel_state(self) -> None:
         """把面板/标签/活动侧写回设置对象（不落盘）。"""
+        self.left._capture_selection()
+        self.right._capture_selection()
         self.left._capture_column_widths()
         self.right._capture_column_widths()
         self.settings.left = self.left.state

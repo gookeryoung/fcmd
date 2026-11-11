@@ -30,6 +30,7 @@ from fcmd.tools.system._cmderw_commands import UserCommand
 from fcmd.tools.system._cmderw_launch import LaunchRequest
 from fcmd.tools.system._cmderw_queue import DEFAULT_QUEUE_PARALLEL, MAX_QUEUE_PARALLEL
 from fcmd.tools.system._cmderw_search import SearchFilters
+from fcmd.tools.system._cmderw_tabs import FilterDefinition
 from fcmd.tools.system.cmderw import (
     ARCHIVE_SUFFIXES,
     DEFAULT_GEOMETRY,
@@ -186,6 +187,43 @@ class TestSettings:
         assert loaded.show_hidden is True
         assert loaded.geometry == "1000x700+10+20"
         assert loaded.queue_parallel == 3
+
+    def test_save_and_load_roundtrip_keeps_tab_metadata_and_filter(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        definition = FilterDefinition(include="*.py;*.md", exclude="test_*")
+        settings = CmderSettings(
+            left=PanelState(path=str(tmp_path), title="  工作区  ", locked=True, selection=["a", "b", "a"]),
+            right=PanelState(path=str(tmp_path)),
+            filter_definition=definition,
+        )
+        save_settings(settings)
+        loaded = load_settings()
+        assert loaded.left.title == "工作区"
+        assert loaded.left.locked is True
+        assert loaded.left.selection == ["a", "b"]
+        assert loaded.filter_definition == definition
+
+    def test_invalid_tab_metadata_and_filter_fall_back(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {"path": str(tmp_path), "title": 1, "locked": "yes", "selection": "x"},
+                    "right": {"path": str(tmp_path)},
+                    "filter_definition": {"include": 1, "exclude": None},
+                }
+            ),
+            encoding="utf-8",
+        )
+        loaded = load_settings()
+        assert loaded.left.title == ""
+        assert loaded.left.locked is False
+        assert loaded.left.selection == []
+        assert loaded.filter_definition == FilterDefinition()
 
     def test_save_and_load_roundtrip_keeps_sync_browse(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
