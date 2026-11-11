@@ -334,6 +334,19 @@ class TestStyleSpecs:
         assert specs["TCombobox"].configure["arrowcolor"] == _guitheme.PALETTE.muted
         assert ("focus", _guitheme.PALETTE.accent) in specs["TEntry"].map["bordercolor"]
 
+    def test_spinbox_matches_entry_and_dims_when_disabled(self) -> None:
+        # TSpinbox 不继承 TEntry 的 configure，缺样式时会回退 clam 默认白底。
+        palette = _guitheme.PALETTE
+        specs = _guitheme.ttk_style_specs()
+        spinbox = specs["TSpinbox"]
+        assert spinbox.configure["fieldbackground"] == palette.surface
+        assert spinbox.configure["foreground"] == palette.text
+        assert spinbox.configure["arrowcolor"] == palette.muted
+        assert ("focus", palette.accent) in spinbox.map["bordercolor"]
+        for name in ("TEntry", "TSpinbox"):
+            assert ("disabled", palette.muted) in specs[name].map["foreground"]
+            assert ("disabled", palette.background) in specs[name].map["fieldbackground"]
+
     def test_button_states_cover_hover_pressed_disabled(self) -> None:
         palette = _guitheme.PALETTE
         specs = _guitheme.ttk_style_specs()
@@ -434,6 +447,23 @@ class TestStyleSpecs:
         assert spec.configure["background"] == theme.palette.surface
         assert ("selected", theme.palette.select_bg) in spec.map["background"]
 
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_treeview_heading_has_visible_column_separators(self, theme_name: str) -> None:
+        # 表头与表体分层、列间实线边框，否则列分隔在深色主题下不可辨。
+        palette = _guitheme.THEMES[theme_name].palette
+        spec = _guitheme.ttk_style_specs(palette)["Treeview.Heading"]
+        assert spec.configure["background"] == palette.surface_hover
+        assert spec.configure["foreground"] == palette.text
+        assert spec.configure["relief"] == "solid"
+        assert spec.configure["bordercolor"] == palette.border_strong
+        assert spec.configure["borderwidth"] == 1
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_treeview_frame_uses_strong_border(self, theme_name: str) -> None:
+        palette = _guitheme.THEMES[theme_name].palette
+        spec = _guitheme.ttk_style_specs(palette)["Treeview"]
+        assert spec.configure["bordercolor"] == palette.border_strong
+
 
 class TestClassicOptions:
     def test_covers_declared_patterns(self) -> None:
@@ -531,6 +561,15 @@ class TestThemeContrast:
         assert palette.stripe != palette.surface
         # 斑马纹只做轻微分层，不能压过正文可读性。
         assert _contrast(palette.text, palette.stripe) >= 4.5
+        # 但也不能淡到看不见（旧深色 stripe 与 surface 对比度仅 1.03）。
+        assert _contrast(palette.stripe, palette.surface) >= 1.1
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_borders_are_visible_against_surface(self, theme_name: str) -> None:
+        # 边框 / 列分隔属于非文本 UI，对比度低于 1.5 时肉眼难以分辨。
+        palette = _guitheme.THEMES[theme_name].palette
+        assert _contrast(palette.border, palette.surface) >= 1.5
+        assert _contrast(palette.border_strong, palette.surface) >= 2.0
 
 
 # ============================================================================ #

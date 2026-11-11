@@ -151,8 +151,8 @@ class Palette:
     surface: str = "#121c2b"
     surface_hover: str = "#1a2839"
     surface_active: str = "#22344a"
-    border: str = "#2a3a4f"
-    border_strong: str = "#3b5370"
+    border: str = "#35496a"
+    border_strong: str = "#4d6a8f"
     text: str = "#e8eef7"
     muted: str = "#9aa9ba"
     accent: str = "#38a8ff"
@@ -167,7 +167,7 @@ class Palette:
     success: str = "#4ade80"
     warning: str = "#fbbf24"
     danger: str = "#f87171"
-    stripe: str = "#151f2f"
+    stripe: str = "#1c2940"
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,8 +240,8 @@ _LIGHT = Theme(
         surface="#ffffff",
         surface_hover="#eef3f9",
         surface_active="#e2eaf3",
-        border="#d5dde8",
-        border_strong="#b9c6d6",
+        border="#c3cedc",
+        border_strong="#9fb0c4",
         text="#1f2937",
         muted="#5f6f82",
         accent="#1f6feb",
@@ -256,7 +256,7 @@ _LIGHT = Theme(
         success="#15803d",
         warning="#b45309",
         danger="#b91c1c",
-        stripe="#f6f8fb",
+        stripe="#edf1f7",
     ),
     description="浅色底 + 蓝色强调，适合白天办公、投影与浅色桌面。",
 )
@@ -285,7 +285,7 @@ _HIGH_CONTRAST = Theme(
         success="#00ff88",
         warning="#ffb000",
         danger="#ff5555",
-        stripe="#141414",
+        stripe="#1e1e1e",
     ),
     description="纯黑底 + 白字 + 黄色强调，优先低视力与强光环境可读性。",
 )
@@ -314,7 +314,7 @@ _NATIVE = Theme(
         success="#107c10",
         warning="#9d5d00",
         danger="#c42b1c",
-        stripe="#f4f4f4",
+        stripe="#eef1f5",
     ),
     native=True,
     description="浅灰系统色 + 蓝色强调，保留系统 ttk 观感，主题化收敛到字体与强调色。",
@@ -364,6 +364,7 @@ STYLE_NAMES: Final[tuple[str, ...]] = (
     "Accent.TButton",
     "Danger.TButton",
     "TEntry",
+    "TSpinbox",
     "TCombobox",
     "TCheckbutton",
     "TRadiobutton",
@@ -677,7 +678,26 @@ def ttk_style_specs(
             },
             {
                 "bordercolor": [("focus", palette.accent)],
-                "fieldbackground": [("readonly", palette.background)],
+                "foreground": [("disabled", palette.muted)],
+                "fieldbackground": [("readonly", palette.background), ("disabled", palette.background)],
+            },
+        ),
+        "TSpinbox": StyleSpec(
+            {
+                "fieldbackground": palette.surface,
+                "foreground": palette.text,
+                "insertcolor": palette.cursor,
+                "bordercolor": palette.border,
+                "lightcolor": palette.surface,
+                "darkcolor": palette.surface,
+                "arrowcolor": palette.muted,
+                "padding": (spacing.sm, spacing.xs),
+            },
+            {
+                "bordercolor": [("focus", palette.accent)],
+                "foreground": [("disabled", palette.muted)],
+                "fieldbackground": [("readonly", palette.background), ("disabled", palette.background)],
+                "arrowcolor": [("disabled", palette.border)],
             },
         ),
         "TCombobox": StyleSpec(
@@ -770,7 +790,7 @@ def ttk_style_specs(
                 "foreground": palette.text,
                 "font": BODY_FONT,
                 "rowheight": spacing.lg + spacing.xs,
-                "bordercolor": palette.border,
+                "bordercolor": palette.border_strong,
             },
             {
                 "background": [("selected", palette.select_bg)],
@@ -779,10 +799,12 @@ def ttk_style_specs(
         ),
         "Treeview.Heading": StyleSpec(
             {
-                "background": palette.background,
-                "foreground": palette.muted,
+                "background": palette.surface_hover,
+                "foreground": palette.text,
                 "font": BODY_FONT,
-                "relief": "flat",
+                "relief": "solid",
+                "bordercolor": palette.border_strong,
+                "borderwidth": 1,
                 "padding": (spacing.sm, spacing.xs),
             }
         ),
@@ -1205,6 +1227,7 @@ def install_theme_switcher(
     def _choose() -> None:
         chosen = save_theme(current.get())
         applied = apply_theme(root, chosen)
+        apply_dark_titlebar(root, dark=is_dark_palette(applied.palette))
         if on_apply is not None:
             on_apply(applied)
 

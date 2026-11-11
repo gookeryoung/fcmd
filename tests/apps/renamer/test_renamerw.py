@@ -36,6 +36,12 @@ def test_tool_registration() -> None:
     assert None in _TOOL_REGISTRY["renamerw"]
 
 
+def test_kind_hint_covers_all_kinds() -> None:
+    """每种规则类型都有非空表单提示，且与类型表一一对应。"""
+    assert set(renamerw.KIND_HINT) == set(renamerw.KIND_TEXT)
+    assert all(hint.strip() for hint in renamerw.KIND_HINT.values())
+
+
 def test_rules_text_roundtrip() -> None:
     rules = [
         RenameRule(kind="reorder", pattern=r"^(\d+)-(.+)$", replacement="{2}-{1}"),

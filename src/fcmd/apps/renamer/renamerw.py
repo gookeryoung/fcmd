@@ -65,6 +65,7 @@ __all__ = [
     "CASE_TEXT",
     "DEFAULT_GEOMETRY",
     "FIELD_TEXT",
+    "KIND_HINT",
     "KIND_TEXT",
     "MIN_HEIGHT",
     "MIN_WIDTH",
@@ -90,9 +91,9 @@ _DESCRIPTION = (
     "规则 JSON 导入导出；设置持久化到 ~/.fcmd/ui/renamerw.json"
 )
 
-DEFAULT_GEOMETRY = "1180x820+120+60"
-MIN_WIDTH = 980
-MIN_HEIGHT = 680
+DEFAULT_GEOMETRY = "1120x760+120+60"
+MIN_WIDTH = 960
+MIN_HEIGHT = 600
 
 KIND_TEXT = {
     "replace": "替换",
@@ -101,6 +102,14 @@ KIND_TEXT = {
     "insert": "插入",
     "case": "大小写",
     "sequence": "计数器",
+}
+KIND_HINT = {
+    "replace": "模板用 \\1 / \\g<name> 引用捕获组；第几个匹配 0 = 全部",
+    "reorder": "模板用 {0}/{1}/{name} 引用捕获组",
+    "move": "把匹配文本整体搬到锚点；第几个匹配 0 = 全部",
+    "insert": "在锚点插入字面文本；锚点文本仅「锚点前/后」需要",
+    "case": "转换名称或扩展名的大小写",
+    "sequence": "按「计数器排序」生成序号；分隔符可空",
 }
 FIELD_TEXT = {FIELD_STEM: "名称", FIELD_EXT: "扩展名"}
 ANCHOR_TEXT = {
@@ -314,7 +323,10 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._selected = self._expand_paths(self._selected)
         self._refresh_preview()
         self._refresh_rule_tree()
-        _guitheme.install_theme_switcher(self.root)
+        _guitheme.install_theme_switcher(
+            self.root,
+            on_apply=lambda theme: self._configure_tree_tags(theme.palette),
+        )
         _guiwindow.build_menu(
             self.root,
             on_close=self.close,
@@ -389,19 +401,26 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         sort_box.grid(row=0, column=3)
         sort_box.bind("<<ComboboxSelected>>", lambda _event: self._refresh_preview())
 
-        self._file_tree = ttk.Treeview(files, columns=("old", "new", "status"), show="headings")
-        for column, title, width in (
-            ("old", "名称", 340),
-            ("new", "新名", 460),
-            ("status", "状态", 90),
+        tree_frame = ttk.Frame(files)
+        tree_frame.grid(row=1, column=0, sticky="nsew", pady=(gap, 0))
+        tree_frame.columnconfigure(0, weight=1)
+        tree_frame.rowconfigure(0, weight=1)
+        self._file_tree = ttk.Treeview(tree_frame, columns=("old", "new", "status"), show="headings")
+        for column, title, width, stretch in (
+            ("old", "名称", 320, True),
+            ("new", "新名", 460, True),
+            ("status", "状态", 90, False),
         ):
-            self._file_tree.heading(column, text=title)
-            self._file_tree.column(column, width=width, anchor="w")
-        self._file_tree.grid(row=1, column=0, sticky="nsew", pady=(gap, 0))
+            self._file_tree.heading(column, text=title, anchor="w")
+            self._file_tree.column(column, width=width, anchor="w", stretch=stretch)
+        self._file_tree.grid(row=0, column=0, sticky="nsew")
+        file_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._file_tree.yview)
+        file_scroll.grid(row=0, column=1, sticky="ns")
+        self._file_tree.configure(yscrollcommand=file_scroll.set)
 
         bar = ttk.Frame(files)
         bar.grid(row=2, column=0, sticky="ew", pady=(gap, 0))
-        ttk.Button(bar, text="执行改名", command=self._execute).grid(row=0, column=0)
+        ttk.Button(bar, text="执行改名", command=self._execute, style="Accent.TButton").grid(row=0, column=0)
         ttk.Button(bar, text="撤销上次", command=self._undo).grid(row=0, column=1, padx=(gap, 0))
         ttk.Checkbutton(
             bar,
@@ -412,87 +431,39 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         bar.columnconfigure(3, weight=1)
         ttk.Label(bar, textvariable=self._status_var).grid(row=0, column=3, sticky="e")
 
-        # ---- 规则：参数一行、长文本两行、锚点/大小写一行、按钮与列表 ----
+        # ---- 规则：类型/作用域常驻，其余字段按类型动态重建 ----
         rules = ttk.LabelFrame(self.root, text="规则（按顺序执行；双击列表可载入表单）", padding=space.sm)
         rules.grid(row=1, column=0, sticky="ew", padx=space.md, pady=(tight, space.md))
         rules.columnconfigure(0, weight=1)
 
-        basics = ttk.Frame(rules)
-        basics.grid(row=0, column=0, sticky="ew")
-        ttk.Label(basics, text="类型").grid(row=0, column=0, sticky="w")
-        ttk.Combobox(
-            basics,
+        selector = ttk.Frame(rules)
+        selector.grid(row=0, column=0, sticky="ew")
+        ttk.Label(selector, text="类型").grid(row=0, column=0, sticky="w")
+        kind_box = ttk.Combobox(
+            selector,
             textvariable=self._kind_var,
             values=list(KIND_TEXT.values()),
             state="readonly",
             width=9,
-        ).grid(row=0, column=1, sticky="w", padx=(tight, space.md))
-        ttk.Label(basics, text="作用域").grid(row=0, column=2, sticky="w")
+        )
+        kind_box.grid(row=0, column=1, sticky="w", padx=(tight, space.md))
+        kind_box.bind("<<ComboboxSelected>>", lambda _event: self._build_rule_form())
+        ttk.Label(selector, text="作用域").grid(row=0, column=2, sticky="w")
         ttk.Combobox(
-            basics,
+            selector,
             textvariable=self._field_var,
             values=list(FIELD_TEXT.values()),
             state="readonly",
             width=9,
         ).grid(row=0, column=3, sticky="w", padx=(tight, space.md))
-        ttk.Label(basics, text="第几个匹配").grid(row=0, column=4, sticky="w")
-        ttk.Spinbox(basics, textvariable=self._occurrence_var, from_=0, to=99, width=5).grid(
-            row=0, column=5, sticky="w", padx=(tight, space.md)
-        )
-        ttk.Checkbutton(basics, text="忽略大小写", variable=self._ignore_case_var).grid(row=0, column=6, sticky="w")
-        ttk.Label(basics, text="起始").grid(row=0, column=7, sticky="w", padx=(space.md, tight))
-        ttk.Spinbox(basics, textvariable=self._start_var, from_=-9999, to=9999, width=6).grid(
-            row=0, column=8, sticky="w", padx=(0, space.md)
-        )
-        ttk.Label(basics, text="步长").grid(row=0, column=9, sticky="w", padx=(0, tight))
-        ttk.Spinbox(basics, textvariable=self._step_var, from_=-99, to=99, width=5).grid(
-            row=0, column=10, sticky="w", padx=(0, space.md)
-        )
-        ttk.Label(basics, text="位数").grid(row=0, column=11, sticky="w", padx=(0, tight))
-        ttk.Spinbox(basics, textvariable=self._digits_var, from_=1, to=32, width=5).grid(row=0, column=12, sticky="w")
+        self._rule_fields = ttk.Frame(selector)
+        self._rule_fields.grid(row=0, column=4, sticky="w")
 
-        texts = ttk.Frame(rules)
-        texts.grid(row=1, column=0, sticky="ew")
-        texts.columnconfigure(1, weight=1)
-        texts.columnconfigure(3, weight=1)
-        ttk.Label(texts, text="正则").grid(row=0, column=0, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Entry(texts, textvariable=self._pattern_var).grid(
-            row=0, column=1, sticky="ew", padx=(0, space.md), pady=tight
-        )
-        ttk.Label(texts, text="替换 / 模板").grid(row=0, column=2, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Entry(texts, textvariable=self._replacement_var).grid(row=0, column=3, sticky="ew", pady=tight)
-        ttk.Label(texts, text="插入文本 / 分隔符").grid(row=1, column=0, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Entry(texts, textvariable=self._text_var).grid(row=1, column=1, columnspan=3, sticky="ew", pady=tight)
-
-        placement = ttk.Frame(rules)
-        placement.grid(row=2, column=0, sticky="ew")
-        ttk.Label(placement, text="锚点").grid(row=0, column=0, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Combobox(
-            placement,
-            textvariable=self._anchor_var,
-            values=list(ANCHOR_TEXT.values()),
-            state="readonly",
-            width=9,
-        ).grid(row=0, column=1, sticky="w", padx=(0, space.md), pady=tight)
-        ttk.Label(placement, text="锚点文本").grid(row=0, column=2, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Entry(placement, textvariable=self._anchor_text_var, width=22).grid(
-            row=0, column=3, sticky="w", padx=(0, space.md), pady=tight
-        )
-        ttk.Label(placement, text="位置").grid(row=0, column=4, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Spinbox(placement, textvariable=self._position_var, from_=-9999, to=9999, width=6).grid(
-            row=0, column=5, sticky="w", padx=(0, space.md), pady=tight
-        )
-        ttk.Label(placement, text="大小写").grid(row=0, column=6, sticky="w", padx=(0, tight), pady=tight)
-        ttk.Combobox(
-            placement,
-            textvariable=self._mode_var,
-            values=list(CASE_TEXT.values()),
-            state="readonly",
-            width=9,
-        ).grid(row=0, column=7, sticky="w", pady=tight)
+        self._rule_texts = ttk.Frame(rules)
+        self._rule_texts.grid(row=1, column=0, sticky="ew")
 
         rule_actions = ttk.Frame(rules)
-        rule_actions.grid(row=3, column=0, sticky="ew", pady=(gap, 0))
+        rule_actions.grid(row=2, column=0, sticky="ew", pady=(gap, 0))
         for index, (label, command) in enumerate(
             (
                 ("添加规则", self._add_rule),
@@ -506,23 +477,128 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 row=0, column=index, padx=(gap if index else 0, 0)
             )
         rule_actions.columnconfigure(5, weight=1)
-        ttk.Label(
-            rule_actions,
-            text="reorder 用 {0}/{1}/{name} 引用捕获组；move occurrence=0 表示全部",
-            style="Hint.TLabel",
-        ).grid(row=0, column=6, sticky="e")
+        self._rule_hint = ttk.Label(rule_actions, style="Hint.TLabel")
+        self._rule_hint.grid(row=0, column=6, sticky="e")
 
-        self._rule_tree = ttk.Treeview(rules, columns=("kind", "field", "params", "detail"), show="headings", height=4)
-        for column, title, width in (
-            ("kind", "类型", 70),
-            ("field", "作用域", 70),
-            ("params", "规则参数", 380),
-            ("detail", "说明", 420),
+        rule_tree_frame = ttk.Frame(rules)
+        rule_tree_frame.grid(row=3, column=0, sticky="ew", pady=(gap, 0))
+        rule_tree_frame.columnconfigure(0, weight=1)
+        self._rule_tree = ttk.Treeview(
+            rule_tree_frame, columns=("kind", "field", "params", "detail"), show="headings", height=4
+        )
+        for column, title, width, stretch in (
+            ("kind", "类型", 70, False),
+            ("field", "作用域", 70, False),
+            ("params", "规则参数", 380, True),
+            ("detail", "说明", 420, True),
         ):
-            self._rule_tree.heading(column, text=title)
-            self._rule_tree.column(column, width=width, anchor="w")
-        self._rule_tree.grid(row=4, column=0, sticky="ew", pady=(gap, 0))
+            self._rule_tree.heading(column, text=title, anchor="w")
+            self._rule_tree.column(column, width=width, anchor="w", stretch=stretch)
+        self._rule_tree.grid(row=0, column=0, sticky="ew")
+        rule_scroll = ttk.Scrollbar(rule_tree_frame, orient="vertical", command=self._rule_tree.yview)
+        rule_scroll.grid(row=0, column=1, sticky="ns")
+        self._rule_tree.configure(yscrollcommand=rule_scroll.set)
         self._rule_tree.bind("<Double-1>", lambda _event: self._load_selected_rule())
+
+        self._configure_tree_tags(self._theme.palette)
+        self._build_rule_form()
+
+    def _build_rule_form(self) -> None:
+        """按当前规则类型重建表单字段；变量值保留，只创建该类型用得到的控件。"""
+        ttk = self._ttk
+        space = self._theme.spacing
+        tight, gap = space.xxs, space.md
+        for frame in (self._rule_fields, self._rule_texts):
+            for child in frame.grid_slaves():
+                child.destroy()
+        kind = _label_value(self._kind_var.get(), KIND_TEXT, "replace")
+        self._rule_hint.configure(text=KIND_HINT[kind])
+
+        fields = self._rule_fields
+        column = 0
+
+        def pair(label: str, widget: Any) -> None:
+            nonlocal column
+            ttk.Label(fields, text=label).grid(row=0, column=column, sticky="w", padx=(gap if column else 0, tight))
+            widget.grid(row=0, column=column + 1, sticky="w")
+            column += 2
+
+        if kind in ("replace", "move"):
+            pair("第几个匹配", ttk.Spinbox(fields, textvariable=self._occurrence_var, from_=0, to=99, width=5))
+        if kind == "replace":
+            ttk.Checkbutton(fields, text="忽略大小写", variable=self._ignore_case_var).grid(
+                row=0, column=column, sticky="w", padx=(gap, 0)
+            )
+        if kind == "case":
+            pair(
+                "模式",
+                ttk.Combobox(
+                    fields, textvariable=self._mode_var, values=list(CASE_TEXT.values()), state="readonly", width=11
+                ),
+            )
+        if kind == "sequence":
+            pair("起始", ttk.Spinbox(fields, textvariable=self._start_var, from_=-9999, to=9999, width=6))
+            pair("步长", ttk.Spinbox(fields, textvariable=self._step_var, from_=-99, to=99, width=5))
+            pair("位数", ttk.Spinbox(fields, textvariable=self._digits_var, from_=1, to=32, width=5))
+        if kind in ("move", "insert", "sequence"):
+            anchors = (
+                [ANCHOR_TEXT[ANCHOR_START], ANCHOR_TEXT[ANCHOR_END]]
+                if kind == "sequence"
+                else list(ANCHOR_TEXT.values())
+            )
+            if self._anchor_var.get() not in anchors:
+                self._anchor_var.set(anchors[0])
+            anchor_box = ttk.Combobox(fields, textvariable=self._anchor_var, values=anchors, state="readonly", width=9)
+            pair("锚点", anchor_box)
+            if kind != "sequence":
+                anchor_entry = ttk.Entry(fields, textvariable=self._anchor_text_var, width=12)
+                pair("锚点文本", anchor_entry)
+                position_spin = ttk.Spinbox(fields, textvariable=self._position_var, from_=-9999, to=9999, width=6)
+                pair("位置", position_spin)
+
+                def sync_anchor_state(_event: Any = None) -> None:
+                    anchor = _label_value(self._anchor_var.get(), ANCHOR_TEXT, ANCHOR_START)
+                    anchor_entry.configure(state="normal" if anchor in (ANCHOR_BEFORE, ANCHOR_AFTER) else "disabled")
+                    position_spin.configure(state="normal" if anchor == ANCHOR_INDEX else "disabled")
+
+                anchor_box.bind("<<ComboboxSelected>>", sync_anchor_state)
+                sync_anchor_state()
+
+        texts = self._rule_texts
+        texts.columnconfigure(1, weight=0)
+        texts.columnconfigure(3, weight=0)
+        if kind in ("replace", "reorder"):
+            texts.columnconfigure(1, weight=1)
+            texts.columnconfigure(3, weight=1)
+            ttk.Label(texts, text="正则").grid(row=0, column=0, sticky="w", padx=(0, tight), pady=tight)
+            ttk.Entry(texts, textvariable=self._pattern_var).grid(
+                row=0, column=1, sticky="ew", padx=(0, gap), pady=tight
+            )
+            ttk.Label(texts, text="替换 / 模板" if kind == "replace" else "重排模板").grid(
+                row=0, column=2, sticky="w", padx=(0, tight), pady=tight
+            )
+            ttk.Entry(texts, textvariable=self._replacement_var).grid(row=0, column=3, sticky="ew", pady=tight)
+            texts.grid()
+        elif kind in ("move", "insert", "sequence"):
+            texts.columnconfigure(1, weight=1)
+            label, var = {
+                "move": ("正则", self._pattern_var),
+                "insert": ("插入文本", self._text_var),
+                "sequence": ("分隔符（可空）", self._text_var),
+            }[kind]
+            ttk.Label(texts, text=label).grid(row=0, column=0, sticky="w", padx=(0, tight), pady=tight)
+            ttk.Entry(texts, textvariable=var).grid(row=0, column=1, sticky="ew", pady=tight)
+            texts.grid()
+        else:
+            texts.grid_remove()
+
+    def _configure_tree_tags(self, palette: _guitheme.Palette) -> None:
+        """按调色板配置斑马纹与预览状态色；主题切换时经 on_apply 重刷。"""
+        for tree in (self._file_tree, self._rule_tree):
+            tree.tag_configure("stripe", background=palette.stripe)
+        self._file_tree.tag_configure(STATUS_CONFLICT, foreground=palette.danger)
+        self._file_tree.tag_configure(STATUS_INVALID, foreground=palette.warning)
+        self._file_tree.tag_configure(STATUS_UNCHANGED, foreground=palette.muted)
 
     def _toggle_old_column(self) -> None:
         """按「旧名」勾选状态切换文件表中的名称列（默认显示）。"""
@@ -597,34 +673,36 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # ------------------------------------------------------------------ #
     def _refresh_rule_tree(self) -> None:
         self._rule_tree.delete(*self._rule_tree.get_children())
-        for rule in self._rules:
-            self._rule_tree.insert("", "end", values=rule_to_row(rule))
+        for index, rule in enumerate(self._rules):
+            self._rule_tree.insert("", "end", values=rule_to_row(rule), tags=("stripe",) if index % 2 else ())
 
     def _rule_from_form(self) -> RenameRule:
-        """从表单构造规则；数字字段非法时抛 ``RuleError``。"""
-        try:
-            occurrence = int(self._occurrence_var.get())
-            position = int(self._position_var.get())
-            start = int(self._start_var.get())
-            step = int(self._step_var.get())
-            digits = int(self._digits_var.get())
-        except ValueError as exc:
-            raise RuleError(f"数字字段不合法：{exc}") from exc
+        """从表单构造规则；只解析当前类型用得到的数字字段，非法时抛 ``RuleError``。"""
+        kind = _label_value(self._kind_var.get(), KIND_TEXT, "replace")
+
+        def int_of(var: Any, label: str, default: int, active: bool) -> int:
+            if not active:
+                return default
+            try:
+                return int(var.get())
+            except ValueError as exc:
+                raise RuleError(f"{label}不是合法整数：{var.get()!r}") from exc
+
         return RenameRule(
-            kind=_label_value(self._kind_var.get(), KIND_TEXT, "replace"),
+            kind=kind,
             pattern=self._pattern_var.get(),
             replacement=self._replacement_var.get(),
             field=_label_value(self._field_var.get(), FIELD_TEXT, FIELD_STEM),
             ignore_case=bool(self._ignore_case_var.get()),
-            occurrence=occurrence,
+            occurrence=int_of(self._occurrence_var, "第几个匹配", 0, kind in ("replace", "move")),
             anchor=_label_value(self._anchor_var.get(), ANCHOR_TEXT, ANCHOR_START),
             anchor_text=self._anchor_text_var.get(),
-            position=position,
+            position=int_of(self._position_var, "位置", 0, kind in ("move", "insert")),
             mode=_label_value(self._mode_var.get(), CASE_TEXT, "lower"),
             text=self._text_var.get(),
-            start=start,
-            step=step,
-            digits=digits,
+            start=int_of(self._start_var, "起始", 1, kind == "sequence"),
+            step=int_of(self._step_var, "步长", 1, kind == "sequence"),
+            digits=int_of(self._digits_var, "位数", 3, kind == "sequence"),
         )
 
     def _add_rule(self) -> None:
@@ -694,6 +772,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._start_var.set(str(rule.start))
         self._step_var.set(str(rule.step))
         self._digits_var.set(str(rule.digits))
+        self._build_rule_form()
 
     def _rules_file_action(self, save: bool) -> None:
         if save:
@@ -809,7 +888,9 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._file_tree.delete(*self._file_tree.get_children())
         self._row_targets = []
         for index, path in enumerate(self._selected):
-            self._file_tree.insert("", "end", iid=str(index), values=(path.name, "", ""))
+            self._file_tree.insert(
+                "", "end", iid=str(index), values=(path.name, "", ""), tags=("stripe",) if index % 2 else ()
+            )
             self._row_targets.append(index)
         if not self._selected:
             self._status_var.set("请先添加文件或目录")
@@ -835,11 +916,15 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._row_targets = []
         index_by_path = {os.path.normcase(str(path)): index for index, path in enumerate(self._selected)}
         for position, item in enumerate(preview.items):
+            tags = [item.status] if item.status != STATUS_OK else []
+            if position % 2:
+                tags.append("stripe")
             self._file_tree.insert(
                 "",
                 "end",
                 iid=str(position),
                 values=(item.old_name, item.new_name, STATUS_TEXT.get(item.status, item.status)),
+                tags=tags,
             )
             self._row_targets.append(index_by_path[os.path.normcase(str(item.source))])
         self._status_var.set(format_preview_status(preview))
