@@ -1,6 +1,6 @@
 """folderzip 工具测试。
 
-验证 ``fcmd.tools.archive.archivebase`` 模块（由 ``fcmd.dsl.toolcmd.archive`` 声明转接）：
+验证 ``fcmd.infras.archive`` 与 ``fcmd.tools.archive.folderzip``：
 - 工具注册（单命令工具，无子命令）
 - archive_folder 单文件夹压缩
 - 通过 run_tool 调用 folderzip --directory 批量压缩
@@ -15,9 +15,8 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.dsl.toolcmd.archive
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.archive.archivebase import archive_folder
+from fcmd.infras.archive import archive_folder
 
 
 # ---------------------------------------------------------------------- #
@@ -42,20 +41,17 @@ class TestToolsRegistration:
 class TestFolderzip:
     """``folderzip`` 工具测试。"""
 
-    def test_archive_folder_creates_zip(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """archive_folder 为单个文件夹创建 zip。"""
+    def test_archive_folder_creates_zip(self, tmp_path: Path) -> None:
+        """archive_folder 为单个文件夹创建 zip 并返回压缩包路径。"""
         src = tmp_path / "mydir"
         src.mkdir()
         (src / "a.txt").write_text("a", encoding="utf-8")
         (src / "sub").mkdir()
         (src / "sub" / "b.txt").write_text("b", encoding="utf-8")
 
-        archive_folder(src)
-        out = capsys.readouterr().out
-        assert "压缩完成" in out
-        assert "mydir.zip" in out
-
+        archive_path = archive_folder(src)
         zip_path = tmp_path / "mydir.zip"
+        assert archive_path == zip_path
         assert zip_path.exists()
         with zipfile.ZipFile(zip_path) as zf:
             names = zf.namelist()

@@ -1,11 +1,9 @@
-"""gittool 工具测试。
+"""gittool 工具测试（普通 Python 工具模块）。
 
-验证 ``gittool`` 工具（clean/c/ca/p/pl 与链式 a/i 由 ``src/fcmd/commands/gittool.toml``
-DSL 声明，与 Python 模块 isub 合并注册；a/i 经 when 守卫链式内部子命令
-``_init``/``_add``/``_commit`` 编排）：
+验证 ``gittool`` 工具：
 - 工具注册与 cmd 子命令规格（clean/c/ca/p/pl）
-- 提交（a / i 子命令：守卫跳过与链式提交）
-- DSL 链式规格（_init/_add/_commit 的 hidden/needs/守卫/豁免）
+- 提交（a / i 子命令：守卫 no-op 与链式提交）
+- 隐藏守卫链规格（_init/_add/_commit 的 hidden/needs）
 - isub 子命令（初始化子目录 Git 仓库）
 """
 
@@ -18,10 +16,10 @@ from pathlib import Path
 import pytest
 
 import fcmd.tools.dev.gittool  # 触发 @fx.tool 注册（isub/main）
-from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.cli._discovery import _TOOL_ALIASES, ensure_tools_discovered
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
-# 触发工具发现：Python 模块扫描 + DSL 声明注册（幂等）
+# 触发工具发现：Python 模块扫描（幂等）
 ensure_tools_discovered()
 
 
@@ -30,6 +28,11 @@ ensure_tools_discovered()
 # ---------------------------------------------------------------------- #
 class TestGittool:
     """``gittool`` 工具测试。"""
+
+    def test_aliases(self) -> None:
+        """gitt / git 别名均指向 gittool。"""
+        assert _TOOL_ALIASES["gitt"] == "gittool"
+        assert _TOOL_ALIASES["git"] == "gittool"
 
     def test_clean_cmd_excludes_dirs(self) -> None:
         """clean 的 cmd 展开为 -e dir1 -e dir2 ...（排除编辑器/项目缓存目录）。"""
@@ -46,15 +49,15 @@ class TestGittool:
     def test_gittool_a_no_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """gittool a 无更改时守卫跳过提交，提示条件不满足。"""
+        """gittool a 无更改时提交守卫 no-op（不产生提交）。"""
         monkeypatch.chdir(tmp_path)
         subprocess.run(["git", "init"], check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], check=True, capture_output=True)
         subprocess.run(["git", "config", "user.name", "test"], check=True, capture_output=True)
         code = run_tool("gittool", ["a"])
         assert code == 0
-        out = capsys.readouterr().out
-        assert "条件不满足" in out
+        head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], check=False, capture_output=True)
+        assert head.returncode != 0
 
     def test_gittool_a_commit(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -92,15 +95,15 @@ class TestGittool:
     def test_gittool_i_existing_repo_no_files(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """gittool i 在已有仓库且无更改时守卫跳过提交，提示条件不满足。"""
+        """gittool i 在已有仓库且无更改时提交守卫 no-op（不产生提交）。"""
         monkeypatch.chdir(tmp_path)
         subprocess.run(["git", "init"], check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@test.com"], check=True, capture_output=True)
         subprocess.run(["git", "config", "user.name", "test"], check=True, capture_output=True)
         code = run_tool("gittool", ["i"])
         assert code == 0
-        out = capsys.readouterr().out
-        assert "条件不满足" in out
+        head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], check=False, capture_output=True)
+        assert head.returncode != 0
 
     def test_gittool_a_via_run_tool_default_message(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """gittool a 使用默认提交信息。"""
@@ -183,41 +186,35 @@ class TestGittoolCmdSpecs:
 
 
 # ============================================================================ #
-# gittool DSL 链式规格（a/i 守卫链）
+# gittool 隐藏守卫链规格（a/i）
 # ============================================================================ #
-class TestGittoolDslChain:
-    """gittool a/i 的链式内部子命令（_init/_add/_commit）规格与行为验证。"""
+class TestGittoolChain:
+    """gittool a/i 的隐藏守卫链（_init/_add/_commit）规格与行为验证。"""
 
-    def test_init_guard_hidden(self) -> None:
-        """_init 是 hidden 子命令，when 路径探针守卫（.git 缺失时才执行）。"""
+    def test_init_is_hidden_fn(self) -> None:
+        """_init 是 hidden fn 子命令（.git 已存在时 no-op）。"""
         spec = _TOOL_REGISTRY["gittool"]["_init"]
-        assert spec.cmd == ("git", "init")
+        assert spec.cmd is None
         assert spec.hidden is True
-        when = spec.func.__dsl_when__  # type: ignore[missing-attribute]
-        assert when.path == ".git"
-        assert when.expect == "missing"
+        assert spec.func.__name__ == "git_init"
 
-    def test_add_needs_init_and_exempt(self) -> None:
-        """_add 依赖 _init 且豁免上游跳过（仓库已存在时仍可暂存）。"""
+    def test_add_needs_init(self) -> None:
+        """_add 依赖 _init。"""
         spec = _TOOL_REGISTRY["gittool"]["_add"]
         assert "_init" in spec.needs
         assert spec.cmd == ("git", "add", ".")
-        assert spec.allow_upstream_skip is True
         assert spec.hidden is True
 
-    def test_commit_guard_needs_add(self) -> None:
-        """_commit 依赖 _add，when 命令探针守卫（有更改才提交）。"""
+    def test_commit_needs_add(self) -> None:
+        """_commit 依赖 _add，是 fn 子命令（无更改时 no-op）。"""
         spec = _TOOL_REGISTRY["gittool"]["_commit"]
         assert "_add" in spec.needs
-        assert spec.cmd == ("git", "commit", "-m", "{message}")
-        assert spec.allow_upstream_skip is True
+        assert spec.cmd is None
         assert spec.hidden is True
-        when = spec.func.__dsl_when__  # type: ignore[missing-attribute]
-        assert when.cmd == "git status --porcelain"
-        assert when.expect == "nonempty"
+        assert "message" in inspect.signature(spec.func).parameters
 
     def test_aggregate_a_needs_commit_with_message(self) -> None:
-        """a 是聚合命令（needs _commit、无 cmd），声明 message 参数供链内插值。"""
+        """a 是聚合命令（needs _commit、无 cmd），声明 message 参数供链内传递。"""
         spec = _TOOL_REGISTRY["gittool"]["a"]
         assert spec.cmd is None
         assert "_commit" in spec.needs

@@ -17,25 +17,6 @@
 
 ## 决策
 
-### M4：`dsl/toolcmd` 体积回归 —— 暂缓
-
-`toolcmd` 的定位是「只保留 `@action` 声明与参数转接」（ADR 0002 第 3 条），但三个
-模块已明显超出该体量：
-
-| 模块 | 行数 |
-|---|---|
-| `src/fcmd/dsl/toolcmd/codec.py` | 467 |
-| `src/fcmd/dsl/toolcmd/data.py` | 446 |
-| `src/fcmd/dsl/toolcmd/conv.py` | 293 |
-
-**触发条件**（满足任一条即执行）：上述任一文件需要实质改动（新增 / 修改子命令、
-修 bug、改参数 schema）时，在同一个提交里把实现下沉为 `tools/<域>/<域>base.py`
-（或 `tools/<域>/<名>base.py`），`toolcmd` 侧只留声明与转接，并按 ADR 0002
-「交接」一节的顺序更新测试 patch 目标。
-
-**为何本轮不做**：三份实现当前无缺陷驱动，纯搬迁会产生 1,200 行级 diff 与大量
-patch 目标迁移，收益（边界更纯）小于一次集中回归的代价。
-
 ### M7：`tests/cli/test_cli.py` 直捣 `_discovery` 内部 —— 暂缓
 
 该文件 45 处 `monkeypatch` 直接改写 `_discovery` 的模块级私有表
@@ -54,6 +35,6 @@ patch 目标迁移，收益（边界更纯）小于一次集中回归的代价�
 - 新增暂缓项时按同样格式补一节（内容 / 触发条件 / 为何暂缓），并登记到
   `docs/adr/README.md` 索引（本 ADR 已登记）。
 - 已在本轮完成的中等项：M1（`_require_pypdf` 收敛进 `pdfbase`）、M2（`_pair_row`
-  收敛进 `fcmd/gui/window.py`）。
+  收敛进 `fcmd/gui/window.py`）、M4（DSL 移除后 `toolcmd` 体积问题不再存在）。
 - 仍待决策：M3（测试内重复 fixture 上收 `tests/helpers.py`）、M6（`ttk_style_specs`
   275 行拆表驱动）。

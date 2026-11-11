@@ -24,8 +24,6 @@ from __future__ import annotations
 import argparse
 import ast
 import inspect
-import os
-import subprocess
 import textwrap
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -36,8 +34,7 @@ from fcmd.core.execution.executors import run
 
 from ..dag import Graph, GraphDefaults
 from ..errors import FcmdError, TaskFailedError
-from ..hooks import rewrite_cmd
-from ..task import Condition, Context, RetryPolicy, TaskSpec, TaskStatus
+from ..task import RetryPolicy, TaskSpec
 from .args import (
     ToolExitCode,
     ToolSpec,
@@ -82,11 +79,8 @@ def _collect_with_deps(subs: dict[str | None, ToolSpec], target: str | None) -> 
 def _has_function_logic(func: Any) -> bool:
     """判断函数体是否有实际逻辑（非 pass/.../docstring）。
 
-    用 ast 分析，避免 exec 函数体。DSL 合成函数标记 ``__dsl_empty_body__``
-    （声明式 exec/聚合编排，占位函数体永不承载逻辑），直接判定无逻辑。
+    用 ast 分析，避免 exec 函数体。
     """
-    if getattr(func, "__dsl_empty_body__", False):
-        return False
     try:
         src = inspect.getsource(func)
         src = textwrap.dedent(src)
@@ -112,16 +106,6 @@ def _is_aggregate(spec: ToolSpec) -> bool:
     return not _has_function_logic(spec.func)
 
 
-def _compute_names(spec: ToolSpec) -> tuple[str, ...]:
-    """返回 DSL 命令 compute 注入变量名（插值白名单扩展用）。
-
-    ``__dsl_compute__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
-    非 DSL 合成函数（无该属性）返回空元组。
-    """
-    compute = getattr(spec.func, "__dsl_compute__", None)
-    return (compute[1],) if compute is not None else ()
-
-
 def _value_to_cmd_str(value: Any) -> str:
     """将 CLI 解析值转换为 cmd 模板插值字符串。
 
@@ -138,255 +122,64 @@ def _value_to_cmd_str(value: Any) -> str:
     return str(value)
 
 
-def _read_file_content(value: Any, token: str) -> str:
-    """读取 ``{参数名:content}`` 指向的文件内容（展开用户目录、utf-8、去首尾空白）。
-
-    Parameters
-    ----------
-    value:
-        参数值（文件路径，str 或 Path）
-    token:
-        原始插值 token（读取失败时原样返回，保持字面量不展开）
-
-    Returns
-    -------
-    str
-        文件内容（去首尾空白）；读取失败（OSError）返回原 token——由 when
-        路径探针或命令执行错误暴露问题，不在插值路径抛异常
-    """
-    try:
-        return Path(str(value)).expanduser().read_text(encoding="utf-8").strip()
-    except OSError:
-        return token
-
-
 def _expand_value(value: str, spec: ToolSpec, variables: Mapping[str, Any]) -> str:
     """将字符串值中 ``{参数名}`` 占位符替换为 CLI 解析值。
 
-    仅替换 ``spec`` 签名内声明且在 ``variables`` 中有值的参数名，以及
-    ``compute`` 注入变量名（``__dsl_compute__`` 的 as 名，构建任务前已由
-    :func:`_apply_compute` 写入 ``variables``）（cmd / cwd / env 值共用）。
-    字面花括号与全局变量（dry_run/quiet/strategy，不在签名内）不受影响。
-
-    扩展语法 ``{参数名:content}``：读取参数指向的文件内容（expanduser +
-    utf-8 + strip）替换进模板（声明期校验仅 str/path 参数可用，见
-    ``fcmd.dsl.decl._check_content_cmd_placeholders``）；读取失败保持
-    字面 token。
+    仅替换 ``spec`` 签名内声明且在 ``variables`` 中有值的参数名（cmd /
+    cwd / env 值共用）。字面花括号与全局变量（dry_run/quiet/strategy，
+    不在签名内）不受影响。
     """
-    names = [*inspect.signature(spec.func).parameters, *_compute_names(spec)]
+    names = inspect.signature(spec.func).parameters
     for pname in names:
         if pname in variables:
             value = value.replace("{" + pname + "}", _value_to_cmd_str(variables[pname]))
-            token = "{" + pname + ":content}"
-            if token in value:
-                value = value.replace(token, _read_file_content(variables[pname], token))
     return value
-
-
-def _collect_on_tokens(spec: ToolSpec, variables: Mapping[str, Any]) -> list[str]:
-    """收集 DSL bool 参数 ``on`` 固定 token（值为真时的参数）。
-
-    ``__dsl_param_on__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
-    非 DSL 合成函数（无该属性）返回空列表。
-    """
-    on_map: Mapping[str, tuple[str, ...]] = getattr(spec.func, "__dsl_param_on__", None) or {}
-    if not on_map:
-        return []
-    return [token for pname, tokens in on_map.items() if variables.get(pname) for token in tokens]
 
 
 def _expand_cmd_placeholders(cmd: str | list[str], spec: ToolSpec, variables: Mapping[str, Any]) -> str | list[str]:
     """将 cmd（str 或 list）中 ``{参数名}`` 占位符替换为 CLI 解析值。
 
-    无占位符时零成本直返。DSL 扩展语义：
-
-    - list 参数在 list cmd 中的**独占占位符项**（整项恰为 ``{name}``）按
-      元素逐项展开（无 shell 执行下每元素一个 argv token），compute 注入
-      变量名（list 值）同语义；
-    - bool 参数声明 ``on`` 时，值为真向 cmd 尾部追加固定 token。
+    无占位符时零成本直返。list 参数在 list cmd 中的**独占占位符项**（整项
+    恰为 ``{name}``）按元素逐项展开（无 shell 执行下每元素一个 argv token）。
     """
-    compute_set = set(_compute_names(spec))
     if isinstance(cmd, str):
-        expanded = _expand_value(cmd, spec, variables) if "{" in cmd else cmd
-        on_tokens = _collect_on_tokens(spec, variables)
-        return f"{expanded} {' '.join(on_tokens)}" if on_tokens else expanded
+        return _expand_value(cmd, spec, variables) if "{" in cmd else cmd
     sig_params = inspect.signature(spec.func).parameters
     result: list[str] = []
     for item in cmd:
-        if item.startswith("{") and item.endswith("}") and (item[1:-1] in sig_params or item[1:-1] in compute_set):
+        if item.startswith("{") and item.endswith("}") and item[1:-1] in sig_params:
             value = variables.get(item[1:-1])
             if isinstance(value, (list, tuple)):
                 # list 值独占占位符：按元素展开
                 result.extend(str(element) for element in value)
                 continue
         result.append(_expand_value(item, spec, variables) if "{" in item else item)
-    result.extend(_collect_on_tokens(spec, variables))
     return result
-
-
-def _build_conditions(spec: ToolSpec, variables: Mapping[str, Any]) -> tuple[Condition, ...]:
-    """将 DSL ``when`` 探针声明构造为引擎条件闭包。
-
-    ``__dsl_when__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入（仅声明
-    when 的 DSL 命令），非 DSL 合成函数返回空元组。探针在任务执行前同步
-    求值一次；探针自身失败（命令不存在/路径异常）由引擎
-    :meth:`TaskSpec.should_execute` 捕获并视为条件不满足（SKIPPED）。
-
-    探针目标（cmd/path）支持 ``{参数名}`` 插值——构造 TaskSpec 时求值一次，
-    与 cmd/cwd/env 模板同语义（default_env 参数取解析后的值）；插值后的
-    探针串同时用于跳过原因文案。
-
-    - cmd 探针：shell 执行（与 DSL str cmd 语义一致）。``nonempty``/``empty``
-      按 stdout 是否非空判定；``success``/``failure`` 按返回码是否为 0 判定；
-    - path 探针：``~`` 展开后按存在性判定。
-
-    闭包携带 ``_reason`` 属性，供引擎把跳过原因格式化为
-    ``"条件不满足: <描述>"``。
-    """
-    when = getattr(spec.func, "__dsl_when__", None)
-    if when is None:
-        return ()
-
-    if when.cmd is not None:
-        probe_cmd = _expand_value(when.cmd, spec, variables) if "{" in when.cmd else when.cmd
-        expect = when.expect
-        if expect in ("nonempty", "empty"):
-            expects_nonempty = expect == "nonempty"
-            reason = f'命令探针 "{probe_cmd}" 期望输出{"非空" if expects_nonempty else "为空"}'
-
-            def _probe(_context: Context) -> bool:
-                result = subprocess.run(probe_cmd, shell=True, capture_output=True, text=True, check=False)
-                has_output = bool(result.stdout.strip())
-                return has_output if expects_nonempty else not has_output
-
-        else:
-            expects_success = expect == "success"
-            reason = f'命令探针 "{probe_cmd}" 期望返回码{"为 0" if expects_success else "非 0"}'
-
-            def _probe(_context: Context) -> bool:
-                result = subprocess.run(probe_cmd, shell=True, capture_output=True, text=True, check=False)
-                ok = result.returncode == 0
-                return ok if expects_success else not ok
-
-    else:
-        assert when.path is not None  # 声明期校验保证 cmd/path 恰有其一
-        probe_path = _expand_value(when.path, spec, variables) if "{" in when.path else when.path
-        expects_exists = when.expect == "exists"
-        reason = f'路径探针 "{probe_path}" 期望{"存在" if expects_exists else "不存在"}'
-
-        def _probe(_context: Context) -> bool:
-            return Path(probe_path).expanduser().exists() == expects_exists
-
-    _probe._reason = reason  # type: ignore[attr-defined]
-    return (_probe,)
-
-
-def _apply_env_defaults(variables: dict[str, Any], spec: ToolSpec) -> None:
-    """解析 DSL str 参数 ``default_env`` 环境变量回退链（就地写 ``variables``）。
-
-    ``__dsl_param_env__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
-    非 DSL 合成函数（无该属性）为空操作。CLI 解析值等于声明 default 时，
-    按链取第一个**非空**环境变量值写入 ``variables``——后续 cmd/cwd/env
-    模板插值与 post-run message 均使用解析后的值；链全空（或对应环境变量
-    未设置/为空）则保持声明 default 不变。
-    """
-    env_map: Mapping[str, tuple[tuple[str, ...], Any]] = getattr(spec.func, "__dsl_param_env__", None) or {}
-    for pname, (chain, default) in env_map.items():
-        if variables.get(pname) != default:
-            continue
-        for env_name in chain:
-            value = os.environ.get(env_name)
-            if value:
-                variables[pname] = value
-                break
-
-
-def _apply_compute(variables: dict[str, Any], spec: ToolSpec) -> None:
-    """执行 DSL 命令的 compute 计算动作（就地写 ``variables``）。
-
-    ``__dsl_compute__`` 由 :func:`fcmd.dsl.synth._synthesize_func` 注入，
-    非 DSL 合成函数（无该属性）为空操作。计算动作在进程内执行：输入参数
-    按实现签名从 ``variables`` 绑定，返回值写入 ``variables[as 名]`` 供
-    本命令模板插值消费；同一条调用链上同名注入变量只计算一次（调用方按
-    链序逐命令调用，首个声明者生效，消费方声明仅为获得插值白名单）。
-
-    Raises
-    ------
-    Exception
-        计算动作自身异常原样抛出（由调用方映射为命令失败）
-    """
-    compute = getattr(spec.func, "__dsl_compute__", None)
-    if compute is None:
-        return
-    action_name, as_name = compute
-    if as_name in variables:
-        return
-    from fcmd.core.hooks import resolve_action  # 经钩子反转 core → dsl 依赖
-
-    impl = resolve_action(action_name).func
-    kwargs = {pname: variables[pname] for pname in inspect.signature(impl).parameters if pname in variables}
-    variables[as_name] = impl(**kwargs)
-
-
-def _compute_skip_condition(spec: ToolSpec, variables: Mapping[str, Any]) -> Condition | None:
-    """compute 空结果跳过条件：注入变量为空 list/空串时任务 SKIPPED。
-
-    Returns
-    -------
-    Condition | None
-        恒假条件闭包（携带跳过原因）；结果非空或未声明 compute 时 ``None``
-    """
-    compute = getattr(spec.func, "__dsl_compute__", None)
-    if compute is None:
-        return None
-    value = variables.get(compute[1])
-    if isinstance(value, (list, tuple, str)) and not value:
-        reason = f"计算结果为空（compute={compute[0]!r}）"
-
-        def _empty_skip(_context: Context) -> bool:
-            return False
-
-        _empty_skip._reason = reason  # type: ignore[attr-defined]
-        return _empty_skip
-    return None
 
 
 def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[Any]:
     """将 ToolSpec + 解析后的变量转为 TaskSpec。
 
     - cmd 任务：执行命令，cwd 从 ``variables["cwd"]`` 或装饰器 cwd 取；
-      cmd 中 ``{参数名}`` 占位符替换为 CLI 解析值（DSL 声明式命令）
+      cmd 中 ``{参数名}`` 占位符替换为 CLI 解析值
     - 聚合任务（有 needs 无 cmd 无函数逻辑）：fn=noop
     - fn 任务：执行函数，kwargs 按签名从 variables 取
-
-    DSL 声明 when 守卫时，三个分支统一挂引擎条件闭包（不满足 → SKIPPED）。
     """
     task_name = spec.subcommand if spec.subcommand is not None else spec.name
-    conditions = _build_conditions(spec, variables)
-    # compute 空结果（空 list/空串）→ 任务 SKIPPED（三支任务统一挂条件）
-    skip_condition = _compute_skip_condition(spec, variables)
-    if skip_condition is not None:
-        conditions = (*conditions, skip_condition)
 
     # cmd 任务
     if spec.cmd is not None:
         cwd_value = variables.get("cwd", spec.cwd)
         if isinstance(cwd_value, str) and "{" in cwd_value:
-            # DSL 声明的 cwd 支持 {参数名} 插值
             cwd_value = _expand_value(cwd_value, spec, variables)
         cwd = Path(cwd_value) if cwd_value is not None else None
         cmd_value: Any = list(spec.cmd) if isinstance(spec.cmd, tuple) else spec.cmd
-        # 依赖本机环境的命令改写（Windows 上把裸 ssh 换成检测到的客户端路径）
-        # 推迟到执行期：探测要起子进程，放在注册期会拖慢每次工具发现。
-        if isinstance(cmd_value, str):
-            cmd_value = rewrite_cmd(cmd_value)
         # 模板插值仅对命令模板（str/list）有意义；callable 型 cmd（如
         # pymake push 的函数任务）直通引擎
         if isinstance(cmd_value, (str, list)):
             cmd_value = _expand_cmd_placeholders(cmd_value, spec, variables)
         env = spec.env
         if env and any("{" in v for v in env.values()):
-            # DSL 声明的 env 值支持 {参数名} 插值
             env = {k: _expand_value(v, spec, variables) for k, v in env.items()}
         return TaskSpec(
             name=task_name,
@@ -399,7 +192,6 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
             allow_upstream_skip=spec.allow_upstream_skip,
             passthrough=spec.passthrough,
             strategy=spec.strategy,
-            conditions=conditions,
         )
 
     # 聚合任务
@@ -410,7 +202,6 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
             depends_on=spec.needs,
             allow_upstream_skip=spec.allow_upstream_skip,
             strategy=spec.strategy,
-            conditions=conditions,
         )
 
     # fn 任务
@@ -419,8 +210,7 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
     for pname in sig.parameters:
         if pname in variables:
             kwargs[pname] = variables[pname]
-    # cwd 取值与 cmd 分支对齐：CLI 变量优先，回退装饰器声明（DSL action
-    # 命令声明 cwd 时 fn 任务同样生效）
+    # cwd 取值与 cmd 分支对齐：CLI 变量优先，回退装饰器声明
     cwd_value = variables.get("cwd", spec.cwd)
     cwd = Path(cwd_value) if cwd_value is not None else None
     return TaskSpec(
@@ -434,7 +224,6 @@ def _build_task_spec(spec: ToolSpec, variables: Mapping[str, Any]) -> TaskSpec[A
         timeout=spec.timeout,
         allow_upstream_skip=spec.allow_upstream_skip,
         strategy=spec.strategy,
-        conditions=conditions,
     )
 
 
@@ -473,7 +262,7 @@ def _parse_tool_args(
     target_spec = subs[target]
 
     # 聚合任务：无参签名保持裸 parser（仅全局选项，既有行为）；带参签名
-    # （DSL 聚合 args）复用完整 parser，参数经共享 variables 流入子任务插值
+    # 复用完整 parser，参数经共享 variables 流入子任务插值
     if _is_aggregate(target_spec) and not inspect.signature(target_spec.func).parameters:
         parser = argparse.ArgumentParser(prog=f"{name} {target}", description=target_spec.help)
         _add_global_options(parser)
@@ -489,30 +278,6 @@ def _parse_tool_args(
     return variables, target_spec
 
 
-def _print_post_run_messages(report: Any, target_spec: ToolSpec, variables: Mapping[str, Any]) -> None:
-    """打印 DSL post-run 完成/失败消息（``__dsl_message__``/``__dsl_fail_message__``）。
-
-    按执行结果打印对应消息，支持 ``{参数名}`` 插值；dry-run 未实际执行不打印。
-    目标任务被 when 守卫跳过时不视为执行成功——不打印完成消息（SKIPPED 不影响
-    ``report.success``，需单独判定）。
-    """
-    if variables.get("dry_run", False):
-        return
-    task_name = target_spec.subcommand if target_spec.subcommand is not None else target_spec.name
-    target_result = report.results.get(task_name)
-    target_skipped = target_result is not None and target_result.status == TaskStatus.SKIPPED
-    message = getattr(target_spec.func, "__dsl_message__", None)
-    fail_message = getattr(target_spec.func, "__dsl_fail_message__", None)
-    if report.success:
-        if message and not target_skipped:
-            print(_expand_value(message, target_spec, variables))
-    elif fail_message:
-        print(_expand_value(fail_message, target_spec, variables))
-
-
-# ---------------------------------------------------------------------- #
-# 执行
-# ---------------------------------------------------------------------- #
 def _execute_tool_tasks(
     name: str,
     target: str | None,
@@ -534,24 +299,12 @@ def _execute_tool_tasks(
             print_error(f"工具 {name!r} 的子命令 {sc!r} 未注册")
             return ToolExitCode.FAILURE.value
         sc_spec = subs[sc]
-        # DSL 参数环境变量回退链解析（依赖在前：链上子任务可见解析结果；
-        # 就地写 variables，post-run message 同样取解析后的值）
-        _apply_env_defaults(variables, sc_spec)
-        # DSL compute 计算动作（链序依赖在前，同 as 名只算一次；异常映射为
-        # 命令失败退出码 1）
-        try:
-            _apply_compute(variables, sc_spec)
-        except Exception as e:  # 计算动作异常统一映射为失败
-            print_error(f"计算动作执行失败: {e}")
-            return ToolExitCode.FAILURE.value
         task_specs.append(_build_task_spec(sc_spec, variables))
 
     # 构建图并执行
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
     strategy = variables.get("strategy") or target_spec.strategy or "dependency"
     verbose = not variables.get("quiet", False)
-    # DSL post-run 失败消息（__dsl_fail_message__ 由 synth 注入）：失败路径打印
-    fail_message = getattr(target_spec.func, "__dsl_fail_message__", None)
 
     try:
         report = run(
@@ -567,8 +320,6 @@ def _execute_tool_tasks(
             err_console.print("[red]执行失败[/red]")
             if e.report is not None:
                 _print_task_summary(e.report, force=True)
-        if fail_message:
-            print(_expand_value(fail_message, target_spec, variables))
         return ToolExitCode.FAILURE.value
     except FcmdError as e:
         if verbose:
@@ -579,9 +330,6 @@ def _execute_tool_tasks(
 
     if verbose and not variables.get("dry_run", False):
         _print_task_summary(report)
-
-    # DSL post-run 完成/失败消息
-    _print_post_run_messages(report, target_spec, variables)
 
     return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
 

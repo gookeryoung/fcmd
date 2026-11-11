@@ -1,8 +1,6 @@
 """packtool - Python 打包工具。
 
-提供源码打包/嵌入式 Python 安装/zip 包创建/清理子命令。
-纯 exec 型子命令 deps/wheel 已迁入内置 DSL ``src/fcmd/commands/packtool.toml``，
-两处逐子命令合并注册。
+提供源码打包/依赖打包/wheel 构建/嵌入式 Python 安装/zip 包创建/清理子命令。
 
 简化说明：不解析 ``pyproject.toml`` 获取项目名，直接用项目目录名作为包名，
 避免引入 ``tomllib``/``tomli`` 依赖（rule-11 优先标准库 + 谨慎新增依赖）。
@@ -10,8 +8,8 @@
 示例
 ----
     fcmd packtool src                          # 打包当前项目源码到 .pypack/
-    fcmd packtool deps requests flask          # 打包依赖到 libs/（DSL 声明）
-    fcmd packtool wheel                        # 构建 wheel 到 dist/（DSL 声明）
+    fcmd packtool deps requests flask          # 打包依赖到 libs/
+    fcmd packtool wheel                        # 构建 wheel 到 dist/
     fcmd packtool embed --version 3.11         # 安装嵌入式 Python 3.11
     fcmd packtool zip                          # 创建 package.zip
     fcmd packtool clean                        # 清理 .pypack 目录
@@ -21,17 +19,20 @@ from __future__ import annotations
 
 import platform
 import shutil
+import subprocess
 import zipfile
 from pathlib import Path
 
-import fcmd
+import fcmd as fx
 from fcmd.core.filefilter import DEFAULT_IGNORE_DIRS
 from fcmd.core.models import IgnoreSpec, should_ignore, to_shutil_ignore
 
 __all__ = [
+    "build_wheel",
     "clean_build_dir",
     "create_zip_package",
     "install_embed_python",
+    "pack_dependencies",
     "pack_source",
 ]
 
@@ -73,12 +74,19 @@ def _normalize_arch() -> str:
     return arch
 
 
+def _run(cmd: list[str]) -> None:
+    """执行命令，非零返回码转换为任务失败。"""
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"命令执行失败（退出码 {result.returncode}）: {cmd}")
+
+
 # ============================================================================
 # CLI 子命令
 # ============================================================================
 
 
-@fcmd.tool("packtool", subcommand="src", help="打包源码")
+@fx.tool("packtool", subcommand="src", help="打包源码")
 def pack_source(project_dir: Path = Path(), output_dir: Path = Path(".pypack")) -> None:
     """打包项目源码到指定目录。
 
@@ -124,7 +132,7 @@ def pack_source(project_dir: Path = Path(), output_dir: Path = Path(".pypack")) 
     print(f"源码打包完成: {source_dir}")
 
 
-@fcmd.tool("packtool", subcommand="embed", help="安装嵌入式 Python")
+@fx.tool("packtool", subcommand="embed", help="安装嵌入式 Python")
 def install_embed_python(version: str = "3.10", output_dir: Path = Path("python")) -> None:
     """安装嵌入式 Python 到指定目录。
 
@@ -161,7 +169,7 @@ def install_embed_python(version: str = "3.10", output_dir: Path = Path("python"
     print(f"嵌入式 Python 安装完成: {output_dir}")
 
 
-@fcmd.tool("packtool", subcommand="zip", help="创建 zip 包")
+@fx.tool("packtool", subcommand="zip", help="创建 zip 包")
 def create_zip_package(source_dir: Path = Path(), output_file: Path = Path("package.zip")) -> None:
     """创建 ZIP 打包文件。
 
@@ -178,7 +186,7 @@ def create_zip_package(source_dir: Path = Path(), output_file: Path = Path("pack
     print(f"ZIP 打包完成: {output_file}")
 
 
-@fcmd.tool("packtool", subcommand="clean", help="清理构建目录")
+@fx.tool("packtool", subcommand="clean", help="清理构建目录")
 def clean_build_dir(build_dir: Path = Path(".pypack")) -> None:
     """清理构建目录。
 
@@ -194,7 +202,47 @@ def clean_build_dir(build_dir: Path = Path(".pypack")) -> None:
         print(f"目录不存在: {build_dir}")
 
 
-@fcmd.main("packtool")
+@fx.tool("packtool", subcommand="deps", help="打包依赖")
+def pack_dependencies(packages: list[str], lib_dir: Path = Path("libs")) -> None:
+    """把依赖安装到目标目录。
+
+    Parameters
+    ----------
+    packages:
+        依赖包名列表（至少一个）
+    lib_dir:
+        依赖库目录
+    """
+    cmd = [
+        "pip",
+        "install",
+        "--target",
+        str(lib_dir),
+        "--no-compile",
+        "--no-warn-script-location",
+        *packages,
+    ]
+    _run(cmd)
+    print(f"依赖打包完成: {lib_dir}")
+
+
+@fx.tool("packtool", subcommand="wheel", help="构建 wheel")
+def build_wheel(project_dir: Path = Path(), output_dir: Path = Path("dist")) -> None:
+    """构建 wheel。
+
+    Parameters
+    ----------
+    project_dir:
+        项目目录
+    output_dir:
+        输出目录
+    """
+    cmd = ["pip", "wheel", "--no-deps", "--wheel-dir", str(output_dir), str(project_dir)]
+    _run(cmd)
+    print(f"Wheel 打包完成: {output_dir}")
+
+
+@fx.main("packtool")
 def main() -> None:
     pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 

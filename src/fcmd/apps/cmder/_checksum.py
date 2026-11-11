@@ -1,7 +1,7 @@
 """cmderw 校验文件（.sha256/.md5/.sfv）的纯逻辑：生成格式、解析与逐项比对。
 
-哈希算法复用 :mod:`fcmd.tools.hashbase`；SFV 的 CRC32 由本模块用 ``zlib.crc32``
-计算（``hashbase`` 只暴露 hashlib 算法，不扩展其口径）。
+哈希算法复用 :mod:`fcmd.infras.hashing`；SFV 的 CRC32 由本模块用 ``zlib.crc32``
+计算（``hashing`` 只暴露 hashlib 算法，不扩展其口径）。
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.tools import hashbase
+from fcmd.infras import hashing
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -85,7 +85,7 @@ def compute_digest(path: Path, algorithm: str) -> str:
     """按算法计算单个文件摘要（小写十六进制）。"""
     if algorithm == "crc32":
         return compute_crc32(path)
-    return hashbase.compute_file_hash(path, algorithm)
+    return hashing.compute_file_hash(path, algorithm)
 
 
 def relative_name(path: Path, base: Path) -> str:

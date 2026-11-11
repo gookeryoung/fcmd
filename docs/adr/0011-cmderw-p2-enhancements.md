@@ -17,7 +17,7 @@
 
 - 大小写三态：文件名搜索 `case_sensitive=None` 保持平台默认（`fnmatch`），
   `True` 用 `fnmatchcase`，`False` 对两侧 casefold；内容搜索 `None` / `True` 均
-  区分大小写，`False` 加 `re.IGNORECASE`。默认值不改变既有 CLI / DSL 语义。
+  区分大小写，`False` 加 `re.IGNORECASE`。默认值不改变既有 CLI 语义。
 - 整词匹配只作用于内容搜索：把模式包装为 `\b(?:pattern)\b`，与大小写开关可叠加。
 - 大小过滤接受 `1024`、`10K`、`2M`、`1.5G`、`512MiB` 等写法（1024 进制，非法抛
   `ValueError`）；时间过滤接受 `YYYY-MM-DD`、`YYYY-MM-DD HH:MM`、
@@ -69,7 +69,7 @@
 
 ## 落地状态
 
-- N3：已落地。`_search.py`、`fileops` 大小写 / 整词参数、搜索对话框过滤栏
+- N3：已落地。`_search.py`、`infras.fs` 大小写 / 整词参数、搜索对话框过滤栏
   与可排序结果面板。
 - N4：已落地。`_volumes.py` 与面板路径栏「卷」下拉。
 - N5：已落地。`_attrs.py`、「修改时间 / 属性…」对话框与菜单入口。

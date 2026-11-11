@@ -25,7 +25,7 @@
 | A 需求意图 | 用户口语需求 | 需求拆句（C1..Cn）、粗查影响面 | 需求卡片 `docs/requirements/NNNN-*.md` | 每条需求句有 C 编号，未决问题清零 | ✅ 需求确认 |
 | B 方案制定 | 需求卡片 | 逐条核对代码、定不变量、收决策 D 表、分期 | ADR `docs/adr/NNNN-*.md`（长期决策才写） | 约束逐条有落点、D 表无「待定」 | ✅ 方案评审 |
 | C 代码编写 | ADR / 需求卡片 | 按 P0→P1→P2 小步实现，每期回填 ADR 落地状态 | `src/fcmd/**` | `make check-fast` | — |
-| D 测试编写 | 实现同轮 | 单测 / CLI 集成 / DSL 合成同步写 | `tests/test_*.py` | `make test` → `make cov`（≥95%） | — |
+| D 测试编写 | 实现同轮 | 单测 / CLI 集成 | `tests/test_*.py` | `make test` → `make cov`（≥95%） | — |
 | E 集成与文档 | 全绿 | 更新 README / docs、回填 ADR 交接、bump 版本 | README、docs、`.bumpversion.toml` | `make check` + CI | — |
 | F 推送与发布 | 评审通过 | 推全部 remote、打 tag | PyPI 包 + GitHub Release | `make push` + [release.yml](../.github/workflows/release.yml) | ✅ 上线 tag |
 
@@ -62,7 +62,7 @@
 
 ### D 测试编写与验证
 
-与实现同轮写测试：核心逻辑单测、CLI 集成、DSL 命令合成。
+与实现同轮写测试：核心逻辑单测、CLI 集成。
 
 命令链：`make test` → `make cov`（阈值 95%）。覆盖率口径固定于
 [.coveragerc](../.coveragerc)（`fail_under = 95`，仅统计 `fcmd`），**不得注水**。

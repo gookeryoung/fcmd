@@ -109,6 +109,7 @@ def tool(  # noqa: PLR0913
     env: Mapping[str, str] | None = None,
     retry: RetryPolicy | None = None,
     timeout: float | None = None,
+    param_help: Mapping[str, str] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将函数注册为 ``@fx.tool`` 工具。
 
@@ -136,6 +137,9 @@ def tool(  # noqa: PLR0913
         不暴露为 subcommand（内部 job，仅被 needs 引用）
     env / retry / timeout:
         透传 :class:`TaskSpec` 对应字段
+    param_help:
+        参数名 → 帮助文本映射（``--help`` 中展示）；``None`` 时用函数
+        docstring 的 NumPy 风格参数说明
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -154,6 +158,7 @@ def tool(  # noqa: PLR0913
             env=dict(env) if env else None,
             retry=retry,
             timeout=timeout,
+            param_help=dict(param_help) if param_help else None,
         )
         _register_tool(spec)
         return func

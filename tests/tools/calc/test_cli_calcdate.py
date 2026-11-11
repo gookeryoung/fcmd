@@ -1,4 +1,4 @@
-"""calcdate 工具测试：公共函数 + CLI 子命令。"""
+"""calcdate 工具测试：infras 纯函数 + CLI 子命令。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from datetime import date
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.tools.calc.calcdatebase import (
+from fcmd.infras.calc import (
     add_days,
     compare_dates,
     count_workdays,

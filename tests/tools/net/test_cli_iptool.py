@@ -1,6 +1,6 @@
 """iptool 工具测试。
 
-验证 ``fcmd.tools.net.netbase`` 模块：
+验证 ``fcmd.infras.net`` 基础设施与 ``fcmd.tools.net.iptool``：
 - 工具注册与三子命令结构（parse/subnet/validate）
 - ``parse_ip``/``subnet_info``/``validate_ip``
 - IPv4/IPv6 与错误分支
@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.tools.net.netbase import (
+from fcmd.infras.net import (
     parse_ip,
     subnet_info,
     validate_ip,

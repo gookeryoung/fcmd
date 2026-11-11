@@ -24,7 +24,7 @@ _ROOT = Path(__file__).resolve().parents[2]
 _SNAPSHOT_SCRIPT = """
 import json
 from fcmd.cli._discovery import (
-    _DSL_TOOL_SOURCES, _TOOL_ALIASES, _TOOL_MODULES, ensure_tools_discovered, tool_description,
+    _TOOL_ALIASES, _TOOL_MODULES, ensure_tools_discovered, tool_description,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
@@ -34,7 +34,6 @@ canonical = sorted(set(_TOOL_ALIASES.values()))
 print(json.dumps({
     "modules": _TOOL_MODULES,
     "registered": sorted(registered),
-    "dsl_builtin": sorted(name for name, source in _DSL_TOOL_SOURCES.items() if source == "builtin"),
     "aliases": {alias: target for alias, target in _TOOL_ALIASES.items() if alias != target and target in registered},
     "descriptions": {name: tool_description(name) for name in canonical},
 }))
@@ -115,29 +114,6 @@ def test_python_entries_match_discovery(tmp_path: Path) -> None:
     assert extra <= set(modules), f"清单条目已失效 {sorted(extra - set(modules))}"
 
 
-def test_dsl_entries_match_discovery(tmp_path: Path) -> None:
-    """清单 DSL 条目与已注册的内置 DSL 工具一致，且指向的文件确有其声明。"""
-    from fcmd.dsl import builtin_tool_decl
-
-    data = _data()
-    snap = _snapshot(tmp_path)
-    manifest_dsl = {name: entry.target for name, entry in data.TOOLS.items() if entry.kind == "dsl"}
-    expected = set(snap["dsl_builtin"]) - set(data.AMBIGUOUS)
-    assert set(manifest_dsl) == expected
-
-    for name, file_name in manifest_dsl.items():
-        assert builtin_tool_decl(file_name, name) is not None, f"清单把 {name!r} 指向 {file_name}，但该文件无此声明"
-
-
-def test_ambiguous_names_match_discovery(tmp_path: Path) -> None:
-    """同时被 Python 与内置 DSL 声明的工具名集合与实跑发现一致。"""
-    data = _data()
-    snap = _snapshot(tmp_path)
-    registered = set(snap["registered"])
-    ambiguous = {name for name in snap["dsl_builtin"] if name in snap["modules"] and name in registered}
-    assert ambiguous == set(data.AMBIGUOUS)
-
-
 def test_aliases_match_discovery(tmp_path: Path) -> None:
     """清单别名表与全量发现登记的别名一致（只比较成功注册的工具）。"""
     data = _data()
@@ -205,43 +181,17 @@ def test_python_fast_path_imports_only_target(tmp_path: Path) -> None:
     assert proc.stdout.strip().splitlines()[-1] == "ok"
 
 
-def test_dsl_fast_path_registers_only_target(tmp_path: Path) -> None:
-    """DSL 工具快路径只注册目标工具的声明，不导入任何 Python 工具模块。"""
-    proc = _run_py(
-        "import sys\n"
-        "import fcmd.cli._discovery as d\n"
-        "from fcmd.core.toolkit import _TOOL_REGISTRY\n"
-        "assert d.resolve_tool_fast('codetool') == 'codetool'\n"
-        "assert d._TOOLS_DISCOVERED is False\n"
-        "assert set(_TOOL_REGISTRY) == {'codetool'}\n"
-        "assert 'fcmd.tools.llm.llmchat' not in sys.modules\n"
-        "print('ok')\n",
-        tmp_path,
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip().splitlines()[-1] == "ok"
-
-
 def test_alias_resolves_to_canonical(tmp_path: Path) -> None:
-    """别名经清单解析到同一规范名（重名工具除外，它们走全量发现）。"""
+    """别名经清单解析到同一规范名。"""
     data = _data()
     aliases: dict[str, str] = data.ALIASES
-    candidates = {alias: target for alias, target in aliases.items() if target not in data.AMBIGUOUS}
-    assert candidates, "清单未登记任何可走快路径的别名"
-    alias, canonical = next(iter(sorted(candidates.items())))
+    assert aliases, "清单未登记任何别名"
+    alias, canonical = next(iter(sorted(aliases.items())))
     proc = _run_py(
         f"import fcmd.cli._discovery as d\nassert d.resolve_tool_fast({alias!r}) == {canonical!r}\nprint('ok')\n",
         tmp_path,
     )
     assert proc.returncode == 0, proc.stderr
-
-
-def test_ambiguous_names_use_full_discovery() -> None:
-    """Python 与 DSL 重名的工具不走快路径（子命令需全量合并）。"""
-    from fcmd.cli import _discovery
-
-    for name in _data().AMBIGUOUS:
-        assert _discovery.resolve_tool_fast(name) is None
 
 
 def test_unknown_name_returns_none() -> None:
@@ -267,15 +217,6 @@ def test_stale_layout_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _manifest.lookup("codetool") is None
 
 
-def test_user_commands_file_disables_dsl_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """用户级 commands.toml 存在时不走 DSL 快路径（用户声明可覆盖内置）。"""
-    from fcmd.cli import _discovery
-
-    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-    (tmp_path / "commands.toml").write_text('[commands.codetool]\nhelp = "x"\ncmd = ["echo"]\n', encoding="utf-8")
-    assert _discovery.resolve_tool_fast("codetool") is None
-
-
 def test_missing_tool_module_returns_none() -> None:
     """清单条目指向不存在的模块时返回 None 且不污染注册表映射。"""
     from fcmd.cli import _discovery
@@ -297,7 +238,7 @@ def test_descriptions_match_discovery(tmp_path: Path) -> None:
 
 
 def test_digest_matches_sources() -> None:
-    """清单内容指纹与当前源码树一致（改任一工具模块 / TOML 即过期）。"""
+    """清单内容指纹与当前源码树一致（改任一工具模块即过期）。"""
     from fcmd.cli import _manifest
 
     assert _manifest.tool_digest() == _data().DIGEST
@@ -333,15 +274,6 @@ def test_list_output_matches_full_discovery(monkeypatch: pytest.MonkeyPatch) -> 
     slow = _capture_listing(FcmdApp([]))
     assert fast == slow
     assert "可用工具" in fast
-
-
-def test_user_commands_file_disables_list_fast_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """用户级 commands.toml 存在时不走列表快路径（会新增 / 覆盖列表条目）。"""
-    from fcmd.cli._discovery import list_tool_rows
-
-    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-    (tmp_path / "commands.toml").write_text('[commands.mine]\nhelp = "x"\ncmd = ["echo"]\n', encoding="utf-8")
-    assert list_tool_rows() is None
 
 
 def test_missing_manifest_disables_list_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:

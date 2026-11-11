@@ -1,7 +1,7 @@
 """cmderw 归档内搜索纯逻辑：zip / tar 条目名与内容，内容按流读取。
 
 名称匹配沿用文件名搜索的 glob 语义；内容匹配复用
-:func:`fcmd.dsl.actions.fileops.compile_content_pattern` 的大小写与整词规则。
+:func:`fcmd.infras.fs.compile_content_pattern` 的大小写与整词规则。
 内容搜索逐成员流式解码（先探测编码，遇到 NUL 视为二进制跳过），不会把整个
 成员读入内存；加密成员与超过大小上限的成员计数后跳过。
 """
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcmd.apps.cmder._preview import detect_encoding
-from fcmd.dsl.actions.fileops import compile_content_pattern
+from fcmd.infras.fs import compile_content_pattern
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator

@@ -1,7 +1,6 @@
 """中立文本 IO 能力：二进制探测与按行读取。
 
-供 ``dsl/actions/fileops.py`` 与 ``tools/text/textbase.py`` 共用，避免
-``tools`` 反向依赖 ``dsl``；本模块只依赖标准库。
+供 :mod:`fcmd.infras.fs` 等基础件共用；本模块只依赖标准库。
 """
 
 from __future__ import annotations

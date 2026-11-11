@@ -1,6 +1,6 @@
 """stattool 工具测试。
 
-验证 ``fcmd.dsl.toolcmd.calc`` 模块：
+验证 ``fcmd.tools.calc.stattool`` 工具与 ``fcmd.infras.calc`` 实现：
 - 工具注册与五子命令结构（mean/median/stddev/variance/summarize）
 - ``load_numbers``/``stat_mean``/``stat_median``/``stat_stddev``/``stat_variance``/``stat_summarize``
 - CLI 子命令端到端
@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.tools.calc.calcbase import (
+from fcmd.infras.calc import (
     load_numbers,
     stat_mean,
     stat_median,

@@ -17,9 +17,9 @@
 模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
 
 ``fcmd <tool>`` 先按生成清单 :mod:`fcmd.cli._manifest` 只加载目标工具；
-清单未命中 / 过期 / 与 DSL 重名时回退 :func:`fcmd.cli._discovery.ensure_tools_discovered`
+清单未命中 / 过期时回退 :func:`fcmd.cli._discovery.ensure_tools_discovered`
 全量扫描。工具列表（无参 / ``--help``）同样优先走清单快路径，清单不可用 /
-过期或存在用户 ``commands.toml`` 时回退全量发现；内建命令始终走全量发现。
+过期时回退全量发现；内建命令始终走全量发现。
 ``import fcmd`` 冷启动不受影响。
 
 用法
@@ -102,7 +102,7 @@ class FcmdApp:
 
         优先走清单快路径（:func:`fcmd.cli._discovery.list_tool_rows`）：名字 /
         别名 / 描述都是生成期固化的静态元数据，不需要导入工具模块。清单
-        不可用 / 过期或存在用户 ``commands.toml`` 时回退全量发现。
+        不可用 / 过期时回退全量发现。
         """
         from fcmd.cli._discovery import list_tool_rows
         from fcmd.console import Table, get_console

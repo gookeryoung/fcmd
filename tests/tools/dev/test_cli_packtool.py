@@ -1,11 +1,10 @@
-"""packtool 工具测试。
+"""packtool 工具测试（普通 Python 工具模块）。
 
-验证 ``fcmd.tools.dev.packtool`` 模块（src/embed/zip/clean）与 DSL 子命令
-deps/wheel（``src/fcmd/commands/packtool.toml``，逐子命令合并注册）：
+验证 ``fcmd.tools.dev.packtool`` 模块（src/deps/wheel/embed/zip/clean）：
 - 工具注册
 - src 子命令（源码打包）
-- deps 子命令（依赖打包，DSL 声明）
-- wheel 子命令（wheel 打包，DSL 声明）
+- deps 子命令（依赖打包）
+- wheel 子命令（wheel 构建）
 - embed 子命令（嵌入式 Python 安装）
 - zip 子命令（zip 包打包）
 - clean 子命令（构建目录清理）
@@ -14,6 +13,7 @@ deps/wheel（``src/fcmd/commands/packtool.toml``，逐子命令合并注册）�
 
 from __future__ import annotations
 
+import subprocess
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -24,7 +24,6 @@ import fcmd as fx
 import fcmd.tools.dev.packtool
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.core.toolkit.exec import _build_task_spec
 from fcmd.tools.dev.packtool import (
     _normalize_arch,
     clean_build_dir,
@@ -127,14 +126,26 @@ class TestPacktoolSource:
         assert "源码打包完成" in out
 
 
-class TestPacktoolDslSubcommands:
-    """packtool DSL 子命令（deps/wheel）与合并注册测试。"""
+class TestPacktoolDepsWheel:
+    """packtool deps/wheel 子命令测试。"""
 
-    def test_deps_list_expansion_and_message(self) -> None:
-        """DSL 子命令 deps：list 参数独占占位符按元素展开，message 注入。"""
-        spec = _TOOL_REGISTRY["packtool"]["deps"]
-        task = _build_task_spec(spec, {"packages": ["requests", "flask"], "lib_dir": "libs"})
-        assert task.cmd == [
+    def test_deps_cmd_and_message(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """deps：list 参数按元素展开，成功后打印 message。"""
+        captured: list[Any] = []
+
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            captured.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr("fcmd.tools.dev.packtool.subprocess.run", fake_run)
+        assert run_tool("packtool", ["deps", "requests", "flask"]) == 0
+        assert captured[0] == [
             "pip",
             "install",
             "--target",
@@ -144,44 +155,26 @@ class TestPacktoolDslSubcommands:
             "requests",
             "flask",
         ]
-        assert getattr(spec.func, "__dsl_message__", None) == "依赖打包完成: {lib_dir}"
+        assert "依赖打包完成: libs" in capsys.readouterr().out
 
-    def test_wheel_cmd(self) -> None:
-        """DSL 子命令 wheel：path 参数插值。"""
-        spec = _TOOL_REGISTRY["packtool"]["wheel"]
-        task = _build_task_spec(spec, {"project_dir": ".", "output_dir": "dist"})
-        assert task.cmd == ["pip", "wheel", "--no-deps", "--wheel-dir", "dist", "."]
-        assert getattr(spec.func, "__dsl_message__", None) == "Wheel 打包完成: {output_dir}"
-
-    def test_merged_subcommands_visible(self) -> None:
-        """合并注册后 Python 子命令（src/embed/zip/clean）与 DSL 子命令（deps/wheel）全部可见。"""
-        subs = fx.list_subcommands("packtool")
-        assert {"src", "embed", "zip", "clean", "deps", "wheel"} <= set(subs)
-
-
-class TestPacktoolDslRunTool:
-    """packtool 通过 run_tool 集成测试（DSL 子命令经引擎执行）。"""
-
-    def test_deps_via_run_tool(
+    def test_wheel_cmd_and_message(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """fcmd packtool deps <packages> 通过 run_tool 调用，成功后打印 message。"""
+        """wheel：path 参数转字符串后插值，成功后打印 message。"""
         captured: list[Any] = []
 
-        def fake_run(cmd: Any, **kwargs: Any) -> Any:
+        def fake_run(cmd: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
             captured.append(cmd)
-            return type("CP", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+            return subprocess.CompletedProcess(cmd, 0, "", "")
 
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setattr("fcmd.core.execution.task_command.subprocess.run", fake_run)
-        code = run_tool("packtool", ["deps", "requests"])
-        assert code == 0
-        assert captured[0][:3] == ["pip", "install", "--target"]
-        out = capsys.readouterr().out
-        assert "依赖打包完成" in out
+        monkeypatch.setattr("fcmd.tools.dev.packtool.subprocess.run", fake_run)
+        assert run_tool("packtool", ["wheel"]) == 0
+        assert captured[0] == ["pip", "wheel", "--no-deps", "--wheel-dir", "dist", "."]
+        assert "Wheel 打包完成: dist" in capsys.readouterr().out
 
     def test_deps_message_absent_on_failure(
         self,
@@ -192,8 +185,8 @@ class TestPacktoolDslRunTool:
         """deps 执行失败时返回码非零且不打印完成消息。"""
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr(
-            "fcmd.core.execution.task_command.subprocess.run",
-            lambda cmd, **kwargs: type("CP", (), {"returncode": 1, "stdout": "", "stderr": "boom"})(),
+            "fcmd.tools.dev.packtool.subprocess.run",
+            lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 1, "", "boom"),
         )
         code = run_tool("packtool", ["deps", "requests"])
         assert code != 0

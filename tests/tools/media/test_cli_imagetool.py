@@ -1,6 +1,6 @@
 """imagetool 工具测试。
 
-验证 ``fcmd.tools.media.mediabase`` 模块：
+验证 ``fcmd.infras.media`` 基础设施与 ``fcmd.tools.media.imagetool``：
 - 工具注册
 - 私有辅助函数
 - 各子命令通过 run_tool 调用
@@ -15,15 +15,16 @@ from pathlib import Path
 import pytest
 
 import fcmd as fx
-import fcmd.tools.media.mediabase
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.media.mediabase import (
+from fcmd.infras.media import (
     HAS_PIL,
     _apply_exif_modifications,
     _apply_single_exif_set,
     _load_font,
     _resolve_position,
     _save_image,
+    exif_items,
+    image_resize,
 )
 
 
@@ -116,31 +117,29 @@ class TestImagetoolHelpers:
             """模拟 PIL.Exif 模拟对象。"""
 
         exif: FakeExif = FakeExif()
-        _apply_single_exif_set(exif, "271=FCMD")
+        assert _apply_single_exif_set(exif, "271=FCMD") is None
         assert exif[271] == "FCMD"
 
-    def test_apply_single_exif_set_invalid_no_eq(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """缺少 = 的项被跳过并打印提示。"""
+    def test_apply_single_exif_set_invalid_no_eq(self) -> None:
+        """缺少 = 的项返回提示且不写入。"""
 
         class FakeExif(dict[int, object]):
             pass
 
         exif: FakeExif = FakeExif()
-        _apply_single_exif_set(exif, "invalid")
-        out = capsys.readouterr().out
-        assert "缺少 =" in out
+        warning = _apply_single_exif_set(exif, "invalid")
+        assert warning is not None and "缺少 =" in warning
         assert len(exif) == 0
 
-    def test_apply_single_exif_set_invalid_tag(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """非数字标签号被跳过并打印提示。"""
+    def test_apply_single_exif_set_invalid_tag(self) -> None:
+        """非数字标签号返回提示且不写入。"""
 
         class FakeExif(dict[int, object]):
             pass
 
         exif: FakeExif = FakeExif()
-        _apply_single_exif_set(exif, "abc=value")
-        out = capsys.readouterr().out
-        assert "无效标签号" in out
+        warning = _apply_single_exif_set(exif, "abc=value")
+        assert warning is not None and "无效标签号" in warning
         assert len(exif) == 0
 
     def test_apply_exif_modifications_clear_then_set(self) -> None:
@@ -150,8 +149,9 @@ class TestImagetoolHelpers:
             pass
 
         exif: FakeExif = FakeExif({1: "old"})
-        modified = _apply_exif_modifications(exif, ["2=new"], clear=True)
+        modified, warnings = _apply_exif_modifications(exif, ["2=new"], clear=True)
         assert modified is True
+        assert warnings == []
         assert 1 not in exif
         assert exif[2] == "new"
 
@@ -162,8 +162,9 @@ class TestImagetoolHelpers:
             pass
 
         exif: FakeExif = FakeExif({1: "old"})
-        modified = _apply_exif_modifications(exif, None, clear=False)
+        modified, warnings = _apply_exif_modifications(exif, None, clear=False)
         assert modified is False
+        assert warnings == []
         assert exif == {1: "old"}
 
 
@@ -324,7 +325,7 @@ class TestImagetoolCommands:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Pillow 未安装时打印提示。"""
-        monkeypatch.setattr("fcmd.tools.media.mediabase.HAS_PIL", False)
+        monkeypatch.setattr("fcmd.infras.media.HAS_PIL", False)
         out = tmp_path / "out.png"
         code = run_tool("imagetool", ["r", str(sample_image), str(out), "10"])
         assert code == 0
@@ -361,7 +362,7 @@ class TestNoDepsGuards:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Pillow 未安装时各子命令打印提示。"""
-        monkeypatch.setattr("fcmd.tools.media.mediabase.HAS_PIL", False)
+        monkeypatch.setattr("fcmd.infras.media.HAS_PIL", False)
         code = run_tool("imagetool", [subcommand, *args])
         assert code == 0
         assert "未安装 Pillow" in capsys.readouterr().out
@@ -375,8 +376,6 @@ class TestEdgeCases:
 
     def test_image_resize_no_keep_ratio_with_height_direct(self, sample_image: Path, tmp_path: Path) -> None:
         """resize 拉伸模式显式传 height（直接调用绕过 CLI int|None 限制）。"""
-        from fcmd.tools.media.mediabase import image_resize
-
         out = tmp_path / "out.png"
         image_resize(sample_image, out, width=30, height=20, keep_ratio=False)
         assert out.exists()
@@ -392,14 +391,11 @@ class TestEdgeCases:
         assert code == 0
         assert "直方图" in capsys.readouterr().out
 
-    def test_print_exif_with_data(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """_print_exif 打印有数据的 EXIF。"""
-        from fcmd.tools.media.mediabase import _print_exif
-
-        _print_exif({271: "FCMD", 272: "Test"})
-        out = capsys.readouterr().out
-        assert "271" in out
-        assert "FCMD" in out
+    def test_exif_items_with_data(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """exif_items 返回标签列表。"""
+        items = exif_items({271: "FCMD", 272: "Test"})
+        assert items == [(271, "FCMD"), (272, "Test")]
+        assert exif_items({}) == []
 
 
 # ---------------------------------------------------------------------- #

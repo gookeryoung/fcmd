@@ -1,7 +1,7 @@
 """网络探测与镜像测速的共享实现。
 
-被 DSL 网络动作（``urlcheck``）与 Python 工具（``envdev`` / ``llmdown``）
-共用，故下沉到中立共享层，避免 tools → dsl 的反向依赖。
+被网络工具（``urlcheck``）与 Python 工具（``envdev`` / ``llmdown``）共用，
+故下沉到中立共享层。
 
 ``urllib.request`` 在函数内惰性导入（连带 ssl 链约 37ms），避免工具发现期
 为每个 CLI 命令付出启动成本。

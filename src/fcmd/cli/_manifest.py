@@ -1,10 +1,10 @@
 """静态工具清单读取（快路径的清单校验与查询）。
 
 ``fcmd <tool>`` 的默认路径需要全量发现（扫描 + 导入 ``fcmd.tools`` 下全部
-工具模块并加载全部 DSL 声明），单个工具调用为此付出约 150ms 固定成本。
-本模块读取生成文件 :mod:`fcmd.cli._manifest_data`（工具名 → 模块路径 /
-DSL 文件），配合 :func:`fcmd.cli._discovery.resolve_tool_fast` 只导入目标
-工具，把 ``fcmd <tool>`` 的启动成本压到「解释器 + 单个模块」。
+工具模块），单个工具调用为此付出约 150ms 固定成本。本模块读取生成文件
+:mod:`fcmd.cli._manifest_data`（工具名 → 模块路径），配合
+:func:`fcmd.cli._discovery.resolve_tool_fast` 只导入目标工具，把
+``fcmd <tool>`` 的启动成本压到「解释器 + 单个模块」。
 
 清单是生成文件，新增 / 删除 / 改名工具后须重新生成:：
 
@@ -15,9 +15,8 @@ DSL 文件），配合 :func:`fcmd.cli._discovery.resolve_tool_fast` 只导入�
 :func:`tool_layout` 用「``fcmd/tools`` 与 ``fcmd/apps`` 下的候选模块文件集合」
 做布局指纹：布局一致说明没有新增 / 删除工具模块，清单条目仍指向有效模块。
 
-列表路径额外要求 :func:`tool_digest`（工具源码 + 内置 ``commands/*.toml``
-的内容指纹）与生成期一致：描述与别名都写在这些文件里，只校验布局会列出
-过期文案。
+列表路径额外要求 :func:`tool_digest`（工具源码内容指纹）与生成期一致：
+描述与别名都写在这些文件里，只校验布局会列出过期文案。
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ __all__ = [
     "SCHEMA",
     "ToolEntry",
     "aliases_for",
-    "ambiguous_names",
     "clear_cache",
     "list_rows",
     "load",
@@ -49,16 +47,12 @@ logger = LazyLogger(__name__)
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 
 # 清单格式版本：与 ``_manifest_data.SCHEMA`` 不一致时视为过期。
-# 2：新增 ``DESCRIPTIONS`` / ``DIGEST``（列表快路径）。
-SCHEMA = 2
+# 3：工具清单只覆盖 Python 模块，移除重名集合与 TOML 文件指纹。
+SCHEMA = 3
 
 
 class ToolEntry(NamedTuple):
-    """清单中的单条工具记录。
-
-    ``kind`` 为 ``"python"`` 时 ``target`` 是模块路径；为 ``"dsl"`` 时
-    ``target`` 是内置 ``fcmd/commands`` 下的 TOML 文件名。
-    """
+    """清单中的单条工具记录（``target`` 为工具模块路径）。"""
 
     name: str
     kind: str
@@ -70,7 +64,6 @@ class _Manifest(NamedTuple):
 
     tools: dict[str, ToolEntry]
     aliases: dict[str, str]
-    ambiguous: frozenset[str]
     descriptions: dict[str, str]
     digest: str
 
@@ -106,8 +99,7 @@ def _source_files() -> list[tuple[str, Path]] | None:
     """返回影响工具元数据的文件（相对 fcmd 包的路径 + 绝对路径）。
 
     覆盖范围与 :func:`tool_layout` 的扫描规则一致（``tools`` / ``apps`` 两个
-    工具根下的候选模块），并加上内置 ``commands/*.toml``（DSL 命令的名字 /
-    别名 / 描述都在这里）。``tools`` 目录读取失败返回 ``None``（按清单不可用
+    工具根下的候选模块）。``tools`` 目录读取失败返回 ``None``（按清单不可用
     处理）；``apps`` 目录缺失时跳过。
     """
     root = _PACKAGE_ROOT
@@ -120,12 +112,6 @@ def _source_files() -> list[tuple[str, Path]] | None:
             scan_root = root / root_name
             if scan_root.is_dir():
                 files.extend(_collect_candidates(root_name, scan_root))
-        commands_root = root / "commands"
-        if commands_root.is_dir():
-            for sub in sorted(commands_root.iterdir(), key=lambda item: item.name):
-                if sub.name.startswith("_") or not sub.name.endswith(".toml"):
-                    continue
-                files.append((f"commands/{sub.name}", sub))
     except OSError as exc:
         logger.debug("工具源码目录读取失败，清单不可用: %s", exc)
         return None
@@ -149,8 +135,8 @@ def tool_layout() -> frozenset[str] | None:
 def tool_digest() -> str | None:
     """返回工具源码与内置声明的内容指纹（列表快路径的新鲜度校验）。
 
-    逐文件读入 ``blake2b``，任一工具模块或 ``commands/*.toml`` 的内容变化
-    都会改变指纹。读取失败返回 ``None``（按清单不可用处理）。
+    逐文件读入 ``blake2b``，任一工具模块的内容变化都会改变指纹。读取失败
+    返回 ``None``（按清单不可用处理）。
     """
     files = _source_files()
     if files is None:
@@ -187,8 +173,8 @@ def load() -> _Manifest | None:
 def load_strict() -> _Manifest | None:
     """在 :func:`load` 基础上追加内容指纹校验（列表快路径用）。
 
-    工具描述来自模块源码 / TOML 声明，布局不变而内容变化（改文案、改别名）
-    时清单会过期，必须回退全量发现。结果同样进程内缓存。
+    工具描述来自模块源码，布局不变而内容变化（改文案、改别名）时清单会
+    过期，必须回退全量发现。结果同样进程内缓存。
     """
     global _strict_loaded, _strict_cache  # noqa: PLW0603 - 严格缓存为模块级单例
     if not _strict_loaded:
@@ -223,7 +209,6 @@ def _build() -> _Manifest | None:
     return _Manifest(
         dict(data.TOOLS),
         dict(data.ALIASES),
-        frozenset(data.AMBIGUOUS),
         dict(data.DESCRIPTIONS),
         data.DIGEST,
     )
@@ -273,14 +258,6 @@ def aliases_for(canonical: str) -> list[str]:
     return sorted(alias for alias, target in manifest.aliases.items() if target == canonical)
 
 
-def ambiguous_names() -> frozenset[str]:
-    """返回同时被 Python 模块与内置 DSL 声明的工具名（须走全量发现合并）。"""
-    manifest = load()
-    if manifest is None:
-        return frozenset()
-    return manifest.ambiguous
-
-
 def _literal(value: str) -> str:
     """生成双引号 Python 字符串字面量（与 ``ruff format`` 风格一致）。"""
     import json
@@ -295,47 +272,31 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
 
         uv run python -m fcmd.cli._manifest_data
 
-    生成时隔离用户级 DSL（``FCMD_HOME`` 指向临时目录），保证清单与用户
-    配置无关；``tests/cli/test_tools_manifest.py`` 会断言清单与实跑发现一致。
+    ``tests/cli/test_tools_manifest.py`` 会断言清单与实跑发现一致。
     """
-    import os
-    import tempfile
     from pathlib import Path
 
     from fcmd.cli import _discovery
     from fcmd.core.toolkit import _TOOL_REGISTRY
-    from fcmd.dsl.loader import builtin_tool_decl, builtin_tool_files
 
-    with tempfile.TemporaryDirectory() as tmp:
-        os.environ["FCMD_HOME"] = tmp
-        _discovery._TOOLS_DISCOVERED = False
-        _discovery._TOOL_ALIASES.clear()
-        _discovery._TOOL_MODULES.clear()
-        _discovery._DSL_TOOL_SOURCES.clear()
-        _discovery.ensure_tools_discovered()
+    _discovery._TOOLS_DISCOVERED = False
+    _discovery._TOOL_ALIASES.clear()
+    _discovery._TOOL_MODULES.clear()
+    _discovery.ensure_tools_discovered()
 
-        registered = set(_TOOL_REGISTRY)
-        python_tools = {name: path for name, path in _discovery._TOOL_MODULES.items() if name in registered}
-        dsl_files: dict[str, str] = {}
-        for name in _discovery._DSL_TOOL_SOURCES:
-            for file_name in builtin_tool_files():
-                if builtin_tool_decl(file_name, name) is not None:
-                    dsl_files[name] = file_name
-                    break
-        ambiguous = frozenset(name for name in dsl_files if name in python_tools)
-        tools = {name: ToolEntry(name, "python", path) for name, path in python_tools.items()}
-        dsl_only = {name: file_name for name, file_name in dsl_files.items() if name not in python_tools}
-        tools.update({name: ToolEntry(name, "dsl", file_name) for name, file_name in dsl_only.items()})
-        # 导入失败的工具仍出现在列表里（描述为空），清单必须同样收录，
-        # 否则列表快路径会少一行；kind="unknown" 让单工具快路径继续回退。
-        for name in sorted(set(_discovery._TOOL_ALIASES.values())):
-            tools.setdefault(name, ToolEntry(name, "unknown", ""))
-        aliases = {
-            alias: target for alias, target in _discovery._TOOL_ALIASES.items() if alias != target and target in tools
-        }
-        layout = sorted(tool_layout() or ())
-        # 描述口径与运行期完全一致：直接复用 tool_description
-        descriptions = {name: _discovery.tool_description(name) for name in sorted(tools)}
+    registered = set(_TOOL_REGISTRY)
+    python_tools = {name: path for name, path in _discovery._TOOL_MODULES.items() if name in registered}
+    tools = {name: ToolEntry(name, "python", path) for name, path in python_tools.items()}
+    # 导入失败的工具仍出现在列表里（描述为空），清单必须同样收录，
+    # 否则列表快路径会少一行；kind="unknown" 让单工具快路径继续回退。
+    for name in sorted(set(_discovery._TOOL_ALIASES.values())):
+        tools.setdefault(name, ToolEntry(name, "unknown", ""))
+    aliases = {
+        alias: target for alias, target in _discovery._TOOL_ALIASES.items() if alias != target and target in tools
+    }
+    layout = sorted(tool_layout() or ())
+    # 描述口径与运行期完全一致：直接复用 tool_description
+    descriptions = {name: _discovery.tool_description(name) for name in sorted(tools)}
 
     digest = tool_digest()
     if digest is None:  # pragma: no cover - 仅源码目录不可读时触发
@@ -345,19 +306,18 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
         '"""静态工具清单（生成文件，勿手改）。',
         "",
         "由 ``python -m fcmd.cli._manifest_data`` 按当前全量发现结果生成：",
-        "工具规范名 → ``ToolEntry``（工具类型与目标）、别名表、工具描述、",
-        "内置 DSL 与 Python 模块重名的工具名，以及候选工具模块布局与源码",
-        "内容指纹（新鲜度校验用）。``fcmd <tool>`` 快路径据此只加载目标工具，",
-        "``fcmd`` 列表快路径据此直接取名字 / 别名 / 描述、不导入任何工具模块；",
-        "清单缺失 / 过期 / 与布局或内容指纹不一致时一律回退全量发现",
-        "（见 :mod:`fcmd.cli._manifest`）。",
+        "工具规范名 → ``ToolEntry``（模块路径）、别名表、工具描述，以及候选",
+        "工具模块布局与源码内容指纹（新鲜度校验用）。``fcmd <tool>`` 快路径",
+        "据此只加载目标工具，``fcmd`` 列表快路径据此直接取名字 / 别名 / 描述、",
+        "不导入任何工具模块；清单缺失 / 过期 / 与布局或内容指纹不一致时一律",
+        "回退全量发现（见 :mod:`fcmd.cli._manifest`）。",
         '"""',
         "",
         "from __future__ import annotations",
         "",
         "from fcmd.cli._manifest import ToolEntry",
         "",
-        '__all__ = ["ALIASES", "AMBIGUOUS", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "TOOLS"]',
+        '__all__ = ["ALIASES", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "TOOLS"]',
         "",
         "# 清单格式版本（与 fcmd.cli._manifest.SCHEMA 比对，不一致即视为过期）",
         f"SCHEMA = {SCHEMA}",
@@ -383,16 +343,6 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
     lines += [
         "}",
         "",
-        "# 同时被 Python 模块与内置 DSL 声明（子命令须全量合并，不走快路径）",
-    ]
-    if ambiguous:
-        lines += ["AMBIGUOUS: frozenset[str] = frozenset(", "    {"]
-        lines.extend(f'        "{name}",' for name in sorted(ambiguous))
-        lines += ["    }", ")"]
-    else:
-        lines.append("AMBIGUOUS: frozenset[str] = frozenset()")
-    lines += [
-        "",
         "# 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）",
         "LAYOUT: tuple[str, ...] = (",
     ]
@@ -400,7 +350,7 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
     lines += [
         ")",
         "",
-        "# 工具源码 + 内置 commands/*.toml 的内容指纹（列表快路径的严格校验）",
+        "# 工具源码内容指纹（列表快路径的严格校验）",
         f"DIGEST = {_literal(digest)}",
         "",
         "",

@@ -27,7 +27,7 @@ import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
-from fcmd.tools.media import mediabase
+from fcmd.infras import media
 
 __all__ = [
     "DEFAULT_SIZES_TEXT",
@@ -88,7 +88,7 @@ def parse_sizes_text(text: str) -> list[int]:
     ValueError
         未填写尺寸、包含非整数或非正数。
     """
-    from fcmd.tools.media.mediabase import parse_size_tokens
+    from fcmd.infras.media import parse_size_tokens
 
     if not text.strip():
         raise ValueError("请输入图标尺寸，例如 16,32,48,128,256")
@@ -100,7 +100,7 @@ def parse_sizes_text(text: str) -> list[int]:
 
 def normalize_quality(name: str) -> str:
     """把质量档位规范为 ``low`` / ``medium`` / ``high``（忽略大小写与空白）。"""
-    return mediabase.normalize_quality(name)
+    return media.normalize_quality(name)
 
 
 def load_settings(path: Path | None = None) -> Img2IcoSettings:
@@ -390,13 +390,13 @@ class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         quality: str,
     ) -> None:
         """后台线程：执行转换并把进度 / 结果写入队列。"""
-        from fcmd.tools.media.mediabase import convert_images
+        from fcmd.infras.media import convert_images
 
         def progress(done: int, total: int, message: str) -> None:
             self._queue.put(("progress", done, total, message))
 
         try:
-            canonical, outputs, used_sizes = convert_images(
+            result = convert_images(
                 input_path,
                 output_path,
                 fmt="win",
@@ -407,7 +407,7 @@ class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         except Exception as exc:  # 后台线程需统一回传给界面
             self._queue.put(("error", str(exc)))
             return
-        self._queue.put(("done", canonical, outputs, used_sizes))
+        self._queue.put(("done", result.canonical, result.outputs, result.used_sizes))
 
     def _poll_queue(self) -> None:
         """在主线程消费后台事件，更新进度条、日志与状态。"""

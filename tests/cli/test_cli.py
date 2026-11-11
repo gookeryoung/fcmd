@@ -410,12 +410,13 @@ class TestToolDiscovery:
         assert "libcairo-2" in captured.out
 
     def test_run_triggers_discovery(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """FcmdApp.run() 首次调用触发 discovery。"""
+        """FcmdApp.run() 清单未命中时回退全量发现。"""
         from fcmd.cli import _discovery as discovery_mod
 
         monkeypatch.setattr(discovery_mod, "_TOOLS_DISCOVERED", False)
         monkeypatch.setattr(discovery_mod, "_TOOL_ALIASES", {})
         monkeypatch.setattr(discovery_mod, "_TOOL_MODULES", {})
+        monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda _name: None)
         app = FcmdApp(["pymake", "b", "--dry-run"])
         app.run()
         assert discovery_mod._TOOLS_DISCOVERED is True
@@ -1536,8 +1537,8 @@ class TestCoverageGaps:
 # 工具模块 main() 入口测试
 # ---------------------------------------------------------------------- #
 # (工具名, 模块路径) 列表：每个工具模块的 main() 应委托 run_tool_main 并传入工具名
-# 注：casetool/colortool/hashfile/hashtool/idtool/mathtool 已迁移为
-# 内置 DSL 动作（commands/*.toml + dsl/actions/*.py），CLI Python 模块已删除。
+# 注：casetool/colortool/hashfile/hashtool/idtool/mathtool 使用
+# ``fcmd.tools.<域>`` 下的 @fcmd.tool 模块（经通用入口启动），不再定义独立 main()。
 _MAIN_ENTRY_TOOLS: list[tuple[str, str]] = [
     ("archivex", "fcmd.tools.archive.archivex"),
     ("bumpversion", "fcmd.tools.dev.bumpversion"),

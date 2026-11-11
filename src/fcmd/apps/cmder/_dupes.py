@@ -1,7 +1,7 @@
 """cmderw 重复文件查找纯逻辑：大小预筛 + 哈希确认，结果可删除或移动。
 
-遍历复用 :func:`fcmd.tools.hashbase.iter_directory_files`，哈希复用
-:func:`fcmd.tools.hashbase.compute_file_hash`；只有大小相同的候选才计算哈希，
+遍历复用 :func:`fcmd.infras.hashing.iter_directory_files`，哈希复用
+:func:`fcmd.infras.hashing.compute_file_hash`；只有大小相同的候选才计算哈希，
 避免对全部文件做 I/O。删除动作由 Tk 层复用现有回收站 / 永久删除入口，本模块
 只负责「找出重复组」与「把多余副本移动到目标目录」。
 """
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fcmd.tools import hashbase
+from fcmd.infras import hashing
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -76,7 +76,7 @@ def _collect_files(roots: Sequence[Path]) -> list[Path]:
     for raw_root in roots:
         root = Path(raw_root)
         if root.is_dir():
-            candidates: Iterable[Path] = hashbase.iter_directory_files(root)
+            candidates: Iterable[Path] = hashing.iter_directory_files(root)
         elif root.is_file():
             candidates = (root,)
         else:
@@ -98,7 +98,7 @@ def find_duplicates(
     progress: Callable[[int, int, str], None] | None = None,
 ) -> DuplicateReport:
     """查找重复文件：先按大小分桶，仅对同大小候选计算哈希确认。"""
-    hashbase.ensure_algorithm(algorithm)
+    hashing.ensure_algorithm(algorithm)
     if min_size < 0:
         raise ValueError("最小大小不能为负数")
     files = _collect_files(roots)
@@ -119,7 +119,7 @@ def find_duplicates(
         by_digest: dict[str, list[Path]] = {}
         for file_path in candidates[size]:
             try:
-                digest = hashbase.compute_file_hash(file_path, algorithm)
+                digest = hashing.compute_file_hash(file_path, algorithm)
             except OSError:
                 done += 1
                 continue

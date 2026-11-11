@@ -1,6 +1,6 @@
 """nettool 工具测试。
 
-验证 ``fcmd.tools.net.netbase`` 模块：
+验证 ``fcmd.infras.net`` 基础设施与 ``fcmd.tools.net.nettool``：
 - 工具注册与子命令结构
 - http_get / http_post / http_head（mock urlopen）
 - HTTPError / URLError 错误处理
@@ -16,9 +16,8 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
-import fcmd.dsl.toolcmd.net
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.net.netbase import http_get, http_head, http_post
+from fcmd.infras.net import http_get, http_head, http_post
 
 # ---------------------------------------------------------------------- #
 # 辅助函数

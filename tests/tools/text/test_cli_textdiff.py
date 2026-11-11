@@ -1,8 +1,8 @@
 """textdiff 工具测试。
 
-验证 ``fcmd.tools.text.textbase`` 模块：
+验证 ``fcmd.infras.text`` 模块：
 - 工具注册与两子命令结构（file/dir）
-- ``_read_lines`` 文本读取（utf-8/回退/二进制检测）
+- ``read_lines`` 文本读取（utf-8/回退/二进制检测）
 - ``colorize_diff`` ANSI 着色
 - ``compare_files`` 文件比较（相同/不同/上下文）
 - ``compare_directories`` 目录比较（仅左/仅右/不同/相同/递归/模式）
@@ -16,11 +16,11 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, run_tool
-from fcmd.tools.text.textbase import (
-    _read_lines,
+from fcmd.infras.text import (
     colorize_diff,
     compare_directories,
     compare_files,
+    read_lines,
 )
 
 
@@ -43,23 +43,23 @@ class TestRegistration:
 
 
 # ============================================================================ #
-# _read_lines
+# read_lines
 # ============================================================================ #
 class TestReadLines:
-    """_read_lines 文本读取测试。"""
+    """read_lines 文本读取测试。"""
 
     def test_utf8(self, tmp_path: Path) -> None:
         """读取 utf-8 文本文件。"""
         f = tmp_path / "utf8.txt"
         f.write_text("line1\nline2\n", encoding="utf-8")
-        lines = _read_lines(f)
+        lines = read_lines(f)
         assert lines == ["line1\n", "line2\n"]
 
     def test_fallback_encoding(self, tmp_path: Path) -> None:
         """非 utf-8 字节回退为 utf-8 + errors='replace'。"""
         f = tmp_path / "gbk.txt"
         f.write_bytes("中文".encode("gbk"))  # gbk 字节非 utf-8 合法
-        lines = _read_lines(f)
+        lines = read_lines(f)
         assert len(lines) >= 1  # 替换字符后仍可读
 
     def test_binary_file_raises(self, tmp_path: Path) -> None:
@@ -67,7 +67,7 @@ class TestReadLines:
         f = tmp_path / "bin.dat"
         f.write_bytes(b"binary\x00data")
         with pytest.raises(ValueError, match="二进制文件不支持比较"):
-            _read_lines(f)
+            read_lines(f)
 
 
 # ============================================================================ #

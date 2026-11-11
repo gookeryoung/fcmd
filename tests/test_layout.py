@@ -1,10 +1,10 @@
 """包布局守卫：把目录不变量固化成可执行断言。
 
-``fcmd`` 的三套机制隐式依赖目录形状——``fcmd.tools`` / ``fcmd.apps`` 的工具发现
+``fcmd`` 的机制隐式依赖目录形状——``fcmd.tools`` / ``fcmd.apps`` 的工具发现
 只扫顶层与一层领域子包（``cli/_discovery.py``）；``cli/_manifest.tool_layout``
-用同一形状做静态清单的新鲜度指纹；``dsl/actions/_index`` 按模块路径懒加载动作
-实现。目录被无意加深、留空或塞入非工具目录时，这些机制不会报错，只会静默回退
-（清单失效）或漏发现（工具消失），因此用独立的结构断言把问题变成红灯。
+用同一形状做静态清单的新鲜度指纹。目录被无意加深、留空或塞入非工具目录时，
+这些机制不会报错，只会静默回退（清单失效）或漏发现（工具消失），因此用
+独立的结构断言把问题变成红灯。
 """
 
 from __future__ import annotations
@@ -93,12 +93,11 @@ def test_test_dirs_mirror_tool_domains() -> None:
 def test_tool_cli_tests_mirror_tool_modules() -> None:
     """``tests/tools/test_cli_<名>.py`` 必须对应顶层工具模块 ``tools/<名>.py``。
 
-    DSL 声明式命令的测试归 ``tests/dsl``（与 ``src/fcmd/commands/*.toml`` 的
-    声明层对应），不应散落在 ``tests/tools`` 根目录，否则按目录找测试会同时
-    命中两套归属。
+    领域工具的行为测试放在 ``tests/tools/<域>/``，不应散落在 ``tests/tools``
+    根目录，否则按目录找测试会同时命中两套归属。
     """
     tool_modules = {p.stem for p in TOOLS.glob("*.py")}
     stray = sorted(
         p.name for p in (TESTS / "tools").glob("test_cli_*.py") if p.stem[len("test_cli_") :] not in tool_modules
     )
-    assert not stray, f"tests/tools 根的 test_cli_* 无对应顶层工具模块（DSL 命令测试应放 tests/dsl）: {stray}"
+    assert not stray, f"tests/tools 根的 test_cli_* 无对应顶层工具模块: {stray}"

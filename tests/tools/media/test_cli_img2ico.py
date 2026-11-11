@@ -1,6 +1,6 @@
 """img2ico 工具测试。
 
-验证 ``fcmd.tools.media.mediabase`` 模块：
+验证 ``fcmd.infras.media`` 与 ``fcmd.tools.media.img2ico``：
 - 工具注册与常量
 - icon_build 核心转换函数（SVG / 位图 / ICO / ICNS）
 - 尺寸解析、质量档位、输出路径语义
@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.tools.media.mediabase import (
+from fcmd.infras.media import (
     IMG2ICO_IMAGE_EXTENSIONS,
     SVG_TO_ICO_MAC_SIZES,
     SVG_TO_ICO_WIN_SIZES,
@@ -362,11 +362,11 @@ class TestBatchConversion:
         (source / "b.png").write_bytes(sample_png.read_bytes())
         (source / "note.txt").write_text("skip")
 
-        canonical, outputs, sizes = convert_images(source, sizes=[16, 32])
-        assert canonical == "windows"
-        assert [path.name for path in outputs] == ["a.ico", "b.ico"]
-        assert all(path.exists() for path in outputs)
-        assert sizes == [(16, 16), (32, 32)]
+        result = convert_images(source, sizes=[16, 32])
+        assert result.canonical == "windows"
+        assert [path.name for path in result.outputs] == ["a.ico", "b.ico"]
+        assert all(path.exists() for path in result.outputs)
+        assert result.used_sizes == [(16, 16), (32, 32)]
 
     def test_convert_empty_directory_raises(self, tmp_path: Path) -> None:
         source = tmp_path / "empty"
@@ -393,13 +393,13 @@ class TestBatchConversion:
 
     def test_convert_single_with_progress(self, sample_png: Path, tmp_path: Path) -> None:
         events: list[int] = []
-        _canonical, outputs, _sizes = convert_images(
+        result = convert_images(
             sample_png,
             tmp_path / "single.ico",
             sizes=[16],
             progress=lambda done, total, msg: events.append(done),
         )
-        assert outputs == [tmp_path / "single.ico"]
+        assert result.outputs == [tmp_path / "single.ico"]
         assert events == [1]
 
 
@@ -446,9 +446,9 @@ class TestGenSubcommand:
 
     def test_gen_output_omitted_via_library(self, sample_svg: Path) -> None:
         """库入口省略输出路径时输出到输入同目录（CLI 仍要求显式输出）。"""
-        _canonical, outputs, _sizes = convert_images(sample_svg, sizes=[16])
-        assert outputs == [sample_svg.with_suffix(".ico")]
-        assert outputs[0].exists()
+        result = convert_images(sample_svg, sizes=[16])
+        assert result.outputs == [sample_svg.with_suffix(".ico")]
+        assert result.outputs[0].exists()
 
     def test_gen_png_input(self, sample_png: Path, tmp_path: Path) -> None:
         """位图输入可直接转换。"""
@@ -479,7 +479,7 @@ class TestGenSubcommand:
         assert "错误" in capsys.readouterr().out
 
     def test_gen_missing_input_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """不存在的输入文件应打印错误提示（DSL action 不 raise，退出码保持 0）。"""
+        """不存在的输入文件应打印错误提示（工具层捕获，退出码保持 0）。"""
         missing = tmp_path / "nope.svg"
         out = tmp_path / "out.ico"
         code = run_tool("img2ico", ["gen", str(missing), str(out)])

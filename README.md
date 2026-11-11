@@ -99,7 +99,7 @@ fcmd completion --shell fish | source         # fish
 
 ## 工具列表
 
-99 个工具（其中 50 个为 Python 模块工具——`alarmclock`/`archivex`/`bumpversion`/`checksum`/`cmderw`/`docdiff`/`docdiffw`/`envdev`/`envw`/`filecheck`/`gittool`/`img2icow`/`img2pdf`/`img2pdfw`/`lscalc`/`llmbench`/`llmchat`/`llmchatw`/`llmconvert`/`llmconvertw`/`llmdoctor`/`llmdown`/`llmengine`/`llmenginew`/`llmenv`/`llmmodel`/`llmqnt`/`llmqntw`/`llmserve`/`llmservew`/`mirrortool`/`mirrortoolw`/`ncmconvertw`/`packtool`/`pdfcrypt`/`pdfcryptw`/`pdfsplit`/`pdfsplitw`/`pdftool`/`portcheck`/`pymake`/`pyprof`/`regexvalidate`/`regexvalidatew`/`reshack`/`reshackw`/`screenshot`/`videoconv`/`videoconvw`/`zipencrypt`；其余 49 个为 DSL 声明式工具——纯 exec 与 compute 工具（`clr`/`autofmt`/`dockercmd`/`sshcopyid`/`reseticoncache`/`piptool`）及 action 原语工具（`setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`）由 DSL 声明），按用途分组：
+99 个工具，全部为 Python 模块（`@fcmd.tool` 注册），按用途分组：
 
 工具名（如 `imagetool`）为官方入口并生成同名全局脚本；短名（如 `imaget`）是显式别名，同样保留全局脚本。例外：`taskkill` / `which` 与系统命令同名，不生成同名全局脚本（避免遮蔽系统命令），只保留短名 `taskk` / `wch` 脚本；规范名仍可通过 `fcmd taskkill` / `fcmd which` 使用。仓库不做 `tool`/`cmd` 后缀自动推断，拼错的命令会直接报「未找到工具」。
 
@@ -151,7 +151,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `bumpversion` | - | 版本号自动管理（patch/minor/major + git tag） |
 | `packtool` | - | Python 打包（源码/依赖/wheel/嵌入式 Python/zip/清理） |
 | `pyprof` | - | Python 代码性能分析（`run`/`module`/`load`；cProfile 采集 + 单文件 HTML 报告：热点排行、调用关系、火焰图、模块聚合） |
-| `piptool` | `pipt` | pip 包管理（安装/卸载/重装/下载/升级/冻结，DSL 声明 + compute 通配符展开） |
+| `piptool` | `pipt` | pip 包管理（安装/卸载/重装/下载/升级/冻结，通配符展开与受保护包过滤） |
 
 ### 文件与目录
 
@@ -242,7 +242,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
-| `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：顶部菜单栏按文件/选中/视图/工具/命令/配置/帮助分组、按选择数与面板状态动态启用；左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签；支持锁定、关闭其他、重命名标签与选择记忆）、Ctrl+D 书签、Alt+Down 历史跳转、Alt+Left/Alt+Right 后退/前进，视图→同步浏览（Ctrl+Shift+S，一侧导航对侧按相同相对动作跟随）、视图→分支视图（Ctrl+B，递归平铺文件并显示相对路径，复制保留结构）、文件/右键「打开方式…」（最近程序持久化），F5 复制/F6 移动进入传输队列（逐项进度/按项取消/失败重试，可暂停恢复、任务内并行 1–8），Ctrl+Shift+C 目录比较（仅文件名/按大小/按时间（2 秒容差）/按内容，包含与排除掩码、仅比较文件）与预演式目录同步（左→右/右→左/双向镜像，总是覆盖/仅较新覆盖/跳过冲突，逐项勾选与全选/反选，复制入队、删除走回收站，执行后结果窗口），Ctrl+Q 内嵌快速查看（文本/图片/PE 与二进制，限读并提示截断；编码自动探测与手动切换、十六进制视图、图片缩放与适应窗口）、Ctrl+F8 只读目录树（跟随活动面板）、视图模式（Ctrl+F1 简要 / Ctrl+F2 详细 / Ctrl+Shift+F1 缩略图，每个标签独立记忆模式与列宽，详细列顺序固定、宽度可拖拽并持久化；缩略图异步加载 + Canvas 虚拟化 + 内存 LRU，PNG/GIF/PPM/JPEG/BMP/WebP/TIFF/ICO 统一由 Pillow 解码，非图片、超大或解码失败的文件显示类型徽标）、Ctrl+Enter 命令行栏（上下键历史与草稿恢复、Tab 补全首个路径/命令 token，删除类命令二次确认）、配置→颜色规则（按掩码/大小/类型/时间，持久化），F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、定义过滤器（包含/排除掩码持久化）、Ctrl+M 多重命名工具（名称/扩展名掩码与日期时间占位符、普通/正则查找替换、大小写、计数器排序与补零、可勾选预览并标出冲突/非法/超长/覆盖、预设保存加载删除并持久化，分支视图可用）、Space 统计大小、「查找重复文件…」（大小预筛 + 哈希确认，可删除或移动），Ctrl+H 显示隐藏文件（菜单勾选同步），Alt+F5 打包/Alt+F9 解压、压缩包浏览与写入（Enter 进入、Backspace 逐级退出，F3/快速查看临时解压，F5/F6 按包内结构导出；zip/tar 可新增/删除/改名并设置压缩级别 0–9 与 zip AES-256 密码，7z/rar 仍只读）、文件分割/合并（按大小或份数、`.sha256` 校验）、Ctrl+F 搜索（区分大小写/整词/按大小与时间范围过滤，结果落入可排序临时面板并可直接复制/移动/删除/加入选择；归档视图内搜索成员名与内容，流式读取并跳过加密/超大成员）、路径栏卷下拉（盘符/挂载点与剩余空间，点击切换）、哈希与属性（批量修改时间戳、Windows 只读/隐藏切换）、用户命令（配置→用户命令…增删改/上下移/试运行，`%P`/`%T`/`%N`/`%S`/`%L` 占位符展开，可挂菜单/工具栏/右键并持久化）、生成与校验校验文件（`.sha256`/`.sha1`/`.md5`/`.sfv`，逐项列 OK/FAIL 与原因）、两个文本文件并排只读比较（增删改着色、行号对齐、同步滚动）、配置→主题（内置调色板写入设置，重开生效，非法值回落默认）、启动参数 `--left`/`--right`/`--select`（相对路径与非法路径容错），复用 archivex/hashbase/fileops，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
+| `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：顶部菜单栏按文件/选中/视图/工具/命令/配置/帮助分组、按选择数与面板状态动态启用；左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签；支持锁定、关闭其他、重命名标签与选择记忆）、Ctrl+D 书签、Alt+Down 历史跳转、Alt+Left/Alt+Right 后退/前进，视图→同步浏览（Ctrl+Shift+S，一侧导航对侧按相同相对动作跟随）、视图→分支视图（Ctrl+B，递归平铺文件并显示相对路径，复制保留结构）、文件/右键「打开方式…」（最近程序持久化），F5 复制/F6 移动进入传输队列（逐项进度/按项取消/失败重试，可暂停恢复、任务内并行 1–8），Ctrl+Shift+C 目录比较（仅文件名/按大小/按时间（2 秒容差）/按内容，包含与排除掩码、仅比较文件）与预演式目录同步（左→右/右→左/双向镜像，总是覆盖/仅较新覆盖/跳过冲突，逐项勾选与全选/反选，复制入队、删除走回收站，执行后结果窗口），Ctrl+Q 内嵌快速查看（文本/图片/PE 与二进制，限读并提示截断；编码自动探测与手动切换、十六进制视图、图片缩放与适应窗口）、Ctrl+F8 只读目录树（跟随活动面板）、视图模式（Ctrl+F1 简要 / Ctrl+F2 详细 / Ctrl+Shift+F1 缩略图，每个标签独立记忆模式与列宽，详细列顺序固定、宽度可拖拽并持久化；缩略图异步加载 + Canvas 虚拟化 + 内存 LRU，PNG/GIF/PPM/JPEG/BMP/WebP/TIFF/ICO 统一由 Pillow 解码，非图片、超大或解码失败的文件显示类型徽标）、Ctrl+Enter 命令行栏（上下键历史与草稿恢复、Tab 补全首个路径/命令 token，删除类命令二次确认）、配置→颜色规则（按掩码/大小/类型/时间，持久化），F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、定义过滤器（包含/排除掩码持久化）、Ctrl+M 多重命名工具（名称/扩展名掩码与日期时间占位符、普通/正则查找替换、大小写、计数器排序与补零、可勾选预览并标出冲突/非法/超长/覆盖、预设保存加载删除并持久化，分支视图可用）、Space 统计大小、「查找重复文件…」（大小预筛 + 哈希确认，可删除或移动），Ctrl+H 显示隐藏文件（菜单勾选同步），Alt+F5 打包/Alt+F9 解压、压缩包浏览与写入（Enter 进入、Backspace 逐级退出，F3/快速查看临时解压，F5/F6 按包内结构导出；zip/tar 可新增/删除/改名并设置压缩级别 0–9 与 zip AES-256 密码，7z/rar 仍只读）、文件分割/合并（按大小或份数、`.sha256` 校验）、Ctrl+F 搜索（区分大小写/整词/按大小与时间范围过滤，结果落入可排序临时面板并可直接复制/移动/删除/加入选择；归档视图内搜索成员名与内容，流式读取并跳过加密/超大成员）、路径栏卷下拉（盘符/挂载点与剩余空间，点击切换）、哈希与属性（批量修改时间戳、Windows 只读/隐藏切换）、用户命令（配置→用户命令…增删改/上下移/试运行，`%P`/`%T`/`%N`/`%S`/`%L` 占位符展开，可挂菜单/工具栏/右键并持久化）、生成与校验校验文件（`.sha256`/`.sha1`/`.md5`/`.sfv`，逐项列 OK/FAIL 与原因）、两个文本文件并排只读比较（增删改着色、行号对齐、同步滚动）、配置→主题（内置调色板写入设置，重开生效，非法值回落默认）、启动参数 `--left`/`--right`/`--select`（相对路径与非法路径容错），复用 archivex / infras.hashing / infras.fs，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
 | `envw` | - | 环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor：用户/系统/当前进程作用域、搜索、新建/编辑/删除/重命名、PATH 逐条路径编辑、变量引用展开预览、JSON 备份恢复，设置持久化到 `~/.fcmd/ui/envw.json`） |
 | `fonttool` | - | 推荐字体按需安装与管理（list/status/install/remove）：默认 Cascadia Code + Noto Sans SC，下载后校验 SHA256 并保存 OFL 许可证，安装到当前用户字体目录，不内置进发行包 |
 | `sysinfo` | - | 系统信息收集（Python/平台/内存/磁盘/CPU，psutil） |
@@ -427,132 +427,33 @@ graph = load_yaml("deploy.yaml")
 report = run(graph, strategy="dependency")
 ```
 
-## 命令定义 DSL
+## 工具定义（Python）
 
-exec 型简单命令无需编写 Python 模块，用 TOML 声明即可注册为工具。两种形态：**单命令**（`[commands.<name>]`，如内置的 `clr`）与**多子命令**（`[commands.<tool>.<sub>]`，如内置的 `pymake`/`gittool`/`autofmt` 纯 exec 子命令）。两级配置：包内 `fcmd/commands/*.toml`（出厂命令，按工具拆分为多个 TOML 文件）与 `${FCMD_HOME:-~/.fcmd}/commands.toml`（用户自定义，同名可覆盖内置单命令；与 Python 模块工具重名时 Python 优先，多子命令形态逐子命令合并注册——同名子命令先注册者优先，用户仅可新增子命令）。
+工具统一用普通 Python 模块 + `@fcmd.tool` 装饰器定义：函数签名即 CLI 参数
+（有默认值 → 选项，无默认值 → 位置参数；`list[str]` → 多值；`pathlib.Path` →
+路径；`Literal[...]` → choices），函数体即逻辑。纯计算与基础操作放
+`fcmd/infras/`，工具模块只做参数适配与输出。
 
-```toml
-# ~/.fcmd/commands.toml
-[commands.hello]
-help = "向某人问好"
-cmd = "echo 你好 {name} x{count}"
-cwd = "/tmp"                     # 可选：工作目录（支持 {参数名} 插值）
-timeout = 30                     # 可选：超时秒数
-env = { LANG = "zh" }            # 可选：环境变量（值支持插值）
-message = "同步完成: {name}"       # 可选：执行成功后打印的完成消息（支持插值，dry-run 不打印；目标被 when 守卫跳过时不打印）
-fail_message = "同步失败"          # 可选：执行失败后打印的失败消息（支持插值，如修复提示）
+```python
+import fcmd as fx
+from pathlib import Path
 
-[commands.hello.args.name]       # 无 default → positional 参数
-help = "目标名字"
 
-[commands.hello.args.count]
-type = "int"                     # str(默认)/int/float/bool/path/choices/list
-default = 1                      # 有 default → --count 选项（list 无 default → positional 多值）
-help = "次数"
+@fx.tool("hello", subcommand=None, help="向某人问好", param_help={"name": "目标名字", "count": "次数"})
+def hello(name: str, count: int = 1) -> None:
+    print(f"你好 {name} x{count}")
 
-[commands.publish]               # {参数名:content} 文件内容插值：读取文件内容（展开 ~，utf-8，去首尾空白）替换进 cmd
-help = "发布文件备注"
-cmd = ["notes-cli", "publish", "--text", "{note:content}"]
-[commands.publish.args.note]
-type = "path"                    # content 插值仅支持 type=str/path 参数
-default = "~/note.txt"
 
-[commands.pkg.install]           # list 参数：独占占位符按元素展开（无 shell 每元素一个 token）
-help = "批量安装"
-cmd = ["pip", "install", "{packages}"]
-[commands.pkg.install.args.packages]
-type = "list"
-help = "包名列表"
-
-[commands.fmttool.lint]          # bool 参数 on：值为真时向 cmd 尾部追加固定 token
-help = "检查并可选自动修复"
-cmd = ["ruff", "check", "{target}"]
-[commands.fmttool.lint.args.target]
-type = "str"
-default = "."
-[commands.fmttool.lint.args.fix]
-type = "bool"
-default = false
-on = ["--fix", "--unsafe-fixes"]
-
-[commands.deploy.build]           # when 守卫：探针不满足 → SKIPPED（命令退出码 0）
-help = "有代码变更才构建"
-cmd = ["make", "build"]
-when = {cmd = "git status --porcelain", expect = "nonempty"}  # 探针 cmd/path 二选一，支持 {参数名} 插值
-allow_upstream_skip = true        # 上游被跳过时豁免执行（默认连坐跳过）
-
-[commands.backup.files]           # 探针 expect：cmd 用 nonempty/empty/success/failure，path 用 exists/missing
-help = "目录已备份则跳过"
-cmd = ["robocopy", "{source}", "{dest}", "/mir"]
-when = {path = "{dest}", expect = "missing"}  # path 探针支持插值与 ~ 展开
-
-[commands.deploy.all]             # 聚合可声明 args：值经共享变量流入子任务插值
-help = "构建并部署"
-needs = ["build"]
-[commands.deploy.all.args.tag]
-type = "str"
-default = "latest"
-
-[commands.dockercmd.login]        # tty 透传：stdout/stderr 不捕获（交互式命令）
-help = "登录 Docker 镜像仓库"
-cmd = ["docker", "login", "--username", "{username}", "{registry}"]
-tty = true                        # 密码提示可见可输入
-message = "已登录镜像仓库: {registry} (用户: {username})"
-[commands.dockercmd.login.args.username]
-default = ""
-default_env = ["USERNAME", "LOGNAME", "USER", "LNAME"]  # 值等于 default 时按链取第一个非空环境变量
-
-[commands.setenv]                 # action 原语：进程内动作（fn 任务，非 subprocess）
-help = "设置环境变量"
-action = "setenv"                 # 内建动作名；参数 schema 来自动作实现签名（禁声明 args）
-message = "环境变量 {name} 已设置"
-
-[commands.pkg.u]                  # compute 计算原语：采集→计算→注入 exec 参数（输出管道）
-help = "卸载包（支持通配符）"
-cmd = ["pip", "uninstall", "-y", "{expanded}"]
-[commands.pkg.u.args.packages]
-type = "list"
-[commands.pkg.u.compute]
-action = "pip_expand"             # 计算动作：输入按实现签名取 CLI 变量，返回值注入 {expanded}
-as = "expanded"                   # 空结果（空 list/空串）→ SKIPPED；同链同名只计算一次
-
-[commands.sync]
-help = "同步（跨平台示例）"
-win.cmd = "robocopy src dst /mir"   # 字符串 → shell 执行
-unix.cmd = ["rsync", "-a", "src/", "dst"]  # 数组 → 无 shell（注入面最小）
-aliases = ["sy"]
-
-# 多子命令形态：与 Python 模块同名的工具逐子命令合并注册
-[commands.mytool.go]
-help = "执行构建"
-cmd = ["make", "build"]
-
-[commands.mytool.all]
-help = "聚合（needs 编排，无 cmd）"
-needs = ["go"]
-strategy = "thread"              # sequential/thread/async/dependency
+@fx.tool("deploy", subcommand="build", help="构建", cmd=["make", "build"], cwd=Path("."))
+def build() -> None:
+    """cmd 任务：函数体不执行，签名仅驱动 CLI。"""
 ```
 
-```bash
-fcmd hello world --count 3        # echo 你好 world x3
-fcmd sy                           # 别名调用
-fcmd mytool all                   # 聚合：先 go 后 all（thread 并行）
-```
-
-能力边界：单命令与多子命令 exec 形态（平台分支 / 参数（含 list 多值、bool on 固定 token 与 default_env 环境回退链） / 插值（含 `{参数名:content}` 文件内容插值） / cwd / env / timeout / when 守卫探针（支持参数插值与返回码判定）/ needs 聚合（含 allow_upstream_skip 豁免连坐）/ 聚合 args 共享插值 / tty 透传 / message 与 fail_message post-run 消息 / strategy / action 内建动作原语（进程内 fn 任务，参数 schema 来自动作实现签名）/ compute 计算原语（进程内计算动作返回值注入 exec 参数，输出管道形态））；matrix/if 条件编排属 YAML 编排的领地。
-
-### DSL 逻辑边界
-
-判断一段命令逻辑能否迁入 DSL：
-
-| 类别 | 判定 | 例子 |
-|------|------|------|
-| 纯 exec（含 when 守卫与聚合编排） | 可迁 DSL | `gittool a/i`（守卫链 `_init`/`_add`/`_commit`）、`piptool d/f`、`dockercmd login`（tty 透传 + default_env 环境回退）、`sshcopyid`（when 探针 + env 插值传 SSHPASS + `{参数名:content}` 公钥内容）、`reseticoncache`（win shell 链 + unix 提示分支） |
-| 输出管道（采集→计算→注入 exec 参数） | 可迁 DSL（compute 计算原语） | `piptool u/r`（`pip list` 采集 + 通配符展开/受保护包过滤注入 uninstall/install 参数；r 经 `_uninstall`/`_install` 隐藏链编排） |
-| 输出管道（计算主体为进程内逻辑，输出解析仅子步骤） | 保留 Python | `portcheck`（socket 探测主体 + psutil 占用查询回显） |
-| 动态遍历（运行时枚举文件系统） | 保留 Python | `gittool isub`、`envdev` 系列 |
-| 进程内副作用（无法映射为子进程） | 副作用型动作可迁 DSL（action 原语） | `setenv`/`writefile`/`filedate`/`filerename`/`filelevel`/`folderback`/`taskkill`/`which`/`sysinfo`（已迁入 action 原语；taskkill 逐进程 terminate→kill 回显，which 逐条查找回显，sysinfo 诊断信息打印，均无返回值消费）；`pathtool`/`filesearch`/`nettool`/`iptool` 产出计算结果（路径解析计算/搜索结果/HTTP 响应/IP 解析），非副作用型动作，保留 Python |
-| 多步有状态流程 | 保留 Python | `bumpversion`、`packtool` |
+`@fcmd.tool` 支持 `cmd`（str/list，`{参数名}` 插值）/ `needs`（DAG 依赖）/
+`strategy` / `cwd` / `env` / `timeout` / `passthrough` / `hidden` /
+`allow_upstream_skip` / `param_help`；模块级 `__tool_aliases__` 声明别名。
+平台差异在模块导入期按 `sys.platform` 选择命令；需要特殊语义（环境变量回退、
+输出管道、交互式透传）时直接写成普通函数。
 
 ## 执行策略
 
@@ -585,29 +486,27 @@ fcmd pymake chk               # 类型检查聚合（清理 + pyrefly + lint + f
 ```
 src/fcmd/
   core/          # 运行时内核：DAG、报告、执行引擎、工具注册、编排、忽略规则
-    shared/      #   中立共享层：dsl 与 tools 共同依赖（网络探测、文本 IO）
+    shared/      #   中立共享层：基础件与工具共同依赖（网络探测、文本 IO）
     toolkit/     #   函数签名 → argparse 的 CLI 工具基座
     execution/   #   sequential/thread/async/dependency 四种执行器
     orchestration/  # YAML 编排与 if 条件求值
     models/      #   通用数据模型
+  infras/        # 基础件：编解码/换算/哈希/加解密/文本/数据/文件/系统等纯函数
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
+    _entry.py    #   console script 通用入口（按 argv[0] 推断工具名）
     _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
     _manifest_data.py  # 生成文件，勿手改
   gui/           # Tk 展示基座：窗口骨架 / 主题 / UI 设置持久化（不参与工具发现）
   apps/          # 独立桌面应用（Tk GUI，自动发现；如 cmder、filesync）
   tools/         # 业务实现（自动发现）
-    archive/ calc/ dev/ llm/ media/ net/ office/ pdf/ system/ text/
-  dsl/           # TOML 命令定义与 exec/compute 原语
-    actions/     #   通用动作：@action 声明与参数转接（业务实现位于 tools/<域>）
-    toolcmd/     #   工具专用动作声明：一域一模块，只做参数转接
-  commands/      # 出厂 DSL 命令定义（*.toml）
+    archive/ calc/ crypto/ data/ dev/ llm/ media/ net/ office/ pdf/ system/ text/
   console.py     # rich 控制台薄封装
 ```
 
 新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。目录按功能域划分；图形界面版命名为 `<工具名>w.py` 并放在其核心逻辑所在域（如 `llm/llmconvertw.py`、`media/img2icow.py`）；独立桌面应用（如 `cmder`，命令 `cmderw`）放 `src/fcmd/apps/<应用>/`（一包一应用，入口 `app.py`），与 `tools` 共用工具发现与静态清单。
 
-新增 / 删除 / 改名工具、调整别名或修改工具描述（含 `commands/*.toml` 的 DSL 声明）后，重新生成静态工具清单（`fcmd <tool>` 快路径据此只加载目标工具，`fcmd` 列表快路径据此直接取名字 / 别名 / 描述而不导入工具模块；清单缺失或过期会自动回退全量发现，功能不受影响，只影响启动速度）：
+新增 / 删除 / 改名工具、调整别名或修改工具描述后，重新生成静态工具清单（`fcmd <tool>` 快路径据此只加载目标工具，`fcmd` 列表快路径据此直接取名字 / 别名 / 描述而不导入工具模块；清单缺失或过期会自动回退全量发现，功能不受影响，只影响启动速度）：
 
 ```bash
 uv run python -m fcmd.cli._manifest_data
@@ -617,7 +516,7 @@ uv run python -m fcmd.cli._manifest_data
 
 公共 API（`import fcmd as fx`）名称保持稳定；原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径已统一收敛到 `fcmd.core.*`，不保留兼容 shim。
 
-`fcmd.tools` 下的 `*base` 实现模块（`tools/media/mediabase.py`、`tools/text/textbase.py`、`tools/net/netbase.py` 等）是**半公开**层：模块 `__all__` 列出的名字可被外部导入复用，但**不承诺跨版本稳定**，可能随版本调整、改名或迁移；稳定承诺仅限上段 `import fcmd as fx` 暴露的公共 API。
+`fcmd.infras.*` 是**半公开**层：模块 `__all__` 列出的名字可被外部导入复用，但**不承诺跨版本稳定**，可能随版本调整、改名或迁移；稳定承诺仅限上段 `import fcmd as fx` 暴露的公共 API。
 
 ## 许可证
 

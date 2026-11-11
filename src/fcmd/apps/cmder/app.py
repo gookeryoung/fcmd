@@ -11,7 +11,7 @@ Alt+Left/Alt+Right 在面板历史中后退/前进。顶部菜单栏按 文件/�
 标签），Ctrl+D 管理书签，Alt+Down 从当前面板历史栈跳转。
 
 能力复用现有工具：打包/解压走 :mod:`fcmd.tools.archive.archivex`，文件哈希走
-:mod:`fcmd.tools.hashbase`，文件名/内容搜索走 :mod:`fcmd.dsl.actions.fileops`，
+:mod:`fcmd.infras.hashing`，文件名/内容搜索走 :mod:`fcmd.infras.fs`，
 窗口骨架、主题与设置持久化走 :mod:`fcmd.gui`。
 
 设置（左右面板标签与路径、书签、排序列、隐藏文件开关、颜色规则、窗口位置）保存在
@@ -348,7 +348,7 @@ _DESCRIPTION = (
     "Ctrl+Shift+C 只读比较与预演式目录同步，"
     "Ctrl+Q 快速查看、Ctrl+F8 目录树、Ctrl+Enter 命令行、配置→颜色规则，"
     "Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，"
-    "复用 archivex/hashbase/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
+    "复用 archivex/hashing/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json"
 )
 
 DEFAULT_GEOMETRY = "1240x760+60+40"
@@ -1535,7 +1535,7 @@ def extract_archive_members(archive: Path, members: Sequence[ArchiveMember], des
 
 
 # ============================================================================ #
-# 哈希 / 搜索 / 预览（复用 hashbase、fileops、textio）
+# 哈希 / 搜索 / 预览（复用 infras.hashing、infras.fs、textio）
 # ============================================================================ #
 def hash_paths(
     paths: Sequence[Path],
@@ -1543,20 +1543,20 @@ def hash_paths(
     *,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> list[HashResult]:
-    """计算文件或目录下所有文件的哈希（目录复用 hashbase 遍历规则）。"""
-    from fcmd.tools import hashbase
+    """计算文件或目录下所有文件的哈希（目录复用 infras.hashing 遍历规则）。"""
+    from fcmd.infras import hashing
 
-    hashbase.ensure_algorithm(algorithm)
+    hashing.ensure_algorithm(algorithm)
     targets: list[Path] = []
     for path in paths:
         if path.is_dir():
-            targets.extend(hashbase.iter_directory_files(path))
+            targets.extend(hashing.iter_directory_files(path))
         elif path.is_file():
             targets.append(path)
     results: list[HashResult] = []
     total = len(targets)
     for index, target in enumerate(targets, start=1):
-        results.append(HashResult(path=target, digest=hashbase.compute_file_hash(target, algorithm)))
+        results.append(HashResult(path=target, digest=hashing.compute_file_hash(target, algorithm)))
         if progress is not None:
             progress(index, total, target.name)
     return results
@@ -1582,7 +1582,7 @@ def search_paths(  # noqa: PLR0913 - 搜索开关由对话框逐项透传
         raise ValueError("搜索内容不能为空")
     if not directory.is_dir():
         raise NotADirectoryError(f"不是目录: {directory}")
-    from fcmd.dsl.actions.fileops import search_by_content, search_by_name
+    from fcmd.infras.fs import search_by_content, search_by_name
 
     active = filters or SearchFilters()
     if content:
@@ -8364,10 +8364,10 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         if not algorithm:
             return
         algorithm = algorithm.strip().lower()
-        from fcmd.tools import hashbase
+        from fcmd.infras import hashing
 
         try:
-            hashbase.ensure_algorithm(algorithm)
+            hashing.ensure_algorithm(algorithm)
         except ValueError as exc:
             self.show_error("算法无效", str(exc))
             return
