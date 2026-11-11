@@ -221,6 +221,8 @@ def make_plan(  # noqa: PLR0913
     ctx: int | None = None,
     kv_type: str | None = None,
     ubatch: int | None = None,
+    parallel: int | None = None,
+    threads_http: int | None = None,
     engine_tag: str | None = None,
     alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
@@ -241,6 +243,10 @@ def make_plan(  # noqa: PLR0913
         raise ServeError(f"不支持的 KV 类型 {kv_type!r}，可选: {', '.join(KV_SCALE)}")
     if ubatch is not None and ubatch < 1:
         raise ServeError(f"ubatch 必须为正整数: {ubatch}")
+    if parallel is not None and parallel < 1:
+        raise ServeError(f"并发槽必须为正整数: {parallel}")
+    if threads_http is not None and threads_http < 1:
+        raise ServeError(f"HTTP 线程数必须为正整数: {threads_http}")
     model_path = llmmodel.find_model(prof.quant, models_root, model)
     engine = llmengine.resolve_engine(engine_tag, home)
     context = ctx or prof.context
@@ -263,6 +269,8 @@ def make_plan(  # noqa: PLR0913
         extra_args=tuple(extra_args),
         kv_type=kv_type,
         ubatch=ubatch,
+        parallel=parallel,
+        threads_http=threads_http,
         tuning=tuning,
     )
 
@@ -426,8 +434,8 @@ def _print_plan(plan: LaunchPlan) -> None:
     )
     table.add_row(
         "调优",
-        f"{plan.tuning.label} / b{plan.tuning.batch} / np{plan.tuning.parallel} / "
-        f"cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}",
+        f"{plan.tuning.label} / b{plan.tuning.batch} / np{plan.effective_parallel} / "
+        f"th{plan.effective_threads_http or '-'} / cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}",
     )
     table.add_row("调优说明", plan.tuning.detail)
     table.add_row("监听", http_base_url(plan.host, plan.port))
@@ -471,6 +479,8 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     ctx: int | None = None,
     kv_type: str | None = None,
     ubatch: int | None = None,
+    parallel: int | None = None,
+    threads_http: int | None = None,
     engine_tag: str | None = None,
     alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
@@ -499,6 +509,10 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         覆盖 KV 缓存类型（``f16`` / ``q8_0`` / ``q4_0``）。
     ubatch:
         覆盖 ubatch。
+    parallel:
+        覆盖并发槽（``-np``）。
+    threads_http:
+        覆盖 HTTP 线程数（``--threads-http``）。
     engine_tag:
         指定引擎 tag，默认 current / 最新安装。
     alias:
@@ -520,6 +534,8 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         ctx=ctx,
         kv_type=kv_type,
         ubatch=ubatch,
+        parallel=parallel,
+        threads_http=threads_http,
         engine_tag=engine_tag,
         alias=alias,
         api_key=api_key,
@@ -540,6 +556,8 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     ctx: int | None = None,
     kv_type: str | None = None,
     ubatch: int | None = None,
+    parallel: int | None = None,
+    threads_http: int | None = None,
     engine_tag: str | None = None,
     alias: str | None = None,
     api_key: str = DEFAULT_API_KEY,
@@ -561,6 +579,8 @@ def start_cmd(  # noqa: PLR0913, PLR0917
         ctx=ctx,
         kv_type=kv_type,
         ubatch=ubatch,
+        parallel=parallel,
+        threads_http=threads_http,
         engine_tag=engine_tag,
         alias=alias,
         api_key=api_key,

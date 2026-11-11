@@ -118,20 +118,45 @@ class TestBackendArgs:
         argv = plan.argv()
         assert argv[argv.index("--spec-type") + 1] == "ngram-simple"
 
+    def test_explicit_parallel_and_threads_http_override_tuning(self, tmp_path: Path) -> None:
+        plan = _plan(tmp_path, tuning=_llmtune.preset("default"), parallel=2, threads_http=6)
+        assert plan.effective_parallel == 2
+        assert plan.effective_threads_http == 6
+        argv = plan.argv()
+        assert argv[argv.index("-np") + 1] == "2"
+        assert argv[argv.index("--threads-http") + 1] == "6"
+
 
 class TestSyncAdvancedFields:
+    @staticmethod
+    def _sync(tuning: Tuning, **fields: object) -> _llmtune.FieldSync:
+        values: dict[str, object] = {
+            "kv_value": "",
+            "ubatch_value": "",
+            "parallel_value": "",
+            "threads_http_value": "",
+            "kv_auto": False,
+            "ubatch_auto": False,
+            "parallel_auto": False,
+            "threads_http_auto": False,
+        }
+        values.update(fields)
+        return _llmtune.sync_advanced_fields(tuning, **values)  # type: ignore[arg-type]
+
     def test_strategy_value_fills_empty_fields(self) -> None:
-        synced = _llmtune.sync_advanced_fields(
-            _llmtune.preset("low-vram"),
-            kv_value="",
-            ubatch_value="",
-            kv_auto=False,
-            ubatch_auto=False,
-        )
-        assert synced == _llmtune.FieldSync("q4_0", "512", True, True)
+        synced = self._sync(_llmtune.preset("low-vram"))
+        assert (synced.kv_value, synced.ubatch_value) == ("q4_0", "512")
+        assert (synced.kv_auto, synced.ubatch_auto) == (True, True)
+        assert (synced.parallel_value, synced.threads_http_value) == ("", "")
+
+    def test_throughput_fills_parallel_and_threads_http(self) -> None:
+        synced = self._sync(_llmtune.preset("throughput"))
+        assert (synced.parallel_value, synced.parallel_auto) == ("4", True)
+        assert (synced.threads_http_value, synced.threads_http_auto) == ("8", True)
+        assert (synced.kv_value, synced.ubatch_value) == ("", "")
 
     def test_strategy_value_overrides_previous_strategy_value(self) -> None:
-        synced = _llmtune.sync_advanced_fields(
+        synced = self._sync(
             _llmtune.preset("long-context"),
             kv_value="q4_0",
             ubatch_value="512",
@@ -144,17 +169,21 @@ class TestSyncAdvancedFields:
         assert synced.ubatch_auto is False
 
     def test_switching_back_clears_but_keeps_manual_values(self) -> None:
-        synced = _llmtune.sync_advanced_fields(
+        synced = self._sync(
             _llmtune.preset("default"),
             kv_value="f16",
             ubatch_value="512",
+            parallel_value="2",
+            threads_http_value="8",
             kv_auto=False,
             ubatch_auto=True,
+            parallel_auto=False,
+            threads_http_auto=True,
         )
-        assert synced.kv_value == "f16"
-        assert synced.kv_auto is False
-        assert synced.ubatch_value == ""
-        assert synced.ubatch_auto is False
+        assert (synced.kv_value, synced.kv_auto) == ("f16", False)
+        assert (synced.ubatch_value, synced.ubatch_auto) == ("", False)
+        assert (synced.parallel_value, synced.parallel_auto) == ("2", False)
+        assert (synced.threads_http_value, synced.threads_http_auto) == ("", False)
 
 
 class TestMakePlanTune:
@@ -178,6 +207,18 @@ class TestMakePlanTune:
         plan = llmserve.make_plan("qwen", home=home, model=model, tune="auto", gpu_mib=32607)
         assert plan.tuning.name == "auto"
         assert plan.tuning.kv_type is None
+
+    def test_explicit_concurrency_overrides_strategy(self, env: tuple[Path, Path]) -> None:
+        model, home = env
+        plan = llmserve.make_plan("qwen", home=home, model=model, tune="throughput", parallel=2, threads_http=6)
+        assert (plan.effective_parallel, plan.effective_threads_http) == (2, 6)
+
+    def test_invalid_concurrency_raises(self, env: tuple[Path, Path]) -> None:
+        model, home = env
+        with pytest.raises(ServeError, match="并发槽必须为正整数"):
+            llmserve.make_plan("qwen", home=home, model=model, parallel=0)
+        with pytest.raises(ServeError, match="HTTP 线程数必须为正整数"):
+            llmserve.make_plan("qwen", home=home, model=model, threads_http=0)
 
     def test_unknown_tune_raises(self, env: tuple[Path, Path]) -> None:
         model, home = env

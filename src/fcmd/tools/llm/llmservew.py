@@ -207,15 +207,21 @@ class ServeWindow(
         self._ctx_var = tk.StringVar(value="")
         self._kv_var = tk.StringVar(value="")
         self._ubatch_var = tk.StringVar(value="")
+        self._parallel_var = tk.StringVar(value="")
+        self._threads_http_var = tk.StringVar(value="")
         self._alias_var = tk.StringVar(value="")
         self._api_key_var = tk.StringVar(value=DEFAULT_API_KEY)
         self._threads_var = tk.StringVar(value=str(DEFAULT_THREADS))
         self._tune_var = tk.StringVar(value=_llmtune.TUNE_LABELS["auto"])
         self._tune_kv_auto = False
         self._tune_ubatch_auto = False
+        self._tune_parallel_auto = False
+        self._tune_threads_http_auto = False
         self._syncing_tune = False
         self._kv_var.trace_add("write", self._on_kv_field_edited)
         self._ubatch_var.trace_add("write", self._on_ubatch_field_edited)
+        self._parallel_var.trace_add("write", self._on_parallel_field_edited)
+        self._threads_http_var.trace_add("write", self._on_threads_http_field_edited)
         self._wait_var = tk.StringVar(value="180")
         self._model_var = tk.StringVar(value=_MODEL_PLACEHOLDER)
         self._status_var = tk.StringVar(value="状态：未查询")
@@ -490,26 +496,42 @@ class ServeWindow(
         if not self._syncing_tune:
             self._tune_ubatch_auto = False
 
+    def _on_parallel_field_edited(self, *_args: object) -> None:
+        if not self._syncing_tune:
+            self._tune_parallel_auto = False
+
+    def _on_threads_http_field_edited(self, *_args: object) -> None:
+        if not self._syncing_tune:
+            self._tune_threads_http_auto = False
+
     def _tuning_for(self, size: int) -> llmbase.Tuning:
         """按当前档位 / 上下文 / GPU 解析调优策略。"""
         _, context, _ = self._profile_context()
         return _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
 
     def _apply_tuning_fields(self, tuning: llmbase.Tuning) -> None:
-        """把策略值同步到 KV / ubatch 输入框，保留用户手填的非策略值。"""
+        """把策略值同步到高级参数输入框，保留用户手填的非策略值。"""
         synced = _llmtune.sync_advanced_fields(
             tuning,
             kv_value=self._kv_var.get().strip(),
             ubatch_value=self._ubatch_var.get().strip(),
+            parallel_value=self._parallel_var.get().strip(),
+            threads_http_value=self._threads_http_var.get().strip(),
             kv_auto=self._tune_kv_auto,
             ubatch_auto=self._tune_ubatch_auto,
+            parallel_auto=self._tune_parallel_auto,
+            threads_http_auto=self._tune_threads_http_auto,
         )
         self._tune_kv_auto = synced.kv_auto
         self._tune_ubatch_auto = synced.ubatch_auto
+        self._tune_parallel_auto = synced.parallel_auto
+        self._tune_threads_http_auto = synced.threads_http_auto
         self._syncing_tune = True
         try:
             self._kv_var.set(synced.kv_value)
             self._ubatch_var.set(synced.ubatch_value)
+            self._parallel_var.set(synced.parallel_value)
+            self._threads_http_var.set(synced.threads_http_value)
         finally:
             self._syncing_tune = False
 
@@ -519,8 +541,10 @@ class ServeWindow(
         profile = llmbase.PROFILES.get(self._profile_var.get().strip())
         kv_type = self._kv_var.get().strip() or tuning.kv_type or profile_kv
         ubatch = self._ubatch_var.get().strip() or str(tuning.ubatch or (profile.ubatch if profile else ""))
+        parallel = self._parallel_var.get().strip() or str(tuning.parallel)
+        threads_http = self._threads_http_var.get().strip() or str(tuning.threads_http or "-")
         return (
-            f"生效: b{tuning.batch} / ub {ubatch} / np {tuning.parallel} / "
+            f"生效: b{tuning.batch} / ub {ubatch} / np {parallel} / th {threads_http} / "
             f"cr {tuning.cache_reuse} / kv {kv_type} / fa {tuning.flash_attn}"
         )
 
@@ -553,6 +577,8 @@ class ServeWindow(
             ctx=self._optional_int_field(self._ctx_var, "上下文"),
             kv_type=self._kv_var.get().strip() or None,
             ubatch=self._optional_int_field(self._ubatch_var, "ubatch"),
+            parallel=self._optional_int_field(self._parallel_var, "并发槽"),
+            threads_http=self._optional_int_field(self._threads_http_var, "HTTP 线程数"),
             alias=self._alias_var.get().strip() or None,
             api_key=self._api_key_var.get().strip() or DEFAULT_API_KEY,
             threads=self._int_field(self._threads_var, "线程数"),
@@ -627,8 +653,8 @@ class ServeWindow(
             f"ctx {plan.context} / ub {plan.effective_ubatch}"
         )
         self._log(
-            f"  调优: {plan.tuning.label} / b{plan.tuning.batch} / np{plan.tuning.parallel} / "
-            f"cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}"
+            f"  调优: {plan.tuning.label} / b{plan.tuning.batch} / np{plan.effective_parallel} / "
+            f"th{plan.effective_threads_http or '-'} / cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}"
         )
         self._log(f"  说明: {plan.tuning.detail}")
         self._log(f"  监听: {http_base_url(plan.host, plan.port)}")

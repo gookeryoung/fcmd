@@ -60,6 +60,8 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _threads_var: Any
         _wait_var: Any
         _ubatch_var: Any
+        _parallel_var: Any
+        _threads_http_var: Any
         _tune_var: Any
         _name_var: Any
         _host_var: Any
@@ -220,6 +222,15 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _guiwindow.pair_row(
             body,
             2,
+            "并发槽（-np）",
+            ttk.Entry(body, textvariable=self._parallel_var),
+            "HTTP 线程",
+            ttk.Entry(body, textvariable=self._threads_http_var),
+            theme=self._theme,
+        )
+        _guiwindow.pair_row(
+            body,
+            3,
             "API Key",
             ttk.Entry(body, textvariable=self._api_key_var),
             "等待就绪（秒）",

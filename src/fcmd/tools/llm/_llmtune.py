@@ -121,33 +121,54 @@ class FieldSync:
 
     kv_value: str
     ubatch_value: str
+    parallel_value: str
+    threads_http_value: str
     kv_auto: bool
     ubatch_auto: bool
+    parallel_auto: bool
+    threads_http_auto: bool
 
 
-def sync_advanced_fields(
+def _sync_field(strategy: object, value: str, auto: bool) -> tuple[str, bool]:
+    """策略指定则覆盖并标记来源，否则只清除上一次由策略填入的值。"""
+    if strategy is not None:
+        return str(strategy), True
+    if auto:
+        return "", False
+    return value, False
+
+
+def sync_advanced_fields(  # noqa: PLR0913 - 四个字段的值与来源标记需成对传入
     tuning: Tuning,
     *,
     kv_value: str,
     ubatch_value: str,
+    parallel_value: str,
+    threads_http_value: str,
     kv_auto: bool,
     ubatch_auto: bool,
+    parallel_auto: bool,
+    threads_http_auto: bool,
 ) -> FieldSync:
-    """把策略值写入 KV / ubatch 输入框。
+    """把策略值写入 KV / ubatch / 并发槽 / HTTP 线程输入框。
 
     策略明确指定某项时覆盖并标记为“由策略填入”；策略未指定时，只清空上一次
     由策略填入的值，用户手填的值保持不变。``*_auto`` 用于区分这两种来源。
+    并发槽 ``1`` 是所有预设的中性值，按“未指定”处理，避免覆盖用户手填。
     """
-    if tuning.kv_type is not None:
-        kv_value = tuning.kv_type
-        kv_auto = True
-    elif kv_auto:
-        kv_value = ""
-        kv_auto = False
-    if tuning.ubatch is not None:
-        ubatch_value = str(tuning.ubatch)
-        ubatch_auto = True
-    elif ubatch_auto:
-        ubatch_value = ""
-        ubatch_auto = False
-    return FieldSync(kv_value, ubatch_value, kv_auto, ubatch_auto)
+    kv, kv_auto = _sync_field(tuning.kv_type, kv_value, kv_auto)
+    ubatch, ubatch_auto = _sync_field(tuning.ubatch, ubatch_value, ubatch_auto)
+    parallel, parallel_auto = _sync_field(
+        tuning.parallel if tuning.parallel != 1 else None, parallel_value, parallel_auto
+    )
+    threads_http, threads_http_auto = _sync_field(tuning.threads_http, threads_http_value, threads_http_auto)
+    return FieldSync(
+        kv_value=kv,
+        ubatch_value=ubatch,
+        parallel_value=parallel,
+        threads_http_value=threads_http,
+        kv_auto=kv_auto,
+        ubatch_auto=ubatch_auto,
+        parallel_auto=parallel_auto,
+        threads_http_auto=threads_http_auto,
+    )

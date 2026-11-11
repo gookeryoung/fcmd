@@ -173,6 +173,8 @@ class LaunchPlan:
     extra_args: tuple[str, ...] = ()
     kv_type: str | None = None
     ubatch: int | None = None
+    parallel: int | None = None
+    threads_http: int | None = None
     tuning: Tuning = Tuning()
 
     @property
@@ -189,6 +191,16 @@ class LaunchPlan:
     def effective_ubatch(self) -> int:
         """生效的 ubatch（显式覆盖 > 调优策略 > 档位）。"""
         return self.ubatch or self.tuning.ubatch or self.profile.ubatch
+
+    @property
+    def effective_parallel(self) -> int:
+        """生效的并发槽（显式覆盖 > 调优策略）。"""
+        return self.parallel if self.parallel is not None else self.tuning.parallel
+
+    @property
+    def effective_threads_http(self) -> int | None:
+        """生效的 HTTP 线程数（显式覆盖 > 调优策略）。"""
+        return self.threads_http if self.threads_http is not None else self.tuning.threads_http
 
     def argv(self, backend: Backend | None = None) -> list[str]:
         """按后端生成启动参数列表。"""
@@ -273,7 +285,7 @@ class LlamaCppBackend:
             "-c",
             str(plan.context),
             "-np",
-            str(tuning.parallel),
+            str(plan.effective_parallel),
             "--flash-attn",
             tuning.flash_attn,
             "-ctk",
@@ -290,8 +302,9 @@ class LlamaCppBackend:
         ]
         if tuning.cache_reuse > 0:
             args += ["--cache-reuse", str(tuning.cache_reuse)]
-        if tuning.threads_http:
-            args += ["--threads-http", str(tuning.threads_http)]
+        threads_http = plan.effective_threads_http
+        if threads_http:
+            args += ["--threads-http", str(threads_http)]
         if tuning.spec_type:
             args += ["--spec-type", tuning.spec_type]
         args += [
