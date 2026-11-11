@@ -64,14 +64,16 @@
 
 ## 落地状态
 
-- M1：纯逻辑模块 `_cmderw_rename.py`（掩码、查找替换、大小写、计数器、预览、预设）
-  与单测。
-- M2：Tk 多重命名工具对话框（预设、勾选预览、执行 / 撤销）并接入 `Ctrl+M`。
-- M3：设置持久化、README / 0005 状态回填、门禁与镜像同步。
+- M1：已落地。纯逻辑模块 `_cmderw_rename.py`（掩码、查找替换、大小写、计数器、
+  预览、预设）与单测。
+- M2：已落地。Tk 多重命名工具对话框（预设、勾选预览、执行 / 撤销）并接入 `Ctrl+M`。
+- M3：已落地。设置持久化 `rename_presets`、README / 0005 状态回填、门禁与镜像同步。
 
 ## 交接
 
 - 纯逻辑全部在 `_cmderw_rename.py`，Tk 层只做变量绑定、预览渲染与执行调度。
 - 旧的 `BulkRenameOptions` / `build_new_name` / `plan_bulk_rename` 随本次升级移除，
   执行与撤销继续复用 `RenamePlan` / `apply_rename_plan` / `undo_rename`。
+- 预设持久化字段为设置 JSON 的 `rename_presets`（上限 50）：旧配置缺失时回落空列表，
+  非法条目 / 非法选项值丢弃并回落默认，不做迁移脚本。
 - 若后续需要参数级命名模板、正则捕获组进入掩码或预设导入导出，另开 ADR。
