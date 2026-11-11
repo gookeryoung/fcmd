@@ -24,6 +24,7 @@ from fcmd.tools.llm.llmdownw import (
     DownloadGuiSettings,
     config_path,
     detail_pairs,
+    filter_models,
     load_settings,
     local_row,
     model_row,
@@ -31,6 +32,7 @@ from fcmd.tools.llm.llmdownw import (
     parse_patterns,
     resolve_geometry,
     save_settings,
+    sort_models,
 )
 
 
@@ -169,6 +171,47 @@ class TestFormatting:
         assert pairs["大小"] == "1.00 KB"
         assert pairs["版本"] == "master"
         assert pairs["推理支持"] == "True"
+
+
+class TestBrowseHelpers:
+    @staticmethod
+    def _items() -> tuple[ModelSummary, ...]:
+        return (
+            ModelSummary(repo="Qwen/llm", tasks=("文本生成",), downloads=30, storage_size=300),
+            ModelSummary(repo="BAAI/embed", tasks=("文本向量",), downloads=20, storage_size=100),
+            ModelSummary(repo="Qwen/vl", tasks=("文本生成", "视觉问答"), downloads=10, storage_size=200),
+        )
+
+    def test_filter_models_all(self) -> None:
+        items = self._items()
+        assert filter_models(items, "") == items
+        assert filter_models(items, "全部类别") == items
+
+    def test_filter_models_by_task(self) -> None:
+        repos = [item.repo for item in filter_models(self._items(), "文本生成")]
+        assert repos == ["Qwen/llm", "Qwen/vl"]
+        assert filter_models(self._items(), "语音识别") == ()
+
+    def test_sort_models_text_ascending(self) -> None:
+        repos = [item.repo for item in sort_models(self._items(), "repo", descending=False)]
+        assert repos == ["BAAI/embed", "Qwen/llm", "Qwen/vl"]
+
+    def test_sort_models_numeric_descending(self) -> None:
+        assert [item.repo for item in sort_models(self._items(), "downloads")] == [
+            "Qwen/llm",
+            "BAAI/embed",
+            "Qwen/vl",
+        ]
+        assert [item.repo for item in sort_models(self._items(), "size", descending=False)] == [
+            "BAAI/embed",
+            "Qwen/vl",
+            "Qwen/llm",
+        ]
+
+    def test_sort_models_unknown_column(self) -> None:
+        items = self._items()
+        assert sort_models(items, None) == items
+        assert sort_models(items, "unknown") == items
 
 
 class TestOpenPath:

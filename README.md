@@ -279,7 +279,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `llmconvertw` | - | `llmconvert` 的 Tk 窗口版（界面按「模型列表 / 转换配置 / 输出日志」分标签页，先选模型再配参数，避免表单堆叠；启动时后台扫描 `llmenv` 已配置的模型目录，识别并列出可转换的 HF safetensors 目录，选中即填入源目录；配置转换精度/解释器/源码脚本/引擎 tag；输出留空时界面直接显示默认输出目录与文件名，模型列表“输出”列标注默认目录中已生成的格式；以勾选方式选择原始 GGUF 及多种量化格式（Q2_K…Q8_0 与 IQ1_S…IQ4_XS 共 25 种），已生成的格式自动勾选并标注“已存在”置为只读，除非勾选覆盖；可预览转换计划与命令，后台先转换一次基础 GGUF 再批量量化，转换脚本与量化器输出逐行实时回显，并解析 tqdm 百分比（含 `\r` 覆盖刷新）驱动整体进度条） |
 | `llmdoctor` | - | 运行环境体检独立命令（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++ 运行库） |
 | `llmdown` | - | 大模型仓库下载（`search`/`info`/`local`/`files`/`mirror`/`download`；ModelScope 搜索与详情、本地模型扫描，ModelScope 优先 + hf-mirror 兜底，两源同名分片实测吞吐自动选优，rich 展示进度/速度/剩余时间，支持 Range 断点续传、已存在跳过与 sha256 校验） |
-| `llmdownw` | - | `llmdown` 的 Tk 窗口版（参考 LM Studio：左侧 ModelScope 模型列表与搜索，右侧详情 / README / 文件清单；底部配置目标目录、下载源、并发、掩码与校验，支持实时进度、停止续传；「本地管理」可打开目录并在确认后删除模型） |
+| `llmdownw` | - | `llmdown` 的 Tk 窗口版（参考 LM Studio：分页窗口「模型浏览 / 下载 / 本地管理」，左侧 ModelScope 模型列表，支持中文任务类别筛选、服务端排序（下载/星标/时间）与列头点击排序，右侧详情 / README / 文件清单；下载页配置目标目录、下载源、并发、掩码与校验，支持实时进度、停止续传；「本地管理」可打开目录并在确认后删除模型） |
 | `llmengine` | - | llama.cpp 引擎管理独立命令（`list`/`install`/`use`/`check`/`inspect`；安装或注册引擎、切换默认引擎、验证可运行、检查 zip 离线包类型/内容/CRC 完整性；`install --zips` 可一次解压引擎包 + cudart 运行库包） |
 | `llmenginew` | - | `llmengine` 的 Tk 窗口版（在线下载官方预编译包并显示实时下载进度；检查/安装本地 zip 离线包或已编译引擎目录，支持深度 CRC 校验；列出已安装引擎、切换默认引擎、后台执行 `llama-server --version` 体检） |
 | `llmenv` | - | 路径与配置独立命令（`show`/`add`/`remove`/`reset`/`list`/`env`；打印 `FCMD_HOME` 目录布局、增删模型目录、列出服务状态、输出 `OPENAI_*` 环境变量；`FCMD_SERVE_DIR` / `FCMD_CONFIG` / `FCMD_ENGINES` 可分别覆盖服务目录、配置文件与引擎根目录） |

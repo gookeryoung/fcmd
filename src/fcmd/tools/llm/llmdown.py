@@ -48,12 +48,14 @@ __all__ = [
     "ModelInfo",
     "ModelSearch",
     "ModelSummary",
+    "ModelTask",
     "ProgressEvent",
     "SourceSelection",
     "delete_local_model",
     "download_files",
     "fetch_files",
     "fetch_model_info",
+    "fetch_tasks",
     "filter_files",
     "format_timestamp",
     "scan_local_models",
@@ -76,7 +78,14 @@ _FILE_URL = {
 }
 _MODEL_INFO_URL = "https://www.modelscope.cn/api/v1/models/{repo}"
 _MODEL_SEARCH_URL = "https://www.modelscope.cn/api/v1/dolphin/models"
-_MODEL_SORTS = {"default": "Default", "modified": "GmtModified"}
+_MODEL_TASKS_URL = "https://www.modelscope.cn/api/v1/tasks"
+_MODEL_SORTS = {
+    "default": "Default",
+    "modified": "GmtModified",
+    "created": "GmtCreated",
+    "downloads": "DownloadsCount",
+    "stars": "StarsCount",
+}
 _MANIFEST_TIMEOUT = 30.0
 _PROBE_TIMEOUT = 5.0
 _STREAM_TIMEOUT = 60.0
@@ -202,6 +211,20 @@ class ModelSummary:
     license: str = ""
     updated: int = 0
     storage_size: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ModelTask:
+    """ModelScope 的一个任务类别（用于界面类别筛选）。"""
+
+    name: str
+    chinese_name: str = ""
+    domain: str = ""
+
+    @property
+    def label(self) -> str:
+        """界面显示名：优先中文名，缺失时回落英文名。"""
+        return self.chinese_name or self.name
 
 
 @dataclass(frozen=True, slots=True)
@@ -439,7 +462,8 @@ def search_models(
     page / page_size:
         页码（从 1 开始）与每页条数（1–100）。
     sort:
-        ``default``（默认排序）或 ``modified``（最近更新）。
+        ``default`` 默认排序、``modified`` 最近更新、``created`` 最新发布、
+        ``downloads`` 下载最多、``stars`` 星标最多。
     timeout:
         请求超时秒数。
 
@@ -467,6 +491,37 @@ def search_models(
         raise ModelToolError(f"ModelScope 模型列表格式异常{f': {message}' if message else ''}")
     items = tuple(_summary_from_item(item) for item in raw_items if isinstance(item, dict) and item.get("Name"))
     return ModelSearch(items, _as_int(model.get("TotalCount")), page, page_size)
+
+
+def fetch_tasks(timeout: float = _MANIFEST_TIMEOUT) -> tuple[ModelTask, ...]:
+    """拉取 ModelScope 的任务类别清单（按领域顺序去重）。
+
+    Raises
+    ------
+    ModelToolError
+        网络失败或响应格式异常。
+    """
+    data = _http_json(_MODEL_TASKS_URL, timeout)
+    payload = data.get("Data") if isinstance(data, dict) else None
+    domains = payload.get("Domains") if isinstance(payload, dict) else None
+    if not isinstance(domains, list):
+        message = data.get("Message") if isinstance(data, dict) else ""
+        raise ModelToolError(f"ModelScope 任务列表格式异常{f': {message}' if message else ''}")
+    tasks: list[ModelTask] = []
+    seen: set[str] = set()
+    for domain in domains:
+        if not isinstance(domain, dict):
+            continue
+        domain_label = _as_text(domain.get("DomainChineseName")) or _as_text(domain.get("DomainName"))
+        for item in domain.get("Tasks") or ():
+            if not isinstance(item, dict):
+                continue
+            name = _as_text(item.get("Name"))
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            tasks.append(ModelTask(name, _as_text(item.get("ChineseName")), domain_label))
+    return tuple(tasks)
 
 
 def fetch_model_info(repo: str, timeout: float = _MANIFEST_TIMEOUT) -> ModelInfo:
@@ -933,7 +988,7 @@ def search_cmd(
     keyword: str = "",
     page: int = 1,
     limit: int = 20,
-    sort: Literal["default", "modified"] = "default",
+    sort: Literal["default", "modified", "created", "downloads", "stars"] = "default",
 ) -> None:
     """在 ModelScope 搜索模型并列出摘要。
 
@@ -946,7 +1001,8 @@ def search_cmd(
     limit:
         每页条数（1–100）。
     sort:
-        ``default`` 默认排序；``modified`` 按最近更新。
+        ``default`` 默认排序、``modified`` 最近更新、``created`` 最新发布、
+        ``downloads`` 下载最多、``stars`` 星标最多。
     """
     result = search_models(keyword, page, limit, sort)
     if not result.items:

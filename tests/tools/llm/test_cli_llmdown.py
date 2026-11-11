@@ -28,6 +28,7 @@ from fcmd.tools.llm.llmdown import (
     ModelInfo,
     ModelSearch,
     ModelSummary,
+    ModelTask,
     ModelToolError,
     ProgressEvent,
     SourceSelection,
@@ -38,6 +39,7 @@ from fcmd.tools.llm.llmdown import (
     download_files,
     fetch_files,
     fetch_model_info,
+    fetch_tasks,
     file_url,
     filter_files,
     format_timestamp,
@@ -757,6 +759,67 @@ class TestSearchModels:
         result = search_models()
         assert result.items == ()
         assert result.total == 0
+
+    @pytest.mark.parametrize(
+        ("sort", "expected"),
+        [
+            ("default", "Default"),
+            ("modified", "GmtModified"),
+            ("created", "GmtCreated"),
+            ("downloads", "DownloadsCount"),
+            ("stars", "StarsCount"),
+        ],
+    )
+    def test_sort_mapping(self, monkeypatch: pytest.MonkeyPatch, sort: str, expected: str) -> None:
+        captured: dict[str, Any] = {}
+
+        def _urlopen(req: Any, timeout: float = 30) -> _FakeResponse:
+            import json
+
+            captured["body"] = json.loads(req.data)
+            return _FakeResponse(json.dumps({"Data": {"Model": {"TotalCount": 0, "Models": []}}}).encode())
+
+        monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+        search_models(sort=sort)  # type: ignore[arg-type]
+        assert captured["body"]["SortBy"] == expected
+
+
+class TestFetchTasks:
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "Data": {
+                "Domains": [
+                    {
+                        "DomainName": "nlp",
+                        "DomainChineseName": "自然语言处理",
+                        "Tasks": [
+                            {"Name": "text-generation", "ChineseName": "文本生成"},
+                            {"Name": "text-generation", "ChineseName": "重复任务"},
+                            {"Name": "", "ChineseName": "空任务"},
+                        ],
+                    },
+                    {"DomainName": "audio", "Tasks": [{"Name": "auto-speech-recognition", "ChineseName": "语音识别"}]},
+                    "bad-domain",
+                ]
+            }
+        }
+
+    def test_parse_tasks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen(self._payload()))
+        tasks = fetch_tasks()
+
+        assert [task.name for task in tasks] == ["text-generation", "auto-speech-recognition"]
+        assert [task.label for task in tasks] == ["文本生成", "语音识别"]
+        assert tasks[0].domain == "自然语言处理"
+        assert tasks[1].domain == "audio"
+
+    def test_label_fallback(self) -> None:
+        assert ModelTask("text-generation").label == "text-generation"
+
+    def test_format_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen({"Message": "boom"}))
+        with pytest.raises(ModelToolError, match="任务列表格式异常: boom"):
+            fetch_tasks()
 
 
 class TestFetchModelInfo:

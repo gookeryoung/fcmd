@@ -2,7 +2,8 @@
 
 参考 LM Studio 的「左侧模型列表 + 右侧详情」布局：
 
-* 左侧在 ModelScope 搜索模型（关键字为空时浏览默认排序），选中行拉取详情；
+* 左侧在 ModelScope 搜索模型（关键字为空时浏览默认排序），可按中文任务类别筛选，
+  服务端排序支持下载最多 / 星标最多 / 最新发布 / 最近更新；点击列头对当前页排序；
 * 右侧展示模型元信息、README、文件清单（大小 / SHA256）与本地管理；
 * 底栏配置目标目录、下载源、并发数与校验开关，下载复用 :mod:`fcmd.tools.llm.llmdown`
   的多源选优 / 断点续传实现，支持进度回调与中途停止；
@@ -37,12 +38,14 @@ from fcmd.tools.llm.llmdown import (
     ModelInfo,
     ModelSearch,
     ModelSummary,
+    ModelTask,
     ModelToolError,
     ProgressEvent,
     delete_local_model,
     download_files,
     fetch_files,
     fetch_model_info,
+    fetch_tasks,
     filter_files,
     format_timestamp,
     scan_local_models,
@@ -54,6 +57,7 @@ __all__ = [
     "DownloadGuiSettings",
     "config_path",
     "detail_pairs",
+    "filter_models",
     "load_settings",
     "local_row",
     "model_row",
@@ -61,11 +65,12 @@ __all__ = [
     "parse_patterns",
     "resolve_geometry",
     "save_settings",
+    "sort_models",
 ]
 
 _DESCRIPTION = (
-    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 详情 / 下载 / 本地管理；"
-    "窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）"
+    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别筛选 / 服务端排序与列头排序 / "
+    "详情 / 下载 / 本地管理；窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）"
 )
 _MIN_WIDTH = 1080
 _MIN_HEIGHT = 720
@@ -80,8 +85,21 @@ _SOURCE_KEYS: dict[str, Literal["modelscope", "hf-mirror", "auto"]] = {
     "hf-mirror": "hf-mirror",
     "自动测速": "auto",
 }
-_SORT_LABELS = {"default": "默认排序", "modified": "最近更新"}
+_SORT_LABELS = {
+    "default": "默认排序",
+    "downloads": "下载最多",
+    "stars": "星标最多",
+    "created": "最新发布",
+    "modified": "最近更新",
+}
 _SORT_KEYS = {label: key for key, label in _SORT_LABELS.items()}
+_ALL_TASKS = "全部类别"
+_MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw", "s", "se", "sw", "w"]]] = {
+    "repo": ("模型", 190, "w"),
+    "tasks": ("任务", 116, "w"),
+    "downloads": ("下载", 84, "e"),
+    "size": ("体积", 76, "e"),
+}
 
 
 @dataclass
@@ -179,6 +197,31 @@ def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
     )
 
 
+def filter_models(items: tuple[ModelSummary, ...], task_label: str) -> tuple[ModelSummary, ...]:
+    """按任务中文名筛选模型；``全部类别`` / 空串表示不过滤。"""
+    if not task_label or task_label == _ALL_TASKS:
+        return items
+    return tuple(item for item in items if task_label in item.tasks)
+
+
+def sort_models(
+    items: tuple[ModelSummary, ...],
+    column: str | None,
+    descending: bool = True,
+) -> tuple[ModelSummary, ...]:
+    """按列表列排序（对当前页生效）；未知列保持原顺序。"""
+    keys = {
+        "repo": lambda item: item.repo.casefold(),
+        "tasks": lambda item: "、".join(item.tasks).casefold(),
+        "downloads": lambda item: item.downloads,
+        "size": lambda item: item.storage_size,
+    }
+    key = keys.get(column or "")
+    if key is None:
+        return items
+    return tuple(sorted(items, key=key, reverse=descending))
+
+
 def local_row(item: LocalModel) -> tuple[str, str, str, str, str]:
     """本地模型列表的一行：仓库、大小、文件数、状态、路径。"""
     status = "完整" if item.complete else f"未完成（{item.partial} 个 .part）"
@@ -244,6 +287,10 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._search_page = 1
         self._search_total = 0
         self._sort_key = "default"
+        self._sort_column: str | None = None
+        self._sort_desc = True
+        self._last_result: ModelSearch | None = None
+        self._tasks: tuple[ModelTask, ...] = ()
         self._detail_generation = 0
         self._current_repo: str | None = None
         self._current_info: ModelInfo | None = None
@@ -254,6 +301,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._download_target = Path("models")
 
         self._keyword_var = tk.StringVar()
+        self._task_var = tk.StringVar(value=_ALL_TASKS)
         self._sort_var = tk.StringVar(value=_SORT_LABELS["default"])
         self._page_var = tk.StringVar(value="尚未搜索")
         self._status_var = tk.StringVar(value="就绪")
@@ -275,6 +323,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _guiwindow.build_menu(self.root, on_close=self._close, on_about=self._about)
         _guitheme.install_theme_switcher(self.root)
         self._refresh_local()
+        self._start_task_load()
         self._start_search(1)
 
     # ------------------------------------------------------------------ #
@@ -331,19 +380,11 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         left = ttk.LabelFrame(paned, text="模型列表", padding=(self._theme.spacing.sm, self._theme.spacing.xs))
         left.columnconfigure(0, weight=1)
         left.rowconfigure(0, weight=1)
-        columns = ("repo", "tasks", "downloads", "size")
+        columns = tuple(_MODEL_COLUMNS)
         self._models_tree = ttk.Treeview(left, columns=columns, show="headings", selectmode="browse")
-        headings = {
-            "repo": ("模型", 190),
-            "tasks": ("任务", 116),
-            "downloads": ("下载", 84),
-            "size": ("体积", 76),
-        }
-        for key, (label, width) in headings.items():
-            self._models_tree.heading(key, text=label)
-            self._models_tree.column(
-                key, width=width, anchor="w" if key in {"repo", "tasks"} else "e", stretch=key == "repo"
-            )
+        for key, (label, width, anchor) in _MODEL_COLUMNS.items():
+            self._models_tree.heading(key, text=label, command=lambda k=key: self._sort_by_column(k))
+            self._models_tree.column(key, width=width, anchor=anchor, stretch=key == "repo")
         scrollbar = ttk.Scrollbar(left, orient="vertical", command=self._models_tree.yview)
         self._models_tree.configure(yscrollcommand=scrollbar.set)
         self._models_tree.grid(row=0, column=0, sticky="nsew")
@@ -378,6 +419,17 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
         nav = ttk.Frame(box)
         nav.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(space.xs, 0))
+        ttk.Label(nav, text="类别").pack(side="left")
+        self._task_box = ttk.Combobox(
+            nav,
+            textvariable=self._task_var,
+            values=[_ALL_TASKS],
+            state="readonly",
+            width=14,
+        )
+        self._task_box.pack(side="left", padx=(space.xs, space.lg))
+        self._task_box.bind("<<ComboboxSelected>>", self._on_task_changed)
+
         ttk.Label(nav, text="排序").pack(side="left")
         sort_box = ttk.Combobox(
             nav,
@@ -613,8 +665,21 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._sort_key = _SORT_KEYS.get(self._sort_var.get(), "default")
         self._start_search(1)
 
+    def _on_task_changed(self, _event: Any = None) -> None:
+        """类别变化后重新从第 1 页搜索。"""
+        self._start_search(1)
+
+    def _active_task(self) -> ModelTask | None:
+        """当前选中的类别（``全部类别`` 返回 ``None``）。"""
+        label = self._task_var.get()
+        return next((task for task in self._tasks if task.label == label), None)
+
     def _start_search(self, page: int) -> None:
-        """在后台搜索指定页；关键字为 ``组织/模型`` 时直接加载该仓库。"""
+        """在后台搜索指定页；关键字为 ``组织/模型`` 时直接加载该仓库。
+
+        只选类别未填关键字时，用该类别的英文任务名作为搜索词，
+        与 ModelScope 站内按任务浏览的行为一致。
+        """
         if self._downloading:
             self._status_var.set("下载进行中，请稍后再搜索")
             return
@@ -622,11 +687,16 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if keyword.count("/") == 1 and " " not in keyword:
             self._load_repo(keyword)
             return
+        task = self._active_task()
+        query = keyword
+        if not query and task is not None:
+            query = task.name
         page = max(1, page)
         self._search_page = page
         self._search_btn.configure(state="disabled")
-        self._status_var.set(f"正在搜索第 {page} 页…")
-        self._spawn(self._search_worker, keyword, page)
+        label = f"「{task.label}」" if task is not None else ""
+        self._status_var.set(f"正在搜索{label}第 {page} 页…")
+        self._spawn(self._search_worker, query, page)
 
     def _search_worker(self, keyword: str, page: int) -> None:
         """后台线程：调用 ModelScope 搜索接口。"""
@@ -638,6 +708,29 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._queue.put(("search_error", f"{type(exc).__name__}: {exc}"))
         else:
             self._queue.put(("search_done", result))
+
+    def _start_task_load(self) -> None:
+        """后台拉取 ModelScope 任务类别清单。"""
+        self._spawn(self._task_worker)
+
+    def _task_worker(self) -> None:
+        """后台线程：拉取类别清单（失败时保留「全部类别」）。"""
+        try:
+            tasks = fetch_tasks()
+        except (ModelToolError, OSError) as exc:
+            self._queue.put(("tasks_error", str(exc)))
+        except Exception as exc:  # 后台线程兜底
+            self._queue.put(("tasks_error", f"{type(exc).__name__}: {exc}"))
+        else:
+            self._queue.put(("tasks_done", tasks))
+
+    def _render_tasks(self, tasks: tuple[ModelTask, ...]) -> None:
+        """填充类别下拉框；保留当前选择，失效时回落全部类别。"""
+        self._tasks = tasks
+        labels = [_ALL_TASKS, *dict.fromkeys(task.label for task in tasks)]
+        self._task_box.configure(values=labels)
+        if self._task_var.get() not in labels:
+            self._task_var.set(_ALL_TASKS)
 
     def _on_model_selected(self, _event: Any = None) -> None:
         """左侧选中变化时加载详情。"""
@@ -948,6 +1041,10 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._search_btn.configure(state="normal")
             self._status_var.set("搜索失败")
             self._log(f"搜索失败: {payload}")
+        elif kind == "tasks_done":
+            self._render_tasks(payload)
+        elif kind == "tasks_error":
+            self._log(f"类别列表加载失败: {payload}")
         elif kind == "detail_done":
             self._render_detail(*payload)
         elif kind == "detail_error":
@@ -978,26 +1075,66 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._status_var.set("本地管理失败")
             self._log(f"本地管理失败: {payload}")
 
+    def _sort_by_column(self, column: str) -> None:
+        """点击列头：同一列切换升降序，不同列默认降序（文本列升序）。"""
+        if self._sort_column == column:
+            self._sort_desc = not self._sort_desc
+        else:
+            self._sort_column = column
+            self._sort_desc = column in {"downloads", "size"}
+        self._render_results()
+
+    def _update_headings(self) -> None:
+        """列头文字追加升降序箭头。"""
+        for key, (label, _width, _anchor) in _MODEL_COLUMNS.items():
+            arrow = ""
+            if key == self._sort_column:
+                arrow = " ▼" if self._sort_desc else " ▲"
+            self._models_tree.heading(key, text=f"{label}{arrow}")
+
+    def _render_results(self) -> None:
+        """按类别筛选与列排序渲染当前页，并尽量保持原选中模型。"""
+        result = self._last_result
+        if result is None:
+            return
+        task = self._active_task()
+        task_label = task.label if task is not None else _ALL_TASKS
+        items = result.items
+        if task is not None and task.chinese_name:
+            items = filter_models(items, task.chinese_name)
+        items = sort_models(items, self._sort_column, self._sort_desc)
+        selected_repo = self._current_repo
+        self._models_tree.delete(*self._models_tree.get_children())
+        for item in items:
+            repo, tasks, downloads, _updated, size = model_row(item)
+            self._models_tree.insert("", "end", iid=item.repo, values=(repo, tasks, downloads, size))
+        self._update_headings()
+        pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
+        matched = f" · 本页匹配 {len(items)} 个" if task_label != _ALL_TASKS else ""
+        self._page_var.set(f"第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
+        self._prev_btn.configure(state="normal" if result.page > 1 else "disabled")
+        self._next_btn.configure(state="normal" if result.page < pages else "disabled")
+        if not items:
+            self._status_var.set(
+                f"本页没有「{task_label}」模型，可翻页或清空关键字后再试"
+                if task_label != _ALL_TASKS
+                else "没有匹配的模型"
+            )
+            return
+        repos = {item.repo for item in items}
+        target = selected_repo if selected_repo in repos else items[0].repo
+        self._models_tree.selection_set(target)
+        self._models_tree.focus(target)
+        self._models_tree.see(target)
+        self._status_var.set(f"找到 {result.total:,} 个模型，本页显示 {len(items)} 个")
+
     def _render_search(self, result: ModelSearch) -> None:
-        """渲染搜索结果并自动加载第一条详情。"""
+        """记录搜索结果并渲染。"""
         self._search_btn.configure(state="normal")
         self._search_total = result.total
         self._search_page = result.page
-        self._models_tree.delete(*self._models_tree.get_children())
-        for item in result.items:
-            repo, tasks, downloads, _updated, size = model_row(item)
-            self._models_tree.insert("", "end", values=(repo, tasks, downloads, size))
-        pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
-        self._page_var.set(f"第 {result.page} / {pages} 页（共 {result.total:,} 条）")
-        self._prev_btn.configure(state="normal" if result.page > 1 else "disabled")
-        self._next_btn.configure(state="normal" if result.page < pages else "disabled")
-        if result.items:
-            first = self._models_tree.get_children()[0]
-            self._models_tree.selection_set(first)
-            self._models_tree.focus(first)
-            self._status_var.set(f"找到 {result.total:,} 个模型")
-        else:
-            self._status_var.set("没有匹配的模型")
+        self._last_result = result
+        self._render_results()
 
     def _render_detail(
         self,

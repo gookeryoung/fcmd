@@ -23,7 +23,8 @@
 
 | 用途 | 请求 | 说明 |
 |---|---|---|
-| 搜索 | `PUT https://www.modelscope.cn/api/v1/dolphin/models` | JSON 体含 `Name` / `PageNumber` / `PageSize` / `SortBy`（`Default` / `GmtModified`） |
+| 搜索 | `PUT https://www.modelscope.cn/api/v1/dolphin/models` | JSON 体含 `Name` / `PageNumber` / `PageSize` / `SortBy`（`Default` / `GmtModified` / `GmtCreated` / `DownloadsCount` / `StarsCount`） |
+| 任务类别 | `GET https://www.modelscope.cn/api/v1/tasks` | `Data.Domains[].Tasks[]` 提供英文任务名与中文名，用于类别下拉框 |
 | 详情 | `GET https://www.modelscope.cn/api/v1/models/{repo}` | `Data` 内含 `ReadMeContent`、`Tasks`、`Frameworks`、`Organization` 等 |
 | 文件清单 | 沿用 `fetch_files(repo, "modelscope")` | 已有实现；GUI 详情页展示大小与 SHA256 |
 
@@ -50,8 +51,8 @@ CLI 不传这两个参数时行为与原来完全一致。Tk 窗口通过队列�
 
 ```
 ┌ 模型浏览 │ 下载 │ 本地管理                                  ┐
-├ 搜索 [关键字] [搜索] 排序 [默认/最近更新] [上一页] [下一页] ┤
-├ 模型列表（仓库/任务/下载/体积） │ 模型详情 / 文件列表       ┤
+├ 搜索 [关键字] [搜索] 类别 [全部类别] 排序 [默认/下载/星标…] ┤
+├ 模型列表（仓库/任务/下载/体积，点列头排序） │ 模型详情 / 文件列表 ┤
 └ 状态栏                                                      ┘
 下载页：当前模型｜下载设置（目录/源/并发/校验/掩码）｜下载 停止｜进度｜日志
 本地管理页：刷新 / 打开目录 / 删除模型 + 本地模型列表
@@ -59,6 +60,13 @@ CLI 不传这两个参数时行为与原来完全一致。Tk 窗口通过队列�
 
 - 模型浏览页左右分栏首次布局即固定分隔条，列表四列完整可见，详情页提供
   「前往下载」按钮跳转到下载页；
+- **类别筛选**：启动时后台拉取 `/api/v1/tasks` 填充中文任务名下拉框；
+  选类别且关键字为空时用任务英文名作为 `Name` 搜索（ModelScope 的名称检索
+  会命中任务），再按返回项的中文任务名做本页过滤，避免模糊命中混入；
+  有关键字时按关键字搜索，仅做本页任务过滤；
+- **排序**：工具栏「排序」是服务端全局排序（默认 / 下载最多 / 星标最多 /
+  最新发布 / 最近更新）；点击列头（模型 / 任务 / 下载 / 体积）对当前页做
+  升降序切换并显示箭头，不触发重新请求；
 - 选中列表行即拉取详情；`组织/模型` 直接回车可跳过搜索加载指定仓库；
 - 详情请求带世代号，快速切换选择时丢弃过期响应；
 - 下载的选源（`modelscope` / `hf-mirror` / `auto` 测速）、并发、SHA256 校验
@@ -93,16 +101,22 @@ CLI 不传这两个参数时行为与原来完全一致。Tk 窗口通过队列�
 
 ## 落地状态
 
-- 代码：`llmdown.py` 新增搜索 / 详情 / 本地扫描 / 删除 / 进度事件与取消；
+- 代码：`llmdown.py` 新增搜索 / 任务类别 / 详情 / 本地扫描 / 删除 / 进度事件与取消；
   `llmdownw.py` 新增窗口；`pyproject.toml` 新增 `llmdownw` 入口。
-- 测试：`tests/tools/llm/test_cli_llmdown.py` 覆盖搜索请求体、详情解析、
-  分页校验、本地扫描 / 删除 / 越界拒绝、进度事件与取消保留 `.part`；
-  `test_cli_llmdownw.py` 覆盖注册、配置回退、几何恢复、格式化与打开目录。
+- 测试：`tests/tools/llm/test_cli_llmdown.py` 覆盖搜索请求体、排序取值、
+  任务类别解析、详情解析、分页校验、本地扫描 / 删除 / 越界拒绝、进度事件与
+  取消保留 `.part`；`test_cli_llmdownw.py` 覆盖注册、配置回退、几何恢复、
+  格式化、类别过滤、列排序与打开目录。
 - 文档：README 工具表新增 `llmdownw` 并更新 `llmdown` 说明；本 ADR 与索引。
 - 静态清单已重新生成。
 
 ## 交接
 
+- ModelScope 的 `SingleCriterion` / `Target` 任务过滤在匿名接口上不生效（已探测
+  多种字段形态均被忽略），因此类别筛选用「任务英文名作 `Name` 搜索 + 本页中文名
+  过滤」实现；若官方后续开放服务端任务过滤，替换 `_start_search` 的查询构造即可。
+- 类别筛选与列排序都只作用于当前页（30 条）；如需跨页筛选，需改成多页抓取后
+  在本地分页，注意请求量与取消逻辑。
 - 当前只接入 ModelScope 列表；如需 Hugging Face 搜索，新增 `search_models` 的
   源参数并保持返回结构一致即可。
 - README 以纯文本展示，未做 Markdown 渲染；如需渲染，先引入无依赖的轻量转换，
