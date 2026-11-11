@@ -10,13 +10,20 @@ import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 
-__all__ = ["FILE_ALGORITHMS", "compute_file_hash", "ensure_algorithm", "hash_text", "iter_directory_files"]
+__all__ = [
+    "CHUNK_SIZE",
+    "FILE_ALGORITHMS",
+    "compute_file_hash",
+    "ensure_algorithm",
+    "hash_text",
+    "iter_directory_files",
+]
 
 # 支持的哈希算法（文件哈希命令的 algorithm 取值白名单）
 FILE_ALGORITHMS: frozenset[str] = frozenset({"md5", "sha1", "sha256", "sha512"})
 
-# 文件哈希分块大小（64 KB）
-_CHUNK_SIZE = 64 * 1024
+# 文件哈希默认分块大小（64 KB）
+CHUNK_SIZE = 64 * 1024
 
 
 def ensure_algorithm(algorithm: str) -> None:
@@ -32,12 +39,12 @@ def hash_text(text: str, algorithm: str) -> str:
     return hasher.hexdigest()
 
 
-def compute_file_hash(file_path: Path, algorithm: str) -> str:
+def compute_file_hash(file_path: Path, algorithm: str, chunk_size: int = CHUNK_SIZE) -> str:
     """计算单个文件的哈希值（分块读取支持大文件）。"""
     hasher = hashlib.new(algorithm)
     with file_path.open("rb") as file:
         while True:
-            chunk = file.read(_CHUNK_SIZE)
+            chunk = file.read(chunk_size)
             if not chunk:
                 break
             hasher.update(chunk)

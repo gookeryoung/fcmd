@@ -1,7 +1,8 @@
-"""cmderw 校验文件（.sha256/.md5/.sfv）的纯逻辑：生成格式、解析与逐项比对。
+"""校验和基础件：算法归一、摘要计算与校验清单（.sha256/.sha1/.md5/.sfv）的生成、解析与比对。
 
 哈希算法复用 :mod:`fcmd.infras.hashing`；SFV 的 CRC32 由本模块用 ``zlib.crc32``
-计算（``hashing`` 只暴露 hashlib 算法，不扩展其口径）。
+计算（``hashing`` 只暴露 hashlib 算法，不扩展其口径）。工具与 GUI 层只做参数
+适配与结果文案，不再自带摘要循环或清单解析。
 """
 
 from __future__ import annotations
@@ -51,7 +52,6 @@ ALGORITHM_SUFFIXES: dict[str, str] = {algorithm: suffix for suffix, algorithm in
 _DIGEST_LENGTHS = {"md5": 32, "sha1": 40, "sha256": 64, "sha512": 128, "crc32": 8}
 _HASH_LINE = re.compile(r"^([0-9A-Fa-f]+)[ \t]+\*?(.+)$")
 _CRC_LINE = re.compile(r"^(.+?)[ \t]+([0-9A-Fa-f]{8})$")
-_CHUNK_SIZE = 64 * 1024
 
 
 def normalize_algorithm(raw: str) -> str:
@@ -74,7 +74,7 @@ def compute_crc32(path: Path) -> str:
     checksum = 0
     with path.open("rb") as file:
         while True:
-            chunk = file.read(_CHUNK_SIZE)
+            chunk = file.read(hashing.CHUNK_SIZE)
             if not chunk:
                 break
             checksum = zlib.crc32(chunk, checksum)

@@ -5,6 +5,9 @@ Blake2b / Blake2s，计算输入字符串或所选文件的十六进制摘要；
 后可填入期望值，结果区追加不区分大小写的比对结论，支持与 ``sha256sum`` 等
 工具输出的摘要直接比对。
 
+摘要计算与分块策略复用 :mod:`fcmd.infras.hashing`，本模块只保留展示用的算法
+列表、参数归一与结果文案。
+
 设置（上次算法 / 比较开关 / 窗口位置）保存在
 ``${FCMD_HOME:-~/.fcmd}/ui/checksum.json``，下次启动自动恢复。
 
@@ -16,7 +19,6 @@ Blake2b / Blake2s，计算输入字符串或所选文件的十六进制摘要；
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +26,7 @@ import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
+from fcmd.infras import hashing
 
 __all__ = [
     "ALGORITHMS",
@@ -57,8 +60,8 @@ DEFAULT_ALGORITHM = "MD5"
 DEFAULT_GEOMETRY = "720x480+300+200"
 MIN_WIDTH = 640
 MIN_HEIGHT = 440
-# 文件哈希分块大小（64 KB）
-CHUNK_SIZE = 64 * 1024
+# 文件哈希分块大小（与 infras.hashing 保持一致）
+CHUNK_SIZE = hashing.CHUNK_SIZE
 
 
 # ---------------------------------------------------------------------- #
@@ -159,9 +162,7 @@ def calculate_string_checksum(content: str, algorithm: str = DEFAULT_ALGORITHM) 
     """
     if not content:
         raise ValueError("内容不能为空")
-    hasher = hashlib.new(normalize_algorithm(algorithm).lower())
-    hasher.update(content.encode("utf-8"))
-    return hasher.hexdigest()
+    return hashing.hash_text(content, normalize_algorithm(algorithm).lower())
 
 
 def calculate_file_checksum(path: Path, algorithm: str = DEFAULT_ALGORITHM, chunk_size: int = CHUNK_SIZE) -> str:
@@ -176,11 +177,7 @@ def calculate_file_checksum(path: Path, algorithm: str = DEFAULT_ALGORITHM, chun
     """
     if not path.is_file():
         raise FileNotFoundError(f"文件不存在: {path}")
-    hasher = hashlib.new(normalize_algorithm(algorithm).lower())
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(chunk_size), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
+    return hashing.compute_file_hash(path, normalize_algorithm(algorithm).lower(), chunk_size)
 
 
 def verify_checksum(calculated: str, expected: str) -> bool:

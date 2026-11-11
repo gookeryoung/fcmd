@@ -69,15 +69,6 @@ from fcmd.apps.cmder._attrs import (
     format_timestamp,
     parse_timestamp,
 )
-from fcmd.apps.cmder._checksum import (
-    VerifyReport,
-    algorithm_for_suffix,
-    build_manifest,
-    manifest_name,
-    normalize_algorithm,
-    report_text,
-    verify_manifest,
-)
 from fcmd.apps.cmder._commands import (
     COMMAND_LIMIT,
     PLACEHOLDERS,
@@ -257,6 +248,15 @@ from fcmd.apps.cmder._volumes import enumerate_volumes
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
+from fcmd.infras.checksum import (
+    VerifyReport,
+    algorithm_for_suffix,
+    build_manifest,
+    manifest_name,
+    normalize_algorithm,
+    report_text,
+    verify_manifest,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
