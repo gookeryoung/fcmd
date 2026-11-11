@@ -1,11 +1,11 @@
 """llmdown 工具测试。
 
 覆盖：
-- 工具注册与 files / mirror / download 子命令
-- ModelScope / hf-mirror 清单解析与错误映射
-- 文件过滤、URL 构造、源自动选优
+- 工具注册与 search / info / local / files / mirror / download 子命令
+- ModelScope 搜索 / 详情 / 清单解析与错误映射
+- 本地模型扫描与删除、文件过滤、URL 构造、源自动选优
 - 下载：新建、Range 续传、服务端忽略 Range、兜底源、sha256 与大小校验
-- download_files 的已存在跳过与并发下载
+- download_files 的已存在跳过、进度回调、取消与并发下载
 """
 
 from __future__ import annotations
@@ -23,15 +23,26 @@ from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.infras.net import UrlProbe
 from fcmd.tools.llm import llmdown
 from fcmd.tools.llm.llmdown import (
+    DownloadCancelled,
     ModelFile,
+    ModelInfo,
+    ModelSearch,
+    ModelSummary,
     ModelToolError,
+    ProgressEvent,
     SourceSelection,
     _download_one,
     _normalize_repo,
+    _ReporterProgress,
+    delete_local_model,
     download_files,
     fetch_files,
+    fetch_model_info,
     file_url,
     filter_files,
+    format_timestamp,
+    scan_local_models,
+    search_models,
     select_source,
 )
 
@@ -600,3 +611,335 @@ class TestCli:
         monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
         with pytest.raises(ModelToolError, match="过滤后没有文件"):
             llmdown.download_cmd("Qwen/demo", include=["*.json"])
+
+    def test_search_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        result = ModelSearch(
+            (
+                ModelSummary(
+                    repo="Qwen/demo",
+                    name="demo",
+                    owner="Qwen",
+                    tasks=("文本生成",),
+                    downloads=1234,
+                    stars=5,
+                    updated=1700000000,
+                    storage_size=2048,
+                ),
+            ),
+            1,
+        )
+        monkeypatch.setattr(llmdown, "search_models", lambda *a, **k: result)
+        code = run_tool("llmdown", ["search", "--keyword", "qwen"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "Qwen/demo" in out
+        assert "文本生成" in out
+        assert "1,234" in out
+
+    def test_search_empty_result(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        monkeypatch.setattr(llmdown, "search_models", lambda *a, **k: ModelSearch((), 0))
+        llmdown.search_cmd("nothing")
+        assert "没有匹配的模型" in capsys.readouterr().out
+
+    def test_info_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        info = ModelInfo(
+            summary=ModelSummary(repo="Qwen/demo", name="demo", owner="Qwen", chinese_name="演示", downloads=7),
+            description="desc",
+            readme="# README\n内容",
+            organization="Qwen",
+            frameworks=("PyTorch",),
+            architectures=("Transformer",),
+            languages=("zh",),
+            revision="master",
+        )
+        monkeypatch.setattr(llmdown, "fetch_model_info", lambda *a, **k: info)
+        code = run_tool("llmdown", ["info", "Qwen/demo", "--readme", "--limit", "5"])
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "演示" in out
+        assert "PyTorch" in out
+        assert "已截断" in out
+
+    def test_local_lists_models(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        model = tmp_path / "Qwen" / "demo"
+        model.mkdir(parents=True)
+        (model / "a.bin").write_bytes(b"1234")
+        (model / "b.bin.part").write_bytes(b"1")
+        llmdown.local_cmd(tmp_path)
+        out = capsys.readouterr().out
+        assert "Qwen/demo" in out
+        assert "未完成" in out
+
+    def test_local_empty(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        llmdown.local_cmd(tmp_path / "missing")
+        assert "没有已下载的模型" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------- #
+# ModelScope 搜索 / 详情
+# ---------------------------------------------------------------------- #
+class TestSearchModels:
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "Code": 200,
+            "Data": {
+                "Model": {
+                    "TotalCount": 42,
+                    "Models": [
+                        {
+                            "Name": "Qwen3-Coder",
+                            "Path": "Qwen",
+                            "ChineseName": "千问代码",
+                            "Downloads": 123,
+                            "Stars": 4,
+                            "Tasks": [{"Name": "text-generation", "ChineseName": "文本生成"}, "bad-task"],
+                            "Tags": ["llm", None, ""],
+                            "License": "Apache-2.0",
+                            "LastUpdatedTime": 1700000000,
+                            "StorageSize": 4096,
+                        },
+                        {"Name": ""},
+                    ],
+                }
+            },
+        }
+
+    def test_search_request_and_parse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        captured: dict[str, Any] = {}
+
+        def _urlopen(req: Any, timeout: float = 30) -> _FakeResponse:
+            import json
+
+            captured["method"] = req.get_method()
+            captured["body"] = json.loads(req.data)
+            return _FakeResponse(json.dumps(self._payload()).encode())
+
+        monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+        result = search_models(" qwen ", page=2, page_size=10, sort="modified")
+
+        assert captured["method"] == "PUT"
+        assert captured["body"] == {
+            "PageSize": 10,
+            "PageNumber": 2,
+            "SortBy": "GmtModified",
+            "Target": "",
+            "SingleCriterion": [],
+            "Name": "qwen",
+        }
+        assert result.total == 42
+        assert result.page == 2
+        assert result.page_size == 10
+        assert len(result.items) == 1
+        item = result.items[0]
+        assert item.repo == "Qwen/Qwen3-Coder"
+        assert item.chinese_name == "千问代码"
+        assert item.tasks == ("文本生成",)
+        assert item.tags == ("llm",)
+        assert item.downloads == 123
+        assert item.storage_size == 4096
+
+    def test_invalid_pagination(self) -> None:
+        with pytest.raises(ModelToolError, match="分页参数非法"):
+            search_models(page=0)
+        with pytest.raises(ModelToolError, match="分页参数非法"):
+            search_models(page_size=0)
+        with pytest.raises(ModelToolError, match="分页参数非法"):
+            search_models(page_size=101)
+
+    def test_format_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen({"Message": "boom"}))
+        with pytest.raises(ModelToolError, match="模型列表格式异常: boom"):
+            search_models("qwen")
+
+    def test_empty_result(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload = {"Data": {"Model": {"TotalCount": 0, "Models": [{"Name": ""}]}}}
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen(payload))
+        result = search_models()
+        assert result.items == ()
+        assert result.total == 0
+
+
+class TestFetchModelInfo:
+    def test_parse_detail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        payload = {
+            "Data": {
+                "Name": "Qwen3-Coder",
+                "Path": "Qwen",
+                "ChineseName": "千问代码",
+                "Description": "描述",
+                "ReadMeContent": "# README",
+                "Downloads": 9,
+                "Stars": 3,
+                "Tasks": [{"Name": "text-generation", "ChineseName": "文本生成"}],
+                "Tags": ["llm"],
+                "License": "Apache-2.0",
+                "LastUpdatedTime": 1700000000,
+                "StorageSize": 8192,
+                "Organization": {"FullName": "通义千问"},
+                "Frameworks": ["PyTorch"],
+                "Architectures": ["Transformer"],
+                "ModelType": ["text-generation"],
+                "Language": ["zh", "en"],
+                "Revision": "master",
+                "CreatedTime": 1600000000,
+                "SupportInference": "True",
+            }
+        }
+        captured: dict[str, str] = {}
+
+        def _urlopen(req: Any, timeout: float = 30) -> _FakeResponse:
+            import json
+
+            captured["url"] = req.full_url
+            return _FakeResponse(json.dumps(payload).encode())
+
+        monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+        info = fetch_model_info(" Qwen/Qwen3-Coder ")
+
+        assert captured["url"] == "https://www.modelscope.cn/api/v1/models/Qwen/Qwen3-Coder"
+        assert info.summary.repo == "Qwen/Qwen3-Coder"
+        assert info.organization == "通义千问"
+        assert info.readme == "# README"
+        assert info.frameworks == ("PyTorch",)
+        assert info.architectures == ("Transformer",)
+        assert info.model_types == ("text-generation",)
+        assert info.languages == ("zh", "en")
+        assert info.revision == "master"
+        assert info.created == 1600000000
+        assert info.inference == "True"
+
+    def test_invalid_repo(self) -> None:
+        with pytest.raises(ModelToolError, match="<组织>/<模型>"):
+            fetch_model_info("demo")
+
+    def test_format_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("urllib.request.urlopen", _json_urlopen({"Message": "not found"}))
+        with pytest.raises(ModelToolError, match="模型详情格式异常: not found"):
+            fetch_model_info("Qwen/demo")
+
+
+class TestFormatTimestamp:
+    def test_values(self) -> None:
+        assert format_timestamp(0) == "-"
+        assert format_timestamp(-1) == "-"
+        assert format_timestamp(1700000000) == "2023-11-15"
+        assert format_timestamp(10**20) == "-"
+
+
+# ---------------------------------------------------------------------- #
+# 本地模型管理
+# ---------------------------------------------------------------------- #
+class TestLocalModels:
+    def test_scan_models(self, tmp_path: Path) -> None:
+        model = tmp_path / "Qwen" / "demo"
+        (model / "sub").mkdir(parents=True)
+        (model / "a.bin").write_bytes(b"1234")
+        (model / "sub" / "b.bin").write_bytes(b"12")
+        (model / "c.bin.part").write_bytes(b"1")
+        (tmp_path / "empty" / "no-files").mkdir(parents=True)
+
+        models = scan_local_models(tmp_path)
+
+        assert len(models) == 1
+        item = models[0]
+        assert item.repo == "Qwen/demo"
+        assert item.path == model
+        assert item.size == 7
+        assert item.files == 3
+        assert item.partial == 1
+        assert item.complete is False
+
+    def test_scan_missing_root(self, tmp_path: Path) -> None:
+        assert scan_local_models(tmp_path / "missing") == []
+
+    def test_delete_model(self, tmp_path: Path) -> None:
+        model = tmp_path / "Qwen" / "demo"
+        model.mkdir(parents=True)
+        (model / "a.bin").write_bytes(b"1")
+
+        removed = delete_local_model(tmp_path, "Qwen/demo")
+
+        assert removed == model.resolve()
+        assert not model.exists()
+
+    def test_delete_rejects_outside_root(self, tmp_path: Path) -> None:
+        outside = tmp_path.parent / "outside-model"
+        outside.mkdir(exist_ok=True)
+        with pytest.raises(ModelToolError, match="拒绝删除"):
+            delete_local_model(tmp_path / "models", "../outside-model")
+        assert outside.exists()
+
+    def test_delete_missing(self, tmp_path: Path) -> None:
+        with pytest.raises(ModelToolError, match="目录不存在"):
+            delete_local_model(tmp_path, "Qwen/missing")
+
+
+# ---------------------------------------------------------------------- #
+# 进度回调与取消
+# ---------------------------------------------------------------------- #
+class TestReporterProgress:
+    def test_events_and_clamp(self) -> None:
+        events: list[ProgressEvent] = []
+        progress = _ReporterProgress(events.append)
+        task = progress.add_task("a.bin", total=10)
+        progress.update(task, advance=4)
+        progress.update(task, advance=100)
+        progress.remove_task(task)
+
+        assert [(event.task, event.state, event.completed) for event in events] == [
+            ("a.bin", "start", 0),
+            ("a.bin", "update", 4),
+            ("a.bin", "update", 10),
+            ("a.bin", "done", 10),
+        ]
+
+    def test_context_exit_finishes_remaining_tasks(self) -> None:
+        events: list[ProgressEvent] = []
+        with _ReporterProgress(events.append) as progress:
+            progress.add_task("总进度", total=3)
+        assert events[-1].state == "done"
+        assert events[-1].total == 3
+
+
+class TestCancellation:
+    def test_sha256_stops(self, tmp_path: Path) -> None:
+        path = tmp_path / "a.bin"
+        path.write_bytes(b"x" * 10)
+        with pytest.raises(DownloadCancelled):
+            llmdown._sha256_file(path, should_stop=lambda: True)
+
+    def test_download_files_cancel_keeps_part(self, tmp_path: Path) -> None:
+        part = llmdown._part_path(tmp_path / "a.bin")
+        part.write_bytes(b"abc")
+        file = ModelFile("a.bin", 10)
+        with pytest.raises(DownloadCancelled, match=r"保留 \.part"):
+            download_files(
+                "Qwen/demo",
+                [file],
+                tmp_path,
+                SourceSelection("modelscope", (file,)),
+                workers=1,
+                should_stop=lambda: True,
+            )
+        assert part.read_bytes() == b"abc"
+
+    def test_reporter_receives_progress(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        content = b"abc"
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _download_urlopen({"https://www.modelscope.cn/models/Qwen/demo/resolve/master/a.bin": content}),
+        )
+        events: list[ProgressEvent] = []
+        file = ModelFile("a.bin", len(content))
+        download_files(
+            "Qwen/demo",
+            [file],
+            tmp_path,
+            SourceSelection("modelscope", (file,)),
+            workers=1,
+            reporter=events.append,
+        )
+
+        assert ("总进度", "start") in {(event.task, event.state) for event in events}
+        assert ("a.bin", "done") in {(event.task, event.state) for event in events}
+        assert any(event.task == "总进度" and event.completed == len(content) for event in events)

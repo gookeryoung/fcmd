@@ -23,8 +23,12 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import shutil
+import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.error import HTTPError, URLError
@@ -38,11 +42,22 @@ if TYPE_CHECKING:
     from fcmd.infras.net import UrlProbe
 
 __all__ = [
+    "DownloadCancelled",
+    "LocalModel",
     "ModelFile",
+    "ModelInfo",
+    "ModelSearch",
+    "ModelSummary",
+    "ProgressEvent",
     "SourceSelection",
+    "delete_local_model",
     "download_files",
     "fetch_files",
+    "fetch_model_info",
     "filter_files",
+    "format_timestamp",
+    "scan_local_models",
+    "search_models",
     "select_source",
 ]
 
@@ -59,6 +74,9 @@ _FILE_URL = {
     "modelscope": "https://www.modelscope.cn/models/{repo}/resolve/{revision}/{path}",
     "hf-mirror": "https://hf-mirror.com/{repo}/resolve/{revision}/{path}",
 }
+_MODEL_INFO_URL = "https://www.modelscope.cn/api/v1/models/{repo}"
+_MODEL_SEARCH_URL = "https://www.modelscope.cn/api/v1/dolphin/models"
+_MODEL_SORTS = {"default": "Default", "modified": "GmtModified"}
 _MANIFEST_TIMEOUT = 30.0
 _PROBE_TIMEOUT = 5.0
 _STREAM_TIMEOUT = 60.0
@@ -68,6 +86,64 @@ _SOURCE_BY_HOST = {"www.modelscope.cn": "modelscope", "hf-mirror.com": "hf-mirro
 
 class ModelToolError(RuntimeError):
     """模型仓库清单 / 下载失败。"""
+
+
+class DownloadCancelled(ModelToolError):
+    """用户取消下载；已下载部分保留为 ``.part`` 供下次续传。"""
+
+
+class _ReporterProgress:
+    """把 rich Progress 的最小接口转成 :class:`ProgressEvent` 回调。
+
+    Tk 等前端无需依赖 rich，即可拿到整体 / 单文件进度。
+    """
+
+    def __init__(self, reporter: Callable[[ProgressEvent], None]) -> None:
+        self._reporter = reporter
+        self._tasks: dict[int, tuple[str, int, int]] = {}
+        self._lock = threading.Lock()
+        self._next_id = 0
+
+    def __enter__(self) -> _ReporterProgress:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        with self._lock:
+            tasks = list(self._tasks.items())
+            self._tasks.clear()
+        for _, (description, completed, total) in tasks:
+            self._reporter(ProgressEvent(description, "done", completed, total))
+
+    def _emit(
+        self,
+        description: str,
+        state: Literal["start", "update", "done"],
+        completed: int,
+        total: int,
+    ) -> None:
+        self._reporter(ProgressEvent(description, state, completed, total))
+
+    def add_task(self, description: str, total: int | None = None, completed: int = 0) -> int:
+        with self._lock:
+            task_id = self._next_id
+            self._next_id += 1
+            self._tasks[task_id] = (description, completed, total or 0)
+        self._emit(description, "start", completed, total or 0)
+        return task_id
+
+    def update(self, task: int, advance: int = 0, completed: int | None = None, **_kwargs: Any) -> None:
+        with self._lock:
+            description, current, total = self._tasks.get(task, ("", 0, 0))
+            value = completed if completed is not None else current + advance
+            if total:
+                value = max(0, min(value, total))
+            self._tasks[task] = (description, value, total)
+        self._emit(description, "update", value, total)
+
+    def remove_task(self, task: int) -> None:
+        with self._lock:
+            description, completed, total = self._tasks.pop(task, ("", 0, 0))
+        self._emit(description, "done", completed, total)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +187,76 @@ class SourceSelection:
     probes: tuple[UrlProbe, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class ModelSummary:
+    """ModelScope 模型列表中的一条摘要。"""
+
+    repo: str
+    name: str = ""
+    owner: str = ""
+    chinese_name: str = ""
+    downloads: int = 0
+    stars: int = 0
+    tasks: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
+    license: str = ""
+    updated: int = 0
+    storage_size: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ModelSearch:
+    """ModelScope 模型搜索结果（分页）。"""
+
+    items: tuple[ModelSummary, ...]
+    total: int
+    page: int = 1
+    page_size: int = 20
+
+
+@dataclass(frozen=True, slots=True)
+class ModelInfo:
+    """ModelScope 模型详情（含 README）。"""
+
+    summary: ModelSummary
+    description: str = ""
+    readme: str = ""
+    organization: str = ""
+    frameworks: tuple[str, ...] = ()
+    architectures: tuple[str, ...] = ()
+    model_types: tuple[str, ...] = ()
+    languages: tuple[str, ...] = ()
+    revision: str = ""
+    created: int = 0
+    inference: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class LocalModel:
+    """本地目标目录下已下载（或部分下载）的一个模型目录。"""
+
+    repo: str
+    path: Path
+    size: int
+    files: int
+    partial: int = 0
+
+    @property
+    def complete(self) -> bool:
+        """没有 ``.part`` 残留即视为下载完成。"""
+        return self.partial == 0
+
+
+@dataclass(frozen=True, slots=True)
+class ProgressEvent:
+    """下载进度事件；供 Tk 等自定义前端复用同一套下载实现。"""
+
+    task: str
+    state: Literal["start", "update", "done"]
+    completed: int = 0
+    total: int = 0
+
+
 # ---------------------------------------------------------------------- #
 # 通用辅助
 # ---------------------------------------------------------------------- #
@@ -145,12 +291,26 @@ def file_url(repo: str, source: str, revision: str | None, path: str) -> str:
     )
 
 
-def _http_json(url: str, timeout: float) -> Any:
-    """请求 JSON 清单；网络 / 解析错误统一转换为 :class:`ModelToolError`。"""
+def _http_json(
+    url: str,
+    timeout: float,
+    *,
+    method: str = "GET",
+    payload: Any = None,
+) -> Any:
+    """请求 JSON 接口；网络 / 解析错误统一转换为 :class:`ModelToolError`。
+
+    ``payload`` 不为 ``None`` 时以 JSON 请求体发送（ModelScope 搜索接口用 ``PUT``）。
+    """
     # 惰性导入 urllib 请求链，避免工具发现期给冷启动增加导入成本
     from urllib.request import Request, urlopen
 
-    req = Request(url, headers={"User-Agent": _UA, "Accept": "application/json"})
+    headers = {"User-Agent": _UA, "Accept": "application/json"}
+    body = None
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = Request(url, data=body, headers=headers, method=method)
     try:
         with urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
@@ -197,6 +357,215 @@ def _parse_hf(data: Any) -> list[ModelFile]:
         sha256 = str(lfs.get("oid") or "") if isinstance(lfs, dict) else ""
         files.append(ModelFile(str(path), int(item.get("size") or 0), sha256))
     return files
+
+
+def _as_int(value: Any) -> int:
+    """把接口返回值宽松转换为非负整数（缺失 / 非数字均为 0）。"""
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_text(value: Any) -> str:
+    """把接口返回值宽松转换为字符串。"""
+    return value if isinstance(value, str) else ""
+
+
+def format_timestamp(value: int) -> str:
+    """把 Unix 秒转换为 ``YYYY-MM-DD``；无效值返回 ``-``。"""
+    if value <= 0:
+        return "-"
+    try:
+        return datetime.fromtimestamp(value).strftime("%Y-%m-%d")
+    except (OverflowError, OSError, ValueError):
+        return "-"
+
+
+def _as_tuple(value: Any) -> tuple[str, ...]:
+    """把字符串数组转换为去空元组；非数组返回空元组。"""
+    if not isinstance(value, list):
+        return ()
+    return tuple(item for item in value if isinstance(item, str) and item)
+
+
+def _task_names(value: Any) -> tuple[str, ...]:
+    """从 ``Tasks`` 对象数组提取中文（缺失时用英文）任务名。"""
+    if not isinstance(value, list):
+        return ()
+    names: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = _as_text(item.get("ChineseName")) or _as_text(item.get("Name"))
+        if name:
+            names.append(name)
+    return tuple(names)
+
+
+def _summary_from_item(item: dict[str, Any]) -> ModelSummary:
+    """把 ModelScope 列表 / 详情里的模型对象转换为 :class:`ModelSummary`。"""
+    name = _as_text(item.get("Name"))
+    owner = _as_text(item.get("Path"))
+    repo = f"{owner}/{name}" if owner and name else name
+    return ModelSummary(
+        repo=repo,
+        name=name,
+        owner=owner,
+        chinese_name=_as_text(item.get("ChineseName")),
+        downloads=_as_int(item.get("Downloads")),
+        stars=_as_int(item.get("Stars")),
+        tasks=_task_names(item.get("Tasks")),
+        tags=_as_tuple(item.get("Tags")),
+        license=_as_text(item.get("License")),
+        updated=_as_int(item.get("LastUpdatedTime")),
+        storage_size=_as_int(item.get("StorageSize")),
+    )
+
+
+def search_models(
+    keyword: str = "",
+    page: int = 1,
+    page_size: int = 20,
+    sort: str = "default",
+    timeout: float = _MANIFEST_TIMEOUT,
+) -> ModelSearch:
+    """搜索 ModelScope 模型（按 ``Name`` 关键字匹配组织或模型名）。
+
+    Parameters
+    ----------
+    keyword:
+        关键字；空串表示浏览全部模型。
+    page / page_size:
+        页码（从 1 开始）与每页条数（1–100）。
+    sort:
+        ``default``（默认排序）或 ``modified``（最近更新）。
+    timeout:
+        请求超时秒数。
+
+    Raises
+    ------
+    ModelToolError
+        网络失败或响应格式异常。
+    """
+    if page < 1 or not 1 <= page_size <= 100:
+        raise ModelToolError("分页参数非法：page 需 ≥ 1，page_size 需在 1–100 之间")
+    payload = {
+        "PageSize": page_size,
+        "PageNumber": page,
+        "SortBy": _MODEL_SORTS.get(sort.casefold(), _MODEL_SORTS["default"]),
+        "Target": "",
+        "SingleCriterion": (),
+        "Name": keyword.strip(),
+    }
+    data = _http_json(_MODEL_SEARCH_URL, timeout, method="PUT", payload=payload)
+    payload_data = data.get("Data") if isinstance(data, dict) else None
+    model = payload_data.get("Model") if isinstance(payload_data, dict) else None
+    raw_items = model.get("Models") if isinstance(model, dict) else None
+    if not isinstance(model, dict) or not isinstance(raw_items, list):
+        message = data.get("Message") if isinstance(data, dict) else ""
+        raise ModelToolError(f"ModelScope 模型列表格式异常{f': {message}' if message else ''}")
+    items = tuple(_summary_from_item(item) for item in raw_items if isinstance(item, dict) and item.get("Name"))
+    return ModelSearch(items, _as_int(model.get("TotalCount")), page, page_size)
+
+
+def fetch_model_info(repo: str, timeout: float = _MANIFEST_TIMEOUT) -> ModelInfo:
+    """拉取 ModelScope 模型详情（含 README、任务、框架与许可证）。
+
+    Raises
+    ------
+    ModelToolError
+        仓库名非法、网络失败或响应格式异常。
+    """
+    repo = _normalize_repo(repo)
+    data = _http_json(_MODEL_INFO_URL.format(repo=quote(repo, safe="/")), timeout)
+    detail = data.get("Data") if isinstance(data, dict) else None
+    if not isinstance(detail, dict) or not detail.get("Name"):
+        message = data.get("Message") if isinstance(data, dict) else ""
+        raise ModelToolError(f"ModelScope 模型详情格式异常{f': {message}' if message else ''}")
+    organization = detail.get("Organization")
+    org_name = ""
+    if isinstance(organization, dict):
+        org_name = _as_text(organization.get("FullName")) or _as_text(organization.get("Name"))
+    return ModelInfo(
+        summary=_summary_from_item(detail),
+        description=_as_text(detail.get("Description")),
+        readme=_as_text(detail.get("ReadMeContent")),
+        organization=org_name,
+        frameworks=_as_tuple(detail.get("Frameworks")),
+        architectures=_as_tuple(detail.get("Architectures")),
+        model_types=_as_tuple(detail.get("ModelType")),
+        languages=_as_tuple(detail.get("Language")),
+        revision=_as_text(detail.get("Revision")),
+        created=_as_int(detail.get("CreatedTime")),
+        inference=_as_text(detail.get("SupportInference")),
+    )
+
+
+# ---------------------------------------------------------------------- #
+# 本地模型管理
+# ---------------------------------------------------------------------- #
+def scan_local_models(root: Path) -> list[LocalModel]:
+    """扫描 ``root/<组织>/<模型>`` 下已下载的模型目录。
+
+    只统计真实文件，不跟随符号链接；含 ``.part`` 的目录标记为未完成。
+    目录不存在或无模型时返回空列表。
+    """
+    if not root.is_dir():
+        return []
+    found: list[LocalModel] = []
+    try:
+        owners = sorted(entry for entry in root.iterdir() if entry.is_dir() and not entry.is_symlink())
+    except OSError:
+        return []
+    for owner in owners:
+        try:
+            models = sorted(entry for entry in owner.iterdir() if entry.is_dir() and not entry.is_symlink())
+        except OSError:
+            continue
+        for model_dir in models:
+            size = 0
+            files = 0
+            partial = 0
+            try:
+                candidates = list(model_dir.rglob("*"))
+            except OSError:
+                continue
+            for item in candidates:
+                if item.is_symlink() or not item.is_file():
+                    continue
+                try:
+                    size += item.stat().st_size
+                except OSError:
+                    continue
+                files += 1
+                if item.name.endswith(".part"):
+                    partial += 1
+            if files:
+                found.append(LocalModel(f"{owner.name}/{model_dir.name}", model_dir, size, files, partial))
+    return found
+
+
+def delete_local_model(root: Path, repo: str) -> Path:
+    """删除 ``root/<组织>/<模型>`` 目录（调用方必须已获得用户确认）。
+
+    Raises
+    ------
+    ModelToolError
+        仓库名非法、目标越出根目录或目录不存在。
+    """
+    owner, name = _normalize_repo(repo).split("/")
+    base = root.resolve()
+    target = (root / owner / name).resolve()
+    if not target.is_relative_to(base):
+        raise ModelToolError(f"拒绝删除目标目录之外的路径: {target}")
+    if not target.is_dir():
+        raise ModelToolError(f"目录不存在: {target}")
+    try:
+        shutil.rmtree(target)
+    except OSError as exc:
+        raise ModelToolError(f"删除失败: {target}（{exc}）") from exc
+    return target
 
 
 def fetch_files(
@@ -330,11 +699,23 @@ def _part_path(final: Path) -> Path:
     return final.with_name(final.name + ".part")
 
 
-def _sha256_file(path: Path, progress: Any = None, task: Any = None) -> str:
+def _check_stop(should_stop: Callable[[], bool] | None) -> None:
+    """外部要求取消时抛出 :class:`DownloadCancelled`。"""
+    if should_stop is not None and should_stop():
+        raise DownloadCancelled("下载已取消（已保留 .part 以便续传）")
+
+
+def _sha256_file(
+    path: Path,
+    progress: Any = None,
+    task: Any = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> str:
     """计算文件 sha256；传入 progress/task 时同步刷新校验进度。"""
     digest = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(_CHUNK_SIZE), b""):
+            _check_stop(should_stop)
             digest.update(chunk)
             if progress is not None and task is not None:
                 progress.update(task, advance=len(chunk))
@@ -348,10 +729,12 @@ def _stream_to_part(  # noqa: PLR0913, PLR0917
     progress: Any,
     file_task: Any,
     overall_task: Any,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """把 URL 流式写入 ``.part``，支持 Range 续传与进度刷新。"""
     from urllib.request import Request, urlopen
 
+    _check_stop(should_stop)
     headers = {"User-Agent": _UA}
     if start:
         headers["Range"] = f"bytes={start}-"
@@ -367,6 +750,7 @@ def _stream_to_part(  # noqa: PLR0913, PLR0917
             start = 0
         with part.open(mode) as fh:
             while chunk := resp.read(_CHUNK_SIZE):
+                _check_stop(should_stop)
                 fh.write(chunk)
                 progress.update(file_task, advance=len(chunk))
                 progress.update(overall_task, advance=len(chunk))
@@ -383,8 +767,10 @@ def _download_one(  # noqa: PLR0913, PLR0917
     progress: Any,
     file_task: Any,
     overall_task: Any,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """下载单个文件：主源失败回退兜底源，完成后校验并原子替换。"""
+    _check_stop(should_stop)
     final.parent.mkdir(parents=True, exist_ok=True)
     urls = [file_url(repo, selection.source, revision, file.path)]
     if selection.fallback:
@@ -392,6 +778,7 @@ def _download_one(  # noqa: PLR0913, PLR0917
 
     last_error: Exception | None = None
     for url in urls:
+        _check_stop(should_stop)
         start = part.stat().st_size if part.is_file() and file.size else 0
         if file.size and start > file.size:
             part.unlink()
@@ -400,20 +787,21 @@ def _download_one(  # noqa: PLR0913, PLR0917
         if file.size and start == file.size:
             break
         try:
-            _stream_to_part(url, part, start, progress, file_task, overall_task)
+            _stream_to_part(url, part, start, progress, file_task, overall_task, should_stop)
             break
         except (HTTPError, URLError, TimeoutError, OSError) as exc:
             last_error = exc
     else:
         raise ModelToolError(f"下载失败: {last_error}")
 
+    _check_stop(should_stop)
     if file.size and part.is_file() and part.stat().st_size != file.size:
         raise ModelToolError(f"大小不符（期望 {file.size}，实际 {part.stat().st_size}）")
 
     if verify and file.sha256:
         hash_task = progress.add_task(f"校验 {file.path}", total=file.size or None)
         try:
-            actual = _sha256_file(part, progress, hash_task)
+            actual = _sha256_file(part, progress, hash_task, should_stop)
         finally:
             progress.remove_task(hash_task)
         if actual.lower() != file.sha256.lower():
@@ -431,11 +819,22 @@ def download_files(  # noqa: PLR0913, PLR0917
     revision: str | None = None,
     workers: int = 4,
     verify: bool = True,
+    reporter: Callable[[ProgressEvent], None] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
-    """并发下载文件列表，展示单文件与总进度、速度与剩余时间。
+    """并发下载文件列表。
+
+    Parameters
+    ----------
+    reporter:
+        自定义进度回调；传入时不再渲染 rich 进度条（供 Tk 等前端使用）。
+    should_stop:
+        返回 ``True`` 时尽快停止下载，已写入的 ``.part`` 保留以便续传。
 
     Raises
     ------
+    DownloadCancelled
+        被 ``should_stop`` 取消。
     ModelToolError
         任一文件在全部源上均下载失败，或校验不通过。
     """
@@ -466,10 +865,12 @@ def download_files(  # noqa: PLR0913, PLR0917
         pending.append((file, final, part, start))
 
     if not pending:
-        console.print("[green]全部文件已存在，无需下载[/green]")
+        if reporter is None:
+            console.print("[green]全部文件已存在，无需下载[/green]")
         return
 
     failures: list[str] = []
+    cancelled = False
     columns = (
         TextColumn("[cyan]{task.description}", justify="left"),
         BarColumn(),
@@ -477,7 +878,8 @@ def download_files(  # noqa: PLR0913, PLR0917
         TransferSpeedColumn(),
         TimeRemainingColumn(),
     )
-    with Progress(*columns, console=console.rich) as progress:
+    progress: Any = _ReporterProgress(reporter) if reporter is not None else Progress(*columns, console=console.rich)
+    with progress:
         overall_task = progress.add_task("总进度", total=total, completed=done_bytes)
         file_tasks = {
             file.path: progress.add_task(file.path, total=file.size or None, completed=start)
@@ -497,15 +899,23 @@ def download_files(  # noqa: PLR0913, PLR0917
                     progress,
                     file_tasks[file.path],
                     overall_task,
+                    should_stop,
                 ): file.path
                 for file, final, part, _ in pending
             }
             for future in as_completed(futures):
+                path = futures[future]
                 try:
                     future.result()
+                except DownloadCancelled:
+                    cancelled = True
                 except (ModelToolError, OSError) as exc:
-                    failures.append(f"{futures[future]}: {exc}")
+                    failures.append(f"{path}: {exc}")
+                finally:
+                    progress.remove_task(file_tasks[path])
 
+    if cancelled:
+        raise DownloadCancelled("下载已取消（已保留 .part 以便续传）")
     if failures:
         raise ModelToolError(f"{len(failures)} 个文件下载失败：" + "；".join(failures))
 
@@ -513,6 +923,136 @@ def download_files(  # noqa: PLR0913, PLR0917
 # ---------------------------------------------------------------------- #
 # CLI 子命令
 # ---------------------------------------------------------------------- #
+@fcmd.tool(
+    "llmdown",
+    subcommand="search",
+    help="在 ModelScope 搜索模型",
+    description="大模型仓库下载：搜索 / 详情 / 清单 / 多源测速 / 断点续传下载",
+)
+def search_cmd(
+    keyword: str = "",
+    page: int = 1,
+    limit: int = 20,
+    sort: Literal["default", "modified"] = "default",
+) -> None:
+    """在 ModelScope 搜索模型并列出摘要。
+
+    Parameters
+    ----------
+    keyword:
+        搜索关键字（组织或模型名）；留空浏览热门 / 默认排序。
+    page:
+        页码，从 1 开始。
+    limit:
+        每页条数（1–100）。
+    sort:
+        ``default`` 默认排序；``modified`` 按最近更新。
+    """
+    result = search_models(keyword, page, limit, sort)
+    if not result.items:
+        get_console().print("[yellow]没有匹配的模型[/yellow]")
+        return
+    table = Table(title=f"ModelScope 模型（第 {result.page} 页 / 共 {result.total} 条）", box="ascii")
+    table.add_column("仓库", style="cyan", no_wrap=True)
+    table.add_column("任务", no_wrap=True)
+    table.add_column("下载", justify="right", no_wrap=True)
+    table.add_column("星标", justify="right", no_wrap=True)
+    table.add_column("更新", justify="right", no_wrap=True)
+    table.add_column("大小", justify="right", no_wrap=True)
+    for item in result.items:
+        table.add_row(
+            item.repo,
+            "、".join(item.tasks) or "-",
+            f"{item.downloads:,}",
+            f"{item.stars:,}",
+            format_timestamp(item.updated),
+            human_size(item.storage_size) if item.storage_size else "-",
+        )
+    get_console().print(table)
+
+
+@fcmd.tool(
+    "llmdown",
+    subcommand="info",
+    help="查看 ModelScope 模型详情",
+    description="大模型仓库下载：搜索 / 详情 / 清单 / 多源测速 / 断点续传下载",
+)
+def info_cmd(repo: str, readme: bool = False, limit: int = 2000) -> None:
+    """查看模型详情（任务、框架、许可证、README）。
+
+    Parameters
+    ----------
+    repo:
+        仓库标识，如 ``Qwen/Qwen3-Coder-30B-A3B-Instruct``。
+    readme:
+        额外输出 README 正文（``--readme``）。
+    limit:
+        README 最大输出字符数（默认 2000）。
+    """
+    info = fetch_model_info(repo)
+    summary = info.summary
+    table = Table(title=summary.repo, box="ascii", show_header=False)
+    table.add_column("字段", style="cyan", no_wrap=True)
+    table.add_column("值")
+    rows = (
+        ("中文名", summary.chinese_name or "-"),
+        ("组织", info.organization or summary.owner or "-"),
+        ("任务", "、".join(summary.tasks) or "-"),
+        ("框架", "、".join(info.frameworks) or "-"),
+        ("架构", "、".join(info.architectures) or "-"),
+        ("模型类型", "、".join(info.model_types) or "-"),
+        ("语言", "、".join(info.languages) or "-"),
+        ("许可证", summary.license or "-"),
+        ("下载", f"{summary.downloads:,}"),
+        ("星标", f"{summary.stars:,}"),
+        ("大小", human_size(summary.storage_size) if summary.storage_size else "-"),
+        ("版本", info.revision or "-"),
+        ("更新时间", format_timestamp(summary.updated)),
+        ("推理支持", info.inference or "-"),
+    )
+    for name, value in rows:
+        table.add_row(name, value)
+    get_console().print(table)
+    if info.description:
+        get_console().print(info.description)
+    if readme and info.readme:
+        text = info.readme
+        if len(text) > limit:
+            text = text[:limit] + f"\n…（已截断，共 {len(info.readme)} 字符）"
+        get_console().print(text)
+
+
+@fcmd.tool(
+    "llmdown",
+    subcommand="local",
+    help="列出本地已下载的模型目录",
+    description="大模型仓库下载：搜索 / 详情 / 清单 / 多源测速 / 断点续传下载",
+)
+def local_cmd(root: Path | None = None) -> None:
+    """列出 ``root`` 下已下载的模型及占用空间。
+
+    Parameters
+    ----------
+    root:
+        模型根目录，默认 ``./models``。
+    """
+    base = root if root is not None else Path("models")
+    models = scan_local_models(base)
+    if not models:
+        get_console().print(f"[yellow]{base} 下没有已下载的模型[/yellow]")
+        return
+    table = Table(title=f"本地模型（{base}）", box="ascii")
+    table.add_column("仓库", style="cyan", no_wrap=True)
+    table.add_column("大小", justify="right", no_wrap=True)
+    table.add_column("文件", justify="right", no_wrap=True)
+    table.add_column("状态", no_wrap=True)
+    table.add_column("路径")
+    for model in models:
+        status = "[green]完整[/green]" if model.complete else f"[yellow]未完成（{model.partial} 个 .part）[/yellow]"
+        table.add_row(model.repo, human_size(model.size), str(model.files), status, str(model.path))
+    get_console().print(table)
+
+
 @fcmd.tool(
     "llmdown",
     subcommand="files",
