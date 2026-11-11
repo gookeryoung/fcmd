@@ -12,10 +12,10 @@
 
 from __future__ import annotations
 
-import socket
 from typing import Any
 
 import fcmd
+from fcmd.infras.net import is_port_in_use as _is_port_in_use
 
 __all__ = [
     "check_port",
@@ -28,8 +28,8 @@ __all__ = [
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     """检查指定端口是否被占用。
 
-    通过尝试 ``bind`` 判断端口是否可绑定，仅检测 TCP。
-    使用 ``SO_REUSEADDR`` 避免 TIME_WAIT 状态干扰，结果反映"能否绑定该端口"。
+    实现位于 ``fcmd.infras.net.is_port_in_use``（基础件，供 llm 等工具域共用），
+    此处保留同名转发以维持本工具的公开接口。
 
     Parameters
     ----------
@@ -43,13 +43,7 @@ def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     bool
         端口被占用时返回 ``True``，否则 ``False``
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-        except OSError:
-            return True
-        return False
+    return _is_port_in_use(port, host)
 
 
 def _occupant_row(conn: Any) -> dict[str, str]:

@@ -1492,7 +1492,7 @@ class TestLaunch:
     ) -> None:
         plan = _plan(tmp_path, monkeypatch, home, model_file)
         llmenv.save_state(_state(pid=2**31 - 1), home)
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: False)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: False)
         state = llmserve.start_server(
             plan,
             home=home,
@@ -1614,7 +1614,7 @@ def _doctor_runner(cmd: list[str] | Any) -> CommandResult:
 class TestDoctor:
     def test_all_ok(self, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / llmengine.engine_exe_name()))
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: False)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: False)
         monkeypatch.setattr(llmengine.shutil, "disk_usage", lambda path: DiskUsage(100, 10, 90 * 1024**3))
         monkeypatch.setattr(llmdoctor, "_file_version", lambda dll: (14, 51, 0, 0))
         checks = llmdoctor.doctor(home=home, models_root=model_file.parent.parent, runner=_doctor_runner)
@@ -1624,7 +1624,7 @@ class TestDoctor:
 
     def test_problems(self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(tmp_path / "nope" / llmengine.engine_exe_name()))
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: True)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: True)
         monkeypatch.setattr(llmengine.shutil, "disk_usage", lambda path: DiskUsage(100, 99, 1024))
         checks = llmdoctor.doctor(
             home=home, models_root=tmp_path / "empty", runner=lambda cmd: CommandResult(1, "", "err")
@@ -1661,7 +1661,7 @@ class TestDoctor:
     def test_port_owned_by_service(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
         pid = os.getpid()
         llmenv.save_state(_state(pid=pid, create_time=llmserve.process_create_time(pid), port=9188), home)
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: True)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: True)
         check = llmdoctor._check_port(9188, home)
         assert check.status == "ok"
         assert "qwen" in check.detail
@@ -1819,7 +1819,7 @@ class TestServeBranches:
 class TestDoctorBranches:
     def test_port_occupied_by_other_process(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
         llmenv.save_state(_state(pid=1, port=9999), home)
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: True)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: True)
         check = llmdoctor._check_port(DEFAULT_PORT, home)
         assert check.status == "warn"
 
@@ -1875,7 +1875,7 @@ class TestDoctorBranches:
         self, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / llmengine.engine_exe_name()))
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: False)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: False)
         monkeypatch.setattr(llmengine.shutil, "disk_usage", lambda path: DiskUsage(100, 10, 90 * 1024**3))
         checks = llmdoctor.doctor(
             home=home, models_root=model_file.parent.parent, runner=lambda cmd: CommandResult(1, "", "no gpu")
@@ -1886,7 +1886,7 @@ class TestDoctorBranches:
         self, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path, tmp_path: Path
     ) -> None:
         monkeypatch.setenv("FCMD_LLAMA_SERVER", str(_engine_dir(tmp_path) / llmengine.engine_exe_name()))
-        monkeypatch.setattr("fcmd.tools.net.portcheck.is_port_in_use", lambda port, host: False)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: False)
         monkeypatch.setattr(llmengine.shutil, "disk_usage", lambda path: DiskUsage(100, 10, 90 * 1024**3))
         from types import SimpleNamespace
 

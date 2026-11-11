@@ -62,7 +62,7 @@ def _check_cuda(runner: Runner) -> Check:
 
 
 def _check_port(port: int, home: Path | None) -> Check:
-    from fcmd.tools.net.portcheck import is_port_in_use
+    from fcmd.infras.net import is_port_in_use
 
     if not is_port_in_use(port, "127.0.0.1"):
         return Check("端口", "ok", f"127.0.0.1:{port} 空闲")

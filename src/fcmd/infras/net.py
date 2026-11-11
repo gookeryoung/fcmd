@@ -14,6 +14,7 @@ import ipaddress
 import os
 import posixpath
 import re
+import socket
 import time
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +39,7 @@ __all__ = [
     "http_head",
     "http_post",
     "is_ad_url",
+    "is_port_in_use",
     "is_relevant_url",
     "is_same_origin",
     "parse_ip",
@@ -673,3 +675,35 @@ def urlcheck_single(url: str, timeout: float = _DEFAULT_CHECK_TIMEOUT) -> tuple[
 def urlcheck_many(urls: list[str], timeout: float = _DEFAULT_CHECK_TIMEOUT) -> list[tuple[str, bool, float]]:
     """并发探测多个 URL，返回按访问速度排序的 ``(url, 是否可访问, 延迟毫秒)`` 列表。"""
     return check_urls(urls, timeout)
+
+
+# ============================================================================
+# 端口探测
+# ============================================================================
+
+
+def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
+    """检查指定端口是否被占用。
+
+    通过尝试 ``bind`` 判断端口是否可绑定，仅检测 TCP。
+    使用 ``SO_REUSEADDR`` 避免 TIME_WAIT 状态干扰，结果反映"能否绑定该端口"。
+
+    Parameters
+    ----------
+    port:
+        目标端口号（1-65535）
+    host:
+        目标主机（默认 ``127.0.0.1``）
+
+    Returns
+    -------
+    bool
+        端口被占用时返回 ``True``，否则 ``False``
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return True
+        return False

@@ -401,7 +401,7 @@ def start_server(  # noqa: PLR0913
         llmenv.delete_state(plan.name, home)
 
     if port_in_use is None:
-        from fcmd.tools.net.portcheck import is_port_in_use
+        from fcmd.infras.net import is_port_in_use
 
         port_in_use = is_port_in_use
     if port_in_use(plan.port, plan.host):
