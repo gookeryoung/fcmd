@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmengine, llmenv, llmmodel, llmserve
+from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
 from fcmd.tools.llm._llmservew_monitor import (
     _FIT_BUSY,
     _FIT_RUNNING,
@@ -46,6 +47,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _fits: Any
         _gpu_usage: Any
         _info_vars: Any
+        _precisions: dict[str, GgufPrecision]
         _metric_vars: Any
         _load_vars: Any
         _gpu_vars: Any
@@ -245,7 +247,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._tree.heading("profiles", text="匹配档位")
         self._tree.heading("tags", text="标签")
         self._tree.heading("fit", text="硬件")
-        self._tree.column("model", width=290, anchor="w")
+        self._tree.column("model", width=380, anchor="w")
         self._tree.column("size", width=90, anchor="e", stretch=False)
         self._tree.column("profiles", width=130, anchor="w", stretch=False)
         self._tree.column("tags", width=100, anchor="w", stretch=False)
@@ -505,7 +507,8 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         info, gpu_mib = self._collect_env_info()
         usage = self._gpu_usage()
         free_mib = max(usage[1] - usage[0], 0) if usage is not None else None
-        self._scan_results.put((entries, info, gpu_mib, free_mib))
+        precisions = {llmenv.path_key(entry.path): detect_precision(entry.path) for entry in entries}
+        self._scan_results.put((entries, info, gpu_mib, free_mib, precisions))
 
     @staticmethod
     def _with_running_models(entries: list[ModelEntry]) -> list[ModelEntry]:
@@ -549,12 +552,12 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
     def _poll_scan(self) -> None:
         try:
-            entries, info, gpu_mib, free_mib = self._scan_results.get_nowait()
+            entries, info, gpu_mib, free_mib, precisions = self._scan_results.get_nowait()
         except queue.Empty:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 self.root.after(200, self._poll_scan)
             return
-        self._apply_models(entries, info, gpu_mib, free_mib)
+        self._apply_models(entries, info, gpu_mib, free_mib, precisions)
 
     def _apply_models(
         self,
@@ -562,8 +565,10 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         info: dict[str, str],
         gpu_mib: int | None,
         free_mib: int | None,
+        precisions: dict[str, GgufPrecision],
     ) -> None:
         self._models = entries
+        self._precisions = precisions
         self._gpu_mib = gpu_mib
         self._gpu_free_mib = free_mib
         if self._selected_model is None:
@@ -596,12 +601,16 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._tree.delete(*self._tree.get_children())
         for index, entry in enumerate(self._models):
             state = self._row_state(entry)
+            name = entry.relative
+            precision = self._precisions.get(llmenv.path_key(entry.path))
+            if precision is not None:
+                name = f"{name}（{precision.note}）"
             self._tree.insert(
                 "",
                 "end",
                 iid=str(index),
                 values=(
-                    entry.relative,
+                    name,
                     human_size(entry.size),
                     ", ".join(entry.profiles) or "-",
                     " · ".join(entry.tags) or "-",

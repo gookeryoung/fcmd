@@ -27,6 +27,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmenv, llmmodel, llmserve
+from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
 from fcmd.tools.llm._llmservew_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
     RATE_WINDOW_SECONDS,
     GpuSample,
@@ -160,6 +161,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         )
 
         self._models: list[ModelEntry] = []
+        self._precisions: dict[str, GgufPrecision] = {}
         self._selected_model: Path | None = None
         self._syncing_selection = False
         self._gpu_mib: int | None = None
@@ -169,7 +171,9 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._closing = False
 
         self._scan_thread: threading.Thread | None = None
-        self._scan_results: queue.Queue[tuple[list[ModelEntry], dict[str, str], int | None, int | None]] = queue.Queue()
+        self._scan_results: queue.Queue[
+            tuple[list[ModelEntry], dict[str, str], int | None, int | None, dict[str, GgufPrecision]]
+        ] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
 
@@ -314,6 +318,15 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         finally:
             self._syncing_selection = False
 
+    def _precision_for(self, path: Path) -> GgufPrecision:
+        """取模型精度识别结果（优先用后台扫描缓存，未命中时现场读取头部）。"""
+        key = llmenv.path_key(path)
+        precision = self._precisions.get(key)
+        if precision is None:
+            precision = detect_precision(path)
+            self._precisions[key] = precision
+        return precision
+
     def _show_model_hint(self, path: Path) -> None:
         """按文件名内置标签展示推荐档位、最佳实践、硬件适配与客户端接入方式。"""
         tags = llmmodel.detect_model_tags(path.name)
@@ -325,13 +338,15 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
             port = DEFAULT_PORT
         base = http_base_url(self._host_var.get().strip() or DEFAULT_HOST, port)
         alias = self._alias_var.get().strip() or path.stem
-        hint = f"标签: {label} | {advice}\n接入: {base}/v1，model={alias}"
+        precision = self._precision_for(path)
+        hint = f"标签: {label} | {advice}\n精度: {precision.detail}\n接入: {base}/v1，model={alias}"
         note = self._hardware_note(path)
         if note:
             hint += f"\n{note}"
             self._log(f"  {note}")
         self._hint_var.set(hint)
         self._log(f"  标签: {label}")
+        self._log(f"  精度: {precision.detail}")
         self._log(f"  建议: {advice}")
 
     @override
@@ -511,6 +526,7 @@ class ServeWindow(_ServeWindowUI, _ServeWindowMonitor):  # pragma: no cover - Tk
         self._log(f"  监听: {http_base_url(plan.host, plan.port)}")
         tags = llmmodel.detect_model_tags(plan.model.name)
         self._log(f"  标签: {' · '.join(tags) or '未识别'}")
+        self._log(f"  精度: {self._precision_for(plan.model).detail}")
         self._log(f"  建议: {llmmodel.model_advice(tags)}")
         self._log(f"  显存估算: {human_size(estimate)}")
         self._log("  命令: " + format_command(plan.argv()))
