@@ -1509,6 +1509,7 @@ class TestMenuState:
             show_hidden=True,
             tree_visible=False,
             quick_visible=True,
+            sync_browse=True,
             sort_key="size",
             view_mode="brief",
         )
@@ -1518,11 +1519,35 @@ class TestMenuState:
         assert state.show_hidden is True
         assert state.tree_visible is False
         assert state.quick_visible is True
+        assert state.sync_browse is True
         assert state.sort_key == "size"
         assert state.view_mode == "brief"
 
     def test_invalid_view_mode_falls_back_to_detailed(self) -> None:
         assert ops.menu_state(self._facts(view_mode="grid")).view_mode == "detailed"
+
+
+class TestSyncBrowse:
+    """同步浏览：把一侧的目录变化折算成相对动作，另一侧按同样动作跟随。"""
+
+    def test_enter_child_directory(self) -> None:
+        assert ops.browse_step("/a", "/a/b") == "b"
+        assert ops.browse_follow_path("/x", "b") == str(Path("/x/b"))
+
+    def test_return_to_parent(self) -> None:
+        assert ops.browse_step("/a/b", "/a") == ops.BROWSE_STEP_PARENT
+        assert ops.browse_follow_path("/x/y", ops.BROWSE_STEP_PARENT) == str(Path("/x"))
+
+    def test_unrelated_jump_is_not_followed(self) -> None:
+        assert ops.browse_step("/a", "/c") is None
+        assert ops.browse_step("/a", "/a/b/c") is None
+        assert ops.browse_step("/a", "/a") is None
+        assert ops.browse_step("", "/a") is None
+
+    def test_follow_path_rejects_root_and_invalid_step(self) -> None:
+        assert ops.browse_follow_path("/", ops.BROWSE_STEP_PARENT) is None
+        assert ops.browse_follow_path("/x", None) is None
+        assert ops.browse_follow_path("", "b") is None
 
 
 class TestViewModes:

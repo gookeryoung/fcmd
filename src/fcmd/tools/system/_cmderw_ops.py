@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 __all__ = [
+    "BROWSE_STEP_PARENT",
     "COLOR_KIND_ANY",
     "COLOR_KIND_DIR",
     "COLOR_KIND_FILE",
@@ -112,6 +113,8 @@ __all__ = [
     "TransferQueue",
     "TrashReport",
     "apply_rename_plan",
+    "browse_follow_path",
+    "browse_step",
     "build_new_name",
     "build_sync_plan",
     "cleanup_incomplete_items",
@@ -2290,6 +2293,7 @@ class MenuFacts:
     show_hidden: bool = False
     tree_visible: bool = False
     quick_visible: bool = False
+    sync_browse: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2302,6 +2306,7 @@ class MenuState:
     show_hidden: bool = False
     tree_visible: bool = False
     quick_visible: bool = False
+    sync_browse: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2366,6 +2371,41 @@ def menu_state(facts: MenuFacts) -> MenuState:
         show_hidden=facts.show_hidden,
         tree_visible=facts.tree_visible,
         quick_visible=facts.quick_visible,
+        sync_browse=facts.sync_browse,
         sort_key=facts.sort_key,
         view_mode=normalize_view_mode(facts.view_mode),
     )
+
+
+# ============================================================================ #
+# 同步浏览：把一侧的目录变化折算成相对动作，另一侧按同样动作跟随
+# ============================================================================ #
+BROWSE_STEP_PARENT = ".."
+
+
+def browse_step(old: str, new: str) -> str | None:
+    """折算一次目录变化：进入子目录返回目录名，返回上级返回 ``..``。
+
+    路径栏直接跳转、书签、历史跨步与切换盘符都无法折算成相对动作，返回
+    ``None``，对侧保持不动（与 TC 的“同步切换目录”口径一致）。
+    """
+    if not old or not new or old == new:
+        return None
+    old_path = Path(old)
+    new_path = Path(new)
+    if new_path.parent == old_path:
+        return new_path.name
+    if new_path == old_path.parent:
+        return BROWSE_STEP_PARENT
+    return None
+
+
+def browse_follow_path(current: str, step: str | None) -> str | None:
+    """按相对动作计算对侧目标目录；无效动作或已在根目录时返回 ``None``。"""
+    if not current or step is None:
+        return None
+    base = Path(current)
+    if step == BROWSE_STEP_PARENT:
+        parent = base.parent
+        return None if parent == base else str(parent)
+    return str(base / step)

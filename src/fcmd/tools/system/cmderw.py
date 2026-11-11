@@ -107,6 +107,8 @@ from fcmd.tools.system._cmderw_ops import (
     TransferQueue,
     TrashReport,
     apply_rename_plan,
+    browse_follow_path,
+    browse_step,
     build_sync_plan,
     cleanup_incomplete_items,
     column_display_names,
@@ -403,6 +405,7 @@ class CmderSettings:
     right_tab_index: int = 0
     bookmarks: list[str] = field(default_factory=list)
     color_rules: list[ColorRule] = field(default_factory=list)
+    sync_browse: bool = False
 
 
 # ============================================================================ #
@@ -523,6 +526,9 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     show_hidden = raw.get("show_hidden")
     if isinstance(show_hidden, bool):
         settings.show_hidden = show_hidden
+    sync_browse = raw.get("sync_browse")
+    if isinstance(sync_browse, bool):
+        settings.sync_browse = sync_browse
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
@@ -547,6 +553,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "right_tab_index": right_index,
         "bookmarks": list(settings.bookmarks),
         "color_rules": dump_color_rules(settings.color_rules),
+        "sync_browse": settings.sync_browse,
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -1112,6 +1119,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.entries: list[FileEntry] = []
         self._index: dict[str, FileEntry] = {}
         self._filter = ""
+        self._last_path = self.state.path
         self._tk = tk
         self._ttk = ttk
         theme = app.theme
@@ -1694,6 +1702,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """重新读取当前目录并恢复选择。"""
         self._invalidate_thumbnails("refresh")
         self._render_tabs()
+        previous_path = self._last_path
+        self._last_path = self.state.path
+        if previous_path != self._last_path:
+            self.app.on_panel_navigated(self, previous_path, self._last_path)
         directory = Path(self.state.path)
         try:
             entries = sort_entries(
@@ -3631,6 +3643,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._tree_loaded: set[str] = set()
         self._command_visible = False
         self._color_dialog: ColorRulesDialog | None = None
+        self._sync_browse_lock = True
 
         self.root, self.theme = _guiwindow.create_root(
             title=f"cmderw - 双面板文件管理器 v{__version__}",
@@ -3652,6 +3665,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.active_side = self.settings.active if self.settings.active in ("left", "right") else "left"
         self.left.set_path(Path(self.settings.left.path))
         self.right.set_path(Path(self.settings.right.path))
+        self._sync_browse_lock = False
         self.set_active(self.left if self.active_side == "left" else self.right)
         self._sync_menu_state()
         self.set_status("就绪")
@@ -3750,6 +3764,14 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "目录树\tCtrl+F8",
             self._tree_var,
             self.toggle_directory_tree,
+        )
+        self._sync_var = tk.BooleanVar(value=self.settings.sync_browse)
+        self._menu_check(
+            view_menu,
+            "sync_browse",
+            "同步浏览\tCtrl+Shift+S",
+            self._sync_var,
+            self._apply_sync_browse,
         )
         view_menu.add_separator()
         view_mode_menu = tk.Menu(view_menu, tearoff=False, postcommand=self._sync_menu_state)
@@ -3986,6 +4008,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-F2>": lambda _event: self.set_view_mode(VIEW_MODE_DETAILED),
             "<Control-Shift-F1>": lambda _event: self.set_view_mode(VIEW_MODE_THUMBNAILS),
             "<Control-F8>": lambda _event: self.toggle_directory_tree(),
+            "<Control-Shift-s>": lambda _event: self.toggle_sync_browse(),
+            "<Control-Shift-S>": lambda _event: self.toggle_sync_browse(),
             "<Control-Return>": lambda _event: self.focus_command_bar(),
             "<Control-KP_Enter>": lambda _event: self.focus_command_bar(),
             "<Alt-Down>": lambda _event: self.show_history_menu(),
@@ -4054,6 +4078,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             show_hidden=self.settings.show_hidden,
             tree_visible=self._tree_visible,
             quick_visible=panel.quick_visible,
+            sync_browse=self.settings.sync_browse,
             sort_key=panel.state.sort_key,
             view_mode=panel.state.view_mode,
         )
@@ -4063,6 +4088,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._hidden_var.set(state.show_hidden)
         self._quick_var.set(state.quick_visible)
         self._tree_var.set(state.tree_visible)
+        self._sync_var.set(state.sync_browse)
         self._sort_var.set(state.sort_key)
         self._view_var.set(state.view_mode)
 
@@ -4206,6 +4232,27 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         if iid:
             self._select_tree_iid(iid)
 
+    def on_panel_navigated(self, panel: FilePanel, old: str, new: str) -> None:
+        """同步浏览：按相对动作让对侧进入同名子目录或返回上级。
+
+        路径栏直接跳转、书签与跨盘跳转无法折算成相对动作，对侧保持不动。
+        """
+        if not self.settings.sync_browse or self._sync_browse_lock:
+            return
+        step = browse_step(old, new)
+        if step is None:
+            return
+        other = self.right if panel is self.left else self.left
+        target = browse_follow_path(other.state.path, step)
+        if target is None or not Path(target).is_dir():
+            self.set_status(f"同步浏览：对侧没有「{step}」，未跟随")
+            return
+        self._sync_browse_lock = True
+        try:
+            other.set_path(Path(target))
+        finally:
+            self._sync_browse_lock = False
+
     # ------------------------------------------------------------------ #
     # 命令行栏（默认隐藏，Enter 执行、Esc 清空返回）
     # ------------------------------------------------------------------ #
@@ -4336,8 +4383,12 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def swap_panels(self) -> None:
         """交换左右面板当前目录。"""
         left_path, right_path = self.left.state.path, self.right.state.path
-        self.left.set_path(Path(right_path))
-        self.right.set_path(Path(left_path))
+        self._sync_browse_lock = True
+        try:
+            self.left.set_path(Path(right_path))
+            self.right.set_path(Path(left_path))
+        finally:
+            self._sync_browse_lock = False
         self.set_status("已交换面板")
 
     # ------------------------------------------------------------------ #
@@ -4398,6 +4449,19 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.settings.show_hidden = bool(self._hidden_var.get())
         self.refresh_both()
         self.set_status("显示隐藏文件" if self.settings.show_hidden else "隐藏隐藏文件")
+
+    def toggle_sync_browse(self) -> None:
+        """Ctrl+Shift+S：切换同步浏览。"""
+        self._sync_var.set(not bool(self._sync_var.get()))
+        self._apply_sync_browse()
+
+    def _apply_sync_browse(self) -> None:
+        """采用菜单勾选状态；开启后一侧导航时对侧按相同相对动作跟随。"""
+        self.settings.sync_browse = bool(self._sync_var.get())
+        if self.settings.sync_browse:
+            self.set_status("同步浏览已开启：一侧进入子目录或返回上级时对侧跟随")
+        else:
+            self.set_status("同步浏览已关闭")
 
     def clear_selection(self) -> None:
         """取消活动面板的全部选择。"""

@@ -174,6 +174,27 @@ class TestSettings:
         assert loaded.show_hidden is True
         assert loaded.geometry == "1000x700+10+20"
 
+    def test_save_and_load_roundtrip_keeps_sync_browse(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path)),
+                right=PanelState(path=str(tmp_path)),
+                sync_browse=True,
+            )
+        )
+        assert load_settings().sync_browse is True
+
+    def test_invalid_sync_browse_falls_back_to_disabled(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"left": {"path": str(tmp_path)}, "right": {"path": str(tmp_path)}, "sync_browse": "yes"}),
+            encoding="utf-8",
+        )
+        assert load_settings().sync_browse is False
+
     def test_save_and_load_roundtrip_keeps_tabs_and_bookmarks(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
