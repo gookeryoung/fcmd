@@ -954,6 +954,87 @@ class TestSyncPlan:
         assert [item.relative for item in plan.deletes] == ["left-only.txt"]
         assert plan.deletes[0].target == left / "left-only.txt"
 
+    def test_bidirectional_copies_each_side_only(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "left-only.txt", "x")
+        self._write(right / "right-only.txt", "y")
+
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report, ops.SyncOptions(direction=ops.SYNC_BOTH))
+
+        assert [(item.relative, item.source, item.target) for item in plan.copies] == [
+            ("left-only.txt", left / "left-only.txt", right / "left-only.txt"),
+            ("right-only.txt", right / "right-only.txt", left / "right-only.txt"),
+        ]
+        assert plan.deletes == []
+        assert plan.is_bidirectional
+
+    def test_bidirectional_newer_side_wins_conflict(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "c.txt", "left", mtime=1_700_000_500)
+        self._write(right / "c.txt", "right", mtime=1_700_000_000)
+
+        report = ops.compare_trees(left, right)
+        options = ops.SyncOptions(direction=ops.SYNC_BOTH, conflict=ops.SYNC_CONFLICT_NEWER)
+
+        forward = ops.build_sync_plan(report, options).copies
+        assert [(item.source, item.target) for item in forward] == [(left / "c.txt", right / "c.txt")]
+
+        os.utime(right / "c.txt", (1_700_000_900, 1_700_000_900))
+        reversed_plan = ops.build_sync_plan(ops.compare_trees(left, right), options).copies
+        assert [(item.source, item.target) for item in reversed_plan] == [(right / "c.txt", left / "c.txt")]
+
+    def test_bidirectional_conflict_policies(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "c.txt", "left", mtime=1_700_000_500)
+        self._write(right / "c.txt", "right", mtime=1_700_000_000)
+        report = ops.compare_trees(left, right)
+
+        skip_plan = ops.build_sync_plan(
+            report, ops.SyncOptions(direction=ops.SYNC_BOTH, conflict=ops.SYNC_CONFLICT_SKIP)
+        )
+        assert skip_plan.copies == []
+        assert skip_plan.skipped[0].skip_reason == "两侧内容不同，按策略跳过"
+
+        os.utime(right / "c.txt", (1_700_000_500, 1_700_000_500))
+        tie_plan = ops.build_sync_plan(
+            ops.compare_trees(left, right),
+            ops.SyncOptions(direction=ops.SYNC_BOTH, conflict=ops.SYNC_CONFLICT_NEWER),
+        )
+        assert tie_plan.copies == []
+        assert tie_plan.skipped[0].skip_reason == "两侧时间相同，无法判定较新一侧"
+
+    def test_directed_newer_policy_skips_stale_source(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "c.txt", "left", mtime=1_700_000_000)
+        self._write(right / "c.txt", "right", mtime=1_700_000_500)
+        options = ops.SyncOptions(conflict=ops.SYNC_CONFLICT_NEWER)
+
+        stale = ops.build_sync_plan(ops.compare_trees(left, right), options)
+        assert stale.copies == []
+        assert stale.skipped[0].skip_reason == "源端不较新，按策略跳过"
+
+        os.utime(left / "c.txt", (1_700_000_900, 1_700_000_900))
+        fresh = ops.build_sync_plan(ops.compare_trees(left, right), options)
+        assert [(item.source, item.target) for item in fresh.copies] == [(left / "c.txt", right / "c.txt")]
+
+    def test_unknown_conflict_falls_back_to_overwrite(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "c.txt", "left", mtime=1_700_000_500)
+        self._write(right / "c.txt", "right", mtime=1_700_000_000)
+
+        plan = ops.build_sync_plan(ops.compare_trees(left, right), ops.SyncOptions(conflict="bogus"))
+
+        assert [item.relative for item in plan.copies] == ["c.txt"]
+
+    def test_root_for_locates_owning_panel(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report)
+
+        assert plan.root_for(right / "sub" / "a.txt") == right
+        assert plan.root_for(left / "a.txt") == left
+
     def test_symlink_entries_are_skipped(self, tmp_path: Path) -> None:
         left, right = self._roots(tmp_path)
         self._write(left / "target.txt", "x")

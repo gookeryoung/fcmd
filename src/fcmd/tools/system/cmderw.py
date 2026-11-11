@@ -70,6 +70,10 @@ from fcmd.tools.system._cmderw_ops import (
     PREVIEW_UNSUPPORTED,
     QUEUE_CANCELLED,
     QUEUE_RUNNING,
+    SYNC_BOTH,
+    SYNC_CONFLICT_OVERWRITE,
+    SYNC_CONFLICT_TEXT,
+    SYNC_CONFLICTS,
     SYNC_DELETE,
     SYNC_LTR,
     SYNC_RTL,
@@ -2910,16 +2914,29 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         controls.pack(fill="x", pady=(0, spacing.xs))
         self.direction_var = tk.StringVar(value=SYNC_LTR)
         ttk.Radiobutton(
-            controls, text="左 → 右", value=SYNC_LTR, variable=self.direction_var, command=self.refresh_plan
+            controls, text="左 → 右", value=SYNC_LTR, variable=self.direction_var, command=self._on_direction_toggle
         ).pack(side="left")
         ttk.Radiobutton(
-            controls, text="右 → 左", value=SYNC_RTL, variable=self.direction_var, command=self.refresh_plan
+            controls, text="右 → 左", value=SYNC_RTL, variable=self.direction_var, command=self._on_direction_toggle
         ).pack(side="left", padx=spacing.sm)
+        ttk.Radiobutton(
+            controls, text="双向 ⇄", value=SYNC_BOTH, variable=self.direction_var, command=self._on_direction_toggle
+        ).pack(side="left")
+        ttk.Label(controls, text="冲突").pack(side="left", padx=(spacing.lg, 0))
+        self.conflict_var = tk.StringVar(value=SYNC_CONFLICT_TEXT[SYNC_CONFLICT_OVERWRITE])
+        ttk.Combobox(
+            controls,
+            textvariable=self.conflict_var,
+            values=[SYNC_CONFLICT_TEXT[name] for name in SYNC_CONFLICTS],
+            state="readonly",
+            width=10,
+        ).pack(side="left", padx=(spacing.xxs, 0))
         self.delete_var = tk.BooleanVar(value=False)
         self.delete_dirs_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self.delete_check = ttk.Checkbutton(
             controls, text="同时删除目标端多余文件", variable=self.delete_var, command=self._on_delete_toggle
-        ).pack(side="left", padx=(spacing.lg, 0))
+        )
+        self.delete_check.pack(side="left", padx=(spacing.lg, 0))
         self.delete_dirs_check = ttk.Checkbutton(
             controls, text="允许删除多余目录及其内容", variable=self.delete_dirs_var, command=self.refresh_plan
         )
@@ -2963,19 +2980,36 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
     def _on_delete_toggle(self) -> None:
         """「删除多余文件」控制目录删除勾选框的可用性。"""
-        if self.delete_var.get():
-            self.delete_dirs_check.configure(state="normal")
-        else:
+        if not self.delete_var.get():
             self.delete_dirs_var.set(False)
-            self.delete_dirs_check.configure(state="disabled")
+        self._sync_delete_states()
         self.refresh_plan()
 
+    def _on_direction_toggle(self) -> None:
+        """双向镜像不删除任何一侧的独有项，切回单向时恢复删除选项。"""
+        if self.direction_var.get() == SYNC_BOTH:
+            self.delete_var.set(False)
+            self.delete_dirs_var.set(False)
+        self._sync_delete_states()
+        self.refresh_plan()
+
+    def _sync_delete_states(self) -> None:
+        """按方向与勾选状态刷新两级删除控件的可用性。"""
+        bidirectional = self.direction_var.get() == SYNC_BOTH
+        self.delete_check.configure(state="disabled" if bidirectional else "normal")
+        dirs_ready = not bidirectional and bool(self.delete_var.get())
+        self.delete_dirs_check.configure(state="normal" if dirs_ready else "disabled")
+
     def refresh_plan(self) -> None:
-        """按当前方向与勾选项重新生成预演。"""
+        """按当前方向、冲突策略与勾选项重新生成预演。"""
+        text_to_conflict = {text: name for name, text in SYNC_CONFLICT_TEXT.items()}
+        conflict = text_to_conflict.get(self.conflict_var.get(), SYNC_CONFLICT_OVERWRITE)
+        direction = self.direction_var.get()
         options = SyncOptions(
-            direction=self.direction_var.get(),
-            delete_target_extra=bool(self.delete_var.get()),
-            delete_dirs=bool(self.delete_dirs_var.get()),
+            direction=direction,
+            conflict=conflict,
+            delete_target_extra=direction != SYNC_BOTH and bool(self.delete_var.get()),
+            delete_dirs=direction != SYNC_BOTH and bool(self.delete_dirs_var.get()),
             mtime_tolerance=self.tolerance,
         )
         self.plan = build_sync_plan(self.report, options)
@@ -3025,7 +3059,8 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if counts["skipped"]:
             parts.append(f"跳过 {counts['skipped']} 项")
         parts.append(f"相同 {counts['same']} 项")
-        self.status_var.set("；".join(parts))
+        prefix = "双向镜像" if plan.is_bidirectional else "单向同步"
+        self.status_var.set(f"{prefix}：" + "；".join(parts))
         self.start_button.configure(state="normal" if (plan.copies or plan.deletes) else "disabled")
 
     def execute(self) -> None:
@@ -3034,7 +3069,10 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if plan is None or not (plan.copies or plan.deletes):
             return
         counts = plan.counts()
-        lines = [f"将执行以下操作（{plan.source_root} → {plan.target_root}）："]
+        if plan.is_bidirectional:
+            lines = [f"将执行以下操作（双向镜像：{plan.left_root} ⇄ {plan.right_root}）："]
+        else:
+            lines = [f"将执行以下操作（{plan.source_root} → {plan.target_root}）："]
         if plan.copies:
             lines.append(f"- 复制 {counts['copy_new']} 个新文件")
             lines.append(f"- 覆盖 {counts['copy_overwrite']} 个已有文件")
@@ -3056,7 +3094,7 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
     def _confirm_deletes(self, plan: SyncPlan) -> bool:
         """删除单独确认：逐条列出完整路径与总数。"""
-        side = "右侧" if plan.direction == SYNC_LTR else "左侧"
+        side = {SYNC_LTR: "右侧", SYNC_RTL: "左侧", SYNC_BOTH: "两侧"}.get(plan.direction, "目标端")
         counts = plan.counts()
         lines = ["确认删除目标端多余项", "", f"即将从{side}移入回收站以下 {len(plan.deletes)} 项：", ""]
         for index, item in enumerate(plan.deletes, start=1):
@@ -3077,12 +3115,15 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         ready_deletes, skipped_deletes = revalidate_sync_items(plan.deletes, mtime_tolerance=self.tolerance)
         enqueue_ok = True
         if ready_copies:
-            items = [
-                TransferItem(source=item.source, target=item.target, overwrite=item.overwrite)
-                for item in ready_copies
-                if item.source is not None
-            ]
-            enqueue_ok = self.app.enqueue_transfer(items, plan.target_root, move=False)
+            groups: dict[Path, list[TransferItem]] = {}
+            for item in ready_copies:
+                if item.source is None:
+                    continue
+                transfer = TransferItem(source=item.source, target=item.target, overwrite=item.overwrite)
+                groups.setdefault(plan.root_for(item.target), []).append(transfer)
+            for destination, items in groups.items():
+                if not self.app.enqueue_transfer(items, destination, move=False):
+                    enqueue_ok = False
         delete_report = SyncDeleteReport()
         if enqueue_ok and ready_deletes:
             delete_report = execute_sync_deletes(ready_deletes)

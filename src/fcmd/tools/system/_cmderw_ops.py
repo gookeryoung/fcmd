@@ -64,8 +64,15 @@ __all__ = [
     "QUEUE_PENDING",
     "QUEUE_RUNNING",
     "SYNC_ACTION_TEXT",
+    "SYNC_BOTH",
+    "SYNC_CONFLICTS",
+    "SYNC_CONFLICT_NEWER",
+    "SYNC_CONFLICT_OVERWRITE",
+    "SYNC_CONFLICT_SKIP",
+    "SYNC_CONFLICT_TEXT",
     "SYNC_COPY",
     "SYNC_DELETE",
+    "SYNC_DIRECTIONS",
     "SYNC_LTR",
     "SYNC_RTL",
     "THUMBNAIL_BADGE",
@@ -1146,6 +1153,8 @@ def compare_trees(
 # ============================================================================ #
 SYNC_LTR = "left_to_right"
 SYNC_RTL = "right_to_left"
+SYNC_BOTH = "both"
+SYNC_DIRECTIONS: tuple[str, ...] = (SYNC_LTR, SYNC_RTL, SYNC_BOTH)
 SYNC_COPY = "copy"
 SYNC_DELETE = "delete"
 
@@ -1154,12 +1163,24 @@ SYNC_ACTION_TEXT = {
     SYNC_DELETE: "删除",
 }
 
+#: 冲突策略：总是覆盖 / 仅较新覆盖 / 跳过冲突。
+SYNC_CONFLICT_OVERWRITE = "overwrite"
+SYNC_CONFLICT_NEWER = "newer"
+SYNC_CONFLICT_SKIP = "skip"
+SYNC_CONFLICTS: tuple[str, ...] = (SYNC_CONFLICT_OVERWRITE, SYNC_CONFLICT_NEWER, SYNC_CONFLICT_SKIP)
+SYNC_CONFLICT_TEXT = {
+    SYNC_CONFLICT_OVERWRITE: "总是覆盖",
+    SYNC_CONFLICT_NEWER: "仅较新覆盖",
+    SYNC_CONFLICT_SKIP: "跳过冲突",
+}
+
 
 @dataclass(frozen=True)
 class SyncOptions:
     """同步计划选项；删除默认关闭，目录删除需再开一层。"""
 
     direction: str = SYNC_LTR
+    conflict: str = SYNC_CONFLICT_OVERWRITE
     delete_target_extra: bool = False
     delete_dirs: bool = False
     mtime_tolerance: float = 2.0
@@ -1203,13 +1224,28 @@ class SyncPlan:
 
     @property
     def source_root(self) -> Path:
-        """复制来源根目录。"""
-        return self.left_root if self.direction == SYNC_LTR else self.right_root
+        """复制来源根目录（双向同步时按左→右展示）。"""
+        return self.left_root if self.direction != SYNC_RTL else self.right_root
 
     @property
     def target_root(self) -> Path:
-        """复制目标 / 删除所在根目录。"""
-        return self.right_root if self.direction == SYNC_LTR else self.left_root
+        """复制目标 / 删除所在根目录（双向同步时按左→右展示）。"""
+        return self.right_root if self.direction != SYNC_RTL else self.left_root
+
+    @property
+    def is_bidirectional(self) -> bool:
+        """是否双向镜像同步。"""
+        return self.direction == SYNC_BOTH
+
+    def root_for(self, path: Path) -> Path:
+        """返回目标路径所属的面板根目录，供分方向入队使用。"""
+        for root in (self.left_root, self.right_root):
+            try:
+                path.relative_to(root)
+            except ValueError:
+                continue
+            return root
+        return self.right_root
 
     def counts(self) -> dict[str, int]:
         """汇总计数（新建 / 覆盖 / 删除 / 跳过 / 相同）。"""
@@ -1272,31 +1308,28 @@ def _skip_item(action: str, relative: str, target: Path, is_dir: bool, reason: s
     return SyncItem(action, relative, target, is_dir=is_dir, skip_reason=reason)
 
 
-def _entry_action(entry: CompareEntry, direction: str) -> tuple[str, bool]:
-    """按方向判定条目是复制还是删除，并取源侧目录标记。"""
-    source_is_left = direction == SYNC_LTR
-    source_is_dir = entry.left_is_dir if source_is_left else entry.right_is_dir
-    target_is_dir = entry.right_is_dir if source_is_left else entry.left_is_dir
-    if entry.status == COMPARE_DIFFERENT:
-        return SYNC_COPY, bool(source_is_dir)
-    if (entry.status == COMPARE_LEFT_ONLY) == source_is_left:
-        return SYNC_COPY, bool(source_is_dir)
-    return SYNC_DELETE, bool(target_is_dir)
-
-
-def _make_copy_item(entry: CompareEntry, options: SyncOptions, plan: SyncPlan, is_dir: bool) -> SyncItem:
-    """生成复制项或跳过项；不跟随符号链接。"""
-    source = entry.left if options.direction == SYNC_LTR else entry.right
-    target = entry.right if options.direction == SYNC_LTR else entry.left
-    target = target or _safe_join(plan.target_root, entry.relative)
+def _make_copy_item(
+    entry: CompareEntry,
+    plan: SyncPlan,
+    source_is_left: bool,
+    is_dir: bool,
+    skip_reason: str = "",
+) -> SyncItem:
+    """按指定来源侧生成复制项或跳过项；不跟随符号链接。"""
+    source = entry.left if source_is_left else entry.right
+    target = entry.right if source_is_left else entry.left
+    target_root = plan.right_root if source_is_left else plan.left_root
+    target = target or _safe_join(target_root, entry.relative)
     if target is None:
-        return _skip_item(SYNC_COPY, entry.relative, plan.target_root, is_dir, "路径越出面板范围")
+        return _skip_item(SYNC_COPY, entry.relative, target_root, is_dir, "路径越出面板范围")
     if source is None:
         return _skip_item(SYNC_COPY, entry.relative, target, is_dir, "源端条目缺失")
     if source.is_symlink():
         return _skip_item(SYNC_COPY, entry.relative, target, is_dir, "符号链接不处理")
     if target.is_symlink():
         return _skip_item(SYNC_COPY, entry.relative, target, is_dir, "目标为符号链接，未处理")
+    if skip_reason:
+        return _skip_item(SYNC_COPY, entry.relative, target, is_dir, skip_reason)
     item = SyncItem(
         SYNC_COPY,
         entry.relative,
@@ -1337,11 +1370,76 @@ def _record_item(plan: SyncPlan, item: SyncItem, covered: list[str]) -> None:
         plan.deletes.append(item)
 
 
+def _newer_side(entry: CompareEntry, tolerance: float) -> str | None:
+    """两侧 mtime 超过容差时返回较新一侧；无法判定返回 ``None``。"""
+    if entry.left_mtime is None or entry.right_mtime is None:
+        return None
+    if entry.left_mtime - entry.right_mtime > tolerance:
+        return "left"
+    if entry.right_mtime - entry.left_mtime > tolerance:
+        return "right"
+    return None
+
+
+def _source_newer(entry: CompareEntry, source_is_left: bool, tolerance: float) -> bool:
+    """单向同步时源端是否严格新于目标端（超出容差）。"""
+    newer = _newer_side(entry, tolerance)
+    if newer is None:
+        return False
+    return newer == ("left" if source_is_left else "right")
+
+
+def _make_directed_item(
+    entry: CompareEntry,
+    options: SyncOptions,
+    plan: SyncPlan,
+    conflict: str,
+) -> SyncItem:
+    """单向同步：按方向与冲突策略生成复制 / 删除 / 跳过项。"""
+    source_is_left = options.direction == SYNC_LTR
+    is_dir = entry.left_is_dir if source_is_left else entry.right_is_dir
+    if entry.status != COMPARE_DIFFERENT:
+        if (entry.status == COMPARE_LEFT_ONLY) == source_is_left:
+            return _make_copy_item(entry, plan, source_is_left, bool(is_dir))
+        target_is_dir = entry.right_is_dir if source_is_left else entry.left_is_dir
+        return _make_delete_item(entry, options, plan, bool(target_is_dir))
+    reason = ""
+    if conflict == SYNC_CONFLICT_SKIP:
+        reason = "两侧内容不同，按策略跳过"
+    elif conflict == SYNC_CONFLICT_NEWER and not _source_newer(entry, source_is_left, options.mtime_tolerance):
+        reason = "源端不较新，按策略跳过"
+    return _make_copy_item(entry, plan, source_is_left, bool(is_dir), reason)
+
+
+def _make_both_item(
+    entry: CompareEntry,
+    plan: SyncPlan,
+    conflict: str,
+    tolerance: float,
+) -> SyncItem:
+    """双向镜像：单侧独有项复制到另一侧，两侧不同项按冲突策略决定方向。"""
+    if entry.status == COMPARE_LEFT_ONLY:
+        return _make_copy_item(entry, plan, True, bool(entry.left_is_dir))
+    if entry.status == COMPARE_RIGHT_ONLY:
+        return _make_copy_item(entry, plan, False, bool(entry.right_is_dir))
+    if conflict == SYNC_CONFLICT_SKIP:
+        return _make_copy_item(entry, plan, True, bool(entry.left_is_dir), "两侧内容不同，按策略跳过")
+    if conflict == SYNC_CONFLICT_NEWER:
+        newer = _newer_side(entry, tolerance)
+        if newer is None:
+            return _make_copy_item(entry, plan, True, bool(entry.left_is_dir), "两侧时间相同，无法判定较新一侧")
+        source_is_left = newer == "left"
+        is_dir = entry.left_is_dir if source_is_left else entry.right_is_dir
+        return _make_copy_item(entry, plan, source_is_left, bool(is_dir))
+    return _make_copy_item(entry, plan, True, bool(entry.left_is_dir))
+
+
 def build_sync_plan(report: CompareReport, options: SyncOptions | None = None) -> SyncPlan:
     """把比较结果转成同步预演；只读，不修改任何文件、不跟随符号链接。"""
     options = options or SyncOptions()
-    if options.direction not in (SYNC_LTR, SYNC_RTL):
+    if options.direction not in SYNC_DIRECTIONS:
         raise ValueError(f"未知的同步方向: {options.direction}")
+    conflict = options.conflict if options.conflict in SYNC_CONFLICTS else SYNC_CONFLICT_OVERWRITE
     plan = SyncPlan(Path(report.left_root), Path(report.right_root), options.direction)
     covered: list[str] = []
     for entry in sorted(report.entries, key=lambda item: item.relative):
@@ -1350,11 +1448,10 @@ def build_sync_plan(report: CompareReport, options: SyncOptions | None = None) -
             continue
         if _covered_by(entry.relative, covered):
             continue
-        action, is_dir = _entry_action(entry, options.direction)
-        if action == SYNC_COPY:
-            item = _make_copy_item(entry, options, plan, is_dir)
+        if options.direction == SYNC_BOTH:
+            item = _make_both_item(entry, plan, conflict, options.mtime_tolerance)
         else:
-            item = _make_delete_item(entry, options, plan, is_dir)
+            item = _make_directed_item(entry, options, plan, conflict)
         _record_item(plan, item, covered)
     return plan
 
