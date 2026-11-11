@@ -31,7 +31,8 @@ pip install fcmd          # 或 uv add fcmd
 | `filecheck` | `pip install fcmd[filecheck]` | `filecheck` 的容器类型识别（puremagic） |
 | `color` | `pip install fcmd[color]` | `colortool` 的颜色换算（coloraide） |
 | `pe` | `pip install fcmd[pe]` | `reshack` / `reshackw` 的 PE 资源解析与写回（pefile） |
-| `office` | `pip install fcmd[office]` | pdf + ocr + svg 全家桶 |
+| `ppt` | `pip install fcmd[ppt]` | `pptmake` 的 PPTX 生成与导入（python-pptx） |
+| `office` | `pip install fcmd[office]` | pdf + ocr + svg + ppt 全家桶 |
 | `win32` | `pip install fcmd[win32]` | `docdiff` / `docdiffw` 的 Word 自动化（pywin32，仅 Windows） |
 | `full` | `pip install fcmd[full]` | office + win32 + crypto + archive + filecheck + color + pe |
 | `lint` | `pip install fcmd[lint]` | 开发用：ruff + pyrefly |
@@ -225,6 +226,8 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 |------|------|------|
 | `docdiff` | - | 对比两个 doc/docx 文档（调用本机 Word 生成带修订标记的对比文档，标题、original/revised 模式与是否显示修订可设），依赖 Windows + Word + `fcmd[win32]` |
 | `docdiffw` | - | 文档对比窗口版（Tk，旧/新文档与输出选择、标题/模式/显示修订设置、后台对比与日志，设置持久化），依赖 Windows + Word + `fcmd[win32]` |
+| `pptmake` | - | PPT 模板生成（`presets`/`init`/`inspect`/`export`/`import`；九种版式 + 四套风格 + 四种装饰，模板 JSON 导入导出，可渲染为 `.pptx` 或从 `.pptx` 反向导入主题与文字），导出依赖 `fcmd[ppt]` |
+| `pptmakew` | - | PPT 模板设计器窗口版（Tk，页面列表与布局库、Canvas 实时预览、六个语义色自定义、模板 JSON / PPTX 双向导入导出，设置持久化到 `~/.fcmd/ui/pptmakew.json`），导出依赖 `fcmd[ppt]` |
 
 ### 多媒体（可选依赖）
 

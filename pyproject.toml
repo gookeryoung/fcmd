@@ -96,6 +96,8 @@ pdftool        = "fcmd.tools.pdf.pdftool:main"
 pipt           = "fcmd.cli._entry:run_named"
 piptool        = "fcmd.cli._entry:run_named"
 portcheck      = "fcmd.tools.net.portcheck:main"
+pptmake        = "fcmd.apps.pptmake.pptmake:main"
+pptmakew       = "fcmd.apps.pptmake.pptmakew:main"
 pymake         = "fcmd.tools.dev.pymake:main"
 pyprof         = "fcmd.tools.dev.pyprof:main"
 randtool       = "fcmd.cli._entry:run_named"
@@ -140,13 +142,14 @@ dev = [
 ]
 
 filecheck = [ "puremagic>=1.28" ]
-full = [ "fcmd[img,pdf,ocr,svg,crypto,archive,filecheck,color,pe,win32]" ]
+full = [ "fcmd[img,pdf,ocr,svg,crypto,archive,filecheck,color,pe,ppt,win32]" ]
 img = [ "pillow>=10" ]
 lint = [ "pyrefly>=1.1.1", "ruff>=0.8.0" ]
 ocr = [ "fcmd[img]", "pytesseract>=0.3.13" ]
-office = [ "fcmd[img,pdf,ocr,svg]" ]
+office = [ "fcmd[img,pdf,ocr,svg,ppt]" ]
 pdf = [ "pymupdf>=1.23,<2", "pypdf>=5.9.0" ]
 pe = [ "pefile>=2024.8.26" ]
+ppt = [ "python-pptx>=1.0" ]
 svg = [ "resvg-py>=0.5" ]
 test = [
     "pytest-asyncio>=0.24.0",

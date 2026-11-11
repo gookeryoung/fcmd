@@ -19,3 +19,4 @@
 | [0014](0014-batch-renamer.md) | 批量重命名：规则流水线 + 正则重排 / 搬移 | 已落地（v1） |
 | [0015](0015-llm-serve-tuning.md) | llmserve 启动参数调优策略（基准实测） | 已落地 |
 | [0016](0016-llmdown-model-browser.md) | llmdown 模型浏览器：ModelScope 搜索 / 详情 / 下载管理 | 已落地（v1） |
+| [0017](0017-pptmake.md) | pptmake：PPT 模板设计器（布局 / 风格 / PPTX 导入导出） | 已落地（v1） |
