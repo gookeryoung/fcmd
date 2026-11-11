@@ -1033,7 +1033,7 @@ def enable_dpi_awareness() -> bool:
     return _apply_win32_dpi_awareness(_load_windll())
 
 
-def _load_windll() -> Any | None:
+def _load_windll() -> Any:
     """惰性加载 ``ctypes.windll``；非 Windows 或缺少 ctypes 时返回 ``None``。"""
     try:
         import ctypes
