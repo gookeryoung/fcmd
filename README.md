@@ -254,6 +254,8 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
 | `reshack` | - | PE 资源查看与修改（list/extract/replace/export-all；Icon/Bitmap 导出自动补 ICO/BMP 头，替换前自动备份，依赖 `fcmd[pe]`） |
 | `reshackw` | - | PE 资源编辑器窗口版（Tk：资源树 + 文本/十六进制/图像预览（图像支持缩放/适应窗口、Ctrl+滚轮及右键复制/保存）+ 导出（Icon/Bitmap 自动补 ICO/BMP 头）/替换/全部导出，设置持久化到 `~/.fcmd/ui/reshackw.json`，依赖 `fcmd[pe]`） |
+| `filesync` | - | 文件夹比较与同步（参考 FreeFileSync）：`compare` 按时间与大小/仅大小/内容比较左右目录，`sync` 支持双向/镜像/更新三种模式；包含/排除通配符与跳过隐藏文件，`--preview` 预览，冲突项（时间相同但内容不同）自动跳过 |
+| `filesyncw` | - | 文件夹比较与同步窗口版（Tk：左右目录选择、比较/同步模式与过滤、差异表与计划动作着色、后台比较与逐项同步进度、预演不写盘、冲突跳过、JSON 配置载入/保存，设置持久化到 `~/.fcmd/ui/filesyncw.json`） |
 | `iptool` | - | IP 地址工具（parse/subnet/validate） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
 | `urlcheck` | - | URL 可访问性与访问速度检测（HEAD/GET 探测 + 并发测速排序，供镜像源选优） |
@@ -593,7 +595,7 @@ src/fcmd/
     _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
     _manifest_data.py  # 生成文件，勿手改
   gui/           # Tk 展示基座：窗口骨架 / 主题 / UI 设置持久化（不参与工具发现）
-  apps/          # 独立桌面应用（Tk GUI，自动发现；如 cmder，命令 cmderw）
+  apps/          # 独立桌面应用（Tk GUI，自动发现；如 cmder、filesync）
   tools/         # 业务实现（自动发现）
     archive/ calc/ dev/ llm/ media/ net/ office/ pdf/ system/ text/
   dsl/           # TOML 命令定义与 exec/compute 原语

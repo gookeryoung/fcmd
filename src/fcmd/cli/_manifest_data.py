@@ -44,6 +44,8 @@ TOOLS: dict[str, ToolEntry] = {
     "filelevel": ToolEntry("filelevel", "dsl", "filelevel.toml"),
     "filerename": ToolEntry("filerename", "dsl", "filerename.toml"),
     "filesearch": ToolEntry("filesearch", "dsl", "filesearch.toml"),
+    "filesync": ToolEntry("filesync", "python", "fcmd.apps.filesync.filesync"),
+    "filesyncw": ToolEntry("filesyncw", "python", "fcmd.apps.filesync.filesyncw"),
     "folderback": ToolEntry("folderback", "dsl", "folderback.toml"),
     "folderzip": ToolEntry("folderzip", "dsl", "folderzip.toml"),
     "fonttool": ToolEntry("fonttool", "python", "fcmd.tools.system.fonttool"),
@@ -159,6 +161,8 @@ DESCRIPTIONS: dict[str, str] = {
     "filelevel": "设置文件等级",
     "filerename": "正则替换文件名主干",
     "filesearch": "按文件名 glob 搜索",
+    "filesync": "文件夹比较与同步（参考 FreeFileSync）：compare 按时间/大小/内容比较两侧，sync 支持双向/镜像/更新三种模式，可用 --preview 预览，冲突项自动跳过",
+    "filesyncw": "文件夹比较与同步窗口版（Tk）：左右目录对比（时间/大小/内容），结果表列出差异与计划动作，支持双向/镜像/更新同步与试运行，冲突项自动跳过；设置持久化到 ~/.fcmd/ui/filesyncw.json",
     "folderback": "备份文件夹",
     "folderzip": "压缩当前目录下所有子文件夹为 zip",
     "fonttool": "列出可安装字体",
@@ -248,6 +252,8 @@ AMBIGUOUS: frozenset[str] = frozenset(
 # 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）
 LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
+    "apps/filesync/filesync.py",
+    "apps/filesync/filesyncw.py",
     "apps/reshack/reshack.py",
     "apps/reshack/reshackw.py",
     "tools/archive/archivebase.py",
@@ -316,7 +322,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码 + 内置 commands/*.toml 的内容指纹（列表快路径的严格校验）
-DIGEST = "411c5eb5ffd04a18f921e93ce255f157"
+DIGEST = "dfc99de6624d6b5307396dbe2a505329"
 
 
 if __name__ == "__main__":  # pragma: no cover
