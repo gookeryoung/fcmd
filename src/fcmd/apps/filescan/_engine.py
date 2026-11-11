@@ -18,8 +18,8 @@ import codecs
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -64,6 +64,15 @@ BINARY_SNIFF_SIZE = 8192
 
 DEFAULT_MAX_FILE_BYTES = 8 * 1024 * 1024
 """单文件读取上限（默认 8 MiB）。"""
+
+PROCESS_MIN_FILES = 512
+"""进程池调度阈值：待扫描文件数达到该值（或总字节数达标）时改用进程池。"""
+
+PROCESS_MIN_BYTES = 2 * 1024 * 1024
+"""进程池调度阈值：待扫描文件总字节数达到该值时改用进程池。"""
+
+_PROCESS_MAX_CHUNK = 64
+"""单个进程任务的批大小上限：限制取消延迟与负载不均。"""
 
 DEFAULT_ENCODINGS: tuple[str, ...] = ("utf-8", "gb18030", "latin-1")
 """编码候选：BOM 优先，其余按顺序尝试，最后以 latin-1 兜底。"""
@@ -221,6 +230,8 @@ class ScanOptions:
     ``ext_whitelist`` 是后缀白名单（默认 :data:`DEFAULT_TEXT_EXTENSIONS`），
     名单外的文件不读内容直接跳过；``include_exts`` 只做白名单内的收窄，
     ``force_exts`` 强制扫描名单外的后缀（逃生口），``exclude_exts`` 优先级最高。
+    ``use_processes`` 只影响调度方式：达到 :data:`PROCESS_MIN_FILES` /
+    :data:`PROCESS_MIN_BYTES` 阈值时用进程池绕开 GIL，结果与线程池逐字节一致。
     """
 
     recursive: bool = True
@@ -238,6 +249,7 @@ class ScanOptions:
     workers: int = 4
     context_chars: int = 40
     max_hits_per_file: int = 200
+    use_processes: bool = True
 
 
 @dataclass(frozen=True)
@@ -338,6 +350,8 @@ class WalkResult:
     """遍历结果（内部使用，也供单测直接断言过滤行为）。"""
 
     files: list[Path] = field(default_factory=list)
+    # 与 ``files`` 一一对应的文件大小（决定是否值得走进程池）。
+    sizes: list[int] = field(default_factory=list)
     skipped: list[SkipRecord] = field(default_factory=list)
     errors: list[ScanError] = field(default_factory=list)
     seen: int = 0
@@ -490,6 +504,7 @@ def _classify_entry(
     result.seen += 1
     if _filtered_file(path, stat.st_size, options, result):
         result.files.append(path)
+        result.sizes.append(stat.st_size)
     return None
 
 
@@ -536,7 +551,9 @@ def walk_files(
                 if child is not None:
                     stack.append(child)
 
-    result.files.sort(key=str)
+    pairs = sorted(zip(result.files, result.sizes, strict=True), key=lambda item: str(item[0]))
+    result.files = [path for path, _size in pairs]
+    result.sizes = [size for _path, size in pairs]
     return result
 
 
@@ -692,6 +709,107 @@ def scan_file(path: Path, context: ScanContext) -> _Outcome:
 
 
 # ---------------------------------------------------------------------- #
+# 调度：线程池 / 进程池
+# ---------------------------------------------------------------------- #
+_WORKER_CONTEXT: ScanContext | None = None
+
+
+def _worker_init(context: ScanContext) -> None:
+    """进程池 worker 初始化：规则上下文每个子进程只收一次（不逐任务 pickle）。"""
+    global _WORKER_CONTEXT  # noqa: PLW0603 - 子进程内的模块级单例
+    _WORKER_CONTEXT = context
+
+
+def _worker_scan_batch(paths: list[str]) -> list[_Outcome]:
+    """子进程任务：扫一批文件，返回与 :func:`scan_file` 相同的结果对象。"""
+    context = _WORKER_CONTEXT
+    if context is None:  # pragma: no cover - initializer 未执行说明用法错误
+        raise RuntimeError("进程池 worker 未初始化")
+    return [scan_file(Path(item), context) for item in paths]
+
+
+def _process_worthwhile(files: Sequence[Path], sizes: Sequence[int], workers: int) -> bool:
+    """是否值得走进程池：文件数或总字节数达到阈值，且并发数 > 1。
+
+    小目录用线程（或直接串行）更快——spawn 4 个进程约 0.1 s 固定成本，超过
+    小目录本身的扫描耗时，所以按「工作量」而不是只按文件数决定。
+    """
+    if workers <= 1:
+        return False
+    if len(files) >= PROCESS_MIN_FILES:
+        return True
+    return sum(sizes) >= PROCESS_MIN_BYTES
+
+
+def _scan_in_threads(
+    files: Sequence[Path],
+    context: ScanContext,
+    workers: int,
+    progress: Callable[[int, int, Path], None] | None,
+) -> list[_Outcome]:
+    """线程池路径：GIL 下正则不并行，收益仅来自 I/O 重叠。"""
+    outcomes: list[_Outcome] = []
+    total = len(files)
+    done = 0
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = [(path, executor.submit(scan_file, path, context)) for path in files]
+        for path, future in futures:
+            outcomes.append(future.result())
+            done += 1
+            if progress is not None:
+                progress(done, total, path)
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+    return outcomes
+
+
+def _scan_in_processes(
+    files: Sequence[Path],
+    context: ScanContext,
+    workers: int,
+    token: CancelToken | None,
+    progress: Callable[[int, int, Path], None] | None,
+) -> tuple[list[_Outcome], bool]:
+    """进程池路径：遍历与统计留主进程，读 + 解码 + 逐行匹配在子进程。
+
+    批大小取 ``len(files) // (workers * 8)``、上限 :data:`_PROCESS_MAX_CHUNK`：
+    批太大限制取消延迟，批太小让 IPC 往返占掉收益。取消只在批次边界检查
+    （取消延迟 ≤ 一个批次），已完成批次照常汇总。
+    """
+    import multiprocessing
+
+    total = len(files)
+    chunk = max(1, min(_PROCESS_MAX_CHUNK, total // (workers * 8)))
+    batches = [files[index : index + chunk] for index in range(0, total, chunk)]
+    outcomes: list[_Outcome] = []
+    cancelled = False
+    done = 0
+    executor = ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_worker_init,
+        initargs=(replace(context, token=None),),
+    )
+    try:
+        futures = [executor.submit(_worker_scan_batch, [str(path) for path in batch]) for batch in batches]
+        for index, (batch, future) in enumerate(zip(batches, futures, strict=True)):
+            if _is_cancelled(token):
+                cancelled = True
+                for pending in futures[index:]:
+                    pending.cancel()
+                break
+            outcomes.extend(future.result())
+            for path in batch:
+                done += 1
+                if progress is not None:
+                    progress(done, total, path)
+    finally:
+        executor.shutdown(wait=True, cancel_futures=True)
+    return outcomes, cancelled
+
+
+# ---------------------------------------------------------------------- #
 # 批量扫描
 # ---------------------------------------------------------------------- #
 def scan_paths(
@@ -737,28 +855,21 @@ def scan_paths(
         stats=ScanStats(files_seen=walk.seen, cancelled=walk.cancelled),
     )
     files = walk.files
-    total = len(files)
     if not files:
         _finalize_stats(result, walk)
         result.stats.elapsed = time.perf_counter() - started
         return result
 
     outcomes: list[_Outcome] = []
-    done = 0
     workers = max(1, min(opts.workers, 64))
-    executor = ThreadPoolExecutor(max_workers=workers)
-    try:
-        futures = [(path, executor.submit(scan_file, path, context)) for path in files]
-        for path, future in futures:
-            outcome = future.result()
-            outcomes.append(outcome)
-            done += 1
-            if progress is not None:
-                progress(done, total, path)
-            if outcome.cancelled:
-                result.stats.cancelled = True
-    finally:
-        executor.shutdown(wait=True, cancel_futures=True)
+    # 进程数不超过 CPU 核数：多出来的进程只会增加 spawn 与内存开销。
+    process_workers = min(workers, os.cpu_count() or workers)
+    if opts.use_processes and _process_worthwhile(files, walk.sizes, process_workers):
+        outcomes, cancelled = _scan_in_processes(files, context, process_workers, token, progress)
+        result.stats.cancelled = result.stats.cancelled or cancelled
+    else:
+        outcomes = _scan_in_threads(files, context, workers, progress)
+        result.stats.cancelled = result.stats.cancelled or any(item.cancelled for item in outcomes)
 
     hits: list[FileHit] = []
     for outcome in outcomes:

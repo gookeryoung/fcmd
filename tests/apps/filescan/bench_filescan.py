@@ -40,16 +40,24 @@ MIB = 1024 * KIB
 
 BASELINES: dict[str, tuple[float, float]] = {
     # 场景 -> (文件/秒, MiB/秒)；本机基线（Windows 11 / Python 3.13 / workers=4）
-    # 2026-11-12 优化后重测：读缓冲按文件实际大小申请、逐行先 search 再 finditer。
-    "small/1rule": (6200.0, 24.50),
-    "small/builtin": (2600.0, 10.20),
-    "large/builtin": (6.20, 12.50),
-    "deep/builtin": (3400.0, 6.80),
+    # 2026-11-12 优化后重测：进程池调度（绕开 GIL）+ 读缓冲按实际大小申请，
+    # 基线取实测值下浮约 10%，`--check` 再按 --min-ratio（默认 50%）判回归。
+    "small/1rule": (5900.0, 23.50),
+    "small/builtin": (7200.0, 28.50),
+    "large/builtin": (20.00, 40.00),
+    "large/w1": (7.00, 14.00),
+    "large/w8": (27.00, 55.00),
+    "deep/builtin": (3500.0, 7.00),
     "mixed/whitelist": (3400.0, 6.70),
 }
 
 DEFAULT_MIN_RATIO = 0.5
 """``--check`` 阈值：实测吞吐低于基线的该比例即判回归。"""
+
+_EXTRA_LABELS = {
+    "speedup_vs_all_ext": "白名单相比全后缀加速",
+    "speedup_vs_w1": "相比单线程加速",
+}
 
 LINE_TEMPLATE = "INFO ordinary log line without secrets 0123456789abcdef\n"
 PHONE_LINE = "联系方式 13812345678，邮箱 zhang@example.com\n"
@@ -195,8 +203,15 @@ def run_benchmark(base: Path, *, workers: int) -> list[CaseResult]:
     _expect(results[-1], files=5000)
 
     large = _build_large(base / "large")
-    results.append(_with_key(_run(large.root, builtin_ruleset(), options), "large/builtin"))
-    _expect(results[-1], files=20)
+    # 大文件场景的并发维度：单线程 / 4 / 8 并发，用来观察进程池是否绕开 GIL。
+    four = _with_key(_run(large.root, builtin_ruleset(), options), "large/builtin")
+    single = _with_key(_run(large.root, builtin_ruleset(), ScanOptions(workers=1)), "large/w1")
+    wide = _with_key(_run(large.root, builtin_ruleset(), ScanOptions(workers=8)), "large/w8")
+    for item in (four, single, wide):
+        _expect(item, files=20)
+    for item in (four, wide):
+        item.extra["speedup_vs_w1"] = single.elapsed / item.elapsed if item.elapsed else 0.0
+    results.extend((four, single, wide))
 
     deep = _build_deep(base / "deep")
     results.append(_with_key(_run(deep.root, builtin_ruleset(), options), "deep/builtin"))
@@ -267,8 +282,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         for result in results:
             print(_format_row(result))
-            if "speedup_vs_all_ext" in result.extra:
-                print(f"{'':<18} 白名单相比全后缀加速 {result.extra['speedup_vs_all_ext']:.2f}x")
+            for key, value in result.extra.items():
+                print(f"{'':<18} {_EXTRA_LABELS.get(key, key)} {value:.2f}x")
         print(f"总耗时 {total:.2f}s（含语料生成）")
 
     if not args.check:

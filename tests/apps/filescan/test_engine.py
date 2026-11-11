@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ from fcmd.apps.filescan._engine import (
     CancelToken,
     ScanContext,
     ScanOptions,
+    ScanResult,
     decode_text,
     format_size,
     normalize_exts,
@@ -337,6 +339,33 @@ def test_scan_paths_cancel_during_scan(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(_engine, "scan_file", wrapped)
     result = scan_paths([tmp_path], _ruleset(("alpha", "alpha")), ScanOptions(workers=1), token=token)
     assert result.stats.cancelled is True
+
+
+def test_scan_paths_process_mode_matches_threads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """进程池路径的结果必须与线程路径逐条一致（只是调度方式不同）。"""
+    from fcmd.apps.filescan import _engine
+
+    for index in range(12):
+        _write(tmp_path, f"f{index}.txt", "alpha 13812345678\nplain line\n")
+    ruleset = _ruleset(("alpha", "alpha"), ("phone", "13812345678"))
+    options = ScanOptions(workers=2)
+
+    threaded = scan_paths([tmp_path], ruleset, replace(options, use_processes=False))
+    monkeypatch.setattr(_engine, "PROCESS_MIN_FILES", 1)
+    monkeypatch.setattr(_engine, "PROCESS_MIN_BYTES", 1)
+    processed = scan_paths([tmp_path], ruleset, options)
+
+    def snapshot(result: ScanResult) -> tuple[object, ...]:
+        return (
+            [(str(hit.path), [(item.rule_id, item.line_no, item.start, item.end) for item in hit.matches]) for hit in result.hits],
+            result.stats.files_scanned,
+            result.stats.bytes_read,
+            result.stats.hit_files,
+            result.stats.hit_count,
+        )
+
+    assert snapshot(processed) == snapshot(threaded)
+    assert processed.stats.hit_count == 24
 
 
 def test_scan_paths_empty_and_filtered(tmp_path: Path) -> None:
