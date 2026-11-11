@@ -66,7 +66,8 @@ src/fcmd/apps/renamer/
 - CLI：`--rules` 接受内联 JSON 或 `@rules.json`；`preview` 只打印计划，`apply`
   先打印计划再执行。
 - GUI：规则表支持增删改与上下移，规则导出 / 导入 JSON；目标列表、规则、递归与
-  排序选项、窗口位置持久化到 `~/.fcmd/ui/renamerw.json`。
+  排序选项、窗口位置持久化到 `~/.fcmd/ui/renamerw.json`。预览底部的「旧名」勾选项
+  默认关闭，仅显示新名 / 状态 / 说明，勾选后恢复旧名列。
 - 帮助：「帮助 → 使用帮助」打开非模态窗口，左侧为典型示例（双击或按钮写入规则表，
   已有规则时确认覆盖），正文为规则速查；完整说明见 `help/renamerw.md`，
   示例规则同时落在 `help/examples/*.json`，测试校验两者与 `_examples.py` 一致。

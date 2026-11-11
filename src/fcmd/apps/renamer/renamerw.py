@@ -302,6 +302,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._dirs_var = tk.BooleanVar(value=self._settings.include_dirs)
         self._sort_var = tk.StringVar(value=SORT_TEXT.get(self._settings.sort_key, SORT_TEXT[SORT_NAME]))
         self._status_var = tk.StringVar(value="就绪")
+        self._show_old_var = tk.BooleanVar(value=False)
         self._init_rule_vars()
 
         self._build_widgets()
@@ -514,14 +515,26 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._preview_tree.heading(column, text=title)
             self._preview_tree.column(column, width=width, anchor="w")
         self._preview_tree.grid(row=0, column=0, sticky="nsew")
+        self._preview_tree.configure(displaycolumns=("new", "status", "note"))
 
         bar = ttk.Frame(preview)
         bar.grid(row=1, column=0, sticky="ew", pady=(gap, 0))
         ttk.Button(bar, text="刷新预览", command=self._refresh_preview).grid(row=0, column=0)
         ttk.Button(bar, text="执行改名", command=self._execute).grid(row=0, column=1, padx=(gap, 0))
         ttk.Button(bar, text="撤销上次", command=self._undo).grid(row=0, column=2, padx=(gap, 0))
-        bar.columnconfigure(3, weight=1)
-        ttk.Label(bar, textvariable=self._status_var).grid(row=0, column=3, sticky="e")
+        ttk.Checkbutton(
+            bar,
+            text="旧名",
+            variable=self._show_old_var,
+            command=self._toggle_old_column,
+        ).grid(row=0, column=3, padx=(gap, 0))
+        bar.columnconfigure(4, weight=1)
+        ttk.Label(bar, textvariable=self._status_var).grid(row=0, column=4, sticky="e")
+
+    def _toggle_old_column(self) -> None:
+        """按「旧名」勾选状态切换预览中的旧名列（默认隐藏）。"""
+        columns = ("old", "new", "status", "note") if self._show_old_var.get() else ("new", "status", "note")
+        self._preview_tree.configure(displaycolumns=columns)
 
     # ------------------------------------------------------------------ #
     # 目标列表
