@@ -1,10 +1,10 @@
-"""版本号模型。
+"""版本号基础件。
 
 提供 PEP 440 兼容的语义版本号解析与递增，替代 bumpversion 中分散的版本操作。
 
 示例
 ----
-    from fcmd.core.models import BumpPart, parse_version
+    from fcmd.infras.version import BumpPart, parse_version
 
     version = parse_version("1.2.3")
     new_version = version.bump(BumpPart.MINOR)

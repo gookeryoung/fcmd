@@ -19,8 +19,8 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
-from fcmd.core.shared.net import UrlProbe
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.infras.net import UrlProbe
 from fcmd.tools.llm import llmdown
 from fcmd.tools.llm.llmdown import (
     ModelFile,
@@ -310,7 +310,7 @@ class TestSelectSource:
             probed.extend(urls)
             return [_probe(url, throughput=float(index + 1) * 10) for index, url in enumerate(urls)]
 
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", _probe_mirrors)
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", _probe_mirrors)
         result = llmdown._probe_sources("Qwen/demo", manifests, None, 3.0)
 
         assert [source for source, _ in result] == ["modelscope", "hf-mirror"]

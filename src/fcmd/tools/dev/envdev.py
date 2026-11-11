@@ -40,12 +40,12 @@ import shutil
 from typing import Literal
 
 import fcmd
+from fcmd.infras.command import run_command  # noqa: F401
+from fcmd.infras.net import check_urls, probe_mirrors  # noqa: F401
 
 # 门面层 re-export：保留拆分前的 ``envdev.<name>`` 访问路径（含私有常量 / 步骤函数），
 # 子模块在导入时完成 ``fcmd.tool`` 注册。
-from fcmd.core.env_persist import persist_env  # noqa: F401
-from fcmd.core.models import run_command  # noqa: F401
-from fcmd.core.shared.net import check_urls, probe_mirrors  # noqa: F401
+from fcmd.infras.system import persist_env  # noqa: F401
 from fcmd.tools.dev._envdev_langs import (  # noqa: F401
     _BUN_INSTALL_SCRIPT_URL,
     _CARGO_PROBE_URLS,

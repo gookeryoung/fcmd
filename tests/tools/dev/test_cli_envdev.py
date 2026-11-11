@@ -22,14 +22,14 @@ from urllib.error import URLError
 import pytest
 
 import fcmd as fx
-import fcmd.core.shared.net
+import fcmd.infras.net
 import fcmd.tools.dev.envdev
 import fcmd.tools.dev.envdev_core
 import fcmd.tools.dev.envdev_go
 import fcmd.tools.dev.envdev_java
 import fcmd.tools.dev.envdev_node
-from fcmd.core.models import CommandResult
 from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.infras.command import CommandResult
 
 
 # ============================================================================ #
@@ -1105,7 +1105,7 @@ def _fake_probe_mirrors(
     返回与 probe_mirrors 相同签名的函数：仅对请求中的 URL 生成结果，
     按可达优先 + 综合评分降序 + 延迟升序排序。
     """
-    from fcmd.core.shared.net import UrlProbe, probe_score
+    from fcmd.infras.net import UrlProbe, probe_score
 
     def fake(  # noqa: PLR0913, PLR0917
         urls: list[str],
@@ -1134,7 +1134,7 @@ class TestCheckCernetMirrors:
         sites = fcmd.tools.dev.envdev._CERNET_MIRROR_SITES
         urls = list(sites.values())
         probe = {url: (True, 50.0 * (len(urls) - i)) for i, url in enumerate(urls)}
-        probe[urls[3]] = (False, fcmd.core.shared.net.unreachable_latency())
+        probe[urls[3]] = (False, fcmd.infras.net.unreachable_latency())
         monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.check_urls", _fake_check_urls(probe))
 
         rc = fcmd.tools.dev.envdev.check_cernet_mirrors(source="builtin")
@@ -1147,7 +1147,7 @@ class TestCheckCernetMirrors:
     def test_probe_all_unreachable(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         """全部不可达时返回 1 并提示检查网络。"""
         probe = {
-            url: (False, fcmd.core.shared.net.unreachable_latency())
+            url: (False, fcmd.infras.net.unreachable_latency())
             for url in fcmd.tools.dev.envdev._CERNET_MIRROR_SITES.values()
         }
         monkeypatch.setattr("fcmd.tools.dev._envdev_mirrors.check_urls", _fake_check_urls(probe))
@@ -1330,7 +1330,7 @@ class TestAutoMirror:
         # conda 服务：ustc 吞吐最高，应胜出（验证按服务独立选优）
         probe[conda_urls["ustc"]] = (True, 30.0, 1500.0)
         probe[conda_urls["nju"]] = (True, 20.0, 300.0)
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", _fake_probe_mirrors(probe))
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python")
         out = capsys.readouterr().out
@@ -1356,7 +1356,7 @@ class TestAutoMirror:
             {**fcmd.tools.dev.envdev._PIP_PROBE_URLS, **fcmd.tools.dev.envdev._CONDA_PROBE_URLS}.values(),
             (False, 0.0, 0.0),
         )
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", _fake_probe_mirrors(probe))
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python")
         out = capsys.readouterr().out
@@ -1385,7 +1385,7 @@ class TestAutoMirror:
         probe[rustup_urls["aliyun"]] = (True, 50.0, 200.0)
         probe[cargo_urls["aliyun"]] = (True, 30.0, 2500.0)
         probe[cargo_urls["tsinghua"]] = (True, 60.0, 300.0)
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", _fake_probe_mirrors(probe))
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_lang_env(language="rust")
         out = capsys.readouterr().out
@@ -1403,7 +1403,7 @@ class TestAutoMirror:
         go_urls = fcmd.tools.dev.envdev_go._GO_PROXY_PROBE_URLS
         probe = dict.fromkeys(go_urls.values(), (False, 0.0, 0.0))
         probe[go_urls["goproxy"]] = (True, 25.0, 3000.0)
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", _fake_probe_mirrors(probe))
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", _fake_probe_mirrors(probe))
 
         fcmd.tools.dev.envdev.setup_go_env()
         out = capsys.readouterr().out
@@ -1425,7 +1425,7 @@ class TestAutoMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", fake)
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", fake)
 
         fcmd.tools.dev.envdev.setup_lang_env(language="python", mirror="ustc")
         assert called == []
@@ -1440,7 +1440,7 @@ class TestAutoMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", fake)
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", fake)
         monkeypatch.setattr("fcmd.tools.dev._envdev_langs._setup_bun_mirror", lambda m: None)
         monkeypatch.setattr("fcmd.tools.dev._envdev_langs._install_bun", lambda: None)
 
@@ -1459,7 +1459,7 @@ class TestResolveMirror:
             called.append(list(urls))
             return []
 
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", fake)
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", fake)
 
         result = fcmd.tools.dev.envdev_core.resolve_mirror("pip", "ustc", {"a": "https://a"}, "aliyun")
         assert result == "ustc"
@@ -1470,7 +1470,7 @@ class TestResolveMirror:
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """探测结果为空（全部不可达）时回退默认镜像。"""
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", lambda urls, **_: [])
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", lambda urls, **_: [])
 
         result = fcmd.tools.dev.envdev_core.resolve_mirror("conda", "auto", {"ustc": "https://u"}, "aliyun")
         assert result == "aliyun"

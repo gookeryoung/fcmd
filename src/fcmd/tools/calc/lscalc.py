@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Literal
 
 import fcmd
-from fcmd.core.models import run_command
+from fcmd.infras.command import run_command
 
 __all__ = [
     "LsDynaConfig",

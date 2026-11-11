@@ -241,7 +241,7 @@ def service_candidates(service: str) -> dict[str, str]:
 
 def probe_service(service: str, timeout: float = DEFAULT_TIMEOUT) -> list[MirrorResult]:
     """探测单个服务的全部候选镜像，返回按实测吞吐与延迟排序的结果。"""
-    from fcmd.core.shared.net import probe_mirrors
+    from fcmd.infras.net import probe_mirrors
     from fcmd.tools.dev.envdev_core import _MIRROR_DEFAULT_UA, _MIRROR_USER_AGENTS
 
     candidates = service_candidates(service)
@@ -268,7 +268,7 @@ def probe_service(service: str, timeout: float = DEFAULT_TIMEOUT) -> list[Mirror
 
 def probe_sites(timeout: float = DEFAULT_TIMEOUT, source: str = "auto") -> tuple[list[MirrorResult], str]:
     """探测教育网镜像站点，返回 ``(按速度排序的站点, 列表来源说明)``。"""
-    from fcmd.core.shared.net import check_urls
+    from fcmd.infras.net import check_urls
     from fcmd.tools.dev._envdev_mirrors import _CERNET_MIRROR_SITES, fetch_mirrorz_sites
 
     sites = dict(_CERNET_MIRROR_SITES)

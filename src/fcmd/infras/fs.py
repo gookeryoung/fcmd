@@ -12,8 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fcmd.core.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
-from fcmd.core.shared.textio import read_text_lines
+from fcmd.infras.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
+from fcmd.infras.textio import read_text_lines
 
 __all__ = [
     "add_date_prefixes",

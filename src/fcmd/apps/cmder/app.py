@@ -1369,7 +1369,7 @@ def default_archive_name(entries: Sequence[Path]) -> str:
 
 def _write_zip(sources: Sequence[Path], output: Path) -> None:
     """把同目录的多个条目写入一个 zip（复用 filefilter 忽略规则）。"""
-    from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
+    from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
 
     base = sources[0].parent.resolve()
     if any(source.parent.resolve() != base for source in sources):
@@ -1611,7 +1611,7 @@ def format_search_hit(hit: SearchHit) -> str:
 
 def load_preview(path: Path, *, max_lines: int = _MAX_PREVIEW_LINES) -> str:
     """读取文件预览文本；二进制文件抛 ``ValueError``，超长只取前若干行。"""
-    from fcmd.core.shared.textio import read_text_lines
+    from fcmd.infras.textio import read_text_lines
 
     lines = read_text_lines(path, binary_message="二进制文件，无法预览")
     if len(lines) > max_lines:

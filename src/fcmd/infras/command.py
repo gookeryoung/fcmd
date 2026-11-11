@@ -1,10 +1,10 @@
-"""命令执行模型。
+"""命令执行基础件。
 
 提供统一的命令执行接口与结果封装，替代各工具中重复的 ``_run`` 函数。
 
 示例
 ----
-    from fcmd.core.models import run_command
+    from fcmd.infras.command import run_command
 
     result = run_command(["git", "status"], capture=True)
     if result.succeeded:

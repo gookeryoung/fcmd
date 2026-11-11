@@ -35,10 +35,10 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.core.env_persist import shell_profile_path
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
+from fcmd.infras.system import shell_profile_path
 
 __all__ = [
     "ALL_SCOPES",

@@ -6,7 +6,7 @@
 * ``hf-mirror`` —— HuggingFace 国内镜像（hf-mirror.com），作为兜底源。
 
 ``auto`` 模式会同时拉取两源清单，对同名大文件做两阶段实测下载吞吐
-（复用 :func:`fcmd.core.shared.net.probe_mirrors`），按吞吐与延迟选优。
+（复用 :func:`fcmd.infras.net.probe_mirrors`），按吞吐与延迟选优。
 下载过程用 rich 展示单文件 / 总进度、实时速度与剩余时间，支持 HTTP Range
 断点续传、已存在文件跳过与 sha256 校验。
 
@@ -35,7 +35,7 @@ from fcmd.console import Table, get_console
 from fcmd.tools.llm.llmbase import human_size
 
 if TYPE_CHECKING:
-    from fcmd.core.shared.net import UrlProbe
+    from fcmd.infras.net import UrlProbe
 
 __all__ = [
     "ModelFile",
@@ -254,7 +254,7 @@ def _probe_sources(
     timeout: float,
 ) -> list[tuple[str, UrlProbe]]:
     """对两源共同的最大文件做实测吞吐，返回按评分降序的 (源, 结果)。"""
-    from fcmd.core.shared.net import probe_mirrors  # 惰性导入，避免冷启动连带网络模块
+    from fcmd.infras.net import probe_mirrors  # 惰性导入，避免冷启动连带网络模块
 
     sizes = {src: {f.path: f.size for f in files} for src, files in manifests.items()}
     common = set.intersection(*(set(paths) for paths in sizes.values()))

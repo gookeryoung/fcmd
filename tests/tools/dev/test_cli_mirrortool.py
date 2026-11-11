@@ -13,11 +13,11 @@ from typing import Any
 
 import pytest
 
-import fcmd.core.shared.net
+import fcmd.infras.net
 import fcmd.tools.dev._envdev_mirrors as mirrors_mod
 import fcmd.tools.dev.mirrortool
-from fcmd.core.shared.net import UrlProbe, probe_score, unreachable_latency
 from fcmd.core.toolkit import _TOOL_REGISTRY, list_subcommands
+from fcmd.infras.net import UrlProbe, probe_score, unreachable_latency
 
 
 # ---------------------------------------------------------------------- #

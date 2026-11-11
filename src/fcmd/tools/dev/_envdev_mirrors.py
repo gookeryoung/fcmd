@@ -12,7 +12,7 @@ import re
 from typing import Literal
 
 import fcmd
-from fcmd.core.shared.net import check_urls, probe_mirrors
+from fcmd.infras.net import check_urls, probe_mirrors
 from fcmd.tools.dev._envdev_langs import (
     _CARGO_PROBE_URLS,
     _CONDA_PROBE_URLS,

@@ -66,13 +66,13 @@ def apply_mirror_config(
         镜像源规格。
     persist_fn:
         环境变量持久化函数签名 ``(name, value) -> None``。
-        默认为 ``fcmd.core.env_persist.persist_env``，可注入假函数用于测试。
+        默认为 ``fcmd.infras.system.persist_env``，可注入假函数用于测试。
     label:
         打印日志时的标签（如 ``"Python"`` / ``"Rust"``）。
     """
     # 延迟导入避免反向依赖
     if persist_fn is None:
-        from fcmd.core.env_persist import persist_env as persist_fn  # type: ignore[no-redef]
+        from fcmd.infras.system import persist_env as persist_fn  # type: ignore[no-redef]
 
     # 1) 环境变量
     for name, value in spec.env_vars.items():
@@ -139,7 +139,7 @@ def auto_select_mirror(service: str, candidates: dict[str, str], timeout: float 
         综合评分最高的可达镜像名；全部不可达时返回 ``None``。
     """
     # 延迟导入避免加重导入链
-    from fcmd.core.shared.net import probe_mirrors
+    from fcmd.infras.net import probe_mirrors
 
     probes = probe_mirrors(
         list(candidates.values()),

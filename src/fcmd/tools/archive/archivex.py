@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
-from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
+from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
 
 __all__ = [
     "create_archive",
@@ -299,9 +299,9 @@ def _collect_files(
     source:
         源目录
     ignore_dirs:
-        跳过的目录名集合（默认 ``core.filefilter.DEFAULT_IGNORE_SPEC``）
+        跳过的目录名集合（默认 ``infras.filefilter.DEFAULT_IGNORE_SPEC``）
     ignore_ext:
-        跳过的扩展名集合（默认 ``core.filefilter.DEFAULT_IGNORE_EXTS``）
+        跳过的扩展名集合（默认 ``infras.filefilter.DEFAULT_IGNORE_EXTS``）
 
     Returns
     -------
@@ -369,7 +369,7 @@ def create_archive(
     """创建归档文件。
 
     支持格式：``zip``/``tar``/``tar.gz``/``tar.bz2``/``tar.xz``/``gz``/``bz2``/``xz``。
-    目录模式递归收集文件打包（应用 ``core.filefilter`` 默认忽略规则）；
+    目录模式递归收集文件打包（应用 ``infras.filefilter`` 默认忽略规则）；
     文件模式执行单文件压缩或打包。不支持创建 ``7z``/``rar``（外部命令创建超范围）。
 
     Parameters
@@ -379,9 +379,9 @@ def create_archive(
     output:
         输出归档路径（扩展名决定格式）
     ignore_dirs:
-        目录模式下跳过的目录名集合（默认 ``core.filefilter.DEFAULT_IGNORE_SPEC``）
+        目录模式下跳过的目录名集合（默认 ``infras.filefilter.DEFAULT_IGNORE_SPEC``）
     ignore_ext:
-        目录模式下跳过的扩展名集合（默认 ``core.filefilter.DEFAULT_IGNORE_EXTS``）
+        目录模式下跳过的扩展名集合（默认 ``infras.filefilter.DEFAULT_IGNORE_EXTS``）
 
     Raises
     ------

@@ -12,7 +12,6 @@
 子包：
 - execution: 执行引擎——run/executors、四种策略执行器
 - orchestration: YAML 编排与 ``if`` 条件求值
-- models: 通用数据模型（CommandResult、PDF 页码/拆分/合并）
 
 执行引擎位于 :mod:`fcmd.core.execution`，YAML 编排位于
 :mod:`fcmd.core.orchestration`，经顶层 ``fcmd.__init__`` 懒加载暴露。

@@ -1,4 +1,4 @@
-"""文件过滤模型。
+"""文件过滤基础件。
 
 本模块是文件遍历忽略规则的唯一出处：``DEFAULT_IGNORE_*`` 提供跨工具共享的
 默认规则，``IgnoreSpec`` 描述自定义规则，``should_skip_parts`` 负责路径匹配。
@@ -6,12 +6,12 @@ filesearch/hashfile/folderzip/archivex 等工具统一调用本模块，不再�
 
 示例
 ----
-    from fcmd.core.filefilter import DEFAULT_IGNORE_SPEC, should_skip_parts
+    from fcmd.infras.filefilter import DEFAULT_IGNORE_SPEC, should_skip_parts
 
     if should_skip_parts(path.parts, DEFAULT_IGNORE_SPEC):
         continue
 
-    from fcmd.core.models import IgnoreSpec, to_shutil_ignore
+    from fcmd.infras.filefilter import IgnoreSpec, to_shutil_ignore
     import shutil
 
     spec = IgnoreSpec.from_iterable([".git", "__pycache__", "*.pyc"])

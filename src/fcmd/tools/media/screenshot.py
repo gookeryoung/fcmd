@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import fcmd
-from fcmd.core.models import run_command
+from fcmd.infras.command import run_command
 
 __all__ = ["get_screenshot_path", "take_screenshot_area", "take_screenshot_full"]
 

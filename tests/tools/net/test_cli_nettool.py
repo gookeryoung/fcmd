@@ -252,7 +252,7 @@ class TestProbeMirrors:
 
     def test_describe_http_error(self) -> None:
         """429 判定为限速，401/403 判定为受限，其余返回状态码。"""
-        from fcmd.core.shared.net import _describe_http_error
+        from fcmd.infras.net import _describe_http_error
 
         assert _describe_http_error(HTTPError("u", 429, "Too Many", Message(), None)) == "限速(429)"
         assert _describe_http_error(HTTPError("u", 403, "Forbidden", Message(), None)) == "受限(403)"
@@ -260,7 +260,7 @@ class TestProbeMirrors:
 
     def test_probe_score(self) -> None:
         """不可达为 -1；大样本按吞吐；小样本退化为延迟倒数。"""
-        from fcmd.core.shared.net import UrlProbe, probe_score
+        from fcmd.infras.net import UrlProbe, probe_score
 
         assert probe_score(UrlProbe("u", False, 10.0, 100.0, 0)) == -1.0
         assert probe_score(UrlProbe("u", True, 50.0, 2048.0, 131072)) == 2048.0
@@ -268,7 +268,7 @@ class TestProbeMirrors:
 
     def test_probe_download_measures_throughput(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """读取采样字节并计算吞吐。"""
-        from fcmd.core.shared.net import _probe_download
+        from fcmd.infras.net import _probe_download
 
         payload = b"x" * 8192
         monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout: _FakeProbeResponse(payload))
@@ -279,7 +279,7 @@ class TestProbeMirrors:
 
     def test_probe_download_rejects_html_portal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """未声明允许 HTML 时，HTML 门户页判为不可用。"""
-        from fcmd.core.shared.net import _probe_download
+        from fcmd.infras.net import _probe_download
 
         monkeypatch.setattr(
             "urllib.request.urlopen",
@@ -294,7 +294,7 @@ class TestProbeMirrors:
 
     def test_probe_download_http_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """HTTP 429 返回限速原因。"""
-        from fcmd.core.shared.net import _probe_download
+        from fcmd.infras.net import _probe_download
 
         error = HTTPError("https://mirror.example", 429, "Too Many", Message(), None)
         monkeypatch.setattr(
@@ -307,7 +307,7 @@ class TestProbeMirrors:
 
     def test_probe_download_network_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """网络错误返回超时/网络错误原因。"""
-        from fcmd.core.shared.net import _probe_download
+        from fcmd.infras.net import _probe_download
 
         monkeypatch.setattr(
             "urllib.request.urlopen",
@@ -319,7 +319,7 @@ class TestProbeMirrors:
 
     def test_probe_mirrors_two_phase_and_sort(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """阶段一并发筛选，阶段二仅对延迟最低的若干候选测吞吐并排序。"""
-        from fcmd.core.shared.net import UrlProbe, probe_mirrors
+        from fcmd.infras.net import UrlProbe, probe_mirrors
 
         benchmarked: list[str] = []
 
@@ -334,7 +334,7 @@ class TestProbeMirrors:
             latency = 300.0 if url.endswith("slow-latency") else 20.0
             return UrlProbe(url, True, latency, 0.0, 2048)
 
-        monkeypatch.setattr("fcmd.core.shared.net._probe_download", fake_probe)
+        monkeypatch.setattr("fcmd.infras.net._probe_download", fake_probe)
         urls = ["https://a/dead", "https://b/slow-latency", "https://c/normal"]
         results = probe_mirrors(urls)
 
@@ -344,7 +344,7 @@ class TestProbeMirrors:
 
     def test_probe_mirrors_retries_transient_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """阶段一失败项重试一次，偶发超时不应把可用镜像判死。"""
-        from fcmd.core.shared.net import UrlProbe, probe_mirrors
+        from fcmd.infras.net import UrlProbe, probe_mirrors
 
         calls: list[str] = []
 
@@ -356,13 +356,13 @@ class TestProbeMirrors:
                 return UrlProbe(url, False, 0.0, 0.0, 0, "超时/网络错误")
             return UrlProbe(url, True, 30.0, 1000.0 if sample_bytes > 2048 else 0.0, sample_bytes)
 
-        monkeypatch.setattr("fcmd.core.shared.net._probe_download", fake_probe)
+        monkeypatch.setattr("fcmd.infras.net._probe_download", fake_probe)
         results = probe_mirrors(["https://flaky.example"])
         assert results[0].ok is True
         assert calls.count("https://flaky.example") == 3  # 阶段一失败 + 重试 + 阶段二测吞吐
 
     def test_probe_mirrors_empty(self) -> None:
         """空输入返回空列表。"""
-        from fcmd.core.shared.net import probe_mirrors
+        from fcmd.infras.net import probe_mirrors
 
         assert probe_mirrors([]) == []

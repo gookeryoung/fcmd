@@ -4,7 +4,7 @@
 - 工具注册与两子命令结构（name/content）
 - ``is_binary_file`` 二进制检测（含 OSError 回退）
 - ``read_text_lines`` 文本读取（含二进制抛错、UnicodeDecodeError 回退）
-- ``should_skip_parts``（core.filefilter）忽略目录命中（含通配模式）
+- ``should_skip_parts``（infras.filefilter）忽略目录命中（含通配模式）
 - ``search_by_name`` 文件名 glob 搜索
 - ``search_by_content`` 内容正则搜索
 - CLI 子命令端到端
@@ -16,10 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.core.filefilter import IgnoreSpec, should_skip_parts
-from fcmd.core.shared.textio import is_binary_file, read_text_lines
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
+from fcmd.infras.filefilter import IgnoreSpec, should_skip_parts
 from fcmd.infras.fs import search_by_content, search_by_name
+from fcmd.infras.textio import is_binary_file, read_text_lines
 
 
 # ============================================================================ #
@@ -38,10 +38,10 @@ class TestRegistration:
 
 
 # ============================================================================ #
-# should_skip_parts（core.filefilter 单一实现）
+# should_skip_parts（infras.filefilter 单一实现）
 # ============================================================================ #
 class TestShouldSkipParts:
-    """core.filefilter.should_skip_parts 忽略目录命中测试。"""
+    """infras.filefilter.should_skip_parts 忽略目录命中测试。"""
 
     def test_exact_match(self) -> None:
         """精确命中忽略目录。"""
@@ -184,7 +184,7 @@ class TestSearchByName:
         assert all(p.is_file() for p in search_by_name(tmp_path, "*.py"))
 
     def test_ignore_dirs_default(self, tmp_path: Path) -> None:
-        """默认跳过 core.filefilter.DEFAULT_IGNORE_SPEC 中的目录。"""
+        """默认跳过 infras.filefilter.DEFAULT_IGNORE_SPEC 中的目录。"""
         (tmp_path / "a.py").touch()
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "b.py").touch()

@@ -128,7 +128,7 @@ def load_lines(path: Path, *, max_lines: int = DEFAULT_MAX_LINES) -> tuple[list[
     返回:
         ``(行列表, 是否被截断)``。
     """
-    from fcmd.core.shared.textio import read_text_lines
+    from fcmd.infras.textio import read_text_lines
 
     lines = read_text_lines(path, binary_message="二进制文件无法比较")
     return lines[:max_lines], len(lines) > max_lines

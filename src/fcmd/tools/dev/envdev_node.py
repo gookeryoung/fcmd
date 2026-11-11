@@ -11,8 +11,8 @@ import sys
 from pathlib import Path
 
 import fcmd
-from fcmd.core.env_persist import persist_env
-from fcmd.core.models import run_command
+from fcmd.infras.command import run_command
+from fcmd.infras.system import persist_env
 from fcmd.tools.dev.envdev_core import MirrorSpec, apply_mirror_config, mirror_supported, resolve_mirror
 
 __all__ = ["setup_node_env"]

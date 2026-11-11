@@ -13,7 +13,7 @@ __all__ = ["archive_folder", "collect_folders"]
 
 def collect_folders(root: Path) -> list[Path]:
     """收集 root 下需要压缩的子目录（跳过忽略目录与忽略后缀）。"""
-    from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
+    from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
 
     return [
         entry

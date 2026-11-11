@@ -13,8 +13,8 @@ import sys
 from pathlib import Path
 
 import fcmd
-from fcmd.core.models import run_command
-from fcmd.core.shared.net import check_urls
+from fcmd.infras.command import run_command
+from fcmd.infras.net import check_urls
 from fcmd.tools.dev._envdev_langs import _PIP_INDEX_URLS
 
 _QT_LIBS: list[str] = [

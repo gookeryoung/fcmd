@@ -521,7 +521,7 @@ class TestCreateArchive:
         assert output.is_file()
 
     def test_create_applies_ignore_dirs(self, tmp_path: Path) -> None:
-        """默认跳过 core.filefilter.DEFAULT_IGNORE_SPEC 中的目录。"""
+        """默认跳过 infras.filefilter.DEFAULT_IGNORE_SPEC 中的目录。"""
         src = tmp_path / "src"
         (src / ".git").mkdir(parents=True)
         (src / "a.txt").write_text("keep", encoding="utf-8")
@@ -534,7 +534,7 @@ class TestCreateArchive:
         assert all(".git" not in n for n in names)
 
     def test_create_applies_ignore_ext(self, tmp_path: Path) -> None:
-        """默认跳过 core.filefilter.DEFAULT_IGNORE_EXTS 中的扩展名（如 .pyc）。"""
+        """默认跳过 infras.filefilter.DEFAULT_IGNORE_EXTS 中的扩展名（如 .pyc）。"""
         src = tmp_path / "src"
         src.mkdir()
         (src / "a.txt").write_text("keep", encoding="utf-8")

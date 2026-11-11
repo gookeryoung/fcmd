@@ -2,7 +2,7 @@
 shell 字符串 / 可调用对象）转换为统一执行入口。
 
 本模块作为纯执行逻辑集中地，``TaskSpec`` 仅持有配置，执行逻辑位于此处，
-便于独立测试与维护。注意与 :mod:`fcmd.core.models.command` 区分：后者是 CLI
+便于独立测试与维护。注意与 :mod:`fcmd.infras.command` 区分：后者是 CLI
 工具的 subprocess 封装（返回 :class:`CommandResult`），本模块服务于
 DAG 任务执行链。
 """

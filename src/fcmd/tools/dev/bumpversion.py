@@ -21,8 +21,9 @@ from typing import Literal
 
 import fcmd
 from fcmd.console import print_error
-from fcmd.core.filefilter import DEFAULT_IGNORE_SPEC
-from fcmd.core.models import BumpPart, IgnoreSpec, Version, parse_version, run_command, should_ignore
+from fcmd.infras.command import run_command
+from fcmd.infras.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_ignore
+from fcmd.infras.version import BumpPart, Version, parse_version
 
 __all__ = [
     "BumpVersionType",

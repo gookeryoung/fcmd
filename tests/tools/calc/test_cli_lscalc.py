@@ -19,8 +19,8 @@ import pytest
 
 import fcmd as fx
 import fcmd.tools.calc.lscalc
-from fcmd.core.models import CommandResult
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.infras.command import CommandResult
 from fcmd.tools.calc.lscalc import (
     _DEFAULT_MEMORY,
     _DEFAULT_NCPU,

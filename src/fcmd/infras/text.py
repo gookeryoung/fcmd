@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from fcmd.core.shared.textio import read_text_lines
+from fcmd.infras.textio import read_text_lines
 
 __all__ = [
     "PRINTABLE_END",

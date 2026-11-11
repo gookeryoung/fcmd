@@ -24,8 +24,7 @@ import zipfile
 from pathlib import Path
 
 import fcmd as fx
-from fcmd.core.filefilter import DEFAULT_IGNORE_DIRS
-from fcmd.core.models import IgnoreSpec, should_ignore, to_shutil_ignore
+from fcmd.infras.filefilter import DEFAULT_IGNORE_DIRS, IgnoreSpec, should_ignore, to_shutil_ignore
 
 __all__ = [
     "build_wheel",

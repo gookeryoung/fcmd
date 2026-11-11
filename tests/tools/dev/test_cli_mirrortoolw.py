@@ -15,8 +15,8 @@ from typing import Any
 import pytest
 
 import fcmd.tools.dev._envdev_mirrors as mirrors_mod
-from fcmd.core.shared.net import UrlProbe
 from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.infras.net import UrlProbe
 from fcmd.tools.dev import mirrortoolw
 from fcmd.tools.dev.mirrortoolw import (
     DEFAULT_GEOMETRY,
@@ -220,7 +220,7 @@ class TestProbeService:
                 key=lambda probe: not probe.ok,
             )
 
-        monkeypatch.setattr("fcmd.core.shared.net.probe_mirrors", fake_probe)
+        monkeypatch.setattr("fcmd.infras.net.probe_mirrors", fake_probe)
         rows = probe_service("pip", timeout=2.5)
 
         assert captured["timeout"] == 2.5
@@ -242,7 +242,7 @@ class TestProbeSites:
     def test_builtin_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
         urls = list(mirrors_mod._CERNET_MIRROR_SITES.values())
         monkeypatch.setattr(
-            "fcmd.core.shared.net.check_urls",
+            "fcmd.infras.net.check_urls",
             lambda targets, timeout=5.0, workers=8: [(url, True, 10.0) for url in targets],
         )
         rows, origin = probe_sites(timeout=2.0, source="builtin")
@@ -254,7 +254,7 @@ class TestProbeSites:
     def test_dynamic_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mirrors_mod, "fetch_mirrorz_sites", lambda timeout=5.0: {"tuna": "https://tuna.test"})
         monkeypatch.setattr(
-            "fcmd.core.shared.net.check_urls",
+            "fcmd.infras.net.check_urls",
             lambda targets, timeout=5.0, workers=8: [("https://tuna.test", True, 8.0)],
         )
         rows, origin = probe_sites(source="auto")
@@ -265,7 +265,7 @@ class TestProbeSites:
     def test_dynamic_failure_falls_back_to_builtin(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(mirrors_mod, "fetch_mirrorz_sites", lambda timeout=5.0: None)
         monkeypatch.setattr(
-            "fcmd.core.shared.net.check_urls",
+            "fcmd.infras.net.check_urls",
             lambda targets, timeout=5.0, workers=8: [(url, False, float("inf")) for url in targets],
         )
         rows, origin = probe_sites(source="auto")

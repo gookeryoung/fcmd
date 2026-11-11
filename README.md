@@ -334,7 +334,7 @@ report = fx.run(fx.graph(fetch, parse, save))
 
 ```python
 import fcmd
-from fcmd.core.models import run_command
+from fcmd.infras.command import run_command
 
 
 @fcmd.tool("gittool", subcommand="a", help="git add + commit")
@@ -485,13 +485,11 @@ fcmd pymake chk               # 类型检查聚合（清理 + pyrefly + lint + f
 
 ```
 src/fcmd/
-  core/          # 运行时内核：DAG、报告、执行引擎、工具注册、编排、忽略规则
-    shared/      #   中立共享层：基础件与工具共同依赖（网络探测、文本 IO）
+  core/          # 运行时内核：DAG、报告、执行引擎、工具注册、编排
     toolkit/     #   函数签名 → argparse 的 CLI 工具基座
     execution/   #   sequential/thread/async/dependency 四种执行器
     orchestration/  # YAML 编排与 if 条件求值
-    models/      #   通用数据模型
-  infras/        # 基础件：编解码/换算/哈希/加解密/文本/数据/文件/系统等纯函数
+  infras/        # 基础件：编解码/换算/哈希/加解密/文本/数据/文件/系统/网络/文件过滤/命令/版本等纯函数
   cli/           # 仅入口、工具发现、内建命令与诊断辅助
     _builtins/   #   graph/info/completion/yaml/env/doctor/profiler
     _entry.py    #   console script 通用入口（按 argv[0] 推断工具名）
@@ -514,7 +512,7 @@ uv run python -m fcmd.cli._manifest_data
 
 `tests/cli/test_tools_manifest.py` 会校验清单与实跑全量发现严格一致（含列表描述与源码内容指纹）。清单的内容指纹必须在**干净工作区**生成：若生成时存在其他未提交的工具源码改动，提交后指纹会与仓库内容不符，列表会回退全量发现。
 
-公共 API（`import fcmd as fx`）名称保持稳定；原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径已统一收敛到 `fcmd.core.*`，不保留兼容 shim。
+公共 API（`import fcmd as fx`）名称保持稳定；原 `fcmd.apis.*` / `fcmd.engine.*` / `fcmd.models.*` / `fcmd.orchestration.*` 深路径已收敛：运行时内核在 `fcmd.core.*`，通用基础件在 `fcmd.infras.*`，不保留兼容 shim。
 
 `fcmd.infras.*` 是**半公开**层：模块 `__all__` 列出的名字可被外部导入复用，但**不承诺跨版本稳定**，可能随版本调整、改名或迁移；稳定承诺仅限上段 `import fcmd as fx` 暴露的公共 API。
 

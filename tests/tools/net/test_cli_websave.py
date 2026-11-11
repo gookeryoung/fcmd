@@ -468,7 +468,7 @@ class TestProbeMirrorsRetry:
     """``probe_mirrors`` 对失败项的并发重试。"""
 
     def test_failed_probe_is_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.core.shared import net
+        from fcmd.infras import net
 
         calls: list[tuple[str, int]] = []
 

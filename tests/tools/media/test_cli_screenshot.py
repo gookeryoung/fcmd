@@ -16,8 +16,8 @@ import pytest
 
 import fcmd as fx
 import fcmd.tools.media.screenshot
-from fcmd.core.models import CommandResult
 from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.infras.command import CommandResult
 
 
 # ============================================================================ #

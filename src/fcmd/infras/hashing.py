@@ -47,7 +47,7 @@ def compute_file_hash(file_path: Path, algorithm: str) -> str:
 def iter_directory_files(directory: Path) -> Iterator[Path]:
     """遍历目录下需要哈希的文件（跳过常见忽略目录与 .pyc/.pyo）。"""
     # 延迟导入：仅目录哈希场景需要
-    from fcmd.core.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
+    from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
 
     for file_path in sorted(directory.rglob("*")):
         if not file_path.is_file():

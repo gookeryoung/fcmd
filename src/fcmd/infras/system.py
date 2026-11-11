@@ -1,4 +1,4 @@
-"""系统基础操作：进程终止、命令查找、系统信息、文件夹备份与文件副作用。
+"""系统基础操作：进程终止、命令查找、系统信息、文件夹备份、环境变量持久化与文件副作用。
 
 本模块只做操作与数据收集，**不打印**任何内容；需要回显的过程反馈以字符串
 列表返回，由 :mod:`fcmd.tools.system` 下的命令行外壳统一输出。
@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -15,7 +16,9 @@ __all__ = [
     "collect_system_info",
     "format_bytes",
     "kill_processes",
+    "persist_env",
     "set_environment_variable",
+    "shell_profile_path",
     "which_commands",
     "write_text_file",
 ]
@@ -171,3 +174,91 @@ def set_environment_variable(name: str, value: str, default: bool = False) -> No
 def write_text_file(path: str, content: str, encoding: str = "utf-8") -> None:
     """将文本内容写入指定路径的文件。"""
     Path(path).write_text(content, encoding=encoding)
+
+
+# ============================================================================
+# 环境变量持久化
+# ============================================================================
+
+# Windows 注册表用户环境变量键路径（HKEY_CURRENT_USER 下）。
+_WIN_ENV_KEY: str = "Environment"
+
+
+def shell_profile_path() -> Path:
+    """返回 Linux/macOS 上用于持久化环境变量的 shell 启动文件路径。
+
+    优先使用 ``~/.profile``（登录 shell 通用，bash/sh/zsh 均会读取）。
+    """
+    return Path.home() / ".profile"
+
+
+def _persist_env_windows(name: str, value: str) -> None:  # pragma: no cover - 仅 Windows 运行
+    """在 Windows 上将环境变量写入注册表 ``HKCU\\Environment`` 并广播刷新通知。"""
+    import ctypes
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _WIN_ENV_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, name, 0, winreg.REG_EXPAND_SZ, value)
+
+    # 广播 WM_SETTINGCHANGE，通知已运行进程刷新环境块（否则新终端才生效）。
+    # getattr 取 windll 避免 Linux 下 pyrefly 报 missing-attribute（windll 仅 Windows 存在）
+    hwnd_broadcast = 0xFFFF  # HWND_BROADCAST
+    wm_settingchange = 0x001A
+    smto_abortifhung = 0x0002
+    windll = getattr(ctypes, "windll")  # noqa: B009 - 跨平台动态访问，非安全访问用途
+    windll.user32.SendMessageTimeoutW(
+        hwnd_broadcast,
+        wm_settingchange,
+        0,
+        "Environment",
+        smto_abortifhung,
+        5000,
+        None,
+    )
+
+
+def _persist_env_unix(name: str, value: str) -> None:
+    """在 Linux/macOS 上将 ``export NAME="value"`` 追加或更新到 shell 启动文件。"""
+    profile = shell_profile_path()
+    profile.parent.mkdir(parents=True, exist_ok=True)
+
+    export_line = f'export {name}="{value}"'
+    try:
+        existing = profile.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        existing = ""
+
+    # 匹配同名变量的已有 export 行（行首可有空白），存在则替换，否则追加。
+    pattern = re.compile(rf"^\s*export\s+{re.escape(name)}=.*$", re.MULTILINE)
+    if pattern.search(existing):
+        updated = pattern.sub(export_line, existing)
+    else:
+        prefix = existing if existing.endswith("\n") or not existing else existing + "\n"
+        updated = f"{prefix}{export_line}\n"
+
+    profile.write_text(updated, encoding="utf-8")
+
+
+def persist_env(name: str, value: str) -> None:
+    """持久化设置环境变量（跨平台），并同步更新当前进程。
+
+    ``set_environment_variable`` 只改当前进程的 ``os.environ``；本函数在
+    Windows 额外写入注册表用户环境变量并广播刷新，Linux/macOS 写入
+    ``~/.profile``，使新终端自动生效。
+
+    Parameters
+    ----------
+    name:
+        环境变量名。
+    value:
+        环境变量值。
+
+    Notes
+    -----
+    持久化写入通常需重开终端或重新登录后对新进程生效；当前进程立即生效。
+    """
+    os.environ[name] = value
+    if sys.platform == "win32":
+        _persist_env_windows(name, value)
+    else:
+        _persist_env_unix(name, value)

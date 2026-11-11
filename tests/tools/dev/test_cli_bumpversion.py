@@ -19,8 +19,9 @@ import pytest
 
 import fcmd as fx
 import fcmd.tools.dev.bumpversion
-from fcmd.core.models import CommandResult, Version
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.infras.command import CommandResult
+from fcmd.infras.version import Version
 from fcmd.tools.dev.bumpversion import (
     _build_replacement_string,
     _get_pattern_for_file,
