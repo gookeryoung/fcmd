@@ -111,6 +111,9 @@ def fcmd(tmp_path: Path, tmp_home: Path) -> Callable[..., CmdResult]:
             cmd,
             capture_output=True,
             text=True,
+            # 子进程输出已被 PYTHONIOENCODING 固定为 UTF-8；显式指定解码，
+            # 避免 Windows 中文locale（cp936）下按本地编码解码失败。
+            encoding="utf-8",
             input=stdin,
             cwd=str(tmp_path),
             env=merged_env,

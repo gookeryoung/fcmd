@@ -82,6 +82,7 @@ class TestSshcopyidLinux:
     ) -> None:
         key = _key_file(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
+        monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr("fcmd.tools.dev.sshcopyid.subprocess.run", _fake_run_factory(captured))
         assert (
             run_tool(
@@ -118,7 +119,10 @@ class TestSshcopyidLinux:
         key = tmp_path / ".ssh" / "id_rsa.pub"
         key.parent.mkdir()
         key.write_text("ssh-rsa AAAA test\n", encoding="utf-8")
+        monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setenv("HOME", str(tmp_path))
+        # Windows 的 expanduser 读 USERPROFILE 而非 HOME，两个都指向临时目录
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         captured: list[tuple[Any, dict[str, Any]]] = []
         monkeypatch.setattr("fcmd.tools.dev.sshcopyid.subprocess.run", _fake_run_factory(captured))
         assert run_tool("sshcopyid", ["host.example.com", "root", "secret"]) == 0
@@ -132,6 +136,7 @@ class TestSshcopyidLinux:
     ) -> None:
         key = _key_file(tmp_path)
         captured: list[tuple[Any, dict[str, Any]]] = []
+        monkeypatch.setattr(sys, "platform", "linux")
         monkeypatch.setattr(
             "fcmd.tools.dev.sshcopyid.subprocess.run",
             _fake_run_factory(captured, returncode=1),
