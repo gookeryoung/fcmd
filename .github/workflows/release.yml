@@ -3,7 +3,13 @@ name: Release
 # 触发方式：
 #   - push v*.*.* tag：完整发布（PyPI + 多平台打包 + GitHub Release）
 #   - workflow_dispatch：默认 dry-run，只跑多平台打包并把产物上传为 Actions artifact；
-#     在 tag ref 上手动触发且关闭 dry_run 时，才会发布 PyPI / 更新 GitHub Release。
+#     关闭 dry_run 且给了 release_tag 时，把产物上传到该已存在 Release（不碰 PyPI）。
+#
+# 注意：GitHub 执行 workflow_dispatch 时用的是「所选 ref 上的 workflow 文件」。
+# 本流水线落地之前打的 tag（例如 v0.3.11）里仍是旧的 PyPI-only 版本，对它执行
+# dispatch 会直接 422 "Workflow does not have 'workflow_dispatch' trigger"，
+# 这不是流水线故障。要验证 Release 上传，只能在 main 上用 release_tag 指定目标，
+# 或用本流水线落地后新建的 tag。
 #
 # 打包使用 fspack（https://github.com/…/fspack），在原生 runner 上构建：
 #   - Windows：mingw-w64 编译 loader，产出 Windows 便携 zip
@@ -24,6 +30,10 @@ on:
         description: '仅构建并上传 Actions artifact，不发布 PyPI / GitHub Release'
         type: boolean
         default: true
+      release_tag:
+        description: '（可选）在非 tag ref 上把产物挂到该已存在 Release，如 v0.3.11；留空则不涉及 Release'
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -312,10 +322,12 @@ jobs:
 
   # ===== 收集产物并上传到 GitHub Release =====
   # 任一上游 job 失败即跳过，避免发布不完整的产物。
+  # tag 推送：必须 PyPI 成功才继续；非 tag ref：仅当显式给出 release_tag 时执行，
+  # 用于把当前 ref 构建出的产物回填/修复到已存在的 Release。
   release:
     name: Upload to GitHub Release
     needs: [pypi, pack]
-    if: ${{ !cancelled() && github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run) && needs.pypi.result == 'success' && needs.pack.result == 'success' }}
+    if: ${{ !cancelled() && needs.pack.result == 'success' && ((github.ref_type == 'tag' && needs.pypi.result == 'success') || (github.ref_type != 'tag' && inputs.release_tag != '')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -336,13 +348,33 @@ jobs:
           ls -la release-files/
           echo "::endgroup::"
 
-      # 幂等：release 已存在则覆盖同名 asset，不存在则创建，支持重跑 tag。
-      # release job 无 checkout，gh 无法从 git remote 推断仓库，显式设置 GH_REPO。
-      - name: Create or update GitHub Release
+      # dry-run 下只做只读预检：确认目标 Release 是否存在、已有哪些 asset、
+      # 将要上传哪些文件；不创建、不上传。用于在没有新 tag 的情况下验证发布路径。
+      - name: Preflight target release (read-only)
+        if: ${{ inputs.dry_run == true }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG_NAME: ${{ github.ref_name }}
+          TAG_NAME: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          echo "目标 Release: $TAG_NAME"
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release 已存在，当前 assets："
+            gh release view "$TAG_NAME" --json assets --jq '.assets[] | "  \(.name)\t\(.size) bytes"'
+          else
+            echo "::warning::Release $TAG_NAME 不存在，正式执行时会创建"
+          fi
+          echo "本次将上传："
+          ls -1 release-files/
+
+      # 幂等：release 已存在则覆盖同名 asset，不存在则创建，支持重跑 tag。
+      # release job 无 checkout，gh 无法从 git remote 推断仓库，显式设置 GH_REPO。
+      - name: Create or update GitHub Release
+        if: ${{ inputs.dry_run != true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_NAME: ${{ inputs.release_tag || github.ref_name }}
         run: |
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             echo "Release $TAG_NAME 已存在，上传产物（覆盖同名 asset）..."
