@@ -89,7 +89,6 @@ __all__ = [
     "VIEW_MODE_BRIEF",
     "VIEW_MODE_DETAILED",
     "VIEW_MODE_THUMBNAILS",
-    "BulkRenameOptions",
     "ColorRule",
     "ColorStyle",
     "ColorSubject",
@@ -105,7 +104,6 @@ __all__ = [
     "RenameItem",
     "RenamePlan",
     "RenameReport",
-    "RenameSource",
     "SyncDeleteReport",
     "SyncItem",
     "SyncOptions",
@@ -119,7 +117,6 @@ __all__ = [
     "branch_relative_path",
     "browse_follow_path",
     "browse_step",
-    "build_new_name",
     "build_sync_plan",
     "cleanup_incomplete_items",
     "cleanup_partial_target",
@@ -147,7 +144,6 @@ __all__ = [
     "normalize_view_mode",
     "open_with_command",
     "parse_color_rules",
-    "plan_bulk_rename",
     "read_preview",
     "relative_parent_dir",
     "remember_open_with",
@@ -183,7 +179,6 @@ _FOF_NOERRORUI = 0x0400
 _FO_DELETE = 3
 
 _INVALID_NAME_RE = re.compile(r'[<>:"|?*\x00-\x1f]')
-_CASE_MODES = frozenset({"keep", "lower", "upper", "title"})
 
 
 # ============================================================================ #
@@ -422,28 +417,6 @@ def validate_name(name: str) -> str:
 
 
 @dataclass(frozen=True)
-class RenameSource:
-    """批量重命名的输入项：名称与是否为目录。"""
-
-    name: str
-    is_dir: bool = False
-
-
-@dataclass(frozen=True)
-class BulkRenameOptions:
-    """批量重命名规则（最小语法集，见 ADR 0005）。"""
-
-    find: str = ""
-    replace: str = ""
-    template: str = ""
-    start: int = 1
-    step: int = 1
-    digits: int = 3
-    case: str = "keep"
-    extension: str = ""
-
-
-@dataclass(frozen=True)
 class RenameItem:
     """单个条目的改名预览；``status`` 取 ok / unchanged / conflict。"""
 
@@ -476,75 +449,6 @@ class RenameReport:
 
     completed: list[tuple[Path, Path]] = field(default_factory=list)
     errors: list[tuple[Path, str]] = field(default_factory=list)
-
-
-def build_new_name(source: RenameSource, number: int, options: BulkRenameOptions) -> str:
-    """按规则计算单个条目的新名称（不做合法性 / 冲突判断）。"""
-    if options.case not in _CASE_MODES:
-        raise ValueError(f"未知的大小写模式: {options.case}")
-    name = source.name.replace(options.find, options.replace) if options.find else source.name
-    if source.is_dir:
-        stem, suffix = name, ""
-    else:
-        suffix = Path(name).suffix
-        stem = name[: -len(suffix)] if suffix else name
-    if options.case == "lower":
-        stem = stem.lower()
-    elif options.case == "upper":
-        stem = stem.upper()
-    elif options.case == "title":
-        stem = stem.title()
-    if options.extension.strip() == "-":
-        suffix = ""
-    elif options.extension.strip():
-        suffix = "." + options.extension.strip().lstrip(".")
-    if options.template:
-        try:
-            return options.template.format(
-                name=stem,
-                ext=suffix.lstrip("."),
-                n=str(number).zfill(max(options.digits, 1)),
-            )
-        except (KeyError, IndexError, ValueError) as exc:
-            raise ValueError("模板无效（仅支持 {name} {ext} {n}，字面花括号用 {{ }}）") from exc
-    return stem + suffix
-
-
-def plan_bulk_rename(
-    directory: Path,
-    sources: Sequence[RenameSource],
-    options: BulkRenameOptions,
-) -> RenamePlan:
-    """生成预览：标记未变化、非法名、同批重名与目标已存在，冲突不可执行。"""
-    items: list[RenameItem] = []
-    seen: dict[str, int] = {}
-    for position, source in enumerate(sources, start=1):
-        path = directory / source.name
-        try:
-            new_name = build_new_name(source, options.start + (position - 1) * options.step, options)
-        except ValueError as exc:
-            items.append(RenameItem(path, source.name, "conflict", str(exc)))
-            continue
-        if new_name == source.name:
-            items.append(RenameItem(path, new_name, "unchanged", "名称未变化"))
-            continue
-        try:
-            validate_name(new_name)
-        except ValueError as exc:
-            items.append(RenameItem(path, new_name, "conflict", str(exc)))
-            continue
-        key = new_name.casefold()
-        if key in seen:
-            items.append(RenameItem(path, new_name, "conflict", f"与第 {seen[key]} 项目标同名"))
-            continue
-        seen[key] = position
-        target = directory / new_name
-        same_file = os.path.normcase(str(target)) == os.path.normcase(str(path))
-        if not same_file and (target.exists() or target.is_symlink()):
-            items.append(RenameItem(path, new_name, "conflict", "目标已存在"))
-            continue
-        items.append(RenameItem(path, new_name, "ok"))
-    return RenamePlan(tuple(items))
 
 
 def apply_rename_plan(

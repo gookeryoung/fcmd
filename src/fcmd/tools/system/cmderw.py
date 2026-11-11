@@ -85,7 +85,6 @@ from fcmd.tools.system._cmderw_ops import (
     VIEW_MODE_BRIEF,
     VIEW_MODE_DETAILED,
     VIEW_MODE_THUMBNAILS,
-    BulkRenameOptions,
     ColorRule,
     ColorStyle,
     ColorSubject,
@@ -95,10 +94,7 @@ from fcmd.tools.system._cmderw_ops import (
     PreviewResult,
     QueueItem,
     QueueTask,
-    RenameItem,
-    RenamePlan,
     RenameReport,
-    RenameSource,
     SyncDeleteReport,
     SyncItem,
     SyncOptions,
@@ -137,7 +133,6 @@ from fcmd.tools.system._cmderw_ops import (
     normalize_view_mode,
     open_with_command,
     parse_color_rules,
-    plan_bulk_rename,
     read_preview,
     relative_parent_dir,
     remember_open_with,
@@ -157,6 +152,18 @@ from fcmd.tools.system._cmderw_ops import (
     trash_paths,
     undo_rename,
     validate_name,
+)
+from fcmd.tools.system._cmderw_rename import (
+    RENAME_PRESET_LIMIT,
+    RenameInput,
+    RenameOptions,
+    RenamePreset,
+    RenamePreview,
+    RenamePreviewItem,
+    build_rename_preview,
+    normalize_rename_presets,
+    preview_to_plan,
+    rename_presets_to_json,
 )
 
 if TYPE_CHECKING:
@@ -441,6 +448,7 @@ class CmderSettings:
     sync_browse: bool = False
     open_with: list[str] = field(default_factory=list)
     command_history: list[str] = field(default_factory=list)
+    rename_presets: list[RenamePreset] = field(default_factory=list)
 
 
 # ============================================================================ #
@@ -569,6 +577,7 @@ def load_settings(path: Path | None = None) -> CmderSettings:
         settings.sync_browse = sync_browse
     settings.open_with = normalize_open_with_list(raw.get("open_with"))
     settings.command_history = normalize_command_history(raw.get("command_history"))
+    settings.rename_presets = normalize_rename_presets(raw.get("rename_presets"))
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
@@ -596,6 +605,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "sync_browse": settings.sync_browse,
         "open_with": list(settings.open_with),
         "command_history": list(settings.command_history),
+        "rename_presets": rename_presets_to_json(settings.rename_presets),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -2476,165 +2486,489 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.app.open_entry(selected[0])
 
 
-class BulkRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
-    """批量重命名：规则 → 预览 → 冲突拦截 → 执行 → 本次运行内撤销。"""
+_RENAME_CASE_CHOICES = (
+    ("keep", "保持"),
+    ("lower", "全部小写"),
+    ("upper", "全部大写"),
+    ("title", "每个单词首字母大写"),
+    ("sentence", "仅首字母大写"),
+)
+_RENAME_SORT_CHOICES = (("name", "名称"), ("created", "创建时间"), ("modified", "修改时间"))
+_RENAME_MASK_HINT = (
+    "占位符：[N] 原名、[N1-3] 名称片段、[C] 计数器、[E] 扩展名、"
+    "[Y]/[M]/[D]/[h]/[m]/[s] 日期时间；扩展名留空保持、填 - 删除"
+)
 
-    _CASE_CHOICES = (("keep", "保持"), ("lower", "小写"), ("upper", "大写"), ("title", "首字母大写"))
 
-    def __init__(self, app: CmderWindow, directory: Path, entries: Sequence[FileEntry]) -> None:
+def _choice_key(choices: Sequence[tuple[str, str]], label: str, fallback: str) -> str:
+    """按下拉框显示文字取回设置值；找不到时回落默认。"""
+    return next((key for key, text in choices if text == label), fallback)
+
+
+class MultiRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """多重命名工具：掩码 / 查找替换 / 大小写 / 计数器 → 预览勾选 → 执行 → 撤销。"""
+
+    def __init__(self, app: CmderWindow, panel: FilePanel, entries: Sequence[FileEntry]) -> None:
         import tkinter as tk
         from tkinter import ttk
 
+        self._tk = tk
         self.app = app
-        self.directory = directory
-        self.sources = [RenameSource(entry.name, entry.is_dir) for entry in entries]
-        self._plan: RenamePlan | None = None
+        self.panel = panel
+        self.entries = list(entries)
+        self.presets = list(app.settings.rename_presets)
+        self.inputs = self._build_inputs()
+        self._preview: RenamePreview | None = None
+        self._row_items: dict[str, RenamePreviewItem] = {}
+        self._unchecked: set[str] = set()
         self._last_report: RenameReport | None = None
+        self._preview_job: str | None = None
 
         theme = app.theme
         spacing = theme.spacing
         self.win = tk.Toplevel(app.root)
-        self.win.title(f"批量重命名 - {directory}")
+        self.win.title(f"多重命名工具 - {len(self.entries)} 项")
         self.win.transient(app.root)
-        _guiwindow.center_over_parent(self.win, app.root, width=940, height=640)
-        self.win.minsize(780, 500)
+        _guiwindow.center_over_parent(self.win, app.root, width=1080, height=720)
+        self.win.minsize(900, 560)
         frame = ttk.Frame(self.win, padding=spacing.md)
         frame.pack(fill="both", expand=True)
 
-        form = ttk.LabelFrame(
-            frame,
-            text="规则（字面替换、{name}/{ext}/{n} 占位、大小写、扩展名）",
-            padding=spacing.sm,
-        )
-        form.pack(fill="x", pady=(0, spacing.sm))
-        form.grid_columnconfigure(1, weight=1)
-        form.grid_columnconfigure(3, weight=1)
-
+        self.preset_var = tk.StringVar()
+        self.name_mask_var = tk.StringVar(value=RenameOptions().name_mask)
+        self.ext_mask_var = tk.StringVar(value=RenameOptions().ext_mask)
         self.find_var = tk.StringVar()
         self.replace_var = tk.StringVar()
-        self.template_var = tk.StringVar()
+        self.regex_var = tk.BooleanVar(value=False)
+        self.case_sensitive_var = tk.BooleanVar(value=False)
+        self.only_ext_var = tk.BooleanVar(value=False)
+        self.case_var = tk.StringVar(value=_RENAME_CASE_CHOICES[0][1])
         self.start_var = tk.StringVar(value="1")
         self.step_var = tk.StringVar(value="1")
         self.digits_var = tk.StringVar(value="3")
-        self.extension_var = tk.StringVar()
-        self.case_var = tk.StringVar(value=self._CASE_CHOICES[0][1])
+        self.sort_var = tk.StringVar(value=_RENAME_SORT_CHOICES[0][1])
+        self.status_var = tk.StringVar()
 
-        ttk.Label(form, text="查找：").grid(row=0, column=0, sticky="w")
-        ttk.Entry(form, textvariable=self.find_var).grid(row=0, column=1, sticky="ew", padx=(0, spacing.sm))
-        ttk.Label(form, text="替换：").grid(row=0, column=2, sticky="w")
-        ttk.Entry(form, textvariable=self.replace_var).grid(row=0, column=3, sticky="ew")
+        self._build_preset_row(frame, spacing)
+        self._build_mask_row(frame, spacing)
+        self._build_find_row(frame, spacing)
+        self._build_counter_row(frame, spacing)
+        self._build_buttons(frame, spacing)
+        self._build_tree(frame, spacing, theme)
 
-        ttk.Label(form, text="模板：").grid(row=1, column=0, sticky="w")
-        ttk.Entry(form, textvariable=self.template_var).grid(row=1, column=1, sticky="ew", padx=(0, spacing.sm))
-        ttk.Label(form, text="例：{name}_{n} 或 {name}").grid(row=1, column=2, columnspan=2, sticky="w")
+        for var in (
+            self.name_mask_var,
+            self.ext_mask_var,
+            self.find_var,
+            self.replace_var,
+            self.regex_var,
+            self.case_sensitive_var,
+            self.only_ext_var,
+            self.case_var,
+            self.start_var,
+            self.step_var,
+            self.digits_var,
+            self.sort_var,
+        ):
+            var.trace_add("write", self._on_var_change)
 
-        ttk.Label(form, text="序号：").grid(row=2, column=0, sticky="w")
-        number_row = ttk.Frame(form)
-        number_row.grid(row=2, column=1, sticky="ew", padx=(0, spacing.sm))
-        ttk.Label(number_row, text="起始").pack(side="left")
-        ttk.Entry(number_row, textvariable=self.start_var, width=6).pack(side="left", padx=(2, spacing.sm))
-        ttk.Label(number_row, text="步长").pack(side="left")
-        ttk.Entry(number_row, textvariable=self.step_var, width=6).pack(side="left", padx=(2, spacing.sm))
-        ttk.Label(number_row, text="位数").pack(side="left")
-        ttk.Entry(number_row, textvariable=self.digits_var, width=6).pack(side="left", padx=(2, 0))
-        ttk.Label(form, text="大小写：").grid(row=2, column=2, sticky="w")
+        self.preview()
+
+    # ------------------------------------------------------------------ #
+    # 装配
+    # ------------------------------------------------------------------ #
+    def _build_preset_row(self, frame: Any, spacing: Any) -> None:
+        from tkinter import ttk
+
+        row = ttk.LabelFrame(frame, text="预设", padding=spacing.sm)
+        row.pack(fill="x", pady=(0, spacing.sm))
+        self.preset_box = ttk.Combobox(
+            row,
+            textvariable=self.preset_var,
+            state="readonly",
+            width=28,
+            values=[preset.name for preset in self.presets],
+        )
+        self.preset_box.pack(side="left")
+        ttk.Button(row, text="加载", command=self.load_preset).pack(side="left", padx=(spacing.sm, 0))
+        ttk.Button(row, text="保存为…", command=self.save_preset).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Button(row, text="删除", command=self.delete_preset).pack(side="left", padx=(spacing.xs, 0))
+        ttk.Label(
+            row,
+            text=f"最多保存 {RENAME_PRESET_LIMIT} 个预设，随设置文件持久化",
+            style="Muted.TLabel",
+        ).pack(side="left", padx=spacing.sm)
+
+    def _build_mask_row(self, frame: Any, spacing: Any) -> None:
+        from tkinter import ttk
+
+        row = ttk.LabelFrame(frame, text="命名掩码", padding=spacing.sm)
+        row.pack(fill="x", pady=(0, spacing.sm))
+        row.grid_columnconfigure(1, weight=1)
+        row.grid_columnconfigure(3, weight=1)
+        ttk.Label(row, text="名称：").grid(row=0, column=0, sticky="w")
+        ttk.Entry(row, textvariable=self.name_mask_var).grid(row=0, column=1, sticky="ew", padx=(0, spacing.sm))
+        ttk.Label(row, text="扩展名：").grid(row=0, column=2, sticky="w")
+        ttk.Entry(row, textvariable=self.ext_mask_var).grid(row=0, column=3, sticky="ew")
+        ttk.Label(row, text=_RENAME_MASK_HINT, style="Muted.TLabel").grid(
+            row=1, column=0, columnspan=4, sticky="w", pady=(spacing.xxs, 0)
+        )
+
+    def _build_find_row(self, frame: Any, spacing: Any) -> None:
+        from tkinter import ttk
+
+        row = ttk.LabelFrame(frame, text="查找替换", padding=spacing.sm)
+        row.pack(fill="x", pady=(0, spacing.sm))
+        row.grid_columnconfigure(1, weight=1)
+        row.grid_columnconfigure(3, weight=1)
+        ttk.Label(row, text="查找：").grid(row=0, column=0, sticky="w")
+        ttk.Entry(row, textvariable=self.find_var).grid(row=0, column=1, sticky="ew", padx=(0, spacing.sm))
+        ttk.Label(row, text="替换：").grid(row=0, column=2, sticky="w")
+        ttk.Entry(row, textvariable=self.replace_var).grid(row=0, column=3, sticky="ew")
+        ttk.Checkbutton(row, text="正则表达式", variable=self.regex_var).grid(row=1, column=0, sticky="w")
+        ttk.Checkbutton(row, text="区分大小写", variable=self.case_sensitive_var).grid(row=1, column=1, sticky="w")
+        ttk.Checkbutton(row, text="仅匹配扩展名", variable=self.only_ext_var).grid(
+            row=1, column=2, columnspan=2, sticky="w"
+        )
+
+    def _build_counter_row(self, frame: Any, spacing: Any) -> None:
+        from tkinter import ttk
+
+        row = ttk.LabelFrame(frame, text="大小写与计数器", padding=spacing.sm)
+        row.pack(fill="x", pady=(0, spacing.sm))
+        ttk.Label(row, text="大小写：").grid(row=0, column=0, sticky="w")
         ttk.Combobox(
-            form,
+            row,
             textvariable=self.case_var,
             state="readonly",
-            width=12,
-            values=[label for _, label in self._CASE_CHOICES],
-        ).grid(row=2, column=3, sticky="w")
+            width=18,
+            values=[label for _, label in _RENAME_CASE_CHOICES],
+        ).grid(row=0, column=1, sticky="w", padx=(0, spacing.md))
+        ttk.Label(row, text="起始").grid(row=0, column=2, sticky="w")
+        ttk.Entry(row, textvariable=self.start_var, width=7).grid(row=0, column=3, padx=(2, spacing.sm))
+        ttk.Label(row, text="步长").grid(row=0, column=4, sticky="w")
+        ttk.Entry(row, textvariable=self.step_var, width=7).grid(row=0, column=5, padx=(2, spacing.sm))
+        ttk.Label(row, text="位数").grid(row=0, column=6, sticky="w")
+        ttk.Entry(row, textvariable=self.digits_var, width=7).grid(row=0, column=7, padx=(2, spacing.md))
+        ttk.Label(row, text="计数顺序：").grid(row=0, column=8, sticky="w")
+        ttk.Combobox(
+            row,
+            textvariable=self.sort_var,
+            state="readonly",
+            width=10,
+            values=[label for _, label in _RENAME_SORT_CHOICES],
+        ).grid(row=0, column=9, sticky="w")
 
-        ttk.Label(form, text="扩展名：").grid(row=3, column=0, sticky="w")
-        ttk.Entry(form, textvariable=self.extension_var).grid(row=3, column=1, sticky="ew", padx=(0, spacing.sm))
-        ttk.Label(form, text="留空不变，填 - 移除，其他值作为新扩展名").grid(row=3, column=2, columnspan=2, sticky="w")
+    def _build_buttons(self, frame: Any, spacing: Any) -> None:
+        from tkinter import ttk
 
-        button_row = ttk.Frame(frame)
-        button_row.pack(fill="x", pady=(0, spacing.sm))
-        ttk.Button(button_row, text="预览", style="Accent.TButton", command=self.preview).pack(side="left")
-        self.execute_button = ttk.Button(button_row, text="执行", command=self.execute, state="disabled")
+        row = ttk.Frame(frame)
+        row.pack(fill="x", pady=(0, spacing.sm))
+        ttk.Button(row, text="刷新预览", style="Accent.TButton", command=self.preview).pack(side="left")
+        self.execute_button = ttk.Button(row, text="执行选中", command=self.execute, state="disabled")
         self.execute_button.pack(side="left", padx=spacing.sm)
-        self.undo_button = ttk.Button(button_row, text="撤销上次执行", command=self.undo, state="disabled")
+        self.undo_button = ttk.Button(row, text="撤销上次执行", command=self.undo, state="disabled")
         self.undo_button.pack(side="left")
-        ttk.Label(button_row, text="撤销仅本次运行有效，关闭窗口后不可用", style="Muted.TLabel").pack(
-            side="left", padx=spacing.sm
+        ttk.Button(row, text="全选", command=lambda: self._set_all_checked(True)).pack(
+            side="left", padx=(spacing.md, spacing.xs)
         )
-        ttk.Button(button_row, text="关闭", command=self.win.destroy).pack(side="right")
+        ttk.Button(row, text="全不选", command=lambda: self._set_all_checked(False)).pack(side="left")
+        ttk.Label(row, text="撤销仅本次运行有效", style="Muted.TLabel").pack(side="left", padx=spacing.sm)
+        ttk.Button(row, text="关闭", command=self.win.destroy).pack(side="right")
+
+    def _build_tree(self, frame: Any, spacing: Any, theme: Any) -> None:
+        from tkinter import ttk
 
         result_frame = ttk.Frame(frame)
         result_frame.pack(fill="both", expand=True)
-        self.tree = ttk.Treeview(result_frame, columns=("old", "new", "status"), show="headings")
+        self.tree = ttk.Treeview(
+            result_frame,
+            columns=("sel", "old", "new", "status", "note"),
+            show="headings",
+            height=12,
+        )
+        self.tree.heading("sel", text="选")
         self.tree.heading("old", text="原名称")
         self.tree.heading("new", text="新名称")
         self.tree.heading("status", text="状态")
-        self.tree.column("old", width=320)
-        self.tree.column("new", width=320)
-        self.tree.column("status", width=240)
+        self.tree.heading("note", text="说明")
+        self.tree.column("sel", width=42, anchor="center", stretch=False)
+        self.tree.column("old", width=280)
+        self.tree.column("new", width=280)
+        self.tree.column("status", width=120, stretch=False)
+        self.tree.column("note", width=260)
+        self.tree.tag_configure("conflict", foreground=theme.palette.danger)
+        self.tree.tag_configure("invalid", foreground=theme.palette.warning)
+        self.tree.tag_configure("unchanged", foreground=theme.palette.muted)
+        self.tree.bind("<Button-1>", self._on_click)
         scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-
-        self.status_var = tk.StringVar(value=f"已选 {len(self.sources)} 项；填写规则后点“预览”")
         ttk.Label(frame, textvariable=self.status_var, style="Muted.TLabel").pack(fill="x", pady=(spacing.xs, 0))
 
-        self.preview()
+    # ------------------------------------------------------------------ #
+    # 规则与预览
+    # ------------------------------------------------------------------ #
+    def _build_inputs(self) -> list[RenameInput]:
+        inputs: list[RenameInput] = []
+        for entry in self.entries:
+            try:
+                info = entry.path.stat()
+            except OSError:
+                info = None
+            inputs.append(
+                RenameInput(
+                    entry.path,
+                    is_dir=entry.is_dir,
+                    mtime=info.st_mtime if info is not None else entry.mtime,
+                    ctime=info.st_ctime if info is not None else 0.0,
+                )
+            )
+        return inputs
 
-    def _options(self) -> BulkRenameOptions:
+    def _options(self) -> RenameOptions:
         def integer(text: str, label: str) -> int:
             try:
                 return int(text.strip())
             except ValueError as exc:
                 raise ValueError(f"{label}必须是整数") from exc
 
-        case = next((key for key, label in self._CASE_CHOICES if label == self.case_var.get()), "keep")
-        return BulkRenameOptions(
+        return RenameOptions(
+            name_mask=self.name_mask_var.get(),
+            ext_mask=self.ext_mask_var.get(),
             find=self.find_var.get(),
             replace=self.replace_var.get(),
-            template=self.template_var.get().strip(),
-            start=integer(self.start_var.get(), "起始序号"),
+            use_regex=self.regex_var.get(),
+            case_sensitive=self.case_sensitive_var.get(),
+            only_extension=self.only_ext_var.get(),
+            case_mode=_choice_key(_RENAME_CASE_CHOICES, self.case_var.get(), "keep"),
+            start=integer(self.start_var.get(), "起始值"),
             step=integer(self.step_var.get(), "步长"),
             digits=integer(self.digits_var.get(), "位数"),
-            case=case,
-            extension=self.extension_var.get().strip(),
+            sort_key=_choice_key(_RENAME_SORT_CHOICES, self.sort_var.get(), "name"),
         )
 
+    def _apply_options(self, options: RenameOptions) -> None:
+        self.name_mask_var.set(options.name_mask)
+        self.ext_mask_var.set(options.ext_mask)
+        self.find_var.set(options.find)
+        self.replace_var.set(options.replace)
+        self.regex_var.set(options.use_regex)
+        self.case_sensitive_var.set(options.case_sensitive)
+        self.only_ext_var.set(options.only_extension)
+        self.case_var.set(dict(_RENAME_CASE_CHOICES).get(options.case_mode, _RENAME_CASE_CHOICES[0][1]))
+        self.start_var.set(str(options.start))
+        self.step_var.set(str(options.step))
+        self.digits_var.set(str(options.digits))
+        self.sort_var.set(dict(_RENAME_SORT_CHOICES).get(options.sort_key, _RENAME_SORT_CHOICES[0][1]))
+
+    def _on_var_change(self, *_args: Any) -> None:
+        self._cancel_preview_job()
+        self._preview_job = self.win.after(220, self.preview)
+
+    def _cancel_preview_job(self) -> None:
+        if self._preview_job is not None:
+            with contextlib.suppress(self._tk.TclError):
+                self.win.after_cancel(self._preview_job)
+            self._preview_job = None
+
+    @staticmethod
+    def _key(path: Path) -> str:
+        return os.path.normcase(str(path))
+
     def preview(self) -> None:
-        """按当前规则刷新预览；有冲突时禁用执行。"""
+        """按当前规则刷新预览；规则错误时清空并提示。"""
+        self._preview_job = None
+        try:
+            options = self._options()
+        except ValueError as exc:
+            self._show_error(f"规则无效：{exc}")
+            return
+        preview = build_rename_preview(options, self.inputs)
+        self._preview = preview
+        self.tree.delete(*self.tree.get_children())
+        self._row_items.clear()
+        if preview.error:
+            self._show_error(f"规则错误：{preview.error}")
+            return
+        labels = {self._key(entry.path): entry for entry in self.entries}
+        for item in preview.items:
+            entry = labels.get(self._key(item.path))
+            old_label = entry.label if entry is not None else item.old_name
+            new_label = self._new_label(entry, item.new_name)
+            row = self.tree.insert(
+                "",
+                "end",
+                values=(
+                    self._mark(item.status == "ok" and self._key(item.path) not in self._unchecked, item.status),
+                    old_label,
+                    new_label,
+                    self._status_text(item),
+                    item.note,
+                ),
+                tags=(item.status,),
+            )
+            self._row_items[row] = item
+        self._update_status()
+
+    def _new_label(self, entry: FileEntry | None, new_name: str) -> str:
+        if entry is None or not entry.relative:
+            return new_name
+        parent = Path(entry.relative).parent
+        return str(parent / new_name) if str(parent) not in ("", ".") else new_name
+
+    @staticmethod
+    def _mark(checked: bool, status: str) -> str:
+        if status != "ok":
+            return "—"
+        return "☑" if checked else "☐"
+
+    @staticmethod
+    def _status_text(item: RenamePreviewItem) -> str:
+        if item.status == "ok":
+            return "将改名"
+        if item.status == "unchanged":
+            return "未变化"
+        if item.status == "invalid":
+            return "名称非法"
+        return "冲突"
+
+    def _show_error(self, message: str) -> None:
+        self._preview = None
+        self._row_items.clear()
+        self.tree.delete(*self.tree.get_children())
+        self.status_var.set(message)
+        self.execute_button.configure(state="disabled")
+
+    def _selected_paths(self) -> list[Path]:
+        if self._preview is None:
+            return []
+        return [item.path for item in self._preview.ok if self._key(item.path) not in self._unchecked]
+
+    def _update_status(self) -> None:
+        if self._preview is None or self._preview.error:
+            return
+        preview = self._preview
+        selected = len(self._selected_paths())
+        self.status_var.set(
+            f"预览：可执行 {len(preview.ok)} 项（已勾选 {selected}），未变化 {len(preview.unchanged)}，"
+            f"冲突 {len(preview.conflicts)}，非法 {len(preview.invalid)}"
+        )
+        if not self.app.busy:
+            self.execute_button.configure(state="normal" if selected else "disabled")
+
+    def _on_click(self, event: Any) -> str | None:
+        if self.tree.identify_column(event.x) != "#1":
+            return None
+        row = self.tree.identify_row(event.y)
+        item = self._row_items.get(row)
+        if item is None or item.status != "ok":
+            return None
+        key = self._key(item.path)
+        if key in self._unchecked:
+            self._unchecked.discard(key)
+        else:
+            self._unchecked.add(key)
+        self.tree.set(row, "sel", self._mark(key not in self._unchecked, item.status))
+        self._update_status()
+        return "break"
+
+    def _set_all_checked(self, checked: bool) -> None:
+        if self._preview is None:
+            return
+        for item in self._preview.ok:
+            key = self._key(item.path)
+            if checked:
+                self._unchecked.discard(key)
+            else:
+                self._unchecked.add(key)
+        for row, item in self._row_items.items():
+            if item.status == "ok":
+                self.tree.set(row, "sel", self._mark(checked, item.status))
+        self._update_status()
+
+    # ------------------------------------------------------------------ #
+    # 预设
+    # ------------------------------------------------------------------ #
+    def _sync_preset_box(self) -> None:
+        self.preset_box.configure(values=[preset.name for preset in self.presets])
+
+    def _persist_presets(self) -> None:
+        self.app.apply_rename_presets(self.presets)
+        self._sync_preset_box()
+
+    def load_preset(self) -> None:
+        name = self.preset_var.get()
+        preset = next((item for item in self.presets if item.name == name), None)
+        if preset is None:
+            self.status_var.set("请先选择一个预设")
+            return
+        self._cancel_preview_job()
+        self._apply_options(preset.options)
+        self.preview()
+
+    def save_preset(self) -> None:
+        name = self.app._simpledialog.askstring("保存预设", "预设名称：", parent=self.win)
+        if not name or not name.strip():
+            return
+        name = name.strip()
         try:
             options = self._options()
         except ValueError as exc:
             self.status_var.set(f"规则无效：{exc}")
             return
-        self._plan = plan_bulk_rename(self.directory, self.sources, options)
-        self.tree.delete(*self.tree.get_children())
-        for item in self._plan.items:
-            self.tree.insert("", "end", values=(item.source.name, item.new_name, self._status_text(item)))
-        changes = len(self._plan.changes)
-        conflicts = len(self._plan.conflicts)
-        unchanged = len(self._plan.items) - changes - conflicts
-        self.status_var.set(f"预览：可改名 {changes} 项，未变化 {unchanged} 项，冲突 {conflicts} 项")
-        self.execute_button.configure(state="normal" if changes and not conflicts else "disabled")
+        existing = next((index for index, item in enumerate(self.presets) if item.name == name), None)
+        if existing is None and len(self.presets) >= RENAME_PRESET_LIMIT:
+            self.app._messagebox.showwarning(
+                "保存预设",
+                f"最多保存 {RENAME_PRESET_LIMIT} 个预设，请先删除旧预设",
+                parent=self.win,
+            )
+            return
+        preset = RenamePreset(name, options)
+        if existing is None:
+            self.presets.append(preset)
+        else:
+            self.presets[existing] = preset
+        self._persist_presets()
+        self.preset_var.set(name)
+        self.status_var.set(f"已保存预设「{name}」")
 
-    @staticmethod
-    def _status_text(item: RenameItem) -> str:
-        if item.status == "ok":
-            return "将改名"
-        if item.status == "unchanged":
-            return "未变化"
-        return f"冲突：{item.note}"
+    def delete_preset(self) -> None:
+        name = self.preset_var.get()
+        if not name:
+            self.status_var.set("请先选择一个预设")
+            return
+        if not self.app._messagebox.askyesno("删除预设", f"删除预设「{name}」吗？", parent=self.win):
+            return
+        self.presets = [item for item in self.presets if item.name != name]
+        self._persist_presets()
+        self.preset_var.set("")
+        self.status_var.set(f"已删除预设「{name}」")
+
+    # ------------------------------------------------------------------ #
+    # 执行与撤销
+    # ------------------------------------------------------------------ #
+    def _selection_labels(self, paths: Sequence[Path]) -> list[str]:
+        root = Path(self.panel.state.path)
+        if self.panel.state.branch_view:
+            return [branch_relative_path(root, path) for path in paths]
+        return [path.name for path in paths]
 
     def execute(self) -> None:
-        """确认后执行预览中无冲突的改名。"""
-        if self.app.busy or self._plan is None:
+        """执行勾选且无冲突的行。"""
+        if self.app.busy or self._preview is None:
             return
-        changes = self._plan.changes
-        if not changes or self._plan.conflicts:
+        selected = self._selected_paths()
+        if not selected:
             return
-        if not self.app._messagebox.askyesno("批量重命名", f"确定执行 {len(changes)} 项改名吗？", parent=self.win):
+        if not self.app._messagebox.askyesno("多重命名", f"确定执行 {len(selected)} 项改名吗？", parent=self.win):
             return
-        plan = self._plan
+        plan = preview_to_plan(self._preview, selected)
+        if not plan.changes:
+            return
+        self._cancel_preview_job()
 
         def task() -> RenameReport:
             return apply_rename_plan(plan, progress=self.app._progress_callback)
@@ -2642,16 +2976,19 @@ class BulkRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（C
         def done(report: RenameReport) -> None:
             self._last_report = report if report.completed else None
             self.app.refresh_both()
+            self.panel.select_names(self._selection_labels([target for _source, target in report.completed]))
             summary = f"改名完成：成功 {len(report.completed)}，失败 {len(report.errors)}"
             self.status_var.set(summary)
+            self._preview = None
+            self._row_items.clear()
             self.tree.delete(*self.tree.get_children())
             self.execute_button.configure(state="disabled")
             self.undo_button.configure(state="normal" if self._last_report else "disabled")
             if report.errors:
                 details = "\n".join(f"{source.name}: {error}" for source, error in report.errors[:_MAX_ERROR_DETAILS])
-                self.app._messagebox.showwarning("批量重命名（有失败）", f"{summary}\n\n{details}", parent=self.win)
+                self.app._messagebox.showwarning("多重命名（有失败）", f"{summary}\n\n{details}", parent=self.win)
 
-        self.app.start_worker(task, done, title=f"批量重命名 {len(changes)} 项")
+        self.app.start_worker(task, done, title=f"多重命名 {len(plan.changes)} 项")
 
     def undo(self) -> None:
         """撤销本次运行内最近一次执行。"""
@@ -2664,6 +3001,7 @@ class BulkRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（C
 
         def done(result: RenameReport) -> None:
             self.app.refresh_both()
+            self.panel.select_names(self._selection_labels([source for _target, source in result.completed]))
             self.status_var.set(f"已撤销 {len(result.completed)} 项（仅本次运行有效）")
             if result.errors:
                 details = "\n".join(f"{path.name}: {error}" for path, error in result.errors[:_MAX_ERROR_DETAILS])
@@ -2671,7 +3009,10 @@ class BulkRenameDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（C
             if len(result.completed) == len(report.completed):
                 self._last_report = None
             self.undo_button.configure(state="normal" if self._last_report else "disabled")
-            self.preview()
+            self._preview = None
+            self._row_items.clear()
+            self.tree.delete(*self.tree.get_children())
+            self.execute_button.configure(state="disabled")
 
         self.app.start_worker(task, done, title=f"撤销改名 {len(report.completed)} 项")
 
@@ -4150,7 +4491,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         file_menu.add_separator()
         self._menu_command(file_menu, "new_folder", "新建目录\tF7", self.new_folder)
         self._menu_command(file_menu, "rename", "重命名\tF2", self.rename_selected)
-        self._menu_command(file_menu, "bulk_rename", "批量重命名…\tCtrl+M", self.bulk_rename)
+        self._menu_command(file_menu, "bulk_rename", "多重命名工具…\tCtrl+M", self.bulk_rename)
         file_menu.add_separator()
         self._menu_command(file_menu, "copy", "复制到对面面板\tF5", self.copy_selected)
         self._menu_command(file_menu, "move", "移动到对面面板\tF6", self.move_selected)
@@ -4929,6 +5270,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.left.refresh()
         self.right.refresh()
         self.set_status(f"颜色规则已保存：{len(rules)} 条")
+
+    def apply_rename_presets(self, presets: Sequence[RenamePreset]) -> None:
+        """保存多重命名预设并写回设置文件。"""
+        self.settings.rename_presets = list(presets)
+        self._store_panel_state()
+        save_settings(self.settings, self._settings_path)
+        self.set_status(f"多重命名预设已保存：{len(presets)} 个")
 
     def refresh_both(self) -> None:
         """刷新两个面板（保留选择）。"""
@@ -5771,22 +6119,15 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.set_status(f"已重命名为 {target.name}")
 
     def bulk_rename(self) -> None:
-        """Ctrl+M 批量重命名选中条目。"""
+        """Ctrl+M 打开多重命名工具（支持分支视图下的相对路径）。"""
         if self._busy or self._archive_readonly():
             return
         panel = self.active_panel()
         entries = panel.selected_entries()
         if not entries:
-            self._messagebox.showinfo("批量重命名", "请先选择文件或文件夹", parent=self.root)
+            self._messagebox.showinfo("多重命名工具", "请先选择文件或文件夹", parent=self.root)
             return
-        if panel.state.branch_view:
-            self._messagebox.showinfo(
-                "批量重命名",
-                "分支视图下的条目来自不同子目录，请切回普通视图后再批量重命名",
-                parent=self.root,
-            )
-            return
-        BulkRenameDialog(self, Path(panel.state.path), entries)
+        MultiRenameDialog(self, panel, entries)
 
     def adopt_paths(self, paths: Sequence[Path]) -> str:
         """把搜索结果加入活动面板选择；跨目录结果按目录统计提示。"""
