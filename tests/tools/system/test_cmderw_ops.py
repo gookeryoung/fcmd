@@ -1517,6 +1517,7 @@ class TestMenuState:
             tree_visible=False,
             quick_visible=True,
             sync_browse=True,
+            branch_view=True,
             sort_key="size",
             view_mode="brief",
         )
@@ -1527,6 +1528,7 @@ class TestMenuState:
         assert state.tree_visible is False
         assert state.quick_visible is True
         assert state.sync_browse is True
+        assert state.branch_view is True
         assert state.sort_key == "size"
         assert state.view_mode == "brief"
 
@@ -1585,6 +1587,26 @@ class TestOpenWith:
             ops.open_with_command("", "/tmp/a.txt")
         with pytest.raises(ValueError):
             ops.open_with_command("/bin/editor", " ")
+
+
+class TestBranchView:
+    """分支视图：相对路径显示名与复制时的相对子目录。"""
+
+    def test_relative_path_inside_root(self) -> None:
+        root = Path("/data")
+
+        assert ops.branch_relative_path(root, root / "sub" / "a.txt") == str(Path("sub/a.txt"))
+        assert ops.branch_relative_path(root, root / "a.txt") == "a.txt"
+
+    def test_relative_path_outside_root_falls_back_to_name(self) -> None:
+        assert ops.branch_relative_path(Path("/data"), Path("/other/a.txt")) == "a.txt"
+
+    def test_relative_parent_dir(self) -> None:
+        root = Path("/data")
+
+        assert ops.relative_parent_dir(root, root / "a.txt") == ""
+        assert ops.relative_parent_dir(root, root / "sub" / "deep" / "a.txt") == str(Path("sub/deep"))
+        assert ops.relative_parent_dir(root, Path("/other/a.txt")) is None
 
 
 class TestViewModes:

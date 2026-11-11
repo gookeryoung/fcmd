@@ -114,6 +114,7 @@ __all__ = [
     "TransferQueue",
     "TrashReport",
     "apply_rename_plan",
+    "branch_relative_path",
     "browse_follow_path",
     "browse_step",
     "build_new_name",
@@ -141,6 +142,7 @@ __all__ = [
     "parse_color_rules",
     "plan_bulk_rename",
     "read_preview",
+    "relative_parent_dir",
     "remember_open_with",
     "resolve_color_style",
     "revalidate_sync_item",
@@ -2298,6 +2300,7 @@ class MenuFacts:
     tree_visible: bool = False
     quick_visible: bool = False
     sync_browse: bool = False
+    branch_view: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2311,6 +2314,7 @@ class MenuState:
     tree_visible: bool = False
     quick_visible: bool = False
     sync_browse: bool = False
+    branch_view: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2376,6 +2380,7 @@ def menu_state(facts: MenuFacts) -> MenuState:
         tree_visible=facts.tree_visible,
         quick_visible=facts.quick_visible,
         sync_browse=facts.sync_browse,
+        branch_view=facts.branch_view,
         sort_key=facts.sort_key,
         view_mode=normalize_view_mode(facts.view_mode),
     )
@@ -2455,3 +2460,24 @@ def open_with_command(program: str, path: str) -> list[str]:
     if not target:
         raise ValueError("文件路径不能为空")
     return [name, target]
+
+
+# ============================================================================ #
+# 分支视图：相对路径显示与复制时保留目录结构
+# ============================================================================ #
+def branch_relative_path(root: Path, path: Path) -> str:
+    """分支视图显示名：相对根目录的路径；不在根目录下时回退文件名。"""
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return path.name
+    return str(relative)
+
+
+def relative_parent_dir(root: Path, path: Path) -> str | None:
+    """文件相对根目录的父目录文本（根下为 ``""``）；不在根下返回 ``None``。"""
+    try:
+        relative = path.relative_to(root).parent
+    except ValueError:
+        return None
+    return "" if relative == Path() else str(relative)

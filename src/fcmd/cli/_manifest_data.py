@@ -316,7 +316,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码 + 内置 commands/*.toml 的内容指纹（列表快路径的严格校验）
-DIGEST = "ae5dc5abfa9dc6aff21e69e029b0207e"
+DIGEST = "e9957f91dd09edcacd446a1623f762b1"
 
 
 if __name__ == "__main__":  # pragma: no cover

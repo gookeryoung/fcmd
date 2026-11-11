@@ -222,6 +222,18 @@ class TestSettings:
         )
         assert load_settings().open_with == ["/bin/editor"]
 
+    def test_save_and_load_roundtrip_keeps_branch_view(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path), branch_view=True),
+                right=PanelState(path=str(tmp_path)),
+            )
+        )
+        loaded = load_settings()
+        assert loaded.left.branch_view is True
+        assert loaded.right.branch_view is False
+
     def test_save_and_load_roundtrip_keeps_tabs_and_bookmarks(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

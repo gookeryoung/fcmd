@@ -107,6 +107,7 @@ from fcmd.tools.system._cmderw_ops import (
     TransferQueue,
     TrashReport,
     apply_rename_plan,
+    branch_relative_path,
     browse_follow_path,
     browse_step,
     build_sync_plan,
@@ -131,6 +132,7 @@ from fcmd.tools.system._cmderw_ops import (
     parse_color_rules,
     plan_bulk_rename,
     read_preview,
+    relative_parent_dir,
     remember_open_with,
     resolve_color_style,
     revalidate_sync_items,
@@ -262,6 +264,9 @@ _HIDDEN_ATTRIBUTE = 0x2
 _MAX_PREVIEW_LINES = 500
 _MAX_ERROR_DETAILS = 10
 _QUICK_IMAGE_LIMIT = 32 * 1024 * 1024
+#: 分支视图：递归深度与条目上限，避免误入超深目录树时卡死界面。
+BRANCH_MAX_DEPTH = 32
+BRANCH_MAX_ENTRIES = 20000
 _SORT_MENU_CHOICES: tuple[tuple[str, str, str], ...] = (
     ("名称", "name", "name"),
     ("扩展名", "attr", "type"),
@@ -318,7 +323,10 @@ def load_thumbnail_payload(path: Path, tile_size: int = _THUMB_TILE) -> bytes | 
 # ============================================================================ #
 @dataclass(frozen=True)
 class FileEntry:
-    """目录中的一个条目（文件 / 目录 / 符号链接）。"""
+    """目录中的一个条目（文件 / 目录 / 符号链接）。
+
+    ``relative`` 仅分支视图使用：相对面板根目录的路径，作为显示名与唯一键。
+    """
 
     name: str
     path: Path
@@ -327,6 +335,12 @@ class FileEntry:
     size: int = 0
     mtime: float = 0.0
     hidden: bool = False
+    relative: str = ""
+
+    @property
+    def label(self) -> str:
+        """列表显示名：分支视图为相对路径，普通视图为文件名。"""
+        return self.relative or self.name
 
 
 @dataclass(frozen=True)
@@ -375,6 +389,7 @@ class PanelState:
     history_index: int = -1
     view_mode: str = DEFAULT_VIEW_MODE
     column_widths: dict[str, int] = field(default_factory=dict)
+    branch_view: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为设置文件中的字典。"""
@@ -386,6 +401,7 @@ class PanelState:
             "history_index": self.history_index,
             "view_mode": self.view_mode,
             "column_widths": dict(self.column_widths),
+            "branch_view": self.branch_view,
         }
 
 
@@ -461,6 +477,9 @@ def _panel_from_raw(raw: object, fallback: Path) -> PanelState:
         state.history_index = len(state.history) - 1
     state.view_mode = normalize_view_mode(data.get("view_mode"))
     state.column_widths = normalize_column_widths(data.get("column_widths"))
+    branch_view = data.get("branch_view")
+    if isinstance(branch_view, bool):
+        state.branch_view = branch_view
     return state
 
 
@@ -649,7 +668,7 @@ def is_hidden(name: str, stat: os.stat_result | None = None) -> bool:
 
 def _sort_value(entry: FileEntry, sort_key: str) -> tuple[Any, ...]:
     """排序主键：目录与文件后续由稳定排序保证目录在前。"""
-    folded = entry.name.casefold()
+    folded = entry.label.casefold()
     if sort_key == "size":
         return (entry.size, folded)
     if sort_key == "mtime":
@@ -657,7 +676,7 @@ def _sort_value(entry: FileEntry, sort_key: str) -> tuple[Any, ...]:
     if sort_key == "type":
         kind = "" if entry.is_dir else entry.path.suffix.casefold()
         return (kind, folded)
-    return (folded, entry.name)
+    return (folded, entry.label)
 
 
 def sort_entries(
@@ -1126,6 +1145,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._index: dict[str, FileEntry] = {}
         self._filter = ""
         self._last_path = self.state.path
+        self._branch_truncated = False
         self._tk = tk
         self._ttk = ttk
         theme = app.theme
@@ -1389,7 +1409,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
                 entry = self.entries[index]
                 key = self._thumb_key(entry)
                 wanted.add(key)
-                self._draw_thumb_cell(entry, column, row, key, entry.name in selected)
+                self._draw_thumb_cell(entry, column, row, key, entry.label in selected)
         self._sync_thumb_wanted(wanted)
 
     def _draw_thumb_cell(
@@ -1433,7 +1453,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             )
             if plan != THUMBNAIL_BADGE:
                 self._schedule_thumbnail(entry, key)
-        label = entry.name if len(entry.name) <= 13 else entry.name[:12] + "…"
+        label = entry.label
+        if len(label) > 18:
+            label = "…" + label[-17:]
         self._thumb_canvas.create_text(
             x0 + _THUMB_TILE // 2,
             y0 + _THUMB_TILE + _THUMB_LABEL_HEIGHT // 2,
@@ -1540,8 +1562,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if index is None:
             return
         entry = self.entries[index]
-        self.tree.selection_set(entry.name)
-        self.tree.focus(entry.name)
+        self.tree.selection_set(entry.label)
+        self.tree.focus(entry.label)
         self._update_status()
         self._request_thumb_redraw(immediate=True)
 
@@ -1554,9 +1576,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         index = self._thumb_index_at(event.x, event.y)
         if index is not None:
             entry = self.entries[index]
-            if entry.name not in self.tree.selection():
-                self.tree.selection_set(entry.name)
-            self.tree.focus(entry.name)
+            if entry.label not in self.tree.selection():
+                self.tree.selection_set(entry.label)
+            self.tree.focus(entry.label)
             self._update_status()
             self._request_thumb_redraw(immediate=True)
         self.app.show_context_menu(event)
@@ -1575,7 +1597,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def _thumb_move(self, delta: int) -> str:
         if not self.entries:
             return "break"
-        names = [entry.name for entry in self.entries]
+        names = [entry.label for entry in self.entries]
         current = self.tree.focus()
         index = names.index(current) if current in names else 0
         target = min(max(0, index + delta), len(names) - 1)
@@ -1713,12 +1735,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if previous_path != self._last_path:
             self.app.on_panel_navigated(self, previous_path, self._last_path)
         directory = Path(self.state.path)
+        self._branch_truncated = False
         try:
-            entries = sort_entries(
-                list_directory(directory, show_hidden=self.app.settings.show_hidden),
-                sort_key=self.state.sort_key,
-                descending=self.state.descending,
-            )
+            entries = self._load_entries(directory)
         except OSError as exc:
             self.entries = []
             self._index = {}
@@ -1730,10 +1749,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if select:
             previous = {select}
         if self._filter:
-            visible = set(filter_names([entry.name for entry in entries], self._filter))
-            entries = [entry for entry in entries if entry.name in visible]
+            visible = set(filter_names([entry.label for entry in entries], self._filter))
+            entries = [entry for entry in entries if entry.label in visible]
         self.entries = entries
-        self._index = {entry.name: entry for entry in entries}
+        self._index = {entry.label: entry for entry in entries}
         self.tree.delete(*self.tree.get_children())
         now = time.time()
         color_tags: dict[str, str] = {}
@@ -1761,9 +1780,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.tree.insert(
                 "",
                 "end",
-                iid=entry.name,
+                iid=entry.label,
                 values=(
-                    entry.name,
+                    entry.label,
                     "" if entry.is_dir else entry.path.suffix[1:],
                     format_size(entry.size, is_dir=entry.is_dir),
                     format_mtime(entry.mtime),
@@ -1781,6 +1800,65 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if self._quick_visible:
             self.update_quick_view()
         self.app.on_panel_refreshed(self)
+
+    def _load_entries(self, directory: Path) -> list[FileEntry]:
+        """读取目录并排序：分支视图递归列出所有文件，普通视图只列直接子项。"""
+        if self.state.branch_view:
+            entries = self._list_branch(directory)
+        else:
+            entries = list_directory(directory, show_hidden=self.app.settings.show_hidden)
+        return sort_entries(
+            entries,
+            sort_key=self.state.sort_key,
+            descending=self.state.descending,
+        )
+
+    def _list_branch(self, directory: Path) -> list[FileEntry]:
+        """分支视图：递归列出所有文件，``relative`` 记录相对根目录的路径。
+
+        隐藏目录按隐藏项整体跳过；符号链接目录不递归；深度与条目数设上限，
+        超限时在状态栏给出提示而不是卡死界面。
+        """
+        if not directory.is_dir():
+            raise NotADirectoryError(f"不是目录: {directory}")
+        show_hidden = self.app.settings.show_hidden
+        entries: list[FileEntry] = []
+        pending: list[tuple[Path, int]] = [(directory, 0)]
+        truncated = False
+        while pending:
+            if len(entries) >= BRANCH_MAX_ENTRIES:
+                truncated = True
+                break
+            current, depth = pending.pop(0)
+            try:
+                children = sorted(current.iterdir())
+            except OSError:
+                continue
+            for child in children:
+                try:
+                    stat = child.stat()
+                except OSError:
+                    stat = None
+                hidden = is_hidden(child.name, stat)
+                if hidden and not show_hidden:
+                    continue
+                if child.is_dir():
+                    if not child.is_symlink() and depth < BRANCH_MAX_DEPTH:
+                        pending.append((child, depth + 1))
+                    continue
+                entries.append(
+                    FileEntry(
+                        name=child.name,
+                        path=child,
+                        is_symlink=child.is_symlink(),
+                        size=stat.st_size if stat is not None else 0,
+                        mtime=stat.st_mtime if stat is not None else 0.0,
+                        hidden=hidden,
+                        relative=branch_relative_path(directory, child),
+                    )
+                )
+        self._branch_truncated = truncated or bool(pending)
+        return entries
 
     def _color_tag(self, style: ColorStyle | None, cache: dict[str, str]) -> str:
         """按合并后的颜色生成 Treeview tag；同类颜色只配置一次。"""
@@ -1844,9 +1922,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self._show_quick_note("快速查看", note)
             return
         entry = selected[0]
-        self._quick_title_var.set(f"快速查看 - {entry.name}")
+        self._quick_title_var.set(f"快速查看 - {entry.label}")
         if entry.is_dir:
-            self._show_quick_note(f"快速查看 - {entry.name}", "目录不预览，双击进入")
+            self._show_quick_note(f"快速查看 - {entry.label}", "目录不预览，双击进入")
             return
         result = read_preview(entry.path)
         self._quick_note_var.set(result.note)
@@ -1902,6 +1980,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         total = len(self.entries)
         file_size = sum(entry.size for entry in self.entries if not entry.is_dir)
         text = f"{total} 个对象，共 {format_size(file_size)}"
+        if self.state.branch_view:
+            text = f"分支视图 · {text}"
+            if self._branch_truncated:
+                text += f"（已达上限 {BRANCH_MAX_ENTRIES} 条，未列完）"
         if self._filter:
             text = f"过滤「{self._filter}」→ {text}"
         selected = self.selected_entries()
@@ -2002,11 +2084,17 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         return [self._index[name] for name in self.tree.selection() if name in self._index]
 
     def select_name(self, name: str) -> None:
-        """按名称选中并滚动到可见位置。"""
-        if name in self.tree.get_children():
-            self.tree.selection_set(name)
-            self.tree.focus(name)
-            self.tree.see(name)
+        """按名称选中并滚动到可见位置；分支视图下按文件名回退匹配。"""
+        target = name if name in self.tree.get_children() else ""
+        if not target:
+            target = next(
+                (entry.label for entry in self.entries if entry.name == name),
+                "",
+            )
+        if target:
+            self.tree.selection_set(target)
+            self.tree.focus(target)
+            self.tree.see(target)
             self._update_status()
 
     def select_all(self) -> None:
@@ -3828,6 +3916,14 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             self._sync_var,
             self._apply_sync_browse,
         )
+        self._branch_var = tk.BooleanVar(value=False)
+        self._menu_check(
+            view_menu,
+            "branch_view",
+            "分支视图\tCtrl+B",
+            self._branch_var,
+            self._apply_branch_view,
+        )
         view_menu.add_separator()
         view_mode_menu = tk.Menu(view_menu, tearoff=False, postcommand=self._sync_menu_state)
         self._view_var = tk.StringVar(value=DEFAULT_VIEW_MODE)
@@ -4066,6 +4162,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-F8>": lambda _event: self.toggle_directory_tree(),
             "<Control-Shift-s>": lambda _event: self.toggle_sync_browse(),
             "<Control-Shift-S>": lambda _event: self.toggle_sync_browse(),
+            "<Control-b>": lambda _event: self.toggle_branch_view(),
             "<Control-Return>": lambda _event: self.focus_command_bar(),
             "<Control-KP_Enter>": lambda _event: self.focus_command_bar(),
             "<Alt-Down>": lambda _event: self.show_history_menu(),
@@ -4135,6 +4232,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             tree_visible=self._tree_visible,
             quick_visible=panel.quick_visible,
             sync_browse=self.settings.sync_browse,
+            branch_view=panel.state.branch_view,
             sort_key=panel.state.sort_key,
             view_mode=panel.state.view_mode,
         )
@@ -4145,6 +4243,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._quick_var.set(state.quick_visible)
         self._tree_var.set(state.tree_visible)
         self._sync_var.set(state.sync_browse)
+        self._branch_var.set(state.branch_view)
         self._sort_var.set(state.sort_key)
         self._view_var.set(state.view_mode)
 
@@ -4519,6 +4618,25 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         else:
             self.set_status("同步浏览已关闭")
 
+    def toggle_branch_view(self) -> None:
+        """Ctrl+B：切换当前标签的分支视图（递归平铺文件）。"""
+        panel = self.active_panel()
+        self._set_branch_view(panel, not panel.state.branch_view)
+
+    def _apply_branch_view(self) -> None:
+        """采用菜单勾选状态切换分支视图。"""
+        self._set_branch_view(self.active_panel(), bool(self._branch_var.get()))
+
+    def _set_branch_view(self, panel: FilePanel, enabled: bool) -> None:
+        """切换指定标签的分支视图并刷新目录（不改变当前路径）。"""
+        panel.state.branch_view = enabled
+        self._branch_var.set(enabled)
+        panel.refresh()
+        if enabled:
+            self.set_status(f"分支视图已开启：递归列出「{panel.state.path}」下的全部文件")
+        else:
+            self.set_status("分支视图已关闭")
+
     def clear_selection(self) -> None:
         """取消活动面板的全部选择。"""
         self.active_panel().clear_selection()
@@ -4771,12 +4889,18 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._transfer(move=True)
 
     def _transfer(self, *, move: bool) -> None:
+        panel = self.active_panel()
         paths = self._selected_paths()
         if paths:
-            self.transfer_paths(paths, move=move)
+            root = Path(panel.state.path) if panel.state.branch_view else None
+            self.transfer_paths(paths, move=move, preserve_root=root)
 
-    def transfer_paths(self, paths: Sequence[Path], *, move: bool) -> bool:
-        """通用复制 / 移动入口：规划后加入传输队列，返回是否已入队。"""
+    def transfer_paths(self, paths: Sequence[Path], *, move: bool, preserve_root: Path | None = None) -> bool:
+        """通用复制 / 移动入口：规划后加入传输队列，返回是否已入队。
+
+        ``preserve_root`` 非空时（分支视图）按文件相对该目录的子目录结构，
+        在目标下逐级创建同名子目录，而不是全部平铺到目标根。
+        """
         if not paths:
             return False
         action = "移动" if move else "复制"
@@ -4794,7 +4918,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         if not destination.is_absolute():
             destination = Path(self.active_panel().state.path) / destination
         try:
-            items, skipped = plan_transfer(paths, destination, conflict="ask", chooser=self._ask_conflict)
+            items, skipped = self._plan_transfer_groups(paths, destination, preserve_root)
         except (OSError, ValueError) as exc:
             self.show_error(f"无法{action}", str(exc))
             return False
@@ -4802,6 +4926,35 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             self.set_status("没有需要操作的条目")
             return False
         return self.enqueue_transfer(items, destination, move=move, skipped=skipped)
+
+    def _plan_transfer_groups(
+        self,
+        paths: Sequence[Path],
+        destination: Path,
+        preserve_root: Path | None,
+    ) -> tuple[list[TransferItem], list[Path]]:
+        """按目标目录分组规划；分支视图下保留相对子目录结构。"""
+        if preserve_root is None:
+            return plan_transfer(paths, destination, conflict="ask", chooser=self._ask_conflict)
+        grouped: dict[str, list[Path]] = {}
+        for path in paths:
+            relative = relative_parent_dir(preserve_root, path)
+            grouped.setdefault("" if relative is None else relative, []).append(path)
+        items: list[TransferItem] = []
+        skipped: list[Path] = []
+        for relative, group in grouped.items():
+            target_root = destination if not relative else destination / relative
+            if relative:
+                target_root.mkdir(parents=True, exist_ok=True)
+            planned, group_skipped = plan_transfer(
+                group,
+                target_root,
+                conflict="ask",
+                chooser=self._ask_conflict,
+            )
+            items.extend(planned)
+            skipped.extend(group_skipped)
+        return items, skipped
 
     def enqueue_transfer(
         self,
@@ -5112,6 +5265,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         entries = panel.selected_entries()
         if not entries:
             self._messagebox.showinfo("批量重命名", "请先选择文件或文件夹", parent=self.root)
+            return
+        if panel.state.branch_view:
+            self._messagebox.showinfo(
+                "批量重命名",
+                "分支视图下的条目来自不同子目录，请切回普通视图后再批量重命名",
+                parent=self.root,
+            )
             return
         BulkRenameDialog(self, Path(panel.state.path), entries)
 
