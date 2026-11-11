@@ -1461,6 +1461,11 @@ class TestMenuState:
         data.update(overrides)
         return ops.MenuFacts(**data)  # type: ignore[arg-type]
 
+    def test_diff_text_requires_two_files(self) -> None:
+        assert not ops.menu_state(self._facts(selection_count=2, two_files=True)).is_disabled("diff_text")
+        assert ops.menu_state(self._facts(selection_count=2, two_files=False)).is_disabled("diff_text")
+        assert ops.menu_state(self._facts(selection_count=1)).is_disabled("diff_text")
+
     def test_no_selection_disables_selection_actions(self) -> None:
         state = ops.menu_state(self._facts(selection_count=0, single_is_file=False))
 

@@ -188,12 +188,16 @@ def create_root(  # noqa: PLR0913 - 关键字参数描述窗口骨架，显式�
     min_width: int,
     min_height: int,
     on_close: Callable[[], None],
+    theme: str | _guitheme.Theme | None = None,
 ) -> tuple[Tk, Theme]:  # pragma: no cover - 需要真实 Tk 窗口
-    """创建根窗口：应用主题、标题、geometry、最小尺寸并绑定关闭回调。"""
+    """创建根窗口：应用主题、标题、geometry、最小尺寸并绑定关闭回调。
+
+    ``theme`` 为 ``None`` 时沿用持久化主题配置；显式传入时优先使用（非法值回落默认）。
+    """
     import tkinter as tk
 
     root = tk.Tk()
-    theme = _guitheme.apply_theme(root)
+    theme = _guitheme.apply_theme(root, theme)
     if not _guitheme.can_render_cjk(root):
         from fcmd.console import print_error
 

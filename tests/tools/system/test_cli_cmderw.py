@@ -26,6 +26,8 @@ import pytest
 from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.system import cmderw
+from fcmd.tools.system._cmderw_commands import UserCommand
+from fcmd.tools.system._cmderw_launch import LaunchRequest
 from fcmd.tools.system.cmderw import (
     ARCHIVE_SUFFIXES,
     DEFAULT_GEOMETRY,
@@ -106,12 +108,14 @@ def test_run_gui_delegates_to_window_runner(monkeypatch: pytest.MonkeyPatch) -> 
     assert message == "双面板文件管理器"
 
 
-def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:
-    """工具入口直接打开窗口。"""
-    calls: list[bool] = []
-    monkeypatch.setattr(cmderw, "run_gui", lambda: calls.append(True))
+def test_launch_cmd_passes_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    """工具入口把 --left/--right/--select 包装成启动请求。"""
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(cmderw, "run_gui", lambda **kwargs: captured.append(kwargs))
+    cmderw.launch_cmd(left="/data", right="/backup", select="/data/a.txt")
+    assert captured == [{"launch": LaunchRequest(left="/data", right="/backup", select="/data/a.txt")}]
     cmderw.launch_cmd()
-    assert calls == [True]
+    assert captured[1] == {"launch": LaunchRequest()}
 
 
 # ============================================================================ #
@@ -255,6 +259,80 @@ class TestSettings:
             encoding="utf-8",
         )
         assert load_settings().command_history == ["pwd"]
+
+    def test_save_and_load_roundtrip_keeps_user_commands(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        commands = [
+            UserCommand("在终端打开", "x-terminal-emulator", "%P", in_toolbar=False),
+            UserCommand("查看", "less", "%L"),
+        ]
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path)),
+                right=PanelState(path=str(tmp_path)),
+                user_commands=commands,
+            )
+        )
+        assert load_settings().user_commands == commands
+
+    def test_invalid_user_commands_are_sanitized(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {"path": str(tmp_path)},
+                    "right": {"path": str(tmp_path)},
+                    "user_commands": "bad",
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert load_settings().user_commands == []
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {"path": str(tmp_path)},
+                    "right": {"path": str(tmp_path)},
+                    "user_commands": [
+                        3,
+                        {"name": "", "command": "x"},
+                        {"name": "ok", "command": "code", "in_menu": "yes"},
+                        {"name": "ok", "command": "other"},
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert load_settings().user_commands == [UserCommand("ok", "code")]
+
+    def test_theme_defaults_and_falls_back(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        assert load_settings().theme == "dark-blue"
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"left": {"path": str(tmp_path)}, "right": {"path": str(tmp_path)}, "theme": "neon"}),
+            encoding="utf-8",
+        )
+        assert load_settings().theme == "dark-blue"
+        path.write_text(
+            json.dumps({"left": {"path": str(tmp_path)}, "right": {"path": str(tmp_path)}, "theme": "dark"}),
+            encoding="utf-8",
+        )
+        assert load_settings().theme == "dark-blue"
+
+    def test_theme_roundtrip_preserves_choice(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        save_settings(
+            CmderSettings(
+                left=PanelState(path=str(tmp_path)),
+                right=PanelState(path=str(tmp_path)),
+                theme="light",
+            )
+        )
+        assert load_settings().theme == "light"
 
     def test_save_and_load_roundtrip_keeps_branch_view(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))

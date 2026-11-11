@@ -50,6 +50,27 @@ import fcmd
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
+from fcmd.tools.system import _cmderw_diff as diffmod
+from fcmd.tools.system._cmderw_checksum import (
+    VerifyReport,
+    algorithm_for_suffix,
+    build_manifest,
+    manifest_name,
+    normalize_algorithm,
+    report_text,
+    verify_manifest,
+)
+from fcmd.tools.system._cmderw_commands import (
+    COMMAND_LIMIT,
+    PLACEHOLDERS,
+    CommandContext,
+    PlaceholderError,
+    UserCommand,
+    expand_placeholders,
+    normalize_user_commands,
+    user_commands_to_json,
+)
+from fcmd.tools.system._cmderw_launch import LaunchRequest, resolve_launch
 from fcmd.tools.system._cmderw_ops import (
     COLOR_KIND_ANY,
     COLOR_KIND_DIR,
@@ -439,6 +460,7 @@ class CmderSettings:
     active: str = "left"
     show_hidden: bool = False
     geometry: str | None = None
+    theme: str = _guitheme.DEFAULT_THEME_NAME
     left_tabs: list[PanelState] = field(default_factory=list)
     right_tabs: list[PanelState] = field(default_factory=list)
     left_tab_index: int = 0
@@ -449,6 +471,7 @@ class CmderSettings:
     open_with: list[str] = field(default_factory=list)
     command_history: list[str] = field(default_factory=list)
     rename_presets: list[RenamePreset] = field(default_factory=list)
+    user_commands: list[UserCommand] = field(default_factory=list)
 
 
 # ============================================================================ #
@@ -578,9 +601,12 @@ def load_settings(path: Path | None = None) -> CmderSettings:
     settings.open_with = normalize_open_with_list(raw.get("open_with"))
     settings.command_history = normalize_command_history(raw.get("command_history"))
     settings.rename_presets = normalize_rename_presets(raw.get("rename_presets"))
+    settings.user_commands = normalize_user_commands(raw.get("user_commands"))
     geometry = raw.get("geometry")
     if isinstance(geometry, str):
         settings.geometry = _guiconfig.valid_geometry(geometry)
+    theme = raw.get("theme")
+    settings.theme = _guitheme.resolve_theme(theme if isinstance(theme, str) else None).name
     return settings
 
 
@@ -596,6 +622,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "active": settings.active,
         "show_hidden": settings.show_hidden,
         "geometry": settings.geometry,
+        "theme": settings.theme,
         "left_tabs": [tab.to_dict() for tab in left_tabs],
         "right_tabs": [tab.to_dict() for tab in right_tabs],
         "left_tab_index": left_index,
@@ -606,6 +633,7 @@ def save_settings(settings: CmderSettings, path: Path | None = None) -> None:
         "open_with": list(settings.open_with),
         "command_history": list(settings.command_history),
         "rename_presets": rename_presets_to_json(settings.rename_presets),
+        "user_commands": user_commands_to_json(settings.user_commands),
     }
     _guiconfig.write_settings(payload, path or config_path())
 
@@ -3424,6 +3452,113 @@ class TransferQueueDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖�
         self.app.retry_queue_items(task.task_id, None)
 
 
+class TextDiffDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """两个文本文件的并排只读比较：增删行着色、行号对齐、同步滚动。"""
+
+    def __init__(self, app: CmderWindow, left: Path, right: Path) -> None:
+        import tkinter as tk
+        from tkinter import ttk
+
+        colors = app.theme.palette
+        spacing = app.theme.spacing
+        left_lines, left_cut = diffmod.load_lines(left)
+        right_lines, right_cut = diffmod.load_lines(right)
+        self.result = diffmod.diff_lines(left_lines, right_lines, truncated_left=left_cut, truncated_right=right_cut)
+        self._syncing = False
+
+        self.win = tk.Toplevel(app.root)
+        self.win.title("文本比较（只读）")
+        self.win.transient(app.root)
+        _guiwindow.center_over_parent(self.win, app.root, width=1180, height=720)
+        self.win.minsize(800, 480)
+        frame = ttk.Frame(self.win, padding=spacing.sm)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text=f"左：{left}", style="Muted.TLabel").pack(anchor="w")
+        ttk.Label(frame, text=f"右：{right}", style="Muted.TLabel").pack(anchor="w")
+        ttk.Label(frame, text=diffmod.summary_text(self.result)).pack(anchor="w", pady=(spacing.xxs, spacing.xs))
+
+        body = ttk.Frame(frame)
+        body.pack(fill="both", expand=True)
+        body.grid_rowconfigure(0, weight=1)
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_columnconfigure(2, weight=1)
+        self.left_text = self._build_text(body, colors)
+        self.right_text = self._build_text(body, colors)
+        self.left_text.grid(row=0, column=0, sticky="nsew")
+        self.right_text.grid(row=0, column=2, sticky="nsew")
+
+        left_y = ttk.Scrollbar(body, orient="vertical", command=self._scroll_both)
+        right_y = ttk.Scrollbar(body, orient="vertical", command=self._scroll_both)
+        left_y.grid(row=0, column=1, sticky="ns")
+        right_y.grid(row=0, column=3, sticky="ns")
+        left_x = ttk.Scrollbar(body, orient="horizontal", command=self.left_text.xview)
+        right_x = ttk.Scrollbar(body, orient="horizontal", command=self.right_text.xview)
+        left_x.grid(row=1, column=0, sticky="ew")
+        right_x.grid(row=1, column=2, sticky="ew")
+        self.left_text.configure(xscrollcommand=left_x.set, yscrollcommand=self._on_yview)
+        self.right_text.configure(xscrollcommand=right_x.set, yscrollcommand=self._on_yview)
+
+        for row in self.result.rows:
+            self._insert_line(
+                self.left_text,
+                row.left_no,
+                row.left_text,
+                "delete" if row.kind == diffmod.DELETE else "change" if row.kind == diffmod.CHANGE else "",
+            )
+            self._insert_line(
+                self.right_text,
+                row.right_no,
+                row.right_text,
+                "add" if row.kind == diffmod.ADD else "change" if row.kind == diffmod.CHANGE else "",
+            )
+        self.left_text.configure(state="disabled")
+        self.right_text.configure(state="disabled")
+        ttk.Button(frame, text="关闭", command=self.win.destroy).pack(anchor="e", pady=(spacing.xs, 0))
+
+    @staticmethod
+    def _build_text(parent: Any, colors: Any) -> Any:
+        import tkinter as tk
+
+        widget = tk.Text(
+            parent,
+            wrap="none",
+            font=_guitheme.MONO_FONT,
+            background=colors.log_bg,
+            foreground=colors.log_fg,
+            insertbackground=colors.cursor,
+            selectbackground=colors.select_bg,
+            selectforeground=colors.select_fg,
+            relief="flat",
+            borderwidth=0,
+        )
+        widget.tag_configure("lineno", foreground=colors.muted)
+        widget.tag_configure("add", background=colors.success, foreground=colors.on_accent)
+        widget.tag_configure("delete", background=colors.danger, foreground=colors.on_accent)
+        widget.tag_configure("change", background=colors.warning, foreground=colors.on_accent)
+        return widget
+
+    @staticmethod
+    def _insert_line(widget: Any, number: int | None, content: str, tag: str) -> None:
+        if number is None:
+            widget.insert("end", "\n")
+            return
+        widget.insert("end", f"{number:>5}  ", ("lineno",))
+        widget.insert("end", f"{content}\n", (tag,) if tag else ())
+
+    def _scroll_both(self, *args: Any) -> None:
+        self.left_text.yview(*args)
+        self.right_text.yview(*args)
+
+    def _on_yview(self, first: str, _last: str) -> None:
+        if self._syncing:
+            return
+        self._syncing = True
+        try:
+            self.right_text.yview_moveto(float(first))
+        finally:
+            self._syncing = False
+
+
 class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
     """只读目录比较：选项 + 结果表，不修改任何文件、不跟随符号链接。"""
 
@@ -4002,6 +4137,218 @@ _HIDDEN_CHOICES: tuple[tuple[str, bool | None], ...] = (
 )
 
 
+class UserCommandsDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
+    """用户命令管理器：列表、表单、顺序调整与试运行。"""
+
+    def __init__(self, app: CmderWindow) -> None:
+        import tkinter as tk
+        from tkinter import messagebox, ttk
+
+        self.app = app
+        self._messagebox = messagebox
+        self.commands = list(app.settings.user_commands)
+        self._editing: int | None = None
+        spacing = app.theme.spacing
+        self.window = tk.Toplevel(app.root)
+        self.window.title("用户命令")
+        self.window.transient(app.root)
+        _guiwindow.center_over_parent(self.window, app.root, width=1000, height=640)
+        self.window.grab_set()
+
+        outer = ttk.Frame(self.window, padding=spacing.sm)
+        outer.pack(fill="both", expand=True)
+        hint = "占位符：" + "  ".join(f"%{key} {text}" for key, text in PLACEHOLDERS.items())
+        ttk.Label(outer, text=hint, style="Muted.TLabel", wraplength=960).pack(fill="x", pady=(0, spacing.xs))
+
+        body = ttk.Frame(outer)
+        body.pack(fill="both", expand=True)
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True)
+        right = ttk.Frame(body, padding=(spacing.sm, 0, 0, 0))
+        right.pack(side="left", fill="y")
+
+        self._list = ttk.Treeview(
+            left,
+            columns=("name", "command", "where"),
+            show="headings",
+            selectmode="browse",
+            height=16,
+        )
+        for column, title, width in (("name", "名称", 160), ("command", "命令", 430), ("where", "入口", 170)):
+            self._list.heading(column, text=title)
+            self._list.column(column, width=width, anchor="w")
+        scrollbar = ttk.Scrollbar(left, orient="vertical", command=self._list.yview)
+        self._list.configure(yscrollcommand=scrollbar.set)
+        self._list.pack(side="top", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self._list.bind("<<TreeviewSelect>>", self._on_select)
+
+        actions = ttk.Frame(left)
+        actions.pack(fill="x", pady=(spacing.xs, 0))
+        for text, handler in (
+            ("新增", self._new),
+            ("删除", self._delete),
+            ("上移", lambda: self._move(-1)),
+            ("下移", lambda: self._move(1)),
+            ("运行", self._run),
+        ):
+            ttk.Button(actions, text=text, style="Toolbutton", command=handler).pack(side="left")
+
+        self._name_var = tk.StringVar()
+        self._command_var = tk.StringVar()
+        self._params_var = tk.StringVar()
+        self._menu_var = tk.BooleanVar(value=True)
+        self._toolbar_var = tk.BooleanVar(value=True)
+        self._context_var = tk.BooleanVar(value=True)
+
+        row = 0
+        row = self._form_entry(right, row, "名称", self._name_var)
+        row = self._form_entry(right, row, "命令", self._command_var)
+        row = self._form_entry(right, row, "参数", self._params_var)
+        for text, variable in (
+            ("挂到菜单", self._menu_var),
+            ("挂到工具栏", self._toolbar_var),
+            ("挂到右键菜单", self._context_var),
+        ):
+            ttk.Checkbutton(right, text=text, variable=variable).grid(row=row, column=0, columnspan=2, sticky="w")
+            row += 1
+        ttk.Button(right, text="保存命令", command=self._commit).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(spacing.xs, 0)
+        )
+        row += 1
+        ttk.Button(right, text="清空表单", command=self._reset).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(spacing.xxs, 0)
+        )
+        row += 1
+        ttk.Button(right, text="关闭", command=self.window.destroy).grid(
+            row=row, column=0, columnspan=2, sticky="ew", pady=(spacing.sm, 0)
+        )
+        self._reload()
+
+    @staticmethod
+    def _form_entry(frame: Any, row: int, label: str, variable: Any) -> int:
+        from tkinter import ttk
+
+        ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=(0, 2))
+        ttk.Entry(frame, textvariable=variable, width=34).grid(row=row + 1, column=0, sticky="ew", pady=(0, 6))
+        return row + 2
+
+    def _reload(self) -> None:
+        for item in self._list.get_children():
+            self._list.delete(item)
+        for index, command in enumerate(self.commands):
+            where = " ".join(
+                label
+                for label, enabled in (
+                    ("菜单", command.in_menu),
+                    ("工具栏", command.in_toolbar),
+                    ("右键", command.in_context),
+                )
+                if enabled
+            )
+            self._list.insert(
+                "",
+                "end",
+                iid=str(index),
+                values=(command.name, command.full_command, where or "—"),
+            )
+        if self.commands:
+            last = min(self._editing if self._editing is not None else len(self.commands) - 1, len(self.commands) - 1)
+            self._list.selection_set(str(last))
+            self._on_select()
+
+    def _selected_index(self) -> int | None:
+        selection = self._list.selection()
+        if not selection:
+            return None
+        return int(selection[0])
+
+    def _on_select(self, _event: Any = None) -> None:
+        index = self._selected_index()
+        if index is None or not 0 <= index < len(self.commands):
+            return
+        command = self.commands[index]
+        self._editing = index
+        self._name_var.set(command.name)
+        self._command_var.set(command.command)
+        self._params_var.set(command.parameters)
+        self._menu_var.set(command.in_menu)
+        self._toolbar_var.set(command.in_toolbar)
+        self._context_var.set(command.in_context)
+
+    def _new(self) -> None:
+        self._editing = None
+        self._reset()
+
+    def _reset(self) -> None:
+        self._editing = None
+        self._name_var.set("")
+        self._command_var.set("")
+        self._params_var.set("")
+        self._menu_var.set(True)
+        self._toolbar_var.set(True)
+        self._context_var.set(True)
+
+    def _delete(self) -> None:
+        index = self._selected_index()
+        if index is None:
+            return
+        del self.commands[index]
+        self._editing = None
+        self._apply()
+        self._reset()
+        self._reload()
+
+    def _move(self, delta: int) -> None:
+        index = self._selected_index()
+        if index is None:
+            return
+        target = index + delta
+        if not 0 <= target < len(self.commands):
+            return
+        self.commands[index], self.commands[target] = self.commands[target], self.commands[index]
+        self._editing = target
+        self._apply()
+        self._reload()
+
+    def _commit(self) -> None:
+        name = self._name_var.get().strip()
+        command = self._command_var.get().strip()
+        if not name or not command:
+            self._messagebox.showwarning("用户命令", "名称与命令都不能为空", parent=self.window)
+            return
+        if any(item.name == name and index != self._editing for index, item in enumerate(self.commands)):
+            self._messagebox.showwarning("用户命令", f"名称已存在：{name}", parent=self.window)
+            return
+        if self._editing is None and len(self.commands) >= COMMAND_LIMIT:
+            self._messagebox.showwarning("用户命令", f"最多 {COMMAND_LIMIT} 条用户命令", parent=self.window)
+            return
+        entry = UserCommand(
+            name=name,
+            command=command,
+            parameters=self._params_var.get().strip(),
+            in_menu=bool(self._menu_var.get()),
+            in_toolbar=bool(self._toolbar_var.get()),
+            in_context=bool(self._context_var.get()),
+        )
+        if self._editing is None:
+            self.commands.append(entry)
+            self._editing = len(self.commands) - 1
+        else:
+            self.commands[self._editing] = entry
+        self._apply()
+        self._reload()
+
+    def _run(self) -> None:
+        index = self._selected_index()
+        if index is None:
+            return
+        self.app.run_user_command(self.commands[index])
+
+    def _apply(self) -> None:
+        self.app.apply_user_commands(self.commands)
+
+
 class ColorRulesDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无显示环境）
     """颜色规则编辑器：列表顺序即优先级，靠下的规则覆盖靠上的同色属性。"""
 
@@ -4393,7 +4740,7 @@ class OpenWithDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 
 class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """双面板文件管理器主窗口。"""
 
-    def __init__(self, settings_path: Path | None = None) -> None:
+    def __init__(self, settings_path: Path | None = None, launch: LaunchRequest | None = None) -> None:
         import tkinter as tk
         from tkinter import messagebox, simpledialog, ttk
 
@@ -4403,6 +4750,16 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._simpledialog = simpledialog
         self._settings_path = settings_path
         self.settings = load_settings(settings_path)
+        self._launch = resolve_launch(launch) if launch is not None else None
+        if self._launch is not None:
+            if self._launch.left:
+                self.settings.left.path = self._launch.left
+            if self._launch.right:
+                self.settings.right.path = self._launch.right
+            if self._launch.select_dir:
+                side = "left" if self.settings.active != "right" else "right"
+                self.settings.active = side
+                (self.settings.left if side == "left" else self.settings.right).path = self._launch.select_dir
         self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self._busy = False
         self._closing = False
@@ -4421,6 +4778,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._command_history_index = -1
         self._command_draft = ""
         self._color_dialog: ColorRulesDialog | None = None
+        self._user_command_dialog: UserCommandsDialog | None = None
+        self._user_command_menus: list[Any] = []
         self._sync_browse_lock = True
 
         self.root, self.theme = _guiwindow.create_root(
@@ -4430,6 +4789,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             min_width=MIN_WIDTH,
             min_height=MIN_HEIGHT,
             on_close=self.close,
+            theme=self.settings.theme,
         )
         self.root.grid_rowconfigure(1, weight=1)
         self.root.grid_columnconfigure(0, weight=1)
@@ -4445,8 +4805,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.right.set_path(Path(self.settings.right.path))
         self._sync_browse_lock = False
         self.set_active(self.left if self.active_side == "left" else self.right)
+        if self._launch is not None and self._launch.select_name:
+            panel = self.left if self.active_side == "left" else self.right
+            panel.select_name(self._launch.select_name)
         self._sync_menu_state()
         self.set_status("就绪")
+        if self._launch is not None and self._launch.messages:
+            self.set_status("；".join(self._launch.messages))
 
     # ------------------------------------------------------------------ #
     # 界面构建
@@ -4505,6 +4870,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         file_menu.add_separator()
         self._menu_command(file_menu, "properties", "属性\tAlt+Enter", self.show_properties)
         self._menu_command(file_menu, "hash", "计算校验和…", self.hash_selected)
+        self._menu_command(file_menu, "checksum_generate", "生成校验文件…", self.generate_checksum_file)
+        self._menu_command(file_menu, "checksum_verify", "校验文件…", self.verify_checksum_file)
+        self._menu_command(file_menu, "diff_text", "比较文本内容…", self.compare_text_files)
         file_menu.add_separator()
         self._menu_command(file_menu, "pack", "打包…\tAlt+F5", self.pack_selected)
         self._menu_command(file_menu, "unpack", "解压…\tAlt+F9", self.unpack_selected)
@@ -4618,12 +4986,27 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         )
         self._menu_command(commands_menu, "command_hide", "隐藏命令行栏", self.hide_command_bar)
         commands_menu.add_separator()
+        self._user_menu = tk.Menu(commands_menu, tearoff=False)
+        commands_menu.add_cascade(label="用户命令", menu=self._user_menu)
+        self._populate_user_menu()
+        commands_menu.add_separator()
         self._menu_command(commands_menu, "bookmarks", "书签…\tCtrl+D", self.open_bookmarks)
         self._menu_command(commands_menu, "history", "历史记录…\tAlt+Down", self.show_history_menu)
         menubar.add_cascade(label="命令", menu=commands_menu)
 
         config_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
+        self._theme_var = tk.StringVar(value=self.settings.theme)
+        theme_menu = tk.Menu(config_menu, tearoff=False)
+        for theme in _guitheme.THEMES.values():
+            theme_menu.add_radiobutton(
+                label=theme.label,
+                value=theme.name,
+                variable=self._theme_var,
+                command=self.save_theme_choice,
+            )
+        config_menu.add_cascade(label="主题", menu=theme_menu)
         self._menu_command(config_menu, "color_rules", "颜色规则…", self.open_color_rules)
+        self._menu_command(config_menu, "user_commands", "用户命令…", self.open_user_commands)
         menubar.add_cascade(label="配置", menu=config_menu)
 
         help_menu = tk.Menu(menubar, tearoff=False)
@@ -4663,14 +5046,35 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         menu.add_command(label="打包", command=self.pack_selected)
         menu.add_command(label="解压", command=self.unpack_selected)
         menu.add_command(label="哈希", command=self.hash_selected)
+        menu.add_command(label="比较文本内容…", command=self.compare_text_files)
         menu.add_command(label="属性", command=self.show_properties)
+        context_commands = [command for command in self.settings.user_commands if command.in_context]
+        if context_commands:
+            user_menu = self._tk.Menu(menu, tearoff=False)
+            for command in context_commands:
+                user_menu.add_command(
+                    label=command.name,
+                    command=lambda item=command: self.run_user_command(item),
+                )
+            menu.add_separator()
+            menu.add_cascade(label="用户命令", menu=user_menu)
+            self._user_command_menus.append(user_menu)
         return menu
 
     def _build_toolbar(self) -> None:
+        spacing = self.theme.spacing
+        self._toolbar = self._ttk.Frame(self.root, padding=(spacing.sm, spacing.xs))
+        self._toolbar.grid(row=0, column=0, sticky="ew")
+        self._populate_toolbar()
+
+    def _populate_toolbar(self) -> None:
+        """重建工具栏内容：内置动作 + 勾选工具栏的用户命令。"""
         ttk = self._ttk
         spacing = self.theme.spacing
-        toolbar = ttk.Frame(self.root, padding=(spacing.sm, spacing.xs))
-        toolbar.grid(row=0, column=0, sticky="ew")
+        toolbar = self._toolbar
+        for child in toolbar.winfo_children():
+            child.destroy()
+        self._toolbar_buttons = []
         buttons: tuple[tuple[str, Callable[[], None]], ...] = (
             ("复制 F5", self.copy_selected),
             ("移动 F6", self.move_selected),
@@ -4691,6 +5095,18 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             button = ttk.Button(toolbar, text=label, style="Toolbutton", command=command)
             button.pack(side="left", padx=(0, spacing.xxs))
             self._toolbar_buttons.append(button)
+        user_commands = [command for command in self.settings.user_commands if command.in_toolbar]
+        if user_commands:
+            ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=spacing.xs)
+            for command in user_commands:
+                button = ttk.Button(
+                    toolbar,
+                    text=command.name,
+                    style="Toolbutton",
+                    command=lambda item=command: self.run_user_command(item),
+                )
+                button.pack(side="left", padx=(0, spacing.xxs))
+                self._toolbar_buttons.append(button)
         ttk.Checkbutton(toolbar, text="隐藏文件", variable=self._hidden_var, command=self._apply_hidden).pack(
             side="right"
         )
@@ -4861,6 +5277,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         facts = MenuFacts(
             entry_count=len(panel.tree.get_children()),
             selection_count=len(entries),
+            two_files=len(entries) == 2 and all(not entry.is_dir and not entry.archive_member for entry in entries),
             single_is_file=bool(single and not single.is_dir),
             single_is_archive=bool(
                 single and not single.is_dir and single.archive_member == "" and archive_browsable(single.path)
@@ -4892,6 +5309,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._branch_var.set(state.branch_view)
         self._sort_var.set(state.sort_key)
         self._view_var.set(state.view_mode)
+        self._sync_user_command_state(panel)
 
     # ------------------------------------------------------------------ #
     # 目录树（只读，跟随活动面板）
@@ -5248,6 +5666,107 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.set_status(f"命令结束（退出码 {code}）：{command}")
         body = output.strip() or "（无输出）"
         self._show_text_dialog(f"命令行输出 - 退出码 {code}", f"$ {command}\n退出码：{code}\n\n{body}")
+
+    # ------------------------------------------------------------------ #
+    # 用户命令
+    # ------------------------------------------------------------------ #
+    def _command_context(self) -> CommandContext:
+        """收集占位符展开所需的当前面板与选中项。"""
+        panel = self.active_panel()
+        entries = panel.selected_entries()
+        return CommandContext(
+            active_dir=panel.state.path,
+            other_dir=self.other_panel().state.path,
+            selected=tuple(entry.name for entry in entries),
+            selected_paths=tuple(str(entry.path) for entry in entries),
+        )
+
+    def _populate_user_menu(self) -> None:
+        """重建「命令 → 用户命令」子菜单并登记到禁用状态同步列表。"""
+        menu = self._user_menu
+        menu.delete(0, "end")
+        commands = [command for command in self.settings.user_commands if command.in_menu]
+        if not commands:
+            menu.add_command(label="（未配置用户命令）", state="disabled")
+        else:
+            for command in commands:
+                menu.add_command(label=command.name, command=lambda item=command: self.run_user_command(item))
+        self._user_command_menus.append(menu)
+
+    def _rebuild_user_command_entries(self) -> None:
+        """命令变更后重建菜单、工具栏与右键菜单三处入口。"""
+        self._user_command_menus = []
+        self._populate_user_menu()
+        self._populate_toolbar()
+        self._context_menu = self._build_context_menu()
+        self._sync_menu_state()
+
+    def apply_user_commands(self, commands: Sequence[UserCommand]) -> None:
+        """保存用户命令并立即刷新入口；非法条目按既有容错口径丢弃。"""
+        self.settings.user_commands = normalize_user_commands([item.to_dict() for item in commands])
+        save_settings(self.settings, self._settings_path)
+        self._rebuild_user_command_entries()
+
+    def open_user_commands(self) -> None:
+        """配置 → 用户命令…（无快捷键）。"""
+        if self._user_command_dialog is not None and self._user_command_dialog.window.winfo_exists():
+            self._user_command_dialog.window.lift()
+            self._user_command_dialog.window.focus_set()
+            return
+        self._user_command_dialog = UserCommandsDialog(self)
+        self._user_command_dialog.window.wait_window()
+        self._user_command_dialog = None
+
+    def save_theme_choice(self) -> None:
+        """配置 → 主题：写入设置，重新打开窗口后生效；非法值回落默认。"""
+        chosen = _guitheme.resolve_theme(self._theme_var.get())
+        self.settings.theme = chosen.name
+        self._theme_var.set(chosen.name)
+        save_settings(self.settings, self._settings_path)
+        self.set_status(f"主题已保存：{chosen.label}；重新打开窗口后生效")
+
+    def run_user_command(self, command: UserCommand) -> None:
+        """展开占位符后在活动面板目录执行用户命令。"""
+        if self._busy:
+            self.set_status("当前有任务在运行，稍后再执行用户命令")
+            return
+        try:
+            text = expand_placeholders(command.full_command, self._command_context())
+        except PlaceholderError as exc:
+            self.show_error("用户命令", f"{command.name}\n{exc}")
+            return
+        if not text.strip():
+            self.show_error("用户命令", "命令为空")
+            return
+        cwd = Path(self.active_panel().state.path)
+        if not cwd.is_dir():
+            self.show_error("用户命令", f"活动面板目录不存在：{cwd}")
+            return
+        risky = destructive_command(text)
+        if risky and not self._messagebox.askyesno(
+            "确认执行删除命令",
+            f"命令包含删除类操作（{risky}），执行后可能无法恢复。\n\n工作目录：{cwd}\n命令：{text}\n\n确定执行吗？",
+            parent=self.root,
+        ):
+            return
+        self.set_status(f"执行用户命令（{cwd}）：{text}")
+        self.start_worker(
+            lambda: self._run_shell(text, cwd),
+            lambda result: self._command_finished(text, result),
+            title=f"用户命令 {command.name}",
+        )
+
+    def _sync_user_command_state(self, panel: FilePanel) -> None:
+        """忙碌或活动目录不存在时禁用用户命令入口。"""
+        enabled = not self._busy and Path(panel.state.path).is_dir()
+        for menu in self._user_command_menus:
+            end = menu.index("end")
+            if end is None:
+                continue
+            for index in range(int(end) + 1):
+                if str(menu.entrycget(index, "label")).startswith("（"):
+                    continue
+                menu.entryconfigure(index, state="normal" if enabled else "disabled")
 
     # ------------------------------------------------------------------ #
     # 颜色规则
@@ -5849,6 +6368,17 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         """打开并聚焦传输队列窗口。"""
         self._ensure_queue_dialog()
 
+    def compare_text_files(self) -> None:
+        """对选中的两个文本文件做并排只读比较。"""
+        entries = self.active_panel().selected_entries()
+        if len(entries) != 2 or any(entry.is_dir or entry.archive_member for entry in entries):
+            self._messagebox.showinfo("文本比较", "请在同一面板选择两个文本文件", parent=self.root)
+            return
+        try:
+            TextDiffDialog(self, entries[0].path, entries[1].path)
+        except (OSError, ValueError) as exc:
+            self.show_error("文本比较", str(exc))
+
     def open_compare(self) -> None:
         """Ctrl+Shift+C：只读比较左右面板当前目录（已有窗口则前置）。"""
         dialog = self._compare_dialog
@@ -6260,6 +6790,82 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
         self.start_worker(task, done, title=f"哈希（{algorithm}）")
 
+    def generate_checksum_file(self) -> None:
+        """为选中文件生成校验文件（写入活动面板目录，GNU/SFV 兼容格式）。"""
+        if self._busy or self._archive_readonly():
+            return
+        paths = [path for path in self._selected_paths() if path.is_file()]
+        if not paths:
+            self._messagebox.showinfo("生成校验文件", "请选择要计算校验值的文件", parent=self.root)
+            return
+        raw = self._simpledialog.askstring(
+            "生成校验文件",
+            "算法（sha256/sha1/md5/sfv）：",
+            initialvalue="sha256",
+            parent=self.root,
+        )
+        if not raw:
+            return
+        try:
+            algorithm = normalize_algorithm(raw)
+        except ValueError as exc:
+            self.show_error("算法无效", str(exc))
+            return
+        base = Path(self.active_panel().state.path)
+        target = base / manifest_name(base, algorithm)
+
+        def task() -> tuple[Path, int]:
+            text = build_manifest(
+                paths,
+                base,
+                algorithm,
+                progress=lambda done, total: self._progress_callback(done, total, "校验文件"),
+            )
+            target.write_text(text, encoding="utf-8", newline="\n")
+            return target, len(paths)
+
+        def done(result: tuple[Path, int]) -> None:
+            path, count = result
+            self.refresh_both()
+            self.set_status(f"已生成 {path.name}（{count} 个文件）")
+            self._show_text_dialog(
+                "校验文件已生成",
+                f"文件：{path}\n算法：{algorithm}\n条目：{count}\n\n{path.read_text(encoding='utf-8')}",
+            )
+
+        self.start_worker(task, done, title=f"生成校验文件（{algorithm}）")
+
+    def verify_checksum_file(self) -> None:
+        """对选中的校验文件逐项比对，结果窗口列出失败项。"""
+        if self._busy or self._archive_readonly():
+            return
+        targets = [path for path in self._selected_paths() if path.is_file() and algorithm_for_suffix(path.suffix)]
+        if not targets:
+            self._messagebox.showinfo(
+                "校验文件",
+                "请选择 .sha256 / .sha1 / .md5 / .sfv 校验文件",
+                parent=self.root,
+            )
+            return
+
+        def task() -> list[tuple[Path, VerifyReport]]:
+            reports: list[tuple[Path, VerifyReport]] = []
+            for path in targets:
+                algorithm = algorithm_for_suffix(path.suffix)
+                if algorithm is None:  # pragma: no cover - 入口已按后缀过滤
+                    continue
+                text = path.read_text(encoding="utf-8", errors="replace")
+                reports.append((path, verify_manifest(text, path.parent, algorithm)))
+            return reports
+
+        def done(reports: list[tuple[Path, VerifyReport]]) -> None:
+            failures = sum(len(report.failures) for _, report in reports)
+            body = "\n\n".join(f"{path.name}\n{report_text(report)}" for path, report in reports)
+            self.set_status(f"校验完成：{len(reports)} 个清单，{failures} 项失败")
+            self._show_text_dialog(f"校验结果（失败 {failures} 项）", body)
+
+        self.start_worker(task, done, title="校验文件")
+
     def open_search(self) -> None:
         """Ctrl+F 打开搜索对话框。"""
         SearchDialog(self, Path(self.active_panel().state.path))
@@ -6466,15 +7072,15 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self.root.destroy()
 
 
-def run_gui(settings_path: Path | None = None) -> None:
+def run_gui(settings_path: Path | None = None, launch: LaunchRequest | None = None) -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(lambda: CmderWindow(settings_path), "双面板文件管理器")
+    _guiwindow.run_window(lambda: CmderWindow(settings_path, launch), "双面板文件管理器")
 
 
 @fcmd.tool("cmderw", help="打开双面板文件管理器窗口（Tk）", description=_DESCRIPTION)
-def launch_cmd() -> None:
-    """打开双面板文件管理器窗口。"""
-    run_gui()
+def launch_cmd(left: str | None = None, right: str | None = None, select: str | None = None) -> None:
+    """打开双面板文件管理器窗口；``--left`` / ``--right`` 指定两侧目录，``--select`` 定位并选中路径。"""
+    run_gui(launch=LaunchRequest(left=left, right=right, select=select))
 
 
 @fcmd.main("cmderw")

@@ -2156,10 +2156,13 @@ _MENU_NEEDS_SELECTION = frozenset(
         "pack",
         "bulk_rename",
         "hash",
+        "checksum_generate",
+        "checksum_verify",
     }
 )
 _MENU_ONE = frozenset({"open", "view", "edit", "open_with", "open_archive", "properties", "unpack", "rename"})
 _MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack"})
+_MENU_TWO_FILES = frozenset({"diff_text"})
 _MENU_ACTIVE_WRITE = frozenset(
     {
         "new_folder",
@@ -2169,6 +2172,7 @@ _MENU_ACTIVE_WRITE = frozenset(
         "permanent_delete",
         "move",
         "pack",
+        "checksum_generate",
     }
 )
 _MENU_TARGET_WRITE = frozenset({"copy", "move", "unpack"})
@@ -2184,6 +2188,9 @@ _MENU_BUSY = frozenset(
         "pack",
         "unpack",
         "hash",
+        "checksum_generate",
+        "checksum_verify",
+        "diff_text",
         "properties",
         "refresh",
         "search",
@@ -2199,6 +2206,7 @@ class MenuFacts:
 
     entry_count: int = 0
     selection_count: int = 0
+    two_files: bool = False
     single_is_file: bool = False
     single_is_archive: bool = False
     busy: bool = False
@@ -2248,6 +2256,8 @@ def _selection_disabled(facts: MenuFacts) -> set[str]:
         disabled |= _MENU_ONE
     if facts.selection_count == 1 and not facts.single_is_file:
         disabled |= _MENU_ONE_FILE
+    if not facts.two_files:
+        disabled |= _MENU_TWO_FILES
     if facts.selection_count != 1 or not facts.single_is_archive:
         disabled.add("open_archive")
     return disabled
