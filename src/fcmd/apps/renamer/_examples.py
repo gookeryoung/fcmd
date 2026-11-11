@@ -1,6 +1,6 @@
 """renamerw 使用帮助与典型规则示例（纯数据，供窗口与测试共用）。
 
-示例规则同时以 JSON 文件放在 ``docs/help/examples/``，可直接通过窗口的
+示例规则同时以 JSON 文件放在本包的 ``help/examples/`` 下，可直接通过窗口的
 「帮助 → 载入规则…」导入；``tests/apps/renamer/test_renamerw.py`` 会校验两份
 数据一致，避免文档与内置示例漂移。
 """

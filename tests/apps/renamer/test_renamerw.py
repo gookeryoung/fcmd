@@ -19,7 +19,7 @@ from fcmd.apps.renamer._core import (
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
-_EXAMPLES_DIR = Path(__file__).resolve().parents[3] / "docs" / "help" / "examples"
+_EXAMPLES_DIR = Path(_examples.__file__).resolve().parent / "help" / "examples"
 
 
 def test_tool_registration() -> None:
@@ -154,7 +154,7 @@ def test_examples_produce_expected_names() -> None:
 
 
 def test_doc_example_json_matches_embedded() -> None:
-    """docs/help/examples 下的 JSON 与内置示例一致，避免文档与代码漂移。"""
+    """包内 help/examples 下的 JSON 与内置示例一致，避免文档与代码漂移。"""
     expected = {
         f"{index:02d}-{example.slug}.json": _examples.example_to_mapping(example)
         for index, example in enumerate(_examples.EXAMPLES, start=1)

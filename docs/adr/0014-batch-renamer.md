@@ -68,8 +68,8 @@ src/fcmd/apps/renamer/
 - GUI：规则表支持增删改与上下移，规则导出 / 导入 JSON；目标列表、规则、递归与
   排序选项、窗口位置持久化到 `~/.fcmd/ui/renamerw.json`。
 - 帮助：「帮助 → 使用帮助」打开非模态窗口，左侧为典型示例（双击或按钮写入规则表，
-  已有规则时确认覆盖），正文为规则速查；完整说明见 `docs/help/renamerw.md`，
-  示例规则同时落在 `docs/help/examples/*.json`，测试校验两者与 `_examples.py` 一致。
+  已有规则时确认覆盖），正文为规则速查；完整说明见 `help/renamerw.md`，
+  示例规则同时落在 `help/examples/*.json`，测试校验两者与 `_examples.py` 一致。
 - 新增工具后重新生成 `fcmd/cli/_manifest_data.py`，保持列表快路径有效。
 
 ## 备选方案与取舍
@@ -88,8 +88,8 @@ src/fcmd/apps/renamer/
   `renamer` / `renamerw` 入口；静态工具清单已重新生成。
 - 测试：`tests/apps/renamer/` 覆盖规则求值、模板错误、JSON、排序、冲突、
   目标收集、互换、回滚与撤销；内置示例逐条跑通演示改名，并校验
-  `docs/help/examples/*.json` 与 `_examples.py` 不漂移；GUI 只测纯函数与注册。
-- 文档：README 工具表新增两行；`docs/help/renamerw.md` 提供规则说明与典型示例；
+  `help/examples/*.json` 与 `_examples.py` 不漂移；GUI 只测纯函数与注册。
+- 文档：README 工具表新增两行；`help/renamerw.md` 提供规则说明与典型示例；
   本 ADR 与需求卡片 0014。
 
 ## 交接
@@ -99,5 +99,5 @@ src/fcmd/apps/renamer/
   同一锚点时按匹配顺序拼接；回滚为尽力而为，磁盘级故障仍可能留下临时名。
 - 扩展规则时先改 `_core.RenameRule` / `validate_rules` / `apply_rule` 与 JSON
   字段表，再同步 GUI 表单与 README，最后补 ADR 口径行与本表。
-- 修改帮助或示例时同步 `_examples.py`、`docs/help/renamerw.md` 与
-  `docs/help/examples/*.json`；示例一致性由测试拦截，勿只改其中一处。
+- 修改帮助或示例时同步 `_examples.py`、`help/renamerw.md` 与
+  `help/examples/*.json`；示例一致性由测试拦截，勿只改其中一处。
