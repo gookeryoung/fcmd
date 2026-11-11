@@ -57,6 +57,9 @@ from fcmd.tools.system._cmderw_ops import (
     COLUMN_SORT,
     COMPARE_DIFFERENT,
     COMPARE_LEFT_ONLY,
+    COMPARE_MODE_TEXT,
+    COMPARE_MODE_TIME,
+    COMPARE_MODES,
     COMPARE_RIGHT_ONLY,
     COMPARE_SAME,
     COMPARE_STATUS_TEXT,
@@ -2700,17 +2703,37 @@ class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
         options.pack(fill="x", pady=(0, spacing.xs))
         self.recursive_var = tk.BooleanVar(value=True)
         self.hidden_var = tk.BooleanVar(value=False)
-        self.deep_var = tk.BooleanVar(value=False)
+        self.files_only_var = tk.BooleanVar(value=False)
+        self.mode_var = tk.StringVar(value=COMPARE_MODE_TEXT[COMPARE_MODE_TIME])
         self.tolerance_var = tk.StringVar(value="2.0")
         ttk.Checkbutton(options, text="递归子目录", variable=self.recursive_var).pack(side="left")
         ttk.Checkbutton(options, text="包含隐藏项", variable=self.hidden_var).pack(side="left", padx=spacing.sm)
-        ttk.Checkbutton(options, text="深度比较（逐字节哈希）", variable=self.deep_var).pack(
+        ttk.Checkbutton(options, text="仅比较文件", variable=self.files_only_var).pack(
             side="left", padx=(0, spacing.sm)
         )
+        ttk.Label(options, text="比较").pack(side="left")
+        mode_box = ttk.Combobox(
+            options,
+            textvariable=self.mode_var,
+            values=[COMPARE_MODE_TEXT[mode] for mode in COMPARE_MODES],
+            state="readonly",
+            width=8,
+        )
+        mode_box.pack(side="left", padx=(spacing.xxs, spacing.sm))
         ttk.Label(options, text="时间容差（秒）").pack(side="left")
         ttk.Entry(options, textvariable=self.tolerance_var, width=6).pack(side="left", padx=(spacing.xxs, spacing.sm))
         self.start_button = ttk.Button(options, text="开始比较", style="Accent.TButton", command=self.start_compare)
         self.start_button.pack(side="left")
+
+        masks = ttk.Frame(frame)
+        masks.pack(fill="x", pady=(0, spacing.xxs))
+        self.mask_var = tk.StringVar()
+        self.exclude_var = tk.StringVar()
+        ttk.Label(masks, text="包含掩码").pack(side="left")
+        ttk.Entry(masks, textvariable=self.mask_var, width=24).pack(side="left", padx=(spacing.xxs, spacing.sm))
+        ttk.Label(masks, text="排除掩码").pack(side="left")
+        ttk.Entry(masks, textvariable=self.exclude_var, width=24).pack(side="left", padx=(spacing.xxs, spacing.sm))
+        ttk.Label(masks, text="多个掩码用 ; 分隔，只作用于文件名", style="Muted.TLabel").pack(side="left")
 
         filters = ttk.Frame(frame)
         filters.pack(fill="x", pady=(0, spacing.xxs))
@@ -2777,10 +2800,15 @@ class CompareDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI �
             tolerance = float(self.tolerance_var.get())
         except ValueError:
             tolerance = 2.0
+        text_to_mode = {text: mode for mode, text in COMPARE_MODE_TEXT.items()}
+        mode = text_to_mode.get(self.mode_var.get(), COMPARE_MODE_TIME)
         return CompareOptions(
             recursive=bool(self.recursive_var.get()),
             include_hidden=bool(self.hidden_var.get()),
-            deep=bool(self.deep_var.get()),
+            mode=mode,
+            mask=self.mask_var.get().strip(),
+            exclude_mask=self.exclude_var.get().strip(),
+            files_only=bool(self.files_only_var.get()),
             mtime_tolerance=max(tolerance, 0.0),
         )
 

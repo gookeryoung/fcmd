@@ -719,7 +719,7 @@ class TestCompareTrees:
         statuses = {entry.relative: entry.status for entry in with_hidden.entries}
         assert statuses[".hidden"] == ops.COMPARE_DIFFERENT
 
-    def test_deep_compare_detects_same_size_different_content(self, tmp_path: Path) -> None:
+    def test_content_mode_detects_same_size_different_content(self, tmp_path: Path) -> None:
         left, right = self._roots(tmp_path)
         self._write(left / "a.txt", "abc")
         self._write(right / "a.txt", "abd")
@@ -727,9 +727,63 @@ class TestCompareTrees:
         shallow = ops.compare_trees(left, right).entries[0]
         assert shallow.status == ops.COMPARE_SAME
 
-        deep = ops.compare_trees(left, right, ops.CompareOptions(deep=True)).entries[0]
+        deep = ops.compare_trees(left, right, ops.CompareOptions(mode=ops.COMPARE_MODE_CONTENT)).entries[0]
         assert deep.status == ops.COMPARE_DIFFERENT
         assert deep.reason == "内容不同"
+
+    def test_name_mode_ignores_size_and_time(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "abc", mtime=1_700_000_000)
+        self._write(right / "a.txt", "abcdef", mtime=1_700_000_900)
+
+        entry = ops.compare_trees(left, right, ops.CompareOptions(mode=ops.COMPARE_MODE_NAME)).entries[0]
+
+        assert entry.status == ops.COMPARE_SAME
+
+    def test_size_mode_ignores_time(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "same.txt", "abc", mtime=1_700_000_000)
+        self._write(right / "same.txt", "abd", mtime=1_700_000_900)
+        self._write(left / "grow.txt", "abc")
+        self._write(right / "grow.txt", "abcdef")
+
+        report = ops.compare_trees(left, right, ops.CompareOptions(mode=ops.COMPARE_MODE_SIZE))
+        statuses = {entry.relative: entry.status for entry in report.entries}
+
+        assert statuses["same.txt"] == ops.COMPARE_SAME
+        assert statuses["grow.txt"] == ops.COMPARE_DIFFERENT
+
+    def test_unknown_mode_falls_back_to_time(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "abc", mtime=1_700_000_000)
+        self._write(right / "a.txt", "abc", mtime=1_700_000_900)
+
+        entry = ops.compare_trees(left, right, ops.CompareOptions(mode="bogus")).entries[0]
+
+        assert entry.status == ops.COMPARE_DIFFERENT
+        assert entry.reason == "修改时间不同"
+
+    def test_include_and_exclude_masks(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "a.txt", "one")
+        self._write(right / "a.txt", "two")
+        self._write(left / "b.py", "one")
+        self._write(right / "b.py", "two")
+
+        included = ops.compare_trees(left, right, ops.CompareOptions(mask="*.txt")).entries
+        assert [entry.relative for entry in included] == ["a.txt"]
+
+        excluded = ops.compare_trees(left, right, ops.CompareOptions(exclude_mask="*.txt;*.md")).entries
+        assert [entry.relative for entry in excluded] == ["b.py"]
+
+    def test_files_only_skips_directory_entries(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "sub" / "inner.txt", "one")
+        self._write(right / "sub" / "inner.txt", "three")
+
+        entries = ops.compare_trees(left, right, ops.CompareOptions(files_only=True)).entries
+
+        assert [entry.relative for entry in entries] == ["sub/inner.txt"]
 
     def test_type_mismatch_between_file_and_directory(self, tmp_path: Path) -> None:
         left, right = self._roots(tmp_path)

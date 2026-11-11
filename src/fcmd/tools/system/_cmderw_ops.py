@@ -34,6 +34,12 @@ __all__ = [
     "COLUMN_SORT",
     "COMPARE_DIFFERENT",
     "COMPARE_LEFT_ONLY",
+    "COMPARE_MODES",
+    "COMPARE_MODE_CONTENT",
+    "COMPARE_MODE_NAME",
+    "COMPARE_MODE_SIZE",
+    "COMPARE_MODE_TEXT",
+    "COMPARE_MODE_TIME",
     "COMPARE_RIGHT_ONLY",
     "COMPARE_SAME",
     "COMPARE_STATUS_TEXT",
@@ -861,15 +867,36 @@ COMPARE_STATUS_TEXT = {
     COMPARE_SAME: "相同",
 }
 
+#: 比较口径：仅文件名 / 按大小 / 按时间 / 按内容哈希。
+COMPARE_MODE_NAME = "name"
+COMPARE_MODE_SIZE = "size"
+COMPARE_MODE_TIME = "time"
+COMPARE_MODE_CONTENT = "content"
+COMPARE_MODES: tuple[str, ...] = (
+    COMPARE_MODE_NAME,
+    COMPARE_MODE_SIZE,
+    COMPARE_MODE_TIME,
+    COMPARE_MODE_CONTENT,
+)
+COMPARE_MODE_TEXT = {
+    COMPARE_MODE_NAME: "仅文件名",
+    COMPARE_MODE_SIZE: "按大小",
+    COMPARE_MODE_TIME: "按时间",
+    COMPARE_MODE_CONTENT: "按内容",
+}
+
 
 @dataclass(frozen=True)
 class CompareOptions:
-    """比较口径：递归、隐藏项、时间容差与深度哈希。"""
+    """比较口径：递归、隐藏项、时间容差、比较模式与掩码过滤。"""
 
     recursive: bool = True
     include_hidden: bool = False
     mtime_tolerance: float = 2.0
-    deep: bool = False
+    mode: str = COMPARE_MODE_TIME
+    mask: str = ""
+    exclude_mask: str = ""
+    files_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -955,10 +982,23 @@ def _collect_nodes(
             except OSError as exc:
                 errors.append((Path(item.path), str(exc)))
                 continue
+            if not is_dir and not _name_allowed(name, options):
+                continue
+            if is_dir and options.files_only:
+                if not is_symlink and options.recursive:
+                    stack.append((Path(item.path), f"{relative}/"))
+                continue
             nodes[relative] = _CompareNode(Path(item.path), is_dir, is_symlink, stat.st_size, stat.st_mtime)
             if is_dir and not is_symlink and options.recursive:
                 stack.append((Path(item.path), f"{relative}/"))
     return nodes
+
+
+def _name_allowed(name: str, options: CompareOptions) -> bool:
+    """掩码过滤：包含掩码为空表示全收，排除掩码命中则丢弃。"""
+    if options.mask and not matches_mask(name, options.mask):
+        return False
+    return not (options.exclude_mask and matches_mask(name, options.exclude_mask))
 
 
 def _hash_file(path: Path) -> str:
@@ -988,6 +1028,21 @@ def _compare_symlinks(
     return (same_link, "" if same_link else "链接目标不同")
 
 
+def _compare_contents(
+    left: _CompareNode,
+    right: _CompareNode,
+    errors: list[tuple[Path, str]],
+) -> tuple[bool, str]:
+    """按 SHA256 比较内容；读取失败如实记录。"""
+    try:
+        if _hash_file(left.path) == _hash_file(right.path):
+            return True, ""
+    except OSError as exc:
+        errors.append((left.path, str(exc)))
+        return False, "无法读取内容"
+    return False, "内容不同"
+
+
 def _compare_files(
     left: _CompareNode,
     right: _CompareNode,
@@ -995,16 +1050,15 @@ def _compare_files(
     errors: list[tuple[Path, str]],
 ) -> tuple[bool, str]:
     """比较两个普通文件，返回 (是否相同, 不同原因)。"""
+    mode = options.mode if options.mode in COMPARE_MODES else COMPARE_MODE_TIME
+    if mode == COMPARE_MODE_NAME:
+        return True, ""
     if left.size != right.size:
         return False, "大小不同"
-    if options.deep:
-        try:
-            if _hash_file(left.path) == _hash_file(right.path):
-                return True, ""
-        except OSError as exc:
-            errors.append((left.path, str(exc)))
-            return False, "无法读取内容"
-        return False, "内容不同"
+    if mode == COMPARE_MODE_SIZE:
+        return True, ""
+    if mode == COMPARE_MODE_CONTENT:
+        return _compare_contents(left, right, errors)
     if abs(left.mtime - right.mtime) > options.mtime_tolerance:
         return False, "修改时间不同"
     return True, ""
