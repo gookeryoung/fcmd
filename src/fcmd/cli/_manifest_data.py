@@ -93,6 +93,8 @@ TOOLS: dict[str, ToolEntry] = {
     "pdftool": ToolEntry("pdftool", "python", "fcmd.tools.pdf.pdftool"),
     "piptool": ToolEntry("piptool", "python", "fcmd.tools.dev.piptool"),
     "portcheck": ToolEntry("portcheck", "python", "fcmd.tools.net.portcheck"),
+    "pptmake": ToolEntry("pptmake", "python", "fcmd.apps.pptmake.pptmake"),
+    "pptmakew": ToolEntry("pptmakew", "python", "fcmd.apps.pptmake.pptmakew"),
     "pymake": ToolEntry("pymake", "python", "fcmd.tools.dev.pymake"),
     "pyprof": ToolEntry("pyprof", "python", "fcmd.tools.dev.pyprof"),
     "randtool": ToolEntry("randtool", "python", "fcmd.tools.calc.randtool"),
@@ -214,6 +216,8 @@ DESCRIPTIONS: dict[str, str] = {
     "pdftool": "合并 PDF",
     "piptool": "安装包",
     "portcheck": "检查端口占用",
+    "pptmake": "PPT 模板生成器：内置九种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿",
+    "pptmakew": "PPT 模板设计器（Tk）：九种布局、四套风格、六个语义色实时预览，模板 JSON 与 PPTX 双向导入导出；设置持久化到 ~/.fcmd/ui/pptmakew.json",
     "pymake": "推送代码到所有远程仓库",
     "pyprof": "非侵入式 Python 代码性能分析（cProfile 采集 + HTML 报告）",
     "randtool": "生成强密码",
@@ -252,6 +256,8 @@ LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
     "apps/filesync/filesync.py",
     "apps/filesync/filesyncw.py",
+    "apps/pptmake/pptmake.py",
+    "apps/pptmake/pptmakew.py",
     "apps/renamer/renamer.py",
     "apps/renamer/renamerw.py",
     "apps/reshack/reshack.py",
@@ -365,7 +371,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "487f2b1f945cb9de620d4acb0159828d"
+DIGEST = "46d3657c2879102822a13ffcc29fbec9"
 
 
 if __name__ == "__main__":  # pragma: no cover
