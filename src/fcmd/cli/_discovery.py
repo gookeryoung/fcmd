@@ -1,7 +1,8 @@
-"""fcmd.tools 工具发现与注册表查询。
+"""fcmd.tools / fcmd.apps 工具发现与注册表查询。
 
-``fcmd.tools`` 包下每个非 ``main`` / 非 ``_`` 前缀的模块即一个工具，
-模块名即工具名。模块内可选定义 ``__tool_aliases__: list[str]`` 声明别名。
+``fcmd.tools`` 与 ``fcmd.apps`` 两个包下每个非 ``main`` / 非 ``_`` 前缀的
+模块即一个工具，模块名即工具名。模块内可选定义
+``__tool_aliases__: list[str]`` 声明别名。
 
 首次调用 :func:`ensure_tools_discovered` 时用 ``pkgutil.iter_modules``
 扫描并导入所有工具模块，随后加载 DSL 声明式命令（内置
@@ -63,16 +64,19 @@ _TOOL_MODULES: dict[str, str] = {}
 # DSL 命令注册状态：{工具名: 来源}（"builtin" / "user"，由 _register_dsl_commands 懒填充）
 _DSL_TOOL_SOURCES: dict[str, str] = {}
 
-# 发现标志：True 表示已扫描过 fcmd.tools 包
+# 发现标志：True 表示已扫描过工具根包（fcmd.tools / fcmd.apps）
 _TOOLS_DISCOVERED = False
 
 
 def ensure_tools_discovered() -> None:
-    """首次调用时扫描 ``fcmd.tools`` 包，发现工具模块并填充注册表。
+    """首次调用时扫描工具根包，发现工具模块并填充注册表。
 
-    扫描两层结构：顶层模块与领域子包（``fcmd.tools.<域>.<工具>``，
-    如 ``fcmd.tools.media.screenshot``）。工具名取模块名（最后一段），调用方式
-    ``fcmd <工具名>`` 不受分组影响。领域子包内部不再嵌套子包。
+    根包为 ``fcmd.tools``（业务工具）与 ``fcmd.apps``（独立桌面应用）。
+    ``fcmd.tools`` 扫描顶层模块与领域子包（``fcmd.tools.<域>.<工具>``，
+    如 ``fcmd.tools.media.screenshot``）；``fcmd.apps`` 下每个子包即一个
+    独立应用（如 ``fcmd.apps.cmderw``），导入包门面触发注册。工具名取模块
+    或应用包名（最后一段），调用方式 ``fcmd <工具名>`` 不受分组影响。
+    领域子包内部不再嵌套子包。
 
     幂等：后续调用直接返回。用 ``setdefault`` 填充，不覆盖测试通过
     ``monkeypatch.setitem`` 注入的键。扫描时导入模块以读取
@@ -83,18 +87,8 @@ def ensure_tools_discovered() -> None:
         return
     _TOOLS_DISCOVERED = True
 
-    # 懒导入 fcmd.tools 以访问 __path__，避免 import fcmd 时触发
-    import fcmd.tools as tools_pkg
-
-    for _finder, name, ispkg in pkgutil.iter_modules(tools_pkg.__path__):
-        # 排除入口模块、私有模块/包（_builtins 等）
-        if name.startswith("_") or name == "main":
-            continue
-        if ispkg:
-            # 领域子包：工具名取子包内模块名，模块路径带域前缀
-            _discover_domain(name)
-        else:
-            _register_tool(f"fcmd.tools.{name}", name)
+    _scan_root("fcmd.tools")
+    _scan_root("fcmd.apps")
 
     # 模块扫描后注册 DSL 声明式命令（Python 工具优先级高于 DSL，
     # 冲突时 DSL 侧跳过，见 _register_dsl_tool）
@@ -181,20 +175,47 @@ def _register_dsl_aliases(tool: ToolDecl) -> None:
             logger.warning("DSL 命令 %r 的别名 %r 已被工具 %r 占用，忽略该别名", tool.name, alias, previous)
 
 
-def _discover_domain(domain: str) -> None:
-    """扫描单个领域子包，注册其中全部工具模块。
+def _scan_root(root: str) -> None:
+    """扫描一个工具根包（``fcmd.tools`` / ``fcmd.apps``）的顶层模块与子包。
+
+    ``fcmd.apps`` 下的子包按「一包一应用」处理：模块路径取包路径，导入包
+    门面（``__init__.py``）触发 ``@fcmd.tool`` 注册；``fcmd.tools`` 下的
+    子包仍按领域子包逐个模块注册。
+    """
+    try:
+        root_pkg = importlib.import_module(root)
+    except ImportError as exc:
+        logger.warning("工具根包 %s 不可用，已跳过: %s", root, exc)
+        return
+    for _finder, name, ispkg in pkgutil.iter_modules(root_pkg.__path__):
+        # 排除入口模块、私有模块/包（_builtins 等）
+        if name.startswith("_") or name == "main":
+            continue
+        if ispkg:
+            if root == "fcmd.apps":
+                # 应用包：整包即一个应用，导入包门面触发注册
+                _register_tool(f"{root}.{name}", name)
+            else:
+                # 领域子包：工具名取子包内模块名，模块路径带域前缀
+                _discover_domain(root, name)
+        else:
+            _register_tool(f"{root}.{name}", name)
+
+
+def _discover_domain(root: str, domain: str) -> None:
+    """扫描根包下的单个领域子包，注册其中全部工具模块。
 
     子包导入失败（可选依赖缺失等）时静默跳过整个域，不影响其他工具。
     """
     try:
-        domain_pkg = importlib.import_module(f"fcmd.tools.{domain}")
+        domain_pkg = importlib.import_module(f"{root}.{domain}")
     except ImportError:
         return
     for _finder, name, ispkg in pkgutil.iter_modules(domain_pkg.__path__):
         # 域内不允许嵌套子包，私有模块不算工具
         if ispkg or name.startswith("_"):
             continue
-        _register_tool(f"fcmd.tools.{domain}.{name}", name)
+        _register_tool(f"{root}.{domain}.{name}", name)
 
 
 def _register_tool(module_path: str, tool_name: str) -> None:

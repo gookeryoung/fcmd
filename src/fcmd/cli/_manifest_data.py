@@ -28,7 +28,7 @@ TOOLS: dict[str, ToolEntry] = {
     "casetool": ToolEntry("casetool", "dsl", "casetool.toml"),
     "checksum": ToolEntry("checksum", "python", "fcmd.tools.system.checksum"),
     "clr": ToolEntry("clr", "dsl", "clr.toml"),
-    "cmderw": ToolEntry("cmderw", "python", "fcmd.tools.system.cmderw"),
+    "cmderw": ToolEntry("cmderw", "python", "fcmd.apps.cmderw"),
     "codetool": ToolEntry("codetool", "dsl", "codetool.toml"),
     "colortool": ToolEntry("colortool", "dsl", "colortool.toml"),
     "convtool": ToolEntry("convtool", "dsl", "convtool.toml"),
@@ -247,6 +247,7 @@ AMBIGUOUS: frozenset[str] = frozenset(
 
 # 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）
 LAYOUT: tuple[str, ...] = (
+    "apps/cmderw/app.py",
     "tools/archive/archivebase.py",
     "tools/archive/archivex.py",
     "tools/archive/zipencrypt.py",
@@ -305,7 +306,6 @@ LAYOUT: tuple[str, ...] = (
     "tools/pdf/pdftool.py",
     "tools/system/alarmclock.py",
     "tools/system/checksum.py",
-    "tools/system/cmderw.py",
     "tools/system/envw.py",
     "tools/system/fonttool.py",
     "tools/system/reshack.py",
@@ -316,7 +316,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码 + 内置 commands/*.toml 的内容指纹（列表快路径的严格校验）
-DIGEST = "2e731f9603d34b1a2745b9340c8c39be"
+DIGEST = "16f057ddacdf88dda586a0adca3f4c64"
 
 
 if __name__ == "__main__":  # pragma: no cover

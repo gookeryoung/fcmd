@@ -62,7 +62,7 @@ F8 移入系统回收站，Shift+F8 永久删除；两者都先确认，永久�
 ### D4 新增逻辑放 `_cmderw_ops.py`，窗口文件只留 Tk 装配
 
 `cmderw.py` 已接近 2000 行；继续堆纯函数会失去可测边界。新增能力（回收站、
-掩码匹配、过滤、目录统计）落在同域私有模块 `tools/system/_cmderw_ops.py`，
+掩码匹配、过滤、目录统计）落在同目录私有模块 `fcmd/apps/cmderw/_cmderw_ops.py`，
 下划线前缀不参与工具发现（与 `_reshackw_core.py` 同例）。`cmderw.py` 导入并
 经 `__all__` 重新导出，既有导入路径不变。
 

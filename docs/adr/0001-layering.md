@@ -16,6 +16,7 @@ core            基础能力（toolkit / execution / orchestration / models / co
 core/shared     中立共享层：dsl 与 tools 都向下依赖
 gui             展示基座（tkinter 窗口骨架 / 主题 / UI 设置持久化），只依赖标准库
 tools/<域>      业务实现（每域一份实现，含 CLI / GUI 入口）
+apps            独立桌面应用（Tk GUI，与 tools 同为工具发现根，可复用 gui / tools / dsl）
 dsl             声明解析、exec / compute 原语、动作注册表门面
 cli             组合根：参数解析、工具发现、内建命令
 ```
@@ -26,7 +27,8 @@ cli             组合根：参数解析、工具发现、内建命令
 2. `core/shared` 只依赖 `core` 与标准库；`dsl` 与 `tools` 均可依赖它。
 3. `gui` 只依赖标准库（tkinter），不得 import `core` / `tools` / `dsl` / `cli`；`tools` 的窗口模块依赖 `gui`。
 4. `tools` 与 `dsl` 之间不互相 import：业务实现放 `tools`，`dsl/actions` 与 `dsl/toolcmd` 只做声明与转接。
-5. `cli` 是唯一组合根，可依赖以上全部层。
+5. `apps` 是独立应用层，可依赖 `gui` / `tools` / `dsl`；`core` / `tools` / `dsl` 不得反向依赖 `apps`。
+6. `cli` 是唯一组合根，可依赖以上全部层。
 
 依赖反转（D4 配套）：
 
@@ -46,4 +48,4 @@ cli             组合根：参数解析、工具发现、内建命令
 
 - 后续域迁移沿用 `tools/<域>` 承载实现的模式，不得在 `dsl/actions` 保留第二份实现。
 - 新增跨层能力时先判断归属：中立能力进 `core/shared`，业务能力进 `tools/<域>`，`core` 新增对外依赖必须走 hooks 反转。
-- 测试镜像目录（`tests/{core,cli,dsl,tools/<domain>}`）已随 P2-3 落地，新增测试按被测实现所在层放置。
+- 测试镜像目录（`tests/{core,cli,dsl,tools/<domain>,apps}`）已随 P2-3 落地，新增测试按被测实现所在层放置。

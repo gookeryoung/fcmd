@@ -12,8 +12,8 @@ DSL 文件），配合 :func:`fcmd.cli._discovery.resolve_tool_fast` 只导入�
 
 任何异常（清单缺失、``SCHEMA`` 不匹配、目录布局与清单不一致、内容指纹
 不符）都返回 ``None``，由调用方回退全量发现——清单只影响速度，不影响语义。
-:func:`tool_layout` 用「``fcmd/tools`` 下的候选模块文件集合」做布局指纹：
-布局一致说明没有新增 / 删除工具模块，清单条目仍指向有效模块。
+:func:`tool_layout` 用「``fcmd/tools`` 与 ``fcmd/apps`` 下的候选模块文件集合」
+做布局指纹：布局一致说明没有新增 / 删除工具模块，清单条目仍指向有效模块。
 
 列表路径额外要求 :func:`tool_digest`（工具源码 + 内置 ``commands/*.toml``
 的内容指纹）与生成期一致：描述与别名都写在这些文件里，只校验布局会列出
@@ -82,12 +82,33 @@ _strict_loaded = False
 _strict_cache: _Manifest | None = None
 
 
+def _collect_candidates(root_name: str, scan_root: Path) -> list[tuple[str, Path]]:
+    """收集单个工具根包下的候选模块（顶层 + 一层子包，跳过私有与 ``main``）。"""
+    files: list[tuple[str, Path]] = []
+    for entry in sorted(scan_root.iterdir(), key=lambda item: item.name):
+        name = entry.name
+        if name.startswith("_"):
+            continue
+        if name.endswith(".py"):
+            if name != "main.py":
+                files.append((f"{root_name}/{name}", entry))
+            continue
+        if not entry.is_dir():
+            continue
+        for sub in sorted(entry.iterdir(), key=lambda item: item.name):
+            if sub.name.startswith("_") or not sub.name.endswith(".py"):
+                continue
+            files.append((f"{root_name}/{name}/{sub.name}", sub))
+    return files
+
+
 def _source_files() -> list[tuple[str, Path]] | None:
     """返回影响工具元数据的文件（相对 fcmd 包的路径 + 绝对路径）。
 
-    覆盖范围与 :func:`tool_layout` 的扫描规则一致（工具模块），并加上内置
-    ``commands/*.toml``（DSL 命令的名字 / 别名 / 描述都在这里）。目录读取
-    失败返回 ``None``（按清单不可用处理）。
+    覆盖范围与 :func:`tool_layout` 的扫描规则一致（``tools`` / ``apps`` 两个
+    工具根下的候选模块），并加上内置 ``commands/*.toml``（DSL 命令的名字 /
+    别名 / 描述都在这里）。``tools`` 目录读取失败返回 ``None``（按清单不可用
+    处理）；``apps`` 目录缺失时跳过。
     """
     root = _PACKAGE_ROOT
     tools_root = root / "tools"
@@ -95,20 +116,10 @@ def _source_files() -> list[tuple[str, Path]] | None:
     try:
         if not tools_root.is_dir():
             return None
-        for entry in sorted(tools_root.iterdir(), key=lambda item: item.name):
-            name = entry.name
-            if name.startswith("_"):
-                continue
-            if name.endswith(".py"):
-                if name != "main.py":
-                    files.append((f"tools/{name}", entry))
-                continue
-            if not entry.is_dir():
-                continue
-            for sub in sorted(entry.iterdir(), key=lambda item: item.name):
-                if sub.name.startswith("_") or not sub.name.endswith(".py"):
-                    continue
-                files.append((f"tools/{name}/{sub.name}", sub))
+        for root_name in ("tools", "apps"):
+            scan_root = root / root_name
+            if scan_root.is_dir():
+                files.extend(_collect_candidates(root_name, scan_root))
         commands_root = root / "commands"
         if commands_root.is_dir():
             for sub in sorted(commands_root.iterdir(), key=lambda item: item.name):
@@ -122,16 +133,17 @@ def _source_files() -> list[tuple[str, Path]] | None:
 
 
 def tool_layout() -> frozenset[str] | None:
-    """返回 ``fcmd/tools`` 下候选工具模块的相对路径集合（清单布局指纹）。
+    """返回工具根包下候选工具模块的相对路径集合（清单布局指纹）。
 
     规则与 :func:`fcmd.cli._discovery.ensure_tools_discovered` 的扫描一致：
-    顶层 ``*.py``（排除 ``_`` 前缀与 ``main.py``）；领域子包再列一层
-    ``*.py``（排除 ``_`` 前缀）。目录读取失败返回 ``None``（按清单不可用处理）。
+    ``tools`` / ``apps`` 顶层 ``*.py``（排除 ``_`` 前缀与 ``main.py``）；
+    子包再列一层 ``*.py``（排除 ``_`` 前缀）。目录读取失败返回 ``None``
+    （按清单不可用处理）。
     """
     files = _source_files()
     if files is None:
         return None
-    return frozenset(rel for rel, _ in files if rel.startswith("tools/"))
+    return frozenset(rel for rel, _ in files if rel.startswith(("tools/", "apps/")))
 
 
 def tool_digest() -> str | None:

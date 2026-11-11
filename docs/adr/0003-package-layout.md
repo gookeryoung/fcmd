@@ -11,7 +11,7 @@
 - GUI 共享基座（`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py`）寄居在工具发现命名空间里，只能靠 `_` 前缀躲开扫描；
 - `tools/ui/` 空壳目录，以及 `tools/data` / `tools/hash` 这类单文件域，属于名义分层。
 
-同时，三套机制隐式依赖目录形状：工具发现（顶层 + 一层领域子包）、静态清单的布局指纹（`tools/*.py` 与 `tools/<域>/*.py`）、动作懒加载表（`_index` 的模块路径）。布局被无意改动时，三者都不会报错，只会静默回退或漏发现。
+同时，三套机制隐式依赖目录形状：工具发现（顶层 + 一层领域子包）、静态清单的布局指纹（`tools/*.py`、`apps/*.py` 与 `tools/<域>/*.py`）、动作懒加载表（`_index` 的模块路径）。布局被无意改动时，三者都不会报错，只会静默回退或漏发现。
 
 ## 决策
 
@@ -34,7 +34,7 @@
 
 `tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`。依据：三者只依赖标准库 tkinter，被十余个窗口复用，不属于任何业务域；`tools/` 是发现命名空间，共享代码靠 `_` 前缀躲扫描是设计破损信号。
 
-窗口本身仍与业务同域（`<tool>w.py`），这是 `.trae/rules/tk.md` 的硬约定，不搬。
+窗口本身默认与业务同域（`<tool>w.py`）；独立桌面应用（如 `cmderw`）归 `fcmd/apps/`，与 `fcmd.tools` 同为工具发现根。
 
 ### D5 生成物就地、只重生成
 
@@ -51,9 +51,11 @@
 - B2：`dsl/actions/toolcmd/` → `dsl/toolcmd/`；`_index` 改存绝对模块路径并重生成。
 - B4：`tools/data`、`tools/hash` 两个单文件域提为顶层模块，`_manifest_data` 布局指纹同步重生成。
 - B5：`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`，测试镜像迁至 `tests/gui/`；布局指纹不含下划线模块，清单无需重生成。
+- B6：独立桌面应用 `cmderw`（含 `_cmderw_*` 实现模块）迁至 `fcmd/apps/`，测试迁至 `tests/apps/`；工具发现与静态清单的扫描根同步扩展为 `tools` + `apps`。
 
 ## 交接
 
 - 新增工具：放 `tools/<域>/<工具>.py`。只有单个模块支撑的能力不要新建子包，直接放 `tools/<工具>.py`。
+- 新增独立桌面应用：在 `apps/<应用>/` 下新建包（入口 `app.py`，`__init__.py` 只做门面与注册），无需改发现代码。
 - 新增动作：通用动作进 `dsl/actions/`，工具专用声明进 `dsl/toolcmd/`，随后重生成 `_index`。
-- 改动 `tools/` 目录形状后必须重生成 `_manifest_data`，并跑 `tests/test_layout.py` 与 `tests/cli/test_tools_manifest.py`。
+- 改动 `tools/` 或 `apps/` 目录形状后必须重生成 `_manifest_data`，并跑 `tests/test_layout.py` 与 `tests/cli/test_tools_manifest.py`。

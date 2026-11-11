@@ -591,6 +591,7 @@ src/fcmd/
     _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
     _manifest_data.py  # 生成文件，勿手改
   gui/           # Tk 展示基座：窗口骨架 / 主题 / UI 设置持久化（不参与工具发现）
+  apps/          # 独立桌面应用（Tk GUI，自动发现；如 cmderw）
   tools/         # 业务实现（自动发现）
     archive/ calc/ dev/ llm/ media/ net/ office/ pdf/ system/ text/
   dsl/           # TOML 命令定义与 exec/compute 原语
@@ -600,7 +601,7 @@ src/fcmd/
   console.py     # rich 控制台薄封装
 ```
 
-新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。目录按功能域划分；图形界面版命名为 `<工具名>w.py` 并放在其核心逻辑所在域（如 `llm/llmconvertw.py`、`media/img2icow.py`）。
+新增 Python 工具：在 `src/fcmd/tools/<领域>/` 下新建模块（非 `_` 前缀、非 `main`），用 `@fcmd.tool` 装饰器注册即可，无需修改 `main.py`。可选在模块内定义 `__tool_aliases__: list[str]` 声明别名。目录按功能域划分；图形界面版命名为 `<工具名>w.py` 并放在其核心逻辑所在域（如 `llm/llmconvertw.py`、`media/img2icow.py`）；独立桌面应用（如 `cmderw`）放 `src/fcmd/apps/<应用>/`（一包一应用，入口 `app.py`），与 `tools` 共用工具发现与静态清单。
 
 新增 / 删除 / 改名工具、调整别名或修改工具描述（含 `commands/*.toml` 的 DSL 声明）后，重新生成静态工具清单（`fcmd <tool>` 快路径据此只加载目标工具，`fcmd` 列表快路径据此直接取名字 / 别名 / 描述而不导入工具模块；清单缺失或过期会自动回退全量发现，功能不受影响，只影响启动速度）：
 

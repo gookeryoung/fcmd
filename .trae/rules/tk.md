@@ -6,11 +6,11 @@ alwaysApply: false
 
 # Tk GUI 工具开发规则
 
-适用于 `src/fcmd/tools/**` 的 tkinter/ttk 窗口工具，基准为 `tools/llm`。
+适用于 `src/fcmd/tools/**` 与 `src/fcmd/apps/**` 的 tkinter/ttk 窗口工具，基准为 `tools/llm`。
 
 ## 目录与注册
 
-- 与核心逻辑同域存放，禁止新建 `tools/ui`；有 CLI 对应物用 `<tool>w.py` / 命令 `<tool>w`，纯 GUI 用功能名（如 `alarmclock.py`）。
+- 独立桌面应用放 `src/fcmd/apps/`，其余窗口与核心逻辑同域存放；禁止新建 `tools/ui`；有 CLI 对应物用 `<tool>w.py` / 命令 `<tool>w`，纯 GUI 用功能名（如 `alarmclock.py`）。
 - 必须有模块 docstring、`_DESCRIPTION`、`@fcmd.tool(..., description=_DESCRIPTION)`、`@fcmd.main(...)`，
   并在 `pyproject.toml [project.scripts]` 注册；同步 README 工具表。
 
