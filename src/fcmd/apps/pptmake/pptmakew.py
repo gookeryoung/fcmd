@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 import fcmd
 from fcmd.apps.pptmake import _core as core
+from fcmd.apps.pptmake import _preview as preview
 from fcmd.apps.pptmake._design import Line, Oval, Rect, Text, build_draw_list
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.gui import config as _guiconfig
@@ -59,6 +60,11 @@ DEFAULT_GEOMETRY = "1320x840"
 MIN_WIDTH = 1100
 MIN_HEIGHT = 700
 
+THUMB_HEIGHT = 54.0
+THUMB_GAP = 8.0
+THUMB_LABEL = 14.0
+THUMB_STRIP_HEIGHT = round(THUMB_HEIGHT + THUMB_LABEL + THUMB_GAP * 2)
+
 STYLE_OPTIONS: tuple[tuple[str, str], ...] = (
     *((core.STYLE_TEXT[style], style) for style in core.STYLES),
     (core.STYLE_TEXT[core.STYLE_CUSTOM], core.STYLE_CUSTOM),
@@ -78,7 +84,9 @@ HELP_TEXT = """1. 左侧「页面」选择要编辑的页；「布局库」双�
    - 双栏页副标题写成「左栏标题|右栏标题」。
 3. 顶部切换风格 / 画幅 / 装饰；右侧六个色块可逐项改色（自动转为自定义风格）。
 4. 「文件 → 导出模板」保存 .pptmtpl.json，「文件 → 导出 PPTX」生成演示文稿。
-5. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。"""
+5. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。
+6. 预览工具栏可「适应窗口」或按比例缩放；下方缩略图点击即可跳页。
+7. 预览底部出现「文本框可能溢出」提示时，可精简文字或调整版式。"""
 
 
 @dataclass(slots=True)
@@ -210,6 +218,10 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._apply_job: str | None = None
         self._preview_job: str | None = None
         self._color_buttons: dict[str, Any] = {}
+        self._zoom: float | None = None
+        self._thumb_source: core.TemplateSpec | None = None
+        self._thumb_selected = -1
+        self._thumb_slots: list[tuple[float, float, float, float, int]] = []
 
         self.root, self._theme = _guiwindow.create_root(
             title=f"pptmake - PPT 模板设计器 v{__version__}",
@@ -400,10 +412,38 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         center = ttk.Frame(paned)
         center.columnconfigure(0, weight=1)
-        center.rowconfigure(0, weight=1)
+        center.rowconfigure(1, weight=1)
+        zoom_bar = ttk.Frame(center)
+        zoom_bar.grid(row=0, column=0, sticky="ew", pady=(0, space.xs))
+        ttk.Label(zoom_bar, text="预览").pack(side="left")
+        self._zoom_var = tk.StringVar(value="适应窗口")
+        ttk.Label(zoom_bar, textvariable=self._zoom_var).pack(side="right", padx=(0, space.sm))
+        ttk.Button(zoom_bar, text="适应窗口", command=lambda: self._set_zoom(None)).pack(
+            side="right", padx=(0, space.xs)
+        )
+        ttk.Button(zoom_bar, text="100%", command=lambda: self._set_zoom(1.0)).pack(side="right", padx=(0, space.xs))
+        ttk.Button(zoom_bar, text="+", width=3, command=lambda: self._step_zoom(1.25)).pack(
+            side="right", padx=(0, space.xs)
+        )
+        ttk.Button(zoom_bar, text="-", width=3, command=lambda: self._step_zoom(0.8)).pack(
+            side="right", padx=(0, space.xs)
+        )
         self._canvas = tk.Canvas(center, bd=0, highlightthickness=0, bg=palette.background)
-        self._canvas.grid(row=0, column=0, sticky="nsew")
+        self._canvas.grid(row=1, column=0, sticky="nsew")
         self._canvas.bind("<Configure>", lambda _event: self._schedule_preview())
+        ttk.Label(center, text="页面缩略图").grid(row=2, column=0, sticky="w", pady=(space.xs, 0))
+        self._thumb_canvas = tk.Canvas(
+            center,
+            height=THUMB_STRIP_HEIGHT,
+            bd=0,
+            highlightthickness=0,
+            bg=palette.surface,
+        )
+        self._thumb_canvas.grid(row=3, column=0, sticky="ew")
+        thumb_scroll = ttk.Scrollbar(center, orient="horizontal", command=self._thumb_canvas.xview)
+        thumb_scroll.grid(row=4, column=0, sticky="ew")
+        self._thumb_canvas.configure(xscrollcommand=thumb_scroll.set)
+        self._thumb_canvas.bind("<Button-1>", self._on_thumbnail_click)
         paned.add(center, weight=1)
 
         right = ttk.Frame(paned, width=320)
@@ -808,27 +848,157 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 font=(_guitheme.ui_font_family(self.root), -14),
                 justify="center",
             )
+            if self._thumb_source is not self._template:
+                self._thumb_source = self._template
+                self._thumb_selected = -1
+                self._draw_thumbnails()
             return
         slide = self._template.slides[self._selected]
-        design_width, design_height = core.ASPECT_DESIGN[self._template.aspect]
-        scale = min((width - 32) / design_width, (height - 32) / design_height)
-        offset_x = (width - design_width * scale) / 2
-        offset_y = (height - design_height * scale) / 2
-        canvas.create_rectangle(
-            offset_x - 1,
-            offset_y - 1,
-            offset_x + design_width * scale + 1,
-            offset_y + design_height * scale + 1,
-            outline=self._theme.palette.border,
-        )
-        for primitive in build_draw_list(slide, self._template):
-            self._draw_primitive(primitive, offset_x, offset_y, scale)
+        try:
+            primitives = build_draw_list(slide, self._template)
+        except core.TemplateError as exc:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text=f"预览失败\n{exc}",
+                fill=self._theme.palette.muted,
+                font=(_guitheme.ui_font_family(self.root), -14),
+                justify="center",
+            )
+            return
+        view = self._viewport(width, height)
+        palette = self._template.theme.palette
+        x0, y0, x1, y1 = view.page_rect()
+        canvas.create_rectangle(x0, y0, x1, y1, fill=palette.background, outline="")
+        for primitive in primitives:
+            self._draw_primitive(canvas, primitive, view)
+        for matte in view.matte_rects():
+            canvas.create_rectangle(*matte, fill=self._theme.palette.background, outline="")
+        canvas.create_rectangle(x0, y0, x1, y1, outline=self._theme.palette.border)
+        issues = preview.overflow_issues(primitives)
+        if issues:
+            canvas.create_text(
+                10,
+                height - 8,
+                anchor="sw",
+                text=f"提示：{len(issues)} 个文本框可能溢出",
+                fill=self._theme.palette.muted,
+                font=(_guitheme.ui_font_family(self.root), -12),
+            )
+        if self._thumb_source is not self._template or self._thumb_selected != self._selected:
+            self._thumb_source = self._template
+            self._thumb_selected = self._selected
+            self._draw_thumbnails()
 
-    def _draw_primitive(self, primitive: Any, offset_x: float, offset_y: float, scale: float) -> None:
-        canvas = self._canvas
+    def _viewport(self, width: float, height: float) -> preview.Viewport:
+        """当前画幅在指定画布尺寸下的视口；``_zoom`` 为 None 时适应窗口。"""
+        design_width, design_height = core.ASPECT_DESIGN[self._template.aspect]
+        if self._zoom is None:
+            return preview.fit_viewport(design_width, design_height, width, height, padding=16.0)
+        scale = self._zoom
+        return preview.Viewport(
+            scale=scale,
+            offset_x=(width - design_width * scale) / 2,
+            offset_y=(height - design_height * scale) / 2,
+            design_width=design_width,
+            design_height=design_height,
+            canvas_width=width,
+            canvas_height=height,
+        )
+
+    def _set_zoom(self, zoom: float | None) -> None:
+        """设置绝对缩放；``None`` 表示适应窗口。"""
+        self._zoom = None if zoom is None else min(max(float(zoom), 0.05), 4.0)
+        self._zoom_var.set("适应窗口" if self._zoom is None else f"{self._zoom * 100:.0f}%")
+        self._schedule_preview()
+
+    def _step_zoom(self, factor: float) -> None:
+        width = max(self._canvas.winfo_width(), 2)
+        height = max(self._canvas.winfo_height(), 2)
+        current = self._zoom if self._zoom is not None else self._viewport(width, height).scale
+        self._set_zoom(current * factor)
+
+    def _draw_thumbnails(self) -> None:
+        strip = self._thumb_canvas
+        strip.delete("all")
+        self._thumb_slots = []
+        if not self._template.slides:
+            strip.configure(scrollregion=(0, 0, 1, THUMB_STRIP_HEIGHT))
+            return
+        design_width, design_height = core.ASPECT_DESIGN[self._template.aspect]
+        scale = THUMB_HEIGHT / design_height
+        page_width = design_width * scale
+        try:
+            draw_lists = [build_draw_list(slide, self._template) for slide in self._template.slides]
+        except core.TemplateError:
+            return
+        x = THUMB_GAP
+        for index, primitives in enumerate(draw_lists):
+            y = THUMB_GAP
+            view = preview.Viewport(
+                scale=scale,
+                offset_x=x,
+                offset_y=y,
+                design_width=design_width,
+                design_height=design_height,
+                canvas_width=page_width,
+                canvas_height=THUMB_HEIGHT,
+            )
+            strip.create_rectangle(
+                x,
+                y,
+                x + page_width,
+                y + THUMB_HEIGHT,
+                fill=self._template.theme.palette.background,
+                outline="",
+            )
+            for primitive in primitives:
+                if isinstance(primitive, Text):
+                    continue
+                self._draw_primitive(strip, primitive, view)
+            selected = index == self._selected
+            strip.create_rectangle(
+                x,
+                y,
+                x + page_width,
+                y + THUMB_HEIGHT,
+                outline=self._template.theme.palette.accent if selected else self._theme.palette.border,
+                width=2 if selected else 1,
+            )
+            strip.create_text(
+                x + page_width / 2,
+                y + THUMB_HEIGHT + THUMB_LABEL / 2,
+                text=str(index + 1),
+                fill=self._theme.palette.text if selected else self._theme.palette.muted,
+                font=(_guitheme.ui_font_family(self.root), -9),
+            )
+            self._thumb_slots.append((x, y, x + page_width, y + THUMB_HEIGHT, index))
+            x += page_width + THUMB_GAP
+        strip.configure(scrollregion=(0, 0, x, THUMB_STRIP_HEIGHT))
+
+    def _on_thumbnail_click(self, event: Any) -> None:
+        strip = self._thumb_canvas
+        x = strip.canvasx(event.x)
+        y = strip.canvasy(event.y)
+        for x0, y0, x1, y1, index in self._thumb_slots:
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                self._select_slide(index)
+                return
+
+    def _select_slide(self, index: int) -> None:
+        if not self._template.slides:
+            return
+        self._selected = min(max(index, 0), len(self._template.slides) - 1)
+        self._slides_list.selection_clear(0, "end")
+        self._slides_list.selection_set(self._selected)
+        self._slides_list.see(self._selected)
+        self._refresh_form()
+        self._schedule_preview()
+
+    def _draw_primitive(self, canvas: Any, primitive: Any, view: preview.Viewport) -> None:
+        scale = view.scale
         if isinstance(primitive, Rect):
-            x = offset_x + primitive.x * scale
-            y = offset_y + primitive.y * scale
+            x, y = view.to_canvas(primitive.x, primitive.y)
             w = primitive.w * scale
             h = primitive.h * scale
             if w <= 0 or h <= 0:
@@ -849,8 +1019,7 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 )
             return
         if isinstance(primitive, Oval):
-            x = offset_x + primitive.x * scale
-            y = offset_y + primitive.y * scale
+            x, y = view.to_canvas(primitive.x, primitive.y)
             w = primitive.w * scale
             h = primitive.h * scale
             if w <= 0 or h <= 0:
@@ -866,39 +1035,55 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             )
             return
         if isinstance(primitive, Line):
+            x1, y1 = view.to_canvas(primitive.x1, primitive.y1)
+            x2, y2 = view.to_canvas(primitive.x2, primitive.y2)
             canvas.create_line(
-                offset_x + primitive.x1 * scale,
-                offset_y + primitive.y1 * scale,
-                offset_x + primitive.x2 * scale,
-                offset_y + primitive.y2 * scale,
+                x1,
+                y1,
+                x2,
+                y2,
                 fill=primitive.color,
                 width=max(1, round(primitive.width * scale)),
             )
             return
         if isinstance(primitive, Text):
-            self._draw_text(primitive, offset_x, offset_y, scale)
+            self._draw_text(canvas, primitive, view)
 
-    def _draw_text(self, primitive: Text, offset_x: float, offset_y: float, scale: float) -> None:
-        x = offset_x + primitive.x * scale
-        y = offset_y + primitive.y * scale
+    def _draw_text(self, canvas: Any, primitive: Text, view: preview.Viewport) -> None:
+        """逐段绘制文本；Canvas 不支持行距，按段落高度手工堆叠来近似。"""
+        from tkinter import font as tk_font
+
+        scale = view.scale
+        x, y = view.to_canvas(primitive.x, primitive.y)
         w = primitive.w * scale
         h = primitive.h * scale
-        horizontal = {"left": ("w", x), "center": ("", x + w / 2), "right": ("e", x + w)}
-        vertical = {"top": ("n", y), "middle": ("", y + h / 2), "bottom": ("s", y + h)}
-        anchor = (vertical[primitive.anchor][0] + horizontal[primitive.align][0]) or "center"
         size = max(round(primitive.size * scale), 1)
         family = primitive.font or _guitheme.ui_font_family(self.root)
-        font = (family, -size, "bold" if primitive.bold else "normal")
-        self._canvas.create_text(
-            horizontal[primitive.align][1],
-            vertical[primitive.anchor][1],
-            text="\n".join(primitive.paragraphs),
-            anchor=cast(_CanvasAnchor, anchor),
-            width=max(round(w), 1),
-            justify=cast(_CanvasJustify, primitive.align),
-            fill=primitive.color,
-            font=font,
-        )
+        styles = " ".join(name for name, enabled in (("bold", primitive.bold), ("italic", primitive.italic)) if enabled)
+        font = (family, -size, styles or "normal")
+        line_height = tk_font.Font(root=self.root, font=font).metrics("linespace")
+        extra = max(round(size * (primitive.line_spacing - 1.2)), 0)
+        paragraphs = primitive.paragraphs or ("",)
+        heights: list[float] = []
+        for paragraph in paragraphs:
+            lines = max(len(preview.wrap_text(paragraph, primitive.w, primitive.size, bold=primitive.bold)), 1)
+            heights.append(lines * line_height + (lines - 1) * extra + round(primitive.space_after * scale))
+        total = sum(heights)
+        align_x = {"left": x, "center": x + w / 2, "right": x + w}[primitive.align]
+        anchor = {"left": "nw", "center": "n", "right": "ne"}[primitive.align]
+        cursor = {"top": y, "middle": y + (h - total) / 2, "bottom": y + h - total}[primitive.anchor]
+        for paragraph, paragraph_height in zip(paragraphs, heights, strict=True):
+            canvas.create_text(
+                align_x,
+                cursor,
+                text=paragraph,
+                anchor=cast(_CanvasAnchor, anchor),
+                width=max(round(w), 1),
+                justify=cast(_CanvasJustify, primitive.align),
+                fill=primitive.color,
+                font=font,
+            )
+            cursor += paragraph_height
 
     @staticmethod
     def _rounded_points(x: float, y: float, w: float, h: float, radius: float) -> list[float]:
@@ -934,6 +1119,8 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _on_gui_theme(self, theme: Theme) -> None:
         palette = theme.palette
         self._canvas.configure(bg=palette.background)
+        self._thumb_canvas.configure(bg=palette.surface)
+        self._thumb_source = None
         for widget in (self._slides_list, self._layout_list):
             widget.configure(
                 bg=palette.surface,
