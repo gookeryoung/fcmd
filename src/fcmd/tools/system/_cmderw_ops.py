@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import importlib
 import os
 import re
 import shutil
 import stat
 import sys
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -28,17 +30,24 @@ __all__ = [
     "COLOR_KIND_FILE",
     "COLOR_KIND_LINK",
     "COLOR_KIND_TEXT",
+    "COLUMN_MAX_WIDTH",
+    "COLUMN_MIN_WIDTH",
+    "COLUMN_SORT",
     "COMPARE_DIFFERENT",
     "COMPARE_LEFT_ONLY",
     "COMPARE_RIGHT_ONLY",
     "COMPARE_SAME",
     "COMPARE_STATUS_TEXT",
+    "DEFAULT_VIEW_MODE",
     "DESTRUCTIVE_COMMANDS",
     "ITEM_CANCELLED",
     "ITEM_DONE",
     "ITEM_FAILED",
     "ITEM_PENDING",
     "ITEM_RUNNING",
+    "NATIVE_IMAGE_SUFFIXES",
+    "PANEL_COLUMNS",
+    "PILLOW_IMAGE_SUFFIXES",
     "PREVIEW_BINARY",
     "PREVIEW_HEX_LIMIT",
     "PREVIEW_IMAGE",
@@ -55,6 +64,18 @@ __all__ = [
     "SYNC_DELETE",
     "SYNC_LTR",
     "SYNC_RTL",
+    "THUMBNAIL_BADGE",
+    "THUMBNAIL_CACHE_BYTES",
+    "THUMBNAIL_CACHE_ITEMS",
+    "THUMBNAIL_GAP",
+    "THUMBNAIL_INVALIDATION_REASONS",
+    "THUMBNAIL_NATIVE",
+    "THUMBNAIL_PILLOW",
+    "THUMBNAIL_TILE_SIZE",
+    "VIEW_MODES",
+    "VIEW_MODE_BRIEF",
+    "VIEW_MODE_DETAILED",
+    "VIEW_MODE_THUMBNAILS",
     "BulkRenameOptions",
     "ColorRule",
     "ColorStyle",
@@ -75,6 +96,8 @@ __all__ = [
     "SyncItem",
     "SyncOptions",
     "SyncPlan",
+    "ThumbnailCache",
+    "ThumbnailRequestTracker",
     "TransferQueue",
     "TrashReport",
     "apply_rename_plan",
@@ -82,6 +105,7 @@ __all__ = [
     "build_sync_plan",
     "cleanup_incomplete_items",
     "cleanup_partial_target",
+    "column_display_names",
     "compare_trees",
     "destructive_command",
     "directory_size",
@@ -94,7 +118,10 @@ __all__ = [
     "matches_mask",
     "menu_state",
     "normalize_color",
+    "normalize_column_widths",
+    "normalize_view_mode",
     "parse_color_rules",
+    "pillow_available",
     "plan_bulk_rename",
     "read_preview",
     "resolve_color_style",
@@ -102,6 +129,12 @@ __all__ = [
     "revalidate_sync_items",
     "send_to_trash",
     "split_masks",
+    "thumbnail_backend_note",
+    "thumbnail_cache_key",
+    "thumbnail_columns",
+    "thumbnail_plan",
+    "thumbnail_unsupported_hint",
+    "thumbnail_visible_rows",
     "trash_paths",
     "trash_root",
     "undo_rename",
@@ -1738,6 +1771,227 @@ def destructive_command(command: str) -> str | None:
 
 
 # ============================================================================ #
+# 视图模式与列宽（纯逻辑，便于无显示环境测试）
+# ============================================================================ #
+VIEW_MODE_BRIEF = "brief"
+VIEW_MODE_DETAILED = "detailed"
+VIEW_MODE_THUMBNAILS = "thumbnails"
+VIEW_MODES: tuple[str, ...] = (VIEW_MODE_BRIEF, VIEW_MODE_DETAILED, VIEW_MODE_THUMBNAILS)
+DEFAULT_VIEW_MODE = VIEW_MODE_DETAILED
+
+#: 详细列表列定义：(列 id, 标题, 默认宽度)，顺序固定，仅宽度可调。
+PANEL_COLUMNS: tuple[tuple[str, str, int], ...] = (
+    ("name", "名称", 380),
+    ("ext", "扩展名", 80),
+    ("size", "大小", 100),
+    ("mtime", "修改时间", 150),
+    ("attr", "属性", 90),
+)
+
+#: 列 id → 排序列（扩展名与属性都按类型排序）。
+COLUMN_SORT: dict[str, str] = {
+    "name": "name",
+    "ext": "type",
+    "size": "size",
+    "mtime": "mtime",
+    "attr": "type",
+}
+
+COLUMN_MIN_WIDTH = 40
+COLUMN_MAX_WIDTH = 2000
+_BRIEF_COLUMNS: tuple[str, ...] = ("name",)
+
+
+def normalize_view_mode(value: object) -> str:
+    """校验视图模式；非字符串或未知取值回落详细列表。"""
+    if isinstance(value, str) and value in VIEW_MODES:
+        return value
+    return DEFAULT_VIEW_MODE
+
+
+def normalize_column_widths(raw: object) -> dict[str, int]:
+    """解析列宽：只保留已知列，整数夹到 40–2000，未知键与非整数丢弃。"""
+    if not isinstance(raw, dict):
+        return {}
+    widths: dict[str, int] = {}
+    for column, _label, _default in PANEL_COLUMNS:
+        value = raw.get(column)
+        if isinstance(value, int) and not isinstance(value, bool):
+            widths[column] = min(max(value, COLUMN_MIN_WIDTH), COLUMN_MAX_WIDTH)
+    return widths
+
+
+def column_display_names(view_mode: str) -> tuple[str, ...]:
+    """该模式在列表里显示的列：简要只有名称，详细为全部列，缩略图不用列表。"""
+    mode = normalize_view_mode(view_mode)
+    if mode == VIEW_MODE_BRIEF:
+        return _BRIEF_COLUMNS
+    if mode == VIEW_MODE_THUMBNAILS:
+        return ()
+    return tuple(column for column, _label, _width in PANEL_COLUMNS)
+
+
+# ============================================================================ #
+# 缩略图：格式判定、可选依赖探测、世代号、缓存与网格几何（纯逻辑）
+# ============================================================================ #
+THUMBNAIL_NATIVE = "native"
+THUMBNAIL_PILLOW = "pillow"
+THUMBNAIL_BADGE = "badge"
+
+#: Tk 8.6 自带可解码的图片格式（PhotoImage）。
+NATIVE_IMAGE_SUFFIXES: frozenset[str] = frozenset({".png", ".gif", ".ppm", ".pgm", ".pbm"})
+#: 只有 Pillow 可用时才解码的格式；未安装时显示类型徽标。
+PILLOW_IMAGE_SUFFIXES: frozenset[str] = frozenset({".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff", ".ico"})
+
+THUMBNAIL_TILE_SIZE = 96
+THUMBNAIL_GAP = 8
+THUMBNAIL_CACHE_ITEMS = 256
+THUMBNAIL_CACHE_BYTES = 32 * 1024 * 1024
+#: 世代号的四种失效来源：刷新、切目录、切标签、切模式。
+THUMBNAIL_INVALIDATION_REASONS: tuple[str, ...] = ("refresh", "navigate", "tab", "mode")
+
+
+def pillow_available(importer: Callable[[str], object] | None = None) -> bool:
+    """运行期探测 Pillow 是否可用；导入失败静默回落，不报错。
+
+    ``importer`` 可注入（默认 ``importlib.import_module``），便于在未安装
+    Pillow 的机器上覆盖两条路径。
+    """
+    load = importlib.import_module if importer is None else importer
+    try:
+        load("PIL.Image")
+    except (ImportError, OSError):
+        return False
+    return True
+
+
+def thumbnail_plan(name: str, has_pillow: bool) -> str:
+    """决定一张图片的缩略图来源：Tk 原生、Pillow 解码或类型徽标。"""
+    suffix = Path(name).suffix.casefold()
+    if suffix in NATIVE_IMAGE_SUFFIXES:
+        return THUMBNAIL_NATIVE
+    if suffix in PILLOW_IMAGE_SUFFIXES:
+        return THUMBNAIL_PILLOW if has_pillow else THUMBNAIL_BADGE
+    return THUMBNAIL_BADGE
+
+
+def thumbnail_backend_note(has_pillow: bool) -> str:
+    """进入缩略图模式时给用户的后端说明。"""
+    if has_pillow:
+        return "缩略图模式：Pillow 可用，支持 JPEG/BMP/WebP/TIFF 等格式"
+    return "缩略图模式：未安装 Pillow（fcmd[img]），仅 PNG/GIF/PPM 生成缩略图，其余显示类型徽标"
+
+
+def thumbnail_unsupported_hint(name: str, has_pillow: bool) -> str:
+    """选中无法生成缩略图的文件时的提示文本。"""
+    suffix = Path(name).suffix.casefold()
+    label = suffix.upper() if suffix else Path(name).name
+    if has_pillow:
+        return f"{label} 不是支持的图片格式，显示类型徽标"
+    return f"{label} 需要 Pillow（fcmd[img]）才能生成缩略图，当前显示类型徽标"
+
+
+@dataclass
+class ThumbnailRequestTracker:
+    """缩略图世代号：刷新 / 切目录 / 切标签 / 切模式都会让旧结果失效。"""
+
+    generation: int = 0
+    reason: str = ""
+
+    def invalidate(self, reason: str) -> int:
+        """递增世代号并记录来源，返回新世代号。"""
+        self.generation += 1
+        self.reason = reason
+        return self.generation
+
+    def accept(self, generation: int) -> bool:
+        """该世代号的结果是否仍可应用。"""
+        return generation == self.generation
+
+
+class ThumbnailCache:
+    """内存 LRU 缩略图缓存，同时按条目数与字节上限淘汰。"""
+
+    def __init__(self, max_items: int = THUMBNAIL_CACHE_ITEMS, max_bytes: int = THUMBNAIL_CACHE_BYTES) -> None:
+        self._max_items = max(1, max_items)
+        self._max_bytes = max(1, max_bytes)
+        self._items: OrderedDict[tuple[str, int, int, int], tuple[object | None, int]] = OrderedDict()
+        self._bytes = 0
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._items
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    @property
+    def size_bytes(self) -> int:
+        """当前缓存估算占用字节。"""
+        return self._bytes
+
+    def get(self, key: tuple[str, int, int, int]) -> object | None:
+        """读取并刷新 LRU 顺序；未命中返回 ``None``（用 ``in`` 区分）。"""
+        try:
+            value, _size = self._items.pop(key)
+        except KeyError:
+            return None
+        self._items[key] = (value, _size)
+        return value
+
+    def put(self, key: tuple[str, int, int, int], value: object | None, size_bytes: int) -> None:
+        """写入（``None`` 表示解码失败），超出条目或字节上限时淘汰最旧项。"""
+        old = self._items.pop(key, None)
+        if old is not None:
+            self._bytes -= old[1]
+        cost = max(0, size_bytes)
+        self._items[key] = (value, cost)
+        self._bytes += cost
+        while len(self._items) > self._max_items or (self._bytes > self._max_bytes and len(self._items) > 1):
+            _old_key, (_old_value, old_cost) = self._items.popitem(last=False)
+            self._bytes -= old_cost
+
+    def clear(self) -> None:
+        """清空缓存（切换目录/模式时释放图片引用）。"""
+        self._items.clear()
+        self._bytes = 0
+
+
+def thumbnail_columns(
+    viewport_width: int,
+    tile_size: int = THUMBNAIL_TILE_SIZE,
+    gap: int = THUMBNAIL_GAP,
+) -> int:
+    """按可用宽度计算列数，至少 1 列。"""
+    step = tile_size + gap
+    if step <= 0:
+        return 1
+    return max(1, (max(0, viewport_width) + gap) // step)
+
+
+def thumbnail_visible_rows(
+    scroll_offset: int,
+    viewport_height: int,
+    row_height: int,
+    total_rows: int,
+    *,
+    overscan: int = 1,
+) -> tuple[int, int]:
+    """可见行的闭区间 ``[first, last]``；无行时返回 ``(0, -1)``。"""
+    if total_rows <= 0 or row_height <= 0:
+        return (0, -1)
+    first = max(0, max(0, scroll_offset) // row_height - overscan)
+    last = min(total_rows - 1, (max(0, scroll_offset) + max(0, viewport_height)) // row_height + overscan)
+    if first > last:
+        return (0, -1)
+    return (first, last)
+
+
+def thumbnail_cache_key(path: str, mtime_ns: int, size: int, tile_size: int) -> tuple[str, int, int, int]:
+    """缓存键：路径 + mtime + 大小 + 缩略图尺寸，任一变化都重新解码。"""
+    return (path, mtime_ns, size, tile_size)
+
+
+# ============================================================================ #
 # 顶部菜单启用状态（纯逻辑，便于无显示环境测试）
 # ============================================================================ #
 _MENU_SELECTION = frozenset(
@@ -1814,6 +2068,7 @@ class MenuFacts:
     tree_visible: bool = False
     quick_visible: bool = False
     sort_key: str = "name"
+    view_mode: str = DEFAULT_VIEW_MODE
 
 
 @dataclass(frozen=True)
@@ -1825,6 +2080,7 @@ class MenuState:
     tree_visible: bool = False
     quick_visible: bool = False
     sort_key: str = "name"
+    view_mode: str = DEFAULT_VIEW_MODE
 
     def is_disabled(self, action: str) -> bool:
         """动作是否应显示为 disabled。"""
@@ -1888,4 +2144,5 @@ def menu_state(facts: MenuFacts) -> MenuState:
         tree_visible=facts.tree_visible,
         quick_visible=facts.quick_visible,
         sort_key=facts.sort_key,
+        view_mode=normalize_view_mode(facts.view_mode),
     )

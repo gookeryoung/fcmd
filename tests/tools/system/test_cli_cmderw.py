@@ -216,6 +216,61 @@ class TestSettings:
         loaded = load_settings()
         assert loaded.color_rules == rules
 
+    def test_save_and_load_roundtrip_keeps_view_modes_and_widths(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        settings = CmderSettings(
+            left=PanelState(
+                path=str(tmp_path),
+                view_mode="brief",
+                column_widths={"name": 512, "ext": 96},
+            ),
+            right=PanelState(path=str(tmp_path), view_mode="thumbnails"),
+        )
+        save_settings(settings)
+        loaded = load_settings()
+        assert loaded.left.view_mode == "brief"
+        assert loaded.left.column_widths == {"name": 512, "ext": 96}
+        assert loaded.right.view_mode == "thumbnails"
+        assert loaded.right.column_widths == {}
+
+    def test_invalid_view_mode_and_widths_fall_back(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "left": {
+                        "path": str(tmp_path),
+                        "view_mode": "grid",
+                        "column_widths": {"name": 10, "size": 99999, "mtime": True, "bogus": 80},
+                    },
+                    "right": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        settings = load_settings()
+        assert settings.left.view_mode == "detailed"
+        assert settings.left.column_widths == {"name": 40, "size": 2000}
+        assert settings.right.view_mode == "detailed"
+        assert settings.right.column_widths == {}
+
+    def test_load_old_config_defaults_view_mode(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+        path = config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            json.dumps({"left": {"path": str(tmp_path)}, "right": {"path": str(tmp_path)}}),
+            encoding="utf-8",
+        )
+        settings = load_settings()
+        assert settings.left.view_mode == "detailed"
+        assert settings.right.view_mode == "detailed"
+        assert settings.left.column_widths == {}
+
     def test_load_old_config_without_tabs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
         path = config_path()

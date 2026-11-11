@@ -39,6 +39,7 @@ import sys
 import threading
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -53,12 +54,15 @@ from fcmd.tools.system._cmderw_ops import (
     COLOR_KIND_FILE,
     COLOR_KIND_LINK,
     COLOR_KIND_TEXT,
+    COLUMN_SORT,
     COMPARE_DIFFERENT,
     COMPARE_LEFT_ONLY,
     COMPARE_RIGHT_ONLY,
     COMPARE_SAME,
     COMPARE_STATUS_TEXT,
+    DEFAULT_VIEW_MODE,
     ITEM_FAILED,
+    PANEL_COLUMNS,
     PREVIEW_IMAGE,
     PREVIEW_UNSUPPORTED,
     QUEUE_CANCELLED,
@@ -66,6 +70,13 @@ from fcmd.tools.system._cmderw_ops import (
     SYNC_DELETE,
     SYNC_LTR,
     SYNC_RTL,
+    THUMBNAIL_BADGE,
+    THUMBNAIL_GAP,
+    THUMBNAIL_PILLOW,
+    THUMBNAIL_TILE_SIZE,
+    VIEW_MODE_BRIEF,
+    VIEW_MODE_DETAILED,
+    VIEW_MODE_THUMBNAILS,
     BulkRenameOptions,
     ColorRule,
     ColorStyle,
@@ -84,11 +95,14 @@ from fcmd.tools.system._cmderw_ops import (
     SyncItem,
     SyncOptions,
     SyncPlan,
+    ThumbnailCache,
+    ThumbnailRequestTracker,
     TransferQueue,
     TrashReport,
     apply_rename_plan,
     build_sync_plan,
     cleanup_incomplete_items,
+    column_display_names,
     compare_trees,
     destructive_command,
     directory_size,
@@ -100,11 +114,20 @@ from fcmd.tools.system._cmderw_ops import (
     match_names,
     menu_state,
     normalize_color,
+    normalize_column_widths,
+    normalize_view_mode,
     parse_color_rules,
+    pillow_available,
     plan_bulk_rename,
     read_preview,
     resolve_color_style,
     revalidate_sync_items,
+    thumbnail_backend_note,
+    thumbnail_cache_key,
+    thumbnail_columns,
+    thumbnail_plan,
+    thumbnail_unsupported_hint,
+    thumbnail_visible_rows,
     trash_paths,
     undo_rename,
     validate_name,
@@ -198,21 +221,8 @@ POLL_INTERVAL_MS = 100
 DEFAULT_SORT_KEY = "name"
 SORT_KEYS: tuple[str, ...] = ("name", "size", "mtime", "type")
 
-#: 面板列定义：(列 id, 标题, 宽度)
-COLUMNS: tuple[tuple[str, str, int], ...] = (
-    ("name", "名称", 380),
-    ("size", "大小", 100),
-    ("mtime", "修改时间", 150),
-    ("attr", "属性", 90),
-)
-
-#: 列 id → 排序列
-COLUMN_SORT: dict[str, str] = {
-    "name": "name",
-    "size": "size",
-    "mtime": "mtime",
-    "attr": "type",
-}
+#: 面板列定义：(列 id, 标题, 宽度)，顺序固定，仅宽度可拖拽调整。
+COLUMNS: tuple[tuple[str, str, int], ...] = PANEL_COLUMNS
 
 #: 归档扩展名（长的在前，供界面推导默认解压目录）
 ARCHIVE_SUFFIXES: tuple[str, ...] = (
@@ -242,6 +252,51 @@ _SORT_MENU_CHOICES: tuple[tuple[str, str, str], ...] = (
     ("大小", "size", "size"),
     ("修改时间", "mtime", "mtime"),
 )
+_VIEW_MODE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("简要列表\tCtrl+F1", VIEW_MODE_BRIEF),
+    ("详细列表\tCtrl+F2", VIEW_MODE_DETAILED),
+    ("缩略图\tCtrl+Shift+F1", VIEW_MODE_THUMBNAILS),
+)
+
+#: 缩略图：后台线程数、单文件读取上限、主线程应用节奏、滚动防抖与网格尺寸。
+_THUMB_WORKERS = 2
+_THUMB_READ_LIMIT = 8 * 1024 * 1024
+_THUMB_POLL_MS = 60
+_THUMB_APPLY_PER_TICK = 2
+_THUMB_REDRAW_MS = 80
+_THUMB_TILE = THUMBNAIL_TILE_SIZE
+_THUMB_LABEL_HEIGHT = 20
+_THUMB_PAD = THUMBNAIL_GAP
+_THUMB_CELL_WIDTH = _THUMB_TILE + 2 * _THUMB_PAD
+_THUMB_CELL_HEIGHT = _THUMB_TILE + _THUMB_LABEL_HEIGHT + 2 * _THUMB_PAD
+
+
+def _decode_thumbnail_with_pillow(data: bytes, tile_size: int) -> bytes | None:
+    """在后台线程用 Pillow 解码并等比缩放到 tile_size，返回 PNG 字节。"""
+    from importlib import import_module
+    from io import BytesIO
+
+    image_module = import_module("PIL.Image")
+    try:
+        with image_module.open(BytesIO(data)) as image:
+            image.thumbnail((tile_size, tile_size))
+            converted = image if image.mode in ("RGB", "RGBA") else image.convert("RGBA")
+            output = BytesIO()
+            converted.save(output, format="PNG")
+            return output.getvalue()
+    except Exception:
+        return None
+
+
+def load_thumbnail_payload(path: Path, plan: str, tile_size: int = _THUMB_TILE) -> bytes | None:
+    """后台读取图片字节：最多 8 MiB；Pillow 路径先解码为 PNG，原生格式直接返回。"""
+    with path.open("rb") as handle:
+        data = handle.read(_THUMB_READ_LIMIT + 1)
+    if len(data) > _THUMB_READ_LIMIT:
+        return None
+    if plan == THUMBNAIL_PILLOW:
+        return _decode_thumbnail_with_pillow(data, tile_size)
+    return data
 
 
 # ============================================================================ #
@@ -304,6 +359,8 @@ class PanelState:
     descending: bool = False
     history: list[str] = field(default_factory=list)
     history_index: int = -1
+    view_mode: str = DEFAULT_VIEW_MODE
+    column_widths: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """序列化为设置文件中的字典。"""
@@ -313,6 +370,8 @@ class PanelState:
             "descending": self.descending,
             "history": list(self.history),
             "history_index": self.history_index,
+            "view_mode": self.view_mode,
+            "column_widths": dict(self.column_widths),
         }
 
 
@@ -384,6 +443,8 @@ def _panel_from_raw(raw: object, fallback: Path) -> PanelState:
         state.history_index = index
     else:
         state.history_index = len(state.history) - 1
+    state.view_mode = normalize_view_mode(data.get("view_mode"))
+    state.column_widths = normalize_column_widths(data.get("column_widths"))
     return state
 
 
@@ -1078,10 +1139,12 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.filter_var.trace_add("write", lambda *_args: self._on_filter_change())
         ttk.Button(filter_bar, text="清除", width=5, style="Toolbutton", command=self.clear_filter).pack(side="left")
 
-        list_frame = ttk.Frame(self.frame)
-        list_frame.pack(fill="both", expand=True)
+        self._list_host = ttk.Frame(self.frame)
+        self._list_host.pack(fill="both", expand=True)
+        self._list_frame = ttk.Frame(self._list_host)
+        self._list_frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(
-            list_frame,
+            self._list_frame,
             columns=[column for column, _label, _width in COLUMNS],
             show="headings",
             selectmode="extended",
@@ -1089,10 +1152,11 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         for column, label, width in COLUMNS:
             self.tree.heading(column, text=label, command=lambda c=column: self.sort_by(c))
             self.tree.column(column, width=width, anchor="w" if column == "name" else "e")
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
+        scrollbar = ttk.Scrollbar(self._list_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.tree.bind("<ButtonRelease-1>", lambda _event: self._capture_column_widths(), add="+")
 
         self.tree.tag_configure("dir", foreground=theme.palette.accent)
         self.tree.tag_configure("hidden", foreground=theme.palette.muted)
@@ -1130,6 +1194,392 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.status_var = tk.StringVar()
         self._status_label = ttk.Label(self.frame, textvariable=self.status_var, style="Muted.TLabel")
         self._status_label.pack(fill="x", pady=(spacing.xxs, 0))
+        self._init_thumbnail_view()
+        self._apply_column_widths()
+        self.apply_view_mode(self.state.view_mode)
+
+    # ------------------------------------------------------------------ #
+    # 视图模式与列宽
+    # ------------------------------------------------------------------ #
+    def apply_view_mode(self, mode: str) -> None:
+        """切换当前标签的视图模式；简要/详细只改显示列，不重读目录。"""
+        self.state.view_mode = normalize_view_mode(mode)
+        if self.state.view_mode == VIEW_MODE_THUMBNAILS:
+            self._enter_thumbnail_view()
+        else:
+            self._leave_thumbnail_view()
+            self._apply_column_widths()
+            display = column_display_names(self.state.view_mode)
+            if display:
+                self.tree.configure(displaycolumns=display)
+                self.tree.column("name", stretch=True)
+        self._update_status()
+
+    def _apply_column_widths(self) -> None:
+        """把当前标签记忆的列宽写回 Treeview，缺失列用默认宽度。"""
+        for column, _label, default in COLUMNS:
+            self.tree.column(column, width=self.state.column_widths.get(column, default))
+
+    def _capture_column_widths(self) -> None:
+        """读回拖拽后的列宽写入当前标签状态（供保存与标签切换保留）。"""
+        widths: dict[str, int] = {}
+        for column, _label, _default in COLUMNS:
+            try:
+                width = int(self.tree.column(column, "width"))
+            except (ValueError, self._tk.TclError):
+                continue
+            if width > 0:
+                widths[column] = width
+        if widths:
+            self.state.column_widths = widths
+
+    # ------------------------------------------------------------------ #
+    # 缩略图视图
+    # ------------------------------------------------------------------ #
+    def _init_thumbnail_view(self) -> None:
+        """创建缩略图画布与后台加载状态；不在该模式时保持隐藏。"""
+        from tkinter import ttk
+
+        self._thumb_tracker = ThumbnailRequestTracker()
+        self._thumb_cache = ThumbnailCache()
+        self._thumb_has_pillow = pillow_available()
+        self._thumb_results: queue.Queue[tuple[int, tuple[str, int, int, int], bytes | None]] = queue.Queue()
+        self._thumb_futures: dict[tuple[str, int, int, int], Any] = {}
+        self._thumb_executor: ThreadPoolExecutor | None = None
+        self._thumb_poll_id: str | None = None
+        self._thumb_redraw_id: str | None = None
+        self._thumb_canvas = self._tk.Canvas(self._list_host, highlightthickness=0, takefocus=True)
+        self._thumb_scroll = ttk.Scrollbar(self._list_host, orient="vertical", command=self._thumb_yview)
+        self._thumb_canvas.configure(yscrollcommand=self._thumb_scroll.set)
+        self._thumb_canvas.bind("<Configure>", lambda _event: self._request_thumb_redraw())
+        self._thumb_canvas.bind("<MouseWheel>", self._on_thumb_wheel)
+        self._thumb_canvas.bind("<Button-4>", lambda _event: self._on_thumb_wheel_linux(-1))
+        self._thumb_canvas.bind("<Button-5>", lambda _event: self._on_thumb_wheel_linux(1))
+        self._thumb_canvas.bind("<Button-1>", self._on_thumb_click)
+        self._thumb_canvas.bind("<Double-1>", self._on_thumb_double_click)
+        self._thumb_canvas.bind("<Up>", lambda _event: self._thumb_move(-1))
+        self._thumb_canvas.bind("<Down>", lambda _event: self._thumb_move(1))
+        self._thumb_canvas.bind("<Left>", lambda _event: self._thumb_move(-self._thumb_columns()))
+        self._thumb_canvas.bind("<Right>", lambda _event: self._thumb_move(self._thumb_columns()))
+        self._thumb_canvas.bind("<Prior>", lambda _event: self._thumb_move(-self._thumb_page_size()))
+        self._thumb_canvas.bind("<Next>", lambda _event: self._thumb_move(self._thumb_page_size()))
+        self._thumb_canvas.bind("<Return>", lambda _event: self._on_activate())
+        self._thumb_canvas.bind("<BackSpace>", lambda _event: self.go_up())
+        self._thumb_canvas.bind("<Button-3>", self.app.show_context_menu)
+
+    def _is_thumbnail_view(self) -> bool:
+        return self.state.view_mode == VIEW_MODE_THUMBNAILS
+
+    @property
+    def thumbnail_note(self) -> str:
+        """缩略图后端说明（Pillow 可用性）。"""
+        return thumbnail_backend_note(self._thumb_has_pillow)
+
+    def _enter_thumbnail_view(self) -> None:
+        """隐藏列表、显示网格，并让旧世代结果失效。"""
+        if self._thumb_canvas.winfo_ismapped():
+            return
+        self._list_frame.pack_forget()
+        self._thumb_canvas.pack(side="left", fill="both", expand=True)
+        self._thumb_scroll.pack(side="right", fill="y")
+        self._invalidate_thumbnails("mode")
+        self._request_thumb_redraw(immediate=True)
+        self._schedule_thumb_poll()
+
+    def _leave_thumbnail_view(self) -> None:
+        """回到列表视图：停止轮询、让后台世代失效并恢复列表。"""
+        if not self._thumb_canvas.winfo_ismapped():
+            return
+        self._invalidate_thumbnails("mode")
+        self._stop_thumb_poll()
+        self._thumb_canvas.pack_forget()
+        self._thumb_scroll.pack_forget()
+        self._list_frame.pack(fill="both", expand=True)
+
+    def _invalidate_thumbnails(self, reason: str) -> None:
+        """刷新/切目录/切标签/切模式统一入口：递增世代号并取消未开始的读取。"""
+        self._thumb_tracker.invalidate(reason)
+        for future in self._thumb_futures.values():
+            future.cancel()
+        self._thumb_futures.clear()
+        while True:
+            try:
+                self._thumb_results.get_nowait()
+            except queue.Empty:
+                break
+
+    def _thumb_columns(self) -> int:
+        return thumbnail_columns(self._thumb_canvas.winfo_width(), _THUMB_TILE, _THUMB_PAD)
+
+    def _thumb_page_size(self) -> int:
+        height = max(_THUMB_CELL_HEIGHT, self._thumb_canvas.winfo_height())
+        return max(1, height // _THUMB_CELL_HEIGHT) * self._thumb_columns()
+
+    def _thumb_yview(self, *args: Any) -> None:
+        self._thumb_canvas.yview(*args)
+        self._request_thumb_redraw()
+
+    def _on_thumb_wheel(self, event: Any) -> str:
+        self._thumb_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        self._request_thumb_redraw()
+        return "break"
+
+    def _on_thumb_wheel_linux(self, delta: int) -> str:
+        self._thumb_canvas.yview_scroll(delta, "units")
+        self._request_thumb_redraw()
+        return "break"
+
+    def _request_thumb_redraw(self, immediate: bool = False) -> None:
+        """滚动/尺寸变化时防抖重绘，避免滚动过程中反复重建画布元素。"""
+        if not self._is_thumbnail_view():
+            return
+        if self._thumb_redraw_id is not None:
+            self._thumb_canvas.after_cancel(self._thumb_redraw_id)
+            self._thumb_redraw_id = None
+        delay = 0 if immediate else _THUMB_REDRAW_MS
+        self._thumb_redraw_id = self._thumb_canvas.after(delay, self._draw_thumbnails)
+
+    def _draw_thumbnails(self) -> None:
+        """只创建可视区域 ±1 行的网格元素，实现画布虚拟化。"""
+        self._thumb_redraw_id = None
+        if not self._is_thumbnail_view():
+            return
+        self._thumb_canvas.delete("thumb")
+        total = len(self.entries)
+        columns = self._thumb_columns()
+        rows = (total + columns - 1) // columns if total else 0
+        self._thumb_canvas.configure(scrollregion=(0, 0, columns * _THUMB_CELL_WIDTH, rows * _THUMB_CELL_HEIGHT))
+        if not total:
+            self._thumb_canvas.create_text(
+                12,
+                12,
+                anchor="nw",
+                text="（空目录）",
+                tags="thumb",
+                fill=self.app.theme.palette.muted,
+            )
+            return
+        offset = int(self._thumb_canvas.canvasy(0))
+        viewport = max(_THUMB_CELL_HEIGHT, self._thumb_canvas.winfo_height())
+        first, last = thumbnail_visible_rows(offset, viewport, _THUMB_CELL_HEIGHT, rows)
+        selected = set(self.tree.selection())
+        wanted: set[tuple[str, int, int, int]] = set()
+        for row in range(first, last + 1):
+            for column in range(columns):
+                index = row * columns + column
+                if index >= total:
+                    break
+                entry = self.entries[index]
+                key = self._thumb_key(entry)
+                wanted.add(key)
+                self._draw_thumb_cell(entry, column, row, key, entry.name in selected)
+        self._sync_thumb_wanted(wanted)
+
+    def _draw_thumb_cell(
+        self,
+        entry: FileEntry,
+        column: int,
+        row: int,
+        key: tuple[str, int, int, int],
+        selected: bool,
+    ) -> None:
+        x0 = column * _THUMB_CELL_WIDTH + _THUMB_PAD
+        y0 = row * _THUMB_CELL_HEIGHT + _THUMB_PAD
+        self._thumb_canvas.create_rectangle(
+            x0,
+            y0,
+            x0 + _THUMB_TILE,
+            y0 + _THUMB_TILE + _THUMB_LABEL_HEIGHT,
+            tags="thumb",
+            fill=self.app.theme.palette.surface,
+            outline=self.app.theme.palette.accent if selected else self.app.theme.palette.border,
+            width=2 if selected else 1,
+        )
+        photo: Any = self._thumb_cache.get(key)
+        plan = THUMBNAIL_BADGE if entry.is_dir else thumbnail_plan(entry.name, self._thumb_has_pillow)
+        if photo is not None:
+            self._thumb_canvas.create_image(
+                x0 + (_THUMB_TILE - int(photo.width())) // 2,
+                y0 + (_THUMB_TILE - int(photo.height())) // 2,
+                anchor="nw",
+                image=photo,
+                tags="thumb",
+            )
+        else:
+            self._thumb_canvas.create_text(
+                x0 + _THUMB_TILE // 2,
+                y0 + _THUMB_TILE // 2,
+                text=self._thumb_badge_text(entry),
+                tags="thumb",
+                fill=self.app.theme.palette.muted,
+                font=("Consolas", 10, "bold"),
+            )
+            if plan != THUMBNAIL_BADGE:
+                self._schedule_thumbnail(entry, key)
+        label = entry.name if len(entry.name) <= 13 else entry.name[:12] + "…"
+        self._thumb_canvas.create_text(
+            x0 + _THUMB_TILE // 2,
+            y0 + _THUMB_TILE + _THUMB_LABEL_HEIGHT // 2,
+            text=label,
+            tags="thumb",
+            fill=self.app.theme.palette.text,
+        )
+
+    @staticmethod
+    def _thumb_badge_text(entry: FileEntry) -> str:
+        if entry.is_dir:
+            return "DIR"
+        suffix = entry.path.suffix[1:].upper()
+        return suffix[:6] if suffix else "FILE"
+
+    @staticmethod
+    def _thumb_key(entry: FileEntry) -> tuple[str, int, int, int]:
+        return thumbnail_cache_key(str(entry.path), int(entry.mtime * 1_000_000_000), entry.size, _THUMB_TILE)
+
+    def _sync_thumb_wanted(self, wanted: set[tuple[str, int, int, int]]) -> None:
+        """滚动后取消已移出视野且尚未开始的读取，避免无谓 I/O。"""
+        for key in list(self._thumb_futures):
+            if key not in wanted:
+                future = self._thumb_futures.pop(key)
+                future.cancel()
+
+    def _schedule_thumbnail(self, entry: FileEntry, key: tuple[str, int, int, int]) -> None:
+        """按需提交后台读取；同一键只保留一个任务。"""
+        if key in self._thumb_futures or key in self._thumb_cache:
+            return
+        plan = thumbnail_plan(entry.name, self._thumb_has_pillow)
+        if plan == THUMBNAIL_BADGE:
+            return
+        executor = self._thumb_executor
+        if executor is None:
+            executor = ThreadPoolExecutor(max_workers=_THUMB_WORKERS, thread_name_prefix="cmderw-thumb")
+            self._thumb_executor = executor
+        generation = self._thumb_tracker.generation
+        self._thumb_futures[key] = executor.submit(self._thumbnail_worker, entry.path, key, generation, plan)
+        self._schedule_thumb_poll()
+
+    def _thumbnail_worker(
+        self,
+        path: Path,
+        key: tuple[str, int, int, int],
+        generation: int,
+        plan: str,
+    ) -> None:
+        """后台线程：只读文件字节并解码，绝不触碰 Tk 对象。"""
+        payload: bytes | None
+        try:
+            payload = load_thumbnail_payload(path, plan, _THUMB_TILE)
+        except Exception:
+            payload = None
+        self._thumb_results.put((generation, key, payload))
+
+    def _schedule_thumb_poll(self) -> None:
+        if self._thumb_poll_id is None and self._is_thumbnail_view():
+            self._thumb_poll_id = self._thumb_canvas.after(_THUMB_POLL_MS, self._poll_thumbnails)
+
+    def _stop_thumb_poll(self) -> None:
+        if self._thumb_poll_id is not None:
+            self._thumb_canvas.after_cancel(self._thumb_poll_id)
+            self._thumb_poll_id = None
+
+    def _poll_thumbnails(self) -> None:
+        """主线程每 60ms 最多创建 2 个 PhotoImage，避免一次性卡住界面。"""
+        self._thumb_poll_id = None
+        if not self._is_thumbnail_view():
+            return
+        applied = 0
+        while applied < _THUMB_APPLY_PER_TICK:
+            try:
+                generation, key, payload = self._thumb_results.get_nowait()
+            except queue.Empty:
+                break
+            self._thumb_futures.pop(key, None)
+            if not self._thumb_tracker.accept(generation):
+                continue
+            photo = self._create_thumb_photo(payload)
+            self._thumb_cache.put(key, photo, self._thumb_photo_bytes(photo))
+            applied += 1
+        if applied:
+            self._request_thumb_redraw(immediate=True)
+        if self._thumb_futures or not self._thumb_results.empty():
+            self._schedule_thumb_poll()
+
+    def _create_thumb_photo(self, payload: bytes | None) -> Any:
+        if payload is None:
+            return None
+        try:
+            photo = self._tk.PhotoImage(data=payload)
+        except self._tk.TclError:
+            return None
+        largest = max(photo.width(), photo.height())
+        if largest > _THUMB_TILE * 2:
+            factor = max(2, largest // _THUMB_TILE)
+            with contextlib.suppress(self._tk.TclError):
+                photo = photo.subsample(factor)
+        return photo
+
+    @staticmethod
+    def _thumb_photo_bytes(photo: Any) -> int:
+        if photo is None:
+            return 0
+        return int(photo.width()) * int(photo.height()) * 4
+
+    def _on_thumb_click(self, event: Any) -> None:
+        self._thumb_canvas.focus_set()
+        index = self._thumb_index_at(event.x, event.y)
+        if index is None:
+            return
+        entry = self.entries[index]
+        self.tree.selection_set(entry.name)
+        self.tree.focus(entry.name)
+        self._update_status()
+        self._request_thumb_redraw(immediate=True)
+
+    def _on_thumb_double_click(self, event: Any) -> None:
+        self._on_thumb_click(event)
+        self._on_activate(event)
+
+    def _thumb_index_at(self, x: int, y: int) -> int | None:
+        columns = self._thumb_columns()
+        row = int(self._thumb_canvas.canvasy(y)) // _THUMB_CELL_HEIGHT
+        column = int(x) // _THUMB_CELL_WIDTH
+        if column < 0 or column >= columns:
+            return None
+        index = row * columns + column
+        if 0 <= index < len(self.entries):
+            return index
+        return None
+
+    def _thumb_move(self, delta: int) -> str:
+        if not self.entries:
+            return "break"
+        names = [entry.name for entry in self.entries]
+        current = self.tree.focus()
+        index = names.index(current) if current in names else 0
+        target = min(max(0, index + delta), len(names) - 1)
+        self.tree.selection_set(names[target])
+        self.tree.focus(names[target])
+        columns = self._thumb_columns()
+        total_rows = max(1, (len(names) + columns - 1) // columns)
+        offset = max(0, target // columns - 1) * _THUMB_CELL_HEIGHT
+        self._thumb_canvas.yview_moveto(min(1.0, offset / (total_rows * _THUMB_CELL_HEIGHT)))
+        self._update_status()
+        self._request_thumb_redraw(immediate=True)
+        return "break"
+
+    def shutdown_thumbnails(self) -> None:
+        """关窗前停止轮询、取消任务并等待线程退出，不留后台线程。"""
+        self._invalidate_thumbnails("close")
+        self._stop_thumb_poll()
+        if self._thumb_redraw_id is not None:
+            with contextlib.suppress(self._tk.TclError):
+                self._thumb_canvas.after_cancel(self._thumb_redraw_id)
+            self._thumb_redraw_id = None
+        executor = self._thumb_executor
+        self._thumb_executor = None
+        if executor is not None:
+            executor.shutdown(wait=True, cancel_futures=True)
+        self._thumb_cache.clear()
 
     # ------------------------------------------------------------------ #
     # 导航
@@ -1179,6 +1629,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """切换到指定标签并刷新列表。"""
         if not 0 <= index < len(self.tabs) or index == self.tab_index:
             return
+        self._capture_column_widths()
+        self._invalidate_thumbnails("tab")
         self.tab_index = index
         self.path_var.set(self.state.path)
         self._render_tabs()
@@ -1186,8 +1638,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.app.set_status(f"{self.title}标签 {self.tab_index + 1}/{len(self.tabs)}：{self.state.path}")
 
     def new_tab(self, path: str | None = None) -> None:
-        """新建标签页：默认沿用当前目录与排序方式。"""
+        """新建标签页：默认沿用当前目录、排序方式、视图模式与列宽。"""
         source = self.state
+        self._capture_column_widths()
         target = path or source.path
         self.tabs.append(
             PanelState(
@@ -1196,6 +1649,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
                 descending=source.descending,
                 history=[target],
                 history_index=0,
+                view_mode=source.view_mode,
+                column_widths=dict(source.column_widths),
             )
         )
         self.tab_index = len(self.tabs) - 1
@@ -1209,6 +1664,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if len(self.tabs) == 1:
             self.app.set_status(f"{self.title}至少保留一个标签页，已取消关闭")
             return False
+        self._capture_column_widths()
+        self._invalidate_thumbnails("tab")
         closed = self.tabs.pop(self.tab_index)
         self.tab_index = min(self.tab_index, len(self.tabs) - 1)
         self.path_var.set(self.state.path)
@@ -1227,6 +1684,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
 
     def refresh(self, select: str | None = None) -> None:
         """重新读取当前目录并恢复选择。"""
+        self._invalidate_thumbnails("refresh")
         self._render_tabs()
         directory = Path(self.state.path)
         try:
@@ -1280,6 +1738,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
                 iid=entry.name,
                 values=(
                     entry.name,
+                    "" if entry.is_dir else entry.path.suffix[1:],
                     format_size(entry.size, is_dir=entry.is_dir),
                     format_mtime(entry.mtime),
                     describe_attributes(entry),
@@ -1290,7 +1749,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         for name in previous & existing:
             self.tree.selection_add(name)
             self.tree.see(name)
-        self._update_status()
+        self.apply_view_mode(self.state.view_mode)
+        if self._is_thumbnail_view():
+            self._request_thumb_redraw(immediate=True)
         if self._quick_visible:
             self.update_quick_view()
         self.app.on_panel_refreshed(self)
@@ -1421,6 +1882,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if selected:
             selected_size = sum(entry.size for entry in selected if not entry.is_dir)
             text += f" | 已选 {len(selected)} 个，{format_size(selected_size)}"
+            if self._is_thumbnail_view() and len(selected) == 1 and not selected[0].is_dir:
+                entry = selected[0]
+                if thumbnail_plan(entry.name, self._thumb_has_pillow) == THUMBNAIL_BADGE:
+                    text += f" | {thumbnail_unsupported_hint(entry.name, self._thumb_has_pillow)}"
         self.status_var.set(text)
 
     def _on_select(self, _event: Any = None) -> None:
@@ -1428,6 +1893,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._update_status()
         if self._quick_visible:
             self.update_quick_view()
+        if self._is_thumbnail_view():
+            self._request_thumb_redraw(immediate=True)
         self.app.on_panel_selection(self)
 
     def _on_path_enter(self, _event: Any = None) -> None:
@@ -1454,6 +1921,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.app.show_error("路径无效", f"目录不存在: {directory}")
             return
         text = str(directory)
+        if text != self.state.path:
+            self._invalidate_thumbnails("navigate")
         if push and text != self.state.path:
             history, index = push_history(self.state.history, self.state.history_index, text)
             self.state.history = history
@@ -1472,6 +1941,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """后退到历史上一项。"""
         index = history_back(self.state.history, self.state.history_index)
         if index != self.state.history_index:
+            self._invalidate_thumbnails("navigate")
             self.state.history_index = index
             self.state.path = self.state.history[index]
             self.path_var.set(self.state.path)
@@ -1481,6 +1951,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """前进到历史下一项。"""
         index = history_forward(self.state.history, self.state.history_index)
         if index != self.state.history_index:
+            self._invalidate_thumbnails("navigate")
             self.state.history_index = index
             self.state.path = self.state.history[index]
             self.path_var.set(self.state.path)
@@ -3084,7 +3555,6 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         command: Callable[[], None],
     ) -> None:
         menu.add_radiobutton(label=label, variable=variable, value=value, command=command)
-        self._menu_items[f"sort_{value}"] = (menu, menu.index("end"))
 
     def _build_menu(self) -> None:
         tk = self._tk
@@ -3153,6 +3623,17 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             self.toggle_directory_tree,
         )
         view_menu.add_separator()
+        view_mode_menu = tk.Menu(view_menu, tearoff=False, postcommand=self._sync_menu_state)
+        self._view_var = tk.StringVar(value=DEFAULT_VIEW_MODE)
+        for label, mode in _VIEW_MODE_CHOICES:
+            self._menu_radio(
+                view_mode_menu,
+                label,
+                self._view_var,
+                mode,
+                lambda value=mode: self.set_view_mode(value),
+            )
+        view_menu.add_cascade(label="视图模式", menu=view_mode_menu)
         sort_menu = tk.Menu(view_menu, tearoff=False, postcommand=self._sync_menu_state)
         self._sort_var = tk.StringVar(value=DEFAULT_SORT_KEY)
         for label, column, key in _SORT_MENU_CHOICES:
@@ -3163,6 +3644,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
                 key,
                 lambda column=column: self.sort_active(column),
             )
+            self._menu_items[f"sort_{key}"] = (sort_menu, sort_menu.index("end"))
         view_menu.add_cascade(label="排序方式", menu=sort_menu)
         view_menu.add_separator()
         self._menu_command(view_menu, "up", "上级目录\tBackspace", self.go_up)
@@ -3211,10 +3693,19 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._context_menu = self._build_context_menu()
 
     def _build_context_menu(self) -> Any:
-        menu = self._tk.Menu(self.root, tearoff=False)
+        menu = self._tk.Menu(self.root, tearoff=False, postcommand=self._sync_menu_state)
         menu.add_command(label="打开", command=self.open_selected)
         menu.add_command(label="查看", command=self.view_selected)
         menu.add_command(label="编辑", command=self.edit_selected)
+        view_mode_menu = self._tk.Menu(menu, tearoff=False, postcommand=self._sync_menu_state)
+        for label, mode in _VIEW_MODE_CHOICES:
+            view_mode_menu.add_radiobutton(
+                label=label.split("\t", 1)[0],
+                variable=self._view_var,
+                value=mode,
+                command=lambda value=mode: self.set_view_mode(value),
+            )
+        menu.add_cascade(label="视图模式", menu=view_mode_menu)
         menu.add_separator()
         menu.add_command(label="复制到对面面板", command=self.copy_selected)
         menu.add_command(label="移动到对面面板", command=self.move_selected)
@@ -3360,6 +3851,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "<Control-Shift-c>": lambda _event: self.open_compare(),
             "<Control-Shift-C>": lambda _event: self.open_compare(),
             "<Control-q>": lambda _event: self.toggle_quick_view(),
+            "<Control-F1>": lambda _event: self.set_view_mode(VIEW_MODE_BRIEF),
+            "<Control-F2>": lambda _event: self.set_view_mode(VIEW_MODE_DETAILED),
+            "<Control-Shift-F1>": lambda _event: self.set_view_mode(VIEW_MODE_THUMBNAILS),
             "<Control-F8>": lambda _event: self.toggle_directory_tree(),
             "<Control-Return>": lambda _event: self.focus_command_bar(),
             "<Control-KP_Enter>": lambda _event: self.focus_command_bar(),
@@ -3430,6 +3924,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             tree_visible=self._tree_visible,
             quick_visible=panel.quick_visible,
             sort_key=panel.state.sort_key,
+            view_mode=panel.state.view_mode,
         )
         state = menu_state(facts)
         for key, (menu, index) in self._menu_items.items():
@@ -3438,6 +3933,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         self._quick_var.set(state.quick_visible)
         self._tree_var.set(state.tree_visible)
         self._sort_var.set(state.sort_key)
+        self._view_var.set(state.view_mode)
 
     # ------------------------------------------------------------------ #
     # 目录树（只读，跟随活动面板）
@@ -3787,6 +4283,17 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def go_forward(self) -> None:
         """活动面板前进到下一历史位置。"""
         self.active_panel().go_forward()
+
+    def set_view_mode(self, mode: str) -> None:
+        """切换活动面板的视图模式；菜单、快捷键与右键菜单共用此入口。"""
+        panel = self.active_panel()
+        panel.apply_view_mode(mode)
+        self._view_var.set(panel.state.view_mode)
+        label = {value: text.split("\t", 1)[0] for text, value in _VIEW_MODE_CHOICES}
+        text = f"{panel.title}视图：{label.get(panel.state.view_mode, panel.state.view_mode)}"
+        if panel.state.view_mode == VIEW_MODE_THUMBNAILS:
+            text += f" | {panel.thumbnail_note}"
+        self.set_status(text)
 
     def sort_active(self, column: str) -> None:
         """按指定列排序活动面板；选择当前列时切换升降序。"""
@@ -4589,6 +5096,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             "Ctrl+Tab 下一个标签页    Ctrl+Shift+Tab 上一个标签页\n"
             "Ctrl+D 书签    Alt+Down 历史记录\n"
             "Ctrl+Q 内嵌快速查看    Ctrl+F8 显示/隐藏目录树\n"
+            "Ctrl+F1 简要列表    Ctrl+F2 详细列表    Ctrl+Shift+F1 缩略图\n"
             "Ctrl+Enter 唤出命令行（Enter 执行、Esc 清空返回；删除类命令先确认）\n"
             "颜色规则在 配置→颜色规则… 中设置（无快捷键）\n"
             "F5/F6 进入串行传输队列（工具→传输队列 查看进度、取消、重试失败项）\n"
@@ -4641,6 +5149,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def _store_panel_state(self) -> None:
         """把面板/标签/活动侧写回设置对象（不落盘）。"""
+        self.left._capture_column_widths()
+        self.right._capture_column_widths()
         self.settings.left = self.left.state
         self.settings.right = self.right.state
         self.settings.left_tabs = list(self.left.tabs)
@@ -4655,6 +5165,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         if self._closing:
             return
         self._closing = True
+        self.left.shutdown_thumbnails()
+        self.right.shutdown_thumbnails()
         self._store_panel_state()
         self.settings.geometry = self.root.winfo_geometry()
         save_settings(self.settings, self._settings_path)

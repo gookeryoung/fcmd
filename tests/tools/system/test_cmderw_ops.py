@@ -1329,6 +1329,7 @@ class TestMenuState:
             tree_visible=False,
             quick_visible=True,
             sort_key="size",
+            view_mode="brief",
         )
 
         state = ops.menu_state(facts)
@@ -1337,3 +1338,167 @@ class TestMenuState:
         assert state.tree_visible is False
         assert state.quick_visible is True
         assert state.sort_key == "size"
+        assert state.view_mode == "brief"
+
+    def test_invalid_view_mode_falls_back_to_detailed(self) -> None:
+        assert ops.menu_state(self._facts(view_mode="grid")).view_mode == "detailed"
+
+
+class TestViewModes:
+    """视图模式与列宽的纯逻辑口径。"""
+
+    def test_normalize_view_mode(self) -> None:
+        for mode in ops.VIEW_MODES:
+            assert ops.normalize_view_mode(mode) == mode
+        for value in ("grid", "", None, 3, True):
+            assert ops.normalize_view_mode(value) == ops.DEFAULT_VIEW_MODE
+
+    def test_column_display_names(self) -> None:
+        assert ops.column_display_names("brief") == ("name",)
+        assert ops.column_display_names("detailed") == tuple(column for column, _label, _width in ops.PANEL_COLUMNS)
+        assert ops.column_display_names("thumbnails") == ()
+        assert ops.column_display_names("bad") == ops.column_display_names("detailed")
+
+    def test_column_definitions_are_fixed_order(self) -> None:
+        assert [column for column, _label, _width in ops.PANEL_COLUMNS] == [
+            "name",
+            "ext",
+            "size",
+            "mtime",
+            "attr",
+        ]
+        assert set(ops.COLUMN_SORT) == {column for column, _label, _width in ops.PANEL_COLUMNS}
+        assert ops.COLUMN_SORT["ext"] == "type"
+
+    def test_normalize_column_widths_drops_unknown_and_clamps(self) -> None:
+        widths = ops.normalize_column_widths(
+            {
+                "name": 500,
+                "ext": 10,
+                "size": 99999,
+                "mtime": True,
+                "attr": "90",
+                "bogus": 120,
+            }
+        )
+
+        assert widths == {
+            "name": 500,
+            "ext": ops.COLUMN_MIN_WIDTH,
+            "size": ops.COLUMN_MAX_WIDTH,
+        }
+
+    def test_normalize_column_widths_non_dict(self) -> None:
+        for value in (None, (), "100", 3):
+            assert ops.normalize_column_widths(value) == {}
+
+
+class TestThumbnails:
+    """缩略图的格式判定、依赖探测、世代号、缓存与网格几何。"""
+
+    def test_pillow_probe_injected_success(self) -> None:
+        calls: list[str] = []
+
+        def importer(name: str) -> object:
+            calls.append(name)
+            return object()
+
+        assert ops.pillow_available(importer) is True
+        assert calls == ["PIL.Image"]
+
+    def test_pillow_probe_injected_failures(self) -> None:
+        def missing(_name: str) -> object:
+            raise ImportError("no PIL")
+
+        def broken(_name: str) -> object:
+            raise OSError("dll load failed")
+
+        assert ops.pillow_available(missing) is False
+        assert ops.pillow_available(broken) is False
+
+    def test_thumbnail_plan_both_paths(self) -> None:
+        assert ops.thumbnail_plan("a.png", False) == ops.THUMBNAIL_NATIVE
+        assert ops.thumbnail_plan("a.GIF", False) == ops.THUMBNAIL_NATIVE
+        assert ops.thumbnail_plan("a.jpg", True) == ops.THUMBNAIL_PILLOW
+        assert ops.thumbnail_plan("a.JPEG", True) == ops.THUMBNAIL_PILLOW
+        assert ops.thumbnail_plan("a.webp", True) == ops.THUMBNAIL_PILLOW
+        assert ops.thumbnail_plan("a.jpg", False) == ops.THUMBNAIL_BADGE
+        assert ops.thumbnail_plan("a.webp", False) == ops.THUMBNAIL_BADGE
+        assert ops.thumbnail_plan("a.txt", True) == ops.THUMBNAIL_BADGE
+        assert ops.thumbnail_plan("README", True) == ops.THUMBNAIL_BADGE
+        assert ops.thumbnail_plan("a.png", True) == ops.THUMBNAIL_NATIVE
+
+    def test_thumbnail_messages_reflect_backend(self) -> None:
+        assert "Pillow 可用" in ops.thumbnail_backend_note(True)
+        assert "未安装 Pillow" in ops.thumbnail_backend_note(False)
+        assert "不是支持的图片格式" in ops.thumbnail_unsupported_hint("a.txt", True)
+        assert "需要 Pillow" in ops.thumbnail_unsupported_hint("a.jpg", False)
+
+    @pytest.mark.parametrize("reason", ops.THUMBNAIL_INVALIDATION_REASONS)
+    def test_tracker_invalidates_old_generation_for_each_reason(self, reason: str) -> None:
+        tracker = ops.ThumbnailRequestTracker()
+        generation = tracker.generation
+        new_generation = tracker.invalidate(reason)
+        assert new_generation == generation + 1
+        assert tracker.reason == reason
+        assert tracker.accept(generation) is False
+        assert tracker.accept(new_generation) is True
+
+    def test_tracker_accepts_current_generation_only(self) -> None:
+        tracker = ops.ThumbnailRequestTracker(generation=3)
+        assert tracker.accept(3) is True
+        assert tracker.accept(2) is False
+        assert tracker.accept(4) is False
+
+    def test_cache_lru_by_item_count(self) -> None:
+        cache = ops.ThumbnailCache(max_items=2, max_bytes=10_000)
+        cache.put(("a", 0, 0, 0), object(), 1)
+        cache.put(("b", 0, 0, 0), object(), 1)
+        cache.get(("a", 0, 0, 0))
+        cache.put(("c", 0, 0, 0), object(), 1)
+        assert ("a", 0, 0, 0) in cache
+        assert ("b", 0, 0, 0) not in cache
+        assert ("c", 0, 0, 0) in cache
+        assert len(cache) == 2
+
+    def test_cache_evicts_by_byte_budget(self) -> None:
+        cache = ops.ThumbnailCache(max_items=10, max_bytes=100)
+        cache.put(("a", 0, 0, 0), object(), 60)
+        cache.put(("b", 0, 0, 0), object(), 60)
+        assert ("a", 0, 0, 0) not in cache
+        assert ("b", 0, 0, 0) in cache
+        assert cache.size_bytes == 60
+
+    def test_cache_keeps_failed_entries_as_negative_results(self) -> None:
+        cache = ops.ThumbnailCache()
+        cache.put(("a", 0, 0, 0), None, 0)
+        assert ("a", 0, 0, 0) in cache
+        assert cache.get(("a", 0, 0, 0)) is None
+
+    def test_cache_clear_releases_bytes(self) -> None:
+        cache = ops.ThumbnailCache()
+        cache.put(("a", 0, 0, 0), object(), 32)
+        cache.clear()
+        assert len(cache) == 0
+        assert cache.size_bytes == 0
+
+    def test_thumbnail_columns(self) -> None:
+        assert ops.thumbnail_columns(0, 96, 8) == 1
+        assert ops.thumbnail_columns(96, 96, 8) == 1
+        assert ops.thumbnail_columns(200, 96, 8) == 2
+        assert ops.thumbnail_columns(1000, 96, 8) == 9
+
+    def test_thumbnail_visible_rows(self) -> None:
+        assert ops.thumbnail_visible_rows(0, 0, 116, 0) == (0, -1)
+        assert ops.thumbnail_visible_rows(0, 300, 116, 10) == (0, 3)
+        assert ops.thumbnail_visible_rows(0, 300, 116, 2) == (0, 1)
+        assert ops.thumbnail_visible_rows(116 * 5, 300, 116, 10) == (4, 8)
+        assert ops.thumbnail_visible_rows(116 * 50, 300, 116, 10) == (0, -1)
+        assert ops.thumbnail_visible_rows(0, 300, 116, 10, overscan=0) == (0, 2)
+
+    def test_thumbnail_cache_key_changes_with_metadata(self) -> None:
+        base = ops.thumbnail_cache_key("/a.png", 1, 2, 96)
+        assert base == ops.thumbnail_cache_key("/a.png", 1, 2, 96)
+        assert base != ops.thumbnail_cache_key("/a.png", 2, 2, 96)
+        assert base != ops.thumbnail_cache_key("/a.png", 1, 3, 96)
+        assert base != ops.thumbnail_cache_key("/a.png", 1, 2, 128)
