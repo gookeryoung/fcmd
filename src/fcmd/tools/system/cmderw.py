@@ -3644,7 +3644,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
                 key,
                 lambda column=column: self.sort_active(column),
             )
-            self._menu_items[f"sort_{key}"] = (sort_menu, sort_menu.index("end"))
+            end = sort_menu.index("end")
+            if end is not None:
+                self._menu_items[f"sort_{key}"] = (sort_menu, end)
         view_menu.add_cascade(label="排序方式", menu=sort_menu)
         view_menu.add_separator()
         self._menu_command(view_menu, "up", "上级目录\tBackspace", self.go_up)
