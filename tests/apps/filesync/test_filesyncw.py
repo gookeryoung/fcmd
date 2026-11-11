@@ -25,6 +25,7 @@ def test_config_path_uses_fcmd_home(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 def test_config_path_defaults_to_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.delenv("FCMD_HOME", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows 的 Path.home() 走 USERPROFILE
     assert filesyncw.config_path() == tmp_path / ".fcmd" / "ui" / "filesyncw.json"
 
 
