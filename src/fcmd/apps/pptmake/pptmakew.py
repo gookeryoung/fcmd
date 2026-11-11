@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import fcmd
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _preview as preview
+from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.apps.pptmake._design import Line, Oval, Rect, Text, build_draw_list
 from fcmd.apps.pptmake._pptx import export_pptx, import_pptx
 from fcmd.gui import config as _guiconfig
@@ -71,6 +72,7 @@ STYLE_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 ASPECT_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.ASPECT_TEXT[item], item) for item in core.ASPECTS)
 DECOR_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.DECOR_TEXT[item], item) for item in core.DECORS)
+DENSITY_OPTIONS: tuple[tuple[str, str], ...] = tuple((tokens.DENSITY_TEXT[item], item) for item in tokens.DENSITIES)
 LAYOUT_OPTIONS: tuple[tuple[str, str], ...] = tuple((core.LAYOUT_TEXT[item], item) for item in core.LAYOUTS)
 
 _FILENAME_RE = re.compile(r'[\\/:*?"<>|]+')
@@ -81,8 +83,11 @@ HELP_TEXT = """1. 左侧「页面」选择要编辑的页；「布局库」双�
 2. 右侧修改标题、副标题、要点与备注；要点按行拆分。
    - 数据页写成「98%|交付准时率」；
    - 时间线写成「01|调研」；
-   - 双栏页副标题写成「左栏标题|右栏标题」。
+   - 双栏页副标题写成「左栏标题|右栏标题」；
+   - 对比矩阵写成「维度|方案A|方案B」，图表写成「Q1|42」；
+   - 联系页写成「邮箱|hello@example.com」。
 3. 顶部切换风格 / 画幅 / 装饰；右侧六个色块可逐项改色（自动转为自定义风格）。
+   「密度」调整间距松紧，「装饰强度」滑杆调节装饰显隐（0 为完全关闭）。
 4. 「文件 → 导出模板」保存 .pptmtpl.json，「文件 → 导出 PPTX」生成演示文稿。
 5. 「文件 → 导入」既支持模板 JSON，也支持从现有 .pptx 提取配色与文字。
 6. 预览工具栏可「适应窗口」或按比例缩放；下方缩略图点击即可跳页。
@@ -252,6 +257,12 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._decor_var = tk.StringVar(
             value=_option_label(DECOR_OPTIONS, self._template.theme.decor, core.DECOR_TEXT[core.DECOR_ORBS])
         )
+        self._density_var = tk.StringVar(
+            value=_option_label(
+                DENSITY_OPTIONS, self._template.theme.tokens.density, tokens.DENSITY_TEXT[tokens.DENSITY_COMFORTABLE]
+            )
+        )
+        self._decor_intensity_var = tk.DoubleVar(value=round(self._template.theme.tokens.decor_intensity * 100))
         self._layout_var = tk.StringVar(value=core.LAYOUT_TEXT[core.LAYOUT_BULLETS])
         self._title_var = tk.StringVar()
         self._subtitle_var = tk.StringVar()
@@ -358,6 +369,26 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         )
         decor_box.pack(side="left")
         decor_box.bind("<<ComboboxSelected>>", lambda _event: self._on_decor_selected())
+        ttk.Label(controls, text="密度").pack(side="left", padx=(space.lg, space.xs))
+        density_box = ttk.Combobox(
+            controls,
+            textvariable=self._density_var,
+            values=[text for text, _ in DENSITY_OPTIONS],
+            state="readonly",
+            width=6,
+        )
+        density_box.pack(side="left", padx=(0, space.lg))
+        density_box.bind("<<ComboboxSelected>>", lambda _event: self._on_density_selected())
+        ttk.Label(controls, text="装饰强度").pack(side="left", padx=(0, space.xs))
+        ttk.Scale(
+            controls,
+            from_=0,
+            to=100,
+            orient="horizontal",
+            length=110,
+            variable=self._decor_intensity_var,
+            command=self._on_decor_intensity,
+        ).pack(side="left")
 
         paned = ttk.Panedwindow(root, orient="horizontal")
         paned.grid(row=1, column=0, sticky="nsew", padx=space.md, pady=(0, space.sm))
@@ -566,6 +597,14 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._decor_var.set(
                 _option_label(DECOR_OPTIONS, self._template.theme.decor, core.DECOR_TEXT[core.DECOR_ORBS])
             )
+            self._density_var.set(
+                _option_label(
+                    DENSITY_OPTIONS,
+                    self._template.theme.tokens.density,
+                    tokens.DENSITY_TEXT[tokens.DENSITY_COMFORTABLE],
+                )
+            )
+            self._decor_intensity_var.set(round(self._template.theme.tokens.decor_intensity * 100))
         finally:
             self._loading = False
 
@@ -615,6 +654,30 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         if self._loading:
             return
         self._apply_decor(_option_value(DECOR_OPTIONS, self._decor_var.get(), core.DECOR_ORBS))
+
+    def _on_density_selected(self) -> None:
+        if self._loading:
+            return
+        density = _option_value(DENSITY_OPTIONS, self._density_var.get(), tokens.DENSITY_COMFORTABLE)
+        theme = self._template.theme
+        self._template = replace(self._template, theme=replace(theme, tokens=replace(theme.tokens, density=density)))
+        self._refresh_style_controls()
+        self._schedule_preview()
+        self._set_status(f"已切换密度：{tokens.DENSITY_TEXT[density]}")
+
+    def _on_decor_intensity(self, value: str) -> None:
+        if self._loading:
+            return
+        intensity = max(0.0, min(1.0, float(value) / 100))
+        theme = self._template.theme
+        if round(theme.tokens.decor_intensity, 3) == round(intensity, 3):
+            return
+        self._template = replace(
+            self._template, theme=replace(theme, tokens=replace(theme.tokens, decor_intensity=intensity))
+        )
+        self._refresh_style_controls()
+        self._schedule_preview()
+        self._set_status(f"装饰强度：{intensity * 100:.0f}%")
 
     def _apply_decor(self, decor: str) -> None:
         self._template = replace(self._template, theme=replace(self._template.theme, decor=core.normalize_decor(decor)))
