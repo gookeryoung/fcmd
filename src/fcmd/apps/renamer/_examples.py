@@ -115,6 +115,25 @@ EXAMPLES: tuple[Example, ...] = (
         ),
         demo=(("my  file (1).TXT", "My_File.txt"),),
     ),
+    Example(
+        slug="timestamp-prefix",
+        name="导出文件时间戳前置",
+        summary="_标题_20261026135414_<32 位哈希> → 20261026135414_标题：抽取时间戳前置并去掉随机后缀",
+        rules=(
+            RenameRule(
+                kind="reorder",
+                pattern=r"^_?(?P<title>.+?)_(?P<stamp>\d{14})_[0-9a-fA-F]{32}$",
+                replacement="{stamp}_{title}",
+            ),
+        ),
+        demo=(
+            (
+                "_SYA26101237__国外客户JSC Novomet-Perm空运，出口到俄罗斯26EX230AP0132-02 2026G-119-1"
+                "_20261026135414_2f3f2acb462cd90834dd1f717e9c0cd5",
+                "20261026135414_SYA26101237__国外客户JSC Novomet-Perm空运，出口到俄罗斯26EX230AP0132-02 2026G-119-1",
+            ),
+        ),
+    ),
 )
 
 

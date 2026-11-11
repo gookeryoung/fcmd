@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "reorder",
+    "pattern": "^_?(?P<title>.+?)_(?P<stamp>\\d{14})_[0-9a-fA-F]{32}$",
+    "replacement": "{stamp}_{title}"
+  }
+]
