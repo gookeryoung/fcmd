@@ -2320,6 +2320,17 @@ class TestServewBench:
         labels = {scenario.label for scenario in _llmservew_bench.SCENARIOS}
         assert {"短对话", "长输出", "代码补全", "长上下文 8K", "长上下文 32K", "并发吞吐 4 路"} <= labels
 
+    def test_checked_scenarios_default_all_and_subset(self) -> None:
+        checked = _llmservew_bench.BENCH_CHECKED
+        unchecked = _llmservew_bench.BENCH_UNCHECKED
+        rows = [(checked, scenario.label) for scenario in _llmservew_bench.SCENARIOS]
+        assert _llmservew_bench.checked_scenarios(rows) == list(_llmservew_bench.SCENARIOS)
+
+        rows[2] = (unchecked, rows[2][1])
+        expected = [scenario for index, scenario in enumerate(_llmservew_bench.SCENARIOS) if index != 2]
+        assert _llmservew_bench.checked_scenarios(rows) == expected
+        assert not _llmservew_bench.checked_scenarios([(unchecked, "x")] * len(rows))
+
     def test_run_scenario_sequential(self) -> None:
         calls: list[dict[str, Any]] = []
 

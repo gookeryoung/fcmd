@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
-from fcmd.tools.llm._llmservew_bench import RESULT_COLUMNS, SCENARIOS
+from fcmd.tools.llm._llmservew_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
 from fcmd.tools.llm._llmservew_monitor import (
     _FIT_BUSY,
     _FIT_RUNNING,
@@ -93,6 +93,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _start_bench: Any
         _stop_bench: Any
         _clear_bench: Any
+        _toggle_bench_scenario: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -515,19 +516,21 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         status = ttk.Label(parent, textvariable=self._bench_status_var)
         status.pack(side="bottom", fill="x", pady=(space.xs, 0))
 
-        scenarios_box = ttk.LabelFrame(parent, text="测试场景（Ctrl / Shift 多选）", padding=space.sm)
+        scenarios_box = ttk.LabelFrame(parent, text="测试场景（点击“选”列勾选，默认全选）", padding=space.sm)
         scenarios_box.pack(fill="x")
         self._bench_tree = ttk.Treeview(
             scenarios_box,
-            columns=("label", "input", "output", "detail"),
+            columns=("check", "label", "input", "output", "detail"),
             show="headings",
-            selectmode="extended",
+            selectmode="browse",
             height=len(SCENARIOS),
         )
+        self._bench_tree.heading("check", text="选")
         self._bench_tree.heading("label", text="场景")
         self._bench_tree.heading("input", text="输入")
         self._bench_tree.heading("output", text="输出上限")
         self._bench_tree.heading("detail", text="说明")
+        self._bench_tree.column("check", width=40, anchor="center", stretch=False)
         self._bench_tree.column("label", width=130, anchor="w", stretch=False)
         self._bench_tree.column("input", width=110, anchor="e", stretch=False)
         self._bench_tree.column("output", width=90, anchor="e", stretch=False)
@@ -538,13 +541,14 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
                 "end",
                 iid=str(index),
                 values=(
+                    BENCH_CHECKED,
                     scenario.label,
                     "默认短提示" if not scenario.prompt_tokens else f"约 {scenario.prompt_tokens} tok",
                     f"{scenario.max_tokens} tok",
                     scenario.detail,
                 ),
             )
-        self._bench_tree.selection_set(self._bench_tree.get_children())
+        self._bench_tree.bind("<Button-1>", self._toggle_bench_scenario)
         self._bench_tree.pack(fill="x")
 
         params = ttk.LabelFrame(parent, text="测试参数", padding=space.sm)

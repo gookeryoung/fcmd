@@ -25,10 +25,13 @@ from fcmd.tools.llm import llmbench, llmenv, llmserve
 from fcmd.tools.llm.llmbase import Endpoint, ServeError, ServeState
 
 __all__ = [
+    "BENCH_CHECKED",
+    "BENCH_UNCHECKED",
     "SCENARIOS",
     "BenchSample",
     "BenchScenario",
     "ScenarioResult",
+    "checked_scenarios",
     "endpoint_from_states",
     "format_result_row",
     "run_scenario",
@@ -37,6 +40,10 @@ __all__ = [
 
 #: 结果表列标题（与 :func:`format_result_row` 的返回顺序一致）
 RESULT_COLUMNS = ("场景", "请求", "输入 tok", "输出 tok", "墙钟", "聚合 tok/s", "单请求 tok/s", "状态")
+
+#: 场景表勾选列的两种标记（点击切换）
+BENCH_CHECKED = "☑"
+BENCH_UNCHECKED = "☐"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +76,14 @@ SCENARIOS: tuple[BenchScenario, ...] = (
 def scenario_by_key(key: str) -> BenchScenario | None:
     """按 key 查找场景；未命中返回 ``None``。"""
     return next((scenario for scenario in SCENARIOS if scenario.key == key), None)
+
+
+def checked_scenarios(rows: Sequence[tuple[str, ...]]) -> list[BenchScenario]:
+    """按场景表各行的勾选标记取场景。
+
+    ``rows`` 与 :data:`SCENARIOS` 同序，每行首列为 :data:`BENCH_CHECKED` 时视为勾选。
+    """
+    return [scenario for scenario, values in zip(SCENARIOS, rows, strict=True) if values and values[0] == BENCH_CHECKED]
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,11 +282,25 @@ class _ServeWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     # 参数与场景
     # ------------------------------------------------------------------ #
     def _selected_scenarios(self) -> list[BenchScenario]:
-        """取当前选中的场景（按场景表顺序）。"""
-        keys = self._bench_tree.selection()
-        if not keys:
-            raise ServeError("请至少选择一个测试场景")
-        return [SCENARIOS[int(iid)] for iid in sorted(keys, key=int)]
+        """取当前勾选的场景（按场景表顺序）。"""
+        rows = [tuple(self._bench_tree.item(iid, "values")) for iid in self._bench_tree.get_children()]
+        scenarios = checked_scenarios(rows)
+        if not scenarios:
+            raise ServeError("请至少勾选一个测试场景")
+        return scenarios
+
+    def _toggle_bench_scenario(self, event: Any) -> str | None:
+        """点击勾选列切换该场景的勾选状态（不改变行选中状态）。"""
+        tree = self._bench_tree
+        if tree.identify("region", event.x, event.y) != "cell" or tree.identify_column(event.x) != "#1":
+            return None
+        iid = tree.identify_row(event.y)
+        if not iid:
+            return None
+        values = list(tree.item(iid, "values"))
+        values[0] = BENCH_UNCHECKED if values[0] == BENCH_CHECKED else BENCH_CHECKED
+        tree.item(iid, values=values)
+        return "break"
 
     def _bench_endpoint(self) -> Endpoint:
         """定位被测服务：优先表单中的服务名，其次唯一运行中的服务。"""
