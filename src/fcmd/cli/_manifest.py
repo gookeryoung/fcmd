@@ -158,7 +158,9 @@ def tool_digest() -> str | None:
     digest = hashlib.blake2b(digest_size=16)
     try:
         for rel, path in files:
-            data = path.read_bytes()
+            # 行尾差异不参与指纹：Windows 工作区里被工具写成 CRLF 的文件与仓库中的
+            # LF 内容应得到同一 digest，否则清单在不同平台上会互相判为过期。
+            data = path.read_bytes().replace(b"\r\n", b"\n")
             digest.update(rel.encode("utf-8"))
             digest.update(b"\0")
             digest.update(len(data).to_bytes(8, "big"))
