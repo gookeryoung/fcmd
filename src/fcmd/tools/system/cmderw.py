@@ -101,6 +101,7 @@ from fcmd.tools.system._cmderw_ops import (
     SyncItem,
     SyncOptions,
     SyncPlan,
+    SyncRunReport,
     ThumbnailCache,
     ThumbnailRequestTracker,
     TransferQueue,
@@ -115,6 +116,7 @@ from fcmd.tools.system._cmderw_ops import (
     dump_color_rules,
     execute_sync_deletes,
     filter_names,
+    format_sync_report,
     invert_names,
     item_status_text,
     match_names,
@@ -127,6 +129,11 @@ from fcmd.tools.system._cmderw_ops import (
     read_preview,
     resolve_color_style,
     revalidate_sync_items,
+    split_sync_selection,
+    sync_invert_selection,
+    sync_item_key,
+    sync_select_all,
+    sync_toggle_selection,
     thumbnail_cache_key,
     thumbnail_columns,
     thumbnail_plan,
@@ -2897,6 +2904,8 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.report = report
         self.tolerance = tolerance
         self.plan: SyncPlan | None = None
+        self.selection: frozenset[str] = frozenset()
+        self._row_keys: dict[str, str] = {}
         theme = app.theme
         spacing = theme.spacing
         self.win = tk.Toplevel(app.root)
@@ -2943,26 +2952,29 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.delete_dirs_check.pack(side="left", padx=spacing.sm)
         self.delete_dirs_check.configure(state="disabled")
 
-        note = "执行前会重新校验目标端的大小与时间，与预演不一致的项将跳过并在结果中列出。"
+        note = "勾选要执行的项（点击首列或按空格切换）；执行前会重新校验大小与时间，不一致的项将跳过。"
         ttk.Label(frame, text=note, style="Muted.TLabel").pack(fill="x", pady=(0, spacing.xxs))
 
         tree_frame = ttk.Frame(frame)
         tree_frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(
             tree_frame,
-            columns=("action", "relative", "source", "target", "note"),
+            columns=("pick", "action", "relative", "source", "target", "note"),
             show="headings",
-            selectmode="browse",
+            selectmode="extended",
         )
         for column, title, width, anchor in (
+            ("pick", "选中", 48, "center"),
             ("action", "操作", 80, "w"),
-            ("relative", "相对路径", 260, "w"),
-            ("source", "源", 320, "w"),
-            ("target", "目标", 320, "w"),
+            ("relative", "相对路径", 240, "w"),
+            ("source", "源", 300, "w"),
+            ("target", "目标", 300, "w"),
             ("note", "说明", 180, "w"),
         ):
             self.tree.heading(column, text=title)
             self.tree.column(column, width=width, anchor=anchor)
+        self.tree.bind("<ButtonRelease-1>", self._on_tree_click)
+        self.tree.bind("<space>", self._on_space_toggle)
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True)
@@ -2976,6 +2988,9 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.start_button = ttk.Button(bottom, text="开始执行", style="Accent.TButton", command=self.execute)
         self.start_button.pack(side="right", padx=(0, spacing.xs))
         ttk.Button(bottom, text="重新预演", command=self.refresh_plan).pack(side="right", padx=(0, spacing.xs))
+        ttk.Button(bottom, text="反选", command=self._invert_selection).pack(side="right", padx=(0, spacing.xs))
+        ttk.Button(bottom, text="全不选", command=self._select_none).pack(side="right", padx=(0, spacing.xs))
+        ttk.Button(bottom, text="全选", command=self._select_all).pack(side="right", padx=(0, spacing.xs))
         self.refresh_plan()
 
     def _on_delete_toggle(self) -> None:
@@ -3013,40 +3028,83 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             mtime_tolerance=self.tolerance,
         )
         self.plan = build_sync_plan(self.report, options)
+        self.selection = sync_select_all(self.plan)
+        self._render(self.plan)
+
+    def _on_tree_click(self, event: Any) -> None:
+        """点击首列切换该行勾选；其它列保持普通选择行为。"""
+        if self.tree.identify_column(event.x) != "#1":
+            return
+        row = self.tree.identify_row(event.y)
+        if row:
+            self._toggle_rows((row,))
+
+    def _on_space_toggle(self, _event: Any) -> str:
+        """空格切换所有选中行，返回 ``break`` 阻止默认滚动。"""
+        self._toggle_rows(self.tree.selection())
+        return "break"
+
+    def _toggle_rows(self, rows: tuple[str, ...]) -> None:
+        """按行键翻转勾选并立即重绘。"""
+        for row in rows:
+            key = self._row_keys.get(row)
+            if key is not None:
+                self.selection = sync_toggle_selection(self.selection, key)
+        if self.plan is not None:
+            self._render(self.plan)
+
+    def _select_all(self) -> None:
+        if self.plan is None:
+            return
+        self.selection = sync_select_all(self.plan)
+        self._render(self.plan)
+
+    def _select_none(self) -> None:
+        self.selection = frozenset()
+        if self.plan is not None:
+            self._render(self.plan)
+
+    def _invert_selection(self) -> None:
+        if self.plan is None:
+            return
+        self.selection = sync_invert_selection(self.plan, self.selection)
         self._render(self.plan)
 
     def _render(self, plan: SyncPlan) -> None:
-        """重绘预演明细与汇总。"""
+        """重绘预演明细（含勾选列）与汇总。"""
         self.tree.delete(*self.tree.get_children())
-        for item in plan.copies:
-            self.tree.insert(
-                "",
-                "end",
-                values=(
+        self._row_keys.clear()
+        selected_copies, selected_deletes, unselected = split_sync_selection(plan, self.selection)
+        for index, item in enumerate(plan.copies):
+            key = sync_item_key(item)
+            note = "目录" if item.is_dir else ("覆盖已有文件" if item.overwrite else "新建文件")
+            self._insert_row(
+                index,
+                (
+                    self._pick_mark(key),
                     "覆盖" if item.overwrite else "复制",
                     item.relative,
                     str(item.source or ""),
                     str(item.target),
-                    "目录" if item.is_dir else ("覆盖已有文件" if item.overwrite else "新建文件"),
+                    note,
                 ),
+                key,
             )
-        for item in plan.deletes:
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    "删除",
-                    item.relative,
-                    "",
-                    str(item.target),
-                    "目录" if item.is_dir else f"文件，{format_size(item.target_size or 0)}",
-                ),
+        offset = len(plan.copies)
+        for index, item in enumerate(plan.deletes):
+            key = sync_item_key(item)
+            note = "目录" if item.is_dir else f"文件，{format_size(item.target_size or 0)}"
+            self._insert_row(
+                offset + index,
+                (self._pick_mark(key), "删除", item.relative, "", str(item.target), note),
+                key,
             )
-        for item in plan.skipped:
-            self.tree.insert(
-                "",
-                "end",
-                values=("跳过", item.relative, "", str(item.target), item.skip_reason),
+        offset += len(plan.deletes)
+        for index, item in enumerate(plan.skipped):
+            self._insert_row(
+                offset + index,
+                ("—", "跳过", item.relative, "", str(item.target), item.skip_reason),
+                None,
             )
         counts = plan.counts()
         parts = [f"将复制 {counts['copy_new']} 个文件，覆盖 {counts['copy_overwrite']} 个文件"]
@@ -3059,60 +3117,86 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if counts["skipped"]:
             parts.append(f"跳过 {counts['skipped']} 项")
         parts.append(f"相同 {counts['same']} 项")
+        total = len(plan.copies) + len(plan.deletes)
+        if total:
+            parts.append(f"已选 {len(selected_copies) + len(selected_deletes)}/{total} 项")
+            if unselected:
+                parts.append(f"未勾选 {unselected} 项")
         prefix = "双向镜像" if plan.is_bidirectional else "单向同步"
         self.status_var.set(f"{prefix}：" + "；".join(parts))
-        self.start_button.configure(state="normal" if (plan.copies or plan.deletes) else "disabled")
+        self.start_button.configure(state="normal" if (selected_copies or selected_deletes) else "disabled")
+
+    def _pick_mark(self, key: str) -> str:
+        """首列勾选标记。"""
+        return "☑" if key in self.selection else "☐"
+
+    def _insert_row(self, index: int, values: tuple[str, ...], key: str | None) -> None:
+        """插入一行；可执行行记录键供勾选切换。"""
+        iid = str(index)
+        self.tree.insert("", "end", iid=iid, values=values)
+        if key is not None:
+            self._row_keys[iid] = key
 
     def execute(self) -> None:
-        """二次确认后执行；删除前再单独确认一次。"""
+        """二次确认后只执行勾选项；删除前再单独确认一次。"""
         plan = self.plan
-        if plan is None or not (plan.copies or plan.deletes):
+        if plan is None:
             return
-        counts = plan.counts()
+        copies, deletes, unselected = split_sync_selection(plan, self.selection)
+        if not copies and not deletes:
+            return
+        copy_new = sum(1 for item in copies if not item.overwrite)
         if plan.is_bidirectional:
-            lines = [f"将执行以下操作（双向镜像：{plan.left_root} ⇄ {plan.right_root}）："]
+            lines = [f"将执行勾选的操作（双向镜像：{plan.left_root} ⇄ {plan.right_root}）："]
         else:
-            lines = [f"将执行以下操作（{plan.source_root} → {plan.target_root}）："]
-        if plan.copies:
-            lines.append(f"- 复制 {counts['copy_new']} 个新文件")
-            lines.append(f"- 覆盖 {counts['copy_overwrite']} 个已有文件")
-        if plan.deletes:
-            lines.append(f"- 删除 {counts['delete']} 项（已勾选，移入回收站）")
-        if plan.skipped:
-            lines.append(f"- 跳过 {counts['skipped']} 项（符号链接 / 未勾选目录等）")
+            lines = [f"将执行勾选的操作（{plan.source_root} → {plan.target_root}）："]
+        if copies:
+            lines.append(f"- 复制 {copy_new} 个新文件")
+            lines.append(f"- 覆盖 {len(copies) - copy_new} 个已有文件")
+        if deletes:
+            dirs = sum(1 for item in deletes if item.is_dir)
+            lines.append(f"- 删除 {len(deletes)} 项（目录 {dirs} 个，移入回收站）")
+        if unselected:
+            lines.append(f"- 未勾选 {unselected} 项不执行")
         lines += [
             "",
             "执行前会重新校验每个目标文件的大小与修改时间；与预演不一致的项将跳过，并在结果里单独列出。",
         ]
-        if plan.deletes:
+        if deletes:
             lines.append("删除不可撤销（回收站可还原）。")
         if not self.app._messagebox.askokcancel("确认执行同步", "\n".join(lines), parent=self.win):
             return
-        if plan.deletes and not self._confirm_deletes(plan):
+        if deletes and not self._confirm_deletes(deletes):
             return
-        self._run(plan)
+        self._run(plan, copies, deletes, unselected)
 
-    def _confirm_deletes(self, plan: SyncPlan) -> bool:
+    def _confirm_deletes(self, deletes: list[SyncItem]) -> bool:
         """删除单独确认：逐条列出完整路径与总数。"""
-        side = {SYNC_LTR: "右侧", SYNC_RTL: "左侧", SYNC_BOTH: "两侧"}.get(plan.direction, "目标端")
-        counts = plan.counts()
-        lines = ["确认删除目标端多余项", "", f"即将从{side}移入回收站以下 {len(plan.deletes)} 项：", ""]
-        for index, item in enumerate(plan.deletes, start=1):
+        side = {SYNC_LTR: "右侧", SYNC_RTL: "左侧"}.get(self.direction_var.get(), "目标端")
+        dirs = sum(1 for item in deletes if item.is_dir)
+        lines = ["确认删除目标端多余项", "", f"即将从{side}移入回收站以下 {len(deletes)} 项：", ""]
+        for index, item in enumerate(deletes, start=1):
             kind = "目录" if item.is_dir else f"文件，{format_size(item.target_size or 0)}"
             lines.append(f"{index}. {item.target}（{kind}）")
         lines += [
             "",
-            f"共 {len(plan.deletes)} 项，其中目录 {counts['delete_dirs']} 个。",
+            f"共 {len(deletes)} 项，其中目录 {dirs} 个。",
             "删除不可撤销（回收站可还原）。",
             "删除逐项执行；任一项失败立即停止，并汇报已完成与未执行部分。",
             "回收站不可用时整批中止，不会改为永久删除。",
         ]
         return bool(self.app._messagebox.askokcancel("确认删除目标端多余项", "\n".join(lines), parent=self.win))
 
-    def _run(self, plan: SyncPlan) -> None:
-        """执行前复核，复制入队，删除逐项执行并汇报。"""
-        ready_copies, skipped_copies = revalidate_sync_items(plan.copies, mtime_tolerance=self.tolerance)
-        ready_deletes, skipped_deletes = revalidate_sync_items(plan.deletes, mtime_tolerance=self.tolerance)
+    def _run(
+        self,
+        plan: SyncPlan,
+        copies: list[SyncItem],
+        deletes: list[SyncItem],
+        unselected: int,
+    ) -> None:
+        """复核后复制入队、删除逐项执行，并用结果窗口汇报。"""
+        ready_copies, skipped_copies = revalidate_sync_items(copies, mtime_tolerance=self.tolerance)
+        ready_deletes, skipped_deletes = revalidate_sync_items(deletes, mtime_tolerance=self.tolerance)
         enqueue_ok = True
         if ready_copies:
             groups: dict[Path, list[TransferItem]] = {}
@@ -3130,56 +3214,38 @@ class SyncDialog:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.app.refresh_both()
         self.start_button.configure(state="disabled")
         self.status_var.set("已执行；复制任务在传输队列中继续，完成后可重新预演")
-
-        skipped = skipped_copies + skipped_deletes
-        text = "\n".join(
-            self._copy_result_lines(ready_copies, enqueue_ok)
-            + self._delete_result_lines(plan, delete_report, enqueue_ok)
-            + self._skipped_result_lines(skipped)
+        report = SyncRunReport(
+            copied=len(ready_copies) if enqueue_ok else 0,
+            copied_new=sum(1 for item in ready_copies if not item.overwrite),
+            deleted=len(delete_report.completed),
+            delete_not_executed=len(delete_report.not_executed) if enqueue_ok else len(ready_deletes),
+            unselected=unselected,
+            enqueue_ok=enqueue_ok,
+            skipped=tuple((str(item.target), reason) for item, reason in (*skipped_copies, *skipped_deletes)),
+            failed=tuple((str(item.target), error) for item, error in delete_report.failures),
         )
-        text = text or "没有可执行的操作（全部被跳过）。"
-        if delete_report.failures:
-            self.app._messagebox.showwarning("同步结果（删除失败）", text, parent=self.win)
-        elif skipped:
-            self.app._messagebox.showwarning("同步结果（有跳过项）", text, parent=self.win)
-        else:
-            self.app._messagebox.showinfo("同步结果", text, parent=self.win)
+        self._show_result(format_sync_report(report))
 
-    @staticmethod
-    def _copy_result_lines(copies: list[SyncItem], enqueue_ok: bool) -> list[str]:
-        """复制入队结果行。"""
-        if not copies:
-            return []
-        if not enqueue_ok:
-            return ["复制未入队：目标与队列中未完成任务冲突"]
-        new_count = sum(1 for item in copies if not item.overwrite)
-        return [f"复制入队：{len(copies)} 项（新建 {new_count}，覆盖 {len(copies) - new_count}）"]
+    def _show_result(self, lines: list[str]) -> None:
+        """执行结果窗口：明细完整可见，可选中复制。"""
+        import tkinter as tk
+        from tkinter import ttk
 
-    @staticmethod
-    def _delete_result_lines(plan: SyncPlan, report: SyncDeleteReport, enqueue_ok: bool) -> list[str]:
-        """删除执行结果行；失败与未执行都如实列出。"""
-        lines: list[str] = []
-        if not enqueue_ok and plan.deletes:
-            lines.append(f"删除未执行：{len(plan.deletes)} 项（复制未入队，未做删除）")
-        if report.completed:
-            lines.append(f"删除完成：{len(report.completed)} 项")
-        for item, error in report.failures:
-            lines.append(f"删除失败：{item.target}：{error}")
-        if report.not_executed:
-            lines.append(f"删除未执行：{len(report.not_executed)} 项（失败即停）")
-        return lines
-
-    @staticmethod
-    def _skipped_result_lines(skipped: list[tuple[SyncItem, str]]) -> list[str]:
-        """执行前校验跳过项；超出上限时提示见预演清单。"""
-        if not skipped:
-            return []
-        lines = ["", "执行前校验跳过："]
-        for item, reason in skipped[:_MAX_ERROR_DETAILS]:
-            lines.append(f"- {item.target}：{reason}")
-        if len(skipped) > _MAX_ERROR_DETAILS:
-            lines.append(f"- 其余 {len(skipped) - _MAX_ERROR_DETAILS} 项见预演清单")
-        return lines
+        spacing = self.app.theme.spacing
+        win = tk.Toplevel(self.win)
+        win.title("同步结果")
+        win.transient(self.win)
+        _guiwindow.center_over_parent(win, self.win, width=760, height=460)
+        frame = ttk.Frame(win, padding=spacing.md)
+        frame.pack(fill="both", expand=True)
+        body = tk.Text(frame, wrap="word", height=16)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=body.yview)
+        body.configure(yscrollcommand=scrollbar.set)
+        body.insert("1.0", "\n".join(lines))
+        body.configure(state="disabled")
+        body.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        ttk.Button(win, text="关闭", command=win.destroy).pack(pady=(0, spacing.sm))
 
 
 _COLOR_KIND_CHOICES: tuple[tuple[str, str], ...] = (

@@ -1035,6 +1035,52 @@ class TestSyncPlan:
         assert plan.root_for(right / "sub" / "a.txt") == right
         assert plan.root_for(left / "a.txt") == left
 
+    def test_selection_split_toggle_and_invert(self, tmp_path: Path) -> None:
+        left, right = self._roots(tmp_path)
+        self._write(left / "left-only.txt", "x")
+        self._write(right / "right-only.txt", "y")
+        report = ops.compare_trees(left, right)
+        plan = ops.build_sync_plan(report, ops.SyncOptions(delete_target_extra=True))
+
+        everything = ops.sync_select_all(plan)
+        assert ops.split_sync_selection(plan, everything) == (plan.copies, plan.deletes, 0)
+
+        first_key = ops.sync_item_key(plan.copies[0])
+        toggled = ops.sync_toggle_selection(everything, first_key)
+        copies, deletes, unselected = ops.split_sync_selection(plan, toggled)
+        assert copies == []
+        assert deletes == plan.deletes
+        assert unselected == 1
+
+        assert ops.sync_invert_selection(plan, everything) == frozenset()
+        assert ops.sync_invert_selection(plan, frozenset()) == everything
+        assert ops.sync_toggle_selection(toggled, first_key) == everything
+
+    def test_format_sync_report_counts_and_truncation(self) -> None:
+        report = ops.SyncRunReport(
+            copied=3,
+            copied_new=1,
+            deleted=1,
+            delete_not_executed=2,
+            unselected=4,
+            skipped=(("a", "大小已变化"), ("b", "源端缺失"), ("c", "符号链接")),
+            failed=(("/tmp/x", "权限不足"),),
+        )
+
+        text = "\n".join(ops.format_sync_report(report, max_details=2))
+
+        assert "复制已入队：3 项（新建 1，覆盖 2）" in text
+        assert "删除完成：1 项" in text
+        assert "删除未执行：2 项" in text
+        assert "未勾选 4 项" in text
+        assert "其余 1 项见预演清单" in text
+        assert "删除失败 1 项" in text
+        assert "传输队列" in text
+
+    def test_format_sync_report_empty_and_enqueue_failure(self) -> None:
+        assert ops.format_sync_report(ops.SyncRunReport()) == ["没有可执行的操作（全部被跳过或未勾选）。"]
+        assert ops.format_sync_report(ops.SyncRunReport(enqueue_ok=False))[0].startswith("复制未入队")
+
     def test_symlink_entries_are_skipped(self, tmp_path: Path) -> None:
         left, right = self._roots(tmp_path)
         self._write(left / "target.txt", "x")

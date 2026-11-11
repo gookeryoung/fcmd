@@ -106,6 +106,7 @@ __all__ = [
     "SyncItem",
     "SyncOptions",
     "SyncPlan",
+    "SyncRunReport",
     "ThumbnailCache",
     "ThumbnailRequestTracker",
     "TransferQueue",
@@ -122,6 +123,7 @@ __all__ = [
     "dump_color_rules",
     "execute_sync_deletes",
     "filter_names",
+    "format_sync_report",
     "invert_names",
     "item_status_text",
     "match_names",
@@ -138,6 +140,12 @@ __all__ = [
     "revalidate_sync_items",
     "send_to_trash",
     "split_masks",
+    "split_sync_selection",
+    "sync_invert_selection",
+    "sync_item_key",
+    "sync_select_all",
+    "sync_selectable_keys",
+    "sync_toggle_selection",
     "thumbnail_cache_key",
     "thumbnail_columns",
     "thumbnail_plan",
@@ -1432,6 +1440,88 @@ def _make_both_item(
         is_dir = entry.left_is_dir if source_is_left else entry.right_is_dir
         return _make_copy_item(entry, plan, source_is_left, bool(is_dir))
     return _make_copy_item(entry, plan, True, bool(entry.left_is_dir))
+
+
+@dataclass(frozen=True)
+class SyncRunReport:
+    """一次同步执行的结果快照，用于结果窗口。"""
+
+    copied: int = 0
+    copied_new: int = 0
+    deleted: int = 0
+    delete_not_executed: int = 0
+    unselected: int = 0
+    enqueue_ok: bool = True
+    skipped: tuple[tuple[str, str], ...] = ()
+    failed: tuple[tuple[str, str], ...] = ()
+
+
+def sync_item_key(item: SyncItem) -> str:
+    """预演行的稳定键：动作 + 相对路径。"""
+    return f"{item.action}\u0000{item.relative}"
+
+
+def sync_selectable_keys(plan: SyncPlan) -> tuple[str, ...]:
+    """可勾选的预演行（复制 + 删除）键，按预演顺序。"""
+    return tuple(sync_item_key(item) for item in (*plan.copies, *plan.deletes))
+
+
+def sync_select_all(plan: SyncPlan) -> frozenset[str]:
+    """默认全选：复制与删除项全部勾选。"""
+    return frozenset(sync_selectable_keys(plan))
+
+
+def sync_toggle_selection(selection: frozenset[str], key: str) -> frozenset[str]:
+    """切换一行的勾选状态。"""
+    if key in selection:
+        return selection - {key}
+    return selection | {key}
+
+
+def sync_invert_selection(plan: SyncPlan, selection: frozenset[str]) -> frozenset[str]:
+    """反选：只保留未勾选的行。"""
+    return frozenset(key for key in sync_selectable_keys(plan) if key not in selection)
+
+
+def split_sync_selection(
+    plan: SyncPlan,
+    selection: frozenset[str],
+) -> tuple[list[SyncItem], list[SyncItem], int]:
+    """按勾选状态拆分执行范围：复制的项、删除的项、未勾选数量。"""
+    copies = [item for item in plan.copies if sync_item_key(item) in selection]
+    deletes = [item for item in plan.deletes if sync_item_key(item) in selection]
+    unselected = len(plan.copies) + len(plan.deletes) - len(copies) - len(deletes)
+    return copies, deletes, unselected
+
+
+def format_sync_report(report: SyncRunReport, *, max_details: int = 20) -> list[str]:
+    """把执行结果格式化成结果窗口文本；明细超限时折叠。"""
+    lines: list[str] = []
+    if report.copied:
+        lines.append(
+            f"复制已入队：{report.copied} 项（新建 {report.copied_new}，覆盖 {report.copied - report.copied_new}）"
+        )
+    elif not report.enqueue_ok:
+        lines.append("复制未入队：目标与队列中未完成任务冲突")
+    if report.deleted:
+        lines.append(f"删除完成：{report.deleted} 项（已移入回收站）")
+    if report.delete_not_executed:
+        lines.append(f"删除未执行：{report.delete_not_executed} 项（失败即停）")
+    if report.unselected:
+        lines.append(f"未勾选 {report.unselected} 项，未执行")
+    if report.skipped:
+        lines.append(f"执行前校验跳过 {len(report.skipped)} 项：")
+        lines.extend(f"- {target}：{reason}" for target, reason in report.skipped[:max_details])
+        if len(report.skipped) > max_details:
+            lines.append(f"- 其余 {len(report.skipped) - max_details} 项见预演清单")
+    if report.failed:
+        lines.append(f"删除失败 {len(report.failed)} 项：")
+        lines.extend(f"- {target}：{error}" for target, error in report.failed[:max_details])
+    if report.copied:
+        lines += ["", "复制任务在传输队列中继续，失败项可在传输面板查看。"]
+    if not lines:
+        lines.append("没有可执行的操作（全部被跳过或未勾选）。")
+    return lines
 
 
 def build_sync_plan(report: CompareReport, options: SyncOptions | None = None) -> SyncPlan:
