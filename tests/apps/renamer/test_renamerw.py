@@ -24,6 +24,7 @@ from fcmd.apps.renamer._core import (
     build_preview,
     format_preview_status,
     make_target,
+    unique_paths,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
@@ -205,3 +206,9 @@ def test_make_target_marks_directories_and_tolerates_missing(tmp_path: Path) -> 
     missing = make_target(tmp_path / "missing.txt")
     assert missing.is_dir is False
     assert (missing.mtime, missing.ctime) == (0.0, 0.0)
+
+
+def test_unique_paths_keeps_first_and_drops_duplicates(tmp_path: Path) -> None:
+    first = tmp_path / "a.txt"
+    second = tmp_path / "b.txt"
+    assert unique_paths([first, second, first]) == (first, second)

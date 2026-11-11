@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
 __all__ = [
     "ANCHORS",
@@ -70,6 +70,7 @@ __all__ = [
     "rules_to_json",
     "split_name",
     "undo_report",
+    "unique_paths",
     "validate_rules",
 ]
 
@@ -665,6 +666,19 @@ def preview_to_plan(preview: RenamePreview, selected: Sequence[Path] | None = No
 # ---------------------------------------------------------------------- #
 # 目标收集
 # ---------------------------------------------------------------------- #
+def unique_paths(paths: Iterable[Path]) -> tuple[Path, ...]:
+    """按平台大小写规则去重，保留首次出现的顺序。"""
+    seen: set[str] = set()
+    result: list[Path] = []
+    for path in paths:
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return tuple(result)
+
+
 def make_target(path: Path, *, is_dir: bool | None = None) -> RenameTarget:
     """按路径构造目标；读取不到的元数据记为 0，目录标记按需推断。"""
     if is_dir is None:

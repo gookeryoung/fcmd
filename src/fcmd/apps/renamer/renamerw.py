@@ -49,6 +49,7 @@ from fcmd.apps.renamer._core import (
     preview_to_plan,
     rules_to_json,
     undo_report,
+    unique_paths,
     validate_rules,
 )
 from fcmd.apps.renamer._examples import EXAMPLES, HELP_TEXT, Example
@@ -291,6 +292,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._rules = []
         self._preview: RenamePreview | None = None
         self._last_report: RenameReport | None = None
+        self._row_targets: list[int] = []
 
         self.root, self._theme = _guiwindow.create_root(
             title=f"renamer - 批量重命名 v{__version__}",
@@ -560,7 +562,7 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                 expanded.append(path)
                 continue
             expanded.extend(target.path for target in targets)
-        return expanded
+        return list(unique_paths(expanded))
 
     def _add_files(self) -> None:
         selected = self._filedialog.askopenfilenames(parent=self.root, title="选择待重命名文件")
@@ -579,7 +581,8 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._status_var.set("目录中没有可添加的文件；可勾选「递归子目录」或「包含目录」后重新添加")
 
     def _remove_targets(self) -> None:
-        indexes = sorted({int(iid) for iid in self._file_tree.selection()}, reverse=True)
+        rows = self._file_tree.selection()
+        indexes = sorted({self._row_targets[int(iid)] for iid in rows}, reverse=True)
         for index in indexes:
             if 0 <= index < len(self._selected):
                 del self._selected[index]
@@ -804,8 +807,10 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _refresh_file_tree(self) -> None:
         """无规则时只显示名称，提示规则生效后会自动预览。"""
         self._file_tree.delete(*self._file_tree.get_children())
+        self._row_targets = []
         for index, path in enumerate(self._selected):
             self._file_tree.insert("", "end", iid=str(index), values=(path.name, "", ""))
+            self._row_targets.append(index)
         if not self._selected:
             self._status_var.set("请先添加文件或目录")
         else:
@@ -827,15 +832,16 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._status_var.set(f"规则错误：{preview.error}")
             return
         self._file_tree.delete(*self._file_tree.get_children())
+        self._row_targets = []
         index_by_path = {os.path.normcase(str(path)): index for index, path in enumerate(self._selected)}
-        for item in preview.items:
-            index = index_by_path[os.path.normcase(str(item.source))]
+        for position, item in enumerate(preview.items):
             self._file_tree.insert(
                 "",
                 "end",
-                iid=str(index),
+                iid=str(position),
                 values=(item.old_name, item.new_name, STATUS_TEXT.get(item.status, item.status)),
             )
+            self._row_targets.append(index_by_path[os.path.normcase(str(item.source))])
         self._status_var.set(format_preview_status(preview))
 
     def _execute(self) -> None:
