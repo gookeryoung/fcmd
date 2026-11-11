@@ -48,6 +48,7 @@ from fcmd.apps.renamer._core import (
     undo_report,
     validate_rules,
 )
+from fcmd.apps.renamer._examples import EXAMPLES, HELP_TEXT, Example
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
@@ -311,7 +312,11 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self.root,
             on_close=self.close,
             on_about=self._show_about,
-            help_items=(("载入规则…", self._load_rules_file), ("保存规则…", self._save_rules_file)),
+            help_items=(
+                ("使用帮助", self._show_help),
+                ("载入规则…", self._load_rules_file),
+                ("保存规则…", self._save_rules_file),
+            ),
         )
 
     # ------------------------------------------------------------------ #
@@ -687,6 +692,71 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _save_rules_file(self) -> None:
         self._rules_file_action(save=True)
+
+    # ------------------------------------------------------------------ #
+    # 帮助与示例
+    # ------------------------------------------------------------------ #
+    def _show_help(self) -> None:
+        """打开非模态帮助窗口：左侧典型示例，正文为规则说明。"""
+        tk = self._tk
+        ttk = self._ttk
+        space = self._theme.spacing
+        window = tk.Toplevel(self.root)
+        window.title("renamer 使用帮助")
+        window.transient(self.root)
+        window.geometry("880x600")
+        window.minsize(700, 460)
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(2, weight=1)
+
+        ttk.Label(
+            window,
+            text="典型规则示例（双击或点「载入选中示例」写入规则表）",
+            style="Hint.TLabel",
+        ).grid(row=0, column=0, sticky="w", padx=space.md, pady=(space.md, space.xxs))
+        example_tree = ttk.Treeview(window, columns=("name", "summary"), show="headings", height=4)
+        example_tree.heading("name", text="示例")
+        example_tree.heading("summary", text="说明")
+        example_tree.column("name", width=220, anchor="w")
+        example_tree.column("summary", width=620, anchor="w")
+        for example in EXAMPLES:
+            example_tree.insert("", "end", values=(example.name, example.summary))
+        example_tree.grid(row=1, column=0, sticky="ew", padx=space.md)
+
+        help_frame = ttk.Frame(window)
+        help_frame.grid(row=2, column=0, sticky="nsew", padx=space.md, pady=space.sm)
+        help_frame.columnconfigure(0, weight=1)
+        help_frame.rowconfigure(0, weight=1)
+        text = _guiwindow.create_log(help_frame, height=14, grid=True)
+        text.configure(state="normal")
+        text.insert("1.0", HELP_TEXT)
+        text.configure(state="disabled")
+
+        def load_selected() -> None:
+            selection = example_tree.selection()
+            if not selection:
+                return
+            self._apply_example(EXAMPLES[example_tree.index(selection[0])])
+
+        bar = ttk.Frame(window)
+        bar.grid(row=3, column=0, sticky="ew", padx=space.md, pady=(0, space.md))
+        ttk.Button(bar, text="载入选中示例", command=load_selected).grid(row=0, column=0, sticky="w")
+        ttk.Button(bar, text="关闭", command=window.destroy).grid(row=0, column=1, sticky="w", padx=(space.sm, 0))
+        bar.columnconfigure(2, weight=1)
+        example_tree.bind("<Double-1>", lambda _event: load_selected())
+
+    def _apply_example(self, example: Example) -> bool:
+        """把示例规则写入规则表；已有规则时先确认覆盖。"""
+        if self._rules and not self._messagebox.askyesno(
+            "载入示例",
+            f"用示例「{example.name}」替换当前 {len(self._rules)} 条规则？",
+            parent=self.root,
+        ):
+            return False
+        self._rules = list(example.rules)
+        self._refresh_rule_tree()
+        self._status_var.set(f"已载入示例「{example.name}」（{len(self._rules)} 条规则），点击「刷新预览」查看结果")
+        return True
 
     # ------------------------------------------------------------------ #
     # 预览与执行

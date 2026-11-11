@@ -1,0 +1,16 @@
+[
+  {
+    "kind": "replace",
+    "pattern": "^IMG_",
+    "replacement": "照片_"
+  },
+  {
+    "kind": "replace",
+    "pattern": "_\\d+$"
+  },
+  {
+    "kind": "sequence",
+    "anchor": "end",
+    "text": "_"
+  }
+]

@@ -257,7 +257,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `filesync` | - | 文件夹比较与同步（参考 FreeFileSync）：`compare` 按时间与大小/仅大小/内容比较左右目录，`sync` 支持双向/镜像/更新三种模式；包含/排除通配符与跳过隐藏文件，`--preview` 预览，冲突项（时间相同但内容不同）自动跳过 |
 | `filesyncw` | - | 文件夹比较与同步窗口版（Tk：左右目录选择、比较/同步模式与过滤、差异表与计划动作着色、后台比较与逐项同步进度、预演不写盘、冲突跳过、JSON 配置载入/保存，设置持久化到 `~/.fcmd/ui/filesyncw.json`） |
 | `renamer` | - | 批量重命名（规则流水线）：`replace` 正则替换、`reorder` 用 `{0}/{1}/{name}` 重排捕获片段、`move` 把匹配文本搬到开头/结尾/锚点/指定位置，另有 `insert`/`case`/`sequence`；规则用 JSON 或 `@文件` 传入，`preview` 预览、`apply` 两阶段执行（支持互换与仅大小写改名），预览标记未变化/非法/冲突 |
-| `renamerw` | - | 批量重命名窗口版（Tk：目标文件/目录列表、规则表增删改与上下移、正则/重排/搬移/插入/大小写/计数器表单、旧名→新名预览与冲突着色、两阶段执行与本次撤销、规则 JSON 导入导出，设置持久化到 `~/.fcmd/ui/renamerw.json`） |
+| `renamerw` | - | 批量重命名窗口版（Tk：目标文件/目录列表、规则表增删改与上下移、正则/重排/搬移/插入/大小写/计数器表单、旧名→新名预览与冲突着色、两阶段执行与本次撤销、规则 JSON 导入导出；「帮助 → 使用帮助」内置规则说明与四组典型示例，可一键载入，详见 [docs/help/renamerw.md](docs/help/renamerw.md)，设置持久化到 `~/.fcmd/ui/renamerw.json`） |
 | `iptool` | - | IP 地址工具（parse/subnet/validate） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
 | `urlcheck` | - | URL 可访问性与访问速度检测（HEAD/GET 探测 + 并发测速排序，供镜像源选优） |

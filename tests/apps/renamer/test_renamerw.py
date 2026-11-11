@@ -7,14 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.renamer import renamerw
+from fcmd.apps.renamer import _examples, renamerw
 from fcmd.apps.renamer._core import (
     ANCHOR_BEFORE,
     ANCHOR_END,
+    RULE_KINDS,
     RenameRule,
+    RenameTarget,
     RuleError,
+    build_preview,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
+
+_EXAMPLES_DIR = Path(__file__).resolve().parents[3] / "docs" / "help" / "examples"
 
 
 def test_tool_registration() -> None:
@@ -135,3 +140,29 @@ def test_resolve_geometry_default_and_clamp() -> None:
     clamped = renamerw.resolve_geometry("500x400+0+0", 1920, 1080)
     width = int(clamped.split("x", 1)[0])
     assert width >= renamerw.MIN_WIDTH
+
+
+def test_examples_produce_expected_names() -> None:
+    """每个内置示例都能通过校验，并对演示名称生成预期结果。"""
+    for example in _examples.EXAMPLES:
+        preview = build_preview(
+            [RenameTarget(Path(old)) for old, _new in example.demo],
+            example.rules,
+        )
+        assert preview.error == "", example.name
+        assert {item.old_name: item.new_name for item in preview.items} == dict(example.demo)
+
+
+def test_doc_example_json_matches_embedded() -> None:
+    """docs/help/examples 下的 JSON 与内置示例一致，避免文档与代码漂移。"""
+    expected = {
+        f"{index:02d}-{example.slug}.json": _examples.example_to_mapping(example)
+        for index, example in enumerate(_examples.EXAMPLES, start=1)
+    }
+    actual = {path.name: json.loads(path.read_text(encoding="utf-8")) for path in _EXAMPLES_DIR.glob("*.json")}
+    assert actual == expected
+
+
+def test_help_text_mentions_all_rule_kinds() -> None:
+    for kind in RULE_KINDS:
+        assert kind in _examples.HELP_TEXT

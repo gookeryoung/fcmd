@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "reorder",
+    "pattern": "^(?P<title>.+?)[-_](?P<date>\\d{8})$",
+    "replacement": "{date}_{title}"
+  }
+]

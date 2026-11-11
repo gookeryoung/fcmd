@@ -1,0 +1,19 @@
+[
+  {
+    "kind": "replace",
+    "pattern": "\\s*[(\\[][^)\\]]*[)\\]]"
+  },
+  {
+    "kind": "replace",
+    "pattern": "\\s+",
+    "replacement": "_"
+  },
+  {
+    "kind": "case",
+    "mode": "title"
+  },
+  {
+    "kind": "case",
+    "field": "ext"
+  }
+]

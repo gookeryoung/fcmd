@@ -1,0 +1,7 @@
+[
+  {
+    "kind": "reorder",
+    "pattern": "^(?P<show>.+?)\\.(?P<season>\\d{2})x(?P<episode>\\d{2})\\..*$",
+    "replacement": "{show} - S{season}E{episode}"
+  }
+]
