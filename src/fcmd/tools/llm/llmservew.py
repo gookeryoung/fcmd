@@ -211,6 +211,11 @@ class ServeWindow(
         self._api_key_var = tk.StringVar(value=DEFAULT_API_KEY)
         self._threads_var = tk.StringVar(value=str(DEFAULT_THREADS))
         self._tune_var = tk.StringVar(value=_llmtune.TUNE_LABELS["auto"])
+        self._tune_kv_auto = False
+        self._tune_ubatch_auto = False
+        self._syncing_tune = False
+        self._kv_var.trace_add("write", self._on_kv_field_edited)
+        self._ubatch_var.trace_add("write", self._on_ubatch_field_edited)
         self._wait_var = tk.StringVar(value="180")
         self._model_var = tk.StringVar(value=_MODEL_PLACEHOLDER)
         self._status_var = tk.StringVar(value="状态：未查询")
@@ -362,9 +367,8 @@ class ServeWindow(
             size = path.stat().st_size
         except OSError:
             size = 0
-        _, context, _ = self._profile_context()
-        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
-        hint += f"\n调优: {tuning.label} · {tuning.detail}"
+        tuning = self._tuning_for(size)
+        hint += f"\n调优: {tuning.label} · {tuning.detail}\n{self._effective_tuning_text(tuning)}"
         note = self._hardware_note(path)
         if note:
             hint += f"\n{note}"
@@ -393,7 +397,7 @@ class ServeWindow(
         if self._gpu_mib is None:
             return None, None
         _, context, kv_type = self._profile_context()
-        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
+        tuning = self._tuning_for(size)
         kv_type = tuning.kv_type or kv_type
         total = llmmodel.fit_vram(size, self._gpu_mib * 1024 * 1024, context, kv_type)
         free = None
@@ -423,7 +427,7 @@ class ServeWindow(
             size = path.stat().st_size
         except OSError:
             size = 0
-        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
+        tuning = self._tuning_for(size)
         kv_type = tuning.kv_type or kv_type
         detail = f"{name} 档（ctx {context} / kv {kv_type} / {tuning.label}）"
         if not total.ok:
@@ -478,16 +482,64 @@ class ServeWindow(
         """当前下拉框对应的调优策略名（未知标签回落 auto）。"""
         return _llmtune.LABEL_TO_TUNE.get(self._tune_var.get().strip(), "auto")
 
+    def _on_kv_field_edited(self, *_args: object) -> None:
+        if not self._syncing_tune:
+            self._tune_kv_auto = False
+
+    def _on_ubatch_field_edited(self, *_args: object) -> None:
+        if not self._syncing_tune:
+            self._tune_ubatch_auto = False
+
+    def _tuning_for(self, size: int) -> llmbase.Tuning:
+        """按当前档位 / 上下文 / GPU 解析调优策略。"""
+        _, context, _ = self._profile_context()
+        return _llmtune.resolve(self._tune_name(), context=context, model_bytes=size, gpu_mib=self._gpu_mib)
+
+    def _apply_tuning_fields(self, tuning: llmbase.Tuning) -> None:
+        """把策略值同步到 KV / ubatch 输入框，保留用户手填的非策略值。"""
+        synced = _llmtune.sync_advanced_fields(
+            tuning,
+            kv_value=self._kv_var.get().strip(),
+            ubatch_value=self._ubatch_var.get().strip(),
+            kv_auto=self._tune_kv_auto,
+            ubatch_auto=self._tune_ubatch_auto,
+        )
+        self._tune_kv_auto = synced.kv_auto
+        self._tune_ubatch_auto = synced.ubatch_auto
+        self._syncing_tune = True
+        try:
+            self._kv_var.set(synced.kv_value)
+            self._ubatch_var.set(synced.ubatch_value)
+        finally:
+            self._syncing_tune = False
+
+    def _effective_tuning_text(self, tuning: llmbase.Tuning) -> str:
+        """提示区展示的生效高级参数（输入框 > 策略 > 档位）。"""
+        _, _, profile_kv = self._profile_context()
+        profile = llmbase.PROFILES.get(self._profile_var.get().strip())
+        kv_type = self._kv_var.get().strip() or tuning.kv_type or profile_kv
+        ubatch = self._ubatch_var.get().strip() or str(tuning.ubatch or (profile.ubatch if profile else ""))
+        return (
+            f"生效: b{tuning.batch} / ub {ubatch} / np {tuning.parallel} / "
+            f"cr {tuning.cache_reuse} / kv {kv_type} / fa {tuning.flash_attn}"
+        )
+
     @override
     def _on_tune_changed(self, _event: object | None = None) -> None:
-        """切换调优策略后刷新硬件适配列与提示区的生效参数说明。"""
+        """切换调优策略后同步高级参数，并刷新硬件适配列与说明。"""
+        size = 0
+        if self._selected_model is not None:
+            try:
+                size = self._selected_model.stat().st_size
+            except OSError:
+                size = 0
+        tuning = self._tuning_for(size)
+        self._apply_tuning_fields(tuning)
         self._update_fit_states()
         if self._selected_model is not None:
             self._show_model_hint(self._selected_model)
             return
-        _, context, _ = self._profile_context()
-        tuning = _llmtune.resolve(self._tune_name(), context=context, model_bytes=0, gpu_mib=self._gpu_mib)
-        self._hint_var.set(f"调优: {tuning.label} · {tuning.detail}")
+        self._hint_var.set(f"调优: {tuning.label} · {tuning.detail}\n{self._effective_tuning_text(tuning)}")
 
     def _build_plan(self) -> llmbase.LaunchPlan:
         """按表单内容构造启动计划（参数错误时抛 :class:`ServeError`）。"""

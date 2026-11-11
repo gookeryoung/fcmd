@@ -119,6 +119,44 @@ class TestBackendArgs:
         assert argv[argv.index("--spec-type") + 1] == "ngram-simple"
 
 
+class TestSyncAdvancedFields:
+    def test_strategy_value_fills_empty_fields(self) -> None:
+        synced = _llmtune.sync_advanced_fields(
+            _llmtune.preset("low-vram"),
+            kv_value="",
+            ubatch_value="",
+            kv_auto=False,
+            ubatch_auto=False,
+        )
+        assert synced == _llmtune.FieldSync("q4_0", "512", True, True)
+
+    def test_strategy_value_overrides_previous_strategy_value(self) -> None:
+        synced = _llmtune.sync_advanced_fields(
+            _llmtune.preset("long-context"),
+            kv_value="q4_0",
+            ubatch_value="512",
+            kv_auto=True,
+            ubatch_auto=True,
+        )
+        assert synced.kv_value == "q8_0"
+        assert synced.kv_auto is True
+        assert synced.ubatch_value == ""
+        assert synced.ubatch_auto is False
+
+    def test_switching_back_clears_but_keeps_manual_values(self) -> None:
+        synced = _llmtune.sync_advanced_fields(
+            _llmtune.preset("default"),
+            kv_value="f16",
+            ubatch_value="512",
+            kv_auto=False,
+            ubatch_auto=True,
+        )
+        assert synced.kv_value == "f16"
+        assert synced.kv_auto is False
+        assert synced.ubatch_value == ""
+        assert synced.ubatch_auto is False
+
+
 class TestMakePlanTune:
     @pytest.fixture
     def env(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:

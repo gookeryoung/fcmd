@@ -8,7 +8,7 @@ Qwen3-Coder-30B-A3B-Instruct Q5_K_M），测量方法与结论见
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from fcmd.tools.llm.llmbase import ServeError, Tuning
 from fcmd.tools.llm.llmmodel import estimate_vram
@@ -113,3 +113,41 @@ def _auto_select(context: int, model_bytes: int, gpu_mib: int | None) -> tuple[s
             f"{VRAM_TIGHT_RATIO:.0%}，改用省显存策略"
         )
     return "default", f"预计显存 {needed / 1024**3:.1f} GiB / {total_bytes / 1024**3:.1f} GiB，显存与上下文适中"
+
+
+@dataclass(frozen=True, slots=True)
+class FieldSync:
+    """策略切换后高级参数输入框的同步结果。"""
+
+    kv_value: str
+    ubatch_value: str
+    kv_auto: bool
+    ubatch_auto: bool
+
+
+def sync_advanced_fields(
+    tuning: Tuning,
+    *,
+    kv_value: str,
+    ubatch_value: str,
+    kv_auto: bool,
+    ubatch_auto: bool,
+) -> FieldSync:
+    """把策略值写入 KV / ubatch 输入框。
+
+    策略明确指定某项时覆盖并标记为“由策略填入”；策略未指定时，只清空上一次
+    由策略填入的值，用户手填的值保持不变。``*_auto`` 用于区分这两种来源。
+    """
+    if tuning.kv_type is not None:
+        kv_value = tuning.kv_type
+        kv_auto = True
+    elif kv_auto:
+        kv_value = ""
+        kv_auto = False
+    if tuning.ubatch is not None:
+        ubatch_value = str(tuning.ubatch)
+        ubatch_auto = True
+    elif ubatch_auto:
+        ubatch_value = ""
+        ubatch_auto = False
+    return FieldSync(kv_value, ubatch_value, kv_auto, ubatch_auto)
