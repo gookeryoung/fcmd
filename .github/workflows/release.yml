@@ -298,10 +298,11 @@ jobs:
           if-no-files-found: error
 
   # ===== 收集产物并上传到 GitHub Release =====
+  # 任一上游 job 失败即跳过，避免发布不完整的产物。
   release:
     name: Upload to GitHub Release
     needs: [pypi, pack]
-    if: ${{ always() && !cancelled() && github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run) }}
+    if: ${{ !cancelled() && github.ref_type == 'tag' && (github.event_name == 'push' || !inputs.dry_run) && needs.pypi.result == 'success' && needs.pack.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -339,9 +340,3 @@ jobs:
               --generate-notes \
               release-files/*
           fi
-
-      - name: Report failure (if any upstream job failed)
-        if: ${{ needs.pypi.result != 'success' || needs.pack.result != 'success' }}
-        run: |
-          echo "::error::部分 job 失败（pypi=${{ needs.pypi.result }} pack=${{ needs.pack.result }}），已成功的产物已上传到 Release。"
-          exit 1
