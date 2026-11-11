@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from fcmd.apps.pptmake import _core as core
@@ -27,6 +29,75 @@ def test_parse_pair() -> None:
     assert design._parse_pair("98%|交付准时率") == ("98%", "交付准时率")
     assert design._parse_pair("只有值") == ("只有值", "")
     assert design._parse_pair("|说明") == ("—", "说明")
+
+
+def _with_tokens(tokens: core.DesignTokens | None = None) -> core.TemplateSpec:
+    """在默认模板上替换设计令牌，用于验证版式是否真正消费令牌。"""
+    template = _template()
+    return replace(template, theme=replace(template.theme, tokens=tokens or core.DesignTokens()))
+
+
+def test_bullets_use_type_scale_body() -> None:
+    primitives = design.build_draw_list(
+        core.SlideSpec(layout=core.LAYOUT_BULLETS, title="字号", bullets=("短要点",)),
+        _with_tokens(),
+    )
+    assert any(isinstance(item, design.Text) and item.size == 20 for item in primitives)
+
+    larger = _with_tokens(replace(core.DesignTokens(), type_scale=replace(core.DesignTokens().type_scale, body=26)))
+    primitives = design.build_draw_list(
+        core.SlideSpec(layout=core.LAYOUT_BULLETS, bullets=("短要点",)),
+        larger,
+    )
+    assert any(isinstance(item, design.Text) and item.size == 26 for item in primitives)
+
+
+def test_density_changes_agenda_row_step() -> None:
+    slide = core.SlideSpec(layout=core.LAYOUT_AGENDA, title="目录", bullets=("甲", "乙", "丙", "丁"))
+
+    def row_gap(template: core.TemplateSpec) -> float:
+        positions = sorted(
+            item.y
+            for item in design.build_draw_list(slide, template)
+            if isinstance(item, design.Text) and item.paragraphs and item.paragraphs[0] in ("甲", "乙")
+        )
+        return positions[1] - positions[0]
+
+    base = core.DesignTokens()
+    assert row_gap(_with_tokens(replace(base, density="compact"))) < row_gap(
+        _with_tokens(replace(base, density="spacious"))
+    )
+
+
+def test_margins_follow_spacing_tokens() -> None:
+    base = core.DesignTokens()
+    tokens = replace(base, spacing=replace(base.spacing, margin_x=0.2, margin_y=0.2))
+    primitives = design.build_draw_list(
+        core.SlideSpec(layout=core.LAYOUT_BULLETS, title="边距"),
+        _with_tokens(tokens),
+    )
+    title = next(item for item in primitives if isinstance(item, design.Text) and item.paragraphs == ("边距",))
+    assert title.x == round(1280 * 0.2)
+    assert title.y == round(720 * 0.2)
+
+
+def test_decor_intensity_zero_fades_ornaments() -> None:
+    template = _with_tokens(replace(core.DesignTokens(), decor_intensity=0.0))
+    primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_COVER), template)
+    ovals = [item for item in primitives if isinstance(item, design.Oval)]
+    assert ovals
+    assert all(item.fill == template.theme.palette.background for item in ovals)
+
+
+def test_card_radius_follows_radius_token() -> None:
+    base = core.DesignTokens()
+    template = _with_tokens(replace(base, radius=replace(base.radius, card=4)))
+    primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_TWO_COLUMN), template)
+    cards = [
+        item for item in primitives if isinstance(item, design.Rect) and item.fill == template.theme.palette.surface
+    ]
+    assert cards
+    assert all(item.radius == 4 for item in cards)
 
 
 def test_all_layouts_render_with_default_content() -> None:

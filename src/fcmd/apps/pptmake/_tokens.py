@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Final
 
 __all__ = [
@@ -136,6 +136,15 @@ class SpacingScale:
     block: float = 32.0
     section: float = 48.0
     line: float = 1.25
+
+    def scaled(self, factor: float) -> SpacingScale:
+        """按密度系数缩放间距；边距比例与行距保持不变。"""
+        return replace(
+            self,
+            gap=round(self.gap * factor, 1),
+            block=round(self.block * factor, 1),
+            section=round(self.section * factor, 1),
+        )
 
 
 @dataclass(frozen=True, slots=True)

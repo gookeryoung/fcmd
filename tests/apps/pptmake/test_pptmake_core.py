@@ -319,6 +319,16 @@ def test_tokens_reject_invalid_values(raw: object, message: str) -> None:
         core.template_from_mapping(raw)
 
 
+def test_spacing_scaled_by_density() -> None:
+    spacious = core.DesignTokens(density="spacious")
+    scaled = spacious.spacing.scaled(spacious.density_scale)
+    assert scaled.gap > spacious.spacing.gap
+    assert scaled.block > spacious.spacing.block
+    assert scaled.section > spacious.spacing.section
+    assert scaled.margin_x == spacious.spacing.margin_x
+    assert scaled.line == spacious.spacing.line
+
+
 def test_replace_slide() -> None:
     template = core.default_template()
     updated = core.replace_slide(template, 0, core.new_slide(core.LAYOUT_QUOTE))
