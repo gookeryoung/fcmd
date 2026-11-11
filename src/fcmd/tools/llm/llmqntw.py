@@ -239,13 +239,21 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if reason:
             self._messagebox.showwarning("无法作为量化输入", f"{path.name}：{reason}")
             return
+        changed = self.input_file is None or llmenv.path_key(path) != llmenv.path_key(self.input_file)
         self.input_file = path
         self._file_var.set(str(path))
+        if changed:
+            self._reset_quants()
         self._sync_model_selection(path)
         self._mark_existing()
         self._clear_log()
         self._log(f"精度: {precision.detail}")
         self._progress["value"] = 0
+
+    def _reset_quants(self) -> None:
+        """切换输入文件时恢复默认勾选，避免沿用上一个模型的勾选状态。"""
+        for quant, var in self._quant_vars.items():
+            var.set(quant in llmqnt.DEFAULT_QUANTS)
 
     def _precision_for(self, path: Path, *, refresh: bool = False) -> GgufPrecision:
         """取模型精度识别结果；``refresh`` 为真时重新读取 GGUF 头部。"""
@@ -344,7 +352,7 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._model_btn.configure(state="disabled" if self._running else "normal")
 
     def _mark_existing(self) -> None:
-        """按当前输入文件标记已存在的量化输出。"""
+        """按当前输入文件标记已存在的量化输出（只置灰，不自动勾选）。"""
         overwrite = self._overwrite_var.get()
         for quant, check in self._quant_checks.items():
             desc = llmqnt.QUANT_TYPES[quant]
@@ -353,8 +361,6 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
                 text=f"{quant}  {desc}" + ("（已存在）" if exists else ""),
                 state="normal" if overwrite or not exists else "disabled",
             )
-            if exists:
-                self._quant_vars[quant].set(True)
 
     def _selected_quants(self) -> list[str]:
         overwrite = self._overwrite_var.get()

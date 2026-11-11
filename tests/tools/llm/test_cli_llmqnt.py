@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
@@ -423,3 +424,71 @@ class TestQntwSettings:
     def test_resolve_geometry_falls_back_to_proportional(self) -> None:
         assert llmqntw.resolve_geometry(None, 1920, 1080) == "806x778"
         assert llmqntw.resolve_geometry("bad", 1920, 1080) == "806x778"
+
+
+class _FakeQuantVar:
+    def __init__(self, value: bool = False) -> None:
+        self.value = value
+
+    def get(self) -> bool:
+        return self.value
+
+    def set(self, value: bool) -> None:
+        self.value = value
+
+
+class _FakeQuantCheck:
+    def __init__(self) -> None:
+        self.options: dict[str, Any] = {}
+
+    def configure(self, **kwargs: Any) -> None:
+        self.options.update(kwargs)
+
+
+def _bare_quantize_window(tmp_path: Path) -> llmqntw.QuantizeWindow:
+    window = object.__new__(llmqntw.QuantizeWindow)
+    window.input_file = tmp_path / "model-f16.gguf"
+    window._overwrite_var = cast(Any, _FakeQuantVar(False))
+    window._quant_vars = {quant: cast(Any, _FakeQuantVar(False)) for quant in llmqnt.QUANT_TYPES}
+    window._quant_checks = {quant: cast(Any, _FakeQuantCheck()) for quant in llmqnt.QUANT_TYPES}
+    return window
+
+
+class TestQntwQuantSelection:
+    """切换模型时量化类型勾选状态（纯状态，不创建 Tk）。"""
+
+    def test_mark_existing_does_not_auto_check_existing_outputs(self, tmp_path: Path) -> None:
+        window = _bare_quantize_window(tmp_path)
+        input_file = window.input_file
+        assert input_file is not None
+        llmqnt.output_path(input_file, "Q4_K_M").write_bytes(b"x")
+
+        window._mark_existing()
+
+        assert window._quant_vars["Q4_K_M"].get() is False
+        assert window._quant_checks["Q4_K_M"].options["state"] == "disabled"
+        assert "已存在" in window._quant_checks["Q4_K_M"].options["text"]
+        assert window._quant_checks["Q5_K_M"].options["state"] == "normal"
+
+    def test_reset_quants_restores_default_selection(self, tmp_path: Path) -> None:
+        window = _bare_quantize_window(tmp_path)
+        for var in window._quant_vars.values():
+            var.set(True)
+
+        window._reset_quants()
+
+        checked = {quant for quant, var in window._quant_vars.items() if var.get()}
+        assert checked == set(llmqnt.DEFAULT_QUANTS)
+
+    def test_mark_existing_keeps_selection_when_overwrite_enabled(self, tmp_path: Path) -> None:
+        window = _bare_quantize_window(tmp_path)
+        window._overwrite_var.set(True)
+        input_file = window.input_file
+        assert input_file is not None
+        llmqnt.output_path(input_file, "Q2_K").write_bytes(b"x")
+        window._quant_vars["Q2_K"].set(True)
+
+        window._mark_existing()
+
+        assert window._quant_vars["Q2_K"].get() is True
+        assert window._quant_checks["Q2_K"].options["state"] == "normal"
