@@ -74,7 +74,7 @@ def test_inspect_prints_summary(tmp_path: Path, capsys: pytest.CaptureFixture[st
     pptmake.inspect_command(target)
     output = capsys.readouterr().out
     assert "品牌演示模板" in output
-    assert "页面：9 页" in output
+    assert "页面：13 页" in output
 
 
 def test_inspect_reports_load_error(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

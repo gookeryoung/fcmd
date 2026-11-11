@@ -52,7 +52,7 @@ __all__ = [
 __version__ = "0.1.0"
 
 _DESCRIPTION = (
-    "PPT 模板设计器（Tk）：九种布局、四套风格、六个语义色实时预览，"
+    "PPT 模板设计器（Tk）：十三种布局、四套风格、六个语义色实时预览，"
     "模板 JSON 与 PPTX 双向导入导出；设置持久化到 ~/.fcmd/ui/pptmakew.json"
 )
 
@@ -818,7 +818,7 @@ class PptmakeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     def _show_about(self) -> None:
         self._messagebox.showinfo(
             "关于",
-            f"pptmake v{__version__}\nPPT 模板设计器：九种布局 + 四套风格 + 语义配色，\n"
+            f"pptmake v{__version__}\nPPT 模板设计器：十三种布局 + 四套风格 + 语义配色，\n"
             "模板 JSON 与 PPTX 双向导入导出。",
             parent=self.root,
         )

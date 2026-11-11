@@ -1,4 +1,4 @@
-"""pptmake 版式引擎测试：九种布局、装饰、边界与坐标口径。"""
+"""pptmake 版式引擎测试：十三种布局、装饰、边界与坐标口径。"""
 
 from __future__ import annotations
 
@@ -258,3 +258,132 @@ def test_section_number_extraction() -> None:
     fallback = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_SECTION), template)
     fallback_text = "\n".join(line for item in fallback if isinstance(item, design.Text) for line in item.paragraphs)
     assert "01" in fallback_text
+
+
+def test_split_parts_keeps_field_order() -> None:
+    assert design._split_parts(" 维度 | 方案A | 方案B ") == ("维度", "方案A", "方案B")
+    assert design._split_parts("只有一列") == ("只有一列",)
+    assert design._split_parts("维度||方案B") == ("维度", "", "方案B")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("42", 42.0), ("+12%", 12.0), ("1,024", 1024.0), ("3.5 万", 3.5), ("-8", -8.0), ("暂无", 0.0)],
+)
+def test_parse_number(raw: str, expected: float) -> None:
+    assert design._parse_number(raw) == expected
+
+
+def test_image_layout_has_placeholder_panel() -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_IMAGE, title="主视觉", bullets=("要点一", "要点二"))
+    primitives = design.build_draw_list(slide, template)
+    text = "\n".join(line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs)
+    assert "主视觉" in text
+    assert "要点一" in text
+    assert "图片占位 · 导出后在 PowerPoint 中替换" in text
+    panels = [
+        item for item in primitives if isinstance(item, design.Rect) and item.fill == template.theme.palette.surface
+    ]
+    assert panels
+    assert panels[-1].x > 1280 / 2
+    assert panels[-1].radius == core.DesignTokens().radius.card
+
+
+def test_image_layout_falls_back_to_defaults() -> None:
+    template = _template()
+    primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_IMAGE), template)
+    text = "\n".join(line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs)
+    assert "让主视觉先说话" in text
+    assert "主视觉占据右侧近一半版面" in text
+
+
+def test_comparison_parses_dimension_and_two_options() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_COMPARISON,
+        title="方案对比",
+        subtitle="自建|采购",
+        bullets=("响应速度|小时级|分钟级", "维护成本|较高|更低"),
+    )
+    primitives = design.build_draw_list(slide, template)
+    texts = [item for item in primitives if isinstance(item, design.Text)]
+    content = "\n".join(line for item in texts for line in item.paragraphs)
+    for expected in ("对比维度", "自建", "采购", "响应速度", "小时级", "分钟级", "维护成本", "较高", "更低"):
+        assert expected in content
+    right_cells = [item for item in texts if item.paragraphs == ("分钟级",)]
+    assert right_cells
+    assert right_cells[0].color == template.theme.palette.accent
+    assert right_cells[0].bold is True
+
+
+def test_comparison_pads_missing_fields_and_caps_rows() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_COMPARISON,
+        bullets=("只有维度", "维度|仅左", "甲|一|二", "乙|一|二", "丙|一|二"),
+    )
+    primitives = design.build_draw_list(slide, template)
+    content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "只有维度" in content
+    assert content.count("—") >= 2
+    assert "丙" not in content
+
+
+def test_chart_bar_heights_follow_values() -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_CHART, title="季度", bullets=("Q1|50", "Q2|100"))
+    primitives = design.build_draw_list(slide, template)
+    bars = [
+        item
+        for item in primitives
+        if isinstance(item, design.Rect) and item.radius == core.DesignTokens().radius.small / 2 and item.w > 100
+    ]
+    assert len(bars) == 2
+    assert bars[0].h == pytest.approx(bars[1].h / 2)
+    assert bars[0].fill == template.theme.palette.accent
+    assert bars[1].fill == template.theme.palette.secondary
+    labels = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "50" in labels
+    assert "100" in labels
+    assert "图表占位 · 导出后可在 PowerPoint 中替换为真实图表" in labels
+
+
+def test_chart_handles_non_numeric_values() -> None:
+    template = _template()
+    slide = core.SlideSpec(layout=core.LAYOUT_CHART, title="空数据", bullets=("无|暂无",))
+    primitives = design.build_draw_list(slide, template)
+    bars = [
+        item
+        for item in primitives
+        if isinstance(item, design.Rect) and item.radius == core.DesignTokens().radius.small / 2 and item.w > 100
+    ]
+    assert len(bars) == 1
+    assert bars[0].h == 2
+
+
+def test_contact_defaults_and_qr_placeholder() -> None:
+    template = _template()
+    primitives = design.build_draw_list(core.SlideSpec(layout=core.LAYOUT_CONTACT), template)
+    content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "让我们保持联系" in content
+    assert "邮箱" in content
+    assert "hello@example.com" in content
+    assert "二维码占位" in content
+    assert "PPTMAKE · 联系方式" in content
+
+
+def test_contact_uses_provided_rows() -> None:
+    template = _template()
+    slide = core.SlideSpec(
+        layout=core.LAYOUT_CONTACT,
+        title="联系我们",
+        subtitle="随时沟通",
+        bullets=("官网|fcmd.dev",),
+    )
+    primitives = design.build_draw_list(slide, template)
+    content = [line for item in primitives if isinstance(item, design.Text) for line in item.paragraphs]
+    assert "联系我们" in content
+    assert "随时沟通" in content
+    assert "官网" in content
+    assert "fcmd.dev" in content

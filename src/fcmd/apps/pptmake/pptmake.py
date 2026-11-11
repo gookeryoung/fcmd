@@ -3,7 +3,7 @@
 子命令：
 
 - ``presets``：列出内置风格、布局与装饰样式；
-- ``init``：生成一份覆盖九种版式的示例模板 JSON；
+- ``init``：生成一份覆盖十三种版式的示例模板 JSON；
 - ``inspect``：查看模板摘要；
 - ``export``：把模板渲染为 ``.pptx``；
 - ``import``：把现有 ``.pptx`` 尽力转换为模板 JSON。
@@ -55,7 +55,7 @@ __all__ = [
 
 __version__ = "0.1.0"
 
-_DESCRIPTION = "PPT 模板生成器：内置九种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
+_DESCRIPTION = "PPT 模板生成器：内置十三种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
 
 StyleName = Literal["aurora", "porcelain", "graphite", "coral"]
 AspectName = Literal["16:9", "4:3"]

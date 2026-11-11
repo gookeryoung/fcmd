@@ -38,8 +38,12 @@ __all__ = [
     "LAYOUTS",
     "LAYOUT_AGENDA",
     "LAYOUT_BULLETS",
+    "LAYOUT_CHART",
     "LAYOUT_CLOSING",
+    "LAYOUT_COMPARISON",
+    "LAYOUT_CONTACT",
     "LAYOUT_COVER",
+    "LAYOUT_IMAGE",
     "LAYOUT_METRICS",
     "LAYOUT_QUOTE",
     "LAYOUT_SECTION",
@@ -120,6 +124,10 @@ LAYOUT_QUOTE: Final[str] = "quote"
 LAYOUT_METRICS: Final[str] = "metrics"
 LAYOUT_TIMELINE: Final[str] = "timeline"
 LAYOUT_CLOSING: Final[str] = "closing"
+LAYOUT_IMAGE: Final[str] = "image"
+LAYOUT_COMPARISON: Final[str] = "comparison"
+LAYOUT_CHART: Final[str] = "chart"
+LAYOUT_CONTACT: Final[str] = "contact"
 
 LAYOUTS: Final[tuple[str, ...]] = (
     LAYOUT_COVER,
@@ -131,6 +139,10 @@ LAYOUTS: Final[tuple[str, ...]] = (
     LAYOUT_METRICS,
     LAYOUT_TIMELINE,
     LAYOUT_CLOSING,
+    LAYOUT_IMAGE,
+    LAYOUT_COMPARISON,
+    LAYOUT_CHART,
+    LAYOUT_CONTACT,
 )
 LAYOUT_TEXT: Final[dict[str, str]] = {
     LAYOUT_COVER: "封面",
@@ -142,6 +154,10 @@ LAYOUT_TEXT: Final[dict[str, str]] = {
     LAYOUT_METRICS: "数据",
     LAYOUT_TIMELINE: "时间线",
     LAYOUT_CLOSING: "结尾",
+    LAYOUT_IMAGE: "图片主视觉",
+    LAYOUT_COMPARISON: "对比矩阵",
+    LAYOUT_CHART: "图表",
+    LAYOUT_CONTACT: "联系方式",
 }
 
 # ---------------------------------------------------------------------- #
@@ -427,6 +443,29 @@ def new_slide(layout: str) -> SlideSpec:
             title="THANK YOU",
             subtitle="期待与你一起，把下一次表达做得更好。",
         ),
+        LAYOUT_IMAGE: SlideSpec(
+            kind,
+            title="让主视觉先说话",
+            subtitle="右侧留出大图区域，文字保持克制，适合品牌与产品发布。",
+            bullets=("主视觉占据右侧约一半版面", "标题与正文左对齐，层级清晰", "导出后可将占位区域替换为真实图片"),
+        ),
+        LAYOUT_COMPARISON: SlideSpec(
+            kind,
+            title="两种方案的取舍",
+            subtitle="现状|目标",
+            bullets=("响应速度|小时级|分钟级", "维护成本|较高|更低", "扩展能力|受限于插件|开放接口"),
+        ),
+        LAYOUT_CHART: SlideSpec(
+            kind,
+            title="关键指标走势",
+            bullets=("Q1|42", "Q2|68", "Q3|54", "Q4|86"),
+        ),
+        LAYOUT_CONTACT: SlideSpec(
+            kind,
+            title="让我们保持联系",
+            subtitle="期待下一次合作，也欢迎随时交流。",
+            bullets=("邮箱|hello@example.com", "电话|+86 138 0000 0000", "地址|上海市 · 徐汇区"),
+        ),
     }
     return samples[kind]
 
@@ -472,7 +511,7 @@ def default_template(*, style: str = STYLE_AURORA, aspect: str = ASPECT_16_9) ->
         name="品牌演示模板",
         style=style,
         aspect=aspect,
-        description="由 pptmake 生成的演示模板，覆盖封面、目录、章节、要点、双栏、引用、数据、时间线与结尾九种版式。",
+        description="由 pptmake 生成的演示模板，覆盖封面、目录、章节、要点、双栏、引用、数据、时间线、结尾、图片、对比、图表与联系十三种版式。",
         author="pptmake",
     )
 

@@ -18,8 +18,12 @@ from fcmd.apps.pptmake._core import (
     DECOR_MINIMAL,
     LAYOUT_AGENDA,
     LAYOUT_BULLETS,
+    LAYOUT_CHART,
     LAYOUT_CLOSING,
+    LAYOUT_COMPARISON,
+    LAYOUT_CONTACT,
     LAYOUT_COVER,
+    LAYOUT_IMAGE,
     LAYOUT_METRICS,
     LAYOUT_QUOTE,
     LAYOUT_SECTION,
@@ -215,6 +219,17 @@ def _parse_pair(text: str) -> tuple[str, str]:
     if not sep:
         return left, ""
     return (left or "—"), right
+
+
+def _split_parts(text: str) -> tuple[str, ...]:
+    """按 ``|`` 拆成多段并保留空段，便于表格类版式对齐。"""
+    return tuple(part.strip() for part in text.split("|"))
+
+
+def _parse_number(text: str) -> float:
+    """从 ``42`` / ``+12%`` / ``3.5 万`` 中提取数值，失败返回 0。"""
+    match = re.search(r"-?\d+(?:\.\d+)?", text.replace(",", ""))
+    return float(match.group(0)) if match else 0.0
 
 
 # ---------------------------------------------------------------------- #
@@ -836,6 +851,517 @@ def _render_closing(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
     )
 
 
+def _render_image(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """图片主视觉：左侧文字、右侧大图占位，导出后可替换为真实图片。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    text_width = (ctx.width - margin * 2) * 0.46
+    out.append(
+        _text(
+            margin,
+            ctx.top,
+            text_width,
+            round(scale.small * 2),
+            "VISUAL STORY",
+            scale.caption,
+            ctx.accent,
+            ctx.theme.heading_font,
+            bold=True,
+        )
+    )
+    title = slide.title.strip() or "让主视觉先说话"
+    out.append(
+        _text(
+            margin,
+            ctx.top + round(scale.title * 1.2),
+            text_width,
+            round(scale.display * 2.4),
+            title,
+            round(scale.display * 0.82),
+            palette.text,
+            ctx.theme.heading_font,
+            bold=True,
+            line_spacing=1.1,
+        )
+    )
+    out.append(
+        Rect(
+            margin,
+            ctx.top + round(scale.display * 2.6),
+            round(scale.title * 1.2),
+            round(scale.title * 0.12),
+            fill=ctx.accent,
+            radius=round(ctx.radius.small / 2),
+        )
+    )
+    out.append(
+        _text(
+            margin,
+            ctx.top + round(scale.display * 3.1),
+            text_width,
+            round(scale.body * 3.2),
+            slide.subtitle.strip() or "右侧留出大图区域，文字保持克制。",
+            scale.body,
+            palette.muted,
+            ctx.theme.body_font,
+            line_spacing=spacing.line,
+        )
+    )
+    bullets = slide.bullets[:3] or ("主视觉占据右侧近一半版面", "标题与正文保持左对齐", "导出后可替换为真实图片")
+    bullet_top = ctx.top + round(scale.display * 4.4)
+    for index, item in enumerate(bullets):
+        y = bullet_top + index * (spacing.block + spacing.gap)
+        out.append(Oval(margin, y + round(scale.small * 0.4), 8, 8, fill=ctx.accent))
+        out.append(
+            _text(
+                margin + round(scale.body * 1.1),
+                y,
+                text_width - round(scale.body * 1.1),
+                round(scale.body * 1.8),
+                item,
+                scale.small,
+                palette.text,
+                ctx.theme.body_font,
+                line_spacing=spacing.line,
+            )
+        )
+    panel_x = margin + text_width + spacing.section
+    panel_y = ctx.top
+    panel_width = ctx.width - margin - panel_x
+    panel_height = ctx.height - ctx.top - round(scale.body * 3)
+    out.append(
+        Rect(
+            panel_x,
+            panel_y,
+            panel_width,
+            panel_height,
+            fill=palette.surface,
+            line=mix_hex(palette.background, palette.muted, 0.24),
+            line_width=1,
+            radius=round(ctx.radius.card),
+        )
+    )
+    out.append(
+        Oval(
+            panel_x + panel_width * 0.62,
+            panel_y + panel_height * 0.18,
+            panel_width * 0.16,
+            panel_width * 0.16,
+            fill=mix_hex(palette.surface, ctx.accent, 0.45),
+        )
+    )
+    horizon = mix_hex(palette.surface, palette.muted, 0.45)
+    out.append(
+        Line(
+            panel_x + panel_width * 0.1,
+            panel_y + panel_height * 0.74,
+            panel_x + panel_width * 0.42,
+            panel_y + panel_height * 0.42,
+            horizon,
+            3,
+        )
+    )
+    out.append(
+        Line(
+            panel_x + panel_width * 0.42,
+            panel_y + panel_height * 0.42,
+            panel_x + panel_width * 0.74,
+            panel_y + panel_height * 0.74,
+            horizon,
+            3,
+        )
+    )
+    out.append(
+        Rect(
+            panel_x + panel_width * 0.1,
+            panel_y + panel_height * 0.74,
+            panel_width * 0.8,
+            1,
+            fill=horizon,
+        )
+    )
+    out.append(
+        _text(
+            panel_x,
+            panel_y + panel_height - round(scale.small * 2.4),
+            panel_width,
+            round(scale.small * 1.6),
+            "图片占位 · 导出后在 PowerPoint 中替换",
+            scale.caption,
+            palette.muted,
+            ctx.theme.body_font,
+            align=ALIGN_CENTER,
+        )
+    )
+
+
+def _render_comparison(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """对比矩阵：``维度|方案A|方案B``，右列用强调色标出推荐项。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    headers = _split_parts(slide.subtitle) if slide.subtitle.strip() else ()
+    left_header = headers[0] if headers and headers[0] else "方案 A"
+    right_header = headers[1] if len(headers) > 1 and headers[1] else "方案 B"
+    raw = slide.bullets or ("响应速度|小时级|分钟级", "维护成本|较高|更低", "扩展能力|受限于插件|开放接口")
+    rows: list[tuple[str, str, str]] = []
+    for item in raw[:4]:
+        parts = _split_parts(item)
+        label = parts[0] or "对比维度"
+        left = parts[1] if len(parts) > 1 and parts[1] else "—"
+        right = parts[2] if len(parts) > 2 and parts[2] else "—"
+        rows.append((label, left, right))
+    table_top = top + round(scale.body)
+    header_height = round(scale.body * 2.2)
+    label_width = (ctx.width - margin * 2) * 0.3
+    option_width = (ctx.width - margin * 2 - label_width - spacing.gap * 2) / 2
+    left_x = margin + label_width + spacing.gap
+    right_x = left_x + option_width + spacing.gap
+    out.append(
+        Rect(
+            margin,
+            table_top,
+            ctx.width - margin * 2,
+            header_height,
+            fill=mix_hex(palette.background, ctx.accent, 0.16),
+            radius=round(ctx.radius.small),
+        )
+    )
+    out.append(
+        _text(
+            margin + spacing.gap,
+            table_top,
+            label_width - spacing.gap,
+            header_height,
+            "对比维度",
+            scale.small,
+            palette.muted,
+            ctx.theme.body_font,
+            anchor=ANCHOR_MIDDLE,
+        )
+    )
+    out.append(
+        _text(
+            left_x,
+            table_top,
+            option_width,
+            header_height,
+            left_header,
+            scale.body,
+            palette.text,
+            ctx.theme.heading_font,
+            bold=True,
+            align=ALIGN_CENTER,
+            anchor=ANCHOR_MIDDLE,
+        )
+    )
+    out.append(
+        _text(
+            right_x,
+            table_top,
+            option_width,
+            header_height,
+            right_header,
+            scale.body,
+            ctx.accent,
+            ctx.theme.heading_font,
+            bold=True,
+            align=ALIGN_CENTER,
+            anchor=ANCHOR_MIDDLE,
+        )
+    )
+    available = ctx.height - table_top - header_height - round(scale.body * 3)
+    row_height = min(round(scale.body * 3), available / max(len(rows), 1))
+    for index, (label, left, right) in enumerate(rows):
+        y = table_top + header_height + index * row_height
+        out.append(
+            Rect(
+                right_x - spacing.gap / 2,
+                y + 4,
+                option_width + spacing.gap,
+                row_height - 8,
+                fill=mix_hex(palette.surface, ctx.accent, 0.1),
+                radius=round(ctx.radius.small),
+            )
+        )
+        if index:
+            out.append(Line(margin, y, ctx.width - margin, y, mix_hex(palette.background, palette.muted, 0.24), 1))
+        out.append(
+            _text(
+                margin + spacing.gap,
+                y,
+                label_width - spacing.gap,
+                row_height,
+                label,
+                scale.small,
+                palette.muted,
+                ctx.theme.body_font,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        out.append(
+            _text(
+                left_x,
+                y,
+                option_width,
+                row_height,
+                left,
+                scale.small,
+                palette.text,
+                ctx.theme.body_font,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+        out.append(
+            _text(
+                right_x,
+                y,
+                option_width,
+                row_height,
+                right,
+                scale.small,
+                ctx.accent,
+                ctx.theme.body_font,
+                bold=True,
+                align=ALIGN_CENTER,
+                anchor=ANCHOR_MIDDLE,
+            )
+        )
+
+
+def _render_chart(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """图表占位：按 ``标签|数值`` 画柱状图，导出后可替换为真实图表。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    margin = ctx.margin
+    top = _paint_heading(out, ctx, slide)
+    raw = slide.bullets or ("Q1|42", "Q2|68", "Q3|54", "Q4|86")
+    points: list[tuple[str, float]] = []
+    for item in raw[:5]:
+        label, value = _parse_pair(item)
+        points.append((label or f"项{len(points) + 1}", _parse_number(value)))
+    if not points:
+        points = [("A", 1.0)]
+    max_value = max((value for _label, value in points), default=0.0) or 1.0
+    card_top = top + round(scale.body)
+    card_height = ctx.height - card_top - round(scale.body * 4)
+    card_width = ctx.width - margin * 2
+    out.append(
+        Rect(
+            margin,
+            card_top,
+            card_width,
+            card_height,
+            fill=palette.surface,
+            line=mix_hex(palette.background, palette.muted, 0.24),
+            line_width=1,
+            radius=round(ctx.radius.card),
+        )
+    )
+    plot_x = margin + round(scale.body * 2.2)
+    plot_y = card_top + round(scale.body * 1.8)
+    plot_width = card_width - round(scale.body * 4.4)
+    plot_height = card_height - round(scale.body * 6)
+    for step in range(5):
+        y = plot_y + plot_height * step / 4
+        out.append(Line(plot_x, y, plot_x + plot_width, y, mix_hex(palette.surface, palette.muted, 0.2), 1))
+    out.append(
+        Line(
+            plot_x,
+            plot_y,
+            plot_x,
+            plot_y + plot_height,
+            mix_hex(palette.background, palette.muted, 0.4),
+            2,
+        )
+    )
+    slot = plot_width / len(points)
+    bar_width = slot * 0.44
+    for index, (label, value) in enumerate(points):
+        bar_height = max(plot_height * value / max_value, 2)
+        x = plot_x + slot * index + (slot - bar_width) / 2
+        y = plot_y + plot_height - bar_height
+        color = ctx.accent if index < len(points) - 1 else palette.secondary
+        out.append(Rect(x, y, bar_width, bar_height, fill=color, radius=round(ctx.radius.small / 2)))
+        out.append(
+            _text(
+                x - 20,
+                y - round(scale.small * 1.9),
+                bar_width + 40,
+                round(scale.small * 1.6),
+                f"{value:g}",
+                scale.caption,
+                palette.text,
+                ctx.theme.heading_font,
+                bold=True,
+                align=ALIGN_CENTER,
+            )
+        )
+        out.append(
+            _text(
+                x - 20,
+                plot_y + plot_height + 8,
+                bar_width + 40,
+                round(scale.small * 1.6),
+                label,
+                scale.caption,
+                palette.muted,
+                ctx.theme.body_font,
+                align=ALIGN_CENTER,
+            )
+        )
+    out.append(
+        _text(
+            margin,
+            card_top + card_height - round(scale.body * 1.9),
+            card_width,
+            round(scale.small * 1.6),
+            "图表占位 · 导出后可在 PowerPoint 中替换为真实图表",
+            scale.caption,
+            palette.muted,
+            ctx.theme.body_font,
+            align=ALIGN_CENTER,
+        )
+    )
+
+
+def _render_contact(out: list[Primitive], ctx: _Ctx, slide: SlideSpec) -> None:
+    """联系方式：左侧联系信息，右侧二维码占位与页脚。"""
+    palette = ctx.palette
+    scale = ctx.type_scale
+    spacing = ctx.spacing
+    margin = ctx.margin
+    title = slide.title.strip() or "让我们保持联系"
+    out.append(
+        _text(
+            margin,
+            ctx.height * 0.18,
+            ctx.width * 0.5,
+            round(scale.display * 1.6),
+            title,
+            round(scale.display * 0.85),
+            palette.text,
+            ctx.theme.heading_font,
+            bold=True,
+            line_spacing=1.15,
+        )
+    )
+    out.append(
+        Rect(
+            margin,
+            ctx.height * 0.18 + round(scale.display * 1.7),
+            round(scale.title * 1.2),
+            round(scale.title * 0.12),
+            fill=ctx.accent,
+            radius=round(ctx.radius.small / 2),
+        )
+    )
+    out.append(
+        _text(
+            margin,
+            ctx.height * 0.18 + round(scale.display * 2.1),
+            ctx.width * 0.46,
+            round(scale.body * 2.4),
+            slide.subtitle.strip() or "期待下一次合作，也欢迎随时交流。",
+            scale.body,
+            palette.muted,
+            ctx.theme.body_font,
+            line_spacing=spacing.line,
+        )
+    )
+    rows = slide.bullets[:4] or ("邮箱|hello@example.com", "电话|+86 138 0000 0000", "地址|上海市 · 徐汇区")
+    start_y = ctx.height * 0.52
+    row_step = scale.body * 3
+    for index, item in enumerate(rows):
+        label, value = _parse_pair(item)
+        y = start_y + index * row_step
+        out.append(Oval(margin, y + round(scale.small * 0.4), 8, 8, fill=ctx.accent))
+        out.append(
+            _text(
+                margin + round(scale.body * 1.1),
+                y,
+                ctx.width * 0.4,
+                round(scale.caption * 1.8),
+                label or "联系方式",
+                scale.caption,
+                palette.muted,
+                ctx.theme.body_font,
+            )
+        )
+        out.append(
+            _text(
+                margin + round(scale.body * 1.1),
+                y + round(scale.caption * 1.8),
+                ctx.width * 0.4,
+                round(scale.body * 1.8),
+                value or "—",
+                scale.body,
+                palette.text,
+                ctx.theme.body_font,
+                bold=True,
+            )
+        )
+    qr_side = round(min(ctx.height * 0.3, ctx.width * 0.18))
+    qr_x = ctx.width - margin - qr_side
+    qr_y = ctx.height * 0.3
+    out.append(
+        Rect(
+            qr_x,
+            qr_y,
+            qr_side,
+            qr_side,
+            fill=palette.surface,
+            line=mix_hex(palette.background, palette.muted, 0.32),
+            line_width=1,
+            radius=round(ctx.radius.small),
+        )
+    )
+    for ratio_x, ratio_y in ((0.14, 0.14), (0.62, 0.14), (0.14, 0.62)):
+        out.append(
+            Rect(
+                qr_x + qr_side * ratio_x,
+                qr_y + qr_side * ratio_y,
+                qr_side * 0.24,
+                qr_side * 0.24,
+                fill=palette.text,
+            )
+        )
+    out.append(
+        _text(
+            qr_x,
+            qr_y + qr_side + 6,
+            qr_side,
+            round(scale.caption * 1.6),
+            "二维码占位",
+            scale.caption,
+            palette.muted,
+            ctx.theme.body_font,
+            align=ALIGN_CENTER,
+        )
+    )
+    footer_y = ctx.height - round(scale.body * 2.8)
+    out.append(
+        Line(margin, footer_y, ctx.width - margin, footer_y, mix_hex(palette.background, palette.muted, 0.32), 1)
+    )
+    out.append(
+        _text(
+            margin,
+            footer_y + 8,
+            ctx.width - margin * 2,
+            round(scale.caption * 1.8),
+            "PPTMAKE · 联系方式",
+            scale.caption,
+            palette.muted,
+            ctx.theme.body_font,
+        )
+    )
+
+
 _RENDERERS = {
     LAYOUT_COVER: _render_cover,
     LAYOUT_AGENDA: _render_agenda,
@@ -846,6 +1372,10 @@ _RENDERERS = {
     LAYOUT_METRICS: _render_metrics,
     LAYOUT_TIMELINE: _render_timeline,
     LAYOUT_CLOSING: _render_closing,
+    LAYOUT_IMAGE: _render_image,
+    LAYOUT_COMPARISON: _render_comparison,
+    LAYOUT_CHART: _render_chart,
+    LAYOUT_CONTACT: _render_contact,
 }
 
 
