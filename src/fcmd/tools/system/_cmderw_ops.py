@@ -2246,7 +2246,7 @@ _MENU_NEEDS_SELECTION = frozenset(
         "hash",
     }
 )
-_MENU_ONE = frozenset({"open", "view", "edit", "open_with", "properties", "unpack", "rename"})
+_MENU_ONE = frozenset({"open", "view", "edit", "open_with", "open_archive", "properties", "unpack", "rename"})
 _MENU_ONE_FILE = frozenset({"view", "edit", "open_with", "unpack"})
 _MENU_ACTIVE_WRITE = frozenset(
     {
@@ -2288,6 +2288,7 @@ class MenuFacts:
     entry_count: int = 0
     selection_count: int = 0
     single_is_file: bool = False
+    single_is_archive: bool = False
     busy: bool = False
     active_writable: bool = True
     target_writable: bool = True
@@ -2301,6 +2302,7 @@ class MenuFacts:
     quick_visible: bool = False
     sync_browse: bool = False
     branch_view: bool = False
+    archive_view: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2315,6 +2317,7 @@ class MenuState:
     quick_visible: bool = False
     sync_browse: bool = False
     branch_view: bool = False
+    archive_view: bool = False
     sort_key: str = "name"
     view_mode: str = DEFAULT_VIEW_MODE
 
@@ -2333,6 +2336,8 @@ def _selection_disabled(facts: MenuFacts) -> set[str]:
         disabled |= _MENU_ONE
     if facts.selection_count == 1 and not facts.single_is_file:
         disabled |= _MENU_ONE_FILE
+    if facts.selection_count != 1 or not facts.single_is_archive:
+        disabled.add("open_archive")
     return disabled
 
 
@@ -2367,6 +2372,29 @@ def _panel_disabled(facts: MenuFacts) -> set[str]:
     return disabled
 
 
+_MENU_ARCHIVE_READONLY = frozenset(
+    {
+        "open_archive",
+        "new_folder",
+        "rename",
+        "bulk_rename",
+        "delete",
+        "permanent_delete",
+        "move",
+        "open_with",
+        "properties",
+        "hash",
+        "pack",
+        "unpack",
+    }
+)
+
+
+def _archive_disabled(facts: MenuFacts) -> set[str]:
+    """压缩包内只读：禁用会写回磁盘或依赖真实路径的动作。"""
+    return set(_MENU_ARCHIVE_READONLY) if facts.archive_view else set()
+
+
 def menu_state(facts: MenuFacts) -> MenuState:
     """根据事实计算菜单禁用集合，并携带勾选变量应取的值。"""
     disabled: set[str] = set()
@@ -2374,6 +2402,7 @@ def menu_state(facts: MenuFacts) -> MenuState:
     disabled |= _write_disabled(facts)
     disabled |= _navigation_disabled(facts)
     disabled |= _panel_disabled(facts)
+    disabled |= _archive_disabled(facts)
     return MenuState(
         disabled=frozenset(disabled),
         show_hidden=facts.show_hidden,
@@ -2381,6 +2410,7 @@ def menu_state(facts: MenuFacts) -> MenuState:
         quick_visible=facts.quick_visible,
         sync_browse=facts.sync_browse,
         branch_view=facts.branch_view,
+        archive_view=facts.archive_view,
         sort_key=facts.sort_key,
         view_mode=normalize_view_mode(facts.view_mode),
     )

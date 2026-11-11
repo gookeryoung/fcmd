@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,12 +30,14 @@ from fcmd.tools.system.cmderw import (
     ARCHIVE_SUFFIXES,
     DEFAULT_GEOMETRY,
     MAX_HISTORY,
+    ArchiveMember,
     CmderSettings,
     ColorRule,
     FileEntry,
     PanelState,
     SearchHit,
     TransferItem,
+    archive_browsable,
     archive_stem,
     config_path,
     copy_entry,
@@ -46,6 +49,7 @@ from fcmd.tools.system.cmderw import (
     delete_entry,
     describe_attributes,
     describe_entry,
+    extract_archive_members,
     extract_archive_to,
     format_hash_report,
     format_mtime,
@@ -67,6 +71,7 @@ from fcmd.tools.system.cmderw import (
     parent_directory,
     plan_transfer,
     push_history,
+    read_archive_members,
     rename_entry,
     resolve_geometry,
     resolve_path_input,
@@ -1012,6 +1017,98 @@ class TestArchive:
     def test_extract_archive_missing(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
             extract_archive_to(tmp_path / "missing.zip", tmp_path / "out")
+
+
+# ============================================================================ #
+# 压缩包只读浏览
+# ============================================================================ #
+class TestArchiveBrowsing:
+    def test_browsable_formats(self, tmp_path: Path) -> None:
+        for name in ("a.zip", "a.tar", "a.tar.gz", "a.tgz", "a.tar.bz2", "a.tbz2", "a.tar.xz", "a.txz"):
+            assert archive_browsable(tmp_path / name), name
+        for name in ("a.7z", "a.rar", "a.txt", "a.exe"):
+            assert not archive_browsable(tmp_path / name), name
+
+    def test_read_zip_members(self, tmp_path: Path) -> None:
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("a.txt", "hello")
+            handle.writestr("sub/", "")
+            handle.writestr("sub/b.txt", "world")
+
+        members = read_archive_members(archive)
+
+        by_name = {member.name: member for member in members}
+        assert set(by_name) == {"a.txt", "sub/", "sub/b.txt"}
+        assert by_name["a.txt"].size == 5
+        assert by_name["sub/"].is_dir is True
+        assert by_name["sub/b.txt"].is_dir is False
+
+    def test_read_tar_members(self, tmp_path: Path) -> None:
+        source = tmp_path / "a.txt"
+        source.write_text("hello", encoding="utf-8")
+        directory = tmp_path / "sub"
+        directory.mkdir()
+        (directory / "b.txt").write_text("world", encoding="utf-8")
+        archive = tmp_path / "bundle.tar.gz"
+        with tarfile.open(archive, "w:gz") as handle:
+            handle.add(source, arcname="a.txt")
+            handle.add(directory, arcname="sub")
+
+        members = read_archive_members(archive)
+
+        by_name = {member.name: member for member in members}
+        assert "a.txt" in by_name
+        assert by_name["sub"].is_dir is True
+        assert by_name["sub/b.txt"].size == 5
+
+    def test_read_single_stream_member(self, tmp_path: Path) -> None:
+        archive = tmp_path / "notes.txt.gz"
+        with open(archive, "wb") as handle:  # noqa: PTH123 - gzip 写入由标准库完成
+            handle.write(b"x")
+        members = read_archive_members(archive)
+        assert [member.name for member in members] == ["notes.txt"]
+
+    def test_read_rejects_unknown_format(self, tmp_path: Path) -> None:
+        archive = tmp_path / "a.7z"
+        archive.write_bytes(b"not really an archive")
+        with pytest.raises(ValueError):
+            read_archive_members(archive)
+
+    def test_read_skips_path_traversal(self, tmp_path: Path) -> None:
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("../evil.txt", "x")
+            handle.writestr("/abs.txt", "x")
+            handle.writestr("safe.txt", "x")
+
+        members = read_archive_members(archive)
+
+        assert [member.name for member in members] == ["safe.txt"]
+
+    def test_extract_selected_subtree(self, tmp_path: Path) -> None:
+        archive = tmp_path / "bundle.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("keep/a.txt", "a")
+            handle.writestr("keep/deep/b.txt", "b")
+            handle.writestr("skip.txt", "c")
+        destination = tmp_path / "out"
+
+        count = extract_archive_members(archive, [ArchiveMember("keep", is_dir=True)], destination)
+
+        assert count == 2
+        assert (destination / "keep" / "a.txt").read_text(encoding="utf-8") == "a"
+        assert (destination / "keep" / "deep" / "b.txt").read_text(encoding="utf-8") == "b"
+        assert not (destination / "skip.txt").exists()
+
+    def test_extract_ignores_unsafe_members(self, tmp_path: Path) -> None:
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as handle:
+            handle.writestr("../evil.txt", "x")
+        destination = tmp_path / "out"
+
+        assert extract_archive_members(archive, [ArchiveMember("../evil.txt")], destination) == 0
+        assert not (tmp_path / "evil.txt").exists()
 
 
 # ============================================================================ #

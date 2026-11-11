@@ -1535,6 +1535,33 @@ class TestMenuState:
     def test_invalid_view_mode_falls_back_to_detailed(self) -> None:
         assert ops.menu_state(self._facts(view_mode="grid")).view_mode == "detailed"
 
+    def test_open_archive_requires_single_browsable_file(self) -> None:
+        assert not ops.menu_state(self._facts(single_is_archive=True)).is_disabled("open_archive")
+        assert ops.menu_state(self._facts(single_is_archive=False)).is_disabled("open_archive")
+        assert ops.menu_state(self._facts(selection_count=2, single_is_archive=True)).is_disabled("open_archive")
+
+    def test_archive_view_disables_write_and_real_path_actions(self) -> None:
+        state = ops.menu_state(self._facts(archive_view=True))
+
+        for action in (
+            "open_archive",
+            "new_folder",
+            "rename",
+            "bulk_rename",
+            "delete",
+            "permanent_delete",
+            "move",
+            "open_with",
+            "properties",
+            "hash",
+            "pack",
+            "unpack",
+        ):
+            assert state.is_disabled(action), action
+        for action in ("open", "view", "copy", "refresh", "command_line"):
+            assert not state.is_disabled(action), action
+        assert state.archive_view is True
+
 
 class TestSyncBrowse:
     """同步浏览：把一侧的目录变化折算成相对动作，另一侧按同样动作跟随。"""

@@ -36,12 +36,14 @@ import queue
 import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
 
 import fcmd
@@ -162,6 +164,7 @@ __all__ = [
     "DEFAULT_SORT_KEY",
     "MAX_HISTORY",
     "SORT_KEYS",
+    "ArchiveMember",
     "CmderSettings",
     "FileEntry",
     "HashResult",
@@ -170,6 +173,7 @@ __all__ = [
     "SearchHit",
     "TransferItem",
     "TrashReport",
+    "archive_browsable",
     "archive_stem",
     "config_path",
     "copy_entry",
@@ -182,6 +186,7 @@ __all__ = [
     "describe_attributes",
     "describe_entry",
     "directory_size",
+    "extract_archive_members",
     "extract_archive_to",
     "filter_names",
     "format_hash_report",
@@ -206,6 +211,7 @@ __all__ = [
     "parent_directory",
     "plan_transfer",
     "push_history",
+    "read_archive_members",
     "rename_entry",
     "resolve_geometry",
     "resolve_path_input",
@@ -336,6 +342,7 @@ class FileEntry:
     mtime: float = 0.0
     hidden: bool = False
     relative: str = ""
+    archive_member: str = ""
 
     @property
     def label(self) -> str:
@@ -1036,6 +1043,106 @@ def extract_archive_to(
 
 
 # ============================================================================ #
+# 压缩包内浏览（zip / tar 家族 / 单文件压缩流，只读）
+# ============================================================================ #
+@dataclass(frozen=True)
+class ArchiveMember:
+    """归档成员：``name`` 为 POSIX 相对路径，目录通常以 ``/`` 结尾。"""
+
+    name: str
+    size: int = 0
+    mtime: float = 0.0
+    is_dir: bool = False
+
+
+def archive_browsable(path: Path) -> bool:
+    """按后缀判断是否支持只读浏览（读取时再校验实际格式）。"""
+    lower = path.name.lower()
+    if lower.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
+        return True
+    return path.suffix.lower() in {".zip", ".tar", ".tgz", ".tbz2", ".txz", ".gz", ".bz2", ".xz"}
+
+
+def _member_allowed(name: str) -> bool:
+    """拒绝绝对路径与 ``..`` 穿越的成员名。"""
+    cleaned = name.replace("\\", "/")
+    if cleaned.startswith("/") or cleaned == ".." or cleaned.startswith("../") or "/../" in cleaned:
+        return False
+    return bool(cleaned.strip("/"))
+
+
+def _zip_member_mtime(info: zipfile.ZipInfo) -> float:
+    try:
+        return time.mktime((*info.date_time, 0, 0, -1))
+    except (OverflowError, ValueError):
+        return 0.0
+
+
+def read_archive_members(archive: Path) -> list[ArchiveMember]:
+    """读取 zip / tar 成员；单文件压缩流返回一个伪成员。"""
+    if not archive.is_file():
+        raise FileNotFoundError(f"归档不存在: {archive}")
+    lower = archive.name.lower()
+    if lower.endswith(".zip"):
+        with zipfile.ZipFile(archive) as handle:
+            return [
+                ArchiveMember(
+                    name=info.filename,
+                    size=info.file_size,
+                    mtime=_zip_member_mtime(info),
+                    is_dir=info.is_dir(),
+                )
+                for info in handle.infolist()
+                if _member_allowed(info.filename)
+            ]
+    if lower.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
+        with tarfile.open(archive) as handle:
+            return [
+                ArchiveMember(name=info.name, size=info.size, mtime=float(info.mtime), is_dir=info.isdir())
+                for info in handle.getmembers()
+                if (info.isfile() or info.isdir()) and _member_allowed(info.name)
+            ]
+    if lower.endswith((".gz", ".bz2", ".xz")):
+        return [ArchiveMember(name=archive_stem(archive.name), size=archive.stat().st_size)]
+    raise ValueError(f"不支持浏览该格式: {archive.name}")
+
+
+def _member_in_scope(name: str, wanted: Sequence[str]) -> bool:
+    """成员是否在选中范围内（选中目录时包含其整棵子树）。"""
+    return any(name == item or name.startswith(f"{item.rstrip('/')}/") for item in wanted)
+
+
+def extract_archive_members(archive: Path, members: Sequence[ArchiveMember], destination: Path) -> int:
+    """把选中成员按包内相对路径解压到目标目录，返回解压的文件数。"""
+    if not archive.is_file():
+        raise FileNotFoundError(f"归档不存在: {archive}")
+    wanted = [member.name for member in members if _member_allowed(member.name)]
+    if not wanted:
+        return 0
+    destination.mkdir(parents=True, exist_ok=True)
+    lower = archive.name.lower()
+    if lower.endswith(".zip"):
+        with zipfile.ZipFile(archive) as handle:
+            selected = [
+                info for info in handle.infolist() if _member_in_scope(info.filename, wanted) and not info.is_dir()
+            ]
+            for info in selected:
+                handle.extract(info, destination)
+        return len(selected)
+    if lower.endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
+        with tarfile.open(archive) as handle:
+            selected = [
+                info
+                for info in handle.getmembers()
+                if (info.isfile() or info.isdir()) and _member_in_scope(info.name, wanted)
+            ]
+            handle.extractall(path=destination, members=selected, filter="data")
+        return sum(1 for info in selected if info.isfile())
+    extract_archive_to(archive, destination)
+    return 1
+
+
+# ============================================================================ #
 # 哈希 / 搜索 / 预览（复用 hashbase、fileops、textio）
 # ============================================================================ #
 def hash_paths(
@@ -1146,6 +1253,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._filter = ""
         self._last_path = self.state.path
         self._branch_truncated = False
+        self.archive: Path | None = None
+        self.archive_prefix = ""
+        self._archive_members: list[ArchiveMember] | None = None
+        self._archive_temp: Path | None = None
         self._tk = tk
         self._ttk = ttk
         theme = app.theme
@@ -1433,7 +1544,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             width=2 if selected else 1,
         )
         photo: Any = self._thumb_cache.get(key)
-        plan = THUMBNAIL_BADGE if entry.is_dir else thumbnail_plan(entry.name)
+        plan = self._thumb_plan(entry)
         if photo is not None:
             self._thumb_canvas.create_image(
                 x0 + (_THUMB_TILE - int(photo.width())) // 2,
@@ -1468,7 +1579,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
     def _thumb_badge_text(entry: FileEntry) -> str:
         if entry.is_dir:
             return "DIR"
-        suffix = entry.path.suffix[1:].upper()
+        suffix = Path(entry.name).suffix[1:].upper()
         return suffix[:6] if suffix else "FILE"
 
     @staticmethod
@@ -1486,7 +1597,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """按需提交后台读取；同一键只保留一个任务。"""
         if key in self._thumb_futures or key in self._thumb_cache:
             return
-        if thumbnail_plan(entry.name) == THUMBNAIL_BADGE:
+        if self._thumb_plan(entry) == THUMBNAIL_BADGE:
             return
         executor = self._thumb_executor
         if executor is None:
@@ -1675,6 +1786,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             return
         self._capture_column_widths()
         self._invalidate_thumbnails("tab")
+        self._clear_archive_state()
         self.tab_index = index
         self.path_var.set(self.state.path)
         self._render_tabs()
@@ -1685,6 +1797,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         """新建标签页：默认沿用当前目录、排序方式、视图模式与列宽。"""
         source = self.state
         self._capture_column_widths()
+        self._clear_archive_state()
         target = path or source.path
         self.tabs.append(
             PanelState(
@@ -1710,6 +1823,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             return False
         self._capture_column_widths()
         self._invalidate_thumbnails("tab")
+        self._clear_archive_state()
         closed = self.tabs.pop(self.tab_index)
         self.tab_index = min(self.tab_index, len(self.tabs) - 1)
         self.path_var.set(self.state.path)
@@ -1734,6 +1848,9 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self._last_path = self.state.path
         if previous_path != self._last_path:
             self.app.on_panel_navigated(self, previous_path, self._last_path)
+        if self.archive is not None:
+            suffix = f"/{self.archive_prefix}" if self.archive_prefix else ""
+            self.path_var.set(f"{self.archive}{suffix}")
         directory = Path(self.state.path)
         self._branch_truncated = False
         try:
@@ -1802,8 +1919,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.app.on_panel_refreshed(self)
 
     def _load_entries(self, directory: Path) -> list[FileEntry]:
-        """读取目录并排序：分支视图递归列出所有文件，普通视图只列直接子项。"""
-        if self.state.branch_view:
+        """读取目录并排序：压缩包 / 分支视图 / 普通目录三种来源。"""
+        if self.archive is not None:
+            entries = self._archive_entries()
+        elif self.state.branch_view:
             entries = self._list_branch(directory)
         else:
             entries = list_directory(directory, show_hidden=self.app.settings.show_hidden)
@@ -1812,6 +1931,142 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             sort_key=self.state.sort_key,
             descending=self.state.descending,
         )
+
+    def _archive_entries(self) -> list[FileEntry]:
+        """把归档成员折算为当前包内目录的直接子项。"""
+        archive = self.archive
+        if archive is None:
+            return []
+        members = self._archive_members or []
+        prefix = self.archive_prefix
+        seen_dirs: set[str] = set()
+        entries: list[FileEntry] = []
+        for member in members:
+            name = member.name.rstrip("/")
+            if not name:
+                continue
+            if prefix:
+                if not name.startswith(f"{prefix}/"):
+                    continue
+                rest = name[len(prefix) + 1 :]
+            else:
+                rest = name
+            if not rest:
+                continue
+            head, sep, _tail = rest.partition("/")
+            if not head:
+                continue
+            if sep or member.is_dir:
+                if head in seen_dirs:
+                    continue
+                seen_dirs.add(head)
+                entries.append(
+                    FileEntry(
+                        name=head,
+                        path=archive,
+                        is_dir=True,
+                        archive_member=f"{prefix}/{head}".strip("/") if prefix else head,
+                    )
+                )
+                continue
+            entries.append(
+                FileEntry(
+                    name=head,
+                    path=archive,
+                    size=member.size,
+                    mtime=member.mtime,
+                    archive_member=name,
+                )
+            )
+        return entries
+
+    def open_archive(self, archive: Path) -> bool:
+        """进入归档只读浏览；不支持或读取失败时提示并返回 ``False``。"""
+        if not archive_browsable(archive):
+            self.app.show_error(
+                "无法浏览",
+                f"不支持浏览该压缩包格式（7z / rar 等请用「解压…」）：\n{archive.name}",
+            )
+            return False
+        try:
+            members = read_archive_members(archive)
+        except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+            self.app.show_error("无法浏览", str(exc))
+            return False
+        self._invalidate_thumbnails("archive")
+        self.archive = archive
+        self.archive_prefix = ""
+        self._archive_members = members
+        self.refresh()
+        return True
+
+    def archive_enter(self, name: str) -> None:
+        """进入包内子目录。"""
+        if self.archive is None:
+            return
+        self.archive_prefix = f"{self.archive_prefix}/{name}".strip("/") if self.archive_prefix else name
+        self.refresh()
+
+    def archive_up(self) -> None:
+        """包内返回上级；已在包根时退出浏览。"""
+        if self.archive is None:
+            return
+        if not self.archive_prefix:
+            self.exit_archive()
+            return
+        parent = str(PurePosixPath(self.archive_prefix).parent)
+        self.archive_prefix = "" if parent == "." else parent
+        self.refresh()
+
+    def exit_archive(self) -> None:
+        """退出压缩包浏览并回到归档所在目录。"""
+        if self.archive is None:
+            return
+        self._clear_archive_state()
+        self.refresh()
+
+    def _clear_archive_state(self) -> None:
+        self.archive = None
+        self.archive_prefix = ""
+        self._archive_members = None
+        self.path_var.set(self.state.path)
+        if self._archive_temp is not None:
+            shutil.rmtree(self._archive_temp, ignore_errors=True)
+            self._archive_temp = None
+
+    def preview_path(self, entry: FileEntry) -> Path | None:
+        """查看用路径：包内文件先解压到临时目录，普通条目返回真实路径。"""
+        if self.archive is None:
+            return entry.path
+        return self.materialize(entry)
+
+    def materialize(self, entry: FileEntry) -> Path | None:
+        """按需把包内文件解压到临时目录；失败或超限时提示并返回 ``None``。"""
+        if self.archive is None or not entry.archive_member:
+            return None
+        if entry.size > _QUICK_IMAGE_LIMIT:
+            self.app.show_error("无法打开", f"文件超过 32 MiB，请先解压：{entry.label}")
+            return None
+        if self._archive_temp is None:
+            self._archive_temp = Path(tempfile.mkdtemp(prefix="fcmd-arcview-"))
+        target = self._archive_temp / entry.archive_member
+        if not target.is_file():
+            try:
+                extract_archive_members(
+                    self.archive,
+                    [ArchiveMember(entry.archive_member, entry.size, entry.mtime)],
+                    self._archive_temp,
+                )
+            except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+                self.app.show_error("无法解压", str(exc))
+                return None
+        return target if target.is_file() else None
+
+    def _thumb_plan(self, entry: FileEntry) -> str:
+        """缩略图计划：包内条目统一画类型徽标，不解码包内图片。"""
+        if self.archive is not None:
+            return THUMBNAIL_BADGE
+        return THUMBNAIL_BADGE if entry.is_dir else thumbnail_plan(entry.name)
 
     def _list_branch(self, directory: Path) -> list[FileEntry]:
         """分支视图：递归列出所有文件，``relative`` 记录相对根目录的路径。
@@ -1926,10 +2181,14 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if entry.is_dir:
             self._show_quick_note(f"快速查看 - {entry.label}", "目录不预览，双击进入")
             return
-        result = read_preview(entry.path)
+        path = self.preview_path(entry)
+        if path is None:
+            self._show_quick_note(f"快速查看 - {entry.label}", "无法读取压缩包内文件")
+            return
+        result = read_preview(path)
         self._quick_note_var.set(result.note)
         if result.kind == PREVIEW_IMAGE:
-            self._show_quick_image(entry.path, result)
+            self._show_quick_image(path, result)
         elif result.kind == PREVIEW_UNSUPPORTED:
             self._show_quick_text(result.note or "无法预览该类型")
         else:
@@ -1980,7 +2239,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         total = len(self.entries)
         file_size = sum(entry.size for entry in self.entries if not entry.is_dir)
         text = f"{total} 个对象，共 {format_size(file_size)}"
-        if self.state.branch_view:
+        if self.archive is not None:
+            inner = f"/{self.archive_prefix}" if self.archive_prefix else ""
+            text = f"压缩包 · 只读 · {self.archive.name}{inner} · {total} 项"
+        elif self.state.branch_view:
             text = f"分支视图 · {text}"
             if self._branch_truncated:
                 text += f"（已达上限 {BRANCH_MAX_ENTRIES} 条，未列完）"
@@ -1992,7 +2254,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             text += f" | 已选 {len(selected)} 个，{format_size(selected_size)}"
             if self._is_thumbnail_view() and len(selected) == 1 and not selected[0].is_dir:
                 entry = selected[0]
-                if thumbnail_plan(entry.name) == THUMBNAIL_BADGE:
+                if self._thumb_plan(entry) == THUMBNAIL_BADGE:
                     text += f" | {thumbnail_unsupported_hint(entry.name)}"
         self.status_var.set(text)
 
@@ -2006,6 +2268,10 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.app.on_panel_selection(self)
 
     def _on_path_enter(self, _event: Any = None) -> None:
+        if self.archive is not None:
+            self.app.set_status("压缩包内为只读浏览：用 Backspace 返回上级，或输入其他目录退出浏览")
+            self.path_var.set(f"{self.archive}/{self.archive_prefix}".rstrip("/"))
+            return
         try:
             directory, select = resolve_path_input(self.path_var.get(), base=Path.cwd())
         except (OSError, ValueError) as exc:
@@ -2017,7 +2283,7 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
             self.select_name(select)
 
     def set_path(self, path: Path, *, push: bool = True) -> None:
-        """切换到指定目录，默认写入历史。"""
+        """切换到指定目录，默认写入历史；压缩包浏览状态下先退出浏览。"""
         try:
             directory = path.resolve(strict=False)
         except OSError as exc:
@@ -2028,6 +2294,8 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         if not directory.is_dir():
             self.app.show_error("路径无效", f"目录不存在: {directory}")
             return
+        if self.archive is not None:
+            self._clear_archive_state()
         text = str(directory)
         if text != self.state.path:
             self._invalidate_thumbnails("navigate")
@@ -2040,30 +2308,45 @@ class FilePanel:  # pragma: no cover - Tk 视图不纳入单元覆盖（CI 无�
         self.refresh()
 
     def go_up(self) -> None:
-        """进入父目录。"""
+        """进入父目录；压缩包内先返回包内上级，包根再退出浏览。"""
+        if self.archive is not None:
+            self.archive_up()
+            return
         parent = parent_directory(Path(self.state.path))
         if parent is not None:
             self.set_path(parent)
 
     def go_back(self) -> None:
-        """后退到历史上一项。"""
+        """后退到历史上一项；压缩包内先退出浏览。"""
+        was_archive = self.archive is not None
+        if was_archive:
+            self._clear_archive_state()
         index = history_back(self.state.history, self.state.history_index)
-        if index != self.state.history_index:
-            self._invalidate_thumbnails("navigate")
-            self.state.history_index = index
-            self.state.path = self.state.history[index]
-            self.path_var.set(self.state.path)
-            self.refresh()
+        if index == self.state.history_index:
+            if was_archive:
+                self.refresh()
+            return
+        self._invalidate_thumbnails("navigate")
+        self.state.history_index = index
+        self.state.path = self.state.history[index]
+        self.path_var.set(self.state.path)
+        self.refresh()
 
     def go_forward(self) -> None:
-        """前进到历史下一项。"""
+        """前进到历史下一项；压缩包内先退出浏览。"""
+        was_archive = self.archive is not None
+        if was_archive:
+            self._clear_archive_state()
         index = history_forward(self.state.history, self.state.history_index)
-        if index != self.state.history_index:
-            self._invalidate_thumbnails("navigate")
-            self.state.history_index = index
-            self.state.path = self.state.history[index]
-            self.path_var.set(self.state.path)
-            self.refresh()
+        if index == self.state.history_index:
+            if was_archive:
+                self.refresh()
+            return
+        self._invalidate_thumbnails("navigate")
+        self.state.history_index = index
+        self.state.path = self.state.history[index]
+        self.path_var.set(self.state.path)
+        self.refresh()
 
     # ------------------------------------------------------------------ #
     # 选择与排序
@@ -3848,6 +4131,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
         file_menu = tk.Menu(menubar, tearoff=False, postcommand=self._sync_menu_state)
         self._menu_command(file_menu, "open", "打开\tEnter", self.open_selected)
+        self._menu_command(file_menu, "open_archive", "进入压缩包", self.open_archive_selected)
         self._menu_command(file_menu, "view", "查看\tF3", self.view_selected)
         self._menu_command(file_menu, "edit", "编辑\tF4", self.edit_selected)
         self._menu_command(file_menu, "open_with", "打开方式…", self.open_with_selected)
@@ -3999,6 +4283,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     def _build_context_menu(self) -> Any:
         menu = self._tk.Menu(self.root, tearoff=False, postcommand=self._sync_menu_state)
         menu.add_command(label="打开", command=self.open_selected)
+        menu.add_command(label="进入压缩包", command=self.open_archive_selected)
         menu.add_command(label="查看", command=self.view_selected)
         menu.add_command(label="编辑", command=self.edit_selected)
         menu.add_command(label="打开方式…", command=self.open_with_selected)
@@ -4220,6 +4505,9 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             entry_count=len(panel.tree.get_children()),
             selection_count=len(entries),
             single_is_file=bool(single and not single.is_dir),
+            single_is_archive=bool(
+                single and not single.is_dir and single.archive_member == "" and archive_browsable(single.path)
+            ),
             busy=self._busy,
             active_writable=self._directory_writable(Path(panel.state.path)),
             target_writable=self._directory_writable(Path(self.other_panel().state.path)),
@@ -4233,6 +4521,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
             quick_visible=panel.quick_visible,
             sync_browse=self.settings.sync_browse,
             branch_view=panel.state.branch_view,
+            archive_view=panel.archive is not None,
             sort_key=panel.state.sort_key,
             view_mode=panel.state.view_mode,
         )
@@ -4706,7 +4995,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def show_selected_size(self) -> None:
         """Space：后台统计选中条目的总大小与文件数。"""
-        if self._busy:
+        if self._busy or self._archive_readonly():
             return
         entries = self.active_panel().selected_entries()
         if not entries:
@@ -4737,8 +5026,20 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def open_entry(self, entry: FileEntry) -> None:
         """双击 / Enter：目录进入，文件用系统默认程序打开。"""
+        panel = self.active_panel()
+        if panel.archive is not None:
+            if entry.is_dir:
+                panel.archive_enter(entry.name)
+                return
+            target = panel.materialize(entry)
+            if target is not None:
+                try:
+                    open_externally(target)
+                except OSError as exc:
+                    self.show_error("无法打开", str(exc))
+            return
         if entry.is_dir:
-            self.active_panel().set_path(entry.path)
+            panel.set_path(entry.path)
             return
         try:
             open_externally(entry.path)
@@ -4750,6 +5051,18 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         entries = self.active_panel().selected_entries()
         if entries:
             self.open_entry(entries[0])
+
+    def open_archive_selected(self) -> None:
+        """文件 / 右键菜单：只读浏览选中的压缩包。"""
+        panel = self.active_panel()
+        if panel.archive is not None:
+            self.set_status("已在压缩包内；先返回上级或退出再打开其他压缩包")
+            return
+        entries = panel.selected_entries()
+        if len(entries) != 1 or entries[0].is_dir:
+            self._messagebox.showinfo("进入压缩包", "请选择一个压缩包文件", parent=self.root)
+            return
+        panel.open_archive(entries[0].path)
 
     def show_context_menu(self, event: Any) -> None:
         """右键菜单：先把点击行与所在面板激活，再弹出菜单。"""
@@ -4768,13 +5081,17 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     # 查看 / 编辑 / 属性
     # ------------------------------------------------------------------ #
     def view_selected(self) -> None:
-        """F3 内置文本查看器。"""
-        entries = self.active_panel().selected_entries()
+        """F3 内置文本查看器（包内文件先解压到临时目录）。"""
+        panel = self.active_panel()
+        entries = panel.selected_entries()
         if len(entries) != 1 or entries[0].is_dir:
             self._messagebox.showinfo("查看", "请选择一个文件", parent=self.root)
             return
+        path = panel.preview_path(entries[0])
+        if path is None:
+            return
         try:
-            text = load_preview(entries[0].path)
+            text = load_preview(path)
         except (OSError, ValueError) as exc:
             self._messagebox.showwarning("无法查看", str(exc), parent=self.root)
             return
@@ -4782,6 +5099,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def edit_selected(self) -> None:
         """F4 用系统默认程序编辑。"""
+        if self._archive_readonly():
+            return
         entries = self.active_panel().selected_entries()
         if len(entries) != 1 or entries[0].is_dir:
             self._messagebox.showinfo("编辑", "请选择一个文件", parent=self.root)
@@ -4793,6 +5112,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def open_with_selected(self) -> None:
         """文件 / 右键菜单：选择一个程序打开当前文件。"""
+        if self._archive_readonly():
+            return
         entries = self.active_panel().selected_entries()
         if len(entries) != 1 or entries[0].is_dir:
             self._messagebox.showinfo("打开方式", "请选择一个文件", parent=self.root)
@@ -4821,6 +5142,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def show_properties(self) -> None:
         """显示选中条目的属性。"""
+        if self._archive_readonly():
+            return
         entries = self.active_panel().selected_entries()
         if not entries:
             self._messagebox.showinfo("属性", "请先选择文件或文件夹", parent=self.root)
@@ -4861,6 +5184,13 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
     # ------------------------------------------------------------------ #
     # 文件操作
     # ------------------------------------------------------------------ #
+    def _archive_readonly(self) -> bool:
+        """压缩包内为只读浏览：写回磁盘或依赖真实路径的动作统一拦截。"""
+        if self.active_panel().archive is None:
+            return False
+        self.set_status("压缩包内为只读浏览，请先导出到磁盘再修改")
+        return True
+
     def _selected_paths(self) -> list[Path]:
         """取选中条目路径；未选择时提示并返回空列表。"""
         entries = self.active_panel().selected_entries()
@@ -4890,10 +5220,71 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def _transfer(self, *, move: bool) -> None:
         panel = self.active_panel()
+        if panel.archive is not None:
+            if move:
+                self.set_status("压缩包为只读，F6 按导出处理")
+            self._extract_selected(panel)
+            return
         paths = self._selected_paths()
         if paths:
             root = Path(panel.state.path) if panel.state.branch_view else None
             self.transfer_paths(paths, move=move, preserve_root=root)
+
+    def _extract_selected(self, panel: FilePanel) -> None:
+        """包内 F5 / F6：把选中成员（含子目录）解压到对面面板或指定目录。"""
+        archive = panel.archive
+        if archive is None:
+            return
+        entries = panel.selected_entries()
+        if not entries:
+            self.set_status("请选择要导出的文件")
+            return
+        members = [
+            ArchiveMember(entry.archive_member, entry.size, entry.mtime, entry.is_dir)
+            for entry in entries
+            if entry.archive_member
+        ]
+        if not members:
+            self.set_status("没有可导出的条目")
+            return
+        default_destination = self.other_panel().state.path
+        destination_text = self._simpledialog.askstring(
+            "解压选中",
+            f"目标目录（默认对面面板）：\n{default_destination}",
+            initialvalue=default_destination,
+            parent=self.root,
+        )
+        if destination_text is None:
+            return
+        raw = destination_text.strip() or default_destination
+        destination = Path(raw).expanduser()
+        if not destination.is_absolute():
+            destination = Path(panel.state.path) / destination
+        if not destination.is_dir():
+            self.show_error("无法解压", f"目标目录不存在：{destination}")
+            return
+        existing = [member for member in members if (destination / member.name).exists()]
+        if existing and not self._messagebox.askyesno(
+            "目标已存在",
+            f"{len(existing)} 个同名条目已存在，继续将覆盖它们。\n\n继续吗？",
+            parent=self.root,
+        ):
+            return
+        count = len(members)
+
+        def task() -> int:
+            return extract_archive_members(archive, members, destination)
+
+        def done(extracted: int) -> None:
+            self.refresh_both()
+            self.set_status(f"已导出 {extracted} 个文件到 {destination}")
+            self._messagebox.showinfo(
+                "导出完成",
+                f"{extracted} 个文件 → {destination}",
+                parent=self.root,
+            )
+
+        self.start_worker(task, done, title=f"导出 {count} 项")
 
     def transfer_paths(self, paths: Sequence[Path], *, move: bool, preserve_root: Path | None = None) -> bool:
         """通用复制 / 移动入口：规划后加入传输队列，返回是否已入队。
@@ -5149,12 +5540,16 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def delete_selected(self) -> None:
         """F8 移入系统回收站（可撤销）。"""
+        if self._archive_readonly():
+            return
         paths = self._selected_paths()
         if paths:
             self.delete_paths(paths)
 
     def permanent_delete_selected(self) -> None:
         """Shift+F8 永久删除选中条目。"""
+        if self._archive_readonly():
+            return
         paths = self._selected_paths()
         if paths:
             self.delete_paths(paths, permanent=True)
@@ -5217,7 +5612,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def new_folder(self) -> None:
         """F7 新建目录。"""
-        if self._busy:
+        if self._busy or self._archive_readonly():
             return
         panel = self.active_panel()
         name = self._simpledialog.askstring("新建目录", "目录名称：", parent=self.root)
@@ -5233,7 +5628,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def rename_selected(self) -> None:
         """F2 重命名单个条目；多选时转到批量重命名。"""
-        if self._busy:
+        if self._busy or self._archive_readonly():
             return
         panel = self.active_panel()
         entries = panel.selected_entries()
@@ -5259,7 +5654,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def bulk_rename(self) -> None:
         """Ctrl+M 批量重命名选中条目。"""
-        if self._busy:
+        if self._busy or self._archive_readonly():
             return
         panel = self.active_panel()
         entries = panel.selected_entries()
@@ -5297,7 +5692,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def pack_selected(self) -> None:
         """Alt+F5 打包选中条目。"""
-        if self._busy:
+        if self._busy or self._archive_readonly():
             return
         paths = self._selected_paths()
         if not paths:
@@ -5370,7 +5765,7 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
 
     def hash_selected(self) -> None:
         """计算选中文件 / 目录的哈希。"""
-        if self._busy:
+        if self._busy or self._archive_readonly():
             return
         paths = self._selected_paths()
         if not paths:
@@ -5602,6 +5997,8 @@ class CmderWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无
         if self._closing:
             return
         self._closing = True
+        self.left._clear_archive_state()
+        self.right._clear_archive_state()
         self.left.shutdown_thumbnails()
         self.right.shutdown_thumbnails()
         self._store_panel_state()

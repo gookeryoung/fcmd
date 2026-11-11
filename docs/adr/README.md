@@ -10,3 +10,5 @@
 | [0004](0004-refactor-backlog.md) | 重构待办的触发条件 | 生效（M4 / M7 暂缓） |
 | [0005](0005-cmderw-totalcommander-alignment.md) | cmderw 对齐 Total Commander 的能力分期 | 生效（A/B/C/D/E/F 批已落地） |
 | [0006](0006-tool-list-fast-path.md) | 工具列表快路径（静态元数据 + 内容指纹回退） | 已落地 |
+| [0007](0007-cmderw-archive-browsing.md) | cmderw 压缩包内只读浏览与按需解压 | 生效（J 批） |
+| [0008](0008-cmderw-command-line.md) | cmderw 命令行历史与补全 | 生效（K 批） |
