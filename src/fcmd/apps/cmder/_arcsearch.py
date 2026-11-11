@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from fcmd.apps.cmder._preview import detect_encoding
 from fcmd.infras.fs import compile_content_pattern
+from fcmd.tools.archive.archivex import detect_format
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -67,25 +68,26 @@ def format_archive_hit(hit: ArchiveHit) -> str:
     return f"{hit.member}:{hit.line}: {hit.text}"
 
 
-def _is_zip(archive: Path) -> bool:
-    return archive.name.lower().endswith(".zip")
-
-
-def _is_tar(archive: Path) -> bool:
-    return archive.name.lower().endswith((".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz", ".tbz2", ".tar.xz", ".txz"))
+def _archive_format(archive: Path) -> str | None:
+    """复用 :func:`fcmd.tools.archive.archivex.detect_format`；不支持的格式返回 ``None``。"""
+    try:
+        return detect_format(archive)
+    except ValueError:
+        return None
 
 
 @contextlib.contextmanager
 def _member_entries(archive: Path) -> Iterator[Iterator[tuple[str, int, bool, Callable[[], Any]]]]:
     """逐个产出 ``(成员名, 大小, 是否加密, 打开函数)``，句柄在本上下文内有效。"""
-    if _is_zip(archive):
+    fmt = _archive_format(archive)
+    if fmt == "zip":
         with zipfile.ZipFile(archive) as handle:
             yield (
                 (info.filename, info.file_size, bool(info.flag_bits & 0x1), lambda info=info: handle.open(info))
                 for info in handle.infolist()
                 if not info.is_dir()
             )
-    elif _is_tar(archive):
+    elif fmt == "tar":
         with tarfile.open(archive) as handle:
             yield (
                 (info.name, info.size, False, lambda info=info: handle.extractfile(info))

@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from fcmd.tools.archive.archivex import detect_format
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
     from typing import Any
@@ -78,12 +80,20 @@ def normalize_level(level: object) -> int:
     return max(MIN_COMPRESSION_LEVEL, min(MAX_COMPRESSION_LEVEL, level))
 
 
+def _archive_format(path: Path) -> str | None:
+    """复用 :func:`fcmd.tools.archive.archivex.detect_format`；不支持的格式返回 ``None``。"""
+    try:
+        return detect_format(path)
+    except ValueError:
+        return None
+
+
 def _is_zip(path: Path) -> bool:
-    return path.name.lower().endswith(".zip")
+    return _archive_format(path) == "zip"
 
 
 def _is_tar(path: Path) -> bool:
-    return path.name.lower().endswith(_TAR_SUFFIXES)
+    return _archive_format(path) == "tar"
 
 
 def archive_editable(path: Path) -> bool:
