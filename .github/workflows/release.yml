@@ -221,10 +221,17 @@ jobs:
           PY
           fi
 
+      # GitHub 的 Windows runner 是 en-US + 传统控制台（cp1252），rich 输出含中文
+      # 的 help 时会 UnicodeEncodeError。这里把控制台切到 UTF-8，模拟用户实际使用的
+      # Windows Terminal；不加这层会把 runner 区域设置问题误判成打包缺陷。
       - name: Smoke test built CLI (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
         run: |
+          chcp 65001 | Out-Null
           $out = & ./dist/fcmd.exe --version
           if ($LASTEXITCODE -ne 0) { throw "fcmd.exe --version 退出码 $LASTEXITCODE" }
           if ($out -notmatch '^fcmd \d+\.\d+\.\d+$') { throw "版本输出异常: $out" }
@@ -244,7 +251,11 @@ jobs:
       - name: Smoke test portable zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+          PYTHONIOENCODING: utf-8
         run: |
+          chcp 65001 | Out-Null
           $archive = Get-ChildItem dist/release -Filter '${{ matrix.zip_pattern }}' | Select-Object -First 1
           if (-not $archive) { throw '未找到 Windows 便携包' }
           $tmp = Join-Path $env:RUNNER_TEMP 'fcmd-smoke'
