@@ -40,11 +40,12 @@ MIB = 1024 * KIB
 
 BASELINES: dict[str, tuple[float, float]] = {
     # 场景 -> (文件/秒, MiB/秒)；本机基线（Windows 11 / Python 3.13 / workers=4）
-    "small/1rule": (900.0, 3.50),
-    "small/builtin": (710.0, 2.80),
-    "large/builtin": (4.80, 9.50),
-    "deep/builtin": (850.0, 1.70),
-    "mixed/whitelist": (840.0, 1.65),
+    # 2026-11-12 优化后重测：读缓冲按文件实际大小申请、逐行先 search 再 finditer。
+    "small/1rule": (6200.0, 24.50),
+    "small/builtin": (2600.0, 10.20),
+    "large/builtin": (6.20, 12.50),
+    "deep/builtin": (3400.0, 6.80),
+    "mixed/whitelist": (3400.0, 6.70),
 }
 
 DEFAULT_MIN_RATIO = 0.5
