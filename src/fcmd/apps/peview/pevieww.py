@@ -536,3 +536,12 @@ def launch_cmd(file: Path | None = None) -> None:
         启动时打开的 PE 文件路径；省略时打开空窗口或恢复上次文件
     """
     run_gui(file=file)
+
+
+@fcmd.main("pevieww")
+def main() -> None:
+    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
