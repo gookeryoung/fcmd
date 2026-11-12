@@ -181,6 +181,23 @@ def test_group_whitelist_normalizes_and_dedupes() -> None:
     assert filescanw.group_whitelist(()) == ()
 
 
+def test_parse_and_validate_ext_line_splits_on_comma() -> None:
+    assert filescanw.parse_and_validate_ext_line(".log, txt，PY") == ((".log", ".txt", ".py"), ())
+    assert filescanw.parse_and_validate_ext_line("") == ((), ())
+    assert filescanw.parse_and_validate_ext_line(".log, , .log") == ((".log",), ())
+
+
+def test_parse_and_validate_ext_line_reports_invalid_entries() -> None:
+    valid, invalid = filescanw.parse_and_validate_ext_line(".log, 日志, p y, *, ..py")
+    assert valid == (".log", "*")
+    assert invalid == ("日志", "p y", "..py")
+
+
+def test_validate_exts_accepts_star_and_wildcard_forms() -> None:
+    assert filescanw.validate_exts(["LOG", "*.log", "log"]) == ((".log",), ())
+    assert filescanw.validate_exts(["*"]) == (("*",), ())
+
+
 def test_run_gui_delegates_to_shared_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: dict[str, object] = {}
 

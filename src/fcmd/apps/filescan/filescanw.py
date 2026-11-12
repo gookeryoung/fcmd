@@ -2,8 +2,8 @@
 
 三个分页（沿用 llmdownw 的分页口径，避免表单堆叠）：
 
-- **扫描**：多目录列表、递归/深度/符号链接、后缀白名单列表（每类一行汇总全部
-  后缀，默认折叠，双击展开可逐个移除；支持新增与恢复默认）、后缀包含/排除、
+- **扫描**：多目录列表、递归/深度/符号链接、后缀白名单表格（类型 / 后缀两列，
+  每类一行，后缀用英文逗号分隔，双击行可编辑并校验）、后缀包含/排除、
   强制后缀、大小上下限、跳过二进制、单文件上限、并发数；开始 / 取消与进度条。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
@@ -75,11 +75,13 @@ __all__ = [
     "apply_expression",
     "group_whitelist",
     "load_settings",
+    "parse_and_validate_ext_line",
     "parse_whitelist_text",
     "run_gui",
     "save_settings",
     "settings_from_mapping",
     "settings_to_mapping",
+    "validate_exts",
 ]
 
 SETTINGS_NAME = "filescanw"
@@ -295,6 +297,38 @@ def group_whitelist(
     return tuple(groups)
 
 
+_EXT_TOKEN = re.compile(r"\.?[a-z0-9][a-z0-9._+-]*")
+_EXT_SEPARATORS = re.compile(r"[,，]")
+
+
+def _is_valid_ext_token(token: str) -> bool:
+    """单个后缀是否有效：``*``、``.log``、``log``、``*.log`` 合法，含空格/中文等非法。"""
+    value = token.strip().lower().removeprefix("*")
+    if token.strip() == "*":
+        return True
+    return bool(_EXT_TOKEN.fullmatch(value))
+
+
+def validate_exts(exts: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """校验后缀条目，返回 ``(有效后缀, 非法条目)``；有效项已规范化去重。"""
+    valid: list[str] = []
+    invalid: list[str] = []
+    for raw in exts:
+        token = str(raw).strip()
+        if not token:
+            continue
+        if _is_valid_ext_token(token):
+            valid.append(token)
+        else:
+            invalid.append(token)
+    return normalize_exts(valid), tuple(invalid)
+
+
+def parse_and_validate_ext_line(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """按英文/中文逗号拆分一行后缀并校验，返回 ``(有效后缀, 非法条目)``。"""
+    return validate_exts(_EXT_SEPARATORS.split(text))
+
+
 # ---------------------------------------------------------------------- #
 # 窗口
 # ---------------------------------------------------------------------- #
@@ -336,6 +370,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._include_ext = tk.StringVar(value=self.settings.include_ext)
         self._force_ext = tk.StringVar(value=self.settings.force_ext)
         self._new_ext = tk.StringVar()
+        self._whitelist_notice = ""
         self._exclude_ext = tk.StringVar(value=self.settings.exclude_ext)
         self._filter_rule = tk.StringVar(value="全部")
         self._filter_path = tk.StringVar(value=self.settings.filter_path)
@@ -352,7 +387,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._build_ui()
         self._refresh_dirs()
         self._refresh_rules()
-        self._status.set(self._summary_text())
+        self._status.set(self._whitelist_notice or self._summary_text())
 
     # -- 界面 --------------------------------------------------------- #
     def _build_ui(self) -> None:
@@ -418,27 +453,35 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Label(options, text="白名单外强制扫描（如 .pdf）").grid(row=3, column=6, columnspan=2, sticky="w")
         ttk.Label(
             options,
-            text="后缀白名单（每类一行列出全部后缀；双击类别展开后可逐个移除，不在列表内的文件直接跳过）",
+            text="后缀白名单（每类一行；双击行编辑，多个后缀用英文逗号【,】分隔）",
         ).grid(row=4, column=0, columnspan=8, sticky="w", padx=(6, 2), pady=(4, 0))
         whitelist_box = ttk.Frame(options)
         whitelist_box.grid(row=5, column=0, columnspan=8, sticky="ew")
         whitelist_box.columnconfigure(0, weight=1)
-        whitelist_tree = ttk.Treeview(whitelist_box, show="tree", height=8, selectmode="extended")
+        whitelist_tree = ttk.Treeview(
+            whitelist_box, columns=("group", "exts"), show="headings", height=8, selectmode="browse"
+        )
+        whitelist_tree.heading("group", text="类型")
+        whitelist_tree.heading("exts", text="后缀（用 , 分隔）")
+        whitelist_tree.column("group", width=120, stretch=False)
+        whitelist_tree.column("exts", width=560, stretch=True)
         whitelist_tree.grid(row=0, column=0, sticky="nsew")
         whitelist_scroll = ttk.Scrollbar(whitelist_box, orient="vertical", command=whitelist_tree.yview)
         whitelist_scroll.grid(row=0, column=1, sticky="ns")
-        whitelist_hscroll = ttk.Scrollbar(whitelist_box, orient="horizontal", command=whitelist_tree.xview)
-        whitelist_hscroll.grid(row=1, column=0, sticky="ew")
-        whitelist_tree.configure(yscrollcommand=whitelist_scroll.set, xscrollcommand=whitelist_hscroll.set)
+        whitelist_tree.configure(yscrollcommand=whitelist_scroll.set)
+        whitelist_tree.bind("<Double-1>", self._edit_whitelist_row)
         self._whitelist_tree = whitelist_tree
-        self._refresh_whitelist_tree(parse_whitelist_text(self.settings.ext_whitelist))
+        loaded, invalid = validate_exts(parse_whitelist_text(self.settings.ext_whitelist))
+        self._refresh_whitelist_tree(loaded)
+        if invalid:
+            self._whitelist_notice = f"白名单中 {'、'.join(invalid)} 无效，已忽略"
         buttons = ttk.Frame(whitelist_box)
         buttons.grid(row=0, column=2, sticky="nsw", padx=(6, 0))
-        ttk.Label(buttons, text="新增后缀").pack(anchor="w")
+        ttk.Button(buttons, text="编辑选中", command=self._edit_whitelist_row).pack(anchor="w", fill="x")
+        ttk.Label(buttons, text="新增后缀").pack(anchor="w", pady=(8, 0))
         ttk.Entry(buttons, textvariable=self._new_ext, width=12).pack(anchor="w", pady=2)
         ttk.Button(buttons, text="添加", command=self._add_whitelist_ext).pack(anchor="w", fill="x")
-        ttk.Button(buttons, text="移除选中", command=self._remove_whitelist_ext).pack(anchor="w", fill="x", pady=2)
-        ttk.Button(buttons, text="恢复默认", command=self._reset_whitelist).pack(anchor="w", fill="x")
+        ttk.Button(buttons, text="恢复默认", command=self._reset_whitelist).pack(anchor="w", fill="x", pady=(8, 0))
 
         actions = ttk.Frame(page)
         actions.grid(row=2, column=0, sticky="ew")
@@ -801,63 +844,106 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         messagebox.showinfo("表达式有效", "表达式解析通过", parent=self.root)
 
     # -- 扫描 --------------------------------------------------------- #
-    def _whitelist_exts(self) -> tuple[str, ...]:
-        """按列表顺序收集白名单后缀（分组行不计入）。"""
+    def _whitelist_rows(self) -> list[tuple[str, tuple[str, ...]]]:
+        """读取白名单表格：``[(类型, 该行后缀), ...]``。"""
         if self._whitelist_tree is None:
-            return ()
-        items: list[str] = []
-        for group in self._whitelist_tree.get_children(""):
-            for child in self._whitelist_tree.get_children(group):
-                items.append(self._whitelist_tree.item(child, "text"))
+            return []
+        rows: list[tuple[str, tuple[str, ...]]] = []
+        for iid in self._whitelist_tree.get_children(""):
+            label = str(self._whitelist_tree.set(iid, "group"))
+            exts, _ = parse_and_validate_ext_line(str(self._whitelist_tree.set(iid, "exts")))
+            rows.append((label, exts))
+        return rows
+
+    def _whitelist_exts(self) -> tuple[str, ...]:
+        """汇总表格中所有类型的有效后缀。"""
+        items = [ext for _, exts in self._whitelist_rows() for ext in exts]
         return normalize_exts(items)
 
     def _refresh_whitelist_tree(self, exts: Iterable[str]) -> None:
-        """按类别重建白名单列表；空输入时回落到默认白名单。"""
+        """按类别重建白名单表格；空输入时回落到默认白名单。"""
         if self._whitelist_tree is None:
             return
         tree = self._whitelist_tree
         tree.delete(*tree.get_children(""))
         selected = normalize_exts(tuple(exts)) or DEFAULT_SCAN_EXTENSIONS
-        for label, group_exts in group_whitelist(selected):
-            parent = tree.insert(
-                "",
-                "end",
-                text=f"{label}（{len(group_exts)}）：{' '.join(group_exts)}",
-                open=False,
-            )
-            for ext in group_exts:
-                tree.insert(parent, "end", text=ext)
+        for index, (label, group_exts) in enumerate(group_whitelist(selected)):
+            tree.insert("", "end", iid=f"row{index}", values=(label, ",".join(group_exts)))
 
     def _add_whitelist_ext(self) -> None:
         from tkinter import messagebox
 
-        parsed = normalize_exts([self._new_ext.get()])
-        if not parsed:
-            messagebox.showwarning("后缀无效", "请输入后缀，如 .log 或 .custom", parent=self.root)
+        valid, invalid = validate_exts([self._new_ext.get()])
+        if invalid or not valid:
+            messagebox.showwarning(
+                "后缀无效",
+                f"“{invalid[0] if invalid else ''}” 不是合法后缀；请输入 .log / custom 这类形式。",
+                parent=self.root,
+            )
             return
-        ext = parsed[0]
+        ext = valid[0]
         current = self._whitelist_exts()
         if ext in current:
             self._status.set(f"后缀 {ext} 已在白名单中")
             return
         self._refresh_whitelist_tree((*current, ext))
         self._new_ext.set("")
-        self._status.set(f"已添加后缀 {ext}")
+        self._status.set(f"已添加后缀 {ext}，共 {len(current) + 1} 个")
 
-    def _remove_whitelist_ext(self) -> None:
+    def _edit_whitelist_row(self, event: Any = None) -> None:
+        """双击表格行或点击「编辑选中」时，用弹窗编辑该类型的后缀串。"""
         if self._whitelist_tree is None:
             return
         tree = self._whitelist_tree
-        selected = {tree.item(iid, "text") for iid in tree.selection() if tree.parent(iid) != ""}
-        if not selected:
-            self._status.set("请先在列表中选择要移除的后缀")
-            return
-        remaining = tuple(ext for ext in self._whitelist_exts() if ext not in selected)
-        if not remaining:
-            self._status.set("白名单不能为空，请至少保留一个后缀")
-            return
-        self._refresh_whitelist_tree(remaining)
-        self._status.set(f"已移除 {len(selected)} 个后缀")
+        iid = tree.identify_row(event.y) if event is not None else ""
+        if not iid:
+            selection = tree.selection()
+            if not selection:
+                self._status.set("请先选择要编辑的类型行")
+                return
+            iid = selection[0]
+        label = str(tree.set(iid, "group"))
+        self._whitelist_edit_dialog(label, str(tree.set(iid, "exts")))
+
+    def _whitelist_edit_dialog(self, label: str, current: str) -> None:
+        from tkinter import StringVar, Toplevel, ttk
+
+        window = Toplevel(self.root)
+        window.title(f"编辑后缀 - {label}")
+        window.transient(self.root)
+        window.resizable(False, False)
+        body = ttk.Frame(window, padding=10)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"{label} 类型的后缀（多个用英文逗号【,】分隔）").pack(anchor="w")
+        value = StringVar(value=current)
+        entry = ttk.Entry(body, textvariable=value, width=64)
+        entry.pack(fill="x", pady=6)
+        hint = StringVar(value="支持 .log / log / *.log / *；非法条目会被拒绝")
+        ttk.Label(body, textvariable=hint, anchor="w", foreground="#b00020").pack(anchor="w")
+
+        def commit() -> None:
+            valid, invalid = parse_and_validate_ext_line(value.get())
+            if invalid:
+                hint.set(f"无效条目：{'、'.join(invalid)}")
+                return
+            others = [ext for row_label, exts in self._whitelist_rows() if row_label != label for ext in exts]
+            if not others and not valid:
+                hint.set("白名单不能为空，请至少保留一个后缀")
+                return
+            others.extend(valid)
+            self._refresh_whitelist_tree(others)
+            window.destroy()
+            self._status.set(f"已更新「{label}」：{len(valid)} 个后缀，白名单共 {len(self._whitelist_exts())} 个")
+
+        actions = ttk.Frame(body)
+        actions.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions, text="取消", command=window.destroy).pack(side="right")
+        ttk.Button(actions, text="确定", command=commit).pack(side="right", padx=(0, 6))
+        window.bind("<Return>", lambda _event: commit())
+        window.bind("<Escape>", lambda _event: window.destroy())
+        entry.focus_set()
+        entry.select_range(0, "end")
+        window.grab_set()
 
     def _scan_options(self) -> ScanOptions:
         return ScanOptions(
