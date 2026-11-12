@@ -160,7 +160,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     follow_symlinks:
         跟随符号链接（默认不跟随，避免扫描越出指定目录）
     ext_whitelist:
-        后缀白名单，分号或逗号分隔；留空使用内置白名单（文本 + docx/xlsx/pptx/odt/ods），
+        后缀白名单，分号或逗号分隔；留空使用内置白名单（文本 + docx/xlsx/pptx/odt/ods/pdf），
         ``*`` 表示全部后缀
     include_ext:
         在白名单内进一步收窄的后缀（如 ``.txt;.log``），留空表示不收窄

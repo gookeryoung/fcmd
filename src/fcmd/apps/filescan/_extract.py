@@ -1,26 +1,31 @@
-"""filescan 文档文本抽取：docx / xlsx / pptx / odt / ods（仅标准库）。
+"""filescan 文档文本抽取：docx / xlsx / pptx / odt / ods / pdf。
 
 设计要点：
 
-- 这五种格式本质都是 zip + XML，用 ``zipfile`` 打开、``xml.etree.iterparse``
+- 前五种格式本质都是 zip + XML，用 ``zipfile`` 打开、``xml.etree.iterparse``
   流式抽取，不引入第三方依赖；
+- PDF 走可选依赖 ``pypdf``（``pip install "fcmd[pdf]"``），按 ``find_spec``
+  探测 + 函数内延迟导入，缺失时抛 :data:`KIND_UNSUPPORTED` 并带安装提示；
 - 抽取结果是一组 :class:`TextUnit`（文本 + 可读位置），位置用于把命中回溯到
-  段落、工作表单元格、幻灯片等，纯文本路径不经过本模块；
-- 三重上限防解压炸弹：压缩包成员数、单部件解压大小、全部部件解压总量；
+  段落、工作表单元格、幻灯片、页码等，纯文本路径不经过本模块；
+- 三重上限防解压炸弹：压缩包成员数、单部件解压大小、全部部件解压总量；PDF
+  另设页数与累计文本长度上限；
 - 失败按 :data:`KIND_ENCRYPTED` / :data:`KIND_CORRUPT` / :data:`KIND_NO_TEXT` /
   :data:`KIND_UNSUPPORTED` / :data:`KIND_TOO_LARGE` 分类，由引擎落到不同统计口径；
-- 本模块只依赖标准库，可在进程池子进程内运行（无打开的文件句柄外泄）。
+- 本模块不持有打开的句柄与全局可变状态，可在进程池子进程内运行。
 """
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import io
 import posixpath
 import xml.etree.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator
@@ -35,14 +40,23 @@ __all__ = [
     "KIND_TOO_LARGE",
     "KIND_UNSUPPORTED",
     "PART_MAX_BYTES",
+    "PDF_EXTENSIONS",
+    "PDF_MAX_PAGES",
+    "PDF_MAX_TEXT_CHARS",
     "ZIP_MAX_MEMBERS",
     "ExtractError",
     "TextUnit",
     "extract_document",
 ]
 
-DOCUMENT_EXTENSIONS: tuple[str, ...] = (".docx", ".xlsx", ".pptx", ".odt", ".ods")
-"""默认按文档解析的后缀（zip + XML 容器）。"""
+PDF_EXTENSIONS: tuple[str, ...] = (".pdf",)
+"""按 PDF 解析的后缀（可选依赖 pypdf）。"""
+
+_ZIP_EXTENSIONS: tuple[str, ...] = (".docx", ".xlsx", ".pptx", ".odt", ".ods")
+"""按 zip + XML 解析的后缀（标准库实现）。"""
+
+DOCUMENT_EXTENSIONS: tuple[str, ...] = _ZIP_EXTENSIONS + PDF_EXTENSIONS
+"""默认按文档解析的后缀（zip 容器 + PDF）。"""
 
 DOCUMENT_MAX_BYTES = 32 * 1024 * 1024
 """单个文档文件的读取上限（32 MiB）。"""
@@ -55,6 +69,18 @@ PART_MAX_BYTES = 8 * 1024 * 1024
 
 ZIP_MAX_MEMBERS = 5000
 """单个文档压缩包允许的成员数上限。"""
+
+PDF_MAX_PAGES = 500
+"""单个 PDF 允许解析的页数上限（实测约 2.8 ms/页，500 页约 1.7 s）。"""
+
+PDF_MAX_TEXT_CHARS = 8 * 1024 * 1024
+"""单个 PDF 累计抽取文本的字符数上限（约 8 MiB 字符，防解压炸弹撑爆内存）。"""
+
+PDF_MISSING_HINT = '缺少 pypdf 库，PDF 解析不可用，请安装: pip install "fcmd[pdf]"'
+"""pypdf 缺失时的提示（随跳过记录展示，不静默跳过）。"""
+
+HAS_PYPDF = importlib.util.find_spec("pypdf") is not None
+"""可选依赖探测：只查定位不触发 import，进程池子进程导入本模块时会重新计算。"""
 
 KIND_ENCRYPTED = "encrypted"
 KIND_CORRUPT = "corrupt"
@@ -405,8 +431,82 @@ _EXTRACTORS: dict[str, Callable[[_PartReader], list[TextUnit]]] = {
 
 
 # ---------------------------------------------------------------------- #
+# pdf（可选依赖 pypdf）
+# ---------------------------------------------------------------------- #
+def _require_pypdf() -> Any:
+    """按 ``HAS_PYPDF`` 延迟导入 pypdf；缺失时抛 unsupported（带安装提示）。"""
+    if not HAS_PYPDF:
+        raise ExtractError(KIND_UNSUPPORTED, PDF_MISSING_HINT)
+    return importlib.import_module("pypdf")
+
+
+def _extract_pdf(path: Path) -> list[TextUnit]:
+    """按页抽取 PDF 文本，位置记为 ``p.N``；先判加密标志位再取页。"""
+    pypdf = _require_pypdf()
+    try:
+        reader = pypdf.PdfReader(str(path), strict=False)
+    except Exception as exc:
+        raise ExtractError(KIND_CORRUPT, f"PDF 无法打开: {exc}") from exc
+    try:
+        # 只查 trailer 的 /Encrypt 标志，不触发解密与页面解析
+        if reader.is_encrypted:
+            raise ExtractError(KIND_ENCRYPTED, "PDF 已加密")
+        try:
+            pages = len(reader.pages)
+        except Exception as exc:
+            raise ExtractError(KIND_CORRUPT, f"PDF 页树损坏: {exc}") from exc
+        if pages > PDF_MAX_PAGES:
+            raise ExtractError(KIND_TOO_LARGE, f"PDF 页数 {pages} 超过 {PDF_MAX_PAGES} 页上限")
+        units: list[TextUnit] = []
+        total = 0
+        for index, page in enumerate(reader.pages, start=1):
+            try:
+                text = page.extract_text() or ""
+            except Exception as exc:
+                raise ExtractError(KIND_CORRUPT, f"PDF 第 {index} 页解析失败: {exc}") from exc
+            total += len(text)
+            if total > PDF_MAX_TEXT_CHARS:
+                raise ExtractError(KIND_TOO_LARGE, f"PDF 文本超过 {PDF_MAX_TEXT_CHARS} 字符上限")
+            if text.strip():
+                units.append(TextUnit(text, f"p.{index}"))
+        return units
+    finally:
+        reader.close()
+
+
+# ---------------------------------------------------------------------- #
 # 入口
 # ---------------------------------------------------------------------- #
+def _document_size(path: Path, size: int | None) -> int:
+    """返回文档字节数；省略 ``size`` 时自行 ``stat``，并校验读取上限。"""
+    if size is None:
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise ExtractError(KIND_CORRUPT, f"无法读取文档: {exc}") from exc
+    if size > DOCUMENT_MAX_BYTES:
+        raise ExtractError(KIND_TOO_LARGE, f"文档超过 {DOCUMENT_MAX_BYTES} 字节上限")
+    return size
+
+
+def _extract_zip_document(path: Path, extractor: Callable[[_PartReader], list[TextUnit]]) -> list[TextUnit]:
+    """打开 zip 容器并交给具体格式的抽取器（加密容器 / 损坏统一归类）。"""
+    try:
+        with path.open("rb") as handle:
+            if handle.read(len(_OLE_MAGIC)) == _OLE_MAGIC:
+                raise ExtractError(KIND_ENCRYPTED, "文档已加密（OLE 复合文档容器）")
+        with zipfile.ZipFile(path) as archive:
+            if len(archive.infolist()) > ZIP_MAX_MEMBERS:
+                raise ExtractError(KIND_TOO_LARGE, f"压缩成员超过 {ZIP_MAX_MEMBERS} 个上限")
+            return extractor(_PartReader(archive))
+    except ExtractError:
+        raise
+    except zipfile.BadZipFile as exc:
+        raise ExtractError(KIND_CORRUPT, f"文档损坏: {exc}") from exc
+    except (OSError, ET.ParseError, ValueError, RuntimeError, EOFError) as exc:
+        raise ExtractError(KIND_CORRUPT, f"文档损坏: {exc}") from exc
+
+
 def extract_document(path: Path, size: int | None = None) -> list[TextUnit]:
     """抽取文档文本单元；失败时抛 :class:`ExtractError`（带 ``kind``）。
 
@@ -415,29 +515,10 @@ def extract_document(path: Path, size: int | None = None) -> list[TextUnit]:
     """
     suffix = path.suffix.lower()
     extractor = _EXTRACTORS.get(suffix)
-    if extractor is None:
+    if extractor is None and suffix not in PDF_EXTENSIONS:
         raise ExtractError(KIND_UNSUPPORTED, f"不支持解析 {suffix or '无后缀'} 文档")
-    if size is None:
-        try:
-            size = path.stat().st_size
-        except OSError as exc:
-            raise ExtractError(KIND_CORRUPT, f"无法读取文档: {exc}") from exc
-    if size > DOCUMENT_MAX_BYTES:
-        raise ExtractError(KIND_TOO_LARGE, f"文档超过 {DOCUMENT_MAX_BYTES} 字节上限")
-    try:
-        with path.open("rb") as handle:
-            if handle.read(len(_OLE_MAGIC)) == _OLE_MAGIC:
-                raise ExtractError(KIND_ENCRYPTED, "文档已加密（OLE 复合文档容器）")
-        with zipfile.ZipFile(path) as archive:
-            if len(archive.infolist()) > ZIP_MAX_MEMBERS:
-                raise ExtractError(KIND_TOO_LARGE, f"压缩成员超过 {ZIP_MAX_MEMBERS} 个上限")
-            units = extractor(_PartReader(archive))
-    except ExtractError:
-        raise
-    except zipfile.BadZipFile as exc:
-        raise ExtractError(KIND_CORRUPT, f"文档损坏: {exc}") from exc
-    except (OSError, ET.ParseError, ValueError, RuntimeError, EOFError) as exc:
-        raise ExtractError(KIND_CORRUPT, f"文档损坏: {exc}") from exc
+    _document_size(path, size)
+    units = _extract_zip_document(path, extractor) if extractor is not None else _extract_pdf(path)
     if not units:
         raise ExtractError(KIND_NO_TEXT, "文档没有可扫描的文本")
     return units

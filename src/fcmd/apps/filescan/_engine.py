@@ -789,6 +789,9 @@ def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | No
         units = extract_document(path, size)
     except ExtractError as exc:
         reason = _DOCUMENT_REASONS.get(exc.kind, REASON_DOC_CORRUPT)
+        if exc.kind == KIND_UNSUPPORTED:
+            # 缺依赖等具体原因（含安装提示）随跳过记录展示，不静默丢弃
+            reason = f"{reason}：{exc}"
         return _Outcome(path=path, skipped=SkipRecord(path, reason))
     byte_count = size
     if byte_count is None:
@@ -1057,7 +1060,7 @@ def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:
     encrypted = sum(1 for item in result.skipped if item.reason == REASON_DOC_ENCRYPTED)
     corrupt = sum(1 for item in result.skipped if item.reason == REASON_DOC_CORRUPT)
     no_text = sum(1 for item in result.skipped if item.reason == REASON_DOC_NO_TEXT)
-    unsupported = sum(1 for item in result.skipped if item.reason == REASON_DOC_UNSUPPORTED)
+    unsupported = sum(1 for item in result.skipped if item.reason.startswith(REASON_DOC_UNSUPPORTED))
     binary = sum(1 for item in result.skipped if item.reason == REASON_BINARY)
     stats.files_skipped_extension = walk.skipped_extension
     stats.files_skipped_binary = binary

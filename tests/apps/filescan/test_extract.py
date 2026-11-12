@@ -1,4 +1,4 @@
-"""filescan 文档抽取测试：docx / xlsx / pptx / odt / ods 与五类降级。"""
+"""filescan 文档抽取测试：docx / xlsx / pptx / odt / ods / pdf 与五类降级。"""
 
 from __future__ import annotations
 
@@ -112,6 +112,43 @@ def _ods(path: Path, rows: list[list[str]], sheet: str = "名单") -> Path:
 
 def _locations(units: list[_extract.TextUnit]) -> list[str]:
     return [unit.location for unit in units]
+
+
+def _pdf(path: Path, pages: list[list[str]], *, password: str | None = None) -> Path:
+    """合成带文本层的 PDF：外层列表是页，内层是该页的文本行；空页不出文本。
+
+    合成样本用 Helvetica 标准字体，只能表达 ASCII（中文需嵌入 CID 字体与
+    ToUnicode 映射，超出本测试的目的），因此断言里的文本一律用 ASCII。
+    """
+    pypdf = pytest.importorskip("pypdf")
+    writer = pypdf.PdfWriter()
+    font = pypdf.generic.DictionaryObject(
+        {
+            pypdf.generic.NameObject("/Type"): pypdf.generic.NameObject("/Font"),
+            pypdf.generic.NameObject("/Subtype"): pypdf.generic.NameObject("/Type1"),
+            pypdf.generic.NameObject("/BaseFont"): pypdf.generic.NameObject("/Helvetica"),
+        }
+    )
+    font_ref = writer._add_object(font)
+    for lines in pages:
+        page = writer.add_blank_page(width=595, height=842)
+        if lines:
+            content = ["BT /F1 12 Tf 72 720 Td", *(f"({line}) Tj T*" for line in lines), "ET"]
+            stream = pypdf.generic.DecodedStreamObject()
+            stream.set_data("\n".join(content).encode())
+            page[pypdf.generic.NameObject("/Contents")] = writer._add_object(stream)
+        page[pypdf.generic.NameObject("/Resources")] = pypdf.generic.DictionaryObject(
+            {
+                pypdf.generic.NameObject("/Font"): pypdf.generic.DictionaryObject(
+                    {pypdf.generic.NameObject("/F1"): font_ref}
+                )
+            }
+        )
+    if password:
+        writer.encrypt(password)
+    with path.open("wb") as handle:
+        writer.write(handle)
+    return path
 
 
 def test_extract_docx_paragraphs_and_headers(tmp_path: Path) -> None:
@@ -293,7 +330,7 @@ def test_extract_no_text_layer(tmp_path: Path) -> None:
 
 def test_extract_unsupported_suffix(tmp_path: Path) -> None:
     with pytest.raises(ExtractError) as excinfo:
-        extract_document(tmp_path / "a.pdf")
+        extract_document(tmp_path / "a.rtf")
     assert excinfo.value.kind == KIND_UNSUPPORTED
 
 
@@ -335,3 +372,74 @@ def test_extract_missing_content_part(tmp_path: Path) -> None:
     with pytest.raises(ExtractError) as excinfo:
         extract_document(path)
     assert excinfo.value.kind == KIND_CORRUPT
+
+
+# ---------------------------------------------------------------------- #
+# pdf（可选依赖 pypdf）
+# ---------------------------------------------------------------------- #
+def test_extract_pdf_pages_with_page_numbers(tmp_path: Path) -> None:
+    """有文本层：按页产出单元，位置记为 p.N，空页不产出。"""
+    path = _pdf(
+        tmp_path / "a.pdf",
+        [["name Zhang San"], [], ["phone 13812345678", "mail zhangsan@example.com"]],
+    )
+    units = extract_document(path)
+    assert _locations(units) == ["p.1", "p.3"]
+    assert "Zhang San" in units[0].text
+    assert "13812345678" in units[1].text
+
+
+def test_extract_pdf_encrypted(tmp_path: Path) -> None:
+    path = _pdf(tmp_path / "a.pdf", [["secret text"]], password="secret")
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_ENCRYPTED
+
+
+def test_extract_pdf_without_text_layer(tmp_path: Path) -> None:
+    path = _pdf(tmp_path / "a.pdf", [[], []])
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_NO_TEXT
+
+
+def test_extract_pdf_corrupt(tmp_path: Path) -> None:
+    path = tmp_path / "a.pdf"
+    path.write_bytes(b"%PDF-1.7\n broken garbage")
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_CORRUPT
+
+
+def test_extract_pdf_rejects_page_bomb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _pdf(tmp_path / "a.pdf", [["first"], ["second"]])
+    monkeypatch.setattr(_extract, "PDF_MAX_PAGES", 1)
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_TOO_LARGE
+
+
+def test_extract_pdf_rejects_text_bomb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _pdf(tmp_path / "a.pdf", [["0123456789"]])
+    monkeypatch.setattr(_extract, "PDF_MAX_TEXT_CHARS", 5)
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_TOO_LARGE
+
+
+def test_extract_pdf_without_pypdf_reports_install_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺可选依赖时按 unsupported 归类，且提示里带安装命令，不静默跳过。"""
+    path = _pdf(tmp_path / "a.pdf", [["正文"]])
+    monkeypatch.setattr(_extract, "HAS_PYPDF", False)
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_UNSUPPORTED
+    assert 'pip install "fcmd[pdf]"' in str(excinfo.value)
+
+
+def test_extract_pdf_rejects_oversize_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _pdf(tmp_path / "a.pdf", [["正文"]])
+    monkeypatch.setattr(_extract, "DOCUMENT_MAX_BYTES", 16)
+    with pytest.raises(ExtractError) as excinfo:
+        extract_document(path)
+    assert excinfo.value.kind == KIND_TOO_LARGE

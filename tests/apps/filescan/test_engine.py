@@ -58,6 +58,40 @@ def _write_docx(path: Path, paragraphs: list[str]) -> Path:
     return _write_zip(path, {"word/document.xml": document})
 
 
+def _write_pdf(path: Path, pages: list[list[str]], *, password: str | None = None) -> Path:
+    """合成 PDF：外层列表是页，内层是该页的 ASCII 文本行（标准字体不支持中文）。"""
+    pypdf = pytest.importorskip("pypdf")
+    writer = pypdf.PdfWriter()
+    font = pypdf.generic.DictionaryObject(
+        {
+            pypdf.generic.NameObject("/Type"): pypdf.generic.NameObject("/Font"),
+            pypdf.generic.NameObject("/Subtype"): pypdf.generic.NameObject("/Type1"),
+            pypdf.generic.NameObject("/BaseFont"): pypdf.generic.NameObject("/Helvetica"),
+        }
+    )
+    font_ref = writer._add_object(font)
+    for lines in pages:
+        page = writer.add_blank_page(width=595, height=842)
+        if lines:
+            content = ["BT /F1 12 Tf 72 720 Td", *(f"({line}) Tj T*" for line in lines), "ET"]
+            stream = pypdf.generic.DecodedStreamObject()
+            stream.set_data("\n".join(content).encode())
+            page[pypdf.generic.NameObject("/Contents")] = writer._add_object(stream)
+        page[pypdf.generic.NameObject("/Resources")] = pypdf.generic.DictionaryObject(
+            {
+                pypdf.generic.NameObject("/Font"): pypdf.generic.DictionaryObject(
+                    {pypdf.generic.NameObject("/F1"): font_ref}
+                )
+            }
+        )
+    if password:
+        writer.encrypt(password)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        writer.write(handle)
+    return path
+
+
 def _ruleset(*specs: tuple[str, str], expression: str = "") -> RuleSet:
     rules = tuple(
         Rule(
@@ -442,12 +476,15 @@ def test_scan_paths_document_skip_categories(tmp_path: Path, monkeypatch: pytest
     assert stats.files_skipped_other == 0
     assert stats.files_skipped == 4
     reasons = {item.path.name: item.reason for item in result.skipped}
+    unsupported_reason = reasons.pop("unsupported.ods")
     assert reasons == {
         "enc.docx": REASON_DOC_ENCRYPTED,
         "bad.xlsx": REASON_DOC_CORRUPT,
         "blank.pptx": REASON_DOC_NO_TEXT,
-        "unsupported.ods": REASON_DOC_UNSUPPORTED,
     }
+    # 缺依赖的跳过记录带具体原因（含安装提示），仍按 unsupported 口径计数
+    assert unsupported_reason.startswith(REASON_DOC_UNSUPPORTED)
+    assert "缺少依赖" in unsupported_reason
 
 
 def test_scan_paths_documents_disabled_skip_by_extension(tmp_path: Path) -> None:
@@ -473,6 +510,63 @@ def test_scan_paths_documents_in_process_pool(tmp_path: Path, monkeypatch: pytes
 
     assert len(result.hits) == 1
     assert result.hits[0].matches[0].location == "段落 1"
+
+
+def test_scan_paths_scans_pdf_with_page_location(tmp_path: Path) -> None:
+    """PDF 默认纳入白名单：命中带页码位置，编码记为 pdf。"""
+    _write_pdf(tmp_path / "a.pdf", [["name Zhang San"], ["phone 13812345678"]])
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(use_processes=False))
+
+    assert result.stats.files_scanned == 1
+    assert len(result.hits) == 1
+    hit = result.hits[0]
+    assert hit.encoding == "pdf"
+    assert [item.location for item in hit.matches] == ["p.2"]
+
+
+def test_scan_paths_pdf_skip_categories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """加密与无文本层 PDF 分别落到各自口径，不算成没命中。"""
+    _write_pdf(tmp_path / "enc.pdf", [["secret text"]], password="secret")
+    _write_pdf(tmp_path / "blank.pdf", [[], []])
+
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(use_processes=False))
+
+    stats = result.stats
+    assert result.hits == []
+    assert stats.files_skipped_encrypted == 1
+    assert stats.files_skipped_no_text == 1
+    assert stats.files_skipped_other == 0
+    reasons = {item.path.name: item.reason for item in result.skipped}
+    assert reasons == {"enc.pdf": REASON_DOC_ENCRYPTED, "blank.pdf": REASON_DOC_NO_TEXT}
+
+
+def test_scan_paths_pdf_without_pypdf_shows_install_hint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺 pypdf 时按 unsupported 计数，跳过原因里带安装命令。"""
+    from fcmd.apps.filescan import _extract
+
+    _write_pdf(tmp_path / "a.pdf", [["phone 13812345678"]])
+    monkeypatch.setattr(_extract, "HAS_PYPDF", False)
+
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(use_processes=False))
+
+    assert result.stats.files_skipped_unsupported == 1
+    reason = result.skipped[0].reason
+    assert reason.startswith(REASON_DOC_UNSUPPORTED)
+    assert 'pip install "fcmd[pdf]"' in reason
+
+
+def test_scan_paths_pdf_in_process_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """子进程内延迟导入 pypdf 并解析：仅传 (str, int)，可 pickle。"""
+    from fcmd.apps.filescan import _engine
+
+    _write_pdf(tmp_path / "a.pdf", [["phone 13812345678"]])
+    monkeypatch.setattr(_engine, "PROCESS_MIN_FILES", 1)
+    monkeypatch.setattr(_engine, "PROCESS_MIN_BYTES", 1)
+
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(workers=2))
+
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].location == "p.1"
 
 
 def test_scan_paths_empty_and_filtered(tmp_path: Path) -> None:
