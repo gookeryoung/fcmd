@@ -2,9 +2,9 @@
 
 三个分页（沿用 llmdownw 的分页口径，避免表单堆叠）：
 
-- **扫描**：多目录列表、递归/深度/符号链接、后缀白名单列表（按类别分组、可展开，
-  添加 / 移除 / 恢复默认）、后缀包含/排除、强制后缀、大小上下限、跳过二进制、
-  单文件上限、并发数；开始 / 取消与进度条。
+- **扫描**：多目录列表、递归/深度/符号链接、后缀白名单列表（每类一行汇总全部
+  后缀，默认折叠，双击展开可逐个移除；支持新增与恢复默认）、后缀包含/排除、
+  强制后缀、大小上下限、跳过二进制、单文件上限、并发数；开始 / 取消与进度条。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
   敏感原文）。
@@ -418,7 +418,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Label(options, text="白名单外强制扫描（如 .pdf）").grid(row=3, column=6, columnspan=2, sticky="w")
         ttk.Label(
             options,
-            text="后缀白名单（按类别分组，展开后双击可查看；不在列表内的文件直接跳过）",
+            text="后缀白名单（每类一行列出全部后缀；双击类别展开后可逐个移除，不在列表内的文件直接跳过）",
         ).grid(row=4, column=0, columnspan=8, sticky="w", padx=(6, 2), pady=(4, 0))
         whitelist_box = ttk.Frame(options)
         whitelist_box.grid(row=5, column=0, columnspan=8, sticky="ew")
@@ -427,7 +427,9 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         whitelist_tree.grid(row=0, column=0, sticky="nsew")
         whitelist_scroll = ttk.Scrollbar(whitelist_box, orient="vertical", command=whitelist_tree.yview)
         whitelist_scroll.grid(row=0, column=1, sticky="ns")
-        whitelist_tree.configure(yscrollcommand=whitelist_scroll.set)
+        whitelist_hscroll = ttk.Scrollbar(whitelist_box, orient="horizontal", command=whitelist_tree.xview)
+        whitelist_hscroll.grid(row=1, column=0, sticky="ew")
+        whitelist_tree.configure(yscrollcommand=whitelist_scroll.set, xscrollcommand=whitelist_hscroll.set)
         self._whitelist_tree = whitelist_tree
         self._refresh_whitelist_tree(parse_whitelist_text(self.settings.ext_whitelist))
         buttons = ttk.Frame(whitelist_box)
@@ -817,7 +819,12 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         tree.delete(*tree.get_children(""))
         selected = normalize_exts(tuple(exts)) or DEFAULT_SCAN_EXTENSIONS
         for label, group_exts in group_whitelist(selected):
-            parent = tree.insert("", "end", text=f"{label}（{len(group_exts)}）", open=True)
+            parent = tree.insert(
+                "",
+                "end",
+                text=f"{label}（{len(group_exts)}）：{' '.join(group_exts)}",
+                open=False,
+            )
             for ext in group_exts:
                 tree.insert(parent, "end", text=ext)
 
