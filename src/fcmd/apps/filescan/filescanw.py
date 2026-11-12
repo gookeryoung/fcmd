@@ -1,12 +1,13 @@
 """filescanw - 目录敏感内容扫描（Tk GUI）。
 
-两个分页（沿用 llmdownw 的分页口径，避免表单堆叠）：
+三个分页（沿用 llmdownw 的分页口径，避免表单堆叠）：
 
 - **扫描**：多目录列表、递归/深度/符号链接、可编辑后缀白名单（默认内置文本
   后缀集，「恢复默认白名单」一键还原）、后缀包含/排除、强制后缀、大小上下限、
-  跳过二进制、单文件上限、并发数；开始 / 取消、进度条与状态栏；结果按文件
-  聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），可按规则与路径筛选，
-  导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出敏感原文）。
+  跳过二进制、单文件上限、并发数；开始 / 取消与进度条。
+- **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
+  可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
+  敏感原文）。
 - **规则**：规则表、新增 / 编辑 / 删除、启用 / 禁用、载入内置、清空、
   导入 / 导出规则集，以及 ``and`` / ``or`` / ``not`` 组合表达式输入与校验。
 
@@ -229,7 +230,7 @@ def apply_expression(ruleset: RuleSet, text: str) -> RuleSet:
 # 窗口
 # ---------------------------------------------------------------------- #
 class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
-    """主窗口：两个分页、后台扫描与设置持久化。"""
+    """主窗口：扫描 / 结果 / 规则三个分页、后台扫描与设置持久化。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
@@ -272,6 +273,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._expression = tk.StringVar()
         self._rule_hint = tk.StringVar(value="")
         self._dirs_list: Any = None
+        self._notebook: Any = None
+        self._result_page: Any = None
         self._tree: ttk.Treeview | None = None
         self._rules_tree: ttk.Treeview | None = None
         self._filter_box: ttk.Combobox | None = None
@@ -291,10 +294,15 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         notebook = ttk.Notebook(self.root)
         notebook.grid(row=0, column=0, sticky="nsew", padx=8, pady=(8, 0))
         scan_page = ttk.Frame(notebook, padding=8)
+        result_page = ttk.Frame(notebook, padding=8)
         rules_page = ttk.Frame(notebook, padding=8)
         notebook.add(scan_page, text="扫描")
+        notebook.add(result_page, text="结果")
         notebook.add(rules_page, text="规则")
+        self._notebook = notebook
+        self._result_page = result_page
         self._build_scan_page(scan_page)
+        self._build_result_page(result_page)
         self._build_rules_page(rules_page)
         ttk.Label(self.root, textvariable=self._status, anchor="w").grid(row=1, column=0, sticky="ew", padx=10, pady=6)
 
@@ -303,7 +311,6 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         from tkinter import ttk
 
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(3, weight=1)
 
         dirs_box = ttk.LabelFrame(page, text="扫描目录", padding=6)
         dirs_box.grid(row=0, column=0, sticky="ew")
@@ -330,7 +337,6 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Checkbutton(options, text="递归子目录", variable=self._recursive).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(options, text="跟随符号链接", variable=self._follow).grid(row=0, column=2, sticky="w")
         ttk.Checkbutton(options, text="跳过二进制", variable=self._skip_binary).grid(row=0, column=4, sticky="w")
-        ttk.Checkbutton(options, text="导出原文", variable=self._export_raw).grid(row=0, column=6, sticky="w")
         self._labeled_entry(options, 1, 0, "深度(0=不限)", self._max_depth, width=8)
         self._labeled_entry(options, 2, 0, "最小字节", self._min_size, width=8)
         self._labeled_entry(options, 3, 0, "最大字节(0=不限)", self._max_size, width=10)
@@ -352,17 +358,21 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
 
         actions = ttk.Frame(page)
         actions.grid(row=2, column=0, sticky="ew")
-        actions.columnconfigure(3, weight=1)
+        actions.columnconfigure(2, weight=1)
         self._start_button = ttk.Button(actions, text="开始扫描", style="Accent.TButton", command=self._start_scan)
         self._start_button.grid(row=0, column=0)
         self._cancel_button = ttk.Button(actions, text="取消", command=self._cancel_scan, state="disabled")
         self._cancel_button.grid(row=0, column=1, padx=6)
         ttk.Progressbar(actions, variable=self._progress, maximum=100).grid(row=0, column=2, sticky="ew", padx=6)
-        ttk.Button(actions, text="应用筛选", command=self._apply_filter).grid(row=0, column=4, padx=(6, 0))
-        ttk.Button(actions, text="导出报告…", command=self._export_report).grid(row=0, column=5, padx=(6, 0))
+
+    def _build_result_page(self, page: Any) -> None:
+        from tkinter import ttk
+
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
 
         result_box = ttk.LabelFrame(page, text="扫描结果", padding=6)
-        result_box.grid(row=3, column=0, sticky="nsew", pady=6)
+        result_box.grid(row=0, column=0, sticky="nsew")
         result_box.columnconfigure(0, weight=1)
         result_box.rowconfigure(0, weight=1)
         tree = ttk.Treeview(result_box, columns=("rule", "line", "context"), show="tree headings")
@@ -383,13 +393,16 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._tree = tree
 
         filter_bar = ttk.Frame(page)
-        filter_bar.grid(row=4, column=0, sticky="ew")
+        filter_bar.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         ttk.Label(filter_bar, text="规则筛选").pack(side="left")
         self._filter_box = ttk.Combobox(filter_bar, textvariable=self._filter_rule, width=18, state="readonly")
         self._filter_box.pack(side="left", padx=6)
         ttk.Label(filter_bar, text="路径包含").pack(side="left", padx=(12, 0))
         ttk.Entry(filter_bar, textvariable=self._filter_path, width=32).pack(side="left", padx=6)
         ttk.Button(filter_bar, text="重置", command=self._reset_filter).pack(side="left")
+        ttk.Button(filter_bar, text="导出报告…", command=self._export_report).pack(side="right")
+        ttk.Button(filter_bar, text="应用筛选", command=self._apply_filter).pack(side="right", padx=(0, 6))
+        ttk.Checkbutton(filter_bar, text="导出原文", variable=self._export_raw).pack(side="right", padx=(0, 12))
 
     def _labeled_entry(  # noqa: PLR0913 - 布局辅助，行列/文案/变量/宽度一一对应
         self, parent: Any, row: int, column: int, text: str, variable: Any, *, width: int
@@ -801,6 +814,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             return
         self.result = result
         self._render_result(result)
+        if self._notebook is not None and self._result_page is not None:
+            self._notebook.select(self._result_page)
         stats = result.stats
         state = "已取消" if stats.cancelled else "完成"
         self._progress.set(100.0)
