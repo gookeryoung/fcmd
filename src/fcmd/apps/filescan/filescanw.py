@@ -648,6 +648,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         scroll = ttk.Scrollbar(page, orient="vertical", command=tree.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         tree.configure(yscrollcommand=scroll.set)
+        tree.bind("<Double-1>", self._on_rule_double_click)
         self._rules_tree = tree
 
         buttons = ttk.Frame(page)
@@ -762,6 +763,18 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             return
         self._rule_dialog(rule)
 
+    def _on_rule_double_click(self, event: Any) -> None:
+        """双击规则行直接打开编辑弹窗；与「编辑规则」按钮共用同一入口。"""
+        if self._rules_tree is None:
+            return
+        iid = self._rules_tree.identify_row(event.y)
+        if not iid:
+            return
+        self._rules_tree.selection_set(iid)
+        rule = self.ruleset.find(iid)
+        if rule is not None:
+            self._rule_dialog(rule)
+
     def _rule_dialog(self, rule: Rule | None) -> None:
         import tkinter as tk
         from tkinter import messagebox, ttk
@@ -769,6 +782,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         window = tk.Toplevel(self.root)
         window.title("编辑规则" if rule else "新增规则")
         window.transient(self.root)
+        window.resizable(False, False)
+        _guiwindow.center_over_parent(window, self.root, width=640, height=320)
         window.grab_set()
         body = ttk.Frame(window, padding=10)
         body.pack(fill="both", expand=True)
