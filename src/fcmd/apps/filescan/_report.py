@@ -61,6 +61,7 @@ def _match_to_mapping(match: RuleMatch, include_raw: bool) -> dict[str, Any]:
         "rule": match.rule_name,
         "line": match.line_no,
         "column": match.start + 1,
+        "location": match.location,
         "excerpt": match.excerpt if include_raw else mask_text(match.excerpt),
         "context": render_context(match, include_raw),
     }
@@ -78,6 +79,10 @@ def result_to_mapping(result: ScanResult, include_raw: bool = False) -> dict[str
             "files_skipped_extension": stats.files_skipped_extension,
             "files_skipped_binary": stats.files_skipped_binary,
             "files_skipped_other": stats.files_skipped_other,
+            "files_skipped_encrypted": stats.files_skipped_encrypted,
+            "files_skipped_corrupt": stats.files_skipped_corrupt,
+            "files_skipped_no_text": stats.files_skipped_no_text,
+            "files_skipped_unsupported": stats.files_skipped_unsupported,
             "files_failed": stats.files_failed,
             "bytes_read": stats.bytes_read,
             "hit_files": stats.hit_files,
@@ -110,7 +115,7 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
     """序列化为 CSV 文本（带 UTF-8 BOM，便于 Excel 直接打开）。"""
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
-    writer.writerow(["文件", "规则", "行号", "列号", "编码", "命中内容", "上下文"])
+    writer.writerow(["文件", "规则", "行号", "列号", "编码", "位置", "命中内容", "上下文"])
     for hit in result.hits:
         for match in hit.matches:
             writer.writerow(
@@ -120,6 +125,7 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
                     match.line_no,
                     match.start + 1,
                     hit.encoding,
+                    match.location,
                     match.excerpt if include_raw else mask_text(match.excerpt),
                     render_context(match, include_raw),
                 ]
@@ -128,15 +134,29 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
 
 
 def _summary_line(result: ScanResult) -> str:
-    """概要与吞吐口径。"""
+    """概要与吞吐口径。
+
+    文档专属的加密 / 损坏 / 无文本 / 不支持四类只在实际出现时追加，
+    纯文本扫描的概要文本保持不变。
+    """
     stats = result.stats
     prefix = "扫描已取消（部分结果）" if stats.cancelled else "扫描完成"
+    document_parts = "".join(
+        f" / {label} {value}"
+        for label, value in (
+            ("加密", stats.files_skipped_encrypted),
+            ("损坏", stats.files_skipped_corrupt),
+            ("无文本", stats.files_skipped_no_text),
+            ("不支持", stats.files_skipped_unsupported),
+        )
+        if value
+    )
     return (
         f"{prefix}：文件 {stats.files_seen}（扫描 {stats.files_scanned}），"
         f"命中 {stats.hit_files} 个文件 / {stats.hit_count} 条，"
         f"跳过 {stats.files_skipped}"
         f"（后缀 {stats.files_skipped_extension} / 二进制 {stats.files_skipped_binary}"
-        f" / 其他 {stats.files_skipped_other}），错误 {stats.files_failed}；"
+        f" / 其他 {stats.files_skipped_other}{document_parts}），错误 {stats.files_failed}；"
         f"读取 {format_size(stats.bytes_read)}，耗时 {stats.elapsed:.2f} s"
         f"（{format_size(int(stats.bytes_per_second))}/s，{stats.files_per_second:.1f} 文件/s）"
     )
@@ -151,7 +171,8 @@ def format_text_report(result: ScanResult, include_raw: bool = False) -> str:
             lines.append("  - 表达式命中（无正向规则明细）")
             continue
         for match in hit.matches:
-            lines.append(f"  - {match.rule_name} @ 第 {match.line_no} 行：{render_context(match, include_raw)}")
+            where = f"{match.location} " if match.location else ""
+            lines.append(f"  - {match.rule_name} @ {where}第 {match.line_no} 行：{render_context(match, include_raw)}")
     if result.skipped:
         lines.append("跳过：")
         lines.extend(f"  - {item.path}：{item.reason}" for item in result.skipped)

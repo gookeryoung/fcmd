@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import zipfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +12,10 @@ import pytest
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
     REASON_BINARY,
+    REASON_DOC_CORRUPT,
+    REASON_DOC_ENCRYPTED,
+    REASON_DOC_NO_TEXT,
+    REASON_DOC_UNSUPPORTED,
     REASON_SYMLINK,
     REASON_TOO_LARGE,
     CancelToken,
@@ -33,6 +38,24 @@ def _write(root: Path, relative: str, data: str | bytes, encoding: str = "utf-8"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data.encode(encoding) if isinstance(data, str) else data)
     return path
+
+
+def _write_zip(path: Path, parts: dict[str, str]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, data in parts.items():
+            archive.writestr(name, data)
+    return path
+
+
+def _write_docx(path: Path, paragraphs: list[str]) -> Path:
+    body = "".join(f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>" for text in paragraphs)
+    document = (
+        '<?xml version="1.0"?><w:document xmlns:w='
+        '"http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body></w:document>"
+    )
+    return _write_zip(path, {"word/document.xml": document})
 
 
 def _ruleset(*specs: tuple[str, str], expression: str = "") -> RuleSet:
@@ -357,7 +380,10 @@ def test_scan_paths_process_mode_matches_threads(tmp_path: Path, monkeypatch: py
 
     def snapshot(result: ScanResult) -> tuple[object, ...]:
         return (
-            [(str(hit.path), [(item.rule_id, item.line_no, item.start, item.end) for item in hit.matches]) for hit in result.hits],
+            [
+                (str(hit.path), [(item.rule_id, item.line_no, item.start, item.end) for item in hit.matches])
+                for hit in result.hits
+            ],
             result.stats.files_scanned,
             result.stats.bytes_read,
             result.stats.hit_files,
@@ -366,6 +392,87 @@ def test_scan_paths_process_mode_matches_threads(tmp_path: Path, monkeypatch: py
 
     assert snapshot(processed) == snapshot(threaded)
     assert processed.stats.hit_count == 24
+
+
+def test_scan_paths_scans_docx_with_location(tmp_path: Path) -> None:
+    """docx 默认纳入白名单，命中带段落位置且编码记为容器格式。"""
+    path = _write_docx(tmp_path / "a.docx", ["姓名 张三", "手机 13812345678"])
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(use_processes=False))
+
+    assert result.stats.files_scanned == 1
+    assert result.stats.bytes_read == path.stat().st_size
+    assert len(result.hits) == 1
+    hit = result.hits[0]
+    assert hit.path == path
+    assert hit.encoding == "docx"
+    assert [item.location for item in hit.matches] == ["段落 2"]
+    assert hit.matches[0].line_no == 1
+
+
+def test_scan_paths_document_skip_categories(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """加密 / 损坏 / 无文本层 / 缺依赖分别计数，不合并成笼统 skipped。"""
+    from fcmd.apps.filescan import _extract
+    from fcmd.apps.filescan._extract import KIND_UNSUPPORTED, ExtractError
+
+    (tmp_path / "enc.docx").write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 32)
+    (tmp_path / "bad.xlsx").write_bytes(b"not a zip at all")
+    _write_zip(
+        tmp_path / "blank.pptx",
+        {
+            "ppt/slides/slide1.xml": (
+                '<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+                ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"/>'
+            )
+        },
+    )
+    _write_zip(tmp_path / "unsupported.ods", {"content.xml": '<office:document-content xmlns:office="x"/>'})
+
+    def missing_dependency(reader: object) -> list[object]:
+        raise ExtractError(KIND_UNSUPPORTED, "缺少依赖")
+
+    monkeypatch.setitem(_extract._EXTRACTORS, ".ods", missing_dependency)
+
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(use_processes=False))
+    stats = result.stats
+    assert stats.files_scanned == 0
+    assert stats.files_skipped_encrypted == 1
+    assert stats.files_skipped_corrupt == 1
+    assert stats.files_skipped_no_text == 1
+    assert stats.files_skipped_unsupported == 1
+    assert stats.files_skipped_other == 0
+    assert stats.files_skipped == 4
+    reasons = {item.path.name: item.reason for item in result.skipped}
+    assert reasons == {
+        "enc.docx": REASON_DOC_ENCRYPTED,
+        "bad.xlsx": REASON_DOC_CORRUPT,
+        "blank.pptx": REASON_DOC_NO_TEXT,
+        "unsupported.ods": REASON_DOC_UNSUPPORTED,
+    }
+
+
+def test_scan_paths_documents_disabled_skip_by_extension(tmp_path: Path) -> None:
+    """关闭多文档后 .docx 退回「后缀跳过」，与支持前口径一致。"""
+    _write_docx(tmp_path / "a.docx", ["手机 13812345678"])
+    options = ScanOptions(use_processes=False, scan_documents=False)
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), options)
+
+    assert not result.hits
+    assert result.stats.files_skipped_extension == 1
+    assert result.stats.files_scanned == 0
+
+
+def test_scan_paths_documents_in_process_pool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """文档抽取在子进程内完成：任务参数只用 (str, int)，可 pickle。"""
+    from fcmd.apps.filescan import _engine
+
+    _write_docx(tmp_path / "a.docx", ["手机 13812345678"])
+    monkeypatch.setattr(_engine, "PROCESS_MIN_FILES", 1)
+    monkeypatch.setattr(_engine, "PROCESS_MIN_BYTES", 1)
+
+    result = scan_paths([tmp_path], _ruleset(("phone", "13812345678")), ScanOptions(workers=2))
+
+    assert len(result.hits) == 1
+    assert result.hits[0].matches[0].location == "段落 1"
 
 
 def test_scan_paths_empty_and_filtered(tmp_path: Path) -> None:

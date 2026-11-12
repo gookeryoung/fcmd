@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 import fcmd
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
-    DEFAULT_TEXT_EXTENSIONS,
+    DEFAULT_SCAN_EXTENSIONS,
     CancelToken,
     ScanOptions,
     ScanResult,
@@ -94,7 +94,7 @@ class FilescanSettings:
     recursive: bool = True
     max_depth: int = 0
     follow_symlinks: bool = False
-    ext_whitelist: str = field(default_factory=lambda: ";".join(DEFAULT_TEXT_EXTENSIONS))
+    ext_whitelist: str = field(default_factory=lambda: ";".join(DEFAULT_SCAN_EXTENSIONS))
     include_ext: str = ""
     force_ext: str = ""
     exclude_ext: str = ""
@@ -170,7 +170,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         recursive=_bool_value(raw, "recursive", True),
         max_depth=_int_value(raw, "max_depth", 0),
         follow_symlinks=_bool_value(raw, "follow_symlinks", False),
-        ext_whitelist=_str_value(raw, "ext_whitelist", ";".join(DEFAULT_TEXT_EXTENSIONS)),
+        ext_whitelist=_str_value(raw, "ext_whitelist", ";".join(DEFAULT_SCAN_EXTENSIONS)),
         include_ext=_str_value(raw, "include_ext"),
         force_ext=_str_value(raw, "force_ext"),
         exclude_ext=_str_value(raw, "exclude_ext"),
@@ -710,7 +710,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             recursive=self._recursive.get(),
             max_depth=max(0, int(self._max_depth.get())),
             follow_symlinks=self._follow.get(),
-            ext_whitelist=parse_ext_text(whitelist_text) if whitelist_text else DEFAULT_TEXT_EXTENSIONS,
+            ext_whitelist=parse_ext_text(whitelist_text) if whitelist_text else DEFAULT_SCAN_EXTENSIONS,
             include_exts=parse_ext_text(self._include_ext.get()),
             force_exts=parse_ext_text(self._force_ext.get()),
             exclude_exts=parse_ext_text(self._exclude_ext.get()),
@@ -832,7 +832,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                     parent,
                     "end",
                     text=match.rule_name,
-                    values=(match.rule_name, match.line_no, render_context(match, False)),
+                    values=(match.rule_name, match.location or match.line_no, render_context(match, False)),
                 )
         for item in result.skipped:
             tree.insert("", "end", text=str(item.path), values=("", "", f"跳过：{item.reason}"))
@@ -857,7 +857,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             self._status.set(self._summary_text())
 
     def _reset_whitelist(self) -> None:
-        self._ext_whitelist.set(";".join(DEFAULT_TEXT_EXTENSIONS))
+        self._ext_whitelist.set(";".join(DEFAULT_SCAN_EXTENSIONS))
         self._status.set(self._summary_text())
 
     def _cancel_scan(self) -> None:

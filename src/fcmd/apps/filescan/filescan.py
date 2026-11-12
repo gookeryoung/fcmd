@@ -29,7 +29,7 @@ from typing import Literal, NoReturn
 import fcmd
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
-    DEFAULT_TEXT_EXTENSIONS,
+    DEFAULT_SCAN_EXTENSIONS,
     CancelToken,
     ScanOptions,
     parse_ext_text,
@@ -79,10 +79,10 @@ def _load_ruleset(path: Path | None) -> RuleSet:
 
 
 def _parse_whitelist(text: str) -> tuple[str, ...]:
-    """解析后缀白名单文本；留空使用内置默认白名单，``*`` 表示全部后缀。"""
+    """解析后缀白名单文本；留空使用内置默认白名单（文本 + 文档后缀）。"""
     stripped = text.strip()
     if not stripped:
-        return DEFAULT_TEXT_EXTENSIONS
+        return DEFAULT_SCAN_EXTENSIONS
     return parse_ext_text(stripped)
 
 
@@ -160,7 +160,8 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     follow_symlinks:
         跟随符号链接（默认不跟随，避免扫描越出指定目录）
     ext_whitelist:
-        后缀白名单，分号或逗号分隔；留空使用内置文本后缀集，``*`` 表示全部后缀
+        后缀白名单，分号或逗号分隔；留空使用内置白名单（文本 + docx/xlsx/pptx/odt/ods），
+        ``*`` 表示全部后缀
     include_ext:
         在白名单内进一步收窄的后缀（如 ``.txt;.log``），留空表示不收窄
     force_ext:

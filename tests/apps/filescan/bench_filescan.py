@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fcmd.apps.filescan._engine import DEFAULT_TEXT_EXTENSIONS, ScanOptions, format_size, scan_paths
+from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS, ScanOptions, format_size, scan_paths
 from fcmd.apps.filescan._rules import MATCH_KEYWORD, Matcher, Rule, RuleSet, builtin_ruleset
 
 KIB = 1024
@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     base = Path(tempfile.mkdtemp(prefix="filescan-bench-"))
     try:
-        print(f"语料目录：{base}（workers={args.workers}，白名单 {len(DEFAULT_TEXT_EXTENSIONS)} 项）")
+        print(f"语料目录：{base}（workers={args.workers}，白名单 {len(DEFAULT_SCAN_EXTENSIONS)} 项）")
         started = time.perf_counter()
         results = run_benchmark(base, workers=max(1, args.workers))
         total = time.perf_counter() - started

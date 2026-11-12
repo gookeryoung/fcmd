@@ -20,13 +20,14 @@ from fcmd.apps.filescan._report import (
 )
 
 
-def _match(
+def _match(  # noqa: PLR0913 - 测试构造器，参数各自独立
     rule_id: str = "cn_phone",
     *,
     line: int = 3,
     excerpt: str = "13812345678",
     context: str = "tel 13812345678 end",
     context_start: int = 4,
+    location: str = "",
 ) -> RuleMatch:
     return RuleMatch(
         rule_id=rule_id,
@@ -37,6 +38,7 @@ def _match(
         excerpt=excerpt,
         context=context,
         context_start=context_start,
+        location=location,
     )
 
 
@@ -203,3 +205,47 @@ def test_write_report_all_formats(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="未知报告格式"):
         write_report(result, tmp_path / "report.bin", "binary")
+
+
+# ---------------------------------------------------------------------- #
+# 文档位置与新增统计字段（向后兼容）
+# ---------------------------------------------------------------------- #
+def test_plain_text_location_stays_empty() -> None:
+    mapping = result_to_mapping(_result(), include_raw=True)
+    assert mapping["hits"][0]["matches"][0]["location"] == ""
+
+
+def test_document_location_in_json_csv_and_text() -> None:
+    hit = FileHit(Path("scan") / "a.docx", 2048, "docx", [_match(location="段落 3")])
+    result = _result(hits=[hit])
+
+    mapping = result_to_mapping(result, include_raw=True)
+    assert mapping["hits"][0]["matches"][0]["location"] == "段落 3"
+
+    csv_text = result_to_csv(result, include_raw=True)
+    lines = csv_text.splitlines()
+    assert "位置" in lines[0]
+    assert "段落 3" in lines[1]
+
+    text = format_text_report(result, include_raw=True)
+    assert "段落 3 第 3 行" in text
+
+
+def test_document_skip_stats_are_separate_fields() -> None:
+    result = _result()
+    result.stats.files_skipped_encrypted = 1
+    result.stats.files_skipped_corrupt = 2
+    result.stats.files_skipped_no_text = 3
+    result.stats.files_skipped_unsupported = 4
+
+    stats = result_to_mapping(result)["stats"]
+    assert stats["files_skipped_encrypted"] == 1
+    assert stats["files_skipped_corrupt"] == 2
+    assert stats["files_skipped_no_text"] == 3
+    assert stats["files_skipped_unsupported"] == 4
+    # 既有字段语义不变
+    assert stats["files_skipped"] == 1
+    assert stats["files_skipped_other"] == 0
+
+    text = format_text_report(result)
+    assert "加密 1" in text and "损坏 2" in text and "无文本 3" in text and "不支持 4" in text

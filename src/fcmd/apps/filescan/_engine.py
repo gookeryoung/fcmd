@@ -23,6 +23,17 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fcmd.apps.filescan._extract import (
+    DOCUMENT_EXTENSIONS,
+    KIND_CORRUPT,
+    KIND_ENCRYPTED,
+    KIND_NO_TEXT,
+    KIND_TOO_LARGE,
+    KIND_UNSUPPORTED,
+    ExtractError,
+    TextUnit,
+    extract_document,
+)
 from fcmd.apps.filescan._rules import (
     CompiledRule,
     Expr,
@@ -40,6 +51,7 @@ __all__ = [
     "BINARY_SNIFF_SIZE",
     "DEFAULT_ENCODINGS",
     "DEFAULT_MAX_FILE_BYTES",
+    "DEFAULT_SCAN_EXTENSIONS",
     "DEFAULT_TEXT_EXTENSIONS",
     "CancelToken",
     "FileHit",
@@ -88,6 +100,11 @@ _BOM_ENCODINGS: tuple[tuple[bytes, str], ...] = (
 REASON_SYMLINK = "符号链接（未跟随）"
 REASON_BINARY = "二进制文件"
 REASON_TOO_LARGE = "超出单文件读取上限"
+REASON_DOC_ENCRYPTED = "文档已加密"
+REASON_DOC_CORRUPT = "文档损坏"
+REASON_DOC_NO_TEXT = "文档无文本层"
+REASON_DOC_UNSUPPORTED = "文档格式不支持（缺少解析依赖）"
+REASON_DOC_TOO_LARGE = "超出文档解析上限"
 
 DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
     ".txt",
@@ -199,6 +216,9 @@ DEFAULT_TEXT_EXTENSIONS: tuple[str, ...] = (
 ``*`` 表示全部后缀（关闭白名单，退回逐文件二进制嗅探）。
 """
 
+DEFAULT_SCAN_EXTENSIONS: tuple[str, ...] = DEFAULT_TEXT_EXTENSIONS + DOCUMENT_EXTENSIONS
+"""默认白名单：文本后缀 + 文档后缀（docx/xlsx/pptx/odt/ods 走文档抽取）。"""
+
 
 # ---------------------------------------------------------------------- #
 # 取消与选项
@@ -227,9 +247,11 @@ class CancelToken:
 class ScanOptions:
     """扫描范围与单文件读取选项。
 
-    ``ext_whitelist`` 是后缀白名单（默认 :data:`DEFAULT_TEXT_EXTENSIONS`），
-    名单外的文件不读内容直接跳过；``include_exts`` 只做白名单内的收窄，
+    ``ext_whitelist`` 是后缀白名单（默认 :data:`DEFAULT_SCAN_EXTENSIONS`，含文本与
+    文档后缀），名单外的文件不读内容直接跳过；``include_exts`` 只做白名单内的收窄，
     ``force_exts`` 强制扫描名单外的后缀（逃生口），``exclude_exts`` 优先级最高。
+    ``scan_documents`` 为真时 docx/xlsx/pptx/odt/ods 走文档抽取（默认开启），
+    关闭后这些后缀按普通文本读取（通常会被二进制判定跳过）。
     ``use_processes`` 只影响调度方式：达到 :data:`PROCESS_MIN_FILES` /
     :data:`PROCESS_MIN_BYTES` 阈值时用进程池绕开 GIL，结果与线程池逐字节一致。
     """
@@ -237,13 +259,14 @@ class ScanOptions:
     recursive: bool = True
     max_depth: int = 0
     follow_symlinks: bool = False
-    ext_whitelist: tuple[str, ...] = DEFAULT_TEXT_EXTENSIONS
+    ext_whitelist: tuple[str, ...] = DEFAULT_SCAN_EXTENSIONS
     include_exts: tuple[str, ...] = ()
     force_exts: tuple[str, ...] = ()
     exclude_exts: tuple[str, ...] = ()
     min_size: int = 0
     max_size: int | None = None
     skip_binary: bool = True
+    scan_documents: bool = True
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
     encodings: tuple[str, ...] = DEFAULT_ENCODINGS
     workers: int = 4
@@ -268,7 +291,11 @@ class ScanContext:
 # ---------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class RuleMatch:
-    """一条命中：规则、行号与上下文（原文，展示时再打码）。"""
+    """一条命中：规则、行号与上下文（原文，展示时再打码）。
+
+    ``location`` 仅在文档路径下非空（如 ``段落 3`` / ``Sheet1!A12`` / ``幻灯片 2``），
+    纯文本路径保持空串，报告与导出据此保持向后兼容。
+    """
 
     rule_id: str
     rule_name: str
@@ -278,6 +305,7 @@ class RuleMatch:
     excerpt: str
     context: str
     context_start: int
+    location: str = ""
 
 
 @dataclass
@@ -316,6 +344,10 @@ class ScanStats:
     files_skipped_extension: int = 0
     files_skipped_binary: int = 0
     files_skipped_other: int = 0
+    files_skipped_encrypted: int = 0
+    files_skipped_corrupt: int = 0
+    files_skipped_no_text: int = 0
+    files_skipped_unsupported: int = 0
     files_failed: int = 0
     bytes_read: int = 0
     hit_files: int = 0
@@ -421,12 +453,15 @@ def _extension_selected(path: Path, options: ScanOptions) -> bool:
     """后缀过滤：排除 > 强制 > 白名单 > 收窄列表。
 
     白名单按文件名结尾匹配（``.env`` 可命中 ``prod.env``）；``*`` 表示放开白名单。
+    关闭 ``scan_documents`` 时文档后缀退回「后缀跳过」（与多文档支持前一致）。
     """
     name = path.name.lower()
     if _matches_ext(name, options.exclude_exts):
         return False
     if _matches_ext(name, options.force_exts):
         return True
+    if not options.scan_documents and _matches_ext(name, DOCUMENT_EXTENSIONS):
+        return False
     if "*" not in options.ext_whitelist and not _matches_ext(name, options.ext_whitelist):
         return False
     return not options.include_exts or _matches_ext(name, options.include_exts)
@@ -468,11 +503,11 @@ def _enter_directory(directory: Path, options: ScanOptions, visited: set[str]) -
     return True
 
 
-def _filtered_file(path: Path, size: int, options: ScanOptions, result: WalkResult) -> bool:
-    """应用后缀白名单与大小过滤，按原因累计计数；返回是否保留。"""
-    if not _extension_selected(path, options):
-        result.skipped_extension += 1
-        return False
+def _filtered_file(size: int, options: ScanOptions, result: WalkResult) -> bool:
+    """应用大小过滤，按原因累计计数；返回是否保留。
+
+    后缀过滤已由 :func:`_classify_entry` 在 ``stat`` 之前完成，这里只判大小。
+    """
     if not _size_selected(size, options):
         result.skipped_size += 1
         return False
@@ -485,26 +520,33 @@ def _classify_entry(
     options: ScanOptions,
     result: WalkResult,
 ) -> tuple[Path, int] | None:
-    """处理单个目录项：记录文件、跳过符号链接或返回待下探子目录。"""
+    """处理单个目录项：记录文件、跳过符号链接或返回待下探子目录。
+
+    后缀白名单在 ``stat`` 之前判断：被后缀挡掉的文件不需要大小，省掉一次
+    系统调用（混合目录实测约占遍历时间 6%）。代价是这类条目即使 ``stat``
+    失败也归入「后缀跳过」，不再记错误。
+    """
     path = Path(entry.path)
     try:
         if entry.is_symlink() and not options.follow_symlinks:
             result.skipped.append(SkipRecord(path, REASON_SYMLINK))
             return None
         if entry.is_dir(follow_symlinks=options.follow_symlinks):
-            if options.recursive and (options.max_depth == 0 or depth + 1 <= options.max_depth):
-                return (path, depth + 1)
+            descend = options.recursive and (options.max_depth == 0 or depth + 1 <= options.max_depth)
+            return (path, depth + 1) if descend else None
+        if not entry.is_file(follow_symlinks=options.follow_symlinks):
             return None
-        stat = entry.stat(follow_symlinks=options.follow_symlinks)
+        result.seen += 1
+        if not _extension_selected(path, options):
+            result.skipped_extension += 1
+            return None
+        size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
     except OSError as exc:
         result.errors.append(ScanError(path, f"无法读取属性: {exc}"))
         return None
-    if not entry.is_file(follow_symlinks=options.follow_symlinks):
-        return None
-    result.seen += 1
-    if _filtered_file(path, stat.st_size, options, result):
+    if _filtered_file(size, options, result):
         result.files.append(path)
-        result.sizes.append(stat.st_size)
+        result.sizes.append(size)
     return None
 
 
@@ -602,12 +644,14 @@ def _is_cancelled(token: Any) -> bool:
 # ---------------------------------------------------------------------- #
 # 单文件匹配
 # ---------------------------------------------------------------------- #
-def _build_match(
+def _build_match(  # noqa: PLR0913 - 命中五要素 + 可选位置，拆开反而更难读
     compiled: CompiledRule,
     line: str,
     line_no: int,
     match: Any,
     context_chars: int,
+    *,
+    location: str = "",
 ) -> RuleMatch:
     """构造一条命中，截取左右上下文并记录命中在上下文中的起点。"""
     start = max(0, match.start() - context_chars)
@@ -621,6 +665,7 @@ def _build_match(
         excerpt=match.group(0),
         context=line[start:end],
         context_start=match.start() - start,
+        location=location,
     )
 
 
@@ -636,12 +681,17 @@ class _ReadError(Exception):
     """内部信号：文件读取失败。"""
 
 
-def _read_text(path: Path, options: ScanOptions) -> tuple[str, str, int]:
-    """读取并解码文件；超限或二进制抛 ``_SkipFile``，IO 错误抛 ``_ReadError``。"""
-    try:
-        size = path.stat().st_size
-    except OSError as exc:
-        raise _ReadError(f"读取失败: {exc}") from exc
+def _read_text(path: Path, options: ScanOptions, size: int | None = None) -> tuple[str, str, int]:
+    """读取并解码文件；超限或二进制抛 ``_SkipFile``，IO 错误抛 ``_ReadError``。
+
+    ``size`` 由遍历阶段传入（``walk`` 已经 ``stat`` 过），省略时自行 ``stat``；
+    仍以实际读取长度做上限判定，避免文件在遍历后变大而绕过限制。
+    """
+    if size is None:
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise _ReadError(f"读取失败: {exc}") from exc
     if size > options.max_file_bytes:
         raise _SkipFile(REASON_TOO_LARGE)
     # 按实际大小申请读缓冲：read(n) 会按 n 分配缓冲区，直接用 max_file_bytes+1
@@ -665,6 +715,7 @@ def _collect_matches(
     compiled_rules: Sequence[CompiledRule],
     options: ScanOptions,
     token: CancelToken | None,
+    location: str = "",
 ) -> tuple[set[str], list[RuleMatch]] | None:
     """逐行匹配全部规则；返回 ``(命中规则 id, 命中明细)``，取消时返回 ``None``。"""
     limit = max(1, options.max_hits_per_file)
@@ -682,16 +733,84 @@ def _collect_matches(
             for match in regex.finditer(line):
                 matched_ids.add(compiled.id)
                 if len(matches) < limit:
-                    matches.append(_build_match(compiled, line, line_no, match, options.context_chars))
+                    matches.append(
+                        _build_match(
+                            compiled,
+                            line,
+                            line_no,
+                            match,
+                            options.context_chars,
+                            location=location,
+                        )
+                    )
     return matched_ids, matches
 
 
-def scan_file(path: Path, context: ScanContext) -> _Outcome:
-    """扫描单个文件：读取上限、二进制判定、编码回退、逐行匹配与文件级求值。"""
-    if _is_cancelled(context.token):
-        return _Outcome(path=path, cancelled=True)
+_DOCUMENT_REASONS: dict[str, str] = {
+    KIND_ENCRYPTED: REASON_DOC_ENCRYPTED,
+    KIND_CORRUPT: REASON_DOC_CORRUPT,
+    KIND_NO_TEXT: REASON_DOC_NO_TEXT,
+    KIND_UNSUPPORTED: REASON_DOC_UNSUPPORTED,
+    KIND_TOO_LARGE: REASON_DOC_TOO_LARGE,
+}
+
+
+def _collect_units(
+    units: Sequence[TextUnit],
+    context: ScanContext,
+) -> tuple[set[str], list[RuleMatch]] | None:
+    """对文档抽取出的文本单元逐个复用逐行匹配，并受全局命中上限约束。"""
+    limit = max(1, context.options.max_hits_per_file)
+    matched_ids: set[str] = set()
+    matches: list[RuleMatch] = []
+    for unit in units:
+        if _is_cancelled(context.token):
+            return None
+        collected = _collect_matches(
+            unit.text,
+            context.compiled_rules,
+            context.options,
+            context.token,
+            unit.location,
+        )
+        if collected is None:
+            return None
+        unit_ids, unit_matches = collected
+        matched_ids |= unit_ids
+        for item in unit_matches:
+            if len(matches) < limit:
+                matches.append(item)
+    return matched_ids, matches
+
+
+def _scan_document(path: Path, context: ScanContext, suffix: str, size: int | None) -> _Outcome:
+    """文档类文件：先抽取带位置的文本单元，再复用逐行匹配与文件级求值。"""
     try:
-        encoding, text, byte_count = _read_text(path, context.options)
+        units = extract_document(path, size)
+    except ExtractError as exc:
+        reason = _DOCUMENT_REASONS.get(exc.kind, REASON_DOC_CORRUPT)
+        return _Outcome(path=path, skipped=SkipRecord(path, reason))
+    byte_count = size
+    if byte_count is None:
+        try:
+            byte_count = path.stat().st_size
+        except OSError as exc:
+            return _Outcome(path=path, error=ScanError(path, f"读取失败: {exc}"))
+    collected = _collect_units(units, context)
+    if collected is None:
+        return _Outcome(path=path, cancelled=True)
+    matched_ids, matches = collected
+    if not evaluate_expression(context.expression, matched_ids):
+        return _Outcome(path=path, bytes_read=byte_count)
+    detail = [item for item in matches if item.rule_id in context.positive_ids]
+    hit = FileHit(path=path, size=byte_count, encoding=suffix.lstrip("."), matches=detail)
+    return _Outcome(path=path, hit=hit, bytes_read=byte_count)
+
+
+def _scan_text(path: Path, context: ScanContext, size: int | None) -> _Outcome:
+    """文本类文件：读取上限、二进制判定、编码回退、逐行匹配与文件级求值。"""
+    try:
+        encoding, text, byte_count = _read_text(path, context.options, size)
     except _SkipFile as skip:
         return _Outcome(path=path, skipped=SkipRecord(path, skip.reason))
     except _ReadError as error:
@@ -708,6 +827,19 @@ def scan_file(path: Path, context: ScanContext) -> _Outcome:
     return _Outcome(path=path, hit=hit, bytes_read=byte_count)
 
 
+def scan_file(path: Path, context: ScanContext, size: int | None = None) -> _Outcome:
+    """扫描单个文件：文档抽取或文本读取，再做逐行匹配与文件级求值。
+
+    ``size`` 由遍历阶段传入以免重复 ``stat``；省略时按需自行获取。
+    """
+    if _is_cancelled(context.token):
+        return _Outcome(path=path, cancelled=True)
+    suffix = path.suffix.lower()
+    if context.options.scan_documents and suffix in DOCUMENT_EXTENSIONS:
+        return _scan_document(path, context, suffix, size)
+    return _scan_text(path, context, size)
+
+
 # ---------------------------------------------------------------------- #
 # 调度：线程池 / 进程池
 # ---------------------------------------------------------------------- #
@@ -720,12 +852,15 @@ def _worker_init(context: ScanContext) -> None:
     _WORKER_CONTEXT = context
 
 
-def _worker_scan_batch(paths: list[str]) -> list[_Outcome]:
-    """子进程任务：扫一批文件，返回与 :func:`scan_file` 相同的结果对象。"""
+def _worker_scan_batch(items: list[tuple[str, int]]) -> list[_Outcome]:
+    """子进程任务：扫一批 ``(路径, 大小)``，返回与 :func:`scan_file` 相同的结果对象。
+
+    只用 ``str`` 与 ``int`` 传参，保证 spawn 下可 pickle，不跨进程传文件句柄。
+    """
     context = _WORKER_CONTEXT
     if context is None:  # pragma: no cover - initializer 未执行说明用法错误
         raise RuntimeError("进程池 worker 未初始化")
-    return [scan_file(Path(item), context) for item in paths]
+    return [scan_file(Path(path), context, size) for path, size in items]
 
 
 def _process_worthwhile(files: Sequence[Path], sizes: Sequence[int], workers: int) -> bool:
@@ -743,6 +878,7 @@ def _process_worthwhile(files: Sequence[Path], sizes: Sequence[int], workers: in
 
 def _scan_in_threads(
     files: Sequence[Path],
+    sizes: Sequence[int],
     context: ScanContext,
     workers: int,
     progress: Callable[[int, int, Path], None] | None,
@@ -753,7 +889,9 @@ def _scan_in_threads(
     done = 0
     executor = ThreadPoolExecutor(max_workers=workers)
     try:
-        futures = [(path, executor.submit(scan_file, path, context)) for path in files]
+        futures = [
+            (path, executor.submit(scan_file, path, context, size)) for path, size in zip(files, sizes, strict=True)
+        ]
         for path, future in futures:
             outcomes.append(future.result())
             done += 1
@@ -764,10 +902,12 @@ def _scan_in_threads(
     return outcomes
 
 
-def _scan_in_processes(
+def _scan_in_processes(  # noqa: PLR0913 - 调度参数与线程路径对齐，保持调用点对称
     files: Sequence[Path],
+    sizes: Sequence[int],
     context: ScanContext,
     workers: int,
+    *,
     token: CancelToken | None,
     progress: Callable[[int, int, Path], None] | None,
 ) -> tuple[list[_Outcome], bool]:
@@ -781,7 +921,8 @@ def _scan_in_processes(
 
     total = len(files)
     chunk = max(1, min(_PROCESS_MAX_CHUNK, total // (workers * 8)))
-    batches = [files[index : index + chunk] for index in range(0, total, chunk)]
+    pairs = list(zip(files, sizes, strict=True))
+    batches = [pairs[index : index + chunk] for index in range(0, total, chunk)]
     outcomes: list[_Outcome] = []
     cancelled = False
     done = 0
@@ -792,7 +933,9 @@ def _scan_in_processes(
         initargs=(replace(context, token=None),),
     )
     try:
-        futures = [executor.submit(_worker_scan_batch, [str(path) for path in batch]) for batch in batches]
+        futures = [
+            executor.submit(_worker_scan_batch, [(str(path), size) for path, size in batch]) for batch in batches
+        ]
         for index, (batch, future) in enumerate(zip(batches, futures, strict=True)):
             if _is_cancelled(token):
                 cancelled = True
@@ -800,7 +943,7 @@ def _scan_in_processes(
                     pending.cancel()
                 break
             outcomes.extend(future.result())
-            for path in batch:
+            for path, _size in batch:
                 done += 1
                 if progress is not None:
                     progress(done, total, path)
@@ -865,10 +1008,17 @@ def scan_paths(
     # 进程数不超过 CPU 核数：多出来的进程只会增加 spawn 与内存开销。
     process_workers = min(workers, os.cpu_count() or workers)
     if opts.use_processes and _process_worthwhile(files, walk.sizes, process_workers):
-        outcomes, cancelled = _scan_in_processes(files, context, process_workers, token, progress)
+        outcomes, cancelled = _scan_in_processes(
+            files,
+            walk.sizes,
+            context,
+            process_workers,
+            token=token,
+            progress=progress,
+        )
         result.stats.cancelled = result.stats.cancelled or cancelled
     else:
-        outcomes = _scan_in_threads(files, context, workers, progress)
+        outcomes = _scan_in_threads(files, walk.sizes, context, workers, progress)
         result.stats.cancelled = result.stats.cancelled or any(item.cancelled for item in outcomes)
 
     hits: list[FileHit] = []
@@ -898,10 +1048,32 @@ def scan_paths(
 
 
 def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:
-    """汇总跳过分类：后缀未命中 / 二进制 / 其他（符号链接、大小过滤、超限）。"""
-    binary = sum(1 for item in result.skipped if item.reason == REASON_BINARY)
+    """汇总跳过分类：后缀未命中 / 二进制 / 文档四类 / 其他。
+
+    文档的加密、损坏、无文本层、缺依赖分别独立计数，剩余（符号链接、大小过滤、
+    文档超限）归入「其他」，各分类之和等于 ``files_skipped``。
+    """
     stats = result.stats
+    encrypted = sum(1 for item in result.skipped if item.reason == REASON_DOC_ENCRYPTED)
+    corrupt = sum(1 for item in result.skipped if item.reason == REASON_DOC_CORRUPT)
+    no_text = sum(1 for item in result.skipped if item.reason == REASON_DOC_NO_TEXT)
+    unsupported = sum(1 for item in result.skipped if item.reason == REASON_DOC_UNSUPPORTED)
+    binary = sum(1 for item in result.skipped if item.reason == REASON_BINARY)
     stats.files_skipped_extension = walk.skipped_extension
     stats.files_skipped_binary = binary
-    stats.files_skipped_other = len(result.skipped) - binary + walk.skipped_size
-    stats.files_skipped = stats.files_skipped_extension + stats.files_skipped_binary + stats.files_skipped_other
+    stats.files_skipped_encrypted = encrypted
+    stats.files_skipped_corrupt = corrupt
+    stats.files_skipped_no_text = no_text
+    stats.files_skipped_unsupported = unsupported
+    stats.files_skipped_other = (
+        len(result.skipped) - binary - encrypted - corrupt - no_text - unsupported + walk.skipped_size
+    )
+    stats.files_skipped = (
+        stats.files_skipped_extension
+        + stats.files_skipped_binary
+        + stats.files_skipped_other
+        + encrypted
+        + corrupt
+        + no_text
+        + unsupported
+    )
