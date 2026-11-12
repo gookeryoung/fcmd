@@ -162,31 +162,23 @@ def test_parse_whitelist_text_empty() -> None:
     assert filescanw.parse_whitelist_text("# 只有注释\n") == ()
 
 
-def test_grouped_whitelist_text_covers_all_defaults_and_roundtrips() -> None:
+def test_group_whitelist_covers_defaults_and_marks_unknown() -> None:
     from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS
 
-    text = filescanw.grouped_whitelist_text()
-    assert text.startswith("# ")
-    assert all(line.strip() for line in text.splitlines())
-    assert set(filescanw.parse_whitelist_text(text)) == set(DEFAULT_SCAN_EXTENSIONS)
+    groups = filescanw.group_whitelist()
+    labels = [label for label, _ in groups]
+    assert labels[0] == "文档"
+    flat = [ext for _, items in groups for ext in items]
+    assert set(flat) == set(DEFAULT_SCAN_EXTENSIONS)
+    assert len(flat) == len(set(flat))
+
+    extended = filescanw.group_whitelist((*DEFAULT_SCAN_EXTENSIONS, "custom"))
+    assert extended[-1] == ("其他", (".custom",))
 
 
-def test_grouped_whitelist_text_puts_unknown_exts_last() -> None:
-    from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS
-
-    text = filescanw.grouped_whitelist_text((*DEFAULT_SCAN_EXTENSIONS, ".custom"))
-    assert text.splitlines()[-2] == "# 其他"
-    assert text.splitlines()[-1] == ".custom"
-
-
-def test_whitelist_display_text_converts_defaults() -> None:
-    from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS
-
-    legacy = ";".join(DEFAULT_SCAN_EXTENSIONS)
-    assert filescanw.whitelist_display_text(legacy) == filescanw.grouped_whitelist_text()
-    assert filescanw.whitelist_display_text("") == filescanw.grouped_whitelist_text()
-    custom = ".py;.custom"
-    assert filescanw.whitelist_display_text(custom) == custom
+def test_group_whitelist_normalizes_and_dedupes() -> None:
+    assert filescanw.group_whitelist(("log", ".LOG", "txt")) == (("文本/日志", (".txt", ".log")),)
+    assert filescanw.group_whitelist(()) == ()
 
 
 def test_run_gui_delegates_to_shared_runner(monkeypatch: pytest.MonkeyPatch) -> None:

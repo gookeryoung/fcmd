@@ -383,7 +383,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "35c851a57bc74eefd87b1a57e3ef539f"
+DIGEST = "f92883c3c126aca011a19338db046d53"
 
 
 if __name__ == "__main__":  # pragma: no cover
