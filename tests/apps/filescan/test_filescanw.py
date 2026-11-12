@@ -123,6 +123,33 @@ def test_settings_mapping_roundtrip() -> None:
     assert filescanw.settings_from_mapping(mapping) == settings
 
 
+def test_settings_whitelist_groups_roundtrip() -> None:
+    groups = (("文档", (".docx", ".pdf")), ("自定义", (".abc",)))
+    settings = filescanw.FilescanSettings(whitelist_groups=groups)
+    mapping = filescanw.settings_to_mapping(settings)
+    assert mapping["whitelist_groups"] == [["文档", [".docx", ".pdf"]], ["自定义", [".abc"]]]
+    assert filescanw.settings_from_mapping(mapping).whitelist_groups == groups
+
+
+def test_settings_from_mapping_sanitizes_whitelist_groups() -> None:
+    raw: dict[str, object] = {
+        "whitelist_groups": [
+            ["文档", [".docx", 123, ""]],
+            ["文档", [".dup"]],
+            ["", [".x"]],
+            ["坏", ["日志", ".ok"]],
+            "oops",
+            ["空", []],
+            ["结构不对", [".a"], "多余"],
+        ]
+    }
+    assert filescanw.settings_from_mapping(raw).whitelist_groups == (
+        ("文档", (".docx",)),
+        ("坏", (".ok",)),
+    )
+    assert filescanw.settings_from_mapping({"whitelist_groups": "oops"}).whitelist_groups == ()
+
+
 def test_resolve_geometry_restores_saved() -> None:
     assert filescanw.resolve_geometry("1000x700+10+20", 1920, 1080) == "1000x700+10+20"
 
