@@ -3,7 +3,8 @@
 三个分页（沿用 llmdownw 的分页口径，避免表单堆叠）：
 
 - **扫描**：多目录列表、递归/深度/符号链接、后缀白名单表格（类型 / 后缀两列，
-  每行一个类型，后缀用英文逗号分隔，可新增 / 编辑 / 删除类型并逐项校验）、
+  每行一个类型，后缀用英文逗号分隔，可新增 / 编辑 / 删除类型（支持多选批量删除）
+  并逐项校验）、
   后缀包含/排除、强制后缀、大小与修改时间上下限、跳过二进制、解析文档、
   单文件上限、并发数；开始 / 取消与进度条；导入 / 导出扫描配置。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
@@ -538,13 +539,16 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Label(options, text="白名单外强制扫描（如 .pdf）").grid(row=3, column=6, columnspan=2, sticky="w")
         ttk.Label(
             options,
-            text="后缀白名单（每行一个类型；双击行编辑，后缀用英文逗号【,】分隔；可新增 / 删除类型）",
+            text=(
+                "后缀白名单（每行一个类型；双击行编辑，后缀用英文逗号【,】分隔；"
+                "可新增类型，Ctrl / Shift 多选后批量删除）"
+            ),
         ).grid(row=4, column=0, columnspan=8, sticky="w", padx=(6, 2), pady=(4, 0))
         whitelist_box = ttk.Frame(options)
         whitelist_box.grid(row=5, column=0, columnspan=8, sticky="ew")
         whitelist_box.columnconfigure(0, weight=1)
         whitelist_tree = ttk.Treeview(
-            whitelist_box, columns=("group", "exts"), show="headings", height=8, selectmode="browse"
+            whitelist_box, columns=("group", "exts"), show="headings", height=8, selectmode="extended"
         )
         whitelist_tree.heading("group", text="类型")
         whitelist_tree.heading("exts", text="后缀（用 , 分隔）")
@@ -999,20 +1003,40 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         return next((index for index, (row_label, _) in enumerate(rows) if row_label == label), None)
 
     def _delete_whitelist_row(self) -> None:
+        """删除表格中选中的类型；支持 Ctrl / Shift 多选后批量删除。"""
         from tkinter import messagebox
 
-        index = self._selected_whitelist_index()
-        if index is None:
+        if self._whitelist_tree is None:
+            return
+        tree = self._whitelist_tree
+        selection = tree.selection()
+        if not selection:
+            self._status.set("请先在白名单表格中选择要删除的类型（可按住 Ctrl / Shift 多选）")
             return
         rows = self._whitelist_rows()
-        if len(rows) <= 1:
+        selected = {str(tree.set(iid, "group")) for iid in selection}
+        targets = [row for row in rows if row[0] in selected]
+        if not targets:
+            return
+        if len(rows) - len(targets) < 1:
             self._status.set("白名单至少保留一个类型，请先新增其他类型")
             return
-        label, exts = rows[index]
-        if not messagebox.askyesno("删除类型", f"确认删除类型「{label}」及其 {len(exts)} 个后缀？", parent=self.root):
+        count = len(targets)
+        total_exts = sum(len(exts) for _, exts in targets)
+        if count == 1:
+            prompt = f"确认删除类型「{targets[0][0]}」及其 {total_exts} 个后缀？"
+        else:
+            preview = "、".join(label for label, _ in targets[:5])
+            if count > 5:
+                preview += " 等"
+            prompt = f"确认删除选中的 {count} 个类型（共 {total_exts} 个后缀）？\n\n{preview}"
+        if not messagebox.askyesno("删除类型", prompt, parent=self.root):
             return
-        self._refresh_whitelist_tree([row for i, row in enumerate(rows) if i != index])
-        self._status.set(f"已删除类型「{label}」")
+        self._refresh_whitelist_tree([row for row in rows if row[0] not in selected])
+        if count == 1:
+            self._status.set(f"已删除类型「{targets[0][0]}」")
+        else:
+            self._status.set(f"已删除 {count} 个类型（共 {total_exts} 个后缀）")
 
     def _edit_whitelist_row(self, event: Any = None) -> None:
         """双击表格行或点击「编辑选中」时，弹窗编辑该行的类型名与后缀串。"""
