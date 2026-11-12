@@ -254,6 +254,9 @@ class ScanOptions:
     关闭后这些后缀按普通文本读取（通常会被二进制判定跳过）。
     ``use_processes`` 只影响调度方式：达到 :data:`PROCESS_MIN_FILES` /
     :data:`PROCESS_MIN_BYTES` 阈值时用进程池绕开 GIL，结果与线程池逐字节一致。
+
+    ``modified_after`` / ``modified_before`` 按文件 mtime 过滤（epoch 秒，边界
+    含端点），``None`` 表示不限；与大小过滤同属遍历阶段的「其他跳过」。
     """
 
     recursive: bool = True
@@ -265,6 +268,8 @@ class ScanOptions:
     exclude_exts: tuple[str, ...] = ()
     min_size: int = 0
     max_size: int | None = None
+    modified_after: float | None = None
+    modified_before: float | None = None
     skip_binary: bool = True
     scan_documents: bool = True
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
@@ -474,6 +479,13 @@ def _size_selected(size: int, options: ScanOptions) -> bool:
     return options.max_size is None or size <= options.max_size
 
 
+def _time_selected(mtime: float, options: ScanOptions) -> bool:
+    """修改时间过滤（epoch 秒，边界含端点）。"""
+    if options.modified_after is not None and mtime < options.modified_after:
+        return False
+    return options.modified_before is None or mtime <= options.modified_before
+
+
 # ---------------------------------------------------------------------- #
 # 遍历
 # ---------------------------------------------------------------------- #
@@ -503,12 +515,12 @@ def _enter_directory(directory: Path, options: ScanOptions, visited: set[str]) -
     return True
 
 
-def _filtered_file(size: int, options: ScanOptions, result: WalkResult) -> bool:
-    """应用大小过滤，按原因累计计数；返回是否保留。
+def _filtered_file(size: int, mtime: float, options: ScanOptions, result: WalkResult) -> bool:
+    """应用大小与修改时间过滤，按原因累计计数；返回是否保留。
 
-    后缀过滤已由 :func:`_classify_entry` 在 ``stat`` 之前完成，这里只判大小。
+    后缀过滤已由 :func:`_classify_entry` 在 ``stat`` 之前完成，这里只判大小与时间。
     """
-    if not _size_selected(size, options):
+    if not _size_selected(size, options) or not _time_selected(mtime, options):
         result.skipped_size += 1
         return False
     return True
@@ -540,13 +552,13 @@ def _classify_entry(
         if not _extension_selected(path, options):
             result.skipped_extension += 1
             return None
-        size = entry.stat(follow_symlinks=options.follow_symlinks).st_size
+        info = entry.stat(follow_symlinks=options.follow_symlinks)
     except OSError as exc:
         result.errors.append(ScanError(path, f"无法读取属性: {exc}"))
         return None
-    if _filtered_file(size, options, result):
+    if _filtered_file(info.st_size, info.st_mtime, options, result):
         result.files.append(path)
-        result.sizes.append(size)
+        result.sizes.append(info.st_size)
     return None
 
 

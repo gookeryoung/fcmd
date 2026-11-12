@@ -31,12 +31,13 @@
 | `_rules.py` | 规则/规则集模型、内置敏感规则、表达式语法解析与求值、JSON 读写 |
 | `_engine.py` | 目录遍历、文件类型/大小过滤、编码探测、逐行匹配、聚合与统计、并行与取消 |
 | `_report.py` | 文本 / JSON / CSV 报告、按规则与路径过滤、打码 |
-| `filescan.py` | CLI：`scan` / `rules`（list·export·validate） |
+| `_config.py` | 扫描配置的导入 / 导出、逐字段容错与版本兼容 |
+| `filescan.py` | CLI：`scan` / `run` / `rules`（list·export·validate） |
 | `filescanw.py` | Tk 窗口、设置持久化（`~/.fcmd/ui/filescanw.json`） |
 
-`_rules.py` / `_engine.py` / `_report.py` 只依赖标准库，不导入 Tk，不注册工具；
-CLI 与 GUI 共用同一套扫描与报告逻辑。GUI 复用 `fcmd.gui.window` / `theme` /
-`config`，不另起窗口骨架。
+`_rules.py` / `_engine.py` / `_report.py` / `_config.py` 只依赖标准库，不导入 Tk，
+不注册工具；CLI 与 GUI 共用同一套扫描、报告与配置逻辑。GUI 复用
+`fcmd.gui.window` / `theme` / `config`，不另起窗口骨架。
 
 ### D2 规则模型与表达式
 
@@ -126,7 +127,7 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
 统计 `ScanStats`：文件总数、已扫描、跳过、错误、读取字节数、命中文件数、
 命中条数、耗时，用于吞吐口径（`字节 / 秒`、`文件 / 秒`）。跳过原因按
 `files_skipped_extension`（后缀未命中）/ `files_skipped_binary`（二进制）/
-`files_skipped_other`（符号链接、大小过滤、超限等其他原因）分别计数。
+`files_skipped_other`（符号链接、大小与修改时间过滤、超限等其他原因）分别计数。
 
 ### D4 结果、打码与报告
 
@@ -154,8 +155,13 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
   `--no-recursive`、`--max-depth`、`--follow-symlinks`、`--ext-whitelist TEXT`
   （留空用内置，`*` 为全部后缀）、`--include-ext`（白名单内收窄）、
   `--force-ext`（强制扫描名单外后缀）、`--exclude-ext`、`--min-size` / `--max-size`、
+  `--modified-after` / `--modified-before`（ISO-8601 或 epoch 秒）、
   `--no-skip-binary`、`--max-file-bytes`、`--workers`、`--format text|json|csv`、
-  `--output FILE`、`--raw`、`--rule-id ID`（可重复）、`--path-filter SUBSTR`；
+  `--output FILE`、`--raw`、`--rule-id ID`（可重复）、`--path-filter SUBSTR`、
+  `--save-config FILE`（把本次生效参数与规则集存成配置）；
+- `filescan run --config FILE`：按配置执行扫描，扫描选项 / 根目录 / 规则 / 报告
+  口径全部来自配置；命令行只覆盖 `--format` / `--output` / `--raw` / `--rule-id` /
+  `--path-filter`，避免「配置与单项参数谁优先」的歧义；
 - `filescan rules`：`--action list|export|validate`、`--output FILE`、`--rules FILE`。
 
 `scan` 找不到命中返回 0（扫描完成即有结论），参数或规则错误返回非 0。
@@ -169,16 +175,18 @@ API Key / 访问令牌、私钥头。内置集可一键清空、全部禁用、�
    （「类型 / 后缀」两列，每行一个类型，后缀用英文逗号 `,` 分隔；行可新增、编辑、
    删除，编辑时对类型重名与后缀逐项校验，非法条目拒绝并提示，删除需二次确认；
    分组随设置持久化，恢复默认重新生成内置分组）、后缀包含/排除、强制后缀、
-   大小上下限、跳过二进制、单文件上限、并发数；开始/取消与进度条。
+   大小上下限、修改时间上下界、跳过二进制、解析文档、单文件上限、并发数；
+   开始/取消与进度条；「导入配置…」/「导出配置…」按钮见 D10。
 2. **结果**：结果树按文件聚合（父节点路径 + 命中数，子节点规则/行号/上下文），
    支持按规则与路径筛选；导出 CSV/JSON/文本（「导出原文」开关只作用于导出），
    扫描结束后自动切到本页。
 3. **规则**：规则表（启用、分组、名称、类型、表达式摘要）、新增/编辑/删除、
    启用/禁用、载入内置、清空、导入/导出/保存规则集、表达式输入框与校验。
 
-设置（目录、选项、规则集、几何位置）持久化到
-`~/.fcmd/ui/filescanw.json`；扫描在后台线程执行，取消走 `CancelToken`，
-关窗时置位取消并等待 worker 退出，不留下悬挂线程。
+设置（目录、选项、规则集、几何位置，含未在界面暴露的 `encodings` /
+`max_hits_per_file` / `use_processes`）持久化到 `~/.fcmd/ui/filescanw.json`；
+扫描在后台线程执行，取消走 `CancelToken`，关窗时置位取消并等待 worker 退出，
+不留下悬挂线程。
 
 ### D7 安全边界
 
@@ -308,26 +316,109 @@ make bench-filescan                                          # 同上（独立 t
 - **mmap**：读取仅占单线程耗时约 10%（读 0.105 s / 开 0.099 s），且已按实际
   大小申请缓冲，mmap 最多省一次拷贝，低于测量噪声。
 
+### D10 扫描配置导入 / 导出（2026-11-12）
+
+CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个文件。配置由
+`_config.py` 统一读写，CLI / GUI 共用同一份字段与容错口径。
+
+配置文件（JSON，`version` 当前为 1，省略时按 1 处理）：
+
+```json
+{
+  "version": 1,
+  "roots": ["D:/data"],
+  "rules": { "version": 1, "name": "内置敏感规则", "rules": [], "expression": "…" },
+  "options": {
+    "recursive": true, "max_depth": 0, "follow_symlinks": false,
+    "ext_whitelist": [".txt", ".log"],
+    "include_exts": [], "force_exts": [], "exclude_exts": [],
+    "min_size": 0, "max_size": null,
+    "modified_after": "2026-01-01T00:00:00", "modified_before": null,
+    "skip_binary": true, "scan_documents": true,
+    "max_file_bytes": 8388608, "encodings": ["utf-8", "gb18030", "latin-1"],
+    "workers": 4, "context_chars": 40, "max_hits_per_file": 200, "use_processes": true
+  },
+  "report": { "mask": true, "format": "text" }
+}
+```
+
+| 分组 | 字段 | 说明 |
+|---|---|---|
+| 顶层 | `version` | 配置版本号，当前 1 |
+| | `roots` | 根目录数组（CLI `run` 必填） |
+| | `rules` | 内嵌规则集（与 `filescan rules --action export` 同构） |
+| | `rules_path` | 外部规则集引用（相对配置文件目录，`rules` 优先） |
+| | `expression` | 覆盖规则集表达式（空串表示沿用规则集原值） |
+| | `report.mask` | 真=报告打码，假=输出原文（CLI `--raw` / GUI「导出原文」的反面） |
+| | `report.format` | `text` / `json` / `csv` |
+| `options` | `recursive` / `max_depth` / `follow_symlinks` | 遍历范围 |
+| | `ext_whitelist` / `include_exts` / `force_exts` / `exclude_exts` | 后缀白名单与收窄 / 强制 / 排除（接受数组，也接受分号串） |
+| | `min_size` / `max_size` | 大小过滤；`max_size` 为 `null` 或 `0` 表示不限 |
+| | `modified_after` / `modified_before` | 修改时间过滤，ISO-8601 文本或 epoch 秒，边界含端点 |
+| | `skip_binary` / `scan_documents` | 跳过二进制 / 是否解析 docx·xlsx·pptx·odt·ods·pdf |
+| | `max_file_bytes` | 单文件读取上限 |
+| | `encodings` | 解码候选（未知编码逐项丢弃） |
+| | `workers` / `use_processes` | 并发数 / 是否允许进程池调度 |
+| | `context_chars` / `max_hits_per_file` | 上下文长度 / 单文件命中上限 |
+
+**规则是否内嵌：内嵌。** 导出时把规则集整份写进 `rules`，配置文件单文件即可
+复用，不会因为换机器、移动目录或相对路径失效而丢掉规则；GUI 导入后规则页
+直接回填。代价是配置文件体积随规则数增长（内置 7 条约 3 KiB，可忽略），且
+规则与扫描选项绑在一起、不能「同一规则集配多套范围」——需要时仍可手工用
+`rules_path` 引用外部规则集，两种写法都接受，`rules` 优先。
+
+**兼容策略（逐字段容错，不整份作废）：**
+
+- 只有「文件读不到 / 不是合法 JSON / 顶层不是对象」才整份失败，给出中文错误；
+- 缺字段一律回落默认值；未知字段忽略；`version` 缺失按 1，高于当前版本只提示
+  「未知字段忽略、缺失字段用默认」，仍尽力加载；
+- 每个字段独立校验：类型不符、越界、未知编码、非法时间、空白名单、非法
+  `report.format` 等只把该字段回落默认值，并在 `warnings` 里记一条带字段路径
+  与原始值的中文提示（如 `options.workers 不能小于 1，实际为 -5，已使用默认值 4`），
+  其余字段照常生效；时间上下界颠倒时同时忽略两端；
+- 内嵌规则集或 `rules_path` 解析失败视为「规则」这一个字段失败：提示后回落
+  内置规则，扫描选项不受影响；
+- CLI `run` 把提示逐条打到 stderr 后继续执行；GUI 导入后弹窗列出全部提示；
+- 导出永远写当前 `CONFIG_VERSION`，并内嵌规则集，保证「导出 → 再导入」往返
+  稳定（`test_save_and_load_config_roundtrip`、`test_roundtrip_preserves_options_and_rules`）。
+
+**入口：**
+
+- CLI：`filescan scan … --save-config FILE` 存当前生效参数；`filescan run
+  --config FILE` 加载执行（命令行只覆盖输出类参数，避免优先级歧义）；
+- GUI：扫描页「导入配置…」按字段回填各控件（目录、开关、白名单表格、表达式、
+  规则页），「导出配置…」把当前界面状态（含未暴露的 `encodings` /
+  `max_hits_per_file` / `use_processes`，由设置持久化承载）写出。
+
 ## 验收
 
 - 对含身份证号/手机号/邮箱/API Key 的样例目录扫描，命中文件、规则、行号与
   上下文正确，默认打码；
 - `(a or b) and not c` 等嵌套表达式按文件级语义判定，非法表达式给出中文错误；
-- 递归深度、后缀白名单/收窄/强制/排除、大小上下限、跳过二进制、单文件上限均生效；
-  统计能区分「后缀未命中跳过」与「二进制跳过」；
+- 递归深度、后缀白名单/收窄/强制/排除、大小上下限、修改时间上下界、跳过二进制、
+  单文件上限均生效；统计能区分「后缀未命中跳过」与「二进制跳过」；
 - 取消后返回已完成部分且不写任何文件；
 - CSV / JSON / 文本三种报告可导出，`--raw` 才含原文；
 - GUI 可添加多目录、编辑白名单、载入内置规则、编辑/启停规则、查看聚合结果、筛选与导出；
+- `filescan scan --save-config` 导出的配置可被 `filescan run --config` 原样复用；
+  GUI 导入后各控件回填、导出再导入不漂移；旧配置缺字段回落默认，非法值逐字段
+  提示而不作废整份配置（见 D10）；
 - 数千文件目录有进度且可取消，给出本机实测文件数、体积、耗时与吞吐（见 D9）。
 
 ## 落地状态
 
 - 设计：已定稿（本 ADR）。
 - 纯逻辑引擎：已落地（`_rules` / `_engine` / `_report`，含后缀白名单与跳过分类统计）。
-- CLI：已落地（`scan` / `rules`，含 `--ext-whitelist` / `--force-ext`）。
-- GUI 与收尾：已落地（`filescanw.py`，扫描 / 结果 / 规则三页布局 + 设置持久化）。
+- CLI：已落地（`scan` / `run` / `rules`，含 `--ext-whitelist` / `--force-ext` /
+  `--save-config`）。
+- GUI 与收尾：已落地（`filescanw.py`，扫描 / 结果 / 规则三页布局 + 设置持久化 +
+  配置导入 / 导出）。
 - 性能基准：已落地（`bench_filescan.py` + `make bench-filescan`，基线见 D9）。
 - 性能优化：已落地（读缓冲按文件实际大小申请、逐行先 `search` 后 `finditer`，
   优化前后结果快照逐字节一致，见 D9.1）。
 - 进程池调度：已落地（达到工作量阈值时用 `ProcessPoolExecutor` 绕开 GIL，
   结果与线程路径逐条一致，见 D9.2）。
+- 扫描配置：已落地（`_config.py` + CLI `run`/`--save-config` + GUI 导入导出，
+  字段与兼容策略见 D10）。
+- 修改时间过滤：已落地（`ScanOptions.modified_after/before`，遍历阶段计入
+  `files_skipped_other`）。

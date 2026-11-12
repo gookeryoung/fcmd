@@ -4,8 +4,8 @@
 
 - **扫描**：多目录列表、递归/深度/符号链接、后缀白名单表格（类型 / 后缀两列，
   每行一个类型，后缀用英文逗号分隔，可新增 / 编辑 / 删除类型并逐项校验）、
-  后缀包含/排除、强制后缀、大小上下限、跳过二进制、单文件上限、并发数；
-  开始 / 取消与进度条。
+  后缀包含/排除、强制后缀、大小与修改时间上下限、跳过二进制、解析文档、
+  单文件上限、并发数；开始 / 取消与进度条；导入 / 导出扫描配置。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
   敏感原文）。
@@ -35,7 +35,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import fcmd
+from fcmd.apps.filescan._config import (
+    REPORT_FORMATS,
+    ScanConfig,
+    format_timestamp,
+    load_config,
+    parse_timestamp,
+)
+from fcmd.apps.filescan._config import (
+    save_config as save_config_file,
+)
 from fcmd.apps.filescan._engine import (
+    DEFAULT_ENCODINGS,
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SCAN_EXTENSIONS,
     CancelToken,
@@ -111,13 +122,20 @@ class FilescanSettings:
     exclude_ext: str = ""
     min_size: int = 0
     max_size: int = 0
+    modified_after: str = ""
+    modified_before: str = ""
     skip_binary: bool = True
+    scan_documents: bool = True
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES
     workers: int = 4
     context_chars: int = 40
+    max_hits_per_file: int = 200
+    use_processes: bool = True
+    encodings: tuple[str, ...] = DEFAULT_ENCODINGS
     ruleset: RuleSet = field(default_factory=builtin_ruleset)
     filter_rule: str = ""
     filter_path: str = ""
+    report_format: str = "text"
     geometry: str | None = None
 
 
@@ -135,13 +153,20 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "exclude_ext": settings.exclude_ext,
         "min_size": settings.min_size,
         "max_size": settings.max_size,
+        "modified_after": settings.modified_after,
+        "modified_before": settings.modified_before,
         "skip_binary": settings.skip_binary,
+        "scan_documents": settings.scan_documents,
         "max_file_bytes": settings.max_file_bytes,
         "workers": settings.workers,
         "context_chars": settings.context_chars,
+        "max_hits_per_file": settings.max_hits_per_file,
+        "use_processes": settings.use_processes,
+        "encodings": list(settings.encodings),
         "ruleset": ruleset_to_mapping(settings.ruleset),
         "filter_rule": settings.filter_rule,
         "filter_path": settings.filter_path,
+        "report_format": settings.report_format,
         "geometry": settings.geometry,
     }
 
@@ -164,6 +189,21 @@ def _str_value(raw: Mapping[str, Any], key: str, default: str = "") -> str:
     """读取字符串字段；类型不符时回落默认值。"""
     value = raw.get(key, default)
     return value if isinstance(value, str) else default
+
+
+def _format_value(raw: Mapping[str, Any]) -> str:
+    """读取导出报告格式；非法取值回落 ``text``。"""
+    value = raw.get("report_format", "text")
+    return value if value in REPORT_FORMATS else "text"
+
+
+def _encodings_value(raw: Mapping[str, Any]) -> tuple[str, ...]:
+    """读取编码候选；非列表或全为空时回落默认值。"""
+    stored = raw.get("encodings")
+    if not isinstance(stored, list):
+        return DEFAULT_ENCODINGS
+    items = tuple(item for item in stored if isinstance(item, str) and item.strip())
+    return items or DEFAULT_ENCODINGS
 
 
 def _groups_value(raw: Mapping[str, Any]) -> tuple[tuple[str, tuple[str, ...]], ...]:
@@ -213,13 +253,20 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         exclude_ext=_str_value(raw, "exclude_ext"),
         min_size=_int_value(raw, "min_size", 0),
         max_size=_int_value(raw, "max_size", 0),
+        modified_after=_str_value(raw, "modified_after"),
+        modified_before=_str_value(raw, "modified_before"),
         skip_binary=_bool_value(raw, "skip_binary", True),
+        scan_documents=_bool_value(raw, "scan_documents", True),
         max_file_bytes=_int_value(raw, "max_file_bytes", DEFAULT_MAX_FILE_BYTES, minimum=1),
         workers=_int_value(raw, "workers", 4, minimum=1),
         context_chars=_int_value(raw, "context_chars", 40),
+        max_hits_per_file=_int_value(raw, "max_hits_per_file", 200, minimum=1),
+        use_processes=_bool_value(raw, "use_processes", True),
+        encodings=_encodings_value(raw),
         ruleset=ruleset,
         filter_rule=_str_value(raw, "filter_rule"),
         filter_path=_str_value(raw, "filter_path"),
+        report_format=_format_value(raw),
         geometry=_guiconfig.valid_geometry(_str_value(raw, "geometry") or None),
     )
 
@@ -388,7 +435,10 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._recursive = tk.BooleanVar(value=self.settings.recursive)
         self._follow = tk.BooleanVar(value=self.settings.follow_symlinks)
         self._skip_binary = tk.BooleanVar(value=self.settings.skip_binary)
+        self._scan_documents = tk.BooleanVar(value=self.settings.scan_documents)
         self._export_raw = tk.BooleanVar(value=False)
+        self._modified_after = tk.StringVar(value=self.settings.modified_after)
+        self._modified_before = tk.StringVar(value=self.settings.modified_before)
         self._max_depth = tk.IntVar(value=self.settings.max_depth)
         self._min_size = tk.IntVar(value=self.settings.min_size)
         self._max_size = tk.IntVar(value=self.settings.max_size)
@@ -468,6 +518,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Checkbutton(options, text="递归子目录", variable=self._recursive).grid(row=0, column=0, sticky="w")
         ttk.Checkbutton(options, text="跟随符号链接", variable=self._follow).grid(row=0, column=2, sticky="w")
         ttk.Checkbutton(options, text="跳过二进制", variable=self._skip_binary).grid(row=0, column=4, sticky="w")
+        ttk.Checkbutton(options, text="解析文档", variable=self._scan_documents).grid(row=0, column=6, sticky="w")
         self._labeled_entry(options, 1, 0, "深度(0=不限)", self._max_depth, width=8)
         self._labeled_entry(options, 2, 0, "最小字节", self._min_size, width=8)
         self._labeled_entry(options, 3, 0, "最大字节(0=不限)", self._max_size, width=10)
@@ -477,6 +528,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._labeled_entry(options, 1, 4, "并发数", self._workers, width=6)
         self._labeled_entry(options, 2, 4, "上下文长度", self._context_chars, width=8)
         self._labeled_entry(options, 3, 4, "强制后缀", self._force_ext, width=12)
+        self._labeled_entry(options, 1, 6, "修改时间≥", self._modified_after, width=18)
+        self._labeled_entry(options, 2, 6, "修改时间≤", self._modified_before, width=18)
         ttk.Label(options, text="白名单外强制扫描（如 .pdf）").grid(row=3, column=6, columnspan=2, sticky="w")
         ttk.Label(
             options,
@@ -520,6 +573,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._cancel_button = ttk.Button(actions, text="取消", command=self._cancel_scan, state="disabled")
         self._cancel_button.grid(row=0, column=1, padx=6)
         ttk.Progressbar(actions, variable=self._progress, maximum=100).grid(row=0, column=2, sticky="ew", padx=6)
+        ttk.Button(actions, text="导入配置…", command=self._import_config).grid(row=0, column=3, padx=(6, 0))
+        ttk.Button(actions, text="导出配置…", command=self._export_config).grid(row=0, column=4, padx=(6, 0))
 
     def _build_result_page(self, page: Any) -> None:
         from tkinter import ttk
@@ -1014,6 +1069,10 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         window.grab_set()
 
     def _scan_options(self) -> ScanOptions:
+        after = parse_timestamp(self._modified_after.get())
+        before = parse_timestamp(self._modified_before.get())
+        if after is not None and before is not None and after > before:
+            raise ValueError("修改时间下界（≥）晚于上界（≤），请调整时间过滤")
         return ScanOptions(
             recursive=self._recursive.get(),
             max_depth=max(0, int(self._max_depth.get())),
@@ -1024,7 +1083,10 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             exclude_exts=parse_ext_text(self._exclude_ext.get()),
             min_size=max(0, int(self._min_size.get())),
             max_size=None if int(self._max_size.get()) <= 0 else int(self._max_size.get()),
+            modified_after=after,
+            modified_before=before,
             skip_binary=self._skip_binary.get(),
+            scan_documents=self._scan_documents.get(),
             max_file_bytes=max(1, int(self._max_file_bytes.get())),
             workers=max(1, int(self._workers.get())),
             context_chars=max(0, int(self._context_chars.get())),
@@ -1199,6 +1261,92 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         mode = "含原文" if self._export_raw.get() else "已打码"
         self._status.set(f"报告已导出到 {chosen}（{fmt}，{mode}）")
 
+    # -- 扫描配置 ----------------------------------------------------- #
+    def _import_config(self) -> None:
+        from tkinter import filedialog, messagebox
+
+        chosen = filedialog.askopenfilename(
+            title="导入扫描配置",
+            filetypes=[("JSON", "*.json"), ("全部文件", "*.*")],
+        )
+        if not chosen:
+            return
+        try:
+            loaded = load_config(Path(chosen))
+        except ValueError as exc:
+            messagebox.showerror("导入失败", str(exc), parent=self.root)
+            return
+        self._apply_config(loaded)
+        if loaded.warnings:
+            messagebox.showwarning(
+                "配置已导入（部分字段回落到默认值）",
+                "\n".join(loaded.warnings),
+                parent=self.root,
+            )
+        self._status.set(f"已导入配置：{chosen}（目录 {len(loaded.roots)} 个，规则 {len(self.ruleset.rules)} 条）")
+
+    def _apply_config(self, config: ScanConfig) -> None:
+        """把配置回填到各控件；``None`` 规则集表示沿用当前规则。"""
+        options = config.options
+        self._paths = [str(path) for path in config.roots]
+        self._refresh_dirs()
+        self._recursive.set(options.recursive)
+        self._follow.set(options.follow_symlinks)
+        self._skip_binary.set(options.skip_binary)
+        self._scan_documents.set(options.scan_documents)
+        self._max_depth.set(options.max_depth)
+        self._min_size.set(options.min_size)
+        self._max_size.set(options.max_size or 0)
+        self._max_file_bytes.set(options.max_file_bytes)
+        self._workers.set(options.workers)
+        self._context_chars.set(options.context_chars)
+        self._include_ext.set(";".join(options.include_exts))
+        self._force_ext.set(";".join(options.force_exts))
+        self._exclude_ext.set(";".join(options.exclude_exts))
+        self._modified_after.set(format_timestamp(options.modified_after) or "")
+        self._modified_before.set(format_timestamp(options.modified_before) or "")
+        self._refresh_whitelist_tree(group_whitelist(options.ext_whitelist))
+        if config.ruleset is not None:
+            self.ruleset = config.ruleset
+            self._refresh_rules()
+        self.settings = replace(
+            self.settings,
+            max_hits_per_file=options.max_hits_per_file,
+            use_processes=options.use_processes,
+            encodings=options.encodings,
+            report_format=config.format,
+        )
+
+    def _export_config(self) -> None:
+        from tkinter import filedialog, messagebox
+
+        chosen = filedialog.asksaveasfilename(
+            title="导出扫描配置",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+            initialfile="filescan-config.json",
+        )
+        if not chosen:
+            return
+        try:
+            options = self._scan_options()
+        except Exception as exc:  # 输入框转整数/时间失败，统一提示
+            messagebox.showerror("扫描选项无效", str(exc), parent=self.root)
+            return
+        config = ScanConfig(
+            roots=tuple(Path(item) for item in self._paths),
+            options=options,
+            ruleset=self.ruleset,
+            format=self.settings.report_format,
+            mask=not self._export_raw.get(),
+        )
+        try:
+            save_config_file(config, Path(chosen))
+        except OSError as exc:
+            messagebox.showerror("导出失败", str(exc), parent=self.root)
+            return
+        self._status.set(f"扫描配置已导出到 {chosen}（含规则集与扫描选项）")
+
     # -- 生命周期 ----------------------------------------------------- #
     def _current_settings(self) -> FilescanSettings:
         return FilescanSettings(
@@ -1213,13 +1361,20 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             exclude_ext=self._exclude_ext.get(),
             min_size=max(0, int(self._min_size.get())),
             max_size=max(0, int(self._max_size.get())),
+            modified_after=self._modified_after.get().strip(),
+            modified_before=self._modified_before.get().strip(),
             skip_binary=self._skip_binary.get(),
+            scan_documents=self._scan_documents.get(),
             max_file_bytes=max(1, int(self._max_file_bytes.get())),
             workers=max(1, int(self._workers.get())),
             context_chars=max(0, int(self._context_chars.get())),
+            max_hits_per_file=self.settings.max_hits_per_file,
+            use_processes=self.settings.use_processes,
+            encodings=self.settings.encodings,
             ruleset=self.ruleset,
             filter_rule="" if self._filter_rule.get() == "全部" else self._filter_rule.get(),
             filter_path=self._filter_path.get(),
+            report_format=self.settings.report_format,
             geometry=self.root.winfo_geometry(),
         )
 

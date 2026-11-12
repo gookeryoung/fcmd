@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import os
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -181,6 +182,22 @@ def test_walk_extension_and_size_filters(tmp_path: Path) -> None:
     )
     result = walk_files([tmp_path], options)
     assert [path.name for path in result.files] == ["keep.py"]
+
+
+def test_walk_modified_time_filter(tmp_path: Path) -> None:
+    old = _write(tmp_path, "old.txt", "alpha")
+    new = _write(tmp_path, "new.txt", "alpha")
+    stamp = 1_700_000_000.0
+    os.utime(old, (stamp, stamp))
+    os.utime(new, (stamp + 1000, stamp + 1000))
+    # 边界含端点：
+    after = walk_files([tmp_path], ScanOptions(modified_after=stamp + 1000))
+    assert [path.name for path in after.files] == ["new.txt"]
+    before = walk_files([tmp_path], ScanOptions(modified_before=stamp))
+    assert [path.name for path in before.files] == ["old.txt"]
+    assert before.skipped_size == 1  # 时间过滤与大小过滤同归「其他跳过」
+    windowed = walk_files([tmp_path], ScanOptions(modified_after=stamp, modified_before=stamp + 1000))
+    assert sorted(path.name for path in windowed.files) == ["new.txt", "old.txt"]
 
 
 def test_walk_extension_whitelist_skips_unknown(tmp_path: Path) -> None:

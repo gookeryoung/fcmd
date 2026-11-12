@@ -26,8 +26,8 @@ def sample_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_filescan_registers_two_subcommands() -> None:
-    assert set(_TOOL_REGISTRY["filescan"]) == {"scan", "rules"}
+def test_filescan_registers_three_subcommands() -> None:
+    assert set(_TOOL_REGISTRY["filescan"]) == {"scan", "run", "rules"}
 
 
 def test_scan_text_output_is_masked(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:

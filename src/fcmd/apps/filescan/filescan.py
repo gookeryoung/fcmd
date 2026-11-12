@@ -1,20 +1,22 @@
 """filescan - 目录敏感内容扫描（CLI）。
 
-两个子命令：
+三个子命令：
 
 - ``scan``：扫描一个或多个目录，按「关键词 / 正则 + and/or/not 表达式」判定
   敏感内容，按文件聚合输出命中规则、行号与上下文；默认打码，``--raw`` 才输出
-  原文。支持递归深度、后缀包含/排除、大小上下限、跳过二进制、单文件读取上限、
-  并行数与进度统计，``Ctrl+C`` 可中断。
+  原文。支持递归深度、后缀包含/排除、大小与修改时间过滤、跳过二进制、单文件
+  读取上限、并行数与进度统计，``Ctrl+C`` 可中断；``--save-config`` 把本次生效
+  的参数（含规则集）存成可复用配置。
+- ``run``：按配置文件执行扫描（扫描选项、规则与报告口径都以配置为准）。
 - ``rules``：列出、校验或导出规则集（默认内置敏感规则）。
 
 示例
 ----
     filescan scan D:/data --include-ext ".txt;.log" --format json --output report.json
     filescan scan D:/data --rules my-rules.json --expr "cn_id and not allow_list"
-    filescan scan D:/data --format csv --raw --output report.csv
+    filescan scan D:/data --save-config team.json
+    filescan run --config team.json --format csv --output report.csv
     filescan rules --action export --output rules.json
-    filescan rules --action validate --rules my-rules.json
 
 安全口径：扫描只读，不创建临时文件、不修改被扫文件；报告默认打码，仅 ``--raw``
 输出原文。
@@ -22,16 +24,26 @@
 
 from __future__ import annotations
 
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal, NoReturn
 
 import fcmd
+from fcmd.apps.filescan._config import (
+    ScanConfig,
+    load_config,
+    parse_timestamp,
+)
+from fcmd.apps.filescan._config import (
+    save_config as save_config_file,
+)
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
     DEFAULT_SCAN_EXTENSIONS,
     CancelToken,
     ScanOptions,
+    ScanResult,
     parse_ext_text,
     scan_paths,
 )
@@ -53,7 +65,7 @@ from fcmd.apps.filescan._rules import (
 )
 from fcmd.console import print_error
 
-__all__ = ["rules_command", "scan_command"]
+__all__ = ["rules_command", "run_command", "scan_command"]
 
 __version__ = "0.1.0"
 
@@ -66,6 +78,11 @@ def _fail(message: str) -> NoReturn:
     """输出中文错误并以失败退出。"""
     print_error(message)
     raise SystemExit(2)
+
+
+def _warn(message: str) -> None:
+    """输出中文警告到标准错误（配置逐字段容错的提示走这里）。"""
+    print(f"警告：{message}", file=sys.stderr)
 
 
 def _load_ruleset(path: Path | None) -> RuleSet:
@@ -96,12 +113,21 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
     follow_symlinks: bool,
     min_size: int,
     max_size: int,
+    modified_after: str,
+    modified_before: str,
     skip_binary: bool,
     max_file_bytes: int,
     workers: int,
     context_chars: int,
 ) -> ScanOptions:
     """把 CLI 参数转换成扫描选项；``max_size<=0`` 表示不限。"""
+    try:
+        after = parse_timestamp(modified_after)
+        before = parse_timestamp(modified_before)
+    except ValueError as exc:
+        _fail(f"时间过滤无效: {exc}")
+    if after is not None and before is not None and after > before:
+        _fail("时间过滤无效: --modified-after 晚于 --modified-before")
     return ScanOptions(
         recursive=recursive,
         max_depth=max(0, max_depth),
@@ -112,6 +138,8 @@ def _build_options(  # noqa: PLR0913, PLR0917 - 直接映射 CLI 选项，保持
         exclude_exts=parse_ext_text(exclude_ext),
         min_size=max(0, min_size),
         max_size=None if max_size <= 0 else max_size,
+        modified_after=after,
+        modified_before=before,
         skip_binary=skip_binary,
         max_file_bytes=max(1, max_file_bytes),
         workers=max(1, workers),
@@ -133,6 +161,8 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     exclude_ext: str = "",
     min_size: int = 0,
     max_size: int = 0,
+    modified_after: str = "",
+    modified_before: str = "",
     skip_binary: bool = True,
     max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
     workers: int = 4,
@@ -142,6 +172,7 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     raw: bool = False,
     rule_id: list[str] | None = None,
     path_filter: str = "",
+    save_config: Path | None = None,
 ) -> None:
     """扫描目录并输出敏感内容报告。
 
@@ -172,6 +203,10 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         最小文件大小（字节）
     max_size:
         最大文件大小（字节），0 表示不限
+    modified_after:
+        只扫描修改时间不早于该时刻的文件；ISO-8601 文本（如 ``2026-01-01``）或 epoch 秒
+    modified_before:
+        只扫描修改时间不晚于该时刻的文件；格式同 ``modified_after``
     skip_binary:
         跳过二进制文件，默认开启（``--no-skip-binary`` 关闭）
     max_file_bytes:
@@ -190,6 +225,8 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         仅保留指定规则 id 的命中，可重复
     path_filter:
         仅保留路径包含该子串的命中
+    save_config:
+        把本次生效的参数与规则集存成配置文件，供 ``filescan run --config`` 复用
     """
     if not paths:
         _fail("请至少指定一个待扫描目录")
@@ -210,11 +247,26 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         follow_symlinks,
         min_size,
         max_size,
+        modified_after,
+        modified_before,
         skip_binary,
         max_file_bytes,
         workers,
         context_chars,
     )
+    if save_config is not None:
+        config = ScanConfig(
+            roots=tuple(paths),
+            options=options,
+            ruleset=ruleset,
+            format=format,
+            mask=not raw,
+        )
+        try:
+            save_config_file(config, save_config)
+        except OSError as exc:
+            _fail(f"无法写入配置 {save_config}: {exc}")
+        print(f"扫描配置已保存到 {save_config}（{len(paths)} 个目录，规则 {len(ruleset.rules)} 条）")
     token = CancelToken()
     try:
         result = scan_paths(paths, ruleset, options, token=token)
@@ -224,19 +276,82 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         raise SystemExit(130) from None
     if rule_id or path_filter.strip():
         result = filter_result(result, rule_ids=rule_id, path_contains=path_filter)
+    _emit_result(result, format, output, raw)
+
+
+def _emit_result(result: ScanResult, format: str, output: Path | None, include_raw: bool) -> None:
+    """按格式输出报告：写文件或打到标准输出。"""
     if output is not None:
         try:
-            write_report(result, output, format, include_raw=raw)
+            write_report(result, output, format, include_raw=include_raw)
         except (OSError, ValueError) as exc:
             _fail(f"无法写入报告 {output}: {exc}")
         print(f"报告已写入 {output}（格式 {format}，命中 {result.stats.hit_files} 个文件）")
         return
     if format == "json":
-        print(result_to_json(result, raw), end="")
+        print(result_to_json(result, include_raw), end="")
     elif format == "csv":
-        print(result_to_csv(result, raw).lstrip("\ufeff"), end="")
+        print(result_to_csv(result, include_raw).lstrip("\ufeff"), end="")
     else:
-        print(format_text_report(result, raw))
+        print(format_text_report(result, include_raw))
+
+
+@fcmd.tool("filescan", subcommand="run", help="按配置文件执行扫描", description=_DESCRIPTION)
+def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
+    config: Path | None = None,
+    format: Literal["text", "json", "csv"] | None = None,
+    output: Path | None = None,
+    raw: bool = False,
+    rule_id: list[str] | None = None,
+    path_filter: str = "",
+) -> None:
+    """按配置文件执行扫描。
+
+    扫描选项、根目录、规则集与报告口径都以配置为准；命令行只覆盖报告输出。
+    配置中非法字段会回落到默认值，并在标准错误逐条给出中文提示。
+
+    Parameters
+    ----------
+    config:
+        配置文件路径（``filescan scan --save-config`` 生成）
+    fmt:
+        覆盖配置里的 ``report.format``；留空沿用配置
+    output:
+        报告写入文件；留空输出到标准输出
+    raw:
+        强制输出敏感原文（配置 ``report.mask=false`` 时也默认输出原文）
+    rule_id:
+        仅保留指定规则 id 的命中，可重复
+    path_filter:
+        仅保留路径包含该子串的命中
+    """
+    if config is None:
+        _fail("请用 --config 指定配置文件")
+    try:
+        loaded = load_config(config)
+    except ValueError as exc:
+        _fail(str(exc))
+    for message in loaded.warnings:
+        _warn(message)
+    if not loaded.roots:
+        _fail(f"配置 {config} 未包含扫描目录（roots 为空）")
+    ruleset = loaded.ruleset or _load_ruleset(None)
+    try:
+        resolve_expression(ruleset)
+    except ValueError as exc:
+        _fail(f"规则表达式无效: {exc}")
+    fmt = format or loaded.format
+    include_raw = raw or not loaded.mask
+    token = CancelToken()
+    try:
+        result = scan_paths(loaded.roots, ruleset, loaded.options, token=token)
+    except KeyboardInterrupt:
+        token.cancel()
+        print_error("扫描已取消")
+        raise SystemExit(130) from None
+    if rule_id or path_filter.strip():
+        result = filter_result(result, rule_ids=rule_id, path_contains=path_filter)
+    _emit_result(result, fmt, output, include_raw)
 
 
 @fcmd.tool("filescan", subcommand="rules", help="查看、校验或导出规则集", description=_DESCRIPTION)
