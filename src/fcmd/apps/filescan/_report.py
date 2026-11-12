@@ -75,6 +75,7 @@ def result_to_mapping(result: ScanResult, include_raw: bool = False) -> dict[str
         "stats": {
             "files_seen": stats.files_seen,
             "files_scanned": stats.files_scanned,
+            "files_reused": stats.files_reused,
             "files_skipped": stats.files_skipped,
             "files_skipped_extension": stats.files_skipped_extension,
             "files_skipped_binary": stats.files_skipped_binary,
@@ -152,7 +153,8 @@ def _summary_line(result: ScanResult) -> str:
         if value
     )
     return (
-        f"{prefix}：文件 {stats.files_seen}（扫描 {stats.files_scanned}），"
+        f"{prefix}：文件 {stats.files_seen}"
+        f"（实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}），"
         f"命中 {stats.hit_files} 个文件 / {stats.hit_count} 条，"
         f"跳过 {stats.files_skipped}"
         f"（后缀 {stats.files_skipped_extension} / 二进制 {stats.files_skipped_binary}"

@@ -390,6 +390,92 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
   规则页），「导出配置…」把当前界面状态（含未暴露的 `encodings` /
   `max_hits_per_file` / `use_processes`，由设置持久化承载）写出。
 
+### D11 扫描结果持久化缓存（2026-11-12）
+
+重复扫描同一批目录时，绝大多数文件在上次扫描后并未变化，却仍要完整读盘 +
+逐行匹配。`_cache.py` 为此提供持久化缓存：命中的文件直接复用上次结果，
+未命中的文件也不再重读。
+
+**存储选型：SQLite。** 单文件 `${FCMD_HOME:-~/.fcmd}/cache/filescan-cache.db`：
+
+```sql
+CREATE TABLE meta   (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE entries (
+    cache_key TEXT NOT NULL, path TEXT NOT NULL,
+    size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+    encoding TEXT NOT NULL, has_hit INTEGER NOT NULL, matches TEXT NOT NULL,
+    PRIMARY KEY (cache_key, path)
+);
+```
+
+选它的理由：并发写有成熟的事务与锁语义（索引文件需要自己实现原子替换与合并）；
+单条 `INSERT OR REPLACE` 即可增量更新，不必整份重写；增量删除 / 清理（`DELETE`）
+天然支持；损坏检测（`DatabaseError`）与「删文件重建」都很直接。代价是需要 SQLite
+（Python 标准库自带，无额外依赖）与多次扫描会增长的单文件体积，`clear` 与
+``--clear-cache`` 都已提供。
+
+**复用条件（防止陈旧结果）：**
+
+- 同一路径的 `size` 与 `mtime_ns` 都与缓存一致，且 `cache_key` 一致才复用；
+  `size` / `mtime_ns` 任一变化即重扫。内容变化必然改变二者之一（写入即更新
+  mtime，即使长度相同），因此不会返回陈旧结果；
+- 不做全量内容哈希：哈希需要完整读盘，等于把「省一次读」变成「再读一次」；
+- `has_hit` 区分「实扫过但无命中」（也缓存，避免每次重读）与「命中但无明细」
+  （表达式级命中、无正向规则明细），后者不会被误算进 `hit_files`。
+
+**指纹口径（`cache_fingerprint`）：**
+
+| 参与（改变即失效） | 不参与（只影响扫哪些文件或怎么输出） |
+|---|---|
+| 完整规则集映射：规则增删改、启用状态、匹配器、表达式 | 递归 / 深度 / 符号链接 |
+| `skip_binary` / `scan_documents` / `max_file_bytes` | 后缀白名单、包含 / 强制 / 排除后缀 |
+| `encodings` / `context_chars` / `max_hits_per_file` | 大小与修改时间过滤 |
+| `mask`（打码 / 原文口径决定 `matches` 内容） | `workers` / `use_processes` / 报告格式 |
+
+摘要为 `sha256`（键排序的 JSON），不同配置在库里共存，切回旧配置仍能命中。
+规则集的 `name` 也在映射内，改名同样会失效——这是有意的保守取舍。
+
+**并发安全：**
+
+- 只有扫描的**主进程**打开连接并读写；线程池与进程池的 worker 只返回结果，
+  不接触数据库。进程池调度下不会出现多进程竞争写；
+- 连接使用 WAL + `synchronous=NORMAL` + `busy_timeout=5000`，多个 fcmd 进程同时
+  扫描时写锁等待，超时即降级为「本次不写缓存」，扫描结果不受影响；
+- 读路径 `lookup_many` 分批查询（每批 400 条路径），避开 SQLite 变量上限。
+
+**损坏降级：**
+
+- 打开或建表失败（文件损坏 / 不是 SQLite）：关闭句柄、删掉 `.db` / `-wal` / `-shm`
+  后重建一次；
+- 读写中途报 `sqlite3.Error`：同样删库重建并重试一次，仍失败则本次禁用缓存；
+- 目录不可写、磁盘满等 `OSError`：直接禁用缓存，`ScanCache.error` 记中文原因，
+  CLI 打到 stderr、GUI 显示在状态栏，**扫描继续**；
+- 引擎侧 `_take_cached` / `_store_fresh` 再包一层异常兜底：任何缓存异常都不会
+  中断扫描。
+
+**入口与可见性：**
+
+- CLI：`filescan scan` / `filescan run` 默认启用，`--no-cache` 关闭，
+  `--clear-cache` 扫描前清空并打印条数；
+- GUI：扫描页「使用缓存」勾选框（随设置持久化）与「清理缓存」按钮；
+- 文本报告概要与 JSON `stats` 都给出 `files_reused`，摘要行为
+  `文件 N（实扫 X / 缓存复用 Y）`，GUI 状态栏同口径。
+
+**实测（Windows 11 / Python 3.13 / workers=4，5000 个 4 KiB 文件，共 19.8 MiB）：**
+
+| 场景 | 实扫 | 复用 | 耗时 | 相对首次 |
+|---|---|---|---|---|
+| 首次扫描 | 5000 | 0 | 1.151 s | 1.0x |
+| 二次扫描（全命中） | 0 | 5000 | 0.062 s | **18.6x** |
+| 改一个文件 | 1 | 4999 | 0.069 s | 16.7x |
+| 改规则（新增一条） | 5000 | 0 | 0.684 s | 1.7x |
+| 改上下文长度 40→120 | 5000 | 0 | 0.727 s | 1.6x |
+| 仅改并发数 4→8 | 0 | 5000 | 0.078 s | 14.8x（如预期仍复用） |
+| 切换打码口径 | 5000 | 0 | 0.655 s | 1.8x |
+
+三种失效行为均符合预期：改文件只重扫该文件，改规则 / 改上下文长度 / 切换打码
+全部实扫；而只改并发数不影响命中，继续全部复用。
+
 ## 验收
 
 - 对含身份证号/手机号/邮箱/API Key 的样例目录扫描，命中文件、规则、行号与
@@ -403,6 +489,9 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
 - `filescan scan --save-config` 导出的配置可被 `filescan run --config` 原样复用；
   GUI 导入后各控件回填、导出再导入不漂移；旧配置缺字段回落默认，非法值逐字段
   提示而不作废整份配置（见 D10）；
+- 重复扫描同一批文件时未变化文件直接复用（文件大小 / 修改时间 / 规则与命中相关
+  选项任一变化即重扫）；CLI 与 GUI 都能开关与清理缓存，报告区分「实扫 / 缓存复用」；
+  缓存损坏时自动重建且不中断扫描（见 D11）；
 - 数千文件目录有进度且可取消，给出本机实测文件数、体积、耗时与吞吐（见 D9）。
 
 ## 落地状态
@@ -422,3 +511,5 @@ CLI 与 GUI 需要「一套配置反复用」，且团队内可直接传一个�
   字段与兼容策略见 D10）。
 - 修改时间过滤：已落地（`ScanOptions.modified_after/before`，遍历阶段计入
   `files_skipped_other`）。
+- 扫描缓存：已落地（`_cache.py` + CLI `--no-cache`/`--clear-cache` + GUI 开关与
+  清理，选型 / 指纹 / 并发与损坏降级 / 实测见 D11）。

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import codecs
+import contextlib
 import os
 import threading
 import time
@@ -46,6 +47,8 @@ from fcmd.apps.filescan._rules import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from fcmd.apps.filescan._cache import ScanCache
 
 __all__ = [
     "BINARY_SNIFF_SIZE",
@@ -345,6 +348,7 @@ class ScanStats:
 
     files_seen: int = 0
     files_scanned: int = 0
+    files_reused: int = 0
     files_skipped: int = 0
     files_skipped_extension: int = 0
     files_skipped_binary: int = 0
@@ -389,6 +393,8 @@ class WalkResult:
     files: list[Path] = field(default_factory=list)
     # 与 ``files`` 一一对应的文件大小（决定是否值得走进程池）。
     sizes: list[int] = field(default_factory=list)
+    # 与 ``files`` 一一对应的修改时间（纳秒），供缓存校验复用。
+    mtimes: list[int] = field(default_factory=list)
     skipped: list[SkipRecord] = field(default_factory=list)
     errors: list[ScanError] = field(default_factory=list)
     seen: int = 0
@@ -559,6 +565,7 @@ def _classify_entry(
     if _filtered_file(info.st_size, info.st_mtime, options, result):
         result.files.append(path)
         result.sizes.append(info.st_size)
+        result.mtimes.append(info.st_mtime_ns)
     return None
 
 
@@ -605,9 +612,10 @@ def walk_files(
                 if child is not None:
                     stack.append(child)
 
-    pairs = sorted(zip(result.files, result.sizes, strict=True), key=lambda item: str(item[0]))
-    result.files = [path for path, _size in pairs]
-    result.sizes = [size for _path, size in pairs]
+    triples = sorted(zip(result.files, result.sizes, result.mtimes, strict=True), key=lambda item: str(item[0]))
+    result.files = [path for path, _size, _mtime in triples]
+    result.sizes = [size for _path, size, _mtime in triples]
+    result.mtimes = [mtime for _path, _size, mtime in triples]
     return result
 
 
@@ -970,13 +978,15 @@ def _scan_in_processes(  # noqa: PLR0913 - 调度参数与线程路径对齐，�
 # ---------------------------------------------------------------------- #
 # 批量扫描
 # ---------------------------------------------------------------------- #
-def scan_paths(
+def scan_paths(  # noqa: PLR0913 - 扫描入口参数由调用方一次性传入，保持扁平
     roots: Sequence[Path],
     ruleset: RuleSet,
     options: ScanOptions | None = None,
     *,
     token: CancelToken | None = None,
     progress: Callable[[int, int, Path], None] | None = None,
+    cache: ScanCache | None = None,
+    cache_key: str = "",
 ) -> ScanResult:
     """扫描若干目录并返回按路径排序的结果。
 
@@ -992,6 +1002,10 @@ def scan_paths(
         取消标记；置位后返回已完成部分并标记 ``stats.cancelled``
     progress:
         进度回调 ``(已完成, 总数, 当前文件)``，在 worker 线程调用
+    cache:
+        可选的扫描结果缓存；仅主进程读写，worker 不接触数据库
+    cache_key:
+        缓存指纹（规则与命中相关选项的哈希）；为空表示不启用缓存
     """
     opts = options or ScanOptions()
     started = time.perf_counter()
@@ -1018,25 +1032,36 @@ def scan_paths(
         result.stats.elapsed = time.perf_counter() - started
         return result
 
-    outcomes: list[_Outcome] = []
-    workers = max(1, min(opts.workers, 64))
-    # 进程数不超过 CPU 核数：多出来的进程只会增加 spawn 与内存开销。
-    process_workers = min(workers, os.cpu_count() or workers)
-    if opts.use_processes and _process_worthwhile(files, walk.sizes, process_workers):
-        outcomes, cancelled = _scan_in_processes(
-            files,
-            walk.sizes,
-            context,
-            process_workers,
-            token=token,
-            progress=progress,
-        )
-        result.stats.cancelled = result.stats.cancelled or cancelled
-    else:
-        outcomes = _scan_in_threads(files, walk.sizes, context, workers, progress)
-        result.stats.cancelled = result.stats.cancelled or any(item.cancelled for item in outcomes)
-
+    # 路径 → (大小, mtime_ns)，缓存校验与回写都以遍历阶段的一次 stat 为准。
+    meta = {path: (size, mtime) for path, size, mtime in zip(walk.files, walk.sizes, walk.mtimes, strict=True)}
     hits: list[FileHit] = []
+    files, sizes, reused = _take_cached(files, meta, cache, cache_key, hits)
+    result.stats.files_reused = reused
+    total_files = len(meta)
+    scan_progress = _offset_progress(progress, reused, total_files) if reused and progress is not None else progress
+
+    outcomes: list[_Outcome] = []
+    if files:
+        workers = max(1, min(opts.workers, 64))
+        # 进程数不超过 CPU 核数：多出来的进程只会增加 spawn 与内存开销。
+        process_workers = min(workers, os.cpu_count() or workers)
+        if opts.use_processes and _process_worthwhile(files, sizes, process_workers):
+            outcomes, cancelled = _scan_in_processes(
+                files,
+                sizes,
+                context,
+                process_workers,
+                token=token,
+                progress=scan_progress,
+            )
+            result.stats.cancelled = result.stats.cancelled or cancelled
+        else:
+            outcomes = _scan_in_threads(files, sizes, context, workers, scan_progress)
+            result.stats.cancelled = result.stats.cancelled or any(item.cancelled for item in outcomes)
+    else:
+        result.stats.cancelled = result.stats.cancelled or (token is not None and token.is_set())
+
+    fresh: list[tuple[Path, int, int, FileHit | None]] = []
     for outcome in outcomes:
         if outcome.cancelled:
             continue
@@ -1051,6 +1076,9 @@ def scan_paths(
         result.stats.bytes_read += outcome.bytes_read
         if outcome.hit is not None:
             hits.append(outcome.hit)
+        size, mtime = meta[outcome.path]
+        fresh.append((outcome.path, size, mtime, outcome.hit))
+    _store_fresh(cache, cache_key, fresh)
     hits.sort(key=lambda item: str(item.path))
     result.hits = hits
     result.skipped.sort(key=lambda item: str(item.path))
@@ -1060,6 +1088,52 @@ def scan_paths(
     _finalize_stats(result, walk)
     result.stats.elapsed = time.perf_counter() - started
     return result
+
+
+def _take_cached(
+    files: Sequence[Path],
+    meta: dict[Path, tuple[int, int]],
+    cache: ScanCache | None,
+    cache_key: str,
+    hits: list[FileHit],
+) -> tuple[list[Path], list[int], int]:
+    """把命中缓存的文件从待扫列表中剔除并追加到 ``hits``；返回剩余文件与大小。"""
+    if cache is None or not cache_key:
+        return list(files), [meta[path][0] for path in files], 0
+    try:
+        cached = cache.lookup_many(cache_key, [(path, *meta[path]) for path in files])
+    except Exception:  # 缓存异常不得中断扫描
+        cached: dict[Path, FileHit | None] = {}
+    if not cached:
+        return list(files), [meta[path][0] for path in files], 0
+    remaining = [path for path in files if path not in cached]
+    hits.extend(hit for hit in cached.values() if hit is not None)
+    return remaining, [meta[path][0] for path in remaining], len(cached)
+
+
+def _store_fresh(
+    cache: ScanCache | None,
+    cache_key: str,
+    items: Sequence[tuple[Path, int, int, FileHit | None]],
+) -> None:
+    """把本次实扫结果写回缓存；写失败只降级，不影响扫描结果。"""
+    if cache is None or not cache_key or not items:
+        return
+    with contextlib.suppress(Exception):  # 缓存异常不得中断扫描
+        cache.store_many(cache_key, items)
+
+
+def _offset_progress(
+    progress: Callable[[int, int, Path], None],
+    offset: int,
+    total: int,
+) -> Callable[[int, int, Path], None]:
+    """把实扫进度换算成「含复用文件」的总进度。"""
+
+    def report(done: int, _total: int, path: Path) -> None:
+        progress(offset + done, total, path)
+
+    return report
 
 
 def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:

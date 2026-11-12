@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import fcmd
+from fcmd.apps.filescan._cache import ScanCache, cache_fingerprint
 from fcmd.apps.filescan._config import (
     REPORT_FORMATS,
     ScanConfig,
@@ -132,6 +133,7 @@ class FilescanSettings:
     max_hits_per_file: int = 200
     use_processes: bool = True
     encodings: tuple[str, ...] = DEFAULT_ENCODINGS
+    use_cache: bool = True
     ruleset: RuleSet = field(default_factory=builtin_ruleset)
     filter_rule: str = ""
     filter_path: str = ""
@@ -163,6 +165,7 @@ def settings_to_mapping(settings: FilescanSettings) -> dict[str, Any]:
         "max_hits_per_file": settings.max_hits_per_file,
         "use_processes": settings.use_processes,
         "encodings": list(settings.encodings),
+        "use_cache": settings.use_cache,
         "ruleset": ruleset_to_mapping(settings.ruleset),
         "filter_rule": settings.filter_rule,
         "filter_path": settings.filter_path,
@@ -263,6 +266,7 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> FilescanSettings:
         max_hits_per_file=_int_value(raw, "max_hits_per_file", 200, minimum=1),
         use_processes=_bool_value(raw, "use_processes", True),
         encodings=_encodings_value(raw),
+        use_cache=_bool_value(raw, "use_cache", True),
         ruleset=ruleset,
         filter_rule=_str_value(raw, "filter_rule"),
         filter_path=_str_value(raw, "filter_path"),
@@ -436,6 +440,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._follow = tk.BooleanVar(value=self.settings.follow_symlinks)
         self._skip_binary = tk.BooleanVar(value=self.settings.skip_binary)
         self._scan_documents = tk.BooleanVar(value=self.settings.scan_documents)
+        self._use_cache = tk.BooleanVar(value=self.settings.use_cache)
         self._export_raw = tk.BooleanVar(value=False)
         self._modified_after = tk.StringVar(value=self.settings.modified_after)
         self._modified_before = tk.StringVar(value=self.settings.modified_before)
@@ -575,6 +580,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Progressbar(actions, variable=self._progress, maximum=100).grid(row=0, column=2, sticky="ew", padx=6)
         ttk.Button(actions, text="导入配置…", command=self._import_config).grid(row=0, column=3, padx=(6, 0))
         ttk.Button(actions, text="导出配置…", command=self._export_config).grid(row=0, column=4, padx=(6, 0))
+        ttk.Checkbutton(actions, text="使用缓存", variable=self._use_cache).grid(row=0, column=5, padx=(6, 0))
+        ttk.Button(actions, text="清理缓存", command=self._clear_cache).grid(row=0, column=6, padx=(6, 0))
 
     def _build_result_page(self, page: Any) -> None:
         from tkinter import ttk
@@ -1127,19 +1134,33 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ruleset = self.ruleset
         paths = [Path(item) for item in self._paths]
         events = self.events
+        use_cache = self._use_cache.get()
+        mask = not self._export_raw.get()
 
         def work() -> None:
+            # SQLite 连接只在扫描线程内创建与关闭，避免跨线程使用与进程池并发写。
+            store = ScanCache() if use_cache else None
+            if store is not None and store.error:
+                events.put(("cache", store.error))
             try:
+                key = cache_fingerprint(ruleset, options, mask=mask) if store is not None else ""
                 result = scan_paths(
                     paths,
                     ruleset,
                     options,
                     token=token,
                     progress=lambda done, total, path: events.put(("progress", (done, total, str(path)))),
+                    cache=store,
+                    cache_key=key,
                 )
+                if store is not None and store.error:
+                    events.put(("cache", store.error))
                 events.put(("done", result))
             except Exception as exc:  # 后台异常统一回报到界面
                 events.put(("error", str(exc)))
+            finally:
+                if store is not None:
+                    store.close()
 
         self.worker = _guiwindow.start_worker(root, work, poll=self._poll_events)
 
@@ -1155,6 +1176,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                 self._status.set(f"正在扫描 {done}/{total}：{path}")
             elif kind == "done":
                 self._finish_scan(payload)
+            elif kind == "cache":
+                self._status.set(f"缓存降级：{payload}")
             elif kind == "error":
                 self._finish_scan(None)
                 self._status.set(f"扫描失败：{payload}")
@@ -1177,7 +1200,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         state = "已取消" if stats.cancelled else "完成"
         self._progress.set(100.0)
         self._status.set(
-            f"扫描{state}：文件 {stats.files_scanned}，命中 {stats.hit_files} 个 / {stats.hit_count} 条，"
+            f"扫描{state}：实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}，"
+            f"命中 {stats.hit_files} 个 / {stats.hit_count} 条，"
             f"跳过 {stats.files_skipped}（后缀 {stats.files_skipped_extension} / 二进制 {stats.files_skipped_binary}），"
             f"耗时 {stats.elapsed:.2f}s（{format_size(int(stats.bytes_per_second))}/s）"
         )
@@ -1262,6 +1286,22 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._status.set(f"报告已导出到 {chosen}（{fmt}，{mode}）")
 
     # -- 扫描配置 ----------------------------------------------------- #
+    def _clear_cache(self) -> None:
+        from tkinter import messagebox
+
+        store = ScanCache()
+        if store.error:
+            messagebox.showwarning("缓存不可用", store.error, parent=self.root)
+            store.close()
+            return
+        removed = store.clear()
+        error = store.error
+        store.close()
+        if error:
+            messagebox.showwarning("清理缓存失败", error, parent=self.root)
+            return
+        self._status.set(f"扫描缓存已清理（{removed} 条）")
+
     def _import_config(self) -> None:
         from tkinter import filedialog, messagebox
 
@@ -1371,6 +1411,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             max_hits_per_file=self.settings.max_hits_per_file,
             use_processes=self.settings.use_processes,
             encodings=self.settings.encodings,
+            use_cache=self._use_cache.get(),
             ruleset=self.ruleset,
             filter_rule="" if self._filter_rule.get() == "全部" else self._filter_rule.get(),
             filter_path=self._filter_path.get(),

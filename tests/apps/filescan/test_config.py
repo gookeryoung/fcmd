@@ -306,6 +306,17 @@ def test_cli_save_config_then_run_roundtrip(sample_dir: Path, tmp_path: Path) ->
     assert report["stats"]["hit_files"] >= 1
 
 
+def test_cli_run_reuses_cache_on_second_run(sample_dir: Path, tmp_path: Path) -> None:
+    """``run --config`` 第二次执行复用缓存，统计里能看出节省。"""
+    cfg = tmp_path / "cfg.json"
+    scan_command(paths=[sample_dir], save_config=cfg, cache=False)
+    run_command(config=cfg, format="json", output=tmp_path / "first.json")
+    run_command(config=cfg, format="json", output=tmp_path / "second.json")
+    report = json.loads((tmp_path / "second.json").read_text(encoding="utf-8"))
+    assert report["stats"]["files_scanned"] == 0
+    assert report["stats"]["files_reused"] == report["stats"]["files_seen"] == 2
+
+
 def test_cli_save_config_records_raw_choice(sample_dir: Path, tmp_path: Path) -> None:
     cfg = tmp_path / "raw.json"
     scan_command(paths=[sample_dir], save_config=cfg, raw=True)

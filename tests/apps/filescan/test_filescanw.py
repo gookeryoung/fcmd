@@ -160,6 +160,14 @@ def test_resolve_geometry_clamps_and_falls_back() -> None:
     assert filescanw.resolve_geometry(None, 1920, 1080) == filescanw.DEFAULT_GEOMETRY
 
 
+def test_settings_use_cache_roundtrip() -> None:
+    settings = filescanw.FilescanSettings(use_cache=False)
+    mapping = filescanw.settings_to_mapping(settings)
+    assert mapping["use_cache"] is False
+    assert filescanw.settings_from_mapping(mapping).use_cache is False
+    assert filescanw.settings_from_mapping({"use_cache": "no"}).use_cache is True
+
+
 def test_apply_expression_accepts_valid_expression() -> None:
     ruleset = builtin_ruleset()
     updated = filescanw.apply_expression(ruleset, "  email OR cn_phone ")

@@ -109,6 +109,40 @@ def test_scan_missing_root_reports_error(tmp_path: Path, capsys: pytest.CaptureF
     assert "目录不存在" in capsys.readouterr().out
 
 
+def test_scan_second_run_reports_cache_reuse(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """第二次扫描全部命中缓存，文本与 JSON 都能看出复用数。"""
+    scan_command(paths=[sample_dir])
+    capsys.readouterr()
+    scan_command(paths=[sample_dir], format="json")
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["stats"]["files_seen"] == 3
+    assert payload["stats"]["files_reused"] == 3
+    assert payload["stats"]["files_scanned"] == 0
+    assert payload["stats"]["hit_files"] == 2
+
+    scan_command(paths=[sample_dir])
+    assert "缓存复用 3" in capsys.readouterr().out
+
+
+def test_scan_no_cache_forces_rescan(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    scan_command(paths=[sample_dir])
+    capsys.readouterr()
+    scan_command(paths=[sample_dir], cache=False)
+    out = capsys.readouterr().out
+    assert "实扫 3" in out
+    assert "缓存复用 0" in out
+
+
+def test_scan_clear_cache_reports_count(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    scan_command(paths=[sample_dir])
+    capsys.readouterr()
+    scan_command(paths=[sample_dir], clear_cache=True)
+    out = capsys.readouterr().out
+    assert "扫描缓存已清理（3 条）" in out
+    assert "缓存复用 0" in out
+    assert "实扫 3" in out
+
+
 def test_scan_whitelist_skips_unknown_suffix(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write(sample_dir, "dump.dat", "手机 13812345678\n")
     scan_command(paths=[sample_dir])

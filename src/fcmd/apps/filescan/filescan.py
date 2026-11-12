@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Literal, NoReturn
 
 import fcmd
+from fcmd.apps.filescan._cache import ScanCache, cache_fingerprint
 from fcmd.apps.filescan._config import (
     ScanConfig,
     load_config,
@@ -83,6 +84,33 @@ def _fail(message: str) -> NoReturn:
 def _warn(message: str) -> None:
     """输出中文警告到标准错误（配置逐字段容错的提示走这里）。"""
     print(f"警告：{message}", file=sys.stderr)
+
+
+def _open_cache(enabled: bool, clear: bool) -> ScanCache | None:
+    """按需打开扫描缓存；``clear`` 先清空。打不开或清理失败只提示，不中断。"""
+    if not enabled and not clear:
+        return None
+    store = ScanCache()
+    if store.error:
+        _warn(store.error)
+    if clear:
+        removed = store.clear()
+        print(f"扫描缓存已清理（{removed} 条）")
+        if store.error:
+            _warn(store.error)
+    if not enabled or not store.enabled:
+        store.close()
+        return None
+    return store
+
+
+def _close_cache(store: ScanCache | None) -> None:
+    """关闭缓存并输出运行期降级提示。"""
+    if store is None:
+        return
+    if store.error:
+        _warn(store.error)
+    store.close()
 
 
 def _load_ruleset(path: Path | None) -> RuleSet:
@@ -173,6 +201,8 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     rule_id: list[str] | None = None,
     path_filter: str = "",
     save_config: Path | None = None,
+    cache: bool = True,
+    clear_cache: bool = False,
 ) -> None:
     """扫描目录并输出敏感内容报告。
 
@@ -227,6 +257,10 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         仅保留路径包含该子串的命中
     save_config:
         把本次生效的参数与规则集存成配置文件，供 ``filescan run --config`` 复用
+    cache:
+        使用扫描结果缓存（默认开启，``--no-cache`` 关闭）；未变化的文件直接复用上次命中
+    clear_cache:
+        扫描前清空扫描缓存
     """
     if not paths:
         _fail("请至少指定一个待扫描目录")
@@ -267,13 +301,23 @@ def scan_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
         except OSError as exc:
             _fail(f"无法写入配置 {save_config}: {exc}")
         print(f"扫描配置已保存到 {save_config}（{len(paths)} 个目录，规则 {len(ruleset.rules)} 条）")
+    store = _open_cache(cache, clear_cache)
     token = CancelToken()
     try:
-        result = scan_paths(paths, ruleset, options, token=token)
+        result = scan_paths(
+            paths,
+            ruleset,
+            options,
+            token=token,
+            cache=store,
+            cache_key=cache_fingerprint(ruleset, options, mask=not raw) if store is not None else "",
+        )
     except KeyboardInterrupt:
         token.cancel()
         print_error("扫描已取消")
         raise SystemExit(130) from None
+    finally:
+        _close_cache(store)
     if rule_id or path_filter.strip():
         result = filter_result(result, rule_ids=rule_id, path_contains=path_filter)
     _emit_result(result, format, output, raw)
@@ -304,6 +348,8 @@ def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成
     raw: bool = False,
     rule_id: list[str] | None = None,
     path_filter: str = "",
+    cache: bool = True,
+    clear_cache: bool = False,
 ) -> None:
     """按配置文件执行扫描。
 
@@ -324,6 +370,10 @@ def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成
         仅保留指定规则 id 的命中，可重复
     path_filter:
         仅保留路径包含该子串的命中
+    cache:
+        使用扫描结果缓存（默认开启，``--no-cache`` 关闭）
+    clear_cache:
+        扫描前清空扫描缓存
     """
     if config is None:
         _fail("请用 --config 指定配置文件")
@@ -342,13 +392,23 @@ def run_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成
         _fail(f"规则表达式无效: {exc}")
     fmt = format or loaded.format
     include_raw = raw or not loaded.mask
+    store = _open_cache(cache, clear_cache)
     token = CancelToken()
     try:
-        result = scan_paths(loaded.roots, ruleset, loaded.options, token=token)
+        result = scan_paths(
+            loaded.roots,
+            ruleset,
+            loaded.options,
+            token=token,
+            cache=store,
+            cache_key=cache_fingerprint(ruleset, loaded.options, mask=not include_raw) if store is not None else "",
+        )
     except KeyboardInterrupt:
         token.cancel()
         print_error("扫描已取消")
         raise SystemExit(130) from None
+    finally:
+        _close_cache(store)
     if rule_id or path_filter.strip():
         result = filter_result(result, rule_ids=rule_id, path_contains=path_filter)
     _emit_result(result, fmt, output, include_raw)
