@@ -152,6 +152,43 @@ def test_apply_expression_rejects_invalid() -> None:
         filescanw.apply_expression(builtin_ruleset(), "unknown_rule")
 
 
+def test_parse_whitelist_text_handles_comments_and_separators() -> None:
+    text = "# 文档\n.docx .xlsx\n\n.pdf;.md, txt\n  # 注释行\n*.log\n"
+    assert filescanw.parse_whitelist_text(text) == (".docx", ".xlsx", ".pdf", ".md", ".txt", ".log")
+
+
+def test_parse_whitelist_text_empty() -> None:
+    assert filescanw.parse_whitelist_text("") == ()
+    assert filescanw.parse_whitelist_text("# 只有注释\n") == ()
+
+
+def test_grouped_whitelist_text_covers_all_defaults_and_roundtrips() -> None:
+    from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS
+
+    text = filescanw.grouped_whitelist_text()
+    assert text.startswith("# ")
+    assert all(line.strip() for line in text.splitlines())
+    assert set(filescanw.parse_whitelist_text(text)) == set(DEFAULT_SCAN_EXTENSIONS)
+
+
+def test_grouped_whitelist_text_puts_unknown_exts_last() -> None:
+    from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS
+
+    text = filescanw.grouped_whitelist_text((*DEFAULT_SCAN_EXTENSIONS, ".custom"))
+    assert text.splitlines()[-2] == "# 其他"
+    assert text.splitlines()[-1] == ".custom"
+
+
+def test_whitelist_display_text_converts_defaults() -> None:
+    from fcmd.apps.filescan._engine import DEFAULT_SCAN_EXTENSIONS
+
+    legacy = ";".join(DEFAULT_SCAN_EXTENSIONS)
+    assert filescanw.whitelist_display_text(legacy) == filescanw.grouped_whitelist_text()
+    assert filescanw.whitelist_display_text("") == filescanw.grouped_whitelist_text()
+    custom = ".py;.custom"
+    assert filescanw.whitelist_display_text(custom) == custom
+
+
 def test_run_gui_delegates_to_shared_runner(monkeypatch: pytest.MonkeyPatch) -> None:
     recorded: dict[str, object] = {}
 

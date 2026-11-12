@@ -2,9 +2,9 @@
 
 三个分页（沿用 llmdownw 的分页口径，避免表单堆叠）：
 
-- **扫描**：多目录列表、递归/深度/符号链接、可编辑后缀白名单（默认内置文本
-  后缀集，「恢复默认白名单」一键还原）、后缀包含/排除、强制后缀、大小上下限、
-  跳过二进制、单文件上限、并发数；开始 / 取消与进度条。
+- **扫描**：多目录列表、递归/深度/符号链接、多行后缀白名单编辑框（按类别分组
+  分行，``#`` 开头为注释，「恢复默认白名单」一键还原）、后缀包含/排除、强制后缀、
+  大小上下限、跳过二进制、单文件上限、并发数；开始 / 取消与进度条。
 - **结果**：结果按文件聚合（父节点为路径，子节点为规则 / 行号 / 打码上下文），
   可按规则与路径筛选，导出文本 / JSON / CSV（默认打码，勾选「导出原文」才输出
   敏感原文）。
@@ -26,8 +26,9 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,9 +41,11 @@ from fcmd.apps.filescan._engine import (
     ScanOptions,
     ScanResult,
     format_size,
+    normalize_exts,
     parse_ext_text,
     scan_paths,
 )
+from fcmd.apps.filescan._extract import DOCUMENT_EXTENSIONS
 from fcmd.apps.filescan._report import filter_result, render_context, write_report
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
@@ -66,14 +69,18 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SETTINGS_NAME",
+    "WHITELIST_GROUPS",
     "FilescanSettings",
     "FilescanWindow",
     "apply_expression",
+    "grouped_whitelist_text",
     "load_settings",
+    "parse_whitelist_text",
     "run_gui",
     "save_settings",
     "settings_from_mapping",
     "settings_to_mapping",
+    "whitelist_display_text",
 ]
 
 SETTINGS_NAME = "filescanw"
@@ -226,6 +233,76 @@ def apply_expression(ruleset: RuleSet, text: str) -> RuleSet:
     return replace(ruleset, expression=expression)
 
 
+def _ext_group(text: str) -> tuple[str, ...]:
+    """把空格分隔的后缀串转成元组（仅用于白名单分组定义）。"""
+    return normalize_exts(text.split())
+
+
+WHITELIST_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("文档", DOCUMENT_EXTENSIONS),
+    ("文本/日志", _ext_group(".txt .text .md .markdown .rst .log")),
+    (
+        "数据/结构化",
+        _ext_group(".csv .tsv .json .jsonl .xml .yaml .yml .toml .proto .graphql .gql .hcl .tf .tfvars"),
+    ),
+    ("配置", _ext_group(".ini .cfg .conf .config .env .properties .plist .reg .lock")),
+    (
+        "Web/前端",
+        _ext_group(".html .htm .css .scss .sass .less .js .mjs .cjs .jsx .ts .tsx .vue .svelte"),
+    ),
+    (
+        "编程语言",
+        _ext_group(
+            ".py .pyi .pyw .java .kt .kts .c .h .cc .cpp .cxx .hpp .hh .cs .go .rs .rb .php .pl .pm "
+            ".lua .swift .m .mm .scala .dart .r .jl .ex .exs .erl .hrl .clj .cljs .hs .lisp .el .asm "
+            ".s .sql .vbs .ahk"
+        ),
+    ),
+    (
+        "脚本/构建",
+        _ext_group(".sh .bash .zsh .fish .ps1 .psm1 .psd1 .bat .cmd .gradle .groovy .cmake .mk"),
+    ),
+    ("出版/补丁", _ext_group(".tex .bib .diff .patch")),
+)
+"""白名单展示分组：仅用于界面排版，扫描仍按白名单整体匹配。"""
+
+_WHITELIST_SPLIT = re.compile(r"[;,\s]+")
+
+
+def parse_whitelist_text(text: str) -> tuple[str, ...]:
+    """解析白名单编辑器文本：``#`` 开头为分组注释，其余按空白/分号/逗号切分。"""
+    items: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        items.extend(_WHITELIST_SPLIT.split(stripped))
+    return normalize_exts(items)
+
+
+def grouped_whitelist_text(exts: Iterable[str] = DEFAULT_SCAN_EXTENSIONS) -> str:
+    """把后缀按类别排成多行文本（``# 分组`` 注释行 + 空格分隔的后缀）。"""
+    remaining = list(dict.fromkeys(exts))
+    lines: list[str] = []
+    for label, group in WHITELIST_GROUPS:
+        present = [item for item in group if item in remaining]
+        for item in present:
+            remaining.remove(item)
+        if present:
+            lines.extend((f"# {label}", " ".join(present)))
+    if remaining:
+        lines.extend(("# 其他", " ".join(remaining)))
+    return "\n".join(lines)
+
+
+def whitelist_display_text(text: str) -> str:
+    """默认白名单（含旧版单行写法或空值）统一转成按类别分行的排版，自定义内容原样返回。"""
+    parsed = parse_whitelist_text(text)
+    if not parsed or set(parsed) == set(DEFAULT_SCAN_EXTENSIONS):
+        return grouped_whitelist_text()
+    return text
+
+
 # ---------------------------------------------------------------------- #
 # 窗口
 # ---------------------------------------------------------------------- #
@@ -266,7 +343,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._context_chars = tk.IntVar(value=self.settings.context_chars)
         self._include_ext = tk.StringVar(value=self.settings.include_ext)
         self._force_ext = tk.StringVar(value=self.settings.force_ext)
-        self._ext_whitelist = tk.StringVar(value=self.settings.ext_whitelist)
+        self._ext_whitelist: Any = None
         self._exclude_ext = tk.StringVar(value=self.settings.exclude_ext)
         self._filter_rule = tk.StringVar(value="全部")
         self._filter_path = tk.StringVar(value=self.settings.filter_path)
@@ -347,14 +424,21 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._labeled_entry(options, 2, 4, "上下文长度", self._context_chars, width=8)
         self._labeled_entry(options, 3, 4, "强制后缀", self._force_ext, width=12)
         ttk.Label(options, text="白名单外强制扫描（如 .pdf）").grid(row=3, column=6, columnspan=2, sticky="w")
-        ttk.Label(options, text="后缀白名单").grid(row=4, column=0, sticky="e", padx=(6, 2), pady=2)
-        ttk.Entry(options, textvariable=self._ext_whitelist).grid(row=4, column=1, columnspan=7, sticky="ew", pady=2)
+        ttk.Label(
+            options,
+            text="后缀白名单（# 开头为分组注释；空格 / 分号 / 逗号分隔；填 * 表示全部后缀）",
+        ).grid(row=4, column=0, columnspan=8, sticky="w", padx=(6, 2), pady=(4, 0))
+        whitelist = tk.Text(options, height=8, wrap="word", undo=True)
+        whitelist.grid(row=5, column=0, columnspan=8, sticky="ew")
+        whitelist.insert("1.0", whitelist_display_text(self.settings.ext_whitelist))
+        whitelist_scroll = ttk.Scrollbar(options, orient="vertical", command=whitelist.yview)
+        whitelist_scroll.grid(row=5, column=8, sticky="ns")
+        whitelist.configure(yscrollcommand=whitelist_scroll.set)
+        self._ext_whitelist = whitelist
         ttk.Button(options, text="恢复默认白名单", command=self._reset_whitelist).grid(
-            row=5, column=1, sticky="w", pady=2
+            row=6, column=0, sticky="w", pady=2
         )
-        ttk.Label(options, text="不在白名单内的文件直接跳过；填 * 表示全部后缀").grid(
-            row=5, column=2, columnspan=6, sticky="w"
-        )
+        ttk.Label(options, text="不在白名单内的文件直接跳过").grid(row=6, column=1, columnspan=7, sticky="w")
 
         actions = ttk.Frame(page)
         actions.grid(row=2, column=0, sticky="ew")
@@ -717,13 +801,19 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         messagebox.showinfo("表达式有效", "表达式解析通过", parent=self.root)
 
     # -- 扫描 --------------------------------------------------------- #
+    def _whitelist_text(self) -> str:
+        """读取白名单编辑器全文。"""
+        if self._ext_whitelist is None:
+            return ""
+        return str(self._ext_whitelist.get("1.0", "end"))
+
     def _scan_options(self) -> ScanOptions:
-        whitelist_text = self._ext_whitelist.get().strip()
+        whitelist_text = self._whitelist_text().strip()
         return ScanOptions(
             recursive=self._recursive.get(),
             max_depth=max(0, int(self._max_depth.get())),
             follow_symlinks=self._follow.get(),
-            ext_whitelist=parse_ext_text(whitelist_text) if whitelist_text else DEFAULT_SCAN_EXTENSIONS,
+            ext_whitelist=parse_whitelist_text(whitelist_text) if whitelist_text else DEFAULT_SCAN_EXTENSIONS,
             include_exts=parse_ext_text(self._include_ext.get()),
             force_exts=parse_ext_text(self._force_ext.get()),
             exclude_exts=parse_ext_text(self._exclude_ext.get()),
@@ -872,7 +962,10 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             self._status.set(self._summary_text())
 
     def _reset_whitelist(self) -> None:
-        self._ext_whitelist.set(";".join(DEFAULT_SCAN_EXTENSIONS))
+        if self._ext_whitelist is None:
+            return
+        self._ext_whitelist.delete("1.0", "end")
+        self._ext_whitelist.insert("1.0", grouped_whitelist_text())
         self._status.set(self._summary_text())
 
     def _cancel_scan(self) -> None:
@@ -911,7 +1004,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             recursive=self._recursive.get(),
             max_depth=max(0, int(self._max_depth.get())),
             follow_symlinks=self._follow.get(),
-            ext_whitelist=self._ext_whitelist.get(),
+            ext_whitelist=self._whitelist_text(),
             include_ext=self._include_ext.get(),
             force_ext=self._force_ext.get(),
             exclude_ext=self._exclude_ext.get(),
