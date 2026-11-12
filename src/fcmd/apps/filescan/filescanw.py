@@ -912,6 +912,7 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         window.title(f"编辑后缀 - {label}")
         window.transient(self.root)
         window.resizable(False, False)
+        _guiwindow.center_over_parent(window, self.root, width=660, height=180)
         body = ttk.Frame(window, padding=10)
         body.pack(fill="both", expand=True)
         ttk.Label(body, text=f"{label} 类型的后缀（多个用英文逗号【,】分隔）").pack(anchor="w")
