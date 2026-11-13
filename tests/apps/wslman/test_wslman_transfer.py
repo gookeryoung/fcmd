@@ -1418,5 +1418,5 @@ def test_registers_p3_subcommands() -> None:
         "status",
         "terminate",
     }
-    assert set(_TOOL_REGISTRY["wslman"]) == expected
-    assert set(list_subcommands("wslman")) == expected
+    assert expected <= set(_TOOL_REGISTRY["wslman"])
+    assert expected <= set(list_subcommands("wslman"))

@@ -23,7 +23,10 @@ from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from fcmd.apps.wslman._source import DownloadResult
 
 import fcmd
 from fcmd.apps.wslman._config import WslmanConfig, load_config
@@ -33,6 +36,7 @@ from fcmd.apps.wslman._decode import (
     is_no_distribution_message,
     is_not_enabled_message,
     parse_distro_list,
+    parse_online_list,
     parse_status,
 )
 from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir, volume_info
@@ -83,6 +87,7 @@ from fcmd.apps.wslman._wslconfig import load_wslconfig, summary_lines
 from fcmd.core.result import emit_result, record_error, report_error
 
 __all__ = [
+    "available",
     "backup_remove",
     "backup_verify",
     "backups",
@@ -90,6 +95,7 @@ __all__ = [
     "config",
     "copy_distro",
     "doctor",
+    "download",
     "export_distro",
     "import_distro",
     "info",
@@ -97,8 +103,10 @@ __all__ = [
     "main",
     "open_distro",
     "set_default",
+    "shutdown",
     "status",
     "terminate",
+    "unregister",
 ]
 
 __version__ = "0.1.0"
@@ -1889,6 +1897,608 @@ def backup_remove(file: Path, json_output: bool = False, preview: bool = False, 
         },
         json_output=json_output,
         lines=[f"已删除: {file}（{format_bytes(size)}）"],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="available",
+    help="列出可在线安装的发行版（只读，需联网；失败时给出离线降级提示）",
+    param_help={"json_output": "输出机读结果信封"},
+)
+def available(json_output: bool = False) -> None:
+    """运行 ``wsl --list --online`` 并原样解析两列表格。"""
+    warnings: list[str] = []
+    try:
+        env = _build_environment()
+        _require_wsl(env)
+        result = _run_wsl(env, ["--list", "--online"], timeout=120.0)
+        text = decode_console(result.stdout or result.stderr)
+        if result.returncode != 0:
+            if is_not_enabled_message(text):
+                raise runtime_error("WSL 未启用或系统组件缺失", hint=_NOT_ENABLED_HINT)
+            raise runtime_error(
+                f"wsl --list --online 失败（退出码 {result.returncode}）：{_first_line(text)}",
+                hint="检查网络或代理；离线时可用 fcmd wslman download <名称> --source file --file <本地 tar>",
+            )
+        rows = parse_online_list(text)
+        if not rows:
+            warnings.append("在线清单为空；可能是网络不可达或 WSL 版本过旧")
+    except WslmanError as exc:
+        _fail(exc, "available", json_output)
+        return
+
+    data = {
+        "schema": "wslman/available/1",
+        "count": len(rows),
+        "distros": [{"name": row.name, "friendly_name": row.friendly_name} for row in rows],
+        "source": "wsl --list --online",
+        "warnings": [*warnings, *env.config.warnings],
+    }
+    if json_output:
+        emit_result("wslman", "available", data)
+        return
+
+    print(f"可在线安装的发行版（{len(rows)}）：")
+    for row in rows:
+        print(f"  {row.name}" + (f"  {row.friendly_name}" if row.friendly_name else ""))
+    for warning in [*warnings, *env.config.warnings]:
+        print(f"[警告] {warning}")
+
+
+# ---------------------------------------------------------------------- #
+# 下载档：download / unregister / shutdown
+# ---------------------------------------------------------------------- #
+
+_DOWNLOAD_HINT = (
+    "wsl --install 会触发系统级安装、可能弹出 UAC，且不能指定自定义镜像；"
+    "需要特定镜像或版本时改用 --source manifest / --source file 下载后执行 wslman import"
+)
+_DOWNLOAD_SOURCES = frozenset({"auto", "cli", "manifest", "file"})
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="download",
+    help=(
+        "下载发行版归档或调用 wsl --install（会触发系统级安装、可能弹 UAC，且不能指定自定义镜像；"
+        "需要特定镜像请用 --source manifest/file）"
+    ),
+    param_help={
+        "name": "发行版名称，大小写不敏感",
+        "dir": "归档下载目录（默认取配置 download.dir；manifest 源必填）",
+        "file": "本地归档路径（--source file 时必填）",
+        "source": "auto（默认，优先 wsl --install）/ cli / manifest / file",
+        "manifest_url": "临时的清单地址，覆盖配置 download.manifest_url",
+        "sha256": "期望的 sha256；缺省时用配置 download.sha256.<名称>",
+        "overwrite": "覆盖已存在的目标文件",
+        "preview": "只打印计划、来源与目标路径，不联网、不写文件",
+        "json_output": "输出机读结果信封",
+    },
+)
+def download(  # noqa: PLR0912, PLR0913, PLR0917
+    name: str,
+    dir: Path | None = None,
+    file: Path | None = None,
+    source: Literal["auto", "cli", "manifest", "file"] = "auto",
+    manifest_url: str | None = None,
+    sha256: str | None = None,
+    overwrite: bool = False,
+    preview: bool = False,
+    json_output: bool = False,
+) -> None:
+    """按来源分层获取发行版：CLI 安装、清单下载或本地文件校验。
+
+    ``auto`` 只在能力探测到 ``--no-launch`` 时走 ``wsl --install``，失败自动落到清单；
+    下载始终计算并输出 sha256，只有给了期望值且匹配才置 ``verified``。
+    """
+    from fcmd.apps.wslman._source import download as download_archive
+    from fcmd.apps.wslman._source import download_name, fetch_manifest, file_source, find_entry, parse_manifest
+
+    warnings: list[str] = []
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(name)
+        if source not in _DOWNLOAD_SOURCES:
+            raise invalid_argument(f"不支持的 --source：{source}", field="source")
+        expected = (sha256 or env.config.sha256.get(name) or "").strip().casefold() or None
+        configured_dir = env.config.download_dir.strip()
+        target_dir = dir or (Path(configured_dir) if configured_dir else None)
+
+        use_cli = source == "cli" or (source == "auto" and env.capabilities.has_install_no_launch)
+        if source == "cli" and not env.capabilities.has_install:
+            raise runtime_error("当前 wsl.exe 不支持 --install", hint="升级 WSL 或改用 --source manifest/file")
+
+        if preview:
+            _download_preview(
+                env,
+                name,
+                file=file,
+                source=source,
+                target_dir=target_dir,
+                manifest_url=manifest_url,
+                expected=expected,
+                use_cli=use_cli,
+                json_output=json_output,
+            )
+            return
+
+        if use_cli:
+            view = _try_view(env)
+            existing = view.find(name) if view is not None else None
+            if existing is not None:
+                raise invalid_argument(
+                    f"{existing.name} 已安装，无需下载",
+                    hint=f"运行 fcmd wslman open {existing.name} 打开，或 fcmd wslman list 查看",
+                )
+            argv = [wsl_path, "--install", "-d", name]
+            if env.capabilities.has_install_no_launch:
+                argv.append("--no-launch")
+            result = _run_wsl(env, argv[1:], timeout=3600.0)
+            if result.returncode == 0:
+                _emit_action(
+                    "download",
+                    {
+                        "schema": "wslman/download/1",
+                        "distro": name,
+                        "method": "cli",
+                        "system_install": True,
+                        "commands": [argv],
+                        "artifacts": [],
+                        "hint": _DOWNLOAD_HINT,
+                        "warnings": [*warnings, *env.config.warnings],
+                    },
+                    json_output=json_output,
+                    lines=[
+                        f"已通过 wsl --install 安装 {name}（--no-launch，未自动启动）",
+                        f"下一步: fcmd wslman open {name}",
+                        "[注意] 系统级安装、可能弹出 UAC；不适用于自定义镜像",
+                    ],
+                    warnings=env.config.warnings,
+                )
+                return
+            detail = _first_line(decode_console(result.stderr or result.stdout))
+            if source == "cli":
+                raise runtime_error(
+                    f"wsl --install -d {name} 失败（退出码 {result.returncode}）：{detail}",
+                    hint=_DOWNLOAD_HINT,
+                )
+            warnings.append(f"wsl --install 失败，改用清单：{detail}")
+
+        manifest_url = manifest_url or env.config.manifest_url
+        if source == "file":
+            if file is None:
+                raise invalid_argument("--source file 需要 --file 指定本地归档", field="file")
+            _emit_download_file(
+                file_source(file, expected_sha256=expected),
+                name,
+                method="file",
+                warnings=[*warnings, *env.config.warnings],
+                json_output=json_output,
+            )
+            return
+        if not manifest_url:
+            raise invalid_argument(
+                "未配置清单地址，无法使用 manifest 来源",
+                hint="在 wslman.json 写入 download.manifest_url，或临时传 --manifest-url；也可用 --source file",
+                field="manifest_url",
+            )
+        target_dir = _require_dir(
+            target_dir,
+            example=f"fcmd wslman download {name} --dir D:\\wsl-images",
+        )
+        payload = fetch_manifest(manifest_url)
+        manifest = parse_manifest(payload)
+        entry = find_entry(manifest, name)
+        target_path = target_dir / download_name(name, entry.url, manifest.arch)
+        if target_path.exists() and not overwrite:
+            raise invalid_argument(
+                f"目标文件已存在：{target_path}",
+                hint="换一个 --dir，或加 --overwrite 覆盖",
+                field="dir",
+            )
+        expected = expected or entry.sha256
+        check = _preflight_for(env, target_path, entry.size, estimated=entry.size is None)
+        if not check.ok:
+            raise runtime_error(f"目标卷空间不足：{check.detail}", hint=_RESERVE_HINT)
+        try:
+            downloaded = download_archive(entry.url, target_path, expected_sha256=expected)
+        except KeyboardInterrupt:
+            raise interrupted(
+                f"下载被中断；临时文件 {part_path(target_path)} 已保留",
+                hint="重新执行会尝试续传；也可用 --source file 手工下载",
+            ) from None
+    except WslmanError as exc:
+        _fail(exc, "download", json_output)
+        return
+    except OSError as exc:
+        _fail(runtime_error(f"下载过程文件操作失败：{exc}", hint=_RESERVE_HINT), "download", json_output)
+        return
+
+    _emit_download_file(
+        downloaded,
+        name,
+        method="manifest",
+        warnings=[*warnings, *env.config.warnings],
+        json_output=json_output,
+        extra={"url": entry.url, "arch": manifest.arch, "preflight": check.to_data()},
+    )
+
+
+def _emit_download_file(  # noqa: PLR0913
+    result_data: DownloadResult,
+    name: str,
+    *,
+    method: str,
+    warnings: Sequence[str],
+    json_output: bool,
+    extra: Mapping[str, object] | None = None,
+) -> None:
+    data = result_data.to_data()
+    next_command = f"fcmd wslman import {name} {data['file']} --dir <安装目录>"
+    payload: dict[str, object] = {
+        "schema": "wslman/download/1",
+        "distro": name,
+        "method": method,
+        "system_install": False,
+        **data,
+        "next_command": next_command,
+        "hint": "归档已落盘；导入前请确认目标目录为空，并保留 sha256 以便复核",
+        "warnings": warnings,
+    }
+    if extra:
+        payload.update(extra)
+    _emit_action(
+        "download",
+        payload,
+        json_output=json_output,
+        lines=[
+            f"文件: {result_data.path}",
+            f"大小: {format_bytes(result_data.size)}",
+            f"sha256: {result_data.sha256}",
+            f"校验: {'已校验' if result_data.verified else '未提供期望值，未校验'}",
+            f"下一步: {next_command}",
+        ],
+        warnings=warnings,
+    )
+
+
+def _download_preview(  # noqa: PLR0913
+    env: Environment,
+    name: str,
+    *,
+    file: Path | None,
+    source: str,
+    target_dir: Path | None,
+    manifest_url: str | None,
+    expected: str | None,
+    use_cli: bool,
+    json_output: bool,
+) -> None:
+    warnings = list(env.config.warnings)
+    if use_cli:
+        argv = [env.capabilities.wsl_path or "wsl.exe", "--install", "-d", name]
+        if env.capabilities.has_install_no_launch:
+            argv.append("--no-launch")
+        method = "cli"
+        commands: list[list[str]] = [argv]
+        lines = [
+            f"发行版: {name}",
+            "方式: wsl --install（系统级安装，可能弹出 UAC；不能指定自定义镜像）",
+            f"命令: {_display_argv(argv)}",
+            "[预览] 未执行安装、未联网、未写文件",
+        ]
+    elif source == "file":
+        method = "file"
+        commands = []
+        lines = [
+            f"发行版: {name}",
+            f"本地文件: {file}",
+            f"期望 sha256: {expected or '未提供（将只计算不校验）'}",
+            "[预览] 未读取文件、未写文件",
+        ]
+    else:
+        method = "manifest"
+        commands = []
+        from fcmd.apps.wslman._source import download_name
+
+        url = manifest_url or env.config.manifest_url
+        if not url:
+            raise invalid_argument(
+                "未配置清单地址，无法预览 manifest 来源",
+                hint="在 wslman.json 写入 download.manifest_url，或临时传 --manifest-url；也可用 --source file",
+                field="manifest_url",
+            )
+        target = (target_dir / download_name(name, url)) if target_dir else None
+        lines = [
+            f"发行版: {name}",
+            f"清单: {url}",
+            f"目标: {target or '<未指定 --dir>'}",
+            f"期望 sha256: {expected or '清单未提供时只计算不校验'}",
+            "[预览] 未联网、未写文件",
+        ]
+    _emit_action(
+        "download",
+        {
+            "schema": "wslman/download/1",
+            "distro": name,
+            "method": method,
+            "system_install": method == "cli",
+            "preview": True,
+            "file": str(file) if file else None,
+            "dir": str(target_dir) if target_dir else None,
+            "manifest_url": manifest_url or env.config.manifest_url,
+            "expected_sha256": expected,
+            "commands": commands,
+            "artifacts": [],
+            "warnings": warnings,
+        },
+        json_output=json_output,
+        lines=lines,
+        warnings=warnings,
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="unregister",
+    help="注销发行版并删除其虚拟磁盘（破坏性，需 --yes；可先 --backup 导出）",
+    param_help={
+        "distro": "发行版名称，大小写不敏感",
+        "yes": "确认注销；缺失时退出码 2 并给出完整命令",
+        "terminate_first": "运行中时先终止再注销",
+        "backup": "注销前导出到该文件；导出失败则绝不注销",
+        "preview": "展示 BasePath、占用与将删除的虚拟磁盘，不注销",
+        "json_output": "输出机读结果信封",
+    },
+)
+def unregister(  # noqa: PLR0913, PLR0917
+    distro: str,
+    yes: bool = False,
+    terminate_first: bool = False,
+    backup: Path | None = None,
+    preview: bool = False,
+    json_output: bool = False,
+) -> None:
+    """注销前可先导出备份；``--preview`` 只读列表与元数据，不删任何东西。"""
+    warnings: list[str] = []
+    started = time.monotonic()
+    name = distro.strip()
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(distro)
+        target = _require_target(env, name)
+        name = target.name
+        vhdx = Path(target.base_path) / "ext4.vhdx" if target.base_path else None
+        estimate, estimated = distro_disk_bytes(target.base_path, target.version)
+        scope = (
+            f"发行版: {name}\nBasePath: {target.base_path or '未知'}\n"
+            f"占用: {format_bytes(estimate, estimated=estimated)}\n"
+            f"虚拟磁盘: {vhdx or '未知'}"
+        )
+        commands: list[list[str]] = []
+        if terminate_first:
+            commands.append([wsl_path, "--terminate", name])
+        if backup is not None:
+            commands.append([wsl_path, "--export", name, str(backup)])
+        commands.append([wsl_path, "--unregister", name])
+        command_text = f"fcmd wslman unregister {name} --yes"
+
+        if preview:
+            _emit_action(
+                "unregister",
+                {
+                    "schema": "wslman/unregister/1",
+                    "distro": name,
+                    "base_path": target.base_path,
+                    "vhdx": str(vhdx) if vhdx else None,
+                    "disk_bytes": estimate,
+                    "estimated": estimated,
+                    "backup": str(backup) if backup else None,
+                    "commands": commands,
+                    "destructive": True,
+                    "confirmed": yes,
+                    "preview": True,
+                    "removed": False,
+                    "warnings": [*warnings, *env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[
+                    scope,
+                    "命令:",
+                    *[f"  {_display_argv(argv)}" for argv in commands],
+                    "[预览] 未删除任何内容；虚拟磁盘无回收站，确认后加 --yes 执行",
+                ],
+                warnings=[*warnings, *env.config.warnings],
+            )
+            return
+
+        if target.state == "running" and not terminate_first:
+            raise invalid_argument(
+                f"{name} 正在运行，注销前必须先停机",
+                hint=f"执行：{command_text} --terminate-first",
+            )
+        if not yes:
+            suffix = f" --backup {backup}" if backup else " --backup <备份文件>"
+            raise usage_error(
+                f"注销 {name} 需要 --yes",
+                hint=f"确认后执行：{command_text}{suffix}",
+            )
+
+        backup_info: dict[str, object] | None = None
+        with TransferLock(name, directory=env.lock_dir):
+            if backup is not None:
+                backup_info = _export_for_backup(env, name, backup, estimate, estimated=estimated)
+            if terminate_first:
+                _run_step(
+                    env,
+                    ["--terminate", name],
+                    action=f"注销前终止 {name}",
+                    hint=f"手动终止后重试：{command_text} --terminate-first",
+                )
+            _run_step(
+                env,
+                ["--unregister", name],
+                action=f"注销 {name}",
+                hint="注销后虚拟磁盘不可恢复；可先用 --backup 导出",
+            )
+        remaining = bool(target.base_path and Path(target.base_path).exists())
+    except KeyboardInterrupt:
+        _fail(interrupted(f"注销 {name} 被中断", hint="运行 fcmd wslman list 复核当前状态"), "unregister", json_output)
+        return
+    except WslmanError as exc:
+        _fail(exc, "unregister", json_output)
+        return
+    except OSError as exc:
+        _fail(
+            runtime_error(f"注销过程文件操作失败：{exc}", hint="运行 fcmd wslman list 复核"), "unregister", json_output
+        )
+        return
+
+    _emit_action(
+        "unregister",
+        {
+            "schema": "wslman/unregister/1",
+            "distro": name,
+            "base_path": target.base_path,
+            "vhdx": str(vhdx) if vhdx else None,
+            "disk_bytes": estimate,
+            "estimated": estimated,
+            "backup": str(backup) if backup else None,
+            "backup_info": backup_info,
+            "commands": commands,
+            "destructive": True,
+            "confirmed": True,
+            "preview": False,
+            "removed": True,
+            "remaining_base_path": remaining,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "warnings": [*warnings, *env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[
+            f"已注销 {name}",
+            *(
+                [f"已备份: {backup}（sha256 {backup_info['sha256']}）"]
+                if backup_info is not None
+                else ["[提醒] 未提供 --backup，虚拟磁盘已删除且无回收站"]
+            ),
+            f"BasePath {'仍有残留目录（WSL 版本差异，未自动清理）：' + str(target.base_path) if remaining else '已不存在'}",
+        ],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+def _export_for_backup(
+    env: Environment,
+    name: str,
+    backup: Path,
+    estimate: int | None,
+    *,
+    estimated: bool,
+) -> dict[str, object]:
+    """注销前的备份导出：失败即抛错，调用方因此不会继续注销。"""
+    if backup.exists():
+        raise invalid_argument(
+            f"备份文件已存在：{backup}",
+            hint="换一个 --backup 路径；不会覆盖已有文件",
+            field="backup",
+        )
+    problem = volume_problem(backup)
+    if problem:
+        raise invalid_argument(problem, hint="选择本地 NTFS 卷上的路径", field="backup")
+    check = _preflight_for(env, backup, estimate, estimated=estimated)
+    if not check.ok:
+        raise runtime_error(f"备份目标空间不足，已取消注销：{check.detail}", hint=_RESERVE_HINT)
+    part = part_path(backup)
+    part.parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        part.unlink()
+    reporter = ProgressReporter(part, estimate, label="备份")
+    reporter.start()
+    try:
+        result = _run_wsl(env, ["--export", name, str(part)], timeout=_TRANSFER_TIMEOUT_S)
+    finally:
+        reporter.stop()
+    if result.returncode != 0:
+        with contextlib.suppress(OSError):
+            part.unlink()
+        detail = _first_line(decode_console(result.stderr or result.stdout))
+        raise runtime_error(
+            f"备份 {name} 失败（退出码 {result.returncode}）：{detail}",
+            hint="已取消注销，发行版保持原样；检查空间后重试",
+        )
+    if not part.is_file():
+        raise runtime_error("wsl --export 返回成功但未生成备份文件", hint=f"检查 {part} 所在目录的权限")
+    atomic_replace(part, backup)
+    return {
+        "file": str(backup),
+        "size_bytes": backup.stat().st_size,
+        "sha256": sha256_file(backup),
+        "preflight": check.to_data(),
+    }
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="shutdown",
+    help="停止全部 WSL 发行版与虚拟机（破坏性，需 --yes；会连带停掉 Docker Desktop 等）",
+    param_help={
+        "yes": "确认关闭全部发行版",
+        "preview": "只打印命令与影响范围，不停止任何进程",
+        "json_output": "输出机读结果信封",
+    },
+)
+def shutdown(yes: bool = False, preview: bool = False, json_output: bool = False) -> None:
+    """``wsl --shutdown``；预览不读取执行器，执行前必须显式 ``--yes``。"""
+    impacts = "会停止全部发行版与 WSL 虚拟机，并连带停掉 Docker Desktop、IDE Remote 等后端"
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        argv = [wsl_path, "--shutdown"]
+        if preview:
+            _emit_action(
+                "shutdown",
+                {
+                    "schema": "wslman/shutdown/1",
+                    "commands": [argv],
+                    "destructive": True,
+                    "confirmed": yes,
+                    "preview": True,
+                    "shut_down": False,
+                    "warnings": [*env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[f"命令: {_display_argv(argv)}", f"影响: {impacts}", "[预览] 未停止任何进程"],
+                warnings=env.config.warnings,
+            )
+            return
+        if not yes:
+            raise usage_error("shutdown 需要 --yes", hint="确认后执行：fcmd wslman shutdown --yes")
+        _run_step(env, ["--shutdown"], action="wsl --shutdown", hint=impacts)
+        running = _try_view(env)
+        remaining = [distro.name for distro in running.distros if distro.state == "running"] if running else []
+    except WslmanError as exc:
+        _fail(exc, "shutdown", json_output)
+        return
+
+    _emit_action(
+        "shutdown",
+        {
+            "schema": "wslman/shutdown/1",
+            "commands": [argv],
+            "destructive": True,
+            "confirmed": True,
+            "preview": False,
+            "shut_down": True,
+            "running_after": remaining,
+            "warnings": [*env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[f"已执行 {_display_argv(argv)}", f"复核运行中发行版: {', '.join(remaining) if remaining else '无'}"],
+        warnings=env.config.warnings,
     )
 
 

@@ -27,6 +27,7 @@ _TABLE = """\
 """
 
 _SUBCOMMANDS = {
+    "available",
     "backup-remove",
     "backup-verify",
     "backups",
@@ -34,14 +35,17 @@ _SUBCOMMANDS = {
     "config",
     "copy",
     "doctor",
+    "download",
     "export",
     "import",
     "info",
     "list",
     "open",
     "set-default",
+    "shutdown",
     "status",
     "terminate",
+    "unregister",
 }
 
 
