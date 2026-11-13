@@ -21,17 +21,21 @@ import os
 import re
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from fcmd.apps.dynacalc._mesh import AXISYMMETRIC_DIMENSION, MeshPackage, MeshSet
 from fcmd.apps.dynacalc._model import ModelSet, ModelSpec, apply_model
-from fcmd.apps.dynacalc._params import SCHEMA, TBD, Case, ParamTable, build_cases, is_tbd
+from fcmd.apps.dynacalc._params import SCHEMA, TBD, Case, ParamTable, build_cases, case_fingerprint, is_tbd
 
 __all__ = [
+    "AXISYMMETRIC_TEMPLATE",
     "BUILTIN_KEYS",
     "DEFAULT_TEMPLATE",
+    "DEFAULT_TEMPLATE_FAMILY",
     "GENERATOR_VERSION",
+    "TEMPLATE_FAMILIES",
     "DeckError",
     "DeckPlan",
     "GenerationResult",
@@ -44,6 +48,7 @@ __all__ = [
     "plan_deck",
     "render_template",
     "template_digest",
+    "template_for",
     "template_placeholders",
     "write_manifest",
 ]
@@ -152,6 +157,82 @@ $ x, y, z, t0（占位，实际坐标由几何 / 工艺映射冻结后填写）
 *END
 """
 
+AXISYMMETRIC_TEMPLATE = """$ dynacalc 生成：工况 ${case_code}（${case_group}），参数指纹 ${case_hash}
+$ 模板族：axisymmetric-2d（x = 轴向，y = 径向，z = 0；ELFORM = 14 轴对称壳）
+$ 网格片段由 paramesh 生成并通过网格包校验；*PART / *SECTION_SHELL / 材料卡由本 deck 生成。
+$ 本文件由模板渲染，禁止手改后回灌参数表；所有 TBD 必须由受控材料卡填入。
+*KEYWORD
+*TITLE
+dynacalc ${case_code} axisymmetric-2d
+$ 网格包：${mesh_id}（level ${mesh_level}，geometry_key ${mesh_geometry_key}）
+$ mesh.k 只含节点 / 单元 / 集合；不得重编号，也不得在本 deck 里重复其关键字
+*INCLUDE
+${mesh_include}
+*CONTROL_TERMINATION
+$ endtim（占位）
+TBD, 0, 0.0, 0.0, 0.0
+*CONTROL_TIMESTEP
+$ dtinit, tssfac
+0.0, 0.9
+*CONTROL_ENERGY
+$ hgen, rwen, slnt
+2, 2, 2
+*DATABASE_BINARY_D3PLOT
+$ dt（占位）
+TBD
+*DATABASE_GLSTAT
+$ dt（占位）
+TBD
+*DATABASE_MATSUM
+$ dt（占位）
+TBD
+*DATABASE_HISTORY_NODE
+$ 探针节点号（manifest.probes：轴面站位 / 壁面 / 界面），按节点号升序
+${history_nodes}
+$ 部件与截面：pid = part_id、secid = section.secid，材料号按 role 映射
+$ 壳厚固定为周向单位厚度 1.0，区域径向总厚度只出现在 manifest 的 section.region_thickness_mm
+${parts_block}
+${sections_block}
+*MAT_HIGH_EXPLOSIVE_BURN
+$ rho0 = 装药平均密度（受控参数）
+${density?}
+$ D, PCJ, BETA（占位）
+TBD, TBD, 0.0
+*EOS_JWL
+$ A, B, R1, R2, OMEGA, E0, V0（占位）
+TBD, TBD, TBD, TBD, TBD, TBD, 1.0
+*MAT_PLASTIC_KINEMATIC
+$ rho0, E, PR, SIGY, ETAN（占位）
+TBD, TBD, TBD, TBD, TBD
+*MAT_NULL
+$ rho0, PC, MU（占位）
+TBD, 0.0, 0.0
+*EOS_IDEAL_GAS
+$ C0..C6, E0, V0（占位）
+TBD, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, TBD, 1.0
+$ 初始几何与缺陷状态（模型描述优先；未提供则回落参数矩阵；仍未填即 TBD）
+$ outer_diameter(mm) = ${outer_diameter?}
+$ inner_diameter(mm) = ${inner_diameter?}
+$ length(mm) = ${length?}
+$ wall_thickness(mm) = ${wall_thickness?}
+$ wall_thickness_range(mm) = ${wall_thickness_min?} .. ${wall_thickness_max?}
+$ gap_mm = ${gap_mm?}
+$ debond state / extent(deg) = ${debond_state?} / ${debond_extent_deg?}
+$ model = ${model_id?} (${model_digest?})
+*INITIAL_DETONATION
+$ x = 轴向、y = 径向、z = 0（manifest.detonation，起爆端轴线）
+${detonation_x}, ${detonation_y}, ${detonation_z}, ${detonation_t0}
+*END
+"""
+
+DEFAULT_TEMPLATE_FAMILY = "3d-ale"
+
+TEMPLATE_FAMILIES: dict[str, str] = {
+    DEFAULT_TEMPLATE_FAMILY: DEFAULT_TEMPLATE,
+    "axisymmetric-2d": AXISYMMETRIC_TEMPLATE,
+}
+"""内置模板族：键为 ``dimension``，值为模板文本（``3d-ale`` 文本保持不变）。"""
+
 
 class DeckError(ValueError):
     """deck 生成失败：模板占位符缺失、参数未冻结（``--strict``）或写入失败。"""
@@ -160,6 +241,15 @@ class DeckError(ValueError):
 def default_template() -> str:
     """内置占位模板文本。"""
     return DEFAULT_TEMPLATE
+
+
+def template_for(dimension: str) -> str:
+    """按维度取内置模板族文本；未支持的维度显式报错（不静默回落 3D）。"""
+    try:
+        return TEMPLATE_FAMILIES[dimension]
+    except KeyError as exc:
+        supported = " / ".join(sorted(TEMPLATE_FAMILIES))
+        raise DeckError(f"未支持的模板维度 {dimension!r}（可选：{supported}）") from exc
 
 
 def template_digest(text: str) -> str:
@@ -195,8 +285,17 @@ def _render_value(value: Any) -> str:
     return str(value)
 
 
-def render_template(text: str, case: Case, *, schema: str = SCHEMA) -> tuple[str, tuple[str, ...]]:
+def render_template(
+    text: str,
+    case: Case,
+    *,
+    schema: str = SCHEMA,
+    extra: Mapping[str, Any] | None = None,
+) -> tuple[str, tuple[str, ...]]:
     """渲染模板，返回 ``(deck 文本, TBD 字段列表)``。
+
+    ``extra`` 提供模板族所需的外部取值（如网格包派生的 ``mesh_include`` /
+    ``parts_block`` / ``detonation_*``）；同名时覆盖工况值，内建键仍优先。
 
     Raises
     ------
@@ -210,6 +309,8 @@ def render_template(text: str, case: Case, *, schema: str = SCHEMA) -> tuple[str
         "case_hash": case.fingerprint,
         **case.value_mapping(),
     }
+    if extra:
+        values.update(extra)
     tbd_fields: dict[str, None] = {}
     missing: list[str] = []
 
@@ -247,18 +348,35 @@ class DeckPlan:
     text: str
     tbd_fields: tuple[str, ...]
     model: ModelSpec | None = None
+    template_family: str = DEFAULT_TEMPLATE_FAMILY
+    mesh: MeshPackage | None = None
 
 
-def plan_deck(case: Case, template: str, out_root: Path, model: ModelSpec | None = None) -> DeckPlan:
+def plan_deck(  # noqa: PLR0913 - 供 generate_decks 与测试直接组合，参数保持显式
+    case: Case,
+    template: str,
+    out_root: Path,
+    model: ModelSpec | None = None,
+    *,
+    extra: Mapping[str, Any] | None = None,
+    template_family: str = DEFAULT_TEMPLATE_FAMILY,
+    mesh: MeshPackage | None = None,
+) -> DeckPlan:
     """计算单个工况的目录与渲染结果（不落盘）。"""
-    text, tbd_fields = render_template(template, case)
+    directory = out_root / case.slug()
+    values = dict(extra or {})
+    if mesh is not None:
+        values["mesh_include"] = Path(os.path.relpath(mesh.mesh_file, directory)).as_posix()
+    text, tbd_fields = render_template(template, case, extra=values)
     return DeckPlan(
         case=case,
-        directory=out_root / case.slug(),
+        directory=directory,
         input_name="case.k",
         text=text,
         tbd_fields=tbd_fields,
         model=model,
+        template_family=template_family,
+        mesh=mesh,
     )
 
 
@@ -275,6 +393,11 @@ class ManifestCase:
     model_id: str = ""
     model_digest: str = ""
     model_source: str = ""
+    template_family: str = ""
+    mesh_id: str = ""
+    mesh_digest: str = ""
+    geometry_key: str = ""
+    mesh_level: str = ""
 
     def to_mapping(self) -> dict[str, Any]:
         """序列化为清单条目。"""
@@ -288,6 +411,11 @@ class ManifestCase:
             "model_id": self.model_id,
             "model_digest": self.model_digest,
             "model_source": self.model_source,
+            "template_family": self.template_family,
+            "mesh_id": self.mesh_id,
+            "mesh_digest": self.mesh_digest,
+            "geometry_key": self.geometry_key,
+            "mesh_level": self.mesh_level,
         }
 
 
@@ -365,23 +493,39 @@ def _pretty_json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 
-def generate_decks(  # noqa: PLR0913 - 生成开关由 CLI/GUI 直接透传，显式优于配置对象
+def generate_decks(  # noqa: PLR0912, PLR0913 - 生成开关由 CLI/GUI 直接透传，显式优于配置对象
     table: ParamTable,
     out_root: Path,
     *,
     template: str | None = None,
-    template_name: str = "builtin",
+    template_name: str | None = None,
     only: Sequence[str] | None = None,
     strict: bool = False,
     models: ModelSet | None = None,
+    meshes: MeshSet | None = None,
+    dimension: str | None = None,
+    mesh_level: str | None = None,
 ) -> GenerationResult:
     """生成全部（或指定）工况的 deck 与清单。
 
     ``models`` 按 ``case_scope`` 绑定到工况，模型非 TBD 派生值覆盖矩阵同名因子；
     没有匹配模型的工况回落矩阵。``strict`` 为真时，任何 TBD 字段都会让生成整体
     失败，且不写任何文件。
+
+    给定 ``meshes`` 时按工况模型指纹选择网格包（``mesh_level`` 消歧），渲染
+    ``axisymmetric-2d`` 模板族；此时每个工况必须绑定模型。
     """
-    text = default_template() if template is None else template
+    if template is not None:
+        text = template
+        family = dimension or "custom"
+    else:
+        if meshes is not None:
+            family = dimension or AXISYMMETRIC_DIMENSION
+            if family != AXISYMMETRIC_DIMENSION:
+                raise DeckError(f"网格包只支持 {AXISYMMETRIC_DIMENSION}，不能用于 {family}")
+        else:
+            family = dimension or DEFAULT_TEMPLATE_FAMILY
+        text = template_for(family)
     digest = template_digest(text)
     cases = build_cases(table, digest)
     if only:
@@ -392,11 +536,29 @@ def generate_decks(  # noqa: PLR0913 - 生成开关由 CLI/GUI 直接透传，�
         cases = [case for case in cases if case.code in wanted]
     if models is not None:
         models.validate_against([case.code for case in cases])
-    resolved: list[tuple[Case, ModelSpec | None]] = []
+    resolved: list[tuple[Case, ModelSpec | None, MeshPackage | None]] = []
     for case in cases:
         spec = models.resolve(case.code) if models is not None else None
-        resolved.append((apply_model(case, spec, digest) if spec is not None else case, spec))
-    plans = [plan_deck(case, text, out_root, spec) for case, spec in resolved]
+        merged = apply_model(case, spec, digest) if spec is not None else case
+        mesh: MeshPackage | None = None
+        if meshes is not None:
+            if spec is None:
+                raise DeckError(f"工况 {case.code} 没有模型描述，无法选择网格包")
+            mesh = meshes.for_model(spec.digest, level=mesh_level)
+            merged = replace(merged, fingerprint=case_fingerprint(merged, digest, spec.digest, mesh.digest))
+        resolved.append((merged, spec, mesh))
+    plans = [
+        plan_deck(
+            case,
+            text,
+            out_root,
+            spec,
+            extra=mesh.deck_values() if mesh is not None else None,
+            template_family=family,
+            mesh=mesh,
+        )
+        for case, spec, mesh in resolved
+    ]
     if strict:
         offenders = [plan.case.code for plan in plans if plan.tbd_fields]
         if offenders:
@@ -413,11 +575,16 @@ def generate_decks(  # noqa: PLR0913 - 生成开关由 CLI/GUI 直接透传，�
             model_id=plan.model.id if plan.model else "",
             model_digest=plan.model.digest if plan.model else "",
             model_source=plan.model.source if plan.model else "",
+            template_family=plan.template_family,
+            mesh_id=plan.mesh.mesh_id if plan.mesh else "",
+            mesh_digest=plan.mesh.digest if plan.mesh else "",
+            geometry_key=plan.mesh.geometry_key if plan.mesh else "",
+            mesh_level=plan.mesh.level if plan.mesh else "",
         )
         for plan in plans
     )
     manifest = Manifest(
-        template_name=template_name,
+        template_name=template_name or family,
         template_digest=digest,
         settings=dict(table.defaults),
         run=dict(table.run),
@@ -464,6 +631,11 @@ def _write_deck(plan: DeckPlan) -> None:
         "levels": plan.case.level_mapping(),
         "values": plan.case.value_mapping(),
         "tbd": list(plan.tbd_fields),
+        "template_family": plan.template_family,
+        "mesh_id": plan.mesh.mesh_id if plan.mesh else "",
+        "mesh_digest": plan.mesh.digest if plan.mesh else "",
+        "geometry_key": plan.mesh.geometry_key if plan.mesh else "",
+        "level": plan.mesh.level if plan.mesh else "",
         "model": {
             "id": plan.model.id,
             "digest": plan.model.digest,
@@ -540,6 +712,11 @@ def load_manifest(root: Path) -> Manifest:
                     model_id=str(item.get("model_id") or ""),
                     model_digest=str(item.get("model_digest") or ""),
                     model_source=str(item.get("model_source") or ""),
+                    template_family=str(item.get("template_family") or ""),
+                    mesh_id=str(item.get("mesh_id") or ""),
+                    mesh_digest=str(item.get("mesh_digest") or ""),
+                    geometry_key=str(item.get("geometry_key") or ""),
+                    mesh_level=str(item.get("mesh_level") or ""),
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:

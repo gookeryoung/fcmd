@@ -21,6 +21,7 @@ from typing import Any
 
 import fcmd
 from fcmd.apps.dynacalc._gates import evaluate, format_gate_report
+from fcmd.apps.dynacalc._mesh import scan_mesh_root
 from fcmd.apps.dynacalc._model import load_models
 from fcmd.apps.dynacalc._params import build_cases, load_params
 from fcmd.apps.dynacalc._results import collect_results, format_text_report
@@ -57,6 +58,8 @@ class DynacalcSettings:
     out: str = ""
     template: str = ""
     solver: str = ""
+    mesh_root: str = ""
+    mesh_level: str = ""
     ncpu: int = 4
     concurrency: int = 1
     timeout_s: int = 3600
@@ -71,7 +74,7 @@ def config_path() -> Path:
     return Path(home) / "ui" / "dynacalcw.json"
 
 
-_TEXT_FIELDS = ("params", "model", "out", "template", "solver")
+_TEXT_FIELDS = ("params", "model", "out", "template", "solver", "mesh_root", "mesh_level")
 _INT_FIELDS = {"ncpu": 1, "concurrency": 1, "timeout_s": 1, "retries": 0}
 
 
@@ -197,6 +200,8 @@ class DynacalcWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖
             "out": tk.StringVar(value=self._settings.out),
             "template": tk.StringVar(value=self._settings.template),
             "solver": tk.StringVar(value=self._settings.solver),
+            "mesh_root": tk.StringVar(value=self._settings.mesh_root),
+            "mesh_level": tk.StringVar(value=self._settings.mesh_level),
             "ncpu": tk.StringVar(value=str(self._settings.ncpu)),
             "concurrency": tk.StringVar(value=str(self._settings.concurrency)),
             "timeout_s": tk.StringVar(value=str(self._settings.timeout_s)),
@@ -232,9 +237,14 @@ class DynacalcWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖
         ttk.Label(form, text="模板").grid(row=1, column=3, sticky="w", padx=(space.md, space.sm))
         ttk.Entry(form, textvariable=self._vars["template"]).grid(row=1, column=4, sticky="ew", pady=space.xxs)
         ttk.Button(form, text="选择…", command=self._choose_template).grid(row=1, column=5, padx=space.sm)
+        ttk.Label(form, text="网格根目录").grid(row=2, column=0, sticky="w", padx=(0, space.sm))
+        ttk.Entry(form, textvariable=self._vars["mesh_root"]).grid(row=2, column=1, sticky="ew", pady=space.xxs)
+        ttk.Button(form, text="选择…", command=self._choose_mesh_root).grid(row=2, column=2, padx=space.sm)
+        ttk.Label(form, text="网格档位").grid(row=2, column=3, sticky="w", padx=(space.md, space.sm))
+        ttk.Entry(form, textvariable=self._vars["mesh_level"]).grid(row=2, column=4, sticky="ew", pady=space.xxs)
 
         solver_row = ttk.Frame(form)
-        solver_row.grid(row=2, column=0, columnspan=6, sticky="ew", pady=(space.xs, 0))
+        solver_row.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(space.xs, 0))
         ttk.Label(solver_row, text="求解器").pack(side="left")
         ttk.Entry(solver_row, textvariable=self._vars["solver"], width=34).pack(side="left", padx=space.sm)
         ttk.Button(solver_row, text="选择…", command=self._choose_solver).pack(side="left")
@@ -330,6 +340,13 @@ class DynacalcWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖
     def _choose_solver(self) -> None:
         self._choose("solver", "选择 LS-DYNA 可执行文件", "*.exe")
 
+    def _choose_mesh_root(self) -> None:
+        from tkinter import filedialog
+
+        chosen = filedialog.askdirectory(title="选择网格根目录（meshes）", parent=self.root)
+        if chosen:
+            self._vars["mesh_root"].set(chosen)
+
     def _choose_out(self) -> None:
         from tkinter import filedialog
 
@@ -340,7 +357,7 @@ class DynacalcWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖
     # ------------------------------------------------------------------ #
     # 动作
     # ------------------------------------------------------------------ #
-    def _paths(self) -> tuple[Path, Path, Path | None, list[Path], list[str]]:
+    def _paths(self) -> tuple[Path, Path, Path | None, list[Path], list[str], Path | None, str]:
         params = Path(self._vars["params"].get().strip())
         out = Path(self._vars["out"].get().strip())
         if not params.is_file():
@@ -349,17 +366,20 @@ class DynacalcWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖
             raise ValueError("请选择输出根目录")
         template = self._vars["template"].get().strip()
         model = self._vars["model"].get().strip()
+        mesh_root = self._vars["mesh_root"].get().strip()
         return (
             params,
             out,
             Path(template) if template else None,
             [Path(model)] if model else [],
             list(parse_codes(self._vars["only"].get())),
+            Path(mesh_root) if mesh_root else None,
+            self._vars["mesh_level"].get().strip(),
         )
 
     def _preview(self) -> None:
         try:
-            params, _, _, _, only = self._paths()
+            params, _, _, _, only, _, _ = self._paths()
             table = load_params(params)
             cases = build_cases(table) if not only else [c for c in build_cases(table) if c.code in set(only)]
         except Exception as exc:
@@ -374,17 +394,20 @@ class DynacalcWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖
 
     def _generate(self) -> None:
         def work() -> str:
-            params, out, template, models, only = self._paths()
+            params, out, template, models, only, mesh_root, mesh_level = self._paths()
             table = load_params(params)
             model_set = load_models(models) if models else None
             text = load_template(template) if template is not None else None
+            meshes = scan_mesh_root(mesh_root) if mesh_root is not None else None
             result = generate_decks(
                 table,
                 out,
                 template=text,
-                template_name=template.name if template is not None else "builtin",
+                template_name=template.name if template is not None else None,
                 only=only or None,
                 models=model_set,
+                meshes=meshes,
+                mesh_level=mesh_level or None,
             )
             self._results.put(("cases", result.manifest))
             return generation_summary(result)

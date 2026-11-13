@@ -37,6 +37,7 @@ from typing import Any, Literal
 
 import fcmd
 from fcmd.apps.dynacalc._gates import FAIL, evaluate, format_gate_report
+from fcmd.apps.dynacalc._mesh import MeshError, scan_mesh_root
 from fcmd.apps.dynacalc._model import ModelError, load_models
 from fcmd.apps.dynacalc._params import (
     SCHEMA,
@@ -63,10 +64,10 @@ from fcmd.apps.dynacalc._solver import (
 )
 from fcmd.apps.dynacalc._template import (
     DeckError,
-    default_template,
     generate_decks,
     load_manifest,
     load_template,
+    template_for,
 )
 from fcmd.console import print_error
 
@@ -92,7 +93,7 @@ _DESCRIPTION = (
     "并做汇总、两工况对比与工程门控；不含任何真实配方或材料参数"
 )
 
-_ERRORS = (ParamError, DeckError, ModelError, SolverError, ResultParseError, OSError)
+_ERRORS = (ParamError, DeckError, MeshError, ModelError, SolverError, ResultParseError, OSError)
 
 
 def _fail(message: str, code: int = 2) -> None:
@@ -129,15 +130,20 @@ def example_command(out: Path | None = None) -> None:
 
 
 @fcmd.tool("dynacalc", subcommand="template", help="输出内置 LS-DYNA deck 模板", description=_DESCRIPTION)
-def template_command(out: Path | None = None) -> None:
-    """输出内置关键字模板（含材料 / EOS / ALE / 起爆 / 输出占位）。
+def template_command(
+    out: Path | None = None,
+    dimension: Literal["3d-ale", "axisymmetric-2d"] = "3d-ale",
+) -> None:
+    """输出内置关键字模板（含材料 / EOS / 起爆 / 输出占位）。
 
     Parameters
     ----------
     out:
         写入路径；省略时打印到标准输出
+    dimension:
+        模板族：``3d-ale``（默认，自包含 ALE）或 ``axisymmetric-2d``（含网格包占位符）
     """
-    _write_or_print(default_template(), out)
+    _write_or_print(template_for(dimension), out)
 
 
 @fcmd.tool("dynacalc", subcommand="params", help="校验并摘要参数文件", description=_DESCRIPTION)
@@ -290,6 +296,9 @@ def generate_command(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，�
     model: list[Path] | None = None,
     only: list[str] | None = None,
     strict: bool = False,
+    mesh_root: Path | None = None,
+    dimension: Literal["3d-ale", "axisymmetric-2d"] | None = None,
+    mesh_level: str | None = None,
 ) -> None:
     """按矩阵（及模型描述）生成每个工况的 deck 目录与根清单。
 
@@ -300,44 +309,58 @@ def generate_command(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，�
     out:
         输出根目录
     template:
-        自定义模板文件；省略时用内置模板
+        自定义模板文件；省略时按维度用内置模板族
     model:
         ``dynacalc-model/1`` 模型文件（可多个）
     only:
         只生成指定工况编码
     strict:
         存在 TBD 字段时拒绝生成
+    mesh_root:
+        网格根目录（``<case>/meshes``）；给出时按模型指纹选择网格包并渲染
+        ``axisymmetric-2d`` 模板族
+    dimension:
+        模板族：``3d-ale``（默认，无网格）或 ``axisymmetric-2d``（需 ``--mesh-root``）
+    mesh_level:
+        档位（coarse / medium / fine）；同一模型有多档时必须显式指定
     """
     try:
         table = load_params(params_file)
         models = load_models(model) if model else None
         template_text = load_template(template) if template is not None else None
+        meshes = scan_mesh_root(mesh_root) if mesh_root is not None else None
         result = generate_decks(
             table,
             out,
             template=template_text,
-            template_name=template.name if template is not None else "builtin",
+            template_name=template.name if template is not None else None,
             only=only,
             strict=strict,
             models=models,
+            meshes=meshes,
+            dimension=dimension,
+            mesh_level=mesh_level,
         )
         manifest = result.manifest
     except _ERRORS as exc:
         _fail(str(exc))
         return
     print(f"已生成 {manifest.total} 个工况到 {out}")
-    print(f"清单：{out / 'manifest.json'}；模板摘要 {manifest.template_digest[:12]}")
+    print(f"清单：{out / 'manifest.json'}；模板 {manifest.template_name}，摘要 {manifest.template_digest[:12]}")
     print(
         f"主矩阵 {sum(1 for item in manifest.cases if item.group == 'main')} 组，"
         f"补充组 {sum(1 for item in manifest.cases if item.group != 'main')} 组；"
         f"TBD 工况 {manifest.tbd_cases} 个 / 字段 {manifest.tbd_fields} 处"
     )
+    if meshes is not None:
+        print(f"网格包 {len(meshes.packages)} 个（{mesh_root}）")
     if manifest.models:
         print(f"模型绑定：绑定 {manifest.model_bound} 个工况，回落矩阵 {manifest.model_fallback} 个工况")
     for item in manifest.cases:
         tbd = f" TBD={len(item.tbd)}" if item.tbd else ""
         model_note = f" model={item.model_id}@{item.model_digest[:8]}" if item.model_id else ""
-        print(f"[{item.code}] {item.slug}{tbd}{model_note}")
+        mesh_note = f" mesh={item.mesh_id}@{item.mesh_level}" if item.mesh_id else ""
+        print(f"[{item.code}] {item.slug}{tbd}{model_note}{mesh_note}")
 
 
 @fcmd.tool("dynacalc", subcommand="run", help="执行求解（支持 dry-run / 假求解器）", description=_DESCRIPTION)

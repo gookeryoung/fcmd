@@ -159,24 +159,26 @@ ELFORM=14 的轴对称假定（对称轴位置、`r ≥ 0`、厚度取实厚）�
 ### 6.2 写入与引用方式
 
 - `case.json` 增加：`mesh_id` / `mesh_digest` / `geometry_key` / `level` / `template_family`；
-- deck 主文件 `<case>/<编码>-<指纹前8位>/deck.k`，网格用
-  `*INCLUDE` 相对路径 `../meshes/<mesh_id>/mesh.k` 引用（不复制、不改片段）；
-- `*DATABASE_HISTORY_NODE` 用 `probes`（或集合成员）里的节点号；
-- `*BOUNDARY_*` 一律按 SID 引用，不按 title 猜测。
+- deck 主文件沿用 `<case>/<编码>-<指纹前8位>/case.k`（与求解调度、断点续跑的既有约定一致，
+  不另起 `deck.k`），网格用 `*INCLUDE` 相对路径 `../meshes/<mesh_id>/mesh.k` 引用
+  （不复制、不改片段）；
+- `*DATABASE_HISTORY_NODE` 用 `probes[].node_id`（按节点号升序、去重）；
+- `*BOUNDARY_*` 一律按 SID 引用，不按 title 猜测；v1 不生成 `*BOUNDARY_NON_REFLECTING`。
 
 ### 6.3 排期（明确排在 GUI / 测试之后）
 
 | 顺序 | 工作 | 状态 |
 |---|---|---|
 | 1 | CLI + Tk GUI + 单元测试（现有闭环） | 已完成 |
-| 2 | 模板族拆分：`3d-ale` 保持 + `axisymmetric-2d` 新增，纯函数渲染测试 | 下一阶段 |
-| 3 | 网格包读取与校验模块（§6.1）+ 单元测试 | 下一阶段 |
-| 4 | deck 组装：`*PART` / `*SECTION_SHELL` 映射、`*INITIAL_DETONATION`、`*DATABASE_HISTORY_NODE`、`*BOUNDARY_*` | 下一阶段 |
-| 5 | 门控：同 `geometry_key` 三档的网格误差比较 | 下一阶段 |
-| 6 | CLI `--mesh-root` / `--dimension` 与 GUI 挂接 | 最后 |
+| 2 | 模板族拆分：`3d-ale` 保持 + `axisymmetric-2d` 新增，纯函数渲染测试 | 已完成 |
+| 3 | 网格包读取与校验模块（§6.1）+ 单元测试 | 已完成 |
+| 4 | deck 组装：`*PART` / `*SECTION_SHELL` 映射、`*INITIAL_DETONATION`、`*DATABASE_HISTORY_NODE`、`*INCLUDE` | 已完成 |
+| 5 | 门控：同 `geometry_key` 三档的网格误差比较 | 已完成（纯函数 + 测试；结果侧门控后接） |
+| 6 | CLI `--mesh-root` / `--dimension` / `--mesh-level` 与 GUI 挂接 | CLI 已完成；GUI 待挂接 |
 
-在契约 §7 问题有答复、且本文件 §1.2 的必填项落地之前，dynacalc 不读 `meshes/` 目录，
-现有 3D ALE 路径保持不变。
+落地位置：`_template.py`（`TEMPLATE_FAMILIES` / `template_for`）、`_mesh.py`（读取、校验、
+推断与档间比较）、`dynacalc.py generate`（`--mesh-root` / `--dimension` / `--mesh-level`）。
+现有 3D ALE 路径的模板文本与指纹保持不变；网格派生值只在给定网格根时参与指纹。
 
 ## 7. 需要 paramesh 回复的 6 个问题
 
@@ -223,25 +225,26 @@ ELFORM=14 以 x 轴为对称轴一致。dynacalc 侧据此确认：
 - 校验时读 `coordinate_system`，要求 `symmetry_axis == "x"`、`x == "axial"`、`y == "radial"`，
   不匹配即报错，不静默按 3D 轴序组卡。
 
-### 8.2 两项待确认（不阻塞契约定稿，但影响 deck 组装）
+### 8.2 两项待确认 → 已由 paramesh `0a6d966` 确认
 
-1. **`section.thickness_mm` 的物理语义**：当前取「区域代表截面处的径向总厚度」
-   （炸药 = `propellant_radius_mm`、管壁 = `section_wall_mm`），但网格在壁厚方向有 6–10 层、
-   药层也有径向分层。若 ELFORM=14 的厚度按 shell 中面法向的真实厚度解释，则每一行单元应取
-   本行径向步长，用区域总厚度会按层数放大质量与刚度；若按轴对称连续体解释（厚度不参与
-   面内离散），则应给 1.0。请 paramesh 在 `quality` 里补一项「按 `section.thickness_mm`
-   折算的总质量 / 解析质量」比值，或明确该字段的求解器语义；dynacalc 在 §6.3 第 3 步
-   （网格包校验）里加对应断言。
-2. **探针轴向站位**：当前 `probes` 只锚定两个端面（`axis_start` / `axis_end`）与固定半径，
-   端点差只能给平均爆速。门控要求的「稳态段爆速」需要在稳态区内至少 3 个轴向站位的波面
-   到达时程（最小二乘拟合 + R²）。建议 `probes` 增加 `axis_station_*`（如 `z = 0.25L /
-   0.5L / 0.75L`，且落在稳态窗口内），或由配置给出站位比例。
+1. **`section.thickness_mm` 的物理语义**：固定为 `1.0`，表示轴对称连续体的**周向单位厚度**，
+   另带 `thickness_semantics = "unit_out_of_plane"`；区域总厚度只出现在
+   `section.region_thickness_mm`，**不得**写入 `*SECTION_SHELL`。paramesh 同时补
+   `quality.mass_check`：单位密度下按求解器厚度折算的旋转体体积 / 解析体积，基准模型
+   两者都是 25132.741 mm³、比值 1.0；若误用区域总厚度约 9.855 倍。dynacalc 在网格包校验
+   （`_mesh.load_package`）里断言 `|ratio - 1| <= 1e-2`（`MASS_RATIO_TOLERANCE`），并断言
+   每个部件 `section.thickness_mm == 1.0`、`thickness_semantics == "unit_out_of_plane"`；
+   任一项不满足即拒绝出卡，不落半成品 deck。
+2. **探针轴向站位**：从 8 个增到 11 个，新增 `axis_station_025 / 050 / 075`；三档网格在
+   0.25L / 0.5L / 0.75L 都有精确节点，稳态段爆速用这三点拟合。dynacalc 把
+   `axis_start / axis_station_025 / axis_station_050 / axis_station_075 / axis_end`
+   设为必检探针（`_mesh.REQUIRED_PROBES`），缺失即报错。
 
-### 8.3 排期不变
+### 8.3 排期与落地状态
 
-§6.3 的顺序与内容不变：模板族拆分 → 网格包校验（含 §8.2 的厚度断言）→ deck 组装 →
-同 `geometry_key` 三档门控 → CLI / GUI 挂接。在上述两项确认前，deck 组装只做骨架与
-断言，不锁定厚度取值策略。
+§6.3 的顺序与内容不变，当前进度见其状态列：模板族拆分、网格包校验、deck 组装与档间误差
+比较已完成并有测试覆盖；CLI 已接 `--mesh-root` / `--dimension` / `--mesh-level`，Tk GUI
+挂接留到最后一步。
 
 另：`extent` 用 `z_start_mm` / `z_end_mm`、`detonation` 用 `x`，两套命名并存（模型坐标 vs
 LS-DYNA 坐标）。v1 接受该写法，dynacalc 只按契约读，不做推断；后续若改名按加法扩展处理。

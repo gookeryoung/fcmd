@@ -642,8 +642,13 @@ def build_cases(table: ParamTable, template_digest: str = "") -> list[Case]:
     ]
 
 
-def case_fingerprint(case: Case, template_digest: str = "", model_digest: str = "") -> str:
-    """工况指纹：schema + 编码 + 分组 + 水平 + 解析值 + 模板摘要 + 模型指纹。"""
+def case_fingerprint(
+    case: Case,
+    template_digest: str = "",
+    model_digest: str = "",
+    mesh_digest: str = "",
+) -> str:
+    """工况指纹：schema + 编码 + 分组 + 水平 + 解析值 + 模板摘要 + 模型 / 网格指纹。"""
     payload = {
         "schema": SCHEMA,
         "code": case.code,
@@ -653,6 +658,8 @@ def case_fingerprint(case: Case, template_digest: str = "", model_digest: str = 
         "template": template_digest,
         "model": model_digest,
     }
+    if mesh_digest:
+        payload["mesh"] = mesh_digest
     return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
 
