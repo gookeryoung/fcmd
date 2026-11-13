@@ -231,16 +231,55 @@ def test_collect_images_all_sources_fail_without_cache_raises(tmp_path: Path) ->
     assert excinfo.value.code == "RUNTIME_ERROR"
 
 
-def test_cli_failure_without_cache_keeps_original_error() -> None:
-    """没有缓存可降级时，CLI 失败即报错（既有退出码语义）。"""
+def test_cli_failure_without_cache_falls_back_to_manifest(tmp_path: Path) -> None:
+    """``wsl --list --online`` 失败但官方清单可用：仍出列表，只少 CLI 独有条目。"""
+    manifest = _images.parse_distribution_info(_MANIFEST)
+    cache = tmp_path / "cache.json"
+
+    catalog = _images.collect_images(
+        fetch_cli=lambda: (_ for _ in ()).throw(runtime_error("cli down")),
+        fetch_manifest=lambda: manifest,
+        now=lambda: 1_700_000_000.0,
+        cache_file=cache,
+    )
+
+    assert [entry.name for entry in catalog.entries] == [entry.name for entry in manifest]
+    assert catalog.sources == ("manifest",)
+    assert catalog.from_cache is False
+    assert catalog.stale is False
+    assert any("wsl --list --online 不可用" in warning for warning in catalog.warnings)
+    # 单源成功也落盘，下次单源失效时仍有真实列表可降级。
+    assert cache.exists()
+
+
+def test_manifest_failure_without_cache_keeps_cli_rows(tmp_path: Path) -> None:
+    """官方清单不可用但 CLI 正常：按 CLI 列表输出，不报错。"""
+    catalog = _images.collect_images(
+        fetch_cli=lambda: (OnlineRow("Ubuntu", "Ubuntu"),),
+        fetch_manifest=lambda: (_ for _ in ()).throw(runtime_error("json down")),
+        now=lambda: 1_700_000_000.0,
+        cache_file=tmp_path / "cache.json",
+    )
+
+    assert [entry.name for entry in catalog.entries] == ["Ubuntu"]
+    assert catalog.sources == ("cli",)
+    assert any("官方镜像清单不可用" in warning for warning in catalog.warnings)
+
+
+def test_collect_images_fatal_error_is_never_degraded(tmp_path: Path) -> None:
+    """``fatal`` 判定的错误（如 WSL 未启用）直接上抛，即使清单源可用。"""
+    boom = runtime_error("WSL 未启用")
+
     with pytest.raises(WslmanError) as excinfo:
         _images.collect_images(
-            fetch_cli=lambda: (_ for _ in ()).throw(runtime_error("cli down")),
+            fetch_cli=lambda: (_ for _ in ()).throw(boom),
             fetch_manifest=lambda: _images.parse_distribution_info(_MANIFEST),
             now=lambda: 1_700_000_000.0,
-            cache_file=None,
+            cache_file=tmp_path / "cache.json",
+            fatal=lambda exc: "未启用" in str(exc),
         )
-    assert str(excinfo.value) == "cli down"
+
+    assert excinfo.value is boom
 
 
 def test_mark_local_state_is_case_insensitive() -> None:

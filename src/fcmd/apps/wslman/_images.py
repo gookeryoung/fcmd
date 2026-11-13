@@ -360,13 +360,18 @@ def collect_images(
     fetch_manifest: Callable[[], Sequence[ImageEntry]],
     now: Callable[[], float] = time.time,
     cache_file: Path | None = None,
+    fatal: Callable[[Exception], bool] | None = None,
 ) -> ImageCatalog:
     """并发无关的编排：两个源各自失败不影响另一个，必要时用缓存补齐。
 
     - 两个源都成功：合并后用 ``now()`` 作数据时间，并刷新缓存；
-    - 部分失败：成功的源 + 缓存补齐缺的条目，标记 ``stale``；
-    - 全部失败：只用缓存；
-    - CLI 失败且没有缓存：抛出 CLI 的原错误，保留既有退出码语义。
+    - 只有一个源成功：用它出列表（没有缓存可补时也不报错），并写入缓存；
+    - 部分失败但有缓存：成功的源 + 缓存补齐缺的条目，标记 ``stale``；
+    - 全部失败：只用缓存，标记 ``stale`` 与「已过期」；
+    - 全部失败且没有缓存：抛出 CLI 的原错误，保留既有退出码语义。
+
+    ``fatal`` 用来把「不算抓取失败」的错误（例如 WSL 未启用）直接上抛，
+    避免被当成可降级的单源故障。
     """
     warnings: list[str] = []
     cache = load_cache(cache_file)
@@ -386,6 +391,8 @@ def collect_images(
     try:
         cli_rows = tuple(fetch_cli())
     except Exception as exc:
+        if fatal is not None and fatal(exc):
+            raise
         cli_error = exc
         warnings.append(f"wsl --list --online 不可用：{exc}")
     try:
@@ -393,8 +400,10 @@ def collect_images(
     except Exception as exc:
         warnings.append(f"官方镜像清单不可用：{exc}")
 
-    if cli_rows is None and cache is None:
-        # 没有缓存可降级时保留既有语义：wsl --list --online 失败即报错（退出码不变）。
+    if cli_rows is None and manifest_entries is None and cache is None:
+        # 两条在线源都拿不到、也没有缓存时才报错：优先抛 CLI 的原错误（退出码语义不变）。
+        # 只失败一个源不算错误——``wsl --list --online`` 自身要联网下载清单，慢且易超时，
+        # 官方 DistributionInfo.json 通常仍可直连；此时用它给出完整列表比直接失败有用。
         if cli_error is not None:
             raise cli_error
         raise runtime_error(
@@ -404,41 +413,22 @@ def collect_images(
     if cli_rows is None and manifest_entries is None:
         if cache is None:  # 不可达：上面的分支已拦截，这里只做类型收窄
             raise runtime_error("在线镜像清单不可用且没有可用缓存", hint="检查网络或代理")
-        age = max(0.0, current - cache.fetched_at)
-        warnings.append(
-            f"在线源均不可用，使用缓存（获取于 {_age_text(age)}前，已过期）"
-            if age > CACHE_TTL_SECONDS
-            else f"在线源均不可用，使用缓存（获取于 {_age_text(age)}前）"
-        )
-        return ImageCatalog(
-            entries=cache.entries,
-            sources=("cache",),
-            fetched_at=cache.fetched_at,
-            from_cache=True,
-            stale=True,
-            warnings=tuple(warnings),
-        )
+        return _cache_catalog(cache, current, warnings)
 
     # 只有一个源成功时，用缓存补另一个来源的条目，避免列表突然缩水。
     cli_fresh = cli_rows is not None
     manifest_fresh = manifest_entries is not None
-    if cli_rows is None and cache is not None:
-        cli_rows = tuple(
-            OnlineRow(name=entry.name, friendly_name=entry.friendly_name)
-            for entry in cache.entries
-            if "cli" in entry.sources
-        )
-    if manifest_entries is None and cache is not None:
-        manifest_entries = tuple(entry for entry in cache.entries if set(entry.sources) - {"cli"})
-
-    merged = merge_entries(cli_rows or (), manifest_entries or ())
+    cli_rows, manifest_entries = _backfill_from_cache(cli_rows, manifest_entries, cache)
+    merged = merge_entries(cli_rows, manifest_entries)
     fetched_at = current
     used_cache = cache is not None and not (cli_fresh and manifest_fresh)
     if used_cache and cache is not None and cache.fetched_at:
         # 混合来源时，时间取缓存里最新的一次，避免把旧数据标成刚刚获取。
         fetched_at = min(fetched_at, cache.fetched_at)
     sources = tuple(source for source, ok in (("cli", cli_fresh), ("manifest", manifest_fresh)) if ok)
-    if cli_fresh and manifest_fresh:
+    if merged and not used_cache:
+        # 全部条目都来自本次在线抓取才写缓存（含「只成功一个源且没有缓存可补」的情况），
+        # 这样下次单源失效时至少有上一次的真实列表可降级；混合缓存的结果不落盘。
         save_cache(merged, fetched_at, cache_file, sources)
     if used_cache:
         warnings.append("部分来源不可用，已用上次缓存补齐；条目可能不是最新")
@@ -448,6 +438,43 @@ def collect_images(
         fetched_at=fetched_at,
         from_cache=False,
         stale=used_cache,
+        warnings=tuple(warnings),
+    )
+
+
+def _backfill_from_cache(
+    cli_rows: tuple[OnlineRow, ...] | None,
+    manifest_entries: tuple[ImageEntry, ...] | None,
+    cache: ImageCache | None,
+) -> tuple[tuple[OnlineRow, ...], tuple[ImageEntry, ...]]:
+    """单源成功时用缓存补另一个来源缺的条目；没有缓存就原样返回。"""
+    if cache is None:
+        return cli_rows or (), manifest_entries or ()
+    if cli_rows is None:
+        cli_rows = tuple(
+            OnlineRow(name=entry.name, friendly_name=entry.friendly_name)
+            for entry in cache.entries
+            if "cli" in entry.sources
+        )
+    if manifest_entries is None:
+        manifest_entries = tuple(entry for entry in cache.entries if set(entry.sources) - {"cli"})
+    return cli_rows, manifest_entries
+
+
+def _cache_catalog(cache: ImageCache, current: float, warnings: list[str]) -> ImageCatalog:
+    """两个在线源都不可用时的缓存兜底；明确标注过期，不静默返回空列表。"""
+    age = max(0.0, current - cache.fetched_at)
+    warnings.append(
+        f"在线源均不可用，使用缓存（获取于 {_age_text(age)}前，已过期）"
+        if age > CACHE_TTL_SECONDS
+        else f"在线源均不可用，使用缓存（获取于 {_age_text(age)}前）"
+    )
+    return ImageCatalog(
+        entries=cache.entries,
+        sources=("cache",),
+        fetched_at=cache.fetched_at,
+        from_cache=True,
+        stale=True,
         warnings=tuple(warnings),
     )
 

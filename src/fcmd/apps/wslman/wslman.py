@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from fcmd.apps.wslman._source import DownloadResult
 
 import fcmd
-from fcmd.apps.wslman import _images
+from fcmd.apps.wslman import _images, _mirrors
 from fcmd.apps.wslman._config import WslmanConfig, load_config
 from fcmd.apps.wslman._decode import (
     DistroRow,
@@ -1947,6 +1947,7 @@ def available(json_output: bool = False) -> None:
         catalog = _images.collect_images(
             fetch_cli=lambda: _online_rows(env),
             fetch_manifest=_manifest_images,
+            fatal=_is_not_enabled_error,
         )
     except WslmanError as exc:
         _fail(exc, "available", json_output)
@@ -2005,8 +2006,13 @@ def available(json_output: bool = False) -> None:
 
 
 def _online_rows(env: Environment) -> tuple[OnlineRow, ...]:
-    """运行 ``wsl --list --online`` 并解析两列表格。"""
-    result = _run_wsl(env, ["--list", "--online"], timeout=120.0)
+    """运行 ``wsl --list --online`` 并解析两列表格。
+
+    超时按默认 30 s 掐断：这条命令要由 wsl.exe 自己联网下载 DistributionInfo.json，
+    本机实测冷启动 15–38 s、失败时「操作超时」；掐断后由官方清单或缓存兜底，
+    避免 GUI 长时间停在「正在获取镜像清单…」。
+    """
+    result = _run_wsl(env, ["--list", "--online"])
     text = decode_console(result.stdout or result.stderr)
     if result.returncode != 0:
         if is_not_enabled_message(text):
@@ -2016,6 +2022,11 @@ def _online_rows(env: Environment) -> tuple[OnlineRow, ...]:
             hint="检查网络或代理；离线时可用 fcmd wslman download <名称> --source file --file <本地 tar>",
         )
     return parse_online_list(text)
+
+
+def _is_not_enabled_error(exc: Exception) -> bool:
+    """「WSL 未启用」是环境问题，不当作可降级的单源抓取失败（退出码语义不变）。"""
+    return isinstance(exc, WslmanError) and exc.hint == _NOT_ENABLED_HINT
 
 
 def _manifest_images() -> tuple[_images.ImageEntry, ...]:
@@ -2078,6 +2089,7 @@ _DOWNLOAD_SOURCES = frozenset({"auto", "cli", "manifest", "file"})
         "overwrite": "覆盖已存在的目标文件",
         "preview": "只打印计划、来源与目标路径，不联网、不写文件",
         "json_output": "输出机读结果信封",
+        "mirror": "下载源顺序：auto（默认，国内镜像优先）/ official / ustc / aliyun / huawei",
     },
 )
 def download(  # noqa: PLR0912, PLR0913, PLR0917
@@ -2087,6 +2099,7 @@ def download(  # noqa: PLR0912, PLR0913, PLR0917
     source: Literal["auto", "cli", "manifest", "file"] = "auto",
     manifest_url: str | None = None,
     sha256: str | None = None,
+    mirror: str = "auto",
     overwrite: bool = False,
     preview: bool = False,
     json_output: bool = False,
@@ -2096,8 +2109,14 @@ def download(  # noqa: PLR0912, PLR0913, PLR0917
     ``auto`` 只在能力探测到 ``--no-launch`` 时走 ``wsl --install``，失败自动落到清单；
     下载始终计算并输出 sha256，只有给了期望值且匹配才置 ``verified``。
     """
-    from fcmd.apps.wslman._source import download as download_archive
-    from fcmd.apps.wslman._source import download_name, fetch_manifest, file_source, find_entry, parse_manifest
+    from fcmd.apps.wslman._source import (
+        download_mirrored,
+        download_name,
+        fetch_manifest,
+        file_source,
+        find_entry,
+        parse_manifest,
+    )
 
     warnings: list[str] = []
     try:
@@ -2106,6 +2125,12 @@ def download(  # noqa: PLR0912, PLR0913, PLR0917
         name = _validated_name(name)
         if source not in _DOWNLOAD_SOURCES:
             raise invalid_argument(f"不支持的 --source：{source}", field="source")
+        if mirror not in _mirrors.identifiers():
+            raise invalid_argument(
+                f"不支持的 --mirror：{mirror}",
+                hint=f"可选：{' / '.join(_mirrors.identifiers())}",
+                field="mirror",
+            )
         expected = (sha256 or env.config.sha256.get(name) or "").strip().casefold() or None
         configured_dir = env.config.download_dir.strip()
         target_dir = dir or (Path(configured_dir) if configured_dir else None)
@@ -2182,32 +2207,45 @@ def download(  # noqa: PLR0912, PLR0913, PLR0917
                 json_output=json_output,
             )
             return
-        if not manifest_url:
-            raise invalid_argument(
-                "未配置清单地址，无法使用 manifest 来源",
-                hint="在 wslman.json 写入 download.manifest_url，或临时传 --manifest-url；也可用 --source file",
-                field="manifest_url",
-            )
         target_dir = _require_dir(
             target_dir,
             example=f"fcmd wslman download {name} --dir D:\\wsl-images",
         )
-        payload = fetch_manifest(manifest_url)
-        manifest = parse_manifest(payload)
-        entry = find_entry(manifest, name)
-        target_path = target_dir / download_name(name, entry.url, manifest.arch)
+        if manifest_url:
+            payload = fetch_manifest(manifest_url)
+            manifest = parse_manifest(payload)
+            entry = find_entry(manifest, name)
+            url, size, arch = entry.url, entry.size, manifest.arch
+            expected = expected or entry.sha256
+        else:
+            # 没配置自定义清单时用微软官方发行版清单：与 available / GUI 列表同一份数据，
+            # 一条命令就能下载，不再要求用户先写 manifest_url。
+            image, download_entry = _official_image(name)
+            if not download_entry.url:
+                raise runtime_error(
+                    f"{image.name} 没有可直接下载的镜像（只有 Store 包）",
+                    hint="改用 fcmd wslman download 同名命令（--source cli）走 wsl --install",
+                )
+            url, size, arch = download_entry.url, None, download_entry.arch
+            expected = expected or download_entry.sha256
+            warnings.append(f"使用官方发行版清单：{image.name}（{arch}）")
+        target_path = target_dir / download_name(name, url, arch)
         if target_path.exists() and not overwrite:
             raise invalid_argument(
                 f"目标文件已存在：{target_path}",
                 hint="换一个 --dir，或加 --overwrite 覆盖",
                 field="dir",
             )
-        expected = expected or entry.sha256
-        check = _preflight_for(env, target_path, entry.size, estimated=entry.size is None)
+        check = _preflight_for(env, target_path, size, estimated=size is None)
         if not check.ok:
             raise runtime_error(f"目标卷空间不足：{check.detail}", hint=_RESERVE_HINT)
+        plans = _mirrors.candidates(url, policy=mirror, verifiable=expected is not None)
+        if len(plans) == 1 and expected is None:
+            warnings.append("清单未提供 sha256，只能走官方源（不做字节校验）")
+        elif mirror == "auto" and len(plans) > 1:
+            warnings.append(f"优先使用国内镜像：{plans[0].label}；校验不过自动回退官方源")
         try:
-            downloaded = download_archive(entry.url, target_path, expected_sha256=expected)
+            downloaded = download_mirrored(target_path, candidates=plans, expected_sha256=expected)
         except KeyboardInterrupt:
             raise interrupted(
                 f"下载被中断；临时文件 {part_path(target_path)} 已保留",
@@ -2226,8 +2264,19 @@ def download(  # noqa: PLR0912, PLR0913, PLR0917
         method="manifest",
         warnings=[*warnings, *env.config.warnings],
         json_output=json_output,
-        extra={"url": entry.url, "arch": manifest.arch, "preflight": check.to_data()},
+        extra={
+            "url": url,
+            "arch": arch,
+            "mirror_policy": mirror,
+            "mirror_candidates": [plan.to_data() for plan in plans],
+            "preflight": check.to_data(),
+        },
     )
+
+
+def _source_label(source: str) -> str:
+    """下载结果里的来源 id 转展示文案：官方 / 本地文件 / 具体镜像站。"""
+    return "本地文件" if source == "file" else _mirrors.label(source)
 
 
 def _emit_download_file(  # noqa: PLR0913
@@ -2261,10 +2310,46 @@ def _emit_download_file(  # noqa: PLR0913
             f"文件: {result_data.path}",
             f"大小: {format_bytes(result_data.size)}",
             f"sha256: {result_data.sha256}",
+            f"来源: {_source_label(result_data.source)}",
             f"校验: {'已校验' if result_data.verified else '未提供期望值，未校验'}",
             f"下一步: {next_command}",
         ],
         warnings=warnings,
+    )
+
+
+def _official_image(name: str) -> tuple[_images.ImageEntry, _images.ImageDownload]:
+    """在官方发行版清单里按名称找镜像，并按本机架构挑下载项。
+
+    与 ``available`` / GUI 列表同一份清单：清单里只有 Store 包的条目（``downloads`` 为空）
+    会走 ``wsl --install``，其余直接给出可下载的 URL 与官方 sha256。
+    """
+    from fcmd.apps.wslman._source import current_arch
+
+    try:
+        entries = _manifest_images()
+    except WslmanError:
+        # 清单源临时不可达时用 available 留下的缓存，别让「已下载一半」也被网络卡住。
+        cache = _images.load_cache()
+        if cache is None or not cache.entries:
+            raise
+        entries = cache.entries
+    lowered = name.casefold()
+    for entry in entries:
+        if entry.name.casefold() != lowered:
+            continue
+        if not entry.downloads:
+            return entry, _images.ImageDownload(arch="any", url="")
+        preferred = "aarch64" if "arm" in current_arch().casefold() else "x86_64"
+        for download in entry.downloads:
+            if download.arch == preferred:
+                return entry, download
+        return entry, entry.downloads[0]
+    names = "、".join(entry.name for entry in entries[:8])
+    raise not_found(
+        f"官方清单里没有发行版：{name}",
+        hint=f"可用名称示例：{names}…；完整列表见 fcmd wslman available",
+        field="name",
     )
 
 
@@ -2308,16 +2393,21 @@ def _download_preview(  # noqa: PLR0913
         from fcmd.apps.wslman._source import download_name
 
         url = manifest_url or env.config.manifest_url
-        if not url:
-            raise invalid_argument(
-                "未配置清单地址，无法预览 manifest 来源",
-                hint="在 wslman.json 写入 download.manifest_url，或临时传 --manifest-url；也可用 --source file",
-                field="manifest_url",
-            )
-        target = (target_dir / download_name(name, url)) if target_dir else None
+        target = None
+        if url:
+            catalog_line = f"清单: {url}"
+            if target_dir:
+                target = target_dir / download_name(name, url)
+        else:
+            # 与 available 一致：没配置自定义清单就用官方发行版清单；预览不联网，只给地址。
+            from fcmd.apps.wslman._source import current_arch
+
+            catalog_line = f"清单: 官方发行版清单 {_images.MANIFEST_URL}"
+            if target_dir:
+                target = target_dir / download_name(name, "", current_arch())
         lines = [
             f"发行版: {name}",
-            f"清单: {url}",
+            catalog_line,
             f"目标: {target or '<未指定 --dir>'}",
             f"期望 sha256: {expected or '清单未提供时只计算不校验'}",
             "[预览] 未联网、未写文件",

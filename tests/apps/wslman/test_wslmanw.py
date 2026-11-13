@@ -98,6 +98,7 @@ def test_settings_mapping_is_json_friendly() -> None:
     assert wslmanw.settings_to_mapping(settings) == {
         "geometry": "900x600",
         "download_dir": r"D:\WSL",
+        "mirror": "auto",
     }
 
 

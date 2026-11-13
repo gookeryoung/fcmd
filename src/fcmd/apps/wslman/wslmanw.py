@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.apps.wslman import _images
+from fcmd.apps.wslman import _images, _mirrors
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, load_config
 from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir
@@ -90,6 +90,18 @@ HIDDEN_FACTOR = 3
 """窗口失焦时把轮询间隔放大到 3 倍；最小化时直接暂停。"""
 
 _DOWNLOAD_HINT = "wsl --install 会触发系统级安装、可能弹 UAC，且不能指定自定义镜像"
+
+_IMAGE_DETAIL_FIELDS: tuple[str, ...] = (
+    "名称",
+    "友好名",
+    "可用架构",
+    "下载来源",
+    "国内镜像",
+    "校验和",
+    "已安装",
+    "已备份",
+)
+"""下载页详情区的短字段；下载地址单独用可滚动的只读文本域渲染。"""
 
 _COLUMNS: tuple[tuple[str, str, int, int], ...] = (
     ("name", "名称", 160, 360),
@@ -200,20 +212,24 @@ def action_states(state: str | None) -> tuple[bool, bool]:
 class WslmanwSettings:
     geometry: str | None = None
     download_dir: str = ""
+    mirror: str = "auto"
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
     return {
         "geometry": settings.geometry,
         "download_dir": settings.download_dir,
+        "mirror": settings.mirror,
     }
 
 
 def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
-    # 旧版本写过 manifest_url / download_source（来源下拉框已换成镜像列表）：按未知字段忽略。
+    # 旧版本写过 manifest_url / download_source / auto_refresh：按未知字段忽略。
+    mirror = _str(raw, "mirror")
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
         download_dir=_str(raw, "download_dir"),
+        mirror=mirror if mirror in _mirrors.identifiers() else "auto",
     )
 
 
@@ -285,6 +301,18 @@ def image_row(entry: _images.ImageEntry) -> tuple[str, str, str, str]:
     return (entry.name, entry.friendly_name or "-", "/".join(entry.arches) or "任意", marks)
 
 
+def mirror_choices(entry: _images.ImageEntry) -> str:
+    """该条目可用的国内镜像（按优先顺序去重）；没有 sha256 时只列官方源。"""
+    if not entry.has_sha256:
+        return "无（缺 sha256，仅官方源）"
+    labels: list[str] = []
+    for download in entry.downloads:
+        for candidate in _mirrors.candidates(download.url, policy=_mirrors.AUTO, verifiable=True):
+            if candidate.ident != _mirrors.OFFICIAL and candidate.label not in labels:
+                labels.append(candidate.label)
+    return "、".join(labels) or "无（官方源）"
+
+
 def image_details(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
     """下载页的「字段 → 值」：来源、架构、校验和与每个架构的下载地址。"""
     sources = "、".join(_SOURCE_LABELS.get(source, source) for source in entry.sources) or "未知"
@@ -297,6 +325,7 @@ def image_details(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
         ("友好名", entry.friendly_name or "未知"),
         ("可用架构", "/".join(entry.arches) or "任意（由 WSL 选择）"),
         ("下载来源", sources),
+        ("国内镜像", mirror_choices(entry)),
         ("校验和", "有 sha256" if entry.has_sha256 else "无 sha256（不标 verified）"),
         ("已安装", "是" if entry.installed else "否"),
         ("已备份", "是" if entry.backed_up else "否"),
@@ -523,14 +552,31 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         frame.rowconfigure(1, weight=1)
 
         search = ttk.Frame(frame)
-        search.grid(row=0, column=0, columnspan=2, sticky="ew")
+        search.grid(row=0, column=0, sticky="ew")
         ttk.Label(search, text="搜索").pack(side="left")
         self.image_query = self.tk.StringVar(value="")
         self.image_search = ttk.Entry(search, textvariable=self.image_query)
         self.image_search.pack(side="left", fill="x", expand=True, padx=(space.xs, space.xs))
         self.image_search.bind("<KeyRelease>", self._schedule_image_filter)
+
+        mirror_box = ttk.Frame(frame)
+        mirror_box.grid(row=0, column=1, sticky="e")
+        ttk.Label(mirror_box, text="下载源", style="Muted.TLabel").pack(side="left", padx=(space.xs, space.xs))
+        self.mirror_ids = _mirrors.identifiers()
+        self.mirror_var = self.tk.StringVar(value=self.settings.mirror)
+        self.mirror_combo = ttk.Combobox(
+            mirror_box,
+            state="readonly",
+            width=18,
+            values=[_mirrors.label(ident) for ident in self.mirror_ids],
+        )
+        self.mirror_combo.current(self.mirror_ids.index(self.settings.mirror))
+        self.mirror_combo.pack(side="left")
+        self.mirror_combo.bind("<<ComboboxSelected>>", self._on_mirror_changed)
         self.images_status = self.tk.StringVar(value="打开本页时自动获取镜像清单")
-        ttk.Label(search, textvariable=self.images_status, style="Muted.TLabel").pack(side="right")
+        ttk.Label(mirror_box, textvariable=self.images_status, style="Muted.TLabel").pack(
+            side="left", padx=(space.xs, 0)
+        )
 
         listing = ttk.Frame(frame)
         listing.grid(row=1, column=0, sticky="nsew", pady=(space.xs, 0))
@@ -561,19 +607,41 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         detail = ttk.Frame(frame, padding=(space.md, space.xs, 0, 0))
         detail.grid(row=1, column=1, sticky="nsew", pady=(space.xs, 0))
         detail.columnconfigure(1, weight=1)
+        detail.rowconfigure(len(_IMAGE_DETAIL_FIELDS), weight=1)
         self.image_detail_vars: dict[str, Any] = {}
-        for row, label in enumerate(
-            ("名称", "友好名", "可用架构", "下载来源", "校验和", "已安装", "已备份", "下载地址")
-        ):
-            ttk.Label(detail, text=label, style="Muted.TLabel").grid(row=row, column=0, sticky="nw", padx=(0, space.xs))
+        self.image_detail_labels: list[Any] = []
+        for row, label in enumerate(_IMAGE_DETAIL_FIELDS):
+            ttk.Label(detail, text=label, style="Muted.TLabel", anchor="nw").grid(
+                row=row, column=0, sticky="nw", padx=(0, space.xs)
+            )
             variable = self.tk.StringVar(value="—")
-            ttk.Label(detail, textvariable=variable, wraplength=220, justify="left").grid(row=row, column=1, sticky="w")
+            value = ttk.Label(detail, textvariable=variable, justify="left", anchor="nw")
+            value.grid(row=row, column=1, sticky="ew")
             self.image_detail_vars[label] = variable
+            self.image_detail_labels.append(value)
+
+        # 下载地址可能很长：用只读文本域按字符折行 + 纵向滚动，既不撑宽列也不静默截断，
+        # 文本还能选中复制；配色由主题的 ``*Text.*`` 选项统一给出。
+        url_row = len(_IMAGE_DETAIL_FIELDS)
+        ttk.Label(detail, text="下载地址", style="Muted.TLabel", anchor="nw").grid(
+            row=url_row, column=0, sticky="nw", padx=(0, space.xs)
+        )
+        self.image_url_text = self.tk.Text(detail, height=4, width=20, wrap="char", relief="flat")
+        self.image_url_text.grid(row=url_row, column=1, sticky="nsew")
+        url_scroll = ttk.Scrollbar(detail, orient="vertical", command=self.image_url_text.yview)
+        url_scroll.grid(row=url_row, column=2, sticky="ns")
+        self.image_url_text.configure(yscrollcommand=url_scroll.set, state="disabled", borderwidth=0)
+        detail.bind("<Configure>", self._on_image_detail_resize)
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(space.xs, 0))
         ttk.Button(buttons, text="开始下载", command=self._download, style="Accent.TButton").pack(side="left")
         ttk.Button(buttons, text="取消", command=self._cancel_task).pack(side="left", padx=(space.xs, 0))
+        self.install_after = self.tk.BooleanVar(value=False)
+        ttk.Checkbutton(buttons, text="下载后立即安装", variable=self.install_after).pack(
+            side="left", padx=(space.sm, 0)
+        )
+        ttk.Button(buttons, text="导入本地 tar…", command=self._import).pack(side="left", padx=(space.sm, 0))
         ttk.Label(buttons, text=_DOWNLOAD_HINT, style="Hint.TLabel", wraplength=380).pack(
             side="left", padx=(space.md, 0)
         )
@@ -785,6 +853,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             WslmanwSettings(
                 geometry=self.root.geometry(),
                 download_dir=self.download_dir.get().strip(),
+                mirror=self.mirror_var.get(),
             ),
             self.settings_path,
         )
@@ -1019,10 +1088,11 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
 
         self._start("导出", work)
 
-    def _import(self) -> None:
-        archive = self.filedialog.askopenfilename(
-            title="选择要导入的 tar", filetypes=[("tar 归档", "*.tar;*.gz;*.tgz")]
-        )
+    def _import(self, archive: str | None = None) -> None:
+        if archive is None:
+            archive = self.filedialog.askopenfilename(
+                title="选择要导入的 tar", filetypes=[("tar 归档", "*.tar;*.gz;*.tgz")]
+            )
         if not archive:
             return
         directory = self.filedialog.askdirectory(title="选择新的安装目录（必须为空）")
@@ -1062,6 +1132,20 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             return
         directory_text = self.download_dir.get().strip()
         expected = self.expected_sha.get().strip() or None
+        install_after = self.install_after.get()
+        # Tk 变量只能在主线程读；工作线程里再读会抛 "main thread is not in main loop"。
+        mirror_policy = self.mirror_var.get()
+        install_name = entry.name
+        install_dir: Path | None = None
+        if install_after:
+            # 命名与安装位置必须在主线程问完：工作线程里不能再弹对话框。
+            chosen_name = self.simpledialog.askstring("下载后安装", "新发行版名称", initialvalue=entry.name)
+            if not chosen_name:
+                return
+            chosen_dir = self.filedialog.askdirectory(title="选择安装目录（必须为空）")
+            if not chosen_dir:
+                return
+            install_name, install_dir = chosen_name, Path(chosen_dir)
 
         def work(cancel: threading.Event) -> str:
             env = cli._build_environment()
@@ -1086,17 +1170,60 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             check = cli._preflight_for(env, target, None, estimated=True)
             if not check.ok:
                 raise runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个目录")
-            result_data = _source.download(
-                download.url,
+            result_data = _source.download_mirrored(
                 target,
+                candidates=_mirrors.candidates(
+                    download.url,
+                    policy=mirror_policy,
+                    verifiable=bool(expected or download.sha256),
+                ),
                 expected_sha256=expected or download.sha256,
                 cancelled=cancel.is_set,
             )
-            return f"已下载 {target}（{format_bytes(result_data.size)}，sha256 {result_data.sha256}）"
+            summary = (
+                f"已下载 {target}（{format_bytes(result_data.size)}，"
+                f"来源 {_mirrors.label(result_data.source)}，sha256 {result_data.sha256}）"
+            )
+            if not install_after:
+                return summary
+            if install_dir is None:  # 上面已要求选择目录，这里只做类型收窄
+                raise invalid_argument("未选择安装目录")
+            # 下载完直接装：目录必须为空，同名发行版已存在时明确报错并给出 CLI 替换命令，
+            # 不静默覆盖；进度通过日志行进到界面（导入期间 wsl.exe 不产出可读进度）。
+            self._events.put(("log", "下载", f"下载完成，开始安装为 {install_name}…"))
+            problem = cli._dir_problem(install_dir)
+            if problem:
+                raise invalid_argument(
+                    f"安装目录不可用：{problem}",
+                    hint=f'删空或换目录后重试；也可只下载，再运行 fcmd wslman import {install_name} "{target}" --dir <空目录>',
+                )
+            view = cli._view(env)
+            if view.find(install_name) is not None:
+                raise invalid_argument(
+                    f"发行版 {install_name} 已存在，未自动覆盖",
+                    hint=(
+                        f'如需替换：fcmd wslman import {install_name} "{target}" --dir "{install_dir}" '
+                        "--replace --yes --backup <备份>"
+                    ),
+                )
+            cli._run_step(
+                env,
+                ["--import", install_name, str(install_dir), str(target), "--version", "2"],
+                action=f"安装 {install_name}",
+                hint="目标目录必须为空；失败时用「导入本地 tar…」重试",
+                timeout=3600.0,
+            )
+            return f"{summary}；已安装为 {install_name}（{install_dir}），刷新后可在列表启动"
 
         self._start("下载", work)
 
     # -- 镜像列表（下载页） -------------------------------------------- #
+
+    def _on_mirror_changed(self, _event: Any) -> None:
+        """切换下载源：只改本次会话的策略，关窗时随其它设置一起落盘。"""
+        index = self.mirror_combo.current()
+        self.mirror_var.set(self.mirror_ids[index] if 0 <= index < len(self.mirror_ids) else "auto")
+        self.status.set(f"下载源：{_mirrors.label(self.mirror_var.get())}")
 
     def _on_tab_changed(self, _event: Any) -> None:
         if self.notebook.tab("current", "text") == "下载":
@@ -1107,7 +1234,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         if self._images_busy or self.image_entries or self._closing:
             return
         self._images_busy = True
-        self.images_status.set("正在获取镜像清单…")
+        self.images_status.set("正在获取镜像清单…（wsl --list --online 首次较慢，可用缓存兜底）")
         threading.Thread(target=self._images_worker, daemon=True).start()
 
     def _images_worker(self) -> None:
@@ -1170,11 +1297,21 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         name = selected[0]
         return next((entry for entry in self.image_entries if entry.name == name), None)
 
+    def _on_image_detail_resize(self, event: Any) -> None:
+        """详情区跟随分配宽度换行；下载地址走文本域滚动，不参与宽度竞争。"""
+        wrap = max(120, event.width - 96)
+        for label in self.image_detail_labels:
+            label.configure(wraplength=wrap)
+
     def _show_image_details(self) -> None:
         entry = self._selected_image()
         values = dict(image_details(entry)) if entry is not None else {}
         for label, variable in self.image_detail_vars.items():
             variable.set(values.get(label, "—"))
+        self.image_url_text.configure(state="normal")
+        self.image_url_text.delete("1.0", "end")
+        self.image_url_text.insert("1.0", values.get("下载地址", "—"))
+        self.image_url_text.configure(state="disabled")
 
     def _unregister(self) -> None:
         distro = self._selected()

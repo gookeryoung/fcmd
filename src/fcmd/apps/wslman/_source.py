@@ -12,12 +12,13 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Protocol, override
 
 from fcmd.apps.wslman._errors import WslmanError, check_failed, invalid_argument, not_found, runtime_error
+from fcmd.apps.wslman._mirrors import Candidate
 from fcmd.apps.wslman._transfer import ProgressReporter, atomic_replace, part_path, sha256_file
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "ManifestEntry",
     "current_arch",
     "download",
+    "download_mirrored",
     "download_name",
     "fetch_manifest",
     "file_source",
@@ -82,6 +84,7 @@ class DownloadResult:
     size: int
     verified: bool
     resumed: bool
+    source: str = "official"
     commands: tuple[tuple[str, ...], ...] = ()
 
     def to_data(self) -> dict[str, object]:
@@ -91,6 +94,7 @@ class DownloadResult:
             "size_bytes": self.size,
             "verified": self.verified,
             "resumed": self.resumed,
+            "source": self.source,
             "commands": [list(argv) for argv in self.commands],
         }
 
@@ -377,6 +381,14 @@ def download(  # noqa: PLR0912, PLR0913
             hint=f"保留的临时文件：{part}；网络恢复后重试会尝试续传",
         ) from exc
 
+    written = part.stat().st_size
+    if total is not None and written < total:
+        # 连接中途断开时 read() 直接返回 EOF，不能当成功：保留 .part 供续传，
+        # 否则会把截断的文件误报成「sha256 不匹配」并丢掉全部进度。
+        raise runtime_error(
+            f"下载中断：只收到 {written} / {total} 字节",
+            hint=f"已保留 {part}，网络恢复后重试会自动续传",
+        )
     digest = sha256_file(part)
     if expected_sha256 is not None and digest != expected_sha256.strip().casefold():
         part.unlink(missing_ok=True)
@@ -398,6 +410,63 @@ def download(  # noqa: PLR0912, PLR0913
     )
 
 
+_MAX_RESUME_ATTEMPTS = 6
+"""同一来源断流后最多续传几次；每次只要有字节推进就继续，避免坏网络下一遍遍从头下。"""
+
+
+def download_mirrored(  # noqa: PLR0913
+    target: Path,
+    *,
+    candidates: Sequence[Candidate],
+    expected_sha256: str | None = None,
+    label: str = "下载",
+    cancelled: Callable[[], bool] | None = None,
+    opener: _Opener | None = None,
+) -> DownloadResult:
+    """按候选顺序下载：国内镜像优先，失败或校验不过就换下一个，官方源兜底。
+
+    候选来自 :func:`fcmd.apps.wslman._mirrors.candidates`，每个候选都用同一个官方
+    sha256 校验，所以「换了源」不会降低可信度；``source`` 记录实际用的那个。
+    """
+    part = part_path(Path(target))
+    meta_path = _meta_for(part)
+    failures: list[str] = []
+    for index, candidate in enumerate(candidates):
+        last_candidate = index == len(candidates) - 1
+        for _attempt in range(_MAX_RESUME_ATTEMPTS):
+            before = part.stat().st_size if part.is_file() else 0
+            try:
+                result = download(
+                    candidate.url,
+                    target,
+                    expected_sha256=expected_sha256,
+                    opener=opener,
+                    label=label,
+                    cancelled=cancelled,
+                )
+            except KeyboardInterrupt:
+                raise
+            except WslmanError as exc:
+                failures.append(f"{candidate.label}：{exc}")
+                after = part.stat().st_size if part.is_file() else 0
+                # 断流/超时只要还在推进就同源续传，最多 _MAX_RESUME_ATTEMPTS 次；
+                # 校验不过说明内容不同，直接换源。
+                if exc.code != "CHECK_FAILED" and after > before:
+                    continue
+                if not last_candidate:
+                    # 换源必须从头下：不同来源的 .part 拼在一起会得到错误字节。
+                    part.unlink(missing_ok=True)
+                    meta_path.unlink(missing_ok=True)
+                break
+            return replace(result, source=candidate.ident)
+    kept = part.stat().st_size if part.is_file() else 0
+    resume = f"；已保留 {kept} 字节，重试会从断点续传" if kept else ""
+    raise runtime_error(
+        "所有下载源均失败：" + "；".join(failures),
+        hint=f"检查网络后重试{resume}，或改用 --source file 指定本地归档",
+    )
+
+
 def file_source(path: Path, *, expected_sha256: str | None = None) -> DownloadResult:
     """校验用户提供的本地归档；不复制、不删除用户文件。"""
     target = Path(path)
@@ -415,4 +484,5 @@ def file_source(path: Path, *, expected_sha256: str | None = None) -> DownloadRe
         size=target.stat().st_size,
         verified=expected_sha256 is not None,
         resumed=False,
+        source="file",
     )

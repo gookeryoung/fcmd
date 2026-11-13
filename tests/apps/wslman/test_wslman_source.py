@@ -524,14 +524,15 @@ def test_download_file_source(
     assert code == 4
 
 
-def test_download_manifest_requires_url_and_dir(
+def test_download_manifest_requires_dir(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _use(monkeypatch, _download_env(tmp_path, _fakes.FakeRunner({})))
 
+    # 清单地址已不是必需项（缺省用官方发行版清单），--dir 才是。
     code, _out, err = _run(capsys, ["download", "Ubuntu", "--source", "manifest"])
     assert code == 3
-    assert "manifest_url" in err
+    assert "--dir" in err
 
     code, _out, err = _run(capsys, ["download", "Ubuntu", "--source", "manifest", "--manifest-url", "https://e/m.json"])
     assert code == 3
@@ -905,9 +906,11 @@ def test_download_preview_file_and_missing_manifest(
     assert code == 0
     assert str(archive) in out
 
-    code, _out, err = _run(capsys, ["download", "Ubuntu", "--source", "manifest", "--preview"])
-    assert code == 3
-    assert "manifest_url" in err
+    code, out, _err = _run(capsys, ["download", "Ubuntu", "--source", "manifest", "--preview"])
+    assert code == 0
+    # 没配置自定义清单时回落到官方发行版清单，预览只给地址、不联网。
+    assert _images.MANIFEST_URL in out
+    assert "官方发行版清单" in out
 
 
 def test_unregister_terminate_first_and_failures(
