@@ -133,6 +133,8 @@ TOOLS: dict[str, ToolEntry] = {
     "websave": ToolEntry("websave", "python", "fcmd.tools.net.websave"),
     "which": ToolEntry("which", "python", "fcmd.tools.system.which"),
     "writefile": ToolEntry("writefile", "python", "fcmd.tools.system.writefile"),
+    "wslman": ToolEntry("wslman", "python", "fcmd.apps.wslman.wslman"),
+    "wslmanw": ToolEntry("wslmanw", "python", "fcmd.apps.wslman.wslmanw"),
     "xmltool": ToolEntry("xmltool", "python", "fcmd.tools.data.xmltool"),
     "yamtool": ToolEntry("yamtool", "python", "fcmd.tools.data.yamtool"),
     "zipencrypt": ToolEntry("zipencrypt", "python", "fcmd.tools.archive.zipencrypt"),
@@ -266,6 +268,8 @@ DESCRIPTIONS: dict[str, str] = {
     "websave": "保存网页内容（主页及相关子页面，含图片/CSS/JS）",
     "which": "查找可执行命令路径（跨平台）",
     "writefile": "写入文本内容到文件",
+    "wslman": "列出已安装的 WSL 发行版（只读，不启动发行版）",
+    "wslmanw": "WSL 发行版管理的图形界面：列表/详情、打开终端、导出导入、下载、注销与关闭全部",
     "xmltool": "格式化打印 XML",
     "yamtool": "格式化打印 YAML",
     "zipencrypt": "加密目录下文件为密码保护的 ZIP",
@@ -292,6 +296,8 @@ LAYOUT: tuple[str, ...] = (
     "apps/renamer/renamerw.py",
     "apps/reshack/reshack.py",
     "apps/reshack/reshackw.py",
+    "apps/wslman/wslman.py",
+    "apps/wslman/wslmanw.py",
     "tools/archive/archivex.py",
     "tools/archive/folderzip.py",
     "tools/archive/zipencrypt.py",
@@ -401,7 +407,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "e109aca06d398f7d628d5edc24c193f9"
+DIGEST = "805cddc1debef89b205a258ab6d55187"
 
 
 if __name__ == "__main__":  # pragma: no cover
