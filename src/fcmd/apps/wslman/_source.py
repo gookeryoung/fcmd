@@ -12,7 +12,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, override
@@ -301,6 +301,7 @@ def download(  # noqa: PLR0912, PLR0913
     timeout: float = 60.0,
     chunk: int = _CHUNK,
     label: str = "下载",
+    cancelled: Callable[[], bool] | None = None,
 ) -> DownloadResult:
     """下载到 ``<target>.part``，支持 Range 续传，校验后原子改名。
 
@@ -349,6 +350,8 @@ def download(  # noqa: PLR0912, PLR0913
             try:
                 with part.open("ab" if resumed else "wb") as handle:
                     while True:
+                        if cancelled is not None and cancelled():
+                            raise KeyboardInterrupt
                         data = response.read(chunk)
                         if not data:
                             break

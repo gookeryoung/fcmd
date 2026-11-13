@@ -245,6 +245,26 @@ def test_download_interrupt_keeps_part(tmp_path: Path) -> None:
     assert not target.exists()
 
 
+def test_download_cancelled_keeps_part_for_resume(tmp_path: Path) -> None:
+    """GUI 取消信号等价于中断：保留 .part，目标文件未生成，可续传。"""
+    target = tmp_path / "u.tar"
+    opener, _requests = _opener(_FakeResponse(b"chunk", headers={"Content-Length": "10"}))
+    flags = iter([False, True])
+
+    with pytest.raises(KeyboardInterrupt):
+        _source.download(
+            "https://example.com/u.tar",
+            target,
+            opener=opener,
+            cancelled=lambda: next(flags, True),
+        )
+
+    part = _transfer.part_path(target)
+    assert part.exists()
+    assert part.read_bytes() == b"chunk"
+    assert not target.exists()
+
+
 def test_download_http_and_scheme_errors(tmp_path: Path) -> None:
     opener, _requests = _opener(urllib.error.HTTPError("https://e/u", 404, "not found", Message(), None))
     with pytest.raises(WslmanError) as excinfo:

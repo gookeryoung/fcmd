@@ -984,6 +984,64 @@ def _export_target(file: Path, compress: str) -> Path:
     return file
 
 
+def _export_parts(target_path: Path, compress: str) -> tuple[Path, Path | None]:
+    """返回 ``(原始 tar 的 .part, gzip 的 .part 或 None)``，供 CLI 与 GUI 共用。"""
+    if compress == "gzip":
+        return part_path(target_path.with_name(target_path.name[:-3])), part_path(target_path)
+    return part_path(target_path), None
+
+
+def _export_stream(  # noqa: PLR0913 - 导出核心按需显式传参，CLI 与 GUI 共用
+    env: Environment,
+    name: str,
+    target_path: Path,
+    parts: tuple[Path, Path | None],
+    *,
+    level: int,
+    terminate_first: bool,
+    estimate: int | None,
+) -> tuple[int, str]:
+    """执行 ``wsl --export`` 到 ``.part``，按需 gzip 后原子改名；不负责清理。"""
+    raw_part, gz_part = parts
+    with TransferLock(name, directory=env.lock_dir):
+        if terminate_first:
+            _run_step(
+                env,
+                ["--terminate", name],
+                action=f"导出前终止 {name}",
+                hint="改用 --allow-running 接受运行中导出，或手动终止后重试",
+            )
+        for stale in (path for path in parts if path is not None):
+            with contextlib.suppress(OSError):
+                stale.unlink()
+        raw_part.parent.mkdir(parents=True, exist_ok=True)
+        reporter = ProgressReporter(raw_part, estimate, label="导出")
+        reporter.start()
+        try:
+            result = _run_wsl(env, ["--export", name, str(raw_part)], timeout=_TRANSFER_TIMEOUT_S)
+        finally:
+            reporter.stop()
+        if result.returncode != 0:
+            detail = _first_line(decode_console(result.stderr or result.stdout))
+            raise runtime_error(
+                f"wsl --export {name} 失败（退出码 {result.returncode}）：{detail}",
+                hint=f"{_RESERVE_HINT}；残留文件：{raw_part}",
+            )
+        if not raw_part.is_file():
+            raise runtime_error(
+                "wsl --export 返回成功但未生成文件",
+                hint=f"检查 {raw_part} 所在目录的权限与剩余空间",
+            )
+        if gz_part is not None:
+            gzip_to(raw_part, gz_part, level=level)
+            with contextlib.suppress(OSError):
+                raw_part.unlink()
+            atomic_replace(gz_part, target_path)
+        else:
+            atomic_replace(raw_part, target_path)
+    return target_path.stat().st_size, sha256_file(target_path)
+
+
 def _slug(name: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in "-._" else "_" for ch in name)
     return cleaned or "distro"
@@ -1034,7 +1092,7 @@ def _preflight_for(
         "keep_partial": "中断或失败后保留 .part 文件",
     },
 )
-def export_distro(  # noqa: PLR0912, PLR0913, PLR0917
+def export_distro(  # noqa: PLR0913, PLR0917
     distro: str,
     file: Path,
     json_output: bool = False,
@@ -1083,13 +1141,9 @@ def export_distro(  # noqa: PLR0912, PLR0913, PLR0917
         estimate, estimated = distro_disk_bytes(target.base_path, target.version)
         check = _preflight_for(env, target_path, estimate, estimated=estimated)
 
-        if compress == "gzip":
-            raw_part = part_path(target_path.with_name(target_path.name[:-3]))
-            gz_part: Path | None = part_path(target_path)
-        else:
-            raw_part = part_path(target_path)
-            gz_part = None
-        parts = [path for path in (raw_part, gz_part) if path is not None]
+        parts_pair = _export_parts(target_path, compress)
+        raw_part = parts_pair[0]
+        parts = [path for path in parts_pair if path is not None]
         keep_on_failure = keep_partial or env.config.keep_partial
 
         export_args = ["--export", name, str(raw_part)]
@@ -1136,44 +1190,15 @@ def export_distro(  # noqa: PLR0912, PLR0913, PLR0917
             raise runtime_error(f"目标卷空间不足：{check.detail}", hint=_RESERVE_HINT)
 
         started = time.monotonic()
-        with TransferLock(name, directory=env.lock_dir):
-            if terminate_first:
-                _run_step(
-                    env,
-                    ["--terminate", name],
-                    action=f"导出前终止 {name}",
-                    hint="改用 --allow-running 接受运行中导出，或手动终止后重试",
-                )
-            for stale in parts:
-                with contextlib.suppress(OSError):
-                    stale.unlink()
-            raw_part.parent.mkdir(parents=True, exist_ok=True)
-            reporter = ProgressReporter(raw_part, estimate, label="导出")
-            reporter.start()
-            try:
-                result = _run_wsl(env, export_args, timeout=_TRANSFER_TIMEOUT_S)
-            finally:
-                reporter.stop()
-            if result.returncode != 0:
-                detail = _first_line(decode_console(result.stderr or result.stdout))
-                raise runtime_error(
-                    f"wsl --export {name} 失败（退出码 {result.returncode}）：{detail}",
-                    hint=f"{_RESERVE_HINT}；残留文件：{raw_part}",
-                )
-            if not raw_part.is_file():
-                raise runtime_error(
-                    "wsl --export 返回成功但未生成文件",
-                    hint=f"检查 {raw_part} 所在目录的权限与剩余空间",
-                )
-            if gz_part is not None:
-                gzip_to(raw_part, gz_part, level=level)
-                with contextlib.suppress(OSError):
-                    raw_part.unlink()
-                atomic_replace(gz_part, target_path)
-            else:
-                atomic_replace(raw_part, target_path)
-        size = target_path.stat().st_size
-        digest = sha256_file(target_path)
+        size, digest = _export_stream(
+            env,
+            name,
+            target_path,
+            parts_pair,
+            level=level,
+            terminate_first=terminate_first,
+            estimate=estimate,
+        )
     except KeyboardInterrupt:
         detail = _abort_parts(parts, keep=keep_on_failure)
         _fail(

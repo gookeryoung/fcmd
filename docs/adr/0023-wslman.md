@@ -1,6 +1,6 @@
 # 0023 wslman：Windows 上的 WSL 发行版管理
 
-- 状态：P4 已落地（只读 CLI：`list` / `status` / `info` / `config` / `doctor` / `available`；变更 CLI：`open` / `terminate` / `set-default`；传输 CLI：`export` / `import` / `copy` / `compress` / `backups` / `backup-verify` / `backup-remove`；下载/销毁 CLI：`download` / `unregister` / `shutdown`）；P5 待实现
+- 状态：P5 已落地（CLI：只读 `list` / `status` / `info` / `config` / `doctor` / `available`；变更 `open` / `terminate` / `set-default`；传输 `export` / `import` / `copy` / `compress` / `backups` / `backup-verify` / `backup-remove`；下载/销毁 `download` / `unregister` / `shutdown`；GUI：`wslmanw`）
 - 日期：2026-11-13
 - 相关文档：[ADR 0001](0001-layering.md)、[ADR 0003](0003-package-layout.md)、[ADR 0013](0013-gui-toolkit-feasibility.md)
 
@@ -417,7 +417,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 | P2（已完成） | `_terminal` + `open` / `terminate` / `set-default` | 37 项单测（假执行器 + 假启动器）：argv 构造（含空格名）、`wt` 失败回退、`--preview` 零调用、双读 |
 | P3（已完成） | `_transfer` + `export` / `import` / `copy` / `compress` / `backups` / `backup-verify` / `backup-remove` | 56 项单测：预检、进度、中断、`.part` 原子改名、导入残留提示、导出运行中二选一、preview 零副作用 |
 | P4（已完成） | `_source` + `available` / `download` / `unregister` / `shutdown` | 47 项单测：来源降级阶梯、`wsl --install` 风险提示、sha256 判定、断点续传/中转 200 重启、注销强制先备份、preview 零调用 |
-| P5 | `wslmanw` | 窗口骨架复用、后台任务与取消、破坏性确认（注销需手输名称） |
+| P5（已完成） | `wslmanw` | 窗口骨架复用、后台任务与取消（取消信号透传 `_source.download`，`.part` 保留可续传）、破坏性确认（注销需手输名称、关闭全部需勾选影响）、导出复用 CLI 的预检与 `.part` 原子改名 |
 
 每阶段跑 `make check-fast`，收尾跑 `make test`；覆盖率门禁 95%，新增纯逻辑模块的
 单测不得低于现有平均水平。涉及 `apps/` 目录形状后由统一会话重生成
