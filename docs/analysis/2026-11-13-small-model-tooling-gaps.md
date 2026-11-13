@@ -1,7 +1,7 @@
 # fcmd 面向小模型调用的工具缺口分析与改进计划
 
 - 分析对象：`f:\Dev\fcmd`，HEAD `fa71899`（2026-11-13）
-- 分析方式：§0–§8 为只读静态取证，未修改代码、配置或数据；§9、§10 为 P0 第一批/第二批落地记录（已改代码，含门禁数字）
+- 分析方式：§0–§8 为只读静态取证，未修改代码、配置或数据；§9–§11 为 P0 第一批/第二批/第三批落地记录（已改代码，含门禁数字）
 - 取证边界：本轮未执行仓库内脚本（该工作区为未受信目录），文中行为结论均由源码与测试断言推导；带“复现命令”的示例为代码推导、未执行
 - 分析范围：118 个注册工具、7 个内建命令，以及 `core/toolkit` 的注册/解析/执行/输出链路
 - 目标场景：能力较弱的小模型通过调用工具完成原本需要大模型推理的任务，把推理负担下沉到工具里
@@ -813,7 +813,7 @@ def sub(..., json_output: bool = False) -> None:  # json_output 自动获得 --j
 
 1. `fcmd doctor --json`：复用既有 `checks[{item,ok,detail,fix}]`，`ok=false` 时退出码保持现状。
 2. `fcmd hashfile dupes <dir>`：先把 `find_duplicates` 从 `apps/cmder/_dupes.py` 下沉到 `infras/dupes.py`（满足 ADR 0001），再挂只读子命令，输出 `{groups,total_groups,reclaimable_bytes}`。
-3. 继续按范式铺 JSON：`peview summary/sections/imports/check`、`filesync compare`、`renamer preview`、`sysinfo`、`csvtool show`。
+3. 继续按范式铺 JSON：`peview summary/sections/imports/check`、`filesync compare`、`renamer preview`、`sysinfo`、`csvtool show`（已完成，见 §11）。
 4. 每批沿用同一验收：默认输出快照不变、`--json` 可 `json.loads`、错误含 `code/field/hint`、新增代码 100% 覆盖。
 
 ---
@@ -903,7 +903,46 @@ P0 阶段**不改退出码语义**（统一语义留到 P1，见 §5.2）。因�
 
 ---
 
-## 11. 一句话总结
+## 11. P0 第三批落地记录（2026-11-13）
+
+### 11.1 本批内容
+
+| 子命令 | `--json` 数据 | 备注 |
+|---|---|---|
+| `sysinfo` | `os/platform/arch/python/python_path/cpu/cpu_cores/cwd/boot_time`，分组 `memory{total,used,available}` / `swap{total,used}` / `disk{total,used,free}` | 平台取不到的项直接省略，不补空值、不做有损换算 |
+| `csvtool show` | `file/rows/total_rows/returned/truncated/columns/data` | 空文件与 `--no-header` 仍返回结构（`total_rows=0`、`columns=[]`），不制造只存在于机读形态的错误 |
+| `peview info` | `path/name/size/is_dll/is_64bit/machine/machine_name/timestamp/image_base/entry_point/subsystem/subsystems/section_count/import_dlls/import_symbols/export_count/resource_count/relocation_blocks/relocation_count/debug_count/checksum/signed/overlay_offset/overlay_size` | 计划表里的 `summary` 在仓库中实际叫 `info`，按实名落地 |
+| `peview sections` | `sections[{name,virtual_address,virtual_size,raw_offset,raw_size,characteristics}], total` | |
+| `peview imports` | `dlls[{name,functions}], total_dlls, total_functions` | hint、描述符偏移等细节仍只出现在人类输出；JSON 精简但同源解析 |
+| `peview check` | `ok,checks[{item,ok,detail}],passed,failed,total` | 与 `doctor` 同一形状 |
+| `filesync compare` | `left,right,equal,only_left,only_right,different,errors[{path,error}]` | |
+| `renamer preview` | `total,items[{source,target,changed}],conflicts[{source,target,reason}]` | |
+
+结构处理：`apps/peview/_report.py` 抽 `summary_data/sections_data/imports_data/check_data` 与 `_checksum_values/_alignment_problem/_entry_point_problem/_section_problems/_signature_problem`，`format_*` 改为从同一份数据渲染；`apps/filesync/_core.py` 加 `compare_result_data`；`apps/renamer/_core.py` 加 `preview_data`。没有第二套解析。
+
+### 11.2 默认输出是否变化
+
+不变。默认分支文案逐字保留（peview/filesync/renamer 既有 421 个用例与 csvtool/sysinfo 用例原样通过）。错误双读：`--json` 走 `fcmd-error/1`（`FILE_NOT_FOUND` / `DIR_NOT_FOUND` / `NOT_PE_FILE` / `SAME_DIRECTORY` / `INVALID_RULES`，带 `field` 与 `hint`），默认路径仍是原 `print_error` 与原退出码。
+
+### 11.3 门禁数字
+
+| 门禁 | 结果 |
+|---|---|
+| `ruff check src tests` / `ruff format --check` | 通过 / 517 files already formatted |
+| `pyrefly check` | 0 errors |
+| `pytest -m "not slow"` | **7013 passed, 9 skipped, 11 deselected** |
+| 覆盖率 | **95.18%**（34252 语句 / 1228 未覆盖；10724 分支 / 836 部分覆盖） |
+| 静态清单 | 重新生成 `_manifest_data.py`，仅 `DIGEST` 一行变化 |
+
+### 11.4 已知偏差
+
+- `peview` 没有 `summary` 子命令，实际为 `info`；
+- `csvtool show` 的 `--no-header` 是合法模式，不能当成“缺表头”报错（否则错误只在机读形态出现）；
+- 退出码语义仍未动，`--json` 下输入错误仍是 `ok=false` + 退出 0（过渡说明见 §10.3）。
+
+---
+
+## 12. 一句话总结
 
 
 fcmd 的工具“能做很多事”，但当前更像一套给人用的命令集合：参数靠读文档、结果靠肉眼看、失败靠猜。把小模型当作第一调用者，不需要重写工具，只需要补上四层薄契约——**自描述 schema、结果信封、错误对象与退出码、计划/断言**——就能把现有 118 个工具中的大部分从“需要大模型解释”变成“小模型可直接调用”。

@@ -66,6 +66,7 @@ __all__ = [
     "make_target",
     "order_targets",
     "parse_rules",
+    "preview_data",
     "preview_to_plan",
     "rules_to_json",
     "split_name",
@@ -209,6 +210,18 @@ class RenamePreview:
     def conflicts(self) -> tuple[RenamePreviewItem, ...]:
         """重名或目标已存在的行。"""
         return tuple(item for item in self.items if item.status == STATUS_CONFLICT)
+
+
+def preview_data(preview: RenamePreview) -> dict[str, Any]:
+    """把预览投影为 ``--json`` 结构（与默认计划文本同源）。"""
+    items: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    for item in preview.items:
+        target = str(item.source.parent / item.new_name)
+        items.append({"source": str(item.source), "target": target, "changed": item.status == STATUS_OK})
+        if item.status == STATUS_CONFLICT:
+            conflicts.append({"source": str(item.source), "target": target, "reason": item.note})
+    return {"total": len(items), "items": items, "conflicts": conflicts}
 
 
 @dataclass(frozen=True)

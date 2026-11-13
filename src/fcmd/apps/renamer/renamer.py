@@ -45,9 +45,11 @@ from fcmd.apps.renamer._core import (
     format_preview,
     format_report,
     parse_rules,
+    preview_data,
     preview_to_plan,
 )
 from fcmd.console import print_error
+from fcmd.core.result import emit_error, emit_result
 
 __all__ = ["apply_command", "load_rules", "preview_command"]
 
@@ -77,34 +79,88 @@ def load_rules(text: str) -> tuple[RenameRule, ...]:
     return parse_rules(raw)
 
 
-def _prepare(
+def _prepare(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
     files: list[Path],
     rules_text: str,
     recursive: bool,
     dirs: bool,
     sort_key: str,
+    subcommand: str = "preview",
+    json_output: bool = False,
 ) -> RenamePreview | None:
-    """加载规则并展开目标，生成预览；失败时打印错误并返回 ``None``。"""
+    """加载规则并展开目标，生成预览；失败时输出错误并返回 ``None``。"""
     try:
         rules = load_rules(rules_text)
         targets = collect_targets(files, recursive=recursive, include_dirs=dirs)
     except (RuleError, FileNotFoundError, OSError) as exc:
-        print_error(str(exc))
+        if not json_output:
+            print_error(str(exc))
+            return None
+        if isinstance(exc, FileNotFoundError):
+            emit_error(
+                "renamer",
+                subcommand,
+                code="FILE_NOT_FOUND",
+                message=str(exc),
+                field="files",
+                expected="存在的文件或目录",
+                hint="确认待改名的路径存在后重试",
+            )
+        else:
+            emit_error(
+                "renamer",
+                subcommand,
+                code="INVALID_RULES",
+                message=str(exc),
+                field="rules",
+                expected="合法的规则 JSON 数组",
+                hint="用 --rules 传入 JSON 数组或 @规则文件.json",
+            )
         return None
     preview = build_preview(targets, rules, sort_key)
     if preview.error:
-        print_error(preview.error)
+        if not json_output:
+            print_error(preview.error)
+            return None
+        emit_error(
+            "renamer",
+            subcommand,
+            code="INVALID_RULES",
+            message=preview.error,
+            field="rules",
+            expected="合法的规则 JSON 数组",
+            hint="检查规则字段与正则表达式后重试",
+        )
         return None
     return preview
 
 
-@fcmd.tool("renamer", subcommand="preview", help="预览批量重命名结果", description=_DESCRIPTION)
-def preview_command(
+@fcmd.tool(
+    "renamer",
+    subcommand="preview",
+    help="预览批量重命名结果",
+    description=_DESCRIPTION,
+    param_help={
+        "files": "待改名的文件或目录列表",
+        "rules": "规则 JSON，或 @规则文件.json",
+        "recursive": "目录是否递归展开子目录",
+        "dirs": "是否把目录本身也纳入改名",
+        "sort_key": "计数器排序方式：name=名称（默认）、modified=修改时间、created=创建时间",
+        "json_output": "以 JSON 输出（--json 同义）",
+    },
+    examples=[
+        "fcmd renamer preview ./photos --rules @rename.json",
+        "fcmd renamer preview ./photos --rules @rename.json --recursive",
+        "fcmd renamer preview ./photos --rules @rename.json --json",
+    ],
+)
+def preview_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保持扁平签名
     files: list[Path],
     rules: str = "",
     recursive: bool = False,
     dirs: bool = False,
     sort_key: Literal["name", "modified", "created"] = "name",
+    json_output: bool = False,
 ) -> None:
     """打印批量重命名计划，不修改文件系统。
 
@@ -120,10 +176,16 @@ def preview_command(
         是否把目录本身也纳入改名
     sort_key:
         计数器排序方式：name=名称（默认）、modified=修改时间、created=创建时间
+    json_output:
+        以 JSON 输出（``--json`` 同义）
     """
-    preview = _prepare(files, rules, recursive, dirs, sort_key)
-    if preview is not None:
-        print(format_preview(preview))
+    preview = _prepare(files, rules, recursive, dirs, sort_key, "preview", json_output)
+    if preview is None:
+        return
+    if json_output:
+        emit_result("renamer", "preview", preview_data(preview))
+        return
+    print(format_preview(preview))
 
 
 @fcmd.tool("renamer", subcommand="apply", help="执行批量重命名", description=_DESCRIPTION)

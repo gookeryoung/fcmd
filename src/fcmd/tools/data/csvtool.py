@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fcmd as fx
+from fcmd.core.result import emit_error, emit_result
 from fcmd.infras import data
 
 
@@ -25,16 +26,50 @@ from fcmd.infras import data
         "file": "CSV 文件路径",
         "rows": "显示的行数（默认 5）",
         "header": "首行是否为表头（默认 True，使用 --no-header 关闭）",
+        "json_output": "以 JSON 输出（--json 同义）",
     },
+    examples=[
+        "fcmd csvtool show data.csv",
+        "fcmd csvtool show data.csv --rows 3",
+        "fcmd csvtool show data.csv --json",
+    ],
 )
-def show(file: Path, rows: int = 5, header: bool = True) -> None:
+def show(file: Path, rows: int = 5, header: bool = True, json_output: bool = False) -> None:
     """预览 CSV 前几行。"""
     try:
         hdr, rows_data = data.read_csv(file, has_header=header)
     except FileNotFoundError as exc:
+        if json_output:
+            emit_error(
+                "csvtool",
+                "show",
+                code="FILE_NOT_FOUND",
+                message=str(exc),
+                field="file",
+                expected="已存在的 CSV 文件",
+                hint="确认路径存在且是文件",
+            )
+            return
         print(f"错误: {exc}")
         return
     preview_rows = rows_data[:rows]
+    if json_output:
+        # 与默认路径同源：空文件/无表头也照常返回结构，用 total_rows 与 columns 表达
+        # 「没有数据 / 没有列名」，不制造只存在于机读形态里的错误。
+        emit_result(
+            "csvtool",
+            "show",
+            {
+                "file": str(file),
+                "rows": rows,
+                "total_rows": len(rows_data),
+                "returned": len(preview_rows),
+                "truncated": len(preview_rows) < len(rows_data),
+                "columns": hdr or [],
+                "data": preview_rows,
+            },
+        )
+        return
     print(data.format_table(hdr, preview_rows))
     print(f"\n共 {len(rows_data)} 行（显示前 {len(preview_rows)} 行）")
 

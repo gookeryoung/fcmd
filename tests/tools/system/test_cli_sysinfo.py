@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -16,7 +17,8 @@ import psutil
 import pytest
 
 from fcmd.core.toolkit import list_subcommands, list_tools, run_tool
-from fcmd.infras.system import format_bytes
+from fcmd.infras.system import collect_system_info, format_bytes
+from tests.helpers import run_and_capture as _run_and_capture
 
 _GB = 1024**3
 
@@ -136,6 +138,75 @@ class TestSysinfoRun:
         _patch_psutil(monkeypatch, cpu_count=lambda: None)
         assert run_tool("sysinfo", []) == 0
         assert "CPU 核心数" in capsys.readouterr().out
+
+
+# ============================================================================ #
+# JSON 机读输出
+# ============================================================================ #
+class TestJSONOutput:
+    """``--json`` 增量输出：与默认文本同源，默认路径保持不变。"""
+
+    def test_json_fields(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 返回英文稳定字段，值沿用文本中的原始字符串。"""
+        _patch_psutil(monkeypatch)
+        code, out = _run_and_capture("sysinfo", ["--json"], capsys)
+        assert code == 0
+        payload = json.loads(out)
+        assert payload["schema"] == "fcmd-result/1"
+        assert payload["ok"] is True
+        assert payload["tool"] == "sysinfo"
+        assert payload["subcommand"] is None
+        info = collect_system_info()
+        data = payload["data"]
+        assert data["os"] == info["操作系统"]
+        assert data["arch"] == info["架构"]
+        assert data["python"] == info["Python 版本"]
+        assert data["cpu"] == info["处理器"]
+        assert data["cpu_cores"] == "8"
+        assert data["cwd"] == info["工作目录"]
+        assert data["memory"] == {"total": "16.0 GB", "used": "8.0 GB (50.0%)", "available": "6.0 GB"}
+        assert data["swap"] == {"total": "4.0 GB", "used": "1.0 GB"}
+        assert data["disk"] == {"total": "512.0 GB", "used": "128.0 GB", "free": "384.0 GB"}
+        expected_boot = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(1_700_000_000.0))
+        assert data["boot_time"] == expected_boot
+
+    def test_json_omits_disk_on_error(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """磁盘信息收集失败时省略 disk 分组，不编造字段。"""
+
+        def _boom(_path: str) -> Any:
+            raise OSError("unsupported")
+
+        _patch_psutil(monkeypatch, disk_usage=_boom)
+        _, out = _run_and_capture("sysinfo", ["--json"], capsys)
+        data = json.loads(out)["data"]
+        assert "disk" not in data
+        assert data["memory"]["total"] == "16.0 GB"
+
+    def test_json_omits_boot_time_on_error(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """开机时间收集失败时省略 boot_time 字段。"""
+
+        def _boom() -> float:
+            raise OSError("unsupported")
+
+        _patch_psutil(monkeypatch, boot_time=_boom)
+        _, out = _run_and_capture("sysinfo", ["--json"], capsys)
+        data = json.loads(out)["data"]
+        assert "boot_time" not in data
+
+    def test_default_output_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """不加 --json 时仍是既有文本表，不混入 JSON 信封。"""
+        _patch_psutil(monkeypatch)
+        code, out = _run_and_capture("sysinfo", [], capsys)
+        assert code == 0
+        assert "系统信息" in out
+        assert "CPU 核心数" in out
+        assert '"schema"' not in out
 
 
 # ============================================================================ #

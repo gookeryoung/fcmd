@@ -27,6 +27,7 @@ from fcmd.infras.data import (
     select_columns,
     write_csv,
 )
+from tests.helpers import run_and_capture as _run_and_capture
 
 
 # ============================================================================ #
@@ -623,3 +624,89 @@ class TestCLISubcommands:
         code = run_tool("csvtool", ["merge", str(a), str(tmp_path / "no.csv")])
         assert code == 0
         assert "文件不存在" in capsys.readouterr().out
+
+
+# ============================================================================ #
+# show --json 机读输出
+# ============================================================================ #
+class TestShowJSONOutput:
+    """``csvtool show --json``：与默认表格同源，默认路径保持不变。"""
+
+    def test_show_json_truncated(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--rows 截断时回报全量行数与 truncated=True。"""
+        path = tmp_path / "a.csv"
+        _write_csv_bytes(path, "name,age\n" + "\n".join(f"u{i},{i}" for i in range(10)) + "\n")
+        code, out = _run_and_capture("csvtool", ["show", str(path), "--rows", "3", "--json"], capsys)
+        assert code == 0
+        payload = json.loads(out)
+        assert payload["schema"] == "fcmd-result/1"
+        assert payload["ok"] is True
+        assert payload["tool"] == "csvtool"
+        assert payload["subcommand"] == "show"
+        data = payload["data"]
+        assert data["file"] == str(path)
+        assert data["rows"] == 3
+        assert data["total_rows"] == 10
+        assert data["returned"] == 3
+        assert data["truncated"] is True
+        assert data["columns"] == ["name", "age"]
+        assert data["data"] == [["u0", "0"], ["u1", "1"], ["u2", "2"]]
+
+    def test_show_json_not_truncated(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """请求行数超过总行数时全部返回，truncated=False。"""
+        path = tmp_path / "a.csv"
+        _write_csv_bytes(path, "name,age\nAlice,30\nBob,25\n")
+        code, out = _run_and_capture("csvtool", ["show", str(path), "--json"], capsys)
+        assert code == 0
+        data = json.loads(out)["data"]
+        assert data["rows"] == 5
+        assert data["total_rows"] == 2
+        assert data["returned"] == 2
+        assert data["truncated"] is False
+        assert data["data"] == [["Alice", "30"], ["Bob", "25"]]
+
+    def test_show_json_file_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """文件不存在：stdout 为空，stderr 为 FILE_NOT_FOUND 信封。"""
+        assert run_tool("csvtool", ["show", str(tmp_path / "no.csv"), "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["schema"] == "fcmd-error/1"
+        assert payload["ok"] is False
+        assert payload["code"] == "FILE_NOT_FOUND"
+        assert payload["field"] == "file"
+        assert "文件不存在" in payload["message"]
+        assert payload["hint"]
+
+    def test_show_json_empty_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """空文件与默认路径一致：返回空结构（total_rows=0），不制造机读独有的错误。"""
+        path = tmp_path / "empty.csv"
+        _write_csv_bytes(path, "")
+        code, out = _run_and_capture("csvtool", ["show", str(path), "--json"], capsys)
+        assert code == 0
+        data = json.loads(out)["data"]
+        assert data["total_rows"] == 0
+        assert data["returned"] == 0
+        assert data["columns"] == []
+        assert data["data"] == []
+
+    def test_show_json_no_header(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--no-header 是合法模式：columns 为空列表，数据照常返回。"""
+        path = tmp_path / "a.csv"
+        _write_csv_bytes(path, "a,b\n1,2\n")
+        code, out = _run_and_capture("csvtool", ["show", str(path), "--no-header", "--json"], capsys)
+        assert code == 0
+        data = json.loads(out)["data"]
+        assert data["columns"] == []
+        assert data["total_rows"] == 2
+        assert data["data"] == [["a", "b"], ["1", "2"]]
+
+    def test_show_default_output_unchanged(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """不加 --json 时仍是既有表格与“共 N 行、显示前 M 行”文案。"""
+        path = tmp_path / "a.csv"
+        _write_csv_bytes(path, "name,age\nAlice,30\nBob,25\n")
+        code, out = _run_and_capture("csvtool", ["show", str(path)], capsys)
+        assert code == 0
+        assert "Alice" in out
+        assert "共 2 行（显示前 2 行）" in out
+        assert '"schema"' not in out

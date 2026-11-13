@@ -24,6 +24,7 @@ import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 __all__ = [
     "ACTION_COPY_LTR",
@@ -60,6 +61,7 @@ __all__ = [
     "SyncPlan",
     "SyncReport",
     "build_sync_plan",
+    "compare_result_data",
     "compare_trees",
     "content_equal",
     "execute_plan",
@@ -219,6 +221,23 @@ class CompareResult:
     def category_items(self, category: str) -> list[DiffItem]:
         """返回指定分类的条目。"""
         return [item for item in self.items if item.category == category]
+
+
+def compare_result_data(result: CompareResult) -> dict[str, Any]:
+    """把比较结果投影为 ``--json`` 结构（与默认差异表同源）。"""
+    only_left = [item.relative for item in result.category_items(CATEGORY_LEFT_ONLY)]
+    only_right = [item.relative for item in result.category_items(CATEGORY_RIGHT_ONLY)]
+    different = [item.relative for item in result.category_items(CATEGORY_DIFFERENT)]
+    errors = [{"path": item.relative, "error": item.message} for item in result.errors]
+    return {
+        "left": str(result.left),
+        "right": str(result.right),
+        "equal": not (only_left or only_right or different or errors),
+        "only_left": only_left,
+        "only_right": only_right,
+        "different": different,
+        "errors": errors,
+    }
 
 
 @dataclass(frozen=True)

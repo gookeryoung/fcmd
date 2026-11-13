@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from fcmd.apps.peview import peview
-from fcmd.core.toolkit import _TOOL_REGISTRY, list_subcommands
+from fcmd.core.toolkit import _TOOL_REGISTRY, list_subcommands, run_tool
+from tests.helpers import run_and_capture as _run_and_capture
 
 _SUBCOMMANDS = {
     "check",
@@ -167,3 +169,120 @@ def test_edit_reports_problems(pe32_file: Path, tmp_path: Path, capsys: pytest.C
 
 def test_version() -> None:
     assert peview.__version__ == "0.1.0"
+
+
+class TestPeviewJson:
+    """``--json`` 增量输出：默认人读文本保持不变，JSON 与文本同源。"""
+
+    def test_info_json(self, pe32_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """info --json 给出概览字段。"""
+        code, out = _run_and_capture("peview", ["info", str(pe32_file), "--json"], capsys)
+        assert code == 0
+        payload = json.loads(out)
+        assert payload["schema"] == "fcmd-result/1"
+        assert payload["tool"] == "peview"
+        assert payload["subcommand"] == "info"
+        data = payload["data"]
+        assert data["name"] == "sample.exe"
+        assert data["size"] == 0xA10
+        assert data["machine"] == 0x014C
+        assert data["machine_name"] == "x86（32 位）"
+        assert data["image_base"] == 0x400000
+        assert data["entry_point"] == 0x1000
+        assert data["subsystems"] == ["Windows Console"]
+        assert data["is_dll"] is False
+        assert data["signed"] is True
+
+    def test_sections_json(self, pe32_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """sections --json 给出节明细与总数。"""
+        code, out = _run_and_capture("peview", ["sections", str(pe32_file), "--json"], capsys)
+        assert code == 0
+        data = json.loads(out)["data"]
+        assert data["total"] == 2
+        first = data["sections"][0]
+        assert first == {
+            "name": ".text",
+            "virtual_address": 0x1000,
+            "virtual_size": 0x100,
+            "raw_offset": 0x200,
+            "raw_size": 0x200,
+            "characteristics": 0x60000020,
+        }
+        assert data["sections"][1]["name"] == ".rdata"
+
+    def test_imports_json(self, pe32_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """imports --json 按库分组并统计符号数。"""
+        code, out = _run_and_capture("peview", ["imports", str(pe32_file), "--json"], capsys)
+        assert code == 0
+        data = json.loads(out)["data"]
+        assert data["total_dlls"] == 2
+        assert data["total_functions"] == 3
+        libraries = {entry["name"]: entry["functions"] for entry in data["dlls"]}
+        assert libraries["kernel32.dll"] == ["ExitProcess", "#5"]
+        assert libraries["user32.dll"] == ["MessageBoxW"]
+
+    def test_check_json(self, pe32_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """check --json 给出逐项结论与汇总计数。"""
+        code, out = _run_and_capture("peview", ["check", str(pe32_file), "--json"], capsys)
+        assert code == 0
+        data = json.loads(out)["data"]
+        assert data["ok"] is True
+        assert data["failed"] == 0
+        assert data["passed"] == data["total"]
+        items = [check["item"] for check in data["checks"]]
+        assert items[:3] == ["校验和", "节对齐", "入口点"]
+        assert items[-1] == "数字签名"
+        assert ".text" in items[3]
+
+    def test_check_json_reports_problem(
+        self, pe32_data: bytes, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """校验和被破坏时 check --json 标记 ok=false。"""
+        data = bytearray(pe32_data)
+        data[0x200] ^= 0xFF
+        target = tmp_path / "broken.exe"
+        target.write_bytes(bytes(data))
+        code, out = _run_and_capture("peview", ["check", str(target), "--json"], capsys)
+        assert code == 0
+        payload = json.loads(out)["data"]
+        assert payload["ok"] is False
+        assert payload["failed"] >= 1
+        checksum = next(check for check in payload["checks"] if check["item"] == "校验和")
+        assert checksum["ok"] is False
+        assert "校验和不一致" in checksum["detail"]
+
+    def test_missing_file_json_envelope(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 下文件不存在：stdout 为空，stderr 为错误信封。"""
+        assert run_tool("peview", ["info", str(tmp_path / "missing.exe"), "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["ok"] is False
+        assert payload["code"] == "FILE_NOT_FOUND"
+        assert payload["field"] == "file"
+
+    def test_non_pe_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 下非 PE 文件：NOT_PE_FILE。"""
+        path = tmp_path / "plain.bin"
+        path.write_bytes(b"not a pe")
+        assert run_tool("peview", ["sections", str(path), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "NOT_PE_FILE"
+        assert payload["field"] == "file"
+        assert "PE" in payload["expected"]
+
+    def test_imports_json_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """imports --json 加载失败时只写错误信封。"""
+        path = tmp_path / "plain.bin"
+        path.write_bytes(b"not a pe")
+        assert run_tool("peview", ["imports", str(path), "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert json.loads(captured.err)["code"] == "NOT_PE_FILE"
+
+    def test_check_json_missing_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """check --json 文件不存在时只写错误信封。"""
+        assert run_tool("peview", ["check", str(tmp_path / "missing.exe"), "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert json.loads(captured.err)["code"] == "FILE_NOT_FOUND"

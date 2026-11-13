@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING
 
 import fcmd
 from fcmd.apps.peview import _edit, _report
-from fcmd.apps.peview._pe import load_pe
+from fcmd.apps.peview._pe import PEImage, load_pe
 from fcmd.apps.peview._reader import DEFAULT_HEX_LIMIT, PEError, format_hex_dump
 from fcmd.console import print_error
+from fcmd.core.result import emit_error, emit_result
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -59,16 +60,70 @@ def _run(action: Callable[[], None]) -> None:
         print_error(str(exc))
 
 
-@fcmd.tool("peview", subcommand="info", help="查看 PE 文件概览")
-def info(file: Path) -> None:
+def _load_for_output(file: Path, subcommand: str, json_output: bool) -> PEImage | None:
+    """加载 PE；``--json`` 时把加载失败转成错误信封，返回 ``None``。
+
+    默认路径沿用既有行为：失败时经 :func:`print_error` 输出同一句错误。
+    """
+    try:
+        return load_pe(file)
+    except PEError as exc:
+        if not json_output:
+            print_error(str(exc))
+            return None
+        if not file.is_file():
+            emit_error(
+                "peview",
+                subcommand,
+                code="FILE_NOT_FOUND",
+                message=str(exc),
+                field="file",
+                expected="已存在的 PE 文件",
+                hint="确认路径存在且是文件",
+            )
+        else:
+            emit_error(
+                "peview",
+                subcommand,
+                code="NOT_PE_FILE",
+                message=str(exc),
+                field="file",
+                expected="PE 文件（带 MZ / PE 签名）",
+                hint="确认文件是有效的 exe/dll/sys 等 PE 映像",
+            )
+        return None
+
+
+@fcmd.tool(
+    "peview",
+    subcommand="info",
+    help="查看 PE 文件概览",
+    param_help={
+        "file": "PE 文件路径（exe/dll/sys 等）",
+        "json_output": "以 JSON 输出（--json 同义）",
+    },
+    examples=[
+        "fcmd peview info app.exe",
+        "fcmd peview info app.exe --json",
+    ],
+)
+def info(file: Path, json_output: bool = False) -> None:
     """输出文件类型、架构、入口点、目录数量、签名与 overlay 等概览。
 
     Parameters
     ----------
     file:
         PE 文件路径（exe/dll/sys 等）
+    json_output:
+        以 JSON 输出（``--json`` 同义）
     """
-    _run(lambda: print(_report.format_summary(load_pe(file))))
+    pe = _load_for_output(file, "info", json_output)
+    if pe is None:
+        return
+    if json_output:
+        emit_result("peview", "info", _report.summary_data(pe))
+        return
+    print(_report.format_summary(pe))
 
 
 @fcmd.tool("peview", subcommand="headers", help="查看 DOS / NT / 可选头")
@@ -83,16 +138,36 @@ def headers(file: Path) -> None:
     _run(lambda: print(_report.format_headers(load_pe(file))))
 
 
-@fcmd.tool("peview", subcommand="sections", help="查看节表")
-def sections(file: Path) -> None:
+@fcmd.tool(
+    "peview",
+    subcommand="sections",
+    help="查看节表",
+    param_help={
+        "file": "PE 文件路径",
+        "json_output": "以 JSON 输出（--json 同义）",
+    },
+    examples=[
+        "fcmd peview sections app.exe",
+        "fcmd peview sections app.exe --json",
+    ],
+)
+def sections(file: Path, json_output: bool = False) -> None:
     """输出节名称、虚拟 / 原始大小、地址与属性解读。
 
     Parameters
     ----------
     file:
         PE 文件路径
+    json_output:
+        以 JSON 输出（``--json`` 同义）
     """
-    _run(lambda: print(_report.format_sections(load_pe(file))))
+    pe = _load_for_output(file, "sections", json_output)
+    if pe is None:
+        return
+    if json_output:
+        emit_result("peview", "sections", _report.sections_data(pe))
+        return
+    print(_report.format_sections(pe))
 
 
 @fcmd.tool("peview", subcommand="directories", help="查看数据目录")
@@ -107,16 +182,36 @@ def directories(file: Path) -> None:
     _run(lambda: print(_report.format_directories(load_pe(file))))
 
 
-@fcmd.tool("peview", subcommand="imports", help="查看导入与延迟导入")
-def imports(file: Path) -> None:
+@fcmd.tool(
+    "peview",
+    subcommand="imports",
+    help="查看导入与延迟导入",
+    param_help={
+        "file": "PE 文件路径",
+        "json_output": "以 JSON 输出（--json 同义）",
+    },
+    examples=[
+        "fcmd peview imports app.exe",
+        "fcmd peview imports app.exe --json",
+    ],
+)
+def imports(file: Path, json_output: bool = False) -> None:
     """输出导入库与符号（按序号或名称）。
 
     Parameters
     ----------
     file:
         PE 文件路径
+    json_output:
+        以 JSON 输出（``--json`` 同义）
     """
-    _run(lambda: print(_report.format_imports(load_pe(file))))
+    pe = _load_for_output(file, "imports", json_output)
+    if pe is None:
+        return
+    if json_output:
+        emit_result("peview", "imports", _report.imports_data(pe))
+        return
+    print(_report.format_imports(pe))
 
 
 @fcmd.tool("peview", subcommand="exports", help="查看导出表")
@@ -192,16 +287,36 @@ def _print_hex(file: Path, offset: int, length: int) -> None:
     print(format_hex_dump(pe.data[offset : offset + length], offset=offset))
 
 
-@fcmd.tool("peview", subcommand="check", help="检查结构与校验和")
-def check(file: Path) -> None:
+@fcmd.tool(
+    "peview",
+    subcommand="check",
+    help="检查结构与校验和",
+    param_help={
+        "file": "PE 文件路径",
+        "json_output": "以 JSON 输出（--json 同义）",
+    },
+    examples=[
+        "fcmd peview check app.exe",
+        "fcmd peview check app.exe --json",
+    ],
+)
+def check(file: Path, json_output: bool = False) -> None:
     """输出校验和、对齐、入口点、签名与 overlay 的检查结论。
 
     Parameters
     ----------
     file:
         PE 文件路径
+    json_output:
+        以 JSON 输出（``--json`` 同义）
     """
-    _run(lambda: print(_report.format_check(load_pe(file))))
+    pe = _load_for_output(file, "check", json_output)
+    if pe is None:
+        return
+    if json_output:
+        emit_result("peview", "check", _report.check_data(pe))
+        return
+    print(_report.format_check(pe))
 
 
 @fcmd.tool("peview", subcommand="fields", help="列出可编辑字段")

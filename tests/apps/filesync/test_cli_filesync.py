@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from fcmd.apps.filesync._core import (
     ScanError,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from tests.helpers import run_and_capture as _run_and_capture
 
 
 def _write(root: Path, relative: str, data: bytes = b"x", mtime: float | None = None) -> Path:
@@ -177,3 +179,95 @@ def test_cli_entry_sync_dry_run(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert code == 0
     assert not (right / "only.txt").exists()
     assert "试运行" in capsys.readouterr().out
+
+
+class TestFilesyncCompareJson:
+    """``filesync compare --json``：结构化差异，默认表格文案不变。"""
+
+    def test_compare_json_lists_differences(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """仅左 / 仅右 / 相同分类分别落到各自字段。"""
+        left, right = _pair(tmp_path)
+        _write(left, "only-left.txt", b"a")
+        _write(right, "only-right.txt", b"b")
+        _write(left, "same.txt", b"same")
+        _write(right, "same.txt", b"same")
+        code, out = _run_and_capture("filesync", ["compare", str(left), str(right), "--json"], capsys)
+        assert code == 0
+        payload = json.loads(out)
+        assert payload["schema"] == "fcmd-result/1"
+        assert payload["tool"] == "filesync"
+        assert payload["subcommand"] == "compare"
+        data = payload["data"]
+        assert data["left"] == str(left)
+        assert data["right"] == str(right)
+        assert data["equal"] is False
+        assert data["only_left"] == ["only-left.txt"]
+        assert data["only_right"] == ["only-right.txt"]
+        assert data["different"] == []
+        assert data["errors"] == []
+
+    def test_compare_json_different(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """同名但内容不同归入 different。"""
+        left, right = _pair(tmp_path)
+        _write(left, "same.txt", b"left-content")
+        _write(right, "same.txt", b"right")
+        _, out = _run_and_capture("filesync", ["compare", str(left), str(right), "--json"], capsys)
+        data = json.loads(out)["data"]
+        assert data["different"] == ["same.txt"]
+        assert data["equal"] is False
+
+    def test_compare_json_equal(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """两侧一致时 equal 为 true。"""
+        left, right = _pair(tmp_path)
+        _write(left, "same.txt", b"same")
+        _write(right, "same.txt", b"same")
+        _, out = _run_and_capture("filesync", ["compare", str(left), str(right), "--json"], capsys)
+        data = json.loads(out)["data"]
+        assert data["equal"] is True
+        assert data["only_left"] == data["only_right"] == data["different"] == []
+
+    def test_compare_json_errors(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """扫描错误进入 errors 且使 equal=false。"""
+        left, right = _pair(tmp_path)
+        result = CompareResult(
+            left=left,
+            right=right,
+            errors=[ScanError("locked", "permission denied", "left")],
+            options=CompareOptions(),
+        )
+        monkeypatch.setattr(filesync, "compare_trees", lambda *_args, **_kwargs: result)
+        filesync.compare_command(left, right, json_output=True)
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["equal"] is False
+        assert data["errors"] == [{"path": "locked", "error": "permission denied"}]
+
+    def test_compare_json_left_missing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 下左侧目录不存在：DIR_NOT_FOUND(field=left)。"""
+        _, right = _pair(tmp_path)
+        filesync.compare_command(tmp_path / "missing", right, json_output=True)
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["code"] == "DIR_NOT_FOUND"
+        assert payload["field"] == "left"
+
+    def test_compare_json_right_missing(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 下右侧目录不存在：DIR_NOT_FOUND(field=right)。"""
+        left, _ = _pair(tmp_path)
+        filesync.compare_command(left, tmp_path / "missing", json_output=True)
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "DIR_NOT_FOUND"
+        assert payload["field"] == "right"
+
+    def test_compare_json_same_directory(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--json 下左右相同：SAME_DIRECTORY。"""
+        left, _ = _pair(tmp_path)
+        filesync.compare_command(left, left, json_output=True)
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "SAME_DIRECTORY"
+        assert payload["field"] == "right"

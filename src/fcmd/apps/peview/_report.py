@@ -16,13 +16,13 @@ from fcmd.apps.peview._reader import compute_checksum
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import Any
 
     from fcmd.apps.peview._pe import (
         DebugEntry,
         PEImage,
         RelocationBlock,
         ResourceEntry,
-        Section,
     )
 
 __all__ = [
@@ -36,6 +36,7 @@ __all__ = [
     "SECTION_ALIGNMENT_NAMES",
     "SECTION_CHARACTERISTICS",
     "SUBSYSTEM_NAMES",
+    "check_data",
     "check_problems",
     "debug_type_name",
     "directory_name",
@@ -53,11 +54,14 @@ __all__ = [
     "format_sections",
     "format_summary",
     "format_table",
+    "imports_data",
     "machine_name",
     "relocation_type_name",
     "resource_label",
     "resource_type_name",
+    "sections_data",
     "subsystem_name",
+    "summary_data",
 ]
 
 DATA_DIRECTORY_NAMES: tuple[str, ...] = (
@@ -358,31 +362,63 @@ def format_size(size: int) -> str:
 # ---------------------------------------------------------------------- #
 # 各视图
 # ---------------------------------------------------------------------- #
+def summary_data(pe: PEImage) -> dict[str, Any]:
+    """概览的结构化投影（人读文本与 ``--json`` 共用同一份数据）。"""
+    return {
+        "path": str(pe.path),
+        "name": pe.path.name,
+        "size": pe.size,
+        "is_dll": pe.is_dll,
+        "is_64bit": pe.is_64bit,
+        "machine": pe.file_header.machine,
+        "machine_name": machine_name(pe.file_header.machine),
+        "timestamp": pe.file_header.timestamp,
+        "image_base": pe.optional.image_base,
+        "entry_point": pe.optional.address_of_entry_point,
+        "subsystem": pe.optional.subsystem,
+        "subsystems": [subsystem_name(pe.optional.subsystem)],
+        "section_count": len(pe.sections),
+        "import_dlls": len(pe.imports),
+        "import_symbols": sum(len(library.symbols) for library in pe.imports),
+        "export_count": len(pe.exports.symbols) if pe.exports is not None else 0,
+        "resource_count": len(pe.resources),
+        "relocation_blocks": len(pe.relocations),
+        "relocation_count": sum(len(block.entries) for block in pe.relocations),
+        "debug_count": len(pe.debug),
+        "checksum": pe.optional.checksum,
+        "signed": pe.signature.present,
+        "overlay_offset": pe.overlay_offset,
+        "overlay_size": pe.overlay_size,
+    }
+
+
 def format_summary(pe: PEImage) -> str:
     """概览：文件、架构、数量统计、签名与 overlay。"""
-    kind = "DLL" if pe.is_dll else "可执行文件"
-    bits = "64 位" if pe.is_64bit else "32 位"
-    import_symbols = sum(len(library.symbols) for library in pe.imports)
-    export_count = len(pe.exports.symbols) if pe.exports is not None else 0
-    relocation_count = sum(len(block.entries) for block in pe.relocations)
+    data = summary_data(pe)
+    kind = "DLL" if data["is_dll"] else "可执行文件"
+    bits = "64 位" if data["is_64bit"] else "32 位"
     lines = [
-        f"文件: {pe.path.name}",
-        f"路径: {pe.path}",
-        f"大小: {format_size(pe.size)}（{pe.size} 字节）",
+        f"文件: {data['name']}",
+        f"路径: {data['path']}",
+        f"大小: {format_size(data['size'])}（{data['size']} 字节）",
         f"类型: {kind}（{bits}）",
-        f"架构: {machine_name(pe.file_header.machine)}",
-        f"子系统: {subsystem_name(pe.optional.subsystem)}",
-        f"镜像基址: 0x{pe.optional.image_base:X}",
-        f"入口点: 0x{pe.optional.address_of_entry_point:X}",
-        f"节数量: {len(pe.sections)}",
-        f"导入: {len(pe.imports)} 个库 / {import_symbols} 个符号",
-        f"导出: {export_count} 个函数",
-        f"资源: {len(pe.resources)} 项",
-        f"重定位: {len(pe.relocations)} 块 / {relocation_count} 项",
-        f"调试项: {len(pe.debug)}",
-        f"校验和: 0x{pe.optional.checksum:08X}",
-        f"数字签名: {'有' if pe.signature.present else '无'}",
-        f"Overlay: {'无' if not pe.overlay_size else f'0x{pe.overlay_offset:X}（{format_size(pe.overlay_size)}）'}",
+        f"架构: {data['machine_name']}",
+        f"子系统: {data['subsystems'][0]}",
+        f"镜像基址: 0x{data['image_base']:X}",
+        f"入口点: 0x{data['entry_point']:X}",
+        f"节数量: {data['section_count']}",
+        f"导入: {data['import_dlls']} 个库 / {data['import_symbols']} 个符号",
+        f"导出: {data['export_count']} 个函数",
+        f"资源: {data['resource_count']} 项",
+        f"重定位: {data['relocation_blocks']} 块 / {data['relocation_count']} 项",
+        f"调试项: {data['debug_count']}",
+        f"校验和: 0x{data['checksum']:08X}",
+        f"数字签名: {'有' if data['signed'] else '无'}",
+        (
+            "Overlay: 无"
+            if not data["overlay_size"]
+            else f"Overlay: 0x{data['overlay_offset']:X}（{format_size(data['overlay_size'])}）"
+        ),
     ]
     return "\n".join(lines)
 
@@ -484,30 +520,63 @@ def format_directories(pe: PEImage) -> str:
     )
 
 
-def _section_rows(sections: Sequence[Section]) -> list[tuple[str, ...]]:
-    return [
-        (
-            str(section.index),
-            section.name or f"#{section.index}",
-            f"0x{section.virtual_size:X}",
-            f"0x{section.virtual_address:X}",
-            f"0x{section.size_of_raw_data:X}",
-            f"0x{section.pointer_to_raw_data:X}",
-            f"0x{section.characteristics:08X}（{format_section_characteristics(section.characteristics)}）",
-        )
-        for section in sections
+def sections_data(pe: PEImage) -> dict[str, Any]:
+    """节表的结构化投影（人读表格与 ``--json`` 共用同一份数据）。"""
+    sections = [
+        {
+            "name": section.name,
+            "virtual_address": section.virtual_address,
+            "virtual_size": section.virtual_size,
+            "raw_offset": section.pointer_to_raw_data,
+            "raw_size": section.size_of_raw_data,
+            "characteristics": section.characteristics,
+        }
+        for section in pe.sections
     ]
+    return {"sections": sections, "total": len(sections)}
 
 
 def format_sections(pe: PEImage) -> str:
     """节表。"""
-    if not pe.sections:
+    data = sections_data(pe)
+    if not data["sections"]:
         return "(没有节)"
+    rows = [
+        (
+            str(index),
+            section["name"] or f"#{index}",
+            f"0x{section['virtual_size']:X}",
+            f"0x{section['virtual_address']:X}",
+            f"0x{section['raw_size']:X}",
+            f"0x{section['raw_offset']:X}",
+            f"0x{section['characteristics']:08X}（{format_section_characteristics(section['characteristics'])}）",
+        )
+        for index, section in enumerate(data["sections"])
+    ]
     return format_table(
         ("#", "名称", "VirtualSize", "VirtualAddress", "RawSize", "RawPtr", "属性"),
-        _section_rows(pe.sections),
+        rows,
         ("right", "left", "right", "right", "right", "right", "left"),
     )
+
+
+def imports_data(pe: PEImage) -> dict[str, Any]:
+    """导入与延迟导入的结构化投影：按库分组，符号按序号或名称给出。"""
+    dlls = [
+        {
+            "name": library.name,
+            "functions": [
+                f"#{symbol.ordinal}" if symbol.ordinal is not None else (symbol.name or "")
+                for symbol in library.symbols
+            ],
+        }
+        for library in pe.imports
+    ]
+    return {
+        "dlls": dlls,
+        "total_dlls": len(dlls),
+        "total_functions": sum(len(entry["functions"]) for entry in dlls),
+    }
 
 
 def format_imports(pe: PEImage) -> str:
@@ -632,40 +701,115 @@ def format_fields(pe: PEImage) -> str:
     return format_table(("字段", "说明", "文件偏移", "宽度", "值（十六进制）", "值（十进制）"), rows)
 
 
-def check_problems(pe: PEImage) -> list[str]:
-    """返回结构一致性告警（空列表表示未发现问题）。"""
-    problems: list[str] = []
+def _checksum_values(pe: PEImage) -> tuple[int, bool]:
+    """返回（按当前内容计算的校验和, 是否与文件内校验和一致）。"""
     expected = compute_checksum(pe.data, pe.optional.offset + 64)
-    if expected != pe.optional.checksum:
-        problems.append(f"校验和不一致：文件内 0x{pe.optional.checksum:08X}，按当前内容应为 0x{expected:08X}")
-    if (
-        pe.optional.section_alignment
-        and pe.optional.file_alignment
-        and pe.optional.section_alignment < pe.optional.file_alignment
-    ):
-        problems.append(
-            f"SectionAlignment（0x{pe.optional.section_alignment:X}）小于 FileAlignment"
-            f"（0x{pe.optional.file_alignment:X}）"
+    return expected, expected == pe.optional.checksum
+
+
+def _alignment_problem(pe: PEImage) -> str | None:
+    optional = pe.optional
+    if optional.section_alignment and optional.file_alignment and optional.section_alignment < optional.file_alignment:
+        return (
+            f"SectionAlignment（0x{optional.section_alignment:X}）小于 FileAlignment（0x{optional.file_alignment:X}）"
         )
-    if pe.optional.size_of_image and pe.optional.address_of_entry_point >= pe.optional.size_of_image:
-        problems.append(
-            f"入口点 0x{pe.optional.address_of_entry_point:X} 超出 SizeOfImage 0x{pe.optional.size_of_image:X}"
-        )
+    return None
+
+
+def _entry_point_problem(pe: PEImage) -> str | None:
+    optional = pe.optional
+    if optional.size_of_image and optional.address_of_entry_point >= optional.size_of_image:
+        return f"入口点 0x{optional.address_of_entry_point:X} 超出 SizeOfImage 0x{optional.size_of_image:X}"
+    return None
+
+
+def _section_problems(pe: PEImage) -> dict[str, str]:
+    """返回「节标签 → 原始数据越界告警」，只包含有问题的节。"""
+    problems: dict[str, str] = {}
     for section in pe.sections:
         raw_end = section.pointer_to_raw_data + section.size_of_raw_data
         if section.size_of_raw_data and raw_end > pe.size:
-            problems.append(
-                f"节 {section.name or '#' + str(section.index)} 的原始数据超出文件末尾（0x{raw_end:X} > 0x{pe.size:X}）"
-            )
-    if pe.signature.present and pe.signature.offset + pe.signature.size > pe.size:
-        problems.append("签名目录指向的数据超出文件末尾")
+            label = section.name or f"#{section.index}"
+            problems[label] = f"节 {label} 的原始数据超出文件末尾（0x{raw_end:X} > 0x{pe.size:X}）"
     return problems
+
+
+def _signature_problem(pe: PEImage) -> str | None:
+    if pe.signature.present and pe.signature.offset + pe.signature.size > pe.size:
+        return "签名目录指向的数据超出文件末尾"
+    return None
+
+
+def check_data(pe: PEImage) -> dict[str, Any]:
+    """一致性检查的结构化投影（人读文本与 ``--json`` 共用同一份数据）。"""
+    expected, checksum_ok = _checksum_values(pe)
+    alignment_problem = _alignment_problem(pe)
+    entry_problem = _entry_point_problem(pe)
+    section_problems = _section_problems(pe)
+    signature_problem = _signature_problem(pe)
+    checks: list[dict[str, Any]] = [
+        {
+            "item": "校验和",
+            "ok": checksum_ok,
+            "detail": (
+                f"文件内 0x{pe.optional.checksum:08X}，计算值 0x{expected:08X}"
+                if checksum_ok
+                else f"校验和不一致：文件内 0x{pe.optional.checksum:08X}，按当前内容应为 0x{expected:08X}"
+            ),
+        },
+        {
+            "item": "节对齐",
+            "ok": alignment_problem is None,
+            "detail": alignment_problem
+            or f"SectionAlignment=0x{pe.optional.section_alignment:X}，FileAlignment=0x{pe.optional.file_alignment:X}",
+        },
+        {
+            "item": "入口点",
+            "ok": entry_problem is None,
+            "detail": entry_problem
+            or f"入口点 0x{pe.optional.address_of_entry_point:X} / SizeOfImage 0x{pe.optional.size_of_image:X}",
+        },
+    ]
+    for section in pe.sections:
+        label = section.name or f"#{section.index}"
+        raw_end = section.pointer_to_raw_data + section.size_of_raw_data
+        problem = section_problems.get(label)
+        checks.append(
+            {
+                "item": f"节 {label} 原始数据",
+                "ok": problem is None,
+                "detail": problem or f"原始数据 0x{section.pointer_to_raw_data:X}–0x{raw_end:X} 在文件内",
+            }
+        )
+    checks.append(
+        {
+            "item": "数字签名",
+            "ok": signature_problem is None,
+            "detail": signature_problem
+            or (
+                "无数字签名" if not pe.signature.present else f"签名数据在文件内（文件偏移 0x{pe.signature.offset:X}）"
+            ),
+        }
+    )
+    failed = sum(1 for check in checks if not check["ok"])
+    return {
+        "ok": failed == 0,
+        "checks": checks,
+        "passed": len(checks) - failed,
+        "failed": failed,
+        "total": len(checks),
+    }
+
+
+def check_problems(pe: PEImage) -> list[str]:
+    """返回结构一致性告警（空列表表示未发现问题）。"""
+    return [check["detail"] for check in check_data(pe)["checks"] if not check["ok"]]
 
 
 def format_check(pe: PEImage) -> str:
     """输出校验和、对齐、入口点、签名与 overlay 的检查结论。"""
-    expected = compute_checksum(pe.data, pe.optional.offset + 64)
-    checksum_state = "一致" if expected == pe.optional.checksum else "不一致"
+    expected, checksum_ok = _checksum_values(pe)
+    checksum_state = "一致" if checksum_ok else "不一致"
     problems = check_problems(pe)
     lines = [
         f"文件大小: {pe.size} 字节",
