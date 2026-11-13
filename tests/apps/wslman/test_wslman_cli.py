@@ -26,7 +26,23 @@ _TABLE = """\
   Debian          Stopped         2
 """
 
-_SUBCOMMANDS = {"config", "doctor", "info", "list", "open", "set-default", "status", "terminate"}
+_SUBCOMMANDS = {
+    "backup-remove",
+    "backup-verify",
+    "backups",
+    "compress",
+    "config",
+    "copy",
+    "doctor",
+    "export",
+    "import",
+    "info",
+    "list",
+    "open",
+    "set-default",
+    "status",
+    "terminate",
+}
 
 
 def _env(  # noqa: PLR0913 - 测试工厂按需覆盖各字段

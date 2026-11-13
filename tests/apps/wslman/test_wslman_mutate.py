@@ -243,8 +243,8 @@ def test_subprocess_launcher_timeout_means_started() -> None:
 
 def test_registers_p2_subcommands() -> None:
     expected = {"config", "doctor", "info", "list", "open", "set-default", "status", "terminate"}
-    assert set(_TOOL_REGISTRY["wslman"]) == expected
-    assert set(list_subcommands("wslman")) == expected
+    assert expected <= set(_TOOL_REGISTRY["wslman"])
+    assert expected <= set(list_subcommands("wslman"))
 
 
 # ---------------------------------------------------------------------- #

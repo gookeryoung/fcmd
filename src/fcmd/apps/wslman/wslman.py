@@ -15,11 +15,15 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import sys
+import time
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 import fcmd
 from fcmd.apps.wslman._config import WslmanConfig, load_config
@@ -43,7 +47,14 @@ from fcmd.apps.wslman._distro import (
     to_data,
     with_disk,
 )
-from fcmd.apps.wslman._errors import WslmanError, invalid_argument, not_found, runtime_error
+from fcmd.apps.wslman._errors import (
+    WslmanError,
+    interrupted,
+    invalid_argument,
+    not_found,
+    runtime_error,
+    usage_error,
+)
 from fcmd.apps.wslman._registry import RegistrySnapshot, WindowsRegistryReader, unavailable_snapshot
 from fcmd.apps.wslman._runner import Capabilities, CommandResult, Runner, SubprocessRunner, is_windows, probe
 from fcmd.apps.wslman._terminal import (
@@ -54,11 +65,41 @@ from fcmd.apps.wslman._terminal import (
     build_command,
     uses_windows_path,
 )
+from fcmd.apps.wslman._transfer import (
+    ProgressReporter,
+    SpacePreflight,
+    TransferLock,
+    archive_info,
+    atomic_replace,
+    backup_files,
+    gzip_to,
+    part_path,
+    preflight_space,
+    sha256_file,
+    volume_problem,
+)
 from fcmd.apps.wslman._wslconfig import default_path as wslconfig_default_path
 from fcmd.apps.wslman._wslconfig import load_wslconfig, summary_lines
 from fcmd.core.result import emit_result, record_error, report_error
 
-__all__ = ["config", "doctor", "info", "list_distros", "main", "open_distro", "set_default", "status", "terminate"]
+__all__ = [
+    "backup_remove",
+    "backup_verify",
+    "backups",
+    "compress_file",
+    "config",
+    "copy_distro",
+    "doctor",
+    "export_distro",
+    "import_distro",
+    "info",
+    "list_distros",
+    "main",
+    "open_distro",
+    "set_default",
+    "status",
+    "terminate",
+]
 
 __version__ = "0.1.0"
 
@@ -83,6 +124,7 @@ class Environment:
     config: WslmanConfig
     platform_ok: bool
     launcher: Launcher = field(default_factory=SubprocessLauncher)
+    lock_dir: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -792,6 +834,1061 @@ def set_default(distro: str, json_output: bool = False, preview: bool = False) -
         json_output=json_output,
         lines=[f"已将默认发行版从 {previous or '未设置'} 改为 {name}（复核通过）"],
         warnings=[*warnings, *env.config.warnings],
+    )
+
+
+# ---------------------------------------------------------------------- #
+# 传输档：export / import / copy / compress / backups
+# ---------------------------------------------------------------------- #
+
+_TRANSFER_TIMEOUT_S = 24 * 60 * 60.0
+_RESERVE_HINT = "更换目标路径或清理空间后重试"
+
+
+def _require_target(env: Environment, name: str) -> Distro:
+    view = _view(env)
+    target = view.find(name)
+    if target is None:
+        raise not_found(f"未找到发行版 {name}", hint="运行 fcmd wslman list 查看已安装发行版")
+    return target
+
+
+def _require_dir(directory: Path | None, *, example: str) -> Path:
+    if directory is None:
+        raise invalid_argument("必须用 --dir 指定目标目录", hint=f"例如：{example}", field="dir")
+    return directory
+
+
+def _dir_problem(path: Path) -> str | None:
+    if path.exists():
+        if not path.is_dir():
+            return f"目标路径不是目录：{path}"
+        try:
+            if any(path.iterdir()):
+                return f"目标目录必须为空：{path}"
+        except OSError as exc:
+            return f"无法读取目标目录 {path}：{exc}"
+    return volume_problem(path)
+
+
+def _guard_running_export(
+    target: Distro,
+    *,
+    terminate_first: bool,
+    allow_running: bool,
+    command: str,
+) -> None:
+    if terminate_first and allow_running:
+        raise invalid_argument(
+            "--terminate-first 与 --allow-running 只能二选一",
+            hint=f"二选一后重试：{command}",
+        )
+    if target.state != "running" or terminate_first or allow_running:
+        return
+    raise invalid_argument(
+        f"{target.name} 正在运行，导出不会自动停机，必须显式选择",
+        hint=(f"先停机再导出：{command} --terminate-first\n接受运行中导出的一致性风险：{command} --allow-running"),
+    )
+
+
+def _guard_running_strict(target: Distro, *, terminate_first: bool, command: str) -> None:
+    if target.state == "running" and not terminate_first:
+        raise invalid_argument(
+            f"{target.name} 正在运行，必须先停机",
+            hint=f"执行：{command} --terminate-first",
+        )
+
+
+def _guard_replace(  # noqa: PLR0913
+    env: Environment,
+    *,
+    existing: Distro,
+    yes: bool,
+    backup: Path | None,
+    terminate_first: bool,
+    command: str,
+) -> None:
+    if not yes:
+        suffix = " --backup <备份文件>" if env.config.require_backup_on_replace else ""
+        raise usage_error(
+            f"替换 {existing.name} 需要 --replace --yes",
+            hint=f"确认后执行：{command} --replace --yes{suffix}",
+        )
+    if env.config.require_backup_on_replace and backup is None:
+        raise usage_error(
+            f"替换 {existing.name} 前必须先备份",
+            hint=(
+                f"执行：{command} --replace --yes --backup <备份文件>；"
+                "或在 ~/.fcmd/wslman.json 把 safety.require_backup_on_replace 设为 false（不推荐）"
+            ),
+        )
+    if backup is not None:
+        if backup.exists():
+            raise invalid_argument(
+                f"备份文件已存在：{backup}",
+                hint="换一个备份路径，避免覆盖既有备份",
+                field="backup",
+            )
+        problem = volume_problem(backup)
+        if problem:
+            raise invalid_argument(problem, hint="选择本地 NTFS 卷上的备份路径", field="backup")
+    if existing.state == "running" and not terminate_first:
+        raise invalid_argument(
+            f"{existing.name} 正在运行，替换前必须先停机",
+            hint=f"执行：{command} --terminate-first",
+        )
+
+
+def _run_step(
+    env: Environment,
+    args: Sequence[str],
+    *,
+    action: str,
+    hint: str | None = None,
+    timeout: float = 120.0,
+) -> CommandResult:
+    result = _run_wsl(env, list(args), timeout=timeout)
+    if result.returncode != 0:
+        detail = _first_line(decode_console(result.stderr or result.stdout))
+        raise runtime_error(f"{action}失败（退出码 {result.returncode}）：{detail}", hint=hint)
+    return result
+
+
+def _abort_parts(parts: Sequence[Path], *, keep: bool) -> str:
+    existing = [path for path in parts if path.exists()]
+    if not existing:
+        return "没有残留文件"
+    if keep:
+        return "已保留未完成文件：" + "、".join(str(path) for path in existing)
+    removed: list[str] = []
+    for path in existing:
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except OSError:
+            continue
+    return "已清理未完成文件：" + "、".join(removed) if removed else "未能清理未完成文件"
+
+
+def _export_target(file: Path, compress: str) -> Path:
+    if compress == "gzip" and not file.name.casefold().endswith(".gz"):
+        return file.with_name(file.name + ".gz")
+    return file
+
+
+def _slug(name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "-._" else "_" for ch in name)
+    return cleaned or "distro"
+
+
+def _temp_tar(explicit: Path | None, env: Environment, directory: Path, name: str) -> Path:
+    if explicit is not None:
+        base = explicit
+    elif env.config.temp_dir.strip():
+        base = Path(env.config.temp_dir)
+    else:
+        base = directory.parent
+    if base.suffix.casefold() == ".tar":
+        return base
+    return base / f"wslman-copy-{_slug(name)}-{time.monotonic_ns()}.tar"
+
+
+def _preflight_for(
+    env: Environment,
+    path: Path,
+    needed: int | None,
+    *,
+    estimated: bool,
+) -> SpacePreflight:
+    return preflight_space(
+        path,
+        needed,
+        estimated=estimated,
+        margin=env.config.safety_margin,
+        min_free_after_mb=env.config.min_free_after_mb,
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="export",
+    help="导出发行版为 tar（可选 gzip；运行中必须显式选择停机或接受一致性风险）",
+    param_help={
+        "distro": "发行版名称，大小写不敏感",
+        "file": "导出文件路径（.tar；--compress gzip 时自动补 .gz）",
+        "json_output": "输出机读结果信封",
+        "preview": "打印完整命令、预检结论与目标路径，不写文件",
+        "overwrite": "覆盖已存在的目标文件",
+        "terminate_first": "导出前先终止发行版",
+        "allow_running": "允许在发行版运行时导出（可能不一致）",
+        "compress": "压缩格式：none（默认）或 gzip",
+        "level": "gzip 压缩级别 1-9，默认 6",
+        "keep_partial": "中断或失败后保留 .part 文件",
+    },
+)
+def export_distro(  # noqa: PLR0912, PLR0913, PLR0917
+    distro: str,
+    file: Path,
+    json_output: bool = False,
+    preview: bool = False,
+    overwrite: bool = False,
+    terminate_first: bool = False,
+    allow_running: bool = False,
+    compress: Literal["none", "gzip"] = "none",
+    level: int = 6,
+    keep_partial: bool = False,
+) -> None:
+    """导出前做磁盘预检，写 ``.part`` 后原子改名；失败默认清理残留。"""
+    warnings: list[str] = []
+    parts: list[Path] = []
+    keep_on_failure = keep_partial
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(distro)
+        if not 1 <= level <= 9:
+            raise invalid_argument(f"--level 必须在 1-9 之间：{level}", field="level")
+
+        target_path = _export_target(file, compress)
+        if target_path != file:
+            warnings.append(f"已按 gzip 约定改用 .gz 后缀：{target_path}")
+        problem = volume_problem(target_path)
+        if problem:
+            raise invalid_argument(problem, hint="选择本地 NTFS 卷上的路径", field="file")
+        if target_path.exists() and target_path.is_dir():
+            raise invalid_argument(f"目标路径是目录：{target_path}", field="file")
+        if target_path.exists() and not overwrite:
+            raise invalid_argument(
+                f"目标文件已存在：{target_path}",
+                hint="换一个路径，或加 --overwrite 覆盖",
+                field="file",
+            )
+
+        target = _require_target(env, name)
+        name = target.name
+        _guard_running_export(
+            target,
+            terminate_first=terminate_first,
+            allow_running=allow_running,
+            command=f"fcmd wslman export {name} {target_path}",
+        )
+        estimate, estimated = distro_disk_bytes(target.base_path, target.version)
+        check = _preflight_for(env, target_path, estimate, estimated=estimated)
+
+        if compress == "gzip":
+            raw_part = part_path(target_path.with_name(target_path.name[:-3]))
+            gz_part: Path | None = part_path(target_path)
+        else:
+            raw_part = part_path(target_path)
+            gz_part = None
+        parts = [path for path in (raw_part, gz_part) if path is not None]
+        keep_on_failure = keep_partial or env.config.keep_partial
+
+        export_args = ["--export", name, str(raw_part)]
+        commands: list[list[str]] = []
+        if terminate_first:
+            commands.append([wsl_path, "--terminate", name])
+        commands.append([wsl_path, *export_args])
+        base_data: dict[str, object] = {
+            "schema": "wslman/export/1",
+            "distro": name,
+            "file": str(target_path),
+            "part": str(raw_part),
+            "format": "tar.gz" if compress == "gzip" else "tar",
+            "compression_level": level if compress == "gzip" else None,
+            "commands": commands,
+            "preflight": check.to_data(),
+            "estimated_bytes": estimate,
+            "estimated": estimated,
+            "terminate_first": terminate_first,
+            "allow_running": allow_running,
+            "warnings": [*warnings, *env.config.warnings],
+        }
+
+        if preview:
+            _emit_action(
+                "export",
+                {**base_data, "preview": True, "size_bytes": None, "sha256": None, "artifacts": []},
+                json_output=json_output,
+                lines=[
+                    f"发行版: {name}（{state_label(target)}）",
+                    f"目标: {target_path}",
+                    f"临时文件: {raw_part}",
+                    f"格式: {'tar.gz' if compress == 'gzip' else 'tar'}",
+                    f"预检: {check.detail}",
+                    "命令:",
+                    *[f"  {_display_argv(argv)}" for argv in commands],
+                    "[预览] 未写入任何文件，也未获取传输锁",
+                ],
+                warnings=[*warnings, *env.config.warnings],
+            )
+            return
+
+        if not check.ok:
+            raise runtime_error(f"目标卷空间不足：{check.detail}", hint=_RESERVE_HINT)
+
+        started = time.monotonic()
+        with TransferLock(name, directory=env.lock_dir):
+            if terminate_first:
+                _run_step(
+                    env,
+                    ["--terminate", name],
+                    action=f"导出前终止 {name}",
+                    hint="改用 --allow-running 接受运行中导出，或手动终止后重试",
+                )
+            for stale in parts:
+                with contextlib.suppress(OSError):
+                    stale.unlink()
+            raw_part.parent.mkdir(parents=True, exist_ok=True)
+            reporter = ProgressReporter(raw_part, estimate, label="导出")
+            reporter.start()
+            try:
+                result = _run_wsl(env, export_args, timeout=_TRANSFER_TIMEOUT_S)
+            finally:
+                reporter.stop()
+            if result.returncode != 0:
+                detail = _first_line(decode_console(result.stderr or result.stdout))
+                raise runtime_error(
+                    f"wsl --export {name} 失败（退出码 {result.returncode}）：{detail}",
+                    hint=f"{_RESERVE_HINT}；残留文件：{raw_part}",
+                )
+            if not raw_part.is_file():
+                raise runtime_error(
+                    "wsl --export 返回成功但未生成文件",
+                    hint=f"检查 {raw_part} 所在目录的权限与剩余空间",
+                )
+            if gz_part is not None:
+                gzip_to(raw_part, gz_part, level=level)
+                with contextlib.suppress(OSError):
+                    raw_part.unlink()
+                atomic_replace(gz_part, target_path)
+            else:
+                atomic_replace(raw_part, target_path)
+        size = target_path.stat().st_size
+        digest = sha256_file(target_path)
+    except KeyboardInterrupt:
+        detail = _abort_parts(parts, keep=keep_on_failure)
+        _fail(
+            interrupted(f"导出被中断；{detail}", hint=f"重新执行会从 .part 重新开始；目标文件 {file} 未生成"),
+            "export",
+            json_output,
+        )
+        return
+    except WslmanError as exc:
+        _abort_parts(parts, keep=keep_on_failure)
+        _fail(exc, "export", json_output)
+        return
+    except OSError as exc:
+        detail = _abort_parts(parts, keep=keep_on_failure)
+        _fail(runtime_error(f"导出文件操作失败：{exc}", hint=detail), "export", json_output)
+        return
+
+    artifacts = [{"kind": "backup", "path": str(target_path), "bytes": size, "sha256": digest}]
+    _emit_action(
+        "export",
+        {
+            **base_data,
+            "preview": False,
+            "size_bytes": size,
+            "sha256": digest,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "artifacts": artifacts,
+        },
+        json_output=json_output,
+        lines=[
+            f"导出完成: {target_path}",
+            f"大小: {format_bytes(size)}",
+            f"sha256: {digest}",
+        ],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="import",
+    help="从 tar 导入为新发行版（覆盖已有发行版需 --replace --yes，且默认强制先备份）",
+    param_help={
+        "name": "新发行版名称",
+        "file": "要导入的 tar 文件",
+        "json_output": "输出机读结果信封",
+        "preview": "打印命令与预检结论，不创建目录、不导入",
+        "dir": "目标安装目录（必须为空；不存在会在执行时创建）",
+        "version": "WSL 版本：1 或 2；默认交给 wsl.exe 决定",
+        "replace": "覆盖同名发行版（会先注销旧发行版）",
+        "yes": "确认破坏性替换",
+        "backup": "--replace 时旧发行版的备份文件路径",
+        "terminate_first": "替换前先终止正在运行的旧发行版",
+    },
+)
+def import_distro(  # noqa: PLR0912, PLR0913, PLR0917
+    name: str,
+    file: Path,
+    json_output: bool = False,
+    preview: bool = False,
+    dir: Path | None = None,
+    version: Literal["1", "2"] | None = None,
+    replace: bool = False,
+    yes: bool = False,
+    backup: Path | None = None,
+    terminate_first: bool = False,
+) -> None:
+    """校验目标目录与名称冲突，必要时先备份并注销旧发行版，再执行 ``wsl --import``。"""
+    warnings: list[str] = []
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(name)
+        target_dir = _require_dir(dir, example=r"fcmd wslman import Ubuntu2 D:\b\Ubuntu.tar --dir D:\WSL\Ubuntu2")
+        problem = _dir_problem(target_dir)
+        if problem:
+            raise invalid_argument(problem, hint="目标目录必须为空且位于本地磁盘", field="dir")
+        if not file.is_file():
+            raise not_found(
+                f"导入文件不存在：{file}",
+                hint="确认路径；备份文件可先用 fcmd wslman backup-verify 校验",
+                field="file",
+            )
+        if backup is not None and not replace:
+            raise invalid_argument("--backup 只用于 --replace 替换前备份", field="backup")
+
+        view = _view(env)
+        existing = view.find(name)
+        if existing is not None and not replace:
+            raise invalid_argument(
+                f"发行版 {existing.name} 已存在",
+                hint="换一个名称，或加 --replace --yes（配置要求时再加 --backup <文件>）",
+                field="name",
+            )
+
+        commands: list[list[str]] = []
+        backup_check = None
+        if existing is not None:
+            name = existing.name
+            _guard_replace(
+                env,
+                existing=existing,
+                yes=yes,
+                backup=backup,
+                terminate_first=terminate_first,
+                command=f"fcmd wslman import {name} {file} --dir {target_dir}",
+            )
+            if terminate_first:
+                commands.append([wsl_path, "--terminate", existing.name])
+            if backup is not None:
+                commands.append([wsl_path, "--export", existing.name, str(backup)])
+                estimate, estimated = distro_disk_bytes(existing.base_path, existing.version)
+                backup_check = _preflight_for(env, backup, estimate, estimated=estimated)
+                if not backup_check.ok and not preview:
+                    raise runtime_error(f"备份路径空间不足：{backup_check.detail}", hint=_RESERVE_HINT)
+            commands.append([wsl_path, "--unregister", existing.name])
+
+        import_args = ["--import", name, str(target_dir), str(file)]
+        if version is not None:
+            import_args.extend(["--version", version])
+        commands.append([wsl_path, *import_args])
+
+        check = _preflight_for(env, target_dir, file.stat().st_size, estimated=False)
+        base_data: dict[str, object] = {
+            "schema": "wslman/import/1",
+            "distro": name,
+            "file": str(file),
+            "dir": str(target_dir),
+            "version": version,
+            "replace": existing is not None,
+            "backup": str(backup) if backup is not None else None,
+            "commands": commands,
+            "preflight": check.to_data(),
+            "backup_preflight": backup_check.to_data() if backup_check is not None else None,
+            "warnings": [*warnings, *env.config.warnings],
+        }
+        if preview:
+            _emit_action(
+                "import",
+                {**base_data, "preview": True, "executed": False, "verified": None},
+                json_output=json_output,
+                lines=[
+                    f"名称: {name}",
+                    f"来源: {file}",
+                    f"安装目录: {target_dir}",
+                    f"预检: {check.detail}",
+                    "命令:",
+                    *[f"  {_display_argv(argv)}" for argv in commands],
+                    "[预览] 未创建目录、未导入、未注销任何发行版",
+                ],
+                warnings=[*warnings, *env.config.warnings],
+            )
+            return
+        if not check.ok:
+            raise runtime_error(f"目标卷空间不足：{check.detail}", hint=_RESERVE_HINT)
+
+        started = time.monotonic()
+        with TransferLock(name, directory=env.lock_dir):
+            if existing is not None:
+                if terminate_first:
+                    _run_step(env, ["--terminate", existing.name], action=f"终止 {existing.name}")
+                if backup is not None:
+                    _run_step(
+                        env,
+                        ["--export", existing.name, str(backup)],
+                        action=f"备份 {existing.name}",
+                        hint="备份失败时不会注销旧发行版；检查备份路径后重试",
+                        timeout=_TRANSFER_TIMEOUT_S,
+                    )
+                _run_step(
+                    env,
+                    ["--unregister", existing.name],
+                    action=f"注销 {existing.name}",
+                    hint=f"旧发行版可能已被部分移除；运行 fcmd wslman list 复核，必要时 wsl --unregister {name}",
+                )
+            target_dir.mkdir(parents=True, exist_ok=True)
+            _run_step(
+                env,
+                import_args,
+                action=f"导入 {name}",
+                hint=f"可能留下半成品或空目录；运行 fcmd wslman list 复核，必要时 wsl --unregister {name}",
+                timeout=_TRANSFER_TIMEOUT_S,
+            )
+        after = _try_view(env)
+        verified = after is not None and after.find(name) is not None
+        if not verified:
+            warnings.append("导入命令已成功，但复核时尚未在 wsl -l -v 中看到该发行版；稍后用 fcmd wslman list 确认")
+    except KeyboardInterrupt:
+        _fail(
+            interrupted("导入被中断", hint="运行 fcmd wslman list 复核；必要时 wsl --unregister 清理半成品"),
+            "import",
+            json_output,
+        )
+        return
+    except WslmanError as exc:
+        _fail(exc, "import", json_output)
+        return
+    except OSError as exc:
+        _fail(runtime_error(f"导入文件操作失败：{exc}", hint="检查目标目录权限与剩余空间"), "import", json_output)
+        return
+
+    _emit_action(
+        "import",
+        {
+            **base_data,
+            "preview": False,
+            "executed": True,
+            "verified": verified,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "warnings": [*warnings, *env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[f"导入完成: {name} → {target_dir}"],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="copy",
+    help="复制发行版为新名称（导出临时 tar 再导入，默认清理临时文件）",
+    param_help={
+        "source": "源发行版名称",
+        "name": "新发行版名称",
+        "json_output": "输出机读结果信封",
+        "preview": "打印命令与预检结论，不导出、不导入、不写临时文件",
+        "dir": "新发行版的安装目录（必须为空）",
+        "temp": "临时 tar 路径或所在目录；默认放在安装目录的上一级",
+        "version": "新发行版的 WSL 版本；默认沿用源发行版",
+        "terminate_first": "导出前先终止源发行版（替换目标时也会先终止目标）",
+        "replace": "覆盖同名目标发行版",
+        "yes": "确认破坏性替换",
+        "backup": "--replace 时目标发行版的备份文件路径",
+        "keep_temp": "保留临时 tar 便于排查",
+    },
+)
+def copy_distro(  # noqa: PLR0912, PLR0913, PLR0917
+    source: str,
+    name: str,
+    json_output: bool = False,
+    preview: bool = False,
+    dir: Path | None = None,
+    temp: Path | None = None,
+    version: Literal["1", "2"] | None = None,
+    terminate_first: bool = False,
+    replace: bool = False,
+    yes: bool = False,
+    backup: Path | None = None,
+    keep_temp: bool = False,
+) -> None:
+    """导出源发行版到临时 tar，再以新名称导入；失败时保留可诊断信息。"""
+    warnings: list[str] = []
+    temp_path: Path | None = None
+    temp_part: Path | None = None
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        source_name = _validated_name(source)
+        target_name = _validated_name(name)
+        if source_name.casefold() == target_name.casefold():
+            raise invalid_argument("源与目标名称不能相同", hint="为副本指定一个新名称", field="name")
+        target_dir = _require_dir(dir, example=r"fcmd wslman copy Ubuntu Ubuntu2 --dir D:\WSL\Ubuntu2")
+        problem = _dir_problem(target_dir)
+        if problem:
+            raise invalid_argument(problem, hint="目标安装目录必须为空且位于本地磁盘", field="dir")
+        if backup is not None and not replace:
+            raise invalid_argument("--backup 只用于 --replace 替换前备份", field="backup")
+
+        view = _view(env)
+        origin = view.find(source_name)
+        if origin is None:
+            raise not_found(f"未找到发行版 {source_name}", hint="运行 fcmd wslman list 查看已安装发行版")
+        source_name = origin.name
+        _guard_running_strict(
+            origin,
+            terminate_first=terminate_first,
+            command=f"fcmd wslman copy {source_name} {target_name} --dir {target_dir}",
+        )
+
+        existing = view.find(target_name)
+        if existing is not None and not replace:
+            raise invalid_argument(
+                f"发行版 {existing.name} 已存在",
+                hint="换一个名称，或加 --replace --yes（配置要求时再加 --backup <文件>）",
+                field="name",
+            )
+        commands: list[list[str]] = []
+        backup_check = None
+        if existing is not None:
+            target_name = existing.name
+            _guard_replace(
+                env,
+                existing=existing,
+                yes=yes,
+                backup=backup,
+                terminate_first=terminate_first,
+                command=f"fcmd wslman copy {source_name} {target_name} --dir {target_dir}",
+            )
+            if terminate_first:
+                commands.append([wsl_path, "--terminate", existing.name])
+            if backup is not None:
+                commands.append([wsl_path, "--export", existing.name, str(backup)])
+                estimate, estimated = distro_disk_bytes(existing.base_path, existing.version)
+                backup_check = _preflight_for(env, backup, estimate, estimated=estimated)
+                if not backup_check.ok and not preview:
+                    raise runtime_error(f"备份路径空间不足：{backup_check.detail}", hint=_RESERVE_HINT)
+            commands.append([wsl_path, "--unregister", existing.name])
+
+        temp_path = _temp_tar(temp, env, target_dir, target_name)
+        temp_part = part_path(temp_path)
+        estimate, estimated = distro_disk_bytes(origin.base_path, origin.version)
+        check = _preflight_for(env, temp_path, estimate, estimated=estimated)
+        effective_version = version or (str(origin.version) if origin.version else None)
+
+        export_args = ["--export", source_name, str(temp_part)]
+        import_args = ["--import", target_name, str(target_dir), str(temp_path)]
+        if effective_version is not None:
+            import_args.extend(["--version", effective_version])
+        planned = [[wsl_path, *export_args], *commands, [wsl_path, *import_args]]
+        if terminate_first:
+            planned.insert(0, [wsl_path, "--terminate", source_name])
+
+        base_data: dict[str, object] = {
+            "schema": "wslman/copy/1",
+            "source": source_name,
+            "distro": target_name,
+            "dir": str(target_dir),
+            "temp": str(temp_path),
+            "version": effective_version,
+            "replace": existing is not None,
+            "backup": str(backup) if backup is not None else None,
+            "keep_temp": keep_temp,
+            "commands": planned,
+            "preflight": check.to_data(),
+            "backup_preflight": backup_check.to_data() if backup_check is not None else None,
+            "warnings": [*warnings, *env.config.warnings],
+        }
+        if preview:
+            _emit_action(
+                "copy",
+                {**base_data, "preview": True, "executed": False, "verified": None, "artifacts": []},
+                json_output=json_output,
+                lines=[
+                    f"源: {source_name}（{state_label(origin)}）",
+                    f"目标: {target_name} → {target_dir}",
+                    f"临时包: {temp_path}",
+                    f"预检: {check.detail}",
+                    "命令:",
+                    *[f"  {_display_argv(argv)}" for argv in planned],
+                    "[预览] 未导出、未导入、未写临时文件",
+                ],
+                warnings=[*warnings, *env.config.warnings],
+            )
+            return
+        if not check.ok:
+            raise runtime_error(f"临时目录所在卷空间不足：{check.detail}", hint=_RESERVE_HINT)
+
+        started = time.monotonic()
+        with ExitStack() as stack:
+            stack.enter_context(TransferLock(source_name, directory=env.lock_dir))
+            stack.enter_context(TransferLock(target_name, directory=env.lock_dir))
+            if terminate_first:
+                _run_step(env, ["--terminate", source_name], action=f"终止 {source_name}")
+            with contextlib.suppress(OSError):
+                temp_part.unlink()
+            temp_part.parent.mkdir(parents=True, exist_ok=True)
+            reporter = ProgressReporter(temp_part, estimate, label="复制")
+            reporter.start()
+            try:
+                result = _run_wsl(env, export_args, timeout=_TRANSFER_TIMEOUT_S)
+            finally:
+                reporter.stop()
+            if result.returncode != 0:
+                detail = _first_line(decode_console(result.stderr or result.stdout))
+                raise runtime_error(
+                    f"导出 {source_name} 失败（退出码 {result.returncode}）：{detail}",
+                    hint=f"检查临时目录空间与权限；残留文件：{temp_part}",
+                )
+            atomic_replace(temp_part, temp_path)
+            if existing is not None:
+                if terminate_first:
+                    _run_step(env, ["--terminate", existing.name], action=f"终止 {existing.name}")
+                if backup is not None:
+                    _run_step(
+                        env,
+                        ["--export", existing.name, str(backup)],
+                        action=f"备份 {existing.name}",
+                        hint="备份失败时不会注销目标发行版；检查备份路径后重试",
+                        timeout=_TRANSFER_TIMEOUT_S,
+                    )
+                _run_step(env, ["--unregister", existing.name], action=f"注销 {existing.name}")
+            target_dir.mkdir(parents=True, exist_ok=True)
+            _run_step(
+                env,
+                import_args,
+                action=f"导入 {target_name}",
+                hint=f"可能留下半成品；运行 fcmd wslman list 复核，必要时 wsl --unregister {target_name}",
+                timeout=_TRANSFER_TIMEOUT_S,
+            )
+        size = temp_path.stat().st_size
+        digest = sha256_file(temp_path)
+        if not keep_temp:
+            with contextlib.suppress(OSError):
+                temp_path.unlink()
+        after = _try_view(env)
+        verified = after is not None and after.find(target_name) is not None
+        if not verified:
+            warnings.append("复制命令已成功，但复核时尚未在 wsl -l -v 中看到新发行版；稍后用 fcmd wslman list 确认")
+    except KeyboardInterrupt:
+        detail = _abort_parts([temp_part] if temp_part is not None else [], keep=keep_temp)
+        _fail(interrupted(f"复制被中断；{detail}"), "copy", json_output)
+        return
+    except WslmanError as exc:
+        _abort_parts([temp_part] if temp_part is not None else [], keep=keep_temp)
+        _fail(exc, "copy", json_output)
+        return
+    except OSError as exc:
+        detail = _abort_parts([temp_part] if temp_part is not None else [], keep=keep_temp)
+        _fail(runtime_error(f"复制文件操作失败：{exc}", hint=detail), "copy", json_output)
+        return
+
+    artifacts = [
+        {
+            "kind": "backup",
+            "path": str(temp_path),
+            "bytes": size,
+            "sha256": digest,
+            "kept": keep_temp,
+        }
+    ]
+    _emit_action(
+        "copy",
+        {
+            **base_data,
+            "preview": False,
+            "executed": True,
+            "verified": verified,
+            "size_bytes": size,
+            "sha256": digest,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+            "artifacts": artifacts,
+            "warnings": [*warnings, *env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[
+            f"复制完成: {source_name} → {target_name}（{target_dir}）",
+            f"临时包: {temp_path}" + ("（已保留）" if keep_temp else "（已清理）"),
+        ],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="compress",
+    help="把导出的 tar 压缩为 gzip（--remove-source 需同时 --yes）",
+    param_help={
+        "file": "要压缩的 tar 文件",
+        "json_output": "输出机读结果信封",
+        "preview": "打印目标路径、预检与压缩参数，不写文件",
+        "output": "输出路径；默认在源文件后追加 .gz",
+        "level": "gzip 压缩级别 1-9，默认 6",
+        "overwrite": "覆盖已存在的输出文件",
+        "remove_source": "压缩成功后删除源文件（需 --yes）",
+        "yes": "确认删除源文件",
+    },
+)
+def compress_file(  # noqa: PLR0912, PLR0913, PLR0917
+    file: Path,
+    json_output: bool = False,
+    preview: bool = False,
+    output: Path | None = None,
+    level: int = 6,
+    overwrite: bool = False,
+    remove_source: bool = False,
+    yes: bool = False,
+) -> None:
+    """纯 Python gzip 流式压缩，先写 ``.part`` 再原子改名。"""
+    warnings: list[str] = []
+    part: Path | None = None
+    try:
+        env = _build_environment()
+        if not file.is_file():
+            raise not_found(f"源文件不存在：{file}", hint="确认导出的 tar 路径后重试", field="file")
+        if file.name.casefold().endswith((".gz", ".tgz")):
+            raise invalid_argument(f"源文件已是 gzip：{file}", hint="compress 只处理未压缩的 tar", field="file")
+        if not 1 <= level <= 9:
+            raise invalid_argument(f"--level 必须在 1-9 之间：{level}", field="level")
+        target_path = output if output is not None else file.with_name(file.name + ".gz")
+        if target_path == file:
+            raise invalid_argument("输出路径不能与源文件相同", field="output")
+        problem = volume_problem(target_path)
+        if problem:
+            raise invalid_argument(problem, hint="选择本地 NTFS 卷上的路径", field="output")
+        if target_path.exists() and target_path.is_dir():
+            raise invalid_argument(f"输出路径是目录：{target_path}", field="output")
+        if target_path.exists() and not overwrite:
+            raise invalid_argument(
+                f"输出文件已存在：{target_path}",
+                hint="换一个路径，或加 --overwrite 覆盖",
+                field="output",
+            )
+        if remove_source and not yes:
+            raise usage_error(
+                "删除源文件需要 --yes",
+                hint=f"确认后执行：fcmd wslman compress {file} --remove-source --yes",
+            )
+
+        source_size = file.stat().st_size
+        check = _preflight_for(env, target_path, source_size, estimated=False)
+        part = part_path(target_path)
+        data: dict[str, object] = {
+            "schema": "wslman/compress/1",
+            "source": str(file),
+            "output": str(target_path),
+            "source_bytes": source_size,
+            "level": level,
+            "remove_source": remove_source,
+            "preflight": check.to_data(),
+            "warnings": [*warnings, *env.config.warnings],
+        }
+        if preview:
+            _emit_action(
+                "compress",
+                {**data, "preview": True, "output_bytes": None, "sha256": None, "removed_source": False},
+                json_output=json_output,
+                lines=[
+                    f"源: {file}（{format_bytes(source_size)}）",
+                    f"输出: {target_path}",
+                    f"级别: {level}",
+                    f"预检: {check.detail}",
+                    "[预览] 未写文件" + ("；执行时会删除源文件" if remove_source else ""),
+                ],
+                warnings=[*warnings, *env.config.warnings],
+            )
+            return
+        if not check.ok:
+            raise runtime_error(f"目标卷空间不足：{check.detail}", hint=_RESERVE_HINT)
+
+        started = time.monotonic()
+        with contextlib.suppress(OSError):
+            part.unlink()
+        size = gzip_to(file, part, level=level)
+        atomic_replace(part, target_path)
+        digest = sha256_file(target_path)
+        removed = False
+        if remove_source:
+            file.unlink()
+            removed = True
+    except KeyboardInterrupt:
+        detail = _abort_parts([part] if part is not None else [], keep=False)
+        _fail(interrupted(f"压缩被中断；{detail}"), "compress", json_output)
+        return
+    except WslmanError as exc:
+        _abort_parts([part] if part is not None else [], keep=False)
+        _fail(exc, "compress", json_output)
+        return
+    except OSError as exc:
+        detail = _abort_parts([part] if part is not None else [], keep=False)
+        _fail(runtime_error(f"压缩文件操作失败：{exc}", hint=detail), "compress", json_output)
+        return
+
+    ratio = size / source_size * 100 if source_size else 0.0
+    _emit_action(
+        "compress",
+        {
+            **data,
+            "preview": False,
+            "output_bytes": size,
+            "ratio_percent": round(ratio, 1),
+            "sha256": digest,
+            "removed_source": removed,
+            "duration_ms": int((time.monotonic() - started) * 1000),
+        },
+        json_output=json_output,
+        lines=[
+            f"压缩完成: {file} → {target_path}",
+            f"大小: {format_bytes(source_size)} → {format_bytes(size)}（{ratio:.1f}%）",
+            f"sha256: {digest}",
+            *(["已删除源文件"] if removed else []),
+        ],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="backups",
+    help="列出备份目录内的 tar / tar.gz（只读）",
+    param_help={
+        "dir": "备份目录；默认取配置 backups.dir（默认空，必须显式指定）",
+        "json_output": "输出机读结果信封",
+    },
+)
+def backups(dir: Path | None = None, json_output: bool = False) -> None:
+    """``--dir`` 优先，其次配置 ``backups.dir``；目录不存在不隐式创建。"""
+    try:
+        env = _build_environment()
+        configured = Path(env.config.backups_dir) if env.config.backups_dir.strip() else None
+        target = dir if dir is not None else configured
+        if target is None:
+            raise invalid_argument(
+                "未指定备份目录",
+                hint=(
+                    "用 --dir 指定，或在 ~/.fcmd/wslman.json 设置 backups.dir；"
+                    f"推荐目录（含剩余空间）见 fcmd wslman doctor，例如 {recommended_backup_dir()}"
+                ),
+                field="dir",
+            )
+        files = backup_files(target)
+    except WslmanError as exc:
+        _fail(exc, "backups", json_output)
+        return
+
+    total = sum(item.size_bytes for item in files)
+    data = {
+        "schema": "wslman/backups/1",
+        "dir": str(target),
+        "count": len(files),
+        "total_bytes": total,
+        "files": [item.to_data() for item in files],
+        "warnings": list(env.config.warnings),
+    }
+    if json_output:
+        emit_result("wslman", "backups", data)
+        return
+    if not files:
+        print(f"{target} 下没有 tar / tar.gz 备份。")
+        return
+    print(f"{target}（{len(files)} 个，共 {format_bytes(total)}）")
+    for item in files:
+        stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(item.modified))
+        kind = "tar.gz" if item.compressed else "tar"
+        print(f"  {item.path.name}  {kind}  {format_bytes(item.size_bytes)}  {stamp}")
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="backup-verify",
+    help="校验备份 tar / tar.gz 的完整性与 sha256（只读）",
+    param_help={
+        "file": "备份文件路径",
+        "json_output": "输出机读结果信封",
+    },
+)
+def backup_verify(file: Path, json_output: bool = False) -> None:
+    """流式读取归档；损坏时以 CHECK_FAILED 退出。"""
+    try:
+        info = archive_info(file)
+    except WslmanError as exc:
+        _fail(exc, "backup-verify", json_output)
+        return
+
+    data = {"schema": "wslman/backup-verify/1", **info.to_data(), "ok": True}
+    if json_output:
+        emit_result("wslman", "backup-verify", data)
+        return
+    kind = "tar.gz" if info.compressed else "tar"
+    print(f"备份完整: {info.path}（{kind}）")
+    print(f"大小: {format_bytes(info.size_bytes)}  条目: {info.members}  解压后: {format_bytes(info.total_bytes)}")
+    print(f"sha256: {info.sha256}")
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="backup-remove",
+    help="删除指定备份文件（破坏性，执行需要 --yes）",
+    param_help={
+        "file": "要删除的备份文件",
+        "json_output": "输出机读结果信封",
+        "preview": "只显示将删除的文件与大小，不删除",
+        "yes": "确认删除",
+    },
+)
+def backup_remove(file: Path, json_output: bool = False, preview: bool = False, yes: bool = False) -> None:
+    """只删除单个文件；``--preview`` 不读执行器、不碰文件系统写入。"""
+    warnings: list[str] = []
+    try:
+        if not file.is_file():
+            raise not_found(
+                f"备份文件不存在：{file}", hint="运行 fcmd wslman backups --dir <目录> 查看现有备份", field="file"
+            )
+        size = file.stat().st_size
+        if preview:
+            _emit_action(
+                "backup-remove",
+                {
+                    "schema": "wslman/backup-remove/1",
+                    "file": str(file),
+                    "size_bytes": size,
+                    "preview": True,
+                    "removed": False,
+                    "warnings": warnings,
+                },
+                json_output=json_output,
+                lines=[f"将删除: {file}（{format_bytes(size)}）", "[预览] 未删除任何文件"],
+            )
+            return
+        if not yes:
+            raise usage_error(
+                "删除备份需要 --yes",
+                hint=f"确认后执行：fcmd wslman backup-remove {file} --yes",
+            )
+        file.unlink()
+    except WslmanError as exc:
+        _fail(exc, "backup-remove", json_output)
+        return
+    except OSError as exc:
+        _fail(runtime_error(f"删除备份失败：{exc}", hint=f"检查文件是否被占用：{file}"), "backup-remove", json_output)
+        return
+
+    _emit_action(
+        "backup-remove",
+        {
+            "schema": "wslman/backup-remove/1",
+            "file": str(file),
+            "size_bytes": size,
+            "preview": False,
+            "removed": True,
+            "warnings": warnings,
+        },
+        json_output=json_output,
+        lines=[f"已删除: {file}（{format_bytes(size)}）"],
     )
 
 

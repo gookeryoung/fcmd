@@ -10,6 +10,7 @@ from __future__ import annotations
 __all__ = [
     "WslmanError",
     "check_failed",
+    "interrupted",
     "invalid_argument",
     "not_found",
     "runtime_error",
@@ -58,3 +59,8 @@ def runtime_error(message: str, *, hint: str | None = None, field: str | None = 
 def check_failed(message: str, *, hint: str | None = None, field: str | None = None) -> WslmanError:
     """校验结论为不通过。"""
     return WslmanError("CHECK_FAILED", message, hint=hint, field=field)
+
+
+def interrupted(message: str, *, hint: str | None = None, field: str | None = None) -> WslmanError:
+    """用户中断（Ctrl+C）；退出码 130。"""
+    return WslmanError("INTERRUPTED", message, hint=hint, field=field)

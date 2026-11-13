@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from fcmd.apps.wslman._registry import RegistryDistro, RegistrySnapshot
@@ -32,17 +32,22 @@ class FakeRunner:
     """按 ``argv[1:]`` 返回预置结果；未预置的命令直接失败，防止测试静默跑真命令。
 
     值为 ``list`` 时按调用顺序依次弹出，可模拟「执行前后各读一次列表」这类序列；
-    列表耗尽后继续使用最后一个结果。
+    列表耗尽后继续使用最后一个结果。值为可调用对象时以完整 argv 调用它，
+    便于模拟 ``wsl --export`` 写入目标文件；``fallback`` 用于路径含临时目录、
+    无法预先写死的命令。
     """
 
     def __init__(
         self,
         responses: Mapping[tuple[str, ...], CommandResult | BaseException | list[CommandResult | BaseException]]
         | None = None,
+        *,
+        fallback: Callable[[tuple[str, ...]], CommandResult] | None = None,
     ) -> None:
         self.responses: dict[tuple[str, ...], CommandResult | BaseException | list[CommandResult | BaseException]] = (
             dict(responses or {})
         )
+        self.fallback = fallback
         self.calls: list[tuple[str, ...]] = []
 
     def run(
@@ -52,9 +57,12 @@ class FakeRunner:
         timeout: float | None = None,
         env: Any = None,
     ) -> CommandResult:
-        key = tuple(argv[1:])
-        self.calls.append(tuple(argv))
+        command = tuple(argv)
+        key = command[1:]
+        self.calls.append(command)
         if key not in self.responses:
+            if self.fallback is not None:
+                return self.fallback(command)
             raise AssertionError(f"未预置的命令：{key}")
         value = self.responses[key]
         if isinstance(value, list):
