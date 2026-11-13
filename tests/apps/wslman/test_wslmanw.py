@@ -67,11 +67,23 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
         "download_dir": 42,
         "manifest_url": None,
         "download_source": "ftp",
+        "auto_refresh": "yes",
+        "poll_interval_ms": "fast",
     }
     settings = wslmanw.settings_from_mapping(raw)
     assert settings == wslmanw.WslmanwSettings(geometry=None, download_source="auto")
+    assert settings.auto_refresh is True
+    assert settings.poll_interval_ms == wslmanw.DEFAULT_POLL_MS
 
     assert wslmanw.settings_from_mapping({"download_source": "file"}).download_source == "file"
+
+
+def test_settings_clamp_poll_interval_from_file() -> None:
+    """手改 JSON 造成的越界间隔要夹回 1–30 秒，布尔值不能当整数用。"""
+    assert wslmanw.settings_from_mapping({"poll_interval_ms": 10}).poll_interval_ms == wslmanw.POLL_MIN_MS
+    assert wslmanw.settings_from_mapping({"poll_interval_ms": 999999}).poll_interval_ms == wslmanw.POLL_MAX_MS
+    assert wslmanw.settings_from_mapping({"poll_interval_ms": True}).poll_interval_ms == wslmanw.DEFAULT_POLL_MS
+    assert wslmanw.settings_from_mapping({"auto_refresh": False}).auto_refresh is False
 
 
 def test_old_settings_file_without_new_fields_still_loads(tmp_path: Path) -> None:
@@ -82,6 +94,8 @@ def test_old_settings_file_without_new_fields_still_loads(tmp_path: Path) -> Non
     assert settings.geometry == "1024x700+10+10"
     assert settings.download_dir == ""
     assert settings.download_source == "auto"
+    assert settings.auto_refresh is True
+    assert settings.poll_interval_ms == wslmanw.DEFAULT_POLL_MS
 
 
 def test_settings_mapping_is_json_friendly() -> None:
@@ -91,7 +105,31 @@ def test_settings_mapping_is_json_friendly() -> None:
         "download_dir": "",
         "manifest_url": "",
         "download_source": "cli",
+        "auto_refresh": True,
+        "poll_interval_ms": wslmanw.DEFAULT_POLL_MS,
     }
+
+
+def test_default_poll_interval_is_within_five_seconds() -> None:
+    assert wslmanw.DEFAULT_POLL_MS <= 5000
+    assert wslmanw.POLL_MIN_MS <= wslmanw.DEFAULT_POLL_MS <= wslmanw.POLL_MAX_MS
+
+
+def test_clamp_poll_ms_and_label() -> None:
+    assert wslmanw.clamp_poll_ms(0) == wslmanw.POLL_MIN_MS
+    assert wslmanw.clamp_poll_ms(999999) == wslmanw.POLL_MAX_MS
+    assert wslmanw.clamp_poll_ms(3000) == 3000
+    assert wslmanw.poll_label(3000) == "3 秒"
+    assert wslmanw.poll_label(10000) == "10 秒"
+    assert wslmanw.poll_label(1500) == "1 秒"
+
+
+def test_action_states_follow_selected_state() -> None:
+    """运行中只能停止；已停止只能启动；未选中两个都禁用。"""
+    assert wslmanw.action_states("running") == (False, True)
+    assert wslmanw.action_states("stopped") == (True, False)
+    assert wslmanw.action_states("unknown") == (True, False)
+    assert wslmanw.action_states(None) == (False, False)
 
 
 def test_resolve_geometry_clamps_to_screen_and_minimum() -> None:

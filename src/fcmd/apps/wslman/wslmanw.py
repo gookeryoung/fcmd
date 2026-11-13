@@ -9,8 +9,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import queue
 import threading
+import time
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -34,6 +36,8 @@ __all__ = [
     "SETTINGS_NAME",
     "WslmanWindow",
     "WslmanwSettings",
+    "action_states",
+    "clamp_poll_ms",
     "column_widths",
     "config_path",
     "detail_fields",
@@ -42,6 +46,7 @@ __all__ = [
     "elide_name",
     "load_settings",
     "main",
+    "poll_label",
     "resolve_geometry",
     "save_settings",
     "settings_from_mapping",
@@ -60,6 +65,25 @@ MIN_HEIGHT = 600
 _DESCRIPTION = "WSL 发行版管理的图形界面：列表/详情、打开终端、导出导入、下载、注销与关闭全部"
 
 _DOWNLOAD_SOURCES = ("auto", "cli", "manifest", "file")
+
+DEFAULT_POLL_MS = 3000
+"""默认 3 秒：单次 wsl -l -v 通常几十到一百多毫秒，3 秒足以看清状态迁移，
+又不会让后台频繁拉起 wsl.exe。"""
+
+POLL_MIN_MS = 1000
+POLL_MAX_MS = 30000
+
+POLL_CHOICES: tuple[tuple[int, str], ...] = (
+    (2000, "2 秒"),
+    (3000, "3 秒"),
+    (5000, "5 秒"),
+    (10000, "10 秒"),
+    (30000, "30 秒"),
+)
+"""下拉框可选轮询间隔；旧文件里的其它取值按区间夹取后显示为秒数。"""
+
+HIDDEN_FACTOR = 3
+"""窗口失焦时把轮询间隔放大到 3 倍；最小化时直接暂停。"""
 
 _DOWNLOAD_HINT = "wsl --install 会触发系统级安装、可能弹 UAC，且不能指定自定义镜像"
 
@@ -161,12 +185,34 @@ def summary_text(distro: Distro, size: int | None, estimated: bool) -> str:
     )
 
 
+def clamp_poll_ms(value: int) -> int:
+    """把轮询间隔夹在 1–30 秒，防止旧设置或手改 JSON 造成空转。"""
+    return min(POLL_MAX_MS, max(POLL_MIN_MS, value))
+
+
+def poll_label(value: int) -> str:
+    """把毫秒间隔转成下拉框文案；非预设值显示为整数秒。"""
+    for milliseconds, label in POLL_CHOICES:
+        if milliseconds == value:
+            return label
+    return f"{max(1, value // 1000)} 秒"
+
+
+def action_states(state: str | None) -> tuple[bool, bool]:
+    """按选中行状态返回「启动可用, 停止可用」；未选中时两个都禁用。"""
+    if state == "running":
+        return False, True
+    return (state is not None), False
+
+
 @dataclass(frozen=True, slots=True)
 class WslmanwSettings:
     geometry: str | None = None
     download_dir: str = ""
     manifest_url: str = ""
     download_source: str = "auto"
+    auto_refresh: bool = True
+    poll_interval_ms: int = DEFAULT_POLL_MS
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -175,6 +221,8 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "download_dir": settings.download_dir,
         "manifest_url": settings.manifest_url,
         "download_source": settings.download_source,
+        "auto_refresh": settings.auto_refresh,
+        "poll_interval_ms": settings.poll_interval_ms,
     }
 
 
@@ -182,11 +230,17 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
     source = _str(raw, "download_source") or "auto"
     if source not in _DOWNLOAD_SOURCES:
         source = "auto"
+    interval = raw.get("poll_interval_ms", DEFAULT_POLL_MS)
+    if isinstance(interval, bool) or not isinstance(interval, int):
+        interval = DEFAULT_POLL_MS
+    auto_refresh = raw.get("auto_refresh", True)
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
         download_dir=_str(raw, "download_dir"),
         manifest_url=_str(raw, "manifest_url"),
         download_source=source,
+        auto_refresh=auto_refresh if isinstance(auto_refresh, bool) else True,
+        poll_interval_ms=clamp_poll_ms(interval),
     )
 
 
@@ -278,6 +332,10 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._cancel = threading.Event()
         self._label = ""
         self._rows: list[tuple[str, ...]] = []
+        self._poll_after: str | None = None
+        self._status_busy = False
+        self._last_status_at = 0.0
+        self._closing = False
 
         self.root, self.theme = _guiwindow.create_root(
             title="WSL 管理",
@@ -289,11 +347,16 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         )
         # 主题间距已按 DPI 缩放（apply_theme 内走 scale_spacing），窗口只引用不另算。
         self.space = self.theme.spacing
+        self.auto_refresh_var = tk.BooleanVar(value=self.settings.auto_refresh)
+        self.poll_ms_var = tk.IntVar(value=self.settings.poll_interval_ms)
         self._build()
         _guiwindow.build_menu(self.root, on_close=self._on_close)
         _guitheme.install_theme_switcher(self.root)
+        self.root.bind("<Map>", self._on_window_active)
+        self.root.bind("<FocusIn>", self._on_window_active)
         self.root.after(100, self._poll)
         self.refresh()
+        self._schedule_poll(self._poll_ms())
 
     # -- 布局 ---------------------------------------------------------- #
 
@@ -314,11 +377,13 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         bar.grid(row=0, column=0, sticky="ew")
 
         self._buttons: list[Any] = []
+        self._button_by_text: dict[str, Any] = {}
         groups: tuple[tuple[tuple[str, Callable[[], None], str | None], ...], ...] = (
             (("刷新", self.refresh, None),),
             (
                 ("打开终端", self._open_selected, "Accent.TButton"),
-                ("终止", self._terminate_selected, None),
+                ("启动", self._start_selected, None),
+                ("停止", self._terminate_selected, None),
             ),
             (
                 ("导出", self._export_selected, None),
@@ -336,6 +401,28 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                 button = ttk.Button(bar, text=text, command=command, style=style or "TButton")
                 button.pack(side="left", padx=(0, space.xxs))
                 self._buttons.append(button)
+                self._button_by_text[text] = button
+
+        # 自动刷新开关放在右端：可整体关闭，间隔可选 2–30 秒。
+        ttk.Separator(bar, orient="vertical").pack(side="right", fill="y", padx=space.xs, pady=space.xxs)
+        self.poll_combo = ttk.Combobox(
+            bar,
+            width=6,
+            state="readonly" if self.auto_refresh_var.get() else "disabled",
+            values=[label for _milliseconds, label in POLL_CHOICES],
+        )
+        self.poll_combo.set(poll_label(self._poll_ms()))
+        self.poll_combo.pack(side="right", padx=(0, space.xxs))
+        self.poll_combo.bind("<<ComboboxSelected>>", lambda _event: self._on_poll_choice())
+        ttk.Checkbutton(
+            bar,
+            text="自动刷新",
+            variable=self.auto_refresh_var,
+            command=self._on_auto_toggle,
+        ).pack(side="right", padx=(0, space.xs))
+
+        self.start_button = self._button_by_text["启动"]
+        self.stop_button = self._button_by_text["停止"]
 
     def _build_content(self) -> None:
         """发行版列表独占整幅宽度；详情移到笔记本页，不再挤占右栏。"""
@@ -508,6 +595,16 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                 if kind == "log":
                     self._log(payload)
                     continue
+                if kind == "status":
+                    self._status_busy = False
+                    if not self._busy:
+                        self._apply_status(payload)
+                    continue
+                if kind == "status_error":
+                    self._status_busy = False
+                    if not self._busy:
+                        self.status.set(f"状态刷新失败：{_error_text(payload)}")
+                    continue
                 self._busy = False
                 self._set_buttons(True)
                 if kind == "done":
@@ -533,6 +630,138 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         state = "normal" if enabled else "disabled"
         for button in self._buttons:
             button.configure(state=state)
+        if enabled:
+            self._update_action_states()
+
+    # -- 运行状态自动刷新 ---------------------------------------------- #
+
+    def _poll_ms(self) -> int:
+        """当前设置的轮询间隔（毫秒），越界值按 1–30 秒夹取。"""
+        try:
+            value = int(self.poll_ms_var.get())
+        except (ValueError, TypeError):
+            value = DEFAULT_POLL_MS
+        return clamp_poll_ms(value)
+
+    def _poll_delay(self) -> int:
+        """本次轮询应等待的毫秒数：最小化返回 0（暂停），失焦放大 ``HIDDEN_FACTOR`` 倍。"""
+        if self.root.state() == "iconic":
+            return 0
+        if not self.root.focus_displayof():
+            return self._poll_ms() * HIDDEN_FACTOR
+        return self._poll_ms()
+
+    def _schedule_poll(self, milliseconds: int | None = None) -> None:
+        """重置单次定时器；``milliseconds`` 为 ``None`` 时按窗口状态决定间隔。"""
+        self._cancel_poll()
+        if self._closing or not self.auto_refresh_var.get():
+            return
+        delay = self._poll_ms() if milliseconds is not None else self._poll_delay()
+        if delay <= 0:
+            return
+        self._poll_after = self.root.after(delay, self._poll_tick)
+
+    def _cancel_poll(self) -> None:
+        if self._poll_after is None:
+            return
+        with contextlib.suppress(self.tk.TclError):
+            self.root.after_cancel(self._poll_after)
+        self._poll_after = None
+
+    def _poll_tick(self) -> None:
+        self._poll_after = None
+        if self._closing or not self.auto_refresh_var.get():
+            return
+        self._request_status()
+        self._schedule_poll()
+
+    def _request_status(self) -> None:
+        """发起一次后台状态查询；上一次未完成时直接跳过，避免任务叠加。"""
+        if self._status_busy or self._busy:
+            return
+        self._status_busy = True
+        self._last_status_at = time.monotonic()
+        threading.Thread(target=self._status_worker, daemon=True).start()
+
+    def _status_worker(self) -> None:
+        try:
+            view = cli._view(cli._build_environment())
+        except WslmanError as exc:
+            self._events.put(("status_error", "状态刷新", exc))
+        except Exception as exc:
+            self._events.put(("status_error", "状态刷新", exc))
+        else:
+            self._events.put(("status", "状态刷新", view))
+
+    def _apply_status(self, view: Any) -> None:
+        """只改状态列与按钮态，不重建整表：选中行、滚动位置、详情页输入都不受影响。"""
+        previous = self.view
+        self.view = view
+        names = [distro.name for distro in view.distros]
+        if previous is None or names != [distro.name for distro in previous.distros]:
+            # 增删发行版属于结构性变化，此时才整表重建（内部保留选中行）。
+            self._refresh_rows()
+            return
+        for distro in view.distros:
+            if self.tree.exists(distro.name):
+                self.tree.set(distro.name, "state", state_label(distro))
+        self._update_action_states()
+        self._show_details()
+
+    def _on_window_active(self, event: Any) -> None:
+        """窗口恢复或重新获得焦点：立即刷新一次，再按当前状态重排定时器。"""
+        if self._closing or event.widget is not self.root:
+            return
+        if self.root.state() == "iconic":
+            self._cancel_poll()
+            return
+        self._cancel_poll()
+        self._request_status()
+        self._schedule_poll()
+
+    def _on_auto_toggle(self) -> None:
+        self.poll_combo.configure(state="readonly" if self.auto_refresh_var.get() else "disabled")
+        self._save_settings()
+        if self.auto_refresh_var.get():
+            self.status.set("自动刷新已开启")
+            self._request_status()
+            self._schedule_poll()
+        else:
+            self._cancel_poll()
+            self._status_busy = False
+            self.status.set("自动刷新已关闭")
+
+    def _on_poll_choice(self) -> None:
+        chosen = self.poll_combo.get()
+        for milliseconds, label in POLL_CHOICES:
+            if label == chosen:
+                self.poll_ms_var.set(milliseconds)
+                break
+        self._save_settings()
+        self._schedule_poll()
+        self.status.set(f"自动刷新间隔：{poll_label(self._poll_ms())}")
+
+    def _update_action_states(self) -> None:
+        """按选中行的运行状态切换「启动 / 停止」；未选中或任务进行中时都禁用。"""
+        if self._busy:
+            return
+        distro = self._selected()
+        can_start, can_stop = action_states(distro.state if distro is not None else None)
+        for button, enabled in ((self.start_button, can_start), (self.stop_button, can_stop)):
+            button.configure(state="normal" if enabled else "disabled")
+
+    def _save_settings(self) -> None:
+        save_settings(
+            WslmanwSettings(
+                geometry=self.root.geometry(),
+                download_dir=self.download_dir.get().strip(),
+                manifest_url=self.manifest_url.get().strip(),
+                download_source=self.download_source.get(),
+                auto_refresh=self.auto_refresh_var.get(),
+                poll_interval_ms=self._poll_ms(),
+            ),
+            self.settings_path,
+        )
 
     def _cancel_task(self) -> None:
         if self._busy:
@@ -540,20 +769,15 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             self.status.set(f"{self._label}取消中…")
 
     def _on_close(self) -> None:
+        if self._closing:
+            return
         if self._busy:
             if not self.messagebox.askyesno("任务进行中", "有任务正在执行，取消并退出？"):
                 return
             self._cancel.set()
-        geometry = self.root.geometry()
-        save_settings(
-            WslmanwSettings(
-                geometry=geometry,
-                download_dir=self.download_dir.get().strip(),
-                manifest_url=self.manifest_url.get().strip(),
-                download_source=self.download_source.get(),
-            ),
-            self.settings_path,
-        )
+        self._closing = True
+        self._cancel_poll()
+        self._save_settings()
         self.root.destroy()
 
     # -- 列表与详情 ---------------------------------------------------- #
@@ -587,12 +811,14 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                 variable.set("—")
             self.detail_hint.set("选择上方列表中的发行版查看详情")
             self.hover.set("")
+            self._update_action_states()
             return
         size, estimated = self.sizes.get(distro.name, (None, False))
         for label, value in detail_fields(distro, size, estimated):
             self.detail_vars[label].set(value)
         self.detail_hint.set("")
         self.hover.set(summary_text(distro, size, estimated))
+        self._update_action_states()
 
     def _on_hover(self, event: Any) -> None:
         """悬浮显示完整发行版名（列表里过长会截断）。"""
@@ -657,19 +883,53 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             return
         self._log(f"[打开] 已启动 {distro.name}")
 
-    def _terminate_selected(self) -> None:
+    def _start_selected(self) -> None:
+        """后台启动发行版：``--exec`` 执行完即退出，不弹终端窗口。"""
         distro = self._selected()
         if distro is None:
             return
-        if not self.messagebox.askyesno("终止发行版", f"终止 {distro.name}？正在运行的任务会被中断。"):
+        if distro.state == "running":
+            self.status.set(f"{distro.name} 已在运行")
+            self._update_action_states()
             return
 
         def work(_cancel: threading.Event) -> str:
             env = cli._build_environment()
-            cli._run_step(env, ["--terminate", distro.name], action=f"终止 {distro.name}")
-            return f"已终止 {distro.name}"
+            target = cli._require_target(env, distro.name)
+            if target.state == "running":
+                return f"{target.name} 已在运行"
+            # 用一次性命令把发行版带起来；直接 wsl -d 会进交互式 shell 并挂住线程。
+            cli._run_step(
+                env,
+                ["-d", target.name, "--exec", "/bin/true"],
+                action=f"启动 {target.name}",
+                hint="确认发行版仍已注册；若 WSL 未启用请以管理员运行 wsl --install",
+                timeout=120.0,
+            )
+            current = cli._require_target(env, target.name)
+            if current.state != "running":
+                raise runtime_error(
+                    f"{target.name} 启动后状态仍为 {state_label(current)}",
+                    hint="运行 fcmd wslman doctor 检查 WSL 状态，稍后可点「刷新」再次确认",
+                )
+            return f"已启动 {target.name}"
 
-        self._start("终止", work)
+        self._start("启动", work)
+
+    def _terminate_selected(self) -> None:
+        distro = self._selected()
+        if distro is None:
+            return
+        if not self.messagebox.askyesno("停止发行版", f"停止 {distro.name}？正在运行的任务会被中断。"):
+            return
+
+        def work(_cancel: threading.Event) -> str:
+            env = cli._build_environment()
+            # CLI 子命令仍是 terminate，只有展示层文案叫「停止」。
+            cli._run_step(env, ["--terminate", distro.name], action=f"停止 {distro.name}")
+            return f"已停止 {distro.name}"
+
+        self._start("停止", work)
 
     def _export_selected(self) -> None:
         distro = self._selected()
@@ -686,7 +946,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         terminate_first = False
         if distro.state == "running":
             answer = self.messagebox.askyesnocancel(
-                "发行版运行中", "运行中导出可能不一致。选择「是」先终止，选择「否」接受风险继续？"
+                "发行版运行中", "运行中导出可能不一致。选择「是」先停止，选择「否」接受风险继续？"
             )
             if answer is None:
                 return
@@ -829,13 +1089,13 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             env = cli._build_environment()
             target = cli._require_target(env, distro.name)
             if target.state == "running" and not terminate_first:
-                raise invalid_argument(f"{target.name} 正在运行，请勾选「先终止」")
+                raise invalid_argument(f"{target.name} 正在运行，请勾选「先停止」")
             estimate, estimated = distro_disk_bytes(target.base_path, target.version)
             with cli.TransferLock(target.name, directory=env.lock_dir):
                 if backup is not None:
                     cli._export_for_backup(env, target.name, backup, estimate, estimated=estimated)
                 if terminate_first:
-                    cli._run_step(env, ["--terminate", target.name], action=f"终止 {target.name}")
+                    cli._run_step(env, ["--terminate", target.name], action=f"停止 {target.name}")
                 cli._run_step(env, ["--unregister", target.name], action=f"注销 {target.name}")
             return f"已注销 {target.name}" + (f"；备份在 {backup}" if backup else "")
 
@@ -856,7 +1116,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
 
 
 class _UnregisterDialog:  # pragma: no cover - 需要真实 Tk 窗口
-    """注销确认：手输发行版名、可选先终止、可选先备份。"""
+    """注销确认：手输发行版名、可选先停止、可选先备份。"""
 
     def __init__(self, owner: WslmanWindow, distro: Distro) -> None:
         tk, ttk = owner.tk, owner.ttk
@@ -883,7 +1143,7 @@ class _UnregisterDialog:  # pragma: no cover - 需要真实 Tk 窗口
         ).pack(anchor="w")
 
         self.terminate_first = tk.BooleanVar(value=distro.state == "running")
-        ttk.Checkbutton(frame, text="先终止发行版", variable=self.terminate_first).pack(anchor="w", pady=4)
+        ttk.Checkbutton(frame, text="先停止发行版", variable=self.terminate_first).pack(anchor="w", pady=4)
 
         self.backup_enabled = tk.BooleanVar(value=owner.config_data.require_backup_on_replace)
         ttk.Checkbutton(frame, text="先导出备份到", variable=self.backup_enabled).pack(anchor="w")

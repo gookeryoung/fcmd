@@ -407,7 +407,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "e90974cef9be10ecb815ae087769cf4f"
+DIGEST = "ca94ad945f880b24a54190eeea2adb0d"
 
 
 if __name__ == "__main__":  # pragma: no cover
