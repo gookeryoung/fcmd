@@ -137,6 +137,64 @@ class TestCli:
         assert "*KEYWORD" in template.read_text(encoding="utf-8")
 
 
+class TestCliFailurePaths:
+    """子命令的过滤、打印与校验失败路径（统一退出码 2）。"""
+
+    def test_template_without_out_prints(self, capsys: pytest.CaptureFixture[str]) -> None:
+        dynacalc.template_command()
+        assert "*KEYWORD" in capsys.readouterr().out
+
+    def test_params_prints_typical_cases(self, params_file: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        dynacalc.params_command(params_file)
+        output = capsys.readouterr().out
+        assert "典型工况 T01" in output
+        assert "未冻结水平" in output
+
+    def test_matrix_only_filter(self, small_params: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        dynacalc.matrix_command(small_params, only=["M001", " ", "M002"])
+        assert "共 2 个工况" in capsys.readouterr().out
+
+    def test_matrix_unknown_code(self, small_params: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.matrix_command(small_params, only=["NOPE"])
+        assert excinfo.value.code == 2
+        assert "未知工况编码" in capsys.readouterr().out
+
+    def test_model_invalid_schema(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        bad = tmp_path / "bad.yaml"
+        bad.write_text("schema: nope\nmodels: []\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.model_command([bad])
+        assert excinfo.value.code == 2
+        assert "schema" in capsys.readouterr().out
+
+    def test_generate_missing_params(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.generate_command(tmp_path / "missing.yaml", tmp_path / "out")
+        assert excinfo.value.code == 2
+
+    def test_run_missing_manifest(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.run_command(tmp_path / "missing")
+        assert excinfo.value.code == 2
+
+    def test_report_missing_manifest(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.report_command(tmp_path / "missing")
+        assert excinfo.value.code == 2
+
+    def test_gates_missing_manifest(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.gates_command(tmp_path / "missing")
+        assert excinfo.value.code == 2
+
+    def test_demo_requires_existing_mesh_root(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        with pytest.raises(SystemExit) as excinfo:
+            dynacalc.demo_command(tmp_path / "demo", mesh_root=tmp_path / "mesh")
+        assert excinfo.value.code == 2
+        assert "网格根目录" in capsys.readouterr().out
+
+
 @pytest.mark.slow
 class TestClosedLoop:
     """48 组主矩阵 + 五项补充组 + 典型工况 01/02/03 的完整闭环：生成 → dry-run → 假求解 → 汇总 → 门控。"""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sys
 import typing
 from pathlib import Path
@@ -18,12 +19,14 @@ from fcmd.core.toolkit import (
     ToolSpec,
     _add_optional_arg,
     _add_positional_arg,
+    _build_parser_for_tool,
     _build_task_spec,
     _collect_with_deps,
     _has_function_logic,
     _is_aggregate,
     _is_list_annotation,
     _is_literal_annotation,
+    _jsonable_default,
     _list_inner_type,
     _literal_choices,
     _resolve_hints,
@@ -33,6 +36,7 @@ from fcmd.core.toolkit import (
     get_tool,
     list_subcommands,
     list_tools,
+    param_schema,
     run_tool,
     tool,
 )
@@ -1244,6 +1248,110 @@ def test_run_tool_help_returns_success() -> None:
 
     code = run_tool("demo", ["a", "--help"])
     assert code == ToolExitCode.SUCCESS.value
+
+
+# ---------------------------------------------------------------------- #
+# 参数 schema 与示例（fcmd info --json 的数据源）
+# ---------------------------------------------------------------------- #
+def test_param_schema_types_and_defaults() -> None:
+    """param_schema 覆盖位置参数、标量、枚举、列表与 --json 别名。"""
+
+    @tool("schema_demo", help="演示", examples=["fcmd schema_demo . --json"])
+    def demo(  # noqa: PLR0913, PLR0917 - 覆盖各种注解，参数刻意保持扁平
+        path: Path,
+        count: int = 3,
+        ratio: float = 0.5,
+        name: str = "x",
+        verbose: bool = False,
+        mode: Literal["a", "b"] = "a",
+        tags: list[str] | None = None,
+        json_output: bool = False,
+    ) -> None:
+        """演示函数。"""
+
+    spec = get_tool("schema_demo")
+    params = {item["name"]: item for item in param_schema(spec)}
+
+    assert params["path"]["required"] is True
+    assert params["path"]["cli"] == "path"
+    assert params["path"]["default"] is None
+    assert params["count"]["type"] == "int"
+    assert params["count"]["default"] == 3
+    assert params["ratio"]["type"] == "float"
+    assert params["name"]["type"] == "str"
+    assert params["verbose"]["cli"] == "--verbose"
+    assert params["verbose"]["default"] is False
+    assert params["mode"]["type"] == "literal"
+    assert params["mode"]["choices"] == ["a", "b"]
+    assert params["tags"]["repeatable"] is True
+    assert params["tags"]["type"] == "list[str]"
+    assert params["json_output"]["cli"] == "--json"
+    assert params["json_output"]["aliases"] == ["--json-output"]
+    assert spec.examples == ("fcmd schema_demo . --json",)
+
+
+def test_param_schema_bool_default_true_uses_no_prefix() -> None:
+    """默认 True 的布尔参数在 schema 中显示 --no-xxx。"""
+
+    @tool("schema_flag")
+    def flag(keep: bool = True, json_output: bool = False) -> None:
+        """演示函数。"""
+
+    params = {item["name"]: item for item in param_schema(get_tool("schema_flag"))}
+    assert params["keep"]["cli"] == "--no-keep"
+    assert params["keep"]["default"] is True
+    assert params["json_output"]["aliases"] == ["--json-output"]
+
+
+def test_param_schema_skips_varargs() -> None:
+    """*args / **kwargs 不进入参数 schema。"""
+
+    @tool("schema_varargs")
+    def demo(*args: str, **kwargs: str) -> None:
+        """演示函数。"""
+
+    assert param_schema(get_tool("schema_varargs")) == []
+
+
+def test_jsonable_default() -> None:
+    """默认值转换：容器逐个转换、Path 转字符串、空值保持 None。"""
+
+    assert _jsonable_default(None) is None
+    assert _jsonable_default(inspect.Parameter.empty) is None
+    assert _jsonable_default(True) is True
+    assert _jsonable_default(3) == 3
+    assert _jsonable_default(0.5) == 0.5
+    assert _jsonable_default("x") == "x"
+    assert _jsonable_default([Path("a"), 1]) == ["a", 1]
+    assert _jsonable_default((Path("a"),)) == ["a"]
+    assert _jsonable_default(Path("a")) == "a"
+
+
+def test_parser_accepts_json_alias() -> None:
+    """--json 与 --json-output 指向同一参数。"""
+
+    @tool("schema_alias")
+    def demo(json_output: bool = False) -> None:
+        """演示函数。"""
+
+    parser = _build_parser_for_tool(get_tool("schema_alias"))
+    assert parser.parse_args(["--json"]).json_output is True
+    assert parser.parse_args(["--json-output"]).json_output is True
+    assert parser.parse_args([]).json_output is False
+
+
+def test_parser_help_shows_examples(capsys: pytest.CaptureFixture[str]) -> None:
+    """--help 末尾展示示例调用（可当补充说明读）。"""
+
+    @tool("schema_help", help="演示", examples=["fcmd schema_help ."])
+    def demo(path: Path) -> None:
+        """演示函数。"""
+
+    with pytest.raises(SystemExit):
+        _build_parser_for_tool(get_tool("schema_help")).parse_args(["--help"])
+    out = capsys.readouterr().out
+    assert "示例:" in out
+    assert "fcmd schema_help ." in out
 
 
 def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:

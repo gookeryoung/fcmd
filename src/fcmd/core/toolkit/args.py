@@ -27,7 +27,7 @@ import enum
 import inspect
 import types
 import typing
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -88,6 +88,9 @@ class ToolSpec:
     param_help:
         参数名 → 帮助文本映射（DSL 声明式命令用）；``None`` 时参数帮助退化为
         参数名（与既有签名推导行为一致）
+    examples:
+        示例调用列表（完整 ``fcmd ...`` 命令）；同时进入 ``--help`` 末尾与
+        ``fcmd info --json`` 的 schema，供人直接照抄、供模型减少参数猜测
     """
 
     name: str
@@ -106,6 +109,7 @@ class ToolSpec:
     retry: RetryPolicy | None = None
     timeout: float | None = None
     param_help: Mapping[str, str] | None = None
+    examples: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------- #
@@ -155,12 +159,18 @@ def _literal_choices(annotation: Any) -> tuple[Any, ...]:
     return getattr(annotation, "__args__", ())
 
 
-def _add_optional_arg(
+# 参数名 → 额外 CLI 别名。约定 ``json_output`` 同时接受 ``--json``：机读开关
+# 在命令行上简短且跨工具一致，同时保留 ``--json-output`` 兼容既有工具。
+_PARAM_CLI_ALIASES: Mapping[str, tuple[str, ...]] = {"json_output": ("--json",)}
+
+
+def _add_optional_arg(  # noqa: PLR0913, PLR0917 - argparse 参数逐个生成，保持扁平签名
     parser: argparse.ArgumentParser,
     pname: str,
     annotation: Any,
     default: Any,
     help_text: str | None = None,
+    aliases: Sequence[str] = (),
 ) -> None:
     """添加 --name 选项（有默认值的参数）。
 
@@ -172,7 +182,9 @@ def _add_optional_arg(
     - ``Literal[X, Y, ...]`` → ``choices``（argparse 自动校验取值）
     - ``list[X]`` / ``List[X]`` → ``nargs="*"`` + 对应 ``type``
 
-    ``help_text`` 为 DSL 声明式命令的参数帮助，``None`` 时退化为参数名。
+    ``help_text`` 为 DSL 声明式命令的参数帮助，``None`` 时退化为参数名；
+    ``aliases`` 为同一参数的可选写法（如 ``--json``），由
+    :data:`_PARAM_CLI_ALIASES` 按参数名约定给出。
     """
     annotation = _unwrap_optional(annotation)
     if annotation is bool or (isinstance(default, bool) and default is True):
@@ -181,11 +193,16 @@ def _add_optional_arg(
             # dest=pname 保留原参数名：argparse 默认会把 --no-keep-ratio 映射到
             # no_keep_ratio 属性，导致函数调用时找不到 keep_ratio 形参。
             parser.add_argument(
-                cli_name, dest=pname, action="store_false", default=True, help=f"关闭 {help_text or pname}"
+                cli_name,
+                *aliases,
+                dest=pname,
+                action="store_false",
+                default=True,
+                help=f"关闭 {help_text or pname}",
             )
         else:
             cli_name = f"--{pname.replace('_', '-')}"
-            parser.add_argument(cli_name, action="store_true", default=False, help=help_text or pname)
+            parser.add_argument(cli_name, *aliases, action="store_true", default=False, help=help_text or pname)
         return
     cli_name = f"--{pname.replace('_', '-')}"
     kwargs: dict[str, Any] = {"default": default, "help": help_text or pname}
@@ -201,7 +218,7 @@ def _add_optional_arg(
         inner_type = _resolve_list_inner_type(_list_inner_type(annotation))
         if inner_type is not None:
             kwargs["type"] = inner_type
-    parser.add_argument(cli_name, **kwargs)
+    parser.add_argument(cli_name, *aliases, **kwargs)
 
 
 def _resolve_list_inner_type(inner: Any) -> type | None:
@@ -316,7 +333,16 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
     param_help = _extract_param_help(spec.func)
     if spec.param_help:
         param_help.update(spec.param_help)
-    parser = argparse.ArgumentParser(prog=prog, description=description)
+    epilog = None
+    if spec.examples:
+        # 示例按行原样展示，不参与 argparse 的换行折叠
+        epilog = "示例:\n" + "\n".join(f"  {example}" for example in spec.examples)
+    parser = argparse.ArgumentParser(
+        prog=prog,
+        description=description,
+        epilog=epilog,
+        formatter_class=argparse.RawDescriptionHelpFormatter if epilog else argparse.HelpFormatter,
+    )
     for pname, param in sig.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
@@ -324,9 +350,84 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
         if param.default is inspect.Parameter.empty:
             _add_positional_arg(parser, pname, annotation, help_text=param_help.get(pname))
         else:
-            _add_optional_arg(parser, pname, annotation, param.default, help_text=param_help.get(pname))
+            _add_optional_arg(
+                parser,
+                pname,
+                annotation,
+                param.default,
+                help_text=param_help.get(pname),
+                aliases=_PARAM_CLI_ALIASES.get(pname, ()),
+            )
     _add_global_options(parser)
     return parser
+
+
+# ---------------------------------------------------------------------- #
+# 参数 schema（供 fcmd info --json / 文本帮助复用同一份签名信息）
+# ---------------------------------------------------------------------- #
+_TYPE_LABELS: Mapping[Any, str] = {bool: "bool", int: "int", float: "float", str: "str", Path: "path"}
+
+
+def _type_label(annotation: Any) -> str:
+    """把类型注解映射为 schema 中的粗粒度类型名。"""
+    annotation = _unwrap_optional(annotation)
+    if _is_literal_annotation(annotation):
+        return "literal"
+    if _is_list_annotation(annotation):
+        return f"list[{_type_label(_list_inner_type(annotation))}]"
+    return _TYPE_LABELS.get(annotation, "str")
+
+
+def _jsonable_default(value: Any) -> Any:
+    """把参数默认值转换为 JSON 可序列化的形式。"""
+    if value is inspect.Parameter.empty or value is None:
+        return None
+    if isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_default(item) for item in value]
+    return str(value)
+
+
+def param_schema(spec: ToolSpec) -> list[dict[str, Any]]:
+    """从函数签名推导参数 schema（与 :func:`_build_parser_for_tool` 同口径）。
+
+    每条记录包含参数名、命令行写法（含别名）、类型、是否必填、默认值、
+    ``Literal`` 取值枚举、是否可重复，以及 docstring / ``param_help`` 中的说明。
+    人类可读的 ``fcmd info`` 与机器可读的 ``fcmd info --json`` 共用这份数据。
+    """
+    hints = _resolve_hints(spec.func)
+    sig = inspect.signature(spec.func)
+    param_help = _extract_param_help(spec.func)
+    if spec.param_help:
+        param_help.update(spec.param_help)
+    params: list[dict[str, Any]] = []
+    for pname, param in sig.parameters.items():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        annotation = hints.get(pname, param.annotation)
+        bare = _unwrap_optional(annotation)
+        required = param.default is inspect.Parameter.empty
+        default = param.default if not required else None
+        dashed = f"--{pname.replace('_', '-')}"
+        if isinstance(default, bool) and default is True:
+            dashed = f"--no-{pname.replace('_', '-')}"
+        aliases = list(_PARAM_CLI_ALIASES.get(pname, ()))
+        cli = aliases[0] if aliases else (pname if required else dashed)
+        params.append(
+            {
+                "name": pname,
+                "cli": cli,
+                "aliases": [dashed, *aliases[1:]] if aliases else [],
+                "type": _type_label(annotation),
+                "required": required,
+                "default": _jsonable_default(default),
+                "choices": list(_literal_choices(bare)) if _is_literal_annotation(bare) else None,
+                "repeatable": _is_list_annotation(bare),
+                "help": param_help.get(pname, ""),
+            }
+        )
+    return params
 
 
 def _add_global_options(parser: argparse.ArgumentParser) -> None:

@@ -48,6 +48,7 @@ __all__ = [
     "list_subcommands",
     "list_tools",
     "main",
+    "param_schema",
     "run_tool",
     "tool",
 ]
@@ -69,11 +70,13 @@ from .args import (
     _build_parser_for_tool,  # noqa: F401  重新导出供测试 import
     _is_list_annotation,  # noqa: F401  重新导出供测试 import
     _is_literal_annotation,  # noqa: F401  重新导出供测试 import
+    _jsonable_default,  # noqa: F401  重新导出供测试 import
     _list_inner_type,  # noqa: F401  重新导出供测试 import
     _literal_choices,  # noqa: F401  重新导出供测试 import
     _noop,  # noqa: F401  重新导出供测试 import
     _resolve_hints,  # noqa: F401  重新导出供测试 import
     _unwrap_optional,  # noqa: F401  重新导出供测试 import
+    param_schema,
 )
 from .exec import (
     _build_task_spec,
@@ -110,6 +113,7 @@ def tool(  # noqa: PLR0913
     retry: RetryPolicy | None = None,
     timeout: float | None = None,
     param_help: Mapping[str, str] | None = None,
+    examples: Sequence[str] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """装饰器：将函数注册为 ``@fx.tool`` 工具。
 
@@ -140,6 +144,9 @@ def tool(  # noqa: PLR0913
     param_help:
         参数名 → 帮助文本映射（``--help`` 中展示）；``None`` 时用函数
         docstring 的 NumPy 风格参数说明
+    examples:
+        示例调用列表（完整 ``fcmd ...`` 命令）；同时进入 ``--help`` 末尾与
+        ``fcmd info --json`` 的 schema，供人照抄、供模型减少参数猜测
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -159,6 +166,7 @@ def tool(  # noqa: PLR0913
             retry=retry,
             timeout=timeout,
             param_help=dict(param_help) if param_help else None,
+            examples=tuple(examples) if examples else (),
         )
         _register_tool(spec)
         return func

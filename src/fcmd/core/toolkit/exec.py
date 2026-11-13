@@ -307,7 +307,8 @@ def _execute_tool_tasks(
     # 构建图并执行
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
     strategy = variables.get("strategy") or target_spec.strategy or "dependency"
-    verbose = not variables.get("quiet", False)
+    # --json 要求 stdout 可整体解析：同时关闭框架的进度/汇总行，避免与 JSON 混排
+    verbose = not variables.get("quiet", False) and not variables.get("json_output", False)
 
     try:
         report = run(

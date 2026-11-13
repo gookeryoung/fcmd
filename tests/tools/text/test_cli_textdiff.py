@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,10 @@ from fcmd.core.toolkit import list_subcommands, run_tool
 from fcmd.infras.text import (
     colorize_diff,
     compare_directories,
+    compare_directories_result,
     compare_files,
+    compare_files_result,
+    diff_stats,
     read_lines,
 )
 
@@ -408,3 +412,149 @@ class TestCLISubcommands:
         assert code == 0
         captured = capsys.readouterr()
         assert "目录内容相同" in captured.out
+
+
+# ============================================================================ #
+# 结构化结果（infras）
+# ============================================================================ #
+class TestStructuredResults:
+    """结构化比较结果：文本渲染与 JSON 输出共用同一份数据。"""
+
+    def test_diff_stats(self) -> None:
+        """统计新增/删除/hunk 数，忽略文件头。"""
+        diff = "--- a\n+++ b\n@@ -1 +1,2 @@\n-old\n+new\n+extra\n context\n"
+        assert diff_stats(diff) == {"added": 2, "removed": 1, "hunks": 1}
+
+    def test_compare_files_result_same(self, tmp_path: Path) -> None:
+        """相同文件 equal=True 且计数为 0。"""
+        f1 = tmp_path / "a.txt"
+        f2 = tmp_path / "b.txt"
+        f1.write_text("same\n")
+        f2.write_text("same\n")
+        result = compare_files_result(f1, f2)
+        assert result["equal"] is True
+        assert result["diff"] == ""
+        assert result["added"] == 0
+        assert result["removed"] == 0
+
+    def test_compare_files_result_different(self, tmp_path: Path) -> None:
+        """不同文件带 diff 原文与增删计数。"""
+        f1 = tmp_path / "a.txt"
+        f2 = tmp_path / "b.txt"
+        f1.write_text("old\n")
+        f2.write_text("new\n")
+        result = compare_files_result(f1, f2)
+        assert result["equal"] is False
+        assert "-old" in result["diff"]
+        assert result["added"] == 1
+        assert result["removed"] == 1
+        assert result["hunks"] == 1
+
+    def test_compare_directories_result(self, tmp_path: Path) -> None:
+        """目录结构化差异含五类字段。"""
+        d1 = tmp_path / "d1"
+        d2 = tmp_path / "d2"
+        d1.mkdir()
+        d2.mkdir()
+        (d1 / "only.txt").write_text("x")
+        (d1 / "diff.txt").write_text("a")
+        (d2 / "diff.txt").write_text("b")
+        result = compare_directories_result(d1, d2)
+        assert result["equal"] is False
+        assert result["only_left"] == ["only.txt"]
+        assert result["only_right"] == []
+        assert result["different"] == ["diff.txt"]
+        assert result["errors"] == []
+
+
+# ============================================================================ #
+# JSON 机读输出
+# ============================================================================ #
+class TestCLIJSON:
+    """``--json`` 增量输出，默认人类可读输出保持不变。"""
+
+    def test_file_json_different(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """file --json 返回 diff 原文与增删计数。"""
+        f1 = tmp_path / "a.txt"
+        f2 = tmp_path / "b.txt"
+        f1.write_text("old\n")
+        f2.write_text("new\n")
+        assert run_tool("textdiff", ["file", str(f1), str(f2), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "fcmd-result/1"
+        data = payload["data"]
+        assert data["equal"] is False
+        assert data["added"] == 1
+        assert data["removed"] == 1
+        assert "-old" in data["diff"]
+
+    def test_file_json_same(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """相同文件 equal=True。"""
+        f1 = tmp_path / "a.txt"
+        f2 = tmp_path / "b.txt"
+        f1.write_text("same\n")
+        f2.write_text("same\n")
+        assert run_tool("textdiff", ["file", str(f1), str(f2), "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["data"]["equal"] is True
+
+    def test_file_json_missing_first(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """第一个文件不存在：FILE_NOT_FOUND + field=file1。"""
+        assert run_tool("textdiff", ["file", str(tmp_path / "no1.txt"), str(tmp_path / "no2.txt"), "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["code"] == "FILE_NOT_FOUND"
+        assert payload["field"] == "file1"
+
+    def test_file_json_missing_second(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """第二个文件不存在：field=file2。"""
+        f1 = tmp_path / "a.txt"
+        f1.write_text("x")
+        assert run_tool("textdiff", ["file", str(f1), str(tmp_path / "no.txt"), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "FILE_NOT_FOUND"
+        assert payload["field"] == "file2"
+
+    def test_file_json_binary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """二进制文件：NOT_TEXT + 期望文本。"""
+        f1 = tmp_path / "a.dat"
+        f2 = tmp_path / "b.dat"
+        f1.write_bytes(b"bin\x00ary1")
+        f2.write_bytes(b"bin\x00ary2")
+        assert run_tool("textdiff", ["file", str(f1), str(f2), "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["code"] == "NOT_TEXT"
+        assert payload["expected"] == "UTF-8 文本文件"
+
+    def test_dir_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """dir --json 返回五类差异列表。"""
+        d1 = tmp_path / "d1"
+        d2 = tmp_path / "d2"
+        d1.mkdir()
+        d2.mkdir()
+        (d1 / "only.txt").write_text("x")
+        (d1 / "diff.txt").write_text("a")
+        (d2 / "diff.txt").write_text("b")
+        assert run_tool("textdiff", ["dir", str(d1), str(d2), "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["equal"] is False
+        assert data["only_left"] == ["only.txt"]
+        assert data["different"] == ["diff.txt"]
+
+    def test_dir_json_missing_first(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """dir 第一个目录不存在：DIR_NOT_FOUND + field=dir1。"""
+        assert run_tool("textdiff", ["dir", str(tmp_path / "no1"), str(tmp_path / "no2"), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "DIR_NOT_FOUND"
+        assert payload["field"] == "dir1"
+
+    def test_dir_json_missing_second(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """dir 第二个目录不存在：field=dir2。"""
+        d1 = tmp_path / "d1"
+        d1.mkdir()
+        assert run_tool("textdiff", ["dir", str(d1), str(tmp_path / "no2"), "--json"]) == 0
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "DIR_NOT_FOUND"
+        assert payload["field"] == "dir2"

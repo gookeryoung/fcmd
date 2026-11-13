@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tomllib
@@ -777,6 +778,87 @@ class TestBuiltinInfo:
         # pyrefly_check 是 hidden 子命令
         assert "pyrefly_check" in out
 
+    def test_info_overview_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info --json 输出工具清单（含 gui 标记与内建命令）。"""
+        app = FcmdApp(["info", "--json"])
+        assert app.run() == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "fcmd-schema/1"
+        assert "info" in payload["builtins"]
+        tools = {item["name"]: item for item in payload["tools"]}
+        assert "filesearch" in tools
+        assert tools["filesearch"]["gui"] is False
+        assert tools["filesearch"]["description"]
+        assert tools["checksum"]["gui"] is True
+        assert "subcommands" in tools["filesearch"]
+
+    def test_info_tool_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info <tool> --json 展示子命令、参数 schema 与示例。"""
+        app = FcmdApp(["info", "filesearch", "--json"])
+        assert app.run() == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "fcmd-schema/1"
+        tool = payload["tool"]
+        assert tool["name"] == "filesearch"
+        assert {sub["name"] for sub in tool["subcommands"]} == {"name", "content"}
+        name_sub = next(sub for sub in tool["subcommands"] if sub["name"] == "name")
+        params = {item["name"]: item for item in name_sub["params"]}
+        assert params["directory"]["required"] is True
+        assert params["directory"]["type"] == "path"
+        assert params["limit"]["type"] == "int"
+        assert params["limit"]["default"] == 0
+        assert params["json_output"]["cli"] == "--json"
+        assert params["json_output"]["aliases"] == ["--json-output"]
+        assert any("fcmd filesearch name" in example for example in name_sub["examples"])
+
+    def test_info_subcommand_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd info <tool> <sub> --json 只返回单个子命令。"""
+        app = FcmdApp(["info", "filesearch", "name", "--json"])
+        assert app.run() == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "fcmd-schema/1"
+        assert payload["tool"] == "filesearch"
+        assert payload["subcommand"]["name"] == "name"
+        assert payload["subcommand"]["params"]
+
+    def test_info_unknown_tool_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """未知工具：stderr 错误信封，退出码仍为 1。"""
+        app = FcmdApp(["info", "nonexistent_tool", "--json"])
+        assert app.run() == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["schema"] == "fcmd-error/1"
+        assert payload["code"] == "UNKNOWN_TOOL"
+        assert payload["field"] == "tool"
+
+    def test_info_unknown_subcommand_json(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """未知子命令：UNKNOWN_SUBCOMMAND 错误信封。"""
+        app = FcmdApp(["info", "pymake", "unknown_subcommand", "--json"])
+        assert app.run() == 1
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["code"] == "UNKNOWN_SUBCOMMAND"
+        assert payload["field"] == "subcommand"
+
+    def test_info_subcommand_text_shows_params_and_examples(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """文本模式同样展示参数与示例（人可直接当补充说明读）。"""
+        app = FcmdApp(["info", "filesearch", "name"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "参数" in out
+        assert "--limit" in out
+        assert "示例" in out
+        assert "fcmd filesearch name" in out
+
+    def test_info_subcommand_text_shows_choices(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """有 Literal 取值的参数在文本模式下显示可选值。"""
+        app = FcmdApp(["info", "filescan", "scan"])
+        assert app.run() == 0
+        out = capsys.readouterr().out
+        assert "可选:" in out
+
     def test_spec_kind_classification(self) -> None:
         """_spec_kind 正确分类 cmd / aggregate / fn。"""
         from fcmd.cli._builtins.info_cmd import _spec_kind
@@ -1417,6 +1499,47 @@ class TestBuiltinDoctor:
         app.run()
         out = capsys.readouterr().out
         assert "修复:" in out
+
+    def test_doctor_json_all_pass_returns_0(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``--json`` 全通过时输出 ``ok=true`` 且退出 0。"""
+
+        def fake_deps() -> list[dict[str, object]]:
+            return [{"extra": "img", "package": "PIL", "installed": True, "version": "10.0"}]
+
+        monkeypatch.setattr("fcmd.cli._doctor_helpers.collect_optional_deps_status", fake_deps)
+        monkeypatch.setattr("shutil.which", lambda cmd: f"/fake/{cmd}")
+        monkeypatch.setattr("fcmd.cli._builtins.doctor_cmd._TOOL_MODULES", {"pymake": "fcmd.tools.dev.pymake"})
+
+        app = FcmdApp(["doctor", "--json"])
+        assert app.run() == 0
+        doc = json.loads(capsys.readouterr().out)
+        assert doc["schema"] == "fcmd-result/1"
+        assert doc["ok"] is True
+        assert doc["tool"] == "doctor"
+        assert doc["subcommand"] is None
+        assert doc["data"]["ok"] is True
+        assert doc["data"]["failed"] == 0
+
+    def test_doctor_json_failed_check_returns_1(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``--json`` 有失败项时 ``ok=false``、退出 1，且失败项带 fix 建议。"""
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        app = FcmdApp(["doctor", "--json"])
+        assert app.run() == 1
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["ok"] is False
+        assert data["failed"] == data["total"] - data["passed"]
+        failed = [c for c in data["checks"] if not c["ok"]]
+        assert failed and all(c["fix"] for c in failed)
+        assert set(failed[0]) == {"item", "ok", "detail", "fix"}
 
     def test_doctor_routes_through_run_builtin(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd doctor 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""

@@ -33,12 +33,16 @@ __all__ = [
     "code_to_char",
     "colorize_diff",
     "compare_directories",
+    "compare_directories_result",
     "compare_files",
+    "compare_files_result",
     "convert_case",
     "count_text",
+    "diff_stats",
     "eval_expr",
     "factorial_value",
     "find_all",
+    "format_directory_result",
     "hex_to_rgb",
     "hsl_to_rgb",
     "match_pattern",
@@ -307,8 +311,36 @@ def compare_files(file1: Path, file2: Path, context: int = 3) -> str:
     return "".join(diff)
 
 
-def compare_directories(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = True) -> str:
-    """比较两个目录，返回差异报告字符串。"""
+def diff_stats(diff_text: str) -> dict[str, int]:
+    """统计 unified diff 的增删行数与 hunk 数（不改变 diff 原文）。"""
+    added = 0
+    removed = 0
+    hunks = 0
+    for line in diff_text.splitlines():
+        if line.startswith(("---", "+++")):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+        elif line.startswith("@@"):
+            hunks += 1
+    return {"added": added, "removed": removed, "hunks": hunks}
+
+
+def compare_files_result(file1: Path, file2: Path, context: int = 3) -> dict[str, Any]:
+    """比较两个文本文件，返回结构化结果（diff 原文 + 增删统计）。"""
+    diff = compare_files(file1, file2, context)
+    return {"equal": not diff, "diff": diff, **diff_stats(diff)}
+
+
+def compare_directories_result(
+    dir1: Path,
+    dir2: Path,
+    pattern: str = "*",
+    recursive: bool = True,
+) -> dict[str, Any]:
+    """比较两个目录，返回结构化差异（文本渲染与 JSON 输出共用）。"""
     if recursive:
         files1 = {p.relative_to(dir1).as_posix() for p in dir1.rglob(pattern) if p.is_file()}
         files2 = {p.relative_to(dir2).as_posix() for p in dir2.rglob(pattern) if p.is_file()}
@@ -329,22 +361,39 @@ def compare_directories(dir1: Path, dir2: Path, pattern: str = "*", recursive: b
         except OSError:
             errors.append(rel)
 
+    return {
+        "equal": not (only_left or only_right or diffs or errors),
+        "only_left": only_left,
+        "only_right": only_right,
+        "different": diffs,
+        "errors": errors,
+    }
+
+
+def format_directory_result(result: dict[str, Any], dir1: Path, dir2: Path) -> str:
+    """把结构化目录差异渲染为人类可读文本（保持既有输出格式）。"""
     lines: list[str] = []
-    if only_left:
+    if result["only_left"]:
         lines.append(f"仅在 {dir1}:")
-        lines.extend(f"  {name}" for name in only_left)
-    if only_right:
+        lines.extend(f"  {name}" for name in result["only_left"])
+    if result["only_right"]:
         lines.append(f"仅在 {dir2}:")
-        lines.extend(f"  {name}" for name in only_right)
-    if diffs:
+        lines.extend(f"  {name}" for name in result["only_right"])
+    if result["different"]:
         lines.append("内容不同:")
-        lines.extend(f"  {name}" for name in diffs)
-    if errors:
+        lines.extend(f"  {name}" for name in result["different"])
+    if result["errors"]:
         lines.append("无法比较:")
-        lines.extend(f"  {name}" for name in errors)
+        lines.extend(f"  {name}" for name in result["errors"])
     if not lines:
         return "目录内容相同"
     return "\n".join(lines)
+
+
+def compare_directories(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = True) -> str:
+    """比较两个目录，返回差异报告字符串。"""
+    result = compare_directories_result(dir1, dir2, pattern, recursive)
+    return format_directory_result(result, dir1, dir2)
 
 
 # ============================================================================

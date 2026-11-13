@@ -18,7 +18,7 @@ from fcmd.console import get_console
 
 from ._env_helpers import collect_optional_deps_status
 
-__all__ = ["collect_doctor_checks", "render_doctor_report"]
+__all__ = ["collect_doctor_checks", "doctor_result", "render_doctor_report"]
 
 
 def collect_doctor_checks(tool_modules: dict[str, str]) -> list[dict[str, Any]]:
@@ -111,6 +111,26 @@ def collect_doctor_checks(tool_modules: dict[str, str]) -> list[dict[str, Any]]:
     return checks
 
 
+def doctor_result(checks: list[dict[str, Any]]) -> dict[str, Any]:
+    """把检查项汇总为机器可读结果（与表格渲染同源）。
+
+    Returns
+    -------
+    dict
+        ``{"ok", "passed", "failed", "total", "checks"}``；``checks`` 每项保留
+        ``item`` / ``ok`` / ``detail`` / ``fix`` 四个字段，便于模型逐项判定与自纠。
+    """
+    passed = sum(1 for c in checks if c["ok"])
+    total = len(checks)
+    return {
+        "ok": passed == total,
+        "passed": passed,
+        "failed": total - passed,
+        "total": total,
+        "checks": [{"item": c["item"], "ok": c["ok"], "detail": c["detail"], "fix": c["fix"]} for c in checks],
+    }
+
+
 def render_doctor_report(checks: list[dict[str, Any]]) -> int:
     """渲染诊断检查表格，返回退出码（0=全通过 / 1=有失败）。
 
@@ -121,6 +141,7 @@ def render_doctor_report(checks: list[dict[str, Any]]) -> int:
     """
     from fcmd.console import Table
 
+    result = doctor_result(checks)
     console = get_console()
     console.print("[bold cyan]fcmd 环境诊断[/bold cyan]\n")
     table = Table(show_header=True, header_style="bold", show_lines=False)
@@ -135,10 +156,10 @@ def render_doctor_report(checks: list[dict[str, Any]]) -> int:
         table.add_row(c["item"], status, detail)
     console.print(table)
 
-    passed = sum(1 for c in checks if c["ok"])
-    total = len(checks)
-    if passed == total:
+    passed = result["passed"]
+    total = result["total"]
+    if result["ok"]:
         console.print(f"\n[green]诊断结果: {passed}/{total} 全部通过[/green]")
         return 0
-    console.print(f"\n[red]诊断结果: {passed}/{total} 通过，{total - passed} 项失败[/red]")
+    console.print(f"\n[red]诊断结果: {passed}/{total} 通过，{result['failed']} 项失败[/red]")
     return 1

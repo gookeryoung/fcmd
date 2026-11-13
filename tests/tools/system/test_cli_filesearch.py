@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -432,3 +433,165 @@ class TestCLISubcommands:
         """content 不存在目录提示。"""
         assert run_tool("filesearch", ["content", str(tmp_path / "missing"), "pattern"]) == 0
         assert "目录不存在" in capsys.readouterr().out
+
+    def test_name_help_shows_examples(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--help 末尾带示例调用（人类可当补充说明读）。"""
+        assert run_tool("filesearch", ["name", "--help"]) == 0
+        out = capsys.readouterr().out
+        assert "示例:" in out
+        assert "fcmd filesearch name" in out
+
+
+# ============================================================================ #
+# JSON 机读输出（--json / --json-output）
+# ============================================================================ #
+class TestJSONOutput:
+    """``--json`` 增量输出：与默认人类可读路径同源，互不替换。"""
+
+    def test_name_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """name --json 返回稳定字段与相对/绝对路径列表。"""
+        (tmp_path / "a.py").touch()
+        (tmp_path / "b.py").touch()
+        (tmp_path / "c.txt").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.py", "--json"]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "fcmd-result/1"
+        assert payload["ok"] is True
+        assert payload["tool"] == "filesearch"
+        assert payload["subcommand"] == "name"
+        data = payload["data"]
+        assert data["total"] == 2
+        assert data["returned"] == 2
+        assert data["truncated"] is False
+        assert [Path(item).name for item in data["matches"]] == ["a.py", "b.py"]
+
+    def test_name_json_limit_truncated(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--limit 截断时 truncated=True，并回报总量。"""
+        (tmp_path / "a.py").touch()
+        (tmp_path / "b.py").touch()
+        (tmp_path / "c.py").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.py", "--limit", "1", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["total"] == 3
+        assert data["returned"] == 1
+        assert data["truncated"] is True
+
+    def test_name_json_count(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """--count --json 只回报总数，不返回 matches。"""
+        (tmp_path / "a.py").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.py", "--count", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data == {"total": 1}
+
+    def test_name_json_no_match(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """无命中返回空数组且 ok=True。"""
+        (tmp_path / "a.py").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.md", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["matches"] == []
+        assert data["total"] == 0
+        assert data["truncated"] is False
+
+    def test_name_json_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """目录不存在时 stderr 输出可解析错误信封，stdout 为空。"""
+        assert run_tool("filesearch", ["name", str(tmp_path / "missing"), "*.py", "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["schema"] == "fcmd-error/1"
+        assert payload["ok"] is False
+        assert payload["code"] == "DIR_NOT_FOUND"
+        assert payload["field"] == "directory"
+        assert "目录不存在" in payload["message"]
+        assert payload["hint"]
+
+    def test_name_default_output_unchanged(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """不加 --json 时仍是逐行路径（既有行为不变）。"""
+        (tmp_path / "a.py").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.py"]) == 0
+        out = capsys.readouterr().out
+        assert "a.py" in out
+        assert "{" not in out
+
+    def test_content_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content --json 命中项带 path/line/text。"""
+        (tmp_path / "a.py").write_text("x = 1\nTODO: fix\n", encoding="utf-8")
+        assert run_tool("filesearch", ["content", str(tmp_path), "TODO", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["total"] == 1
+        match = data["matches"][0]
+        assert Path(match["path"]).name == "a.py"
+        assert match["line"] == 2
+        assert match["text"] == "TODO: fix"
+
+    def test_content_json_limit(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content --limit 限制返回条数。"""
+        (tmp_path / "a.txt").write_text("hit\nhit\n", encoding="utf-8")
+        assert run_tool("filesearch", ["content", str(tmp_path), "hit", "--limit", "1", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["total"] == 2
+        assert data["returned"] == 1
+        assert data["truncated"] is True
+
+    def test_content_json_count(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content --count --json 只回报总数。"""
+        (tmp_path / "a.txt").write_text("hit\nhit\n", encoding="utf-8")
+        assert run_tool("filesearch", ["content", str(tmp_path), "hit", "--count", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["data"] == {"total": 2}
+
+    def test_content_json_no_match(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content 无命中返回空数组。"""
+        (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+        assert run_tool("filesearch", ["content", str(tmp_path), "absent", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["data"]["matches"] == []
+
+    def test_content_json_regex_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """正则错误输出 INVALID_REGEX 并带修正提示。"""
+        assert run_tool("filesearch", ["content", str(tmp_path), "(*bad", "--json"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        payload = json.loads(captured.err)
+        assert payload["code"] == "INVALID_REGEX"
+        assert payload["field"] == "pattern"
+        assert payload["expected"] == "Python 正则表达式"
+
+    def test_content_json_dir_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content 目录不存在：DIR_NOT_FOUND。"""
+        assert run_tool("filesearch", ["content", str(tmp_path / "missing"), "x", "--json"]) == 0
+        payload = json.loads(capsys.readouterr().err)
+        assert payload["code"] == "DIR_NOT_FOUND"
+        assert payload["field"] == "directory"
+
+
+class TestHumanCountAndLimit:
+    """人类可读路径下的 --count / --limit（默认无这两个开关时行为不变）。"""
+
+    def test_name_count_human(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """name --count 只打印总数。"""
+        (tmp_path / "a.py").touch()
+        (tmp_path / "b.py").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.py", "--count"]) == 0
+        assert "\n2\n" in capsys.readouterr().out
+
+    def test_name_limit_human_summary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """name --limit 截断时脚注提示总量。"""
+        (tmp_path / "a.py").touch()
+        (tmp_path / "b.py").touch()
+        assert run_tool("filesearch", ["name", str(tmp_path), "*.py", "--limit", "1"]) == 0
+        out = capsys.readouterr().out
+        assert "共 2 条" in out
+        assert "已显示前 1 条" in out
+
+    def test_content_count_human(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content --count 只打印总数。"""
+        (tmp_path / "a.txt").write_text("hit\nhit\n", encoding="utf-8")
+        assert run_tool("filesearch", ["content", str(tmp_path), "hit", "--count"]) == 0
+        assert "\n2\n" in capsys.readouterr().out
+
+    def test_content_limit_human_summary(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """content --limit 截断时脚注提示总量。"""
+        (tmp_path / "a.txt").write_text("hit\nhit\n", encoding="utf-8")
+        assert run_tool("filesearch", ["content", str(tmp_path), "hit", "--limit", "1"]) == 0
+        out = capsys.readouterr().out
+        assert "共 2 条" in out
+        assert "已显示前 1 条" in out

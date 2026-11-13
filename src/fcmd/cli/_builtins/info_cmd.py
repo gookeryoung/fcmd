@@ -8,12 +8,16 @@ from typing import Any
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
 from fcmd.cli._discovery import aliases_for, import_all_tool_modules, load_tool_subs, resolve_tool, tool_description
 from fcmd.cli._discovery import tool_names as _tool_names
+from fcmd.cli._schema import overview_schema, subcommand_schema, tool_document, tool_summary
+from fcmd.cli._schema import spec_kind as _spec_kind
 from fcmd.console import get_console, print_error
+from fcmd.core.result import SCHEMA_SCHEMA, emit_error, emit_json
+from fcmd.core.toolkit import param_schema
 
 __all__ = ["run"]
 
 
-def run(argv: list[str]) -> int:
+def run(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912 - 内建命令按参数组合分支，保持单入口
     """``fcmd info <tool> [subcommand]``。
 
     展示工具或子命令的元信息（不执行）：
@@ -22,7 +26,9 @@ def run(argv: list[str]) -> int:
     - ``fcmd info <tool>``：列出工具的所有子命令（含 hidden）及
       help / needs / strategy / cmd 摘要
     - ``fcmd info <tool> <subcommand>``：展示该子命令的完整 ToolSpec
-      字段（cmd / needs / strategy / cwd / hidden / env / retry / timeout）
+      字段（cmd / needs / strategy / cwd / hidden / env / retry / timeout），
+      以及参数 schema 与示例调用
+    - ``--json``：同一份数据的机器可读形态（``fcmd-schema/1``），供模型拼参数
     """
     parser = argparse.ArgumentParser(
         prog="fcmd info",
@@ -30,14 +36,29 @@ def run(argv: list[str]) -> int:
     )
     parser.add_argument("tool", nargs="?", default=None, help="工具名（如 pymake）")
     parser.add_argument("subcommand", nargs="?", default=None, help="子命令名（如 tc）")
+    parser.add_argument("--json", action="store_true", help="以 JSON 输出（机器可读，抓取参数 schema 与示例）")
     if not argv:
         _info_overview()
         return 0
     parsed = parser.parse_args(argv)
 
+    if parsed.json and parsed.tool is None:
+        _info_overview_json()
+        return 0
+
     resolved = resolve_tool(parsed.tool)
     if resolved is None:
-        print_unknown_tool(parsed.tool)
+        if parsed.json:
+            emit_error(
+                "info",
+                None,
+                code="UNKNOWN_TOOL",
+                message=f"未知工具 {parsed.tool!r}",
+                field="tool",
+                hint="运行 fcmd info 查看可用工具",
+            )
+        else:
+            print_unknown_tool(parsed.tool)
         return 1
 
     subs = load_tool_subs(resolved)
@@ -45,15 +66,31 @@ def run(argv: list[str]) -> int:
         return 1
 
     if parsed.subcommand is None:
-        _info_tool(resolved, subs)
+        if parsed.json:
+            emit_json(tool_document(resolved, subs))
+        else:
+            _info_tool(resolved, subs)
         return 0
 
     # 子命令详情：subcommand 可能是 None（单命令工具），用 .get 兼容
     spec = subs.get(parsed.subcommand)
     if spec is None:
-        print_error(f"工具 {resolved!r} 没有子命令 {parsed.subcommand!r}")
+        if parsed.json:
+            emit_error(
+                "info",
+                parsed.subcommand,
+                code="UNKNOWN_SUBCOMMAND",
+                message=f"工具 {resolved!r} 没有子命令 {parsed.subcommand!r}",
+                field="subcommand",
+                hint=f"运行 fcmd info {resolved} 查看可用子命令",
+            )
+        else:
+            print_error(f"工具 {resolved!r} 没有子命令 {parsed.subcommand!r}")
         return 1
-    _info_subcommand(resolved, spec)
+    if parsed.json:
+        emit_json({"schema": SCHEMA_SCHEMA, "tool": resolved, "subcommand": subcommand_schema(spec)})
+    else:
+        _info_subcommand(resolved, spec)
     return 0
 
 
@@ -86,6 +123,15 @@ def _info_overview() -> None:
         table.add_row(f"[cyan]{tool_name}[/cyan]", alias_str, count_str, tool_description(tool_name))
     console.print(table)
     console.print(f"\n[dim]共 {count} 个工具 · 用法: fcmd info <tool> [subcommand][/dim]")
+
+
+def _info_overview_json() -> None:
+    """``fcmd info --json``：内建命令 + 工具摘要（不含参数细节，控制体积）。"""
+    import_all_tool_modules()
+    from fcmd.core.toolkit import _TOOL_REGISTRY
+
+    tools = [tool_summary(name, _TOOL_REGISTRY.get(name, {})) for name in _tool_names()]
+    emit_json(overview_schema(_BUILTIN_COMMANDS, tools))
 
 
 def _info_tool(tool_name: str, subs: dict[str | None, Any]) -> None:
@@ -159,11 +205,52 @@ def _info_subcommand(tool_name: str, spec: Any) -> None:
         table.add_row(f"[dim]{name}[/dim]", value)
     console.print(table)
 
+    _print_params(spec)
+    _print_examples(spec)
 
-def _spec_kind(spec: Any) -> str:
-    """判断 ToolSpec 类型：cmd / aggregate / fn。"""
-    if spec.cmd is not None:
-        return "cmd"
-    if spec.needs:
-        return "aggregate"
-    return "fn"
+
+def _print_params(spec: Any) -> None:
+    """人类可读的参数表（与 ``--json`` 的 params 同源）。"""
+    from fcmd.console import Table
+
+    params = param_schema(spec)
+    if not params:
+        return
+    console = get_console()
+    console.print("\n[bold]参数:[/bold]")
+    table = Table(show_header=True, header_style="bold", box="auto")
+    table.add_column("参数", no_wrap=True)
+    table.add_column("类型", width=10)
+    table.add_column("必填", width=6)
+    table.add_column("默认", width=10)
+    table.add_column("说明")
+    for item in params:
+        flag = str(item["cli"])
+        aliases = item["aliases"]
+        if aliases:
+            flag = f"{flag} ({', '.join(str(alias) for alias in aliases)})"
+        default = item["default"]
+        if default is None:
+            default_str = "-"
+        elif isinstance(default, bool):
+            default_str = "true" if default else "false"
+        else:
+            default_str = str(default)
+        help_text = str(item["help"] or "-")
+        choices = item["choices"]
+        if choices:
+            help_text = f"{help_text}（可选: {', '.join(str(choice) for choice in choices)}）"
+        table.add_row(flag, str(item["type"]), "yes" if item["required"] else "no", default_str, help_text)
+    console.print(table)
+
+
+def _print_examples(spec: Any) -> None:
+    """人类可读的示例调用（与 ``--json`` 的 examples 同源）。"""
+    if not spec.examples:
+        return
+    from rich.markup import escape
+
+    console = get_console()
+    console.print("\n[bold]示例:[/bold]")
+    for example in spec.examples:
+        console.print(f"  {escape(example)}", style="cyan")
