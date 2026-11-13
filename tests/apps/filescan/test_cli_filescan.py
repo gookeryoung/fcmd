@@ -148,7 +148,19 @@ def test_scan_whitelist_skips_unknown_suffix(sample_dir: Path, capsys: pytest.Ca
     scan_command(paths=[sample_dir])
     out = capsys.readouterr().out
     assert "dump.dat" not in out
-    assert "后缀 1" in out
+    assert "范围外 1（后缀白名单 1" in out
+
+
+def test_scan_only_out_of_scope_files_explains_zero_hits(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """只有白名单外文件时，0 命中要说明「范围外」并给出可操作提示，而不是只报跳过。"""
+    _write(tmp_path, "dump.dat", "手机 13812345678\n")
+    scan_command(paths=[tmp_path])
+    out = capsys.readouterr().out
+    assert "命中 0 个文件 / 0 条" in out
+    assert "范围外 1（后缀白名单 1" in out
+    assert "未发现命中" in out
+    assert "不在扫描范围" in out
+    assert "检查后缀白名单与规则启用状态" in out
 
 
 def test_scan_force_ext_scans_outside_whitelist(sample_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -478,13 +478,62 @@ CREATE TABLE entries (
 三种失效行为均符合预期：改文件只重扫该文件，改规则 / 改上下文长度 / 切换打码
 全部实扫；而只改并发数不影响命中，继续全部复用。
 
+### D12 结果聚合口径：范围外 vs 读取后跳过（2026-11-13）
+
+**问题反馈：** 扫描结果「全是跳过」或「文档无文本层」，看不到正常命中。
+
+**真实复现（用户本地设置 + 真实目录）：** 读取
+`~/.fcmd/ui/filescanw.json`（白名单只勾「文档 + 数据/结构化」两组，共 20 个后缀；
+规则只启用 `cn_id`），扫描 `D:/devspace`：
+
+| 指标 | 值 |
+|---|---|
+| 文件（`files_seen`） | 4909 |
+| 实扫 / 缓存复用 | 24 / 0 |
+| 命中文件 / 命中条数 | 0 / 0 |
+| 旧口径「跳过」 | 4885（后缀 4881 / 二进制 0 / 其他 0），另有 4 个文档无文本层 |
+
+用同一批 13951 条缓存记录逐个提取文本、套 `cn_id` 正则复核，确认这 4 个 PDF
+确实是图片型无文本层，其余 4881 个 `.py/.js/.json/.md/.txt` 等**根本不在白名单**，
+从未被读取。即：0 命中不是漏报，问题出在**统计聚合与展示口径**。
+
+**根因：**
+
+- `_engine._classify_entry` 对白名单外文件累加 `walk.skipped_extension`，同时计入
+  `files_seen`；`_finalize_stats` 把这些「从未读取」的文件与大小 / 时间过滤
+  （原 `walk.skipped_size`）一起塞进单一 `files_skipped`，再与「二进制 / 其他」
+  并列展示；
+- `_report._summary_line` 与 GUI `_finish_scan` 都把它统称为「跳过」，且 0 命中时
+  不给任何诊断。于是用户看到的是「文件 4909，命中 0，跳过 4885」——绝大多数是
+  **范围外**、根本没参与扫描的文件，却被读成「扫了但全跳过」；
+- GUI 状态栏还缺少 `no_text / encrypted / corrupt / unsupported` 分类，
+  与 CLI 口径不一致。
+
+**修复：**
+
+- `ScanStats` 增加 `files_skipped_size_time`，并由派生属性拆分：
+  `files_out_of_scope = 后缀白名单外 + 大小/时间过滤`（从未读取），
+  `files_skipped_after_read = files_skipped - files_out_of_scope`
+  （二进制 / 文档四类 / 其他）；
+- 新增 `_report.scan_summary(stats, compact=...)` 与 `no_hit_hint(stats)`，
+  CLI 文本 / JSON 与 GUI 状态栏**共用**同一实现：
+  `范围外 N（后缀白名单 X / 大小或时间 Y）；读取后跳过 M（二进制 … / 其他 … / 无文本 …）`；
+- 0 命中且未取消时追加可操作提示：已检查文件数、范围外数量、读取后跳过与无文本层
+  数量，并提示检查后缀白名单与规则启用状态；
+- JSON `stats` 增加 `files_skipped_size_time`、`files_out_of_scope`、
+  `files_skipped_after_read`，既有字段语义保持不变（`files_skipped` 仍为总数）。
+
+**口径约定：** 大小 / 修改时间过滤属于「范围外」（从未读取），不再计入「其他」；
+`files_skipped_other` 只统计读盘（或解析）之后才发生的其它跳过。
+
 ## 验收
 
 - 对含身份证号/手机号/邮箱/API Key 的样例目录扫描，命中文件、规则、行号与
   上下文正确，默认打码；
 - `(a or b) and not c` 等嵌套表达式按文件级语义判定，非法表达式给出中文错误；
 - 递归深度、后缀白名单/收窄/强制/排除、大小上下限、修改时间上下界、跳过二进制、
-  单文件上限均生效；统计能区分「后缀未命中跳过」与「二进制跳过」；
+  单文件上限均生效；统计区分「范围外（后缀白名单 / 大小或时间）」与「读取后跳过
+  （二进制 / 文档无文本层等）」，0 命中时给出可操作诊断（见 D12）；
 - 取消后返回已完成部分且不写任何文件；
 - CSV / JSON / 文本三种报告可导出，`--raw` 才含原文；
 - GUI 可添加多目录、编辑白名单、载入内置规则、编辑/启停规则、查看聚合结果、筛选与导出；
@@ -512,6 +561,9 @@ CREATE TABLE entries (
 - 扫描配置：已落地（`_config.py` + CLI `run`/`--save-config` + GUI 导入导出，
   字段与兼容策略见 D10）。
 - 修改时间过滤：已落地（`ScanOptions.modified_after/before`，遍历阶段计入
-  `files_skipped_other`）。
+  `files_skipped_size_time`，属「范围外」）。
 - 扫描缓存：已落地（`_cache.py` + CLI `--no-cache`/`--clear-cache` + GUI 开关与
   清理，选型 / 指纹 / 并发与损坏降级 / 实测见 D11）。
+- 结果聚合口径：已落地（`ScanStats.files_out_of_scope` / `files_skipped_after_read`
+  + `_report.scan_summary` / `no_hit_hint` + GUI `scan_status_text` 共用，
+  0 命中诊断与真实复现见 D12）。

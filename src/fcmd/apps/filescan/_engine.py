@@ -351,6 +351,8 @@ class ScanStats:
     files_reused: int = 0
     files_skipped: int = 0
     files_skipped_extension: int = 0
+    # 后缀在白名单内，但被大小 / 修改时间过滤掉、从未读取的文件数。
+    files_skipped_size_time: int = 0
     files_skipped_binary: int = 0
     files_skipped_other: int = 0
     files_skipped_encrypted: int = 0
@@ -363,6 +365,16 @@ class ScanStats:
     hit_count: int = 0
     elapsed: float = 0.0
     cancelled: bool = False
+
+    @property
+    def files_out_of_scope(self) -> int:
+        """从未读取的文件数：后缀白名单外 + 大小 / 时间过滤。"""
+        return self.files_skipped_extension + self.files_skipped_size_time
+
+    @property
+    def files_skipped_after_read(self) -> int:
+        """读盘（或解析）之后才跳过的文件数：二进制、文档四类与其他。"""
+        return self.files_skipped - self.files_out_of_scope
 
     @property
     def bytes_per_second(self) -> float:
@@ -1137,10 +1149,11 @@ def _offset_progress(
 
 
 def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:
-    """汇总跳过分类：后缀未命中 / 二进制 / 文档四类 / 其他。
+    """汇总跳过分类：未进入扫描范围 / 二进制 / 文档四类 / 其他。
 
-    文档的加密、损坏、无文本层、缺依赖分别独立计数，剩余（符号链接、大小过滤、
-    文档超限）归入「其他」，各分类之和等于 ``files_skipped``。
+    后缀白名单外与大小、时间过滤的文件从未读取，单独计入
+    ``files_skipped_size_time``；文档的加密、损坏、无文本层、缺依赖分别独立计数，
+    剩余（符号链接、单文件超限）归入「其他」。各分类之和等于 ``files_skipped``。
     """
     stats = result.stats
     encrypted = sum(1 for item in result.skipped if item.reason == REASON_DOC_ENCRYPTED)
@@ -1149,16 +1162,16 @@ def _finalize_stats(result: ScanResult, walk: WalkResult) -> None:
     unsupported = sum(1 for item in result.skipped if item.reason.startswith(REASON_DOC_UNSUPPORTED))
     binary = sum(1 for item in result.skipped if item.reason == REASON_BINARY)
     stats.files_skipped_extension = walk.skipped_extension
+    stats.files_skipped_size_time = walk.skipped_size
     stats.files_skipped_binary = binary
     stats.files_skipped_encrypted = encrypted
     stats.files_skipped_corrupt = corrupt
     stats.files_skipped_no_text = no_text
     stats.files_skipped_unsupported = unsupported
-    stats.files_skipped_other = (
-        len(result.skipped) - binary - encrypted - corrupt - no_text - unsupported + walk.skipped_size
-    )
+    stats.files_skipped_other = len(result.skipped) - binary - encrypted - corrupt - no_text - unsupported
     stats.files_skipped = (
         stats.files_skipped_extension
+        + stats.files_skipped_size_time
         + stats.files_skipped_binary
         + stats.files_skipped_other
         + encrypted

@@ -17,6 +17,7 @@ from fcmd.apps.filescan._cache import (
     default_cache_path,
 )
 from fcmd.apps.filescan._engine import ScanOptions, ScanResult, scan_paths
+from fcmd.apps.filescan._report import no_hit_hint
 from fcmd.apps.filescan._rules import MATCH_KEYWORD, Matcher, Rule, RuleSet
 
 
@@ -177,6 +178,44 @@ def test_process_pool_writes_cache_from_main_process(
     assert second.stats.files_scanned == 0
     assert second.stats.files_reused == 6
     assert second.stats.hit_files == 6
+
+
+def test_cache_reuse_keeps_scope_split_without_fake_skips(cache: ScanCache, tmp_path: Path) -> None:
+    """缓存命中路径不伪造跳过：范围外 / 读取后跳过与首次扫描一致。"""
+    root = tmp_path / "scope"
+    _write(root, "customer.txt", "姓名 张三 13812345678\n")
+    _write(root, "clean.txt", "没有任何敏感内容\n")
+    (root / "note.dat").write_text("姓名 张三\n", encoding="utf-8")  # 白名单外，从未读取
+    options = ScanOptions(workers=1)
+
+    first = _scan(root, cache, options=options)
+    assert first.stats.files_out_of_scope == 1
+    assert first.stats.files_skipped_after_read == 0
+    assert first.stats.files_scanned == 2
+
+    second = _scan(root, cache, options=options)
+    assert second.stats.files_reused == 2
+    assert second.stats.files_scanned == 0
+    assert second.stats.files_out_of_scope == first.stats.files_out_of_scope
+    assert second.stats.files_skipped_after_read == first.stats.files_skipped_after_read
+    assert second.stats.files_skipped == first.stats.files_skipped
+    assert [hit.path.name for hit in second.hits] == ["customer.txt"]
+
+
+def test_cache_reuse_zero_hit_still_explains(cache: ScanCache, tmp_path: Path) -> None:
+    """全量复用且 0 命中时，诊断文案仍要说明「未发现命中」，不能只显示跳过。"""
+    root = tmp_path / "emptyhit"
+    _write(root, "clean.txt", "没有任何敏感内容\n")
+    options = ScanOptions(workers=1)
+    _scan(root, cache, options=options)
+
+    second = _scan(root, cache, options=options)
+    assert second.stats.files_reused == 1
+    assert second.stats.hit_files == 0
+    hint = no_hit_hint(second.stats)
+    assert hint is not None
+    assert "缓存复用 1" in hint
+    assert "未发现命中" in hint
 
 
 def test_corrupt_database_is_rebuilt(tmp_path: Path) -> None:

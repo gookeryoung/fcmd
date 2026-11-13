@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import codecs
 import os
+import time
 import zipfile
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from fcmd.apps.filescan import _engine
 from fcmd.apps.filescan._engine import (
     DEFAULT_MAX_FILE_BYTES,
     REASON_BINARY,
@@ -611,6 +613,60 @@ def test_scan_paths_skip_stats(tmp_path: Path) -> None:
     assert result.stats.files_skipped_binary == 1
     assert result.stats.files_skipped_other == 1
     assert result.stats.files_skipped == 3
+
+
+def test_size_and_time_filters_are_out_of_scope(tmp_path: Path) -> None:
+    """大小 / 时间过滤掉的文件从未读取，计入「范围外」而非「读取后跳过」。"""
+    _write(tmp_path, "a.txt", "alpha")
+
+    future = scan_paths([tmp_path], _ruleset(("alpha", "alpha")), ScanOptions(modified_after=time.time() + 3600))
+    assert future.stats.files_skipped_size_time == 1
+    assert future.stats.files_skipped_extension == 0
+    assert future.stats.files_skipped_other == 0
+    assert future.stats.files_out_of_scope == 1
+    assert future.stats.files_skipped_after_read == 0
+    assert future.stats.files_skipped == 1
+    assert future.stats.files_scanned == 0
+
+    too_big = scan_paths([tmp_path], _ruleset(("alpha", "alpha")), ScanOptions(max_size=1))
+    assert too_big.stats.files_skipped_size_time == 1
+    assert too_big.stats.files_scanned == 0
+
+
+def test_skip_categories_match_thread_and_process_pools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """线程池与进程池两条调度路径的跳过分类完全一致。"""
+    _write(tmp_path, "a.txt", "alpha")
+    _write(tmp_path, "bin.txt", b"\x00\x01")
+    _write(tmp_path, "skip.dat", "alpha")
+    _write(tmp_path, "big.txt", "x" * 200)
+    rules = _ruleset(("alpha", "alpha"))
+    options = ScanOptions(workers=2, max_file_bytes=100)
+
+    threaded = scan_paths([tmp_path], rules, replace(options, use_processes=False))
+    monkeypatch.setattr(_engine, "PROCESS_MIN_FILES", 1)
+    monkeypatch.setattr(_engine, "PROCESS_MIN_BYTES", 1)
+    pooled = scan_paths([tmp_path], rules, options)
+
+    fields = (
+        "files_seen",
+        "files_scanned",
+        "files_skipped",
+        "files_skipped_extension",
+        "files_skipped_size_time",
+        "files_skipped_binary",
+        "files_skipped_other",
+        "files_out_of_scope",
+        "files_skipped_after_read",
+        "files_failed",
+        "hit_files",
+        "hit_count",
+    )
+    for name in fields:
+        assert getattr(threaded.stats, name) == getattr(pooled.stats, name), name
+    assert pooled.stats.files_skipped_extension == 1
+    assert pooled.stats.files_skipped_binary == 1
+    assert pooled.stats.files_skipped_other == 1
+    assert pooled.stats.files_out_of_scope == 1
 
 
 def test_scan_paths_reads_no_more_than_limit(tmp_path: Path) -> None:

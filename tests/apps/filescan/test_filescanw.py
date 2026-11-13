@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from fcmd.apps.filescan import filescanw
+from fcmd.apps.filescan._engine import ScanResult, ScanStats
+from fcmd.apps.filescan._report import scan_summary
 from fcmd.apps.filescan._rules import builtin_ruleset, disable_all
 from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.gui import window as _guiwindow
@@ -251,3 +253,47 @@ def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(filescanw, "run_gui", lambda: called.append(True))
     filescanw.launch_cmd()
     assert called == [True]
+
+
+# ---------------------------------------------------------------------- #
+# 状态栏口径：与 CLI 共用 scan_summary / no_hit_hint
+# ---------------------------------------------------------------------- #
+def _status_result(stats: ScanStats) -> ScanResult:
+    return ScanResult(roots=(Path("D:/data"),), hits=[], skipped=[], errors=[], stats=stats)
+
+
+def test_scan_status_text_separates_scope_from_read_skips() -> None:
+    """范围外文件不再被 GUI 笼统称作「跳过」，0 命中时给出诊断。"""
+    stats = ScanStats(
+        files_seen=4909,
+        files_scanned=24,
+        files_skipped=4885,
+        files_skipped_extension=4881,
+        files_skipped_size_time=0,
+        files_skipped_no_text=4,
+        hit_files=0,
+        hit_count=0,
+        elapsed=1.5,
+    )
+    text = filescanw.scan_status_text(_status_result(stats))
+    assert "\n" not in text
+    assert text.startswith(scan_summary(stats, compact=True))
+    assert "范围外 4881（后缀白名单 4881 / 大小或时间 0）" in text
+    assert "读取后跳过 4（二进制 0 / 其他 0 / 无文本 4）" in text
+    assert "未发现命中" in text
+    assert "检查后缀白名单与规则启用状态" in text
+
+
+def test_scan_status_text_omits_hint_when_hits_found() -> None:
+    stats = ScanStats(files_seen=3, files_scanned=3, hit_files=1, hit_count=2, elapsed=0.1)
+    text = filescanw.scan_status_text(_status_result(stats))
+    assert text == scan_summary(stats, compact=True)
+    assert "未发现命中" not in text
+
+
+def test_scan_status_text_hint_survives_full_cache_reuse() -> None:
+    """全量缓存复用、0 命中时仍要给出诊断，不能让人误以为「全是跳过」。"""
+    stats = ScanStats(files_seen=3, files_scanned=0, files_reused=3, hit_files=0, hit_count=0, elapsed=0.01)
+    text = filescanw.scan_status_text(_status_result(stats))
+    assert "缓存复用 3" in text
+    assert "未发现命中" in text

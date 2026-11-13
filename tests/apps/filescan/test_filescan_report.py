@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -12,10 +13,12 @@ from fcmd.apps.filescan._report import (
     filter_result,
     format_text_report,
     mask_text,
+    no_hit_hint,
     render_context,
     result_to_csv,
     result_to_json,
     result_to_mapping,
+    scan_summary,
     write_report,
 )
 
@@ -249,3 +252,82 @@ def test_document_skip_stats_are_separate_fields() -> None:
 
     text = format_text_report(result)
     assert "加密 1" in text and "损坏 2" in text and "无文本 3" in text and "不支持 4" in text
+
+
+# ---------------------------------------------------------------------- #
+# 范围外 / 读取后跳过 的聚合口径
+# ---------------------------------------------------------------------- #
+def _scope_stats() -> ScanStats:
+    """复现「扫 D:/devspace 全是跳过」的真实统计形态：白名单排除绝大多数文件。"""
+    return ScanStats(
+        files_seen=4909,
+        files_scanned=24,
+        files_skipped=4885,
+        files_skipped_extension=4881,
+        files_skipped_size_time=0,
+        files_skipped_no_text=4,
+        hit_files=0,
+        hit_count=0,
+        elapsed=1.5,
+    )
+
+
+def test_scope_split_properties() -> None:
+    stats = _scope_stats()
+    assert stats.files_out_of_scope == 4881
+    assert stats.files_skipped_after_read == 4
+
+
+def test_scan_summary_separates_out_of_scope_from_read_skips() -> None:
+    summary = scan_summary(_scope_stats())
+    assert "范围外 4881（后缀白名单 4881 / 大小或时间 0）" in summary
+    assert "读取后跳过 4（二进制 0 / 其他 0 / 无文本 4）" in summary
+    # 不再把所有范围外文件笼统称作「跳过」
+    assert "跳过 4885" not in summary
+    assert "跳过 4881" not in summary
+
+
+def test_scan_summary_compact_is_single_line() -> None:
+    compact = scan_summary(_scope_stats(), compact=True)
+    assert "\n" not in compact
+    assert compact.startswith("扫描完成：文件 4909")
+
+
+def test_no_hit_hint_explains_scope_and_textless_documents() -> None:
+    hint = no_hit_hint(_scope_stats())
+    assert hint is not None
+    assert "未发现命中" in hint
+    assert "已检查 24 个文件（实扫 24 / 缓存复用 0）" in hint
+    assert "4881 个文件不在扫描范围" in hint
+    assert "其中文档无文本层 4 个" in hint
+    assert "后缀白名单" in hint and "规则启用状态" in hint
+
+    assert no_hit_hint(replace(_scope_stats(), hit_files=1)) is None
+    assert no_hit_hint(replace(_scope_stats(), cancelled=True)) is None
+
+
+def test_text_report_shows_hint_only_when_no_hits() -> None:
+    with_hits = _result()
+    assert "未发现命中" not in format_text_report(with_hits)
+
+    empty = replace(
+        _result(hits=[]),
+        stats=replace(
+            _result(hits=[]).stats,
+            hit_files=0,
+            hit_count=0,
+            files_skipped_extension=7,
+            files_skipped=7,
+            files_seen=9,
+        ),
+    )
+    text = format_text_report(empty)
+    assert "未发现命中" in text
+    assert "范围外 7（后缀白名单 7 / 大小或时间 0）" in text
+
+
+def test_json_stats_include_scope_split() -> None:
+    stats = result_to_mapping(replace(_result(hits=[]), stats=_scope_stats()))["stats"]
+    assert stats["files_skipped_size_time"] == 0
+    assert stats["files_out_of_scope"] == 4881
+    assert stats["files_skipped_after_read"] == 4

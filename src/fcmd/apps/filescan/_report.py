@@ -15,7 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, format_size
+from fcmd.apps.filescan._engine import FileHit, RuleMatch, ScanResult, ScanStats, format_size
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -25,10 +25,12 @@ __all__ = [
     "filter_result",
     "format_text_report",
     "mask_text",
+    "no_hit_hint",
     "render_context",
     "result_to_csv",
     "result_to_json",
     "result_to_mapping",
+    "scan_summary",
     "write_report",
 ]
 
@@ -78,6 +80,9 @@ def result_to_mapping(result: ScanResult, include_raw: bool = False) -> dict[str
             "files_reused": stats.files_reused,
             "files_skipped": stats.files_skipped,
             "files_skipped_extension": stats.files_skipped_extension,
+            "files_skipped_size_time": stats.files_skipped_size_time,
+            "files_out_of_scope": stats.files_out_of_scope,
+            "files_skipped_after_read": stats.files_skipped_after_read,
             "files_skipped_binary": stats.files_skipped_binary,
             "files_skipped_other": stats.files_skipped_other,
             "files_skipped_encrypted": stats.files_skipped_encrypted,
@@ -135,14 +140,13 @@ def result_to_csv(result: ScanResult, include_raw: bool = False) -> str:
 
 
 def _summary_line(result: ScanResult) -> str:
-    """概要与吞吐口径。
+    """概要与吞吐口径（CLI 文本报告的第一段）。"""
+    return scan_summary(result.stats)
 
-    文档专属的加密 / 损坏 / 无文本 / 不支持四类只在实际出现时追加，
-    纯文本扫描的概要文本保持不变。
-    """
-    stats = result.stats
-    prefix = "扫描已取消（部分结果）" if stats.cancelled else "扫描完成"
-    document_parts = "".join(
+
+def _document_parts(stats: ScanStats) -> str:
+    """文档专属四类只在非零时追加，保持纯文本扫描的概要不被拉长。"""
+    return "".join(
         f" / {label} {value}"
         for label, value in (
             ("加密", stats.files_skipped_encrypted),
@@ -152,21 +156,64 @@ def _summary_line(result: ScanResult) -> str:
         )
         if value
     )
-    return (
+
+
+def scan_summary(stats: ScanStats, *, compact: bool = False) -> str:
+    """扫描概要：区分「范围外（从未读取）」与「读取后跳过」。
+
+    ``compact=True`` 时压成一行，供 GUI 状态栏使用；CLI 文本报告用两行，
+    避免把后缀白名单排除的几十万文件与真正读盘后跳过的少量文件混成一个
+    「跳过」数字，让人误以为扫描失败。
+    """
+    prefix = "扫描已取消（部分结果）" if stats.cancelled else "扫描完成"
+    head = (
         f"{prefix}：文件 {stats.files_seen}"
         f"（实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}），"
-        f"命中 {stats.hit_files} 个文件 / {stats.hit_count} 条，"
-        f"跳过 {stats.files_skipped}"
-        f"（后缀 {stats.files_skipped_extension} / 二进制 {stats.files_skipped_binary}"
-        f" / 其他 {stats.files_skipped_other}{document_parts}），错误 {stats.files_failed}；"
-        f"读取 {format_size(stats.bytes_read)}，耗时 {stats.elapsed:.2f} s"
-        f"（{format_size(int(stats.bytes_per_second))}/s，{stats.files_per_second:.1f} 文件/s）"
+        f"命中 {stats.hit_files} 个文件 / {stats.hit_count} 条"
     )
+    scope = (
+        f"范围外 {stats.files_out_of_scope}"
+        f"（后缀白名单 {stats.files_skipped_extension} / 大小或时间 {stats.files_skipped_size_time}）；"
+        f"读取后跳过 {stats.files_skipped_after_read}"
+        f"（二进制 {stats.files_skipped_binary} / 其他 {stats.files_skipped_other}{_document_parts(stats)}）"
+    )
+    tail = (
+        f"错误 {stats.files_failed}；读取 {format_size(stats.bytes_read)}，"
+        f"耗时 {stats.elapsed:.2f} s（{format_size(int(stats.bytes_per_second))}/s，"
+        f"{stats.files_per_second:.1f} 文件/s）"
+    )
+    separator = "；" if compact else "\n"
+    return f"{head}{separator}{scope}；{tail}"
+
+
+def no_hit_hint(stats: ScanStats) -> str | None:
+    """0 命中时返回可操作诊断；有命中或扫描被取消时返回 ``None``。
+
+    用户只看到「全是跳过」往往不是扫描失败，而是后缀白名单把大部分文件排除在
+    扫描范围之外，或规则被禁用、文档本身没有文本层。这里把原因拆开说清楚。
+    """
+    if stats.cancelled or stats.hit_files:
+        return None
+    checked = stats.files_scanned + stats.files_reused
+    parts = [f"已检查 {checked} 个文件（实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}）"]
+    if stats.files_out_of_scope:
+        parts.append(
+            f"{stats.files_out_of_scope} 个文件不在扫描范围"
+            f"（后缀白名单 {stats.files_skipped_extension} / 大小或时间 {stats.files_skipped_size_time}）"
+        )
+    read_skipped = stats.files_skipped_after_read
+    if read_skipped:
+        detail = f"，其中文档无文本层 {stats.files_skipped_no_text} 个" if stats.files_skipped_no_text else ""
+        parts.append(f"{read_skipped} 个文件读取后跳过{detail}")
+    return "未发现命中：" + "，".join(parts) + "；若预期有命中，请检查后缀白名单与规则启用状态。"
 
 
 def format_text_report(result: ScanResult, include_raw: bool = False) -> str:
     """生成人类可读的文本报告。"""
     lines = [_summary_line(result)]
+    hint = no_hit_hint(result.stats)
+    if hint is not None:
+        lines.append(hint)
     for hit in result.hits:
         lines.append(f"[命中] {hit.path}（{hit.encoding}，{format_size(hit.size)}）")
         if not hit.matches:

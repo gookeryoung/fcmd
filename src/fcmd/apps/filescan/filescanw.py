@@ -60,7 +60,13 @@ from fcmd.apps.filescan._engine import (
     scan_paths,
 )
 from fcmd.apps.filescan._extract import DOCUMENT_EXTENSIONS
-from fcmd.apps.filescan._report import filter_result, render_context, write_report
+from fcmd.apps.filescan._report import (
+    filter_result,
+    no_hit_hint,
+    render_context,
+    scan_summary,
+    write_report,
+)
 from fcmd.apps.filescan._rules import (
     MATCH_KEYWORD,
     MATCH_REGEX,
@@ -93,6 +99,7 @@ __all__ = [
     "parse_whitelist_text",
     "run_gui",
     "save_settings",
+    "scan_status_text",
     "settings_from_mapping",
     "settings_to_mapping",
     "validate_exts",
@@ -407,6 +414,17 @@ def validate_exts(exts: Iterable[str]) -> tuple[tuple[str, ...], tuple[str, ...]
 def parse_and_validate_ext_line(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """按英文/中文逗号拆分一行后缀并校验，返回 ``(有效后缀, 非法条目)``。"""
     return validate_exts(_EXT_SEPARATORS.split(text))
+
+
+def scan_status_text(result: ScanResult) -> str:
+    """扫描页状态栏文案：与 CLI 共用「范围外 / 读取后跳过」口径。
+
+    0 命中时追加可操作诊断（白名单排除了多少文件、文档无文本层多少），
+    避免用户只看到「全是跳过」却不知道原因。
+    """
+    summary = scan_summary(result.stats, compact=True)
+    hint = no_hit_hint(result.stats)
+    return f"{summary}；{hint}" if hint is not None else summary
 
 
 # ---------------------------------------------------------------------- #
@@ -1235,15 +1253,8 @@ class FilescanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._render_result(result)
         if self._notebook is not None and self._result_page is not None:
             self._notebook.select(self._result_page)
-        stats = result.stats
-        state = "已取消" if stats.cancelled else "完成"
         self._progress.set(100.0)
-        self._status.set(
-            f"扫描{state}：实扫 {stats.files_scanned} / 缓存复用 {stats.files_reused}，"
-            f"命中 {stats.hit_files} 个 / {stats.hit_count} 条，"
-            f"跳过 {stats.files_skipped}（后缀 {stats.files_skipped_extension} / 二进制 {stats.files_skipped_binary}），"
-            f"耗时 {stats.elapsed:.2f}s（{format_size(int(stats.bytes_per_second))}/s）"
-        )
+        self._status.set(scan_status_text(result))
         self._start_button.configure(state="normal")
         self._cancel_button.configure(state="disabled")
 

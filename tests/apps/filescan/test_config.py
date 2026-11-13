@@ -357,7 +357,7 @@ def test_cli_time_filter_excludes_new_files(tmp_path: Path) -> None:
     run_command(config=cfg, format="json", output=tmp_path / "out.json")
     report = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
     assert report["stats"]["files_scanned"] == 0
-    assert report["stats"]["files_skipped_other"] == 1
+    assert report["stats"]["files_skipped_size_time"] == 1
     assert target.exists()  # 只读，未改动
 
 
