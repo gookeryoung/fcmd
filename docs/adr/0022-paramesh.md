@@ -1,6 +1,6 @@
 # 0022 paramesh：参数化模型到仿真网格
 
-- 状态：最小原型已落地（v1，二维轴对称）；已按 dynacalc 网格契约评审 `0e91922` 对齐
+- 状态：最小原型已落地（v1，二维轴对称）；已按 dynacalc 网格契约评审 `0e91922` 与 `da896b3` §8.2 对齐
 - 日期：2026-11-13
 - 相关文档：[dynacalc 模型契约](../dynacalc-model-contract.md)、[dynacalc 网格评审](../dynacalc-paramesh-mesh-review.md)、[ADR 0020](0020-dynacalc.md)、[ADR 0021](0021-paramcad.md)
 
@@ -101,7 +101,10 @@
 - 各区域面积与解析值对照及相对误差；
 - 壁厚方向实际层数与配置目标区间；
 - 尺度、层数、间隙过薄等警告；
-- 坐标约定固定写入 `quality.txt`：`x=轴向(z)`、`y=径向(r)`、`z=0`，已按 x 轴为对称轴生成（`ELFORM=14`）。
+- 坐标约定固定写入 `quality.txt`：`x=轴向(z)`、`y=径向(r)`、`z=0`，已按 x 轴为对称轴生成（`ELFORM=14`）；
+- 质量自检 `mass_check`：按 `*SECTION_SHELL` 厚度（1.0 mm，周向单位厚度）折算的体积等价
+  质量与解析旋转体体积的比值；密度取单位值，比值应 ≈ 1。另给按区域总厚度折算的比值
+  作为诊断，展示逐层复用区域总厚度会造成的放大。
 
 ### D6 交接契约（`paramesh-mesh/1`，已对齐 dynacalc 评审 v1）
 
@@ -130,14 +133,19 @@ paramesh 只写自己的输出根，由上层放到 `meshes/` 下；`mesh_id` �
 `regions[]`、`parts[]`、`sets`、`extent`、`detonation`、`probes[]`、`counts`、
 `size_range_mm`、`quality`、`refinements[]`、`tbd[]`、`warnings[]`、`files`。
 
-- `parts[]`：`{part_id, name, role, element_type, section{secid, elform, thickness_mm}}`；
+- `parts[]`：`{part_id, name, role, element_type, section{...}}`；
   `role` ∈ `explosive / air / wall / inert`；`section.secid = part_id`；`elform = 14`；
-  `thickness_mm` 取代表截面处的径向厚度：炸药 `scale.propellant_radius_mm`、间隙
-  `scale.gap_mm`、管壁 `scale.section_wall_mm`；`nip` 可选，v1 不给出。
+  `thickness_mm = 1.0`，`thickness_semantics = unit_out_of_plane`——v1 采用轴对称连续体
+  解释，周向单位厚度，区域真实径向厚度由网格分层表达；不采用「本行步长」，因为同一部件
+  的径向行厚（尤其药层渐变）无法用单一 `section` 逐行表达。`region_thickness_mm` 另给
+  代表截面径向总厚度（炸药 `propellant_radius_mm`、间隙 `gap_mm`、管壁
+  `section_wall_mm`），仅供核对，不得作为每个单元的壳厚写入；`nip` 可选，v1 不给出。
 - `sets`：节点 `{集合名: {id, count}}`、部件 `{集合名: {id, part_ids}}`；SID 规则见下。
 - `extent`：`{z_start_mm, z_end_mm, r_max_mm}`，来自实际节点。
 - `detonation`：`{x, y, z, t0}`，起爆端轴线（`x=z_start_mm`、`y=0`、`z=0`、`t0=0`）。
-- `probes[]`：`{name, node_id, r_mm, z_mm}`，锚定端面与固定半径，三档物理坐标一致。
+- `probes[]`：`{name, node_id, r_mm, z_mm}`，锚定端面与固定半径；轴线另有
+  `axis_station_025 / 050 / 075`（0.25L / 0.5L / 0.75L）三个稳态段站位，生成时强制
+  成为网格站点，三档物理坐标完全一致，`node_id` 因编号不同而不同。
 
 `mesh.k`（方案 A）只含 `*NODE` / `*ELEMENT_SHELL` / `*SET_NODE_LIST_TITLE` /
 `*SET_PART_LIST_TITLE`；**不含** `*PART` / `*SECTION_SHELL` / `*MAT_*` / `*KEYWORD` /
@@ -178,7 +186,8 @@ deck 侧约束：
 - 所有单元面积 > 0，退化与负体积计数为 0；
 - 壁厚方向实际层数落在配置区间内，并在质量报告中给出实际值；
 - 可留 TBD 的字段一律不报错，降级为最坏情形并记入 `tbd[]`；
-- 区域面积与解析值对照，相对误差写入 `regions[].area_rel_error`。
+- 区域面积与解析值对照，相对误差写入 `regions[].area_rel_error`；
+- `quality.mass_check.ratio`（按 1.0 mm 求解器厚度折算）应 ≈ 1，防止按径向层数放大质量。
 
 ### D8 非目标与三维接口
 
@@ -193,8 +202,8 @@ v1 不做三维、不做自适应重划分、不做网格收敛自动批跑（�
 |---|---|
 | `*PART` / `*SECTION_SHELL` 归属 | 方案 A：从 `mesh.k` 移除，deck 按 `parts[].role` + `parts[].section` 生成 |
 | 集合 ID | 清单直接给数值 SID；节点 1–99、部件 101–199，生成规则写进契约 |
-| `*SECTION_SHELL` 厚度 | 取代表截面处的径向厚度：炸药 `propellant_radius_mm`、间隙 `gap_mm`、管壁 `section_wall_mm` |
-| 探针选点 | paramesh 选点，锚定端面与固定半径；三档物理坐标一致，仅 `node_id` 随编号不同 |
+| `*SECTION_SHELL` 厚度 | 轴对称连续体解释：`thickness_mm = 1.0`（周向单位厚度）；区域径向总厚度另给 `region_thickness_mm`，仅核对；`quality.mass_check.ratio` ≈ 1 |
+| 探针选点 | paramesh 选点，锚定端面与固定半径，并强制 0.25L / 0.5L / 0.75L 三个轴线站位；三档物理坐标一致，仅 `node_id` 随编号不同 |
 | `MESH_NRB` 与自由端冲突 | v1 不生成 `*BOUNDARY_NON_REFLECTING`；`MESH_NRB` 为预留名，deck 只用 `MESH_END_END` |
 | `element_type` | 保持 `shell` + `dimension=axisymmetric-2d`，用 `parts[].section.elform=14` 澄清轴对称 |
 

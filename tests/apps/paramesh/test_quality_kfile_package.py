@@ -57,6 +57,22 @@ def test_quality_report_covers_all_metrics(mesh_builder: MeshBuilder) -> None:
     assert report.wall_layers_actual == mesh.plan.wall_layers
     assert [item.name for item in report.regions] == ["propellant", "gap", "wall"]
     assert all(abs(item.rel_error) < 1e-9 for item in report.regions)
+    assert report.mass_check.ratio == pytest.approx(1.0, rel=1e-6)
+    assert report.mass_check.region_thickness_ratio > 1.0
+
+
+def test_quality_mass_check_uses_solver_thickness(mesh_builder: MeshBuilder) -> None:
+    report = quality_report(mesh_builder())
+    mass = report.mass_check
+    assert mass.section_thickness_mm == pytest.approx(1.0)
+    assert mass.mesh_volume_mm3 == pytest.approx(mass.analytic_volume_mm3, rel=1e-6)
+    payload = report.to_dict()
+    item = payload["mass_check"]
+    assert isinstance(item, dict)
+    assert item["basis"] == "unit_density"
+    ratio = item.get("ratio")
+    assert isinstance(ratio, float)
+    assert ratio == pytest.approx(1.0, rel=1e-6)
 
 
 def test_quality_to_dict_round_trips(mesh_builder: MeshBuilder) -> None:
@@ -76,6 +92,7 @@ def test_format_quality_text(mesh_builder: MeshBuilder) -> None:
     assert "坐标约定：x=轴向" in text
     assert "长宽比分布：" in text
     assert "壁厚层数：实际" in text
+    assert "质量自检（单位密度）" in text
     assert "区域面积对照：" in text
 
 
@@ -189,6 +206,14 @@ def test_manifest_fields(mesh_builder: MeshBuilder) -> None:
         "y": "radial",
         "z": "out_of_plane",
     }
+    quality = manifest["quality"]
+    assert isinstance(quality, dict)
+    mass = quality["mass_check"]
+    assert isinstance(mass, dict)
+    assert mass["basis"] == "unit_density"
+    ratio = mass["ratio"]
+    assert isinstance(ratio, float)
+    assert ratio == pytest.approx(1.0, rel=1e-6)
     assert "tbd" in manifest
     assert "warnings" in manifest
 
@@ -204,9 +229,11 @@ def test_manifest_parts_roles_and_sections(mesh_builder: MeshBuilder) -> None:
         section = parts[name]["section"]
         assert section["secid"] == region
         assert section["elform"] == 14
-    assert parts["propellant"]["section"]["thickness_mm"] == pytest.approx(mesh.plan.propellant_radius_mm)
-    assert parts["gap"]["section"]["thickness_mm"] == pytest.approx(mesh.plan.gap_mm)
-    assert parts["wall"]["section"]["thickness_mm"] == pytest.approx(mesh.plan.section_wall_mm)
+        assert section["thickness_mm"] == pytest.approx(1.0)
+        assert section["thickness_semantics"] == "unit_out_of_plane"
+    assert parts["propellant"]["section"]["region_thickness_mm"] == pytest.approx(mesh.plan.propellant_radius_mm)
+    assert parts["gap"]["section"]["region_thickness_mm"] == pytest.approx(mesh.plan.gap_mm)
+    assert parts["wall"]["section"]["region_thickness_mm"] == pytest.approx(mesh.plan.section_wall_mm)
 
 
 def test_manifest_sets_have_numeric_sids(mesh_builder: MeshBuilder) -> None:
@@ -233,6 +260,9 @@ def test_manifest_extent_detonation_and_probes(mesh_builder: MeshBuilder) -> Non
     probes = {item["name"]: item for item in manifest["probes"]}
     assert set(probes) == {
         "axis_start",
+        "axis_station_025",
+        "axis_station_050",
+        "axis_station_075",
         "axis_end",
         "wall_inner_start",
         "wall_inner_end",
@@ -245,6 +275,9 @@ def test_manifest_extent_detonation_and_probes(mesh_builder: MeshBuilder) -> Non
         node = nodes[probe["node_id"]]
         assert probe["r_mm"] == pytest.approx(node.r)
         assert probe["z_mm"] == pytest.approx(node.z)
+    for name, fraction in (("axis_station_025", 0.25), ("axis_station_050", 0.5), ("axis_station_075", 0.75)):
+        assert probes[name]["r_mm"] == 0.0
+        assert probes[name]["z_mm"] == pytest.approx(fraction * 20.0)
 
 
 def test_probes_keep_same_physical_positions_across_levels(mesh_builder: MeshBuilder) -> None:

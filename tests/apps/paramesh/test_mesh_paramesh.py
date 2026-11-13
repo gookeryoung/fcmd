@@ -8,6 +8,7 @@ import pytest
 
 from fcmd.apps.paramesh._errors import ParameshError
 from fcmd.apps.paramesh._mesh import (
+    AXIS_STATION_FRACTIONS,
     SET_AXIS,
     SET_END_END,
     SET_END_START,
@@ -208,3 +209,11 @@ def test_length_zero_rejected(mesh_builder: MeshBuilder) -> None:
 def test_unknown_level_rejected(mesh_builder: MeshBuilder) -> None:
     with pytest.raises(ParameshError, match="未知网格档位"):
         mesh_builder("ultra")
+
+
+def test_axis_station_nodes_are_forced_in_all_levels(mesh_builder: MeshBuilder) -> None:
+    for level in ("coarse", "medium", "fine"):
+        mesh = mesh_builder(level)
+        axis_z = {round(node.z, 9) for node in mesh.nodes if abs(node.r) < 1e-12}
+        for fraction in AXIS_STATION_FRACTIONS:
+            assert round(fraction * mesh.model.length, 9) in axis_z

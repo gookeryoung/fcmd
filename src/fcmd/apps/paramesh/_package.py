@@ -27,7 +27,15 @@ from fcmd.apps.paramesh._kfile import (
     part_set_id,
     render_keyword,
 )
-from fcmd.apps.paramesh._mesh import ELEMENT_TYPE, MESH_DIMENSION, Mesh, Node
+from fcmd.apps.paramesh._mesh import (
+    AXIS_STATION_FRACTIONS,
+    ELEMENT_TYPE,
+    MESH_DIMENSION,
+    SECTION_SOLVER_THICKNESS_MM,
+    Mesh,
+    Node,
+    region_thickness_mm,
+)
 from fcmd.apps.paramesh._model import canonical_payload_json
 from fcmd.apps.paramesh._quality import QualityReport, format_quality
 
@@ -62,6 +70,10 @@ CONTRACT_DRAFT = """\
 二、坐标、单元与截面
   - 二维轴对称 r–z：节点写 x=轴向(z)，y=径向(r)，z=0；r >= 0，已按 x 轴为对称轴生成。
   - 单元为 *ELEMENT_SHELL；截面统一 ELFORM=14（轴对称壳），element_type 保持 shell。
+  - v1 采用轴对称连续体解释：*SECTION_SHELL 的 thickness_mm 固定 1.0（周向单位厚度），
+    区域真实径向厚度由网格径向分层表达；区域总厚度另见 section.region_thickness_mm，
+    仅用于核对，不得作为每个单元的壳厚写入。不采用「本行步长」作为该字段：同一部件的
+    径向行厚（尤其药层渐变）无法用单一 section 逐行表达。
   - section_angle_deg 是代表截面方位角（0–359°），不是整周旋转角；旋转由 ELFORM=14 隐式完成。
   - v1 不生成 *BOUNDARY_NON_REFLECTING；MESH_NRB 为预留名，当前与 MESH_END_END 同集合，
     deck 只用 MESH_END_END 作自由端约束，不得对 MESH_NRB 施加无反射吸收。
@@ -80,22 +92,29 @@ CONTRACT_DRAFT = """\
   scale            特征尺度、驱动项、全局尺寸、代表截面与壁厚
   regions[]        {name, part_id, elements, nodes, area_mm2, analytic_area_mm2, area_rel_error}
                    area_mm2 是 r–z 截面面积，不是旋转体体积
-  parts[]          {part_id, name, role, element_type, section{secid, elform, thickness_mm}}
+  parts[]          {part_id, name, role, element_type, section{...}}
                    role ∈ explosive / air / wall / inert
                    section.secid = part_id（v1 固定，deck 可重映射但须保留对应关系）
                    section.elform = 14
-                   section.thickness_mm 取代表截面处的径向厚度：
+                   section.thickness_mm = 1.0，轴对称连续体的周向单位厚度
+                   section.thickness_semantics = unit_out_of_plane
+                   section.region_thickness_mm = 代表截面径向总厚度：
                      炸药 = scale.propellant_radius_mm；间隙 = scale.gap_mm；
-                     管壁 = scale.section_wall_mm（即代表截面壁厚）
+                     管壁 = scale.section_wall_mm
                    nip 为可选项，v1 不给出，由 deck 按 ELFORM=14 与材料选择
   sets             {nodes: {集合名: {id, count}}, parts: {集合名: {id, part_ids}}}
                    SID 由本契约固定生成，见五.1
   extent           {z_start_mm, z_end_mm, r_max_mm}，来自实际网格节点
   detonation       {x, y, z, t0}，起爆端轴线（x=z_start_mm，y=0，z=0，t0=0）
-  probes[]         {name, node_id, r_mm, z_mm}，见四
+  probes[]         {name, node_id, r_mm, z_mm}，见四；含 0.25L / 0.5L / 0.75L 轴线站位
   counts           {nodes, elements, shells}
   size_range_mm    {min, max}
   quality          长宽比、尺寸、负体积/退化、壁厚层数摘要
+  quality.mass_check
+                   {basis: unit_density, section_thickness_mm, analytic_volume_mm3,
+                    mesh_volume_mm3, ratio, region_thickness_volume_mm3,
+                    region_thickness_ratio}
+                   ratio 应 ≈ 1；region_thickness_ratio 仅诊断按区域总厚度折算的放大倍数
   refinements[]    局部加密区是否生效及倍数
   tbd[]            生成时仍未标定、按最坏情形处理的字段路径
   warnings[]       尺度、层数、几何相关警告
@@ -109,8 +128,10 @@ CONTRACT_DRAFT = """\
      *SECTION_SHELL 的 secid=section.secid，ELFORM=section.elform，厚度=section.thickness_mm。
   3. *SET_*_LIST 首张数据卡为 SID, DA1, DA2, DA3, DA4；成员从下一行起每行 8 个。
   4. probes 由 paramesh 选点，全部锚定在几何端面（z_start / z_end）与固定半径
-     （r=0、r=inner、r=outer；有间隙时另加 r=propellant_outer）。这些位置在三档中
-     物理坐标相同（node_id 因节点编号不同而不同），可直接比较到达时程与压力历史。
+     （r=0、r=inner、r=outer；有间隙时另加 r=propellant_outer）。轴线另有
+     axis_station_025 / 050 / 075 三个稳态段站位（0.25L / 0.5L / 0.75L），
+     生成时强制成为网格站点；三档物理坐标完全相同（node_id 因编号不同而不同），
+     可直接比较稳态段爆速、到达时程与压力历史。
   5. 不含 *BOUNDARY_NON_REFLECTING；自由端 / 无反射的取舍由 deck 模板决定。
 
 五、可复算细则
@@ -215,20 +236,12 @@ def _quality_summary(report: QualityReport) -> dict[str, Any]:
             "target_min": report.wall_layers_target_min,
             "target_max": report.wall_layers_target_max,
         },
+        "mass_check": report.mass_check.to_dict(),
     }
 
 
 _EPS = 1e-12
 _PART_ROLES = {"propellant": "explosive", "gap": "air", "wall": "wall"}
-
-
-def _section_thickness(mesh: Mesh, region_name: str) -> float:
-    """部件截面厚度：代表截面处的径向厚度。"""
-    if region_name == "propellant":
-        return mesh.plan.propellant_radius_mm
-    if region_name == "gap":
-        return mesh.plan.gap_mm
-    return mesh.plan.section_wall_mm
 
 
 def _parts(mesh: Mesh) -> list[dict[str, Any]]:
@@ -241,7 +254,9 @@ def _parts(mesh: Mesh) -> list[dict[str, Any]]:
             "section": {
                 "secid": region.part_id,
                 "elform": 14,
-                "thickness_mm": round(_section_thickness(mesh, region.name), 12),
+                "thickness_mm": SECTION_SOLVER_THICKNESS_MM,
+                "thickness_semantics": "unit_out_of_plane",
+                "region_thickness_mm": round(region_thickness_mm(mesh.plan, region.name), 12),
             },
         }
         for region in mesh.regions
@@ -273,6 +288,7 @@ def _probes(mesh: Mesh) -> list[dict[str, Any]]:
     plan = mesh.plan
     targets: list[tuple[str, float, float]] = [
         ("axis_start", 0.0, 0.0),
+        *[(f"axis_station_{round(fraction * 100):03d}", 0.0, fraction * length) for fraction in AXIS_STATION_FRACTIONS],
         ("axis_end", 0.0, length),
         ("wall_inner_start", plan.inner_radius_mm, 0.0),
         ("wall_inner_end", plan.inner_radius_mm, length),

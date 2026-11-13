@@ -17,8 +17,10 @@ from fcmd.apps.paramesh._model import MeshModel
 from fcmd.apps.paramesh._scale import ScalePlan, plan_scale
 
 __all__ = [
+    "AXIS_STATION_FRACTIONS",
     "ELEMENT_TYPE",
     "MESH_DIMENSION",
+    "SECTION_SOLVER_THICKNESS_MM",
     "SET_AXIS",
     "SET_END_END",
     "SET_END_START",
@@ -71,6 +73,15 @@ _REGION_WALL = "wall"
 _PART_IDS = {_REGION_PROP: 1, _REGION_GAP: 2, _REGION_WALL: 3}
 
 _EPS = 1e-12
+
+SECTION_SOLVER_THICKNESS_MM = 1.0
+"""``*SECTION_SHELL`` 写入的求解器厚度。
+
+v1 采用轴对称连续体解释：周向单位厚度，区域真实径向厚度由网格分层表达。
+"""
+
+AXIS_STATION_FRACTIONS: tuple[float, ...] = (0.25, 0.5, 0.75)
+"""轴线探针的轴向站位（占管长比例），生成时强制成为网格站点。"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +173,15 @@ def section_choice(mesh: Mesh) -> tuple[float, float]:
     return mesh.plan.section_angle_deg, mesh.plan.section_wall_mm
 
 
+def region_thickness_mm(plan: ScalePlan, region_name: str) -> float:
+    """区域在代表截面处的径向总厚度（不是求解器壳厚）。"""
+    if region_name == _REGION_PROP:
+        return plan.propellant_radius_mm
+    if region_name == _REGION_GAP:
+        return plan.gap_mm
+    return plan.section_wall_mm
+
+
 def _round_coord(value: float) -> float:
     return round(value, 9) + 0.0
 
@@ -197,6 +217,17 @@ def _uniform_positions(start: float, end: float, count: int) -> list[float]:
     return [start + (end - start) * index / count for index in range(count + 1)]
 
 
+def _include_stations(positions: list[float], stations: tuple[float, ...], length: float) -> list[float]:
+    """把探针站位强制并入轴向站点，三档都落在完全相同的物理坐标。"""
+    forced = sorted({round(min(max(value, 0.0), length), 9) for value in stations if _EPS < value < length})
+    if not forced:
+        return positions
+    tolerance = 1e-9 * max(1.0, length)
+    kept = [value for value in positions if all(abs(value - station) > tolerance for station in forced)]
+    kept.extend(forced)
+    return sorted(set(kept))
+
+
 def _axial_positions(  # noqa: PLR0913, PLR0917 - 分段加密参数显式罗列
     length: float,
     h: float,
@@ -204,6 +235,7 @@ def _axial_positions(  # noqa: PLR0913, PLR0917 - 分段加密参数显式罗列
     start_band: float,
     end_band: float,
     growth: float,
+    stations: tuple[float, ...] = (),
 ) -> list[float]:
     """轴向站点：起爆端与端部疏松带内保持细尺寸，离开后按几何增长回落。"""
     start_band = min(max(start_band, 0.0), length / 2.0)
@@ -228,7 +260,7 @@ def _axial_positions(  # noqa: PLR0913, PLR0917 - 分段加密参数显式罗列
         positions.append(z)
     if len(positions) < 2:  # pragma: no cover - length > 0 已保证
         positions.append(length)
-    return positions
+    return _include_stations(positions, stations, length)
 
 
 def _unique(items: list[str]) -> tuple[str, ...]:
@@ -258,6 +290,7 @@ def build_mesh(model: MeshModel, config: MeshConfig, level: str) -> Mesh:  # noq
         config.initiation_zone_mm or 0.0,
         plan.end_loose_band_mm,
         config.growth,
+        tuple(fraction * model.length for fraction in AXIS_STATION_FRACTIONS),
     )
     propellant_radial = _graded_positions(plan.propellant_radius_mm, 0.0, h * factor, h, config.growth)
     radial_by_region: list[tuple[str, list[float]]] = [(_REGION_PROP, propellant_radial)]
