@@ -91,6 +91,8 @@ TOOLS: dict[str, ToolEntry] = {
     "padtool": ToolEntry("padtool", "python", "fcmd.tools.text.padtool"),
     "paramcad": ToolEntry("paramcad", "python", "fcmd.apps.paramcad.paramcad"),
     "paramcadw": ToolEntry("paramcadw", "python", "fcmd.apps.paramcad.paramcadw"),
+    "paramesh": ToolEntry("paramesh", "python", "fcmd.apps.paramesh.paramesh"),
+    "parameshw": ToolEntry("parameshw", "python", "fcmd.apps.paramesh.parameshw"),
     "pathtool": ToolEntry("pathtool", "python", "fcmd.tools.system.pathtool"),
     "pdfcrypt": ToolEntry("pdfcrypt", "python", "fcmd.tools.pdf.pdfcrypt"),
     "pdfcryptw": ToolEntry("pdfcryptw", "python", "fcmd.tools.pdf.pdfcryptw"),
@@ -222,6 +224,8 @@ DESCRIPTIONS: dict[str, str] = {
     "padtool": "左对齐文本",
     "paramcad": "写入示例模型（虚构占位，用于跑通链路）",
     "paramcadw": "参数化建模预览（Tk）：二维截面、轴向剖面与密度 / 壁厚分布曲线；数据可导出为 dynacalc-model/1 模型描述",
+    "paramesh": "写入占位模型与配套网格配置（虚构，仅用于跑通链路）",
+    "parameshw": "二维轴对称网格预览（Tk）：按区域着色线框、局部放大、质量摘要与三档网格包导出",
     "pathtool": "显示路径各部分信息",
     "pdfcrypt": "批量加密目录中的 PDF 文件",
     "pdfcryptw": "PDF 批量加密解密窗口版（Tk）：选择目录、输入密码，一键加密或解密，支持递归子目录与并发线程；设置持久化到 ~/.fcmd/ui/pdfcryptw.json（不含密码）",
@@ -278,6 +282,8 @@ LAYOUT: tuple[str, ...] = (
     "apps/filesync/filesyncw.py",
     "apps/paramcad/paramcad.py",
     "apps/paramcad/paramcadw.py",
+    "apps/paramesh/paramesh.py",
+    "apps/paramesh/parameshw.py",
     "apps/peview/peview.py",
     "apps/peview/pevieww.py",
     "apps/pptmake/pptmake.py",
@@ -395,7 +401,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "db8e1fd15b44c6616340dcc305b72251"
+DIGEST = "f1f4377e36e0fce65207a91df7e50ff8"
 
 
 if __name__ == "__main__":  # pragma: no cover
