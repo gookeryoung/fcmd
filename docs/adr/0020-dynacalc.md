@@ -2,6 +2,7 @@
 
 - 状态：已实现（CLI + GUI + 测试落地）
 - 日期：2026-11-13
+- 网格交接：[paramesh-mesh/1 评审](../dynacalc-paramesh-mesh-review.md)（deck 侧接入排在 GUI / 测试之后）
 
 ## 背景
 
