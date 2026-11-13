@@ -96,14 +96,14 @@ def test_settings_mapping_is_json_friendly() -> None:
 
 def test_resolve_geometry_clamps_to_screen_and_minimum() -> None:
     assert wslmanw.resolve_geometry(None, 1920, 1080) == wslmanw.DEFAULT_GEOMETRY
-    assert wslmanw.resolve_geometry("600x400+0+0", 1920, 1080) == "880x560+0+0"
+    assert wslmanw.resolve_geometry("600x400+0+0", 1920, 1080) == "900x600+0+0"
     assert wslmanw.resolve_geometry("1400x900+5000+5000", 1920, 1080) == "1400x900+520+180"
 
 
-def test_default_window_is_compact() -> None:
-    """布局收紧后默认尺寸与最小尺寸同步下调，但仍能容纳两栏 + 下载页。"""
-    assert wslmanw.DEFAULT_GEOMETRY == "1040x640"
-    assert (wslmanw.MIN_WIDTH, wslmanw.MIN_HEIGHT) == (880, 560)
+def test_default_window_matches_new_layout() -> None:
+    """列表占满宽度、详情移入笔记本后的默认与最小尺寸。"""
+    assert wslmanw.DEFAULT_GEOMETRY == "980x660"
+    assert (wslmanw.MIN_WIDTH, wslmanw.MIN_HEIGHT) == (900, 600)
 
 
 def test_text_units_counts_wide_chars_as_two() -> None:
@@ -129,8 +129,8 @@ def test_elide_name_truncates_long_names_only() -> None:
 
 
 def test_column_widths_respect_minimum_and_content() -> None:
-    minimums = {"name": 140, "state": 68, "version": 52, "disk": 88, "default": 46}
-    maximums = {"name": 260, "state": 104, "version": 68, "disk": 148, "default": 60}
+    minimums = {"name": 160, "state": 72, "version": 56, "disk": 96, "default": 50}
+    maximums = {"name": 360, "state": 120, "version": 84, "disk": 180, "default": 80}
     assert wslmanw.column_widths([]) == minimums
 
     rows = [("Ubuntu-24.04-Desktop-LTS", "运行中", "2", "≈ 12.3 GiB（估算）", "是")]
@@ -140,6 +140,32 @@ def test_column_widths_respect_minimum_and_content() -> None:
 
     huge = [("x" * 100, "y" * 100, "z" * 100, "w" * 100, "v" * 100)]
     assert wslmanw.column_widths(huge) == maximums
+
+
+def test_column_widths_distribute_slack_by_ratio_not_last_column() -> None:
+    """整幅宽度富余时按比例分摊，且不越过每列上限。"""
+    rows = [("Ubuntu", "运行中", "2", "12.3 GiB", "是")]
+    base = wslmanw.column_widths(rows)
+    wide = wslmanw.column_widths(rows, available=1400)
+    assert all(wide[key] >= base[key] for key in base)
+    assert wide == {"name": 360, "state": 120, "version": 84, "disk": 180, "default": 80}
+    # 富余全部被上限挡住时留在右侧，不会堆给最后一列。
+    assert sum(wide.values()) < 1400
+
+    partial = wslmanw.column_widths(rows, available=600)
+    assert sum(partial.values()) <= 600
+    assert all(partial[key] >= base[key] for key in base)
+
+    narrow = wslmanw.column_widths(rows, available=200)
+    assert narrow == base
+
+
+def test_detail_fields_labels_match_layout() -> None:
+    """详情页静态字段顺序与实际数据字段必须一致，避免布局漂移。"""
+    fields = wslmanw.detail_fields(_distro(), 2048, False)
+    assert tuple(label for label, _value in fields) == wslmanw._DETAIL_LABELS
+    assert dict(fields)["虚拟磁盘"] == r"C:\WSL\Ubuntu\ext4.vhdx"
+    assert wslmanw.detail_lines(_distro(), 2048, False) == [f"{label}: {value}" for label, value in fields]
 
 
 def test_distro_row_truncates_long_name_but_summary_keeps_it() -> None:

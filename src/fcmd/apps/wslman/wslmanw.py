@@ -36,6 +36,7 @@ __all__ = [
     "WslmanwSettings",
     "column_widths",
     "config_path",
+    "detail_fields",
     "detail_lines",
     "distro_row",
     "elide_name",
@@ -52,9 +53,9 @@ __all__ = [
 ]
 
 SETTINGS_NAME = "wslmanw"
-DEFAULT_GEOMETRY = "1040x640"
-MIN_WIDTH = 880
-MIN_HEIGHT = 560
+DEFAULT_GEOMETRY = "980x660"
+MIN_WIDTH = 900
+MIN_HEIGHT = 600
 
 _DESCRIPTION = "WSL 发行版管理的图形界面：列表/详情、打开终端、导出导入、下载、注销与关闭全部"
 
@@ -63,11 +64,11 @@ _DOWNLOAD_SOURCES = ("auto", "cli", "manifest", "file")
 _DOWNLOAD_HINT = "wsl --install 会触发系统级安装、可能弹 UAC，且不能指定自定义镜像"
 
 _COLUMNS: tuple[tuple[str, str, int, int], ...] = (
-    ("name", "名称", 140, 260),
-    ("state", "状态", 68, 104),
-    ("version", "版本", 52, 68),
-    ("disk", "占用", 88, 148),
-    ("default", "默认", 46, 60),
+    ("name", "名称", 160, 360),
+    ("state", "状态", 72, 120),
+    ("version", "版本", 56, 84),
+    ("disk", "占用", 96, 180),
+    ("default", "默认", 50, 80),
 )
 """列定义：``(列 id, 表头, 最小宽度, 最大宽度)``，宽度按内容自适应后夹在两者之间。"""
 
@@ -76,6 +77,22 @@ _CHAR_PX = 7
 
 _CELL_PAD_PX = 16
 """单元格左右留白与排序指示器的估算宽度。"""
+
+_DETAIL_LABELS: tuple[str, ...] = (
+    "名称",
+    "状态",
+    "版本",
+    "默认",
+    "BasePath",
+    "虚拟磁盘",
+    "占用",
+    "默认用户",
+    "来源",
+)
+"""详情页字段顺序：前 5 项为身份信息，后 4 项为存储信息。"""
+
+_DETAIL_ROWS = 5
+"""详情页左右两列各占的行数，长路径换行后仍不会压叠。"""
 
 
 def text_units(text: str) -> int:
@@ -98,13 +115,42 @@ def elide_name(name: str, limit: int = 24) -> str:
     return "".join(kept) + "…"
 
 
-def column_widths(rows: Sequence[Sequence[str]]) -> dict[str, int]:
-    """按表头与各行的显示宽度估算列宽，夹在每列的最小 / 最大宽度之间。"""
+def column_widths(rows: Sequence[Sequence[str]], available: int | None = None) -> dict[str, int]:
+    """按表头与各行显示宽度估算列宽，夹在每列的最小 / 最大宽度之间。
+
+    ``available`` 为列表可用总宽时，把富余宽度按各列基础宽度的比例分摊，
+    而不是全部塞给最后一列；分摊后仍以每列最大宽度为上限，剩余留白留在右侧。
+    """
     widths: dict[str, int] = {}
     for index, (key, title, minimum, maximum) in enumerate(_COLUMNS):
         widest = max([text_units(title), *(text_units(str(row[index])) for row in rows if index < len(row))])
         widths[key] = min(maximum, max(minimum, widest * _CHAR_PX + _CELL_PAD_PX))
+    if available is None:
+        return widths
+    extra = available - sum(widths.values())
+    total = sum(widths.values())
+    if extra <= 0 or total <= 0:
+        return widths
+    for key, _title, _minimum, maximum in _COLUMNS:
+        share = int(extra * widths[key] / total)
+        widths[key] = min(maximum, widths[key] + share)
     return widths
+
+
+def detail_fields(distro: Distro, size: int | None, estimated: bool) -> tuple[tuple[str, str], ...]:
+    """详情页的「字段 → 值」；字段口径与 ``detail_lines`` 完全一致。"""
+    vhdx = str(Path(distro.base_path) / "ext4.vhdx") if distro.base_path else "未知"
+    return (
+        ("名称", distro.name),
+        ("状态", state_label(distro)),
+        ("版本", str(distro.version) if distro.version else "未知"),
+        ("默认", "是" if distro.default else "否"),
+        ("BasePath", distro.base_path or "未知"),
+        ("虚拟磁盘", vhdx),
+        ("占用", format_bytes(size, estimated=estimated)),
+        ("默认用户", str(distro.default_uid) if distro.default_uid is not None else "未知"),
+        ("来源", "Lxss 注册表" if distro.registered else "wsl --list"),
+    )
 
 
 def summary_text(distro: Distro, size: int | None, estimated: bool) -> str:
@@ -198,19 +244,8 @@ def distro_row(distro: Distro, size: int | None, estimated: bool) -> tuple[str, 
 
 
 def detail_lines(distro: Distro, size: int | None, estimated: bool) -> list[str]:
-    """详情面板文本行；未知字段统一显示 ``未知``。"""
-    vhdx = str(Path(distro.base_path) / "ext4.vhdx") if distro.base_path else "未知"
-    return [
-        f"名称: {distro.name}",
-        f"状态: {state_label(distro)}",
-        f"版本: {distro.version or '未知'}",
-        f"默认: {'是' if distro.default else '否'}",
-        f"BasePath: {distro.base_path or '未知'}",
-        f"虚拟磁盘: {vhdx}",
-        f"占用: {format_bytes(size, estimated=estimated)}",
-        f"默认用户: {distro.default_uid if distro.default_uid is not None else '未知'}",
-        f"来源: {'Lxss 注册表' if distro.registered else 'wsl --list'}",
-    ]
+    """详情面板文本行；与 :func:`detail_fields` 同源，未知字段统一显示 ``未知``。"""
+    return [f"{label}: {value}" for label, value in detail_fields(distro, size, estimated)]
 
 
 def _error_text(exc: BaseException) -> str:
@@ -242,6 +277,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._busy = False
         self._cancel = threading.Event()
         self._label = ""
+        self._rows: list[tuple[str, ...]] = []
 
         self.root, self.theme = _guiwindow.create_root(
             title="WSL 管理",
@@ -265,7 +301,6 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=3)
         self.root.rowconfigure(2, weight=2)
-
         self._build_toolbar()
         self._build_content()
         self._build_notebook()
@@ -303,17 +338,11 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                 self._buttons.append(button)
 
     def _build_content(self) -> None:
-        """发行版列表是主视觉：列表比详情宽，详情只占右侧窄栏。"""
-        tk, ttk = self.tk, self.ttk
+        """发行版列表独占整幅宽度；详情移到笔记本页，不再挤占右栏。"""
+        ttk = self.ttk
         space = self.space
-        content = ttk.Frame(self.root)
-        content.grid(row=1, column=0, sticky="nsew", padx=space.xs, pady=(0, space.xxs))
-        content.columnconfigure(0, weight=3)
-        content.columnconfigure(1, weight=2)
-        content.rowconfigure(0, weight=1)
-
-        tree_wrap = ttk.Frame(content)
-        tree_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, space.xs))
+        tree_wrap = ttk.Frame(self.root)
+        tree_wrap.grid(row=1, column=0, sticky="nsew", padx=space.xs, pady=(0, space.xxs))
         tree_wrap.columnconfigure(0, weight=1)
         tree_wrap.rowconfigure(0, weight=1)
 
@@ -321,7 +350,8 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self.tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", selectmode="browse")
         for column, title, minimum, _maximum in _COLUMNS:
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=minimum, minwidth=minimum, anchor="w", stretch=column in {"name", "disk"})
+            # 宽度由 column_widths 统一计算，stretch 关闭后不会把多余宽度堆给最后一列。
+            self.tree.column(column, width=minimum, minwidth=minimum, anchor="w", stretch=False)
         self.tree.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
@@ -330,32 +360,55 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self.tree.bind("<Motion>", self._on_hover)
         self.tree.bind("<Leave>", lambda _event: self.hover.set(""))
         self.tree.bind("<Double-1>", lambda _event: self._open_selected())
-
-        detail_frame = ttk.LabelFrame(content, text="详情", padding=space.xs)
-        detail_frame.grid(row=0, column=1, sticky="nsew")
-        detail_frame.columnconfigure(0, weight=1)
-        detail_frame.rowconfigure(0, weight=1)
-        self.detail = tk.Text(
-            detail_frame,
-            height=8,
-            wrap="word",
-            state="disabled",
-            relief="flat",
-            borderwidth=0,
-            highlightthickness=0,
-            font=_guitheme.BODY_FONT,
-        )
-        self.detail.grid(row=0, column=0, sticky="nsew")
+        self.tree.bind("<Configure>", self._on_tree_resize)
 
     def _build_notebook(self) -> None:
         ttk = self.ttk
         space = self.space
         notebook = ttk.Notebook(self.root)
         notebook.grid(row=2, column=0, sticky="nsew", padx=space.xs, pady=(0, space.xxs))
+        self.notebook = notebook
+        self._build_detail_tab(notebook)
         self._build_download_tab(notebook)
         log_frame = ttk.Frame(notebook, padding=space.xs)
         notebook.add(log_frame, text="日志")
         self.log = _guiwindow.create_log(log_frame, height=8)
+        notebook.select(0)
+
+    def _build_detail_tab(self, notebook: Any) -> None:
+        """详情页：两列「字段 / 值」，窄高度下靠两列排布避免裁切与压叠。"""
+        tk, ttk = self.tk, self.ttk
+        space = self.space
+        frame = ttk.Frame(notebook, padding=(space.sm, space.xs))
+        notebook.add(frame, text="详情")
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
+
+        self.detail_value_labels: list[Any] = []
+        self.detail_vars: dict[str, Any] = {}
+        for index, label in enumerate(_DETAIL_LABELS):
+            group, row = divmod(index, _DETAIL_ROWS)
+            column = group * 2
+            ttk.Label(frame, text=label, style="Muted.TLabel", anchor="nw").grid(
+                row=row, column=column, sticky="nw", padx=(0, space.xs), pady=space.xxs
+            )
+            variable = tk.StringVar(value="—")
+            value = ttk.Label(frame, textvariable=variable, anchor="w", justify="left")
+            value.grid(row=row, column=column + 1, sticky="ew", padx=(0, space.lg), pady=space.xxs)
+            self.detail_vars[label] = variable
+            self.detail_value_labels.append(value)
+
+        self.detail_hint = tk.StringVar(value="选择上方列表中的发行版查看详情")
+        ttk.Label(frame, textvariable=self.detail_hint, style="Hint.TLabel").grid(
+            row=_DETAIL_ROWS, column=0, columnspan=4, sticky="w", pady=(space.xs, 0)
+        )
+        frame.bind("<Configure>", self._on_detail_resize)
+
+    def _on_detail_resize(self, event: Any) -> None:
+        """按当前半栏宽度设置换行点，长路径不会横向溢出。"""
+        half = max(160, (event.width - int(self.space.lg) * 2) // 2)
+        for label in self.detail_value_labels:
+            label.configure(wraplength=max(120, half - 80))
 
     def _build_status(self) -> None:
         ttk = self.ttk
@@ -527,18 +580,19 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         return self.view.find(selection[0])
 
     def _show_details(self) -> None:
+        """只刷新详情页与状态栏摘要，不切换当前页签。"""
         distro = self._selected()
         if distro is None:
-            lines = ["请选择一个发行版"]
+            for variable in self.detail_vars.values():
+                variable.set("—")
+            self.detail_hint.set("选择上方列表中的发行版查看详情")
             self.hover.set("")
-        else:
-            size, estimated = self.sizes.get(distro.name, (None, False))
-            lines = detail_lines(distro, size, estimated)
-            self.hover.set(summary_text(distro, size, estimated))
-        self.detail.configure(state="normal")
-        self.detail.delete("1.0", "end")
-        self.detail.insert("1.0", "\n".join(lines))
-        self.detail.configure(state="disabled")
+            return
+        size, estimated = self.sizes.get(distro.name, (None, False))
+        for label, value in detail_fields(distro, size, estimated):
+            self.detail_vars[label].set(value)
+        self.detail_hint.set("")
+        self.hover.set(summary_text(distro, size, estimated))
 
     def _on_hover(self, event: Any) -> None:
         """悬浮显示完整发行版名（列表里过长会截断）。"""
@@ -552,20 +606,31 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
     def _refresh_rows(self) -> None:
         view = self.view
         if view is None:
+            self._rows = []
+            self._apply_column_widths(self.tree.winfo_width())
             return
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
-        rows: list[tuple[str, ...]] = []
+        row_values: list[tuple[str, ...]] = []
         for distro in view.distros:
             row = distro_row(distro, *self.sizes.get(distro.name, (None, False)))
-            rows.append(row)
+            row_values.append(row)
             self.tree.insert("", "end", iid=distro.name, values=row)
-        widths = column_widths(rows)
-        for column, _title, minimum, _maximum in _COLUMNS:
-            self.tree.column(column, width=widths[column], minwidth=minimum)
+        self._rows = row_values
+        self._apply_column_widths(self.tree.winfo_width())
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
         self._show_details()
+
+    def _on_tree_resize(self, event: Any) -> None:
+        self._apply_column_widths(event.width)
+
+    def _apply_column_widths(self, available: int) -> None:
+        """按列表可用宽度分摊列宽；``available`` 无效时只按内容夹取。"""
+        widths = column_widths(self._rows, available if available > 1 else None)
+        for column, _title, minimum, _maximum in _COLUMNS:
+            if int(self.tree.column(column, "width")) != widths[column]:
+                self.tree.column(column, width=widths[column], minwidth=minimum)
 
     def _log(self, text: str) -> None:
         _guiwindow.append_log(self.log, text, timestamp=True)
