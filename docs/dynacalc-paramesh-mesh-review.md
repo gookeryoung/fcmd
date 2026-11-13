@@ -60,9 +60,9 @@
 | 单元 | `*SECTION_SOLID`，ELFORM=11（ALE 单点实体） | `*ELEMENT_SHELL` + `*SECTION_SHELL` ELFORM=14 |
 | 多物质 | `*ALE_MULTI_MATERIAL_GROUP` | 无（纯 Lagrangian 区域） |
 | 流固耦合 | `*CONSTRAINED_LAGRANGE_IN_SOLID` | 无（界面共节点） |
-| 部件 | 3 个 `*PART`（charge / tube / air），MID 1/2/3 | 3 个 `*PART`，**MID 全为 1 占位** |
-| 起爆 | `*INITIAL_DETONATION` 写死 0,0,0 占位 | 未给出坐标 |
-| 组装 | 单文件自包含，无 `*INCLUDE` | 网格片段，需被 include |
+| 部件 | 3 个 `*PART`（charge / tube / air），MID 1/2/3 | v1.1 起 `mesh.k` 不含 `*PART`，由 deck 按 `parts[].role` 生成 |
+| 起爆 | `*INITIAL_DETONATION` 写死 0,0,0 占位 | v1.1 起 `detonation{x, y, z, t0}`，x 为轴向 |
+| 组装 | 单文件自包含，无 `*INCLUDE` | 网格片段，由 deck `*INCLUDE` 引用 |
 
 结论：**不是改模板，是加模板族**。dynacalc 侧按 `dimension` 选模板：
 
@@ -192,3 +192,57 @@ ELFORM=14 的轴对称假定（对称轴位置、`r ≥ 0`、厚度取实厚）�
 6. `element_type` 最终取值？建议 `axisymmetric-shell` + `elform: 14`，避免与普通壳混淆。
 
 以上 6 条答复后，dynacalc 侧按 §1.2 的加法清单一次性对齐，`schema` 字符串不变。
+
+## 8. v1.1 复核（paramesh `cd7e194`，2026-11-13）
+
+paramesh 已按 §1.2 / §7 落地，`schema` 仍为 `paramesh-mesh/1`。逐条对照：
+
+| 本文件要求 | v1.1 实现 | 结论 |
+|---|---|---|
+| `parts[].role` | `explosive / air / wall / inert` | 接受 |
+| `parts[].section{secid, elform, thickness_mm}` | `secid = part_id`、`elform = 14`、厚度取代表截面径向厚度 | 接受（厚度语义见 §8.2） |
+| 集合数值 ID | 节点 1–99、部件 101–199，规则写入契约 §5.1 | 接受 |
+| `extent` / `detonation` | `extent{z_start_mm, z_end_mm, r_max_mm}`、`detonation{x, y, z, t0}` | 接受 |
+| `probes` 具体节点 | `probes[]{name, node_id, r_mm, z_mm}`，三档物理坐标一致 | 接受（站点密度见 §8.2） |
+| `*PART` / `*SECTION_SHELL` 归属 | 方案 A：mesh.k 移除，deck 生成 | 接受 |
+| `*SET_*_LIST` 卡格式 | 首卡 `SID, DA1..DA4`，成员另起每行 8 个 | 已修正 |
+| `element_type` 语义 | 保持 `shell`，靠 `section.elform = 14` 澄清；新增 `coordinate_system` | 接受 |
+| `MESH_NRB` 语义 | v1 不生成 `*BOUNDARY_NON_REFLECTING`，deck 只用 `MESH_END_END` | 接受 |
+| `mesh_id` / `digest` / `geometry_key` 可复算细则 | 契约 §5 给出规范化与 payload | 接受 |
+
+### 8.1 坐标约定变更对模板族的影响
+
+v1.1 把坐标定为 **x = 轴向（模型 z）、y = 径向（模型 r）、z = 0**，与 `*SECTION_SHELL`
+ELFORM=14 以 x 轴为对称轴一致。dynacalc 侧据此确认：
+
+- `3d-ale` 模板**不改**：它没有轴对称假定，x/y/z 由三维工况自身决定；
+- `axisymmetric-2d` 模板**独立新建**，不复用 3D 模板的轴序，也不把 `detonation` 写死为
+  `0,0,0`，而是绑定 `${detonation.x}` / `${detonation.y}` / `${detonation.z}`；
+- `*DATABASE_HISTORY_NODE` 用 `probes[].node_id`，探针按 `probes[].name` 映射到结果列
+  （`axis_*` → 波面到达，`wall_*` → 管壁速度 / 应变）；
+- 校验时读 `coordinate_system`，要求 `symmetry_axis == "x"`、`x == "axial"`、`y == "radial"`，
+  不匹配即报错，不静默按 3D 轴序组卡。
+
+### 8.2 两项待确认（不阻塞契约定稿，但影响 deck 组装）
+
+1. **`section.thickness_mm` 的物理语义**：当前取「区域代表截面处的径向总厚度」
+   （炸药 = `propellant_radius_mm`、管壁 = `section_wall_mm`），但网格在壁厚方向有 6–10 层、
+   药层也有径向分层。若 ELFORM=14 的厚度按 shell 中面法向的真实厚度解释，则每一行单元应取
+   本行径向步长，用区域总厚度会按层数放大质量与刚度；若按轴对称连续体解释（厚度不参与
+   面内离散），则应给 1.0。请 paramesh 在 `quality` 里补一项「按 `section.thickness_mm`
+   折算的总质量 / 解析质量」比值，或明确该字段的求解器语义；dynacalc 在 §6.3 第 3 步
+   （网格包校验）里加对应断言。
+2. **探针轴向站位**：当前 `probes` 只锚定两个端面（`axis_start` / `axis_end`）与固定半径，
+   端点差只能给平均爆速。门控要求的「稳态段爆速」需要在稳态区内至少 3 个轴向站位的波面
+   到达时程（最小二乘拟合 + R²）。建议 `probes` 增加 `axis_station_*`（如 `z = 0.25L /
+   0.5L / 0.75L`，且落在稳态窗口内），或由配置给出站位比例。
+
+### 8.3 排期不变
+
+§6.3 的顺序与内容不变：模板族拆分 → 网格包校验（含 §8.2 的厚度断言）→ deck 组装 →
+同 `geometry_key` 三档门控 → CLI / GUI 挂接。在上述两项确认前，deck 组装只做骨架与
+断言，不锁定厚度取值策略。
+
+另：`extent` 用 `z_start_mm` / `z_end_mm`、`detonation` 用 `x`，两套命名并存（模型坐标 vs
+LS-DYNA 坐标）。v1 接受该写法，dynacalc 只按契约读，不做推断；后续若改名按加法扩展处理。
+
