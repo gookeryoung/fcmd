@@ -17,10 +17,10 @@ from typing import Any, override
 
 import pytest
 
-from fcmd.apps.wslman import _source, _transfer
+from fcmd.apps.wslman import _images, _source, _transfer
 from fcmd.apps.wslman import wslman as wslman_module
 from fcmd.apps.wslman._config import WslmanConfig
-from fcmd.apps.wslman._errors import WslmanError
+from fcmd.apps.wslman._errors import WslmanError, runtime_error
 from fcmd.core.toolkit import _TOOL_REGISTRY, list_subcommands, run_tool
 from tests.apps.wslman import _fakes
 
@@ -316,18 +316,51 @@ def test_fetch_manifest_errors() -> None:
 def test_available_table_and_json(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    runner = _fakes.FakeRunner({("--list", "--online"): _fakes.make_result(stdout=_fakes.utf16(_ONLINE))})
+    runner = _fakes.FakeRunner(
+        {
+            ("--list", "--online"): _fakes.make_result(stdout=_fakes.utf16(_ONLINE)),
+            ("--list", "--verbose"): _list(_TABLE),
+        }
+    )
     _use(monkeypatch, _env(runner, tmp_path=tmp_path))
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    manifest = (
+        _images.ImageEntry(
+            name="Ubuntu",
+            friendly_name="Ubuntu",
+            sources=("manifest",),
+            downloads=(
+                _images.ImageDownload("x86_64", "https://e/ubuntu.wsl", "a" * 64),
+                _images.ImageDownload("aarch64", "https://e/ubuntu-arm.wsl", None),
+            ),
+        ),
+        _images.ImageEntry(name="Ubuntu-20.04", friendly_name="Ubuntu 20.04 LTS", sources=("manifest",)),
+    )
+    monkeypatch.setattr(wslman_module, "_manifest_images", lambda: manifest)
 
     code, out, _err = _run(capsys, ["available"])
     assert code == 0
     assert "Ubuntu" in out and "Debian GNU/Linux" in out
+    assert "sha256" in out and "已安装" in out
 
+    _images.cache_path().unlink()  # 第二次强制走在线源，验证 JSON 字段而不是缓存命中
     code, out, _err = _run(capsys, ["available", "--json"])
     assert code == 0
     data = json.loads(out)["data"]
-    assert data["count"] == 2
-    assert data["distros"][0] == {"name": "Ubuntu", "friendly_name": "Ubuntu"}
+    assert data["count"] == 3
+    assert data["sources"] == ["cli", "manifest"]
+    assert data["from_cache"] is False
+    assert data["stale"] is False
+    assert data["ttl_seconds"] == _images.CACHE_TTL_SECONDS
+    assert data["fetched_at"]
+    ubuntu = next(item for item in data["distros"] if item["name"] == "Ubuntu")
+    assert ubuntu["friendly_name"] == "Ubuntu"
+    assert ubuntu["arches"] == ["aarch64", "x86_64"]
+    assert ubuntu["download_sources"] == ["cli", "manifest"]
+    assert ubuntu["has_sha256"] is True
+    assert ubuntu["installed"] is True
+    assert ubuntu["backed_up"] is False
+    assert [item["name"] for item in data["distros"]] == ["Ubuntu", "Debian", "Ubuntu-20.04"]
 
 
 def test_available_empty_and_failure(
@@ -335,6 +368,8 @@ def test_available_empty_and_failure(
 ) -> None:
     empty = _fakes.FakeRunner({("--list", "--online"): _fakes.make_result(stdout=_fakes.utf16("NAME\n"))})
     _use(monkeypatch, _env(empty, tmp_path=tmp_path))
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    monkeypatch.setattr(wslman_module, "_manifest_images", lambda: ())
     code, out, _err = _run(capsys, ["available"])
     assert code == 0
     assert "在线清单为空" in out
@@ -343,10 +378,52 @@ def test_available_empty_and_failure(
         {("--list", "--online"): _fakes.make_result(returncode=1, stderr=_fakes.utf16("network down"))}
     )
     _use(monkeypatch, _env(failed, tmp_path=tmp_path))
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path / "no-cache"))
+    monkeypatch.setattr(
+        wslman_module,
+        "_manifest_images",
+        lambda: (_ for _ in ()).throw(runtime_error("清单不可达")),
+    )
     code, _out, err = _run(capsys, ["available"])
     assert code == 1
     assert "network down" in err
     assert "--source file" in err
+
+
+def test_available_degrades_to_cache(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """两个在线源都失败时给出上次缓存，并明确标注缓存 / 已过期。"""
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    cache = _images.cache_path()
+    _images.save_cache(
+        (_images.ImageEntry(name="Ubuntu", friendly_name="Ubuntu", sources=("cli", "manifest")),),
+        1_600_000_000,
+    )
+    assert cache.exists()
+
+    failed = _fakes.FakeRunner(
+        {("--list", "--online"): _fakes.make_result(returncode=1, stderr=_fakes.utf16("network down"))}
+    )
+    _use(monkeypatch, _env(failed, tmp_path=tmp_path))
+    monkeypatch.setattr(
+        wslman_module,
+        "_manifest_images",
+        lambda: (_ for _ in ()).throw(runtime_error("清单不可达")),
+    )
+
+    code, out, _err = _run(capsys, ["available", "--json"])
+    assert code == 0
+    data = json.loads(out)["data"]
+    assert data["count"] == 1
+    assert data["source"] == "cache"
+    assert data["from_cache"] is True
+    assert data["stale"] is True
+    assert any("缓存" in warning for warning in data["warnings"])
+
+    code, out, _err = _run(capsys, ["available"])
+    assert code == 0
+    assert "Ubuntu" in out and "缓存" in out
 
 
 # ---------------------------------------------------------------------- #
@@ -702,6 +779,8 @@ def test_available_not_enabled(
         {("--list", "--online"): _fakes.make_result(returncode=1, stderr=_fakes.utf16("WSL is not installed"))}
     )
     _use(monkeypatch, _env(runner, tmp_path=tmp_path))
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    monkeypatch.setattr(wslman_module, "_manifest_images", lambda: ())
 
     code, _out, err = _run(capsys, ["available"])
 

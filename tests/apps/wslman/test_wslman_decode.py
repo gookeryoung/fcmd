@@ -88,6 +88,11 @@ class TestParseOnlineList:
         rows = parse_online_list(text)
         assert [row.name for row in rows] == ["Ubuntu"]
 
+    def test_single_line_preamble_is_skipped(self) -> None:
+        """中文前言不含空格，会被单列分支误收；名称只认 ASCII 标识符。"""
+        text = "以下是可安装的有效分发的列表。\n\nNAME  FRIENDLY NAME\nUbuntu  Ubuntu\n"
+        assert [row.name for row in parse_online_list(text)] == ["Ubuntu"]
+
     def test_localized_header_is_skipped(self) -> None:
         assert parse_online_list("名称  友好名称\nUbuntu  Ubuntu\n")[0].name == "Ubuntu"
 

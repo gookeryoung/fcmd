@@ -29,9 +29,11 @@ if TYPE_CHECKING:
     from fcmd.apps.wslman._source import DownloadResult
 
 import fcmd
+from fcmd.apps.wslman import _images
 from fcmd.apps.wslman._config import WslmanConfig, load_config
 from fcmd.apps.wslman._decode import (
     DistroRow,
+    OnlineRow,
     decode_console,
     is_no_distribution_message,
     is_not_enabled_message,
@@ -1932,43 +1934,120 @@ def backup_remove(file: Path, json_output: bool = False, preview: bool = False, 
     param_help={"json_output": "输出机读结果信封"},
 )
 def available(json_output: bool = False) -> None:
-    """运行 ``wsl --list --online`` 并原样解析两列表格。"""
+    """合并 ``wsl --list --online`` 与微软官方清单，列出全部可用镜像。
+
+    两个来源互补：CLI 反映本机 WSL 能直接 ``--install`` 的名称，官方清单补 amd64 /
+    arm64 下载地址与 sha256。任一来源失败时用本地缓存补齐并标记 ``stale``；
+    只有「两个来源都失败且无缓存」才报错，退出码语义不变。
+    """
     warnings: list[str] = []
     try:
         env = _build_environment()
         _require_wsl(env)
-        result = _run_wsl(env, ["--list", "--online"], timeout=120.0)
-        text = decode_console(result.stdout or result.stderr)
-        if result.returncode != 0:
-            if is_not_enabled_message(text):
-                raise runtime_error("WSL 未启用或系统组件缺失", hint=_NOT_ENABLED_HINT)
-            raise runtime_error(
-                f"wsl --list --online 失败（退出码 {result.returncode}）：{_first_line(text)}",
-                hint="检查网络或代理；离线时可用 fcmd wslman download <名称> --source file --file <本地 tar>",
-            )
-        rows = parse_online_list(text)
-        if not rows:
-            warnings.append("在线清单为空；可能是网络不可达或 WSL 版本过旧")
+        catalog = _images.collect_images(
+            fetch_cli=lambda: _online_rows(env),
+            fetch_manifest=_manifest_images,
+        )
     except WslmanError as exc:
         _fail(exc, "available", json_output)
         return
 
+    entries = _images.mark_local_state(
+        catalog.entries,
+        installed=_installed_names(env),
+        backups=_backup_names(env),
+    )
+    warnings.extend(catalog.warnings)
+    if not entries:
+        warnings.append("在线清单为空；可能是网络不可达或 WSL 版本过旧")
+    age = max(0, int(time.time() - catalog.fetched_at))
+    fetched_text = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(catalog.fetched_at))
+    warnings.extend(env.config.warnings)
+
     data = {
         "schema": "wslman/available/1",
-        "count": len(rows),
-        "distros": [{"name": row.name, "friendly_name": row.friendly_name} for row in rows],
-        "source": "wsl --list --online",
-        "warnings": [*warnings, *env.config.warnings],
+        "count": len(entries),
+        "distros": [entry.to_data() for entry in entries],
+        "source": " + ".join(catalog.sources) or "cache",
+        "sources": list(catalog.sources),
+        "fetched_at": fetched_text,
+        "from_cache": catalog.from_cache,
+        "stale": catalog.stale,
+        "cache_age_seconds": age,
+        "ttl_seconds": _images.CACHE_TTL_SECONDS,
+        "warnings": warnings,
     }
     if json_output:
         emit_result("wslman", "available", data)
         return
 
-    print(f"可在线安装的发行版（{len(rows)}）：")
-    for row in rows:
-        print(f"  {row.name}" + (f"  {row.friendly_name}" if row.friendly_name else ""))
-    for warning in [*warnings, *env.config.warnings]:
+    print(f"可安装的镜像（{len(entries)}）：")
+    name_width = max((len(entry.name) for entry in entries), default=8)
+    friendly_width = max((len(entry.friendly_name) for entry in entries), default=8)
+    for entry in entries:
+        arches = "/".join(entry.arches) or "任意架构"
+        marks = [
+            friendly
+            for friendly, flag in (
+                ("sha256", entry.has_sha256),
+                ("已安装", entry.installed),
+                ("已备份", entry.backed_up),
+            )
+            if flag
+        ]
+        print(
+            f"  {entry.name:<{name_width}}  {entry.friendly_name or '-':<{friendly_width}}  {arches:<16} "
+            f"{'/'.join(entry.sources):<16} {' '.join(marks)}".rstrip()
+        )
+    print(f"数据来源：{data['source']}；获取于 {fetched_text}" + ("（缓存）" if catalog.from_cache else ""))
+    for warning in warnings:
         print(f"[警告] {warning}")
+
+
+def _online_rows(env: Environment) -> tuple[OnlineRow, ...]:
+    """运行 ``wsl --list --online`` 并解析两列表格。"""
+    result = _run_wsl(env, ["--list", "--online"], timeout=120.0)
+    text = decode_console(result.stdout or result.stderr)
+    if result.returncode != 0:
+        if is_not_enabled_message(text):
+            raise runtime_error("WSL 未启用或系统组件缺失", hint=_NOT_ENABLED_HINT)
+        raise runtime_error(
+            f"wsl --list --online 失败（退出码 {result.returncode}）：{_first_line(text)}",
+            hint="检查网络或代理；离线时可用 fcmd wslman download <名称> --source file --file <本地 tar>",
+        )
+    return parse_online_list(text)
+
+
+def _manifest_images() -> tuple[_images.ImageEntry, ...]:
+    """拉取并解析微软官方 DistributionInfo.json。"""
+    from fcmd.apps.wslman._source import fetch_manifest
+
+    return _images.parse_distribution_info(fetch_manifest(_images.MANIFEST_URL))
+
+
+def _installed_names(env: Environment) -> tuple[str, ...]:
+    """已安装名称；离线或 WSL 不可用时返回空（列表仍可展示在线镜像）。"""
+    try:
+        return tuple(distro.name for distro in _view(env).distros)
+    except Exception:
+        return ()
+
+
+def _backup_names(env: Environment) -> tuple[str, ...]:
+    """备份目录里 ``<名称>.tar`` / ``<名称>.tar.gz`` 对应的发行版名。"""
+    directory = Path(env.config.backups_dir) if env.config.backups_dir else recommended_backup_dir()
+    names: list[str] = []
+    try:
+        for entry in directory.iterdir():
+            if not entry.is_file():
+                continue
+            for suffix in (".tar.gz", ".tar"):
+                if entry.name.casefold().endswith(suffix):
+                    names.append(entry.name[: -len(suffix)])
+                    break
+    except OSError:
+        return ()
+    return tuple(names)
 
 
 # ---------------------------------------------------------------------- #

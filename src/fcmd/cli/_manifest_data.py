@@ -269,7 +269,7 @@ DESCRIPTIONS: dict[str, str] = {
     "which": "查找可执行命令路径（跨平台）",
     "writefile": "写入文本内容到文件",
     "wslman": "列出已安装的 WSL 发行版（只读，不启动发行版）",
-    "wslmanw": "WSL 发行版管理的图形界面：列表/详情、打开终端、导出导入、下载、注销与关闭全部",
+    "wslmanw": "WSL 发行版管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部",
     "xmltool": "格式化打印 XML",
     "yamtool": "格式化打印 YAML",
     "zipencrypt": "加密目录下文件为密码保护的 ZIP",
@@ -407,7 +407,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "87e849247ede1829f3b1c078e89e3a96"
+DIGEST = "fb53f07a98dab2f53b803d65b6ec27ef"
 
 
 if __name__ == "__main__":  # pragma: no cover

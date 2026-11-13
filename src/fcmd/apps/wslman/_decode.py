@@ -42,6 +42,8 @@ _KNOWN_STATES = {
 }
 
 _ONLINE_HEADERS = frozenset({"name", "名称", "发行版名称", "分发版名称"})
+_ONLINE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
+"""发行版名称只含 ASCII 标识符；用于过滤「以下是可安装的有效分发的列表」这类前言。"""
 
 _NO_DISTRO_PATTERNS = (
     "no installed distributions",
@@ -183,6 +185,9 @@ def parse_online_list(text: str) -> tuple[OnlineRow, ...]:
         name = name.strip()
         friendly = friendly.strip()
         if not name or name.casefold() in _ONLINE_HEADERS:
+            continue
+        if not _ONLINE_NAME_RE.fullmatch(name):
+            # 中文前言（如「以下是可安装的有效分发的列表。」）会被单列分支误收。
             continue
         key = name.casefold()
         if key in seen:

@@ -47,8 +47,6 @@ def test_save_and_load_roundtrip(tmp_path: Path) -> None:
     settings = wslmanw.WslmanwSettings(
         geometry="1100x720+20+30",
         download_dir=r"D:\WSL\downloads",
-        manifest_url="https://example.com/manifest.json",
-        download_source="manifest",
     )
     wslmanw.save_settings(settings, path)
     assert wslmanw.load_settings(path) == settings
@@ -65,23 +63,25 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
     raw: dict[str, object] = {
         "geometry": "not-a-geometry",
         "download_dir": 42,
-        "manifest_url": None,
-        "download_source": "ftp",
-        "auto_refresh": "yes",
-        "poll_interval_ms": 1000,
     }
-    settings = wslmanw.settings_from_mapping(raw)
-    assert settings == wslmanw.WslmanwSettings(geometry=None, download_source="auto")
-
-    assert wslmanw.settings_from_mapping({"download_source": "file"}).download_source == "file"
+    assert wslmanw.settings_from_mapping(raw) == wslmanw.WslmanwSettings(geometry=None)
 
 
-def test_legacy_poll_fields_are_ignored() -> None:
-    """上一版写过 auto_refresh / poll_interval_ms，现在按未知字段忽略且不写回。"""
-    settings = wslmanw.settings_from_mapping({"geometry": "900x600", "auto_refresh": False, "poll_interval_ms": 10000})
+def test_removed_fields_are_ignored() -> None:
+    """旧版写过 auto_refresh / poll_interval_ms / manifest_url / download_source：按未知字段忽略。"""
+    settings = wslmanw.settings_from_mapping(
+        {
+            "geometry": "900x600",
+            "auto_refresh": False,
+            "poll_interval_ms": 10000,
+            "manifest_url": "https://example.com/manifest.json",
+            "download_source": "cli",
+        }
+    )
     assert settings == wslmanw.WslmanwSettings(geometry="900x600")
-    assert "auto_refresh" not in wslmanw.settings_to_mapping(settings)
-    assert "poll_interval_ms" not in wslmanw.settings_to_mapping(settings)
+    mapping = wslmanw.settings_to_mapping(settings)
+    for field in ("auto_refresh", "poll_interval_ms", "manifest_url", "download_source"):
+        assert field not in mapping
 
 
 def test_old_settings_file_without_new_fields_still_loads(tmp_path: Path) -> None:
@@ -91,16 +91,13 @@ def test_old_settings_file_without_new_fields_still_loads(tmp_path: Path) -> Non
     settings = wslmanw.load_settings(path)
     assert settings.geometry == "1024x700+10+10"
     assert settings.download_dir == ""
-    assert settings.download_source == "auto"
 
 
 def test_settings_mapping_is_json_friendly() -> None:
-    settings = wslmanw.WslmanwSettings(geometry="900x600", download_source="cli")
+    settings = wslmanw.WslmanwSettings(geometry="900x600", download_dir=r"D:\WSL")
     assert wslmanw.settings_to_mapping(settings) == {
         "geometry": "900x600",
-        "download_dir": "",
-        "manifest_url": "",
-        "download_source": "cli",
+        "download_dir": r"D:\WSL",
     }
 
 
@@ -109,6 +106,59 @@ def test_poll_interval_is_fixed_three_seconds() -> None:
     assert wslmanw.POLL_INTERVAL_MS == 3000
     assert not hasattr(wslmanw.WslmanwSettings(), "auto_refresh")
     assert not hasattr(wslmanw.WslmanwSettings(), "poll_interval_ms")
+
+
+def test_image_rows_and_details() -> None:
+    entry = wslmanw._images.ImageEntry(
+        name="Ubuntu",
+        friendly_name="Ubuntu",
+        sources=("cli", "manifest"),
+        downloads=(
+            wslmanw._images.ImageDownload("x86_64", "https://e/ubuntu.wsl", "a" * 64),
+            wslmanw._images.ImageDownload("aarch64", "https://e/ubuntu-arm.wsl"),
+        ),
+        installed=True,
+    )
+    assert wslmanw.image_row(entry) == ("Ubuntu", "Ubuntu", "aarch64/x86_64", "sha256 · 已安装")
+    details = dict(wslmanw.image_details(entry))
+    assert details["下载来源"] == "CLI 安装（wsl --install）、官方清单 URL"
+    assert details["校验和"] == "有 sha256"
+    assert "x86_64: https://e/ubuntu.wsl（有 sha256）" in details["下载地址"]
+    assert "无 sha256" in details["下载地址"]
+
+    store = wslmanw._images.ImageEntry(name="OracleLinux_9_5", friendly_name="", sources=("store",))
+    assert wslmanw.image_row(store) == ("OracleLinux_9_5", "-", "任意", "")
+    assert dict(wslmanw.image_details(store))["下载地址"].startswith("无直接下载地址")
+
+
+def test_pick_download_prefers_matching_arch(monkeypatch: pytest.MonkeyPatch) -> None:
+    entry = wslmanw._images.ImageEntry(
+        name="Ubuntu",
+        friendly_name="Ubuntu",
+        sources=("manifest",),
+        downloads=(
+            wslmanw._images.ImageDownload("x86_64", "https://e/amd64.wsl"),
+            wslmanw._images.ImageDownload("aarch64", "https://e/arm64.wsl"),
+        ),
+    )
+    monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    assert wslmanw.pick_download(entry).arch == "x86_64"
+    monkeypatch.setattr(wslmanw.platform, "machine", lambda: "ARM64")
+    assert wslmanw.pick_download(entry).arch == "aarch64"
+
+    only_arm = wslmanw._images.ImageEntry(
+        name="X", friendly_name="", sources=("manifest",), downloads=(entry.downloads[1],)
+    )
+    monkeypatch.setattr(wslmanw.platform, "machine", lambda: "AMD64")
+    assert wslmanw.pick_download(only_arm).arch == "aarch64"
+
+
+def test_image_filename_prefers_official_basename() -> None:
+    download = wslmanw._images.ImageDownload("x86_64", "https://e/releases/Ubuntu-24.04.wsl")
+    assert wslmanw.image_filename("Ubuntu-24.04", download) == "Ubuntu-24.04.wsl"
+
+    no_name = wslmanw._images.ImageDownload("aarch64", "https://aka.ms/wslubuntu2404arm64")
+    assert wslmanw.image_filename("Ubuntu-24.04", no_name) == "Ubuntu-24.04-aarch64.tar"
 
 
 def test_action_states_follow_selected_state() -> None:

@@ -10,15 +10,19 @@
 from __future__ import annotations
 
 import contextlib
+import platform
 import queue
 import threading
+import time
 import unicodedata
+import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import fcmd
+from fcmd.apps.wslman import _images
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman._config import WslmanConfig, load_config
 from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir
@@ -42,8 +46,12 @@ __all__ = [
     "detail_lines",
     "distro_row",
     "elide_name",
+    "image_details",
+    "image_filename",
+    "image_row",
     "load_settings",
     "main",
+    "pick_download",
     "resolve_geometry",
     "save_settings",
     "settings_from_mapping",
@@ -59,9 +67,14 @@ DEFAULT_GEOMETRY = "980x660"
 MIN_WIDTH = 900
 MIN_HEIGHT = 600
 
-_DESCRIPTION = "WSL 发行版管理的图形界面：列表/详情、打开终端、导出导入、下载、注销与关闭全部"
+_DESCRIPTION = "WSL 发行版管理的图形界面：列表/详情、打开终端、启动停止、导出导入、镜像下载、注销与关闭全部"
 
-_DOWNLOAD_SOURCES = ("auto", "cli", "manifest", "file")
+_SOURCE_LABELS = {
+    "cli": "CLI 安装（wsl --install）",
+    "manifest": "官方清单 URL",
+    "store": "Store 包（wsl --install）",
+}
+"""下载来源的展示文案；与 :mod:`fcmd.apps.wslman._images` 的 sources 取值一一对应。"""
 
 POLL_INTERVAL_MS = 3000
 """固定 3 秒轮询运行状态（不做成设置项）。
@@ -187,29 +200,20 @@ def action_states(state: str | None) -> tuple[bool, bool]:
 class WslmanwSettings:
     geometry: str | None = None
     download_dir: str = ""
-    manifest_url: str = ""
-    download_source: str = "auto"
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
     return {
         "geometry": settings.geometry,
         "download_dir": settings.download_dir,
-        "manifest_url": settings.manifest_url,
-        "download_source": settings.download_source,
     }
 
 
 def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
-    source = _str(raw, "download_source") or "auto"
-    if source not in _DOWNLOAD_SOURCES:
-        source = "auto"
-    # 旧版本写过 auto_refresh / poll_interval_ms，如今轮询固定 3 秒：按未知字段忽略。
+    # 旧版本写过 manifest_url / download_source（来源下拉框已换成镜像列表）：按未知字段忽略。
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
         download_dir=_str(raw, "download_dir"),
-        manifest_url=_str(raw, "manifest_url"),
-        download_source=source,
     )
 
 
@@ -271,6 +275,52 @@ def detail_lines(distro: Distro, size: int | None, estimated: bool) -> list[str]
     return [f"{label}: {value}" for label, value in detail_fields(distro, size, estimated)]
 
 
+def image_row(entry: _images.ImageEntry) -> tuple[str, str, str, str]:
+    """下载页列表一行：名称、友好名、架构、标记（sha256 / 已安装 / 已备份）。"""
+    marks = " · ".join(
+        label
+        for label, flag in (("sha256", entry.has_sha256), ("已安装", entry.installed), ("已备份", entry.backed_up))
+        if flag
+    )
+    return (entry.name, entry.friendly_name or "-", "/".join(entry.arches) or "任意", marks)
+
+
+def image_details(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
+    """下载页的「字段 → 值」：来源、架构、校验和与每个架构的下载地址。"""
+    sources = "、".join(_SOURCE_LABELS.get(source, source) for source in entry.sources) or "未知"
+    downloads = [
+        f"{download.arch}: {download.url}" + ("（有 sha256）" if download.sha256 else "（无 sha256）")
+        for download in entry.downloads
+    ]
+    return (
+        ("名称", entry.name),
+        ("友好名", entry.friendly_name or "未知"),
+        ("可用架构", "/".join(entry.arches) or "任意（由 WSL 选择）"),
+        ("下载来源", sources),
+        ("校验和", "有 sha256" if entry.has_sha256 else "无 sha256（不标 verified）"),
+        ("已安装", "是" if entry.installed else "否"),
+        ("已备份", "是" if entry.backed_up else "否"),
+        ("下载地址", "\n".join(downloads) or "无直接下载地址；请用 wsl --install"),
+    )
+
+
+def pick_download(entry: _images.ImageEntry) -> _images.ImageDownload:
+    """按本机架构挑下载项：ARM 优先 aarch64，其余优先 x86_64，都没有时取第一个。"""
+    preferred = "aarch64" if "arm" in platform.machine().casefold() else "x86_64"
+    for download in entry.downloads:
+        if download.arch == preferred:
+            return download
+    return entry.downloads[0]
+
+
+def image_filename(name: str, download: _images.ImageDownload) -> str:
+    """下载落盘名：沿用官方 URL 的文件名（``.wsl`` / ``.tar`` 等），否则按名称与架构生成。"""
+    candidate = Path(urllib.parse.urlparse(download.url).path).name
+    if candidate.casefold().endswith((".wsl", ".tar", ".tar.gz", ".tgz", ".appx", ".appxbundle")):
+        return candidate
+    return f"{name}-{download.arch}.tar"
+
+
 def _error_text(exc: BaseException) -> str:
     if isinstance(exc, WslmanError):
         text = str(exc)
@@ -303,6 +353,9 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._rows: list[tuple[str, ...]] = []
         self._poll_after: str | None = None
         self._status_busy = False
+        self._images_busy = False
+        self.image_entries: tuple[_images.ImageEntry, ...] = ()
+        self._filter_after: str | None = None
         self._closing = False
 
         self.root, self.theme = _guiwindow.create_root(
@@ -408,6 +461,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         notebook.add(log_frame, text="日志")
         self.log = _guiwindow.create_log(log_frame, height=8)
         notebook.select(0)
+        notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _build_detail_tab(self, notebook: Any) -> None:
         """详情页：两列「字段 / 值」，窄高度下靠两列排布避免裁切与压叠。"""
@@ -464,22 +518,60 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         space = self.space
         frame = ttk.Frame(notebook, padding=(space.sm, space.xs))
         notebook.add(frame, text="下载")
-        frame.columnconfigure(1, weight=1)
-        frame.columnconfigure(3, weight=1)
+        frame.columnconfigure(0, weight=3)
+        frame.columnconfigure(1, weight=2)
+        frame.rowconfigure(1, weight=1)
 
-        self.download_name = self._field(frame, 0, 0, "名称", "Ubuntu")
-        self.download_source = self.tk.StringVar(value=self.settings.download_source)
-        ttk.Label(frame, text="来源").grid(row=0, column=2, sticky="w", padx=(space.md, space.xs), pady=space.xxs)
-        ttk.Combobox(
-            frame,
-            textvariable=self.download_source,
-            values=_DOWNLOAD_SOURCES,
-            state="readonly",
-            width=8,
-        ).grid(row=0, column=3, sticky="w", pady=space.xxs)
+        search = ttk.Frame(frame)
+        search.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(search, text="搜索").pack(side="left")
+        self.image_query = self.tk.StringVar(value="")
+        self.image_search = ttk.Entry(search, textvariable=self.image_query)
+        self.image_search.pack(side="left", fill="x", expand=True, padx=(space.xs, space.xs))
+        self.image_search.bind("<KeyRelease>", self._schedule_image_filter)
+        self.images_status = self.tk.StringVar(value="打开本页时自动获取镜像清单")
+        ttk.Label(search, textvariable=self.images_status, style="Muted.TLabel").pack(side="right")
+
+        listing = ttk.Frame(frame)
+        listing.grid(row=1, column=0, sticky="nsew", pady=(space.xs, 0))
+        listing.rowconfigure(0, weight=1)
+        listing.columnconfigure(0, weight=1)
+        self.image_tree = ttk.Treeview(
+            listing,
+            columns=("name", "friendly", "arches", "marks"),
+            show="headings",
+            selectmode="browse",
+            height=8,
+        )
+        for column, title, width, anchor in (
+            ("name", "名称", 130, "w"),
+            ("friendly", "友好名", 170, "w"),
+            ("arches", "架构", 90, "w"),
+            ("marks", "标记", 120, "w"),
+        ):
+            self.image_tree.heading(column, text=title)
+            self.image_tree.column(column, width=width, minwidth=60, anchor=anchor, stretch=column == "friendly")
+        self.image_tree.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(listing, orient="vertical", command=self.image_tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.image_tree.configure(yscrollcommand=scroll.set)
+        self.image_tree.bind("<<TreeviewSelect>>", lambda _event: self._show_image_details())
+        self.image_tree.bind("<Double-1>", lambda _event: self._download())
+
+        detail = ttk.Frame(frame, padding=(space.md, space.xs, 0, 0))
+        detail.grid(row=1, column=1, sticky="nsew", pady=(space.xs, 0))
+        detail.columnconfigure(1, weight=1)
+        self.image_detail_vars: dict[str, Any] = {}
+        for row, label in enumerate(
+            ("名称", "友好名", "可用架构", "下载来源", "校验和", "已安装", "已备份", "下载地址")
+        ):
+            ttk.Label(detail, text=label, style="Muted.TLabel").grid(row=row, column=0, sticky="nw", padx=(0, space.xs))
+            variable = self.tk.StringVar(value="—")
+            ttk.Label(detail, textvariable=variable, wraplength=220, justify="left").grid(row=row, column=1, sticky="w")
+            self.image_detail_vars[label] = variable
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(space.xs, 0))
+        buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(space.xs, 0))
         ttk.Button(buttons, text="开始下载", command=self._download, style="Accent.TButton").pack(side="left")
         ttk.Button(buttons, text="取消", command=self._cancel_task).pack(side="left", padx=(space.xs, 0))
         ttk.Label(buttons, text=_DOWNLOAD_HINT, style="Hint.TLabel", wraplength=380).pack(
@@ -487,18 +579,17 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         )
 
         advanced = ttk.Frame(frame)
-        advanced.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(space.xs, 0))
+        advanced.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(space.xs, 0))
         container, body = _guiwindow.collapsible(
             advanced,
-            "高级：下载目录 / 清单源 / 校验",
+            "高级：下载目录 / 校验",
             padding=(space.sm, space.xs, space.sm, space.xs),
             open_state=False,
         )
         container.pack(fill="x")
         body.columnconfigure(1, weight=1)
         self.download_dir = self._field(body, 0, 0, "下载目录", self.settings.download_dir)
-        self.manifest_url = self._field(body, 1, 0, "清单地址", self.settings.manifest_url)
-        self.expected_sha = self._field(body, 2, 0, "期望 sha256", "")
+        self.expected_sha = self._field(body, 1, 0, "期望 sha256", "")
 
     def _field(self, parent: Any, row: int, column: int, label: str, default: str) -> Any:
         """紧凑的「标签 + 输入框」；列坐标以 ``column`` 为标签列。"""
@@ -539,39 +630,62 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         try:
             while True:
                 kind, label, payload = self._events.get_nowait()
-                if kind == "log":
-                    self._log(payload)
-                    continue
-                if kind == "status":
-                    self._status_busy = False
-                    if not self._busy:
-                        self._apply_status(payload)
-                    continue
-                if kind == "status_error":
-                    self._status_busy = False
-                    if not self._busy:
-                        self.status.set(f"状态刷新失败：{_error_text(payload)}")
-                    continue
-                self._busy = False
-                self._set_buttons(True)
-                if kind == "done":
-                    self._log(f"[{label}] {payload}")
-                    self.status.set(f"{label}完成")
-                    if label == "刷新":
-                        self._refresh_rows()
-                    else:
-                        self.refresh()
+                if self._handle_event(kind, label, payload):
                     break
-                if kind == "cancelled":
-                    self._log(f"[{label}] 已取消；未完成的 .part 按配置保留或清理")
-                    self.status.set(f"{label}已取消")
-                    continue
-                self._log(f"[{label}] 失败：{_error_text(payload)}")
-                self.status.set(f"{label}失败")
-                self.messagebox.showerror(label, _error_text(payload))
         except queue.Empty:
             pass
-        self.root.after(100, self._poll)
+        if not self._closing:
+            self.root.after(100, self._poll)
+
+    def _handle_event(self, kind: str, label: str, payload: Any) -> bool:
+        """处理一个后台事件；返回 ``True`` 表示任务收尾后应停止本轮批量处理。"""
+        if self._handle_poll_event(kind, payload):
+            return False
+        self._busy = False
+        self._set_buttons(True)
+        if kind == "done":
+            self._log(f"[{label}] {payload}")
+            self.status.set(f"{label}完成")
+            if label == "刷新":
+                self._refresh_rows()
+            else:
+                self.refresh()
+            return True
+        if kind == "cancelled":
+            self._log(f"[{label}] 已取消；未完成的 .part 按配置保留或清理")
+            self.status.set(f"{label}已取消")
+            return False
+        self._log(f"[{label}] 失败：{_error_text(payload)}")
+        self.status.set(f"{label}失败")
+        self.messagebox.showerror(label, _error_text(payload))
+        return False
+
+    def _handle_poll_event(self, kind: str, payload: Any) -> bool:
+        """状态轮询与镜像清单的后台事件；返回 ``True`` 表示已消费。"""
+        if kind == "log":
+            self._log(payload)
+            return True
+        if kind == "status":
+            self._status_busy = False
+            if not self._busy:
+                self._apply_status(payload)
+            return True
+        if kind == "status_error":
+            self._status_busy = False
+            if not self._busy:
+                self.status.set(f"状态刷新失败：{_error_text(payload)}")
+            return True
+        if kind == "images":
+            self._images_busy = False
+            if not self._closing:
+                self._apply_images(*payload)
+            return True
+        if kind == "images_error":
+            self._images_busy = False
+            self.images_status.set(f"镜像清单获取失败：{_error_text(payload)}")
+            self._log(f"[镜像列表] {_error_text(payload)}")
+            return True
+        return False
 
     def _set_buttons(self, enabled: bool) -> None:
         state = "normal" if enabled else "disabled"
@@ -671,8 +785,6 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             WslmanwSettings(
                 geometry=self.root.geometry(),
                 download_dir=self.download_dir.get().strip(),
-                manifest_url=self.manifest_url.get().strip(),
-                download_source=self.download_source.get(),
             ),
             self.settings_path,
         )
@@ -691,8 +803,16 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             self._cancel.set()
         self._closing = True
         self._cancel_poll()
+        self._cancel_image_filter()
         self._save_settings()
         self.root.destroy()
+
+    def _cancel_image_filter(self) -> None:
+        if self._filter_after is None:
+            return
+        with contextlib.suppress(self.tk.TclError):
+            self.root.after_cancel(self._filter_after)
+        self._filter_after = None
 
     # -- 列表与详情 ---------------------------------------------------- #
 
@@ -936,57 +1056,125 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         self._start("导入", work)
 
     def _download(self) -> None:
-        name = self.download_name.get().strip()
-        source = self.download_source.get()
+        entry = self._selected_image()
+        if entry is None:
+            self.messagebox.showerror("下载", "请先在列表中选择镜像")
+            return
         directory_text = self.download_dir.get().strip()
-        manifest = self.manifest_url.get().strip() or None
         expected = self.expected_sha.get().strip() or None
-        if not name:
-            self.messagebox.showerror("下载", "请填写发行版名称")
-            return
-        if source == "file":
-            self.messagebox.showerror("下载", "GUI 的 file 来源请用「导入」页选择本地 tar")
-            return
 
         def work(cancel: threading.Event) -> str:
+            env = cli._build_environment()
+            if not entry.downloads:
+                # 只有 CLI / Store 来源：走 wsl --install，不下载归档。
+                cli._run_step(
+                    env,
+                    ["--install", "-d", entry.name, "--no-launch"],
+                    action=f"安装 {entry.name}",
+                    hint="系统级安装可能弹 UAC；失败时检查网络或 WSL 版本",
+                    timeout=3600.0,
+                )
+                return f"已通过 wsl --install 安装 {entry.name}；用「打开终端」启动"
+
             from fcmd.apps.wslman import _source
 
-            env = cli._build_environment()
-            if source in {"cli", "auto"} and env.capabilities.has_install_no_launch:
-                argv = [env.capabilities.wsl_path or "wsl.exe", "--install", "-d", name, "--no-launch"]
-                result = cli._run_wsl(env, argv[1:], timeout=3600.0)
-                if result.returncode != 0:
-                    if source == "cli":
-                        raise runtime_error(
-                            f"wsl --install 失败（退出码 {result.returncode}）",
-                            hint="检查网络或改用 --source manifest/file",
-                        )
-                    self._events.put(("log", "下载", "wsl --install 失败，改用清单"))
-                else:
-                    return f"已通过 wsl --install 安装 {name}；用「打开终端」启动"
-            url = manifest or env.config.manifest_url
-            if not url:
-                raise invalid_argument("请填写清单地址，或在 wslman.json 配置 download.manifest_url")
+            download = pick_download(entry)
             directory = Path(directory_text) if directory_text else Path(env.config.download_dir or ".")
-            payload = _source.fetch_manifest(url)
-            parsed = _source.parse_manifest(payload)
-            entry = _source.find_entry(parsed, name)
-            target = directory / _source.download_name(name, entry.url, parsed.arch)
+            target = directory / image_filename(entry.name, download)
             if target.exists():
                 raise invalid_argument(f"目标文件已存在：{target}", hint="换一个目录或先删除旧文件")
-            estimate = entry.size
-            check = cli._preflight_for(env, target, estimate, estimated=estimate is None)
+            check = cli._preflight_for(env, target, None, estimated=True)
             if not check.ok:
                 raise runtime_error(f"目标卷空间不足：{check.detail}", hint="换一个目录")
             result_data = _source.download(
-                entry.url,
+                download.url,
                 target,
-                expected_sha256=expected or entry.sha256,
+                expected_sha256=expected or download.sha256,
                 cancelled=cancel.is_set,
             )
             return f"已下载 {target}（{format_bytes(result_data.size)}，sha256 {result_data.sha256}）"
 
         self._start("下载", work)
+
+    # -- 镜像列表（下载页） -------------------------------------------- #
+
+    def _on_tab_changed(self, _event: Any) -> None:
+        if self.notebook.tab("current", "text") == "下载":
+            self._load_images()
+
+    def _load_images(self) -> None:
+        """后台拉取镜像清单；本页重复进入时复用本次会话结果。"""
+        if self._images_busy or self.image_entries or self._closing:
+            return
+        self._images_busy = True
+        self.images_status.set("正在获取镜像清单…")
+        threading.Thread(target=self._images_worker, daemon=True).start()
+
+    def _images_worker(self) -> None:
+        try:
+            env = cli._build_environment()
+            catalog = _images.collect_images(
+                fetch_cli=lambda: cli._online_rows(env),
+                fetch_manifest=cli._manifest_images,
+            )
+            entries = _images.mark_local_state(
+                catalog.entries,
+                installed=cli._installed_names(env),
+                backups=cli._backup_names(env),
+            )
+        except Exception as exc:
+            self._events.put(("images_error", "镜像列表", exc))
+        else:
+            self._events.put(("images", "镜像列表", (catalog, entries)))
+
+    def _apply_images(self, catalog: Any, entries: tuple[_images.ImageEntry, ...]) -> None:
+        self.image_entries = entries
+        stamp = time.strftime("%H:%M", time.localtime(catalog.fetched_at))
+        marks = f"{len(entries)} 个镜像 · {(catalog.sources and '+'.join(catalog.sources)) or '缓存'} · {stamp}"
+        if catalog.from_cache:
+            marks += "（过期缓存）" if catalog.stale else "（缓存）"
+        self.images_status.set(marks)
+        for warning in catalog.warnings:
+            self._log(f"[镜像列表] {warning}")
+        self._render_images()
+
+    def _render_images(self) -> None:
+        """按搜索词重建可见行；条目量级只有几十条，重建比逐行 diff 更简单可靠。"""
+        query = self.image_query.get().strip().casefold()
+        selected = self.image_tree.selection()
+        keep = selected[0] if selected else None
+        self.image_tree.delete(*self.image_tree.get_children())
+        for entry in self.image_entries:
+            if query and query not in entry.name.casefold() and query not in entry.friendly_name.casefold():
+                continue
+            self.image_tree.insert("", "end", iid=entry.name, values=image_row(entry))
+        if keep and self.image_tree.exists(keep):
+            self.image_tree.selection_set(keep)
+            self.image_tree.see(keep)
+        else:
+            self._show_image_details()
+
+    def _schedule_image_filter(self, _event: Any) -> None:
+        """按键后 150 ms 再过滤，连续输入时只重绘一次。"""
+        self._cancel_image_filter()
+        self._filter_after = self.root.after(150, self._apply_image_filter)
+
+    def _apply_image_filter(self) -> None:
+        self._filter_after = None
+        self._render_images()
+
+    def _selected_image(self) -> _images.ImageEntry | None:
+        selected = self.image_tree.selection()
+        if not selected:
+            return None
+        name = selected[0]
+        return next((entry for entry in self.image_entries if entry.name == name), None)
+
+    def _show_image_details(self) -> None:
+        entry = self._selected_image()
+        values = dict(image_details(entry)) if entry is not None else {}
+        for label, variable in self.image_detail_vars.items():
+            variable.set(values.get(label, "—"))
 
     def _unregister(self) -> None:
         distro = self._selected()
