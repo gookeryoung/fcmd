@@ -158,9 +158,9 @@ TBD 值不参与这些比较，视为未定。周向分布与 `min` / `max` 相�
 
 | 类别 | 规则 | 字段 |
 |---|---|---|
-| 必须给出 | 缺失或 TBD 都报错 | `id`、`units.*`、`geometry.outer_diameter` / `inner_diameter` / `length`、`wall_thickness.nominal`、每个 `*.kind`、`samples[].position`、`samples[].angle_deg`、`local_defects[].id` / `kind`、`passes[].index` |
-| 可留 TBD | 可写 `TBD`；也可整键省略（等价于 TBD） | 除上表外的全部 `num`，包括 `wall_thickness.min/max`、`eccentricity.*`、`gap_mm`、`debond.extent_deg`、`passes[].diameter_reduction`、`wall_thickness_change`、`die_angle_deg`、`cumulative_reduction`、`axial.samples[].density`、`circumferential.samples[].thickness`、`end_loose.*`、`local_defects[].size_mm` / `severity` |
-| 不允许 TBD | 只有 `uniform` 的 `value` | `density_field.axial/radial/circumferential.value`、`wall_thickness.circumferential.value` |
+| 键必须存在，值可 TBD | 键缺失或写 `null` → 报错；显式写 `TBD` → 合法，且不参与几何一致性比较 | `geometry.outer_diameter` / `inner_diameter` / `length`、`geometry.wall_thickness.nominal` |
+| 必须给出具体值 | 缺失或 `TBD` 都报错 | `id`、`units.*`、每个 `*.kind`、`samples[].position`、`samples[].angle_deg`、`local_defects[].id` / `kind`、`passes[].index`、`uniform` 的 `value`（含 `wall_thickness.circumferential.value`） |
+| 可留 TBD | 可写 `TBD`；也可整键省略（省略与显式 TBD 等价） | 除上表外的全部 `num`，包括 `wall_thickness.min/max`、`eccentricity.*`、`gap_mm`、`debond.extent_deg`、`passes[].diameter_reduction`、`wall_thickness_change`、`die_angle_deg`、`cumulative_reduction`、`axial.samples[].density`、`circumferential.samples[].thickness`、`end_loose.*`、`local_defects[].size_mm` / `severity` |
 
 **预览最小必填集不属于文件有效性**：paramcad 出二维截面 / 轴向剖面时至少需要
 `outer_diameter`、`inner_diameter`、`wall_thickness.nominal` 为具体值；`length` 与

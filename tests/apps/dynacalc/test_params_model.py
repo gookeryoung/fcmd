@@ -269,6 +269,16 @@ class TestModel:
         with pytest.raises(ModelError, match="最小壁厚"):
             parse_models(raw)
 
+    def test_required_geometry_key_allows_tbd_value(self, model_file: Path) -> None:
+        raw = _raw(MODEL_YAML)
+        raw["models"][0]["geometry"]["length"] = TBD
+        parsed, _ = parse_models(raw)
+        assert parsed[0].geometry["length"] == TBD
+        raw = _raw(MODEL_YAML)
+        del raw["models"][0]["geometry"]["length"]
+        with pytest.raises(ModelError, match="length"):
+            parse_models(raw)
+
     def test_eccentricity_angle_range(self, model_file: Path) -> None:
         raw = _raw(MODEL_YAML)
         raw["models"][0]["geometry"]["eccentricity"]["angle_deg"] = 360
