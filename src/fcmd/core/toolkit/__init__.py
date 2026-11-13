@@ -60,6 +60,8 @@ from typing import Any, Literal, cast
 
 from ..dag import Graph, GraphDefaults
 from ..errors import FcmdError
+from ..exit_codes import ExitCode
+from ..result import reset_error_state
 from ..task import RetryPolicy, TaskSpec
 from .args import (
     ToolExitCode,
@@ -288,9 +290,14 @@ def run_tool(name: str, argv: Sequence[str]) -> int:
     if name not in _TOOL_REGISTRY:
         from fcmd.console import print_error
 
-        print_error(f"工具 {name!r} 未注册")
-        return ToolExitCode.FAILURE.value
+        print_error(
+            f"工具 {name!r} 未注册",
+            code="UNKNOWN_TOOL",
+            hint="运行 fcmd --help 查看可用工具列表",
+        )
+        return int(ExitCode.USAGE)
 
+    reset_error_state()
     subs = _TOOL_REGISTRY[name]
 
     # 1. 路由解析：确定 target（子命令）与 argv_rest

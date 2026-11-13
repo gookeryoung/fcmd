@@ -365,10 +365,18 @@ def load_tool_subs(tool_name: str) -> dict[str | None, ToolSpec] | None:
 
     error = import_tool_module(tool_name)
     if error is not None:
-        print_error(f"加载工具 {tool_name!r} 失败: {error}")
+        print_error(
+            f"加载工具 {tool_name!r} 失败: {error}",
+            code="RUNTIME_ERROR",
+            hint="检查该工具的依赖是否安装后重试",
+        )
         return None
 
     if tool_name not in _TOOL_REGISTRY:
-        print_error(f"工具 {tool_name!r} 未注册")
+        print_error(
+            f"工具 {tool_name!r} 未注册",
+            code="UNKNOWN_TOOL",
+            hint="运行 fcmd 查看可用工具列表",
+        )
         return None
     return _TOOL_REGISTRY[tool_name]

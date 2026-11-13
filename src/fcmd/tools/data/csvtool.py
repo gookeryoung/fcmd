@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fcmd as fx
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import data
 
 
@@ -34,24 +34,21 @@ from fcmd.infras import data
         "fcmd csvtool show data.csv --json",
     ],
 )
-def show(file: Path, rows: int = 5, header: bool = True, json_output: bool = False) -> None:
+def show(file: Path, rows: int = 5, header: bool = True, json_output: bool = False) -> int | None:
     """预览 CSV 前几行。"""
     try:
         hdr, rows_data = data.read_csv(file, has_header=header)
     except FileNotFoundError as exc:
-        if json_output:
-            emit_error(
-                "csvtool",
-                "show",
-                code="FILE_NOT_FOUND",
-                message=str(exc),
-                field="file",
-                expected="已存在的 CSV 文件",
-                hint="确认路径存在且是文件",
-            )
-            return
-        print(f"错误: {exc}")
-        return
+        return report_error(
+            "csvtool",
+            "show",
+            code="FILE_NOT_FOUND",
+            message=str(exc),
+            field="file",
+            expected="已存在的 CSV 文件",
+            hint="确认路径存在且是文件",
+            json_output=json_output,
+        )
     preview_rows = rows_data[:rows]
     if json_output:
         # 与默认路径同源：空文件/无表头也照常返回结构，用 total_rows 与 columns 表达
@@ -88,7 +85,16 @@ def to_json(file: Path, indent: int = 2) -> None:
     try:
         print(data.csv_to_json(file, indent=indent))
     except FileNotFoundError as exc:
-        print(f"错误: {exc}")
+        report_error(
+            "csvtool",
+            "to-json",
+            code="FILE_NOT_FOUND",
+            message=str(exc),
+            field="file",
+            expected="已存在的 CSV 文件",
+            hint="确认路径存在且是文件",
+            json_output=False,
+        )
 
 
 @fx.tool(
@@ -107,8 +113,28 @@ def from_json(file: Path, output: str = "") -> None:
         out_path = Path(output) if output else file.with_suffix(".csv")
         data.write_csv(out_path, rows, header=header)
         print(f"转换完成: {file} -> {out_path}（{len(rows)} 行）")
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"错误: {exc}")
+    except FileNotFoundError as exc:
+        report_error(
+            "csvtool",
+            "from-json",
+            code="FILE_NOT_FOUND",
+            message=str(exc),
+            field="file",
+            expected="已存在的 JSON 文件",
+            hint="确认路径存在且是文件",
+            json_output=False,
+        )
+    except ValueError as exc:
+        report_error(
+            "csvtool",
+            "from-json",
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="file",
+            expected="合法的 JSON 文件",
+            hint="检查 JSON 语法与结构（对象数组或表头+行数组）",
+            json_output=False,
+        )
 
 
 @fx.tool(
@@ -134,8 +160,28 @@ def select(file: Path, columns: list[str], output: str = "") -> None:
             print(f"筛选完成: {file} -> {output}（{len(new_rows)} 行）")
         else:
             print(data.format_table(new_header, new_rows))
-    except (FileNotFoundError, ValueError) as exc:
-        print(f"错误: {exc}")
+    except FileNotFoundError as exc:
+        report_error(
+            "csvtool",
+            "select",
+            code="FILE_NOT_FOUND",
+            message=str(exc),
+            field="file",
+            expected="已存在的 CSV 文件",
+            hint="确认路径存在且是文件",
+            json_output=False,
+        )
+    except ValueError as exc:
+        report_error(
+            "csvtool",
+            "select",
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="columns",
+            expected="CSV 表头中存在的列名",
+            hint="先运行 fcmd csvtool show <file> 查看列名",
+            json_output=False,
+        )
 
 
 @fx.tool(
@@ -157,5 +203,25 @@ def merge(files: list[Path], mode: str = "union", output: str = "") -> None:
             print(f"合并完成: {len(files)} 个文件 -> {output}（{len(rows)} 行）")
         else:
             print(data.format_table(header, rows))
-    except (ValueError, FileNotFoundError) as exc:
-        print(f"错误: {exc}")
+    except FileNotFoundError as exc:
+        report_error(
+            "csvtool",
+            "merge",
+            code="FILE_NOT_FOUND",
+            message=str(exc),
+            field="files",
+            expected="已存在的 CSV 文件列表",
+            hint="确认每个输入文件路径存在",
+            json_output=False,
+        )
+    except ValueError as exc:
+        report_error(
+            "csvtool",
+            "merge",
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="files",
+            expected="至少 2 个同结构 CSV 文件",
+            hint="确认文件数 >= 2，且 mode/表头一致",
+            json_output=False,
+        )

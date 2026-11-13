@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 import fcmd as fx
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras.fs import search_by_content, search_by_name
 
 __all__ = ["content", "name"]
@@ -38,24 +38,21 @@ def name(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保�
     limit: int = 0,
     count: bool = False,
     json_output: bool = False,
-) -> None:
+) -> int | None:
     """按文件名 glob 模式递归搜索目录。"""
     try:
         results = search_by_name(directory, pattern, include_dirs=include_dirs)
     except (FileNotFoundError, NotADirectoryError) as exc:
-        if json_output:
-            emit_error(
-                "filesearch",
-                "name",
-                code="DIR_NOT_FOUND",
-                message=str(exc),
-                field="directory",
-                expected="已存在的目录",
-                hint="确认路径存在且是目录",
-            )
-            return
-        print(f"错误: {exc}")
-        return
+        return report_error(
+            "filesearch",
+            "name",
+            code="DIR_NOT_FOUND",
+            message=str(exc),
+            field="directory",
+            expected="已存在的目录",
+            hint="确认路径存在且是目录",
+            json_output=json_output,
+        )
     total = len(results)
     if count:
         if json_output:
@@ -104,45 +101,39 @@ def name(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，保�
         'fcmd filesearch content . "TODO" --json',
     ],
 )
-def content(  # noqa: PLR0911, PLR0913, PLR0917 - CLI 参数逐个生成，错误/计数分支提前返回
+def content(  # noqa: PLR0913, PLR0917 - CLI 参数逐个生成，错误/计数分支提前返回
     directory: Path,
     pattern: str,
     extension: str = "",
     limit: int = 0,
     count: bool = False,
     json_output: bool = False,
-) -> None:
+) -> int | None:
     """按文件内容正则递归搜索，输出 文件:行号:行内容。"""
     try:
         results = search_by_content(directory, pattern, extension=extension)
     except (FileNotFoundError, NotADirectoryError) as exc:
-        if json_output:
-            emit_error(
-                "filesearch",
-                "content",
-                code="DIR_NOT_FOUND",
-                message=str(exc),
-                field="directory",
-                expected="已存在的目录",
-                hint="确认路径存在且是目录",
-            )
-            return
-        print(f"错误: {exc}")
-        return
+        return report_error(
+            "filesearch",
+            "content",
+            code="DIR_NOT_FOUND",
+            message=str(exc),
+            field="directory",
+            expected="已存在的目录",
+            hint="确认路径存在且是目录",
+            json_output=json_output,
+        )
     except re.error as exc:
-        if json_output:
-            emit_error(
-                "filesearch",
-                "content",
-                code="INVALID_REGEX",
-                message=f"正则表达式错误: {exc}",
-                field="pattern",
-                expected="Python 正则表达式",
-                hint="检查括号、转义与量词写法",
-            )
-            return
-        print(f"错误: 正则表达式错误: {exc}")
-        return
+        return report_error(
+            "filesearch",
+            "content",
+            code="INVALID_REGEX",
+            message=f"正则表达式错误: {exc}",
+            field="pattern",
+            expected="Python 正则表达式",
+            hint="检查括号、转义与量词写法",
+            json_output=json_output,
+        )
     total = len(results)
     if count:
         if json_output:

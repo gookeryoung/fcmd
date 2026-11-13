@@ -2,10 +2,10 @@
 
 覆盖 ``FcmdApp._builtin_profiler`` 的路由、参数解析、hook 注入与输出：
 
-* 无参数 → 打印帮助返回 1
-* 脚本不存在 → 返回 2
+* 无参数 → 打印帮助返回 2
+* 脚本不存在 → 返回 4
 * 成功分析 fx.run() 脚本 → 生成 HTML / text 报告
-* 脚本不含 fx.run() → 返回 1 并提示
+* 脚本不含 fx.run() → 返回 3 并提示
 * ``--no-browser`` 不打开浏览器
 * ``-o`` 指定输出路径
 * hook 还原后 fcmd.run 恢复正常
@@ -73,27 +73,27 @@ def _write_script(tmp_path: Path, name: str, content: str) -> Path:
 # 参数解析与错误路径
 # ---------------------------------------------------------------------- #
 def test_profiler_no_args_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
-    """无参数打印帮助，返回 1。"""
+    """无参数打印帮助，返回 2。"""
     app = FcmdApp(["profiler"])
-    assert app.run() == 1
+    assert app.run() == 2
     out = capsys.readouterr().out
     assert "fcmd profiler" in out
     assert "script" in out
 
 
-def test_profiler_nonexistent_script_returns_2(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """脚本不存在返回 2。"""
+def test_profiler_nonexistent_script_returns_4(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    """脚本不存在返回 4。"""
     app = FcmdApp(["profiler", str(tmp_path / "nonexistent.py")])
-    assert app.run() == 2
+    assert app.run() == 4
     out = capsys.readouterr().out
     assert "脚本不存在" in out
 
 
-def test_profiler_no_run_call_returns_1(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-    """脚本不含 fx.run() 时返回 1 并提示。"""
+def test_profiler_no_run_call_returns_3(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    """脚本不含 fx.run() 时返回 3 并提示。"""
     script = _write_script(tmp_path, "nrs.py", _NO_RUN_SCRIPT)
     app = FcmdApp(["profiler", str(script), "--no-browser"])
-    assert app.run() == 1
+    assert app.run() == 3
     out = capsys.readouterr().out
     assert "未捕获到 fcmd.run()" in out
 
@@ -425,8 +425,8 @@ def test_builtin_dispatch_profiler(capsys: pytest.CaptureFixture[str], tmp_path:
     """run_builtin('profiler', ...) 正确分发到 profiler_cmd.run。"""
     from fcmd.cli._builtins import run_builtin
 
-    # 无参数 → 返回 1
-    assert run_builtin("profiler", []) == 1
+    # 无参数 → 返回 2
+    assert run_builtin("profiler", []) == 2
 
 
 # ---------------------------------------------------------------------- #

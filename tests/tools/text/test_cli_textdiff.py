@@ -318,7 +318,7 @@ class TestCLISubcommands:
     def test_run_file_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """file 文件不存在时提示。"""
         code = run_tool("textdiff", ["file", str(tmp_path / "no1.txt"), str(tmp_path / "no2.txt")])
-        assert code == 0
+        assert code == 4
         captured = capsys.readouterr()
         assert "文件不存在" in captured.out
 
@@ -327,7 +327,7 @@ class TestCLISubcommands:
         f1 = tmp_path / "a.txt"
         f1.write_text("x")
         code = run_tool("textdiff", ["file", str(f1), str(tmp_path / "no.txt")])
-        assert code == 0
+        assert code == 4
         captured = capsys.readouterr()
         assert "文件不存在" in captured.out
 
@@ -338,7 +338,7 @@ class TestCLISubcommands:
         f1.write_bytes(b"bin\x00ary1")
         f2.write_bytes(b"bin\x00ary2")
         code = run_tool("textdiff", ["file", str(f1), str(f2)])
-        assert code == 0
+        assert code == 3
         captured = capsys.readouterr()
         assert "二进制文件" in captured.out
 
@@ -387,7 +387,7 @@ class TestCLISubcommands:
     def test_run_dir_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """dir 目录不存在时提示。"""
         code = run_tool("textdiff", ["dir", str(tmp_path / "nodir1"), str(tmp_path / "nodir2")])
-        assert code == 0
+        assert code == 4
         captured = capsys.readouterr()
         assert "目录不存在" in captured.out
 
@@ -396,7 +396,7 @@ class TestCLISubcommands:
         d1 = tmp_path / "d1"
         d1.mkdir()
         code = run_tool("textdiff", ["dir", str(d1), str(tmp_path / "nodir2")])
-        assert code == 0
+        assert code == 4
         captured = capsys.readouterr()
         assert "目录不存在" in captured.out
 
@@ -499,7 +499,7 @@ class TestCLIJSON:
 
     def test_file_json_missing_first(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """第一个文件不存在：FILE_NOT_FOUND + field=file1。"""
-        assert run_tool("textdiff", ["file", str(tmp_path / "no1.txt"), str(tmp_path / "no2.txt"), "--json"]) == 0
+        assert run_tool("textdiff", ["file", str(tmp_path / "no1.txt"), str(tmp_path / "no2.txt"), "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -510,7 +510,7 @@ class TestCLIJSON:
         """第二个文件不存在：field=file2。"""
         f1 = tmp_path / "a.txt"
         f1.write_text("x")
-        assert run_tool("textdiff", ["file", str(f1), str(tmp_path / "no.txt"), "--json"]) == 0
+        assert run_tool("textdiff", ["file", str(f1), str(tmp_path / "no.txt"), "--json"]) == 4
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "FILE_NOT_FOUND"
         assert payload["field"] == "file2"
@@ -521,7 +521,7 @@ class TestCLIJSON:
         f2 = tmp_path / "b.dat"
         f1.write_bytes(b"bin\x00ary1")
         f2.write_bytes(b"bin\x00ary2")
-        assert run_tool("textdiff", ["file", str(f1), str(f2), "--json"]) == 0
+        assert run_tool("textdiff", ["file", str(f1), str(f2), "--json"]) == 3
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -545,7 +545,7 @@ class TestCLIJSON:
 
     def test_dir_json_missing_first(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """dir 第一个目录不存在：DIR_NOT_FOUND + field=dir1。"""
-        assert run_tool("textdiff", ["dir", str(tmp_path / "no1"), str(tmp_path / "no2"), "--json"]) == 0
+        assert run_tool("textdiff", ["dir", str(tmp_path / "no1"), str(tmp_path / "no2"), "--json"]) == 4
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "DIR_NOT_FOUND"
         assert payload["field"] == "dir1"
@@ -554,7 +554,7 @@ class TestCLIJSON:
         """dir 第二个目录不存在：field=dir2。"""
         d1 = tmp_path / "d1"
         d1.mkdir()
-        assert run_tool("textdiff", ["dir", str(d1), str(tmp_path / "no2"), "--json"]) == 0
+        assert run_tool("textdiff", ["dir", str(d1), str(tmp_path / "no2"), "--json"]) == 4
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "DIR_NOT_FOUND"
         assert payload["field"] == "dir2"

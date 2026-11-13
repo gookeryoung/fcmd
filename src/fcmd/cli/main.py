@@ -38,6 +38,7 @@ from collections.abc import Sequence
 
 from fcmd import __version__
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
+from fcmd.core.exit_codes import ExitCode
 
 __all__ = ["FcmdApp", "main"]
 
@@ -93,7 +94,7 @@ class FcmdApp:
             resolved = resolve_tool(first)
         if resolved is None:
             print_unknown_tool(first)
-            return 1
+            return int(ExitCode.USAGE)
 
         return self._run_tool(resolved, rest)
 
@@ -151,13 +152,21 @@ class FcmdApp:
             # OSError：原生动态库缺失，与 ImportError 同样友好报错
             from fcmd.console import print_error
 
-            print_error(f"加载工具 {tool_name!r} 失败: {error}")
-            return 1
+            print_error(
+                f"加载工具 {tool_name!r} 失败: {error}",
+                code="RUNTIME_ERROR",
+                hint="检查该工具的依赖是否安装（pip install fcmd[<extra>]）后重试",
+            )
+            return int(ExitCode.FAILURE)
         if tool_name not in _TOOL_MODULES and tool_name not in _TOOL_REGISTRY:
             from fcmd.console import print_error
 
-            print_error(f"工具 {tool_name!r} 无模块映射")
-            return 1
+            print_error(
+                f"工具 {tool_name!r} 无模块映射",
+                code="RUNTIME_ERROR",
+                hint="这是 fcmd 安装不完整；重装 fcmd 后重试",
+            )
+            return int(ExitCode.FAILURE)
 
         return run_tool(tool_name, argv)
 

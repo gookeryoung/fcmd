@@ -389,14 +389,14 @@ class TestCLISubcommands:
 
     def test_name_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """name 不存在目录提示。"""
-        assert run_tool("filesearch", ["name", str(tmp_path / "missing"), "*.py"]) == 0
+        assert run_tool("filesearch", ["name", str(tmp_path / "missing"), "*.py"]) == 4
         assert "目录不存在" in capsys.readouterr().out
 
     def test_name_not_directory(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """name 非目录提示。"""
         f = tmp_path / "file.txt"
         f.touch()
-        assert run_tool("filesearch", ["name", str(f), "*.py"]) == 0
+        assert run_tool("filesearch", ["name", str(f), "*.py"]) == 4
         assert "不是目录" in capsys.readouterr().out
 
     def test_content_basic(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -426,12 +426,12 @@ class TestCLISubcommands:
 
     def test_content_regex_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """content 正则错误提示。"""
-        assert run_tool("filesearch", ["content", str(tmp_path), "(*invalid"]) == 0
+        assert run_tool("filesearch", ["content", str(tmp_path), "(*invalid"]) == 3
         assert "正则表达式错误" in capsys.readouterr().out
 
     def test_content_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """content 不存在目录提示。"""
-        assert run_tool("filesearch", ["content", str(tmp_path / "missing"), "pattern"]) == 0
+        assert run_tool("filesearch", ["content", str(tmp_path / "missing"), "pattern"]) == 4
         assert "目录不存在" in capsys.readouterr().out
 
     def test_name_help_shows_examples(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -494,7 +494,7 @@ class TestJSONOutput:
 
     def test_name_json_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """目录不存在时 stderr 输出可解析错误信封，stdout 为空。"""
-        assert run_tool("filesearch", ["name", str(tmp_path / "missing"), "*.py", "--json"]) == 0
+        assert run_tool("filesearch", ["name", str(tmp_path / "missing"), "*.py", "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -547,7 +547,7 @@ class TestJSONOutput:
 
     def test_content_json_regex_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """正则错误输出 INVALID_REGEX 并带修正提示。"""
-        assert run_tool("filesearch", ["content", str(tmp_path), "(*bad", "--json"]) == 0
+        assert run_tool("filesearch", ["content", str(tmp_path), "(*bad", "--json"]) == 3
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -557,7 +557,7 @@ class TestJSONOutput:
 
     def test_content_json_dir_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """content 目录不存在：DIR_NOT_FOUND。"""
-        assert run_tool("filesearch", ["content", str(tmp_path / "missing"), "x", "--json"]) == 0
+        assert run_tool("filesearch", ["content", str(tmp_path / "missing"), "x", "--json"]) == 4
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "DIR_NOT_FOUND"
         assert payload["field"] == "directory"

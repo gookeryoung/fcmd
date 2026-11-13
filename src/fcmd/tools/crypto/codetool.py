@@ -27,7 +27,11 @@ def codetool_base64(text: str, decode: bool = False) -> None:
         try:
             print(codec.decode_base64(text))
         except (binascii.Error, UnicodeDecodeError) as exc:
-            print_error(f"Base64 解码失败: {exc}")
+            print_error(
+                f"Base64 解码失败: {exc}",
+                code="INVALID_ARGUMENT",
+                hint="确认输入是合法的 Base64 文本（长度与字符集正确）",
+            )
     else:
         print(codec.encode_base64(text))
 
@@ -61,7 +65,11 @@ def codetool_hex(text: str, decode: bool = False) -> None:
         try:
             print(codec.decode_hex(text))
         except (ValueError, UnicodeDecodeError) as exc:
-            print_error(f"Hex 解码失败: {exc}")
+            print_error(
+                f"Hex 解码失败: {exc}",
+                code="INVALID_ARGUMENT",
+                hint="确认输入是合法的十六进制文本（偶数个 0-9a-f 字符）",
+            )
     else:
         print(codec.encode_hex(text))
 

@@ -768,7 +768,7 @@ class TestCli:
         """未知字体输出错误。"""
         code = run_tool("fonttool", ["install", "--font", "nope"])
         out = capsys.readouterr().out
-        assert code == 0
+        assert code == 3
         assert "未知字体" in out
 
     def test_install_success_output(
@@ -806,7 +806,7 @@ class TestCli:
         """未知字体输出错误。"""
         code = run_tool("fonttool", ["remove", "--font", "nope"])
         out = capsys.readouterr().out
-        assert code == 0
+        assert code == 3
         assert "未知字体" in out
 
     def test_remove_success_output(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fcmd as fx
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import text as textinfra
 
 __all__: list[str] = []
@@ -28,54 +28,43 @@ __all__: list[str] = []
         "fcmd textdiff file a.txt b.txt --json",
     ],
 )
-def file(  # noqa: PLR0911 - 两个文件分别校验，错误分支提前返回
-    file1: Path, file2: Path, context: int = 3, color: bool = False, json_output: bool = False
-) -> None:
+def file(file1: Path, file2: Path, context: int = 3, color: bool = False, json_output: bool = False) -> int | None:
     """输出两个文本文件的 unified diff。"""
     if not file1.exists():
-        if json_output:
-            emit_error(
-                "textdiff",
-                "file",
-                code="FILE_NOT_FOUND",
-                message=f"文件不存在: {file1}",
-                field="file1",
-                expected="已存在的文件",
-                hint="确认第一个文件路径存在",
-            )
-            return
-        print(f"文件不存在: {file1}")
-        return
+        return report_error(
+            "textdiff",
+            "file",
+            code="FILE_NOT_FOUND",
+            message=f"文件不存在: {file1}",
+            field="file1",
+            expected="已存在的文件",
+            hint="确认第一个文件路径存在",
+            json_output=json_output,
+        )
     if not file2.exists():
-        if json_output:
-            emit_error(
-                "textdiff",
-                "file",
-                code="FILE_NOT_FOUND",
-                message=f"文件不存在: {file2}",
-                field="file2",
-                expected="已存在的文件",
-                hint="确认第二个文件路径存在",
-            )
-            return
-        print(f"文件不存在: {file2}")
-        return
+        return report_error(
+            "textdiff",
+            "file",
+            code="FILE_NOT_FOUND",
+            message=f"文件不存在: {file2}",
+            field="file2",
+            expected="已存在的文件",
+            hint="确认第二个文件路径存在",
+            json_output=json_output,
+        )
     try:
         result = textinfra.compare_files_result(file1, file2, context)
     except ValueError as exc:
-        if json_output:
-            emit_error(
-                "textdiff",
-                "file",
-                code="NOT_TEXT",
-                message=f"错误: {exc}",
-                field="file1",
-                expected="UTF-8 文本文件",
-                hint="确认两个文件都是文本文件（二进制文件不支持比较）",
-            )
-            return
-        print(f"错误: {exc}")
-        return
+        return report_error(
+            "textdiff",
+            "file",
+            code="NOT_TEXT",
+            message=f"错误: {exc}",
+            field="file1",
+            expected="UTF-8 文本文件",
+            hint="确认两个文件都是文本文件（二进制文件不支持比较）",
+            json_output=json_output,
+        )
     if json_output:
         emit_result("textdiff", "file", result)
         return
@@ -105,36 +94,30 @@ def file(  # noqa: PLR0911 - 两个文件分别校验，错误分支提前返回
         "fcmd textdiff dir src/old src/new --json",
     ],
 )
-def dir(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = True, json_output: bool = False) -> None:
+def dir(dir1: Path, dir2: Path, pattern: str = "*", recursive: bool = True, json_output: bool = False) -> int | None:
     """列出两个目录中差异文件。"""
     if not dir1.is_dir():
-        if json_output:
-            emit_error(
-                "textdiff",
-                "dir",
-                code="DIR_NOT_FOUND",
-                message=f"目录不存在: {dir1}",
-                field="dir1",
-                expected="已存在的目录",
-                hint="确认第一个目录路径存在",
-            )
-            return
-        print(f"目录不存在: {dir1}")
-        return
+        return report_error(
+            "textdiff",
+            "dir",
+            code="DIR_NOT_FOUND",
+            message=f"目录不存在: {dir1}",
+            field="dir1",
+            expected="已存在的目录",
+            hint="确认第一个目录路径存在",
+            json_output=json_output,
+        )
     if not dir2.is_dir():
-        if json_output:
-            emit_error(
-                "textdiff",
-                "dir",
-                code="DIR_NOT_FOUND",
-                message=f"目录不存在: {dir2}",
-                field="dir2",
-                expected="已存在的目录",
-                hint="确认第二个目录路径存在",
-            )
-            return
-        print(f"目录不存在: {dir2}")
-        return
+        return report_error(
+            "textdiff",
+            "dir",
+            code="DIR_NOT_FOUND",
+            message=f"目录不存在: {dir2}",
+            field="dir2",
+            expected="已存在的目录",
+            hint="确认第二个目录路径存在",
+            json_output=json_output,
+        )
     result = textinfra.compare_directories_result(dir1, dir2, pattern, recursive)
     if json_output:
         emit_result("textdiff", "dir", result)

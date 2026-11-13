@@ -1060,24 +1060,24 @@ def _fail_cmd() -> list[str]:
 
 
 def test_run_tool_unknown_tool() -> None:
-    """未注册工具返回 FAILURE。"""
+    """未注册工具返回 USAGE。"""
     code = run_tool("nope", [])
-    assert code == ToolExitCode.FAILURE.value
+    assert code == ToolExitCode.USAGE.value
 
 
 def test_run_tool_unknown_subcommand() -> None:
-    """未注册子命令返回 FAILURE 并列子命令。"""
+    """未注册子命令返回 USAGE 并列子命令。"""
 
     @tool("demo", subcommand="a")
     def a() -> None:
         pass
 
     code = run_tool("demo", ["b"])
-    assert code == ToolExitCode.FAILURE.value
+    assert code == ToolExitCode.USAGE.value
 
 
 def test_run_tool_no_argv_multi_subcommand_lists() -> None:
-    """多 subcommand 工具无 argv 时列出子命令并返回 SUCCESS。"""
+    """多 subcommand 工具无 argv 时列出子命令并返回 USAGE。"""
 
     @tool("demo", subcommand="a")
     def a() -> None:
@@ -1088,7 +1088,7 @@ def test_run_tool_no_argv_multi_subcommand_lists() -> None:
         pass
 
     code = run_tool("demo", [])
-    assert code == ToolExitCode.SUCCESS.value
+    assert code == ToolExitCode.USAGE.value
 
 
 def test_run_tool_cmd_success() -> None:
@@ -1205,14 +1205,14 @@ def test_run_tool_single_command_no_argv() -> None:
 
 
 def test_run_tool_single_command_with_argv() -> None:
-    """单命令工具透传 argv 给 parser，无法识别的参数返回 FAILURE。"""
+    """单命令工具透传 argv 给 parser，无法识别的参数返回 USAGE。"""
 
     @tool("solo", cmd=_echo_cmd())
     def s() -> None:
         pass
 
     code = run_tool("solo", ["unknown"])
-    assert code == ToolExitCode.FAILURE.value
+    assert code == ToolExitCode.USAGE.value
 
 
 def test_run_tool_single_command_with_options() -> None:
@@ -1372,7 +1372,7 @@ def test_run_tool_keyboard_interrupt(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    """FcmdError（非 TaskFailedError）返回 FAILURE。"""
+    """FcmdError（参数类，如 CycleError）返回 INVALID_INPUT。"""
     from fcmd.core import _tool_exec
     from fcmd.core.errors import CycleError
 
@@ -1386,7 +1386,7 @@ def test_run_tool_fcmd_error(monkeypatch: pytest.MonkeyPatch) -> None:
         pass
 
     code = run_tool("demo", ["a"])
-    assert code == ToolExitCode.FAILURE.value
+    assert code == ToolExitCode.INVALID_INPUT.value
 
 
 def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1404,7 +1404,7 @@ def test_run_tool_fcmd_error_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
         pass
 
     code = run_tool("demo", ["a", "--quiet"])
-    assert code == ToolExitCode.FAILURE.value
+    assert code == ToolExitCode.INVALID_INPUT.value
 
 
 def test_run_tool_task_failed_quiet(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1674,14 +1674,14 @@ def test_build_tool_graph_target_with_deps() -> None:
 # P15b: _print_subcommands 无可见子命令分支
 # ---------------------------------------------------------------------- #
 def test_run_tool_no_visible_subcommands(capsys: pytest.CaptureFixture[str]) -> None:
-    """工具仅有 hidden 子命令且无 argv 时打印"无可见子命令"并返回 SUCCESS。"""
+    """工具仅有 hidden 子命令且无 argv 时打印"无可见子命令"并返回 USAGE。"""
 
     @tool("demo", subcommand="secret", hidden=True, cmd=_echo_cmd())
     def s() -> None:
         pass
 
     code = run_tool("demo", [])
-    assert code == ToolExitCode.SUCCESS.value
+    assert code == ToolExitCode.USAGE.value
     captured = capsys.readouterr()
     assert "无可见子命令" in captured.out
 

@@ -731,7 +731,7 @@ class TestCli:
 
     def test_list_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         code = run_tool("reshack", ["list", str(tmp_path / "missing.exe")])
-        assert code == 0
+        assert code == 4
         assert "错误:" in capsys.readouterr().out
 
     def test_extract(self, pe: tuple[PEFile, FakePE, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -762,7 +762,7 @@ class TestCli:
             "reshack",
             ["extract", str(path), "3", "9", "--output", str(tmp_path / "x.ico")],
         )
-        assert code == 0
+        assert code == 4
         assert "未找到资源" in capsys.readouterr().out
 
     def test_replace(self, pe: tuple[PEFile, FakePE, Path], tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -781,7 +781,7 @@ class TestCli:
     ) -> None:
         _wrapper, _fake, path = pe
         code = run_tool("reshack", ["replace", str(path), "3", "1", str(tmp_path / "missing.bin")])
-        assert code == 0
+        assert code == 4
         assert "读取新资源数据失败" in capsys.readouterr().out
 
     def test_export_all(
@@ -803,7 +803,7 @@ class TestCli:
 
     def test_extract_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         code = run_tool("reshack", ["extract", str(tmp_path / "missing.exe"), "3", "1"])
-        assert code == 0
+        assert code == 4
         assert "错误:" in capsys.readouterr().out
 
     def test_replace_error(
@@ -813,10 +813,10 @@ class TestCli:
         data_file = tmp_path / "huge.bin"
         data_file.write_bytes(b"x" * 100)
         code = run_tool("reshack", ["replace", str(path), "3", "1", str(data_file)])
-        assert code == 0
+        assert code == 1
         assert "无法安全扩容" in capsys.readouterr().out
 
     def test_export_all_error(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         code = run_tool("reshack", ["export-all", str(tmp_path / "missing.exe")])
-        assert code == 0
+        assert code == 4
         assert "错误:" in capsys.readouterr().out

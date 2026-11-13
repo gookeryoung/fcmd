@@ -57,8 +57,8 @@ class TestHashfileFile:
     def test_file_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         f = tmp_path / "nonexistent.txt"
         code, out = _run_and_capture("hashfile", ["f", str(f)], capsys)
-        # 文件不存在不视为失败（工具内 print 提示后 return）
-        assert code == 0
+        # 目标不存在：NOT_FOUND（4）
+        assert code == 4
         assert "文件不存在" in out
 
     def test_large_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -102,19 +102,19 @@ class TestHashfileDir:
 
     def test_directory_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("hashfile", ["d", str(tmp_path / "missing")], capsys)
-        assert code == 0
+        assert code == 4
         assert "目录不存在" in out
 
     def test_file_invalid_algorithm_keeps_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """默认模式保留既有行为：非法算法抛 ValueError（框架按失败处理）。"""
+        """默认模式非法算法按 INVALID_INPUT 退出（3）。"""
         f = tmp_path / "a.txt"
         f.write_text("x", encoding="utf-8")
-        assert run_tool("hashfile", ["f", str(f), "--algorithm", "nope"]) == 1
+        assert run_tool("hashfile", ["f", str(f), "--algorithm", "nope"]) == 3
         capsys.readouterr()
 
     def test_dir_invalid_algorithm_keeps_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """d 默认模式同样保留 ValueError 行为。"""
-        assert run_tool("hashfile", ["d", str(tmp_path), "--algorithm", "nope"]) == 1
+        """d 默认模式同样按 INVALID_INPUT 退出（3）。"""
+        assert run_tool("hashfile", ["d", str(tmp_path), "--algorithm", "nope"]) == 3
         capsys.readouterr()
 
 
@@ -139,7 +139,7 @@ class TestHashfileJSON:
     def test_file_json_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """f --json 文件不存在：stdout 为空，stderr 为 FILE_NOT_FOUND 信封。"""
         f = tmp_path / "missing.txt"
-        assert run_tool("hashfile", ["f", str(f), "--json"]) == 0
+        assert run_tool("hashfile", ["f", str(f), "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -151,7 +151,7 @@ class TestHashfileJSON:
         """f --json 非法算法：结构化错误 + 期望取值列表。"""
         f = tmp_path / "a.txt"
         f.write_text("hello", encoding="utf-8")
-        assert run_tool("hashfile", ["f", str(f), "--algorithm", "nope", "--json"]) == 0
+        assert run_tool("hashfile", ["f", str(f), "--algorithm", "nope", "--json"]) == 3
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -171,14 +171,14 @@ class TestHashfileJSON:
 
     def test_dir_json_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """d --json 目录不存在：DIR_NOT_FOUND。"""
-        assert run_tool("hashfile", ["d", str(tmp_path / "missing"), "--json"]) == 0
+        assert run_tool("hashfile", ["d", str(tmp_path / "missing"), "--json"]) == 4
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "DIR_NOT_FOUND"
         assert payload["field"] == "directory"
 
     def test_dir_json_invalid_algorithm(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """d --json 非法算法：INVALID_ALGORITHM。"""
-        assert run_tool("hashfile", ["d", str(tmp_path), "--algorithm", "nope", "--json"]) == 0
+        assert run_tool("hashfile", ["d", str(tmp_path), "--algorithm", "nope", "--json"]) == 3
         assert json.loads(capsys.readouterr().err)["code"] == "INVALID_ALGORITHM"
 
 
@@ -228,16 +228,16 @@ class TestHashfileDupes:
 
     def test_human_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("hashfile", ["dupes", str(tmp_path / "missing")], capsys)
-        assert code == 0
+        assert code == 4
         assert "目录不存在" in out
 
     def test_human_invalid_algorithm_keeps_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """默认模式沿用既有行为：非法算法抛 ValueError。"""
-        assert run_tool("hashfile", ["dupes", str(tmp_path), "--algorithm", "nope"]) == 1
+        """默认模式非法算法按 INVALID_INPUT 退出（3）。"""
+        assert run_tool("hashfile", ["dupes", str(tmp_path), "--algorithm", "nope"]) == 3
         capsys.readouterr()
 
     def test_human_negative_min_size_keeps_exception(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        assert run_tool("hashfile", ["dupes", str(tmp_path), "--min-size", "-1"]) == 1
+        assert run_tool("hashfile", ["dupes", str(tmp_path), "--min-size", "-1"]) == 3
         capsys.readouterr()
 
     def test_json_payload(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -275,7 +275,7 @@ class TestHashfileDupes:
         assert data["truncated"] is True
 
     def test_json_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        assert run_tool("hashfile", ["dupes", str(tmp_path / "missing"), "--json"]) == 0
+        assert run_tool("hashfile", ["dupes", str(tmp_path / "missing"), "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -283,13 +283,13 @@ class TestHashfileDupes:
         assert payload["field"] == "directory"
 
     def test_json_invalid_algorithm(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        assert run_tool("hashfile", ["dupes", str(tmp_path), "--algorithm", "nope", "--json"]) == 0
+        assert run_tool("hashfile", ["dupes", str(tmp_path), "--algorithm", "nope", "--json"]) == 3
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "INVALID_ALGORITHM"
         assert "sha256" in payload["expected"]
 
     def test_json_negative_min_size(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        assert run_tool("hashfile", ["dupes", str(tmp_path), "--min-size", "-1", "--json"]) == 0
+        assert run_tool("hashfile", ["dupes", str(tmp_path), "--min-size", "-1", "--json"]) == 3
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "INVALID_MIN_SIZE"
         assert payload["field"] == "min_size"

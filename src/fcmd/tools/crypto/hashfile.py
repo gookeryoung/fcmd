@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import fcmd as fx
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import dupes, hashing
 from fcmd.infras.system import format_bytes
 
@@ -29,37 +29,32 @@ from fcmd.infras.system import format_bytes
         "fcmd hashfile f README.md --json",
     ],
 )
-def hashfile_f(path: Path, algorithm: str = "sha256", json_output: bool = False) -> None:
+def hashfile_f(path: Path, algorithm: str = "sha256", json_output: bool = False) -> int | None:
     """计算并打印单个文件的哈希值。"""
     try:
         hashing.ensure_algorithm(algorithm)
     except ValueError as exc:
-        if json_output:
-            emit_error(
-                "hashfile",
-                "f",
-                code="INVALID_ALGORITHM",
-                message=str(exc),
-                field="algorithm",
-                expected="、".join(sorted(hashing.FILE_ALGORITHMS)),
-                hint="从 expected 中选一个算法后重试",
-            )
-            return
-        raise
+        return report_error(
+            "hashfile",
+            "f",
+            code="INVALID_ALGORITHM",
+            message=str(exc),
+            field="algorithm",
+            expected="、".join(sorted(hashing.FILE_ALGORITHMS)),
+            hint="从 expected 中选一个算法后重试",
+            json_output=json_output,
+        )
     if not path.is_file():
-        if json_output:
-            emit_error(
-                "hashfile",
-                "f",
-                code="FILE_NOT_FOUND",
-                message=f"文件不存在: {path}",
-                field="path",
-                expected="已存在的文件",
-                hint="确认路径存在且是文件",
-            )
-            return
-        print(f"文件不存在: {path}")
-        return
+        return report_error(
+            "hashfile",
+            "f",
+            code="FILE_NOT_FOUND",
+            message=f"文件不存在: {path}",
+            field="path",
+            expected="已存在的文件",
+            hint="确认路径存在且是文件",
+            json_output=json_output,
+        )
     digest = hashing.compute_file_hash(path, algorithm)
     if json_output:
         emit_result("hashfile", "f", {"algorithm": algorithm, "digest": digest, "path": str(path)})
@@ -82,7 +77,7 @@ def hashfile_f(path: Path, algorithm: str = "sha256", json_output: bool = False)
         "fcmd hashfile d src --json",
     ],
 )
-def hashfile_d(directory: Path, algorithm: str = "sha256", json_output: bool = False) -> None:
+def hashfile_d(directory: Path, algorithm: str = "sha256", json_output: bool = False) -> int | None:
     """计算目录下所有文件的哈希值并打印。
 
     跳过常见忽略目录（.git/__pycache__ 等）与 .pyc/.pyo 文件。
@@ -90,32 +85,27 @@ def hashfile_d(directory: Path, algorithm: str = "sha256", json_output: bool = F
     try:
         hashing.ensure_algorithm(algorithm)
     except ValueError as exc:
-        if json_output:
-            emit_error(
-                "hashfile",
-                "d",
-                code="INVALID_ALGORITHM",
-                message=str(exc),
-                field="algorithm",
-                expected="、".join(sorted(hashing.FILE_ALGORITHMS)),
-                hint="从 expected 中选一个算法后重试",
-            )
-            return
-        raise
+        return report_error(
+            "hashfile",
+            "d",
+            code="INVALID_ALGORITHM",
+            message=str(exc),
+            field="algorithm",
+            expected="、".join(sorted(hashing.FILE_ALGORITHMS)),
+            hint="从 expected 中选一个算法后重试",
+            json_output=json_output,
+        )
     if not directory.is_dir():
-        if json_output:
-            emit_error(
-                "hashfile",
-                "d",
-                code="DIR_NOT_FOUND",
-                message=f"目录不存在: {directory}",
-                field="directory",
-                expected="已存在的目录",
-                hint="确认路径存在且是目录",
-            )
-            return
-        print(f"目录不存在: {directory}")
-        return
+        return report_error(
+            "hashfile",
+            "d",
+            code="DIR_NOT_FOUND",
+            message=f"目录不存在: {directory}",
+            field="directory",
+            expected="已存在的目录",
+            hint="确认路径存在且是目录",
+            json_output=json_output,
+        )
     entries = [
         {"path": str(file_path), "digest": hashing.compute_file_hash(file_path, algorithm)}
         for file_path in hashing.iter_directory_files(directory)
@@ -151,7 +141,7 @@ def hashfile_dupes(
     min_size: int = 1,
     limit: int = 0,
     json_output: bool = False,
-) -> None:
+) -> int | None:
     """查找目录下内容重复的文件（大小预筛 + 哈希确认）。
 
     每组第一项为默认保留项，其余为可回收副本；只读，不删除也不移动文件。
@@ -159,45 +149,38 @@ def hashfile_dupes(
     try:
         hashing.ensure_algorithm(algorithm)
     except ValueError as exc:
-        if json_output:
-            emit_error(
-                "hashfile",
-                "dupes",
-                code="INVALID_ALGORITHM",
-                message=str(exc),
-                field="algorithm",
-                expected="、".join(sorted(hashing.FILE_ALGORITHMS)),
-                hint="从 expected 中选一个算法后重试",
-            )
-            return
-        raise
+        return report_error(
+            "hashfile",
+            "dupes",
+            code="INVALID_ALGORITHM",
+            message=str(exc),
+            field="algorithm",
+            expected="、".join(sorted(hashing.FILE_ALGORITHMS)),
+            hint="从 expected 中选一个算法后重试",
+            json_output=json_output,
+        )
     if min_size < 0:
-        if json_output:
-            emit_error(
-                "hashfile",
-                "dupes",
-                code="INVALID_MIN_SIZE",
-                message="最小大小不能为负数",
-                field="min_size",
-                expected=">= 0 的整数字节数",
-                hint="改用 0 或正整数字节数；0 表示包含空文件",
-            )
-            return
-        raise ValueError("最小大小不能为负数")
+        return report_error(
+            "hashfile",
+            "dupes",
+            code="INVALID_MIN_SIZE",
+            message="最小大小不能为负数",
+            field="min_size",
+            expected=">= 0 的整数字节数",
+            hint="改用 0 或正整数字节数；0 表示包含空文件",
+            json_output=json_output,
+        )
     if not directory.is_dir():
-        if json_output:
-            emit_error(
-                "hashfile",
-                "dupes",
-                code="DIR_NOT_FOUND",
-                message=f"目录不存在: {directory}",
-                field="directory",
-                expected="已存在的目录",
-                hint="确认路径存在且是目录",
-            )
-            return
-        print(f"目录不存在: {directory}")
-        return
+        return report_error(
+            "hashfile",
+            "dupes",
+            code="DIR_NOT_FOUND",
+            message=f"目录不存在: {directory}",
+            field="directory",
+            expected="已存在的目录",
+            hint="确认路径存在且是目录",
+            json_output=json_output,
+        )
     report = dupes.find_duplicates([directory], algorithm=algorithm, min_size=min_size)
     if json_output:
         data = dupes.report_to_mapping(report, limit=limit)

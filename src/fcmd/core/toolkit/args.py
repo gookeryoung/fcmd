@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import argparse
-import enum
 import inspect
 import types
 import typing
@@ -32,15 +31,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from ..exit_codes import ExitCode
 from ..task import RetryPolicy
 
-
-class ToolExitCode(enum.IntEnum):
-    """工具执行退出码。"""
-
-    SUCCESS = 0
-    FAILURE = 1
-    INTERRUPTED = 130  # 与 POSIX 信号中断一致
+# 兼容别名：退出码契约统一由 :mod:`fcmd.core.exit_codes` 定义（P1 起全路径生效）。
+# 旧代码里的 ``ToolExitCode.FAILURE`` 等写法继续可用，但不再有独立语义。
+ToolExitCode = ExitCode
 
 
 def _noop() -> None:

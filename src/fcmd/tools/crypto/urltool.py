@@ -21,7 +21,7 @@ def urltool_parse(url: str) -> None:
     try:
         parts = codec.parse_url(url)
     except ValueError as error:
-        print_error(str(error))
+        print_error(str(error), code="INVALID_ARGUMENT", hint="确认 URL 含 scheme://host 且格式合法")
         return
     for key, value in parts.items():
         print(f"{key}: {value}")
@@ -41,7 +41,7 @@ def urltool_query(url: str, key: str) -> None:
     try:
         value = codec.get_query_param(url, key)
     except ValueError as error:
-        print_error(str(error))
+        print_error(str(error), code="INVALID_ARGUMENT", hint="确认 URL 含 scheme://host 且格式合法")
         return
     if value is None:
         print(f"参数不存在: {key}")
@@ -64,7 +64,7 @@ def urltool_addquery(url: str, key: str, value: str) -> None:
     try:
         result = codec.add_query_param(url, key, value)
     except ValueError as error:
-        print_error(str(error))
+        print_error(str(error), code="INVALID_ARGUMENT", hint="确认 URL 含 scheme://host 且格式合法")
         return
     print(result)
 
@@ -80,6 +80,6 @@ def urltool_baseurl(url: str) -> None:
     try:
         result = codec.get_base_url(url)
     except ValueError as error:
-        print_error(str(error))
+        print_error(str(error), code="INVALID_ARGUMENT", hint="确认 URL 含 scheme://host 且格式合法")
         return
     print(result)

@@ -462,7 +462,7 @@ class TestCLISubcommands:
     def test_show_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """show 文件不存在提示。"""
         code = run_tool("csvtool", ["show", str(tmp_path / "no.csv")])
-        assert code == 0
+        assert code == 4
         assert "文件不存在" in capsys.readouterr().out
 
     def test_to_json(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -484,7 +484,7 @@ class TestCLISubcommands:
     def test_to_json_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """to-json 文件不存在提示。"""
         code = run_tool("csvtool", ["to-json", str(tmp_path / "no.csv")])
-        assert code == 0
+        assert code == 4
         assert "文件不存在" in capsys.readouterr().out
 
     def test_from_json_default_output(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -514,7 +514,7 @@ class TestCLISubcommands:
         path = tmp_path / "a.json"
         _write_json(path, {"k": "v"})
         code = run_tool("csvtool", ["from-json", str(path)])
-        assert code == 0
+        assert code == 3
         assert "顶层必须是数组" in capsys.readouterr().out
 
     def test_select_print(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -548,7 +548,7 @@ class TestCLISubcommands:
         path = tmp_path / "a.csv"
         _write_csv_bytes(path, "a,b\n1,2\n")
         code = run_tool("csvtool", ["select", str(path), "x"])
-        assert code == 0
+        assert code == 3
         assert "列不存在" in capsys.readouterr().out
 
     def test_select_empty_csv(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -562,7 +562,7 @@ class TestCLISubcommands:
     def test_select_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """select 文件不存在提示。"""
         code = run_tool("csvtool", ["select", str(tmp_path / "no.csv"), "x"])
-        assert code == 0
+        assert code == 4
         assert "文件不存在" in capsys.readouterr().out
 
     def test_merge_union_print(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -614,7 +614,7 @@ class TestCLISubcommands:
         a = tmp_path / "a.csv"
         _write_csv_bytes(a, "x\n1\n")
         code = run_tool("csvtool", ["merge", str(a)])
-        assert code == 0
+        assert code == 3
         assert "合并至少需要 2" in capsys.readouterr().out
 
     def test_merge_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -622,7 +622,7 @@ class TestCLISubcommands:
         a = tmp_path / "a.csv"
         _write_csv_bytes(a, "x\n1\n")
         code = run_tool("csvtool", ["merge", str(a), str(tmp_path / "no.csv")])
-        assert code == 0
+        assert code == 4
         assert "文件不存在" in capsys.readouterr().out
 
 
@@ -667,7 +667,7 @@ class TestShowJSONOutput:
 
     def test_show_json_file_not_found(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """文件不存在：stdout 为空，stderr 为 FILE_NOT_FOUND 信封。"""
-        assert run_tool("csvtool", ["show", str(tmp_path / "no.csv"), "--json"]) == 0
+        assert run_tool("csvtool", ["show", str(tmp_path / "no.csv"), "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)

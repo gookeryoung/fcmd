@@ -61,15 +61,16 @@ def test_emit_result(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_emit_error_minimal(capsys: pytest.CaptureFixture[str]) -> None:
     """错误信封必填字段齐全，可选字段缺省时不出现。"""
-    emit_error("hashfile", "f", code="FILE_NOT_FOUND", message="文件不存在: a.txt")
+    code = emit_error("hashfile", "f", code="FILE_NOT_FOUND", message="文件不存在: a.txt")
     captured = capsys.readouterr()
     assert captured.out == ""
     payload = json.loads(captured.err)
     assert payload["schema"] == ERROR_SCHEMA
     assert payload["ok"] is False
-    assert payload["kind"] == "input"
+    assert payload["kind"] == "not_found"
     assert payload["code"] == "FILE_NOT_FOUND"
     assert payload["message"] == "文件不存在: a.txt"
+    assert payload["exit_code"] == code
     assert "field" not in payload
     assert "expected" not in payload
     assert "hint" not in payload

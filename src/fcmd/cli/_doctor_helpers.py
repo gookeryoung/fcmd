@@ -132,7 +132,10 @@ def doctor_result(checks: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def render_doctor_report(checks: list[dict[str, Any]]) -> int:
-    """渲染诊断检查表格，返回退出码（0=全通过 / 1=有失败）。
+    """渲染诊断检查表格，返回退出码（0=全通过 / 5=检查不通过）。
+
+    5 是「结论为不通过」（``ExitCode.CHECK_FAILED``），不是运行错误：
+    表格已给出每项的 ``修复`` 建议，末尾再给一句修正提示，便于人直接照做。
 
     Parameters
     ----------
@@ -140,6 +143,7 @@ def render_doctor_report(checks: list[dict[str, Any]]) -> int:
         :func:`collect_doctor_checks` 返回的检查项列表
     """
     from fcmd.console import Table
+    from fcmd.core.exit_codes import ExitCode
 
     result = doctor_result(checks)
     console = get_console()
@@ -162,4 +166,7 @@ def render_doctor_report(checks: list[dict[str, Any]]) -> int:
         console.print(f"\n[green]诊断结果: {passed}/{total} 全部通过[/green]")
         return 0
     console.print(f"\n[red]诊断结果: {passed}/{total} 通过，{result['failed']} 项失败[/red]")
-    return 1
+    console.print(
+        "[yellow]提示:[/yellow] 按上表每项的「修复」建议处理后，重新运行 fcmd doctor 复查",
+    )
+    return int(ExitCode.CHECK_FAILED)

@@ -34,12 +34,12 @@ class TestHex2Rgb:
 
     def test_invalid_length_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("colortool", ["hex2rgb", "#fff"], capsys)
-        assert code == 0
+        assert code == 3
         assert "HEX 颜色须为 6 位" in out
 
     def test_invalid_chars_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("colortool", ["hex2rgb", "#gg5733"], capsys)
-        assert code == 0
+        assert code == 3
         assert "HEX 颜色含非十六进制字符" in out
 
 
@@ -59,7 +59,7 @@ class TestRgb2Hex:
 
     def test_out_of_range_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("colortool", ["rgb2hex", "256", "0", "0"], capsys)
-        assert code == 0
+        assert code == 3
         assert "超出 0-255" in out
 
 
@@ -93,7 +93,7 @@ class TestColorRoundTrip:
 
     def test_hsl2rgb_out_of_range(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("colortool", ["hsl2rgb", "400", "50", "50"], capsys)
-        assert code == 0
+        assert code == 3
         assert "须在 0-360" in out
 
 
@@ -148,8 +148,8 @@ class TestColoraideConversion:
     def test_missing_coloraide_prints_hint(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """缺库时打印 extra 安装提示，退出码仍为 0。"""
+        """缺库时打印 extra 安装提示，按运行期失败退出（1）。"""
         monkeypatch.setattr(textinfra, "_require_coloraide", lambda: None)
         code, out = _run_and_capture("colortool", ["hex2rgb", "#ff5733"], capsys)
-        assert code == 0
+        assert code == 1
         assert "pip install fcmd[color]" in out

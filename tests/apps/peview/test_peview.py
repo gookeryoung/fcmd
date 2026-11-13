@@ -253,7 +253,7 @@ class TestPeviewJson:
 
     def test_missing_file_json_envelope(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """--json 下文件不存在：stdout 为空，stderr 为错误信封。"""
-        assert run_tool("peview", ["info", str(tmp_path / "missing.exe"), "--json"]) == 0
+        assert run_tool("peview", ["info", str(tmp_path / "missing.exe"), "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -265,7 +265,7 @@ class TestPeviewJson:
         """--json 下非 PE 文件：NOT_PE_FILE。"""
         path = tmp_path / "plain.bin"
         path.write_bytes(b"not a pe")
-        assert run_tool("peview", ["sections", str(path), "--json"]) == 0
+        assert run_tool("peview", ["sections", str(path), "--json"]) == 3
         payload = json.loads(capsys.readouterr().err)
         assert payload["code"] == "NOT_PE_FILE"
         assert payload["field"] == "file"
@@ -275,14 +275,14 @@ class TestPeviewJson:
         """imports --json 加载失败时只写错误信封。"""
         path = tmp_path / "plain.bin"
         path.write_bytes(b"not a pe")
-        assert run_tool("peview", ["imports", str(path), "--json"]) == 0
+        assert run_tool("peview", ["imports", str(path), "--json"]) == 3
         captured = capsys.readouterr()
         assert captured.out == ""
         assert json.loads(captured.err)["code"] == "NOT_PE_FILE"
 
     def test_check_json_missing_file(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """check --json 文件不存在时只写错误信封。"""
-        assert run_tool("peview", ["check", str(tmp_path / "missing.exe"), "--json"]) == 0
+        assert run_tool("peview", ["check", str(tmp_path / "missing.exe"), "--json"]) == 4
         captured = capsys.readouterr()
         assert captured.out == ""
         assert json.loads(captured.err)["code"] == "FILE_NOT_FOUND"

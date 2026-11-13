@@ -287,6 +287,19 @@ def resolve_fonts(ids: Sequence[str] | None = None) -> list[FontSpec]:
     return specs
 
 
+def _report_font_error(exc: FontToolError) -> None:
+    """呈现字体工具错误：字体名非法 → 3，其余（下载/校验/写入）→ 1。"""
+    message = str(exc)
+    if message.startswith(("未知字体", "未指定有效字体", "请用 --font")):
+        print_error(message, code="INVALID_ARGUMENT", hint="运行 fcmd fonttool list 查看可用字体名")
+        return
+    print_error(
+        message,
+        code="RUNTIME_ERROR",
+        hint="检查网络与目标目录权限后重试；本地文件内容不一致时加 --force 覆盖",
+    )
+
+
 def format_size(size: int) -> str:
     """把字节数格式化为 ``N B`` / ``N.N KB`` / ``N.N MB``。"""
     if size < 1024:
@@ -828,7 +841,7 @@ def install_cmd(
         specs = resolve_fonts(font)
         report = install_fonts(specs, font_dir=font_dir, force=force, plan=plan)
     except FontToolError as exc:
-        print_error(str(exc))
+        _report_font_error(exc)
         return
     labels = {"installed": "已安装", "skipped": "已是最新", "planned": "计划安装"}
     for outcome in report.outcomes:
@@ -866,7 +879,7 @@ def remove_cmd(
     try:
         report = remove_fonts(font, all_managed=all_managed, font_dir=font_dir, plan=plan)
     except FontToolError as exc:
-        print_error(str(exc))
+        _report_font_error(exc)
         return
     labels = {"removed": "已移除", "planned": "计划移除", "missing": "文件不存在"}
     if not report.outcomes:

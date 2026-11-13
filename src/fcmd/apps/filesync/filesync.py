@@ -40,7 +40,7 @@ from fcmd.apps.filesync._core import (
     parse_filter_text,
 )
 from fcmd.console import print_error
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 
 __all__ = ["compare_command", "sync_command"]
 
@@ -63,23 +63,21 @@ def _build_options(compare: str, include: str, exclude: str, skip_hidden: bool) 
 
 
 def _emit_root_error(code: str, field: str, message: str, subcommand: str, json_output: bool) -> bool:
-    """输出目录校验错误；``--json`` 时走错误信封，默认走既有错误文本。"""
-    if json_output:
-        if code == "DIR_NOT_FOUND":
-            expected, hint = "已存在的目录", "确认目录路径存在"
-        else:
-            expected, hint = "与左侧不同的目录", "换一个不同的目录作为右侧"
-        emit_error(
-            "filesync",
-            subcommand,
-            code=code,
-            message=message,
-            field=field,
-            expected=expected,
-            hint=hint,
-        )
+    """输出目录校验错误；两条路径同一退出码（未找到 4 / 输入非法 3）。"""
+    if code == "DIR_NOT_FOUND":
+        expected, hint = "已存在的目录", "确认目录路径存在"
     else:
-        print_error(message)
+        expected, hint = "与左侧不同的目录", "换一个不同的目录作为右侧"
+    report_error(
+        "filesync",
+        subcommand,
+        code=code,
+        message=message,
+        field=field,
+        expected=expected,
+        hint=hint,
+        json_output=json_output,
+    )
     return False
 
 
@@ -201,7 +199,7 @@ def sync_command(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生�
     preview:
         只打印计划与统计，不修改文件系统
     """
-    if not _validate_roots(left, right):
+    if not _validate_roots(left, right, "sync"):
         return
     result = compare_trees(left, right, _build_options(compare, include, exclude, skip_hidden))
     plan = build_sync_plan(result, sync_mode)

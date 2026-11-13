@@ -9,6 +9,7 @@ from fcmd.cli._common import print_unknown_tool
 from fcmd.cli._discovery import resolve_tool
 from fcmd.console import get_console, print_error
 from fcmd.core.errors import FcmdError
+from fcmd.core.exit_codes import ExitCode
 from fcmd.core.toolkit import build_tool_graph
 
 if TYPE_CHECKING:
@@ -45,19 +46,24 @@ def run(argv: list[str]) -> int:
     )
     if not argv:
         parser.print_help()
-        return 1
+        get_console().print("[yellow]提示:[/yellow] 用法 fcmd graph <tool> [subcommand] [--format=...]")
+        return int(ExitCode.USAGE)
     parsed = parser.parse_args(argv)
 
     resolved = resolve_tool(parsed.tool)
     if resolved is None:
         print_unknown_tool(parsed.tool)
-        return 1
+        return int(ExitCode.USAGE)
 
     try:
         graph = build_tool_graph(resolved, parsed.subcommand)
     except FcmdError as e:
-        print_error(str(e))
-        return 1
+        print_error(
+            str(e),
+            code="UNKNOWN_SUBCOMMAND",
+            hint=f"运行 fcmd info {resolved} 查看可用子命令",
+        )
+        return int(ExitCode.USAGE)
 
     if parsed.format == "tree":
         _print_tree(graph)

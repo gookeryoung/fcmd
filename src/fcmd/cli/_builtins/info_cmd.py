@@ -11,13 +11,14 @@ from fcmd.cli._discovery import tool_names as _tool_names
 from fcmd.cli._schema import overview_schema, subcommand_schema, tool_document, tool_summary
 from fcmd.cli._schema import spec_kind as _spec_kind
 from fcmd.console import get_console, print_error
+from fcmd.core.exit_codes import ExitCode
 from fcmd.core.result import SCHEMA_SCHEMA, emit_error, emit_json
 from fcmd.core.toolkit import param_schema
 
 __all__ = ["run"]
 
 
-def run(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912 - 内建命令按参数组合分支，保持单入口
+def run(argv: list[str]) -> int:  # noqa: PLR0911 - 内建命令按参数组合分支，保持单入口
     """``fcmd info <tool> [subcommand]``。
 
     展示工具或子命令的元信息（不执行）：
@@ -49,7 +50,7 @@ def run(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912 - 内建命令按参�
     resolved = resolve_tool(parsed.tool)
     if resolved is None:
         if parsed.json:
-            emit_error(
+            return emit_error(
                 "info",
                 None,
                 code="UNKNOWN_TOOL",
@@ -57,13 +58,12 @@ def run(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912 - 内建命令按参�
                 field="tool",
                 hint="运行 fcmd info 查看可用工具",
             )
-        else:
-            print_unknown_tool(parsed.tool)
-        return 1
+        print_unknown_tool(parsed.tool)
+        return int(ExitCode.USAGE)
 
     subs = load_tool_subs(resolved)
     if subs is None:
-        return 1
+        return int(ExitCode.FAILURE)
 
     if parsed.subcommand is None:
         if parsed.json:
@@ -76,7 +76,7 @@ def run(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912 - 内建命令按参�
     spec = subs.get(parsed.subcommand)
     if spec is None:
         if parsed.json:
-            emit_error(
+            return emit_error(
                 "info",
                 parsed.subcommand,
                 code="UNKNOWN_SUBCOMMAND",
@@ -84,9 +84,12 @@ def run(argv: list[str]) -> int:  # noqa: PLR0911, PLR0912 - 内建命令按参�
                 field="subcommand",
                 hint=f"运行 fcmd info {resolved} 查看可用子命令",
             )
-        else:
-            print_error(f"工具 {resolved!r} 没有子命令 {parsed.subcommand!r}")
-        return 1
+        print_error(
+            f"工具 {resolved!r} 没有子命令 {parsed.subcommand!r}",
+            code="UNKNOWN_SUBCOMMAND",
+            hint=f"运行 fcmd info {resolved} 查看可用子命令",
+        )
+        return int(ExitCode.USAGE)
     if parsed.json:
         emit_json({"schema": SCHEMA_SCHEMA, "tool": resolved, "subcommand": subcommand_schema(spec)})
     else:

@@ -46,14 +46,14 @@ def test_run_named_forwards_to_run_tool(monkeypatch: pytest.MonkeyPatch, capsys:
     assert capsys.readouterr().out == ""
 
 
-def test_run_named_unknown_tool_exits_1(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """入口名未对应已注册工具 → 打印错误并以退出码 1 终止。"""
+def test_run_named_unknown_tool_exits_2(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """入口名未对应已注册工具 → 打印错误并以退出码 2 终止。"""
     monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
     monkeypatch.setattr(discovery_mod, "resolve_tool", lambda _name: None)
     monkeypatch.setattr(sys, "argv", ["nosuch.exe"])
     with pytest.raises(SystemExit) as exc_info:
         run_named()
-    assert exc_info.value.code == 1
+    assert exc_info.value.code == 2
     out = capsys.readouterr().out
     assert "未对应任何已注册工具" in out
     assert "查看可用工具列表" in out

@@ -152,9 +152,18 @@ def get_console() -> Console:
     return _console
 
 
-def print_error(message: str) -> None:
-    """输出统一格式的错误行（``错误: {message}``，前缀为红色）。"""
+def print_error(message: str, *, code: str = "RUNTIME_ERROR", hint: str | None = None) -> None:
+    """输出统一格式的错误行（``错误: {message}``，前缀为红色），并登记退出码。
+
+    人读路径的唯一错误出口：只要调用它，框架就会在工具返回后以非零退出码
+    结束（``code`` 决定具体码值，见 ``fcmd.core.exit_codes``）。
+    """
+    from fcmd.core.result import record_error
+
+    record_error(code)
     get_console().print(f"[red]错误:[/red] {message}")
+    if hint:
+        get_console().print(f"[yellow]提示:[/yellow] {hint}")
 
 
 def print_verbose(*args: Any, **kwargs: Any) -> None:

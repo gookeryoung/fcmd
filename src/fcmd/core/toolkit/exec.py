@@ -32,10 +32,18 @@ from typing import Any
 from fcmd.core.execution.executors import run
 
 from ..dag import Graph, GraphDefaults
-from ..errors import FcmdError, TaskFailedError
-from ..task import RetryPolicy, TaskSpec
+from ..errors import (
+    CycleError,
+    DuplicateTaskError,
+    FcmdError,
+    InjectionError,
+    MissingDependencyError,
+    TaskFailedError,
+)
+from ..exit_codes import ExitCode
+from ..result import emit_error, has_pending_error, reset_error_state, take_pending_exit_code
+from ..task import RetryPolicy, TaskSpec, TaskStatus
 from .args import (
-    ToolExitCode,
     ToolSpec,
     _add_global_options,
     _build_parser_for_tool,
@@ -244,9 +252,20 @@ def _resolve_tool_target(
         return argv[0], list(argv[1:])
     if None in subs:
         return None, list(argv)
-    # 列出工具的所有子命令
+    # 显式请求工具级帮助（fcmd <tool> --help）：打印子命令表并正常退出（0）
+    if argv and argv[0] in ("-h", "--help"):
+        _print_subcommands(name, subs)
+        return int(ExitCode.SUCCESS)
+    # 列出工具的所有子命令：缺少子命令属于用法错误（退出码 2）
+    from fcmd.console import print_error
+
+    print_error(
+        f"工具 {name!r} 需要指定子命令",
+        code="USAGE",
+        hint=f"运行 fcmd {name} --help，或从下面的子命令表中选择",
+    )
     _print_subcommands(name, subs)
-    return ToolExitCode.SUCCESS.value
+    return int(ExitCode.USAGE)
 
 
 def _parse_tool_args(
@@ -256,9 +275,13 @@ def _parse_tool_args(
     if target is not None and target not in subs:
         from fcmd.console import print_error
 
-        print_error(f"工具 {name!r} 没有子命令 {target!r}")
+        print_error(
+            f"工具 {name!r} 没有子命令 {target!r}",
+            code="UNKNOWN_SUBCOMMAND",
+            hint=f"运行 fcmd {name} --help 查看可用子命令",
+        )
         _print_subcommands(name, subs)
-        return ToolExitCode.FAILURE.value
+        return int(ExitCode.USAGE)
 
     target_spec = subs[target]
 
@@ -273,10 +296,49 @@ def _parse_tool_args(
     try:
         parsed = parser.parse_args(argv_rest)
     except SystemExit as e:
-        # argparse 解析失败（unrecognized args / --help）时 raise SystemExit
-        return ToolExitCode.SUCCESS.value if e.code == 0 else ToolExitCode.FAILURE.value
+        # argparse 解析失败（unrecognized args / 类型错误）按用法错误处理；
+        # --help 正常退出仍为 0。argparse 自己已打印具体原因（英文），这里补
+        # 一句中文修正提示，避免非零退出只剩一段英文用法文本。
+        if e.code == 0:
+            return int(ExitCode.SUCCESS)
+        from fcmd.console import get_console
+
+        usage = f"fcmd {name} {target} --help" if target is not None else f"fcmd {name} --help"
+        get_console().print(f"[yellow]提示:[/yellow] 运行 {usage} 查看参数用法")
+        return int(ExitCode.USAGE)
     variables: dict[str, Any] = {k: v for k, v in vars(parsed).items() if v is not None}
     return variables, target_spec
+
+
+def _describe_exception(exc: BaseException) -> str:
+    """把任务异常转成一句人能看懂的话。"""
+    if isinstance(exc, SystemExit):
+        return f"工具进程以退出码 {exc.code} 结束"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _report_tool_failure(  # noqa: PLR0913 - 与错误信封字段一一对应
+    name: str,
+    target: str | None,
+    *,
+    code: str,
+    message: str,
+    json_output: bool,
+    hint: str | None = None,
+) -> None:
+    """呈现工具级失败：已呈现过则跳过，避免同一次调用输出两条错误。
+
+    ``--json`` 走 stderr 错误信封，默认路径走 ``错误: …`` 行；两条路径都由
+    这里决定，保证不会出现「退出 1 却没有任何错误文本」。
+    """
+    if has_pending_error():
+        return
+    if json_output:
+        emit_error(name, target, code=code, message=message, hint=hint)
+        return
+    from fcmd.console import print_error
+
+    print_error(message, code=code, hint=hint)
 
 
 def _execute_tool_tasks(
@@ -293,14 +355,16 @@ def _execute_tool_tasks(
     subs:
         工具的子命令字典，由 :func:`run_tool` 从 ``_TOOL_REGISTRY`` 取出后传入
     """
+    reset_error_state()
+    json_output = bool(variables.get("json_output", False))
     chain = _collect_with_deps(subs, target)
     task_specs: list[TaskSpec[Any]] = []
     for sc in chain:
         if sc not in subs:
             from fcmd.console import print_error
 
-            print_error(f"工具 {name!r} 的子命令 {sc!r} 未注册")
-            return ToolExitCode.FAILURE.value
+            print_error(f"工具 {name!r} 的子命令 {sc!r} 未注册", code="RUNTIME_ERROR")
+            return int(ExitCode.FAILURE)
         sc_spec = subs[sc]
         task_specs.append(_build_task_spec(sc_spec, variables))
 
@@ -308,7 +372,7 @@ def _execute_tool_tasks(
     graph = Graph.from_specs(task_specs, defaults=GraphDefaults())
     strategy = variables.get("strategy") or target_spec.strategy or "dependency"
     # --json 要求 stdout 可整体解析：同时关闭框架的进度/汇总行，避免与 JSON 混排
-    verbose = not variables.get("quiet", False) and not variables.get("json_output", False)
+    verbose = not variables.get("quiet", False) and not json_output
 
     try:
         report = run(
@@ -319,27 +383,61 @@ def _execute_tool_tasks(
         )
     except TaskFailedError as e:
         # continue_on_error=False 时 run() 抛 TaskFailedError，携带 report
-        if verbose:
-            from fcmd.console import get_console
-
-            err_console = get_console()
-            err_console.print("[red]执行失败[/red]")
-            if e.report is not None:
-                _print_task_summary(e.report, force=True)
-        return ToolExitCode.FAILURE.value
+        _report_tool_failure(
+            name,
+            target,
+            code="RUNTIME_ERROR",
+            message=f"执行失败: {_describe_exception(e.cause)}",
+            hint="检查入参后重试；若为工具内部错误，请附上上面的一句话与类型反馈",
+            json_output=json_output,
+        )
+        if verbose and e.report is not None:
+            _print_task_summary(e.report, force=True)
+        pending = take_pending_exit_code()
+        return int(pending) if pending is not None else int(ExitCode.FAILURE)
     except FcmdError as e:
-        if verbose:
-            from fcmd.console import print_error
-
-            print_error(str(e))
-        return ToolExitCode.FAILURE.value
+        is_input_error = isinstance(e, (CycleError, DuplicateTaskError, MissingDependencyError, InjectionError))
+        _report_tool_failure(
+            name,
+            target,
+            code="INVALID_ARGUMENT" if is_input_error else "RUNTIME_ERROR",
+            message=str(e),
+            hint="检查任务定义/参数后重试" if is_input_error else "重试；若持续失败请附上错误信息反馈",
+            json_output=json_output,
+        )
+        return int(ExitCode.INVALID_INPUT if is_input_error else ExitCode.FAILURE)
     except KeyboardInterrupt:
-        return ToolExitCode.INTERRUPTED.value
+        _report_tool_failure(
+            name,
+            target,
+            code="INTERRUPTED",
+            message="已中断",
+            hint="重新运行以继续",
+            json_output=json_output,
+        )
+        return int(ExitCode.INTERRUPTED)
 
-    if verbose and not variables.get("dry_run", False):
+    # 已呈现错误时不再打印「成功」汇总：避免与错误行、非零退出码矛盾
+    if verbose and not variables.get("dry_run", False) and not has_pending_error():
         _print_task_summary(report)
 
-    return ToolExitCode.SUCCESS.value if report.success else ToolExitCode.FAILURE.value
+    if not report.success:
+        # continue_on_error=True 时 run() 不抛异常，但必须有错误文本：
+        # 「退出 1 却什么都没说」是最坏形态（脚本侧无从判断，人也无从修正）。
+        failed = [n for n, r in report.results.items() if r.status == TaskStatus.FAILED]
+        detail = "、".join(failed) if failed else "未知任务"
+        _report_tool_failure(
+            name,
+            target,
+            code="RUNTIME_ERROR",
+            message=f"执行失败: 任务 {detail} 未成功",
+            hint="检查入参后重试；若为工具内部错误，请附上上面的一句话与类型反馈",
+            json_output=json_output,
+        )
+        return int(ExitCode.FAILURE)
+    # 工具在函数体内已呈现错误（print_error / emit_error）时，以其错误码为准
+    pending = take_pending_exit_code()
+    return int(pending) if pending is not None else int(ExitCode.SUCCESS)
 
 
 # ---------------------------------------------------------------------- #

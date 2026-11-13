@@ -210,7 +210,11 @@ def check_cmd(
     try:
         print(format_report(pattern, text, flags))
     except PatternValidationError as exc:
-        print_error(str(exc))
+        print_error(
+            str(exc),
+            code="INVALID_ARGUMENT",
+            hint="修正正则语法或去掉不支持的构造后重试",
+        )
 
 
 @fcmd.main("regexvalidate")

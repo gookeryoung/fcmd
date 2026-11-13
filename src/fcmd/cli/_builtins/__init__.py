@@ -18,6 +18,7 @@ from fcmd.cli._builtins import (
 )
 from fcmd.cli._common import _BUILTIN_COMMANDS
 from fcmd.console import print_error
+from fcmd.core.exit_codes import ExitCode
 
 __all__ = ["run_builtin"]
 
@@ -40,9 +41,13 @@ if set(_HANDLERS) != set(_BUILTIN_COMMANDS):
 
 
 def run_builtin(name: str, argv: list[str]) -> int:
-    """分发内建命令，返回退出码。未知命令打印错误返回 1。"""
+    """分发内建命令，返回退出码。未知命令属用法错误（退出码 2）。"""
     handler = _HANDLERS.get(name)
     if handler is None:
-        print_error(f"未知内建命令 {name!r}")
-        return 1
+        print_error(
+            f"未知内建命令 {name!r}",
+            code="USAGE",
+            hint="运行 fcmd --help 查看可用工具与内建命令",
+        )
+        return int(ExitCode.USAGE)
     return handler(argv)  # type: ignore[no-any-return]

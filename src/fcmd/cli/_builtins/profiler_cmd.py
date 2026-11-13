@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fcmd.cli._profiler_helpers import inject_run_hook, output_profile, run_target_script
 from fcmd.console import get_console, print_error
+from fcmd.core.exit_codes import ExitCode
 
 __all__ = ["run"]
 
@@ -54,7 +55,8 @@ def run(argv: list[str]) -> int:
 
     if not argv:
         parser.print_help()
-        return 1
+        get_console().print("[yellow]提示:[/yellow] 用法 fcmd profiler <script.py> [-- args...]")
+        return int(ExitCode.USAGE)
 
     parsed, script_args = parser.parse_known_args(argv)
     # ``--`` 之后的参数全部传给脚本（argparse 已消费 ``--``，此处显式重取确保正确）
@@ -64,8 +66,12 @@ def run(argv: list[str]) -> int:
 
     script_path = Path(parsed.script).resolve()
     if not script_path.is_file():
-        print_error(f"脚本不存在: {script_path}")
-        return 2
+        print_error(
+            f"脚本不存在: {script_path}",
+            code="FILE_NOT_FOUND",
+            hint="确认脚本路径存在，或传入绝对路径",
+        )
+        return int(ExitCode.NOT_FOUND)
 
     # 注入 hook 捕获 run() 调用
     captured = inject_run_hook()
@@ -91,9 +97,12 @@ def run(argv: list[str]) -> int:
     report = captured.get("report")
     graph = captured.get("graph")
     if report is None or graph is None:
-        print_error("未捕获到 fcmd.run() 调用，无法生成性能报告")
-        get_console().print("[dim]请确保脚本通过 fcmd.run() 执行任务流图[/dim]")
-        return 1
+        print_error(
+            "未捕获到 fcmd.run() 调用，无法生成性能报告",
+            code="INVALID_ARGUMENT",
+            hint="请确保脚本通过 fcmd.run() 执行任务流图",
+        )
+        return int(ExitCode.INVALID_INPUT)
 
     # 生成报告
     from fcmd.core.profiling import ProfileReport

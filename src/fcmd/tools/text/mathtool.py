@@ -9,13 +9,17 @@ __all__: list[str] = []
 
 
 def _run(fn: object, *args: object) -> None:
-    """执行计算并打印；``ValueError``/``ZeroDivisionError`` 转为错误行（退出码 0）。"""
+    """执行计算并打印；``ValueError``/``ZeroDivisionError`` 转为错误行（退出码 3）。"""
     from fcmd.console import print_error  # 延迟导入
 
     try:
         result = fn(*args)  # type: ignore[operator]
     except (ValueError, ZeroDivisionError) as error:
-        print_error(str(error))
+        print_error(
+            str(error),
+            code="INVALID_ARGUMENT",
+            hint="检查表达式语法、除数是否为 0、以及 sqrt/factorial 的取值范围",
+        )
         return
     print(result)
 

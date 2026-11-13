@@ -49,7 +49,7 @@ from fcmd.apps.renamer._core import (
     preview_to_plan,
 )
 from fcmd.console import print_error
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 
 __all__ = ["apply_command", "load_rules", "preview_command"]
 
@@ -93,36 +93,32 @@ def _prepare(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，
         rules = load_rules(rules_text)
         targets = collect_targets(files, recursive=recursive, include_dirs=dirs)
     except (RuleError, FileNotFoundError, OSError) as exc:
-        if not json_output:
-            print_error(str(exc))
-            return None
         if isinstance(exc, FileNotFoundError):
-            emit_error(
-                "renamer",
-                subcommand,
-                code="FILE_NOT_FOUND",
-                message=str(exc),
-                field="files",
-                expected="存在的文件或目录",
-                hint="确认待改名的路径存在后重试",
+            code, expected, hint = (
+                "FILE_NOT_FOUND",
+                "存在的文件或目录",
+                "确认待改名的路径存在后重试",
             )
         else:
-            emit_error(
-                "renamer",
-                subcommand,
-                code="INVALID_RULES",
-                message=str(exc),
-                field="rules",
-                expected="合法的规则 JSON 数组",
-                hint="用 --rules 传入 JSON 数组或 @规则文件.json",
+            code, expected, hint = (
+                "INVALID_RULES",
+                "合法的规则 JSON 数组",
+                "用 --rules 传入 JSON 数组或 @规则文件.json",
             )
+        report_error(
+            "renamer",
+            subcommand,
+            code=code,
+            message=str(exc),
+            field="files" if code == "FILE_NOT_FOUND" else "rules",
+            expected=expected,
+            hint=hint,
+            json_output=json_output,
+        )
         return None
     preview = build_preview(targets, rules, sort_key)
     if preview.error:
-        if not json_output:
-            print_error(preview.error)
-            return None
-        emit_error(
+        report_error(
             "renamer",
             subcommand,
             code="INVALID_RULES",
@@ -130,6 +126,7 @@ def _prepare(  # noqa: PLR0913, PLR0917 - CLI 参数由 argparse 逐个生成，
             field="rules",
             expected="合法的规则 JSON 数组",
             hint="检查规则字段与正则表达式后重试",
+            json_output=json_output,
         )
         return None
     return preview
@@ -222,7 +219,11 @@ def apply_command(
     result = execute_plan(plan)
     print(format_report(result))
     if result.errors:
-        print_error(f"有 {len(result.errors)} 项改名失败，详见上方清单。")
+        print_error(
+            f"有 {len(result.errors)} 项改名失败，详见上方清单。",
+            code="RUNTIME_ERROR",
+            hint="修复失败的单项（权限 / 目标已存在）后重新执行",
+        )
 
 
 @fcmd.main("renamer")

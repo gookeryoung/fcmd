@@ -241,7 +241,7 @@ fcmd hashfile d . --algorithm sha256
 - 另一端：fn 任务抛异常时，框架只写 `LazyLogger.warning`；未导入 `logging` 时该日志被直接丢弃（`_lazylog.py:55-56`），导入时也只是 `WARNING:…` 前缀的非结构化行。CLI 侧打印“执行失败”和一张**不含错误文本**的汇总表：
 
   ```python
-  raise TaskFailedError(...)          # task_runner.py:280-286，错误只进 logger
+  raise TaskFailedError(...)  # task_runner.py:280-286，错误只进 logger
   ...
   err_console.print("[red]执行失败[/red]")
   _print_task_summary(e.report, force=True)  # 列：任务/状态/耗时/重试
@@ -463,46 +463,94 @@ P0 的条目是纯增量、不改现有语义，可以直接做。P1 起涉及�
 - 固定字段之外，`data` 由工具自定义；任何新增字段不得改名（语义化版本）。
 - 默认输出（不带 `--json`）保持不变，避免破坏人类使用与既有脚本；这是“加一条通道”，不是“换掉旧通道”。
 
-### 4.3 `fcmd-error/1` 与退出码
+### 4.3 `fcmd-error/1` 与退出码（P1 定稿契约）
 
-错误对象写 **stderr**（`--json` 时 stdout 保持为空或纯 JSON），一行一个对象：
+**唯一权威**：`src/fcmd/core/exit_codes.py`。所有路径（人读 / 机读）共用一张表，
+码值与 `kind` 一一对应；新增错误码必须登记进 `ERROR_CODE_KINDS`，否则默认按
+`input`（3）处理，不会静默退出 0。
+
+错误对象写 **stderr**（`--json` 时 stdout 保持为空；非 `--json` 时写
+`错误: <一句话>` + `提示: <修正建议>`）：
 
 ```json
 {
   "schema": "fcmd-error/1",
-  "tool": "hashfile",
-  "subcommand": null,
   "ok": false,
-  "error": {
-    "code": "FILE_NOT_FOUND",
-    "kind": "input",
-    "message": "文件不存在: a.txt",
-    "field": "path",
-    "expected": "已存在的文件路径",
-    "received": "a.txt",
-    "hint": "先运行 fcmd filesearch name . --pattern a.txt 确认路径"
-  }
+  "tool": "hashfile",
+  "subcommand": "f",
+  "kind": "not_found",
+  "code": "FILE_NOT_FOUND",
+  "message": "文件不存在: a.txt",
+  "exit_code": 4,
+  "field": "path",
+  "expected": "已存在的文件",
+  "hint": "确认路径存在且是文件"
 }
 ```
 
-退出码（沿用 `filescan` / `dynacalc` 已有的 0/1/2 语义，补齐为统一契约；`error.kind` 取 `usage | input | runtime | check`）：
+字段规则：
 
-| 退出码 | 含义 | 说明 |
-|---:|---|---|
-| 0 | 完成 | 包括“无匹配”“两文件相同”等业务结果 |
-| 1 | 运行失败 / 校验不通过 | `error.kind = runtime` 或 `check`；IO、权限、内部错误、`--strict` 校验失败 |
-| 2 | 用法 / 输入错误 | `error.kind = usage` 或 `input`；缺参、非法枚举、未知子命令、输入文件不存在、模型格式不合法；**argparse 的原生 2 不再压平** |
-| 130 | 用户中断 | 沿用现状 |
+- `exit_code` 必填，且**等于进程退出码**（`emit_error` 的返回值即该码）。
+- `kind` 由 `code` 查表推导（也可显式覆盖），`kind` → 码值是一一映射：
+  `runtime=1 / usage=2 / input=3 / not_found=4 / check=5 / interrupted=130`。
+- `ok` 恒为 `false`；`field` / `expected` / `hint` 可选，用于模型自纠。
 
-这样 `filescan scan missing-dir`（2）与 `dynacalc model bad.yaml`（2）的现有行为无需迁移，只需要把“打印后返回 0”的工具对齐到同一张表。
+退出码表（人读与机读行为对照）：
 
-`error.code` 建议固定集合：`FILE_NOT_FOUND`、`PATH_NOT_FOUND`、`PERMISSION_DENIED`、`INVALID_ARGUMENT`、`MISSING_ARGUMENT`、`UNSUPPORTED_FORMAT`、`DEPENDENCY_MISSING`、`CONFLICT`、`CHECK_FAILED`、`INTERNAL`。
+| 码 | 名称 | 触发场景 | 人读路径输出 | 机读路径输出 |
+|---:|---|---|---|---|
+| 0 | `SUCCESS` | 执行成功（含“无匹配”“两文件相同”等业务结果） | 正常结果，文案与 P0 一致 | stdout `fcmd-result/1`，`ok: true` |
+| 1 | `FAILURE` | 运行期失败：I/O、权限、子进程失败、内部异常、任务失败 | `错误: …` + `提示: …` | stderr `fcmd-error/1`，`kind: runtime` |
+| 2 | `USAGE` | 调用方用错命令：未知工具/子命令、缺子命令、缺参、未知选项（含 argparse 原生 2） | `错误: …` + `提示: …`（argparse 场景会补一行中文用法提示） | stderr `fcmd-error/1`，`kind: usage` |
+| 3 | `INVALID_INPUT` | 参数值不合法：枚举/格式/范围/正则/规则冲突、非 PE、非文本、非法 YAML | `错误: …` + `提示: …` | stderr `fcmd-error/1`，`kind: input` |
+| 4 | `NOT_FOUND` | 目标不存在：文件/目录/资源 | `错误: …` + `提示: …` | stderr `fcmd-error/1`，`kind: not_found` |
+| 5 | `CHECK_FAILED` | 检查类工具结论为“不通过”（`doctor` 等） | 既有结论表格 + `提示: …`（不写 stderr） | stdout `fcmd-result/1`，`ok: false`（结论不是错误） |
+| 130 | `INTERRUPTED` | Ctrl+C / `KeyboardInterrupt` | `错误: 已中断` | stderr `fcmd-error/1`，`kind: interrupted` |
+
+关键约束：
+
+- **一个码只有一种语义**。旧计划把“用法错误”和“输入非法”都放在 2，会让调用方
+  无法区分“我命令写错了”和“我给的路径/值不对”；P1 起拆为 2 / 3。
+  因此 `filescan`、`dynacalc` 等既有的“输入错误退出 2”需要改为 3（见 §13.4）。
+- **不存在“退出 0 但有错误文本”**：`print_error` / `emit_error` 都会登记退出码，
+  框架在工具返回后收取，最坏情况也会退 1。
+- **不存在“退出 1 但没有文本”**：框架异常分支、`continue_on_error` 的任务失败
+  汇总都会补一句 `错误: …` + `提示: …`。
+- 5 是“结论”而非“错误”：仍写 stdout 结果信封（`ok: false`），不写 stderr，
+  便于脚本区分“检查没通过”和“工具坏了”。
+- 成功路径（0）的默认文案保持 P0 原样；错误路径文案允许变化，且优先保证可见、
+  可修正。
+
+错误码固定集合（`ERROR_CODE_KINDS`，P1 批次 1 登记）：
+
+| 码 | kind | 典型来源 |
+|---|---|---|
+| `FILE_NOT_FOUND` / `DIR_NOT_FOUND` / `NOT_FOUND` | not_found | hashfile、filesearch、textdiff、csvtool、peview、reshack、renamer、filesync、yaml、profiler |
+| `INVALID_ALGORITHM` / `INVALID_ARGUMENT` / `INVALID_MIN_SIZE` / `INVALID_REGEX` / `INVALID_RULES` / `NOT_PE_FILE` / `NOT_TEXT` / `SAME_DIRECTORY` | input | hashfile、filesearch、textdiff、renamer、peview、codetool、convtool、urltool、mathtool、regexvalidate、colortool、fonttool、yaml |
+| `UNKNOWN_TOOL` / `UNKNOWN_SUBCOMMAND` / `USAGE` | usage | 顶层 dispatch、`run_tool`、`info`、`graph`、内建命令 |
+| `RUNTIME_ERROR` | runtime | 通用运行失败、任务失败、缺可选依赖 |
+| `CHECK_FAILED` | check | `doctor`（后续 `--strict` 校验类工具） |
+| `INTERRUPTED` | interrupted | Ctrl+C |
+
+实现位置：
+
+- 契约与映射：`core/exit_codes.py`
+- 登记与收取：`core/result.py`（`record_error` / `take_pending_exit_code`，同时维护
+  ContextVar 与进程级登记，保证线程池/异步执行下也能被主线程看到）
+- 两条渲染入口：`core/result.py::emit_error`（机读）与 `console.print_error`（人读）；
+  工具侧统一用 `core/result.py::report_error(..., json_output=...)` 二选一，
+  两条路径登记同一个码。
+- 框架兜底：`core/toolkit/exec.py`（用法错误、未预期异常、任务失败、中断）、
+  `core/toolkit/__init__.py`（未知工具）。
 
 迁移要求：
 
-- 修改“打印错误但退出 0”的工具时，必须同步修改仓库内固化该行为的测试（已知 `tests/tools/text/test_cli_txttool.py:284-308`，其余用 `grep "assert code == 0"` 定位）。
-- 这是**有意的破坏性变更**，应写入 CHANGELOG，并在一个版本内完成；不建议加 `FCMD_LEGACY_EXIT=1` 之类兼容开关，避免长期双语义。
-- `paramcad` / `paramesh` / `dynacalc` 属于独立应用，接口调整需与其维护会话协调，先改框架与工具层，再逐个应用接入。
+- 修改“打印错误但退出 0”的工具时，必须同步修改仓库内固化该行为的测试；迁移
+  清单见 §13.4（不删除用例，只改期望值）。
+- 这是**有意的破坏性变更**，应在 CHANGELOG 标注；不提供
+  `FCMD_LEGACY_EXIT=1` 之类的兼容开关，避免长期双语义。
+- `paramcad` / `paramesh` / `dynacalc` 属于独立应用，接口调整需与其维护会话
+  协调（§13.5 列出待办），框架与工具层先行。
 
 ### 4.4 `fcmd-plan/1`：计划-执行两阶段与幂等
 
@@ -551,14 +599,32 @@ P0 的条目是纯增量、不改现有语义，可以直接做。P1 起涉及�
 
 状态（2026-11-13）：P0-1、P0-2、P0-3、P0-4、P0-5 均已完成并作为范式模板（见 §9、§10）。
 
-### 5.2 P1：先定契约，再统一失败语义与 JSON 通道
+### 5.2 P1：先定契约，再统一失败语义与 JSON 通道（已启动，按批推进）
 
-前置：完成 4.2 / 4.3 的契约文档与评审。
+前置：完成 4.2 / 4.3 的契约文档（§4.3 已定稿，`core/exit_codes.py` 为唯一权威）。
+
+批次划分与状态：
+
+| 批次 | 范围 | 状态 |
+|---|---|---|
+| 1 | 框架层 + 内建命令 + P0 工具 + 已使用 `print_error` 的工具（hashfile / filesearch / textdiff / csvtool / peview / filesync / renamer / codetool / convtool / urltool / mathtool / colortool / regexvalidate / fonttool / reshack） | 已完成（§13） |
+| 2 | 仍在用裸 `print("错误: …")` 的工具（calc / pdf / data / net / media / office / txttool / regextool / padtool / asciitool 等），逐个改为 `print_error(code=...)` 并分类 | 待做 |
+| 3 | `filescan`（输入错误 2 → 3）、`dynacalc`（`_fail(code=2)` 重分类）、`paramcad` / `paramesh` 与 `llm*` 系列 | 待做（应用类需协调） |
+
+批次 1 的验收口径（后续批次沿用）：
+
+- 退出码矩阵：成功 0、运行失败 1、用法错误 2、输入非法 3、未找到 4、检查不通过 5、中断 130。
+- 每个非零分支都有一句人读说明 + `提示:` 修正建议；`--json` 时 stderr 错误体
+  的 `exit_code` 与进程退出码一致。
+- 不存在「退出 0 但有错误文本」「退出非零但无任何文本」两种形态。
+- 原「错误场景断言 0」的测试全部改为新契约期望值，不删除用例（清单 §13.4）。
+
+原 P1 细分项（保留作为后续批次的验收参考）：
 
 | 编号 | 改动 | 解决的弱点 | 风险 | 验收 |
 |---|---|---|---|---|
-| P1-1 | 框架级 `--json` 上下文 + `ok/fail/emit` helper：成功走 `fcmd-result/1`，失败走 `fcmd-error/1` 到 stderr；argparse 失败保留退出码 2 | 全部 | 中；触及 `console.py` / `core/toolkit`，需回归 | 退出码矩阵测试：缺参=2、非法枚举=2、运行错误=1、成功=0、中断=130；`--json` 时 stdout 必须可被 `json.loads` 解析 |
-| P1-2 | 修复高价值工具的“silent success”：`peview`、`paramcad`、`paramesh`、`renamer`、`filesync`、`pptmake`、`reshack`、`filecheck` 及文本/数据类工具的错误分支，改为非零退出并带 `error` 对象 | 自纠错 | 中高；行为变更，需改测试 | 每个工具至少 1 个失败用例断言非零；`grep -r "assert code == 0" tests` 中“错误场景断言 0”的用例全部改掉并列出清单 |
+| P1-1 | 框架级 `--json` 上下文 + `ok/fail/emit` helper：成功走 `fcmd-result/1`，失败走 `fcmd-error/1` 到 stderr；argparse 失败保留退出码 2 | 全部 | 中；触及 `console.py` / `core/toolkit`，需回归 | ✅ 批次 1 完成：`emit_error` 返回码、`exit_code` 字段、`report_error` 双路径 |
+| P1-2 | 修复高价值工具的“silent success”：`peview`、`paramcad`、`paramesh`、`renamer`、`filesync`、`pptmake`、`reshack`、`filecheck` 及文本/数据类工具的错误分支，改为非零退出并带 `error` 对象 | 自纠错 | 中高；行为变更，需改测试 | 批次 1 完成 peview/renamer/filesync/reshack/hashfile/filesearch/textdiff/csvtool；其余见批次 2/3 |
 | P1-3 | JSON 输出铺开（按价值排序）：`peview summary/sections/imports/check`、`filesync compare/sync --preview`、`renamer preview`、`sysinfo`、`hashfile`、`filecheck`、`pdf info` | 解析失败、长输出 | 中；输出契约需评审 | 每个工具 golden JSON；`stats.total/returned/truncated` 齐全；默认文本输出快照不变 |
 | P1-4 | `fcmd hashfile verify` 与 `fcmd hashfile manifest`：复用 `infras.checksum.build_manifest/parse_manifest/verify_manifest`，不匹配退出 1 并列出 `{path, expected, actual, ok}` | 自检 | 低（只读）；新子命令 | 正确清单通过；篡改 1 字节后失败并精确指出文件；`--json` 可解析 |
 | P1-5 | 错误文案补 `hint` 与 `field`：建立各工具错误码到提示的映射；子命令拼错加 difflib 建议 | 自纠错 | 低 | 缺文件/非法枚举/未知子命令三类错误均含 `code/field/hint/expected` |
@@ -859,6 +925,9 @@ P0 阶段**不改退出码语义**（统一语义留到 P1，见 §5.2）。因�
 
 调用方不能只看 `$?`，必须读 `ok` 字段判定成败；这条约束持续到 P1 统一错误退出码（改为 2/1）为止，届时按破坏性变更在文档与 CHANGELOG 标注。
 
+> **已结束（P1 批次 1，2026-11-13）**：`--json` 下输入错误现在按契约返回非零（3/4 等），
+> 机读错误体的 `exit_code` 与进程退出码一致；本节仅作历史记录，见 §13。
+
 ### 10.4 门禁数字（含覆盖率基线对比）
 
 | 门禁 | 结果 |
@@ -944,5 +1013,141 @@ P0 阶段**不改退出码语义**（统一语义留到 P1，见 §5.2）。因�
 
 ## 12. 一句话总结
 
-
 fcmd 的工具“能做很多事”，但当前更像一套给人用的命令集合：参数靠读文档、结果靠肉眼看、失败靠猜。把小模型当作第一调用者，不需要重写工具，只需要补上四层薄契约——**自描述 schema、结果信封、错误对象与退出码、计划/断言**——就能把现有 118 个工具中的大部分从“需要大模型解释”变成“小模型可直接调用”。
+
+---
+
+## 13. P1 第一批落地记录（2026-11-13）
+
+目标：退出码与错误语义在**所有路径**（人读 / `--json`）统一；先定契约，再批量替换；
+消除「退出 0 但有错误文本」与「退出非零但无任何文本」两种最坏形态。
+
+### 13.1 契约变化（唯一权威：`core/exit_codes.py`）
+
+| 项 | 内容 |
+|---|---|
+| 码值 | 0 / 1 / 2 / 3 / 4 / 5 / 130，见 §4.3；2 与 3 已拆开（用法错误 vs 输入非法） |
+| kind 映射 | `runtime=1 / usage=2 / input=3 / not_found=4 / check=5 / interrupted=130`，一一对应 |
+| 错误码登记 | 新增 `ERROR_CODE_KINDS`；未登记的码按 `input`（3）处理，不允许出现“未知码=成功” |
+| 本批新增登记的码 | `NOT_TEXT`（input，textdiff 非文本文件）；其余码沿用 P0 已用集合，没有引入新的退出码值 |
+| 机读错误体 | 新增 `exit_code` 字段；`kind` 由码推导；**返回值即退出码**（`emit_error` 返回 `int`） |
+| 人读错误行 | 统一 `错误: <一句话>` + 可选 `提示: <修正建议>`；不再有“只打印、不登记”的路径 |
+| 检查类结论 | 5 = 结论不通过，仍写 stdout `fcmd-result/1` 且 `ok:false`，不写 stderr（`doctor`） |
+
+实现要点：
+
+- `core/result.py`：`record_error` / `pending_exit_code` / `has_pending_error` /
+  `take_pending_exit_code` / `reset_error_state`；同时维护 ContextVar 与进程级登记，
+  确保 `thread` / `async` 策略下工作线程登记的错误也能被主线程收取（ContextVar
+  不跨线程传播，只存一份会退化成“退出 0”）。
+- `core/result.py::report_error`：工具侧统一入口，按 `json_output` 选渲染，两条路径
+  登记同一个码；工具只写 `report_error(...)`，不再手写 if/else 两份。
+- `core/toolkit/exec.py`：缺子命令 / 未知子命令 / argparse 失败 → 2；未预期异常 →
+  必打印 + 1；`TaskFailedError` → 必打印 + 1；`CycleError` / `DuplicateTaskError` /
+  `MissingDependencyError` / `InjectionError` → 3；`KeyboardInterrupt` → 130；
+  工具返回后收取已登记码（成功但有错误文本 → 非零）。
+- `console.print_error`：登记退出码，支持 `code` / `hint`；这是“人读路径也能非零”的关键。
+- `core/execution/executors.py`：已呈现错误时抑制 `OK … 成功` 行，避免“错误 + 成功 + 非零”自相矛盾。
+
+### 13.2 本批改动的工具与内建命令
+
+| 范围 | 改动 |
+|---|---|
+| 内建：顶层 dispatch | 未知工具 1 → 2；加载失败 / 无映射 → 1 并补 `提示` |
+| 内建：`info` | 未知工具 / 未知子命令 1 → 2（两条路径）；加载失败补错误文本 |
+| 内建：`doctor` | 检查不通过 1 → **5**（人读与 `--json` 一致，`ok:false` 留在 stdout） |
+| 内建：`graph` / `yaml` / `profiler` / `completion` | 无参数 → 2；`yaml` 文件不存在 → 4、内容非法 → 3、任务失败 → 1；`profiler` 脚本不存在 → 4、无 `fcmd.run()` → 3 |
+| 内建：`run_builtin` / 独立入口 | 未知命令 1 → 2，并补 `提示` |
+| `filesearch` / `hashfile` / `textdiff` / `csvtool` | 人读路径也登记退出码：目录/文件不存在 → 4，非法算法/正则/列/非文本 → 3 |
+| `peview` / `reshack` | 文件不存在 → 4，非 PE → 3，写入/扩容失败 → 1；错误行统一 `错误:` |
+| `filesync` / `renamer` | 目录不存在 → 4，同目录/规则非法 → 3；`apply` 有失败项 → 1（原为 0） |
+| `codetool` / `convtool` / `urltool` / `mathtool` / `regexvalidate` | 输入非法 → 3（原为 0） |
+| `colortool` | 颜色非法 → 3；缺可选依赖 `coloraide` → 1 并给出安装提示 |
+| `fonttool` | 未知字体 → 3；下载/校验/写入失败 → 1（原为 0） |
+
+未动：所有成功路径文案；未列入本批的仍用裸 `print("错误: …")` 的工具（见 §13.6）。
+
+### 13.3 门禁数字
+
+| 门禁 | 结果 |
+|---|---|
+| `ruff check .` | 通过 |
+| `ruff format --check .` | 通过（554 files already formatted） |
+| `pyrefly check` | 0 errors |
+| `pytest -m "not slow" --cov=fcmd --cov-fail-under=95` | **7024 passed, 9 skipped, 11 deselected**（含新增 `tests/core/test_exit_codes.py` 11 例） |
+| 覆盖率 | **95.12%**（34327 语句 / 1248 未覆盖；10712 分支 / 844 部分覆盖） |
+| 静态清单 | 重生成 `_manifest_data.py`，仅 `DIGEST` 一行变化 |
+
+覆盖率较第三批（95.18%）下降 0.06pp：本批新增约 75 行框架分支（异常分类、双路径、
+中断）中仍有少量防御分支未被非 slow 用例覆盖（如 `KeyboardInterrupt` 的 130 分支、
+进程级 fallback 的并发交错路径）。没有降低阈值、没有加 `pragma: no cover`；
+后续批次在补其余工具错误路径测试时会一并覆盖。
+
+### 13.4 断言迁移清单（旧期望 → 新契约）
+
+共迁移 **21 个测试文件、约 115 条断言**；全部是“改期望值”，没有删除用例。
+“错误场景断言 0”的历史用例已全部改为非零（这是本批的核心目的）。
+
+| 测试文件 | 迁移内容（旧 → 新） |
+|---|---|
+| `tests/core/test_toolkit.py` | 未知工具 1→2；未知子命令 1→2；无可见子命令 0→2；单命令多余参数 1→2；`CycleError` 1→3；`FcmdError` 用例按子类分别 3 |
+| `tests/core/test_result.py` | `emit_error` 的 `kind` 由 `input` → `not_found`（按 code 推导）；新增断言 `exit_code == 返回值` |
+| `tests/cli/test_cli.py` | `pymake`/`pm` 缺子命令 0→2；未知工具/子命令 1→2；`graph`/`info`/`completion`/`yaml` 无参数 1→2；`doctor` 失败 0/1→5；`info --json` 错误 1→2 |
+| `tests/cli/test_cli_profiler.py` | 无参数 1→2；脚本不存在 2→4；无 `fcmd.run()` 1→3 |
+| `tests/cli/test_e2e_cli.py` | `doctor --json` 失败 0→5；`--json` 输入错误 0→非零（3/4） |
+| `tests/cli/test_entry.py` | 独立入口缺子命令 1→2 |
+| `tests/tools/crypto/test_cli_hashfile.py` | 文件/目录不存在 0→4；非法算法 1→3；负数阈值 1→3 |
+| `tests/tools/crypto/test_cli_codetool.py` / `convtool` / `urltool` | 输入非法 0→3 |
+| `tests/tools/data/test_cli_csvtool.py` | 文件不存在 0→4；列名/JSON 非法 0→3 |
+| `tests/tools/dev/test_cli_pymake.py` / `pyprof` | 缺子命令/缺参 0/1→2 |
+| `tests/tools/system/test_cli_filesearch.py` | 目录不存在 0→4；非法正则 0→3 |
+| `tests/tools/system/test_cli_fonttool.py` | 未知字体 0→3 |
+| `tests/tools/text/test_cli_colortool.py` | 颜色非法 0→3；缺 `coloraide` 0→1 |
+| `tests/tools/text/test_cli_mathtool.py` / `regexvalidate` | 输入非法 0→3 |
+| `tests/tools/text/test_cli_textdiff.py` | 文件/目录不存在 0→4；非文本 0→3 |
+| `tests/apps/peview/test_peview.py` | 文件不存在 0→4；非 PE 0→3 |
+| `tests/apps/reshack/test_reshack.py` | 文件/资源不存在 0→4；写入/扩容失败 0→1 |
+
+对调用方的**破坏性变更**（需要写进 CHANGELOG）：
+
+1. 任何“打印错误但退出 0”的工具，现在都会返回非零。依赖 `$? == 0` 判断成功的脚本
+   不需要改；反过来依赖“出错也返回 0”的脚本必须改。
+2. `fcmd <tool>`（多子命令工具缺子命令）由 0 → 2。把“列子命令”当成功用的脚本需改；
+   显式 `--help` 仍为 0。
+3. 未知工具、未知子命令、argparse 错误由 1 → 2（与“运行失败”区分）。
+4. `doctor` 检查不通过由 1 → 5（与“工具坏了”区分）；只看 `!= 0` 的用法不受影响。
+5. `--json` 下的输入错误由 0 → 3/4（§10.3 的过渡已结束）；机读错误体现在一定带
+   `exit_code`，且与进程退出码一致。
+6. 错误文本统一为 `错误: …`（可带 `提示: …`）；精确匹配旧错误行的脚本/测试需放宽匹配。
+
+### 13.5 对已有脚本的影响与建议改法
+
+| 场景 | 旧写法 | 建议改法 |
+|---|---|---|
+| 判断成功/失败 | `fcmd hashfile f x.txt && …` | 不变（0 才算成功） |
+| 错误也当成功用 | 忽略 `$?`，只解析 stdout | 必须检查退出码；错误文本不再出现在成功输出里 |
+| 区分“用错命令”与“输入不对” | 两者都是 2（旧计划）或都是 1 | 2 = 命令/参数写法错；3 = 值/路径内容不合法；4 = 目标不存在 |
+| 检查类门禁 | `fcmd doctor \|\| exit 1` | `case $? in 0) ok;; 5) 按修复项处理;; *) 工具自身故障;; esac` |
+| 机读消费 | `fcmd x --json 2>/dev/null` 后读 `ok` | stderr 解析 `fcmd-error/1`，用 `kind` 分派、`field`/`hint` 自纠；不要用 stdout 判断失败 |
+| PowerShell | `if ($LASTEXITCODE -ne 0)` | 可用：`switch ($LASTEXITCODE) { 2 {…} 3 {…} 4 {…} 5 {…} }` |
+
+最小兼容写法（bash）：
+
+```bash
+set +e
+out=$(fcmd hashfile f "$file" --json 2>err.json); rc=$?
+case $rc in
+  0) : ;;                                    # 成功
+  3) jq -r .hint err.json >&2; exit 3 ;;     # 输入非法：按 hint 修正
+  4) jq -r .message err.json >&2; exit 4 ;;  # 不存在
+  *) jq -r .message err.json >&2; exit "$rc" ;;
+esac
+```
+
+### 13.6 后续批次
+
+| 批次 | 待办 |
+|---|---|
+| 2 | 把仍在用裸 `print("错误: …")` 的工具改为 `print_error(code=...)`（jsontool、pdftool、data/net/media/office 各类、txttool/regextool/padtool/asciitool 等）；逐工具决定 3/4/1，并补对应测试 |
+| 3 | `filescan`：输入错误 2 → 3（与用法错误拆开），`--json` 错误带 `exit_code`；`dynacalc` 的 `_fail(code=2)` 重分类；`paramcad` / `paramesh` / `llm*` 按同一契约接入（需与应用维护会话协调） |
+| 4 | 校验类工具统一 `--strict` 与 5 的用法（`peview check`、`filecheck`、`filesync compare --strict`、`hashfile verify/manifest`） |

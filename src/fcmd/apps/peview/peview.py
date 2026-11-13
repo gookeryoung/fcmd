@@ -22,8 +22,7 @@ import fcmd
 from fcmd.apps.peview import _edit, _report
 from fcmd.apps.peview._pe import PEImage, load_pe
 from fcmd.apps.peview._reader import DEFAULT_HEX_LIMIT, PEError, format_hex_dump
-from fcmd.console import print_error
-from fcmd.core.result import emit_error, emit_result
+from fcmd.core.result import emit_result, report_error
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,45 +51,35 @@ _DESCRIPTION = (
 )
 
 
-def _run(action: Callable[[], None]) -> None:
-    """执行一个子命令动作，把 :class:`PEError` 转成中文错误输出。"""
+def _run(file: Path | None, action: Callable[[], None]) -> None:
+    """执行一个子命令动作，把 :class:`PEError` 转成中文错误输出（非零退出）。"""
     try:
         action()
     except PEError as exc:
-        print_error(str(exc))
+        _report_pe_error(exc, file, subcommand=None, json_output=False)
+
+
+def _report_pe_error(exc: PEError, file: Path | None, *, subcommand: str | None, json_output: bool) -> None:
+    """按「文件不存在 / 不是 PE」两类呈现 PEError，两条路径同一退出码。"""
+    not_found = file is not None and not file.is_file()
+    report_error(
+        "peview",
+        subcommand,
+        code="FILE_NOT_FOUND" if not_found else "NOT_PE_FILE",
+        message=str(exc),
+        field="file",
+        expected="已存在的 PE 文件" if not_found else "PE 文件（带 MZ / PE 签名）",
+        hint="确认路径存在且是文件" if not_found else "确认文件是有效的 exe/dll/sys 等 PE 映像",
+        json_output=json_output,
+    )
 
 
 def _load_for_output(file: Path, subcommand: str, json_output: bool) -> PEImage | None:
-    """加载 PE；``--json`` 时把加载失败转成错误信封，返回 ``None``。
-
-    默认路径沿用既有行为：失败时经 :func:`print_error` 输出同一句错误。
-    """
+    """加载 PE；失败时按当前输出形态呈现错误并返回 ``None``（退出码非零）。"""
     try:
         return load_pe(file)
     except PEError as exc:
-        if not json_output:
-            print_error(str(exc))
-            return None
-        if not file.is_file():
-            emit_error(
-                "peview",
-                subcommand,
-                code="FILE_NOT_FOUND",
-                message=str(exc),
-                field="file",
-                expected="已存在的 PE 文件",
-                hint="确认路径存在且是文件",
-            )
-        else:
-            emit_error(
-                "peview",
-                subcommand,
-                code="NOT_PE_FILE",
-                message=str(exc),
-                field="file",
-                expected="PE 文件（带 MZ / PE 签名）",
-                hint="确认文件是有效的 exe/dll/sys 等 PE 映像",
-            )
+        _report_pe_error(exc, file, subcommand=subcommand, json_output=json_output)
         return None
 
 
@@ -135,7 +124,7 @@ def headers(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_headers(load_pe(file))))
+    _run(file, lambda: print(_report.format_headers(load_pe(file))))
 
 
 @fcmd.tool(
@@ -179,7 +168,7 @@ def directories(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_directories(load_pe(file))))
+    _run(file, lambda: print(_report.format_directories(load_pe(file))))
 
 
 @fcmd.tool(
@@ -223,7 +212,7 @@ def exports(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_exports(load_pe(file))))
+    _run(file, lambda: print(_report.format_exports(load_pe(file))))
 
 
 @fcmd.tool("peview", subcommand="resources", help="查看资源树")
@@ -235,7 +224,7 @@ def resources(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_resources(load_pe(file))))
+    _run(file, lambda: print(_report.format_resources(load_pe(file))))
 
 
 @fcmd.tool("peview", subcommand="relocations", help="查看基址重定位")
@@ -247,7 +236,7 @@ def relocations(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_relocations(load_pe(file))))
+    _run(file, lambda: print(_report.format_relocations(load_pe(file))))
 
 
 @fcmd.tool("peview", subcommand="debug", help="查看调试目录")
@@ -259,7 +248,7 @@ def debug(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_debug(load_pe(file))))
+    _run(file, lambda: print(_report.format_debug(load_pe(file))))
 
 
 @fcmd.tool("peview", subcommand="hex", help="查看文件十六进制")
@@ -275,7 +264,7 @@ def hexdump(file: Path, offset: int = 0, length: int = DEFAULT_HEX_LIMIT) -> Non
     length:
         展示字节数，默认 256
     """
-    _run(lambda: _print_hex(file, offset, length))
+    _run(file, lambda: _print_hex(file, offset, length))
 
 
 def _print_hex(file: Path, offset: int, length: int) -> None:
@@ -328,7 +317,7 @@ def fields(file: Path) -> None:
     file:
         PE 文件路径
     """
-    _run(lambda: print(_report.format_fields(load_pe(file))))
+    _run(file, lambda: print(_report.format_fields(load_pe(file))))
 
 
 @fcmd.tool("peview", subcommand="edit", help="编辑允许的头字段（默认只预演）")
@@ -358,7 +347,7 @@ def edit(
     recompute_checksum:
         按修改后的内容重算校验和（默认开启；加 ``--no-recompute-checksum`` 关闭）
     """
-    _run(lambda: _run_edit(file, assign or [], apply, allow_signature_break, recompute_checksum))
+    _run(file, lambda: _run_edit(file, assign or [], apply, allow_signature_break, recompute_checksum))
 
 
 def _run_edit(

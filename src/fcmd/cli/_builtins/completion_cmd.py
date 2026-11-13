@@ -8,6 +8,7 @@ from typing import Any
 
 from fcmd.cli._completion_scripts import gen_bash_script, gen_fish_script, gen_zsh_script
 from fcmd.cli._discovery import aliases_for, import_all_tool_modules, tool_names
+from fcmd.core.exit_codes import ExitCode
 
 __all__ = ["run"]
 
@@ -35,7 +36,8 @@ def run(argv: list[str]) -> int:
     )
     if not argv:
         parser.print_help()
-        return 1
+        sys.stderr.write("提示: 例如 fcmd completion --shell bash\n")
+        return int(ExitCode.USAGE)
     parsed = parser.parse_args(argv)
 
     # 收集所有工具数据：触发模块导入以填充注册表

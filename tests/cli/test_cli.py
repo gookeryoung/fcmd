@@ -63,23 +63,23 @@ def test_fcmd_app_version() -> None:
 
 
 def test_fcmd_app_unknown_tool() -> None:
-    """未知工具返回 1。"""
+    """未知工具返回 2。"""
     app = FcmdApp(["nonexistent_tool"])
-    assert app.run() == 1
+    assert app.run() == 2
 
 
 def test_fcmd_app_unknown_tool_suggestion() -> None:
     """未知工具名接近时给出模糊匹配建议。"""
     # pymak 接近 pymake，应触发建议
     app = FcmdApp(["pymak"])
-    assert app.run() == 1
+    assert app.run() == 2
 
 
 def test_fcmd_app_pymake_no_subcommand() -> None:
-    """fcmd pymake 列出子命令，返回 0。"""
+    """fcmd pymake 列出子命令，返回 2（缺少子命令）。"""
     app = FcmdApp(["pymake"])
-    # 无 subcommand → run_tool 列子命令返回 SUCCESS
-    assert app.run() == 0
+    # 无 subcommand → run_tool 列子命令返回 USAGE
+    assert app.run() == 2
 
 
 def test_fcmd_app_pymake_b() -> None:
@@ -90,16 +90,16 @@ def test_fcmd_app_pymake_b() -> None:
 
 
 def test_fcmd_app_pymake_unknown_subcommand() -> None:
-    """fcmd pymake unknown 返回 1。"""
+    """fcmd pymake unknown 返回 2。"""
     app = FcmdApp(["pymake", "unknown_subcommand"])
-    assert app.run() == 1
+    assert app.run() == 2
 
 
 def test_fcmd_app_pm_alias() -> None:
     """fcmd pm 别名路由到 pymake。"""
     app = FcmdApp(["pm"])
-    # pm → pymake，无 subcommand → 列子命令返回 0
-    assert app.run() == 0
+    # pm → pymake，无 subcommand → 列子命令返回 2
+    assert app.run() == 2
 
 
 def test_fcmd_app_pymake_dry_run() -> None:
@@ -560,23 +560,23 @@ class TestBuiltinGraph:
         assert "Layer" in out
 
     def test_graph_unknown_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph unknown_tool 返回 1。"""
+        """fcmd graph unknown_tool 返回 2。"""
         app = FcmdApp(["graph", "nonexistent_tool", "x"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "未知工具" in out
 
     def test_graph_unknown_subcommand(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph pymake unknown 返回 1。"""
+        """fcmd graph pymake unknown 返回 2。"""
         app = FcmdApp(["graph", "pymake", "unknown_subcommand"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "没有子命令" in out
 
     def test_graph_no_args_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd graph 无参数打印帮助并返回 1。"""
+        """fcmd graph 无参数打印帮助并返回 2。"""
         app = FcmdApp(["graph"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "tool" in out
 
@@ -638,10 +638,10 @@ class TestBuiltinGraph:
         assert "↓" not in out
 
     def test_run_builtin_unknown_name(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """run_builtin 收到未知内建命令名时返回 1（防御路径）。"""
+        """run_builtin 收到未知内建命令名时返回 2（防御路径）。"""
         from fcmd.cli._builtins import run_builtin
 
-        assert run_builtin("nonexistent_builtin", []) == 1
+        assert run_builtin("nonexistent_builtin", []) == 2
         out = capsys.readouterr().out
         assert "未知内建命令" in out
 
@@ -742,16 +742,16 @@ class TestBuiltinInfo:
         assert "cmd" in out
 
     def test_info_unknown_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd info unknown_tool 返回 1。"""
+        """fcmd info unknown_tool 返回 2。"""
         app = FcmdApp(["info", "nonexistent_tool"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "未知工具" in out
 
     def test_info_unknown_subcommand(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd info pymake unknown 返回 1。"""
+        """fcmd info pymake unknown 返回 2。"""
         app = FcmdApp(["info", "pymake", "unknown_subcommand"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "没有子命令" in out
 
@@ -822,9 +822,9 @@ class TestBuiltinInfo:
         assert payload["subcommand"]["params"]
 
     def test_info_unknown_tool_json(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """未知工具：stderr 错误信封，退出码仍为 1。"""
+        """未知工具：stderr 错误信封，退出码 2。"""
         app = FcmdApp(["info", "nonexistent_tool", "--json"])
-        assert app.run() == 1
+        assert app.run() == 2
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -835,7 +835,7 @@ class TestBuiltinInfo:
     def test_info_unknown_subcommand_json(self, capsys: pytest.CaptureFixture[str]) -> None:
         """未知子命令：UNKNOWN_SUBCOMMAND 错误信封。"""
         app = FcmdApp(["info", "pymake", "unknown_subcommand", "--json"])
-        assert app.run() == 1
+        assert app.run() == 2
         captured = capsys.readouterr()
         assert captured.out == ""
         payload = json.loads(captured.err)
@@ -919,9 +919,9 @@ class TestBuiltinCompletion:
     """``fcmd completion`` 内建命令测试。"""
 
     def test_completion_no_args_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd completion 无参数打印帮助并返回 1。"""
+        """fcmd completion 无参数打印帮助并返回 2。"""
         app = FcmdApp(["completion"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "--shell" in out
 
@@ -1114,9 +1114,9 @@ class TestBuiltinYaml:
         return f'["echo", "{text}"]'
 
     def test_yaml_no_args_prints_help(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd yaml 无参数打印帮助并返回 1。"""
+        """fcmd yaml 无参数打印帮助并返回 2。"""
         app = FcmdApp(["yaml"])
-        assert app.run() == 1
+        assert app.run() == 2
         out = capsys.readouterr().out
         assert "file" in out
 
@@ -1183,28 +1183,28 @@ jobs:
         out = capsys.readouterr().out
         assert "deploy" not in out or "执行成功" in out
 
-    def test_yaml_nonexistent_file_returns_1(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
-        """fcmd yaml <nonexistent> 返回 1。"""
+    def test_yaml_nonexistent_file_returns_4(self, capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+        """fcmd yaml <nonexistent> 返回 4。"""
         app = FcmdApp(["yaml", str(tmp_path / "nonexistent.yaml")])
-        assert app.run() == 1
+        assert app.run() == 4
         out = capsys.readouterr().out
-        assert "加载 YAML 失败" in out
+        assert "YAML 文件不存在" in out
 
-    def test_yaml_invalid_yaml_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd yaml <invalid.yaml> 返回 1。"""
+    def test_yaml_invalid_yaml_returns_3(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <invalid.yaml> 返回 3。"""
         yaml_file = tmp_path / "invalid.yaml"
         yaml_file.write_text("key: [unclosed bracket\n", encoding="utf-8")
         app = FcmdApp(["yaml", str(yaml_file)])
-        assert app.run() == 1
+        assert app.run() == 3
         out = capsys.readouterr().out
         assert "加载 YAML 失败" in out
 
-    def test_yaml_invalid_schema_returns_1(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd yaml <schema_invalid.yaml>（缺 jobs）返回 1。"""
+    def test_yaml_invalid_schema_returns_3(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """fcmd yaml <schema_invalid.yaml>（缺 jobs）返回 3。"""
         yaml_file = tmp_path / "no_jobs.yaml"
         yaml_file.write_text("foo: bar\n", encoding="utf-8")
         app = FcmdApp(["yaml", str(yaml_file)])
-        assert app.run() == 1
+        assert app.run() == 3
         out = capsys.readouterr().out
         assert "加载 YAML 失败" in out
 
@@ -1398,10 +1398,10 @@ class TestBuiltinDoctor:
     """``fcmd doctor`` 内建命令测试。"""
 
     def test_doctor_runs_returns_int(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """fcmd doctor 返回 0（全通过）或 1（有失败），不抛异常。"""
+        """fcmd doctor 返回 0（全通过）或 5（有失败），不抛异常。"""
         app = FcmdApp(["doctor"])
         code = app.run()
-        assert code in (0, 1)
+        assert code in (0, 5)
         out = capsys.readouterr().out
         assert "环境诊断" in out
 
@@ -1474,16 +1474,16 @@ class TestBuiltinDoctor:
         out = capsys.readouterr().out
         assert "全部通过" in out
 
-    def test_doctor_failed_check_returns_1(
+    def test_doctor_failed_check_returns_5(
         self,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """有检查失败时返回 1（mock shutil.which 返回 None 触发 PATH FAIL）。"""
+        """有检查失败时返回 5（mock shutil.which 返回 None 触发 PATH FAIL）。"""
         monkeypatch.setattr("shutil.which", lambda _cmd: None)
 
         app = FcmdApp(["doctor"])
-        assert app.run() == 1
+        assert app.run() == 5
         out = capsys.readouterr().out
         assert "项失败" in out
 
@@ -1524,16 +1524,16 @@ class TestBuiltinDoctor:
         assert doc["data"]["ok"] is True
         assert doc["data"]["failed"] == 0
 
-    def test_doctor_json_failed_check_returns_1(
+    def test_doctor_json_failed_check_returns_5(
         self,
         capsys: pytest.CaptureFixture[str],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """``--json`` 有失败项时 ``ok=false``、退出 1，且失败项带 fix 建议。"""
+        """``--json`` 有失败项时 ``ok=false``、退出 5，且失败项带 fix 建议。"""
         monkeypatch.setattr("shutil.which", lambda _cmd: None)
 
         app = FcmdApp(["doctor", "--json"])
-        assert app.run() == 1
+        assert app.run() == 5
         data = json.loads(capsys.readouterr().out)["data"]
         assert data["ok"] is False
         assert data["failed"] == data["total"] - data["passed"]
@@ -1545,7 +1545,7 @@ class TestBuiltinDoctor:
         """fcmd doctor 通过 run() 入口正确路由（覆盖 _run_builtin 分发）。"""
         app = FcmdApp(["doctor"])
         code = app.run()
-        assert code in (0, 1)
+        assert code in (0, 5)
         out = capsys.readouterr().out
         assert "环境诊断" in out
 
@@ -1565,7 +1565,7 @@ class TestBuiltinDoctor:
             code = app.run()
             out = capsys.readouterr().out
             assert "__fake_broken__" in out
-            assert code == 1
+            assert code == 5
         finally:
             discovery_mod._TOOL_MODULES.clear()
             discovery_mod._TOOL_MODULES.update(original_modules)
@@ -1776,7 +1776,8 @@ class TestStandaloneEntryNoDuplicateRegistration:
             text=True,
             check=False,
         )
-        assert result.returncode == 0, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
+        # 缺少子命令 → USAGE（2），重点是未触发重复注册
+        assert result.returncode == 2, f"stderr:\n{result.stderr}\nstdout:\n{result.stdout}"
         # 修复前此处抛 ValueError: 工具 'gittool' 的子命令 'isub' 已注册
         assert "Traceback" not in result.stderr
         assert "已注册" not in result.stderr

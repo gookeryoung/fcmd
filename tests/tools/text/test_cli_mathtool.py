@@ -73,18 +73,18 @@ class TestMathtoolEval:
 
     def test_div_zero_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("mathtool", ["eval", "1 / 0"], capsys)
-        assert code == 0
+        assert code == 3
         assert "division by zero" in out.lower()
 
     def test_syntax_error_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("mathtool", ["eval", "1 +"], capsys)
-        assert code == 0
+        assert code == 3
         assert "表达式语法错误" in out
 
     def test_no_function_call(self, capsys: pytest.CaptureFixture[str]) -> None:
         """沙箱不允许函数调用（杜绝注入）。"""
         code, out = _run_and_capture("mathtool", ["eval", "__import__('os')"], capsys)
-        assert code == 0
+        assert code == 3
         assert "不支持" in out or "语法错误" in out
 
 
@@ -104,7 +104,7 @@ class TestMathtoolSqrt:
 
     def test_negative_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("mathtool", ["sqrt", "-1"], capsys)
-        assert code == 0
+        assert code == 3
         assert "sqrt 要求非负数" in out
 
 
@@ -145,7 +145,7 @@ class TestMathtoolFactorial:
 
     def test_negative_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:
         code, out = _run_and_capture("mathtool", ["factorial", "-1"], capsys)
-        assert code == 0
+        assert code == 3
         assert "factorial 要求非负整数" in out
 
     def test_non_integer_shows_error(self, capsys: pytest.CaptureFixture[str]) -> None:

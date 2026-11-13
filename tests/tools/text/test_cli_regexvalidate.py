@@ -241,9 +241,9 @@ class TestCli:
         assert "标志: multiline" in out
 
     def test_invalid_pattern_prints_error(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """无效正则按项目惯例输出错误行并保持退出码 0。"""
+        """无效正则输出错误行并以 INVALID_INPUT 退出（3）。"""
         code = run_tool("regexvalidate", ["[bad", "x"])
-        assert code == 0
+        assert code == 3
         assert "无效的正则表达式" in capsys.readouterr().out
 
     def test_validator_module_exports(self) -> None:

@@ -34,10 +34,10 @@ class TestCliEntry:
         r = fcmd(None, "--help")
         assert r.returncode == 0
 
-    def test_unknown_tool_returns_1(self, fcmd: Callable[..., CmdResult]) -> None:
-        """未知工具退出码 1。"""
-        r = fcmd("nonexistent_tool_xyz", expect=1)
-        assert r.returncode == 1
+    def test_unknown_tool_returns_2(self, fcmd: Callable[..., CmdResult]) -> None:
+        """未知工具退出码 2。"""
+        r = fcmd("nonexistent_tool_xyz", expect=2)
+        assert r.returncode == 2
 
 
 @pytest.mark.e2e_smoke

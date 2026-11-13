@@ -14,11 +14,15 @@ from fcmd.infras import codec
 
 
 def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> None:
-    """执行换算并打印结果；``ValueError`` 转为统一错误行（退出码 0）。"""
+    """执行换算并打印结果；``ValueError`` 转为统一错误行（退出码 3）。"""
     try:
         result = fn(*args, **kwargs)
     except ValueError as error:
-        print_error(str(error))
+        print_error(
+            str(error),
+            code="INVALID_ARGUMENT",
+            hint="检查数值范围与单位拼写（源/目标单位需在支持列表内）",
+        )
         return
     print(result)
 

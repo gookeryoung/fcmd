@@ -297,9 +297,9 @@ class TestPymakeCliDispatch:
     """``fcmd pymake`` CLI 调度测试（不执行真实命令）。"""
 
     def test_pymake_no_subcommand_lists(self) -> None:
-        """fcmd pymake 列出子命令，返回 0。"""
+        """fcmd pymake 列出子命令，返回 2（缺少子命令）。"""
         app = FcmdApp(["pymake"])
-        assert app.run() == 0
+        assert app.run() == 2
 
     def test_pymake_t_dry_run(self, capsys: pytest.CaptureFixture[str]) -> None:
         """fcmd pymake t --dry-run 打印执行计划。"""
@@ -371,9 +371,9 @@ class TestPymakeCliDispatch:
         assert "upload" in out
 
     def test_pymake_unknown_subcommand(self) -> None:
-        """fcmd pymake unknown 返回 FAILURE。"""
+        """fcmd pymake unknown 返回 USAGE。"""
         code = run_tool("pymake", ["unknown_subcommand"])
-        assert code == 1
+        assert code == 2
 
     def test_pymake_b_dry_run_via_app(self) -> None:
         """FcmdApp 路由 pymake b --dry-run 返回 0。"""
@@ -429,8 +429,8 @@ class TestPymakeMain:
         assert exc_info.value.code == 0
 
     def test_main_unknown_subcommand_exits_nonzero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """main() 未知子命令通过 SystemExit(1) 退出。"""
+        """main() 未知子命令通过 SystemExit(2) 退出。"""
         monkeypatch.setattr(sys, "argv", ["pymake", "unknown_subcommand"])
         with pytest.raises(SystemExit) as exc_info:
             fcmd.tools.dev.pymake.main()
-        assert exc_info.value.code == 1
+        assert exc_info.value.code == 2

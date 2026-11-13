@@ -6,6 +6,7 @@ import argparse
 
 from fcmd.cli._discovery import _TOOL_MODULES, ensure_tools_discovered
 from fcmd.cli._doctor_helpers import collect_doctor_checks, doctor_result, render_doctor_report
+from fcmd.core.exit_codes import ExitCode
 from fcmd.core.result import emit_result
 
 __all__ = ["run"]
@@ -25,7 +26,8 @@ def run(argv: list[str]) -> int:
     ``--json``：同一份检查项输出为 ``fcmd-result/1``（含 ``checks[{item,ok,detail,fix}]``），
     供模型逐项判定；默认表格输出不变。
 
-    退出码：全部通过返回 0，有失败项返回 1（两种输出形态一致）。
+    退出码：全部通过返回 0；有失败项返回 5（``CHECK_FAILED``，两种输出形态一致）。
+    5 表示「检查结论为不通过」，不是运行错误，因此不写 stderr 错误体。
     """
     parser = argparse.ArgumentParser(
         prog="fcmd doctor",
@@ -38,6 +40,6 @@ def run(argv: list[str]) -> int:
     checks = collect_doctor_checks(_TOOL_MODULES)
     if parsed.json:
         result = doctor_result(checks)
-        emit_result("doctor", None, result)
-        return 0 if result["ok"] else 1
+        emit_result("doctor", None, result, ok=result["ok"])
+        return 0 if result["ok"] else int(ExitCode.CHECK_FAILED)
     return render_doctor_report(checks)

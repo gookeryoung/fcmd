@@ -605,7 +605,7 @@ def list_resources(file: Path) -> None:
             pe.open(file)
             print(format_resource_report(pe.file_info(), pe.resources()))
     except PEError as exc:
-        print_error(str(exc))
+        _report_pe_error(exc, file)
 
 
 @fcmd.tool("reshack", subcommand="extract", help="导出单个资源")
@@ -637,11 +637,15 @@ def extract_resource(
             target = output or Path(f"{file.stem}_resource_{type_id}_{name_id}_{language}{resource_extension(type_id)}")
             resource = pe.export_resource(type_id, name_id, target, language)
             if resource is None:
-                print_error(f"未找到资源: Type={type_id}, Name={name_id}, Language={language}")
+                print_error(
+                    f"未找到资源: Type={type_id}, Name={name_id}, Language={language}",
+                    code="NOT_FOUND",
+                    hint="先运行 fcmd reshack list <file> 查看可用资源",
+                )
                 return
             print(f"已导出 {resource.type_name} #{resource.name_id} -> {target}（{format_file_size(resource.size)}）")
     except PEError as exc:
-        print_error(str(exc))
+        _report_pe_error(exc, file)
 
 
 @fcmd.tool("reshack", subcommand="replace", help="用新数据替换已有资源")
@@ -670,7 +674,18 @@ def replace_resource(
     try:
         new_data = input_path.read_bytes()
     except OSError as exc:
-        print_error(f"读取新资源数据失败: {input_path}: {exc}")
+        if not input_path.is_file():
+            print_error(
+                f"读取新资源数据失败: {input_path}: {exc}",
+                code="FILE_NOT_FOUND",
+                hint="确认新资源数据文件路径存在",
+            )
+        else:
+            print_error(
+                f"读取新资源数据失败: {input_path}: {exc}",
+                code="RUNTIME_ERROR",
+                hint="检查文件权限后重试",
+            )
         return
     try:
         with PEFile() as pe:
@@ -682,7 +697,7 @@ def replace_resource(
             )
             print(f"原文件备份: {backup}")
     except PEError as exc:
-        print_error(str(exc))
+        _report_pe_error(exc, file, fallback="RUNTIME_ERROR")
 
 
 @fcmd.tool("reshack", subcommand="export-all", help="导出全部资源到目录")
@@ -706,7 +721,19 @@ def export_all_resources(
             exported, total, directory = pe.export_all(target)
             print(f"已导出 {exported}/{total} 个资源 -> {directory}")
     except PEError as exc:
-        print_error(str(exc))
+        _report_pe_error(exc, file)
+
+
+def _report_pe_error(exc: PEError, file: Path | None = None, *, fallback: str = "NOT_PE_FILE") -> None:
+    """呈现 PE 错误：文件不存在 → 4；解析失败 → 3；写入/扩容失败 → 1（fallback）。"""
+    not_found = file is not None and not file.is_file()
+    if not_found:
+        print_error(str(exc), code="FILE_NOT_FOUND", hint="确认路径存在且是文件")
+        return
+    if fallback == "RUNTIME_ERROR":
+        print_error(str(exc), code="RUNTIME_ERROR", hint="确认目标文件未被占用、无写保护，且有足够磁盘空间")
+        return
+    print_error(str(exc), code="NOT_PE_FILE", hint="确认文件是有效的 PE 映像（exe/dll/sys 等）")
 
 
 @fcmd.main("reshack")

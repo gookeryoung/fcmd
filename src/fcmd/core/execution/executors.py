@@ -47,6 +47,7 @@ from fcmd.core.context import describe_injection
 from fcmd.core.dag import Graph
 from fcmd.core.errors import TaskFailedError
 from fcmd.core.report import RunReport
+from fcmd.core.result import has_pending_error
 from fcmd.core.task import EventCallback, RunConfig, TaskEvent, TaskStatus
 
 from .dependency_runner import _run_dependency, _run_dependency_sync, _sync_chain_fast_path_ok
@@ -73,7 +74,10 @@ def _make_verbose_callback(on_event: EventCallback | None) -> EventCallback:
         if event.status == TaskStatus.RUNNING:
             console.print(f"[cyan]>[/cyan] [bold]{event.task!r}[/bold] 开始执行...")
         elif event.status == TaskStatus.SUCCESS:
-            console.print(f"[green]OK[/green] [bold]{event.task!r}[/bold] 成功[dim]{dur}[/dim]")
+            # 已呈现过错误时不再打印「OK … 成功」：避免与错误行、非零退出码
+            # 自相矛盾（同一行输出里既说成功又退 1）。
+            if not has_pending_error():
+                console.print(f"[green]OK[/green] [bold]{event.task!r}[/bold] 成功[dim]{dur}[/dim]")
         elif event.status == TaskStatus.FAILED:
             err = f": {event.error}" if event.error else ""
             console.print(

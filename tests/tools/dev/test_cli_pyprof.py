@@ -661,6 +661,6 @@ class TestCliE2E:
         assert (tmp_path / "loaded.html").is_file()
 
     def test_missing_target(self, fcmd: Callable[..., CmdResult]) -> None:
-        """缺少目标时应以非零码退出。"""
-        result = fcmd("pyprof", "run", "--no-open", expect=1)
+        """缺少目标时应以 USAGE（2）退出。"""
+        result = fcmd("pyprof", "run", "--no-open", expect=2)
         assert "required" in result.stderr

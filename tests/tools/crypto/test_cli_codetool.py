@@ -255,7 +255,7 @@ class TestCodetoolCLI:
     def test_base64_decode_invalid_via_run_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
         """非法 Base64 解码应打印错误。"""
         code = run_tool("codetool", ["base64", "!!!invalid!!!", "--decode"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "解码失败" in out
 
@@ -290,7 +290,7 @@ class TestCodetoolCLI:
     def test_hex_decode_invalid_via_run_tool(self, capsys: pytest.CaptureFixture[str]) -> None:
         """非法十六进制解码应打印错误。"""
         code = run_tool("codetool", ["hex", "xyz", "--decode"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "解码失败" in out
 

@@ -19,7 +19,7 @@ def _print_result(result: tuple[float, ...] | str) -> None:
 
 
 def _run(fn: Callable[..., tuple[float, ...] | str], *args: object) -> None:
-    """执行颜色换算并打印；``ValueError`` 转为错误行（错误信息即结果，退出码 0）。"""
+    """执行颜色换算并打印；``ValueError`` 转为错误行（输入非法 3 / 缺依赖 1）。"""
     try:
         result = fn(*args)
     except ValueError as exc:
@@ -27,8 +27,13 @@ def _run(fn: Callable[..., tuple[float, ...] | str], *args: object) -> None:
 
         from fcmd.console import print_error  # 延迟导入
 
+        message = str(exc)
+        if "未安装 coloraide" in message:
+            code, hint = "RUNTIME_ERROR", "安装可选依赖后重试: pip install fcmd[color]"
+        else:
+            code, hint = "INVALID_ARGUMENT", "确认颜色分量范围与 #RRGGBB 格式"
         # 错误文本可能含 ``[color]`` 等字样，必须转义后交给 markup 渲染
-        print_error(escape(str(exc)))
+        print_error(escape(message), code=code, hint=hint)
         return
     _print_result(result)
 

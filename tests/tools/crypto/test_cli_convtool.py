@@ -280,7 +280,7 @@ class TestConvtoolCLI:
     def test_length_invalid_unit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """length 无效单位提示。"""
         code = run_tool("convtool", ["length", "1", "invalid", "m"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "不支持的长度单位" in out
 
@@ -294,7 +294,7 @@ class TestConvtoolCLI:
     def test_weight_invalid_unit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """weight 无效单位提示。"""
         code = run_tool("convtool", ["weight", "1", "invalid", "g"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "不支持的重量单位" in out
 
@@ -309,7 +309,7 @@ class TestConvtoolCLI:
     def test_temp_below_absolute_zero(self, capsys: pytest.CaptureFixture[str]) -> None:
         """temp 低于绝对零度提示。"""
         code = run_tool("convtool", ["temp", "-300", "C", "F"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "绝对零度" in out
 
@@ -330,13 +330,13 @@ class TestConvtoolCLI:
     def test_datasize_invalid_base(self, capsys: pytest.CaptureFixture[str]) -> None:
         """--base hex 提示。"""
         code = run_tool("convtool", ["datasize", "1", "GB", "MB", "--base", "hex"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "不支持的进制基础" in out
 
     def test_datasize_invalid_unit(self, capsys: pytest.CaptureFixture[str]) -> None:
         """datasize 无效单位提示。"""
         code = run_tool("convtool", ["datasize", "1", "XB", "MB"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "不支持的数据大小单位" in out
