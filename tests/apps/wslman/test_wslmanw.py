@@ -309,3 +309,67 @@ def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(wslmanw, "run_gui", lambda: called.append(True))
     wslmanw.launch_cmd()
     assert called == [True]
+
+
+def _manifest_entry(sha256: str = "a" * 64) -> wslmanw._images.ImageEntry:
+    return wslmanw._images.ImageEntry(
+        name="Debian",
+        friendly_name="Debian GNU/Linux",
+        sources=("manifest",),
+        downloads=(
+            wslmanw._images.ImageDownload(
+                "x86_64",
+                "https://salsa.debian.org/debian/WSL/-/jobs/1/artifacts/raw/Debian_WSL_AMD64_v1.26.0.0.wsl",
+                sha256,
+            ),
+        ),
+    )
+
+
+def test_local_archives_filters_suffixes_and_skips_missing_dir(tmp_path: Path) -> None:
+    """扫描只认可导入的归档后缀，目录不存在时返回空而不是报错。"""
+    (tmp_path / "b.wsl").write_bytes(b"x")
+    (tmp_path / "a.tar.gz").write_bytes(b"x")
+    (tmp_path / "c.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "nested").mkdir()
+    assert [path.name for path in wslmanw.local_archives(tmp_path)] == ["a.tar.gz", "b.wsl"]
+    assert wslmanw.local_archives(tmp_path / "missing") == ()
+
+
+def test_guess_distro_name_strips_suffix_and_arch() -> None:
+    assert wslmanw.guess_distro_name(Path("Debian-x86_64.tar")) == "Debian"
+    assert wslmanw.guess_distro_name(Path("Ubuntu 24.04.wsl")) == "Ubuntu_24.04"
+    assert wslmanw.guess_distro_name(Path("---.tar")) == "distro"
+
+
+def test_match_archive_accepts_gui_and_cli_filenames() -> None:
+    """GUI 下载保留官方 URL 原名，CLI 下载是「名称-架构.tar」，两者都要能认出来。"""
+    entry = _manifest_entry()
+    expected = (entry, entry.downloads[0])
+    assert wslmanw.match_archive(Path("Debian_WSL_AMD64_v1.26.0.0.wsl"), [entry]) == expected
+    assert wslmanw.match_archive(Path("Debian-x86_64.tar"), [entry]) == expected
+    assert wslmanw.match_archive(Path("My-Export.tar"), [entry]) is None
+
+
+def test_inspect_archive_reports_package_info(tmp_path: Path) -> None:
+    entry = _manifest_entry()
+    archive = tmp_path / "Debian-x86_64.tar"
+    archive.write_bytes(b"abc")
+    info = wslmanw.inspect_archive(archive, [entry])
+    assert (info.distro, info.arch, info.size) == ("Debian", "x86_64", 3)
+    assert info.expected_sha256 == "a" * 64
+    assert "官方清单" in info.source
+
+    exported = tmp_path / "My-Export.tar"
+    exported.write_bytes(b"abc")
+    loose = wslmanw.inspect_archive(exported, [entry])
+    assert loose.distro == "My-Export"
+    assert loose.expected_sha256 is None
+    assert "未匹配" in loose.source
+
+
+def test_verification_label_never_calls_unverified_files_trusted() -> None:
+    assert "未比对" in wslmanw.verification_label(None, None)
+    assert wslmanw.verification_label("A" * 64, None) == "待校验"
+    assert wslmanw.verification_label("a" * 64, "a" * 64) == "sha256 与官方清单一致"
+    assert wslmanw.verification_label("a" * 64, "b" * 64) == "sha256 与官方清单不一致"

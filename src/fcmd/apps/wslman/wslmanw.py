@@ -29,6 +29,7 @@ from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
+from fcmd.apps.wslman._transfer import sha256_file
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
@@ -350,6 +351,89 @@ def image_filename(name: str, download: _images.ImageDownload) -> str:
     return f"{name}-{download.arch}.tar"
 
 
+_ARCHIVE_SUFFIXES: tuple[str, ...] = (".tar", ".tar.gz", ".tgz", ".wsl")
+"""可交给 ``wsl --import`` 的本地镜像包后缀；``.wsl`` 是官方清单里的未压缩 tar。"""
+
+
+@dataclass(frozen=True, slots=True)
+class LocalArchive:
+    """磁盘上已有的镜像包，以及它与官方清单的对应关系。"""
+
+    path: Path
+    size: int
+    distro: str
+    arch: str
+    source: str
+    expected_sha256: str | None = None
+
+
+def local_archives(directory: Path) -> tuple[Path, ...]:
+    """列出目录（不递归）里的镜像包，按名称排序；目录不存在或不可读时返回空。"""
+    if not directory.is_dir():
+        return ()
+    try:
+        found = [
+            path for path in directory.iterdir() if path.is_file() and path.name.casefold().endswith(_ARCHIVE_SUFFIXES)
+        ]
+    except OSError:
+        return ()
+    return tuple(sorted(found, key=lambda path: path.name.casefold()))
+
+
+def guess_distro_name(path: Path) -> str:
+    """从文件名推测发行版名：去掉归档后缀与架构尾巴，非法字符换成 ``_``。"""
+    name = path.name
+    for suffix in _ARCHIVE_SUFFIXES:
+        if name.casefold().endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    for tail in ("-x86_64", "-aarch64", "-amd64", "-arm64", "-x64"):
+        if name.casefold().endswith(tail):
+            name = name[: -len(tail)]
+            break
+    cleaned = "".join(ch if ch.isalnum() or ch in "-._" else "_" for ch in name).strip("._-")
+    return cleaned or "distro"
+
+
+def match_archive(
+    path: Path, entries: Sequence[_images.ImageEntry]
+) -> tuple[_images.ImageEntry, _images.ImageDownload] | None:
+    """按落盘文件名匹配官方清单：GUI 下载用 URL 原名，CLI 下载用 ``名称-架构.tar``。"""
+    name = path.name.casefold()
+    for entry in entries:
+        for download in entry.downloads:
+            official = Path(urllib.parse.urlparse(download.url).path).name.casefold()
+            if name in {official, f"{entry.name}-{download.arch}.tar".casefold()}:
+                return entry, download
+    return None
+
+
+def inspect_archive(path: Path, entries: Sequence[_images.ImageEntry]) -> LocalArchive:
+    """汇总本地包信息：发行版、架构、来源与官方 sha256（未收录时为 ``None``）。"""
+    size = path.stat().st_size
+    matched = match_archive(path, entries)
+    if matched is None:
+        return LocalArchive(path, size, guess_distro_name(path), "未知", "本地文件（未匹配官方清单）")
+    entry, download = matched
+    return LocalArchive(
+        path,
+        size,
+        entry.name,
+        download.arch,
+        f"本地文件 · 官方清单 {entry.name}（{download.arch}）",
+        download.sha256,
+    )
+
+
+def verification_label(expected_sha256: str | None, actual: str | None) -> str:
+    """包校验状态；没有官方摘要时只说明「未比对」，不把文件说成可信。"""
+    if expected_sha256 is None:
+        return "无官方 sha256（未比对，不标可信）"
+    if actual is None:
+        return "待校验"
+    return "sha256 与官方清单一致" if actual == expected_sha256.strip().casefold() else "sha256 与官方清单不一致"
+
+
 def _error_text(exc: BaseException) -> str:
     if isinstance(exc, WslmanError):
         text = str(exc)
@@ -434,7 +518,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             ),
             (
                 ("导出", self._export_selected, None),
-                ("导入", self._import, None),
+                ("安装本地镜像…", self._install_local, None),
             ),
             (
                 ("注销", self._unregister, "Danger.TButton"),
@@ -641,7 +725,6 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Checkbutton(buttons, text="下载后立即安装", variable=self.install_after).pack(
             side="left", padx=(space.sm, 0)
         )
-        ttk.Button(buttons, text="导入本地 tar…", command=self._import).pack(side="left", padx=(space.sm, 0))
         ttk.Label(buttons, text=_DOWNLOAD_HINT, style="Hint.TLabel", wraplength=380).pack(
             side="left", padx=(space.md, 0)
         )
@@ -1088,42 +1171,224 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
 
         self._start("导出", work)
 
-    def _import(self, archive: str | None = None) -> None:
-        if archive is None:
-            archive = self.filedialog.askopenfilename(
-                title="选择要导入的 tar", filetypes=[("tar 归档", "*.tar;*.gz;*.tgz")]
+    def _install_local(self) -> None:
+        """安装磁盘上已有的镜像包：扫描下载目录或手动选包，确认信息后走 ``wsl --import``。
+
+        这是 GUI 里唯一的本地安装入口（工具栏「安装本地镜像…」）；下载页不再重复放按钮。
+        """
+        if self._busy:
+            self.messagebox.showinfo("请稍候", "已有任务在执行")
+            return
+        tk, ttk, space = self.tk, self.ttk, self.space
+        entries = self._catalog_entries()
+        window = tk.Toplevel(self.root)
+        window.title("安装本地镜像")
+        window.transient(self.root)
+        window.geometry("820x620")
+        window.columnconfigure(0, weight=1)
+        window.rowconfigure(2, weight=1)
+
+        top = ttk.Frame(window, padding=space.sm)
+        top.grid(row=0, column=0, sticky="ew")
+        top.columnconfigure(1, weight=1)
+        ttk.Label(top, text="扫描目录").grid(row=0, column=0, sticky="w")
+        directory = self.tk.StringVar(value=self._local_start_dir())
+        ttk.Entry(top, textvariable=directory).grid(row=0, column=1, sticky="ew", padx=space.xs)
+
+        listing = ttk.Frame(window, padding=(space.sm, 0))
+        listing.grid(row=2, column=0, sticky="nsew")
+        listing.rowconfigure(0, weight=1)
+        listing.columnconfigure(0, weight=1)
+        tree = ttk.Treeview(listing, columns=("file", "size", "distro"), show="headings", height=7)
+        for column, title, width in (("file", "镜像包", 420), ("size", "大小", 100), ("distro", "识别为", 160)):
+            tree.heading(column, text=title)
+            tree.column(column, width=width, minwidth=80, anchor="w", stretch=column == "file")
+        tree.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(listing, orient="vertical", command=tree.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        tree.configure(yscrollcommand=scroll.set)
+
+        info = ttk.Frame(window, padding=(space.sm, space.xs))
+        info.grid(row=3, column=0, sticky="ew")
+        info.columnconfigure(1, weight=1)
+        info_vars = {key: self.tk.StringVar(value="—") for key in ("发行版", "大小", "来源", "校验状态")}
+        for row, (key, variable) in enumerate(info_vars.items()):
+            ttk.Label(info, text=key, style="Muted.TLabel").grid(row=row, column=0, sticky="nw", padx=(0, space.xs))
+            ttk.Label(info, textvariable=variable, justify="left", anchor="nw", wraplength=640).grid(
+                row=row, column=1, sticky="ew"
             )
-        if not archive:
-            return
-        directory = self.filedialog.askdirectory(title="选择新的安装目录（必须为空）")
-        if not directory:
-            return
-        name = self.simpledialog.askstring("导入", "新发行版名称", initialvalue=Path(archive).stem)
-        if not name:
-            return
-        target = Path(directory)
+
+        form = ttk.Frame(window, padding=(space.sm, space.xs))
+        form.grid(row=4, column=0, sticky="ew")
+        form.columnconfigure(1, weight=1)
+        ttk.Label(form, text="发行版名称").grid(row=0, column=0, sticky="w")
+        name_var = self.tk.StringVar(value="")
+        ttk.Entry(form, textvariable=name_var).grid(row=0, column=1, sticky="ew", padx=space.xs)
+        ttk.Label(form, text="安装目录").grid(row=1, column=0, sticky="w")
+        dir_var = self.tk.StringVar(value="")
+        ttk.Entry(form, textvariable=dir_var).grid(row=1, column=1, sticky="ew", padx=space.xs)
+        replace_var = self.tk.BooleanVar(value=False)
+        ttk.Checkbutton(form, text="替换同名发行版（会先注销，必要时先备份）", variable=replace_var).grid(
+            row=2, column=1, sticky="w", pady=(space.xxs, 0)
+        )
+
+        footer = ttk.Frame(window, padding=(space.sm, space.xs))
+        footer.grid(row=5, column=0, sticky="ew")
+
+        archives: dict[str, LocalArchive] = {}
+
+        def add(archive: LocalArchive) -> None:
+            iid = tree.insert("", "end", values=(str(archive.path), format_bytes(archive.size), archive.distro))
+            archives[iid] = archive
+
+        def scan() -> None:
+            tree.delete(*tree.get_children())
+            archives.clear()
+            for path in local_archives(Path(directory.get().strip() or ".")):
+                add(inspect_archive(path, entries))
+            if not archives:
+                info_vars["校验状态"].set("该目录没有 .tar / .tar.gz / .tgz / .wsl 镜像包，可用「选择文件…」指定")
+            else:
+                first = tree.get_children()[0]
+                tree.selection_set(first)
+                tree.focus(first)
+
+        def add_file() -> None:
+            chosen = self.filedialog.askopenfilename(
+                title="选择本地镜像包",
+                filetypes=[("镜像包", "*.tar;*.tar.gz;*.tgz;*.wsl"), ("全部文件", "*.*")],
+            )
+            if not chosen:
+                return
+            archive = inspect_archive(Path(chosen), entries)
+            add(archive)
+            tree.selection_set(tree.get_children()[-1])
+
+        def choose_dir() -> None:
+            chosen = self.filedialog.askdirectory(title="选择安装目录（必须为空）")
+            if chosen:
+                dir_var.set(chosen)
+
+        def on_select(_event: object = None) -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            archive = archives[selection[0]]
+            arch = archive.arch if archive.arch != "未知" else "架构未知"
+            info_vars["发行版"].set(f"{archive.distro}（{arch}）")
+            info_vars["大小"].set(format_bytes(archive.size))
+            info_vars["来源"].set(archive.source)
+            if archive.expected_sha256 is None:
+                info_vars["校验状态"].set(verification_label(None, None))
+            else:
+                info_vars["校验状态"].set("正在计算 sha256…")
+                window.update_idletasks()
+                info_vars["校验状态"].set(verification_label(archive.expected_sha256, sha256_file(archive.path)))
+            name_var.set(archive.distro)
+            dir_var.set(str(archive.path.parent / f"{archive.distro}-wsl"))
+
+        def start() -> None:
+            selection = tree.selection()
+            if not selection:
+                self.messagebox.showerror("安装本地镜像", "请先选择一个镜像包")
+                return
+            archive = archives[selection[0]]
+            name = name_var.get().strip()
+            target_text = dir_var.get().strip()
+            if not name:
+                self.messagebox.showerror("安装本地镜像", "请填写发行版名称")
+                return
+            if not target_text:
+                self.messagebox.showerror("安装本地镜像", "请选择安装目录")
+                return
+            replace = replace_var.get()
+            if replace and not self.messagebox.askyesno(
+                "替换发行版", f"替换 {name} 会先注销现有发行版（运行中会先停止），继续？"
+            ):
+                return
+            backup: Path | None = None
+            if replace and load_config().require_backup_on_replace:
+                chosen = self.filedialog.asksaveasfilename(
+                    title="替换前先备份到", defaultextension=".tar", initialfile=f"{name}.tar"
+                )
+                if not chosen:
+                    return
+                backup = Path(chosen)
+            window.destroy()
+            self._install_archive(archive.path, name, Path(target_text), replace=replace, backup=backup)
+
+        ttk.Button(top, text="选择文件…", command=add_file).grid(row=0, column=2, padx=space.xxs)
+        ttk.Button(top, text="重新扫描", command=scan).grid(row=0, column=3)
+        ttk.Button(form, text="选择…", command=choose_dir).grid(row=1, column=2)
+        ttk.Button(footer, text="开始安装", command=start, style="Accent.TButton").pack(side="left")
+        ttk.Button(footer, text="取消", command=window.destroy).pack(side="left", padx=(space.xs, 0))
+
+        tree.bind("<<TreeviewSelect>>", on_select)
+        tree.bind("<Double-1>", lambda _event: start())
+        scan()
+
+    def _install_archive(self, archive: Path, name: str, target: Path, *, replace: bool, backup: Path | None) -> None:
+        """工作线程执行 ``wsl --import``；替换沿用 CLI 的 ``_guard_replace`` 与备份顺序。"""
 
         def work(_cancel: threading.Event) -> str:
             env = cli._build_environment()
+            existing = cli._view(env).find(name)
+            command = f'fcmd wslman import {name} "{archive}" --dir "{target}"'
+            if existing is not None:
+                if not replace:
+                    raise invalid_argument(
+                        f"发行版 {name} 已存在",
+                        hint=f"勾选「替换同名发行版」后重试，或改用 CLI：{command} --replace --yes",
+                    )
+                running = existing.state == "running"
+                steps = [
+                    step for step, flag in (("停止", running), ("备份", backup is not None), ("注销", True)) if flag
+                ]
+                self._events.put(("log", "安装", f"替换 {existing.name}：" + " → ".join(steps) + " → 重新导入"))
+                cli._guard_replace(
+                    env, existing=existing, yes=True, backup=backup, terminate_first=running, command=command
+                )
+                if running:
+                    cli._run_step(env, ["--terminate", existing.name], action=f"停止 {existing.name}")
+                if backup is not None:
+                    cli._run_step(
+                        env,
+                        ["--export", existing.name, str(backup)],
+                        action=f"备份 {existing.name}",
+                        hint="备份失败时不会注销旧发行版",
+                        timeout=3600.0,
+                    )
+                cli._run_step(env, ["--unregister", existing.name], action=f"注销 {existing.name}")
+            # 目录校验放在替换处理之后：替换会注销并清空旧目录，先校验会把「已存在」误报成目录问题。
             problem = cli._dir_problem(target)
             if problem:
-                raise invalid_argument(problem, hint="选择一个空目录")
-            view = cli._view(env)
-            if view.find(name) is not None:
-                raise invalid_argument(
-                    f"发行版 {name} 已存在",
-                    hint="GUI 不提供覆盖；如需替换请用 CLI：fcmd wslman import <名> <归档> --dir <目录> --replace --yes --backup <备份>",
-                )
+                raise invalid_argument(f"安装目录不可用：{problem}", hint="选择一个空目录（不存在会自动创建）")
+            self._events.put(("log", "安装", f"导入 {archive.name} → {target}"))
             cli._run_step(
                 env,
-                ["--import", name, str(target), archive, "--version", "2"],
-                action=f"导入 {name}",
+                ["--import", name, str(target), str(archive), "--version", "2"],
+                action=f"安装 {name}",
                 hint="目标目录必须为空；WSL1 镜像请改用 CLI 指定 --version 1",
                 timeout=3600.0,
             )
-            return f"已导入 {name} 到 {target}"
+            return f"已安装 {name} 到 {target}（{archive.name}，{format_bytes(archive.stat().st_size)}）"
 
-        self._start("导入", work)
+        self._start("安装", work)
+
+    def _catalog_entries(self) -> tuple[_images.ImageEntry, ...]:
+        """已知镜像清单：优先本次会话从下载页加载的结果，否则只读缓存。"""
+        if self.image_entries:
+            return self.image_entries
+        cache = _images.load_cache()
+        return cache.entries if cache is not None else ()
+
+    def _local_start_dir(self) -> str:
+        """首次扫描目录：高级里填的下载目录 → 上次保存的设置 → wslman.json → 系统下载目录。"""
+        configured = self.download_dir.get().strip() or self.settings.download_dir
+        if configured:
+            return configured
+        fallback = load_config().download_dir.strip()
+        return fallback or str(Path.home() / "Downloads")
 
     def _download(self) -> None:
         entry = self._selected_image()
@@ -1210,7 +1475,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
                 env,
                 ["--import", install_name, str(install_dir), str(target), "--version", "2"],
                 action=f"安装 {install_name}",
-                hint="目标目录必须为空；失败时用「导入本地 tar…」重试",
+                hint="目标目录必须为空；失败时用工具栏的「安装本地镜像…」重试",
                 timeout=3600.0,
             )
             return f"{summary}；已安装为 {install_name}（{install_dir}），刷新后可在列表启动"
