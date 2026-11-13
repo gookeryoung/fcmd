@@ -29,10 +29,20 @@ def make_result(
 
 
 class FakeRunner:
-    """按 ``argv[1:]`` 返回预置结果；未预置的命令直接失败，防止测试静默跑真命令。"""
+    """按 ``argv[1:]`` 返回预置结果；未预置的命令直接失败，防止测试静默跑真命令。
 
-    def __init__(self, responses: Mapping[tuple[str, ...], CommandResult | BaseException] | None = None) -> None:
-        self.responses: dict[tuple[str, ...], CommandResult | BaseException] = dict(responses or {})
+    值为 ``list`` 时按调用顺序依次弹出，可模拟「执行前后各读一次列表」这类序列；
+    列表耗尽后继续使用最后一个结果。
+    """
+
+    def __init__(
+        self,
+        responses: Mapping[tuple[str, ...], CommandResult | BaseException | list[CommandResult | BaseException]]
+        | None = None,
+    ) -> None:
+        self.responses: dict[tuple[str, ...], CommandResult | BaseException | list[CommandResult | BaseException]] = (
+            dict(responses or {})
+        )
         self.calls: list[tuple[str, ...]] = []
 
     def run(
@@ -46,10 +56,14 @@ class FakeRunner:
         self.calls.append(tuple(argv))
         if key not in self.responses:
             raise AssertionError(f"未预置的命令：{key}")
-        outcome = self.responses[key]
-        if isinstance(outcome, BaseException):
-            raise outcome
-        return outcome
+        value = self.responses[key]
+        if isinstance(value, list):
+            if not value:
+                raise AssertionError(f"预置结果已耗尽：{key}")
+            value = value.pop(0) if len(value) > 1 else value[0]
+        if isinstance(value, BaseException):
+            raise value
+        return value
 
 
 def capabilities(**overrides: Any) -> Capabilities:

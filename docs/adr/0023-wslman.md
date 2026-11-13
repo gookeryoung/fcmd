@@ -1,6 +1,6 @@
 # 0023 wslman：Windows 上的 WSL 发行版管理
 
-- 状态：P1 已落地（只读 CLI：`list` / `status` / `info` / `config` / `doctor`）；P2–P5 待实现
+- 状态：P2 已落地（只读 CLI：`list` / `status` / `info` / `config` / `doctor`；变更 CLI：`open` / `terminate` / `set-default`）；P3–P5 待实现
 - 日期：2026-11-13
 - 相关文档：[ADR 0001](0001-layering.md)、[ADR 0003](0003-package-layout.md)、[ADR 0013](0013-gui-toolkit-feasibility.md)
 
@@ -245,7 +245,7 @@ class StreamingRun(Protocol):
 | 首选 | `wt.exe new-tab --title wsl:<Name> -- wsl.exe -d <Name> [--cd <Dir>] [-u <User>]` | `shutil.which("wt.exe")` 找不到时再查 `%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe` |
 | 回退 | `wsl.exe -d <Name> [--cd <Dir>] [-u <User>]` + `CREATE_NEW_CONSOLE` | **不直接调 `conhost.exe`**：新控制台窗口由系统创建 conhost 承载，直接拉起 conhost 不是受支持用法 |
 
-`--cwd` 必须是 Windows 路径（WSL 内部路径用户自行传 `--cd` 语义），含空格时依赖
+`--workdir` 必须是 Windows 路径（WSL 内部路径用户自行传 `--cd` 语义），含空格时依赖
 argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不到）自动回退 conhost
 路径，并在结果里标明实际使用了哪条（`terminal: "wt" | "conhost"`）。
 
@@ -414,7 +414,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | P1（已完成） | `_errors` / `_runner` / `_decode` / `_registry` / `_wslconfig` / `_config` / `_disk` / `_distro` + `list` / `status` / `info` / `config` / `doctor` | 147 项单测（假执行器）；未启用 WSL / 无发行版 / 无 `wsl.exe` 三种情况稳定退出码；`--json` 信封 |
-| P2 | `_terminal` + `open` / `terminate` / `set-default` | argv 构造单测（含空格名）、回退路径、双读 |
+| P2（已完成） | `_terminal` + `open` / `terminate` / `set-default` | 37 项单测（假执行器 + 假启动器）：argv 构造（含空格名）、`wt` 失败回退、`--preview` 零调用、双读 |
 | P3 | `_transfer` + `export` / `import` / `copy` / `compress` | 预检、进度、中断、`.part` 原子改名、导入残留提示；导出运行中二选一 |
 | P4 | `_source` + `download` | 来源降级阶梯、`wsl --install` 风险提示、sha256 判定、断点续传状态机 |
 | P5 | `wslmanw` | 窗口骨架复用、后台任务与取消、破坏性确认（注销需手输名称） |

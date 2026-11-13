@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import fcmd
@@ -38,17 +39,26 @@ from fcmd.apps.wslman._distro import (
     format_info,
     format_list,
     merge,
+    state_label,
     to_data,
     with_disk,
 )
-from fcmd.apps.wslman._errors import WslmanError, not_found, runtime_error
+from fcmd.apps.wslman._errors import WslmanError, invalid_argument, not_found, runtime_error
 from fcmd.apps.wslman._registry import RegistrySnapshot, WindowsRegistryReader, unavailable_snapshot
 from fcmd.apps.wslman._runner import Capabilities, CommandResult, Runner, SubprocessRunner, is_windows, probe
+from fcmd.apps.wslman._terminal import (
+    Launcher,
+    LaunchError,
+    SubprocessLauncher,
+    TerminalCommand,
+    build_command,
+    uses_windows_path,
+)
 from fcmd.apps.wslman._wslconfig import default_path as wslconfig_default_path
 from fcmd.apps.wslman._wslconfig import load_wslconfig, summary_lines
 from fcmd.core.result import emit_result, record_error, report_error
 
-__all__ = ["config", "doctor", "info", "list_distros", "main", "status"]
+__all__ = ["config", "doctor", "info", "list_distros", "main", "open_distro", "set_default", "status", "terminate"]
 
 __version__ = "0.1.0"
 
@@ -65,13 +75,14 @@ _NOT_ENABLED_HINT = (
 
 @dataclass(frozen=True, slots=True)
 class Environment:
-    """一次命令运行内的环境快照；执行器可注入。"""
+    """一次命令运行内的环境快照；执行器与终端启动器可注入。"""
 
     runner: Runner
     capabilities: Capabilities
     registry: RegistrySnapshot
     config: WslmanConfig
     platform_ok: bool
+    launcher: Launcher = field(default_factory=SubprocessLauncher)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +379,420 @@ def _read_wsl_conf(env: Environment, distro: Distro) -> tuple[str | None, str | 
         detail = _first_line(decode_console(result.stderr or result.stdout))
         return None, f"读取 /etc/wsl.conf 失败（退出码 {result.returncode}）：{detail}"
     return decode_console(result.stdout), None
+
+
+# ---------------------------------------------------------------------- #
+# 变更档：open / terminate / set-default
+# ---------------------------------------------------------------------- #
+
+_TRANSITIONAL_STATES = frozenset({"installing", "uninstalling", "converting"})
+
+
+def _validated_name(distro: str) -> str:
+    name = distro.strip()
+    if not name:
+        raise invalid_argument(
+            "发行版名称不能为空",
+            hint="运行 fcmd wslman list 查看已安装发行版",
+            field="distro",
+        )
+    return name
+
+
+def _try_view(env: Environment) -> DistroView | None:
+    """只读列表失败时返回 ``None``，让变更命令继续执行而不是被诊断信息挡住。"""
+    try:
+        return _view(env)
+    except WslmanError:
+        return None
+
+
+def _display_argv(argv: Sequence[str]) -> str:
+    return subprocess.list2cmdline(list(argv))
+
+
+def _terminal_label(terminal: str) -> str:
+    return "Windows Terminal (wt)" if terminal == "wt" else "新控制台 (conhost)"
+
+
+def _emit_action(
+    subcommand: str,
+    data: Mapping[str, object],
+    *,
+    json_output: bool,
+    lines: Sequence[str],
+    warnings: Sequence[str] = (),
+) -> None:
+    if json_output:
+        emit_result("wslman", subcommand, data)
+        return
+    for line in lines:
+        print(line)
+    for warning in warnings:
+        print(f"[警告] {warning}")
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="open",
+    help="在新终端窗口中打开发行版（会启动该发行版；--preview 只打印命令）",
+    param_help={
+        "distro": "发行版名称，大小写不敏感",
+        "json_output": "输出机读结果信封",
+        "preview": "只打印将执行的命令，不启动任何进程",
+        "workdir": "新窗口的工作目录，必须是带盘符的 Windows 路径（如 C:\\Users\\me\\proj）",
+        "user": "以指定 Linux 用户登录（等价 wsl -u <用户>）",
+    },
+)
+def open_distro(
+    distro: str,
+    json_output: bool = False,
+    preview: bool = False,
+    workdir: str | None = None,
+    user: str | None = None,
+) -> None:
+    """优先用 Windows Terminal 打开，找不到或启动失败时回退新控制台。
+
+    Parameters
+    ----------
+    distro:
+        发行版名称；按不区分大小写匹配
+    json_output:
+        输出 ``fcmd-result/1`` 机读信封
+    preview:
+        只打印完整 argv 与预检结论，不启动进程
+    workdir:
+        新窗口的工作目录；必须是带盘符的 Windows 路径（对应 wsl 的 ``--cd``）
+    user:
+        以指定 Linux 用户登录；不存在时报错由 ``wsl.exe`` 给出
+    """
+    warnings: list[str] = []
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(distro)
+        if workdir is not None and not uses_windows_path(workdir):
+            raise invalid_argument(
+                f"--workdir 必须是带盘符的 Windows 路径：{workdir}",
+                hint=r"例如 --workdir C:\Users\me\proj；WSL 内部路径请在窗口里的 shell 中切换",
+                field="workdir",
+            )
+
+        def make(program: str, target: str) -> TerminalCommand:
+            return build_command(
+                wsl_path=wsl_path,
+                distro=target,
+                cwd=workdir,
+                user=user,
+                program=program,
+                extra_args=env.config.terminal_extra_args,
+            )
+
+        command = make(env.config.terminal_program, name)
+        if preview:
+            _emit_action(
+                "open",
+                {
+                    "schema": "wslman/open/1",
+                    "distro": name,
+                    "terminal": command.terminal,
+                    "commands": [list(command.argv)],
+                    "preview": True,
+                    "pid": None,
+                    "warnings": [*warnings, *env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[
+                    f"发行版: {name}",
+                    f"终端: {_terminal_label(command.terminal)}",
+                    f"命令: {_display_argv(command.argv)}",
+                    "[预览] 未启动任何进程；去掉 --preview 才会真正打开",
+                ],
+                warnings=env.config.warnings,
+            )
+            return
+
+        view = _try_view(env)
+        if view is not None:
+            target = view.find(name)
+            if target is None:
+                raise not_found(f"未找到发行版 {name}", hint="运行 fcmd wslman list 查看已安装发行版")
+            if target.state in _TRANSITIONAL_STATES:
+                raise invalid_argument(
+                    f"{target.name} 正在{state_label(target)}，暂不能打开",
+                    hint="稍后重试；运行 fcmd wslman list 查看当前状态",
+                )
+            if target.name != name:
+                name = target.name
+                command = make(env.config.terminal_program, name)
+
+        try:
+            pid = env.launcher.launch(command)
+        except LaunchError as exc:
+            if command.terminal != "wt":
+                raise
+            warnings.append(f"Windows Terminal 启动失败（{exc}），已回退新控制台")
+            command = make("conhost", name)
+            pid = env.launcher.launch(command)
+    except WslmanError as exc:
+        _fail(exc, "open", json_output)
+        return
+    except LaunchError as exc:
+        _fail(runtime_error(f"启动终端失败：{exc}", hint=exc.hint), "open", json_output)
+        return
+
+    _emit_action(
+        "open",
+        {
+            "schema": "wslman/open/1",
+            "distro": name,
+            "terminal": command.terminal,
+            "commands": [list(command.argv)],
+            "preview": False,
+            "pid": pid,
+            "warnings": [*warnings, *env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[
+            f"发行版: {name}",
+            f"终端: {_terminal_label(command.terminal)}",
+            f"命令: {_display_argv(command.argv)}",
+            f"已启动（PID {pid}）",
+        ],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="terminate",
+    help="终止指定发行版（会杀掉其内部进程；不需要 --yes，GUI 侧保留确认）",
+    param_help={
+        "distro": "发行版名称，大小写不敏感",
+        "json_output": "输出机读结果信封",
+        "preview": "只打印将执行的命令，不终止任何发行版",
+    },
+)
+def terminate(distro: str, json_output: bool = False, preview: bool = False) -> None:
+    """执行 ``wsl --terminate``；未运行的发行版按无操作处理。
+
+    Parameters
+    ----------
+    distro:
+        发行版名称；按不区分大小写匹配
+    json_output:
+        输出 ``fcmd-result/1`` 机读信封
+    preview:
+        只打印完整 argv，不读取运行状态、不终止进程
+    """
+    warnings: list[str] = []
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(distro)
+        if preview:
+            argv = [wsl_path, "--terminate", name]
+            _emit_action(
+                "terminate",
+                {
+                    "schema": "wslman/terminate/1",
+                    "distro": name,
+                    "commands": [argv],
+                    "preview": True,
+                    "executed": False,
+                    "state_before": None,
+                    "state_after": None,
+                    "warnings": [*warnings, *env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[
+                    f"发行版: {name}",
+                    f"命令: {_display_argv(argv)}",
+                    "[预览] 未终止任何进程，也未读取运行状态；去掉 --preview 才会真正执行",
+                ],
+                warnings=env.config.warnings,
+            )
+            return
+
+        view = _view(env)
+        target = view.find(name)
+        if target is None:
+            raise not_found(f"未找到发行版 {name}", hint="运行 fcmd wslman list 查看已安装发行版")
+        name = target.name
+        state_before = target.state
+        if state_before != "running":
+            _emit_action(
+                "terminate",
+                {
+                    "schema": "wslman/terminate/1",
+                    "distro": name,
+                    "commands": [],
+                    "preview": False,
+                    "executed": False,
+                    "state_before": state_before,
+                    "state_after": state_before,
+                    "warnings": [*warnings, *env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[f"{name} 当前状态为{state_label(target)}，无需终止"],
+                warnings=env.config.warnings,
+            )
+            return
+
+        argv = [wsl_path, "--terminate", name]
+        result = _run_wsl(env, ["--terminate", name], timeout=120.0)
+        if result.returncode != 0:
+            detail = _first_line(decode_console(result.stderr or result.stdout))
+            raise runtime_error(
+                f"wsl --terminate {name} 失败（退出码 {result.returncode}）：{detail}",
+                hint="运行 fcmd wslman list 复核状态；必要时以管理员身份重试",
+            )
+
+        state_after: str | None = None
+        after = _try_view(env)
+        if after is not None:
+            updated = after.find(name)
+            state_after = updated.state if updated is not None else None
+            if state_after == "running":
+                warnings.append(f"{name} 仍显示为运行中，可能还有进程正在退出")
+    except WslmanError as exc:
+        _fail(exc, "terminate", json_output)
+        return
+
+    state_text = state_after or "未知"
+    _emit_action(
+        "terminate",
+        {
+            "schema": "wslman/terminate/1",
+            "distro": name,
+            "commands": [argv],
+            "preview": False,
+            "executed": True,
+            "state_before": state_before,
+            "state_after": state_after,
+            "warnings": [*warnings, *env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[f"已终止 {name}（当前状态：{state_text}）"],
+        warnings=[*warnings, *env.config.warnings],
+    )
+
+
+@fcmd.tool(
+    "wslman",
+    subcommand="set-default",
+    help="设置默认发行版（执行后用 wsl -l -v 复核 * 标记）",
+    param_help={
+        "distro": "发行版名称，大小写不敏感",
+        "json_output": "输出机读结果信封",
+        "preview": "只打印将执行的命令，不修改默认发行版",
+    },
+)
+def set_default(distro: str, json_output: bool = False, preview: bool = False) -> None:
+    """执行 ``wsl --set-default`` 并复核默认 ``*`` 标记。
+
+    Parameters
+    ----------
+    distro:
+        发行版名称；按不区分大小写匹配
+    json_output:
+        输出 ``fcmd-result/1`` 机读信封
+    preview:
+        只打印完整 argv，不读取当前默认值、不修改任何设置
+    """
+    warnings: list[str] = []
+    try:
+        env = _build_environment()
+        wsl_path = _require_wsl(env)
+        name = _validated_name(distro)
+        if preview:
+            argv = [wsl_path, "--set-default", name]
+            _emit_action(
+                "set-default",
+                {
+                    "schema": "wslman/set-default/1",
+                    "distro": name,
+                    "commands": [argv],
+                    "preview": True,
+                    "executed": False,
+                    "previous": None,
+                    "default": None,
+                    "verified": False,
+                    "warnings": [*warnings, *env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[
+                    f"发行版: {name}",
+                    f"命令: {_display_argv(argv)}",
+                    "[预览] 未修改默认发行版，也未读取当前默认值；去掉 --preview 才会真正执行",
+                ],
+                warnings=env.config.warnings,
+            )
+            return
+
+        view = _view(env)
+        target = view.find(name)
+        if target is None:
+            raise not_found(f"未找到发行版 {name}", hint="运行 fcmd wslman list 查看已安装发行版")
+        name = target.name
+        previous = view.default
+        if previous is not None and previous.casefold() == name.casefold():
+            _emit_action(
+                "set-default",
+                {
+                    "schema": "wslman/set-default/1",
+                    "distro": name,
+                    "commands": [],
+                    "preview": False,
+                    "executed": False,
+                    "previous": previous,
+                    "default": previous,
+                    "verified": True,
+                    "warnings": [*warnings, *env.config.warnings],
+                },
+                json_output=json_output,
+                lines=[f"{name} 已是默认发行版，无需修改"],
+                warnings=env.config.warnings,
+            )
+            return
+
+        argv = [wsl_path, "--set-default", name]
+        result = _run_wsl(env, ["--set-default", name], timeout=120.0)
+        if result.returncode != 0:
+            detail = _first_line(decode_console(result.stderr or result.stdout))
+            raise runtime_error(
+                f"wsl --set-default {name} 失败（退出码 {result.returncode}）：{detail}",
+                hint="运行 fcmd wslman list 复核；必要时以管理员身份重试",
+            )
+
+        after = _try_view(env)
+        new_default = after.default if after is not None else None
+        if new_default is None or new_default.casefold() != name.casefold():
+            raise runtime_error(
+                f"已执行 wsl --set-default {name}，但复核未在 wsl -l -v 中看到默认标记",
+                hint="运行 fcmd wslman list 查看当前默认发行版；若仍不正确，重试或检查 WSL 服务",
+            )
+    except WslmanError as exc:
+        _fail(exc, "set-default", json_output)
+        return
+
+    _emit_action(
+        "set-default",
+        {
+            "schema": "wslman/set-default/1",
+            "distro": name,
+            "commands": [argv],
+            "preview": False,
+            "executed": True,
+            "previous": previous,
+            "default": new_default,
+            "verified": True,
+            "warnings": [*warnings, *env.config.warnings],
+        },
+        json_output=json_output,
+        lines=[f"已将默认发行版从 {previous or '未设置'} 改为 {name}（复核通过）"],
+        warnings=[*warnings, *env.config.warnings],
+    )
 
 
 @fcmd.tool(

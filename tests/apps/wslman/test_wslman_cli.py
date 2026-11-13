@@ -26,7 +26,7 @@ _TABLE = """\
   Debian          Stopped         2
 """
 
-_SUBCOMMANDS = {"config", "doctor", "info", "list", "status"}
+_SUBCOMMANDS = {"config", "doctor", "info", "list", "open", "set-default", "status", "terminate"}
 
 
 def _env(  # noqa: PLR0913 - 测试工厂按需覆盖各字段
@@ -73,7 +73,7 @@ def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, str,
 # ---------------------------------------------------------------------- #
 
 
-def test_p1_registers_five_readonly_subcommands() -> None:
+def test_registers_expected_subcommands() -> None:
     assert set(_TOOL_REGISTRY["wslman"]) == _SUBCOMMANDS
     assert set(list_subcommands("wslman")) == _SUBCOMMANDS
 
