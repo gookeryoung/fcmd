@@ -17,7 +17,7 @@ from fcmd.apps.paramcad._export import (
 )
 from fcmd.apps.paramcad._fields import Field, MeasuredProfile
 from fcmd.apps.paramcad._model import CaseScope, CircumferentialWall, GeometryState, TubeModel, WallSample
-from fcmd.apps.paramcad._preview import distribution_curves, section_at
+from fcmd.apps.paramcad._preview import axial_section, distribution_curves, section_at
 from fcmd.apps.paramcad._quantity import DENSITY_UNIT, LENGTH_UNIT, ParamcadError, quantity
 
 StateFactory = Callable[..., GeometryState]
@@ -259,6 +259,24 @@ def test_polyline_position_tbd_is_still_invalid() -> None:
     )
     with pytest.raises(ParamcadError, match="position"):
         parse_document(text)
+
+
+def test_length_key_is_required_but_value_may_be_tbd() -> None:
+    """§5 定稿口径：length 的键必须在，值可显式 TBD；null / 缺键都报错。"""
+    missing_key = _BASE.replace("length: 200, ", "")
+    with pytest.raises(ParamcadError, match=r"geometry\.length 缺失或为 null"):
+        parse_document(missing_key)
+    explicit_null = _BASE.replace("length: 200", "length: null")
+    with pytest.raises(ParamcadError, match=r"geometry\.length 缺失或为 null"):
+        parse_document(explicit_null)
+    explicit_tbd = _BASE.replace("length: 200", "length: TBD")
+    model = parse_document(explicit_tbd)[0]
+    assert model.geometry.length.value is None
+    assert model_document(model)["geometry"]["length"] == "TBD"
+    assert section_at(model).available is True
+    axial = axial_section(model)
+    assert axial.available is False
+    assert "长度未标定" in axial.note
 
 
 def test_tbd_kind_equals_omission() -> None:
