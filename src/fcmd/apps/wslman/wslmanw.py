@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import queue
 import threading
-import time
-from collections.abc import Callable, Mapping
+import unicodedata
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +25,7 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 
 __all__ = [
@@ -33,9 +34,11 @@ __all__ = [
     "SETTINGS_NAME",
     "WslmanWindow",
     "WslmanwSettings",
+    "column_widths",
     "config_path",
     "detail_lines",
     "distro_row",
+    "elide_name",
     "load_settings",
     "main",
     "resolve_geometry",
@@ -43,17 +46,73 @@ __all__ = [
     "settings_from_mapping",
     "settings_to_mapping",
     "shutdown_confirm_enabled",
+    "summary_text",
+    "text_units",
     "unregister_confirm_enabled",
 ]
 
 SETTINGS_NAME = "wslmanw"
-DEFAULT_GEOMETRY = "1100x720"
-MIN_WIDTH = 900
-MIN_HEIGHT = 600
+DEFAULT_GEOMETRY = "1040x640"
+MIN_WIDTH = 880
+MIN_HEIGHT = 560
 
 _DESCRIPTION = "WSL 发行版管理的图形界面：列表/详情、打开终端、导出导入、下载、注销与关闭全部"
 
 _DOWNLOAD_SOURCES = ("auto", "cli", "manifest", "file")
+
+_DOWNLOAD_HINT = "wsl --install 会触发系统级安装、可能弹 UAC，且不能指定自定义镜像"
+
+_COLUMNS: tuple[tuple[str, str, int, int], ...] = (
+    ("name", "名称", 140, 260),
+    ("state", "状态", 68, 104),
+    ("version", "版本", 52, 68),
+    ("disk", "占用", 88, 148),
+    ("default", "默认", 46, 60),
+)
+"""列定义：``(列 id, 表头, 最小宽度, 最大宽度)``，宽度按内容自适应后夹在两者之间。"""
+
+_CHAR_PX = 7
+"""窄字符的估算宽度（9pt 界面字体）；宽字符按 2 个窄字符计。"""
+
+_CELL_PAD_PX = 16
+"""单元格左右留白与排序指示器的估算宽度。"""
+
+
+def text_units(text: str) -> int:
+    """按显示宽度计字符数：CJK / 全角字符算 2，其余算 1。"""
+    return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
+
+
+def elide_name(name: str, limit: int = 24) -> str:
+    """按显示宽度截断过长的发行版名，末尾补 ``…``；未超长时原样返回。"""
+    if text_units(name) <= limit:
+        return name
+    kept: list[str] = []
+    used = 0
+    for char in name:
+        width = 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+        if used + width > limit - 1:
+            break
+        kept.append(char)
+        used += width
+    return "".join(kept) + "…"
+
+
+def column_widths(rows: Sequence[Sequence[str]]) -> dict[str, int]:
+    """按表头与各行的显示宽度估算列宽，夹在每列的最小 / 最大宽度之间。"""
+    widths: dict[str, int] = {}
+    for index, (key, title, minimum, maximum) in enumerate(_COLUMNS):
+        widest = max([text_units(title), *(text_units(str(row[index])) for row in rows if index < len(row))])
+        widths[key] = min(maximum, max(minimum, widest * _CHAR_PX + _CELL_PAD_PX))
+    return widths
+
+
+def summary_text(distro: Distro, size: int | None, estimated: bool) -> str:
+    """状态栏的完整发行版摘要；列表里截断的名称在这里显示全名。"""
+    return (
+        f"{distro.name} · {state_label(distro)} · "
+        f"v{distro.version or '未知'} · {format_bytes(size, estimated=estimated)}"
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,9 +187,9 @@ def shutdown_confirm_enabled(checked: bool) -> bool:
 
 
 def distro_row(distro: Distro, size: int | None, estimated: bool) -> tuple[str, ...]:
-    """Treeview 一行：名称、状态、版本、磁盘、默认标记。"""
+    """Treeview 一行：名称（过长截断）、状态、版本、磁盘、默认标记。"""
     return (
-        distro.name,
+        elide_name(distro.name),
         state_label(distro),
         str(distro.version) if distro.version else "未知",
         format_bytes(size, estimated=estimated),
@@ -192,106 +251,174 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             min_height=MIN_HEIGHT,
             on_close=self._on_close,
         )
+        # 主题间距已按 DPI 缩放（apply_theme 内走 scale_spacing），窗口只引用不另算。
+        self.space = self.theme.spacing
         self._build()
+        _guiwindow.build_menu(self.root, on_close=self._on_close)
+        _guitheme.install_theme_switcher(self.root)
         self.root.after(100, self._poll)
         self.refresh()
 
     # -- 布局 ---------------------------------------------------------- #
 
     def _build(self) -> None:
-        tk, ttk = self.tk, self.ttk
-        self.root.columnconfigure(0, weight=3)
-        self.root.columnconfigure(1, weight=2)
-        self.root.rowconfigure(1, weight=1)
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=3)
+        self.root.rowconfigure(2, weight=2)
 
-        toolbar = ttk.Frame(self.root, padding=(8, 6))
-        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        self._build_toolbar()
+        self._build_content()
+        self._build_notebook()
+        self._build_status()
+
+    def _build_toolbar(self) -> None:
+        """按钮按危险等级分组：安全 / 变更 / 传输 / 破坏，破坏性用 danger 样式。"""
+        ttk = self.ttk
+        space = self.space
+        bar = ttk.Frame(self.root, padding=(space.xs, space.xxs))
+        bar.grid(row=0, column=0, sticky="ew")
+
         self._buttons: list[Any] = []
-        for text, command in (
-            ("刷新", self.refresh),
-            ("打开终端", self._open_selected),
-            ("终止", self._terminate_selected),
-            ("导出", self._export_selected),
-            ("导入", self._import),
-            ("注销", self._unregister),
-            ("关闭全部", self._shutdown),
-        ):
-            button = ttk.Button(toolbar, text=text, command=command)
-            button.pack(side="left", padx=(0, 6))
-            self._buttons.append(button)
+        groups: tuple[tuple[tuple[str, Callable[[], None], str | None], ...], ...] = (
+            (("刷新", self.refresh, None),),
+            (
+                ("打开终端", self._open_selected, "Accent.TButton"),
+                ("终止", self._terminate_selected, None),
+            ),
+            (
+                ("导出", self._export_selected, None),
+                ("导入", self._import, None),
+            ),
+            (
+                ("注销", self._unregister, "Danger.TButton"),
+                ("关闭全部", self._shutdown, "Danger.TButton"),
+            ),
+        )
+        for index, group in enumerate(groups):
+            if index:
+                ttk.Separator(bar, orient="vertical").pack(side="left", fill="y", padx=space.xs, pady=space.xxs)
+            for text, command, style in group:
+                button = ttk.Button(bar, text=text, command=command, style=style or "TButton")
+                button.pack(side="left", padx=(0, space.xxs))
+                self._buttons.append(button)
 
-        columns = ("name", "state", "version", "disk", "default")
-        self.tree = ttk.Treeview(self.root, columns=columns, show="headings", selectmode="browse")
-        for column, title, width in (
-            ("name", "名称", 180),
-            ("state", "状态", 80),
-            ("version", "版本", 60),
-            ("disk", "占用", 110),
-            ("default", "默认", 60),
-        ):
+    def _build_content(self) -> None:
+        """发行版列表是主视觉：列表比详情宽，详情只占右侧窄栏。"""
+        tk, ttk = self.tk, self.ttk
+        space = self.space
+        content = ttk.Frame(self.root)
+        content.grid(row=1, column=0, sticky="nsew", padx=space.xs, pady=(0, space.xxs))
+        content.columnconfigure(0, weight=3)
+        content.columnconfigure(1, weight=2)
+        content.rowconfigure(0, weight=1)
+
+        tree_wrap = ttk.Frame(content)
+        tree_wrap.grid(row=0, column=0, sticky="nsew", padx=(0, space.xs))
+        tree_wrap.columnconfigure(0, weight=1)
+        tree_wrap.rowconfigure(0, weight=1)
+
+        columns = tuple(key for key, _title, _minimum, _maximum in _COLUMNS)
+        self.tree = ttk.Treeview(tree_wrap, columns=columns, show="headings", selectmode="browse")
+        for column, title, minimum, _maximum in _COLUMNS:
             self.tree.heading(column, text=title)
-            self.tree.column(column, width=width, anchor="w")
-        self.tree.grid(row=1, column=0, sticky="nsew", padx=(8, 4), pady=(0, 6))
+            self.tree.column(column, width=minimum, minwidth=minimum, anchor="w", stretch=column in {"name", "disk"})
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(tree_wrap, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.grid(row=0, column=1, sticky="ns")
         self.tree.bind("<<TreeviewSelect>>", lambda _event: self._show_details())
+        self.tree.bind("<Motion>", self._on_hover)
+        self.tree.bind("<Leave>", lambda _event: self.hover.set(""))
+        self.tree.bind("<Double-1>", lambda _event: self._open_selected())
 
-        detail_frame = ttk.LabelFrame(self.root, text="详情", padding=8)
-        detail_frame.grid(row=1, column=1, sticky="nsew", padx=(4, 8), pady=(0, 6))
-        detail_frame.rowconfigure(0, weight=1)
+        detail_frame = ttk.LabelFrame(content, text="详情", padding=space.xs)
+        detail_frame.grid(row=0, column=1, sticky="nsew")
         detail_frame.columnconfigure(0, weight=1)
-        self.detail = tk.Text(detail_frame, height=12, wrap="word", state="disabled")
+        detail_frame.rowconfigure(0, weight=1)
+        self.detail = tk.Text(
+            detail_frame,
+            height=8,
+            wrap="word",
+            state="disabled",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
+            font=_guitheme.BODY_FONT,
+        )
         self.detail.grid(row=0, column=0, sticky="nsew")
 
+    def _build_notebook(self) -> None:
+        ttk = self.ttk
+        space = self.space
         notebook = ttk.Notebook(self.root)
-        notebook.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 6))
-        self.root.rowconfigure(2, weight=2)
+        notebook.grid(row=2, column=0, sticky="nsew", padx=space.xs, pady=(0, space.xxs))
         self._build_download_tab(notebook)
+        log_frame = ttk.Frame(notebook, padding=space.xs)
+        notebook.add(log_frame, text="日志")
+        self.log = _guiwindow.create_log(log_frame, height=8)
 
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=6)
-        log_frame.grid(row=3, column=0, columnspan=2, sticky="nsew", padx=8, pady=(0, 6))
-        log_frame.rowconfigure(0, weight=1)
-        log_frame.columnconfigure(0, weight=1)
-        self.log = tk.Text(log_frame, height=8, wrap="word", state="disabled")
-        self.log.grid(row=0, column=0, sticky="nsew")
-        self.root.rowconfigure(3, weight=1)
-
-        self.status = tk.StringVar(value="就绪")
-        ttk.Label(self.root, textvariable=self.status, anchor="w", padding=(8, 2)).grid(
-            row=4, column=0, columnspan=2, sticky="ew"
+    def _build_status(self) -> None:
+        ttk = self.ttk
+        space = self.space
+        bar = ttk.Frame(self.root)
+        bar.grid(row=3, column=0, sticky="ew")
+        ttk.Separator(bar, orient="horizontal").pack(fill="x")
+        inner = ttk.Frame(bar, padding=(space.xs, space.xxs))
+        inner.pack(fill="x")
+        self.hover = self.tk.StringVar(value="")
+        ttk.Label(inner, textvariable=self.hover, style="Muted.TLabel", anchor="w").pack(
+            side="left", fill="x", expand=True
         )
+        self.status = self.tk.StringVar(value="就绪")
+        ttk.Label(inner, textvariable=self.status, anchor="e").pack(side="right")
 
     def _build_download_tab(self, notebook: Any) -> None:
         ttk = self.ttk
-        frame = ttk.Frame(notebook, padding=8)
+        space = self.space
+        frame = ttk.Frame(notebook, padding=(space.sm, space.xs))
         notebook.add(frame, text="下载")
-        for index in range(2):
-            frame.columnconfigure(index, weight=1)
+        frame.columnconfigure(1, weight=1)
+        frame.columnconfigure(3, weight=1)
 
-        self.download_name = self._field(frame, 0, "发行版名称", "Ubuntu")
-        self.download_dir = self._field(frame, 1, "下载目录", self.settings.download_dir)
-        self.manifest_url = self._field(frame, 2, "清单地址", self.settings.manifest_url)
-        self.expected_sha = self._field(frame, 3, "期望 sha256（可空）", "")
-
-        row = 4
-        ttk.Label(frame, text="来源").grid(row=row, column=0, sticky="w")
+        self.download_name = self._field(frame, 0, 0, "名称", "Ubuntu")
         self.download_source = self.tk.StringVar(value=self.settings.download_source)
-        ttk.Combobox(frame, textvariable=self.download_source, values=_DOWNLOAD_SOURCES, state="readonly").grid(
-            row=row, column=1, sticky="ew", pady=2
-        )
+        ttk.Label(frame, text="来源").grid(row=0, column=2, sticky="w", padx=(space.md, space.xs), pady=space.xxs)
+        ttk.Combobox(
+            frame,
+            textvariable=self.download_source,
+            values=_DOWNLOAD_SOURCES,
+            state="readonly",
+            width=8,
+        ).grid(row=0, column=3, sticky="w", pady=space.xxs)
 
         buttons = ttk.Frame(frame)
-        buttons.grid(row=row + 1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ttk.Button(buttons, text="开始下载", command=self._download).pack(side="left")
-        ttk.Button(buttons, text="取消", command=self._cancel_task).pack(side="left", padx=(6, 0))
-        ttk.Label(
-            buttons,
-            text="wsl --install 会触发系统级安装、可能弹 UAC，且不能指定自定义镜像",
-            foreground="#8a6d00",
-        ).pack(side="left", padx=(12, 0))
+        buttons.grid(row=1, column=0, columnspan=4, sticky="ew", pady=(space.xs, 0))
+        ttk.Button(buttons, text="开始下载", command=self._download, style="Accent.TButton").pack(side="left")
+        ttk.Button(buttons, text="取消", command=self._cancel_task).pack(side="left", padx=(space.xs, 0))
+        ttk.Label(buttons, text=_DOWNLOAD_HINT, style="Hint.TLabel", wraplength=380).pack(
+            side="left", padx=(space.md, 0)
+        )
 
-    def _field(self, parent: Any, row: int, label: str, default: str) -> Any:
-        self.ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w")
+        advanced = ttk.Frame(frame)
+        advanced.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(space.xs, 0))
+        container, body = _guiwindow.collapsible(
+            advanced,
+            "高级：下载目录 / 清单源 / 校验",
+            padding=(space.sm, space.xs, space.sm, space.xs),
+            open_state=False,
+        )
+        container.pack(fill="x")
+        body.columnconfigure(1, weight=1)
+        self.download_dir = self._field(body, 0, 0, "下载目录", self.settings.download_dir)
+        self.manifest_url = self._field(body, 1, 0, "清单地址", self.settings.manifest_url)
+        self.expected_sha = self._field(body, 2, 0, "期望 sha256", "")
+
+    def _field(self, parent: Any, row: int, column: int, label: str, default: str) -> Any:
+        """紧凑的「标签 + 输入框」；列坐标以 ``column`` 为标签列。"""
+        space = self.space
+        self.ttk.Label(parent, text=label).grid(row=row, column=column, sticky="w", padx=(0, space.xs), pady=space.xxs)
         variable = self.tk.StringVar(value=default)
-        self.ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", pady=2)
+        self.ttk.Entry(parent, textvariable=variable).grid(row=row, column=column + 1, sticky="ew", pady=space.xxs)
         return variable
 
     # -- 任务编排 ------------------------------------------------------ #
@@ -401,15 +528,26 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
 
     def _show_details(self) -> None:
         distro = self._selected()
-        lines = (
-            ["请选择一个发行版"]
-            if distro is None
-            else detail_lines(distro, *self.sizes.get(distro.name, (None, False)))
-        )
+        if distro is None:
+            lines = ["请选择一个发行版"]
+            self.hover.set("")
+        else:
+            size, estimated = self.sizes.get(distro.name, (None, False))
+            lines = detail_lines(distro, size, estimated)
+            self.hover.set(summary_text(distro, size, estimated))
         self.detail.configure(state="normal")
         self.detail.delete("1.0", "end")
         self.detail.insert("1.0", "\n".join(lines))
         self.detail.configure(state="disabled")
+
+    def _on_hover(self, event: Any) -> None:
+        """悬浮显示完整发行版名（列表里过长会截断）。"""
+        name = self.tree.identify_row(event.y)
+        distro = self.view.find(name) if name and self.view is not None else None
+        if distro is None:
+            self.hover.set("")
+            return
+        self.hover.set(summary_text(distro, *self.sizes.get(distro.name, (None, False))))
 
     def _refresh_rows(self) -> None:
         view = self.view
@@ -417,20 +555,20 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
             return
         selected = self.tree.selection()
         self.tree.delete(*self.tree.get_children())
+        rows: list[tuple[str, ...]] = []
         for distro in view.distros:
-            self.tree.insert(
-                "", "end", iid=distro.name, values=distro_row(distro, *self.sizes.get(distro.name, (None, False)))
-            )
+            row = distro_row(distro, *self.sizes.get(distro.name, (None, False)))
+            rows.append(row)
+            self.tree.insert("", "end", iid=distro.name, values=row)
+        widths = column_widths(rows)
+        for column, _title, minimum, _maximum in _COLUMNS:
+            self.tree.column(column, width=widths[column], minwidth=minimum)
         if selected and self.tree.exists(selected[0]):
             self.tree.selection_set(selected[0])
         self._show_details()
 
     def _log(self, text: str) -> None:
-        stamp = time.strftime("%H:%M:%S")
-        self.log.configure(state="normal")
-        self.log.insert("end", f"{stamp} {text}\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
+        _guiwindow.append_log(self.log, text, timestamp=True)
 
     # -- 操作 ---------------------------------------------------------- #
 

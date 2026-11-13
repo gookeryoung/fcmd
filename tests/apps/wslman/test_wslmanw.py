@@ -74,6 +74,16 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
     assert wslmanw.settings_from_mapping({"download_source": "file"}).download_source == "file"
 
 
+def test_old_settings_file_without_new_fields_still_loads(tmp_path: Path) -> None:
+    """旧版设置文件（只有 geometry）与含未知字段的文件都要能读。"""
+    path = tmp_path / "old.json"
+    path.write_text('{"geometry": "1024x700+10+10", "legacy_field": true}', encoding="utf-8")
+    settings = wslmanw.load_settings(path)
+    assert settings.geometry == "1024x700+10+10"
+    assert settings.download_dir == ""
+    assert settings.download_source == "auto"
+
+
 def test_settings_mapping_is_json_friendly() -> None:
     settings = wslmanw.WslmanwSettings(geometry="900x600", download_source="cli")
     assert wslmanw.settings_to_mapping(settings) == {
@@ -86,8 +96,57 @@ def test_settings_mapping_is_json_friendly() -> None:
 
 def test_resolve_geometry_clamps_to_screen_and_minimum() -> None:
     assert wslmanw.resolve_geometry(None, 1920, 1080) == wslmanw.DEFAULT_GEOMETRY
-    assert wslmanw.resolve_geometry("600x400+0+0", 1920, 1080) == "900x600+0+0"
+    assert wslmanw.resolve_geometry("600x400+0+0", 1920, 1080) == "880x560+0+0"
     assert wslmanw.resolve_geometry("1400x900+5000+5000", 1920, 1080) == "1400x900+520+180"
+
+
+def test_default_window_is_compact() -> None:
+    """布局收紧后默认尺寸与最小尺寸同步下调，但仍能容纳两栏 + 下载页。"""
+    assert wslmanw.DEFAULT_GEOMETRY == "1040x640"
+    assert (wslmanw.MIN_WIDTH, wslmanw.MIN_HEIGHT) == (880, 560)
+
+
+def test_text_units_counts_wide_chars_as_two() -> None:
+    assert wslmanw.text_units("Ubuntu") == 6
+    assert wslmanw.text_units("发行版") == 6
+    assert wslmanw.text_units("") == 0
+
+
+def test_elide_name_truncates_long_names_only() -> None:
+    assert wslmanw.elide_name("Ubuntu") == "Ubuntu"
+    short = "a" * 24
+    assert wslmanw.elide_name(short) == short
+
+    long_name = "Ubuntu-Preview-Extremely-Long-Distro-Name"
+    elided = wslmanw.elide_name(long_name)
+    assert elided.endswith("…")
+    assert wslmanw.text_units(elided) <= 24
+    assert long_name.startswith(elided[:-1])
+
+    wide = wslmanw.elide_name("发行版" * 10)
+    assert wide.endswith("…")
+    assert wslmanw.text_units(wide) <= 24
+
+
+def test_column_widths_respect_minimum_and_content() -> None:
+    minimums = {"name": 140, "state": 68, "version": 52, "disk": 88, "default": 46}
+    maximums = {"name": 260, "state": 104, "version": 68, "disk": 148, "default": 60}
+    assert wslmanw.column_widths([]) == minimums
+
+    rows = [("Ubuntu-24.04-Desktop-LTS", "运行中", "2", "≈ 12.3 GiB（估算）", "是")]
+    widths = wslmanw.column_widths(rows)
+    assert widths["name"] > minimums["name"]
+    assert widths["disk"] > minimums["disk"]
+
+    huge = [("x" * 100, "y" * 100, "z" * 100, "w" * 100, "v" * 100)]
+    assert wslmanw.column_widths(huge) == maximums
+
+
+def test_distro_row_truncates_long_name_but_summary_keeps_it() -> None:
+    long_name = "Ubuntu-Preview-Extremely-Long-Distro-Name"
+    distro = _distro(name=long_name)
+    assert wslmanw.distro_row(distro, 0, False)[0].endswith("…")
+    assert wslmanw.summary_text(distro, 0, False).startswith(long_name)
 
 
 def test_unregister_confirm_requires_exact_typed_name() -> None:
