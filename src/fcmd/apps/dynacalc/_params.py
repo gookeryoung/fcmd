@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import itertools
 import json
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +30,7 @@ __all__ = [
     "CONFIDENCE_TEXT",
     "DEFAULT_SETTINGS",
     "FACTOR_KINDS",
+    "GROUP_TEXT",
     "RUN_DEFAULTS",
     "SCHEMA",
     "TBD",
@@ -37,11 +39,15 @@ __all__ = [
     "Level",
     "ParamError",
     "ParamTable",
+    "SupplementaryGroup",
+    "TypicalCase",
     "build_cases",
     "canonical_json",
     "example_params",
     "expand_main_cases",
     "expand_supplementary_cases",
+    "expand_typical_cases",
+    "group_text",
     "is_tbd",
     "load_params",
     "params_to_mapping",
@@ -64,6 +70,17 @@ CONFIDENCE_TEXT = {
 }
 
 FACTOR_KINDS = ("continuous", "discrete")
+
+GROUP_TEXT = {"main": "主矩阵", "typical": "典型工况"}
+"""工况分组的展示名；补充组统一显示为「补充组」。"""
+
+
+def group_text(group: str) -> str:
+    """把 ``Case.group`` 转成报告里的中文分组名。"""
+    if group.startswith("supplementary"):
+        return "补充组"
+    return GROUP_TEXT.get(group, group)
+
 
 DEFAULT_SETTINGS: dict[str, Any] = {
     "skip_fraction": 0.2,
@@ -209,15 +226,34 @@ class Case:
 
 
 @dataclass(frozen=True)
+class SupplementaryGroup:
+    """一个补充组：以基准为底的 OFAT / 组内全因子，附带它要回答的问题。"""
+
+    factors: tuple[str, ...]
+    question: str = ""
+
+
+@dataclass(frozen=True)
+class TypicalCase:
+    """一个典型工况：显式给出各因子水平，不从主矩阵展开。"""
+
+    code: str
+    label: str
+    question: str
+    levels: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
 class ParamTable:
     """一份完整参数表（已通过校验，警告单独保留）。"""
 
     factors: tuple[Factor, ...]
     main_keys: tuple[str, ...]
-    supplementary: tuple[tuple[str, ...], ...]
+    supplementary: tuple[SupplementaryGroup, ...]
     baseline: Mapping[str, str]
     defaults: Mapping[str, Any]
     run: Mapping[str, Any]
+    typical: tuple[TypicalCase, ...] = ()
     meta: Mapping[str, Any] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     source: Path | None = None
@@ -287,6 +323,7 @@ def parse_params(raw: Any, *, source: Path | None = None) -> ParamTable:
         raise ParamError("matrix.main 不能为空")
     supplementary = _parse_supplementary(matrix.get("supplementary"), by_key)
     baseline = _parse_baseline(matrix.get("baseline"), main_keys, by_key, warnings)
+    typical = _parse_typical(matrix.get("typical"), by_key, warnings)
 
     defaults = _parse_settings(raw.get("defaults"), warnings)
     run = _parse_run(raw.get("run"), warnings)
@@ -295,7 +332,9 @@ def parse_params(raw: Any, *, source: Path | None = None) -> ParamTable:
 
     used = set(main_keys)
     for group in supplementary:
-        used.update(group)
+        used.update(group.factors)
+    for item in typical:
+        used.update(key for key, _ in item.levels)
     unused = [item.key for item in factors if item.key not in used]
     if unused:
         warnings.append(f"因子未参与任何矩阵: {', '.join(unused)}")
@@ -307,6 +346,7 @@ def parse_params(raw: Any, *, source: Path | None = None) -> ParamTable:
         baseline=baseline,
         defaults=defaults,
         run=run,
+        typical=typical,
         meta=dict(meta),
         warnings=tuple(warnings),
         source=source,
@@ -400,19 +440,87 @@ def _parse_keys(raw: Any, where: str, by_key: Mapping[str, Factor]) -> tuple[str
     return tuple(keys)
 
 
-def _parse_supplementary(raw: Any, by_key: Mapping[str, Factor]) -> tuple[tuple[str, ...], ...]:
-    """校验补充组：每个内层列表是一组 OFAT / 小规模全因子。"""
+def _parse_supplementary(raw: Any, by_key: Mapping[str, Factor]) -> tuple[SupplementaryGroup, ...]:
+    """校验补充组：每项是因子键列表，或 ``{factors, question}`` 映射。"""
     if raw is None:
         return ()
     if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
-        raise ParamError("matrix.supplementary 必须是「因子键列表」的列表")
-    groups: list[tuple[str, ...]] = []
+        raise ParamError("matrix.supplementary 必须是列表：每项为因子键列表或 {factors, question} 映射")
+    groups: list[SupplementaryGroup] = []
     for index, item in enumerate(raw, 1):
-        keys = _parse_keys(item, f"matrix.supplementary[{index}]", by_key)
+        if isinstance(item, Mapping):
+            keys = _parse_keys(item.get("factors"), f"matrix.supplementary[{index}].factors", by_key)
+            question = str(item.get("question") or "").strip()
+        else:
+            keys = _parse_keys(item, f"matrix.supplementary[{index}]", by_key)
+            question = ""
         if not keys:
             raise ParamError(f"matrix.supplementary[{index}] 不能为空")
-        groups.append(keys)
+        groups.append(SupplementaryGroup(factors=keys, question=question))
     return tuple(groups)
+
+
+_TYPICAL_CODE = re.compile(r"^T\d{2}$")
+
+
+def _parse_typical(
+    raw: Any,
+    by_key: Mapping[str, Factor],
+    warnings: list[str],
+) -> tuple[TypicalCase, ...]:
+    """校验典型工况：编码 ``T01`` 起，``levels`` 显式给出因子水平。"""
+    if raw is None:
+        return ()
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise ParamError("matrix.typical 必须是「典型工况映射」的列表")
+    order = {key: index for index, key in enumerate(by_key)}
+    cases: list[TypicalCase] = []
+    seen: set[str] = set()
+    for index, item in enumerate(raw, 1):
+        cases.append(_parse_typical_case(item, index, by_key, order, seen))
+    if not cases:
+        return ()
+    for key in by_key:
+        if key not in {name for case in cases for name, _ in case.levels}:
+            warnings.append(f"典型工况未给出因子 {key} 的水平，将回落基准或首水平")
+    return tuple(cases)
+
+
+def _parse_typical_case(
+    item: Any,
+    index: int,
+    by_key: Mapping[str, Factor],
+    order: Mapping[str, int],
+    seen: set[str],
+) -> TypicalCase:
+    """校验单个典型工况映射（编码、水平存在性与顺序）。"""
+    if not isinstance(item, Mapping):
+        raise ParamError(f"matrix.typical[{index}] 必须是映射")
+    code = item.get("code")
+    if not isinstance(code, str) or not _TYPICAL_CODE.match(code.strip()):
+        raise ParamError(f"matrix.typical[{index}] 的 code 必须形如 T01，实际为 {code!r}")
+    code = code.strip()
+    if code in seen:
+        raise ParamError(f"matrix.typical 中工况编码重复: {code}")
+    seen.add(code)
+    raw_levels = item.get("levels")
+    if not isinstance(raw_levels, Mapping) or not raw_levels:
+        raise ParamError(f"典型工况 {code} 缺少 levels 映射")
+    levels: list[tuple[str, str]] = []
+    for key, level_code in raw_levels.items():
+        if key not in by_key:
+            raise ParamError(f"典型工况 {code} 引用了未定义因子 {key!r}")
+        if not isinstance(level_code, str):
+            raise ParamError(f"典型工况 {code} 的因子 {key} 水平编码必须是文本")
+        by_key[key].level(level_code)
+        levels.append((key, level_code))
+    levels.sort(key=lambda pair: order[pair[0]])
+    return TypicalCase(
+        code=code,
+        label=str(item.get("label") or ""),
+        question=str(item.get("question") or "").strip(),
+        levels=tuple(levels),
+    )
 
 
 def _parse_baseline(
@@ -604,7 +712,7 @@ def expand_supplementary_cases(table: ParamTable) -> list[Case]:
     """补充组：以 baseline 为底，每组因子做 OFAT / 组内全因子。"""
     cases: list[Case] = []
     for group_index, group in enumerate(table.supplementary, 1):
-        factors = [table.factor(key) for key in group]
+        factors = [table.factor(key) for key in group.factors]
         combos = itertools.product(*(item.levels for item in factors))
         for index, combo in enumerate(combos, 1):
             levels: dict[str, str] = {}
@@ -619,7 +727,7 @@ def expand_supplementary_cases(table: ParamTable) -> list[Case]:
             cases.append(
                 Case(
                     code=f"S{group_index}-{index:03d}",
-                    group=f"supplementary:{'-'.join(group)}",
+                    group=f"supplementary:{'-'.join(group.factors)}",
                     level_codes=tuple(levels.items()),
                     values=tuple(values.items()),
                 )
@@ -627,9 +735,25 @@ def expand_supplementary_cases(table: ParamTable) -> list[Case]:
     return cases
 
 
+def expand_typical_cases(table: ParamTable) -> list[Case]:
+    """典型工况：显式水平优先，未给出的因子回落基准或首水平。"""
+    cases: list[Case] = []
+    for item in table.typical:
+        explicit = dict(item.levels)
+        levels: list[tuple[str, str]] = []
+        values: list[tuple[str, Any]] = []
+        for factor in table.factors:
+            code = explicit.get(factor.key) or table.baseline.get(factor.key) or factor.levels[0].code
+            level = factor.level(code)
+            levels.append((factor.key, level.code))
+            values.append((factor.key, level.value))
+        cases.append(Case(code=item.code, group="typical", level_codes=tuple(levels), values=tuple(values)))
+    return cases
+
+
 def build_cases(table: ParamTable, template_digest: str = "") -> list[Case]:
-    """展开全部工况并写入计算指纹（含模板摘要）。"""
-    cases = [*expand_main_cases(table), *expand_supplementary_cases(table)]
+    """展开全部工况（主矩阵 + 补充组 + 典型工况）并写入计算指纹（含模板摘要）。"""
+    cases = [*expand_main_cases(table), *expand_supplementary_cases(table), *expand_typical_cases(table)]
     return [
         Case(
             code=item.code,
@@ -684,7 +808,13 @@ def params_to_mapping(table: ParamTable) -> dict[str, Any]:
         ],
         "matrix": {
             "main": list(table.main_keys),
-            "supplementary": [list(group) for group in table.supplementary],
+            "supplementary": [
+                {"factors": list(group.factors), "question": group.question} for group in table.supplementary
+            ],
+            "typical": [
+                {"code": item.code, "label": item.label, "question": item.question, "levels": dict(item.levels)}
+                for item in table.typical
+            ],
             "baseline": dict(table.baseline),
         },
         "defaults": {
@@ -717,13 +847,19 @@ def save_params(table: ParamTable, path: Path) -> None:
 
 
 def example_params() -> str:
-    """生成全 TBD 的占位参数表示例文本（不含任何真实配方、尺寸或材料值）。"""
-    return """# dynacalc 参数表（示例）：所有数值均为占位符 TBD，禁止填入真实配方/尺寸后提交到公开仓库。
+    """生成示例占位的参数表文本（不含任何真实配方、尺寸或材料值）。
+
+    结构对齐方案报告第 7 节（主矩阵 5 因子 × 补充组 5 项）与第 12 节（典型工况
+    01/02/03）：主矩阵是 ``2 × 3 × 2 × 2 × 2`` 的笛卡尔积，连续量水平一律
+    ``TBD``；离散水平只是状态语义（均匀/端部疏松、对称/偏心等），不是材料参数。
+    """
+    return """# dynacalc 参数表（示例占位）：不含任何真实配方 / 材料参数 / 产品尺寸，禁止把实测值提交到公开仓库。
+# 结构对应方案报告第 7 节（主矩阵 2×3×2×2×2 与五项补充组）与第 12 节（典型工况 01/02/03）。
 schema: dynacalc/1
 meta:
-  project: 占位项目
+  project: 示例占位
   revision: r1
-  note: 全部水平未冻结；TBD 会原样写入 deck，不会被替换成公开材料卡数值。
+  note: 示例占位；全部连续量水平未冻结，TBD 会原样写入 deck，不会被替换成公开材料卡数值。
 factors:
   - key: density
     label: 装药平均密度
@@ -731,25 +867,25 @@ factors:
     kind: continuous
     confidence: controlled
     levels:
-      - {code: L1, value: TBD, label: 低密度}
-      - {code: H1, value: TBD, label: 高密度}
+      - {code: L1, value: TBD, label: 低密度（示例占位）}
+      - {code: H1, value: TBD, label: 高密度（示例占位）}
   - key: inner_diameter
     label: 装药内径
     unit: mm
     kind: continuous
     confidence: controlled
     levels:
-      - {code: ID1, value: TBD, label: 小内径}
-      - {code: ID2, value: TBD, label: 标称内径}
-      - {code: ID3, value: TBD, label: 大内径}
+      - {code: ID1, value: TBD, label: 小内径（薄药层，示例占位）}
+      - {code: ID2, value: TBD, label: 标称内径（示例占位）}
+      - {code: ID3, value: TBD, label: 大内径（薄药层，示例占位）}
   - key: wall_thickness
     label: 管壁平均厚度
     unit: mm
     kind: continuous
     confidence: controlled
     levels:
-      - {code: T1, value: TBD, label: 薄壁}
-      - {code: T2, value: TBD, label: 厚壁}
+      - {code: T1, value: TBD, label: 薄壁（示例占位）}
+      - {code: T2, value: TBD, label: 厚壁（示例占位）}
   - key: axial_density
     label: 轴向密度状态
     unit: ""
@@ -772,9 +908,9 @@ factors:
     kind: continuous
     confidence: uncalibrated
     levels:
-      - {code: G0, value: 0, label: 理想接触}
-      - {code: G1, value: TBD, label: 小间隙}
-      - {code: G2, value: TBD, label: 大间隙}
+      - {code: G0, value: 0, label: 理想接触（示例占位）}
+      - {code: G1, value: TBD, label: 小间隙（示例占位）}
+      - {code: G2, value: TBD, label: 大间隙（示例占位）}
   - key: initiation_strength
     label: 起爆输入强度
     unit: ""
@@ -784,11 +920,86 @@ factors:
       - {code: W, value: weak, label: 弱}
       - {code: N, value: nominal, label: 标称}
       - {code: S, value: strong, label: 强}
+  - key: residual_stress
+    label: 管壁残余应力
+    unit: ""
+    kind: discrete
+    confidence: uncalibrated
+    levels:
+      - {code: RS1, value: low, label: 低}
+      - {code: RS2, value: high, label: 高}
+  - key: die_skew
+    label: 模具偏斜
+    unit: ""
+    kind: discrete
+    confidence: uncalibrated
+    levels:
+      - {code: DS1, value: low, label: 低}
+      - {code: DS2, value: high, label: 高}
+  - key: wall_thickness_direction
+    label: 壁厚不均方向（相对波传播轴）
+    unit: ""
+    kind: discrete
+    confidence: uncalibrated
+    levels:
+      - {code: FW, value: forward, label: 同向}
+      - {code: RV, value: reverse, label: 反向}
 matrix:
   main: [density, inner_diameter, wall_thickness, axial_density, eccentricity]
   supplementary:
-    - [gap_mm]
-    - [initiation_strength]
+    - factors: [gap_mm]
+      question: 理想接触 / 小间隙 / 大间隙如何改变局部爆速、波面曲率与熄爆边界（情景下界到上限）
+    - factors: [initiation_strength]
+      question: 起爆输入弱 / 标称 / 强对成长段与稳态爆速的敏感性（软件点起爆不等于实测起爆序列）
+    - factors: [residual_stress]
+      question: 管壁残余应力低 / 高如何改变管壁载荷与环向应变（无测量时只做情景，不外推）
+    - factors: [die_skew]
+      question: 模具偏斜低 / 高造成的壁厚偏心对波面畸变与管壁响应的影响
+    - factors: [wall_thickness_direction]
+      question: 壁厚不均方向相对波传播轴同向 / 反向时，滞后侧薄药层与波面滞后的差异
+  typical:
+    - code: T01
+      label: 典型工况 01（占位基准）
+      question: 低密度 + 最小内径 + 薄壁 + 均匀 + 对称 + 理想接触的单因素基准，用于中/细网格差异与稳定段爆速；程序爆轰只给稳定爆速与管壁载荷筛选
+      levels:
+        density: L1
+        inner_diameter: ID1
+        wall_thickness: T1
+        axial_density: U
+        eccentricity: S
+        gap_mm: G0
+        initiation_strength: N
+        residual_stress: RS1
+        die_skew: DS1
+        wall_thickness_direction: FW
+    - code: T02
+      label: 典型工况 02（最坏偏心）
+      question: 复制 T01 的编码，只把偏心设为实测最大等级、薄药层放在波传播预期滞后侧，并把间隙设为情景上限；回答局部波速差 / 曲率 / 熄爆概率，不证明必然熄爆
+      levels:
+        density: L1
+        inner_diameter: ID1
+        wall_thickness: T1
+        axial_density: U
+        eccentricity: X
+        gap_mm: G2
+        initiation_strength: N
+        residual_stress: RS1
+        die_skew: DS2
+        wall_thickness_direction: RV
+    - code: T03
+      label: 典型工况 03（验证耦合）
+      question: 已完成材料标定与工艺映射的代表性批次（标称内径 + 高密度），LS-DYNA 与 AUTODYN 用完全相同的密度场 / 几何场 / 管壁状态 / 起爆输入独立复算；两路线一致且与构件试验匹配前只算待验证预测
+      levels:
+        density: H1
+        inner_diameter: ID2
+        wall_thickness: T2
+        axial_density: U
+        eccentricity: S
+        gap_mm: G0
+        initiation_strength: N
+        residual_stress: RS1
+        die_skew: DS1
+        wall_thickness_direction: FW
   baseline:
     density: L1
     inner_diameter: ID1
@@ -804,8 +1015,10 @@ defaults:
     velocity_rel_diff: 0.02
     arrival_l2_rel: 0.03
     wall_impulse_rel: 0.05
-    reference: ""
-    pairs: []
+    reference: T01
+    pairs:
+      - [T01, T02]
+      - [T01, T03]
 run:
   solver_path: ""
   ncpu: 4

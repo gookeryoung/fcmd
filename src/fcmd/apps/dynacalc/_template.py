@@ -659,7 +659,8 @@ def write_manifest(root: Path, manifest: Manifest) -> None:
         "counts": {
             "total": manifest.total,
             "main": sum(1 for item in manifest.cases if item.group == "main"),
-            "supplementary": sum(1 for item in manifest.cases if item.group != "main"),
+            "supplementary": sum(1 for item in manifest.cases if item.group.startswith("supplementary")),
+            "typical": sum(1 for item in manifest.cases if item.group == "typical"),
             "tbd_cases": manifest.tbd_cases,
             "tbd_fields": manifest.tbd_fields,
             "model_bound": manifest.model_bound,

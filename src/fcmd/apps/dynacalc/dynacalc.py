@@ -15,9 +15,11 @@
 - ``report``：回收 glstat / matsum / history，输出 CSV / JSON / 文本汇总。
 - ``compare``：对比两个工况的关键指标。
 - ``gates``：按工程建议值做四项门控检查（不通过时退出码 1）。
+- ``demo``：一键演示（示例参数 → 生成典型工况 → 假求解 → 汇总 → 对比 → 门控）。
 
 示例
 ----
+    fcmd dynacalc demo --out demo
     fcmd dynacalc example --out params.yaml
     fcmd dynacalc params params.yaml
     fcmd dynacalc matrix params.yaml --only M001 M002
@@ -46,10 +48,12 @@ from fcmd.apps.dynacalc._params import (
     example_params,
     expand_main_cases,
     expand_supplementary_cases,
+    expand_typical_cases,
     load_params,
     summary_rows,
 )
 from fcmd.apps.dynacalc._results import (
+    CompareRow,
     ResultParseError,
     collect_results,
     compare_cases,
@@ -73,6 +77,7 @@ from fcmd.console import print_error
 
 __all__ = [
     "compare_command",
+    "demo_command",
     "example_command",
     "gates_command",
     "generate_command",
@@ -164,6 +169,7 @@ def params_command(params_file: Path, json_output: bool = False) -> None:
         return
     main_count = len(expand_main_cases(table))
     supplementary_count = len(expand_supplementary_cases(table))
+    typical_count = len(expand_typical_cases(table))
     payload = {
         "schema": SCHEMA,
         "source": str(params_file),
@@ -181,9 +187,16 @@ def params_command(params_file: Path, json_output: bool = False) -> None:
         ],
         "matrix": {
             "main": list(table.main_keys),
-            "supplementary": [list(group) for group in table.supplementary],
+            "supplementary": [
+                {"factors": list(group.factors), "question": group.question} for group in table.supplementary
+            ],
+            "typical": [
+                {"code": item.code, "label": item.label, "question": item.question, "levels": dict(item.levels)}
+                for item in table.typical
+            ],
             "main_cases": main_count,
             "supplementary_cases": supplementary_count,
+            "typical_cases": typical_count,
         },
         "confidence": table.confidence_counts(),
         "tbd": table.tbd_counts(),
@@ -195,11 +208,15 @@ def params_command(params_file: Path, json_output: bool = False) -> None:
     print(f"参数文件：{params_file}（schema {SCHEMA}）")
     print(
         f"因子 {len(table.factors)} 个；主矩阵 {' × '.join(table.main_keys)} = {main_count} 组；"
-        f"补充组 {len(table.supplementary)} 个 = {supplementary_count} 组"
+        f"补充组 {len(table.supplementary)} 个 = {supplementary_count} 组；典型工况 {typical_count} 组"
     )
     print("key\tlabel\tunit\tkind\tconfidence\tlevels\ttbd")
     for row in summary_rows(table):
         print("\t".join(row))
+    for group in table.supplementary:
+        print(f"补充组 {'+'.join(group.factors)}：{group.question or '（未标注问题）'}")
+    for item in table.typical:
+        print(f"典型工况 {item.code} {item.label}：{item.question or '（未标注问题）'}")
     print("置信等级：" + "，".join(f"{name}={count}" for name, count in table.confidence_counts().items()))
     tbd = table.tbd_counts()
     print("未冻结水平：" + ("无" if not tbd else "，".join(f"{key}={count}" for key, count in tbd.items())))
@@ -347,9 +364,11 @@ def generate_command(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应，�
         return
     print(f"已生成 {manifest.total} 个工况到 {out}")
     print(f"清单：{out / 'manifest.json'}；模板 {manifest.template_name}，摘要 {manifest.template_digest[:12]}")
+    main_count = sum(1 for item in manifest.cases if item.group == "main")
+    supplementary_count = sum(1 for item in manifest.cases if item.group.startswith("supplementary"))
+    typical_count = sum(1 for item in manifest.cases if item.group == "typical")
     print(
-        f"主矩阵 {sum(1 for item in manifest.cases if item.group == 'main')} 组，"
-        f"补充组 {sum(1 for item in manifest.cases if item.group != 'main')} 组；"
+        f"主矩阵 {main_count} 组，补充组 {supplementary_count} 组，典型工况 {typical_count} 组；"
         f"TBD 工况 {manifest.tbd_cases} 个 / 字段 {manifest.tbd_fields} 处"
     )
     if meshes is not None:
@@ -485,6 +504,11 @@ def compare_command(out: Path, left: str, right: str) -> None:
     except _ERRORS as exc:
         _fail(str(exc))
         return
+    _print_compare(rows, left, right)
+
+
+def _print_compare(rows: list[CompareRow], left: str, right: str) -> None:
+    """打印对比表（供 ``compare`` 与 ``demo`` 共用）。"""
     print(f"对比：{left} vs {right}")
     print("指标\t左\t右\t差值\t相对差")
     for row in rows:
@@ -515,6 +539,77 @@ def gates_command(out: Path) -> None:
     print(format_gate_report(gate_report), end="")
     if gate_report.count(FAIL):
         raise SystemExit(1)
+
+
+@fcmd.tool(
+    "dynacalc",
+    subcommand="demo",
+    help="一键演示：示例参数 → 生成 → 假求解 → 汇总 → 对比 → 门控",
+    description=_DESCRIPTION,
+)
+def demo_command(
+    out: Path | None = None,
+    model: list[Path] | None = None,
+    mesh_root: Path | None = None,
+    mesh_level: str | None = None,
+    full: bool = False,
+) -> None:
+    """用内置示例参数跑通完整链路；始终调用假求解器，不需要 LS-DYNA。
+
+    Parameters
+    ----------
+    out:
+        演示根目录；省略时用当前目录下的 ``dynacalc-demo``
+    model:
+        ``dynacalc-model/1`` 模型文件（通常是 paramcad 导出的示例模型）
+    mesh_root:
+        网格根目录（paramesh 输出）；给出时改用 ``axisymmetric-2d`` 模板族
+    mesh_level:
+        网格档位（coarse / medium / fine）
+    full:
+        生成并运行全部工况；默认只跑典型工况 01/02/03
+    """
+    root = (out if out is not None else Path("dynacalc-demo")).resolve()
+    deck_root = root / "decks"
+    params_file = root / "params.yaml"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        params_file.write_text(example_params(), encoding="utf-8", newline="\n")
+        table = load_params(params_file)
+        typical = [case.code for case in build_cases(table) if case.group == "typical"]
+        only = None if full else typical
+        models = load_models(model) if model else None
+        meshes = scan_mesh_root(mesh_root) if mesh_root is not None else None
+        if meshes is not None and models is None:
+            raise MeshError("使用 --mesh-root 时必须同时给出 --model（网格按模型指纹绑定）")
+        print(f"步骤 1/6 示例参数：{params_file}（示例占位，TBD 原样写入 deck）")
+        result = generate_decks(table, deck_root, only=only, models=models, meshes=meshes, mesh_level=mesh_level)
+        manifest = result.manifest
+        print(f"步骤 2/6 生成：{manifest.total} 个工况 → {deck_root}（模板 {manifest.template_name}）")
+        config = config_for_manifest(manifest, {"fake": True, "concurrency": 4})
+        run_report = run_jobs(manifest, config, root=deck_root)
+        print("步骤 3/6 假求解：")
+        print(format_run_report(run_report, config), end="")
+        result_set = collect_results(deck_root, manifest)
+        report_file = root / "report.txt"
+        write_report(result_set, report_file, "text")
+        print(f"步骤 4/6 汇总：{report_file}")
+        print(format_text_report(result_set), end="")
+        codes = {item.code for item in result_set.results}
+        if {"T01", "T02"} <= codes:
+            print("步骤 5/6 对比：")
+            _print_compare(compare_cases(result_set, "T01", "T02"), "T01", "T02")
+        gate_report = evaluate(result_set, manifest.settings)
+        print("步骤 6/6 门控：")
+        print(format_gate_report(gate_report), end="")
+        if gate_report.count(FAIL):
+            print("注：假求解器指标不是物理结果，门控不通过属预期；真实评估请换实测求解输出。")
+        if run_report.failed() or result_set.failed():
+            raise SystemExit(2)
+    except (*_ERRORS, ValueError) as exc:
+        _fail(str(exc))
+        return
+    print(f"演示完成：{root}（假求解器只验证链路，不代表物理结论）")
 
 
 @fcmd.main("dynacalc")

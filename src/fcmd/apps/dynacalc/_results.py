@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fcmd.apps.dynacalc._params import group_text
 from fcmd.apps.dynacalc._template import Manifest, ManifestCase
 
 __all__ = [
@@ -413,11 +414,18 @@ def _metric_text(value: float | None) -> str:
     return f"{value:.6g}"
 
 
+def _group_map(result_set: ResultSet) -> dict[str, str]:
+    """工况编码 → 分组；清单缺项时按主矩阵处理。"""
+    return {item.code: item.group for item in result_set.manifest.cases}
+
+
 def result_to_csv(result_set: ResultSet) -> str:
     """汇总 CSV 文本（不含 BOM；写文件时由 :func:`write_report` 加 BOM）。"""
     probes = _probe_columns(result_set)
+    groups = _group_map(result_set)
     header = [
         "code",
+        "group",
         "status",
         *(label for _, label in _CSV_METRICS),
         *(f"到达{probe:g}mm(us)" for probe in probes),
@@ -428,7 +436,7 @@ def result_to_csv(result_set: ResultSet) -> str:
     writer.writerow(header)
     for item in result_set.results:
         metrics = item.metrics
-        row = [item.code, item.status]
+        row = [item.code, group_text(groups.get(item.code, "main")), item.status]
         row.extend(_metric_text(metrics.value(key)) if metrics else "" for key, _ in _CSV_METRICS)
         row.extend(_metric_text(metrics.arrivals_us.get(probe)) if metrics else "" for probe in probes)
         row.append(item.error)
@@ -437,7 +445,8 @@ def result_to_csv(result_set: ResultSet) -> str:
 
 
 def result_to_json(result_set: ResultSet) -> str:
-    """汇总 JSON：逐工况状态、指标、到达时程、警告与错误。"""
+    """汇总 JSON：逐工况状态、分组、指标、到达时程、警告与错误。"""
+    groups = _group_map(result_set)
     payload = {
         "schema": "dynacalc-report/1",
         "total": len(result_set.results),
@@ -446,6 +455,7 @@ def result_to_json(result_set: ResultSet) -> str:
         "cases": [
             {
                 "code": item.code,
+                "group": group_text(groups.get(item.code, "main")),
                 "status": item.status,
                 "values": dict(item.metrics.values) if item.metrics else {},
                 "arrivals_us": {f"{probe:g}": value for probe, value in item.metrics.arrivals_us.items()}
@@ -461,14 +471,22 @@ def result_to_json(result_set: ResultSet) -> str:
 
 
 def format_text_report(result_set: ResultSet) -> str:
-    """可读文本汇总：逐工况指标 + 解析失败清单。"""
+    """可读文本汇总：分组统计 + 逐工况指标 + 解析失败清单。"""
+    groups = _group_map(result_set)
+    counts: dict[str, int] = {}
+    for item in result_set.results:
+        name = group_text(groups.get(item.code, "main"))
+        counts[name] = counts.get(name, 0) + 1
     lines = [
-        f"汇总：{len(result_set.results)} 个工况，成功 {len(result_set.results) - len(result_set.failed())}，失败 {len(result_set.failed())}"
+        f"汇总：{len(result_set.results)} 个工况，成功 {len(result_set.results) - len(result_set.failed())}，失败 {len(result_set.failed())}",
+        "分组：" + "，".join(f"{name} {count} 个" for name, count in counts.items()),
     ]
     probes = _probe_columns(result_set)
     for item in result_set.results:
+        tag = group_text(groups.get(item.code, "main"))
+        prefix = f"[{item.code}]" if tag == "主矩阵" else f"[{item.code} {tag}]"
         if not item.ok or item.metrics is None:
-            lines.append(f"[{item.code}] 失败：{item.error}")
+            lines.append(f"{prefix} 失败：{item.error}")
             continue
         metrics = item.metrics
         parts = [
@@ -481,7 +499,7 @@ def format_text_report(result_set: ResultSet) -> str:
         if probes:
             arrivals = "，".join(f"{probe:g}mm={_metric_text(metrics.arrivals_us.get(probe))}µs" for probe in probes)
             parts.append(f"到达时程({arrivals})")
-        lines.append(f"[{item.code}] " + "；".join(parts))
+        lines.append(prefix + " " + "；".join(parts))
         for warning in metrics.warnings:
             lines.append(f"  - 警告：{warning}")
     if result_set.failed():

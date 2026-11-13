@@ -111,7 +111,7 @@ SMALL_PARAMS = textwrap.dedent(
 
 @pytest.fixture
 def params_file(tmp_path: Path) -> Path:
-    """示例参数表（7 因子，主矩阵 48 组 + 补充组 6 组，全部 TBD）。"""
+    """示例参数表（10 因子，主矩阵 48 组 + 补充组 12 组 + 典型工况 3 组，全部 TBD）。"""
     path = tmp_path / "params.yaml"
     path.write_text(example_params(), encoding="utf-8", newline="\n")
     return path

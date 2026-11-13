@@ -84,9 +84,16 @@ factors:
   - key: gap_mm              # 补充组因子（示例）
 matrix:
   main: [density, inner_diameter, wall_thickness, axial_density, eccentricity]
-  supplementary:
-    - [gap_mm]
-    - [initiation_strength]
+  supplementary:             # 每项可带 question，说明该补充组要回答的问题
+    - factors: [gap_mm]
+      question: 药管间隙对局部爆速与熄爆边界的影响
+    - factors: [initiation_strength]
+      question: 起爆输入弱/标称/强的敏感性
+  typical:                   # 典型工况：显式给出水平，不并入主矩阵
+    - code: T01
+      label: 占位基准
+      question: 单因素基准
+      levels: {density: L1, inner_diameter: ID1}
   baseline:                  # 补充组 OFAT 的基准；缺省取主矩阵各因子首个水平
     density: L1
 defaults:
@@ -119,11 +126,14 @@ run:
 
 - 主矩阵：对 `matrix.main` 列出的因子按声明顺序做笛卡尔积。参考工况为
   2×3×2×2×2 时恰好 48 组；用户增删因子或水平即得到自定义矩阵，不硬编码 48。
-- 补充组：`matrix.supplementary` 每个内层列表是一组 **OFAT**（one-factor-at-a-time）
-  工况，以 `baseline` 为底只改该组因子；一个内层列表含多个因子时对该组做笛卡尔积。
-  补充组不并入主矩阵的统计自由度。
+- 补充组：`matrix.supplementary` 每项是因子键列表，或 `{factors, question}` 映射
+  （`question` 说明该组回答什么问题）。每组以 `baseline` 为底只改该组因子（**OFAT**）；
+  一个组含多个因子时对该组做笛卡尔积。补充组不并入主矩阵的统计自由度。
+- 典型工况：`matrix.typical` 用 `T01` 起的编码显式给出因子水平，缺项回落
+  `baseline` 或该因子首水平；它们不是矩阵的自由度，而是在 `report` / `gates` 中
+  单独标注「典型工况」的一组固定情景（示例为基准 / 最坏偏心 / 验证耦合）。
 - 编码：主矩阵 `M001`…（按因子声明顺序的乘积顺序），补充组 `S<组号>-<序号>`
-  （如 `S1-001`）。编码在参数文件不变时稳定。
+  （如 `S1-001`），典型工况 `T01`…。编码在参数文件不变时稳定。
 - 每个工况的计算指纹 `fingerprint` = SHA-256（规范 JSON：schema 版本、因子水平编码
   与解析值、模板摘要、矩阵分组）前 12 位；deck 目录名 `<编码>-<指纹前 8 位>`，
   同一参数重复生成得到同名目录。
@@ -284,7 +294,8 @@ run:
 
 ## 验收
 
-- `dynacalc example` 能生成一份全 TBD 占位参数表；`params` 校验通过并统计 TBD；
+- `dynacalc example` 能生成一份占位参数表（连续量全 TBD，离散水平只表达状态：
+  均匀/端部疏松、对称/偏心、同向/反向）；`params` 校验通过并统计 TBD；
 - 参考参数表 `generate` 产出 48 个 `M###-<hash>` 目录与 `cases.json` / `manifest.json`，
   重复生成逐字节一致；
 - `run --plan-only`（dry-run；全局 `--dry-run` 由 fcmd 任务框架占用）打印 48 条命令且不启动进程；
@@ -296,6 +307,7 @@ run:
 ## 落地状态
 
 - 设计：已定稿（本 ADR）。
-- 实现与测试：已落地；`tests/apps/dynacalc/` 覆盖 48 组主矩阵 + 补充组、deck 生成、
-  dry-run、假求解、续跑/重试/超时、结果解析、汇总、对比、门控与 GUI 纯函数；
+- 实现与测试：已落地；`tests/apps/dynacalc/` 覆盖 48 组主矩阵 + 五项补充组 +
+  典型工况 01/02/03、`demo` 一键链路、deck 生成、dry-run、假求解、续跑/重试/超时、
+  结果解析、汇总、对比、门控与 GUI 纯函数；
   全仓库 `ruff` / `ruff format` / `pyrefly` / `pytest`（含覆盖率 95% 门禁）通过。

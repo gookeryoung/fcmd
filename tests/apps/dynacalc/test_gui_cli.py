@@ -65,6 +65,7 @@ class TestSettings:
         assert dynacalcw.__version__ == "0.1.0"
         assert list_subcommands("dynacalc") == [
             "compare",
+            "demo",
             "example",
             "gates",
             "generate",
@@ -138,14 +139,16 @@ class TestCli:
 
 @pytest.mark.slow
 class TestClosedLoop:
-    """48 组主矩阵 + 补充组的完整闭环：生成 → dry-run → 假求解 → 汇总 → 门控。"""
+    """48 组主矩阵 + 五项补充组 + 典型工况 01/02/03 的完整闭环：生成 → dry-run → 假求解 → 汇总 → 门控。"""
 
     def test_full_loop(self, params_file: Path, tmp_path: Path) -> None:
         out = tmp_path / "out"
         table = load_params(params_file)
         result = generate_decks(table, out)
-        assert result.manifest.total == 54
+        assert result.manifest.total == 63
         assert sum(1 for item in result.manifest.cases if item.group == "main") == 48
+        assert sum(1 for item in result.manifest.cases if item.group.startswith("supplementary")) == 12
+        assert sum(1 for item in result.manifest.cases if item.group == "typical") == 3
         manifest = load_manifest(out)
         assert manifest.tbd_cases == manifest.total
 
@@ -154,7 +157,7 @@ class TestClosedLoop:
 
         dynacalc.run_command(out, fake=True, concurrency=8)
         jobs = json.loads((out / "jobs.json").read_text(encoding="utf-8"))
-        assert len(jobs["jobs"]) == 54
+        assert len(jobs["jobs"]) == 63
         assert all(item["status"] == "done" for item in jobs["jobs"].values())
 
         dynacalc.report_command(out, report_out=tmp_path / "report.csv", output_format="csv")

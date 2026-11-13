@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from fcmd.apps.dynacalc._params import group_text
 from fcmd.apps.dynacalc._results import CaseMetrics, ResultSet
 
 __all__ = [
@@ -60,6 +61,8 @@ class GateReport:
 
     checks: tuple[GateCheck, ...]
     reference: str
+    groups: Mapping[str, str] = field(default_factory=dict)
+    """工况编码 → 分组（``main`` / ``typical`` / ``supplementary:...``）。"""
 
     def count(self, verdict: str) -> int:
         """统计某结论的条数。"""
@@ -248,17 +251,31 @@ def evaluate(result_set: ResultSet, settings: Mapping[str, Any]) -> GateReport:
         checks.append(_arrival_check(left, right, left_metrics, other, thresholds["arrival_l2_rel"]))
         checks.append(_impulse_check(left, right, left_metrics, other, thresholds["wall_impulse_rel"]))
         checks.append(_quench_check(left, right, left_metrics, other, quench_fraction))
-    return GateReport(checks=tuple(checks), reference=reference)
+    groups = {item.code: item.group for item in result_set.manifest.cases}
+    return GateReport(checks=tuple(checks), reference=reference, groups=groups)
+
+
+def _tag(report: GateReport, code: str) -> str:
+    """工况编码附中文分组名；主矩阵不加后缀。"""
+    group = report.groups.get(code, "main")
+    return code if group == "main" else f"{code}（{group_text(group)}）"
 
 
 def format_gate_report(report: GateReport) -> str:
     """文本门控清单，末尾固定附带工程建议值声明。"""
     lines = [
-        f"门控检查：基准工况 {report.reference}，"
+        f"门控检查：基准工况 {_tag(report, report.reference)}，"
         f"通过 {report.count(PASS)}，不通过 {report.count(FAIL)}，跳过 {report.count(SKIP)}"
     ]
+    codes = {code for item in report.checks for code in item.pair}
+    if codes:
+        grouped: dict[str, int] = {}
+        for code in codes:
+            name = group_text(report.groups.get(code, "main"))
+            grouped[name] = grouped.get(name, 0) + 1
+        lines.append("配对工况分组：" + "，".join(f"{name} {count} 个" for name, count in grouped.items()))
     for item in report.checks:
-        pair = f"{item.pair[0]} vs {item.pair[1]}"
+        pair = f"{_tag(report, item.pair[0])} vs {_tag(report, item.pair[1])}"
         lines.append(f"[{item.verdict}] {pair} {item.label}：{item.detail}")
     lines.append("")
     lines.append(DISCLAIMER)

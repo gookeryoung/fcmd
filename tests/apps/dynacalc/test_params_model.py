@@ -57,7 +57,7 @@ class TestExampleMatrix:
     def test_supplementary_groups_are_independent(self, params_file: Path) -> None:
         table = load_params(params_file)
         cases = expand_supplementary_cases(table)
-        assert len(cases) == 6
+        assert len(cases) == 12
         assert [case.group for case in cases] == [
             "supplementary:gap_mm",
             "supplementary:gap_mm",
@@ -65,6 +65,12 @@ class TestExampleMatrix:
             "supplementary:initiation_strength",
             "supplementary:initiation_strength",
             "supplementary:initiation_strength",
+            "supplementary:residual_stress",
+            "supplementary:residual_stress",
+            "supplementary:die_skew",
+            "supplementary:die_skew",
+            "supplementary:wall_thickness_direction",
+            "supplementary:wall_thickness_direction",
         ]
         assert cases[0].code == "S1-001"
 
@@ -77,7 +83,7 @@ class TestExampleMatrix:
     def test_summary_rows_and_counts(self, params_file: Path) -> None:
         table = load_params(params_file)
         rows = summary_rows(table)
-        assert len(rows) == len(table.factors) == 7
+        assert len(rows) == len(table.factors) == 10
         assert table.confidence_counts()["controlled"] >= 1
         assert table.tbd_counts()
 
