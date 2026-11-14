@@ -203,7 +203,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         """可转换模型列表：自动识别模型目录下的 HF safetensors 目录。"""
         ttk = self._ttk
         space = self._theme.spacing
-        box = ttk.LabelFrame(parent, text="已配置模型（可转换的 HF safetensors 目录）", padding=(space.sm, space.xs))
+        box = ttk.LabelFrame(parent, text="可转换模型（HF safetensors 目录）", padding=(space.sm, space.xs))
         box.grid(row=0, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
 
@@ -341,7 +341,9 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._convert_progress.pack(side="right")
 
     def _build_convert_log(self, parent: Any) -> None:
-        box = self._ttk.LabelFrame(parent, text="输出日志", padding=(self._theme.spacing.sm, self._theme.spacing.xs))
+        box = self._ttk.LabelFrame(
+            parent, text="转换输出日志", padding=(self._theme.spacing.sm, self._theme.spacing.xs)
+        )
         box.grid(row=4, column=0, sticky="nsew", pady=(self._theme.spacing.sm, 0))
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
@@ -366,7 +368,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         model_row = ttk.Frame(parent)
         model_row.grid(row=1, column=0, sticky="ew", pady=(space.sm, 0))
-        ttk.Label(model_row, text="已配置模型（未量化）").pack(side="left")
+        ttk.Label(model_row, text="未量化模型（GGUF）").pack(side="left")
         self._quant_model_box = ttk.Combobox(model_row, textvariable=self._model_var, state="disabled")
         self._quant_model_box.pack(side="left", fill="x", expand=True, padx=space.sm)
         self._quant_model_box.bind("<<ComboboxSelected>>", self._on_quant_model_selected)
@@ -420,7 +422,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._quant_progress = ttk.Progressbar(options, mode="determinate", maximum=100, length=180)
         self._quant_progress.pack(side="right", padx=space.sm)
 
-        log_box = ttk.LabelFrame(parent, text="输出日志", padding=(space.sm, space.xs))
+        log_box = ttk.LabelFrame(parent, text="量化输出日志", padding=(space.sm, space.xs))
         log_box.grid(row=6, column=0, sticky="nsew", pady=(space.sm, 0))
         log_box.columnconfigure(0, weight=1)
         log_box.rowconfigure(0, weight=1)

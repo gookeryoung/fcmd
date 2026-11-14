@@ -1,4 +1,4 @@
-"""locllmw 概览页：硬件检测、模型盘、智能推荐与已加载模型。
+"""locllmw 概览页：硬件检测、模型目录、智能推荐与已加载模型。
 
 硬件快照首次检测后写入 ``locllmw.json``，之后读缓存展示并支持重新检测；
 推荐行由 :mod:`fcmd.apps.locllm._locllmw_recommend` 纯逻辑计算，性能默认标注
@@ -34,7 +34,7 @@ __all__: list[str] = []
 
 
 class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """LocllmWindow 的「概览」页：硬件信息、模型盘与智能推荐。"""
+    """LocllmWindow 的「概览」页：硬件信息、模型目录与智能推荐。"""
 
     if TYPE_CHECKING:
         # 宿主 LocllmWindow / _LocllmWindowUI 提供的成员。
@@ -74,7 +74,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
     # 界面
     # ------------------------------------------------------------------ #
     def _build_overview(self, parent: Any) -> None:
-        """概览页：硬件与模型盘 → 智能推荐 → 已加载模型（最下方）。"""
+        """概览页：硬件与模型目录 → 智能推荐 → 已加载模型（最下方）。"""
         self._build_hardware(parent)
         self._build_recommendations(parent)
         self._build_loaded(parent)
@@ -93,7 +93,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
             ("显卡", "gpu"),
             ("处理器", "cpu"),
             ("内存", "memory"),
-            ("模型盘", "model_disk"),
+            ("模型目录", "model_disk"),
         )
         for row, (label, key) in enumerate(rows):
             ttk.Label(box, text=label, style="Muted.TLabel").grid(
@@ -256,7 +256,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         root_text = str(model_path if self._selected_model else (snapshot.model_root or "未配置"))
         self._hardware_vars["model_disk"].set(f"{root_text}\n{format_disk(disk)}")
         self._hardware_vars["detected"].set(
-            f"检测时间 {snapshot.detected_at or '未知'}；模型盘随选中模型或主模型目录变化"
+            f"检测时间 {snapshot.detected_at or '未知'}；模型目录随选中模型或主模型目录变化"
         )
 
     # ------------------------------------------------------------------ #

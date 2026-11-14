@@ -1315,7 +1315,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             self._local_tree.insert("", "end", values=local_row(item))
         if models:
             total = sum(item.size for item in models)
-            self._local_status_var.set(f"本地模型 {len(models)} 个，合计 {human_size(total)}")
+            self._local_status_var.set(f"模型仓库 {len(models)} 个，合计 {human_size(total)}；运行页按 GGUF 文件计数")
         elif not root.is_dir():
             self._local_status_var.set(f"模型目录不存在: {root}")
         else:

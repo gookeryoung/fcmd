@@ -130,6 +130,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _page_canvases: dict[str, Any]
         _page_bodies: dict[str, Any]
         _params_box: Any
+        _models_box: Any
         _loaded_tree: Any
         _loaded_var: Any
         _loaded_states: list[Any]
@@ -499,8 +500,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _build_models(self, parent: Any) -> None:
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="已配置模型（llmenv 登记的模型目录）", padding=self._theme.spacing.sm)
+        box = ttk.LabelFrame(parent, text="运行模型（模型目录中的 GGUF）", padding=self._theme.spacing.sm)
         box.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
+        self._models_box = box
 
         row = ttk.Frame(box)
         row.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
@@ -1071,6 +1073,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
     def _render_models(self) -> None:
         """重建模型列表：硬件不足标红，仅当前余量不足标橙，并显示对应状态。"""
         self._tree.delete(*self._tree.get_children())
+        self._models_box.configure(text=f"运行模型（模型目录中的 GGUF，共 {len(self._models)} 个）")
         for index, entry in enumerate(self._models):
             state = self._row_state(entry)
             name = entry.relative
