@@ -80,7 +80,7 @@ llmmodel       = "fcmd.apps.locllm.llmmodel:main"
 llmqnt         = "fcmd.apps.locllm.llmqnt:main"
 llmqntw        = "fcmd.apps.locllm.llmqntw:main"
 llmserve       = "fcmd.apps.locllm.llmserve:main"
-locllmw      = "fcmd.apps.locllm.locllmw:main"
+locllmw        = "fcmd.apps.locllm.locllmw:main"
 lscalc         = "fcmd.tools.calc.lscalc:main"
 mathtool       = "fcmd.cli._entry:run_named"
 mirrortool     = "fcmd.tools.dev.mirrortool:main"
@@ -152,11 +152,11 @@ dev = [
 ]
 
 filecheck = [ "puremagic>=1.28" ]
-full = [ "fcmd[img,pdf,ocr,svg,crypto,archive,filecheck,color,pe,ppt,win32]" ]
-img = [ "pillow>=10" ]
-lint = [ "pyrefly>=1.1.1", "ruff>=0.8.0" ]
-ocr = [ "fcmd[img]", "pytesseract>=0.3.13" ]
-office = [ "fcmd[img,pdf,ocr,svg,ppt]" ]
+full      = [ "fcmd[img,pdf,ocr,svg,crypto,archive,filecheck,color,pe,ppt,win32]" ]
+img       = [ "pillow>=10" ]
+lint      = [ "pyrefly>=1.1.1", "ruff>=0.8.0" ]
+ocr       = [ "fcmd[img]", "pytesseract>=0.3.13" ]
+office    = [ "fcmd[img,pdf,ocr,svg,ppt]" ]
 # pymupdf 2.x 强依赖 onnxruntime / pymupdf-layout / pymupdf4llm；本项目只用基础 PDF 读写，锁 1.x
 pdf = [ "pymupdf>=1.23,<2", "pypdf>=5.9.0" ]
 pe = [ "pefile>=2024.8.26" ]
