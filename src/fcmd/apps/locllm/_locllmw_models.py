@@ -20,6 +20,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -299,6 +300,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._closed = False
         self._stop_event = threading.Event()
         self._download_target = _llmconfig.models_dir()
+        self._failures: list[tuple[str, str, str]] = []
         self._keyword_var = tk.StringVar()
         self._task_var = tk.StringVar(value=_ALL_TASKS)
         self._series_applied = ""
@@ -716,6 +718,35 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._file_bar.grid(row=1, column=1, sticky="ew", pady=space.xs)
         ttk.Label(progress, textvariable=self._file_var, width=36, anchor="e").grid(
             row=1, column=2, sticky="e", padx=(space.sm, 0), pady=space.xs
+        )
+
+        failed = ttk.LabelFrame(parent, text="失败记录", padding=(space.sm, space.xs))
+        failed.pack(fill="x", pady=(space.sm, 0))
+        self._fail_tree = ttk.Treeview(
+            failed,
+            columns=("time", "repo", "reason"),
+            show="headings",
+            height=3,
+            selectmode="browse",
+        )
+        for key, label, width in (
+            ("time", "时间", 100),
+            ("repo", "模型", 220),
+            ("reason", "原因", 360),
+        ):
+            self._fail_tree.heading(key, text=label)
+            self._fail_tree.column(key, width=width, stretch=key == "reason")
+        self._fail_tree.pack(fill="x")
+        self._fail_tree.bind("<Double-1>", lambda _event: self._retry_failure())
+        fail_actions = ttk.Frame(failed)
+        fail_actions.pack(fill="x", pady=(space.xs, 0))
+        ttk.Button(fail_actions, text="重试选中", command=self._retry_failure, width=10).pack(side="left")
+        ttk.Button(fail_actions, text="清空记录", command=self._clear_failures, width=10).pack(
+            side="left", padx=(space.sm, 0)
+        )
+        self._fail_hint_var = self._tk.StringVar(value="暂无失败记录")
+        ttk.Label(fail_actions, textvariable=self._fail_hint_var, style="Hint.TLabel").pack(
+            side="left", padx=(space.sm, 0)
         )
 
         box = ttk.LabelFrame(parent, text="日志", padding=(space.sm, space.xs))
@@ -1188,6 +1219,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         elif kind == "download_cancelled":
             self._finish_download(str(payload), ok=False)
         elif kind == "download_error":
+            self._record_failure(str(payload))
             self._finish_download(f"下载失败: {payload}", ok=False)
         elif kind == "local_done":
             self._render_local(payload)
@@ -1328,6 +1360,36 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             self._local_status_var.set(f"模型目录不存在: {root}")
         else:
             self._local_status_var.set(f"模型目录 {root} 下没有模型")
+
+    def _record_failure(self, message: str) -> None:
+        """记录一次下载失败（仅当前窗口会话，最多保留 20 条，不落盘）。"""
+        repo = self._current_repo or "-"
+        stamp = time.strftime("%H:%M:%S")
+        self._failures.append((stamp, repo, message))
+        del self._failures[:-20]
+        self._fail_tree.insert("", "end", values=(stamp, repo, message))
+        self._fail_hint_var.set(f"最近 {len(self._failures)} 次失败，选中后点「重试选中」可重下")
+
+    def _retry_failure(self) -> None:
+        """按失败记录重新下载：恢复模型名后走与「下载」相同的校验与流程。"""
+        selection = self._fail_tree.selection()
+        if not selection:
+            self._fail_hint_var.set("先在失败记录里选中一行")
+            return
+        stamp, repo, _reason = self._fail_tree.item(selection[0], "values")
+        if repo == "-":
+            self._fail_hint_var.set("该记录没有可重试的模型名")
+            return
+        self._current_repo = repo
+        self._selected_repo_var.set(repo)
+        self._status_var.set(f"重试下载 {repo}（{stamp} 的失败记录）")
+        self._start_download()
+
+    def _clear_failures(self) -> None:
+        """清空失败记录（仅界面内记录，不影响已下载文件）。"""
+        self._failures.clear()
+        self._fail_tree.delete(*self._fail_tree.get_children())
+        self._fail_hint_var.set("暂无失败记录")
 
     def _finish_download(self, message: str, *, ok: bool) -> None:
         """下载结束：恢复按钮、刷新本地列表并提示结果。"""
