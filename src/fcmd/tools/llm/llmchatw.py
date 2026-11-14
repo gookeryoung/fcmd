@@ -36,8 +36,9 @@ from fcmd.tools.llm.llmbase import (
     ServeError,
     ServeState,
     http_base_url,
+    human_size,
 )
-from fcmd.tools.llm.llmchat import ChatSession
+from fcmd.tools.llm.llmchat import Attachment, ChatSession
 from fcmd.tools.llm.llmserve import process_alive
 
 __all__ = [
@@ -55,6 +56,8 @@ _DESCRIPTION = (
 _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
 _CUSTOM = "自定义"
 _UNAVAILABLE = "不可用"
+#: 单条消息允许的图片数量上限
+_MAX_IMAGES = 4
 
 MIN_WIDTH = 860
 MIN_HEIGHT = 620
@@ -120,10 +123,11 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
 
     def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
-        from tkinter import messagebox, ttk
+        from tkinter import filedialog, messagebox, ttk
 
         self._tk = tk
         self._messagebox = messagebox
+        self._filedialog = filedialog
         self._ttk = ttk
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
@@ -144,6 +148,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._saw_reasoning = False
         self._answer_started = False
         self._states: list[ServeState] = []
+        self._attachments: list[Attachment] = []
 
         self._service_var = tk.StringVar(value=_CUSTOM)
         self._url_var = tk.StringVar(value=_DEFAULT_URL)
@@ -153,6 +158,7 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._max_tokens_var = tk.StringVar(value="2048")
         self._temperature_var = tk.StringVar(value="0.7")
         self._top_p_var = tk.StringVar(value="0.9")
+        self._attach_var = tk.StringVar(value="未选择图片")
         self._status_var = tk.StringVar(value=_UNAVAILABLE)
 
         self._build_widgets()
@@ -292,6 +298,16 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         box.grid(row=3, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
 
+        toolbar = ttk.Frame(box)
+        toolbar.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, self._theme.spacing.sm))
+        self._image_btn = ttk.Button(toolbar, text="选择图片", command=self._pick_images, width=10)
+        self._image_btn.pack(side="left")
+        self._image_clear_btn = ttk.Button(toolbar, text="移除图片", command=self._clear_images, width=10)
+        self._image_clear_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
+        ttk.Label(toolbar, textvariable=self._attach_var, foreground=self._theme.palette.muted).pack(
+            side="left", padx=(self._theme.spacing.md, 0)
+        )
+
         self._input_text = self._tk.Text(
             box,
             height=4,
@@ -301,23 +317,57 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
             undo=True,
             font=_guitheme.BODY_FONT,
         )
-        self._input_text.grid(row=0, column=0, columnspan=3, sticky="nsew")
+        self._input_text.grid(row=1, column=0, columnspan=3, sticky="nsew")
         self._input_text.bind("<Control-Return>", self._on_send_shortcut)
 
         ttk.Label(box, text="Ctrl+Enter 发送 · Enter 换行", foreground=self._theme.palette.muted).grid(
-            row=1, column=0, sticky="w", pady=(self._theme.spacing.sm, 0)
+            row=2, column=0, sticky="w", pady=(self._theme.spacing.sm, 0)
         )
         self._stop_btn = ttk.Button(
             box, text="停止", command=self._stop, state="disabled", width=10, style="Danger.TButton"
         )
         self._stop_btn.grid(
-            row=1, column=1, sticky="e", padx=(self._theme.spacing.sm, 0), pady=(self._theme.spacing.sm, 0)
+            row=2, column=1, sticky="e", padx=(self._theme.spacing.sm, 0), pady=(self._theme.spacing.sm, 0)
         )
         self._send_btn = ttk.Button(box, text="发送", command=self._send, width=10, style="Accent.TButton")
         self._send_btn.grid(
-            row=1, column=2, sticky="e", padx=(self._theme.spacing.sm, 0), pady=(self._theme.spacing.sm, 0)
+            row=2, column=2, sticky="e", padx=(self._theme.spacing.sm, 0), pady=(self._theme.spacing.sm, 0)
         )
         self._input_text.focus_set()
+
+    # ------------------------------------------------------------------ #
+    # 图片附件
+    # ------------------------------------------------------------------ #
+    def _pick_images(self) -> None:
+        """选择图片作为下一条消息的附件（单轮最多 4 张）。"""
+        paths = self._filedialog.askopenfilenames(
+            title="选择图片（png / jpeg / webp）",
+            filetypes=[("图片", "*.png *.jpg *.jpeg *.webp"), ("全部文件", "*.*")],
+        )
+        if not paths:
+            return
+        for raw in paths:
+            if len(self._attachments) >= _MAX_IMAGES:
+                self._status_var.set(f"单条消息最多 {_MAX_IMAGES} 张图片")
+                break
+            try:
+                self._attachments.append(Attachment.image(raw))
+            except ServeError as exc:
+                self._messagebox.showwarning("无法添加图片", str(exc))
+        self._refresh_attach_label()
+
+    def _clear_images(self) -> None:
+        """清空已选图片。"""
+        self._attachments.clear()
+        self._refresh_attach_label()
+
+    def _refresh_attach_label(self) -> None:
+        """刷新附件计数与总体积提示。"""
+        if not self._attachments:
+            self._attach_var.set("未选择图片")
+            return
+        total = sum(item.size for item in self._attachments)
+        self._attach_var.set(f"已选 {len(self._attachments)} 张图片 · {human_size(total)}")
 
     def _on_send_shortcut(self, _event: Any) -> str:
         """Ctrl+Enter 发送并阻止插入换行。"""
@@ -411,8 +461,9 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         if self._running:
             return
         text = self._input_text.get("1.0", "end").strip()
-        if not text:
-            self._status_var.set("请输入内容")
+        attachments = tuple(self._attachments)
+        if not text and not attachments:
+            self._status_var.set("请输入内容或选择图片")
             return
         try:
             session = self._make_session()
@@ -421,7 +472,10 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
             self._status_var.set(str(exc))
             return
 
-        self._append("user", f"你: {text}\n")
+        if attachments and not self._current_vision():
+            self._append("info", "提示: 当前服务启动时未加载 mmproj（vision=false），图片可能被忽略。\n")
+        suffix = f"（图片 x{len(attachments)}）" if attachments else ""
+        self._append("user", f"你: {text or '（仅图片）'}{suffix}\n")
         self._input_text.delete("1.0", "end")
         self._saw_reasoning = False
         self._answer_started = False
@@ -429,17 +483,26 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._set_running(True)
         self._status_var.set("思考中…")
         self._messages = queue.Queue()
-        self._thread = threading.Thread(target=self._work, args=(session, text), daemon=True)
+        self._thread = threading.Thread(target=self._work, args=(session, text, attachments), daemon=True)
         self._thread.start()
         self.root.after(60, self._poll)
 
-    def _work(self, session: ChatSession, prompt: str) -> None:
+    def _current_vision(self) -> bool:
+        """当前选中服务是否以视觉模式启动（自定义地址无法判断，按 True 处理）。"""
+        name = self._service_var.get()
+        state = next((item for item in self._states if item.name == name), None)
+        if state is None:
+            return True
+        return state.vision
+
+    def _work(self, session: ChatSession, prompt: str, attachments: Sequence[Attachment]) -> None:
         """后台线程：执行一轮对话，把思考 / 回答增量与结果放入队列。"""
         try:
             reply = session.ask(
                 prompt,
                 on_delta=lambda delta: self._messages.put(("delta", delta)),
                 on_reasoning=lambda text: self._messages.put(("reasoning", text)),
+                attachments=attachments,
             )
         except (ServeError, OSError, ValueError) as exc:
             self._messages.put(("error", str(exc)))
@@ -489,6 +552,8 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         self._running = False
         self._thread = None
         self._set_running(False)
+        if ok:
+            self._clear_images()
         if not ok:
             self._append("error", f"\n错误: {reply}\n")
             self._status_var.set("失败")
@@ -528,6 +593,8 @@ class ChatWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         state = "disabled" if running else "normal"
         self._send_btn.configure(state=state)
         self._clear_btn.configure(state=state)
+        self._image_btn.configure(state=state)
+        self._image_clear_btn.configure(state=state)
         self._stop_btn.configure(state="normal" if running else "disabled")
 
     def _append(self, tag: str, text: str) -> None:

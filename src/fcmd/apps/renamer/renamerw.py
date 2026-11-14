@@ -823,8 +823,8 @@ class RenamerWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         window = tk.Toplevel(self.root)
         window.title("renamer 使用帮助")
         window.transient(self.root)
-        window.geometry("880x600")
         window.minsize(700, 460)
+        _guiwindow.center_over_parent(window, self.root, width=880, height=600)
         window.columnconfigure(0, weight=1)
         window.rowconfigure(2, weight=1)
 

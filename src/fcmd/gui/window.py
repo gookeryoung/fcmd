@@ -155,8 +155,22 @@ def centered_geometry(  # noqa: PLR0913 - 纯几何计算，参数与父窗口/�
     return f"{width}x{height}+{x}+{y}"
 
 
-def center_over_parent(window: Any, parent: Any, *, width: int, height: int) -> None:  # pragma: no cover
-    """把 Toplevel 放到父窗口中央；父窗口尚未映射时按屏幕居中。"""
+def center_over_parent(  # pragma: no cover - 需要真实 Tk 窗口
+    window: Any,
+    parent: Any,
+    *,
+    width: int | None = None,
+    height: int | None = None,
+) -> None:
+    """把 Toplevel 放到父窗口中央；父窗口尚未映射时按屏幕居中。
+
+    ``width`` / ``height`` 省略时使用窗口自身布局算出的请求尺寸，适合没有显式
+    geometry 的自动布局对话框；显式传入时保持固定尺寸并居中。
+    """
+    if width is None or height is None:
+        window.update_idletasks()
+        width = window.winfo_reqwidth() if width is None else width
+        height = window.winfo_reqheight() if height is None else height
     parent_width = parent.winfo_width()
     parent_height = parent.winfo_height()
     if parent_width <= 1 or parent_height <= 1:

@@ -609,8 +609,8 @@ class RegexValidateWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         tk = self._tk
         dialog = tk.Toplevel(self.root)
         dialog.title("正则语法帮助")
-        dialog.geometry("640x560")
         dialog.transient(self.root)
+        _guiwindow.center_over_parent(dialog, self.root, width=640, height=560)
         text = tk.Text(dialog, wrap="word", padx=self._theme.spacing.md, pady=self._theme.spacing.md)
         scrollbar = tk.Scrollbar(dialog, orient="vertical", command=text.yview)
         text.configure(yscrollcommand=scrollbar.set)

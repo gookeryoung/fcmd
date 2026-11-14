@@ -413,6 +413,7 @@ class AlarmClockWindow:
             pady=(0, self._theme.spacing.lg + self._theme.spacing.xs)
         )
         window.update_idletasks()
+        _guiwindow.center_over_parent(window, self.root)
         window.grab_set()
         window.focus_force()
 

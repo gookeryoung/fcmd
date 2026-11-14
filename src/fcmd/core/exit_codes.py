@@ -83,8 +83,21 @@ ERROR_CODE_KINDS: dict[str, str] = {
     "UNKNOWN_TOOL": "usage",
     "UNKNOWN_SUBCOMMAND": "usage",
     "USAGE": "usage",
+    "CONFIRM_REQUIRED": "usage",
     # 运行期失败
     "RUNTIME_ERROR": "runtime",
+    # devman：安装 / 卸载 / 环境集成
+    "VERSION_NOT_FOUND": "not_found",
+    "NOT_INSTALLED": "not_found",
+    "CHECKSUM_UNAVAILABLE": "runtime",
+    "DOWNLOAD_FAILED": "runtime",
+    "UV_UNAVAILABLE": "runtime",
+    "ROOT_NOT_WRITABLE": "runtime",
+    "DEVICE_BUSY": "runtime",
+    "PATH_WRITE_FAILED": "runtime",
+    "EXEC_FAILED": "runtime",
+    "CHECKSUM_MISMATCH": "check",
+    "INCOMPLETE_INSTALL": "check",
     # 结论性失败 / 中断
     "CHECK_FAILED": "check",
     "INTERRUPTED": "interrupted",

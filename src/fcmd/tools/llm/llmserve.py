@@ -13,7 +13,7 @@ import os
 import subprocess
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -231,8 +231,12 @@ def make_plan(  # noqa: PLR0913
     extra_args: Sequence[str] = (),
     tune: str = "default",
     gpu_mib: int | None = None,
+    mmproj: str = "auto",
 ) -> LaunchPlan:
-    """解析模型与引擎，构造启动计划（``alias`` 省略时取模型文件名）。"""
+    """解析模型与引擎，构造启动计划（``alias`` 省略时取模型文件名）。
+
+    ``mmproj`` 支持 ``auto``（按文件名/目录自动配对）、``off`` 或具体 ``.gguf`` 路径。
+    """
     validate_name(name)
     prof = PROFILES.get(profile)
     if prof is None:
@@ -254,6 +258,7 @@ def make_plan(  # noqa: PLR0913
         gpu = llmengine.detect_gpu()
         gpu_mib = gpu.memory_mib if gpu is not None else None
     tuning = _llmtune.resolve(tune, context=context, model_bytes=model_path.stat().st_size, gpu_mib=gpu_mib)
+    vision_path = llmmodel.resolve_mmproj(model_path, mmproj)
     return LaunchPlan(
         name=name,
         model=model_path,
@@ -272,6 +277,7 @@ def make_plan(  # noqa: PLR0913
         parallel=parallel,
         threads_http=threads_http,
         tuning=tuning,
+        mmproj=vision_path,
     )
 
 
@@ -317,7 +323,19 @@ def _tail_text(path: Path, lines: int = 20) -> str:
     return "\n".join(content[-lines:])
 
 
-def launch(  # noqa: PLR0913
+#: 视觉塔加载失败的日志特征（命中后去掉 ``--mmproj`` 重试一次）
+_MMPROJ_FAILURE_MARKERS = ("mmproj", "projector", "clip vision")
+
+
+def _mmproj_failure(plan: LaunchPlan) -> bool:
+    """日志是否表明视觉塔加载失败（仅在有 mmproj 时判定）。"""
+    if plan.mmproj is None:
+        return False
+    tail = _tail_text(plan.log, 80).lower()
+    return any(marker in tail for marker in _MMPROJ_FAILURE_MARKERS)
+
+
+def _launch_once(  # noqa: PLR0913
     plan: LaunchPlan,
     *,
     wait_s: float = 180.0,
@@ -326,7 +344,7 @@ def launch(  # noqa: PLR0913
     health: Callable[[str, int, str], bool] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ServeState:
-    """启动引擎进程，等待健康检查通过后落盘状态。"""
+    """拉起一次引擎进程并等待健康检查通过。"""
     plan.log.parent.mkdir(parents=True, exist_ok=True)
     argv = plan.argv()
     kwargs: dict[str, Any] = {
@@ -371,6 +389,8 @@ def launch(  # noqa: PLR0913
                 api_key=plan.api_key,
                 log=str(plan.log),
                 started_at=now_iso(),
+                mmproj=str(plan.mmproj or ""),
+                vision=plan.vision,
             )
             llmenv.save_state(state, home)
             return state
@@ -379,6 +399,33 @@ def launch(  # noqa: PLR0913
     with contextlib.suppress(ServeError):
         _terminate(pid, create_time, 5.0)
     raise ServeError(f"健康检查超时（{wait_s:.0f}s）：{http_base_url(plan.host, plan.port)}/health")
+
+
+def launch(  # noqa: PLR0913
+    plan: LaunchPlan,
+    *,
+    wait_s: float = 180.0,
+    home: Path | None = None,
+    popen: Callable[..., Any] | None = None,
+    health: Callable[[str, int, str], bool] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    allow_mmproj_fallback: bool = True,
+) -> ServeState:
+    """启动引擎；视觉塔加载失败时自动去掉 ``--mmproj`` 重试一次。"""
+    try:
+        return _launch_once(plan, wait_s=wait_s, home=home, popen=popen, health=health, sleep=sleep)
+    except ServeError:
+        if not allow_mmproj_fallback or not _mmproj_failure(plan):
+            raise
+        get_console().print("[yellow]视觉塔加载失败，已改为纯文本模式重试一次[/yellow]")
+        return _launch_once(
+            replace(plan, mmproj=None),
+            wait_s=wait_s,
+            home=home,
+            popen=popen,
+            health=health,
+            sleep=sleep,
+        )
 
 
 def start_server(  # noqa: PLR0913
@@ -438,6 +485,7 @@ def _print_plan(plan: LaunchPlan) -> None:
         f"th{plan.effective_threads_http or '-'} / cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}",
     )
     table.add_row("调优说明", plan.tuning.detail)
+    table.add_row("视觉", str(plan.mmproj) if plan.mmproj is not None else "未启用（纯文本）")
     table.add_row("监听", http_base_url(plan.host, plan.port))
     estimate = llmmodel.plan_vram(plan)
     table.add_row("显存估算", human_size(estimate))
@@ -462,6 +510,7 @@ def _print_state(state: ServeState) -> None:
     table.add_row("地址", state.base_url)
     table.add_row("模型", state.model)
     table.add_row("档位", f"{state.profile} / ctx {state.context}")
+    table.add_row("视觉", str(state.mmproj) if state.vision else "未启用（纯文本）")
     table.add_row("PID", str(state.pid))
     table.add_row("启动时间", state.started_at)
     table.add_row("日志", state.log)
@@ -486,6 +535,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     api_key: str = DEFAULT_API_KEY,
     threads: int = DEFAULT_THREADS,
     tune: str = "default",
+    mmproj: str = "auto",
 ) -> None:
     """打印启动计划，便于确认参数与显存占用。
 
@@ -510,7 +560,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
     ubatch:
         覆盖 ubatch。
     parallel:
-        覆盖并发槽（``-np``）。
+        覆盖并发槽（``-np``；视觉模式下强制 1）。
     threads_http:
         覆盖 HTTP 线程数（``--threads-http``）。
     engine_tag:
@@ -523,6 +573,8 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         CPU 线程数。
     tune:
         调优策略：``auto`` / ``default`` / ``throughput`` / ``long-context`` / ``low-vram``。
+    mmproj:
+        视觉塔：``auto`` 自动配对、``off`` 关闭、或指定 ``.gguf`` 路径。
     """
     plan = make_plan(
         name,
@@ -541,6 +593,7 @@ def plan_cmd(  # noqa: PLR0913, PLR0917
         api_key=api_key,
         threads=threads,
         tune=tune,
+        mmproj=mmproj,
     )
     _print_plan(plan)
 
@@ -564,6 +617,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
     threads: int = DEFAULT_THREADS,
     tune: str = "default",
     wait: float = 180.0,
+    mmproj: str = "auto",
 ) -> None:
     """启动服务并等待 ``/health`` 就绪。
 
@@ -586,6 +640,7 @@ def start_cmd(  # noqa: PLR0913, PLR0917
         api_key=api_key,
         threads=threads,
         tune=tune,
+        mmproj=mmproj,
     )
     _print_plan(plan)
     state = start_server(plan, wait_s=wait)

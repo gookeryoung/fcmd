@@ -1184,7 +1184,7 @@ class WslmanWindow:  # pragma: no cover - 需要真实 Tk 窗口
         window = tk.Toplevel(self.root)
         window.title("安装本地镜像")
         window.transient(self.root)
-        window.geometry("820x620")
+        _guiwindow.center_over_parent(window, self.root, width=820, height=620)
         window.columnconfigure(0, weight=1)
         window.rowconfigure(2, weight=1)
 
@@ -1669,6 +1669,7 @@ class _UnregisterDialog:  # pragma: no cover - 需要真实 Tk 窗口
         ttk.Button(frame, text="取消", command=window.destroy).pack(anchor="e")
         self.typed.trace_add("write", lambda *_: self._sync())
         self._sync()
+        _guiwindow.center_over_parent(window, owner.root)
 
     def _sync(self) -> None:
         self.confirm_button.configure(
@@ -1721,6 +1722,7 @@ class _ShutdownDialog:  # pragma: no cover - 需要真实 Tk 窗口
         self.confirm_button.pack(anchor="e")
         ttk.Button(frame, text="取消", command=window.destroy).pack(anchor="e")
         self.checked.trace_add("write", lambda *_: self._sync())
+        _guiwindow.center_over_parent(window, owner.root)
 
     def _sync(self) -> None:
         self.confirm_button.configure(state="normal" if shutdown_confirm_enabled(self.checked.get()) else "disabled")

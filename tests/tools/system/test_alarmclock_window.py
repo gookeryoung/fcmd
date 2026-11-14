@@ -111,6 +111,15 @@ class _FakeToplevel(_FakeWidget):
     def update_idletasks(self) -> None:
         pass
 
+    def winfo_reqwidth(self) -> int:
+        return 360
+
+    def winfo_reqheight(self) -> int:
+        return 220
+
+    def geometry(self, spec: str) -> None:
+        self.options["geometry"] = spec
+
     def grab_set(self) -> None:
         self.options["grabbed"] = True
 
@@ -149,6 +158,24 @@ class _FakeRoot:
 
     def winfo_geometry(self) -> str:
         return "480x400+300+200"
+
+    def winfo_width(self) -> int:
+        return 480
+
+    def winfo_height(self) -> int:
+        return 400
+
+    def winfo_rootx(self) -> int:
+        return 300
+
+    def winfo_rooty(self) -> int:
+        return 200
+
+    def winfo_screenwidth(self) -> int:
+        return 1920
+
+    def winfo_screenheight(self) -> int:
+        return 1080
 
     def destroy(self) -> None:
         self.destroyed = True
@@ -328,6 +355,7 @@ class TestTick:
         assert isinstance(reminder, _FakeToplevel)
         assert reminder.options["title"] == REMINDER_TITLE
         assert reminder.options["grabbed"] is True
+        assert reminder.options["geometry"] == "360x220+360+290"
         assert reminder.protocols["WM_DELETE_WINDOW"] == gui.window.close_reminder
         assert gui.window._status_var.get() == "⏰ 闹钟响了！"
 

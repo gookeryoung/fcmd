@@ -235,6 +235,8 @@ def load_state(name: str, home: Path | None = None, *, missing_ok: bool = False)
             api_key=str(data["api_key"]),
             log=str(data["log"]),
             started_at=str(data["started_at"]),
+            mmproj=str(data.get("mmproj", "")),
+            vision=bool(data.get("vision", False)),
         )
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ServeError(f"状态文件损坏: {path}（{exc}）") from exc

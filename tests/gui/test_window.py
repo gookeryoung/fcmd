@@ -123,6 +123,80 @@ class TestCenteredGeometry:
         )
 
 
+class TestCenterOverParent:
+    """把 Toplevel 放到父窗口中央：显式尺寸与按请求尺寸两种入口。"""
+
+    @staticmethod
+    def _parent(width: int = 1000, height: int = 700, *, x: int = 220, y: int = 110) -> _FakeParent:
+        return _FakeParent(width=width, height=height, x=x, y=y)
+
+    def test_uses_explicit_size(self) -> None:
+        window = _FakeWindow(requested=(200, 100))
+        _guiwindow.center_over_parent(window, self._parent(), width=640, height=400)
+        assert window.geometry_calls == ["640x400+400+260"]
+        assert window.updates == 0
+
+    def test_falls_back_to_requested_size(self) -> None:
+        window = _FakeWindow(requested=(360, 220))
+        _guiwindow.center_over_parent(window, self._parent())
+        assert window.updates == 1
+        assert window.geometry_calls == ["360x220+540+350"]
+
+    def test_unmapped_parent_centers_on_screen(self) -> None:
+        window = _FakeWindow(requested=(640, 400))
+        _guiwindow.center_over_parent(window, self._parent(width=1, height=1))
+        assert window.geometry_calls == ["640x400+640+340"]
+
+
+class _FakeParent:
+    """替身父窗口：只需实际尺寸、根坐标与屏幕尺寸。"""
+
+    def __init__(self, *, width: int, height: int, x: int, y: int) -> None:
+        self._width = width
+        self._height = height
+        self._x = x
+        self._y = y
+
+    def winfo_width(self) -> int:
+        return self._width
+
+    def winfo_height(self) -> int:
+        return self._height
+
+    def winfo_rootx(self) -> int:
+        return self._x
+
+    def winfo_rooty(self) -> int:
+        return self._y
+
+    def winfo_screenwidth(self) -> int:
+        return 1920
+
+    def winfo_screenheight(self) -> int:
+        return 1080
+
+
+class _FakeWindow:
+    """替身 Toplevel：记录 geometry / update_idletasks 调用与请求尺寸。"""
+
+    def __init__(self, *, requested: tuple[int, int]) -> None:
+        self._requested = requested
+        self.geometry_calls: list[str] = []
+        self.updates = 0
+
+    def update_idletasks(self) -> None:
+        self.updates += 1
+
+    def winfo_reqwidth(self) -> int:
+        return self._requested[0]
+
+    def winfo_reqheight(self) -> int:
+        return self._requested[1]
+
+    def geometry(self, spec: str) -> None:
+        self.geometry_calls.append(spec)
+
+
 class TestClampSavedGeometry:
     """只夹紧已保存值时，非法输入返回 ``None``。"""
 

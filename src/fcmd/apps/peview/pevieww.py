@@ -422,8 +422,8 @@ class EditDialog:  # pragma: no cover - Tk 对话框不纳入单元覆盖（CI �
         self.top = tk.Toplevel(window.root)
         self.top.title(f"编辑字段 - {path.name}")
         self.top.transient(window.root)
-        self.top.geometry("760x620")
         self.top.minsize(600, 440)
+        _guiwindow.center_over_parent(self.top, window.root, width=760, height=620)
 
         ttk.Label(self.top, text=f"文件: {path}", anchor="w").pack(fill="x", padx=12, pady=(12, 4))
         ttk.Label(

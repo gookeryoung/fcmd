@@ -176,6 +176,12 @@ class LaunchPlan:
     parallel: int | None = None
     threads_http: int | None = None
     tuning: Tuning = Tuning()
+    mmproj: Path | None = None
+
+    @property
+    def vision(self) -> bool:
+        """是否启用视觉塔（存在 mmproj 即视为多模态）。"""
+        return self.mmproj is not None
 
     @property
     def base_url(self) -> str:
@@ -233,6 +239,8 @@ class ServeState:
     api_key: str
     log: str
     started_at: str
+    mmproj: str = ""
+    vision: bool = False
 
     @property
     def base_url(self) -> str:
@@ -280,12 +288,18 @@ class LlamaCppBackend:
             str(plan.engine.exe),
             "-m",
             str(plan.model),
+        ]
+        if plan.mmproj is not None:
+            args += ["--mmproj", str(plan.mmproj)]
+        # 视觉模式下强制单并发：多槽 + 图片在 llama.cpp 上易出现 batch 分配异常
+        parallel = 1 if plan.vision else plan.effective_parallel
+        args += [
             "-ngl",
             "99",
             "-c",
             str(plan.context),
             "-np",
-            str(plan.effective_parallel),
+            str(parallel),
             "--flash-attn",
             tuning.flash_attn,
             "-ctk",

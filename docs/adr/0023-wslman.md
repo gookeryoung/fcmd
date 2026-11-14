@@ -353,6 +353,9 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   关闭窗口时若有传输在跑，先确认，再终止子进程并按 CLI 同规则清理 `.part`。
 - 破坏性操作：`unregister` 要求**手动输入发行版名**匹配才启用按钮，并展示
   BasePath 与占用；`shutdown` 需勾选「我明白会停止全部发行版」；两者用错误色按钮。
+- 弹窗位置：所有 Toplevel（安装本地镜像、注销确认、关闭全部）用
+  `fcmd.gui.window.center_over_parent` 居中到父窗口；固定尺寸弹窗显式传
+  `width` / `height`，自动布局弹窗省略后按请求尺寸定位，不再交给窗口管理器摆放。
 - GUI 与 CLI 调同一套 `_transfer` / `_source` / `_distro` 函数，不复制业务判断。
 
 ### D11 配置

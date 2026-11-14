@@ -13,12 +13,15 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import sys
 import threading
 from codecs import IncrementalDecoder, getincrementaldecoder
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
+from io import BytesIO
+from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
@@ -26,10 +29,14 @@ from fcmd.console import get_console
 from fcmd.tools.llm.llmbase import DEFAULT_ALIAS, DEFAULT_API_KEY, Endpoint, Opener, ServeError
 
 __all__ = [
+    "MAX_IMAGE_BYTES",
+    "MAX_IMAGE_EDGE",
+    "Attachment",
     "ChatDelta",
     "ChatMessage",
     "ChatSession",
     "build_payload",
+    "image_size",
     "resolve_endpoint",
     "stream_chat",
     "stream_chat_events",
@@ -40,6 +47,11 @@ DeltaKind = Literal["content", "reasoning"]
 
 _CHUNK_SIZE = 4096
 _EXIT_WORDS = frozenset({"/exit", "/quit", "exit", "quit"})
+
+#: 单张图片的原始字节上限
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+#: 图片长边上限（超出后按需缩放，视觉模型常用上限）
+MAX_IMAGE_EDGE = 1568
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,16 +66,130 @@ class ChatDelta:
     text: str
 
 
+_IMAGE_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+)
+_JPEG_SOF_MARKERS = frozenset({0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF})
+
+
+def _detect_image_mime(data: bytes) -> str | None:
+    """按文件头识别图片格式（不信任扩展名）。"""
+    for signature, mime in _IMAGE_SIGNATURES:
+        if data.startswith(signature):
+            return mime
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def image_size(data: bytes) -> tuple[int, int] | None:
+    """读取 PNG/JPEG 的像素尺寸；无法解析（如 WEBP）时返回 ``None``。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n") and len(data) >= 24 and data[12:16] == b"IHDR":
+        return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    if data.startswith(b"\xff\xd8\xff"):
+        index = 2
+        while index + 9 < len(data):
+            if data[index] != 0xFF:  # pragma: no cover - 异常 JPEG 结构
+                index += 1
+                continue
+            marker = data[index + 1]
+            if marker in _JPEG_SOF_MARKERS:
+                height = int.from_bytes(data[index + 5 : index + 7], "big")
+                width = int.from_bytes(data[index + 7 : index + 9], "big")
+                return width, height
+            if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:  # pragma: no cover - 无尺寸段
+                index += 2
+                continue
+            segment = int.from_bytes(data[index + 2 : index + 4], "big")
+            if segment < 2:  # pragma: no cover - 防御异常段长
+                return None
+            index += 2 + segment
+    return None
+
+
+def _resize_with_pillow(data: bytes, max_edge: int) -> bytes:
+    """用 Pillow 等比缩放到长边 ``max_edge``；未安装 Pillow 时给出明确提示。"""
+    try:
+        from PIL import Image  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - 依赖环境
+        raise ServeError(f"图片长边超过 {max_edge}，且未安装 Pillow，无法自动缩放；请手动缩小后重试") from exc
+    with Image.open(BytesIO(data)) as image:
+        image.thumbnail((max_edge, max_edge))
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _encode_data_url(mime: str, data: bytes) -> str:
+    """把图片编码为 OpenAI 兼容的 data URL。"""
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+@dataclass(frozen=True, slots=True)
+class Attachment:
+    """一条消息的附件；S1 只处理图片，``text`` 预留给文档解析。"""
+
+    kind: Literal["image", "text"]
+    mime: str
+    size: int
+    data: bytes = b""
+    path: Path | None = None
+    text: str = ""
+
+    @classmethod
+    def image(
+        cls,
+        path: Path | str,
+        *,
+        max_bytes: int = MAX_IMAGE_BYTES,
+        max_edge: int = MAX_IMAGE_EDGE,
+        resize: Callable[[bytes, int], bytes] | None = None,
+    ) -> Attachment:
+        """读取并校验一张图片；超限或格式不支持时抛 :class:`ServeError`。"""
+        source = Path(path).expanduser()
+        try:
+            raw = source.read_bytes()
+        except OSError as exc:
+            raise ServeError(f"读取图片失败: {source}（{exc}）") from exc
+        mime = _detect_image_mime(raw)
+        if mime is None:
+            raise ServeError(f"不支持的图片格式（仅 png/jpeg/webp）: {source.name}")
+        if len(raw) > max_bytes:
+            raise ServeError(f"图片过大: {source.name} {len(raw)} 字节（上限 {max_bytes}）")
+        size = image_size(raw)
+        if size is not None and max(size) > max_edge:
+            resizer = resize or _resize_with_pillow
+            raw = resizer(raw, max_edge)
+            mime = _detect_image_mime(raw) or mime
+            if len(raw) > max_bytes:
+                raise ServeError(f"图片缩放后仍过大: {source.name} {len(raw)} 字节（上限 {max_bytes}）")
+        return cls(kind="image", mime=mime, size=len(raw), data=raw, path=source)
+
+    def to_content_part(self) -> dict[str, Any]:
+        """转换为 OpenAI 多模态 content 数组中的一项。"""
+        if self.kind == "image":
+            return {"type": "image_url", "image_url": {"url": _encode_data_url(self.mime, self.data)}}
+        return {"type": "text", "text": self.text}
+
+
 @dataclass(frozen=True, slots=True)
 class ChatMessage:
-    """一条对话消息。"""
+    """一条对话消息；带图片附件时序列化为多模态 content 数组。"""
 
     role: ChatRole
     content: str
+    attachments: tuple[Attachment, ...] = ()
 
-    def to_dict(self) -> dict[str, str]:
-        """转换为 OpenAI 兼容的消息字典。"""
-        return {"role": self.role, "content": self.content}
+    def to_dict(self) -> dict[str, Any]:
+        """转换为 OpenAI 兼容的消息字典（无附件时保持字符串 content）。"""
+        if not self.attachments:
+            return {"role": self.role, "content": self.content}
+        parts: list[dict[str, Any]] = []
+        if self.content:
+            parts.append({"type": "text", "text": self.content})
+        parts.extend(attachment.to_content_part() for attachment in self.attachments)
+        return {"role": self.role, "content": parts}
 
 
 @dataclass
@@ -105,14 +231,16 @@ class ChatSession:
         prompt: str,
         on_delta: Callable[[str], None] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
+        *,
+        attachments: Sequence[Attachment] = (),
     ) -> str:
         """发送一轮提问，返回完整回复（思考与回答分别增量回调）。"""
         text = prompt.strip()
-        if not text:
+        if not text and not attachments:
             raise ServeError("提示词不能为空")
         self._cancel.clear()
         self.last_had_reasoning = False
-        self.messages.append(ChatMessage("user", text))
+        self.messages.append(ChatMessage("user", text, tuple(attachments)))
         parts: list[str] = []
         try:
             for event in stream_chat_events(

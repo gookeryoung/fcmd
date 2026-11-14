@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,16 +28,21 @@ from fcmd.tools.llm.llmbase import (
 
 __all__ = [
     "GENERAL_TAG",
+    "MMPROJ_MIN_SCORE",
     "MODEL_TAGS",
+    "MmprojCandidate",
     "ModelTag",
     "VramFit",
     "detect_model_tags",
     "estimate_vram",
+    "find_mmproj",
     "find_model",
     "fit_vram",
     "max_context",
     "model_advice",
+    "pair_score",
     "plan_vram",
+    "resolve_mmproj",
     "scan_models",
 ]
 
@@ -77,7 +84,7 @@ MODEL_TAGS: dict[str, ModelTag] = {
         "视觉",
         ("vision", "llava", "minicpm-v", "internvl", "-vl-", "vl-", "pixtral", "molmo", "paligemma"),
         "balanced",
-        "多模态需要配套 mmproj：llama-server 须加 --mmproj；当前启动器未注入，仅文本可用",
+        "多模态需要配套 mmproj：启动时加 --mmproj（llmserve 默认 auto 自动配对同目录视觉塔），错配会触发降级为纯文本",
     ),
     "数学": ModelTag(
         "数学",
@@ -249,6 +256,142 @@ def find_model(
     return max(matched, key=lambda entry: entry.size).path
 
 
+#: 自动配对视觉塔的最低分；低于该值视为“无匹配”，避免误配
+MMPROJ_MIN_SCORE = 50
+#: 视觉塔文件与模型文件名中的噪音 token（不参与相似度计算）
+_MMPROJ_NOISE = frozenset({"mmproj", "projector", "f16", "bf16", "f32", "gguf", "model", "vision", "vit", "clip"})
+_SIZE_MARKER = re.compile(r"(?<![a-z0-9])(\d+(?:\.\d+)?)b(?![a-z])", re.IGNORECASE)
+_QUANT_TOKEN = re.compile(r"i?q\d+(_[a-z0-9]+)*", re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class MmprojCandidate:
+    """一个视觉塔（mmproj）候选及其配对依据。"""
+
+    path: Path
+    score: int
+    reasons: tuple[str, ...] = ()
+
+
+def _name_tokens(name: str) -> set[str]:
+    """把文件名切成有意义的 token（去掉量化档、mmproj 标记等噪音）。"""
+    tokens = {token for token in re.split(r"[^a-z0-9]+", name.lower()) if token}
+    return {token for token in tokens if token not in _MMPROJ_NOISE and not _QUANT_TOKEN.fullmatch(token)}
+
+
+def _size_markers(name: str) -> set[str]:
+    """提取文件名中的参数量标记（如 ``8b``、``30b-a3b`` 里的 ``8``/``30``/``3``）。"""
+    return {match.group(1).lower() for match in _SIZE_MARKER.finditer(name.lower())}
+
+
+def pair_score(model: Path, mmproj: Path) -> tuple[int, tuple[str, ...]]:
+    """给“主模型 ↔ 视觉塔”配对打分；返回 ``(分数, 依据)``。"""
+    score = 0
+    reasons: list[str] = []
+    if model.parent == mmproj.parent:
+        score += 40
+        reasons.append("同目录 +40")
+    elif mmproj.parent.name.lower() == "mmproj" and mmproj.parent.parent == model.parent:
+        score += 30
+        reasons.append("同目录 mmproj/ 子目录 +30")
+    model_tokens = _name_tokens(model.stem)
+    cand_tokens = _name_tokens(mmproj.stem)
+    if model_tokens and cand_tokens:
+        overlap = len(model_tokens & cand_tokens)
+        ratio = overlap / len(model_tokens | cand_tokens)
+        if ratio > 0:
+            gained = round(30 * ratio)
+            score += gained
+            reasons.append(f"文件名相似 {ratio:.0%} +{gained}")
+    elif model.parent == mmproj.parent:
+        score += 15
+        reasons.append("同目录且无同名特征 +15")
+    model_sizes = _size_markers(model.name)
+    cand_sizes = _size_markers(mmproj.name)
+    if model_sizes and cand_sizes:
+        if model_sizes & cand_sizes or model_sizes == cand_sizes:
+            score += 20
+            reasons.append("参数量一致 +20")
+        elif model_sizes.isdisjoint(cand_sizes):
+            score -= 100
+            reasons.append(f"参数量冲突 {sorted(model_sizes)} vs {sorted(cand_sizes)} -100")
+    if any(token in mmproj.stem.lower() for token in ("f16", "bf16", "f32")):
+        score += 5
+        reasons.append("projector 高精度 +5")
+    try:
+        if mmproj.stat().st_size < 20 * 1024 * 1024:
+            score -= 20
+            reasons.append("文件过小 -20")
+    except OSError:  # pragma: no cover - 扫描期间文件被删除
+        pass
+    return score, tuple(reasons)
+
+
+def _mmproj_candidates(model: Path) -> list[Path]:
+    """收集候选视觉塔：模型同目录 → 同目录 ``mmproj/`` 子目录。"""
+    found: list[Path] = []
+    seen: set[str] = set()
+
+    def add(paths: Sequence[Path]) -> None:
+        for path in paths:
+            name = path.name.lower()
+            if path == model or path.suffix.lower() != ".gguf":
+                continue
+            if "mmproj" not in name and "projector" not in name and path.parent.name.lower() != "mmproj":
+                continue
+            try:
+                key = str(path.resolve())
+            except OSError:  # pragma: no cover - 路径异常
+                continue
+            if key not in seen:
+                seen.add(key)
+                found.append(path)
+
+    add(sorted(model.parent.glob("*mmproj*.gguf")))
+    add(sorted(model.parent.glob("*projector*.gguf")))
+    add(sorted((model.parent / "mmproj").glob("*.gguf")))
+    return found
+
+
+def find_mmproj(model: Path) -> MmprojCandidate | None:
+    """为主模型寻找最佳视觉塔；分数低于阈值时返回 ``None``。"""
+    candidates = _mmproj_candidates(model)
+    if not candidates:
+        return None
+    scored: list[MmprojCandidate] = []
+    for path in candidates:
+        score, reasons = pair_score(model, path)
+        scored.append(MmprojCandidate(path=path, score=score, reasons=reasons))
+    scored.sort(key=lambda item: (-item.score, str(item.path)))
+    best = scored[0]
+    if len(scored) == 1 and best.score > 0 and best.path.parent == model.parent:
+        best = MmprojCandidate(
+            path=best.path,
+            score=max(best.score, MMPROJ_MIN_SCORE),
+            reasons=(*best.reasons, "唯一候选"),
+        )
+    if best.score < MMPROJ_MIN_SCORE:
+        return None
+    return best
+
+
+def resolve_mmproj(model: Path, spec: str | Path | None) -> Path | None:
+    """把 ``auto`` / ``off`` / 具体路径解析为视觉塔路径。"""
+    text = str(spec or "auto").strip()
+    lowered = text.lower()
+    if lowered in {"", "auto"}:
+        candidate = find_mmproj(model)
+        return candidate.path if candidate is not None else None
+    if lowered in {"off", "none", "0", "no"}:
+        return None
+    path = Path(text).expanduser()
+    if not path.is_file():
+        raise ServeError(f"视觉塔文件不存在: {path}")
+    if path.suffix.lower() != ".gguf":
+        raise ServeError(f"视觉塔必须是 .gguf 文件: {path}")
+    return path.resolve()
+
+
 def estimate_vram(model_bytes: int, context: int, kv_type: str = "q8_0") -> int:
     """估算显存占用（模型权重 + KV 缓存 + 固定开销）。"""
     kv = int(context * KV_BYTES_PER_TOKEN_FP16 * KV_SCALE.get(kv_type, 1.0))
@@ -288,11 +431,14 @@ def fit_vram(model_bytes: int, gpu_bytes: int, context: int, kv_type: str = "q8_
 
 
 def plan_vram(plan: LaunchPlan) -> int:
-    """估算启动计划的显存占用。"""
+    """估算启动计划的显存占用（含视觉塔）。"""
     try:
         size = plan.model.stat().st_size
     except OSError:
         size = 0
+    if plan.mmproj is not None:
+        with contextlib.suppress(OSError):  # pragma: no cover - 视觉塔在启动前被删除
+            size += plan.mmproj.stat().st_size
     return estimate_vram(size, plan.context, plan.effective_kv_type)
 
 
