@@ -29,6 +29,7 @@ from typing import Any, Literal
 
 import fcmd
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm.llmbase import human_size
@@ -369,7 +370,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     # 界面
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
-        """按 llmservew 的分页范式组织：底部状态栏 + 模型浏览 / 下载 / 本地管理三页。"""
+        """按 llmservew 的侧边栏分页范式组织：底部状态栏 + 模型浏览 / 下载 / 本地管理三页。"""
         ttk = self._ttk
         space = self._theme.spacing
         outer = ttk.Frame(self.root, padding=space.md)
@@ -384,14 +385,17 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         )
         status.pack(side="bottom", fill="x", pady=(space.xs, 0))
 
-        self._pages = ttk.Notebook(outer)
-        self._pages.pack(fill="both", expand=True)
-        self._browse_page = ttk.Frame(self._pages, padding=space.md)
-        self._download_page = ttk.Frame(self._pages, padding=space.md)
-        local_page = ttk.Frame(self._pages, padding=space.md)
-        self._pages.add(self._browse_page, text="模型浏览")
-        self._pages.add(self._download_page, text="下载")
-        self._pages.add(local_page, text="本地管理")
+        self._nav = _guisidebar.SidebarNav(
+            outer,
+            theme=self._theme,
+            page_padding=space.md,
+            title="模型管理",
+        )
+        self._nav.container.pack(fill="both", expand=True)
+        self._browse_page = self._nav.add("browse", "模型浏览", hint="搜索、筛选与详情")
+        self._download_page = self._nav.add("download", "下载", hint="队列、进度与目标目录")
+        local_page = self._nav.add("local", "本地管理", hint="已下载模型与清理")
+        self._nav.enable_shortcuts()
 
         self._build_browse(self._browse_page)
         self._build_download(self._download_page)
@@ -906,7 +910,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if not self._current_repo:
             self._status_var.set("请先选择一个模型")
             return
-        self._pages.select(self._download_page)
+        self._nav.select("download")
         self._download_btn.focus_set()
 
     def _open_download_target(self) -> None:
@@ -1111,7 +1115,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         values = self._local_tree.item(selection[0], "values")
         if values:
             self._keyword_var.set(str(values[0]))
-            self._pages.select(self._browse_page)
+            self._nav.select("browse")
             self._load_repo(str(values[0]))
 
     # ------------------------------------------------------------------ #

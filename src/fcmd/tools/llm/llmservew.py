@@ -720,7 +720,7 @@ class ServeWindow(
 
     def _begin_task(self, target: Any, args: tuple[Any, ...]) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
-        self._notebook.select(1)
+        self._nav.select("monitor")
         self._messages = queue.Queue()
         self._thread = threading.Thread(target=target, args=args, daemon=True)
         self._set_busy(True)
@@ -898,7 +898,7 @@ class ServeWindow(
 
     @override
     def _show_logs(self) -> None:
-        self._notebook.select(1)
+        self._nav.select("monitor")
         try:
             name = self._model_name()
             content = llmserve.read_log(name, 50)

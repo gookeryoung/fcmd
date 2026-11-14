@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.tools.llm._llmgguf import GgufPrecision, detect_precision
@@ -83,6 +84,7 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         _select_file: Any
         _select_model: Any
         _show_logs: Any
+        _nav: Any
         _start: Any
         _stop: Any
         _sync_tree_selection: Any
@@ -104,14 +106,17 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         self._build_actions(outer)
-        self._notebook = ttk.Notebook(outer)
-        self._notebook.pack(fill="both", expand=True)
-        start_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        run_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        bench_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        self._notebook.add(start_page, text="启动配置")
-        self._notebook.add(run_page, text="运行监控")
-        self._notebook.add(bench_page, text="性能测试")
+        self._nav = _guisidebar.SidebarNav(
+            outer,
+            theme=self._theme,
+            page_padding=self._theme.spacing.md,
+            title="功能页",
+        )
+        self._nav.container.pack(fill="both", expand=True)
+        start_page = self._nav.add("config", "启动配置", hint="模型、参数与显存适配")
+        run_page = self._nav.add("monitor", "运行监控", hint="服务状态、性能指标与日志")
+        bench_page = self._nav.add("bench", "性能测试", hint="吞吐与延迟基准")
+        self._nav.enable_shortcuts()
         self._build_params(start_page)
         self._build_env(start_page)
         self._build_models(start_page)

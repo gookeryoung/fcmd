@@ -375,6 +375,11 @@ STYLE_NAMES: Final[tuple[str, ...]] = (
     "Active.Treeview",
     "TNotebook",
     "TNotebook.Tab",
+    "Sidebar.TFrame",
+    "SidebarTitle.TLabel",
+    "SidebarHint.TLabel",
+    "Sidebar.TButton",
+    "SidebarActive.TButton",
     "TSeparator",
     "Toolbutton",
 )
@@ -568,6 +573,8 @@ def ttk_style_specs(
     )
     danger_bg = palette.surface if native else palette.danger
     danger_fg = palette.danger if native else palette.on_accent
+    sidebar_active_bg = palette.surface if native else palette.surface_active
+    sidebar_active_fg = palette.accent if native else palette.text
     return {
         "TFrame": StyleSpec({"background": palette.background}),
         "TLabelframe": StyleSpec(
@@ -838,6 +845,45 @@ def ttk_style_specs(
             },
         ),
         "TSeparator": StyleSpec({"background": palette.border}),
+        "Sidebar.TFrame": StyleSpec({"background": palette.surface, "bordercolor": palette.border}),
+        "SidebarTitle.TLabel": StyleSpec(
+            {"background": palette.surface, "foreground": palette.text, "font": HEADING_FONT}
+        ),
+        "SidebarHint.TLabel": StyleSpec(
+            {"background": palette.surface, "foreground": palette.muted, "font": SMALL_FONT}
+        ),
+        "Sidebar.TButton": StyleSpec(
+            {
+                "background": palette.surface,
+                "foreground": palette.muted,
+                "bordercolor": palette.surface,
+                "focuscolor": palette.accent,
+                "font": BODY_FONT,
+                "padding": (spacing.md, spacing.sm),
+                "relief": "flat",
+                "anchor": "w",
+            },
+            {
+                "background": [("active", palette.surface_hover), ("pressed", palette.surface_active)],
+                "foreground": [("active", palette.text), ("disabled", palette.muted)],
+            },
+        ),
+        "SidebarActive.TButton": StyleSpec(
+            {
+                "background": sidebar_active_bg,
+                "foreground": sidebar_active_fg,
+                "bordercolor": palette.accent,
+                "focuscolor": palette.accent,
+                "font": BODY_FONT,
+                "padding": (spacing.md, spacing.sm),
+                "relief": "flat",
+                "anchor": "w",
+            },
+            {
+                "background": [("active", sidebar_active_bg), ("pressed", sidebar_active_bg)],
+                "foreground": [("active", sidebar_active_fg), ("disabled", palette.muted)],
+            },
+        ),
         "Toolbutton": StyleSpec(
             {
                 "background": palette.surface,

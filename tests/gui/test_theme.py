@@ -440,6 +440,23 @@ class TestStyleSpecs:
         assert ("active", palette.surface_hover) in spec.map["background"]
 
     @pytest.mark.parametrize("theme_name", _THEME_IDS)
+    def test_sidebar_styles_are_legible(self, theme_name: str) -> None:
+        # 侧边栏用 surface 底 + 选中态底色；选中页文字必须与底色可辨，
+        # native 主题下按钮不响应 background，改用强调色文字标记当前页。
+        theme = _guitheme.THEMES[theme_name]
+        palette = theme.palette
+        specs = _guitheme.ttk_style_specs(palette, theme.spacing, native=theme.native)
+        expected_active_bg = palette.surface if theme.native else palette.surface_active
+        active = specs["SidebarActive.TButton"]
+        assert specs["Sidebar.TFrame"].configure["background"] == palette.surface
+        assert specs["Sidebar.TButton"].configure["background"] == palette.surface
+        assert ("active", palette.surface_hover) in specs["Sidebar.TButton"].map["background"]
+        assert active.configure["background"] == expected_active_bg
+        assert active.configure["bordercolor"] == palette.accent
+        assert _contrast(active.configure["foreground"], expected_active_bg) >= 4.5
+        assert _contrast(palette.muted, palette.surface) >= 4.5
+
+    @pytest.mark.parametrize("theme_name", _THEME_IDS)
     def test_active_treeview_draws_accent_focus_ring(self, theme_name: str) -> None:
         theme = _guitheme.THEMES[theme_name]
         spec = _guitheme.ttk_style_specs(theme.palette, theme.spacing, native=theme.native)["Active.Treeview"]

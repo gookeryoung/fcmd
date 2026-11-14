@@ -30,6 +30,7 @@ from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmenv
@@ -373,18 +374,20 @@ class EnvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
         outer = ttk.Frame(self.root, padding=spacing.md)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(spacing.xs, 0))
-        self._notebook = ttk.Notebook(outer)
-        self._notebook.pack(fill="both", expand=True)
-        layout_page = ttk.Frame(self._notebook, padding=spacing.md)
-        self._roots_page = ttk.Frame(self._notebook, padding=spacing.md)
-        service_page = ttk.Frame(self._notebook, padding=spacing.md)
-        config_page = ttk.Frame(self._notebook, padding=spacing.md)
-        self._config_page = config_page
-        self._notebook.add(layout_page, text="目录布局")
-        self._notebook.add(self._roots_page, text="模型目录")
-        self._notebook.add(service_page, text="已登记服务 / 客户端环境")
-        self._notebook.add(config_page, text="配置文件（JSON）")
-        self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+        self._nav = _guisidebar.SidebarNav(
+            outer,
+            theme=self._theme,
+            page_padding=spacing.md,
+            width=210,
+            title="环境与目录",
+            on_change=self._on_tab_changed,
+        )
+        self._nav.container.pack(fill="both", expand=True)
+        layout_page = self._nav.add("layout", "目录布局", hint="各目录的实际来源")
+        self._roots_page = self._nav.add("roots", "模型目录", hint="额外的模型根目录")
+        service_page = self._nav.add("services", "已登记服务 / 客户端环境", hint="服务与客户端环境变量")
+        config_page = self._nav.add("config", "配置文件（JSON）", hint="直接编辑配置原文")
+        self._nav.enable_shortcuts()
         self._build_layout(layout_page)
         self._build_roots(self._roots_page)
         self._build_services(service_page)
@@ -612,7 +615,7 @@ class EnvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
             self._messagebox.showinfo("只读", "服务数量由状态目录自动发现，不能直接编辑")
             return
         if label == "模型目录":
-            self._notebook.select(self._roots_page)
+            self._nav.select("roots")
             children = self._root_tree.get_children()
             if children:
                 self._root_tree.selection_set(children[0])
@@ -742,10 +745,9 @@ class EnvWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无�
     # ------------------------------------------------------------------ #
     # 配置文件编辑
     # ------------------------------------------------------------------ #
-    def _on_tab_changed(self, _event: object | None = None) -> None:
+    def _on_tab_changed(self, key: str = "") -> None:
         """切到配置页时，在用户未改动的前提下重新加载磁盘内容。"""
-        selected = self._notebook.select()
-        if selected == str(self._config_page):
+        if key == "config":
             self._load_config_text(force=False)
 
     def _config_dirty(self) -> bool:

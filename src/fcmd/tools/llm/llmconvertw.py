@@ -24,6 +24,7 @@ from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmbase, llmconvert, llmengine, llmenv, llmqnt
@@ -257,15 +258,17 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
         self._build_actions(outer)
-        self._notebook = ttk.Notebook(outer)
-        self._notebook.pack(fill="both", expand=True)
-        models_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        config_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        log_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        self._notebook.add(models_page, text="模型列表")
-        self._notebook.add(config_page, text="转换配置")
-        self._notebook.add(log_page, text="输出日志")
-        self._log_page = log_page
+        self._nav = _guisidebar.SidebarNav(
+            outer,
+            theme=self._theme,
+            page_padding=self._theme.spacing.md,
+            title="转换流程",
+        )
+        self._nav.container.pack(fill="both", expand=True)
+        models_page = self._nav.add("models", "模型列表", hint="可转换的 safetensors 目录")
+        config_page = self._nav.add("config", "转换配置", hint="输入输出、精度与引擎")
+        log_page = self._nav.add("log", "输出日志", hint="转换进度与命令输出")
+        self._nav.enable_shortcuts()
         self._build_io(config_page)
         self._build_params(config_page)
         self._build_formats(config_page)
@@ -738,7 +741,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _begin_task(self, target: Any) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
-        self._notebook.select(self._log_page)
+        self._nav.select("log")
         self._messages = queue.Queue()
         self._thread = threading.Thread(target=target, daemon=True)
         self._set_running(True)

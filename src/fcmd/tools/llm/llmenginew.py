@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import fcmd
 from fcmd.gui import config as _guiconfig
+from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.tools.llm import llmengine, llmenv
@@ -152,12 +153,16 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         outer = ttk.Frame(self.root, padding=self._theme.spacing.md)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
-        self._notebook = ttk.Notebook(outer)
-        self._notebook.pack(fill="both", expand=True)
-        install_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        manage_page = ttk.Frame(self._notebook, padding=self._theme.spacing.md)
-        self._notebook.add(install_page, text="安装配置")
-        self._notebook.add(manage_page, text="引擎列表 / 日志")
+        self._nav = _guisidebar.SidebarNav(
+            outer,
+            theme=self._theme,
+            page_padding=self._theme.spacing.md,
+            title="引擎管理",
+        )
+        self._nav.container.pack(fill="both", expand=True)
+        install_page = self._nav.add("install", "安装配置", hint="在线下载与离线包")
+        manage_page = self._nav.add("manage", "引擎列表 / 日志", hint="已安装引擎与体检")
+        self._nav.enable_shortcuts()
         self._build_online(install_page)
         self._build_offline(install_page)
         self._build_env(install_page)
@@ -462,7 +467,7 @@ class EngineWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._log("已有任务正在进行，请等待完成")
             return
         self._running = True
-        self._notebook.select(1)
+        self._nav.select("manage")
         self._set_buttons(False)
         self._progress.configure(mode="determinate")
         self._progress["value"] = 0
