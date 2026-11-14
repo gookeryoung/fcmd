@@ -239,7 +239,8 @@ def test_detect_precisions_preserves_order_and_reuses_cache(tmp_path: Path, monk
     entries = _entries(tmp_path, 6)
     calls: list[str] = []
 
-    def fake(path: Path) -> GgufPrecision:
+    def fake(path: Path, *, tensors: bool = True) -> GgufPrecision:
+        assert tensors is False
         calls.append(path.name)
         return GgufPrecision(label=path.stem, quantized=True, source="filename")
 

@@ -240,8 +240,12 @@ def _skip_value(stream: BinaryIO, value_type: int) -> None:
     stream.seek(size, 1)
 
 
-def _read_meta(path: Path) -> _GgufMeta:
-    """解析 GGUF 头部，返回 file_type、主导张量类型与预期大小。"""
+def _read_meta(path: Path, *, tensors: bool = True) -> _GgufMeta:  # noqa: PLR0912 - 头部顺序解析，分支按格式展开更直观
+    """解析 GGUF 头部，返回 file_type、主导张量类型与预期大小。
+
+    ``tensors=False`` 时只读到 ``general.file_type`` 就停止：跳过词表数组与
+    张量表，无法给出主导张量类型和预期文件大小，但足以判定量化类别。
+    """
     with path.open("rb") as stream:
         if _read(stream, 4) != b"GGUF":
             raise ValueError("不是 GGUF 文件")
@@ -266,6 +270,11 @@ def _read_meta(path: Path) -> _GgufMeta:
                 _skip_value(stream, value_type)
             if stream.tell() > GGUF_META_LIMIT:
                 raise ValueError("GGUF 元数据过大")
+            if not tensors and file_type is not None:
+                return _GgufMeta(file_type=file_type, tensor_type=None, expected_bytes=None)
+
+        if not tensors:
+            return _GgufMeta(file_type=file_type, tensor_type=None, expected_bytes=None)
 
         elems_by_type: dict[str, int] = {}
         max_end = 0
@@ -305,11 +314,16 @@ def _label_for(name: str, quantized: bool) -> str:
     return f"{name} 量化" if quantized else f"{name} 全量，未量化"
 
 
-def detect_precision(path: Path) -> GgufPrecision:
+def detect_precision(path: Path, *, tensors: bool = True) -> GgufPrecision:
     """识别 GGUF 是全量精度还是量化版本，并给出括号备注文本。
 
     读取失败（文件不存在、头部损坏、非 GGUF）时回退到文件名标记；都没有
     则返回“精度未知”，不会抛异常。
+
+    ``tensors=False`` 时读到 ``general.file_type`` 即停止，跳过张量表与其余
+    元数据：结果够用来区分全量与量化，但 ``source`` 不会为 ``"tensors"``，
+    ``expected_bytes`` 恒为 ``None``（因此不产生“文件疑似不完整”提示）。窗口
+    列表用这个快路径，转换 / 量化前的校验仍走默认的全量解析。
     """
     target = Path(path)
     try:
@@ -319,7 +333,7 @@ def detect_precision(path: Path) -> GgufPrecision:
     marker = _filename_marker(target.stem)
 
     try:
-        meta = _read_meta(target)
+        meta = _read_meta(target, tensors=tensors)
     except (OSError, ValueError, struct.error):
         meta = None
 

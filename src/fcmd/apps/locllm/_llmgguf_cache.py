@@ -5,7 +5,8 @@
 「绝对路径 + mtime_ns + size」缓存到 ``${FCMD_HOME:-~/.fcmd}/cache/gguf-precision.json``：
 
 - 文件被重新下载、原地替换或修改后 ``mtime_ns`` / ``size`` 变化，条目自动失效；
-- 缓存结构版本变化时整体丢弃并重建；
+- 缓存结构版本变化时整体丢弃并重建（窗口只存 ``tensors=False`` 快路径的结果，
+  不记录 ``expected_bytes``，因此不参与“文件疑似不完整”判断）；
 - 只保存 :class:`GgufPrecision` 的原始字段，``note`` / ``detail`` 等派生文本
   仍按当前代码计算，避免字段口径调整后读到旧文案；
 - 读写失败一律降级为「本次不缓存」，不影响扫描本身。
@@ -23,7 +24,7 @@ from fcmd.apps.locllm._llmgguf import GgufPrecision, PrecisionSource
 
 __all__ = ["GGUF_CACHE_SCHEMA_VERSION", "PrecisionCache", "default_cache_path"]
 
-GGUF_CACHE_SCHEMA_VERSION = 1
+GGUF_CACHE_SCHEMA_VERSION = 2
 """缓存结构版本；与文件中的 ``version`` 不一致时整体丢弃。"""
 
 _MAX_ENTRIES = 2000

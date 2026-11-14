@@ -54,7 +54,8 @@ def _detect_precisions(entries: list[ModelEntry], *, cache: PrecisionCache | Non
     """识别每个 GGUF 的精度：缓存命中直接复用，未命中的并行解析（最多 4 路）。
 
     结果按 ``entries`` 顺序组装，与串行实现的唯一区别是解析并发；``cache`` 省略时
-    使用默认缓存文件，写入失败会自动降级。
+    使用默认缓存文件，写入失败会自动降级。列表只需要区分全量 / 量化，因此走
+    ``tensors=False`` 快路径，读到 ``general.file_type`` 就已结束，不解析张量表。
     """
     store = cache if cache is not None else PrecisionCache()
     results: list[GgufPrecision | None] = [None] * len(entries)
@@ -68,7 +69,7 @@ def _detect_precisions(entries: list[ModelEntry], *, cache: PrecisionCache | Non
     if pending:
         workers = min(_PRECISION_WORKERS, len(pending))
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gguf-precision") as pool:
-            parsed = pool.map(lambda item: detect_precision(entries[item].path), pending)
+            parsed = pool.map(lambda item: detect_precision(entries[item].path, tensors=False), pending)
             for index, precision in zip(pending, parsed, strict=True):
                 results[index] = precision
                 store.remember(entries[index].path, precision)

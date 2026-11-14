@@ -352,6 +352,37 @@ def test_oversized_metadata_is_rejected(tmp_path: Path, monkeypatch: pytest.Monk
     assert result.label == "Q4_0 量化"
 
 
+def test_tensors_false_stops_after_file_type(tmp_path: Path) -> None:
+    """快路径读到 ``general.file_type`` 即结束，其后的元数据不再解析。"""
+    path = tmp_path / "model-f16.gguf"
+    bogus_array = _string("tokenizer.ggml.tokens") + struct.pack("<I", 9) + struct.pack("<I", 99) + struct.pack("<Q", 1)
+    _write_gguf(path, file_type=1, extra_kv=[bogus_array])
+
+    fast = detect_precision(path, tensors=False)
+
+    assert fast.label == "F16 全量，未量化"
+    assert fast.source == "metadata"
+    assert fast.expected_bytes is None
+    # 全量解析会读到坏数组并回退文件名，说明快路径确实没有继续往下读
+    assert detect_precision(path).source == "filename"
+
+
+def test_tensors_false_skips_truncated_tensor_table(tmp_path: Path) -> None:
+    """张量表被截断时快路径仍能给出结论，也不会报“文件疑似不完整”。"""
+    path = tmp_path / "model-f16.gguf"
+    payload = bytearray(b"GGUF") + struct.pack("<I", 3) + struct.pack("<Q", 2) + struct.pack("<Q", 2)
+    payload += _kv_str("general.architecture", "qwen3moe") + _kv_u32("general.file_type", 1)
+    path.write_bytes(bytes(payload))
+
+    fast = detect_precision(path, tensors=False)
+
+    assert fast.label == "F16 全量，未量化"
+    assert fast.source == "metadata"
+    assert fast.expected_bytes is None
+    assert not fast.incomplete
+    assert detect_precision(path).source == "filename"
+
+
 def test_quantize_input_error_rejects_quantized_file(tmp_path: Path) -> None:
     path = tmp_path / "model.gguf"
     _write_gguf(path, file_type=15, tensors=[("w", (256,), 12, 0)])
