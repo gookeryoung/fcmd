@@ -8,20 +8,23 @@ llmqnt / llmserve / llmdoctor / locllmw 等）都从这里解析目录与配置�
 覆盖），权威键::
 
     models_dir    str        唯一的模型目录
-    work_dir      str        下载 / 转换等工作目录（默认模型目录）
     engines_root  str        llama.cpp 引擎根目录
     serve_dir     str        服务状态与日志目录
 
-模型目录只支持单一目录；设置页与所有 CLI 读取点都走 :func:`models_dir`。
+模型目录只支持单一目录；下载的模型直接写入模型目录，转换等产物写入其中的
+固定子目录 :data:`PRODUCTS_DIRNAME`（``converted``）。设置页与所有 CLI 读取点
+都走 :func:`models_dir` / :func:`products_dir`。
 
 优先级（配置文件路径本身除外，避免自引用）::
 
     显式参数 > 环境变量 > config.json > 内置默认
 
     模型目录：--models-root → FCMD_MODELS → models_dir → 默认目录
-    工作目录：显式 dest    → FCMD_WORK   → work_dir   → 模型目录
     引擎目录：               FCMD_ENGINES → engines_root → ${home}/engines/llama.cpp
     服务目录：               FCMD_SERVE_DIR → serve_dir  → ${home}/serve
+
+工作目录概念已移除：``work_dir`` 键、``FCMD_WORK`` 环境变量与 ``work_dir``
+API 都不再存在。
 
 旧配置一次性迁移后写回；旧键仍可读入，但此后只写 ``models_dir``：
 
@@ -29,13 +32,13 @@ llmqnt / llmserve / llmdoctor / locllmw 等）都从这里解析目录与配置�
   ``model_roots`` / ``models`` → ``models_dir``。列表只保留第一个作为
   模型目录，其余路径写入 ``models_dir_extra`` 迁移记录（不会被扫描），
   不再静默丢弃。
-* config.json 其他旧键：``download_dir`` / ``workdir`` / ``work_root`` →
-  ``work_dir``；``engines`` / ``engine_dir`` / ``llama_cpp_dir`` →
+* config.json 其他旧键：``engines`` / ``engine_dir`` / ``llama_cpp_dir`` →
   ``engines_root``；``serve`` → ``serve_dir``。
+* 旧工作目录键（``work_dir`` / ``download_dir`` / ``workdir`` /
+  ``work_root``）与 ``ui/locllmw.json`` 的 ``download.dest``：读取时忽略并删除，
+  值写入 ``ignored_work_dir`` 迁移记录，供设置页与 ``llmenv show`` 提示一次。
 * ``ui/llmenvw.json`` 的 ``serve_dir`` / ``engines_root`` 并入 config.json，
   随后把该文件改名为 ``.migrated``（保留数据，不再读取）。
-* ``ui/locllmw.json`` 的 ``download.dest`` 若是绝对路径则迁移为 ``work_dir``
-  并移除该键；相对路径（旧默认 ``models``）不迁移，回落到统一默认。
 """
 
 from __future__ import annotations
@@ -48,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 __all__ = [
+    "PRODUCTS_DIRNAME",
     "config_path",
     "configured_models_dir",
     "default_models_dir",
@@ -55,19 +59,23 @@ __all__ = [
     "fcmd_home",
     "get_option",
     "home_dir",
+    "ignored_work_dir",
     "load_config",
     "models_dir",
     "models_dir_extra",
     "path_key",
+    "products_dir",
     "save_config",
     "serve_dir",
     "set_models_dir",
     "set_option",
-    "work_dir",
 ]
 
+#: 转换等产物的固定子目录名（位于模型目录下）。
+PRODUCTS_DIRNAME = "converted"
+
 _MODELS_KEYS = ("models_roots", "models_root", "model_roots", "models")
-_WORK_KEYS = ("download_dir", "workdir", "work_root")
+_WORK_KEYS = ("work_dir", "download_dir", "workdir", "work_root")
 _ENGINE_KEYS = ("engines", "engine_dir", "llama_cpp_dir")
 _SERVE_KEYS = ("serve",)
 
@@ -159,7 +167,7 @@ def _migrate_legacy_file(raw: dict[str, Any], home: Path | None) -> bool:
 
 
 def _migrate_download_dest(raw: dict[str, Any], home: Path | None) -> bool:
-    """把 locllmw.json 的旧 ``download.dest``（仅绝对路径）迁为 ``work_dir``。"""
+    """移除 locllmw.json 的旧 ``download.dest``，绝对路径记入迁移提示。"""
     legacy = home_dir(home) / "ui" / "locllmw.json"
     data = _read_json(legacy)
     if data is None:
@@ -171,10 +179,20 @@ def _migrate_download_dest(raw: dict[str, Any], home: Path | None) -> bool:
     changed = True
     if isinstance(dest, str) and dest.strip():
         path = Path(dest.strip()).expanduser()
-        if path.is_absolute() and not raw.get("work_dir"):
-            raw["work_dir"] = str(path)
+        if path.is_absolute() and not raw.get("ignored_work_dir"):
+            raw["ignored_work_dir"] = str(path)
     with contextlib.suppress(OSError):
         _write_json(legacy, data)
+    return changed
+
+
+def _record_ignored_work(raw: dict[str, Any]) -> bool:
+    """把旧工作目录值记入迁移记录后删除；返回值是否发生变化。"""
+    value = _first_text(raw, _WORK_KEYS)
+    changed = False
+    if value and not raw.get("ignored_work_dir"):
+        raw["ignored_work_dir"] = value
+        changed = True
     return changed
 
 
@@ -188,17 +206,14 @@ def _migrate(raw: dict[str, Any], home: Path | None) -> bool:
             changed = True
             if extras:
                 raw["models_dir_extra"] = extras
-    for keys, target in (
-        (_WORK_KEYS, "work_dir"),
-        (_ENGINE_KEYS, "engines_root"),
-        (_SERVE_KEYS, "serve_dir"),
-    ):
+    for keys, target in ((_ENGINE_KEYS, "engines_root"), (_SERVE_KEYS, "serve_dir")):
         if raw.get(target):
             continue
         value = _first_text(raw, keys)
         if value:
             raw[target] = value
             changed = True
+    changed = _record_ignored_work(raw) or changed
     for key in (*_MODELS_KEYS, *_WORK_KEYS, *_ENGINE_KEYS, *_SERVE_KEYS):
         if key in raw:
             del raw[key]
@@ -244,7 +259,7 @@ def set_option(key: str, value: Any, home: Path | None = None) -> dict[str, Any]
 
 
 # ---------------------------------------------------------------------- #
-# 模型目录 / 工作目录
+# 模型目录 / 转换产物目录
 # ---------------------------------------------------------------------- #
 def default_models_dir() -> Path:
     """兜底模型目录：Windows 的 ``D:/models``，否则 ``${FCMD_HOME}/models``。"""
@@ -274,6 +289,14 @@ def models_dir_extra(home: Path | None = None) -> list[str]:
     return [item.strip() for item in raw if isinstance(item, str) and item.strip()]
 
 
+def ignored_work_dir(home: Path | None = None) -> str | None:
+    """迁移时忽略的旧工作目录（仅提示一次，不参与任何路径解析）。"""
+    raw = load_config(home).get("ignored_work_dir")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    return raw.strip()
+
+
 def models_dir(explicit: Path | None = None, home: Path | None = None) -> Path:
     """解析唯一模型目录（显式 → FCMD_MODELS → 配置 → 默认）。"""
     if explicit is not None:
@@ -284,23 +307,16 @@ def models_dir(explicit: Path | None = None, home: Path | None = None) -> Path:
     return configured_models_dir(home) or default_models_dir()
 
 
-def work_dir(explicit: Path | None = None, home: Path | None = None) -> Path:
-    """解析工作目录（显式 → FCMD_WORK → 配置 → 模型目录）。"""
-    if explicit is not None:
-        return explicit.expanduser()
-    raw = os.environ.get("FCMD_WORK")
-    if raw:
-        return Path(raw).expanduser()
-    configured = load_config(home).get("work_dir")
-    if isinstance(configured, str) and configured.strip():
-        return Path(configured.strip()).expanduser()
-    return models_dir(home=home)
+def products_dir(explicit: Path | None = None, home: Path | None = None) -> Path:
+    """转换等产物的固定目录：模型目录下的 ``converted`` 子目录。"""
+    return models_dir(explicit, home) / PRODUCTS_DIRNAME
 
 
 def set_models_dir(path: Path | None, home: Path | None = None) -> Path:
     """设置唯一模型目录；``None`` 清除配置回到默认，并保留其他配置键。"""
     data = load_config(home)
     data.pop("models_dir_extra", None)
+    data.pop("ignored_work_dir", None)
     if path is None:
         data.pop("models_dir", None)
     else:

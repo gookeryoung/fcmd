@@ -676,33 +676,42 @@ def sort_by_popularity(items: tuple[ModelSummary, ...]) -> tuple[ModelSummary, .
 # ---------------------------------------------------------------------- #
 # 本地模型管理
 # ---------------------------------------------------------------------- #
-def scan_local_models(root: Path) -> list[LocalModel]:
-    """扫描 ``root/<组织>/<模型>`` 下已下载的模型目录。
+def _subdirs(path: Path) -> list[Path]:
+    """列出真实子目录（不跟随符号链接）；读取失败时抛出 ``OSError``。"""
+    return sorted(entry for entry in path.iterdir() if entry.is_dir() and not entry.is_symlink())
 
+
+def _has_direct_file(path: Path) -> bool:
+    """目录是否直接包含文件（用于区分单级模型目录与组织目录）。"""
+    return any(entry.is_file() and not entry.is_symlink() for entry in path.iterdir())
+
+
+def scan_local_models(root: Path) -> list[LocalModel]:
+    """扫描 ``root`` 下已下载的模型目录。
+
+    兼容两种布局：
+
+    * ``root/<组织>/<模型>``：下载器写入的两级结构；
+    * ``root/<模型>``：手工整理的目录，模型文件直接放在一级目录下。
+
+    顶层目录若直接包含文件即视为模型目录，否则按组织目录展开一层。
     只统计真实文件，不跟随符号链接；含 ``.part`` 的目录标记为未完成。
-    目录不存在或无模型时返回空列表。
+    目录不存在时返回空列表；目录读取失败（如权限不足）时抛出 ``OSError``，
+    由调用方显式提示，而不是静默返回空列表。
     """
     if not root.is_dir():
         return []
     found: list[LocalModel] = []
-    try:
-        owners = sorted(entry for entry in root.iterdir() if entry.is_dir() and not entry.is_symlink())
-    except OSError:
-        return []
-    for owner in owners:
-        try:
-            models = sorted(entry for entry in owner.iterdir() if entry.is_dir() and not entry.is_symlink())
-        except OSError:
-            continue
-        for model_dir in models:
+    for entry in _subdirs(root):
+        if _has_direct_file(entry):
+            candidates: list[tuple[str, Path]] = [(entry.name, entry)]
+        else:
+            candidates = [(f"{entry.name}/{child.name}", child) for child in _subdirs(entry)]
+        for repo, model_dir in candidates:
             size = 0
             files = 0
             partial = 0
-            try:
-                candidates = list(model_dir.rglob("*"))
-            except OSError:
-                continue
-            for item in candidates:
+            for item in model_dir.rglob("*"):
                 if item.is_symlink() or not item.is_file():
                     continue
                 try:
@@ -713,22 +722,30 @@ def scan_local_models(root: Path) -> list[LocalModel]:
                 if item.name.endswith(".part"):
                     partial += 1
             if files:
-                found.append(LocalModel(f"{owner.name}/{model_dir.name}", model_dir, size, files, partial))
+                found.append(LocalModel(repo, model_dir, size, files, partial))
     return found
 
 
+def _local_repo_parts(repo: str) -> tuple[str, ...]:
+    """把列表中的模型标识拆成安全路径段（支持一至两级）。"""
+    cleaned = repo.strip().strip("/")
+    parts = tuple(cleaned.split("/"))
+    if not cleaned or len(parts) > 2 or not all(parts):
+        raise ModelToolError(f"非法的模型目录标识: {repo!r}")
+    return parts
+
+
 def delete_local_model(root: Path, repo: str) -> Path:
-    """删除 ``root/<组织>/<模型>`` 目录（调用方必须已获得用户确认）。
+    """删除 ``root`` 下的模型目录（调用方必须已获得用户确认）。
 
     Raises
     ------
     ModelToolError
-        仓库名非法、目标越出根目录或目录不存在。
+        模型标识非法、目标越出根目录或目录不存在。
     """
-    owner, name = _normalize_repo(repo).split("/")
     base = root.resolve()
-    target = (root / owner / name).resolve()
-    if not target.is_relative_to(base):
+    target = root.joinpath(*_local_repo_parts(repo)).resolve()
+    if target == base or not target.is_relative_to(base):
         raise ModelToolError(f"拒绝删除目标目录之外的路径: {target}")
     if not target.is_dir():
         raise ModelToolError(f"目录不存在: {target}")
@@ -1211,9 +1228,9 @@ def local_cmd(root: Path | None = None) -> None:
     Parameters
     ----------
     root:
-        模型根目录，默认取统一的工作目录（``_llmconfig.work_dir``）。
+        模型根目录，默认取统一模型目录（``_llmconfig.models_dir``）。
     """
-    base = root if root is not None else _llmconfig.work_dir()
+    base = root if root is not None else _llmconfig.models_dir()
     models = scan_local_models(base)
     if not models:
         get_console().print(f"[yellow]{base} 下没有已下载的模型[/yellow]")
@@ -1337,7 +1354,7 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     repo:
         仓库标识，如 ``Qwen/Qwen3-Coder-30B-A3B-Instruct``。
     dest:
-        目标目录，默认 ``<工作目录>/<组织>/<模型>``（工作目录见 ``llmenv show``）。
+        目标目录，默认 ``<模型目录>/<组织>/<模型>``（模型目录见 ``llmenv show``）。
     source:
         ``auto`` 两源测速选优；也可指定 ``modelscope`` / ``hf-mirror``。
     revision:
@@ -1358,7 +1375,7 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     if not selected:
         raise ModelToolError("过滤后没有文件，请检查 --include / --exclude")
 
-    target = dest if dest is not None else _llmconfig.work_dir() / repo
+    target = dest if dest is not None else _llmconfig.models_dir() / repo
     total = sum(f.size for f in selected)
     get_console().print(f"目标目录: {target}\n文件数: {len(selected)}  总大小: {human_size(total)}")
     download_files(repo, selected, target, selection, revision, workers, verify)

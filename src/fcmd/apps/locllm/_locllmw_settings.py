@@ -56,7 +56,6 @@ _KIND_LABELS = {
 #: 设置页可编辑的目录项：配置键 → (行标题, 选择对话框标题)
 _EDITABLE: dict[str, tuple[str, str]] = {
     "models_dir": ("模型目录", "选择模型目录（仅支持单一目录）"),
-    "work_dir": ("工作目录", "选择工作目录（下载 / 转换等产物）"),
     "engines_root": ("引擎根目录", "选择 llama.cpp 引擎根目录"),
 }
 
@@ -77,10 +76,9 @@ def _source(env_name: str, config_key: str, home: Path | None = None) -> str:
 
 
 def directory_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
-    """返回「目录」页 ``(项目, 路径, 来源)``。"""
+    """返回「目录」页 ``(项目, 路径, 来源)``：只有模型目录。"""
     return [
         ("模型目录", str(_llmconfig.models_dir(home=home)), _source("FCMD_MODELS", "models_dir", home)),
-        ("工作目录", str(_llmconfig.work_dir(home=home)), _source("FCMD_WORK", "work_dir", home)),
     ]
 
 
@@ -102,20 +100,21 @@ def ui_rows() -> list[tuple[str, str, str]]:
 
 
 def migration_note(home: Path | None = None) -> str:
-    """旧多值模型目录合并后的迁移提示；无记录时返回空串。"""
+    """旧配置迁移提示：多余模型目录 + 已忽略的旧工作目录；无记录时返回空串。"""
+    notes: list[str] = []
     extras = _llmconfig.models_dir_extra(home)
-    if not extras:
-        return ""
-    return "旧配置中的其他模型目录已记录但不再扫描：" + "、".join(extras)
+    if extras:
+        notes.append("旧配置中的其他模型目录已记录但不再扫描：" + "、".join(extras))
+    ignored = _llmconfig.ignored_work_dir(home)
+    if ignored:
+        notes.append(f"旧工作目录已忽略（下载与转换产物统一使用模型目录）：{ignored}")
+    return "\n".join(notes)
 
 
 def apply_path(key: str, value: str | None, home: Path | None = None) -> Path:
     """写入设置页目录项并返回当前生效路径；``value`` 为 ``None`` 表示恢复默认。"""
     if key == "models_dir":
         return _llmconfig.set_models_dir(Path(value) if value else None, home)
-    if key == "work_dir":
-        _llmconfig.set_option("work_dir", value or None, home)
-        return _llmconfig.work_dir(home=home)
     if key == "engines_root":
         _llmconfig.set_option("engines_root", value or None, home)
         return _llmconfig.engines_root(home)
@@ -297,12 +296,13 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
     def _build_directory(self, parent: Any) -> None:
         group = self._group(parent, "目录")
         self._editable_row(group, "models_dir", 0)
-        self._editable_row(group, "work_dir", 1)
-        self._ttk.Label(group, text="模型目录只支持单一目录；工作目录用于存放下载 / 转换等产物。").grid(
-            row=2, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.xs, 0)
-        )
+        self._ttk.Label(
+            group,
+            text="模型目录只支持单一目录；下载的模型直接写入该目录，转换等产物写入其中的 "
+            f"{_llmconfig.PRODUCTS_DIRNAME} 子目录。",
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.xs, 0))
         self._ttk.Label(group, textvariable=self._migration_var, style="Hint.TLabel", justify="left").grid(
-            row=3, column=0, columnspan=4, sticky="w"
+            row=2, column=0, columnspan=4, sticky="w"
         )
 
     def _build_engine(self, parent: Any) -> None:
@@ -447,8 +447,6 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
     def _current(self, key: str) -> Path:
         if key == "models_dir":
             return _llmconfig.models_dir()
-        if key == "work_dir":
-            return _llmconfig.work_dir()
         return _llmconfig.engines_root()
 
     def _apply(self, key: str, value: str | None, *, label: str | None = None) -> None:

@@ -214,7 +214,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
 
     def _on_config_changed(self) -> None:
-        """权威配置变更后同步模型页的工作目录并重扫。"""
+        """权威配置变更后同步模型页的模型目录并重扫。"""
         if self._model_page is not None:
             self._model_page.refresh_from_config()
 

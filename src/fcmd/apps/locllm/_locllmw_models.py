@@ -3,7 +3,7 @@
 内嵌在 locllmw 的「模型」分页，用嵌套 Notebook 分为三个子页：
 
 * 浏览：ModelScope 搜索、类别 / 系列筛选、详情与文件清单；
-* 已安装：扫描下载目录下 ``<组织>/<模型>``，可打开目录或确认后删除；
+* 已安装：扫描模型目录下的 ``<组织>/<模型>`` 或单级 ``<模型>`` 目录，可打开目录或确认后删除；
 * 下载：配置目标目录 / 下载源 / 并发 / 校验，复用 ``llmdown`` 的多源选优与断点续传。
 
 原独立工具 ``llmdownw`` 已移除；页面类由 ``locllmw`` 实例化，下载设置写入
@@ -100,7 +100,8 @@ _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw"
 class DownloadGuiSettings:
     """模型页的下载参数（持久化到 ``locllmw.json`` 的 ``download`` 字段）。
 
-    目标目录不在本设置里：它统一由 :mod:`_llmconfig` 的 ``work_dir`` 提供。
+    模型目录不在本设置里：下载与本地扫描统一使用 :mod:`_llmconfig` 的
+    ``models_dir``，本结构只保存下载源与并发等参数。
     """
 
     source: str = "modelscope"
@@ -286,7 +287,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._downloading = False
         self._closed = False
         self._stop_event = threading.Event()
-        self._download_target = _llmconfig.work_dir()
+        self._download_target = _llmconfig.models_dir()
         self._keyword_var = tk.StringVar()
         self._task_var = tk.StringVar(value=_ALL_TASKS)
         self._series_applied = ""
@@ -294,7 +295,8 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._sort_var = tk.StringVar(value=_SORT_LABELS["default"])
         self._page_var = tk.StringVar(value="尚未搜索")
         self._status_var = tk.StringVar(value="就绪")
-        self._dest_var = tk.StringVar(value=str(_llmconfig.work_dir()))
+        self._local_status_var = tk.StringVar(value="")
+        self._dest_var = tk.StringVar(value=str(_llmconfig.models_dir()))
         self._source_var = tk.StringVar(value=_SOURCE_LABELS[self._settings.source])
         self._workers_var = tk.StringVar(value=str(self._settings.workers))
         self._verify_var = tk.BooleanVar(value=self._settings.verify)
@@ -358,15 +360,10 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             )
         )
 
-    def persist_work_dir(self) -> None:
-        """把页面的目标目录写回统一配置的 ``work_dir``（留空不写）。"""
-        text = self._dest_var.get().strip()
-        if text:
-            _llmconfig.set_option("work_dir", text)
-
     def refresh_from_config(self) -> None:
-        """配置变化后同步目标目录并重新扫描已安装模型。"""
-        self._dest_var.set(str(_llmconfig.work_dir()))
+        """配置变化后同步模型目录显示并重新扫描已安装模型。"""
+        self._dest_var.set(str(_llmconfig.models_dir()))
+        self._download_target = _llmconfig.models_dir()
         self._refresh_local()
 
     def close(self) -> bool:
@@ -585,6 +582,9 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         ttk.Label(bar, text="仅在二次确认后删除整个模型目录", style="Hint.TLabel").pack(side="left", padx=(space.sm, 0))
 
         table = ttk.Frame(parent)
+        ttk.Label(parent, textvariable=self._local_status_var, anchor="w", style="Hint.TLabel").pack(
+            side="bottom", fill="x", pady=(space.xs, 0)
+        )
         table.pack(fill="both", expand=True)
         table.columnconfigure(0, weight=1)
         table.rowconfigure(0, weight=1)
@@ -623,9 +623,11 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         settings.columnconfigure(1, weight=1)
         settings.columnconfigure(3, weight=1)
 
-        ttk.Label(settings, text="目标目录").grid(row=0, column=0, sticky="e", padx=(0, space.sm))
-        ttk.Entry(settings, textvariable=self._dest_var).grid(row=0, column=1, columnspan=3, sticky="ew")
-        ttk.Button(settings, text="浏览…", command=self._browse_dest, width=8).grid(
+        ttk.Label(settings, text="模型目录").grid(row=0, column=0, sticky="e", padx=(0, space.sm))
+        ttk.Entry(settings, textvariable=self._dest_var, state="readonly").grid(
+            row=0, column=1, columnspan=3, sticky="ew"
+        )
+        ttk.Label(settings, text="下载直接写入该目录", style="Hint.TLabel").grid(
             row=0, column=4, sticky="w", padx=(space.sm, 0)
         )
 
@@ -893,7 +895,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._download_btn.focus_set()
 
     def _open_download_target(self) -> None:
-        """打开当前下载目标目录（未开始时回落到目标根目录）。"""
+        """打开当前下载目标目录（未开始时回落到模型目录）。"""
         target = self._download_target if self._download_target.is_dir() else self._local_root()
         if not target.is_dir():
             self._messagebox.showwarning("目录不存在", f"目录不存在:\n{target}")
@@ -903,15 +905,6 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         except OSError as exc:
             self._messagebox.showerror("打开目录失败", str(exc))
 
-    def _browse_dest(self) -> None:
-        """选择目标目录。"""
-        from tkinter import filedialog
-
-        initial = Path(self._dest_var.get().strip() or _llmconfig.work_dir()).expanduser()
-        chosen = filedialog.askdirectory(initialdir=str(initial), title="选择模型保存目录")
-        if chosen:
-            self._dest_var.set(chosen)
-
     def _start_download(self) -> None:
         """校验参数后在后台执行下载。"""
         if self._downloading:
@@ -920,17 +913,13 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         if not repo:
             self._status_var.set("请先在左侧选择一个模型")
             return
-        dest_text = self._dest_var.get().strip()
-        if not dest_text:
-            self._status_var.set("请填写目标目录")
-            return
         try:
             workers = min(max(int(self._workers_var.get().strip()), 1), _MAX_WORKERS)
         except ValueError:
             self._status_var.set("并发数必须是整数")
             return
         source = _SOURCE_KEYS.get(self._source_var.get(), "modelscope")
-        dest = Path(dest_text).expanduser()
+        dest = self._local_root()
         self._download_target = dest / repo
         self._downloading = True
         self._stop_event.clear()
@@ -1017,21 +1006,21 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     # 本地管理
     # ------------------------------------------------------------------ #
     def _local_root(self) -> Path:
-        """当前目标目录（留空时回落到统一工作目录）。"""
-        return Path(self._dest_var.get().strip() or _llmconfig.work_dir()).expanduser()
+        """唯一模型目录（所有下载与本地扫描都基于它）。"""
+        return _llmconfig.models_dir()
 
     def _refresh_local(self) -> None:
-        """后台扫描目标目录下的本地模型。"""
+        """后台扫描模型目录下的本地模型。"""
         root = self._local_root()
-        self._status_var.set(f"正在扫描 {root} …")
+        self._local_status_var.set(f"正在扫描 {root} …")
         self._spawn(self._local_worker, root)
 
     def _local_worker(self, root: Path) -> None:
-        """后台线程：扫描本地模型目录。"""
+        """后台线程：扫描本地模型目录（读取失败时显式回报，不静默吞掉）。"""
         try:
             models = scan_local_models(root)
         except OSError as exc:
-            self._queue.put(("local_error", str(exc)))
+            self._queue.put(("local_error", f"{root}: {exc}"))
         else:
             self._queue.put(("local_done", models))
 
@@ -1058,7 +1047,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             return
         selection = self._local_tree.selection()
         if not selection:
-            self._status_var.set("请先在本地管理中选择要删除的模型")
+            self._local_status_var.set("请先在本地管理中选择要删除的模型")
             return
         values = self._local_tree.item(selection[0], "values")
         repo = str(values[0]) if values else ""
@@ -1074,7 +1063,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         if not confirmed:
             return
         self._delete_btn.configure(state="disabled")
-        self._status_var.set(f"正在删除 {model.repo} …")
+        self._local_status_var.set(f"正在删除 {model.repo} …")
         self._spawn(self._delete_worker, model.repo)
 
     def _delete_worker(self, repo: str) -> None:
@@ -1170,12 +1159,12 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             self._render_local(payload)
         elif kind == "local_deleted":
             self._delete_btn.configure(state="normal")
-            self._status_var.set(f"已删除 {payload}")
+            self._local_status_var.set(f"已删除 {payload}")
             self._log(f"已删除 {payload}")
             self._refresh_local()
         elif kind == "local_error":
             self._delete_btn.configure(state="normal")
-            self._status_var.set("本地管理失败")
+            self._local_status_var.set(f"扫描本地模型失败: {payload}")
             self._log(f"本地管理失败: {payload}")
 
     def _sort_by_column(self, column: str) -> None:
@@ -1290,13 +1279,19 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._status_var.set(f"已加载 {summary.repo}")
 
     def _render_local(self, models: list[LocalModel]) -> None:
-        """渲染本地模型列表。"""
+        """渲染本地模型列表；空目录或缺目录时给出明确提示。"""
+        root = self._local_root()
         self._local_models = models
         self._local_tree.delete(*self._local_tree.get_children())
         for item in models:
             self._local_tree.insert("", "end", values=local_row(item))
-        total = sum(item.size for item in models)
-        self._status_var.set(f"本地模型 {len(models)} 个，合计 {human_size(total)}")
+        if models:
+            total = sum(item.size for item in models)
+            self._local_status_var.set(f"本地模型 {len(models)} 个，合计 {human_size(total)}")
+        elif not root.is_dir():
+            self._local_status_var.set(f"模型目录不存在: {root}")
+        else:
+            self._local_status_var.set(f"模型目录 {root} 下没有模型")
 
     def _finish_download(self, message: str, *, ok: bool) -> None:
         """下载结束：恢复按钮、刷新本地列表并提示结果。"""

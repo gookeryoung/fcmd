@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
-from fcmd.apps.locllm import llmbase, llmengine
+from fcmd.apps.locllm import _llmconfig, llmbase, llmengine
 from fcmd.console import Table, get_console
 
 __all__ = [
@@ -118,8 +118,8 @@ def strip_f16_suffix(stem: str) -> str:
 
 
 def output_path(input_file: Path, quant: str, out_dir: Path | None = None) -> Path:
-    """计算某个量化类型的输出路径。"""
-    directory = (out_dir or input_file.parent).expanduser()
+    """计算某个量化类型的输出路径（默认写入模型目录的 ``converted`` 子目录）。"""
+    directory = (out_dir or _llmconfig.products_dir()).expanduser()
     return directory / f"{strip_f16_suffix(input_file.stem)}-{quant}.gguf"
 
 
@@ -296,7 +296,7 @@ def quantize_cmd(
     quants:
         量化类型列表（空格分隔多个），如 ``Q4_K_M Q5_K_M``；默认两者。
     out_dir:
-        输出目录；默认与输入文件同目录。
+        输出目录；默认写入模型目录的 ``converted`` 子目录。
     quantize_exe:
         llama-quantize 可执行文件；默认按环境变量 / 引擎 / PATH 查找。
     overwrite:

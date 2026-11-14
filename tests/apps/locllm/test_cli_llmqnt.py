@@ -67,6 +67,15 @@ def _write(path: Path, data: bytes = b"x") -> Path:
     return path
 
 
+@pytest.fixture(autouse=True)
+def _isolate_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """量化默认输出落在模型目录的 converted 子目录：隔离到临时目录。"""
+    models = tmp_path / "models"
+    (models / "converted").mkdir(parents=True)
+    monkeypatch.setenv("FCMD_MODELS", str(models))
+    return models
+
+
 class TestRegistration:
     def test_tools_registered(self) -> None:
         assert "llmqnt" in _TOOL_REGISTRY
@@ -85,7 +94,8 @@ class TestNaming:
 
     def test_output_path(self, tmp_path: Path) -> None:
         source = tmp_path / "model-F16.gguf"
-        assert llmqnt.output_path(source, "Q4_K_M") == tmp_path / "model-Q4_K_M.gguf"
+        products = tmp_path / "models" / "converted"
+        assert llmqnt.output_path(source, "Q4_K_M") == products / "model-Q4_K_M.gguf"
         assert llmqnt.output_path(source, "Q5_K_M", tmp_path / "out") == (tmp_path / "out" / "model-Q5_K_M.gguf")
 
 
@@ -126,7 +136,7 @@ class TestPlan:
 
     def test_pending_and_skipped(self, tmp_path: Path) -> None:
         source = _write(tmp_path / "model-F16.gguf")
-        _write(tmp_path / "model-Q4_K_M.gguf")
+        llmqnt.output_path(source, "Q4_K_M").write_bytes(b"x")
         jobs = llmqnt.plan_jobs(source, ["Q4_K_M", "Q5_K_M"])
         pending, skipped = llmqnt.pending_jobs(jobs)
         assert [job.quant for job in pending] == ["Q5_K_M"]
@@ -336,15 +346,16 @@ class TestCli:
         code = run_tool("llmqnt", [str(source), "--quants", "Q4_K_M", "Q5_K_M"])
 
         assert code == 0
-        assert (tmp_path / "model-Q4_K_M.gguf").is_file()
-        assert (tmp_path / "model-Q5_K_M.gguf").is_file()
+        products = tmp_path / "models" / "converted"
+        assert (products / "model-Q4_K_M.gguf").is_file()
+        assert (products / "model-Q5_K_M.gguf").is_file()
         assert "已生成" in capsys.readouterr().out
 
     def test_skips_existing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         source = _write(tmp_path / "model.gguf")
-        _write(tmp_path / "model-Q4_K_M.gguf")
+        llmqnt.output_path(source, "Q4_K_M").write_bytes(b"x")
         monkeypatch.setattr(llmqnt, "resolve_quantize_exe", lambda explicit=None: Path("llama-quantize"))
         calls: list[object] = []
         monkeypatch.setattr(llmqnt, "run_job", lambda *args, **kwargs: calls.append(args))

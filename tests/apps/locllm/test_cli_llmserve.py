@@ -749,7 +749,7 @@ class TestConvert:
         script = tmp_path / "convert.py"
         script.write_text("", encoding="utf-8")
         plan = llmconvert.plan_convert(source, script=script, python="py-test", models_root=tmp_path / "models")
-        assert plan.output == (tmp_path / "models" / source.name / f"{source.name}.gguf").resolve()
+        assert plan.output == (tmp_path / "models" / "converted" / source.name / f"{source.name}.gguf").resolve()
         assert plan.quant is None
         assert plan.outtype == "f16"
         assert plan.intermediate == str(plan.output)

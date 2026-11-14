@@ -975,8 +975,6 @@ class LocllmWindow(
             return
         if self._model_page is not None and not self._model_page.close():
             return
-        if self._model_page is not None:
-            self._model_page.persist_work_dir()
         self._closing = True
         self._close_chat()
         self._stop_monitor()

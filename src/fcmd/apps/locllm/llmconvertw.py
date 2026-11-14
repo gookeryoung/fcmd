@@ -124,13 +124,12 @@ def _dir_stats(path: Path) -> str:
 
 
 def default_output_path(source: Path, root: Path | None = None) -> Path:
-    """默认输出路径：``<模型目录>/<源目录名>/<源目录名>.gguf``。"""
-    base_root = (root or llmenv.models_dir()).expanduser()
-    return base_root / source.name / f"{source.name}.gguf"
+    """默认输出路径：``<模型目录>/converted/<源目录名>/<源目录名>.gguf``。"""
+    return llmenv.products_dir(root) / source.name / f"{source.name}.gguf"
 
 
 def output_path_from_form(source_text: str, output_text: str, root: Path | None = None) -> Path | None:
-    """按表单文本解析输出路径：显式输出优先，留空时落到默认模型目录。"""
+    """按表单文本解析输出路径：显式输出优先，留空时落到模型目录的 converted 子目录。"""
     text = source_text.strip()
     if not text:
         return None
@@ -482,8 +481,8 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         """输出位置提示：显示实际默认目录，避免用户不清楚文件落在哪里。"""
         base = self._base_output()
         if base is None:
-            root = llmenv.models_dir().expanduser()
-            return f"输出留空时写入默认模型目录：{root}/<源目录名>/<源目录名>[-量化].gguf"
+            root = llmenv.products_dir().expanduser()
+            return f"输出留空时写入模型目录的 converted 子目录：{root}/<源目录名>/<源目录名>[-量化].gguf"
         if self._output_var.get().strip():
             return f"输出文件：{base}"
         stem = llmqnt.strip_f16_suffix(base.stem)

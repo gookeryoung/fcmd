@@ -641,7 +641,7 @@ def test_convertw_default_output_path(tmp_path: Path) -> None:
     source = tmp_path / "Qwen3-8B"
     source.mkdir()
     root = tmp_path / "models"
-    assert llmconvertw.default_output_path(source, root) == root / "Qwen3-8B" / "Qwen3-8B.gguf"
+    assert llmconvertw.default_output_path(source, root) == root / "converted" / "Qwen3-8B" / "Qwen3-8B.gguf"
 
 
 def test_convertw_output_path_from_form(tmp_path: Path) -> None:

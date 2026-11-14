@@ -9,11 +9,12 @@
 
     ${FCMD_HOME}/serve/<name>.json        服务状态（pid / 端口 / 模型 / 引擎）
     ${FCMD_HOME}/serve/logs/<name>.log    引擎日志（追加写）
-    ${FCMD_HOME}/serve/config.json        持久化配置（模型 / 工作 / 引擎 / 服务目录）
+    ${FCMD_HOME}/serve/config.json        持久化配置（模型 / 引擎 / 服务目录）
     ${FCMD_HOME}/engines/llama.cpp/<tag>/ 引擎目录（含 llama-server）
 
-配置优先级：显式参数 > 环境变量（``FCMD_MODELS`` / ``FCMD_WORK`` /
-``FCMD_ENGINES`` / ``FCMD_SERVE_DIR``）> ``config.json`` > 内置默认。
+配置优先级：显式参数 > 环境变量（``FCMD_MODELS`` / ``FCMD_ENGINES`` /
+``FCMD_SERVE_DIR``）> ``config.json`` > 内置默认。工作目录概念已移除，
+下载与转换产物统一使用模型目录（转换产物在其 ``converted`` 子目录）。
 """
 
 from __future__ import annotations
@@ -31,15 +32,16 @@ from fcmd.apps.locllm._llmconfig import (
     fcmd_home,
     get_option,
     home_dir,
+    ignored_work_dir,
     load_config,
     models_dir,
     models_dir_extra,
     path_key,
+    products_dir,
     save_config,
     serve_dir,
     set_models_dir,
     set_option,
-    work_dir,
 )
 from fcmd.apps.locllm.llmbase import DEFAULT_NAME, ServeError, ServeState, validate_name
 from fcmd.console import Table, get_console
@@ -54,6 +56,7 @@ __all__ = [
     "fcmd_home",
     "get_option",
     "home_dir",
+    "ignored_work_dir",
     "list_states",
     "load_config",
     "load_state",
@@ -61,6 +64,7 @@ __all__ = [
     "models_dir",
     "models_dir_extra",
     "path_key",
+    "products_dir",
     "require_state",
     "save_config",
     "save_state",
@@ -68,7 +72,6 @@ __all__ = [
     "set_models_dir",
     "set_option",
     "state_path",
-    "work_dir",
 ]
 
 
@@ -167,7 +170,7 @@ _ENV_SHELL = Literal["plain", "powershell", "bash"]
 
 @fcmd.tool("llmenv", subcommand="show", help="显示目录布局与当前生效的模型目录")
 def show_cmd() -> None:
-    """打印 ``FCMD_HOME`` 目录布局、模型 / 工作目录与已登记服务数量。"""
+    """打印 ``FCMD_HOME`` 目录布局、模型目录与已登记服务数量。"""
     table = Table(title="llmenv 目录布局", box="ascii")
     table.add_column("项目", style="cyan", no_wrap=True)
     table.add_column("路径")
@@ -176,10 +179,13 @@ def show_cmd() -> None:
     table.add_row("配置文件", str(config_path()))
     table.add_row("引擎根目录", str(engines_root()))
     table.add_row("模型目录", str(models_dir()))
-    table.add_row("工作目录", str(work_dir()))
+    table.add_row("转换产物目录", str(products_dir()))
     extras = models_dir_extra()
     if extras:
         table.add_row("旧模型目录（未使用）", ", ".join(extras))
+    ignored = ignored_work_dir()
+    if ignored:
+        table.add_row("旧工作目录（已忽略）", ignored)
     table.add_row("已登记服务", str(len(list_states())))
     get_console().print(table)
 

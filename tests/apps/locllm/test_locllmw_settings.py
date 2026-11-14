@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -16,7 +17,7 @@ from fcmd.apps.locllm.llmbase import Check, EngineInfo, ServeError
 def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     target = tmp_path / "home"
     monkeypatch.setenv("FCMD_HOME", str(target))
-    for name in ("FCMD_MODELS", "FCMD_WORK", "FCMD_ENGINES", "FCMD_SERVE_DIR", "FCMD_CONFIG"):
+    for name in ("FCMD_MODELS", "FCMD_ENGINES", "FCMD_SERVE_DIR", "FCMD_CONFIG"):
         monkeypatch.delenv(name, raising=False)
     return target
 
@@ -37,23 +38,27 @@ def _read(path: Path) -> dict[str, object]:
 # ---------------------------------------------------------------------- #
 def test_directory_rows_default_values(home: Path) -> None:
     rows = {label: (value, source) for label, value, source in settings_page.directory_rows(home)}
-    assert rows["模型目录"] == (str(_llmconfig.default_models_dir()), "默认")
-    assert rows["工作目录"] == (str(_llmconfig.default_models_dir()), "默认")
+    assert rows == {"模型目录": (str(_llmconfig.default_models_dir()), "默认")}
 
 
 def test_directory_rows_marks_config_source(home: Path, tmp_path: Path) -> None:
-    models, work = tmp_path / "models", tmp_path / "work"
-    _write_config(home, {"models_dir": str(models), "work_dir": str(work)})
-    rows = {label: value for label, value, _source in settings_page.directory_rows(home)}
-    assert rows == {"模型目录": str(models), "工作目录": str(work)}
+    models = tmp_path / "models"
+    _write_config(home, {"models_dir": str(models)})
+    rows = {label: (value, source) for label, value, source in settings_page.directory_rows(home)}
+    assert rows == {"模型目录": (str(models), "配置")}
 
 
 def test_directory_rows_marks_env_source(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    env_models, env_work = tmp_path / "env-models", tmp_path / "env-work"
+    env_models = tmp_path / "env-models"
     monkeypatch.setenv("FCMD_MODELS", str(env_models))
-    monkeypatch.setenv("FCMD_WORK", str(env_work))
     rows = {label: (value, source) for label, value, source in settings_page.directory_rows()}
-    assert rows == {"模型目录": (str(env_models), "环境变量"), "工作目录": (str(env_work), "环境变量")}
+    assert rows == {"模型目录": (str(env_models), "环境变量")}
+
+
+def test_directory_rows_ignores_fcmd_work(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("FCMD_WORK", str(tmp_path / "legacy-work"))
+    rows = {label: value for label, value, _source in settings_page.directory_rows(home)}
+    assert list(rows) == ["模型目录"]
 
 
 # ---------------------------------------------------------------------- #
@@ -101,6 +106,27 @@ def test_migration_note_lists_dropped_roots(home: Path, tmp_path: Path) -> None:
     assert str(first) not in note
 
 
+def test_migration_note_reports_ignored_work_dir(home: Path, tmp_path: Path) -> None:
+    work = tmp_path / "old-work"
+    _write_config(home, {"models_dir": str(tmp_path / "models"), "work_dir": str(work)})
+    note = settings_page.migration_note(home)
+    assert "旧工作目录已忽略" in note
+    assert str(work) in note
+    assert "work_dir" not in _read(home / "serve" / "config.json")
+
+
+def test_migration_note_reports_legacy_download_dest(home: Path, tmp_path: Path) -> None:
+    dest = tmp_path / "downloads"
+    legacy = home / "ui" / "locllmw.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(json.dumps({"download": {"dest": str(dest), "workers": 4}}), encoding="utf-8")
+    note = settings_page.migration_note(home)
+    assert str(dest) in note
+    saved = json.loads(legacy.read_text(encoding="utf-8"))
+    assert "dest" not in saved["download"]
+    assert saved["download"]["workers"] == 4
+
+
 # ---------------------------------------------------------------------- #
 # 写入
 # ---------------------------------------------------------------------- #
@@ -111,10 +137,9 @@ def test_apply_models_dir_writes_single_value(home: Path, tmp_path: Path) -> Non
     assert saved["models_dir"] == str(target)
 
 
-def test_apply_work_dir_writes_value(home: Path, tmp_path: Path) -> None:
-    target = tmp_path / "work"
-    assert settings_page.apply_path("work_dir", str(target), home) == target
-    assert _read(home / "serve" / "config.json")["work_dir"] == str(target)
+def test_apply_work_dir_rejected(home: Path, tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="未知设置项"):
+        settings_page.apply_path("work_dir", str(tmp_path / "work"), home)
 
 
 def test_apply_engines_root_writes_value(home: Path, tmp_path: Path) -> None:
@@ -125,10 +150,8 @@ def test_apply_engines_root_writes_value(home: Path, tmp_path: Path) -> None:
 
 def test_apply_none_restores_defaults(home: Path, tmp_path: Path) -> None:
     _llmconfig.set_models_dir(tmp_path / "models", home)
-    _llmconfig.set_option("work_dir", str(tmp_path / "work"), home)
     _llmconfig.set_option("engines_root", str(tmp_path / "engines"), home)
     assert settings_page.apply_path("models_dir", None, home) == _llmconfig.default_models_dir()
-    assert settings_page.apply_path("work_dir", None, home) == _llmconfig.default_models_dir()
     assert settings_page.apply_path("engines_root", None, home) == home / "engines" / "llama.cpp"
 
 
@@ -204,7 +227,7 @@ def test_check_engine_tag_runs_version(home: Path, monkeypatch: pytest.MonkeyPat
 
 def test_install_online_sets_default_when_missing(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     info = EngineInfo("b9", Path("x.exe"))
-    events: list[tuple[str, int, int | None]] = []
+    events: list[tuple[object, ...]] = []
     markers: list[str] = []
 
     def fake_install(tag: str, **kwargs: object) -> EngineInfo:
@@ -241,7 +264,7 @@ def test_install_offline_from_zip(home: Path, tmp_path: Path, monkeypatch: pytes
     seen: list[tuple[str, list[Path] | None, Path | None]] = []
 
     def fake_install(tag: str, **kwargs: object) -> EngineInfo:
-        seen.append((tag, kwargs.get("archives"), kwargs.get("path")))
+        seen.append((tag, cast("list[Path] | None", kwargs.get("archives")), cast("Path | None", kwargs.get("path"))))
         return info
 
     monkeypatch.setattr(llmengine, "install_engine", fake_install)
@@ -261,7 +284,7 @@ def test_install_offline_from_directory_prefers_zips(
     seen: list[list[Path] | None] = []
 
     def fake_install(tag: str, **kwargs: object) -> EngineInfo:
-        seen.append(kwargs.get("archives"))
+        seen.append(cast("list[Path] | None", kwargs.get("archives")))
         return info
 
     monkeypatch.setattr(llmengine, "install_engine", fake_install)
@@ -277,7 +300,7 @@ def test_install_offline_directory_without_zips_registers_path(
     seen: list[Path | None] = []
 
     def fake_install(tag: str, **kwargs: object) -> EngineInfo:
-        seen.append(kwargs.get("path"))
+        seen.append(cast("Path | None", kwargs.get("path")))
         return info
 
     monkeypatch.setattr(llmengine, "install_engine", fake_install)

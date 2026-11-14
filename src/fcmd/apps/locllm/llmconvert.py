@@ -300,7 +300,8 @@ def plan_convert(  # noqa: PLR0913, PLR0917
 ) -> ConvertPlan:
     """构造转换计划。
 
-    默认输出到模型目录：``<models_root>/<源目录名>/<源目录名>[-<量化>].gguf``。
+    默认输出到模型目录下的 ``converted`` 子目录：
+    ``<模型目录>/converted/<源目录名>/<源目录名>[-<量化>].gguf``。
     """
     src = source.expanduser()
     if not is_hf_safetensors_dir(src):
@@ -309,7 +310,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         raise ServeError(f"不支持的 outtype {outtype!r}：可选 {', '.join(CONVERT_OUTTYPES)}")
 
     if output is None:
-        root = llmenv.models_dir(models_root, home)
+        root = llmenv.products_dir(models_root, home)
         suffix = f"-{quant}" if quant else ""
         target = root / src.name / f"{src.name}{suffix}.gguf"
     else:

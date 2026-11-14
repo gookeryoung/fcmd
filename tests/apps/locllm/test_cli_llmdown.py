@@ -603,13 +603,14 @@ class TestCli:
         llmdown.mirror_cmd("Qwen/demo")
         assert "无法同文件测速" in capsys.readouterr().out
 
-    def test_download_default_dest(
+    def test_download_default_dest_to_models_dir(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
     ) -> None:
         captured: dict[str, Any] = {}
         selection = SourceSelection("modelscope", (ModelFile("a.bin", 2),))
-        work = tmp_path / "work"
-        monkeypatch.setenv("FCMD_WORK", str(work))
+        models = tmp_path / "models"
+        monkeypatch.setenv("FCMD_MODELS", str(models))
+        monkeypatch.setenv("FCMD_WORK", str(tmp_path / "ignored-work"))
 
         def _fake_download(repo: str, files: list[ModelFile], dest: Path, *args: Any) -> None:
             captured.update(repo=repo, files=files, dest=dest)
@@ -617,7 +618,7 @@ class TestCli:
         monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
         monkeypatch.setattr(llmdown, "download_files", _fake_download)
         llmdown.download_cmd("Qwen/demo")
-        assert captured["dest"] == work / "Qwen/demo"
+        assert captured["dest"] == models / "Qwen/demo"
         assert captured["files"][0].path == "a.bin"
         assert "总大小" in capsys.readouterr().out
 
@@ -1045,8 +1046,43 @@ class TestLocalModels:
         assert item.partial == 1
         assert item.complete is False
 
+    def test_scan_single_level_layout(self, tmp_path: Path) -> None:
+        """手工整理的一级模型目录（文件直接放在目录下）也要能被列出。"""
+        model = tmp_path / "Qwen3.5-4B"
+        model.mkdir()
+        (model / "Qwen3.5-4B-Q4_K_M.gguf").write_bytes(b"1234")
+        (model / "README.md").write_bytes(b"1")
+        (tmp_path / "image" / "loras").mkdir(parents=True)
+
+        models = scan_local_models(tmp_path)
+
+        assert [item.repo for item in models] == ["Qwen3.5-4B"]
+        assert models[0].path == model
+        assert models[0].files == 2
+
     def test_scan_missing_root(self, tmp_path: Path) -> None:
         assert scan_local_models(tmp_path / "missing") == []
+
+    def test_scan_permission_error_is_raised(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """目录读取失败要抛出 OSError，由界面显式提示，而不是伪装成空列表。"""
+        (tmp_path / "Qwen" / "demo").mkdir(parents=True)
+
+        def _denied(_self: Path):
+            raise PermissionError(13, "拒绝访问")
+
+        monkeypatch.setattr(Path, "iterdir", _denied)
+        with pytest.raises(PermissionError):
+            scan_local_models(tmp_path)
+
+    def test_delete_single_level_model(self, tmp_path: Path) -> None:
+        model = tmp_path / "Qwen3.5-4B"
+        model.mkdir()
+        (model / "a.gguf").write_bytes(b"1")
+
+        removed = delete_local_model(tmp_path, "Qwen3.5-4B")
+
+        assert removed == model.resolve()
+        assert not model.exists()
 
     def test_delete_model(self, tmp_path: Path) -> None:
         model = tmp_path / "Qwen" / "demo"
