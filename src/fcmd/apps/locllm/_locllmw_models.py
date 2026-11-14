@@ -1,11 +1,12 @@
-"""locllmw「模型」页：浏览 / 已安装 / 下载 / 转换。
+"""locllmw「模型」页：浏览 / 下载 / 已安装 / 转换 / 量化。
 
-内嵌在 locllmw 的「模型」分页，用嵌套 Notebook 分为四个子页：
+内嵌在 locllmw 的「模型」分页，用嵌套 Notebook 分为五个同级子页：
 
 * 浏览：ModelScope 搜索、类别 / 系列筛选、详情与文件清单；
-* 已安装：扫描模型目录下的 ``<组织>/<模型>`` 或单级 ``<模型>`` 目录，可打开目录或确认后删除；
 * 下载：配置目标目录 / 下载源 / 并发 / 校验，复用 ``llmdown`` 的多源选优与断点续传；
-* 转换：safetensors → GGUF 与 GGUF 量化，复用 ``llmconvert`` / ``llmqnt`` 的核心逻辑。
+* 已安装：扫描模型目录下的 ``<组织>/<模型>`` 或单级 ``<模型>`` 目录，可打开目录或确认后删除；
+* 转换：safetensors → GGUF，复用 ``llmconvert`` 的核心逻辑；
+* 量化：GGUF 量化，复用 ``llmqnt`` 的核心逻辑。
 
 原独立的下载 / 转换 / 量化窗口已移除；页面类由 ``locllmw`` 实例化，下载设置
 写入 ``locllmw.json`` 的 ``download`` 字段。
@@ -57,6 +58,8 @@ from fcmd.apps.locllm.llmdown import (
 from fcmd.gui import window as _guiwindow
 
 __all__ = [
+    "DEFAULT_MODEL_TAB",
+    "MODEL_TAB_NAMES",
     "DownloadGuiSettings",
     "detail_pairs",
     "filter_models",
@@ -96,6 +99,10 @@ _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw"
     "downloads": ("下载", 78, "e"),
     "size": ("体积", 70, "e"),
 }
+
+# 子页顺序是唯一来源：控件创建、默认选中与测试都从这里派生，避免散落的索引常量。
+MODEL_TAB_NAMES: tuple[str, ...] = ("浏览", "下载", "已安装", "转换", "量化")
+DEFAULT_MODEL_TAB = "浏览"
 
 
 @dataclass
@@ -323,7 +330,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     # 界面
     # ------------------------------------------------------------------ #
     def _build_widgets(self, host: Any) -> None:
-        """模型页：嵌套 Notebook 分为浏览 / 已安装 / 下载 / 转换四个子页。"""
+        """模型页：嵌套 Notebook 分为浏览 / 下载 / 已安装 / 转换 / 量化五个同级子页。"""
         ttk = self._ttk
         space = self._theme.spacing
         outer = ttk.Frame(host)
@@ -338,25 +345,29 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         status.pack(side="bottom", fill="x", pady=(space.xs, 0))
         self._tabs = ttk.Notebook(outer)
         self._tabs.pack(fill="both", expand=True)
-        self._browse_tab = ttk.Frame(self._tabs, padding=space.sm)
-        self._installed_tab = ttk.Frame(self._tabs, padding=space.sm)
-        self._download_tab = ttk.Frame(self._tabs, padding=space.sm)
-        self._convert_tab = ttk.Frame(self._tabs, padding=space.sm)
-        self._tabs.add(self._browse_tab, text="浏览")
-        self._tabs.add(self._installed_tab, text="已安装")
-        self._tabs.add(self._download_tab, text="下载")
-        self._tabs.add(self._convert_tab, text="转换")
+        frames: dict[str, Any] = {}
+        for name in MODEL_TAB_NAMES:
+            frame = ttk.Frame(self._tabs, padding=space.sm)
+            self._tabs.add(frame, text=name)
+            frames[name] = frame
+        self._browse_tab = frames["浏览"]
+        self._download_tab = frames["下载"]
+        self._installed_tab = frames["已安装"]
+        self._convert_tab = frames["转换"]
+        self._quant_tab = frames["量化"]
         self._build_browse(self._browse_tab)
-        self._build_local(self._installed_tab)
         self._build_download(self._download_tab)
+        self._build_local(self._installed_tab)
         self._convert_page = _ConvertPage(
             self._convert_tab,
+            self._quant_tab,
             tk=self._tk,
             ttk=self._ttk,
             theme=self._theme,
             messagebox=self._messagebox,
             filedialog=self._filedialog,
         )
+        self._tabs.select(MODEL_TAB_NAMES.index(DEFAULT_MODEL_TAB))
 
     def settings_dict(self) -> dict[str, Any]:
         """导出当前下载参数，供 locllmw 写回配置。"""

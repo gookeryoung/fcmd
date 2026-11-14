@@ -1,7 +1,7 @@
-"""locllmw「模型 → 转换」页：整合原独立的转换与量化窗口。
+"""locllmw「模型」页的转换与量化子页：整合原独立的转换与量化窗口。
 
-内嵌在 locllmw 模型页的第四个标签页，用嵌套 Notebook 分为「转换」「量化」两块，
-两块职责严格分开，不出现重复或交叉的控件：
+两者在模型页中是同级标签页（「转换」之后是「量化」），职责严格分开，不出现重复
+或交叉的控件：
 
 * 转换：只负责 HF safetensors → GGUF，扫描模型目录中的可转换目录，配置精度 /
   解释器 / 源码 / 引擎 tag，输出默认 ``<models_dir>/converted/<源目录名>/<源目录名>.gguf``；
@@ -118,11 +118,12 @@ class _ConvertForm:
 
 
 class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """locllmw「转换」子页：转换与量化两块能力，复用 CLI 核心逻辑。"""
+    """locllmw 的转换与量化子页：两个容器由宿主放入同级标签页，共用任务与队列。"""
 
     def __init__(  # noqa: PLR0913 - 宿主窗口依赖与页面参数显式传入，避免隐式全局
         self,
-        parent: Any,
+        convert_parent: Any,
+        quant_parent: Any,
         *,
         tk: Any,
         ttk: Any,
@@ -135,7 +136,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._theme = theme
         self._messagebox = messagebox
         self._filedialog = filedialog
-        self.root = parent.winfo_toplevel()
+        self.root = convert_parent.winfo_toplevel()
 
         self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._jobs = 0
@@ -173,7 +174,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         }
         self._quant_checks: dict[str, Any] = {}
 
-        self._build_widgets(parent)
+        self._build_widgets(convert_parent, quant_parent)
         self._source_var.trace_add("write", lambda *_: self._refresh_output_state())
         self._output_var.trace_add("write", lambda *_: self._refresh_output_state())
         self._quant_out_dir_var.trace_add("write", lambda *_: self._on_quant_out_dir_edited())
@@ -183,19 +184,10 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
     # ------------------------------------------------------------------ #
     # 界面
     # ------------------------------------------------------------------ #
-    def _build_widgets(self, host: Any) -> None:
-        """转换子页：外层 Notebook 分为「转换」「量化」两个标签页。"""
-        ttk = self._ttk
-        outer = ttk.Frame(host)
-        outer.pack(fill="both", expand=True)
-        self._tabs = ttk.Notebook(outer)
-        self._tabs.pack(fill="both", expand=True)
-        self._convert_tab = ttk.Frame(self._tabs, padding=self._theme.spacing.sm)
-        self._quant_tab = ttk.Frame(self._tabs, padding=self._theme.spacing.sm)
-        self._tabs.add(self._convert_tab, text="转换")
-        self._tabs.add(self._quant_tab, text="量化")
-        self._build_convert(self._convert_tab)
-        self._build_quant(self._quant_tab)
+    def _build_widgets(self, convert_parent: Any, quant_parent: Any) -> None:
+        """转换与量化各自占据宿主提供的一个标签页容器，不再内嵌 Notebook。"""
+        self._build_convert(convert_parent)
+        self._build_quant(quant_parent)
 
     # -------------------------- 转换页 -------------------------------- #
     def _build_convert(self, parent: Any) -> None:
@@ -682,7 +674,6 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
     def _begin_task(self, target: Any, *args: Any) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
-        self._tabs.select(self._convert_tab)
         self._set_running(True)
         self._task_thread = threading.Thread(target=self._task_runner, args=(target, args), daemon=True)
         self._task_thread.start()
@@ -924,7 +915,6 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             self._log_quant("全部量化文件已存在，无需转换")
             return
 
-        self._tabs.select(self._quant_tab)
         self._set_running(True)
         self._task_thread = threading.Thread(target=self._task_runner, args=(self._quant_work, ()), daemon=True)
         self._quant_work_args = (pending, exe)

@@ -346,7 +346,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
 
     def _build_model_browser(self, parent: Any) -> None:
-        """模型页：浏览 / 已安装 / 下载 / 转换四个子页。"""
+        """模型页：浏览 / 下载 / 已安装 / 转换 / 量化五个同级子页。"""
         self._model_page = _ModelBrowserPage(
             parent,
             tk=self._tk,

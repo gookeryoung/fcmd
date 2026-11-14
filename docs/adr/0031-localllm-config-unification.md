@@ -125,5 +125,6 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
   `work_dir` / `FCMD_WORK` / `--work-dir` 被忽略且不生效，旧值记入
   `ignored_work_dir` 提示一次，重设模型目录时清除记录。
 - 界面：设置页为「目录 / 引擎 / 界面」三页，目录页只有模型目录；模型页不再在
-  `locllmw.json` 保存 `dest`；引擎管理不再单独开窗。模型页的「转换」子页分
-  转换 / 量化两页，共用 `llmconvert` / `llmqnt` 与 `<models_dir>/converted/` 约定。
+  `locllmw.json` 保存 `dest`；引擎管理不再单独开窗。模型页的「转换」与「量化」
+  为同级子页（顺序在转换之后），共用 `llmconvert` / `llmqnt` 与
+  `<models_dir>/converted/` 约定。

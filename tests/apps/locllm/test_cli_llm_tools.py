@@ -529,6 +529,17 @@ def test_convert_model_streams_output(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen == ["a", " 45%|#### |", "b"]
 
 
+def test_convert_model_stream_filters_caret_noise(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``~~~~^^`` 一类栈标记行不进入实时日志，避免错误信息被片段淹没。"""
+    process = _FakeStreamProcess(b"a\n    ~~~~^^\nb\n")
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    llmconvert.convert_model(_convert_plan(), on_output=seen.append)
+
+    assert seen == ["a", "b"]
+
+
 def test_convert_model_folds_chat_template_log(monkeypatch: pytest.MonkeyPatch) -> None:
     """转换脚本整段打印的 chat template 折叠为长度摘要，避免日志刷屏。"""
     template = "{%- if messages[0]['role'] == 'system' %}{{ messages[0]['content'] }}{%- endif %}"
@@ -570,9 +581,10 @@ def test_progress_percent_parsing() -> None:
 
 
 def _hf_dir(path: Path) -> Path:
-    """构造一个 HF safetensors 目录（config.json + 一个权重文件）。"""
+    """构造一个可转换的 HF 目录（config.json + 权重 + 令牌器）。"""
     path.mkdir(parents=True, exist_ok=True)
-    (path / "config.json").write_text("{}", encoding="utf-8")
+    (path / "config.json").write_text('{"architectures": ["LlamaForCausalLM"]}', encoding="utf-8")
+    (path / "tokenizer.json").write_text("{}", encoding="utf-8")
     (path / "model.safetensors").write_bytes(b"x")
     return path
 

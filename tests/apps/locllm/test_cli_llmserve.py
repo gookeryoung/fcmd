@@ -444,10 +444,11 @@ class TestScanModels:
 # safetensors → GGUF 转换
 # ---------------------------------------------------------------------- #
 def _hf_source(tmp_path: Path) -> Path:
-    """构造最小 HF safetensors 目录。"""
+    """构造最小可转换 HF safetensors 目录（含架构声明与令牌器）。"""
     source = tmp_path / "hf" / "Qwen3-Coder-30B-A3B-Instruct"
     source.mkdir(parents=True)
-    (source / "config.json").write_text("{}", encoding="utf-8")
+    (source / "config.json").write_text('{"architectures": ["Qwen3MoeForCausalLM"]}', encoding="utf-8")
+    (source / "tokenizer.json").write_text("{}", encoding="utf-8")
     (source / "model-00001-of-00001.safetensors").write_bytes(b"x" * 32)
     return source
 
@@ -1890,7 +1891,8 @@ class TestConvertBranches:
     def test_plan_convert_quant_needs_engine(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         source = tmp_path / "hf"
         source.mkdir()
-        (source / "config.json").write_text("{}", encoding="utf-8")
+        (source / "config.json").write_text('{"architectures": ["LlamaForCausalLM"]}', encoding="utf-8")
+        (source / "tokenizer.json").write_text("{}", encoding="utf-8")
         (source / "model.safetensors").write_bytes(b"x")
         monkeypatch.delenv("FCMD_LLAMA_SERVER", raising=False)
         monkeypatch.setattr(
@@ -1902,7 +1904,8 @@ class TestConvertBranches:
     def test_plan_convert_quant_without_script_reraises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         source = tmp_path / "hf"
         source.mkdir()
-        (source / "config.json").write_text("{}", encoding="utf-8")
+        (source / "config.json").write_text('{"architectures": ["LlamaForCausalLM"]}', encoding="utf-8")
+        (source / "tokenizer.json").write_text("{}", encoding="utf-8")
         (source / "model.safetensors").write_bytes(b"x")
         monkeypatch.delenv("FCMD_LLAMA_SERVER", raising=False)
         monkeypatch.setattr(
@@ -1914,6 +1917,95 @@ class TestConvertBranches:
     def test_python_candidates_skips_empty_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PATH", os.pathsep + os.environ.get("PATH", ""))
         assert llmconvert._python_candidates()
+
+
+class TestConvertPrecheck:
+    """转换前置检查与错误呈现：元数据 / 文件 / 架构问题在启动脚本前给出可执行提示。"""
+
+    @staticmethod
+    def _source(tmp_path: Path, config: dict[str, Any], *, tokenizer: bool = True) -> Path:
+        source = tmp_path / "hf"
+        source.mkdir()
+        (source / "config.json").write_text(json.dumps(config), encoding="utf-8")
+        (source / "model.safetensors").write_bytes(b"x")
+        if tokenizer:
+            (source / "tokenizer.json").write_text("{}", encoding="utf-8")
+        return source
+
+    @staticmethod
+    def _repo(tmp_path: Path, registered: tuple[str, ...] = ("GPT2LMHeadModel",)) -> Path:
+        repo = tmp_path / "llama.cpp"
+        conversion = repo / "conversion"
+        conversion.mkdir(parents=True)
+        body = "@ModelBase.register(\n" + "".join(f'    "{name}",\n' for name in registered) + ")\nclass M:\n    pass\n"
+        (conversion / "gpt2.py").write_text(body, encoding="utf-8")
+        (conversion / "__init__.py").write_text('ARCH_NAMES = {\n    "GPT2LMHeadModel": "gpt2",\n}\n', encoding="utf-8")
+        return repo
+
+    def test_missing_architectures_suggests_registered_arch(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, {"model_type": "gpt2"})
+        with pytest.raises(ServeError) as info:
+            llmconvert.check_convert_source(source, self._repo(tmp_path))
+        message = str(info.value)
+        assert "缺少 architectures" in message
+        assert "GPT2LMHeadModel" in message
+
+    def test_unsupported_arch_points_to_engine_upgrade(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, {"architectures": ["MysteryForCausalLM"], "model_type": "mystery"})
+        with pytest.raises(ServeError, match="不支持架构 MysteryForCausalLM"):
+            llmconvert.check_convert_source(source, self._repo(tmp_path))
+
+    def test_missing_tokenizer_is_reported(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, {"architectures": ["GPT2LMHeadModel"]}, tokenizer=False)
+        with pytest.raises(ServeError, match="令牌器"):
+            llmconvert.check_convert_source(source, self._repo(tmp_path))
+
+    def test_invalid_config_json(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, {"architectures": ["GPT2LMHeadModel"]})
+        (source / "config.json").write_text("{", encoding="utf-8")
+        with pytest.raises(ServeError, match="无法读取模型配置"):
+            llmconvert.check_convert_source(source)
+
+    def test_plan_convert_blocks_before_script_download(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        source = self._source(tmp_path, {"model_type": "gpt2"})
+
+        def _unexpected(**kwargs: Any) -> Path:
+            raise AssertionError("前置检查失败时不应下载转换脚本")
+
+        monkeypatch.setattr(llmconvert, "ensure_convert_script", _unexpected)
+        with pytest.raises(ServeError, match="缺少 architectures"):
+            llmconvert.plan_convert(source, home=tmp_path / "home")
+
+    def test_convert_model_leads_with_real_reason(self, tmp_path: Path) -> None:
+        source = self._source(tmp_path, {"architectures": ["GPT2LMHeadModel"]})
+        plan = llmconvert.ConvertPlan(
+            source=source,
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+        stderr = (
+            "Traceback (most recent call last):\n"
+            '  File "convert_hf_to_gguf.py", line 247, in main\n'
+            "    model_architecture = get_model_architecture(hparams, model_type)\n"
+            "    ~~~~^^\n"
+            '  File "conversion/base.py", line 3419, in get_model_architecture\n'
+            '    raise ValueError("Failed to detect model architecture")\n'
+            "ValueError: Failed to detect model architecture"
+        )
+        with pytest.raises(ServeError) as info:
+            llmconvert.convert_model(plan, _conv_runner([], code=1, stderr=stderr))
+        message = str(info.value)
+        assert message.startswith("safetensors 转 GGUF 失败")
+        assert "ValueError: Failed to detect model architecture" in message
+        assert "~~~" not in message
+        assert message.index("ValueError") < message.index("调用栈")
+
+    def test_root_error_line_skips_caret_noise(self) -> None:
+        text = "Traceback (most recent call last):\n  ~~^^\nValueError: boom\n"
+        assert llmconvert.root_error_line(text) == "ValueError: boom"
+        assert llmconvert.root_error_line("no error here") is None
 
 
 # ---------------------------------------------------------------------- #

@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -36,12 +38,14 @@ __all__ = [
     "CONVERT_REPO_URL",
     "CONVERT_SCRIPT",
     "ConvertPlan",
+    "check_convert_source",
     "convert_model",
     "convert_source_root",
     "ensure_convert_script",
     "find_convert_python",
     "is_hf_safetensors_dir",
     "plan_convert",
+    "root_error_line",
     "summarize_convert_line",
 ]
 
@@ -56,6 +60,9 @@ _SOURCE_TIMEOUT = 30.0
 _SOURCE_RETRY_DELAY = 1.0
 _BUILD_TAG_RE = re.compile(r"^b\d+$")
 _ACCESS_VIOLATION = 0xC0000005
+_ARCH_MAPPING_RE = re.compile(r"""^\s*["']([\w.]+)["']\s*:\s*["']([\w.-]+)["']\s*,\s*$""", re.MULTILINE)
+_ERROR_LINE_RE = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Exception):\s")
+_TOKENIZER_HINT = "tokenizer.json 或 tokenizer.model 或 vocab.json + merges.txt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +107,99 @@ def is_hf_safetensors_dir(path: Path) -> bool:
     """判断目录是否为 HuggingFace safetensors 模型目录。"""
     target = path.expanduser()
     return target.is_dir() and (target / "config.json").is_file() and any(target.glob("*.safetensors"))
+
+
+def _registered_architectures(text: str) -> set[str]:
+    """解析 ``@ModelBase.register(...)`` 装饰器声明的架构名（支持跨行多参数）。"""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        decorators = getattr(node, "decorator_list", ())
+        for decorator in decorators:
+            if not isinstance(decorator, ast.Call):
+                continue
+            func = decorator.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "register"):
+                continue
+            names.update(
+                arg.value for arg in decorator.args if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            )
+    return names
+
+
+def _engine_architectures(repo: Path) -> tuple[set[str], dict[str, str]]:
+    """引擎源码里已注册的转换架构与「架构 → model_type」映射。
+
+    注册以 ``conversion/*.py`` 的 ``@ModelBase.register("...")`` 为准，是
+    ``convert_hf_to_gguf.py`` 实际可转换的架构集合；映射来自
+    ``conversion/__init__.py`` 的 ``ARCH_NAMES`` 字面量，仅用于提示缺失字段时的候选。
+    """
+    conversion = repo / "conversion"
+    registered: set[str] = set()
+    mapping: dict[str, str] = {}
+    if not conversion.is_dir():
+        return registered, mapping
+    for path in sorted(conversion.glob("*.py")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        registered.update(_registered_architectures(text))
+        if path.name == "__init__.py":
+            for match in _ARCH_MAPPING_RE.finditer(text):
+                mapping[match.group(1)] = match.group(2)
+    return registered, mapping
+
+
+def _tokenizer_missing(source: Path) -> bool:
+    """是否缺少任何一种可用的令牌器资源。"""
+    if any((source / name).is_file() for name in ("tokenizer.json", "tokenizer.model", "spiece.model")):
+        return False
+    return not ((source / "vocab.json").is_file() and (source / "merges.txt").is_file())
+
+
+def check_convert_source(source: Path, repo: Path | None = None, *, tag: str | None = None) -> None:
+    """转换前置检查：元数据、令牌器资源与引擎架构支持。
+
+    ``repo`` 是 llama.cpp 源码目录（内含 ``conversion/``）；无法定位源码时只做
+    本地文件检查。不满足条件时抛出带可执行建议的 :class:`ServeError`，避免把
+    转换脚本的 Python 栈直接抛给用户。
+    """
+    target = source.expanduser()
+    config_path = target / "config.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ServeError(f"无法读取模型配置 {config_path}：{exc}") from exc
+    if not isinstance(config, dict):
+        raise ServeError(f"模型配置不是 JSON 对象：{config_path}")
+    if _tokenizer_missing(target):
+        raise ServeError(f"模型目录缺少转换必需的令牌器文件（{_TOKENIZER_HINT}）：{target}")
+
+    registered, mapping = _engine_architectures(repo) if repo is not None else (set(), {})
+    arches = config.get("architectures")
+    arch = arches[0] if isinstance(arches, list) and arches else None
+    if not isinstance(arch, str) or not arch:
+        model_type = str(config.get("model_type") or "未知")
+        candidates = sorted(
+            name for name, kind in mapping.items() if kind == model_type and (not registered or name in registered)
+        )
+        hint = ""
+        if candidates:
+            hint = f'；若该模型确为 {model_type}，可在 config.json 增加 "architectures": ["{candidates[0]}"]'
+        raise ServeError(
+            f"模型配置缺少 architectures 字段（model_type={model_type}），转换脚本无法判定架构。"
+            f"该目录可能是测试桩或导出不完整{hint}，或改用完整模型目录重试"
+        )
+    if registered and arch not in registered:
+        where = f"引擎 {tag} 的转换脚本" if tag else "当前引擎的转换脚本"
+        raise ServeError(
+            f"{where}不支持架构 {arch}（该版本已注册 {len(registered)} 个架构）："
+            f"请升级引擎（fcmd llmengine install --tag <新版>）或换用已支持架构的模型"
+        )
 
 
 def convert_source_root(tag: str, home: Path | None = None) -> Path:
@@ -308,6 +408,13 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         raise ServeError(f"不是 HF safetensors 目录（需要 config.json 与 *.safetensors）: {src}")
     if outtype not in CONVERT_OUTTYPES:
         raise ServeError(f"不支持的 outtype {outtype!r}：可选 {', '.join(CONVERT_OUTTYPES)}")
+    resolved_tag = tag or llmengine.current_engine_tag(llmenv.engines_root(home)) or DEFAULT_ENGINE_TAG
+    repo = (
+        script.expanduser().parent
+        if script is not None and script.suffix.lower() == ".py"
+        else convert_source_root(resolved_tag, home)
+    )
+    check_convert_source(src, repo, tag=resolved_tag)
 
     if output is None:
         root = llmenv.products_dir(models_root, home)
@@ -384,6 +491,51 @@ def _tail(text: str, lines: int = 6) -> str:
     return " | ".join(parts[-lines:])
 
 
+def _is_stack_noise(line: str) -> bool:
+    """是否为 ``~~~~^^`` 一类只指示位置的栈标记行。"""
+    stripped = line.strip()
+    return bool(stripped) and not stripped.strip("~^")
+
+
+def root_error_line(text: str) -> str | None:
+    """提取脚本输出里真正的异常行（如 ``ValueError: ...``），忽略栈标记片段。"""
+    for raw in reversed(text.splitlines()):
+        line = raw.strip()
+        if not line or _is_stack_noise(line):
+            continue
+        if _ERROR_LINE_RE.match(line):
+            return line
+    return None
+
+
+def _stack_frames(text: str, limit: int = 3) -> list[str]:
+    """从输出中取末尾若干帧（``File "...", line N, in func``）。"""
+    frames = [line.strip() for line in text.splitlines() if line.strip().startswith('File "')]
+    return frames[-limit:]
+
+
+def _convert_failure(result: llmbase.CommandResult, *, streamed: bool) -> str:
+    """整理转换失败信息：真正异常行在前，栈只在无实时日志时精简附带。"""
+    output = f"{result.stderr}\n{result.stdout}"
+    hint = "；请用 --python 指定已安装 torch / safetensors / numpy 的解释器" if "ModuleNotFoundError" in output else ""
+    reason = root_error_line(output)
+    if reason is None:
+        detail = _tail(output) or "无输出"
+    elif streamed:
+        detail = f"{reason}；完整调用栈见上方日志"
+    else:
+        frames = _stack_frames(output)
+        detail = reason if not frames else f"{reason}；调用栈：{' <- '.join(frames)}"
+    return f"safetensors 转 GGUF 失败（{format_returncode(result.returncode)}）：{detail}{hint}"
+
+
+def _relay_output(line: str, sink: Callable[[str], None]) -> None:
+    """实时日志回调：折叠 chat template，并丢弃 ``~~~~^^`` 一类栈标记行。"""
+    if _is_stack_noise(line):
+        return
+    sink(summarize_convert_line(line))
+
+
 def summarize_convert_line(line: str) -> str:
     """折叠转换脚本打印的整段 chat template 日志。
 
@@ -417,20 +569,14 @@ def convert_model(
             result = llmbase.stream_command(
                 plan.convert_argv(),
                 timeout=CONVERT_TIMEOUT,
-                on_output=lambda line: on_output(summarize_convert_line(line)),
+                on_output=lambda line: _relay_output(line, on_output),
             )
         except subprocess.TimeoutExpired as exc:
             raise ServeError(f"safetensors 转 GGUF 超时（{CONVERT_TIMEOUT:.0f}s）") from exc
         except OSError as exc:
             raise ServeError(f"无法启动转换脚本: {exc}") from exc
     if result.returncode != 0:
-        output = f"{result.stderr}\n{result.stdout}"
-        hint = ""
-        if "ModuleNotFoundError" in output:
-            hint = "；请用 --python 指定已安装 torch / safetensors / numpy 的解释器"
-        raise ServeError(
-            f"safetensors 转 GGUF 失败（{format_returncode(result.returncode)}）：{_tail(output) or '无输出'}{hint}"
-        )
+        raise ServeError(_convert_failure(result, streamed=on_output is not None))
     if plan.quant is None:
         return [plan.output]
 

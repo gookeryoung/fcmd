@@ -11,7 +11,7 @@
     fcmd llmqnt model-F16.gguf --quants Q4_K_M Q5_K_M --overwrite
     fcmd llmqnt model.gguf --out-dir D:/models/quantized
 
-图形界面入口统一为 ``fcmd locllmw`` 的「模型 → 转换 → 量化」页。
+图形界面入口统一为 ``fcmd locllmw`` 的「模型 → 量化」页。
 """
 
 from __future__ import annotations
