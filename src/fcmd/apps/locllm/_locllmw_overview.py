@@ -129,7 +129,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         ttk.Label(box, textvariable=self._hardware_vars["detected"], style="Hint.TLabel").grid(
             row=6, column=0, columnspan=2, sticky="w", pady=(space.xs, 0)
         )
-        ttk.Button(box, text="重新检测", command=self._start_hardware_detection).grid(
+        ttk.Button(box, text="重新检测硬件", command=self._start_hardware_detection).grid(
             row=6, column=2, sticky="e", padx=(space.sm, 0)
         )
 

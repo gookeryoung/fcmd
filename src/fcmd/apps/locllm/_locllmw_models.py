@@ -599,7 +599,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         space = self._theme.spacing
         bar = ttk.Frame(parent)
         bar.pack(fill="x", pady=(0, space.sm))
-        ttk.Button(bar, text="刷新", command=self._refresh_local, width=8).pack(side="left")
+        ttk.Button(bar, text="刷新仓库列表", command=self._refresh_local, width=12).pack(side="left")
         ttk.Button(bar, text="打开目录", command=self._open_selected_local, width=10).pack(
             side="left", padx=(space.sm, 0)
         )
@@ -716,7 +716,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         box.pack(fill="both", expand=True, pady=(space.sm, 0))
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        self._log_view = _guiwindow.create_log(box, height=8, grid=True)
+        self._log_view = _guiwindow.create_log(box, height=8, grid=True, toolbar=True, theme=self._theme)
 
     # ------------------------------------------------------------------ #
     # 模型搜索 / 详情

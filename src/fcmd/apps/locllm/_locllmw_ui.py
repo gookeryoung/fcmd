@@ -110,7 +110,6 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _preview: Any
         _profile_context: Any
         _log: Any
-        _clear_log: Any
         _clear_selection: Any
         _load_state_safe: Any
         _on_model_selected: Any
@@ -509,7 +508,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         ttk.Entry(row, textvariable=self._model_var, state="readonly").pack(
             side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
         )
-        self._model_btn = ttk.Button(row, text="刷新", command=self._refresh_models)
+        self._model_btn = ttk.Button(row, text="刷新模型列表", command=self._refresh_models)
         self._model_btn.pack(side="left")
         self._browse_btn = ttk.Button(row, text="浏览…", command=self._select_file)
         self._browse_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
@@ -788,7 +787,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._stop_selected_btn.pack(side="left", padx=(space.sm, 0))
         self._stop_btn = ttk.Button(service, text="停止全部服务", command=self._stop, style="Danger.TButton")
         self._stop_btn.pack(side="left", padx=(space.sm, 0))
-        self._status_btn = ttk.Button(service, text="刷新状态", command=self._refresh_status)
+        self._status_btn = ttk.Button(service, text="刷新进程状态", command=self._refresh_status)
         self._status_btn.pack(side="left", padx=(space.sm, 0))
 
         view = ttk.Frame(actions)
@@ -816,18 +815,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             self._log(line)
 
     def _build_log(self, parent: Any) -> None:
-        tk = self._tk
-        ttk = self._ttk
-        log_frame = ttk.LabelFrame(parent, text="输出日志", padding=self._theme.spacing.sm)
+        log_frame = self._ttk.LabelFrame(parent, text="服务日志", padding=self._theme.spacing.sm)
         log_frame.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
-        bar = ttk.Frame(log_frame)
-        bar.pack(fill="x")
-        ttk.Button(bar, text="清空日志", command=self._clear_log).pack(side="right")
-        scrollbar = ttk.Scrollbar(log_frame)
-        scrollbar.pack(side="right", fill="y")
-        self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
-        self._log_text.pack(side="left", fill="both", expand=True)
-        scrollbar.configure(command=self._log_text.yview)
+        self._log_text = _guiwindow.create_log(log_frame, height=10, toolbar=True, theme=self._theme)
 
     def _build_bench(self, parent: Any) -> None:
         """性能测试页：典型场景多选、测试参数、开始 / 停止与结果表。"""

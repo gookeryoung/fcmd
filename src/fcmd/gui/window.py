@@ -260,15 +260,50 @@ def build_menu(
     return menubar
 
 
-def create_log(parent: Misc, *, height: int = 12, grid: bool = False) -> Any:  # pragma: no cover
+def create_log(
+    parent: Misc,
+    *,
+    height: int = 12,
+    grid: bool = False,
+    toolbar: bool = False,
+    theme: Theme | None = None,
+) -> Any:  # pragma: no cover
     """创建只读日志文本区（等宽字体 + 垂直滚动条），返回 ``Text`` 控件。
 
     ``grid`` 为假时用 pack（文本在左、滚动条在右），为真时用 grid（第 0 行的
-    第 0 / 1 列），由调用方提前设置行列权重。
+    第 0 / 1 列），由调用方提前设置行列权重。``toolbar`` 为真时在日志下方加
+    「复制 / 清空」工具条，各窗口的日志区因此行为一致。
     """
     import tkinter as tk
     from tkinter import ttk
 
+    container = parent
+    if toolbar:
+        holder = ttk.Frame(parent)
+        if grid:
+            holder.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        else:
+            holder.pack(fill="both", expand=True)
+        bar = ttk.Frame(holder)
+        bar.pack(side="bottom", fill="x")
+        container = ttk.Frame(holder)
+        container.pack(side="top", fill="both", expand=True)
+        text = tk.Text(container, height=height, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        text.pack(side="left", fill="both", expand=True)
+        gap = theme.spacing.xs if theme is not None else 4
+
+        def copy() -> None:
+            content = text.get("1.0", "end-1c")
+            if content:
+                text.clipboard_clear()
+                text.clipboard_append(content)
+
+        ttk.Button(bar, text="复制", command=copy).pack(side="right")
+        ttk.Button(bar, text="清空", command=lambda: clear_log(text)).pack(side="right", padx=(0, gap))
+        return text
     text = tk.Text(parent, height=height, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
     scrollbar = ttk.Scrollbar(parent, orient="vertical", command=text.yview)
     text.configure(yscrollcommand=scrollbar.set)

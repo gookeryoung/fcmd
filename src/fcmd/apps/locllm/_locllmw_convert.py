@@ -209,7 +209,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
 
         bar = ttk.Frame(box)
         bar.grid(row=1, column=0, sticky="ew", pady=(space.xs, 0))
-        self._convert_models_btn = ttk.Button(bar, text="刷新", command=self.refresh_env, width=8)
+        self._convert_models_btn = ttk.Button(bar, text="刷新模型列表", command=self.refresh_env, width=12)
         self._convert_models_btn.pack(side="left")
         self._convert_models_hint_var = self._tk.StringVar(value="正在扫描模型目录…")
         ttk.Label(bar, textvariable=self._convert_models_hint_var, style="Hint.TLabel").pack(
@@ -347,7 +347,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         box.grid(row=4, column=0, sticky="nsew", pady=(self._theme.spacing.sm, 0))
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        self._convert_log_view = _guiwindow.create_log(box, height=6, grid=True)
+        self._convert_log_view = _guiwindow.create_log(box, height=6, grid=True, toolbar=True, theme=self._theme)
 
     # -------------------------- 量化页 -------------------------------- #
     def _build_quant(self, parent: Any) -> None:
@@ -372,7 +372,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._quant_model_box = ttk.Combobox(model_row, textvariable=self._model_var, state="disabled")
         self._quant_model_box.pack(side="left", fill="x", expand=True, padx=space.sm)
         self._quant_model_box.bind("<<ComboboxSelected>>", self._on_quant_model_selected)
-        self._quant_model_btn = ttk.Button(model_row, text="刷新", command=self.refresh_env, width=8)
+        self._quant_model_btn = ttk.Button(model_row, text="刷新模型列表", command=self.refresh_env, width=12)
         self._quant_model_btn.pack(side="left")
 
         info_box = ttk.LabelFrame(parent, text="环境信息", padding=(space.sm, space.xs))
@@ -426,7 +426,7 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         log_box.grid(row=6, column=0, sticky="nsew", pady=(space.sm, 0))
         log_box.columnconfigure(0, weight=1)
         log_box.rowconfigure(0, weight=1)
-        self._quant_log_view = _guiwindow.create_log(log_box, height=6, grid=True)
+        self._quant_log_view = _guiwindow.create_log(log_box, height=6, grid=True, toolbar=True, theme=self._theme)
 
     # ------------------------------------------------------------------ #
     # 文件选择

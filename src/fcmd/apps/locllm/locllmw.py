@@ -1037,11 +1037,6 @@ class LocllmWindow(
     def _log(self, message: str) -> None:
         _guiwindow.append_log(self._log_text, message)
 
-    @override
-    def _clear_log(self) -> None:
-        """清空输出日志区域。"""
-        _guiwindow.clear_log(self._log_text)
-
 
 def run_gui() -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""

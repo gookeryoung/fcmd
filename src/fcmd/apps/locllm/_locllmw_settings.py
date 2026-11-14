@@ -395,7 +395,7 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         actions = ttk.Frame(parent)
         actions.pack(fill="x", pady=(0, space.sm))
         for text, command in (
-            ("刷新", self.refresh_engine),
+            ("刷新引擎列表", self.refresh_engine),
             ("设为默认", self._use_selected),
             ("检测版本", self._check_selected),
         ):
@@ -454,14 +454,9 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         self._engine_buttons.extend([zip_btn, dir_btn, install_btn, check_btn])
 
     def _build_engine_log(self, parent: Any) -> None:
-        ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="输出日志", padding=self._theme.spacing.sm)
+        box = self._ttk.LabelFrame(parent, text="引擎安装日志", padding=self._theme.spacing.sm)
         box.pack(fill="both", expand=True)
-        scrollbar = ttk.Scrollbar(box)
-        scrollbar.pack(side="right", fill="y")
-        self._log_text = self._tk.Text(box, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=6)
-        self._log_text.pack(side="left", fill="both", expand=True)
-        scrollbar.configure(command=self._log_text.yview)
+        self._log_text = _guiwindow.create_log(box, height=6, toolbar=True, theme=self._theme)
 
     # ------------------------------------------------------------------ #
     # 存储 / 关于行为

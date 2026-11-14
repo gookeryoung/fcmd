@@ -168,7 +168,7 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             row=0, column=1, sticky="ew", padx=(0, self._theme.spacing.sm), pady=self._theme.spacing.xxs
         )
         self._chat_service_box.bind("<<ComboboxSelected>>", self._chat_on_service_selected)
-        self._chat_refresh_btn = ttk.Button(box, text="刷新", command=self._chat_refresh_services, width=8)
+        self._chat_refresh_btn = ttk.Button(box, text="刷新服务列表", command=self._chat_refresh_services, width=12)
         self._chat_refresh_btn.grid(
             row=0,
             column=2,
