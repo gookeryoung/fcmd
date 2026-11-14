@@ -51,6 +51,7 @@ from fcmd.apps.locllm._locllmw_ui import (
     _MODEL_PLACEHOLDER,
     _QUANT_SUFFIX_RE,
     _LocllmWindowUI,
+    _ScanOutcome,
 )
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
@@ -213,9 +214,7 @@ class LocllmWindow(
         self._closing = False
 
         self._scan_thread: threading.Thread | None = None
-        self._scan_results: queue.Queue[
-            tuple[list[ModelEntry], dict[str, str], int | None, int | None, dict[str, GgufPrecision]]
-        ] = queue.Queue()
+        self._scan_results: queue.Queue[_ScanOutcome] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._messages: queue.Queue[tuple[str, Any]] | None = None
 
@@ -263,6 +262,9 @@ class LocllmWindow(
         self._wait_var = tk.StringVar(value="180")
         self._model_var = tk.StringVar(value=_MODEL_PLACEHOLDER)
         self._status_var = tk.StringVar(value="状态：未查询")
+        self._health_var = tk.StringVar(value="正在检测运行环境…")
+        self._health_target = "settings"
+        self._health_btns: list[Any] = []
         self._info_vars: dict[str, tk.StringVar] = {}
         self._metric_vars: dict[str, tk.StringVar] = {
             "gen_rate": tk.StringVar(value="0.0 tok/s"),

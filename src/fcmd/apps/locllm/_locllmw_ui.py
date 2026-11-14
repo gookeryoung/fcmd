@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import queue
 import re
+import socket
 import threading
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,7 +27,15 @@ from fcmd.apps.locllm._locllmw_monitor import (
     _fit_state,
 )
 from fcmd.apps.locllm._locllmw_settings import SettingsPage
-from fcmd.apps.locllm.llmbase import KV_SCALE, PROFILES, ModelEntry, ServeError, human_size
+from fcmd.apps.locllm.llmbase import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    KV_SCALE,
+    PROFILES,
+    ModelEntry,
+    ServeError,
+    human_size,
+)
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
 from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import window as _guiwindow
@@ -33,6 +43,31 @@ from fcmd.gui import window as _guiwindow
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
+
+
+def _scan_dir(root: Path) -> tuple[list[ModelEntry], str | None]:
+    """扫描模型目录并分类问题；空目录由调用方结合运行中服务再判断。"""
+    if not root.is_dir():
+        return [], f"模型目录不存在：{root}"
+    try:
+        return llmmodel.scan_models(root), None
+    except PermissionError:
+        return [], f"没有权限读取模型目录：{root}"
+    except OSError as exc:
+        return [], f"扫描模型目录失败：{exc}"
+
+
+@dataclass(frozen=True)
+class _ScanOutcome:
+    """一次后台扫描的结果：模型清单 + 运行环境状态。"""
+
+    entries: list[ModelEntry]
+    gpu_mib: int | None
+    free_mib: int | None
+    precisions: dict[str, GgufPrecision]
+    issue: str | None = None
+    engine_missing: bool = False
+    port_busy: bool = False
 
 
 class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
@@ -93,6 +128,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _stop_selected: Any
         _plan_text: Any
         _page_canvases: dict[str, Any]
+        _health_var: Any
+        _health_target: Any
+        _health_btns: Any
         _sync_tree_selection: Any
         _bench_repeat_var: Any
         _bench_timeout_var: Any
@@ -140,8 +178,11 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._nav.enable_shortcuts()
         self.root.bind("<MouseWheel>", self._on_page_wheel, add="+")
         run_body = self._scroll_page("run", run_page)
-        self._build_overview(self._scroll_page("overview", overview_page))
+        overview_body = self._scroll_page("overview", overview_page)
+        self._build_health_banner(overview_body)
+        self._build_overview(overview_body)
         self._build_model_browser(self._scroll_page("models", models_page))
+        self._build_health_banner(run_body)
         self._build_actions(run_body)
         self._build_plan_preview(run_body)
         self._build_models(run_body)
@@ -185,6 +226,47 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             return None
         canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
         return "break"
+
+    def _build_health_banner(self, parent: Any) -> None:
+        """运行环境状态条：引擎、模型目录、GPU 与默认端口；异常时提供处理入口。"""
+        space = self._theme.spacing
+        banner = self._ttk.Frame(parent)
+        banner.pack(fill="x", pady=(0, space.sm))
+        self._ttk.Label(banner, textvariable=self._health_var, style="Hint.TLabel", justify="left").pack(
+            side="left", fill="x", expand=True
+        )
+        button = self._ttk.Button(banner, text="去处理", command=self._health_action, state="disabled")
+        button.pack(side="right")
+        self._health_btns.append(button)
+
+    def _health_action(self) -> None:
+        self._nav.select(self._health_target)
+
+    def _update_health(self, issue: str | None, engine_missing: bool, port_busy: bool) -> None:
+        """把最近一次扫描结果汇总为一条状态，异常时指向处理页。"""
+        target = "settings"
+        parts: list[str] = []
+        if engine_missing:
+            parts.append("引擎未安装（设置 → 引擎）")
+        if issue:
+            parts.append(issue)
+            if issue.startswith("模型目录中未找到"):
+                target = "models"
+        if self._gpu_mib is None:
+            parts.append("未检测到 NVIDIA GPU，显存适配不可用")
+        if port_busy:
+            parts.append(f"默认端口 {self._port_var.get()} 已被占用")
+            target = "run"
+        if parts:
+            self._health_target = target
+            self._health_var.set("注意：" + "；".join(parts))
+            label = {"settings": "去设置", "models": "去模型页", "run": "去运行页"}[target]
+            for button in self._health_btns:
+                button.configure(state="normal", text=label)
+        else:
+            self._health_var.set("环境检查通过：引擎、模型目录、GPU 与默认端口均可用。")
+            for button in self._health_btns:
+                button.configure(state="disabled", text="去处理")
 
     def _build_lab(self, parent: Any) -> None:
         """实验室：代理 / 画图 / 视频 / 音频四项规划中的能力合并为一个入口。"""
@@ -783,32 +865,67 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             return
         self._model_btn.configure(state="disabled")
         self._model_var.set("正在扫描模型目录…")
-        self._scan_thread = threading.Thread(target=self._scan_models, daemon=True)
+        self._scan_thread = threading.Thread(target=self._scan_models, args=(self._health_port(),), daemon=True)
         self._scan_thread.start()
         self.root.after(200, self._poll_scan)
 
-    def _scan_models(self) -> None:
-        """后台线程：扫描模型目录并收集引擎 / GPU 信息。"""
-        entries: list[ModelEntry] = []
+    def _health_port(self) -> int | None:
+        """在主线程读取待检测的默认端口，避免后台线程访问 Tk 变量。"""
         try:
-            root = llmenv.models_dir()
-            if root.is_dir():
-                entries = llmmodel.scan_models(root)
-            entries = self._with_running_models(entries)
-        except OSError:
-            entries = []
+            return int(self._port_var.get().strip() or DEFAULT_PORT)
+        except ValueError:
+            return None
+
+    def _scan_models(self, port: int | None) -> None:
+        """后台线程：扫描模型目录并收集引擎 / GPU / 默认端口状态。"""
+        entries, issue = _scan_dir(llmenv.models_dir())
+        states: list[Any]
+        try:
+            states = llmenv.list_states()
+        except (OSError, ServeError):
+            states = []
+        with contextlib.suppress(OSError):
+            entries = self._with_running_models(entries, states)
+        if not entries and issue is None:
+            issue = "模型目录中未找到 GGUF 文件"
         gpu = llmengine.detect_gpu()
         gpu_mib = gpu.memory_mib if gpu is not None else None
         usage = self._gpu_usage()
         free_mib = max(usage[1] - usage[0], 0) if usage is not None else None
         precisions = {llmenv.path_key(entry.path): detect_precision(entry.path) for entry in entries}
-        self._scan_results.put((entries, gpu_mib, free_mib, precisions))
+        try:
+            engine_missing = not llmengine.list_engines()
+        except OSError:
+            engine_missing = True
+        self._scan_results.put(
+            _ScanOutcome(
+                entries=entries,
+                gpu_mib=gpu_mib,
+                free_mib=free_mib,
+                precisions=precisions,
+                issue=issue,
+                engine_missing=engine_missing,
+                port_busy=self._default_port_busy(states, port),
+            )
+        )
+
+    def _default_port_busy(self, states: list[Any], port: int | None) -> bool:
+        """默认端口被其它进程占用时返回 True；本窗口登记且存活的同端口服务不算占用。"""
+        if port is None:
+            return False
+        if any(state.port == port and llmserve.process_alive(state.pid, state.create_time) for state in states):
+            return False
+        try:
+            with socket.create_connection((DEFAULT_HOST, port), timeout=0.2):
+                return True
+        except OSError:
+            return False
 
     @staticmethod
-    def _with_running_models(entries: list[ModelEntry]) -> list[ModelEntry]:
+    def _with_running_models(entries: list[ModelEntry], states: list[Any] | None = None) -> list[ModelEntry]:
         """把运行中服务的模型并入清单，便于停止已加载模型时在列表中找到。"""
         seen = {llmenv.path_key(entry.path) for entry in entries}
-        for state in llmenv.list_states():
+        for state in states if states is not None else llmenv.list_states():
             path = Path(state.model)
             key = llmenv.path_key(path)
             if key in seen or not llmserve.process_alive(state.pid, state.create_time):
@@ -832,24 +949,19 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _poll_scan(self) -> None:
         try:
-            entries, gpu_mib, free_mib, precisions = self._scan_results.get_nowait()
+            outcome = self._scan_results.get_nowait()
         except queue.Empty:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 self.root.after(200, self._poll_scan)
             return
-        self._apply_models(entries, gpu_mib, free_mib, precisions)
+        self._apply_models(outcome)
 
-    def _apply_models(
-        self,
-        entries: list[ModelEntry],
-        gpu_mib: int | None,
-        free_mib: int | None,
-        precisions: dict[str, GgufPrecision],
-    ) -> None:
+    def _apply_models(self, outcome: _ScanOutcome) -> None:
+        entries = outcome.entries
         self._models = entries
-        self._precisions = precisions
-        self._gpu_mib = gpu_mib
-        self._gpu_free_mib = free_mib
+        self._precisions = outcome.precisions
+        self._gpu_mib = outcome.gpu_mib
+        self._gpu_free_mib = outcome.free_mib
         if self._selected_model is None:
             state = self._load_state_safe(self._name_var.get().strip())
             if state is not None and llmserve.process_alive(state.pid, state.create_time):
@@ -861,6 +973,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._model_btn.configure(state="normal")
         self._refresh_hardware_view()
         self._refresh_recommendations()
+        self._update_health(outcome.issue, outcome.engine_missing, outcome.port_busy)
         if not entries:
             self._log("未发现已配置的 GGUF：用 fcmd llmenv add 登记模型目录，或直接“浏览…”选择模型文件")
 
