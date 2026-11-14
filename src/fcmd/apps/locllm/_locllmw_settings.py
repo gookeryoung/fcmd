@@ -14,9 +14,10 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
-from fcmd.apps.locllm import _llmconfig, llmengine
+import fcmd
+from fcmd.apps.locllm import _llmconfig, llmdoctor, llmengine
 from fcmd.apps.locllm.llmbase import DEFAULT_ENGINE_TAG, Check, EngineInfo, EngineVariant, ServeError, human_size
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import window as _guiwindow
@@ -88,12 +89,14 @@ def engine_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
 
 
 def ui_rows() -> list[tuple[str, str, str]]:
-    """返回「关于与诊断」折叠区：窗口配置文件与已保存的窗口几何（只读）。"""
+    """返回「关于与诊断」折叠区：程序版本、配置文件与窗口记忆（只读）。"""
     path = _guiconfig.config_path("locllmw")
     settings = _guiconfig.read_settings(path) or {}
     geometry = settings.get("geometry")
     geometry_text = geometry if isinstance(geometry, str) and geometry.strip() else "未保存（使用默认尺寸）"
     return [
+        ("程序版本", fcmd.__version__, _AUTO),
+        ("配置文件", str(_llmconfig.config_path()), _AUTO),
         ("窗口配置文件", str(path), _AUTO),
         ("窗口位置与大小", geometry_text, _AUTO),
     ]
@@ -252,6 +255,10 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         self._engine_thread: threading.Thread | None = None
         self._engine_messages: queue.Queue[tuple[str, Any]] | None = None
         self._engine_running = False
+        self._doctor_thread: threading.Thread | None = None
+        self._doctor_messages: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._gpu_thread: threading.Thread | None = None
+        self._gpu_messages: queue.Queue[str] = queue.Queue()
         self._build_tabs(parent)
         ttk.Label(parent, textvariable=self._status_var, style="Hint.TLabel").pack(fill="x", pady=(theme.spacing.xs, 0))
         self.refresh()
@@ -334,7 +341,7 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
             self._notify(f"打开失败：{exc}")
 
     def _build_about(self, parent: Any) -> None:
-        """关于与诊断：窗口记忆文件与已保存几何，只读折叠区。"""
+        """关于与诊断：版本 / 配置 / GPU 只读行，并提供环境体检。"""
         space = self._theme.spacing
         container, body = _guiwindow.collapsible(
             parent,
@@ -344,16 +351,103 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         )
         container.pack(fill="x", pady=(space.sm, 0))
         body.columnconfigure(1, weight=1)
-        for row, (label, _value, _source) in enumerate(ui_rows()):
+        rows = ui_rows()
+        for row, (label, _value, _source) in enumerate(rows):
             self._ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", padx=(0, space.sm))
             var = self._tk.StringVar()
             self._ttk.Entry(body, textvariable=var, state="readonly").grid(row=row, column=1, sticky="we")
             self._ui_vars[label] = var
-        self._ttk.Label(
-            body,
-            text="窗口位置与大小在关闭时自动写入，无需手动编辑。",
-            style="Hint.TLabel",
-        ).grid(row=len(self._ui_vars), column=0, columnspan=2, sticky="w", pady=(space.xs, 0))
+
+        gpu_row = len(rows)
+        self._ttk.Label(body, text="GPU").grid(row=gpu_row, column=0, sticky="w", padx=(0, space.sm))
+        self._gpu_var = self._tk.StringVar(value="检测中…")
+        self._ttk.Entry(body, textvariable=self._gpu_var, state="readonly").grid(row=gpu_row, column=1, sticky="we")
+
+        actions = self._ttk.Frame(body)
+        actions.grid(row=gpu_row + 1, column=0, columnspan=2, sticky="w", pady=(space.sm, 0))
+        self._doctor_btn = self._ttk.Button(actions, text="环境体检", command=self._run_doctor)
+        self._doctor_btn.pack(side="left")
+        self._doctor_status_var = self._tk.StringVar(
+            value="体检项来自 fcmd llmdoctor：GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++。"
+        )
+        self._ttk.Label(actions, textvariable=self._doctor_status_var, style="Hint.TLabel").pack(
+            side="left", padx=(space.sm, 0)
+        )
+
+        log_box = self._ttk.Frame(body)
+        log_box.grid(row=gpu_row + 2, column=0, columnspan=2, sticky="nsew", pady=(space.xs, 0))
+        self._doctor_log = _guiwindow.create_log(log_box, height=6, toolbar=True, theme=self._theme)
+
+        self._detect_gpu()
+
+    def _detect_gpu(self) -> None:
+        """后台读取 GPU 摘要，避免建窗时同步调用 nvidia-smi。"""
+        self._gpu_thread = threading.Thread(target=self._gpu_work, daemon=True)
+        self._gpu_thread.start()
+        self._root.after(150, self._poll_gpu)
+
+    def _gpu_work(self) -> None:
+        gpu = llmengine.detect_gpu()
+        if gpu is None:
+            self._gpu_messages.put("未检测到 NVIDIA GPU（CPU 推理会很慢）")
+        else:
+            self._gpu_messages.put(f"{gpu.name} · 显存 {gpu.memory_mib} MiB")
+
+    def _poll_gpu(self) -> None:
+        if not self._root.winfo_exists():
+            return
+        try:
+            text = self._gpu_messages.get_nowait()
+        except queue.Empty:
+            if self._gpu_thread is not None and self._gpu_thread.is_alive():
+                self._root.after(150, self._poll_gpu)
+            else:
+                self._gpu_var.set("未检测到 NVIDIA GPU（CPU 推理会很慢）")
+            return
+        self._gpu_var.set(text)
+
+    def _run_doctor(self) -> None:
+        """后台执行与 ``fcmd llmdoctor`` 相同的体检，结果写入下方日志。"""
+        if self._doctor_thread is not None and self._doctor_thread.is_alive():
+            return
+        self._doctor_btn.configure(state="disabled")
+        self._doctor_status_var.set("体检中…")
+        _guiwindow.clear_log(self._doctor_log)
+        self._doctor_thread = threading.Thread(target=self._doctor_work, daemon=True)
+        self._doctor_thread.start()
+        self._root.after(150, self._poll_doctor)
+
+    def _doctor_work(self) -> None:
+        try:
+            checks = llmdoctor.doctor(models_root=_llmconfig.models_dir())
+        except Exception as exc:  # 体检失败回显原因，不应中断窗口
+            self._doctor_messages.put(("error", str(exc)))
+        else:
+            self._doctor_messages.put(("checks", checks))
+
+    def _poll_doctor(self) -> None:
+        if not self._root.winfo_exists():
+            return
+        try:
+            kind, payload = self._doctor_messages.get_nowait()
+        except queue.Empty:
+            if self._doctor_thread is not None and self._doctor_thread.is_alive():
+                self._root.after(150, self._poll_doctor)
+            else:
+                self._doctor_btn.configure(state="normal")
+            return
+        self._doctor_btn.configure(state="normal")
+        if kind == "error":
+            self._doctor_status_var.set(f"体检失败：{payload}")
+            _guiwindow.append_log(self._doctor_log, f"体检失败：{payload}")
+            return
+        checks = cast(list[Check], payload)
+        for check in checks:
+            _guiwindow.append_log(self._doctor_log, f"[{check.status}] {check.name}: {check.detail}")
+        failures = sum(1 for check in checks if check.status == "fail")
+        warnings = sum(1 for check in checks if check.status == "warn")
+        summary = f"体检完成：{len(checks)} 项，{failures} 项失败，{warnings} 项警告"
+        self._doctor_status_var.set(summary + ("；请先处理失败项再启动服务。" if failures else "。"))
 
     def _build_engine(self, parent: Any) -> None:
         """引擎页：已安装引擎、在线下载、离线包、日志与进度；根目录在存储页统一编辑。"""

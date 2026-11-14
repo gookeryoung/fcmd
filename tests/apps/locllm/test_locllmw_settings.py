@@ -81,6 +81,8 @@ def test_ui_rows_default_geometry(home: Path) -> None:
     rows = {label: value for label, value, _source in settings_page.ui_rows()}
     assert rows["窗口配置文件"] == str(home / "ui" / "locllmw.json")
     assert rows["窗口位置与大小"] == "未保存（使用默认尺寸）"
+    assert rows["程序版本"]
+    assert rows["配置文件"] == str(_llmconfig.config_path())
 
 
 def test_ui_rows_reads_saved_geometry(home: Path) -> None:
