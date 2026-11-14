@@ -6,6 +6,7 @@ CLI / 后续 GUI 共用本模块，业务判定不重复实现。
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -18,11 +19,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fcmd.apps.devman import _env, _node, _project, _python
+from fcmd.apps.devman import _env, _maintenance, _node, _project, _python
 from fcmd.apps.devman._errors import (
     BUSY,
     NOT_INSTALLED,
     DevmanError,
+    confirm_required,
     invalid_argument,
     not_found,
     runtime_error,
@@ -40,6 +42,7 @@ from fcmd.apps.devman._state import (
     now_iso,
     save_state,
     set_active,
+    write_atomic,
 )
 from fcmd.apps.devman._toolchain import (
     Spec,
@@ -55,6 +58,8 @@ from fcmd.apps.devman._toolchain import (
 __all__ = [
     "JobContext",
     "doctor_payload",
+    "env_payload",
+    "export_payload",
     "init",
     "install",
     "list_payload",
@@ -62,10 +67,14 @@ __all__ = [
     "project_pins",
     "project_snapshot",
     "project_versions",
+    "repair_payload",
+    "restore_payload",
+    "size_payload",
     "uninit",
     "uninstall",
     "upgrade",
     "use",
+    "verify_payload",
     "versions_payload",
 ]
 
@@ -1164,5 +1173,119 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
         "root": str(layout.root),
         "checks": checks,
         "project": project,
+        "warnings": ctx.warnings,
+    }
+
+
+# ---- 可运维性 ----
+def size_payload(ctx: JobContext, *, tool: str | None = None) -> dict[str, Any]:
+    """磁盘占用：各版本目录、下载缓存与 shim（只读）。"""
+    payload = _maintenance.size(ctx.layout, tool=normalize_tool(tool) if tool else None)
+    payload["warnings"] = ctx.warnings
+    return payload
+
+
+def verify_payload(ctx: JobContext, *, tool: str | None = None) -> dict[str, Any]:
+    """完整性检查：标记、可执行文件、活动版本、shim 与安装残留（只读）。"""
+    payload = _maintenance.verify(ctx.layout, tool=normalize_tool(tool) if tool else None)
+    payload["warnings"] = ctx.warnings
+    return payload
+
+
+def repair_payload(
+    ctx: JobContext,
+    *,
+    tool: str | None = None,
+    dry_run: bool = False,
+    yes: bool = False,
+    purge_incomplete: bool = False,
+) -> dict[str, Any]:
+    """自动修复可处理的问题；需要 ``--yes``（``--dry-run`` 只出计划）。"""
+    if not yes and not dry_run:
+        raise confirm_required(
+            "repair 会修改 shim / 删除残留 / 清空失效活动版本",
+            hint="先运行 fcmd devman repair --dry-run 查看计划",
+        )
+    payload = _maintenance.repair(
+        ctx.layout,
+        tool=normalize_tool(tool) if tool else None,
+        dry_run=dry_run,
+        purge_incomplete=purge_incomplete,
+    )
+    payload["warnings"] = ctx.warnings
+    return payload
+
+
+def export_payload(
+    ctx: JobContext,
+    *,
+    output: str | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """导出锁文件：已安装版本 + 活动版本 + 校验信息；``output`` 为空时只返回内容。"""
+    lock = _maintenance.export_lock(ctx.layout)
+    written = False
+    target: Path | None = None
+    if output:
+        target = Path(output).expanduser().resolve()
+        if target.exists() and not force:
+            raise invalid_argument(f"目标已存在：{target}", hint="加 --force 覆盖", field="output")
+        if not target.parent.is_dir():
+            raise invalid_argument(f"输出目录不存在：{target.parent}", field="output")
+        if not dry_run:
+            write_atomic(target, json.dumps(lock, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+            written = True
+    return {
+        "schema": "devman/export/1",
+        "lock": lock,
+        "output": str(target) if target else None,
+        "written": written,
+        "dry_run": dry_run,
+        "warnings": ctx.warnings,
+    }
+
+
+def restore_payload(  # noqa: PLR0913 - 恢复选项与 CLI 参数一一对应
+    ctx: JobContext,
+    lock_path: str,
+    *,
+    yes: bool = False,
+    dry_run: bool = False,
+    write_path: bool = True,
+    allow_shadow: bool = False,
+) -> dict[str, Any]:
+    """按锁文件补齐缺失版本并切换活动版本；安装复用 :func:`install`。"""
+    lock = _maintenance.load_lock(Path(lock_path).expanduser().resolve())
+    plan = _maintenance.lock_plan(ctx.layout, lock)
+    changed = bool(plan["installs"] or plan["use"])
+    if changed and not yes and not dry_run:
+        raise confirm_required(
+            "restore 会安装 / 切换版本",
+            hint="先运行 fcmd devman restore <lock> --dry-run 查看计划",
+        )
+    installed: list[str] = []
+    used: list[str] = []
+    if not dry_run:
+        for item in plan["installs"]:
+            install(
+                ctx,
+                item["spec"],
+                force=item["force"],
+                write_path=write_path,
+                allow_shadow=allow_shadow,
+            )
+            installed.append(item["spec"])
+        for item in plan["use"]:
+            use(ctx, item["spec"])
+            used.append(item["spec"])
+    return {
+        "schema": "devman/restore/1",
+        "lock": str(lock_path),
+        "changed": changed,
+        "dry_run": dry_run,
+        "planned": plan,
+        "installed": installed,
+        "used": used,
         "warnings": ctx.warnings,
     }

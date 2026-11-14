@@ -298,6 +298,11 @@ exit /b %ERRORLEVEL%
 | `env` | `--shell pwsh\|cmd\|bash`、`--json` | 只打印；有项目绑定时按项目版本输出 |
 | `exec` | `-- <argv…>` | 起子进程；有项目绑定时子进程用项目版本 |
 | `doctor` | `--json` | 只读；有 `fail` 项时退出 5；含 `project` 检查项 |
+| `size` | `[tool]`、`--json` | 只读：版本目录 / 缓存 / shim 的占用与文件数 |
+| `verify` | `[tool]`、`--json` | 只读：标记、可执行文件、活动版本、shim、残留；有问题退出 5 |
+| `repair` | `[tool]`、`--yes`、`--dry-run`、`--purge-incomplete`、`--json` | 重建 shim、清残留、清空损坏的活动版本；必须 `--yes` |
+| `export [output]` | `--force`、`--dry-run`、`--json` | 只读（写锁文件）：导出可复现清单 |
+| `restore <lock>` | `--yes`、`--dry-run`、`--no-path`、`--allow-shadow`、`--json` | 按锁文件安装 + 切换；必须 `--yes` |
 
 公共参数（全部子命令）：`--root <dir>`、`--json`（函数签名 `json_output: bool = False`，
 沿用仓库 `--json` 别名约定）。破坏性操作 `--yes` 缺失 → `CONFIRM_REQUIRED`（退出 2）；
@@ -311,6 +316,9 @@ exit /b %ERRORLEVEL%
   涉及 PATH 的子命令（`install` / `upgrade` 透传 / `init` / `uninit` / `uninstall`）
   带 `user_path: {enabled, changed, entry, position, shadowed}`，可直接判断本次是否
   写了 PATH（`changed`）以及是否因 `--no-path` 跳过（`enabled=false`）；
+- 可运维五命令的 schema 分别是 `devman/size/1`、`devman/verify/1`、`devman/repair/1`、
+  `devman/export/1`、`devman/restore/1`，锁文件本体为 `devman-lock/1`；
+  `verify` / `repair` 额外带 `ok`，`ok=false` 时沿用「有检查项未通过」的退出 5；
 - 失败：`report_error(...)`，人读与机读共用同一退出码；
 - `doctor` 的 `checks[]` 每项 `{name, status: ok|warn|fail, detail, hint}`，
   有 `fail` 时 `emit_result(..., ok=False)` + 退出 5，不写 stderr 错误体。
@@ -472,6 +480,48 @@ P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-veri
 | 未装版本 | `.node-version` = `18` → 退出 4，提示 install / 改文件；`doctor` 的 `project` 项为 `warn` |
 | `use --project` | 写入 `22`，`active\node.txt` 未变；`--project --clear` 删除文件 |
 | 现场恢复 | HKCU `Path` 与验证前逐字一致（未调 `init`）；临时 root / home 已删除 |
+
+### D16 可运维性（P0，2026-11-14）
+
+五个命令分成两半：`size` / `verify` / `export` 只读，`repair` / `restore` 改状态且必须 `--yes`。
+
+- `size`：按「版本目录 / 下载缓存 / shim」三段统计字节数与文件数，另给 `total_bytes`。
+  递归时跳过符号链接与 junction（`entry.is_junction()`），避免把用户自己做的目录联接
+  重复计入；只读，不触碰状态文件。
+- `verify`：逐版本检查安装标记（缺失 / schema、`tool`、`version` 不符）与主可执行文件，
+  再检查活动版本是否指向完整安装、shim 是否指向已不存在的版本、`.staging-*` /
+  `.trash-*` 与 `cache/*.part` 残留。shim 检查仅在 shim 目录已存在且非空时进行——
+  用 `--no-path` 的纯进程内模式本就可能没有 shim，不能据此判失败。有问题时 `ok=false`、
+  退出 5，与 `doctor` 同一条契约。
+- `repair`：只做可安全自动化的四类动作——重建 shim（`write_shims`）、删残留目录、
+  清空指向损坏安装的活动版本、（可选）删半完成版本目录。**默认不删半完成版本**，
+  需要 `--purge-incomplete` 显式要求；`--dry-run` 只列计划且不改文件。
+  成功与否按「修复后仍存在的问题」判定，而不是「有没有执行动作」，否则修好也会报失败。
+- `export`：导出 `devman-lock/1`，每个版本带 `version` / `name`（python 的 uv key）/
+  `status` / `source` / `sha256` / `verify`，足以在新机复现来源与校验方式；
+  目标文件已存在且无 `--force` → `INVALID_ARGUMENT`（退出 3），不静默覆盖。
+- `restore`：读锁文件 → 生成计划（缺的版本 `install`、`active` 不符则 `use`）→ 执行。
+  结构、schema、未知工具、条目缺 `version` 都归为 `INVALID_ARGUMENT`（`field=lock`），
+  不抛出 traceback。已存在的版本默认跳过（`force=false`），想重装用 `install --force`。
+- 共用的代价：`verify` / `size` 都是遍历目录，root 很大时是 O(文件数)；
+  `repair` 只能修「devman 自己写的东西」，用户改过的文件不猜、不覆盖。
+
+验收记录 D（root = `%TEMP%\devman-b2\root`，`FCMD_HOME` 同样隔离，全程 `--no-path`，
+安装真实 node 22.23.5）：
+
+| 项 | 结果 |
+|---|---|
+| `size` | node 94.6 MiB、缓存 34.0 MiB、shim 1.1 KiB，合计 128.6 MiB，文件数与人读一致 |
+| `verify` 干净 | 「完整性检查通过」，退出 0 |
+| `verify` 损坏 | 给 `node.cmd` 追加 `rem damage` + 建 `.staging-junk` → 列出 2 项，退出 5 |
+| `repair --dry-run` | 列出 2 项动作，文件未改（`node.cmd` 内容与残留目录都在），退出 5 |
+| `repair --yes` | 重建 shim、删残留，退出 0；再次 `verify` 通过 |
+| `repair` 无 `--yes` | 退出 2，提示缺确认，零改动 |
+| `export` | 写出锁文件，含 `sha256` / `source` / `verify=official-shasums` |
+| 卸载后 `restore --dry-run` | 计划「安装 node@22.23.5 + 切换」，不下载，退出 0 |
+| `restore --yes --no-path` | 2.8 s 完成（命中本地缓存），`verify` 再次通过 |
+| 活动版本卸载 | `uninstall --yes --force` 清空活动标记并删目录，再 `restore` 能装回并切换 |
+| 现场恢复 | HKCU `Path` 与验证前逐字一致（`path-before.txt` 除 `reg query` 表头外无差异）；临时 root / home 已删除 |
 
 ## 风险与边界
 

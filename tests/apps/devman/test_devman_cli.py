@@ -24,13 +24,18 @@ _SUBCOMMANDS = {
     "doctor",
     "env",
     "exec",
+    "export",
     "init",
     "install",
     "list",
+    "repair",
+    "restore",
+    "size",
     "uninit",
     "uninstall",
     "upgrade",
     "use",
+    "verify",
     "versions",
 }
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -636,6 +637,222 @@ def doctor(root: str = "", *, json_output: bool = False) -> None:
         _fail(subcommand, exc, json_output=json_output)
         return
     _finish(subcommand, payload, json_output=json_output, render=_human_doctor, ok=bool(payload.get("ok")))
+
+
+def _format_bytes(value: int) -> str:
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    size = float(value)
+    index = 0
+    while size >= 1024 and index < len(units) - 1:
+        size /= 1024
+        index += 1
+    return f"{int(size)} B" if index == 0 else f"{size:.1f} {units[index]}"
+
+
+def _human_size(payload: dict[str, Any]) -> None:
+    for tool, data in (payload.get("tools") or {}).items():
+        print(f"{tool}: {_format_bytes(data['bytes'])}（{len(data['versions'])} 个版本）")
+        for item in data["versions"]:
+            print(f"  {item['version']:<14} {_format_bytes(item['bytes']):>10}  {item['status']}")
+    cache = payload.get("cache") or {}
+    shims = payload.get("shims") or {}
+    print(f"缓存: {_format_bytes(cache.get('bytes', 0))}  {cache.get('dir')}")
+    print(f"shim: {_format_bytes(shims.get('bytes', 0))}  {shims.get('dir')}")
+    print(f"合计: {_format_bytes(payload.get('total_bytes', 0))}")
+
+
+def _human_verify(payload: dict[str, Any]) -> None:
+    if payload.get("ok"):
+        print("完整性检查通过")
+        return
+    issues = payload.get("issues") or []
+    print(f"发现 {len(issues)} 个问题：")
+    for issue in issues:
+        where = f"{issue['tool']}\\{issue['name']}" if issue.get("tool") else (issue.get("name") or "-")
+        print(f"  [{issue['kind']}] {where}: {issue['detail']}")
+        if issue.get("hint"):
+            print(f"    {issue['hint']}")
+
+
+def _human_repair(payload: dict[str, Any]) -> None:
+    actions = payload.get("actions") or []
+    if not actions:
+        print("没有需要修复的问题")
+        return
+    head = "将执行" if payload.get("dry_run") else "已执行"
+    print(f"{head} {len(actions)} 项修复：")
+    for action in actions:
+        print(f"  {action['kind']}: {action['detail']}  {action['target']}")
+    remaining = payload.get("remaining") or []
+    if payload.get("dry_run"):
+        return
+    for issue in remaining[:5]:
+        print(f"  待手工处理 [{issue['kind']}] {issue.get('tool') or ''} {issue.get('name') or ''}: {issue['detail']}")
+
+
+def _human_export(payload: dict[str, Any]) -> None:
+    if payload.get("written"):
+        print(f"已写入锁文件：{payload['output']}")
+        return
+    if payload.get("output"):
+        print(f"将写入锁文件：{payload['output']}")
+        return
+    print(json.dumps(payload.get("lock") or {}, ensure_ascii=False, indent=2))
+
+
+def _human_restore(payload: dict[str, Any]) -> None:
+    plan = payload.get("planned") or {}
+    if payload.get("dry_run"):
+        print("恢复计划：")
+    elif not payload.get("changed"):
+        print("已与锁文件一致，无需操作")
+        return
+    else:
+        print("恢复完成")
+    for item in plan.get("installs") or []:
+        print(f"  安装 {item['spec']}")
+    for item in plan.get("use") or []:
+        print(f"  切换 {item['spec']}")
+    for item in plan.get("skipped") or []:
+        print(f"  跳过 {item['tool']}@{item['version']}（{item['reason']}）")
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="size",
+    help="统计各版本目录、下载缓存与 shim 的磁盘占用",
+    param_help={"tool": "只统计 node 或 python", "root": "devman 根目录"},
+)
+def size(tool: str = "", root: str = "", *, json_output: bool = False) -> None:
+    """磁盘占用统计（只读）。"""
+    subcommand = "size"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.size_payload(ctx, tool=tool or None)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_size)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="verify",
+    help="校验安装完整性（标记 / 可执行文件 / 活动版本 / shim / 残留），有问题退出 5",
+    param_help={"tool": "只检查 node 或 python", "root": "devman 根目录"},
+)
+def verify(tool: str = "", root: str = "", *, json_output: bool = False) -> None:
+    """完整性检查（只读）；有问题时退出 5。"""
+    subcommand = "verify"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.verify_payload(ctx, tool=tool or None)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_verify, ok=bool(payload.get("ok")))
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="repair",
+    help="修复可自动处理的问题：重建 shim、清安装残留、清空失效活动版本",
+    param_help={
+        "tool": "只修复 node 或 python",
+        "yes": "确认执行修复",
+        "purge_incomplete": "同时删除半完成版本目录（可能含用户数据）",
+        "dry_run": "只输出计划，不改文件",
+        "root": "devman 根目录",
+    },
+)
+def repair(  # noqa: PLR0913 - CLI 参数与安全语义一一对应
+    tool: str = "",
+    yes: bool = False,
+    purge_incomplete: bool = False,
+    dry_run: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """自动修复；需要 ``--yes``（``--dry-run`` 只出计划）。"""
+    subcommand = "repair"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.repair_payload(
+            ctx,
+            tool=tool or None,
+            dry_run=dry_run,
+            yes=yes,
+            purge_incomplete=purge_incomplete,
+        )
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_repair, ok=bool(payload.get("ok")))
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="export",
+    help="导出锁文件（已安装版本 + 活动版本 + 校验信息），便于新机复现",
+    param_help={
+        "output": "写入文件；省略时打印到标准输出",
+        "force": "覆盖已存在的文件",
+        "dry_run": "只检查不写文件",
+        "root": "devman 根目录",
+    },
+)
+def export_lock(output: str = "", force: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
+    """导出锁文件（只读；``--output`` 时才写文件）。"""
+    subcommand = "export"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.export_payload(ctx, output=output or None, force=force, dry_run=dry_run)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_export)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="restore",
+    help="按锁文件补齐缺失版本并切换活动版本（新机复现），需要 --yes",
+    param_help={
+        "lock": "锁文件路径（fcmd devman export --output 生成）",
+        "yes": "确认安装 / 切换版本",
+        "dry_run": "只输出计划",
+        "no_path": "不写用户 PATH",
+        "allow_shadow": "允许遮蔽已有的 node / python",
+        "root": "devman 根目录",
+    },
+)
+def restore(  # noqa: PLR0913, PLR0917 - CLI 参数与安装语义一一对应
+    lock: str,
+    yes: bool = False,
+    dry_run: bool = False,
+    no_path: bool = False,
+    allow_shadow: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """按锁文件恢复环境；``--dry-run`` 只出计划。"""
+    subcommand = "restore"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.restore_payload(
+            ctx,
+            lock,
+            yes=yes,
+            dry_run=dry_run,
+            write_path=not no_path,
+            allow_shadow=allow_shadow,
+        )
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_restore)
 
 
 @fcmd.main("devman")
