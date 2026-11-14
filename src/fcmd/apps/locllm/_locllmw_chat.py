@@ -11,6 +11,8 @@ from __future__ import annotations
 import queue
 import threading
 from collections.abc import Sequence
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.locllm import llmenv
@@ -25,14 +27,14 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
     human_size,
 )
-from fcmd.apps.locllm.llmchat import Attachment, ChatSession
+from fcmd.apps.locllm.llmchat import Attachment, ChatMessage, ChatSession
 from fcmd.apps.locllm.llmserve import process_alive
 from fcmd.gui import theme as _guitheme
 
 if TYPE_CHECKING:
     from fcmd.gui.theme import Theme
 
-__all__: list[str] = []
+__all__ = ["format_session_markdown"]
 
 _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
 _CUSTOM = "自定义"
@@ -49,6 +51,31 @@ def _state_available(state: ServeState) -> bool:
 def _first_available(states: Sequence[ServeState]) -> ServeState | None:
     """按登记顺序返回第一个可用服务。"""
     return next((state for state in states if _state_available(state)), None)
+
+
+def format_session_markdown(
+    messages: Sequence[ChatMessage],
+    *,
+    model: str = "",
+    base_url: str = "",
+) -> str:
+    """把对话历史导出为 Markdown 文本；系统提示与思考内容不写入。"""
+    lines = ["# 对话记录", ""]
+    if model:
+        lines.extend([f"- 模型：`{model}`", ""])
+    if base_url:
+        lines.extend([f"- 服务：{base_url}", ""])
+    for message in messages:
+        if message.role == "system":
+            continue
+        lines.extend(["## 你" if message.role == "user" else "## 助手", ""])
+        if message.content:
+            lines.extend([message.content, ""])
+        for attachment in message.attachments:
+            name = attachment.path.name if attachment.path is not None else "image"
+            target = attachment.path.as_posix() if attachment.path is not None else ""
+            lines.extend([f"![{name}]({target})", ""])
+    return "\n".join(lines).rstrip() + "\n"
 
 
 class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
@@ -232,8 +259,10 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             row=0, column=5, sticky="w"
         )
 
+        self._chat_export_btn = ttk.Button(box, text="导出记录", command=self._chat_export_markdown, width=10)
+        self._chat_export_btn.grid(row=0, column=7, sticky="e", padx=(0, self._theme.spacing.xs))
         self._chat_clear_btn = ttk.Button(box, text="清空对话", command=self._chat_clear, width=10)
-        self._chat_clear_btn.grid(row=0, column=7, sticky="e")
+        self._chat_clear_btn.grid(row=0, column=8, sticky="e")
 
     def _build_chat_view(self, parent: Any) -> None:
         box = self._ttk.LabelFrame(parent, text="对话", padding=(self._theme.spacing.md, self._theme.spacing.sm))
@@ -580,10 +609,39 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._chat_text.configure(state="disabled")
         self._chat_status_var.set("已清空")
 
+    def _chat_export_markdown(self) -> None:
+        """把当前会话导出为 Markdown 文件；不改动“对话不持久化”的决策。"""
+        if self._chat_running:
+            self._chat_status_var.set("生成中，请先停止再导出")
+            return
+        session = self._chat_session
+        messages = tuple(session.messages) if session is not None else ()
+        if not any(message.role != "system" for message in messages):
+            self._chat_status_var.set("没有可导出的对话")
+            return
+        path = self._filedialog.asksaveasfilename(
+            parent=self.root,
+            title="导出对话记录",
+            defaultextension=".md",
+            initialfile=f"locllmw-chat-{datetime.now():%Y%m%d-%H%M%S}.md",
+            filetypes=[("Markdown 文件", "*.md"), ("所有文件", "*.*")],
+        )
+        if not path:
+            return
+        model = session.endpoint.model if session is not None else ""
+        base_url = session.endpoint.base_url if session is not None else ""
+        try:
+            Path(path).write_text(format_session_markdown(messages, model=model, base_url=base_url), encoding="utf-8")
+        except OSError as exc:
+            self._messagebox.showerror("导出失败", str(exc))
+            return
+        self._chat_status_var.set(f"已导出 {len(messages)} 条消息到 {path}")
+
     def _chat_set_running(self, running: bool) -> None:
         state = "disabled" if running else "normal"
         self._chat_send_btn.configure(state=state)
         self._chat_clear_btn.configure(state=state)
+        self._chat_export_btn.configure(state=state)
         self._chat_image_btn.configure(state=state)
         self._chat_image_clear_btn.configure(state=state)
         self._chat_stop_btn.configure(state="normal" if running else "disabled")

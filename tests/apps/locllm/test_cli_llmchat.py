@@ -547,6 +547,26 @@ def test_chat_page_default_url() -> None:
     assert _locllmw_chat._DEFAULT_URL == "http://127.0.0.1:8080"
 
 
+def test_format_session_markdown_skips_system_and_keeps_turns() -> None:
+    messages = [
+        ChatMessage("system", "你是助手"),
+        ChatMessage("user", "你好"),
+        ChatMessage("assistant", "你好！"),
+    ]
+    text = _locllmw_chat.format_session_markdown(messages, model="qwen", base_url="http://127.0.0.1:8080")
+
+    assert text.startswith("# 对话记录")
+    assert "- 模型：`qwen`" in text
+    assert "- 服务：http://127.0.0.1:8080" in text
+    assert "## 你\n\n你好" in text
+    assert "## 助手\n\n你好！" in text
+    assert "你是助手" not in text
+
+
+def test_format_session_markdown_empty_history() -> None:
+    assert _locllmw_chat.format_session_markdown([ChatMessage("system", "sys")]) == "# 对话记录\n"
+
+
 class _FakeVar:
     """模拟 tk.StringVar 的读写。"""
 
