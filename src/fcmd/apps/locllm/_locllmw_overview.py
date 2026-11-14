@@ -271,7 +271,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
             f"把模型根目录改为：\n{path}\n\n现有模型目录配置会被替换，随后重新扫描模型。",
         ):
             return
-        llmenv.save_config({"models_roots": [str(path)]})
+        llmenv.set_models_roots([path])
         if self._hardware is not None:
             self._hardware = replace(self._hardware, model_root=str(path))
         self._refresh_hardware_view()

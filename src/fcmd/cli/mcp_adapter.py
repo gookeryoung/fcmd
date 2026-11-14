@@ -277,6 +277,9 @@ _BUILTIN_DESCRIPTIONS: dict[str, str] = {
 def _add_flag_args(cli: str, value: Any, *, is_bool: bool, default_true: bool) -> list[str]:
     """把 ``--flag value`` / ``--flag`` / ``--no-flag`` 转成 argv 片段。"""
     if is_bool:
+        if cli.startswith("--no-"):
+            # Typer 的否定式选项（如 ``--no-symbols``）：False 才需要显式传，True 是默认行为
+            return [] if value else [cli]
         if value is True:
             return [cli]
         if value is False and default_true:

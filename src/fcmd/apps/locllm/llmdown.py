@@ -36,6 +36,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 
 import fcmd
+from fcmd.apps.locllm import _llmconfig
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.console import Table, get_console
 
@@ -1210,9 +1211,9 @@ def local_cmd(root: Path | None = None) -> None:
     Parameters
     ----------
     root:
-        模型根目录，默认 ``./models``。
+        模型根目录，默认取统一的工作目录（``_llmconfig.work_dir``）。
     """
-    base = root if root is not None else Path("models")
+    base = root if root is not None else _llmconfig.work_dir()
     models = scan_local_models(base)
     if not models:
         get_console().print(f"[yellow]{base} 下没有已下载的模型[/yellow]")
@@ -1336,7 +1337,7 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     repo:
         仓库标识，如 ``Qwen/Qwen3-Coder-30B-A3B-Instruct``。
     dest:
-        目标目录，默认 ``./models/<组织>/<模型>``。
+        目标目录，默认 ``<工作目录>/<组织>/<模型>``（工作目录见 ``llmenv show``）。
     source:
         ``auto`` 两源测速选优；也可指定 ``modelscope`` / ``hf-mirror``。
     revision:
@@ -1357,7 +1358,7 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     if not selected:
         raise ModelToolError("过滤后没有文件，请检查 --include / --exclude")
 
-    target = dest if dest is not None else Path("models") / repo
+    target = dest if dest is not None else _llmconfig.work_dir() / repo
     total = sum(f.size for f in selected)
     get_console().print(f"目标目录: {target}\n文件数: {len(selected)}  总大小: {human_size(total)}")
     download_files(repo, selected, target, selection, revision, workers, verify)

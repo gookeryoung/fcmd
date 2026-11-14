@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from fcmd.apps.locllm import _llmconfig
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     DownloadCancelled,
@@ -97,9 +98,11 @@ _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw"
 
 @dataclass
 class DownloadGuiSettings:
-    """模型页的下载参数（持久化到 ``locllmw.json`` 的 ``download`` 字段）。"""
+    """模型页的下载参数（持久化到 ``locllmw.json`` 的 ``download`` 字段）。
 
-    dest: str = "models"
+    目标目录不在本设置里：它统一由 :mod:`_llmconfig` 的 ``work_dir`` 提供。
+    """
+
     source: str = "modelscope"
     workers: int = 4
     verify: bool = True
@@ -112,9 +115,6 @@ def settings_from_dict(raw: object) -> DownloadGuiSettings:
     settings = DownloadGuiSettings()
     if not isinstance(raw, Mapping):
         return settings
-    dest = raw.get("dest")
-    if isinstance(dest, str) and dest.strip():
-        settings.dest = dest
     source = raw.get("source")
     if isinstance(source, str) and source in _SOURCES:
         settings.source = source
@@ -134,7 +134,6 @@ def settings_from_dict(raw: object) -> DownloadGuiSettings:
 def settings_to_dict(settings: DownloadGuiSettings) -> dict[str, Any]:
     """把下载参数转换为可写入 JSON 的字典。"""
     return {
-        "dest": settings.dest,
         "source": settings.source,
         "workers": settings.workers,
         "verify": settings.verify,
@@ -287,7 +286,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._downloading = False
         self._closed = False
         self._stop_event = threading.Event()
-        self._download_target = Path("models")
+        self._download_target = _llmconfig.work_dir()
         self._keyword_var = tk.StringVar()
         self._task_var = tk.StringVar(value=_ALL_TASKS)
         self._series_applied = ""
@@ -295,7 +294,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._sort_var = tk.StringVar(value=_SORT_LABELS["default"])
         self._page_var = tk.StringVar(value="尚未搜索")
         self._status_var = tk.StringVar(value="就绪")
-        self._dest_var = tk.StringVar(value=self._settings.dest)
+        self._dest_var = tk.StringVar(value=str(_llmconfig.work_dir()))
         self._source_var = tk.StringVar(value=_SOURCE_LABELS[self._settings.source])
         self._workers_var = tk.StringVar(value=str(self._settings.workers))
         self._verify_var = tk.BooleanVar(value=self._settings.verify)
@@ -351,7 +350,6 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             workers = self._settings.workers
         return settings_to_dict(
             DownloadGuiSettings(
-                dest=self._dest_var.get().strip() or "models",
                 source=_SOURCE_KEYS.get(self._source_var.get(), "modelscope"),
                 workers=workers,
                 verify=bool(self._verify_var.get()),
@@ -359,6 +357,17 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
                 exclude=self._exclude_var.get(),
             )
         )
+
+    def persist_work_dir(self) -> None:
+        """把页面的目标目录写回统一配置的 ``work_dir``（留空不写）。"""
+        text = self._dest_var.get().strip()
+        if text:
+            _llmconfig.set_option("work_dir", text)
+
+    def refresh_from_config(self) -> None:
+        """配置变化后同步目标目录并重新扫描已安装模型。"""
+        self._dest_var.set(str(_llmconfig.work_dir()))
+        self._refresh_local()
 
     def close(self) -> bool:
         """确认并停止下载；返回 ``False`` 表示用户取消关闭。"""
@@ -898,7 +907,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         """选择目标目录。"""
         from tkinter import filedialog
 
-        initial = Path(self._dest_var.get().strip() or "models").expanduser()
+        initial = Path(self._dest_var.get().strip() or _llmconfig.work_dir()).expanduser()
         chosen = filedialog.askdirectory(initialdir=str(initial), title="选择模型保存目录")
         if chosen:
             self._dest_var.set(chosen)
@@ -1008,8 +1017,8 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     # 本地管理
     # ------------------------------------------------------------------ #
     def _local_root(self) -> Path:
-        """当前目标目录（相对路径按工作目录展开）。"""
-        return Path(self._dest_var.get().strip() or "models").expanduser()
+        """当前目标目录（留空时回落到统一工作目录）。"""
+        return Path(self._dest_var.get().strip() or _llmconfig.work_dir()).expanduser()
 
     def _refresh_local(self) -> None:
         """后台扫描目标目录下的本地模型。"""

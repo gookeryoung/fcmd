@@ -38,7 +38,9 @@
 - 新增 `_locllmw_models.py` 的 `_ModelBrowserPage`，持有自己的控件、队列、
   后台任务与轮询；`locllmw` 只负责创建它并调用 `settings_dict()` / `close()`。
 - 下载设置从 `~/.fcmd/ui/llmdownw.json` 迁入 `locllmw.json` 的 `download` 字段
-  （`dest / source / workers / verify / include / exclude`），非法值逐项回退默认。
+  （`source / workers / verify / include / exclude`），非法值逐项回退默认；
+  目标目录统一由 `_llmconfig.work_dir` 提供，页面关闭时写回，避免与「设置」页
+  的目录配置出现两份来源。
 - 关窗时若仍在下载，先弹二次确认；确认后置停止事件，已下载部分保留 `.part`。
 
 ### 4. 移除独立工具 `llmdownw`

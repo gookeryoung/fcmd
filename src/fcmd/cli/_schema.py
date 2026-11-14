@@ -40,7 +40,6 @@ GUI_TOOLS: frozenset[str] = frozenset(
         "img2pdfw",
         "llmconvertw",
         "llmenginew",
-        "llmenvw",
         "llmqntw",
         "locllmw",
         "mirrortoolw",

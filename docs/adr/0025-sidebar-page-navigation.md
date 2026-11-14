@@ -1,12 +1,12 @@
 # 0025 GUI 侧边栏分页导航（`SidebarNav`）
 
-- 状态：已落地（locllmw / llmconvertw / llmenginew / llmenvw）
+- 状态：已落地（locllmw / llmconvertw / llmenginew / 原环境窗口）
 - 日期：2026-11-14
 - 关联：`src/fcmd/gui/sidebar.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
 
 ## 背景
 
-locllmw 原先与 llmconvertw、llmenginew、llmenvw 一样，用顶部
+locllmw 原先与 llmconvertw、llmenginew、原环境窗口 一样，用顶部
 `ttk.Notebook` 承载「配置 / 监控 / 日志」这类页面：
 
 1. 标签条与内容抢横向空间：页数到 3–4 个、或标题有中文长词时，标签被截断，
@@ -52,7 +52,7 @@ locllmw 原先与 llmconvertw、llmenginew、llmenvw 一样，用顶部
 ### 3. 迁移范围
 
 已迁移「整窗主页面」型窗口：locllmw（模型页内部再分浏览 / 已安装 / 下载）、
-llmconvertw、llmenginew、llmenvw。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。主容器
+llmconvertw、llmenginew、原环境窗口。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。主容器
 `ttk.Frame(self.root)` **不加 padding**，让侧边栏与状态栏贴窗边；内容间距统一
 由各页面自己的 `page_padding` 负责，避免外层再叠一层边距。
 
@@ -77,7 +77,7 @@ llmconvertw、llmenginew、llmenvw。跨页跳转改为 `_nav.select("log")` 之
 ## 落地状态与交接
 
 - 已完成：组件、主题样式、5 个窗口迁移、单测与 ADR 口径。
-- 视觉回归点：侧边栏宽度（默认 172，llmenvw 210）按最长页名调整；
+- 视觉回归点：侧边栏宽度（默认 172，原环境窗口 210）按最长页名调整；
   长页名加宽而不是换行，`ttk.Button` 不支持多行文本。
 - 下一步（未做）：若把 wslmanw 迁移过来，需要先决定导航栏放在主网格左侧
   还是顶部横向，并补一次 900×680 最小窗口的截图验收。

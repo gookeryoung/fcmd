@@ -23,6 +23,7 @@ from fcmd.apps.locllm._locllmw_monitor import (
     RATE_WINDOW_SECONDS,
     _fit_state,
 )
+from fcmd.apps.locllm._locllmw_settings import SettingsPage
 from fcmd.apps.locllm.llmbase import KV_SCALE, PROFILES, ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
 from fcmd.gui import config as _guiconfig
@@ -205,19 +206,31 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._build_log(parent)
 
     def _build_settings(self, parent: Any) -> None:
-        """设置页：配置文件路径、窗口行为与环境信息。"""
+        """设置页：统一目录配置、服务环境变量与环境信息。"""
         ttk = self._ttk
         space = self._theme.spacing
         box = ttk.LabelFrame(parent, text="窗口与配置文件", padding=space.sm)
         box.pack(fill="x")
         path = _guiconfig.config_path("locllmw")
-        ttk.Label(box, text=f"配置文件：{path}", justify="left").pack(anchor="w")
+        ttk.Label(box, text=f"窗口配置文件：{path}", justify="left").pack(anchor="w")
         ttk.Label(
             box,
-            text="窗口位置与大小在关闭时自动写入；其余设置随对话 / 代理 / 多模态分页逐步扩展。",
+            text="窗口位置与大小在关闭时自动写入；目录与模型配置统一在下方子页编辑。",
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(space.xs, 0))
         self._build_env(parent)
+        self._settings_page = SettingsPage(
+            parent,
+            tk=self._tk,
+            ttk=self._ttk,
+            theme=self._theme,
+            on_config_changed=self._on_config_changed,
+        )
+
+    def _on_config_changed(self) -> None:
+        """权威配置变更后同步模型页的工作目录并重扫。"""
+        if self._model_page is not None:
+            self._model_page.refresh_from_config()
 
     @staticmethod
     def _service_names() -> list[str]:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 
@@ -264,7 +265,7 @@ def test_exec_fcmd_exception_isolated() -> None:
 # MCP Server list_tools / call_tool（需要 mcp 包）
 # ---------------------------------------------------------------------------
 
-pytestmark = pytest.mark.skipif(Server is None, reason="mcp 包未安装")
+requires_mcp = pytest.mark.skipif(Server is None, reason="mcp 包未安装")
 
 
 def _run_async(coro):
@@ -276,6 +277,7 @@ def _run_async(coro):
         loop.close()
 
 
+@requires_mcp
 def test_mcp_list_tools_returns_whitelist_count() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -284,6 +286,7 @@ def test_mcp_list_tools_returns_whitelist_count() -> None:
     assert len(tools) == len(AGENT_WHITELIST)
 
 
+@requires_mcp
 def test_mcp_list_tools_schema_fields() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -296,6 +299,7 @@ def test_mcp_list_tools_schema_fields() -> None:
     assert "pattern" in fs_name.inputSchema["required"]
 
 
+@requires_mcp
 def test_mcp_call_tool_success() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -306,6 +310,7 @@ def test_mcp_call_tool_success() -> None:
     assert parsed["schema"] == "fcmd-result/1"
 
 
+@requires_mcp
 def test_mcp_call_tool_error_no_such_dir() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -317,6 +322,7 @@ def test_mcp_call_tool_error_no_such_dir() -> None:
     assert parsed["code"] == "DIR_NOT_FOUND"
 
 
+@requires_mcp
 def test_mcp_call_tool_builtin_env() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -325,6 +331,7 @@ def test_mcp_call_tool_builtin_env() -> None:
     assert result.isError is False
 
 
+@requires_mcp
 def test_mcp_call_tool_builtin_info() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -335,6 +342,7 @@ def test_mcp_call_tool_builtin_info() -> None:
     assert parsed["schema"] == "fcmd-schema/1"
 
 
+@requires_mcp
 def test_mcp_call_tool_whitelist_rejects() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -600,6 +608,7 @@ def test_plan_arguments_matching_passes_security_gate() -> None:
 # ---------------------------------------------------------------------------
 
 
+@requires_mcp
 def test_mcp_list_resources_count() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -610,6 +619,7 @@ def test_mcp_list_resources_count() -> None:
     assert {"fcmd://manifest", "fcmd://info", "fcmd://doctor", "fcmd://policy"} <= uris
 
 
+@requires_mcp
 def test_mcp_read_resource_manifest() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -627,6 +637,7 @@ def test_mcp_read_resource_manifest() -> None:
     assert any(t["tool"] == "wslman" and t["subcommand"] == "export" for t in write_tools)
 
 
+@requires_mcp
 def test_mcp_read_resource_info() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -637,6 +648,7 @@ def test_mcp_read_resource_info() -> None:
     assert data.get("schema") in ("fcmd-schema/1", "fcmd-result/1")
 
 
+@requires_mcp
 def test_mcp_read_resource_doctor() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -648,6 +660,7 @@ def test_mcp_read_resource_doctor() -> None:
     assert isinstance(data, dict)
 
 
+@requires_mcp
 def test_mcp_read_resource_policy() -> None:
     from fcmd.cli.agent_security import AgentSecurityPolicy
     from fcmd.cli.mcp_adapter import _set_policy, build_mcp_server
@@ -662,6 +675,7 @@ def test_mcp_read_resource_policy() -> None:
     assert data["allow_network"] is False
 
 
+@requires_mcp
 def test_mcp_read_resource_unknown_uri() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -671,6 +685,7 @@ def test_mcp_read_resource_unknown_uri() -> None:
     assert "error" in data
 
 
+@requires_mcp
 def test_mcp_list_prompts() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -680,6 +695,7 @@ def test_mcp_list_prompts() -> None:
     assert names == {"fcmd-quickstart", "fcmd-filesystem-scan", "fcmd-diff-confirm"}
 
 
+@requires_mcp
 def test_mcp_get_prompt_quickstart() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
@@ -692,9 +708,218 @@ def test_mcp_get_prompt_quickstart() -> None:
     assert "plan 阶段" in msg.content.text
 
 
+@requires_mcp
 def test_mcp_get_prompt_unknown() -> None:
     from fcmd.cli.mcp_adapter import build_mcp_server
 
     server = build_mcp_server()
     result = _run_async(server.get_prompt("fcmd-nonexistent"))
     assert "(unknown prompt: fcmd-nonexistent)" in result.messages[0].content.text
+
+
+# ---------------------------------------------------------------------------
+# 纯逻辑补充分支：不依赖 mcp 包
+# ---------------------------------------------------------------------------
+
+
+def test_kwargs_to_argv_boolean_false_with_default_true() -> None:
+    """否定式布尔选项：False 传 ``--no-*``，True 保持默认不传。"""
+    spec = get_tool("randtool", "password")
+    assert _kwargs_to_argv(spec, {"symbols": False}) == ["--no-symbols", "--json"]
+    assert _kwargs_to_argv(spec, {"symbols": True}) == ["--json"]
+
+
+def test_kwargs_to_argv_false_bool_default_false_is_omitted() -> None:
+    """默认 False 的布尔参数显式传 False 不产生参数。"""
+    argv = _kwargs_to_argv(get_tool("filesearch", "name"), {"directory": ".", "include_dirs": False})
+    assert "--include-dirs" not in argv and "--no-include-dirs" not in argv
+
+
+def test_kwargs_to_argv_skips_none() -> None:
+    """值为 None 的可选参数不生成命令行片段。"""
+    argv = _kwargs_to_argv(get_tool("filesearch", "name"), {"directory": ".", "pattern": None})
+    assert "None" not in argv
+
+
+def test_collect_positional_expands_sequence() -> None:
+    """位置参数为列表时展开为多个 token。"""
+    from fcmd.cli.mcp_adapter import _collect_positional
+
+    assert _collect_positional(["a", "b"], "item") == [("item", "a"), ("item", "b")]
+    assert _collect_positional("a", "item") == [("item", "a")]
+
+
+def test_builtin_kwargs_info_without_tool_and_graph() -> None:
+    """内建 info 无 tool；graph 拼接 tool/subcommand/format 与 --json。"""
+    assert _builtin_kwargs_to_argv("info", {}, force_json=False) == []
+    assert _builtin_kwargs_to_argv("graph", {"subcommand": "name"}, force_json=False) == ["name"]
+    assert _builtin_kwargs_to_argv("graph", {"tool": "filesearch", "subcommand": "name"}, force_json=False) == [
+        "filesearch",
+        "name",
+    ]
+    argv = _builtin_kwargs_to_argv(
+        "graph", {"tool": "filesearch", "subcommand": "name", "format": "json"}, force_json=True
+    )
+    assert argv == ["filesearch", "name", "--format", "json", "--json"]
+
+
+def test_builtin_kwargs_env_without_force_json() -> None:
+    """force_json=False 时不追加 --json。"""
+    assert _builtin_kwargs_to_argv("env", {}, force_json=False) == []
+
+
+@requires_mcp
+def test_security_error_includes_hint_and_expected() -> None:
+    """安全错误信封透传 hint / expected；未提供时不出现空字段。"""
+    from fcmd.cli.agent_security import SecurityError
+    from fcmd.cli.mcp_adapter import _security_error_to_result
+
+    error = SecurityError("TEST_CODE", "被拦截", hint="改参数", expected="合法值")
+    data = json.loads(_security_error_to_result(error).content[0].text)
+    assert data["code"] == "TEST_CODE"
+    assert data["hint"] == "改参数"
+    assert data["expected"] == "合法值"
+
+    bare = json.loads(_security_error_to_result(SecurityError("BARE", "无提示")).content[0].text)
+    assert "hint" not in bare and "expected" not in bare
+
+
+@requires_mcp
+def test_workspace_scan_skips_non_path_and_missing_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    """工作区模式下跳过非 path 参数与未提供参数，合法路径放行。"""
+    import fcmd.cli.mcp_adapter as adapter
+    from fcmd.cli.agent_security import AgentSecurityPolicy
+
+    _fresh_policy_and_cache()
+    adapter._set_policy(AgentSecurityPolicy(workspace_root=Path.cwd(), require_write_confirmation=False))
+    monkeypatch.setattr(adapter, "exec_fcmd", lambda *a, **k: ExecResult(0, _ok_envelope(), ""))
+    try:
+        result = _run_async(adapter._call_tool_handler("fcmd__filesearch__name", {"directory": ".", "pattern": "*.py"}))
+        assert result.isError is False
+        # 只给 directory、不给 pattern → 未提供的 path/非 path 参数都被跳过
+        result = _run_async(adapter._call_tool_handler("fcmd__filesearch__name", {"directory": "."}))
+        assert result.isError is False
+        # 路径参数完全未提供 → 直接跳过校验
+        result = _run_async(adapter._call_tool_handler("fcmd__wslman__export", {"distro": "Ubuntu"}))
+        assert result.isError is False
+    finally:
+        _fresh_policy_and_cache()
+
+
+@requires_mcp
+def test_workspace_policy_skips_builtin_without_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """工作区模式对无 ToolSpec 的内建条目不做路径校验。"""
+    import fcmd.cli.mcp_adapter as adapter
+    from fcmd.cli.agent_security import AgentSecurityPolicy
+
+    _fresh_policy_and_cache()
+    adapter._set_policy(AgentSecurityPolicy(workspace_root=Path.cwd()))
+    monkeypatch.setattr(adapter, "exec_fcmd", lambda *a, **k: ExecResult(0, _ok_envelope(), ""))
+    try:
+        result = _run_async(adapter._call_tool_handler("fcmd__info", {"tool": "filesearch"}))
+        assert result.isError is False
+    finally:
+        _fresh_policy_and_cache()
+
+
+def test_exec_fcmd_unexpected_exception_returns_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """执行器抛异常时降级为 exit_code=1，并保留 stderr。"""
+    import fcmd.cli.mcp_adapter as adapter
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(adapter, "run_tool", _boom)
+    result = exec_fcmd("filesearch", ["name", ".", "*.py", "--json"])
+    assert result.exit_code == 1
+    assert "RuntimeError" in result.stderr and "boom" in result.stderr
+
+
+@requires_mcp
+def test_two_phase_plan_and_apply_caches_hash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """写操作 plan 阶段注入并缓存 plan_hash，apply 阶段命中后消费缓存。"""
+    import fcmd.cli.mcp_adapter as adapter
+    from fcmd.cli.agent_security import AgentSecurityPolicy
+
+    _fresh_policy_and_cache()
+    adapter._set_policy(AgentSecurityPolicy(require_write_confirmation=False))
+    monkeypatch.setattr(adapter, "exec_fcmd", lambda *a, **k: ExecResult(0, _ok_envelope(), ""))
+    try:
+        args = {"distro": "Ubuntu", "file": "x.tar"}
+        plan = _run_async(adapter._call_tool_handler("fcmd__wslman__export", args))
+        plan_data = json.loads(plan.content[0].text)
+        plan_hash = plan_data["plan_hash"]
+        assert plan_hash in adapter._plan_cache
+
+        applied = _run_async(adapter._call_tool_handler("fcmd__wslman__export", {**args, "plan_hash": plan_hash}))
+        assert json.loads(applied.content[0].text)["ok"] is True
+        assert plan_hash not in adapter._plan_cache
+    finally:
+        _fresh_policy_and_cache()
+
+
+@requires_mcp
+def test_format_result_without_envelope_keeps_stderr_and_plan_hash() -> None:
+    """无 JSON 信封时保留 stderr、退出码与 plan_hash 提示。"""
+    from fcmd.cli.mcp_adapter import _format_mcp_result
+
+    result = _format_mcp_result(ExecResult(2, "", "boom"), plan_hash="abcdef")
+    text = result.content[0].text
+    assert "boom" in text
+    assert "[exit_code=2]" in text
+    assert "[plan_hash=abcdef]" in text
+
+    no_stderr = _format_mcp_result(ExecResult(3, "", "")).content[0].text
+    assert "stderr" not in no_stderr and "[exit_code=3]" in no_stderr
+
+
+def test_build_mcp_server_requires_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺 mcp 包时构建服务器给出可操作报错。"""
+    import fcmd.cli.mcp_adapter as adapter
+
+    monkeypatch.setattr(adapter, "_MCP_AVAILABLE", False)
+    with pytest.raises(RuntimeError, match="mcp 包未安装"):
+        adapter.build_mcp_server()
+
+
+def test_run_mcp_stdio_requires_mcp(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """缺 mcp 包时 stdio 入口打印安装指引并以 1 退出。"""
+    import fcmd.cli.mcp_adapter as adapter
+
+    monkeypatch.setattr(adapter, "_MCP_AVAILABLE", False)
+    with pytest.raises(SystemExit) as exc:
+        adapter.run_mcp_stdio()
+    assert exc.value.code == 1
+    assert "uv pip install mcp" in capsys.readouterr().err
+
+
+def test_run_mcp_stdio_starts_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    """stdio 入口接线：Server.run 收到 stdio 读写流并启动。"""
+    import fcmd.cli.mcp_adapter as adapter
+
+    class _FakeServer:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def create_initialization_options(self) -> dict[str, object]:
+            return {}
+
+        async def run(self, read: object, write: object, options: object) -> None:
+            self.ran = (read, write, options)
+
+    class _FakeStdio:
+        async def __aenter__(self) -> tuple[str, str]:
+            return ("read", "write")
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+    monkeypatch.setattr(adapter, "_MCP_AVAILABLE", True)
+    monkeypatch.setattr(adapter, "Server", _FakeServer)
+    monkeypatch.setattr(adapter, "stdio_server", _FakeStdio)
+    adapter.run_mcp_stdio()
+
+
+def _ok_envelope() -> str:
+    """成功结果信封（供 exec_fcmd 替身使用）。"""
+    return json.dumps({"schema": "fcmd-result/1", "ok": True, "data": {}}, ensure_ascii=False)

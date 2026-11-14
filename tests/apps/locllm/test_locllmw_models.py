@@ -46,7 +46,6 @@ class TestSettings:
 
     def test_roundtrip(self) -> None:
         settings = DownloadGuiSettings(
-            dest="/data/models",
             source="hf-mirror",
             workers=8,
             verify=False,
@@ -58,7 +57,6 @@ class TestSettings:
     def test_invalid_values_fallback(self) -> None:
         settings = settings_from_dict(
             {
-                "dest": "  ",
                 "source": "unknown",
                 "workers": 999,
                 "verify": "yes",
@@ -66,7 +64,6 @@ class TestSettings:
                 "exclude": "*.bin",
             }
         )
-        assert settings.dest == "models"
         assert settings.source == "modelscope"
         assert settings.workers == 16
         assert settings.verify is True

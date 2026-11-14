@@ -603,9 +603,13 @@ class TestCli:
         llmdown.mirror_cmd("Qwen/demo")
         assert "无法同文件测速" in capsys.readouterr().out
 
-    def test_download_default_dest(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_download_default_dest(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
         captured: dict[str, Any] = {}
         selection = SourceSelection("modelscope", (ModelFile("a.bin", 2),))
+        work = tmp_path / "work"
+        monkeypatch.setenv("FCMD_WORK", str(work))
 
         def _fake_download(repo: str, files: list[ModelFile], dest: Path, *args: Any) -> None:
             captured.update(repo=repo, files=files, dest=dest)
@@ -613,7 +617,7 @@ class TestCli:
         monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
         monkeypatch.setattr(llmdown, "download_files", _fake_download)
         llmdown.download_cmd("Qwen/demo")
-        assert captured["dest"] == Path("models") / "Qwen/demo"
+        assert captured["dest"] == work / "Qwen/demo"
         assert captured["files"][0].path == "a.bin"
         assert "总大小" in capsys.readouterr().out
 
