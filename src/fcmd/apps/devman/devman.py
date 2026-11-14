@@ -10,9 +10,6 @@ from typing import Any, Literal
 import fcmd
 from fcmd.apps.devman import _env, _ops
 from fcmd.apps.devman._errors import DevmanError, invalid_argument, not_found, runtime_error
-from fcmd.apps.devman._paths import normalize_tool
-from fcmd.apps.devman._python import find_uv, list_remote, version_of
-from fcmd.apps.devman._toolchain import list_installed
 from fcmd.core.result import emit_result, record_error, report_error
 
 __all__ = ["main"]
@@ -248,65 +245,8 @@ def versions(
     """已安装版本或远端可用版本。"""
     subcommand = "versions"
     try:
-        name = normalize_tool(tool)
         ctx = _ops.new_context(root)
-        installed = list_installed(ctx.layout, name)
-        active = ctx.state.active.get(name)
-        rows: list[dict[str, Any]] = []
-        source: str | None = None
-        if remote:
-            if name == "node":
-                from fcmd.apps.devman import _node
-
-                releases = _node.parse_release_index(ctx.fetch().get_text(_node.RELEASE_INDEX))
-                versions_seen = {row.version for row in installed}
-                for release in sorted(releases, key=lambda item: tuple(int(x) for x in item.version.split("."))):
-                    rows.append(
-                        {
-                            "version": release.version,
-                            "installed": release.version in versions_seen,
-                            "active": release.version == active,
-                            "lts": release.lts or False,
-                        }
-                    )
-                source = _node.RELEASE_INDEX
-            else:
-                uv = find_uv(ctx.config.python_uv)
-                entries = list_remote(ctx.execute(), uv, include_prerelease=prerelease)
-                seen: set[str] = set()
-                installed_versions = {row.version for row in installed}
-                for entry in sorted(entries, key=lambda item: tuple(int(x) for x in item.version.split("."))):
-                    if entry.version in seen:
-                        continue
-                    seen.add(entry.version)
-                    rows.append(
-                        {
-                            "version": entry.version,
-                            "installed": entry.version in installed_versions,
-                            "active": entry.version == version_of("python", active or ""),
-                            "key": entry.key,
-                        }
-                    )
-                source = "uv python list --all-versions"
-        else:
-            for row in installed:
-                rows.append(
-                    {
-                        "version": row.version,
-                        "installed": row.complete,
-                        "active": row.name == active,
-                        "name": row.name,
-                        "path": str(row.path),
-                    }
-                )
-        payload = {
-            "schema": "devman/versions/1",
-            "tool": name,
-            "remote": remote,
-            "source": source,
-            "versions": rows,
-            "warnings": ctx.warnings,
-        }
+        payload = _ops.versions_payload(ctx, tool, remote=remote, prerelease=prerelease)
     except DevmanError as exc:
         _fail(subcommand, exc, json_output=json_output)
         return

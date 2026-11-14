@@ -27,8 +27,8 @@ from fcmd.apps.devman._errors import (
     not_found,
     runtime_error,
 )
-from fcmd.apps.devman._net import Fetcher, UrllibFetcher
-from fcmd.apps.devman._paths import Layout
+from fcmd.apps.devman._net import Fetcher, ProgressCallback, UrllibFetcher
+from fcmd.apps.devman._paths import Layout, normalize_tool
 from fcmd.apps.devman._runner import Runner, SubprocessRunner
 from fcmd.apps.devman._state import (
     MARKER_NAME,
@@ -63,6 +63,7 @@ __all__ = [
     "uninstall",
     "upgrade",
     "use",
+    "versions_payload",
 ]
 
 LOCK_STALE_SECONDS = 30 * 60
@@ -295,6 +296,74 @@ def list_payload(ctx: JobContext, *, env: Mapping[str, str] | None = None) -> di
     }
 
 
+# ---- versions ----
+def versions_payload(
+    ctx: JobContext,
+    tool_text: str,
+    *,
+    remote: bool = False,
+    prerelease: bool = False,
+) -> dict[str, Any]:
+    """已安装版本或远端可用版本（``versions`` 子命令与 GUI 共用同一份数据）。"""
+    name = normalize_tool(tool_text)
+    installed = list_installed(ctx.layout, name)
+    active = ctx.state.active.get(name)
+    rows: list[dict[str, Any]] = []
+    source: str | None = None
+    if remote:
+        if name == "node":
+            releases = _node.parse_release_index(ctx.fetch().get_text(_node.RELEASE_INDEX))
+            seen = {row.version for row in installed}
+            for release in sorted(releases, key=lambda item: sort_key(item.version)):
+                rows.append(
+                    {
+                        "version": release.version,
+                        "installed": release.version in seen,
+                        "active": release.version == active,
+                        "lts": release.lts or False,
+                    }
+                )
+            source = _node.RELEASE_INDEX
+        else:
+            uv = _python.find_uv(ctx.config.python_uv)
+            entries = _python.list_remote(ctx.execute(), uv, include_prerelease=prerelease)
+            installed_versions = {row.version for row in installed}
+            active_version_text = version_of("python", active or "")
+            seen_keys: set[str] = set()
+            for entry in sorted(entries, key=lambda item: sort_key(item.version)):
+                if entry.version in seen_keys:
+                    continue
+                seen_keys.add(entry.version)
+                rows.append(
+                    {
+                        "version": entry.version,
+                        "installed": entry.version in installed_versions,
+                        "active": entry.version == active_version_text,
+                        "key": entry.key,
+                    }
+                )
+            source = "uv python list --all-versions"
+    else:
+        for row in installed:
+            rows.append(
+                {
+                    "version": row.version,
+                    "installed": row.complete,
+                    "active": row.name == active,
+                    "name": row.name,
+                    "path": str(row.path),
+                }
+            )
+    return {
+        "schema": "devman/versions/1",
+        "tool": name,
+        "remote": remote,
+        "source": source,
+        "versions": rows,
+        "warnings": ctx.warnings,
+    }
+
+
 # ---- install ----
 def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
     ctx: JobContext,
@@ -307,6 +376,7 @@ def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
     allow_shadow: bool = False,
     store: _env.EnvStore | None = None,
     env: Mapping[str, str] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     """安装一个具体版本；默认把 shim 目录写入用户 PATH，``--dry-run`` 只输出计划。"""
     spec = parse_spec(spec_text)
@@ -337,7 +407,9 @@ def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
             }
         with install_lock(layout):
             layout.ensure_bootstrap()
-            result = _node.install(plan, layout, fetcher=ctx.fetch(), runner=ctx.execute(), force=force)
+            result = _node.install(
+                plan, layout, fetcher=ctx.fetch(), runner=ctx.execute(), force=force, progress=progress
+            )
             user_path = _apply_path(ctx, store=store) if write_path else path_plan
     else:
         uv = _python.find_uv(ctx.config.python_uv)
@@ -602,6 +674,7 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
     force: bool = False,
     write_path: bool = True,
     allow_shadow: bool = False,
+    progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
     """升级到同一条版本线的最新版（或 ``--to`` 指定版本）。"""
     layout = ctx.layout
@@ -663,6 +736,7 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
         force=force,
         write_path=write_path,
         allow_shadow=allow_shadow,
+        progress=progress,
     )
     switched = use(ctx, f"{tool}@{target_version}")
     purged: dict[str, Any] | None = None
