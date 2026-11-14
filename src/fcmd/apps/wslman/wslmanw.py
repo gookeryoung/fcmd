@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import contextlib
+import ntpath
 import platform
 import queue
 import threading
@@ -180,7 +181,8 @@ def column_widths(rows: Sequence[Sequence[str]], available: int | None = None) -
 
 def detail_fields(distro: Distro, size: int | None, estimated: bool) -> tuple[tuple[str, str], ...]:
     """详情页的「字段 → 值」；字段口径与 ``detail_lines`` 完全一致。"""
-    vhdx = str(Path(distro.base_path) / "ext4.vhdx") if distro.base_path else "未知"
+    # BasePath 来自 Lxss 注册表，始终是 Windows 路径；用 ntpath 拼接保持反斜杠。
+    vhdx = ntpath.join(distro.base_path, "ext4.vhdx") if distro.base_path else "未知"
     return (
         ("名称", distro.name),
         ("状态", state_label(distro)),

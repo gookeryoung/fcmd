@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 import sys
@@ -142,7 +143,9 @@ def path_entries(value: str | None) -> list[str]:
 
 
 def _normalized(value: str) -> str:
-    return os.path.normcase(os.path.normpath(os.path.expandvars(value.strip())))
+    # PATH 段始终是 Windows 语义（``;`` 分隔、大小写不敏感、反斜杠），
+    # 用 ntpath 处理，避免在非 Windows 主机上比较结果漂移。
+    return ntpath.normcase(ntpath.normpath(os.path.expandvars(value.strip())))
 
 
 def add_path_entry(value: str | None, entry: str, *, append: bool = False) -> str:

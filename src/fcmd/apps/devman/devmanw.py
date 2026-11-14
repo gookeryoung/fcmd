@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import ntpath
 import queue
 import threading
 from collections.abc import Callable, Mapping, Sequence
@@ -302,7 +303,8 @@ def detail_values(
         "状态": "完整" if row.get("status") == "ok" else "半完成（不可切换，需重装）",
         "活动": "是" if row.get("active") else "否",
         "版本目录": version_dir,
-        "可执行文件": str(Path(version_dir) / exe),
+        # 展示的是 Windows 安装目录，用 ntpath 拼接以保持反斜杠（主机平台无关）。
+        "可执行文件": ntpath.join(version_dir, exe),
         "来源": str(row.get("source") or "—"),
         "安装时间": str(row.get("installed_at") or "—"),
     }
