@@ -82,9 +82,7 @@ def test_state_missing_and_corrupt(tmp_path: Path) -> None:
 
 def test_state_roundtrip_and_sanitize(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
-    state = _state.State(
-        active={"node": "20.11.1", "python": "", "ruby": "3"}, path_added=["C:/bin"], path_previous_user_path="X"
-    )
+    state = _state.State(active={"node": "20.11.1", "python": "", "ruby": "3"}, path_added=["C:/bin"], path_previous_user_path="X")
     _state.save_state(layout, state)
     loaded, warnings = _state.load_state(layout)
     assert loaded.active == {"node": "20.11.1"}
@@ -96,9 +94,7 @@ def test_state_roundtrip_and_sanitize(tmp_path: Path) -> None:
 def test_state_bad_types(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     layout.root.mkdir(parents=True)
-    layout.state_file.write_text(
-        json.dumps({"active": "oops", "path_added": "oops", "path_previous_user_path": 5}), encoding="utf-8"
-    )
+    layout.state_file.write_text(json.dumps({"active": "oops", "path_added": "oops", "path_previous_user_path": 5}), encoding="utf-8")
     state, warnings = _state.load_state(layout)
     assert state.active == {}
     assert state.path_added == []

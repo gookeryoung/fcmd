@@ -242,7 +242,9 @@ def test_command_candidates_with_explicit_suffix(tmp_path: Path) -> None:
     assert _env.command_candidates("node.exe", str(tmp_path)) == [tmp_path / "node.exe"]
 
 
-def test_command_candidates_ignores_unreadable_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_command_candidates_ignores_unreadable_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "node.exe").write_bytes(b"MZ")
     original = Path.is_file
 

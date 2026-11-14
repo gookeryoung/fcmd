@@ -62,9 +62,7 @@ class FakeFetcher:
 class FakeRunner:
     """按 handler 返回预置结果，并记录调用（含子进程环境）。"""
 
-    def __init__(
-        self, handler: Callable[[list[str], Mapping[str, str] | None], CommandResult | BaseException] | None = None
-    ) -> None:
+    def __init__(self, handler: Callable[[list[str], Mapping[str, str] | None], CommandResult | BaseException] | None = None) -> None:
         self.handler = handler or (lambda argv, env: result())
         self.calls: list[list[str]] = []
         self.envs: list[dict[str, str]] = []

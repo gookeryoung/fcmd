@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from fcmd.apps.locllm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._locllmw_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
+from fcmd.apps.locllm._locllmw_models import _ModelBrowserPage, settings_from_dict
 from fcmd.apps.locllm._locllmw_monitor import (
     _FIT_BUSY,
     _FIT_RUNNING,
@@ -102,6 +103,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _build_overview: Any
         _build_chat_page: Any
         _on_page_changed: Any
+        _settings: Any
+        _model_page: Any
+        _messagebox: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -131,9 +135,10 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         settings_page = self._nav.add("settings", "设置", hint="环境、配置与窗口")
         self._nav.enable_shortcuts()
         self._build_overview(overview_page)
-        self._build_models(models_page)
-        self._build_params(run_page)
+        self._build_model_browser(models_page)
         self._build_actions(run_page)
+        self._build_models(run_page)
+        self._build_params(run_page)
         self._build_chat_page(chat_page)
         self._build_planned(
             agent_page,
@@ -338,6 +343,17 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             title,
             padding=(self._theme.spacing.sm, self._theme.spacing.xs, 0, 0),
             open_state=open_state,
+        )
+
+    def _build_model_browser(self, parent: Any) -> None:
+        """模型页：浏览 / 已安装 / 下载三个子页（整合原 llmdownw）。"""
+        self._model_page = _ModelBrowserPage(
+            parent,
+            tk=self._tk,
+            ttk=self._ttk,
+            theme=self._theme,
+            messagebox=self._messagebox,
+            settings=settings_from_dict(getattr(self._settings, "download", None)),
         )
 
     def _build_models(self, parent: Any) -> None:

@@ -54,7 +54,7 @@ def test_safe_member_rejects_parent_and_drive() -> None:
 def test_extract_zip_rejects_symlink_member(tmp_path: Path) -> None:
     archive = tmp_path / "a.zip"
     info = zipfile.ZipInfo("root/link")
-    info.external_attr = 0o120000 << 16
+    info.external_attr = (0o120000 << 16)
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr(info, b"target")
     with pytest.raises(DevmanError) as exc:

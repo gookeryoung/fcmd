@@ -107,6 +107,7 @@ class LocllmSettings:
     geometry: str | None = None
     hardware: dict[str, Any] | None = None
     measured: dict[str, dict[str, Any]] | None = None
+    download: dict[str, Any] | None = None
 
 
 def config_path() -> Path:
@@ -141,6 +142,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "geometry": settings.geometry,
             "hardware": settings.hardware,
             "measured": settings.measured,
+            "download": settings.download,
         },
         path or config_path(),
     )
@@ -185,6 +187,7 @@ class LocllmWindow(
         self._hardware_thread: threading.Thread | None = None
         self._hardware_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._hardware_detecting = False
+        self._model_page: Any = None
         self.root, self._theme = _guiwindow.create_root(
             title="本地 LLM 服务",
             saved_geometry=self._settings.geometry,
@@ -961,6 +964,7 @@ class LocllmWindow(
                 geometry=self.root.winfo_geometry(),
                 hardware=self._hardware_dict(),
                 measured=self._measured,
+                download=self._model_page.settings_dict() if self._model_page is not None else self._settings.download,
             ),
             self._settings_path,
         )
@@ -968,6 +972,8 @@ class LocllmWindow(
     def _close(self) -> None:
         running = self._thread is not None and self._thread.is_alive()
         if running and not self._messagebox.askyesno("任务进行中", "启动 / 停止任务仍在执行，确实退出？"):
+            return
+        if self._model_page is not None and not self._model_page.close():
             return
         self._closing = True
         self._close_chat()

@@ -348,7 +348,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `fcmd.gui.theme`；设置持久化 `~/.fcmd/ui/wslmanw.json`（`fcmd.gui.config`）。
 - 布局：左侧发行版表（名称 / 状态 / 版本 / 默认 / 占用），右侧详情（BasePath、
   默认用户、vhdx 路径与大小、`.wslconfig` 摘要），底部日志与进度条；
-  「下载」为独立分页，避免与发行版操作抢空间（沿用 llmdownw 的分页经验）。
+  「下载」为独立分页，避免与发行版操作抢空间（沿用原 llmdownw（现 locllmw 模型页）的分页经验）。
 - 长任务在后台线程执行，`root.after` 轮询；「取消」置 `Event` 并终止子进程；
   关闭窗口时若有传输在跑，先确认，再终止子进程并按 CLI 同规则清理 `.part`。
 - 破坏性操作：`unregister` 要求**手动输入发行版名**匹配才启用按钮，并展示

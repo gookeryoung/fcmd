@@ -71,7 +71,6 @@ TOOLS: dict[str, ToolEntry] = {
     "llmconvertw": ToolEntry("llmconvertw", "python", "fcmd.apps.locllm.llmconvertw"),
     "llmdoctor": ToolEntry("llmdoctor", "python", "fcmd.apps.locllm.llmdoctor"),
     "llmdown": ToolEntry("llmdown", "python", "fcmd.apps.locllm.llmdown"),
-    "llmdownw": ToolEntry("llmdownw", "python", "fcmd.apps.locllm.llmdownw"),
     "llmengine": ToolEntry("llmengine", "python", "fcmd.apps.locllm.llmengine"),
     "llmenginew": ToolEntry("llmenginew", "python", "fcmd.apps.locllm.llmenginew"),
     "llmenv": ToolEntry("llmenv", "python", "fcmd.apps.locllm.llmenv"),
@@ -206,7 +205,6 @@ DESCRIPTIONS: dict[str, str] = {
     "llmconvertw": "HF safetensors 转 GGUF 窗口版（Tk）：启动时后台扫描 llmenv 已配置的模型目录，识别并列出可转换的 HF safetensors 目录；配置精度、解释器、源码脚本与引擎 tag，勾选多种输出格式（原始 / 量化），已生成的格式自动标记并置为只读避免覆盖；可预览转换计划，后台先转换一次再批量量化，实时显示日志与进度；窗口位置与大小记忆到 ~/.fcmd/ui/llmconvertw.json",
     "llmdoctor": "运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）",
     "llmdown": "大模型仓库下载：搜索 / 详情 / 清单 / 多源测速 / 断点续传下载",
-    "llmdownw": "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别与系列筛选 / 系列知名度默认排序 / 服务端排序与列头排序 / 详情 / 下载 / 本地管理；窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）",
     "llmengine": "列出已安装引擎",
     "llmenginew": "llama.cpp 引擎窗口版（Tk）：在线下载官方预编译包，或检查并安装本地 zip 离线包（引擎包 / cudart 运行库 / 源码包），查看已安装引擎并切换默认；窗口位置与大小记忆到 ~/.fcmd/ui/llmenginew.json",
     "llmenv": "显示目录布局与当前生效的模型目录",
@@ -292,7 +290,6 @@ LAYOUT: tuple[str, ...] = (
     "apps/locllm/llmconvertw.py",
     "apps/locllm/llmdoctor.py",
     "apps/locllm/llmdown.py",
-    "apps/locllm/llmdownw.py",
     "apps/locllm/llmengine.py",
     "apps/locllm/llmenginew.py",
     "apps/locllm/llmenv.py",
@@ -407,7 +404,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "2f54a467f905ba4fc71b6f9adcbe45eb"
+DIGEST = "e1b7deb95dfaf0b6c29cf58549d9dde0"
 
 
 if __name__ == "__main__":  # pragma: no cover

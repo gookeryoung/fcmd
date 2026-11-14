@@ -1,18 +1,13 @@
-"""llmdownw - ModelScope 模型浏览器 / 下载管理器的 Tk 窗口版。
+"""locllmw「模型」页：浏览 / 已安装 / 下载（整合原 llmdownw）。
 
-参考 LM Studio 的「左侧模型列表 + 右侧详情」布局：
+内嵌在 locllmw 的「模型」分页，用嵌套 Notebook 分为三个子页：
 
-* 左侧在 ModelScope 搜索模型（关键字为空时浏览默认排序），可按中文任务类别与模型系列筛选，
-  列表默认按系列国际知名度排序；服务端排序支持下载最多 / 星标最多 / 最新发布 / 最近更新，
-  点击列头对当前页排序（再点一次切换升降序，第三次恢复知名度顺序）；
-* 右侧展示模型元信息、README、文件清单（大小 / SHA256）与本地管理；
-* 底栏配置目标目录、下载源、并发数与校验开关，下载复用 :mod:`fcmd.apps.locllm.llmdown`
-  的多源选优 / 断点续传实现，支持进度回调与中途停止；
-* 「本地管理」页扫描目标目录下 ``<组织>/<模型>``，可打开目录或经确认后删除。
+* 浏览：ModelScope 搜索、类别 / 系列筛选、详情与文件清单；
+* 已安装：扫描下载目录下 ``<组织>/<模型>``，可打开目录或确认后删除；
+* 下载：配置目标目录 / 下载源 / 并发 / 校验，复用 ``llmdown`` 的多源选优与断点续传。
 
-示例
-----
-    fcmd llmdownw
+原独立工具 ``llmdownw`` 已移除；页面类由 ``locllmw`` 实例化，下载设置写入
+``locllmw.json`` 的 ``download`` 字段。
 """
 
 from __future__ import annotations
@@ -23,11 +18,11 @@ import re
 import subprocess
 import sys
 import threading
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-import fcmd
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     DownloadCancelled,
@@ -56,35 +51,22 @@ from fcmd.apps.locllm.llmdown import (
     series_rank,
     sort_by_popularity,
 )
-from fcmd.gui import config as _guiconfig
-from fcmd.gui import sidebar as _guisidebar
-from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 
 __all__ = [
     "DownloadGuiSettings",
-    "config_path",
     "detail_pairs",
     "filter_models",
-    "load_settings",
     "local_row",
     "model_row",
     "open_path",
     "parse_patterns",
-    "resolve_geometry",
-    "save_settings",
+    "settings_from_dict",
+    "settings_to_dict",
     "sort_models",
     "sync_tree_rows",
 ]
 
-_DESCRIPTION = (
-    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别与系列筛选 / 系列知名度默认排序 / "
-    "服务端排序与列头排序 / 详情 / 下载 / 本地管理；窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）"
-)
-_MIN_WIDTH = 1080
-_MIN_HEIGHT = 720
-_DEFAULT_WIDTH = 1280
-_DEFAULT_HEIGHT = 880
 _PAGE_SIZE = 30
 _MAX_WORKERS = 16
 _SOURCES = ("modelscope", "hf-mirror", "auto")
@@ -115,9 +97,8 @@ _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw"
 
 @dataclass
 class DownloadGuiSettings:
-    """窗口与下载参数的持久化设置。"""
+    """模型页的下载参数（持久化到 ``locllmw.json`` 的 ``download`` 字段）。"""
 
-    geometry: str | None = None
     dest: str = "models"
     source: str = "modelscope"
     workers: int = 4
@@ -126,24 +107,11 @@ class DownloadGuiSettings:
     exclude: str = ""
 
 
-def config_path() -> Path:
-    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmdownw.json``。"""
-    return _guiconfig.config_path("llmdownw")
-
-
-valid_geometry = _guiconfig.valid_geometry
-
-
-def load_settings(path: Path | None = None) -> DownloadGuiSettings:
-    """读取设置；缺失 / 损坏 / 非法字段逐项回退默认值。"""
-    raw = _guiconfig.read_settings(path or config_path())
+def settings_from_dict(raw: object) -> DownloadGuiSettings:
+    """从配置字典还原下载参数；缺失 / 非法字段逐项回退默认值。"""
     settings = DownloadGuiSettings()
-    if raw is None:
+    if not isinstance(raw, Mapping):
         return settings
-
-    geometry = raw.get("geometry")
-    if isinstance(geometry, str) and valid_geometry(geometry):
-        settings.geometry = geometry
     dest = raw.get("dest")
     if isinstance(dest, str) and dest.strip():
         settings.dest = dest
@@ -163,32 +131,16 @@ def load_settings(path: Path | None = None) -> DownloadGuiSettings:
     return settings
 
 
-def save_settings(settings: DownloadGuiSettings, path: Path | None = None) -> None:
-    """保存设置；写入失败静默忽略（不影响窗口关闭）。"""
-    _guiconfig.write_settings(
-        {
-            "geometry": settings.geometry,
-            "dest": settings.dest,
-            "source": settings.source,
-            "workers": settings.workers,
-            "verify": settings.verify,
-            "include": settings.include,
-            "exclude": settings.exclude,
-        },
-        path or config_path(),
-    )
-
-
-def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
-    """优先恢复记忆的位置，越界/异常时回落到默认尺寸（按屏幕夹紧）。"""
-    return _guiwindow.resolve_geometry(
-        saved,
-        screen_width,
-        screen_height,
-        default=f"{_DEFAULT_WIDTH}x{_DEFAULT_HEIGHT}",
-        min_width=_MIN_WIDTH,
-        min_height=_MIN_HEIGHT,
-    )
+def settings_to_dict(settings: DownloadGuiSettings) -> dict[str, Any]:
+    """把下载参数转换为可写入 JSON 的字典。"""
+    return {
+        "dest": settings.dest,
+        "source": settings.source,
+        "workers": settings.workers,
+        "verify": settings.verify,
+        "include": settings.include,
+        "exclude": settings.exclude,
+    }
 
 
 def parse_patterns(text: str) -> list[str] | None:
@@ -298,27 +250,25 @@ def open_path(path: Path) -> None:
     subprocess.Popen(command)
 
 
-class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """ModelScope 模型浏览、详情与下载管理窗口。"""
+class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
+    """locllmw「模型」页：ModelScope 浏览、已安装模型与下载管理。"""
 
-    def __init__(self, settings_path: Path | None = None) -> None:
-        import tkinter as tk
-        from tkinter import messagebox, ttk
-
+    def __init__(  # noqa: PLR0913 - 宿主窗口依赖与页面参数显式传入，避免隐式全局
+        self,
+        parent: Any,
+        *,
+        tk: Any,
+        ttk: Any,
+        theme: Any,
+        messagebox: Any,
+        settings: DownloadGuiSettings,
+    ) -> None:
         self._tk = tk
         self._ttk = ttk
+        self._theme = theme
         self._messagebox = messagebox
-        self._settings_path = settings_path
-        self._settings = load_settings(settings_path)
-        self.root, self._theme = _guiwindow.create_root(
-            title="模型下载器（ModelScope）",
-            saved_geometry=self._settings.geometry,
-            default_geometry=f"{_DEFAULT_WIDTH}x{_DEFAULT_HEIGHT}",
-            min_width=_MIN_WIDTH,
-            min_height=_MIN_HEIGHT,
-            on_close=self._close,
-        )
-
+        self._settings = settings
+        self.root = parent.winfo_toplevel()
         self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self._jobs = 0
         self._poll_scheduled = False
@@ -335,9 +285,9 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._current_files: tuple[ModelFile, ...] = ()
         self._local_models: list[LocalModel] = []
         self._downloading = False
+        self._closed = False
         self._stop_event = threading.Event()
         self._download_target = Path("models")
-
         self._keyword_var = tk.StringVar()
         self._task_var = tk.StringVar(value=_ALL_TASKS)
         self._series_applied = ""
@@ -359,9 +309,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._files_total_var = tk.StringVar(value="")
         self._meta_vars: dict[str, Any] = {}
 
-        self._build_widgets()
-        _guiwindow.build_menu(self.root, on_close=self._close, on_about=self._about)
-        _guitheme.install_theme_switcher(self.root)
+        self._build_widgets(parent)
         self._refresh_local()
         self._start_task_load()
         self._start_search(1)
@@ -369,13 +317,12 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     # ------------------------------------------------------------------ #
     # 界面
     # ------------------------------------------------------------------ #
-    def _build_widgets(self) -> None:
-        """按 locllmw 的侧边栏分页范式组织：底部状态栏 + 模型浏览 / 下载 / 本地管理三页。"""
+    def _build_widgets(self, host: Any) -> None:
+        """模型页：嵌套 Notebook 分为浏览 / 已安装 / 下载三个子页。"""
         ttk = self._ttk
         space = self._theme.spacing
-        outer = ttk.Frame(self.root)
+        outer = ttk.Frame(host)
         outer.pack(fill="both", expand=True)
-
         status = ttk.Label(
             outer,
             textvariable=self._status_var,
@@ -384,22 +331,45 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             padding=(space.sm, space.xs),
         )
         status.pack(side="bottom", fill="x", pady=(space.xs, 0))
+        self._tabs = ttk.Notebook(outer)
+        self._tabs.pack(fill="both", expand=True)
+        self._browse_tab = ttk.Frame(self._tabs, padding=space.sm)
+        self._installed_tab = ttk.Frame(self._tabs, padding=space.sm)
+        self._download_tab = ttk.Frame(self._tabs, padding=space.sm)
+        self._tabs.add(self._browse_tab, text="浏览")
+        self._tabs.add(self._installed_tab, text="已安装")
+        self._tabs.add(self._download_tab, text="下载")
+        self._build_browse(self._browse_tab)
+        self._build_local(self._installed_tab)
+        self._build_download(self._download_tab)
 
-        self._nav = _guisidebar.SidebarNav(
-            outer,
-            theme=self._theme,
-            page_padding=space.md,
-            title="模型管理",
+    def settings_dict(self) -> dict[str, Any]:
+        """导出当前下载参数，供 locllmw 写回配置。"""
+        try:
+            workers = min(max(int(self._workers_var.get().strip()), 1), _MAX_WORKERS)
+        except ValueError:
+            workers = self._settings.workers
+        return settings_to_dict(
+            DownloadGuiSettings(
+                dest=self._dest_var.get().strip() or "models",
+                source=_SOURCE_KEYS.get(self._source_var.get(), "modelscope"),
+                workers=workers,
+                verify=bool(self._verify_var.get()),
+                include=self._include_var.get(),
+                exclude=self._exclude_var.get(),
+            )
         )
-        self._nav.container.pack(fill="both", expand=True)
-        self._browse_page = self._nav.add("browse", "模型浏览", hint="搜索、筛选与详情")
-        self._download_page = self._nav.add("download", "下载", hint="队列、进度与目标目录")
-        local_page = self._nav.add("local", "本地管理", hint="已下载模型与清理")
-        self._nav.enable_shortcuts()
 
-        self._build_browse(self._browse_page)
-        self._build_download(self._download_page)
-        self._build_local(local_page)
+    def close(self) -> bool:
+        """确认并停止下载；返回 ``False`` 表示用户取消关闭。"""
+        if self._downloading and not self._messagebox.askyesno(
+            "下载进行中",
+            "下载尚未完成，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？",
+        ):
+            return False
+        self._closed = True
+        self._stop_event.set()
+        return True
 
     def _build_browse(self, parent: Any) -> None:
         ttk = self._ttk
@@ -635,7 +605,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         ttk.Label(summary, textvariable=self._selected_repo_var, style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             summary,
-            text="在「模型浏览」选中模型后，到此页配置下载参数并开始下载",
+            text="在「浏览」页选中模型后，到此页配置下载参数并开始下载",
             style="Hint.TLabel",
         ).pack(anchor="w")
 
@@ -910,7 +880,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         if not self._current_repo:
             self._status_var.set("请先选择一个模型")
             return
-        self._nav.select("download")
+        self._tabs.select(self._download_tab)
         self._download_btn.focus_set()
 
     def _open_download_target(self) -> None:
@@ -1115,7 +1085,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         values = self._local_tree.item(selection[0], "values")
         if values:
             self._keyword_var.set(str(values[0]))
-            self._nav.select("browse")
+            self._tabs.select(self._browse_tab)
             self._load_repo(str(values[0]))
 
     # ------------------------------------------------------------------ #
@@ -1135,13 +1105,15 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._schedule_poll()
 
     def _schedule_poll(self) -> None:
-        if not self._poll_scheduled:
+        if not self._poll_scheduled and not self._closed:
             self._poll_scheduled = True
             self.root.after(_guiwindow.WORKER_INTERVAL_MS, self._poll)
 
     def _poll(self) -> None:
         """主线程消费后台事件。"""
         self._poll_scheduled = False
+        if self._closed:
+            return
         try:
             while True:
                 kind, payload = self._queue.get_nowait()
@@ -1336,62 +1308,3 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     def _log(self, message: str) -> None:
         """向日志区追加一行。"""
         _guiwindow.append_log(self._log_view, message)
-
-    def _about(self) -> None:
-        """关于对话框。"""
-        self._messagebox.showinfo(
-            "关于",
-            "模型下载器（ModelScope）\n\n"
-            "搜索模型、查看 README / 文件清单，支持多源选优、断点续传、\n"
-            "SHA256 校验与本地模型管理。",
-        )
-
-    def _save(self) -> None:
-        """把当前窗口状态写回设置。"""
-        try:
-            workers = min(max(int(self._workers_var.get().strip()), 1), _MAX_WORKERS)
-        except ValueError:
-            workers = self._settings.workers
-        save_settings(
-            DownloadGuiSettings(
-                geometry=self.root.winfo_geometry(),
-                dest=self._dest_var.get().strip() or "models",
-                source=_SOURCE_KEYS.get(self._source_var.get(), "modelscope"),
-                workers=workers,
-                verify=bool(self._verify_var.get()),
-                include=self._include_var.get(),
-                exclude=self._exclude_var.get(),
-            ),
-            self._settings_path,
-        )
-
-    def _close(self) -> None:
-        """关闭窗口；下载中先确认，退出前保存设置。"""
-        if self._downloading and not self._messagebox.askyesno(
-            "下载进行中",
-            "下载尚未完成，退出将停止下载（已下载部分保留为 .part）。确实退出？",
-        ):
-            return
-        self._stop_event.set()
-        self._save()
-        self.root.destroy()
-
-
-def run_gui() -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(DownloadWindow, "窗口版")
-
-
-@fcmd.tool("llmdownw", help="打开模型下载器窗口（Tk，ModelScope）", description=_DESCRIPTION)
-def launch_cmd() -> None:
-    """打开 ModelScope 模型下载器窗口。"""
-    run_gui()
-
-
-@fcmd.main("llmdownw")
-def main() -> None:
-    pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
-
-
-if __name__ == "__main__":  # pragma: no cover
-    main()

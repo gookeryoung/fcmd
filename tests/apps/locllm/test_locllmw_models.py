@@ -1,9 +1,9 @@
-"""llmdownw 窗口版测试。
+"""locllmw 模型页（整合原 llmdownw）测试。
 
 覆盖：
-- 工具注册
-- 设置文件读写与非法值回退
-- geometry 恢复、掩码解析、列表行与详情行格式化
+- 独立工具已移除
+- 下载设置字典读写与非法值回退
+- 掩码解析、列表行与详情行格式化
 - 系统文件管理器打开路径
 - 删除模型前的路径校验沿用 llmdown 的本地管理实现
 """
@@ -18,72 +18,54 @@ from typing import Any
 
 import pytest
 
-from fcmd.apps.locllm import llmdownw
-from fcmd.apps.locllm.llmdown import LocalModel, ModelInfo, ModelSummary
-from fcmd.apps.locllm.llmdownw import (
+from fcmd.apps.locllm._locllmw_models import (
     DownloadGuiSettings,
-    config_path,
     detail_pairs,
     filter_models,
-    load_settings,
     local_row,
     model_row,
     open_path,
     parse_patterns,
-    resolve_geometry,
-    save_settings,
+    settings_from_dict,
+    settings_to_dict,
     sort_models,
     sync_tree_rows,
 )
+from fcmd.apps.locllm.llmdown import LocalModel, ModelInfo, ModelSummary
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 class TestRegistration:
-    def test_registered(self) -> None:
-        assert "llmdownw" in _TOOL_REGISTRY
+    def test_removed_from_registry(self) -> None:
+        assert "llmdownw" not in _TOOL_REGISTRY
 
 
 class TestSettings:
-    def test_defaults(self, tmp_path: Path) -> None:
-        settings = load_settings(tmp_path / "missing.json")
-        assert settings == DownloadGuiSettings()
+    def test_defaults(self) -> None:
+        assert settings_from_dict(None) == DownloadGuiSettings()
 
-    def test_roundtrip(self, tmp_path: Path) -> None:
-        path = tmp_path / "llmdownw.json"
-        save_settings(
-            DownloadGuiSettings(
-                geometry="1200x800+10+20",
-                dest="/data/models",
-                source="hf-mirror",
-                workers=8,
-                verify=False,
-                include="*.safetensors",
-                exclude="*.md",
-            ),
-            path,
+    def test_roundtrip(self) -> None:
+        settings = DownloadGuiSettings(
+            dest="/data/models",
+            source="hf-mirror",
+            workers=8,
+            verify=False,
+            include="*.safetensors",
+            exclude="*.md",
         )
+        assert settings_from_dict(settings_to_dict(settings)) == settings
 
-        loaded = load_settings(path)
-
-        assert loaded.geometry == "1200x800+10+20"
-        assert loaded.dest == "/data/models"
-        assert loaded.source == "hf-mirror"
-        assert loaded.workers == 8
-        assert loaded.verify is False
-        assert loaded.include == "*.safetensors"
-        assert loaded.exclude == "*.md"
-
-    def test_invalid_values_fallback(self, tmp_path: Path) -> None:
-        path = tmp_path / "llmdownw.json"
-        path.write_text(
-            '{"geometry": "bad", "dest": "  ", "source": "unknown", "workers": 999, '
-            '"verify": "yes", "include": 1, "exclude": "*.bin"}',
-            encoding="utf-8",
+    def test_invalid_values_fallback(self) -> None:
+        settings = settings_from_dict(
+            {
+                "dest": "  ",
+                "source": "unknown",
+                "workers": 999,
+                "verify": "yes",
+                "include": 1,
+                "exclude": "*.bin",
+            }
         )
-
-        settings = load_settings(path)
-
-        assert settings.geometry is None
         assert settings.dest == "models"
         assert settings.source == "modelscope"
         assert settings.workers == 16
@@ -91,26 +73,8 @@ class TestSettings:
         assert settings.include == ""
         assert settings.exclude == "*.bin"
 
-    def test_bool_workers_rejected(self, tmp_path: Path) -> None:
-        path = tmp_path / "llmdownw.json"
-        path.write_text('{"workers": true}', encoding="utf-8")
-        assert load_settings(path).workers == 4
-
-    def test_config_path_under_fcmd_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-        assert config_path() == tmp_path / "ui" / "llmdownw.json"
-
-
-class TestGeometry:
-    def test_default_when_missing(self) -> None:
-        assert resolve_geometry(None, 1920, 1080) == "1280x880"
-
-    def test_clamps_to_screen(self) -> None:
-        geometry = resolve_geometry("3000x2000+5000+5000", 1920, 1080)
-        assert geometry.startswith("1920x1080")
-
-    def test_restores_valid(self) -> None:
-        assert resolve_geometry("1200x800+30+40", 1920, 1080) == "1200x800+30+40"
+    def test_bool_workers_rejected(self) -> None:
+        assert settings_from_dict({"workers": True}).workers == 4
 
 
 class TestFormatting:
@@ -322,16 +286,3 @@ class TestOpenPath:
         monkeypatch.setattr(subprocess, "Popen", _Popen)
         open_path(tmp_path)
         assert calls == [["open", str(tmp_path)]]
-
-
-class TestLaunchEntry:
-    def test_launch_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        called: list[bool] = []
-        monkeypatch.setattr(llmdownw, "run_gui", lambda: called.append(True))
-        llmdownw.launch_cmd()
-        assert called == [True]
-
-    def test_settings_type_annotations(self) -> None:
-        # 防止 dataclass 字段被误删：窗口保存逻辑依赖这些字段
-        fields = {field.name for field in DownloadGuiSettings.__dataclass_fields__.values()}
-        assert fields == {"geometry", "dest", "source", "workers", "verify", "include", "exclude"}

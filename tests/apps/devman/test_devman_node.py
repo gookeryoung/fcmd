@@ -246,7 +246,9 @@ def test_install_with_explicit_sha_skips_shasums(tmp_path: Path) -> None:
         (_zip(("node-v20.11.1-win-x64/README.md", b"x")), "没有 node.exe"),
     ],
 )
-def test_install_rejects_unexpected_archive_layout(tmp_path: Path, payload: bytes, message: str) -> None:
+def test_install_rejects_unexpected_archive_layout(
+    tmp_path: Path, payload: bytes, message: str
+) -> None:
     layout = _layout(tmp_path)
     plan = _node.plan_install(layout, VERSION)
     digest = hashlib.sha256(payload).hexdigest()
