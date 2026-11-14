@@ -2539,6 +2539,13 @@ class TestServewBench:
         assert _locllmw_bench.format_result_row(cancelled)[-1] == "已取消"
         assert _locllmw_bench.ScenarioResult(scenario).mean_tps == 0.0
 
+    def test_format_result_csv_has_header_and_escapes_fields(self) -> None:
+        text = _locllmw_bench.format_result_csv([("场景,带逗号", "1", "2", "3", "1.00 s", "9.0", "8.0", '失败: "x"')])
+        lines = text.strip().splitlines()
+        assert lines[0].split(",") == list(_locllmw_bench.RESULT_COLUMNS)
+        assert '"场景,带逗号"' in lines[1]
+        assert '""x""' in lines[1]
+
     def test_endpoint_from_states_prefers_named_and_single(self) -> None:
         states = [_state("alpha", port=8081), _state("beta", port=8082)]
         named = _locllmw_bench.endpoint_from_states(states, "beta", alive=lambda state: state.name == "beta")

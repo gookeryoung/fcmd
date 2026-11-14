@@ -12,6 +12,8 @@ token 吞吐；也支持在窗口关闭时干净地停止后台测试。
 
 from __future__ import annotations
 
+import csv
+import io
 import queue
 import statistics
 import threading
@@ -19,6 +21,8 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.locllm import llmbench, llmenv, llmserve
@@ -33,6 +37,7 @@ __all__ = [
     "ScenarioResult",
     "checked_scenarios",
     "endpoint_from_states",
+    "format_result_csv",
     "format_result_row",
     "run_scenario",
     "scenario_by_key",
@@ -153,6 +158,15 @@ def format_result_row(result: ScenarioResult) -> tuple[str, ...]:
         return (*shared, "-", "-", "失败: " + _short(result.error))
     status = "已取消" if result.cancelled else "完成"
     return (*shared, f"{result.aggregate_tps:.1f}", f"{result.mean_tps:.1f}", status)
+
+
+def format_result_csv(rows: Sequence[Sequence[Any]]) -> str:
+    """把结果表行导出为 CSV 文本（首行为 :data:`RESULT_COLUMNS` 表头）。"""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(RESULT_COLUMNS)
+    writer.writerows(rows)
+    return buffer.getvalue()
 
 
 def endpoint_from_states(
@@ -486,6 +500,45 @@ class _LocllmWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
             return
         self._bench_result_tree.delete(*self._bench_result_tree.get_children())
         self._bench_status_var.set("已清空结果")
+
+    def _bench_rows(self) -> list[tuple[str, ...]]:
+        """读取结果表当前所有行（与 :data:`RESULT_COLUMNS` 顺序一致）。"""
+        return [tuple(self._bench_result_tree.item(iid, "values")) for iid in self._bench_result_tree.get_children()]
+
+    def _copy_bench_csv(self) -> None:
+        """把结果表复制为 CSV 文本到剪贴板。"""
+        rows = self._bench_rows()
+        if not rows:
+            self._bench_status_var.set("没有可复制的结果")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(format_result_csv(rows))
+        self._bench_status_var.set(f"已复制 {len(rows)} 行 CSV 到剪贴板")
+
+    def _export_bench_csv(self) -> None:
+        """把结果表另存为 CSV 文件（UTF-8 BOM，便于 Excel 直接打开）。"""
+        rows = self._bench_rows()
+        if not rows:
+            self._bench_status_var.set("没有可导出的结果")
+            return
+        from tkinter import filedialog
+
+        path = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="导出性能测试结果",
+            defaultextension=".csv",
+            initialfile=f"locllmw-bench-{datetime.now():%Y%m%d-%H%M%S}.csv",
+            filetypes=[("CSV 文件", "*.csv"), ("所有文件", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(format_result_csv(rows), encoding="utf-8-sig")
+        except OSError as exc:
+            self._messagebox.showerror("导出失败", str(exc))
+            return
+        self._bench_status_var.set(f"已导出 {len(rows)} 行到 {path}")
+        self._log(f"性能测试结果已导出：{path}")
 
     def _set_bench_busy(self, busy: bool) -> None:
         """切换测试按钮可用状态。"""

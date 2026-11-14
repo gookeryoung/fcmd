@@ -145,6 +145,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _start_bench: Any
         _stop_bench: Any
         _clear_bench: Any
+        _copy_bench_csv: Any
+        _export_bench_csv: Any
         _toggle_bench_scenario: Any
         _refresh_hardware_view: Any
         _refresh_recommendations: Any
@@ -908,6 +910,10 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._bench_stop_btn.pack(side="left", padx=(space.sm, 0))
         self._bench_clear_btn = ttk.Button(actions, text="清空结果", command=self._clear_bench)
         self._bench_clear_btn.pack(side="left", padx=(space.sm, 0))
+        self._bench_copy_btn = ttk.Button(actions, text="复制 CSV", command=self._copy_bench_csv)
+        self._bench_copy_btn.pack(side="left", padx=(space.sm, 0))
+        self._bench_export_btn = ttk.Button(actions, text="导出 CSV", command=self._export_bench_csv)
+        self._bench_export_btn.pack(side="left", padx=(space.xs, 0))
         self._bench_progress = ttk.Progressbar(actions, mode="indeterminate", length=180)
         self._bench_progress.pack(side="right")
 
