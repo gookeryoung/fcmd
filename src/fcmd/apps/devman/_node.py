@@ -234,11 +234,7 @@ def _resolve_expected(plan: InstallPlan, fetcher: Fetcher) -> tuple[str, str]:
 
 def _download(plan: InstallPlan, fetcher: Fetcher, progress: ProgressCallback | None) -> None:
     """按候选来源下载；全部失败抛 ``DOWNLOAD_FAILED``。"""
-    if (
-        plan.cache_path.is_file()
-        and plan.expected_sha256
-        and sha256_file(plan.cache_path) == plan.expected_sha256
-    ):
+    if plan.cache_path.is_file() and plan.expected_sha256 and sha256_file(plan.cache_path) == plan.expected_sha256:
         return
     problems: list[str] = []
     for url in plan.urls:

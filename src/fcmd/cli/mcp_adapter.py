@@ -722,8 +722,7 @@ def build_mcp_server() -> Server:
     """构造 MCP Server 并注册全部 handler（tools + resources + prompts）。"""
     if not _MCP_AVAILABLE or Server is None:
         raise RuntimeError(
-            "mcp 包未安装。请运行 'uv pip install mcp>=1.0,<2' 或添加到 pyproject.toml "
-            "的 [project.optional-dependencies] mcp 组。"
+            "mcp 包未安装。请运行 'uv pip install \"mcp>=1.0,<2\"' 或安装 fcmd[agent] extra （uv sync --extra agent）。"
         )
     server = Server(MCP_SERVER_NAME)
     server.list_tools = _list_tools_handler  # type: ignore[assignment]
