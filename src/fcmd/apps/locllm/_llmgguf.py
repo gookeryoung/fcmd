@@ -218,16 +218,24 @@ def _read_string(stream: BinaryIO) -> str:
     return _read(stream, length).decode("utf-8", "replace")
 
 
+def _skip_string(stream: BinaryIO) -> None:
+    """跳过一个 GGUF 字符串（不解码、不分配）：词表可达数十万项。"""
+    (length,) = struct.unpack("<Q", _read(stream, 8))
+    if length > GGUF_META_LIMIT:
+        raise ValueError("GGUF 字符串长度异常")
+    stream.seek(length, 1)
+
+
 def _skip_value(stream: BinaryIO, value_type: int) -> None:
     """跳过一个元数据值（数组按元素类型逐项跳过）。"""
     if value_type == _TYPE_STRING:
-        _read_string(stream)
+        _skip_string(stream)
         return
     if value_type == _TYPE_ARRAY:
         elem_type, count = struct.unpack("<IQ", _read(stream, 12))
         if elem_type == _TYPE_STRING:
             for _ in range(count):
-                _read_string(stream)
+                _skip_string(stream)
             return
         size = _SCALAR_SIZES.get(elem_type)
         if size is None or count > GGUF_META_LIMIT:
@@ -280,7 +288,7 @@ def _read_meta(path: Path, *, tensors: bool = True) -> _GgufMeta:  # noqa: PLR09
         max_end = 0
         fixed_width = True
         for _ in range(tensor_count):
-            _read_string(stream)
+            _skip_string(stream)
             (n_dims,) = struct.unpack("<I", _read(stream, 4))
             dims = struct.unpack(f"<{n_dims}Q", _read(stream, 8 * n_dims))
             (type_id,) = struct.unpack("<I", _read(stream, 4))

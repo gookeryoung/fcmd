@@ -23,6 +23,7 @@ from typing import Any
 
 from fcmd.apps.locllm import _llmconfig, llmbase, llmconvert, llmengine, llmenv, llmmodel, llmqnt
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
+from fcmd.apps.locllm._llmgguf_cache import PrecisionCache
 from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
 from fcmd.gui import window as _guiwindow
 
@@ -533,11 +534,18 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
                     entries = llmmodel.scan_models(root)
             except OSError as exc:
                 self._queue.put(("qlog", f"扫描模型目录失败: {root}: {exc}"))
+            # 列表只需要“是否量化 + 标注文本”，走 ``tensors=False`` 快路径并复用精度
+            # 缓存：默认全量解析会逐项读 tokenizer 词表（数十万次小读），在 30B 级
+            # 模型目录上单次扫描要数秒 CPU，启动阶段与界面抢 GIL。
+            store = PrecisionCache()
             for entry in entries:
                 try:
-                    precisions[llmenv.path_key(entry.path)] = detect_precision(entry.path)
+                    precision = store.get(entry.path) or detect_precision(entry.path, tensors=False)
                 except OSError:
                     continue
+                precisions[llmenv.path_key(entry.path)] = precision
+                store.remember(entry.path, precision)
+            store.save()
         finally:
             # 任何一步异常都要让主线程拿到结果，避免按钮永久停在“检测中”
             self._queue.put(("env", (info, tag, convertible, entries, precisions)))

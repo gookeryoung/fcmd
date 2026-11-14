@@ -301,3 +301,59 @@ def test_write_failure_is_ignored_on_migration(home: Path, monkeypatch: pytest.M
 
     monkeypatch.setattr(Path, "write_text", _denied)
     assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}
+
+
+# ---------------------------------------------------------------------- #
+# 读取缓存（窗口启动时同一轮会读取数十次）
+# ---------------------------------------------------------------------- #
+def test_load_config_reuses_cache(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write(home / "serve" / "config.json", {"models_dir": "D:/models"})
+    reads: list[Path] = []
+    original = _llmconfig._read_json
+
+    def _counted(path: Path) -> dict[str, Any] | None:
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(_llmconfig, "_read_json", _counted)
+    assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}
+    after_first = list(reads)
+    assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}
+    assert reads == after_first
+    assert reads.count(home / "serve" / "config.json") == 1
+
+
+def test_load_config_returns_copy(home: Path) -> None:
+    _write(home / "serve" / "config.json", {"models_dir": "D:/models"})
+    first = _llmconfig.load_config(home)
+    first["models_dir"] = str(home / "other")
+    assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}
+
+
+def test_save_config_invalidates_cache(home: Path) -> None:
+    _write(home / "serve" / "config.json", {"models_dir": "D:/models"})
+    assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}
+    _llmconfig.save_config({"models_dir": "E:/models"}, home)
+    assert _llmconfig.load_config(home) == {"models_dir": "E:/models"}
+
+
+def test_load_config_sees_external_rewrite(home: Path) -> None:
+    _write(home / "serve" / "config.json", {"models_dir": "D:/models"})
+    assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}
+    _write(home / "serve" / "config.json", {"models_dir": "E:/models-external"})
+    assert _llmconfig.load_config(home) == {"models_dir": "E:/models-external"}
+
+
+def test_missing_config_is_cached_as_empty(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    reads: list[Path] = []
+    original = _llmconfig._read_json
+
+    def _counted(path: Path) -> dict[str, Any] | None:
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(_llmconfig, "_read_json", _counted)
+    assert _llmconfig.load_config(home) == {}
+    after_first = list(reads)
+    assert _llmconfig.load_config(home) == {}
+    assert reads == after_first

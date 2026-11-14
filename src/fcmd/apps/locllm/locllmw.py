@@ -134,6 +134,9 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         measured = raw.get("measured")
         if isinstance(measured, dict):
             settings.measured = {str(key): dict(value) for key, value in measured.items() if isinstance(value, dict)}
+        download = raw.get("download")
+        if isinstance(download, dict):
+            settings.download = download
         chat_settings_open = raw.get("chat_settings_open")
         if isinstance(chat_settings_open, bool):
             settings.chat_settings_open = chat_settings_open

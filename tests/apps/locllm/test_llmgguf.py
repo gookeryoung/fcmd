@@ -301,6 +301,31 @@ def test_oversized_string_length_falls_back_to_filename(tmp_path: Path) -> None:
     assert result.label == "BF16 全量，未量化"
 
 
+def test_skipped_oversized_string_length_falls_back_to_filename(tmp_path: Path) -> None:
+    """被跳过的元数据字符串同样受长度上限保护（跳过路径不解码但仍要校验）。"""
+    path = tmp_path / "model-BF16.gguf"
+    bogus = _string("tokenizer.ggml.bogus") + struct.pack("<I", 8) + struct.pack("<Q", _llmgguf.GGUF_META_LIMIT + 1)
+    _write_gguf(path, file_type=None, extra_kv=[bogus])
+
+    result = detect_precision(path, tensors=False)
+
+    assert result.source == "filename"
+    assert result.label == "BF16 全量，未量化"
+
+
+def test_skipped_oversized_string_in_array_falls_back_to_filename(tmp_path: Path) -> None:
+    """字符串数组的元素同样走跳过路径，异常长度要回退到文件名标记。"""
+    path = tmp_path / "model-Q4_K_M.gguf"
+    body = struct.pack("<I", 8) + struct.pack("<Q", 2) + struct.pack("<Q", 1) + struct.pack("<Q", 0)
+    bogus = _string("tokenizer.ggml.tokens") + struct.pack("<I", 9) + body
+    _write_gguf(path, file_type=None, extra_kv=[bogus])
+
+    result = detect_precision(path, tensors=False)
+
+    assert result.source == "filename"
+    assert result.label == "Q4_K_M 量化"
+
+
 def test_scalar_metadata_is_skipped(tmp_path: Path) -> None:
     path = tmp_path / "model-f16.gguf"
     _write_gguf(path, file_type=1, extra_kv=[_kv_f32("general.some.float", 1.5)])

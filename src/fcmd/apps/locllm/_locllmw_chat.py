@@ -93,6 +93,8 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
 
         def _persist_settings(self) -> None: ...
 
+        def _ensure_page(self, key: str) -> None: ...
+
     # ------------------------------------------------------------------ #
     # 界面
     # ------------------------------------------------------------------ #
@@ -167,7 +169,8 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._chat_status_var = tk.StringVar(value=_UNAVAILABLE)
 
     def _on_page_changed(self, key: str) -> None:
-        """切到对话页时刷新可用服务，避免启动服务后列表过期。"""
+        """切页时先构建首次可见的延迟页面，再刷新对话页可用服务。"""
+        self._ensure_page(key)
         if key == "chat":
             self._chat_refresh_services()
 

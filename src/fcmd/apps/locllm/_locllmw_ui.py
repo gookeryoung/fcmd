@@ -11,6 +11,7 @@ import queue
 import re
 import socket
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -20,7 +21,6 @@ from fcmd.apps.locllm import _llmtune, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._llmgguf_cache import PrecisionCache
 from fcmd.apps.locllm._locllmw_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
-from fcmd.apps.locllm._locllmw_models import _ModelBrowserPage, settings_from_dict
 from fcmd.apps.locllm._locllmw_monitor import (
     _FIT_BUSY,
     _FIT_RUNNING,
@@ -28,7 +28,6 @@ from fcmd.apps.locllm._locllmw_monitor import (
     RATE_WINDOW_SECONDS,
     _fit_state,
 )
-from fcmd.apps.locllm._locllmw_settings import SettingsPage
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -220,13 +219,17 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         settings_page = self._nav.add("settings", "设置", hint="存储、引擎与关于")
         self._page_canvases = {}
         self._page_bodies = {}
+        self._page_builders: dict[str, Callable[[], None]] = {}
+        self._built_pages: set[str] = set()
         self._nav.enable_shortcuts()
         self.root.bind("<MouseWheel>", self._on_page_wheel, add="+")
         run_body = self._scroll_page("run", run_page)
         overview_body = self._scroll_page("overview", overview_page)
         self._build_health_banner(overview_body)
         self._build_overview(overview_body)
-        self._build_model_browser(self._scroll_page("models", models_page))
+        # 模型页与设置页首屏不可见，构建时会启动模型目录 / 引擎 / GGUF 精度扫描，
+        # 改成首次切页时构建：窗口先出来，这两页的工作量等用户真的要看时再付。
+        self._defer_page("models", lambda: self._build_model_browser(self._scroll_page("models", models_page)))
         self._build_health_banner(run_body)
         self._build_actions(run_body)
         self._build_plan_preview(run_body)
@@ -235,7 +238,21 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._build_chat_page(chat_page)
         self._build_lab(self._scroll_page("lab", lab_page))
         self._build_monitor(self._scroll_page("monitor", monitor_page))
-        self._build_settings(self._scroll_page("settings", settings_page))
+        self._defer_page("settings", lambda: self._build_settings(self._scroll_page("settings", settings_page)))
+
+    def _defer_page(self, key: str, builder: Callable[[], None]) -> None:
+        """登记一个「首次切到该页再构建」的页面构建函数。"""
+        self._page_builders[key] = builder
+
+    def _ensure_page(self, key: str) -> None:
+        """构建尚未构建的分页内容（已构建时无操作）。"""
+        if key in self._built_pages:
+            return
+        builder = self._page_builders.pop(key, None)
+        if builder is None:
+            return
+        self._built_pages.add(key)
+        builder()
 
     def _scroll_page(self, key: str, page: Any) -> Any:
         """把分页内容套进纵向滚动容器，内容高于窗口时可滚动，避免底部控件被裁掉。"""
@@ -380,6 +397,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _build_settings(self, parent: Any) -> None:
         """设置页：目录 / 引擎 / 界面三页配置。"""
+        # 延迟导入：设置页首次切页才构建，其模块（引擎 / 环境扫描）不在冷启动路径上。
+        from fcmd.apps.locllm._locllmw_settings import SettingsPage
+
         self._settings_page = SettingsPage(
             parent,
             tk=self._tk,
@@ -526,6 +546,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _build_model_browser(self, parent: Any) -> None:
         """模型页：浏览 / 下载 / 已安装 / 转换 / 量化五个同级子页。"""
+        # 延迟导入：模型页同样首次切页才构建，避免冷启动拉进 llmdown / llmconvert。
+        from fcmd.apps.locllm._locllmw_models import _ModelBrowserPage, settings_from_dict
+
         self._model_page = _ModelBrowserPage(
             parent,
             tk=self._tk,

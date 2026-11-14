@@ -119,7 +119,8 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
-    """写入 JSON 对象（自动创建父目录）。"""
+    """写入 JSON 对象（自动创建父目录）；任一写操作都会让配置缓存失效。"""
+    _LOAD_CACHE.clear()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -226,12 +227,39 @@ def _migrate(raw: dict[str, Any], home: Path | None) -> bool:
 # ---------------------------------------------------------------------- #
 # 配置读写
 # ---------------------------------------------------------------------- #
+_LOAD_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
+"""``load_config`` 的进程内缓存：键为（路径, mtime_ns, size），任何写操作后整体失效。
+
+窗口启动时（locllmw / 设置页 / 转换页）会在同一轮里读取配置十余次，缓存把
+「重新读盘 + 旧键迁移」压到每次文件指纹变化后的一次，冷启动少掉数十次 I/O。
+"""
+
+
+def _stat_key(path: Path) -> tuple[str, int, int]:
+    """文件指纹键；文件不存在时用 ``(-1, -1)`` 表示，仍可命中“空配置”缓存。"""
+    try:
+        stat = path.stat()
+    except OSError:
+        return str(path), -1, -1
+    return str(path), stat.st_mtime_ns, stat.st_size
+
+
 def load_config(home: Path | None = None) -> dict[str, Any]:
-    """读取配置并完成旧键迁移；缺失或损坏时返回空字典。"""
-    raw = _read_json(config_path(home)) or {}
+    """读取配置并完成旧键迁移；缺失或损坏时返回空字典。
+
+    结果按「路径 + mtime_ns + size」缓存在进程内，命中时直接返回副本；写配置
+    （:func:`save_config` / :func:`set_option` / 迁移写回）会使缓存失效。
+    """
+    path = config_path(home)
+    cached = _LOAD_CACHE.get(_stat_key(path))
+    if cached is not None:
+        return dict(cached)
+    raw = _read_json(path) or {}
     if _migrate(raw, home):
         with contextlib.suppress(OSError):
-            _write_json(config_path(home), raw)
+            _write_json(path, raw)
+    _LOAD_CACHE.clear()
+    _LOAD_CACHE[_stat_key(path)] = dict(raw)
     return raw
 
 
