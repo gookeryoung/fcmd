@@ -694,6 +694,8 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             actions, text="停止", command=self._stop_download, style="Danger.TButton", state="disabled", width=8
         )
         self._stop_btn.pack(side="left", padx=(space.sm, 0))
+        self._retry_btn = ttk.Button(actions, text="重试下载", command=self._start_download, state="disabled", width=10)
+        self._retry_btn.pack(side="left", padx=(space.sm, 0))
         ttk.Button(actions, text="打开目标目录", command=self._open_download_target, width=12).pack(side="right")
 
         progress = ttk.LabelFrame(parent, text="进度", padding=space.sm)
@@ -952,6 +954,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._downloading = True
         self._stop_event.clear()
         self._download_btn.configure(state="disabled")
+        self._retry_btn.configure(state="disabled")
         self._stop_btn.configure(state="normal")
         self._search_btn.configure(state="disabled")
         self._overall_bar.configure(maximum=1, value=0)
@@ -1246,7 +1249,9 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._next_btn.configure(state="normal" if result.page < pages else "disabled")
         if not items:
             self._status_var.set(
-                f"本页没有符合{'、'.join(filters)}的模型，可翻页或放宽筛选后再试" if filters else "没有匹配的模型"
+                f"本页没有符合{'、'.join(filters)}的模型，可清空关键字、放宽筛选或翻页后再试"
+                if filters
+                else "没有匹配的模型，可清空关键字或翻页后再试"
             )
             return
         repos = {item.repo for item in items}
@@ -1325,6 +1330,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         """下载结束：恢复按钮、刷新本地列表并提示结果。"""
         self._downloading = False
         self._download_btn.configure(state="normal" if self._current_repo else "disabled")
+        self._retry_btn.configure(state="disabled" if ok or not self._current_repo else "normal")
         self._stop_btn.configure(state="disabled")
         self._search_btn.configure(state="normal")
         self._status_var.set(message)

@@ -127,6 +127,7 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._chat_saw_reasoning = False
         self._chat_answer_started = False
         self._chat_states: list[ServeState] = []
+        self._chat_service_labels: dict[str, str] = {}
         self._chat_attachments: list[Attachment] = []
         self._chat_service_var = tk.StringVar(value=_CUSTOM)
         self._chat_url_var = tk.StringVar(value=_DEFAULT_URL)
@@ -346,6 +347,10 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     # ------------------------------------------------------------------ #
     # 服务
     # ------------------------------------------------------------------ #
+    def _chat_service_name(self) -> str:
+        """下拉框显示文案 → 服务名；自定义地址返回 ``_CUSTOM``。"""
+        return self._chat_service_labels.get(self._chat_service_var.get(), _CUSTOM)
+
     def _chat_refresh_services(self) -> None:
         """重新读取 llmenv 登记的服务并刷新下拉框，默认选中第一个可用服务。"""
         try:
@@ -353,44 +358,61 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         except OSError as exc:
             self._chat_states = []
             self._chat_append("error", f"读取服务状态失败: {exc}\n")
-        names = [state.name for state in self._chat_states]
-        self._chat_service_box.configure(values=[_CUSTOM, *names])
+        labels = [
+            _CUSTOM,
+            *[f"{state.name}（{'运行中' if _state_available(state) else '已退出'}）" for state in self._chat_states],
+        ]
+        self._chat_service_labels = {
+            label: state.name for label, state in zip(labels[1:], self._chat_states, strict=True)
+        }
+        self._chat_service_box.configure(values=labels)
 
         current = self._chat_service_var.get()
-        if current not in [_CUSTOM, *names]:
+        if current not in labels:
             current = _CUSTOM
             self._chat_service_var.set(_CUSTOM)
         if current == _CUSTOM and not self._chat_manual_choice:
             first = _first_available(self._chat_states)
             if first is not None:
-                current = first.name
+                current = next(label for label, name in self._chat_service_labels.items() if name == first.name)
+                self._chat_service_var.set(current)
+            elif self._chat_states:
+                # 都不可用时也选中第一个服务，让状态栏说明“进程已退出”而不是笼统的未选择。
+                current = labels[1]
                 self._chat_service_var.set(current)
 
-        state = next((item for item in self._chat_states if item.name == current), None)
+        state = self._chat_selected_state()
         if state is None:
-            self._chat_status_var.set(_UNAVAILABLE)
+            self._chat_status_var.set(
+                "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
+                if not self._chat_states
+                else "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
+            )
             return
         self._chat_apply_state(state)
         if _state_available(state):
-            self._chat_status_var.set(f"已选择服务 {state.name}")
+            self._chat_status_var.set(f"已选择服务 {state.name}（运行中）")
         else:
-            self._chat_status_var.set(_UNAVAILABLE)
+            self._chat_status_var.set(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
+
+    def _chat_selected_state(self) -> ServeState | None:
+        name = self._chat_service_name()
+        return next((item for item in self._chat_states if item.name == name), None)
 
     def _chat_on_service_selected(self, _event: Any = None) -> None:
         """选中已登记服务后回填地址 / 模型 / API Key，并提示是否可用。"""
         self._chat_manual_choice = True
-        name = self._chat_service_var.get()
-        state = next((item for item in self._chat_states if item.name == name), None)
+        state = self._chat_selected_state()
         if state is None:
-            self._chat_status_var.set(_CUSTOM)
+            self._chat_status_var.set("自定义地址：脱离已登记服务，直接按下方地址与模型接入")
             return
         self._chat_apply_state(state)
         if _state_available(state):
             self._chat_append("info", f"已切换到服务 {state.name}：{state.endpoint.base_url}\n")
-            self._chat_status_var.set(f"已选择服务 {state.name}")
+            self._chat_status_var.set(f"已选择服务 {state.name}（运行中）")
         else:
             self._chat_append("error", f"服务 {state.name} 不可用：{state.endpoint.base_url}\n")
-            self._chat_status_var.set(_UNAVAILABLE)
+            self._chat_status_var.set(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
 
     def _chat_apply_state(self, state: ServeState) -> None:
         """把服务状态的地址 / 模型 / API Key 回填到表单。"""
@@ -458,8 +480,7 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
 
     def _chat_current_vision(self) -> bool:
         """当前选中服务是否以视觉模式启动（自定义地址无法判断，按 True 处理）。"""
-        name = self._chat_service_var.get()
-        state = next((item for item in self._chat_states if item.name == name), None)
+        state = self._chat_selected_state()
         if state is None:
             return True
         return state.vision

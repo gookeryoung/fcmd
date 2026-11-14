@@ -581,6 +581,7 @@ def _chat_page(states: list[ServeState], service: str = _locllmw_chat._CUSTOM) -
     page._chat_api_key_var = _FakeVar()
     page._chat_status_var = _FakeVar("就绪")
     page._chat_service_box = _FakeBox()
+    page._chat_service_labels = {}
     appended: list[tuple[str, str]] = []
     page._appended = appended
     page._chat_append = lambda tag, text: appended.append((tag, text))
@@ -596,10 +597,10 @@ def test_chat_page_refresh_selects_first_available(monkeypatch: pytest.MonkeyPat
     page = _chat_page([])
     _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
-    assert page._chat_service_var.get() == "alive"
+    assert page._chat_service_var.get() == "alive（运行中）"
     assert page._chat_url_var.get() == alive.base_url
     assert page._chat_model_var.get() == alive.alias
-    assert page._chat_status_var.get() == "已选择服务 alive"
+    assert page._chat_status_var.get() == "已选择服务 alive（运行中）"
 
 
 def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -610,9 +611,9 @@ def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     page = _chat_page([])
     _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
-    assert page._chat_service_var.get() == _locllmw_chat._CUSTOM
-    assert page._chat_service_box.values == [_locllmw_chat._CUSTOM, "dead"]
-    assert page._chat_status_var.get() == "不可用"
+    assert page._chat_service_var.get() == "dead（已退出）"
+    assert page._chat_service_box.values == [_locllmw_chat._CUSTOM, "dead（已退出）"]
+    assert page._chat_status_var.get() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
 
 
 def test_chat_page_refresh_without_services(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -622,7 +623,7 @@ def test_chat_page_refresh_without_services(monkeypatch: pytest.MonkeyPatch) -> 
     _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
     assert page._chat_service_box.values == [_locllmw_chat._CUSTOM]
-    assert page._chat_status_var.get() == "不可用"
+    assert page._chat_status_var.get() == "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
 
 
 def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -635,16 +636,17 @@ def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch) 
     _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
     assert page._chat_service_var.get() == _locllmw_chat._CUSTOM
-    assert page._chat_status_var.get() == "不可用"
+    assert page._chat_status_var.get() == "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
 
 
 def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch) -> None:
     state = _state("dead")
     monkeypatch.setattr(_locllmw_chat, "process_alive", lambda pid, created: False)
 
-    page = _chat_page([state], service="dead")
+    page = _chat_page([state], service="dead（已退出）")
+    page._chat_service_labels = {"dead（已退出）": "dead"}
     _locllmw_chat._LocllmWindowChat._chat_on_service_selected(page)
 
     assert page._chat_url_var.get() == state.base_url
-    assert page._chat_status_var.get() == "不可用"
+    assert page._chat_status_var.get() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
     assert page._appended[0][0] == "error"

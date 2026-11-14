@@ -383,8 +383,15 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         scrollbar.pack(side="right", fill="y")
         self._engine_tree.pack(side="left", fill="both", expand=True)
 
+        self._engine_empty_var = self._tk.StringVar(value="")
+        self._engine_empty_label = ttk.Label(
+            parent, textvariable=self._engine_empty_var, style="Hint.TLabel", justify="left"
+        )
+        self._engine_empty_label.pack(fill="x", pady=(0, space.sm))
+
         info = ttk.Frame(parent)
         info.pack(fill="x", pady=(0, space.sm))
+        self._engine_info_frame = info
         info.columnconfigure(1, weight=1)
         for row, (key, label) in enumerate((("current", "当前引擎"), ("installed", "已安装"))):
             ttk.Label(info, text=label).grid(row=row, column=0, sticky="w", padx=(0, space.sm))
@@ -537,6 +544,11 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         self._engine_info_vars["current"].set(status.current)
         self._engine_info_vars["installed"].set(f"{status.installed} 个")
         self._vars["engines_root"].set(str(status.root))
+        if status.installed:
+            self._engine_empty_label.pack_forget()
+        else:
+            self._engine_empty_var.set("尚未安装引擎：用下方「在线安装」或「离线安装」添加，安装后点「设为默认」。")
+            self._engine_empty_label.pack(fill="x", pady=(0, self._theme.spacing.sm), before=self._engine_info_frame)
 
     def _selected_tag(self) -> str | None:
         selection = self._engine_tree.selection()
