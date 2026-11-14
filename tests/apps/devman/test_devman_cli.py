@@ -330,6 +330,63 @@ def test_install_python_dry_run_human(
     assert "安装目录:" in out
 
 
+def test_install_from_local_zip_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data, digest = _fakes.make_node_zip("20.11.1")
+    artifact = tmp_path / "node-v20.11.1-win-x64.zip"
+    artifact.write_bytes(data)
+    artifact.with_name(artifact.name + ".sha256").write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
+    runner = _fakes.FakeRunner(lambda argv, env: _fakes.result(stdout="v20.11.1\n"))
+    ctx = _ctx(tmp_path, runner=runner)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(
+        capsys, ["install", "node@20.11.1", "--from", str(artifact), "--no-path", "--json"]
+    )
+    assert code == 0
+    data_out = _envelope(out)["data"]
+    assert data_out["changed"] is True
+    assert data_out["actions"][0]["action"] == "import"
+    assert (ctx.layout.version_dir("node", "20.11.1") / "node.exe").is_file()
+    assert not list(ctx.layout.cache_dir.glob("*.part"))
+
+
+def test_install_from_local_zip_dry_run_human(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data, _digest = _fakes.make_node_zip("20.11.1")
+    artifact = tmp_path / "node-v20.11.1-win-x64.zip"
+    artifact.write_bytes(data)
+    _use(monkeypatch, _ctx(tmp_path))
+    code, out, _err = _run(capsys, ["install", "node@20.11.1", "--from", str(artifact), "--dry-run"])
+    assert code == 0
+    assert f"本地来源: {artifact}" in out
+    assert "校验: --sha256 或同目录校验文件" in out
+
+
+def test_install_from_local_rejects_non_exact_version(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data, _digest = _fakes.make_node_zip("20.11.1")
+    artifact = tmp_path / "node.zip"
+    artifact.write_bytes(data)
+    _use(monkeypatch, _ctx(tmp_path))
+    code, out, err = _run(capsys, ["install", "node@20", "--from", str(artifact)])
+    assert code == 3
+    assert "精确版本号" in out + err
+
+
+def test_install_from_local_rejects_python(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    artifact = tmp_path / "python.zip"
+    artifact.write_bytes(b"x")
+    _use(monkeypatch, _ctx(tmp_path))
+    code, out, err = _run(capsys, ["install", "python@3.12.15", "--from", str(artifact)])
+    assert code == 3
+    assert "--from 仅支持 node" in out + err
+
+
 # ---------------------------------------------------------------------- #
 # uninstall
 # ---------------------------------------------------------------------- #

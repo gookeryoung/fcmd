@@ -63,7 +63,12 @@ def _human_install(payload: dict[str, Any]) -> None:
     print(payload.get("message") or "完成")
     if payload.get("dry_run") and payload.get("planned"):
         planned = payload["planned"]
-        if "urls" in planned:
+        if planned.get("local"):
+            print(f"  构件: {planned['artifact']}")
+            print(f"  本地来源: {planned['local']}")
+            print(f"  校验: {planned['sha256_url'] or '--sha256 或同目录校验文件'}")
+            print(f"  目标: {planned['dest']}")
+        elif "urls" in planned:
             print(f"  构件: {planned['artifact']}")
             for url in planned["urls"]:
                 print(f"  来源: {url}")
@@ -278,6 +283,7 @@ def versions(
         "dry_run": "只输出计划，不建目录、不下载、不改状态、不写 PATH",
         "force": "已安装时强制重装",
         "sha256": "显式指定构件 sha256（官方清单不可达时用）",
+        "from_path": "离线导入本地 node zip（需精确版本号；校验值取 <zip>.sha256 / SHASUMS256.txt）",
         "no_path": "不把 shim 目录写入用户 PATH",
         "allow_shadow": "允许 devman 的 shim 遮蔽已有 node/python",
         "root": "devman 根目录",
@@ -288,6 +294,7 @@ def install(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一�
     dry_run: bool = False,
     force: bool = False,
     sha256: str = "",
+    from_path: str = "",
     no_path: bool = False,
     allow_shadow: bool = False,
     root: str = "",
@@ -304,6 +311,7 @@ def install(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一�
             dry_run=dry_run,
             force=force,
             sha256=sha256 or None,
+            source=from_path or None,
             write_path=not no_path,
             allow_shadow=allow_shadow,
         )

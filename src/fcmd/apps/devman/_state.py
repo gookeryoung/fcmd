@@ -75,13 +75,15 @@ class Config:
     python_mirror: str | None = None
     timeout_s: int = 120
     progress: bool = True
+    # None=跟随系统，URL=显式代理，off/none=显式禁用（跳过环境变量代理）
+    proxy: str | None = None
 
     def to_data(self) -> dict[str, Any]:
         return {
             "schema": CONFIG_SCHEMA,
             "node": {"mirror": self.node_mirror},
             "python": {"uv": self.python_uv, "mirror": self.python_mirror},
-            "network": {"timeout_s": self.timeout_s, "progress": self.progress},
+            "network": {"timeout_s": self.timeout_s, "progress": self.progress, "proxy": self.proxy},
         }
 
 
@@ -137,6 +139,14 @@ def load_config(layout: Layout) -> tuple[Config, list[str]]:
         warnings.append("config.network.progress 非法，已回落 true")
         progress = defaults.progress
 
+    proxy = network.get("proxy", defaults.proxy)
+    if proxy is not None:
+        if not isinstance(proxy, str) or not proxy.strip():
+            warnings.append("config.network.proxy 非法，已回落 null")
+            proxy = None
+        else:
+            proxy = proxy.strip()
+
     return (
         Config(
             node_mirror=mirror,
@@ -144,6 +154,7 @@ def load_config(layout: Layout) -> tuple[Config, list[str]]:
             python_mirror=py_mirror,
             timeout_s=timeout,
             progress=progress,
+            proxy=proxy,
         ),
         warnings,
     )

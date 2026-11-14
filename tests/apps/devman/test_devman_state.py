@@ -45,6 +45,25 @@ def test_config_field_level_fallback(tmp_path: Path) -> None:
     assert len(warnings) == 5
 
 
+def test_config_proxy_field(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    layout.root.mkdir(parents=True)
+    layout.config_file.write_text(json.dumps({"network": {"proxy": "  127.0.0.1:7890  "}}), encoding="utf-8")
+    config, warnings = _state.load_config(layout)
+    assert config.proxy == "127.0.0.1:7890"
+    assert warnings == []
+
+    layout.config_file.write_text(json.dumps({"network": {"proxy": 7890}}), encoding="utf-8")
+    config, warnings = _state.load_config(layout)
+    assert config.proxy is None
+    assert any("network.proxy" in item for item in warnings)
+
+    layout.config_file.write_text(json.dumps({"network": {"proxy": " "}}), encoding="utf-8")
+    config, warnings = _state.load_config(layout)
+    assert config.proxy is None
+    assert any("network.proxy" in item for item in warnings)
+
+
 def test_config_corrupt_file(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     layout.root.mkdir(parents=True)

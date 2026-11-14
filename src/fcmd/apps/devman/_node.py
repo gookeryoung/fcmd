@@ -40,6 +40,7 @@ __all__ = [
     "parse_release_index",
     "parse_shasums",
     "plan_install",
+    "plan_local",
     "sha_url",
 ]
 
@@ -161,7 +162,11 @@ def parse_shasums(text: str) -> dict[str, str]:
 
 @dataclass(frozen=True, slots=True)
 class InstallPlan:
-    """node 安装计划（dry-run 会原样打印）。"""
+    """node 安装计划（dry-run 会原样打印）。
+
+    ``local`` 非空表示离线导入：构件来自本地 zip，``urls`` 为空，校验值取
+    ``<zip>.sha256`` / 同目录 ``SHASUMS256.txt`` 或显式 ``--sha256``。
+    """
 
     version: str
     filename: str
@@ -170,6 +175,7 @@ class InstallPlan:
     dest: Path
     cache_path: Path
     expected_sha256: str | None = None
+    local: Path | None = None
 
     def to_data(self) -> dict[str, Any]:
         return {
@@ -177,9 +183,10 @@ class InstallPlan:
             "version": self.version,
             "artifact": self.filename,
             "urls": list(self.urls),
-            "sha256_url": self.sha_url,
+            "sha256_url": self.sha_url or None,
             "dest": str(self.dest),
             "cache": str(self.cache_path),
+            "local": str(self.local) if self.local is not None else None,
         }
 
 
@@ -210,8 +217,72 @@ def plan_install(
     )
 
 
+def plan_local(layout: Layout, version: str, artifact: Path, *, sha256: str | None = None) -> InstallPlan:
+    """离线导入计划：构件取本地 zip，不访问网络（校验值仍必须可得）。"""
+    if not _STABLE_RE.fullmatch(version):
+        raise invalid_argument(
+            f"--from 需要精确版本号（当前为 {version!r}）",
+            hint="例如 fcmd devman install node@22.23.5 --from D:\\node-v22.23.5-win-x64.zip",
+            field="spec",
+        )
+    if not artifact.is_file():
+        raise invalid_argument(f"本地构件不存在：{artifact}", hint="检查 --from 路径", field="from")
+    if sha256 is not None:
+        sha256 = sha256.strip().lower()
+        if not _SHA_RE.fullmatch(sha256):
+            raise invalid_argument("--sha256 必须是 64 位十六进制", field="sha256")
+    return InstallPlan(
+        version=version,
+        filename=artifact.name,
+        urls=(),
+        sha_url="",
+        dest=layout.version_dir("node", version),
+        cache_path=layout.cache_dir / artifact.name,
+        expected_sha256=sha256,
+        local=artifact,
+    )
+
+
+def _local_expected(plan: InstallPlan) -> tuple[str, str]:
+    """离线导入的校验值：显式值 → ``<zip>.sha256`` → 同目录 ``SHASUMS256.txt``。"""
+    assert plan.local is not None
+    if plan.expected_sha256:
+        return plan.expected_sha256, "explicit-sha256"
+    candidates = (
+        (plan.local.with_name(plan.local.name + ".sha256"), "local-sha256"),
+        (plan.local.parent / "SHASUMS256.txt", "local-shasums"),
+    )
+    saw_file = False
+    for path, label in candidates:
+        if not path.is_file():
+            continue
+        saw_file = True
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            raise runtime_error(f"无法读取校验文件 {path}：{exc}", hint="确认文件可读", code=CHECKSUM_UNAVAILABLE) from exc
+        expected = parse_shasums(text).get(plan.filename)
+        if expected is None and _SHA_RE.fullmatch(text.strip()):
+            # 裸摘要文件（只写一行 sha256）
+            expected = text.strip().lower()
+        if expected is not None:
+            return expected, label
+    hint = (
+        f"{plan.local.name}.sha256 的内容与构件不匹配"
+        if saw_file
+        else "把 sha256 放在 <zip>.sha256 或同目录 SHASUMS256.txt，或用 --sha256 显式指定"
+    )
+    raise invalid_argument(
+        f"离线导入缺少可用校验值：{plan.local}",
+        hint=hint,
+        field="sha256",
+    )
+
+
 def _resolve_expected(plan: InstallPlan, fetcher: Fetcher) -> tuple[str, str]:
-    """返回 ``(sha256, verify)``；显式值优先，否则取官方清单。"""
+    """返回 ``(sha256, verify)``；显式值优先，否则取官方清单 / 本地校验文件。"""
+    if plan.local is not None:
+        return _local_expected(plan)
     if plan.expected_sha256:
         return plan.expected_sha256, "explicit-sha256"
     try:
@@ -233,8 +304,11 @@ def _resolve_expected(plan: InstallPlan, fetcher: Fetcher) -> tuple[str, str]:
 
 
 def _download(plan: InstallPlan, fetcher: Fetcher, progress: ProgressCallback | None) -> None:
-    """按候选来源下载；全部失败抛 ``DOWNLOAD_FAILED``。"""
+    """按候选来源下载；离线导入时改为复制本地构件；全部失败抛 ``DOWNLOAD_FAILED``。"""
     if plan.cache_path.is_file() and plan.expected_sha256 and sha256_file(plan.cache_path) == plan.expected_sha256:
+        return
+    if plan.local is not None:
+        _copy_local(plan)
         return
     problems: list[str] = []
     for url in plan.urls:
@@ -249,6 +323,23 @@ def _download(plan: InstallPlan, fetcher: Fetcher, progress: ProgressCallback | 
         hint="检查网络或配置 config.node.mirror",
         code=DOWNLOAD_FAILED,
     )
+
+
+def _copy_local(plan: InstallPlan) -> None:
+    """复制本地构件到缓存（先 ``.part`` 再落位，失败不留半成品）。"""
+    assert plan.local is not None
+    plan.cache_path.parent.mkdir(parents=True, exist_ok=True)
+    partial = plan.cache_path.with_name(plan.cache_path.name + ".part")
+    try:
+        shutil.copyfile(plan.local, partial)
+        partial.replace(plan.cache_path)
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        raise runtime_error(
+            f"无法读取本地构件 {plan.local}：{exc}",
+            hint="确认文件存在且未被其他程序占用",
+            code=DOWNLOAD_FAILED,
+        ) from exc
 
 
 def install(  # noqa: PLR0913 - 安装流程参数与回滚语义一一对应
@@ -280,6 +371,7 @@ def install(  # noqa: PLR0913 - 安装流程参数与回滚语义一一对应
         dest=plan.dest,
         cache_path=plan.cache_path,
         expected_sha256=expected,
+        local=plan.local,
     )
     _download(plan, fetcher, progress)
 
@@ -316,13 +408,19 @@ def install(  # noqa: PLR0913 - 安装流程参数与回滚语义一一对应
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
+    source = plan.urls[0] if plan.urls else str(plan.local)
+    action = (
+        {"action": "download", "url": source, "sha256": expected, "verify": verify}
+        if plan.urls
+        else {"action": "import", "path": source, "sha256": expected, "verify": verify}
+    )
     write_marker(
         final,
         {
             "schema": MARKER_SCHEMA,
             "tool": "node",
             "version": plan.version,
-            "source": plan.urls[0],
+            "source": source,
             "sha256": expected,
             "verify": verify,
             "installed_at": now_iso(),
@@ -333,8 +431,5 @@ def install(  # noqa: PLR0913 - 安装流程参数与回滚语义一一对应
         "changed": True,
         "path": str(final),
         "message": f"已安装 node {plan.version}",
-        "actions": [
-            {"action": "download", "url": plan.urls[0], "sha256": expected, "verify": verify},
-            {"action": "install", "path": str(final)},
-        ],
+        "actions": [action, {"action": "install", "path": str(final)}],
     }

@@ -29,7 +29,7 @@ from fcmd.apps.devman._errors import (
     not_found,
     runtime_error,
 )
-from fcmd.apps.devman._net import Fetcher, ProgressCallback, UrllibFetcher
+from fcmd.apps.devman._net import Fetcher, ProgressCallback, UrllibFetcher, normalize_proxy
 from fcmd.apps.devman._paths import Layout, normalize_tool
 from fcmd.apps.devman._runner import Runner, SubprocessRunner
 from fcmd.apps.devman._state import (
@@ -97,7 +97,7 @@ class JobContext:
 
     def fetch(self) -> Fetcher:
         if self.fetcher is None:
-            self.fetcher = UrllibFetcher(timeout_s=self.config.timeout_s)
+            self.fetcher = UrllibFetcher(timeout_s=self.config.timeout_s, proxy=self.config.proxy)
         return self.fetcher
 
     def execute(self) -> Runner:
@@ -456,14 +456,29 @@ def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
     dry_run: bool = False,
     force: bool = False,
     sha256: str | None = None,
+    source: str | None = None,
     write_path: bool = True,
     allow_shadow: bool = False,
     store: _env.EnvStore | None = None,
     env: Mapping[str, str] | None = None,
     progress: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """安装一个具体版本；默认把 shim 目录写入用户 PATH，``--dry-run`` 只输出计划。"""
+    """安装一个具体版本；``source`` 指定本地 zip 时走离线导入（仅 node）。
+
+    默认把 shim 目录写入用户 PATH，``--dry-run`` 只输出计划。
+    """
     spec = parse_spec(spec_text)
+    local_artifact: Path | None = None
+    if source:
+        if spec.tool != "node":
+            raise invalid_argument("--from 仅支持 node 构件", hint="python 版本请用 uv 安装", field="from")
+        if not _EXACT_RE.fullmatch(spec.raw):
+            raise invalid_argument(
+                f"--from 需要精确版本号（当前为 {spec.raw or '空'}）",
+                hint="例如 fcmd devman install node@22.23.5 --from D:\\node-v22.23.5-win-x64.zip",
+                field="spec",
+            )
+        local_artifact = Path(source)
     tool, target = resolve_target(ctx, spec)
     layout = ctx.layout
     path_plan = _path_plan(
@@ -476,7 +491,11 @@ def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
     )
 
     if tool == "node":
-        plan = _node.plan_install(layout, target, mirror=ctx.config.node_mirror, sha256=sha256)
+        plan = (
+            _node.plan_local(layout, target, local_artifact, sha256=sha256)
+            if local_artifact is not None
+            else _node.plan_install(layout, target, mirror=ctx.config.node_mirror, sha256=sha256)
+        )
         if dry_run:
             return {
                 "schema": "devman/install/1",
@@ -1160,7 +1179,27 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
     except Exception as exc:  # 诊断命令不应因单点探测失败整体崩掉
         checks.append(_check("uv", "warn", str(exc), "安装 uv 后才能获取新的 Python 版本"))
 
-    # 8. 平台能力
+    # 8. 网络配置（只读，不联网）
+    proxy = normalize_proxy(ctx.config.proxy)
+    if proxy is None:
+        proxy_text, proxy_ok = "代理跟随系统", True
+    elif proxy == "":
+        proxy_text, proxy_ok = "显式禁用代理", True
+    else:
+        scheme = proxy.split("://", 1)[0].lower()
+        proxy_ok = scheme in {"http", "https"} and " " not in proxy
+        proxy_text = f"显式代理 {proxy}"
+    checks.append(
+        _check(
+            "network",
+            "ok" if proxy_ok else "warn",
+            f"node.mirror={ctx.config.node_mirror}；python.mirror={ctx.config.python_mirror or '默认'}；"
+            f"{proxy_text}；超时 {ctx.config.timeout_s}s",
+            None if proxy_ok else "urllib 只支持 http/https 代理；SOCKS 请改用系统代理或本地转发",
+        )
+    )
+
+    # 9. 平台能力
     if sys.platform == "win32":
         checks.append(_check("platform", "ok", "Windows：支持安装 / 卸载"))
     else:

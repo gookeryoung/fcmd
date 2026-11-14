@@ -302,6 +302,93 @@ def test_install_force_replaces_existing_version(tmp_path: Path) -> None:
     assert not (existing / "stale.txt").exists()
 
 
+# ---------------------------------------------------------------------- #
+# 离线导入
+# ---------------------------------------------------------------------- #
+
+
+def _local_zip(tmp_path: Path, version: str = VERSION) -> tuple[Path, str]:
+    data, digest = _fakes.make_node_zip(version)
+    artifact = tmp_path / f"node-v{version}-win-x64.zip"
+    artifact.write_bytes(data)
+    return artifact, digest
+
+
+def test_plan_local_variants(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    artifact, digest = _local_zip(tmp_path)
+    plan = _node.plan_local(layout, VERSION, artifact)
+    assert plan.urls == ()
+    assert plan.local == artifact
+    assert plan.cache_path == layout.cache_dir / artifact.name
+    assert plan.to_data()["local"] == str(artifact)
+    assert plan.to_data()["sha256_url"] is None
+
+    explicit = _node.plan_local(layout, VERSION, artifact, sha256=digest)
+    assert explicit.expected_sha256 == digest
+    with pytest.raises(DevmanError) as info:
+        _node.plan_local(layout, "20", artifact)
+    assert info.value.code == "INVALID_ARGUMENT"
+    with pytest.raises(DevmanError) as info:
+        _node.plan_local(layout, VERSION, tmp_path / "missing.zip")
+    assert info.value.code == "INVALID_ARGUMENT"
+
+
+def test_install_from_local_zip_with_sidecar(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    artifact, digest = _local_zip(tmp_path)
+    artifact.with_name(artifact.name + ".sha256").write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
+    plan = _node.plan_local(layout, VERSION, artifact)
+    fetcher = _fakes.FakeFetcher()
+    result = _node.install(plan, layout, fetcher=fetcher, runner=_good_runner())
+    assert result["changed"] is True
+    assert result["actions"][0]["action"] == "import"
+    assert result["actions"][0]["verify"] == "local-sha256"
+    assert fetcher.text_calls == [] and fetcher.download_calls == []
+    marker = (plan.dest / ".devman.json").read_text(encoding="utf-8")
+    assert '"verify": "local-sha256"' in marker
+    assert str(artifact).replace("\\", "\\\\") in marker
+
+
+def test_install_from_local_zip_with_shasums_manifest(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    artifact, digest = _local_zip(tmp_path)
+    (tmp_path / "SHASUMS256.txt").write_text(_fakes.shasums_text((artifact.name, digest)), encoding="utf-8")
+    plan = _node.plan_local(layout, VERSION, artifact)
+    result = _node.install(plan, layout, fetcher=_fakes.FakeFetcher(), runner=_good_runner())
+    assert result["actions"][0]["verify"] == "local-shasums"
+
+
+def test_install_from_local_zip_with_bare_sha_file(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    artifact, digest = _local_zip(tmp_path)
+    artifact.with_name(artifact.name + ".sha256").write_text(digest + "\n", encoding="utf-8")
+    plan = _node.plan_local(layout, VERSION, artifact)
+    result = _node.install(plan, layout, fetcher=_fakes.FakeFetcher(), runner=_good_runner())
+    assert result["changed"] is True
+
+
+def test_install_from_local_requires_checksum(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    artifact, _digest = _local_zip(tmp_path)
+    plan = _node.plan_local(layout, VERSION, artifact)
+    with pytest.raises(DevmanError) as info:
+        _node.install(plan, layout, fetcher=_fakes.FakeFetcher(), runner=_good_runner())
+    assert info.value.code == "INVALID_ARGUMENT"
+    assert not plan.dest.exists()
+
+
+def test_install_from_local_checksum_mismatch(tmp_path: Path) -> None:
+    layout = _layout(tmp_path)
+    artifact, _digest = _local_zip(tmp_path)
+    artifact.with_name(artifact.name + ".sha256").write_text(f"{'0' * 64}  {artifact.name}\n", encoding="utf-8")
+    plan = _node.plan_local(layout, VERSION, artifact)
+    with pytest.raises(DevmanError) as info:
+        _node.install(plan, layout, fetcher=_fakes.FakeFetcher(), runner=_good_runner())
+    assert info.value.code == "CHECKSUM_MISMATCH"
+    assert not plan.cache_path.exists()
+
+
 def test_install_runner_failure_cleans_staging(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     data, digest = _fakes.make_node_zip(VERSION)

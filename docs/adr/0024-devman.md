@@ -289,7 +289,7 @@ exit /b %ERRORLEVEL%
 |---|---|---|
 | `list` | `--json` | 只读：已安装版本、活动版本、外部探测、shim 状态、项目绑定 |
 | `versions <tool>` | `--remote`、`--prerelease`、`--json` | 只读（`--remote` 联网读索引，不下载构件） |
-| `install <spec>` | `--dry-run`、`--json`、`--sha256`、`--force`、`--no-path`、`--allow-shadow` | 安装 + 默认写 HKCU PATH；`--dry-run` 零副作用 |
+| `install <spec>` | `--dry-run`、`--json`、`--sha256`、`--from <zip>`、`--force`、`--no-path`、`--allow-shadow` | 安装 + 默认写 HKCU PATH；`--from` 离线导入本地 node zip；`--dry-run` 零副作用 |
 | `uninstall <spec>` | `--yes`、`--dry-run`、`--json`、`--if-present`、`--all`、`--purge-cache` | 删除版本目录；必须 `--yes`；删掉最后一个版本时清理 devman 写入的 PATH 条目 |
 | `use <spec>` / `use --clear <tool>` | `--json`、`--project` | 改 `active/<tool>.txt`；`--project` 只写当前目录的版本文件 |
 | `upgrade <tool>` | `--to <spec>`、`--purge-old`、`--yes`、`--dry-run`、`--json`、`--no-path`、`--allow-shadow` | 安装 + 切换（+ 可选卸载旧版）；默认写 PATH |
@@ -352,7 +352,7 @@ exit /b %ERRORLEVEL%
   "schema": "devman-config/1",
   "node": {"mirror": "auto"},
   "python": {"uv": "auto", "mirror": null},
-  "network": {"timeout_s": 120, "progress": true}
+  "network": {"timeout_s": 120, "progress": true, "proxy": null}
 }
 ```
 
@@ -522,6 +522,47 @@ P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-veri
 | `restore --yes --no-path` | 2.8 s 完成（命中本地缓存），`verify` 再次通过 |
 | 活动版本卸载 | `uninstall --yes --force` 清空活动标记并删目录，再 `restore` 能装回并切换 |
 | 现场恢复 | HKCU `Path` 与验证前逐字一致（`path-before.txt` 除 `reg query` 表头外无差异）；临时 root / home 已删除 |
+
+### D17 网络：代理、断点续传、离线导入（P1，2026-11-14）
+
+三项能力都收在 `_net` 一层，`_node.py` / `_python.py` 的组装方式不变：
+
+- 代理：`config.network.proxy` 三态。`null` 跟随系统（含 `HTTP_PROXY` / `HTTPS_PROXY`，
+  即标准库默认行为）；`off` / `none` / `direct` 用空 `ProxyHandler` 显式禁用；其余值按
+  URL 使用（缺 scheme 补 `http://`），同时套到 http 与 https。**只作用于 devman 自己的
+  `UrllibFetcher`**；python 安装走 uv 子进程，代理由 uv 读环境变量，devman 不改写子进程环境。
+  `doctor` 的 `network` 项只读展示 mirror / proxy / 超时；非 http(s) scheme（如 `socks5://`）
+  给 `warn` 并提示改用系统代理或本地转发。
+- 断点续传：`download` 每次尝试从 `<dest>.part` 的现存字节数发 `Range: bytes=N-`；
+  只有响应 `206` 才追加，`200` 一律截断重写；`416`（半成品大于服务端文件）丢弃 `.part`
+  后自动从头重来一次。进度回调的 `total` 为「已有字节 + Content-Length」，`done` 从已有
+  字节起算。仍保持「先 `.part` 再原子 replace」；传输失败保留 `.part` 供下次续传，
+  `doctor` 的 `leftovers` 会列出它。
+- 离线导入：`install node@<精确版本> --from <zip>`。不访问网络，`InstallPlan.local` 指向
+  本地文件，构件复制进缓存（同样先 `.part` 再落位）后，走与在线安装相同的 sha256 校验、
+  解压、自检、标记流水线。校验值来源优先级：`--sha256` → `<zip>.sha256` →
+  同目录 `SHASUMS256.txt`；都不可用则 `INVALID_ARGUMENT`（退出 3），**不允许无校验导入**。
+  `--dry-run` 打印本地路径与目标目录；`--json` 的 `planned.local` 非空、
+  `actions[0].action = import`；标记的 `verify` 为 `explicit-sha256` / `local-sha256` /
+  `local-shasums`。`--from` 只支持 node，且要求精确三段版本号（`node@20` 先报参数错误，
+  不会联网解析）。
+- 代价与边界：镜像只加速构件，校验清单仍取官方（离线时改用本地校验文件或 `--sha256`）；
+  续传依赖服务端支持 Range，返回 200 的镜像会整段重下；离线导入的 `source` 记录本地路径，
+  跨机复现需重新指定 zip。
+
+验收记录 E（root = `%TEMP%\devman-b3\root`，`FCMD_HOME` 同样隔离，全程 `--no-path`）：
+
+| 项 | 结果 |
+|---|---|
+| 真实下载 | node 22.23.5，构件 35,630,346 字节，官方 `SHASUMS256.txt` 校验通过 |
+| Range 支持 | 对同一 URL 发 `Range: bytes=0-99` → `206` + `Content-Range: bytes 0-99/35630346` |
+| 续传成功 | 预置前 1 MiB 的 `.part` → 只补齐剩余字节，sha256 通过；缓存只剩完整 zip |
+| 续传反证 | 预置 1 MiB 全零 `.part` → 退出 5 `CHECKSUM_MISMATCH`（证明是追加而非整段覆盖） |
+| 离线导入 | 删缓存后用 zip + `<zip>.sha256` 导入，`actions[0].action=import`、`verify=local-sha256` |
+| 离线拒收 | 同一 zip 去掉校验文件 → 退出 3，提示 `--sha256` 或校验文件 |
+| `--dry-run` | 打印本地来源与目标目录，缓存目录仍为空 |
+| 代理 | `proxy=off` → doctor `network`「显式禁用代理」；`socks5://…` → `warn` + 提示 |
+| 现场恢复 | 全程 `--no-path`；HKCU `Path` 与验证前逐字一致；临时 root / home 已删除 |
 
 ## 风险与边界
 

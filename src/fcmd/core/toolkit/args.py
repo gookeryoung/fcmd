@@ -157,7 +157,7 @@ def _literal_choices(annotation: Any) -> tuple[Any, ...]:
 
 # 参数名 → 额外 CLI 别名。约定 ``json_output`` 同时接受 ``--json``：机读开关
 # 在命令行上简短且跨工具一致，同时保留 ``--json-output`` 兼容既有工具。
-_PARAM_CLI_ALIASES: Mapping[str, tuple[str, ...]] = {"json_output": ("--json",)}
+_PARAM_CLI_ALIASES: Mapping[str, tuple[str, ...]] = {"json_output": ("--json",), "from_path": ("--from",)}
 
 
 def _add_optional_arg(  # noqa: PLR0913, PLR0917 - argparse 参数逐个生成，保持扁平签名
