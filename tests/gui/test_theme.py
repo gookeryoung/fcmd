@@ -447,13 +447,15 @@ class TestStyleSpecs:
         palette = theme.palette
         specs = _guitheme.ttk_style_specs(palette, theme.spacing, native=theme.native)
         expected_active_bg = palette.surface if theme.native else palette.surface_active
+        expected_active_fg = palette.accent if theme.native else palette.text
         active = specs["SidebarActive.TButton"]
         assert specs["Sidebar.TFrame"].configure["background"] == palette.surface
         assert specs["Sidebar.TButton"].configure["background"] == palette.surface
         assert ("active", palette.surface_hover) in specs["Sidebar.TButton"].map["background"]
         assert active.configure["background"] == expected_active_bg
+        assert active.configure["foreground"] == expected_active_fg
         assert active.configure["bordercolor"] == palette.accent
-        assert _contrast(active.configure["foreground"], expected_active_bg) >= 4.5
+        assert _contrast(expected_active_fg, expected_active_bg) >= 4.5
         assert _contrast(palette.muted, palette.surface) >= 4.5
 
     @pytest.mark.parametrize("theme_name", _THEME_IDS)

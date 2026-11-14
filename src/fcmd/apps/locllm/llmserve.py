@@ -3,7 +3,7 @@
 独立命令：``llmserve <plan|start|stop|status|logs>``。
 
 另提供 ``/metrics`` 采样辅助（:func:`fetch_metrics` / :func:`parse_metrics`），
-供 ``llmservew`` 窗口实时统计 token/s 等性能指标。
+供 ``locllmw`` 窗口实时统计 token/s 等性能指标。
 """
 
 from __future__ import annotations

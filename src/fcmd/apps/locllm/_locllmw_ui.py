@@ -1,6 +1,6 @@
-"""llmservew 的界面构建：控件布局与模型列表渲染（从 llmservew.py 拆出）。
+"""locllmw 的界面构建：控件布局与模型列表渲染（从 locllmw.py 拆出）。
 
-``ServeWindow`` 继承 ``_ServeWindowUI``；``llmservew`` 仍 re-export
+``LocllmWindow`` 继承 ``_LocllmWindowUI``；``locllmw`` 仍 re-export
 ``_MODEL_PLACEHOLDER`` / ``_HINT_PLACEHOLDER`` / ``_QUANT_SUFFIX_RE`` 供其自身与测试使用。
 """
 
@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.locllm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
-from fcmd.apps.locllm._llmservew_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
-from fcmd.apps.locllm._llmservew_monitor import (
+from fcmd.apps.locllm._locllmw_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
+from fcmd.apps.locllm._locllmw_monitor import (
     _FIT_BUSY,
     _FIT_RUNNING,
     _FIT_UNSUPPORTED,
@@ -24,6 +24,7 @@ from fcmd.apps.locllm._llmservew_monitor import (
 )
 from fcmd.apps.locllm.llmbase import KV_SCALE, PROFILES, ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
+from fcmd.gui import config as _guiconfig
 from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import window as _guiwindow
 
@@ -32,11 +33,11 @@ _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/�
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
 
 
-class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """ServeWindow 的界面构建与模型列表渲染（mixin）。"""
+class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
+    """LocllmWindow 的界面构建与模型列表渲染（mixin）。"""
 
     if TYPE_CHECKING:
-        # 宿主 ServeWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
+        # 宿主 LocllmWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
         root: Any
         _theme: Any
         _tk: Any
@@ -110,22 +111,126 @@ class _ServeWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             outer,
             theme=self._theme,
             page_padding=self._theme.spacing.md,
-            title="功能页",
+            title="locllm",
         )
         self._nav.container.pack(fill="both", expand=True)
-        start_page = self._nav.add("config", "启动配置", hint="模型、参数与显存适配")
-        run_page = self._nav.add("monitor", "运行监控", hint="服务状态、性能指标与日志")
-        bench_page = self._nav.add("bench", "性能测试", hint="吞吐与延迟基准")
+        overview_page = self._nav.add("overview", "概览", hint="服务状态与快捷入口")
+        models_page = self._nav.add("models", "模型", hint="GGUF 模型与显存适配")
+        run_page = self._nav.add("run", "运行", hint="档位、上下文与启动参数")
+        chat_page = self._nav.add("chat", "对话", hint="单轮 / 多轮流式对话")
+        agent_page = self._nav.add("agent", "代理", hint="工具调用与多步任务")
+        image_page = self._nav.add("image", "画图", hint="文生图 / 图生图")
+        video_page = self._nav.add("video", "视频", hint="文生视频 / 视频理解")
+        audio_page = self._nav.add("audio", "音频", hint="语音识别 / 合成")
+        monitor_page = self._nav.add("monitor", "监测", hint="指标、日志与性能测试")
+        settings_page = self._nav.add("settings", "设置", hint="环境、配置与窗口")
         self._nav.enable_shortcuts()
-        self._build_params(start_page)
-        self._build_env(start_page)
-        self._build_models(start_page)
-        self._build_loaded(run_page)
-        self._build_metrics(run_page)
-        self._build_load(run_page)
-        self._build_gpu(run_page)
-        self._build_log(run_page)
-        self._build_bench(bench_page)
+        self._build_overview(overview_page)
+        self._build_models(models_page)
+        self._build_params(run_page)
+        self._build_planned(
+            chat_page,
+            title="对话",
+            summary="内嵌对话页规划中：将复用 llmchat 的流式会话、历史与图片附件能力，并直接调用本页启动的服务。",
+            commands=("fcmd llmchat", "fcmd llmchatw"),
+        )
+        self._build_planned(
+            agent_page,
+            title="代理",
+            summary="代理页规划中：工具调用、文件编辑与多步任务编排将统一在此配置与查看运行轨迹。",
+        )
+        self._build_planned(
+            image_page,
+            title="画图",
+            summary="画图页规划中：接入本地图片生成模型后，在此配置提示词、尺寸、步数与批量任务。",
+        )
+        self._build_planned(
+            video_page,
+            title="视频",
+            summary="视频页规划中：视频生成与视频理解将复用同一套本地模型与任务队列；当前可用 videoconvw 做格式转换。",
+            commands=("fcmd videoconvw",),
+        )
+        self._build_planned(
+            audio_page,
+            title="音频",
+            summary="音频页规划中：语音识别与语音合成将共用本页的模型选择、设备与批处理设置。",
+        )
+        self._build_monitor(monitor_page)
+        self._build_settings(settings_page)
+
+    def _build_overview(self, parent: Any) -> None:
+        """概览页：运行中的服务 + 常用分页快捷入口。"""
+        ttk = self._ttk
+        self._build_loaded(parent)
+        box = ttk.LabelFrame(parent, text="快捷入口", padding=self._theme.spacing.sm)
+        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
+        for column, (label, key) in enumerate(
+            (("选择模型", "models"), ("启动配置", "run"), ("运行监测", "monitor"), ("设置", "settings"))
+        ):
+            box.columnconfigure(column, weight=1)
+            ttk.Button(box, text=label, command=lambda page=key: self._nav.select(page)).grid(
+                row=0, column=column, sticky="ew", padx=(0, self._theme.spacing.xs)
+            )
+        ttk.Label(
+            box,
+            text="对话 / 代理 / 画图 / 视频 / 音频为规划中分页；当前可用底部按钮启动服务，或使用对应 CLI。",
+            style="Hint.TLabel",
+        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.sm, 0))
+
+    def _build_planned(
+        self,
+        parent: Any,
+        *,
+        title: str,
+        summary: str,
+        commands: tuple[str, ...] = (),
+    ) -> None:
+        """规划中分页：说明定位与当前可用命令，避免空白页。"""
+        ttk = self._ttk
+        space = self._theme.spacing
+        box = ttk.LabelFrame(parent, text=title, padding=space.sm)
+        box.pack(fill="both", expand=True)
+        ttk.Label(box, text="规划中", style="Title.TLabel").pack(anchor="w", pady=(0, space.xs))
+        hint = ttk.Label(box, text=summary, justify="left")
+        hint.pack(anchor="w", fill="x")
+        hint.bind(
+            "<Configure>",
+            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+        )
+        if commands:
+            ttk.Label(box, text="当前可用命令：", style="Hint.TLabel").pack(anchor="w", pady=(space.sm, 0))
+            for command in commands:
+                ttk.Label(box, text=command, font="TkFixedFont").pack(anchor="w")
+
+    def _build_monitor(self, parent: Any) -> None:
+        """监测页：实时性能、系统负载、GPU、性能测试与日志。"""
+        space = self._theme.spacing
+        self._build_metrics(parent)
+        self._build_load(parent)
+        self._build_gpu(parent)
+        bench_box, bench_body = self._collapsible(
+            parent,
+            "性能测试（短对话 / 长输出 / 代码补全 / 长上下文 / 并发）",
+            open_state=False,
+        )
+        bench_box.pack(fill="x", pady=(space.sm, 0))
+        self._build_bench(bench_body)
+        self._build_log(parent)
+
+    def _build_settings(self, parent: Any) -> None:
+        """设置页：配置文件路径、窗口行为与环境信息。"""
+        ttk = self._ttk
+        space = self._theme.spacing
+        box = ttk.LabelFrame(parent, text="窗口与配置文件", padding=space.sm)
+        box.pack(fill="x")
+        path = _guiconfig.config_path("locllmw")
+        ttk.Label(box, text=f"配置文件：{path}", justify="left").pack(anchor="w")
+        ttk.Label(
+            box,
+            text="窗口位置与大小在关闭时自动写入；其余设置随对话 / 代理 / 多模态分页逐步扩展。",
+            style="Hint.TLabel",
+        ).pack(anchor="w", pady=(space.xs, 0))
+        self._build_env(parent)
 
     @staticmethod
     def _service_names() -> list[str]:

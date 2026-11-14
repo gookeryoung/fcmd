@@ -370,7 +370,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     # 界面
     # ------------------------------------------------------------------ #
     def _build_widgets(self) -> None:
-        """按 llmservew 的侧边栏分页范式组织：底部状态栏 + 模型浏览 / 下载 / 本地管理三页。"""
+        """按 locllmw 的侧边栏分页范式组织：底部状态栏 + 模型浏览 / 下载 / 本地管理三页。"""
         ttk = self._ttk
         space = self._theme.spacing
         outer = ttk.Frame(self.root)

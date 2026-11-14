@@ -44,7 +44,7 @@ GUI_TOOLS: frozenset[str] = frozenset(
         "llmenginew",
         "llmenvw",
         "llmqntw",
-        "llmservew",
+        "locllmw",
         "mirrortoolw",
         "ncmconvertw",
         "paramcadw",

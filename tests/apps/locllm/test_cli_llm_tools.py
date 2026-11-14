@@ -84,7 +84,7 @@ def test_tools_registered() -> None:
     assert set(_TOOL_REGISTRY["llmenv"]) == {"show", "add", "remove", "reset", "list", "env"}
     assert set(_TOOL_REGISTRY["llmmodel"]) == {"list", "find", "vram"}
     assert set(_TOOL_REGISTRY["llmserve"]) == {"plan", "start", "stop", "status", "logs"}
-    assert set(_TOOL_REGISTRY["llmservew"]) == {None}
+    assert set(_TOOL_REGISTRY["locllmw"]) == {None}
     assert set(_TOOL_REGISTRY["llmbench"]) == {None}
     assert set(_TOOL_REGISTRY["llmconvert"]) == {None}
     assert set(_TOOL_REGISTRY["llmdoctor"]) == {None}

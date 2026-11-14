@@ -1,16 +1,15 @@
-"""llmservew - 推理服务生命周期管理的 Tk 窗口版。
+"""locllmw - 本地 LLM 服务管理的 Tk 窗口版。
 
-基于 :mod:`fcmd.apps.locllm.llmserve` 的核心逻辑，提供启动参数的图形化配置、
-已配置模型列表（后台扫描 ``llmenv`` 登记的模型目录，并按文件名内置能力标签
-与最佳实践提示）、启动计划预览、后台启动 / 停止（一次停止全部已登记服务）、状态与日志查看、一键在默认浏览器
-打开服务地址，以及运行监控（``/metrics`` 性能指标 + 系统负载）。启动与停止均在后台线程执行，界面不阻塞。
-系统负载（CPU / 内存 / 交换 / GPU）在窗口打开后即持续采样，服务未启动时同样可见。
-模型列表按整卡与当前可用显存双重评估：整卡放不下标红并加删除线为“硬件不足”，仅当前余量不足标橙为“需释放显存”，
-运行中的模型标为“运行中”，并在提示区给出针对性建议；显存释放后自动重算。
+基于 :mod:`fcmd.apps.locllm.llmserve` 的核心逻辑，用侧边栏分页组织为
+概览、模型、运行、对话、代理、画图、视频、音频、监测、设置十页：
+后四类多模态页与对话 / 代理页当前为规划中占位，其余页面提供启动参数配置、
+模型扫描与显存适配、服务启停、``/metrics`` 监控、系统负载 / GPU 面板、
+性能测试与日志。启动与停止均在后台线程执行，界面不阻塞；系统负载在窗口
+打开后即持续采样，服务未启动时同样可见。
 
 示例
 ----
-    fcmd llmservew
+    fcmd locllmw
 """
 
 from __future__ import annotations
@@ -25,8 +24,8 @@ from typing import Any, cast, override
 import fcmd
 from fcmd.apps.locllm import _llmtune, llmbase, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
-from fcmd.apps.locllm._llmservew_bench import _ServeWindowBench
-from fcmd.apps.locllm._llmservew_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
+from fcmd.apps.locllm._locllmw_bench import _LocllmWindowBench
+from fcmd.apps.locllm._locllmw_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
     RATE_WINDOW_SECONDS,
     GpuSample,
     LoadSample,
@@ -37,18 +36,18 @@ from fcmd.apps.locllm._llmservew_monitor import (  # noqa: F401  门面 re-expor
     _format_duration,
     _format_gpu,
     _format_load,
+    _LocllmWindowMonitor,
     _parse_gpu_rows,
     _parse_number,
     _probe_web_ui,
     _sample_gpu,
     _sample_load,
-    _ServeWindowMonitor,
 )
-from fcmd.apps.locllm._llmservew_ui import (
+from fcmd.apps.locllm._locllmw_ui import (
     _HINT_PLACEHOLDER,
     _MODEL_PLACEHOLDER,
     _QUANT_SUFFIX_RE,
-    _ServeWindowUI,
+    _LocllmWindowUI,
 )
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
@@ -73,7 +72,7 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 
 __all__ = [
-    "ServeSettings",
+    "LocllmSettings",
     "config_path",
     "load_settings",
     "resolve_geometry",
@@ -81,14 +80,15 @@ __all__ = [
 ]
 
 _DESCRIPTION = (
-    "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
+    "本地 LLM 服务窗口版（Tk，侧边栏分页：概览 / 模型 / 运行 / 对话 / 代理 / 画图 / 视频 / 音频 / 监测 / 设置）："
+    "列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
     "与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，"
     "配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
     "查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，"
     "同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标"
-    "（系统负载在服务未启动时也持续采样展示）；性能测试页提供短对话 / 长输出 / 代码补全 / "
+    "（系统负载在服务未启动时也持续采样展示）；监测页的性能测试分区提供短对话 / 长输出 / 代码补全 / "
     "长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，"
-    "后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json"
+    "后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/locllmw.json"
 )
 
 MIN_WIDTH = 820
@@ -98,24 +98,24 @@ DEFAULT_HEIGHT = 780
 
 
 @dataclass
-class ServeSettings:
+class LocllmSettings:
     """窗口持久化设置（当前只有 geometry）。"""
 
     geometry: str | None = None
 
 
 def config_path() -> Path:
-    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmservew.json``。"""
-    return _guiconfig.config_path("llmservew")
+    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``。"""
+    return _guiconfig.config_path("locllmw")
 
 
 valid_geometry = _guiconfig.valid_geometry
 
 
-def load_settings(path: Path | None = None) -> ServeSettings:
+def load_settings(path: Path | None = None) -> LocllmSettings:
     """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
     raw = _guiconfig.read_settings(path or config_path())
-    settings = ServeSettings()
+    settings = LocllmSettings()
     if raw is not None:
         geometry = raw.get("geometry")
         if isinstance(geometry, str) and valid_geometry(geometry):
@@ -123,7 +123,7 @@ def load_settings(path: Path | None = None) -> ServeSettings:
     return settings
 
 
-def save_settings(settings: ServeSettings, path: Path | None = None) -> None:
+def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
     _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
 
@@ -140,10 +140,10 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-class ServeWindow(
-    _ServeWindowUI, _ServeWindowMonitor, _ServeWindowBench
+class LocllmWindow(
+    _LocllmWindowUI, _LocllmWindowMonitor, _LocllmWindowBench
 ):  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """Tk 服务窗口：参数表单 + 模型列表 + 计划预览 + 后台启停 + 性能测试。"""
+    """Tk 服务窗口：侧边栏分页 + 模型列表 + 计划预览 + 后台启停 + 监控与性能测试。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         import tkinter as tk
@@ -157,7 +157,7 @@ class ServeWindow(
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
         self.root, self._theme = _guiwindow.create_root(
-            title="推理服务管理",
+            title="本地 LLM 服务",
             saved_geometry=self._settings.geometry,
             default_geometry=f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
             min_width=MIN_WIDTH,
@@ -928,7 +928,7 @@ class ServeWindow(
         self._closing = True
         self._stop_monitor()
         self._close_bench()
-        save_settings(ServeSettings(geometry=self.root.winfo_geometry()), self._settings_path)
+        save_settings(LocllmSettings(geometry=self.root.winfo_geometry()), self._settings_path)
         self.root.destroy()
 
     # ------------------------------------------------------------------ #
@@ -946,16 +946,16 @@ class ServeWindow(
 
 def run_gui() -> None:
     """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(ServeWindow, "窗口版")
+    _guiwindow.run_window(LocllmWindow, "本地 LLM")
 
 
-@fcmd.tool("llmservew", help="打开推理服务窗口（Tk）", description=_DESCRIPTION)
+@fcmd.tool("locllmw", help="打开本地 LLM 服务窗口（Tk）", description=_DESCRIPTION)
 def launch_cmd() -> None:
-    """打开推理服务窗口。"""
+    """打开本地 LLM 服务窗口。"""
     run_gui()
 
 
-@fcmd.main("llmservew")
+@fcmd.main("locllmw")
 def main() -> None:
     pass  # pragma: no cover - @fcmd.main 装饰器替换函数体，pass 永不执行
 

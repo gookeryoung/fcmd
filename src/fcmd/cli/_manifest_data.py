@@ -81,7 +81,7 @@ TOOLS: dict[str, ToolEntry] = {
     "llmqnt": ToolEntry("llmqnt", "python", "fcmd.apps.locllm.llmqnt"),
     "llmqntw": ToolEntry("llmqntw", "python", "fcmd.apps.locllm.llmqntw"),
     "llmserve": ToolEntry("llmserve", "python", "fcmd.apps.locllm.llmserve"),
-    "llmservew": ToolEntry("llmservew", "python", "fcmd.apps.locllm.llmservew"),
+    "locllmw": ToolEntry("locllmw", "python", "fcmd.apps.locllm.locllmw"),
     "lscalc": ToolEntry("lscalc", "python", "fcmd.tools.calc.lscalc"),
     "mathtool": ToolEntry("mathtool", "python", "fcmd.tools.text.mathtool"),
     "mirrortool": ToolEntry("mirrortool", "python", "fcmd.tools.dev.mirrortool"),
@@ -217,7 +217,7 @@ DESCRIPTIONS: dict[str, str] = {
     "llmqnt": "GGUF 量化：调用 llama-quantize 批量生成多种量化版本",
     "llmqntw": "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，按 GGUF 元数据识别全量与量化精度并检查完整性（备注在括号中，避免误转或漏转），显示引擎/量化器版本，勾选多种量化类型批量转换；窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json",
     "llmserve": "打印启动计划（命令 + 显存估算），不启动",
-    "llmservew": "推理服务窗口版（Tk）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标（系统负载在服务未启动时也持续采样展示）；性能测试页提供短对话 / 长输出 / 代码补全 / 长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/llmservew.json",
+    "locllmw": "本地 LLM 服务窗口版（Tk，侧边栏分页：概览 / 模型 / 运行 / 对话 / 代理 / 画图 / 视频 / 音频 / 监测 / 设置）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标（系统负载在服务未启动时也持续采样展示）；监测页的性能测试分区提供短对话 / 长输出 / 代码补全 / 长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/locllmw.json",
     "lscalc": "运行 LS-DYNA SMP 单机计算",
     "mathtool": "求值数学表达式",
     "mirrortool": "镜像站点探测 / 指定服务镜像测速与自动选取",
@@ -304,7 +304,7 @@ LAYOUT: tuple[str, ...] = (
     "apps/locllm/llmqnt.py",
     "apps/locllm/llmqntw.py",
     "apps/locllm/llmserve.py",
-    "apps/locllm/llmservew.py",
+    "apps/locllm/locllmw.py",
     "apps/paramcad/paramcad.py",
     "apps/paramcad/paramcadw.py",
     "apps/paramesh/paramesh.py",
@@ -410,7 +410,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "dec2b2d938cbb820278770d7c7a3c2c1"
+DIGEST = "e2c7291af55cb40269f311a1f8da8baa"
 
 
 if __name__ == "__main__":  # pragma: no cover

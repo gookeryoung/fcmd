@@ -2,11 +2,11 @@
 
 - 状态：已落地（auto / default / throughput / long-context / low-vram）
 - 日期：2026-11-11
-- 关联：`src/fcmd/apps/locllm/_llmtune.py`、`llmserve`、`llmservew`、0013（GUI 技术路线）
+- 关联：`src/fcmd/apps/locllm/_llmtune.py`、`llmserve`、`locllmw`、0013（GUI 技术路线）
 
 ## 背景
 
-`llmserve` / `llmservew` 原先固定使用一套启动参数：`-np 1`、`--flash-attn on`、
+`llmserve` / `locllmw` 原先固定使用一套启动参数：`-np 1`、`--flash-attn on`、
 `-ctk/-ctv` 跟随档位、`-b 4096`、`-ub` 跟随档位、`--cache-reuse 256`。这组参数在
 单请求、显存充足时表现稳定，但缺少按使用方式的入口：
 
@@ -115,5 +115,5 @@
 
 - 已完成：策略模块、`LaunchPlan` 接入、CLI `--tune`、窗口下拉与提示、单元测试、
   README 说明。
-- 后续可选：把基准场景接入 `llmservew` 性能测试页，按实测结果动态推荐策略；
+- 后续可选：把基准场景接入 `locllmw` 监测页的性能测试分区，按实测结果动态推荐策略；
   该能力依赖已有性能测试页，不在本次范围内。

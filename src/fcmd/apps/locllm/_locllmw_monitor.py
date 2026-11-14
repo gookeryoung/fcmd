@@ -1,7 +1,7 @@
-"""llmservew 的运行监控：GPU / 系统负载采样、格式化、速率平滑与适配建议。
+"""locllmw 的运行监控：GPU / 系统负载采样、格式化、速率平滑与适配建议。
 
-从 :mod:`fcmd.apps.locllm.llmservew` 拆出；``llmservew`` 仍 re-export 这些纯函数与
-``_ServeWindowMonitor`` / ``_ServeWindowUI`` 所需的常量，既有导入路径不变。
+从 :mod:`fcmd.apps.locllm.locllmw` 拆出；``locllmw`` 仍 re-export 这些纯函数与
+``_LocllmWindowMonitor`` / ``_LocllmWindowUI`` 所需的常量，既有导入路径不变。
 """
 
 from __future__ import annotations
@@ -331,11 +331,11 @@ class RateWindow:
         return self._gen_rate, self._prompt_rate
 
 
-class _ServeWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """ServeWindow 的实时监控方法（mixin）。"""
+class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
+    """LocllmWindow 的实时监控方法（mixin）。"""
 
     if TYPE_CHECKING:
-        # 宿主 ServeWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
+        # 宿主 LocllmWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
         root: Any
         _closing: bool
         _gpu_mib: int | None

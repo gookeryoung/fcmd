@@ -1,12 +1,12 @@
 # 0025 GUI 侧边栏分页导航（`SidebarNav`）
 
-- 状态：已落地（llmservew / llmdownw / llmconvertw / llmenginew / llmenvw）
+- 状态：已落地（locllmw / llmdownw / llmconvertw / llmenginew / llmenvw）
 - 日期：2026-11-14
 - 关联：`src/fcmd/gui/sidebar.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
 
 ## 背景
 
-llmservew 原先与 llmdownw、llmconvertw、llmenginew、llmenvw 一样，用顶部
+locllmw 原先与 llmdownw、llmconvertw、llmenginew、llmenvw 一样，用顶部
 `ttk.Notebook` 承载「配置 / 监控 / 日志」这类页面：
 
 1. 标签条与内容抢横向空间：页数到 3–4 个、或标题有中文长词时，标签被截断，
@@ -15,7 +15,7 @@ llmservew 原先与 llmdownw、llmconvertw、llmenginew、llmenvw 一样，用�
 3. 每个窗口各自写 `Notebook` + `Frame` + `add/select`，页面 key 用控件对象
    传递（`select(self._roots_page)`），跨页跳转与「切页触发加载」散落在各处。
 
-要求：**以 llmservew 为目标改成侧边栏分页，并把实现收敛成通用 GUI 组件**，
+要求：**以 locllmw 为目标改成侧边栏分页，并把实现收敛成通用 GUI 组件**，
 其他同类窗口直接复用，不再各自拼 `Notebook`。
 
 ## 决策
@@ -51,7 +51,7 @@ llmservew 原先与 llmdownw、llmconvertw、llmenginew、llmenvw 一样，用�
 
 ### 3. 迁移范围
 
-已迁移「整窗主页面」型窗口：llmservew、llmdownw、llmconvertw、llmenginew、
+已迁移「整窗主页面」型窗口：locllmw、llmdownw、llmconvertw、llmenginew、
 llmenvw。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。主容器
 `ttk.Frame(self.root)` **不加 padding**，让侧边栏与状态栏贴窗边；内容间距统一
 由各页面自己的 `page_padding` 负责，避免外层再叠一层边距。

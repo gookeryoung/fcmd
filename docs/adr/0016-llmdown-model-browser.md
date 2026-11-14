@@ -46,7 +46,7 @@ CLI 不传这两个参数时行为与原来完全一致。Tk 窗口通过队列�
 
 ### 3. Tk 窗口布局与交互
 
-`llmdownw` 与 `llmservew` 一致，采用「底部状态栏 + 侧边栏分页」结构
+`llmdownw` 与 `locllmw` 一致，采用「底部状态栏 + 侧边栏分页」结构
 （`fcmd.gui.sidebar.SidebarNav`，见 [ADR 0025](0025-sidebar-page-navigation.md)），
 避免搜索、详情、下载配置与日志挤在单页：
 

@@ -351,7 +351,7 @@ exit /b %ERRORLEVEL%
 
 - 复用 `fcmd.gui.window` 的 `create_root` / `start_worker` / `create_log` 与
   `fcmd.gui.theme`；设置持久化 `~/.fcmd/ui/devmanw.json`（`fcmd.gui.config`）。
-- 分页（沿用 llmservew 的分页经验，避免表单堆叠）：
+- 分页（沿用 locllmw 的分页经验，避免表单堆叠）：
   「已安装」版本表（工具 / 版本 / 活动 / 大小 / 完整性）＋切换按钮；
   「可用版本」按工具筛选、勾选安装、显示下载源与校验方式；
   「环境」展示 PATH 顺序、外部 node/python、venv/conda 状态与 shim 开关；

@@ -1,7 +1,7 @@
-"""llmservew 的性能测试页：典型场景定义、后台执行与结果汇总。
+"""locllmw 的性能测试页：典型场景定义、后台执行与结果汇总。
 
 纯逻辑部分（场景表、单次 / 并发执行、结果指标、被测服务解析、结果行格式化）
-不依赖 Tk，可直接单测；``_ServeWindowBench`` 只负责把执行结果经队列回传给
+不依赖 Tk，可直接单测；``_LocllmWindowBench`` 只负责把执行结果经队列回传给
 主线程并刷新界面。
 
 示例
@@ -251,11 +251,11 @@ def run_scenario(  # noqa: PLR0913 - 测试参数与依赖注入成组出现，�
     return ScenarioResult(scenario, tuple(samples), wall_s, error, cancelled)
 
 
-class _ServeWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """ServeWindow 的性能测试页逻辑（mixin）。"""
+class _LocllmWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
+    """LocllmWindow 的性能测试页逻辑（mixin）。"""
 
     if TYPE_CHECKING:
-        # 宿主 ServeWindow / _ServeWindowUI 提供的成员：仅用于类型检查。
+        # 宿主 LocllmWindow / _LocllmWindowUI 提供的成员：仅用于类型检查。
         root: Any
         _name_var: Any
         _messagebox: Any

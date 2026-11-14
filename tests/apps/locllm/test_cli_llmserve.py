@@ -27,7 +27,7 @@ from urllib.request import Request
 import pytest
 
 from fcmd.apps.locllm import (
-    _llmservew_bench,
+    _locllmw_bench,
     llmbase,
     llmbench,
     llmconvert,
@@ -36,7 +36,7 @@ from fcmd.apps.locllm import (
     llmenv,
     llmmodel,
     llmserve,
-    llmservew,
+    locllmw,
 )
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
@@ -1934,7 +1934,7 @@ class TestConvertBranches:
 
 
 # ---------------------------------------------------------------------- #
-# llmservew 运行监控采样
+# locllmw 运行监控采样
 # ---------------------------------------------------------------------- #
 _GPU_CSV = (
     "GPU-aaaa,0,NVIDIA RTX 5090 D,45,20480,32768,60,250.5,575.0,40,2500\n"
@@ -1956,13 +1956,13 @@ def _gpu_runner(gpu_csv: str, apps_csv: str = "", code: int = 0) -> llmbase.Runn
 
 class TestServewSamples:
     def test_parse_number(self) -> None:
-        assert llmservew._parse_number("12.5") == 12.5
-        assert llmservew._parse_number(" [N/A] ") is None
-        assert llmservew._parse_number("") is None
-        assert llmservew._parse_number("abc") is None
+        assert locllmw._parse_number("12.5") == 12.5
+        assert locllmw._parse_number(" [N/A] ") is None
+        assert locllmw._parse_number("") is None
+        assert locllmw._parse_number("abc") is None
 
     def test_sample_gpu_matches_process(self) -> None:
-        sample = llmservew._sample_gpu(1234, _gpu_runner(_GPU_CSV, "1234,GPU-bbbb,512\n"))
+        sample = locllmw._sample_gpu(1234, _gpu_runner(_GPU_CSV, "1234,GPU-bbbb,512\n"))
         assert sample is not None
         assert sample.name == "NVIDIA RTX 4090"
         assert sample.index == "1"
@@ -1970,18 +1970,18 @@ class TestServewSamples:
         assert sample.fan is None
 
     def test_sample_gpu_falls_back_to_largest_memory(self) -> None:
-        sample = llmservew._sample_gpu(999, _gpu_runner(_GPU_CSV))
+        sample = locllmw._sample_gpu(999, _gpu_runner(_GPU_CSV))
         assert sample is not None
         assert sample.index == "0"
         assert sample.process_memory is None
 
     def test_sample_gpu_unavailable(self) -> None:
-        assert llmservew._sample_gpu(1, _gpu_runner("", code=1)) is None
-        assert llmservew._sample_gpu(1, _gpu_runner("")) is None
-        assert llmservew._parse_gpu_rows("bad,row\n") == []
+        assert locllmw._sample_gpu(1, _gpu_runner("", code=1)) is None
+        assert locllmw._sample_gpu(1, _gpu_runner("")) is None
+        assert locllmw._parse_gpu_rows("bad,row\n") == []
 
     def test_format_load(self) -> None:
-        sample = llmservew.LoadSample(
+        sample = locllmw.LoadSample(
             cpu=12.34,
             cpu_freq=3200.0,
             memory_used=8 * 1024**3,
@@ -1994,7 +1994,7 @@ class TestServewSamples:
             process_threads=12,
             process_uptime=3661.0,
         )
-        values = llmservew._format_load(sample)
+        values = locllmw._format_load(sample)
         assert values["cpu"] == "12.3 %"
         assert values["cpu_freq"] == "3200 MHz"
         assert values["memory"] == "8.00 GB / 32.00 GB（25.0 %）"
@@ -2005,13 +2005,13 @@ class TestServewSamples:
         assert values["uptime"] == "1h 01m 01s"
 
     def test_format_load_empty(self) -> None:
-        values = llmservew._format_load(llmservew.LoadSample())
+        values = locllmw._format_load(locllmw.LoadSample())
         assert values["cpu"] == "-"
         assert values["memory"] == "-"
         assert values["swap"] == "-"
 
     def test_format_gpu(self) -> None:
-        gpu = llmservew.GpuSample(
+        gpu = locllmw.GpuSample(
             name="NVIDIA RTX 5090 D",
             index="0",
             utilization=45.0,
@@ -2024,7 +2024,7 @@ class TestServewSamples:
             clock_mhz=2500.0,
             process_memory=18432.0,
         )
-        values = llmservew._format_gpu(gpu)
+        values = locllmw._format_gpu(gpu)
         assert values["gpu_name"] == "NVIDIA RTX 5090 D（GPU 0）"
         assert values["gpu_util"] == "45 %"
         assert values["gpu_vram"] == "20.00 GB / 32.00 GB（62.5 %）"
@@ -2035,12 +2035,12 @@ class TestServewSamples:
         assert values["gpu_clock"] == "2500 MHz"
 
     def test_format_gpu_missing(self) -> None:
-        values = llmservew._format_gpu(None)
+        values = locllmw._format_gpu(None)
         assert "未检测到" in values["gpu_name"]
         assert values["gpu_util"] == "-"
 
     def test_format_gpu_partial(self) -> None:
-        values = llmservew._format_gpu(llmservew.GpuSample(name="GPU", power_draw=100.0))
+        values = locllmw._format_gpu(locllmw.GpuSample(name="GPU", power_draw=100.0))
         assert values["gpu_vram"] == "-"
         assert values["gpu_power"] == "100 W"
         assert values["gpu_fan"] == "-"
@@ -2050,7 +2050,7 @@ class TestServewSamples:
 
         process = psutil.Process(os.getpid())
         process.cpu_percent()
-        sample = llmservew._sample_load(os.getpid(), process)
+        sample = locllmw._sample_load(os.getpid(), process)
         assert sample.cpu is not None
         assert sample.memory_total > 0
         assert sample.process_rss is not None
@@ -2058,20 +2058,20 @@ class TestServewSamples:
         assert sample.process_uptime is not None
 
     def test_sample_load_without_process(self) -> None:
-        sample = llmservew._sample_load(2**31 - 1, None)
+        sample = locllmw._sample_load(2**31 - 1, None)
         assert sample.process_rss is None
         assert sample.process_cpu is None
 
 
 class TestRateWindow:
     def test_smooths_steady_generation(self) -> None:
-        window = llmservew.RateWindow(window=10.0)
+        window = locllmw.RateWindow(window=10.0)
         assert window.update(0.0, 0.0, 0.0) == (0.0, 0.0)
         rates = [window.update(float(second), 100.0 * second, 0.0)[0] for second in range(1, 6)]
         assert rates == pytest.approx([100.0] * 5)
 
     def test_window_decays_after_idle(self) -> None:
-        window = llmservew.RateWindow(window=4.0)
+        window = locllmw.RateWindow(window=4.0)
         window.update(0.0, 0.0, 0.0)
         window.update(1.0, 100.0, 0.0)
         assert window.update(2.0, 150.0, 0.0)[0] == pytest.approx(75.0)
@@ -2081,13 +2081,13 @@ class TestRateWindow:
         assert window.update(6.0, 150.0, 0.0)[0] == 0.0
 
     def test_counter_reset(self) -> None:
-        window = llmservew.RateWindow(window=10.0)
+        window = locllmw.RateWindow(window=10.0)
         window.update(0.0, 100.0, 10.0)
         assert window.update(1.0, 200.0, 20.0) == pytest.approx((100.0, 10.0))
         assert window.update(2.0, 5.0, 1.0) == (0.0, 0.0)
 
     def test_prompt_rate(self) -> None:
-        window = llmservew.RateWindow(window=10.0)
+        window = locllmw.RateWindow(window=10.0)
         window.update(0.0, 0.0, 0.0)
         gen_rate, prompt_rate = window.update(2.0, 100.0, 400.0)
         assert gen_rate == pytest.approx(50.0)
@@ -2097,59 +2097,59 @@ class TestRateWindow:
 class TestServewFitAdvice:
     def test_suggest_smaller_context(self) -> None:
         fit = llmmodel.VramFit(needed=40, available=32, max_context=32 * 1024)
-        advice = llmservew._fit_advice(fit, 65536, "f16")
+        advice = locllmw._fit_advice(fit, 65536, "f16")
         assert "降到 32K" in advice
         assert "q8_0" in advice
 
     def test_suggest_smaller_quant_when_weight_too_large(self) -> None:
         fit = llmmodel.VramFit(needed=40, available=32, max_context=0)
-        advice = llmservew._fit_advice(fit, 65536, "q8_0")
+        advice = locllmw._fit_advice(fit, 65536, "q8_0")
         assert "仅权重" in advice
         assert "Q4_K_M" in advice
         assert "q8_0" not in advice
 
     def test_busy_advice_prioritizes_releasing_vram(self) -> None:
         fit = llmmodel.VramFit(needed=40, available=10, max_context=32 * 1024)
-        advice = llmservew._busy_advice(fit, 65536, "f16")
+        advice = locllmw._busy_advice(fit, 65536, "f16")
         assert "先停止" in advice
         assert "32K" in advice
         assert "q8_0" in advice
 
     def test_busy_advice_without_room_for_context(self) -> None:
         fit = llmmodel.VramFit(needed=40, available=10, max_context=0)
-        assert "更小量化" in llmservew._busy_advice(fit, 65536, "q8_0")
+        assert "更小量化" in locllmw._busy_advice(fit, 65536, "q8_0")
 
 
 class TestServewFitState:
     def test_unknown_without_gpu(self) -> None:
-        assert llmservew._fit_state(None, None) == "-"
+        assert locllmw._fit_state(None, None) == "-"
 
     def test_hardware_unsupported(self) -> None:
         total = llmmodel.VramFit(needed=40, available=32, max_context=0)
         free = llmmodel.VramFit(needed=40, available=10, max_context=0)
-        assert llmservew._fit_state(total, free) == "硬件不足"
+        assert locllmw._fit_state(total, free) == "硬件不足"
 
     def test_needs_release(self) -> None:
         total = llmmodel.VramFit(needed=20, available=32, max_context=100000)
         free = llmmodel.VramFit(needed=20, available=10, max_context=20000)
-        assert llmservew._fit_state(total, free) == "需释放显存"
+        assert locllmw._fit_state(total, free) == "需释放显存"
 
     def test_available(self) -> None:
         total = llmmodel.VramFit(needed=20, available=32, max_context=100000)
-        assert llmservew._fit_state(total, llmmodel.VramFit(needed=20, available=30, max_context=90000)) == "可用"
-        assert llmservew._fit_state(total, None) == "可用"
+        assert locllmw._fit_state(total, llmmodel.VramFit(needed=20, available=30, max_context=90000)) == "可用"
+        assert locllmw._fit_state(total, None) == "可用"
 
     def test_state_maps_to_row_tag(self) -> None:
         # 标签必须与中文状态一一对应，否则 Treeview 不会着色
-        assert llmservew.ServeWindow._state_tag("硬件不足") == ("unfit",)
-        assert llmservew.ServeWindow._state_tag("需释放显存") == ("busy",)
-        assert llmservew.ServeWindow._state_tag("可用") == ()
-        assert llmservew.ServeWindow._state_tag("运行中") == ()
+        assert locllmw.LocllmWindow._state_tag("硬件不足") == ("unfit",)
+        assert locllmw.LocllmWindow._state_tag("需释放显存") == ("busy",)
+        assert locllmw.LocllmWindow._state_tag("可用") == ()
+        assert locllmw.LocllmWindow._state_tag("运行中") == ()
 
 
 class TestServewEdgeCases:
     def test_parse_gpu_rows_skips_blank_lines(self) -> None:
-        assert llmservew._parse_gpu_rows("\n   \n") == []
+        assert locllmw._parse_gpu_rows("\n   \n") == []
 
     def test_sample_gpu_when_process_query_fails(self) -> None:
         def run(cmd: list[str], *args: Any, **kwargs: Any) -> CommandResult:
@@ -2158,7 +2158,7 @@ class TestServewEdgeCases:
                 return CommandResult(1, "", "")
             return CommandResult(0, _GPU_CSV, "")
 
-        sample = llmservew._sample_gpu(1, run)
+        sample = locllmw._sample_gpu(1, run)
         assert sample is not None
         assert sample.process_memory is None
 
@@ -2169,7 +2169,7 @@ class TestServewEdgeCases:
             raise NotImplementedError
 
         monkeypatch.setattr(psutil, "cpu_freq", boom)
-        sample = llmservew._sample_load(2**31 - 1, None)
+        sample = locllmw._sample_load(2**31 - 1, None)
         assert sample.cpu_freq is None
 
     def test_sample_load_ignores_dead_process(self) -> None:
@@ -2179,17 +2179,17 @@ class TestServewEdgeCases:
             def cpu_percent(self) -> float:
                 raise psutil.NoSuchProcess(pid=1)
 
-        sample = llmservew._sample_load(2**31 - 1, _DeadProcess())
+        sample = locllmw._sample_load(2**31 - 1, _DeadProcess())
         assert sample.process_cpu is None
         assert sample.process_rss is None
 
     def test_format_duration_branches(self) -> None:
-        assert llmservew._format_duration(45) == "45s"
-        assert llmservew._format_duration(125) == "2m 05s"
-        assert llmservew._format_duration(3661) == "1h 01m 01s"
+        assert locllmw._format_duration(45) == "45s"
+        assert locllmw._format_duration(125) == "2m 05s"
+        assert locllmw._format_duration(3661) == "1h 01m 01s"
 
     def test_format_gpu_without_power_draw(self) -> None:
-        assert llmservew._format_gpu(llmservew.GpuSample(name="GPU"))["gpu_power"] == "-"
+        assert locllmw._format_gpu(locllmw.GpuSample(name="GPU"))["gpu_power"] == "-"
 
     def test_probe_web_ui_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from urllib.error import HTTPError
@@ -2204,19 +2204,19 @@ class TestServewEdgeCases:
                 return False
 
         monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: _Response())
-        assert llmservew._probe_web_ui("http://127.0.0.1:8080") == 200
+        assert locllmw._probe_web_ui("http://127.0.0.1:8080") == 200
 
         def unauthorized(request: Any, timeout: float) -> Any:
             raise HTTPError("http://x/", 401, "unauthorized", cast(Any, None), None)
 
         monkeypatch.setattr("urllib.request.urlopen", unauthorized)
-        assert llmservew._probe_web_ui("http://127.0.0.1:8080", "secret") == 401
+        assert locllmw._probe_web_ui("http://127.0.0.1:8080", "secret") == 401
 
         def offline(request: Any, timeout: float) -> Any:
             raise OSError("down")
 
         monkeypatch.setattr("urllib.request.urlopen", offline)
-        assert llmservew._probe_web_ui("http://127.0.0.1:8080") is None
+        assert locllmw._probe_web_ui("http://127.0.0.1:8080") is None
 
 
 class TestServewGuiEntry:
@@ -2224,8 +2224,8 @@ class TestServewGuiEntry:
         def fake_window() -> None:
             raise ImportError("no tkinter")
 
-        monkeypatch.setattr(llmservew, "ServeWindow", fake_window)
-        llmservew.run_gui()  # 不应抛出
+        monkeypatch.setattr(locllmw, "LocllmWindow", fake_window)
+        locllmw.run_gui()  # 不应抛出
 
     def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[str] = []
@@ -2237,99 +2237,99 @@ class TestServewGuiEntry:
         class _Window:
             root = _Root()
 
-        monkeypatch.setattr(llmservew, "ServeWindow", _Window)
-        llmservew.run_gui()
+        monkeypatch.setattr(locllmw, "LocllmWindow", _Window)
+        locllmw.run_gui()
         assert calls == ["mainloop"]
 
     def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[bool] = []
-        monkeypatch.setattr(llmservew, "run_gui", lambda: calls.append(True))
-        llmservew.launch_cmd()
+        monkeypatch.setattr(locllmw, "run_gui", lambda: calls.append(True))
+        locllmw.launch_cmd()
         assert calls == [True]
 
 
 class TestServewSettings:
-    """llmservew 窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
+    """locllmw 窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
 
     def test_config_path_uses_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-        assert llmservew.config_path() == tmp_path / "ui" / "llmservew.json"
+        assert locllmw.config_path() == tmp_path / "ui" / "locllmw.json"
 
     def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
-        assert llmservew.load_settings(tmp_path / "none.json") == llmservew.ServeSettings()
+        assert locllmw.load_settings(tmp_path / "none.json") == locllmw.LocllmSettings()
 
     def test_load_ignores_invalid_geometry(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         path.write_text('{"geometry": "bad"}', encoding="utf-8")
-        assert llmservew.load_settings(path).geometry is None
+        assert locllmw.load_settings(path).geometry is None
         path.write_text('{"geometry": 123}', encoding="utf-8")
-        assert llmservew.load_settings(path).geometry is None
+        assert locllmw.load_settings(path).geometry is None
 
     def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
         path = tmp_path / "nested" / "ui.json"
-        llmservew.save_settings(llmservew.ServeSettings(geometry="920x700+10+20"), path)
-        assert llmservew.load_settings(path).geometry == "920x700+10+20"
+        locllmw.save_settings(locllmw.LocllmSettings(geometry="920x700+10+20"), path)
+        assert locllmw.load_settings(path).geometry == "920x700+10+20"
 
     def test_save_ignores_write_error(self, tmp_path: Path) -> None:
         blocker = tmp_path / "blocker"
         blocker.write_text("x", encoding="utf-8")
-        llmservew.save_settings(llmservew.ServeSettings(geometry="920x700"), blocker / "ui.json")
+        locllmw.save_settings(locllmw.LocllmSettings(geometry="920x700"), blocker / "ui.json")
 
     def test_resolve_geometry_keeps_visible_position(self) -> None:
-        assert llmservew.resolve_geometry("920x700+100+80", 1920, 1080) == "920x700+100+80"
+        assert locllmw.resolve_geometry("920x700+100+80", 1920, 1080) == "920x700+100+80"
 
     def test_resolve_geometry_pulls_back_offscreen(self) -> None:
-        assert llmservew.resolve_geometry("920x700+5000+5000", 1920, 1080) == "920x700+1000+380"
+        assert locllmw.resolve_geometry("920x700+5000+5000", 1920, 1080) == "920x700+1000+380"
 
     def test_resolve_geometry_enforces_minimum_size(self) -> None:
-        assert llmservew.resolve_geometry("200x100+0+0", 1920, 1080) == "820x640+0+0"
+        assert locllmw.resolve_geometry("200x100+0+0", 1920, 1080) == "820x640+0+0"
 
     def test_resolve_geometry_falls_back_to_default_size(self) -> None:
-        assert llmservew.resolve_geometry(None, 1920, 1080) == "900x780"
-        assert llmservew.resolve_geometry("bad", 1920, 1080) == "900x780"
+        assert locllmw.resolve_geometry(None, 1920, 1080) == "900x780"
+        assert locllmw.resolve_geometry("bad", 1920, 1080) == "900x780"
 
     def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
-        assert llmservew.resolve_geometry(None, 800, 600) == "800x600"
+        assert locllmw.resolve_geometry(None, 800, 600) == "800x600"
 
     def test_unfit_and_busy_markers_use_theme_semantic_colors(self) -> None:
         from fcmd.gui import theme as _guitheme
 
         # 标记色改为窗口实例的 self._theme.palette，不再有模块级静态绑定。
-        assert not hasattr(llmservew, "_UNFIT_COLOR")
-        assert not hasattr(llmservew, "_BUSY_COLOR")
+        assert not hasattr(locllmw, "_UNFIT_COLOR")
+        assert not hasattr(locllmw, "_BUSY_COLOR")
         for theme in _guitheme.THEMES.values():
             assert theme.palette.danger != theme.palette.warning
 
 
 class TestServewBench:
-    """llmservew 性能测试页的纯逻辑：场景表、执行、结果与目标解析。"""
+    """locllmw 性能测试页的纯逻辑：场景表、执行、结果与目标解析。"""
 
     @staticmethod
     def _endpoint(port: int = DEFAULT_PORT) -> llmbase.Endpoint:
         return llmbase.Endpoint(f"http://127.0.0.1:{port}", DEFAULT_API_KEY, "test-model")
 
     def test_scenarios_have_unique_keys_and_lookup(self) -> None:
-        keys = [scenario.key for scenario in _llmservew_bench.SCENARIOS]
+        keys = [scenario.key for scenario in _locllmw_bench.SCENARIOS]
         assert len(keys) == len(set(keys))
-        long8k = _llmservew_bench.scenario_by_key("long8k")
+        long8k = _locllmw_bench.scenario_by_key("long8k")
         assert long8k is not None
         assert long8k.prompt_tokens == 8192
-        assert _llmservew_bench.scenario_by_key("missing") is None
+        assert _locllmw_bench.scenario_by_key("missing") is None
 
     def test_scenarios_cover_typical_cases(self) -> None:
-        labels = {scenario.label for scenario in _llmservew_bench.SCENARIOS}
+        labels = {scenario.label for scenario in _locllmw_bench.SCENARIOS}
         assert {"短对话", "长输出", "代码补全", "长上下文 8K", "长上下文 32K", "并发吞吐 4 路"} <= labels
 
     def test_checked_scenarios_default_all_and_subset(self) -> None:
-        checked = _llmservew_bench.BENCH_CHECKED
-        unchecked = _llmservew_bench.BENCH_UNCHECKED
-        rows = [(checked, scenario.label) for scenario in _llmservew_bench.SCENARIOS]
-        assert _llmservew_bench.checked_scenarios(rows) == list(_llmservew_bench.SCENARIOS)
+        checked = _locllmw_bench.BENCH_CHECKED
+        unchecked = _locllmw_bench.BENCH_UNCHECKED
+        rows = [(checked, scenario.label) for scenario in _locllmw_bench.SCENARIOS]
+        assert _locllmw_bench.checked_scenarios(rows) == list(_locllmw_bench.SCENARIOS)
 
         rows[2] = (unchecked, rows[2][1])
-        expected = [scenario for index, scenario in enumerate(_llmservew_bench.SCENARIOS) if index != 2]
-        assert _llmservew_bench.checked_scenarios(rows) == expected
-        assert not _llmservew_bench.checked_scenarios([(unchecked, "x")] * len(rows))
+        expected = [scenario for index, scenario in enumerate(_locllmw_bench.SCENARIOS) if index != 2]
+        assert _locllmw_bench.checked_scenarios(rows) == expected
+        assert not _locllmw_bench.checked_scenarios([(unchecked, "x")] * len(rows))
 
     def test_run_scenario_sequential(self) -> None:
         calls: list[dict[str, Any]] = []
@@ -2338,9 +2338,9 @@ class TestServewBench:
             calls.append(kwargs)
             return llmbench.BenchResult(0.5, 10, 20, 40.0)
 
-        scenario = _llmservew_bench.scenario_by_key("short")
+        scenario = _locllmw_bench.scenario_by_key("short")
         assert scenario is not None
-        result = _llmservew_bench.run_scenario(self._endpoint(), scenario, repeat=2, request=request)
+        result = _locllmw_bench.run_scenario(self._endpoint(), scenario, repeat=2, request=request)
         assert result.requests == 2
         assert result.total_prompt == 20
         assert result.total_completion == 40
@@ -2355,9 +2355,9 @@ class TestServewBench:
             seen.append(kwargs)
             return llmbench.BenchResult(0.1, 1024, 64, 32.0)
 
-        scenario = _llmservew_bench.scenario_by_key("code")
+        scenario = _locllmw_bench.scenario_by_key("code")
         assert scenario is not None
-        result = _llmservew_bench.run_scenario(self._endpoint(), scenario, max_tokens=64, request=request)
+        result = _locllmw_bench.run_scenario(self._endpoint(), scenario, max_tokens=64, request=request)
         assert seen[0]["prompt_tokens"] == 1024
         assert seen[0]["max_tokens"] == 64
         assert seen[0]["timeout"] == 180.0
@@ -2372,9 +2372,9 @@ class TestServewBench:
                 calls.append(1)
             return llmbench.BenchResult(0.2, 10, 20, 100.0)
 
-        scenario = _llmservew_bench.scenario_by_key("concurrent4")
+        scenario = _locllmw_bench.scenario_by_key("concurrent4")
         assert scenario is not None
-        result = _llmservew_bench.run_scenario(self._endpoint(), scenario, request=request)
+        result = _locllmw_bench.run_scenario(self._endpoint(), scenario, request=request)
         assert scenario.concurrency == 4
         assert result.requests == 4
         assert len(calls) == 4
@@ -2383,7 +2383,7 @@ class TestServewBench:
         def request(endpoint: Any, **kwargs: Any) -> llmbench.BenchResult:
             raise ServeError("boom")
 
-        result = _llmservew_bench.run_scenario(self._endpoint(), _llmservew_bench.SCENARIOS[0], request=request)
+        result = _locllmw_bench.run_scenario(self._endpoint(), _locllmw_bench.SCENARIOS[0], request=request)
         assert result.error == "boom"
         assert result.requests == 0
         assert result.cancelled is False
@@ -2397,54 +2397,54 @@ class TestServewBench:
             called.append(True)
             return llmbench.BenchResult(0.1, 1, 1, 10.0)
 
-        result = _llmservew_bench.run_scenario(
-            self._endpoint(), _llmservew_bench.SCENARIOS[0], cancel=cancel, request=request
+        result = _locllmw_bench.run_scenario(
+            self._endpoint(), _locllmw_bench.SCENARIOS[0], cancel=cancel, request=request
         )
         assert result.cancelled is True
         assert not called
 
     def test_result_metrics_and_row(self) -> None:
-        scenario = _llmservew_bench.SCENARIOS[0]
+        scenario = _locllmw_bench.SCENARIOS[0]
         samples = (
-            _llmservew_bench.BenchSample(0.5, 10, 20, 40.0),
-            _llmservew_bench.BenchSample(0.7, 30, 40, 60.0),
+            _locllmw_bench.BenchSample(0.5, 10, 20, 40.0),
+            _locllmw_bench.BenchSample(0.7, 30, 40, 60.0),
         )
-        result = _llmservew_bench.ScenarioResult(scenario, samples, 2.0)
+        result = _locllmw_bench.ScenarioResult(scenario, samples, 2.0)
         assert result.requests == 2
         assert result.total_prompt == 40
         assert result.total_completion == 60
         assert result.aggregate_tps == pytest.approx(30.0)
         assert result.mean_tps == pytest.approx(50.0)
-        row = _llmservew_bench.format_result_row(result)
+        row = _locllmw_bench.format_result_row(result)
         assert row[0] == scenario.label
         assert row[1] == "2"
         assert row[5] == "30.0"
         assert row[6] == "50.0"
         assert row[-1] == "完成"
-        assert len(row) == len(_llmservew_bench.RESULT_COLUMNS)
+        assert len(row) == len(_locllmw_bench.RESULT_COLUMNS)
 
     def test_result_row_reports_error_and_cancel(self) -> None:
-        scenario = _llmservew_bench.SCENARIOS[0]
-        failed = _llmservew_bench.ScenarioResult(scenario, error="x" * 100)
-        status = _llmservew_bench.format_result_row(failed)[-1]
+        scenario = _locllmw_bench.SCENARIOS[0]
+        failed = _locllmw_bench.ScenarioResult(scenario, error="x" * 100)
+        status = _locllmw_bench.format_result_row(failed)[-1]
         assert status.startswith("失败: ")
         assert len(status) < 60
-        cancelled = _llmservew_bench.ScenarioResult(scenario, cancelled=True)
-        assert _llmservew_bench.format_result_row(cancelled)[-1] == "已取消"
-        assert _llmservew_bench.ScenarioResult(scenario).mean_tps == 0.0
+        cancelled = _locllmw_bench.ScenarioResult(scenario, cancelled=True)
+        assert _locllmw_bench.format_result_row(cancelled)[-1] == "已取消"
+        assert _locllmw_bench.ScenarioResult(scenario).mean_tps == 0.0
 
     def test_endpoint_from_states_prefers_named_and_single(self) -> None:
         states = [_state("alpha", port=8081), _state("beta", port=8082)]
-        named = _llmservew_bench.endpoint_from_states(states, "beta", alive=lambda state: state.name == "beta")
+        named = _locllmw_bench.endpoint_from_states(states, "beta", alive=lambda state: state.name == "beta")
         assert named.base_url == "http://127.0.0.1:8082"
-        single = _llmservew_bench.endpoint_from_states(states, alive=lambda state: state.name == "alpha")
+        single = _locllmw_bench.endpoint_from_states(states, alive=lambda state: state.name == "alpha")
         assert single.base_url == "http://127.0.0.1:8081"
 
     def test_endpoint_from_states_errors(self) -> None:
         with pytest.raises(ServeError, match="没有运行中的服务"):
-            _llmservew_bench.endpoint_from_states([_state("alpha")], alive=lambda state: False)
+            _locllmw_bench.endpoint_from_states([_state("alpha")], alive=lambda state: False)
         registered = [_state("alpha"), _state("beta", port=8081)]
         with pytest.raises(ServeError, match="未在运行"):
-            _llmservew_bench.endpoint_from_states(registered, "alpha", alive=lambda state: state.name == "beta")
+            _locllmw_bench.endpoint_from_states(registered, "alpha", alive=lambda state: state.name == "beta")
         with pytest.raises(ServeError, match="多个服务在运行"):
-            _llmservew_bench.endpoint_from_states(registered, alive=lambda state: True)
+            _locllmw_bench.endpoint_from_states(registered, alive=lambda state: True)
