@@ -340,9 +340,7 @@ def test_install_from_local_zip_json(
     runner = _fakes.FakeRunner(lambda argv, env: _fakes.result(stdout="v20.11.1\n"))
     ctx = _ctx(tmp_path, runner=runner)
     _use(monkeypatch, ctx)
-    code, out, _err = _run(
-        capsys, ["install", "node@20.11.1", "--from", str(artifact), "--no-path", "--json"]
-    )
+    code, out, _err = _run(capsys, ["install", "node@20.11.1", "--from", str(artifact), "--no-path", "--json"])
     assert code == 0
     data_out = _envelope(out)["data"]
     assert data_out["changed"] is True
@@ -387,9 +385,7 @@ def test_install_from_local_rejects_python(
     assert "--from 仅支持 node" in out + err
 
 
-def test_install_go_json(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_install_go_json(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     data, digest = _fakes.make_go_zip("1.23.4")
     fetcher = _fakes.FakeFetcher(
         texts={_go.INDEX: _fakes.go_index_json("1.23.4", digest)},

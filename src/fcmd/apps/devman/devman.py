@@ -811,7 +811,9 @@ def repair(  # noqa: PLR0913 - CLI 参数与安全语义一一对应
         "root": "devman 根目录",
     },
 )
-def export_lock(output: str = "", force: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
+def export_lock(
+    output: str = "", force: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False
+) -> None:
     """导出锁文件（只读；``--output`` 时才写文件）。"""
     subcommand = "export"
     try:

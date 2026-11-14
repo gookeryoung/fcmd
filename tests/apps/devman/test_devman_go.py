@@ -19,9 +19,7 @@ def _layout(tmp_path: Path) -> Layout:
     return Layout(tmp_path / "root")
 
 
-def _index(
-    version: str = VERSION, *, stable: bool = True, sha: str | None = None
-) -> tuple[bytes, str, str]:
+def _index(version: str = VERSION, *, stable: bool = True, sha: str | None = None) -> tuple[bytes, str, str]:
     data, digest = _fakes.make_go_zip(version)
     return data, digest, _fakes.go_index_json(version, sha or digest, stable=stable)
 

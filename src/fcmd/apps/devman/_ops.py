@@ -1111,9 +1111,7 @@ def env_payload(
         "shell": shell,
         "snippet": _env.shell_snippet(layout, shell, pins=pins),
         "dirs": [str(item) for item in _env.path_dirs(layout, pins=pins)],
-        "active": {
-            tool: pins.get(tool) or active_version(layout, tool) for tool in TOOLS
-        },
+        "active": {tool: pins.get(tool) or active_version(layout, tool) for tool in TOOLS},
         "project": project,
         "warnings": [*ctx.warnings, *project["warnings"]],
     }

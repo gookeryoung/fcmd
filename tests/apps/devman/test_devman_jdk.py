@@ -24,10 +24,7 @@ def _layout(tmp_path: Path) -> Layout:
 
 
 def _assets_url(feature: str) -> str:
-    return (
-        f"{_jdk.API}/assets/latest/{feature}/hotspot?architecture=x64"
-        "&image_type=jdk&os=windows&vendor=eclipse"
-    )
+    return f"{_jdk.API}/assets/latest/{feature}/hotspot?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
 
 
 def _available(*, lts: int = 21, latest: int = 23) -> str:
@@ -53,10 +50,7 @@ def test_lts_resolves_via_available_releases(tmp_path: Path) -> None:
 
 def test_exact_version_uses_version_endpoint(tmp_path: Path) -> None:
     _data, digest = _fakes.make_jdk_zip(SEMVER)
-    url = (
-        f"{_jdk.API}/assets/version/21.0.5%2B11?architecture=x64"
-        "&image_type=jdk&os=windows&vendor=eclipse"
-    )
+    url = f"{_jdk.API}/assets/version/21.0.5%2B11?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
     fetcher = _fakes.FakeFetcher(texts={url: _fakes.jdk_assets_json(SEMVER, FILENAME, LINK, digest)})
     plan = _jdk.plan_install(fetcher, _layout(tmp_path), SEMVER)
     assert plan.version == SEMVER
@@ -78,9 +72,7 @@ def test_install_end_to_end(tmp_path: Path) -> None:
         payloads={LINK: data},
     )
     plan = _jdk.plan_install(fetcher, _layout(tmp_path), "lts")
-    runner = _fakes.FakeRunner(
-        lambda argv, env: _fakes.result(stderr=f'openjdk version "{CORE}" 2024-10-15 LTS\n')
-    )
+    runner = _fakes.FakeRunner(lambda argv, env: _fakes.result(stderr=f'openjdk version "{CORE}" 2024-10-15 LTS\n'))
     result = _install.install_zip(plan, _layout(tmp_path), fetcher=fetcher, runner=runner)
     assert result["changed"] is True
     assert result["actions"][0]["verify"] == "official-api"
@@ -89,11 +81,7 @@ def test_install_end_to_end(tmp_path: Path) -> None:
 
 def test_release_names_are_listed(tmp_path: Path) -> None:
     fetcher = _fakes.FakeFetcher(
-        texts={
-            _jdk.RELEASES.format(arch="x64"): json.dumps(
-                ["jdk-21.0.5+11", "jdk-21.0.4+7", "jdk-17.0.13+11"]
-            )
-        }
+        texts={_jdk.RELEASES.format(arch="x64"): json.dumps(["jdk-21.0.5+11", "jdk-21.0.4+7", "jdk-17.0.13+11"])}
     )
     assert _jdk.release_names(fetcher)[:2] == ["21.0.5+11", "21.0.4+7"]
 

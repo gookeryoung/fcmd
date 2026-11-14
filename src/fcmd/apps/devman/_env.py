@@ -325,9 +325,7 @@ def detect_environment(
     """只读探测：PATH 解析、活动版本、外部安装与需要提示的环境标记。"""
     source = os.environ if env is None else env
     path_value = source.get("PATH", "")
-    candidates = {
-        tool: [str(item) for item in command_candidates(_command_for(tool), path_value)] for tool in TOOLS
-    }
+    candidates = {tool: [str(item) for item in command_candidates(_command_for(tool), path_value)] for tool in TOOLS}
     shim_dir = str(layout.shim_dir)
     shim_index = next(
         (index for index, part in enumerate(path_entries(path_value)) if _normalized(part) == _normalized(shim_dir)),

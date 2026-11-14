@@ -38,18 +38,12 @@ def detect_arch() -> str:
 
 
 def _assets_url(feature: str, arch: str) -> str:
-    return (
-        f"{API}/assets/latest/{feature}/hotspot?architecture={arch}"
-        "&image_type=jdk&os=windows&vendor=eclipse"
-    )
+    return f"{API}/assets/latest/{feature}/hotspot?architecture={arch}&image_type=jdk&os=windows&vendor=eclipse"
 
 
 def _version_url(version: str, arch: str) -> str:
     encoded = urllib.parse.quote(version, safe="")
-    return (
-        f"{API}/assets/version/{encoded}?architecture={arch}"
-        "&image_type=jdk&os=windows&vendor=eclipse"
-    )
+    return f"{API}/assets/version/{encoded}?architecture={arch}&image_type=jdk&os=windows&vendor=eclipse"
 
 
 def _load_list(text: str, what: str) -> list[Any]:

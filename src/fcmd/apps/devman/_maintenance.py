@@ -104,9 +104,7 @@ def leftovers(layout: Layout, *, tool: str | None = None) -> list[Path]:
             entries = list(root.iterdir())
         except OSError:
             continue
-        items.extend(
-            item for item in entries if item.is_dir() and item.name.startswith(_LEFTOVER_PREFIXES)
-        )
+        items.extend(item for item in entries if item.is_dir() and item.name.startswith(_LEFTOVER_PREFIXES))
     with contextlib.suppress(OSError):
         items.extend(sorted(layout.cache_dir.glob("*.part")))
     return items
@@ -181,7 +179,9 @@ def _shim_issues(layout: Layout) -> list[dict[str, Any]]:
         if current is None:
             issues.append(_issue(None, name, "shim-missing", f"缺少 shim {name}", "运行 fcmd devman repair --yes"))
         elif current != text:
-            issues.append(_issue(None, name, "shim-stale", f"shim {name} 内容与当前版本不一致", "运行 fcmd devman repair --yes"))
+            issues.append(
+                _issue(None, name, "shim-stale", f"shim {name} 内容与当前版本不一致", "运行 fcmd devman repair --yes")
+            )
     return issues
 
 
@@ -280,7 +280,9 @@ def repair(  # noqa: PLR0912 - 按问题类型逐类收敛，线性展开更易�
         if "active" in kinds:
             for name in (tool,) if tool else TOOLS:
                 active = _state.active_version(layout, name)
-                if active and not any(row.name == active and row.complete for row in _toolchain.list_installed(layout, name)):
+                if active and not any(
+                    row.name == active and row.complete for row in _toolchain.list_installed(layout, name)
+                ):
                     _state.remove_active(layout, name)
 
     remaining = verify(layout, tool=tool) if not dry_run else report
@@ -370,7 +372,9 @@ def lock_plan(layout: Layout, lock: dict[str, Any]) -> dict[str, Any]:
         rows = {row.name: row for row in _toolchain.list_installed(layout, tool)}
         for item in entry.get("versions") or []:
             version = item["version"]
-            row = rows.get(version) or next((candidate for candidate in rows.values() if candidate.version == version), None)
+            row = rows.get(version) or next(
+                (candidate for candidate in rows.values() if candidate.version == version), None
+            )
             if row is not None and row.complete:
                 skipped.append({"tool": tool, "version": version, "reason": "已安装"})
                 continue

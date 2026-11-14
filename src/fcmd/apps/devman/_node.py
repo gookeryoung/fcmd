@@ -260,7 +260,9 @@ def _local_expected(plan: InstallPlan) -> tuple[str, str]:
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
-            raise runtime_error(f"无法读取校验文件 {path}：{exc}", hint="确认文件可读", code=CHECKSUM_UNAVAILABLE) from exc
+            raise runtime_error(
+                f"无法读取校验文件 {path}：{exc}", hint="确认文件可读", code=CHECKSUM_UNAVAILABLE
+            ) from exc
         expected = parse_shasums(text).get(plan.filename)
         if expected is None and _SHA_RE.fullmatch(text.strip()):
             # 裸摘要文件（只写一行 sha256）
