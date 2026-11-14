@@ -232,7 +232,7 @@ def _human_doctor(payload: dict[str, Any]) -> None:
     "devman",
     subcommand="list",
     help="列出已安装版本、活动版本与外部 node/python 探测结果",
-    param_help={"root": "devman 根目录（默认 %LOCALAPPDATA%\\devman）"},
+    param_help={"root": "devman 根目录（默认 %%LOCALAPPDATA%%\\devman）"},
 )
 def list_versions(root: str = "", *, json_output: bool = False) -> None:
     """只读：已安装版本 + 活动版本 + external 探测。"""

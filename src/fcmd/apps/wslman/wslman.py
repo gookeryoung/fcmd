@@ -2702,7 +2702,7 @@ def shutdown(yes: bool = False, preview: bool = False, json_output: bool = False
     help="查看并校验 .wslconfig（只读，不修改文件）",
     param_help={
         "json_output": "输出机读结果信封",
-        "path": "指定配置文件路径，默认 %UserProfile%\\.wslconfig",
+        "path": "指定配置文件路径，默认 %%UserProfile%%\\.wslconfig",
     },
 )
 def config(json_output: bool = False, path: Path | None = None) -> None:
