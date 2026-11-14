@@ -69,14 +69,12 @@ TOOLS: dict[str, ToolEntry] = {
     "llmbench": ToolEntry("llmbench", "python", "fcmd.apps.locllm.llmbench"),
     "llmchat": ToolEntry("llmchat", "python", "fcmd.apps.locllm.llmchat"),
     "llmconvert": ToolEntry("llmconvert", "python", "fcmd.apps.locllm.llmconvert"),
-    "llmconvertw": ToolEntry("llmconvertw", "python", "fcmd.apps.locllm.llmconvertw"),
     "llmdoctor": ToolEntry("llmdoctor", "python", "fcmd.apps.locllm.llmdoctor"),
     "llmdown": ToolEntry("llmdown", "python", "fcmd.apps.locllm.llmdown"),
     "llmengine": ToolEntry("llmengine", "python", "fcmd.apps.locllm.llmengine"),
     "llmenv": ToolEntry("llmenv", "python", "fcmd.apps.locllm.llmenv"),
     "llmmodel": ToolEntry("llmmodel", "python", "fcmd.apps.locllm.llmmodel"),
     "llmqnt": ToolEntry("llmqnt", "python", "fcmd.apps.locllm.llmqnt"),
-    "llmqntw": ToolEntry("llmqntw", "python", "fcmd.apps.locllm.llmqntw"),
     "llmserve": ToolEntry("llmserve", "python", "fcmd.apps.locllm.llmserve"),
     "locllmw": ToolEntry("locllmw", "python", "fcmd.apps.locllm.locllmw"),
     "lscalc": ToolEntry("lscalc", "python", "fcmd.tools.calc.lscalc"),
@@ -202,14 +200,12 @@ DESCRIPTIONS: dict[str, str] = {
     "llmbench": "对 OpenAI 兼容服务实测延迟与 token 吞吐",
     "llmchat": "与 OpenAI 兼容服务多轮流式对话（CLI）",
     "llmconvert": "HF safetensors 目录转 GGUF（可复用本地源码 zip、可选再量化）",
-    "llmconvertw": "HF safetensors 转 GGUF 窗口版（Tk）：启动时后台扫描 llmenv 已配置的模型目录，识别并列出可转换的 HF safetensors 目录；配置精度、解释器、源码脚本与引擎 tag，勾选多种输出格式（原始 / 量化），已生成的格式自动标记并置为只读避免覆盖；可预览转换计划，后台先转换一次再批量量化，实时显示日志与进度；窗口位置与大小记忆到 ~/.fcmd/ui/llmconvertw.json",
     "llmdoctor": "运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）",
     "llmdown": "大模型仓库下载：搜索 / 详情 / 清单 / 多源测速 / 断点续传下载",
     "llmengine": "列出已安装引擎",
     "llmenv": "显示目录布局与当前生效的模型目录",
     "llmmodel": "列出模型目录中的 GGUF 文件",
     "llmqnt": "GGUF 量化：调用 llama-quantize 批量生成多种量化版本",
-    "llmqntw": "GGUF 量化窗口版（Tk）：从已配置模型下拉选择或手动选文件，按 GGUF 元数据识别全量与量化精度并检查完整性（备注在括号中，避免误转或漏转），显示引擎/量化器版本，勾选多种量化类型批量转换；窗口位置与大小记忆到 ~/.fcmd/ui/llmqntw.json",
     "llmserve": "打印启动计划（命令 + 显存估算），不启动",
     "locllmw": "本地 LLM 服务窗口版（Tk，侧边栏分页：概览 / 模型 / 运行 / 对话 / 代理 / 画图 / 视频 / 音频 / 监测 / 设置）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，并在服务运行中实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标（系统负载在服务未启动时也持续采样展示）；监测页的性能测试分区提供短对话 / 长输出 / 代码补全 / 长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/locllmw.json",
     "lscalc": "运行 LS-DYNA SMP 单机计算",
@@ -286,14 +282,12 @@ LAYOUT: tuple[str, ...] = (
     "apps/locllm/llmbench.py",
     "apps/locllm/llmchat.py",
     "apps/locllm/llmconvert.py",
-    "apps/locllm/llmconvertw.py",
     "apps/locllm/llmdoctor.py",
     "apps/locllm/llmdown.py",
     "apps/locllm/llmengine.py",
     "apps/locllm/llmenv.py",
     "apps/locllm/llmmodel.py",
     "apps/locllm/llmqnt.py",
-    "apps/locllm/llmqntw.py",
     "apps/locllm/llmserve.py",
     "apps/locllm/locllmw.py",
     "apps/paramcad/paramcad.py",
@@ -401,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "cdb402d653e307cfb9a37406e274d36d"
+DIGEST = "44be9041a2e240ee057f4362a1fe0344"
 
 
 if __name__ == "__main__":  # pragma: no cover

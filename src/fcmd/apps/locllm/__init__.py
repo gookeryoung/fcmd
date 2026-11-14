@@ -11,11 +11,10 @@
     llmmodel   模型扫描、定位与显存估算                   → fcmd llmmodel <list|find|vram>
     llmengine  引擎安装、切换、离线包检查与量化器定位     → fcmd llmengine <list|install|use|check|inspect>
     llmserve   启动计划与进程生命周期                     → fcmd llmserve <plan|start|stop|status|logs>
-    locllmw    本地 LLM 工作台（含内嵌对话页）                 → fcmd locllmw
+    locllmw    本地 LLM 工作台（对话 / 模型 / 服务 / 设置）        → fcmd locllmw
     llmbench    OpenAI 兼容服务性能测试（只依赖 llmbase.Endpoint） → fcmd llmbench
     llmchat     OpenAI 兼容服务多轮流式对话客户端                  → fcmd llmchat
     llmconvert  HF safetensors → GGUF 转换                        → fcmd llmconvert
-    llmconvertw llmconvert 的 Tk 窗口版                           → fcmd llmconvertw
     llmdoctor   运行环境体检                                      → fcmd llmdoctor
 """
 

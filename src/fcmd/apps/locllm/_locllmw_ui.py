@@ -43,6 +43,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _theme: Any
         _tk: Any
         _ttk: Any
+        _filedialog: Any
         _font: Any
         _busy: bool
         _selected_model: Path | None
@@ -345,13 +346,14 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
 
     def _build_model_browser(self, parent: Any) -> None:
-        """模型页：浏览 / 已安装 / 下载三个子页（整合原 llmdownw）。"""
+        """模型页：浏览 / 已安装 / 下载 / 转换四个子页。"""
         self._model_page = _ModelBrowserPage(
             parent,
             tk=self._tk,
             ttk=self._ttk,
             theme=self._theme,
             messagebox=self._messagebox,
+            filedialog=self._filedialog,
             settings=settings_from_dict(getattr(self._settings, "download", None)),
         )
 

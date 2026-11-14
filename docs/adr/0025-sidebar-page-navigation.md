@@ -1,12 +1,12 @@
 # 0025 GUI 侧边栏分页导航（`SidebarNav`）
 
-- 状态：已落地（locllmw / llmconvertw 等整窗分页；原环境窗口与引擎窗口已并入 locllmw 设置页，见 0031）
+- 状态：已落地（locllmw 等整窗分页；原环境窗口、引擎窗口与转换 / 量化窗口已并入 locllmw，见 0031）
 - 日期：2026-11-14
 - 关联：`src/fcmd/gui/sidebar.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
 
 ## 背景
 
-locllmw 原先与 llmconvertw 等窗口一样，用顶部
+locllmw 原先与其他整窗工具一样，用顶部
 `ttk.Notebook` 承载「配置 / 监控 / 日志」这类页面：
 
 1. 标签条与内容抢横向空间：页数到 3–4 个、或标题有中文长词时，标签被截断，
@@ -51,9 +51,9 @@ locllmw 原先与 llmconvertw 等窗口一样，用顶部
 
 ### 3. 迁移范围
 
-已迁移「整窗主页面」型窗口：locllmw（模型页内部再分浏览 / 已安装 / 下载）、
-llmconvertw 等。原引擎管理窗口与独立环境窗口已并入 locllmw 设置页的「引擎」「目录」
-分页，不再单独开窗。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。主容器
+已迁移「整窗主页面」型窗口：locllmw（模型页内部再分浏览 / 已安装 / 下载 / 转换）。
+原引擎管理窗口与独立环境窗口已并入 locllmw 设置页的「引擎」「目录」分页，
+转换与量化窗口已并入 locllmw 模型页的「转换」分页，不再单独开窗。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。主容器
 `ttk.Frame(self.root)` **不加 padding**，让侧边栏与状态栏贴窗边；内容间距统一
 由各页面自己的 `page_padding` 负责，避免外层再叠一层边距。
 

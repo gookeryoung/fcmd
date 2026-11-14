@@ -54,8 +54,8 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
 - 旧列表中的其余目录写入 `models_dir_extra` 迁移记录，作为设置页与 `llmenv show`
   的提示展示，**不再参与扫描**，避免静默丢弃；
 - 迁移后旧键会被移除，此后只写 `models_dir`；再次设置模型目录会清除迁移记录；
-- 读取点（`llmmodel`、`llmdoctor`、`llmconvert`、`llmconvertw`、`llmqntw`、locllmw
-  模型页 / 运行页 / 概览页）统一调用 `_llmconfig.models_dir()`，不再各自遍历列表。
+- 读取点（`llmmodel`、`llmdoctor`、`llmconvert`、`llmqnt`、locllmw 模型页 /
+  运行页 / 概览页）统一调用 `_llmconfig.models_dir()`，不再各自遍历列表。
 
 选择单一目录的理由：真实使用中模型目录只有一个主盘；多值带来的“主目录/次目录”
 优先级、跨目录去重与下载落点歧义，比它解决的问题更多，也让设置页与 CLI 难以解释。
@@ -125,4 +125,5 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
   `work_dir` / `FCMD_WORK` / `--work-dir` 被忽略且不生效，旧值记入
   `ignored_work_dir` 提示一次，重设模型目录时清除记录。
 - 界面：设置页为「目录 / 引擎 / 界面」三页，目录页只有模型目录；模型页不再在
-  `locllmw.json` 保存 `dest`；引擎管理不再单独开窗。
+  `locllmw.json` 保存 `dest`；引擎管理不再单独开窗。模型页的「转换」子页分
+  转换 / 量化两页，共用 `llmconvert` / `llmqnt` 与 `<models_dir>/converted/` 约定。

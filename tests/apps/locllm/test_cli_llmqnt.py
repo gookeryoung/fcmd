@@ -1,4 +1,4 @@
-"""llmqnt（GGUF 量化）与 llmqntw（Tk 窗口版）工具测试。"""
+"""llmqnt（GGUF 量化）工具测试。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import Any, cast
 import pytest
 
 import fcmd as fx
-from fcmd.apps.locllm import llmbase, llmengine, llmqnt, llmqntw
+from fcmd.apps.locllm import _locllmw_convert, llmbase, llmengine, llmqnt
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
@@ -79,11 +79,9 @@ def _isolate_models_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path
 class TestRegistration:
     def test_tools_registered(self) -> None:
         assert "llmqnt" in _TOOL_REGISTRY
-        assert "llmqntw" in _TOOL_REGISTRY
 
     def test_flat_commands(self) -> None:
         assert fx.list_subcommands("llmqnt") == []
-        assert fx.list_subcommands("llmqntw") == []
 
 
 class TestNaming:
@@ -385,78 +383,8 @@ class TestCli:
 
 
 # ---------------------------------------------------------------------- #
-# llmqntw GUI 入口
+# 转换页的量化选择状态
 # ---------------------------------------------------------------------- #
-class TestQntwGuiEntry:
-    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def fake_window() -> None:
-            raise ImportError("no tkinter")
-
-        monkeypatch.setattr(llmqntw, "QuantizeWindow", fake_window)
-        llmqntw.run_gui()  # 不应抛出
-
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(llmqntw, "QuantizeWindow", _Window)
-        llmqntw.run_gui()
-        assert calls == ["mainloop"]
-
-    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[bool] = []
-        monkeypatch.setattr(llmqntw, "run_gui", lambda: calls.append(True))
-        llmqntw.launch_cmd()
-        assert calls == [True]
-
-
-class TestQntwSettings:
-    """窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
-
-    def test_config_path_uses_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-        assert llmqntw.config_path() == tmp_path / "ui" / "llmqntw.json"
-
-    def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
-        assert llmqntw.load_settings(tmp_path / "none.json") == llmqntw.QuantizeSettings()
-
-    def test_load_ignores_invalid_geometry(self, tmp_path: Path) -> None:
-        path = tmp_path / "ui.json"
-        path.write_text('{"geometry": "bad"}', encoding="utf-8")
-        assert llmqntw.load_settings(path).geometry is None
-        path.write_text('{"geometry": 123}', encoding="utf-8")
-        assert llmqntw.load_settings(path).geometry is None
-
-    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
-        path = tmp_path / "nested" / "ui.json"
-        llmqntw.save_settings(llmqntw.QuantizeSettings(geometry="700x600+10+20"), path)
-        assert llmqntw.load_settings(path).geometry == "700x600+10+20"
-
-    def test_save_ignores_write_error(self, tmp_path: Path) -> None:
-        blocker = tmp_path / "blocker"
-        blocker.write_text("x", encoding="utf-8")
-        llmqntw.save_settings(llmqntw.QuantizeSettings(geometry="700x600"), blocker / "ui.json")
-
-    def test_resolve_geometry_keeps_visible_position(self) -> None:
-        assert llmqntw.resolve_geometry("700x600+100+80", 1920, 1080) == "700x600+100+80"
-
-    def test_resolve_geometry_pulls_back_offscreen(self) -> None:
-        assert llmqntw.resolve_geometry("700x600+5000+5000", 1920, 1080) == "700x600+1220+480"
-
-    def test_resolve_geometry_enforces_minimum_size(self) -> None:
-        assert llmqntw.resolve_geometry("200x100+0+0", 1920, 1080) == "560x520+0+0"
-
-    def test_resolve_geometry_falls_back_to_proportional(self) -> None:
-        assert llmqntw.resolve_geometry(None, 1920, 1080) == "806x778"
-        assert llmqntw.resolve_geometry("bad", 1920, 1080) == "806x778"
-
-
 class _FakeQuantVar:
     def __init__(self, value: bool = False) -> None:
         self.value = value
@@ -476,50 +404,63 @@ class _FakeQuantCheck:
         self.options.update(kwargs)
 
 
-def _bare_quantize_window(tmp_path: Path) -> llmqntw.QuantizeWindow:
-    window = object.__new__(llmqntw.QuantizeWindow)
-    window.input_file = tmp_path / "model-f16.gguf"
-    window._overwrite_var = cast(Any, _FakeQuantVar(False))
-    window._quant_vars = {quant: cast(Any, _FakeQuantVar(False)) for quant in llmqnt.QUANT_TYPES}
-    window._quant_checks = {quant: cast(Any, _FakeQuantCheck()) for quant in llmqnt.QUANT_TYPES}
-    return window
+class _FakeStrVar:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+    def set(self, value: str) -> None:
+        self.value = value
 
 
-class TestQntwQuantSelection:
+def _bare_convert_page(tmp_path: Path) -> _locllmw_convert._ConvertPage:
+    page = object.__new__(_locllmw_convert._ConvertPage)
+    page._closed = False
+    page._quant_input = tmp_path / "model-f16.gguf"
+    page._quant_overwrite_var = cast(Any, _FakeQuantVar(False))
+    page._quant_out_dir_var = cast(Any, _FakeStrVar(str(tmp_path)))
+    page._quant_vars = {quant: cast(Any, _FakeQuantVar(False)) for quant in llmqnt.QUANT_TYPES}
+    page._quant_checks = {quant: cast(Any, _FakeQuantCheck()) for quant in llmqnt.QUANT_TYPES}
+    return page
+
+
+class TestQuantSelection:
     """切换模型时量化类型勾选状态（纯状态，不创建 Tk）。"""
 
     def test_mark_existing_does_not_auto_check_existing_outputs(self, tmp_path: Path) -> None:
-        window = _bare_quantize_window(tmp_path)
-        input_file = window.input_file
+        page = _bare_convert_page(tmp_path)
+        input_file = page._quant_input
         assert input_file is not None
-        llmqnt.output_path(input_file, "Q4_K_M").write_bytes(b"x")
+        llmqnt.output_path(input_file, "Q4_K_M", page._quant_out_dir()).write_bytes(b"x")
 
-        window._mark_existing()
+        page._mark_quant_existing()
 
-        assert window._quant_vars["Q4_K_M"].get() is False
-        assert window._quant_checks["Q4_K_M"].options["state"] == "disabled"
-        assert "已存在" in window._quant_checks["Q4_K_M"].options["text"]
-        assert window._quant_checks["Q5_K_M"].options["state"] == "normal"
+        assert page._quant_vars["Q4_K_M"].get() is False
+        assert page._quant_checks["Q4_K_M"].options["state"] == "disabled"
+        assert "已存在" in page._quant_checks["Q4_K_M"].options["text"]
+        assert page._quant_checks["Q5_K_M"].options["state"] == "normal"
 
     def test_reset_quants_restores_default_selection(self, tmp_path: Path) -> None:
-        window = _bare_quantize_window(tmp_path)
-        for var in window._quant_vars.values():
+        page = _bare_convert_page(tmp_path)
+        for var in page._quant_vars.values():
             var.set(True)
 
-        window._reset_quants()
+        page._reset_quants()
 
-        checked = {quant for quant, var in window._quant_vars.items() if var.get()}
+        checked = {quant for quant, var in page._quant_vars.items() if var.get()}
         assert checked == set(llmqnt.DEFAULT_QUANTS)
 
     def test_mark_existing_keeps_selection_when_overwrite_enabled(self, tmp_path: Path) -> None:
-        window = _bare_quantize_window(tmp_path)
-        window._overwrite_var.set(True)
-        input_file = window.input_file
+        page = _bare_convert_page(tmp_path)
+        page._quant_overwrite_var.set(True)
+        input_file = page._quant_input
         assert input_file is not None
-        llmqnt.output_path(input_file, "Q2_K").write_bytes(b"x")
-        window._quant_vars["Q2_K"].set(True)
+        llmqnt.output_path(input_file, "Q2_K", page._quant_out_dir()).write_bytes(b"x")
+        page._quant_vars["Q2_K"].set(True)
 
-        window._mark_existing()
+        page._mark_quant_existing()
 
-        assert window._quant_vars["Q2_K"].get() is True
-        assert window._quant_checks["Q2_K"].options["state"] == "normal"
+        assert page._quant_vars["Q2_K"].get() is True
+        assert page._quant_checks["Q2_K"].options["state"] == "normal"

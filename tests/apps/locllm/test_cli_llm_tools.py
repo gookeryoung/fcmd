@@ -562,11 +562,11 @@ def test_convert_model_streaming_timeout(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_progress_percent_parsing() -> None:
-    from fcmd.apps.locllm import llmconvertw
+    from fcmd.apps.locllm import _locllmw_convert
 
-    assert llmconvertw._progress_percent(" 45%|████▌     | 9/20") == 45
-    assert llmconvertw._progress_percent("100%|████████| 20/20") == 100
-    assert llmconvertw._progress_percent("Loading model file") is None
+    assert _locllmw_convert._progress_percent(" 45%|████▌     | 9/20") == 45
+    assert _locllmw_convert._progress_percent("100%|████████| 20/20") == 100
+    assert _locllmw_convert._progress_percent("Loading model file") is None
 
 
 def _hf_dir(path: Path) -> Path:
@@ -577,20 +577,20 @@ def _hf_dir(path: Path) -> Path:
     return path
 
 
-def test_convertw_hf_size_and_stats(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_hf_size_and_stats(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
     model = tmp_path / "model"
     model.mkdir()
     (model / "a.safetensors").write_bytes(b"x" * 10)
     (model / "b.safetensors").write_bytes(b"y" * 5)
     (model / "config.json").write_text("{}", encoding="utf-8")
-    assert llmconvertw._hf_size(model) == 15
-    assert llmconvertw._dir_stats(model).startswith("2 个 safetensors")
+    assert _locllmw_convert._hf_size(model) == 15
+    assert _locllmw_convert._dir_stats(model).startswith("2 个 safetensors")
 
 
-def test_convertw_hf_size_skips_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_hf_size_skips_unreadable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
     model = tmp_path / "model"
     model.mkdir()
@@ -604,11 +604,11 @@ def test_convertw_hf_size_skips_unreadable(tmp_path: Path, monkeypatch: pytest.M
         return real_stat(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "stat", fake_stat)
-    assert llmconvertw._hf_size(model) == 0
+    assert _locllmw_convert._hf_size(model) == 0
 
 
-def test_convertw_find_convertible_layouts(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_find_convertible_layouts(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
     root = tmp_path / "root"
     child = _hf_dir(root / "model")
@@ -618,77 +618,53 @@ def test_convertw_find_convertible_layouts(tmp_path: Path) -> None:
     plain = root / "plain"
     plain.mkdir()
 
-    found = {path for path, _ in llmconvertw._find_convertible(root)}
+    found = {path for path, _ in _locllmw_convert._find_convertible(root)}
     assert found == {child, nested}
 
 
-def test_convertw_find_convertible_root_itself(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_find_convertible_root_itself(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
     direct = _hf_dir(tmp_path / "direct")
-    assert [path for path, _ in llmconvertw._find_convertible(direct)] == [direct]
+    assert [path for path, _ in _locllmw_convert._find_convertible(direct)] == [direct]
 
 
-def test_convertw_find_convertible_missing(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_find_convertible_missing(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
-    assert llmconvertw._find_convertible(tmp_path / "missing") == []
+    assert _locllmw_convert._find_convertible(tmp_path / "missing") == []
 
 
-def test_convertw_default_output_path(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_default_output_path(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
     source = tmp_path / "Qwen3-8B"
     source.mkdir()
     root = tmp_path / "models"
-    assert llmconvertw.default_output_path(source, root) == root / "converted" / "Qwen3-8B" / "Qwen3-8B.gguf"
+    assert _locllmw_convert.default_output_path(source, root) == root / "converted" / "Qwen3-8B" / "Qwen3-8B.gguf"
 
 
-def test_convertw_output_path_from_form(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_output_path_from_form(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
-    assert llmconvertw.output_path_from_form("", "", tmp_path) is None
-    assert llmconvertw.output_path_from_form("   ", "custom.gguf", tmp_path) is None
+    assert _locllmw_convert.output_path_from_form("", "", tmp_path) is None
+    assert _locllmw_convert.output_path_from_form("   ", "custom.gguf", tmp_path) is None
 
     source = tmp_path / "model"
     source.mkdir()
-    assert llmconvertw.output_path_from_form(str(source), "", tmp_path) == (
-        llmconvertw.default_output_path(source, tmp_path)
+    assert _locllmw_convert.output_path_from_form(str(source), "", tmp_path) == (
+        _locllmw_convert.default_output_path(source, tmp_path)
     )
     explicit = tmp_path / "custom.gguf"
-    assert llmconvertw.output_path_from_form(str(source), str(explicit), tmp_path) == explicit
+    assert _locllmw_convert.output_path_from_form(str(source), str(explicit), tmp_path) == explicit
 
 
-def test_convertw_quant_target_naming(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
-
-    assert llmconvertw.quant_target(tmp_path / "model.gguf", "Q4_K_M") == tmp_path / "model-Q4_K_M.gguf"
-    assert llmconvertw.quant_target(tmp_path / "model-F16.gguf", "Q8_0") == tmp_path / "model-Q8_0.gguf"
-
-
-def test_convertw_existing_format_detection(tmp_path: Path) -> None:
-    from fcmd.apps.locllm import llmconvertw
-
-    base = tmp_path / "model.gguf"
-    assert llmconvertw.existing_format_keys(base) == []
-    assert llmconvertw.existing_summary(base) == ""
-
-    base.write_bytes(b"x")
-    target = llmconvertw.quant_target(base, "Q4_K_M")
-    target.write_bytes(b"x")
-    assert llmconvertw.existing_format_keys(base) == ["raw", "Q4_K_M"]
-    assert llmconvertw.existing_summary(base) == "原始 GGUF、Q4_K_M"
-
-    base.unlink()
-    assert llmconvertw.existing_summary(base) == "Q4_K_M"
-
-
-def test_convertw_find_convertible_skips_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from fcmd.apps.locllm import llmconvertw
+def test_convert_page_find_convertible_skips_oserror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.apps.locllm import _locllmw_convert
 
     broken = tmp_path / "broken"
     broken.mkdir()
-    monkeypatch.setattr(llmconvertw.llmconvert, "is_hf_safetensors_dir", lambda path: False)
+    monkeypatch.setattr(_locllmw_convert.llmconvert, "is_hf_safetensors_dir", lambda path: False)
     real_iterdir = Path.iterdir
 
     def fake_iterdir(self: Path) -> Any:
@@ -697,106 +673,7 @@ def test_convertw_find_convertible_skips_oserror(tmp_path: Path, monkeypatch: py
         return real_iterdir(self)
 
     monkeypatch.setattr(Path, "iterdir", fake_iterdir)
-    assert llmconvertw._find_convertible(broken) == []
-
-
-class TestConvertwGuiEntry:
-    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        def fake_window() -> None:
-            raise ImportError("no tkinter")
-
-        monkeypatch.setattr(llmconvertw, "ConvertWindow", fake_window)
-        llmconvertw.run_gui()  # 不应抛出
-
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(llmconvertw, "ConvertWindow", _Window)
-        llmconvertw.run_gui()
-        assert calls == ["mainloop"]
-
-    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        calls: list[bool] = []
-        monkeypatch.setattr(llmconvertw, "run_gui", lambda: calls.append(True))
-        llmconvertw.launch_cmd()
-        assert calls == [True]
-
-
-class TestConvertwSettings:
-    """llmconvertw 窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
-
-    def test_config_path_uses_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-        assert llmconvertw.config_path() == tmp_path / "ui" / "llmconvertw.json"
-
-    def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        assert llmconvertw.load_settings(tmp_path / "none.json") == llmconvertw.ConvertSettings()
-
-    def test_load_ignores_invalid_geometry(self, tmp_path: Path) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        path = tmp_path / "ui.json"
-        path.write_text('{"geometry": "bad"}', encoding="utf-8")
-        assert llmconvertw.load_settings(path).geometry is None
-        path.write_text('{"geometry": 123}', encoding="utf-8")
-        assert llmconvertw.load_settings(path).geometry is None
-
-    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        path = tmp_path / "nested" / "ui.json"
-        llmconvertw.save_settings(llmconvertw.ConvertSettings(geometry="950x700+10+20"), path)
-        assert llmconvertw.load_settings(path).geometry == "950x700+10+20"
-
-    def test_save_ignores_write_error(self, tmp_path: Path) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        blocker = tmp_path / "blocker"
-        blocker.write_text("x", encoding="utf-8")
-        llmconvertw.save_settings(llmconvertw.ConvertSettings(geometry="950x700"), blocker / "ui.json")
-
-    def test_resolve_geometry_keeps_visible_position(self) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        assert llmconvertw.resolve_geometry("950x700+100+80", 1920, 1080) == "950x700+100+80"
-
-    def test_resolve_geometry_pulls_back_offscreen(self) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        assert llmconvertw.resolve_geometry("950x700+5000+5000", 1920, 1080) == "950x700+970+380"
-
-    def test_resolve_geometry_enforces_minimum_size(self) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        assert llmconvertw.resolve_geometry("200x100+0+0", 1920, 1080) == "880x640+0+0"
-
-    def test_resolve_geometry_falls_back_to_default_size(self) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        assert llmconvertw.resolve_geometry(None, 1920, 1080) == "960x760"
-        assert llmconvertw.resolve_geometry("bad", 1920, 1080) == "960x760"
-
-    def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
-        from fcmd.apps.locllm import llmconvertw
-
-        assert llmconvertw.resolve_geometry(None, 800, 600) == "800x600"
+    assert _locllmw_convert._find_convertible(broken) == []
 
 
 # ---------------------------------------------------------------------- #

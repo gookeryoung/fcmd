@@ -1,13 +1,14 @@
-"""locllmw「模型」页：浏览 / 已安装 / 下载（整合原 llmdownw）。
+"""locllmw「模型」页：浏览 / 已安装 / 下载 / 转换。
 
-内嵌在 locllmw 的「模型」分页，用嵌套 Notebook 分为三个子页：
+内嵌在 locllmw 的「模型」分页，用嵌套 Notebook 分为四个子页：
 
 * 浏览：ModelScope 搜索、类别 / 系列筛选、详情与文件清单；
 * 已安装：扫描模型目录下的 ``<组织>/<模型>`` 或单级 ``<模型>`` 目录，可打开目录或确认后删除；
-* 下载：配置目标目录 / 下载源 / 并发 / 校验，复用 ``llmdown`` 的多源选优与断点续传。
+* 下载：配置目标目录 / 下载源 / 并发 / 校验，复用 ``llmdown`` 的多源选优与断点续传；
+* 转换：safetensors → GGUF 与 GGUF 量化，复用 ``llmconvert`` / ``llmqnt`` 的核心逻辑。
 
-原独立工具 ``llmdownw`` 已移除；页面类由 ``locllmw`` 实例化，下载设置写入
-``locllmw.json`` 的 ``download`` 字段。
+原独立的下载 / 转换 / 量化窗口已移除；页面类由 ``locllmw`` 实例化，下载设置
+写入 ``locllmw.json`` 的 ``download`` 字段。
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fcmd.apps.locllm import _llmconfig
+from fcmd.apps.locllm._locllmw_convert import _ConvertPage
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     DownloadCancelled,
@@ -261,12 +263,14 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         ttk: Any,
         theme: Any,
         messagebox: Any,
+        filedialog: Any,
         settings: DownloadGuiSettings,
     ) -> None:
         self._tk = tk
         self._ttk = ttk
         self._theme = theme
         self._messagebox = messagebox
+        self._filedialog = filedialog
         self._settings = settings
         self.root = parent.winfo_toplevel()
         self._queue: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -319,7 +323,7 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     # 界面
     # ------------------------------------------------------------------ #
     def _build_widgets(self, host: Any) -> None:
-        """模型页：嵌套 Notebook 分为浏览 / 已安装 / 下载三个子页。"""
+        """模型页：嵌套 Notebook 分为浏览 / 已安装 / 下载 / 转换四个子页。"""
         ttk = self._ttk
         space = self._theme.spacing
         outer = ttk.Frame(host)
@@ -337,12 +341,22 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._browse_tab = ttk.Frame(self._tabs, padding=space.sm)
         self._installed_tab = ttk.Frame(self._tabs, padding=space.sm)
         self._download_tab = ttk.Frame(self._tabs, padding=space.sm)
+        self._convert_tab = ttk.Frame(self._tabs, padding=space.sm)
         self._tabs.add(self._browse_tab, text="浏览")
         self._tabs.add(self._installed_tab, text="已安装")
         self._tabs.add(self._download_tab, text="下载")
+        self._tabs.add(self._convert_tab, text="转换")
         self._build_browse(self._browse_tab)
         self._build_local(self._installed_tab)
         self._build_download(self._download_tab)
+        self._convert_page = _ConvertPage(
+            self._convert_tab,
+            tk=self._tk,
+            ttk=self._ttk,
+            theme=self._theme,
+            messagebox=self._messagebox,
+            filedialog=self._filedialog,
+        )
 
     def settings_dict(self) -> dict[str, Any]:
         """导出当前下载参数，供 locllmw 写回配置。"""
@@ -361,17 +375,20 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         )
 
     def refresh_from_config(self) -> None:
-        """配置变化后同步模型目录显示并重新扫描已安装模型。"""
+        """配置变化后同步模型目录显示，并重新扫描已安装模型与转换页环境。"""
         self._dest_var.set(str(_llmconfig.models_dir()))
         self._download_target = _llmconfig.models_dir()
         self._refresh_local()
+        self._convert_page.refresh_env()
 
     def close(self) -> bool:
-        """确认并停止下载；返回 ``False`` 表示用户取消关闭。"""
+        """确认并停止下载 / 转换任务；返回 ``False`` 表示用户取消关闭。"""
         if self._downloading and not self._messagebox.askyesno(
             "下载进行中",
             "下载尚未完成，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？",
         ):
+            return False
+        if not self._convert_page.close():
             return False
         self._closed = True
         self._stop_event.set()
