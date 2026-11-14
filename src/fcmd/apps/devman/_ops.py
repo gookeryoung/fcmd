@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fcmd.apps.devman import _env, _node, _python
+from fcmd.apps.devman import _env, _node, _project, _python
 from fcmd.apps.devman._errors import (
     BUSY,
     NOT_INSTALLED,
@@ -59,6 +59,9 @@ __all__ = [
     "install",
     "list_payload",
     "new_context",
+    "project_pins",
+    "project_snapshot",
+    "project_versions",
     "uninit",
     "uninstall",
     "upgrade",
@@ -100,6 +103,71 @@ def new_context(root: str | Path | None = None) -> JobContext:
     config, config_warnings = load_config(layout)
     state, state_warnings = load_state(layout)
     return JobContext(layout=layout, config=config, state=state, warnings=[*config_warnings, *state_warnings])
+
+
+# ---- 项目级绑定 ----
+def project_pins(
+    *,
+    start: Path | str | None = None,
+) -> tuple[dict[str, _project.Pin], list[str]]:
+    """从当前目录向上查找项目版本文件（``devman.toml`` 优先）。"""
+    return _project.discover(start=start)
+
+
+def project_snapshot(
+    ctx: JobContext,
+    *,
+    start: Path | str | None = None,
+) -> dict[str, Any]:
+    """只读快照：项目文件、绑定值、是否已安装；不抛错（供 ``list`` / ``doctor``）。"""
+    pins, warnings = project_pins(start=start)
+    entries: dict[str, Any] = {}
+    for tool, pin in pins.items():
+        entry: dict[str, Any] = {
+            "raw": pin.raw,
+            "source": pin.source,
+            "kind": pin.kind,
+            "installed": False,
+            "resolved": None,
+            "path": None,
+        }
+        try:
+            row = resolve_installed(ctx.layout, Spec(tool, pin.raw))
+        except DevmanError:
+            pass
+        else:
+            entry.update(installed=True, resolved=row.name, version=row.version, path=str(row.path))
+        entries[tool] = entry
+    return {
+        "schema": _project.SCHEMA,
+        "files": sorted({pin.source for pin in pins.values()}),
+        "pins": entries,
+        "warnings": warnings,
+    }
+
+
+def project_versions(
+    ctx: JobContext,
+    *,
+    start: Path | str | None = None,
+) -> dict[str, str]:
+    """项目绑定的安装名（``tool → 版本目录名``）；绑定版本未安装时抛 ``NOT_INSTALLED``。
+
+    只影响本次进程的环境构造，不改全局 active、不写 PATH、不自动下载。
+    """
+    pins, _warnings = project_pins(start=start)
+    versions: dict[str, str] = {}
+    for tool, pin in pins.items():
+        try:
+            row = resolve_installed(ctx.layout, Spec(tool, pin.raw))
+        except DevmanError as exc:
+            raise not_found(
+                f"项目要求 {tool}@{pin.raw}，但本机没有可用的已安装版本（{pin.source}）",
+                hint=f"运行 fcmd devman install {tool}@{pin.raw}，或修改 {pin.source}",
+                code=NOT_INSTALLED,
+            ) from exc
+        versions[tool] = row.name
+    return versions
 
 
 # ---- PATH 集成 ----
@@ -267,8 +335,13 @@ def resolve_target(ctx: JobContext, spec: Spec, *, remote_only: bool = False) ->
 
 
 # ---- list ----
-def list_payload(ctx: JobContext, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """已安装版本 + 活动版本 + 外部探测（只读）。"""
+def list_payload(
+    ctx: JobContext,
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: Path | str | None = None,
+) -> dict[str, Any]:
+    """已安装版本 + 活动版本 + 外部探测 + 项目绑定（只读）。"""
     layout = ctx.layout
     tools: dict[str, Any] = {}
     for tool in ("node", "python"):
@@ -280,7 +353,8 @@ def list_payload(ctx: JobContext, *, env: Mapping[str, str] | None = None) -> di
             "incomplete": [row.name for row in installed if not row.complete],
         }
     detected = _env.detect_environment(layout, env=env)
-    warnings = [*ctx.warnings, *[str(item) for item in detected["warnings"]]]
+    project = project_snapshot(ctx, start=cwd)
+    warnings = [*ctx.warnings, *[str(item) for item in detected["warnings"]], *project["warnings"]]
     return {
         "schema": "devman/list/1",
         "root": str(layout.root),
@@ -292,6 +366,7 @@ def list_payload(ctx: JobContext, *, env: Mapping[str, str] | None = None) -> di
         },
         "external": detected["path_resolution"],
         "markers": detected["markers"],
+        "project": project,
         "warnings": warnings,
     }
 
@@ -607,10 +682,20 @@ def _confirm_error(names: str, tool: str):
 
 
 # ---- use ----
-def use(ctx: JobContext, spec_text: str, *, clear: bool = False, dry_run: bool = False) -> dict[str, Any]:
-    """切换活动版本：原子写 ``active/<tool>.txt``。"""
+def use(  # noqa: PLR0913 - 切换选项与 CLI 参数一一对应
+    ctx: JobContext,
+    spec_text: str,
+    *,
+    clear: bool = False,
+    dry_run: bool = False,
+    project: bool = False,
+    cwd: Path | str | None = None,
+) -> dict[str, Any]:
+    """切换活动版本：原子写 ``active/<tool>.txt``；``project`` 只写项目版本文件。"""
     layout = ctx.layout
     spec = parse_spec(spec_text)
+    if project:
+        return _use_project(ctx, spec, clear=clear, dry_run=dry_run, cwd=cwd)
     if clear:
         if dry_run:
             return {
@@ -660,6 +745,59 @@ def use(ctx: JobContext, spec_text: str, *, clear: bool = False, dry_run: bool =
     if spec.tool == "python":
         payload["hint"] = _env.python_hint(layout, row.name)
     return payload
+
+
+def _use_project(
+    ctx: JobContext,
+    spec: Spec,
+    *,
+    clear: bool,
+    dry_run: bool,
+    cwd: Path | str | None,
+) -> dict[str, Any]:
+    """把版本绑定写进当前目录的 ``.node-version`` / ``.python-version``。"""
+    directory = Path(cwd or Path.cwd()).resolve()
+    path_file = directory / _project.VERSION_FILES[spec.tool]
+    warnings = list(ctx.warnings)
+    shadow_pin = _project.read_directory(directory)[0].get(spec.tool)
+    if shadow_pin is not None and shadow_pin.kind == _project.PROJECT_FILE:
+        warnings.append(f"同目录 {shadow_pin.source} 已绑定 {spec.tool}，单行版本文件不会生效")
+
+    if clear:
+        changed = False if dry_run else _project.remove_pin(directory, spec.tool)
+        return {
+            "schema": "devman/use/1",
+            "tool": spec.tool,
+            "changed": changed,
+            "dry_run": dry_run,
+            "active": active_version(ctx.layout, spec.tool),
+            "project": {"file": str(path_file), "raw": None, "changed": changed},
+            "warnings": warnings,
+        }
+
+    row = resolve_installed(ctx.layout, spec)
+    raw = spec.raw or row.version
+    try:
+        current = path_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        current = None
+    if not dry_run and current != raw:
+        _project.write_pin(directory, spec.tool, raw)
+    return {
+        "schema": "devman/use/1",
+        "tool": spec.tool,
+        "changed": current != raw,
+        "dry_run": dry_run,
+        "active": active_version(ctx.layout, spec.tool),
+        "project": {
+            "file": str(path_file),
+            "raw": raw,
+            "resolved": row.name,
+            "path": str(row.path),
+            "changed": current != raw,
+        },
+        "warnings": warnings,
+    }
 
 
 # ---- upgrade ----
@@ -847,16 +985,26 @@ def uninit(
 
 
 # ---- env / exec ----
-def env_payload(ctx: JobContext, *, shell: str = "pwsh") -> dict[str, Any]:
-    """打印当前活动版本的激活片段（不落盘）。"""
+def env_payload(
+    ctx: JobContext,
+    *,
+    shell: str = "pwsh",
+    cwd: Path | str | None = None,
+) -> dict[str, Any]:
+    """打印当前活动版本的激活片段（不落盘）；项目绑定时改用项目版本。"""
     layout = ctx.layout
+    pins = project_versions(ctx, start=cwd)
+    project = project_snapshot(ctx, start=cwd)
     return {
         "schema": "devman/env/1",
         "shell": shell,
-        "snippet": _env.shell_snippet(layout, shell),
-        "dirs": [str(item) for item in _env.path_dirs(layout)],
-        "active": {tool: active_version(layout, tool) for tool in ("node", "python")},
-        "warnings": ctx.warnings,
+        "snippet": _env.shell_snippet(layout, shell, pins=pins),
+        "dirs": [str(item) for item in _env.path_dirs(layout, pins=pins)],
+        "active": {
+            tool: pins.get(tool) or active_version(layout, tool) for tool in ("node", "python")
+        },
+        "project": project,
+        "warnings": [*ctx.warnings, *project["warnings"]],
     }
 
 
@@ -869,6 +1017,7 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
     ctx: JobContext,
     *,
     env: Mapping[str, str] | None = None,
+    cwd: Path | str | None = None,
 ) -> dict[str, Any]:
     """只读诊断；任一 ``fail`` 时整体退出 5（由命令层判定）。"""
     layout = ctx.layout
@@ -968,7 +1117,32 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
     for marker_name, value in dict(detected["markers"]).items():
         checks.append(_check(f"env_{marker_name.lower()}", "warn", f"{marker_name}={value}", "devman 不会接管该环境"))
 
-    # 6. uv（仅 python 相关时提示缺失）
+    # 6. 项目版本绑定
+    project = project_snapshot(ctx, start=cwd)
+    if not project["pins"]:
+        checks.append(_check("project", "ok", "未检测到项目版本文件"))
+    else:
+        missing_pins = [
+            f"{tool}@{item['raw']}（{item['source']}）"
+            for tool, item in project["pins"].items()
+            if not item["installed"]
+        ]
+        if missing_pins:
+            checks.append(
+                _check(
+                    "project",
+                    "warn",
+                    ("项目要求的版本未安装：" + "、".join(missing_pins))[:400],
+                    "运行 fcmd devman install <tool>@<version>，或 use --project --clear <tool> 取消绑定",
+                )
+            )
+        else:
+            detail = "；".join(
+                f"{tool}@{item['resolved']}（{item['source']}）" for tool, item in project["pins"].items()
+            )
+            checks.append(_check("project", "ok", detail[:400]))
+
+    # 7. uv（仅 python 相关时提示缺失）
     try:
         uv = _python.find_uv(ctx.config.python_uv)
         probe = ctx.execute().run([uv, "--version"])
@@ -977,7 +1151,7 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
     except Exception as exc:  # 诊断命令不应因单点探测失败整体崩掉
         checks.append(_check("uv", "warn", str(exc), "安装 uv 后才能获取新的 Python 版本"))
 
-    # 7. 平台能力
+    # 8. 平台能力
     if sys.platform == "win32":
         checks.append(_check("platform", "ok", "Windows：支持安装 / 卸载"))
     else:
@@ -989,5 +1163,6 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
         "ok": not failed,
         "root": str(layout.root),
         "checks": checks,
+        "project": project,
         "warnings": ctx.warnings,
     }

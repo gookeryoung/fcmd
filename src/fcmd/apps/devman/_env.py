@@ -195,11 +195,15 @@ def command_candidates(name: str, path_value: str | None) -> list[Path]:
     return found
 
 
-def path_dirs(layout: Layout) -> list[Path]:
-    """当前活动版本的真实 bin 目录（``devman env`` / ``exec`` 用）。"""
+def path_dirs(layout: Layout, *, pins: Mapping[str, str] | None = None) -> list[Path]:
+    """当前活动版本的真实 bin 目录（``devman env`` / ``exec`` 用）。
+
+    ``pins`` 为项目级绑定（``tool → 安装名``），优先于全局活动版本；
+    没有绑定的工具仍回落到 ``active/<tool>.txt``。
+    """
     dirs: list[Path] = []
     for tool in ("node", "python"):
-        name = active_version(layout, tool)
+        name = (pins or {}).get(tool) or active_version(layout, tool)
         if name:
             directory = layout.version_dir(tool, name)
             if directory.is_dir():
@@ -251,11 +255,11 @@ def write_shims(layout: Layout) -> tuple[list[str], list[str]]:
 
 
 # ---- shell 片段 ----
-def shell_snippet(layout: Layout, shell: str) -> str:
+def shell_snippet(layout: Layout, shell: str, *, pins: Mapping[str, str] | None = None) -> str:
     """把活动版本目录前置到当前 shell 的 PATH（只打印，不落盘）。"""
     if shell not in _SHELLS:
         raise runtime_error(f"不支持的 shell：{shell}", hint="可选 pwsh / cmd / bash", code="INVALID_ARGUMENT")
-    dirs = [str(item) for item in path_dirs(layout)]
+    dirs = [str(item) for item in path_dirs(layout, pins=pins)]
     if not dirs:
         return f"# devman: 没有活动版本，先运行 fcmd devman use <tool>@<version>（{shell}）"
     if shell == "pwsh":
@@ -268,10 +272,15 @@ def shell_snippet(layout: Layout, shell: str) -> str:
     return "export PATH='" + ":".join(posix) + "':$PATH"
 
 
-def child_env(layout: Layout, base: Mapping[str, str] | None = None) -> dict[str, str]:
+def child_env(
+    layout: Layout,
+    base: Mapping[str, str] | None = None,
+    *,
+    pins: Mapping[str, str] | None = None,
+) -> dict[str, str]:
     """构造把活动版本目录前置的子进程环境（不修改父进程）。"""
     env = dict(os.environ if base is None else base)
-    dirs = [str(item) for item in path_dirs(layout)]
+    dirs = [str(item) for item in path_dirs(layout, pins=pins)]
     if dirs:
         env["PATH"] = ";".join([*dirs, env.get("PATH", "")]).strip(";")
     return env

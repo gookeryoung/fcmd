@@ -287,17 +287,17 @@ exit /b %ERRORLEVEL%
 
 | 子命令 | 关键参数 | 副作用 |
 |---|---|---|
-| `list` | `--json` | 只读：已安装版本、活动版本、外部探测、shim 状态 |
+| `list` | `--json` | 只读：已安装版本、活动版本、外部探测、shim 状态、项目绑定 |
 | `versions <tool>` | `--remote`、`--prerelease`、`--json` | 只读（`--remote` 联网读索引，不下载构件） |
 | `install <spec>` | `--dry-run`、`--json`、`--sha256`、`--force`、`--no-path`、`--allow-shadow` | 安装 + 默认写 HKCU PATH；`--dry-run` 零副作用 |
 | `uninstall <spec>` | `--yes`、`--dry-run`、`--json`、`--if-present`、`--all`、`--purge-cache` | 删除版本目录；必须 `--yes`；删掉最后一个版本时清理 devman 写入的 PATH 条目 |
-| `use <spec>` / `use --clear <tool>` | `--json` | 改 `active/<tool>.txt` |
+| `use <spec>` / `use --clear <tool>` | `--json`、`--project` | 改 `active/<tool>.txt`；`--project` 只写当前目录的版本文件 |
 | `upgrade <tool>` | `--to <spec>`、`--purge-old`、`--yes`、`--dry-run`、`--json`、`--no-path`、`--allow-shadow` | 安装 + 切换（+ 可选卸载旧版）；默认写 PATH |
 | `init` | `--no-path`、`--append`、`--allow-shadow`、`--dry-run`、`--json` | 生成 shim + 默认写 HKCU PATH |
 | `uninit` | `--no-path`、`--dry-run`、`--json` | 删 shim + 精确移除 devman 写入的 PATH 条目 |
-| `env` | `--shell pwsh\|cmd\|bash`、`--json` | 只打印 |
-| `exec` | `-- <argv…>` | 起子进程 |
-| `doctor` | `--json` | 只读；有 `fail` 项时退出 5 |
+| `env` | `--shell pwsh\|cmd\|bash`、`--json` | 只打印；有项目绑定时按项目版本输出 |
+| `exec` | `-- <argv…>` | 起子进程；有项目绑定时子进程用项目版本 |
+| `doctor` | `--json` | 只读；有 `fail` 项时退出 5；含 `project` 检查项 |
 
 公共参数（全部子命令）：`--root <dir>`、`--json`（函数签名 `json_output: bool = False`，
 沿用仓库 `--json` 别名约定）。破坏性操作 `--yes` 缺失 → `CONFIRM_REQUIRED`（退出 2）；
@@ -443,6 +443,35 @@ P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-veri
 | 单测 | `tests/apps/devman` 235 项通过，覆盖率 97.88%；`ruff` / `pyrefly` 0 错误 |
 
 （验证前清理了上一轮验证遗留在 HKCU `Path` 的两条 `%TEMP%\devman-verify-*\bin` 死条目。）
+
+### D15 项目级版本绑定（P0，2026-11-14）
+
+- 读取约定：`devman.toml` 的 `[versions]`（`node` / `python`，值为版本号或前缀）优先；
+  同目录再回落 `.node-version` / `.python-version`；从当前目录向上逐级查找，
+  **每个工具取最近的一条**。项目文件只接受数字开头的具体版本/前缀，
+  `latest` / `lts` 通道会被忽略并给出 `warn`（新机复现不可控）。
+- 不读用户主目录及更上层：`~/.python-version` 属于 pyenv 的全局语义，
+  devman 的全局版本由 `active/<tool>.txt` 表示，混用会互相覆盖。
+- 生效范围：`exec` 在子进程内把项目版本目录前置到 PATH，`env` 输出同样顺位的片段，
+  `list` / `doctor` 展示绑定来源与是否已安装。**不改全局 active、不写 PATH、不碰注册表**；
+  shim 仍只跟随全局 active，因此项目绑定不会影响其他终端或其它项目。
+- 缺失行为：绑定版本未安装 → `NOT_INSTALLED`（退出 4），提示
+  `fcmd devman install <spec>` 或修改文件；**不自动下载**。
+- `use <tool>@<ver> --project` 只写当前目录的单行版本文件，`--project --clear` 删除；
+  `devman.toml` 由用户手写、devman 不重写（避免重排注释）；同目录 toml 已绑定该工具时
+  给出「单行文件不会生效」的 `warn`。
+- 不做「cd 自动切换」：需要 shell hook 改全局 active，会污染全局且多目录互相踩；
+  需要自动化的场景用 `devman exec`（可选后续做 shim 读文件，另立决策）。
+
+验收记录 C（root = `%TEMP%\devman-b1\root`，全程 `--no-path`；全局 active 先设为 20.20.2）：
+
+| 项 | 结果 |
+|---|---|
+| 项目文件生效 | `.node-version` = `22` → `exec node -v` = `v22.23.5`（覆盖全局 20.20.2）；`env` 片段前缀为 `root\node\22.23.5` |
+| 删除文件回落 | 删除 `.node-version` 后 `exec node -v` = `v20.20.2` |
+| 未装版本 | `.node-version` = `18` → 退出 4，提示 install / 改文件；`doctor` 的 `project` 项为 `warn` |
+| `use --project` | 写入 `22`，`active\node.txt` 未变；`--project --clear` 删除文件 |
+| 现场恢复 | HKCU `Path` 与验证前逐字一致（未调 `init`）；临时 root / home 已删除 |
 
 ## 风险与边界
 

@@ -124,6 +124,17 @@ def _human_uninstall(payload: dict[str, Any]) -> None:
 
 
 def _human_use(payload: dict[str, Any]) -> None:
+    project = payload.get("project")
+    if project:
+        raw = project.get("raw")
+        if raw is None:
+            state = "已删除" if project.get("changed") else "不存在"
+            print(f"{payload['tool']} 项目绑定{state}: {project['file']}")
+        else:
+            state = "已写入" if project.get("changed") else "未变化"
+            print(f"{payload['tool']}@{raw} 项目绑定{state}: {project['file']}")
+            print(f"  解析为 {project.get('resolved')}；全局活动版本未改（{payload.get('active') or '未设置'}）")
+        return
     if payload.get("active") is None:
         print(f"{payload['tool']} 活动版本已清空")
         return
@@ -169,6 +180,10 @@ def _human_list(payload: dict[str, Any]) -> None:
     shims = payload.get("shims") or {}
     where = f"顺位 {shims['index']}" if shims.get("on_path") else "不在 PATH"
     print(f"shim: {shims.get('dir')}（{where}）")
+    pins = (payload.get("project") or {}).get("pins") or {}
+    for tool, item in pins.items():
+        state = f"→ {item['resolved']}" if item.get("installed") else "（未安装）"
+        print(f"项目 {tool}: {item['raw']} {state}  {item['source']}")
     markers = payload.get("markers") or {}
     for key, value in markers.items():
         print(f"{key}={value}")
@@ -347,15 +362,28 @@ def uninstall(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一
 @fcmd.tool(
     "devman",
     subcommand="use",
-    help="切换活动版本（原子写 active/<tool>.txt）",
-    param_help={"spec": "版本规格；配合 --clear 时只需工具名", "clear": "清空活动版本", "root": "devman 根目录"},
+    help="切换活动版本（原子写 active/<tool>.txt）；--project 只写当前目录的版本文件",
+    param_help={
+        "spec": "版本规格；配合 --clear 时只需工具名",
+        "clear": "清空活动版本（配合 --project 时删除当前目录的版本文件）",
+        "project": "写当前目录的 .node-version / .python-version，不改全局活动版本",
+        "root": "devman 根目录",
+    },
 )
-def use(spec: str, clear: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
-    """切换活动版本；不修改 PATH。"""
+def use(  # noqa: PLR0913 - CLI 参数与 ADR 命令面一一对应
+    spec: str,
+    clear: bool = False,
+    dry_run: bool = False,
+    project: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """切换活动版本；``--project`` 时只写项目文件；都不修改 PATH。"""
     subcommand = "use"
     try:
         ctx = _ops.new_context(root)
-        payload = _ops.use(ctx, spec, clear=clear, dry_run=dry_run)
+        payload = _ops.use(ctx, spec, clear=clear, dry_run=dry_run, project=project)
     except DevmanError as exc:
         _fail(subcommand, exc, json_output=json_output)
         return
@@ -543,7 +571,8 @@ def exec_command(command: list[str], root: str = "", *, json_output: bool = Fals
     subcommand = "exec"
     try:
         ctx = _ops.new_context(root)
-        dirs = _env.path_dirs(ctx.layout)
+        pins = _ops.project_versions(ctx)
+        dirs = _env.path_dirs(ctx.layout, pins=pins)
         if not dirs:
             raise not_found(
                 "没有活动版本，无法构造执行环境",
@@ -551,7 +580,7 @@ def exec_command(command: list[str], root: str = "", *, json_output: bool = Fals
             )
         if not command:
             raise invalid_argument("缺少要执行的命令", hint="例：fcmd devman exec -- node -v")
-        child_env = _env.child_env(ctx.layout)
+        child_env = _env.child_env(ctx.layout, pins=pins)
         # CreateProcess 用父进程 PATH 解析命令，必须显式按活动版本解析
         resolved = shutil.which(command[0], path=child_env.get("PATH"))
         if resolved is None:
@@ -578,6 +607,7 @@ def exec_command(command: list[str], root: str = "", *, json_output: bool = Fals
         "command": command,
         "exit_code": completed.returncode,
         "dirs": [str(item) for item in dirs],
+        "project": pins,
         "warnings": ctx.warnings,
     }
     if completed.returncode != 0:
