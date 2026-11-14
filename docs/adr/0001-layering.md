@@ -41,7 +41,7 @@ cli             组合根：参数解析、工具发现、内建命令
 - P1-1：环境变量持久化下沉至 `infras/system.py`，消除 `core → cli` 反向依赖。
 - P1-2：新增 `core/hooks.py`，discovery 改为注册式依赖反转。
 - P1-3：`core/models/pdf.py` → `tools/pdf/models.py`，模型归属业务域。
-- P1-4：网络探测能力下沉至 `infras/net.py`，`tools/dev`、`tools/llm` 共用同一实现。
+- P1-4：网络探测能力下沉至 `infras/net.py`，`tools/dev`、`apps/locllm` 共用同一实现。
 - P2：移除 TOML DSL 与 `dsl` 包；全部命令改为 `tools/<域>` 下的 `@fcmd.tool` 模块，纯计算迁入 `fcmd/infras/`（见 ADR 0003）。
 - P2-1：`core/filefilter.py` → `infras/filefilter.py`；`core/shared/textio.py` → `infras/textio.py`；`core/shared/net.py` 并入 `infras/net.py`，`core/shared` 包移除。
 - P2-2：`core/models/command.py` → `infras/command.py`；`core/version.py` → `infras/version.py`；`core/env_persist.py` 并入 `infras/system.py`，`core/models` 包移除。

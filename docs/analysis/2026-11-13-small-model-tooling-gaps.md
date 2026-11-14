@@ -87,7 +87,7 @@
 | 多媒体 | `imagetool`、`img2ico`、`videoconv` | ◐ | 以产出文件为主；失败的呈现方式不统一（打印后退出 0 / 抛异常后静默退出 1） | README「多媒体」；`tools/media/videoconv.py:201-223` |
 | 系统/进程 | `sysinfo`、`portcheck`、`peview`、`reshack` | ◐ | `sysinfo` 只有中文标签文本；`peview` 13 个子命令全表格、错误退出 0 | `tools/system/sysinfo.py`；`apps/peview/peview.py:54-59` |
 | 项目构建 | `pymake`、`autofmt`、`pyprof`、`piptool`、`packtool`、`gittool` | ✅/◐ | cmd 任务失败可判定（统一退出 1）；但输出是原生命令输出，缺摘要 | `core/toolkit/exec.py:341` |
-| LLM 工具链 | `llmenv`、`llmdown`、`llmserve`、`llmqnt`、`llmbench`、`llmchat` | ◐ | 多为长进度/日志；`llmchat` 省略 `--prompt` 会进入 `input()` 交互 | `tools/llm/llmchat.py:404,444-446` |
+| LLM 工具链 | `llmenv`、`llmdown`、`llmserve`、`llmqnt`、`llmbench`、`llmchat` | ◐ | 多为长进度/日志；`llmchat` 省略 `--prompt` 会进入 `input()` 交互 | `apps/locllm/llmchat.py:404,444-446` |
 | 科学计算应用 | `dynacalc`、`paramcad`、`paramesh` | ✅/◐ | `dynacalc` 已有 JSON/退出码范式；`paramcad`/`paramesh` 错误仍退出 0 | `apps/dynacalc/dynacalc.py:104-107,155,205,460`；`apps/paramcad/paramcad.py:40-46`；`apps/paramesh/paramesh.py:112-116,259-273` |
 | GUI 应用 | `cmderw`、`filescanw`、`renamerw` 等 29 个 | ✗ | 无 headless 模式；且部分能力只在 GUI 暴露（重复文件、校验文件比对） | `apps/cmder/app.py:8083,8477`；`apps/cmder/_dupes.py:93` |
 
@@ -107,7 +107,7 @@
 | `textdiff` | 输出 unified diff；“相同”与“不同”都退出 0，无统计 | ◐ | `tools/text/textdiff.py:27-42` |
 | `checksum` | 工具本身是 Tk GUI；`infras.checksum` 已有 build/parse/verify，但只被 cmderw 调用 | ✗（能力存在但不可 CLI 调用） | `tools/system/checksum.py:1,386`；`infras/checksum.py:120,160,218`；`apps/cmder/app.py:8477` |
 | `cmderw` | 重复文件查找只在此 GUI 暴露 | ✗（能力存在但不可 CLI 调用） | `apps/cmder/app.py:8083`；`apps/cmder/_dupes.py:93` |
-| `llmchat` | `--prompt` 单次可脚本化；省略时进入 `input()` 循环 | ◐（有交互陷阱） | `tools/llm/llmchat.py:404,444-446` |
+| `llmchat` | `--prompt` 单次可脚本化；省略时进入 `input()` 循环 | ◐（有交互陷阱） | `apps/locllm/llmchat.py:404,444-446` |
 | `pdftool` | 18 个子命令中 10 个为 `m/s/c/e/d/xt/xi/w/r/i` | ◐（发现性差） | `tools/pdf/pdftool.py:51,77,127,133,143,153` |
 | `paramcad` / `paramesh` | 有 `digest` / `report --as-json` 等结构化出口，但域错误打印后退出 0 | ◐ | `apps/paramcad/paramcad.py:40-46,108-122`；`apps/paramesh/paramesh.py:112-116,259-273` |
 
@@ -759,7 +759,7 @@ P2-1 plan ──► P2-2 renamer plan ──► P2-3 幂等写
 | 校验文件逻辑只在 infras/cmderw | `src/fcmd/infras/checksum.py:120,160,218`；`src/fcmd/apps/cmder/app.py:8477` |
 | 重复文件查找只在 cmderw | `src/fcmd/apps/cmder/app.py:8083`；`src/fcmd/apps/cmder/_dupes.py:93` |
 | `pdftool` 单字母子命令 | `src/fcmd/tools/pdf/pdftool.py:51,77,127,133,143,153,198` |
-| `llmchat` 省略 prompt 进入交互 | `src/fcmd/tools/llm/llmchat.py:404,444-446` |
+| `llmchat` 省略 prompt 进入交互 | `src/fcmd/apps/locllm/llmchat.py:404,444-446` |
 | `doctor` 内部已有 ok/detail/fix | `src/fcmd/cli/_doctor_helpers.py:29,46,64,83,95,107,114-140` |
 | `env --json` 是少数结构化出口 | `src/fcmd/cli/_builtins/env_cmd.py:31` |
 | 未知工具仅有 difflib 建议 | `src/fcmd/cli/_common.py:17-27` |

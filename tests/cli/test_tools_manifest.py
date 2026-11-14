@@ -172,7 +172,7 @@ def test_python_fast_path_imports_only_target(tmp_path: Path) -> None:
         "assert d.resolve_tool_fast('img2icow') == 'img2icow'\n"
         "assert d._TOOLS_DISCOVERED is False\n"
         "assert d._TOOL_MODULES['img2icow'] == 'fcmd.tools.media.img2icow'\n"
-        "assert 'fcmd.tools.llm.llmchat' not in sys.modules\n"
+        "assert 'fcmd.apps.locllm.llmchat' not in sys.modules\n"
         "assert 'fcmd.tools.dev.pymake' not in sys.modules\n"
         "print('ok')\n",
         tmp_path,

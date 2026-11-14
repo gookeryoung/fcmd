@@ -354,7 +354,8 @@ def _build_parser_for_tool(spec: ToolSpec) -> argparse.ArgumentParser:
                 help_text=param_help.get(pname),
                 aliases=_PARAM_CLI_ALIASES.get(pname, ()),
             )
-    _add_global_options(parser)
+    # 工具自己声明 dry_run 时由工具生成结构化计划，不再添加框架级 --dry-run
+    _add_global_options(parser, include_dry_run="dry_run" not in sig.parameters)
     return parser
 
 
@@ -426,9 +427,10 @@ def param_schema(spec: ToolSpec) -> list[dict[str, Any]]:
     return params
 
 
-def _add_global_options(parser: argparse.ArgumentParser) -> None:
+def _add_global_options(parser: argparse.ArgumentParser, *, include_dry_run: bool = True) -> None:
     """为 parser 添加全局选项（--dry-run / --quiet / --strategy）。"""
-    parser.add_argument("--dry-run", action="store_true", default=False, help="仅打印执行计划，不执行")
+    if include_dry_run:
+        parser.add_argument("--dry-run", action="store_true", default=False, help="仅打印执行计划，不执行")
     parser.add_argument("-q", "--quiet", action="store_true", default=False, help="减少输出")
     parser.add_argument(
         "--strategy",

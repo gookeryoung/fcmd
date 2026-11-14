@@ -2,7 +2,7 @@
 
 - 状态：已落地（auto / default / throughput / long-context / low-vram）
 - 日期：2026-11-11
-- 关联：`src/fcmd/tools/llm/_llmtune.py`、`llmserve`、`llmservew`、0013（GUI 技术路线）
+- 关联：`src/fcmd/apps/locllm/_llmtune.py`、`llmserve`、`llmservew`、0013（GUI 技术路线）
 
 ## 背景
 

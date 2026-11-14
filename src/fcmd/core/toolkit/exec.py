@@ -374,11 +374,13 @@ def _execute_tool_tasks(
     # --json 要求 stdout 可整体解析：同时关闭框架的进度/汇总行，避免与 JSON 混排
     verbose = not variables.get("quiet", False) and not json_output
 
+    # 工具自己声明 dry_run 时由工具生成结构化计划，框架不跳过任务
+    owns_dry_run = "dry_run" in inspect.signature(target_spec.func).parameters
     try:
         report = run(
             graph,  # type: ignore[bad-argument-type]
             strategy=strategy,  # type: ignore[arg-type]
-            dry_run=variables.get("dry_run", False),
+            dry_run=False if owns_dry_run else variables.get("dry_run", False),
             verbose=verbose,
         )
     except TaskFailedError as e:

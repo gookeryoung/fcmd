@@ -6,7 +6,7 @@ alwaysApply: false
 
 # Tk GUI 工具开发规则
 
-适用于 `src/fcmd/tools/**` 与 `src/fcmd/apps/**` 的 tkinter/ttk 窗口工具，基准为 `tools/llm`。
+适用于 `src/fcmd/tools/**` 与 `src/fcmd/apps/**` 的 tkinter/ttk 窗口工具，基准为 `apps/locllm`。
 
 ## 目录与注册
 

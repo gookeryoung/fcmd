@@ -44,7 +44,7 @@
 
 - `infras → core/tools/apps/cli/gui`：**0 条**。基础层没有反向依赖。
 - `gui → core/tools/apps/cli/infras`：**0 条**（仅标准库 + `fcmd.console` 的函数内导入）。
-- `tools` 跨域依赖：**1 处真实跨域**——`llm → net`，具体是 `tools/llm/llmserve.py:404` 与 `tools/llm/llmdoctor.py:65` 函数内导入 `fcmd.tools.net.portcheck.is_port_in_use`。`media/pdf → fcmd.tools._deps` 是共享基础模块，不算跨域。
+- `tools` 跨域依赖：**1 处真实跨域**——`llm → net`，具体是 `apps/locllm/llmserve.py:404` 与 `apps/locllm/llmdoctor.py:65` 函数内导入 `fcmd.tools.net.portcheck.is_port_in_use`。`media/pdf → fcmd.tools._deps` 是共享基础模块，不算跨域。
 - `apps → tools`：3 处，全部是 `apps/cmder/app.py` 延迟导入 `fcmd.tools.archive.archivex`（ADR 0001 允许）。
 - 模块级导入环：**1 个**，位于 vendored 的 `tools/dev/_pyprof_html` ↔ `tools/dev/pyprof`（自带 HTML 生成器），与本项目主干代码无关。
 - **唯一违反 ADR 0001 的边**：`core → console`
@@ -123,7 +123,7 @@
 | `apps/cmder/app.py` | 8,735 | 视图 + 模型 + 设置混在一起，唯一真正需要拆的文件 |
 | `apps/cmder/_ops.py` | 2,565 | 纯逻辑，97 个函数，符合"逻辑与 UI 分离"的预期 |
 | `tools/system/envw.py` | 1,331 | 环境变量 GUI，工具内单体 |
-| `tools/llm/llmdownw.py` / `llmdown.py` | 1,262 / 1,252 | 模型浏览 / 下载，已在 0016 记录 |
+| `apps/locllm/llmdownw.py` / `llmdown.py` | 1,262 / 1,252 | 模型浏览 / 下载，已在 0016 记录 |
 | `gui/theme.py` | 1,239 | ttk 样式表驱动，ADR 0004 M6 待决策 |
 | `apps/renamer/renamerw.py` | 1,021 | 批量重命名 GUI |
 | `apps/pptmake/pptmakew.py` | 987 | 接近阈值，可暂不处理 |

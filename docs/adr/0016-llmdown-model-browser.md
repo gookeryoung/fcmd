@@ -2,7 +2,7 @@
 
 - 状态：已落地（v1）
 - 日期：2026-11-11
-- 关联：`src/fcmd/tools/llm/llmdown.py`、`src/fcmd/tools/llm/llmdownw.py`、0013（GUI 技术路线）
+- 关联：`src/fcmd/apps/locllm/llmdown.py`、`src/fcmd/apps/locllm/llmdownw.py`、0013（GUI 技术路线）
 
 ## 背景
 
@@ -141,7 +141,7 @@ Hugging Face 下载 / 点赞、Open LLM Leaderboard、LMArena 等国际开源社
   `series_options` / `filter_by_series` / `sort_by_popularity`）；
   `llmdownw.py` 新增窗口与系列下拉、增量列表同步（`sync_tree_rows`）；
   `pyproject.toml` 新增 `llmdownw` 入口。
-- 测试：`tests/tools/llm/test_cli_llmdown.py` 覆盖搜索请求体、排序取值、
+- 测试：`tests/apps/locllm/test_cli_llmdown.py` 覆盖搜索请求体、排序取值、
   任务类别解析、详情解析、分页校验、本地扫描 / 删除 / 越界拒绝、进度事件与
   取消保留 `.part`、系列识别 / 排名表顺序 / 选项排序 / `--series` 过滤；
   `test_cli_llmdownw.py` 覆盖注册、配置回退、几何恢复、格式化、类别过滤、

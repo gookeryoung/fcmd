@@ -52,7 +52,9 @@ llmservew 原先与 llmdownw、llmconvertw、llmenginew、llmenvw 一样，用�
 ### 3. 迁移范围
 
 已迁移「整窗主页面」型窗口：llmservew、llmdownw、llmconvertw、llmenginew、
-llmenvw。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。
+llmenvw。跨页跳转改为 `_nav.select("log")` 之类的 key 调用。主容器
+`ttk.Frame(self.root)` **不加 padding**，让侧边栏与状态栏贴窗边；内容间距统一
+由各页面自己的 `page_padding` 负责，避免外层再叠一层边距。
 
 **不迁移**以下 `Notebook`：它们是同屏子视图而不是顶层页，或受窗口高度约束，
 侧边栏会二次挤压内容：
