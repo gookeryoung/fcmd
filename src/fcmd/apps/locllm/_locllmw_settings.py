@@ -335,8 +335,8 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         self._engine_tree.bind("<Double-1>", lambda _event: self._use_selected())
         scrollbar = ttk.Scrollbar(box, orient="vertical", command=self._engine_tree.yview)
         self._engine_tree.configure(yscrollcommand=scrollbar.set)
-        self._engine_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self._engine_tree.pack(side="left", fill="both", expand=True)
 
         info = ttk.Frame(parent)
         info.pack(fill="x", pady=(0, space.sm))
@@ -451,6 +451,17 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
 
     def _apply(self, key: str, value: str | None, *, label: str | None = None) -> None:
         label = label or _EDITABLE[key][0]
+        if key == "models_dir":
+            from tkinter import messagebox
+
+            target = value or str(_llmconfig.models_dir())
+            if not messagebox.askyesno(
+                "修改模型目录",
+                f"把模型目录改为：\n{target}\n\n只会修改配置指向，不移动或复制已有文件；运行中的服务不受影响。\n"
+                "保存后会立即重新扫描运行页的模型列表。",
+                parent=self._root,
+            ):
+                return
         try:
             resolved = apply_path(key, value)
         except (OSError, ValueError) as exc:

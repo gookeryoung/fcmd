@@ -2382,17 +2382,17 @@ class TestServewSettings:
         locllmw.save_settings(locllmw.LocllmSettings(geometry="920x700"), blocker / "ui.json")
 
     def test_resolve_geometry_keeps_visible_position(self) -> None:
-        assert locllmw.resolve_geometry("920x700+100+80", 1920, 1080) == "920x700+100+80"
+        assert locllmw.resolve_geometry("1100x850+100+80", 1920, 1080) == "1100x850+100+80"
 
     def test_resolve_geometry_pulls_back_offscreen(self) -> None:
-        assert locllmw.resolve_geometry("920x700+5000+5000", 1920, 1080) == "920x700+1000+380"
+        assert locllmw.resolve_geometry("1100x850+5000+5000", 1920, 1080) == "1100x850+820+230"
 
     def test_resolve_geometry_enforces_minimum_size(self) -> None:
-        assert locllmw.resolve_geometry("200x100+0+0", 1920, 1080) == "820x640+0+0"
+        assert locllmw.resolve_geometry("200x100+0+0", 1920, 1080) == "1000x800+0+0"
 
     def test_resolve_geometry_falls_back_to_default_size(self) -> None:
-        assert locllmw.resolve_geometry(None, 1920, 1080) == "900x780"
-        assert locllmw.resolve_geometry("bad", 1920, 1080) == "900x780"
+        assert locllmw.resolve_geometry(None, 1920, 1080) == "1080x880"
+        assert locllmw.resolve_geometry("bad", 1920, 1080) == "1080x880"
 
     def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
         assert locllmw.resolve_geometry(None, 800, 600) == "800x600"

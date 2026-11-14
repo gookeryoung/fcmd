@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import queue
 import threading
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,8 +42,6 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         _tk: Any
         _ttk: Any
         _theme: Any
-        _messagebox: Any
-        _filedialog: Any
         _settings: Any
         _settings_path: Path | None
         _hardware: HardwareSnapshot | None
@@ -58,6 +55,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         _build_loaded: Callable[[Any], None]
         _refresh_models: Callable[[], None]
         _persist_settings: Callable[[], None]
+        _nav: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -94,7 +92,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
                 "<Configure>",
                 lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
             )
-        ttk.Button(box, text="修改模型盘…", command=self._choose_model_root).grid(
+        ttk.Button(box, text="去设置修改…", command=lambda: self._nav.select("settings")).grid(
             row=3, column=2, sticky="e", padx=(space.sm, 0)
         )
 
@@ -201,7 +199,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
     def _hardware_work(self) -> None:
         """后台检测；异常也回传，避免界面一直停在「检测中」。"""
         try:
-            snapshot = detect_hardware(models_root=self._primary_model_root())
+            snapshot = detect_hardware(models_root=llmenv.models_dir())
         except Exception as exc:  # 边界兜底：驱动 / psutil 异常不能拖垮窗口
             self._hardware_queue.put(("error", str(exc)))
             return
@@ -245,39 +243,6 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         )
 
     # ------------------------------------------------------------------ #
-    # 模型盘
-    # ------------------------------------------------------------------ #
-    @staticmethod
-    def _primary_model_root() -> Path:
-        return llmenv.models_dir()
-
-    def _choose_model_root(self) -> None:
-        """选择新的模型根目录并写入 ``llmenv`` 配置，随后重扫模型。"""
-        current = self._primary_model_root()
-        chosen = self._filedialog.askdirectory(
-            parent=self.root,
-            title="选择模型盘 / 模型根目录",
-            initialdir=str(current),
-        )
-        if not chosen:
-            return
-        path = Path(chosen).expanduser()
-        if not path.is_dir():
-            self._messagebox.showerror("修改模型盘", f"目录不存在：{path}")
-            return
-        if not self._messagebox.askyesno(
-            "修改模型盘",
-            f"把模型根目录改为：\n{path}\n\n现有模型目录配置会被替换，随后重新扫描模型。",
-        ):
-            return
-        llmenv.set_models_dir(path)
-        if self._hardware is not None:
-            self._hardware = replace(self._hardware, model_root=str(path))
-        self._refresh_hardware_view()
-        self._persist_settings()
-        self._refresh_models()
-
-    # ------------------------------------------------------------------ #
     # 智能推荐 / 实测
     # ------------------------------------------------------------------ #
     def _refresh_recommendations(self) -> None:
@@ -289,7 +254,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         rows = recommend(self._models, self._hardware, self._measured)
         if not rows:
             status.set(
-                "未检测到可用模型：先在「模型」页刷新，或用「修改模型盘…」登记模型目录。"
+                "未检测到可用模型：先在「模型」页刷新，或在「设置 → 目录」中登记模型目录。"
                 if not self._models
                 else "当前模型都放不进整卡显存：建议换更小量化，或释放显存后重新检测。"
             )

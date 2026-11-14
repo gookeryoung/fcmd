@@ -9,6 +9,7 @@ from __future__ import annotations
 import queue
 import re
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -89,6 +90,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _nav: Any
         _start: Any
         _stop: Any
+        _stop_selected: Any
+        _plan_text: Any
+        _page_canvases: dict[str, Any]
         _sync_tree_selection: Any
         _bench_repeat_var: Any
         _bench_timeout_var: Any
@@ -106,6 +110,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _settings: Any
         _model_page: Any
         _messagebox: Any
+        _hardware: Any
+        _refresh_hardware_view: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -133,12 +139,16 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         audio_page = self._nav.add("audio", "音频", hint="语音识别 / 合成")
         monitor_page = self._nav.add("monitor", "监测", hint="指标、日志与性能测试")
         settings_page = self._nav.add("settings", "设置", hint="环境、配置与窗口")
+        self._page_canvases = {}
         self._nav.enable_shortcuts()
-        self._build_overview(overview_page)
-        self._build_model_browser(models_page)
-        self._build_actions(run_page)
-        self._build_models(run_page)
-        self._build_params(run_page)
+        self.root.bind("<MouseWheel>", self._on_page_wheel, add="+")
+        run_body = self._scroll_page("run", run_page)
+        self._build_overview(self._scroll_page("overview", overview_page))
+        self._build_model_browser(self._scroll_page("models", models_page))
+        self._build_actions(run_body)
+        self._build_plan_preview(run_body)
+        self._build_models(run_body)
+        self._build_params(run_body)
         self._build_chat_page(chat_page)
         self._build_planned(
             agent_page,
@@ -161,8 +171,43 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             title="音频",
             summary="音频页规划中：语音识别与语音合成将共用本页的模型选择、设备与批处理设置。",
         )
-        self._build_monitor(monitor_page)
-        self._build_settings(settings_page)
+        self._build_monitor(self._scroll_page("monitor", monitor_page))
+        self._build_settings(self._scroll_page("settings", settings_page))
+
+    def _scroll_page(self, key: str, page: Any) -> Any:
+        """把分页内容套进纵向滚动容器，内容高于窗口时可滚动，避免底部控件被裁掉。"""
+        tk = self._tk
+        ttk = self._ttk
+        canvas = tk.Canvas(page, highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = ttk.Frame(canvas)
+        window = canvas.create_window((0, 0), window=body, anchor="nw")
+        self._page_canvases[key] = canvas
+
+        def sync(_event: object = None) -> None:
+            width = max(canvas.winfo_width(), 1)
+            canvas.itemconfigure(window, width=width)
+            canvas.configure(scrollregion=(0, 0, width, max(body.winfo_reqheight(), 1)))
+
+        body.bind("<Configure>", sync)
+        canvas.bind("<Configure>", sync)
+        return body
+
+    def _on_page_wheel(self, event: Any) -> str | None:
+        """分页内容高于窗口时用滚轮滚动页面；文本 / 列表 / 表格保留自身滚动。"""
+        if isinstance(event.widget, (self._tk.Text, self._tk.Listbox, self._ttk.Treeview)):
+            return None
+        canvas = self._page_canvases.get(self._nav.selected())
+        if canvas is None:
+            return None
+        first, last = canvas.yview()
+        if first <= 0.0 and last >= 1.0:
+            return None
+        canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+        return "break"
 
     def _build_planned(
         self,
@@ -215,9 +260,13 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
 
     def _on_config_changed(self) -> None:
-        """权威配置变更后同步模型页的模型目录并重扫。"""
+        """权威配置变更后同步模型页、概览硬件卡与运行页模型列表。"""
         if self._model_page is not None:
             self._model_page.refresh_from_config()
+        if self._hardware is not None:
+            self._hardware = replace(self._hardware, model_root=str(llmenv.models_dir()))
+            self._refresh_hardware_view()
+        self._refresh_models()
 
     @staticmethod
     def _service_names() -> list[str]:
@@ -381,7 +430,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             columns=("model", "size", "profiles", "tags", "fit"),
             show="headings",
             selectmode="browse",
-            height=4,
+            height=10,
         )
         self._tree.heading("model", text="模型")
         self._tree.heading("size", text="大小")
@@ -399,8 +448,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._tree.tag_configure("busy", foreground=self._theme.palette.warning)
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
-        self._tree.pack(side="left", fill="both", expand=True)
         yscroll.pack(side="right", fill="y")
+        self._tree.pack(side="left", fill="both", expand=True)
         self._tree.bind("<<TreeviewSelect>>", self._on_model_selected)
 
         self._hint_var = self._tk.StringVar(value=_HINT_PLACEHOLDER)
@@ -571,30 +620,54 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _build_actions(self, outer: Any) -> None:
         ttk = self._ttk
+        space = self._theme.spacing
         actions = ttk.Frame(outer)
-        actions.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
-        self._preview_btn = ttk.Button(actions, text="预览计划", command=self._preview)
+        actions.pack(side="bottom", fill="x", pady=(space.sm, 0))
+        service = ttk.Frame(actions)
+        service.pack(fill="x")
+        self._preview_btn = ttk.Button(service, text="预览计划", command=self._preview)
         self._preview_btn.pack(side="left")
-        self._start_btn = ttk.Button(actions, text="启动服务", command=self._start, style="Accent.TButton")
-        self._start_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        self._stop_btn = ttk.Button(actions, text="停止全部服务", command=self._stop, style="Danger.TButton")
-        self._stop_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        self._status_btn = ttk.Button(actions, text="刷新状态", command=self._refresh_status)
-        self._status_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        self._logs_btn = ttk.Button(actions, text="查看日志", command=self._show_logs)
-        self._logs_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        self._browser_btn = ttk.Button(actions, text="打开浏览器", command=self._open_browser)
-        self._browser_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        self._clear_log_btn = ttk.Button(actions, text="清空日志", command=self._clear_log)
-        self._clear_log_btn.pack(side="left", padx=(self._theme.spacing.sm, 0))
-        self._progress = ttk.Progressbar(actions, mode="indeterminate", length=200)
+        self._start_btn = ttk.Button(service, text="启动服务", command=self._start, style="Accent.TButton")
+        self._start_btn.pack(side="left", padx=(space.sm, 0))
+        self._stop_selected_btn = ttk.Button(service, text="停止选中服务", command=self._stop_selected)
+        self._stop_selected_btn.pack(side="left", padx=(space.sm, 0))
+        self._stop_btn = ttk.Button(service, text="停止全部服务", command=self._stop, style="Danger.TButton")
+        self._stop_btn.pack(side="left", padx=(space.sm, 0))
+        self._status_btn = ttk.Button(service, text="刷新状态", command=self._refresh_status)
+        self._status_btn.pack(side="left", padx=(space.sm, 0))
+
+        view = ttk.Frame(actions)
+        view.pack(fill="x", pady=(space.xs, 0))
+        self._browser_btn = ttk.Button(view, text="打开浏览器", command=self._open_browser)
+        self._browser_btn.pack(side="left")
+        self._logs_btn = ttk.Button(view, text="查看日志", command=self._show_logs)
+        self._logs_btn.pack(side="left", padx=(space.sm, 0))
+        self._progress = ttk.Progressbar(view, mode="indeterminate", length=200)
         self._progress.pack(side="right")
+
+    def _build_plan_preview(self, parent: Any) -> None:
+        """运行页的启动计划预览：点击“预览计划”后就地展示摘要与命令。"""
+        space = self._theme.spacing
+        box = self._ttk.LabelFrame(parent, text="启动计划", padding=(space.sm, space.xs))
+        box.pack(side="bottom", fill="x", pady=(space.sm, 0))
+        self._plan_text = _guiwindow.create_log(box, height=5)
+        _guiwindow.append_log(self._plan_text, "尚未生成：点击下方“预览计划”查看命令、显存估算与建议。")
+
+    def _set_plan(self, lines: list[str]) -> None:
+        """把启动计划写入运行页预览区（同时保留监测页日志）。"""
+        _guiwindow.clear_log(self._plan_text)
+        for line in lines:
+            _guiwindow.append_log(self._plan_text, line)
+            self._log(line)
 
     def _build_log(self, parent: Any) -> None:
         tk = self._tk
         ttk = self._ttk
         log_frame = ttk.LabelFrame(parent, text="输出日志", padding=self._theme.spacing.sm)
         log_frame.pack(fill="both", expand=True, pady=(self._theme.spacing.sm, 0))
+        bar = ttk.Frame(log_frame)
+        bar.pack(fill="x")
+        ttk.Button(bar, text="清空日志", command=self._clear_log).pack(side="right")
         scrollbar = ttk.Scrollbar(log_frame)
         scrollbar.pack(side="right", fill="y")
         self._log_text = tk.Text(log_frame, wrap="word", state="disabled", yscrollcommand=scrollbar.set, height=10)
@@ -705,8 +778,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         ).pack(side="bottom", fill="x", pady=(space.xs, 0))
         yscroll = ttk.Scrollbar(result_box, orient="vertical", command=self._bench_result_tree.yview)
         self._bench_result_tree.configure(yscrollcommand=yscroll.set)
-        self._bench_result_tree.pack(side="left", fill="both", expand=True)
         yscroll.pack(side="right", fill="y")
+        self._bench_result_tree.pack(side="left", fill="both", expand=True)
 
     # ------------------------------------------------------------------ #
     # 扫描模型与引擎信息

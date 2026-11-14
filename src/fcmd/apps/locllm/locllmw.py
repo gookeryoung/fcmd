@@ -94,10 +94,10 @@ _DESCRIPTION = (
     "后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/locllmw.json"
 )
 
-MIN_WIDTH = 820
-MIN_HEIGHT = 640
-DEFAULT_WIDTH = 900
-DEFAULT_HEIGHT = 780
+MIN_WIDTH = 1000
+MIN_HEIGHT = 800
+DEFAULT_WIDTH = 1080
+DEFAULT_HEIGHT = 880
 
 
 @dataclass
@@ -684,37 +684,43 @@ class LocllmWindow(
             self._messagebox.showerror("参数错误", str(exc))
             return
         estimate = llmmodel.plan_vram(plan)
-        self._log("启动计划:")
-        self._log(f"  服务名: {plan.name}")
-        self._log(f"  引擎: {plan.engine.tag} · {plan.engine.exe}")
-        self._log(f"  模型: {plan.model}")
-        self._log(
+        lines = [
+            "启动计划:",
+            f"  服务名: {plan.name}",
+            f"  引擎: {plan.engine.tag} · {plan.engine.exe}",
+            f"  模型: {plan.model}",
             f"  档位: {plan.profile.name} / {plan.profile.quant} / kv {plan.effective_kv_type} / "
-            f"ctx {plan.context} / ub {plan.effective_ubatch}"
-        )
-        self._log(
+            f"ctx {plan.context} / ub {plan.effective_ubatch}",
             f"  调优: {plan.tuning.label} / b{plan.tuning.batch} / np{plan.effective_parallel} / "
-            f"th{plan.effective_threads_http or '-'} / cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}"
-        )
-        self._log(f"  说明: {plan.tuning.detail}")
-        self._log(f"  监听: {http_base_url(plan.host, plan.port)}")
+            f"th{plan.effective_threads_http or '-'} / cr{plan.tuning.cache_reuse} / fa {plan.tuning.flash_attn}",
+            f"  说明: {plan.tuning.detail}",
+            f"  监听: {http_base_url(plan.host, plan.port)}",
+        ]
         tags = llmmodel.detect_model_tags(plan.model.name)
-        self._log(f"  标签: {' · '.join(tags) or '未识别'}")
-        self._log(f"  精度: {self._precision_for(plan.model).detail}")
-        self._log(f"  建议: {llmmodel.model_advice(tags)}")
-        self._log(f"  显存估算: {human_size(estimate)}")
-        self._log("  命令: " + format_command(plan.argv()))
+        lines.extend(
+            [
+                f"  标签: {' · '.join(tags) or '未识别'}",
+                f"  精度: {self._precision_for(plan.model).detail}",
+                f"  建议: {llmmodel.model_advice(tags)}",
+                f"  显存估算: {human_size(estimate)}",
+                "  命令: " + format_command(plan.argv()),
+            ]
+        )
         total, free = self._fits_for(plan.model)
         if total is not None and not total.ok:
-            self._log(
+            lines.append(
                 f"  警告: 估算 {human_size(estimate)} 超过整卡显存 {human_size(total.available)}，无法运行；"
                 f"建议{_fit_advice(total, plan.context, plan.effective_kv_type)}"
             )
         elif free is not None and not free.ok:
-            self._log(
+            lines.append(
                 f"  警告: 估算 {human_size(estimate)} 超过当前可用显存 {human_size(free.available)}，可能 OOM；"
                 f"建议{_busy_advice(free, plan.context, plan.effective_kv_type)}"
             )
+        self._set_plan(lines)
+        self._status_var.set(
+            f"启动计划已生成：{plan.name} · {plan.profile.name} · {http_base_url(plan.host, plan.port)}"
+        )
 
     @override
     def _start(self) -> None:
@@ -740,7 +746,7 @@ class LocllmWindow(
 
     @override
     def _stop(self) -> None:
-        """停止所有已登记的服务，无需先选择服务名。"""
+        """停止所有已登记的服务；有多台时先确认。"""
         if self._busy:
             self._log("已有任务正在进行，请等待完成")
             return
@@ -755,8 +761,36 @@ class LocllmWindow(
             self._refresh_service_names()
             self._start_system_monitor()
             return
+        if not self._messagebox.askyesno(
+            "停止全部服务",
+            f"将停止 {len(names)} 个已登记的服务：\n{'、'.join(names)}\n\n确定继续？",
+        ):
+            return
         self._stop_monitor("停止中…")
         self._begin_task(self._stop_work, (names,))
+
+    @override
+    def _stop_selected(self) -> None:
+        """停止当前“服务名”对应的服务，不影响其他已登记服务。"""
+        if self._busy:
+            self._log("已有任务正在进行，请等待完成")
+            return
+        try:
+            name = self._model_name()
+        except ServeError as exc:
+            self._messagebox.showerror("参数错误", str(exc))
+            return
+        state = llmenv.load_state(name, missing_ok=True)
+        if state is None:
+            self._status_var.set(f"{name} · 未启动")
+            self._log(f"服务 {name} 未启动，无需停止")
+            return
+        alive = llmserve.process_alive(state.pid, state.create_time)
+        action = "停止服务" if alive else "服务已退出，清理残留状态"
+        if not self._messagebox.askyesno("停止选中服务", f"{action}：{name}？\n其他服务不受影响。"):
+            return
+        self._stop_monitor("停止中…")
+        self._begin_task(self._stop_work, ((name,),))
 
     def _begin_task(self, target: Any, args: tuple[Any, ...]) -> None:
         """启动后台线程执行目标函数，结果通过队列回传主线程。"""
@@ -951,7 +985,14 @@ class LocllmWindow(
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
         state = "disabled" if busy else "normal"
-        for button in (self._preview_btn, self._start_btn, self._stop_btn, self._status_btn, self._logs_btn):
+        for button in (
+            self._preview_btn,
+            self._start_btn,
+            self._stop_selected_btn,
+            self._stop_btn,
+            self._status_btn,
+            self._logs_btn,
+        ):
             button.configure(state=state)
         self._model_btn.configure(state=state)
         self._browse_btn.configure(state=state)
