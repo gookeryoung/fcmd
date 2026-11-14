@@ -30,7 +30,10 @@ def _zip(*members: tuple[str, bytes]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as bundle:
         for name, payload in members:
-            bundle.writestr(name, payload)
+            # 固定时间戳与压缩方式，避免 zip 头写入当前时间导致参数化 id 每次收集都不同
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            bundle.writestr(info, payload)
     return buffer.getvalue()
 
 
@@ -242,13 +245,11 @@ def test_install_with_explicit_sha_skips_shasums(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("payload", "message"),
     [
-        (_zip(("node.exe", b"MZ")), "缺少顶层目录"),
-        (_zip(("node-v20.11.1-win-x64/README.md", b"x")), "没有 node.exe"),
+        pytest.param(_zip(("node.exe", b"MZ")), "缺少顶层目录", id="missing-top-dir"),
+        pytest.param(_zip(("node-v20.11.1-win-x64/README.md", b"x")), "没有 node.exe", id="missing-node-exe"),
     ],
 )
-def test_install_rejects_unexpected_archive_layout(
-    tmp_path: Path, payload: bytes, message: str
-) -> None:
+def test_install_rejects_unexpected_archive_layout(tmp_path: Path, payload: bytes, message: str) -> None:
     layout = _layout(tmp_path)
     plan = _node.plan_install(layout, VERSION)
     digest = hashlib.sha256(payload).hexdigest()

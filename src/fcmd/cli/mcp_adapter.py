@@ -422,7 +422,7 @@ class _ToolRegistry:
     def __init__(self) -> None:
         self._by_name: dict[str, AgentWhitelistEntry] = {}
         self._specs: dict[str, ToolSpec] = {}
-        self._tools: list[Tool] = []
+        self._tools: list[Tool] | None = None
         self._build()
 
     def _build(self) -> None:
@@ -433,16 +433,14 @@ class _ToolRegistry:
             if not entry.builtin:
                 spec = get_tool(entry.tool, entry.subcommand)
                 self._specs[tool_name] = spec
-            schema = self._build_schema(entry)
-            description = self._build_description(entry)
-            self._tools.append(
-                Tool(
-                    name=tool_name,
-                    description=description,
-                    inputSchema=schema,
-                    annotations=self._build_annotations(entry),
-                )
-            )
+
+    def _build_tool(self, entry: AgentWhitelistEntry) -> Tool:
+        return Tool(
+            name=entry.tool_name,
+            description=self._build_description(entry),
+            inputSchema=self._build_schema(entry),
+            annotations=self._build_annotations(entry),
+        )
 
     def _build_schema(self, entry: AgentWhitelistEntry) -> dict[str, Any]:
         if entry.builtin:
@@ -474,6 +472,9 @@ class _ToolRegistry:
 
     @property
     def tools(self) -> list[Tool]:
+        """按需构建 MCP Tool 列表；安全闸门等不依赖 mcp 包的路径不会触发。"""
+        if self._tools is None:
+            self._tools = [self._build_tool(entry) for entry in self._by_name.values()]
         return list(self._tools)
 
     def get_entry(self, tool_name: str) -> AgentWhitelistEntry | None:

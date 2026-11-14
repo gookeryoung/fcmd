@@ -20,6 +20,7 @@ import pytest
 from fcmd.cli._discovery import ensure_tools_discovered
 from fcmd.cli.agent_whitelist import (
     AGENT_WHITELIST,
+    AgentWhitelistEntry,
     build_whitelist_index,
     total_whitelisted_subcommands,
 )
@@ -456,95 +457,85 @@ def _fresh_policy_and_cache() -> None:
     _plan_cache.clear()
 
 
+def _entry(tool: str, subcommand: str | None) -> AgentWhitelistEntry:
+    return build_whitelist_index()[(tool, subcommand)]
+
+
 def test_write_tool_without_plan_hash_is_blocked() -> None:
     """write 工具第一次调用不带 plan_hash：安全闸门拦截。"""
-    from fcmd.cli.agent_security import AgentSecurityPolicy
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _plan_cache, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError
+    from fcmd.cli.mcp_adapter import _check_security, _plan_cache, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(require_write_confirmation=True))
 
-    # peview edit 是 write 工具；不需要 PE 文件就能进安全闸门（闸门在执行前）
-    result = _run_async(
-        _call_tool_handler("fcmd__peview__edit", {"file": "C:/nope.dll", "assign": ["entry_point=0x1000"]})
-    )
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["kind"] == "security"
-    assert parsed["code"] == "WRITE_CONFIRM_REQUIRED"
-    # cache 应该还是空的（plan 阶段被闸门拦了，没走到 argv 构造）
+    # peview edit 是 write 工具；闸门在构造 argv / 执行之前
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("peview", "edit"), {"file": "C:/nope.dll", "assign": ["entry_point=0x1000"]})
+    assert info.value.code == "WRITE_CONFIRM_REQUIRED"
+    # cache 应该还是空的（plan 阶段被闸门拦了，没走到执行与缓存）
     assert len(_plan_cache) == 0
 
 
 def test_network_denied_by_policy() -> None:
     """allow_network=False 时 meta='network' 工具被拦截。"""
-    from fcmd.cli.agent_security import AgentSecurityPolicy
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError
+    from fcmd.cli.mcp_adapter import _check_security, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(allow_network=False))
 
-    result = _run_async(_call_tool_handler("fcmd__nettool__get", {"url": "https://example.com"}))
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["kind"] == "security"
-    assert parsed["code"] == "NETWORK_DENIED"
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("nettool", "get"), {"url": "https://example.com"})
+    assert info.value.code == "NETWORK_DENIED"
 
 
 def test_path_escapes_workspace_root() -> None:
     from pathlib import Path
 
-    from fcmd.cli.agent_security import AgentSecurityPolicy
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError
+    from fcmd.cli.mcp_adapter import _check_security, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(workspace_root=Path("F:/Dev/fcmd").resolve()))
 
-    result = _run_async(_call_tool_handler("fcmd__filesearch__content", {"directory": "C:/Windows", "pattern": "x"}))
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["kind"] == "security"
-    assert parsed["code"] == "PATH_ESCAPE"
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("filesearch", "content"), {"directory": "C:/Windows", "pattern": "x"})
+    assert info.value.code == "PATH_ESCAPE"
 
 
 def test_deny_patterns_block() -> None:
     from pathlib import Path
 
-    from fcmd.cli.agent_security import AgentSecurityPolicy
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError
+    from fcmd.cli.mcp_adapter import _check_security, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(
         AgentSecurityPolicy(workspace_root=Path("F:/Dev/fcmd").resolve(), deny_patterns=[".git", "node_modules"])
     )
 
-    result = _run_async(
-        _call_tool_handler("fcmd__filesearch__name", {"directory": "F:/Dev/fcmd/.git", "pattern": "config"})
-    )
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["code"] == "PATH_DENIED"
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("filesearch", "name"), {"directory": "F:/Dev/fcmd/.git", "pattern": "config"})
+    assert info.value.code == "PATH_DENIED"
 
 
 def test_plan_cache_miss_on_apply() -> None:
-    from fcmd.cli.agent_security import AgentSecurityPolicy
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError
+    from fcmd.cli.mcp_adapter import _check_security, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(require_write_confirmation=True))
 
     # 不存在的 plan_hash
-    result = _run_async(
-        _call_tool_handler("fcmd__peview__edit", {"file": "C:/nope.dll", "plan_hash": "deadbeef12345678"})
-    )
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["code"] == "PLAN_CACHE_MISS"
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("peview", "edit"), {"file": "C:/nope.dll", "plan_hash": "deadbeef12345678"})
+    assert info.value.code == "PLAN_CACHE_MISS"
 
 
 def test_plan_entry_mismatch() -> None:
-    from fcmd.cli.agent_security import AgentSecurityPolicy
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _plan_cache, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError
+    from fcmd.cli.mcp_adapter import _check_security, _plan_cache, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(require_write_confirmation=True))
@@ -554,17 +545,14 @@ def test_plan_entry_mismatch() -> None:
         "arguments": {"distro": "Ubuntu", "file": "x.tar"},
         "plan_text": "",
     }
-    result = _run_async(
-        _call_tool_handler("fcmd__peview__edit", {"file": "C:/nope.dll", "plan_hash": "abcdef1234567890"})
-    )
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["code"] == "PLAN_ENTRY_MISMATCH"
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("peview", "edit"), {"file": "C:/nope.dll", "plan_hash": "abcdef1234567890"})
+    assert info.value.code == "PLAN_ENTRY_MISMATCH"
 
 
 def test_plan_arguments_changed_rejected() -> None:
-    from fcmd.cli.agent_security import AgentSecurityPolicy, plan_hash_for
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _plan_cache, _set_policy
+    from fcmd.cli.agent_security import AgentSecurityPolicy, SecurityError, plan_hash_for
+    from fcmd.cli.mcp_adapter import _check_security, _plan_cache, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(require_write_confirmation=True))
@@ -575,16 +563,15 @@ def test_plan_arguments_changed_rejected() -> None:
     changed = dict(args)
     changed["assign"] = ["entry_point=0x2000"]
     changed["plan_hash"] = ph
-    result = _run_async(_call_tool_handler("fcmd__peview__edit", changed))
-    assert result.isError is True
-    parsed = json.loads(result.content[0].text)
-    assert parsed["code"] == "PLAN_ARGUMENTS_CHANGED"
+    with pytest.raises(SecurityError) as info:
+        _check_security(_entry("peview", "edit"), changed)
+    assert info.value.code == "PLAN_ARGUMENTS_CHANGED"
 
 
 def test_plan_arguments_matching_passes_security_gate() -> None:
-    """参数完全一致 → 通过安全闸门。执行可能因文件不存在而失败，但不是 security 拦截。"""
+    """参数完全一致 → 通过安全闸门（执行期失败不属于闸门拦截）。"""
     from fcmd.cli.agent_security import AgentSecurityPolicy, plan_hash_for
-    from fcmd.cli.mcp_adapter import _call_tool_handler, _plan_cache, _set_policy
+    from fcmd.cli.mcp_adapter import _check_security, _plan_cache, _set_policy
 
     _fresh_policy_and_cache()
     _set_policy(AgentSecurityPolicy(require_write_confirmation=True))
@@ -592,15 +579,7 @@ def test_plan_arguments_matching_passes_security_gate() -> None:
     ph = plan_hash_for(args, "fcmd__peview__edit")
     _plan_cache[ph] = {"entry_name": "fcmd__peview__edit", "arguments": args, "plan_text": ""}
 
-    result = _run_async(
-        _call_tool_handler(
-            "fcmd__peview__edit", {"file": "C:/a.dll", "assign": ["entry_point=0x1000"], "plan_hash": ph}
-        )
-    )
-    text = result.content[0].text
-    # 闸门拦截时 text 是 JSON envelope 且 kind="security"；这里应该不是 security 拦截
-    # peview edit 不支持 --json，所以会返回纯文本错误（文件不存在），但这是执行期失败不是闸门拦截
-    assert '"kind": "security"' not in text and '"kind":"security"' not in text
+    assert _check_security(_entry("peview", "edit"), {**args, "plan_hash": ph}) is None
 
 
 # ---------------------------------------------------------------------------
