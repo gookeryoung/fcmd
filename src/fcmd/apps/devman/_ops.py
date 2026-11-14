@@ -1,0 +1,787 @@
+"""命令编排：解析目标版本、加锁、执行、回滚与 dry-run 计划。
+
+CLI / 后续 GUI 共用本模块，业务判定不重复实现。
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import re
+import shutil
+import sys
+import time
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from fcmd.apps.devman import _env, _node, _python
+from fcmd.apps.devman._errors import (
+    BUSY,
+    NOT_INSTALLED,
+    DevmanError,
+    invalid_argument,
+    not_found,
+    runtime_error,
+)
+from fcmd.apps.devman._net import Fetcher, UrllibFetcher
+from fcmd.apps.devman._paths import Layout
+from fcmd.apps.devman._runner import Runner, SubprocessRunner
+from fcmd.apps.devman._state import (
+    MARKER_NAME,
+    Config,
+    State,
+    active_version,
+    load_config,
+    load_state,
+    now_iso,
+    save_state,
+    set_active,
+)
+from fcmd.apps.devman._toolchain import (
+    Spec,
+    executable_path,
+    list_installed,
+    matches,
+    parse_spec,
+    resolve_installed,
+    sort_key,
+    version_of,
+)
+
+__all__ = [
+    "JobContext",
+    "doctor_payload",
+    "init",
+    "install",
+    "list_payload",
+    "new_context",
+    "uninit",
+    "uninstall",
+    "upgrade",
+    "use",
+]
+
+LOCK_STALE_SECONDS = 30 * 60
+_EXACT_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
+@dataclass(slots=True)
+class JobContext:
+    """一次命令的根、配置、状态与已收集的告警。"""
+
+    layout: Layout
+    config: Config
+    state: State
+    warnings: list[str] = field(default_factory=list)
+    fetcher: Fetcher | None = None
+    runner: Runner | None = None
+
+    def fetch(self) -> Fetcher:
+        if self.fetcher is None:
+            self.fetcher = UrllibFetcher(timeout_s=self.config.timeout_s)
+        return self.fetcher
+
+    def execute(self) -> Runner:
+        if self.runner is None:
+            self.runner = SubprocessRunner()
+        return self.runner
+
+
+def new_context(root: str | Path | None = None) -> JobContext:
+    """读取配置与状态，组装命令上下文。"""
+    layout = Layout.create(root)
+    config, config_warnings = load_config(layout)
+    state, state_warnings = load_state(layout)
+    return JobContext(layout=layout, config=config, state=state, warnings=[*config_warnings, *state_warnings])
+
+
+@contextmanager
+def install_lock(layout: Layout) -> Iterator[None]:
+    """安装互斥锁：``O_EXCL`` 创建；超过 30 分钟视为陈旧锁。"""
+    layout.root.mkdir(parents=True, exist_ok=True)
+    path = layout.lock_file
+    deadline = time.time()
+    for attempt in range(2):
+        try:
+            handle = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as exc:
+            stale = False
+            try:
+                stale = (deadline - path.stat().st_mtime) > LOCK_STALE_SECONDS
+            except OSError:
+                stale = True
+            if stale and attempt == 0:
+                path.unlink(missing_ok=True)
+                continue
+            raise runtime_error(
+                f"另一个 devman 正在安装（锁文件 {path}）",
+                hint="等它结束后重试；确认无进程占用可删除该锁文件",
+                code=BUSY,
+            ) from exc
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(f"pid={os.getpid()} at={now_iso()}\n")
+        break
+    try:
+        yield
+    finally:
+        path.unlink(missing_ok=True)
+
+
+# ---- 目标版本解析 ----
+def _resolve_node_version(ctx: JobContext, spec: Spec, *, remote_only: bool = False) -> str:
+    layout = ctx.layout
+    if not remote_only and not spec.channel:
+        if _EXACT_RE.fullmatch(spec.raw) and spec.raw:
+            return spec.raw
+        rows = [row for row in list_installed(layout, "node") if matches(spec.raw, row.version, name=row.name)]
+        if rows:
+            return max(rows, key=lambda row: sort_key(row.version)).version
+    releases = _node.parse_release_index(ctx.fetch().get_text(_node.RELEASE_INDEX))
+    return _node.latest_matching(releases, spec.raw)
+
+
+def _resolve_python_key(ctx: JobContext, spec: Spec, *, remote_only: bool = False) -> str:
+    layout = ctx.layout
+    if not remote_only and not spec.channel:
+        rows = [row for row in list_installed(layout, "python") if matches(spec.raw, row.version, name=row.name)]
+        if rows:
+            return max(rows, key=lambda row: sort_key(row.version)).name
+    uv = _python.find_uv(ctx.config.python_uv)
+    return _python.resolve_key(ctx.execute(), uv, spec.raw)
+
+
+def resolve_target(ctx: JobContext, spec: Spec, *, remote_only: bool = False) -> tuple[str, str]:
+    """返回 ``(规范名, 目标版本/安装键)``。"""
+    if not spec.raw:
+        raise invalid_argument(
+            f"{spec.tool} 需要指定版本",
+            hint=f"例如 fcmd devman install {spec.tool}@latest",
+            field="spec",
+        )
+    if spec.tool == "node":
+        return "node", _resolve_node_version(ctx, spec, remote_only=remote_only)
+    return "python", _resolve_python_key(ctx, spec, remote_only=remote_only)
+
+
+# ---- list ----
+def list_payload(ctx: JobContext, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """已安装版本 + 活动版本 + 外部探测（只读）。"""
+    layout = ctx.layout
+    tools: dict[str, Any] = {}
+    for tool in ("node", "python"):
+        installed = list_installed(layout, tool)
+        active = active_version(layout, tool)
+        tools[tool] = {
+            "installed": [row.to_data() for row in installed],
+            "active": active,
+            "incomplete": [row.name for row in installed if not row.complete],
+        }
+    detected = _env.detect_environment(layout, env=env)
+    warnings = [*ctx.warnings, *[str(item) for item in detected["warnings"]]]
+    return {
+        "schema": "devman/list/1",
+        "root": str(layout.root),
+        "tools": tools,
+        "shims": {
+            "dir": str(layout.shim_dir),
+            "on_path": detected["shim_on_path"],
+            "index": detected["shim_index"],
+        },
+        "external": detected["path_resolution"],
+        "markers": detected["markers"],
+        "warnings": warnings,
+    }
+
+
+# ---- install ----
+def install(
+    ctx: JobContext,
+    spec_text: str,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+    sha256: str | None = None,
+) -> dict[str, Any]:
+    """安装一个具体版本；``--dry-run`` 只输出计划。"""
+    spec = parse_spec(spec_text)
+    tool, target = resolve_target(ctx, spec)
+    layout = ctx.layout
+
+    if tool == "node":
+        plan = _node.plan_install(layout, target, mirror=ctx.config.node_mirror, sha256=sha256)
+        if dry_run:
+            return {
+                "schema": "devman/install/1",
+                "tool": tool,
+                "version": target,
+                "changed": False,
+                "dry_run": True,
+                "planned": plan.to_data(),
+                "actions": [],
+                "warnings": ctx.warnings,
+            }
+        with install_lock(layout):
+            layout.ensure_bootstrap()
+            result = _node.install(plan, layout, fetcher=ctx.fetch(), runner=ctx.execute(), force=force)
+    else:
+        uv = _python.find_uv(ctx.config.python_uv)
+        if dry_run:
+            return {
+                "schema": "devman/install/1",
+                "tool": tool,
+                "version": version_of("python", target),
+                "key": target,
+                "changed": False,
+                "dry_run": True,
+                "planned": {
+                    "tool": "python",
+                    "key": target,
+                    "install_dir": str(layout.python_root),
+                    "uv": uv,
+                    "mirror": ctx.config.python_mirror,
+                },
+                "actions": [],
+                "warnings": ctx.warnings,
+            }
+        with install_lock(layout):
+            layout.ensure_bootstrap()
+            result = _python.install(
+                layout,
+                target,
+                runner=ctx.execute(),
+                uv=uv,
+                mirror=ctx.config.python_mirror,
+                force=force,
+            )
+
+    payload = {
+        "schema": "devman/install/1",
+        "tool": tool,
+        "version": result["version"],
+        "changed": result["changed"],
+        "path": result["path"],
+        "message": result["message"],
+        "actions": result["actions"],
+        "warnings": ctx.warnings,
+    }
+    if tool == "python":
+        payload["key"] = target
+    return payload
+
+
+# ---- uninstall ----
+def _uv_uninstall(ctx: JobContext, name: str) -> bool:
+    """让 uv 自己清理托管解释器（含 junction 别名与元数据）；失败不致命。"""
+    try:
+        uv = _python.find_uv(ctx.config.python_uv)
+        result = ctx.execute().run(
+            [uv, "python", "uninstall", name, "--install-dir", str(ctx.layout.python_root), "--no-config"]
+        )
+    except DevmanError:
+        return False
+    return result.returncode == 0
+
+
+def _remove_version(ctx: JobContext, tool: str, name: str) -> dict[str, Any]:
+    """先交给 uv（python）再兜底删除；返回残留信息。"""
+    layout = ctx.layout
+    source = layout.version_dir(tool, name)
+    if tool == "python":
+        _uv_uninstall(ctx, name)
+        if not source.exists():
+            return {"leftovers": []}
+    trash = layout.tool_root(tool) / f".trash-{name}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    leftovers: list[str] = []
+    try:
+        source.replace(trash)
+    except OSError as exc:
+        raise runtime_error(f"无法移走 {source}：{exc}", hint="确认没有进程正在使用该版本") from exc
+    shutil.rmtree(trash, ignore_errors=True)
+    if trash.exists():
+        leftovers.append(str(trash))
+    return {"leftovers": leftovers}
+
+
+def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
+    ctx: JobContext,
+    spec_text: str,
+    *,
+    dry_run: bool = False,
+    yes: bool = False,
+    if_present: bool = False,
+    force: bool = False,
+    purge_cache: bool = False,
+    all_versions: bool = False,
+) -> dict[str, Any]:
+    """卸载版本；破坏性操作必须 ``--yes``。"""
+    layout = ctx.layout
+    spec = parse_spec(spec_text)
+    rows = [row for row in list_installed(layout, spec.tool) if matches(spec.raw, row.version, name=row.name)]
+    if not rows:
+        if if_present:
+            return {
+                "schema": "devman/uninstall/1",
+                "tool": spec.tool,
+                "removed": [],
+                "changed": False,
+                "warnings": ctx.warnings,
+            }
+        raise not_found(
+            f"未安装 {spec.text}",
+            hint="用 fcmd devman list 查看已安装版本",
+            code=NOT_INSTALLED,
+        )
+    rows = sorted(rows, key=lambda row: sort_key(row.version))
+    targets = rows if all_versions else [rows[-1]]
+    if not yes and not dry_run:
+        names = ", ".join(row.version for row in targets)
+        raise _confirm_error(names, spec.tool)
+
+    active = active_version(layout, spec.tool)
+    clearing = [row for row in targets if row.name == active]
+    if clearing and not force and not dry_run:
+        raise invalid_argument(
+            f"{spec.tool} 的 {active} 是当前活动版本",
+            hint="先 fcmd devman use 切到别的版本，或加 --force 清空活动版本后卸载",
+            field="spec",
+        )
+
+    plan = {
+        "targets": [{"name": row.name, "version": row.version, "path": str(row.path)} for row in targets],
+        "clear_active": bool(clearing),
+        "purge_cache": purge_cache,
+    }
+    if dry_run:
+        return {
+            "schema": "devman/uninstall/1",
+            "tool": spec.tool,
+            "changed": False,
+            "dry_run": True,
+            "planned": plan,
+            "removed": [],
+            "warnings": ctx.warnings,
+        }
+
+    with install_lock(layout):
+        removed: list[dict[str, str]] = []
+        leftovers: list[str] = []
+        for row in targets:
+            outcome = _remove_version(ctx, spec.tool, row.name)
+            leftovers.extend(outcome["leftovers"])
+            removed.append({"name": row.name, "version": row.version})
+        if clearing:
+            set_active(layout, spec.tool, None)
+            ctx.state.active.pop(spec.tool, None)
+        if purge_cache:
+            shutil.rmtree(layout.cache_dir, ignore_errors=True)
+        save_state(layout, ctx.state)
+
+    return {
+        "schema": "devman/uninstall/1",
+        "tool": spec.tool,
+        "changed": bool(removed),
+        "removed": removed,
+        "cleared_active": bool(clearing),
+        "purged_cache": purge_cache,
+        "leftovers": leftovers,
+        "note": "npm 全局包与 uv 托管解释器不在 devman 管理范围",
+        "warnings": ctx.warnings,
+    }
+
+
+def _confirm_error(names: str, tool: str):
+    from fcmd.apps.devman._errors import confirm_required
+
+    return confirm_required(
+        f"卸载 {tool} {names} 会删除该版本目录",
+        hint="确认后加 --yes；先用 --dry-run 预览",
+    )
+
+
+# ---- use ----
+def use(ctx: JobContext, spec_text: str, *, clear: bool = False, dry_run: bool = False) -> dict[str, Any]:
+    """切换活动版本：原子写 ``active/<tool>.txt``。"""
+    layout = ctx.layout
+    spec = parse_spec(spec_text)
+    if clear:
+        if dry_run:
+            return {
+                "schema": "devman/use/1",
+                "tool": spec.tool,
+                "changed": False,
+                "dry_run": True,
+                "active": None,
+                "warnings": ctx.warnings,
+            }
+        set_active(layout, spec.tool, None)
+        ctx.state.active.pop(spec.tool, None)
+        save_state(layout, ctx.state)
+        return {
+            "schema": "devman/use/1",
+            "tool": spec.tool,
+            "changed": True,
+            "active": None,
+            "warnings": ctx.warnings,
+        }
+
+    row = resolve_installed(layout, spec)
+    previous = active_version(layout, spec.tool)
+    if dry_run:
+        return {
+            "schema": "devman/use/1",
+            "tool": spec.tool,
+            "changed": previous != row.name,
+            "dry_run": True,
+            "active": row.name,
+            "previous": previous,
+            "warnings": ctx.warnings,
+        }
+    if previous != row.name:
+        set_active(layout, spec.tool, row.name)
+        ctx.state.active[spec.tool] = row.name
+        save_state(layout, ctx.state)
+    payload: dict[str, Any] = {
+        "schema": "devman/use/1",
+        "tool": spec.tool,
+        "changed": previous != row.name,
+        "active": row.name,
+        "previous": previous,
+        "path": str(executable_path(layout, spec.tool, row.name)),
+        "warnings": ctx.warnings,
+    }
+    if spec.tool == "python":
+        payload["hint"] = _env.python_hint(layout, row.name)
+    return payload
+
+
+# ---- upgrade ----
+def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
+    ctx: JobContext,
+    tool_text: str,
+    *,
+    to: str | None = None,
+    purge_old: bool = False,
+    yes: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    """升级到同一条版本线的最新版（或 ``--to`` 指定版本）。"""
+    layout = ctx.layout
+    spec = parse_spec(tool_text)
+    tool = spec.tool
+    rows = [row for row in list_installed(layout, tool) if row.complete]
+    if not rows:
+        raise not_found(f"未安装任何 {tool} 版本", hint=f"先运行 fcmd devman install {tool}@latest", code=NOT_INSTALLED)
+
+    active = active_version(layout, tool)
+    current = next((row for row in rows if row.name == active), max(rows, key=lambda row: sort_key(row.version)))
+    current_parts = sort_key(current.version)
+    raw = (to or "").strip()
+    if not raw:
+        raw = str(current_parts[0]) if tool == "node" else f"{current_parts[0]}.{current_parts[1]}"
+
+    target_spec = Spec(tool, raw)
+    _, target = resolve_target(ctx, target_spec, remote_only=True)
+    if tool == "python":
+        target_version = version_of("python", target)
+    else:
+        target_version = target
+    if sort_key(target_version) <= sort_key(current.version):
+        return {
+            "schema": "devman/upgrade/1",
+            "tool": tool,
+            "current": current.version,
+            "target": target_version,
+            "changed": False,
+            "message": "已是最新（按当前版本线）",
+            "warnings": ctx.warnings,
+        }
+
+    if purge_old and not yes and not dry_run:
+        raise _confirm_error(current.version, tool)
+
+    plan = {
+        "tool": tool,
+        "current": current.name,
+        "target": target,
+        "install": target,
+        "activate": target,
+        "purge": current.name if purge_old else None,
+    }
+    if dry_run:
+        return {
+            "schema": "devman/upgrade/1",
+            "tool": tool,
+            "changed": False,
+            "dry_run": True,
+            "planned": plan,
+            "warnings": ctx.warnings,
+        }
+
+    installed = install(ctx, f"{tool}@{target_version}", force=force)
+    switched = use(ctx, f"{tool}@{target_version}")
+    purged: dict[str, Any] | None = None
+    if purge_old:
+        purged = uninstall(ctx, f"{tool}@{current.name}", yes=True)
+    return {
+        "schema": "devman/upgrade/1",
+        "tool": tool,
+        "changed": bool(installed.get("changed") or switched.get("changed")),
+        "current": current.version,
+        "target": target_version,
+        "installed": installed,
+        "use": switched,
+        "purged": purged,
+        "warnings": ctx.warnings,
+    }
+
+
+# ---- init / uninit ----
+def init(  # noqa: PLR0913 - 可选注入项用于测试与 GUI 复用
+    ctx: JobContext,
+    *,
+    path: bool = False,
+    append: bool = False,
+    allow_shadow: bool = False,
+    dry_run: bool = False,
+    store: _env.EnvStore | None = None,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """生成 shim；``--path`` 时把 shim 目录写入用户 PATH。"""
+    layout = ctx.layout
+    shadowed = _env.shadowed_commands(layout, env=env) if path else {}
+    if path and shadowed and not allow_shadow and not dry_run:
+        details = "；".join(f"{tool}: {', '.join(items)}" for tool, items in shadowed.items())
+        raise invalid_argument(
+            f"前置 shim 目录会遮蔽现有可执行文件：{details}",
+            hint="确认要接管时加 --allow-shadow，或用 devman exec / env 不改 PATH",
+            field="path",
+        )
+    plan = {
+        "shim_dir": str(layout.shim_dir),
+        "shims": list(_env.shim_scripts()),
+        "add_to_user_path": path,
+        "position": "append" if append else "prepend",
+        "shadowed": shadowed,
+    }
+    if dry_run:
+        return {
+            "schema": "devman/init/1",
+            "changed": False,
+            "dry_run": True,
+            "planned": plan,
+            "warnings": ctx.warnings,
+        }
+    written, unchanged = _env.write_shims(layout)
+    payload: dict[str, Any] = {
+        "schema": "devman/init/1",
+        "changed": bool(written),
+        "shims_written": written,
+        "shims_unchanged": unchanged,
+        "path": {"enabled": path, "changed": False},
+        "warnings": ctx.warnings,
+    }
+    if path:
+        result = _env.install_path(layout, store=store, append=append)
+        entry = str(layout.shim_dir)
+        ctx.state.path_added = [entry]
+        ctx.state.path_previous_user_path = str(result["previous"]) if result["previous"] is not None else None
+        save_state(layout, ctx.state)
+        payload["path"] = {
+            "enabled": True,
+            "changed": bool(result["changed"]),
+            "entry": entry,
+            "position": "append" if append else "prepend",
+        }
+    return payload
+
+
+def uninit(
+    ctx: JobContext,
+    *,
+    path: bool = False,
+    dry_run: bool = False,
+    store: _env.EnvStore | None = None,
+) -> dict[str, Any]:
+    """删除 shim（``--path`` 时同时移除用户 PATH 条目）。"""
+    layout = ctx.layout
+    if dry_run:
+        return {
+            "schema": "devman/uninit/1",
+            "changed": False,
+            "dry_run": True,
+            "planned": {"remove_shims": str(layout.shim_dir), "remove_path_entry": path},
+            "warnings": ctx.warnings,
+        }
+    removed: list[str] = []
+    if layout.shim_dir.is_dir():
+        for item in layout.shim_dir.iterdir():
+            if item.is_file():
+                item.unlink(missing_ok=True)
+                removed.append(item.name)
+        with contextlib.suppress(OSError):
+            layout.shim_dir.rmdir()
+    payload: dict[str, Any] = {
+        "schema": "devman/uninit/1",
+        "changed": bool(removed),
+        "removed_shims": removed,
+        "path": {"enabled": path, "changed": False},
+        "warnings": ctx.warnings,
+    }
+    if path:
+        result = _env.remove_path(layout, store=store)
+        ctx.state.path_added = []
+        save_state(layout, ctx.state)
+        payload["path"] = {"enabled": True, "changed": bool(result["changed"]), "removed": result["removed"]}
+    return payload
+
+
+# ---- env / exec ----
+def env_payload(ctx: JobContext, *, shell: str = "pwsh") -> dict[str, Any]:
+    """打印当前活动版本的激活片段（不落盘）。"""
+    layout = ctx.layout
+    return {
+        "schema": "devman/env/1",
+        "shell": shell,
+        "snippet": _env.shell_snippet(layout, shell),
+        "dirs": [str(item) for item in _env.path_dirs(layout)],
+        "active": {tool: active_version(layout, tool) for tool in ("node", "python")},
+        "warnings": ctx.warnings,
+    }
+
+
+# ---- doctor ----
+def _check(name: str, status: str, detail: str, hint: str | None = None) -> dict[str, Any]:
+    return {"name": name, "status": status, "detail": detail, "hint": hint}
+
+
+def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于逐条阅读
+    ctx: JobContext,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """只读诊断；任一 ``fail`` 时整体退出 5（由命令层判定）。"""
+    layout = ctx.layout
+    checks: list[dict[str, Any]] = []
+
+    # 1. 根目录可写
+    try:
+        if layout.root.exists():
+            writable = os.access(layout.root, os.W_OK)
+            detail = str(layout.root)
+        else:
+            parent = layout.root.parent
+            writable = parent.exists() and os.access(parent, os.W_OK)
+            detail = f"{layout.root}（尚不存在，检查父目录 {parent}）"
+        checks.append(
+            _check(
+                "root_writable",
+                "ok" if writable else "fail",
+                detail,
+                None if writable else "换一个可写目录：--root <dir> 或设置 DEVMAN_ROOT",
+            )
+        )
+    except OSError as exc:
+        checks.append(_check("root_writable", "fail", f"{layout.root}: {exc}", "检查路径权限"))
+
+    # 2. 活动版本一致性
+    for tool in ("node", "python"):
+        name = active_version(layout, tool)
+        if name is None:
+            checks.append(_check(f"active_{tool}", "ok", "未设置活动版本"))
+            continue
+        exe = executable_path(layout, tool, name)
+        complete = exe.is_file()
+        status = "ok" if complete else "fail"
+        checks.append(
+            _check(
+                f"active_{tool}",
+                status,
+                f"{name} → {exe}",
+                None if complete else "运行 fcmd devman use 切换，或重新安装该版本",
+            )
+        )
+
+    # 3. shim 状态
+    scripts = _env.shim_scripts()
+    missing = [name for name in scripts if not (layout.shim_dir / name).is_file()]
+    mismatched = [
+        name
+        for name in scripts
+        if (layout.shim_dir / name).is_file()
+        and (layout.shim_dir / name).read_bytes().decode("utf-8", errors="replace") != scripts[name]
+    ]
+    if missing:
+        checks.append(_check("shims", "warn", f"缺少 shim：{', '.join(missing)}", "运行 fcmd devman init 重新生成"))
+    elif mismatched:
+        checks.append(_check("shims", "warn", f"shim 内容已过期：{', '.join(mismatched)}", "运行 fcmd devman init"))
+    else:
+        checks.append(_check("shims", "ok", f"{layout.shim_dir}（{len(scripts)} 个）"))
+
+    # 4. 残留临时目录 / 半完成安装
+    stray: list[str] = []
+    for tool in ("node", "python"):
+        root = layout.tool_root(tool)
+        if not root.is_dir():
+            continue
+        for entry in root.iterdir():
+            alias = entry.is_symlink() or os.path.isjunction(entry)
+            if entry.name.startswith((".staging-", ".trash-")) or (
+                entry.is_dir() and not entry.name.startswith(".") and not alias and not (entry / MARKER_NAME).is_file()
+            ):
+                stray.append(str(entry))
+    partials = [str(item) for item in layout.cache_dir.glob("*.part")] if layout.cache_dir.is_dir() else []
+    if stray or partials:
+        checks.append(
+            _check(
+                "leftovers",
+                "warn",
+                "；".join([*stray, *partials])[:500],
+                "重新 install 对应版本可自动清理；缓存 .part 可安全删除",
+            )
+        )
+    else:
+        checks.append(_check("leftovers", "ok", "无残留"))
+
+    # 5. 环境探测
+    detected = _env.detect_environment(layout, env=env)
+    checks.append(
+        _check(
+            "shim_on_path",
+            "ok" if detected["shim_on_path"] else "warn",
+            f"{layout.shim_dir} 在 PATH 顺位 {detected['shim_index']}"
+            if detected["shim_on_path"]
+            else "shim 目录不在用户 PATH",
+            None if detected["shim_on_path"] else "如需切换生效：fcmd devman init --path（会提示遮蔽项）",
+        )
+    )
+    for marker_name, value in dict(detected["markers"]).items():
+        checks.append(_check(f"env_{marker_name.lower()}", "warn", f"{marker_name}={value}", "devman 不会接管该环境"))
+
+    # 6. uv（仅 python 相关时提示缺失）
+    try:
+        uv = _python.find_uv(ctx.config.python_uv)
+        probe = ctx.execute().run([uv, "--version"])
+        version_text = (probe.stdout or probe.stderr).strip() or "未知版本"
+        checks.append(_check("uv", "ok" if probe.returncode == 0 else "warn", f"{uv}（{version_text}）"))
+    except Exception as exc:  # 诊断命令不应因单点探测失败整体崩掉
+        checks.append(_check("uv", "warn", str(exc), "安装 uv 后才能获取新的 Python 版本"))
+
+    # 7. 平台能力
+    if sys.platform == "win32":
+        checks.append(_check("platform", "ok", "Windows：支持安装 / 卸载"))
+    else:
+        checks.append(_check("platform", "warn", "非 Windows：仅支持查看与诊断", "安装能力仅在 Windows 提供"))
+
+    failed = [item for item in checks if item["status"] == "fail"]
+    return {
+        "schema": "devman/doctor/1",
+        "ok": not failed,
+        "root": str(layout.root),
+        "checks": checks,
+        "warnings": ctx.warnings,
+    }

@@ -1,6 +1,6 @@
 # 0024 devman：Windows 开发环境管理（Node.js / Python 多版本）
 
-- 状态：设计中（P1 CLI 待实施，P2 GUI 待实施）
+- 状态：已实施（P1 CLI 已落地，P2 GUI 待实施）
 - 日期：2026-11-14
 - 相关文档：[ADR 0001](0001-layering.md)、[ADR 0003](0003-package-layout.md)、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0023](0023-wslman.md)
 
@@ -395,6 +395,18 @@ P1 真机验证（`%TEMP%\devman-verify-<ts>` 作 root，不碰任何既有安�
 6. 逐项对比基线：用户 / 系统 PATH 未变、`where node` / `where python` 未变、
    `node -v` / `python -V` 未变、`uv python list` 未新增条目；
 7. `init --path --dry-run --json` 只输出计划，注册表写入路径另用假 `EnvStore` 单测覆盖。
+
+P1 验收记录（2026-11-14，root = `%TEMP%\devman-verify-20261114-104606`）：
+
+| 项 | 结果 |
+|---|---|
+| `install node@20.11.1` | 官方 `node-v20.11.1-win-x64.zip`，官方 `SHASUMS256.txt` 校验通过 |
+| `install python@3.12` | 经 uv 安装 `cpython-3.12.15-windows-x86_64-none` 到隔离目录 |
+| `use` + `exec` | 分别输出 `v20.11.1` / `3.12.15`，执行文件位于隔离 root |
+| 外部环境 | `node -v` 仍为 v25.2.1、`python -V` 仍为 3.13.13；HKCU `Path` 与基线逐字一致；`uv python list` 既有条目未变 |
+| 卸载 | 版本目录、`active/*.txt`、uv junction 别名均清空；node root 为空，python root 仅剩 uv 自身元数据（`.temp` / `.gitignore` / `.lock`） |
+| `doctor` | 仅提示 `shim_on_path`（默认不改 PATH）与 conda 解释器存在 |
+| 单测 | `tests/apps/devman` 220 项通过，覆盖率 98%；`ruff` / `pyrefly` 0 错误 |
 
 ## 风险与边界
 

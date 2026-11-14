@@ -1,0 +1,613 @@
+"""devman 命令行入口：子命令注册、双读输出与错误映射。"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from typing import Any, Literal
+
+import fcmd
+from fcmd.apps.devman import _env, _ops
+from fcmd.apps.devman._errors import DevmanError, invalid_argument, not_found, runtime_error
+from fcmd.apps.devman._paths import normalize_tool
+from fcmd.apps.devman._python import find_uv, list_remote, version_of
+from fcmd.apps.devman._toolchain import list_installed
+from fcmd.core.result import emit_result, record_error, report_error
+
+__all__ = ["main"]
+
+ShellName = Literal["pwsh", "cmd", "bash"]
+
+_WARN_PREFIX = "warn:"
+
+
+def _warn(payload: dict[str, Any], *, json_output: bool) -> None:
+    if json_output:
+        return
+    for item in payload.get("warnings") or []:
+        print(f"{_WARN_PREFIX} {item}", file=sys.stderr)
+
+
+def _finish(
+    subcommand: str,
+    payload: dict[str, Any],
+    *,
+    json_output: bool,
+    render: Any = None,
+    ok: bool = True,
+) -> None:
+    """统一出口：机读写信封，人读写渲染；``ok=False`` 时登记退出码 5。"""
+    _warn(payload, json_output=json_output)
+    if json_output:
+        emit_result("devman", subcommand, payload, ok=ok)
+    elif render is not None:
+        render(payload)
+    if not ok:
+        record_error("INCOMPLETE_INSTALL", kind="check")
+
+
+def _fail(subcommand: str, exc: DevmanError, *, json_output: bool) -> None:
+    report_error(
+        "devman",
+        subcommand,
+        code=exc.code,
+        message=exc.message,
+        hint=exc.hint,
+        field=exc.field,
+        expected=exc.expected,
+        kind=exc.kind,
+        json_output=json_output,
+    )
+
+
+def _human_install(payload: dict[str, Any]) -> None:
+    print(payload.get("message") or "完成")
+    if payload.get("dry_run") and payload.get("planned"):
+        planned = payload["planned"]
+        if "urls" in planned:
+            print(f"  构件: {planned['artifact']}")
+            for url in planned["urls"]:
+                print(f"  来源: {url}")
+            print(f"  校验清单: {planned['sha256_url']}")
+            print(f"  目标: {planned['dest']}")
+        else:
+            print(f"  解释器: {planned['key']}")
+            print(f"  安装目录: {planned['install_dir']}")
+    elif payload.get("path"):
+        print(f"  路径: {payload['path']}")
+
+
+def _human_uninstall(payload: dict[str, Any]) -> None:
+    if payload.get("dry_run"):
+        print("计划卸载：")
+        for item in (payload.get("planned") or {}).get("targets", []):
+            print(f"  {item['version']}  {item['path']}")
+        if (payload.get("planned") or {}).get("clear_active"):
+            print("  该版本是活动版本，将清空活动标记")
+        if (payload.get("planned") or {}).get("purge_cache"):
+            print("  同时清空下载缓存")
+        return
+    removed = payload.get("removed") or []
+    if not removed:
+        print("没有可卸载的版本")
+        return
+    for item in removed:
+        print(f"已卸载 {payload['tool']} {item['version']}")
+    if payload.get("cleared_active"):
+        print("  活动版本已清空")
+    if payload.get("purged_cache"):
+        print("  下载缓存已清空")
+    for leftover in payload.get("leftovers") or []:
+        print(f"  残留（可手工删除）：{leftover}")
+    if payload.get("note"):
+        print(f"  说明: {payload['note']}")
+
+
+def _human_use(payload: dict[str, Any]) -> None:
+    if payload.get("active") is None:
+        print(f"{payload['tool']} 活动版本已清空")
+        return
+    changed = "已切换" if payload.get("changed") else "已是活动版本"
+    print(f"{changed}: {payload['tool']} {payload['active']}")
+    if payload.get("hint"):
+        print(f"  {payload['hint']}")
+
+
+def _human_upgrade(payload: dict[str, Any]) -> None:
+    if payload.get("dry_run"):
+        planned = payload.get("planned") or {}
+        print(f"计划升级 {planned.get('current')} → {planned.get('target')}")
+        if planned.get("purge"):
+            print(f"  升级后卸载 {planned['purge']}")
+        return
+    if not payload.get("changed"):
+        print(payload.get("message") or "已是最新")
+        return
+    print(f"已升级 {payload['tool']} {payload.get('current')} → {payload.get('target')}")
+    if payload.get("purged"):
+        print("  旧版本已卸载")
+
+
+def _human_list(payload: dict[str, Any]) -> None:
+    print(f"root: {payload['root']}")
+    tools = payload.get("tools") or {}
+    for tool in ("node", "python"):
+        rows = tools.get(tool, {}).get("installed") or []
+        active = tools.get(tool, {}).get("active")
+        print(f"{tool}:")
+        if not rows:
+            print("  (未安装)")
+            continue
+        for row in rows:
+            mark = "*" if row["name"] == active else " "
+            status = "" if row["status"] == "ok" else "  [半完成]"
+            print(f" {mark} {row['version']:<12} {row['path']}{status}")
+    external = payload.get("external") or {}
+    for tool, paths in external.items():
+        for path in paths:
+            print(f"外部 {tool}: {path}")
+    shims = payload.get("shims") or {}
+    where = f"顺位 {shims['index']}" if shims.get("on_path") else "不在 PATH"
+    print(f"shim: {shims.get('dir')}（{where}）")
+    markers = payload.get("markers") or {}
+    for key, value in markers.items():
+        print(f"{key}={value}")
+
+
+def _human_versions(payload: dict[str, Any]) -> None:
+    rows = payload.get("versions") or []
+    if not rows:
+        print("没有可显示的版本")
+        return
+    for row in rows:
+        flags: list[str] = []
+        if row.get("installed"):
+            flags.append("已安装")
+        if row.get("active"):
+            flags.append("活动")
+        if row.get("lts"):
+            flags.append(f"LTS {row['lts']}")
+        suffix = f"  ({', '.join(flags)})" if flags else ""
+        print(f"{row['version']}{suffix}")
+    if payload.get("source"):
+        print(f"来源: {payload['source']}")
+
+
+def _human_doctor(payload: dict[str, Any]) -> None:
+    for check in payload.get("checks") or []:
+        print(f"[{check['status']}] {check['name']}: {check['detail']}")
+        if check.get("hint") and check["status"] != "ok":
+            print(f"       {check['hint']}")
+    print("结论: " + ("通过" if payload.get("ok") else "存在失败项"))
+
+
+# ---------------------------------------------------------------------- #
+# 子命令
+# ---------------------------------------------------------------------- #
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="list",
+    help="列出已安装版本、活动版本与外部 node/python 探测结果",
+    param_help={"root": "devman 根目录（默认 %LOCALAPPDATA%\\devman）"},
+)
+def list_versions(root: str = "", *, json_output: bool = False) -> None:
+    """只读：已安装版本 + 活动版本 + external 探测。"""
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.list_payload(ctx)
+    except DevmanError as exc:
+        _fail("list", exc, json_output=json_output)
+        return
+    _finish("list", payload, json_output=json_output, render=_human_list)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="versions",
+    help="列出某个工具的版本（--remote 读远端索引）",
+    param_help={
+        "tool": "node / python",
+        "remote": "读取远端索引（不下载构件）",
+        "prerelease": "包含预发布版本（仅 python 远端列表）",
+        "root": "devman 根目录",
+    },
+)
+def versions(
+    tool: str,
+    remote: bool = False,
+    prerelease: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """已安装版本或远端可用版本。"""
+    subcommand = "versions"
+    try:
+        name = normalize_tool(tool)
+        ctx = _ops.new_context(root)
+        installed = list_installed(ctx.layout, name)
+        active = ctx.state.active.get(name)
+        rows: list[dict[str, Any]] = []
+        source: str | None = None
+        if remote:
+            if name == "node":
+                from fcmd.apps.devman import _node
+
+                releases = _node.parse_release_index(ctx.fetch().get_text(_node.RELEASE_INDEX))
+                versions_seen = {row.version for row in installed}
+                for release in sorted(releases, key=lambda item: tuple(int(x) for x in item.version.split("."))):
+                    rows.append(
+                        {
+                            "version": release.version,
+                            "installed": release.version in versions_seen,
+                            "active": release.version == active,
+                            "lts": release.lts or False,
+                        }
+                    )
+                source = _node.RELEASE_INDEX
+            else:
+                uv = find_uv(ctx.config.python_uv)
+                entries = list_remote(ctx.execute(), uv, include_prerelease=prerelease)
+                seen: set[str] = set()
+                installed_versions = {row.version for row in installed}
+                for entry in sorted(entries, key=lambda item: tuple(int(x) for x in item.version.split("."))):
+                    if entry.version in seen:
+                        continue
+                    seen.add(entry.version)
+                    rows.append(
+                        {
+                            "version": entry.version,
+                            "installed": entry.version in installed_versions,
+                            "active": entry.version == version_of("python", active or ""),
+                            "key": entry.key,
+                        }
+                    )
+                source = "uv python list --all-versions"
+        else:
+            for row in installed:
+                rows.append(
+                    {
+                        "version": row.version,
+                        "installed": row.complete,
+                        "active": row.name == active,
+                        "name": row.name,
+                        "path": str(row.path),
+                    }
+                )
+        payload = {
+            "schema": "devman/versions/1",
+            "tool": name,
+            "remote": remote,
+            "source": source,
+            "versions": rows,
+            "warnings": ctx.warnings,
+        }
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_versions)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="install",
+    help="安装指定版本的 node / python（--dry-run 只输出计划）",
+    param_help={
+        "spec": "版本规格，如 node@20.11.1、python@3.12、node@lts",
+        "dry_run": "只输出计划，不建目录、不下载、不改状态",
+        "force": "已安装时强制重装",
+        "sha256": "显式指定构件 sha256（官方清单不可达时用）",
+        "root": "devman 根目录",
+    },
+)
+def install(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
+    spec: str,
+    dry_run: bool = False,
+    force: bool = False,
+    sha256: str = "",
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """安装一个版本。"""
+    subcommand = "install"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.install(ctx, spec, dry_run=dry_run, force=force, sha256=sha256 or None)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_install)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="uninstall",
+    help="卸载版本（破坏性操作需要 --yes）",
+    param_help={
+        "spec": "版本规格，如 node@20.11.1；省略版本表示最高匹配",
+        "yes": "确认执行破坏性操作",
+        "dry_run": "只输出计划",
+        "if_present": "目标不存在时视为成功（幂等脚本用）",
+        "force": "活动版本也强制卸载（先清空活动标记）",
+        "purge_cache": "同时清空下载缓存",
+        "all_versions": "卸载所有匹配版本",
+        "root": "devman 根目录",
+    },
+)
+def uninstall(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一一对应
+    spec: str,
+    yes: bool = False,
+    dry_run: bool = False,
+    if_present: bool = False,
+    force: bool = False,
+    purge_cache: bool = False,
+    all_versions: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """删除版本目录（保留其余版本与用户数据）。"""
+    subcommand = "uninstall"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.uninstall(
+            ctx,
+            spec,
+            dry_run=dry_run,
+            yes=yes,
+            if_present=if_present,
+            force=force,
+            purge_cache=purge_cache,
+            all_versions=all_versions,
+        )
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_uninstall)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="use",
+    help="切换活动版本（原子写 active/<tool>.txt）",
+    param_help={"spec": "版本规格；配合 --clear 时只需工具名", "clear": "清空活动版本", "root": "devman 根目录"},
+)
+def use(spec: str, clear: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
+    """切换活动版本；不修改 PATH。"""
+    subcommand = "use"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.use(ctx, spec, clear=clear, dry_run=dry_run)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_use)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="upgrade",
+    help="升级到当前版本线的最新版（或 --to 指定版本）",
+    param_help={
+        "tool": "node / python",
+        "to": "目标版本或通道（默认当前主版本线最新）",
+        "purge_old": "升级成功后卸载旧版本（需要 --yes）",
+        "yes": "确认卸载旧版本",
+        "dry_run": "只输出计划",
+        "force": "强制重装目标版本",
+        "root": "devman 根目录",
+    },
+)
+def upgrade(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一一对应
+    tool: str,
+    to: str = "",
+    purge_old: bool = False,
+    yes: bool = False,
+    dry_run: bool = False,
+    force: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """安装新版本并切换。"""
+    subcommand = "upgrade"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.upgrade(
+            ctx,
+            tool,
+            to=to or None,
+            purge_old=purge_old,
+            yes=yes,
+            dry_run=dry_run,
+            force=force,
+        )
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_upgrade)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="init",
+    help="生成 shim（--path 时把 shim 目录写入用户 PATH）",
+    param_help={
+        "path": "写入 HKCU 用户 PATH（不写系统 PATH，不需要管理员）",
+        "append": "追加到 PATH 末尾而不是最前",
+        "allow_shadow": "允许遮蔽已有 node/python",
+        "dry_run": "只输出计划",
+        "root": "devman 根目录",
+    },
+)
+def init(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
+    path: bool = False,
+    append: bool = False,
+    allow_shadow: bool = False,
+    dry_run: bool = False,
+    root: str = "",
+    *,
+    json_output: bool = False,
+) -> None:
+    """生成 shim，可选写用户 PATH。"""
+    subcommand = "init"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.init(ctx, path=path, append=append, allow_shadow=allow_shadow, dry_run=dry_run)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+
+    def render(data: dict[str, Any]) -> None:
+        if data.get("dry_run"):
+            print(f"shim 目录: {data['planned']['shim_dir']}")
+            print(f"将生成: {', '.join(data['planned']['shims'])}")
+            if data["planned"]["add_to_user_path"]:
+                print(f"将把 shim 目录写入用户 PATH（{data['planned']['position']}）")
+            for tool, items in (data["planned"].get("shadowed") or {}).items():
+                print(f"  会遮蔽 {tool}: {', '.join(items)}")
+            return
+        if data.get("shims_written"):
+            print(f"已生成 shim: {', '.join(data['shims_written'])}")
+        else:
+            print("shim 已是最新")
+        if data["path"].get("enabled"):
+            print("用户 PATH: " + ("已更新" if data["path"].get("changed") else "无需修改"))
+
+    _finish(subcommand, payload, json_output=json_output, render=render)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="uninit",
+    help="删除 shim（--path 时同时移除用户 PATH 条目）",
+    param_help={"path": "移除 devman 写入的用户 PATH 条目", "dry_run": "只输出计划", "root": "devman 根目录"},
+)
+def uninit(path: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
+    """撤销 shim / PATH 集成。"""
+    subcommand = "uninit"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.uninit(ctx, path=path, dry_run=dry_run)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+
+    def render(data: dict[str, Any]) -> None:
+        if data.get("dry_run"):
+            print(f"将删除 shim: {data['planned']['remove_shims']}")
+            if data["planned"]["remove_path_entry"]:
+                print("将移除用户 PATH 中的 devman 条目")
+            return
+        print(f"已删除 shim: {', '.join(data['removed_shims']) or '（无）'}")
+        if data["path"].get("enabled"):
+            print("用户 PATH: " + ("已更新" if data["path"].get("changed") else "无需修改"))
+
+    _finish(subcommand, payload, json_output=json_output, render=render)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="env",
+    help="打印把活动版本加入当前 shell PATH 的片段",
+    param_help={"shell": "pwsh / cmd / bash", "root": "devman 根目录"},
+)
+def env(shell: ShellName = "pwsh", root: str = "", *, json_output: bool = False) -> None:
+    """输出激活片段（不落盘）。"""
+    subcommand = "env"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.env_payload(ctx, shell=shell)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+
+    def render(data: dict[str, Any]) -> None:
+        print(data["snippet"])
+
+    _finish(subcommand, payload, json_output=json_output, render=render)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="exec",
+    help="在活动版本环境下执行命令（只在子进程内改 PATH）",
+    param_help={"command": "要执行的命令，例：fcmd devman exec -- node -v", "root": "devman 根目录"},
+)
+def exec_command(command: list[str], root: str = "", *, json_output: bool = False) -> None:
+    """子进程执行；不修改当前 shell 与注册表。"""
+    subcommand = "exec"
+    try:
+        ctx = _ops.new_context(root)
+        dirs = _env.path_dirs(ctx.layout)
+        if not dirs:
+            raise not_found(
+                "没有活动版本，无法构造执行环境",
+                hint="先运行 fcmd devman use node@<ver>（或 python@<ver>）",
+            )
+        if not command:
+            raise invalid_argument("缺少要执行的命令", hint="例：fcmd devman exec -- node -v")
+        child_env = _env.child_env(ctx.layout)
+        # CreateProcess 用父进程 PATH 解析命令，必须显式按活动版本解析
+        resolved = shutil.which(command[0], path=child_env.get("PATH"))
+        if resolved is None:
+            raise not_found(f"找不到命令：{command[0]}", hint="确认命令名，或使用绝对路径")
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+
+    try:
+        completed = subprocess.run([resolved, *command[1:]], env=child_env, check=False)
+    except FileNotFoundError:
+        _fail(
+            subcommand,
+            runtime_error(f"找不到命令：{command[0]}", hint="确认活动版本包含该可执行文件", code="EXEC_FAILED"),
+            json_output=json_output,
+        )
+        return
+    except OSError as exc:
+        _fail(subcommand, runtime_error(f"执行失败：{exc}", code="EXEC_FAILED"), json_output=json_output)
+        return
+
+    payload = {
+        "schema": "devman/exec/1",
+        "command": command,
+        "exit_code": completed.returncode,
+        "dirs": [str(item) for item in dirs],
+        "warnings": ctx.warnings,
+    }
+    if completed.returncode != 0:
+        _fail(
+            subcommand,
+            runtime_error(f"命令以退出码 {completed.returncode} 结束", code="EXEC_FAILED"),
+            json_output=json_output,
+        )
+        return
+    _finish(subcommand, payload, json_output=json_output)
+
+
+@fcmd.tool(
+    "devman",
+    subcommand="doctor",
+    help="只读诊断：根目录、活动版本、shim、残留、外部环境",
+    param_help={"root": "devman 根目录"},
+)
+def doctor(root: str = "", *, json_output: bool = False) -> None:
+    """诊断；存在 ``fail`` 项时退出 5。"""
+    subcommand = "doctor"
+    try:
+        ctx = _ops.new_context(root)
+        payload = _ops.doctor_payload(ctx)
+    except DevmanError as exc:
+        _fail(subcommand, exc, json_output=json_output)
+        return
+    _finish(subcommand, payload, json_output=json_output, render=_human_doctor, ok=bool(payload.get("ok")))
+
+
+@fcmd.main("devman")
+def main() -> None:
+    """管理 Windows 上的 node / python 多版本环境（安装、切换、卸载、诊断）。"""
