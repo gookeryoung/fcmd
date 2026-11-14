@@ -10,6 +10,7 @@ import json
 import platform
 import re
 import urllib.parse
+from typing import Any
 
 from fcmd.apps.devman._errors import invalid_argument, not_found, runtime_error
 from fcmd.apps.devman._install import ArtifactPlan
@@ -51,7 +52,7 @@ def _version_url(version: str, arch: str) -> str:
     )
 
 
-def _load_list(text: str, what: str) -> list:
+def _load_list(text: str, what: str) -> list[Any]:
     try:
         raw = json.loads(text)
     except ValueError as exc:
@@ -61,7 +62,7 @@ def _load_list(text: str, what: str) -> list:
     return raw
 
 
-def _pick_asset(rows: list, what: str) -> tuple[str, dict]:
+def _pick_asset(rows: list[Any], what: str) -> tuple[str, dict[str, Any]]:
     for row in rows:
         if not isinstance(row, dict):
             continue
@@ -74,7 +75,13 @@ def _pick_asset(rows: list, what: str) -> tuple[str, dict]:
         link = package.get("link")
         checksum = package.get("checksum")
         name = package.get("name")
-        if not all(isinstance(item, str) and item for item in (semver, link, checksum, name)):
+        if not (isinstance(semver, str) and semver):
+            continue
+        if not (isinstance(link, str) and link):
+            continue
+        if not (isinstance(checksum, str) and checksum):
+            continue
+        if not (isinstance(name, str) and name):
             continue
         if _SHA_RE.fullmatch(checksum.lower()) and name.endswith(".zip"):
             return semver, package
@@ -95,7 +102,7 @@ def _latest_feature(fetcher: Fetcher, raw: str) -> str:
     return str(feature)
 
 
-def _resolve_asset(fetcher: Fetcher, raw: str, arch: str) -> tuple[str, dict]:
+def _resolve_asset(fetcher: Fetcher, raw: str, arch: str) -> tuple[str, dict[str, Any]]:
     value = (raw or "latest").strip()
     if value in {"latest", "lts"} or value.isdigit():
         return _pick_asset(

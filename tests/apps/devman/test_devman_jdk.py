@@ -10,6 +10,7 @@ import pytest
 from fcmd.apps.devman import _install, _jdk
 from fcmd.apps.devman._errors import DevmanError
 from fcmd.apps.devman._paths import Layout
+from fcmd.apps.devman._toolchain import parse_spec
 from tests.apps.devman import _fakes
 
 SEMVER = "21.0.5+11"
@@ -95,3 +96,9 @@ def test_release_names_are_listed(tmp_path: Path) -> None:
         }
     )
     assert _jdk.release_names(fetcher)[:2] == ["21.0.5+11", "21.0.4+7"]
+
+
+def test_lts_spec_allowed_for_jdk_only() -> None:
+    assert parse_spec("jdk@lts").tool == "jdk"
+    with pytest.raises(DevmanError):
+        parse_spec("go@lts")

@@ -67,8 +67,12 @@ def parse_spec(text: str) -> Spec:
             hint="允许版本号（20.11.1 / 3.12）、通道（latest / lts）；不允许路径分隔符",
             field="spec",
         )
-    if raw.lower() == "lts" and tool != "node":
-        raise invalid_argument("lts 通道仅适用于 node", hint="python 请用具体版本或 latest", field="spec")
+    if raw.lower() == "lts" and tool not in {"node", "jdk"}:
+        raise invalid_argument(
+            "lts 通道仅适用于 node / jdk",
+            hint="其余运行时请用具体版本或 latest",
+            field="spec",
+        )
     return Spec(tool, raw)
 
 

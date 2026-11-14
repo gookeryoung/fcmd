@@ -573,7 +573,7 @@ P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-veri
 | 运行时 | 结论 | 来源与校验 | 落地 |
 |---|---|---|---|
 | Go | 做 | `go.dev/dl/?mode=json`，索引内自带 sha256 | `<root>\go\<ver>`，shim `go` / `gofmt`，`.go-version` |
-| Deno | 做 | `dl.deno.land/release-latest.txt` + GitHub Release zip，`.sha256sum`（`Hash : <hex>` 格式） | 单 exe，`.deno-version` |
+| Deno | 做 | `dl.deno.land/release-latest.txt` + 官方 CDN `dl.deno.land/release/v<ver>/…zip`（GitHub Release 作回退），`.sha256sum`（`digest  name` 或 `Hash : <hex>` 两种格式都认） | 单 exe，`.deno-version` |
 | Bun | 做 | GitHub API latest + Release zip，`SHASUMS256.txt` | 单 exe，`.bun-version` |
 | JDK | 做 | Adoptium v3 `assets/latest/<feature>` 或 `assets/version/<ver>`，`checksum` 字段 | `<root>\jdk\<semver>`，shim `java` / `javac` / `jar`，`.java-version`；**不写 `JAVA_HOME`** |
 | Rust | 不做，委托 rustup | rustup 已覆盖 toolchain、组件、target、镜像与自更新，重复实现无收益 | 文档提示用 rustup |
@@ -595,6 +595,28 @@ P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-veri
 - Bun 的 `latest` 走 GitHub API 匿名配额；Deno 的 latest 走官方文本文件。
 - JDK 只安装 JDK 本体，不设置 `JAVA_HOME`；需要者可用 `devman env` 输出的 `bin` 目录或自行设置。
 - JDK 版本号保留 Adoptium semver（如 `21.0.5+11`），目录名与 `.java-version` 都使用它。
+- `lts` 通道对 jdk 生效（Adoptium 的 `most_recent_lts`），node / jdk 之外的其他运行时
+  仍只认具体版本或 `latest`。
+- Bun / JDK 的构件托管在 GitHub Release：该域名在部分网络下会超时或重置连接，
+  此时 `CHECKSUM_UNAVAILABLE` / `DOWNLOAD_FAILED` 退出，`.part` 保留供续传；
+  镜像加速留到后续批次，不在本轮猜第三方镜像地址。
+
+验收记录 F（root = `%TEMP%\devman-b4\root`，`FCMD_HOME` 同样隔离，全程 `--no-path`）：
+
+| 项 | 结果 |
+|---|---|
+| Go 真实安装 | `install go@1.23.4` → 构件 81,942,945 B，索引内 sha256 校验通过，`verify=official-index` |
+| Go 真实切换 | `use go@1.23.4` + `exec -- go version` → `go version go1.23.4 windows/amd64` |
+| Deno 真实安装 | `install deno@2.9.8` → 官方 CDN 42,917,472 B，`.sha256sum` 校验通过，`verify=official-shasums` |
+| Deno 真实切换 | `use deno@2.9.8` + `exec -- deno --version` → `deno 2.9.8 (long term support, release, x86_64-pc-windows-msvc)` |
+| 新运行时 `size` | go 232.5 MiB、deno 93.5 MiB、缓存 133.1 MiB，合计 459.1 MiB，与目录实际大小一致 |
+| Bun 真实安装 | `install bun@latest` → 1.4.4，`SHASUMS256.txt` 校验通过，`verify=official-shasums`；中途站停后靠 `Range` 续传完成 |
+| Bun 真实切换 | `use bun@1.4.4` + `exec -- bun --version` → `1.4.4` |
+| JDK 计划 | `--dry-run`：`jdk@lts` → `25.0.5+8.0.LTS`，期望值取自 Adoptium `checksum`，`verify=official-api` |
+| 反向用例 | 修复前 `jdk@lts` 被 `parse_spec` 判为「仅 node 支持 lts」（退出 3）；修复后 `go@lts` 仍退出 3 |
+| 网络限制 | 本机直连 GitHub Release 复位/超时；本地 HTTP 代理（`127.0.0.1:1080`）可访问 API 与构件，但实测约 55 KB/s（Bun 约 12 分钟、JDK 141 MB 需更久），JDK 的端到端下载在本轮未跑完 |
+| `verify` | 对新运行时同一套标记检查；正在下载的 `.part` 会按 `leftover` 报出（预期行为） |
+| 现场恢复 | 全程 `--no-path`，HKCU `Path` 未改动；临时 root / home 与探测用 zip 已删除 |
 
 ## 风险与边界
 
