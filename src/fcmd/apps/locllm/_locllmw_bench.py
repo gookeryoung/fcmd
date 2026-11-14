@@ -277,6 +277,8 @@ class _LocllmWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         _bench_running: bool
         _bench_completed: int
         _bench_total: int
+        _bench_model_path: str
+        _record_benchmark: Any
 
     # ------------------------------------------------------------------ #
     # 参数与场景
@@ -306,6 +308,14 @@ class _LocllmWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         """定位被测服务：优先表单中的服务名，其次唯一运行中的服务。"""
         state_name = self._name_var.get().strip()
         return endpoint_from_states(llmenv.list_states(), state_name)
+
+    @staticmethod
+    def _bench_model_path_for(endpoint: Endpoint) -> str:
+        """把 bench 接入点映射回实际模型文件路径（用于保存实测结果）。"""
+        for state in llmenv.list_states():
+            if state.endpoint.base_url == endpoint.base_url and llmserve.process_alive(state.pid, state.create_time):
+                return state.model
+        return ""
 
     def _bench_settings(self) -> tuple[int, float, int | None]:
         """解析重复次数、超时与输出上限（非法输入抛 :class:`ServeError`）。"""
@@ -344,6 +354,7 @@ class _LocllmWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         except ServeError as exc:
             self._messagebox.showerror("无法开始性能测试", str(exc))
             return
+        self._bench_model_path = self._bench_model_path_for(endpoint)
         stop = threading.Event()
         self._bench_stop = stop
         self._bench_results = queue.Queue()
@@ -434,6 +445,7 @@ class _LocllmWindowBench:  # pragma: no cover - Tk 窗口不纳入单元覆盖�
         elif result.cancelled:
             tags = ("cancelled",)
         self._bench_result_tree.insert("", "end", values=format_result_row(result), tags=tags)
+        self._record_benchmark(self._bench_model_path, result)
         self._bench_status_var.set(f"已完成 {self._bench_completed}/{self._bench_total}")
         if result.error is not None:
             self._log(f"性能测试失败（{result.scenario.label}）：{result.error}")

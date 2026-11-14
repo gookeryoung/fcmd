@@ -97,6 +97,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _stop_bench: Any
         _clear_bench: Any
         _toggle_bench_scenario: Any
+        _refresh_hardware_view: Any
+        _refresh_recommendations: Any
+        _build_overview: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -157,25 +160,6 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
         self._build_monitor(monitor_page)
         self._build_settings(settings_page)
-
-    def _build_overview(self, parent: Any) -> None:
-        """概览页：运行中的服务 + 常用分页快捷入口。"""
-        ttk = self._ttk
-        self._build_loaded(parent)
-        box = ttk.LabelFrame(parent, text="快捷入口", padding=self._theme.spacing.sm)
-        box.pack(fill="x", pady=(self._theme.spacing.sm, 0))
-        for column, (label, key) in enumerate(
-            (("选择模型", "models"), ("启动配置", "run"), ("运行监测", "monitor"), ("设置", "settings"))
-        ):
-            box.columnconfigure(column, weight=1)
-            ttk.Button(box, text=label, command=lambda page=key: self._nav.select(page)).grid(
-                row=0, column=column, sticky="ew", padx=(0, self._theme.spacing.xs)
-            )
-        ttk.Label(
-            box,
-            text="对话 / 代理 / 画图 / 视频 / 音频为规划中分页；当前可用底部按钮启动服务，或使用对应 CLI。",
-            style="Hint.TLabel",
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.sm, 0))
 
     def _build_planned(
         self,
@@ -831,6 +815,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         for key, var in self._info_vars.items():
             var.set(info.get(key) or "-")
         self._model_btn.configure(state="normal")
+        self._refresh_hardware_view()
+        self._refresh_recommendations()
         if not entries:
             self._log("未发现已配置的 GGUF：用 fcmd llmenv add 登记模型目录，或直接“浏览…”选择模型文件")
 

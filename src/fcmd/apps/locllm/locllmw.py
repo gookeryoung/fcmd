@@ -25,6 +25,7 @@ import fcmd
 from fcmd.apps.locllm import _llmtune, llmbase, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._locllmw_bench import _LocllmWindowBench
+from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot, snapshot_from_dict
 from fcmd.apps.locllm._locllmw_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
     RATE_WINDOW_SECONDS,
     GpuSample,
@@ -43,6 +44,7 @@ from fcmd.apps.locllm._locllmw_monitor import (  # noqa: F401  门面 re-export�
     _sample_gpu,
     _sample_load,
 )
+from fcmd.apps.locllm._locllmw_overview import _LocllmWindowOverview
 from fcmd.apps.locllm._locllmw_ui import (
     _HINT_PLACEHOLDER,
     _MODEL_PLACEHOLDER,
@@ -99,9 +101,11 @@ DEFAULT_HEIGHT = 780
 
 @dataclass
 class LocllmSettings:
-    """窗口持久化设置（当前只有 geometry）。"""
+    """窗口持久化设置：geometry、硬件快照与性能实测记录。"""
 
     geometry: str | None = None
+    hardware: dict[str, Any] | None = None
+    measured: dict[str, dict[str, Any]] | None = None
 
 
 def config_path() -> Path:
@@ -120,12 +124,25 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         geometry = raw.get("geometry")
         if isinstance(geometry, str) and valid_geometry(geometry):
             settings.geometry = geometry
+        hardware = raw.get("hardware")
+        if isinstance(hardware, dict):
+            settings.hardware = hardware
+        measured = raw.get("measured")
+        if isinstance(measured, dict):
+            settings.measured = {str(key): dict(value) for key, value in measured.items() if isinstance(value, dict)}
     return settings
 
 
 def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
     """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
-    _guiconfig.write_settings({"geometry": settings.geometry}, path or config_path())
+    _guiconfig.write_settings(
+        {
+            "geometry": settings.geometry,
+            "hardware": settings.hardware,
+            "measured": settings.measured,
+        },
+        path or config_path(),
+    )
 
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
@@ -141,7 +158,7 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
 
 
 class LocllmWindow(
-    _LocllmWindowUI, _LocllmWindowMonitor, _LocllmWindowBench
+    _LocllmWindowUI, _LocllmWindowOverview, _LocllmWindowMonitor, _LocllmWindowBench
 ):  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 服务窗口：侧边栏分页 + 模型列表 + 计划预览 + 后台启停 + 监控与性能测试。"""
 
@@ -156,6 +173,13 @@ class LocllmWindow(
         self._ttk = ttk
         self._settings_path = settings_path
         self._settings = load_settings(settings_path)
+        self._hardware: HardwareSnapshot | None = (
+            snapshot_from_dict(self._settings.hardware) if self._settings.hardware else None
+        )
+        self._measured: dict[str, dict[str, Any]] = dict(self._settings.measured or {})
+        self._hardware_thread: threading.Thread | None = None
+        self._hardware_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self._hardware_detecting = False
         self.root, self._theme = _guiwindow.create_root(
             title="本地 LLM 服务",
             saved_geometry=self._settings.geometry,
@@ -195,6 +219,7 @@ class LocllmWindow(
         self._bench_running = False
         self._bench_completed = 0
         self._bench_total = 0
+        self._bench_model_path = ""
         self._bench_repeat_var = tk.StringVar(value="1")
         self._bench_timeout_var = tk.StringVar(value="180")
         self._bench_tokens_var = tk.StringVar(value="")
@@ -259,6 +284,7 @@ class LocllmWindow(
 
         self._build_widgets()
         _guitheme.install_theme_switcher(self.root)
+        self._init_overview()
         self._refresh_loaded()
         self._refresh_models()
         self._start_system_monitor()
@@ -302,6 +328,7 @@ class LocllmWindow(
         if update_name:
             self._name_var.set(self._service_name_from_model(path))
         self._show_model_hint(path)
+        self._refresh_hardware_view()
         self._log(f"已选择模型: {path}")
 
     @classmethod
@@ -921,6 +948,18 @@ class LocllmWindow(
         else:
             self._progress.stop()
 
+    @override
+    def _persist_settings(self) -> None:
+        """把 geometry、硬件快照与实测记录写入配置。"""
+        save_settings(
+            LocllmSettings(
+                geometry=self.root.winfo_geometry(),
+                hardware=self._hardware_dict(),
+                measured=self._measured,
+            ),
+            self._settings_path,
+        )
+
     def _close(self) -> None:
         running = self._thread is not None and self._thread.is_alive()
         if running and not self._messagebox.askyesno("任务进行中", "启动 / 停止任务仍在执行，确实退出？"):
@@ -928,7 +967,7 @@ class LocllmWindow(
         self._closing = True
         self._stop_monitor()
         self._close_bench()
-        save_settings(LocllmSettings(geometry=self.root.winfo_geometry()), self._settings_path)
+        self._persist_settings()
         self.root.destroy()
 
     # ------------------------------------------------------------------ #

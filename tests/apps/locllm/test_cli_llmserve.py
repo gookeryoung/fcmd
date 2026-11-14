@@ -2270,6 +2270,22 @@ class TestServewSettings:
         locllmw.save_settings(locllmw.LocllmSettings(geometry="920x700+10+20"), path)
         assert locllmw.load_settings(path).geometry == "920x700+10+20"
 
+    def test_roundtrip_hardware_and_measured(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        settings = locllmw.LocllmSettings(
+            geometry="920x700",
+            hardware={"schema": 1, "cpu": "CPU", "disks": []},
+            measured={"d:/models/a.gguf": {"decode_tps": 42.0}},
+        )
+        locllmw.save_settings(settings, path)
+        loaded = locllmw.load_settings(path)
+        assert loaded == settings
+
+    def test_load_drops_non_dict_measured_rows(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"measured": {"a": {"decode_tps": 1}, "b": 2}}', encoding="utf-8")
+        assert locllmw.load_settings(path).measured == {"a": {"decode_tps": 1}}
+
     def test_save_ignores_write_error(self, tmp_path: Path) -> None:
         blocker = tmp_path / "blocker"
         blocker.write_text("x", encoding="utf-8")
