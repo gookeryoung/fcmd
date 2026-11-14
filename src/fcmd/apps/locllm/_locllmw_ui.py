@@ -11,12 +11,14 @@ import queue
 import re
 import socket
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.locllm import _llmtune, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
+from fcmd.apps.locllm._llmgguf_cache import PrecisionCache
 from fcmd.apps.locllm._locllmw_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
 from fcmd.apps.locllm._locllmw_models import _ModelBrowserPage, settings_from_dict
 from fcmd.apps.locllm._locllmw_monitor import (
@@ -43,6 +45,39 @@ from fcmd.gui import window as _guiwindow
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
+
+_PRECISION_WORKERS = 4
+"""并行识别 GGUF 精度的线程数：单文件 200–400 ms，4 路即可覆盖磁盘与 CPU 等待。"""
+
+
+def _detect_precisions(entries: list[ModelEntry], *, cache: PrecisionCache | None = None) -> dict[str, GgufPrecision]:
+    """识别每个 GGUF 的精度：缓存命中直接复用，未命中的并行解析（最多 4 路）。
+
+    结果按 ``entries`` 顺序组装，与串行实现的唯一区别是解析并发；``cache`` 省略时
+    使用默认缓存文件，写入失败会自动降级。
+    """
+    store = cache if cache is not None else PrecisionCache()
+    results: list[GgufPrecision | None] = [None] * len(entries)
+    pending: list[int] = []
+    for index, entry in enumerate(entries):
+        hit = store.get(entry.path)
+        if hit is not None:
+            results[index] = hit
+        else:
+            pending.append(index)
+    if pending:
+        workers = min(_PRECISION_WORKERS, len(pending))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="gguf-precision") as pool:
+            parsed = pool.map(lambda item: detect_precision(entries[item].path), pending)
+            for index, precision in zip(pending, parsed, strict=True):
+                results[index] = precision
+                store.remember(entries[index].path, precision)
+    store.save()
+    return {
+        llmenv.path_key(entry.path): precision
+        for entry, precision in zip(entries, results, strict=True)
+        if precision is not None
+    }
 
 
 def _scan_dir(root: Path) -> tuple[list[ModelEntry], str | None]:
@@ -984,7 +1019,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         gpu_mib = gpu.memory_mib if gpu is not None else None
         usage = self._gpu_usage()
         free_mib = max(usage[1] - usage[0], 0) if usage is not None else None
-        precisions = {llmenv.path_key(entry.path): detect_precision(entry.path) for entry in entries}
+        precisions = _detect_precisions(entries)
         try:
             engine_missing = not llmengine.list_engines()
         except OSError:

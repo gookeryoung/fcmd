@@ -972,6 +972,34 @@ class TestGpu:
         assert llmengine.detect_gpu(lambda cmd: CommandResult(0, "bad line")) is None
         assert llmengine.detect_gpu(lambda cmd: CommandResult(0, "name, not-a-number")) is None
 
+    def test_detect_caches_default_runner(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[list[str]] = []
+
+        def fake(cmd: list[str]) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(0, "NVIDIA RTX 5090 D, 32607\n")
+
+        monkeypatch.setattr(llmengine, "run_command", fake)
+        monkeypatch.setattr(llmengine, "_gpu_cache", llmengine._GpuCache())
+        first = llmengine.detect_gpu(fake)
+        second = llmengine.detect_gpu(fake)
+        assert first == second == GpuInfo("NVIDIA RTX 5090 D", 32607)
+        assert len(calls) == 1
+
+    def test_detect_cache_expires(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[list[str]] = []
+
+        def fake(cmd: list[str]) -> CommandResult:
+            calls.append(cmd)
+            return CommandResult(0, "NVIDIA RTX 5090 D, 32607\n")
+
+        monkeypatch.setattr(llmengine, "run_command", fake)
+        monkeypatch.setattr(llmengine, "_gpu_cache", llmengine._GpuCache())
+        monkeypatch.setattr(llmengine, "_GPU_CACHE_TTL_SECONDS", 0.0)
+        assert llmengine.detect_gpu(fake) == GpuInfo("NVIDIA RTX 5090 D", 32607)
+        assert llmengine.detect_gpu(fake) == GpuInfo("NVIDIA RTX 5090 D", 32607)
+        assert len(calls) == 2
+
 
 class TestEngine:
     def test_engine_exe_name(self) -> None:

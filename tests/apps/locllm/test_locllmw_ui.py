@@ -9,6 +9,8 @@ from typing import Any, override
 import pytest
 
 from fcmd.apps.locllm import _llmtune, _locllmw_ui, llmmodel
+from fcmd.apps.locllm._llmgguf import GgufPrecision
+from fcmd.apps.locllm._llmgguf_cache import PrecisionCache
 from fcmd.apps.locllm._locllmw_overview import _LocllmWindowOverview
 from fcmd.apps.locllm._locllmw_recommend import Recommendation
 from fcmd.apps.locllm.llmbase import ModelEntry
@@ -222,3 +224,34 @@ def test_apply_recommendation_requires_selection(tmp_path: Path) -> None:
     host._apply_recommendation()
     assert host.selected is None
     assert "先在推荐表中选择一行" in host._recommend_status.get()
+
+
+def _entries(tmp_path: Path, count: int) -> list[ModelEntry]:
+    entries = []
+    for index in range(count):
+        path = tmp_path / f"model-{index}.gguf"
+        path.write_bytes(b"x" * (index + 1))
+        entries.append(ModelEntry(root=tmp_path, path=path, size=path.stat().st_size))
+    return entries
+
+
+def test_detect_precisions_preserves_order_and_reuses_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    entries = _entries(tmp_path, 6)
+    calls: list[str] = []
+
+    def fake(path: Path) -> GgufPrecision:
+        calls.append(path.name)
+        return GgufPrecision(label=path.stem, quantized=True, source="filename")
+
+    monkeypatch.setattr(_locllmw_ui, "detect_precision", fake)
+    cache = PrecisionCache(tmp_path / "cache.json")
+    first = _locllmw_ui._detect_precisions(entries, cache=cache)
+    assert list(first) == [_locllmw_ui.llmenv.path_key(entry.path) for entry in entries]
+    key = _locllmw_ui.llmenv.path_key(entries[0].path)
+    assert first[key] == GgufPrecision(label="model-0", quantized=True, source="filename")
+    assert len(calls) == 6
+
+    calls.clear()
+    second = _locllmw_ui._detect_precisions(entries, cache=PrecisionCache(tmp_path / "cache.json"))
+    assert second == first
+    assert calls == []

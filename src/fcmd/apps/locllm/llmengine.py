@@ -9,11 +9,12 @@ import json
 import os
 import re
 import shutil
+import time
 import zipfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import fcmd
 from fcmd.apps.locllm import llmenv
@@ -125,8 +126,24 @@ class ZipInspection:
         return self.valid and self.bad_member is None and self.kind == "engine"
 
 
-def detect_gpu(runner: Runner = run_command) -> GpuInfo | None:
-    """用 ``nvidia-smi`` 查询第一块 GPU；不可用时返回 ``None``。"""
+@dataclass(slots=True)
+class _GpuCache:
+    """默认 ``run_command`` 的进程内 GPU 查询缓存。"""
+
+    stamp: float = 0.0
+    info: GpuInfo | None = None
+    valid: bool = False
+
+
+_GPU_CACHE_TTL_SECONDS: Final[float] = 3.0
+"""``nvidia-smi`` 结果的进程内复用窗口（秒）：建窗期多条线程各查一次 GPU，
+3 秒内复用同一结果可少起 2–3 个进程；窗口外照常重查，GPU 变化最多滞后 3 秒。"""
+
+_gpu_cache = _GpuCache()
+
+
+def _query_gpu(runner: Runner) -> GpuInfo | None:
+    """实际执行一次 ``nvidia-smi`` 查询。"""
     result = runner(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
     if result.returncode != 0 or not result.stdout.strip():
         return None
@@ -139,6 +156,23 @@ def detect_gpu(runner: Runner = run_command) -> GpuInfo | None:
     except ValueError:
         return None
     return GpuInfo(name.strip(), memory_mib)
+
+
+def detect_gpu(runner: Runner = run_command) -> GpuInfo | None:
+    """用 ``nvidia-smi`` 查询第一块 GPU；不可用时返回 ``None``。
+
+    默认查询在 :data:`_GPU_CACHE_TTL_SECONDS` 内复用结果：建窗时硬件检测、设置页
+    与模型扫描会各查一次，缓存可少起 2–3 个 ``nvidia-smi`` 进程。传入自定义
+    ``runner``（测试替身）时始终实际执行，不缓存，也不影响调用方拿到的返回值。
+    """
+    if runner is not run_command:
+        return _query_gpu(runner)
+    cache = _gpu_cache
+    if cache.valid and time.monotonic() - cache.stamp < _GPU_CACHE_TTL_SECONDS:
+        return cache.info
+    info = _query_gpu(runner)
+    cache.stamp, cache.info, cache.valid = time.monotonic(), info, True
+    return info
 
 
 def engine_exe_name(base: str = "llama-server") -> str:

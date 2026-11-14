@@ -25,6 +25,8 @@ _FIT_RUNNING = "运行中"
 
 #: token 速率平滑窗口（秒）：窗口内累计 token 数 ÷ 经过时间，避免逐秒差值剧烈跳变
 RATE_WINDOW_SECONDS = 10.0
+#: 建窗后首次系统采样的延迟（毫秒）：先让窗口完成布局与首绘，再启动采样线程
+MONITOR_START_DELAY_MS = 500
 #: ``nvidia-smi --query-gpu`` 查询字段（顺序与解析逻辑对应）
 _GPU_FIELDS = (
     "uuid",
@@ -380,7 +382,11 @@ class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖
         self.root.after(300, lambda: self._poll_metrics(seq))
 
     def _start_system_monitor(self) -> None:
-        """服务未运行时仅采样系统负载，保证窗口打开即可看到 CPU / 内存 / GPU 使用情况。"""
+        """服务未运行时仅采样系统负载，保证窗口打开即可看到 CPU / 内存 / GPU 使用情况。
+
+        采样线程延后 :data:`MONITOR_START_DELAY_MS` 启动：首轮 ``psutil`` 采样与
+        ``nvidia-smi`` 子进程会和建窗争抢主线程，等首屏绘制完成再开始更跟手。
+        """
         if self._closing:
             return
         if self._monitor_thread is not None and self._monitor_thread.is_alive():
@@ -390,10 +396,16 @@ class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖
         self._monitor_state = None
         self._monitor_seq += 1
         seq = self._monitor_seq
+        self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
+        self.root.after(MONITOR_START_DELAY_MS, lambda: self._launch_system_monitor(seq, stop))
+        self.root.after(MONITOR_START_DELAY_MS + 300, lambda: self._poll_metrics(seq))
+
+    def _launch_system_monitor(self, seq: int, stop: threading.Event) -> None:
+        """按序号启动负载采样线程；窗口已关闭或监控已停止时丢弃本次启动。"""
+        if self._closing or seq != self._monitor_seq:
+            return
         self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(None, stop), daemon=True)
         self._monitor_thread.start()
-        self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
-        self.root.after(300, lambda: self._poll_metrics(seq))
 
     def _stop_monitor(self, reason: str = "未监控") -> None:
         """停止采样线程并更新状态（重复调用安全）。"""
