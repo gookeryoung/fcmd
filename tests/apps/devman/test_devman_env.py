@@ -48,7 +48,21 @@ def test_command_candidates_order(tmp_path: Path) -> None:
 
 def test_shim_scripts_are_crlf_wrappers() -> None:
     scripts = _env.shim_scripts()
-    assert set(scripts) == {"node.cmd", "npm.cmd", "npx.cmd", "python.cmd", "python3.cmd"}
+    assert set(scripts) == {
+        "node.cmd",
+        "npm.cmd",
+        "npx.cmd",
+        "python.cmd",
+        "python3.cmd",
+        "go.cmd",
+        "gofmt.cmd",
+        "deno.cmd",
+        "bun.cmd",
+        "bunx.cmd",
+        "java.cmd",
+        "javac.cmd",
+        "jar.cmd",
+    }
     node = scripts["node.cmd"]
     assert "\r\n" in node
     assert "active\\node.txt" in node
@@ -118,7 +132,14 @@ def test_detect_environment_reports_resolution_and_markers(tmp_path: Path) -> No
     assert any("首先解析到" in item for item in detected["warnings"])
     assert any("虚拟环境" in item for item in detected["warnings"])
     assert any("conda" in item for item in detected["warnings"])
-    assert detected["active"] == {"node": None, "python": None}
+    assert detected["active"] == {
+        "node": None,
+        "python": None,
+        "go": None,
+        "deno": None,
+        "bun": None,
+        "jdk": None,
+    }
 
 
 def test_shadowed_commands_lists_external_only(tmp_path: Path) -> None:

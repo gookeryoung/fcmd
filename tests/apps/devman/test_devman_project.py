@@ -236,7 +236,14 @@ def test_env_and_exec_follow_project_pins(tmp_path: Path) -> None:
     (tmp_path / ".node-version").write_text("20\n", encoding="utf-8")
 
     payload = _ops.env_payload(ctx, shell="pwsh", cwd=tmp_path)
-    assert payload["active"] == {"node": "20.11.1", "python": PY_KEY}
+    assert payload["active"] == {
+        "node": "20.11.1",
+        "python": PY_KEY,
+        "go": None,
+        "deno": None,
+        "bun": None,
+        "jdk": None,
+    }
     assert payload["project"]["pins"]["node"]["resolved"] == "20.11.1"
     assert str(ctx.layout.version_dir("node", "20.11.1")) in payload["dirs"][0]
 

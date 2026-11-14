@@ -19,6 +19,7 @@ __all__ = [
     "CHANNELS",
     "Installed",
     "Spec",
+    "executable_name",
     "executable_path",
     "is_complete",
     "list_installed",
@@ -121,10 +122,24 @@ class Installed:
         }
 
 
+_EXECUTABLES = {
+    "node": "node.exe",
+    "python": "python.exe",
+    "go": "bin/go.exe",
+    "deno": "deno.exe",
+    "bun": "bun.exe",
+    "jdk": "bin/java.exe",
+}
+
+
+def executable_name(tool: str) -> str:
+    """主可执行文件相对版本目录的路径。"""
+    return _EXECUTABLES.get(tool, f"{tool}.exe")
+
+
 def executable_path(layout: Layout, tool: str, name: str) -> Path:
     """版本目录内主可执行文件路径。"""
-    exe = "node.exe" if tool == "node" else "python.exe"
-    return layout.version_dir(tool, name) / exe
+    return layout.version_dir(tool, name) / executable_name(tool)
 
 
 def is_complete(layout: Layout, tool: str, name: str) -> bool:

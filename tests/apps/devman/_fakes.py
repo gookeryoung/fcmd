@@ -110,6 +110,95 @@ def make_node_zip(version: str, *, arch: str = "x64", exe_content: bytes = b"MZ-
     return data, hashlib.sha256(data).hexdigest()
 
 
+def make_go_zip(version: str, *, arch: str = "amd64") -> tuple[bytes, str]:
+    """构造结构正确的 Go zip（``go/bin/go.exe``）；返回 ``(bytes, sha256)``。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("go/bin/go.exe", b"MZ-fake-go")
+        bundle.writestr("go/bin/gofmt.exe", b"MZ-fake-gofmt")
+        bundle.writestr("go/VERSION", f"go{version}\n")
+    data = buffer.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def go_index_json(version: str, digest: str, *, arch: str = "amd64", stable: bool = True) -> str:
+    rows = [
+        {
+            "version": f"go{version}",
+            "stable": stable,
+            "files": [
+                {
+                    "filename": f"go{version}.windows-{arch}.zip",
+                    "os": "windows",
+                    "arch": arch,
+                    "sha256": digest,
+                    "size": 1,
+                }
+            ],
+        }
+    ]
+    return json.dumps(rows)
+
+
+def make_deno_zip(version: str) -> tuple[bytes, str]:
+    """Deno zip 没有顶层目录，``deno.exe`` 在根上。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("deno.exe", b"MZ-fake-deno")
+    data = buffer.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def make_bun_zip(version: str) -> tuple[bytes, str]:
+    """Bun zip 有 ``bun-windows-x64/`` 顶层目录。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("bun-windows-x64/bun.exe", b"MZ-fake-bun")
+    data = buffer.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def make_jdk_zip(version: str) -> tuple[bytes, str]:
+    """Temurin zip：顶层 ``jdk-<semver>/``，主程序在 ``bin/java.exe``。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr(f"jdk-{version}/bin/java.exe", b"MZ-fake-java")
+        bundle.writestr(f"jdk-{version}/bin/javac.exe", b"MZ-fake-javac")
+    data = buffer.getvalue()
+    return data, hashlib.sha256(data).hexdigest()
+
+
+def jdk_assets_json(version: str, filename: str, link: str, digest: str) -> str:
+    return json.dumps(
+        [
+            {
+                "version": {"semver": version},
+                "binary": {"package": {"name": filename, "link": link, "checksum": digest}},
+            }
+        ]
+    )
+
+
+def install_fake_go(layout: Layout, version: str) -> Path:
+    """在 devman 根下造一个结构正确的 Go 安装目录。"""
+    directory = layout.version_dir("go", version)
+    (directory / "bin").mkdir(parents=True, exist_ok=True)
+    (directory / "bin" / "go.exe").write_bytes(b"MZ-fake-go")
+    write_marker(
+        directory,
+        {
+            "schema": MARKER_SCHEMA,
+            "tool": "go",
+            "version": version,
+            "source": "fake",
+            "sha256": "0" * 64,
+            "verify": "official-shasums",
+            "installed_at": now_iso(),
+        },
+    )
+    return directory
+
+
 def node_plan_payload(
     version: str,
     *,

@@ -20,6 +20,7 @@ import fcmd
 from fcmd.apps.devman import _env, _ops
 from fcmd.apps.devman._errors import DevmanError
 from fcmd.apps.devman._paths import TOOLS
+from fcmd.apps.devman._toolchain import executable_name
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
@@ -294,7 +295,7 @@ def detail_values(
     name = str(row.get("name") or "")
     tool_root = str(snapshot.get("tool_roots", {}).get(tool, ""))
     version_dir = str(row.get("path") or (Path(tool_root) / name if tool_root else ""))
-    exe = "node.exe" if tool == "node" else "python.exe"
+    exe = executable_name(tool)
     return {
         "工具": tool,
         "版本": str(row.get("version") or ""),

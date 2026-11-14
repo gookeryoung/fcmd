@@ -105,7 +105,16 @@ def test_iid_roundtrip() -> None:
 
 def test_installed_rows_group_and_active() -> None:
     rows = devmanw.installed_rows(_list_payload())
-    assert [row["kind"] for row in rows] == ["tool", "installed", "installed", "tool"]
+    assert [row["kind"] for row in rows] == [
+        "tool",
+        "installed",
+        "installed",
+        "tool",
+        "tool",
+        "tool",
+        "tool",
+        "tool",
+    ]
     assert rows[0]["text"] == "node（2 个已安装，活动 22.23.5）"
     assert rows[1]["active"] is True
     assert rows[1]["values"][0] == "完整"

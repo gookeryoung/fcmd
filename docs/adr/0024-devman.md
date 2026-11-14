@@ -564,6 +564,38 @@ P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-veri
 | 代理 | `proxy=off` → doctor `network`「显式禁用代理」；`socks5://…` → `warn` + 提示 |
 | 现场恢复 | 全程 `--no-path`；HKCU `Path` 与验证前逐字一致；临时 root / home 已删除 |
 
+### D18 运行时扩展：Go / Deno / Bun / JDK（P1，2026-11-14）
+
+先把「版本目录 + 标记 + shim」之外的差异收敛成通用 zip 流水线
+（`_install.py`：缓存校验 → 下载 → sha256 → 解压到 `.staging-*` → 主程序自检 →
+原子落位 → 写标记），再按运行时补「来源 + 校验值」两段。逐项结论：
+
+| 运行时 | 结论 | 来源与校验 | 落地 |
+|---|---|---|---|
+| Go | 做 | `go.dev/dl/?mode=json`，索引内自带 sha256 | `<root>\go\<ver>`，shim `go` / `gofmt`，`.go-version` |
+| Deno | 做 | `dl.deno.land/release-latest.txt` + GitHub Release zip，`.sha256sum`（`Hash : <hex>` 格式） | 单 exe，`.deno-version` |
+| Bun | 做 | GitHub API latest + Release zip，`SHASUMS256.txt` | 单 exe，`.bun-version` |
+| JDK | 做 | Adoptium v3 `assets/latest/<feature>` 或 `assets/version/<ver>`，`checksum` 字段 | `<root>\jdk\<semver>`，shim `java` / `javac` / `jar`，`.java-version`；**不写 `JAVA_HOME`** |
+| Rust | 不做，委托 rustup | rustup 已覆盖 toolchain、组件、target、镜像与自更新，重复实现无收益 | 文档提示用 rustup |
+| .NET SDK | 不做，委托官方安装器 | MSI/签名与全局 SDK 解析不适合 devman 的目录模型 | 文档提示 |
+| pnpm / yarn | 不做，走 npm / corepack | 它们是 node 生态的包管理器，corepack 已能按项目锁版本 | 文档提示 |
+
+通用化改动：
+
+- `TOOLS` 注册表统一驱动 `list` / `versions` / `size` / `verify` / `export-lock` / `doctor`，
+  新增运行时只需补 `_EXECUTABLES`、`SHIM_TARGETS`、`_BIN_SUBDIRS`、`VERSION_FILES` 与
+  一个来源模块；`doctor` 的 PATH 冲突检测按主命令名（JDK → `java`）比较。
+- 校验标签新增 `official-index`（Go 索引内 sha256）与 `official-api`（Adoptium API 字段），
+  与 `official-shasums` / `explicit-sha256` 一起写入安装标记，`--json` 与退出码不变。
+- `--from` 离线导入仍只支持 node：其他运行时的包结构与版本语义不同，先不做。
+
+边界与代价：
+
+- Deno / Bun 不支持版本前缀（用精确版本或 `latest`）；`upgrade` 对这两者直接取 latest。
+- Bun 的 `latest` 走 GitHub API 匿名配额；Deno 的 latest 走官方文本文件。
+- JDK 只安装 JDK 本体，不设置 `JAVA_HOME`；需要者可用 `devman env` 输出的 `bin` 目录或自行设置。
+- JDK 版本号保留 Adoptium semver（如 `21.0.5+11`），目录名与 `.java-version` 都使用它。
+
 ## 风险与边界
 
 - Node 官方站点在部分网络下不可达：镜像可下构件，但校验清单只认官方；

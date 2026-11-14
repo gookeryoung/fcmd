@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from fcmd.apps.devman import _env, _node, _ops
+from fcmd.apps.devman import _env, _go, _node, _ops
 from fcmd.apps.devman import devman as devman_module
 from fcmd.apps.devman._errors import invalid_argument
 from fcmd.apps.devman._paths import Layout
@@ -385,6 +385,41 @@ def test_install_from_local_rejects_python(
     code, out, err = _run(capsys, ["install", "python@3.12.15", "--from", str(artifact)])
     assert code == 3
     assert "--from 仅支持 node" in out + err
+
+
+def test_install_go_json(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data, digest = _fakes.make_go_zip("1.23.4")
+    fetcher = _fakes.FakeFetcher(
+        texts={_go.INDEX: _fakes.go_index_json("1.23.4", digest)},
+        payloads={f"{_go.DIST}/go1.23.4.windows-amd64.zip": data},
+    )
+    runner = _fakes.FakeRunner(lambda argv, env: _fakes.result(stdout="go version go1.23.4 windows/amd64\n"))
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["install", "go@1.23", "--no-path", "--json"])
+    assert code == 0
+    payload = _envelope(out)["data"]
+    assert payload["tool"] == "go"
+    assert payload["version"] == "1.23.4"
+    assert payload["changed"] is True
+    assert (ctx.layout.version_dir("go", "1.23.4") / "bin" / "go.exe").is_file()
+
+
+def test_install_go_dry_run_does_not_download(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _data, digest = _fakes.make_go_zip("1.23.4")
+    fetcher = _fakes.FakeFetcher(texts={_go.INDEX: _fakes.go_index_json("1.23.4", digest)})
+    ctx = _ctx(tmp_path, fetcher=fetcher)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["install", "go@latest", "--dry-run", "--json"])
+    assert code == 0
+    payload = _envelope(out)["data"]
+    assert payload["dry_run"] is True
+    assert payload["planned"]["artifact"] == "go1.23.4.windows-amd64.zip"
+    assert fetcher.download_calls == []
 
 
 # ---------------------------------------------------------------------- #

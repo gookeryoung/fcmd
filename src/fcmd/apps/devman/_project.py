@@ -31,7 +31,14 @@ __all__ = [
 
 PROJECT_FILE = "devman.toml"
 SCHEMA = "devman-project/1"
-VERSION_FILES = {"node": ".node-version", "python": ".python-version"}
+VERSION_FILES = {
+    "node": ".node-version",
+    "python": ".python-version",
+    "go": ".go-version",
+    "deno": ".deno-version",
+    "bun": ".bun-version",
+    "jdk": ".java-version",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +126,7 @@ def read_directory(directory: Path) -> tuple[dict[str, Pin], list[str]]:
     if project.is_file():
         pins, warnings = read_project_file(project)
     for tool in TOOLS:
-        if tool in pins:
+        if tool in pins or tool not in VERSION_FILES:
             continue
         legacy = directory / VERSION_FILES[tool]
         if legacy.is_file():
@@ -171,6 +178,8 @@ def write_pin(directory: Path | str, tool: str, raw: str) -> Path:
 
 def remove_pin(directory: Path | str, tool: str) -> bool:
     """删除目录下的单行版本文件；返回是否真的删除了。"""
+    if tool not in VERSION_FILES:
+        return False
     path = Path(directory) / VERSION_FILES[tool]
     try:
         path.unlink()

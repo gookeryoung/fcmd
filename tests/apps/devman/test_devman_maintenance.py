@@ -78,7 +78,7 @@ def test_verify_clean_install_passes(tmp_path: Path) -> None:
     report = _maintenance.verify(ctx.layout)
     assert report["ok"] is True
     assert report["issues"] == []
-    assert report["checked"] == {"node": 1, "python": 0}
+    assert report["checked"] == {"node": 1, "python": 0, "go": 0, "deno": 0, "bun": 0, "jdk": 0}
 
 
 def test_verify_flags_missing_marker_exe_and_broken_active(tmp_path: Path) -> None:
@@ -232,7 +232,7 @@ def test_load_lock_rejects_bad_input(tmp_path: Path) -> None:
     bad_bodies: tuple[dict[str, Any], ...] = (
         {"schema": "other", "tools": {}},
         {"schema": _maintenance.LOCK_SCHEMA},
-        {"schema": _maintenance.LOCK_SCHEMA, "tools": {"go": {}}},
+        {"schema": _maintenance.LOCK_SCHEMA, "tools": {"unknown": {}}},
         {"schema": _maintenance.LOCK_SCHEMA, "tools": {"node": {"versions": [{"name": "x"}]}}},
     )
     for body in bad_bodies:

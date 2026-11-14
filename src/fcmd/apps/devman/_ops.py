@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fcmd.apps.devman import _env, _maintenance, _node, _project, _python
+from fcmd.apps.devman import _bun, _deno, _env, _go, _install, _jdk, _maintenance, _node, _project, _python
 from fcmd.apps.devman._errors import (
     BUSY,
     NOT_INSTALLED,
@@ -30,7 +30,7 @@ from fcmd.apps.devman._errors import (
     runtime_error,
 )
 from fcmd.apps.devman._net import Fetcher, ProgressCallback, UrllibFetcher, normalize_proxy
-from fcmd.apps.devman._paths import Layout, normalize_tool
+from fcmd.apps.devman._paths import TOOLS, Layout, normalize_tool
 from fcmd.apps.devman._runner import Runner, SubprocessRunner
 from fcmd.apps.devman._state import (
     MARKER_NAME,
@@ -80,6 +80,13 @@ __all__ = [
 
 LOCK_STALE_SECONDS = 30 * 60
 _EXACT_RE = re.compile(r"^\d+\.\d+\.\d+$")
+# 走通用 zip 流水线的运行时：解析计划 → 下载 → 解压 → 自检 → 落位
+_GENERIC_PLANNERS = {
+    "go": _go.plan_install,
+    "deno": _deno.plan_install,
+    "bun": _bun.plan_install,
+    "jdk": _jdk.plan_install,
+}
 
 
 @dataclass(slots=True)
@@ -340,7 +347,27 @@ def resolve_target(ctx: JobContext, spec: Spec, *, remote_only: bool = False) ->
         )
     if spec.tool == "node":
         return "node", _resolve_node_version(ctx, spec, remote_only=remote_only)
+    if spec.tool == "go":
+        return "go", _resolve_go_version(ctx, spec, remote_only=remote_only)
+    if spec.tool in {"deno", "bun"}:
+        resolver = _deno if spec.tool == "deno" else _bun
+        return spec.tool, resolver.resolve_version(ctx.fetch(), spec.raw or "latest")
+    if spec.tool == "jdk":
+        return "jdk", _jdk.resolve_version(ctx.fetch(), spec.raw or "latest")
     return "python", _resolve_python_key(ctx, spec, remote_only=remote_only)
+
+
+def _resolve_go_version(ctx: JobContext, spec: Spec, *, remote_only: bool = False) -> str:
+    """解析 Go 版本：精确版本直接用，其余查官方索引。"""
+    if _EXACT_RE.fullmatch(spec.raw):
+        return spec.raw
+    if not remote_only:
+        try:
+            return resolve_installed(ctx.layout, spec).version
+        except DevmanError:
+            pass
+    releases = _go.parse_index(ctx.fetch().get_text(_go.INDEX))
+    return _go.latest_matching(releases, spec.raw or "latest")
 
 
 # ---- list ----
@@ -353,7 +380,7 @@ def list_payload(
     """已安装版本 + 活动版本 + 外部探测 + 项目绑定（只读）。"""
     layout = ctx.layout
     tools: dict[str, Any] = {}
-    for tool in ("node", "python"):
+    for tool in TOOLS:
         installed = list_installed(layout, tool)
         active = active_version(layout, tool)
         tools[tool] = {
@@ -381,7 +408,7 @@ def list_payload(
 
 
 # ---- versions ----
-def versions_payload(
+def versions_payload(  # noqa: PLR0912 - 每个运行时的远端索引格式不同
     ctx: JobContext,
     tool_text: str,
     *,
@@ -408,6 +435,29 @@ def versions_payload(
                     }
                 )
             source = _node.RELEASE_INDEX
+        elif name == "go":
+            releases = _go.parse_index(ctx.fetch().get_text(_go.INDEX))
+            seen = {row.version for row in installed}
+            for release in sorted((item for item in releases if item.stable), key=lambda item: sort_key(item.version)):
+                rows.append(
+                    {
+                        "version": release.version,
+                        "installed": release.version in seen,
+                        "active": release.version == active,
+                    }
+                )
+            source = _go.INDEX
+        elif name in {"deno", "bun"}:
+            resolver = _deno if name == "deno" else _bun
+            version = resolver.resolve_version(ctx.fetch(), "latest")
+            seen = {row.version for row in installed}
+            rows.append({"version": version, "installed": version in seen, "active": version == active})
+            source = _deno.LATEST_URL if name == "deno" else _bun.LATEST_API
+        elif name == "jdk":
+            seen = {row.version for row in installed}
+            for version in _jdk.release_names(ctx.fetch()):
+                rows.append({"version": version, "installed": version in seen, "active": version == active})
+            source = _jdk.RELEASES.format(arch=_jdk.detect_arch())
         else:
             uv = _python.find_uv(ctx.config.python_uv)
             entries = _python.list_remote(ctx.execute(), uv, include_prerelease=prerelease)
@@ -449,7 +499,7 @@ def versions_payload(
 
 
 # ---- install ----
-def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
+def install(  # noqa: PLR0912, PLR0913 - 安装选项与安全语义一一对应
     ctx: JobContext,
     spec_text: str,
     *,
@@ -479,8 +529,15 @@ def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
                 field="spec",
             )
         local_artifact = Path(source)
-    tool, target = resolve_target(ctx, spec)
     layout = ctx.layout
+    generic_plan: _install.ArtifactPlan | None = None
+    planner = _GENERIC_PLANNERS.get(spec.tool)
+    if planner is not None:
+        tool = spec.tool
+        generic_plan = planner(ctx.fetch(), layout, spec.raw or "latest", sha256=sha256)
+        target = generic_plan.version
+    else:
+        tool, target = resolve_target(ctx, spec)
     path_plan = _path_plan(
         ctx,
         write_path=write_path,
@@ -512,6 +569,26 @@ def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
             layout.ensure_bootstrap()
             result = _node.install(
                 plan, layout, fetcher=ctx.fetch(), runner=ctx.execute(), force=force, progress=progress
+            )
+            user_path = _apply_path(ctx, store=store) if write_path else path_plan
+    elif tool in _GENERIC_PLANNERS:
+        assert generic_plan is not None
+        if dry_run:
+            return {
+                "schema": "devman/install/1",
+                "tool": tool,
+                "version": target,
+                "changed": False,
+                "dry_run": True,
+                "planned": generic_plan.to_data(),
+                "actions": [],
+                "user_path": path_plan,
+                "warnings": ctx.warnings,
+            }
+        with install_lock(layout):
+            layout.ensure_bootstrap()
+            result = _install.install_zip(
+                generic_plan, layout, fetcher=ctx.fetch(), runner=ctx.execute(), force=force, progress=progress
             )
             user_path = _apply_path(ctx, store=store) if write_path else path_plan
     else:
@@ -855,7 +932,13 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
     current_parts = sort_key(current.version)
     raw = (to or "").strip()
     if not raw:
-        raw = str(current_parts[0]) if tool == "node" else f"{current_parts[0]}.{current_parts[1]}"
+        if tool in {"deno", "bun"}:
+            # 单线发布：没有可复用的版本前缀，直接取 latest
+            raw = "latest"
+        elif tool in {"node", "jdk"}:
+            raw = str(current_parts[0])
+        else:
+            raw = f"{current_parts[0]}.{current_parts[1]}"
 
     target_spec = Spec(tool, raw)
     _, target = resolve_target(ctx, target_spec, remote_only=True)
@@ -1029,7 +1112,7 @@ def env_payload(
         "snippet": _env.shell_snippet(layout, shell, pins=pins),
         "dirs": [str(item) for item in _env.path_dirs(layout, pins=pins)],
         "active": {
-            tool: pins.get(tool) or active_version(layout, tool) for tool in ("node", "python")
+            tool: pins.get(tool) or active_version(layout, tool) for tool in TOOLS
         },
         "project": project,
         "warnings": [*ctx.warnings, *project["warnings"]],
@@ -1072,7 +1155,7 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
         checks.append(_check("root_writable", "fail", f"{layout.root}: {exc}", "检查路径权限"))
 
     # 2. 活动版本一致性
-    for tool in ("node", "python"):
+    for tool in TOOLS:
         name = active_version(layout, tool)
         if name is None:
             checks.append(_check(f"active_{tool}", "ok", "未设置活动版本"))
@@ -1107,7 +1190,7 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
 
     # 4. 残留临时目录 / 半完成安装
     stray: list[str] = []
-    for tool in ("node", "python"):
+    for tool in TOOLS:
         root = layout.tool_root(tool)
         if not root.is_dir():
             continue

@@ -16,9 +16,21 @@ from fcmd.apps.devman._errors import invalid_argument
 __all__ = ["ROOT_ENV", "TOOLS", "Layout", "normalize_tool", "resolve_root"]
 
 ROOT_ENV = "DEVMAN_ROOT"
-TOOLS = ("node", "python")
+TOOLS = ("node", "python", "go", "deno", "bun", "jdk")
 
-_TOOL_ALIASES = {"node": "node", "nodejs": "node", "python": "python"}
+_TOOL_ALIASES = {
+    "node": "node",
+    "nodejs": "node",
+    "python": "python",
+    "go": "go",
+    "golang": "go",
+    "deno": "deno",
+    "bun": "bun",
+    "jdk": "jdk",
+    "java": "jdk",
+    "temurin": "jdk",
+    "adoptium": "jdk",
+}
 
 
 def normalize_tool(name: str) -> str:
@@ -27,7 +39,7 @@ def normalize_tool(name: str) -> str:
     if canonical is None:
         raise invalid_argument(
             f"不支持的工具 {name!r}",
-            hint="首批支持 node（nodejs）与 python",
+            hint="支持 node（nodejs）、python、go（golang）、deno、bun 与 jdk（java）",
             field="tool",
         )
     return canonical
@@ -73,6 +85,10 @@ class Layout:
         return self.root / "python"
 
     @property
+    def go_root(self) -> Path:
+        return self.root / "go"
+
+    @property
     def shim_dir(self) -> Path:
         return self.root / "bin"
 
@@ -98,7 +114,7 @@ class Layout:
 
     # ---- 工具相关路径 ----
     def tool_root(self, tool: str) -> Path:
-        return self.node_root if tool == "node" else self.python_root
+        return self.root / tool
 
     def version_dir(self, tool: str, name: str) -> Path:
         return self.tool_root(tool) / name
@@ -108,5 +124,5 @@ class Layout:
 
     def ensure_bootstrap(self) -> None:
         """创建安装所需的最小目录集合（只在真正写入前调用）。"""
-        for path in (self.root, self.node_root, self.python_root, self.shim_dir, self.active_dir, self.cache_dir):
+        for path in (self.root, *(self.root / tool for tool in TOOLS), self.shim_dir, self.active_dir, self.cache_dir):
             path.mkdir(parents=True, exist_ok=True)

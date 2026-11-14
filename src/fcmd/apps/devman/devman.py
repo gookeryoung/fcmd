@@ -11,6 +11,7 @@ from typing import Any, Literal
 import fcmd
 from fcmd.apps.devman import _env, _ops
 from fcmd.apps.devman._errors import DevmanError, invalid_argument, not_found, runtime_error
+from fcmd.apps.devman._paths import TOOLS
 from fcmd.core.result import emit_result, record_error, report_error
 
 __all__ = ["main"]
@@ -168,7 +169,7 @@ def _human_upgrade(payload: dict[str, Any]) -> None:
 def _human_list(payload: dict[str, Any]) -> None:
     print(f"root: {payload['root']}")
     tools = payload.get("tools") or {}
-    for tool in ("node", "python"):
+    for tool in TOOLS:
         rows = tools.get(tool, {}).get("installed") or []
         active = tools.get(tool, {}).get("active")
         print(f"{tool}:")

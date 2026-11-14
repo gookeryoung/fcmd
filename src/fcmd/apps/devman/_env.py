@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from fcmd.apps.devman._errors import PATH_WRITE_FAILED, runtime_error
-from fcmd.apps.devman._paths import Layout
+from fcmd.apps.devman._paths import TOOLS, Layout
 from fcmd.apps.devman._state import active_version, write_atomic
 from fcmd.apps.devman._toolchain import version_of
 
@@ -41,7 +41,24 @@ SHIM_TARGETS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     # (shim 文件名, 版本目录内目标, 是否用 call —— .cmd 目标必须 call 才能返回)
     "node": (("node.cmd", "node.exe", False), ("npm.cmd", "npm.cmd", True), ("npx.cmd", "npx.cmd", True)),
     "python": (("python.cmd", "python.exe", False), ("python3.cmd", "python.exe", False)),
+    "go": (("go.cmd", "bin\\go.exe", False), ("gofmt.cmd", "bin\\gofmt.exe", False)),
+    "deno": (("deno.cmd", "deno.exe", False),),
+    "bun": (("bun.cmd", "bun.exe", False), ("bunx.cmd", "bunx.exe", False)),
+    "jdk": (
+        ("java.cmd", "bin\\java.exe", False),
+        ("javac.cmd", "bin\\javac.exe", False),
+        ("jar.cmd", "bin\\jar.exe", False),
+    ),
 }
+
+# 版本目录里需要额外前置到 PATH 的子目录（node/python 的可执行文件在根上）
+_BIN_SUBDIRS = {"go": "bin", "jdk": "bin"}
+# 工具名与主命令名不一致时的映射（用于 PATH 冲突检测）
+_COMMANDS = {"jdk": "java"}
+
+
+def _command_for(tool: str) -> str:
+    return _COMMANDS.get(tool, tool)
 
 
 class EnvStore(Protocol):
@@ -202,10 +219,10 @@ def path_dirs(layout: Layout, *, pins: Mapping[str, str] | None = None) -> list[
     没有绑定的工具仍回落到 ``active/<tool>.txt``。
     """
     dirs: list[Path] = []
-    for tool in ("node", "python"):
+    for tool in TOOLS:
         name = (pins or {}).get(tool) or active_version(layout, tool)
         if name:
-            directory = layout.version_dir(tool, name)
+            directory = layout.version_dir(tool, name) / _BIN_SUBDIRS.get(tool, "")
             if directory.is_dir():
                 dirs.append(directory)
     return dirs
@@ -294,6 +311,9 @@ _KNOWN_LOCATIONS = (
     ("python", "{LOCALAPPDATA}\\Microsoft\\WindowsApps"),
     ("python", "{ProgramFiles}\\Python311"),
     ("python", "{ProgramFiles}\\Python312"),
+    ("go", "{ProgramFiles}\\Go"),
+    ("jdk", "{ProgramFiles}\\Eclipse Adoptium"),
+    ("jdk", "{ProgramFiles}\\Java"),
 )
 
 
@@ -305,7 +325,9 @@ def detect_environment(
     """只读探测：PATH 解析、活动版本、外部安装与需要提示的环境标记。"""
     source = os.environ if env is None else env
     path_value = source.get("PATH", "")
-    candidates = {tool: [str(item) for item in command_candidates(tool, path_value)] for tool in ("node", "python")}
+    candidates = {
+        tool: [str(item) for item in command_candidates(_command_for(tool), path_value)] for tool in TOOLS
+    }
     shim_dir = str(layout.shim_dir)
     shim_index = next(
         (index for index, part in enumerate(path_entries(path_value)) if _normalized(part) == _normalized(shim_dir)),
@@ -342,7 +364,7 @@ def detect_environment(
         "shim_dir": shim_dir,
         "shim_on_path": shim_index is not None,
         "shim_index": shim_index,
-        "active": {tool: active_version(layout, tool) for tool in ("node", "python")},
+        "active": {tool: active_version(layout, tool) for tool in TOOLS},
         "markers": {key: value for key, value in markers.items() if value},
         "known_locations": known,
         "warnings": warnings,
@@ -354,9 +376,9 @@ def shadowed_commands(layout: Layout, *, env: Mapping[str, str] | None = None) -
     source = os.environ if env is None else env
     path_value = source.get("PATH", "")
     result: dict[str, list[str]] = {}
-    for tool in ("node", "python"):
+    for tool in TOOLS:
         others: list[str] = []
-        for candidate in command_candidates(tool, path_value):
+        for candidate in command_candidates(_command_for(tool), path_value):
             if _normalized(str(candidate.parent)) == _normalized(str(layout.shim_dir)):
                 continue
             others.append(str(candidate))
