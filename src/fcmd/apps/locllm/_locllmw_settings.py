@@ -365,7 +365,7 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
     def _build_engine_list(self, parent: Any) -> None:
         ttk = self._ttk
         space = self._theme.spacing
-        box = ttk.LabelFrame(parent, text="已安装引擎（双击设为默认）", padding=space.sm)
+        box = ttk.LabelFrame(parent, text="已安装引擎（选中后点「设为默认」）", padding=space.sm)
         box.pack(fill="x", pady=(0, space.sm))
         self._engine_tree = ttk.Treeview(
             box, columns=("tag", "current", "exe"), show="headings", selectmode="browse", height=5
@@ -563,6 +563,14 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         tag = self._selected_tag()
         if tag is None:
             return
+        from tkinter import messagebox
+
+        if not messagebox.askyesno(
+            "切换默认引擎",
+            f"将把默认引擎切换为 {tag}，之后启动服务都使用它。\n\n继续？",
+            parent=self._root,
+        ):
+            return
 
         def job(_progress: llmengine.ProgressCallback) -> tuple[str, str | None]:
             info = select_engine(tag)
@@ -638,6 +646,14 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
             messagebox.showwarning("变体无效", f"请选择 {', '.join(_VARIANTS)}", parent=self._root)
             return
         typed: EngineVariant = "cuda" if variant == "cuda" else "cpu"
+        if not messagebox.askyesno(
+            "在线安装引擎",
+            f"将从网络下载并安装 llama.cpp 引擎：\n\n版本：{tag}\n变体：{variant}"
+            f"（{'GPU 加速' if typed == 'cuda' else 'CPU'}）\n\n"
+            "安装包可能较大；没有默认引擎时，新装引擎会自动设为默认。继续？",
+            parent=self._root,
+        ):
+            return
 
         def job(progress: llmengine.ProgressCallback) -> tuple[str, str | None]:
             info = install_online(tag, typed, on_progress=progress)
