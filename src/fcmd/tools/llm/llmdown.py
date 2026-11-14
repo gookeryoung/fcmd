@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from fcmd.infras.net import UrlProbe
 
 __all__ = [
+    "MODEL_SERIES_RANKING",
     "DownloadCancelled",
     "LocalModel",
     "ModelFile",
@@ -52,20 +53,22 @@ __all__ = [
     "ModelTask",
     "ProgressEvent",
     "SourceSelection",
-    "company_matches",
-    "company_options",
     "delete_local_model",
     "download_files",
     "fetch_files",
     "fetch_model_info",
     "fetch_tasks",
-    "filter_by_company",
+    "filter_by_series",
     "filter_files",
     "format_timestamp",
-    "model_company",
+    "model_series",
     "scan_local_models",
     "search_models",
     "select_source",
+    "series_matches",
+    "series_options",
+    "series_rank",
+    "sort_by_popularity",
 ]
 
 SourceName = Literal["auto", "modelscope", "hf-mirror"]
@@ -96,74 +99,45 @@ _PROBE_TIMEOUT = 5.0
 _STREAM_TIMEOUT = 60.0
 _CHUNK_SIZE = 1024 * 1024
 _SOURCE_BY_HOST = {"www.modelscope.cn": "modelscope", "hf-mirror.com": "hf-mirror"}
-_OTHER_COMPANY = "其他"
-# 公司别名表：键为归一后的名称（小写、空白 / 下划线 / 点号折叠为 ``-``），
-# 值为界面与 CLI 共用的显示名。同一家公司的模型代号 / 组织别名在此合并。
-_COMPANY_ALIASES: dict[str, str] = {
-    "alibaba": "阿里巴巴（Alibaba）",
-    "alibaba-cloud": "阿里巴巴（Alibaba）",
-    "alibaba-group": "阿里巴巴（Alibaba）",
-    "aliyun": "阿里巴巴（Alibaba）",
-    "damo": "阿里巴巴（Alibaba）",
-    "qwen": "阿里巴巴（Alibaba）",
-    "qwenlm": "阿里巴巴（Alibaba）",
-    "tongyi": "阿里巴巴（Alibaba）",
-    "baai": "智源（BAAI）",
-    "beijing-academy-of-artificial-intelligence": "智源（BAAI）",
-    "deepseek": "深度求索（DeepSeek）",
-    "deepseek-ai": "深度求索（DeepSeek）",
-    "high-flyer": "深度求索（DeepSeek）",
-    "meta": "Meta",
-    "meta-llama": "Meta",
-    "facebook": "Meta",
-    "google": "Google",
-    "google-research": "Google",
-    "deepmind": "Google",
-    "gemma": "Google",
-    "microsoft": "Microsoft",
-    "microsoft-research": "Microsoft",
-    "openai": "OpenAI",
-    "anthropic": "Anthropic",
-    "mistral": "Mistral AI",
-    "mistralai": "Mistral AI",
-    "mistral-ai": "Mistral AI",
-    "nvidia": "NVIDIA",
-    "stabilityai": "Stability AI",
-    "stability-ai": "Stability AI",
-    "huggingface": "Hugging Face",
-    "huggingfaceh4": "Hugging Face",
-    "tencent": "腾讯（Tencent）",
-    "hunyuan": "腾讯（Tencent）",
-    "baidu": "百度（Baidu）",
-    "ernie": "百度（Baidu）",
-    "zhipu": "智谱（Zhipu）",
-    "zhipuai": "智谱（Zhipu）",
-    "thudm": "智谱（Zhipu）",
-    "chatglm": "智谱（Zhipu）",
-    "moonshot": "月之暗面（Moonshot AI）",
-    "moonshotai": "月之暗面（Moonshot AI）",
-    "moonshot-ai": "月之暗面（Moonshot AI）",
-    "kimi": "月之暗面（Moonshot AI）",
-    "minimax": "MiniMax",
-    "01-ai": "零一万物（01.AI）",
-    "01ai": "零一万物（01.AI）",
-    "internlm": "上海 AI Lab（InternLM）",
-    "shanghai-ai-laboratory": "上海 AI Lab（InternLM）",
-    "sensetime": "商汤（SenseTime）",
-    "openbmb": "OpenBMB",
-    "stepfun": "阶跃星辰（StepFun）",
-    "stepfun-ai": "阶跃星辰（StepFun）",
-    "baichuan": "百川智能（Baichuan）",
-    "baichuan-inc": "百川智能（Baichuan）",
-    "xverse": "元象（XVERSE）",
-    "xverse-ai": "元象（XVERSE）",
-    "allenai": "Allen AI",
-    "allen-ai": "Allen AI",
-    "ibm": "IBM",
-    "amazon": "Amazon",
-    "xai": "xAI",
-    "x-ai": "xAI",
-}
+_OTHER_SERIES = "其他"
+# 模型系列知名度排名（单一数据源：顺序即界面默认展示顺序，越靠前越知名）。
+# 依据：按 2024–2026 年 Hugging Face 下载 / 点赞、Open LLM Leaderboard、LMArena
+# 等国际开源社区与主流榜单的普遍认知做粗排，不追求精确名次；新增或调整系列
+# 只改这张表，筛选选项、默认排序与「其他」置末都会自动跟随。
+# 每项为 ``(系列显示名, 识别关键词)``，关键词以小写、无分隔符形式给出。
+MODEL_SERIES_RANKING: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Llama", ("llama", "codellama", "tinyllama")),
+    ("GPT", ("gpt", "chatgpt")),
+    ("Stable Diffusion", ("stablediffusion", "sdxl")),
+    ("Qwen", ("qwen",)),
+    ("DeepSeek", ("deepseek",)),
+    ("Mistral", ("mistral",)),
+    ("BERT", ("bert", "roberta")),
+    ("Whisper", ("whisper",)),
+    ("Gemma", ("gemma",)),
+    ("Phi", ("phi",)),
+    ("T5", ("t5", "mt5")),
+    ("Claude", ("claude",)),
+    ("Mixtral", ("mixtral",)),
+    ("Falcon", ("falcon",)),
+    ("Yi", ("yi",)),
+    ("GLM", ("chatglm", "glm")),
+    ("Kimi", ("kimi", "moonshot")),
+    ("Baichuan", ("baichuan",)),
+    ("InternLM", ("internlm",)),
+    ("MiniMax", ("minimax",)),
+    ("Command R", ("command",)),
+    ("Grok", ("grok",)),
+    ("Nemotron", ("nemotron",)),
+    ("Vicuna", ("vicuna",)),
+    ("Alpaca", ("alpaca",)),
+    ("WizardLM", ("wizardlm",)),
+    ("OLMo", ("olmo",)),
+    ("DBRX", ("dbrx",)),
+    ("BLOOM", ("bloom",)),
+    ("SmolLM", ("smollm",)),
+    ("Granite", ("granite",)),
+)
 
 
 class ModelToolError(RuntimeError):
@@ -633,66 +607,69 @@ def fetch_model_info(repo: str, timeout: float = _MANIFEST_TIMEOUT) -> ModelInfo
 
 
 # ---------------------------------------------------------------------- #
-# 公司归集与筛选
+# 模型系列识别与知名度排序
 # ---------------------------------------------------------------------- #
-def _company_token(value: str) -> str:
-    """公司名归一键：去空白、折叠 ``-`` / ``_`` / 空格 / 点号并转小写。"""
-    return re.sub(r"[\s_.]+", "-", value.strip().casefold()).strip("-")
+def _series_segments(value: str) -> tuple[str, tuple[str, ...]]:
+    """把一段标识拆成 (紧凑串, 词列表)：小写、只保留字母数字，按非字母数字切词。"""
+    compact = "".join(char for char in value.casefold() if char.isalnum())
+    tokens = tuple(token for token in re.split(r"[^0-9a-z]+", value.casefold()) if token)
+    return compact, tokens
 
 
-def _company_name(summary: ModelSummary) -> str:
-    """模型元数据里的原始公司名：优先 owner，其次 ``<组织>/<模型>`` 的组织段。"""
-    raw = summary.owner or (summary.repo.split("/", 1)[0] if "/" in summary.repo else "")
-    return raw.split("/", 1)[0].strip()
+def model_series(summary: ModelSummary) -> str:
+    """从 repo id / 模型名识别模型系列；识别不出归入「其他」。
 
-
-def model_company(summary: ModelSummary) -> str:
-    """模型所属公司的归一显示名；元数据缺失时归入「其他」。
-
-    归一规则：忽略大小写与 ``-`` / ``_`` / 空格 / 点号差异，命中别名表时
-    使用统一显示名（如 ``Qwen`` / ``qwen`` / ``Alibaba`` 都显示为
-    「阿里巴巴（Alibaba）」）；未命中别名时把全大写 / 全小写名称统一为首字母
-    大写，避免 ``acme`` / ``ACME`` 在筛选列表里分裂成多行。
+    识别规则：owner 段与模型名段分别转小写、只保留字母数字后，按
+    :data:`MODEL_SERIES_RANKING` 的顺序逐个系列匹配关键词——某段与关键词
+    完全相同、以关键词开头（如 ``qwen3`` 命中 ``qwen``），或首个系列在
+    紧凑串上整体前缀命中（如 ``stable-diffusion-xl`` 命中
+    ``stablediffusion``）即算命中；先命中排行榜靠前者，全部不中为「其他」。
     """
-    raw = _company_name(summary)
-    token = _company_token(raw)
-    if not token:
-        return _OTHER_COMPANY
-    label = _COMPANY_ALIASES.get(token)
-    if label:
-        return label
-    return raw.capitalize() if raw.islower() or raw.isupper() else raw
+    raw = summary.repo or summary.name
+    if not raw.strip():
+        return _OTHER_SERIES
+    segments = [_series_segments(part) for part in raw.split("/") if part.strip()]
+    for label, patterns in MODEL_SERIES_RANKING:
+        for pattern in patterns:
+            for compact, tokens in segments:
+                if (len(pattern) >= 6 and compact.startswith(pattern)) or any(
+                    token == pattern or (len(pattern) >= 3 and token.startswith(pattern)) for token in tokens
+                ):
+                    return label
+    return _OTHER_SERIES
 
 
-def company_options(items: tuple[ModelSummary, ...]) -> tuple[str, ...]:
-    """归集当前结果涉及的公司显示名：去重、按名称排序，「其他」始终置末。"""
-    labels = {model_company(item) for item in items}
-    others = [label for label in labels if label == _OTHER_COMPANY]
-    rest = sorted((label for label in labels if label != _OTHER_COMPANY), key=str.casefold)
-    return tuple(rest + others)
+def series_rank(label: str) -> int:
+    """系列在知名度排名表中的位次；「其他」与未知系列排在最后。"""
+    for index, (name, _patterns) in enumerate(MODEL_SERIES_RANKING):
+        if name == label:
+            return index
+    return len(MODEL_SERIES_RANKING)
 
 
-def company_matches(label: str, query: str) -> bool:
-    """公司显示名是否匹配查询词：支持别名（``qwen``）与不区分大小写的子串。"""
-    text = query.strip()
-    if not text:
-        return True
-    lowered = text.casefold()
-    alias = _COMPANY_ALIASES.get(_company_token(text))
-    target = label.casefold()
-    return target == lowered or (alias is not None and target == alias.casefold()) or lowered in target
+def series_options(items: tuple[ModelSummary, ...]) -> tuple[str, ...]:
+    """归集当前结果涉及的系列：按知名度排名排序，「其他」始终置末。"""
+    labels = {model_series(item) for item in items}
+    return tuple(sorted(labels, key=series_rank))
 
 
-def filter_by_company(items: tuple[ModelSummary, ...], company: str = "") -> tuple[ModelSummary, ...]:
-    """按公司筛选；空串表示不过滤，查询词支持显示名与别名（精确匹配）。"""
-    text = company.strip()
+def series_matches(label: str, query: str) -> bool:
+    """系列显示名是否匹配查询词（不区分大小写的子串，用于可搜索下拉）。"""
+    text = query.strip().casefold()
+    return not text or text in label.casefold()
+
+
+def filter_by_series(items: tuple[ModelSummary, ...], series: str = "") -> tuple[ModelSummary, ...]:
+    """按模型系列筛选；空串表示不过滤，按显示名精确匹配（大小写不敏感）。"""
+    text = series.strip().casefold()
     if not text:
         return items
-    alias = _COMPANY_ALIASES.get(_company_token(text))
-    wanted = {text.casefold()}
-    if alias is not None:
-        wanted.add(alias.casefold())
-    return tuple(item for item in items if model_company(item).casefold() in wanted)
+    return tuple(item for item in items if model_series(item).casefold() == text)
+
+
+def sort_by_popularity(items: tuple[ModelSummary, ...]) -> tuple[ModelSummary, ...]:
+    """按系列知名度排序（同系列保持服务端返回的原顺序），「其他」置末。"""
+    return tuple(sorted(items, key=lambda item: series_rank(model_series(item))))
 
 
 # ---------------------------------------------------------------------- #
@@ -1127,7 +1104,7 @@ def search_cmd(
     page: int = 1,
     limit: int = 20,
     sort: Literal["default", "modified", "created", "downloads", "stars"] = "default",
-    company: str = "",
+    series: str = "",
 ) -> None:
     """在 ModelScope 搜索模型并列出摘要。
 
@@ -1142,12 +1119,12 @@ def search_cmd(
     sort:
         ``default`` 默认排序、``modified`` 最近更新、``created`` 最新发布、
         ``downloads`` 下载最多、``stars`` 星标最多。
-    company:
-        按公司筛选（只作用于当前页）。支持别名且不区分大小写，如
-        ``qwen`` / ``Alibaba`` 都匹配阿里巴巴；缺公司信息的条目归入「其他」。
+    series:
+        按模型系列筛选（只作用于当前页），如 ``Llama`` / ``Qwen`` /
+        ``DeepSeek``；识别不出系列的条目归入「其他」。
     """
     result = search_models(keyword, page, limit, sort)
-    items = filter_by_company(result.items, company)
+    items = filter_by_series(result.items, series)
     if not items:
         get_console().print("[yellow]没有匹配的模型[/yellow]")
         return

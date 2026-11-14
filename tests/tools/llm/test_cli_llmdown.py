@@ -24,6 +24,7 @@ from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.infras.net import UrlProbe
 from fcmd.tools.llm import llmdown
 from fcmd.tools.llm.llmdown import (
+    MODEL_SERIES_RANKING,
     DownloadCancelled,
     ModelFile,
     ModelInfo,
@@ -37,21 +38,23 @@ from fcmd.tools.llm.llmdown import (
     _normalize_repo,
     _ReporterProgress,
     _summary_from_item,
-    company_matches,
-    company_options,
     delete_local_model,
     download_files,
     fetch_files,
     fetch_model_info,
     fetch_tasks,
     file_url,
-    filter_by_company,
+    filter_by_series,
     filter_files,
     format_timestamp,
-    model_company,
+    model_series,
     scan_local_models,
     search_models,
     select_source,
+    series_matches,
+    series_options,
+    series_rank,
+    sort_by_popularity,
 )
 
 
@@ -796,78 +799,117 @@ class TestSearchModels:
         assert _summary_from_item({"Name": "m"}).owner == ""
 
 
-class TestCompany:
-    """公司归集 / 筛选（列表元数据缺失时归入「其他」）。"""
+class TestSeries:
+    """模型系列识别 / 筛选 / 知名度排序（识别不出归入「其他」）。"""
 
     @staticmethod
     def _items() -> tuple[ModelSummary, ...]:
         return (
-            ModelSummary(repo="Qwen/qwen3", owner="Qwen"),
-            ModelSummary(repo="qwen/qwen2", owner="qwen"),
-            ModelSummary(repo="Alibaba/agent", owner="Alibaba"),
-            ModelSummary(repo="BAAI/embed", owner="BAAI"),
-            ModelSummary(repo="acme/tool", owner="acme"),
-            ModelSummary(repo="standalone-model"),
+            ModelSummary(repo="random/foo-model"),
+            ModelSummary(repo="THUDM/chatglm3-6b"),
+            ModelSummary(repo="microsoft/phi-2"),
+            ModelSummary(repo="google/gemma-7b"),
+            ModelSummary(repo="deepseek-ai/DeepSeek-V3"),
+            ModelSummary(repo="qwen/Qwen2.5-7B"),
+            ModelSummary(repo="Qwen/Qwen3-8B"),
+            ModelSummary(repo="meta-llama/Llama-3.1-8B"),
+            ModelSummary(repo="mistralai/Mistral-7B"),
+            ModelSummary(repo="01-ai/Yi-6B"),
         )
 
-    def test_alias_merges_model_and_org_spellings(self) -> None:
-        items = self._items()[:4]
-        assert [model_company(item) for item in items] == ["阿里巴巴（Alibaba）"] * 3 + ["智源（BAAI）"]
+    def test_series_recognition(self) -> None:
+        expected = {
+            "meta-llama/Llama-3.1-8B": "Llama",
+            "Qwen/Qwen3-8B": "Qwen",
+            "qwen/Qwen2.5-7B": "Qwen",
+            "deepseek-ai/DeepSeek-V3": "DeepSeek",
+            "google/gemma-7b": "Gemma",
+            "mistralai/Mistral-7B": "Mistral",
+            "microsoft/phi-2": "Phi",
+            "01-ai/Yi-6B": "Yi",
+            "THUDM/chatglm3-6b": "GLM",
+            "random/foo-model": "其他",
+        }
+        assert {item.repo: model_series(item) for item in self._items()} == expected
 
-    def test_unknown_name_case_variants_merge(self) -> None:
-        assert model_company(ModelSummary(owner="acme", repo="acme/a")) == "Acme"
-        assert model_company(ModelSummary(owner="ACME", repo="ACME/a")) == "Acme"
-        assert model_company(ModelSummary(owner="SomeOrg", repo="SomeOrg/a")) == "SomeOrg"
+    def test_series_ranking_is_single_source(self) -> None:
+        labels = [label for label, _patterns in MODEL_SERIES_RANKING]
+        assert labels[0] == "Llama"
+        assert labels[:5] == ["Llama", "GPT", "Stable Diffusion", "Qwen", "DeepSeek"]
+        assert len(labels) == len(set(labels))
+        assert series_rank("Qwen") < series_rank("GLM")
+        assert series_rank("其他") == len(MODEL_SERIES_RANKING)
+        assert series_rank("不存在的系列") == len(MODEL_SERIES_RANKING)
 
-    def test_missing_metadata_goes_to_other(self) -> None:
-        assert model_company(ModelSummary(repo="standalone-model")) == "其他"
-        assert model_company(ModelSummary(repo="")) == "其他"
+    def test_series_options_follow_ranking_with_other_last(self) -> None:
+        assert series_options(self._items()) == (
+            "Llama",
+            "Qwen",
+            "DeepSeek",
+            "Mistral",
+            "Gemma",
+            "Phi",
+            "Yi",
+            "GLM",
+            "其他",
+        )
 
-    def test_company_options_sorted_with_other_last(self) -> None:
-        assert company_options(self._items()) == ("Acme", "智源（BAAI）", "阿里巴巴（Alibaba）", "其他")
-
-    def test_filter_by_company_accepts_label_and_alias(self) -> None:
+    def test_filter_by_series(self) -> None:
         items = self._items()
-        labels = [item.repo for item in filter_by_company(items, "阿里巴巴（Alibaba）")]
-        assert labels == ["Qwen/qwen3", "qwen/qwen2", "Alibaba/agent"]
-        assert [item.repo for item in filter_by_company(items, "qwen")] == labels
-        assert [item.repo for item in filter_by_company(items, "BAAI")] == ["BAAI/embed"]
-        assert [item.repo for item in filter_by_company(items, "其他")] == ["standalone-model"]
+        assert [item.repo for item in filter_by_series(items, "Qwen")] == ["qwen/Qwen2.5-7B", "Qwen/Qwen3-8B"]
+        assert [item.repo for item in filter_by_series(items, "qwen")] == ["qwen/Qwen2.5-7B", "Qwen/Qwen3-8B"]
+        assert [item.repo for item in filter_by_series(items, "其他")] == ["random/foo-model"]
+        assert filter_by_series(items, "") == items
 
-    def test_filter_by_company_empty_keeps_all(self) -> None:
-        items = self._items()
-        assert filter_by_company(items, "") == items
-        assert filter_by_company(items, "  ") == items
+    def test_series_matches_substring(self) -> None:
+        assert series_matches("Stable Diffusion", "diff")
+        assert series_matches("Qwen", "QWE")
+        assert not series_matches("Qwen", "llama")
+        assert series_matches("Qwen", "")
 
-    def test_company_matches_supports_alias_and_substring(self) -> None:
-        assert company_matches("阿里巴巴（Alibaba）", "qwen")
-        assert company_matches("阿里巴巴（Alibaba）", "ali")
-        assert not company_matches("智源（BAAI）", "qwen")
-        assert company_matches("智源（BAAI）", "")
+    def test_sort_by_popularity_is_stable(self) -> None:
+        ordered = sort_by_popularity(self._items())
+        assert [model_series(item) for item in ordered] == [
+            "Llama",
+            "Qwen",
+            "Qwen",
+            "DeepSeek",
+            "Mistral",
+            "Gemma",
+            "Phi",
+            "Yi",
+            "GLM",
+            "其他",
+        ]
+        # 同系列保持服务端返回顺序（qwen/Qwen2.5 在 Qwen/Qwen3 之前）
+        assert [item.repo for item in ordered if model_series(item) == "Qwen"] == [
+            "qwen/Qwen2.5-7B",
+            "Qwen/Qwen3-8B",
+        ]
 
     def test_search_cmd_filters_current_page(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         result = ModelSearch(
             (
-                ModelSummary(repo="Qwen/demo", owner="Qwen", downloads=1),
-                ModelSummary(repo="BAAI/embed", owner="BAAI", downloads=2),
+                ModelSummary(repo="Qwen/demo", downloads=1),
+                ModelSummary(repo="BAAI/embed", downloads=2),
             ),
             2,
         )
         monkeypatch.setattr(llmdown, "search_models", lambda *a, **k: result)
 
-        llmdown.search_cmd("", company="qwen")
+        llmdown.search_cmd("", series="Qwen")
 
         out = capsys.readouterr().out
         assert "Qwen/demo" in out
         assert "BAAI/embed" not in out
 
-    def test_search_cmd_company_no_match(
+    def test_search_cmd_series_no_match(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
         monkeypatch.setattr(llmdown, "search_models", lambda *a, **k: ModelSearch((ModelSummary(repo="BAAI/x"),), 1))
-        llmdown.search_cmd("", company="qwen")
+        llmdown.search_cmd("", series="Qwen")
         assert "没有匹配的模型" in capsys.readouterr().out
 
 

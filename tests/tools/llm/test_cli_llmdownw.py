@@ -128,10 +128,10 @@ class TestFormatting:
             updated=1700000000,
             storage_size=2048,
         )
-        assert model_row(summary) == ("Qwen/demo", "阿里巴巴（Alibaba）", "文本生成、视觉问答", "1,234", "2.00 KB")
+        assert model_row(summary) == ("Qwen/demo", "Qwen", "文本生成、视觉问答", "1,234", "2.00 KB")
 
     def test_model_row_empty(self) -> None:
-        assert model_row(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "阿里巴巴（Alibaba）", "-", "0", "-")
+        assert model_row(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "Qwen", "-", "0", "-")
         assert model_row(ModelSummary(repo="")) == ("", "其他", "-", "0", "-")
 
     def test_local_row(self) -> None:
@@ -209,6 +209,18 @@ class TestBrowseHelpers:
             "BAAI/embed",
             "Qwen/vl",
             "Qwen/llm",
+        ]
+
+    def test_sort_models_by_series_rank(self) -> None:
+        items = (
+            ModelSummary(repo="acme/unknown"),
+            ModelSummary(repo="01-ai/Yi-6B"),
+            ModelSummary(repo="meta-llama/Llama-3-8B"),
+        )
+        assert [item.repo for item in sort_models(items, "series", descending=False)] == [
+            "meta-llama/Llama-3-8B",
+            "01-ai/Yi-6B",
+            "acme/unknown",
         ]
 
     def test_sort_models_unknown_column(self) -> None:

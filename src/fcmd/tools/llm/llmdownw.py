@@ -2,8 +2,9 @@
 
 参考 LM Studio 的「左侧模型列表 + 右侧详情」布局：
 
-* 左侧在 ModelScope 搜索模型（关键字为空时浏览默认排序），可按中文任务类别筛选，
-  服务端排序支持下载最多 / 星标最多 / 最新发布 / 最近更新；点击列头对当前页排序；
+* 左侧在 ModelScope 搜索模型（关键字为空时浏览默认排序），可按中文任务类别与模型系列筛选，
+  列表默认按系列国际知名度排序；服务端排序支持下载最多 / 星标最多 / 最新发布 / 最近更新，
+  点击列头对当前页排序（再点一次切换升降序，第三次恢复知名度顺序）；
 * 右侧展示模型元信息、README、文件清单（大小 / SHA256）与本地管理；
 * 底栏配置目标目录、下载源、并发数与校验开关，下载复用 :mod:`fcmd.tools.llm.llmdown`
   的多源选优 / 断点续传实现，支持进度回调与中途停止；
@@ -41,20 +42,22 @@ from fcmd.tools.llm.llmdown import (
     ModelTask,
     ModelToolError,
     ProgressEvent,
-    company_matches,
-    company_options,
     delete_local_model,
     download_files,
     fetch_files,
     fetch_model_info,
     fetch_tasks,
-    filter_by_company,
+    filter_by_series,
     filter_files,
     format_timestamp,
-    model_company,
+    model_series,
     scan_local_models,
     search_models,
     select_source,
+    series_matches,
+    series_options,
+    series_rank,
+    sort_by_popularity,
 )
 
 __all__ = [
@@ -74,8 +77,8 @@ __all__ = [
 ]
 
 _DESCRIPTION = (
-    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别与公司筛选 / 服务端排序与列头排序 / "
-    "详情 / 下载 / 本地管理；窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）"
+    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别与系列筛选 / 系列知名度默认排序 / "
+    "服务端排序与列头排序 / 详情 / 下载 / 本地管理；窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）"
 )
 _MIN_WIDTH = 1080
 _MIN_HEIGHT = 720
@@ -99,10 +102,10 @@ _SORT_LABELS = {
 }
 _SORT_KEYS = {label: key for key, label in _SORT_LABELS.items()}
 _ALL_TASKS = "全部类别"
-_ALL_COMPANIES = "全部公司"
+_ALL_SERIES = "全部系列"
 _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw", "s", "se", "sw", "w"]]] = {
     "repo": ("模型", 180, "w"),
-    "company": ("公司", 112, "w"),
+    "series": ("系列", 112, "w"),
     "tasks": ("任务", 108, "w"),
     "downloads": ("下载", 78, "e"),
     "size": ("体积", 70, "e"),
@@ -194,10 +197,10 @@ def parse_patterns(text: str) -> list[str] | None:
 
 
 def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
-    """模型列表的一行：仓库、公司、任务、下载量、体积。"""
+    """模型列表的一行：仓库、系列、任务、下载量、体积。"""
     return (
         item.repo,
-        model_company(item),
+        model_series(item),
         "、".join(item.tasks) or "-",
         f"{item.downloads:,}",
         human_size(item.storage_size) if item.storage_size else "-",
@@ -219,6 +222,7 @@ def sort_models(
     """按列表列排序（对当前页生效）；未知列保持原顺序。"""
     keys = {
         "repo": lambda item: item.repo.casefold(),
+        "series": lambda item: series_rank(model_series(item)),
         "tasks": lambda item: "、".join(item.tasks).casefold(),
         "downloads": lambda item: item.downloads,
         "size": lambda item: item.storage_size,
@@ -335,8 +339,8 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
         self._keyword_var = tk.StringVar()
         self._task_var = tk.StringVar(value=_ALL_TASKS)
-        self._company_applied = ""
-        self._company_options: tuple[str, ...] = ()
+        self._series_applied = ""
+        self._series_options: tuple[str, ...] = ()
         self._sort_var = tk.StringVar(value=_SORT_LABELS["default"])
         self._page_var = tk.StringVar(value="尚未搜索")
         self._status_var = tk.StringVar(value="就绪")
@@ -465,21 +469,21 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         self._task_box.pack(side="left", padx=(space.xs, space.lg))
         self._task_box.bind("<<ComboboxSelected>>", self._on_task_changed)
 
-        ttk.Label(nav, text="公司").pack(side="left")
-        self._company_var = self._tk.StringVar(value=_ALL_COMPANIES)
-        self._company_box = ttk.Combobox(
+        ttk.Label(nav, text="系列").pack(side="left")
+        self._series_var = self._tk.StringVar(value=_ALL_SERIES)
+        self._series_box = ttk.Combobox(
             nav,
-            textvariable=self._company_var,
-            values=[_ALL_COMPANIES],
+            textvariable=self._series_var,
+            values=[_ALL_SERIES],
             width=14,
-            postcommand=self._filter_company_values,
+            postcommand=self._filter_series_values,
         )
-        self._company_box.pack(side="left", padx=(space.xs, space.lg))
-        self._company_box.bind("<<ComboboxSelected>>", self._on_company_changed)
-        self._company_box.bind("<Return>", self._on_company_enter)
-        self._company_box.bind("<Escape>", self._reset_company)
-        self._company_box.bind("<KeyRelease>", self._filter_company_values)
-        self._company_box.bind("<FocusOut>", self._on_company_blur)
+        self._series_box.pack(side="left", padx=(space.xs, space.lg))
+        self._series_box.bind("<<ComboboxSelected>>", self._on_series_changed)
+        self._series_box.bind("<Return>", self._on_series_enter)
+        self._series_box.bind("<Escape>", self._reset_series)
+        self._series_box.bind("<KeyRelease>", self._filter_series_values)
+        self._series_box.bind("<FocusOut>", self._on_series_blur)
 
         ttk.Label(nav, text="排序").pack(side="left")
         sort_box = ttk.Combobox(
@@ -720,68 +724,68 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         """类别变化后重新从第 1 页搜索。"""
         self._start_search(1)
 
-    def _on_company_changed(self, _event: Any = None) -> None:
-        """公司下拉选中后只重渲染当前页，不触发网络请求。"""
-        label = self._company_var.get().strip()
-        if label in ("", _ALL_COMPANIES) or label not in self._company_options:
-            self._company_applied = ""
-            self._company_var.set(_ALL_COMPANIES)
+    def _on_series_changed(self, _event: Any = None) -> None:
+        """系列下拉选中后只重渲染当前页，不触发网络请求。"""
+        label = self._series_var.get().strip()
+        if label in ("", _ALL_SERIES) or label not in self._series_options:
+            self._series_applied = ""
+            self._series_var.set(_ALL_SERIES)
         else:
-            self._company_applied = label
-        self._company_box.configure(values=[_ALL_COMPANIES, *self._company_options])
+            self._series_applied = label
+        self._series_box.configure(values=[_ALL_SERIES, *self._series_options])
         self._render_results()
 
-    def _on_company_enter(self, _event: Any = None) -> str:
-        """回车应用：精确匹配优先，唯一候选（含别名 / 子串命中）时自动补全。"""
-        text = self._company_var.get().strip()
-        if text in ("", _ALL_COMPANIES):
-            self._company_var.set(_ALL_COMPANIES)
-            self._company_applied = ""
+    def _on_series_enter(self, _event: Any = None) -> str:
+        """回车应用：精确匹配优先，唯一候选（子串命中）时自动补全。"""
+        text = self._series_var.get().strip()
+        if text in ("", _ALL_SERIES):
+            self._series_var.set(_ALL_SERIES)
+            self._series_applied = ""
             self._render_results()
             return "break"
-        candidates = [label for label in self._company_options if company_matches(label, text)]
-        if text not in self._company_options and len(candidates) == 1:
-            self._company_var.set(candidates[0])
-        elif text in self._company_options:
-            self._company_var.set(text)
+        candidates = [label for label in self._series_options if series_matches(label, text)]
+        if text not in self._series_options and len(candidates) == 1:
+            self._series_var.set(candidates[0])
+        elif text in self._series_options:
+            self._series_var.set(text)
         else:
-            self._status_var.set("没有匹配的公司，请输入关键字后从下拉中选择")
+            self._status_var.set("没有匹配的系列，请输入关键字后从下拉中选择")
             return "break"
-        self._on_company_changed()
+        self._on_series_changed()
         return "break"
 
-    def _reset_company(self, _event: Any = None) -> str:
-        """Esc 清空公司筛选，回到「全部公司」。"""
-        self._company_var.set(_ALL_COMPANIES)
-        self._company_applied = ""
-        self._company_box.configure(values=[_ALL_COMPANIES, *self._company_options])
+    def _reset_series(self, _event: Any = None) -> str:
+        """Esc 清空系列筛选，回到「全部系列」。"""
+        self._series_var.set(_ALL_SERIES)
+        self._series_applied = ""
+        self._series_box.configure(values=[_ALL_SERIES, *self._series_options])
         self._render_results()
         return "break"
 
-    def _filter_company_values(self, _event: Any = None) -> None:
-        """按输入文本过滤下拉候选（别名与子串均可命中），不改变已生效筛选。"""
-        text = self._company_var.get().strip()
-        if text and text != _ALL_COMPANIES:
-            values = [label for label in self._company_options if company_matches(label, text)]
+    def _filter_series_values(self, _event: Any = None) -> None:
+        """按输入文本过滤下拉候选（子串命中），不改变已生效筛选。"""
+        text = self._series_var.get().strip()
+        if text and text != _ALL_SERIES:
+            values = [label for label in self._series_options if series_matches(label, text)]
         else:
-            values = list(self._company_options)
-        self._company_box.configure(values=[_ALL_COMPANIES, *(values or self._company_options)])
+            values = list(self._series_options)
+        self._series_box.configure(values=[_ALL_SERIES, *(values or self._series_options)])
 
-    def _on_company_blur(self, _event: Any = None) -> None:
-        """失焦时丢弃半截输入，恢复为已生效的公司或「全部公司」。"""
-        text = self._company_var.get().strip()
-        if text not in self._company_options and text not in ("", _ALL_COMPANIES):
-            self._company_var.set(self._company_applied or _ALL_COMPANIES)
-        self._company_box.configure(values=[_ALL_COMPANIES, *self._company_options])
+    def _on_series_blur(self, _event: Any = None) -> None:
+        """失焦时丢弃半截输入，恢复为已生效的系列或「全部系列」。"""
+        text = self._series_var.get().strip()
+        if text not in self._series_options and text not in ("", _ALL_SERIES):
+            self._series_var.set(self._series_applied or _ALL_SERIES)
+        self._series_box.configure(values=[_ALL_SERIES, *self._series_options])
 
-    def _update_company_options(self, items: tuple[ModelSummary, ...]) -> None:
-        """按当前页归集公司刷新下拉；已选公司在新结果里不存在时回落「全部」。"""
-        options = company_options(items)
-        self._company_options = options
-        if self._company_applied and self._company_applied not in options:
-            self._company_applied = ""
-            self._company_var.set(_ALL_COMPANIES)
-        self._company_box.configure(values=[_ALL_COMPANIES, *options])
+    def _update_series_options(self, items: tuple[ModelSummary, ...]) -> None:
+        """按当前页归集系列刷新下拉；已选系列在新结果里不存在时回落「全部」。"""
+        options = series_options(items)
+        self._series_options = options
+        if self._series_applied and self._series_applied not in options:
+            self._series_applied = ""
+            self._series_var.set(_ALL_SERIES)
+        self._series_box.configure(values=[_ALL_SERIES, *options])
 
     def _active_task(self) -> ModelTask | None:
         """当前选中的类别（``全部类别`` 返回 ``None``）。"""
@@ -1190,12 +1194,14 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._log(f"本地管理失败: {payload}")
 
     def _sort_by_column(self, column: str) -> None:
-        """点击列头：同一列切换升降序，不同列默认降序（文本列升序）。"""
-        if self._sort_column == column:
-            self._sort_desc = not self._sort_desc
-        else:
+        """点击列头：切换升降序，第三次点击清除列排序并回到系列知名度顺序。"""
+        if self._sort_column != column:
             self._sort_column = column
             self._sort_desc = column in {"downloads", "size"}
+        elif self._sort_desc:
+            self._sort_desc = False
+        else:
+            self._sort_column = None
         self._render_results()
 
     def _update_headings(self) -> None:
@@ -1207,7 +1213,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._models_tree.heading(key, text=f"{label}{arrow}")
 
     def _render_results(self) -> None:
-        """按类别 / 公司筛选与列排序渲染当前页，保持选中模型与滚动位置。"""
+        """按类别 / 系列筛选与排序渲染当前页，保持选中模型与滚动位置。"""
         result = self._last_result
         if result is None:
             return
@@ -1216,9 +1222,12 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         items = result.items
         if task is not None and task.chinese_name:
             items = filter_models(items, task.chinese_name)
-        self._update_company_options(items)
-        items = filter_by_company(items, self._company_applied)
-        items = sort_models(items, self._sort_column, self._sort_desc)
+        self._update_series_options(items)
+        items = filter_by_series(items, self._series_applied)
+        if self._sort_column is None:
+            items = sort_by_popularity(items)
+        else:
+            items = sort_models(items, self._sort_column, self._sort_desc)
         selected_repo = self._current_repo
         offset = self._models_tree.yview()[0]
         sync_tree_rows(self._models_tree, [(item.repo, model_row(item)) for item in items])
@@ -1227,8 +1236,8 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         filters = []
         if task_label != _ALL_TASKS:
             filters.append(f"类别「{task_label}」")
-        if self._company_applied:
-            filters.append(f"公司「{self._company_applied}」")
+        if self._series_applied:
+            filters.append(f"系列「{self._series_applied}」")
         matched = f" · 本页匹配 {len(items)} 个" if filters else ""
         self._page_var.set(f"第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
         self._prev_btn.configure(state="normal" if result.page > 1 else "disabled")
