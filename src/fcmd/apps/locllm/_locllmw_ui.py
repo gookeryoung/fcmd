@@ -92,6 +92,62 @@ def _scan_dir(root: Path) -> tuple[list[ModelEntry], str | None]:
         return [], f"扫描模型目录失败：{exc}"
 
 
+_GROUP_ROOT_LABEL = "模型目录（根）"
+"""直接放在模型目录下、未归入子目录的模型所在分组的名称。"""
+
+
+def _group_name(entry: ModelEntry, root: Path | None) -> str:
+    """取模型的一级子目录作为分组名，这是清单里最稳定的天然归属。
+
+    运行页清单来自 ``llmenv.models_dir()`` 的递归扫描，一级子目录对应下载仓库
+    （``<组织>/<模型>``）或用户自己的归档目录；直接放在根下的模型归入
+    ``_GROUP_ROOT_LABEL``。不在模型目录下的模型（运行中服务的模型可能来自别处）
+    退回父目录名。
+    """
+    base = root if root is not None else entry.root
+    try:
+        relative = entry.path.relative_to(base)
+    except ValueError:
+        parent = entry.path.parent
+        return parent.name or str(parent)
+    if len(relative.parts) <= 1:
+        return _GROUP_ROOT_LABEL
+    return relative.parts[0]
+
+
+def _group_models(
+    entries: list[ModelEntry],
+    root: Path | None,
+) -> list[tuple[str, list[tuple[int, ModelEntry]]]]:
+    """按一级子目录分组；组内保持传入清单的原有顺序（已按大小降序）。"""
+    groups: dict[str, list[tuple[int, ModelEntry]]] = {}
+    for index, entry in enumerate(entries):
+        groups.setdefault(_group_name(entry, root), []).append((index, entry))
+    return list(groups.items())
+
+
+def _default_open_groups(
+    groups: list[tuple[str, list[tuple[int, ModelEntry]]]],
+    running_keys: set[str],
+    selected: Path | None,
+) -> set[str]:
+    """首屏默认展开的组：有运行中实例的组，以及当前选中模型所在的组。
+
+    其余组保持收起，让首屏只看到组名与数量；选中组必须展开，否则已有选中项
+    会隐藏在收起的分组里。
+    """
+    selected_key = llmenv.path_key(selected) if selected is not None else None
+    return {
+        label
+        for label, items in groups
+        if any(
+            llmenv.path_key(entry.path) in running_keys
+            or (selected_key is not None and llmenv.path_key(entry.path) == selected_key)
+            for _index, entry in items
+        )
+    }
+
+
 @dataclass(frozen=True)
 class _ScanOutcome:
     """一次后台扫描的结果：模型清单 + 运行环境状态。"""
@@ -103,6 +159,7 @@ class _ScanOutcome:
     issue: str | None = None
     engine_missing: bool = False
     port_busy: bool = False
+    models_root: Path | None = None
 
 
 class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
@@ -118,6 +175,10 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _font: Any
         _busy: bool
         _selected_model: Path | None
+        _models_root: Path | None
+        _group_open: dict[str, bool]
+        _group_labels: dict[str, str]
+        _group_for_index: dict[int, str]
         _scan_thread: threading.Thread | None
         _scan_results: Any
         _fits: Any
@@ -582,29 +643,39 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._tree = ttk.Treeview(
             tree_frame,
             columns=("model", "size", "profiles", "tags", "fit"),
-            show="headings",
+            # 需要 #0 树列显示分组的展开 / 收起箭头，同时保留原有表头。
+            show="tree headings",
             selectmode="browse",
             height=10,
         )
+        self._tree.heading("#0", text="")
+        self._tree.column("#0", width=24, minwidth=24, stretch=False)
         self._tree.heading("model", text="模型")
         self._tree.heading("size", text="大小")
         self._tree.heading("profiles", text="匹配档位")
         self._tree.heading("tags", text="标签")
         self._tree.heading("fit", text="硬件")
-        self._tree.column("model", width=380, anchor="w")
+        self._tree.column("model", width=356, anchor="w")
         self._tree.column("size", width=90, anchor="e", stretch=False)
         self._tree.column("profiles", width=130, anchor="w", stretch=False)
         self._tree.column("tags", width=100, anchor="w", stretch=False)
         self._tree.column("fit", width=90, anchor="w", stretch=False)
         self._strike_font = self._font.nametofont("TkDefaultFont").copy()
         self._strike_font.configure(overstrike=True)
+        self._group_font = self._font.nametofont("TkDefaultFont").copy()
+        self._group_font.configure(weight="bold")
         self._tree.tag_configure("unfit", foreground=self._theme.palette.danger, font=self._strike_font)
         self._tree.tag_configure("busy", foreground=self._theme.palette.warning)
+        self._tree.tag_configure("group", foreground=self._theme.palette.accent, font=self._group_font)
         yscroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self._tree.yview)
         self._tree.configure(yscrollcommand=yscroll.set)
         yscroll.pack(side="right", fill="y")
         self._tree.pack(side="left", fill="both", expand=True)
+        self._group_open: dict[str, bool] = {}
+        self._group_labels: dict[str, str] = {}
+        self._group_for_index: dict[int, str] = {}
         self._tree.bind("<<TreeviewSelect>>", self._on_model_selected)
+        self._tree.bind("<Button-1>", self._on_tree_click, add="+")
 
         self._hint_var = self._tk.StringVar(value=_HINT_PLACEHOLDER)
         hint_label = ttk.Label(box, textvariable=self._hint_var, justify="left")
@@ -1029,7 +1100,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
 
     def _scan_models(self, port: int | None) -> None:
         """后台线程：扫描模型目录并收集引擎 / GPU / 默认端口状态。"""
-        entries, issue = _scan_dir(llmenv.models_dir())
+        root = llmenv.models_dir()
+        entries, issue = _scan_dir(root)
         states: list[Any]
         try:
             states = llmenv.list_states()
@@ -1057,6 +1129,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
                 issue=issue,
                 engine_missing=engine_missing,
                 port_busy=self._default_port_busy(states, port),
+                models_root=root,
             )
         )
 
@@ -1110,6 +1183,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
     def _apply_models(self, outcome: _ScanOutcome) -> None:
         entries = outcome.entries
         self._models = entries
+        self._models_root = outcome.models_root
         self._precisions = outcome.precisions
         self._gpu_mib = outcome.gpu_mib
         self._gpu_free_mib = outcome.free_mib
@@ -1140,29 +1214,78 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         return {_FIT_UNSUPPORTED: ("unfit",), _FIT_BUSY: ("busy",)}.get(state, ())
 
     def _render_models(self) -> None:
-        """重建模型列表：硬件不足标红，仅当前余量不足标橙，并显示对应状态。"""
-        self._tree.delete(*self._tree.get_children())
+        """重建模型列表：按一级子目录折叠分组，组内行保持原有硬件着色。
+
+        分组父行显示「组名（数量）」，默认只展开有运行中实例的组与选中模型
+        所在的组，其余收起，避免一次列出全部 GGUF。
+        """
+        tree = self._tree
+        offset = tree.yview()[0]
+        tree.delete(*tree.get_children())
         self._models_box.configure(text=f"运行模型（模型目录中的 GGUF，共 {len(self._models)} 个）")
-        for index, entry in enumerate(self._models):
-            state = self._row_state(entry)
-            name = entry.relative
-            precision = self._precisions.get(llmenv.path_key(entry.path))
-            if precision is not None:
-                name = f"{name}（{precision.note}）"
-            self._tree.insert(
+        groups = _group_models(self._models, self._models_root)
+        default_open = _default_open_groups(groups, self._running_paths, self._selected_model)
+        running_groups = {
+            label
+            for label, items in groups
+            if any(llmenv.path_key(entry.path) in self._running_paths for _index, entry in items)
+        }
+        # 有运行中实例的组排前面，首屏先看到正在使用的模型；其余按组名排序。
+        ordered = sorted(groups, key=lambda item: (item[0] not in running_groups, item[0].casefold()))
+        self._group_labels = {}
+        self._group_for_index = {}
+        for group_index, (label, items) in enumerate(ordered):
+            gid = f"g{group_index}"
+            self._group_labels[gid] = label
+            tree.insert(
                 "",
                 "end",
-                iid=str(index),
-                values=(
-                    name,
-                    human_size(entry.size),
-                    ", ".join(entry.profiles) or "-",
-                    " · ".join(entry.tags) or "-",
-                    state,
-                ),
-                tags=self._state_tag(state),
+                iid=gid,
+                values=(f"{label}（{len(items)}）", "", "", "", ""),
+                open=self._group_open.get(label, label in default_open),
+                tags=("group",),
             )
+            for index, entry in items:
+                self._group_for_index[index] = gid
+                state = self._row_state(entry)
+                name = entry.relative
+                precision = self._precisions.get(llmenv.path_key(entry.path))
+                if precision is not None:
+                    name = f"{name}（{precision.note}）"
+                tree.insert(
+                    gid,
+                    "end",
+                    iid=str(index),
+                    values=(
+                        name,
+                        human_size(entry.size),
+                        ", ".join(entry.profiles) or "-",
+                        " · ".join(entry.tags) or "-",
+                        state,
+                    ),
+                    tags=self._state_tag(state),
+                )
+        tree.yview_moveto(offset)
+        if self._selected_model is not None:
+            self._sync_tree_selection(self._selected_model)
         self._show_basis_hint()
+
+    def _on_tree_click(self, event: Any) -> str | None:
+        """点击分组父行只切换展开状态，不改变当前选中模型。"""
+        iid = self._tree.identify_row(event.y)
+        if iid and iid in self._group_labels:
+            self._toggle_group(iid)
+            return "break"
+        return None
+
+    def _toggle_group(self, iid: str) -> None:
+        """展开 / 收起分组父行，并记住用户本次选择（重建列表后仍沿用）。"""
+        label = self._group_labels.get(iid)
+        if label is None:
+            return
+        open_state = not bool(self._tree.item(iid, "open"))
+        self._tree.item(iid, open=open_state)
+        self._group_open[label] = open_state
 
     def _update_fit_states(self) -> None:
         """按最新可用显存原地更新各行状态（不重建列表，保留选中项）。"""

@@ -256,3 +256,44 @@ def test_detect_precisions_preserves_order_and_reuses_cache(tmp_path: Path, monk
     second = _locllmw_ui._detect_precisions(entries, cache=PrecisionCache(tmp_path / "cache.json"))
     assert second == first
     assert calls == []
+
+
+def _model(root: Path, relative: str) -> ModelEntry:
+    path = root / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"x")
+    return ModelEntry(root=root, path=path, size=1)
+
+
+def test_group_name_uses_first_directory(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    assert _locllmw_ui._group_name(_model(root, "Qwen/a.gguf"), root) == "Qwen"
+    assert _locllmw_ui._group_name(_model(root, "top.gguf"), root) == _locllmw_ui._GROUP_ROOT_LABEL
+    outside = _model(tmp_path / "other", "b.gguf")
+    assert _locllmw_ui._group_name(outside, root) == "other"
+
+
+def test_group_models_keeps_input_order_and_indexes(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    entries = [
+        _model(root, "b/x.gguf"),
+        _model(root, "a/y.gguf"),
+        _model(root, "b/z.gguf"),
+    ]
+    groups = dict(_locllmw_ui._group_models(entries, root))
+    assert list(groups) == ["b", "a"]
+    assert [index for index, _entry in groups["b"]] == [0, 2]
+    assert [index for index, _entry in groups["a"]] == [1]
+
+
+def test_default_open_groups_only_running_and_selected(tmp_path: Path) -> None:
+    root = tmp_path / "models"
+    running = _model(root, "run/a.gguf")
+    selected = _model(root, "pick/b.gguf")
+    idle = _model(root, "idle/c.gguf")
+    groups = _locllmw_ui._group_models([running, selected, idle], root)
+    running_keys = {_locllmw_ui.llmenv.path_key(running.path)}
+
+    assert _locllmw_ui._default_open_groups(groups, running_keys, None) == {"run"}
+    assert _locllmw_ui._default_open_groups(groups, set(), selected.path) == {"pick"}
+    assert _locllmw_ui._default_open_groups(groups, running_keys, selected.path) == {"run", "pick"}

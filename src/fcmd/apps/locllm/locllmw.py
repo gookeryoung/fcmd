@@ -207,6 +207,7 @@ class LocllmWindow(
         )
 
         self._models: list[ModelEntry] = []
+        self._models_root: Path | None = None
         self._precisions: dict[str, GgufPrecision] = {}
         self._selected_model: Path | None = None
         self._syncing_selection = False
@@ -318,7 +319,16 @@ class LocllmWindow(
         selection = self._tree.selection()
         if not selection:
             return
-        index = int(selection[0])
+        iid = selection[0]
+        if not iid.isdigit():
+            # 分组父行只负责展开 / 收起，不参与模型选择（键盘导航也可能选中它）。
+            self._syncing_selection = True
+            try:
+                self._tree.selection_remove(iid)
+            finally:
+                self._syncing_selection = False
+            return
+        index = int(iid)
         if 0 <= index < len(self._models):
             self._select_model(self._models[index].path)
 
@@ -381,14 +391,21 @@ class LocllmWindow(
 
     @override
     def _sync_tree_selection(self, path: Path) -> None:
-        """在模型树中选中指定路径的条目（不触发服务名联动）。"""
+        """在模型树中选中指定路径的条目（自动展开其所在分组，不触发服务名联动）。"""
         key = llmenv.path_key(path)
         self._syncing_selection = True
         try:
             for index, entry in enumerate(self._models):
                 if llmenv.path_key(entry.path) == key:
-                    self._tree.selection_set(str(index))
-                    self._tree.see(str(index))
+                    iid = str(index)
+                    group = self._group_for_index.get(index)
+                    if group is not None and self._tree.exists(group):
+                        self._tree.item(group, open=True)
+                        label = self._group_labels.get(group)
+                        if label is not None:
+                            self._group_open[label] = True
+                    self._tree.selection_set(iid)
+                    self._tree.see(iid)
                     return
         finally:
             self._syncing_selection = False
