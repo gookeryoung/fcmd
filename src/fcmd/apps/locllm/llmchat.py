@@ -25,8 +25,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
-from fcmd.console import get_console
 from fcmd.apps.locllm.llmbase import DEFAULT_ALIAS, DEFAULT_API_KEY, Endpoint, Opener, ServeError
+from fcmd.console import get_console
 
 __all__ = [
     "MAX_IMAGE_BYTES",

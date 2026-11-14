@@ -28,10 +28,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
-from fcmd.gui import config as _guiconfig
-from fcmd.gui import sidebar as _guisidebar
-from fcmd.gui import theme as _guitheme
-from fcmd.gui import window as _guiwindow
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     DownloadCancelled,
@@ -60,6 +56,10 @@ from fcmd.apps.locllm.llmdown import (
     series_rank,
     sort_by_popularity,
 )
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import sidebar as _guisidebar
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 
 __all__ = [
     "DownloadGuiSettings",

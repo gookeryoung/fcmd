@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm import llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_PORT,
@@ -28,6 +27,7 @@ from fcmd.apps.locllm.llmbase import (
     human_size,
     run_command,
 )
+from fcmd.console import Table, get_console
 
 __all__ = ["doctor"]
 

@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.apps.locllm import llmdownw
 from fcmd.apps.locllm.llmdown import LocalModel, ModelInfo, ModelSummary
 from fcmd.apps.locllm.llmdownw import (
@@ -36,6 +35,7 @@ from fcmd.apps.locllm.llmdownw import (
     sort_models,
     sync_tree_rows,
 )
+from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 class TestRegistration:

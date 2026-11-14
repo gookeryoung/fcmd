@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm import llmenv
 from fcmd.apps.locllm.llmbase import (
     CHUNK_SIZE,
@@ -36,6 +35,7 @@ from fcmd.apps.locllm.llmbase import (
     now_iso,
     run_command,
 )
+from fcmd.console import Table, get_console
 
 __all__ = [
     "ZipInspection",

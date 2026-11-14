@@ -44,8 +44,8 @@
 
 - `infras → core/tools/apps/cli/gui`：**0 条**。基础层没有反向依赖。
 - `gui → core/tools/apps/cli/infras`：**0 条**（仅标准库 + `fcmd.console` 的函数内导入）。
-- `tools` 跨域依赖：**1 处真实跨域**——`llm → net`，具体是 `apps/locllm/llmserve.py:404` 与 `apps/locllm/llmdoctor.py:65` 函数内导入 `fcmd.tools.net.portcheck.is_port_in_use`。`media/pdf → fcmd.tools._deps` 是共享基础模块，不算跨域。
-- `apps → tools`：3 处，全部是 `apps/cmder/app.py` 延迟导入 `fcmd.tools.archive.archivex`（ADR 0001 允许）。
+- 本地 LLM 工具族跨层依赖：**1 处**——`apps/locllm` → `tools/net`，具体是 `apps/locllm/llmserve.py:404` 与 `apps/locllm/llmdoctor.py:65` 函数内导入 `fcmd.tools.net.portcheck.is_port_in_use`。`media/pdf → fcmd.tools._deps` 是共享基础模块，不算跨域。
+- `apps → tools`：5 处，其中 3 处是 `apps/cmder/app.py` 延迟导入 `fcmd.tools.archive.archivex`（ADR 0001 允许），另外 2 处是 `apps/locllm` 对 `tools/net` 的端口探测依赖。
 - 模块级导入环：**1 个**，位于 vendored 的 `tools/dev/_pyprof_html` ↔ `tools/dev/pyprof`（自带 HTML 生成器），与本项目主干代码无关。
 - **唯一违反 ADR 0001 的边**：`core → console`
   - `core/toolkit/exec.py:32`（顶层 `from fcmd.console import get_console, print_error`）

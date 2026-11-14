@@ -20,8 +20,6 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 import fcmd as fx
-from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
-from fcmd.infras.net import UrlProbe
 from fcmd.apps.locllm import llmdown
 from fcmd.apps.locllm.llmdown import (
     MODEL_SERIES_RANKING,
@@ -56,6 +54,8 @@ from fcmd.apps.locllm.llmdown import (
     series_rank,
     sort_by_popularity,
 )
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.infras.net import UrlProbe
 
 
 # ---------------------------------------------------------------------- #

@@ -29,12 +29,12 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
+from fcmd.apps.locllm import llmenv
+from fcmd.apps.locllm.llmbase import ServeError, ServeState
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
-from fcmd.apps.locllm import llmenv
-from fcmd.apps.locllm.llmbase import ServeError, ServeState
 
 __all__ = [
     "EnvSettings",

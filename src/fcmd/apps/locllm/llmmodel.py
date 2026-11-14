@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm import llmenv
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_PROFILE,
@@ -25,6 +24,7 @@ from fcmd.apps.locllm.llmbase import (
     ServeError,
     human_size,
 )
+from fcmd.console import Table, get_console
 
 __all__ = [
     "GENERAL_TAG",

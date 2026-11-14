@@ -24,8 +24,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm.llmbase import DEFAULT_NAME, ServeError, ServeState, validate_name
+from fcmd.console import Table, get_console
 
 __all__ = [
     "add_models_root",

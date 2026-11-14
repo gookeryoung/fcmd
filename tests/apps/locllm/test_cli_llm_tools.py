@@ -11,8 +11,6 @@ from typing import Any
 
 import pytest
 
-from fcmd.console import Console
-from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool
 from fcmd.apps.locllm import llmbase, llmbench, llmconvert, llmdoctor, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
@@ -26,6 +24,8 @@ from fcmd.apps.locllm.llmbase import (
     StopResult,
 )
 from fcmd.apps.locllm.llmbench import BenchResult
+from fcmd.console import Console
+from fcmd.core.toolkit import _TOOL_REGISTRY, get_tool
 
 
 # ---------------------------------------------------------------------- #

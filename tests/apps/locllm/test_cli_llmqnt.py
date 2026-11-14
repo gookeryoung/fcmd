@@ -9,8 +9,8 @@ from typing import Any, cast
 import pytest
 
 import fcmd as fx
-from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 from fcmd.apps.locllm import llmbase, llmengine, llmqnt, llmqntw
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
 class _FakeStdout:

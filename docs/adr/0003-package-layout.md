@@ -32,7 +32,7 @@
 
 `tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`。依据：三者只依赖标准库 tkinter，被十余个窗口复用，不属于任何业务域；`tools/` 是发现命名空间，共享代码靠 `_` 前缀躲扫描是设计破损信号。
 
-窗口本身默认与业务同域（`<tool>w.py`）；独立桌面应用（如 `cmder`，命令 `cmderw`）归 `fcmd/apps/`，与 `fcmd.tools` 同为工具发现根。
+窗口本身默认与业务同域（`<tool>w.py`）；独立桌面应用（如 `cmder`，命令 `cmderw`）归 `fcmd/apps/`，与 `fcmd.tools` 同为工具发现根。共享模型与运行时的多模块应用族（如本地 LLM 工具族 `apps/locllm/`，命令名不变）同样归 `apps/<应用>/`，见 [ADR 0026](0026-locllm-app-migration.md)。
 
 ### D5 生成物就地、只重生成
 

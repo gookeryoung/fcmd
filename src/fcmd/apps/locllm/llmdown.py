@@ -36,8 +36,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm.llmbase import human_size
+from fcmd.console import Table, get_console
 
 if TYPE_CHECKING:
     from fcmd.infras.net import UrlProbe

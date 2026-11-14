@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.apps.locllm import llmenv, llmenvw
 from fcmd.apps.locllm.llmbase import DEFAULT_API_KEY, ServeError, ServeState
+from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 def _state(name: str = "qwen") -> ServeState:

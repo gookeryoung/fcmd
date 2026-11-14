@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm import _llmtune, llmengine, llmenv, llmmodel
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
@@ -42,6 +41,7 @@ from fcmd.apps.locllm.llmbase import (
     now_iso,
     validate_name,
 )
+from fcmd.console import Table, get_console
 
 __all__ = [
     "ServeMetrics",

@@ -23,9 +23,6 @@ from pathlib import Path
 from typing import Any, cast, override
 
 import fcmd
-from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
-from fcmd.gui import window as _guiwindow
 from fcmd.apps.locllm import _llmtune, llmbase, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._llmservew_bench import _ServeWindowBench
@@ -71,6 +68,9 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
     human_size,
 )
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 
 __all__ = [
     "ServeSettings",

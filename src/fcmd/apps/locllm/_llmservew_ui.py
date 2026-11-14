@@ -12,8 +12,6 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fcmd.gui import sidebar as _guisidebar
-from fcmd.gui import window as _guiwindow
 from fcmd.apps.locllm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._llmservew_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
@@ -26,6 +24,8 @@ from fcmd.apps.locllm._llmservew_monitor import (
 )
 from fcmd.apps.locllm.llmbase import KV_SCALE, PROFILES, ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
+from fcmd.gui import sidebar as _guisidebar
+from fcmd.gui import window as _guiwindow
 
 _MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"

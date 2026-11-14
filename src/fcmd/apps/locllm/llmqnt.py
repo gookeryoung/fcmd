@@ -24,8 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm import llmbase, llmengine
+from fcmd.console import Table, get_console
 
 __all__ = [
     "DEFAULT_QUANTS",

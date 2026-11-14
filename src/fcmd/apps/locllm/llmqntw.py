@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import Any
 
 import fcmd
-from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
-from fcmd.gui import window as _guiwindow
 from fcmd.apps.locllm import llmbase, llmengine, llmenv, llmmodel, llmqnt
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
 from fcmd.apps.locllm.llmbase import ModelEntry, human_size
+from fcmd.gui import config as _guiconfig
+from fcmd.gui import theme as _guitheme
+from fcmd.gui import window as _guiwindow
 
 __all__ = [
     "QuantizeSettings",

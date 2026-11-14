@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm import llmbase, llmengine, llmenv
 from fcmd.apps.locllm.llmbase import (
     CHUNK_SIZE,
@@ -30,6 +29,7 @@ from fcmd.apps.locllm.llmbase import (
     format_returncode,
     run_command,
 )
+from fcmd.console import Table, get_console
 
 __all__ = [
     "CONVERT_OUTTYPES",

@@ -10,9 +10,9 @@ from typing import Any, cast
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.apps.locllm import llmengine, llmenginew, llmenv
 from fcmd.apps.locllm.llmbase import Check, CommandResult, EngineInfo, ServeError
+from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 def test_tool_registered() -> None:

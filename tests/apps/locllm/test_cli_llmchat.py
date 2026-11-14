@@ -16,10 +16,10 @@ from urllib.request import Request
 
 import pytest
 
-from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.apps.locllm import llmchat, llmchatw, llmenv
 from fcmd.apps.locllm.llmbase import DEFAULT_API_KEY, Endpoint, ServeError, ServeState
 from fcmd.apps.locllm.llmchat import ChatDelta, ChatMessage, ChatSession
+from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 # ---------------------------------------------------------------------- #

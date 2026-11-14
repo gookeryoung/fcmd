@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from typing import Any
 
 import fcmd
-from fcmd.console import Table, get_console
 from fcmd.apps.locllm.llmbase import DEFAULT_ALIAS, DEFAULT_API_KEY, Endpoint, Opener, ServeError
+from fcmd.console import Table, get_console
 
 __all__ = ["BenchResult", "bench", "make_bench_prompt"]
 
