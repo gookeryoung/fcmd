@@ -291,9 +291,9 @@ class QuantizeWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         """后台线程：扫描模型目录并收集 llama.cpp 引擎 / 量化器信息。"""
         entries: list[ModelEntry] = []
         try:
-            roots = [root for root in llmenv.models_roots() if root.is_dir()]
-            if roots:
-                entries = llmmodel.scan_models(roots)
+            root = llmenv.models_dir()
+            if root.is_dir():
+                entries = llmmodel.scan_models(root)
         except OSError:
             entries = []
         precisions = {llmenv.path_key(entry.path): detect_precision(entry.path) for entry in entries}

@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 
 from fcmd.apps.locllm import _llmconfig
-from fcmd.apps.locllm.llmbase import ServeError
 
 
 @pytest.fixture
@@ -38,9 +37,10 @@ def test_default_paths(home: Path) -> None:
     assert _llmconfig.config_path(home) == home / "serve" / "config.json"
     assert _llmconfig.serve_dir(home) == home / "serve"
     assert _llmconfig.engines_root(home) == home / "engines" / "llama.cpp"
-    assert _llmconfig.models_roots(home=home) == [_llmconfig.default_models_root()]
-    assert _llmconfig.work_dir(home=home) == _llmconfig.default_models_root()
-    assert _llmconfig.work_dir(home=home) in _llmconfig.models_roots(home=home)
+    assert _llmconfig.models_dir(home=home) == _llmconfig.default_models_dir()
+    assert _llmconfig.work_dir(home=home) == _llmconfig.default_models_dir()
+    assert _llmconfig.configured_models_dir(home) is None
+    assert _llmconfig.models_dir_extra(home) == []
 
 
 def test_config_path_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -50,19 +50,19 @@ def test_config_path_env_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 
 def test_env_overrides_config(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _write(home / "serve" / "config.json", {"models_roots": [str(tmp_path / "cfg")], "work_dir": str(tmp_path / "w")})
+    _write(home / "serve" / "config.json", {"models_dir": str(tmp_path / "cfg"), "work_dir": str(tmp_path / "w")})
     env_models = tmp_path / "env-models"
     env_work = tmp_path / "env-work"
     monkeypatch.setenv("FCMD_MODELS", str(env_models))
     monkeypatch.setenv("FCMD_WORK", str(env_work))
-    assert _llmconfig.models_roots(home=home) == [env_models]
+    assert _llmconfig.models_dir(home=home) == env_models
     assert _llmconfig.work_dir(home=home) == env_work
 
 
 def test_explicit_beats_env(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "env"))
     monkeypatch.setenv("FCMD_WORK", str(tmp_path / "env"))
-    assert _llmconfig.models_roots(tmp_path / "explicit", home) == [tmp_path / "explicit"]
+    assert _llmconfig.models_dir(tmp_path / "explicit", home) == tmp_path / "explicit"
     assert _llmconfig.work_dir(tmp_path / "explicit", home) == tmp_path / "explicit"
 
 
@@ -77,13 +77,13 @@ def test_config_keys_used_when_env_absent(home: Path, tmp_path: Path) -> None:
     _write(
         home / "serve" / "config.json",
         {
-            "models_roots": [str(tmp_path / "models")],
+            "models_dir": str(tmp_path / "models"),
             "work_dir": str(tmp_path / "work"),
             "engines_root": str(tmp_path / "engines"),
             "serve_dir": str(tmp_path / "serve"),
         },
     )
-    assert _llmconfig.models_roots(home=home) == [tmp_path / "models"]
+    assert _llmconfig.models_dir(home=home) == tmp_path / "models"
     assert _llmconfig.work_dir(home=home) == tmp_path / "work"
     assert _llmconfig.engines_root(home) == tmp_path / "engines"
     assert _llmconfig.serve_dir(home) == tmp_path / "serve"
@@ -92,38 +92,35 @@ def test_config_keys_used_when_env_absent(home: Path, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------- #
 # 写入语义
 # ---------------------------------------------------------------------- #
-def test_add_and_remove_preserve_other_keys(home: Path, tmp_path: Path) -> None:
+def test_set_models_dir_preserves_other_keys(home: Path, tmp_path: Path) -> None:
     _write(home / "serve" / "config.json", {"extra": {"keep": True}})
-    first = tmp_path / "first"
-    second = tmp_path / "second"
-    _llmconfig.add_models_root(first, home)
-    _llmconfig.add_models_root(second, home)
-    assert _llmconfig.configured_roots(home) == [first, second]
-    assert _read(home / "serve" / "config.json")["extra"] == {"keep": True}
-
-    _llmconfig.remove_models_root(first, home)
-    assert _llmconfig.configured_roots(home) == [second]
-    assert _read(home / "serve" / "config.json")["extra"] == {"keep": True}
-
-
-def test_add_deduplicates(home: Path, tmp_path: Path) -> None:
     target = tmp_path / "models"
-    _llmconfig.add_models_root(target, home)
-    _llmconfig.add_models_root(target, home)
-    assert _llmconfig.configured_roots(home) == [target]
-
-
-def test_remove_missing_raises(home: Path, tmp_path: Path) -> None:
-    with pytest.raises(ServeError, match="配置中没有模型目录"):
-        _llmconfig.remove_models_root(tmp_path / "missing", home)
-
-
-def test_reset_only_removes_models_key(home: Path) -> None:
-    _write(home / "serve" / "config.json", {"models_roots": ["D:/models"], "extra": {"keep": True}})
-    assert _llmconfig.reset_models_roots(home) == [_llmconfig.default_models_root()]
+    assert _llmconfig.set_models_dir(target, home) == target
     saved = _read(home / "serve" / "config.json")
-    assert "models_roots" not in saved
+    assert saved["models_dir"] == str(target)
     assert saved["extra"] == {"keep": True}
+
+
+def test_set_models_dir_replaces_previous_value(home: Path, tmp_path: Path) -> None:
+    _llmconfig.set_models_dir(tmp_path / "first", home)
+    _llmconfig.set_models_dir(tmp_path / "second", home)
+    assert _llmconfig.configured_models_dir(home) == tmp_path / "second"
+    assert _llmconfig.models_dir(home=home) == tmp_path / "second"
+
+
+def test_set_models_dir_none_resets_to_default(home: Path, tmp_path: Path) -> None:
+    _llmconfig.set_models_dir(tmp_path / "models", home)
+    assert _llmconfig.set_models_dir(None, home) == _llmconfig.default_models_dir()
+    saved = _read(home / "serve" / "config.json")
+    assert "models_dir" not in saved
+
+
+def test_set_models_dir_clears_migration_record(home: Path, tmp_path: Path) -> None:
+    _write(home / "serve" / "config.json", {"models_roots": [str(tmp_path / "a"), str(tmp_path / "b")]})
+    assert _llmconfig.models_dir_extra(home) == [str(tmp_path / "b")]
+    _llmconfig.set_models_dir(tmp_path / "c", home)
+    assert _llmconfig.models_dir_extra(home) == []
+    assert "models_dir_extra" not in _read(home / "serve" / "config.json")
 
 
 def test_set_option_none_deletes(home: Path) -> None:
@@ -134,7 +131,7 @@ def test_set_option_none_deletes(home: Path) -> None:
 
 
 def test_save_config_creates_parent(home: Path) -> None:
-    path = _llmconfig.save_config({"models_roots": []}, home)
+    path = _llmconfig.save_config({"models_dir": "D:/models"}, home)
     assert path.is_file()
 
 
@@ -153,7 +150,7 @@ def test_migrates_legacy_config_keys(home: Path, tmp_path: Path) -> None:
     )
     config = _llmconfig.load_config(home)
     assert config == {
-        "models_roots": [str(tmp_path / "models")],
+        "models_dir": str(tmp_path / "models"),
         "work_dir": str(tmp_path / "work"),
         "engines_root": str(tmp_path / "engines"),
         "serve_dir": str(tmp_path / "serve"),
@@ -163,9 +160,36 @@ def test_migrates_legacy_config_keys(home: Path, tmp_path: Path) -> None:
     assert "download_dir" not in saved
 
 
-def test_migrates_legacy_list_models(home: Path, tmp_path: Path) -> None:
-    _write(home / "serve" / "config.json", {"models": [str(tmp_path / "a"), "", str(tmp_path / "b")]})
-    assert _llmconfig.configured_roots(home) == [tmp_path / "a", tmp_path / "b"]
+def test_migrates_legacy_list_models_to_single_dir(home: Path, tmp_path: Path) -> None:
+    first, second = tmp_path / "a", tmp_path / "b"
+    _write(home / "serve" / "config.json", {"models": [str(first), "", str(second)]})
+    assert _llmconfig.models_dir(home=home) == first
+    assert _llmconfig.models_dir_extra(home) == [str(second)]
+    saved = _read(home / "serve" / "config.json")
+    assert "models" not in saved
+    assert saved["models_dir"] == str(first)
+    assert saved["models_dir_extra"] == [str(second)]
+
+
+def test_migrates_models_roots_list_records_extras(home: Path, tmp_path: Path) -> None:
+    roots = [tmp_path / "one", tmp_path / "two", tmp_path / "three"]
+    _write(home / "serve" / "config.json", {"models_roots": [str(path) for path in roots]})
+    assert _llmconfig.models_dir(home=home) == roots[0]
+    assert _llmconfig.models_dir_extra(home) == [str(roots[1]), str(roots[2])]
+    saved = _read(home / "serve" / "config.json")
+    assert "models_roots" not in saved
+    assert saved["models_dir"] == str(roots[0])
+
+
+def test_existing_models_dir_wins_over_legacy_keys(home: Path, tmp_path: Path) -> None:
+    _write(
+        home / "serve" / "config.json",
+        {"models_dir": str(tmp_path / "current"), "models_roots": [str(tmp_path / "old")]},
+    )
+    assert _llmconfig.models_dir(home=home) == tmp_path / "current"
+    assert _llmconfig.models_dir_extra(home) == []
+    saved = _read(home / "serve" / "config.json")
+    assert "models_roots" not in saved
 
 
 def test_migrates_llmenvw_overrides_once(home: Path, tmp_path: Path) -> None:
@@ -194,7 +218,7 @@ def test_migrates_download_dest_absolute(home: Path, tmp_path: Path) -> None:
 def test_download_dest_relative_is_dropped(home: Path) -> None:
     legacy = home / "ui" / "locllmw.json"
     _write(legacy, {"download": {"dest": "models", "source": "hf"}})
-    assert _llmconfig.work_dir(home=home) == _llmconfig.default_models_root()
+    assert _llmconfig.work_dir(home=home) == _llmconfig.default_models_dir()
     assert "dest" not in _read(legacy)["download"]
 
 
@@ -218,4 +242,4 @@ def test_write_failure_is_ignored_on_migration(home: Path, monkeypatch: pytest.M
         raise OSError("denied")
 
     monkeypatch.setattr(Path, "write_text", _denied)
-    assert _llmconfig.load_config(home) == {"models_roots": ["D:/models"]}
+    assert _llmconfig.load_config(home) == {"models_dir": "D:/models"}

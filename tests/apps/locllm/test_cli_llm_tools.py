@@ -138,8 +138,8 @@ def test_env_add_remove_and_reset(home: Path, capsys: pytest.CaptureFixture[str]
     target = home / "models"
     target.mkdir(parents=True)
     llmenv.add_cmd(target)
-    assert "已登记模型目录" in capsys.readouterr().out
-    assert any(llmenv.path_key(item) == llmenv.path_key(target) for item in llmenv.configured_roots())
+    assert "已设置模型目录" in capsys.readouterr().out
+    assert llmenv.path_key(llmenv.configured_models_dir() or Path()) == llmenv.path_key(target)
 
     llmenv.remove_cmd(target)
     assert "已移除模型目录" in capsys.readouterr().out
@@ -181,13 +181,13 @@ def test_env_cmd_shells(
 # llmmodel
 # ---------------------------------------------------------------------- #
 def test_model_list_without_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llmenv, "models_roots", lambda *args, **kwargs: [tmp_path / "missing"])
+    monkeypatch.setattr(llmenv, "models_dir", lambda *args, **kwargs: tmp_path / "missing")
     with pytest.raises(ServeError, match="模型目录不存在"):
         llmmodel.list_cmd()
 
 
 def test_model_list_empty_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llmenv, "models_roots", lambda *args, **kwargs: [tmp_path])
+    monkeypatch.setattr(llmenv, "models_dir", lambda *args, **kwargs: tmp_path)
     with pytest.raises(ServeError, match=r"没有 \.gguf"):
         llmmodel.list_cmd()
 
@@ -196,7 +196,7 @@ def test_model_list_entries(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     (tmp_path / "m-Q4_K_M.gguf").write_bytes(b"x" * 16)
-    monkeypatch.setattr(llmenv, "models_roots", lambda *args, **kwargs: [tmp_path])
+    monkeypatch.setattr(llmenv, "models_dir", lambda *args, **kwargs: tmp_path)
     llmmodel.list_cmd()
     out = capsys.readouterr().out
     assert "m-Q4_K_M.gguf" in out
@@ -244,7 +244,7 @@ def test_model_advice_general_tag() -> None:
 
 def test_scan_models_fills_tags(tmp_path: Path) -> None:
     (tmp_path / "qwen3-coder-instruct-Q4_K_M.gguf").write_bytes(b"x" * 16)
-    entries = llmmodel.scan_models([tmp_path])
+    entries = llmmodel.scan_models(tmp_path)
     assert entries[0].tags == ("代码", "对话")
 
 
@@ -610,17 +610,29 @@ def test_convertw_hf_size_skips_unreadable(tmp_path: Path, monkeypatch: pytest.M
 def test_convertw_find_convertible_layouts(tmp_path: Path) -> None:
     from fcmd.apps.locllm import llmconvertw
 
-    direct = _hf_dir(tmp_path / "direct")
     root = tmp_path / "root"
     child = _hf_dir(root / "model")
     nested = _hf_dir(root / "org" / "model")
     (root / "README.md").write_text("x", encoding="utf-8")
     (root / "org" / "notes.txt").write_text("x", encoding="utf-8")
-    plain = tmp_path / "plain"
+    plain = root / "plain"
     plain.mkdir()
 
-    found = {path for path, _ in llmconvertw._find_convertible([direct, direct, root, plain, tmp_path / "missing"])}
-    assert found == {direct, child, nested}
+    found = {path for path, _ in llmconvertw._find_convertible(root)}
+    assert found == {child, nested}
+
+
+def test_convertw_find_convertible_root_itself(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import llmconvertw
+
+    direct = _hf_dir(tmp_path / "direct")
+    assert [path for path, _ in llmconvertw._find_convertible(direct)] == [direct]
+
+
+def test_convertw_find_convertible_missing(tmp_path: Path) -> None:
+    from fcmd.apps.locllm import llmconvertw
+
+    assert llmconvertw._find_convertible(tmp_path / "missing") == []
 
 
 def test_convertw_default_output_path(tmp_path: Path) -> None:
@@ -685,7 +697,7 @@ def test_convertw_find_convertible_skips_oserror(tmp_path: Path, monkeypatch: py
         return real_iterdir(self)
 
     monkeypatch.setattr(Path, "iterdir", fake_iterdir)
-    assert llmconvertw._find_convertible([broken]) == []
+    assert llmconvertw._find_convertible(broken) == []
 
 
 class TestConvertwGuiEntry:

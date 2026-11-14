@@ -24,23 +24,20 @@ from typing import Literal
 
 import fcmd
 from fcmd.apps.locllm._llmconfig import (
-    add_models_root,
     config_path,
-    configured_roots,
-    default_models_root,
+    configured_models_dir,
+    default_models_dir,
     engines_root,
     fcmd_home,
     get_option,
     home_dir,
     load_config,
-    models_roots,
+    models_dir,
+    models_dir_extra,
     path_key,
-    primary_models_root,
-    remove_models_root,
-    reset_models_roots,
     save_config,
     serve_dir,
-    set_models_roots,
+    set_models_dir,
     set_option,
     work_dir,
 )
@@ -48,11 +45,10 @@ from fcmd.apps.locllm.llmbase import DEFAULT_NAME, ServeError, ServeState, valid
 from fcmd.console import Table, get_console
 
 __all__ = [
-    "add_models_root",
     "client_env",
     "config_path",
-    "configured_roots",
-    "default_models_root",
+    "configured_models_dir",
+    "default_models_dir",
     "delete_state",
     "engines_root",
     "fcmd_home",
@@ -62,16 +58,14 @@ __all__ = [
     "load_config",
     "load_state",
     "log_path",
-    "models_roots",
+    "models_dir",
+    "models_dir_extra",
     "path_key",
-    "primary_models_root",
-    "remove_models_root",
     "require_state",
-    "reset_models_roots",
     "save_config",
     "save_state",
     "serve_dir",
-    "set_models_roots",
+    "set_models_dir",
     "set_option",
     "state_path",
     "work_dir",
@@ -181,46 +175,57 @@ def show_cmd() -> None:
     table.add_row("服务状态", str(serve_dir()))
     table.add_row("配置文件", str(config_path()))
     table.add_row("引擎根目录", str(engines_root()))
-    table.add_row("模型目录", ", ".join(str(path) for path in models_roots()))
+    table.add_row("模型目录", str(models_dir()))
     table.add_row("工作目录", str(work_dir()))
+    extras = models_dir_extra()
+    if extras:
+        table.add_row("旧模型目录（未使用）", ", ".join(extras))
     table.add_row("已登记服务", str(len(list_states())))
     get_console().print(table)
 
 
-@fcmd.tool("llmenv", subcommand="add", help="登记一个模型目录")
+@fcmd.tool("llmenv", subcommand="add", help="设置模型目录（单一目录，已存在则替换）")
 def add_cmd(path: Path) -> None:
-    """新增模型目录并落盘（重复登记忽略）。
+    """设置唯一模型目录并落盘。
 
     Parameters
     ----------
     path:
-        要登记的模型目录。
+        要使用的模型目录；若已登记其他目录会被替换。
     """
-    add_models_root(path)
-    get_console().print(f"已登记模型目录: {path.expanduser()}")
-    if not path.expanduser().is_dir():
-        get_console().print(f"[yellow]提示: 目录当前不存在 {path.expanduser()}[/yellow]")
+    target = path.expanduser()
+    previous = models_dir()
+    set_models_dir(target)
+    get_console().print(f"已设置模型目录: {target}")
+    if previous != target:
+        get_console().print(f"原模型目录 {previous} 已被替换（只支持单一目录）")
+    if not target.is_dir():
+        get_console().print(f"[yellow]提示: 目录当前不存在 {target}[/yellow]")
     show_cmd()
 
 
-@fcmd.tool("llmenv", subcommand="remove", help="移除已登记的模型目录")
+@fcmd.tool("llmenv", subcommand="remove", help="清除已登记的模型目录，回到默认目录")
 def remove_cmd(path: Path) -> None:
-    """移除模型目录并落盘。
+    """清除模型目录配置（仅当与当前登记目录一致时）。
 
     Parameters
     ----------
     path:
-        要移除的模型目录。
+        当前登记的模型目录；不一致时拒绝，避免误清空。
     """
-    remove_models_root(path)
-    get_console().print(f"已移除模型目录: {path.expanduser()}")
+    target = path.expanduser()
+    configured = load_config().get("models_dir")
+    if not isinstance(configured, str) or path_key(Path(configured)) != path_key(target):
+        raise ServeError(f"当前模型目录不是 {target}，无需移除")
+    set_models_dir(None)
+    get_console().print(f"已移除模型目录: {target}")
     show_cmd()
 
 
 @fcmd.tool("llmenv", subcommand="reset", help="清空模型目录配置，回到默认目录")
 def reset_cmd() -> None:
-    """清空配置文件中的模型目录列表（保留其他配置键）。"""
-    reset_models_roots()
+    """清空配置文件中的模型目录（保留其他配置键）。"""
+    set_models_dir(None)
     get_console().print("已清空模型目录配置，回到默认目录")
     show_cmd()
 

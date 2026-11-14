@@ -34,6 +34,7 @@ TOOLS: dict[str, ToolEntry] = {
     "cryptool": ToolEntry("cryptool", "python", "fcmd.tools.crypto.cryptool"),
     "csvtool": ToolEntry("csvtool", "python", "fcmd.tools.data.csvtool"),
     "devman": ToolEntry("devman", "python", "fcmd.apps.devman.devman"),
+    "devmanw": ToolEntry("devmanw", "python", "fcmd.apps.devman.devmanw"),
     "docdiff": ToolEntry("docdiff", "python", "fcmd.tools.office.docdiff"),
     "docdiffw": ToolEntry("docdiffw", "python", "fcmd.tools.office.docdiffw"),
     "dockercmd": ToolEntry("dockercmd", "python", "fcmd.tools.dev.dockercmd"),
@@ -167,6 +168,7 @@ DESCRIPTIONS: dict[str, str] = {
     "cryptool": "生成加密密钥",
     "csvtool": "预览 CSV 前几行",
     "devman": "列出已安装版本、活动版本与外部 node/python 探测结果",
+    "devmanw": "devman 的图形界面：按工具查看已安装 / 活动 / 可用版本，安装、卸载、切换、升级与 PATH 集成",
     "docdiff": "对比两个 doc/docx 文件（Windows + Microsoft Word + pywin32）：调用 Word 的 CompareDocuments 生成带修订标记的对比文档，可设置标题、对比模式与是否显示变更；依赖 fcmd[win32]",
     "docdiffw": "文档对比工具窗口版（Tk）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，依赖 Windows + Word + fcmd[win32]",
     "dockercmd": "Docker 镜像仓库登录工具",
@@ -275,6 +277,7 @@ DESCRIPTIONS: dict[str, str] = {
 LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
     "apps/devman/devman.py",
+    "apps/devman/devmanw.py",
     "apps/dynacalc/dynacalc.py",
     "apps/dynacalc/dynacalcw.py",
     "apps/filescan/filescan.py",
@@ -401,7 +404,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "11d2a899a90278914bce00aaa704f359"
+DIGEST = "d5a5beeede64e98eb705b51acdda891d"
 
 
 if __name__ == "__main__":  # pragma: no cover

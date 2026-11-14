@@ -177,17 +177,15 @@ def model_advice(tags: Sequence[str]) -> str:
 
 
 def scan_models(
-    roots: Sequence[Path] | None = None,
+    root: Path | None = None,
     home: Path | None = None,
 ) -> list[ModelEntry]:
-    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj、跨目录去重、按大小降序）。"""
+    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj、按大小降序）。"""
     entries: list[ModelEntry] = []
     seen: set[str] = set()
-    for raw_root in llmenv.models_roots(home=home) if roots is None else roots:
-        root = raw_root.expanduser()
-        if not root.is_dir():
-            continue
-        for path in root.rglob("*.gguf"):
+    resolved_root = (root if root is not None else llmenv.models_dir(home=home)).expanduser()
+    if resolved_root.is_dir():
+        for path in resolved_root.rglob("*.gguf"):
             if "mmproj" in path.name.lower():
                 continue
             try:
@@ -202,7 +200,7 @@ def scan_models(
             profiles = tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower())
             entries.append(
                 ModelEntry(
-                    root=root,
+                    root=resolved_root,
                     path=resolved,
                     size=size,
                     profiles=profiles,
@@ -221,8 +219,8 @@ def find_model(
 ) -> Path:
     """定位指定量化档位的 GGUF 文件。
 
-    ``model`` 可为 GGUF 文件或目录（覆盖模型目录配置）；未指定时在所有已配置的
-    模型目录中递归查找文件名包含 ``quant`` 的 GGUF（忽略 mmproj），同名取最大。
+    ``model`` 可为 GGUF 文件或目录（覆盖模型目录配置）；未指定时在模型目录中
+    递归查找文件名包含 ``quant`` 的 GGUF（忽略 mmproj），同名取最大。
     """
     if model is not None:
         target = model.expanduser()
@@ -232,26 +230,24 @@ def find_model(
             return target.resolve()
         if not target.is_dir():
             raise ServeError(f"模型路径不存在: {target}")
-        roots = [target]
+        directory = target
     else:
-        roots = llmenv.models_roots(models_root, home)
-        existing = [root for root in roots if root.is_dir()]
-        if not existing:
+        directory = llmenv.models_dir(models_root, home)
+        if not directory.is_dir():
             raise ServeError(
-                f"模型目录不存在: {', '.join(str(root) for root in roots)}；先下载模型："
-                f"fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {roots[0]}"
+                f"模型目录不存在: {directory}；先下载模型："
+                f"fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {directory}"
             )
-        roots = existing
 
-    entries = scan_models(roots)
+    entries = scan_models(directory)
     matched = [entry for entry in entries if quant.lower() in entry.path.name.lower()]
     if not matched:
         available = sorted({entry.path.name for entry in entries})[:5]
         hint = f"；已发现: {', '.join(available)}" if available else ""
         raise ServeError(
-            f"在 {', '.join(str(root) for root in roots)} 未找到量化 {quant} 的 GGUF{hint}；"
+            f"在 {directory} 未找到量化 {quant} 的 GGUF{hint}；"
             f"可执行 fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* "
-            f"--dest {roots[0]}"
+            f"--dest {directory}"
         )
     return max(matched, key=lambda entry: entry.size).path
 
@@ -451,16 +447,12 @@ def list_cmd(models_root: Path | None = None) -> None:
     models_root:
         只扫描该目录；默认用 ``FCMD_MODELS``、配置文件或内置默认目录。
     """
-    roots = llmenv.models_roots(models_root)
-    missing = [root for root in roots if not root.is_dir()]
-    existing = [root for root in roots if root.is_dir()]
-    if not existing:
-        raise ServeError(f"模型目录不存在: {', '.join(str(root) for root in roots)}；先用 fcmd llmdown download 下载")
-    entries = scan_models(existing)
+    directory = llmenv.models_dir(models_root)
+    if not directory.is_dir():
+        raise ServeError(f"模型目录不存在: {directory}；先用 fcmd llmdown download 下载")
+    entries = scan_models(directory)
     if not entries:
-        raise ServeError(
-            f"{', '.join(str(root) for root in existing)} 下没有 .gguf 文件；先用 fcmd llmdown download 下载"
-        )
+        raise ServeError(f"{directory} 下没有 .gguf 文件；先用 fcmd llmdown download 下载")
 
     table = Table(title=f"本地模型（{len(entries)} 个）", box="ascii")
     table.add_column("文件", style="cyan", no_wrap=True)
@@ -482,9 +474,6 @@ def list_cmd(models_root: Path | None = None) -> None:
             get_console().print(f"  {name:<12} {quant} {chosen.path}")
         else:
             get_console().print(f"  {name:<12} {quant} [yellow]缺失[/yellow]")
-
-    for root in missing:
-        get_console().print(f"[yellow]提示: 配置中的目录不存在 {root}[/yellow]")
 
 
 @fcmd.tool("llmmodel", subcommand="find", help="按量化类型定位 GGUF 文件")

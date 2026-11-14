@@ -33,4 +33,4 @@
 | [0028](0028-locllmw-overview.md) | locllmw 概览：硬件检测 / 模型盘 / 智能推荐（预测与实测口径） | 已落地 |
 | [0029](0029-locllmw-chat-page.md) | locllmw 对话页：整合 llmchatw 的多轮流式对话，移除独立窗口工具 | 已落地 |
 | [0030](0030-locllmw-models-page.md) | locllmw 模型页：整合 llmdownw 的浏览 / 已安装 / 下载，移除独立窗口工具 | 已落地 |
-| [0031](0031-localllm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析，原环境窗口并入 locllmw 设置页 | 已落地 |
+| [0031](0031-localllm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`，设置页三组（目录 / 引擎 / 界面） | 已落地 |

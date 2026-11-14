@@ -125,7 +125,7 @@ def _dir_stats(path: Path) -> str:
 
 def default_output_path(source: Path, root: Path | None = None) -> Path:
     """默认输出路径：``<模型目录>/<源目录名>/<源目录名>.gguf``。"""
-    base_root = (root or llmenv.models_roots()[0]).expanduser()
+    base_root = (root or llmenv.models_dir()).expanduser()
     return base_root / source.name / f"{source.name}.gguf"
 
 
@@ -160,40 +160,29 @@ def existing_summary(base: Path) -> str:
     return "、".join("原始 GGUF" if key == "raw" else key for key in existing_format_keys(base))
 
 
-def _find_convertible(roots: list[Path]) -> list[tuple[Path, int]]:
+def _find_convertible(root: Path) -> list[tuple[Path, int]]:
     """在模型目录中查找可转换的 HF safetensors 目录（含根目录及向下两层）。
 
     兼容 ``<root>/<模型>`` 与 ``<root>/<组织>/<模型>`` 两种常见布局；命中 HF 目录后
     不再继续向下扫描，避免把模型内部文件误判为可转换目录。
     """
     found: list[tuple[Path, int]] = []
-    seen: set[str] = set()
-
-    def add(path: Path) -> None:
-        key = llmenv.path_key(path)
-        if key in seen:
-            return
-        seen.add(key)
-        found.append((path, _hf_size(path)))
-
-    for root in roots:
-        if not root.is_dir():
-            continue
-        try:
-            if llmconvert.is_hf_safetensors_dir(root):
-                add(root)
+    if not root.is_dir():
+        return found
+    try:
+        if llmconvert.is_hf_safetensors_dir(root):
+            return [(root, _hf_size(root))]
+        for child in sorted(root.iterdir()):
+            if not child.is_dir():
                 continue
-            for child in sorted(root.iterdir()):
-                if not child.is_dir():
-                    continue
-                if llmconvert.is_hf_safetensors_dir(child):
-                    add(child)
-                    continue
-                for grandchild in sorted(child.iterdir()):
-                    if grandchild.is_dir() and llmconvert.is_hf_safetensors_dir(grandchild):
-                        add(grandchild)
-        except OSError:
-            continue
+            if llmconvert.is_hf_safetensors_dir(child):
+                found.append((child, _hf_size(child)))
+                continue
+            for grandchild in sorted(child.iterdir()):
+                if grandchild.is_dir() and llmconvert.is_hf_safetensors_dir(grandchild):
+                    found.append((grandchild, _hf_size(grandchild)))
+    except OSError:
+        return found
     return found
 
 
@@ -493,7 +482,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         """输出位置提示：显示实际默认目录，避免用户不清楚文件落在哪里。"""
         base = self._base_output()
         if base is None:
-            root = llmenv.models_roots()[0].expanduser()
+            root = llmenv.models_dir().expanduser()
             return f"输出留空时写入默认模型目录：{root}/<源目录名>/<源目录名>[-量化].gguf"
         if self._output_var.get().strip():
             return f"输出文件：{base}"
@@ -665,9 +654,9 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
             info["version"] = llmengine.probe_version(engine)
         gpu = llmengine.detect_gpu()
         info["gpu"] = f"{gpu.name}（{gpu.memory_mib} MiB）" if gpu else "未检测到 NVIDIA GPU"
-        roots = llmenv.models_roots()
-        info["models"] = " · ".join(str(path) for path in roots)
-        self._scan_results.put((info, tag, _find_convertible(roots)))
+        root = llmenv.models_dir()
+        info["models"] = str(root)
+        self._scan_results.put((info, tag, _find_convertible(root)))
 
     def _poll_env(self) -> None:
         try:
@@ -686,7 +675,7 @@ class ConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         """填充可转换模型列表，并恢复当前已选源目录的选中状态。"""
         self._convertible = convertible
         self._tree.delete(*self._tree.get_children())
-        root = llmenv.models_roots()[0].expanduser()
+        root = llmenv.models_dir().expanduser()
         for index, (path, size) in enumerate(convertible):
             existing = existing_summary(default_output_path(path, root))
             self._tree.insert(

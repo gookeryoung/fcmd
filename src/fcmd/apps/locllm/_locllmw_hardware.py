@@ -120,8 +120,7 @@ def _disk_infos() -> tuple[DiskInfo, ...]:
 def _primary_model_root(models_root: Path | None) -> Path:
     if models_root is not None:
         return models_root.expanduser()
-    roots = llmenv.models_roots()
-    return roots[0] if roots else llmenv.default_models_root()
+    return llmenv.models_dir()
 
 
 def detect_hardware(

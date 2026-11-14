@@ -73,8 +73,7 @@ def _check_port(port: int, home: Path | None) -> Check:
 
 
 def _check_disk(models_root: Path | None, home: Path | None) -> Check:
-    roots = llmenv.models_roots(models_root, home)
-    root = roots[0]
+    root = llmenv.models_dir(models_root, home)
     target = root if root.is_dir() else llmenv.home_dir(home)
     try:
         usage = shutil.disk_usage(target)

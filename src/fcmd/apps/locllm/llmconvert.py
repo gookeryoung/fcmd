@@ -309,7 +309,7 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         raise ServeError(f"不支持的 outtype {outtype!r}：可选 {', '.join(CONVERT_OUTTYPES)}")
 
     if output is None:
-        root = llmenv.models_roots(models_root, home)[0].expanduser()
+        root = llmenv.models_dir(models_root, home)
         suffix = f"-{quant}" if quant else ""
         target = root / src.name / f"{src.name}{suffix}.gguf"
     else:

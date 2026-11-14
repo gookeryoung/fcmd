@@ -319,9 +319,9 @@ class TestModel:
         with pytest.raises(ServeError, match="模型目录不存在"):
             llmmodel.find_model("Q5_K_M", models_root=tmp_path / "nope")
 
-    def test_default_models_root_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_default_models_dir_env(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "m"))
-        assert llmenv.models_roots() == [tmp_path / "m"]
+        assert llmenv.models_dir() == tmp_path / "m"
 
     def test_estimate_vram(self) -> None:
         f16 = llmmodel.estimate_vram(10, 65536, "f16")
@@ -356,105 +356,88 @@ class TestModelsConfig:
         assert llmenv.load_config(home) == {}
 
     def test_save_and_load(self, home: Path) -> None:
-        written = llmenv.save_config({"models_roots": ["D:/models"]}, home)
+        written = llmenv.save_config({"models_dir": "D:/models"}, home)
         assert written == llmenv.config_path(home)
-        assert llmenv.load_config(home) == {"models_roots": ["D:/models"]}
+        assert llmenv.load_config(home) == {"models_dir": "D:/models"}
 
-    def test_configured_roots_filters_invalid(self, home: Path) -> None:
-        root = home.parent / "models"
-        llmenv.save_config({"models_roots": ["", "  ", 3, str(root), str(root), str(root / "sub")]}, home)
-        assert llmenv.configured_roots(home) == [root, root / "sub"]
+    def test_configured_models_dir(self, home: Path, tmp_path: Path) -> None:
+        target = tmp_path / "models"
+        llmenv.set_models_dir(target, home)
+        assert llmenv.configured_models_dir(home) == target
 
-    def test_configured_roots_non_list(self, home: Path) -> None:
-        llmenv.save_config({"models_roots": "D:/models"}, home)
-        assert llmenv.configured_roots(home) == []
+    def test_configured_models_dir_ignores_invalid(self, home: Path) -> None:
+        llmenv.save_config({"models_dir": "   "}, home)
+        assert llmenv.configured_models_dir(home) is None
 
-    def test_models_roots_precedence(self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path) -> None:
+    def test_legacy_multi_roots_keep_first_and_record_extras(self, home: Path, tmp_path: Path) -> None:
+        first, second = tmp_path / "a", tmp_path / "b"
+        llmenv.save_config({"models_roots": [str(first), str(second)]}, home)
+        assert llmenv.models_dir(home=home) == first
+        assert llmenv.models_dir_extra(home) == [str(second)]
+
+    def test_models_dir_precedence(self, monkeypatch: pytest.MonkeyPatch, home: Path, tmp_path: Path) -> None:
         configured = tmp_path / "configured"
-        llmenv.save_config({"models_roots": [str(configured)]}, home)
-        assert llmenv.models_roots(home=home) == [configured]
-        assert llmenv.models_roots(tmp_path / "explicit", home) == [tmp_path / "explicit"]
+        llmenv.set_models_dir(configured, home)
+        assert llmenv.models_dir(home=home) == configured
+        assert llmenv.models_dir(tmp_path / "explicit", home) == tmp_path / "explicit"
         monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "env"))
-        assert llmenv.models_roots(home=home) == [tmp_path / "env"]
-        assert llmenv.models_roots(tmp_path / "explicit", home) == [tmp_path / "explicit"]
+        assert llmenv.models_dir(home=home) == tmp_path / "env"
+        assert llmenv.models_dir(tmp_path / "explicit", home) == tmp_path / "explicit"
 
-    def test_models_roots_default(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+    def test_models_dir_default(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
         monkeypatch.delenv("FCMD_MODELS", raising=False)
-        assert llmenv.models_roots(home=home) == [llmenv.default_models_root()]
+        assert llmenv.models_dir(home=home) == llmenv.default_models_dir()
 
-    def test_add_dedupes(self, home: Path) -> None:
+    def test_set_models_dir_replaces(self, home: Path) -> None:
         a = home.parent / "a"
         b = home.parent / "b"
-        assert llmenv.add_models_root(a, home) == [a]
-        assert llmenv.add_models_root(a, home) == [a]
-        assert llmenv.add_models_root(b, home) == [a, b]
-        assert llmenv.configured_roots(home) == [a, b]
+        assert llmenv.set_models_dir(a, home) == a
+        assert llmenv.set_models_dir(b, home) == b
+        assert llmenv.configured_models_dir(home) == b
 
-    def test_remove(self, home: Path) -> None:
-        a = home.parent / "a"
-        b = home.parent / "b"
-        llmenv.add_models_root(a, home)
-        llmenv.add_models_root(b, home)
-        assert llmenv.remove_models_root(a, home) == [b]
-        with pytest.raises(ServeError, match="配置中没有模型目录"):
-            llmenv.remove_models_root(a, home)
-
-    def test_reset(self, home: Path) -> None:
-        llmenv.add_models_root(home.parent / "a", home)
-        assert llmenv.reset_models_roots(home) == [llmenv.default_models_root()]
-        assert llmenv.configured_roots(home) == []
-
-    def test_reset_without_config(self, home: Path) -> None:
-        assert llmenv.reset_models_roots(home) == [llmenv.default_models_root()]
+    def test_set_models_dir_none_clears(self, home: Path) -> None:
+        llmenv.set_models_dir(home.parent / "a", home)
+        assert llmenv.set_models_dir(None, home) == llmenv.default_models_dir()
+        assert llmenv.configured_models_dir(home) is None
 
 
 class TestScanModels:
-    def test_multi_root_and_profiles(self, tmp_path: Path) -> None:
-        first = tmp_path / "r1"
-        second = tmp_path / "r2"
-        small = first / "repo" / "Model-Q4_K_M.gguf"
-        large = second / "Model-Q5_K_M.gguf"
+    def test_scans_single_root_and_profiles(self, tmp_path: Path) -> None:
+        root = tmp_path / "models"
+        small = root / "repo" / "Model-Q4_K_M.gguf"
+        large = root / "Model-Q5_K_M.gguf"
         for path, payload in ((small, b"a" * 10), (large, b"b" * 100)):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
 
-        entries = llmmodel.scan_models([first, second])
+        entries = llmmodel.scan_models(root)
         assert [entry.path for entry in entries] == [large.resolve(), small.resolve()]
         assert entries[0].profiles == ("balanced", "long")
         assert entries[1].profiles == ("speed", "max-context")
         assert entries[0].relative == "Model-Q5_K_M.gguf"
         assert entries[1].relative == str(Path("repo") / "Model-Q4_K_M.gguf")
 
-    def test_ignores_mmproj_and_missing_roots(self, tmp_path: Path) -> None:
+    def test_ignores_mmproj_and_missing_root(self, tmp_path: Path) -> None:
         root = tmp_path / "models"
         root.mkdir()
         (root / "mmproj-Q5_K_M.gguf").write_bytes(b"x")
-        assert llmmodel.scan_models([root, tmp_path / "missing"]) == []
+        assert llmmodel.scan_models(root) == []
+        assert llmmodel.scan_models(tmp_path / "missing") == []
 
-    def test_dedupes_nested_roots(self, tmp_path: Path) -> None:
-        root = tmp_path / "models"
-        nested = root / "repo"
-        nested.mkdir(parents=True)
-        (nested / "m-Q5_K_M.gguf").write_bytes(b"x")
-        assert len(llmmodel.scan_models([root, nested])) == 1
-
-    def test_uses_configured_roots(self, home: Path, tmp_path: Path) -> None:
+    def test_uses_configured_models_dir(self, home: Path, tmp_path: Path) -> None:
         root = tmp_path / "models"
         root.mkdir()
         (root / "m-Q5_K_M.gguf").write_bytes(b"x")
-        llmenv.add_models_root(root, home)
+        llmenv.set_models_dir(root, home)
         assert [entry.path for entry in llmmodel.scan_models(home=home)] == [(root / "m-Q5_K_M.gguf").resolve()]
 
-    def test_find_model_across_roots_picks_largest(self, tmp_path: Path, home: Path) -> None:
-        first = tmp_path / "r1"
-        second = tmp_path / "r2"
-        for root, payload in ((first, b"a" * 10), (second, b"b" * 100)):
-            root.mkdir()
-            (root / "m-Q5_K_M.gguf").write_bytes(payload)
-        assert llmmodel.find_model("Q5_K_M", models_root=first) == (first / "m-Q5_K_M.gguf").resolve()
-        llmenv.add_models_root(first, home)
-        llmenv.add_models_root(second, home)
-        assert llmmodel.find_model("Q5_K_M", home=home) == (second / "m-Q5_K_M.gguf").resolve()
+    def test_find_model_uses_configured_dir(self, tmp_path: Path, home: Path) -> None:
+        root = tmp_path / "models"
+        root.mkdir()
+        target = root / "m-Q5_K_M.gguf"
+        target.write_bytes(b"b" * 100)
+        llmenv.set_models_dir(root, home)
+        assert llmmodel.find_model("Q5_K_M", home=home) == target.resolve()
 
 
 # ---------------------------------------------------------------------- #

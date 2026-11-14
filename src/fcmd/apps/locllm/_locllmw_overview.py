@@ -249,8 +249,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
     # ------------------------------------------------------------------ #
     @staticmethod
     def _primary_model_root() -> Path:
-        roots = llmenv.models_roots()
-        return roots[0] if roots else llmenv.default_models_root()
+        return llmenv.models_dir()
 
     def _choose_model_root(self) -> None:
         """选择新的模型根目录并写入 ``llmenv`` 配置，随后重扫模型。"""
@@ -271,7 +270,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
             f"把模型根目录改为：\n{path}\n\n现有模型目录配置会被替换，随后重新扫描模型。",
         ):
             return
-        llmenv.set_models_roots([path])
+        llmenv.set_models_dir(path)
         if self._hardware is not None:
             self._hardware = replace(self._hardware, model_root=str(path))
         self._refresh_hardware_view()

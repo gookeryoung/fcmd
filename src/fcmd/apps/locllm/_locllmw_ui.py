@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fcmd.apps.locllm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
+from fcmd.apps.locllm import _llmtune, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._locllmw_bench import BENCH_CHECKED, RESULT_COLUMNS, SCENARIOS
 from fcmd.apps.locllm._locllmw_models import _ModelBrowserPage, settings_from_dict
@@ -26,7 +26,6 @@ from fcmd.apps.locllm._locllmw_monitor import (
 from fcmd.apps.locllm._locllmw_settings import SettingsPage
 from fcmd.apps.locllm.llmbase import KV_SCALE, PROFILES, ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
-from fcmd.gui import config as _guiconfig
 from fcmd.gui import sidebar as _guisidebar
 from fcmd.gui import window as _guiwindow
 
@@ -51,7 +50,6 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _scan_results: Any
         _fits: Any
         _gpu_usage: Any
-        _info_vars: Any
         _precisions: dict[str, GgufPrecision]
         _metric_vars: Any
         _load_vars: Any
@@ -206,19 +204,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._build_log(parent)
 
     def _build_settings(self, parent: Any) -> None:
-        """设置页：统一目录配置、服务环境变量与环境信息。"""
-        ttk = self._ttk
-        space = self._theme.spacing
-        box = ttk.LabelFrame(parent, text="窗口与配置文件", padding=space.sm)
-        box.pack(fill="x")
-        path = _guiconfig.config_path("locllmw")
-        ttk.Label(box, text=f"窗口配置文件：{path}", justify="left").pack(anchor="w")
-        ttk.Label(
-            box,
-            text="窗口位置与大小在关闭时自动写入；目录与模型配置统一在下方子页编辑。",
-            style="Hint.TLabel",
-        ).pack(anchor="w", pady=(space.xs, 0))
-        self._build_env(parent)
+        """设置页：目录 / 引擎 / 界面三组配置。"""
         self._settings_page = SettingsPage(
             parent,
             tk=self._tk,
@@ -422,23 +408,6 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             "<Configure>",
             lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
         )
-
-    def _build_env(self, parent: Any) -> None:
-        tk = self._tk
-        ttk = self._ttk
-        box, body = self._collapsible(parent, "环境信息（引擎 / 版本 / GPU）", open_state=False)
-        box.pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
-        body.columnconfigure(1, weight=1)
-        for row, (key, label) in enumerate((("engine", "引擎"), ("version", "版本"), ("gpu", "GPU"))):
-            ttk.Label(body, text=label).grid(row=row, column=0, sticky="nw", padx=(0, self._theme.spacing.sm))
-            var = tk.StringVar(value="检测中…")
-            value_label = ttk.Label(body, textvariable=var, justify="left")
-            value_label.grid(row=row, column=1, sticky="we")
-            value_label.bind(
-                "<Configure>",
-                lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
-            )
-            self._info_vars[key] = var
 
     def _build_loaded(self, parent: Any) -> None:
         """已加载模型：列出运行中的服务及其模型、档位与地址。"""
@@ -748,8 +717,6 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
             return
         self._model_btn.configure(state="disabled")
         self._model_var.set("正在扫描模型目录…")
-        for var in self._info_vars.values():
-            var.set("检测中…")
         self._scan_thread = threading.Thread(target=self._scan_models, daemon=True)
         self._scan_thread.start()
         self.root.after(200, self._poll_scan)
@@ -758,17 +725,18 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         """后台线程：扫描模型目录并收集引擎 / GPU 信息。"""
         entries: list[ModelEntry] = []
         try:
-            roots = [root for root in llmenv.models_roots() if root.is_dir()]
-            if roots:
-                entries = llmmodel.scan_models(roots)
+            root = llmenv.models_dir()
+            if root.is_dir():
+                entries = llmmodel.scan_models(root)
             entries = self._with_running_models(entries)
         except OSError:
             entries = []
-        info, gpu_mib = self._collect_env_info()
+        gpu = llmengine.detect_gpu()
+        gpu_mib = gpu.memory_mib if gpu is not None else None
         usage = self._gpu_usage()
         free_mib = max(usage[1] - usage[0], 0) if usage is not None else None
         precisions = {llmenv.path_key(entry.path): detect_precision(entry.path) for entry in entries}
-        self._scan_results.put((entries, info, gpu_mib, free_mib, precisions))
+        self._scan_results.put((entries, gpu_mib, free_mib, precisions))
 
     @staticmethod
     def _with_running_models(entries: list[ModelEntry]) -> list[ModelEntry]:
@@ -796,33 +764,18 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
         return entries
 
-    def _collect_env_info(self) -> tuple[dict[str, str], int | None]:
-        """收集当前引擎 tag / 可执行文件、版本与显存（MiB）。"""
-        info: dict[str, str] = {"engine": "", "version": "", "gpu": ""}
-        try:
-            engine = llmengine.resolve_engine()
-        except llmbase.ServeError as exc:
-            info["engine"] = f"未找到（{exc}）"
-        else:
-            info["engine"] = f"{engine.tag} · {engine.exe}"
-            info["version"] = llmengine.probe_version(engine)
-        gpu = llmengine.detect_gpu()
-        info["gpu"] = f"{gpu.name}（{gpu.memory_mib} MiB）" if gpu else "未检测到 NVIDIA GPU"
-        return info, gpu.memory_mib if gpu is not None else None
-
     def _poll_scan(self) -> None:
         try:
-            entries, info, gpu_mib, free_mib, precisions = self._scan_results.get_nowait()
+            entries, gpu_mib, free_mib, precisions = self._scan_results.get_nowait()
         except queue.Empty:
             if self._scan_thread is not None and self._scan_thread.is_alive():
                 self.root.after(200, self._poll_scan)
             return
-        self._apply_models(entries, info, gpu_mib, free_mib, precisions)
+        self._apply_models(entries, gpu_mib, free_mib, precisions)
 
     def _apply_models(
         self,
         entries: list[ModelEntry],
-        info: dict[str, str],
         gpu_mib: int | None,
         free_mib: int | None,
         precisions: dict[str, GgufPrecision],
@@ -839,8 +792,6 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._model_var.set(str(self._selected_model) if self._selected_model else _MODEL_PLACEHOLDER)
         if self._selected_model is not None:
             self._sync_tree_selection(self._selected_model)
-        for key, var in self._info_vars.items():
-            var.set(info.get(key) or "-")
         self._model_btn.configure(state="normal")
         self._refresh_hardware_view()
         self._refresh_recommendations()
