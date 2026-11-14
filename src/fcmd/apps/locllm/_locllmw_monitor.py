@@ -350,6 +350,8 @@ class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖
         _load_vars: Any
         _gpu_vars: Any
         _update_fit_states: Any
+        _refresh_overview_usage: Any
+        _reset_overview_usage: Any
 
     # ------------------------------------------------------------------ #
     # 实时性能监控（/metrics）
@@ -407,6 +409,7 @@ class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖
         self._metric_vars["monitor"].set(reason)
         for var in (*self._load_vars.values(), *self._gpu_vars.values()):
             var.set("-")
+        self._reset_overview_usage()
 
     def _monitor_loop(self, state: ServeState | None, stop: threading.Event) -> None:
         """后台线程：每秒采样系统负载；服务运行时额外采样 ``/metrics``。"""
@@ -481,6 +484,7 @@ class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖
         for key, value in _format_gpu(sample.gpu).items():
             self._gpu_vars[key].set(value)
         self._sync_free_vram(sample.gpu)
+        self._refresh_overview_usage(sample)
 
     def _sync_free_vram(self, gpu: GpuSample | None) -> None:
         """用实时 GPU 采样更新可用显存，服务停止释放显存后自动恢复为“可用”。"""

@@ -71,19 +71,17 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
     def _build_hardware(self, parent: Any) -> None:
         ttk = self._ttk
         space = self._theme.spacing
-        box = ttk.LabelFrame(parent, text="硬件与模型盘", padding=space.sm)
+        box = ttk.LabelFrame(parent, text="硬件信息", padding=space.sm)
         box.pack(fill="x")
         box.columnconfigure(1, weight=1)
 
         self._hardware_vars = {
-            key: self._tk.StringVar(value="检测中…")
-            for key in ("gpu", "cpu", "memory", "disks", "model_disk", "detected")
+            key: self._tk.StringVar(value="检测中…") for key in ("gpu", "cpu", "memory", "model_disk", "detected")
         }
         rows = (
             ("显卡", "gpu"),
             ("处理器", "cpu"),
             ("内存", "memory"),
-            ("硬盘", "disks"),
             ("模型盘", "model_disk"),
         )
         for row, (label, key) in enumerate(rows):
@@ -97,14 +95,60 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
                 lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
             )
         ttk.Button(box, text="修改模型盘…", command=self._choose_model_root).grid(
-            row=4, column=2, sticky="e", padx=(space.sm, 0)
+            row=3, column=2, sticky="e", padx=(space.sm, 0)
         )
+
+        self._usage_vars = {
+            "gpu": self._tk.StringVar(value="等待采样…"),
+            "memory": self._tk.StringVar(value="等待采样…"),
+        }
+        self._usage_bars: dict[str, Any] = {}
+        for row, (label, key) in enumerate((("显存占用", "gpu"), ("内存占用", "memory")), start=4):
+            ttk.Label(box, text=label, style="Muted.TLabel").grid(
+                row=row, column=0, sticky="nw", padx=(0, space.sm), pady=space.xxs
+            )
+            usage = ttk.Frame(box)
+            usage.grid(row=row, column=1, columnspan=2, sticky="we", pady=space.xxs)
+            usage.columnconfigure(0, weight=1)
+            bar = ttk.Progressbar(usage, mode="determinate", maximum=100, length=220)
+            bar.grid(row=0, column=0, sticky="we", padx=(0, space.sm))
+            ttk.Label(usage, textvariable=self._usage_vars[key], style="Hint.TLabel").grid(row=0, column=1, sticky="e")
+            self._usage_bars[key] = bar
+
         ttk.Label(box, textvariable=self._hardware_vars["detected"], style="Hint.TLabel").grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(space.xs, 0)
+            row=6, column=0, columnspan=2, sticky="w", pady=(space.xs, 0)
         )
         ttk.Button(box, text="重新检测", command=self._start_hardware_detection).grid(
-            row=5, column=2, sticky="e", padx=(space.sm, 0)
+            row=6, column=2, sticky="e", padx=(space.sm, 0)
         )
+
+    def _refresh_overview_usage(self, sample: Any) -> None:
+        """用系统采样刷新显存 / 内存占用条与百分比文案。"""
+        gpu = sample.gpu
+        if gpu is not None and gpu.memory_used is not None and gpu.memory_total:
+            percent = min(max(gpu.memory_used / gpu.memory_total * 100, 0.0), 100.0)
+            self._usage_bars["gpu"].configure(value=percent)
+            self._usage_vars["gpu"].set(
+                f"{gpu.memory_used / 1024:.1f} / {gpu.memory_total / 1024:.1f} GB（{percent:.1f} %）"
+            )
+        else:
+            self._usage_bars["gpu"].configure(value=0)
+            self._usage_vars["gpu"].set("未检测到 NVIDIA GPU" if gpu is None else "暂不可用")
+        if sample.memory_total:
+            percent = min(max(sample.memory_percent, 0.0), 100.0)
+            self._usage_bars["memory"].configure(value=percent)
+            self._usage_vars["memory"].set(
+                f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}（{percent:.1f} %）"
+            )
+        else:  # pragma: no cover - psutil 总能返回内存总量
+            self._usage_bars["memory"].configure(value=0)
+            self._usage_vars["memory"].set("暂不可用")
+
+    def _reset_overview_usage(self) -> None:
+        """停止采样时把占用条归零，避免停在过期数值。"""
+        for key, bar in self._usage_bars.items():
+            bar.configure(value=0)
+            self._usage_vars[key].set("未监控")
 
     def _build_recommendations(self, parent: Any) -> None:
         ttk = self._ttk
@@ -192,7 +236,6 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         self._hardware_vars["gpu"].set(gpu)
         self._hardware_vars["cpu"].set(f"{snapshot.cpu}（{snapshot.cpu_cores} 核 / {snapshot.cpu_threads} 线程）")
         self._hardware_vars["memory"].set(human_size(snapshot.memory_total) if snapshot.memory_total else "-")
-        self._hardware_vars["disks"].set("；".join(format_disk(disk) for disk in snapshot.disks) or "未检测到固定磁盘")
         model_path = self._selected_model or Path(snapshot.model_root or ".")
         disk = disk_for_path(model_path, snapshot.disks)
         root_text = str(model_path if self._selected_model else (snapshot.model_root or "未配置"))
