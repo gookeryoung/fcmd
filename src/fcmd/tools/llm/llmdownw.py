@@ -41,13 +41,17 @@ from fcmd.tools.llm.llmdown import (
     ModelTask,
     ModelToolError,
     ProgressEvent,
+    company_matches,
+    company_options,
     delete_local_model,
     download_files,
     fetch_files,
     fetch_model_info,
     fetch_tasks,
+    filter_by_company,
     filter_files,
     format_timestamp,
+    model_company,
     scan_local_models,
     search_models,
     select_source,
@@ -66,10 +70,11 @@ __all__ = [
     "resolve_geometry",
     "save_settings",
     "sort_models",
+    "sync_tree_rows",
 ]
 
 _DESCRIPTION = (
-    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别筛选 / 服务端排序与列头排序 / "
+    "llmdown 的 Tk 窗口版（ModelScope 模型搜索 / 类别与公司筛选 / 服务端排序与列头排序 / "
     "详情 / 下载 / 本地管理；窗口位置与下载参数记忆到 ~/.fcmd/ui/llmdownw.json）"
 )
 _MIN_WIDTH = 1080
@@ -94,11 +99,13 @@ _SORT_LABELS = {
 }
 _SORT_KEYS = {label: key for key, label in _SORT_LABELS.items()}
 _ALL_TASKS = "全部类别"
+_ALL_COMPANIES = "全部公司"
 _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw", "s", "se", "sw", "w"]]] = {
-    "repo": ("模型", 190, "w"),
-    "tasks": ("任务", 116, "w"),
-    "downloads": ("下载", 84, "e"),
-    "size": ("体积", 76, "e"),
+    "repo": ("模型", 180, "w"),
+    "company": ("公司", 112, "w"),
+    "tasks": ("任务", 108, "w"),
+    "downloads": ("下载", 78, "e"),
+    "size": ("体积", 70, "e"),
 }
 
 
@@ -187,12 +194,12 @@ def parse_patterns(text: str) -> list[str] | None:
 
 
 def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
-    """模型列表的一行：仓库、任务、下载量、更新时间、体积。"""
+    """模型列表的一行：仓库、公司、任务、下载量、体积。"""
     return (
         item.repo,
+        model_company(item),
         "、".join(item.tasks) or "-",
         f"{item.downloads:,}",
-        format_timestamp(item.updated),
         human_size(item.storage_size) if item.storage_size else "-",
     )
 
@@ -220,6 +227,32 @@ def sort_models(
     if key is None:
         return items
     return tuple(sorted(items, key=key, reverse=descending))
+
+
+def sync_tree_rows(tree: Any, rows: list[tuple[str, tuple[Any, ...]]]) -> None:
+    """按 iid 增量同步 Treeview 行：只增删 / 移动变化项，不整表重建。
+
+    整表删除再逐行插入会丢失选中项与滚动位置，数据量大时还会造成明显卡顿；
+    这里以模型仓库名为 iid，只处理新增、删除、字段变化与位置变化。
+    """
+    desired = [repo for repo, _ in rows]
+    wanted = set(desired)
+    current = list(tree.get_children())
+    for iid in current:
+        if iid not in wanted:
+            tree.delete(iid)
+    current = [iid for iid in current if iid in wanted]
+    for index, (repo, values) in enumerate(rows):
+        if not tree.exists(repo):
+            tree.insert("", index, iid=repo, values=values)
+            current.insert(index, repo)
+            continue
+        if tuple(str(value) for value in tree.item(repo, "values")) != tuple(str(value) for value in values):
+            tree.item(repo, values=values)
+        if index >= len(current) or current[index] != repo:
+            tree.move(repo, "", index)
+            current.remove(repo)
+            current.insert(index, repo)
 
 
 def local_row(item: LocalModel) -> tuple[str, str, str, str, str]:
@@ -302,6 +335,8 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
 
         self._keyword_var = tk.StringVar()
         self._task_var = tk.StringVar(value=_ALL_TASKS)
+        self._company_applied = ""
+        self._company_options: tuple[str, ...] = ()
         self._sort_var = tk.StringVar(value=_SORT_LABELS["default"])
         self._page_var = tk.StringVar(value="尚未搜索")
         self._status_var = tk.StringVar(value="就绪")
@@ -429,6 +464,22 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         )
         self._task_box.pack(side="left", padx=(space.xs, space.lg))
         self._task_box.bind("<<ComboboxSelected>>", self._on_task_changed)
+
+        ttk.Label(nav, text="公司").pack(side="left")
+        self._company_var = self._tk.StringVar(value=_ALL_COMPANIES)
+        self._company_box = ttk.Combobox(
+            nav,
+            textvariable=self._company_var,
+            values=[_ALL_COMPANIES],
+            width=14,
+            postcommand=self._filter_company_values,
+        )
+        self._company_box.pack(side="left", padx=(space.xs, space.lg))
+        self._company_box.bind("<<ComboboxSelected>>", self._on_company_changed)
+        self._company_box.bind("<Return>", self._on_company_enter)
+        self._company_box.bind("<Escape>", self._reset_company)
+        self._company_box.bind("<KeyRelease>", self._filter_company_values)
+        self._company_box.bind("<FocusOut>", self._on_company_blur)
 
         ttk.Label(nav, text="排序").pack(side="left")
         sort_box = ttk.Combobox(
@@ -668,6 +719,69 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
     def _on_task_changed(self, _event: Any = None) -> None:
         """类别变化后重新从第 1 页搜索。"""
         self._start_search(1)
+
+    def _on_company_changed(self, _event: Any = None) -> None:
+        """公司下拉选中后只重渲染当前页，不触发网络请求。"""
+        label = self._company_var.get().strip()
+        if label in ("", _ALL_COMPANIES) or label not in self._company_options:
+            self._company_applied = ""
+            self._company_var.set(_ALL_COMPANIES)
+        else:
+            self._company_applied = label
+        self._company_box.configure(values=[_ALL_COMPANIES, *self._company_options])
+        self._render_results()
+
+    def _on_company_enter(self, _event: Any = None) -> str:
+        """回车应用：精确匹配优先，唯一候选（含别名 / 子串命中）时自动补全。"""
+        text = self._company_var.get().strip()
+        if text in ("", _ALL_COMPANIES):
+            self._company_var.set(_ALL_COMPANIES)
+            self._company_applied = ""
+            self._render_results()
+            return "break"
+        candidates = [label for label in self._company_options if company_matches(label, text)]
+        if text not in self._company_options and len(candidates) == 1:
+            self._company_var.set(candidates[0])
+        elif text in self._company_options:
+            self._company_var.set(text)
+        else:
+            self._status_var.set("没有匹配的公司，请输入关键字后从下拉中选择")
+            return "break"
+        self._on_company_changed()
+        return "break"
+
+    def _reset_company(self, _event: Any = None) -> str:
+        """Esc 清空公司筛选，回到「全部公司」。"""
+        self._company_var.set(_ALL_COMPANIES)
+        self._company_applied = ""
+        self._company_box.configure(values=[_ALL_COMPANIES, *self._company_options])
+        self._render_results()
+        return "break"
+
+    def _filter_company_values(self, _event: Any = None) -> None:
+        """按输入文本过滤下拉候选（别名与子串均可命中），不改变已生效筛选。"""
+        text = self._company_var.get().strip()
+        if text and text != _ALL_COMPANIES:
+            values = [label for label in self._company_options if company_matches(label, text)]
+        else:
+            values = list(self._company_options)
+        self._company_box.configure(values=[_ALL_COMPANIES, *(values or self._company_options)])
+
+    def _on_company_blur(self, _event: Any = None) -> None:
+        """失焦时丢弃半截输入，恢复为已生效的公司或「全部公司」。"""
+        text = self._company_var.get().strip()
+        if text not in self._company_options and text not in ("", _ALL_COMPANIES):
+            self._company_var.set(self._company_applied or _ALL_COMPANIES)
+        self._company_box.configure(values=[_ALL_COMPANIES, *self._company_options])
+
+    def _update_company_options(self, items: tuple[ModelSummary, ...]) -> None:
+        """按当前页归集公司刷新下拉；已选公司在新结果里不存在时回落「全部」。"""
+        options = company_options(items)
+        self._company_options = options
+        if self._company_applied and self._company_applied not in options:
+            self._company_applied = ""
+            self._company_var.set(_ALL_COMPANIES)
+        self._company_box.configure(values=[_ALL_COMPANIES, *options])
 
     def _active_task(self) -> ModelTask | None:
         """当前选中的类别（``全部类别`` 返回 ``None``）。"""
@@ -1093,7 +1207,7 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
             self._models_tree.heading(key, text=f"{label}{arrow}")
 
     def _render_results(self) -> None:
-        """按类别筛选与列排序渲染当前页，并尽量保持原选中模型。"""
+        """按类别 / 公司筛选与列排序渲染当前页，保持选中模型与滚动位置。"""
         result = self._last_result
         if result is None:
             return
@@ -1102,30 +1216,38 @@ class DownloadWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 
         items = result.items
         if task is not None and task.chinese_name:
             items = filter_models(items, task.chinese_name)
+        self._update_company_options(items)
+        items = filter_by_company(items, self._company_applied)
         items = sort_models(items, self._sort_column, self._sort_desc)
         selected_repo = self._current_repo
-        self._models_tree.delete(*self._models_tree.get_children())
-        for item in items:
-            repo, tasks, downloads, _updated, size = model_row(item)
-            self._models_tree.insert("", "end", iid=item.repo, values=(repo, tasks, downloads, size))
+        offset = self._models_tree.yview()[0]
+        sync_tree_rows(self._models_tree, [(item.repo, model_row(item)) for item in items])
         self._update_headings()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
-        matched = f" · 本页匹配 {len(items)} 个" if task_label != _ALL_TASKS else ""
+        filters = []
+        if task_label != _ALL_TASKS:
+            filters.append(f"类别「{task_label}」")
+        if self._company_applied:
+            filters.append(f"公司「{self._company_applied}」")
+        matched = f" · 本页匹配 {len(items)} 个" if filters else ""
         self._page_var.set(f"第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
         self._prev_btn.configure(state="normal" if result.page > 1 else "disabled")
         self._next_btn.configure(state="normal" if result.page < pages else "disabled")
         if not items:
             self._status_var.set(
-                f"本页没有「{task_label}」模型，可翻页或清空关键字后再试"
-                if task_label != _ALL_TASKS
-                else "没有匹配的模型"
+                f"本页没有符合{'、'.join(filters)}的模型，可翻页或放宽筛选后再试" if filters else "没有匹配的模型"
             )
             return
         repos = {item.repo for item in items}
         target = selected_repo if selected_repo in repos else items[0].repo
-        self._models_tree.selection_set(target)
-        self._models_tree.focus(target)
-        self._models_tree.see(target)
+        selection = self._models_tree.selection()
+        if not selection or selection[0] != target:
+            self._models_tree.selection_set(target)
+            self._models_tree.focus(target)
+            self._models_tree.see(target)
+        else:
+            # 选中项未变时不打扰视图，把滚动位置还原到筛选前
+            self._models_tree.yview_moveto(offset)
         self._status_var.set(f"找到 {result.total:,} 个模型，本页显示 {len(items)} 个")
 
     def _render_search(self, result: ModelSearch) -> None:

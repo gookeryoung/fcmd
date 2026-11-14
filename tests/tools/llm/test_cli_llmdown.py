@@ -36,14 +36,19 @@ from fcmd.tools.llm.llmdown import (
     _download_one,
     _normalize_repo,
     _ReporterProgress,
+    _summary_from_item,
+    company_matches,
+    company_options,
     delete_local_model,
     download_files,
     fetch_files,
     fetch_model_info,
     fetch_tasks,
     file_url,
+    filter_by_company,
     filter_files,
     format_timestamp,
+    model_company,
     scan_local_models,
     search_models,
     select_source,
@@ -783,6 +788,87 @@ class TestSearchModels:
         monkeypatch.setattr("urllib.request.urlopen", _urlopen)
         search_models(sort=sort)  # type: ignore[arg-type]
         assert captured["body"]["SortBy"] == expected
+
+    def test_summary_owner_fallbacks(self) -> None:
+        assert _summary_from_item({"Name": "m", "Path": "Qwen"}).owner == "Qwen"
+        assert _summary_from_item({"Name": "m", "Author": "deepseek-ai"}).owner == "deepseek-ai"
+        assert _summary_from_item({"Name": "m", "Publisher": "BAAI"}).owner == "BAAI"
+        assert _summary_from_item({"Name": "m"}).owner == ""
+
+
+class TestCompany:
+    """公司归集 / 筛选（列表元数据缺失时归入「其他」）。"""
+
+    @staticmethod
+    def _items() -> tuple[ModelSummary, ...]:
+        return (
+            ModelSummary(repo="Qwen/qwen3", owner="Qwen"),
+            ModelSummary(repo="qwen/qwen2", owner="qwen"),
+            ModelSummary(repo="Alibaba/agent", owner="Alibaba"),
+            ModelSummary(repo="BAAI/embed", owner="BAAI"),
+            ModelSummary(repo="acme/tool", owner="acme"),
+            ModelSummary(repo="standalone-model"),
+        )
+
+    def test_alias_merges_model_and_org_spellings(self) -> None:
+        items = self._items()[:4]
+        assert [model_company(item) for item in items] == ["阿里巴巴（Alibaba）"] * 3 + ["智源（BAAI）"]
+
+    def test_unknown_name_case_variants_merge(self) -> None:
+        assert model_company(ModelSummary(owner="acme", repo="acme/a")) == "Acme"
+        assert model_company(ModelSummary(owner="ACME", repo="ACME/a")) == "Acme"
+        assert model_company(ModelSummary(owner="SomeOrg", repo="SomeOrg/a")) == "SomeOrg"
+
+    def test_missing_metadata_goes_to_other(self) -> None:
+        assert model_company(ModelSummary(repo="standalone-model")) == "其他"
+        assert model_company(ModelSummary(repo="")) == "其他"
+
+    def test_company_options_sorted_with_other_last(self) -> None:
+        assert company_options(self._items()) == ("Acme", "智源（BAAI）", "阿里巴巴（Alibaba）", "其他")
+
+    def test_filter_by_company_accepts_label_and_alias(self) -> None:
+        items = self._items()
+        labels = [item.repo for item in filter_by_company(items, "阿里巴巴（Alibaba）")]
+        assert labels == ["Qwen/qwen3", "qwen/qwen2", "Alibaba/agent"]
+        assert [item.repo for item in filter_by_company(items, "qwen")] == labels
+        assert [item.repo for item in filter_by_company(items, "BAAI")] == ["BAAI/embed"]
+        assert [item.repo for item in filter_by_company(items, "其他")] == ["standalone-model"]
+
+    def test_filter_by_company_empty_keeps_all(self) -> None:
+        items = self._items()
+        assert filter_by_company(items, "") == items
+        assert filter_by_company(items, "  ") == items
+
+    def test_company_matches_supports_alias_and_substring(self) -> None:
+        assert company_matches("阿里巴巴（Alibaba）", "qwen")
+        assert company_matches("阿里巴巴（Alibaba）", "ali")
+        assert not company_matches("智源（BAAI）", "qwen")
+        assert company_matches("智源（BAAI）", "")
+
+    def test_search_cmd_filters_current_page(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        result = ModelSearch(
+            (
+                ModelSummary(repo="Qwen/demo", owner="Qwen", downloads=1),
+                ModelSummary(repo="BAAI/embed", owner="BAAI", downloads=2),
+            ),
+            2,
+        )
+        monkeypatch.setattr(llmdown, "search_models", lambda *a, **k: result)
+
+        llmdown.search_cmd("", company="qwen")
+
+        out = capsys.readouterr().out
+        assert "Qwen/demo" in out
+        assert "BAAI/embed" not in out
+
+    def test_search_cmd_company_no_match(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(llmdown, "search_models", lambda *a, **k: ModelSearch((ModelSummary(repo="BAAI/x"),), 1))
+        llmdown.search_cmd("", company="qwen")
+        assert "没有匹配的模型" in capsys.readouterr().out
 
 
 class TestFetchTasks:

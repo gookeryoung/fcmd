@@ -23,6 +23,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import re
 import shutil
 import threading
 from collections.abc import Callable
@@ -51,13 +52,17 @@ __all__ = [
     "ModelTask",
     "ProgressEvent",
     "SourceSelection",
+    "company_matches",
+    "company_options",
     "delete_local_model",
     "download_files",
     "fetch_files",
     "fetch_model_info",
     "fetch_tasks",
+    "filter_by_company",
     "filter_files",
     "format_timestamp",
+    "model_company",
     "scan_local_models",
     "search_models",
     "select_source",
@@ -91,6 +96,74 @@ _PROBE_TIMEOUT = 5.0
 _STREAM_TIMEOUT = 60.0
 _CHUNK_SIZE = 1024 * 1024
 _SOURCE_BY_HOST = {"www.modelscope.cn": "modelscope", "hf-mirror.com": "hf-mirror"}
+_OTHER_COMPANY = "其他"
+# 公司别名表：键为归一后的名称（小写、空白 / 下划线 / 点号折叠为 ``-``），
+# 值为界面与 CLI 共用的显示名。同一家公司的模型代号 / 组织别名在此合并。
+_COMPANY_ALIASES: dict[str, str] = {
+    "alibaba": "阿里巴巴（Alibaba）",
+    "alibaba-cloud": "阿里巴巴（Alibaba）",
+    "alibaba-group": "阿里巴巴（Alibaba）",
+    "aliyun": "阿里巴巴（Alibaba）",
+    "damo": "阿里巴巴（Alibaba）",
+    "qwen": "阿里巴巴（Alibaba）",
+    "qwenlm": "阿里巴巴（Alibaba）",
+    "tongyi": "阿里巴巴（Alibaba）",
+    "baai": "智源（BAAI）",
+    "beijing-academy-of-artificial-intelligence": "智源（BAAI）",
+    "deepseek": "深度求索（DeepSeek）",
+    "deepseek-ai": "深度求索（DeepSeek）",
+    "high-flyer": "深度求索（DeepSeek）",
+    "meta": "Meta",
+    "meta-llama": "Meta",
+    "facebook": "Meta",
+    "google": "Google",
+    "google-research": "Google",
+    "deepmind": "Google",
+    "gemma": "Google",
+    "microsoft": "Microsoft",
+    "microsoft-research": "Microsoft",
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "mistral": "Mistral AI",
+    "mistralai": "Mistral AI",
+    "mistral-ai": "Mistral AI",
+    "nvidia": "NVIDIA",
+    "stabilityai": "Stability AI",
+    "stability-ai": "Stability AI",
+    "huggingface": "Hugging Face",
+    "huggingfaceh4": "Hugging Face",
+    "tencent": "腾讯（Tencent）",
+    "hunyuan": "腾讯（Tencent）",
+    "baidu": "百度（Baidu）",
+    "ernie": "百度（Baidu）",
+    "zhipu": "智谱（Zhipu）",
+    "zhipuai": "智谱（Zhipu）",
+    "thudm": "智谱（Zhipu）",
+    "chatglm": "智谱（Zhipu）",
+    "moonshot": "月之暗面（Moonshot AI）",
+    "moonshotai": "月之暗面（Moonshot AI）",
+    "moonshot-ai": "月之暗面（Moonshot AI）",
+    "kimi": "月之暗面（Moonshot AI）",
+    "minimax": "MiniMax",
+    "01-ai": "零一万物（01.AI）",
+    "01ai": "零一万物（01.AI）",
+    "internlm": "上海 AI Lab（InternLM）",
+    "shanghai-ai-laboratory": "上海 AI Lab（InternLM）",
+    "sensetime": "商汤（SenseTime）",
+    "openbmb": "OpenBMB",
+    "stepfun": "阶跃星辰（StepFun）",
+    "stepfun-ai": "阶跃星辰（StepFun）",
+    "baichuan": "百川智能（Baichuan）",
+    "baichuan-inc": "百川智能（Baichuan）",
+    "xverse": "元象（XVERSE）",
+    "xverse-ai": "元象（XVERSE）",
+    "allenai": "Allen AI",
+    "allen-ai": "Allen AI",
+    "ibm": "IBM",
+    "amazon": "Amazon",
+    "xai": "xAI",
+    "x-ai": "xAI",
+}
 
 
 class ModelToolError(RuntimeError):
@@ -429,8 +502,10 @@ def _task_names(value: Any) -> tuple[str, ...]:
 def _summary_from_item(item: dict[str, Any]) -> ModelSummary:
     """把 ModelScope 列表 / 详情里的模型对象转换为 :class:`ModelSummary`。"""
     name = _as_text(item.get("Name"))
-    owner = _as_text(item.get("Path"))
-    repo = f"{owner}/{name}" if owner and name else name
+    path = _as_text(item.get("Path"))
+    # owner 优先取仓库路径；缺失时回落到接口可能提供的作者 / 发布方字段
+    owner = path or _as_text(item.get("Owner")) or _as_text(item.get("Author")) or _as_text(item.get("Publisher"))
+    repo = f"{path}/{name}" if path and name else name
     return ModelSummary(
         repo=repo,
         name=name,
@@ -555,6 +630,69 @@ def fetch_model_info(repo: str, timeout: float = _MANIFEST_TIMEOUT) -> ModelInfo
         created=_as_int(detail.get("CreatedTime")),
         inference=_as_text(detail.get("SupportInference")),
     )
+
+
+# ---------------------------------------------------------------------- #
+# 公司归集与筛选
+# ---------------------------------------------------------------------- #
+def _company_token(value: str) -> str:
+    """公司名归一键：去空白、折叠 ``-`` / ``_`` / 空格 / 点号并转小写。"""
+    return re.sub(r"[\s_.]+", "-", value.strip().casefold()).strip("-")
+
+
+def _company_name(summary: ModelSummary) -> str:
+    """模型元数据里的原始公司名：优先 owner，其次 ``<组织>/<模型>`` 的组织段。"""
+    raw = summary.owner or (summary.repo.split("/", 1)[0] if "/" in summary.repo else "")
+    return raw.split("/", 1)[0].strip()
+
+
+def model_company(summary: ModelSummary) -> str:
+    """模型所属公司的归一显示名；元数据缺失时归入「其他」。
+
+    归一规则：忽略大小写与 ``-`` / ``_`` / 空格 / 点号差异，命中别名表时
+    使用统一显示名（如 ``Qwen`` / ``qwen`` / ``Alibaba`` 都显示为
+    「阿里巴巴（Alibaba）」）；未命中别名时把全大写 / 全小写名称统一为首字母
+    大写，避免 ``acme`` / ``ACME`` 在筛选列表里分裂成多行。
+    """
+    raw = _company_name(summary)
+    token = _company_token(raw)
+    if not token:
+        return _OTHER_COMPANY
+    label = _COMPANY_ALIASES.get(token)
+    if label:
+        return label
+    return raw.capitalize() if raw.islower() or raw.isupper() else raw
+
+
+def company_options(items: tuple[ModelSummary, ...]) -> tuple[str, ...]:
+    """归集当前结果涉及的公司显示名：去重、按名称排序，「其他」始终置末。"""
+    labels = {model_company(item) for item in items}
+    others = [label for label in labels if label == _OTHER_COMPANY]
+    rest = sorted((label for label in labels if label != _OTHER_COMPANY), key=str.casefold)
+    return tuple(rest + others)
+
+
+def company_matches(label: str, query: str) -> bool:
+    """公司显示名是否匹配查询词：支持别名（``qwen``）与不区分大小写的子串。"""
+    text = query.strip()
+    if not text:
+        return True
+    lowered = text.casefold()
+    alias = _COMPANY_ALIASES.get(_company_token(text))
+    target = label.casefold()
+    return target == lowered or (alias is not None and target == alias.casefold()) or lowered in target
+
+
+def filter_by_company(items: tuple[ModelSummary, ...], company: str = "") -> tuple[ModelSummary, ...]:
+    """按公司筛选；空串表示不过滤，查询词支持显示名与别名（精确匹配）。"""
+    text = company.strip()
+    if not text:
+        return items
+    alias = _COMPANY_ALIASES.get(_company_token(text))
+    wanted = {text.casefold()}
+    if alias is not None:
+        wanted.add(alias.casefold())
+    return tuple(item for item in items if model_company(item).casefold() in wanted)
 
 
 # ---------------------------------------------------------------------- #
@@ -989,6 +1127,7 @@ def search_cmd(
     page: int = 1,
     limit: int = 20,
     sort: Literal["default", "modified", "created", "downloads", "stars"] = "default",
+    company: str = "",
 ) -> None:
     """在 ModelScope 搜索模型并列出摘要。
 
@@ -1003,9 +1142,13 @@ def search_cmd(
     sort:
         ``default`` 默认排序、``modified`` 最近更新、``created`` 最新发布、
         ``downloads`` 下载最多、``stars`` 星标最多。
+    company:
+        按公司筛选（只作用于当前页）。支持别名且不区分大小写，如
+        ``qwen`` / ``Alibaba`` 都匹配阿里巴巴；缺公司信息的条目归入「其他」。
     """
     result = search_models(keyword, page, limit, sort)
-    if not result.items:
+    items = filter_by_company(result.items, company)
+    if not items:
         get_console().print("[yellow]没有匹配的模型[/yellow]")
         return
     table = Table(title=f"ModelScope 模型（第 {result.page} 页 / 共 {result.total} 条）", box="ascii")
@@ -1015,7 +1158,7 @@ def search_cmd(
     table.add_column("星标", justify="right", no_wrap=True)
     table.add_column("更新", justify="right", no_wrap=True)
     table.add_column("大小", justify="right", no_wrap=True)
-    for item in result.items:
+    for item in items:
         table.add_row(
             item.repo,
             "、".join(item.tasks) or "-",

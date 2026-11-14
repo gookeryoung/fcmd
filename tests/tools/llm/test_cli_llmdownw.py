@@ -13,8 +13,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -34,6 +34,7 @@ from fcmd.tools.llm.llmdownw import (
     resolve_geometry,
     save_settings,
     sort_models,
+    sync_tree_rows,
 )
 
 
@@ -127,11 +128,11 @@ class TestFormatting:
             updated=1700000000,
             storage_size=2048,
         )
-        expected_date = datetime.fromtimestamp(1700000000).strftime("%Y-%m-%d")
-        assert model_row(summary) == ("Qwen/demo", "文本生成、视觉问答", "1,234", expected_date, "2.00 KB")
+        assert model_row(summary) == ("Qwen/demo", "阿里巴巴（Alibaba）", "文本生成、视觉问答", "1,234", "2.00 KB")
 
     def test_model_row_empty(self) -> None:
-        assert model_row(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "-", "0", "-", "-")
+        assert model_row(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "阿里巴巴（Alibaba）", "-", "0", "-")
+        assert model_row(ModelSummary(repo="")) == ("", "其他", "-", "0", "-")
 
     def test_local_row(self) -> None:
         path = Path("/models/Qwen/demo")
@@ -214,6 +215,68 @@ class TestBrowseHelpers:
         items = self._items()
         assert sort_models(items, None) == items
         assert sort_models(items, "unknown") == items
+
+
+class _FakeTree:
+    """最小 Treeview 替身：记录 iid 顺序、行值与各类操作次数。"""
+
+    def __init__(self, rows: list[tuple[str, tuple[str, ...]]] | None = None) -> None:
+        self.rows = list(rows or [])
+        self.inserts = 0
+        self.deletes = 0
+        self.moves = 0
+        self.updates = 0
+
+    def get_children(self) -> tuple[str, ...]:
+        return tuple(iid for iid, _ in self.rows)
+
+    def exists(self, iid: str) -> bool:
+        return any(row[0] == iid for row in self.rows)
+
+    def item(self, iid: str, option: str | None = None, values: tuple[str, ...] | None = None) -> Any:
+        if values is not None:
+            self.updates += 1
+            self.rows = [(key, tuple(values)) if key == iid else (key, current) for key, current in self.rows]
+            return None
+        assert option == "values"
+        return next(current for key, current in self.rows if key == iid)
+
+    def insert(self, _parent: str, index: int, iid: str, values: tuple[str, ...]) -> None:
+        self.inserts += 1
+        self.rows.insert(index, (iid, tuple(values)))
+
+    def delete(self, iid: str) -> None:
+        self.deletes += 1
+        self.rows = [row for row in self.rows if row[0] != iid]
+
+    def move(self, iid: str, _parent: str, index: int) -> None:
+        self.moves += 1
+        row = next(row for row in self.rows if row[0] == iid)
+        self.rows.remove(row)
+        self.rows.insert(index, row)
+
+
+class TestSyncTreeRows:
+    """增量同步：只处理变化项，保留未变化的行（选中与滚动不受影响）。"""
+
+    def test_insert_update_and_remove(self) -> None:
+        tree = _FakeTree([("a", ("a", "1")), ("b", ("b", "1"))])
+        sync_tree_rows(tree, [("b", ("b", "2")), ("c", ("c", "1"))])
+        assert tree.rows == [("b", ("b", "2")), ("c", ("c", "1"))]
+        assert (tree.inserts, tree.deletes, tree.updates, tree.moves) == (1, 1, 1, 0)
+
+    def test_reorder_without_rebuild(self) -> None:
+        tree = _FakeTree([("a", ("a",)), ("b", ("b",)), ("c", ("c",))])
+        sync_tree_rows(tree, [("c", ("c",)), ("a", ("a",)), ("b", ("b",))])
+        assert [iid for iid, _ in tree.rows] == ["c", "a", "b"]
+        assert (tree.inserts, tree.deletes) == (0, 0)
+
+    def test_identical_rows_do_nothing(self) -> None:
+        rows: list[tuple[str, tuple[str, ...]]] = [("a", ("a", "1")), ("b", ("b", "2"))]
+        tree = _FakeTree(rows)
+        sync_tree_rows(tree, rows)
+        assert tree.rows == rows
+        assert (tree.inserts, tree.deletes, tree.updates, tree.moves) == (0, 0, 0, 0)
 
 
 class TestOpenPath:
