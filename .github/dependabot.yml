@@ -14,6 +14,11 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # PyMuPDF 2.x 强依赖 onnxruntime / pymupdf-layout / pymupdf4llm，
+      # 会让安装包多约 72 MB；本项目只用 1.x 的基础 PDF 读写。
+      - dependency-name: "pymupdf"
+        versions: ["2.x"]
   # GitHub Actions：workflow 内 action 版本对齐
   - package-ecosystem: github-actions
     directory: /

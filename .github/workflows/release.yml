@@ -198,6 +198,25 @@ jobs:
           test -d dist/site-packages/PIL
           test -d dist/site-packages/yaml
 
+      # PDF 依赖策略：PyMuPDF 必须锁 1.x，且 onnxruntime 不得进入发布物。
+      # 2.x 会硬拉 onnxruntime / numpy / networkx / pymupdf4llm，安装包多约 72 MB。
+      - name: Assert PDF dependency policy
+        shell: bash
+        run: |
+          pymupdf_meta=$(find dist/site-packages -maxdepth 1 -iname 'pymupdf-*.dist-info' -print -quit)
+          test -n "$pymupdf_meta" || { echo "::error::发布物缺少 pymupdf 元数据"; exit 1; }
+          pymupdf_version=$(grep -m1 '^Version:' "$pymupdf_meta/METADATA" | cut -d' ' -f2)
+          pymupdf_major=${pymupdf_version%%.*}
+          if [ "$pymupdf_major" -ge 2 ]; then
+            echo "::error::PyMuPDF 必须锁 1.x，当前解析到 $pymupdf_version"
+            exit 1
+          fi
+          if [ -e dist/site-packages/onnxruntime ]; then
+            echo "::error::发布物不应包含 onnxruntime（由 PyMuPDF 2.x 带入）"
+            exit 1
+          fi
+          echo "PDF 依赖策略通过: PyMuPDF $pymupdf_version，onnxruntime 未打包"
+
       # Tk 运行期依赖检查：只查文件，不启动 GUI。
       # Windows embed：runtime/Lib/tkinter/__init__.py
       # Linux standalone：tkinter 纯 Python 包被压缩进 runtime/python/lib/python3XX.zip
