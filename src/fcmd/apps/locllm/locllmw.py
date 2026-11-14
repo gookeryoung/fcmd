@@ -793,8 +793,7 @@ class LocllmWindow(
         self._begin_task(self._stop_work, ((name,),))
 
     def _begin_task(self, target: Any, args: tuple[Any, ...]) -> None:
-        """启动后台线程执行目标函数，结果通过队列回传主线程。"""
-        self._nav.select("monitor")
+        """启动后台线程执行目标函数，结果通过队列回传主线程；停留在当前页。"""
         self._messages = queue.Queue()
         self._thread = threading.Thread(target=target, args=args, daemon=True)
         self._set_busy(True)

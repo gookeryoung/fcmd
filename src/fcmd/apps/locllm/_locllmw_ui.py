@@ -133,12 +133,9 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         models_page = self._nav.add("models", "模型", hint="GGUF 模型与显存适配")
         run_page = self._nav.add("run", "运行", hint="档位、上下文与启动参数")
         chat_page = self._nav.add("chat", "对话", hint="单轮 / 多轮流式对话")
-        agent_page = self._nav.add("agent", "代理", hint="工具调用与多步任务")
-        image_page = self._nav.add("image", "画图", hint="文生图 / 图生图")
-        video_page = self._nav.add("video", "视频", hint="文生视频 / 视频理解")
-        audio_page = self._nav.add("audio", "音频", hint="语音识别 / 合成")
+        lab_page = self._nav.add("lab", "实验室", hint="代理 / 画图 / 视频 / 音频规划")
         monitor_page = self._nav.add("monitor", "监测", hint="指标、日志与性能测试")
-        settings_page = self._nav.add("settings", "设置", hint="环境、配置与窗口")
+        settings_page = self._nav.add("settings", "设置", hint="存储、引擎与关于")
         self._page_canvases = {}
         self._nav.enable_shortcuts()
         self.root.bind("<MouseWheel>", self._on_page_wheel, add="+")
@@ -150,27 +147,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._build_models(run_body)
         self._build_params(run_body)
         self._build_chat_page(chat_page)
-        self._build_planned(
-            agent_page,
-            title="代理",
-            summary="代理页规划中：工具调用、文件编辑与多步任务编排将统一在此配置与查看运行轨迹。",
-        )
-        self._build_planned(
-            image_page,
-            title="画图",
-            summary="画图页规划中：接入本地图片生成模型后，在此配置提示词、尺寸、步数与批量任务。",
-        )
-        self._build_planned(
-            video_page,
-            title="视频",
-            summary="视频页规划中：视频生成与视频理解将复用同一套本地模型与任务队列；当前可用 videoconvw 做格式转换。",
-            commands=("fcmd videoconvw",),
-        )
-        self._build_planned(
-            audio_page,
-            title="音频",
-            summary="音频页规划中：语音识别与语音合成将共用本页的模型选择、设备与批处理设置。",
-        )
+        self._build_lab(self._scroll_page("lab", lab_page))
         self._build_monitor(self._scroll_page("monitor", monitor_page))
         self._build_settings(self._scroll_page("settings", settings_page))
 
@@ -209,30 +186,44 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
         return "break"
 
-    def _build_planned(
-        self,
-        parent: Any,
-        *,
-        title: str,
-        summary: str,
-        commands: tuple[str, ...] = (),
-    ) -> None:
-        """规划中分页：说明定位与当前可用命令，避免空白页。"""
+    def _build_lab(self, parent: Any) -> None:
+        """实验室：代理 / 画图 / 视频 / 音频四项规划中的能力合并为一个入口。"""
         ttk = self._ttk
         space = self._theme.spacing
-        box = ttk.LabelFrame(parent, text=title, padding=space.sm)
-        box.pack(fill="both", expand=True)
-        ttk.Label(box, text="规划中", style="Title.TLabel").pack(anchor="w", pady=(0, space.xs))
-        hint = ttk.Label(box, text=summary, justify="left")
-        hint.pack(anchor="w", fill="x")
-        hint.bind(
-            "<Configure>",
-            lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+        ttk.Label(
+            parent,
+            text="以下能力尚未落地，先集中说明定位；列出的 CLI 命令当前可用。",
+            style="Hint.TLabel",
+            justify="left",
+        ).pack(anchor="w", fill="x")
+        grid = ttk.Frame(parent)
+        grid.pack(fill="both", expand=True, pady=(space.sm, 0))
+        cards = (
+            ("代理", "工具调用、文件编辑与多步任务编排；落地后在此配置并查看运行轨迹。", ()),
+            ("画图", "接入本地图片生成模型后，在此配置提示词、尺寸、步数与批量任务。", ()),
+            ("视频", "视频生成与视频理解复用同一套本地模型与任务队列。", ("fcmd videoconvw",)),
+            ("音频", "语音识别与语音合成共用模型选择、设备与批处理设置。", ()),
         )
-        if commands:
-            ttk.Label(box, text="当前可用命令：", style="Hint.TLabel").pack(anchor="w", pady=(space.sm, 0))
+        for index, (title, summary, commands) in enumerate(cards):
+            box = ttk.LabelFrame(grid, text=title, padding=space.sm)
+            box.grid(
+                row=index // 2,
+                column=index % 2,
+                sticky="nsew",
+                padx=(0, space.sm),
+                pady=(0, space.sm),
+            )
+            ttk.Label(box, text="规划中 · 暂无入口", style="Hint.TLabel").pack(anchor="w")
+            hint = ttk.Label(box, text=summary, justify="left")
+            hint.pack(anchor="w", fill="x", pady=(space.xs, 0))
+            hint.bind(
+                "<Configure>",
+                lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
+            )
             for command in commands:
-                ttk.Label(box, text=command, font="TkFixedFont").pack(anchor="w")
+                ttk.Label(box, text=command, font="TkFixedFont").pack(anchor="w", pady=(space.xs, 0))
+        grid.columnconfigure(0, weight=1)
+        grid.columnconfigure(1, weight=1)
 
     def _build_monitor(self, parent: Any) -> None:
         """监测页：实时性能、系统负载、GPU、性能测试与日志。"""
