@@ -136,4 +136,5 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
 - 界面：设置页为「存储 / 引擎」两页，另设「关于与诊断」折叠区；模型目录只有一个
   写入入口且写入前有确认；模型页不再在 `locllmw.json` 保存 `dest`；引擎管理不再
   单独开窗。模型页的「转换」与「量化」为同级子页（顺序在转换之后），共用
-  `llmconvert` / `llmqnt` 与 `<models_dir>/converted/` 约定。
+  `llmconvert` / `llmqnt` 与 `<models_dir>/converted/` 约定；两个子页的输出行都提供
+  「打开目录」，未选源目录时打开默认 `converted` 目录。

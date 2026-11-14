@@ -126,6 +126,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _stop: Any
         _stop_selected: Any
         _plan_text: Any
+        _plan_command: str
         _page_canvases: dict[str, Any]
         _page_bodies: dict[str, Any]
         _params_box: Any
@@ -804,15 +805,28 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         space = self._theme.spacing
         box = self._ttk.LabelFrame(parent, text="启动计划", padding=(space.sm, space.xs))
         box.pack(side="bottom", fill="x", pady=(space.sm, 0))
+        header = self._ttk.Frame(box)
+        header.pack(fill="x")
+        self._ttk.Button(header, text="复制命令", command=self._copy_plan_command).pack(side="right")
         self._plan_text = _guiwindow.create_log(box, height=5)
         _guiwindow.append_log(self._plan_text, "尚未生成：点击下方“预览计划”查看命令、显存估算与建议。")
 
     def _set_plan(self, lines: list[str]) -> None:
         """把启动计划写入运行页预览区（同时保留监测页日志）。"""
         _guiwindow.clear_log(self._plan_text)
+        self._plan_command = ""
         for line in lines:
             _guiwindow.append_log(self._plan_text, line)
             self._log(line)
+            if line.startswith("  命令: "):
+                self._plan_command = line[len("  命令: ") :]
+
+    def _copy_plan_command(self) -> None:
+        """复制当前预览的启动命令，便于在终端复现。"""
+        if not self._plan_command:
+            self._status_var.set("先点「预览计划」生成命令")
+            return
+        self._copy_text(self._plan_command, "已复制启动命令")
 
     def _build_log(self, parent: Any) -> None:
         log_frame = self._ttk.LabelFrame(parent, text="服务日志", padding=self._theme.spacing.sm)

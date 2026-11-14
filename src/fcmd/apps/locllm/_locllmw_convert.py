@@ -256,6 +256,9 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         ttk.Entry(box, textvariable=self._output_var).grid(row=1, column=1, sticky="ew", pady=space.xxs)
         self._output_btn = ttk.Button(box, text="另存为…", command=self._pick_output, width=8)
         self._output_btn.grid(row=1, column=2, sticky="w", padx=(space.xs, 0), pady=space.xxs)
+        ttk.Button(box, text="打开目录", command=self._open_convert_dir, width=9).grid(
+            row=1, column=3, sticky="w", padx=(space.xs, 0), pady=space.xxs
+        )
 
         hint_label = ttk.Label(box, textvariable=self._output_hint_var, justify="left", style="Hint.TLabel")
         hint_label.grid(row=2, column=0, columnspan=3, sticky="we", pady=(space.xxs, 0))
@@ -405,6 +408,9 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         self._quant_out_btn.grid(row=0, column=2, sticky="w", padx=(space.xs, 0))
         self._quant_default_btn = ttk.Button(output_row, text="默认目录", command=self._reset_quant_out_dir, width=9)
         self._quant_default_btn.grid(row=0, column=3, sticky="w", padx=(space.xs, 0))
+        ttk.Button(output_row, text="打开目录", command=self._open_quant_dir, width=9).grid(
+            row=0, column=4, sticky="w", padx=(space.xs, 0)
+        )
 
         options = ttk.Frame(parent)
         options.grid(row=5, column=0, sticky="ew", pady=(space.xs, 0))
@@ -608,6 +614,23 @@ class _ConvertPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI �
         source_text = self._source_var.get().strip()
         if source_text:
             self._sync_convertible_selection(Path(source_text).expanduser())
+
+    def _open_convert_dir(self) -> None:
+        """打开转换输出所在目录；尚未选择源目录时打开默认的 converted 目录。"""
+        from fcmd.apps.locllm._locllmw_models import open_path
+
+        base = self._base_output()
+        target = base.parent if base is not None else _llmconfig.products_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        open_path(target)
+
+    def _open_quant_dir(self) -> None:
+        """打开当前量化输出目录（不存在时先创建）。"""
+        from fcmd.apps.locllm._locllmw_models import open_path
+
+        target = self._quant_out_dir()
+        target.mkdir(parents=True, exist_ok=True)
+        open_path(target)
 
     def _base_output(self) -> Path | None:
         """当前表单对应的基础 GGUF 输出路径（未选择源目录时返回 None）。"""

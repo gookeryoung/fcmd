@@ -265,6 +265,7 @@ class LocllmWindow(
         self._health_var = tk.StringVar(value="正在检测运行环境…")
         self._health_target = "settings"
         self._health_btns: list[Any] = []
+        self._plan_command = ""
         self._info_vars: dict[str, tk.StringVar] = {}
         self._metric_vars: dict[str, tk.StringVar] = {
             "gen_rate": tk.StringVar(value="0.0 tok/s"),
