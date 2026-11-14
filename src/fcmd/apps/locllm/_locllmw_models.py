@@ -439,16 +439,25 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._models_tree.bind("<<TreeviewSelect>>", self._on_model_selected)
         paned.add(left, weight=3)
 
-        right = ttk.Notebook(paned)
-        self._detail_tab = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        self._files_tab = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        right.add(self._detail_tab, text="模型详情")
-        right.add(self._files_tab, text="文件列表")
-        paned.add(right, weight=5)
-        self._detail_notebook = right
+        right = ttk.PanedWindow(paned, orient="vertical")
+        detail_pane = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
+        files_pane = ttk.Frame(right, padding=(self._theme.spacing.md, self._theme.spacing.sm))
+        right.add(detail_pane, weight=3)
+        right.add(files_pane, weight=2)
+        vsash_placed = False
 
-        self._build_detail(self._detail_tab)
-        self._build_files(self._files_tab)
+        def place_vsash(event: Any) -> None:
+            """首次布局时把上下分隔条留在能同时看到详情与文件列表的位置。"""
+            nonlocal vsash_placed
+            if not vsash_placed and event.height > 420:
+                right.sashpos(0, int(event.height * 0.6))
+                vsash_placed = True
+
+        right.bind("<Configure>", place_vsash)
+        paned.add(right, weight=5)
+
+        self._build_detail(detail_pane)
+        self._build_files(files_pane)
 
     def _build_search(self, parent: Any) -> None:
         ttk = self._ttk
@@ -531,8 +540,8 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
 
         meta = ttk.Frame(parent)
         meta.pack(fill="x", pady=space.sm)
-        meta.columnconfigure(1, weight=1)
-        meta.columnconfigure(3, weight=1)
+        meta.columnconfigure(0, weight=1, uniform="meta")
+        meta.columnconfigure(1, weight=1, uniform="meta")
         labels = (
             "中文名",
             "组织",
@@ -551,17 +560,12 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         )
         for index, name in enumerate(labels):
             row, column = divmod(index, 2)
-            ttk.Label(meta, text=f"{name}：", style="Muted.TLabel").grid(
-                row=row, column=column * 2, sticky="e", padx=(0, space.xs), pady=space.xxs
-            )
+            cell = ttk.Frame(meta)
+            cell.grid(row=row, column=column, sticky="ew", padx=(0, space.lg), pady=space.xxs)
+            cell.columnconfigure(1, weight=1)
+            ttk.Label(cell, text=f"{name}：", style="Muted.TLabel").grid(row=0, column=0, sticky="e")
             var = self._tk.StringVar(value="-")
-            ttk.Label(meta, textvariable=var).grid(
-                row=row,
-                column=column * 2 + 1,
-                sticky="w",
-                padx=(0, space.lg),
-                pady=space.xxs,
-            )
+            ttk.Label(cell, textvariable=var, anchor="w").grid(row=0, column=1, sticky="w")
             self._meta_vars[name] = var
 
         readme_box = ttk.LabelFrame(parent, text="README", padding=(space.sm, space.xs))
@@ -892,7 +896,6 @@ class _ModelBrowserPage:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         _guiwindow.clear_log(self._readme)
         self._files_tree.delete(*self._files_tree.get_children())
         self._files_total_var.set("")
-        self._detail_notebook.select(self._detail_tab)
         self._status_var.set(f"正在加载 {repo} …")
         self._spawn(self._detail_worker, repo, generation)
 
