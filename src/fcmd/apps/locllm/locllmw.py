@@ -865,7 +865,6 @@ class LocllmWindow(
         self._log(f"  日志: {state.log}")
         self._start_monitor(state)
         self._refresh_loaded()
-        self._messagebox.showinfo("启动成功", f"服务 {state.name} 已就绪\n{state.base_url}")
 
     def _show_stopped(self, results: list[StopResult], failures: list[str]) -> None:
         """汇总本次“停止所有服务”的结果并刷新界面状态。"""

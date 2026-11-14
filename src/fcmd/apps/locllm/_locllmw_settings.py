@@ -365,7 +365,7 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
     def _build_engine_list(self, parent: Any) -> None:
         ttk = self._ttk
         space = self._theme.spacing
-        box = ttk.LabelFrame(parent, text="已安装引擎（选中后点「设为默认」）", padding=space.sm)
+        box = ttk.LabelFrame(parent, text="已安装引擎", padding=space.sm)
         box.pack(fill="x", pady=(0, space.sm))
         self._engine_tree = ttk.Treeview(
             box, columns=("tag", "current", "exe"), show="headings", selectmode="browse", height=5

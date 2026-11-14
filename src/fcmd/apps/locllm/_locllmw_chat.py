@@ -91,13 +91,12 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         self._chat_refresh_services()
 
     def _build_chat_header(self, parent: Any) -> None:
-        """顶部工具条：始终可见的「设置」入口，一键展开 / 收起连接与生成参数。"""
+        """顶部工具条：始终可见的「连接参数」入口，一键展开 / 收起连接与生成参数。"""
         ttk = self._ttk
         bar = ttk.Frame(parent)
         bar.grid(row=0, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
-        self._chat_settings_btn = ttk.Button(bar, text="设置", width=10, command=self._toggle_chat_settings)
+        self._chat_settings_btn = ttk.Button(bar, text="连接参数", width=12, command=self._toggle_chat_settings)
         self._chat_settings_btn.pack(side="left")
-        ttk.Label(bar, text="连接与生成参数", style="Hint.TLabel").pack(side="left", padx=(self._theme.spacing.sm, 0))
 
     def _toggle_chat_settings(self) -> None:
         """展开 / 收起设置区，并立即持久化，下次进入保持同一状态。"""
@@ -111,11 +110,11 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         if self._chat_settings_open:
             self._chat_connection_box.grid()
             self._chat_params_box.grid()
-            self._chat_settings_btn.configure(text="设置 ▾")
+            self._chat_settings_btn.configure(text="连接参数 ▾")
         else:
             self._chat_connection_box.grid_remove()
             self._chat_params_box.grid_remove()
-            self._chat_settings_btn.configure(text="设置 ▸")
+            self._chat_settings_btn.configure(text="连接参数 ▸")
 
     def _init_chat_state(self) -> None:
         tk = self._tk
