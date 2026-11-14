@@ -1,4 +1,4 @@
-"""locllmw 设置页：目录 / 引擎 / 界面三页配置。
+"""locllmw 设置页：存储 / 引擎两页配置 + 关于与诊断。
 
 所有目录解析都委托给 :mod:`fcmd.apps.locllm._llmconfig`，页面不保存私有默认值；
 修改直接写入权威 ``config.json``。「引擎」页等价承载原独立引擎窗口的能力：
@@ -63,7 +63,7 @@ TaskFunc = Callable[[Callable[[str, int, int | None], None]], tuple[str, str | N
 
 
 # ---------------------------------------------------------------------- #
-# 纯逻辑：目录 / 引擎 / 界面
+# 纯逻辑：存储 / 引擎 / 关于
 # ---------------------------------------------------------------------- #
 def _source(env_name: str, config_key: str, home: Path | None = None) -> str:
     """来源标注：环境变量 > 配置 > 默认（显式 home 时忽略环境变量）。"""
@@ -76,7 +76,7 @@ def _source(env_name: str, config_key: str, home: Path | None = None) -> str:
 
 
 def directory_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
-    """返回「目录」页 ``(项目, 路径, 来源)``：只有模型目录。"""
+    """返回「存储」页 ``(项目, 路径, 来源)``：只有模型目录。"""
     return [
         ("模型目录", str(_llmconfig.models_dir(home=home)), _source("FCMD_MODELS", "models_dir", home)),
     ]
@@ -88,7 +88,7 @@ def engine_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
 
 
 def ui_rows() -> list[tuple[str, str, str]]:
-    """返回「界面」页：窗口配置文件与已保存的窗口几何（只读）。"""
+    """返回「关于与诊断」折叠区：窗口配置文件与已保存的窗口几何（只读）。"""
     path = _guiconfig.config_path("locllmw")
     settings = _guiconfig.read_settings(path) or {}
     geometry = settings.get("geometry")
@@ -226,7 +226,7 @@ def format_inspection(item: llmengine.ZipInspection) -> str:
 # 设置页
 # ---------------------------------------------------------------------- #
 class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI 无显示环境）
-    """设置页容器：分页承载目录 / 引擎 / 界面，共用同一份权威配置。"""
+    """设置页容器：分页承载存储 / 引擎，关于与诊断折叠在存储页底部，共用同一份权威配置。"""
 
     def __init__(
         self,
@@ -260,17 +260,15 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
     # 构建
     # ------------------------------------------------------------------ #
     def _build_tabs(self, parent: Any) -> None:
-        """三个分页：目录 / 引擎 / 界面（原三组字段与行为不变）。"""
+        """两个分页：存储 / 引擎；窗口信息降为存储页底部的只读折叠区。"""
         self._notebook = self._ttk.Notebook(parent)
         self._notebook.pack(fill="both", expand=True)
-        directory, engine, ui = (self._ttk.Frame(self._notebook) for _ in range(3))
-        self._notebook.add(directory, text="目录")
+        storage, engine = (self._ttk.Frame(self._notebook, padding=self._theme.spacing.sm) for _ in range(2))
+        self._notebook.add(storage, text="存储")
         self._notebook.add(engine, text="引擎")
-        self._notebook.add(ui, text="界面")
-        self._groups.update({"目录": directory, "引擎": engine, "界面": ui})
-        self._build_directory(directory)
+        self._groups.update({"存储": storage, "引擎": engine})
+        self._build_storage(storage)
         self._build_engine(engine)
-        self._build_ui(ui)
 
     def _group(self, parent: Any, title: str) -> Any:
         frame = self._ttk.LabelFrame(parent, text=title, padding=self._theme.spacing.sm)
@@ -293,25 +291,72 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         )
         self._vars[key] = var
 
-    def _build_directory(self, parent: Any) -> None:
-        group = self._group(parent, "目录")
+    def _build_storage(self, parent: Any) -> None:
+        """存储页：模型目录 / 引擎根目录（唯一写入口）+ 服务目录 / 配置文件（只读）。"""
+        space = self._theme.spacing
+        group = self._group(parent, "存储位置")
         self._editable_row(group, "models_dir", 0)
-        self._ttk.Label(
+        self._hint(
             group,
-            text="模型目录只支持单一目录；下载的模型直接写入该目录，转换等产物写入其中的 "
-            f"{_llmconfig.PRODUCTS_DIRNAME} 子目录。",
-        ).grid(row=1, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.xs, 0))
-        self._ttk.Label(group, textvariable=self._migration_var, style="Hint.TLabel", justify="left").grid(
-            row=2, column=0, columnspan=4, sticky="w"
+            1,
+            "模型目录只支持单一目录；下载的模型直接写入该目录，转换产物写入其中的 "
+            f"{_llmconfig.PRODUCTS_DIRNAME} 子目录。修改只改指向，不移动已有文件。",
+        )
+        self._editable_row(group, "engines_root", 2)
+        self._hint(group, 3, "llama.cpp 引擎根目录；留空使用内置默认，修改后按新根目录重新识别已安装引擎。")
+        for row, (label, path) in enumerate(
+            (("服务目录", _llmconfig.serve_dir()), ("配置文件", _llmconfig.config_path())),
+            start=4,
+        ):
+            self._ttk.Label(group, text=label).grid(row=row, column=0, sticky="w", padx=(0, space.sm))
+            var = self._tk.StringVar(value=str(path))
+            self._ttk.Entry(group, textvariable=var, state="readonly").grid(row=row, column=1, sticky="we")
+            self._ttk.Button(group, text="打开", command=lambda target=path: self._open(target)).grid(
+                row=row, column=2, columnspan=2, padx=(space.sm, 0)
+            )
+        self._migration_label = self._ttk.Label(
+            group, textvariable=self._migration_var, style="Hint.TLabel", justify="left"
+        )
+        self._migration_label.grid(row=6, column=0, columnspan=4, sticky="w")
+        self._build_about(parent)
+
+    def _hint(self, group: Any, row: int, text: str) -> None:
+        self._ttk.Label(group, text=text, justify="left").grid(
+            row=row, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.xs, 0)
         )
 
-    def _build_engine(self, parent: Any) -> None:
-        """引擎页：根目录、已安装引擎、在线下载、离线包、日志与进度。"""
-        root_group = self._group(parent, "引擎根目录")
-        self._editable_row(root_group, "engines_root", 0)
-        self._ttk.Label(root_group, text="llama.cpp 引擎根目录；留空使用内置默认。").grid(
-            row=1, column=0, columnspan=4, sticky="w", pady=(self._theme.spacing.xs, 0)
+    def _open(self, path: Path) -> None:
+        from fcmd.apps.locllm._locllmw_models import open_path
+
+        try:
+            open_path(path)
+        except OSError as exc:
+            self._notify(f"打开失败：{exc}")
+
+    def _build_about(self, parent: Any) -> None:
+        """关于与诊断：窗口记忆文件与已保存几何，只读折叠区。"""
+        space = self._theme.spacing
+        container, body = _guiwindow.collapsible(
+            parent,
+            "关于与诊断",
+            padding=(space.sm, space.xs, space.sm, space.sm),
+            open_state=False,
         )
+        container.pack(fill="x", pady=(space.sm, 0))
+        body.columnconfigure(1, weight=1)
+        for row, (label, _value, _source) in enumerate(ui_rows()):
+            self._ttk.Label(body, text=label).grid(row=row, column=0, sticky="w", padx=(0, space.sm))
+            var = self._tk.StringVar()
+            self._ttk.Entry(body, textvariable=var, state="readonly").grid(row=row, column=1, sticky="we")
+            self._ui_vars[label] = var
+        self._ttk.Label(
+            body,
+            text="窗口位置与大小在关闭时自动写入，无需手动编辑。",
+            style="Hint.TLabel",
+        ).grid(row=len(self._ui_vars), column=0, columnspan=2, sticky="w", pady=(space.xs, 0))
+
+    def _build_engine(self, parent: Any) -> None:
+        """引擎页：已安装引擎、在线下载、离线包、日志与进度；根目录在存储页统一编辑。"""
         self._build_engine_list(parent)
         self._build_online(parent)
         self._build_offline(parent)
@@ -418,19 +463,8 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         self._log_text.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=self._log_text.yview)
 
-    def _build_ui(self, parent: Any) -> None:
-        group = self._group(parent, "界面")
-        for row, (label, _value, _source) in enumerate(ui_rows()):
-            self._ttk.Label(group, text=label).grid(row=row, column=0, sticky="w", padx=(0, self._theme.spacing.sm))
-            var = self._tk.StringVar()
-            self._ttk.Entry(group, textvariable=var, state="readonly").grid(row=row, column=1, sticky="we")
-            self._ui_vars[label] = var
-        self._ttk.Label(group, text="窗口位置与大小在关闭时自动写入，无需手动编辑。", style="Hint.TLabel").grid(
-            row=len(self._ui_vars), column=0, columnspan=2, sticky="w", pady=(self._theme.spacing.xs, 0)
-        )
-
     # ------------------------------------------------------------------ #
-    # 目录 / 界面行为
+    # 存储 / 关于行为
     # ------------------------------------------------------------------ #
     def _notify(self, message: str) -> None:
         self._status_var.set(message)
@@ -439,7 +473,7 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
         from tkinter import filedialog
 
         label = _EDITABLE[key][0]
-        chosen = filedialog.askdirectory(parent=self._groups["目录"], title=title, initialdir=str(self._current(key)))
+        chosen = filedialog.askdirectory(parent=self._groups["存储"], title=title, initialdir=str(self._current(key)))
         if not chosen:
             return
         self._apply(key, chosen, label=label)
@@ -475,7 +509,7 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
             self._on_config_changed()
 
     def refresh(self) -> None:
-        """从权威配置重新读取三页显示值。"""
+        """从权威配置重新读取两页与关于区的显示值。"""
         values = {label: path for label, path, _source in (*directory_rows(), *engine_rows())}
         for key, (label, _title) in _EDITABLE.items():
             self._vars[key].set(values.get(label, ""))
@@ -484,6 +518,10 @@ class SettingsPage:  # pragma: no cover - Tk 界面不纳入单元覆盖（CI �
             if var is not None:
                 var.set(value)
         self._migration_var.set(migration_note())
+        if self._migration_var.get():
+            self._migration_label.grid()
+        else:
+            self._migration_label.grid_remove()
         self.refresh_engine()
 
     # ------------------------------------------------------------------ #
