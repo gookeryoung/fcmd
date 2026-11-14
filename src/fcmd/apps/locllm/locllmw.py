@@ -25,6 +25,7 @@ import fcmd
 from fcmd.apps.locllm import _llmtune, llmbase, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision
 from fcmd.apps.locllm._locllmw_bench import _LocllmWindowBench
+from fcmd.apps.locllm._locllmw_chat import _LocllmWindowChat
 from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot, snapshot_from_dict
 from fcmd.apps.locllm._locllmw_monitor import (  # noqa: F401  门面 re-export：保留旧访问路径
     RATE_WINDOW_SECONDS,
@@ -158,7 +159,11 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
 
 
 class LocllmWindow(
-    _LocllmWindowUI, _LocllmWindowOverview, _LocllmWindowMonitor, _LocllmWindowBench
+    _LocllmWindowUI,
+    _LocllmWindowOverview,
+    _LocllmWindowChat,
+    _LocllmWindowMonitor,
+    _LocllmWindowBench,
 ):  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
     """Tk 服务窗口：侧边栏分页 + 模型列表 + 计划预览 + 后台启停 + 监控与性能测试。"""
 
@@ -965,6 +970,7 @@ class LocllmWindow(
         if running and not self._messagebox.askyesno("任务进行中", "启动 / 停止任务仍在执行，确实退出？"):
             return
         self._closing = True
+        self._close_chat()
         self._stop_monitor()
         self._close_bench()
         self._persist_settings()

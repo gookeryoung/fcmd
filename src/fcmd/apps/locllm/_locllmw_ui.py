@@ -100,6 +100,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _refresh_hardware_view: Any
         _refresh_recommendations: Any
         _build_overview: Any
+        _build_chat_page: Any
+        _on_page_changed: Any
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -109,12 +111,12 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         outer = ttk.Frame(self.root)
         outer.pack(fill="both", expand=True)
         ttk.Label(outer, textvariable=self._status_var).pack(side="bottom", fill="x", pady=(self._theme.spacing.xs, 0))
-        self._build_actions(outer)
         self._nav = _guisidebar.SidebarNav(
             outer,
             theme=self._theme,
             page_padding=self._theme.spacing.md,
             title="locllm",
+            on_change=self._on_page_changed,
         )
         self._nav.container.pack(fill="both", expand=True)
         overview_page = self._nav.add("overview", "概览", hint="服务状态与快捷入口")
@@ -131,12 +133,8 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._build_overview(overview_page)
         self._build_models(models_page)
         self._build_params(run_page)
-        self._build_planned(
-            chat_page,
-            title="对话",
-            summary="内嵌对话页规划中：将复用 llmchat 的流式会话、历史与图片附件能力，并直接调用本页启动的服务。",
-            commands=("fcmd llmchat", "fcmd llmchatw"),
-        )
+        self._build_actions(run_page)
+        self._build_chat_page(chat_page)
         self._build_planned(
             agent_page,
             title="代理",

@@ -1,4 +1,4 @@
-"""llmchat / llmchatw 测试。
+"""llmchat 与 locllmw 内嵌对话页测试。
 
 覆盖 SSE 解析（跨块多字节字符、注释行、非法 JSON、错误事件、[DONE]）、
 HTTP / 网络错误映射、会话历史与回滚、取消生成、服务解析与 CLI 交互分支。
@@ -9,14 +9,13 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import replace
-from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.request import Request
 
 import pytest
 
-from fcmd.apps.locllm import llmchat, llmchatw, llmenv
+from fcmd.apps.locllm import _locllmw_chat, llmchat, llmenv
 from fcmd.apps.locllm.llmbase import DEFAULT_API_KEY, Endpoint, ServeError, ServeState
 from fcmd.apps.locllm.llmchat import ChatDelta, ChatMessage, ChatSession
 from fcmd.core.toolkit import _TOOL_REGISTRY
@@ -167,7 +166,8 @@ def _reasoning_only_events(endpoint: Endpoint, messages: Any, **kwargs: Any) -> 
 # ---------------------------------------------------------------------- #
 def test_tools_registered() -> None:
     assert set(_TOOL_REGISTRY["llmchat"]) == {None}
-    assert set(_TOOL_REGISTRY["llmchatw"]) == {None}
+    # 对话已整合进 locllmw，独立窗口工具不再注册。
+    assert "llmchatw" not in _TOOL_REGISTRY
 
 
 def test_help_describes_parameters() -> None:
@@ -541,10 +541,10 @@ def test_chat_cmd_interactive_interrupt(monkeypatch: pytest.MonkeyPatch, capsys:
 
 
 # ---------------------------------------------------------------------- #
-# llmchatw（窗口版纯逻辑）
+# locllmw 内嵌对话页（纯逻辑）
 # ---------------------------------------------------------------------- #
-def test_chatw_default_url() -> None:
-    assert llmchatw._DEFAULT_URL == "http://127.0.0.1:8080"
+def test_chat_page_default_url() -> None:
+    assert _locllmw_chat._DEFAULT_URL == "http://127.0.0.1:8080"
 
 
 class _FakeVar:
@@ -570,157 +570,81 @@ class _FakeBox:
         self.values = list(kwargs["values"])
 
 
-def _chat_window(states: list[ServeState], service: str = llmchatw._CUSTOM) -> Any:
-    """构造只含服务刷新所需属性的 ChatWindow 替身。"""
-    window: Any = object.__new__(llmchatw.ChatWindow)
-    window._states = states
-    window._manual_choice = False
-    window._service_var = _FakeVar(service)
-    window._url_var = _FakeVar()
-    window._model_var = _FakeVar()
-    window._api_key_var = _FakeVar()
-    window._status_var = _FakeVar("就绪")
-    window._service_box = _FakeBox()
+def _chat_page(states: list[ServeState], service: str = _locllmw_chat._CUSTOM) -> Any:
+    """构造只含服务刷新所需属性的对话页替身。"""
+    page: Any = object.__new__(_locllmw_chat._LocllmWindowChat)
+    page._chat_states = states
+    page._chat_manual_choice = False
+    page._chat_service_var = _FakeVar(service)
+    page._chat_url_var = _FakeVar()
+    page._chat_model_var = _FakeVar()
+    page._chat_api_key_var = _FakeVar()
+    page._chat_status_var = _FakeVar("就绪")
+    page._chat_service_box = _FakeBox()
     appended: list[tuple[str, str]] = []
-    window._appended = appended
-    window._append = lambda tag, text: appended.append((tag, text))
-    return window
+    page._appended = appended
+    page._chat_append = lambda tag, text: appended.append((tag, text))
+    return page
 
 
-def test_chatw_refresh_selects_first_available(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_page_refresh_selects_first_available(monkeypatch: pytest.MonkeyPatch) -> None:
     dead = _state("dead")
     alive = replace(_state("alive"), pid=1234)
     monkeypatch.setattr(llmenv, "list_states", lambda: [dead, alive])
-    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: pid == alive.pid)
+    monkeypatch.setattr(_locllmw_chat, "process_alive", lambda pid, created: pid == alive.pid)
 
-    window = _chat_window([])
-    llmchatw.ChatWindow._refresh_services(window)
+    page = _chat_page([])
+    _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
-    assert window._service_var.get() == "alive"
-    assert window._url_var.get() == alive.base_url
-    assert window._model_var.get() == alive.alias
-    assert window._status_var.get() == "已选择服务 alive"
+    assert page._chat_service_var.get() == "alive"
+    assert page._chat_url_var.get() == alive.base_url
+    assert page._chat_model_var.get() == alive.alias
+    assert page._chat_status_var.get() == "已选择服务 alive"
 
 
-def test_chatw_refresh_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     state = _state("dead")
     monkeypatch.setattr(llmenv, "list_states", lambda: [state])
-    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: False)
+    monkeypatch.setattr(_locllmw_chat, "process_alive", lambda pid, created: False)
 
-    window = _chat_window([])
-    llmchatw.ChatWindow._refresh_services(window)
+    page = _chat_page([])
+    _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
-    assert window._service_var.get() == llmchatw._CUSTOM
-    assert window._service_box.values == [llmchatw._CUSTOM, "dead"]
-    assert window._status_var.get() == "不可用"
+    assert page._chat_service_var.get() == _locllmw_chat._CUSTOM
+    assert page._chat_service_box.values == [_locllmw_chat._CUSTOM, "dead"]
+    assert page._chat_status_var.get() == "不可用"
 
 
-def test_chatw_refresh_without_services(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_page_refresh_without_services(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(llmenv, "list_states", lambda: [])
 
-    window = _chat_window([])
-    llmchatw.ChatWindow._refresh_services(window)
+    page = _chat_page([])
+    _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
-    assert window._service_box.values == [llmchatw._CUSTOM]
-    assert window._status_var.get() == "不可用"
+    assert page._chat_service_box.values == [_locllmw_chat._CUSTOM]
+    assert page._chat_status_var.get() == "不可用"
 
 
-def test_chatw_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch) -> None:
     alive = _state("alive")
     monkeypatch.setattr(llmenv, "list_states", lambda: [alive])
-    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: True)
+    monkeypatch.setattr(_locllmw_chat, "process_alive", lambda pid, created: True)
 
-    window = _chat_window([])
-    window._manual_choice = True
-    llmchatw.ChatWindow._refresh_services(window)
+    page = _chat_page([])
+    page._chat_manual_choice = True
+    _locllmw_chat._LocllmWindowChat._chat_refresh_services(page)
 
-    assert window._service_var.get() == llmchatw._CUSTOM
-    assert window._status_var.get() == "不可用"
+    assert page._chat_service_var.get() == _locllmw_chat._CUSTOM
+    assert page._chat_status_var.get() == "不可用"
 
 
-def test_chatw_select_unavailable_service(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch) -> None:
     state = _state("dead")
-    monkeypatch.setattr(llmchatw, "process_alive", lambda pid, created: False)
+    monkeypatch.setattr(_locllmw_chat, "process_alive", lambda pid, created: False)
 
-    window = _chat_window([state], service="dead")
-    llmchatw.ChatWindow._on_service_selected(window)
+    page = _chat_page([state], service="dead")
+    _locllmw_chat._LocllmWindowChat._chat_on_service_selected(page)
 
-    assert window._url_var.get() == state.base_url
-    assert window._status_var.get() == "不可用"
-    assert window._appended[0][0] == "error"
-
-
-# ---------------------------------------------------------------------- #
-# llmchatw GUI 入口
-# ---------------------------------------------------------------------- #
-class TestChatwGuiEntry:
-    def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def fake_window() -> None:
-            raise ImportError("no tkinter")
-
-        monkeypatch.setattr(llmchatw, "ChatWindow", fake_window)
-        llmchatw.run_gui()  # 不应抛出
-
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(llmchatw, "ChatWindow", _Window)
-        llmchatw.run_gui()
-        assert calls == ["mainloop"]
-
-    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[bool] = []
-        monkeypatch.setattr(llmchatw, "run_gui", lambda: calls.append(True))
-        llmchatw.launch_cmd()
-        assert calls == [True]
-
-
-class TestChatwSettings:
-    """窗口位置/大小持久化（纯逻辑，不创建 Tk）。"""
-
-    def test_config_path_uses_fcmd_home(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-        assert llmchatw.config_path() == tmp_path / "ui" / "llmchatw.json"
-
-    def test_load_missing_file_returns_default(self, tmp_path: Path) -> None:
-        assert llmchatw.load_settings(tmp_path / "none.json") == llmchatw.ChatSettings()
-
-    def test_load_ignores_invalid_geometry(self, tmp_path: Path) -> None:
-        path = tmp_path / "ui.json"
-        path.write_text('{"geometry": "bad"}', encoding="utf-8")
-        assert llmchatw.load_settings(path).geometry is None
-        path.write_text('{"geometry": 123}', encoding="utf-8")
-        assert llmchatw.load_settings(path).geometry is None
-
-    def test_save_and_load_roundtrip(self, tmp_path: Path) -> None:
-        path = tmp_path / "nested" / "ui.json"
-        llmchatw.save_settings(llmchatw.ChatSettings(geometry="1000x700+10+20"), path)
-        assert llmchatw.load_settings(path).geometry == "1000x700+10+20"
-
-    def test_save_ignores_write_error(self, tmp_path: Path) -> None:
-        blocker = tmp_path / "blocker"
-        blocker.write_text("x", encoding="utf-8")
-        llmchatw.save_settings(llmchatw.ChatSettings(geometry="1000x700"), blocker / "ui.json")
-
-    def test_resolve_geometry_keeps_visible_position(self) -> None:
-        assert llmchatw.resolve_geometry("1000x700+100+80", 1920, 1080) == "1000x700+100+80"
-
-    def test_resolve_geometry_pulls_back_offscreen(self) -> None:
-        assert llmchatw.resolve_geometry("1000x700+5000+5000", 1920, 1080) == "1000x700+920+380"
-
-    def test_resolve_geometry_enforces_minimum_size(self) -> None:
-        assert llmchatw.resolve_geometry("200x100+0+0", 1920, 1080) == "860x620+0+0"
-
-    def test_resolve_geometry_falls_back_to_default_size(self) -> None:
-        assert llmchatw.resolve_geometry(None, 1920, 1080) == "1040x780"
-        assert llmchatw.resolve_geometry("bad", 1920, 1080) == "1040x780"
-
-    def test_resolve_geometry_clamps_default_to_small_screen(self) -> None:
-        assert llmchatw.resolve_geometry(None, 800, 600) == "800x600"
+    assert page._chat_url_var.get() == state.base_url
+    assert page._chat_status_var.get() == "不可用"
+    assert page._appended[0][0] == "error"

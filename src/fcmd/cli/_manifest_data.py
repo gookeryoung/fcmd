@@ -67,7 +67,6 @@ TOOLS: dict[str, ToolEntry] = {
     "jsontool": ToolEntry("jsontool", "python", "fcmd.tools.data.jsontool"),
     "llmbench": ToolEntry("llmbench", "python", "fcmd.apps.locllm.llmbench"),
     "llmchat": ToolEntry("llmchat", "python", "fcmd.apps.locllm.llmchat"),
-    "llmchatw": ToolEntry("llmchatw", "python", "fcmd.apps.locllm.llmchatw"),
     "llmconvert": ToolEntry("llmconvert", "python", "fcmd.apps.locllm.llmconvert"),
     "llmconvertw": ToolEntry("llmconvertw", "python", "fcmd.apps.locllm.llmconvertw"),
     "llmdoctor": ToolEntry("llmdoctor", "python", "fcmd.apps.locllm.llmdoctor"),
@@ -203,7 +202,6 @@ DESCRIPTIONS: dict[str, str] = {
     "jsontool": "格式化打印 JSON",
     "llmbench": "对 OpenAI 兼容服务实测延迟与 token 吞吐",
     "llmchat": "与 OpenAI 兼容服务多轮流式对话（CLI）",
-    "llmchatw": "llmchat 的 Tk 窗口版（多轮流式对话；可选用 llmenv 登记的服务或自定义地址；窗口位置与大小记忆到 ~/.fcmd/ui/llmchatw.json）",
     "llmconvert": "HF safetensors 目录转 GGUF（可复用本地源码 zip、可选再量化）",
     "llmconvertw": "HF safetensors 转 GGUF 窗口版（Tk）：启动时后台扫描 llmenv 已配置的模型目录，识别并列出可转换的 HF safetensors 目录；配置精度、解释器、源码脚本与引擎 tag，勾选多种输出格式（原始 / 量化），已生成的格式自动标记并置为只读避免覆盖；可预览转换计划，后台先转换一次再批量量化，实时显示日志与进度；窗口位置与大小记忆到 ~/.fcmd/ui/llmconvertw.json",
     "llmdoctor": "运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）",
@@ -290,7 +288,6 @@ LAYOUT: tuple[str, ...] = (
     "apps/locllm/llmbase.py",
     "apps/locllm/llmbench.py",
     "apps/locllm/llmchat.py",
-    "apps/locllm/llmchatw.py",
     "apps/locllm/llmconvert.py",
     "apps/locllm/llmconvertw.py",
     "apps/locllm/llmdoctor.py",
@@ -410,7 +407,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "15a514ad6926b8f66b15be9cff74b684"
+DIGEST = "2f54a467f905ba4fc71b6f9adcbe45eb"
 
 
 if __name__ == "__main__":  # pragma: no cover
