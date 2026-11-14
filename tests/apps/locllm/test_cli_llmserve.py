@@ -2253,6 +2253,21 @@ class TestServewSettings:
         locllmw.save_settings(locllmw.LocllmSettings(geometry="920x700+10+20"), path)
         assert locllmw.load_settings(path).geometry == "920x700+10+20"
 
+    def test_chat_settings_collapsed_by_default(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text("{}", encoding="utf-8")
+        assert locllmw.load_settings(path).chat_settings_open is False
+
+    def test_chat_settings_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        locllmw.save_settings(locllmw.LocllmSettings(chat_settings_open=True), path)
+        assert locllmw.load_settings(path).chat_settings_open is True
+
+    def test_load_ignores_non_bool_chat_settings(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"chat_settings_open": "yes"}', encoding="utf-8")
+        assert locllmw.load_settings(path).chat_settings_open is False
+
     def test_roundtrip_hardware_and_measured(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         settings = locllmw.LocllmSettings(

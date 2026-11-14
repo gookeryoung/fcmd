@@ -102,12 +102,13 @@ DEFAULT_HEIGHT = 780
 
 @dataclass
 class LocllmSettings:
-    """窗口持久化设置：geometry、硬件快照与性能实测记录。"""
+    """窗口持久化设置：geometry、对话设置展开状态、硬件快照与性能实测记录。"""
 
     geometry: str | None = None
     hardware: dict[str, Any] | None = None
     measured: dict[str, dict[str, Any]] | None = None
     download: dict[str, Any] | None = None
+    chat_settings_open: bool = False
 
 
 def config_path() -> Path:
@@ -132,6 +133,9 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         measured = raw.get("measured")
         if isinstance(measured, dict):
             settings.measured = {str(key): dict(value) for key, value in measured.items() if isinstance(value, dict)}
+        chat_settings_open = raw.get("chat_settings_open")
+        if isinstance(chat_settings_open, bool):
+            settings.chat_settings_open = chat_settings_open
     return settings
 
 
@@ -143,6 +147,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "hardware": settings.hardware,
             "measured": settings.measured,
             "download": settings.download,
+            "chat_settings_open": settings.chat_settings_open,
         },
         path or config_path(),
     )
@@ -958,13 +963,14 @@ class LocllmWindow(
 
     @override
     def _persist_settings(self) -> None:
-        """把 geometry、硬件快照与实测记录写入配置。"""
+        """把 geometry、对话设置展开状态、硬件快照与实测记录写入配置。"""
         save_settings(
             LocllmSettings(
                 geometry=self.root.winfo_geometry(),
                 hardware=self._hardware_dict(),
                 measured=self._measured,
                 download=self._model_page.settings_dict() if self._model_page is not None else self._settings.download,
+                chat_settings_open=self._settings.chat_settings_open,
             ),
             self._settings_path,
         )

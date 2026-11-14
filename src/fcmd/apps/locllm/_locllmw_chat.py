@@ -62,6 +62,9 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
         _messagebox: Any
         _filedialog: Any
         _closing: bool
+        _settings: Any
+
+        def _persist_settings(self) -> None: ...
 
     # ------------------------------------------------------------------ #
     # 界面
@@ -69,7 +72,8 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     def _build_chat_page(self, parent: Any) -> None:
         self._init_chat_state()
         parent.columnconfigure(0, weight=1)
-        parent.rowconfigure(2, weight=1)
+        parent.rowconfigure(3, weight=1)
+        self._build_chat_header(parent)
         self._build_chat_connection(parent)
         self._build_chat_params(parent)
         self._build_chat_view(parent)
@@ -81,8 +85,37 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
             relief="sunken",
             padding=(self._theme.spacing.sm, self._theme.spacing.xs),
         )
-        status.grid(row=4, column=0, sticky="ew", pady=(self._theme.spacing.sm, 0))
+        status.grid(row=5, column=0, sticky="ew", pady=(self._theme.spacing.sm, 0))
+        self._chat_settings_open = bool(self._settings.chat_settings_open)
+        self._apply_chat_settings_visibility()
         self._chat_refresh_services()
+
+    def _build_chat_header(self, parent: Any) -> None:
+        """顶部工具条：始终可见的「设置」入口，一键展开 / 收起连接与生成参数。"""
+        ttk = self._ttk
+        bar = ttk.Frame(parent)
+        bar.grid(row=0, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        self._chat_settings_btn = ttk.Button(bar, text="设置", width=10, command=self._toggle_chat_settings)
+        self._chat_settings_btn.pack(side="left")
+        ttk.Label(bar, text="连接与生成参数", style="Hint.TLabel").pack(side="left", padx=(self._theme.spacing.sm, 0))
+
+    def _toggle_chat_settings(self) -> None:
+        """展开 / 收起设置区，并立即持久化，下次进入保持同一状态。"""
+        self._chat_settings_open = not self._chat_settings_open
+        self._settings.chat_settings_open = self._chat_settings_open
+        self._apply_chat_settings_visibility()
+        self._persist_settings()
+
+    def _apply_chat_settings_visibility(self) -> None:
+        """收起时用 grid_remove 让出空间，而不是留下空白。"""
+        if self._chat_settings_open:
+            self._chat_connection_box.grid()
+            self._chat_params_box.grid()
+            self._chat_settings_btn.configure(text="设置 ▾")
+        else:
+            self._chat_connection_box.grid_remove()
+            self._chat_params_box.grid_remove()
+            self._chat_settings_btn.configure(text="设置 ▸")
 
     def _init_chat_state(self) -> None:
         tk = self._tk
@@ -122,7 +155,8 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     def _build_chat_connection(self, parent: Any) -> None:
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="连接", padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        box.grid(row=0, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        box.grid(row=1, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        self._chat_connection_box = box
         box.columnconfigure(1, weight=3)
         box.columnconfigure(4, weight=2)
 
@@ -177,7 +211,8 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     def _build_chat_params(self, parent: Any) -> None:
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="生成参数", padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        box.grid(row=1, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        box.grid(row=2, column=0, sticky="ew", pady=(0, self._theme.spacing.sm))
+        self._chat_params_box = box
         box.columnconfigure(6, weight=1)
 
         ttk.Label(box, text="max_tokens").grid(row=0, column=0, sticky="e", padx=(0, self._theme.spacing.sm))
@@ -202,7 +237,7 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
 
     def _build_chat_view(self, parent: Any) -> None:
         box = self._ttk.LabelFrame(parent, text="对话", padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        box.grid(row=2, column=0, sticky="nsew", pady=(0, self._theme.spacing.sm))
+        box.grid(row=3, column=0, sticky="nsew", pady=(0, self._theme.spacing.sm))
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
 
@@ -229,7 +264,7 @@ class _LocllmWindowChat:  # pragma: no cover - Tk 窗口不纳入单元覆盖（
     def _build_chat_input(self, parent: Any) -> None:
         ttk = self._ttk
         box = ttk.LabelFrame(parent, text="输入", padding=(self._theme.spacing.md, self._theme.spacing.sm))
-        box.grid(row=3, column=0, sticky="ew")
+        box.grid(row=4, column=0, sticky="ew")
         box.columnconfigure(0, weight=1)
 
         toolbar = ttk.Frame(box)
