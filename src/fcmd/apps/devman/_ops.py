@@ -79,6 +79,8 @@ class JobContext:
     warnings: list[str] = field(default_factory=list)
     fetcher: Fetcher | None = None
     runner: Runner | None = None
+    env_store: _env.EnvStore | None = None
+    env: Mapping[str, str] | None = None
 
     def fetch(self) -> Fetcher:
         if self.fetcher is None:
@@ -97,6 +99,102 @@ def new_context(root: str | Path | None = None) -> JobContext:
     config, config_warnings = load_config(layout)
     state, state_warnings = load_state(layout)
     return JobContext(layout=layout, config=config, state=state, warnings=[*config_warnings, *state_warnings])
+
+
+# ---- PATH 集成 ----
+def _store_of(ctx: JobContext, store: _env.EnvStore | None = None) -> _env.EnvStore:
+    return store or ctx.env_store or _env.default_env_store()
+
+
+def _path_plan(  # noqa: PLR0913 - 计划需要写入开关、遮蔽放行与注入点
+    ctx: JobContext,
+    *,
+    write_path: bool,
+    allow_shadow: bool,
+    append: bool = False,
+    store: _env.EnvStore | None = None,
+    env: Mapping[str, str] | None = None,
+    strict: bool = True,
+) -> dict[str, Any]:
+    """计算 PATH 集成计划；新增条目会遮蔽现有 node/python 时按需拒绝。"""
+    if not write_path:
+        return {"enabled": False, "changed": False, "shadowed": {}}
+    layout = ctx.layout
+    entry = str(layout.shim_dir)
+    present = _env.path_entry_present(_store_of(ctx, store).get("Path"), entry)
+    shadowed: dict[str, list[str]] = (
+        {} if present else _env.shadowed_commands(layout, env=env if env is not None else ctx.env)
+    )
+    if shadowed and not allow_shadow and strict:
+        details = "；".join(f"{tool}: {', '.join(items)}" for tool, items in shadowed.items())
+        raise invalid_argument(
+            f"把 devman 加入用户 PATH 会遮蔽现有可执行文件：{details}",
+            hint="确认要接管时加 --allow-shadow；或用 --no-path 跳过 PATH 集成",
+            field="path",
+        )
+    return {
+        "enabled": True,
+        "changed": False,
+        "entry": entry,
+        "position": "append" if append else "prepend",
+        "already_present": present,
+        "shadowed": shadowed,
+    }
+
+
+def _apply_path(ctx: JobContext, *, append: bool = False, store: _env.EnvStore | None = None) -> dict[str, Any]:
+    """生成 shim 并把 shim 目录写入用户 PATH；只记录 devman 实际新增的条目。"""
+    layout = ctx.layout
+    backend = _store_of(ctx, store)
+    written, unchanged = _env.write_shims(layout)
+    result = _env.install_path(layout, store=backend, append=append)
+    entry = str(result["entry"])
+    if result["changed"]:
+        if entry not in ctx.state.path_added:
+            ctx.state.path_added.append(entry)
+        if ctx.state.path_previous_user_path is None and result["previous"] is not None:
+            ctx.state.path_previous_user_path = str(result["previous"])
+        save_state(layout, ctx.state)
+    return {
+        "enabled": True,
+        "changed": bool(result["changed"]),
+        "entry": entry,
+        "position": result["position"],
+        "shims_written": written,
+        "shims_unchanged": unchanged,
+    }
+
+
+def _drop_recorded_paths(ctx: JobContext, *, store: _env.EnvStore | None = None) -> dict[str, Any]:
+    """精确移除 state 里记录的 PATH 条目（不整份恢复旧快照）。"""
+    entries = list(ctx.state.path_added)
+    if not entries:
+        return {"enabled": True, "changed": False, "removed": 0, "entries": []}
+    backend = _store_of(ctx, store)
+    current = backend.get("Path")
+    removed = 0
+    for entry in entries:
+        current, count = _env.remove_path_entry(current, entry)
+        removed += count
+    if removed:
+        backend.set("Path", current or "")
+    ctx.state.path_added = []
+    save_state(ctx.layout, ctx.state)
+    return {"enabled": True, "changed": bool(removed), "removed": removed, "entries": entries}
+
+
+def _remove_shims(layout: Layout) -> list[str]:
+    """删除已知 shim 文件；返回被删除的文件名。"""
+    removed: list[str] = []
+    if not layout.shim_dir.is_dir():
+        return removed
+    for item in layout.shim_dir.iterdir():
+        if item.is_file():
+            item.unlink(missing_ok=True)
+            removed.append(item.name)
+    with contextlib.suppress(OSError):
+        layout.shim_dir.rmdir()
+    return removed
 
 
 @contextmanager
@@ -198,18 +296,30 @@ def list_payload(ctx: JobContext, *, env: Mapping[str, str] | None = None) -> di
 
 
 # ---- install ----
-def install(
+def install(  # noqa: PLR0913 - 安装选项与安全语义一一对应
     ctx: JobContext,
     spec_text: str,
     *,
     dry_run: bool = False,
     force: bool = False,
     sha256: str | None = None,
+    write_path: bool = True,
+    allow_shadow: bool = False,
+    store: _env.EnvStore | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """安装一个具体版本；``--dry-run`` 只输出计划。"""
+    """安装一个具体版本；默认把 shim 目录写入用户 PATH，``--dry-run`` 只输出计划。"""
     spec = parse_spec(spec_text)
     tool, target = resolve_target(ctx, spec)
     layout = ctx.layout
+    path_plan = _path_plan(
+        ctx,
+        write_path=write_path,
+        allow_shadow=allow_shadow,
+        store=store,
+        env=env,
+        strict=not dry_run,
+    )
 
     if tool == "node":
         plan = _node.plan_install(layout, target, mirror=ctx.config.node_mirror, sha256=sha256)
@@ -222,11 +332,13 @@ def install(
                 "dry_run": True,
                 "planned": plan.to_data(),
                 "actions": [],
+                "user_path": path_plan,
                 "warnings": ctx.warnings,
             }
         with install_lock(layout):
             layout.ensure_bootstrap()
             result = _node.install(plan, layout, fetcher=ctx.fetch(), runner=ctx.execute(), force=force)
+            user_path = _apply_path(ctx, store=store) if write_path else path_plan
     else:
         uv = _python.find_uv(ctx.config.python_uv)
         if dry_run:
@@ -245,6 +357,7 @@ def install(
                     "mirror": ctx.config.python_mirror,
                 },
                 "actions": [],
+                "user_path": path_plan,
                 "warnings": ctx.warnings,
             }
         with install_lock(layout):
@@ -257,6 +370,7 @@ def install(
                 mirror=ctx.config.python_mirror,
                 force=force,
             )
+            user_path = _apply_path(ctx, store=store) if write_path else path_plan
 
     payload = {
         "schema": "devman/install/1",
@@ -266,8 +380,12 @@ def install(
         "path": result["path"],
         "message": result["message"],
         "actions": result["actions"],
+        "user_path": user_path,
         "warnings": ctx.warnings,
     }
+    user_path["shadowed"] = path_plan.get("shadowed", {})
+    if user_path.get("enabled"):
+        user_path["already_present"] = path_plan.get("already_present", False)
     if tool == "python":
         payload["key"] = target
     return payload
@@ -316,6 +434,7 @@ def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
     force: bool = False,
     purge_cache: bool = False,
     all_versions: bool = False,
+    store: _env.EnvStore | None = None,
 ) -> dict[str, Any]:
     """卸载版本；破坏性操作必须 ``--yes``。"""
     layout = ctx.layout
@@ -328,6 +447,7 @@ def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
                 "tool": spec.tool,
                 "removed": [],
                 "changed": False,
+                "user_path": {"enabled": False, "changed": False, "removed": 0},
                 "warnings": ctx.warnings,
             }
         raise not_found(
@@ -350,10 +470,17 @@ def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
             field="spec",
         )
 
+    target_names = {row.name for row in targets}
+    remaining = [
+        row
+        for row in [*list_installed(layout, "node"), *list_installed(layout, "python")]
+        if not (row.tool == spec.tool and row.name in target_names)
+    ]
     plan = {
         "targets": [{"name": row.name, "version": row.version, "path": str(row.path)} for row in targets],
         "clear_active": bool(clearing),
         "purge_cache": purge_cache,
+        "remove_path_entries": [] if remaining else list(ctx.state.path_added),
     }
     if dry_run:
         return {
@@ -363,9 +490,11 @@ def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
             "dry_run": True,
             "planned": plan,
             "removed": [],
+            "user_path": {"enabled": True, "changed": False, "removed": 0, "entries": plan["remove_path_entries"]},
             "warnings": ctx.warnings,
         }
 
+    user_path: dict[str, Any] = {"enabled": bool(ctx.state.path_added), "changed": False, "removed": 0, "entries": []}
     with install_lock(layout):
         removed: list[dict[str, str]] = []
         leftovers: list[str] = []
@@ -379,6 +508,8 @@ def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
         if purge_cache:
             shutil.rmtree(layout.cache_dir, ignore_errors=True)
         save_state(layout, ctx.state)
+        if not [*list_installed(layout, "node"), *list_installed(layout, "python")] and ctx.state.path_added:
+            user_path = _drop_recorded_paths(ctx, store=store)
 
     return {
         "schema": "devman/uninstall/1",
@@ -388,7 +519,8 @@ def uninstall(  # noqa: PLR0913 - 卸载选项与安全语义一一对应
         "cleared_active": bool(clearing),
         "purged_cache": purge_cache,
         "leftovers": leftovers,
-        "note": "npm 全局包与 uv 托管解释器不在 devman 管理范围",
+        "user_path": user_path,
+        "note": "npm 全局包与 uv 托管解释器不在 devman 管理范围；卸载最后版本会移除 devman 写入的用户 PATH 条目",
         "warnings": ctx.warnings,
     }
 
@@ -468,6 +600,8 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
     yes: bool = False,
     dry_run: bool = False,
     force: bool = False,
+    write_path: bool = True,
+    allow_shadow: bool = False,
 ) -> dict[str, Any]:
     """升级到同一条版本线的最新版（或 ``--to`` 指定版本）。"""
     layout = ctx.layout
@@ -511,6 +645,7 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
         "install": target,
         "activate": target,
         "purge": current.name if purge_old else None,
+        "add_to_user_path": write_path,
     }
     if dry_run:
         return {
@@ -522,7 +657,13 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
             "warnings": ctx.warnings,
         }
 
-    installed = install(ctx, f"{tool}@{target_version}", force=force)
+    installed = install(
+        ctx,
+        f"{tool}@{target_version}",
+        force=force,
+        write_path=write_path,
+        allow_shadow=allow_shadow,
+    )
     switched = use(ctx, f"{tool}@{target_version}")
     purged: dict[str, Any] | None = None
     if purge_old:
@@ -544,100 +685,91 @@ def upgrade(  # noqa: PLR0913 - 升级选项与安全语义一一对应
 def init(  # noqa: PLR0913 - 可选注入项用于测试与 GUI 复用
     ctx: JobContext,
     *,
-    path: bool = False,
+    write_path: bool = True,
     append: bool = False,
     allow_shadow: bool = False,
     dry_run: bool = False,
     store: _env.EnvStore | None = None,
     env: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """生成 shim；``--path`` 时把 shim 目录写入用户 PATH。"""
+    """生成 shim，并默认把 shim 目录写入用户 PATH（``--no-path`` 关闭）。"""
     layout = ctx.layout
-    shadowed = _env.shadowed_commands(layout, env=env) if path else {}
-    if path and shadowed and not allow_shadow and not dry_run:
-        details = "；".join(f"{tool}: {', '.join(items)}" for tool, items in shadowed.items())
-        raise invalid_argument(
-            f"前置 shim 目录会遮蔽现有可执行文件：{details}",
-            hint="确认要接管时加 --allow-shadow，或用 devman exec / env 不改 PATH",
-            field="path",
-        )
-    plan = {
-        "shim_dir": str(layout.shim_dir),
-        "shims": list(_env.shim_scripts()),
-        "add_to_user_path": path,
-        "position": "append" if append else "prepend",
-        "shadowed": shadowed,
-    }
+    path_plan = _path_plan(
+        ctx,
+        write_path=write_path,
+        allow_shadow=allow_shadow,
+        append=append,
+        store=store,
+        env=env,
+        strict=not dry_run,
+    )
     if dry_run:
         return {
             "schema": "devman/init/1",
             "changed": False,
             "dry_run": True,
-            "planned": plan,
+            "planned": {
+                "shim_dir": str(layout.shim_dir),
+                "shims": list(_env.shim_scripts()),
+                "add_to_user_path": write_path,
+                "position": path_plan.get("position", "prepend"),
+                "already_present": path_plan.get("already_present", False),
+                "shadowed": path_plan.get("shadowed", {}),
+            },
             "warnings": ctx.warnings,
         }
-    written, unchanged = _env.write_shims(layout)
-    payload: dict[str, Any] = {
+    if write_path:
+        applied = _apply_path(ctx, append=append, store=store)
+        written = list(applied.pop("shims_written"))
+        unchanged = list(applied.pop("shims_unchanged"))
+        applied["shadowed"] = path_plan.get("shadowed", {})
+        applied["already_present"] = path_plan.get("already_present", False)
+        user_path = applied
+    else:
+        written, unchanged = _env.write_shims(layout)
+        user_path = {"enabled": False, "changed": False}
+    return {
         "schema": "devman/init/1",
-        "changed": bool(written),
+        "changed": bool(written or user_path["changed"]),
         "shims_written": written,
         "shims_unchanged": unchanged,
-        "path": {"enabled": path, "changed": False},
+        "user_path": user_path,
         "warnings": ctx.warnings,
     }
-    if path:
-        result = _env.install_path(layout, store=store, append=append)
-        entry = str(layout.shim_dir)
-        ctx.state.path_added = [entry]
-        ctx.state.path_previous_user_path = str(result["previous"]) if result["previous"] is not None else None
-        save_state(layout, ctx.state)
-        payload["path"] = {
-            "enabled": True,
-            "changed": bool(result["changed"]),
-            "entry": entry,
-            "position": "append" if append else "prepend",
-        }
-    return payload
 
 
 def uninit(
     ctx: JobContext,
     *,
-    path: bool = False,
+    write_path: bool = True,
     dry_run: bool = False,
     store: _env.EnvStore | None = None,
 ) -> dict[str, Any]:
-    """删除 shim（``--path`` 时同时移除用户 PATH 条目）。"""
+    """删除 shim，并精确移除 devman 写入的用户 PATH 条目（``--no-path`` 保留）。"""
     layout = ctx.layout
+    recorded = list(ctx.state.path_added)
     if dry_run:
         return {
             "schema": "devman/uninit/1",
             "changed": False,
             "dry_run": True,
-            "planned": {"remove_shims": str(layout.shim_dir), "remove_path_entry": path},
+            "planned": {
+                "remove_shims": str(layout.shim_dir),
+                "remove_path_entries": recorded if write_path else [],
+            },
             "warnings": ctx.warnings,
         }
-    removed: list[str] = []
-    if layout.shim_dir.is_dir():
-        for item in layout.shim_dir.iterdir():
-            if item.is_file():
-                item.unlink(missing_ok=True)
-                removed.append(item.name)
-        with contextlib.suppress(OSError):
-            layout.shim_dir.rmdir()
-    payload: dict[str, Any] = {
+    removed = _remove_shims(layout)
+    user_path: dict[str, Any] = {"enabled": write_path, "changed": False, "removed": 0, "entries": []}
+    if write_path:
+        user_path = _drop_recorded_paths(ctx, store=store)
+    return {
         "schema": "devman/uninit/1",
-        "changed": bool(removed),
+        "changed": bool(removed or user_path["changed"]),
         "removed_shims": removed,
-        "path": {"enabled": path, "changed": False},
+        "user_path": user_path,
         "warnings": ctx.warnings,
     }
-    if path:
-        result = _env.remove_path(layout, store=store)
-        ctx.state.path_added = []
-        save_state(layout, ctx.state)
-        payload["path"] = {"enabled": True, "changed": bool(result["changed"]), "removed": result["removed"]}
-    return payload
 
 
 # ---- env / exec ----
@@ -756,7 +888,7 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
             f"{layout.shim_dir} 在 PATH 顺位 {detected['shim_index']}"
             if detected["shim_on_path"]
             else "shim 目录不在用户 PATH",
-            None if detected["shim_on_path"] else "如需切换生效：fcmd devman init --path（会提示遮蔽项）",
+            None if detected["shim_on_path"] else "运行 fcmd devman init（默认写入用户 PATH，可用 --no-path 关闭）",
         )
     )
     for marker_name, value in dict(detected["markers"]).items():

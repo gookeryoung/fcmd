@@ -76,9 +76,27 @@ def _human_install(payload: dict[str, Any]) -> None:
             print(f"  安装目录: {planned['install_dir']}")
     elif payload.get("path"):
         print(f"  路径: {payload['path']}")
+    _print_user_path(payload.get("user_path") or {}, dry_run=bool(payload.get("dry_run")))
+
+
+def _print_user_path(data: dict[str, Any], *, dry_run: bool) -> None:
+    if not data.get("enabled"):
+        return
+    position = "追加" if data.get("position") == "append" else "前置"
+    if dry_run:
+        if data.get("already_present"):
+            print("  用户 PATH: 已包含 devman（无需修改）")
+        else:
+            print(f"  用户 PATH: 将{position} {data.get('entry')}")
+        return
+    if data.get("changed"):
+        print(f"  用户 PATH: 已{position} {data.get('entry')}")
+    else:
+        print("  用户 PATH: 无需修改（已包含 devman）")
 
 
 def _human_uninstall(payload: dict[str, Any]) -> None:
+    user_path = payload.get("user_path") or {}
     if payload.get("dry_run"):
         print("计划卸载：")
         for item in (payload.get("planned") or {}).get("targets", []):
@@ -87,6 +105,8 @@ def _human_uninstall(payload: dict[str, Any]) -> None:
             print("  该版本是活动版本，将清空活动标记")
         if (payload.get("planned") or {}).get("purge_cache"):
             print("  同时清空下载缓存")
+        for entry in (payload.get("planned") or {}).get("remove_path_entries") or []:
+            print(f"  卸载最后一个版本，将移除用户 PATH 条目: {entry}")
         return
     removed = payload.get("removed") or []
     if not removed:
@@ -100,6 +120,8 @@ def _human_uninstall(payload: dict[str, Any]) -> None:
         print("  下载缓存已清空")
     for leftover in payload.get("leftovers") or []:
         print(f"  残留（可手工删除）：{leftover}")
+    if user_path.get("changed"):
+        print(f"  用户 PATH: 已精确移除 {user_path.get('removed')} 个 devman 条目")
     if payload.get("note"):
         print(f"  说明: {payload['note']}")
 
@@ -294,29 +316,41 @@ def versions(
 @fcmd.tool(
     "devman",
     subcommand="install",
-    help="安装指定版本的 node / python（--dry-run 只输出计划）",
+    help="安装指定版本的 node / python（默认把 shim 目录写入用户 PATH）",
     param_help={
         "spec": "版本规格，如 node@20.11.1、python@3.12、node@lts",
-        "dry_run": "只输出计划，不建目录、不下载、不改状态",
+        "dry_run": "只输出计划，不建目录、不下载、不改状态、不写 PATH",
         "force": "已安装时强制重装",
         "sha256": "显式指定构件 sha256（官方清单不可达时用）",
+        "no_path": "不把 shim 目录写入用户 PATH",
+        "allow_shadow": "允许 devman 的 shim 遮蔽已有 node/python",
         "root": "devman 根目录",
     },
 )
-def install(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
+def install(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一一对应
     spec: str,
     dry_run: bool = False,
     force: bool = False,
     sha256: str = "",
+    no_path: bool = False,
+    allow_shadow: bool = False,
     root: str = "",
     *,
     json_output: bool = False,
 ) -> None:
-    """安装一个版本。"""
+    """安装一个版本，默认完成用户 PATH 集成。"""
     subcommand = "install"
     try:
         ctx = _ops.new_context(root)
-        payload = _ops.install(ctx, spec, dry_run=dry_run, force=force, sha256=sha256 or None)
+        payload = _ops.install(
+            ctx,
+            spec,
+            dry_run=dry_run,
+            force=force,
+            sha256=sha256 or None,
+            write_path=not no_path,
+            allow_shadow=allow_shadow,
+        )
     except DevmanError as exc:
         _fail(subcommand, exc, json_output=json_output)
         return
@@ -399,6 +433,8 @@ def use(spec: str, clear: bool = False, dry_run: bool = False, root: str = "", *
         "yes": "确认卸载旧版本",
         "dry_run": "只输出计划",
         "force": "强制重装目标版本",
+        "no_path": "不把 shim 目录写入用户 PATH",
+        "allow_shadow": "允许 devman 的 shim 遮蔽已有 node/python",
         "root": "devman 根目录",
     },
 )
@@ -409,6 +445,8 @@ def upgrade(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一�
     yes: bool = False,
     dry_run: bool = False,
     force: bool = False,
+    no_path: bool = False,
+    allow_shadow: bool = False,
     root: str = "",
     *,
     json_output: bool = False,
@@ -425,6 +463,8 @@ def upgrade(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一�
             yes=yes,
             dry_run=dry_run,
             force=force,
+            write_path=not no_path,
+            allow_shadow=allow_shadow,
         )
     except DevmanError as exc:
         _fail(subcommand, exc, json_output=json_output)
@@ -435,9 +475,9 @@ def upgrade(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一�
 @fcmd.tool(
     "devman",
     subcommand="init",
-    help="生成 shim（--path 时把 shim 目录写入用户 PATH）",
+    help="生成 shim 并把 shim 目录写入用户 PATH（--no-path 只生成 shim）",
     param_help={
-        "path": "写入 HKCU 用户 PATH（不写系统 PATH，不需要管理员）",
+        "no_path": "只生成 shim，不改用户 PATH",
         "append": "追加到 PATH 末尾而不是最前",
         "allow_shadow": "允许遮蔽已有 node/python",
         "dry_run": "只输出计划",
@@ -445,7 +485,7 @@ def upgrade(  # noqa: PLR0913, PLR0917 - CLI 参数与 ADR D10 的命令面一�
     },
 )
 def init(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
-    path: bool = False,
+    no_path: bool = False,
     append: bool = False,
     allow_shadow: bool = False,
     dry_run: bool = False,
@@ -453,11 +493,17 @@ def init(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
     *,
     json_output: bool = False,
 ) -> None:
-    """生成 shim，可选写用户 PATH。"""
+    """生成 shim 并写入用户 PATH（默认）。"""
     subcommand = "init"
     try:
         ctx = _ops.new_context(root)
-        payload = _ops.init(ctx, path=path, append=append, allow_shadow=allow_shadow, dry_run=dry_run)
+        payload = _ops.init(
+            ctx,
+            write_path=not no_path,
+            append=append,
+            allow_shadow=allow_shadow,
+            dry_run=dry_run,
+        )
     except DevmanError as exc:
         _fail(subcommand, exc, json_output=json_output)
         return
@@ -466,8 +512,15 @@ def init(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
         if data.get("dry_run"):
             print(f"shim 目录: {data['planned']['shim_dir']}")
             print(f"将生成: {', '.join(data['planned']['shims'])}")
-            if data["planned"]["add_to_user_path"]:
-                print(f"将把 shim 目录写入用户 PATH（{data['planned']['position']}）")
+            _print_user_path(
+                {
+                    "enabled": data["planned"]["add_to_user_path"],
+                    "position": data["planned"]["position"],
+                    "entry": data["planned"]["shim_dir"],
+                    "already_present": data["planned"]["already_present"],
+                },
+                dry_run=True,
+            )
             for tool, items in (data["planned"].get("shadowed") or {}).items():
                 print(f"  会遮蔽 {tool}: {', '.join(items)}")
             return
@@ -475,8 +528,7 @@ def init(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
             print(f"已生成 shim: {', '.join(data['shims_written'])}")
         else:
             print("shim 已是最新")
-        if data["path"].get("enabled"):
-            print("用户 PATH: " + ("已更新" if data["path"].get("changed") else "无需修改"))
+        _print_user_path(data.get("user_path") or {}, dry_run=False)
 
     _finish(subcommand, payload, json_output=json_output, render=render)
 
@@ -484,15 +536,19 @@ def init(  # noqa: PLR0913 - CLI 参数与 ADR D10 的命令面一一对应
 @fcmd.tool(
     "devman",
     subcommand="uninit",
-    help="删除 shim（--path 时同时移除用户 PATH 条目）",
-    param_help={"path": "移除 devman 写入的用户 PATH 条目", "dry_run": "只输出计划", "root": "devman 根目录"},
+    help="删除 shim 并精确移除 devman 写入的用户 PATH 条目（--no-path 保留 PATH）",
+    param_help={
+        "no_path": "保留用户 PATH 中的 devman 条目",
+        "dry_run": "只输出计划",
+        "root": "devman 根目录",
+    },
 )
-def uninit(path: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
+def uninit(no_path: bool = False, dry_run: bool = False, root: str = "", *, json_output: bool = False) -> None:
     """撤销 shim / PATH 集成。"""
     subcommand = "uninit"
     try:
         ctx = _ops.new_context(root)
-        payload = _ops.uninit(ctx, path=path, dry_run=dry_run)
+        payload = _ops.uninit(ctx, write_path=not no_path, dry_run=dry_run)
     except DevmanError as exc:
         _fail(subcommand, exc, json_output=json_output)
         return
@@ -500,12 +556,16 @@ def uninit(path: bool = False, dry_run: bool = False, root: str = "", *, json_ou
     def render(data: dict[str, Any]) -> None:
         if data.get("dry_run"):
             print(f"将删除 shim: {data['planned']['remove_shims']}")
-            if data["planned"]["remove_path_entry"]:
-                print("将移除用户 PATH 中的 devman 条目")
+            for entry in data["planned"]["remove_path_entries"]:
+                print(f"将移除用户 PATH 条目: {entry}")
             return
         print(f"已删除 shim: {', '.join(data['removed_shims']) or '（无）'}")
-        if data["path"].get("enabled"):
-            print("用户 PATH: " + ("已更新" if data["path"].get("changed") else "无需修改"))
+        user_path = data.get("user_path") or {}
+        if user_path.get("enabled"):
+            if user_path.get("changed"):
+                print(f"用户 PATH: 已精确移除 {user_path.get('removed')} 个 devman 条目")
+            else:
+                print("用户 PATH: 无需修改")
 
     _finish(subcommand, payload, json_output=json_output, render=render)
 

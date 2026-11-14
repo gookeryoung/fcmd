@@ -41,7 +41,7 @@ def test_sha256_file_matches_hashlib(tmp_path: Path) -> None:
 
 def test_get_text_decodes_utf8_with_replacement(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        _net.urllib.request,
+        urllib.request,
         "urlopen",
         lambda request, timeout=None: FakeResponse([b"hello ", b"\xff"]),
     )
@@ -50,7 +50,7 @@ def test_get_text_decodes_utf8_with_replacement(monkeypatch: pytest.MonkeyPatch)
 
 def test_download_writes_part_then_replaces(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(
-        _net.urllib.request,
+        urllib.request,
         "urlopen",
         lambda request, timeout=None: FakeResponse([b"abc", b"def"], content_length="6"),
     )
@@ -65,7 +65,7 @@ def test_download_writes_part_then_replaces(monkeypatch: pytest.MonkeyPatch, tmp
 
 
 def test_download_without_content_length(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(_net.urllib.request, "urlopen", lambda request, timeout=None: FakeResponse([b"x" * 10]))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout=None: FakeResponse([b"x" * 10]))
     dest = tmp_path / "f.bin"
     _net.UrllibFetcher().download("https://example.invalid/f", dest)
     assert dest.read_bytes() == b"x" * 10
@@ -80,7 +80,7 @@ def test_retryable_http_error_retries_then_succeeds(monkeypatch: pytest.MonkeyPa
             raise urllib.error.HTTPError(request.full_url, 503, "busy", {}, None)  # type: ignore[arg-type]
         return FakeResponse([b"ok"])
 
-    monkeypatch.setattr(_net.urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(urllib.request, "urlopen", flaky)
     monkeypatch.setattr(_net.time, "sleep", lambda seconds: None)
     assert _net.UrllibFetcher(retries=1).get_text("https://example.invalid/x") == "ok"
     assert len(calls) == 2
@@ -90,7 +90,7 @@ def test_non_retryable_http_error_raises_fetch_error(monkeypatch: pytest.MonkeyP
     def missing(request: Any, timeout: Any = None) -> FakeResponse:
         raise urllib.error.HTTPError(request.full_url, 404, "gone", {}, None)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(_net.urllib.request, "urlopen", missing)
+    monkeypatch.setattr(urllib.request, "urlopen", missing)
     with pytest.raises(_net.FetchError) as info:
         _net.UrllibFetcher(retries=3).get_text("https://example.invalid/x")
     assert "404" in str(info.value)
@@ -103,7 +103,7 @@ def test_url_error_raises_fetch_error_after_retries(monkeypatch: pytest.MonkeyPa
         attempts.append(1)
         raise urllib.error.URLError("offline")
 
-    monkeypatch.setattr(_net.urllib.request, "urlopen", broken)
+    monkeypatch.setattr(urllib.request, "urlopen", broken)
     monkeypatch.setattr(_net.time, "sleep", lambda seconds: None)
     with pytest.raises(_net.FetchError) as info:
         _net.UrllibFetcher(retries=2).download("https://example.invalid/f", tmp_path / "f.bin")
@@ -115,7 +115,7 @@ def test_timeout_maps_to_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
     def slow(request: Any, timeout: Any = None) -> FakeResponse:
         raise TimeoutError("timed out")
 
-    monkeypatch.setattr(_net.urllib.request, "urlopen", slow)
+    monkeypatch.setattr(urllib.request, "urlopen", slow)
     with pytest.raises(_net.FetchError):
         _net.UrllibFetcher(retries=0).get_text("https://example.invalid/x")
 

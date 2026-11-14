@@ -20,12 +20,20 @@ PY_KEY = _fakes.PY_KEY
 EMPTY_ENV = {"PATH": "C:\\Windows"}
 
 
-def _ctx(
+def _store(ctx: _ops.JobContext) -> _fakes.FakeEnvStore:
+    store = ctx.env_store
+    assert isinstance(store, _fakes.FakeEnvStore)
+    return store
+
+
+def _ctx(  # noqa: PLR0913 - 测试构造器集中注入替身
     tmp_path: Path,
     *,
     config: Config | None = None,
     fetcher: Any = None,
     runner: Any = None,
+    store: Any = None,
+    env: dict[str, str] | None = None,
 ) -> _ops.JobContext:
     return _ops.JobContext(
         layout=Layout(tmp_path / "root"),
@@ -33,6 +41,8 @@ def _ctx(
         state=State(),
         fetcher=fetcher,
         runner=runner,
+        env_store=store if store is not None else _fakes.FakeEnvStore(),
+        env=EMPTY_ENV if env is None else env,
     )
 
 
@@ -212,6 +222,51 @@ def test_install_node_actual(tmp_path: Path) -> None:
     assert payload["version"] == "20.12.0"
     assert (ctx.layout.version_dir("node", "20.12.0") / "node.exe").is_file()
     assert not ctx.layout.lock_file.exists()
+    assert payload["user_path"]["changed"] is True
+    assert (ctx.layout.shim_dir / "node.cmd").is_file()
+    assert (_store(ctx).get("Path") or "").startswith(str(ctx.layout.shim_dir))
+    assert ctx.state.path_added == [str(ctx.layout.shim_dir)]
+
+
+def test_install_node_dry_run_reports_path_plan(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    payload = _ops.install(ctx, "node@20.11.1", dry_run=True)
+    assert payload["user_path"]["enabled"] is True
+    assert payload["user_path"]["already_present"] is False
+    assert _store(ctx).get("Path") is None
+
+
+def test_install_node_no_path(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, fetcher=_node_fetcher("20.12.0"), runner=_node_runner("20.12.0"))
+    payload = _ops.install(ctx, "node@20.12.0", write_path=False)
+    assert payload["user_path"]["enabled"] is False
+    assert _store(ctx).get("Path") is None
+    assert not (ctx.layout.shim_dir / "node.cmd").exists()
+    assert ctx.state.path_added == []
+
+
+def test_install_blocks_shadowing(tmp_path: Path) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "node.exe").write_bytes(b"MZ")
+    ctx = _ctx(tmp_path, fetcher=_node_fetcher("20.12.0"), runner=_node_runner("20.12.0"), env={"PATH": str(external)})
+    with pytest.raises(DevmanError) as info:
+        _ops.install(ctx, "node@20.12.0")
+    assert info.value.code == "INVALID_ARGUMENT"
+    assert not ctx.layout.version_dir("node", "20.12.0").exists()
+
+    payload = _ops.install(ctx, "node@20.12.0", allow_shadow=True)
+    assert payload["user_path"]["changed"] is True
+
+
+def test_install_repeat_is_path_idempotent(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, fetcher=_node_fetcher("20.12.0"), runner=_node_runner("20.12.0"))
+    _ops.install(ctx, "node@20.12.0")
+    before = _store(ctx).get("Path")
+    payload = _ops.install(ctx, "node@20.12.0")
+    assert payload["changed"] is False
+    assert payload["user_path"]["changed"] is False
+    assert _store(ctx).get("Path") == before
 
 
 def test_install_python_actual(tmp_path: Path) -> None:
@@ -301,6 +356,40 @@ def test_uninstall_all_versions_and_cache(tmp_path: Path) -> None:
     assert len(payload["removed"]) == 2
     assert payload["purged_cache"] is True
     assert not ctx.layout.cache_dir.exists()
+
+
+def test_uninstall_last_version_removes_recorded_path(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    _fakes.install_fake_node(ctx.layout, "20.11.1")
+    ctx.layout.ensure_bootstrap()
+    _env.write_shims(ctx.layout)
+    _env.install_path(ctx.layout, store=ctx.env_store)
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    payload = _ops.uninstall(ctx, "node@20.11.1", yes=True)
+    assert payload["user_path"]["changed"] is True
+    assert _store(ctx).get("Path") == ""
+    assert ctx.state.path_added == []
+
+
+def test_uninstall_keeps_path_when_versions_remain(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    _fakes.install_fake_node(ctx.layout, "20.11.1")
+    _fakes.install_fake_node(ctx.layout, "20.12.0")
+    _env.install_path(ctx.layout, store=ctx.env_store)
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    payload = _ops.uninstall(ctx, "node@20", yes=True)
+    assert payload["user_path"]["changed"] is False
+    assert ctx.state.path_added == [str(ctx.layout.shim_dir)]
+    assert (_store(ctx).get("Path") or "").startswith(str(ctx.layout.shim_dir))
+
+
+def test_uninstall_dry_run_reports_path_removal(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    _fakes.install_fake_node(ctx.layout, "20.11.1")
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    payload = _ops.uninstall(ctx, "node@20", dry_run=True)
+    assert payload["planned"]["remove_path_entries"] == [str(ctx.layout.shim_dir)]
+    assert ctx.state.path_added == [str(ctx.layout.shim_dir)]
 
 
 def test_uninstall_active_requires_force(tmp_path: Path) -> None:
@@ -455,10 +544,16 @@ def test_upgrade_to_explicit_version(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------- #
 def test_init_dry_run(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
-    payload = _ops.init(ctx, path=True, dry_run=True, env=EMPTY_ENV)
+    payload = _ops.init(ctx, dry_run=True, env=EMPTY_ENV)
     assert payload["dry_run"] is True
     assert payload["planned"]["add_to_user_path"] is True
     assert not ctx.layout.shim_dir.exists()
+
+
+def test_init_no_path_dry_run(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    payload = _ops.init(ctx, write_path=False, dry_run=True, env=EMPTY_ENV)
+    assert payload["planned"]["add_to_user_path"] is False
 
 
 def test_init_writes_shims(tmp_path: Path) -> None:
@@ -474,12 +569,24 @@ def test_init_writes_shims(tmp_path: Path) -> None:
 def test_init_path_updates_store_and_state(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
     store = _fakes.FakeEnvStore({"Path": "C:\\Windows"})
-    payload = _ops.init(ctx, path=True, store=store, env=EMPTY_ENV)
-    assert payload["path"]["changed"] is True
-    assert (store.get("Path") or "").startswith(str(ctx.layout.shim_dir))
+    payload = _ops.init(ctx, store=store, env=EMPTY_ENV)
+    assert payload["user_path"]["changed"] is True
+    assert store.get("Path") == f"{ctx.layout.shim_dir};C:\\Windows"
     assert ctx.state.path_added == [str(ctx.layout.shim_dir)]
     assert ctx.state.path_previous_user_path == "C:\\Windows"
     assert ctx.layout.state_file.is_file()
+
+
+def test_init_path_keeps_preexisting_entry_unrecorded(tmp_path: Path) -> None:
+    """PATH 里已有该目录时不算 devman 写入，不记录、不改变格式。"""
+    ctx = _ctx(tmp_path)
+    layout = ctx.layout
+    original = f"C:\\Windows;C:\\Tools;{layout.shim_dir}"
+    store = _fakes.FakeEnvStore({"Path": original})
+    payload = _ops.init(ctx, store=store, env=EMPTY_ENV)
+    assert payload["user_path"]["changed"] is False
+    assert store.get("Path") == original
+    assert ctx.state.path_added == []
 
 
 def test_init_path_blocks_shadowing(tmp_path: Path) -> None:
@@ -489,11 +596,11 @@ def test_init_path_blocks_shadowing(tmp_path: Path) -> None:
     (external / "node.exe").write_bytes(b"MZ")
     env = {"PATH": str(external)}
     with pytest.raises(DevmanError) as info:
-        _ops.init(ctx, path=True, store=_fakes.FakeEnvStore(), env=env)
+        _ops.init(ctx, store=_fakes.FakeEnvStore(), env=env)
     assert info.value.code == "INVALID_ARGUMENT"
     assert "--allow-shadow" in (info.value.hint or "")
 
-    payload = _ops.init(ctx, path=True, allow_shadow=True, store=_fakes.FakeEnvStore(), env=env)
+    payload = _ops.init(ctx, allow_shadow=True, store=_fakes.FakeEnvStore(), env=env)
     assert payload["changed"] is True
 
 
@@ -502,7 +609,7 @@ def test_init_path_dry_run_reports_shadowing(tmp_path: Path) -> None:
     external = tmp_path / "external"
     external.mkdir()
     (external / "python.exe").write_bytes(b"MZ")
-    payload = _ops.init(ctx, path=True, dry_run=True, env={"PATH": str(external)})
+    payload = _ops.init(ctx, dry_run=True, env={"PATH": str(external)})
     assert "python" in payload["planned"]["shadowed"]
 
 
@@ -520,6 +627,7 @@ def test_uninit_dry_run(tmp_path: Path) -> None:
     payload = _ops.uninit(ctx, dry_run=True)
     assert payload["dry_run"] is True
     assert ctx.layout.shim_dir.is_dir()
+    assert payload["planned"]["remove_path_entries"] == [str(ctx.layout.shim_dir)]
 
 
 def test_uninit_removes_path_entry(tmp_path: Path) -> None:
@@ -527,17 +635,41 @@ def test_uninit_removes_path_entry(tmp_path: Path) -> None:
     _ops.init(ctx)
     store = _fakes.FakeEnvStore({"Path": f"{ctx.layout.shim_dir};C:\\Windows"})
     ctx.state.path_added = [str(ctx.layout.shim_dir)]
-    payload = _ops.uninit(ctx, path=True, store=store)
-    assert payload["path"]["changed"] is True
+    payload = _ops.uninit(ctx, store=store)
+    assert payload["user_path"]["changed"] is True
     assert store.get("Path") == "C:\\Windows"
     assert ctx.state.path_added == []
 
 
-def test_uninit_path_without_entry(tmp_path: Path) -> None:
+def test_uninit_keeps_unrecorded_entry(tmp_path: Path) -> None:
+    """没有 state 记录的条目（用户手工加的）不删。"""
     ctx = _ctx(tmp_path)
-    store = _fakes.FakeEnvStore({"Path": "C:\\Windows"})
-    payload = _ops.uninit(ctx, path=True, store=store)
-    assert payload["path"]["changed"] is False
+    original = f"{ctx.layout.shim_dir};C:\\Windows"
+    store = _fakes.FakeEnvStore({"Path": original})
+    payload = _ops.uninit(ctx, store=store)
+    assert payload["user_path"]["changed"] is False
+    assert store.get("Path") == original
+
+
+def test_uninit_restores_exact_original_text(tmp_path: Path) -> None:
+    """写入再撤销应逐字回到原值（含 %VAR% 与空段）。"""
+    ctx = _ctx(tmp_path)
+    original = "%USERPROFILE%\\bin;;C:\\Windows;"
+    store = _fakes.FakeEnvStore({"Path": original})
+    _ops.init(ctx, store=store, env=EMPTY_ENV)
+    assert store.get("Path") != original
+    _ops.uninit(ctx, store=store)
+    assert store.get("Path") == original
+
+
+def test_uninit_no_path_keeps_entry(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    _ops.init(ctx)
+    store = _fakes.FakeEnvStore({"Path": f"{ctx.layout.shim_dir};C:\\Windows"})
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    payload = _ops.uninit(ctx, write_path=False, store=store)
+    assert payload["user_path"]["changed"] is False
+    assert store.get("Path") == f"{ctx.layout.shim_dir};C:\\Windows"
 
 
 # ---------------------------------------------------------------------- #

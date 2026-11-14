@@ -27,6 +27,10 @@ def test_path_entry_add_and_remove(tmp_path: Path) -> None:
     assert _env.remove_path_entry(f"C:\\A;{entry};C:\\B", entry) == ("C:\\A;C:\\B", 1)
     assert _env.remove_path_entry("C:\\A", entry) == ("C:\\A", 0)
     assert _env.remove_path_entry("", entry) == ("", 0)
+    assert _env.remove_path_entry(f"{entry};;C:\\A;", entry) == (";C:\\A;", 1)
+    assert _env.add_path_entry("C:\\A;;", entry) == f"{entry};C:\\A;;"
+    assert _env.path_entry_present(f"C:\\A;{entry.upper()}", entry) is True
+    assert _env.path_entry_present(None, entry) is False
     assert _env.path_entries("C:\\A;; ;C:\\B") == ["C:\\A", "C:\\B"]
 
 

@@ -1,7 +1,8 @@
 """环境集成：PATH 解析、用户环境变量读写、shim 生成、冲突检测。
 
-默认零持久化副作用；只有 ``devman init --path`` 会写 HKCU 的 ``Path``，
-且写入的条目可由 ``devman uninit --path`` 精确移除。
+``install`` / ``init`` 默认把 ``<root>/bin`` 写入 HKCU 的 ``Path``（用户级、
+无 UAC、幂等）；``--no-path`` 关闭。只有 devman 实际新增的条目会记入
+``state.json``，``uninstall`` / ``uninit`` 只精确移除这些条目。
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ __all__ = [
     "detect_environment",
     "path_dirs",
     "path_entries",
+    "path_entry_present",
     "remove_path_entry",
     "shell_snippet",
     "shim_scripts",
@@ -127,24 +129,38 @@ def _normalized(value: str) -> str:
 
 
 def add_path_entry(value: str | None, entry: str, *, append: bool = False) -> str:
-    """把 ``entry`` 加入 PATH 文本（已存在则不重复）。"""
-    parts = path_entries(value)
+    """把 ``entry`` 加入 PATH 文本（已存在则原样返回，保留其余段格式）。"""
+    if not value:
+        return entry
+    parts = value.split(";")
     wanted = _normalized(entry)
-    if any(_normalized(part) == wanted for part in parts):
-        return ";".join(parts)
-    if append:
-        parts.append(entry)
-    else:
-        parts.insert(0, entry)
-    return ";".join(parts)
+    for part in parts:
+        if part.strip() and _normalized(part) == wanted:
+            return value
+    return f"{value};{entry}" if append else f"{entry};{value}"
+
+
+def path_entry_present(value: str | None, entry: str) -> bool:
+    """PATH 文本里是否已有与 ``entry`` 相等的段。"""
+    wanted = _normalized(entry)
+    return any(part.strip() and _normalized(part) == wanted for part in (value or "").split(";"))
 
 
 def remove_path_entry(value: str | None, entry: str) -> tuple[str, int]:
-    """移除与 ``entry`` 完全相等的段；返回 ``(新值, 移除条数)``。"""
-    parts = path_entries(value)
+    """移除与 ``entry`` 完全相等的段；返回 ``(新值, 移除条数)``。
+
+    按原始 ``;`` 段删除，其余段（含空段与 ``%VAR%`` 写法）原样保留，
+    以便撤销时精确回到写入前的文本。
+    """
+    if not value:
+        return value or "", 0
+    parts = value.split(";")
     wanted = _normalized(entry)
-    kept = [part for part in parts if _normalized(part) != wanted]
-    return ";".join(kept), len(parts) - len(kept)
+    for index, part in enumerate(parts):
+        if part.strip() and _normalized(part) == wanted:
+            del parts[index]
+            return ";".join(parts), 1
+    return value, 0
 
 
 _EXT_SPLIT = re.compile(r"[;]")
@@ -341,19 +357,19 @@ def shadowed_commands(layout: Layout, *, env: Mapping[str, str] | None = None) -
 
 
 def install_path(layout: Layout, *, store: EnvStore | None = None, append: bool = False) -> dict[str, object]:
-    """把 shim 目录写入用户 PATH；返回 ``{changed, entry, previous}``。"""
+    """把 shim 目录写入用户 PATH；返回 ``{changed, entry, previous, position}``。"""
     backend = store or default_env_store()
     current = backend.get("Path")
     entry = str(layout.shim_dir)
     updated = add_path_entry(current, entry, append=append)
-    if updated == ";".join(path_entries(current)):
-        return {"changed": False, "entry": entry, "previous": current}
+    if updated == (current or ""):
+        return {"changed": False, "entry": entry, "previous": current, "position": "append" if append else "prepend"}
     backend.set("Path", updated)
-    return {"changed": True, "entry": entry, "previous": current}
+    return {"changed": True, "entry": entry, "previous": current, "position": "append" if append else "prepend"}
 
 
 def remove_path(layout: Layout, *, store: EnvStore | None = None) -> dict[str, object]:
-    """从用户 PATH 精确移除 shim 目录；返回 ``{changed, removed}``。"""
+    """从用户 PATH 精确移除 shim 目录；返回 ``{changed, removed, previous}``。"""
     backend = store or default_env_store()
     current = backend.get("Path")
     updated, removed = remove_path_entry(current, str(layout.shim_dir))

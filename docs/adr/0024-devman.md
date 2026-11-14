@@ -149,13 +149,18 @@ devmanw = "fcmd.apps.devman.devmanw:main"
 
 ### D5 PATH 与 shell 集成
 
-三种方式对比后，**默认不改 PATH**：
+**默认写入用户级 PATH**（HKCU，无 UAC、幂等），`--no-path` 关闭：
 
 | 方式 | 生效范围 | 风险 | 采用 |
 |---|---|---|---|
-| shim 目录 + 写用户 PATH | 新开的终端 | 会遮蔽已有 node/python，需显式授权 | `devman init --path`（显式、可逆） |
+| shim 目录 + 写用户 PATH | 新开的终端 | 会遮蔽已有 node/python，需显式授权 | `install` / `upgrade` / `init` 默认；`--no-path` 关闭 |
 | shell hook（改 profile） | 只对该 shell | 改用户 profile 文件，跨 shell 各写一份 | 不默认；只打印片段供用户自行粘贴 |
 | 进程内注入 PATH | 单条命令 | 无持久化副作用 | `devman exec`（默认） |
+
+采用默认写入的理由：P1 的目标是「装完打开新终端就能用」。若把 PATH 集成留给用户手工
+执行，首次安装会在最后一步断掉，且用户很难判断该加哪个目录。写入范围严格限制在
+HKCU 用户级 PATH（不碰系统 PATH、不触发 UAC），且只记录、只回滚 devman 自己新增的
+条目（见第 3 点），因此默认开启的风险可控；需要完全零持久化的用户随时可用 `--no-path`。
 
 具体设计：
 
@@ -178,14 +183,21 @@ exit /b %ERRORLEVEL%
    而联结需要 shell 外调且不可跨平台测试。代价是 `.cmd` 对个别只认 `*.exe`
    的构建脚本不透明——这类场景用 `devman exec` 或 `devman env` 的片段。
 
-2. **PATH 写入**：`devman init --path [--append]` 只写 **HKCU\Environment\Path**
-   （用户级，不需要管理员），默认前置；写前广播 `WM_SETTINGCHANGE`
-   （与 `infras.system.persist_env` 同口径）。以下情形拒绝执行并给出原因：
-   - 前置会遮蔽已存在的 node/python 且未给 `--allow-shadow`（列出被遮蔽的路径）；
-   - 目标条目已在 PATH 中（幂等，成功返回 `changed=false`）。
-3. **回滚**：`devman uninit --path` 只删除与 `<root>/bin` **完全相等**的条目，
-   保留其余条目与顺序；PATH 被外部改过也照此处理。同时清掉 `state.json` 里的记录。
-   不在 `uninit` 时整份恢复旧 PATH 快照（会把用户后续改动一起抹掉），快照只用于诊断。
+2. **PATH 写入（默认）**：`install` / `upgrade` 成功安装后、`init` 默认把
+   `<root>/bin` 写入 **HKCU\Environment\Path**（用户级，不需要管理员），默认前置
+   （`init --append` 可追加到末尾），写后广播 `WM_SETTINGCHANGE`
+   （与 `infras.system.persist_env` 同口径）。`--no-path` 跳过 shim 生成与 PATH 写入，
+   只装版本。
+   - **遮蔽校验**：新增条目会遮蔽已存在的 node/python 时默认拒绝（列出被遮蔽的路径与
+     提示 `--allow-shadow`）；条目已在 PATH 中（幂等重装）不再重复校验，成功返回
+     `changed=false`。
+   - **写入顺序**：先装版本（失败即中止，不写 PATH），再生成 shim，最后写 PATH；
+     PATH 写入失败时版本仍可用 `devman exec` / `devman env`，错误码 `PATH_WRITE_FAILED`。
+3. **回滚**：`state.json` 的 `path_added` **只记录 devman 实际新增的条目**（PATH 里原本
+   就有、或本次写入失败的不记）。`uninit` 默认、`uninstall` 卸掉最后一个版本时，
+   按 `;` 段精确移除这些条目：保留其余条目、顺序、空段与 `%VAR%` 原文，逐字回到
+   写入前的文本；不整份恢复旧 PATH 快照（会把用户后续改动一起抹掉），快照只用于诊断。
+   未被 `path_added` 记录的条目（用户手工添加）不动。
 4. **不改环境变量的场景**：`devman env --shell pwsh|cmd|bash` 打印把
    `<root>/node/<active>` 与 `<root>/python/<active>` 前置到 PATH 的一行命令；
    `devman exec -- <argv…>` 在子进程环境里做同样的事，当前 shell 不变。
@@ -245,7 +257,9 @@ exit /b %ERRORLEVEL%
    `--force` 时先清空 `active/<tool>.txt`，再按 1 处理。
 3. 目标不存在 → `NOT_INSTALLED`（退出 4）；加 `--if-present` 则成功且 `changed=false`。
 4. 保留：其余版本、`config.json`、`cache/downloads`（`--purge-cache` 才清）、
-   `<root>/bin` 与 PATH 记录（`uninit --path` 才动）。
+   `<root>/bin` 与用户 PATH 条目（还有其他版本时保留）。卸掉最后一个版本
+   （node 与 python 都没有了）时，只移除 `state.json` 里 `path_added` 记录的条目，
+   用户手工添加的条目不删；`uninit` 随时可完整撤销 shim 与 PATH。
 5. 明确不删：`%APPDATA%\npm` 里的全局包、用户自己的 venv、
    `%APPDATA%\uv\python` 下的 uv 托管版本、conda 环境。
    `uninstall` 的输出会写一句「npm 全局包不在 devman 管理范围」。
@@ -275,12 +289,12 @@ exit /b %ERRORLEVEL%
 |---|---|---|
 | `list` | `--json` | 只读：已安装版本、活动版本、外部探测、shim 状态 |
 | `versions <tool>` | `--remote`、`--prerelease`、`--json` | 只读（`--remote` 联网读索引，不下载构件） |
-| `install <spec>` | `--dry-run`、`--json`、`--sha256`、`--force` | 安装；`--dry-run` 零副作用 |
-| `uninstall <spec>` | `--yes`、`--dry-run`、`--json`、`--if-present`、`--all`、`--purge-cache` | 删除版本目录；必须 `--yes` |
+| `install <spec>` | `--dry-run`、`--json`、`--sha256`、`--force`、`--no-path`、`--allow-shadow` | 安装 + 默认写 HKCU PATH；`--dry-run` 零副作用 |
+| `uninstall <spec>` | `--yes`、`--dry-run`、`--json`、`--if-present`、`--all`、`--purge-cache` | 删除版本目录；必须 `--yes`；删掉最后一个版本时清理 devman 写入的 PATH 条目 |
 | `use <spec>` / `use --clear <tool>` | `--json` | 改 `active/<tool>.txt` |
-| `upgrade <tool>` | `--to <spec>`、`--purge-old`、`--yes`、`--dry-run`、`--json` | 安装 + 切换（+ 可选卸载旧版） |
-| `init` | `--path`、`--append`、`--allow-shadow`、`--dry-run`、`--json` | 生成 shim；`--path` 时写 HKCU PATH |
-| `uninit` | `--path`、`--dry-run`、`--json` | 删 shim 目录与 PATH 条目 |
+| `upgrade <tool>` | `--to <spec>`、`--purge-old`、`--yes`、`--dry-run`、`--json`、`--no-path`、`--allow-shadow` | 安装 + 切换（+ 可选卸载旧版）；默认写 PATH |
+| `init` | `--no-path`、`--append`、`--allow-shadow`、`--dry-run`、`--json` | 生成 shim + 默认写 HKCU PATH |
+| `uninit` | `--no-path`、`--dry-run`、`--json` | 删 shim + 精确移除 devman 写入的 PATH 条目 |
 | `env` | `--shell pwsh\|cmd\|bash`、`--json` | 只打印 |
 | `exec` | `-- <argv…>` | 起子进程 |
 | `doctor` | `--json` | 只读；有 `fail` 项时退出 5 |
@@ -294,6 +308,9 @@ exit /b %ERRORLEVEL%
 - 成功：`emit_result("devman", "<子命令>", data)`，`data.schema = "devman/<子命令>/1"`，
   安装类命令另带 `actions[]`（实际执行的 argv / 下载 URL / 目标路径）、
   `changed`、`duration_ms`、`destructive`/`confirmed`（适用时）；
+  涉及 PATH 的子命令（`install` / `upgrade` 透传 / `init` / `uninit` / `uninstall`）
+  带 `user_path: {enabled, changed, entry, position, shadowed}`，可直接判断本次是否
+  写了 PATH（`changed`）以及是否因 `--no-path` 跳过（`enabled=false`）；
 - 失败：`report_error(...)`，人读与机读共用同一退出码；
 - `doctor` 的 `checks[]` 每项 `{name, status: ok|warn|fail, detail, hint}`，
   有 `fail` 时 `emit_result(..., ok=False)` + 退出 5，不写 stderr 错误体。
@@ -365,6 +382,9 @@ exit /b %ERRORLEVEL%
 ### D13 不变量
 
 - 不写 Machine 级 PATH / HKLM，不发起 UAC 提权；所有持久化写入落在 `<root>` 与 HKCU。
+- 默认写 HKCU 用户 PATH（`install` / `upgrade` / `init`），`--no-path` 可完全关闭；
+  只把 devman 实际新增的条目记入 `state.path_added`，撤销时只移除这些条目，
+  其余 PATH 文本（顺序、空段、`%VAR%`）逐字保留。
 - 不删除 `<root>` 之外的任何文件；`uninstall` 只动 `<root>/node`、`<root>/python`。
 - 不改动既有 node / python / conda / venv 的目录、注册表项与配置文件。
 - `--dry-run` 零副作用：不建目录、不下载、不写状态、不写注册表。
@@ -394,9 +414,11 @@ P1 真机验证（`%TEMP%\devman-verify-<ts>` 作 root，不碰任何既有安�
    `<root>/bin` 不再指向已删目录；
 6. 逐项对比基线：用户 / 系统 PATH 未变、`where node` / `where python` 未变、
    `node -v` / `python -V` 未变、`uv python list` 未新增条目；
-7. `init --path --dry-run --json` 只输出计划，注册表写入路径另用假 `EnvStore` 单测覆盖。
+7. `install --dry-run --json` / `init --dry-run --json` 只输出计划（含 `user_path`
+   的 `already_present` / `shadowed`），注册表写入路径另用假 `EnvStore` 单测覆盖。
 
-P1 验收记录（2026-11-14，root = `%TEMP%\devman-verify-20261114-104606`）：
+P1 验收记录 A（2026-11-14 首次落地，root = `%TEMP%\devman-verify-20261114-104606`，
+当时 PATH 集成默认关闭）：
 
 | 项 | 结果 |
 |---|---|
@@ -405,8 +427,22 @@ P1 验收记录（2026-11-14，root = `%TEMP%\devman-verify-20261114-104606`）�
 | `use` + `exec` | 分别输出 `v20.11.1` / `3.12.15`，执行文件位于隔离 root |
 | 外部环境 | `node -v` 仍为 v25.2.1、`python -V` 仍为 3.13.13；HKCU `Path` 与基线逐字一致；`uv python list` 既有条目未变 |
 | 卸载 | 版本目录、`active/*.txt`、uv junction 别名均清空；node root 为空，python root 仅剩 uv 自身元数据（`.temp` / `.gitignore` / `.lock`） |
-| `doctor` | 仅提示 `shim_on_path`（默认不改 PATH）与 conda 解释器存在 |
+| `doctor` | 仅提示 `shim_on_path`（当时默认不改 PATH）与 conda 解释器存在 |
 | 单测 | `tests/apps/devman` 220 项通过，覆盖率 98%；`ruff` / `pyrefly` 0 错误 |
+
+P1 验收记录 B（2026-11-14 改为默认写 PATH，root = `%TEMP%\devman-verify-53w22gr9`）：
+
+| 项 | 结果 |
+|---|---|
+| 基线 | `winreg` 读出 HKCU `Path` 原文（REG_EXPAND_SZ，23 段，含 `%PNPM_HOME%` / `%USERPROFILE%`），记录全部用户变量及其类型 |
+| 默认拒绝遮蔽 | `install node@22`（无 `--allow-shadow`）退出 3，stderr 列出被遮蔽的 `node.exe` / `python.exe` / 商店别名，HKCU `Path` 不变 |
+| `install node@22 --allow-shadow` | 装成 22.23.5；`--json` 的 `data.user_path = {changed: true, position: "prepend", entry: "<root>\\bin"}`；HKCU `Path` 变为 `<root>\bin;<原值>`，其余段逐字不变 |
+| 新终端可见 | 按「机器 PATH + 用户 PATH」拼出的新登录环境：`where node` 首行为 `<root>\bin\node.cmd`，`node -v` = `v22.23.5`；`install python@3.12` + `use` 后 `python -V` = `Python 3.12.15` |
+| `uninit` | shim 目录删除；HKCU `Path` 与基线**逐字一致**；`Path` 之外的用户变量（值 + 类型）零差异；同一新登录环境 `node -v` 回到 `v25.2.1` |
+| `init` + 卸载 | `init` 重新写入（`user_path.changed=true`）；卸 node 后仍有 python 时条目保留（`changed=false`）；卸掉最后一个版本后 `user_path.removed=1`，`Path` 回到基线 |
+| 单测 | `tests/apps/devman` 235 项通过，覆盖率 97.88%；`ruff` / `pyrefly` 0 错误 |
+
+（验证前清理了上一轮验证遗留在 HKCU `Path` 的两条 `%TEMP%\devman-verify-*\bin` 死条目。）
 
 ## 风险与边界
 
@@ -414,8 +450,11 @@ P1 验收记录（2026-11-14，root = `%TEMP%\devman-verify-20261114-104606`）�
   不可达时安装失败并提示用 `--sha256` 显式指定，不降级成「镜像说对就算对」。
 - `.cmd` shim 对只认 `*.exe` 的构建脚本不透明；这类场景用 `devman exec` / `env`
   把真实版本目录加进 PATH。
-- 前置 shim 目录会遮蔽已有 node/python；`init --path` 默认拒绝遮蔽，必须显式
-  `--allow-shadow`，且输出逐条列出被遮蔽的路径。
+- 默认把 shim 目录前置到用户 PATH，会遮蔽已有 node/python；`install` / `init` 默认
+  拒绝遮蔽，必须显式 `--allow-shadow`，且输出逐条列出被遮蔽的路径。用户已确认接管后，
+  重装/升级不会再次拦截（条目已在 PATH 中）。
+- HKCU `Path` 可能被其他安装器并发修改：devman 每次写入前重读当前值、只增删自己的
+  条目，不整份覆盖；但两个进程同时写注册表仍可能丢失其中一次修改，建议避免并行安装。
 - npm 全局包按 npm 自己的 prefix 落盘（Windows 默认 `%APPDATA%\npm`），
   卸载版本不会清掉；`doctor` 提示该目录但不动它。
 - uv 的版本索引随其发布节奏变化（含预发布），`install` 只接受稳定版，
@@ -430,9 +469,9 @@ P1 验收记录（2026-11-14，root = `%TEMP%\devman-verify-20261114-104606`）�
 
 - node / python 的「装、切、卸」有单一模型（版本目录 + 标记 + 活动文件），
   CLI / JSON / 后续 GUI 三处同源，避免各自判定；
-- 默认不动 PATH、不动既有解释器，切换只是原子写一行文件，
-  彻底卸载只需删两个目录；
-- 借 uv 取 Python，避免重复实现 python-build-standalone 下载与校验，
-  也天然与 venv 分工（devman 供解释器，uv 建环境）；
-- 代价是多了一层目录约定与 shim 机制，且 `.cmd` shim 对少数只认 `.exe` 的工具不透明；
-  这两点都在 `doctor` 与 `env` 输出里显式说明。
+- 默认把 `<root>/bin` 写入用户级 PATH：装完新开终端即可用；写入落在 HKCU，
+  只增删 devman 自己的条目，`--no-path` 可退回纯进程内注入；
+- 不动既有 node / python / conda / venv，切换只是原子写一行文件，
+  借用 uv 取 Python，避免重复实现 python-build-standalone 下载与校验；
+- 代价是多了一层目录约定与 shim 机制，`.cmd` shim 对少数只认 `.exe` 的工具不透明，
+  且默认 PATH 写入需要处理遮蔽与精确回滚——这些都在 `doctor`、`env` 与 ADR 中显式说明。

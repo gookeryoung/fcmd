@@ -35,13 +35,20 @@ _SUBCOMMANDS = {
 }
 
 
-def _ctx(
+def _store(ctx: _ops.JobContext) -> _fakes.FakeEnvStore:
+    store = ctx.env_store
+    assert isinstance(store, _fakes.FakeEnvStore)
+    return store
+
+
+def _ctx(  # noqa: PLR0913 - 测试构造器集中注入替身
     tmp_path: Path,
     *,
     config: Config | None = None,
     fetcher: Any = None,
     runner: Any = None,
     warnings: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> _ops.JobContext:
     ctx = _ops.JobContext(
         layout=Layout(tmp_path / "root"),
@@ -49,6 +56,8 @@ def _ctx(
         state=State(),
         fetcher=fetcher,
         runner=runner,
+        env_store=_fakes.FakeEnvStore(),
+        env=EMPTY_ENV if env is None else env,
     )
     if warnings:
         ctx.warnings.extend(warnings)
@@ -57,6 +66,13 @@ def _ctx(
 
 def _use(monkeypatch: pytest.MonkeyPatch, ctx: _ops.JobContext) -> None:
     monkeypatch.setattr(devman_module._ops, "new_context", lambda root=None: ctx)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认写 PATH 后，任何走到真实上下文的命令都不得触碰 HKCU。"""
+    monkeypatch.setattr(_env, "default_env_store", _fakes.FakeEnvStore)
+    monkeypatch.setenv("PATH", "C:\\Windows")
 
 
 def _run(capsys: pytest.CaptureFixture[str], argv: list[str]) -> tuple[int, str, str]:
@@ -247,6 +263,51 @@ def test_install_invalid_spec(
     assert "版本规格不合法" in out + err
 
 
+def test_install_default_writes_user_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetcher, runner = _node_setup("20.12.0")
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["install", "node@20.12.0", "--json"])
+    assert code == 0
+    data = _envelope(out)["data"]
+    assert data["user_path"]["enabled"] is True
+    assert data["user_path"]["changed"] is True
+    assert (ctx.layout.shim_dir / "node.cmd").is_file()
+    assert (_store(ctx).values.get("Path") or "").startswith(str(ctx.layout.shim_dir))
+
+
+def test_install_no_path_skips_integration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetcher, runner = _node_setup("20.12.0")
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["install", "node@20.12.0", "--no-path", "--json"])
+    assert code == 0
+    data = _envelope(out)["data"]
+    assert data["user_path"]["enabled"] is False
+    assert data["user_path"]["changed"] is False
+    assert _store(ctx).values.get("Path") is None
+    assert not (ctx.layout.shim_dir / "node.cmd").exists()
+
+
+def test_install_shadow_blocked_without_allow(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "node.exe").write_bytes(b"MZ")
+    fetcher, runner = _node_setup("20.12.0")
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner, env={"PATH": str(external)})
+    _use(monkeypatch, ctx)
+    code, out, err = _run(capsys, ["install", "node@20.12.0"])
+    assert code == 3
+    assert "--allow-shadow" in out + err
+    assert not fetcher.download_calls
+
+
 def test_install_python_dry_run_human(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -407,11 +468,11 @@ def test_init_dry_run_human(
 ) -> None:
     ctx = _ctx(tmp_path)
     _use(monkeypatch, ctx)
-    code, out, _err = _run(capsys, ["init", "--path", "--dry-run"])
+    code, out, _err = _run(capsys, ["init", "--dry-run"])
     assert code == 0
     assert "shim 目录:" in out
     assert "将生成: node.cmd" in out
-    assert "将把 shim 目录写入用户 PATH" in out
+    assert "用户 PATH: 将前置" in out
     assert not ctx.layout.shim_dir.exists()
 
 
@@ -423,9 +484,11 @@ def test_init_human_existing(
     code, out, _err = _run(capsys, ["init"])
     assert code == 0
     assert "已生成 shim" in out
+    assert "用户 PATH: 已前置" in out
     code, out, _err = _run(capsys, ["init"])
     assert code == 0
     assert "shim 已是最新" in out
+    assert "用户 PATH: 无需修改" in out
 
 
 def test_init_shadow_blocked(
@@ -435,10 +498,25 @@ def test_init_shadow_blocked(
     external.mkdir()
     (external / "node.exe").write_bytes(b"MZ")
     monkeypatch.setenv("PATH", str(external))
-    _use(monkeypatch, _ctx(tmp_path))
-    code, out, err = _run(capsys, ["init", "--path"])
+    _use(monkeypatch, _ctx(tmp_path, env={"PATH": str(external)}))
+    code, out, err = _run(capsys, ["init"])
     assert code == 3
     assert "--allow-shadow" in out + err
+
+
+def test_init_allow_shadow_writes_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "node.exe").write_bytes(b"MZ")
+    ctx = _ctx(tmp_path, env={"PATH": str(external)})
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["init", "--allow-shadow", "--json"])
+    assert code == 0
+    data = _envelope(out)["data"]
+    assert data["user_path"]["changed"] is True
+    assert data["user_path"]["shadowed"]
 
 
 def test_uninit_human(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -448,9 +526,12 @@ def test_uninit_human(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: p
     code, out, _err = _run(capsys, ["uninit", "--dry-run"])
     assert code == 0
     assert "将删除 shim" in out
+    assert "将移除用户 PATH 条目" in out
     code, out, _err = _run(capsys, ["uninit"])
     assert code == 0
     assert "已删除 shim" in out
+    assert "已精确移除 1 个 devman 条目" in out
+    assert not (_store(ctx).values.get("Path") or "").strip()
 
 
 # ---------------------------------------------------------------------- #
@@ -674,7 +755,7 @@ def test_init_dry_run_without_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _use(monkeypatch, _ctx(tmp_path))
-    code, out, _err = _run(capsys, ["init", "--dry-run"])
+    code, out, _err = _run(capsys, ["init", "--no-path", "--dry-run"])
     assert code == 0
     assert "将生成" in out
     assert "用户 PATH" not in out

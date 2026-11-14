@@ -298,7 +298,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `gittool` | `gitt` | Git 操作（add+commit/init/init-submodules/clean/push/pull） |
-| `devman` | - | Windows 开发环境管理（首批 node / python）：`list`/`versions`/`install`/`uninstall`/`use`/`upgrade`/`init`/`uninit`/`env`/`exec`/`doctor`；装进独立根目录、多版本共存、切换只改活动版本文件，默认不动 PATH、不碰既有 node/python/conda/venv，改动均支持 `--dry-run` 与 `--yes`，详见 [docs/adr/0024-devman.md](docs/adr/0024-devman.md) |
+| `devman` | - | Windows 开发环境管理（首批 node / python）：`list`/`versions`/`install`/`uninstall`/`use`/`upgrade`/`init`/`uninit`/`env`/`exec`/`doctor`；装进独立根目录、多版本共存、切换只改活动版本文件；`install`/`init` 默认把 shim 目录写入 HKCU 用户 PATH（`--no-path` 关闭，遮蔽已有 node/python 需 `--allow-shadow`），`uninit` / 卸掉最后一个版本按记录精确回滚 PATH 条目，不碰既有 node/python/conda/venv，改动均支持 `--dry-run` 与 `--yes`，详见 [docs/adr/0024-devman.md](docs/adr/0024-devman.md) |
 | `envdev` | - | 开发环境一键配置（分组入口 lang/app/mirror/check/all，镜像按服务（pip/conda/rustup/cargo/go/maven/npm）独立自动选优：以真实构件实测下载吞吐排序并可识别限速/门户页，避免误选「延迟低但被限速」的镜像；另含教育网镜像探测（动态拉取 MirrorZ 列表）与 `mirror --service <服务>` 测速、`--apply` 自动应用，以及工具链安装，Linux 含系统依赖） |
 | `mirrortool` | - | 镜像源独立入口（薄壳，实现与 `envdev mirror` 共用）：教育网镜像站点探测；`--service <服务>` 对 pip/conda/rustup/cargo/go/maven/npm 实测下载吞吐排序并推荐最快镜像，`--apply` 立即写入对应服务配置 |
 | `mirrortoolw` | - | 镜像搜索与配置窗口版（Tk）：服务镜像测速排序与一键应用、MirrorZ 教育网镜像站点探测二合一；结果按镜像名/地址实时过滤，展示延迟与实测吞吐并高亮推荐项，配置位置随服务切换提示，设置持久化到 `~/.fcmd/ui/mirrortoolw.json` |
