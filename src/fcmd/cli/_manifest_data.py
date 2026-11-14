@@ -73,7 +73,6 @@ TOOLS: dict[str, ToolEntry] = {
     "llmdoctor": ToolEntry("llmdoctor", "python", "fcmd.apps.locllm.llmdoctor"),
     "llmdown": ToolEntry("llmdown", "python", "fcmd.apps.locllm.llmdown"),
     "llmengine": ToolEntry("llmengine", "python", "fcmd.apps.locllm.llmengine"),
-    "llmenginew": ToolEntry("llmenginew", "python", "fcmd.apps.locllm.llmenginew"),
     "llmenv": ToolEntry("llmenv", "python", "fcmd.apps.locllm.llmenv"),
     "llmmodel": ToolEntry("llmmodel", "python", "fcmd.apps.locllm.llmmodel"),
     "llmqnt": ToolEntry("llmqnt", "python", "fcmd.apps.locllm.llmqnt"),
@@ -207,7 +206,6 @@ DESCRIPTIONS: dict[str, str] = {
     "llmdoctor": "运行环境体检（GPU / CUDA / 引擎 / 模型 / 端口 / 磁盘 / VC++）",
     "llmdown": "大模型仓库下载：搜索 / 详情 / 清单 / 多源测速 / 断点续传下载",
     "llmengine": "列出已安装引擎",
-    "llmenginew": "llama.cpp 引擎窗口版（Tk）：在线下载官方预编译包，或检查并安装本地 zip 离线包（引擎包 / cudart 运行库 / 源码包），查看已安装引擎并切换默认；窗口位置与大小记忆到 ~/.fcmd/ui/llmenginew.json",
     "llmenv": "显示目录布局与当前生效的模型目录",
     "llmmodel": "列出模型目录中的 GGUF 文件",
     "llmqnt": "GGUF 量化：调用 llama-quantize 批量生成多种量化版本",
@@ -292,7 +290,6 @@ LAYOUT: tuple[str, ...] = (
     "apps/locllm/llmdoctor.py",
     "apps/locllm/llmdown.py",
     "apps/locllm/llmengine.py",
-    "apps/locllm/llmenginew.py",
     "apps/locllm/llmenv.py",
     "apps/locllm/llmmodel.py",
     "apps/locllm/llmqnt.py",
@@ -404,7 +401,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "d5a5beeede64e98eb705b51acdda891d"
+DIGEST = "01df48b15dbd5bff4e01a4b1d8f11985"
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -204,7 +204,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._build_log(parent)
 
     def _build_settings(self, parent: Any) -> None:
-        """设置页：目录 / 引擎 / 界面三组配置。"""
+        """设置页：目录 / 引擎 / 界面三页配置。"""
         self._settings_page = SettingsPage(
             parent,
             tk=self._tk,
