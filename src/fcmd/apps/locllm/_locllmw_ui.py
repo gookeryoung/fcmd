@@ -128,6 +128,11 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         _stop_selected: Any
         _plan_text: Any
         _page_canvases: dict[str, Any]
+        _page_bodies: dict[str, Any]
+        _params_box: Any
+        _loaded_tree: Any
+        _loaded_var: Any
+        _loaded_states: list[Any]
         _health_var: Any
         _health_target: Any
         _health_btns: Any
@@ -175,6 +180,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         monitor_page = self._nav.add("monitor", "监测", hint="指标、日志与性能测试")
         settings_page = self._nav.add("settings", "设置", hint="存储、引擎与关于")
         self._page_canvases = {}
+        self._page_bodies = {}
         self._nav.enable_shortcuts()
         self.root.bind("<MouseWheel>", self._on_page_wheel, add="+")
         run_body = self._scroll_page("run", run_page)
@@ -204,6 +210,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         body = ttk.Frame(canvas)
         window = canvas.create_window((0, 0), window=body, anchor="nw")
         self._page_canvases[key] = canvas
+        self._page_bodies[key] = body
 
         def sync(_event: object = None) -> None:
             width = max(canvas.winfo_width(), 1)
@@ -213,6 +220,16 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         body.bind("<Configure>", sync)
         canvas.bind("<Configure>", sync)
         return body
+
+    def _scroll_to_widget(self, key: str, widget: Any) -> None:
+        """把分页滚到指定控件所在位置（用于跨页跳转后定位参数区）。"""
+        canvas = self._page_canvases.get(key)
+        body = self._page_bodies.get(key)
+        if canvas is None or body is None:
+            return
+        self.root.update_idletasks()
+        total = max(body.winfo_reqheight(), 1)
+        canvas.yview_moveto(min(max(widget.winfo_y() / total, 0.0), 1.0))
 
     def _on_page_wheel(self, event: Any) -> str | None:
         """分页内容高于窗口时用滚轮滚动页面；文本 / 列表 / 表格保留自身滚动。"""
@@ -367,6 +384,7 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         ttk = self._ttk
         params = ttk.LabelFrame(parent, text="启动参数", padding=self._theme.spacing.sm)
         params.pack(fill="x")
+        self._params_box = params
         params.columnconfigure(1, weight=1)
         params.columnconfigure(3, weight=1)
         self._name_box = ttk.Combobox(
@@ -534,9 +552,10 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
 
     def _build_loaded(self, parent: Any) -> None:
-        """已加载模型：列出运行中的服务及其模型、档位与地址。"""
+        """已加载模型：列出运行中的服务及其模型、档位与地址，并提供行内动作。"""
         ttk = self._ttk
-        box = ttk.LabelFrame(parent, text="已加载模型（运行中的服务）", padding=self._theme.spacing.sm)
+        space = self._theme.spacing
+        box = ttk.LabelFrame(parent, text="已加载模型（运行中的服务）", padding=space.sm)
         box.pack(fill="x")
         self._loaded_tree = ttk.Treeview(
             box,
@@ -554,19 +573,29 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         self._loaded_tree.column("profile", width=140, anchor="w", stretch=False)
         self._loaded_tree.column("address", width=170, anchor="w", stretch=False)
         self._loaded_tree.pack(fill="x")
+        self._loaded_tree.bind("<Double-1>", lambda _event: self._loaded_open())
         self._loaded_var = self._tk.StringVar(value="无运行中的服务")
-        ttk.Label(box, textvariable=self._loaded_var).pack(fill="x", pady=(self._theme.spacing.xs, 0))
+        ttk.Label(box, textvariable=self._loaded_var).pack(fill="x", pady=(space.xs, 0))
+        actions = ttk.Frame(box)
+        actions.pack(fill="x", pady=(space.xs, 0))
+        ttk.Button(actions, text="打开 Web UI", command=self._loaded_open).pack(side="left")
+        ttk.Button(actions, text="查看日志", command=self._loaded_logs).pack(side="left", padx=(space.xs, 0))
+        ttk.Button(actions, text="复制地址", command=self._loaded_copy_address).pack(side="left", padx=(space.xs, 0))
+        ttk.Button(actions, text="复制 API Key", command=self._loaded_copy_key).pack(side="left", padx=(space.xs, 0))
+        ttk.Button(actions, text="停止服务", command=self._loaded_stop, style="Danger.TButton").pack(side="right")
 
     def _refresh_loaded(self) -> None:
         """刷新“已加载模型”列表（只统计进程仍存活的服务）。"""
         for item in self._loaded_tree.get_children():
             self._loaded_tree.delete(item)
         alive = [state for state in llmenv.list_states() if llmserve.process_alive(state.pid, state.create_time)]
+        self._loaded_states = alive
         self._running_paths = {llmenv.path_key(Path(state.model)) for state in alive}
-        for state in alive:
+        for index, state in enumerate(alive):
             self._loaded_tree.insert(
                 "",
                 "end",
+                iid=str(index),
                 values=(
                     state.name,
                     Path(state.model).name,
@@ -575,6 +604,57 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
                 ),
             )
         self._loaded_var.set("" if alive else "无运行中的服务")
+
+    def _loaded_selected(self) -> Any:
+        """取“已加载模型”选中行对应的服务状态；未选中时在提示行给出引导。"""
+        selection = self._loaded_tree.selection()
+        if not selection:
+            self._loaded_var.set("先在列表中选择一个运行中的服务")
+            return None
+        index = int(selection[0])
+        if not 0 <= index < len(self._loaded_states):
+            return None
+        return self._loaded_states[index]
+
+    def _loaded_open(self) -> None:
+        state = self._loaded_selected()
+        if state is None:
+            return
+        self._name_var.set(state.name)
+        self._open_browser()
+
+    def _loaded_logs(self) -> None:
+        state = self._loaded_selected()
+        if state is None:
+            return
+        self._name_var.set(state.name)
+        self._show_logs()
+
+    def _loaded_stop(self) -> None:
+        state = self._loaded_selected()
+        if state is None:
+            return
+        self._name_var.set(state.name)
+        self._stop_selected()
+
+    def _loaded_copy_address(self) -> None:
+        state = self._loaded_selected()
+        if state is None:
+            return
+        self._copy_text(state.base_url, f"已复制地址: {state.base_url}")
+
+    def _loaded_copy_key(self) -> None:
+        state = self._loaded_selected()
+        if state is None:
+            return
+        self._copy_text(state.api_key, "已复制 API Key")
+
+    def _copy_text(self, text: str, message: str) -> None:
+        """复制文本到剪贴板，并同时更新状态栏与监测页日志。"""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self._status_var.set(message)
+        self._log(message)
 
     def _build_metrics(self, parent: Any) -> None:
         """实时性能面板：显示 /metrics 计算的 token/s 与请求队列状态。"""

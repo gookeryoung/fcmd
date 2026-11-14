@@ -13,7 +13,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fcmd.apps.locllm import llmenv
+from fcmd.apps.locllm import _llmtune, llmenv
 from fcmd.apps.locllm._locllmw_hardware import (
     HardwareSnapshot,
     detect_hardware,
@@ -21,7 +21,7 @@ from fcmd.apps.locllm._locllmw_hardware import (
     format_disk,
     snapshot_to_dict,
 )
-from fcmd.apps.locllm._locllmw_recommend import recommend
+from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import human_size, now_iso
 from fcmd.gui import window as _guiwindow
 
@@ -55,6 +55,19 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         _build_loaded: Callable[[Any], None]
         _refresh_models: Callable[[], None]
         _persist_settings: Callable[[], None]
+        _select_model: Callable[..., None]
+        _on_tune_changed: Callable[..., None]
+        _on_profile_changed: Callable[..., None]
+        _scroll_to_widget: Callable[[str, Any], None]
+        _recommend_tree: Any
+        _recommend_status: Any
+        _recommendations: tuple[Recommendation, ...]
+        _profile_var: Any
+        _ctx_var: Any
+        _kv_var: Any
+        _tune_var: Any
+        _params_box: Any
+        _status_var: Any
         _nav: Any
 
     # ------------------------------------------------------------------ #
@@ -169,6 +182,10 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
             self._recommend_tree.heading(column, text=label)
             self._recommend_tree.column(column, width=width, anchor="w", stretch=stretch)
         self._recommend_tree.pack(fill="x")
+        self._recommend_tree.bind("<Double-1>", lambda _event: self._apply_recommendation())
+        bar = ttk.Frame(box)
+        bar.pack(fill="x", pady=(space.xs, 0))
+        ttk.Button(bar, text="用此配置启动", command=self._apply_recommendation).pack(side="right")
         self._recommend_status = self._tk.StringVar(value="等待硬件检测与模型扫描…")
         ttk.Label(box, textvariable=self._recommend_status, style="Hint.TLabel", justify="left").pack(
             anchor="w", fill="x", pady=(space.xs, 0)
@@ -252,17 +269,19 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
             return
         tree.delete(*tree.get_children())
         rows = recommend(self._models, self._hardware, self._measured)
+        self._recommendations = rows
         if not rows:
             status.set(
-                "未检测到可用模型：先在「模型」页刷新，或在「设置 → 目录」中登记模型目录。"
+                "未检测到可用模型：先在「模型」页刷新，或在「设置 → 存储」中登记模型目录。"
                 if not self._models
                 else "当前模型都放不进整卡显存：建议换更小量化，或释放显存后重新检测。"
             )
             return
-        for row in rows:
+        for index, row in enumerate(rows):
             tree.insert(
                 "",
                 "end",
+                iid=str(index),
                 values=(
                     row.model.path.name,
                     row.config_text,
@@ -271,9 +290,30 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
                 ),
             )
         status.set(
-            "推荐按模型大小与显存适配排序；解码速度为「预测」时来自参考机器外推，"
-            "跑过性能测试后同一模型自动切换为「实测」。"
+            "推荐按模型大小与显存适配排序；选中一行点「用此配置启动」把模型与参数带入运行页。"
+            "解码速度为「预测」时来自参考机器外推，跑过性能测试后同一模型自动切换为「实测」。"
         )
+
+    def _apply_recommendation(self) -> None:
+        """把推荐行的模型与启动配置带入运行页，便于直接预览计划或启动。"""
+        selection = self._recommend_tree.selection()
+        if not selection or not self._recommendations:
+            self._recommend_status.set("先在推荐表中选择一行，再点「用此配置启动」。")
+            return
+        index = int(selection[0])
+        if not 0 <= index < len(self._recommendations):
+            return
+        row = self._recommendations[index]
+        self._select_model(row.model.path)
+        self._profile_var.set(row.profile)
+        self._tune_var.set(_llmtune.TUNE_LABELS["auto"])
+        self._ctx_var.set(str(row.context))
+        self._on_tune_changed()
+        self._kv_var.set(row.kv_type)
+        self._on_profile_changed()
+        self._nav.select("run")
+        self._scroll_to_widget("run", self._params_box)
+        self._status_var.set(f"已带入推荐配置：{row.model.path.name} · {row.config_text}")
 
     def _record_benchmark(self, model_path: str, result: Any) -> None:
         """记录性能测试结果；后续推荐优先使用实测解码速度。"""
