@@ -14,9 +14,13 @@ import sys
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
+
+from fcmd.cli import _discovery
+from fcmd.core import toolkit
 
 _ROOT = Path(__file__).resolve().parents[2]
 
@@ -324,3 +328,128 @@ def test_layout_unreadable_returns_none(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(_manifest, "_PACKAGE_ROOT", Path("/nonexistent/fcmd"))
     assert _manifest.tool_layout() is None
     assert _manifest.lookup("codetool") is None
+
+
+# ---------------------------------------------------------------------- #
+# 发现流程的容错分支
+# ---------------------------------------------------------------------- #
+def test_scan_root_skips_missing_root(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def _raise(name: str) -> None:
+        raise ImportError(f"no module {name}")
+
+    caplog.set_level("WARNING", logger=_discovery.logger.name)
+    monkeypatch.setattr(_discovery.importlib, "import_module", _raise)
+
+    _discovery._scan_root("fcmd.tools.missing")
+
+    assert "不可用" in caplog.text
+    assert "fcmd.tools.missing" in caplog.text
+
+
+def test_scan_root_registers_top_level_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(_discovery.importlib, "import_module", lambda name: SimpleNamespace(__path__=[]))
+    monkeypatch.setattr(
+        _discovery.pkgutil, "iter_modules", lambda path: [(None, "alpha", False), (None, "_private", False)]
+    )
+    monkeypatch.setattr(
+        _discovery, "_register_tool", lambda module_path, tool_name: calls.append((module_path, tool_name))
+    )
+
+    _discovery._scan_root("fcmd.tools")
+
+    assert calls == [("fcmd.tools.alpha", "alpha")]
+
+
+def test_register_app_skips_oserror(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    def _raise(name: str) -> None:
+        raise OSError("dll missing")
+
+    caplog.set_level("WARNING", logger=_discovery.logger.name)
+    monkeypatch.setattr(_discovery.importlib, "import_module", _raise)
+
+    _discovery._register_app("fcmd.apps.broken")
+
+    assert "导入失败" in caplog.text
+    assert "dll missing" in caplog.text
+
+
+def test_discover_domain_skips_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _raise(name: str) -> None:
+        raise ImportError("optional dependency")
+
+    monkeypatch.setattr(_discovery.importlib, "import_module", _raise)
+    monkeypatch.setattr(_discovery.pkgutil, "iter_modules", lambda path: pytest.fail("should not scan"))
+
+    _discovery._discover_domain("fcmd.tools", "broken")
+
+
+def test_register_tool_keeps_cached_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    aliases = {"ghost": "cached"}
+    monkeypatch.setattr(_discovery, "_TOOL_MODULES", {})
+    monkeypatch.setattr(_discovery, "_TOOL_ALIASES", aliases)
+    monkeypatch.setattr(toolkit, "_TOOL_REGISTRY", {})
+    monkeypatch.setattr(_discovery.importlib, "import_module", lambda name: SimpleNamespace())
+
+    _discovery._register_tool("fcmd.tools.ghost", "ghost")
+
+    assert _discovery._TOOL_MODULES == {}
+    assert aliases == {"ghost": "cached"}
+
+
+def test_seed_main_module_alias_without_main(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "__main__", None)
+
+    _discovery._seed_main_module_alias("fcmd.tools.not-registered")
+
+    assert "fcmd.tools.not-registered" not in sys.modules
+
+
+def test_seed_main_module_alias_without_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "__main__", SimpleNamespace(__file__=""))
+
+    _discovery._seed_main_module_alias("fcmd.tools.not-registered")
+
+    assert "fcmd.tools.not-registered" not in sys.modules
+
+
+def test_seed_main_module_alias_ignores_find_spec_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(sys.modules, "__main__", SimpleNamespace(__file__="entry.py"))
+    monkeypatch.setattr(_discovery.importlib.util, "find_spec", lambda name: (_ for _ in ()).throw(ValueError("bad")))
+
+    _discovery._seed_main_module_alias("fcmd.tools.not-registered")
+
+    assert "fcmd.tools.not-registered" not in sys.modules
+
+
+def test_resolve_tool_fast_returns_none_when_loader_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.cli import _manifest
+
+    entry = SimpleNamespace(name="ghost", target="fcmd.tools.ghost")
+    monkeypatch.setattr(_manifest, "lookup", lambda name: entry)
+    monkeypatch.setattr(_discovery, "_load_python_tool", lambda entry: None)
+
+    assert _discovery.resolve_tool_fast("ghost") is None
+
+
+def test_load_python_tool_returns_none_without_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(toolkit, "_TOOL_REGISTRY", {})
+    monkeypatch.setattr(_discovery.importlib, "import_module", lambda name: SimpleNamespace())
+    entry = SimpleNamespace(name="ghost", target="fcmd.tools.ghost")
+
+    assert _discovery._load_python_tool(cast(Any, entry)) is None
+
+
+def test_drop_module_specs_removes_only_matching_entries(monkeypatch: pytest.MonkeyPatch) -> None:
+    keep = SimpleNamespace(func=SimpleNamespace(__module__="other"))
+    drop = SimpleNamespace(func=SimpleNamespace(__module__="fcmd.tools.broken"))
+    only = SimpleNamespace(func=SimpleNamespace(__module__="fcmd.tools.broken"))
+    registry = {
+        "alpha": {"keep": keep, "drop": drop},
+        "beta": {"only": only},
+    }
+    monkeypatch.setattr(toolkit, "_TOOL_REGISTRY", registry)
+
+    _discovery._drop_module_specs("fcmd.tools.broken")
+
+    assert registry == {"alpha": {"keep": keep}}

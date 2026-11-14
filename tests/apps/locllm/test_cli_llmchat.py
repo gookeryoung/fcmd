@@ -9,7 +9,8 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import replace
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 from urllib.error import URLError
 from urllib.request import Request
 
@@ -17,7 +18,7 @@ import pytest
 
 from fcmd.apps.locllm import _locllmw_chat, llmchat, llmenv
 from fcmd.apps.locllm.llmbase import DEFAULT_API_KEY, Endpoint, ServeError, ServeState
-from fcmd.apps.locllm.llmchat import ChatDelta, ChatMessage, ChatSession
+from fcmd.apps.locllm.llmchat import Attachment, ChatDelta, ChatMessage, ChatSession
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
@@ -253,6 +254,16 @@ def test_stream_chat_events_separate_reasoning_and_content() -> None:
         ChatDelta("reasoning", "think-2"),
         ChatDelta("content", "answer"),
     ]
+
+
+def test_stream_chat_ignores_trailing_blank_line() -> None:
+    payload = b'data: {"choices":[{"delta":{"content":"end"}}]}\n\n'
+    assert list(llmchat.stream_chat(_endpoint(), [], opener=_opener(payload))) == ["end"]
+
+
+def test_stream_chat_done_without_newline_exits_cleanly() -> None:
+    payload = b'data: {"choices":[{"delta":{"content":"end"}}]}\ndata: [DONE]'
+    assert list(llmchat.stream_chat(_endpoint(), [], opener=_opener(payload))) == ["end"]
 
 
 def test_stream_chat_returns_content_only_when_reasoning_present() -> None:
@@ -567,6 +578,27 @@ def test_format_session_markdown_empty_history() -> None:
     assert _locllmw_chat.format_session_markdown([ChatMessage("system", "sys")]) == "# 对话记录\n"
 
 
+def test_format_session_markdown_renders_image_attachments(tmp_path: Path) -> None:
+    image = tmp_path / "shot.png"
+    image.write_bytes(b"x")
+    messages = [
+        ChatMessage(
+            "user",
+            "",
+            (
+                Attachment(kind="image", mime="image/png", size=1, path=image),
+                Attachment(kind="image", mime="image/png", size=1),
+            ),
+        ),
+        ChatMessage("assistant", "ok"),
+    ]
+    text = _locllmw_chat.format_session_markdown(messages)
+
+    assert f"![shot.png]({image.as_posix()})" in text
+    assert "![image]()" in text
+    assert "## 助手\n\nok" in text
+
+
 class _FakeVar:
     """模拟 tk.StringVar 的读写。"""
 
@@ -670,3 +702,21 @@ def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch) -
     assert page._chat_url_var.get() == state.base_url
     assert page._chat_status_var.get() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
     assert page._appended[0][0] == "error"
+
+
+class _ReasoningTwiceSession:
+    def ask(self, prompt: str, *, on_delta: Any, on_reasoning: Any) -> None:
+        assert prompt == "hi"
+        on_reasoning("t1")
+        on_reasoning("t2")
+        on_delta("a")
+        on_delta("b")
+
+
+def test_ask_and_print_writes_thinking_marker_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    written: list[str] = []
+    monkeypatch.setattr(llmchat, "_write", written.append)
+
+    llmchat._ask_and_print(cast(Any, _ReasoningTwiceSession()), "hi")
+
+    assert written == ["思考中…", "\n", "AI> ", "a", "b", "\n"]

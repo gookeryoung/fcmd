@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from fcmd.apps.locllm import _locllmw_hardware as hardware
 from fcmd.apps.locllm import _locllmw_recommend as recommend
@@ -139,3 +143,103 @@ class TestRecommend:
         entries = [_entry(tmp_path, f"m{i}.gguf", (i + 1) * 1024**3) for i in range(5)]
         assert len(recommend.recommend(entries, _snapshot(), limit=2)) == 2
         assert recommend.recommend([], _snapshot()) == ()
+
+    def test_unknown_tag_falls_through_to_known_profile(self, tmp_path: Path) -> None:
+        entry = _entry(tmp_path, "model.gguf", 1024**3, ("未知标签", "代码"))
+        rows = recommend.recommend([entry], _snapshot(gpu_mib=32000))
+        assert rows[0].profile == "balanced"
+
+    def test_fits_at_preferred_profile_without_downgrade(self, tmp_path: Path) -> None:
+        entry = _entry(tmp_path, "model.gguf", 1024**3)
+        rows = recommend.recommend([entry], _snapshot(gpu_mib=32000))
+        assert rows[0].kv_type == "f16"
+        assert rows[0].context == 65536
+
+    def test_non_numeric_prompt_tps_keeps_prediction(self, tmp_path: Path) -> None:
+        entry = _entry(tmp_path, "model.gguf", 1024**3)
+        key = llmenv.path_key(entry.path)
+        rows = recommend.recommend([entry], _snapshot(gpu_mib=32000), {key: {"decode_tps": 12.5, "prompt_tps": "n/a"}})
+        assert rows[0].decode_tps == 12.5
+        assert rows[0].prompt_tps != "n/a"
+
+
+class TestHardwareDetection:
+    def test_detect_cpu_name_reads_proc_cpuinfo(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _FakePath:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def read_text(self, **_kwargs: object) -> str:
+                return "processor\t: 0\nmodel name\t: Test CPU 9000\n"
+
+        monkeypatch.setattr(hardware, "Path", _FakePath)
+        monkeypatch.setattr(hardware.os, "name", "posix")
+        assert hardware.detect_cpu_name() == "Test CPU 9000"
+
+    def test_detect_cpu_name_falls_back_to_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _FakePath:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def read_text(self, **_kwargs: object) -> str:
+                raise OSError("no /proc")
+
+        monkeypatch.setattr(hardware, "Path", _FakePath)
+        monkeypatch.setattr(hardware.os, "name", "posix")
+        monkeypatch.setattr(hardware.platform, "processor", lambda: "")
+        monkeypatch.setattr(hardware.platform, "machine", lambda: "x86_64")
+        assert hardware.detect_cpu_name() == "x86_64"
+
+    def test_detect_cpu_name_registry_error_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _FakePath:
+            def __init__(self, *_args: object, **_kwargs: object) -> None:
+                pass
+
+            def read_text(self, **_kwargs: object) -> str:
+                raise OSError("no /proc")
+
+        def _open_key(*_args: object, **_kwargs: object) -> None:
+            raise OSError("registry unavailable")
+
+        monkeypatch.setitem(
+            sys.modules,
+            "winreg",
+            SimpleNamespace(HKEY_LOCAL_MACHINE=0, OpenKey=_open_key),
+        )
+        monkeypatch.setattr(hardware, "Path", _FakePath)
+        monkeypatch.setattr(hardware.os, "name", "nt")
+        monkeypatch.setattr(hardware.platform, "processor", lambda: "AMD Test")
+        assert hardware.detect_cpu_name() == "AMD Test"
+
+    def test_detect_hardware_skips_duplicate_and_unreadable_disks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        partitions = [
+            SimpleNamespace(fstype="NTFS", mountpoint="C:/"),
+            SimpleNamespace(fstype="NTFS", mountpoint="C:/"),
+            SimpleNamespace(fstype="tmpfs", mountpoint="/tmp"),
+            SimpleNamespace(fstype="NTFS", mountpoint="E:/"),
+        ]
+        monkeypatch.setattr("psutil.disk_partitions", lambda all=False: partitions)
+        monkeypatch.setattr(
+            "psutil.disk_usage",
+            lambda mount: (
+                (_ for _ in ()).throw(OSError("locked")) if mount == "E:/" else SimpleNamespace(total=100, free=40)
+            ),
+        )
+        monkeypatch.setattr("psutil.virtual_memory", lambda: SimpleNamespace(total=1024))
+        monkeypatch.setattr("psutil.cpu_count", lambda logical=True: 8)
+        monkeypatch.setattr(hardware.llmengine, "detect_gpu", lambda *_args: None)
+        monkeypatch.setattr(hardware.llmenv, "models_dir", lambda home=None: tmp_path)
+
+        snapshot = hardware.detect_hardware()
+
+        assert snapshot.model_root == str(tmp_path)
+        assert [disk.mount for disk in snapshot.disks] == ["C:/"]
+        assert snapshot.gpu_mib is None
+
+    def test_snapshot_from_dict_tolerates_non_list_disks(self) -> None:
+        snapshot = hardware.snapshot_from_dict({"schema": 1, "cpu": "CPU", "disks": "oops"})
+        assert snapshot is not None
+        assert snapshot.cpu == "CPU"
+        assert snapshot.disks == ()

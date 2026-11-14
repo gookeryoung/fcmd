@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +16,7 @@ from fcmd.apps.devman import _env, _maintenance, _ops
 from fcmd.apps.devman import devman as devman_module
 from fcmd.apps.devman._errors import CONFIRM_REQUIRED, DevmanError
 from fcmd.apps.devman._paths import Layout
-from fcmd.apps.devman._state import Config, State, set_active
+from fcmd.apps.devman._state import MARKER_SCHEMA, Config, State, set_active, write_marker
 from fcmd.core.toolkit import run_tool
 from tests.apps.devman import _fakes
 
@@ -359,3 +360,191 @@ def test_cli_export_and_restore_dry_run(
 
     assert run_tool("devman", ["restore", str(target), "--dry-run"]) == 0
     assert "恢复计划" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------- #
+# 边界与失败分支
+# ---------------------------------------------------------------------- #
+def test_path_size_skips_links_junctions_and_broken_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Entry:
+        def __init__(self, name: str, *, link: bool = False, junction: bool = False, error: bool = False) -> None:
+            self.name = name
+            self.path = str(tmp_path / name)
+            self._link = link
+            self._junction = junction
+            self._error = error
+
+        def is_symlink(self) -> bool:
+            return self._link
+
+        def is_junction(self) -> bool:
+            return self._junction
+
+        def is_dir(self, follow_symlinks: bool = False) -> bool:
+            return False
+
+        def stat(self, follow_symlinks: bool = False) -> types.SimpleNamespace:
+            if self._error:
+                raise OSError("gone")
+            return types.SimpleNamespace(st_size=10)
+
+    entries = [Entry("link", link=True), Entry("junction", junction=True), Entry("gone", error=True)]
+    monkeypatch.setattr(_maintenance.os, "scandir", lambda path: entries)
+    assert _maintenance.path_size(tmp_path) == (0, 0)
+
+
+def test_verify_flags_invalid_marker_and_version_mismatch(tmp_path: Path) -> None:
+    layout = _ctx(tmp_path).layout
+    directory = _fakes.install_fake_node(layout, "20.11.1")
+    write_marker(
+        directory,
+        {"schema": "other-schema", "tool": "node", "version": "20.11.1", "installed_at": "2026-01-01"},
+    )
+    invalid = _maintenance._version_issues(layout, _maintenance._toolchain.list_installed(layout, "node")[0])
+    assert [issue["kind"] for issue in invalid] == ["marker-invalid"]
+    assert "schema" in invalid[0]["detail"]
+
+    write_marker(
+        directory,
+        {
+            "schema": MARKER_SCHEMA,
+            "tool": "node",
+            "version": "19.0.0",
+            "sha256": "0" * 64,
+            "verify": "official-shasums",
+            "installed_at": "2026-01-01",
+        },
+    )
+    mismatch = _maintenance._version_issues(layout, _maintenance._toolchain.list_installed(layout, "node")[0])
+    assert [issue["kind"] for issue in mismatch] == ["marker-invalid"]
+    assert "'19.0.0'" in mismatch[0]["detail"]
+
+
+def test_shim_checks_tolerate_unreadable_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    layout = _ctx(tmp_path).layout
+    layout.shim_dir.mkdir(parents=True)
+
+    original = Path.iterdir
+
+    def boom(self: Path) -> Any:
+        if self == layout.shim_dir:
+            raise OSError("denied")
+        return original(self)
+
+    monkeypatch.setattr(Path, "iterdir", boom)
+    assert _maintenance._shim_issues(layout) == []
+
+
+def test_shim_checks_flag_missing_and_undecodable(tmp_path: Path) -> None:
+    layout = _ctx(tmp_path).layout
+    layout.shim_dir.mkdir(parents=True)
+    (layout.shim_dir / "note.txt").write_text("marker", encoding="utf-8")
+    (layout.shim_dir / "node.cmd").write_bytes(b"\xff\xfe\x00")
+
+    issues = _maintenance._shim_issues(layout)
+    node = [issue for issue in issues if issue["name"] == "node.cmd"]
+    assert node and node[0]["kind"] == "shim-missing"
+    assert "缺少 shim node.cmd" in node[0]["detail"]
+
+
+def test_repair_dedupes_shim_actions(tmp_path: Path) -> None:
+    layout = _ctx(tmp_path).layout
+    _fakes.install_fake_node(layout, "20.11.1")
+    _env.write_shims(layout)
+    (layout.shim_dir / "node.cmd").write_text("broken", encoding="utf-8")
+    (layout.shim_dir / "npm.cmd").write_text("broken", encoding="utf-8")
+
+    payload = _maintenance.repair(layout, dry_run=True)
+    shim_actions = [action for action in payload["actions"] if action["kind"] == "shim"]
+    assert len(shim_actions) == 1
+    assert shim_actions[0]["target"] == str(layout.shim_dir)
+
+
+def test_remove_handles_files_and_rmtree_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    target = tmp_path / "x.txt"
+    target.write_text("x", encoding="utf-8")
+    _maintenance._remove(target)
+    assert not target.exists()
+
+    directory = tmp_path / "locked"
+    directory.mkdir()
+
+    def boom(path: Path, ignore_errors: bool = False) -> None:
+        raise OSError("locked")
+
+    monkeypatch.setattr(_maintenance.shutil, "rmtree", boom)
+    _maintenance._remove(directory)
+    assert directory.exists()
+
+
+def test_load_lock_rejects_non_object_and_bad_entry(tmp_path: Path) -> None:
+    path = tmp_path / "devman.lock.json"
+    for body in ([1], {"schema": _maintenance.LOCK_SCHEMA, "tools": {"node": ["bad"]}}):
+        path.write_text(json.dumps(body), encoding="utf-8")
+        with pytest.raises(DevmanError) as info:
+            _maintenance.load_lock(path)
+        assert info.value.code == "INVALID_ARGUMENT"
+        assert info.value.field == "lock"
+
+
+def test_cli_repair_renders_actions_and_remaining(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    layout = ctx.layout
+    _fakes.install_fake_node(layout, "20.11.1")
+    _env.write_shims(layout)
+    (layout.shim_dir / "npm.cmd").write_text("broken", encoding="utf-8")
+    _fakes.install_fake_node(layout, "18.20.0", complete=False)
+    _install_ctx(monkeypatch, ctx)
+
+    assert run_tool("devman", ["repair", "--yes"]) == 5
+    out = capsys.readouterr().out
+    assert "已执行 1 项修复" in out
+    assert "shim: 重建 shim" in out
+    assert "待手工处理 [marker-missing] node 18.20.0" in out
+
+
+def test_cli_repair_human_dry_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _env.write_shims(ctx.layout)
+    (ctx.layout.shim_dir / "npm.cmd").write_text("broken", encoding="utf-8")
+    _install_ctx(monkeypatch, ctx)
+
+    assert run_tool("devman", ["repair", "--dry-run"]) == 5
+    out = capsys.readouterr().out
+    assert "将执行 1 项修复" in out
+
+
+def test_cli_repair_reports_nothing_to_fix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _fakes.install_fake_node(ctx.layout, "20.11.1")
+    _install_ctx(monkeypatch, ctx)
+
+    assert run_tool("devman", ["repair", "--yes"]) == 0
+    assert "没有需要修复的问题" in capsys.readouterr().out
+
+
+def test_cli_export_and_restore_human_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _fakes.install_fake_node(ctx.layout, "20.11.1")
+    _install_ctx(monkeypatch, ctx)
+    target = tmp_path / "devman.lock.json"
+
+    assert run_tool("devman", ["export", "--output", str(target), "--dry-run"]) == 0
+    assert "将写入锁文件" in capsys.readouterr().out
+
+    assert run_tool("devman", ["export"]) == 0
+    assert '"schema": "devman-lock/1"' in capsys.readouterr().out
+
+    assert run_tool("devman", ["export", "--output", str(target)]) == 0
+    assert "已写入锁文件" in capsys.readouterr().out
+
+    assert run_tool("devman", ["restore", str(target), "--yes"]) == 0
+    assert "已与锁文件一致，无需操作" in capsys.readouterr().out

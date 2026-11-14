@@ -876,7 +876,312 @@ def test_exec_spawn_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsy
     def boom(*args: Any, **kwargs: Any) -> Any:
         raise OSError("spawn failed")
 
+    # 假安装里的 node.exe 在 POSIX 主机上没有可执行位，shutil.which 会返回 None；
+    # 本用例只验证 spawn 失败的处理，直接固定命令解析结果。
+    monkeypatch.setattr(
+        devman_module.shutil,
+        "which",
+        lambda *_args, **_kwargs: str(ctx.layout.version_dir("node", "20.11.1") / "node.exe"),
+    )
     monkeypatch.setattr(devman_module.subprocess, "run", boom)
     code, out, err = _run(capsys, ["exec", "--", "node", "-v"])
     assert code == 1
     assert "spawn failed" in out + err
+
+
+# ---------------------------------------------------------------------- #
+# 人读渲染与失败分支补充
+# ---------------------------------------------------------------------- #
+def test_install_dry_run_path_already_present(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _store(ctx).values["Path"] = f"{ctx.layout.shim_dir};C:\\Windows"
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["install", "node@20.11.1", "--dry-run"])
+    assert code == 0
+    assert "用户 PATH: 已包含 devman（无需修改）" in out
+
+
+def test_uninstall_dry_run_reports_path_entries(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["uninstall", "node@20", "--dry-run"])
+    assert code == 0
+    assert f"卸载最后一个版本，将移除用户 PATH 条目: {ctx.layout.shim_dir}" in out
+
+
+def test_uninstall_reports_leftovers_and_path_removal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    _store(ctx).values["Path"] = f"{ctx.layout.shim_dir};C:\\Windows"
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    monkeypatch.setattr(_ops.shutil, "rmtree", lambda *args, **kwargs: None)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["uninstall", "node@20", "--yes"])
+    assert code == 0
+    assert "残留（可手工删除）" in out
+    assert "用户 PATH: 已精确移除 1 个 devman 条目" in out
+    assert "说明:" in out
+
+
+def test_use_project_binding_clear(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    _use(monkeypatch, ctx)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "devman.toml").write_text('[versions]\nnode = "20"\n', encoding="utf-8")
+    (tmp_path / ".node-version").write_text("20\n", encoding="utf-8")
+    code, out, _err = _run(capsys, ["use", "node", "--project", "--clear"])
+    assert code == 0
+    assert "项目绑定已删除" in out
+
+
+def test_list_human_external_and_project_pins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    set_active(ctx.layout, "node", "20.11.1")
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "node.exe").write_bytes(b"MZ")
+    monkeypatch.setenv("PATH", str(external))
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "devman.toml").write_text('[versions]\nnode = "20"\n', encoding="utf-8")
+    _use(monkeypatch, ctx)
+
+    code, out, _err = _run(capsys, ["list"])
+    assert code == 0
+    assert f"外部 node: {external / 'node.exe'}" in out
+    assert "项目 node: 20 → 20.11.1" in out
+    assert "devman.toml" in out
+
+
+def test_upgrade_dry_run_without_purge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetcher, runner = _node_setup("20.12.0")
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner)
+    _install_node(ctx)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["upgrade", "node", "--dry-run"])
+    assert code == 0
+    assert "计划升级 20.11.1 → 20.12.0" in out
+    assert "升级后卸载" not in out
+
+
+def test_upgrade_success_without_purge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetcher, runner = _node_setup("20.12.0")
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner)
+    _install_node(ctx)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["upgrade", "node", "--yes"])
+    assert code == 0
+    assert "已升级 node 20.11.1 → 20.12.0" in out
+    assert "旧版本已卸载" not in out
+
+
+def test_init_dry_run_reports_shadowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    external = tmp_path / "external"
+    external.mkdir()
+    (external / "node.exe").write_bytes(b"MZ")
+    monkeypatch.setenv("PATH", str(external))
+    _use(monkeypatch, _ctx(tmp_path, env={"PATH": str(external)}))
+    code, out, _err = _run(capsys, ["init", "--dry-run"])
+    assert code == 0
+    assert "会遮蔽 node" in out
+
+
+def test_uninit_no_path_skips_user_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+    _run(capsys, ["init"])
+    code, out, _err = _run(capsys, ["uninit", "--no-path"])
+    assert code == 0
+    assert "已删除 shim" in out
+    assert "用户 PATH" not in out
+
+
+def test_uninit_user_path_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+    code, out, _err = _run(capsys, ["uninit"])
+    assert code == 0
+    assert "用户 PATH: 无需修改" in out
+
+
+def test_env_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise invalid_argument("shell 不受支持", field="shell")
+
+    monkeypatch.setattr(devman_module._ops, "env_payload", boom)
+    code, out, err = _run(capsys, ["env"])
+    assert code == 3
+    assert "shell 不受支持" in out + err
+
+
+def test_exec_success_human_has_no_render(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    set_active(ctx.layout, "node", "20.11.1")
+    _use(monkeypatch, ctx)
+    monkeypatch.setattr(devman_module.shutil, "which", lambda name, path=None: sys.executable)
+    monkeypatch.setattr(devman_module.subprocess, "run", lambda *args, **kwargs: _fakes.result())
+    code, out, err = _run(capsys, ["exec", "--", sys.executable, "-v"])
+    assert code == 0
+    assert "devman/exec/1" not in out
+    assert err == ""
+
+
+def test_exec_empty_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    set_active(ctx.layout, "node", "20.11.1")
+    _use(monkeypatch, ctx)
+    devman_module.exec_command([], root=str(tmp_path / "root"))
+    captured = capsys.readouterr()
+    assert "缺少要执行的命令" in captured.out + captured.err
+
+
+def test_exec_file_not_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    set_active(ctx.layout, "node", "20.11.1")
+    _use(monkeypatch, ctx)
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise FileNotFoundError("node")
+
+    monkeypatch.setattr(devman_module.shutil, "which", lambda name, path=None: sys.executable)
+    monkeypatch.setattr(devman_module.subprocess, "run", boom)
+    code, out, err = _run(capsys, ["exec", "--", "node", "-v"])
+    assert code == 1
+    assert "找不到命令" in out + err
+
+
+def test_doctor_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise invalid_argument("无法诊断", field="root")
+
+    monkeypatch.setattr(devman_module._ops, "doctor_payload", boom)
+    code, out, err = _run(capsys, ["doctor"])
+    assert code == 3
+    assert "无法诊断" in out + err
+
+
+def test_size_human_formats_large_files(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    (ctx.layout.version_dir("node", "20.11.1") / "blob.bin").write_bytes(b"x" * 4096)
+    _use(monkeypatch, ctx)
+    code, out, _err = _run(capsys, ["size"])
+    assert code == 0
+    assert "KiB" in out
+
+
+def test_size_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise invalid_argument("无法统计", field="tool")
+
+    monkeypatch.setattr(devman_module._ops, "size_payload", boom)
+    code, out, err = _run(capsys, ["size"])
+    assert code == 3
+    assert "无法统计" in out + err
+
+
+def test_verify_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+
+    def boom(*args: Any, **kwargs: Any) -> Any:
+        raise invalid_argument("无法校验", field="tool")
+
+    monkeypatch.setattr(devman_module._ops, "verify_payload", boom)
+    code, out, err = _run(capsys, ["verify"])
+    assert code == 3
+    assert "无法校验" in out + err
+
+
+def test_human_verify_without_hint(capsys: pytest.CaptureFixture[str]) -> None:
+    devman_module._human_verify(
+        {"ok": False, "issues": [{"kind": "custom", "name": "node", "detail": "自定义问题", "tool": None}]}
+    )
+    out = capsys.readouterr().out
+    assert "发现 1 个问题：" in out
+    assert "[custom] node: 自定义问题" in out
+
+
+def test_human_uninstall_without_note(capsys: pytest.CaptureFixture[str]) -> None:
+    devman_module._human_uninstall({"tool": "node", "removed": [{"version": "1.0.0"}], "user_path": {}})
+    assert capsys.readouterr().out == "已卸载 node 1.0.0\n"
+
+
+def test_export_existing_target_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _ctx(tmp_path)
+    _install_node(ctx)
+    _use(monkeypatch, ctx)
+    target = tmp_path / "devman.lock.json"
+    target.write_text("{}", encoding="utf-8")
+    code, out, err = _run(capsys, ["export", "--output", str(target)])
+    assert code == 3
+    assert "目标已存在" in out + err
+
+
+def test_restore_installs_and_switches_human(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetcher, runner = _node_setup("18.20.0")
+    ctx = _ctx(tmp_path, fetcher=fetcher, runner=runner)
+    _install_node(ctx)
+    set_active(ctx.layout, "node", "20.11.1")
+    _use(monkeypatch, ctx)
+    lock = {
+        "schema": "devman-lock/1",
+        "tools": {"node": {"active": "18.20.0", "versions": [{"version": "18.20.0"}, {"version": "20.11.1"}]}},
+    }
+    path = tmp_path / "devman.lock.json"
+    path.write_text(json.dumps(lock), encoding="utf-8")
+
+    code, out, _err = _run(capsys, ["restore", str(path), "--yes"])
+    assert code == 0
+    assert "恢复完成" in out
+    assert "安装 node@18.20.0" in out
+    assert "切换 node@18.20.0" in out
+    assert (ctx.layout.version_dir("node", "18.20.0") / "node.exe").is_file()
+
+
+def test_restore_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _use(monkeypatch, _ctx(tmp_path))
+    code, out, err = _run(capsys, ["restore", str(tmp_path / "missing.lock.json"), "--yes"])
+    assert code == 3
+    assert "锁文件无法读取" in out + err

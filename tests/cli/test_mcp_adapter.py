@@ -382,7 +382,7 @@ def test_security_policy_to_from_dict() -> None:
         deny_patterns=[".git", "__pycache__"],
     )
     d = p.to_dict()
-    assert d["workspace_root"] == "F:\\work"
+    assert d["workspace_root"] == str(Path("F:/work"))
     assert d["allow_absolute_paths"] is True
     assert d["allow_network"] is False
     assert d["require_write_confirmation"] is False

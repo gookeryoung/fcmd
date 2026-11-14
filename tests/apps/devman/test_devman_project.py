@@ -130,6 +130,54 @@ def test_write_and_remove_pin(tmp_path: Path) -> None:
     assert not path.exists()
 
 
+def test_version_files_handle_parse_errors_and_empty_content(tmp_path: Path) -> None:
+    invalid = tmp_path / ".node-version"
+    invalid.write_text("20/21\n", encoding="utf-8")
+    pin, warnings = _project.read_version_file("node", invalid)
+    assert pin is None
+    assert warnings and "不合法" in warnings[0]
+
+    empty = tmp_path / ".python-version"
+    empty.write_text("# 只有注释\n\n", encoding="utf-8")
+    assert _project.read_version_file("python", empty) == (None, [])
+
+    pin, warnings = _project.read_version_file("node", tmp_path / "missing-version")
+    assert pin is None
+    assert warnings and "无法读取" in warnings[0]
+
+
+def test_read_project_file_rejects_non_table_versions(tmp_path: Path) -> None:
+    path = tmp_path / "devman.toml"
+    path.write_text('versions = ["node"]\n', encoding="utf-8")
+    pins, warnings = _project.read_project_file(path)
+    assert pins == {}
+    assert warnings and "必须是表" in warnings[0]
+
+
+def test_read_directory_ignores_invalid_legacy_file(tmp_path: Path) -> None:
+    (tmp_path / ".go-version").write_text("not-a-version\n", encoding="utf-8")
+    pins, warnings = _project.read_directory(tmp_path)
+    assert pins == {}
+    assert warnings and "不合法" in warnings[0]
+
+
+def test_discover_stops_when_all_tools_pinned(tmp_path: Path) -> None:
+    (tmp_path / "devman.toml").write_text(
+        '[versions]\nnode = "20"\npython = "3.12"\ngo = "1.23"\ndeno = "2.1"\nbun = "1.1"\njdk = "21"\n',
+        encoding="utf-8",
+    )
+    pins, warnings = _project.discover(start=tmp_path)
+    assert warnings == []
+    assert set(pins) == {"node", "python", "go", "deno", "bun", "jdk"}
+    assert pins["jdk"].raw == "21"
+
+
+def test_write_and_remove_pin_reject_unknown_tool(tmp_path: Path) -> None:
+    with pytest.raises(KeyError):
+        _project.write_pin(tmp_path, "rust", "1.0")
+    assert _project.remove_pin(tmp_path, "rust") is False
+
+
 # ---------------------------------------------------------------------- #
 # 只读快照与解析
 # ---------------------------------------------------------------------- #

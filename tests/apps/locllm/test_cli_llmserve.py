@@ -1946,6 +1946,135 @@ class TestConvertBranches:
         monkeypatch.setenv("PATH", os.pathsep + os.environ.get("PATH", ""))
         assert llmconvert._python_candidates()
 
+    def test_python_candidates_skips_unknown_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", "")
+        monkeypatch.setattr(llmconvert.shutil, "which", lambda name: None)
+        assert llmconvert._python_candidates() == [sys.executable]
+
+    def test_registered_architectures_rejects_syntax_error(self) -> None:
+        assert llmconvert._registered_architectures("def (") == set()
+
+    def test_registered_architectures_ignores_non_register_decorators(self) -> None:
+        text = (
+            "@register\n"
+            "class A:\n"
+            "    pass\n"
+            "@register('Named')\n"
+            "class B:\n"
+            "    pass\n"
+            "@other.wrap('Ignored')\n"
+            "class C:\n"
+            "    pass\n"
+            "@ModelBase.register('GPT2LMHeadModel')\n"
+            "class D:\n"
+            "    pass\n"
+        )
+        assert llmconvert._registered_architectures(text) == {"GPT2LMHeadModel"}
+
+    def test_engine_architectures_skips_unreadable_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        repo = tmp_path / "llama.cpp"
+        conversion = repo / "conversion"
+        conversion.mkdir(parents=True)
+        (conversion / "good.py").write_text('@ModelBase.register("GoodArch")\nclass G:\n    pass\n', encoding="utf-8")
+        (conversion / "bad.py").write_text('@ModelBase.register("BadArch")\n', encoding="utf-8")
+        original = Path.read_text
+
+        def _read(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self.name == "bad.py":
+                raise OSError("denied")
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _read)
+        registered, mapping = llmconvert._engine_architectures(repo)
+        assert registered == {"GoodArch"}
+        assert mapping == {}
+
+    def test_check_convert_source_rejects_non_object_config(self, tmp_path: Path) -> None:
+        source = tmp_path / "hf"
+        source.mkdir()
+        (source / "config.json").write_text("[]", encoding="utf-8")
+        (source / "tokenizer.json").write_text("{}", encoding="utf-8")
+        with pytest.raises(ServeError, match="不是 JSON 对象"):
+            llmconvert.check_convert_source(source)
+
+    def test_download_resumable_tolerates_bad_content_length(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _Response:
+            status = 200
+            headers = {"Content-Length": "oops"}
+
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+
+            def read(self, size: int = -1) -> bytes:
+                payload, self._payload = self._payload, b""
+                return payload
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+        monkeypatch.setattr(llmconvert, "_SOURCE_ATTEMPTS", 1)
+        monkeypatch.setattr(llmconvert, "_SOURCE_RETRY_DELAY", 0.0)
+        dest = tmp_path / "src.zip"
+        size = llmconvert._download_resumable(
+            "https://example.com/src.zip", dest, lambda request, timeout: _Response(b"data")
+        )
+        assert size == 4
+        assert dest.read_bytes() == b"data"
+
+    def test_download_resumable_retries_truncated_body(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _Response:
+            status = 200
+            headers = {"Content-Length": "100"}
+
+            def __init__(self) -> None:
+                self._sent = False
+
+            def read(self, size: int = -1) -> bytes:
+                if self._sent:
+                    return b""
+                self._sent = True
+                return b"x" * 10
+
+            def __enter__(self) -> _Response:
+                return self
+
+            def __exit__(self, *args: object) -> bool:
+                return False
+
+        monkeypatch.setattr(llmconvert, "_SOURCE_ATTEMPTS", 2)
+        monkeypatch.setattr(llmconvert, "_SOURCE_RETRY_DELAY", 0.0)
+        dest = tmp_path / "src.zip"
+        with pytest.raises(ServeError, match="传输中断"):
+            llmconvert._download_resumable("https://example.com/src.zip", dest, lambda request, timeout: _Response())
+        assert not dest.exists()
+        assert not dest.with_name("src.zip.part").exists()
+
+    def test_convert_failure_streamed_points_to_log(self) -> None:
+        message = llmconvert._convert_failure(CommandResult(1, "", "ValueError: boom"), streamed=True)
+        assert "ValueError: boom" in message
+        assert "完整调用栈见上方日志" in message
+
+    def test_convert_model_stream_start_failure(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        plan = llmconvert.ConvertPlan(
+            source=_hf_source(tmp_path),
+            output=tmp_path / "out" / "m.gguf",
+            outtype="f16",
+            script=tmp_path / "c.py",
+            python="py",
+        )
+
+        def _raise(*args: object, **kwargs: object) -> None:
+            raise OSError("python missing")
+
+        monkeypatch.setattr(llmbase, "stream_command", _raise)
+        with pytest.raises(ServeError, match="无法启动转换脚本"):
+            llmconvert.convert_model(plan, on_output=lambda line: None)
+
 
 class TestConvertPrecheck:
     """转换前置检查与错误呈现：元数据 / 文件 / 架构问题在启动脚本前给出可执行提示。"""
@@ -2589,3 +2718,69 @@ class TestServewBench:
             _locllmw_bench.endpoint_from_states(registered, "alpha", alive=lambda state: state.name == "beta")
         with pytest.raises(ServeError, match="多个服务在运行"):
             _locllmw_bench.endpoint_from_states(registered, alive=lambda state: True)
+
+
+class TestServeMiscBranches:
+    def test_parse_prometheus_skips_missing_value(self) -> None:
+        assert llmserve.parse_prometheus("without_value\nother 1.5\n") == {"other": 1.5}
+
+    def test_make_plan_auto_detects_gpu(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path
+    ) -> None:
+        engine = _engine_dir(tmp_path) / llmengine.engine_exe_name()
+        monkeypatch.setenv("FCMD_LLAMA_SERVER", str(engine))
+        calls: list[int] = []
+
+        def _detect_gpu(*_args: object) -> GpuInfo:
+            calls.append(1)
+            return GpuInfo("Test GPU", 16384)
+
+        monkeypatch.setattr(llmengine, "detect_gpu", _detect_gpu)
+
+        plan = llmserve.make_plan("qwen", home=home, model=model_file, tune="auto")
+
+        assert calls == [1]
+        assert plan.tuning.label
+
+    def test_launch_once_uses_new_session_off_windows(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_file: Path
+    ) -> None:
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        captured: dict[str, object] = {}
+
+        def _popen(argv: list[str], **kwargs: object) -> _FakeProc:
+            captured["kwargs"] = kwargs
+            return _FakeProc(os.getpid())
+
+        monkeypatch.setattr(llmserve.os, "name", "posix")
+
+        state = llmserve._launch_once(
+            plan,
+            home=home,
+            popen=_popen,
+            health=lambda host, port, key: True,
+            sleep=lambda seconds: None,
+        )
+
+        assert state.name == "qwen"
+        kwargs = cast(dict[str, object], captured["kwargs"])
+        assert kwargs["start_new_session"] is True
+        assert kwargs["creationflags"] == 0
+
+    def test_print_plan_warns_when_estimate_exceeds_gpu(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        monkeypatch.setattr(llmmodel, "plan_vram", lambda plan: 2 * 1024**3)
+        monkeypatch.setattr(llmengine, "detect_gpu", lambda *_args: GpuInfo("Test GPU", 1024))
+
+        llmserve._print_plan(plan)
+
+        out = capsys.readouterr().out
+        assert "警告" in out
+        assert "可能 OOM" in out

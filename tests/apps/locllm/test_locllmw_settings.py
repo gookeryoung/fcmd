@@ -197,7 +197,7 @@ def test_engine_status_reports_current(home: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(llmengine, "resolve_engine", lambda tag=None, home=None: info)
     status = settings_page.engine_status(home)
     assert status.installed == 1
-    assert status.current == "b2 · D:\\engines\\b2\\llama-server.exe"
+    assert status.current == f"b2 · {info.exe}"
 
 
 def test_select_engine_uses_engine_use(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -415,3 +415,42 @@ class TestLaunchFallback:
         with pytest.raises(ServeError):
             llmserve.launch(plan, allow_mmproj_fallback=False)
         assert len(calls) == 1
+
+
+class TestImageFormats:
+    def test_webp_attachment_is_accepted(self, tmp_path: Path) -> None:
+        data = b"RIFF" + (16).to_bytes(4, "little") + b"WEBPVP8 " + b"\x00" * 8
+        path = tmp_path / "image.webp"
+        path.write_bytes(data)
+
+        attachment = Attachment.image(path)
+
+        assert attachment.mime == "image/webp"
+        assert attachment.data == data
+
+    def test_jpeg_with_leading_segment_reports_size(self) -> None:
+        app0 = b"\xff\xe0" + (16).to_bytes(2, "big") + b"\x00" * 14
+        sof = b"\xff\xc0" + (17).to_bytes(2, "big") + b"\x08" + (24).to_bytes(2, "big") + (32).to_bytes(2, "big")
+        data = b"\xff\xd8" + app0 + sof + b"\x00" * 9
+        assert llmchat.image_size(data) == (32, 24)
+        assert llmchat._detect_image_mime(data) == "image/jpeg"
+
+    def test_large_image_is_resized_with_pillow(self, tmp_path: Path) -> None:
+        import io
+
+        from PIL import Image
+
+        buffer = io.BytesIO()
+        Image.new("RGBA", (8, 4), (255, 0, 0, 255)).save(buffer, format="PNG")
+        path = tmp_path / "big.png"
+        path.write_bytes(buffer.getvalue())
+
+        attachment = Attachment.image(path, max_edge=2)
+
+        assert llmchat.image_size(attachment.data) == (2, 1)
+        assert attachment.mime == "image/png"
+        assert attachment.size == len(attachment.data)
+
+    def test_text_attachment_content_part(self) -> None:
+        part = Attachment(kind="text", mime="text/plain", size=3, text="abc").to_content_part()
+        assert part == {"type": "text", "text": "abc"}

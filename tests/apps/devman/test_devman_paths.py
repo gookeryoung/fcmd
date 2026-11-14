@@ -23,6 +23,8 @@ def test_blank_explicit_falls_back_to_env(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_missing_env_uses_localappdata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 前半段验证 Windows 的 LOCALAPPDATA 优先；显式固定平台，避免在 Linux CI 上走 XDG 分支。
+    monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.delenv(_paths.ROOT_ENV, raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
     root = _paths.resolve_root()

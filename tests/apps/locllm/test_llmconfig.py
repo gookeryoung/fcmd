@@ -256,6 +256,43 @@ def test_non_object_config_returns_empty(home: Path) -> None:
     assert _llmconfig.load_config(home) == {}
 
 
+def test_legacy_models_roots_non_list_is_dropped(home: Path) -> None:
+    _write(home / "serve" / "config.json", {"models_roots": 123})
+    assert _llmconfig.load_config(home) == {}
+
+
+def test_legacy_models_roots_empty_list_is_dropped(home: Path) -> None:
+    _write(home / "serve" / "config.json", {"models_roots": ["", 1]})
+    assert _llmconfig.load_config(home) == {}
+
+
+def test_legacy_llmenvw_non_string_values_are_skipped(home: Path) -> None:
+    legacy = home / "ui" / "llmenvw.json"
+    _write(legacy, {"serve_dir": 123, "engines_root": ""})
+    assert _llmconfig.load_config(home) == {}
+    assert not legacy.exists()
+    assert (home / "ui" / "llmenvw.json.migrated").is_file()
+
+
+def test_download_dest_non_string_is_dropped_without_warning(home: Path) -> None:
+    legacy = home / "ui" / "locllmw.json"
+    _write(legacy, {"download": {"dest": 123, "source": "hf"}})
+    assert _llmconfig.load_config(home) == {}
+    assert _read(legacy)["download"] == {"source": "hf"}
+
+
+def test_default_models_dir_without_d_drive(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original_exists = Path.exists
+
+    def _exists(self: Path) -> bool:
+        if self.drive == "D:":
+            return False
+        return original_exists(self)
+
+    monkeypatch.setattr(Path, "exists", _exists)
+    assert _llmconfig.default_models_dir() == home / "models"
+
+
 def test_write_failure_is_ignored_on_migration(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write(home / "serve" / "config.json", {"models_root": "D:/models"})
 

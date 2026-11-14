@@ -6,6 +6,7 @@ import inspect
 import sys
 import typing
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Literal
 
 import pytest
@@ -1917,3 +1918,116 @@ def test_run_tool_summary_on_failure_multi_tasks(capsys: pytest.CaptureFixture[s
     captured = capsys.readouterr()
     assert "执行汇总" in captured.out
     assert "执行失败" in captured.out
+
+
+# ---------------------------------------------------------------------- #
+# exec 辅助分支
+# ---------------------------------------------------------------------- #
+def _two_param_spec() -> ToolSpec:
+    def _fn(a: str = "", b: str = "") -> None:
+        pass
+
+    return ToolSpec(name="demo", subcommand=None, func=_fn)
+
+
+def test_value_to_cmd_str_covers_scalar_kinds() -> None:
+    from fcmd.core import _tool_exec
+
+    assert _tool_exec._value_to_cmd_str(True) == "true"
+    assert _tool_exec._value_to_cmd_str(False) == "false"
+    assert _tool_exec._value_to_cmd_str(["a", "b"]) == "a b"
+    expected = str(Path("~/x").expanduser())
+    assert _tool_exec._value_to_cmd_str(Path("~/x")) == expected
+
+
+def test_expand_value_skips_params_absent_from_variables() -> None:
+    from fcmd.core import _tool_exec
+
+    assert _tool_exec._expand_value("{a}-{b}", _two_param_spec(), {"a": "1"}) == "1-{b}"
+
+
+def test_build_task_spec_expands_cwd_and_env() -> None:
+    from fcmd.core import _tool_exec
+
+    def _fn(a: str = "", d: str = "") -> None:
+        pass
+
+    spec = ToolSpec(name="demo", subcommand=None, func=_fn, cmd="echo {a}", cwd="{d}", env={"P": "{a}"})
+    task = _tool_exec._build_task_spec(spec, {"a": "1", "d": "work"})
+
+    assert task.cmd == "echo 1"
+    assert task.cwd == Path("work")
+    assert task.env == {"P": "1"}
+
+
+def test_resolve_tool_target_help_returns_success(capsys: pytest.CaptureFixture[str]) -> None:
+    from fcmd.core import _tool_exec
+
+    spec = _two_param_spec()
+    code = _tool_exec._resolve_tool_target("demo", {"run": spec}, ["--help"])
+
+    assert code == int(ToolExitCode.SUCCESS)
+    assert "run" in capsys.readouterr().out
+
+
+def test_describe_exception_system_exit() -> None:
+    from fcmd.core import _tool_exec
+
+    assert _tool_exec._describe_exception(SystemExit(3)) == "工具进程以退出码 3 结束"
+
+
+def test_report_tool_failure_skips_when_error_pending(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fcmd.core import _tool_exec
+
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(_tool_exec, "has_pending_error", lambda: True)
+    monkeypatch.setattr(_tool_exec, "emit_error", lambda name, target, **kwargs: calls.append((name, target)))
+
+    _tool_exec._report_tool_failure("demo", None, code="X", message="m", json_output=True)
+
+    assert calls == []
+    assert capsys.readouterr().out == ""
+
+
+def test_report_tool_failure_json_uses_envelope(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.core import _tool_exec
+
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr(_tool_exec, "has_pending_error", lambda: False)
+    monkeypatch.setattr(_tool_exec, "emit_error", lambda name, target, **kwargs: seen.update(name=name, **kwargs))
+
+    _tool_exec._report_tool_failure("demo", "run", code="USAGE", message="m", json_output=True, hint="h")
+
+    assert seen == {"name": "demo", "code": "USAGE", "message": "m", "hint": "h"}
+
+
+def test_execute_tool_tasks_reports_failed_report(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from fcmd.core import _tool_exec
+    from fcmd.core.task import TaskStatus
+
+    def _fn() -> None:
+        pass
+
+    spec = ToolSpec(name="demo", subcommand=None, func=_fn)
+    report = SimpleNamespace(
+        success=False,
+        results={"a": SimpleNamespace(status=TaskStatus.FAILED, duration=0.0)},
+    )
+    monkeypatch.setattr(_tool_exec, "run", lambda *args, **kwargs: report)
+
+    code = _tool_exec._execute_tool_tasks("demo", None, {}, spec, {None: spec})
+
+    assert code == int(ToolExitCode.FAILURE)
+    assert "执行失败: 任务 a 未成功" in capsys.readouterr().out
+
+
+def test_print_task_summary_returns_for_empty_results(capsys: pytest.CaptureFixture[str]) -> None:
+    from fcmd.core import _tool_exec
+
+    _tool_exec._print_task_summary(SimpleNamespace(results={}), force=True)
+
+    assert capsys.readouterr().out == ""

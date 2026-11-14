@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -153,6 +153,51 @@ def test_env_add_missing_dir(home: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert "目录当前不存在" in capsys.readouterr().out
 
 
+def test_env_show_legacy_directories(
+    home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(llmenv, "get_console", lambda: Console(width=300))
+    monkeypatch.setattr(llmenv, "models_dir_extra", lambda: ["D:/old-models"])
+    monkeypatch.setattr(llmenv, "ignored_work_dir", lambda: "E:/old-work")
+
+    llmenv.show_cmd()
+
+    out = capsys.readouterr().out
+    assert "旧模型目录（未使用）" in out
+    assert "D:/old-models" in out
+    assert "旧工作目录（已忽略）" in out
+    assert "E:/old-work" in out
+
+
+def test_env_add_same_dir_skips_replacement_notice(
+    home: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(llmenv, "get_console", lambda: Console(width=300))
+    target = home / "models"
+    target.mkdir(parents=True)
+    llmenv.add_cmd(target)
+    capsys.readouterr()
+
+    llmenv.add_cmd(target)
+
+    assert "已被替换" not in capsys.readouterr().out
+
+
+def test_env_remove_rejects_unconfigured_dir(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llmenv, "get_console", lambda: Console(width=300))
+    with pytest.raises(ServeError, match="无需移除"):
+        llmenv.remove_cmd(home / "models")
+
+
+def test_list_states_skips_unreadable_state(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    state_file = llmenv.state_path("alpha", home)
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(llmenv, "load_state", lambda name, home=None: None)
+
+    assert llmenv.list_states(home) == []
+
+
 def test_env_list_empty(home: Path, capsys: pytest.CaptureFixture[str]) -> None:
     llmenv.list_cmd()
     assert "没有已登记的服务" in capsys.readouterr().out
@@ -246,6 +291,53 @@ def test_scan_models_fills_tags(tmp_path: Path) -> None:
     (tmp_path / "qwen3-coder-instruct-Q4_K_M.gguf").write_bytes(b"x" * 16)
     entries = llmmodel.scan_models(tmp_path)
     assert entries[0].tags == ("代码", "对话")
+
+
+def test_scan_models_deduplicates_resolved_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    model = tmp_path / "m.gguf"
+    model.write_bytes(b"x")
+    original = Path.rglob
+    monkeypatch.setattr(
+        Path, "rglob", lambda self, pattern: iter([model, model]) if self == tmp_path else original(self, pattern)
+    )
+
+    assert len(llmmodel.scan_models(tmp_path)) == 1
+
+
+def test_pair_score_without_name_features(tmp_path: Path) -> None:
+    model = tmp_path / "model-f16.gguf"
+    mmproj = tmp_path / "sub" / "mmproj-mmproj-f16.gguf"
+
+    score, reasons = llmmodel.pair_score(model, mmproj)
+
+    assert score == 5
+    assert len(reasons) == 1
+
+
+def test_find_mmproj_skips_model_itself_and_collects_subdir(tmp_path: Path) -> None:
+    model = tmp_path / "alpha-mmproj.gguf"
+    model.write_bytes(b"x" * 16)
+    candidate = tmp_path / "beta-projector.gguf"
+    candidate.write_bytes(b"x" * 16)
+
+    found = llmmodel.find_mmproj(model)
+
+    assert found is not None
+    assert found.path.name == "beta-projector.gguf"
+
+
+def test_find_mmproj_deduplicates_and_accepts_subdir_gguf(tmp_path: Path) -> None:
+    model = tmp_path / "qwen2.5-8b.gguf"
+    model.write_bytes(b"x" * 16)
+    (tmp_path / "qwen2.5-8b-mmproj-projector-f16.gguf").write_bytes(b"x" * 16)
+    vision = tmp_path / "mmproj" / "vision.gguf"
+    vision.parent.mkdir()
+    vision.write_bytes(b"x" * 16)
+
+    found = llmmodel.find_mmproj(model)
+
+    assert found is not None
+    assert found.path.name == "qwen2.5-8b-mmproj-projector-f16.gguf"
 
 
 def test_model_find(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
@@ -505,7 +597,76 @@ def test_stream_command_splits_carriage_returns(monkeypatch: pytest.MonkeyPatch)
 
     assert result.returncode == 0
     assert seen == ["loading", " 20%|##   |", " 80%|#####|", "done"]
+    assert process.stdout is not None
     assert process.stdout.closed is True
+
+
+class _ChunkedStreamProcess:
+    def __init__(self, chunks: list[bytes], returncode: int = 0) -> None:
+        self.stdout: _ChunkedStdout | None = _ChunkedStdout(chunks)
+        self.returncode = returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+
+class _ChunkedStdout:
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+
+    def read1(self, size: int) -> bytes:
+        return self._chunks.pop(0) if self._chunks else b""
+
+    def close(self) -> None:
+        pass
+
+
+def test_stream_command_skips_empty_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _FakeStreamProcess(b"a\n\nb\n")
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    llmbase.stream_command(["python", "convert.py"], on_output=seen.append)
+
+    assert seen == ["a", "b"]
+
+
+def test_stream_command_without_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
+    process = _ChunkedStreamProcess([])
+    process.stdout = None
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+
+    result = llmbase.stream_command(["python", "convert.py"], on_output=lambda line: None)
+
+    assert result == llmbase.CommandResult(0, "", "")
+
+
+def test_stream_command_flushes_partial_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llmbase.locale, "getpreferredencoding", lambda do_setlocale=False: "utf-8")
+    process = _ChunkedStreamProcess([b"\xe4", b"\xb8\xad"])
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    result = llmbase.stream_command(["python", "convert.py"], on_output=seen.append)
+
+    assert result.stdout == "中"
+    assert seen == ["中"]
+
+
+def test_stream_command_flushes_incomplete_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llmbase.locale, "getpreferredencoding", lambda do_setlocale=False: "utf-8")
+    process = _ChunkedStreamProcess([b"abc\xe4"])
+    monkeypatch.setattr(llmbase.subprocess, "Popen", lambda *args, **kwargs: process)
+    seen: list[str] = []
+
+    result = llmbase.stream_command(["python", "convert.py"], on_output=seen.append)
+
+    assert result.stdout == "abc\ufffd"
+    assert seen == ["abc\ufffd"]
+
+
+def test_backend_protocol_default_impl_returns_none() -> None:
+    assert llmbase.Backend.build_argv(cast(Any, None), cast(Any, object())) is None
 
 
 def test_stream_command_timeout_kills_process(monkeypatch: pytest.MonkeyPatch) -> None:

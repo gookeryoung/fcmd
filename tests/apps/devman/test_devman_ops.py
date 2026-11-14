@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from fcmd.apps.devman import _env, _node, _ops
+from fcmd.apps.devman import _bun, _deno, _env, _go, _jdk, _maintenance, _node, _ops
 from fcmd.apps.devman._errors import DevmanError
 from fcmd.apps.devman._paths import Layout
-from fcmd.apps.devman._state import Config, State, active_version, set_active
+from fcmd.apps.devman._state import MARKER_SCHEMA, Config, State, active_version, set_active, write_marker
 from tests.apps.devman import _fakes
 
 PY_KEY = _fakes.PY_KEY
@@ -688,7 +689,9 @@ def test_env_payload_with_active(tmp_path: Path) -> None:
     assert "20.11.1" in _ops.env_payload(ctx, shell="cmd")["snippet"]
 
 
-def test_doctor_ok(tmp_path: Path) -> None:
+def test_doctor_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 平台检查按真实平台给结论；本用例验证 Windows 正常态，显式固定平台。
+    monkeypatch.setattr(_ops.sys, "platform", "win32")
     uv = tmp_path / "uv.exe"
     uv.write_bytes(b"MZ")
     ctx = _ctx(tmp_path, config=Config(python_uv=str(uv)))
@@ -872,3 +875,237 @@ def _parse(text: str) -> Any:
     from fcmd.apps.devman._toolchain import parse_spec
 
     return parse_spec(text)
+
+
+# ---------------------------------------------------------------------- #
+# PATH 记录与 shim 清理的边界
+# ---------------------------------------------------------------------- #
+def test_install_does_not_duplicate_recorded_path(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, fetcher=_node_fetcher("20.12.0"), runner=_node_runner("20.12.0"))
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    payload = _ops.install(ctx, "node@20.12.0")
+    assert payload["user_path"]["changed"] is True
+    assert ctx.state.path_added == [str(ctx.layout.shim_dir)]
+
+
+def test_uninit_with_unmatched_recorded_entry_leaves_store(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    store = _fakes.FakeEnvStore({"Path": "C:\\Windows"})
+    ctx.state.path_added = [str(ctx.layout.shim_dir)]
+    payload = _ops.uninit(ctx, store=store)
+    assert payload["user_path"]["changed"] is False
+    assert store.get("Path") == "C:\\Windows"
+    assert store.writes == []
+    assert ctx.state.path_added == []
+
+
+def test_uninit_skips_non_file_shim_entries(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    _ops.init(ctx)
+    nested = ctx.layout.shim_dir / "nested"
+    nested.mkdir()
+    payload = _ops.uninit(ctx)
+    assert "nested" not in payload["removed_shims"]
+    assert nested.is_dir()
+
+
+# ---------------------------------------------------------------------- #
+# 其余运行时的目标解析
+# ---------------------------------------------------------------------- #
+def test_resolve_node_prefix_without_local_match_uses_remote(tmp_path: Path) -> None:
+    fetcher = _fakes.FakeFetcher(texts={_node.RELEASE_INDEX: _fakes.node_index_json(("20.11.1", "Iron"))})
+    ctx = _ctx(tmp_path, fetcher=fetcher)
+    assert _ops.resolve_target(ctx, _parse("node@20")) == ("node", "20.11.1")
+
+
+def test_resolve_go_exact_installed_and_index(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    assert _ops.resolve_target(ctx, _parse("go@1.23.4")) == ("go", "1.23.4")
+
+    _fakes.install_fake_go(ctx.layout, "1.22.9")
+    assert _ops.resolve_target(ctx, _parse("go@1.22")) == ("go", "1.22.9")
+
+    _data, digest = _fakes.make_go_zip("1.23.4")
+    remote = _ctx(
+        tmp_path / "remote",
+        fetcher=_fakes.FakeFetcher(texts={_go.INDEX: _fakes.go_index_json("1.23.4", digest)}),
+    )
+    assert _ops.resolve_target(remote, _parse("go@1.23")) == ("go", "1.23.4")
+    assert _ops.resolve_target(remote, _parse("go@latest")) == ("go", "1.23.4")
+
+
+def test_resolve_deno_and_bun_latest(tmp_path: Path) -> None:
+    deno_ctx = _ctx(tmp_path / "deno", fetcher=_fakes.FakeFetcher(texts={_deno.LATEST_URL: "v2.1.4\n"}))
+    assert _ops.resolve_target(deno_ctx, _parse("deno@latest")) == ("deno", "2.1.4")
+
+    bun_ctx = _ctx(
+        tmp_path / "bun",
+        fetcher=_fakes.FakeFetcher(texts={_bun.LATEST_API: json.dumps({"tag_name": "bun-v1.1.38"})}),
+    )
+    assert _ops.resolve_target(bun_ctx, _parse("bun@latest")) == ("bun", "1.1.38")
+
+
+def test_resolve_jdk_lts(tmp_path: Path) -> None:
+    _data, digest = _fakes.make_jdk_zip("21.0.5+11")
+    arch = _jdk.detect_arch()
+    url = f"{_jdk.API}/assets/latest/21/hotspot?architecture={arch}&image_type=jdk&os=windows&vendor=eclipse"
+    fetcher = _fakes.FakeFetcher(
+        texts={
+            _jdk.AVAILABLE: json.dumps({"most_recent_lts": 21, "most_recent_feature_release": 23}),
+            url: _fakes.jdk_assets_json(
+                "21.0.5+11",
+                "OpenJDK21U-jdk_x64_windows_hotspot_21.0.5_11.zip",
+                "https://example.invalid/jdk.zip",
+                digest,
+            ),
+        }
+    )
+    ctx = _ctx(tmp_path, fetcher=fetcher)
+    assert _ops.resolve_target(ctx, _parse("jdk@lts")) == ("jdk", "21.0.5+11")
+
+
+# ---------------------------------------------------------------------- #
+# versions --remote 的其余运行时
+# ---------------------------------------------------------------------- #
+def test_versions_remote_go_marks_installed(tmp_path: Path) -> None:
+    _data, digest = _fakes.make_go_zip("1.23.4")
+    ctx = _ctx(tmp_path, fetcher=_fakes.FakeFetcher(texts={_go.INDEX: _fakes.go_index_json("1.23.4", digest)}))
+    _fakes.install_fake_go(ctx.layout, "1.23.4")
+    payload = _ops.versions_payload(ctx, "go", remote=True)
+    assert payload["source"] == _go.INDEX
+    assert payload["versions"] == [{"version": "1.23.4", "installed": True, "active": False}]
+
+
+def test_versions_remote_deno_and_bun(tmp_path: Path) -> None:
+    deno_ctx = _ctx(
+        tmp_path / "deno",
+        fetcher=_fakes.FakeFetcher(texts={_deno.LATEST_URL: "v2.1.4\n"}),
+    )
+    deno_payload = _ops.versions_payload(deno_ctx, "deno", remote=True)
+    assert deno_payload["source"] == _deno.LATEST_URL
+    assert deno_payload["versions"] == [{"version": "2.1.4", "installed": False, "active": False}]
+
+    bun_ctx = _ctx(
+        tmp_path / "bun",
+        fetcher=_fakes.FakeFetcher(texts={_bun.LATEST_API: json.dumps({"tag_name": "bun-v1.1.38"})}),
+    )
+    bun_payload = _ops.versions_payload(bun_ctx, "bun", remote=True)
+    assert bun_payload["source"] == _bun.LATEST_API
+    assert bun_payload["versions"] == [{"version": "1.1.38", "installed": False, "active": False}]
+
+
+def test_versions_remote_jdk_lists_releases(tmp_path: Path) -> None:
+    arch = _jdk.detect_arch()
+    ctx = _ctx(
+        tmp_path,
+        fetcher=_fakes.FakeFetcher(
+            texts={_jdk.RELEASES.format(arch=arch): json.dumps(["jdk-21.0.5+11", "temurin-17.0.13+11"])}
+        ),
+    )
+    payload = _ops.versions_payload(ctx, "jdk", remote=True)
+    assert payload["source"] == _jdk.RELEASES.format(arch=arch)
+    assert payload["versions"] == [{"version": "21.0.5+11", "installed": False, "active": False}]
+
+
+# ---------------------------------------------------------------------- #
+# 卸载 python / 升级默认版本线 / init 无 PATH
+# ---------------------------------------------------------------------- #
+def test_uninstall_python_uv_deletes_source_early(tmp_path: Path) -> None:
+    uv = tmp_path / "uv.exe"
+    uv.write_bytes(b"MZ")
+    final = tmp_path / "root" / "python" / PY_KEY
+
+    def handler(argv: list[str], env: Any) -> Any:
+        if argv[1:3] == ["python", "uninstall"]:
+            shutil.rmtree(final)
+            return _fakes.result()
+        return _fakes.result()
+
+    ctx = _ctx(tmp_path, config=Config(python_uv=str(uv)), runner=_fakes.FakeRunner(handler))
+    _fakes.install_fake_python(ctx.layout, PY_KEY, "3.12.15")
+    payload = _ops.uninstall(ctx, f"python@{PY_KEY}", yes=True)
+    assert payload["leftovers"] == []
+    assert not final.exists()
+
+
+def test_upgrade_deno_defaults_to_latest(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, fetcher=_fakes.FakeFetcher(texts={_deno.LATEST_URL: "v2.1.5\n"}))
+    directory = ctx.layout.version_dir("deno", "2.1.4")
+    directory.mkdir(parents=True)
+    (directory / "deno.exe").write_bytes(b"MZ")
+    write_marker(
+        directory,
+        {
+            "schema": MARKER_SCHEMA,
+            "tool": "deno",
+            "version": "2.1.4",
+            "sha256": "0" * 64,
+            "verify": "official-shasums",
+            "installed_at": "2026-01-01",
+        },
+    )
+    payload = _ops.upgrade(ctx, "deno", dry_run=True)
+    assert payload["planned"]["target"] == "2.1.5"
+
+
+def test_upgrade_go_defaults_to_same_minor(tmp_path: Path) -> None:
+    _data, digest = _fakes.make_go_zip("1.22.9")
+    rows = json.loads(_fakes.go_index_json("1.22.9", digest)) + json.loads(_fakes.go_index_json("1.23.4", digest))
+    ctx = _ctx(tmp_path, fetcher=_fakes.FakeFetcher(texts={_go.INDEX: json.dumps(rows)}))
+    _fakes.install_fake_go(ctx.layout, "1.22.1")
+    payload = _ops.upgrade(ctx, "go", dry_run=True)
+    assert payload["planned"]["target"] == "1.22.9"
+
+
+def test_init_no_path_writes_shims_only(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    payload = _ops.init(ctx, write_path=False, env=EMPTY_ENV)
+    assert payload["user_path"] == {"enabled": False, "changed": False}
+    assert set(payload["shims_written"]) == set(_env.shim_scripts())
+    assert ctx.state.path_added == []
+
+
+# ---------------------------------------------------------------------- #
+# doctor 代理配置 / export / restore
+# ---------------------------------------------------------------------- #
+def test_doctor_reports_proxy_configuration(tmp_path: Path) -> None:
+    cases = (
+        ("", "ok", "显式禁用代理"),
+        ("http://127.0.0.1:7890", "ok", "显式代理 http://127.0.0.1:7890"),
+        ("socks5://127.0.0.1:1080", "warn", "显式代理 socks5://127.0.0.1:1080"),
+    )
+    for index, (proxy, status, text) in enumerate(cases):
+        ctx = _ctx(tmp_path / str(index), config=Config(python_uv=str(tmp_path / "uv-missing.exe"), proxy=proxy))
+        payload = _ops.doctor_payload(ctx, env=EMPTY_ENV)
+        network = next(item for item in payload["checks"] if item["name"] == "network")
+        assert network["status"] == status
+        assert text in network["detail"]
+        if status == "warn":
+            assert "SOCKS" in (network["hint"] or "")
+
+
+def test_export_rejects_missing_output_parent(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path)
+    with pytest.raises(DevmanError) as info:
+        _ops.export_payload(ctx, output=str(tmp_path / "missing" / "devman.lock.json"))
+    assert info.value.code == "INVALID_ARGUMENT"
+    assert info.value.field == "output"
+    assert "输出目录不存在" in info.value.message
+
+
+def test_restore_installs_and_switches_versions(tmp_path: Path) -> None:
+    ctx = _ctx(tmp_path, fetcher=_node_fetcher("18.20.0"), runner=_node_runner("18.20.0"))
+    _fakes.install_fake_node(ctx.layout, "20.11.1")
+    set_active(ctx.layout, "node", "20.11.1")
+    lock = {
+        "schema": _maintenance.LOCK_SCHEMA,
+        "tools": {"node": {"active": "18.20.0", "versions": [{"version": "18.20.0"}, {"version": "20.11.1"}]}},
+    }
+    path = tmp_path / "devman.lock.json"
+    path.write_text(json.dumps(lock), encoding="utf-8")
+
+    payload = _ops.restore_payload(ctx, str(path), yes=True, write_path=False)
+    assert payload["installed"] == ["node@18.20.0"]
+    assert payload["used"] == ["node@18.20.0"]
+    assert active_version(ctx.layout, "node") == "18.20.0"
+    assert (ctx.layout.version_dir("node", "18.20.0") / "node.exe").is_file()

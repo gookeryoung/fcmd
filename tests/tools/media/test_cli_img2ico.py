@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+from fcmd.infras import media
 from fcmd.infras.media import (
     IMG2ICO_IMAGE_EXTENSIONS,
     SVG_TO_ICO_MAC_SIZES,
@@ -512,3 +514,84 @@ class TestOutputValidation:
         icon_build(sample_svg, out, fmt="mac")
         img = Image.open(out)
         assert img.format == "ICNS"
+
+
+class TestDependencyAndProbeBranches:
+    """依赖缺失与文件探测的边界分支。"""
+
+    def test_ensure_pil_requires_pillow(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(media, "HAS_PIL", False)
+        with pytest.raises(ImportError, match="Pillow"):
+            media.ensure_pil()
+
+    def test_ensure_resvg_requires_resvg(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(media, "HAS_RESVG", False)
+        with pytest.raises(ImportError, match="resvg-py"):
+            media.ensure_resvg()
+
+    def test_ensure_deps_reports_missing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(media, "HAS_RESVG", False)
+        with pytest.raises(RuntimeError, match="缺少依赖"):
+            media.ensure_deps()
+
+    def test_parse_sizes_none_and_invalid(self) -> None:
+        assert media._parse_sizes(None) is None
+        with pytest.raises(ValueError, match="尺寸必须为正整数"):
+            media._parse_sizes([16, 0])
+
+    def test_svg_probe_returns_false_on_directory(self, tmp_path: Path) -> None:
+        assert media._looks_like_svg(tmp_path) is False
+
+    def test_magic_probe_returns_false_on_directory(self, tmp_path: Path) -> None:
+        assert media._has_valid_magic(tmp_path) is False
+
+    def test_magic_probe_rejects_empty_file(self, tmp_path: Path) -> None:
+        empty = tmp_path / "empty.png"
+        empty.write_bytes(b"")
+        assert media._has_valid_magic(empty) is False
+
+    def test_supported_image_handles_stat_error(self, sample_png: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # pathlib 3.14 起 is_file 不再经过 Path.stat，显式固定前置条件，
+        # 确保稳定覆盖 stat 抛 OSError 的兜底分支。
+        def _raise_stat(_self: Path) -> Any:
+            raise OSError("vanished")
+
+        monkeypatch.setattr(Path, "is_file", lambda _self: True)
+        monkeypatch.setattr(Path, "stat", _raise_stat)
+        assert is_supported_image(sample_png) is False
+
+    def test_icon_build_rejects_directory_input(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="输入路径不是文件"):
+            icon_build(tmp_path, tmp_path / "out.ico")
+
+    def test_resolve_output_target_icns_suffix(self, sample_png: Path, tmp_path: Path) -> None:
+        target, canonical = resolve_output_target(sample_png, tmp_path / "out.icns")
+        assert target == tmp_path / "out.icns"
+        assert canonical == "mac"
+
+    def test_batch_records_skipped_failures(
+        self, sample_png: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        source_dir = tmp_path / "src"
+        source_dir.mkdir()
+        (source_dir / "good.png").write_bytes(sample_png.read_bytes())
+        (source_dir / "bad.png").write_bytes(sample_png.read_bytes())
+        real_build = media.icon_build
+
+        def _build(input_path: Path, output_path: Path, **kwargs: Any) -> Any:
+            if input_path.name == "bad.png":
+                raise ValueError("boom")
+            return real_build(input_path, output_path, **kwargs)
+
+        monkeypatch.setattr(media, "icon_build", _build)
+        canonical, outputs, skipped = media.icon_build_batch(source_dir, tmp_path / "out")
+
+        assert canonical == "windows"
+        assert [path.name for path in outputs] == ["good.ico"]
+        assert skipped == [("bad.png", "boom")]
+
+    def test_image_exif_collects_warnings(self, sample_png: Path) -> None:
+        result = media.image_exif(sample_png, show=False, set=["missing-equals"])
+
+        assert result.warnings == ["跳过无效项 (缺少 =): missing-equals"]
+        assert result.saved_path == sample_png

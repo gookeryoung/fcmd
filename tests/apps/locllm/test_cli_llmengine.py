@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 from typing import Any, cast
@@ -352,3 +353,147 @@ class TestProbeVersion:
     def test_reports_unknown_when_output_empty(self) -> None:
         engine = EngineInfo("b1", Path("llama-server.exe"))
         assert llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(0)) == "未知"
+
+
+class TestArchiveMarker:
+    def test_oversized_marker_is_ignored(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(llmengine, "CHUNK_SIZE", 4)
+        archive = _make_zip(
+            tmp_path / "llama-b4321-bin-win-cuda-13.5-x64.zip",
+            {"engine.json": b'{"tag":"b4321"}', "llama-server.exe": b"x"},
+        )
+        inspection = llmengine.inspect_zip(archive)
+        assert inspection.kind == "engine"
+        assert inspection.tag == "b4321"
+
+    def test_invalid_utf8_marker_is_ignored(self, tmp_path: Path) -> None:
+        archive = _make_zip(
+            tmp_path / "llama-b4321-bin-win-cuda-13.5-x64.zip",
+            {"engine.json": b"\xff\xfe", "llama-server.exe": b"x"},
+        )
+        inspection = llmengine.inspect_zip(archive)
+        assert inspection.kind == "engine"
+        assert inspection.tag == "b4321"
+
+    def test_unreadable_zip_is_reported(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        archive = _make_zip(tmp_path / "broken.zip", {"llama-server.exe": b"x"})
+
+        def _broken(*_args: object, **_kwargs: object) -> None:
+            raise zipfile.BadZipFile("broken")
+
+        monkeypatch.setattr(llmengine.zipfile, "ZipFile", _broken)
+        inspection = llmengine.inspect_zip(archive)
+        assert inspection.kind == "invalid"
+        assert inspection.problems == ("读取失败: broken",)
+
+
+class TestEngineLookup:
+    def test_marker_relative_exe_is_resolved(self, tmp_path: Path) -> None:
+        engine_dir = tmp_path / "b1"
+        (engine_dir / "bin").mkdir(parents=True)
+        exe = engine_dir / "bin" / llmengine.engine_exe_name()
+        exe.write_bytes(b"x")
+        (engine_dir / llmengine.ENGINE_MARKER).write_text(json.dumps({"exe": "bin/" + exe.name}), encoding="utf-8")
+
+        assert llmengine._engine_exe_in(engine_dir) == exe
+
+    def test_missing_marker_exe_falls_back_to_direct(self, tmp_path: Path) -> None:
+        engine_dir = tmp_path / "b1"
+        engine_dir.mkdir()
+        exe = engine_dir / llmengine.engine_exe_name()
+        exe.write_bytes(b"x")
+        (engine_dir / llmengine.ENGINE_MARKER).write_text(json.dumps({"exe": "missing.exe"}), encoding="utf-8")
+
+        assert llmengine._engine_exe_in(engine_dir) == exe
+
+    def test_run_with_engine_passes_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", "base-path")
+        seen: dict[str, object] = {}
+
+        def runner(cmd: list[str], **kwargs: object) -> CommandResult:
+            seen["cmd"] = cmd
+            seen["env"] = kwargs.get("env")
+            return CommandResult(0)
+
+        engine = EngineInfo("b1", Path("llama-server.exe"), "release", ("D:/vendor",))
+        result = llmengine.run_with_engine(runner, ["llama-server.exe"], engine)
+
+        assert result.returncode == 0
+        assert seen["cmd"] == ["llama-server.exe"]
+        assert cast(dict[str, str], seen["env"])["PATH"] == f"D:/vendor{os.pathsep}base-path"
+
+    def test_resolve_engine_scans_installed_engines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FCMD_LLAMA_SERVER", raising=False)
+        root = tmp_path / "engines"
+        (root / "b0").mkdir(parents=True)
+        (root / "a0").mkdir()
+        (root / "a0" / llmengine.engine_exe_name()).write_bytes(b"x")
+        monkeypatch.setattr(llmenv, "engines_root", lambda home=None: root)
+        monkeypatch.setattr(llmengine, "current_engine_tag", lambda directory: "gone")
+
+        info = llmengine.resolve_engine()
+
+        assert info.tag == "a0"
+        assert info.exe == root / "a0" / llmengine.engine_exe_name()
+
+    def test_resolve_engine_returns_none_when_nothing_installed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("FCMD_LLAMA_SERVER", raising=False)
+        root = tmp_path / "engines"
+        (root / "empty").mkdir(parents=True)
+        monkeypatch.setattr(llmenv, "engines_root", lambda home=None: root)
+        monkeypatch.setattr(llmengine, "current_engine_tag", lambda directory: None)
+        monkeypatch.setattr(llmengine.shutil, "which", lambda name: None)
+
+        with pytest.raises(ServeError, match=r"未找到 llama\.cpp 引擎"):
+            llmengine.resolve_engine()
+
+    def test_list_engines_skips_files_and_incomplete_dirs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = tmp_path / "engines"
+        (root / "b0").mkdir(parents=True)
+        (root / "b1").mkdir()
+        (root / "b1" / llmengine.engine_exe_name()).write_bytes(b"x")
+        (root / "b2").mkdir()
+        (root / "b2" / llmengine.engine_exe_name()).write_bytes(b"x")
+        (root / "notes.txt").write_text("x", encoding="utf-8")
+        monkeypatch.setattr(llmenv, "engines_root", lambda home=None: root)
+        monkeypatch.setattr(llmengine, "current_engine_tag", lambda directory: "b1")
+
+        infos = llmengine.list_engines()
+
+        assert [info.tag for info in infos] == ["b2", "b1"]
+        assert infos[0].source == str(root / "b2")
+        assert infos[1].source == "current"
+
+    def test_install_rejects_path_and_archives(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(llmenv, "engines_root", lambda home=None: tmp_path / "engines")
+        with pytest.raises(ServeError, match="不能同时指定"):
+            llmengine.install_engine("b1", path=tmp_path, archives=[tmp_path / "a.zip"])
+
+    def test_release_url_points_to_release_asset(self) -> None:
+        assert (
+            llmengine._release_url("b1", "asset.zip")
+            == "https://github.com/ggml-org/llama.cpp/releases/download/b1/asset.zip"
+        )
+
+
+def test_inspect_cmd_prints_notes_and_problems(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    inspection = llmengine.ZipInspection(
+        Path("cudart.zip"),
+        "cudart",
+        True,
+        notes=("需与引擎包一起安装",),
+        problems=("缺少 llama-server",),
+    )
+    monkeypatch.setattr(llmengine, "inspect_zips", lambda paths, deep=False: [inspection])
+
+    llmengine.inspect_cmd([Path("cudart.zip")])
+
+    out = capsys.readouterr().out
+    assert "需与引擎包一起安装" in out
+    assert "缺少 llama-server" in out

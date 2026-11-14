@@ -216,6 +216,26 @@ class TestResolveExe:
         monkeypatch.setattr(llmqnt.shutil, "which", lambda name: str(exe))
         assert llmqnt.resolve_quantize_exe() == exe
 
+    def test_skips_current_engine_and_missing_quantizer(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
+        server = _write(tmp_path / "llama-server.exe")
+        same = llmbase.EngineInfo("same", server)
+        (tmp_path / "other").mkdir()
+        other_server = _write(tmp_path / "other" / "llama-server.exe")
+        other = llmbase.EngineInfo("other", other_server)
+        (tmp_path / "third").mkdir()
+        third_server = _write(tmp_path / "third" / "llama-server.exe")
+        third = llmbase.EngineInfo("third", third_server)
+        quantize = _write(tmp_path / "third" / llmengine.engine_exe_name("llama-quantize"))
+        monkeypatch.setattr(llmqnt.llmengine, "resolve_engine", lambda *args, **kwargs: same)
+        monkeypatch.setattr(llmqnt.llmengine, "list_engines", lambda *args, **kwargs: [same, other, third])
+
+        def _quantize_exe(engine: llmbase.EngineInfo) -> Path | None:
+            return quantize if engine.tag == "third" else None
+
+        monkeypatch.setattr(llmqnt.llmengine, "quantize_exe", _quantize_exe)
+        assert llmqnt.resolve_quantize_exe() == quantize
+
     def test_not_found(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("FCMD_LLAMA_QUANTIZE", raising=False)
 
@@ -464,3 +484,47 @@ class TestQuantSelection:
 
         assert page._quant_vars["Q2_K"].get() is True
         assert page._quant_checks["Q2_K"].options["state"] == "normal"
+
+
+def test_plan_jobs_rejects_output_equal_to_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _write(tmp_path / "m-F16.gguf")
+    monkeypatch.setattr(llmqnt, "output_path", lambda input_file, quant, out_dir=None: source)
+    with pytest.raises(llmqnt.QuantizeError, match="输出文件与输入文件相同"):
+        llmqnt.plan_jobs(source, ["Q4_K_M"], tmp_path)
+
+
+def test_run_jobs_without_done_callback_returns_failures(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _write(tmp_path / "m-F16.gguf")
+    jobs = [
+        llmqnt.QuantizeJob(source, tmp_path / "q4.gguf", "Q4_K_M"),
+        llmqnt.QuantizeJob(source, tmp_path / "q5.gguf", "Q5_K_M"),
+    ]
+
+    def _run_job(job: llmqnt.QuantizeJob, exe: Path, on_output: object = None) -> None:
+        if job.quant == "Q4_K_M":
+            raise llmqnt.QuantizeError("boom")
+
+    monkeypatch.setattr(llmqnt, "run_job", _run_job)
+    failures = llmqnt.run_jobs(jobs, tmp_path / "q")
+
+    assert failures == ["Q4_K_M: boom"]
+
+
+def test_quantize_cmd_reports_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    source = _write(tmp_path / "m-F16.gguf")
+    monkeypatch.setattr(llmqnt, "resolve_quantize_exe", lambda explicit=None: tmp_path / "q")
+
+    def _run_jobs(jobs: list[llmqnt.QuantizeJob], exe: Path, on_done: Any = None) -> list[str]:
+        on_done(jobs[0], False, "Q4_K_M: boom")
+        return ["Q4_K_M: boom"]
+
+    monkeypatch.setattr(llmqnt, "run_jobs", _run_jobs)
+
+    with pytest.raises(llmqnt.QuantizeError, match="1 个量化任务失败"):
+        llmqnt.quantize_cmd(source, ["Q4_K_M"], tmp_path)
+
+    out = capsys.readouterr().out
+    assert "量化计划" in out
+    assert "Q4_K_M: boom" in out

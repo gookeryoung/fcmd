@@ -71,6 +71,65 @@ def test_parse_index_rejects_non_list() -> None:
         _go.parse_index("{}")
 
 
+def test_parse_index_rejects_bad_json() -> None:
+    with pytest.raises(DevmanError) as info:
+        _go.parse_index("{not json")
+    assert info.value.code == "RUNTIME_ERROR"
+    assert "Go 发布索引无法解析" in info.value.message
+
+
+def test_parse_index_skips_non_dict_rows_and_serializes() -> None:
+    digest = "a" * 64
+    text = json.dumps(
+        [
+            7,
+            {
+                "version": "go1.23.4",
+                "stable": True,
+                "files": [
+                    9,
+                    {
+                        "filename": f"go{VERSION}.windows-amd64.zip",
+                        "os": "windows",
+                        "arch": "amd64",
+                        "sha256": digest,
+                        "size": 5,
+                    },
+                ],
+            },
+        ]
+    )
+    releases = _go.parse_index(text)
+    assert [release.to_data() for release in releases] == [{"version": VERSION, "stable": True}]
+    assert releases[0].files[0].to_data() == {
+        "filename": f"go{VERSION}.windows-amd64.zip",
+        "os": "windows",
+        "arch": "amd64",
+        "size": 5,
+    }
+
+
+def test_latest_matching_reports_missing_stable_and_unparsable() -> None:
+    unstable = [_go.GoRelease(version=VERSION, stable=False, files=())]
+    with pytest.raises(DevmanError) as info:
+        _go.latest_matching(unstable, "latest")
+    assert info.value.code == "VERSION_NOT_FOUND"
+    assert "没有稳定版" in info.value.message
+
+    with pytest.raises(DevmanError) as info:
+        _go.latest_matching([], "go")
+    assert info.value.code == "VERSION_NOT_FOUND"
+    assert "无法解析 Go 版本" in info.value.message
+
+
+def test_plan_install_with_explicit_sha(tmp_path: Path) -> None:
+    _data, digest, text = _index()
+    fetcher = _fakes.FakeFetcher(texts={_go.INDEX: text})
+    plan = _go.plan_install(fetcher, _layout(tmp_path), "1.23", sha256=digest.upper())
+    assert plan.expected_sha256 == digest
+    assert plan.expected_verify == "explicit-sha256"
+
+
 def test_plan_install_uses_official_sha(tmp_path: Path) -> None:
     plan, _data, _fetcher = _plan(tmp_path)
     assert plan.version == VERSION

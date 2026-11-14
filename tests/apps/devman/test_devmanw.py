@@ -7,11 +7,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from fcmd.apps.devman import devmanw
-from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.apps.devman._errors import DevmanError
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
 def _list_payload() -> dict[str, object]:
@@ -241,3 +243,39 @@ def test_detail_values_for_installed_available_and_tool() -> None:
     assert empty["版本"] == "—"
     assert empty["来源"] == "—"
     assert empty["版本目录"] == r"C:\devman"
+
+
+def test_path_lines_on_path_without_index() -> None:
+    snapshot: dict[str, Any] = {
+        "registered": True,
+        "process_on_path": True,
+        "process_index": None,
+        "entry": r"C:\devman\bin",
+        "recorded": [],
+        "shadowed": {},
+    }
+    lines = dict(devmanw.path_lines(snapshot))
+    assert lines["当前终端"] == "在 PATH 中"
+    assert lines["写入记录"] == "无"
+
+
+def test_error_text_variants() -> None:
+    assert devmanw._error_text(DevmanError("操作失败", "RUNTIME_ERROR", hint="稍后重试")) == "操作失败\n稍后重试"
+    assert devmanw._error_text(DevmanError("操作失败", "RUNTIME_ERROR")) == "操作失败"
+    assert devmanw._error_text(ValueError("bad")) == "bad"
+    assert devmanw._error_text(ValueError()) == "ValueError"
+
+
+def test_gui_entrypoints_share_one_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        devmanw._guiwindow,
+        "run_window",
+        lambda factory, title: calls.append((factory, title)),
+    )
+
+    assert devmanw.run_gui(str(tmp_path / "root")) is None
+    assert devmanw.launch_cmd(str(tmp_path / "root")) is None
+    assert run_tool("devmanw", []) == 0
+    assert [title for _factory, title in calls] == ["开发环境管理"] * 3
+    assert all(callable(factory) for factory, _title in calls)
