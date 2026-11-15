@@ -163,7 +163,9 @@ def test_latest_feature_errors(tmp_path: Path) -> None:
 
 def test_numeric_feature_accepts_explicit_sha(tmp_path: Path) -> None:
     _data, digest = _fakes.make_jdk_zip(SEMVER)
-    fetcher = _fakes.FakeFetcher(texts={_assets_url("21"): _fakes.jdk_assets_json(SEMVER, FILENAME, LINK, digest)})
+    fetcher = _fakes.FakeFetcher(
+        texts={_assets_url("21"): _fakes.jdk_assets_json(SEMVER, FILENAME, LINK, digest)}
+    )
     plan = _jdk.plan_install(fetcher, _layout(tmp_path), "21", sha256=digest.upper())
     assert plan.version == SEMVER
     assert plan.expected_sha256 == digest
@@ -173,7 +175,9 @@ def test_numeric_feature_accepts_explicit_sha(tmp_path: Path) -> None:
 
 def test_plan_install_rejects_bad_sha(tmp_path: Path) -> None:
     _data, digest = _fakes.make_jdk_zip(SEMVER)
-    fetcher = _fakes.FakeFetcher(texts={_assets_url("21"): _fakes.jdk_assets_json(SEMVER, FILENAME, LINK, digest)})
+    fetcher = _fakes.FakeFetcher(
+        texts={_assets_url("21"): _fakes.jdk_assets_json(SEMVER, FILENAME, LINK, digest)}
+    )
     with pytest.raises(DevmanError) as info:
         _jdk.plan_install(fetcher, _layout(tmp_path), "21", sha256="not-a-sha")
     assert info.value.code == "INVALID_ARGUMENT"

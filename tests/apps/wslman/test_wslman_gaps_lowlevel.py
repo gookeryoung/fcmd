@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.wslman import _decode, _disk, _images, _mirrors, _transfer
+from fcmd.apps.wslman import _decode, _disk, _images, _mirrors, _registry, _transfer
 from fcmd.apps.wslman._errors import WslmanError
 from fcmd.apps.wslman._registry import WindowsRegistryReader
 
@@ -89,9 +89,7 @@ def test_walk_size_counts_nested_directories(tmp_path: Path) -> None:
     assert _disk._walk_size(root, budget_s=30.0) == (8, False)
 
 
-def test_walk_size_ignores_entries_that_are_neither_file_nor_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_walk_size_ignores_entries_that_are_neither_file_nor_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     class _Entry:
         def is_dir(self, follow_symlinks: bool = False) -> bool:
             return False
@@ -140,7 +138,9 @@ def test_registry_import_failure_degrades_to_unavailable(monkeypatch: pytest.Mon
 # ---------------------------------------------------------------------- #
 
 
-def test_volume_filesystem_failure_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_volume_filesystem_failure_returns_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import ctypes
 
     def boom(size: int) -> object:
@@ -184,8 +184,9 @@ def test_transfer_lock_exit_without_acquire_and_busy_without_pid(tmp_path: Path)
     assert not lock.path.exists()
 
     lock.path.write_text(json.dumps({"pid": "not-int"}), encoding="utf-8")
-    with pytest.raises(WslmanError) as excinfo, lock:
-        pass
+    with pytest.raises(WslmanError) as excinfo:
+        with lock:
+            pass
 
     assert excinfo.value.code == "RUNTIME_ERROR"
     assert "已有传输在进行" in str(excinfo.value)

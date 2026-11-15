@@ -88,13 +88,7 @@ def test_parse_index_skips_non_dict_rows_and_serializes() -> None:
                 "stable": True,
                 "files": [
                     9,
-                    {
-                        "filename": f"go{VERSION}.windows-amd64.zip",
-                        "os": "windows",
-                        "arch": "amd64",
-                        "sha256": digest,
-                        "size": 5,
-                    },
+                    {"filename": f"go{VERSION}.windows-amd64.zip", "os": "windows", "arch": "amd64", "sha256": digest, "size": 5},
                 ],
             },
         ]
