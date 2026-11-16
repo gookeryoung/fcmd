@@ -422,9 +422,7 @@ class TestEngineLookup:
         assert seen["cmd"] == ["llama-server.exe"]
         assert cast(dict[str, str], seen["env"])["PATH"] == f"D:/vendor{os.pathsep}base-path"
 
-    def test_resolve_engine_scans_installed_engines(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_resolve_engine_scans_installed_engines(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("FCMD_LLAMA_SERVER", raising=False)
         root = tmp_path / "engines"
         (root / "b0").mkdir(parents=True)

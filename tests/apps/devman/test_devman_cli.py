@@ -878,7 +878,11 @@ def test_exec_spawn_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsy
 
     # 假安装里的 node.exe 在 POSIX 主机上没有可执行位，shutil.which 会返回 None；
     # 本用例只验证 spawn 失败的处理，直接固定命令解析结果。
-    monkeypatch.setattr(devman_module.shutil, "which", lambda *_args, **_kwargs: str(ctx.layout.version_dir("node", "20.11.1") / "node.exe"))
+    monkeypatch.setattr(
+        devman_module.shutil,
+        "which",
+        lambda *_args, **_kwargs: str(ctx.layout.version_dir("node", "20.11.1") / "node.exe"),
+    )
     monkeypatch.setattr(devman_module.subprocess, "run", boom)
     code, out, err = _run(capsys, ["exec", "--", "node", "-v"])
     assert code == 1
