@@ -30,6 +30,7 @@ from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
+    LoadingBar,
     PageScroll,
     RowListWidget,
     button,
@@ -306,6 +307,8 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         scroll = PageScroll(self)
         layout = scroll.body
         outer.addWidget(scroll)
+        self.loading = LoadingBar("正在检测硬件…", self)
+        layout.addWidget(self.loading)
         layout.addWidget(self._build_hardware())
         layout.addWidget(self._build_recommendations(), 1)
 
@@ -441,9 +444,11 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     def _detect(self) -> None:
         self._detect_button.setEnabled(False)
         self._detected_label.setText("正在检测硬件…")
+        self.loading.start("正在检测硬件…")
         self.state.detect_hardware(on_done=lambda: self._detect_button.setEnabled(True))
 
     def _on_hardware_failed(self, message: str) -> None:
+        self.loading.stop()
         self._detect_button.setEnabled(True)
         for value in self._hardware_values.values():
             value.setText("检测失败")
@@ -453,10 +458,15 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         """按当前快照（缓存或新检测）刷新硬件卡片。"""
         snapshot = self.state.hardware
         if snapshot is None:
+            if self.state.detecting:
+                self.loading.start("正在检测硬件…")
+            else:
+                self.loading.stop()
             for value in self._hardware_values.values():
                 value.setText("尚未检测" if not self.state.detecting else "检测中…")
             self._detected_label.setText("尚未检测硬件" if not self.state.detecting else "正在检测硬件…")
             return
+        self.loading.stop()
         self._detect_button.setEnabled(True)
         theme = _qt_theme.load_theme()
         if snapshot.gpu_mib:

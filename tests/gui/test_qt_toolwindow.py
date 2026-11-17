@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 
 import pytest
@@ -24,6 +23,7 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.app import create_application
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import ElidedLabel
+from fcmd.gui.qt.window import parse_geometry
 
 _LONG_PATH = "C:/Users/demo/Projects/fcmd/src/fcmd/apps/locllm/_locllmw_qt_window.py"
 
@@ -76,19 +76,31 @@ def test_geometry_is_saved_on_close_and_restored(app: QApplication, home: Path) 
     try:
         assert (window.width(), window.height()) == (700, 500)
         window.show()
+        window.move(60, 50)
         window.resize(720, 520)
         QApplication.processEvents()
         window.close()
     finally:
         window.deleteLater()
 
+    # 保存的是客户区几何，与 restore_geometry 的 setGeometry 同一口径，
+    # 不叠加窗口装饰，因此每次启动都能原样恢复。
     saved = _settings("geo")["geometry"]
     assert isinstance(saved, str)
-    # frameGeometry 含窗口装饰（offscreen 平台也有 4px 边框），按容差比较。
-    match = re.fullmatch(r"(\d+)x(\d+)\+(-?\d+)\+(-?\d+)", saved)
-    assert match is not None
-    assert abs(int(match.group(1)) - 720) <= 10
-    assert abs(int(match.group(2)) - 520) <= 10
+    rect = parse_geometry(saved)
+    assert rect is not None
+    width, height, x, y = rect
+    assert (width, height) == (720, 520)
+    assert abs(x - 60) <= 4
+    assert abs(y - 50) <= 4
+
+    restored = QtToolWindow(title="几何", config_name="geo", min_size=(600, 400), default_size=(800, 600))
+    try:
+        assert (restored.width(), restored.height()) == (720, 520)
+        assert abs(restored.x() - x) <= 4
+        assert abs(restored.y() - y) <= 4
+    finally:
+        restored.deleteLater()
 
 
 def test_close_persists_through_callback_without_writing_settings(app: QApplication, home: Path) -> None:

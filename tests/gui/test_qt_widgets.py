@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, Collapsible, LogView, MetricGrid, PathRow, button
+from fcmd.gui.qt.widgets import Card, Collapsible, LoadingBar, LogView, MetricGrid, PathRow, button
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
 
@@ -114,6 +114,26 @@ def test_collapsible_set_title_updates_toggle() -> None:
     assert section.toggle.text() == "文件清单（2 个 · 4.00 KB）"
     section.set_expanded(True)
     assert section.is_expanded()
+
+
+def test_loading_bar_tracks_elapsed_and_stops() -> None:
+    """加载条显示说明文字与已用时，stop 后收起且停止计时。"""
+    bar = LoadingBar("正在加载模型列表…")
+    try:
+        assert not bar.isVisible()
+        bar.start("正在加载第 1 页…")
+        assert bar.isVisible()
+        assert bar.is_running()
+        assert bar.text_label.text() == "正在加载第 1 页…"
+        bar.set_text("正在扫描本地模型…")
+        assert bar.text_label.text() == "正在扫描本地模型…"
+        bar._tick()
+        assert bar.elapsed_text().endswith("s")
+        bar.stop()
+        assert not bar.isVisible()
+        assert not bar.is_running()
+    finally:
+        bar.deleteLater()
 
 
 def test_log_view_roundtrip() -> None:

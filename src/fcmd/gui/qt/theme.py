@@ -403,6 +403,12 @@ QProgressBar {
     height: 10px;
 }
 QProgressBar::chunk { background: $accent; border-radius: 4px; }
+QWidget#LoadingBar {
+    background: $surface_hover;
+    border: 1px solid $border;
+    border-radius: 6px;
+}
+QLabel#LoadingText { color: $muted; }
 
 QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
 QScrollBar::handle:vertical { background: $border_strong; border-radius: 5px; min-height: 28px; }

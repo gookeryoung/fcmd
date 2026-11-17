@@ -263,9 +263,14 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         )
 
     def geometry_text(self) -> str:
-        """当前窗口的 ``WxH+X+Y``，用于关闭时写回设置。"""
-        frame = self.frameGeometry()
-        return format_geometry(frame.width(), frame.height(), frame.x(), frame.y())
+        """当前窗口的 ``WxH+X+Y``，用于关闭时写回设置。
+
+        取 ``geometry()``（客户区，不含窗口装饰）而不是 ``frameGeometry()``：
+        ``restore_geometry`` 用 ``setGeometry`` 恢复客户区，两者口径一致，
+        标题栏高度与边框不会在每次启动时被重复累加导致窗口漂移。
+        """
+        rect = self.geometry()
+        return format_geometry(rect.width(), rect.height(), rect.x(), rect.y())
 
     # ------------------------------------------------------------------ #
     # 菜单 / 主题

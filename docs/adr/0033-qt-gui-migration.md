@@ -40,7 +40,7 @@
 | `sidebar.py` | 左侧导航（`SidebarNav`）：页登记、`Alt+1..9`、`Alt+↑/↓` 循环 |
 | `window.py` | `QtMainWindow`：导航 + `QStackedWidget` + 状态栏 + 主题 / 关于菜单 + 几何记忆 |
 | `toolwindow.py` | `QtToolWindow`：单页工具窗口骨架（文件 / 视图 / 帮助菜单、状态栏、几何记忆、关闭落盘） |
-| `widgets.py` | `Card` / `PageScroll` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `ElidedLabel` / `make_table` / `QSplitter` 辅助 |
+| `widgets.py` | `Card` / `PageScroll` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `LoadingBar` / `ElidedLabel` / `make_table` / `QSplitter` 辅助 |
 | `layout.py` | 纯函数：中间省略、按比例分配列宽、分栏尺寸读写（不导入 Qt） |
 | `workers.py` | `submit(...)`（线程池 + 信号回投）、`periodic(...)` |
 
@@ -63,6 +63,14 @@
 | 页面 | 能力 | 复用逻辑 |
 |---|---|---|
 | 浏览 | ModelScope 筛选 / 排序 / 翻页、行内下载 / 转换 / 量化、行内详情元数据、底部任务进度 | `llmdown.search_models` / `fetch_model_info` / `select_source` / `filter_files` / `download_files` |
+
+### 加载过程提示（模型页 / 概览页）
+
+| 场景 | 行为 |
+|---|---|
+| 切到模型页 | 本地目录扫描与在线列表搜索都放线程池；页首 `LoadingBar` 显示当前任务（正在扫描本地模型 / 正在加载第 N 页）与已用时（每 100ms 刷新），任务全部结束才收起 |
+| 概览页硬件检测 | 检测期间显示同一 `LoadingBar`（正在检测硬件 + 已用时），完成或失败后收起 |
+| 其它后台加载 | 一律复用 `fcmd.gui.qt.widgets.LoadingBar`：`start(text)` → 完成回调里 `stop()`；同一页多项任务由调用方合并说明，避免多个进度条抢位 |
 
 ## 测试与门禁
 
@@ -98,5 +106,9 @@
 - 主题：新增控件样式改 `fcmd/gui/qt/theme.py` 的 QSS 模板，色值只从 `Palette` 取。
 - 关闭：`QtMainWindow.closeEvent` → `on_close()`（确认进行中任务）→ `persist(geometry)`；
   采样 / 生成 / 下载线程必须在这里停掉。
+- 窗口位置与大小：`geometry` 存客户区（`QWidget.geometry()`，不含标题栏与边框），
+  恢复走 `restore_geometry` 的 `setGeometry`，两侧同一口径，避免每次启动叠加窗口装饰导致窗口漂移。
+- 后台加载：需要等待的场景用 `LoadingBar`（说明 + 不知道总量的忙碌动画 + 已用时），
+  不要把阻塞扫描留在页面构造函数里。
 - 复测：`QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/locllm/test_locllmw_qt_smoke.py`；
   真实窗口用 `uv run fcmd locllmw`（`PySide6-Essentials` 随 fcmd 安装）。

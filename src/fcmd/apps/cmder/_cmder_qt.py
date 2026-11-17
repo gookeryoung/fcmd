@@ -71,6 +71,7 @@ from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.theme_menu import ThemeMenu
 from fcmd.gui.qt.widgets import button, hint_label
+from fcmd.gui.qt.window import restore_geometry
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -129,23 +130,12 @@ class CmderQtWindow(QMainWindow):
     def _build_window(self) -> None:
         self.setWindowTitle("fcmd 双面板文件管理器")
         self.setMinimumSize(*MIN_SIZE)
-        available = self.screen().availableGeometry() if self.screen() is not None else None
-        width = available.width() if available is not None else 1920
-        height = available.height() if available is not None else 1080
-        text = _geometry.resolve_geometry(
+        restore_geometry(
+            self,
             self.settings.geometry,
-            width,
-            height,
-            default=f"{DEFAULT_SIZE[0]}x{DEFAULT_SIZE[1]}",
-            min_width=MIN_SIZE[0],
-            min_height=MIN_SIZE[1],
+            default_size=DEFAULT_SIZE,
+            min_size=MIN_SIZE,
         )
-        rect = _geometry.parse_geometry(text)
-        self.resize(DEFAULT_SIZE[0], DEFAULT_SIZE[1])
-        if rect is not None:
-            self.resize(rect[0], rect[1])
-            if rect[2] or rect[3]:
-                self.move(rect[2], rect[3])
         central = QWidget(self)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(6, 6, 6, 4)
@@ -498,8 +488,9 @@ class CmderQtWindow(QMainWindow):
         core.save_settings(self.settings, self.settings_path)
 
     def _geometry_text(self) -> str:
-        frame = self.frameGeometry()
-        return _geometry.format_geometry(frame.width(), frame.height(), frame.x(), frame.y())
+        """保存客户区几何（不含窗口装饰），与 ``restore_geometry`` 口径一致。"""
+        rect = self.geometry()
+        return _geometry.format_geometry(rect.width(), rect.height(), rect.x(), rect.y())
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self.closing:

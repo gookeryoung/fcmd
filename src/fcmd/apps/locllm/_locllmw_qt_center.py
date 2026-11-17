@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -60,6 +61,7 @@ from fcmd.apps.locllm.llmdown import (
 )
 from fcmd.gui.qt.widgets import (
     ElidedLabel,
+    LoadingBar,
     RowListWidget,
     button,
     hint_label,
@@ -83,6 +85,19 @@ class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
     """下载进度信号（工作线程 → 主线程）。"""
 
     progress = Signal(object)
+
+
+@dataclass(frozen=True)
+class _InstalledSnapshot:
+    """一次本地模型目录扫描的结果（工作线程算好，GUI 线程一次性套用）。"""
+
+    models: dict[str, ModelSummary]
+    repos: set[str]
+    partial: dict[str, LocalModel]
+    convertible: dict[str, tuple[Path, Path, bool]]
+    blocked: dict[str, str]
+    quant_candidates: dict[str, tuple[Path, ...]]
+    quant_tags: dict[str, tuple[str, ...]]
 
 
 class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
@@ -371,6 +386,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
         self._detail_generation = 0
         self._searching = False
+        self._scanning_installed = False
+        self._loading_tasks: dict[str, str] = {}
         self._downloading = False
         self._stop_requested = False
         self._active_repo: str | None = None
@@ -413,6 +430,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.filter_buttons[key] = chip
         filters.addStretch(1)
         browse_layout.addLayout(filters)
+
+        self.loading = LoadingBar("正在加载模型列表…", self)
+        browse_layout.addWidget(self.loading)
 
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
@@ -469,69 +489,112 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == key), "")
         self.start_search(1)
 
-    def refresh_installed(self) -> None:  # noqa: PLR0912 - 一次扫描同时归集安装 / 转换 / 量化状态
-        """重新扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。"""
+    def refresh_installed(self) -> None:
+        """后台扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。
+
+        扫描可能遍历大量 GGUF 头与转换产物，放到线程池执行；完成后一次性
+        套用快照并重绘当前结果，切页 / 下载完成时界面不会被同步扫描卡住。
+        """
+        if self._scanning_installed:
+            return
+        self._scanning_installed = True
+        self._begin_loading("installed", "正在扫描本地模型…")
+        submit(
+            self._scan_installed,
+            on_done=self._apply_installed,
+            on_error=self._installed_error,
+            on_finished=self._installed_finished,
+        )
+
+    @staticmethod
+    def _scan_installed() -> _InstalledSnapshot:  # noqa: PLR0912 - 一次扫描归集安装 / 转换 / 量化状态
+        """在线程池里扫描本地模型目录（不碰任何 Qt 控件）。"""
         try:
             models = scan_local_models(_llmconfig.models_dir())
         except OSError:
-            self._installed_models = {}
-            self._installed_repos = set()
-            self._partial_models = {}
-            self._convertible = {}
-            self._convert_blocked = {}
-            self._quant_candidates = {}
-            self._quant_tags = {}
+            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {})
+        installed = {
+            model.repo.casefold(): ModelSummary(
+                repo=model.repo,
+                name=model.repo.rsplit("/", 1)[-1],
+                storage_size=model.size,
+            )
+            for model in models
+        }
+        partial = {model.repo.casefold(): model for model in models if not model.complete}
+        convertible: dict[str, tuple[Path, Path, bool]] = {}
+        blocked: dict[str, str] = {}
+        quant_candidates: dict[str, tuple[Path, ...]] = {}
+        quant_tags: dict[str, tuple[str, ...]] = {}
+        try:
+            product_ggufs = sorted(_llmconfig.products_dir().glob("*.gguf"))
+        except OSError:
+            product_ggufs = []
+        for model in models:
+            key = model.repo.casefold()
+            if llmconvert.is_hf_safetensors_dir(model.path):
+                output = _locllmw_convert.default_output_path(model.path)
+                convertible[key] = (model.path, output, output.is_file())
+            elif (model.path / "model_index.json").is_file():
+                blocked[key] = "diffusers 多组件模型（model_index.json），当前仅支持单目录 HF transformers safetensors"
+            full: list[Path] = []
+            tags: list[str] = []
+            for gguf in sorted(model.path.glob("*.gguf")):
+                precision = detect_precision(gguf, tensors=False)
+                if precision.quantized is True:
+                    label = precision.filename_label or precision.label.removesuffix(" 量化")
+                    if label not in tags:
+                        tags.append(label)
+                elif quantize_input_error(precision) is None:
+                    full.append(gguf)
+            bases = {llmqnt.strip_f16_suffix(path.stem) for path in full}
+            for product in product_ggufs:
+                if not bases or not any(product.stem.startswith(base + "-") for base in bases):
+                    continue
+                precision = detect_precision(product, tensors=False)
+                if precision.quantized is True:
+                    label = precision.filename_label or precision.label.removesuffix(" 量化")
+                    if label not in tags:
+                        tags.append(label)
+            if full:
+                quant_candidates[key] = tuple(full)
+            if tags:
+                quant_tags[key] = tuple(tags)
+        return _InstalledSnapshot(
+            installed, set(installed), partial, convertible, blocked, quant_candidates, quant_tags
+        )
+
+    def _apply_installed(self, snapshot: _InstalledSnapshot) -> None:
+        """套用扫描结果；若已有结果行则就地重绘已安装 / 可转换 / 可量化标志。"""
+        self._installed_models = snapshot.models
+        self._installed_repos = snapshot.repos
+        self._partial_models = snapshot.partial
+        self._convertible = snapshot.convertible
+        self._convert_blocked = snapshot.blocked
+        self._quant_candidates = snapshot.quant_candidates
+        self._quant_tags = snapshot.quant_tags
+        if self._last_result is not None and not self._searching:
+            self._render_results()
+
+    def _installed_error(self, message: str) -> None:
+        self._log(f"扫描本地模型失败: {message}")
+
+    def _installed_finished(self) -> None:
+        self._scanning_installed = False
+        self._end_loading("installed")
+
+    # -- 加载提示 ------------------------------------------------------ #
+    def _begin_loading(self, key: str, text: str) -> None:
+        """登记一项加载任务；同一时刻只显示一个加载条，任务结束才收起。"""
+        self._loading_tasks[key] = text
+        self.loading.start(text)
+
+    def _end_loading(self, key: str) -> None:
+        self._loading_tasks.pop(key, None)
+        if self._loading_tasks:
+            self.loading.set_text(next(reversed(self._loading_tasks.values())))
         else:
-            self._installed_models = {
-                model.repo.casefold(): ModelSummary(
-                    repo=model.repo,
-                    name=model.repo.rsplit("/", 1)[-1],
-                    storage_size=model.size,
-                )
-                for model in models
-            }
-            self._installed_repos = set(self._installed_models)
-            self._partial_models = {model.repo.casefold(): model for model in models if not model.complete}
-            self._convertible = {}
-            self._convert_blocked = {}
-            self._quant_candidates = {}
-            self._quant_tags = {}
-            try:
-                product_ggufs = sorted(_llmconfig.products_dir().glob("*.gguf"))
-            except OSError:
-                product_ggufs = []
-            for model in models:
-                key = model.repo.casefold()
-                if llmconvert.is_hf_safetensors_dir(model.path):
-                    output = _locllmw_convert.default_output_path(model.path)
-                    self._convertible[key] = (model.path, output, output.is_file())
-                elif (model.path / "model_index.json").is_file():
-                    self._convert_blocked[key] = (
-                        "diffusers 多组件模型（model_index.json），当前仅支持单目录 HF transformers safetensors"
-                    )
-                full: list[Path] = []
-                tags: list[str] = []
-                for gguf in sorted(model.path.glob("*.gguf")):
-                    precision = detect_precision(gguf, tensors=False)
-                    if precision.quantized is True:
-                        label = precision.filename_label or precision.label.removesuffix(" 量化")
-                        if label not in tags:
-                            tags.append(label)
-                    elif quantize_input_error(precision) is None:
-                        full.append(gguf)
-                bases = {llmqnt.strip_f16_suffix(path.stem) for path in full}
-                for product in product_ggufs:
-                    if not bases or not any(product.stem.startswith(base + "-") for base in bases):
-                        continue
-                    precision = detect_precision(product, tensors=False)
-                    if precision.quantized is True:
-                        label = precision.filename_label or precision.label.removesuffix(" 量化")
-                        if label not in tags:
-                            tags.append(label)
-                if full:
-                    self._quant_candidates[key] = tuple(full)
-                if tags:
-                    self._quant_tags[key] = tuple(tags)
+            self.loading.stop()
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -549,6 +612,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._page = max(1, page)
         self._searching = True
         self.state.status(f"正在加载第 {self._page} 页…")
+        self._begin_loading("search", f"正在加载第 {self._page} 页…")
         submit(
             search_models,
             self._filter_query,
@@ -562,6 +626,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def _search_finished(self) -> None:
         self._searching = False
+        self._end_loading("search")
 
     def _search_error(self, message: str) -> None:
         self.state.status("模型列表加载失败")

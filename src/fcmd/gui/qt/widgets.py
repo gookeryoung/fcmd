@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QElapsedTimer, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -52,6 +53,7 @@ __all__ = [
     "FormGrid",
     "HintLabel",
     "KeyValueGrid",
+    "LoadingBar",
     "LogView",
     "MetricGrid",
     "PageScroll",
@@ -429,6 +431,70 @@ class Collapsible(QWidget):  # pragma: no cover - Qt 控件
     def is_expanded(self) -> bool:
         """当前是否展开。"""
         return self.toggle.isChecked()
+
+
+class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
+    """不定进度加载条：说明文字 + 忙碌动画 + 已用时（秒）。
+
+    用于无法预估总量的后台加载（在线搜索、本地目录扫描、硬件检测等）：
+    ``start()`` 后每 100ms 刷新已用时，``stop()`` 收起；同一页面同时只有
+    一项任务时直接 ``start`` / ``stop``，多项任务由调用方合并且只保留
+    最后开始的那条说明。
+    """
+
+    def __init__(self, text: str = "加载中…", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("LoadingBar")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 6, 10, 6)
+        row.setSpacing(10)
+        self.text_label = QLabel(text, self)
+        self.text_label.setObjectName("LoadingText")
+        self.elapsed_label = QLabel("0.0s", self)
+        self.elapsed_label.setObjectName("Hint")
+        self.elapsed_label.setToolTip("本次加载已用时")
+        self.bar = QProgressBar(self)
+        self.bar.setRange(0, 0)  # 0/0 = 忙碌态，不显示百分比
+        self.bar.setTextVisible(False)
+        self.bar.setMinimumWidth(160)
+        row.addWidget(self.text_label, 0)
+        row.addWidget(self.bar, 1)
+        row.addWidget(self.elapsed_label, 0)
+        self._clock = QElapsedTimer()
+        self._timer = QTimer(self)
+        self._timer.setInterval(100)
+        self._timer.timeout.connect(self._tick)
+        self.setVisible(False)
+
+    def start(self, text: str | None = None) -> None:
+        """显示加载条并重新计时；``text`` 为 ``None`` 时沿用上次说明。"""
+        if text:
+            self.text_label.setText(text)
+        self._clock.start()
+        self.elapsed_label.setText("0.0s")
+        self._timer.start()
+        self.setVisible(True)
+
+    def set_text(self, text: str) -> None:
+        """更新说明文字（已用时不清零）。"""
+        self.text_label.setText(text)
+
+    def stop(self) -> None:
+        """停止计时并收起加载条。"""
+        self._timer.stop()
+        self.setVisible(False)
+
+    def is_running(self) -> bool:
+        """是否正在计时（供测试与调用方判断）。"""
+        return self._timer.isActive()
+
+    def elapsed_text(self) -> str:
+        """当前已用时文本（形如 ``1.2s``）。"""
+        return self.elapsed_label.text()
+
+    def _tick(self) -> None:
+        seconds = self._clock.elapsed() / 1000
+        self.elapsed_label.setText(f"{seconds:.1f}s")
 
 
 class LogView(QWidget):  # pragma: no cover - Qt 控件

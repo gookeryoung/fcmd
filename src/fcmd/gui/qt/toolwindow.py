@@ -166,9 +166,14 @@ class QtToolWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         _guiconfig.write_settings(merged, self._settings_path)
 
     def geometry_text(self) -> str:
-        """当前窗口的 ``WxH+X+Y``，用于关闭时写回设置。"""
-        frame = self.frameGeometry()
-        return format_geometry(frame.width(), frame.height(), frame.x(), frame.y())
+        """当前窗口的 ``WxH+X+Y``，用于关闭时写回设置。
+
+        取 ``geometry()``（客户区，不含窗口装饰）而不是 ``frameGeometry()``，
+        与 ``restore_geometry`` 的 ``setGeometry`` 保持同一口径；否则标题栏与
+        边框会在每次启动时叠加到保存的尺寸上，窗口越开越大、位置逐次上移。
+        """
+        rect = self.geometry()
+        return format_geometry(rect.width(), rect.height(), rect.x(), rect.y())
 
     def _show_about(self) -> None:
         """关于对话框：版本、设置文件与当前主题。"""
