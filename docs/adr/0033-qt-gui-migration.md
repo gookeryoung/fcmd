@@ -50,7 +50,7 @@
 
 | 页面 | Qt 实现 | 复用逻辑 |
 |---|---|---|
-| 概览 | `_locllmw_qt_overview`：硬件卡、显存/内存占用条、智能推荐、已加载服务 | `_locllmw_hardware` / `_locllmw_recommend` |
+| 概览 | `_locllmw_qt_overview`：硬件卡（环形显存 / 内存占用表）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` |
 | 模型 | `_locllmw_qt_center`（五子页：浏览 / 下载 / 已安装 / 转换 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
 | 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停、浏览器/日志 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
@@ -74,7 +74,7 @@
   `tests/apps/locllm/` 单测；Qt 冒烟用 `QT_QPA_PLATFORM=offscreen`
   （`test_locllmw_qt_smoke.py`），断言七页可构建、模型树 / 分页内容与几何落盘。
 - 断言 Tk 内部实现的用例已改写为 Qt 等价断言：对话页服务选择改为 `ChatPage`，
-  概览页已加载服务 / 推荐动作改为 `OverviewPage`，量化勾选改为 `_QuantPanel`，
+  概览页推荐动作改为 `OverviewPage`，量化勾选改为 `_QuantPanel`，
   `state_tag` 改为 `_locllmw_ui.state_tag` 纯函数。
 - `pyrefly.toml` / `.coveragerc` 继续排除 `src/fcmd/gui/qt/**` 与
   `src/fcmd/apps/locllm/_locllmw_qt_*.py`（CI 不装 PySide6，与 `mcp_adapter` 同处理）。

@@ -13,22 +13,19 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from fcmd.apps.locllm import _llmtune, llmenv, llmserve
-from fcmd.apps.locllm._locllmw_hardware import DiskInfo, HardwareSnapshot, disk_for_path
+from fcmd.apps.locllm import llmenv
+from fcmd.apps.locllm._locllmw_hardware import DiskInfo, disk_for_path
 from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
-from fcmd.apps.locllm.llmbase import ServeState, human_size
-from fcmd.apps.locllm.llmserve import read_log
+from fcmd.apps.locllm.llmbase import human_size
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
@@ -40,20 +37,13 @@ from fcmd.gui.qt.widgets import (
     make_table,
     make_table_item,
 )
-from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
 
-__all__ = ["OverviewPage", "loaded_row_values", "usage_gauge_texts"]
+__all__ = ["OverviewPage", "usage_gauge_texts"]
 
 RECOMMEND_COLUMNS = ("推荐模型", "启动配置", "性能", "依据")
-LOADED_COLUMNS = ("服务", "已加载模型", "档位 / ctx", "地址")
-
-
-def loaded_row_values(state: ServeState) -> tuple[str, str, str, str]:
-    """已加载服务表的一行（与 :data:`LOADED_COLUMNS` 对应）。"""
-    return (state.name, Path(state.model).name, f"{state.profile} / ctx {state.context}", state.base_url)
 
 
 def usage_gauge_texts(sample: LoadSample) -> tuple[float, str, float, str]:
@@ -160,13 +150,12 @@ class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
 
 
 class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
-    """概览页：硬件与模型目录 → 智能推荐 → 已加载模型。"""
+    """概览页：硬件与模型目录 → 智能推荐。"""
 
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
         self._recommendations: tuple[Recommendation, ...] = ()
-        self._loaded_states: list[ServeState] = []
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -175,12 +164,11 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         outer.addWidget(scroll)
         layout.addWidget(self._build_hardware())
         layout.addWidget(self._build_recommendations())
-        layout.addWidget(self._build_loaded(), 1)
+        layout.addStretch(1)
 
         state.hardwareChanged.connect(lambda _snapshot: self.refresh_hardware())
         state.hardwareFailed.connect(self._on_hardware_failed)
         state.modelsChanged.connect(lambda _outcome: self.refresh_recommendations())
-        state.servicesChanged.connect(self.set_services)
         state.sampleUpdated.connect(self.apply_sample)
         self.refresh_hardware()
         self.refresh_recommendations()
@@ -291,30 +279,6 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         card.body.addLayout(row)
         return card
 
-    def _build_loaded(self) -> Card:
-        card = Card("已加载模型（运行中的服务）")
-        self._loaded_table = make_table(LOADED_COLUMNS, widths=(90, 360, 140, 170), stretch_columns=(1,))
-        self._loaded_table.setMinimumHeight(100)
-        card.body.addWidget(self._loaded_table)
-        self._loaded_hint = hint_label("无运行中的服务")
-        card.body.addWidget(self._loaded_hint)
-        actions = QHBoxLayout()
-        for text, slot in (
-            ("打开 Web UI", self._open_web_ui),
-            ("查看日志", self._show_logs),
-            ("复制地址", lambda: self._copy("address")),
-            ("复制 API Key", lambda: self._copy("api_key")),
-        ):
-            widget = button(text, kind="ghost")
-            widget.clicked.connect(slot)
-            actions.addWidget(widget)
-        actions.addStretch(1)
-        stop_button = button("停止服务", kind="danger")
-        stop_button.clicked.connect(self._stop_selected)
-        actions.addWidget(stop_button)
-        card.body.addLayout(actions)
-        return card
-
     # ------------------------------------------------------------------ #
     # 硬件
     # ------------------------------------------------------------------ #
@@ -407,88 +371,3 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         recommendation = self._recommendations[row]
         self.state.recommendationApplied.emit(recommendation)
         self.state.navigate("run")
-
-    # ------------------------------------------------------------------ #
-    # 已加载服务
-    # ------------------------------------------------------------------ #
-    def set_services(self, states: list[ServeState]) -> None:
-        """刷新「已加载模型」表。"""
-        self._loaded_states = list(states)
-        self._loaded_table.setRowCount(len(states))
-        for index, state in enumerate(states):
-            for column, text in enumerate(loaded_row_values(state)):
-                self._loaded_table.setItem(index, column, make_table_item(text))
-        self._loaded_hint.setText("" if states else "无运行中的服务")
-
-    def _selected_state(self) -> ServeState | None:
-        row = self._loaded_table.currentRow()
-        if 0 <= row < len(self._loaded_states):
-            return self._loaded_states[row]
-        self._loaded_hint.setText("先在列表中选择一个运行中的服务")
-        return None
-
-    def _open_web_ui(self) -> None:
-        state = self._selected_state()
-        if state is None:
-            return
-        import webbrowser
-
-        webbrowser.open(state.base_url)
-        self.state.log(f"已在浏览器中打开: {state.base_url}")
-
-    def _show_logs(self) -> None:
-        state = self._selected_state()
-        if state is None:
-            return
-        try:
-            content = read_log(state.name, 50)
-        except Exception as exc:
-            QMessageBox.critical(self, "日志不可用", str(exc))
-            return
-        self.state.navigate("monitor")
-        self.state.log(f"日志尾部（{state.name}）:")
-        self.state.log(content)
-
-    def _copy(self, field: str) -> None:
-        state = self._selected_state()
-        if state is None:
-            return
-        text = state.base_url if field == "address" else state.api_key
-        clipboard = QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText(text)
-        message = "已复制地址: " + text if field == "address" else "已复制 API Key"
-        self.state.status(message)
-        self.state.log(message)
-
-    def _stop_selected(self) -> None:
-        state = self._selected_state()
-        if state is None:
-            return
-        answer = QMessageBox.question(self, "停止选中服务", f"停止服务：{state.name}？\n其他服务不受影响。")
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self.state.set_busy(True)
-        submit(
-            llmserve.stop_server,
-            state.name,
-            on_done=self._on_stopped,
-            on_error=lambda message: QMessageBox.critical(self, "停止失败", message),
-            on_finished=lambda: self.state.set_busy(False),
-        )
-
-    def _on_stopped(self, result: object) -> None:
-        was_running = getattr(result, "was_running", False)
-        name = getattr(getattr(result, "state", None), "name", "")
-        if was_running:
-            self.state.log(f"已停止服务 {name}")
-            self.state.status(f"已停止服务 {name}")
-        else:
-            self.state.log(f"服务未在运行，已清理残留状态: {name}")
-        self.state.refresh_services()
-        self.state.refresh_models()
-
-
-_ = HardwareSnapshot  # 类型引用：硬件快照由共享状态持有，页面只读
-_ = _llmtune
-_ = llmenv

@@ -27,7 +27,7 @@ from fcmd.apps.locllm._locllmw_qt_models import (
     ordered_groups,
 )
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
-from fcmd.apps.locllm._locllmw_qt_overview import loaded_row_values, model_disk_text, usage_gauge_texts
+from fcmd.apps.locllm._locllmw_qt_overview import model_disk_text, usage_gauge_texts
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
     memory_guard,
@@ -199,14 +199,6 @@ def test_fit_state_for_prefers_running() -> None:
 # ---------------------------------------------------------------------- #
 # 概览 / 对话 / 设置行渲染
 # ---------------------------------------------------------------------- #
-def test_loaded_row_values() -> None:
-    values = loaded_row_values(_state())
-    assert values[0] == "qwen"
-    assert values[1] == "qwen.gguf"
-    assert "ctx 65536" in values[2]
-    assert values[3] == "http://127.0.0.1:8080"
-
-
 def test_usage_gauge_texts_with_gpu_and_memory() -> None:
     sample = LoadSample(
         memory_used=8 * 1024**3,
