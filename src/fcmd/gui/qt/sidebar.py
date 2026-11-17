@@ -1,7 +1,7 @@
 """Qt 侧边栏分页导航：左侧导航栏 + 右侧页面栈。
 
-分页导航能力：标题、页按钮、
-当前页提示与快捷键循环切换。窗口只负责提供页面内容，导航栏只管「选中哪一页」：
+分页导航能力：标题、页按钮与快捷键循环切换；
+页面提示只用于按钮 tooltip 与窗口右侧标题栏，不再在侧边栏底部占一行。窗口只负责提供页面内容，导航栏只管「选中哪一页」：
 
 - ``add(key, label, hint)`` 登记页面（顺序即导航顺序）；
 - ``select(key)`` 切换页面并发出 :attr:`SidebarNav.changed`；
@@ -46,7 +46,7 @@ COLLAPSED_WIDTH = 52
 
 
 class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
-    """左侧导航栏：标题 + 折叠按钮 + 页按钮 + 当前页提示。"""
+    """左侧导航栏：标题 + 折叠按钮 + 页按钮。"""
 
     changed = Signal(str)
     collapsedChanged = Signal(bool)
@@ -105,11 +105,6 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._button_layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(self._button_layout)
         layout.addStretch(1)
-        self.hint_label = QLabel("", self)
-        self.hint_label.setObjectName("Hint")
-        self.hint_label.setWordWrap(True)
-        self.hint_label.setContentsMargins(6, 0, 6, 0)
-        layout.addWidget(self.hint_label)
         self.setFixedWidth(self._expanded_width)
         if collapsed:
             self.set_collapsed(True)
@@ -157,7 +152,6 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         if self._current is None:
             self._current = key
             button.setChecked(True)
-            self.hint_label.setText(hint)
         self._sync_tooltips()
 
     def keys(self) -> tuple[str, ...]:
@@ -199,14 +193,11 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
             return
         self._current = key
         self._buttons[key].setChecked(True)
-        self.hint_label.setText(self._hints.get(key, ""))
         self.changed.emit(key)
 
     def set_hint(self, key: str, hint: str) -> None:
-        """更新页面提示（例如健康横幅变化后同步说明）。"""
+        """更新页面提示（供按钮 tooltip 与窗口标题栏使用，不在侧边栏显示）。"""
         self._hints[key] = hint
-        if key == self._current:
-            self.hint_label.setText(hint)
         self._sync_tooltips()
 
     # ------------------------------------------------------------------ #
@@ -223,7 +214,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
     def set_collapsed(self, collapsed: bool) -> None:
         """折叠成窄栏（只显示页名首字 + 应用图标 + tooltip）或恢复展开态。
 
-        折叠时隐藏标题与页提示，按钮文本退化为首字，标题左侧的图标保留并居中，
+        折叠时隐藏标题，按钮文本退化为首字，标题左侧的图标保留并居中，
         点击图标即可展开；展开时还原完整页名，图标回到标题左侧。
         重复设置同一状态只同步宽度，不重复发信号。
         """
@@ -231,7 +222,6 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._collapsed = collapsed
         self._apply_width()
         self.title_label.setVisible(not collapsed)
-        self.hint_label.setVisible(not collapsed)
         self.toggle_button.setVisible(not collapsed)
         if self.icon_label is not None:
             self.icon_label.setVisible(True)

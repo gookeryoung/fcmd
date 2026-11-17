@@ -55,7 +55,6 @@ def test_collapse_and_expand(nav: Any) -> None:
     assert nav.is_collapsed()
     assert nav.width() == COLLAPSED_WIDTH
     assert nav.title_label.isHidden()
-    assert nav.hint_label.isHidden()
     for key, label in (("overview", "概览"), ("run", "运行"), ("settings", "设置")):
         button = nav.button(key)
         assert button is not None
@@ -107,10 +106,14 @@ def test_add_duplicate_key_raises(nav: Any) -> None:
         nav.add("run", "重复")
 
 
-def test_set_hint_updates_current_page(nav: Any) -> None:
+def test_set_hint_updates_tooltips_only(nav: Any) -> None:
+    """页面提示不再在侧边栏底部显示，只同步按钮 tooltip。"""
     nav.set_hint("overview", "新的提示")
     assert nav.hint("overview") == "新的提示"
-    assert nav.hint_label.text() == "新的提示"
+    button = nav.button("overview")
+    assert button is not None
+    assert button.toolTip() == "新的提示"
+    assert not hasattr(nav, "hint_label")
 
 
 def test_collapsed_keeps_icon_and_click_expands() -> None:
