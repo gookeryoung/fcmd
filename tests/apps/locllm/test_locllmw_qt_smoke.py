@@ -118,6 +118,14 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     page.model_combo.setCurrentIndex(1)
     assert window.state.selected_model == model.path
     assert page.mode_choice.key() in {"speed", "balanced", "long", "max-context", "low-vram"}
+    assert page.start_button.isEnabled()
+    assert not page.stop_selected_button.isEnabled()
+    assert not page.stop_all_button.isEnabled()
+    window.state.set_busy(True)
+    assert not page.start_button.isEnabled()
+    assert not page.stop_selected_button.isEnabled()
+    assert not page.stop_all_button.isEnabled()
+    window.state.set_busy(False)
 
 
 def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
@@ -250,7 +258,7 @@ def test_scan_result_auto_selects_a_startable_model(window: Any, tmp_path: Path)
     window.state.selected_model = None
     window.run_page.on_models_changed()
     assert window.state.selected_model == tmp_path / "b-Q5_K_M.gguf"
-    assert window.run_page.name_combo.currentText() == "b"
+    assert window.run_page.service_name() == "b"
 
 
 def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
