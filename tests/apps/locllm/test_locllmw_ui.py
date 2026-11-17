@@ -119,6 +119,7 @@ def test_apply_recommendation_requires_selection(overview: Any) -> None:
     page.apply_recommendation()
     assert any("先在推荐列表中选择一行" in text for text in messages)
     assert page._apply_button.text() == "启动服务"
+    assert page._apply_button.objectName() == "RunPrimary"
     assert not hasattr(page, "_recommend_status")
 
 
