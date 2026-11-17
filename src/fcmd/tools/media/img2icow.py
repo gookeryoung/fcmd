@@ -1,4 +1,4 @@
-"""img2icow - 图像转 ICO 转换器（Tk GUI）。
+"""img2icow - 图像转 ICO 转换器（Qt GUI）。
 
 交互参考 ``bitool_gui.img2ico``：选择单张图像或整个目录，填写逗号分隔的
 图标尺寸与质量档位，一键生成多尺寸 Windows ICO。输入同时支持 SVG 与常见
@@ -17,15 +17,11 @@
 from __future__ import annotations
 
 import contextlib
-import queue
-import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.infras import media
 
@@ -45,7 +41,7 @@ __all__ = [
 __version__ = "0.1.0"
 
 _DESCRIPTION = (
-    "图像转 ICO 转换器窗口版（Tk）：支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF 单文件或目录批量转换，"
+    "图像转 ICO 转换器窗口版（Qt）：支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF 单文件或目录批量转换，"
     "自定义多尺寸与质量档位，自动保持宽高比并居中透明填充；"
     "设置持久化到 ~/.fcmd/ui/img2icow.json"
 )
@@ -156,319 +152,17 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-# ---------------------------------------------------------------------- #
-# Tk 界面
-# ---------------------------------------------------------------------- #
-class Img2IcoWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """Tk 图像转 ICO 转换器主窗口。"""
+def run_gui() -> None:
+    """创建并运行 Qt 主窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    try:
+        from fcmd.tools.media._img2icow_qt import run_qt
+    except ImportError as exc:  # pragma: no cover - 安装完整时不会触发
+        raise SystemExit("未安装 Qt 前端：pip install 'PySide6-Essentials'") from exc
 
-    def __init__(self, settings_path: Path | None = None) -> None:
-        import tkinter as tk
-        from tkinter import filedialog, messagebox, ttk
-
-        self._tk = tk
-        self._filedialog = filedialog
-        self._messagebox = messagebox
-        self._ttk = ttk
-        self._settings_path = settings_path
-        self._settings = load_settings(settings_path)
-        self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
-        self._worker: threading.Thread | None = None
-
-        self.root, self._theme = _guiwindow.create_root(
-            title=f"图像转 ICO 转换器 v{__version__}",
-            saved_geometry=self._settings.geometry,
-            default_geometry=DEFAULT_GEOMETRY,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-            on_close=self.close,
-        )
-
-        self._input_var = tk.StringVar(value=self._settings.input_path)
-        self._output_var = tk.StringVar(value=self._settings.output_path)
-        self._sizes_var = tk.StringVar(value=self._settings.sizes)
-        self._quality_var = tk.StringVar(value=self._settings.quality)
-        self._status_var = tk.StringVar(value="就绪")
-
-        self._build_widgets()
-        _guitheme.install_theme_switcher(self.root)
-
-    def _build_widgets(self) -> None:
-        ttk = self._ttk
-        palette = self._theme.palette
-        self._build_menu()
-
-        input_frame = ttk.LabelFrame(self.root, text="输入", padding=self._theme.spacing.sm)
-        input_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.xs))
-        ttk.Label(input_frame, text="图像/目录：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(input_frame, textvariable=self._input_var).pack(
-            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
-        )
-        self._browse_input_dir_button = ttk.Button(input_frame, text="目录…", command=self._browse_input_dir)
-        self._browse_input_dir_button.pack(side="right")
-        self._browse_input_file_button = ttk.Button(input_frame, text="文件…", command=self._browse_input_file)
-        self._browse_input_file_button.pack(side="right", padx=(0, self._theme.spacing.xs))
-
-        output_frame = ttk.LabelFrame(self.root, text="输出", padding=self._theme.spacing.sm)
-        output_frame.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-        ttk.Label(output_frame, text="输出路径：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(output_frame, textvariable=self._output_var).pack(
-            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
-        )
-        self._browse_output_button = ttk.Button(output_frame, text="浏览…", command=self._browse_output)
-        self._browse_output_button.pack(side="right")
-        ttk.Label(
-            output_frame,
-            text="留空时：单文件输出到同目录，目录输入输出到 ico_output/",
-            foreground=palette.muted,
-            anchor="w",
-        ).pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
-
-        options_frame = ttk.LabelFrame(self.root, text="选项", padding=self._theme.spacing.sm)
-        options_frame.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-        ttk.Label(options_frame, text="图标尺寸：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(options_frame, textvariable=self._sizes_var).pack(
-            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.lg)
-        )
-        ttk.Label(options_frame, text="质量：", anchor="w").pack(side="left")
-        quality_combo = ttk.Combobox(
-            options_frame,
-            textvariable=self._quality_var,
-            values=QUALITY_CHOICES,
-            state="readonly",
-            width=10,
-        )
-        quality_combo.pack(side="left", padx=(self._theme.spacing.xs, 0))
-
-        action_frame = ttk.Frame(self.root)
-        action_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, 0))
-        self._convert_button = ttk.Button(
-            action_frame,
-            text="开始转换",
-            command=self._start_conversion,
-            style="Accent.TButton",
-            padding=(self._theme.spacing.lg + self._theme.spacing.xxs, self._theme.spacing.xs),
-        )
-        self._convert_button.pack(side="right")
-        ttk.Label(action_frame, textvariable=self._status_var, anchor="w").pack(side="left", fill="x", expand=True)
-
-        progress_frame = ttk.Frame(self.root)
-        progress_frame.pack(
-            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.sm, self._theme.spacing.xs)
-        )
-        self._progress = self._ttk.Progressbar(progress_frame, mode="determinate", maximum=1, value=0)
-        self._progress.pack(fill="x")
-
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=self._theme.spacing.sm)
-        log_frame.pack(
-            fill="both", expand=True, padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.md)
-        )
-        self._log_text = _guiwindow.create_log(log_frame, height=12)
-        self._append_log("选择输入图像或目录，填写尺寸后点击「开始转换」。")
-
-    def _build_menu(self) -> None:
-        _guiwindow.build_menu(self.root, on_close=self.close, on_about=self._show_about)
-
-    # ------------------------------------------------------------------ #
-    # 交互
-    # ------------------------------------------------------------------ #
-    def _show_about(self) -> None:
-        """关于对话框。"""
-        self._messagebox.showinfo(
-            "关于",
-            f"图像转 ICO 转换器 v{__version__}\n\n"
-            "支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF\n"
-            "按原始宽高比缩放并居中透明填充\n"
-            "尺寸与质量可自定义，目录可批量转换",
-        )
-
-    def _browse_input_file(self) -> None:
-        """选择输入图像文件。"""
-        filename = self._filedialog.askopenfilename(
-            title="选择输入图像",
-            filetypes=[
-                ("图像文件", "*.svg *.png *.jpg *.jpeg *.gif *.bmp *.webp *.tif *.tiff"),
-                ("所有文件", "*.*"),
-            ],
-        )
-        if filename:
-            self._input_var.set(filename)
-
-    def _browse_input_dir(self) -> None:
-        """选择输入目录。"""
-        directory = self._filedialog.askdirectory(title="选择输入目录")
-        if directory:
-            self._input_var.set(directory)
-
-    def _browse_output(self) -> None:
-        """选择输出文件或目录（根据输入类型决定）。"""
-        raw_input = self._input_var.get().strip()
-        input_path = Path(raw_input).expanduser() if raw_input else None
-        if input_path is not None and input_path.is_dir():
-            directory = self._filedialog.askdirectory(title="选择输出目录")
-            if directory:
-                self._output_var.set(directory)
-            return
-
-        initial_dir = str(input_path.parent) if input_path is not None and input_path.parent.exists() else None
-        initial_file = f"{input_path.stem}.ico" if input_path is not None else "icon.ico"
-        filename = self._filedialog.asksaveasfilename(
-            title="选择输出图标",
-            defaultextension=".ico",
-            initialfile=initial_file,
-            initialdir=initial_dir,
-            filetypes=[("ICO 图标", "*.ico"), ("所有文件", "*.*")],
-        )
-        if filename:
-            self._output_var.set(filename)
-
-    def _append_log(self, message: str) -> None:
-        """向只读日志区追加带时间戳的一行并滚动到底部。"""
-        _guiwindow.append_log(self._log_text, message, timestamp=True)
-
-    def _clear_log(self) -> None:
-        """清空日志区。"""
-        _guiwindow.clear_log(self._log_text)
-
-    def _set_busy(self, busy: bool) -> None:
-        """转换期间禁用按钮，避免重复提交。"""
-        state = "disabled" if busy else "normal"
-        for button in (
-            self._convert_button,
-            self._browse_input_file_button,
-            self._browse_input_dir_button,
-            self._browse_output_button,
-        ):
-            button.configure(state=state)
-
-    # ------------------------------------------------------------------ #
-    # 转换（后台线程 + 队列回传，避免阻塞 Tk 主循环）
-    # ------------------------------------------------------------------ #
-    def _start_conversion(self) -> None:
-        """校验输入并启动后台转换线程。"""
-        if self._worker is not None and self._worker.is_alive():
-            return
-
-        raw_input = self._input_var.get().strip()
-        if not raw_input:
-            self._append_log("错误：请选择输入图像或目录")
-            return
-        input_path = Path(raw_input).expanduser()
-        if not input_path.exists():
-            self._append_log(f"错误：输入路径不存在 {input_path}")
-            return
-
-        try:
-            sizes = parse_sizes_text(self._sizes_var.get())
-            quality = normalize_quality(self._quality_var.get())
-        except ValueError as exc:
-            self._append_log(f"错误：{exc}")
-            return
-
-        raw_output = self._output_var.get().strip()
-        output_path = Path(raw_output).expanduser() if raw_output else None
-
-        self._clear_log()
-        self._set_busy(True)
-        self._progress.configure(maximum=1, value=0)
-        self._status_var.set("正在转换…")
-        self._append_log(f"输入：{input_path}")
-        self._append_log(f"尺寸：{', '.join(str(size) for size in sizes)}；质量：{quality}")
-
-        self._worker = _guiwindow.start_worker(
-            self.root,
-            self._run_conversion,
-            (input_path, output_path, sizes, quality),
-            self._poll_queue,
-        )
-
-    def _run_conversion(
-        self,
-        input_path: Path,
-        output_path: Path | None,
-        sizes: list[int],
-        quality: str,
-    ) -> None:
-        """后台线程：执行转换并把进度 / 结果写入队列。"""
-        from fcmd.infras.media import convert_images
-
-        def progress(done: int, total: int, message: str) -> None:
-            self._queue.put(("progress", done, total, message))
-
-        try:
-            result = convert_images(
-                input_path,
-                output_path,
-                fmt="win",
-                sizes=sizes,
-                quality=quality,
-                progress=progress,
-            )
-        except Exception as exc:  # 后台线程需统一回传给界面
-            self._queue.put(("error", str(exc)))
-            return
-        self._queue.put(("done", result.canonical, result.outputs, result.used_sizes))
-
-    def _poll_queue(self) -> None:
-        """在主线程消费后台事件，更新进度条、日志与状态。"""
-        while True:
-            try:
-                event = self._queue.get_nowait()
-            except queue.Empty:
-                break
-
-            kind = event[0]
-            if kind == "progress":
-                _, done, total, message = event
-                self._progress.configure(maximum=max(total, 1), value=done)
-                self._append_log(message)
-            elif kind == "done":
-                _, _canonical, outputs, used_sizes = event
-                self._progress.configure(maximum=max(len(outputs), 1), value=len(outputs))
-                for output in outputs:
-                    self._append_log(f"已生成 {output}")
-                self._append_log(f"完成：{len(outputs)} 个图标，{len(used_sizes)} 种尺寸")
-                self._status_var.set(f"完成：{len(outputs)} 个图标")
-                self._set_busy(False)
-                self._worker = None
-                self._messagebox.showinfo("转换完成", f"已生成 {len(outputs)} 个图标文件。")
-                return
-            elif kind == "error":
-                _, message = event
-                self._append_log(f"错误：{message}")
-                self._status_var.set("转换失败")
-                self._set_busy(False)
-                self._worker = None
-                self._messagebox.showerror("转换失败", message)
-                return
-
-        if self._worker is not None:
-            self.root.after(80, self._poll_queue)
-
-    # ------------------------------------------------------------------ #
-    # 生命周期
-    # ------------------------------------------------------------------ #
-    def close(self) -> None:
-        """保存设置并退出窗口（后台转换线程为 daemon，随进程结束）。"""
-        save_settings(
-            Img2IcoSettings(
-                input_path=self._input_var.get(),
-                output_path=self._output_var.get(),
-                sizes=self._sizes_var.get(),
-                quality=self._quality_var.get(),
-                geometry=self.root.winfo_geometry(),
-            ),
-            self._settings_path,
-        )
-        self.root.destroy()
+    run_qt()
 
 
-def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(lambda: Img2IcoWindow(settings_path), "图像转 ICO 转换器")
-
-
-@fcmd.tool("img2icow", help="打开图像转 ICO 转换器窗口（Tk）", description=_DESCRIPTION)
+@fcmd.tool("img2icow", help="打开图像转 ICO 转换器窗口（Qt）", description=_DESCRIPTION)
 def launch_cmd() -> None:
     """打开图像转 ICO 转换器窗口。"""
     run_gui()

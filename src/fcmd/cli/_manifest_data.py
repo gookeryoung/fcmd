@@ -191,7 +191,7 @@ DESCRIPTIONS: dict[str, str] = {
     "idtool": "生成 UUID",
     "imagetool": "调整尺寸",
     "img2ico": "图像/SVG 转图标文件（支持目录批量）",
-    "img2icow": "图像转 ICO 转换器窗口版（Tk）：支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF 单文件或目录批量转换，自定义多尺寸与质量档位，自动保持宽高比并居中透明填充；设置持久化到 ~/.fcmd/ui/img2icow.json",
+    "img2icow": "图像转 ICO 转换器窗口版（Qt）：支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF 单文件或目录批量转换，自定义多尺寸与质量档位，自动保持宽高比并居中透明填充；设置持久化到 ~/.fcmd/ui/img2icow.json",
     "img2pdf": "图片合并为 PDF（支持文件/目录、页面尺寸与 DPI 设置）",
     "img2pdfw": "图片转 PDF 转换器窗口版（Tk）：支持图片文件或目录批量、页面尺寸（A3/A4/A5/B5/letter/legal）与 DPI 设置、EXIF 方向校正；设置持久化到 ~/.fcmd/ui/img2pdfw.json",
     "inifile": "获取指定 section.key 的值",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "344467adb68dc8d3bd2ac2a002bff0fa"
+DIGEST = "40c31c86ef7f9fa6af26d6a49381a9f2"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
