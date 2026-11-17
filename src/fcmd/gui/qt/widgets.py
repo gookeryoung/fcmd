@@ -62,6 +62,7 @@ __all__ = [
     "apply_splitter_sizes",
     "button",
     "hint_label",
+    "icon_button",
     "link_button",
     "make_splitter",
     "make_table",
@@ -91,6 +92,17 @@ def link_button(text: str, *, tooltip: str = "") -> QPushButton:  # pragma: no c
     widget.setCursor(Qt.CursorShape.PointingHandCursor)
     if tooltip:
         widget.setToolTip(tooltip)
+    return widget
+
+
+def icon_button(text: str, *, tooltip: str = "", checkable: bool = False) -> QToolButton:  # pragma: no cover
+    """方形图标按钮：用一个字形作图标，必配 tooltip；``checkable`` 用于展开 / 收起开关。"""
+    widget = QToolButton()
+    widget.setObjectName("IconButton")
+    widget.setText(text)
+    widget.setCheckable(checkable)
+    widget.setCursor(Qt.CursorShape.PointingHandCursor)
+    widget.setToolTip(tooltip)
     return widget
 
 
@@ -390,9 +402,20 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
 
 
 class Collapsible(QWidget):  # pragma: no cover - Qt 控件
-    """可折叠分区：标题按钮 + 内容容器（默认收起状态可配置）。"""
+    """可折叠分区：标题按钮 + 内容容器（默认收起状态可配置）。
 
-    def __init__(self, title: str, *, expanded: bool = False, parent: QWidget | None = None) -> None:
+    ``header=False`` 时隐藏内置标题按钮，由调用方的图标按钮控制展开状态
+    （对话页把「连接参数 / 生成参数」入口收进顶部工具行）。
+    """
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        expanded: bool = False,
+        header: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -405,6 +428,7 @@ class Collapsible(QWidget):  # pragma: no cover - Qt 控件
         self.toggle.setText(title)
         self.toggle.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
         self.toggle.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.toggle.setVisible(header)
         self.toggle.toggled.connect(self._on_toggled)
         layout.addWidget(self.toggle)
         self.content = QWidget(self)

@@ -44,7 +44,7 @@ from fcmd.apps.locllm.llmbase import (
 )
 from fcmd.apps.locllm.llmchat import ChatMessage, ChatSession
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, button
+from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, button, icon_button
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -157,11 +157,15 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.refresh_button = button("刷新", kind="ghost")
         self.refresh_button.clicked.connect(self.refresh_services)
         service_row.addWidget(self.refresh_button)
+        self.connection_button = icon_button("🔗", tooltip="连接参数（自动回填，可自定义）", checkable=True)
+        self.generation_button = icon_button("⚙", tooltip="生成参数", checkable=True)
+        service_row.addWidget(self.connection_button)
+        service_row.addWidget(self.generation_button)
         connection.body.addLayout(service_row)
         self.status = HintLabel("未开始对话")
         connection.body.addWidget(self.status)
 
-        self.connection_section = Collapsible("连接参数（自动回填，可自定义）", expanded=False)
+        self.connection_section = Collapsible("连接参数（自动回填，可自定义）", expanded=False, header=False)
         form = FormGrid(self.connection_section.content)
         self.model_edit = QLineEdit(DEFAULT_ALIAS, self.connection_section.content)
         self.url_edit = QLineEdit(_DEFAULT_URL, self.connection_section.content)
@@ -172,7 +176,17 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.connection_section.body.addWidget(form)
         connection.body.addWidget(self.connection_section)
 
-        self.settings_section = Collapsible("生成参数", expanded=bool(self.state.settings.chat_settings_open))
+        self.settings_section = Collapsible(
+            "生成参数",
+            expanded=bool(self.state.settings.chat_settings_open),
+            header=False,
+        )
+        self.connection_button.setChecked(self.connection_section.is_expanded())
+        self.generation_button.setChecked(self.settings_section.is_expanded())
+        self.connection_button.toggled.connect(self.connection_section.set_expanded)
+        self.generation_button.toggled.connect(self.settings_section.set_expanded)
+        self.connection_section.toggle.toggled.connect(self.connection_button.setChecked)
+        self.settings_section.toggle.toggled.connect(self.generation_button.setChecked)
         settings_form = FormGrid(self.settings_section.content)
         self.system_edit = QLineEdit("", self.settings_section.content)
         self.system_edit.setPlaceholderText("系统提示（留空不发送）")

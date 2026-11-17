@@ -95,6 +95,23 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     assert settings_page.models_path.value()
 
 
+def test_chat_parameter_icon_buttons_toggle_sections(window: Any) -> None:
+    """连接 / 生成参数入口是刷新右侧的图标按钮，点击展开对应分区。"""
+    window.show_page("chat")
+    chat = window.page("chat")
+    assert chat.connection_button.text() == "🔗"
+    assert chat.generation_button.text() == "⚙"
+    assert not chat.connection_section.is_expanded()
+    chat.connection_button.click()
+    assert chat.connection_section.is_expanded()
+    chat.connection_button.click()
+    assert not chat.connection_section.is_expanded()
+    chat.generation_button.click()
+    assert chat.settings_section.is_expanded()
+    chat.generation_button.click()
+    assert not chat.settings_section.is_expanded()
+
+
 def test_run_page_model_combo_selects_model(window: Any) -> None:
     """运行页顶部下拉框列出模型，选中后同步共享状态与硬件提示。"""
     from fcmd.apps.locllm.llmbase import ModelEntry

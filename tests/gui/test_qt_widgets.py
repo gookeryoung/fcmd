@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, Collapsible, LoadingBar, LogView, MetricGrid, PathRow, button
+from fcmd.gui.qt.widgets import Card, Collapsible, LoadingBar, LogView, MetricGrid, PathRow, button, icon_button
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
 
@@ -103,6 +103,31 @@ def test_path_row_commits_on_editing_finished() -> None:
     assert seen == []
     row.edit.editingFinished.emit()
     assert seen == ["D:/models2"]
+
+
+def test_icon_button_is_square_and_checkable() -> None:
+    """图标按钮用字形作图标，可作展开 / 收起开关。"""
+    widget = icon_button("⚙", tooltip="生成参数", checkable=True)
+    try:
+        assert widget.text() == "⚙"
+        assert widget.toolTip() == "生成参数"
+        assert widget.isCheckable()
+        assert widget.objectName() == "IconButton"
+    finally:
+        widget.deleteLater()
+
+
+def test_collapsible_can_hide_header() -> None:
+    """入口移到外部图标按钮时，分区内置标题隐藏但仍可程序化展开。"""
+    section = Collapsible("连接参数", header=False)
+    try:
+        assert not section.toggle.isVisible()
+        assert not section.is_expanded()
+        section.set_expanded(True)
+        assert section.is_expanded()
+        assert not section.content.isHidden()
+    finally:
+        section.deleteLater()
 
 
 def test_collapsible_set_title_updates_toggle() -> None:

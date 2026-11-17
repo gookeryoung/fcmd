@@ -279,6 +279,19 @@ QToolButton#Collapsible {
     padding: 4px 0;
 }
 QToolButton#Collapsible:hover { color: $text; }
+QToolButton#IconButton {
+    background: transparent;
+    border: 1px solid $border;
+    border-radius: 6px;
+    color: $muted;
+    min-width: 30px;
+    max-width: 30px;
+    min-height: 30px;
+    max-height: 30px;
+    font-size: ${font_heading}pt;
+}
+QToolButton#IconButton:hover { background: $surface_hover; color: $text; }
+QToolButton#IconButton:checked { background: $accent_soft; color: $accent; border-color: $accent; }
 QPushButton#NavButton {
     background: transparent;
     border: none;
