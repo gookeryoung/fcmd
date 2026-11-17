@@ -16,7 +16,11 @@
   其余 12 次取中位数；
 - 冷启动 ``cold``：每次测量前把 ``PYTHONPYCACHEPREFIX`` 指向一个新建的空
   目录（空字节码缓存），默认跑 5 次、丢弃首 1 次，其余 4 次取中位数；
-- 中位数相邻两次结果差异超过 20% 说明宿主抖动，建议重跑一次再采信。
+- 中位数相邻两次结果差异超过 20% 说明宿主抖动，建议重跑一次再采信；若整体
+  同乘以约 2，属于宿主电源/调度状态切换（本机 ``python -c pass`` 会在 27ms 与
+  55ms 之间跳变），不要跨会话直接比较绝对数，用同会话 A/B 或 ``--check``；
+- 清单快路径落地后，``BASELINES`` 已更新为优化后的本机中位数（HEAD d0adf1d，
+  与改动前同会话交错 A/B 口径一致）；改动前数字见提交信息与本文件 git 历史。
 
 用法::
 
@@ -64,24 +68,24 @@ DEFAULT_MAX_RATIO = 1.5
 
 BASELINES: dict[tuple[str, str], float] = {
     # (场景, warm|cold) -> 中位数（毫秒）。本机基线：Windows 11 / Python 3.14，
-    # 改动前（HEAD 8ca182d）按同一口径采集（N=15/5，丢弃 3/1）。
-    ("env", "warm"): 1031.6,
-    ("env", "cold"): 2682.9,
-    ("env-json", "warm"): 1019.5,
+    # 清单快路径落地后（HEAD d0adf1d）按同一口径采集（N=15/5，丢弃 3/1）。
+    ("env", "warm"): 349.1,
+    ("env", "cold"): 870.8,
+    ("env-json", "warm"): 327.2,
     ("env-json", "cold"): 2626.7,
-    ("graph-tree", "warm"): 897.4,
-    ("graph-tree", "cold"): 2497.3,
-    ("graph-mermaid", "warm"): 901.2,
+    ("graph-tree", "warm"): 318.7,
+    ("graph-tree", "cold"): 836.7,
+    ("graph-mermaid", "warm"): 319.6,
     ("graph-mermaid", "cold"): 2508.8,
-    ("graph-layers", "warm"): 896.6,
+    ("graph-layers", "warm"): 318.5,
     ("graph-layers", "cold"): 2500.6,
     ("tool-help", "warm"): 279.3,
     ("tool-help", "cold"): 725.3,
-    ("tool-exe-help", "warm"): 875.5,
-    ("tool-exe-help", "cold"): 2444.7,
-    ("version", "warm"): 115.0,
+    ("tool-exe-help", "warm"): 274.2,
+    ("tool-exe-help", "cold"): 710.0,
+    ("version", "warm"): 113.9,
     ("version", "cold"): 234.2,
-    ("python-floor", "warm"): 55.8,
+    ("python-floor", "warm"): 54.9,
     ("python-floor", "cold"): 73.1,
 }
 
