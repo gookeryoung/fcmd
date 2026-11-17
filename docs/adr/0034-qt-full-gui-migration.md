@@ -1,6 +1,6 @@
 # 0034 全量 GUI 迁移到 Qt（PySide6）：共享层先行与分批迁移
 
-- 状态：生效（B0 共享层已落地；B1 进行中；B2–B7 待实施；D1–D3 已拍板）
+- 状态：生效（B0 共享层与 B1 六个单页工具已落地；B2–B7 待实施；D1–D3 已拍板）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线）、0033（locllmw 迁移与 Qt 基座）、0025（侧边栏导航）
 
@@ -85,6 +85,11 @@ Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已�
 
 每批独立提交、可独立回退；批次内每迁完一个应用即可单独启动验收，不攒到最后。
 B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk 实现改坏。
+
+进度：B0、B1 已完成。B1 六个应用（pdfcryptw / img2icow / docdiffw / parameshw /
+paramcadw / img2pdfw）各自单独提交，Tk 实现已删除，GUI 入口统一委托
+``_<tool>w_qt.py``；断言 Tk 内部实现的入口测试已改写为 Qt 等价断言，纯逻辑
+与设置测试保持原样。
 
 ## 每应用交付时的布局适配点
 
