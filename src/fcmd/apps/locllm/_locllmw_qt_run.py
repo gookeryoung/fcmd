@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -53,6 +54,7 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
     human_size,
 )
+from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, PageScroll, button
 from fcmd.gui.qt.workers import submit
 
@@ -451,6 +453,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
         self.model_combo = QComboBox(self.model_card)
+        self.model_combo.setObjectName("ModelCombo")
+        self.model_combo.setFixedHeight(40)
         self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.model_combo.setMinimumContentsLength(8)
         self.model_combo.addItem("（未选择，按档位自动查找）", None)
@@ -852,10 +856,20 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.state.selectionChanged.emit(None, False)
 
     def _service_status_text(self, path: Path) -> str:
+        """只有正在运行的服务才返回状态；未运行不占用下拉项文本。"""
         state = self.state.state_for_model(path)
         if state is None:
-            return "未启动"
-        return "运行中" if llmserve.process_alive(state.pid, state.create_time) else "已停止"
+            return ""
+        alive = llmserve.process_alive(state.pid, state.create_time)
+        return "● 已启动" if alive else ""
+
+    def _paint_combo_status(self, index: int, path: Path) -> None:
+        status = self._service_status_text(path)
+        if not status:
+            self.model_combo.setItemData(index, None, Qt.ItemDataRole.ForegroundRole)
+            return
+        green = QColor(_qt_theme.load_theme().palette.success)
+        self.model_combo.setItemData(index, QBrush(green), Qt.ItemDataRole.ForegroundRole)
 
     def _populate_model_combo(self) -> None:
         """把当前扫描到的 GGUF 与启动状态填入顶部下拉框，保留已选模型。"""
@@ -866,7 +880,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.model_combo.addItem(
                 model_combo_text(entry, status=self._service_status_text(entry.path)), str(entry.path)
             )
-            self.model_combo.setItemData(self.model_combo.count() - 1, str(entry.path), Qt.ToolTipRole)
+            index = self.model_combo.count() - 1
+            self.model_combo.setItemData(index, str(entry.path), Qt.ToolTipRole)
+            self._paint_combo_status(index, entry.path)
         self.model_combo.blockSignals(False)
         if current is not None:
             self._select_model_combo(current)
@@ -881,8 +897,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
                 status=self._service_status_text(path),
             )
             self.model_combo.addItem(label, target)
-            self.model_combo.setItemData(self.model_combo.count() - 1, target, Qt.ToolTipRole)
             index = self.model_combo.count() - 1
+            self.model_combo.setItemData(index, target, Qt.ToolTipRole)
+            self._paint_combo_status(index, path)
             self.model_combo.blockSignals(False)
         self.model_combo.blockSignals(True)
         self.model_combo.setCurrentIndex(index)

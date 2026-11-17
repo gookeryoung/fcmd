@@ -112,6 +112,8 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     page.on_models_changed()
     assert page.model_combo.count() == 1
     assert "small.gguf" in page.model_combo.itemText(0)
+    assert "未启动" not in page.model_combo.itemText(0)
+    assert page.model_combo.minimumHeight() >= 40
     assert not hasattr(page, "manage_models_button")
     assert not hasattr(page, "browse_button")
     assert not hasattr(page, "clear_button")
