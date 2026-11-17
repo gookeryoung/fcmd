@@ -137,7 +137,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
                 self._usage_bars[key] = bar
                 self._usage_labels[key] = text
             if key == "model_disk":
-                settings_button = button("去设置修改…", kind="ghost")
+                settings_button = button("修改…", kind="ghost")
                 settings_button.clicked.connect(lambda: self.state.navigate("settings"))
                 row.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignTop)
             card.body.addLayout(row)
@@ -145,7 +145,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
 
         footer = QHBoxLayout()
         self._detected_label = hint_label("尚未检测硬件")
-        self._detect_button = button("重新检测硬件", kind="ghost")
+        self._detect_button = button("重新检测", kind="ghost")
         self._detect_button.clicked.connect(self._detect)
         footer.addWidget(self._detected_label, 1)
         footer.addWidget(self._detect_button)
@@ -227,7 +227,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         disk_text = model_disk_text(models_dir, disk)
         self._hardware_values["model_disk"].setText(disk_text)
         self._hardware_values["model_disk"].setToolTip(disk_text)
-        self._detected_label.setText(f"检测时间 {snapshot.detected_at or '未知'}；模型目录在「设置 → 存储」中修改")
+        self._detected_label.setText("")
 
     def apply_sample(self, sample: object) -> None:
         """用系统采样刷新显存 / 内存占用条。"""

@@ -105,7 +105,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
                 "<Configure>",
                 lambda event: event.widget.configure(wraplength=_guiwindow.fit_wraplength(event.width)),
             )
-        ttk.Button(box, text="去设置修改…", command=lambda: self._nav.select("settings")).grid(
+        ttk.Button(box, text="修改…", command=lambda: self._nav.select("settings")).grid(
             row=3, column=2, sticky="e", padx=(space.sm, 0)
         )
 
@@ -129,7 +129,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         ttk.Label(box, textvariable=self._hardware_vars["detected"], style="Hint.TLabel").grid(
             row=6, column=0, columnspan=2, sticky="w", pady=(space.xs, 0)
         )
-        ttk.Button(box, text="重新检测硬件", command=self._start_hardware_detection).grid(
+        ttk.Button(box, text="重新检测", command=self._start_hardware_detection).grid(
             row=6, column=2, sticky="e", padx=(space.sm, 0)
         )
 
@@ -255,9 +255,7 @@ class _LocllmWindowOverview:  # pragma: no cover - Tk 窗口不纳入单元覆�
         disk = disk_for_path(model_path, snapshot.disks)
         root_text = str(model_path if self._selected_model else (snapshot.model_root or "未配置"))
         self._hardware_vars["model_disk"].set(f"{root_text}\n{format_disk(disk)}")
-        self._hardware_vars["detected"].set(
-            f"检测时间 {snapshot.detected_at or '未知'}；模型目录随选中模型或主模型目录变化"
-        )
+        self._hardware_vars["detected"].set("")
 
     # ------------------------------------------------------------------ #
     # 智能推荐 / 实测
