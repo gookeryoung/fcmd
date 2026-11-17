@@ -1,11 +1,14 @@
 """devmanw 测试：设置往返、列表口径、PATH 状态、按钮态与详情文案。
 
-真实 Tk 窗口不在单测范围内（窗口类标 ``pragma: no cover``）；这里覆盖纯函数
-与入口接线，保证 GUI 与 CLI 共用同一套机读契约。
+真实 Qt 窗口不在本文件覆盖（窗口类标 ``pragma: no cover``，离屏用例见
+``test_devmanw_qt``）；这里覆盖纯函数与入口接线，保证 GUI 与 CLI 共用同一套
+机读契约。
 """
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -266,16 +269,22 @@ def test_error_text_variants() -> None:
     assert devmanw._error_text(ValueError()) == "ValueError"
 
 
-def test_gui_entrypoints_share_one_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    calls: list[tuple[object, str]] = []
-    monkeypatch.setattr(
-        devmanw._guiwindow,
-        "run_window",
-        lambda factory, title: calls.append((factory, title)),
-    )
+def test_gui_entry_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺少 Qt 前端时提示安装并退出，不抛堆栈。"""
+    monkeypatch.setitem(sys.modules, "fcmd.apps.devman._devmanw_qt", None)
+    with pytest.raises(SystemExit, match="Qt"):
+        devmanw.run_gui()
 
-    assert devmanw.run_gui(str(tmp_path / "root")) is None
-    assert devmanw.launch_cmd(str(tmp_path / "root")) is None
+
+def test_gui_entrypoints_share_one_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """run_gui / launch_cmd / 工具注册三条入口都委托同一 Qt 入口。"""
+    calls: list[str] = []
+    fake = types.ModuleType("fcmd.apps.devman._devmanw_qt")
+    fake.run_qt = lambda root_dir="": calls.append(root_dir)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.devman._devmanw_qt", fake)
+
+    root = str(tmp_path / "root")
+    assert devmanw.run_gui(root) is None
+    assert devmanw.launch_cmd(root) is None
     assert run_tool("devmanw", []) == 0
-    assert [title for _factory, title in calls] == ["开发环境管理"] * 3
-    assert all(callable(factory) for factory, _title in calls)
+    assert calls == [root, root, ""]
