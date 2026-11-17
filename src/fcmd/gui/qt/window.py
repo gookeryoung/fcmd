@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtCore import QPoint
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -32,6 +33,7 @@ from fcmd.gui.qt.theme_menu import ThemeMenu
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from PySide6.QtGui import QIcon
 
@@ -73,24 +75,23 @@ def restore_geometry(
     default_size: tuple[int, int],
     min_size: tuple[int, int],
 ) -> None:  # pragma: no cover - 需要 Qt 屏幕信息
-    """按记忆位置恢复窗口；越界 / 非法时用默认尺寸。"""
+    """按记忆位置恢复窗口；支持多屏，越界 / 非法时用默认尺寸。"""
+    rect = parse_geometry(saved)
     screen = QApplication.primaryScreen()
-    available = screen.availableGeometry() if screen is not None else None
-    screen_width = available.width() if available is not None else 1920
-    screen_height = available.height() if available is not None else 1080
-    text = resolve_geometry_text(
-        saved,
-        screen_width,
-        screen_height,
-        default=f"{default_size[0]}x{default_size[1]}",
-        min_width=min_size[0],
-        min_height=min_size[1],
-    )
-    rect = parse_geometry(text)
+    if rect is not None:
+        width, height, x, y = rect
+        screen = QApplication.screenAt(QPoint(x + width // 2, y + height // 2)) or screen
+    if screen is None:
+        widget.resize(*default_size)
+        return
+    available = screen.availableGeometry()
     if rect is None:
         widget.resize(*default_size)
         return
-    width, height, x, y = rect
+    width = min(max(rect[0], min_size[0]), available.width())
+    height = min(max(rect[1], min_size[1]), available.height())
+    x = min(max(rect[2], available.left()), available.left() + max(available.width() - width, 0))
+    y = min(max(rect[3], available.top()), available.top() + max(available.height() - height, 0))
     widget.setGeometry(x, y, width, height)
 
 
@@ -109,10 +110,11 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         persist: Callable[[str], None] | None = None,
         sidebar_collapsed: bool = False,
         icon: QIcon | None = None,
+        settings_path: Path | None = None,
     ) -> None:
         super().__init__()
         self._config_name = config_name
-        self._settings_path = _guiconfig.config_path(config_name)
+        self._settings_path = settings_path or _guiconfig.config_path(config_name)
         self._raw_settings = _guiconfig.read_settings(self._settings_path) or {}
         self._on_close = on_close
         self._persist = persist

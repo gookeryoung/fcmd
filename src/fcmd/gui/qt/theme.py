@@ -153,7 +153,7 @@ QPushButton#Primary:disabled { background: $surface_hover; color: $muted; border
 QPushButton#Danger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#Danger:hover { background: $danger; color: $on_accent; }
 QPushButton#Danger:disabled { color: $muted; border-color: $border; background: transparent; }
-QComboBox#ModelCombo[running="true"] { color: $success; font-weight: 600; }
+QComboBox#ModelCombo[running="true"] { color: $success; border-color: $success; font-weight: 600; }
 QComboBox#ModelCombo {
     min-height: 40px;
     max-height: 40px;

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -304,13 +304,18 @@ class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
         theme = _qt_theme.load_theme()
+        running = bool(index.data(_MODEL_RUNNING_ROLE))
         if selected:
             color = QColor(theme.palette.on_accent)
-        elif index.data(_MODEL_RUNNING_ROLE):
+        elif running:
             color = QColor(theme.palette.success)
         else:
             color = QColor(theme.palette.text)
         painter.save()
+        if running:
+            pen = QPen(QColor(theme.palette.success), 1)
+            painter.setPen(pen)
+            painter.drawRect(opt.rect.adjusted(1, 1, -2, -2))
         painter.setFont(opt.font)
         painter.setPen(color)
         rect = opt.rect.adjusted(8, 0, -6, 0)
@@ -882,7 +887,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _service_status_text(self, path: Path) -> str:
         """只有正在运行的服务才返回状态；未运行不占用下拉项文本。"""
-        return "已启动" if self.state.is_running(path) else ""
+        return "✓ 已启动" if self.state.is_running(path) else ""
 
     def _paint_combo_status(self, index: int, path: Path) -> None:
         self.model_combo.setItemData(index, bool(self._service_status_text(path)), _MODEL_RUNNING_ROLE)

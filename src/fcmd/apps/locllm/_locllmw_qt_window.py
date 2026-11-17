@@ -68,6 +68,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             persist=self.state.persist,
             sidebar_collapsed=self.state.settings.sidebar_collapsed,
             icon=window_icon(),
+            settings_path=settings_path,
         )
         self.overview = OverviewPage(self.state)
         self.run_page = RunPage(self.state)
