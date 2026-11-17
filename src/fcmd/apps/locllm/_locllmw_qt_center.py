@@ -3,7 +3,7 @@
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 搜索（类别 / 系列 / 排序 / 翻页）、自定义结果行，展开行显示详情 / README，文件清单从体积旁链接展开；
+- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，展开行显示详情 / README，文件清单从体积旁链接展开；
 - **下载**：目标目录（唯一模型目录）、下载源、并发、SHA256 校验、包含 / 排除掩码、
   汇总 / 单文件进度、失败记录与重试、日志；
 - **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -61,21 +62,16 @@ from fcmd.apps.locllm.llmdown import (
     ModelInfo,
     ModelSearch,
     ModelSummary,
-    ModelTask,
     ModelToolError,
     ProgressEvent,
     delete_local_model,
     download_files,
     fetch_files,
     fetch_model_info,
-    fetch_tasks,
-    filter_by_series,
     filter_files,
     scan_local_models,
     search_models,
     select_source,
-    series_matches,
-    series_options,
     sort_by_popularity,
 )
 from fcmd.gui.qt.widgets import (
@@ -102,8 +98,8 @@ __all__ = ["ModelCenterPage"]
 
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
 _MAX_WORKERS = _locllmw_models._MAX_WORKERS
-_ALL_TASKS = _locllmw_models._ALL_TASKS
-_ALL_SERIES = _locllmw_models._ALL_SERIES
+_MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
+_DEFAULT_FILTER = _locllmw_models.DEFAULT_MODEL_FILTER
 _SOURCE_LABELS = _locllmw_models._SOURCE_LABELS
 _SOURCE_KEYS = _locllmw_models._SOURCE_KEYS
 _SORT_LABELS = _locllmw_models._SORT_LABELS
@@ -363,14 +359,13 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.current_repo: str | None = None
         self.current_info: ModelInfo | None = None
         self.current_files: tuple[ModelFile, ...] = ()
-        self._tasks: tuple[ModelTask, ...] = ()
         self._last_result: ModelSearch | None = None
         self._result_items: tuple[ModelSummary, ...] = ()
         self._expanded_row: _ModelItemRow | None = None
         self._page = 1
         self._sort_key = "default"
-        self._series_options: tuple[str, ...] = ()
-        self._series_applied = ""
+        self._filter_key = _DEFAULT_FILTER
+        self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
         self._detail_generation = 0
         self._searching = False
 
@@ -378,52 +373,43 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        search = Card("搜索 ModelScope")
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(6)
-        top.addWidget(QLabel("关键字"))
-        self.keyword = QLineEdit(search)
-        self.keyword.setPlaceholderText("关键字，或直接输入「组织/模型」查看详情")
-        self.keyword.returnPressed.connect(lambda: self.start_search(1))
-        top.addWidget(self.keyword, 1)
-        self.search_button = button("搜索", kind="primary")
-        self.search_button.clicked.connect(lambda: self.start_search(1))
-        top.addWidget(self.search_button)
-        search.body.addLayout(top)
+        browse = Card("浏览")
+        filters = QHBoxLayout()
+        filters.setContentsMargins(0, 0, 0, 0)
+        filters.setSpacing(6)
+        self.filter_group = QButtonGroup(self)
+        self.filter_group.setExclusive(True)
+        self.filter_buttons: dict[str, Any] = {}
+        for key, label, _query in _MODEL_FILTERS:
+            chip = button(label)
+            chip.setObjectName("FilterChip")
+            chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.clicked.connect(lambda _checked, key=key: self._on_filter_changed(key))
+            self.filter_group.addButton(chip)
+            filters.addWidget(chip)
+            self.filter_buttons[key] = chip
+        filters.addStretch(1)
+        filters.addWidget(QLabel("排序"))
+        self.sort_combo = QComboBox(browse)
+        self.sort_combo.addItems(list(_SORT_LABELS.values()))
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        filters.addWidget(self.sort_combo)
+        browse.body.addLayout(filters)
 
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
         nav.setSpacing(6)
-        nav.addWidget(QLabel("类别"))
-        self.task_combo = QComboBox(search)
-        self.task_combo.addItem(_ALL_TASKS)
-        self.task_combo.currentIndexChanged.connect(lambda _index: self.start_search(1))
-        nav.addWidget(self.task_combo)
-        nav.addWidget(QLabel("系列"))
-        self.series_combo = QComboBox(search)
-        self.series_combo.setEditable(True)
-        self.series_combo.addItem(_ALL_SERIES)
-        self.series_combo.currentIndexChanged.connect(lambda _index: self._on_series_changed())
-        series_edit = self.series_combo.lineEdit()
-        if series_edit is not None:
-            series_edit.returnPressed.connect(self._on_series_enter)
-        nav.addWidget(self.series_combo, 1)
-        nav.addWidget(QLabel("排序"))
-        self.sort_combo = QComboBox(search)
-        self.sort_combo.addItems(list(_SORT_LABELS.values()))
-        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        nav.addWidget(self.sort_combo)
-        self.page_label = hint_label("尚未搜索", wrap=False)
-        nav.addWidget(self.page_label)
+        self.page_label = hint_label("正在加载…", wrap=False)
+        nav.addWidget(self.page_label, 1)
         self.prev_button = button("上一页")
         self.prev_button.clicked.connect(lambda: self.start_search(self._page - 1))
         self.next_button = button("下一页")
         self.next_button.clicked.connect(lambda: self.start_search(self._page + 1))
         nav.addWidget(self.prev_button)
         nav.addWidget(self.next_button)
-        search.body.addLayout(nav)
-        layout.addWidget(search)
+        browse.body.addLayout(nav)
+        layout.addWidget(browse)
 
         list_card = Card("", self)
         self.models = RowListWidget(list_card)
@@ -441,48 +427,35 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.detail_view.setVisible(False)
         self.detail_view.downloadRequested.connect(self.repoSelected.emit)
 
-        self._load_tasks()
+        self.filter_buttons[_DEFAULT_FILTER].setChecked(True)
+        self.start_search(1)
 
-    # -- 搜索 ---------------------------------------------------------- #
-    def _load_tasks(self) -> None:
-        submit(
-            fetch_tasks,
-            on_done=self._render_tasks,
-            on_error=lambda message: self._log(f"类别列表加载失败: {message}"),
-        )
+    # -- 筛选 ---------------------------------------------------------- #
+    def _on_filter_changed(self, key: str) -> None:
+        """切换浏览筛选：分类指标走服务端关键字，适合本机在本地按容量过滤。"""
+        self._filter_key = key
+        self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == key), "")
+        self.start_search(1)
 
-    def _render_tasks(self, tasks: tuple[ModelTask, ...]) -> None:
-        self._tasks = tasks
-        labels = [_ALL_TASKS, *dict.fromkeys(task.label for task in tasks)]
-        current = self.task_combo.currentText()
-        self.task_combo.blockSignals(True)
-        self.task_combo.clear()
-        self.task_combo.addItems(labels)
-        if current in labels:
-            self.task_combo.setCurrentText(current)
-        self.task_combo.blockSignals(False)
-
-    def _active_task(self) -> ModelTask | None:
-        label = self.task_combo.currentText()
-        return next((task for task in self._tasks if task.label == label), None)
+    def _local_capacity(self) -> int:
+        """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
+        hardware = getattr(self.state, "hardware", None)
+        gpu_mib = getattr(self.state, "gpu_mib", None) or (hardware.gpu_mib if hardware is not None else None)
+        memory = hardware.memory_total if hardware is not None else 0
+        gpu_bytes = (gpu_mib or 0) * 1024**2
+        memory_bytes = int(memory * 0.8) if memory else 0
+        return max(gpu_bytes, memory_bytes)
 
     def start_search(self, page: int) -> None:
-        """后台搜索指定页；关键字为 ``组织/模型`` 时直接加载仓库详情。"""
+        """按当前筛选拉取指定页；筛选关键字为空时浏览全部模型。"""
         if self._searching:
             return
-        keyword = self.keyword.text().strip()
-        if keyword.count("/") == 1 and " " not in keyword:
-            self.open_repo(keyword)
-            return
-        task = self._active_task()
-        query = keyword or (task.name if task is not None else "")
         self._page = max(1, page)
         self._searching = True
-        self.search_button.setEnabled(False)
-        self.page_label.setText(f"正在搜索第 {self._page} 页…")
+        self.page_label.setText(f"正在加载第 {self._page} 页…")
         submit(
             search_models,
-            query,
+            self._filter_query,
             self._page,
             _PAGE_SIZE,
             self._sort_key,
@@ -493,11 +466,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def _search_finished(self) -> None:
         self._searching = False
-        self.search_button.setEnabled(True)
 
     def _search_error(self, message: str) -> None:
-        self.page_label.setText("搜索失败")
-        self._log(f"搜索失败: {message}")
+        self.page_label.setText("加载失败")
+        self._log(f"模型列表加载失败: {message}")
 
     def _render_search(self, result: ModelSearch) -> None:
         self._last_result = result
@@ -505,7 +477,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def open_repo(self, repo: str) -> None:
         """直接打开 ``组织/模型``：生成单行结果并就地展开详情。"""
-        self.keyword.setText(repo)
         self._last_result = ModelSearch(items=(ModelSummary(repo=repo),), total=1)
         self._render_results()
         self._expand_repo(repo)
@@ -514,55 +485,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._sort_key = _SORT_KEYS.get(self.sort_combo.currentText(), "default")
         self.start_search(1)
 
-    def _on_series_changed(self) -> None:
-        label = self.series_combo.currentText().strip()
-        if label in ("", _ALL_SERIES) or label not in self._series_options:
-            self._series_applied = ""
-            self.series_combo.blockSignals(True)
-            self.series_combo.setCurrentText(_ALL_SERIES)
-            self.series_combo.blockSignals(False)
-        else:
-            self._series_applied = label
-        self._render_results()
-
-    def _on_series_enter(self) -> None:
-        """回车应用系列筛选：精确匹配优先，唯一子串候选时自动补全。"""
-        text = self.series_combo.currentText().strip()
-        if text in ("", _ALL_SERIES):
-            self._series_applied = ""
-            self.series_combo.setCurrentText(_ALL_SERIES)
-            self._render_results()
-            return
-        candidates = [label for label in self._series_options if series_matches(label, text)]
-        if text not in self._series_options and len(candidates) == 1:
-            self.series_combo.setCurrentText(candidates[0])
-        elif text not in self._series_options:
-            self.page_label.setText("没有匹配的系列，请从下拉中选择")
-            return
-        self._series_applied = self.series_combo.currentText()
-        self._render_results()
-
-    def _update_series_options(self, items: tuple[Any, ...]) -> None:
-        options = series_options(items)
-        self._series_options = options
-        if self._series_applied and self._series_applied not in options:
-            self._series_applied = ""
-        self.series_combo.blockSignals(True)
-        self.series_combo.clear()
-        self.series_combo.addItems([_ALL_SERIES, *options])
-        self.series_combo.setCurrentText(self._series_applied or _ALL_SERIES)
-        self.series_combo.blockSignals(False)
-
     def _render_results(self) -> None:
         result = self._last_result
         if result is None:
             return
-        task = self._active_task()
         items = result.items
-        if task is not None and task.chinese_name:
-            items = _locllmw_models.filter_models(items, task.chinese_name)
-        self._update_series_options(items)
-        items = filter_by_series(items, self._series_applied)
+        filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
+        if self._filter_key == "local":
+            items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
         items = sort_by_popularity(items)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),
@@ -585,13 +515,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
-        filters = []
-        if task is not None:
-            filters.append(f"类别「{task.label}」")
-        if self._series_applied:
-            filters.append(f"系列「{self._series_applied}」")
-        matched = f" · 本页匹配 {len(items)} 个" if filters else ""
-        self.page_label.setText(f"第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
+        matched = f" · 本页显示 {len(items)} 个" if self._filter_key == "local" else ""
+        self.page_label.setText(f"{filter_label} · 第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
         self.prev_button.setEnabled(result.page > 1)
         self.next_button.setEnabled(result.page < pages)
         if selected is not None:
@@ -600,7 +525,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     self.models.setCurrentRow(row)
                     break
         if not items:
-            self.page_label.setText("没有匹配的模型，可清空关键字或翻页后再试")
+            self.page_label.setText(f"{filter_label} · 当前页没有匹配的模型，可切换筛选或翻页")
 
     # -- 详情 ---------------------------------------------------------- #
     def _on_model_selected(self, current: int) -> None:

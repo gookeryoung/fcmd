@@ -18,10 +18,13 @@ from pathlib import Path
 import pytest
 
 from fcmd.apps.locllm._locllmw_models import (
+    DEFAULT_MODEL_FILTER,
     DEFAULT_MODEL_TAB,
+    MODEL_FILTERS,
     MODEL_TAB_NAMES,
     DownloadGuiSettings,
     detail_pairs,
+    filter_by_local_fit,
     filter_models,
     local_row,
     model_item_lines,
@@ -176,6 +179,19 @@ class TestBrowseHelpers:
             ModelSummary(repo="BAAI/embed", tasks=("文本向量",), downloads=20, storage_size=100),
             ModelSummary(repo="Qwen/vl", tasks=("文本生成", "视觉问答"), downloads=10, storage_size=200),
         )
+
+    def test_filter_options_cover_required_categories(self) -> None:
+        keys = [key for key, _label, _query in MODEL_FILTERS]
+        labels = [label for _key, label, _query in MODEL_FILTERS]
+        assert len(set(keys)) == len(keys)
+        assert DEFAULT_MODEL_FILTER in keys
+        assert labels == ["适合本机", "全部", "对话", "编程", "看图", "推理", "视频", "音频"]
+
+    def test_filter_by_local_fit_keeps_fitting_and_unknown_sizes(self) -> None:
+        items = (*self._items(), ModelSummary(repo="Qwen/unknown"))
+        repos = [item.repo for item in filter_by_local_fit(items, 200)]
+        assert repos == ["BAAI/embed", "Qwen/vl", "Qwen/unknown"]
+        assert filter_by_local_fit(items, 0) == items
 
     def test_filter_models_all(self) -> None:
         items = self._items()

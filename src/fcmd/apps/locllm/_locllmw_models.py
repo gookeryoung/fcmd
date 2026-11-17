@@ -25,10 +25,13 @@ from fcmd.apps.locllm.llmdown import (
 )
 
 __all__ = [
+    "DEFAULT_MODEL_FILTER",
     "DEFAULT_MODEL_TAB",
+    "MODEL_FILTERS",
     "MODEL_TAB_NAMES",
     "DownloadGuiSettings",
     "detail_pairs",
+    "filter_by_local_fit",
     "filter_models",
     "local_row",
     "model_item_lines",
@@ -59,6 +62,19 @@ _SORT_LABELS = {
 _SORT_KEYS = {label: key for key, label in _SORT_LABELS.items()}
 _ALL_TASKS = "全部类别"
 _ALL_SERIES = "全部系列"
+
+#: 浏览页顶部筛选：(key, 显示名, 服务端搜索关键字)；关键字为空表示浏览全部。
+MODEL_FILTERS: tuple[tuple[str, str, str], ...] = (
+    ("local", "适合本机", ""),
+    ("all", "全部", ""),
+    ("chat", "对话", "chat"),
+    ("code", "编程", "coder"),
+    ("vision", "看图", "vision"),
+    ("reasoning", "推理", "reasoning"),
+    ("video", "视频", "video"),
+    ("audio", "音频", "audio"),
+)
+DEFAULT_MODEL_FILTER = "local"
 _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw", "s", "se", "sw", "w"]]] = {
     "repo": ("模型", 180, "w"),
     "series": ("系列", 112, "w"),
@@ -148,6 +164,13 @@ def model_item_lines(item: ModelSummary) -> tuple[str, str, str]:
         if part
     )
     return item.repo, subtitle or "-", metrics or "-"
+
+
+def filter_by_local_fit(items: tuple[ModelSummary, ...], capacity_bytes: int) -> tuple[ModelSummary, ...]:
+    """筛选整仓体积不超过本机可承载容量的模型；未知容量或体积时保留。"""
+    if capacity_bytes <= 0:
+        return items
+    return tuple(item for item in items if item.storage_size <= 0 or item.storage_size <= capacity_bytes)
 
 
 def filter_models(items: tuple[ModelSummary, ...], task_label: str) -> tuple[ModelSummary, ...]:

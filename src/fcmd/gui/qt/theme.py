@@ -166,6 +166,19 @@ QPushButton#Ghost:hover {
 }
 QPushButton#Ghost:pressed { background: $surface_active; }
 QPushButton#Ghost:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#FilterChip {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: 12px;
+    color: $muted;
+    font-weight: 600;
+}
+QPushButton#FilterChip:hover { border-color: $border_strong; color: $text; }
+QPushButton#FilterChip:checked {
+    background: $accent_soft;
+    border-color: $accent;
+    color: $text;
+}
 QPushButton#Link {
     background: transparent;
     border: none;
