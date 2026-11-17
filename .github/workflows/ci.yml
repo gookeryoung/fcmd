@@ -93,19 +93,29 @@ jobs:
 
       # PySide6 的 Linux wheel 依赖系统 GL/EGL 与输入库；runner 默认没有 libEGL，
       # 导入 PySide6 会直接 ImportError（即使只跑离屏 Qt 测试）。
-      # 复用 apt 下载缓存：deb 包命中时仍执行 apt-get update，但不再重复下载。
+      # 缓存 .deb 到工作区目录而非 /var/cache/apt/archives：后者里的 lock（root 所有）
+      # 与 partial/（_apt 所有）对 runner 用户无读权限，post 阶段 tar 会 Permission
+      # denied 退出码 2，导致缓存从未保存成功。
       - name: Cache Qt runtime .deb packages
         uses: actions/cache@v6
         with:
-          path: /var/cache/apt/archives
-          key: apt-qt-runtime-${{ runner.os }}-v1
+          path: .apt-cache
+          key: apt-qt-runtime-${{ runner.os }}-v2
           restore-keys: |
             apt-qt-runtime-${{ runner.os }}-
 
       - name: Install Qt runtime libraries
         run: |
+          # 命中缓存时把 .deb 放回 apt 缓存目录，apt 直接安装不再重复下载
+          if compgen -G ".apt-cache/*.deb" > /dev/null; then
+            sudo cp -a .apt-cache/*.deb /var/cache/apt/archives/
+          fi
           sudo apt-get update
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
+          # 只拷 .deb（lock/partial 对 runner 用户无权限），并归还所有权供 actions/cache 打包
+          mkdir -p .apt-cache
+          sudo cp -a /var/cache/apt/archives/*.deb .apt-cache/
+          sudo chown -R "$(id -u):$(id -g)" .apt-cache
 
       - name: Sync dependencies
         env:
