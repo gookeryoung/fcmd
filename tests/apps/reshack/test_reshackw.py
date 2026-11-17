@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import sys
+import types
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -423,31 +424,21 @@ class TestImageToDib:
 # ============================================================================ #
 # GUI 入口
 # ============================================================================ #
-def test_run_gui_import_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """缺少 tkinter 时输出中文提示且不抛堆栈。"""
-
-    def boom(_settings_path: Path | None = None) -> None:
-        raise ImportError("no tkinter")
-
-    monkeypatch.setattr(reshackw, "ReshackWindow", boom)
-    reshackw.run_gui()
-    assert "tkinter 不可用" in capsys.readouterr().out
+def test_run_gui_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺少 Qt 前端时提示安装并退出，不抛堆栈。"""
+    monkeypatch.setitem(sys.modules, "fcmd.apps.reshack._reshackw_qt", None)
+    with pytest.raises(SystemExit, match="Qt"):
+        reshackw.run_gui()
 
 
-def test_run_gui_starts_mainloop(monkeypatch: pytest.MonkeyPatch) -> None:
-    """窗口创建成功后进入 mainloop。"""
-    calls: list[str] = []
-
-    class FakeWindow:
-        def __init__(self, _settings_path: Path | None = None) -> None:
-            self.root = self
-
-        def mainloop(self) -> None:
-            calls.append("mainloop")
-
-    monkeypatch.setattr(reshackw, "ReshackWindow", FakeWindow)
-    reshackw.run_gui()
-    assert calls == ["mainloop"]
+def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """正常路径把启动交给 Qt 入口，并转发自定义设置路径。"""
+    calls: list[Path | None] = []
+    fake = types.ModuleType("fcmd.apps.reshack._reshackw_qt")
+    fake.run_qt = lambda settings_path=None: calls.append(settings_path)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.reshack._reshackw_qt", fake)
+    reshackw.run_gui(Path("custom.json"))
+    assert calls == [Path("custom.json")]
 
 
 def test_launch_cmd_forwards(monkeypatch: pytest.MonkeyPatch) -> None:

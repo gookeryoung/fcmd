@@ -242,7 +242,7 @@ DESCRIPTIONS: dict[str, str] = {
     "renamerw": "批量重命名窗口版（Tk）：目标文件/目录选择、规则流水线编辑（正则替换、捕获组重排、匹配文本搬移、插入、大小写、计数器）、勾选前预览与冲突/非法标记、两阶段执行与撤销、规则 JSON 导入导出；设置持久化到 ~/.fcmd/ui/renamerw.json",
     "reseticoncache": "重置 Windows 图标缓存（仅 Windows 生效）",
     "reshack": "列出 PE 文件中的资源",
-    "reshackw": "PE 资源编辑器窗口版（Tk）：按类型展示资源树，支持文本/十六进制/图像预览（图像可缩放/适应窗口，右键复制到剪贴板或另存为 PNG/ICO/BMP）、单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、全部导出；设置持久化到 ~/.fcmd/ui/reshackw.json，依赖 fcmd[pe]",
+    "reshackw": "PE 资源编辑器窗口版（Qt）：按类型展示资源树，支持文本/十六进制/图像预览（图像可缩放/适应窗口，右键复制到剪贴板或另存为 PNG/ICO/BMP）、单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、全部导出；设置持久化到 ~/.fcmd/ui/reshackw.json，依赖 fcmd[pe]",
     "screenshot": "全屏截图",
     "setenv": "设置环境变量",
     "sshcopyid": "SSH 公钥部署工具（Linux: sshpass 自动密码，Windows: plink 优先自动密码 / OpenSSH 需交互）",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "ae94c025ad1bb53a06fca0cabf808daf"
+DIGEST = "418a23052eaf12a5067b03f2b8898357"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
