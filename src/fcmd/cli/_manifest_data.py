@@ -181,7 +181,7 @@ DESCRIPTIONS: dict[str, str] = {
     "filescanw": "目录敏感内容扫描：规则表达式、并行扫描、按文件聚合、打码与多格式报告（Tk）",
     "filesearch": "按文件名 glob 搜索",
     "filesync": "文件夹比较与同步（参考 FreeFileSync）：compare 按时间/大小/内容比较两侧，sync 支持双向/镜像/更新三种模式，可用 --preview 预览，冲突项自动跳过",
-    "filesyncw": "文件夹比较与同步窗口版（Tk）：左右目录对比（时间/大小/内容），结果表列出差异与计划动作，支持双向/镜像/更新同步与试运行，冲突项自动跳过；设置持久化到 ~/.fcmd/ui/filesyncw.json",
+    "filesyncw": "文件夹比较与同步窗口版（Qt）：左右目录对比（时间/大小/内容），结果表列出差异与计划动作，支持双向/镜像/更新同步与试运行，冲突项自动跳过；设置持久化到 ~/.fcmd/ui/filesyncw.json",
     "folderback": "备份文件夹",
     "folderzip": "压缩当前目录下所有子文件夹为 zip",
     "fonttool": "列出可安装字体",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "dbbf25605a9622909d477d2d221ca74c"
+DIGEST = "a1d1a65d02466bb0788142a9583b1817"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
