@@ -35,8 +35,7 @@ def test_run_named_forwards_to_run_tool(monkeypatch: pytest.MonkeyPatch, capsys:
         seen["argv"] = argv
         return 0
 
-    monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
-    monkeypatch.setattr(discovery_mod, "resolve_tool", lambda name: name)
+    monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda name: name)
     monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
     monkeypatch.setattr(sys, "argv", [r"C:\Scripts\clr.exe", "--help"])
     with pytest.raises(SystemExit) as exc_info:
@@ -46,14 +45,43 @@ def test_run_named_forwards_to_run_tool(monkeypatch: pytest.MonkeyPatch, capsys:
     assert capsys.readouterr().out == ""
 
 
+def test_run_named_manifest_fast_path_skips_discovery(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """清单命中时 ``<tool>.exe`` 与 ``fcmd <tool>`` 同走快路径，不做全量发现。"""
+    seen: dict[str, Any] = {}
+
+    def fake_run_tool(name: str, argv: list[str]) -> int:
+        seen["name"] = name
+        seen["argv"] = argv
+        return 0
+
+    def _boom() -> None:
+        raise AssertionError("<tool>.exe 入口不应触发全量发现")
+
+    monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda name: name if name == "stattool" else None)
+    monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", _boom)
+    monkeypatch.setattr(discovery_mod, "resolve_tool", _boom)
+    monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
+    monkeypatch.setattr(sys, "argv", [r"C:\Scripts\stattool.exe", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        run_named()
+    assert exc_info.value.code == 0
+    assert seen == {"name": "stattool", "argv": ["--help"]}
+    assert capsys.readouterr().out == ""
+
+
 def test_run_named_unknown_tool_exits_2(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """入口名未对应已注册工具 → 打印错误并以退出码 2 终止。"""
-    monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
+    calls: list[str] = []
+    monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda _name: None)
+    monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: calls.append("discover"))
     monkeypatch.setattr(discovery_mod, "resolve_tool", lambda _name: None)
     monkeypatch.setattr(sys, "argv", ["nosuch.exe"])
     with pytest.raises(SystemExit) as exc_info:
         run_named()
     assert exc_info.value.code == 2
+    assert calls == ["discover"], "清单未命中时必须回退全量发现"
     out = capsys.readouterr().out
     assert "未对应任何已注册工具" in out
     assert "查看可用工具列表" in out
@@ -78,8 +106,35 @@ def test_run_named_falls_back_to_executable_name(
     def fake_resolve(name: str) -> str | None:
         return name if name == "img2ico" else None
 
+    # 清单未命中（入口名是模块路径），回退全量发现后仍按 exe 名解析
+    monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda _name: None)
     monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", lambda: None)
     monkeypatch.setattr(discovery_mod, "resolve_tool", fake_resolve)
+    monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
+    monkeypatch.setattr(sys, "argv", [r"F:\app\dist\src\fcmd\cli\_entry.py", "gen", "in.svg"])
+    monkeypatch.setattr(sys, "executable", r"F:\app\dist\img2ico.exe")
+    with pytest.raises(SystemExit) as exc_info:
+        run_named()
+    assert exc_info.value.code == 0
+    assert seen == {"name": "img2ico", "argv": ["gen", "in.svg"]}
+    assert capsys.readouterr().out == ""
+
+
+def test_run_named_exe_name_fast_path(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """runpy 入口在清单里能按加载器 exe 名命中时也走快路径，不做全量发现。"""
+    seen: dict[str, Any] = {}
+
+    def fake_run_tool(name: str, argv: list[str]) -> int:
+        seen["name"] = name
+        seen["argv"] = argv
+        return 0
+
+    def _boom() -> None:
+        raise AssertionError("清单命中时不应回退全量发现")
+
+    monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda name: name if name == "img2ico" else None)
+    monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", _boom)
+    monkeypatch.setattr(discovery_mod, "resolve_tool", _boom)
     monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
     monkeypatch.setattr(sys, "argv", [r"F:\app\dist\src\fcmd\cli\_entry.py", "gen", "in.svg"])
     monkeypatch.setattr(sys, "executable", r"F:\app\dist\img2ico.exe")

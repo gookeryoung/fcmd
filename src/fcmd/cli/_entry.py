@@ -31,21 +31,30 @@ def infer_tool_name(argv0: str) -> str:
 
 
 def run_named() -> None:
-    """console script 通用入口：按 argv[0] 推断工具名并转发执行。"""
+    """console script 通用入口：按 argv[0] 推断工具名并转发执行。
+
+    工具名优先按生成清单只加载目标工具（:func:`fcmd.cli._discovery.resolve_tool_fast`），
+    与 ``fcmd <tool>`` 走同一快路径；清单未命中 / 过期时才回退全量发现。
+    """
     # 懒导入避免 cli 包级循环（_discovery 函数内懒导入本包）
-    from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool
+    from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool, resolve_tool_fast
     from fcmd.console import print_error
     from fcmd.core.exit_codes import ExitCode
     from fcmd.core.toolkit import run_tool
 
     name = infer_tool_name(sys.argv[0])
-    ensure_tools_discovered()
-    resolved = resolve_tool(name)
+    resolved = resolve_tool_fast(name)
     if resolved is None:
         # runpy 入口（fspack 打包包装器以 run_module(alter_sys=True) 执行本模块）
         # 会把 argv[0] 改写为入口模块文件路径而非加载器 exe 名；此时退回从
         # sys.executable（即 per-tool loader exe，如 img2ico.exe）推断工具名。
-        resolved = resolve_tool(infer_tool_name(sys.executable))
+        resolved = resolve_tool_fast(infer_tool_name(sys.executable))
+    if resolved is None:
+        # 清单不可用 / 过期：回退全量发现，与 fcmd <tool> 的回退路径一致
+        ensure_tools_discovered()
+        resolved = resolve_tool(name)
+        if resolved is None:
+            resolved = resolve_tool(infer_tool_name(sys.executable))
     if resolved is None:
         print_error(
             f"入口 {name!r} 未对应任何已注册工具",
