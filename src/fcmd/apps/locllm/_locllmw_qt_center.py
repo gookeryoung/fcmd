@@ -190,13 +190,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
-    """展开行里的详情：模型元数据与「前往下载」。
+    """展开行里的详情：模型元数据。
 
     同一个实例在行之间复用，展开哪一行就挂到哪一行下面；不展示 README
     与文件清单，保持列表项展开后的内容紧凑。
     """
-
-    downloadRequested = Signal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -208,16 +206,9 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         separator = QFrame(self)
         separator.setFrameShape(QFrame.Shape.HLine)
         layout.addWidget(separator)
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
         self.error = hint_label("")
         self.error.setVisible(False)
-        actions.addWidget(self.error, 1)
-        self.download_button = button("前往下载", kind="primary")
-        self.download_button.setEnabled(False)
-        self.download_button.clicked.connect(self._emit_download)
-        actions.addWidget(self.download_button, 0)
-        layout.addLayout(actions)
+        layout.addWidget(self.error)
 
         layout.addWidget(QLabel("详细信息", self))
         self.meta_grid = QGridLayout()
@@ -260,7 +251,6 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
     def reset(self, repo: str) -> None:
         """切换模型时清空旧内容，等后台详情回填。"""
         self.repo = repo
-        self.download_button.setEnabled(False)
         self.error.setVisible(False)
         self.error.setText("")
         for value in self.meta_values.values():
@@ -270,14 +260,9 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.error.setText(message)
         self.error.setVisible(True)
 
-    def _emit_download(self) -> None:
-        if self.repo:
-            self.downloadRequested.emit(self.repo)
-
     def render(self, info: ModelInfo) -> None:
         """回填仓库元数据。"""
         self.repo = info.summary.repo
-        self.download_button.setEnabled(True)
         self.error.setVisible(False)
         self.error.setText("")
         for name, value in _locllmw_models.detail_pairs(info):
@@ -385,7 +370,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
         self.detail_view = _ModelDetailView(self)
         self.detail_view.setVisible(False)
-        self.detail_view.downloadRequested.connect(self.start_download)
 
         self.filter_buttons[_DEFAULT_FILTER].setChecked(True)
         self.start_search(1)

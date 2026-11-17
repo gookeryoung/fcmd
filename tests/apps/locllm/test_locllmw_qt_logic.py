@@ -234,14 +234,13 @@ def test_model_detail_view_reset_and_metadata() -> None:
     view = _ModelDetailView()
     view.reset("Qwen/demo")
     assert view.repo == "Qwen/demo"
-    assert not view.download_button.isEnabled()
+    assert not hasattr(view, "download_button")
     assert not hasattr(view, "readme")
     view.set_error("网络错误")
     assert view.error.text() == "网络错误"
     assert not view.error.isHidden()
     view.render(ModelInfo(summary=ModelSummary(repo="Qwen/demo", chinese_name="示例")))
     assert view.meta_values["中文名"].text() == "示例"
-    assert view.download_button.isEnabled()
 
 
 # ---------------------------------------------------------------------- #
