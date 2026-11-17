@@ -38,6 +38,20 @@ def test_load_settings_drops_invalid_geometry(tmp_path: Path) -> None:
     assert paramcadw.load_settings(path) == paramcadw.Settings()
 
 
+def test_settings_splitter_round_trip(tmp_path: Path) -> None:
+    """分栏比例按二元组回读。"""
+    path = tmp_path / "paramcad.json"
+    paramcadw.save_settings(paramcadw.Settings(splitter=(800, 360)), path)
+    assert paramcadw.load_settings(path).splitter == (800, 360)
+
+
+def test_settings_invalid_splitter_falls_back(tmp_path: Path) -> None:
+    """非法分栏记录回退 None，不抛异常。"""
+    path = tmp_path / "paramcad.json"
+    path.write_text('{"splitter": [1, "x"]}', encoding="utf-8")
+    assert paramcadw.load_settings(path).splitter is None
+
+
 def test_canvas_map_keeps_aspect_and_flips_y() -> None:
     mapper = paramcadw.CanvasMap(200.0, 100.0, -10.0, 10.0, -10.0, 10.0, padding=0.0)
     assert mapper.to_pixel(0.0, 0.0) == pytest.approx((100.0, 50.0))
