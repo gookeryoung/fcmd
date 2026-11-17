@@ -46,7 +46,7 @@ from fcmd.apps.locllm._locllmw_qt_run import (
 from fcmd.apps.locllm._locllmw_qt_settings import engine_rows_values
 from fcmd.apps.locllm._locllmw_recommend import Recommendation
 from fcmd.apps.locllm.llmbase import EngineInfo, LaunchPlan, ModelEntry, Profile, ServeError, ServeState, Tuning
-from fcmd.apps.locllm.llmdown import ModelSummary
+from fcmd.apps.locllm.llmdown import ModelInfo, ModelSummary
 
 
 def _plan(*, model: Path = Path("model.gguf"), context: int = 65536, kv_type: str | None = None) -> LaunchPlan:
@@ -214,7 +214,7 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()
     assert row.expand_button.text() == "展开"
-    assert row.files_button.text() == "文件清单"
+    assert not hasattr(row, "files_button")
     assert row.detail_host.isHidden()
     row.set_expanded(True)
     assert row.is_expanded()
@@ -223,11 +223,11 @@ def test_model_item_row_expands_inline_detail() -> None:
     row.set_expanded(False)
     assert not row.is_expanded()
     assert row.expand_button.text() == "展开"
-    assert row.files_button.text() == "文件清单"
+    assert not hasattr(row, "files_button")
     assert row.detail_host.isHidden()
 
 
-def test_model_detail_view_reset_and_error() -> None:
+def test_model_detail_view_reset_and_readme() -> None:
     from PySide6.QtWidgets import QApplication
 
     QApplication.instance() or QApplication([])
@@ -235,13 +235,14 @@ def test_model_detail_view_reset_and_error() -> None:
     view.reset("Qwen/demo")
     assert view.repo == "Qwen/demo"
     assert not view.download_button.isEnabled()
-    assert "正在加载 Qwen/demo" in view.files_hint.text()
-    assert not view.files_section.is_expanded()
-    view.show_files()
-    assert view.files_section.is_expanded()
+    assert "正在加载 Qwen/demo 的 README" in view.readme.toPlainText()
     view.set_error("网络错误")
     assert view.error.text() == "网络错误"
     assert not view.error.isHidden()
+    view.render(ModelInfo(summary=ModelSummary(repo="Qwen/demo"), readme="# 标题\n\n正文"))
+    assert "标题" in view.readme.toPlainText()
+    assert "正文" in view.readme.toPlainText()
+    assert view.download_button.isEnabled()
 
 
 # ---------------------------------------------------------------------- #

@@ -3,7 +3,7 @@
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，展开行显示详情 / README，文件清单从体积旁链接展开；
+- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，展开行显示详情 / README；
 - **下载**：目标目录（唯一模型目录）、下载源、并发、SHA256 校验、包含 / 排除掩码、
   汇总 / 单文件进度、失败记录与重试、日志；
 - **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
@@ -37,11 +37,11 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidgetItem,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QSizePolicy,
     QSpinBox,
     QTabWidget,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -58,7 +58,6 @@ from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_
 from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmdown import (
     LocalModel,
-    ModelFile,
     ModelInfo,
     ModelSearch,
     ModelSummary,
@@ -66,7 +65,6 @@ from fcmd.apps.locllm.llmdown import (
     ProgressEvent,
     delete_local_model,
     download_files,
-    fetch_files,
     fetch_model_info,
     filter_files,
     scan_local_models,
@@ -76,7 +74,6 @@ from fcmd.apps.locllm.llmdown import (
 )
 from fcmd.gui.qt.widgets import (
     Card,
-    Collapsible,
     ElidedLabel,
     LogView,
     PageScroll,
@@ -114,24 +111,14 @@ class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
     progress = Signal(object)
 
 
-def _task_text(exc: BaseException) -> str:
-    """后台异常转可读文案（含类型名），与既有日志口径一致。"""
-    return (
-        str(exc)
-        if isinstance(exc, (ModelToolError, ServeError, OSError, ValueError))
-        else f"{type(exc).__name__}: {exc}"
-    )
-
-
 class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
 
-    行本身只放关键内容；展开后在行下方显示详细信息与 README，文件清单通过
-    行内「文件清单」链接按需展开，不再占用右侧面板，列表可以铺满整页宽度。
+    行本身只放关键内容；展开后在行下方显示详细信息与 README，不再占用
+    右侧面板，列表可以铺满整页宽度。
     """
 
     toggleRequested = Signal(object)
-    filesRequested = Signal(object)
 
     def __init__(self, item: ModelSummary, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -173,9 +160,6 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
-        self.files_button = link_button("文件清单", tooltip="展开 / 收起该模型的文件清单")
-        self.files_button.clicked.connect(lambda: self.filesRequested.emit(self))
-        header_row.addWidget(self.files_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息与 README")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
@@ -205,10 +189,10 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
-    """展开行里的详情：详细信息与 README 直接可见，文件清单按需展开。
+    """展开行里的详情：详细信息与 README 直接可见。
 
-    文件清单用固定高度的可滚动表格，README 用只读文本框，避免单个模型把
-    列表行撑得过高；同一个实例在行之间复用，展开哪一行就挂到哪一行下面。
+    README 用只读富文本视图渲染 Markdown，固定高度内部滚动，避免单个模型
+    把列表行撑得过高；同一个实例在行之间复用，展开哪一行就挂到哪一行下面。
     """
 
     downloadRequested = Signal(str)
@@ -273,32 +257,13 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         layout.addLayout(self.meta_grid)
 
         layout.addWidget(QLabel("README", self))
-        self.readme = QPlainTextEdit(self)
+        self.readme = QTextBrowser(self)
         self.readme.setObjectName("Readme")
         self.readme.setFrameShape(QFrame.Shape.NoFrame)
-        self.readme.setReadOnly(True)
-        self.readme.setMinimumHeight(120)
-        self.readme.setMaximumHeight(220)
+        self.readme.setOpenExternalLinks(True)
+        self.readme.setMinimumHeight(160)
+        self.readme.setMaximumHeight(320)
         layout.addWidget(self.readme)
-
-        self.files_section = Collapsible("文件清单", expanded=False, parent=self)
-        self.files = make_table(
-            ("文件", "大小", "SHA256"),
-            widths=(360, 90, 130),
-            stretch_columns=(0,),
-            parent=self.files_section.content,
-        )
-        self.files.setFrameShape(QFrame.Shape.NoFrame)
-        self.files.setMinimumHeight(160)
-        self.files.setMaximumHeight(280)
-        self.files_section.body.addWidget(self.files)
-        self.files_hint = hint_label("")
-        self.files_section.body.addWidget(self.files_hint)
-        layout.addWidget(self.files_section)
-
-    def show_files(self) -> None:
-        """点击行内「文件清单」链接时展开清单。"""
-        self.files_section.set_expanded(True)
 
     def reset(self, repo: str) -> None:
         """切换模型时清空旧内容，等后台详情回填。"""
@@ -308,23 +273,18 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.error.setText("")
         for value in self.meta_values.values():
             value.setText("-")
-        self.readme.clear()
-        self.files.setRowCount(0)
-        self.files_section.set_title("文件清单")
-        self.files_section.set_expanded(False)
-        self.files_hint.setText(f"正在加载 {repo} 的文件清单…")
+        self.readme.setPlainText(f"正在加载 {repo} 的 README…")
 
     def set_error(self, message: str) -> None:
         self.error.setText(message)
         self.error.setVisible(True)
-        self.files_hint.setText("")
 
     def _emit_download(self) -> None:
         if self.repo:
             self.downloadRequested.emit(self.repo)
 
-    def render(self, info: ModelInfo, files: tuple[ModelFile, ...], error: str) -> None:
-        """回填仓库详情与文件清单；``error`` 只影响文件清单提示。"""
+    def render(self, info: ModelInfo) -> None:
+        """回填仓库详情与 README（Markdown 会渲染成富文本）。"""
         self.repo = info.summary.repo
         self.download_button.setEnabled(True)
         self.error.setVisible(False)
@@ -332,24 +292,14 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         for name, value in _locllmw_models.detail_pairs(info):
             if name in self.meta_values:
                 self.meta_values[name].setText(value)
-        self.readme.setPlainText(info.readme or "（该模型未提供 README）")
-        self.files.setRowCount(len(files))
-        total = 0
-        for row, file in enumerate(files):
-            total += file.size
-            self.files.setItem(row, 0, make_table_item(file.path))
-            self.files.setItem(row, 1, make_table_item(human_size(file.size)))
-            self.files.setItem(row, 2, make_table_item(file.sha256[:12] or "-"))
-        if files:
-            self.files_hint.setText(f"共 {len(files)} 个文件，合计 {human_size(total)}（ModelScope 清单）")
-            self.files_section.set_title(f"文件清单（{len(files)} 个 · {human_size(total)}）")
+        if info.readme:
+            self.readme.setMarkdown(info.readme)
         else:
-            self.files_hint.setText(f"文件清单获取失败：{error}" if error else "文件清单为空")
-            self.files_section.set_title("文件清单（0 个）")
+            self.readme.setPlainText("（该模型未提供 README）")
 
 
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
-    """浏览页：搜索、自定义结果行与行内展开的详情 / README，文件清单按需展开。"""
+    """浏览页：筛选条、自定义结果行与行内展开的详情 / README。"""
 
     repoSelected = Signal(str)
 
@@ -358,7 +308,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         self.current_repo: str | None = None
         self.current_info: ModelInfo | None = None
-        self.current_files: tuple[ModelFile, ...] = ()
         self._last_result: ModelSearch | None = None
         self._result_items: tuple[ModelSummary, ...] = ()
         self._expanded_row: _ModelItemRow | None = None
@@ -504,14 +453,12 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._detail_generation += 1
         self.current_repo = None
         self.current_info = None
-        self.current_files = ()
         self.models.clear()
         for item in items:
             list_item = QListWidgetItem(self.models)
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             row = _ModelItemRow(item, self.models)
             row.toggleRequested.connect(self._on_row_toggle)
-            row.filesRequested.connect(self._on_files_requested)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -560,15 +507,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if self.current_repo != row.repo:
             self.load_repo(row.repo)
 
-    def _on_files_requested(self, row: _ModelItemRow) -> None:
-        """行内「文件清单」链接：先展开该行，再展开清单分区。"""
-        if not row.is_expanded():
-            self._on_row_toggle(row)
-        else:
-            self._focus_row(row)
-        self.detail_view.show_files()
-        self._update_row_height(row)
-
     def _expand_repo(self, repo: str) -> None:
         for index in range(self.models.count()):
             row = self.models.itemWidget(self.models.item(index))
@@ -606,30 +544,24 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 return
 
     def load_repo(self, repo: str) -> None:
-        """加载仓库详情与文件清单；世代号防止旧请求覆盖新选择。"""
+        """加载仓库详情与 README；世代号防止旧请求覆盖新选择。"""
         self._detail_generation += 1
         generation = self._detail_generation
         self.current_repo = repo
         self.current_info = None
-        self.current_files = ()
         self.detail_view.reset(repo)
         self._update_row_height(self._expanded_row)
         self.page_label.setText(f"正在加载 {repo} …")
         submit(
             self._detail_work,
             repo,
-            on_done=lambda payload: self._render_detail(generation, *payload),
+            on_done=lambda info: self._render_detail(generation, info),
             on_error=lambda message: self._detail_error(generation, repo, message),
         )
 
     @staticmethod
-    def _detail_work(repo: str) -> tuple[ModelInfo, tuple[ModelFile, ...], str]:
-        info = fetch_model_info(repo)
-        try:
-            files = tuple(fetch_files(repo, "modelscope"))
-        except Exception as exc:  # 清单异常不影响详情展示
-            return info, (), _task_text(exc)
-        return info, files, ""
+    def _detail_work(repo: str) -> ModelInfo:
+        return fetch_model_info(repo)
 
     def _detail_error(self, generation: int, repo: str, message: str) -> None:
         if generation != self._detail_generation:
@@ -639,12 +571,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.page_label.setText(f"{repo} 详情加载失败")
         self._log(f"详情加载失败 {repo}: {message}")
 
-    def _render_detail(self, generation: int, info: ModelInfo, files: tuple[ModelFile, ...], error: str) -> None:
+    def _render_detail(self, generation: int, info: ModelInfo) -> None:
         if generation != self._detail_generation:
             return
         self.current_info = info
-        self.current_files = files
-        self.detail_view.render(info, files, error)
+        self.detail_view.render(info)
         self._update_row_height(self._expanded_row)
         self.page_label.setText(f"已加载 {info.summary.repo}")
         self.repoSelected.emit(info.summary.repo)

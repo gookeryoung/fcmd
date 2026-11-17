@@ -274,7 +274,7 @@ QPlainTextEdit#Log, QTextEdit#Log {
     border: 1px solid $border;
     border-radius: 6px;
 }
-QPlainTextEdit#Readme {
+QPlainTextEdit#Readme, QTextBrowser#Readme {
     background: transparent;
     color: $text;
     border: none;
