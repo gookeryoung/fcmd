@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -38,12 +39,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.qt.layout import parse_sizes, serialize_sizes
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = [
     "Card",
     "Collapsible",
+    "ElidedLabel",
     "FormGrid",
     "HintLabel",
     "KeyValueGrid",
@@ -51,11 +55,14 @@ __all__ = [
     "MetricGrid",
     "PageScroll",
     "PathRow",
+    "apply_splitter_sizes",
     "button",
     "hint_label",
+    "make_splitter",
     "make_table",
     "make_table_item",
     "mono_label",
+    "splitter_sizes",
     "value_label",
 ]
 
@@ -432,6 +439,7 @@ def make_table(
     *,
     widths: Sequence[int] | None = None,
     stretch_columns: Sequence[int] = (),
+    stretch_last: bool = False,
     parent: QWidget | None = None,
 ) -> QTableWidget:  # pragma: no cover - Qt 控件
     """创建只读、整行选择、交替行色的表格。"""
@@ -450,4 +458,82 @@ def make_table(
         else:
             header.setSectionResizeMode(index, QHeaderView.ResizeMode.Interactive)
             header.resizeSection(index, widths[index] if widths and index < len(widths) else 120)
+    if stretch_last and len(headers) and len(headers) - 1 not in stretch_columns:
+        header.setStretchLastSection(True)
     return table
+
+
+class ElidedLabel(QLabel):  # pragma: no cover - Qt 控件
+    """长文本标签：按可用宽度中间省略，完整内容放进 tooltip。
+
+    用于长路径、长 URL、长命令。水平尺寸策略为 ``Ignored``，避免超长文本
+    反过来把窗口撑宽；窗口放大后自动显示更多字符。
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        mode: Qt.TextElideMode = Qt.TextElideMode.ElideMiddle,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._full_text = text
+        self._elide_mode = mode
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._refresh()
+
+    def setText(self, text: str) -> None:
+        """设置完整文本（显示内容按当前宽度省略）。"""
+        self._full_text = text
+        self._refresh()
+
+    def fullText(self) -> str:
+        """完整文本（未省略）。"""
+        return self._full_text
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        """按当前宽度重算显示文本与 tooltip。"""
+        available = self.contentsRect().width()
+        if available <= 0:
+            super().setText(self._full_text)
+            super().setToolTip("")
+            return
+        shown = self.fontMetrics().elidedText(self._full_text, self._elide_mode, available)
+        super().setText(shown)
+        super().setToolTip(self._full_text if shown != self._full_text else "")
+
+
+def make_splitter(
+    orientation: Qt.Orientation = Qt.Orientation.Horizontal,
+    *,
+    sizes: Sequence[int] = (),
+    parent: QWidget | None = None,
+) -> QSplitter:  # pragma: no cover - Qt 控件
+    """创建不可折叠的分栏容器（可拖动，尺寸可持久化）。"""
+    splitter = QSplitter(orientation, parent)
+    splitter.setChildrenCollapsible(False)
+    splitter.setHandleWidth(6)
+    if sizes:
+        splitter.setSizes(list(sizes))
+    return splitter
+
+
+def splitter_sizes(splitter: QSplitter) -> list[int]:  # pragma: no cover - Qt 控件
+    """读取分栏尺寸（写入设置文件用）。"""
+    return serialize_sizes(splitter.sizes())
+
+
+def apply_splitter_sizes(splitter: QSplitter, sizes: object) -> bool:  # pragma: no cover - Qt 控件
+    """按记忆尺寸恢复分栏；非法内容保持当前布局并返回 ``False``。"""
+    parsed = parse_sizes(sizes)
+    if parsed is None:
+        return False
+    splitter.setSizes(parsed)
+    return True

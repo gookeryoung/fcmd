@@ -28,16 +28,22 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt.theme_menu import ThemeMenu
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from fcmd.gui.theme import Theme
 
-__all__ = ["QtMainWindow", "format_geometry", "parse_geometry", "resolve_geometry_text"]
+__all__ = [
+    "QtMainWindow",
+    "format_geometry",
+    "parse_geometry",
+    "resolve_geometry_text",
+    "restore_geometry",
+]
 
 _GEOMETRY_RE = re.compile(r"^(?P<width>\d+)x(?P<height>\d+)(?:(?P<sign_x>[+-])(?P<x>\d+)(?P<sign_y>[+-])(?P<y>\d+))?$")
 
@@ -85,6 +91,34 @@ def resolve_geometry_text(  # noqa: PLR0913 - 与 Tk 版 resolve_geometry 参数
         min_width=min_width,
         min_height=min_height,
     )
+
+
+def restore_geometry(
+    widget: QWidget,
+    saved: str | None,
+    *,
+    default_size: tuple[int, int],
+    min_size: tuple[int, int],
+) -> None:  # pragma: no cover - 需要 Qt 屏幕信息
+    """按记忆位置恢复窗口；越界 / 非法时用默认尺寸。"""
+    screen = QApplication.primaryScreen()
+    available = screen.availableGeometry() if screen is not None else None
+    screen_width = available.width() if available is not None else 1920
+    screen_height = available.height() if available is not None else 1080
+    text = resolve_geometry_text(
+        saved,
+        screen_width,
+        screen_height,
+        default=f"{default_size[0]}x{default_size[1]}",
+        min_width=min_size[0],
+        min_height=min_size[1],
+    )
+    rect = parse_geometry(text)
+    if rect is None:
+        widget.resize(*default_size)
+        return
+    width, height, x, y = rect
+    widget.setGeometry(x, y, width, height)
 
 
 class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
@@ -243,24 +277,12 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _restore_geometry(self, default_size: tuple[int, int], min_size: tuple[int, int]) -> None:
         """按记忆位置恢复窗口；越界 / 非法时用默认尺寸居中。"""
-        screen = QApplication.primaryScreen()
-        available = screen.availableGeometry() if screen is not None else None
-        screen_width = available.width() if available is not None else 1920
-        screen_height = available.height() if available is not None else 1080
-        text = resolve_geometry_text(
+        restore_geometry(
+            self,
             self._raw_settings.get("geometry"),
-            screen_width,
-            screen_height,
-            default=f"{default_size[0]}x{default_size[1]}",
-            min_width=min_size[0],
-            min_height=min_size[1],
+            default_size=default_size,
+            min_size=min_size,
         )
-        rect = parse_geometry(text)
-        if rect is None:
-            self.resize(*default_size)
-            return
-        width, height, x, y = rect
-        self.setGeometry(x, y, width, height)
 
     def geometry_text(self) -> str:
         """当前窗口的 ``WxH+X+Y``，用于关闭时写回设置。"""
@@ -286,17 +308,8 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.sidebar_action.triggered.connect(self.nav.set_collapsed)
         view_menu.addAction(self.sidebar_action)
         view_menu.addSeparator()
-        self._theme_menu = view_menu.addMenu("主题")
-        self._theme_actions: dict[str, QAction] = {}
-        for name in _guitheme.theme_names():
-            theme = _guitheme.resolve_theme(name)
-            action = QAction(theme.label, self)
-            action.setCheckable(True)
-            action.setChecked(theme.name == self._theme.name)
-            action.setToolTip(theme.description)
-            action.triggered.connect(lambda _checked=False, chosen=theme: self.set_theme(chosen))
-            self._theme_menu.addAction(action)
-            self._theme_actions[theme.name] = action
+        self.theme_menu = ThemeMenu(self, self._theme)
+        self.theme_menu.attach(view_menu.addMenu("主题"))
 
         help_menu = self.menuBar().addMenu("帮助")
         about_action = QAction("关于", self)
@@ -305,12 +318,8 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def set_theme(self, theme: Theme) -> None:
         """切换主题：立即重设 QPalette / QSS 并持久化选择。"""
-        self._theme = _guitheme.save_theme(theme)
-        app = QApplication.instance()
-        if app is not None:
-            _qt_theme.apply_theme(app, self._theme)
-        for name, action in self._theme_actions.items():
-            action.setChecked(name == self._theme.name)
+        self.theme_menu.set_theme(theme)
+        self._theme = self.theme_menu.theme()
 
     def theme(self) -> Theme:
         """当前主题。"""
