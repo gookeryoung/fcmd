@@ -27,7 +27,7 @@ from fcmd.apps.locllm._locllmw_qt_models import (
     ordered_groups,
 )
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
-from fcmd.apps.locllm._locllmw_qt_overview import model_disk_text, usage_gauge_texts
+from fcmd.apps.locllm._locllmw_qt_overview import usage_gauge_texts
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
     memory_guard,
@@ -405,13 +405,3 @@ def test_pick_model_falls_back_to_largest_when_quant_missing(tmp_path: Path) -> 
 
 def test_pick_model_returns_none_for_empty_list() -> None:
     assert pick_model(None, [], "Q5_K_M") is None
-
-
-def test_model_disk_text_is_single_line_with_free_space() -> None:
-    from fcmd.apps.locllm._locllmw_hardware import DiskInfo
-
-    disk = DiskInfo("D:", "NTFS", 1000 * 1024**3, 250 * 1024**3)
-    text = model_disk_text(Path("D:/models"), disk)
-    assert text == f"{Path('D:/models')} · 剩余 250.00 GB"
-    assert "\n" not in text
-    assert model_disk_text(Path("D:/models"), None).endswith("剩余 未知")

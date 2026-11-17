@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -22,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.locllm import llmenv
-from fcmd.apps.locllm._locllmw_hardware import DiskInfo, disk_for_path
+from fcmd.apps.locllm._locllmw_hardware import disk_for_path
 from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import human_size
@@ -65,16 +64,6 @@ def usage_gauge_texts(sample: LoadSample) -> tuple[float, str, float, str]:
         memory_percent = 0.0
         memory_brief = "暂不可用"
     return percent, gpu_brief, memory_percent, memory_brief
-
-
-def model_disk_text(models_dir: Path, disk: DiskInfo | None) -> str:
-    """概览「模型目录」一行：设置里登记的模型目录 + 所在盘剩余空间。
-
-    只显示模型目录本身（不随选中模型变成具体文件路径），盘符信息来自硬件
-    快照的分区列表；取不到分区时剩余空间显示「未知」。
-    """
-    free = human_size(disk.free) if disk is not None else "未知"
-    return f"{models_dir} · 剩余 {free}"
 
 
 class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
@@ -235,8 +224,9 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._hardware_values["memory"] = memory_value
 
         disk_value = ElidedLabel("检测中…", parent=card)
-        disk_value.setFixedWidth(420)
-        disk_value.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        disk_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        free_value = QLabel("", card)
+        free_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         modify = link_button("修改", tooltip="到设置页修改模型目录")
         modify.clicked.connect(lambda: self.state.navigate("settings"))
         self._modify_link = modify
@@ -244,11 +234,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         disk_row = QHBoxLayout()
         disk_row.setContentsMargins(0, 0, 0, 0)
         disk_row.setSpacing(8)
-        disk_row.addWidget(disk_value, 0, Qt.AlignmentFlag.AlignVCenter)
+        disk_row.addWidget(disk_value, 1, Qt.AlignmentFlag.AlignVCenter)
+        disk_row.addWidget(free_value, 0, Qt.AlignmentFlag.AlignVCenter)
         disk_row.addWidget(modify, 0, Qt.AlignmentFlag.AlignVCenter)
-        disk_row.addStretch(1)
         grid.addLayout(disk_row, 3, 1)
         self._hardware_values["model_disk"] = disk_value
+        self._hardware_values["model_free"] = free_value
 
         gauges = QHBoxLayout()
         gauges.setContentsMargins(0, 0, 0, 0)
@@ -325,9 +316,11 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         )
         models_dir = llmenv.models_dir()
         disk = disk_for_path(models_dir, snapshot.disks)
-        disk_text = model_disk_text(models_dir, disk)
-        self._hardware_values["model_disk"].setText(disk_text)
-        self._hardware_values["model_disk"].setToolTip(disk_text)
+        path_text = str(models_dir)
+        free_text = f"剩余 {human_size(disk.free) if disk is not None else '未知'}"
+        self._hardware_values["model_disk"].setText(path_text)
+        self._hardware_values["model_disk"].setToolTip(f"{path_text} · {free_text}")
+        self._hardware_values["model_free"].setText(free_text)
         self._detected_label.setText("")
 
     def apply_sample(self, sample: object) -> None:
