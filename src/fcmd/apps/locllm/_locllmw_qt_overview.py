@@ -123,29 +123,25 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             row.addWidget(name, 0, Qt.AlignmentFlag.AlignTop)
             row.addWidget(value, 1)
+            if key in ("gpu", "memory"):
+                # 显存 / 内存与占用条、剩余值绑定在同一行展示，布局更紧凑
+                bar = QProgressBar(card)
+                bar.setRange(0, 100)
+                bar.setValue(0)
+                bar.setTextVisible(False)
+                bar.setMinimumWidth(160)
+                text = hint_label("等待采样…", wrap=False)
+                text.setMinimumWidth(220)
+                row.addWidget(bar, 1)
+                row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
+                self._usage_bars[key] = bar
+                self._usage_labels[key] = text
             if key == "model_disk":
                 settings_button = button("去设置修改…", kind="ghost")
                 settings_button.clicked.connect(lambda: self.state.navigate("settings"))
                 row.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignTop)
             card.body.addLayout(row)
             self._hardware_values[key] = value
-            if key in ("gpu", "memory"):
-                # 显存 / 内存与占用条、剩余值绑定在同一行组里展示
-                usage_row = QHBoxLayout()
-                indent = QLabel(card)
-                indent.setFixedWidth(64)
-                bar = QProgressBar(card)
-                bar.setRange(0, 100)
-                bar.setValue(0)
-                bar.setTextVisible(False)
-                text = hint_label("等待采样…", wrap=False)
-                text.setMinimumWidth(220)
-                usage_row.addWidget(indent)
-                usage_row.addWidget(bar, 1)
-                usage_row.addWidget(text)
-                card.body.addLayout(usage_row)
-                self._usage_bars[key] = bar
-                self._usage_labels[key] = text
 
         footer = QHBoxLayout()
         self._detected_label = hint_label("尚未检测硬件")
