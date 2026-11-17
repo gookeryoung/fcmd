@@ -149,14 +149,14 @@ ALIASES: dict[str, str] = {
 
 # 列表页描述（与 _discovery.tool_description 同口径，供列表快路径直接使用）
 DESCRIPTIONS: dict[str, str] = {
-    "alarmclock": "数字时钟 + 定时提醒（Tk）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复",
+    "alarmclock": "数字时钟 + 定时提醒（Qt）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复",
     "archivex": "解压归档文件",
     "asciitool": "查询字符的 ASCII 码",
     "autofmt": "格式化代码 (ruff format)",
     "bumpversion": "版本号自动管理",
     "calcdate": "日期加减天数",
     "casetool": "转 snake_case",
-    "checksum": "校验和计算器窗口版（Tk）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，计算字符串或文件的十六进制摘要，可选用期望值做忽略大小写的校验比对；设置持久化到 ~/.fcmd/ui/checksum.json",
+    "checksum": "校验和计算器窗口版（Qt）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，计算字符串或文件的十六进制摘要，可选用期望值做忽略大小写的校验比对；设置持久化到 ~/.fcmd/ui/checksum.json",
     "clr": "清屏（跨平台）",
     "cmderw": "双面板文件管理器窗口版（Tk，Total Commander 风格）：左右面板独立导航与历史，F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 多重命名工具，Space 统计大小，每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，复制/移动进入串行传输队列（逐项进度、按项取消、失败重试），Ctrl+Shift+C 只读比较与预演式目录同步，Ctrl+Q 快速查看、Ctrl+F8 目录树、Ctrl+Enter 命令行、配置→颜色规则，Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，复用 archivex/hashing/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json",
     "codetool": "Base64 编解码",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "99cdb5cea99d360f2882d64260be139f"
+DIGEST = "bb5dc354317a4ac3046c08c091cd174e"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

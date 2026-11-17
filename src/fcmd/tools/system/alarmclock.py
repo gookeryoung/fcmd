@@ -1,4 +1,4 @@
-"""alarmclock - Tk 定时提醒（数字时钟 + 闹钟 + 到点闪烁提醒）。
+"""alarmclock - 定时提醒（数字时钟 + 闹钟 + 到点闪烁提醒，Qt GUI）。
 
 交互参考 ``bitool_gui.alarmclock``：大号数字时钟每秒刷新并轮换边框颜色，
 可按 ``HH:MM:SS`` 设定闹钟，或用「延时」按钮快速设定 N 分钟后的提醒；
@@ -19,12 +19,10 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
-from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _geometry
 
 __all__ = [
     "AlarmSettings",
@@ -42,7 +40,7 @@ __all__ = [
 
 __version__ = "0.1.0"
 
-_DESCRIPTION = "数字时钟 + 定时提醒（Tk）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复"
+_DESCRIPTION = "数字时钟 + 定时提醒（Qt）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复"
 
 DIGITAL_FORMAT = "%H:%M:%S"
 CLOCK_FONT = ("Consolas", 44, "bold italic")
@@ -107,7 +105,7 @@ def save_settings(settings: AlarmSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
-    return _guiwindow.resolve_geometry(
+    return _geometry.resolve_geometry(
         saved,
         screen_width,
         screen_height,
@@ -118,7 +116,7 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
 
 
 # ---------------------------------------------------------------------- #
-# 纯逻辑（可单测，不依赖 Tk）
+# 纯逻辑（可单测，不依赖 GUI 工具包）
 # ---------------------------------------------------------------------- #
 def parse_clock(text: str) -> time:
     """解析 ``HH:MM:SS``（也接受 ``HH:MM``）为 :class:`datetime.time`。
@@ -206,281 +204,16 @@ class AlarmState:
         self.target = target
 
 
-# ---------------------------------------------------------------------- #
-# Tk 界面
-# ---------------------------------------------------------------------- #
-class AlarmClockWindow:
-    """Tk 定时提醒主窗口。"""
-
-    def __init__(self, settings_path: Path | None = None) -> None:
-        import tkinter as tk
-        from tkinter import messagebox, ttk
-
-        self._tk = tk
-        self._ttk = ttk
-        self._messagebox = messagebox
-        self._settings_path = settings_path
-        self._settings = load_settings(settings_path)
-        self._state = AlarmState(repeat=self._settings.repeat)
-        self._border_color = DIGITAL_BORDER_COLORS[0]
-        self._reminder: Any | None = None
-        self._reminder_label: Any | None = None
-        self._blink_timer: str | None = None
-        self._tick_timer: str | None = None
-
-        self.root, self._theme = _guiwindow.create_root(
-            title=f"定时提醒 v{__version__}",
-            saved_geometry=self._settings.geometry,
-            default_geometry=DEFAULT_GEOMETRY,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-            on_close=self.close,
-        )
-
-        self._clock_var = tk.StringVar(value=datetime.now().strftime(DIGITAL_FORMAT))
-        self._time_var = tk.StringVar(value=self._initial_alarm_text())
-        self._repeat_var = tk.BooleanVar(value=self._settings.repeat)
-        self._status_var = tk.StringVar(value="未设置闹钟")
-        # 主题正文字体族名：局部自定义字号/字重时复用，避免写死 Windows 字体导致乱码。
-        self._ui_family = _guitheme.ui_font_family(self.root)
-
-        self._build_widgets()
-        _guitheme.install_theme_switcher(self.root)
-        self._refresh_clock(datetime.now())
-        self._schedule_tick()
-
-    def _initial_alarm_text(self) -> str:
-        """初始时间输入框内容：恢复上次设定，否则为 1 分钟后。"""
-        if self._settings.alarm:
-            return self._settings.alarm
-        return (datetime.now() + timedelta(minutes=DELAY_STEPS[0])).strftime(DIGITAL_FORMAT)
-
-    def _build_widgets(self) -> None:
-        tk = self._tk
-        ttk = self._ttk
-        palette = self._theme.palette
-        # 大号时钟保留经典 Label：需要每秒直改 highlight 边框颜色，ttk 样式不支持逐控件边框动画
-        self._clock_label = tk.Label(
-            self.root,
-            textvariable=self._clock_var,
-            font=CLOCK_FONT,
-            fg=palette.text,
-            bg=palette.log_bg,
-            padx=self._theme.spacing.md,
-            pady=self._theme.spacing.md,
-            highlightthickness=2,
-            highlightbackground=self._border_color,
-            highlightcolor=self._border_color,
-        )
-        self._clock_label.pack(
-            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.sm)
-        )
-
-        box = ttk.LabelFrame(self.root, text="时间设置", padding=self._theme.spacing.sm)
-        box.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-
-        row = ttk.Frame(box)
-        row.pack(fill="x")
-        ttk.Label(row, text="闹钟时间：").pack(side="left")
-        ttk.Entry(row, textvariable=self._time_var, width=12, justify="center").pack(
-            side="left", padx=(0, self._theme.spacing.sm)
-        )
-        self._set_button = ttk.Button(row, text="设置闹钟", command=self.toggle_alarm, style="Accent.TButton")
-        self._set_button.pack(side="right")
-
-        delay = ttk.Frame(box)
-        delay.pack(fill="x", pady=(self._theme.spacing.sm, 0))
-        ttk.Label(delay, text="延时(分钟)：").pack(side="left")
-        for minutes in DELAY_STEPS:
-            button = ttk.Button(delay, text=str(minutes), width=3, command=lambda value=minutes: self.set_delay(value))
-            button.pack(side="left", padx=(0, self._theme.spacing.xs))
-        ttk.Button(delay, text="重置", command=self.reset_time).pack(side="left")
-
-        options = ttk.Frame(box)
-        options.pack(fill="x", pady=(self._theme.spacing.sm, 0))
-        ttk.Checkbutton(options, text="重复（每天）", variable=self._repeat_var, command=self._sync_repeat).pack(
-            side="left"
-        )
-
-        self._status_label = ttk.Label(
-            self.root,
-            textvariable=self._status_var,
-            foreground=palette.danger,
-            font=(self._ui_family, 10, "bold italic underline"),
-        )
-        self._status_label.pack(
-            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.sm, self._theme.spacing.xxs)
-        )
-        ttk.Label(
-            self.root,
-            text="到点后弹窗置顶闪烁，点击「关闭提醒」结束本次提醒。",
-            foreground=palette.muted,
-        ).pack(fill="x", padx=self._theme.spacing.md, pady=(0, self._theme.spacing.md))
-
-    # ------------------------------------------------------------------ #
-    # 时钟与状态刷新
-    # ------------------------------------------------------------------ #
-    def _schedule_tick(self) -> None:
-        self._tick_timer = self.root.after(1000, self._on_tick)
-
-    def _on_tick(self) -> None:
-        now = datetime.now()
-        self._refresh_clock(now)
-        if self._state.is_due(now) and self._reminder is None:
-            self._open_reminder()
-        self._schedule_tick()
-
-    def _refresh_clock(self, now: datetime) -> None:
-        self._clock_var.set(now.strftime(DIGITAL_FORMAT))
-        self._border_color = next_border_color(self._border_color)
-        self._clock_label.configure(highlightbackground=self._border_color, highlightcolor=self._border_color)
-        self._refresh_status(now)
-
-    def _refresh_status(self, now: datetime) -> None:
-        if not self._state.armed:
-            return
-        assert self._state.target is not None
-        remaining = self._state.remaining(now) or timedelta(0)
-        self._status_var.set(
-            f"闹钟已设置: {self._state.target.strftime(DIGITAL_FORMAT)}（剩余 {format_duration(remaining)}）"
-        )
-
-    # ------------------------------------------------------------------ #
-    # 闹钟操作
-    # ------------------------------------------------------------------ #
-    def toggle_alarm(self) -> None:
-        """设置 / 取消闹钟。"""
-        if self._state.armed:
-            self._cancel_alarm()
-        else:
-            self._arm_alarm()
-
-    def _arm_alarm(self) -> None:
-        try:
-            clock = parse_clock(self._time_var.get())
-        except ValueError as exc:
-            self._messagebox.showerror("时间无效", str(exc))
-            return
-        self._state.repeat = bool(self._repeat_var.get())
-        target = self._state.arm(clock, datetime.now())
-        self._time_var.set(target.strftime(DIGITAL_FORMAT))
-        self._set_button.configure(text="取消闹钟", style="Danger.TButton")
-        self._status_var.set(f"已设置闹钟: {target.strftime(DIGITAL_FORMAT)}")
-
-    def _cancel_alarm(self) -> None:
-        self._state.cancel()
-        self._set_button.configure(text="设置闹钟", style="Accent.TButton")
-        self._status_var.set("闹钟已取消")
-
-    def set_delay(self, minutes: int) -> None:
-        """把闹钟时间设为当前时间 + ``minutes`` 分钟。"""
-        self._time_var.set((datetime.now() + timedelta(minutes=minutes)).strftime(DIGITAL_FORMAT))
-
-    def reset_time(self) -> None:
-        """把闹钟时间重置为当前时刻。"""
-        self._time_var.set(datetime.now().strftime(DIGITAL_FORMAT))
-
-    def _sync_repeat(self) -> None:
-        self._state.repeat = bool(self._repeat_var.get())
-
-    # ------------------------------------------------------------------ #
-    # 提醒窗口
-    # ------------------------------------------------------------------ #
-    def _open_reminder(self) -> None:
-        tk = self._tk
-        ttk = self._ttk
-        self.root.bell()
-        window = tk.Toplevel(self.root)
-        window.title(REMINDER_TITLE)
-        window.attributes("-topmost", True)
-        window.transient(self.root)
-        window.protocol("WM_DELETE_WINDOW", self.close_reminder)
-        self._blink_color = random.choice(list(BLINK_BG_COLORS))
-        window.configure(bg=self._blink_color)
-
-        label = tk.Label(
-            window,
-            text=REMINDER_TEXT,
-            font=(self._ui_family, 24, "bold"),
-            fg="red",
-            bg=self._blink_color,
-        )
-        label.pack(
-            padx=self._theme.spacing.xl + self._theme.spacing.lg,
-            pady=(self._theme.spacing.xl + self._theme.spacing.xs + self._theme.spacing.xxs, self._theme.spacing.md),
-        )
-        ttk.Button(window, text="关闭提醒", command=self.close_reminder).pack(
-            pady=(0, self._theme.spacing.lg + self._theme.spacing.xs)
-        )
-        window.update_idletasks()
-        _guiwindow.center_over_parent(window, self.root)
-        window.grab_set()
-        window.focus_force()
-
-        self._reminder = window
-        self._reminder_label = label
-        self._blink_timer = window.after(BLINK_INTERVAL, self._blink)
-        self._status_var.set("⏰ 闹钟响了！")
-
-    def _blink(self) -> None:
-        if self._reminder is None:
-            return
-        choices = [color for color in BLINK_BG_COLORS if color != self._blink_color] or list(BLINK_BG_COLORS)
-        self._blink_color = random.choice(choices)
-        self._reminder.configure(bg=self._blink_color)
-        if self._reminder_label is not None:
-            self._reminder_label.configure(bg=self._blink_color)
-        self._blink_timer = self._reminder.after(BLINK_INTERVAL, self._blink)
-
-    def close_reminder(self) -> None:
-        """关闭提醒窗口，并按「重复」设置决定是否顺延。"""
-        if self._reminder is None:
-            return
-        if self._blink_timer is not None:
-            self._reminder.after_cancel(self._blink_timer)
-            self._blink_timer = None
-        self._reminder.grab_release()
-        self._reminder.destroy()
-        self._reminder = None
-        self._reminder_label = None
-
-        self._state.repeat = bool(self._repeat_var.get())
-        self._state.dismiss(datetime.now())
-        if self._state.armed:
-            assert self._state.target is not None
-            self._time_var.set(self._state.target.strftime(DIGITAL_FORMAT))
-            self._status_var.set(f"下次提醒: {self._state.target.strftime(DIGITAL_FORMAT)}")
-        else:
-            self._set_button.configure(text="设置闹钟", style="Accent.TButton")
-            self._status_var.set("闹钟已关闭")
-
-    # ------------------------------------------------------------------ #
-    # 生命周期
-    # ------------------------------------------------------------------ #
-    def close(self) -> None:
-        """保存设置并退出窗口。"""
-        if self._tick_timer is not None:
-            self.root.after_cancel(self._tick_timer)
-            self._tick_timer = None
-        self.close_reminder()
-        alarm = (
-            self._state.target.strftime(DIGITAL_FORMAT)
-            if self._state.target is not None
-            else (self._time_var.get().strip() or None)
-        )
-        save_settings(
-            AlarmSettings(alarm=alarm, repeat=bool(self._repeat_var.get()), geometry=self.root.winfo_geometry()),
-            self._settings_path,
-        )
-        self.root.destroy()
-
-
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(lambda: AlarmClockWindow(settings_path), "定时提醒窗口")
+    """创建并运行 Qt 主窗口。"""
+    try:
+        from fcmd.tools.system._alarmclock_qt import run_qt
+    except ImportError as exc:  # pragma: no cover - 缺少可选依赖
+        raise SystemExit("未安装 Qt 前端：pip install 'PySide6-Essentials'") from exc
+    run_qt(settings_path)
 
 
-@fcmd.tool("alarmclock", help="打开定时提醒窗口（Tk）", description=_DESCRIPTION)
+@fcmd.tool("alarmclock", help="打开定时提醒窗口（Qt）", description=_DESCRIPTION)
 def launch_cmd() -> None:
     """打开定时提醒窗口。"""
     run_gui()

@@ -420,6 +420,6 @@ def test_model_disk_text_is_single_line_with_free_space() -> None:
 
     disk = DiskInfo("D:", "NTFS", 1000 * 1024**3, 250 * 1024**3)
     text = model_disk_text(Path("D:/models"), disk)
-    assert text == "D:\\models · 剩余 250.00 GB"
+    assert text == f"{Path('D:/models')} · 剩余 250.00 GB"
     assert "\n" not in text
     assert model_disk_text(Path("D:/models"), None).endswith("剩余 未知")

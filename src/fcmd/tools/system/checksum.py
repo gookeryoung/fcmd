@@ -1,4 +1,4 @@
-"""checksum - 校验和计算器（Tk GUI）。
+"""checksum - 校验和计算器（Qt GUI）。
 
 交互参考 ``bitool_gui.checksum``：选择 MD5 / SHA1 / SHA256 / SHA384 / SHA512 /
 Blake2b / Blake2s，计算输入字符串或所选文件的十六进制摘要；勾选「比较校验」
@@ -24,8 +24,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _geometry
 from fcmd.infras import hashing
 
 __all__ = [
@@ -46,7 +45,7 @@ __all__ = [
 __version__ = "0.1.0"
 
 _DESCRIPTION = (
-    "校验和计算器窗口版（Tk）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，"
+    "校验和计算器窗口版（Qt）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，"
     "计算字符串或文件的十六进制摘要，可选用期望值做忽略大小写的校验比对；"
     "设置持久化到 ~/.fcmd/ui/checksum.json"
 )
@@ -117,7 +116,7 @@ def save_settings(settings: ChecksumSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到默认位置与尺寸（按屏幕夹紧）。"""
-    return _guiwindow.resolve_geometry(
+    return _geometry.resolve_geometry(
         saved,
         screen_width,
         screen_height,
@@ -128,7 +127,7 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
 
 
 # ---------------------------------------------------------------------- #
-# 纯逻辑（可单测，不依赖 Tk）
+# 纯逻辑（可单测，不依赖 GUI 工具包）
 # ---------------------------------------------------------------------- #
 def normalize_algorithm(name: str) -> str:
     """把算法名规范为 :data:`ALGORITHMS` 中的展示名（忽略大小写与首尾空白）。
@@ -193,197 +192,16 @@ def format_result(digest: str, expected: str | None = None) -> str:
     return f"{digest}\n{verdict}"
 
 
-# ---------------------------------------------------------------------- #
-# Tk 界面
-# ---------------------------------------------------------------------- #
-class ChecksumWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """Tk 校验和计算器主窗口。"""
-
-    def __init__(self, settings_path: Path | None = None) -> None:
-        import tkinter as tk
-        from tkinter import filedialog, ttk
-
-        self._tk = tk
-        self._ttk = ttk
-        self._filedialog = filedialog
-        self._settings_path = settings_path
-        self._settings = load_settings(settings_path)
-
-        self.root, self._theme = _guiwindow.create_root(
-            title=f"校验和计算器 v{__version__}",
-            saved_geometry=self._settings.geometry,
-            default_geometry=DEFAULT_GEOMETRY,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-            on_close=self.close,
-        )
-
-        self._algorithm_var = tk.StringVar(value=self._settings.algorithm)
-        self._string_var = tk.StringVar()
-        self._file_var = tk.StringVar()
-        self._compare_enabled_var = tk.BooleanVar(value=self._settings.compare)
-        self._compare_var = tk.StringVar()
-
-        self._build_widgets()
-        _guitheme.install_theme_switcher(self.root)
-        self._toggle_compare()
-
-    def _build_widgets(self) -> None:
-        tk = self._tk
-        ttk = self._ttk
-        palette = self._theme.palette
-        source = ttk.LabelFrame(self.root, text="数据源", padding=self._theme.spacing.sm)
-        source.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.xs))
-
-        string_row = ttk.Frame(source)
-        string_row.pack(fill="x")
-        ttk.Label(string_row, text="字符串：", width=8, anchor="w").pack(side="left")
-        string_entry = ttk.Entry(string_row, textvariable=self._string_var)
-        string_entry.pack(side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm))
-        string_entry.bind("<Return>", lambda _event: self._compute_string())
-        ttk.Button(string_row, text="计算", command=self._compute_string, style="Accent.TButton").pack(side="right")
-
-        file_row = ttk.Frame(source)
-        file_row.pack(fill="x", pady=(self._theme.spacing.sm, 0))
-        ttk.Label(file_row, text="文件：", width=8, anchor="w").pack(side="left")
-        ttk.Entry(file_row, textvariable=self._file_var).pack(
-            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
-        )
-        ttk.Button(file_row, text="浏览…", command=self._browse_file).pack(side="right")
-        ttk.Button(file_row, text="计算", command=self._compute_file).pack(
-            side="right", padx=(0, self._theme.spacing.xs)
-        )
-
-        algorithm = ttk.LabelFrame(self.root, text="算法", padding=self._theme.spacing.sm)
-        algorithm.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-        for index, name in enumerate(ALGORITHMS):
-            ttk.Radiobutton(algorithm, text=name, value=name, variable=self._algorithm_var).grid(
-                row=index // 4,
-                column=index % 4,
-                sticky="w",
-                padx=(0, self._theme.spacing.lg),
-                pady=self._theme.spacing.xxs,
-            )
-
-        comparison = ttk.LabelFrame(self.root, text="比较校验", padding=self._theme.spacing.sm)
-        comparison.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-        ttk.Checkbutton(
-            comparison,
-            text="启用比较（忽略大小写）",
-            variable=self._compare_enabled_var,
-            command=self._toggle_compare,
-        ).pack(side="left")
-        self._compare_entry = ttk.Entry(comparison, textvariable=self._compare_var)
-        self._compare_entry.pack(side="left", fill="x", expand=True, padx=(self._theme.spacing.sm, 0))
-
-        result = ttk.LabelFrame(self.root, text="结果", padding=self._theme.spacing.sm)
-        result.pack(
-            fill="both", expand=True, padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.md)
-        )
-        self._result = tk.Text(result, height=6, wrap="word", state="disabled", font=_guitheme.MONO_FONT)
-        self._result.tag_configure("pass", foreground=palette.success)
-        self._result.tag_configure("fail", foreground=palette.danger)
-        scrollbar = ttk.Scrollbar(result, orient="vertical", command=self._result.yview)
-        self._result.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self._result.pack(side="left", fill="both", expand=True)
-
-    # ------------------------------------------------------------------ #
-    # 交互
-    # ------------------------------------------------------------------ #
-    def _toggle_compare(self) -> None:
-        """启用 / 禁用比较输入框；关闭时清空期望值。"""
-        enabled = bool(self._compare_enabled_var.get())
-        self._compare_entry.configure(state="normal" if enabled else "disabled")
-        if not enabled:
-            self._compare_var.set("")
-
-    def _browse_file(self) -> None:
-        """选择待计算摘要的文件。"""
-        filename = self._filedialog.askopenfilename(title="选择文件")
-        if filename:
-            self._file_var.set(filename)
-
-    def _show_result(self, text: str, *, passed: bool | None = None) -> None:
-        """把文本写入只读结果区；校验结论按通过 / 失败着色。"""
-        self._result.configure(state="normal")
-        self._result.delete("1.0", "end")
-        digest, newline, verdict = text.partition("\n")
-        self._result.insert("1.0", digest)
-        if newline and passed is not None:
-            self._result.insert("end", "\n" + verdict, ("pass" if passed else "fail",))
-        elif newline:
-            self._result.insert("end", "\n" + verdict)
-        self._result.configure(state="disabled")
-
-    def _expected(self) -> str | None:
-        """返回当前期望值；未启用比较时返回 ``None``。"""
-        if not self._compare_enabled_var.get():
-            return None
-        return self._compare_var.get().strip()
-
-    def _render(self, digest: str) -> None:
-        """输出摘要，启用比较时校验期望值。"""
-        expected = self._expected()
-        if expected is not None and not expected:
-            self._show_result("请输入比较值")
-            return
-        if expected is None:
-            self._show_result(digest)
-            return
-        self._show_result(
-            format_result(digest, expected),
-            passed=verify_checksum(digest, expected),
-        )
-
-    def _compute_string(self) -> None:
-        """计算字符串摘要。"""
-        content = self._string_var.get()
-        if not content.strip():
-            self._show_result("请输入字符串")
-            return
-        try:
-            digest = calculate_string_checksum(content, self._algorithm_var.get())
-        except (ValueError, OSError) as exc:
-            self._show_result(f"错误：{exc}")
-            return
-        self._render(digest)
-
-    def _compute_file(self) -> None:
-        """计算文件摘要。"""
-        raw = self._file_var.get().strip()
-        if not raw or not Path(raw).is_file():
-            self._show_result("请选择有效文件")
-            return
-        try:
-            digest = calculate_file_checksum(Path(raw), self._algorithm_var.get())
-        except (OSError, ValueError) as exc:
-            self._show_result(f"错误：{exc}")
-            return
-        self._render(digest)
-
-    # ------------------------------------------------------------------ #
-    # 生命周期
-    # ------------------------------------------------------------------ #
-    def close(self) -> None:
-        """保存设置并退出窗口。"""
-        save_settings(
-            ChecksumSettings(
-                algorithm=self._algorithm_var.get(),
-                compare=bool(self._compare_enabled_var.get()),
-                geometry=self.root.winfo_geometry(),
-            ),
-            self._settings_path,
-        )
-        self.root.destroy()
-
-
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(lambda: ChecksumWindow(settings_path), "校验和计算器")
+    """创建并运行 Qt 主窗口。"""
+    try:
+        from fcmd.tools.system._checksum_qt import run_qt
+    except ImportError as exc:  # pragma: no cover - 缺少可选依赖
+        raise SystemExit("未安装 Qt 前端：pip install 'PySide6-Essentials'") from exc
+    run_qt(settings_path)
 
 
-@fcmd.tool("checksum", help="打开校验和计算器窗口（Tk）", description=_DESCRIPTION)
+@fcmd.tool("checksum", help="打开校验和计算器窗口（Qt）", description=_DESCRIPTION)
 def launch_cmd() -> None:
     """打开校验和计算器窗口。"""
     run_gui()

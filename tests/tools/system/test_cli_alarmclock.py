@@ -254,31 +254,28 @@ class TestResolveGeometry:
 # GUI 入口
 # ============================================================================ #
 class TestGuiEntry:
-    """GUI 启动入口（不真正创建窗口）。"""
+    """GUI 启动入口（不真正创建 Qt 窗口）。"""
 
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """tkinter 不可用时打印错误并退出。"""
+        """缺少 Qt 前端时提示安装并以非零状态退出。"""
+        import sys
 
-        def fake_window(_path: Path | None) -> None:
-            raise ImportError("no tkinter")
+        monkeypatch.setitem(sys.modules, "fcmd.tools.system._alarmclock_qt", None)
+        with pytest.raises(SystemExit, match="Qt"):
+            alarmclock.run_gui()
 
-        monkeypatch.setattr(alarmclock, "AlarmClockWindow", fake_window)
-        alarmclock.run_gui()  # 不应抛出
+    def test_run_gui_delegates_to_qt_entry(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """run_gui 把设置路径原样交给 Qt 入口。"""
+        import sys
+        import types
 
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """正常创建窗口后进入 mainloop。"""
-        calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(alarmclock, "AlarmClockWindow", lambda _path: _Window())
-        alarmclock.run_gui()
-        assert calls == ["mainloop"]
+        calls: list[object] = []
+        fake = types.ModuleType("fcmd.tools.system._alarmclock_qt")
+        fake.run_qt = lambda path=None: calls.append(path)  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "fcmd.tools.system._alarmclock_qt", fake)
+        path = tmp_path / "settings.json"
+        alarmclock.run_gui(path)
+        assert calls == [path]
 
     def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[bool] = []
