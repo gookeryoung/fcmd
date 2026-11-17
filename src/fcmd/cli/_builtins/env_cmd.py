@@ -3,15 +3,33 @@
 from __future__ import annotations
 
 import argparse
-import platform
 import sys
 from pathlib import Path
 
-from fcmd.cli._discovery import ensure_tools_discovered, import_all_tool_modules, tool_names
-from fcmd.cli._env_helpers import collect_optional_deps_status
+from fcmd.cli._env_helpers import collect_optional_deps_status, platform_string
 from fcmd.console import get_console
 
 __all__ = ["run"]
+
+
+def _tool_stats() -> tuple[int, int]:
+    """返回 ``(工具数, 子命令总数)``。
+
+    优先读生成清单（严格校验过内容指纹）：两个数字在生成期就已固化，无需
+    导入 116 个工具模块。清单缺失 / 过期时按原口径回退全量发现。
+    """
+    from fcmd.cli import _manifest
+
+    manifest = _manifest.load_strict()
+    if manifest is not None:
+        return manifest.tool_count, manifest.subcommand_total
+
+    from fcmd.cli._discovery import ensure_tools_discovered, import_all_tool_modules, tool_names
+    from fcmd.core.toolkit import _TOOL_REGISTRY
+
+    ensure_tools_discovered()
+    import_all_tool_modules()
+    return len(tool_names()), sum(len(subs) for subs in _TOOL_REGISTRY.values())
 
 
 def run(argv: list[str]) -> int:
@@ -34,13 +52,7 @@ def run(argv: list[str]) -> int:
 
     from fcmd import __version__ as fcmd_version
 
-    # 触发全部工具模块导入以统计准确数字
-    ensure_tools_discovered()
-    import_all_tool_modules()
-    from fcmd.core.toolkit import _TOOL_REGISTRY
-
-    tool_count = len(tool_names())
-    subcommand_total = sum(len(subs) for subs in _TOOL_REGISTRY.values())
+    tool_count, subcommand_total = _tool_stats()
 
     optional_deps = collect_optional_deps_status()
 
@@ -57,7 +69,7 @@ def run(argv: list[str]) -> int:
             "python_version": sys.version,
             "python_executable": sys.executable,
             "platform": sys.platform,
-            "platform_info": platform.platform(),
+            "platform_info": platform_string(),
             "tool_count": tool_count,
             "subcommand_total": subcommand_total,
             "optional_deps": optional_deps,
@@ -77,7 +89,7 @@ def run(argv: list[str]) -> int:
     console.print("\n[bold]运行时[/bold]")
     console.print(f"  Python 版本   [cyan]{sys.version.split()[0]}[/cyan]")
     console.print(f"  平台         [cyan]{sys.platform}[/cyan]")
-    console.print(f"  平台信息     [dim]{platform.platform()}[/dim]")
+    console.print(f"  平台信息     [dim]{platform_string()}[/dim]")
     console.print(f"  解释器       [dim]{sys.executable}[/dim]")
 
     console.print("\n[bold]工具[/bold]")

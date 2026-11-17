@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -483,3 +484,41 @@ def test_collect_optional_deps_status_with_missing_dep(monkeypatch: pytest.Monke
     pil_dep = next(d for d in deps if d["package"] == "PIL")
     assert pil_dep["installed"] is False
     assert pil_dep["version"] == ""
+
+
+def test_platform_string_matches_platform_platform() -> None:
+    """轻量平台探测与 ``platform.platform()`` 逐字一致（Windows 快路径等价性）。"""
+    import platform
+
+    from fcmd.cli._env_helpers import platform_string
+
+    assert platform_string() == platform.platform()
+
+
+def test_collect_optional_deps_versions_match_metadata() -> None:
+    """单次 dist-info 扫描读到的版本与 ``importlib.metadata.version`` 一致。"""
+    import importlib.metadata
+
+    from fcmd.cli._env_helpers import _OPTIONAL_DEPS, collect_optional_deps_status
+
+    versions = {dep["package"]: dep["version"] for dep in collect_optional_deps_status()}
+    for _extra, package, distribution in _OPTIONAL_DEPS:
+        try:
+            expected = importlib.metadata.version(distribution)
+        except importlib.metadata.PackageNotFoundError:
+            continue
+        assert versions[package] == expected
+
+
+def test_collect_optional_deps_status_avoids_importlib_metadata() -> None:
+    """探测可选依赖不导入 ``importlib.metadata``（其冷导入约 100ms）。"""
+    code = (
+        "import sys\n"
+        "from fcmd.cli._env_helpers import collect_optional_deps_status\n"
+        "assert collect_optional_deps_status()\n"
+        "assert 'importlib.metadata' not in sys.modules\n"
+        "print('ok')\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().splitlines()[-1] == "ok"

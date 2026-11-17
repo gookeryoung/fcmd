@@ -40,6 +40,8 @@ print(json.dumps({
     "registered": sorted(registered),
     "aliases": {alias: target for alias, target in _TOOL_ALIASES.items() if alias != target and target in registered},
     "descriptions": {name: tool_description(name) for name in canonical},
+    "tool_count": len(canonical),
+    "subcommand_total": sum(len(subs) for subs in _TOOL_REGISTRY.values()),
 }))
 """
 
@@ -125,6 +127,14 @@ def test_aliases_match_discovery(tmp_path: Path) -> None:
     registered = set(snap["registered"])
     manifest_aliases = {alias: target for alias, target in data.ALIASES.items() if target in registered}
     assert manifest_aliases == snap["aliases"]
+
+
+def test_counts_match_discovery(tmp_path: Path) -> None:
+    """清单固化的工具数 / 子命令总数与全量发现一致（``fcmd env`` 直接取用）。"""
+    data = _data()
+    snap = _snapshot(tmp_path)
+    assert data.TOOL_COUNT == snap["tool_count"] == len(data.TOOLS)
+    assert snap["subcommand_total"] == data.SUBCOMMAND_TOTAL
 
 
 def test_layout_fingerprint_matches_tree() -> None:

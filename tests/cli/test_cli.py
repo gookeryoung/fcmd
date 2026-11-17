@@ -1393,6 +1393,50 @@ class TestBuiltinEnv:
         out = capsys.readouterr().out
         assert "(无)" in out
 
+    def test_env_reads_counts_from_manifest_without_discovery(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """env 的工具数 / 子命令数取自生成清单，不触发全量发现。"""
+        import json as json_mod
+
+        from fcmd.cli import _discovery, _manifest_data
+
+        def _boom() -> None:
+            raise AssertionError("env 不应触发全量发现")
+
+        monkeypatch.setattr(_discovery, "ensure_tools_discovered", _boom)
+        app = FcmdApp(["env", "--json"])
+        assert app.run() == 0
+        data = json_mod.loads(capsys.readouterr().out)
+        assert data["tool_count"] == _manifest_data.TOOL_COUNT == len(_manifest_data.TOOLS)
+        assert data["subcommand_total"] == _manifest_data.SUBCOMMAND_TOTAL
+
+    def test_env_falls_back_to_discovery_when_manifest_unavailable(
+        self,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """清单严格校验失败时回退全量发现，计数口径不变。"""
+        import json as json_mod
+
+        from fcmd.cli import _discovery
+        from fcmd.core import toolkit
+
+        calls: list[str] = []
+        monkeypatch.setattr("fcmd.cli._manifest.load_strict", lambda: None)
+        monkeypatch.setattr(_discovery, "ensure_tools_discovered", lambda: calls.append("discover"))
+        monkeypatch.setattr(_discovery, "import_all_tool_modules", lambda: calls.append("import"))
+        monkeypatch.setattr(_discovery, "tool_names", lambda: ["a", "b"])
+        monkeypatch.setattr(toolkit, "_TOOL_REGISTRY", {"a": {None: object()}, "b": {None: object(), "x": object()}})
+        app = FcmdApp(["env", "--json"])
+        assert app.run() == 0
+        data = json_mod.loads(capsys.readouterr().out)
+        assert data["tool_count"] == 2
+        assert data["subcommand_total"] == 3
+        assert calls == ["discover", "import"]
+
 
 class TestBuiltinDoctor:
     """``fcmd doctor`` 内建命令测试。"""

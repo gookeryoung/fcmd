@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from fcmd.cli._manifest import ToolEntry
 
-__all__ = ["ALIASES", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "TOOLS"]
+__all__ = ["ALIASES", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "SUBCOMMAND_TOTAL", "TOOLS", "TOOL_COUNT"]
 
 # 清单格式版本（与 fcmd.cli._manifest.SCHEMA 比对，不一致即视为过期）
-SCHEMA = 3
+SCHEMA = 4
 
 TOOLS: dict[str, ToolEntry] = {
     "alarmclock": ToolEntry("alarmclock", "python", "fcmd.tools.system.alarmclock"),
@@ -396,6 +396,10 @@ LAYOUT: tuple[str, ...] = (
 
 # 工具源码内容指纹（列表快路径的严格校验）
 DIGEST = "4b3e8e89714b3bffa88823f5d9fbcb1b"
+
+# 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
+TOOL_COUNT = 116
+SUBCOMMAND_TOTAL = 405
 
 
 if __name__ == "__main__":  # pragma: no cover

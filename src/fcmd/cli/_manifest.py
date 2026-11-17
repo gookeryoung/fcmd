@@ -48,7 +48,8 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 
 # 清单格式版本：与 ``_manifest_data.SCHEMA`` 不一致时视为过期。
 # 3：工具清单只覆盖 Python 模块，移除重名集合与 TOML 文件指纹。
-SCHEMA = 3
+# 4：新增工具数与子命令总数（``fcmd env`` 据此免去全量发现）。
+SCHEMA = 4
 
 
 class ToolEntry(NamedTuple):
@@ -66,6 +67,8 @@ class _Manifest(NamedTuple):
     aliases: dict[str, str]
     descriptions: dict[str, str]
     digest: str
+    tool_count: int
+    subcommand_total: int
 
 
 _loaded = False
@@ -211,6 +214,8 @@ def _build() -> _Manifest | None:
         dict(data.ALIASES),
         dict(data.DESCRIPTIONS),
         data.DIGEST,
+        data.TOOL_COUNT,
+        data.SUBCOMMAND_TOTAL,
     )
 
 
@@ -284,6 +289,10 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
     _discovery._TOOL_MODULES.clear()
     _discovery.ensure_tools_discovered()
 
+    # 计数口径与 fcmd env 的运行时统计一致：工具数 = 规范名去重，子命令数 = 注册表条目总和
+    tool_count = len(set(_discovery._TOOL_ALIASES.values()))
+    subcommand_total = sum(len(subs) for subs in _TOOL_REGISTRY.values())
+
     registered = set(_TOOL_REGISTRY)
     python_tools = {name: path for name, path in _discovery._TOOL_MODULES.items() if name in registered}
     tools = {name: ToolEntry(name, "python", path) for name, path in python_tools.items()}
@@ -317,7 +326,7 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
         "",
         "from fcmd.cli._manifest import ToolEntry",
         "",
-        '__all__ = ["ALIASES", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "TOOLS"]',
+        '__all__ = ["ALIASES", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "SUBCOMMAND_TOTAL", "TOOLS", "TOOL_COUNT"]',
         "",
         "# 清单格式版本（与 fcmd.cli._manifest.SCHEMA 比对，不一致即视为过期）",
         f"SCHEMA = {SCHEMA}",
@@ -352,6 +361,10 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
         "",
         "# 工具源码内容指纹（列表快路径的严格校验）",
         f"DIGEST = {_literal(digest)}",
+        "",
+        "# 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）",
+        f"TOOL_COUNT = {tool_count}",
+        f"SUBCOMMAND_TOTAL = {subcommand_total}",
         "",
         "",
         'if __name__ == "__main__":  # pragma: no cover',
