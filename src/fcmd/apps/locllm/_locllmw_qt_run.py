@@ -19,7 +19,6 @@ from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
-    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -529,24 +528,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
         layout.addStretch(1)
 
-        outer.addWidget(self._build_action_bar())
-
-    def _build_action_bar(self) -> QFrame:
-        """固定底部动作栏：只保留启动 / 停止选中 / 停止全部三个大按钮。"""
-        bar = QFrame(self)
-        bar.setObjectName("ActionBar")
-        row = QHBoxLayout(bar)
-        row.setContentsMargins(0, 8, 0, 0)
-        row.setSpacing(8)
-        self.stop_selected_button = button("停止选中服务")
-        self.stop_selected_button.setObjectName("RunAction")
-        self.stop_all_button = button("停止全部服务", kind="danger")
-        self.stop_all_button.setObjectName("RunDanger")
-        for widget in (self.stop_selected_button, self.stop_all_button):
-            row.addWidget(widget)
-        row.addStretch(1)
-        return bar
-
     def _wire(self) -> None:
         self.kv_choice.changed.connect(lambda _key: self._mark_manual("kv"))
         self.mode_choice.changed.connect(lambda _key: self._on_mode_changed())
@@ -555,8 +536,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.ubatch_edit.textChanged.connect(lambda _text: self._mark_manual("ubatch"))
         self.parallel_edit.textChanged.connect(lambda _text: self._mark_manual("parallel"))
         self.threads_http_edit.textChanged.connect(lambda _text: self._mark_manual("threads_http"))
-        self.stop_selected_button.clicked.connect(self.stop_selected)
-        self.stop_all_button.clicked.connect(self.stop_all)
         for widget in (
             self.host_edit,
             self.port_edit,
@@ -835,8 +814,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_action_button.style().unpolish(self.model_action_button)
         self.model_action_button.style().polish(self.model_action_button)
         self.model_action_button.setEnabled(not busy and has_model)
-        self.stop_selected_button.setEnabled(not busy and selected is not None)
-        self.stop_all_button.setEnabled(not busy and bool(self.state.states))
 
     @staticmethod
     def _load_state_safe(name: str) -> ServeState | None:
@@ -854,10 +831,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         else:
             self.state.selected_model = None
             self.state.selectionChanged.emit(None, False)
+        self._refresh_combo_current_color()
 
     def _service_status_text(self, path: Path) -> str:
         """只有正在运行的服务才返回状态；未运行不占用下拉项文本。"""
-        return "● 已启动" if self.state.is_running(path) else ""
+        return "已启动" if self.state.is_running(path) else ""
 
     def _paint_combo_status(self, index: int, path: Path) -> None:
         status = self._service_status_text(path)
@@ -866,6 +844,13 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return
         green = QColor(_qt_theme.load_theme().palette.success)
         self.model_combo.setItemData(index, QBrush(green), Qt.ItemDataRole.ForegroundRole)
+
+    def _refresh_combo_current_color(self) -> None:
+        path = self.state.selected_model
+        running = path is not None and bool(self._service_status_text(path))
+        self.model_combo.setProperty("running", "true" if running else "false")
+        self.model_combo.style().unpolish(self.model_combo)
+        self.model_combo.style().polish(self.model_combo)
 
     def _populate_model_combo(self) -> None:
         """把当前扫描到的 GGUF 与启动状态填入顶部下拉框，保留已选模型。"""
@@ -882,6 +867,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.blockSignals(False)
         if current is not None:
             self._select_model_combo(current)
+        self._refresh_combo_current_color()
 
     def _select_model_combo(self, path: Path) -> None:
         target = str(path)
@@ -900,6 +886,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.blockSignals(True)
         self.model_combo.setCurrentIndex(index)
         self.model_combo.blockSignals(False)
+        self._refresh_combo_current_color()
 
     def _on_selection_changed(self, path: object, update_name: bool) -> None:
         if path is None:

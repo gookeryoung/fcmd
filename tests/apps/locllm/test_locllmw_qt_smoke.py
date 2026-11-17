@@ -122,12 +122,10 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     assert page.mode_choice.key() in {"speed", "balanced", "long", "max-context", "low-vram"}
     assert page.model_action_button.text() == "启动服务"
     assert page.model_action_button.isEnabled()
-    assert not page.stop_selected_button.isEnabled()
-    assert not page.stop_all_button.isEnabled()
+    assert not hasattr(page, "stop_selected_button")
+    assert not hasattr(page, "stop_all_button")
     window.state.set_busy(True)
     assert not page.model_action_button.isEnabled()
-    assert not page.stop_selected_button.isEnabled()
-    assert not page.stop_all_button.isEnabled()
     window.state.set_busy(False)
 
 
@@ -238,8 +236,8 @@ def test_pages_use_scroll_container(window: Any) -> None:
         assert page.findChild(PageScroll) is not None, key
 
 
-def test_run_page_keeps_action_bar_visible(window: Any) -> None:
-    """窗口缩到最小、展开高级参数后，底栏动作仍可见。"""
+def test_run_page_has_no_bottom_action_bar(window: Any) -> None:
+    """底部不再保留启停按钮，动作集中到顶部模型卡片。"""
     from PySide6.QtWidgets import QApplication
 
     window.show()
@@ -248,17 +246,12 @@ def test_run_page_keeps_action_bar_visible(window: Any) -> None:
     window.run_page.advanced.set_expanded(True)
     QApplication.processEvents()
     run = window.run_page
-    assert [run.stop_selected_button.text(), run.stop_all_button.text()] == [
-        "停止选中服务",
-        "停止全部服务",
-    ]
+    assert not hasattr(run, "stop_selected_button")
+    assert not hasattr(run, "stop_all_button")
     assert not hasattr(run, "start_button")
     assert not hasattr(run, "status_button")
     assert not hasattr(run, "browser_button")
     assert not hasattr(run, "logs_button")
-    assert run.stop_selected_button.sizeHint().height() >= 40
-    assert not run.stop_selected_button.isHidden()
-    assert run.stop_selected_button.mapTo(window, run.stop_selected_button.rect().bottomLeft()).y() <= window.height()
 
 
 def test_chat_input_buttons_share_one_row(window: Any) -> None:
