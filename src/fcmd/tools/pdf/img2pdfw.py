@@ -1,4 +1,4 @@
-"""img2pdfw - 图片转 PDF 转换器（Tk GUI）。
+"""img2pdfw - 图片转 PDF 转换器（Qt GUI）。
 
 交互参考 ``bitool_gui.img2pdf``：选择图片文件或目录，设置页面尺寸、DPI
 与 EXIF 方向校正，一键合并为 PDF。目录输入按文件名顺序排版并默认输出
@@ -15,15 +15,11 @@
 from __future__ import annotations
 
 import contextlib
-import queue
-import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 
 __all__ = [
@@ -44,7 +40,7 @@ __all__ = [
 __version__ = "0.1.0"
 
 _DESCRIPTION = (
-    "图片转 PDF 转换器窗口版（Tk）：支持图片文件或目录批量、页面尺寸（A3/A4/A5/B5/letter/legal）"
+    "图片转 PDF 转换器窗口版（Qt）：支持图片文件或目录批量、页面尺寸（A3/A4/A5/B5/letter/legal）"
     "与 DPI 设置、EXIF 方向校正；设置持久化到 ~/.fcmd/ui/img2pdfw.json"
 )
 
@@ -177,349 +173,17 @@ def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -
     )
 
 
-# ---------------------------------------------------------------------- #
-# Tk 界面
-# ---------------------------------------------------------------------- #
-class Img2PdfWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """Tk 图片转 PDF 转换器主窗口。"""
+def run_gui() -> None:
+    """创建并运行 Qt 主窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    try:
+        from fcmd.tools.pdf._img2pdfw_qt import run_qt
+    except ImportError as exc:  # pragma: no cover - 安装完整时不会触发
+        raise SystemExit("未安装 Qt 前端：pip install 'PySide6-Essentials'") from exc
 
-    def __init__(self, settings_path: Path | None = None) -> None:
-        import tkinter as tk
-        from tkinter import filedialog, messagebox, ttk
-
-        self._tk = tk
-        self._filedialog = filedialog
-        self._messagebox = messagebox
-        self._ttk = ttk
-        self._settings_path = settings_path
-        self._settings = load_settings(settings_path)
-        self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
-        self._worker: threading.Thread | None = None
-
-        self.root, self._theme = _guiwindow.create_root(
-            title=f"图片转 PDF 转换器 v{__version__}",
-            saved_geometry=self._settings.geometry,
-            default_geometry=DEFAULT_GEOMETRY,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-            on_close=self.close,
-        )
-
-        self._input_var = tk.StringVar(value=self._settings.input_path)
-        self._output_var = tk.StringVar(value=self._settings.output_path)
-        self._page_size_var = tk.StringVar(value=format_page_size(self._settings.page_size))
-        self._dpi_var = tk.StringVar(value=str(self._settings.dpi))
-        self._normalize_var = tk.BooleanVar(value=self._settings.normalize)
-        self._status_var = tk.StringVar(value="就绪")
-
-        self._build_widgets()
-        _guitheme.install_theme_switcher(self.root)
-
-    def _build_widgets(self) -> None:
-        ttk = self._ttk
-        palette = self._theme.palette
-        self._build_menu()
-
-        input_frame = ttk.LabelFrame(self.root, text="输入", padding=self._theme.spacing.sm)
-        input_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.md, self._theme.spacing.xs))
-        ttk.Label(input_frame, text="图片/目录：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(input_frame, textvariable=self._input_var).pack(
-            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
-        )
-        self._browse_input_dir_button = ttk.Button(input_frame, text="目录…", command=self._browse_input_dir)
-        self._browse_input_dir_button.pack(side="right")
-        self._browse_input_file_button = ttk.Button(input_frame, text="图片…", command=self._browse_input_file)
-        self._browse_input_file_button.pack(side="right", padx=(0, self._theme.spacing.xs))
-
-        output_frame = ttk.LabelFrame(self.root, text="输出", padding=self._theme.spacing.sm)
-        output_frame.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-        ttk.Label(output_frame, text="PDF 路径：", width=10, anchor="w").pack(side="left")
-        ttk.Entry(output_frame, textvariable=self._output_var).pack(
-            side="left", fill="x", expand=True, padx=(0, self._theme.spacing.sm)
-        )
-        self._browse_output_button = ttk.Button(output_frame, text="浏览…", command=self._browse_output)
-        self._browse_output_button.pack(side="right")
-        ttk.Label(
-            output_frame,
-            text="留空时：目录输入输出到 <目录名>.pdf，单文件输出到同名 PDF",
-            foreground=palette.muted,
-            anchor="w",
-        ).pack(side="bottom", fill="x", pady=(self._theme.spacing.sm, 0))
-
-        options_frame = ttk.LabelFrame(self.root, text="选项", padding=self._theme.spacing.sm)
-        options_frame.pack(fill="x", padx=self._theme.spacing.md, pady=self._theme.spacing.xs)
-        ttk.Label(options_frame, text="页面尺寸：", width=10, anchor="w").pack(side="left")
-        self._page_size_combo = ttk.Combobox(
-            options_frame,
-            textvariable=self._page_size_var,
-            values=PAGE_SIZE_OPTIONS,
-            state="readonly",
-            width=10,
-        )
-        self._page_size_combo.pack(side="left", padx=(0, self._theme.spacing.lg))
-        ttk.Label(options_frame, text="DPI：", anchor="w").pack(side="left")
-        self._dpi_spinbox = ttk.Spinbox(
-            options_frame,
-            from_=36,
-            to=1200,
-            increment=1,
-            textvariable=self._dpi_var,
-            width=8,
-        )
-        self._dpi_spinbox.pack(side="left", padx=(self._theme.spacing.xs, self._theme.spacing.lg))
-        self._normalize_check = ttk.Checkbutton(
-            options_frame,
-            text="校正 EXIF 方向",
-            variable=self._normalize_var,
-        )
-        self._normalize_check.pack(side="left")
-
-        action_frame = ttk.Frame(self.root)
-        action_frame.pack(fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, 0))
-        self._convert_button = ttk.Button(
-            action_frame,
-            text="开始转换",
-            command=self._start_conversion,
-            style="Accent.TButton",
-            padding=(self._theme.spacing.lg + self._theme.spacing.xxs, self._theme.spacing.xs),
-        )
-        self._convert_button.pack(side="right")
-        ttk.Label(action_frame, textvariable=self._status_var, anchor="w").pack(side="left", fill="x", expand=True)
-
-        progress_frame = ttk.Frame(self.root)
-        progress_frame.pack(
-            fill="x", padx=self._theme.spacing.md, pady=(self._theme.spacing.sm, self._theme.spacing.xs)
-        )
-        self._progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=1, value=0)
-        self._progress.pack(fill="x")
-
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=self._theme.spacing.sm)
-        log_frame.pack(
-            fill="both", expand=True, padx=self._theme.spacing.md, pady=(self._theme.spacing.xs, self._theme.spacing.md)
-        )
-        self._log_text = _guiwindow.create_log(log_frame, height=12)
-        self._append_log("选择图片或目录，设置页面尺寸与 DPI 后点击「开始转换」。")
-
-    def _build_menu(self) -> None:
-        _guiwindow.build_menu(self.root, on_close=self.close, on_about=self._show_about)
-
-    # ------------------------------------------------------------------ #
-    # 交互
-    # ------------------------------------------------------------------ #
-    def _show_about(self) -> None:
-        """关于对话框。"""
-        self._messagebox.showinfo(
-            "关于",
-            f"图片转 PDF 转换器 v{__version__}\n\n"
-            "支持 PNG/JPG/BMP/GIF/WebP/TIFF/ICO\n"
-            "页面尺寸：auto/A4/A3/A5/B5/letter/legal\n"
-            "目录输入按文件名顺序合并",
-        )
-
-    def _browse_input_file(self) -> None:
-        """选择输入图片文件。"""
-        filename = self._filedialog.askopenfilename(
-            title="选择输入图片",
-            filetypes=[
-                ("图片文件", "*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff *.ico"),
-                ("所有文件", "*.*"),
-            ],
-        )
-        if filename:
-            self._input_var.set(filename)
-
-    def _browse_input_dir(self) -> None:
-        """选择输入目录。"""
-        directory = self._filedialog.askdirectory(title="选择输入目录")
-        if directory:
-            self._input_var.set(directory)
-
-    def _browse_output(self) -> None:
-        """选择输出 PDF 文件。"""
-        raw_input = self._input_var.get().strip()
-        input_path = Path(raw_input).expanduser() if raw_input else None
-        if input_path is not None and input_path.exists():
-            suggested = default_output_path(input_path)
-        else:
-            suggested = Path("output.pdf")
-        filename = self._filedialog.asksaveasfilename(
-            title="选择输出 PDF",
-            defaultextension=".pdf",
-            initialfile=suggested.name,
-            initialdir=str(suggested.parent) if suggested.parent.exists() else "",
-            filetypes=[("PDF 文件", "*.pdf"), ("所有文件", "*.*")],
-        )
-        if filename:
-            self._output_var.set(filename)
-
-    def _append_log(self, message: str) -> None:
-        """向只读日志区追加带时间戳的一行并滚动到底部。"""
-        _guiwindow.append_log(self._log_text, message, timestamp=True)
-
-    def _clear_log(self) -> None:
-        """清空日志区。"""
-        _guiwindow.clear_log(self._log_text)
-
-    def _set_busy(self, busy: bool) -> None:
-        """转换期间禁用按钮，避免重复提交。"""
-        state = "disabled" if busy else "normal"
-        for button in (
-            self._convert_button,
-            self._browse_input_file_button,
-            self._browse_input_dir_button,
-            self._browse_output_button,
-        ):
-            button.configure(state=state)
-
-    # ------------------------------------------------------------------ #
-    # 转换（后台线程 + 队列回传，避免阻塞 Tk 主循环）
-    # ------------------------------------------------------------------ #
-    def _start_conversion(self) -> None:
-        """校验输入并启动后台转换线程。"""
-        if self._worker is not None and self._worker.is_alive():
-            return
-
-        raw_input = self._input_var.get().strip()
-        if not raw_input:
-            self._append_log("错误：请选择输入图片或目录")
-            return
-        input_path = Path(raw_input).expanduser()
-        if not input_path.exists():
-            self._append_log(f"错误：输入路径不存在 {input_path}")
-            return
-
-        try:
-            page_size = normalize_page(self._page_size_var.get())
-            dpi = parse_dpi(self._dpi_var.get())
-        except ValueError as exc:
-            self._append_log(f"错误：{exc}")
-            return
-
-        raw_output = self._output_var.get().strip()
-        output_path = Path(raw_output).expanduser() if raw_output else default_output_path(input_path)
-        from fcmd.tools.pdf.img2pdf import resolve_pdf_output
-
-        try:
-            output_path = resolve_pdf_output(output_path)
-        except ValueError as exc:
-            self._append_log(f"错误：{exc}")
-            return
-
-        self._clear_log()
-        self._set_busy(True)
-        self._progress.configure(maximum=1, value=0)
-        self._status_var.set("正在转换…")
-        self._append_log(f"输入：{input_path}")
-        self._append_log(f"输出：{output_path}")
-        self._append_log(f"页面尺寸：{page_size}；DPI：{dpi}")
-
-        self._worker = _guiwindow.start_worker(
-            self.root,
-            self._run_conversion,
-            (input_path, output_path, page_size, dpi, self._normalize_var.get()),
-            self._poll_queue,
-        )
-
-    def _run_conversion(
-        self,
-        input_path: Path,
-        output_path: Path,
-        page_size: str,
-        dpi: int,
-        normalize: bool,
-    ) -> None:
-        """后台线程：执行转换并把进度 / 结果写入队列。"""
-        from fcmd.tools.pdf.img2pdf import collect_pdf_images, images_to_pdf
-
-        def progress(done: int, total: int, message: str) -> None:
-            self._queue.put(("progress", done, total, message))
-
-        try:
-            images = collect_pdf_images([input_path])
-            self._queue.put(("message", f"找到 {len(images)} 张图片"))
-            result = images_to_pdf(
-                images,
-                output_path,
-                page_size=page_size,
-                dpi=dpi,
-                normalize=normalize,
-                progress=progress,
-            )
-        except Exception as exc:  # 后台线程需统一回传给界面
-            self._queue.put(("error", str(exc)))
-            return
-        self._queue.put(("done", result, len(images)))
-
-    def _poll_queue(self) -> None:
-        """在主线程消费后台事件，更新进度条、日志与状态。"""
-        while True:
-            try:
-                event = self._queue.get_nowait()
-            except queue.Empty:
-                break
-
-            kind = event[0]
-            if kind == "message":
-                _, message = event
-                self._append_log(message)
-            elif kind == "progress":
-                _, done, total, message = event
-                self._progress.configure(maximum=max(total, 1), value=done)
-                self._append_log(message)
-            elif kind == "done":
-                _, output, total = event
-                self._progress.configure(maximum=max(total, 1), value=total)
-                self._append_log(f"完成：{total} 页 -> {output}")
-                self._status_var.set(f"完成：{total} 页")
-                self._set_busy(False)
-                self._worker = None
-                self._messagebox.showinfo("转换完成", f"已生成 PDF：\n{output}")
-                return
-            elif kind == "error":
-                _, message = event
-                self._append_log(f"错误：{message}")
-                self._status_var.set("转换失败")
-                self._set_busy(False)
-                self._worker = None
-                self._messagebox.showerror("转换失败", message)
-                return
-
-        if self._worker is not None:
-            self.root.after(80, self._poll_queue)
-
-    # ------------------------------------------------------------------ #
-    # 生命周期
-    # ------------------------------------------------------------------ #
-    def close(self) -> None:
-        """保存设置并退出窗口（后台转换线程为 daemon，随进程结束）。"""
-        try:
-            page_size = normalize_page(self._page_size_var.get())
-        except ValueError:
-            page_size = DEFAULT_PAGE_SIZE
-        try:
-            dpi = parse_dpi(self._dpi_var.get())
-        except ValueError:
-            dpi = DEFAULT_DPI
-        save_settings(
-            Img2PdfSettings(
-                input_path=self._input_var.get(),
-                output_path=self._output_var.get(),
-                page_size=page_size,
-                dpi=dpi,
-                normalize=self._normalize_var.get(),
-                geometry=self.root.winfo_geometry(),
-            ),
-            self._settings_path,
-        )
-        self.root.destroy()
+    run_qt()
 
 
-def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(lambda: Img2PdfWindow(settings_path), "图片转 PDF 转换器")
-
-
-@fcmd.tool("img2pdfw", help="打开图片转 PDF 转换器窗口（Tk）", description=_DESCRIPTION)
+@fcmd.tool("img2pdfw", help="打开图片转 PDF 转换器窗口（Qt）", description=_DESCRIPTION)
 def launch_cmd() -> None:
     """打开图片转 PDF 转换器窗口。"""
     run_gui()
