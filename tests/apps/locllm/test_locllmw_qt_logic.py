@@ -349,6 +349,7 @@ def test_model_tree_keeps_name_readable() -> None:
     tree.refresh()
     header = tree.tree.header()
     assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive
+    assert not header.stretchLastSection()
     assert header.sectionSize(0) >= NAME_COLUMN_WIDTH
     assert tree.tree.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     group = tree.tree.topLevelItem(0)

@@ -135,6 +135,7 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
         self.tree.setUniformRowHeights(True)
         self.tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         header = self.tree.header()
+        header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         header.resizeSection(0, NAME_COLUMN_WIDTH)
         for column, width in ((1, 90), (2, 130), (3, 110), (4, 90)):
