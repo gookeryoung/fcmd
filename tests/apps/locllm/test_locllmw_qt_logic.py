@@ -38,6 +38,7 @@ from fcmd.apps.locllm._locllmw_qt_overview import (
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
     memory_guard,
+    parse_custom_args,
     parse_int,
     parse_optional_int,
     pick_model,
@@ -103,6 +104,13 @@ def test_parse_int_and_optional_int() -> None:
         parse_int("abc", "端口")
     with pytest.raises(ServeError, match="上下文 必须是整数"):
         parse_optional_int("x", "上下文")
+
+
+def test_parse_custom_args_splits_shell_like_text() -> None:
+    assert parse_custom_args("") == ()
+    assert parse_custom_args("  --no-mmap   --flash-attn on  ") == ("--no-mmap", "--flash-attn", "on")
+    with pytest.raises(ValueError):
+        parse_custom_args("'unclosed")
 
 
 def test_memory_guard_passes_with_enough_vram(monkeypatch: pytest.MonkeyPatch) -> None:

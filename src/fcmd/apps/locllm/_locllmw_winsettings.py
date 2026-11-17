@@ -42,6 +42,7 @@ class LocllmSettings:
     measured: dict[str, dict[str, Any]] | None = None
     download: dict[str, Any] | None = None
     convert: dict[str, Any] | None = None
+    run_params: dict[str, dict[str, Any]] | None = None
     chat_settings_open: bool = False
     sidebar_collapsed: bool = False
 
@@ -74,6 +75,11 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         convert = raw.get("convert")
         if isinstance(convert, dict):
             settings.convert = convert
+        run_params = raw.get("run_params")
+        if isinstance(run_params, dict):
+            settings.run_params = {
+                str(key): dict(value) for key, value in run_params.items() if isinstance(value, dict)
+            }
         chat_settings_open = raw.get("chat_settings_open")
         if isinstance(chat_settings_open, bool):
             settings.chat_settings_open = chat_settings_open
@@ -92,6 +98,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "measured": settings.measured,
             "download": settings.download,
             "convert": settings.convert,
+            "run_params": settings.run_params,
             "chat_settings_open": settings.chat_settings_open,
             "sidebar_collapsed": settings.sidebar_collapsed,
         },

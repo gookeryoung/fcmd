@@ -10,12 +10,11 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -65,6 +64,7 @@ __all__ = [
     "build_plan_from",
     "default_service_name",
     "memory_guard",
+    "parse_custom_args",
     "parse_int",
     "parse_optional_int",
     "plan_lines",
@@ -88,6 +88,11 @@ def parse_optional_int(text: str, label: str) -> int | None:
     if not text.strip():
         return None
     return parse_int(text, label)
+
+
+def parse_custom_args(text: str) -> tuple[str, ...]:
+    """按 shell 规则拆分自定义启动参数；空串返回空元组。"""
+    return tuple(shlex.split(text.strip())) if text.strip() else ()
 
 
 def memory_guard(plan: LaunchPlan, usage: tuple[int, int] | None, available_memory: int | None = None) -> str:
@@ -228,6 +233,7 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
         api_key=str(values.get("api_key", "")).strip() or DEFAULT_API_KEY,
         threads=parse_int(str(values.get("threads", DEFAULT_THREADS)), "线程数"),
         tune=str(values.get("tune", "auto")),
+        extra_args=parse_custom_args(str(values.get("extra_args", ""))),
         gpu_mib=values.get("gpu_mib"),
     )
 
@@ -235,20 +241,17 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
 class RunPage(QWidget):  # pragma: no cover - Qt 控件
     """运行页：参数表单 + 模型列表 + 计划预览 + 启停动作。"""
 
-    fitChanged = Signal()
-    """档位 / 调优变化导致硬件适配口径变化，供模型页同步刷新。"""
-
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
         self._syncing_tune = False
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
-        self._plan_command = ""
         self._health_target = "settings"
         self._build()
         self._wire()
         self.on_models_changed()
         self.refresh_service_names()
+        self._refresh_command_preview()
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -270,6 +273,23 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         health_row.addWidget(self.health_label, 1)
         health_row.addWidget(self.health_button)
         layout.addLayout(health_row)
+
+        self.model_card = Card("选择模型")
+        model_row = QHBoxLayout()
+        self.model_combo = QComboBox(self.model_card)
+        self.model_combo.addItem("（未选择，按档位自动查找）", None)
+        self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
+        model_row.addWidget(self.model_combo, 1)
+        self.browse_button = button("浏览…")
+        self.browse_button.clicked.connect(self._browse)
+        self.clear_button = button("清除选择")
+        self.clear_button.clicked.connect(self._clear_selection)
+        model_row.addWidget(self.browse_button)
+        model_row.addWidget(self.clear_button)
+        self.model_card.body.addLayout(model_row)
+        self.model_hint = HintLabel("")
+        self.model_card.body.addWidget(self.model_hint)
+        layout.addWidget(self.model_card)
 
         self.params_card = Card("启动参数")
         form = FormGrid(self.params_card)
@@ -306,42 +326,31 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         adv_form.add_pair("API Key", self.api_key_edit, "等待就绪（秒）", self.wait_edit)
         self.advanced.body.addWidget(adv_form)
         self.params_card.body.addWidget(self.advanced)
+
+        self.params_card.body.addWidget(QLabel("启动命令预览", self.params_card))
+        self.command_preview = QPlainTextEdit(self.params_card)
+        self.command_preview.setObjectName("Log")
+        self.command_preview.setReadOnly(True)
+        self.command_preview.setFixedHeight(64)
+        self.params_card.body.addWidget(self.command_preview)
+
+        self.params_card.body.addWidget(QLabel("自定义启动参数", self.params_card))
+        self.extra_args_edit = QPlainTextEdit(self.params_card)
+        self.extra_args_edit.setFixedHeight(56)
+        self.extra_args_edit.setPlaceholderText("每行或空格分隔，例如：--no-mmap --flash-attn on")
+        self.params_card.body.addWidget(self.extra_args_edit)
+        params_actions = QHBoxLayout()
+        self.save_params_button = button("保存参数")
+        self.save_params_button.clicked.connect(self._save_params)
+        self.fill_params_button = button("填入当前参数")
+        self.fill_params_button.clicked.connect(self._fill_params)
+        params_actions.addWidget(self.save_params_button)
+        params_actions.addWidget(self.fill_params_button)
+        params_actions.addStretch(1)
+        self.params_card.body.addLayout(params_actions)
         layout.addWidget(self.params_card)
 
-        self.models_card = Card("运行模型（模型目录中的 GGUF）")
-        from fcmd.apps.locllm._locllmw_qt_models import ModelTree
-
-        self.tree = ModelTree(self.state, self.models_card)
-        self.tree.set_fit_resolver(self._fit_text)
-        self.tree.tree.setMinimumHeight(240)
-        self.models_card.body.addWidget(self.tree)
-        pick_row = QHBoxLayout()
-        self.model_label = QLabel("未选择（按档位自动在模型目录中查找）", self.models_card)
-        self.model_label.setObjectName("Hint")
-        self.model_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        pick_row.addWidget(self.model_label, 1)
-        self.expand_button = button("展开全部", kind="ghost")
-        self.collapse_button = button("收起全部", kind="ghost")
-        self.browse_button = button("浏览…")
-        self.clear_button = button("清除选择")
-        for widget in (self.expand_button, self.collapse_button, self.browse_button, self.clear_button):
-            pick_row.addWidget(widget)
-        self.models_card.body.addLayout(pick_row)
-        layout.addWidget(self.models_card, 1)
-
-        self.plan_card = Card("启动计划")
-        self.plan_view = QPlainTextEdit(self.plan_card)
-        self.plan_view.setObjectName("Log")
-        self.plan_view.setReadOnly(True)
-        self.plan_view.setFixedHeight(120)
-        self.plan_view.setPlainText("尚未生成：点击「预览计划」查看命令、显存估算与建议。")
-        copy_row = QHBoxLayout()
-        copy_row.addStretch(1)
-        self.copy_plan_button = button("复制命令", kind="ghost")
-        copy_row.addWidget(self.copy_plan_button)
-        self.plan_card.body.addWidget(self.plan_view)
-        self.plan_card.body.addLayout(copy_row)
-        layout.addWidget(self.plan_card)
+        layout.addStretch(1)
 
         outer.addWidget(self._build_action_bar())
 
@@ -355,13 +364,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
         service_row = QHBoxLayout()
         service_row.setSpacing(6)
-        self.preview_button = button("预览计划")
         self.start_button = button("启动服务", kind="primary")
         self.stop_selected_button = button("停止选中服务")
         self.stop_all_button = button("停止全部服务", kind="danger")
         self.status_button = button("刷新进程状态", kind="ghost")
         for widget in (
-            self.preview_button,
             self.start_button,
             self.stop_selected_button,
             self.stop_all_button,
@@ -394,19 +401,33 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.ubatch_edit.textChanged.connect(lambda _text: self._mark_manual("ubatch"))
         self.parallel_edit.textChanged.connect(lambda _text: self._mark_manual("parallel"))
         self.threads_http_edit.textChanged.connect(lambda _text: self._mark_manual("threads_http"))
-        self.preview_button.clicked.connect(self.preview)
         self.start_button.clicked.connect(self.start)
         self.stop_selected_button.clicked.connect(self.stop_selected)
         self.stop_all_button.clicked.connect(self.stop_all)
         self.status_button.clicked.connect(self.refresh_status)
         self.browser_button.clicked.connect(self.open_browser)
         self.logs_button.clicked.connect(lambda: self.state.navigate("monitor"))
-        self.copy_plan_button.clicked.connect(self.copy_plan_command)
-        self.browse_button.clicked.connect(self._browse)
-        self.clear_button.clicked.connect(self._clear_selection)
-        self.expand_button.clicked.connect(self.tree.expand_all)
-        self.collapse_button.clicked.connect(self.tree.collapse_all)
-        self.tree.modelSelected.connect(self._on_model_picked)
+        for widget in (
+            self.name_combo,
+            self.profile_combo,
+            self.tune_combo,
+            self.host_edit,
+            self.port_edit,
+            self.threads_edit,
+            self.ctx_edit,
+            self.kv_combo,
+            self.ubatch_edit,
+            self.alias_edit,
+            self.parallel_edit,
+            self.threads_http_edit,
+            self.api_key_edit,
+            self.wait_edit,
+        ):
+            signal = getattr(widget, "textChanged", None) or getattr(widget, "currentTextChanged", None)
+            if signal is not None:
+                signal.connect(lambda *_args: self._refresh_command_preview())
+        self.extra_args_edit.textChanged.connect(self._refresh_command_preview)
+        self.model_combo.currentIndexChanged.connect(self._refresh_command_preview)
         self.state.modelsChanged.connect(self._on_models_changed_signal)
         self.state.servicesChanged.connect(self._on_services_changed)
         self.state.selectionChanged.connect(self._on_selection_changed)
@@ -435,9 +456,73 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             "parallel": self.parallel_edit.text(),
             "threads_http": self.threads_http_edit.text(),
             "api_key": self.api_key_edit.text(),
+            "extra_args": self.extra_args_edit.toPlainText(),
             "model": self._resolved_model(),
             "gpu_mib": self.state.gpu_mib,
         }
+
+    def _param_values(self) -> dict[str, str]:
+        """可持久化的表单值（不含模型路径与硬件快照）。"""
+        return {
+            "name": self.name_combo.currentText(),
+            "profile": self.profile_combo.currentText(),
+            "host": self.host_edit.text(),
+            "port": self.port_edit.text(),
+            "threads": self.threads_edit.text(),
+            "tune": self.tune_combo.currentText(),
+            "ctx": self.ctx_edit.text(),
+            "kv": self.kv_combo.currentText(),
+            "ubatch": self.ubatch_edit.text(),
+            "alias": self.alias_edit.text(),
+            "parallel": self.parallel_edit.text(),
+            "threads_http": self.threads_http_edit.text(),
+            "api_key": self.api_key_edit.text(),
+            "wait": self.wait_edit.text(),
+            "extra_args": self.extra_args_edit.toPlainText(),
+        }
+
+    def _save_params(self) -> None:
+        path = self.state.selected_model or self._resolved_model()
+        key = llmenv.path_key(path) if path is not None else ""
+        saved = dict(self.state.settings.run_params or {})
+        saved[key] = self._param_values()
+        self.state.settings.run_params = saved
+        self.state.persist()
+        self.state.status("启动参数已保存")
+        self.state.log(f"已保存启动参数: {path or '（未选择模型）'}")
+
+    def _fill_params(self) -> None:
+        path = self.state.selected_model or self._resolved_model()
+        key = llmenv.path_key(path) if path is not None else ""
+        saved = (self.state.settings.run_params or {}).get(key)
+        if not isinstance(saved, dict):
+            self.state.status("当前模型还没有保存参数")
+            return
+        self.name_combo.setCurrentText(str(saved.get("name", self.name_combo.currentText())))
+        self.profile_combo.setCurrentText(str(saved.get("profile", self.profile_combo.currentText())))
+        self.host_edit.setText(str(saved.get("host", self.host_edit.text())))
+        self.port_edit.setText(str(saved.get("port", self.port_edit.text())))
+        self.threads_edit.setText(str(saved.get("threads", self.threads_edit.text())))
+        self.tune_combo.setCurrentText(str(saved.get("tune", self.tune_combo.currentText())))
+        self.ctx_edit.setText(str(saved.get("ctx", self.ctx_edit.text())))
+        self.kv_combo.setCurrentText(str(saved.get("kv", self.kv_combo.currentText())))
+        self.ubatch_edit.setText(str(saved.get("ubatch", self.ubatch_edit.text())))
+        self.alias_edit.setText(str(saved.get("alias", self.alias_edit.text())))
+        self.parallel_edit.setText(str(saved.get("parallel", self.parallel_edit.text())))
+        self.threads_http_edit.setText(str(saved.get("threads_http", self.threads_http_edit.text())))
+        self.api_key_edit.setText(str(saved.get("api_key", self.api_key_edit.text())))
+        self.wait_edit.setText(str(saved.get("wait", self.wait_edit.text())))
+        self.extra_args_edit.setPlainText(str(saved.get("extra_args", "")))
+        self._refresh_command_preview()
+        self.state.status("已填入保存的启动参数")
+
+    def _refresh_command_preview(self) -> None:
+        try:
+            plan = self.build_plan()
+        except ServeError as exc:
+            self.command_preview.setPlainText(f"参数未就绪：{exc}")
+            return
+        self.command_preview.setPlainText(format_command(plan.argv()))
 
     def build_plan(self) -> LaunchPlan:
         """按当前表单构造启动计划。"""
@@ -482,17 +567,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return path.stat().st_size
         except OSError:
             return 0
-
-    def _fit_text(self, entry: Any) -> str:
-        """模型行的硬件状态文本（运行中优先）。"""
-        from fcmd.apps.locllm._locllmw_qt_models import fit_state_for
-
-        total, free = self.fit_estimate(entry.size)
-        return fit_state_for(running=self.state.is_running(entry.path), total=total, free=free)
-
-    def fit_text_for(self, entry: Any) -> str:
-        """供模型页复用的硬件状态回调，口径与运行页当前表单一致。"""
-        return self._fit_text(entry)
 
     def _mark_manual(self, key: str) -> None:
         if not self._syncing_tune:
@@ -541,28 +615,22 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         )
 
     def _on_profile_changed(self) -> None:
-        """切换档位后重算模型列表的显存适配标注与提示。"""
-        self._refresh_fit()
+        """切换档位后刷新提示。"""
         path = self.state.selected_model
         if path is not None:
             self.show_model_hint(path)
         else:
-            self.tree.set_hint(self._basis_hint())
+            self.model_hint.setText(self._basis_hint())
 
     def _on_tune_changed(self) -> None:
         """切换调优策略后同步高级参数，并刷新硬件适配列与说明。"""
         self._apply_tuning()
-        self.tree.refresh()
         path = self.state.selected_model
         if path is not None:
             self.show_model_hint(path)
             return
         tuning = self.tuning()
-        self.tree.set_hint(f"调优: {tuning.label} · {tuning.detail}\n{self.effective_tuning_text(tuning)}")
-
-    def _refresh_fit(self) -> None:
-        self.tree.set_fit_resolver(self._fit_text)
-        self.fitChanged.emit()
+        self.model_hint.setText(f"调优: {tuning.label} · {tuning.detail}\n{self.effective_tuning_text(tuning)}")
 
     def _basis_hint(self) -> str:
         """未选中模型时展示硬件评估口径。"""
@@ -602,7 +670,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return
         path = Path(state.model)
         self.state.select_model(path, update_name=False)
-        self.tree.select_path(path)
+        self._select_model_combo(path)
 
     @staticmethod
     def _load_state_safe(name: str) -> ServeState | None:
@@ -613,19 +681,49 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         except ServeError:
             return None
 
-    def _on_model_picked(self, path: Path) -> None:
-        self.state.select_model(path, update_name=True)
+    def _on_model_combo_changed(self, index: int) -> None:
+        path = self.model_combo.itemData(index)
+        if path:
+            self.state.select_model(Path(str(path)), update_name=True)
+        else:
+            self.state.selected_model = None
+            self.state.selectionChanged.emit(None, False)
+
+    def _populate_model_combo(self) -> None:
+        """把当前扫描到的 GGUF 填入顶部下拉框，保留已选模型。"""
+        current = self.state.selected_model
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItem("（未选择，按档位自动查找）", None)
+        for entry in self.state.models:
+            self.model_combo.addItem(f"{entry.relative}  ({human_size(entry.size)})", str(entry.path))
+        self.model_combo.blockSignals(False)
+        if current is not None:
+            self._select_model_combo(current)
+
+    def _select_model_combo(self, path: Path) -> None:
+        target = str(path)
+        index = self.model_combo.findData(target)
+        if index < 0:
+            self.model_combo.blockSignals(True)
+            self.model_combo.addItem(f"{path.name}  ({human_size(self._size_of(path))})", target)
+            index = self.model_combo.count() - 1
+            self.model_combo.blockSignals(False)
+        self.model_combo.blockSignals(True)
+        self.model_combo.setCurrentIndex(index)
+        self.model_combo.blockSignals(False)
 
     def _on_selection_changed(self, path: object, update_name: bool) -> None:
         if path is None:
-            self.model_label.setText(_HINT_PLACEHOLDER)
-            self.tree.set_hint(self._basis_hint())
+            self.model_combo.blockSignals(True)
+            self.model_combo.setCurrentIndex(0)
+            self.model_combo.blockSignals(False)
+            self.model_hint.setText(_HINT_PLACEHOLDER)
             return
         selected = Path(path)  # type: ignore[arg-type]
-        self.model_label.setText(str(selected))
+        self._select_model_combo(selected)
         if update_name:
             self.name_combo.setCurrentText(service_name_from_model(selected))
-        self.tree.select_path(selected)
         self.show_model_hint(selected)
 
     def _browse(self) -> None:
@@ -634,7 +732,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.state.select_model(Path(path).resolve())
 
     def _clear_selection(self) -> None:
-        self.tree.tree.clearSelection()
+        self.model_combo.blockSignals(True)
+        self.model_combo.setCurrentIndex(0)
+        self.model_combo.blockSignals(False)
         self.state.selected_model = None
         self.state.selectionChanged.emit(None, False)
 
@@ -675,7 +775,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         note = self._hardware_note(path)
         if note:
             lines.append(note)
-        self.tree.set_hint("\n".join(lines))
+        self.model_hint.setText("\n".join(lines))
         self.state.log(f"已选择模型: {path}")
         self.state.log(f"  标签: {' · '.join(tags) or '未识别'}")
         self.state.log(f"  建议: {advice}")
@@ -718,48 +818,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 动作
     # ------------------------------------------------------------------ #
-    def preview(self) -> None:
-        """生成启动计划并展示命令、显存估算与建议。"""
-        try:
-            plan = self.build_plan()
-        except ServeError as exc:
-            self._error("参数错误", str(exc))
-            return
-        estimate = llmmodel.plan_vram(plan)
-        tags = llmmodel.detect_model_tags(plan.model.name)
-        total, free = self.fit_estimate(self._size_of(plan.model))
-        lines = plan_lines(
-            plan,
-            estimate=estimate,
-            tags=tags,
-            precision_detail=self._precision_detail(plan.model),
-            advice=llmmodel.model_advice(tags),
-            total=total,
-            free=free,
-        )
-        self._set_plan(lines)
-        self.state.status(f"启动计划已生成：{plan.name} · {plan.profile.name} · {http_base_url(plan.host, plan.port)}")
-
-    def _set_plan(self, lines: list[str]) -> None:
-        """把计划写入预览区并同步日志（记录命令行便于复制）。"""
-        self.plan_view.setPlainText("\n".join(lines))
-        self.scroll.ensureWidgetVisible(self.plan_card, 0, 24)
-        self._plan_command = ""
-        for line in lines:
-            self.state.log(line)
-            if line.startswith("  命令: "):
-                self._plan_command = line[len("  命令: ") :]
-
-    def copy_plan_command(self) -> None:
-        """复制当前预览的启动命令，便于在终端复现。"""
-        if not self._plan_command:
-            self.state.status("先点「预览计划」生成命令")
-            return
-        clipboard = QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText(self._plan_command)
-        self.state.status("已复制启动命令")
-
     def start(self) -> None:
         """校验参数与资源后，后台启动服务。"""
         if self.state.busy:
@@ -1001,33 +1059,32 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.on_models_changed()
 
     def on_models_changed(self) -> None:
-        """扫描完成后刷新模型列表与服务名；未选择时自动带入一个可启动的模型。"""
-        self.tree.refresh()
+        """扫描完成后刷新模型下拉与服务名；未选择时自动带入一个可启动的模型。"""
+        self._populate_model_combo()
         self.refresh_service_names()
         if self.state.selected_model is None and self.state.models:
             chosen = self._resolved_model()
             if chosen is not None:
                 self.state.log(f"未选择模型，自动使用: {chosen}")
                 self.state.select_model(chosen, update_name=True)
-                self.tree.select_path(chosen)
                 return
         if self.state.selected_model is not None:
-            self.tree.select_path(self.state.selected_model)
+            self._select_model_combo(self.state.selected_model)
 
     def _on_services_changed(self, _states: list[ServeState]) -> None:
-        """运行中服务变化：刷新服务名下拉与模型行的「运行中」标注。"""
+        """运行中服务变化：刷新服务名下拉。"""
         self.refresh_service_names()
-        self.tree.refresh()
 
     def _on_busy_changed(self, busy: bool) -> None:
         for widget in (
-            self.preview_button,
             self.start_button,
             self.stop_selected_button,
             self.stop_all_button,
             self.status_button,
             self.browse_button,
             self.clear_button,
+            self.save_params_button,
+            self.fill_params_button,
         ):
             widget.setEnabled(not busy)
         self.progress.setVisible(busy)
@@ -1077,10 +1134,13 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         QMessageBox.critical(self, title, message)
 
     def update_service_and_fit(self) -> None:
-        """外部（启动 / 停止 / 显存采样）变化后刷新适配列与服务名。"""
-        self.tree.refresh()
+        """外部（启动 / 停止 / 显存采样）变化后刷新提示与服务名。"""
+        if self.state.selected_model is not None:
+            self.show_model_hint(self.state.selected_model)
+        else:
+            self.model_hint.setText(self._basis_hint())
         self.refresh_service_names()
 
     def set_available_models_hint(self, text: str) -> None:
         """外部（模型页扫描问题）直接更新提示。"""
-        self.tree.set_hint(text)
+        self.model_hint.setText(text)

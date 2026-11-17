@@ -117,7 +117,6 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         from fcmd.apps.locllm._locllmw_qt_center import ModelCenterPage
 
         page = ModelCenterPage(self.state)
-        self.run_page.fitChanged.connect(self.run_page.tree.refresh)
         self._models_page = page
         return page
 

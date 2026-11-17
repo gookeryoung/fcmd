@@ -95,25 +95,26 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     assert settings_page.models_path.value()
 
 
-def test_run_page_tree_fills_hardware_column(window: Any) -> None:
-    """运行页模型树的硬件列必须按当前档位口径给出适配状态，而不是一律空白。"""
+def test_run_page_model_combo_selects_model(window: Any) -> None:
+    """运行页顶部下拉框列出模型，选中后同步共享状态与硬件提示。"""
     from fcmd.apps.locllm.llmbase import ModelEntry
 
     root = Path("/models")
-    window.state.models = [
-        ModelEntry(root=root, path=root / "org" / "small.gguf", size=1024**3, profiles=("balanced",), tags=("对话",))
-    ]
+    model = ModelEntry(
+        root=root, path=root / "org" / "small.gguf", size=1024**3, profiles=("balanced",), tags=("对话",)
+    )
+    window.state.models = [model]
     window.state.models_root = root
     window.state.running_paths = set()
     window.state.gpu_mib = 32768
     window.state.gpu_free_mib = 32000
     page = window.run_page
-    page.tree.refresh()
-    page.tree.expand_all()
-    group = page.tree.tree.topLevelItem(0)
-    assert group is not None
-    child = group.child(0)
-    assert child.text(4) == "可用"
+    page.on_models_changed()
+    assert page.model_combo.count() == 2
+    assert "small.gguf" in page.model_combo.itemText(1)
+    page.model_combo.setCurrentIndex(1)
+    assert window.state.selected_model == model.path
+    assert "硬件" in page.model_hint.text()
 
 
 def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
@@ -129,9 +130,10 @@ def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     window.state.models = [ModelEntry(root=tmp_path, path=model_file, size=64, profiles=("balanced",), tags=("对话",))]
     window.state.models_root = tmp_path
     run.on_models_changed()
-    run.preview_button.click()
-    assert "启动计划" in run.plan_view.toPlainText()
-    assert run.plan_view.toPlainText().startswith("启动计划:")
+    run._refresh_command_preview()
+    command = run.command_preview.toPlainText()
+    assert "demo-Q4_K_XL.gguf" in command
+    assert "--model" in command or "-m" in command
 
 
 def test_theme_switch_persists(window: Any, tmp_path: Path) -> None:
@@ -187,18 +189,15 @@ def test_pages_use_scroll_container(window: Any) -> None:
         assert page.findChild(PageScroll) is not None, key
 
 
-def test_run_page_keeps_model_list_height(window: Any) -> None:
-    """窗口缩到最小、展开高级参数与模型分组后，模型列表不被压扁，底栏仍可见。"""
+def test_run_page_keeps_action_bar_visible(window: Any) -> None:
+    """窗口缩到最小、展开高级参数后，底栏动作仍可见。"""
     from PySide6.QtWidgets import QApplication
 
     window.show()
     window.show_page("run")
     window.resize(1040, 780)
     window.run_page.advanced.set_expanded(True)
-    window.run_page.tree.expand_all()
     QApplication.processEvents()
-    assert window.run_page.tree.tree.height() >= 240
-    assert window.run_page.scroll.verticalScrollBar().maximum() > 0
     button = window.run_page.start_button
     assert not button.isHidden()
     assert button.mapTo(window, button.rect().bottomLeft()).y() <= window.height()
