@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -27,6 +27,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -285,6 +288,44 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
     )
 
 
+_MODEL_RUNNING_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+
+
+class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
+    """模型下拉项：仅运行中的项绘制绿色文字，避免整框被染绿。"""
+
+    def paint(self, painter: Any, option: QStyleOptionViewItem, index: Any) -> None:
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = opt.text
+        opt.text = ""
+        super().paint(painter, opt, index)
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        theme = _qt_theme.load_theme()
+        if selected:
+            color = QColor(theme.palette.on_accent)
+        elif index.data(_MODEL_RUNNING_ROLE):
+            color = QColor(theme.palette.success)
+        else:
+            color = QColor(theme.palette.text)
+        painter.save()
+        painter.setFont(opt.font)
+        painter.setPen(color)
+        rect = opt.rect.adjusted(8, 0, -6, 0)
+        painter.drawText(
+            rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            opt.fontMetrics.elidedText(text, Qt.TextElideMode.ElideRight, rect.width()),
+        )
+        painter.restore()
+
+
+class _ModelCombo(QComboBox):  # pragma: no cover - Qt 控件
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setItemDelegate(_ModelItemDelegate(self))
+
+
 class _ChoiceCard(QPushButton):  # pragma: no cover - Qt 控件
     """可选项方块：标题 + 下方说明，整块可点击。"""
 
@@ -451,7 +492,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
-        self.model_combo = QComboBox(self.model_card)
+        self.model_combo = _ModelCombo(self.model_card)
         self.model_combo.setObjectName("ModelCombo")
         self.model_combo.setFixedHeight(40)
         self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
@@ -838,12 +879,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         return "已启动" if self.state.is_running(path) else ""
 
     def _paint_combo_status(self, index: int, path: Path) -> None:
-        status = self._service_status_text(path)
-        if not status:
-            self.model_combo.setItemData(index, None, Qt.ItemDataRole.ForegroundRole)
-            return
-        green = QColor(_qt_theme.load_theme().palette.success)
-        self.model_combo.setItemData(index, QBrush(green), Qt.ItemDataRole.ForegroundRole)
+        self.model_combo.setItemData(index, bool(self._service_status_text(path)), _MODEL_RUNNING_ROLE)
 
     def _refresh_combo_current_color(self) -> None:
         path = self.state.selected_model
