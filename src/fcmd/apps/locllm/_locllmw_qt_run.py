@@ -14,6 +14,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -63,6 +64,7 @@ __all__ = [
     "build_plan_from",
     "default_service_name",
     "memory_guard",
+    "model_combo_text",
     "parse_custom_args",
     "parse_int",
     "parse_optional_int",
@@ -207,6 +209,14 @@ def pick_model(
     return max(pool, key=lambda entry: entry.size).path
 
 
+def model_combo_text(entry: ModelEntry, limit: int = 30) -> str:
+    """模型下拉项的紧凑文本：截断长文件名，避免撑宽运行页。"""
+    name = entry.path.name
+    if len(name) > limit:
+        name = name[: limit - 1] + "…"
+    return f"{name}  ({human_size(entry.size)})"
+
+
 def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
     """按表单取值构造启动计划；参数非法时抛 :class:`ServeError`。
 
@@ -276,6 +286,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
         self.model_combo = QComboBox(self.model_card)
+        self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.model_combo.setMinimumContentsLength(8)
         self.model_combo.addItem("（未选择，按档位自动查找）", None)
         self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
         model_row.addWidget(self.model_combo, 1)
@@ -662,7 +674,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.clear()
         self.model_combo.addItem("（未选择，按档位自动查找）", None)
         for entry in self.state.models:
-            self.model_combo.addItem(f"{entry.relative}  ({human_size(entry.size)})", str(entry.path))
+            self.model_combo.addItem(model_combo_text(entry), str(entry.path))
+            self.model_combo.setItemData(self.model_combo.count() - 1, str(entry.path), Qt.ToolTipRole)
         self.model_combo.blockSignals(False)
         if current is not None:
             self._select_model_combo(current)
@@ -672,7 +685,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         index = self.model_combo.findData(target)
         if index < 0:
             self.model_combo.blockSignals(True)
-            self.model_combo.addItem(f"{path.name}  ({human_size(self._size_of(path))})", target)
+            label = model_combo_text(ModelEntry(root=path.parent, path=path, size=self._size_of(path)))
+            self.model_combo.addItem(label, target)
+            self.model_combo.setItemData(self.model_combo.count() - 1, target, Qt.ToolTipRole)
             index = self.model_combo.count() - 1
             self.model_combo.blockSignals(False)
         self.model_combo.blockSignals(True)

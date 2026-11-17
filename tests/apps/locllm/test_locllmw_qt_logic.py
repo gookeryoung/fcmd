@@ -38,6 +38,7 @@ from fcmd.apps.locllm._locllmw_qt_overview import (
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
     memory_guard,
+    model_combo_text,
     parse_custom_args,
     parse_int,
     parse_optional_int,
@@ -104,6 +105,18 @@ def test_parse_int_and_optional_int() -> None:
         parse_int("abc", "端口")
     with pytest.raises(ServeError, match="上下文 必须是整数"):
         parse_optional_int("x", "上下文")
+
+
+def test_model_combo_text_truncates_long_names() -> None:
+    entry = ModelEntry(
+        root=Path("/models"),
+        path=Path("/models/Qwen3-Coder-30B-A3B-Instruct-Q5_K_M.gguf"),
+        size=20 * 1024**3,
+    )
+    text = model_combo_text(entry)
+    assert "…" in text
+    assert "Qwen3-Coder" in text
+    assert len(text.split("  (")[0]) == 30
 
 
 def test_parse_custom_args_splits_shell_like_text() -> None:
