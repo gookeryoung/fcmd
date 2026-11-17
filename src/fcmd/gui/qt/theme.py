@@ -152,6 +152,19 @@ QPushButton#Ghost:hover {
 }
 QPushButton#Ghost:pressed { background: $surface_active; }
 QPushButton#Ghost:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#Link {
+    background: transparent;
+    border: none;
+    color: $accent;
+    padding: 0 2px;
+    min-height: 0;
+    max-height: none;
+    font-size: ${font_small}pt;
+    text-align: left;
+}
+QPushButton#Link:hover { color: $accent_hover; }
+QPushButton#Link:pressed { color: $accent_pressed; }
+QPushButton#Link:disabled { color: $muted; }
 
 QToolButton { border: 1px solid $border; border-radius: 6px; background: $surface_hover; padding: 4px 8px; }
 QToolButton:hover { background: $surface_active; }

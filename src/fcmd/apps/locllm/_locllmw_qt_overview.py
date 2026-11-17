@@ -14,10 +14,12 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QProgressBar,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -28,7 +30,16 @@ from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import ServeState, human_size
 from fcmd.apps.locllm.llmserve import read_log
-from fcmd.gui.qt.widgets import Card, PageScroll, button, hint_label, make_table, make_table_item
+from fcmd.gui.qt.widgets import (
+    Card,
+    ElidedLabel,
+    PageScroll,
+    button,
+    hint_label,
+    link_button,
+    make_table,
+    make_table_item,
+)
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -108,48 +119,77 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build_hardware(self) -> Card:
-        card = Card("硬件信息")
+        """硬件卡片：标题旁「重新检测」，各行「标签 / 内容」按网格对齐。
+
+        「修改」与「重新检测」都是文字链接（`QPushButton#Link`），不占按钮高度；
+        模型目录用单行省略标签（完整路径在 tooltip），修改链接紧贴在目录文本后。
+        """
+        card = Card()
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel("硬件信息", card)
+        title.setObjectName("SectionTitle")
+        self._detect_button = link_button("重新检测", tooltip="重新检测 CPU / GPU / 内存")
+        self._detect_button.clicked.connect(self._detect)
+        self._detected_label = hint_label("", wrap=False)
+        header.addWidget(title)
+        header.addWidget(self._detect_button)
+        header.addWidget(self._detected_label, 1)
+        card.body.addLayout(header)
+
         self._hardware_values: dict[str, QLabel] = {}
         self._usage_bars: dict[str, QProgressBar] = {}
         self._usage_labels: dict[str, QLabel] = {}
         rows = (("显卡", "gpu"), ("处理器", "cpu"), ("内存", "memory"), ("模型目录", "model_disk"))
-        for label, key in rows:
-            row = QHBoxLayout()
-            name = hint_label(label, wrap=False)
-            name.setFixedWidth(64)
-            value = QLabel("检测中…", card)
-            # 模型目录固定单行（路径 + 剩余空间），过长时用 tooltip 兜底
-            value.setWordWrap(key != "model_disk")
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            row.addWidget(name, 0, Qt.AlignmentFlag.AlignTop)
-            row.addWidget(value, 1)
-            if key in ("gpu", "memory"):
-                # 显存 / 内存与占用条、剩余值绑定在同一行展示，布局更紧凑
-                bar = QProgressBar(card)
-                bar.setRange(0, 100)
-                bar.setValue(0)
-                bar.setTextVisible(False)
-                bar.setMinimumWidth(160)
-                text = hint_label("等待采样…", wrap=False)
-                text.setMinimumWidth(220)
-                row.addWidget(bar, 1)
-                row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
-                self._usage_bars[key] = bar
-                self._usage_labels[key] = text
-            if key == "model_disk":
-                settings_button = button("修改…", kind="ghost")
-                settings_button.clicked.connect(lambda: self.state.navigate("settings"))
-                row.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignTop)
-            card.body.addLayout(row)
-            self._hardware_values[key] = value
 
-        footer = QHBoxLayout()
-        self._detected_label = hint_label("尚未检测硬件")
-        self._detect_button = button("重新检测", kind="ghost")
-        self._detect_button.clicked.connect(self._detect)
-        footer.addWidget(self._detected_label, 1)
-        footer.addWidget(self._detect_button)
-        card.body.addLayout(footer)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        for index, (label, key) in enumerate(rows):
+            name = QLabel(label, card)
+            name.setObjectName("Hint")
+            name.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            grid.addWidget(name, index, 0)
+
+            cell = QWidget(card)
+            row = QHBoxLayout(cell)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            if key == "model_disk":
+                value = ElidedLabel("检测中…", parent=cell)
+                value.setFixedWidth(420)
+                value.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+                modify = link_button("修改", tooltip="到设置页修改模型目录")
+                modify.clicked.connect(lambda: self.state.navigate("settings"))
+                self._modify_link = modify
+                row.addWidget(value, 0, Qt.AlignmentFlag.AlignVCenter)
+                row.addWidget(modify, 0, Qt.AlignmentFlag.AlignVCenter)
+                row.addStretch(1)
+            else:
+                value = QLabel("检测中…", cell)
+                value.setWordWrap(key in ("gpu", "cpu"))
+                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                row.addWidget(value, 0, Qt.AlignmentFlag.AlignVCenter)
+                if key in ("gpu", "memory"):
+                    bar = QProgressBar(cell)
+                    bar.setRange(0, 100)
+                    bar.setValue(0)
+                    bar.setTextVisible(False)
+                    bar.setMinimumWidth(160)
+                    text = hint_label("等待采样…", wrap=False)
+                    text.setMinimumWidth(220)
+                    row.addWidget(bar, 1, Qt.AlignmentFlag.AlignVCenter)
+                    row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
+                    self._usage_bars[key] = bar
+                    self._usage_labels[key] = text
+                else:
+                    row.addStretch(1)
+            grid.addWidget(cell, index, 1)
+            self._hardware_values[key] = value
+        card.body.addLayout(grid)
         return card
 
     def _build_recommendations(self) -> Card:

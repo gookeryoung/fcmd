@@ -243,6 +243,15 @@ def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
     assert not icon_label.isHidden()
 
 
+def test_overview_actions_are_text_links(window: Any) -> None:
+    """「修改 / 重新检测」是文字链接（无按钮边框），且重新检测在硬件信息标题旁。"""
+    overview = window.overview
+    assert overview._detect_button.text() == "重新检测"
+    assert overview._detect_button.objectName() == "Link"
+    assert overview._modify_link.text() == "修改"
+    assert overview._modify_link.objectName() == "Link"
+
+
 def test_overview_model_dir_row_is_single_line(window: Any) -> None:
     """概览「模型目录」只显示设置的目录 + 剩余空间（单行，不随选中模型变化）。"""
     from fcmd.apps.locllm import llmenv

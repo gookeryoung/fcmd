@@ -58,6 +58,7 @@ __all__ = [
     "apply_splitter_sizes",
     "button",
     "hint_label",
+    "link_button",
     "make_splitter",
     "make_table",
     "make_table_item",
@@ -73,6 +74,17 @@ def button(text: str, *, kind: str = "", tooltip: str = "") -> QPushButton:  # p
     widget = QPushButton(text)
     if kind:
         widget.setObjectName(kind.capitalize())
+    if tooltip:
+        widget.setToolTip(tooltip)
+    return widget
+
+
+def link_button(text: str, *, tooltip: str = "") -> QPushButton:  # pragma: no cover - Qt 控件
+    """文字链接按钮：透明背景、强调色、无边框，用于「修改 / 重新检测」等轻量动作。"""
+    widget = QPushButton(text)
+    widget.setObjectName("Link")
+    widget.setFlat(True)
+    widget.setCursor(Qt.CursorShape.PointingHandCursor)
     if tooltip:
         widget.setToolTip(tooltip)
     return widget
