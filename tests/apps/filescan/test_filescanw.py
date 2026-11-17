@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from dataclasses import replace
 from pathlib import Path
 
@@ -12,7 +14,6 @@ from fcmd.apps.filescan._engine import ScanResult, ScanStats
 from fcmd.apps.filescan._report import scan_summary
 from fcmd.apps.filescan._rules import builtin_ruleset, disable_all
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.gui import window as _guiwindow
 
 
 def test_tool_registration() -> None:
@@ -235,17 +236,14 @@ def test_validate_exts_accepts_star_and_wildcard_forms() -> None:
     assert filescanw.validate_exts(["*"]) == (("*",), ())
 
 
-def test_run_gui_delegates_to_shared_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorded: dict[str, object] = {}
-
-    def fake_run_window(factory: object, message: str) -> None:
-        recorded["factory"] = factory
-        recorded["message"] = message
-
-    monkeypatch.setattr(_guiwindow, "run_window", fake_run_window)
-    filescanw.run_gui(Path("custom.json"))
-    assert callable(recorded["factory"])
-    assert recorded["message"] == "敏感内容扫描"
+def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[object] = []
+    fake = types.ModuleType("fcmd.apps.filescan._filescanw_qt")
+    fake.run_qt = lambda settings_path=None: calls.append(settings_path)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.filescan._filescanw_qt", fake)
+    path = tmp_path / "settings.json"
+    filescanw.run_gui(path)
+    assert calls == [path]
 
 
 def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:
