@@ -60,3 +60,19 @@ fcmd dynacalc generate params.yaml out --model model.yaml --mesh-root meshes --m
 `gates` 的基准工况与配对来自参数文件的 `defaults.gates.reference` / `pairs`
 （示例是 `T01` 对 `T02`、`T03`）；典型工况在汇总与门控里会标注「典型工况」，
 与主矩阵、「补充组」区分。
+
+## 启动性能基准
+
+[bench_startup.py](../tests/cli/bench_startup.py) 测量 CLI 启动墙钟，覆盖
+`env` / `env --json`、`graph` 的 tree/mermaid/layers、`fcmd <tool> --help` 与
+`<tool>.exe --help` 两条入口，以及 `--version` 与 `python -c pass` 两条固定成本
+地板。冷启动（空字节码缓存）与热启动分别采样取中位数，口径写在脚本 docstring：
+
+```powershell
+uv run python tests/cli/bench_startup.py          # 打印实测
+uv run python tests/cli/bench_startup.py --check  # 与 BASELINES 比对，回归时非零退出
+make bench-startup                                # 同上（独立 target，不参与 make test）
+```
+
+该基准不参与默认 `make test`：启动耗时受机器负载影响，且不同机型差异大。
+`--check` 只在同机对比有意义；换机器请重采 `BASELINES`。
