@@ -50,13 +50,18 @@ def usage_texts(sample: LoadSample) -> tuple[str, float, str, float]:
     gpu = sample.gpu
     if gpu is not None and gpu.memory_used is not None and gpu.memory_total:
         percent = min(max(gpu.memory_used / gpu.memory_total * 100, 0.0), 100.0)
-        gpu_text = f"{gpu.memory_used / 1024:.1f} / {gpu.memory_total / 1024:.1f} GB（{percent:.1f} %）"
+        free = max(gpu.memory_total - gpu.memory_used, 0.0)
+        gpu_text = f"{gpu.memory_used / 1024:.1f} / {gpu.memory_total / 1024:.1f} GB（{percent:.1f} %，剩余 {free / 1024:.1f} GB）"
     else:
         percent = 0.0
         gpu_text = "未检测到 NVIDIA GPU" if gpu is None else "暂不可用"
     if sample.memory_total:
         memory_percent = min(max(sample.memory_percent, 0.0), 100.0)
-        memory_text = f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}（{memory_percent:.1f} %）"
+        free = max(sample.memory_total - sample.memory_used, 0)
+        memory_text = (
+            f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}"
+            f"（{memory_percent:.1f} %，剩余 {human_size(free)}）"
+        )
     else:
         memory_percent = 0.0
         memory_text = "暂不可用"
@@ -105,6 +110,8 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     def _build_hardware(self) -> Card:
         card = Card("硬件信息")
         self._hardware_values: dict[str, QLabel] = {}
+        self._usage_bars: dict[str, QProgressBar] = {}
+        self._usage_labels: dict[str, QLabel] = {}
         rows = (("显卡", "gpu"), ("处理器", "cpu"), ("内存", "memory"), ("模型目录", "model_disk"))
         for label, key in rows:
             row = QHBoxLayout()
@@ -122,25 +129,23 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
                 row.addWidget(settings_button, 0, Qt.AlignmentFlag.AlignTop)
             card.body.addLayout(row)
             self._hardware_values[key] = value
-
-        self._usage_bars: dict[str, QProgressBar] = {}
-        self._usage_labels: dict[str, QLabel] = {}
-        for label, key in (("显存占用", "gpu"), ("内存占用", "memory")):
-            row = QHBoxLayout()
-            name = hint_label(label, wrap=False)
-            name.setFixedWidth(64)
-            bar = QProgressBar(card)
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setTextVisible(False)
-            text = hint_label("等待采样…", wrap=False)
-            text.setMinimumWidth(220)
-            row.addWidget(name)
-            row.addWidget(bar, 1)
-            row.addWidget(text)
-            card.body.addLayout(row)
-            self._usage_bars[key] = bar
-            self._usage_labels[key] = text
+            if key in ("gpu", "memory"):
+                # 显存 / 内存与占用条、剩余值绑定在同一行组里展示
+                usage_row = QHBoxLayout()
+                indent = QLabel(card)
+                indent.setFixedWidth(64)
+                bar = QProgressBar(card)
+                bar.setRange(0, 100)
+                bar.setValue(0)
+                bar.setTextVisible(False)
+                text = hint_label("等待采样…", wrap=False)
+                text.setMinimumWidth(220)
+                usage_row.addWidget(indent)
+                usage_row.addWidget(bar, 1)
+                usage_row.addWidget(text)
+                card.body.addLayout(usage_row)
+                self._usage_bars[key] = bar
+                self._usage_labels[key] = text
 
         footer = QHBoxLayout()
         self._detected_label = hint_label("尚未检测硬件")
