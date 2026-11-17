@@ -183,6 +183,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return False
         if self._chat_page is not None:
             self._chat_page.close()
+        self.run_page.persist_params()
         self.monitor_page.stop()
         self.state.closing = True
         return True

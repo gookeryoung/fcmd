@@ -245,12 +245,13 @@ def pick_model(
     return max(pool, key=lambda entry: entry.size).path
 
 
-def model_combo_text(entry: ModelEntry, limit: int = 30) -> str:
-    """模型下拉项的紧凑文本：截断长文件名，避免撑宽运行页。"""
+def model_combo_text(entry: ModelEntry, *, status: str = "", limit: int = 30) -> str:
+    """模型下拉项的紧凑文本：截断长文件名，并可附带启动状态。"""
     name = entry.path.name
     if len(name) > limit:
         name = name[: limit - 1] + "…"
-    return f"{name}  ({human_size(entry.size)})"
+    text = f"{name}  ({human_size(entry.size)})"
+    return f"{text}  · {status}" if status else text
 
 
 def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
@@ -427,6 +428,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         super().__init__(parent)
         self.state = state
         self._syncing_tune = False
+        self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
         self._build()
         self._wire()
@@ -454,9 +456,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.addItem("（未选择，按档位自动查找）", None)
         self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
         model_row.addWidget(self.model_combo, 1)
-        self.manage_models_button = button("模型管理")
-        self.manage_models_button.clicked.connect(lambda: self.state.navigate("models"))
-        model_row.addWidget(self.manage_models_button)
+        self.model_action_button = button("启动服务", kind="primary")
+        self.model_action_button.setObjectName("RunPrimary")
+        self.model_action_button.clicked.connect(self._on_model_action)
+        model_row.addWidget(self.model_action_button)
         self.model_card.body.addLayout(model_row)
         layout.addWidget(self.model_card)
 
@@ -531,13 +534,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         row = QHBoxLayout(bar)
         row.setContentsMargins(0, 8, 0, 0)
         row.setSpacing(8)
-        self.start_button = button("启动服务", kind="primary")
-        self.start_button.setObjectName("RunPrimary")
         self.stop_selected_button = button("停止选中服务")
         self.stop_selected_button.setObjectName("RunAction")
         self.stop_all_button = button("停止全部服务", kind="danger")
         self.stop_all_button.setObjectName("RunDanger")
-        for widget in (self.start_button, self.stop_selected_button, self.stop_all_button):
+        for widget in (self.stop_selected_button, self.stop_all_button):
             row.addWidget(widget)
         row.addStretch(1)
         return bar
@@ -550,7 +551,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.ubatch_edit.textChanged.connect(lambda _text: self._mark_manual("ubatch"))
         self.parallel_edit.textChanged.connect(lambda _text: self._mark_manual("parallel"))
         self.threads_http_edit.textChanged.connect(lambda _text: self._mark_manual("threads_http"))
-        self.start_button.clicked.connect(self.start)
         self.stop_selected_button.clicked.connect(self.stop_selected)
         self.stop_all_button.clicked.connect(self.stop_all)
         for widget in (
@@ -624,17 +624,50 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             "api_key": self.api_key_edit.text(),
             "wait": self.wait_edit.text(),
             "extra_args": self.extra_args_edit.toPlainText(),
+            "mode": self.mode_choice.key(),
         }
 
-    def _save_params(self) -> None:
+    def _param_key(self) -> str:
         path = self.state.selected_model or self._resolved_model()
-        key = llmenv.path_key(path) if path is not None else ""
+        return llmenv.path_key(path) if path is not None else ""
+
+    def _persist_current_params(self) -> None:
+        key = self._active_param_key
+        if not key:
+            return
         saved = dict(self.state.settings.run_params or {})
         saved[key] = self._param_values()
         self.state.settings.run_params = saved
+
+    def persist_params(self) -> None:
+        """模型切换 / 关窗时把当前模型的启动参数落到配置。"""
+        self._persist_current_params()
+        self.state.persist()
+
+    def _save_params(self) -> None:
+        key = self._param_key()
+        self._active_param_key = key
+        self._persist_current_params()
         self.state.persist()
         self.state.status("启动参数已保存")
-        self.state.log(f"已保存启动参数: {path or '（未选择模型）'}")
+        self.state.log(f"已保存启动参数: {self.state.selected_model or '（未选择模型）'}")
+
+    def _apply_saved_params(self, saved: dict[str, Any]) -> None:
+        mode = str(saved.get("mode") or _mode_for_profile(str(saved.get("profile", "balanced"))))
+        self.mode_choice.set_key(mode)
+        self.host_edit.setText(str(saved.get("host", self.host_edit.text())))
+        self.port_edit.setText(str(saved.get("port", self.port_edit.text())))
+        self.threads_edit.setText(str(saved.get("threads", self.threads_edit.text())))
+        self.ctx_edit.setText(str(saved.get("ctx", self.ctx_edit.text())))
+        self.kv_choice.set_key(str(saved.get("kv", self.kv_choice.key())))
+        self.ubatch_edit.setText(str(saved.get("ubatch", self.ubatch_edit.text())))
+        self.alias_edit.setText(str(saved.get("alias", self.alias_edit.text())))
+        self.parallel_edit.setText(str(saved.get("parallel", self.parallel_edit.text())))
+        self.threads_http_edit.setText(str(saved.get("threads_http", self.threads_http_edit.text())))
+        self.api_key_edit.setText(str(saved.get("api_key", self.api_key_edit.text())))
+        self.wait_edit.setText(str(saved.get("wait", self.wait_edit.text())))
+        self.extra_args_edit.setPlainText(str(saved.get("extra_args", "")))
+        self._refresh_command_preview()
 
     def _fill_params(self) -> None:
         """把当前表单生成的启动参数填入自定义参数框，与命令预览保持一致。"""
@@ -775,6 +808,14 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """当前应使用的服务名（供监测页等外部页面读取）。"""
         return self._service_name()
 
+    def _on_model_action(self) -> None:
+        """顶部按钮：当前模型运行中则停止，否则启动。"""
+        selected = self._selected_service_state()
+        if selected is not None and llmserve.process_alive(selected.pid, selected.create_time):
+            self.stop_selected()
+        else:
+            self.start()
+
     def _selected_service_state(self) -> ServeState | None:
         path = self.state.selected_model or self._resolved_model()
         return self.state.state_for_model(path) if path is not None else None
@@ -785,7 +826,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         selected = self._selected_service_state()
         running = selected is not None and llmserve.process_alive(selected.pid, selected.create_time)
         has_model = self.state.selected_model is not None or bool(self.state.models)
-        self.start_button.setEnabled(not busy and has_model and not running)
+        self.model_action_button.setText("停止服务" if running else "启动服务")
+        self.model_action_button.setObjectName("RunDanger" if running else "RunPrimary")
+        self.model_action_button.style().unpolish(self.model_action_button)
+        self.model_action_button.style().polish(self.model_action_button)
+        self.model_action_button.setEnabled(not busy and has_model)
         self.stop_selected_button.setEnabled(not busy and selected is not None)
         self.stop_all_button.setEnabled(not busy and bool(self.state.states))
 
@@ -806,14 +851,21 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.state.selected_model = None
             self.state.selectionChanged.emit(None, False)
 
+    def _service_status_text(self, path: Path) -> str:
+        state = self.state.state_for_model(path)
+        if state is None:
+            return "未启动"
+        return "运行中" if llmserve.process_alive(state.pid, state.create_time) else "已停止"
+
     def _populate_model_combo(self) -> None:
-        """把当前扫描到的 GGUF 填入顶部下拉框，保留已选模型。"""
+        """把当前扫描到的 GGUF 与启动状态填入顶部下拉框，保留已选模型。"""
         current = self.state.selected_model
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        self.model_combo.addItem("（未选择，按档位自动查找）", None)
         for entry in self.state.models:
-            self.model_combo.addItem(model_combo_text(entry), str(entry.path))
+            self.model_combo.addItem(
+                model_combo_text(entry, status=self._service_status_text(entry.path)), str(entry.path)
+            )
             self.model_combo.setItemData(self.model_combo.count() - 1, str(entry.path), Qt.ToolTipRole)
         self.model_combo.blockSignals(False)
         if current is not None:
@@ -824,7 +876,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         index = self.model_combo.findData(target)
         if index < 0:
             self.model_combo.blockSignals(True)
-            label = model_combo_text(ModelEntry(root=path.parent, path=path, size=self._size_of(path)))
+            label = model_combo_text(
+                ModelEntry(root=path.parent, path=path, size=self._size_of(path)),
+                status=self._service_status_text(path),
+            )
             self.model_combo.addItem(label, target)
             self.model_combo.setItemData(self.model_combo.count() - 1, target, Qt.ToolTipRole)
             index = self.model_combo.count() - 1
@@ -836,13 +891,22 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def _on_selection_changed(self, path: object, update_name: bool) -> None:
         if path is None:
             self.model_combo.blockSignals(True)
-            self.model_combo.setCurrentIndex(0)
+            self.model_combo.setCurrentIndex(-1)
             self.model_combo.blockSignals(False)
+            self._refresh_action_states()
             return
         selected = Path(path)  # type: ignore[arg-type]
         self._select_model_combo(selected)
         del update_name
-        self._apply_model_recommendation(selected)
+        key = llmenv.path_key(selected)
+        if self._active_param_key and self._active_param_key != key:
+            self._persist_current_params()
+        self._active_param_key = key
+        saved = (self.state.settings.run_params or {}).get(key)
+        if isinstance(saved, dict):
+            self._apply_saved_params(saved)
+        else:
+            self._apply_model_recommendation(selected)
         self._refresh_action_states()
 
     def _apply_model_recommendation(self, path: Path) -> None:
@@ -896,6 +960,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self._error("资源不足", str(exc))
             return
         self.state.log(note)
+        self._active_param_key = llmenv.path_key(plan.model)
+        self._persist_current_params()
+        self.state.settings.last_model = str(plan.model)
+        self.state.persist()
         self.state.log(f"正在启动 {plan.name}，等待 /health（最多 {wait_s}s）…")
         self.state.status(f"正在启动 {plan.name} · {plan.profile.name} · ctx {plan.context}…")
         self.state.set_busy(True)
@@ -1110,7 +1178,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """扫描完成后刷新模型下拉与服务名；未选择时自动带入一个可启动的模型。"""
         self._populate_model_combo()
         if self.state.selected_model is None and self.state.models:
-            chosen = self._resolved_model()
+            last = self.state.settings.last_model
+            last_path = Path(last) if last else None
+            chosen = last_path if last_path is not None and last_path.is_file() else self._resolved_model()
             if chosen is not None:
                 self.state.log(f"未选择模型，自动使用: {chosen}")
                 self.state.select_model(chosen, update_name=True)
@@ -1120,7 +1190,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._refresh_action_states()
 
     def _on_services_changed(self, _states: list[ServeState]) -> None:
-        """运行中服务变化：刷新底部按钮状态。"""
+        """运行中服务变化：刷新下拉框状态与底部按钮。"""
+        self._populate_model_combo()
         self._refresh_action_states()
 
     def _on_busy_changed(self, busy: bool) -> None:

@@ -110,19 +110,20 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     window.state.gpu_free_mib = 32000
     page = window.run_page
     page.on_models_changed()
-    assert page.model_combo.count() == 2
-    assert "small.gguf" in page.model_combo.itemText(1)
-    assert page.manage_models_button.text() == "模型管理"
+    assert page.model_combo.count() == 1
+    assert "small.gguf" in page.model_combo.itemText(0)
+    assert not hasattr(page, "manage_models_button")
     assert not hasattr(page, "browse_button")
     assert not hasattr(page, "clear_button")
-    page.model_combo.setCurrentIndex(1)
+    page.model_combo.setCurrentIndex(0)
     assert window.state.selected_model == model.path
     assert page.mode_choice.key() in {"speed", "balanced", "long", "max-context", "low-vram"}
-    assert page.start_button.isEnabled()
+    assert page.model_action_button.text() == "启动服务"
+    assert page.model_action_button.isEnabled()
     assert not page.stop_selected_button.isEnabled()
     assert not page.stop_all_button.isEnabled()
     window.state.set_busy(True)
-    assert not page.start_button.isEnabled()
+    assert not page.model_action_button.isEnabled()
     assert not page.stop_selected_button.isEnabled()
     assert not page.stop_all_button.isEnabled()
     window.state.set_busy(False)
@@ -158,6 +159,28 @@ def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     assert "--alias" in custom and "--host 127.0.0.1" in custom
     # 与预览一致：填入完整参数后不会在命令里重复追加一遍
     assert run.command_preview.toPlainText().count("-ngl") == 1
+
+
+def test_run_page_restores_last_model_and_per_model_params(window: Any, tmp_path: Path) -> None:
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    first_path = tmp_path / "a.gguf"
+    second_path = tmp_path / "b.gguf"
+    first_path.write_bytes(b"a")
+    second_path.write_bytes(b"bb")
+    first = ModelEntry(root=tmp_path, path=first_path, size=10)
+    second = ModelEntry(root=tmp_path, path=second_path, size=20)
+    window.state.models = [first, second]
+    window.state.models_root = tmp_path
+    window.state.selected_model = None
+    window.state.settings.last_model = str(first.path)
+    page = window.run_page
+    page.on_models_changed()
+    assert window.state.selected_model == first.path
+    page.port_edit.setText("9123")
+    page.model_combo.setCurrentIndex(1)
+    page.model_combo.setCurrentIndex(0)
+    assert page.port_edit.text() == "9123"
 
 
 def test_theme_switch_persists(window: Any, tmp_path: Path) -> None:
@@ -223,17 +246,17 @@ def test_run_page_keeps_action_bar_visible(window: Any) -> None:
     window.run_page.advanced.set_expanded(True)
     QApplication.processEvents()
     run = window.run_page
-    assert [run.start_button.text(), run.stop_selected_button.text(), run.stop_all_button.text()] == [
-        "启动服务",
+    assert [run.stop_selected_button.text(), run.stop_all_button.text()] == [
         "停止选中服务",
         "停止全部服务",
     ]
+    assert not hasattr(run, "start_button")
     assert not hasattr(run, "status_button")
     assert not hasattr(run, "browser_button")
     assert not hasattr(run, "logs_button")
-    assert run.start_button.sizeHint().height() >= 40
-    assert not run.start_button.isHidden()
-    assert run.start_button.mapTo(window, run.start_button.rect().bottomLeft()).y() <= window.height()
+    assert run.stop_selected_button.sizeHint().height() >= 40
+    assert not run.stop_selected_button.isHidden()
+    assert run.stop_selected_button.mapTo(window, run.stop_selected_button.rect().bottomLeft()).y() <= window.height()
 
 
 def test_chat_input_buttons_share_one_row(window: Any) -> None:
