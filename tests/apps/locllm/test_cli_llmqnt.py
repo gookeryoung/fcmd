@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
 import fcmd as fx
-from fcmd.apps.locllm import _locllmw_convert, llmbase, llmengine, llmqnt
+from fcmd.apps.locllm import llmbase, llmengine, llmqnt
+from fcmd.apps.locllm._llmgguf import GgufPrecision
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
@@ -405,85 +407,72 @@ class TestCli:
 # ---------------------------------------------------------------------- #
 # 转换页的量化选择状态
 # ---------------------------------------------------------------------- #
-class _FakeQuantVar:
-    def __init__(self, value: bool = False) -> None:
-        self.value = value
-
-    def get(self) -> bool:
-        return self.value
-
-    def set(self, value: bool) -> None:
-        self.value = value
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+pytest.importorskip("PySide6")
 
 
-class _FakeQuantCheck:
-    def __init__(self) -> None:
-        self.options: dict[str, Any] = {}
+@pytest.fixture()
+def quant_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
+    """离屏量化页：只验证勾选 / 已存在标记，不探测引擎与模型目录。"""
+    from fcmd.apps.locllm._locllmw_qt_center import _QuantPanel
+    from fcmd.gui.qt.app import create_application
 
-    def configure(self, **kwargs: Any) -> None:
-        self.options.update(kwargs)
-
-
-class _FakeStrVar:
-    def __init__(self, value: str) -> None:
-        self.value = value
-
-    def get(self) -> str:
-        return self.value
-
-    def set(self, value: str) -> None:
-        self.value = value
-
-
-def _bare_convert_page(tmp_path: Path) -> _locllmw_convert._ConvertPage:
-    page = object.__new__(_locllmw_convert._ConvertPage)
-    page._closed = False
-    page._quant_input = tmp_path / "model-f16.gguf"
-    page._quant_overwrite_var = cast(Any, _FakeQuantVar(False))
-    page._quant_out_dir_var = cast(Any, _FakeStrVar(str(tmp_path)))
-    page._quant_vars = {quant: cast(Any, _FakeQuantVar(False)) for quant in llmqnt.QUANT_TYPES}
-    page._quant_checks = {quant: cast(Any, _FakeQuantCheck()) for quant in llmqnt.QUANT_TYPES}
-    return page
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    create_application("locllmw-quant-test")
+    panel = _QuantPanel()
+    panel.out_dir.setText(str(tmp_path))
+    yield panel
+    panel.deleteLater()
 
 
 class TestQuantSelection:
-    """切换模型时量化类型勾选状态（纯状态，不创建 Tk）。"""
+    """量化类型勾选状态（Qt 控件状态，不创建窗口事件循环）。"""
 
-    def test_mark_existing_does_not_auto_check_existing_outputs(self, tmp_path: Path) -> None:
-        page = _bare_convert_page(tmp_path)
-        input_file = page._quant_input
-        assert input_file is not None
-        llmqnt.output_path(input_file, "Q4_K_M", page._quant_out_dir()).write_bytes(b"x")
+    def test_mark_existing_does_not_auto_check_existing_outputs(self, quant_panel: Any, tmp_path: Path) -> None:
+        input_file = tmp_path / "model-f16.gguf"
+        quant_panel._input = input_file
+        llmqnt.output_path(input_file, "Q4_K_M", tmp_path).write_bytes(b"x")
+        quant_panel.quant_checks["Q4_K_M"].setChecked(False)
 
-        page._mark_quant_existing()
+        quant_panel._mark_existing()
 
-        assert page._quant_vars["Q4_K_M"].get() is False
-        assert page._quant_checks["Q4_K_M"].options["state"] == "disabled"
-        assert "已存在" in page._quant_checks["Q4_K_M"].options["text"]
-        assert page._quant_checks["Q5_K_M"].options["state"] == "normal"
+        assert quant_panel.quant_checks["Q4_K_M"].isChecked() is False
+        assert quant_panel.quant_checks["Q4_K_M"].isEnabled() is False
+        assert "已存在" in quant_panel.quant_checks["Q4_K_M"].text()
+        assert quant_panel.quant_checks["Q5_K_M"].isEnabled() is True
 
-    def test_reset_quants_restores_default_selection(self, tmp_path: Path) -> None:
-        page = _bare_convert_page(tmp_path)
-        for var in page._quant_vars.values():
-            var.set(True)
+    def test_reset_quants_restores_default_selection(self, quant_panel: Any, tmp_path: Path) -> None:
+        from fcmd.apps.locllm import _locllmw_qt_center
 
-        page._reset_quants()
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            monkeypatch.setattr(
+                _locllmw_qt_center,
+                "detect_precision",
+                lambda *args, **kwargs: GgufPrecision(label="F16 全量，未量化", quantized=False, source="filename"),
+            )
+            monkeypatch.setattr(_locllmw_qt_center, "quantize_input_error", lambda _precision: None)
+            for check in quant_panel.quant_checks.values():
+                check.setChecked(True)
 
-        checked = {quant for quant, var in page._quant_vars.items() if var.get()}
+            quant_panel._choose_input(tmp_path / "model-f16.gguf")
+        finally:
+            monkeypatch.undo()
+
+        checked = {quant for quant, check in quant_panel.quant_checks.items() if check.isChecked()}
         assert checked == set(llmqnt.DEFAULT_QUANTS)
 
-    def test_mark_existing_keeps_selection_when_overwrite_enabled(self, tmp_path: Path) -> None:
-        page = _bare_convert_page(tmp_path)
-        page._quant_overwrite_var.set(True)
-        input_file = page._quant_input
-        assert input_file is not None
-        llmqnt.output_path(input_file, "Q2_K", page._quant_out_dir()).write_bytes(b"x")
-        page._quant_vars["Q2_K"].set(True)
+    def test_mark_existing_keeps_selection_when_overwrite_enabled(self, quant_panel: Any, tmp_path: Path) -> None:
+        input_file = tmp_path / "model-f16.gguf"
+        quant_panel._input = input_file
+        quant_panel.overwrite.setChecked(True)
+        llmqnt.output_path(input_file, "Q2_K", tmp_path).write_bytes(b"x")
+        quant_panel.quant_checks["Q2_K"].setChecked(True)
 
-        page._mark_quant_existing()
+        quant_panel._mark_existing()
 
-        assert page._quant_vars["Q2_K"].get() is True
-        assert page._quant_checks["Q2_K"].options["state"] == "normal"
+        assert quant_panel.quant_checks["Q2_K"].isChecked() is True
+        assert quant_panel.quant_checks["Q2_K"].isEnabled() is True
 
 
 def test_plan_jobs_rejects_output_equal_to_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

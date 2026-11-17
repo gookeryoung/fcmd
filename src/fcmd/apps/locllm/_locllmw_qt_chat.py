@@ -54,12 +54,17 @@ _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
 
 
 def service_labels(states: list[ServeState]) -> list[tuple[str, ServeState]]:
-    """生成服务下拉项：``自定义`` + 每个已登记服务（标注是否运行中）。"""
+    """生成服务下拉项：每个已登记服务都标注「运行中 / 已退出」。"""
     options: list[tuple[str, ServeState]] = []
     for state in states:
-        suffix = "" if process_alive(state.pid, state.create_time) else "（已退出）"
+        suffix = "（运行中）" if process_alive(state.pid, state.create_time) else "（已退出）"
         options.append((f"{state.name}{suffix}", state))
     return options
+
+
+def _first_available(states: list[ServeState]) -> ServeState | None:
+    """第一个进程仍在运行的服务；没有可用服务时返回 ``None``。"""
+    return next((state for state in states if process_alive(state.pid, state.create_time)), None)
 
 
 def endpoint_from_form(base_url: str, api_key: str, model: str) -> Endpoint:
@@ -91,6 +96,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         self._session: ChatSession | None = None
         self._running = False
+        self._services: list[tuple[str, ServeState]] = []
+        self._manual_choice = False
         self._bridge = _ChatBridge(self)
         self._bridge.delta.connect(self._append_delta)
         self._bridge.reasoning.connect(self._append_reasoning)
@@ -173,7 +180,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # 服务选择
     # ------------------------------------------------------------------ #
     def refresh_services(self) -> None:
-        """按最新状态刷新服务下拉项（保留当前选择）。"""
+        """按最新状态刷新服务下拉项，默认选中第一个可用服务并刷新状态提示。"""
         try:
             states = llmenv.list_states()
         except ServeError:
@@ -185,9 +192,28 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._services = service_labels(states)
         for label, _state in self._services:
             self.service_combo.addItem(label)
-        if current:
-            self.service_combo.setCurrentText(current)
+        labels = [_CUSTOM, *[label for label, _state in self._services]]
+        if current not in labels:
+            current = _CUSTOM
+        if current == _CUSTOM and not self._manual_choice:
+            first = _first_available(states)
+            if first is not None:
+                current = next(label for label, state in self._services if state.name == first.name)
+            elif self._services:
+                # 都不可用时也选中第一个服务，让状态栏说明“进程已退出”而不是笼统的未选择。
+                current = self._services[0][0]
+        self.service_combo.setCurrentText(current)
         self.service_combo.blockSignals(False)
+        state = self._selected_state()
+        if state is None:
+            self.status.setText(
+                "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
+                if not states
+                else "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
+            )
+            return
+        self._apply_state(state)
+        self._report_state(state)
 
     def _selected_state(self) -> ServeState | None:
         label = self.service_combo.currentText()
@@ -197,14 +223,31 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         return None
 
     def _on_service_changed(self) -> None:
-        """选中已登记服务时回填地址 / 模型 / API Key。"""
+        """选中已登记服务时回填地址 / 模型 / API Key，并提示进程是否仍在运行。"""
+        self._manual_choice = True
         state = self._selected_state()
         if state is None:
+            self.status.setText("自定义地址：脱离已登记服务，直接按下方地址与模型接入")
             return
+        self._apply_state(state)
+        if process_alive(state.pid, state.create_time):
+            self._append_text(f"[服务] 已切换到 {state.name}：{state.base_url}\n\n", "info")
+        else:
+            self._append_text(f"[错误] 服务 {state.name} 不可用：{state.base_url}\n\n", "error")
+        self._report_state(state)
+
+    def _apply_state(self, state: ServeState) -> None:
+        """把服务状态的地址 / 模型 / API Key 回填到表单。"""
         self.url_edit.setText(state.base_url)
         self.model_edit.setText(state.alias)
         self.api_key_edit.setText(state.api_key)
-        self.status.setText(f"已选择服务 {state.name}（{state.base_url}）")
+
+    def _report_state(self, state: ServeState) -> None:
+        """状态栏文案：运行中 / 进程已退出。"""
+        if process_alive(state.pid, state.create_time):
+            self.status.setText(f"已选择服务 {state.name}（运行中）")
+        else:
+            self.status.setText(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
 
     # ------------------------------------------------------------------ #
     # 发送 / 停止

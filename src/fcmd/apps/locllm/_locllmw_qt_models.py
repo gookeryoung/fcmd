@@ -16,14 +16,14 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QResizeEvent
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QHeaderView, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHeaderView, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from fcmd.apps.locllm import llmenv, llmmodel
 from fcmd.apps.locllm._locllmw_monitor import _FIT_BUSY, _FIT_RUNNING, _FIT_UNSUPPORTED, _fit_state
 from fcmd.apps.locllm._locllmw_ui import _HINT_PLACEHOLDER, _default_open_groups, _group_models
 from fcmd.apps.locllm.llmbase import ModelEntry, human_size
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.widgets import Card, HintLabel, PageScroll, button
+from fcmd.gui.qt.widgets import HintLabel
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -34,7 +34,6 @@ __all__ = [
     "COLUMNS",
     "NAME_COLUMN_WIDTH",
     "ModelTree",
-    "ModelsPage",
     "display_path_for",
     "fit_state_for",
     "model_row_values",
@@ -293,93 +292,3 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
                         if emit:
                             self.modelSelected.emit(path)
                         return
-
-
-class ModelsPage(QWidget):  # pragma: no cover - Qt 控件
-    """模型页：扫描 / 选择模型，展示精度与显存适配；下载与转换见 CLI。"""
-
-    def __init__(
-        self,
-        state: LocllmState,
-        parent: QWidget | None = None,
-        *,
-        fit_resolver: Callable[[ModelEntry], str] | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.state = state
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-
-        toolbar = QHBoxLayout()
-        self.refresh_button = button("刷新模型列表")
-        self.expand_button = button("展开全部", kind="ghost")
-        self.collapse_button = button("收起全部", kind="ghost")
-        self.browse_button = button("浏览…")
-        self.clear_button = button("清除选择")
-        self.open_dir_button = button("打开模型目录", kind="ghost")
-        toolbar.addWidget(self.refresh_button)
-        toolbar.addWidget(self.expand_button)
-        toolbar.addWidget(self.collapse_button)
-        toolbar.addWidget(self.browse_button)
-        toolbar.addWidget(self.clear_button)
-        toolbar.addStretch(1)
-        toolbar.addWidget(self.open_dir_button)
-        layout.addLayout(toolbar)
-
-        scroll = PageScroll(self)
-        layout.addWidget(scroll, 1)
-        self.card = Card("运行模型（模型目录中的 GGUF）")
-        self.tree = ModelTree(state, self.card)
-        if fit_resolver is not None:
-            self.tree.set_fit_resolver(fit_resolver)
-        self.tree.tree.setMinimumHeight(320)
-        self.card.body.addWidget(self.tree)
-        scroll.body.addWidget(self.card, 1)
-
-        self.hint = HintLabel(
-            "下载与转换请用 `fcmd llmdown` / `fcmd llmconvert`；"
-            "需要内嵌下载浏览器与转换向导时用 `fcmd locllmw --ui tk`。"
-        )
-        scroll.body.addWidget(self.hint)
-
-        self.refresh_button.clicked.connect(self._refresh)
-        self.expand_button.clicked.connect(self.tree.expand_all)
-        self.collapse_button.clicked.connect(self.tree.collapse_all)
-        self.browse_button.clicked.connect(self._browse)
-        self.clear_button.clicked.connect(self._clear)
-        self.open_dir_button.clicked.connect(self._open_dir)
-        state.modelsChanged.connect(self._on_models_changed)
-        state.servicesChanged.connect(lambda _states: self.tree.refresh())
-
-    # ------------------------------------------------------------------ #
-    # 动作
-    # ------------------------------------------------------------------ #
-    def _refresh(self) -> None:
-        self.card.setTitle("正在扫描模型目录…")
-        self.state.refresh_models()
-
-    def _on_models_changed(self, outcome: object) -> None:
-        self.card.setTitle(f"运行模型（模型目录中的 GGUF，共 {len(self.state.models)} 个）")
-        self.tree.refresh()
-        issue = getattr(outcome, "issue", None)
-        if issue:
-            self.hint.setText(issue)
-
-    def _browse(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 GGUF 模型", "", "GGUF 文件 (*.gguf);;所有文件 (*.*)")
-        if not path:
-            return
-        self.tree.tree.clearSelection()
-        self.state.select_model(Path(path).resolve())
-
-    def _clear(self) -> None:
-        self.tree.tree.clearSelection()
-        self.state.selected_model = None
-        self.state.selectionChanged.emit(None, False)
-        self.tree.set_hint(_HINT_PLACEHOLDER)
-
-    def _open_dir(self) -> None:
-        from fcmd.apps.locllm._locllmw_models import open_path
-
-        open_path(llmenv.models_dir())

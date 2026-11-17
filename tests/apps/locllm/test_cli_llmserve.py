@@ -2463,11 +2463,13 @@ class TestServewFitState:
         assert locllmw._fit_state(total, None) == "可用"
 
     def test_state_maps_to_row_tag(self) -> None:
-        # 标签必须与中文状态一一对应，否则 Treeview 不会着色
-        assert locllmw.LocllmWindow._state_tag("硬件不足") == ("unfit",)
-        assert locllmw.LocllmWindow._state_tag("需释放显存") == ("busy",)
-        assert locllmw.LocllmWindow._state_tag("可用") == ()
-        assert locllmw.LocllmWindow._state_tag("运行中") == ()
+        # 标签必须与中文状态一一对应，否则列表不会着色
+        from fcmd.apps.locllm._locllmw_ui import state_tag
+
+        assert state_tag("硬件不足") == ("unfit",)
+        assert state_tag("需释放显存") == ("busy",)
+        assert state_tag("可用") == ()
+        assert state_tag("运行中") == ()
 
 
 class TestServewEdgeCases:
@@ -2547,30 +2549,22 @@ class TestServewGuiEntry:
         from fcmd.apps.locllm import _locllmw_qt_window
 
         calls: list[bool] = []
-        monkeypatch.setattr(_locllmw_qt_window, "run_qt", lambda: calls.append(True))
+        monkeypatch.setattr(_locllmw_qt_window, "run_qt", lambda _path=None: calls.append(True))
         locllmw.run_gui()
         assert calls == [True]
 
-    def test_run_gui_tk_delegates_to_tk_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[tuple[str, str]] = []
-        monkeypatch.setattr(locllmw._guiwindow, "run_window", lambda factory, title: calls.append((title, "")))
-        locllmw.run_gui(ui="tk")
-        assert calls == [("LocLLM", "")]
-
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def fake_window(_factory: object, _title: str) -> None:
-            raise ImportError("no tkinter")
+        import sys
 
-        monkeypatch.setattr(locllmw._guiwindow, "run_window", fake_window)
-        with pytest.raises(ImportError):
-            locllmw.run_gui(ui="tk")
+        monkeypatch.setitem(sys.modules, "fcmd.apps.locllm._locllmw_qt_window", None)
+        with pytest.raises(SystemExit, match="Qt"):
+            locllmw.run_gui()
 
-    def test_launch_cmd_calls_run_gui_with_ui(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
-        monkeypatch.setattr(locllmw, "run_gui", lambda *, ui="qt": calls.append(ui))
+    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[bool] = []
+        monkeypatch.setattr(locllmw, "run_gui", lambda: calls.append(True))
         locllmw.launch_cmd()
-        locllmw.launch_cmd("tk")
-        assert calls == ["qt", "tk"]
+        assert calls == [True]
 
 
 class TestServewSettings:

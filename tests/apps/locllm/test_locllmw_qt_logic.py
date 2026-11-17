@@ -233,7 +233,7 @@ def test_usage_texts_without_gpu() -> None:
 def test_service_labels_marks_dead_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_chat.process_alive", lambda pid, created: pid == 1)
     labels = service_labels([_state(pid=1), _state(name="dead", pid=2)])
-    assert labels[0][0] == "qwen"
+    assert labels[0][0] == "qwen（运行中）"
     assert labels[1][0] == "dead（已退出）"
 
 

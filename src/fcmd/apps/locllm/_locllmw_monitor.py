@@ -1,21 +1,19 @@
 """locllmw 的运行监控：GPU / 系统负载采样、格式化、速率平滑与适配建议。
 
 从 :mod:`fcmd.apps.locllm.locllmw` 拆出；``locllmw`` 仍 re-export 这些纯函数与
-``_LocllmWindowMonitor`` / ``_LocllmWindowUI`` 所需的常量，既有导入路径不变。
+Qt 监测页所需的常量 / 采样函数，既有导入路径不变。
 """
 
 from __future__ import annotations
 
 import csv
-import queue
-import threading
 import time
 from collections import deque
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
-from fcmd.apps.locllm import llmbase, llmmodel, llmserve
-from fcmd.apps.locllm.llmbase import ServeError, ServeState, human_size
+from fcmd.apps.locllm import llmbase, llmmodel
+from fcmd.apps.locllm.llmbase import human_size
 
 _FIT_OK = "可用"
 _FIT_BUSY = "需释放显存"
@@ -331,181 +329,3 @@ class RateWindow:
             self._gen_rate = max(predicted - first_predicted, 0.0) / span
             self._prompt_rate = max(prompt - first_prompt, 0.0) / span
         return self._gen_rate, self._prompt_rate
-
-
-class _LocllmWindowMonitor:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """LocllmWindow 的实时监控方法（mixin）。"""
-
-    if TYPE_CHECKING:
-        # 宿主 LocllmWindow 提供的成员：仅用于类型检查，运行时由宿主类实现。
-        root: Any
-        _closing: bool
-        _gpu_mib: int | None
-        _gpu_free_mib: int | None
-        _monitor_seq: int
-        _monitor_state: ServeState | None
-        _monitor_stop: threading.Event | None
-        _monitor_thread: threading.Thread | None
-        _monitor_results: Any
-        _log: Any
-        _metric_vars: Any
-        _load_vars: Any
-        _gpu_vars: Any
-        _update_fit_states: Any
-        _refresh_overview_usage: Any
-        _reset_overview_usage: Any
-
-    # ------------------------------------------------------------------ #
-    # 实时性能监控（/metrics）
-    # ------------------------------------------------------------------ #
-    def _start_monitor(self, state: ServeState) -> None:
-        """启动 ``/metrics`` 采样线程；同一服务已在监控时忽略。"""
-        current = self._monitor_state
-        if (
-            self._monitor_thread is not None
-            and self._monitor_thread.is_alive()
-            and current is not None
-            and (current.host, current.port) == (state.host, state.port)
-        ):
-            self._metric_vars["monitor"].set("监控中")
-            return
-        self._stop_monitor("重新连接监控…")
-        stop = threading.Event()
-        self._monitor_stop = stop
-        self._monitor_state = state
-        self._monitor_seq += 1
-        seq = self._monitor_seq
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(state, stop), daemon=True)
-        self._monitor_thread.start()
-        self._metric_vars["monitor"].set("监控中")
-        self._log(f"已开始实时性能采样: {state.base_url}/metrics")
-        self.root.after(300, lambda: self._poll_metrics(seq))
-
-    def _start_system_monitor(self) -> None:
-        """服务未运行时仅采样系统负载，保证窗口打开即可看到 CPU / 内存 / GPU 使用情况。
-
-        采样线程延后 :data:`MONITOR_START_DELAY_MS` 启动：首轮 ``psutil`` 采样与
-        ``nvidia-smi`` 子进程会和建窗争抢主线程，等首屏绘制完成再开始更跟手。
-        """
-        if self._closing:
-            return
-        if self._monitor_thread is not None and self._monitor_thread.is_alive():
-            return
-        stop = threading.Event()
-        self._monitor_stop = stop
-        self._monitor_state = None
-        self._monitor_seq += 1
-        seq = self._monitor_seq
-        self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
-        self.root.after(MONITOR_START_DELAY_MS, lambda: self._launch_system_monitor(seq, stop))
-        self.root.after(MONITOR_START_DELAY_MS + 300, lambda: self._poll_metrics(seq))
-
-    def _launch_system_monitor(self, seq: int, stop: threading.Event) -> None:
-        """按序号启动负载采样线程；窗口已关闭或监控已停止时丢弃本次启动。"""
-        if self._closing or seq != self._monitor_seq:
-            return
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, args=(None, stop), daemon=True)
-        self._monitor_thread.start()
-
-    def _stop_monitor(self, reason: str = "未监控") -> None:
-        """停止采样线程并更新状态（重复调用安全）。"""
-        if self._monitor_stop is not None:
-            self._monitor_stop.set()
-        thread = self._monitor_thread
-        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
-            thread.join(timeout=1.5)
-        self._monitor_stop = None
-        self._monitor_thread = None
-        self._monitor_state = None
-        self._monitor_seq += 1
-        self._metric_vars["monitor"].set(reason)
-        for var in (*self._load_vars.values(), *self._gpu_vars.values()):
-            var.set("-")
-        self._reset_overview_usage()
-
-    def _monitor_loop(self, state: ServeState | None, stop: threading.Event) -> None:
-        """后台线程：每秒采样系统负载；服务运行时额外采样 ``/metrics``。"""
-        window = RateWindow()
-        process = self._attach_process(state.pid) if state is not None else None
-        pid = state.pid if state is not None else 0
-        while not stop.is_set():
-            started = time.monotonic()
-            self._monitor_results.put(("load", _sample_load(pid, process)))
-            if state is None:
-                self._monitor_results.put(("idle", None))
-            else:
-                try:
-                    metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
-                except ServeError as exc:
-                    self._monitor_results.put(("error", str(exc)))
-                else:
-                    gen_rate, prompt_rate = window.update(started, metrics.predicted_tokens, metrics.prompt_tokens)
-                    self._monitor_results.put(("metrics", (metrics, gen_rate, prompt_rate)))
-            stop.wait(max(0.2, 1.0 - (time.monotonic() - started)))
-
-    @staticmethod
-    def _attach_process(pid: int) -> Any | None:
-        """绑定服务进程用于 CPU / 内存 / 运行时长采样；进程已退出时返回 ``None``。"""
-        import psutil
-
-        try:
-            return psutil.Process(pid)
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return None
-
-    def _poll_metrics(self, seq: int) -> None:
-        """主线程刷新性能面板（按序号丢弃已停止监控的旧回调）。"""
-        if self._closing or seq != self._monitor_seq:
-            return
-        try:
-            while True:
-                kind, payload = self._monitor_results.get_nowait()
-                if kind == "metrics":
-                    metrics, gen_rate, prompt_rate = cast(tuple[llmserve.ServeMetrics, float, float], payload)
-                    self._apply_metrics(metrics, gen_rate, prompt_rate)
-                elif kind == "load":
-                    self._apply_load(cast(LoadSample, payload))
-                elif kind == "idle":
-                    self._apply_idle()
-                else:
-                    self._metric_vars["monitor"].set("采样失败: " + str(payload)[:60])
-        except queue.Empty:
-            pass
-        self.root.after(500, lambda: self._poll_metrics(seq))
-
-    def _apply_metrics(self, metrics: llmserve.ServeMetrics, gen_rate: float, prompt_rate: float) -> None:
-        self._metric_vars["gen_rate"].set(f"{gen_rate:.1f} tok/s")
-        self._metric_vars["prompt_rate"].set(f"{prompt_rate:.1f} tok/s")
-        self._metric_vars["processing"].set(f"{metrics.processing:.0f}")
-        self._metric_vars["deferred"].set(f"{metrics.deferred:.0f}")
-        self._metric_vars["kv"].set(f"{metrics.kv_usage * 100:.1f} %")
-        self._metric_vars["predicted"].set(f"{metrics.predicted_tokens:.0f}")
-        self._metric_vars["prompt"].set(f"{metrics.prompt_tokens:.0f}")
-        self._metric_vars["monitor"].set("监控中")
-
-    def _apply_idle(self) -> None:
-        """服务未运行：清空服务相关指标，仅保留系统负载采样。"""
-        for key in ("gen_rate", "prompt_rate", "processing", "deferred", "kv", "predicted", "prompt"):
-            self._metric_vars[key].set("-")
-        self._metric_vars["monitor"].set("服务未运行（仅采样系统负载）")
-
-    def _apply_load(self, sample: LoadSample) -> None:
-        """刷新系统负载与 GPU 面板，并同步模型列表的显存适配状态。"""
-        for key, value in _format_load(sample).items():
-            self._load_vars[key].set(value)
-        for key, value in _format_gpu(sample.gpu).items():
-            self._gpu_vars[key].set(value)
-        self._sync_free_vram(sample.gpu)
-        self._refresh_overview_usage(sample)
-
-    def _sync_free_vram(self, gpu: GpuSample | None) -> None:
-        """用实时 GPU 采样更新可用显存，服务停止释放显存后自动恢复为“可用”。"""
-        if gpu is None or gpu.memory_used is None or gpu.memory_total is None:
-            return
-        free_mib = int(max(gpu.memory_total - gpu.memory_used, 0))
-        if self._gpu_free_mib is not None and abs(free_mib - self._gpu_free_mib) < 256:
-            return
-        self._gpu_free_mib = free_mib
-        if self._gpu_mib is None:
-            self._gpu_mib = int(gpu.memory_total)
-        self._update_fit_states()

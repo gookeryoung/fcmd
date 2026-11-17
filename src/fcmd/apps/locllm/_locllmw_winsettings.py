@@ -1,9 +1,8 @@
 """locllmw 的窗口设置：geometry、硬件快照、性能实测与下载设置。
 
-Tk 窗口（``locllmw.py``）与 Qt 窗口（``_locllmw_qt_window.py``）共用这一份
-设置模型，文件固定为 ``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``，因此切换
-前端不会丢失窗口位置、硬件缓存与实测记录。解析与校验都是纯逻辑，
-不依赖任何 GUI 工具包。
+Qt 窗口（``_locllmw_qt_window.py``）使用这一份设置模型，文件固定为
+``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``，保存窗口位置、硬件缓存、性能实测与
+下载参数。解析与校验都是纯逻辑，不依赖任何 GUI 工具包。
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _geometry
 
 __all__ = [
     "DEFAULT_HEIGHT",
@@ -97,7 +96,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
 
 def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
     """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
-    return _guiwindow.resolve_geometry(
+    return _geometry.resolve_geometry(
         saved,
         screen_width,
         screen_height,

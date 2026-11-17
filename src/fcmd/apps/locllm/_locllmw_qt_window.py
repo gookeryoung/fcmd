@@ -119,9 +119,9 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return builders[key]
 
     def _build_models_page(self) -> QWidget:
-        from fcmd.apps.locllm._locllmw_qt_models import ModelsPage
+        from fcmd.apps.locllm._locllmw_qt_center import ModelCenterPage
 
-        page = ModelsPage(self.state, fit_resolver=self.run_page.fit_text_for)
+        page = ModelCenterPage(self.state, fit_resolver=self.run_page.fit_text_for)
         page.tree.modelSelected.connect(lambda path: self.state.select_model(path, update_name=True))
         page.tree.refresh()
         self.run_page.fitChanged.connect(page.tree.refresh)
@@ -168,6 +168,8 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             gpu = f"GPU {self.state.gpu_mib // 1024} GB" if self.state.gpu_mib else "CPU 推理"
             self.set_status(f"环境就绪 · {count} 个模型 · {gpu}")
         self.overview.refresh_hardware()
+        if self._models_page is not None:
+            self._models_page.refresh_config()
         if self._settings_page is not None:
             self._settings_page.refresh()
         if self._chat_page is not None:
@@ -184,6 +186,8 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             answer = QMessageBox.question(self, "任务进行中", "启动 / 停止任务仍在执行，确实退出？")
             if answer != QMessageBox.StandardButton.Yes:
                 return False
+        if self._models_page is not None and not self._models_page.close():
+            return False
         if self._chat_page is not None:
             self._chat_page.close()
         self.monitor_page.stop()
