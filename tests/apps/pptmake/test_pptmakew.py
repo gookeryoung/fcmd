@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -9,7 +11,6 @@ import pytest
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import pptmakew
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.gui import window as _guiwindow
 
 
 def test_tool_registration() -> None:
@@ -126,17 +127,21 @@ def test_resolve_geometry() -> None:
     assert pptmakew.resolve_geometry(None, 1920, 1080) == pptmakew.DEFAULT_GEOMETRY
 
 
-def test_run_gui_delegates_to_shared_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorded: dict[str, object] = {}
+def test_run_gui_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺少 Qt 前端时提示安装并退出。"""
+    monkeypatch.setitem(sys.modules, "fcmd.apps.pptmake._pptmakew_qt", None)
+    with pytest.raises(SystemExit, match="Qt"):
+        pptmakew.run_gui()
 
-    def fake_run_window(factory: object, message: str) -> None:
-        recorded["factory"] = factory
-        recorded["message"] = message
 
-    monkeypatch.setattr(_guiwindow, "run_window", fake_run_window)
+def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """正常路径把启动交给 Qt 入口，并转发自定义设置路径。"""
+    calls: list[Path | None] = []
+    fake = types.ModuleType("fcmd.apps.pptmake._pptmakew_qt")
+    fake.run_qt = lambda settings_path=None: calls.append(settings_path)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.pptmake._pptmakew_qt", fake)
     pptmakew.run_gui(Path("custom.json"))
-    assert callable(recorded["factory"])
-    assert recorded["message"] == "PPT 模板设计器"
+    assert calls == [Path("custom.json")]
 
 
 def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:

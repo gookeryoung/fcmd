@@ -1,6 +1,6 @@
 # 0034 全量 GUI 迁移到 Qt（PySide6）：共享层先行与分批迁移
 
-- 状态：生效（B0 共享层、B1 六个单页工具、B2 五个表单窗口、B3 五个中型表格 / 树窗口已落地；B4–B7 待实施；D1–D3 已拍板）
+- 状态：生效（B0 共享层、B1 六个单页工具、B2 五个表单窗口、B3 五个中型表格 / 树窗口已落地；B4 进行中，pptmakew 已完成；B5–B7 待实施；D1–D3 已拍板）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线）、0033（locllmw 迁移与 Qt 基座）、0025（侧边栏导航）
 
@@ -87,7 +87,8 @@ Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已�
 每批独立提交、可独立回退；批次内每迁完一个应用即可单独启动验收，不攒到最后。
 B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk 实现改坏。
 
-进度：B0、B1、B2、B3 已完成；B3 六个应用（ncmconvertw / mirrortoolw / videoconvw /
+进度：B0、B1、B2、B3 已完成；B4 进行中（pptmakew 已完成并单独提交，预览画布与
+缩略图共用同一份绘制列表）。B3 六个应用（ncmconvertw / mirrortoolw / videoconvw /
 reshackw / devmanw / renamerw）各自单独提交。B1 六个应用（pdfcryptw / img2icow /
 docdiffw / parameshw / paramcadw / img2pdfw）与 B2 五个应用（pevieww / pdfsplitw / dynacalcw /
 regexvalidatew / filesyncw）各自单独提交，Tk 实现已删除，GUI 入口统一委托
@@ -96,6 +97,8 @@ regexvalidatew / filesyncw）各自单独提交，Tk 实现已删除，GUI 入�
 下拉 / 数值框按字体行高推导逻辑像素，高 DPI 下随缩放同比换算；Tk 侧
 ``ttk_style_specs`` 原本就对这几类控件用同一套 padding 并按 DPI 缩放，
 尚未迁移的窗口迁移后自动收敛到 Qt 基准，locllmw 的 Tk 回退沿用 ttk 基准。
+另：单页工具窗口的内容统一放进纵向滚动页面，窗口缩矮到内容最小高度以下时
+改为整页滚动，不再把表格 / 工具栏压出卡片边界（B4 期间的回溯修复）。
 
 ## 每应用交付时的布局适配点
 
