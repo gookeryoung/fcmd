@@ -237,7 +237,7 @@ DESCRIPTIONS: dict[str, str] = {
     "randtool": "生成强密码",
     "regextool": "匹配正则表达式",
     "regexvalidate": "正则校验（匹配/全匹配/findall/分组与特征分析，支持 ignorecase/multiline/dotall 标志）",
-    "regexvalidatew": "正则校验器窗口版（Tk）：实时校验正则与文本，展示匹配位置/捕获组/全匹配/findall，内置 20 个典型示例，支持 ignorecase/multiline/dotall 标志、历史记录与语法帮助；设置持久化到 ~/.fcmd/ui/regexvalidate.json",
+    "regexvalidatew": "正则校验器窗口版（Qt）：实时校验正则与文本，展示匹配位置/捕获组/全匹配/findall，内置 20 个典型示例，支持 ignorecase/multiline/dotall 标志、历史记录与语法帮助；设置持久化到 ~/.fcmd/ui/regexvalidate.json",
     "renamer": "批量重命名（规则流水线）：replace 正则替换、reorder 捕获组重排、move 把匹配文本搬到开头/结尾/锚点、insert / case / sequence；规则用 JSON 或 @文件传入，preview 预览、apply 两阶段执行",
     "renamerw": "批量重命名窗口版（Tk）：目标文件/目录选择、规则流水线编辑（正则替换、捕获组重排、匹配文本搬移、插入、大小写、计数器）、勾选前预览与冲突/非法标记、两阶段执行与撤销、规则 JSON 导入导出；设置持久化到 ~/.fcmd/ui/renamerw.json",
     "reseticoncache": "重置 Windows 图标缓存（仅 Windows 生效）",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "695092849aed6fa13f7472a44ee2be19"
+DIGEST = "dbbf25605a9622909d477d2d221ca74c"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
