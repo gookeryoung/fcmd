@@ -14,24 +14,26 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
-    QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from fcmd.apps.locllm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
-from fcmd.apps.locllm._llmgguf import detect_precision
+from fcmd.apps.locllm import _llmtune, _locllmw_recommend, llmbase, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._locllmw_monitor import _busy_advice, _fit_advice, _probe_web_ui
-from fcmd.apps.locllm._locllmw_ui import _HINT_PLACEHOLDER, service_name_from_model
+from fcmd.apps.locllm._locllmw_ui import service_name_from_model
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
     DEFAULT_HOST,
@@ -247,6 +249,109 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
     )
 
 
+class _ChoiceCard(QPushButton):  # pragma: no cover - Qt 控件
+    """可选项方块：标题 + 下方说明，整块可点击。"""
+
+    def __init__(self, title: str, description: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("ChoiceCard")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumHeight(72)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(2)
+        title_label = QLabel(title, self)
+        title_label.setObjectName("ChoiceTitle")
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        desc_label = QLabel(description, self)
+        desc_label.setObjectName("ChoiceHint")
+        desc_label.setWordWrap(True)
+        desc_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(title_label)
+        layout.addWidget(desc_label)
+
+
+class _ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
+    """一组互斥的方块选项，``key()`` / ``set_key()`` 读写当前值。"""
+
+    changed = Signal(str)
+
+    def __init__(
+        self,
+        options: Sequence[tuple[str, str, str]],
+        *,
+        current: str = "",
+        columns: int = 4,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._current = current
+        self._buttons: dict[str, _ChoiceCard] = {}
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        for index, (key, title, description) in enumerate(options):
+            card = _ChoiceCard(title, description, self)
+            card.clicked.connect(lambda _checked=False, key=key: self._select(key))
+            self._group.addButton(card)
+            self._buttons[key] = card
+            row, column = divmod(index, columns)
+            grid.addWidget(card, row, column)
+        for column in range(columns):
+            grid.setColumnStretch(column, 1)
+        self.set_key(current, emit=False)
+
+    def key(self) -> str:
+        return self._current
+
+    def set_key(self, key: str, *, emit: bool = False) -> None:
+        card = self._buttons.get(key)
+        if card is None:
+            return
+        self._current = key
+        card.setChecked(True)
+        if emit:
+            self.changed.emit(key)
+
+    def _select(self, key: str) -> None:
+        if key == self._current:
+            return
+        self._current = key
+        self.changed.emit(key)
+
+
+def _profile_options() -> list[tuple[str, str, str]]:
+    titles = {
+        "speed": "速度优先",
+        "balanced": "均衡",
+        "long": "长上下文",
+        "max-context": "最大上下文",
+    }
+    return [(name, titles.get(name, name), profile.note) for name, profile in PROFILES.items()]
+
+
+def _tune_options() -> list[tuple[str, str, str]]:
+    options: list[tuple[str, str, str]] = []
+    for name in _llmtune.TUNE_NAMES:
+        description = "按显存与上下文自动选择" if name == "auto" else _llmtune.preset(name).detail
+        options.append((name, _llmtune.TUNE_LABELS[name], description))
+    return options
+
+
+def _kv_options() -> list[tuple[str, str, str]]:
+    return [
+        ("", "档位默认", "跟随档位与调优策略自动选择"),
+        ("f16", "F16", "精度最高，KV 显存占用最大"),
+        ("q8_0", "Q8_0", "约省一半 KV 显存，质量略降"),
+        ("q4_0", "Q4_0", "最省显存，长上下文质量损失更明显"),
+    ]
+
+
 class RunPage(QWidget):  # pragma: no cover - Qt 控件
     """运行页：参数表单 + 模型列表 + 计划预览 + 启停动作。"""
 
@@ -291,15 +396,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.addItem("（未选择，按档位自动查找）", None)
         self.model_combo.currentIndexChanged.connect(self._on_model_combo_changed)
         model_row.addWidget(self.model_combo, 1)
-        self.browse_button = button("浏览…")
-        self.browse_button.clicked.connect(self._browse)
-        self.clear_button = button("清除选择")
-        self.clear_button.clicked.connect(self._clear_selection)
-        model_row.addWidget(self.browse_button)
-        model_row.addWidget(self.clear_button)
+        self.manage_models_button = button("模型管理")
+        self.manage_models_button.clicked.connect(lambda: self.state.navigate("models"))
+        model_row.addWidget(self.manage_models_button)
         self.model_card.body.addLayout(model_row)
-        self.model_hint = HintLabel("")
-        self.model_card.body.addWidget(self.model_hint)
         layout.addWidget(self.model_card)
 
         self.params_card = Card("启动参数")
@@ -307,25 +407,29 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.name_combo = QComboBox(self.params_card)
         self.name_combo.setEditable(True)
         self.name_combo.setCurrentText(default_service_name())
-        self.profile_combo = QComboBox(self.params_card)
-        self.profile_combo.addItems(list(PROFILES))
-        self.profile_combo.setCurrentText(DEFAULT_PROFILE)
-        form.add_pair("服务名", self.name_combo, "档位", self.profile_combo)
+        form.add_row("服务名", self.name_combo)
         self.host_edit = QLineEdit(DEFAULT_HOST, self.params_card)
         self.port_edit = QLineEdit(str(DEFAULT_PORT), self.params_card)
         form.add_pair("监听地址", self.host_edit, "端口", self.port_edit)
         self.threads_edit = QLineEdit(str(DEFAULT_THREADS), self.params_card)
-        self.tune_combo = QComboBox(self.params_card)
-        self.tune_combo.addItems(list(_llmtune.TUNE_LABELS.values()))
-        form.add_pair("线程数", self.threads_edit, "调优策略", self.tune_combo)
+        form.add_row("线程数", self.threads_edit)
         self.params_card.body.addWidget(form)
+
+        self.params_card.body.addWidget(QLabel("档位", self.params_card))
+        self.profile_choice = _ChoiceGroup(
+            _profile_options(), current=DEFAULT_PROFILE, columns=4, parent=self.params_card
+        )
+        self.params_card.body.addWidget(self.profile_choice)
+        self.params_card.body.addWidget(QLabel("调优策略", self.params_card))
+        self.tune_choice = _ChoiceGroup(_tune_options(), current="auto", columns=3, parent=self.params_card)
+        self.params_card.body.addWidget(self.tune_choice)
 
         self.advanced = Collapsible("高级参数（留空回落档位默认）", expanded=False, parent=self.params_card)
         adv_form = FormGrid(self.advanced.content)
         self.ctx_edit = QLineEdit("", self.advanced.content)
-        self.kv_combo = QComboBox(self.advanced.content)
-        self.kv_combo.addItems(["", *KV_SCALE])
-        adv_form.add_pair("上下文", self.ctx_edit, "KV", self.kv_combo)
+        adv_form.add_row("上下文", self.ctx_edit)
+        self.kv_choice = _ChoiceGroup(_kv_options(), current="", columns=4, parent=self.advanced.content)
+        adv_form.add_row("KV", self.kv_choice)
         self.ubatch_edit = QLineEdit("", self.advanced.content)
         self.alias_edit = QLineEdit("", self.advanced.content)
         adv_form.add_pair("ubatch", self.ubatch_edit, "模型别名（留空自动）", self.alias_edit)
@@ -384,10 +488,12 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         return bar
 
     def _wire(self) -> None:
-        self.profile_combo.currentTextChanged.connect(lambda _text: self._on_profile_changed())
-        self.tune_combo.currentTextChanged.connect(lambda _text: self._on_tune_changed())
+        self.tune_choice.changed.connect(lambda _key: self._on_tune_changed())
         self.name_combo.currentTextChanged.connect(self._on_service_name_changed)
-        self.kv_combo.currentTextChanged.connect(lambda _text: self._mark_manual("kv"))
+        self.kv_choice.changed.connect(lambda _key: self._mark_manual("kv"))
+        self.profile_choice.changed.connect(lambda _key: self._refresh_command_preview())
+        self.tune_choice.changed.connect(lambda _key: self._refresh_command_preview())
+        self.kv_choice.changed.connect(lambda _key: self._refresh_command_preview())
         self.ubatch_edit.textChanged.connect(lambda _text: self._mark_manual("ubatch"))
         self.parallel_edit.textChanged.connect(lambda _text: self._mark_manual("parallel"))
         self.threads_http_edit.textChanged.connect(lambda _text: self._mark_manual("threads_http"))
@@ -396,13 +502,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.stop_all_button.clicked.connect(self.stop_all)
         for widget in (
             self.name_combo,
-            self.profile_combo,
-            self.tune_combo,
             self.host_edit,
             self.port_edit,
             self.threads_edit,
             self.ctx_edit,
-            self.kv_combo,
             self.ubatch_edit,
             self.alias_edit,
             self.parallel_edit,
@@ -425,19 +528,19 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def _resolved_model(self) -> Path | None:
         """表单实际使用的模型：显式选择，或按档位量化 / 大小兜底。"""
-        profile = PROFILES.get(self.profile_combo.currentText().strip(), PROFILES[DEFAULT_PROFILE])
+        profile = PROFILES.get(self.profile_choice.key(), PROFILES[DEFAULT_PROFILE])
         return pick_model(self.state.selected_model, self.state.models, profile.quant)
 
     def _workflow(self, *, extra_args: str | None = None) -> dict[str, Any]:
         return {
             "name": self.name_combo.currentText(),
-            "profile": self.profile_combo.currentText(),
+            "profile": self.profile_choice.key(),
             "host": self.host_edit.text(),
             "port": self.port_edit.text(),
             "threads": self.threads_edit.text(),
-            "tune": _llmtune.LABEL_TO_TUNE.get(self.tune_combo.currentText().strip(), "auto"),
+            "tune": self.tune_choice.key(),
             "ctx": self.ctx_edit.text(),
-            "kv": self.kv_combo.currentText(),
+            "kv": self.kv_choice.key(),
             "ubatch": self.ubatch_edit.text(),
             "alias": self.alias_edit.text(),
             "parallel": self.parallel_edit.text(),
@@ -452,13 +555,13 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """可持久化的表单值（不含模型路径与硬件快照）。"""
         return {
             "name": self.name_combo.currentText(),
-            "profile": self.profile_combo.currentText(),
+            "profile": self.profile_choice.key(),
             "host": self.host_edit.text(),
             "port": self.port_edit.text(),
             "threads": self.threads_edit.text(),
-            "tune": self.tune_combo.currentText(),
+            "tune": self.tune_choice.key(),
             "ctx": self.ctx_edit.text(),
-            "kv": self.kv_combo.currentText(),
+            "kv": self.kv_choice.key(),
             "ubatch": self.ubatch_edit.text(),
             "alias": self.alias_edit.text(),
             "parallel": self.parallel_edit.text(),
@@ -508,20 +611,20 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def profile_context(self) -> tuple[str, int, str]:
         """当前表单下的档位名、上下文与 KV 类型（输入无效时回退档位默认值）。"""
-        name = self.profile_combo.currentText().strip() or DEFAULT_PROFILE
+        name = self.profile_choice.key() or DEFAULT_PROFILE
         profile = PROFILES.get(name, PROFILES[DEFAULT_PROFILE])
         try:
             context = parse_optional_int(self.ctx_edit.text(), "上下文") or profile.context
         except ServeError:
             context = profile.context
-        kv_type = self.kv_combo.currentText().strip() or profile.kv_type
+        kv_type = self.kv_choice.key() or profile.kv_type
         return name, context, kv_type if kv_type in KV_SCALE else profile.kv_type
 
     def tuning(self) -> llmbase.Tuning:
         """按当前档位 / 上下文 / GPU 解析调优策略。"""
         _, context, _ = self.profile_context()
         size = self._selected_size()
-        tune = _llmtune.LABEL_TO_TUNE.get(self.tune_combo.currentText().strip(), "auto")
+        tune = self.tune_choice.key()
         return _llmtune.resolve(tune, context=context, model_bytes=size, gpu_mib=self.state.gpu_mib)
 
     def fit_estimate(self, size: int) -> tuple[llmmodel.VramFit | None, llmmodel.VramFit | None]:
@@ -555,7 +658,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         tuning = self.tuning()
         synced = _llmtune.sync_advanced_fields(
             tuning,
-            kv_value=self.kv_combo.currentText().strip(),
+            kv_value=self.kv_choice.key(),
             ubatch_value=self.ubatch_edit.text().strip(),
             parallel_value=self.parallel_edit.text().strip(),
             threads_http_value=self.threads_http_edit.text().strip(),
@@ -572,7 +675,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         }
         self._syncing_tune = True
         try:
-            self.kv_combo.setCurrentText(synced.kv_value)
+            self.kv_choice.set_key(synced.kv_value)
             self.ubatch_edit.setText(synced.ubatch_value)
             self.parallel_edit.setText(synced.parallel_value)
             self.threads_http_edit.setText(synced.threads_http_value)
@@ -582,8 +685,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def effective_tuning_text(self, tuning: llmbase.Tuning) -> str:
         """提示区展示的生效高级参数（输入框 > 策略 > 档位）。"""
         _, _, profile_kv = self.profile_context()
-        profile = PROFILES.get(self.profile_combo.currentText().strip())
-        kv_type = self.kv_combo.currentText().strip() or tuning.kv_type or profile_kv
+        profile = PROFILES.get(self.profile_choice.key())
+        kv_type = self.kv_choice.key() or tuning.kv_type or profile_kv
         ubatch = self.ubatch_edit.text().strip() or str(tuning.ubatch or (profile.ubatch if profile else ""))
         parallel = self.parallel_edit.text().strip() or str(tuning.parallel)
         threads_http = self.threads_http_edit.text().strip() or str(tuning.threads_http or "-")
@@ -592,38 +695,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             f"cr {tuning.cache_reuse} / kv {kv_type} / fa {tuning.flash_attn}"
         )
 
-    def _on_profile_changed(self) -> None:
-        """切换档位后刷新提示。"""
-        path = self.state.selected_model
-        if path is not None:
-            self.show_model_hint(path)
-        else:
-            self.model_hint.setText(self._basis_hint())
-
     def _on_tune_changed(self) -> None:
-        """切换调优策略后同步高级参数，并刷新硬件适配列与说明。"""
+        """切换调优策略后同步高级参数。"""
         self._apply_tuning()
-        path = self.state.selected_model
-        if path is not None:
-            self.show_model_hint(path)
-            return
-        tuning = self.tuning()
-        self.model_hint.setText(f"调优: {tuning.label} · {tuning.detail}\n{self.effective_tuning_text(tuning)}")
-
-    def _basis_hint(self) -> str:
-        """未选中模型时展示硬件评估口径。"""
-        available = self.state.gpu_free_mib if self.state.gpu_free_mib is not None else self.state.gpu_mib
-        if available is None:
-            return "未检测到可用 NVIDIA GPU，无法评估显存适配（CPU 推理会很慢）"
-        _, context, kv_type = self.profile_context()
-        tuning = self.tuning()
-        kv_type = tuning.kv_type or kv_type
-        total = f"{self.state.gpu_mib} MiB" if self.state.gpu_mib is not None else "-"
-        return (
-            f"硬件评估口径：整卡 {total}，当前可用 {available} MiB，上下文 {context}，KV {kv_type}，"
-            f"调优 {tuning.label}；红色=硬件不足（清理显存也放不下），橙色=需释放显存（整卡够用），"
-            "选择模型可查看具体建议"
-        )
 
     # ------------------------------------------------------------------ #
     # 模型选择与提示
@@ -699,95 +773,32 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.model_combo.blockSignals(True)
             self.model_combo.setCurrentIndex(0)
             self.model_combo.blockSignals(False)
-            self.model_hint.setText(_HINT_PLACEHOLDER)
             return
         selected = Path(path)  # type: ignore[arg-type]
         self._select_model_combo(selected)
         if update_name:
             self.name_combo.setCurrentText(service_name_from_model(selected))
-        self.show_model_hint(selected)
+        self._apply_model_recommendation(selected)
 
-    def _browse(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "选择 GGUF 模型", "", "GGUF 文件 (*.gguf);;所有文件 (*.*)")
-        if path:
-            self.state.select_model(Path(path).resolve())
-
-    def _clear_selection(self) -> None:
-        self.model_combo.blockSignals(True)
-        self.model_combo.setCurrentIndex(0)
-        self.model_combo.blockSignals(False)
-        self.state.selected_model = None
-        self.state.selectionChanged.emit(None, False)
-
-    def _precision_detail(self, path: Path) -> str:
-        precision = self.state.precisions.get(llmenv.path_key(path))
-        if precision is not None:
-            return precision.detail
-        try:
-            return detect_precision(path).detail
-        except OSError:
-            return "未知"
-
-    def show_model_hint(self, path: Path) -> None:
-        """展示推荐档位、最佳实践、精度与显存适配建议。"""
-        tags = llmmodel.detect_model_tags(path.name)
-        advice = llmmodel.model_advice(tags)
-        try:
-            port = parse_int(self.port_edit.text(), "端口")
-        except ServeError:
-            port = DEFAULT_PORT
-        base = http_base_url(self.host_edit.text().strip() or DEFAULT_HOST, port)
-        alias = self.alias_edit.text().strip() or path.stem
-        tuning = self.tuning()
-        try:
-            engine = llmengine.resolve_engine()
-        except ServeError:
-            engine_text = "未找到引擎（设置 → 引擎 安装）"
-        else:
-            engine_text = f"{engine.tag} · {engine.exe}"
-        lines = [
-            f"标签: {' · '.join(tags) or '未识别'} | {advice}",
-            f"精度: {self._precision_detail(path)}",
-            f"引擎: {engine_text}",
-            f"接入: {base}/v1，model={alias}",
-            f"调优: {tuning.label} · {tuning.detail}",
-            self.effective_tuning_text(tuning),
-        ]
-        note = self._hardware_note(path)
-        if note:
-            lines.append(note)
-        self.model_hint.setText("\n".join(lines))
-        self.state.log(f"已选择模型: {path}")
-        self.state.log(f"  标签: {' · '.join(tags) or '未识别'}")
-        self.state.log(f"  建议: {advice}")
-
-    def _hardware_note(self, path: Path) -> str:
-        """生成硬件适配说明，区分「硬件不足」与「需释放显存」两类情况。"""
-        if self.state.is_running(path):
-            return "硬件: 该模型已在运行中的服务里加载"
-        if self.state.gpu_mib is None:
-            return "硬件: 未检测到可用 NVIDIA GPU，只能 CPU 推理（速度很慢，显存适配无法判断）"
-        size = self._selected_size() if self.state.selected_model == path else self._size_of(path)
-        total, free = self.fit_estimate(size)
-        if total is None:
-            return ""
-        name, context, kv_type = self.profile_context()
-        tuning = self.tuning()
-        kv_type = tuning.kv_type or kv_type
-        detail = f"{name} 档（ctx {context} / kv {kv_type} / {tuning.label}）"
-        if not total.ok:
-            return (
-                f"硬件不足（已标红）: {detail}预计需 {human_size(total.needed)}，整卡显存仅 "
-                f"{human_size(total.available)}，清理显存也无法运行；建议{_fit_advice(total, context, kv_type)}"
-            )
-        if free is not None and not free.ok:
-            return (
-                f"需释放显存（已标橙）: {detail}预计需 {human_size(total.needed)}，整卡 "
-                f"{human_size(total.available)} 够用，但当前可用仅 {human_size(free.available)}；"
-                f"建议{_busy_advice(free, context, kv_type)}"
-            )
-        available = free.available if free is not None else total.available
-        return f"硬件: {detail}预计占 {human_size(total.needed)} / 可用显存 {human_size(available)}"
+    def _apply_model_recommendation(self, path: Path) -> None:
+        """选中模型后自动套用该模型在当前硬件上的推荐配置。"""
+        limit = max(1, len(self.state.models))
+        rows = _locllmw_recommend.recommend(self.state.models, self.state.hardware, self.state.measured, limit=limit)
+        rec = next((row for row in rows if row.model.path == path), None)
+        if rec is None:
+            return
+        self.profile_choice.set_key(rec.profile)
+        self.ctx_edit.setText(str(rec.context))
+        self.tune_choice.set_key("auto")
+        self._apply_tuning()
+        self.kv_choice.set_key(rec.kv_type)
+        self.ubatch_edit.setText(str(rec.ubatch))
+        self.parallel_edit.setText(str(rec.parallel))
+        self._refresh_command_preview()
+        self.state.log(
+            f"已套用推荐配置: {path.name} · {rec.profile} / ctx {rec.context} / kv {rec.kv_type} "
+            f"/ ub {rec.ubatch} / np {rec.parallel}"
+        )
 
     @staticmethod
     def _size_of(path: Path) -> int:
@@ -1061,8 +1072,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.start_button,
             self.stop_selected_button,
             self.stop_all_button,
-            self.browse_button,
-            self.clear_button,
             self.save_params_button,
             self.fill_params_button,
         ):
@@ -1096,13 +1105,14 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def apply_recommendation(self, recommendation: Any) -> None:
         """把推荐行的模型与启动配置带入运行页。"""
-        self.profile_combo.setCurrentText(recommendation.profile)
-        self.tune_combo.setCurrentText(_llmtune.TUNE_LABELS["auto"])
+        self.state.select_model(recommendation.model.path, update_name=True)
+        self.profile_choice.set_key(recommendation.profile)
+        self.tune_choice.set_key("auto")
         self.ctx_edit.setText(str(recommendation.context))
         self._on_tune_changed()
-        self.kv_combo.setCurrentText(recommendation.kv_type)
-        self.state.select_model(recommendation.model.path, update_name=True)
-        self._on_profile_changed()
+        self.kv_choice.set_key(recommendation.kv_type)
+        self.ubatch_edit.setText(str(recommendation.ubatch))
+        self.parallel_edit.setText(str(recommendation.parallel))
         self.state.navigate("run")
         self.state.status(f"已带入推荐配置：{recommendation.model.path.name} · {recommendation.config_text}")
 
@@ -1113,13 +1123,5 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         QMessageBox.critical(self, title, message)
 
     def update_service_and_fit(self) -> None:
-        """外部（启动 / 停止 / 显存采样）变化后刷新提示与服务名。"""
-        if self.state.selected_model is not None:
-            self.show_model_hint(self.state.selected_model)
-        else:
-            self.model_hint.setText(self._basis_hint())
+        """外部（启动 / 停止 / 显存采样）变化后刷新服务名。"""
         self.refresh_service_names()
-
-    def set_available_models_hint(self, text: str) -> None:
-        """外部（模型页扫描问题）直接更新提示。"""
-        self.model_hint.setText(text)

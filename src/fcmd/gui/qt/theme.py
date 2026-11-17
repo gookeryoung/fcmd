@@ -170,6 +170,28 @@ QPushButton#RunAction:hover { background: $surface_active; border-color: $border
 QPushButton#RunDanger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
 QPushButton#RunDanger:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#ChoiceCard {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: 8px;
+    padding: 0;
+    text-align: left;
+    min-height: 72px;
+    max-height: 72px;
+}
+QPushButton#ChoiceCard:hover { background: $surface_hover; border-color: $border_strong; }
+QPushButton#ChoiceCard:checked { background: $accent_soft; border-color: $accent; }
+QLabel#ChoiceTitle {
+    background: transparent;
+    color: $text;
+    font-size: ${font_body}pt;
+    font-weight: 600;
+}
+QLabel#ChoiceHint {
+    background: transparent;
+    color: $muted;
+    font-size: ${font_small}pt;
+}
 QPushButton#Ghost {
     background: transparent;
     border: 1px solid $border;

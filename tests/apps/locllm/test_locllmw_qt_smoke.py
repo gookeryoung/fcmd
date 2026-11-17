@@ -112,14 +112,19 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     page.on_models_changed()
     assert page.model_combo.count() == 2
     assert "small.gguf" in page.model_combo.itemText(1)
+    assert page.manage_models_button.text() == "模型管理"
+    assert not hasattr(page, "browse_button")
+    assert not hasattr(page, "clear_button")
     page.model_combo.setCurrentIndex(1)
     assert window.state.selected_model == model.path
-    assert "硬件" in page.model_hint.text()
+    assert page.profile_choice.key() in {"speed", "balanced", "long", "max-context"}
 
 
 def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     run = window.run_page
-    assert run.profile_combo.currentText() == "balanced"
+    assert run.profile_choice.key() == "balanced"
+    assert run.tune_choice.key() == "auto"
+    assert run.kv_choice.key() == ""
     assert run.host_edit.text() == "127.0.0.1"
     assert run.port_edit.text() == "8080"
     # CI / 无引擎机器上没有真实模型目录，垫一个可启动的模型再预览
