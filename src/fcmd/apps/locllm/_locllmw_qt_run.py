@@ -928,7 +928,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """启动任务收尾：解除 busy 后再刷新模型列表（刷新会跳过 busy 状态）。"""
         self.state.set_busy(False)
         self.state.refresh_models(self._port_value())
-        self._on_profile_changed()
 
     def _port_value(self) -> int | None:
         try:
