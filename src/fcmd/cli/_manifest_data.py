@@ -211,7 +211,7 @@ DESCRIPTIONS: dict[str, str] = {
     "lscalc": "运行 LS-DYNA SMP 单机计算",
     "mathtool": "求值数学表达式",
     "mirrortool": "镜像站点探测 / 指定服务镜像测速与自动选取",
-    "mirrortoolw": "镜像搜索与配置窗口版（Tk）：按服务（pip/conda/rustup/cargo/go/maven/npm）实测下载吞吐排序并一键应用镜像，或探测 MirrorZ 教育网镜像站点；结果支持按镜像名/地址过滤，设置持久化到 ~/.fcmd/ui/mirrortoolw.json",
+    "mirrortoolw": "镜像搜索与配置窗口版（Qt）：按服务（pip/conda/rustup/cargo/go/maven/npm）实测下载吞吐排序并一键应用镜像，或探测 MirrorZ 教育网镜像站点；结果支持按镜像名/地址过滤，设置持久化到 ~/.fcmd/ui/mirrortoolw.json",
     "ncmconvertw": "NCM 音乐解锁转换器窗口版（Qt）：批量添加/导入 .ncm 文件，后台逐文件解锁为 mp3/flac，进度与失败明细实时回传，设置持久化到 ~/.fcmd/ui/ncmconvertw.json，依赖 fcmd[crypto]",
     "nettool": "HTTP GET 请求",
     "packtool": "打包源码",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "8d547ee5de39ee103307a2481b279136"
+DIGEST = "fe0be68b0a813f9f208dc9091e902c10"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
