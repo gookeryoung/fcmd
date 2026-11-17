@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 from typing import NamedTuple
 
@@ -77,24 +78,38 @@ _cache: _Manifest | None = None
 _strict_loaded = False
 _strict_cache: _Manifest | None = None
 
+# 目录扫描结果缓存（包根 → 文件列表）。严格校验的布局与内容指纹需要同一份
+# 列表，扫描一次即可；``clear_cache`` 或包根变化（测试替换 ``_PACKAGE_ROOT``）
+# 时失效。Windows 上 123 个候选文件的 ``iterdir`` + ``is_dir`` 约 6.8ms，
+# 这份缓存让严格校验不必走两遍。
+_scan_cache: tuple[Path, list[tuple[str, Path]]] | None = None
+
 
 def _collect_candidates(root_name: str, scan_root: Path) -> list[tuple[str, Path]]:
-    """收集单个工具根包下的候选模块（顶层 + 一层子包，跳过私有与 ``main``）。"""
+    """收集单个工具根包下的候选模块（顶层 + 一层子包，跳过私有与 ``main``）。
+
+    用 ``os.scandir`` 直接消费目录项：``DirEntry.is_dir`` 复用目录遍历时已拿到
+    的类型信息，避免 ``Path.is_dir`` 再发一次 ``stat``。
+    """
     files: list[tuple[str, Path]] = []
-    for entry in sorted(scan_root.iterdir(), key=lambda item: item.name):
+    with os.scandir(scan_root) as scanner:
+        entries = sorted(scanner, key=lambda item: item.name)
+    for entry in entries:
         name = entry.name
         if name.startswith("_"):
             continue
         if name.endswith(".py"):
             if name != "main.py":
-                files.append((f"{root_name}/{name}", entry))
+                files.append((f"{root_name}/{name}", Path(entry.path)))
             continue
         if not entry.is_dir():
             continue
-        for sub in sorted(entry.iterdir(), key=lambda item: item.name):
+        with os.scandir(entry.path) as scanner:
+            subs = sorted(scanner, key=lambda item: item.name)
+        for sub in subs:
             if sub.name.startswith("_") or not sub.name.endswith(".py"):
                 continue
-            files.append((f"{root_name}/{name}/{sub.name}", sub))
+            files.append((f"{root_name}/{name}/{sub.name}", Path(sub.path)))
     return files
 
 
@@ -104,8 +119,16 @@ def _source_files() -> list[tuple[str, Path]] | None:
     覆盖范围与 :func:`tool_layout` 的扫描规则一致（``tools`` / ``apps`` 两个
     工具根下的候选模块）。``tools`` 目录读取失败返回 ``None``（按清单不可用
     处理）；``apps`` 目录缺失时跳过。
+
+    结果按包根缓存：严格校验要拿同一份列表做布局与内容指纹两件事。缓存只在
+    :func:`clear_cache` 或 ``_PACKAGE_ROOT`` 变化时失效（进程内清单本就只校验
+    一次，语义不变）。
     """
+    global _scan_cache  # noqa: PLW0603 - 扫描缓存为模块级单例
     root = _PACKAGE_ROOT
+    cached = _scan_cache
+    if cached is not None and cached[0] == root:
+        return cached[1]
     tools_root = root / "tools"
     files: list[tuple[str, Path]] = []
     try:
@@ -118,6 +141,7 @@ def _source_files() -> list[tuple[str, Path]] | None:
     except OSError as exc:
         logger.debug("工具源码目录读取失败，清单不可用: %s", exc)
         return None
+    _scan_cache = (root, files)
     return files
 
 
@@ -149,7 +173,10 @@ def tool_digest() -> str | None:
         for rel, path in files:
             # 行尾差异不参与指纹：Windows 工作区里被工具写成 CRLF 的文件与仓库中的
             # LF 内容应得到同一 digest，否则清单在不同平台上会互相判为过期。
-            data = path.read_bytes().replace(b"\r\n", b"\n")
+            # 仓库里绝大多数文件是 LF，先 in 探测再替换，省掉全量拷贝。
+            data = path.read_bytes()
+            if b"\r\n" in data:
+                data = data.replace(b"\r\n", b"\n")
             digest.update(rel.encode("utf-8"))
             digest.update(b"\0")
             digest.update(len(data).to_bytes(8, "big"))
@@ -221,11 +248,12 @@ def _build() -> _Manifest | None:
 
 def clear_cache() -> None:
     """清空清单缓存（供测试在替换清单 / 目录布局后重新加载）。"""
-    global _loaded, _cache, _strict_loaded, _strict_cache  # noqa: PLW0603 - 模块级单例
+    global _loaded, _cache, _strict_loaded, _strict_cache, _scan_cache  # noqa: PLW0603 - 模块级单例
     _loaded = False
     _cache = None
     _strict_loaded = False
     _strict_cache = None
+    _scan_cache = None
 
 
 def list_rows() -> list[tuple[str, list[str], str]] | None:

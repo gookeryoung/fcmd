@@ -316,6 +316,27 @@ def test_digest_matches_sources() -> None:
     assert _manifest.tool_digest() == _data().DIGEST
 
 
+def test_strict_validation_scans_tree_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """严格校验的布局与内容指纹共用一次目录扫描（``tools`` / ``apps`` 各一次）。
+
+    两者各扫一遍会多付一次 ``iterdir`` + ``is_dir``（本机 123 个候选文件约 6.8ms），
+    这里用调用计数守住「单次遍历」。
+    """
+    from fcmd.cli import _manifest
+
+    calls: list[str] = []
+    real = _manifest._collect_candidates
+
+    def _counting(root_name: str, scan_root: Path) -> list[tuple[str, Path]]:
+        calls.append(root_name)
+        return real(root_name, scan_root)
+
+    monkeypatch.setattr(_manifest, "_collect_candidates", _counting)
+    manifest = _manifest.load_strict()
+    assert manifest is not None
+    assert calls == ["tools", "apps"]
+
+
 def test_list_rows_match_discovery(tmp_path: Path) -> None:
     """列表快路径的 (名字, 别名, 描述) 与全量发现逐条一致。"""
     proc = _run_py(_LIST_ROWS_SCRIPT, tmp_path)

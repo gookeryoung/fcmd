@@ -68,26 +68,26 @@ DEFAULT_MAX_RATIO = 1.5
 
 BASELINES: dict[tuple[str, str], float] = {
     # (场景, warm|cold) -> 中位数（毫秒）。本机基线：Windows 11 / Python 3.14，
-    # 内建命令按需导入落地后按同一口径采集（N=15/5，丢弃 3/1）；改动前后
-    # 的同位置 A/B 数字见提交信息。
-    ("env", "warm"): 299.4,
-    ("env", "cold"): 710.2,
-    ("env-json", "warm"): 283.2,
-    ("env-json", "cold"): 665.2,
-    ("graph-tree", "warm"): 288.1,
-    ("graph-tree", "cold"): 740.6,
-    ("graph-mermaid", "warm"): 288.3,
-    ("graph-mermaid", "cold"): 737.1,
-    ("graph-layers", "warm"): 288.8,
-    ("graph-layers", "cold"): 741.8,
-    ("tool-help", "warm"): 281.3,
-    ("tool-help", "cold"): 733.1,
-    ("tool-exe-help", "warm"): 275.6,
-    ("tool-exe-help", "cold"): 711.8,
-    ("version", "warm"): 114.2,
-    ("version", "cold"): 234.7,
-    ("python-floor", "warm"): 56.3,
-    ("python-floor", "cold"): 70.8,
+    # 内建命令按需导入 + 清单严格校验单次遍历落地后按同一口径采集
+    # （N=15/5，丢弃 3/1）；改动前后的同位置 A/B 数字见提交信息。
+    ("env", "warm"): 291.2,
+    ("env", "cold"): 704.9,
+    ("env-json", "warm"): 276.3,
+    ("env-json", "cold"): 657.5,
+    ("graph-tree", "warm"): 285.7,
+    ("graph-tree", "cold"): 733.4,
+    ("graph-mermaid", "warm"): 285.4,
+    ("graph-mermaid", "cold"): 740.6,
+    ("graph-layers", "warm"): 286.1,
+    ("graph-layers", "cold"): 737.9,
+    ("tool-help", "warm"): 278.6,
+    ("tool-help", "cold"): 727.8,
+    ("tool-exe-help", "warm"): 272.1,
+    ("tool-exe-help", "cold"): 712.1,
+    ("version", "warm"): 113.6,
+    ("version", "cold"): 233.5,
+    ("python-floor", "warm"): 55.3,
+    ("python-floor", "cold"): 71.0,
 }
 
 _MODE_LABELS = {"warm": "热启动", "cold": "冷启动"}
