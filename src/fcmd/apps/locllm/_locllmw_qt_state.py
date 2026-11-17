@@ -131,6 +131,7 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     recommendationApplied = Signal(object)
     busyChanged = Signal(bool)
     navigateRequested = Signal(str)
+    serveModelRequested = Signal(object)
 
     def __init__(self, settings_path: Path | None = None) -> None:
         super().__init__()
@@ -168,6 +169,25 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     def navigate(self, key: str) -> None:
         """请求窗口切页。"""
         self.navigateRequested.emit(key)
+
+    def request_serve_model(self, path: Path) -> None:
+        """请求窗口切到运行页并启动指定模型（模型页快捷启动用）。"""
+        self.serveModelRequested.emit(path)
+
+    def remember_quant_choice(self, path: Path) -> None:
+        """记住用户启动过的量化精度（按仓库保存），供模型页快捷启动默认选中。
+
+        只记录量化模型；写入内存设置，由调用方决定何时 ``persist``。
+        """
+        from fcmd.apps.locllm import _llmconfig, _locllmw_models
+
+        repo = _locllmw_models.repo_for_model_path(path, llmenv.models_dir())
+        label = _locllmw_models.quant_precision_label(path)
+        if not repo or not label or repo.casefold() == _llmconfig.PRODUCTS_DIRNAME:
+            return
+        choices = dict(self.settings.quant_choice or {})
+        choices[repo.casefold()] = label
+        self.settings.quant_choice = choices
 
     def set_busy(self, busy: bool) -> None:
         """标记「启动 / 停止进行中」，窗口据此禁用动作按钮。"""

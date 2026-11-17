@@ -1010,6 +1010,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._active_param_key = llmenv.path_key(plan.model)
         self._persist_current_params()
         self.state.settings.last_model = str(plan.model)
+        self.state.remember_quant_choice(plan.model)
         self.state.persist()
         self.state.log(f"正在启动 {plan.name}，等待 /health（最多 {wait_s}s）…")
         self.state.status(f"正在启动 {plan.name} · {plan.profile.name} · ctx {plan.context}…")
@@ -1022,6 +1023,16 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             on_error=self._on_start_failed,
             on_finished=self._on_start_finished,
         )
+
+    def start_model(self, path: Path) -> None:
+        """选中指定模型并立即启动（模型页快捷启动入口）。"""
+        self.state.select_model(path, update_name=True)
+        current = self.state.state_for_model(path)
+        if current is not None and llmserve.process_alive(current.pid, current.create_time):
+            self.state.status(f"{current.name} · 运行中 · {current.base_url}")
+            self.state.log(f"{path.name} 已在运行，无需重复启动")
+            return
+        self.start()
 
     def _on_started(self, state: ServeState) -> None:
         self.state.log(f"服务已就绪: {state.base_url}（OpenAI: {state.base_url}/v1）")

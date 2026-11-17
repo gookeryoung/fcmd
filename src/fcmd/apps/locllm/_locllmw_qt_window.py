@@ -82,6 +82,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         self.state.statusText.connect(self.set_status)
         self.state.navigateRequested.connect(self.show_page)
+        self.state.serveModelRequested.connect(self._serve_model)
         self.state.logLine.connect(self.monitor_page.log_view.append)
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
@@ -173,6 +174,13 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """折叠状态属于窗口设置，随 ``locllmw.json`` 一起持久化。"""
         self.state.settings.sidebar_collapsed = collapsed
         self.state.persist()
+
+    def _serve_model(self, path: object) -> None:
+        """模型页快捷启动：切到运行页并选中该模型后立即启动。"""
+        if not isinstance(path, Path):
+            return
+        self.show_page("run")
+        self.run_page.start_model(path)
 
     def _on_close(self) -> bool:
         """关窗前确认进行中的任务，落盘设置并停掉采样 / 生成。"""

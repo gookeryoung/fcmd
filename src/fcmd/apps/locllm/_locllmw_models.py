@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from fcmd.apps.locllm._llmgguf import detect_precision
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     LocalModel,
@@ -40,6 +41,8 @@ __all__ = [
     "model_score",
     "open_path",
     "parse_patterns",
+    "quant_precision_label",
+    "repo_for_model_path",
     "settings_from_dict",
     "settings_to_dict",
     "sort_browse_items",
@@ -173,6 +176,33 @@ def model_item_lines(item: ModelSummary) -> tuple[str, str, str]:
         if part
     )
     return item.repo, subtitle or "-", metrics or "-"
+
+
+def repo_for_model_path(path: Path, models_root: Path) -> str:
+    """从 GGUF 路径反推所在仓库标识（与 :func:`llmdown.scan_local_models` 同口径）。
+
+    标准下载布局 ``<root>/<组织>/<模型>/x.gguf`` 返回 ``组织/模型``；手工整理
+    的 ``<root>/<模型>/x.gguf`` 返回 ``模型``；不在模型目录下或布局无法判定时
+    返回空串。
+    """
+    try:
+        relative = Path(path).resolve().relative_to(Path(models_root).resolve())
+    except (OSError, ValueError):
+        return ""
+    parts = relative.parts
+    if len(parts) >= 3:
+        return f"{parts[0]}/{parts[1]}"
+    if len(parts) == 2:
+        return parts[0]
+    return ""
+
+
+def quant_precision_label(path: Path) -> str:
+    """GGUF 的量化精度短标签（如 ``Q4_K_M``）；全量 / 未知精度返回空串。"""
+    precision = detect_precision(path, tensors=False)
+    if precision.quantized is not True:
+        return ""
+    return precision.filename_label or precision.label.removesuffix(" 量化")
 
 
 def model_score(item: ModelSummary) -> int:

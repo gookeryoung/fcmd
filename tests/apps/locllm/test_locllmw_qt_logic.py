@@ -274,6 +274,26 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert not blocked_row.convert_button.isEnabled()
     quantized_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_tags=("Q4_K_M", "Q5_K_M"))
     assert quantized_row.findChild(QLabel, "QuantTag") is not None
+    start_row = _ModelItemRow(
+        ModelSummary(repo="Qwen/demo"),
+        quant_tags=("Q4_K_M", "Q5_K_M"),
+        startable=True,
+        default_quant="Q4_K_M",
+        serve_path=Path("/models/Qwen/demo/x-Q4_K_M.gguf"),
+    )
+    assert start_row.start_button is not None
+    assert start_row.start_button.text() == "启动服务"
+    assert start_row.start_button.isEnabled()
+    tag_texts = {label.text() for label in start_row.findChildren(QLabel, "QuantTag")}
+    assert "Q4_K_M · 上次启动" in tag_texts
+    assert "Q5_K_M" in tag_texts
+    requested: list[str] = []
+    start_row.startRequested.connect(requested.append)
+    start_row.start_button.click()
+    assert requested == ["Qwen/demo"]
+    start_row.set_serve_state(busy=False, running=True)
+    assert start_row.start_button.text() == "已启动"
+    assert not start_row.start_button.isEnabled()
     quantizable_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quantizable=True)
     assert quantizable_row.quant_button is not None
     assert quantizable_row.quant_button.text() == "量化"

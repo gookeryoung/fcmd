@@ -2619,6 +2619,16 @@ class TestServewSettings:
         path.write_text('{"sidebar_collapsed": 1}', encoding="utf-8")
         assert locllmw.load_settings(path).sidebar_collapsed is False
 
+    def test_quant_choice_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        locllmw.save_settings(locllmw.LocllmSettings(quant_choice={"org/model": "Q4_K_M"}), path)
+        assert locllmw.load_settings(path).quant_choice == {"org/model": "Q4_K_M"}
+
+    def test_load_drops_non_string_quant_choice(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"quant_choice": {"a": "Q4_K_M", "b": 1, "c": ""}}', encoding="utf-8")
+        assert locllmw.load_settings(path).quant_choice == {"a": "Q4_K_M"}
+
     def test_roundtrip_hardware_and_measured(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         settings = locllmw.LocllmSettings(

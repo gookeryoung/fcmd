@@ -32,6 +32,8 @@ from fcmd.apps.locllm._locllmw_models import (
     model_score,
     open_path,
     parse_patterns,
+    quant_precision_label,
+    repo_for_model_path,
     settings_from_dict,
     settings_to_dict,
     sort_browse_items,
@@ -273,6 +275,42 @@ class TestBrowseHelpers:
         items = self._items()
         assert sort_models(items, None) == items
         assert sort_models(items, "unknown") == items
+
+
+class TestQuantQuickStart:
+    """模型页快捷启动用到的纯逻辑：仓库反推与量化精度标签。"""
+
+    def test_repo_for_two_level_layout(self, tmp_path: Path) -> None:
+        path = tmp_path / "org" / "model" / "x-Q4_K_M.gguf"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x")
+        assert repo_for_model_path(path, tmp_path) == "org/model"
+
+    def test_repo_for_manual_one_level_layout(self, tmp_path: Path) -> None:
+        path = tmp_path / "model" / "x-Q4_K_M.gguf"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"x")
+        assert repo_for_model_path(path, tmp_path) == "model"
+
+    def test_repo_for_path_outside_root_is_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "x-Q4_K_M.gguf"
+        path.write_bytes(b"x")
+        assert repo_for_model_path(path, tmp_path / "models") == ""
+
+    def test_quant_precision_label_prefers_filename_marker(self, tmp_path: Path) -> None:
+        path = tmp_path / "model-Q4_K_M.gguf"
+        path.write_bytes(b"x")
+        assert quant_precision_label(path) == "Q4_K_M"
+
+    def test_quant_precision_label_ignores_full_precision(self, tmp_path: Path) -> None:
+        path = tmp_path / "model-F16.gguf"
+        path.write_bytes(b"x")
+        assert quant_precision_label(path) == ""
+
+    def test_quant_precision_label_unknown_is_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "model.gguf"
+        path.write_bytes(b"x")
+        assert quant_precision_label(path) == ""
 
 
 class TestOpenPath:

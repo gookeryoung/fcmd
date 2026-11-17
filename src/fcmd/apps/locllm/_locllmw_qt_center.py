@@ -98,6 +98,7 @@ class _InstalledSnapshot:
     blocked: dict[str, str]
     quant_candidates: dict[str, tuple[Path, ...]]
     quant_tags: dict[str, tuple[str, ...]]
+    quantized: dict[str, tuple[tuple[str, Path], ...]]
 
 
 class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
@@ -111,8 +112,9 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     downloadRequested = Signal(str)
     convertRequested = Signal(str)
     quantizeRequested = Signal(str)
+    startRequested = Signal(str)
 
-    def __init__(  # noqa: PLR0913 - 行状态位由列表统一透传
+    def __init__(  # noqa: PLR0912, PLR0913 - 行状态位由列表统一透传
         self,
         item: ModelSummary,
         parent: QWidget | None = None,
@@ -124,12 +126,16 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         quant_tags: tuple[str, ...] = (),
         quantizable: bool = False,
         quant_blocked: bool = False,
+        startable: bool = False,
+        default_quant: str = "",
+        serve_path: Path | None = None,
         incomplete: bool = False,
         progress_text: str = "",
     ) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
         self.repo = item.repo
+        self.serve_path = serve_path
         self._expanded = False
         self._installed = installed
         self._convertible = convertible
@@ -170,8 +176,12 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         note_row.addWidget(sub, 0)
         for tag in quant_tags:
             chip = QLabel(tag, header)
+            if tag == default_quant:
+                chip.setText(f"{tag} · 上次启动")
+                chip.setToolTip("快捷启动默认使用该量化精度（记住用户上次启动过的精度）")
+            else:
+                chip.setToolTip(f"已量化精度 {tag}")
             chip.setObjectName("QuantTag")
-            chip.setToolTip(f"已量化精度 {tag}")
             note_row.addWidget(chip, 0)
         if incomplete and progress_text:
             progress = QLabel(progress_text, header)
@@ -213,6 +223,12 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.quant_button.setEnabled(False)
             self.quant_button.setToolTip("当前模型没有可量化的全量精度 GGUF")
             header_row.addWidget(self.quant_button, 0)
+        self.start_button: Any = None
+        if startable:
+            self.start_button = button("启动服务", kind="primary")
+            self.start_button.setToolTip("选择量化精度并启动服务；默认使用上次启动过的精度")
+            self.start_button.clicked.connect(lambda: self.startRequested.emit(self.repo))
+            header_row.addWidget(self.start_button, 0)
         self.download_button = button("继续下载" if incomplete else "下载")
         if installed and not incomplete:
             self.download_button.setObjectName("InstalledButton")
@@ -285,6 +301,13 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             return
         self.quant_button.setEnabled(not busy)
         self.quant_button.setText("量化中…" if active else "量化")
+
+    def set_serve_state(self, *, busy: bool, running: bool) -> None:
+        """快捷启动按钮：任务进行中禁用，已运行时显示「已启动」。"""
+        if self.start_button is None:
+            return
+        self.start_button.setEnabled(not busy and not running)
+        self.start_button.setText("已启动" if running else "启动服务")
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -402,6 +425,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._convert_active_repo: str | None = None
         self._quant_candidates: dict[str, tuple[Path, ...]] = {}
         self._quant_tags: dict[str, tuple[str, ...]] = {}
+        self._quantized_files: dict[str, tuple[tuple[str, Path], ...]] = {}
         self._quantizing = False
         self._quant_active_repo: str | None = None
 
@@ -481,6 +505,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.refresh_installed()
         self.filter_buttons[_DEFAULT_FILTER].setChecked(True)
         self.start_search(1)
+        self.state.busyChanged.connect(lambda _busy: self._sync_download_buttons())
+        self.state.servicesChanged.connect(lambda _states: self._sync_download_buttons())
 
     # -- 筛选 ---------------------------------------------------------- #
     def _on_filter_changed(self, key: str) -> None:
@@ -512,7 +538,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         try:
             models = scan_local_models(_llmconfig.models_dir())
         except OSError:
-            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {})
+            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {}, {})
         installed = {
             model.repo.casefold(): ModelSummary(
                 repo=model.repo,
@@ -526,6 +552,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         blocked: dict[str, str] = {}
         quant_candidates: dict[str, tuple[Path, ...]] = {}
         quant_tags: dict[str, tuple[str, ...]] = {}
+        quantized: dict[str, list[tuple[str, Path]]] = {}
         try:
             product_ggufs = sorted(_llmconfig.products_dir().glob("*.gguf"))
         except OSError:
@@ -545,6 +572,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     label = precision.filename_label or precision.label.removesuffix(" 量化")
                     if label not in tags:
                         tags.append(label)
+                    entries = quantized.setdefault(key, [])
+                    if all(existing != label for existing, _path in entries):
+                        entries.append((label, gguf))
                 elif quantize_input_error(precision) is None:
                     full.append(gguf)
             bases = {llmqnt.strip_f16_suffix(path.stem) for path in full}
@@ -556,12 +586,22 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     label = precision.filename_label or precision.label.removesuffix(" 量化")
                     if label not in tags:
                         tags.append(label)
+                    entries = quantized.setdefault(key, [])
+                    if all(existing != label for existing, _path in entries):
+                        entries.append((label, product))
             if full:
                 quant_candidates[key] = tuple(full)
             if tags:
                 quant_tags[key] = tuple(tags)
         return _InstalledSnapshot(
-            installed, set(installed), partial, convertible, blocked, quant_candidates, quant_tags
+            installed,
+            set(installed),
+            partial,
+            convertible,
+            blocked,
+            quant_candidates,
+            quant_tags,
+            {repo: tuple(entries) for repo, entries in quantized.items()},
         )
 
     def _apply_installed(self, snapshot: _InstalledSnapshot) -> None:
@@ -573,6 +613,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._convert_blocked = snapshot.blocked
         self._quant_candidates = snapshot.quant_candidates
         self._quant_tags = snapshot.quant_tags
+        self._quantized_files = snapshot.quantized
         if self._last_result is not None and not self._searching:
             self._render_results()
 
@@ -595,6 +636,23 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.loading.set_text(next(reversed(self._loading_tasks.values())))
         else:
             self.loading.stop()
+
+    def _default_quant(self, repo_key: str) -> str:
+        """快捷启动默认精度：持久化的上次启动精度 → 上次运行模型 → 首个量化文件。"""
+        files = self._quantized_files.get(repo_key, ())
+        if not files:
+            return ""
+        labels = [label for label, _path in files]
+        saved = (self.state.settings.quant_choice or {}).get(repo_key)
+        if saved in labels:
+            return saved
+        last = self.state.settings.last_model
+        if last:
+            last_key = _llmconfig.path_key(Path(last))
+            for label, path in files:
+                if _llmconfig.path_key(path) == last_key:
+                    return label
+        return labels[0]
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -681,6 +739,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     progress_text = f"已下载 {human_size(partial.size)}"
             convert_info = self._convertible.get(key)
             quantizable = key in self._quant_candidates
+            quantized = self._quantized_files.get(key, ())
+            default_quant = self._default_quant(key)
+            serve_path = next((path for label, path in quantized if label == default_quant), None)
+            if serve_path is None and quantized:
+                serve_path = quantized[0][1]
             row = _ModelItemRow(
                 item,
                 self.models,
@@ -691,6 +754,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 quant_tags=self._quant_tags.get(key, ()),
                 quantizable=quantizable,
                 quant_blocked=installed and not quantizable,
+                startable=bool(quantized),
+                default_quant=default_quant,
+                serve_path=serve_path,
                 incomplete=incomplete,
                 progress_text=progress_text,
             )
@@ -698,6 +764,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             row.downloadRequested.connect(self.start_download)
             row.convertRequested.connect(self.start_convert)
             row.quantizeRequested.connect(self._on_quantize_requested)
+            row.startRequested.connect(self._on_quick_serve)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -837,6 +904,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     busy=busy,
                     active=self._quantizing and row.repo == self._quant_active_repo,
                 )
+                running = row.serve_path is not None and self.state.is_running(row.serve_path)
+                row.set_serve_state(busy=busy or self.state.busy, running=running)
 
     def start_download(self, repo: str) -> None:
         """下载指定仓库到模型目录，进度显示在列表底部右侧。"""
@@ -1004,6 +1073,39 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._converting = False
         self._convert_active_repo = None
         self._sync_download_buttons()
+
+    # -- 快捷启动 ------------------------------------------------------ #
+    def _on_quick_serve(self, repo: str) -> None:
+        """选择量化精度后快捷启动；只有一个精度时直接启动。"""
+        if self._quantizing or self._downloading or self._converting:
+            return
+        files = self._quantized_files.get(repo.casefold(), ())
+        if not files:
+            return
+        key = repo.casefold()
+        if len(files) == 1:
+            self._request_serve(files[0][1], key)
+            return
+        default = self._default_quant(key)
+        menu = QMenu(self)
+        for label, path in files:
+            suffix = "（上次启动）" if label == default else ""
+            action = menu.addAction(f"{label}{suffix}  {path.name}")
+            action.triggered.connect(lambda _checked=False, target=path: self._request_serve(target, key))
+        menu.exec(QCursor.pos())
+
+    def _request_serve(self, path: Path, repo_key: str = "") -> None:
+        """请求窗口切到运行页并启动指定量化模型，同时记住该仓库的精度选择。"""
+        if repo_key:
+            label = _locllmw_models.quant_precision_label(path)
+            if label:
+                choices = dict(self.state.settings.quant_choice or {})
+                choices[repo_key] = label
+                self.state.settings.quant_choice = choices
+                self.state.persist()
+        self._log(f"快捷启动: {path}")
+        self.state.status(f"正在准备启动 {path.name}…")
+        self.state.request_serve_model(path)
 
     def _on_quantize_requested(self, repo: str) -> None:
         """点击「量化」后弹出精度选项，选中后立即开始单精度量化。"""

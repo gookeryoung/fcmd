@@ -1,8 +1,9 @@
 """locllmw 的窗口设置：geometry、硬件快照、性能实测与下载设置。
 
 Qt 窗口（``_locllmw_qt_window.py``）使用这一份设置模型，文件固定为
-``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``，保存窗口位置、硬件缓存、性能实测与
-下载参数。解析与校验都是纯逻辑，不依赖任何 GUI 工具包。
+``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``，保存窗口位置、硬件缓存、性能实测、
+下载参数、按模型保存的启动参数与上次启动的量化精度。解析与校验都是纯逻辑，
+不依赖任何 GUI 工具包。
 """
 
 from __future__ import annotations
@@ -44,6 +45,7 @@ class LocllmSettings:
     download_totals: dict[str, int] | None = None
     convert: dict[str, Any] | None = None
     run_params: dict[str, dict[str, Any]] | None = None
+    quant_choice: dict[str, str] | None = None
     last_model: str | None = None
     chat_settings_open: bool = False
     sidebar_collapsed: bool = False
@@ -89,6 +91,11 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
             settings.run_params = {
                 str(key): dict(value) for key, value in run_params.items() if isinstance(value, dict)
             }
+        quant_choice = raw.get("quant_choice")
+        if isinstance(quant_choice, dict):
+            settings.quant_choice = {
+                str(key): value for key, value in quant_choice.items() if isinstance(value, str) and value.strip()
+            }
         last_model = raw.get("last_model")
         if isinstance(last_model, str) and last_model.strip():
             settings.last_model = last_model
@@ -112,6 +119,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "download_totals": settings.download_totals,
             "convert": settings.convert,
             "run_params": settings.run_params,
+            "quant_choice": settings.quant_choice,
             "last_model": settings.last_model,
             "chat_settings_open": settings.chat_settings_open,
             "sidebar_collapsed": settings.sidebar_collapsed,
