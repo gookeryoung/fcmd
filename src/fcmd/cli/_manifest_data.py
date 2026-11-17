@@ -167,7 +167,7 @@ DESCRIPTIONS: dict[str, str] = {
     "devman": "列出已安装版本、活动版本与外部 node/python 探测结果",
     "devmanw": "devman 的图形界面：按工具查看已安装 / 活动 / 可用版本，安装、卸载、切换、升级与 PATH 集成",
     "docdiff": "对比两个 doc/docx 文件（Windows + Microsoft Word + pywin32）：调用 Word 的 CompareDocuments 生成带修订标记的对比文档，可设置标题、对比模式与是否显示变更；依赖 fcmd[win32]",
-    "docdiffw": "文档对比工具窗口版（Tk）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，依赖 Windows + Word + fcmd[win32]",
+    "docdiffw": "文档对比工具窗口版（Qt）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，依赖 Windows + Word + fcmd[win32]",
     "dockercmd": "Docker 镜像仓库登录工具",
     "dynacalc": "装药密度—尺寸—工艺缺陷→爆轰传递的参数化算例：YAML 参数矩阵 + dynacalc-model/1 模型映射，批量生成 LS-DYNA 关键字 deck，调度求解（支持 dry-run 与假求解器），回收 glstat/matsum/history 并做汇总、两工况对比与工程门控；不含任何真实配方或材料参数",
     "dynacalcw": "dynacalc 的 Tk 窗口：选参数/模型、预览清单、生成 deck、dry-run、执行、查看作业与门控",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "40c31c86ef7f9fa6af26d6a49381a9f2"
+DIGEST = "19e5fed656440f216a17fb5458650750"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
