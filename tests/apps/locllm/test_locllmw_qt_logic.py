@@ -19,7 +19,7 @@ pytest.importorskip("PySide6")
 from fcmd.apps.locllm import llmbase, llmserve
 from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
 from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
-from fcmd.apps.locllm._locllmw_qt_center import _ModelDetailView, _ModelItemRow
+from fcmd.apps.locllm._locllmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
 from fcmd.apps.locllm._locllmw_qt_chat import endpoint_from_form, service_labels
 from fcmd.apps.locllm._locllmw_qt_models import (
     display_path_for,
@@ -247,6 +247,16 @@ def test_ordered_groups_puts_running_first(tmp_path: Path) -> None:
 def test_fit_state_for_prefers_running() -> None:
     assert fit_state_for(running=True, total=None, free=None) == "运行中"
     assert fit_state_for(running=False, total=None, free=None) == "-"
+
+
+def test_quantize_menu_items_marks_existing_precisions() -> None:
+    """已量化的精度在菜单里打勾并禁用，其余精度保持可选。"""
+    items = quantize_menu_items(("q4_k_m", "Q5_K_M"))
+    by_quant = {quant: done for quant, _desc, done in items}
+    assert by_quant["Q4_K_M"] is True
+    assert by_quant["Q5_K_M"] is True
+    assert by_quant["Q8_0"] is False
+    assert all(desc for _quant, desc, _done in items)
 
 
 def test_model_item_row_expands_inline_detail() -> None:

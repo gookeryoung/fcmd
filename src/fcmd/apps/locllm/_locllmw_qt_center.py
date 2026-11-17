@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -74,7 +75,17 @@ if TYPE_CHECKING:
 
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
 
-__all__ = ["ModelCenterPage"]
+__all__ = ["ModelCenterPage", "quantize_menu_items"]
+
+
+def quantize_menu_items(existing: Iterable[str]) -> tuple[tuple[str, str, bool], ...]:
+    """量化菜单项：``(精度, 说明, 是否已量化)``；已存在的精度不再可选。
+
+    比较按大小写不敏感；标签来自本地量化 GGUF 的文件名 / 元数据精度。
+    """
+    done = {tag.casefold() for tag in existing}
+    return tuple((quant, desc, quant.casefold() in done) for quant, desc in llmqnt.QUANT_TYPES.items())
+
 
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
 _MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
@@ -1114,7 +1125,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if repo.casefold() not in self._quant_candidates:
             return
         menu = QMenu(self)
-        for quant, desc in llmqnt.QUANT_TYPES.items():
+        existing = self._quant_tags.get(repo.casefold(), ())
+        for quant, desc, done in quantize_menu_items(existing):
+            if done:
+                action = menu.addAction(f"{quant}  {desc}（已量化）")
+                action.setCheckable(True)
+                action.setChecked(True)
+                action.setEnabled(False)
+                continue
             action = menu.addAction(f"{quant}  {desc}")
             action.triggered.connect(lambda _checked=False, quant=quant, repo=repo: self.start_quantize(repo, quant))
         menu.exec(QCursor.pos())
@@ -1122,6 +1140,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def start_quantize(self, repo: str, quant: str) -> None:
         """对指定仓库中最大的全量 GGUF 执行一次量化。"""
         if self._quantizing or self._downloading or self._converting:
+            return
+        if quant.casefold() in {tag.casefold() for tag in self._quant_tags.get(repo.casefold(), ())}:
+            self.state.status(f"{repo} · {quant} 已量化，无需重复执行")
+            self._log(f"跳过重复量化 {repo}: {quant} 已存在")
             return
         files = self._quant_candidates.get(repo.casefold())
         if not files:
