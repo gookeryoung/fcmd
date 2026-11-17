@@ -222,7 +222,7 @@ DESCRIPTIONS: dict[str, str] = {
     "parameshw": "二维轴对称网格预览（Tk）：按区域着色线框、局部放大、质量摘要与三档网格包导出",
     "pathtool": "显示路径各部分信息",
     "pdfcrypt": "批量加密目录中的 PDF 文件",
-    "pdfcryptw": "PDF 批量加密解密窗口版（Tk）：选择目录、输入密码，一键加密或解密，支持递归子目录与并发线程；设置持久化到 ~/.fcmd/ui/pdfcryptw.json（不含密码）",
+    "pdfcryptw": "PDF 批量加密解密窗口版（Qt）：选择目录、输入密码，一键加密或解密，支持递归子目录与并发线程；设置持久化到 ~/.fcmd/ui/pdfcryptw.json（不含密码）",
     "pdfsplit": "分割 PDF（按份数 / 每份页数 / 页码范围）",
     "pdfsplitw": "PDF 分割窗口版（Tk）：按份数 / 每份页数 / 页码范围三种模式分割或提取页面，进度与日志实时回传；设置持久化到 ~/.fcmd/ui/pdfsplitw.json",
     "pdftool": "合并 PDF",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "c79c25b97da90b23068af52d29532536"
+DIGEST = "344467adb68dc8d3bd2ac2a002bff0fa"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
