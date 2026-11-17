@@ -227,7 +227,7 @@ DESCRIPTIONS: dict[str, str] = {
     "pdfsplitw": "PDF 分割窗口版（Tk）：按份数 / 每份页数 / 页码范围三种模式分割或提取页面，进度与日志实时回传；设置持久化到 ~/.fcmd/ui/pdfsplitw.json",
     "pdftool": "合并 PDF",
     "peview": "查看 PE 文件概览",
-    "pevieww": "PE 查看器窗口版（Tk）：按分类浏览 DOS/NT/可选头、数据目录、节表、导入导出、资源、重定位、调试与签名，详情与十六进制联动；设置持久化到 ~/.fcmd/ui/pevieww.json",
+    "pevieww": "PE 查看器窗口版（Qt）：按分类浏览 DOS/NT/可选头、数据目录、节表、导入导出、资源、重定位、调试与签名，详情与十六进制联动；设置持久化到 ~/.fcmd/ui/pevieww.json",
     "piptool": "安装包",
     "portcheck": "检查端口占用",
     "pptmake": "PPT 模板生成器：内置十三种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "135baa08a806562eec63094c8bbb1b44"
+DIGEST = "9f0cdb4d2d0d288a1fec1f21807eb4f0"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

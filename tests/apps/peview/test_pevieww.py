@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -105,9 +107,15 @@ class TestConfig:
             file_path="/app.exe",
             recent_files=["/app.exe", "/b.dll"],
             geometry="1180x760+10+20",
+            splitter=(320, 820),
         )
         save_settings(settings, path)
         assert load_settings(path) == settings
+
+    def test_load_settings_splitter_filtered(self, tmp_path: Path) -> None:
+        path = tmp_path / "split.json"
+        path.write_text(json.dumps({"splitter": ["320", 820]}), encoding="utf-8")
+        assert load_settings(path).splitter is None
 
 
 class TestResolveGeometry:
@@ -130,40 +138,27 @@ class TestResolveGeometry:
         assert resolve_geometry(None, 800, 600) == "800x600+0+0"
 
 
-def test_run_gui_import_error(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    """缺少 tkinter 时输出中文提示且不抛堆栈。"""
-
-    def boom(_settings_path: Path | None = None, _file: Path | None = None) -> None:
-        raise ImportError("no tkinter")
-
-    monkeypatch.setattr(pevieww, "PeviewWindow", boom)
-    pevieww.run_gui()
-    assert "tkinter 不可用" in capsys.readouterr().out
+def test_run_gui_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺少 Qt 前端时提示安装并退出，不抛堆栈。"""
+    monkeypatch.setitem(sys.modules, "fcmd.apps.peview._pevieww_qt", None)
+    with pytest.raises(SystemExit, match="Qt"):
+        pevieww.run_gui()
 
 
-def test_run_gui_starts_mainloop(monkeypatch: pytest.MonkeyPatch) -> None:
-    """窗口创建成功后进入 mainloop，并转发路径。"""
-    calls: list[tuple[Path | None, Path | None]] = []
-
-    class FakeWindow:
-        def __init__(self, settings_path: Path | None = None, file: Path | None = None) -> None:
-            self.root = self
-            self.settings_path = settings_path
-            self.file = file
-
-        def mainloop(self) -> None:
-            calls.append((self.settings_path, self.file))
-
-    monkeypatch.setattr(pevieww, "PeviewWindow", FakeWindow)
-    pevieww.run_gui(None, Path("x.exe"))
-    assert calls == [(None, Path("x.exe"))]
+def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """正常路径把启动交给 Qt 入口，并转发要打开的文件。"""
+    calls: list[Path | None] = []
+    fake = types.ModuleType("fcmd.apps.peview._pevieww_qt")
+    fake.run_qt = lambda file=None: calls.append(file)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.peview._pevieww_qt", fake)
+    pevieww.run_gui(Path("x.exe"))
+    assert calls == [Path("x.exe")]
 
 
 def test_launch_cmd_forwards(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[Path | None] = []
 
-    def fake_run_gui(settings_path: Path | None = None, file: Path | None = None) -> None:
-        del settings_path
+    def fake_run_gui(file: Path | None = None) -> None:
         calls.append(file)
 
     monkeypatch.setattr(pevieww, "run_gui", fake_run_gui)
