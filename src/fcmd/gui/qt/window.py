@@ -35,6 +35,8 @@ from fcmd.gui.qt.theme_menu import ThemeMenu
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from PySide6.QtGui import QIcon
+
     from fcmd.gui.theme import Theme
 
 __all__ = [
@@ -135,6 +137,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         on_close: Callable[[], bool] | None = None,
         persist: Callable[[str], None] | None = None,
         sidebar_collapsed: bool = False,
+        icon: QIcon | None = None,
     ) -> None:
         super().__init__()
         self._config_name = config_name
@@ -149,6 +152,8 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._theme: Theme = _qt_theme.load_theme()
 
         self.setWindowTitle(title)
+        if icon is not None and not icon.isNull():
+            self.setWindowIcon(icon)
         self.setMinimumSize(*min_size)
         self._restore_geometry(default_size, min_size)
 
@@ -159,7 +164,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         collapsed = sidebar_collapsed or bool(self._raw_settings.get("sidebar_collapsed"))
-        self.nav = SidebarNav(title=nav_title or title, collapsed=collapsed)
+        self.nav = SidebarNav(title=nav_title or title, collapsed=collapsed, icon=icon)
         self.nav.collapsedChanged.connect(self._handle_sidebar_collapsed)
         layout.addWidget(self.nav)
         right = QWidget(central)
@@ -339,11 +344,13 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         import fcmd
 
-        QMessageBox.information(
-            self,
-            "关于",
-            f"fcmd {fcmd.__version__}\n配置文件：{self._settings_path}\n主题：{self._theme.label}",
-        )
+        box = QMessageBox(self)
+        box.setWindowTitle("关于")
+        box.setText(f"fcmd {fcmd.__version__}\n配置文件：{self._settings_path}\n主题：{self._theme.label}")
+        icon = self.windowIcon()
+        if not icon.isNull():
+            box.setIconPixmap(icon.pixmap(64, 64))
+        box.exec()
 
     # ------------------------------------------------------------------ #
     # 关闭

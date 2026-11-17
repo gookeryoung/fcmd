@@ -260,7 +260,10 @@ jobs:
           ls dist/site-packages/PySide6/QtCore* >/dev/null 2>&1 || {
             echo "::error::发布物缺少 PySide6 QtCore 扩展"; exit 1;
           }
-          echo "PySide6 运行期依赖齐全"
+          test -f dist/site-packages/fcmd/apps/locllm/assets/icons/locllmw.ico || {
+            echo "::error::发布物缺少 locllmw 图标资源"; exit 1;
+          }
+          echo "PySide6 运行期依赖齐全，locllmw 图标已打包"
 
       # GitHub 的 Windows runner 是 en-US + 传统控制台（cp1252），rich 输出含中文
       # 的 help 时会 UnicodeEncodeError。这里把控制台切到 UTF-8，模拟用户实际使用的

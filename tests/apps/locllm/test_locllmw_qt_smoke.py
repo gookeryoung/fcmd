@@ -203,3 +203,30 @@ def test_scan_result_auto_selects_a_startable_model(window: Any, tmp_path: Path)
     window.run_page.on_models_changed()
     assert window.state.selected_model == tmp_path / "b-Q5_K_M.gguf"
     assert window.run_page.name_combo.currentText() == "b"
+
+
+def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
+    """窗口图标来自 assets/icons，侧边栏标题左侧显示同一图标（折叠时隐藏）。"""
+    assert window.nav.title_label.text() == "LocLLM"
+    assert window.windowTitle().startswith("LocLLM")
+    assert not window.windowIcon().isNull()
+    assert window.windowIcon().availableSizes()
+    icon_label = window.nav.icon_label
+    assert icon_label is not None
+    window.nav.set_collapsed(True)
+    assert icon_label.isHidden()
+    window.nav.set_collapsed(False)
+    assert not icon_label.isHidden()
+
+
+def test_overview_model_dir_row_is_single_line(window: Any) -> None:
+    """概览「模型目录」只显示设置的目录 + 剩余空间（单行，不随选中模型变化）。"""
+    from fcmd.apps.locllm import llmenv
+    from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
+
+    window.state.hardware = HardwareSnapshot(model_root=str(llmenv.models_dir()))
+    window.overview.refresh_hardware()
+    text = window.overview._hardware_values["model_disk"].text()
+    assert "\n" not in text
+    assert str(llmenv.models_dir()) in text
+    assert "剩余" in text

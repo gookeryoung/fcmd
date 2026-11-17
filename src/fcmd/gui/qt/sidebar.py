@@ -20,6 +20,7 @@ CI 无显示环境也能单测。
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -56,6 +57,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         parent: QWidget | None = None,
         width: int = EXPANDED_WIDTH,
         collapsed: bool = False,
+        icon: QIcon | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("Sidebar")
@@ -75,10 +77,13 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         layout.setSpacing(4)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 6)
-        header.setSpacing(4)
+        header.setSpacing(6)
+        self.icon_label = self._build_icon(icon)
+        if self.icon_label is not None:
+            header.addWidget(self.icon_label)
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("Title")
-        self.title_label.setContentsMargins(6, 0, 0, 0)
+        self.title_label.setContentsMargins(2 if self.icon_label is not None else 6, 0, 0, 0)
         self.title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toggle_button = QToolButton(self)
         self.toggle_button.setObjectName("SidebarToggle")
@@ -105,6 +110,21 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
             self.set_collapsed(True)
         else:
             self._apply_width()
+
+    def _build_icon(self, icon: QIcon | None) -> QLabel | None:
+        """把窗口图标画在标题左侧（折叠态空间不足，由 ``set_collapsed`` 隐藏）。"""
+        if icon is None or icon.isNull():
+            return None
+        label = QLabel(self)
+        # 用资源里实际存在的 24px 尺寸并按屏幕缩放比取图：避免 Qt 缩放 + 标签
+        # 内边距把图标裁掉一圈，高 DPI 下也不会发虚。
+        from PySide6.QtCore import QSize
+
+        label.setPixmap(icon.pixmap(QSize(24, 24), self.devicePixelRatioF()))
+        label.setFixedSize(24, 24)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setToolTip(self.windowTitle())
+        return label
 
     # ------------------------------------------------------------------ #
     # 页面登记与切换
@@ -206,6 +226,8 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._apply_width()
         self.title_label.setVisible(not collapsed)
         self.hint_label.setVisible(not collapsed)
+        if self.icon_label is not None:
+            self.icon_label.setVisible(not collapsed)
         self.toggle_button.setText("»" if collapsed else "«")
         self.toggle_button.setToolTip("展开侧边栏（Ctrl+Shift+B）" if collapsed else "折叠侧边栏（Ctrl+Shift+B）")
         for key, button in self._buttons.items():

@@ -2555,7 +2555,7 @@ class TestServewGuiEntry:
         calls: list[tuple[str, str]] = []
         monkeypatch.setattr(locllmw._guiwindow, "run_window", lambda factory, title: calls.append((title, "")))
         locllmw.run_gui(ui="tk")
-        assert calls == [("本地 LLM", "")]
+        assert calls == [("LocLLM", "")]
 
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def fake_window(_factory: object, _title: str) -> None:

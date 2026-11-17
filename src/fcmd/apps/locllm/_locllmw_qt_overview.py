@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.locllm import _llmtune, llmenv, llmserve
-from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot, disk_for_path, format_disk
+from fcmd.apps.locllm._locllmw_hardware import DiskInfo, HardwareSnapshot, disk_for_path
 from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import ServeState, human_size
@@ -61,6 +61,16 @@ def usage_texts(sample: LoadSample) -> tuple[str, float, str, float]:
         memory_percent = 0.0
         memory_text = "暂不可用"
     return gpu_text, percent, memory_text, memory_percent
+
+
+def model_disk_text(models_dir: Path, disk: DiskInfo | None) -> str:
+    """概览「模型目录」一行：设置里登记的模型目录 + 所在盘剩余空间。
+
+    只显示模型目录本身（不随选中模型变成具体文件路径），盘符信息来自硬件
+    快照的分区列表；取不到分区时剩余空间显示「未知」。
+    """
+    free = human_size(disk.free) if disk is not None else "未知"
+    return f"{models_dir} · 剩余 {free}"
 
 
 class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
@@ -101,7 +111,8 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             name = hint_label(label, wrap=False)
             name.setFixedWidth(64)
             value = QLabel("检测中…", card)
-            value.setWordWrap(True)
+            # 模型目录固定单行（路径 + 剩余空间），过长时用 tooltip 兜底
+            value.setWordWrap(key != "model_disk")
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             row.addWidget(name, 0, Qt.AlignmentFlag.AlignTop)
             row.addWidget(value, 1)
@@ -210,11 +221,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._hardware_values["gpu"].setText(gpu)
         self._hardware_values["cpu"].setText(f"{snapshot.cpu}（{snapshot.cpu_cores} 核 / {snapshot.cpu_threads} 线程）")
         self._hardware_values["memory"].setText(human_size(snapshot.memory_total) if snapshot.memory_total else "-")
-        model_path = self.state.selected_model or Path(snapshot.model_root or ".")
-        disk = disk_for_path(model_path, snapshot.disks)
-        root_text = str(model_path if self.state.selected_model else (snapshot.model_root or "未配置"))
-        self._hardware_values["model_disk"].setText(f"{root_text}\n{format_disk(disk)}")
-        self._detected_label.setText(f"检测时间 {snapshot.detected_at or '未知'}；模型目录随选中模型或主模型目录变化")
+        models_dir = llmenv.models_dir()
+        disk = disk_for_path(models_dir, snapshot.disks)
+        disk_text = model_disk_text(models_dir, disk)
+        self._hardware_values["model_disk"].setText(disk_text)
+        self._hardware_values["model_disk"].setToolTip(disk_text)
+        self._detected_label.setText(f"检测时间 {snapshot.detected_at or '未知'}；模型目录在「设置 → 存储」中修改")
 
     def apply_sample(self, sample: object) -> None:
         """用系统采样刷新显存 / 内存占用条。"""

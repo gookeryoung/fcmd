@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QGridLayout,
@@ -110,6 +111,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._syncing = False
         self._last_warnings: tuple[str, ...] = ()
         self._bridge: _TaskBridge | None = None
+        self._initial_refresh_pending = True
         super().__init__(
             title="开发环境管理 - devman",
             config_name="devmanw",
@@ -123,9 +125,18 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._raw_settings = _guiconfig.read_settings(settings_path) or {}
         self._build()
         self._update_action_states()
-        # 绑定 self 作为上下文：窗口在定时器触发前被销毁时自动取消，
-        # 避免测试里跨用例触发已删除的 C++ 对象（Qt 会直接 abort）
-        QTimer.singleShot(0, self, self.refresh)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """首次显示时再触发初始刷新。
+
+        构造即排队会让从未显示的窗口（含测试里只构造后 deleteLater 的窗口）
+        留下待触发的定时器，事件循环一旦推进就会对已销毁的窗口执行刷新；
+        绑定 self 只能取消已销毁的 C++ 对象，不能覆盖“尚未析构”的窗口。
+        """
+        super().showEvent(event)
+        if self._initial_refresh_pending:
+            self._initial_refresh_pending = False
+            QTimer.singleShot(0, self, self.refresh)
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -249,7 +260,11 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _start(self, label: str, work: _Work) -> None:
         """提交后台任务；同一时刻只允许一个任务。"""
         if self._busy:
-            QMessageBox.information(self, "请稍候", f"「{self._label}」仍在执行")
+            # 自动刷新与手动动作可能撞车：用状态栏 + 日志提示，不弹模态框。
+            # 模态框会在测试 / 自动刷新场景里开启嵌套事件循环，窗口销毁后回调
+            # 容易落到已删除的控件上（Qt 堆损坏），这里不做阻塞等待。
+            self._log(f"「{self._label}」仍在执行，稍后再试")
+            self.set_status(f"「{self._label}」仍在执行")
             return
         self._busy = True
         self._label = label

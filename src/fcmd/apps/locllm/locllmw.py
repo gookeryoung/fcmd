@@ -1,4 +1,4 @@
-"""locllmw - 本地 LLM 服务管理窗口（Qt 默认，Tk 回退）。
+"""LocLLM（locllmw）- 本地 LLM 服务管理窗口（Qt 默认，Tk 回退）。
 
 默认前端为 Qt（``PySide6``，随 fcmd 一起安装）：侧边栏分页组织为
 概览、模型、运行、对话、实验室、监测、设置七页，提供启动参数配置、
@@ -101,7 +101,7 @@ __all__ = [
 ]
 
 _DESCRIPTION = (
-    "本地 LLM 服务窗口版（Qt/PySide6，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 监测 / 设置；"
+    "LocLLM——本地 LLM 服务窗口版（Qt/PySide6，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 监测 / 设置；"
     "``--ui tk`` 回退 Tk）："
     "列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
     "与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，"
@@ -143,13 +143,21 @@ class LocllmWindow(
         self._hardware_detecting = False
         self._model_page: Any = None
         self.root, self._theme = _guiwindow.create_root(
-            title="本地 LLM 服务",
+            title="LocLLM · 本地 LLM 服务",
             saved_geometry=self._settings.geometry,
             default_geometry=f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
             min_width=MIN_WIDTH,
             min_height=MIN_HEIGHT,
             on_close=self._close,
         )
+
+        from fcmd.apps.locllm._locllmw_icon import ico_path
+
+        if (ico := ico_path()).is_file():
+            import contextlib
+
+            with contextlib.suppress(Exception):  # pragma: no cover - 平台差异静默回退
+                self.root.iconbitmap(default=str(ico))
 
         self._models: list[ModelEntry] = []
         self._models_root: Path | None = None
@@ -1006,7 +1014,7 @@ class LocllmWindow(
 def run_gui(*, ui: str = "qt") -> None:
     """按 ``ui`` 启动前端：``qt``（默认）或 ``tk``（迁移期回退）。"""
     if ui == "tk":
-        _guiwindow.run_window(LocllmWindow, "本地 LLM")
+        _guiwindow.run_window(LocllmWindow, "LocLLM")
         return
     try:
         from fcmd.apps.locllm._locllmw_qt_window import run_qt

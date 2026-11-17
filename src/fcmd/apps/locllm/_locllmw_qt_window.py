@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
+from fcmd.apps.locllm._locllmw_icon import window_icon
 from fcmd.apps.locllm._locllmw_qt_monitor import MonitorPage
 from fcmd.apps.locllm._locllmw_qt_overview import OverviewPage
 from fcmd.apps.locllm._locllmw_qt_run import RunPage
@@ -29,8 +30,8 @@ if TYPE_CHECKING:
 
 __all__ = ["LocllmWindow", "create_application", "run_qt"]
 
-TITLE = "本地 LLM 服务"
-NAV_TITLE = "locllm"
+TITLE = "LocLLM · 本地 LLM 服务"
+NAV_TITLE = "LocLLM"
 DEFAULT_SIZE = (1180, 900)
 MIN_SIZE = (1040, 780)
 
@@ -71,6 +72,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             on_close=self._on_close,
             persist=self.state.persist,
             sidebar_collapsed=self.state.settings.sidebar_collapsed,
+            icon=window_icon(),
         )
         self.overview = OverviewPage(self.state)
         self.run_page = RunPage(self.state)
@@ -192,6 +194,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 def run_qt(settings_path: Path | None = None) -> None:
     """创建 Qt 应用与主窗口并进入事件循环（阻塞到窗口关闭）。"""
     app = create_application()
+    app.setWindowIcon(window_icon())
     _qt_theme.apply_theme(app, _qt_theme.load_theme())
     window = LocllmWindow(settings_path)
     window.show()
