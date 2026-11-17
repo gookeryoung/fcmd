@@ -31,6 +31,20 @@ def test_settings_invalid_level_falls_back(tmp_path: Path) -> None:
     assert parameshw.load_settings(path).level == "coarse"
 
 
+def test_settings_splitter_round_trip(tmp_path: Path) -> None:
+    """分栏比例按二元组回读。"""
+    path = tmp_path / "paramesh.json"
+    parameshw.save_settings(parameshw.Settings(splitter=(900, 300)), path)
+    assert parameshw.load_settings(path).splitter == (900, 300)
+
+
+def test_settings_invalid_splitter_falls_back(tmp_path: Path) -> None:
+    """非法分栏记录回退 None，不抛异常。"""
+    path = tmp_path / "paramesh.json"
+    path.write_text('{"splitter": [1, "x"]}', encoding="utf-8")
+    assert parameshw.load_settings(path).splitter is None
+
+
 def test_settings_path_uses_app_name(tmp_path: Path) -> None:
     assert parameshw.settings_path().name == "paramesh.json"
 

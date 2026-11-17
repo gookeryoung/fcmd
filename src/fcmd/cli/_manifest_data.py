@@ -219,7 +219,7 @@ DESCRIPTIONS: dict[str, str] = {
     "paramcad": "写入示例模型（虚构占位，用于跑通链路）",
     "paramcadw": "参数化建模预览（Tk）：二维截面、轴向剖面与密度 / 壁厚分布曲线；数据可导出为 dynacalc-model/1 模型描述",
     "paramesh": "写入占位模型与配套网格配置（虚构，仅用于跑通链路）",
-    "parameshw": "二维轴对称网格预览（Tk）：按区域着色线框、局部放大、质量摘要与三档网格包导出",
+    "parameshw": "二维轴对称网格预览（Qt）：按区域着色线框、局部放大、质量摘要与三档网格包导出",
     "pathtool": "显示路径各部分信息",
     "pdfcrypt": "批量加密目录中的 PDF 文件",
     "pdfcryptw": "PDF 批量加密解密窗口版（Qt）：选择目录、输入密码，一键加密或解密，支持递归子目录与并发线程；设置持久化到 ~/.fcmd/ui/pdfcryptw.json（不含密码）",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "19e5fed656440f216a17fb5458650750"
+DIGEST = "3e8085decaf250fd4287ba50fc6895e2"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
