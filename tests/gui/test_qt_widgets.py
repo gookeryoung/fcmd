@@ -44,8 +44,10 @@ def test_button_variants_share_size_hint() -> None:
     sizes = {kind: button("刷新模型列表", kind=kind).sizeHint() for kind in _BUTTON_KINDS}
     assert len({size.height() for size in sizes.values()}) == 1
     assert len({size.width() for size in sizes.values()}) == 1
-    baseline = _qt_theme.control_height(_guitheme.resolve_theme("dark-blue"))
-    assert next(iter(sizes.values())).height() == baseline + 2
+    # 共享层运行时基准 = 字体行高 + 补偿（min-height 的内容高，随平台字体不同），
+    # 控件总高再加 QSS 上下各 1px 边框。
+    expected = _qt_theme.runtime_control_height(QApplication.instance()) + 2
+    assert next(iter(sizes.values())).height() == expected
 
 
 def test_ghost_button_keeps_padding_of_default() -> None:
@@ -70,8 +72,8 @@ def test_single_line_controls_share_height() -> None:
     container.show()
     QApplication.processEvents()
     assert len({control.height() for control in controls}) == 1
-    baseline = _qt_theme.control_height(_guitheme.resolve_theme("dark-blue"))
-    assert controls[0].height() == baseline + 2
+    expected = _qt_theme.runtime_control_height(QApplication.instance()) + 2
+    assert controls[0].height() == expected
 
 
 def test_card_title_is_plain_label_inside_frame() -> None:

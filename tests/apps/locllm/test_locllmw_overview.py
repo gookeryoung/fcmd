@@ -81,7 +81,10 @@ class TestHardwareSnapshot:
     def test_detect_cpu_name_never_empty(self) -> None:
         assert hardware.detect_cpu_name().strip()
 
-    def test_detect_hardware_uses_runner(self, tmp_path: Path) -> None:
+    def test_detect_hardware_uses_runner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 内存代数查询仅在 Windows 分支可达：CI（Linux）注入 nt 平台走同一逻辑。
+        monkeypatch.setattr(hardware.os, "name", "nt")
+
         def runner(argv: list[str]) -> CommandResult:
             assert argv[0] in ("nvidia-smi", "powershell")
             if argv[0] == "powershell":
@@ -95,7 +98,8 @@ class TestHardwareSnapshot:
         assert snapshot.memory_gen == "DDR5"
         assert snapshot.model_root == str(tmp_path)
 
-    def test_detect_memory_gen_maps_smbios_code(self) -> None:
+    def test_detect_memory_gen_maps_smbios_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hardware.os, "name", "nt")
         for code, expected in ((20, "DDR"), (21, "DDR2"), (24, "DDR3"), (26, "DDR4"), (34, "DDR5")):
             runner = lambda argv, code=code: CommandResult(0, f"{code}\n")  # noqa: E731
             assert hardware.detect_memory_gen(runner) == expected

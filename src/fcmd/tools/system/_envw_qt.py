@@ -306,10 +306,10 @@ class VariableDialog(QDialog):  # pragma: no cover - 模态对话框
 class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     """作用域 / 搜索 + 变量表 + 详情 + 操作条的环境变量编辑器。"""
 
-    def __init__(self, settings_path: Path | None = None) -> None:
+    def __init__(self, settings_path: Path | None = None, *, platform: str | None = None) -> None:
         self._settings = load_settings(settings_path)
         self._own_settings_path = settings_path
-        self._platform = sys.platform
+        self._platform = platform or sys.platform
         self._profile_path = None if _is_windows(self._platform) else envw.shell_profile_path()
         self._scopes = available_scopes(self._platform)
         self._scope = self._settings.scope if self._settings.scope in self._scopes else self._scopes[0]

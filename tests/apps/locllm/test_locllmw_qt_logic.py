@@ -19,6 +19,7 @@ pytest.importorskip("PySide6")
 from fcmd.apps.locllm import llmbase, llmserve
 from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
 from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
+from fcmd.apps.locllm._locllmw_qt_center import _ModelDetailView, _ModelItemRow
 from fcmd.apps.locllm._locllmw_qt_chat import endpoint_from_form, service_labels
 from fcmd.apps.locllm._locllmw_qt_models import (
     display_path_for,
@@ -45,6 +46,7 @@ from fcmd.apps.locllm._locllmw_qt_run import (
 from fcmd.apps.locllm._locllmw_qt_settings import engine_rows_values
 from fcmd.apps.locllm._locllmw_recommend import Recommendation
 from fcmd.apps.locllm.llmbase import EngineInfo, LaunchPlan, ModelEntry, Profile, ServeError, ServeState, Tuning
+from fcmd.apps.locllm.llmdown import ModelSummary
 
 
 def _plan(*, model: Path = Path("model.gguf"), context: int = 65536, kv_type: str | None = None) -> LaunchPlan:
@@ -201,6 +203,45 @@ def test_ordered_groups_puts_running_first(tmp_path: Path) -> None:
 def test_fit_state_for_prefers_running() -> None:
     assert fit_state_for(running=True, total=None, free=None) == "运行中"
     assert fit_state_for(running=False, total=None, free=None) == "-"
+
+
+def test_model_item_row_expands_inline_detail() -> None:
+    """浏览结果行展开后，详情区直接挂在行下方（不再需要右侧面板）。"""
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    row = _ModelItemRow(ModelSummary(repo="Qwen/demo"))
+    assert row.repo == "Qwen/demo"
+    assert not row.is_expanded()
+    assert row.expand_button.text() == "展开"
+    assert row.files_button.text() == "文件清单"
+    assert row.detail_host.isHidden()
+    row.set_expanded(True)
+    assert row.is_expanded()
+    assert row.expand_button.text() == "收起"
+    assert not row.detail_host.isHidden()
+    row.set_expanded(False)
+    assert not row.is_expanded()
+    assert row.expand_button.text() == "展开"
+    assert row.files_button.text() == "文件清单"
+    assert row.detail_host.isHidden()
+
+
+def test_model_detail_view_reset_and_error() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    view = _ModelDetailView()
+    view.reset("Qwen/demo")
+    assert view.repo == "Qwen/demo"
+    assert not view.download_button.isEnabled()
+    assert "正在加载 Qwen/demo" in view.files_hint.text()
+    assert not view.files_section.is_expanded()
+    view.show_files()
+    assert view.files_section.is_expanded()
+    view.set_error("网络错误")
+    assert view.error.text() == "网络错误"
+    assert not view.error.isHidden()
 
 
 # ---------------------------------------------------------------------- #

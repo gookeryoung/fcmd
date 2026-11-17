@@ -3,7 +3,7 @@
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 搜索（类别 / 系列 / 排序 / 翻页）、自定义结果行与可折叠的详情 / README / 文件清单；
+- **浏览**：ModelScope 搜索（类别 / 系列 / 排序 / 翻页）、自定义结果行，展开行显示详情 / README，文件清单从体积旁链接展开；
 - **下载**：目标目录（唯一模型目录）、下载源、并发、SHA256 校验、包含 / 排除掩码、
   汇总 / 单文件进度、失败记录与重试、日志；
 - **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
@@ -87,7 +87,7 @@ from fcmd.gui.qt.widgets import (
     RowListWidget,
     button,
     hint_label,
-    make_splitter,
+    link_button,
     make_table,
     make_table_item,
 )
@@ -130,43 +130,76 @@ def _task_text(exc: BaseException) -> str:
 class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
 
-    只展示仓库名、系列 / 任务与下载 / 体积；详情、README 与文件清单在右侧
-    折叠区里按需展开，避免列表被表格列挤窄。
+    行本身只放关键内容；展开后在行下方显示详细信息与 README，文件清单通过
+    行内「文件清单」链接按需展开，不再占用右侧面板，列表可以铺满整页宽度。
     """
+
+    toggleRequested = Signal(object)
+    filesRequested = Signal(object)
 
     def __init__(self, item: ModelSummary, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
+        self.repo = item.repo
+        self._expanded = False
         self.setObjectName("ModelItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
         self.setToolTip(item.repo)
 
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(12, 8, 12, 8)
-        outer.setSpacing(12)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QWidget(self)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(12, 8, 12, 8)
+        header_row.setSpacing(12)
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(3)
-        name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=self)
+        name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=header)
         name.setObjectName("ModelItemName")
         name.setToolTip(item.repo)
         left.addWidget(name)
-        sub = QLabel(subtitle, self)
+        sub = QLabel(subtitle, header)
         sub.setObjectName("Hint")
         sub.setWordWrap(False)
         sub.setMinimumWidth(0)
         sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         sub.setToolTip(subtitle)
         left.addWidget(sub)
-        outer.addLayout(left, 1)
+        header_row.addLayout(left, 1)
 
-        stats = QLabel(metrics, self)
+        stats = QLabel(metrics, header)
         stats.setObjectName("Hint")
         stats.setWordWrap(False)
         stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         stats.setToolTip(metrics)
-        outer.addWidget(stats, 0)
+        header_row.addWidget(stats, 0)
+        self.files_button = link_button("文件清单", tooltip="展开 / 收起该模型的文件清单")
+        self.files_button.clicked.connect(lambda: self.filesRequested.emit(self))
+        header_row.addWidget(self.files_button, 0)
+        self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息与 README")
+        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
+        header_row.addWidget(self.expand_button, 0)
+        outer.addWidget(header)
+
+        self.detail_host = QWidget(self)
+        self.detail_host.setVisible(False)
+        self.detail_layout = QVBoxLayout(self.detail_host)
+        self.detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_layout.setSpacing(0)
+        outer.addWidget(self.detail_host)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
+        self._expanded = expanded
+        self.detail_host.setVisible(expanded)
+        self.expand_button.setText("收起" if expanded else "展开")
 
     def set_selected(self, selected: bool) -> None:
         """切换选中态边框（列表当前行变化时由页面同步）。"""
@@ -175,8 +208,152 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self.style().polish(self)
 
 
+class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
+    """展开行里的详情：详细信息与 README 直接可见，文件清单按需展开。
+
+    文件清单用固定高度的可滚动表格，README 用只读文本框，避免单个模型把
+    列表行撑得过高；同一个实例在行之间复用，展开哪一行就挂到哪一行下面。
+    """
+
+    downloadRequested = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.repo: str | None = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 10)
+        layout.setSpacing(6)
+
+        separator = QFrame(self)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(separator)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        self.error = hint_label("")
+        self.error.setVisible(False)
+        actions.addWidget(self.error, 1)
+        self.download_button = button("前往下载", kind="primary")
+        self.download_button.setEnabled(False)
+        self.download_button.clicked.connect(self._emit_download)
+        actions.addWidget(self.download_button, 0)
+        layout.addLayout(actions)
+
+        layout.addWidget(QLabel("详细信息", self))
+        self.meta_grid = QGridLayout()
+        self.meta_grid.setContentsMargins(0, 0, 0, 0)
+        self.meta_grid.setHorizontalSpacing(10)
+        self.meta_grid.setVerticalSpacing(2)
+        self.meta_values: dict[str, QLabel] = {}
+        for index, name in enumerate(
+            (
+                "中文名",
+                "组织",
+                "任务",
+                "框架",
+                "架构",
+                "模型类型",
+                "语言",
+                "许可证",
+                "下载",
+                "星标",
+                "大小",
+                "版本",
+                "更新时间",
+                "推理支持",
+            )
+        ):
+            row, column = divmod(index, 2)
+            cell = QHBoxLayout()
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.addWidget(hint_label(f"{name}：", wrap=False))
+            value = QLabel("-", self)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            value.setWordWrap(True)
+            cell.addWidget(value, 1)
+            self.meta_grid.addLayout(cell, row, column)
+            self.meta_values[name] = value
+        self.meta_grid.setColumnStretch(0, 1)
+        self.meta_grid.setColumnStretch(1, 1)
+        layout.addLayout(self.meta_grid)
+
+        layout.addWidget(QLabel("README", self))
+        self.readme = QPlainTextEdit(self)
+        self.readme.setObjectName("Readme")
+        self.readme.setFrameShape(QFrame.Shape.NoFrame)
+        self.readme.setReadOnly(True)
+        self.readme.setMinimumHeight(120)
+        self.readme.setMaximumHeight(220)
+        layout.addWidget(self.readme)
+
+        self.files_section = Collapsible("文件清单", expanded=False, parent=self)
+        self.files = make_table(
+            ("文件", "大小", "SHA256"),
+            widths=(360, 90, 130),
+            stretch_columns=(0,),
+            parent=self.files_section.content,
+        )
+        self.files.setFrameShape(QFrame.Shape.NoFrame)
+        self.files.setMinimumHeight(160)
+        self.files.setMaximumHeight(280)
+        self.files_section.body.addWidget(self.files)
+        self.files_hint = hint_label("")
+        self.files_section.body.addWidget(self.files_hint)
+        layout.addWidget(self.files_section)
+
+    def show_files(self) -> None:
+        """点击行内「文件清单」链接时展开清单。"""
+        self.files_section.set_expanded(True)
+
+    def reset(self, repo: str) -> None:
+        """切换模型时清空旧内容，等后台详情回填。"""
+        self.repo = repo
+        self.download_button.setEnabled(False)
+        self.error.setVisible(False)
+        self.error.setText("")
+        for value in self.meta_values.values():
+            value.setText("-")
+        self.readme.clear()
+        self.files.setRowCount(0)
+        self.files_section.set_title("文件清单")
+        self.files_section.set_expanded(False)
+        self.files_hint.setText(f"正在加载 {repo} 的文件清单…")
+
+    def set_error(self, message: str) -> None:
+        self.error.setText(message)
+        self.error.setVisible(True)
+        self.files_hint.setText("")
+
+    def _emit_download(self) -> None:
+        if self.repo:
+            self.downloadRequested.emit(self.repo)
+
+    def render(self, info: ModelInfo, files: tuple[ModelFile, ...], error: str) -> None:
+        """回填仓库详情与文件清单；``error`` 只影响文件清单提示。"""
+        self.repo = info.summary.repo
+        self.download_button.setEnabled(True)
+        self.error.setVisible(False)
+        self.error.setText("")
+        for name, value in _locllmw_models.detail_pairs(info):
+            if name in self.meta_values:
+                self.meta_values[name].setText(value)
+        self.readme.setPlainText(info.readme or "（该模型未提供 README）")
+        self.files.setRowCount(len(files))
+        total = 0
+        for row, file in enumerate(files):
+            total += file.size
+            self.files.setItem(row, 0, make_table_item(file.path))
+            self.files.setItem(row, 1, make_table_item(human_size(file.size)))
+            self.files.setItem(row, 2, make_table_item(file.sha256[:12] or "-"))
+        if files:
+            self.files_hint.setText(f"共 {len(files)} 个文件，合计 {human_size(total)}（ModelScope 清单）")
+            self.files_section.set_title(f"文件清单（{len(files)} 个 · {human_size(total)}）")
+        else:
+            self.files_hint.setText(f"文件清单获取失败：{error}" if error else "文件清单为空")
+            self.files_section.set_title("文件清单（0 个）")
+
+
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
-    """浏览页：搜索、自定义结果行与折叠式详情 / README / 文件清单。"""
+    """浏览页：搜索、自定义结果行与行内展开的详情 / README，文件清单按需展开。"""
 
     repoSelected = Signal(str)
 
@@ -189,6 +366,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._tasks: tuple[ModelTask, ...] = ()
         self._last_result: ModelSearch | None = None
         self._result_items: tuple[ModelSummary, ...] = ()
+        self._expanded_row: _ModelItemRow | None = None
         self._page = 1
         self._sort_key = "default"
         self._series_options: tuple[str, ...] = ()
@@ -247,9 +425,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         search.body.addLayout(nav)
         layout.addWidget(search)
 
-        split = make_splitter(sizes=(460, 520), parent=self)
-        layout.addWidget(split, 1)
-        list_card = Card("", split)
+        list_card = Card("", self)
         self.models = RowListWidget(list_card)
         self.models.setObjectName("ModelResultList")
         self.models.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
@@ -257,97 +433,13 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.models.setMinimumHeight(200)
         self.models.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.models.currentRowChanged.connect(self._on_model_selected)
-        list_card.body.addWidget(self.models)
-        split.addWidget(list_card)
+        self.models.itemDoubleClicked.connect(self._on_item_double_clicked)
+        list_card.body.addWidget(self.models, 1)
+        layout.addWidget(list_card, 1)
 
-        right = PageScroll(split, margins=(0, 0, 4, 8))
-        split.addWidget(right)
-
-        detail = Card("", right)
-        detail_layout = detail.body
-        detail_layout.setSpacing(6)
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        titles = QVBoxLayout()
-        titles.setContentsMargins(0, 0, 0, 0)
-        self.title = QLabel("选择左侧模型查看详情", detail)
-        self.title.setObjectName("Value")
-        self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.subtitle = hint_label("")
-        self.key_summary = hint_label("", wrap=False)
-        titles.addWidget(self.title)
-        titles.addWidget(self.subtitle)
-        titles.addWidget(self.key_summary)
-        header.addLayout(titles, 1)
-        self.go_download = button("前往下载", kind="primary")
-        self.go_download.setEnabled(False)
-        self.go_download.clicked.connect(lambda: self.repoSelected.emit(self.current_repo or ""))
-        header.addWidget(self.go_download)
-        detail_layout.addLayout(header)
-
-        self.detail_section = Collapsible("详细信息", expanded=False, parent=detail)
-        self.meta_grid = QGridLayout()
-        self.meta_grid.setContentsMargins(0, 0, 0, 0)
-        self.meta_grid.setHorizontalSpacing(10)
-        self.meta_grid.setVerticalSpacing(2)
-        self.meta_values: dict[str, QLabel] = {}
-        for index, name in enumerate(
-            (
-                "中文名",
-                "组织",
-                "任务",
-                "框架",
-                "架构",
-                "模型类型",
-                "语言",
-                "许可证",
-                "下载",
-                "星标",
-                "大小",
-                "版本",
-                "更新时间",
-                "推理支持",
-            )
-        ):
-            row, column = divmod(index, 2)
-            cell = QHBoxLayout()
-            cell.setContentsMargins(0, 0, 0, 0)
-            cell.addWidget(hint_label(f"{name}：", wrap=False))
-            value = QLabel("-", detail)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            value.setWordWrap(True)
-            cell.addWidget(value, 1)
-            self.meta_grid.addLayout(cell, row, column)
-            self.meta_values[name] = value
-        self.meta_grid.setColumnStretch(0, 1)
-        self.meta_grid.setColumnStretch(1, 1)
-        self.detail_section.body.addLayout(self.meta_grid)
-        detail_layout.addWidget(self.detail_section)
-
-        self.readme_section = Collapsible("README", expanded=False, parent=detail)
-        self.readme = QPlainTextEdit(self.readme_section.content)
-        self.readme.setObjectName("Readme")
-        self.readme.setFrameShape(QFrame.Shape.NoFrame)
-        self.readme.setReadOnly(True)
-        self.readme.setMinimumHeight(120)
-        self.readme_section.body.addWidget(self.readme)
-        detail_layout.addWidget(self.readme_section)
-
-        self.files_section = Collapsible("文件清单", expanded=False, parent=detail)
-        self.files = make_table(
-            ("文件", "大小", "SHA256"),
-            widths=(360, 90, 130),
-            stretch_columns=(0,),
-            parent=self.files_section.content,
-        )
-        self.files.setFrameShape(QFrame.Shape.NoFrame)
-        self.files.setMinimumHeight(160)
-        self.files_section.body.addWidget(self.files)
-        self.files_hint = hint_label("")
-        self.files_section.body.addWidget(self.files_hint)
-        detail_layout.addWidget(self.files_section)
-        detail_layout.addStretch(1)
-        right.body.addWidget(detail)
+        self.detail_view = _ModelDetailView(self)
+        self.detail_view.setVisible(False)
+        self.detail_view.downloadRequested.connect(self.repoSelected.emit)
 
         self._load_tasks()
 
@@ -380,7 +472,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         keyword = self.keyword.text().strip()
         if keyword.count("/") == 1 and " " not in keyword:
-            self.load_repo(keyword)
+            self.open_repo(keyword)
             return
         task = self._active_task()
         query = keyword or (task.name if task is not None else "")
@@ -410,6 +502,13 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def _render_search(self, result: ModelSearch) -> None:
         self._last_result = result
         self._render_results()
+
+    def open_repo(self, repo: str) -> None:
+        """直接打开 ``组织/模型``：生成单行结果并就地展开详情。"""
+        self.keyword.setText(repo)
+        self._last_result = ModelSearch(items=(ModelSummary(repo=repo),), total=1)
+        self._render_results()
+        self._expand_repo(repo)
 
     def _on_sort_changed(self, _index: int) -> None:
         self._sort_key = _SORT_KEYS.get(self.sort_combo.currentText(), "default")
@@ -470,11 +569,18 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             items[0].repo if items else None,
         )
         self._result_items = items
+        self._detach_detail()
+        self._detail_generation += 1
+        self.current_repo = None
+        self.current_info = None
+        self.current_files = ()
         self.models.clear()
         for item in items:
             list_item = QListWidgetItem(self.models)
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             row = _ModelItemRow(item, self.models)
+            row.toggleRequested.connect(self._on_row_toggle)
+            row.filesRequested.connect(self._on_files_requested)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -502,11 +608,76 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             widget = self.models.itemWidget(self.models.item(index))
             if isinstance(widget, _ModelItemRow):
                 widget.set_selected(index == current)
-        if current < 0 or current >= len(self._result_items):
+
+    def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
+        row = self.models.itemWidget(item)
+        if isinstance(row, _ModelItemRow):
+            self._on_row_toggle(row)
+
+    def _on_row_toggle(self, row: _ModelItemRow) -> None:
+        """展开一行并在行下方挂详情；同一时间只展开一行。"""
+        self._focus_row(row)
+        if row.is_expanded():
+            row.set_expanded(False)
+            self.detail_view.setVisible(False)
+            self._expanded_row = None
+            self._update_row_height(row)
             return
-        repo = self._result_items[current].repo
-        if repo and repo != self.current_repo:
-            self.load_repo(repo)
+        if self._expanded_row is not None and self._expanded_row is not row:
+            self._expanded_row.set_expanded(False)
+            self._update_row_height(self._expanded_row)
+        row.detail_layout.addWidget(self.detail_view)
+        self.detail_view.setVisible(True)
+        row.set_expanded(True)
+        self._expanded_row = row
+        self._update_row_height(row)
+        if self.current_repo != row.repo:
+            self.load_repo(row.repo)
+
+    def _on_files_requested(self, row: _ModelItemRow) -> None:
+        """行内「文件清单」链接：先展开该行，再展开清单分区。"""
+        if not row.is_expanded():
+            self._on_row_toggle(row)
+        else:
+            self._focus_row(row)
+        self.detail_view.show_files()
+        self._update_row_height(row)
+
+    def _expand_repo(self, repo: str) -> None:
+        for index in range(self.models.count()):
+            row = self.models.itemWidget(self.models.item(index))
+            if isinstance(row, _ModelItemRow) and row.repo == repo:
+                self.models.setCurrentRow(index)
+                if not row.is_expanded():
+                    self._on_row_toggle(row)
+                return
+
+    def _focus_row(self, row: _ModelItemRow) -> None:
+        for index in range(self.models.count()):
+            if self.models.itemWidget(self.models.item(index)) is row:
+                self.models.setCurrentRow(index)
+                return
+
+    def _detach_detail(self) -> None:
+        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
+        self.detail_view.setParent(None)
+        self.detail_view.setVisible(False)
+        if self._expanded_row is not None:
+            self._expanded_row.set_expanded(False)
+            self._expanded_row = None
+
+    def _update_row_height(self, row: _ModelItemRow | None) -> None:
+        if row is None:
+            return
+        layout = row.layout()
+        if layout is not None:
+            layout.activate()
+        for index in range(self.models.count()):
+            item = self.models.item(index)
+            if self.models.itemWidget(item) is row:
+                item.setSizeHint(QSize(0, row.sizeHint().height()))
+                self.models.sync_row_widths()
+                return
 
     def load_repo(self, repo: str) -> None:
         """加载仓库详情与文件清单；世代号防止旧请求覆盖新选择。"""
@@ -515,18 +686,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.current_repo = repo
         self.current_info = None
         self.current_files = ()
-        self.go_download.setEnabled(False)
-        self.title.setText(repo)
-        self.subtitle.setText("正在加载详情…")
-        self.key_summary.setText("")
-        for value in self.meta_values.values():
-            value.setText("-")
-        self.readme.clear()
-        self.files.setRowCount(0)
-        self.files_hint.setText("")
-        self.files_section.set_title("文件清单")
-        for section in (self.detail_section, self.readme_section, self.files_section):
-            section.set_expanded(False)
+        self.detail_view.reset(repo)
+        self._update_row_height(self._expanded_row)
         self.page_label.setText(f"正在加载 {repo} …")
         submit(
             self._detail_work,
@@ -547,7 +708,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def _detail_error(self, generation: int, repo: str, message: str) -> None:
         if generation != self._detail_generation:
             return
-        self.subtitle.setText("详情加载失败")
+        self.detail_view.set_error(f"详情加载失败：{message}")
+        self._update_row_height(self._expanded_row)
         self.page_label.setText(f"{repo} 详情加载失败")
         self._log(f"详情加载失败 {repo}: {message}")
 
@@ -556,32 +718,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         self.current_info = info
         self.current_files = files
-        summary = info.summary
-        self.title.setText(summary.repo)
-        self.subtitle.setText(summary.chinese_name or info.description[:80] or " ")
-        _, key_subtitle, key_metrics = _locllmw_models.model_item_lines(summary)
-        self.key_summary.setText(" · ".join(part for part in (key_subtitle, key_metrics) if part and part != "-"))
-        for name, value in _locllmw_models.detail_pairs(info):
-            if name in self.meta_values:
-                self.meta_values[name].setText(value)
-        self.readme.setPlainText(info.readme or "（该模型未提供 README）")
-        self.files.setRowCount(len(files))
-        total = 0
-        for row, file in enumerate(files):
-            total += file.size
-            self.files.setItem(row, 0, make_table_item(file.path))
-            self.files.setItem(row, 1, make_table_item(human_size(file.size)))
-            self.files.setItem(row, 2, make_table_item(file.sha256[:12] or "-"))
-        if files:
-            self.files_hint.setText(f"共 {len(files)} 个文件，合计 {human_size(total)}（ModelScope 清单）")
-            self.files_section.set_title(f"文件清单（{len(files)} 个 · {human_size(total)}）")
-        else:
-            self.files_hint.setText(f"文件清单获取失败：{error}" if error else "文件清单为空")
-            self.files_section.set_title("文件清单（0 个）")
-        self.go_download.setEnabled(True)
-        self.page_label.setText(f"已加载 {summary.repo}")
-        self.repoSelected.emit(summary.repo)
-        self._log(f"已加载模型详情: {summary.repo}")
+        self.detail_view.render(info, files, error)
+        self._update_row_height(self._expanded_row)
+        self.page_label.setText(f"已加载 {info.summary.repo}")
+        self.repoSelected.emit(info.summary.repo)
+        self._log(f"已加载模型详情: {info.summary.repo}")
 
     def _log(self, message: str) -> None:
         self.state.logLine.emit(message)
@@ -1833,8 +1974,7 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _open_repo(self, repo: str) -> None:
         self.tabs.setCurrentIndex(_TAB_NAMES.index("浏览"))
-        self.browse.keyword.setText(repo)
-        self.browse.load_repo(repo)
+        self.browse.open_repo(repo)
 
     def settings_dict(self) -> dict[str, Any]:
         """导出下载参数，供窗口写回 ``locllmw.json``。"""

@@ -40,7 +40,9 @@ def window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(_envw_qt, "read_scope", lambda _scope, **_kwargs: dict(_SAMPLE))
     app = create_application("envw-test")
     _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))
-    widget = EnvQtWindow(tmp_path / "envw.json")
+    # 样例数据是 Windows 风格（%VAR% 引用、分号路径）：显式注入 win32 平台，
+    # 使 Linux CI 与本地走同一套展开语义。
+    widget = EnvQtWindow(tmp_path / "envw.json", platform="win32")
     yield widget
     widget.deleteLater()
 

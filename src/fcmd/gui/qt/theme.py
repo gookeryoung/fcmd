@@ -36,6 +36,7 @@ __all__ = [
     "control_height",
     "load_theme",
     "pick_font_family",
+    "runtime_control_height",
     "save_theme",
     "stylesheet",
     "template_tokens",
@@ -68,6 +69,18 @@ _APPLIED: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
 
 _FAMILIES: weakref.WeakKeyDictionary[Any, tuple[str, ...]] = weakref.WeakKeyDictionary()
 """按应用缓存 ``QFontDatabase.families()``：字体枚举在部分平台上需要数百毫秒。"""
+
+_RUNTIME_HEIGHTS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
+"""已应用主题的应用实例 → :func:`apply_theme` 实测写入样式表的单行控件高度。"""
+
+
+def runtime_control_height(app: Any) -> int:
+    """返回 :func:`apply_theme` 实际写进样式表的单行控件高度（逻辑像素）。
+
+    运行时高度按当前字体 ``QFontMetrics`` 实测行高推导，随平台字体不同而不同，
+    不能用纯估算的 :func:`control_height` 代替；主题未应用时返回 0。
+    """
+    return _RUNTIME_HEIGHTS.get(app, 0)
 
 
 def control_height(theme: Theme) -> int:
@@ -498,5 +511,6 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     app.setFont(font)
     height = QFontMetrics(font).height() + CONTROL_HEIGHT_EXTRA
+    _RUNTIME_HEIGHTS[app] = height
     app.setStyleSheet(stylesheet(theme, font_family=family, mono_family=mono, control_height_px=height))
     _APPLIED[app] = theme.name
