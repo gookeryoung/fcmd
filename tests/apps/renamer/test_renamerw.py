@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -26,7 +28,7 @@ from fcmd.apps.renamer._core import (
     make_target,
     unique_paths,
 )
-from fcmd.core.toolkit import _TOOL_REGISTRY
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 _EXAMPLES_DIR = Path(_examples.__file__).resolve().parent / "help" / "examples"
 
@@ -218,3 +220,24 @@ def test_unique_paths_keeps_first_and_drops_duplicates(tmp_path: Path) -> None:
     first = tmp_path / "a.txt"
     second = tmp_path / "b.txt"
     assert unique_paths([first, second, first]) == (first, second)
+
+
+def test_gui_entry_import_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """缺少 Qt 前端时提示安装并退出，不抛堆栈。"""
+    monkeypatch.setitem(sys.modules, "fcmd.apps.renamer._renamerw_qt", None)
+    with pytest.raises(SystemExit, match="Qt"):
+        renamerw.run_gui()
+
+
+def test_gui_entrypoints_share_one_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """run_gui / launch_cmd / 工具注册三条入口都委托同一 Qt 入口。"""
+    calls: list[object] = []
+    fake = types.ModuleType("fcmd.apps.renamer._renamerw_qt")
+    fake.run_qt = lambda path=None: calls.append(path)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.renamer._renamerw_qt", fake)
+
+    path = tmp_path / "settings.json"
+    assert renamerw.run_gui(path) is None
+    assert renamerw.launch_cmd() is None
+    assert run_tool("renamerw", []) == 0
+    assert calls == [path, None, None]
