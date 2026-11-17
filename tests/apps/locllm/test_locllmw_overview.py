@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -87,7 +88,7 @@ class TestHardwareSnapshot:
 
         real_import = builtins.__import__
 
-        def fake_import(name: str, *args: object, **kwargs: object) -> object:
+        def fake_import(name: str, *args: Any, **kwargs: Any) -> object:
             if name == "winreg":
                 raise ImportError("no winreg")
             return real_import(name, *args, **kwargs)
