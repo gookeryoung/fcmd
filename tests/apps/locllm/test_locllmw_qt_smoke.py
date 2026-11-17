@@ -17,17 +17,33 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtWidgets import QMessageBox
+
 from fcmd.apps.locllm import _locllmw_qt_state as qt_state
 from fcmd.apps.locllm._locllmw_qt_window import LocllmWindow, create_application
+from fcmd.apps.locllm.llmbase import EngineInfo
 from fcmd.gui import theme as _guitheme
 
 
 @pytest.fixture()
 def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
-    """构建离线窗口：扫描 / 检测 / 采样全部打桩，关闭时自动清理。"""
+    """构建离线窗口：扫描 / 检测 / 采样全部打桩，关闭时自动清理。
+
+    引擎解析打桩成假引擎：CI / 无引擎机器上 ``preview`` 走正常路径而不是
+    抛 ServeError 弹出模态错误框（模态框无人点击会让测试永久挂死）。
+    模态弹窗整体打桩兜底：任何错误分支都不允许在测试里阻塞主线程。
+    """
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
     monkeypatch.setattr(qt_state.LocllmState, "refresh_models", lambda self, port=None: None)
     monkeypatch.setattr(qt_state.LocllmState, "detect_hardware", lambda self, on_done=None: None)
+    monkeypatch.setattr(
+        qt_state.llmserve.llmengine,
+        "resolve_engine",
+        lambda tag=None, home=None: EngineInfo("test-engine", Path("/nonexistent/llama-server"), "test", ()),
+    )
+    shown: list[str] = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *_args, **_kw: shown.append("critical") or None)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kw: QMessageBox.StandardButton.No)
     create_application([])
     win = LocllmWindow(tmp_path / "ui" / "locllmw.json")
     win.monitor_page.stop()
@@ -100,11 +116,19 @@ def test_models_page_fills_hardware_column(window: Any) -> None:
     assert child.text(4) == "可用"
 
 
-def test_run_page_form_defaults(window: Any) -> None:
+def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     run = window.run_page
     assert run.profile_combo.currentText() == "balanced"
     assert run.host_edit.text() == "127.0.0.1"
     assert run.port_edit.text() == "8080"
+    # CI / 无引擎机器上没有真实模型目录，垫一个可启动的模型再预览
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    model_file = tmp_path / "demo-Q4_K_XL.gguf"
+    model_file.write_bytes(b"\0" * 64)
+    window.state.models = [ModelEntry(root=tmp_path, path=model_file, size=64, profiles=("balanced",), tags=("对话",))]
+    window.state.models_root = tmp_path
+    run.on_models_changed()
     run.preview_button.click()
     assert "启动计划" in run.plan_view.toPlainText()
     assert run.plan_view.toPlainText().startswith("启动计划:")
