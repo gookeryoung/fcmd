@@ -36,6 +36,7 @@ __all__ = [
     "filter_models",
     "local_row",
     "matches_filter",
+    "merge_installed_items",
     "model_item_lines",
     "model_row",
     "model_score",
@@ -194,6 +195,21 @@ def matches_filter(item: ModelSummary, filter_key: str) -> bool:
     keywords = _FILTER_KEYWORDS.get(filter_key, ())
     haystack = " ".join((item.repo, item.name, *item.tasks, *item.tags)).casefold()
     return any(keyword.casefold() in haystack for keyword in keywords)
+
+
+def merge_installed_items(
+    items: tuple[ModelSummary, ...],
+    installed: Mapping[str, ModelSummary],
+    filter_key: str,
+) -> tuple[ModelSummary, ...]:
+    """把不在当前页结果里的已安装模型补进来；分类筛选只补匹配该用途的。"""
+    present = {item.repo.casefold() for item in items}
+    extra = tuple(
+        summary
+        for repo, summary in installed.items()
+        if repo not in present and (filter_key in ("all", "local") or matches_filter(summary, filter_key))
+    )
+    return (*items, *extra)
 
 
 def sort_browse_items(

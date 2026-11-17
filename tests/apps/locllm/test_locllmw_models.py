@@ -28,6 +28,7 @@ from fcmd.apps.locllm._locllmw_models import (
     filter_models,
     local_row,
     matches_filter,
+    merge_installed_items,
     model_item_lines,
     model_row,
     model_score,
@@ -206,6 +207,22 @@ class TestBrowseHelpers:
         assert matches_filter(ModelSummary(repo="Qwen/vl", tags=("vision",)), "vision")
         assert not matches_filter(ModelSummary(repo="Qwen/chat", tasks=("文本生成",)), "video")
         assert matches_filter(ModelSummary(repo="Qwen/chat"), "all")
+
+    def test_merge_installed_items_adds_local_models_missing_from_page(self) -> None:
+        page = (ModelSummary(repo="Qwen/chat"),)
+        installed = {
+            "qwen/chat": ModelSummary(repo="Qwen/chat"),
+            "local/coder": ModelSummary(repo="local/coder", storage_size=1024),
+        }
+        assert [item.repo for item in merge_installed_items(page, installed, "all")] == [
+            "Qwen/chat",
+            "local/coder",
+        ]
+        assert [item.repo for item in merge_installed_items(page, installed, "code")] == [
+            "Qwen/chat",
+            "local/coder",
+        ]
+        assert [item.repo for item in merge_installed_items(page, installed, "video")] == ["Qwen/chat"]
 
     def test_sort_browse_items_pins_installed_category_matches_then_scores(self) -> None:
         installed_code = ModelSummary(repo="local/coder", tasks=("代码生成",), downloads=1)

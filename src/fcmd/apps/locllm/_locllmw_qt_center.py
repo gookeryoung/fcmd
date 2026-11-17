@@ -295,6 +295,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._active_repo: str | None = None
         self._bridge: _ProgressBridge | None = None
         self._download_target = _llmconfig.models_dir()
+        self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
 
         layout = QVBoxLayout(self)
@@ -384,9 +385,18 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         try:
             models = scan_local_models(_llmconfig.models_dir())
         except OSError:
+            self._installed_models = {}
             self._installed_repos = set()
         else:
-            self._installed_repos = {model.repo.casefold() for model in models}
+            self._installed_models = {
+                model.repo.casefold(): ModelSummary(
+                    repo=model.repo,
+                    name=model.repo.rsplit("/", 1)[-1],
+                    storage_size=model.size,
+                )
+                for model in models
+            }
+            self._installed_repos = set(self._installed_models)
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -440,6 +450,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
         if self._filter_key == "local":
             items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
+        items = _locllmw_models.merge_installed_items(items, self._installed_models, self._filter_key)
         items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),
