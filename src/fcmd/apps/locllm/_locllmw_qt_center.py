@@ -568,6 +568,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if result is None:
             return
         items = result.items
+        filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
         if self._filter_key == "local":
             items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
         items = _locllmw_models.merge_installed_items(items, self._installed_models, self._filter_key)
@@ -609,7 +610,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.models.sync_row_widths()
         self._sync_download_buttons()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
-        self.state.status(f"{result.page}/{pages}")
+        self.state.status(f"{filter_label} · {result.page}/{pages} · 共 {result.total:,} 条")
         self.prev_button.setEnabled(result.page > 1)
         self.next_button.setEnabled(result.page < pages)
         if selected is not None:
