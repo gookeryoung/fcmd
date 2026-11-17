@@ -35,6 +35,7 @@ from fcmd.apps.locllm.llmbase import (
     PROFILES,
     ModelEntry,
     ServeError,
+    ServeState,
     human_size,
 )
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
@@ -160,6 +161,65 @@ class _ScanOutcome:
     engine_missing: bool = False
     port_busy: bool = False
     models_root: Path | None = None
+
+
+def service_name_from_model(path: Path) -> str:
+    """按模型文件名生成服务名：去掉量化后缀，把非法字符转为 ``-``。
+
+    Tk 与 Qt 两个前端共用这一口径，切换前端后服务名保持一致。
+    """
+    stem = _QUANT_SUFFIX_RE.sub("", path.stem)
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")
+    return cleaned or DEFAULT_NAME
+
+
+def entries_with_running_models(
+    entries: list[ModelEntry],
+    states: list[ServeState] | None = None,
+) -> list[ModelEntry]:
+    """把运行中服务的模型并入清单，便于停止已加载模型时在列表中找到。
+
+    只并入进程仍存活、且不在模型目录清单里的模型；结果按大小降序，
+    与目录扫描的排序口径一致。
+    """
+    seen = {llmenv.path_key(entry.path) for entry in entries}
+    for state in states if states is not None else llmenv.list_states():
+        path = Path(state.model)
+        key = llmenv.path_key(path)
+        if key in seen or not llmserve.process_alive(state.pid, state.create_time):
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        seen.add(key)
+        entries.append(
+            ModelEntry(
+                root=path.parent,
+                path=path,
+                size=size,
+                profiles=tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower()),
+                tags=llmmodel.detect_model_tags(path.name),
+            )
+        )
+    entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
+    return entries
+
+
+def default_port_busy(states: list[ServeState], port: int | None, *, host: str = DEFAULT_HOST) -> bool:
+    """默认端口被其它进程占用时返回 ``True``。
+
+    本窗口登记且存活的同端口服务不算占用（否则刚启动的服务会被误判为端口冲突）。
+    """
+    if port is None:
+        return False
+    if any(state.port == port and llmserve.process_alive(state.pid, state.create_time) for state in states):
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=0.2):
+            return True
+    except OSError:
+        return False
 
 
 class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
@@ -1134,42 +1194,13 @@ class _LocllmWindowUI:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI
         )
 
     def _default_port_busy(self, states: list[Any], port: int | None) -> bool:
-        """默认端口被其它进程占用时返回 True；本窗口登记且存活的同端口服务不算占用。"""
-        if port is None:
-            return False
-        if any(state.port == port and llmserve.process_alive(state.pid, state.create_time) for state in states):
-            return False
-        try:
-            with socket.create_connection((DEFAULT_HOST, port), timeout=0.2):
-                return True
-        except OSError:
-            return False
+        """默认端口占用判断（口径见 :func:`default_port_busy`）。"""
+        return default_port_busy(states, port)
 
     @staticmethod
     def _with_running_models(entries: list[ModelEntry], states: list[Any] | None = None) -> list[ModelEntry]:
-        """把运行中服务的模型并入清单，便于停止已加载模型时在列表中找到。"""
-        seen = {llmenv.path_key(entry.path) for entry in entries}
-        for state in states if states is not None else llmenv.list_states():
-            path = Path(state.model)
-            key = llmenv.path_key(path)
-            if key in seen or not llmserve.process_alive(state.pid, state.create_time):
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            seen.add(key)
-            entries.append(
-                ModelEntry(
-                    root=path.parent,
-                    path=path,
-                    size=size,
-                    profiles=tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower()),
-                    tags=llmmodel.detect_model_tags(path.name),
-                )
-            )
-        entries.sort(key=lambda entry: (-entry.size, str(entry.path)))
-        return entries
+        """把运行中服务的模型并入清单（口径见 :func:`entries_with_running_models`）。"""
+        return entries_with_running_models(entries, states)
 
     def _poll_scan(self) -> None:
         try:

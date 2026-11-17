@@ -369,6 +369,7 @@ dev = [
     { name = "pymupdf" },
     { name = "pypdf" },
     { name = "pyrefly" },
+    { name = "pyside6-essentials" },
     { name = "pytesseract" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -429,6 +430,9 @@ pe = [
 ppt = [
     { name = "python-pptx" },
 ]
+qt = [
+    { name = "pyside6-essentials" },
+]
 svg = [
     { name = "resvg-py" },
 ]
@@ -457,7 +461,7 @@ requires-dist = [
     { name = "fcmd", extras = ["img"], marker = "extra == 'ocr'" },
     { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color", "pe", "ppt", "win32"], marker = "extra == 'full'" },
     { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "ppt"], marker = "extra == 'office'" },
-    { name = "fcmd", extras = ["lint", "test", "full"], marker = "extra == 'dev'" },
+    { name = "fcmd", extras = ["lint", "test", "full", "qt"], marker = "extra == 'dev'" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.0,<2" },
     { name = "pefile", marker = "extra == 'pe'", specifier = ">=2024.8.26" },
     { name = "pillow", specifier = ">=10" },
@@ -468,6 +472,7 @@ requires-dist = [
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.23,<2" },
     { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5.9.0" },
     { name = "pyrefly", marker = "extra == 'lint'", specifier = ">=1.1.1" },
+    { name = "pyside6-essentials", marker = "extra == 'qt'", specifier = ">=6.9" },
     { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.13" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.24.0" },
@@ -484,7 +489,7 @@ requires-dist = [
     { name = "tox", marker = "extra == 'dev'", specifier = ">=4.25.0" },
     { name = "tox-uv", marker = "extra == 'dev'", specifier = ">=1.13.1" },
 ]
-provides-extras = ["agent", "archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "pe", "ppt", "svg", "test", "win32"]
+provides-extras = ["agent", "archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "pe", "qt", "ppt", "svg", "test", "win32"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "fcmd", extras = ["lint", "test", "full"] }]
@@ -1125,6 +1130,21 @@ wheels = [
 ]
 
 [[package]]
+name = "pyside6-essentials"
+version = "6.12.0"
+source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }
+dependencies = [
+    { name = "shiboken6" },
+]
+wheels = [
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/e1/90/d528f8dd3f9f20712bc719e10c698d27c998e1dd76ed3f33b6fb606d0972/pyside6_essentials-6.12.0-cp310-abi3-macosx_14_0_universal2.whl", hash = "sha256:0867b709a724db28b161227c7d6ecb5ed10cc09226a53542417ac6dee1308239" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/7b/3c/7597d8dcb36aa8315427635ec6ec9d850ffbad4ce78b9118ac854889f2d3/pyside6_essentials-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:16f4b5e41daf49235ae048458243da9efe5f3d8040f9cc5aa454ce69893d3bd9" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/5e/4e/f4fd4c016719be832ec49d3c87940459e87fd666179a0a199a3998d07916/pyside6_essentials-6.12.0-cp310-abi3-manylinux_2_39_aarch64.whl", hash = "sha256:08c5841063fc1df69b7fa1ee405f539e66576a83fc48004be3e2c5e35ccbfa69" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/03/61/9a7e32a37b224f68506785bfb0f288d516098ec71681782d72b695a6c95d/pyside6_essentials-6.12.0-cp310-abi3-win_amd64.whl", hash = "sha256:c9a95102aa23c1f86516a30d5a9be37552d324eee7e567eb7508973f1218cb42" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/92/11/43afb3d0e7c25dd09f0eb7e44f1283dadb5fa8d8b517249fe3fde02e6702/pyside6_essentials-6.12.0-cp310-abi3-win_arm64.whl", hash = "sha256:c76aa689989bf9bb9b45535e0a81c6733294df720b0eed1308fa30d2606b98cc" },
+]
+
+[[package]]
 name = "pytesseract"
 version = "0.3.13"
 source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }
@@ -1498,6 +1518,18 @@ wheels = [
     { url = "https://mirrors.cloud.tencent.com/pypi/packages/2c/d4/c3b74e1b4808438ea7f14bb914478025e2d51261f60774a54a0fa222ec46/ruff-0.17.2-py3-none-win32.whl", hash = "sha256:6bce7d1f5165701ae18f5df85c65afe78cddfa6c5fb4b9bdb0014d60388f3edd" },
     { url = "https://mirrors.cloud.tencent.com/pypi/packages/1c/9a/c7da96c2c96d20704cf9027f7a5121da272a8c05f1d1531ba949e3b3df04/ruff-0.17.2-py3-none-win_amd64.whl", hash = "sha256:1b59d447f197bef9ef48a22ba1a6016137753c6099e9bac9c36eb566e422424c" },
     { url = "https://mirrors.cloud.tencent.com/pypi/packages/81/60/a3604c79cb02777b6cb84da894104021986f06c4bc41375102cc95049a32/ruff-0.17.2-py3-none-win_arm64.whl", hash = "sha256:195ad918027f817c119310ca89a42d347887dfc28934aaa869325e9c5dc9d962" },
+]
+
+[[package]]
+name = "shiboken6"
+version = "6.12.0"
+source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }
+wheels = [
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/b5/45/11536fba5f50a57671eb14441c6098096f3e57074e54c9d7d66039a5831e/shiboken6-6.12.0-cp310-abi3-macosx_14_0_universal2.whl", hash = "sha256:47105e05baf57d35453e07d240bbe59cb4b8d9565377ea5134ff9fb37d4f5c02" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/49/c2/a04fa003b4360e99d8e3fc2829abacf37396ace63ea1cd616402209ec7c6/shiboken6-6.12.0-cp310-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:3bde565bb0890044b5c7f63808adddede5abc241e9395a2bfed61919884d6240" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/97/ca/a4415e6218e0dff764fe2b2d30db2fc8f499a08ace07634232ade3f73adc/shiboken6-6.12.0-cp310-abi3-manylinux_2_39_aarch64.whl", hash = "sha256:ff72a72b3277b418902d562b987b33a6f6818bed9fe40a49d634d09bc67f620e" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/2a/b6/bee97e7a2edeab72aafabb46ee5adc939790a638d107860b4cad7a20e407/shiboken6-6.12.0-cp310-abi3-win_amd64.whl", hash = "sha256:a1906cb8116869178c64b6bab52623bbc8b4ceed7b30bfc3c9aa0f6e67f6438e" },
+    { url = "https://mirrors.cloud.tencent.com/pypi/packages/8c/d5/5894d35f8a470ca8acff0d1cd8f15b1c94cbfdfe0ce4a6ec0fcf10b95bd1/shiboken6-6.12.0-cp310-abi3-win_arm64.whl", hash = "sha256:da382e68f0815b31b6dc2bce11a465b148c4f42c37b91546a361de1576567d10" },
 ]
 
 [[package]]

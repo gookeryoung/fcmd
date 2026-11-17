@@ -144,7 +144,7 @@ archive = [ "pyzipper>=0.3.6" ]
 color = [ "coloraide>=2.9" ]
 crypto = [ "cryptography>=43" ]
 dev = [
-    "fcmd[lint,test,full]",
+    "fcmd[lint,test,full,qt]",
     "prek>=0.4.5",
     "tox-uv>=1.13.1",
     "tox>=4.25.0"
@@ -159,6 +159,8 @@ office    = [ "fcmd[img,pdf,ocr,svg,ppt]" ]
 # pymupdf 2.x 强依赖 onnxruntime / pymupdf-layout / pymupdf4llm；本项目只用基础 PDF 读写，锁 1.x
 pdf = [ "pymupdf>=1.23,<2", "pypdf>=5.9.0" ]
 pe = [ "pefile>=2024.8.26" ]
+# locllmw 的 Qt 前端：PySide2 无 Python 3.13+ wheel，改用 PySide6（见 docs/adr/0033）
+qt = [ "PySide6-Essentials>=6.9" ]
 ppt = [ "python-pptx>=1.0" ]
 svg = [ "resvg-py>=0.5" ]
 test = [
@@ -189,6 +191,7 @@ extras = [
     "office",
     "pdf",
     "pe",
+    "qt",
     "win32"
 ]
 

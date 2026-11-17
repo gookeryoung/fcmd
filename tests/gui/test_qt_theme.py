@@ -1,0 +1,75 @@
+"""``fcmd.gui.qt.theme`` 的纯逻辑测试：QSS 生成、字体挑选与模板变量。
+
+这些函数不导入 ``PySide6``，CI（无 Qt 环境）也能跑；控件类与真实渲染
+留给离屏冒烟测试（``test_qt_window_smoke.py``）。
+"""
+
+from __future__ import annotations
+
+from dataclasses import fields
+from pathlib import Path
+
+import pytest
+
+from fcmd.gui import theme as _guitheme
+from fcmd.gui.qt import theme as _qt_theme
+
+
+@pytest.mark.parametrize("name", list(_guitheme.THEMES))
+def test_stylesheet_substitutes_every_palette_token(name: str) -> None:
+    theme = _guitheme.resolve_theme(name)
+    text = _qt_theme.stylesheet(theme)
+    assert "$" not in text
+    # ``cursor`` 只用于 QPalette / 文本光标，QSS 没有对应属性
+    for item in fields(theme.palette):
+        if item.name == "cursor":
+            continue
+        assert getattr(theme.palette, item.name) in text
+
+
+def test_stylesheet_contains_expected_selectors() -> None:
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    for selector in ("QGroupBox#Card", "QPushButton#Primary", "QPushButton#Danger", "QToolButton#NavButton"):
+        assert selector in text
+    assert f"{theme.fonts.body}pt" in text
+
+
+def test_template_tokens_include_fonts_and_radius() -> None:
+    theme = _guitheme.resolve_theme("light")
+    tokens = _qt_theme.template_tokens(theme, font_family="Fake Font", mono_family="Fake Mono")
+    assert tokens["font_family"] == "Fake Font"
+    assert tokens["mono_family"] == "Fake Mono"
+    assert tokens["font_body"] == str(theme.fonts.body)
+    assert tokens["radius"] == "8"
+    assert tokens["background"] == theme.palette.background
+
+
+def test_template_tokens_fall_back_to_candidate_family() -> None:
+    theme = _guitheme.resolve_theme("dark-blue")
+    tokens = _qt_theme.template_tokens(theme)
+    assert tokens["font_family"] == _qt_theme.UI_FONT_CANDIDATES[0]
+    assert tokens["mono_family"] == _qt_theme.MONO_FONT_CANDIDATES[0]
+
+
+def test_pick_font_family_prefers_available_candidate_case_insensitively() -> None:
+    available = {"consolas", "Microsoft YaHei UI"}
+    assert _qt_theme.pick_font_family(available) == "Microsoft YaHei UI"
+    assert _qt_theme.pick_font_family({"segoe ui"}) == "segoe ui"
+
+
+def test_pick_font_family_falls_back_to_first_candidate() -> None:
+    assert _qt_theme.pick_font_family(set()) == _qt_theme.UI_FONT_CANDIDATES[0]
+    assert _qt_theme.pick_font_family(set(), ("Mono",)) == "Mono"
+
+
+def test_theme_names_matches_tk_registry() -> None:
+    assert _qt_theme.theme_names() == _guitheme.theme_names()
+
+
+def test_load_and_save_share_tk_settings_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    saved = _qt_theme.save_theme("light")
+    assert saved.name == "light"
+    assert _qt_theme.load_theme().name == "light"
+    assert (tmp_path / "ui" / "theme.json").is_file()

@@ -1,15 +1,22 @@
-"""locllmw - 本地 LLM 服务管理的 Tk 窗口版。
+"""locllmw - 本地 LLM 服务管理窗口（Qt 默认，Tk 回退）。
 
-基于 :mod:`fcmd.apps.locllm.llmserve` 的核心逻辑，用侧边栏分页组织为
-概览、模型、运行、对话、代理、画图、视频、音频、监测、设置十页：
-后四类多模态页与对话 / 代理页当前为规划中占位，其余页面提供启动参数配置、
+默认前端为 Qt（``PySide6``，可选依赖 ``fcmd[qt]``）：侧边栏分页组织为
+概览、模型、运行、对话、实验室、监测、设置七页，提供启动参数配置、
 模型扫描与显存适配、服务启停、``/metrics`` 监控、系统负载 / GPU 面板、
-性能测试与日志。启动与停止均在后台线程执行，界面不阻塞；系统负载在窗口
-打开后即持续采样，服务未启动时同样可见。
+性能测试、日志与智能推荐。
+
+开工与停止都在后台线程 / 线程池执行，界面不阻塞；系统负载在窗口打开后
+即持续采样，服务未启动时同样可见。窗口位置与大小记忆到
+``~/.fcmd/ui/locllmw.json``。
+
+迁移期仍保留 Tk 实现（``locllmw --ui tk``）：模型页的在线搜索 / 下载管理与
+转换 / 量化向导尚未迁移到 Qt，需要时用 Tk 回退或对应 CLI
+（``fcmd llmdown`` / ``fcmd llmconvert``）。
 
 示例
 ----
     fcmd locllmw
+    fcmd locllmw --ui tk
 """
 
 from __future__ import annotations
@@ -17,9 +24,8 @@ from __future__ import annotations
 import queue
 import re
 import threading
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast, override
+from typing import Any, Literal, cast, override
 
 import fcmd
 from fcmd.apps.locllm import _llmtune, llmbase, llmenv, llmmodel, llmserve
@@ -53,6 +59,18 @@ from fcmd.apps.locllm._locllmw_ui import (
     _LocllmWindowUI,
     _ScanOutcome,
 )
+from fcmd.apps.locllm._locllmw_winsettings import (  # noqa: F401  门面 re-export：设置模型供 Qt / Tk 共用
+    DEFAULT_HEIGHT,
+    DEFAULT_WIDTH,
+    MIN_HEIGHT,
+    MIN_WIDTH,
+    LocllmSettings,
+    config_path,
+    load_settings,
+    resolve_geometry,
+    save_settings,
+    valid_geometry,
+)
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_API_KEY,
     DEFAULT_HOST,
@@ -71,7 +89,6 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
     human_size,
 )
-from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 
@@ -84,7 +101,8 @@ __all__ = [
 ]
 
 _DESCRIPTION = (
-    "本地 LLM 服务窗口版（Tk，侧边栏分页：概览 / 模型 / 运行 / 对话 / 代理 / 画图 / 视频 / 音频 / 监测 / 设置）："
+    "本地 LLM 服务窗口版（Qt/PySide6，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 监测 / 设置；"
+    "``--ui tk`` 回退 Tk）："
     "列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）"
     "与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，"
     "配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，"
@@ -94,79 +112,6 @@ _DESCRIPTION = (
     "长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，"
     "后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/locllmw.json"
 )
-
-MIN_WIDTH = 1000
-MIN_HEIGHT = 800
-DEFAULT_WIDTH = 1080
-DEFAULT_HEIGHT = 880
-
-
-@dataclass
-class LocllmSettings:
-    """窗口持久化设置：geometry、对话设置展开状态、硬件快照与性能实测记录。"""
-
-    geometry: str | None = None
-    hardware: dict[str, Any] | None = None
-    measured: dict[str, dict[str, Any]] | None = None
-    download: dict[str, Any] | None = None
-    chat_settings_open: bool = False
-
-
-def config_path() -> Path:
-    """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``。"""
-    return _guiconfig.config_path("locllmw")
-
-
-valid_geometry = _guiconfig.valid_geometry
-
-
-def load_settings(path: Path | None = None) -> LocllmSettings:
-    """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
-    raw = _guiconfig.read_settings(path or config_path())
-    settings = LocllmSettings()
-    if raw is not None:
-        geometry = raw.get("geometry")
-        if isinstance(geometry, str) and valid_geometry(geometry):
-            settings.geometry = geometry
-        hardware = raw.get("hardware")
-        if isinstance(hardware, dict):
-            settings.hardware = hardware
-        measured = raw.get("measured")
-        if isinstance(measured, dict):
-            settings.measured = {str(key): dict(value) for key, value in measured.items() if isinstance(value, dict)}
-        download = raw.get("download")
-        if isinstance(download, dict):
-            settings.download = download
-        chat_settings_open = raw.get("chat_settings_open")
-        if isinstance(chat_settings_open, bool):
-            settings.chat_settings_open = chat_settings_open
-    return settings
-
-
-def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
-    """保存设置；父目录自动创建，写入失败静默忽略（不影响窗口关闭）。"""
-    _guiconfig.write_settings(
-        {
-            "geometry": settings.geometry,
-            "hardware": settings.hardware,
-            "measured": settings.measured,
-            "download": settings.download,
-            "chat_settings_open": settings.chat_settings_open,
-        },
-        path or config_path(),
-    )
-
-
-def resolve_geometry(saved: str | None, screen_width: int, screen_height: int) -> str:
-    """优先恢复记忆的位置，越界/异常时回落到窗口原默认尺寸（按屏幕夹紧）。"""
-    return _guiwindow.resolve_geometry(
-        saved,
-        screen_width,
-        screen_height,
-        default=f"{DEFAULT_WIDTH}x{DEFAULT_HEIGHT}",
-        min_width=MIN_WIDTH,
-        min_height=MIN_HEIGHT,
-    )
 
 
 class LocllmWindow(
@@ -1058,15 +1003,30 @@ class LocllmWindow(
         _guiwindow.append_log(self._log_text, message)
 
 
-def run_gui() -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(LocllmWindow, "本地 LLM")
+def run_gui(*, ui: str = "qt") -> None:
+    """按 ``ui`` 启动前端：``qt``（默认）或 ``tk``（迁移期回退）。"""
+    if ui == "tk":
+        _guiwindow.run_window(LocllmWindow, "本地 LLM")
+        return
+    try:
+        from fcmd.apps.locllm._locllmw_qt_window import run_qt
+    except ImportError as exc:  # 未安装可选依赖 fcmd[qt]
+        raise SystemExit("未安装 Qt 前端：pip install 'fcmd[qt]'；或改用 Tk 回退：fcmd locllmw --ui tk") from exc
+
+    run_qt()
 
 
-@fcmd.tool("locllmw", help="打开本地 LLM 服务窗口（Tk）", description=_DESCRIPTION)
-def launch_cmd() -> None:
-    """打开本地 LLM 服务窗口。"""
-    run_gui()
+@fcmd.tool("locllmw", help="打开本地 LLM 服务窗口（Qt）", description=_DESCRIPTION)
+def launch_cmd(ui: Literal["qt", "tk"] = "qt") -> None:
+    """打开本地 LLM 服务窗口。
+
+    Parameters
+    ----------
+    ui:
+        前端：``qt``（默认）或 ``tk``。Tk 版保留尚未迁移到 Qt 的模型下载浏览器
+        与转换 / 量化向导；两者共用同一份配置与窗口设置。
+    """
+    run_gui(ui=ui)
 
 
 @fcmd.main("locllmw")

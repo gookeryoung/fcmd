@@ -34,10 +34,11 @@ pip install fcmd          # 或 uv add fcmd
 | `ppt` | `pip install fcmd[ppt]` | `pptmake` 的 PPTX 生成与导入（python-pptx） |
 | `office` | `pip install fcmd[office]` | pdf + ocr + svg + ppt 全家桶 |
 | `win32` | `pip install fcmd[win32]` | `docdiff` / `docdiffw` 的 Word 自动化（pywin32，仅 Windows） |
+| `qt` | `pip install fcmd[qt]` | `locllmw` 的 Qt（PySide6-Essentials）前端；不装则只能用 `locllmw --ui tk` |
 | `full` | `pip install fcmd[full]` | office + win32 + crypto + archive + filecheck + color + pe |
 | `lint` | `pip install fcmd[lint]` | 开发用：ruff + pyrefly |
 | `test` | `pip install fcmd[test]` | 开发用：pytest + cov + xdist |
-| `dev` | `pip install fcmd[dev]` | lint + test + full + prek + tox |
+| `dev` | `pip install fcmd[dev]` | lint + test + full + qt + prek + tox |
 
 要求 Python ≥ 3.13。
 
@@ -106,7 +107,7 @@ fcmd completion --shell fish | source         # fish
 
 ### GUI 主题
 
-所有 Tk 窗口共用一套可切换主题，内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
+所有 Tk 窗口与 Qt 窗口（`locllmw`）共用同一份主题注册表，内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
 
 ```json
 { "theme": "light" }
@@ -288,7 +289,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `llmmodel` | - | 模型扫描独立命令（`list`/`find`/`vram`；列出 GGUF、按量化定位文件、估算显存占用） |
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 与 IQ1_S…IQ4_XS 共 25 种量化版本；默认 Q4_K_M/Q5_K_M，输出到模型目录下的 `converted` 子目录，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
 | `llmserve` | - | 服务生命周期独立命令（`plan`/`start`/`stop`/`status`/`logs`；打印启动计划与显存估算、拉起引擎等待 `/health`、停止进程树、查看状态与日志；OpenAI 模型别名默认取 GGUF 文件名，可用 `--alias` 覆盖；`--tune auto/default/throughput/long-context/low-vram` 按实测预设调整 batch、并发槽、HTTP 线程与 KV 类型） |
-| `locllmw` | - | `llmserve` 的 Tk 窗口版（侧边栏分页：概览 / 模型 / 运行 / 对话 / 代理 / 画图 / 视频 / 音频 / 监测 / 设置；代理 / 画图 / 视频 / 音频当前为规划中占位；概览页展示 CPU / GPU / 内存与模型所在盘（可修改，首次检测写入配置并支持重新检测），并用占用条实时显示显存与内存使用情况，按硬件推荐模型与启动配置，性能区分预测与实测、性能测试后优先用实测值；对话页整合原 llmchatw 的服务选择、自定义地址、流式回复、思考过程单独展示、图片附件与停止 / 清空；模型页按「浏览 / 下载 / 已安装 / 转换 / 量化」五个同级子页组织 ModelScope 搜索、下载、本地模型管理与模型转换，启动默认停在「浏览」；「转换」子页只做 HF safetensors → GGUF，扫描模型目录中的 HF safetensors 目录，配置精度 / 解释器 / 源码 / 引擎 tag，可预览计划并后台转换、实时显示日志与进度；「量化」子页完整承载 GGUF 量化，按 GGUF 元数据识别全量 / 量化精度与完整性，仅列出可量化的未量化模型，已存在输出只置灰不自动勾选，切换模型恢复默认勾选，可选量化类型与输出目录；两块默认输出统一落在模型目录的 `converted` 子目录，均复用 `llmconvert` / `llmqnt` 的 CLI 核心逻辑。启动时后台扫描 `llmenv` 已配置的模型目录并列出可选 GGUF，按 GGUF 元数据与张量类型识别全量 F16/BF16 或量化版本（如 `Q4_K_M`）并在模型名后的括号中备注，文件名标注与实际不符、全量文件疑似下载不完整时一并提示；按文件名内置能力标签（代码/推理/对话/视觉/数学/重排/嵌入，主流系列兜底为通用）并给出推荐档位与最佳实践提示；按整卡与当前可用显存双重评估标注模型适配情况：整卡放不下的标红加删除线为“硬件不足”，仅当前余量不足的标橙为“需释放显存”，运行中的模型标为“运行中”，选择后给出针对性建议（优先停止占用显存的服务 / 减小上下文 / KV 切 q8_0 / 更小量化），切换档位或显存释放后自动重算；显示引擎 tag/路径、版本与 GPU；表单配置档位/端口/上下文/KV/ubatch/并发槽/HTTP 线程等参数，并提供调优策略下拉（自动/默认/并发吞吐/长上下文/省显存，自动按整卡显存与上下文切换，切换后同步对应输入框并刷新硬件适配与说明）（服务名为可编辑下拉框，自动列出已登记服务并默认选中唯一运行中的服务；选择模型时服务名自动按模型文件名去掉量化后缀同步，选中服务名时自动定位其模型，运行中服务的模型始终并入模型列表并自动选中），可预览启动计划、后台启动与一键停止全部已登记服务（无需先选择服务名）、查看状态与日志、清空日志输出、一键在默认浏览器打开服务地址（优先使用运行中服务的实际地址，否则用表单配置的监听地址）；服务运行中每秒采样 `/metrics`，生成/提示 token/s 按 10s 滑动窗口平滑（参考 DeepSeek Harness 的累计平均口径），并展示处理中/排队请求与 KV 使用率；系统负载面板补充 CPU 频率、内存、交换、服务进程 CPU/内存/线程/运行时长，GPU 面板展示利用率、显存、服务显存、温度、功耗、风扇与核心频率；系统负载在窗口打开后即持续采样，服务未启动时同样可见；监测页的性能测试分区提供短对话 / 长输出 / 代码补全 / 长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，按“选”列勾选执行并默认全选，可调重复次数、请求超时与输出上限，后台批量实测延迟与 token 吞吐，结果按场景汇总请求数、输入/输出 tokens、墙钟、聚合吞吐与单请求吞吐，测试中可停止、关窗时后台线程干净退出） |
+| `locllmw` | `fcmd[qt]` | 本地 LLM 服务管理窗口（Qt/PySide6 默认，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 监测 / 设置；迁移期保留 Tk 回退 `locllmw --ui tk`，两者共用同一份配置与窗口设置）：概览页展示 CPU / GPU / 内存与模型所在盘（可修改，首次检测写入配置并支持重新检测），用占用条实时显示显存与内存使用，按硬件推荐模型与启动配置（性能分预测 / 实测，性能测试后优先用实测值），并列出运行中的服务（打开 Web UI / 查看日志 / 复制地址与 API Key / 停止）；模型页按一级子目录分组列出 GGUF，识别精度并在选中后给出标签、接入地址、调优与显存适配建议；运行页配置服务名 / 档位 / 监听地址 / 端口 / 线程与调优策略（自动 / 默认 / 并发吞吐 / 长上下文 / 省显存，切换后同步高级参数），高级参数含上下文 / KV / ubatch / 别名 / 并发槽 / HTTP 线程 / API Key / 等待就绪；整卡放不下的模型标红加删除线为「硬件不足」，仅当前余量不足的标橙为「需释放显存」，显存释放后自动重算；可预览启动计划（含显存估算与命令）、后台启动与停止（支持全部服务）、查看状态与日志、在浏览器打开服务地址；对话页支持服务回填、流式回复、思考过程单独展示、新对话与导出 Markdown；监测页每秒采样 `/metrics` 并按 10s 滑动窗口平滑 token/s，展示 CPU / 内存 / 交换 / 服务进程与 GPU 利用率、显存、温度、功耗、风扇、频率，性能测试支持短对话 / 长输出 / 代码补全 / 长上下文 8K / 32K / 并发 4 路，可调重复次数 / 超时 / 输出上限并导出 CSV；设置页统一模型目录与引擎根目录（单一来源）、显示已安装引擎并可切换默认引擎；实验室页集中说明代理 / 画图 / 视频 / 音频规划。窗口位置与大小记忆到 `~/.fcmd/ui/locllmw.json`；模型在线搜索下载与转换 / 量化向导仍在 Tk 版（`--ui tk`）或对应 CLI（`llmdown` / `llmconvert`） |
 
 ### 开发环境
 
@@ -503,8 +504,9 @@ src/fcmd/
     _entry.py    #   console script 通用入口（按 argv[0] 推断工具名）
     _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
     _manifest_data.py  # 生成文件，勿手改
-  gui/           # Tk 展示基座：窗口骨架 / 主题 / UI 设置持久化（不参与工具发现）
-  apps/          # 独立桌面应用（Tk GUI，自动发现；如 cmder、filesync、locllm）
+  gui/           # 展示基座（不参与工具发现）：Tk 窗口骨架 / 主题 / UI 设置持久化
+    qt/          #   Qt（PySide6）基座：主题 QSS / 侧边栏 / 窗口骨架 / 后台任务 / 控件
+  apps/          # 独立桌面应用（自动发现；如 cmder、filesync、locllm）
   tools/         # 业务实现（自动发现）
     archive/ calc/ crypto/ data/ dev/ media/ net/ office/ pdf/ system/ text/
   console.py     # rich 控制台薄封装

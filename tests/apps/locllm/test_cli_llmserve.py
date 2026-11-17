@@ -2452,32 +2452,34 @@ class TestServewEdgeCases:
 
 
 class TestServewGuiEntry:
+    def test_run_gui_defaults_to_qt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fcmd.apps.locllm import _locllmw_qt_window
+
+        calls: list[bool] = []
+        monkeypatch.setattr(_locllmw_qt_window, "run_qt", lambda: calls.append(True))
+        locllmw.run_gui()
+        assert calls == [True]
+
+    def test_run_gui_tk_delegates_to_tk_window(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[tuple[str, str]] = []
+        monkeypatch.setattr(locllmw._guiwindow, "run_window", lambda factory, title: calls.append((title, "")))
+        locllmw.run_gui(ui="tk")
+        assert calls == [("本地 LLM", "")]
+
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def fake_window() -> None:
+        def fake_window(_factory: object, _title: str) -> None:
             raise ImportError("no tkinter")
 
-        monkeypatch.setattr(locllmw, "LocllmWindow", fake_window)
-        locllmw.run_gui()  # 不应抛出
+        monkeypatch.setattr(locllmw._guiwindow, "run_window", fake_window)
+        with pytest.raises(ImportError):
+            locllmw.run_gui(ui="tk")
 
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_launch_cmd_calls_run_gui_with_ui(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(locllmw, "LocllmWindow", _Window)
-        locllmw.run_gui()
-        assert calls == ["mainloop"]
-
-    def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[bool] = []
-        monkeypatch.setattr(locllmw, "run_gui", lambda: calls.append(True))
+        monkeypatch.setattr(locllmw, "run_gui", lambda *, ui="qt": calls.append(ui))
         locllmw.launch_cmd()
-        assert calls == [True]
+        locllmw.launch_cmd("tk")
+        assert calls == ["qt", "tk"]
 
 
 class TestServewSettings:

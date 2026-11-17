@@ -1,0 +1,144 @@
+"""Qt 侧边栏分页导航：左侧导航栏 + 右侧页面栈。
+
+与 Tk 版 :class:`fcmd.gui.sidebar.SidebarNav` 同名的能力：标题、页按钮、
+当前页提示与快捷键循环切换。窗口只负责提供页面内容，导航栏只管「选中哪一页」：
+
+- ``add(key, label, hint)`` 登记页面（顺序即导航顺序）；
+- ``select(key)`` 切换页面并发出 :attr:`SidebarNav.changed`；
+- ``Alt+1..9`` 直达、``Alt+↓ / Alt+↑`` 循环，键位与 Tk 版一致。
+
+纯逻辑（key 解析、循环切换）复用 :mod:`fcmd.gui.sidebar` 的模块级函数，
+CI 无显示环境也能单测。
+"""
+
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QButtonGroup, QFrame, QLabel, QToolButton, QVBoxLayout, QWidget
+
+from fcmd.gui.sidebar import next_page, resolve_page_key
+
+__all__ = ["SidebarNav", "next_page", "resolve_page_key"]
+
+
+class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
+    """左侧导航栏：标题 + 页按钮 + 当前页提示。"""
+
+    changed = Signal(str)
+
+    def __init__(self, *, title: str = "", parent: QWidget | None = None, width: int = 168) -> None:
+        super().__init__(parent)
+        self.setObjectName("Sidebar")
+        self.setFixedWidth(width)
+        self._keys: list[str] = []
+        self._labels: dict[str, str] = {}
+        self._hints: dict[str, str] = {}
+        self._buttons: dict[str, QToolButton] = {}
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._current: str | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 12, 8, 12)
+        layout.setSpacing(4)
+        self.title_label = QLabel(title, self)
+        self.title_label.setObjectName("Title")
+        self.title_label.setContentsMargins(6, 0, 0, 8)
+        layout.addWidget(self.title_label)
+        self._button_layout = QVBoxLayout()
+        self._button_layout.setSpacing(2)
+        layout.addLayout(self._button_layout)
+        layout.addStretch(1)
+        self.hint_label = QLabel("", self)
+        self.hint_label.setObjectName("Hint")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setContentsMargins(6, 0, 6, 0)
+        layout.addWidget(self.hint_label)
+
+    # ------------------------------------------------------------------ #
+    # 页面登记与切换
+    # ------------------------------------------------------------------ #
+    def add(self, key: str, label: str, *, hint: str = "") -> None:
+        """登记一页；``key`` 必须唯一，重复登记抛 ``KeyError``。"""
+        if key in self._buttons:
+            raise KeyError(f"页面已存在: {key}")
+        button = QToolButton(self)
+        button.setObjectName("NavButton")
+        button.setText(label)
+        button.setCheckable(True)
+        button.setAutoExclusive(True)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        button.setToolTip(hint)
+        button.clicked.connect(lambda _checked=False, page_key=key: self.select(page_key))
+        self._button_layout.addWidget(button)
+        self._group.addButton(button)
+        self._buttons[key] = button
+        self._keys.append(key)
+        self._labels[key] = label
+        self._hints[key] = hint
+        if self._current is None:
+            self._current = key
+            button.setChecked(True)
+            self.hint_label.setText(hint)
+
+    def keys(self) -> tuple[str, ...]:
+        """按登记顺序返回页面 key。"""
+        return tuple(self._keys)
+
+    def selected(self) -> str:
+        """当前页面 key；尚未登记任何页面时返回空串。"""
+        return self._current or ""
+
+    def label(self, key: str) -> str:
+        """页面显示名。"""
+        return self._labels.get(key, key)
+
+    def hint(self, key: str) -> str:
+        """页面提示文案。"""
+        return self._hints.get(key, "")
+
+    def select(self, target: str | int) -> str:
+        """切到指定页：``target`` 可以是 key 或索引；非法值抛 ``KeyError``。"""
+        key = resolve_page_key(self._keys, target)
+        self._activate(key)
+        return key
+
+    def select_relative(self, step: int) -> str:
+        """按顺序循环切换到相邻页（``step`` 为负数时向前）。"""
+        key = next_page(self._keys, self._current, step)
+        if key:
+            self._activate(key)
+        return key
+
+    def _activate(self, key: str) -> None:
+        """同步按钮选中态与提示文字，并发出 ``changed``。"""
+        if key == self._current and self._buttons[key].isChecked():
+            return
+        self._current = key
+        self._buttons[key].setChecked(True)
+        self.hint_label.setText(self._hints.get(key, ""))
+        self.changed.emit(key)
+
+    def set_hint(self, key: str, hint: str) -> None:
+        """更新页面提示（例如健康横幅变化后同步说明）。"""
+        self._hints[key] = hint
+        button = self._buttons.get(key)
+        if button is not None:
+            button.setToolTip(hint)
+        if key == self._current:
+            self.hint_label.setText(hint)
+
+    def enable_shortcuts(self, window: QWidget) -> None:
+        """注册 ``Alt+1..9`` 直达与 ``Alt+↑/↓`` 循环切换。"""
+        from PySide6.QtGui import QAction, QKeySequence
+
+        for index, key in enumerate(self._keys[:9], start=1):
+            action = QAction(window)
+            action.setShortcut(QKeySequence(f"Alt+{index}"))
+            action.triggered.connect(lambda _checked=False, page_key=key: self.select(page_key))
+            window.addAction(action)
+        for sequence, step in (("Alt+Down", 1), ("Alt+Up", -1)):
+            action = QAction(window)
+            action.setShortcut(QKeySequence(sequence))
+            action.triggered.connect(lambda _checked=False, delta=step: self.select_relative(delta))
+            window.addAction(action)

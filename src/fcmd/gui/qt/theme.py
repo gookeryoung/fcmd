@@ -1,0 +1,333 @@
+"""Qt 主题：把 :mod:`fcmd.gui.theme` 的调色板翻译成 QSS 与 QPalette。
+
+与 Tk 基座共用同一份 :class:`fcmd.gui.theme.Theme`（四套内置主题、别名与
+``${FCMD_HOME:-~/.fcmd}/ui/theme.json`` 持久化），因此 Tk 窗口与 Qt 窗口的
+配色、字号阶梯与切换方式保持一致：Qt 侧只负责把语义色板映射到控件样式。
+
+设计约定：
+
+- :func:`stylesheet` / :func:`pick_font_family` / :func:`template_tokens` 是纯函数，
+  不导入 Qt，CI（无 ``PySide6``）可单测；
+- 只在 :func:`apply_theme` 内延迟导入 Qt，``import fcmd.gui.qt.theme`` 不会
+  在 CLI 快路径上加载图形库；
+- 样式表覆盖本项目实际用到的控件：卡片、按钮（主 / 危险）、输入、下拉、
+  表格 / 树、标签页、进度条、滚动条、侧边栏按钮、日志区与提示文字。
+"""
+
+from __future__ import annotations
+
+from dataclasses import asdict
+from string import Template
+from typing import TYPE_CHECKING, Any
+
+from fcmd.gui import theme as _guitheme
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from fcmd.gui.theme import Theme
+
+__all__ = [
+    "MONO_FONT_CANDIDATES",
+    "UI_FONT_CANDIDATES",
+    "apply_theme",
+    "load_theme",
+    "pick_font_family",
+    "save_theme",
+    "stylesheet",
+    "template_tokens",
+    "theme_names",
+]
+
+UI_FONT_CANDIDATES = _guitheme.UI_FONT_CANDIDATES
+MONO_FONT_CANDIDATES = _guitheme.MONO_FONT_CANDIDATES
+theme_names = _guitheme.theme_names
+load_theme = _guitheme.load_theme
+save_theme = _guitheme.save_theme
+
+_RADIUS = 8
+"""卡片 / 输入框圆角（Qt 逻辑像素，高 DPI 由 Qt 自动缩放）。"""
+
+_QSS = Template(
+    """
+QWidget { color: $text; font-size: ${font_body}pt; }
+QMainWindow, QDialog, QScrollArea, QStackedWidget { background: $background; }
+QWidget#PageBody { background: $background; }
+QLabel { background: transparent; }
+QMenuBar { background: $surface; color: $text; border-bottom: 1px solid $border; }
+QMenuBar::item { padding: 4px 10px; background: transparent; }
+QMenuBar::item:selected { background: $surface_active; border-radius: 4px; }
+QMenu { background: $surface; color: $text; border: 1px solid $border; padding: 4px; }
+QMenu::item { padding: 5px 22px 5px 18px; border-radius: 4px; }
+QMenu::item:selected { background: $surface_active; }
+QMenu::separator { height: 1px; background: $border; margin: 4px 6px; }
+QStatusBar { background: $surface; color: $muted; border-top: 1px solid $border; }
+QStatusBar QLabel { color: $muted; }
+
+QGroupBox#Card {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: ${radius}px;
+    margin-top: 12px;
+    padding: 12px 12px 10px 12px;
+    font-weight: 600;
+}
+QGroupBox#Card::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 4px;
+    color: $muted;
+    background: $surface;
+}
+
+QLabel#Title { font-size: ${font_title}pt; font-weight: 600; }
+QLabel#SectionTitle { font-size: ${font_heading}pt; font-weight: 600; }
+QLabel#Hint { color: $muted; font-size: ${font_small}pt; }
+QLabel#Value { font-weight: 600; }
+QLabel#Danger { color: $danger; }
+QLabel#Warning { color: $warning; }
+QLabel#Success { color: $success; }
+QLabel#Mono { font-family: "$mono_family"; font-size: ${font_small}pt; }
+
+QPushButton {
+    background: $surface_hover;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 5px 14px;
+}
+QPushButton:hover { background: $surface_active; border-color: $border_strong; }
+QPushButton:pressed { background: $border; }
+QPushButton:disabled { color: $muted; background: $surface; border-color: $border; }
+QPushButton#Primary {
+    background: $accent;
+    color: $on_accent;
+    border-color: $accent;
+    font-weight: 600;
+}
+QPushButton#Primary:hover { background: $accent_hover; border-color: $accent_hover; }
+QPushButton#Primary:pressed { background: $accent_pressed; }
+QPushButton#Primary:disabled { background: $surface_hover; color: $muted; border-color: $border; }
+QPushButton#Danger { color: $danger; border-color: $danger; background: transparent; }
+QPushButton#Danger:hover { background: $danger; color: $on_accent; }
+QPushButton#Danger:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#Ghost { background: transparent; border-color: transparent; color: $muted; padding: 3px 8px; }
+QPushButton#Ghost:hover { background: $surface_hover; color: $text; }
+
+QToolButton { border: 1px solid $border; border-radius: 6px; background: $surface_hover; padding: 4px 8px; }
+QToolButton:hover { background: $surface_active; }
+QToolButton#Collapsible {
+    border: none;
+    background: transparent;
+    color: $muted;
+    font-weight: 600;
+    text-align: left;
+    padding: 4px 0;
+}
+QToolButton#Collapsible:hover { color: $text; }
+QToolButton#NavButton {
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: $muted;
+    text-align: left;
+    padding: 8px 12px;
+    font-size: ${font_body}pt;
+}
+QToolButton#NavButton:hover { background: $surface_hover; color: $text; }
+QToolButton#NavButton:checked {
+    background: $surface_active;
+    color: $accent;
+    border-left: 3px solid $accent;
+    font-weight: 600;
+}
+
+QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: $surface;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 4px 8px;
+    selection-background-color: $select_bg;
+    selection-color: $select_fg;
+}
+QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus,
+QSpinBox:focus, QDoubleSpinBox:focus { border-color: $accent; }
+QLineEdit:disabled, QComboBox:disabled { color: $muted; background: $surface_hover; }
+QLineEdit[readOnly="true"] { color: $muted; background: $surface_hover; }
+QComboBox::drop-down { border: none; width: 20px; }
+QComboBox QAbstractItemView {
+    background: $surface;
+    color: $text;
+    border: 1px solid $border;
+    selection-background-color: $select_bg;
+    selection-color: $select_fg;
+    outline: none;
+}
+QPlainTextEdit#Log, QTextEdit#Log {
+    background: $log_bg;
+    color: $log_fg;
+    font-family: "$mono_family";
+    font-size: ${font_small}pt;
+    border: 1px solid $border;
+    border-radius: 6px;
+}
+
+QTableView, QTreeView, QListView, QTreeWidget, QTableWidget {
+    background: $surface;
+    alternate-background-color: $stripe;
+    color: $text;
+    gridline-color: $border;
+    border: 1px solid $border;
+    border-radius: 6px;
+    selection-background-color: $select_bg;
+    selection-color: $select_fg;
+    outline: none;
+}
+QTableView::item, QTreeView::item, QTreeWidget::item, QTableWidget::item { padding: 3px 4px; }
+QTableView::item:selected, QTreeView::item:selected, QTreeWidget::item:selected,
+QTableWidget::item:selected { background: $select_bg; color: $select_fg; }
+QHeaderView::section {
+    background: $surface_hover;
+    color: $muted;
+    padding: 5px 6px;
+    border: none;
+    border-right: 1px solid $border;
+    border-bottom: 1px solid $border;
+}
+QTableCornerButton::section { background: $surface_hover; border: none; }
+
+QTabWidget::pane { border: 1px solid $border; border-radius: 6px; background: $surface; }
+QTabBar::tab {
+    background: $surface;
+    color: $muted;
+    border: 1px solid $border;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    padding: 6px 16px;
+    margin-right: 2px;
+}
+QTabBar::tab:selected { background: $surface_active; color: $text; font-weight: 600; }
+QTabBar::tab:hover { color: $text; }
+
+QProgressBar {
+    background: $surface_hover;
+    border: 1px solid $border;
+    border-radius: 5px;
+    color: $text;
+    text-align: center;
+    height: 10px;
+}
+QProgressBar::chunk { background: $accent; border-radius: 4px; }
+
+QScrollBar:vertical { background: transparent; width: 10px; margin: 0; }
+QScrollBar::handle:vertical { background: $border_strong; border-radius: 5px; min-height: 28px; }
+QScrollBar::handle:vertical:hover { background: $accent; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 0; }
+QScrollBar::handle:horizontal { background: $border_strong; border-radius: 5px; min-width: 28px; }
+QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+QScrollBar::add-page, QScrollBar::sub-page { background: transparent; }
+
+QCheckBox, QRadioButton { color: $text; spacing: 6px; }
+QCheckBox::indicator, QRadioButton::indicator { width: 14px; height: 14px; }
+QCheckBox::indicator:unchecked { border: 1px solid $border_strong; border-radius: 3px; background: $surface; }
+QCheckBox::indicator:checked { border: 1px solid $accent; border-radius: 3px; background: $accent; }
+QToolTip { background: $surface_active; color: $text; border: 1px solid $border; padding: 4px 6px; }
+QSplitter::handle { background: $border; }
+QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
+"""
+)
+
+
+def pick_font_family(
+    available: Iterable[str],
+    candidates: tuple[str, ...] = UI_FONT_CANDIDATES,
+) -> str:
+    """从候选列表里挑第一个系统可用字体族，均不可用时返回首个候选。
+
+    与 :func:`fcmd.gui.theme.pick_font_family` 口径一致（大小写不敏感匹配，
+    保留系统报告的真实写法），但接受的是 Qt ``QFontDatabase.families()``。
+    """
+    return _guitheme.pick_font_family(available, candidates)
+
+
+def template_tokens(theme: Theme, *, font_family: str = "", mono_family: str = "") -> dict[str, str]:
+    """把主题展开成 QSS 模板变量：调色板 token + 字号 + 圆角 + 字体族。
+
+    调色板字段全部内联为 ``$<token>`` 变量，新增 token 时会自动进入模板
+    （模板里未引用也不报错），避免样式表与 :class:`Palette` 两处维护色值。
+    """
+    palette = asdict(theme.palette)
+    tokens = {name: str(value) for name, value in palette.items()}
+    tokens.update(
+        {
+            "font_small": str(theme.fonts.small),
+            "font_body": str(theme.fonts.body),
+            "font_heading": str(theme.fonts.heading),
+            "font_title": str(theme.fonts.title),
+            "radius": str(_RADIUS),
+            "font_family": font_family or pick_font_family((), UI_FONT_CANDIDATES),
+            "mono_family": mono_family or pick_font_family((), MONO_FONT_CANDIDATES),
+        }
+    )
+    return tokens
+
+
+def stylesheet(theme: Theme, *, font_family: str = "", mono_family: str = "") -> str:
+    """生成整套 QSS 文本（纯函数，不依赖 Qt，便于单测与快照）。"""
+    return _QSS.substitute(template_tokens(theme, font_family=font_family, mono_family=mono_family))
+
+
+def _qt_palette(theme: Theme, app: Any) -> Any:  # pragma: no cover - 需要 PySide6
+    """把语义调色板翻译成 ``QPalette``。"""
+    from PySide6.QtGui import QColor, QPalette
+
+    colors = theme.palette
+    palette = QPalette()
+    roles = {
+        QPalette.ColorRole.Window: colors.background,
+        QPalette.ColorRole.WindowText: colors.text,
+        QPalette.ColorRole.Base: colors.surface,
+        QPalette.ColorRole.AlternateBase: colors.stripe,
+        QPalette.ColorRole.Text: colors.text,
+        QPalette.ColorRole.Button: colors.surface_hover,
+        QPalette.ColorRole.ButtonText: colors.text,
+        QPalette.ColorRole.Highlight: colors.select_bg,
+        QPalette.ColorRole.HighlightedText: colors.select_fg,
+        QPalette.ColorRole.ToolTipBase: colors.surface_active,
+        QPalette.ColorRole.ToolTipText: colors.text,
+        QPalette.ColorRole.PlaceholderText: colors.muted,
+        QPalette.ColorRole.Link: colors.accent,
+        QPalette.ColorRole.BrightText: colors.danger,
+        QPalette.ColorRole.Light: colors.surface_hover,
+        QPalette.ColorRole.Mid: colors.border,
+        QPalette.ColorRole.Dark: colors.border_strong,
+        QPalette.ColorRole.Midlight: colors.surface_active,
+    }
+    for role, color in roles.items():
+        palette.setColor(role, QColor(color))
+    for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor(colors.muted))
+    del app
+    return palette
+
+
+def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 PySide6
+    """把主题应用到 ``QApplication``：Fusion 样式 + QPalette + 字体 + QSS。
+
+    幂等：重复调用只覆盖样式与调色板，不重建控件；主题切换即时生效。
+    """
+    from PySide6.QtGui import QFont, QFontDatabase
+
+    families = QFontDatabase.families()
+    family = pick_font_family(families)
+    mono = pick_font_family(families, MONO_FONT_CANDIDATES)
+    app.setStyle("Fusion")
+    app.setPalette(_qt_palette(theme, app))
+    font = QFont(family)
+    font.setPointSize(theme.fonts.body)
+    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+    app.setFont(font)
+    app.setStyleSheet(stylesheet(theme, font_family=family, mono_family=mono))

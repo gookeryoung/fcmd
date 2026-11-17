@@ -35,3 +35,4 @@
 | [0030](0030-locllmw-models-page.md) | locllmw 模型页：整合 llmdownw 的浏览 / 已安装 / 下载，移除独立窗口工具 | 已落地 |
 | [0031](0031-localllm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`；设置页两分页（存储 / 引擎）+ 关于与诊断，引擎页承接原引擎管理窗口 | 已落地 |
 | [0032](0032-locllmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
+| [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt（PySide6）：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）与七页重构；PySide2 不可行的依据与分期 | 生效（P0/P1 已落地，P2 待迁移） |
