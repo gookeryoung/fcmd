@@ -28,7 +28,7 @@ from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import ServeState, human_size
 from fcmd.apps.locllm.llmserve import read_log
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item
+from fcmd.gui.qt.widgets import Card, PageScroll, button, hint_label, make_table, make_table_item
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -71,9 +71,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         self._recommendations: tuple[Recommendation, ...] = ()
         self._loaded_states: list[ServeState] = []
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = PageScroll(self)
+        layout = scroll.body
+        outer.addWidget(scroll)
         layout.addWidget(self._build_hardware())
         layout.addWidget(self._build_recommendations())
         layout.addWidget(self._build_loaded(), 1)

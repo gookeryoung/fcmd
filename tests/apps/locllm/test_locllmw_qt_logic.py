@@ -6,10 +6,13 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
@@ -275,3 +278,32 @@ def test_sample_once_reports_fetch_error(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_hardware_snapshot_import_is_usable() -> None:
     """概览页只读快照；这里确认快照类型仍可独立构造（防止上游改名）。"""
     assert HardwareSnapshot().gpu_mib is None
+
+
+def test_model_tree_expand_and_collapse() -> None:
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.apps.locllm._locllmw_qt_models import ModelTree
+
+    QApplication.instance() or QApplication([])
+    root = Path("/models")
+    state = SimpleNamespace(
+        models=[_model(root, "org/a.gguf"), _model(root, "org/b.gguf")],
+        models_root=root,
+        selected_model=None,
+        running_paths=set(),
+        precisions={},
+    )
+    tree = ModelTree(cast("Any", state))
+    tree.refresh()
+    assert tree.tree.topLevelItemCount() == 1
+    tree.expand_all()
+    group = tree.tree.topLevelItem(0)
+    assert group is not None
+    assert group.isExpanded()
+    tree.collapse_all()
+    group = tree.tree.topLevelItem(0)
+    assert group is not None
+    assert not group.isExpanded()

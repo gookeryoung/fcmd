@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
@@ -48,6 +49,7 @@ __all__ = [
     "KeyValueGrid",
     "LogView",
     "MetricGrid",
+    "PageScroll",
     "PathRow",
     "button",
     "hint_label",
@@ -137,6 +139,28 @@ class Card(QFrame):  # pragma: no cover - Qt 控件
         self.title_label.setVisible(bool(title))
 
 
+class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
+    """纵向滚动页面：内容高于窗口时滚动，而不是把控件压扁 / 裁掉。
+
+    约定：页面把卡片加进 :attr:`body`，不要给页面自身再加 ``QVBoxLayout``；
+    ``widgetResizable=True`` 让内容在窗口变高时跟着拉伸（卡片内的 stretch 生效），
+    内容最小高度超过视口时自动出现纵向滚动条。横向不滚动，避免卡片被推来推去。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        container = QWidget(self)
+        container.setObjectName("PageBody")
+        self.body = QVBoxLayout(container)
+        self.body.setContentsMargins(0, 0, 4, 8)
+        self.body.setSpacing(8)
+        self.setWidget(container)
+
+
 class HintLabel(QLabel):  # pragma: no cover - Qt 控件
     """次要说明文字，``text`` 可随时替换（替代 Tk 的 ``StringVar`` 提示行）。"""
 
@@ -201,13 +225,14 @@ class MetricGrid(QWidget):  # pragma: no cover - Qt 控件
         for index, (label, key) in enumerate(keys):
             row, column = divmod(index, columns)
             cell = QWidget(self)
+            cell.setMinimumWidth(150)
             cell_layout = QHBoxLayout(cell)
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.setSpacing(4)
-            cell_layout.addWidget(hint_label(f"{label}:", wrap=False))
+            cell_layout.addWidget(hint_label(f"{label}:", wrap=False), 0, Qt.AlignmentFlag.AlignTop)
             value = value_label("-")
-            cell_layout.addWidget(value)
-            cell_layout.addStretch(1)
+            value.setWordWrap(True)
+            cell_layout.addWidget(value, 1, Qt.AlignmentFlag.AlignTop)
             grid.addWidget(cell, row, column)
             self._values[key] = value
         for column in range(columns):

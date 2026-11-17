@@ -23,7 +23,7 @@ from fcmd.apps.locllm._locllmw_monitor import _FIT_BUSY, _FIT_RUNNING, _FIT_UNSU
 from fcmd.apps.locllm._locllmw_ui import _HINT_PLACEHOLDER, _default_open_groups, _group_models
 from fcmd.apps.locllm.llmbase import ModelEntry, human_size
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.widgets import Card, HintLabel, button
+from fcmd.gui.qt.widgets import Card, HintLabel, PageScroll, button
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -188,6 +188,14 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
         self.tree.verticalScrollBar().setValue(scroll)
         self._select_path(selected, emit=False)
 
+    def expand_all(self) -> None:
+        """展开所有分组（模型较多时配合纵向滚动查看）。"""
+        self.tree.expandAll()
+
+    def collapse_all(self) -> None:
+        """收起所有分组，只保留分组标题与数量。"""
+        self.tree.collapseAll()
+
     def _hardware_text(self, entry: ModelEntry) -> str:
         """调用注入的状态回调；未注入时只标注运行中 / 未知。"""
         if self._fit_resolver is not None:
@@ -252,28 +260,37 @@ class ModelsPage(QWidget):  # pragma: no cover - Qt 控件
 
         toolbar = QHBoxLayout()
         self.refresh_button = button("刷新模型列表")
+        self.expand_button = button("展开全部", kind="ghost")
+        self.collapse_button = button("收起全部", kind="ghost")
         self.browse_button = button("浏览…")
         self.clear_button = button("清除选择")
         self.open_dir_button = button("打开模型目录", kind="ghost")
         toolbar.addWidget(self.refresh_button)
+        toolbar.addWidget(self.expand_button)
+        toolbar.addWidget(self.collapse_button)
         toolbar.addWidget(self.browse_button)
         toolbar.addWidget(self.clear_button)
         toolbar.addStretch(1)
         toolbar.addWidget(self.open_dir_button)
         layout.addLayout(toolbar)
 
+        scroll = PageScroll(self)
+        layout.addWidget(scroll, 1)
         self.card = Card("运行模型（模型目录中的 GGUF）")
         self.tree = ModelTree(state, self.card)
+        self.tree.tree.setMinimumHeight(320)
         self.card.body.addWidget(self.tree)
-        layout.addWidget(self.card, 1)
+        scroll.body.addWidget(self.card, 1)
 
         self.hint = HintLabel(
             "下载与转换请用 `fcmd llmdown` / `fcmd llmconvert`；"
             "需要内嵌下载浏览器与转换向导时用 `fcmd locllmw --ui tk`。"
         )
-        layout.addWidget(self.hint)
+        scroll.body.addWidget(self.hint)
 
         self.refresh_button.clicked.connect(self._refresh)
+        self.expand_button.clicked.connect(self.tree.expand_all)
+        self.collapse_button.clicked.connect(self.tree.collapse_all)
         self.browse_button.clicked.connect(self._browse)
         self.clear_button.clicked.connect(self._clear)
         self.open_dir_button.clicked.connect(self._open_dir)

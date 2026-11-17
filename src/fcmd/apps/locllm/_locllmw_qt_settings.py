@@ -16,7 +16,17 @@ from fcmd.apps.locllm import _llmconfig, llmenv
 from fcmd.apps.locllm import _locllmw_settings as settings_logic
 from fcmd.apps.locllm._locllmw_models import open_path
 from fcmd.apps.locllm.llmbase import EngineInfo, ServeError
-from fcmd.gui.qt.widgets import Card, HintLabel, KeyValueGrid, PathRow, button, hint_label, make_table, make_table_item
+from fcmd.gui.qt.widgets import (
+    Card,
+    HintLabel,
+    KeyValueGrid,
+    PageScroll,
+    PathRow,
+    button,
+    hint_label,
+    make_table,
+    make_table_item,
+)
 
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
@@ -38,9 +48,12 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         super().__init__(parent)
         self.state = state
         self._engines: list[EngineInfo] = []
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = PageScroll(self)
+        layout = scroll.body
+        outer.addWidget(scroll)
         layout.addWidget(self._build_storage())
         layout.addWidget(self._build_engines())
         layout.addWidget(self._build_about(), 1)

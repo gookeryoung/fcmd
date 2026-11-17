@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import QGridLayout, QVBoxLayout, QWidget
 
-from fcmd.gui.qt.widgets import Card, HintLabel, hint_label, mono_label
+from fcmd.gui.qt.widgets import Card, HintLabel, PageScroll, hint_label, mono_label
 
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
@@ -32,9 +32,12 @@ class LabPage(QWidget):  # pragma: no cover - Qt 控件
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = PageScroll(self)
+        layout = scroll.body
+        outer.addWidget(scroll)
         layout.addWidget(hint_label("以下能力尚未落地，先集中说明定位；列出的 CLI 命令当前可用。"))
         grid = QGridLayout()
         grid.setSpacing(8)

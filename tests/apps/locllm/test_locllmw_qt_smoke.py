@@ -130,3 +130,39 @@ def test_sidebar_collapsed_state_restored(monkeypatch: pytest.MonkeyPatch, tmp_p
         assert win.sidebar_action.isChecked()
     finally:
         win.close()
+
+
+def test_pages_use_scroll_container(window: Any) -> None:
+    """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件。"""
+    from fcmd.gui.qt.widgets import PageScroll
+
+    for key in ("overview", "run", "models", "monitor", "settings", "lab"):
+        window.show_page(key)
+        page = window.page(key)
+        assert page.findChild(PageScroll) is not None, key
+
+
+def test_run_page_keeps_model_list_height(window: Any) -> None:
+    """窗口缩到最小、展开高级参数与模型分组后，模型列表不被压扁，底栏仍可见。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show()
+    window.show_page("run")
+    window.resize(1040, 780)
+    window.run_page.advanced.set_expanded(True)
+    window.run_page.tree.expand_all()
+    QApplication.processEvents()
+    assert window.run_page.tree.tree.height() >= 240
+    assert window.run_page.scroll.verticalScrollBar().maximum() > 0
+    button = window.run_page.start_button
+    assert not button.isHidden()
+    assert button.mapTo(window, button.rect().bottomLeft()).y() <= window.height()
+
+
+def test_chat_input_buttons_share_one_row(window: Any) -> None:
+    """对话页输入区按钮横排，避免四个按钮纵向堆叠溢出窗口。"""
+    window.show_page("chat")
+    chat = window.page("chat")
+    buttons = [chat.send_button, chat.stop_button, chat.reset_button, chat.export_button]
+    tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in buttons}
+    assert len(tops) == 1

@@ -59,6 +59,7 @@ from fcmd.gui.qt.widgets import (
     Collapsible,
     LogView,
     MetricGrid,
+    PageScroll,
     button,
     hint_label,
     make_table,
@@ -191,9 +192,12 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = PageScroll(self)
+        layout = scroll.body
+        outer.addWidget(scroll)
 
         metrics_card = Card(f"实时性能（服务运行中每 1s 采样 /metrics，速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑）")
         self._metrics = MetricGrid(METRIC_KEYS, columns=4, parent=metrics_card)
@@ -219,7 +223,7 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(self._bench)
 
         log_card = Card("服务日志")
-        self.log_view = LogView(height=180, parent=log_card)
+        self.log_view = LogView(height=240, parent=log_card)
         log_card.body.addWidget(self.log_view)
         layout.addWidget(log_card, 1)
 

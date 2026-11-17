@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -50,7 +51,7 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
     human_size,
 )
-from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, button
+from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, PageScroll, button
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -225,9 +226,13 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        self.scroll = PageScroll(self)
+        layout = self.scroll.body
+        outer.addWidget(self.scroll, 1)
 
         health_row = QHBoxLayout()
         self.health_label = HintLabel("正在检测运行环境…")
@@ -280,16 +285,19 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
         self.tree = ModelTree(self.state, self.models_card)
         self.tree.set_fit_resolver(self._fit_text)
+        self.tree.tree.setMinimumHeight(240)
         self.models_card.body.addWidget(self.tree)
         pick_row = QHBoxLayout()
         self.model_label = QLabel("未选择（按档位自动在模型目录中查找）", self.models_card)
         self.model_label.setObjectName("Hint")
         self.model_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         pick_row.addWidget(self.model_label, 1)
+        self.expand_button = button("展开全部", kind="ghost")
+        self.collapse_button = button("收起全部", kind="ghost")
         self.browse_button = button("浏览…")
         self.clear_button = button("清除选择")
-        pick_row.addWidget(self.browse_button)
-        pick_row.addWidget(self.clear_button)
+        for widget in (self.expand_button, self.collapse_button, self.browse_button, self.clear_button):
+            pick_row.addWidget(widget)
         self.models_card.body.addLayout(pick_row)
         layout.addWidget(self.models_card, 1)
 
@@ -307,7 +315,18 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.plan_card.body.addLayout(copy_row)
         layout.addWidget(self.plan_card)
 
-        actions = QHBoxLayout()
+        outer.addWidget(self._build_action_bar())
+
+    def _build_action_bar(self) -> QFrame:
+        """固定底部动作栏：服务动作一行、查看类动作一行，滚动内容时始终可见。"""
+        bar = QFrame(self)
+        bar.setObjectName("ActionBar")
+        column = QVBoxLayout(bar)
+        column.setContentsMargins(0, 8, 0, 0)
+        column.setSpacing(6)
+
+        service_row = QHBoxLayout()
+        service_row.setSpacing(6)
         self.preview_button = button("预览计划")
         self.start_button = button("启动服务", kind="primary")
         self.stop_selected_button = button("停止选中服务")
@@ -320,22 +339,24 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.stop_all_button,
             self.status_button,
         ):
-            actions.addWidget(widget)
-        actions.addStretch(1)
-        self.progress = QProgressBar(self)
+            service_row.addWidget(widget)
+        service_row.addStretch(1)
+        self.progress = QProgressBar(bar)
         self.progress.setRange(0, 0)
         self.progress.setFixedWidth(160)
         self.progress.setVisible(False)
-        actions.addWidget(self.progress)
-        layout.addLayout(actions)
+        service_row.addWidget(self.progress)
+        column.addLayout(service_row)
 
-        view_actions = QHBoxLayout()
+        view_row = QHBoxLayout()
+        view_row.setSpacing(6)
         self.browser_button = button("打开浏览器", kind="ghost")
         self.logs_button = button("查看日志", kind="ghost")
-        view_actions.addWidget(self.browser_button)
-        view_actions.addWidget(self.logs_button)
-        view_actions.addStretch(1)
-        layout.addLayout(view_actions)
+        view_row.addWidget(self.browser_button)
+        view_row.addWidget(self.logs_button)
+        view_row.addStretch(1)
+        column.addLayout(view_row)
+        return bar
 
     def _wire(self) -> None:
         self.profile_combo.currentTextChanged.connect(lambda _text: self._on_profile_changed())
@@ -355,6 +376,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.copy_plan_button.clicked.connect(self.copy_plan_command)
         self.browse_button.clicked.connect(self._browse)
         self.clear_button.clicked.connect(self._clear_selection)
+        self.expand_button.clicked.connect(self.tree.expand_all)
+        self.collapse_button.clicked.connect(self.tree.collapse_all)
         self.tree.modelSelected.connect(self._on_model_picked)
         self.state.modelsChanged.connect(self._on_models_changed_signal)
         self.state.servicesChanged.connect(self._on_services_changed)
@@ -675,6 +698,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def _set_plan(self, lines: list[str]) -> None:
         """把计划写入预览区并同步日志（记录命令行便于复制）。"""
         self.plan_view.setPlainText("\n".join(lines))
+        self.scroll.ensureWidgetVisible(self.plan_card, 0, 24)
         self._plan_command = ""
         for line in lines:
             self.state.log(line)

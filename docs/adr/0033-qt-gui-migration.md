@@ -39,7 +39,7 @@
 | `theme.py` | `Palette → QSS` / `QPalette`、字体挑选、主题持久化；纯函数可单测 | `fcmd.gui.theme` |
 | `sidebar.py` | 左侧导航（`SidebarNav`）：页登记、`Alt+1..9`、`Alt+↑/↓` 循环 | `fcmd.gui.sidebar` |
 | `window.py` | `QtMainWindow`：导航 + `QStackedWidget` + 状态栏 + 主题 / 关于菜单 + 几何记忆；几何解析为纯函数 | `fcmd.gui.window` |
-| `widgets.py` | `Card` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `make_table` | `create_log` / `collapsible` / `pair_row` |
+| `widgets.py` | `Card` / `PageScroll` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `make_table` | `create_log` / `collapsible` / `pair_row` |
 | `workers.py` | `submit(...)`（线程池 + 信号回投）、`periodic(...)` | daemon 线程 + `after` 轮询 |
 
 约定：Qt 只在**创建窗口的路径**上延迟导入；`theme.py` / `window.py` 的纯函数不导入 PySide6，CI（无 Qt）仍可单测。
@@ -83,6 +83,9 @@
 
 - 新增页面：继承 `QWidget`，只接收 `LocllmState`，通过其信号联动；在
   `LocllmWindow._factory` 登记，重页面用工厂延迟构建。
+- 页面布局：内容放进 `PageScroll`（窗口变矮时滚动、变高时拉伸），需要常驻的操作
+  放固定的 `QFrame#ActionBar`（如运行页的启停按钮），不要靠压缩列表高度换空间；
+  列表控件给最小高度（模型树 240px）+ 展开 / 收起全部入口，避免「显示不全」。
 - 新增后台动作：一律 `fcmd.gui.qt.workers.submit(...)`，禁止在 GUI 线程做阻塞 IO；
   长任务的日志用 `state.log`（信号自动排队回主线程）。
 - 主题：新增控件样式改 `fcmd/gui/qt/theme.py` 的 QSS 模板，色值只从 `Palette` 取。

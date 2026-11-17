@@ -251,6 +251,10 @@ QCheckBox::indicator, QRadioButton::indicator { width: 14px; height: 14px; }
 QCheckBox::indicator:unchecked { border: 1px solid $border_strong; border-radius: 3px; background: $surface; }
 QCheckBox::indicator:checked { border: 1px solid $accent; border-radius: 3px; background: $accent; }
 QToolTip { background: $surface_active; color: $text; border: 1px solid $border; padding: 4px 6px; }
+QFrame#ActionBar {
+    background: $background;
+    border-top: 1px solid $border;
+}
 QSplitter::handle { background: $border; }
 QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
 """
