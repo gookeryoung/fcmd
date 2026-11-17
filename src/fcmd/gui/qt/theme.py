@@ -327,15 +327,12 @@ QFrame#RecommendationRow {
     border: 1px solid $border;
     border-radius: 8px;
 }
-QFrame#RecommendationRow[band="excellent"] { border-color: $success; }
-QFrame#RecommendationRow[band="good"] { border-color: $accent; }
-QFrame#RecommendationRow[band="fair"] { border-color: $warning; }
-QFrame#RecommendationRow[band="limited"] { border-color: $danger; }
-QFrame#RecommendationRow:hover { background: $surface_hover; border-color: $border_strong; }
-QFrame#RecommendationRow[selected="true"] {
-    background: $surface_active;
-    border-color: $accent;
-}
+QFrame#RecommendationRow[band="excellent"] { background: $success_soft; border-color: $success; }
+QFrame#RecommendationRow[band="good"] { background: $accent_soft; border-color: $accent; }
+QFrame#RecommendationRow[band="fair"] { background: $warning_soft; border-color: $warning; }
+QFrame#RecommendationRow[band="limited"] { background: $danger_soft; border-color: $danger; }
+QFrame#RecommendationRow:hover { border-width: 2px; }
+QFrame#RecommendationRow[selected="true"] { border-width: 2px; }
 QLabel#RecommendationName { font-size: ${font_heading}pt; font-weight: 600; }
 QLabel#ScoreBadge {
     border: 2px solid $border;
@@ -379,6 +376,9 @@ def template_tokens(
     """
     palette = asdict(theme.palette)
     tokens = {name: str(value) for name, value in palette.items()}
+    # 评分档位的浅色底：由档位色按固定透明度派生，避免调色板里再堆一组近似色。
+    for name in ("accent", "success", "warning", "danger"):
+        tokens[f"{name}_soft"] = _rgba(palette[name], 16)
     height = control_height_px if control_height_px is not None else control_height(theme)
     tokens.update(
         {
@@ -395,6 +395,18 @@ def template_tokens(
         }
     )
     return tokens
+
+
+def _rgba(value: str, percent: int) -> str:
+    """把 ``#rrggbb`` 转成 QSS 的 ``rgba(r, g, b, n%)``；非六位十六进制原样返回。"""
+    text = value.lstrip("#")
+    if len(text) != 6:
+        return value
+    try:
+        red, green, blue = (int(text[index : index + 2], 16) for index in (0, 2, 4))
+    except ValueError:
+        return value
+    return f"rgba({red}, {green}, {blue}, {percent}%)"
 
 
 def tiered_value_html(theme: Theme, main: str, detail: str = "") -> str:

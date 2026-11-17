@@ -137,7 +137,9 @@ class TestRecommend:
         small = _entry(tmp_path, "small.gguf", 2 * 1024**3)
         rows = recommend.recommend([huge, medium, small], _snapshot(gpu_mib=8000))
         names = [row.model.path.name for row in rows]
-        assert names == ["medium.gguf", "small.gguf"]
+        # 按评分降序，而不是按模型大小：小模型显存余量 / 速度更好，排在前面。
+        assert names == ["small.gguf", "medium.gguf"]
+        assert [row.score for row in rows] == sorted((row.score for row in rows), reverse=True)
         assert rows[0].context >= 4096
         assert "预测" in rows[0].performance_text
 
@@ -160,6 +162,13 @@ class TestRecommend:
         entries = [_entry(tmp_path, f"m{i}.gguf", (i + 1) * 1024**3) for i in range(5)]
         assert len(recommend.recommend(entries, _snapshot(), limit=2)) == 2
         assert recommend.recommend([], _snapshot()) == ()
+
+    def test_limit_keeps_highest_scores(self, tmp_path: Path) -> None:
+        entries = [_entry(tmp_path, f"m{i}.gguf", (i + 1) * 1024**3) for i in range(5)]
+        rows = recommend.recommend(entries, _snapshot(), limit=2)
+        all_rows = recommend.recommend(entries, _snapshot(), limit=len(entries))
+        assert [row.score for row in rows] == [row.score for row in all_rows[:2]]
+        assert all(rows[i].score >= rows[i + 1].score for i in range(len(rows) - 1))
 
     def test_unknown_tag_falls_through_to_known_profile(self, tmp_path: Path) -> None:
         entry = _entry(tmp_path, "model.gguf", 1024**3, ("未知标签", "代码"))

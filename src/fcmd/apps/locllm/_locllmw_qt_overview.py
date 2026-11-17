@@ -114,7 +114,7 @@ class ScoreBadge(QLabel):  # pragma: no cover - Qt 控件
 class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
     """单条推荐的自定义列表行：左侧评分圆框，模型名大字，配置 / 性能小字补充。
 
-    行边框颜色跟评分档位一致（QSS 按 ``band`` 属性上色），选中时边框改为主色。
+    行边框与底色按评分档位区分色系（QSS 按 ``band`` 属性上色），选中只加粗边框。
     """
 
     def __init__(self, recommendation: Recommendation, parent: QWidget | None = None) -> None:
@@ -380,7 +380,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         return card
 
     def _build_recommendations(self) -> Card:
-        card = Card("智能推荐（按显存筛选；性能测试后优先用实测值）")
+        card = Card("智能推荐（按评分排序；性能测试后优先用实测值）")
         self._recommend_list = RecommendationList(card)
         self._recommend_list.setObjectName("RecommendationList")
         self._recommend_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
@@ -493,7 +493,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             )
             return
         self._recommend_status.setText(
-            "推荐按模型大小与显存适配排序；选中一行点「用此配置启动」把模型与参数带入运行页。"
+            "推荐按评分从高到低排序，评分越高越适合当前机器；选中一行点「用此配置启动」把模型与参数带入运行页。"
             "解码速度为「预测」时来自参考机器外推，跑过性能测试后同一模型自动切换为「实测」。"
         )
 

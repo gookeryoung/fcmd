@@ -59,6 +59,16 @@ def test_template_tokens_fall_back_to_candidate_family() -> None:
     assert tokens["mono_family"] == _qt_theme.MONO_FONT_CANDIDATES[0]
 
 
+def test_template_tokens_derive_band_soft_colors() -> None:
+    """评分档位的浅色底由调色板派生，保证每套主题下都是同一色系的淡色。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    tokens = _qt_theme.template_tokens(theme)
+    for name in ("accent", "success", "warning", "danger"):
+        color = getattr(theme.palette, name).lstrip("#")
+        red, green, blue = (int(color[index : index + 2], 16) for index in (0, 2, 4))
+        assert tokens[f"{name}_soft"] == f"rgba({red}, {green}, {blue}, 16%)"
+
+
 def test_tiered_value_html_uses_theme_fonts_and_escapes() -> None:
     """分层主值取标题字号加粗、说明取次要字号与 muted 色，并转义特殊字符。"""
     theme = _guitheme.resolve_theme("dark-blue")
