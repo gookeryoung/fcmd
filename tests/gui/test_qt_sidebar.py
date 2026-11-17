@@ -37,11 +37,13 @@ def test_pages_are_registered_in_order(nav: Any) -> None:
 
 
 def test_buttons_expand_to_fill_sidebar_width(nav: Any) -> None:
+    """页按钮横向铺满侧栏；纵向高度交给共享样式统一，不在按钮上单独写死。"""
     button = nav.button("run")
     assert button is not None
     assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert button.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
+    assert button.minimumHeight() == 0
     assert nav.width() == EXPANDED_WIDTH
-    assert button.minimumHeight() >= 30
 
 
 def test_collapse_and_expand(nav: Any) -> None:

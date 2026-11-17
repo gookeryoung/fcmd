@@ -15,7 +15,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QLineEdit,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
@@ -36,7 +44,8 @@ def test_button_variants_share_size_hint() -> None:
     sizes = {kind: button("刷新模型列表", kind=kind).sizeHint() for kind in _BUTTON_KINDS}
     assert len({size.height() for size in sizes.values()}) == 1
     assert len({size.width() for size in sizes.values()}) == 1
-    assert next(iter(sizes.values())).height() >= 30
+    baseline = _qt_theme.control_height(_guitheme.resolve_theme("dark-blue"))
+    assert next(iter(sizes.values())).height() == baseline + 2
 
 
 def test_ghost_button_keeps_padding_of_default() -> None:
@@ -44,9 +53,25 @@ def test_ghost_button_keeps_padding_of_default() -> None:
     text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
     default_block = text.split("QPushButton {", 1)[1].split("}", 1)[0]
     ghost_block = text.split("QPushButton#Ghost {", 1)[1].split("}", 1)[0]
-    assert "padding: 5px 14px" in default_block
-    assert "padding: 5px 14px" in ghost_block
+    assert "padding: 0 " in default_block
+    assert "padding: 0 " in ghost_block
     assert "min-height" in default_block
+
+
+def test_single_line_controls_share_height() -> None:
+    """按钮、输入框、下拉与数值框在同一布局里等高：统一基准在共享层收敛。"""
+    container = QWidget()
+    layout = QVBoxLayout(container)
+    combo = QComboBox()
+    combo.addItem("1")
+    controls = [button("确定"), QLineEdit(), combo, QSpinBox(), QDoubleSpinBox()]
+    for control in controls:
+        layout.addWidget(control)
+    container.show()
+    QApplication.processEvents()
+    assert len({control.height() for control in controls}) == 1
+    baseline = _qt_theme.control_height(_guitheme.resolve_theme("dark-blue"))
+    assert controls[0].height() == baseline + 2
 
 
 def test_card_title_is_plain_label_inside_frame() -> None:

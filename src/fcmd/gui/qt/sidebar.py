@@ -42,9 +42,6 @@ EXPANDED_WIDTH = 184
 COLLAPSED_WIDTH = 52
 """折叠态侧边栏宽度：一个中文字 + 左右内边距。"""
 
-_BUTTON_HEIGHT = 34
-"""页按钮最小高度，保证高 DPI 下点击区域不缩水。"""
-
 
 class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
     """左侧导航栏：标题 + 折叠按钮 + 页按钮 + 当前页提示。"""
@@ -121,7 +118,6 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         button.setCheckable(True)
         button.setAutoExclusive(True)
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        button.setMinimumHeight(_BUTTON_HEIGHT)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setToolTip(hint)
         button.clicked.connect(lambda _checked=False, page_key=key: self.select(page_key))

@@ -28,9 +28,11 @@ if TYPE_CHECKING:
     from fcmd.gui.theme import Theme
 
 __all__ = [
+    "CONTROL_HEIGHT_EXTRA",
     "MONO_FONT_CANDIDATES",
     "UI_FONT_CANDIDATES",
     "apply_theme",
+    "control_height",
     "load_theme",
     "pick_font_family",
     "save_theme",
@@ -47,6 +49,27 @@ save_theme = _guitheme.save_theme
 
 _RADIUS = 8
 """卡片 / 输入框圆角（Qt 逻辑像素，高 DPI 由 Qt 自动缩放）。"""
+
+CONTROL_HEIGHT_EXTRA = 9
+"""控件高度相对字体行高的补偿量（Qt 逻辑像素）。
+
+单行件的总高 = 字体行高 + 边框（上下各 1px）+ 呼吸空间。9pt 字体行高 12px，
+加 9 得到内容高 21px，再加 2px 边框即 23px，与按钮 / 输入框 / 下拉 / 数值框
+实测一致。数值固定为逻辑像素，高 DPI 下由 Qt 按缩放因子换算成设备像素。
+"""
+
+_CONTROL_PAD_X_BUTTON = "0.9em"
+_CONTROL_PAD_X_INPUT = "0.45em"
+
+
+def control_height(theme: Theme) -> int:
+    """按字号推导单行控件内容高度（逻辑像素），供无 Qt 环境下的样式表快照使用。
+
+    运行时 :func:`apply_theme` 会用 ``QFontMetrics`` 的实际行高替代这里的估算，
+    保证字体替换后控件仍与文字对齐；本函数保持纯函数，便于 CI 无 ``PySide6`` 单测。
+    """
+    return round(theme.fonts.body * 96 / 72) + CONTROL_HEIGHT_EXTRA
+
 
 _QSS = Template(
     """
@@ -90,8 +113,9 @@ QPushButton {
     color: $text;
     border: 1px solid $border;
     border-radius: 6px;
-    padding: 5px 14px;
-    min-height: 22px;
+    padding: 0 ${control_pad_x};
+    min-height: $control_height;
+    max-height: $control_height;
 }
 QPushButton:hover { background: $surface_active; border-color: $border_strong; }
 QPushButton:pressed { background: $border; }
@@ -112,7 +136,7 @@ QPushButton#Ghost {
     background: transparent;
     border: 1px solid $border;
     color: $muted;
-    padding: 5px 14px;
+    padding: 0 ${control_pad_x};
 }
 QPushButton#Ghost:hover {
     background: $surface_hover;
@@ -140,7 +164,7 @@ QPushButton#NavButton {
     border-radius: 6px;
     color: $muted;
     text-align: left;
-    padding: 7px 10px;
+    padding: 0 10px;
     font-size: ${font_body}pt;
 }
 QPushButton#NavButton:hover { background: $surface_hover; color: $text; }
@@ -155,12 +179,25 @@ QToolButton#SidebarToggle {
     border: none;
     border-radius: 6px;
     color: $muted;
-    padding: 2px 6px;
+    padding: 0 6px;
+    min-height: $control_height;
+    max-height: $control_height;
     font-size: ${font_body}pt;
 }
 QToolButton#SidebarToggle:hover { background: $surface_hover; color: $text; }
 
-QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+    background: $surface;
+    color: $text;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 0 ${control_pad_x_input};
+    min-height: $control_height;
+    max-height: $control_height;
+    selection-background-color: $select_bg;
+    selection-color: $select_fg;
+}
+QPlainTextEdit, QTextEdit {
     background: $surface;
     color: $text;
     border: 1px solid $border;
@@ -273,14 +310,23 @@ def pick_font_family(
     return _guitheme.pick_font_family(available, candidates)
 
 
-def template_tokens(theme: Theme, *, font_family: str = "", mono_family: str = "") -> dict[str, str]:
+def template_tokens(
+    theme: Theme,
+    *,
+    font_family: str = "",
+    mono_family: str = "",
+    control_height_px: int | None = None,
+) -> dict[str, str]:
     """把主题展开成 QSS 模板变量：调色板 token + 字号 + 圆角 + 字体族。
 
     调色板字段全部内联为 ``$<token>`` 变量，新增 token 时会自动进入模板
     （模板里未引用也不报错），避免样式表与 :class:`Palette` 两处维护色值。
+    ``control_height_px`` 省略时按字号估算，运行时由 :func:`apply_theme` 传入
+    实际字体行高推导值。
     """
     palette = asdict(theme.palette)
     tokens = {name: str(value) for name, value in palette.items()}
+    height = control_height_px if control_height_px is not None else control_height(theme)
     tokens.update(
         {
             "font_small": str(theme.fonts.small),
@@ -288,6 +334,9 @@ def template_tokens(theme: Theme, *, font_family: str = "", mono_family: str = "
             "font_heading": str(theme.fonts.heading),
             "font_title": str(theme.fonts.title),
             "radius": str(_RADIUS),
+            "control_height": f"{height}px",
+            "control_pad_x": _CONTROL_PAD_X_BUTTON,
+            "control_pad_x_input": _CONTROL_PAD_X_INPUT,
             "font_family": font_family or pick_font_family((), UI_FONT_CANDIDATES),
             "mono_family": mono_family or pick_font_family((), MONO_FONT_CANDIDATES),
         }
@@ -295,9 +344,22 @@ def template_tokens(theme: Theme, *, font_family: str = "", mono_family: str = "
     return tokens
 
 
-def stylesheet(theme: Theme, *, font_family: str = "", mono_family: str = "") -> str:
+def stylesheet(
+    theme: Theme,
+    *,
+    font_family: str = "",
+    mono_family: str = "",
+    control_height_px: int | None = None,
+) -> str:
     """生成整套 QSS 文本（纯函数，不依赖 Qt，便于单测与快照）。"""
-    return _QSS.substitute(template_tokens(theme, font_family=font_family, mono_family=mono_family))
+    return _QSS.substitute(
+        template_tokens(
+            theme,
+            font_family=font_family,
+            mono_family=mono_family,
+            control_height_px=control_height_px,
+        )
+    )
 
 
 def _qt_palette(theme: Theme, app: Any) -> Any:  # pragma: no cover - 需要 PySide6
@@ -339,7 +401,7 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
 
     幂等：重复调用只覆盖样式与调色板，不重建控件；主题切换即时生效。
     """
-    from PySide6.QtGui import QFont, QFontDatabase
+    from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
 
     families = QFontDatabase.families()
     family = pick_font_family(families)
@@ -350,4 +412,5 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     font.setPointSize(theme.fonts.body)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
     app.setFont(font)
-    app.setStyleSheet(stylesheet(theme, font_family=family, mono_family=mono))
+    height = QFontMetrics(font).height() + CONTROL_HEIGHT_EXTRA
+    app.setStyleSheet(stylesheet(theme, font_family=family, mono_family=mono, control_height_px=height))

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -57,6 +57,28 @@ def test_template_tokens_fall_back_to_candidate_family() -> None:
     tokens = _qt_theme.template_tokens(theme)
     assert tokens["font_family"] == _qt_theme.UI_FONT_CANDIDATES[0]
     assert tokens["mono_family"] == _qt_theme.MONO_FONT_CANDIDATES[0]
+
+
+def test_control_height_follows_font_metrics() -> None:
+    """统一控件高度按字号换算成逻辑像素，字号变大时同比变大（不写死物理像素）。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    baseline = _qt_theme.control_height(theme)
+    assert baseline == round(theme.fonts.body * 96 / 72) + _qt_theme.CONTROL_HEIGHT_EXTRA
+    bigger = replace(theme, fonts=_guitheme.FontScale(body=theme.fonts.body + 3))
+    assert _qt_theme.control_height(bigger) > baseline
+
+
+def test_template_tokens_accept_measured_control_height() -> None:
+    """运行时用 ``QFontMetrics`` 实测高度覆盖估算值，样式表与字体实际行高对齐。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    assert _qt_theme.template_tokens(theme)["control_height"] == f"{_qt_theme.control_height(theme)}px"
+    assert _qt_theme.template_tokens(theme, control_height_px=30)["control_height"] == "30px"
+    text = _qt_theme.stylesheet(theme, control_height_px=30)
+    button_block = text.split("QPushButton {", 1)[1].split("}", 1)[0]
+    input_block = text.split("QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {", 1)[1].split("}", 1)[0]
+    for block in (button_block, input_block):
+        assert "min-height: 30px" in block
+        assert "max-height: 30px" in block
 
 
 def test_pick_font_family_prefers_available_candidate_case_insensitively() -> None:
