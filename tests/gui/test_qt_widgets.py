@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, Collapsible, LogView, MetricGrid, button
+from fcmd.gui.qt.widgets import Card, Collapsible, LogView, MetricGrid, PathRow, button
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
 
@@ -92,6 +92,17 @@ def test_card_body_accepts_widgets() -> None:
     assert card.body.count() == 1
     grid.set_value("cpu", "10 %")
     assert grid.value("cpu") == "10 %"
+
+
+def test_path_row_commits_on_editing_finished() -> None:
+    """设置页自动保存监听 committed：输入中不落盘，失焦 / 回车后才提交。"""
+    row = PathRow(value="D:/models", show_reset=True)
+    seen: list[str] = []
+    row.committed.connect(seen.append)
+    row.edit.setText("D:/models2")
+    assert seen == []
+    row.edit.editingFinished.emit()
+    assert seen == ["D:/models2"]
 
 
 def test_collapsible_set_title_updates_toggle() -> None:

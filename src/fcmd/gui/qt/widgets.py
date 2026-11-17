@@ -340,6 +340,7 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
     """路径输入行：输入框 + 「浏览…」+「恢复默认」按钮。"""
 
     changed = Signal(str)
+    committed = Signal(str)
 
     def __init__(
         self,
@@ -358,6 +359,7 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
         self.edit = QLineEdit(value)
         self.edit.setPlaceholderText(placeholder)
         self.edit.textChanged.connect(self.changed.emit)
+        self.edit.editingFinished.connect(lambda: self.committed.emit(self.value()))
         layout.addWidget(self.edit, 1)
         self.browse = button("浏览…")
         self.browse.clicked.connect(self._pick)
@@ -382,6 +384,7 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
             path, _ = QFileDialog.getOpenFileName(self, "选择文件", self.value())
         if path:
             self.edit.setText(path)
+            self.committed.emit(self.value())
 
 
 class Collapsible(QWidget):  # pragma: no cover - Qt 控件

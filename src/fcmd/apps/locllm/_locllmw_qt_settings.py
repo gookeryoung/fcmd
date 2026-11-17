@@ -81,9 +81,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         row.addWidget(hint_label("模型目录", wrap=False))
         self.models_path = PathRow(value="", directory=True, show_reset=True)
         row.addWidget(self.models_path, 1)
-        self.models_save = button("保存")
         self.models_open = button("打开", kind="ghost")
-        row.addWidget(self.models_save)
         row.addWidget(self.models_open)
         card.body.addLayout(row)
         self.models_source = hint_label("来源：默认")
@@ -91,7 +89,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.migration_note = HintLabel("")
         card.body.addWidget(self.migration_note)
         card.body.addWidget(hint_label("下载与转换产物统一写入模型目录；旧配置里的其它目录不再扫描。"))
-        self.models_save.clicked.connect(lambda: self._save_path("models_dir", self.models_path.value()))
+        self.models_path.committed.connect(lambda text: self._save_path("models_dir", text))
         self.models_path.reset.clicked.connect(lambda: self._save_path("models_dir", None))
         self.models_open.clicked.connect(lambda: open_path(llmenv.models_dir()))
         return card
@@ -131,14 +129,14 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.download_exclude.setPlaceholderText("如 *.bin，留空表示不排除")
         grid.addWidget(self.download_exclude, 2, 1, 1, 3)
         card.body.addLayout(grid)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        self.download_save = button("保存下载设置")
-        self.download_save.clicked.connect(self._save_download)
-        row.addWidget(self.download_save)
-        row.addWidget(hint_label("下载目标固定为上方模型目录；参数在模型列表点击「下载」时生效。"))
-        row.addStretch(1)
-        card.body.addLayout(row)
+        card.body.addWidget(
+            hint_label("下载目标固定为上方模型目录；修改后自动保存，参数在模型列表点击「下载」时生效。")
+        )
+        self.download_source.currentIndexChanged.connect(lambda _index: self._save_download())
+        self.download_workers.valueChanged.connect(lambda _value: self._save_download())
+        self.download_verify.toggled.connect(lambda _checked: self._save_download())
+        self.download_include.editingFinished.connect(self._save_download)
+        self.download_exclude.editingFinished.connect(self._save_download)
         return card
 
     def _save_download(self) -> None:
@@ -151,8 +149,8 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         )
         self.state.settings.download = _locllmw_models.settings_to_dict(settings)
         self.state.persist()
-        self.state.log("已保存下载设置")
-        self.state.status("下载设置已保存")
+        self.state.log("已自动保存下载设置")
+        self.state.status("已自动保存下载设置")
 
     # ------------------------------------------------------------------ #
     # 引擎
@@ -163,9 +161,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         row.addWidget(hint_label("引擎根目录", wrap=False))
         self.engines_path = PathRow(value="", directory=True, show_reset=True)
         row.addWidget(self.engines_path, 1)
-        self.engines_save = button("保存")
         self.engines_open = button("打开", kind="ghost")
-        row.addWidget(self.engines_save)
         row.addWidget(self.engines_open)
         card.body.addLayout(row)
         self.engines_source = hint_label("来源：默认")
@@ -193,7 +189,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         )
         card.body.addWidget(self.engine_hint)
 
-        self.engines_save.clicked.connect(lambda: self._save_path("engines_root", self.engines_path.value()))
+        self.engines_path.committed.connect(lambda text: self._save_path("engines_root", text))
         self.engines_path.reset.clicked.connect(lambda: self._save_path("engines_root", None))
         self.engines_open.clicked.connect(lambda: open_path(_llmconfig.engines_root()))
         self.use_engine_button.clicked.connect(self._use_engine)
@@ -261,8 +257,9 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "保存失败", str(exc))
             return
-        self.state.log(f"已更新{('模型目录' if key == 'models_dir' else '引擎根目录')}: {resolved}")
-        self.state.status(f"已保存：{resolved}")
+        label = "模型目录" if key == "models_dir" else "引擎根目录"
+        self.state.log(f"已自动保存{label}: {resolved}")
+        self.state.status(f"已自动保存{label}：{resolved}")
         self.refresh()
         if key == "models_dir":
             self.state.refresh_models()
