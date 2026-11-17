@@ -6,6 +6,7 @@
 - ``graph pymake tc`` 的 ``tree`` / ``mermaid`` / ``layers`` 三种渲染；
 - ``fcmd stattool --help`` 与 ``stattool.exe --help``：同一工具的两条入口
   （后者走 console script 的 :func:`fcmd.cli._entry.run_named`）；
+- 裸 ``fcmd``：工具列表路径，唯一走清单严格校验（布局 + 内容指纹）的场景；
 - ``--version`` 与 ``python -c pass``：只剩解释器 / CLI 导入的固定成本地板。
 
 口径（改动前后必须一致，否则数字不可比）：
@@ -19,8 +20,9 @@
 - 中位数相邻两次结果差异超过 20% 说明宿主抖动，建议重跑一次再采信；若整体
   同乘以约 2，属于宿主电源/调度状态切换（本机 ``python -c pass`` 会在 27ms 与
   55ms 之间跳变），不要跨会话直接比较绝对数，用同会话 A/B 或 ``--check``；
-- 清单快路径落地后，``BASELINES`` 已更新为优化后的本机中位数（HEAD d0adf1d，
-  与改动前同会话交错 A/B 口径一致）；改动前数字见提交信息与本文件 git 历史。
+- ``BASELINES`` 是本机慢档下的中位数（最近一轮：内建命令按需导入 + 清单严格
+  校验单次遍历，见 fa9bdb1），与改动前同会话交错 A/B 口径一致；改动前数字见
+  提交信息与本文件 git 历史。
 
 用法::
 
@@ -84,6 +86,11 @@ BASELINES: dict[tuple[str, str], float] = {
     ("tool-help", "cold"): 727.8,
     ("tool-exe-help", "warm"): 272.1,
     ("tool-exe-help", "cold"): 712.1,
+    # list 场景补测时宿主处于快档（warm 140.0 / cold 408.2），其余基线是慢档；
+    # 按同会话跨档比值折算到慢档（warm 用 env 291.2/134.0≈2.17，cold 用
+    # version 233.5/142.5≈1.64），保持与其余条目同口径。
+    ("list", "warm"): 304.0,
+    ("list", "cold"): 670.0,
     ("version", "warm"): 113.6,
     ("version", "cold"): 233.5,
     ("python-floor", "warm"): 55.3,
@@ -145,6 +152,7 @@ def build_cases() -> list[Case]:
         Case("graph-layers", (fcmd, "graph", "pymake", "tc", "--format=layers"), "graph layers"),
         Case("tool-help", (fcmd, "stattool", "--help"), "fcmd <tool> --help"),
         Case("tool-exe-help", (stattool_exe, "--help"), "<tool>.exe --help"),
+        Case("list", (fcmd,), "工具列表（裸 fcmd，走清单严格校验）"),
         Case("version", (fcmd, "--version"), "固定成本地板（--version）"),
         Case("python-floor", (sys.executable, "-c", "pass"), "固定成本地板（解释器）", require_output=False),
     ]
