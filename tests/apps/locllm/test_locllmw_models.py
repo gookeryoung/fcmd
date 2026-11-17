@@ -23,6 +23,7 @@ from fcmd.apps.locllm._locllmw_models import (
     DownloadGuiSettings,
     detail_pairs,
     filter_by_local_fit,
+    filter_by_name,
     filter_models,
     local_row,
     matches_filter,
@@ -275,6 +276,19 @@ class TestBrowseHelpers:
         items = self._items()
         assert sort_models(items, None) == items
         assert sort_models(items, "unknown") == items
+
+
+def test_filter_by_name_matches_repo_name_and_chinese_name() -> None:
+    items = (
+        ModelSummary(repo="Qwen/Qwen3-Coder-30B", name="Qwen3-Coder-30B"),
+        ModelSummary(repo="deepseek/DeepSeek-R1", name="DeepSeek-R1", chinese_name="深度求索"),
+        ModelSummary(repo="meta/Llama-3", name="Llama-3"),
+    )
+    assert [item.repo for item in filter_by_name(items, "coder")] == ["Qwen/Qwen3-Coder-30B"]
+    assert [item.repo for item in filter_by_name(items, "  DEEPSEEK ")] == ["deepseek/DeepSeek-R1"]
+    assert [item.repo for item in filter_by_name(items, "深度")] == ["deepseek/DeepSeek-R1"]
+    assert filter_by_name(items, "   ") == items
+    assert filter_by_name(items, "missing") == ()
 
 
 class TestQuantQuickStart:

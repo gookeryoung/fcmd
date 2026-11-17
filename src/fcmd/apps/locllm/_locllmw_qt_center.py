@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidgetItem,
     QMenu,
     QMessageBox,
@@ -88,6 +89,7 @@ def quantize_menu_items(existing: Iterable[str]) -> tuple[tuple[str, str, bool],
 
 
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
+_FILTER_DEBOUNCE_MS = 250
 _MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _locllmw_models.DEFAULT_MODEL_FILTER
 
@@ -472,7 +474,18 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
         nav.setSpacing(6)
+        self.name_filter = QLineEdit(self)
+        self.name_filter.setPlaceholderText("按名称筛选当前页…")
+        self.name_filter.setClearButtonEnabled(True)
+        self.name_filter.setMaximumWidth(260)
+        self.name_filter.textChanged.connect(self._on_name_filter_changed)
+        nav.addWidget(self.name_filter)
         nav.addStretch(1)
+        self._name_filter = ""
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(_FILTER_DEBOUNCE_MS)
+        self._filter_timer.timeout.connect(self._apply_name_filter)
         self.prev_button = button("上一页")
         self.prev_button.clicked.connect(lambda: self.start_search(self._page - 1))
         self.next_button = button("下一页")
@@ -525,6 +538,17 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_key = key
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == key), "")
         self.start_search(1)
+
+    def _on_name_filter_changed(self, _text: str) -> None:
+        """名称筛选输入防抖：停止输入 250ms 后才重建列表。"""
+        self._filter_timer.start()
+
+    def _apply_name_filter(self) -> None:
+        text = self.name_filter.text().strip()
+        if text == self._name_filter:
+            return
+        self._name_filter = text
+        self._render_results()
 
     def refresh_installed(self) -> None:
         """后台扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。
@@ -721,6 +745,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
         items = _locllmw_models.merge_installed_items(items, self._installed_models, self._filter_key)
         items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key)
+        items = _locllmw_models.filter_by_name(items, self._name_filter)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),
             items[0].repo if items else None,
@@ -781,7 +806,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.models.sync_row_widths()
         self._sync_download_buttons()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
-        self.state.status(f"{filter_label} · {result.page}/{pages} · 共 {result.total:,} 条")
+        matched = f" · 名称筛选 {len(items)} 条" if self._name_filter else ""
+        self.state.status(f"{filter_label} · {result.page}/{pages} · 共 {result.total:,} 条{matched}")
         self.prev_button.setEnabled(result.page > 1)
         self.next_button.setEnabled(result.page < pages)
         if selected is not None:

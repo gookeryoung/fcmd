@@ -95,6 +95,21 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     assert settings_page.models_path.value()
 
 
+def test_models_page_name_filter_is_debounced(window: Any) -> None:
+    """上一页左侧的名称过滤框只在停止输入后重建列表。"""
+    window.show_page("models")
+    browse = window.page("models").browse
+    assert browse.name_filter.placeholderText().startswith("按名称筛选")
+    assert browse.name_filter.isClearButtonEnabled()
+    assert browse._filter_timer.isSingleShot()
+    assert browse._filter_timer.interval() == 250
+    browse.name_filter.setText("qwen")
+    assert browse._filter_timer.isActive()
+    assert browse._name_filter == ""
+    browse._apply_name_filter()
+    assert browse._name_filter == "qwen"
+
+
 def test_chat_parameter_icon_buttons_toggle_sections(window: Any) -> None:
     """连接 / 生成参数入口是刷新右侧的图标按钮，点击展开对应分区。"""
     window.show_page("chat")

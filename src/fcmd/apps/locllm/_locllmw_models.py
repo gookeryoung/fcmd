@@ -32,6 +32,7 @@ __all__ = [
     "DownloadGuiSettings",
     "detail_pairs",
     "filter_by_local_fit",
+    "filter_by_name",
     "filter_models",
     "local_row",
     "matches_filter",
@@ -258,6 +259,21 @@ def sort_browse_items(
                 item.repo.casefold(),
             ),
         )
+    )
+
+
+def filter_by_name(items: tuple[ModelSummary, ...], query: str) -> tuple[ModelSummary, ...]:
+    """按名称筛选当前页结果：仓库名 / 模型名 / 中文名任一包含关键字即可。
+
+    关键字去首尾空白、大小写不敏感；空查询原样返回，避免列表无谓重建。
+    """
+    text = query.strip().casefold()
+    if not text:
+        return items
+    return tuple(
+        item
+        for item in items
+        if text in item.repo.casefold() or text in item.name.casefold() or text in item.chinese_name.casefold()
     )
 
 
