@@ -45,6 +45,7 @@ from fcmd.apps.locllm import (
 from fcmd.apps.locllm._llmgguf import detect_precision, quantize_input_error
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
+    LocalModel,
     ModelInfo,
     ModelSearch,
     ModelSummary,
@@ -108,6 +109,8 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         quant_tags: tuple[str, ...] = (),
         quantizable: bool = False,
         quant_blocked: bool = False,
+        incomplete: bool = False,
+        progress_text: str = "",
     ) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
@@ -119,6 +122,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self._convert_blocked = convert_blocked
         self._quantizable = quantizable
         self._quant_blocked = quant_blocked
+        self._incomplete = incomplete
         self.setObjectName("ModelItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
@@ -154,6 +158,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             chip.setObjectName("QuantTag")
             chip.setToolTip(f"已量化精度 {tag}")
             note_row.addWidget(chip, 0)
+        if incomplete and progress_text:
+            progress = QLabel(progress_text, header)
+            progress.setObjectName("DownloadProgress")
+            progress.setToolTip(progress_text)
+            note_row.addWidget(progress, 0)
         note_row.addStretch(1)
         left.addLayout(note_row)
         header_row.addLayout(left, 1)
@@ -189,13 +198,15 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.quant_button.setEnabled(False)
             self.quant_button.setToolTip("当前模型没有可量化的全量精度 GGUF")
             header_row.addWidget(self.quant_button, 0)
-        self.download_button = button("下载")
-        if installed:
+        self.download_button = button("继续下载" if incomplete else "下载")
+        if installed and not incomplete:
             self.download_button.setObjectName("InstalledButton")
             self.download_button.setText("✓ 已安装")
             self.download_button.setEnabled(False)
             self.download_button.setToolTip("该模型已在本地模型目录中")
         else:
+            if incomplete:
+                self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
             self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
         header_row.addWidget(self.download_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
@@ -232,7 +243,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.download_button.setText("✓ 已安装")
             return
         self.download_button.setEnabled(not busy)
-        self.download_button.setText("下载中…" if active else "下载")
+        self.download_button.setText("下载中…" if active else ("继续下载" if self._incomplete else "下载"))
 
     def set_convert_state(self, *, busy: bool, active: bool) -> None:
         """转换中禁用按钮；已转换行保持不可点击的「已转换」。"""
@@ -367,6 +378,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._download_target = _llmconfig.models_dir()
         self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
+        self._partial_models: dict[str, LocalModel] = {}
         self._convertible: dict[str, tuple[Path, Path, bool]] = {}
         self._convert_blocked: dict[str, str] = {}
         self._converting = False
@@ -464,6 +476,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         except OSError:
             self._installed_models = {}
             self._installed_repos = set()
+            self._partial_models = {}
             self._convertible = {}
             self._convert_blocked = {}
             self._quant_candidates = {}
@@ -478,6 +491,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 for model in models
             }
             self._installed_repos = set(self._installed_models)
+            self._partial_models = {model.repo.casefold(): model for model in models if not model.complete}
             self._convertible = {}
             self._convert_blocked = {}
             self._quant_candidates = {}
@@ -588,18 +602,32 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             key = item.repo.casefold()
             installed = key in self._installed_repos
+            partial = self._partial_models.get(key)
+            incomplete = partial is not None
+            progress_text = ""
+            if partial is not None:
+                total = (self.state.settings.download_totals or {}).get(key)
+                if not total and item.storage_size > partial.size:
+                    total = item.storage_size
+                if total and total > 0:
+                    percent = min(99, max(0, round(partial.size * 100 / total)))
+                    progress_text = f"已下载 {percent}%"
+                else:
+                    progress_text = f"已下载 {human_size(partial.size)}"
             convert_info = self._convertible.get(key)
             quantizable = key in self._quant_candidates
             row = _ModelItemRow(
                 item,
                 self.models,
-                installed=installed,
+                installed=installed and not incomplete,
                 convertible=convert_info is not None,
                 converted=bool(convert_info and convert_info[2]),
                 convert_blocked=self._convert_blocked.get(key, ""),
                 quant_tags=self._quant_tags.get(key, ()),
                 quantizable=quantizable,
                 quant_blocked=installed and not quantizable,
+                incomplete=incomplete,
+                progress_text=progress_text,
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
@@ -820,6 +848,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if event.task != "总进度":
             return
         self.download_bar.setValue(round(100 * event.completed / max(event.total, 1)))
+        if self._active_repo and event.total > 0:
+            totals = dict(self.state.settings.download_totals or {})
+            totals[self._active_repo.casefold()] = event.total
+            self.state.settings.download_totals = totals
         self.download_text.setText(
             f"下载 {self._active_repo or '-'} · {human_size(event.completed)} / {human_size(event.total)}"
         )
@@ -1015,6 +1047,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._downloading = False
         self._active_repo = None
         self.stop_download_button.setVisible(False)
+        self.state.persist()
         self._sync_download_buttons()
 
     def stop_download(self) -> None:

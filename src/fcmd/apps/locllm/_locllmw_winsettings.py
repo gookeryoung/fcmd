@@ -41,6 +41,7 @@ class LocllmSettings:
     hardware: dict[str, Any] | None = None
     measured: dict[str, dict[str, Any]] | None = None
     download: dict[str, Any] | None = None
+    download_totals: dict[str, int] | None = None
     convert: dict[str, Any] | None = None
     run_params: dict[str, dict[str, Any]] | None = None
     last_model: str | None = None
@@ -73,6 +74,13 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         download = raw.get("download")
         if isinstance(download, dict):
             settings.download = download
+        download_totals = raw.get("download_totals")
+        if isinstance(download_totals, dict):
+            settings.download_totals = {
+                str(key): int(value)
+                for key, value in download_totals.items()
+                if isinstance(value, int) and not isinstance(value, bool) and value > 0
+            }
         convert = raw.get("convert")
         if isinstance(convert, dict):
             settings.convert = convert
@@ -101,6 +109,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "hardware": settings.hardware,
             "measured": settings.measured,
             "download": settings.download,
+            "download_totals": settings.download_totals,
             "convert": settings.convert,
             "run_params": settings.run_params,
             "last_model": settings.last_model,

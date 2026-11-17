@@ -434,6 +434,15 @@ QPushButton#InstalledButton:disabled, QPushButton#ConvertedButton:disabled {
     background: $success_soft;
     border: 1px solid $success;
 }
+QLabel#DownloadProgress {
+    color: $warning;
+    background: $warning_soft;
+    border: 1px solid $warning;
+    border-radius: 7px;
+    padding: 0px 5px;
+    font-size: ${font_small}pt;
+    font-weight: 600;
+}
 QLabel#QuantTag {
     color: $accent;
     background: $accent_soft;
