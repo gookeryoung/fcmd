@@ -14,7 +14,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -318,6 +318,10 @@ class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
             opt.fontMetrics.elidedText(text, Qt.TextElideMode.ElideRight, rect.width()),
         )
         painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: Any) -> QSize:
+        size = super().sizeHint(option, index)
+        return QSize(size.width(), 34)
 
 
 class _ModelCombo(QComboBox):  # pragma: no cover - Qt 控件
