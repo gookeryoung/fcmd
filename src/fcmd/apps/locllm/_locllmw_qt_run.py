@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QGridLayout,
@@ -299,7 +300,8 @@ class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
         self.initStyleOption(opt, index)
         text = opt.text
         opt.text = ""
-        super().paint(painter, opt, index)
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
         selected = bool(opt.state & QStyle.StateFlag.State_Selected)
         theme = _qt_theme.load_theme()
         if selected:
