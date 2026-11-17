@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -109,17 +109,31 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        connection = Card("连接")
-        form = FormGrid(connection)
+        connection = Card("对话服务")
+        service_row = QHBoxLayout()
+        service_row.setContentsMargins(0, 0, 0, 0)
+        service_row.setSpacing(8)
         self.service_combo = QComboBox(connection)
         self.service_combo.setEditable(False)
         self.service_combo.currentIndexChanged.connect(lambda _index: self._on_service_changed())
-        self.model_edit = QLineEdit(DEFAULT_ALIAS, connection)
-        form.add_pair("服务", self.service_combo, "模型", self.model_edit)
-        self.url_edit = QLineEdit(_DEFAULT_URL, connection)
-        self.api_key_edit = QLineEdit(DEFAULT_API_KEY, connection)
-        form.add_pair("服务地址", self.url_edit, "API Key", self.api_key_edit)
-        connection.body.addWidget(form)
+        service_row.addWidget(self.service_combo, 1)
+        self.refresh_button = button("刷新", kind="ghost")
+        self.refresh_button.clicked.connect(self.refresh_services)
+        service_row.addWidget(self.refresh_button)
+        connection.body.addLayout(service_row)
+        self.status = HintLabel("未开始对话")
+        connection.body.addWidget(self.status)
+
+        self.connection_section = Collapsible("连接参数（自动回填，可自定义）", expanded=False)
+        form = FormGrid(self.connection_section.content)
+        self.model_edit = QLineEdit(DEFAULT_ALIAS, self.connection_section.content)
+        self.url_edit = QLineEdit(_DEFAULT_URL, self.connection_section.content)
+        self.api_key_edit = QLineEdit(DEFAULT_API_KEY, self.connection_section.content)
+        form.add_row("模型", self.model_edit)
+        form.add_row("服务地址", self.url_edit)
+        form.add_row("API Key", self.api_key_edit)
+        self.connection_section.body.addWidget(form)
+        connection.body.addWidget(self.connection_section)
 
         self.settings_section = Collapsible("生成参数", expanded=bool(self.state.settings.chat_settings_open))
         settings_form = FormGrid(self.settings_section.content)
@@ -128,9 +142,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         settings_form.add_row("系统提示", self.system_edit)
         self.max_tokens_edit = QLineEdit("2048", self.settings_section.content)
         self.temperature_edit = QLineEdit("0.7", self.settings_section.content)
-        self.top_p_edit = QLineEdit("0.9", self.settings_section.content)
         settings_form.add_pair("输出上限", self.max_tokens_edit, "temperature", self.temperature_edit)
-        settings_form.add_row("top_p", self.top_p_edit)
         self.settings_section.body.addWidget(settings_form)
         self.settings_section.toggle.toggled.connect(self._on_settings_toggled)
         connection.body.addWidget(self.settings_section)
@@ -142,15 +154,13 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         transcript_card.body.addWidget(self.transcript, 1)
         layout.addWidget(transcript_card, 1)
 
-        self.status = HintLabel("未开始对话")
-        layout.addWidget(self.status)
-
         input_area = QVBoxLayout()
         input_area.setSpacing(6)
         self.input_edit = QPlainTextEdit(self)
         self.input_edit.setPlaceholderText("输入问题，Ctrl+Enter 发送")
         self.input_edit.setMinimumHeight(72)
         self.input_edit.setMaximumHeight(120)
+        self.input_edit.installEventFilter(self)
         input_area.addWidget(self.input_edit)
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
@@ -243,6 +253,19 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         else:
             self.status.setText(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
 
+    def eventFilter(self, obj: object, event: QEvent) -> bool:
+        """Ctrl+Enter 发送；其余事件交给父类。"""
+        if obj is self.input_edit and event.type() == QEvent.Type.KeyPress:
+            key_event = event if isinstance(event, QKeyEvent) else None
+            if (
+                key_event is not None
+                and key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and key_event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            ):
+                self.send()
+                return True
+        return super().eventFilter(obj, event)
+
     # ------------------------------------------------------------------ #
     # 发送 / 停止
     # ------------------------------------------------------------------ #
@@ -258,7 +281,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             endpoint = endpoint_from_form(self.url_edit.text(), self.api_key_edit.text(), self.model_edit.text())
             max_tokens = int(self.max_tokens_edit.text().strip() or "2048")
             temperature = float(self.temperature_edit.text().strip() or "0.7")
-            top_p = float(self.top_p_edit.text().strip() or "0.9")
+            top_p = 0.9
         except (ServeError, ValueError) as exc:
             self.status.setText(f"参数错误：{exc}")
             return

@@ -667,6 +667,17 @@ def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch, 
     assert chat_page.status.text() == "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
 
 
+def test_chat_page_ctrl_enter_sends(chat_page: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    sent: list[bool] = []
+    monkeypatch.setattr(chat_page, "send", lambda: sent.append(True))
+    event = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
+    assert chat_page.eventFilter(chat_page.input_edit, event) is True
+    assert sent == [True]
+
+
 def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
     state = _state("dead")
     monkeypatch.setattr(llmenv, "list_states", lambda: [state])
