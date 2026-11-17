@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -55,6 +56,7 @@ __all__ = [
     "MetricGrid",
     "PageScroll",
     "PathRow",
+    "RowListWidget",
     "apply_splitter_sizes",
     "button",
     "hint_label",
@@ -127,6 +129,27 @@ def make_table_item(text: str) -> QTableWidgetItem:  # pragma: no cover - Qt 控
     item = QTableWidgetItem(text)
     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
     return item
+
+
+class RowListWidget(QListWidget):  # pragma: no cover - Qt 控件
+    """自定义行列表：行宽始终跟随视口，避免反复拖宽 / 拖窄后行宽度残留。
+
+    ``QListWidget.setItemWidget`` 挂上去的行只在 item rect 变大时被 Qt 重新
+    摆正；窗口反复拖拉后行会保留上一次的更大宽度，右半部分被推到视口之外。
+    这里在每次尺寸变化后按当前可视区域重新摆正每行几何。
+    """
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.sync_row_widths()
+
+    def sync_row_widths(self) -> None:
+        """把每行自定义控件的几何对齐到列表当前可视区域。"""
+        for index in range(self.count()):
+            item = self.item(index)
+            widget = self.itemWidget(item)
+            if widget is not None:
+                widget.setGeometry(self.visualRect(self.indexFromItem(item)))
 
 
 class Card(QFrame):  # pragma: no cover - Qt 控件
@@ -390,6 +413,11 @@ class Collapsible(QWidget):  # pragma: no cover - Qt 控件
     def _on_toggled(self, checked: bool) -> None:
         self.content.setVisible(checked)
         self.toggle.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+
+    def set_title(self, title: str) -> None:
+        """更新分区标题（如追加文件数量等动态信息）。"""
+        self._title = title
+        self.toggle.setText(title)
 
     def set_expanded(self, expanded: bool) -> None:
         """展开 / 收起（同步箭头与内容可见性）。"""

@@ -3,7 +3,7 @@
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 搜索（类别 / 系列 / 排序 / 翻页）、模型详情与文件清单；
+- **浏览**：ModelScope 搜索（类别 / 系列 / 排序 / 翻页）、自定义结果行与可折叠的详情 / README / 文件清单；
 - **下载**：目标目录（唯一模型目录）、下载源、并发、SHA256 校验、包含 / 排除掩码、
   汇总 / 单文件进度、失败记录与重试、日志；
 - **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,9 +34,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -58,6 +60,7 @@ from fcmd.apps.locllm.llmdown import (
     ModelFile,
     ModelInfo,
     ModelSearch,
+    ModelSummary,
     ModelTask,
     ModelToolError,
     ProgressEvent,
@@ -77,8 +80,11 @@ from fcmd.apps.locllm.llmdown import (
 )
 from fcmd.gui.qt.widgets import (
     Card,
+    Collapsible,
+    ElidedLabel,
     LogView,
     PageScroll,
+    RowListWidget,
     button,
     hint_label,
     make_splitter,
@@ -102,7 +108,6 @@ _SOURCE_LABELS = _locllmw_models._SOURCE_LABELS
 _SOURCE_KEYS = _locllmw_models._SOURCE_KEYS
 _SORT_LABELS = _locllmw_models._SORT_LABELS
 _SORT_KEYS = _locllmw_models._SORT_KEYS
-_MODEL_COLUMNS = _locllmw_models._MODEL_COLUMNS
 _TAB_NAMES = _locllmw_models.MODEL_TAB_NAMES
 _DEFAULT_TAB = _locllmw_models.DEFAULT_MODEL_TAB
 
@@ -122,8 +127,56 @@ def _task_text(exc: BaseException) -> str:
     )
 
 
+class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
+    """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
+
+    只展示仓库名、系列 / 任务与下载 / 体积；详情、README 与文件清单在右侧
+    折叠区里按需展开，避免列表被表格列挤窄。
+    """
+
+    def __init__(self, item: ModelSummary, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        title, subtitle, metrics = _locllmw_models.model_item_lines(item)
+        self.setObjectName("ModelItemRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", "false")
+        self.setToolTip(item.repo)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(12)
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(3)
+        name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=self)
+        name.setObjectName("ModelItemName")
+        name.setToolTip(item.repo)
+        left.addWidget(name)
+        sub = QLabel(subtitle, self)
+        sub.setObjectName("Hint")
+        sub.setWordWrap(False)
+        sub.setMinimumWidth(0)
+        sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        sub.setToolTip(subtitle)
+        left.addWidget(sub)
+        outer.addLayout(left, 1)
+
+        stats = QLabel(metrics, self)
+        stats.setObjectName("Hint")
+        stats.setWordWrap(False)
+        stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        stats.setToolTip(metrics)
+        outer.addWidget(stats, 0)
+
+    def set_selected(self, selected: bool) -> None:
+        """切换选中态边框（列表当前行变化时由页面同步）。"""
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
-    """浏览页：搜索、结果表、详情与文件清单。"""
+    """浏览页：搜索、自定义结果行与折叠式详情 / README / 文件清单。"""
 
     repoSelected = Signal(str)
 
@@ -135,10 +188,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.current_files: tuple[ModelFile, ...] = ()
         self._tasks: tuple[ModelTask, ...] = ()
         self._last_result: ModelSearch | None = None
+        self._result_items: tuple[ModelSummary, ...] = ()
         self._page = 1
         self._sort_key = "default"
-        self._sort_column: str | None = None
-        self._sort_desc = True
         self._series_options: tuple[str, ...] = ()
         self._series_applied = ""
         self._detail_generation = 0
@@ -197,27 +249,23 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
         split = make_splitter(sizes=(460, 520), parent=self)
         layout.addWidget(split, 1)
-        list(_MODEL_COLUMNS)
         list_card = Card("", split)
-        self.models = make_table(
-            [title for title, _width, _anchor in _MODEL_COLUMNS.values()],
-            widths=[width for _title, width, _anchor in _MODEL_COLUMNS.values()],
-            stretch_columns=(0,),
-            parent=list_card,
-        )
-        self.models.setFrameShape(QFrame.Shape.NoFrame)
+        self.models = RowListWidget(list_card)
+        self.models.setObjectName("ModelResultList")
+        self.models.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
+        self.models.setSpacing(4)
         self.models.setMinimumHeight(200)
-        self.models.itemSelectionChanged.connect(self._on_model_selected)
-        self.models.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
+        self.models.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.models.currentRowChanged.connect(self._on_model_selected)
         list_card.body.addWidget(self.models)
         split.addWidget(list_card)
 
-        right = make_splitter(Qt.Orientation.Vertical, sizes=(260, 230, 200), parent=split)
+        right = PageScroll(split, margins=(0, 0, 4, 8))
         split.addWidget(right)
 
         detail = Card("", right)
         detail_layout = detail.body
-        detail_layout.setSpacing(4)
+        detail_layout.setSpacing(6)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         titles = QVBoxLayout()
@@ -226,8 +274,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.title.setObjectName("Value")
         self.title.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.subtitle = hint_label("")
+        self.key_summary = hint_label("", wrap=False)
         titles.addWidget(self.title)
         titles.addWidget(self.subtitle)
+        titles.addWidget(self.key_summary)
         header.addLayout(titles, 1)
         self.go_download = button("前往下载", kind="primary")
         self.go_download.setEnabled(False)
@@ -235,6 +285,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         header.addWidget(self.go_download)
         detail_layout.addLayout(header)
 
+        self.detail_section = Collapsible("详细信息", expanded=False, parent=detail)
         self.meta_grid = QGridLayout()
         self.meta_grid.setContentsMargins(0, 0, 0, 0)
         self.meta_grid.setHorizontalSpacing(10)
@@ -270,31 +321,33 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.meta_values[name] = value
         self.meta_grid.setColumnStretch(0, 1)
         self.meta_grid.setColumnStretch(1, 1)
-        detail_layout.addLayout(self.meta_grid)
-        right.addWidget(detail)
+        self.detail_section.body.addLayout(self.meta_grid)
+        detail_layout.addWidget(self.detail_section)
 
-        readme_card = Card("README", right)
-        self.readme = QPlainTextEdit(readme_card)
+        self.readme_section = Collapsible("README", expanded=False, parent=detail)
+        self.readme = QPlainTextEdit(self.readme_section.content)
         self.readme.setObjectName("Readme")
         self.readme.setFrameShape(QFrame.Shape.NoFrame)
         self.readme.setReadOnly(True)
-        self.readme.setMinimumHeight(90)
-        readme_card.body.addWidget(self.readme)
-        right.addWidget(readme_card)
+        self.readme.setMinimumHeight(120)
+        self.readme_section.body.addWidget(self.readme)
+        detail_layout.addWidget(self.readme_section)
 
-        files_card = Card("文件清单", right)
+        self.files_section = Collapsible("文件清单", expanded=False, parent=detail)
         self.files = make_table(
             ("文件", "大小", "SHA256"),
             widths=(360, 90, 130),
             stretch_columns=(0,),
-            parent=files_card,
+            parent=self.files_section.content,
         )
         self.files.setFrameShape(QFrame.Shape.NoFrame)
-        self.files.setMinimumHeight(120)
-        files_card.body.addWidget(self.files)
+        self.files.setMinimumHeight(160)
+        self.files_section.body.addWidget(self.files)
         self.files_hint = hint_label("")
-        files_card.body.addWidget(self.files_hint)
-        right.addWidget(files_card)
+        self.files_section.body.addWidget(self.files_hint)
+        detail_layout.addWidget(self.files_section)
+        detail_layout.addStretch(1)
+        right.body.addWidget(detail)
 
         self._load_tasks()
 
@@ -362,20 +415,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._sort_key = _SORT_KEYS.get(self.sort_combo.currentText(), "default")
         self.start_search(1)
 
-    def _on_header_clicked(self, index: int) -> None:
-        keys = list(_MODEL_COLUMNS)
-        if not 0 <= index < len(keys):
-            return
-        column = keys[index]
-        if self._sort_column != column:
-            self._sort_column = column
-            self._sort_desc = column in {"downloads", "size"}
-        elif self._sort_desc:
-            self._sort_desc = False
-        else:
-            self._sort_column = None
-        self._render_results()
-
     def _on_series_changed(self) -> None:
         label = self.series_combo.currentText().strip()
         if label in ("", _ALL_SERIES) or label not in self._series_options:
@@ -415,7 +454,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.series_combo.setCurrentText(self._series_applied or _ALL_SERIES)
         self.series_combo.blockSignals(False)
 
-    def _render_results(self) -> None:  # noqa: PLR0912 - 结果渲染集中处理筛选 / 排序 / 翻页状态
+    def _render_results(self) -> None:
         result = self._last_result
         if result is None:
             return
@@ -425,21 +464,20 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             items = _locllmw_models.filter_models(items, task.chinese_name)
         self._update_series_options(items)
         items = filter_by_series(items, self._series_applied)
-        if self._sort_column is None:
-            items = sort_by_popularity(items)
-        else:
-            items = _locllmw_models.sort_models(items, self._sort_column, self._sort_desc)
+        items = sort_by_popularity(items)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),
             items[0].repo if items else None,
         )
-        self.models.setRowCount(len(items))
-        for row, item in enumerate(items):
-            for column, text in enumerate(_locllmw_models.model_row(item)):
-                cell = make_table_item(text)
-                if column == 0:
-                    cell.setData(Qt.ItemDataRole.UserRole, item.repo)
-                self.models.setItem(row, column, cell)
+        self._result_items = items
+        self.models.clear()
+        for item in items:
+            list_item = QListWidgetItem(self.models)
+            list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            row = _ModelItemRow(item, self.models)
+            list_item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self.models.setItemWidget(list_item, row)
+        self.models.sync_row_widths()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
         filters = []
         if task is not None:
@@ -451,22 +489,23 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.prev_button.setEnabled(result.page > 1)
         self.next_button.setEnabled(result.page < pages)
         if selected is not None:
-            for row in range(self.models.rowCount()):
-                cell = self.models.item(row, 0)
-                if cell is not None and cell.data(Qt.ItemDataRole.UserRole) == selected:
-                    self.models.selectRow(row)
+            for row, item in enumerate(items):
+                if item.repo == selected:
+                    self.models.setCurrentRow(row)
                     break
         if not items:
             self.page_label.setText("没有匹配的模型，可清空关键字或翻页后再试")
 
     # -- 详情 ---------------------------------------------------------- #
-    def _on_model_selected(self) -> None:
-        row = self.models.currentRow()
-        if row < 0:
+    def _on_model_selected(self, current: int) -> None:
+        for index in range(self.models.count()):
+            widget = self.models.itemWidget(self.models.item(index))
+            if isinstance(widget, _ModelItemRow):
+                widget.set_selected(index == current)
+        if current < 0 or current >= len(self._result_items):
             return
-        cell = self.models.item(row, 0)
-        repo = cell.data(Qt.ItemDataRole.UserRole) if cell is not None else None
-        if isinstance(repo, str) and repo and repo != self.current_repo:
+        repo = self._result_items[current].repo
+        if repo and repo != self.current_repo:
             self.load_repo(repo)
 
     def load_repo(self, repo: str) -> None:
@@ -479,11 +518,15 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.go_download.setEnabled(False)
         self.title.setText(repo)
         self.subtitle.setText("正在加载详情…")
+        self.key_summary.setText("")
         for value in self.meta_values.values():
             value.setText("-")
         self.readme.clear()
         self.files.setRowCount(0)
         self.files_hint.setText("")
+        self.files_section.set_title("文件清单")
+        for section in (self.detail_section, self.readme_section, self.files_section):
+            section.set_expanded(False)
         self.page_label.setText(f"正在加载 {repo} …")
         submit(
             self._detail_work,
@@ -516,6 +559,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         summary = info.summary
         self.title.setText(summary.repo)
         self.subtitle.setText(summary.chinese_name or info.description[:80] or " ")
+        _, key_subtitle, key_metrics = _locllmw_models.model_item_lines(summary)
+        self.key_summary.setText(" · ".join(part for part in (key_subtitle, key_metrics) if part and part != "-"))
         for name, value in _locllmw_models.detail_pairs(info):
             if name in self.meta_values:
                 self.meta_values[name].setText(value)
@@ -529,8 +574,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.files.setItem(row, 2, make_table_item(file.sha256[:12] or "-"))
         if files:
             self.files_hint.setText(f"共 {len(files)} 个文件，合计 {human_size(total)}（ModelScope 清单）")
+            self.files_section.set_title(f"文件清单（{len(files)} 个 · {human_size(total)}）")
         else:
             self.files_hint.setText(f"文件清单获取失败：{error}" if error else "文件清单为空")
+            self.files_section.set_title("文件清单（0 个）")
         self.go_download.setEnabled(True)
         self.page_label.setText(f"已加载 {summary.repo}")
         self.repoSelected.emit(summary.repo)

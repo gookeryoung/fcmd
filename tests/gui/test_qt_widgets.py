@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, LogView, MetricGrid, button
+from fcmd.gui.qt.widgets import Card, Collapsible, LogView, MetricGrid, button
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
 
@@ -90,6 +90,17 @@ def test_card_body_accepts_widgets() -> None:
     assert card.body.count() == 1
     grid.set_value("cpu", "10 %")
     assert grid.value("cpu") == "10 %"
+
+
+def test_collapsible_set_title_updates_toggle() -> None:
+    """文件清单等动态数量通过 set_title 更新折叠区标题。"""
+    section = Collapsible("文件清单")
+    assert section.toggle.text() == "文件清单"
+    assert not section.is_expanded()
+    section.set_title("文件清单（2 个 · 4.00 KB）")
+    assert section.toggle.text() == "文件清单（2 个 · 4.00 KB）"
+    section.set_expanded(True)
+    assert section.is_expanded()
 
 
 def test_log_view_roundtrip() -> None:

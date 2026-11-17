@@ -24,6 +24,7 @@ from fcmd.apps.locllm._locllmw_models import (
     detail_pairs,
     filter_models,
     local_row,
+    model_item_lines,
     model_row,
     open_path,
     parse_patterns,
@@ -105,6 +106,25 @@ class TestFormatting:
     def test_model_row_empty(self) -> None:
         assert model_row(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "Qwen", "-", "0", "-")
         assert model_row(ModelSummary(repo="")) == ("", "其他", "-", "0", "-")
+
+    def test_model_item_lines(self) -> None:
+        summary = ModelSummary(
+            repo="Qwen/demo",
+            downloads=1234,
+            stars=9,
+            tasks=("文本生成", "视觉问答"),
+            updated=1700000000,
+            storage_size=2048,
+        )
+        assert model_item_lines(summary) == (
+            "Qwen/demo",
+            "Qwen · 文本生成、视觉问答",
+            "下载 1,234 · 2.00 KB",
+        )
+
+    def test_model_item_lines_empty(self) -> None:
+        assert model_item_lines(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "Qwen", "-")
+        assert model_item_lines(ModelSummary(repo="")) == ("", "其他", "-")
 
     def test_local_row(self) -> None:
         path = Path("/models/Qwen/demo")

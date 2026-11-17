@@ -320,9 +320,9 @@ QFrame#ActionBar {
 }
 QSplitter::handle { background: $border; }
 QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
-QListWidget#RecommendationList { background: transparent; border: none; outline: 0; }
-QListWidget#RecommendationList::item { background: transparent; border: none; padding: 0; }
-QFrame#RecommendationRow {
+QListWidget#RecommendationList, QListWidget#ModelResultList { background: transparent; border: none; outline: 0; }
+QListWidget#RecommendationList::item, QListWidget#ModelResultList::item { background: transparent; border: none; padding: 0; }
+QFrame#RecommendationRow, QFrame#ModelItemRow {
     background: $surface;
     border: 1px solid $border;
     border-radius: 8px;
@@ -331,9 +331,9 @@ QFrame#RecommendationRow[band="excellent"] { background: $success_soft; border-c
 QFrame#RecommendationRow[band="good"] { background: $accent_soft; border-color: $accent; }
 QFrame#RecommendationRow[band="fair"] { background: $warning_soft; border-color: $warning; }
 QFrame#RecommendationRow[band="limited"] { background: $danger_soft; border-color: $danger; }
-QFrame#RecommendationRow:hover { border-width: 2px; }
-QFrame#RecommendationRow[selected="true"] { border-width: 2px; }
-QLabel#RecommendationName { font-size: ${font_heading}pt; font-weight: 600; }
+QFrame#RecommendationRow:hover, QFrame#ModelItemRow:hover { border-width: 2px; }
+QFrame#RecommendationRow[selected="true"], QFrame#ModelItemRow[selected="true"] { border-width: 2px; }
+QLabel#RecommendationName, QLabel#ModelItemName { font-size: ${font_heading}pt; font-weight: 600; }
 QLabel#ScoreBadge {
     border: 2px solid $border;
     border-radius: 22px;
