@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +29,7 @@ from fcmd.apps.locllm.llmbase import human_size
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
+    ElidedLabel,
     PageScroll,
     button,
     hint_label,
@@ -88,15 +90,17 @@ class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(3)
-        name = QLabel(recommendation.model.path.name, self)
+        name = ElidedLabel(recommendation.model.path.name, parent=self)
         name.setObjectName("RecommendationName")
-        name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        name.setMinimumWidth(0)
         name.setToolTip(str(recommendation.model.path))
         left.addWidget(name)
         params = QLabel(recommendation_params_html(recommendation), self)
         params.setObjectName("Hint")
         params.setTextFormat(Qt.TextFormat.RichText)
         params.setWordWrap(False)
+        params.setMinimumWidth(0)
+        params.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         left.addWidget(params)
         outer.addLayout(left, 1)
 
@@ -104,6 +108,8 @@ class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
         perf.setObjectName("Hint")
         perf.setTextFormat(Qt.TextFormat.RichText)
         perf.setWordWrap(False)
+        perf.setMinimumWidth(0)
+        perf.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         perf.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         outer.addWidget(perf, 0)
 
@@ -221,8 +227,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         layout = scroll.body
         outer.addWidget(scroll)
         layout.addWidget(self._build_hardware())
-        layout.addWidget(self._build_recommendations())
-        layout.addStretch(1)
+        layout.addWidget(self._build_recommendations(), 1)
 
         state.hardwareChanged.connect(lambda _snapshot: self.refresh_hardware())
         state.hardwareFailed.connect(self._on_hardware_failed)
@@ -313,11 +318,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._recommend_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._recommend_list.setSpacing(4)
         self._recommend_list.setMinimumHeight(120)
+        self._recommend_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._recommend_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._recommend_list.currentRowChanged.connect(self._on_recommendation_selected)
         self._recommend_list.itemDoubleClicked.connect(lambda _item: self.apply_recommendation())
         self._recommend_list.itemActivated.connect(lambda _item: self.apply_recommendation())
-        card.body.addWidget(self._recommend_list)
+        card.body.addWidget(self._recommend_list, 1)
         row = QHBoxLayout()
         self._recommend_status = hint_label("等待硬件检测与模型扫描…")
         self._apply_button = button("用此配置启动")
@@ -334,8 +340,9 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             item = QListWidgetItem(self._recommend_list)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             row = RecommendationRow(recommendation, self._recommend_list)
-            item.setSizeHint(row.sizeHint())
-            self._recommend_list.addItem(item)
+            # 宽度交给列表铺满视口（0 不会限制宽度），只固定行高，避免长模型名
+            # 把行撑到视口之外导致右侧内容被裁。
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
             self._recommend_list.setItemWidget(item, row)
         if self._recommendations:
             self._recommend_list.setCurrentRow(0)

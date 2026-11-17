@@ -206,6 +206,7 @@ def test_recommendation_list_uses_custom_row(overview: Any, tmp_path: Path) -> N
     assert isinstance(card, RecommendationRow)
     name = card.findChild(QLabel, "RecommendationName")
     assert name is not None
-    assert name.text() == row.model.path.name
+    text = name.fullText() if hasattr(name, "fullText") else name.text()
+    assert text == row.model.path.name
     assert page._recommend_list.currentRow() == 0
     assert card.property("selected") == "true"

@@ -262,3 +262,41 @@ def test_overview_gauges_paint_event_runs(window: Any) -> None:
     gauge.set_usage(42.0, "1.0 / 24.0 GB")
     gauge.paintEvent(QPaintEvent(gauge.rect()))
     assert gauge._percent == 42.0
+
+
+def test_recommendation_list_fills_width_without_clipping(window: Any) -> None:
+    """推荐列表宽度跟随视口（长模型名不撑宽），高度随卡片扩展且不出现内层滚动。"""
+    from pathlib import Path
+
+    from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    window.resize(1000, 800)
+    window.state.hardware = HardwareSnapshot(
+        gpu="RTX 4090",
+        gpu_mib=24576,
+        cpu="Intel i9",
+        cpu_cores=24,
+        cpu_threads=32,
+        memory_total=64 * 1024**3,
+    )
+    root = Path(window.state.settings_path or "")
+    models = []
+    for index in range(3):
+        path = root / f"Qwen3-Coder-30B-A3B-Instruct-very-long-model-name-{index}-Q5_K_M.gguf"
+        models.append(ModelEntry(root=root, path=path, size=5 * 1024**3, tags=("代码",)))
+    window.state.models = models
+    window.overview.refresh_recommendations()
+    window.show()
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.processEvents()
+    recommend_list = window.overview._recommend_list
+    assert recommend_list.count() == 3
+    assert recommend_list.horizontalScrollBar().maximum() == 0
+    assert recommend_list.verticalScrollBar().maximum() == 0
+    for index in range(recommend_list.count()):
+        item = recommend_list.item(index)
+        widget = recommend_list.itemWidget(item)
+        assert widget is not None
+        assert widget.width() <= recommend_list.viewport().width()
