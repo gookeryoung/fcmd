@@ -30,6 +30,7 @@ from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import ServeState, human_size
 from fcmd.apps.locllm.llmserve import read_log
+from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
@@ -254,13 +255,19 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             self._detected_label.setText("尚未检测硬件" if not self.state.detecting else "正在检测硬件…")
             return
         self._detect_button.setEnabled(True)
-        gpu = (
-            f"{snapshot.gpu} · {snapshot.gpu_mib / 1024:.0f} GB 显存"
-            if snapshot.gpu_mib
-            else "未检测到 NVIDIA GPU（CPU 推理）"
-        )
+        theme = _qt_theme.load_theme()
+        if snapshot.gpu_mib:
+            gpu = _qt_theme.tiered_value_html(
+                theme,
+                snapshot.gpu,
+                f"{snapshot.gpu_mib / 1024:.0f} GB 显存",
+            )
+        else:
+            gpu = "未检测到 NVIDIA GPU（CPU 推理）"
         self._hardware_values["gpu"].setText(gpu)
-        self._hardware_values["cpu"].setText(f"{snapshot.cpu}（{snapshot.cpu_cores} 核 / {snapshot.cpu_threads} 线程）")
+        self._hardware_values["cpu"].setText(
+            _qt_theme.tiered_value_html(theme, snapshot.cpu, f"{snapshot.cpu_cores} 核 / {snapshot.cpu_threads} 线程")
+        )
         self._hardware_values["memory"].setText(human_size(snapshot.memory_total) if snapshot.memory_total else "-")
         models_dir = llmenv.models_dir()
         disk = disk_for_path(models_dir, snapshot.disks)

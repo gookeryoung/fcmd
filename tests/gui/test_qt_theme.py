@@ -59,6 +59,17 @@ def test_template_tokens_fall_back_to_candidate_family() -> None:
     assert tokens["mono_family"] == _qt_theme.MONO_FONT_CANDIDATES[0]
 
 
+def test_tiered_value_html_uses_theme_fonts_and_escapes() -> None:
+    """分层主值取标题字号加粗、说明取次要字号与 muted 色，并转义特殊字符。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    html_text = _qt_theme.tiered_value_html(theme, "NVIDIA RTX <X>", "24 GB 显存")
+    assert f"font-size:{theme.fonts.heading}pt; font-weight:600;" in html_text
+    assert f"font-size:{theme.fonts.small}pt" in html_text
+    assert f"color:{theme.palette.muted}" in html_text
+    assert "NVIDIA RTX &lt;X&gt;" in html_text
+    assert "24 GB 显存" in html_text
+
+
 def test_control_height_follows_font_metrics() -> None:
     """统一控件高度按字号换算成逻辑像素，字号变大时同比变大（不写死物理像素）。"""
     theme = _guitheme.resolve_theme("dark-blue")
