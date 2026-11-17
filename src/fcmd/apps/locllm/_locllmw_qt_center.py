@@ -1,10 +1,9 @@
-"""locllmw（Qt）模型中心：ModelScope 浏览器 / 已安装 / 转换 / 量化四个子页。
+"""locllmw（Qt）模型中心：ModelScope 浏览器 / 转换 / 量化三个子页。
 
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
 - **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，行内提供下载按钮，展开显示详情元数据，底部右侧显示下载进度；
-- **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
 - **转换**：HF safetensors → GGUF（刷新模型列表、精度 / 解释器 / 脚本 / 引擎 tag、
   输出位置与覆盖开关、计划预览、进度与日志）；
 - **量化**：GGUF 量化（输入文件、全量模型下拉、量化器环境、量化类型、输出目录、
@@ -52,13 +51,11 @@ from fcmd.apps.locllm import (
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
 from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmdown import (
-    LocalModel,
     ModelInfo,
     ModelSearch,
     ModelSummary,
     ModelToolError,
     ProgressEvent,
-    delete_local_model,
     download_files,
     fetch_model_info,
     filter_files,
@@ -728,156 +725,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return False
         self._stop_requested = True
         return True
-
-
-class _InstalledPanel(QWidget):  # pragma: no cover - Qt 控件
-    """已安装页：模型仓库（扫描 / 打开 / 删除）与运行用 GGUF 分组树。"""
-
-    repoActivated = Signal(str)
-
-    def __init__(self, state: LocllmState, fit_resolver: Any = None, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        from fcmd.apps.locllm._locllmw_qt_models import ModelTree
-
-        self.state = state
-        self._local_models: list[LocalModel] = []
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        repos = Card("模型仓库（下载目录）")
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        bar.setSpacing(6)
-        refresh = button("刷新仓库列表")
-        refresh.clicked.connect(self.refresh)
-        bar.addWidget(refresh)
-        open_selected = button("打开目录")
-        open_selected.clicked.connect(self.open_selected)
-        bar.addWidget(open_selected)
-        self.delete_button = button("删除模型", kind="danger")
-        self.delete_button.clicked.connect(self.delete_selected)
-        bar.addWidget(self.delete_button)
-        bar.addWidget(hint_label("仅在二次确认后删除整个模型目录"))
-        bar.addStretch(1)
-        self.repo_hint = hint_label("")
-        bar.addWidget(self.repo_hint)
-        repos.body.addLayout(bar)
-        self.repos = make_table(
-            ("仓库", "大小", "文件", "状态", "路径"),
-            widths=(220, 90, 70, 150, 320),
-            stretch_columns=(0, 4),
-            parent=repos,
-        )
-        self.repos.setMinimumHeight(120)
-        self.repos.cellDoubleClicked.connect(lambda _row, _column: self._open_repo())
-        repos.body.addWidget(self.repos)
-        layout.addWidget(repos)
-
-        self.card = Card("运行模型（模型目录中的 GGUF）")
-        self.tree = ModelTree(state, self.card)
-        if fit_resolver is not None:
-            self.tree.set_fit_resolver(fit_resolver)
-        self.tree.tree.setMinimumHeight(240)
-        self.card.body.addWidget(self.tree)
-        layout.addWidget(self.card, 1)
-        self.refresh()
-
-    def refresh(self) -> None:
-        root = _llmconfig.models_dir()
-        self.repo_hint.setText(f"正在扫描 {root} …")
-        submit(
-            scan_local_models,
-            root,
-            on_done=self._render,
-            on_error=lambda message: self._repo_error(message, root),
-        )
-
-    def _repo_error(self, message: str, root: Path) -> None:
-        self.repo_hint.setText(f"扫描本地模型失败: {message}")
-        if not root.is_dir():
-            self.repo_hint.setText(f"模型目录不存在: {root}")
-
-    def _render(self, models: list[LocalModel]) -> None:
-        self._local_models = models
-        root = _llmconfig.models_dir()
-        self.repos.setRowCount(len(models))
-        for row, item in enumerate(models):
-            for column, text in enumerate(_locllmw_models.local_row(item)):
-                cell = make_table_item(text)
-                if column == 0:
-                    cell.setData(Qt.ItemDataRole.UserRole, item.repo)
-                self.repos.setItem(row, column, cell)
-        if models:
-            total = sum(item.size for item in models)
-            self.repo_hint.setText(f"模型仓库 {len(models)} 个，合计 {human_size(total)}；运行模型按 GGUF 文件计数")
-        elif not root.is_dir():
-            self.repo_hint.setText(f"模型目录不存在: {root}")
-        else:
-            self.repo_hint.setText(f"模型目录 {root} 下没有模型")
-        self.card.setTitle(f"运行模型（模型目录中的 GGUF，共 {len(self.state.models)} 个）")
-        self.tree.refresh()
-
-    def _current(self) -> LocalModel | None:
-        row = self.repos.currentRow()
-        if row < 0:
-            return None
-        cell = self.repos.item(row, 0)
-        repo = cell.data(Qt.ItemDataRole.UserRole) if cell is not None else None
-        return next((item for item in self._local_models if item.repo == repo), None)
-
-    def open_selected(self) -> None:
-        model = self._current()
-        target = model.path if model is not None else _llmconfig.models_dir()
-        if not target.is_dir():
-            QMessageBox.warning(self, "目录不存在", f"目录不存在:\n{target}")
-            return
-        try:
-            _locllmw_models.open_path(target)
-        except OSError as exc:
-            QMessageBox.critical(self, "打开目录失败", str(exc))
-
-    def _open_repo(self) -> None:
-        model = self._current()
-        if model is None:
-            self.open_selected()
-            return
-        self.repoActivated.emit(model.repo)
-
-    def delete_selected(self) -> None:
-        model = self._current()
-        if model is None:
-            self.repo_hint.setText("请先在列表中选择要删除的模型")
-            return
-        answer = QMessageBox.question(
-            self,
-            "确认删除模型",
-            f"将从磁盘删除以下目录：\n\n{model.path}\n\n"
-            f"大小：{human_size(model.size)}，文件数：{model.files}\n\n该操作不可撤销，确定删除？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        self.delete_button.setEnabled(False)
-        self.repo_hint.setText(f"正在删除 {model.repo} …")
-        submit(
-            delete_local_model,
-            _llmconfig.models_dir(),
-            model.repo,
-            on_done=self._deleted,
-            on_error=self._delete_error,
-            on_finished=lambda: self.delete_button.setEnabled(True),
-        )
-
-    def _deleted(self, removed: object) -> None:
-        self.repo_hint.setText(f"已删除 {removed}")
-        self.refresh()
-
-    def _delete_error(self, message: str) -> None:
-        self.repo_hint.setText(f"删除失败: {message}")
-        QMessageBox.critical(self, "删除失败", message)
 
 
 class _ConvertPanel(QWidget):  # pragma: no cover - Qt 控件
@@ -1588,7 +1435,7 @@ class _QuantPanel(QWidget):  # pragma: no cover - Qt 控件
 
 
 class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
-    """模型中心的四个子页；宿主窗口提供运行模型树的适配回调。"""
+    """模型中心的三个子页。"""
 
     def __init__(
         self,
@@ -1599,21 +1446,17 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
     ) -> None:
         super().__init__(parent)
         self.state = state
+        del fit_resolver
         self.browse = _BrowsePanel(state, self)
-        self.installed = _InstalledPanel(state, fit_resolver, self)
         self.convert = _ConvertPanel(self)
         self.quant = _QuantPanel(self)
         self.tabs = QTabWidget(self)
-        for name, page in zip(_TAB_NAMES, (self.browse, self.installed, self.convert, self.quant), strict=True):
+        for name, page in zip(_TAB_NAMES, (self.browse, self.convert, self.quant), strict=True):
             self.tabs.addTab(page, name)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tabs)
         self.tabs.setCurrentIndex(_TAB_NAMES.index(_DEFAULT_TAB))
-        self.browse.downloadFinished.connect(self.installed.refresh)
-        self.installed.repoActivated.connect(self._open_repo)
-        self.card = self.installed.card
-        self.tree = self.installed.tree
         self._install_env_hooks()
 
     def _install_env_hooks(self) -> None:
@@ -1629,14 +1472,9 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
             self.quant._env_loaded = True
             self.quant.refresh_env()
 
-    def _open_repo(self, repo: str) -> None:
-        self.tabs.setCurrentIndex(_TAB_NAMES.index("浏览"))
-        self.browse.open_repo(repo)
-
     def refresh_config(self) -> None:
-        """模型目录变化后刷新已安装列表与转换 / 量化环境。"""
+        """模型目录变化后刷新已安装标识与转换 / 量化环境。"""
         self.browse.refresh_installed()
-        self.installed.refresh()
         self.convert.refresh_env()
         if self.tabs.currentIndex() == _TAB_NAMES.index("量化"):
             self.quant.refresh_env()

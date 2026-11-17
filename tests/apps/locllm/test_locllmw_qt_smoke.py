@@ -83,7 +83,7 @@ def test_window_builds_all_pages(window: Any) -> None:
 def test_generated_pages_expose_core_widgets(window: Any) -> None:
     window.show_page("models")
     models = window.page("models")
-    assert models.card.title().startswith("运行模型")
+    assert [models.tabs.tabText(index) for index in range(models.tabs.count())] == ["浏览", "转换", "量化"]
     window.show_page("chat")
     chat = window.page("chat")
     assert chat.service_combo.count() >= 1
@@ -95,8 +95,8 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     assert settings_page.models_path.value()
 
 
-def test_models_page_fills_hardware_column(window: Any) -> None:
-    """模型页的硬件列必须按运行页当前口径给出适配状态，而不是一律空白。"""
+def test_run_page_tree_fills_hardware_column(window: Any) -> None:
+    """运行页模型树的硬件列必须按当前档位口径给出适配状态，而不是一律空白。"""
     from fcmd.apps.locllm.llmbase import ModelEntry
 
     root = Path("/models")
@@ -107,8 +107,8 @@ def test_models_page_fills_hardware_column(window: Any) -> None:
     window.state.running_paths = set()
     window.state.gpu_mib = 32768
     window.state.gpu_free_mib = 32000
-    window.show_page("models")
-    page = window.page("models")
+    page = window.run_page
+    page.tree.refresh()
     page.tree.expand_all()
     group = page.tree.tree.topLevelItem(0)
     assert group is not None
