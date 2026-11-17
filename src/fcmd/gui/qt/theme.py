@@ -303,8 +303,14 @@ QHeaderView::section {
     border-bottom: 1px solid $border;
 }
 QTableCornerButton::section { background: $surface_hover; border: none; }
+QFrame#Card QTableView, QFrame#Card QTreeView, QFrame#Card QListView,
+QFrame#Card QTreeWidget, QFrame#Card QTableWidget {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+}
 
-QTabWidget::pane { border: 1px solid $border; border-radius: 6px; background: $surface; }
+QTabWidget::pane { border: none; background: transparent; }
 QTabBar::tab {
     background: $surface;
     color: $muted;

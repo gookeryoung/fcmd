@@ -139,6 +139,25 @@ def test_card_uses_plain_frame_and_title_label() -> None:
     assert "background" not in title_block
 
 
+def test_tab_pane_and_nested_tables_are_flat() -> None:
+    """页签内容区与卡片内表格不再叠加边框：外层留给 Card / 行卡片表达层次。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    pane_block = text.split("QTabWidget::pane {", 1)[1].split("}", 1)[0]
+    assert "border: none" in pane_block
+    assert "background: transparent" in pane_block
+    for selector in (
+        "QFrame#Card QTableView",
+        "QFrame#Card QTreeView",
+        "QFrame#Card QListView",
+        "QFrame#Card QTreeWidget",
+        "QFrame#Card QTableWidget",
+    ):
+        assert selector in text
+    nested_block = text.split("QFrame#Card QTreeWidget, QFrame#Card QTableWidget {", 1)[1].split("}", 1)[0]
+    assert "border: none" in nested_block
+    assert "background: transparent" in nested_block
+
+
 def test_secondary_buttons_keep_visible_border() -> None:
     """次要（Ghost）按钮也要有可见边框，否则在卡片里看起来像纯文字标签。"""
     text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
