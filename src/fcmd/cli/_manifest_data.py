@@ -172,7 +172,7 @@ DESCRIPTIONS: dict[str, str] = {
     "dynacalc": "装药密度—尺寸—工艺缺陷→爆轰传递的参数化算例：YAML 参数矩阵 + dynacalc-model/1 模型映射，批量生成 LS-DYNA 关键字 deck，调度求解（支持 dry-run 与假求解器），回收 glstat/matsum/history 并做汇总、两工况对比与工程门控；不含任何真实配方或材料参数",
     "dynacalcw": "dynacalc 的 Qt 窗口：选参数/模型、预览清单、生成 deck、dry-run、执行、查看作业与门控",
     "envdev": "镜像站点探测 / 指定服务镜像测速与自动选取",
-    "envw": "环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor）：用户 / 系统 / 当前进程三作用域，搜索、新建、编辑、删除与重命名，PATH 逐条路径编辑，变量引用展开预览，JSON 备份与恢复；设置持久化到 ~/.fcmd/ui/envw.json",
+    "envw": "环境变量编辑器窗口版（Qt，参考 Rapid Environment Editor）：用户 / 系统 / 当前进程三作用域，搜索、新建、编辑、删除与重命名，PATH 逐条路径编辑，变量引用展开预览，JSON 备份与恢复；设置持久化到 ~/.fcmd/ui/envw.json",
     "filecheck": "文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数",
     "filedate": "添加/更新文件日期前缀",
     "filelevel": "设置文件等级",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "798d53b52e19cb7c77fabcc6faa036c9"
+DIGEST = "9619ed952e133474a8d485799097a646"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
