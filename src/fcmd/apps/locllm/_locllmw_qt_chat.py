@@ -90,6 +90,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         self._session: ChatSession | None = None
         self._running = False
+        self._assistant_started = False
+        self._reasoning_started = False
         self._services: list[tuple[str, ServeState]] = []
         self._manual_choice = False
         self._bridge = _ChatBridge(self)
@@ -338,6 +340,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         if self._session is not None:
             self._session.reset()
         self.transcript.clear()
+        self._assistant_started = False
+        self._reasoning_started = False
         self.status.setText("已开始新对话")
 
     def is_running(self) -> bool:
@@ -380,10 +384,17 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.transcript.ensureCursorVisible()
 
     def _append_delta(self, text: str) -> None:
+        if not self._assistant_started:
+            prefix = "\n\n助手：" if self._reasoning_started else "助手："
+            self._append_text(prefix, "assistant")
+            self._assistant_started = True
         self._append_text(text, "assistant")
 
     def _append_reasoning(self, text: str) -> None:
-        self._append_text(f"[思考] {text}", "reasoning")
+        if not self._reasoning_started:
+            self._append_text("助手（思考）：\n", "reasoning")
+            self._reasoning_started = True
+        self._append_text(text, "reasoning")
 
     # ------------------------------------------------------------------ #
     # 设置与导出
