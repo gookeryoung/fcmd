@@ -170,7 +170,7 @@ DESCRIPTIONS: dict[str, str] = {
     "docdiffw": "文档对比工具窗口版（Qt）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，依赖 Windows + Word + fcmd[win32]",
     "dockercmd": "Docker 镜像仓库登录工具",
     "dynacalc": "装药密度—尺寸—工艺缺陷→爆轰传递的参数化算例：YAML 参数矩阵 + dynacalc-model/1 模型映射，批量生成 LS-DYNA 关键字 deck，调度求解（支持 dry-run 与假求解器），回收 glstat/matsum/history 并做汇总、两工况对比与工程门控；不含任何真实配方或材料参数",
-    "dynacalcw": "dynacalc 的 Tk 窗口：选参数/模型、预览清单、生成 deck、dry-run、执行、查看作业与门控",
+    "dynacalcw": "dynacalc 的 Qt 窗口：选参数/模型、预览清单、生成 deck、dry-run、执行、查看作业与门控",
     "envdev": "镜像站点探测 / 指定服务镜像测速与自动选取",
     "envw": "环境变量编辑器窗口版（Tk，参考 Rapid Environment Editor）：用户 / 系统 / 当前进程三作用域，搜索、新建、编辑、删除与重命名，PATH 逐条路径编辑，变量引用展开预览，JSON 备份与恢复；设置持久化到 ~/.fcmd/ui/envw.json",
     "filecheck": "文件完整性检查：筛查丢失/损坏的视频剧集文件与缺失集数",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "414778455f9e0ca51d4216f0a606a7a3"
+DIGEST = "695092849aed6fa13f7472a44ee2be19"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116
