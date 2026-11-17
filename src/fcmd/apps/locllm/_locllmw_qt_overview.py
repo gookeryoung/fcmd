@@ -122,8 +122,10 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     def _build_hardware(self) -> Card:
         """硬件卡片：标题旁「重新检测」，各行「标签 / 内容」按网格对齐。
 
-        「修改」与「重新检测」都是文字链接（`QPushButton#Link`），不占按钮高度；
-        模型目录用单行省略标签（完整路径在 tooltip），修改链接紧贴在目录文本后。
+        布局分层：主值（型号 / 容量，大字加粗）独占一行；显卡与内存的占用条
+        + 采样文案另起一行，避免与大字混排错乱。「修改」与「重新检测」都是
+        文字链接（`QPushButton#Link`），不占按钮高度；模型目录用单行省略
+        标签（完整路径在 tooltip），修改链接紧贴在目录文本后。
         """
         card = Card()
         header = QHBoxLayout()
@@ -142,54 +144,78 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._hardware_values: dict[str, QLabel] = {}
         self._usage_bars: dict[str, QProgressBar] = {}
         self._usage_labels: dict[str, QLabel] = {}
-        rows = (("显卡", "gpu"), ("处理器", "cpu"), ("内存", "memory"), ("模型目录", "model_disk"))
+
+        def row_label(text: str) -> QLabel:
+            label = QLabel(text, card)
+            label.setObjectName("Hint")
+            return label
+
+        def usage_row(parent: QWidget) -> QHBoxLayout:
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(8)
+            bar = QProgressBar(parent)
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(False)
+            bar.setFixedWidth(160)
+            text = hint_label("等待采样…", wrap=False)
+            row.addWidget(bar, 0, Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
+            row.addStretch(1)
+            return row
+
+        def value_label(parent: QWidget) -> QLabel:
+            value = QLabel("检测中…", parent)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            return value
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(6)
+        grid.setVerticalSpacing(4)
         grid.setColumnStretch(1, 1)
-        for index, (label, key) in enumerate(rows):
-            name = QLabel(label, card)
-            name.setObjectName("Hint")
-            name.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            grid.addWidget(name, index, 0)
+        grid.setColumnMinimumWidth(0, 48)
 
-            cell = QWidget(card)
-            row = QHBoxLayout(cell)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            if key == "model_disk":
-                value = ElidedLabel("检测中…", parent=cell)
-                value.setFixedWidth(420)
-                value.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
-                modify = link_button("修改", tooltip="到设置页修改模型目录")
-                modify.clicked.connect(lambda: self.state.navigate("settings"))
-                self._modify_link = modify
-                row.addWidget(value, 0, Qt.AlignmentFlag.AlignVCenter)
-                row.addWidget(modify, 0, Qt.AlignmentFlag.AlignVCenter)
-                row.addStretch(1)
-            else:
-                value = QLabel("检测中…", cell)
-                value.setWordWrap(key in ("gpu", "cpu"))
-                value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                row.addWidget(value, 0, Qt.AlignmentFlag.AlignVCenter)
-                if key in ("gpu", "memory"):
-                    bar = QProgressBar(cell)
-                    bar.setRange(0, 100)
-                    bar.setValue(0)
-                    bar.setTextVisible(False)
-                    bar.setMinimumWidth(160)
-                    text = hint_label("等待采样…", wrap=False)
-                    text.setMinimumWidth(220)
-                    row.addWidget(bar, 1, Qt.AlignmentFlag.AlignVCenter)
-                    row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
-                    self._usage_bars[key] = bar
-                    self._usage_labels[key] = text
-                else:
-                    row.addStretch(1)
-            grid.addWidget(cell, index, 1)
-            self._hardware_values[key] = value
+        gpu_value = value_label(card)
+        gpu_usage = usage_row(card)
+        self._usage_bars["gpu"] = gpu_usage.itemAt(0).widget()
+        self._usage_labels["gpu"] = gpu_usage.itemAt(1).widget()
+        grid.addWidget(row_label("显卡"), 0, 0, 2, 1, Qt.AlignmentFlag.AlignRight)
+        grid.addWidget(gpu_value, 0, 1)
+        grid.addLayout(gpu_usage, 1, 1)
+        self._hardware_values["gpu"] = gpu_value
+
+        cpu_value = value_label(card)
+        grid.addWidget(row_label("处理器"), 2, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(cpu_value, 2, 1)
+        self._hardware_values["cpu"] = cpu_value
+
+        memory_value = value_label(card)
+        memory_usage = usage_row(card)
+        self._usage_bars["memory"] = memory_usage.itemAt(0).widget()
+        self._usage_labels["memory"] = memory_usage.itemAt(1).widget()
+        grid.addWidget(row_label("内存"), 3, 0, 2, 1, Qt.AlignmentFlag.AlignRight)
+        grid.addWidget(memory_value, 3, 1)
+        grid.addLayout(memory_usage, 4, 1)
+        self._hardware_values["memory"] = memory_value
+
+        disk_value = ElidedLabel("检测中…", parent=card)
+        disk_value.setFixedWidth(420)
+        disk_value.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        modify = link_button("修改", tooltip="到设置页修改模型目录")
+        modify.clicked.connect(lambda: self.state.navigate("settings"))
+        self._modify_link = modify
+        disk_row = QHBoxLayout()
+        disk_row.setContentsMargins(0, 0, 0, 0)
+        disk_row.setSpacing(8)
+        disk_row.addWidget(disk_value, 0, Qt.AlignmentFlag.AlignVCenter)
+        disk_row.addWidget(modify, 0, Qt.AlignmentFlag.AlignVCenter)
+        disk_row.addStretch(1)
+        grid.addWidget(row_label("模型目录"), 5, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        grid.addLayout(disk_row, 5, 1)
+        self._hardware_values["model_disk"] = disk_value
+
         card.body.addLayout(grid)
         return card
 
@@ -268,7 +294,9 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._hardware_values["cpu"].setText(
             _qt_theme.tiered_value_html(theme, snapshot.cpu, f"{snapshot.cpu_cores} 核 / {snapshot.cpu_threads} 线程")
         )
-        self._hardware_values["memory"].setText(human_size(snapshot.memory_total) if snapshot.memory_total else "-")
+        self._hardware_values["memory"].setText(
+            _qt_theme.tiered_value_html(theme, human_size(snapshot.memory_total) if snapshot.memory_total else "-")
+        )
         models_dir = llmenv.models_dir()
         disk = disk_for_path(models_dir, snapshot.disks)
         disk_text = model_disk_text(models_dir, disk)

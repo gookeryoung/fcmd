@@ -365,18 +365,19 @@ def template_tokens(
     return tokens
 
 
-def tiered_value_html(theme: Theme, main: str, detail: str) -> str:
+def tiered_value_html(theme: Theme, main: str, detail: str = "") -> str:
     """生成「主值大字加粗 + 说明小字灰」的富文本，供硬件信息等分层数值使用。
 
-    纯函数：主值用标题字号加粗，说明用次要字号与 ``muted`` 色，
+    纯函数：主值用标题字号加粗；``detail`` 非空时追加小号 muted 色说明。
     字号 / 颜色均取自当前主题，随主题缩放不写死物理像素。
     """
     from html import escape
 
-    return (
-        f'<span style="font-size:{theme.fonts.heading}pt; font-weight:600;">{escape(main)}</span>'
-        f' <span style="font-size:{theme.fonts.small}pt; color:{theme.palette.muted};">{escape(detail)}</span>'
-    )
+    main_html = f'<span style="font-size:{theme.fonts.heading}pt; font-weight:600;">{escape(main)}</span>'
+    if not detail:
+        return main_html
+    note = f' <span style="font-size:{theme.fonts.small}pt; color:{theme.palette.muted};">{escape(detail)}</span>'
+    return main_html + note
 
 
 def stylesheet(

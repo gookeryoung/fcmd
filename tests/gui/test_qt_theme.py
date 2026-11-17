@@ -68,6 +68,9 @@ def test_tiered_value_html_uses_theme_fonts_and_escapes() -> None:
     assert f"color:{theme.palette.muted}" in html_text
     assert "NVIDIA RTX &lt;X&gt;" in html_text
     assert "24 GB 显存" in html_text
+    assert _qt_theme.tiered_value_html(theme, "64 GB") == (
+        f'<span style="font-size:{theme.fonts.heading}pt; font-weight:600;">64 GB</span>'
+    )
 
 
 def test_control_height_follows_font_metrics() -> None:
