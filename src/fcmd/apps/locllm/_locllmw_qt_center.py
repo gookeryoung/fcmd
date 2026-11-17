@@ -726,7 +726,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.detail_view.render(info)
         self._update_row_height(self._expanded_row)
         self.page_label.setText(f"已加载 {info.summary.repo}")
-        self.repoSelected.emit(info.summary.repo)
         self._log(f"已加载模型详情: {info.summary.repo}")
 
     def _log(self, message: str) -> None:
