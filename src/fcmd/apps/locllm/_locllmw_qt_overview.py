@@ -78,9 +78,9 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(self._build_recommendations())
         layout.addWidget(self._build_loaded(), 1)
 
-        state.hardwareChanged.connect(self.refresh_hardware)
+        state.hardwareChanged.connect(lambda _snapshot: self.refresh_hardware())
         state.hardwareFailed.connect(self._on_hardware_failed)
-        state.modelsChanged.connect(self.refresh_recommendations)
+        state.modelsChanged.connect(lambda _outcome: self.refresh_recommendations())
         state.servicesChanged.connect(self.set_services)
         state.sampleUpdated.connect(self.apply_sample)
         self.refresh_hardware()
@@ -186,13 +186,17 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _on_hardware_failed(self, message: str) -> None:
         self._detect_button.setEnabled(True)
+        for value in self._hardware_values.values():
+            value.setText("检测失败")
         self._detected_label.setText(f"检测失败：{message}")
 
     def refresh_hardware(self) -> None:
         """按当前快照（缓存或新检测）刷新硬件卡片。"""
         snapshot = self.state.hardware
         if snapshot is None:
-            self._detected_label.setText("尚未检测硬件")
+            for value in self._hardware_values.values():
+                value.setText("尚未检测" if not self.state.detecting else "检测中…")
+            self._detected_label.setText("尚未检测硬件" if not self.state.detecting else "正在检测硬件…")
             return
         self._detect_button.setEnabled(True)
         gpu = (

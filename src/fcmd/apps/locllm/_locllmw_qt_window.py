@@ -70,6 +70,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             min_size=MIN_SIZE,
             on_close=self._on_close,
             persist=self.state.persist,
+            sidebar_collapsed=self.state.settings.sidebar_collapsed,
         )
         self.overview = OverviewPage(self.state)
         self.run_page = RunPage(self.state)
@@ -87,6 +88,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
         self.state.modelsChanged.connect(self._on_models_changed)
+        self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
         self.run_page.name_combo.currentTextChanged.connect(self.monitor_page.set_target_name)
 
         self.set_status("正在读取服务与模型目录…")
@@ -147,16 +149,31 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     def _on_models_changed(self, outcome: Any) -> None:
         """扫描完成：健康横幅、设置页来源与聊天服务列表同步刷新。"""
-        self.run_page.update_health(
-            getattr(outcome, "issue", None),
-            getattr(outcome, "engine_missing", False),
-            getattr(outcome, "port_busy", False),
-        )
+        issue = getattr(outcome, "issue", None)
+        engine_missing = getattr(outcome, "engine_missing", False)
+        port_busy = getattr(outcome, "port_busy", False)
+        self.run_page.update_health(issue, engine_missing, port_busy)
+        count = len(self.state.models)
+        if issue or engine_missing or port_busy:
+            problems = [
+                text
+                for text in (issue, "引擎未安装" if engine_missing else "", "默认端口被占用" if port_busy else "")
+                if text
+            ]
+            self.set_status("注意：" + "；".join(problems))
+        else:
+            gpu = f"GPU {self.state.gpu_mib // 1024} GB" if self.state.gpu_mib else "CPU 推理"
+            self.set_status(f"环境就绪 · {count} 个模型 · {gpu}")
         self.overview.refresh_hardware()
         if self._settings_page is not None:
             self._settings_page.refresh()
         if self._chat_page is not None:
             self._chat_page.refresh_services()
+
+    def _persist_sidebar_collapsed(self, collapsed: bool) -> None:
+        """折叠状态属于窗口设置，随 ``locllmw.json`` 一起持久化。"""
+        self.state.settings.sidebar_collapsed = collapsed
+        self.state.persist()
 
     def _on_close(self) -> bool:
         """关窗前确认进行中的任务，落盘设置并停掉采样 / 生成。"""

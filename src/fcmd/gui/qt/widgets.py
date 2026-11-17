@@ -21,8 +21,8 @@ from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -100,15 +100,41 @@ def make_table_item(text: str) -> QTableWidgetItem:  # pragma: no cover - Qt 控
     return item
 
 
-class Card(QGroupBox):  # pragma: no cover - Qt 控件
-    """卡片容器：带标题的 ``QGroupBox`` + 纵向布局 ``body``。"""
+class Card(QFrame):  # pragma: no cover - Qt 控件
+    """卡片容器：圆角 ``QFrame`` + 独立标题 ``QLabel`` + 纵向布局 ``body``。
+
+    不用 ``QGroupBox``：它的 ``::title`` 是子控件，QSS 里给标题加背景会在圆角
+    边框上留下方形色块，``subcontrol-origin: margin`` 又会把标题顶到卡片外面。
+    自绘标题（普通 ``QLabel``）是 Qt 自定义卡片的最佳实践：标题与正文同一套
+    布局，主题只负责颜色 / 字重，不依赖样式子控件的位置规则。
+    """
 
     def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
-        super().__init__(title, parent)
+        super().__init__(parent)
         self.setObjectName("Card")
-        self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(0, 4, 0, 0)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        frame = QVBoxLayout(self)
+        frame.setContentsMargins(12, 10, 12, 10)
+        frame.setSpacing(8)
+        self.title_label = QLabel(title, self)
+        self.title_label.setObjectName("CardTitle")
+        self.title_label.setWordWrap(True)
+        self.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.title_label.setVisible(bool(title))
+        frame.addWidget(self.title_label)
+        self.body = QVBoxLayout()
+        self.body.setContentsMargins(0, 0, 0, 0)
         self.body.setSpacing(6)
+        frame.addLayout(self.body, 1)
+
+    def title(self) -> str:
+        """卡片标题文本（空串表示无标题）。"""
+        return self.title_label.text()
+
+    def setTitle(self, title: str) -> None:
+        """更新标题；空串时隐藏标题行，只留正文。"""
+        self.title_label.setText(title)
+        self.title_label.setVisible(bool(title))
 
 
 class HintLabel(QLabel):  # pragma: no cover - Qt 控件

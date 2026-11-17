@@ -341,6 +341,7 @@ source = { editable = "." }
 dependencies = [
     { name = "pillow" },
     { name = "psutil" },
+    { name = "pyside6-essentials" },
     { name = "pyyaml" },
     { name = "rich" },
 ]
@@ -369,7 +370,6 @@ dev = [
     { name = "pymupdf" },
     { name = "pypdf" },
     { name = "pyrefly" },
-    { name = "pyside6-essentials" },
     { name = "pytesseract" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -430,9 +430,6 @@ pe = [
 ppt = [
     { name = "python-pptx" },
 ]
-qt = [
-    { name = "pyside6-essentials" },
-]
 svg = [
     { name = "resvg-py" },
 ]
@@ -461,7 +458,7 @@ requires-dist = [
     { name = "fcmd", extras = ["img"], marker = "extra == 'ocr'" },
     { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "crypto", "archive", "filecheck", "color", "pe", "ppt", "win32"], marker = "extra == 'full'" },
     { name = "fcmd", extras = ["img", "pdf", "ocr", "svg", "ppt"], marker = "extra == 'office'" },
-    { name = "fcmd", extras = ["lint", "test", "full", "qt"], marker = "extra == 'dev'" },
+    { name = "fcmd", extras = ["lint", "test", "full"], marker = "extra == 'dev'" },
     { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.0,<2" },
     { name = "pefile", marker = "extra == 'pe'", specifier = ">=2024.8.26" },
     { name = "pillow", specifier = ">=10" },
@@ -472,7 +469,7 @@ requires-dist = [
     { name = "pymupdf", marker = "extra == 'pdf'", specifier = ">=1.23,<2" },
     { name = "pypdf", marker = "extra == 'pdf'", specifier = ">=5.9.0" },
     { name = "pyrefly", marker = "extra == 'lint'", specifier = ">=1.1.1" },
-    { name = "pyside6-essentials", marker = "extra == 'qt'", specifier = ">=6.9" },
+    { name = "pyside6-essentials", specifier = ">=6.9" },
     { name = "pytesseract", marker = "extra == 'ocr'", specifier = ">=0.3.13" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.24.0" },
@@ -489,7 +486,7 @@ requires-dist = [
     { name = "tox", marker = "extra == 'dev'", specifier = ">=4.25.0" },
     { name = "tox-uv", marker = "extra == 'dev'", specifier = ">=1.13.1" },
 ]
-provides-extras = ["agent", "archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "pe", "qt", "ppt", "svg", "test", "win32"]
+provides-extras = ["agent", "archive", "color", "crypto", "dev", "filecheck", "full", "img", "lint", "ocr", "office", "pdf", "pe", "ppt", "svg", "test", "win32"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "fcmd", extras = ["lint", "test", "full"] }]

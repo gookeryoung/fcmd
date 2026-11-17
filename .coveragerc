@@ -1,6 +1,6 @@
 [run]
 branch = true
-# Qt 控件胶水与 Tk 窗口一致不追求覆盖率（CI 只装 --extra test，无 PySide6）；
+# Qt 控件胶水与 Tk 窗口一致不追求覆盖率（CI 无显示环境）；
 # 页面内的纯逻辑由 tests/apps/locllm/test_locllmw_qt_logic.py 覆盖。
 omit =
     tests/*

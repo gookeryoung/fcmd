@@ -35,6 +35,26 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     win.close()
 
 
+def test_first_page_is_built_immediately(window: Any) -> None:
+    """首屏页面必须已经实例化，不能停在空占位控件上（点击已选中项不会触发切换）。"""
+    assert window.stack.currentWidget() is window.page("overview")
+    assert window.current_page() == "overview"
+
+
+def test_status_reflects_scan_result(window: Any) -> None:
+    """扫描结束后状态栏不能停在「正在读取服务与模型目录…」。"""
+    from types import SimpleNamespace
+
+    window._on_models_changed(SimpleNamespace(issue=None, engine_missing=False, port_busy=False))
+    status = window.status_text()
+    assert "环境就绪" in status
+    assert "个模型" in status
+    window._on_models_changed(SimpleNamespace(issue="模型目录不存在", engine_missing=True, port_busy=False))
+    status = window.status_text()
+    assert status.startswith("注意：")
+    assert "引擎未安装" in status
+
+
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
     assert keys == ("overview", "models", "run", "chat", "lab", "monitor", "settings")
@@ -83,3 +103,30 @@ def test_close_persists_geometry(window: Any, tmp_path: Path) -> None:
     payload = json.loads(settings_file.read_text(encoding="utf-8"))
     assert payload["geometry"]
     assert "hardware" in payload
+
+
+def test_sidebar_collapse_updates_menu_and_settings(window: Any, tmp_path: Path) -> None:
+    assert not window.nav.is_collapsed()
+    window.nav.set_collapsed(True)
+    assert window.sidebar_action.isChecked()
+    payload = json.loads((tmp_path / "ui" / "locllmw.json").read_text(encoding="utf-8"))
+    assert payload["sidebar_collapsed"] is True
+    window.sidebar_action.trigger()  # 可勾选动作：再触发一次即展开
+    assert not window.nav.is_collapsed()
+
+
+def test_sidebar_collapsed_state_restored(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    monkeypatch.setattr(qt_state.LocllmState, "refresh_models", lambda self, port=None: None)
+    monkeypatch.setattr(qt_state.LocllmState, "detect_hardware", lambda self, on_done=None: None)
+    settings_path = tmp_path / "ui" / "locllmw.json"
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps({"sidebar_collapsed": True}), encoding="utf-8")
+    create_application([])
+    win = LocllmWindow(settings_path)
+    win.monitor_page.stop()
+    try:
+        assert win.nav.is_collapsed()
+        assert win.sidebar_action.isChecked()
+    finally:
+        win.close()

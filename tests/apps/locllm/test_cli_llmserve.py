@@ -2519,6 +2519,21 @@ class TestServewSettings:
         path.write_text('{"chat_settings_open": "yes"}', encoding="utf-8")
         assert locllmw.load_settings(path).chat_settings_open is False
 
+    def test_sidebar_collapsed_defaults_to_false(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text("{}", encoding="utf-8")
+        assert locllmw.load_settings(path).sidebar_collapsed is False
+
+    def test_sidebar_collapsed_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        locllmw.save_settings(locllmw.LocllmSettings(sidebar_collapsed=True), path)
+        assert locllmw.load_settings(path).sidebar_collapsed is True
+
+    def test_load_ignores_non_bool_sidebar_collapsed(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"sidebar_collapsed": 1}', encoding="utf-8")
+        assert locllmw.load_settings(path).sidebar_collapsed is False
+
     def test_roundtrip_hardware_and_measured(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         settings = locllmw.LocllmSettings(

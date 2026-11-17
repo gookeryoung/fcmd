@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -100,6 +100,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         min_size: tuple[int, int] = (1000, 800),
         on_close: Callable[[], bool] | None = None,
         persist: Callable[[str], None] | None = None,
+        sidebar_collapsed: bool = False,
     ) -> None:
         super().__init__()
         self._config_name = config_name
@@ -123,7 +124,9 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         layout = QHBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.nav = SidebarNav(title=nav_title or title)
+        collapsed = sidebar_collapsed or bool(self._raw_settings.get("sidebar_collapsed"))
+        self.nav = SidebarNav(title=nav_title or title, collapsed=collapsed)
+        self.nav.collapsedChanged.connect(self._handle_sidebar_collapsed)
         layout.addWidget(self.nav)
         right = QWidget(central)
         right_layout = QVBoxLayout(right)
@@ -156,10 +159,15 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         placeholder = QWidget(self)
         placeholder.setObjectName("PageBody")
         self.stack.addWidget(placeholder)
-        if not self._current:
+        first = not self._current
+        if first:
             self._current = key
             self.page_title.setText(label)
             self.page_hint.setText(hint)
+        if first:
+            # 首屏页面立即构建：否则右侧只有占位控件，点击已选中的首项也不会
+            # 触发 changed，用户会一直看到空白 / 「读取中」。
+            self.show_page(key)
 
     def show_page(self, key: str) -> None:
         """切换到指定页，必要时先构建页面内容。"""
@@ -271,6 +279,13 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         file_menu.addAction(quit_action)
 
         view_menu = self.menuBar().addMenu("视图")
+        self.sidebar_action = QAction("折叠侧边栏", self)
+        self.sidebar_action.setCheckable(True)
+        self.sidebar_action.setChecked(self.nav.is_collapsed())
+        self.sidebar_action.setShortcut(QKeySequence("Ctrl+Shift+B"))
+        self.sidebar_action.triggered.connect(self.nav.set_collapsed)
+        view_menu.addAction(self.sidebar_action)
+        view_menu.addSeparator()
         self._theme_menu = view_menu.addMenu("主题")
         self._theme_actions: dict[str, QAction] = {}
         for name in _guitheme.theme_names():
@@ -300,6 +315,14 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def theme(self) -> Theme:
         """当前主题。"""
         return self._theme
+
+    def _handle_sidebar_collapsed(self, collapsed: bool) -> None:
+        """同步菜单勾选状态；无自定义 persist 时把折叠状态写进窗口设置。"""
+        self.sidebar_action.blockSignals(True)
+        self.sidebar_action.setChecked(collapsed)
+        self.sidebar_action.blockSignals(False)
+        if self._persist is None:
+            self.save_settings({"sidebar_collapsed": collapsed})
 
     def _show_about(self) -> None:
         """关于对话框：版本、配置文件与当前主题。"""

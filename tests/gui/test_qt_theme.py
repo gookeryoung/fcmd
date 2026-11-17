@@ -30,7 +30,14 @@ def test_stylesheet_substitutes_every_palette_token(name: str) -> None:
 def test_stylesheet_contains_expected_selectors() -> None:
     theme = _guitheme.resolve_theme("dark-blue")
     text = _qt_theme.stylesheet(theme)
-    for selector in ("QGroupBox#Card", "QPushButton#Primary", "QPushButton#Danger", "QToolButton#NavButton"):
+    for selector in (
+        "QFrame#Card",
+        "QLabel#CardTitle",
+        "QPushButton#Primary",
+        "QPushButton#Danger",
+        "QPushButton#NavButton",
+        "QToolButton#SidebarToggle",
+    ):
         assert selector in text
     assert f"{theme.fonts.body}pt" in text
 
@@ -73,3 +80,24 @@ def test_load_and_save_share_tk_settings_file(monkeypatch: pytest.MonkeyPatch, t
     assert saved.name == "light"
     assert _qt_theme.load_theme().name == "light"
     assert (tmp_path / "ui" / "theme.json").is_file()
+
+
+def test_card_uses_plain_frame_and_title_label() -> None:
+    """卡片标题必须是普通 QLabel：QGroupBox::title 的背景 / 定位在 QSS 里不可控。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    assert "QGroupBox#Card" not in text
+    card_block = text.split("QFrame#Card {", 1)[1].split("}", 1)[0]
+    assert "border-radius" in card_block
+    title_block = text.split("QLabel#CardTitle {", 1)[1].split("}", 1)[0]
+    assert "font-weight: 600" in title_block
+    assert "background" not in title_block
+
+
+def test_secondary_buttons_keep_visible_border() -> None:
+    """次要（Ghost）按钮也要有可见边框，否则在卡片里看起来像纯文字标签。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    ghost_block = text.split("QPushButton#Ghost {", 1)[1].split("}", 1)[0]
+    assert "border: 1px solid" in ghost_block
+    hover_block = text.split("QPushButton#Ghost:hover {", 1)[1].split("}", 1)[0]
+    assert "border-color" in hover_block
+    assert "border-color: transparent" not in text

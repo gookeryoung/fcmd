@@ -52,14 +52,17 @@ class _Task(QRunnable):  # pragma: no cover - Qt 线程池
 
     def run(self) -> None:
         try:
-            result = self._fn(*self._args, **self._kwargs)
-        except Exception as exc:
-            detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-            self.signals.failed.emit(detail)
-        else:
-            self.signals.done.emit(result)
-        finally:
-            self.signals.finished.emit()
+            try:
+                result = self._fn(*self._args, **self._kwargs)
+            except Exception as exc:
+                detail = "".join(traceback.format_exception_only(type(exc), exc)).strip()
+                self.signals.failed.emit(detail)
+            else:
+                self.signals.done.emit(result)
+            finally:
+                self.signals.finished.emit()
+        except RuntimeError:  # pragma: no cover - 解释器退出时信号源可能已析构
+            return
 
 
 _PENDING: set[_Task] = set()

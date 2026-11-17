@@ -43,6 +43,7 @@ class LocllmSettings:
     measured: dict[str, dict[str, Any]] | None = None
     download: dict[str, Any] | None = None
     chat_settings_open: bool = False
+    sidebar_collapsed: bool = False
 
 
 def config_path() -> Path:
@@ -73,6 +74,9 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         chat_settings_open = raw.get("chat_settings_open")
         if isinstance(chat_settings_open, bool):
             settings.chat_settings_open = chat_settings_open
+        sidebar_collapsed = raw.get("sidebar_collapsed")
+        if isinstance(sidebar_collapsed, bool):
+            settings.sidebar_collapsed = sidebar_collapsed
     return settings
 
 
@@ -85,6 +89,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "measured": settings.measured,
             "download": settings.download,
             "chat_settings_open": settings.chat_settings_open,
+            "sidebar_collapsed": settings.sidebar_collapsed,
         },
         path or config_path(),
     )

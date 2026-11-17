@@ -10,7 +10,7 @@
 
 | 编号 | 约束 | 落点 |
 |---|---|---|
-| C1 | 引入 Qt 依赖，locllmw 用 Qt 重写 | `pyproject.toml` 的 `qt` extra；`src/fcmd/gui/qt/**`；`src/fcmd/apps/locllm/_locllmw_qt_*.py` |
+| C1 | 引入 Qt 依赖，locllmw 用 Qt 重写 | `pyproject.toml` 基础依赖 `PySide6-Essentials`；`src/fcmd/gui/qt/**`；`src/fcmd/apps/locllm/_locllmw_qt_*.py` |
 | C2 | 补齐 GUI 基础设计（窗口骨架 / 主题 / 导航 / 后台任务 / 常用控件） | `fcmd.gui.qt.window` / `theme` / `sidebar` / `workers` / `widgets` |
 | C3 | locllmw 保持既有七页能力与配置兼容 | 页面模块；`_locllmw_winsettings` 与 `locllmw.json` 口径不变 |
 | C4 | 门禁不退化：lint / typecheck / test / 覆盖率照旧 | `pyrefly.toml` / `.coveragerc` 的可选依赖排除；离屏冒烟测试 |
@@ -21,7 +21,7 @@
 | 编号 | 决策 | 被否决的方案（原因） | 代码落点 |
 |---|---|---|---|
 | D1 | 使用 **PySide6**，不使用 PySide2 | **PySide2 不可行**：最后版本 5.15.2.1 只提供 cp36–cp310 wheel，且无 `win_amd64` / `linux_x86_64` 现代平台轮子；本项目要求 Python ≥ 3.13（`uv pip install PySide2` 直接无解）。PyQt6 为 GPL/商业许可，与 MIT 分发不一致 | `pyproject.toml` → `qt = ["PySide6-Essentials>=6.9"]` |
-| D2 | Qt 依赖为**可选 extra**，不进入默认安装 | 直接并入 `dependencies`：`pip install fcmd` 体积翻数倍，与 0013「纯 Python 依赖不变」的收益冲突 | `qt` extra；`dev` extra 含 `qt`（本地开发与门禁可跑 Qt 测试） |
+| D2 | Qt 依赖进入**基础依赖**（`pip install fcmd` 即可用 locllmw；按维护者要求简化安装） | 作为可选 extra `fcmd[qt]`：默认入口会因缺依赖不可用，用户需额外记忆一个 extra；代价是安装体积增加约 200 MB，与 0013「纯 Python 依赖不变」冲突，接受该代价 | `pyproject.toml` → `dependencies` 含 `PySide6-Essentials>=6.9` |
 | D3 | Qt 与 Tk **共用同一份主题注册表**（四套主题、别名、`ui/theme.json`） | 另建 Qt 专用主题：两套配色/字号必然漂移，用户切换前端后观感不一致 | `fcmd/gui/qt/theme.py` 只做 `Palette → QSS/QPalette` 翻译 |
 | D4 | Qt 与 Tk **共用同一份窗口设置**（`ui/locllmw.json`、`WxH+X+Y` 几何、`LocllmSettings`） | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | 抽出 `_locllmw_winsettings`；`fcmd.gui.qt.window` 复用 `fcmd.gui.config` / `window.resolve_geometry` |
 | D5 | 后台任务用线程池 + 信号，不用 `QThread` 子类 | 每任务一个 `QThread`：线程生命周期与窗口销毁耦合，易悬空 | `fcmd/gui/qt/workers.py`（`submit` / `periodic`） |
@@ -58,7 +58,7 @@
 
 ## 分期与落地状态
 
-- **P0（已落地）**：`qt` extra、GUI 基座五模块、离屏冒烟测试与纯函数测试。
+- **P0（已落地）**：`PySide6-Essentials` 基础依赖、GUI 基座五模块、离屏冒烟测试与纯函数测试。
 - **P1（已落地）**：locllmw 七页 Qt 化，默认入口切到 Qt；`--ui tk` 保留；设置与主题共用；
   监测页承担性能测试与日志；运行页承担服务启停与健康横幅。
 - **P2（未落地）**：模型页的 ModelScope 搜索 / 下载管理、转换（HF safetensors → GGUF）与
@@ -69,12 +69,14 @@
 
 ## 已知取舍
 
-- 发布物：`fspack` extras 增加 `qt`，Windows 便携 zip 体积增加约 150–200 MB（PySide6-Essentials）。
-  不用 Qt 的用户 `pip install fcmd` 不受影响。
+- 发布物 / 安装体积：`PySide6-Essentials` 进入基础依赖，wheel 安装与便携 zip 均增加约 150–200 MB；
+  这是「默认入口开箱可用」换来的代价（D2）。
 - 覆盖率：Qt 控件胶水不追求覆盖率（与 Tk 窗口同口径），纯逻辑由
   `tests/apps/locllm/test_locllmw_qt_logic.py` 覆盖；类型检查对 Qt 绑定模块关闭
   （CI 不装 PySide6，与 `mcp_adapter` 同处理）。
 - 对话页暂不支持图片附件（Tk 版支持）；需要时用 `--ui tk` 或 `fcmd llmchat --image`。
+- `PySide6-Essentials` 只含 QtCore/QtGui/QtWidgets 等基础模块，够 locllmw 使用；引入 WebEngine/Charts
+  等 Addons 时才需要额外依赖。
 - 模型页在 Qt 下只做扫描 / 选择 / 打开目录，下载与转换指向 `fcmd llmdown` / `fcmd llmconvert`。
 
 ## 交接
@@ -87,4 +89,4 @@
 - 关闭：`QtMainWindow.closeEvent` → `on_close()`（确认进行中任务）→ `persist(geometry)`；
   采样 / 生成线程必须在这里停掉。
 - 复测：`QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/locllm/test_locllmw_qt_smoke.py`；
-  真实窗口用 `uv run fcmd locllmw`（需 `pip install fcmd[qt]`）。
+  真实窗口用 `uv run fcmd locllmw`（`PySide6-Essentials` 随 fcmd 安装）。

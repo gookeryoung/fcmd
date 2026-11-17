@@ -105,7 +105,6 @@ jobs:
             extras_args: >-
               --extra archive --extra color --extra crypto --extra filecheck
               --extra img --extra ocr --extra office --extra pdf --extra pe
-              --extra qt
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:

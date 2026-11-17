@@ -1,6 +1,6 @@
 """locllmw - 本地 LLM 服务管理窗口（Qt 默认，Tk 回退）。
 
-默认前端为 Qt（``PySide6``，可选依赖 ``fcmd[qt]``）：侧边栏分页组织为
+默认前端为 Qt（``PySide6``，随 fcmd 一起安装）：侧边栏分页组织为
 概览、模型、运行、对话、实验室、监测、设置七页，提供启动参数配置、
 模型扫描与显存适配、服务启停、``/metrics`` 监控、系统负载 / GPU 面板、
 性能测试、日志与智能推荐。
@@ -1010,8 +1010,10 @@ def run_gui(*, ui: str = "qt") -> None:
         return
     try:
         from fcmd.apps.locllm._locllmw_qt_window import run_qt
-    except ImportError as exc:  # 未安装可选依赖 fcmd[qt]
-        raise SystemExit("未安装 Qt 前端：pip install 'fcmd[qt]'；或改用 Tk 回退：fcmd locllmw --ui tk") from exc
+    except ImportError as exc:  # pragma: no cover - 安装完整时不会触发
+        raise SystemExit(
+            "未安装 Qt 前端：pip install 'PySide6-Essentials'；或改用 Tk 回退：fcmd locllmw --ui tk"
+        ) from exc
 
     run_qt()
 

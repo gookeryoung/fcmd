@@ -64,21 +64,16 @@ QMenu::separator { height: 1px; background: $border; margin: 4px 6px; }
 QStatusBar { background: $surface; color: $muted; border-top: 1px solid $border; }
 QStatusBar QLabel { color: $muted; }
 
-QGroupBox#Card {
+QFrame#Card {
     background: $surface;
     border: 1px solid $border;
     border-radius: ${radius}px;
-    margin-top: 12px;
-    padding: 12px 12px 10px 12px;
-    font-weight: 600;
 }
-QGroupBox#Card::title {
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    left: 12px;
-    padding: 0 4px;
+QLabel#CardTitle {
     color: $muted;
-    background: $surface;
+    font-weight: 600;
+    font-size: ${font_body}pt;
+    padding: 0 0 2px 0;
 }
 
 QLabel#Title { font-size: ${font_title}pt; font-weight: 600; }
@@ -96,6 +91,7 @@ QPushButton {
     border: 1px solid $border;
     border-radius: 6px;
     padding: 5px 14px;
+    min-height: 22px;
 }
 QPushButton:hover { background: $surface_active; border-color: $border_strong; }
 QPushButton:pressed { background: $border; }
@@ -112,8 +108,19 @@ QPushButton#Primary:disabled { background: $surface_hover; color: $muted; border
 QPushButton#Danger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#Danger:hover { background: $danger; color: $on_accent; }
 QPushButton#Danger:disabled { color: $muted; border-color: $border; background: transparent; }
-QPushButton#Ghost { background: transparent; border-color: transparent; color: $muted; padding: 3px 8px; }
-QPushButton#Ghost:hover { background: $surface_hover; color: $text; }
+QPushButton#Ghost {
+    background: transparent;
+    border: 1px solid $border;
+    color: $muted;
+    padding: 5px 14px;
+}
+QPushButton#Ghost:hover {
+    background: $surface_hover;
+    border-color: $border_strong;
+    color: $text;
+}
+QPushButton#Ghost:pressed { background: $surface_active; }
+QPushButton#Ghost:disabled { color: $muted; border-color: $border; background: transparent; }
 
 QToolButton { border: 1px solid $border; border-radius: 6px; background: $surface_hover; padding: 4px 8px; }
 QToolButton:hover { background: $surface_active; }
@@ -126,23 +133,32 @@ QToolButton#Collapsible {
     padding: 4px 0;
 }
 QToolButton#Collapsible:hover { color: $text; }
-QToolButton#NavButton {
+QPushButton#NavButton {
+    background: transparent;
     border: none;
     border-left: 3px solid transparent;
     border-radius: 6px;
-    background: transparent;
     color: $muted;
     text-align: left;
-    padding: 8px 12px;
+    padding: 7px 10px;
     font-size: ${font_body}pt;
 }
-QToolButton#NavButton:hover { background: $surface_hover; color: $text; }
-QToolButton#NavButton:checked {
+QPushButton#NavButton:hover { background: $surface_hover; color: $text; }
+QPushButton#NavButton:checked {
     background: $surface_active;
     color: $accent;
     border-left: 3px solid $accent;
     font-weight: 600;
 }
+QToolButton#SidebarToggle {
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: $muted;
+    padding: 2px 6px;
+    font-size: ${font_body}pt;
+}
+QToolButton#SidebarToggle:hover { background: $surface_hover; color: $text; }
 
 QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     background: $surface;
