@@ -38,11 +38,11 @@ from fcmd.gui.pages import next_page, resolve_page_key
 
 __all__ = ["COLLAPSED_WIDTH", "EXPANDED_WIDTH", "SidebarNav", "next_page", "resolve_page_key"]
 
-EXPANDED_WIDTH = 184
-"""展开态侧边栏宽度（像素）：容纳 3 个中文字的页名 + 内边距。"""
+EXPANDED_WIDTH = 220
+"""展开态侧边栏宽度（像素）：容纳大字号页名与更宽的点击区域。"""
 
-COLLAPSED_WIDTH = 52
-"""折叠态侧边栏宽度：一个中文字 + 左右内边距。"""
+COLLAPSED_WIDTH = 60
+"""折叠态侧边栏宽度：一个中文字 + 左右内边距与更大图标。"""
 
 
 class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
@@ -74,11 +74,11 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._current: str | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 10, 8, 12)
-        layout.setSpacing(4)
+        layout.setContentsMargins(10, 12, 10, 14)
+        layout.setSpacing(6)
         header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 6)
-        header.setSpacing(6)
+        header.setContentsMargins(0, 0, 0, 8)
+        header.setSpacing(8)
         self._header = header
         self.icon_label = self._build_icon(icon)
         if self.icon_label is not None:
@@ -101,7 +101,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         header.addWidget(self.toggle_button)
         layout.addLayout(header)
         self._button_layout = QVBoxLayout()
-        self._button_layout.setSpacing(3)
+        self._button_layout.setSpacing(5)
         self._button_layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(self._button_layout)
         layout.addStretch(1)
@@ -120,8 +120,8 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         # 内边距把图标裁掉一圈，高 DPI 下也不会发虚。
         from PySide6.QtCore import QSize
 
-        label.setPixmap(icon.pixmap(QSize(24, 24), self.devicePixelRatioF()))
-        label.setFixedSize(24, 24)
+        label.setPixmap(icon.pixmap(QSize(28, 28), self.devicePixelRatioF()))
+        label.setFixedSize(28, 28)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setToolTip(self.windowTitle())
         return label
@@ -246,7 +246,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         return super().eventFilter(obj, event)
 
     def _apply_width(self) -> None:
-        """按折叠状态设置固定宽度（折叠 52px / 展开 184px，可构造时覆盖）。"""
+        """按折叠状态设置固定宽度（折叠 60px / 展开 220px，可构造时覆盖）。"""
         self.setFixedWidth(COLLAPSED_WIDTH if self._collapsed else self._expanded_width)
 
     def _sync_tooltips(self) -> None:
