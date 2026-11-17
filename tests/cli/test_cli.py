@@ -645,6 +645,22 @@ class TestBuiltinGraph:
         out = capsys.readouterr().out
         assert "未知内建命令" in out
 
+    def test_builtin_command_modules_import_lazily(self) -> None:
+        """导入 ``_builtins`` 包不得连带导入 7 个命令模块。
+
+        子模块会分别拉入 rich / PyYAML 等依赖链，eager 导入会让每条内建
+        命令都付全部内建模块的导入并集（约 138ms）。这里用干净子进程守
+        住「按需导入」，避免后续改动把顶层导入加回来。
+        """
+        code = (
+            "import sys\n"
+            "import fcmd.cli._builtins\n"
+            "leaked = sorted(n for n in sys.modules if n.startswith('fcmd.cli._builtins.'))\n"
+            "assert not leaked, leaked\n"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+        assert proc.returncode == 0, proc.stderr
+
 
 # ---------------------------------------------------------------------- #
 # build_tool_graph 直接 API 测试
