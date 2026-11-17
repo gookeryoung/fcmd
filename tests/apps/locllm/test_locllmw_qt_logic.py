@@ -215,6 +215,15 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert installed_row.download_button.text() == "✓ 已安装"
     assert installed_row.download_button.objectName() == "InstalledButton"
     assert not installed_row.download_button.isEnabled()
+    convertible_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), convertible=True)
+    assert convertible_row.convert_button is not None
+    assert convertible_row.convert_button.text() == "转换"
+    assert convertible_row.convert_button.isEnabled()
+    converted_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), convertible=True, converted=True)
+    assert converted_row.convert_button is not None
+    assert converted_row.convert_button.text() == "已转换"
+    assert converted_row.convert_button.objectName() == "ConvertedButton"
+    assert not converted_row.convert_button.isEnabled()
     assert row.download_button.text() == "下载"
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()

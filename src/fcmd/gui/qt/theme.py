@@ -361,13 +361,13 @@ QFrame#RecommendationRow[band="limited"] { background: $danger_soft; border-colo
 QFrame#RecommendationRow:hover, QFrame#ModelItemRow:hover { border-width: 2px; }
 QFrame#RecommendationRow[selected="true"], QFrame#ModelItemRow[selected="true"] { border-width: 2px; }
 QLabel#RecommendationName, QLabel#ModelItemName { font-size: ${font_heading}pt; font-weight: 600; }
-QPushButton#InstalledButton {
+QPushButton#InstalledButton, QPushButton#ConvertedButton {
     color: $success;
     background: $success_soft;
     border: 1px solid $success;
     font-weight: 600;
 }
-QPushButton#InstalledButton:disabled {
+QPushButton#InstalledButton:disabled, QPushButton#ConvertedButton:disabled {
     color: $success;
     background: $success_soft;
     border: 1px solid $success;

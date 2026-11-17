@@ -808,6 +808,22 @@ def test_convert_page_find_convertible_missing(tmp_path: Path) -> None:
     assert _locllmw_convert._find_convertible(tmp_path / "missing") == []
 
 
+def test_convert_settings_roundtrip_and_invalid_values() -> None:
+    from fcmd.apps.locllm import _locllmw_convert
+
+    defaults = _locllmw_convert.convert_settings_from_dict(None)
+    assert defaults.outtype == "f32"
+    assert defaults.overwrite is False
+    settings = _locllmw_convert.ConvertSettings(
+        outtype="bf16", tag="b1", python="py", script="convert.py", overwrite=True
+    )
+    assert _locllmw_convert.convert_settings_from_dict(_locllmw_convert.convert_settings_to_dict(settings)) == settings
+    invalid = _locllmw_convert.convert_settings_from_dict(
+        {"outtype": "bad", "tag": 1, "python": None, "script": ["x"], "overwrite": "yes"}
+    )
+    assert invalid == defaults
+
+
 def test_convert_page_default_output_path(tmp_path: Path) -> None:
     from fcmd.apps.locllm import _locllmw_convert
 

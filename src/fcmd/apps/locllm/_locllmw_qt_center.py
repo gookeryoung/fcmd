@@ -1,17 +1,15 @@
-"""locllmw（Qt）模型中心：ModelScope 浏览器 / 转换 / 量化三个子页。
+"""locllmw（Qt）模型中心：ModelScope 浏览器 / 量化两个子页。
 
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，行内提供下载按钮，展开显示详情元数据，底部右侧显示下载进度；
-- **转换**：HF safetensors → GGUF（刷新模型列表、精度 / 解释器 / 脚本 / 引擎 tag、
-  输出位置与覆盖开关、计划预览、进度与日志）；
+- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，行内提供下载 / 转换按钮，展开显示详情元数据，底部右侧显示下载或转换进度；
 - **量化**：GGUF 量化（输入文件、全量模型下拉、量化器环境、量化类型、输出目录、
   覆盖开关、进度与日志）。
 
 业务逻辑全部复用 ``llmdown`` / ``llmconvert`` / ``llmqnt`` 与
 :mod:`fcmd.apps.locllm._locllmw_models`、:mod:`fcmd.apps.locllm._locllmw_convert`
-的纯函数；窗口只做编排。下载参数写入 ``locllmw.json`` 的 ``download`` 字段。
+的纯函数；窗口只做编排。下载 / 转换参数写入 ``locllmw.json`` 的 ``download`` / ``convert`` 字段。
 """
 
 from __future__ import annotations
@@ -49,7 +47,7 @@ from fcmd.apps.locllm import (
     llmqnt,
 )
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
-from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
+from fcmd.apps.locllm.llmbase import ModelEntry, human_size
 from fcmd.apps.locllm.llmdown import (
     ModelInfo,
     ModelSearch,
@@ -72,8 +70,6 @@ from fcmd.gui.qt.widgets import (
     button,
     hint_label,
     link_button,
-    make_table,
-    make_table_item,
 )
 from fcmd.gui.qt.workers import submit
 
@@ -106,13 +102,24 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
 
     toggleRequested = Signal(object)
     downloadRequested = Signal(str)
+    convertRequested = Signal(str)
 
-    def __init__(self, item: ModelSummary, parent: QWidget | None = None, *, installed: bool = False) -> None:
+    def __init__(
+        self,
+        item: ModelSummary,
+        parent: QWidget | None = None,
+        *,
+        installed: bool = False,
+        convertible: bool = False,
+        converted: bool = False,
+    ) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
         self.repo = item.repo
         self._expanded = False
         self._installed = installed
+        self._convertible = convertible
+        self._converted = converted
         self.setObjectName("ModelItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
@@ -148,6 +155,16 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
+        self.convert_button: Any = None
+        if convertible:
+            self.convert_button = button("已转换" if converted else "转换")
+            if converted:
+                self.convert_button.setObjectName("ConvertedButton")
+                self.convert_button.setEnabled(False)
+                self.convert_button.setToolTip("已存在转换后的 GGUF")
+            else:
+                self.convert_button.clicked.connect(lambda: self.convertRequested.emit(self.repo))
+            header_row.addWidget(self.convert_button, 0)
         self.download_button = button("下载")
         if installed:
             self.download_button.setObjectName("InstalledButton")
@@ -192,6 +209,17 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             return
         self.download_button.setEnabled(not busy)
         self.download_button.setText("下载中…" if active else "下载")
+
+    def set_convert_state(self, *, busy: bool, active: bool) -> None:
+        """转换中禁用按钮；已转换行保持不可点击的「已转换」。"""
+        if self.convert_button is None:
+            return
+        if self._converted:
+            self.convert_button.setEnabled(False)
+            self.convert_button.setText("已转换")
+            return
+        self.convert_button.setEnabled(not busy)
+        self.convert_button.setText("转换中…" if active else "转换")
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -300,6 +328,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._download_target = _llmconfig.models_dir()
         self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
+        self._convertible: dict[str, tuple[Path, Path, bool]] = {}
+        self._converting = False
+        self._convert_active_repo: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -390,6 +421,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         except OSError:
             self._installed_models = {}
             self._installed_repos = set()
+            self._convertible = {}
         else:
             self._installed_models = {
                 model.repo.casefold(): ModelSummary(
@@ -400,6 +432,12 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 for model in models
             }
             self._installed_repos = set(self._installed_models)
+            self._convertible = {}
+            for model in models:
+                if not llmconvert.is_hf_safetensors_dir(model.path):
+                    continue
+                output = _locllmw_convert.default_output_path(model.path)
+                self._convertible[model.repo.casefold()] = (model.path, output, output.is_file())
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -468,10 +506,19 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         for item in items:
             list_item = QListWidgetItem(self.models)
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            installed = item.repo.casefold() in self._installed_repos
-            row = _ModelItemRow(item, self.models, installed=installed)
+            key = item.repo.casefold()
+            installed = key in self._installed_repos
+            convert_info = self._convertible.get(key)
+            row = _ModelItemRow(
+                item,
+                self.models,
+                installed=installed,
+                convertible=convert_info is not None,
+                converted=bool(convert_info and convert_info[2]),
+            )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
+            row.convertRequested.connect(self.start_convert)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -603,11 +650,18 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         for index in range(self.models.count()):
             row = self.models.itemWidget(self.models.item(index))
             if isinstance(row, _ModelItemRow):
-                row.set_download_state(busy=self._downloading, active=row.repo == self._active_repo)
+                row.set_download_state(
+                    busy=self._downloading or self._converting,
+                    active=self._downloading and row.repo == self._active_repo,
+                )
+                row.set_convert_state(
+                    busy=self._downloading or self._converting,
+                    active=self._converting and row.repo == self._convert_active_repo,
+                )
 
     def start_download(self, repo: str) -> None:
         """下载指定仓库到模型目录，进度显示在列表底部右侧。"""
-        if self._downloading or not repo:
+        if self._downloading or self._converting or not repo:
             return
         settings = _locllmw_models.settings_from_dict(self.state.settings.download)
         dest = _llmconfig.models_dir()
@@ -684,6 +738,90 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             f"下载 {self._active_repo or '-'} · {human_size(event.completed)} / {human_size(event.total)}"
         )
 
+    def start_convert(self, repo: str) -> None:
+        """把已安装的 HF safetensors 模型转换为 GGUF，进度复用底部状态区。"""
+        if self._converting or self._downloading or not repo:
+            return
+        info = self._convertible.get(repo.casefold())
+        if info is None:
+            return
+        source, output, converted = info
+        settings = _locllmw_convert.convert_settings_from_dict(self.state.settings.convert)
+        if converted or (output.is_file() and not settings.overwrite):
+            self.refresh_installed()
+            self._render_results()
+            return
+        self._converting = True
+        self._convert_active_repo = repo
+        self.download_status.setVisible(True)
+        self.download_bar.setValue(0)
+        self.download_text.setText(f"准备转换 {repo}…")
+        self.stop_download_button.setVisible(False)
+        self._sync_download_buttons()
+        self._log(f"开始转换 {source} -> {output}")
+        self._bridge = _ProgressBridge(self)
+        self._bridge.progress.connect(self._on_convert_progress)
+        form = _locllmw_convert._ConvertForm(
+            source=str(source),
+            output=str(output),
+            outtype=settings.outtype,
+            script=settings.script,
+            python=settings.python,
+            tag=settings.tag,
+        )
+        submit(
+            self._convert_work,
+            form,
+            on_done=lambda produced: self._convert_done(repo, produced),
+            on_error=lambda message: self._convert_error(repo, message),
+            on_finished=self._convert_finished,
+        )
+
+    def _convert_work(self, form: _locllmw_convert._ConvertForm) -> list[str]:
+        source = Path(form.source).expanduser()
+        python = form.python or llmconvert.find_convert_python()
+        plan = llmconvert.plan_convert(
+            source,
+            output=Path(form.output),
+            outtype=form.outtype,
+            script=Path(form.script).expanduser() if form.script else None,
+            python=python,
+            tag=form.tag or None,
+        )
+        last = -1
+
+        def relay(line: str) -> None:
+            nonlocal last
+            percent = _locllmw_convert._progress_percent(line)
+            if percent is None:
+                self._log(line)
+            elif percent >= last:
+                last = percent
+                self._bridge.progress.emit(percent) if self._bridge is not None else None
+
+        return [str(path) for path in llmconvert.convert_model(plan, on_output=relay)]
+
+    def _on_convert_progress(self, value: object) -> None:
+        if isinstance(value, int):
+            self.download_bar.setValue(value)
+            self.download_text.setText(f"转换 {self._convert_active_repo or '-'} · {value}%")
+
+    def _convert_done(self, repo: str, produced: list[str]) -> None:
+        self.download_bar.setValue(100)
+        self.download_text.setText(f"转换完成：{repo}")
+        self._log(f"转换完成 {repo}: {'、'.join(produced)}")
+        self.refresh_installed()
+        self._render_results()
+
+    def _convert_error(self, repo: str, message: str) -> None:
+        self.download_text.setText(f"转换失败：{repo} · {message}")
+        self._log(f"转换失败 {repo}: {message}")
+
+    def _convert_finished(self) -> None:
+        self._converting = False
+        self._convert_active_repo = None
+        self._sync_download_buttons()
+
     def _download_done(self, target: str) -> None:
         self.download_bar.setValue(100)
         self.download_text.setText(f"下载完成：{self._active_repo or target}")
@@ -725,396 +863,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return False
         self._stop_requested = True
         return True
-
-
-class _ConvertPanel(QWidget):  # pragma: no cover - Qt 控件
-    """转换页：HF safetensors → GGUF。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._convertible: list[tuple[Path, int]] = []
-        self._running = False
-        self._env_loaded = False
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroll = PageScroll(self)
-        outer.addWidget(scroll)
-        layout = scroll.body
-        layout.setSpacing(6)
-
-        models_card = Card("可转换模型（HF safetensors 目录）")
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        bar.setSpacing(6)
-        self.refresh_button = button("刷新模型列表")
-        self.refresh_button.clicked.connect(self.refresh_env)
-        bar.addWidget(self.refresh_button)
-        self.models_hint = hint_label("正在扫描模型目录…")
-        bar.addWidget(self.models_hint, 1)
-        models_card.body.addLayout(bar)
-        self.convertible = make_table(
-            ("模型", "大小", "输出", "位置"),
-            widths=(180, 90, 100, 380),
-            stretch_columns=(3,),
-            parent=models_card,
-        )
-        self.convertible.setMinimumHeight(100)
-        self.convertible.itemSelectionChanged.connect(self._on_selected)
-        models_card.body.addWidget(self.convertible)
-        layout.addWidget(models_card)
-
-        io_card = Card("输入 / 输出")
-        io_grid = QGridLayout()
-        io_grid.setContentsMargins(0, 0, 0, 0)
-        io_grid.setHorizontalSpacing(8)
-        io_grid.setVerticalSpacing(6)
-        io_grid.setColumnStretch(1, 1)
-        io_grid.addWidget(QLabel("源目录"), 0, 0, Qt.AlignmentFlag.AlignRight)
-        self.source = QLineEdit(io_card)
-        self.source.textChanged.connect(self._refresh_output_state)
-        io_grid.addWidget(self.source, 0, 1)
-        pick_source = button("浏览…")
-        pick_source.clicked.connect(self._pick_source)
-        io_grid.addWidget(pick_source, 0, 2)
-        io_grid.addWidget(QLabel("输出 GGUF"), 1, 0, Qt.AlignmentFlag.AlignRight)
-        self.output = QLineEdit(io_card)
-        self.output.textChanged.connect(self._refresh_output_state)
-        io_grid.addWidget(self.output, 1, 1)
-        pick_output = button("另存为…")
-        pick_output.clicked.connect(self._pick_output)
-        io_grid.addWidget(pick_output, 1, 2)
-        open_dir = button("打开目录")
-        open_dir.clicked.connect(self._open_output_dir)
-        io_grid.addWidget(open_dir, 1, 3)
-        io_card.body.addLayout(io_grid)
-        self.output_hint = hint_label("")
-        io_card.body.addWidget(self.output_hint)
-        layout.addWidget(io_card)
-
-        params = Card("转换参数")
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
-        grid.addWidget(QLabel("转换精度"), 0, 0, Qt.AlignmentFlag.AlignRight)
-        self.outtype = QComboBox(params)
-        self.outtype.addItems(list(llmconvert.CONVERT_OUTTYPES))
-        grid.addWidget(self.outtype, 0, 1)
-        grid.addWidget(QLabel("引擎 tag"), 0, 2, Qt.AlignmentFlag.AlignRight)
-        self.tag = QLineEdit(params)
-        grid.addWidget(self.tag, 0, 3)
-        grid.addWidget(QLabel("解释器"), 1, 0, Qt.AlignmentFlag.AlignRight)
-        self.python = QLineEdit(params)
-        self.python.setPlaceholderText("留空自动探测已安装 torch / safetensors / numpy")
-        grid.addWidget(self.python, 1, 1, 1, 3)
-        grid.addWidget(QLabel("转换脚本"), 2, 0, Qt.AlignmentFlag.AlignRight)
-        self.script = QLineEdit(params)
-        self.script.setPlaceholderText(_locllmw_convert._SCRIPT_PLACEHOLDER)
-        grid.addWidget(self.script, 2, 1, 1, 2)
-        pick_script = button("浏览…")
-        pick_script.clicked.connect(self._pick_script)
-        grid.addWidget(pick_script, 2, 3)
-        self.overwrite = QCheckBox("覆盖已存在的输出文件", params)
-        self.overwrite.toggled.connect(lambda _checked: self._refresh_existing())
-        grid.addWidget(self.overwrite, 3, 0, 1, 2)
-        params.body.addLayout(grid)
-        self.existing = hint_label("")
-        params.body.addWidget(self.existing)
-        params.body.addWidget(
-            hint_label(
-                f"精度可选：{' / '.join(llmconvert.CONVERT_OUTTYPES)}；"
-                f"脚本可填 convert_hf_to_gguf.py 或源码 zip，{_locllmw_convert._SCRIPT_PLACEHOLDER}"
-            )
-        )
-        layout.addWidget(params)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self.preview_button = button("预览计划")
-        self.preview_button.clicked.connect(self._preview)
-        actions.addWidget(self.preview_button)
-        self.start_button = button("开始转换", kind="primary")
-        self.start_button.clicked.connect(self._start_convert)
-        actions.addWidget(self.start_button)
-        self.clear_button = button("清空日志")
-        actions.addWidget(self.clear_button)
-        self.status = hint_label("状态：就绪", wrap=False)
-        actions.addWidget(self.status, 1)
-        self.progress = QProgressBar(self)
-        self.progress.setRange(0, 100)
-        actions.addWidget(self.progress)
-        layout.addLayout(actions)
-
-        log_card = Card("转换输出日志")
-        self.log_view = LogView(height=100, parent=log_card)
-        self.clear_button.clicked.connect(self.log_view.clear)
-        log_card.body.addWidget(self.log_view)
-        layout.addWidget(log_card, 1)
-        layout.addStretch(1)
-        self._bridge = _ProgressBridge(self)
-        self._bridge.progress.connect(self._on_percent)
-
-    # -- 环境 ---------------------------------------------------------- #
-    def refresh_env(self) -> None:
-        self.refresh_button.setEnabled(False)
-        self.models_hint.setText("正在扫描模型目录…")
-        submit(
-            self._scan_env,
-            on_done=self._apply_env,
-            on_error=self._env_error,
-            on_finished=lambda: self.refresh_button.setEnabled(True),
-        )
-
-    @staticmethod
-    def _scan_env() -> _locllmw_convert.ModelEnv:
-        return _locllmw_convert.scan_model_env()
-
-    def _env_error(self, message: str) -> None:
-        self.models_hint.setText(f"扫描模型目录失败: {message}")
-
-    def _apply_env(self, env: _locllmw_convert.ModelEnv) -> None:
-        if env.tag and not self.tag.text().strip():
-            self.tag.setText(env.tag)
-        self._apply_convertible(env.convertible)
-        self._refresh_existing()
-
-    def _apply_convertible(self, convertible: list[tuple[Path, int]]) -> None:
-        self._convertible = convertible
-        root = _llmconfig.models_dir()
-        self.convertible.setRowCount(len(convertible))
-        for row, (path, size) in enumerate(convertible):
-            existing = _locllmw_convert.default_output_path(path, root).is_file()
-            self.convertible.setItem(row, 0, make_table_item(path.name))
-            self.convertible.setItem(row, 1, make_table_item(human_size(size)))
-            self.convertible.setItem(row, 2, make_table_item("已生成" if existing else "未转换"))
-            self.convertible.setItem(row, 3, make_table_item(str(path)))
-        if convertible:
-            self.models_hint.setText(
-                f"发现 {len(convertible)} 个可转换模型；选中后自动填入源目录，“输出”列显示默认输出是否已生成"
-            )
-        else:
-            self.models_hint.setText(
-                "未发现可转换模型（模型目录中需含 config.json 与 *.safetensors）；可在设置页调整模型目录"
-            )
-        if self.source.text().strip():
-            self._sync_selection(Path(self.source.text()).expanduser())
-
-    def _sync_selection(self, path: Path) -> None:
-        key = llmenv.path_key(path)
-        for row, (candidate, _) in enumerate(self._convertible):
-            if llmenv.path_key(candidate) == key:
-                self.convertible.selectRow(row)
-                return
-
-    def _on_selected(self) -> None:
-        row = self.convertible.currentRow()
-        if not 0 <= row < len(self._convertible):
-            return
-        path = self._convertible[row][0]
-        self.source.setText(str(path))
-        base = _locllmw_convert.default_output_path(path)
-        detail = "；默认输出已存在（可勾选覆盖后重新生成）" if base.is_file() else "；默认输出尚未生成"
-        self.status.setText(f"状态：已选择 {path.name}（{_locllmw_convert._dir_stats(path)}{detail}）")
-        self.log_view.append(f"已选择可转换模型: {path}")
-
-    # -- 表单 ---------------------------------------------------------- #
-    def _pick_source(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "选择 HF safetensors 模型目录")
-        if chosen:
-            self.source.setText(chosen)
-            self._sync_selection(Path(chosen).resolve())
-            self.status.setText(f"状态：已选择源目录 {Path(chosen).name}")
-
-    def _pick_output(self) -> None:
-        chosen, _ = QFileDialog.getSaveFileName(self, "选择输出 GGUF 文件", "", "GGUF 文件 (*.gguf);;所有文件 (*.*)")
-        if chosen:
-            self.output.setText(chosen)
-
-    def _pick_script(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择转换脚本或 llama.cpp 源码包",
-            "",
-            "转换脚本 / 源码包 (*.py *.zip);;所有文件 (*.*)",
-        )
-        if chosen:
-            self.script.setText(chosen)
-
-    def _output_path(self) -> Path | None:
-        return _locllmw_convert.output_path_from_form(self.source.text(), self.output.text())
-
-    def _refresh_output_state(self) -> None:
-        base = self._output_path()
-        if base is None:
-            root = _llmconfig.products_dir().expanduser()
-            self.output_hint.setText(f"输出留空时写入模型目录的 converted 子目录：{root}/<源目录名>/<源目录名>.gguf")
-        elif self.output.text().strip():
-            self.output_hint.setText(f"输出文件：{base}")
-        else:
-            self.output_hint.setText(f"默认输出目录：{base.parent}（文件名 {base.name}）")
-        self._refresh_existing()
-
-    def _refresh_existing(self) -> None:
-        if self._running:
-            return
-        base = self._output_path()
-        if base is not None and base.is_file():
-            self.existing.setText(f"输出已存在：{base}（勾选“覆盖已存在的输出文件”后才会重新生成）")
-        else:
-            self.existing.setText("")
-
-    def _open_output_dir(self) -> None:
-        base = self._output_path()
-        target = base.parent if base is not None else _llmconfig.products_dir()
-        target.mkdir(parents=True, exist_ok=True)
-        try:
-            _locllmw_models.open_path(target)
-        except OSError as exc:
-            QMessageBox.critical(self, "打开目录失败", str(exc))
-
-    def _snapshot(self) -> _locllmw_convert._ConvertForm:
-        return _locllmw_convert._ConvertForm(
-            source=self.source.text().strip(),
-            output=self.output.text().strip(),
-            outtype=self.outtype.currentText().strip() or "f16",
-            script=self.script.text().strip(),
-            python=self.python.text().strip(),
-            tag=self.tag.text().strip(),
-        )
-
-    # -- 执行 ---------------------------------------------------------- #
-    def _preview(self) -> None:
-        if self._running:
-            self.log_view.append("已有任务正在进行，请等待完成")
-            return
-        self._begin(self._preview_work, self._snapshot())
-
-    def _start_convert(self) -> None:
-        if self._running:
-            self.log_view.append("已有任务正在进行，请等待完成")
-            return
-        base = self._output_path()
-        if base is None:
-            QMessageBox.warning(self, "缺少源目录", "请选择 HF safetensors 源目录")
-            return
-        if base.is_file() and not self.overwrite.isChecked():
-            QMessageBox.warning(self, "输出已存在", f"{base}\n\n如要重新生成，请勾选“覆盖已存在的输出文件”。")
-            return
-        self._begin(self._convert_work, self._snapshot())
-
-    def _begin(self, target: Any, *args: Any) -> None:
-        self._set_running(True)
-        submit(
-            target,
-            *args,
-            on_done=self._task_done,
-            on_error=self._task_error,
-            on_finished=lambda: self._set_running(False),
-        )
-
-    def _on_percent(self, value: object) -> None:
-        if isinstance(value, int):
-            self.progress.setValue(value)
-
-    def _task_done(self, payload: object) -> None:
-        if payload == "preview":
-            self.log_view.append("计划预览完成，可点击“开始转换”执行")
-            return
-        produced = [str(item) for item in payload] if isinstance(payload, list) else []
-        self.progress.setValue(100)
-        self._apply_convertible(self._convertible)
-        self.status.setText("状态：转换完成")
-        self.log_view.append("已生成: " + "、".join(produced))
-        QMessageBox.information(self, "转换完成", "已生成:\n" + "\n".join(produced))
-
-    def _task_error(self, message: str) -> None:
-        self.log_view.append(message)
-        self.status.setText("状态：失败")
-        QMessageBox.critical(self, "错误", message)
-
-    def _set_running(self, running: bool) -> None:
-        self._running = running
-        for widget in (self.preview_button, self.start_button, self.refresh_button):
-            widget.setEnabled(not running)
-        self.status.setText("状态：转换中…" if running else "状态：就绪")
-        if running:
-            self.progress.setValue(0)
-        else:
-            self._refresh_existing()
-
-    def _prepare_plan(self, form: _locllmw_convert._ConvertForm) -> llmconvert.ConvertPlan:
-        if not form.source:
-            raise ServeError("请选择 HF safetensors 源目录")
-        source = Path(form.source).expanduser()
-        if not llmconvert.is_hf_safetensors_dir(source):
-            raise ServeError(f"不是 HF safetensors 目录（需要 config.json 与 *.safetensors）: {source}")
-        self._log(f"源目录: {source}（{_locllmw_convert._dir_stats(source)}）")
-        python = form.python
-        if not python:
-            self._log("正在探测已安装 torch / safetensors / numpy 的解释器…")
-            python = llmconvert.find_convert_python()
-        self._log(f"解释器: {python}")
-        self._log("正在准备转换脚本（首次使用会下载 llama.cpp 源码）…")
-        base = _locllmw_convert.output_path_from_form(form.source, form.output)
-        if base is None:
-            raise ServeError("无法确定输出路径")
-        return llmconvert.plan_convert(
-            source,
-            output=base,
-            outtype=form.outtype,
-            script=Path(form.script).expanduser() if form.script else None,
-            python=python,
-            tag=form.tag or None,
-        )
-
-    def _log(self, message: str) -> None:
-        self.log_view.append(message)
-
-    def _log_plan(self, plan: llmconvert.ConvertPlan) -> None:
-        for line in (
-            "转换计划:",
-            f"  源目录: {plan.source}（{_locllmw_convert._dir_stats(plan.source)}）",
-            f"  精度: {plan.outtype}",
-            f"  输出: {plan.output}",
-            f"  脚本: {plan.script}",
-            f"  解释器: {plan.python}",
-            "  转换命令: " + llmbase_format(plan),
-        ):
-            self._log(line)
-
-    def _preview_work(self, form: _locllmw_convert._ConvertForm) -> str:
-        plan = self._prepare_plan(form)
-        self._log_plan(plan)
-        return "preview"
-
-    def _convert_work(self, form: _locllmw_convert._ConvertForm) -> list[str]:
-        plan = self._prepare_plan(form)
-        self._log_plan(plan)
-        last = -1
-
-        def relay(line: str) -> None:
-            nonlocal last
-            percent = _locllmw_convert._progress_percent(line)
-            if percent is None:
-                self._log(line)
-            elif percent >= last:
-                last = percent
-                self._bridge.progress.emit(percent)
-
-        self._log(f"开始转换 {plan.source.name}…")
-        produced = [str(path) for path in llmconvert.convert_model(plan, on_output=relay)]
-        return produced
-
-
-def llmbase_format(plan: llmconvert.ConvertPlan) -> str:
-    """格式化转换命令（复用 ``llmbase.format_command``）。"""
-    from fcmd.apps.locllm import llmbase
-
-    return llmbase.format_command(plan.convert_argv())
 
 
 class _QuantPanel(QWidget):  # pragma: no cover - Qt 控件
@@ -1435,7 +1183,7 @@ class _QuantPanel(QWidget):  # pragma: no cover - Qt 控件
 
 
 class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
-    """模型中心的三个子页。"""
+    """模型中心的两个子页：浏览 / 量化。"""
 
     def __init__(
         self,
@@ -1448,10 +1196,9 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         del fit_resolver
         self.browse = _BrowsePanel(state, self)
-        self.convert = _ConvertPanel(self)
         self.quant = _QuantPanel(self)
         self.tabs = QTabWidget(self)
-        for name, page in zip(_TAB_NAMES, (self.browse, self.convert, self.quant), strict=True):
+        for name, page in zip(_TAB_NAMES, (self.browse, self.quant), strict=True):
             self.tabs.addTab(page, name)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1464,18 +1211,13 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     def _on_tab_changed(self, index: int) -> None:
-        name = _TAB_NAMES[index]
-        if name == "转换" and not self.convert._env_loaded:
-            self.convert._env_loaded = True
-            self.convert.refresh_env()
-        elif name == "量化" and not self.quant._env_loaded:
+        if _TAB_NAMES[index] == "量化" and not self.quant._env_loaded:
             self.quant._env_loaded = True
             self.quant.refresh_env()
 
     def refresh_config(self) -> None:
-        """模型目录变化后刷新已安装标识与转换 / 量化环境。"""
+        """模型目录变化后刷新已安装标识与量化环境。"""
         self.browse.refresh_installed()
-        self.convert.refresh_env()
         if self.tabs.currentIndex() == _TAB_NAMES.index("量化"):
             self.quant.refresh_env()
 

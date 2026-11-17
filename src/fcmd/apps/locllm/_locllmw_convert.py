@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from fcmd.apps.locllm import _llmconfig, llmconvert, llmengine, llmmodel, llmqnt
 from fcmd.apps.locllm._llmgguf import GgufPrecision
@@ -24,11 +26,66 @@ from fcmd.apps.locllm._locllmw_ui import _detect_precisions
 from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
 
 __all__ = [
+    "ConvertSettings",
     "ModelEnv",
+    "convert_settings_from_dict",
+    "convert_settings_to_dict",
     "default_output_path",
     "output_path_from_form",
     "scan_model_env",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ConvertSettings:
+    """转换页移除后，模型列表行内转换使用的持久化参数。"""
+
+    outtype: str = "f32"
+    tag: str = ""
+    python: str = ""
+    script: str = ""
+    overwrite: bool = False
+
+
+def convert_settings_from_dict(raw: object) -> ConvertSettings:
+    """从 ``locllmw.json`` 的 ``convert`` 字段还原参数；非法值逐项回退默认。"""
+    settings = ConvertSettings()
+    if not isinstance(raw, Mapping):
+        return settings
+    outtype = raw.get("outtype")
+    if isinstance(outtype, str) and outtype in llmconvert.CONVERT_OUTTYPES:
+        settings = ConvertSettings(
+            outtype=outtype,
+            tag=settings.tag,
+            python=settings.python,
+            script=settings.script,
+            overwrite=settings.overwrite,
+        )
+    values: dict[str, Any] = {}
+    for field in ("tag", "python", "script"):
+        value = raw.get(field)
+        if isinstance(value, str):
+            values[field] = value
+    overwrite = raw.get("overwrite")
+    if isinstance(overwrite, bool):
+        values["overwrite"] = overwrite
+    return ConvertSettings(
+        outtype=settings.outtype,
+        tag=values.get("tag", settings.tag),
+        python=values.get("python", settings.python),
+        script=values.get("script", settings.script),
+        overwrite=values.get("overwrite", settings.overwrite),
+    )
+
+
+def convert_settings_to_dict(settings: ConvertSettings) -> dict[str, Any]:
+    return {
+        "outtype": settings.outtype,
+        "tag": settings.tag,
+        "python": settings.python,
+        "script": settings.script,
+        "overwrite": settings.overwrite,
+    }
 
 
 @dataclass(frozen=True, slots=True)

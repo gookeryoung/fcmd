@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.locllm import _llmconfig, _locllmw_models, llmenv
+from fcmd.apps.locllm import _llmconfig, _locllmw_convert, _locllmw_models, llmconvert, llmenv
 from fcmd.apps.locllm import _locllmw_settings as settings_logic
 from fcmd.apps.locllm._locllmw_models import open_path
 from fcmd.apps.locllm.llmbase import EngineInfo, ServeError
@@ -68,6 +69,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         outer.addWidget(scroll)
         layout.addWidget(self._build_storage())
         layout.addWidget(self._build_download())
+        layout.addWidget(self._build_convert())
         layout.addWidget(self._build_engines())
         layout.addWidget(self._build_about(), 1)
         self.refresh()
@@ -151,6 +153,75 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.persist()
         self.state.log("已自动保存下载设置")
         self.state.status("已自动保存下载设置")
+
+    # ------------------------------------------------------------------ #
+    # 转换
+    # ------------------------------------------------------------------ #
+    def _build_convert(self) -> Card:
+        """HF safetensors → GGUF 的持久化参数；转换入口在模型列表行内。"""
+        card = Card("模型转换")
+        settings = _locllmw_convert.convert_settings_from_dict(self.state.settings.convert)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        grid.addWidget(QLabel("转换精度"), 0, 0, Qt.AlignmentFlag.AlignRight)
+        self.convert_outtype = QComboBox(card)
+        self.convert_outtype.addItems(list(llmconvert.CONVERT_OUTTYPES))
+        self.convert_outtype.setCurrentText(settings.outtype)
+        grid.addWidget(self.convert_outtype, 0, 1)
+        grid.addWidget(QLabel("引擎 tag"), 0, 2, Qt.AlignmentFlag.AlignRight)
+        self.convert_tag = QLineEdit(settings.tag, card)
+        self.convert_tag.setPlaceholderText("留空自动取当前默认引擎")
+        grid.addWidget(self.convert_tag, 0, 3)
+        grid.addWidget(QLabel("解释器"), 1, 0, Qt.AlignmentFlag.AlignRight)
+        self.convert_python = QLineEdit(settings.python, card)
+        self.convert_python.setPlaceholderText("留空自动探测已安装 torch / safetensors / numpy")
+        grid.addWidget(self.convert_python, 1, 1, 1, 3)
+        grid.addWidget(QLabel("转换脚本"), 2, 0, Qt.AlignmentFlag.AlignRight)
+        self.convert_script = QLineEdit(settings.script, card)
+        self.convert_script.setPlaceholderText(_locllmw_convert._SCRIPT_PLACEHOLDER)
+        grid.addWidget(self.convert_script, 2, 1, 1, 2)
+        pick_script = button("浏览…")
+        pick_script.clicked.connect(self._pick_convert_script)
+        grid.addWidget(pick_script, 2, 3)
+        self.convert_overwrite = QCheckBox("覆盖已存在的输出文件", card)
+        self.convert_overwrite.setChecked(settings.overwrite)
+        grid.addWidget(self.convert_overwrite, 3, 0, 1, 2)
+        card.body.addLayout(grid)
+        card.body.addWidget(hint_label("模型列表中的可转换模型会显示「转换」按钮；参数修改后自动保存。"))
+        self.convert_outtype.currentIndexChanged.connect(lambda _index: self._save_convert())
+        self.convert_tag.editingFinished.connect(self._save_convert)
+        self.convert_python.editingFinished.connect(self._save_convert)
+        self.convert_script.editingFinished.connect(self._save_convert)
+        self.convert_overwrite.toggled.connect(lambda _checked: self._save_convert())
+        return card
+
+    def _pick_convert_script(self) -> None:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择转换脚本或 llama.cpp 源码包",
+            "",
+            "转换脚本 / 源码包 (*.py *.zip);;所有文件 (*.*)",
+        )
+        if chosen:
+            self.convert_script.setText(chosen)
+            self._save_convert()
+
+    def _save_convert(self) -> None:
+        settings = _locllmw_convert.ConvertSettings(
+            outtype=self.convert_outtype.currentText().strip() or llmconvert.CONVERT_OUTTYPES[0],
+            tag=self.convert_tag.text().strip(),
+            python=self.convert_python.text().strip(),
+            script=self.convert_script.text().strip(),
+            overwrite=self.convert_overwrite.isChecked(),
+        )
+        self.state.settings.convert = _locllmw_convert.convert_settings_to_dict(settings)
+        self.state.persist()
+        self.state.log("已自动保存模型转换设置")
+        self.state.status("已自动保存模型转换设置")
 
     # ------------------------------------------------------------------ #
     # 引擎

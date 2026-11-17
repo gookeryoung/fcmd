@@ -83,7 +83,7 @@ def test_window_builds_all_pages(window: Any) -> None:
 def test_generated_pages_expose_core_widgets(window: Any) -> None:
     window.show_page("models")
     models = window.page("models")
-    assert [models.tabs.tabText(index) for index in range(models.tabs.count())] == ["浏览", "转换", "量化"]
+    assert [models.tabs.tabText(index) for index in range(models.tabs.count())] == ["浏览", "量化"]
     window.show_page("chat")
     chat = window.page("chat")
     assert chat.service_combo.count() >= 1
