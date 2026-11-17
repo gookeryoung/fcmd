@@ -342,15 +342,15 @@ _MODE_TUNE: dict[str, str] = {
 _MODE_TITLES: dict[str, str] = {
     "speed": "速度优先",
     "balanced": "均衡",
-    "long": "长上下文",
-    "max-context": "最大上下文",
+    "long": "长上下文 128K",
+    "max-context": "超长上下文 192K",
     "low-vram": "省显存",
 }
 _MODE_NOTES: dict[str, str] = {
     "speed": "Q4_K_M / 64K，并发槽优先，适合持续吞吐",
     "balanced": "Q5_K_M / 64K，按显存与上下文自动调优",
-    "long": "Q5_K_M / 128K，KV q8_0，适合长文档",
-    "max-context": "Q4_K_M / 192K，KV q8_0，上下文优先",
+    "long": "Q5_K_M / 128K，质量优先，适合长文档",
+    "max-context": "Q4_K_M / 192K，容量优先，显存更紧张",
     "low-vram": "KV q4_0 / 小 batch，显存紧张时使用",
 }
 
