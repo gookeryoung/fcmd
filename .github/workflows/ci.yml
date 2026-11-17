@@ -93,10 +93,19 @@ jobs:
 
       # PySide6 的 Linux wheel 依赖系统 GL/EGL 与输入库；runner 默认没有 libEGL，
       # 导入 PySide6 会直接 ImportError（即使只跑离屏 Qt 测试）。
+      # 复用 apt 下载缓存：deb 包命中时仍执行 apt-get update，但不再重复下载。
+      - name: Cache Qt runtime .deb packages
+        uses: actions/cache@v6
+        with:
+          path: /var/cache/apt/archives
+          key: apt-qt-runtime-${{ runner.os }}-v1
+          restore-keys: |
+            apt-qt-runtime-${{ runner.os }}-
+
       - name: Install Qt runtime libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends             libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
 
       - name: Sync dependencies
         env:
@@ -107,4 +116,6 @@ jobs:
         env:
           # 所有 Qt 测试统一走离屏平台，runner 没有 X/Wayland 显示
           QT_QPA_PLATFORM: offscreen
-        run: uv run pytest -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
+        # xdist 并行：本机 8 核约 15–20s，GitHub 2 核 runner 也能把 8k+ 测试
+        # 压到数分钟内，避免串行跑满 15m 超时；loadfile 已在 pytest.ini addopts。
+        run: uv run pytest -n auto -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
