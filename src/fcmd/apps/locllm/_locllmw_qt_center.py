@@ -146,14 +146,15 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         sub.setObjectName("Hint")
         sub.setWordWrap(False)
         sub.setMinimumWidth(0)
-        sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         sub.setToolTip(subtitle)
-        note_row.addWidget(sub, 1)
+        note_row.addWidget(sub, 0)
         for tag in quant_tags:
             chip = QLabel(tag, header)
             chip.setObjectName("QuantTag")
             chip.setToolTip(f"已量化精度 {tag}")
             note_row.addWidget(chip, 0)
+        note_row.addStretch(1)
         left.addLayout(note_row)
         header_row.addLayout(left, 1)
 
