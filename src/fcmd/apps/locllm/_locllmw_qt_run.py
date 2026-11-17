@@ -325,22 +325,38 @@ class _ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
         self.changed.emit(key)
 
 
-def _profile_options() -> list[tuple[str, str, str]]:
-    titles = {
-        "speed": "速度优先",
-        "balanced": "均衡",
-        "long": "长上下文",
-        "max-context": "最大上下文",
-    }
-    return [(name, titles.get(name, name), profile.note) for name, profile in PROFILES.items()]
+_MODE_PROFILE: dict[str, str] = {
+    "speed": "speed",
+    "balanced": "balanced",
+    "long": "long",
+    "max-context": "max-context",
+    "low-vram": "balanced",
+}
+_MODE_TUNE: dict[str, str] = {
+    "speed": "throughput",
+    "balanced": "auto",
+    "long": "long-context",
+    "max-context": "long-context",
+    "low-vram": "low-vram",
+}
+_MODE_TITLES: dict[str, str] = {
+    "speed": "速度优先",
+    "balanced": "均衡",
+    "long": "长上下文",
+    "max-context": "最大上下文",
+    "low-vram": "省显存",
+}
+_MODE_NOTES: dict[str, str] = {
+    "speed": "Q4_K_M / 64K，并发槽优先，适合持续吞吐",
+    "balanced": "Q5_K_M / 64K，按显存与上下文自动调优",
+    "long": "Q5_K_M / 128K，KV q8_0，适合长文档",
+    "max-context": "Q4_K_M / 192K，KV q8_0，上下文优先",
+    "low-vram": "KV q4_0 / 小 batch，显存紧张时使用",
+}
 
 
-def _tune_options() -> list[tuple[str, str, str]]:
-    options: list[tuple[str, str, str]] = []
-    for name in _llmtune.TUNE_NAMES:
-        description = "按显存与上下文自动选择" if name == "auto" else _llmtune.preset(name).detail
-        options.append((name, _llmtune.TUNE_LABELS[name], description))
-    return options
+def _mode_options() -> list[tuple[str, str, str]]:
+    return [(key, _MODE_TITLES[key], _MODE_NOTES[key]) for key in _MODE_PROFILE]
 
 
 def _kv_options() -> list[tuple[str, str, str]]:
@@ -350,6 +366,14 @@ def _kv_options() -> list[tuple[str, str, str]]:
         ("q8_0", "Q8_0", "约省一半 KV 显存，质量略降"),
         ("q4_0", "Q4_0", "最省显存，长上下文质量损失更明显"),
     ]
+
+
+def _mode_for_profile(profile: str) -> str:
+    """把推荐档位映射到对应的运行模式（保持均衡 / 长上下文等语义）。"""
+    for mode, mode_profile in _MODE_PROFILE.items():
+        if mode_profile == profile and mode != "low-vram":
+            return mode
+    return "balanced"
 
 
 class RunPage(QWidget):  # pragma: no cover - Qt 控件
@@ -415,14 +439,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         form.add_row("线程数", self.threads_edit)
         self.params_card.body.addWidget(form)
 
-        self.params_card.body.addWidget(QLabel("档位", self.params_card))
-        self.profile_choice = _ChoiceGroup(
-            _profile_options(), current=DEFAULT_PROFILE, columns=4, parent=self.params_card
-        )
-        self.params_card.body.addWidget(self.profile_choice)
-        self.params_card.body.addWidget(QLabel("调优策略", self.params_card))
-        self.tune_choice = _ChoiceGroup(_tune_options(), current="auto", columns=3, parent=self.params_card)
-        self.params_card.body.addWidget(self.tune_choice)
+        self.params_card.body.addWidget(QLabel("运行模式（档位 + 调优）", self.params_card))
+        self.mode_choice = _ChoiceGroup(_mode_options(), current="balanced", columns=3, parent=self.params_card)
+        self.params_card.body.addWidget(self.mode_choice)
 
         self.advanced = Collapsible("高级参数（留空回落档位默认）", expanded=False, parent=self.params_card)
         adv_form = FormGrid(self.advanced.content)
@@ -488,11 +507,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         return bar
 
     def _wire(self) -> None:
-        self.tune_choice.changed.connect(lambda _key: self._on_tune_changed())
         self.name_combo.currentTextChanged.connect(self._on_service_name_changed)
         self.kv_choice.changed.connect(lambda _key: self._mark_manual("kv"))
-        self.profile_choice.changed.connect(lambda _key: self._refresh_command_preview())
-        self.tune_choice.changed.connect(lambda _key: self._refresh_command_preview())
+        self.mode_choice.changed.connect(lambda _key: self._on_mode_changed())
+        self.mode_choice.changed.connect(lambda _key: self._refresh_command_preview())
         self.kv_choice.changed.connect(lambda _key: self._refresh_command_preview())
         self.ubatch_edit.textChanged.connect(lambda _text: self._mark_manual("ubatch"))
         self.parallel_edit.textChanged.connect(lambda _text: self._mark_manual("parallel"))
@@ -528,17 +546,17 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def _resolved_model(self) -> Path | None:
         """表单实际使用的模型：显式选择，或按档位量化 / 大小兜底。"""
-        profile = PROFILES.get(self.profile_choice.key(), PROFILES[DEFAULT_PROFILE])
+        profile = PROFILES.get(self._mode_profile(), PROFILES[DEFAULT_PROFILE])
         return pick_model(self.state.selected_model, self.state.models, profile.quant)
 
     def _workflow(self, *, extra_args: str | None = None) -> dict[str, Any]:
         return {
             "name": self.name_combo.currentText(),
-            "profile": self.profile_choice.key(),
+            "profile": self._mode_profile(),
             "host": self.host_edit.text(),
             "port": self.port_edit.text(),
             "threads": self.threads_edit.text(),
-            "tune": self.tune_choice.key(),
+            "tune": self._mode_tune(),
             "ctx": self.ctx_edit.text(),
             "kv": self.kv_choice.key(),
             "ubatch": self.ubatch_edit.text(),
@@ -555,11 +573,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """可持久化的表单值（不含模型路径与硬件快照）。"""
         return {
             "name": self.name_combo.currentText(),
-            "profile": self.profile_choice.key(),
+            "profile": self._mode_profile(),
             "host": self.host_edit.text(),
             "port": self.port_edit.text(),
             "threads": self.threads_edit.text(),
-            "tune": self.tune_choice.key(),
+            "tune": self._mode_tune(),
             "ctx": self.ctx_edit.text(),
             "kv": self.kv_choice.key(),
             "ubatch": self.ubatch_edit.text(),
@@ -611,7 +629,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def profile_context(self) -> tuple[str, int, str]:
         """当前表单下的档位名、上下文与 KV 类型（输入无效时回退档位默认值）。"""
-        name = self.profile_choice.key() or DEFAULT_PROFILE
+        name = self._mode_profile() or DEFAULT_PROFILE
         profile = PROFILES.get(name, PROFILES[DEFAULT_PROFILE])
         try:
             context = parse_optional_int(self.ctx_edit.text(), "上下文") or profile.context
@@ -624,7 +642,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """按当前档位 / 上下文 / GPU 解析调优策略。"""
         _, context, _ = self.profile_context()
         size = self._selected_size()
-        tune = self.tune_choice.key()
+        tune = self._mode_tune()
         return _llmtune.resolve(tune, context=context, model_bytes=size, gpu_mib=self.state.gpu_mib)
 
     def fit_estimate(self, size: int) -> tuple[llmmodel.VramFit | None, llmmodel.VramFit | None]:
@@ -685,7 +703,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def effective_tuning_text(self, tuning: llmbase.Tuning) -> str:
         """提示区展示的生效高级参数（输入框 > 策略 > 档位）。"""
         _, _, profile_kv = self.profile_context()
-        profile = PROFILES.get(self.profile_choice.key())
+        profile = PROFILES.get(self._mode_profile())
         kv_type = self.kv_choice.key() or tuning.kv_type or profile_kv
         ubatch = self.ubatch_edit.text().strip() or str(tuning.ubatch or (profile.ubatch if profile else ""))
         parallel = self.parallel_edit.text().strip() or str(tuning.parallel)
@@ -695,8 +713,14 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             f"cr {tuning.cache_reuse} / kv {kv_type} / fa {tuning.flash_attn}"
         )
 
-    def _on_tune_changed(self) -> None:
-        """切换调优策略后同步高级参数。"""
+    def _mode_profile(self) -> str:
+        return _MODE_PROFILE.get(self.mode_choice.key(), DEFAULT_PROFILE)
+
+    def _mode_tune(self) -> str:
+        return _MODE_TUNE.get(self.mode_choice.key(), "auto")
+
+    def _on_mode_changed(self) -> None:
+        """切换运行模式后同步高级参数。"""
         self._apply_tuning()
 
     # ------------------------------------------------------------------ #
@@ -787,9 +811,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         rec = next((row for row in rows if row.model.path == path), None)
         if rec is None:
             return
-        self.profile_choice.set_key(rec.profile)
+        self.mode_choice.set_key(_mode_for_profile(rec.profile))
         self.ctx_edit.setText(str(rec.context))
-        self.tune_choice.set_key("auto")
         self._apply_tuning()
         self.kv_choice.set_key(rec.kv_type)
         self.ubatch_edit.setText(str(rec.ubatch))
@@ -1106,10 +1129,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def apply_recommendation(self, recommendation: Any) -> None:
         """把推荐行的模型与启动配置带入运行页。"""
         self.state.select_model(recommendation.model.path, update_name=True)
-        self.profile_choice.set_key(recommendation.profile)
-        self.tune_choice.set_key("auto")
+        self.mode_choice.set_key(_mode_for_profile(recommendation.profile))
         self.ctx_edit.setText(str(recommendation.context))
-        self._on_tune_changed()
+        self._on_mode_changed()
         self.kv_choice.set_key(recommendation.kv_type)
         self.ubatch_edit.setText(str(recommendation.ubatch))
         self.parallel_edit.setText(str(recommendation.parallel))

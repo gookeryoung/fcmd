@@ -117,14 +117,15 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     assert not hasattr(page, "clear_button")
     page.model_combo.setCurrentIndex(1)
     assert window.state.selected_model == model.path
-    assert page.profile_choice.key() in {"speed", "balanced", "long", "max-context"}
+    assert page.mode_choice.key() in {"speed", "balanced", "long", "max-context", "low-vram"}
 
 
 def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     run = window.run_page
-    assert run.profile_choice.key() == "balanced"
-    assert run.tune_choice.key() == "auto"
+    assert run.mode_choice.key() == "balanced"
     assert run.kv_choice.key() == ""
+    assert not hasattr(run, "profile_choice")
+    assert not hasattr(run, "tune_choice")
     assert run.host_edit.text() == "127.0.0.1"
     assert run.port_edit.text() == "8080"
     # CI / 无引擎机器上没有真实模型目录，垫一个可启动的模型再预览
