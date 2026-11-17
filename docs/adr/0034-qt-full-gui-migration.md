@@ -96,7 +96,7 @@ B7 与 B1–B6 平行排期，迁移期间任何一批的提交都不应把 cmde
   B3 六个应用（ncmconvertw / mirrortoolw / videoconvw / reshackw / devmanw / renamerw）、
   B4 四个应用（pptmakew / envw / filescanw / wslmanw）各自单独提交，旧实现已删除，
   GUI 入口统一委托 ``_<tool>w_qt.py``；
-- locllmw 的 P2 已落地：模型页补齐 ModelScope 浏览 / 下载、已安装仓库、转换与量化向导，
+- locllmw 的 P2 已落地：模型页补齐 ModelScope 浏览 / 下载、行内转换与量化，
   `--ui tk` 与全部 Tk 模块（`locllmw.LocllmWindow`、`_locllmw_ui` / `_locllmw_bench` /
   `_locllmw_chat` / `_locllmw_monitor` / `_locllmw_overview` / `_locllmw_settings` /
   `_locllmw_models` / `_locllmw_convert` 的 Tk 类）已删除（见 0033）；

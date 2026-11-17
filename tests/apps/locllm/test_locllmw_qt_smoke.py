@@ -83,7 +83,7 @@ def test_window_builds_all_pages(window: Any) -> None:
 def test_generated_pages_expose_core_widgets(window: Any) -> None:
     window.show_page("models")
     models = window.page("models")
-    assert [models.tabs.tabText(index) for index in range(models.tabs.count())] == ["浏览", "量化"]
+    assert models.browse is not None
     window.show_page("chat")
     chat = window.page("chat")
     assert chat.service_combo.count() >= 1
@@ -178,10 +178,10 @@ def test_sidebar_collapsed_state_restored(monkeypatch: pytest.MonkeyPatch, tmp_p
 
 
 def test_pages_use_scroll_container(window: Any) -> None:
-    """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件。"""
+    """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll
 
-    for key in ("overview", "run", "models", "monitor", "settings", "lab"):
+    for key in ("overview", "run", "monitor", "settings", "lab"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key

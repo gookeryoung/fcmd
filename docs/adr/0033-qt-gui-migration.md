@@ -1,6 +1,6 @@
 # 0033 locllmw 迁移到 Qt（PySide6）：GUI 基座与分页重构
 
-- 状态：已落地（GUI 基座、七页分页、模型下载 / 转换 / 量化向导全部为 Qt；Tk 实现已删除）
+- 状态：已落地（GUI 基座、七页分页、模型行内下载 / 转换 / 量化全部为 Qt；Tk 实现已删除）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线研究）、0025（侧边栏分页导航）、0027 / 0028 / 0029 / 0030 / 0031（locllmw 既有分页与配置）、0032（启动速度）、0034（全量 GUI 迁移）
 
@@ -14,7 +14,7 @@
 | C2 | 补齐 GUI 基础设计（窗口骨架 / 主题 / 导航 / 后台任务 / 常用控件） | `fcmd.gui.qt.window` / `theme` / `sidebar` / `workers` / `widgets` |
 | C3 | locllmw 保持既有七页能力与配置兼容 | 页面模块；`_locllmw_winsettings` 与 `locllmw.json` 口径不变 |
 | C4 | 门禁不退化：lint / typecheck / test / 覆盖率照旧 | `pyrefly.toml` / `.coveragerc` 的可选依赖排除；离屏冒烟测试 |
-| C5 | 不因换工具包丢失能力 | 模型页在同一 Qt 页内补齐 ModelScope 浏览 / 下载、行内转换与量化向导；Tk 窗口已删除 |
+| C5 | 不因换工具包丢失能力 | 模型页在同一 Qt 页内补齐 ModelScope 浏览 / 下载、行内转换与量化；Tk 窗口已删除 |
 
 ## 决策（D 表）
 
@@ -51,19 +51,18 @@
 | 页面 | Qt 实现 | 复用逻辑 |
 |---|---|---|
 | 概览 | `_locllmw_qt_overview`：硬件卡（环形显存 / 内存占用表）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` |
-| 模型 | `_locllmw_qt_center`（两子页：浏览 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
+| 模型 | `_locllmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
 | 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停、浏览器/日志 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
 | 实验室 | `_locllmw_qt_lab`：四张规划卡片 | — |
 | 监测 | `_locllmw_qt_monitor`：`/metrics` + 系统负载 + GPU + 性能测试 + 日志 | `_locllmw_monitor` / `_locllmw_bench` |
 | 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎、关于与诊断 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
 
-### 模型页两子页（C5）
+### 模型页浏览与行内操作（C5）
 
-| 子页 | 能力 | 复用逻辑 |
+| 页面 | 能力 | 复用逻辑 |
 |---|---|---|
-| 浏览 | ModelScope 筛选 / 排序 / 翻页、行内下载按钮、行内详情元数据、底部下载进度 | `llmdown.search_models` / `fetch_model_info` / `select_source` / `filter_files` / `download_files` |
-| 量化 | 输入 GGUF、全量模型下拉、量化器环境、量化类型、输出目录、覆盖开关、进度与日志 | `llmqnt` / `_locllmw_convert` |
+| 浏览 | ModelScope 筛选 / 排序 / 翻页、行内下载 / 转换 / 量化、行内详情元数据、底部任务进度 | `llmdown.search_models` / `fetch_model_info` / `select_source` / `filter_files` / `download_files` |
 
 ## 测试与门禁
 

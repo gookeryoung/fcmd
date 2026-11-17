@@ -164,6 +164,9 @@ def test_installed_and_converted_buttons_use_success_color() -> None:
     block = text.split("QPushButton#InstalledButton, QPushButton#ConvertedButton {", 1)[1].split("}", 1)[0]
     assert f"color: {theme.palette.success}" in block
     assert f"border: 1px solid {theme.palette.success}" in block
+    tag_block = text.split("QLabel#QuantTag {", 1)[1].split("}", 1)[0]
+    assert f"color: {theme.palette.accent}" in tag_block
+    assert f"background: {theme.palette.accent}" not in tag_block
 
 
 def test_secondary_buttons_keep_visible_border() -> None:

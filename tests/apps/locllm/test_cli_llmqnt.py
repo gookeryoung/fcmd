@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -11,7 +10,6 @@ import pytest
 
 import fcmd as fx
 from fcmd.apps.locllm import llmbase, llmengine, llmqnt
-from fcmd.apps.locllm._llmgguf import GgufPrecision
 from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
 
 
@@ -402,77 +400,6 @@ class TestCli:
         )
 
         assert code == 0
-
-
-# ---------------------------------------------------------------------- #
-# 转换页的量化选择状态
-# ---------------------------------------------------------------------- #
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-
-@pytest.fixture()
-def quant_panel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Any:
-    """离屏量化页：只验证勾选 / 已存在标记，不探测引擎与模型目录。"""
-    from fcmd.apps.locllm._locllmw_qt_center import _QuantPanel
-    from fcmd.gui.qt.app import create_application
-
-    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
-    create_application("locllmw-quant-test")
-    panel = _QuantPanel()
-    panel.out_dir.setText(str(tmp_path))
-    yield panel
-    panel.deleteLater()
-
-
-class TestQuantSelection:
-    """量化类型勾选状态（Qt 控件状态，不创建窗口事件循环）。"""
-
-    def test_mark_existing_does_not_auto_check_existing_outputs(self, quant_panel: Any, tmp_path: Path) -> None:
-        input_file = tmp_path / "model-f16.gguf"
-        quant_panel._input = input_file
-        llmqnt.output_path(input_file, "Q4_K_M", tmp_path).write_bytes(b"x")
-        quant_panel.quant_checks["Q4_K_M"].setChecked(False)
-
-        quant_panel._mark_existing()
-
-        assert quant_panel.quant_checks["Q4_K_M"].isChecked() is False
-        assert quant_panel.quant_checks["Q4_K_M"].isEnabled() is False
-        assert "已存在" in quant_panel.quant_checks["Q4_K_M"].text()
-        assert quant_panel.quant_checks["Q5_K_M"].isEnabled() is True
-
-    def test_reset_quants_restores_default_selection(self, quant_panel: Any, tmp_path: Path) -> None:
-        from fcmd.apps.locllm import _locllmw_qt_center
-
-        monkeypatch = pytest.MonkeyPatch()
-        try:
-            monkeypatch.setattr(
-                _locllmw_qt_center,
-                "detect_precision",
-                lambda *args, **kwargs: GgufPrecision(label="F16 全量，未量化", quantized=False, source="filename"),
-            )
-            monkeypatch.setattr(_locllmw_qt_center, "quantize_input_error", lambda _precision: None)
-            for check in quant_panel.quant_checks.values():
-                check.setChecked(True)
-
-            quant_panel._choose_input(tmp_path / "model-f16.gguf")
-        finally:
-            monkeypatch.undo()
-
-        checked = {quant for quant, check in quant_panel.quant_checks.items() if check.isChecked()}
-        assert checked == set(llmqnt.DEFAULT_QUANTS)
-
-    def test_mark_existing_keeps_selection_when_overwrite_enabled(self, quant_panel: Any, tmp_path: Path) -> None:
-        input_file = tmp_path / "model-f16.gguf"
-        quant_panel._input = input_file
-        quant_panel.overwrite.setChecked(True)
-        llmqnt.output_path(input_file, "Q2_K", tmp_path).write_bytes(b"x")
-        quant_panel.quant_checks["Q2_K"].setChecked(True)
-
-        quant_panel._mark_existing()
-
-        assert quant_panel.quant_checks["Q2_K"].isChecked() is True
-        assert quant_panel.quant_checks["Q2_K"].isEnabled() is True
 
 
 def test_plan_jobs_rejects_output_equal_to_input(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

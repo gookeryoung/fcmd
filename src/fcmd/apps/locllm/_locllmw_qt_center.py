@@ -19,21 +19,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QCheckBox,
-    QComboBox,
-    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -43,11 +40,10 @@ from fcmd.apps.locllm import (
     _locllmw_convert,
     _locllmw_models,
     llmconvert,
-    llmenv,
     llmqnt,
 )
-from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
-from fcmd.apps.locllm.llmbase import ModelEntry, human_size
+from fcmd.apps.locllm._llmgguf import detect_precision, quantize_input_error
+from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     ModelInfo,
     ModelSearch,
@@ -62,10 +58,7 @@ from fcmd.apps.locllm.llmdown import (
     select_source,
 )
 from fcmd.gui.qt.widgets import (
-    Card,
     ElidedLabel,
-    LogView,
-    PageScroll,
     RowListWidget,
     button,
     hint_label,
@@ -83,8 +76,6 @@ __all__ = ["ModelCenterPage"]
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
 _MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _locllmw_models.DEFAULT_MODEL_FILTER
-_TAB_NAMES = _locllmw_models.MODEL_TAB_NAMES
-_DEFAULT_TAB = _locllmw_models.DEFAULT_MODEL_TAB
 
 
 class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
@@ -103,6 +94,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     toggleRequested = Signal(object)
     downloadRequested = Signal(str)
     convertRequested = Signal(str)
+    quantizeRequested = Signal(str)
 
     def __init__(  # noqa: PLR0913 - 行状态位由列表统一透传
         self,
@@ -113,6 +105,9 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         convertible: bool = False,
         converted: bool = False,
         convert_blocked: str = "",
+        quant_tags: tuple[str, ...] = (),
+        quantizable: bool = False,
+        quant_blocked: bool = False,
     ) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
@@ -122,6 +117,8 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self._convertible = convertible
         self._converted = converted
         self._convert_blocked = convert_blocked
+        self._quantizable = quantizable
+        self._quant_blocked = quant_blocked
         self.setObjectName("ModelItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
@@ -142,13 +139,22 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         name.setObjectName("ModelItemName")
         name.setToolTip(item.repo)
         left.addWidget(name)
+        note_row = QHBoxLayout()
+        note_row.setContentsMargins(0, 0, 0, 0)
+        note_row.setSpacing(6)
         sub = QLabel(subtitle, header)
         sub.setObjectName("Hint")
         sub.setWordWrap(False)
         sub.setMinimumWidth(0)
         sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         sub.setToolTip(subtitle)
-        left.addWidget(sub)
+        note_row.addWidget(sub, 1)
+        for tag in quant_tags:
+            chip = QLabel(tag, header)
+            chip.setObjectName("QuantTag")
+            chip.setToolTip(f"已量化精度 {tag}")
+            note_row.addWidget(chip, 0)
+        left.addLayout(note_row)
         header_row.addLayout(left, 1)
 
         stats = QLabel(metrics, header)
@@ -172,6 +178,16 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.convert_button.setEnabled(False)
             self.convert_button.setToolTip(convert_blocked)
             header_row.addWidget(self.convert_button, 0)
+        self.quant_button: Any = None
+        if quantizable:
+            self.quant_button = button("量化")
+            self.quant_button.clicked.connect(lambda: self.quantizeRequested.emit(self.repo))
+            header_row.addWidget(self.quant_button, 0)
+        elif quant_blocked:
+            self.quant_button = button("不可量化")
+            self.quant_button.setEnabled(False)
+            self.quant_button.setToolTip("当前模型没有可量化的全量精度 GGUF")
+            header_row.addWidget(self.quant_button, 0)
         self.download_button = button("下载")
         if installed:
             self.download_button.setObjectName("InstalledButton")
@@ -231,6 +247,17 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             return
         self.convert_button.setEnabled(not busy)
         self.convert_button.setText("转换中…" if active else "转换")
+
+    def set_quant_state(self, *, busy: bool, active: bool) -> None:
+        """量化中禁用按钮；无候选时保持不可量化的禁用态。"""
+        if self.quant_button is None:
+            return
+        if self._quant_blocked:
+            self.quant_button.setEnabled(False)
+            self.quant_button.setText("不可量化")
+            return
+        self.quant_button.setEnabled(not busy)
+        self.quant_button.setText("量化中…" if active else "量化")
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -343,6 +370,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._convert_blocked: dict[str, str] = {}
         self._converting = False
         self._convert_active_repo: str | None = None
+        self._quant_candidates: dict[str, tuple[Path, ...]] = {}
+        self._quant_tags: dict[str, tuple[str, ...]] = {}
+        self._quantizing = False
+        self._quant_active_repo: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -426,7 +457,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == key), "")
         self.start_search(1)
 
-    def refresh_installed(self) -> None:
+    def refresh_installed(self) -> None:  # noqa: PLR0912 - 一次扫描同时归集安装 / 转换 / 量化状态
         """重新扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。"""
         try:
             models = scan_local_models(_llmconfig.models_dir())
@@ -435,6 +466,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._installed_repos = set()
             self._convertible = {}
             self._convert_blocked = {}
+            self._quant_candidates = {}
+            self._quant_tags = {}
         else:
             self._installed_models = {
                 model.repo.casefold(): ModelSummary(
@@ -447,6 +480,12 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._installed_repos = set(self._installed_models)
             self._convertible = {}
             self._convert_blocked = {}
+            self._quant_candidates = {}
+            self._quant_tags = {}
+            try:
+                product_ggufs = sorted(_llmconfig.products_dir().glob("*.gguf"))
+            except OSError:
+                product_ggufs = []
             for model in models:
                 key = model.repo.casefold()
                 if llmconvert.is_hf_safetensors_dir(model.path):
@@ -456,6 +495,29 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     self._convert_blocked[key] = (
                         "diffusers 多组件模型（model_index.json），当前仅支持单目录 HF transformers safetensors"
                     )
+                full: list[Path] = []
+                tags: list[str] = []
+                for gguf in sorted(model.path.glob("*.gguf")):
+                    precision = detect_precision(gguf, tensors=False)
+                    if precision.quantized is True:
+                        label = precision.filename_label or precision.label.removesuffix(" 量化")
+                        if label not in tags:
+                            tags.append(label)
+                    elif quantize_input_error(precision) is None:
+                        full.append(gguf)
+                bases = {llmqnt.strip_f16_suffix(path.stem) for path in full}
+                for product in product_ggufs:
+                    if not bases or not any(product.stem.startswith(base + "-") for base in bases):
+                        continue
+                    precision = detect_precision(product, tensors=False)
+                    if precision.quantized is True:
+                        label = precision.filename_label or precision.label.removesuffix(" 量化")
+                        if label not in tags:
+                            tags.append(label)
+                if full:
+                    self._quant_candidates[key] = tuple(full)
+                if tags:
+                    self._quant_tags[key] = tuple(tags)
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -527,6 +589,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             key = item.repo.casefold()
             installed = key in self._installed_repos
             convert_info = self._convertible.get(key)
+            quantizable = key in self._quant_candidates
             row = _ModelItemRow(
                 item,
                 self.models,
@@ -534,10 +597,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 convertible=convert_info is not None,
                 converted=bool(convert_info and convert_info[2]),
                 convert_blocked=self._convert_blocked.get(key, ""),
+                quant_tags=self._quant_tags.get(key, ()),
+                quantizable=quantizable,
+                quant_blocked=installed and not quantizable,
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
             row.convertRequested.connect(self.start_convert)
+            row.quantizeRequested.connect(self._on_quantize_requested)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -669,18 +736,23 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         for index in range(self.models.count()):
             row = self.models.itemWidget(self.models.item(index))
             if isinstance(row, _ModelItemRow):
+                busy = self._downloading or self._converting or self._quantizing
                 row.set_download_state(
-                    busy=self._downloading or self._converting,
+                    busy=busy,
                     active=self._downloading and row.repo == self._active_repo,
                 )
                 row.set_convert_state(
-                    busy=self._downloading or self._converting,
+                    busy=busy,
                     active=self._converting and row.repo == self._convert_active_repo,
+                )
+                row.set_quant_state(
+                    busy=busy,
+                    active=self._quantizing and row.repo == self._quant_active_repo,
                 )
 
     def start_download(self, repo: str) -> None:
         """下载指定仓库到模型目录，进度显示在列表底部右侧。"""
-        if self._downloading or self._converting or not repo:
+        if self._downloading or self._converting or self._quantizing or not repo:
             return
         settings = _locllmw_models.settings_from_dict(self.state.settings.download)
         dest = _llmconfig.models_dir()
@@ -759,7 +831,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def start_convert(self, repo: str) -> None:
         """把已安装的 HF safetensors 模型转换为 GGUF，进度复用底部状态区。"""
-        if self._converting or self._downloading or not repo:
+        if self._converting or self._downloading or self._quantizing or not repo:
             return
         info = self._convertible.get(repo.casefold())
         if info is None:
@@ -841,6 +913,97 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._convert_active_repo = None
         self._sync_download_buttons()
 
+    def _on_quantize_requested(self, repo: str) -> None:
+        """点击「量化」后弹出精度选项，选中后立即开始单精度量化。"""
+        if self._quantizing or self._downloading or self._converting:
+            return
+        if repo.casefold() not in self._quant_candidates:
+            return
+        menu = QMenu(self)
+        for quant, desc in llmqnt.QUANT_TYPES.items():
+            action = menu.addAction(f"{quant}  {desc}")
+            action.triggered.connect(lambda _checked=False, quant=quant, repo=repo: self.start_quantize(repo, quant))
+        menu.exec(QCursor.pos())
+
+    def start_quantize(self, repo: str, quant: str) -> None:
+        """对指定仓库中最大的全量 GGUF 执行一次量化。"""
+        if self._quantizing or self._downloading or self._converting:
+            return
+        files = self._quant_candidates.get(repo.casefold())
+        if not files:
+            return
+        source = max(files, key=lambda path: path.stat().st_size if path.is_file() else 0)
+        try:
+            exe = llmqnt.resolve_quantize_exe()
+            jobs = llmqnt.plan_jobs(source, [quant])
+            pending, _skipped = llmqnt.pending_jobs(jobs)
+        except (OSError, llmqnt.QuantizeError) as exc:
+            self.download_status.setVisible(True)
+            self.download_text.setText(f"无法量化：{repo} · {exc}")
+            self._log(f"无法量化 {repo}: {exc}")
+            return
+        if not pending:
+            self.download_status.setVisible(True)
+            self.download_bar.setValue(100)
+            self.download_text.setText(f"已存在：{repo} · {quant}")
+            self.refresh_installed()
+            self._render_results()
+            return
+        self._quantizing = True
+        self._quant_active_repo = repo
+        self.download_status.setVisible(True)
+        self.download_bar.setValue(0)
+        self.download_text.setText(f"准备量化 {repo} · {quant}…")
+        self.stop_download_button.setVisible(False)
+        self._sync_download_buttons()
+        self._log(f"开始量化 {source} -> {quant}")
+        self._bridge = _ProgressBridge(self)
+        self._bridge.progress.connect(self._on_quant_progress)
+        submit(
+            self._quant_work,
+            pending,
+            exe,
+            on_done=lambda success: self._quant_done(repo, success),
+            on_error=lambda message: self._quant_error(repo, message),
+            on_finished=self._quant_finished,
+        )
+
+    def _quant_work(self, pending: list[Any], exe: Path) -> bool:
+        success = True
+        total = len(pending)
+        for index, job in enumerate(pending, 1):
+            try:
+                llmqnt.run_job(job, exe, on_output=self._log)
+            except llmqnt.QuantizeError as exc:
+                success = False
+                self._log(f"量化 {job.quant} 失败: {exc}")
+            else:
+                self._log(f"已生成: {job.output}")
+            if self._bridge is not None:
+                self._bridge.progress.emit(index * 100 // total)
+        return success
+
+    def _on_quant_progress(self, value: object) -> None:
+        if isinstance(value, int):
+            self.download_bar.setValue(value)
+            self.download_text.setText(f"量化 {self._quant_active_repo or '-'} · {value}%")
+
+    def _quant_done(self, repo: str, success: bool) -> None:
+        self.download_bar.setValue(100 if success else self.download_bar.value())
+        self.download_text.setText(f"量化{'完成' if success else '结束'}：{repo}")
+        self._log(f"量化{'完成' if success else '结束'} {repo}")
+        self.refresh_installed()
+        self._render_results()
+
+    def _quant_error(self, repo: str, message: str) -> None:
+        self.download_text.setText(f"量化失败：{repo} · {message}")
+        self._log(f"量化失败 {repo}: {message}")
+
+    def _quant_finished(self) -> None:
+        self._quantizing = False
+        self._quant_active_repo = None
+        self._sync_download_buttons()
+
     def _download_done(self, target: str) -> None:
         self.download_bar.setValue(100)
         self.download_text.setText(f"下载完成：{self._active_repo or target}")
@@ -884,325 +1047,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         return True
 
 
-class _QuantPanel(QWidget):  # pragma: no cover - Qt 控件
-    """量化页：GGUF 量化。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._input: Path | None = None
-        self._models: list[ModelEntry] = []
-        self._precisions: dict[str, GgufPrecision] = {}
-        self._out_dir_auto = True
-        self._running = False
-        self._env_loaded = False
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroll = PageScroll(self)
-        outer.addWidget(scroll)
-        layout = scroll.body
-        layout.setSpacing(6)
-
-        file_row = QHBoxLayout()
-        file_row.setContentsMargins(0, 0, 0, 0)
-        file_row.setSpacing(6)
-        file_row.addWidget(QLabel("输入文件"))
-        self.file_text = QLineEdit(self)
-        self.file_text.setReadOnly(True)
-        self.file_text.setPlaceholderText("尚未选择输入文件")
-        file_row.addWidget(self.file_text, 1)
-        pick = button("选择…")
-        pick.clicked.connect(self._select_file)
-        file_row.addWidget(pick)
-        layout.addLayout(file_row)
-
-        model_row = QHBoxLayout()
-        model_row.setContentsMargins(0, 0, 0, 0)
-        model_row.setSpacing(6)
-        model_row.addWidget(QLabel("未量化模型（GGUF）"))
-        self.model_combo = QComboBox(self)
-        self.model_combo.setEnabled(False)
-        self.model_combo.currentIndexChanged.connect(self._on_model_selected)
-        model_row.addWidget(self.model_combo, 1)
-        refresh = button("刷新模型列表")
-        refresh.clicked.connect(self.refresh_env)
-        model_row.addWidget(refresh)
-        layout.addLayout(model_row)
-
-        info_card = Card("环境信息")
-        info_grid = QGridLayout()
-        info_grid.setContentsMargins(0, 0, 0, 0)
-        info_grid.setHorizontalSpacing(8)
-        info_grid.setVerticalSpacing(4)
-        info_grid.setColumnStretch(1, 1)
-        self.info_values: dict[str, QLabel] = {}
-        for row, (key, label) in enumerate((("engine", "引擎"), ("quantizer", "量化器"), ("version", "版本"))):
-            info_grid.addWidget(QLabel(label), row, 0, Qt.AlignmentFlag.AlignTop)
-            value = QLabel("检测中…", info_card)
-            value.setWordWrap(True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            info_grid.addWidget(value, row, 1)
-            self.info_values[key] = value
-        info_card.body.addLayout(info_grid)
-        layout.addWidget(info_card)
-
-        quant_card = Card("量化类型")
-        quant_grid = QGridLayout()
-        quant_grid.setContentsMargins(0, 0, 0, 0)
-        quant_grid.setHorizontalSpacing(12)
-        quant_grid.setVerticalSpacing(4)
-        self.quant_checks: dict[str, QCheckBox] = {}
-        for index, (quant, desc) in enumerate(llmqnt.QUANT_TYPES.items()):
-            check = QCheckBox(f"{quant}  {desc}", quant_card)
-            check.setChecked(quant in llmqnt.DEFAULT_QUANTS)
-            quant_grid.addWidget(check, index // 3, index % 3)
-            self.quant_checks[quant] = check
-        quant_card.body.addLayout(quant_grid)
-        layout.addWidget(quant_card)
-
-        out_row = QHBoxLayout()
-        out_row.setContentsMargins(0, 0, 0, 0)
-        out_row.setSpacing(6)
-        out_row.addWidget(QLabel("输出目录"))
-        self.out_dir = QLineEdit(str(_llmconfig.products_dir()), self)
-        self.out_dir.textEdited.connect(self._on_out_dir_edited)
-        out_row.addWidget(self.out_dir, 1)
-        pick_dir = button("浏览…")
-        pick_dir.clicked.connect(self._pick_out_dir)
-        out_row.addWidget(pick_dir)
-        default_dir = button("默认目录")
-        default_dir.clicked.connect(self._reset_out_dir)
-        out_row.addWidget(default_dir)
-        layout.addLayout(out_row)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self.overwrite = QCheckBox("覆盖已存在的量化文件", self)
-        self.overwrite.toggled.connect(lambda _checked: self._mark_existing())
-        actions.addWidget(self.overwrite)
-        actions.addStretch(1)
-        self.start_button = button("开始量化", kind="primary")
-        self.start_button.clicked.connect(self._start_quant)
-        actions.addWidget(self.start_button)
-        self.progress = QProgressBar(self)
-        self.progress.setRange(0, 100)
-        actions.addWidget(self.progress)
-        layout.addLayout(actions)
-
-        log_card = Card("量化输出日志")
-        self.log_view = LogView(height=100, parent=log_card)
-        log_card.body.addWidget(self.log_view)
-        layout.addWidget(log_card, 1)
-        layout.addStretch(1)
-
-    # -- 环境 ---------------------------------------------------------- #
-    def refresh_env(self) -> None:
-        for value in self.info_values.values():
-            value.setText("检测中…")
-        submit(self._scan_env, on_done=self._apply_env, on_error=self._env_error)
-
-    @staticmethod
-    def _scan_env() -> _locllmw_convert.ModelEnv:
-        return _locllmw_convert.scan_model_env()
-
-    def _env_error(self, message: str) -> None:
-        self.info_values["engine"].setText(f"检测失败（{message}）")
-
-    def _apply_env(self, env: _locllmw_convert.ModelEnv) -> None:
-        info, entries, precisions = env.info, env.entries, env.precisions
-        for key, value in info.items():
-            if key in self.info_values:
-                self.info_values[key].setText(value or "-")
-        self._precisions = precisions
-        usable = [entry for entry in entries if self._precision_for(entry.path).quantized is not True]
-        self._models = usable
-        labels = [
-            f"{entry.relative}（{self._precision_for(entry.path).note}）  ({human_size(entry.size)})"
-            for entry in usable
-        ]
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItems(labels)
-        self.model_combo.setCurrentIndex(-1)
-        self.model_combo.blockSignals(False)
-        self.model_combo.setEnabled(bool(labels) and not self._running)
-        self._mark_existing()
-
-    def _precision_for(self, path: Path, *, refresh: bool = False) -> GgufPrecision:
-        key = llmenv.path_key(path)
-        if refresh or key not in self._precisions:
-            self._precisions[key] = detect_precision(path)
-        return self._precisions[key]
-
-    # -- 选择 ---------------------------------------------------------- #
-    def _select_file(self) -> None:
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "选择 F16 格式的 GGUF 文件", "", "GGUF 文件 (*.gguf);;所有文件 (*.*)"
-        )
-        if chosen:
-            self._choose_input(Path(chosen))
-
-    def _on_model_selected(self, index: int) -> None:
-        if 0 <= index < len(self._models):
-            self._choose_input(self._models[index].path)
-
-    def _choose_input(self, path: Path) -> None:
-        precision = self._precision_for(path, refresh=True)
-        reason = quantize_input_error(precision)
-        if reason:
-            QMessageBox.warning(self, "无法作为量化输入", f"{path.name}：{reason}")
-            return
-        changed = self._input is None or llmenv.path_key(path) != llmenv.path_key(self._input)
-        self._input = path
-        self.file_text.setText(str(path))
-        if changed:
-            for quant, check in self.quant_checks.items():
-                check.setChecked(quant in llmqnt.DEFAULT_QUANTS)
-        self._mark_existing()
-        self.log_view.clear()
-        self.log_view.append(f"精度: {precision.detail}")
-        self.progress.setValue(0)
-
-    def _on_out_dir_edited(self, _text: str) -> None:
-        text = self.out_dir.text().strip()
-        self._out_dir_auto = not text or (
-            llmenv.path_key(Path(text).expanduser()) == llmenv.path_key(_llmconfig.products_dir())
-        )
-        self._mark_existing()
-
-    def _pick_out_dir(self) -> None:
-        chosen = QFileDialog.getExistingDirectory(self, "选择量化输出目录", str(self._out_dir()))
-        if chosen:
-            self.out_dir.setText(chosen)
-
-    def _reset_out_dir(self) -> None:
-        self._out_dir_auto = True
-        self.out_dir.setText(str(_llmconfig.products_dir()))
-
-    def _out_dir(self) -> Path:
-        text = self.out_dir.text().strip()
-        return Path(text).expanduser() if text else _llmconfig.products_dir()
-
-    def _mark_existing(self) -> None:
-        overwrite = self.overwrite.isChecked()
-        out_dir = self._out_dir()
-        for quant, check in self.quant_checks.items():
-            desc = llmqnt.QUANT_TYPES[quant]
-            exists = self._input is not None and llmqnt.output_path(self._input, quant, out_dir).is_file()
-            check.setText(f"{quant}  {desc}" + ("（已存在）" if exists else ""))
-            check.setEnabled(overwrite or not exists)
-
-    def _selected_quants(self) -> list[str]:
-        overwrite = self.overwrite.isChecked()
-        out_dir = self._out_dir()
-        selected: list[str] = []
-        for quant, check in self.quant_checks.items():
-            if not check.isChecked():
-                continue
-            if not overwrite and self._input is not None and llmqnt.output_path(self._input, quant, out_dir).is_file():
-                continue
-            selected.append(quant)
-        return selected
-
-    # -- 执行 ---------------------------------------------------------- #
-    def _start_quant(self) -> None:
-        if self._running:
-            self.log_view.append("已有任务正在进行，请等待完成")
-            return
-        if self._input is None or not self._input.is_file():
-            QMessageBox.warning(self, "缺少输入", "请先选择 F16 GGUF 文件")
-            return
-        precision = self._precision_for(self._input, refresh=True)
-        reason = quantize_input_error(precision)
-        if reason:
-            QMessageBox.critical(self, "无法开始量化", f"{self._input.name}：{reason}")
-            return
-        quants = self._selected_quants()
-        if not quants:
-            QMessageBox.warning(self, "缺少量化类型", "请至少勾选一种尚未生成的量化类型")
-            return
-        try:
-            exe = llmqnt.resolve_quantize_exe()
-            jobs = llmqnt.plan_jobs(self._input, quants, self._out_dir())
-            pending, skipped = llmqnt.pending_jobs(jobs, self.overwrite.isChecked())
-        except llmqnt.QuantizeError as exc:
-            QMessageBox.critical(self, "无法开始量化", str(exc))
-            return
-        self.log_view.clear()
-        self.log_view.append(f"输入: {self._input}")
-        self.log_view.append(f"精度: {precision.detail}")
-        self.log_view.append(f"量化器: {exe}")
-        self.log_view.append(f"输出目录: {self._out_dir()}")
-        self.log_view.append(f"量化类型: {', '.join(quants)}（共 {len(pending)} 个任务）")
-        if skipped:
-            self.log_view.append(f"已存在并跳过: {', '.join(job.quant for job in skipped)}")
-        if not pending:
-            self.log_view.append("全部量化文件已存在，无需转换")
-            return
-        self._set_running(True)
-        self._bridge = _ProgressBridge(self)
-        self._bridge.progress.connect(self._on_progress)
-        submit(
-            self._quant_work,
-            pending,
-            exe,
-            on_done=self._quant_done,
-            on_error=self._quant_error,
-            on_finished=lambda: self._set_running(False),
-        )
-
-    def _quant_work(self, pending: list[Any], exe: Path) -> bool:
-        success = True
-        total = len(pending)
-        for index, job in enumerate(pending, 1):
-            self._log_safe(f"正在转换到 {job.quant} 格式…")
-            try:
-                llmqnt.run_job(job, exe, on_output=self._log_safe)
-            except llmqnt.QuantizeError as exc:
-                success = False
-                self._log_safe(f"转换 {job.quant} 失败: {exc}")
-            else:
-                self._log_safe(f"成功生成: {job.output}")
-            if self._bridge is not None:
-                self._bridge.progress.emit(index * 100 // total)
-        return success
-
-    def _log_safe(self, message: str) -> None:
-        self.log_view.append(message)
-
-    def _on_progress(self, value: object) -> None:
-        if isinstance(value, int):
-            self.progress.setValue(value)
-
-    def _quant_done(self, success: bool) -> None:
-        if success:
-            self.progress.setValue(100)
-            self.log_view.append("所有量化转换完成！")
-            QMessageBox.information(self, "完成", "所有量化转换已完成")
-        else:
-            self.log_view.append("量化转换过程中出现错误，详见日志")
-            QMessageBox.warning(self, "失败", "部分量化任务失败，详见日志")
-
-    def _quant_error(self, message: str) -> None:
-        self.log_view.append(message)
-        QMessageBox.critical(self, "量化失败", message)
-
-    def _set_running(self, running: bool) -> None:
-        self._running = running
-        self.start_button.setEnabled(not running)
-        self.model_combo.setEnabled(bool(self._models) and not running)
-        for check in self.quant_checks.values():
-            check.setEnabled(not running)
-        if not running:
-            self._mark_existing()
-
-    def close(self) -> bool:
-        return True
-
-
 class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
-    """模型中心的两个子页：浏览 / 量化。"""
+    """模型中心：ModelScope 浏览与行内下载 / 转换 / 量化。"""
 
     def __init__(
         self,
@@ -1215,30 +1061,13 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         del fit_resolver
         self.browse = _BrowsePanel(state, self)
-        self.quant = _QuantPanel(self)
-        self.tabs = QTabWidget(self)
-        for name, page in zip(_TAB_NAMES, (self.browse, self.quant), strict=True):
-            self.tabs.addTab(page, name)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.tabs)
-        self.tabs.setCurrentIndex(_TAB_NAMES.index(_DEFAULT_TAB))
-        self._install_env_hooks()
-
-    def _install_env_hooks(self) -> None:
-        """首次进入转换 / 量化页时再扫描环境，避免冷启动做重活。"""
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-
-    def _on_tab_changed(self, index: int) -> None:
-        if _TAB_NAMES[index] == "量化" and not self.quant._env_loaded:
-            self.quant._env_loaded = True
-            self.quant.refresh_env()
+        layout.addWidget(self.browse)
 
     def refresh_config(self) -> None:
-        """模型目录变化后刷新已安装标识与量化环境。"""
+        """模型目录变化后刷新已安装标识与量化 / 转换状态。"""
         self.browse.refresh_installed()
-        if self.tabs.currentIndex() == _TAB_NAMES.index("量化"):
-            self.quant.refresh_env()
 
     def close(self) -> bool:
         """确认并停止下载 / 转换 / 量化任务；返回 ``False`` 表示用户取消关闭。"""

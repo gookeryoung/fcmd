@@ -207,7 +207,7 @@ def test_fit_state_for_prefers_running() -> None:
 
 def test_model_item_row_expands_inline_detail() -> None:
     """浏览结果行展开后，详情区直接挂在行下方（不再需要右侧面板）。"""
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
 
     QApplication.instance() or QApplication([])
     row = _ModelItemRow(ModelSummary(repo="Qwen/demo"))
@@ -228,6 +228,16 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert blocked_row.convert_button is not None
     assert blocked_row.convert_button.text() == "不可转换"
     assert not blocked_row.convert_button.isEnabled()
+    quantized_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_tags=("Q4_K_M", "Q5_K_M"))
+    assert quantized_row.findChild(QLabel, "QuantTag") is not None
+    quantizable_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quantizable=True)
+    assert quantizable_row.quant_button is not None
+    assert quantizable_row.quant_button.text() == "量化"
+    assert quantizable_row.quant_button.isEnabled()
+    blocked_quant_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_blocked=True)
+    assert blocked_quant_row.quant_button is not None
+    assert blocked_quant_row.quant_button.text() == "不可量化"
+    assert not blocked_quant_row.quant_button.isEnabled()
     assert row.download_button.text() == "下载"
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()

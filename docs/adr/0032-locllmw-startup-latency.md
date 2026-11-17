@@ -11,7 +11,7 @@
 与「用户实际想看的内容」无关的开销：
 
 1. 六个分页在构造期一次性建完，模型页 / 设置页各自在后台拉起扫描线程；
-2. 模型页的「量化」子页扫描对每个 GGUF 做**默认全量解析**（`tensors=True`），
+2. 模型页量化状态扫描对每个 GGUF 做**默认全量解析**（`tensors=True`），
    会逐项读出 tokenizer 词表（单个 30B 模型数十万项字符串）。实测 13 个模型的
    目录里一轮扫描约 450 万次 `bytes.decode` + 小读，持续数秒占用 GIL，与 Tk
    主线程抢时间片，表现为窗口刚出来时卡顿；
@@ -39,7 +39,7 @@
 
 ### 2. GGUF 精度解析快路径
 
-- 列表类场景（运行页模型列表、模型页量化子页）口径统一为 `detect_precision(path, tensors=False)`
+- 列表类场景（运行页模型列表、模型页量化状态）口径统一为 `detect_precision(path, tensors=False)`
   + `PrecisionCache`：读到 `general.file_type` 即停止，结果按「路径 + mtime_ns + size」
   缓存到 `~/.fcmd/cache/gguf-precision.json`，文件替换后自动失效。
 - `_skip_value` 跳过的字符串改走 `_skip_string`（读长度后 `seek`），不再 decode /

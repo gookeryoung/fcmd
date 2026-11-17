@@ -372,6 +372,15 @@ QPushButton#InstalledButton:disabled, QPushButton#ConvertedButton:disabled {
     background: $success_soft;
     border: 1px solid $success;
 }
+QLabel#QuantTag {
+    color: $accent;
+    background: $accent_soft;
+    border: 1px solid $accent;
+    border-radius: 7px;
+    padding: 0px 5px;
+    font-size: ${font_small}pt;
+    font-weight: 600;
+}
 QLabel#ScoreBadge {
     border: 2px solid $border;
     border-radius: 22px;
