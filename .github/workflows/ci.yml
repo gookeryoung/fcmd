@@ -91,7 +91,12 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      
+      # PySide6 的 Linux wheel 依赖系统 GL/EGL 与输入库；runner 默认没有 libEGL，
+      # 导入 PySide6 会直接 ImportError（即使只跑离屏 Qt 测试）。
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
 
       - name: Sync dependencies
         env:
@@ -99,5 +104,7 @@ jobs:
         run: uv sync --frozen --extra test --extra agent --python ${{ matrix.python-version }}
 
       - name: Run tests
-        
+        env:
+          # 所有 Qt 测试统一走离屏平台，runner 没有 X/Wayland 显示
+          QT_QPA_PLATFORM: offscreen
         run: uv run pytest -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
