@@ -24,6 +24,7 @@ __all__ = [
     "HardwareSnapshot",
     "detect_cpu_name",
     "detect_hardware",
+    "detect_memory_gen",
     "disk_for_path",
     "format_disk",
     "snapshot_from_dict",
@@ -32,6 +33,9 @@ __all__ = [
 
 #: 不纳入硬件面板的分区类型（光驱 / 虚拟盘 / 临时盘）
 DISK_SKIP_FSTYPES = frozenset({"", "cdrom", "iso9660", "udf", "squashfs", "tmpfs", "devtmpfs"})
+
+#: SMBIOS 内存类型代码 → 代数名（Win32_PhysicalMemory.SMBIOSMemoryType）
+SMBIOS_MEMORY_TYPES = {20: "DDR", 21: "DDR2", 24: "DDR3", 26: "DDR4", 34: "DDR5"}
 
 _SCHEMA = 1
 
@@ -64,6 +68,7 @@ class HardwareSnapshot:
     cpu_cores: int = 0
     cpu_threads: int = 0
     memory_total: int = 0
+    memory_gen: str = ""
     gpu: str = ""
     gpu_mib: int | None = None
     disks: tuple[DiskInfo, ...] = ()
@@ -96,6 +101,31 @@ def detect_cpu_name() -> str:
             if value.strip():
                 return value.strip()
     return platform.processor() or platform.machine() or "未知处理器"
+
+
+def detect_memory_gen(runner: Runner = run_command) -> str:
+    """读取内存代数（DDR4 / DDR5…）：Windows 查 ``Win32_PhysicalMemory``，其余平台返回空。
+
+    取第一根内存条的 ``SMBIOSMemoryType`` 代码映射代数；查询失败或代码未知时
+    返回空串（界面不显示代数）。``runner`` 可注入供单测使用。
+    """
+    if os.name != "nt":
+        return ""
+    result = runner(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "(Get-CimInstance Win32_PhysicalMemory | Select-Object -First 1).SMBIOSMemoryType",
+        ]
+    )
+    if result.returncode != 0:
+        return ""
+    try:
+        code = int(float(result.stdout.strip()))
+    except ValueError:
+        return ""
+    return SMBIOS_MEMORY_TYPES.get(code, "")
 
 
 def _disk_infos() -> tuple[DiskInfo, ...]:
@@ -138,6 +168,7 @@ def detect_hardware(
         cpu_cores=int(psutil.cpu_count(logical=False) or 0),
         cpu_threads=int(psutil.cpu_count(logical=True) or 0),
         memory_total=int(memory.total),
+        memory_gen=detect_memory_gen(runner or run_command),
         gpu=gpu.name if gpu is not None else "",
         gpu_mib=gpu.memory_mib if gpu is not None else None,
         disks=_disk_infos(),
@@ -175,6 +206,7 @@ def snapshot_to_dict(snapshot: HardwareSnapshot) -> dict[str, Any]:
         "cpu_cores": snapshot.cpu_cores,
         "cpu_threads": snapshot.cpu_threads,
         "memory_total": snapshot.memory_total,
+        "memory_gen": snapshot.memory_gen,
         "gpu": snapshot.gpu,
         "gpu_mib": snapshot.gpu_mib,
         "disks": [
@@ -214,6 +246,7 @@ def snapshot_from_dict(raw: object) -> HardwareSnapshot | None:
         cpu_cores=_as_int(raw.get("cpu_cores")),
         cpu_threads=_as_int(raw.get("cpu_threads")),
         memory_total=_as_int(raw.get("memory_total")),
+        memory_gen=str(raw.get("memory_gen") or ""),
         gpu=str(raw.get("gpu") or ""),
         gpu_mib=_as_int(gpu_mib) if gpu_mib is not None else None,
         disks=tuple(disks),

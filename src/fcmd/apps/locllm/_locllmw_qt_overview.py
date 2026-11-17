@@ -294,8 +294,13 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._hardware_values["cpu"].setText(
             _qt_theme.tiered_value_html(theme, snapshot.cpu, f"{snapshot.cpu_cores} 核 / {snapshot.cpu_threads} 线程")
         )
+        memory_detail = snapshot.memory_gen
         self._hardware_values["memory"].setText(
-            _qt_theme.tiered_value_html(theme, human_size(snapshot.memory_total) if snapshot.memory_total else "-")
+            _qt_theme.tiered_value_html(
+                theme,
+                human_size(snapshot.memory_total) if snapshot.memory_total else "-",
+                memory_detail,
+            )
         )
         models_dir = llmenv.models_dir()
         disk = disk_for_path(models_dir, snapshot.disks)

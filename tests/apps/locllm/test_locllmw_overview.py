@@ -83,14 +83,31 @@ class TestHardwareSnapshot:
 
     def test_detect_hardware_uses_runner(self, tmp_path: Path) -> None:
         def runner(argv: list[str]) -> CommandResult:
-            assert argv[0] == "nvidia-smi"
+            assert argv[0] in ("nvidia-smi", "powershell")
+            if argv[0] == "powershell":
+                return CommandResult(0, "34\n")  # SMBIOSMemoryType: DDR5
             return CommandResult(0, "NVIDIA Test, 16384\n")
 
         snapshot = hardware.detect_hardware(tmp_path, runner=runner)
         assert snapshot.gpu == "NVIDIA Test"
         assert snapshot.gpu_mib == 16384
         assert snapshot.memory_total > 0
+        assert snapshot.memory_gen == "DDR5"
         assert snapshot.model_root == str(tmp_path)
+
+    def test_detect_memory_gen_maps_smbios_code(self) -> None:
+        for code, expected in ((20, "DDR"), (21, "DDR2"), (24, "DDR3"), (26, "DDR4"), (34, "DDR5")):
+            runner = lambda argv, code=code: CommandResult(0, f"{code}\n")  # noqa: E731
+            assert hardware.detect_memory_gen(runner) == expected
+
+    def test_detect_memory_gen_tolerates_failure(self) -> None:
+        assert hardware.detect_memory_gen(lambda argv: CommandResult(1, "", "err")) == ""
+        assert hardware.detect_memory_gen(lambda argv: CommandResult(0, "unknown\n")) == ""
+        assert hardware.detect_memory_gen(lambda argv: CommandResult(0, "35\n")) == ""
+
+    def test_detect_memory_gen_skips_non_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(hardware.os, "name", "posix")
+        assert hardware.detect_memory_gen(lambda argv: CommandResult(0, "34\n")) == ""
 
 
 class TestPredictPerformance:
@@ -230,6 +247,7 @@ class TestHardwareDetection:
         monkeypatch.setattr("psutil.virtual_memory", lambda: SimpleNamespace(total=1024))
         monkeypatch.setattr("psutil.cpu_count", lambda logical=True: 8)
         monkeypatch.setattr(hardware.llmengine, "detect_gpu", lambda *_args: None)
+        monkeypatch.setattr(hardware, "detect_memory_gen", lambda *_args: "")
         monkeypatch.setattr(hardware.llmenv, "models_dir", lambda home=None: tmp_path)
 
         snapshot = hardware.detect_hardware()
