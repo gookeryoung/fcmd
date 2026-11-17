@@ -300,8 +300,14 @@ class LlamaCppBackend:
             str(plan.context),
             "-np",
             str(parallel),
-            "--flash-attn",
-            tuning.flash_attn,
+        ]
+        # llama.cpp 的 --flash-attn 在不同构建间语法不一致：旧版（如 b5019）是布尔开关，
+        # 新版才接受 on/off/auto 取值。默认值 on 用无参形式，两代引擎都能启动。
+        if tuning.flash_attn == "on":
+            args.append("--flash-attn")
+        elif tuning.flash_attn and tuning.flash_attn != "off":
+            args += ["--flash-attn", tuning.flash_attn]
+        args += [
             "-ctk",
             plan.effective_kv_type,
             "-ctv",

@@ -20,7 +20,12 @@ from fcmd.apps.locllm import llmbase, llmserve
 from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
 from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
 from fcmd.apps.locllm._locllmw_qt_chat import endpoint_from_form, service_labels
-from fcmd.apps.locllm._locllmw_qt_models import fit_state_for, model_row_values, ordered_groups
+from fcmd.apps.locllm._locllmw_qt_models import (
+    display_path_for,
+    fit_state_for,
+    model_row_values,
+    ordered_groups,
+)
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
 from fcmd.apps.locllm._locllmw_qt_overview import loaded_row_values, usage_texts
 from fcmd.apps.locllm._locllmw_qt_run import (
@@ -159,6 +164,16 @@ def test_model_row_values() -> None:
     assert values[2] == "balanced"
     assert values[3] == "代码"
     assert values[4] == "可用"
+
+
+def test_display_path_strips_group_prefix(tmp_path: Path) -> None:
+    """分组已展示一级目录时，行内省略重复前缀；根目录与目录外条目保持原样。"""
+    entry = _model(tmp_path, "meta-models/sub/model.gguf")
+    assert display_path_for(entry, tmp_path) == str(Path("sub") / "model.gguf")
+    root_file = _model(tmp_path, "top.gguf")
+    assert display_path_for(root_file, tmp_path) == "top.gguf"
+    outside = ModelEntry(root=tmp_path / "elsewhere", path=tmp_path / "elsewhere" / "x.gguf", size=1)
+    assert display_path_for(outside, tmp_path) == "x.gguf"
 
 
 def test_ordered_groups_puts_running_first(tmp_path: Path) -> None:
@@ -307,3 +322,69 @@ def test_model_tree_expand_and_collapse() -> None:
     group = tree.tree.topLevelItem(0)
     assert group is not None
     assert not group.isExpanded()
+
+
+def test_model_tree_keeps_name_readable() -> None:
+    """模型名默认给足宽度、可横向滚动，并用 tooltip 兜底完整名称。"""
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QHeaderView
+
+    from fcmd.apps.locllm._locllmw_qt_models import NAME_COLUMN_WIDTH, ModelTree
+
+    QApplication.instance() or QApplication([])
+    root = Path("/models")
+    long_name = "org/" + "超长模型目录与文件名-" * 6 + "Q4_K_M.gguf"
+    state = SimpleNamespace(
+        models=[_model(root, long_name)],
+        models_root=root,
+        selected_model=None,
+        running_paths=set(),
+        precisions={},
+    )
+    tree = ModelTree(cast("Any", state))
+    tree.resize(1200, 420)
+    tree.refresh()
+    header = tree.tree.header()
+    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive
+    assert header.sectionSize(0) >= NAME_COLUMN_WIDTH
+    assert tree.tree.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
+    group = tree.tree.topLevelItem(0)
+    assert group is not None
+    child = group.child(0)
+    assert child.text(0).startswith("超长模型目录与文件名-")
+    assert child.toolTip(0) == str(root / long_name)
+    assert child.text(0).endswith("Q4_K_M.gguf")
+
+
+def test_model_tree_distinguishes_same_name_across_groups() -> None:
+    """同名文件分属不同分组时，分组标题与完整路径 tooltip 仍能唯一定位。"""
+    from types import SimpleNamespace
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.apps.locllm._locllmw_qt_models import ModelTree
+
+    QApplication.instance() or QApplication([])
+    root = Path("/models")
+    first = _model(root, "alpha/same.gguf")
+    second = _model(root, "beta/same.gguf")
+    state = SimpleNamespace(
+        models=[first, second],
+        models_root=root,
+        selected_model=None,
+        running_paths=set(),
+        precisions={},
+    )
+    tree = ModelTree(cast("Any", state))
+    tree.refresh()
+    tree.expand_all()
+    groups = [tree.tree.topLevelItem(index) for index in range(tree.tree.topLevelItemCount())]
+    labels = [group.data(0, Qt.ItemDataRole.UserRole)[1] for group in groups if group is not None]
+    assert labels == ["alpha", "beta"]
+    children = [group.child(0) for group in groups if group is not None]
+    assert {child.text(0) for child in children} == {"same.gguf"}
+    assert {child.toolTip(0) for child in children} == {str(first.path), str(second.path)}
+

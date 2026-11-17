@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -209,6 +209,9 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
 
 class RunPage(QWidget):  # pragma: no cover - Qt 控件
     """运行页：参数表单 + 模型列表 + 计划预览 + 启停动作。"""
+
+    fitChanged = Signal()
+    """档位 / 调优变化导致硬件适配口径变化，供模型页同步刷新。"""
 
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -457,6 +460,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         total, free = self.fit_estimate(entry.size)
         return fit_state_for(running=self.state.is_running(entry.path), total=total, free=free)
 
+    def fit_text_for(self, entry: Any) -> str:
+        """供模型页复用的硬件状态回调，口径与运行页当前表单一致。"""
+        return self._fit_text(entry)
+
     def _mark_manual(self, key: str) -> None:
         if not self._syncing_tune:
             self._tune_auto[key] = False
@@ -525,6 +532,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _refresh_fit(self) -> None:
         self.tree.set_fit_resolver(self._fit_text)
+        self.fitChanged.emit()
 
     def _basis_hint(self) -> str:
         """未选中模型时展示硬件评估口径。"""

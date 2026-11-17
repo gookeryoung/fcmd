@@ -119,9 +119,10 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _build_models_page(self) -> QWidget:
         from fcmd.apps.locllm._locllmw_qt_models import ModelsPage
 
-        page = ModelsPage(self.state)
+        page = ModelsPage(self.state, fit_resolver=self.run_page.fit_text_for)
         page.tree.modelSelected.connect(lambda path: self.state.select_model(path, update_name=True))
         page.tree.refresh()
+        self.run_page.fitChanged.connect(page.tree.refresh)
         self._models_page = page
         return page
 

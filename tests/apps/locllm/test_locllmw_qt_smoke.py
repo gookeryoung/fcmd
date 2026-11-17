@@ -79,6 +79,28 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     assert settings_page.models_path.value()
 
 
+def test_models_page_fills_hardware_column(window: Any) -> None:
+    """模型页的硬件列必须按运行页当前口径给出适配状态，而不是一律空白。"""
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    root = Path("/models")
+    window.state.models = [
+        ModelEntry(root=root, path=root / "org" / "small.gguf", size=1024**3, profiles=("balanced",), tags=("对话",))
+    ]
+    window.state.models_root = root
+    window.state.precisions = {}
+    window.state.running_paths = set()
+    window.state.gpu_mib = 32768
+    window.state.gpu_free_mib = 32000
+    window.show_page("models")
+    page = window.page("models")
+    page.tree.expand_all()
+    group = page.tree.tree.topLevelItem(0)
+    assert group is not None
+    child = group.child(0)
+    assert child.text(4) == "可用"
+
+
 def test_run_page_form_defaults(window: Any) -> None:
     run = window.run_page
     assert run.profile_combo.currentText() == "balanced"

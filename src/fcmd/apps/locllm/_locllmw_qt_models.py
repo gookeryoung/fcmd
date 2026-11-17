@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtGui import QBrush, QColor, QFont, QResizeEvent
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QHeaderView, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget
 
 from fcmd.apps.locllm import llmenv, llmmodel
@@ -32,8 +32,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COLUMNS",
+    "NAME_COLUMN_WIDTH",
     "ModelTree",
     "ModelsPage",
+    "display_path_for",
     "fit_state_for",
     "model_row_values",
     "ordered_groups",
@@ -41,6 +43,25 @@ __all__ = [
 
 COLUMNS = ("模型", "大小", "匹配档位", "标签", "硬件")
 """模型列表列名，顺序与 ``model_row_values`` 一一对应。"""
+
+NAME_COLUMN_WIDTH = 460
+"""模型名初始列宽：长路径默认也能看清，窗口更宽时继续扩展。"""
+
+
+def display_path_for(entry: ModelEntry, root: Path | None) -> str:
+    """分组列表里的展示路径：省略与一级分组重复的那段前缀。
+
+    只影响展示；定位、复制与 tooltip 仍使用 ``entry.path`` 的完整绝对路径。
+    目录外模型（跨盘 / 运行中服务指向别处）没有可省略的公共前缀，退回原始相对路径。
+    """
+    base = root if root is not None else entry.root
+    try:
+        relative = entry.path.relative_to(base)
+    except ValueError:
+        return entry.relative
+    if len(relative.parts) <= 1:
+        return entry.relative
+    return str(Path(*relative.parts[1:]))
 
 
 def fit_state_for(
@@ -60,9 +81,14 @@ def model_row_values(
     *,
     precision_note: str = "",
     hardware: str = "-",
+    display_path: str | None = None,
 ) -> tuple[str, str, str, str, str]:
-    """把一个模型条目格式化为列表行（与 :data:`COLUMNS` 对应）。"""
-    name = entry.relative
+    """把一个模型条目格式化为列表行（与 :data:`COLUMNS` 对应）。
+
+    ``display_path`` 仅供展示（默认 :attr:`ModelEntry.relative`）；分组前缀由调用方
+    用 :func:`display_path_for` 省略，内部定位仍以 ``entry.path`` 为准。
+    """
+    name = display_path if display_path is not None else entry.relative
     if precision_note:
         name = f"{name}（{precision_note}）"
     return (
@@ -109,10 +135,13 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
         self.tree.setUniformRowHeights(True)
         self.tree.setSelectionMode(QTreeWidget.SelectionMode.SingleSelection)
         header = self.tree.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.resizeSection(0, NAME_COLUMN_WIDTH)
         for column, width in ((1, 90), (2, 130), (3, 110), (4, 90)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
             header.resizeSection(column, width)
+        self.tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.tree.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         self.tree.itemExpanded.connect(lambda item: self._remember_group(item, True))
         self.tree.itemCollapsed.connect(lambda item: self._remember_group(item, False))
@@ -169,9 +198,14 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
                     entry,
                     precision_note=precision.note if precision is not None else "",
                     hardware=hardware,
+                    display_path=display_path_for(entry, self.state.models_root),
                 )
                 child = QTreeWidgetItem(group_item, list(values))
                 child.setData(0, Qt.ItemDataRole.UserRole, ("model", index))
+                child.setToolTip(0, str(entry.path))
+                for column, value in enumerate(values):
+                    if column and value:
+                        child.setToolTip(column, value)
                 child.setForeground(1, muted)
                 child.setForeground(2, muted)
                 child.setForeground(3, muted)
@@ -195,6 +229,18 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
     def collapse_all(self) -> None:
         """收起所有分组，只保留分组标题与数量。"""
         self.tree.collapseAll()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._fill_name_column()
+
+    def _fill_name_column(self) -> None:
+        """窗口变宽时把剩余宽度给模型名；变窄时保留列宽并交给横向滚动条。"""
+        header = self.tree.header()
+        used = sum(header.sectionSize(column) for column in range(len(COLUMNS)))
+        extra = self.tree.viewport().width() - used
+        if extra > 0:
+            header.resizeSection(0, header.sectionSize(0) + extra)
 
     def _hardware_text(self, entry: ModelEntry) -> str:
         """调用注入的状态回调；未注入时只标注运行中 / 未知。"""
@@ -251,7 +297,13 @@ class ModelTree(QWidget):  # pragma: no cover - Qt 控件
 class ModelsPage(QWidget):  # pragma: no cover - Qt 控件
     """模型页：扫描 / 选择模型，展示精度与显存适配；下载与转换见 CLI。"""
 
-    def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        state: LocllmState,
+        parent: QWidget | None = None,
+        *,
+        fit_resolver: Callable[[ModelEntry], str] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.state = state
         layout = QVBoxLayout(self)
@@ -278,6 +330,8 @@ class ModelsPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(scroll, 1)
         self.card = Card("运行模型（模型目录中的 GGUF）")
         self.tree = ModelTree(state, self.card)
+        if fit_resolver is not None:
+            self.tree.set_fit_resolver(fit_resolver)
         self.tree.tree.setMinimumHeight(320)
         self.card.body.addWidget(self.tree)
         scroll.body.addWidget(self.card, 1)

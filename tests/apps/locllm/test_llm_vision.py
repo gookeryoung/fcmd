@@ -224,6 +224,13 @@ class TestLaunchArgs:
         argv = LlamaCppBackend().build_argv(plan)
         assert argv[argv.index("-np") + 1] == "4"
 
+    def test_flash_attn_uses_bare_flag(self, tmp_path: Path) -> None:
+        """默认 on 必须输出无参 --flash-attn，兼容只认布尔开关的旧版 llama.cpp。"""
+        argv = LlamaCppBackend().build_argv(_plan(tmp_path))
+        index = argv.index("--flash-attn")
+        assert argv[index + 1] != "on"
+        assert argv[index + 1].startswith("-")
+
     def test_plan_vram_includes_projector(self, tmp_path: Path) -> None:
         plain = llmmodel.plan_vram(_plan(tmp_path))
         with_vision = llmmodel.plan_vram(_plan(tmp_path, mmproj=_mmproj(tmp_path)))
