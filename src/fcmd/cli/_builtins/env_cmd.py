@@ -7,7 +7,7 @@ import platform
 import sys
 from pathlib import Path
 
-from fcmd.cli._discovery import import_all_tool_modules, tool_names
+from fcmd.cli._discovery import ensure_tools_discovered, import_all_tool_modules, tool_names
 from fcmd.cli._env_helpers import collect_optional_deps_status
 from fcmd.console import get_console
 
@@ -35,6 +35,7 @@ def run(argv: list[str]) -> int:
     from fcmd import __version__ as fcmd_version
 
     # 触发全部工具模块导入以统计准确数字
+    ensure_tools_discovered()
     import_all_tool_modules()
     from fcmd.core.toolkit import _TOOL_REGISTRY
 

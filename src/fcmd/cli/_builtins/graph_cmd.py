@@ -6,7 +6,7 @@ import argparse
 from typing import TYPE_CHECKING
 
 from fcmd.cli._common import print_unknown_tool
-from fcmd.cli._discovery import resolve_tool
+from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool, resolve_tool_fast
 from fcmd.console import get_console, print_error
 from fcmd.core.errors import FcmdError
 from fcmd.core.exit_codes import ExitCode
@@ -50,7 +50,10 @@ def run(argv: list[str]) -> int:
         return int(ExitCode.USAGE)
     parsed = parser.parse_args(argv)
 
-    resolved = resolve_tool(parsed.tool)
+    resolved = resolve_tool_fast(parsed.tool)
+    if resolved is None:
+        ensure_tools_discovered()
+        resolved = resolve_tool(parsed.tool)
     if resolved is None:
         print_unknown_tool(parsed.tool)
         return int(ExitCode.USAGE)

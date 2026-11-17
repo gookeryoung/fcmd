@@ -63,7 +63,7 @@ DEFAULT_MAX_RATIO = 1.5
 """``--check`` 阈值：实测中位数高于基线的该比例即判回归。"""
 
 BASELINES: dict[tuple[str, str], float] = {
-    # (场景, warm|cold) -> 中位数（毫秒）。本机基线：Windows 11 / Python 3.13，
+    # (场景, warm|cold) -> 中位数（毫秒）。本机基线：Windows 11 / Python 3.14，
     # 改动前（HEAD 8ca182d）按同一口径采集（N=15/5，丢弃 3/1）。
     ("env", "warm"): 1031.6,
     ("env", "cold"): 2682.9,

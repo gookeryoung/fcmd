@@ -205,6 +205,64 @@ def test_unknown_name_returns_none() -> None:
     assert _discovery.resolve_tool_fast("no-such-tool-xyz") is None
 
 
+def test_graph_fast_path_skips_full_discovery(tmp_path: Path) -> None:
+    """``fcmd graph <tool>`` 只按清单解析目标工具，不触发全量发现。"""
+    proc = _run_py(
+        "import sys\n"
+        "from fcmd.cli._builtins import graph_cmd\n"
+        "def _boom():\n"
+        "    raise AssertionError('graph 触发了全量发现')\n"
+        "graph_cmd.ensure_tools_discovered = _boom\n"
+        "assert graph_cmd.run(['pymake', 'tc', '--format=mermaid']) == 0\n"
+        "assert 'fcmd.tools.dev.pymake' in sys.modules\n"
+        "assert 'fcmd.apps.locllm.llmchat' not in sys.modules\n"
+        "print('ok')\n",
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().splitlines()[-1] == "ok"
+
+
+def test_graph_falls_back_to_discovery_when_manifest_misses(tmp_path: Path) -> None:
+    """清单未命中（如清单过期）时 graph 回退全量发现，行为不变。"""
+    proc = _run_py(
+        "from fcmd.cli import _manifest\n"
+        "_manifest.lookup = lambda name: None\n"
+        "from fcmd.cli._builtins import graph_cmd\n"
+        "calls = []\n"
+        "real = graph_cmd.ensure_tools_discovered\n"
+        "def _spy():\n"
+        "    calls.append(True)\n"
+        "    real()\n"
+        "graph_cmd.ensure_tools_discovered = _spy\n"
+        "assert graph_cmd.run(['pymake', 'tc', '--format=layers']) == 0\n"
+        "assert calls, '清单未命中时必须回退全量发现'\n"
+        "print('ok')\n",
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().splitlines()[-1] == "ok"
+
+
+def test_info_overview_still_discovers_tools(tmp_path: Path) -> None:
+    """``fcmd info --json`` 自己触发全量发现（main 不再统一发现）。"""
+    proc = _run_py(
+        "import io, json\n"
+        "from contextlib import redirect_stdout\n"
+        "from fcmd.cli import _manifest_data\n"
+        "from fcmd.cli._builtins import info_cmd\n"
+        "buffer = io.StringIO()\n"
+        "with redirect_stdout(buffer):\n"
+        "    assert info_cmd.run(['--json']) == 0\n"
+        "data = json.loads(buffer.getvalue())\n"
+        "assert len(data['tools']) == len(_manifest_data.TOOLS)\n"
+        "print('ok')\n",
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().splitlines()[-1] == "ok"
+
+
 def test_missing_manifest_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     """清单模块不可导入时整体失效（回退全量发现）。"""
     from fcmd.cli import _manifest

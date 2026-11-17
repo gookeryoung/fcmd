@@ -6,7 +6,14 @@ import argparse
 from typing import Any
 
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
-from fcmd.cli._discovery import aliases_for, import_all_tool_modules, load_tool_subs, resolve_tool, tool_description
+from fcmd.cli._discovery import (
+    aliases_for,
+    ensure_tools_discovered,
+    import_all_tool_modules,
+    load_tool_subs,
+    resolve_tool,
+    tool_description,
+)
 from fcmd.cli._discovery import tool_names as _tool_names
 from fcmd.cli._schema import overview_schema, subcommand_schema, tool_document, tool_summary
 from fcmd.cli._schema import spec_kind as _spec_kind
@@ -47,6 +54,7 @@ def run(argv: list[str]) -> int:  # noqa: PLR0911 - 内建命令按参数组合�
         _info_overview_json()
         return 0
 
+    ensure_tools_discovered()
     resolved = resolve_tool(parsed.tool)
     if resolved is None:
         if parsed.json:
@@ -101,6 +109,7 @@ def _info_overview() -> None:
     """``fcmd info`` 无参数：列出内建命令与工具。"""
     from fcmd.console import Table
 
+    ensure_tools_discovered()
     console = get_console()
     console.print("[bold]内建命令:[/bold]")
     console.print("  " + " [dim]·[/dim] ".join(f"[cyan]fcmd {name}[/cyan]" for name in _BUILTIN_COMMANDS))
@@ -130,6 +139,7 @@ def _info_overview() -> None:
 
 def _info_overview_json() -> None:
     """``fcmd info --json``：内建命令 + 工具摘要（不含参数细节，控制体积）。"""
+    ensure_tools_discovered()
     import_all_tool_modules()
     from fcmd.core.toolkit import _TOOL_REGISTRY
 

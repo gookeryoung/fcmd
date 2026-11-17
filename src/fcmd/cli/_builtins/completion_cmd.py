@@ -7,7 +7,7 @@ import sys
 from typing import Any
 
 from fcmd.cli._completion_scripts import gen_bash_script, gen_fish_script, gen_zsh_script
-from fcmd.cli._discovery import aliases_for, import_all_tool_modules, tool_names
+from fcmd.cli._discovery import aliases_for, ensure_tools_discovered, import_all_tool_modules, tool_names
 from fcmd.core.exit_codes import ExitCode
 
 __all__ = ["run"]
@@ -59,6 +59,7 @@ def _collect_completion_data() -> list[dict[str, Any]]:
     from fcmd.core.toolkit import _TOOL_REGISTRY
 
     # 触发全部工具模块导入
+    ensure_tools_discovered()
     import_all_tool_modules()
 
     result: list[dict[str, Any]] = []

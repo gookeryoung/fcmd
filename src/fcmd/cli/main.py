@@ -19,7 +19,9 @@
 ``fcmd <tool>`` 先按生成清单 :mod:`fcmd.cli._manifest` 只加载目标工具；
 清单未命中 / 过期时回退 :func:`fcmd.cli._discovery.ensure_tools_discovered`
 全量扫描。工具列表（无参 / ``--help``）同样优先走清单快路径，清单不可用 /
-过期时回退全量发现；内建命令始终走全量发现。
+过期时回退全量发现。内建命令不再统一做全量发现：需要全量注册表的命令
+（``info`` / ``completion`` / ``env`` / ``doctor``）在各自入口自行触发，
+``graph`` 只按清单解析目标工具，``yaml`` / ``profiler`` 完全不触发发现。
 ``import fcmd`` 冷启动不受影响。
 
 用法
@@ -80,11 +82,10 @@ class FcmdApp:
             self._list_tools()
             return 0
 
-        # 内建命令（graph/info/...）优先于工具路由
+        # 内建命令（graph/info/...）优先于工具路由；是否全量发现由命令自身决定
         if first in _BUILTIN_COMMANDS:
             from fcmd.cli._builtins import run_builtin
 
-            ensure_tools_discovered()
             return run_builtin(first, self._argv[1:])
 
         rest = self._argv[1:]
