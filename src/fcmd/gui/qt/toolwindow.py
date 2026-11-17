@@ -76,23 +76,20 @@ class QtToolWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 布局
     # ------------------------------------------------------------------ #
     def _build_central(self, scroll: bool) -> None:
-        """创建中央容器；``scroll=True`` 时内容放进可滚动页面。"""
+        """创建中央容器：内容统一放在纵向滚动页面里，窗口缩小时不会裁掉底部控件。
+
+        窗口高度低于内容最小高度时出现滚动条，而不是把表格 / 工具栏压出卡片边界；
+        ``scroll=True`` 额外保留页面内边距，供纯表单窗口使用。
+        """
         root = QWidget(self)
         root.setObjectName("ToolBody")
         outer = QVBoxLayout(root)
         outer.setContentsMargins(16, 12, 16, 10)
         outer.setSpacing(10)
-        self.scroll: PageScroll | None = None
-        if scroll:
-            self.scroll = PageScroll(root)
-            outer.addWidget(self.scroll, 1)
-            self.body = self.scroll.body
-        else:
-            container = QWidget(root)
-            self.body = QVBoxLayout(container)
-            self.body.setContentsMargins(0, 0, 0, 0)
-            self.body.setSpacing(10)
-            outer.addWidget(container, 1)
+        self.scroll: PageScroll | None = PageScroll(root, margins=(0, 0, 4, 8) if scroll else (0, 0, 0, 0))
+        outer.addWidget(self.scroll, 1)
+        self.body = self.scroll.body
+        self.body.setSpacing(10)
         self.setCentralWidget(root)
 
     def add(self, widget: QWidget, stretch: int = 0) -> QWidget:

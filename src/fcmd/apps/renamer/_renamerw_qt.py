@@ -179,7 +179,7 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             parent=card,
         )
         self._file_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._file_table.setMinimumHeight(180)
+        self._file_table.setMinimumHeight(120)
         card.body.addWidget(self._file_table, 1)
 
         bar = QHBoxLayout()
@@ -213,7 +213,7 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             stretch_columns=(2, 3),
             parent=card,
         )
-        self._rule_table.setMinimumHeight(130)
+        self._rule_table.setMinimumHeight(90)
         self._rule_table.cellDoubleClicked.connect(lambda _row, _column: self._load_selected_rule())
         card.body.addWidget(self._rule_table)
         return card

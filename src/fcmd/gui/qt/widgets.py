@@ -152,9 +152,17 @@ class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
     约定：页面把卡片加进 :attr:`body`，不要给页面自身再加 ``QVBoxLayout``；
     ``widgetResizable=True`` 让内容在窗口变高时跟着拉伸（卡片内的 stretch 生效），
     内容最小高度超过视口时自动出现纵向滚动条。横向不滚动，避免卡片被推来推去。
+
+    ``margins`` 供窗口骨架统一留白：单页工具窗口传 ``(0, 0, 0, 0)``，让外层
+    容器负责边距；表单页保留默认的右侧 / 底部余量，避免滚动条压住卡片边框。
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        margins: tuple[int, int, int, int] = (0, 0, 4, 8),
+    ) -> None:
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -163,7 +171,7 @@ class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
         container = QWidget(self)
         container.setObjectName("PageBody")
         self.body = QVBoxLayout(container)
-        self.body.setContentsMargins(0, 0, 4, 8)
+        self.body.setContentsMargins(*margins)
         self.body.setSpacing(8)
         self.setWidget(container)
 

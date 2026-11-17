@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import theme as _guitheme
@@ -121,6 +121,29 @@ def test_on_close_can_cancel(app: QApplication, home: Path) -> None:
         assert calls == [True]
         assert window.is_closing() is False
         assert not _guiconfig.config_path("cancel").exists()
+    finally:
+        window.deleteLater()
+
+
+def test_body_scrolls_instead_of_clipping_when_window_shrinks(app: QApplication, home: Path) -> None:
+    """窗口缩到内容最小高度以下时，底部控件完整保留、改为整页滚动。"""
+    window = QtToolWindow(title="收缩", config_name="shrink", min_size=(320, 240), default_size=(640, 480))
+    tall = QWidget()
+    tall.setMinimumHeight(900)
+    window.add(tall, 1)
+    try:
+        window.show()
+        window.resize(360, 260)
+        QApplication.processEvents()
+        assert window.size().height() == 260
+        scroll = window.scroll
+        assert scroll is not None
+        assert scroll.verticalScrollBar().maximum() > 0
+        # 内容保持最小高度，没有被布局压扁或裁掉。
+        assert tall.height() >= 900
+        page = scroll.widget()
+        assert page is not None
+        assert tall.geometry().bottom() <= page.contentsRect().bottom()
     finally:
         window.deleteLater()
 

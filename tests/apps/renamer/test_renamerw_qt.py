@@ -18,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QWidget
 
 from fcmd.apps.renamer import _examples
 from fcmd.apps.renamer._core import RenameRule
@@ -327,6 +327,48 @@ def test_theme_switch_keeps_preview(window: Any, tmp_path: Path) -> None:
     window._add_rule()
     window.set_theme(_guitheme.resolve_theme("light"))
     assert window._file_table.rowCount() == 1
+
+
+def _overflowing_children(root: QWidget) -> list[str]:
+    """收集越出父控件内容区（底部 / 右侧）的后代控件，用于布局回归。"""
+    problems: list[str] = []
+
+    def walk(widget: QWidget) -> None:
+        parent = widget.parentWidget()
+        if parent is not None:
+            rect = widget.geometry()
+            area = parent.contentsRect()
+            if rect.bottom() > area.bottom() or rect.right() > area.right():
+                problems.append(f"{type(widget).__name__}{rect.getRect()} 超出 {area.getRect()}")
+        for child in widget.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            if child.isVisible():
+                walk(child)
+
+    for child in root.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+        if child.isVisible():
+            walk(child)
+    return problems
+
+
+def test_tables_stay_inside_cards_when_window_shrinks(window: Any) -> None:
+    """窗口缩矮（含极小高度）时两张表不越过卡片边界，超出部分改为整页滚动。"""
+    window.show()
+    QApplication.processEvents()
+    window.resize(960, 600)
+    QApplication.processEvents()
+    page = window.scroll.widget()
+    assert window._file_table.height() >= window._file_table.minimumHeight()
+    assert window._rule_table.height() >= window._rule_table.minimumHeight()
+    assert _overflowing_children(page) == []
+
+    window.setMinimumSize(960, 360)
+    window.resize(960, 360)
+    QApplication.processEvents()
+    assert window.scroll.verticalScrollBar().maximum() > 0
+    assert window._file_table.height() >= window._file_table.minimumHeight()
+    assert window._rule_table.height() >= window._rule_table.minimumHeight()
+    assert _overflowing_children(page) == []
+    window.close()
 
 
 def test_help_menu_entries(window: Any) -> None:
