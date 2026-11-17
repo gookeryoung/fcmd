@@ -33,6 +33,7 @@ from fcmd.apps.locllm._locllmw_qt_run import (
     memory_guard,
     parse_int,
     parse_optional_int,
+    pick_model,
     plan_lines,
 )
 from fcmd.apps.locllm._locllmw_qt_settings import engine_rows_values
@@ -353,6 +354,7 @@ def test_model_tree_keeps_name_readable() -> None:
     group = tree.tree.topLevelItem(0)
     assert group is not None
     child = group.child(0)
+    assert child is not None
     assert child.text(0).startswith("超长模型目录与文件名-")
     assert child.toolTip(0) == str(root / long_name)
     assert child.text(0).endswith("Q4_K_M.gguf")
@@ -384,7 +386,29 @@ def test_model_tree_distinguishes_same_name_across_groups() -> None:
     groups = [tree.tree.topLevelItem(index) for index in range(tree.tree.topLevelItemCount())]
     labels = [group.data(0, Qt.ItemDataRole.UserRole)[1] for group in groups if group is not None]
     assert labels == ["alpha", "beta"]
-    children = [group.child(0) for group in groups if group is not None]
+    children = [child for group in groups if group is not None and (child := group.child(0)) is not None]
     assert {child.text(0) for child in children} == {"same.gguf"}
     assert {child.toolTip(0) for child in children} == {str(first.path), str(second.path)}
 
+
+def test_pick_model_prefers_explicit_selection(tmp_path: Path) -> None:
+    entries = [_model(tmp_path, "a-Q4_K_XL.gguf", 10), _model(tmp_path, "b-Q5_K_M.gguf", 20)]
+    selected = tmp_path / "other.gguf"
+    assert pick_model(selected, entries, "Q5_K_M") == selected
+
+
+def test_pick_model_matches_profile_quant_first(tmp_path: Path) -> None:
+    entries = [
+        _model(tmp_path, "a-Q4_K_XL.gguf", 100),
+        _model(tmp_path, "b-Q5_K_M.gguf", 20),
+    ]
+    assert pick_model(None, entries, "Q5_K_M") == tmp_path / "b-Q5_K_M.gguf"
+
+
+def test_pick_model_falls_back_to_largest_when_quant_missing(tmp_path: Path) -> None:
+    entries = [_model(tmp_path, "a-Q4_K_XL.gguf", 10), _model(tmp_path, "b-IQ4_XS.gguf", 30)]
+    assert pick_model(None, entries, "Q5_K_M") == tmp_path / "b-IQ4_XS.gguf"
+
+
+def test_pick_model_returns_none_for_empty_list() -> None:
+    assert pick_model(None, [], "Q5_K_M") is None

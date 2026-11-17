@@ -43,6 +43,7 @@ from fcmd.apps.locllm.llmbase import (
     KV_SCALE,
     PROFILES,
     LaunchPlan,
+    ModelEntry,
     ProfileName,
     ServeError,
     ServeState,
@@ -55,6 +56,8 @@ from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, PageScro
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
 
 __all__ = [
@@ -176,6 +179,28 @@ def default_service_name() -> str:
         return DEFAULT_NAME
     alive = [state.name for state in states if llmserve.process_alive(state.pid, state.create_time)]
     return alive[0] if len(alive) == 1 else DEFAULT_NAME
+
+
+def pick_model(
+    selected: Path | None,
+    models: Sequence[ModelEntry],
+    quant: str,
+) -> Path | None:
+    """选择启动用的模型文件：显式选择优先，否则按档位量化匹配、再退回最大文件。
+
+    界面上的模型列表可能来自任意量化（Q4_K_XL / IQ4_XS 等），而档位默认量化
+    （如 Q5_K_M）不一定存在。未选中模型时直接交给 ``make_plan`` 会因「未找到量化
+    Q5_K_M」而启动失败，因此这里给出确定性的兜底：先找文件名含档位量化的最大
+    文件，没有就取最大的 GGUF，保证「列表里有可用模型就能启动」。
+    """
+    if selected is not None:
+        return selected
+    if not models:
+        return None
+    wanted = quant.lower()
+    matched = [entry for entry in models if wanted in entry.path.name.lower()]
+    pool = matched or list(models)
+    return max(pool, key=lambda entry: entry.size).path
 
 
 def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
@@ -390,6 +415,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 参数与调优
     # ------------------------------------------------------------------ #
+    def _resolved_model(self) -> Path | None:
+        """表单实际使用的模型：显式选择，或按档位量化 / 大小兜底。"""
+        profile = PROFILES.get(self.profile_combo.currentText().strip(), PROFILES[DEFAULT_PROFILE])
+        return pick_model(self.state.selected_model, self.state.models, profile.quant)
+
     def _workflow(self) -> dict[str, Any]:
         return {
             "name": self.name_combo.currentText(),
@@ -405,7 +435,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             "parallel": self.parallel_edit.text(),
             "threads_http": self.threads_http_edit.text(),
             "api_key": self.api_key_edit.text(),
-            "model": self.state.selected_model,
+            "model": self._resolved_model(),
             "gpu_mib": self.state.gpu_mib,
         }
 
@@ -746,6 +776,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             return
         self.state.log(note)
         self.state.log(f"正在启动 {plan.name}，等待 /health（最多 {wait_s}s）…")
+        self.state.status(f"正在启动 {plan.name} · {plan.profile.name} · ctx {plan.context}…")
         self.state.set_busy(True)
         submit(
             llmserve.start_server,
@@ -753,7 +784,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             wait_s=float(wait_s),
             on_done=self._on_started,
             on_error=self._on_start_failed,
-            on_finished=lambda: self.state.set_busy(False),
+            on_finished=self._on_start_finished,
         )
 
     def _on_started(self, state: ServeState) -> None:
@@ -764,13 +795,17 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.status(f"{state.name} · 运行中 · {state.base_url} · pid {state.pid}")
         self.name_combo.setCurrentText(state.name)
         self.state.refresh_services()
-        self.state.refresh_models(self._port_value())
 
     def _on_start_failed(self, message: str) -> None:
         self.state.log(f"启动失败: {message}")
         self._error("启动失败", message)
         self.state.refresh_services()
+
+    def _on_start_finished(self) -> None:
+        """启动任务收尾：解除 busy 后再刷新模型列表（刷新会跳过 busy 状态）。"""
+        self.state.set_busy(False)
         self.state.refresh_models(self._port_value())
+        self._on_profile_changed()
 
     def _port_value(self) -> int | None:
         try:
@@ -959,9 +994,16 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.on_models_changed()
 
     def on_models_changed(self) -> None:
-        """扫描完成后刷新模型列表与服务名（保持当前选择不变）。"""
+        """扫描完成后刷新模型列表与服务名；未选择时自动带入一个可启动的模型。"""
         self.tree.refresh()
         self.refresh_service_names()
+        if self.state.selected_model is None and self.state.models:
+            chosen = self._resolved_model()
+            if chosen is not None:
+                self.state.log(f"未选择模型，自动使用: {chosen}")
+                self.state.select_model(chosen, update_name=True)
+                self.tree.select_path(chosen)
+                return
         if self.state.selected_model is not None:
             self.tree.select_path(self.state.selected_model)
 

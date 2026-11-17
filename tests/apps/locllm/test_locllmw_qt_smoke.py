@@ -88,7 +88,6 @@ def test_models_page_fills_hardware_column(window: Any) -> None:
         ModelEntry(root=root, path=root / "org" / "small.gguf", size=1024**3, profiles=("balanced",), tags=("对话",))
     ]
     window.state.models_root = root
-    window.state.precisions = {}
     window.state.running_paths = set()
     window.state.gpu_mib = 32768
     window.state.gpu_free_mib = 32000
@@ -188,3 +187,19 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     buttons = [chat.send_button, chat.stop_button, chat.reset_button, chat.export_button]
     tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in buttons}
     assert len(tops) == 1
+
+
+def test_scan_result_auto_selects_a_startable_model(window: Any, tmp_path: Path) -> None:
+    """列表里有模型但未选择时，自动带入可启动的模型（避免启动报「未找到量化」）。"""
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    entries = [
+        ModelEntry(root=tmp_path, path=tmp_path / "a-Q4_K_XL.gguf", size=10),
+        ModelEntry(root=tmp_path, path=tmp_path / "b-Q5_K_M.gguf", size=20),
+    ]
+    window.state.models = entries
+    window.state.models_root = tmp_path
+    window.state.selected_model = None
+    window.run_page.on_models_changed()
+    assert window.state.selected_model == tmp_path / "b-Q5_K_M.gguf"
+    assert window.run_page.name_combo.currentText() == "b"

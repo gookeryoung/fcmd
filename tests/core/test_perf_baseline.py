@@ -8,7 +8,7 @@
 - **tool discovery**: ``_ensure_tools_discovered()`` 首次扫描 ``fcmd.cli`` 包的耗时
 - **DAG run**: 3 任务链 ``fx.graph`` + ``fx.run`` 端到端耗时
 - **tool exec**: ``run_tool`` 单工具冷执行端到端耗时（含按需导入工具模块）
-- **GUI build**: 构造 img2icow 主窗口到 ``update_idletasks`` 完成的耗时
+- **GUI build**: 构造 img2icow Qt 主窗口到首次布局完成的耗时（离屏平台）
 
 每项在独立子进程内测量，避免主进程 import 缓存污染；预热 1 次后取 6 次统计
 （min/median/mean/stdev），工具发现与启动路径单独采样 5 次取中位数以降低并行
@@ -37,20 +37,30 @@ _COLD_START_SCRIPT = (
 )
 
 _GUI_BUILD_SCRIPT = (
+    "import os\n"
     "import time\n"
-    "import importlib\n"
-    "import pathlib\n"
-    "import tempfile\n"
+    "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
+    "from fcmd.gui.qt.app import apply_theme, create_application\n"
+    "app=create_application('img2icow')\n"
+    "apply_theme(app)\n"
     "t=time.perf_counter()\n"
-    "m=importlib.import_module('fcmd.tools.media.img2icow')\n"
-    "C=[getattr(m, n) for n in dir(m) if n.endswith('Window')][0]\n"
-    "w=C(settings_path=pathlib.Path(tempfile.gettempdir())/'fcmd_perf_probe.json')\n"
-    "w.root.update_idletasks()\n"
+    "from fcmd.tools.media._img2icow_qt import Img2IcoWindow\n"
+    "w=Img2IcoWindow()\n"
+    "w.show()\n"
+    "app.processEvents()\n"
     "print((time.perf_counter()-t)*1000)\n"
-    "w.root.destroy()\n"
+    "w.close()\n"
 )
 
 _TK_PROBE_SCRIPT = "import tkinter\nr=tkinter.Tk()\nr.destroy()\nprint(0)\n"
+
+_QT_PROBE_SCRIPT = (
+    "import os\n"
+    "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
+    "from PySide6.QtWidgets import QApplication\n"
+    "QApplication([])\n"
+    "print(0)\n"
+)
 
 _DISCOVERY_SCRIPT = (
     "import time\n"
@@ -157,11 +167,11 @@ def _measure_wall(args: list[str], runs: int = _VERSION_RUNS) -> list[float]:
     return samples[_WARMUP:]
 
 
-def _tk_available() -> bool:
-    """探测当前环境是否可创建 Tk 根窗口（无显示/无 tkinter 时返回 False）。"""
+def _probe(script: str) -> bool:
+    """在子进程里执行探测脚本，退出码为 0 视为可用。"""
     try:
         result = subprocess.run(
-            [sys.executable, "-c", _TK_PROBE_SCRIPT],
+            [sys.executable, "-c", script],
             capture_output=True,
             text=True,
             check=False,
@@ -171,6 +181,16 @@ def _tk_available() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
+
+
+def _tk_available() -> bool:
+    """探测当前环境是否可创建 Tk 根窗口（无显示/无 tkinter 时返回 False）。"""
+    return _probe(_TK_PROBE_SCRIPT)
+
+
+def _qt_available() -> bool:
+    """探测当前环境是否可创建 Qt 应用（离屏平台，无显示环境也可用）。"""
+    return _probe(_QT_PROBE_SCRIPT)
 
 
 def _format_stats(name: str, samples: list[float], budget: float) -> str:
@@ -203,8 +223,8 @@ def test_version_path_baseline() -> None:
 @pytest.mark.slow
 def test_gui_build_baseline() -> None:
     """GUI 构建基线：img2icow 窗口构造到 idle 完成，中位数应在预算内。"""
-    if not _tk_available():
-        pytest.skip("当前环境无可用 Tk 显示")
+    if not _qt_available():
+        pytest.skip("当前环境无法创建 Qt 应用")
     samples = _measure(_GUI_BUILD_SCRIPT)
     print("\n" + _format_stats("GUI build", samples, _GUI_BUILD_BUDGET_MS))
     assert statistics.median(samples) < _GUI_BUILD_BUDGET_MS
@@ -257,11 +277,11 @@ def test_perf_baseline_report() -> None:
         _format_stats("DAG run", dag, _DAG_RUN_BUDGET_MS),
         _format_stats("tool exec", tool, _TOOL_EXEC_BUDGET_MS),
     ]
-    if _tk_available():
+    if _qt_available():
         gui = _measure(_GUI_BUILD_SCRIPT)
         report.append(_format_stats("GUI build", gui, _GUI_BUILD_BUDGET_MS))
     else:
-        report.append(f"  {'GUI build':<14} skipped（当前环境无可用 Tk 显示）")
+        report.append(f"  {'GUI build':<14} skipped（当前环境无法创建 Qt 应用）")
     report += [
         "-" * 72,
         "说明: min 为最优值（无干扰）；median 为典型值；budget 为回归断言上限。",
