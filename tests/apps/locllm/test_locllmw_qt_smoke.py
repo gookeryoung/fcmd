@@ -126,6 +126,9 @@ def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     assert run.kv_choice.key() == ""
     assert not hasattr(run, "profile_choice")
     assert not hasattr(run, "tune_choice")
+    assert not hasattr(run, "health_label")
+    assert not hasattr(run, "health_button")
+    assert run.mode_choice._buttons["speed"].property("tone") == "danger"
     assert run.host_edit.text() == "127.0.0.1"
     assert run.port_edit.text() == "8080"
     # CI / 无引擎机器上没有真实模型目录，垫一个可启动的模型再预览

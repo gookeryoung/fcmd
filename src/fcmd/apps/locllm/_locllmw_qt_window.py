@@ -147,7 +147,6 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         issue = getattr(outcome, "issue", None)
         engine_missing = getattr(outcome, "engine_missing", False)
         port_busy = getattr(outcome, "port_busy", False)
-        self.run_page.update_health(issue, engine_missing, port_busy)
         count = len(self.state.models)
         if issue or engine_missing or port_busy:
             problems = [

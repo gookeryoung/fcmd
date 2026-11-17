@@ -192,6 +192,21 @@ QLabel#ChoiceHint {
     color: $muted;
     font-size: ${font_small}pt;
 }
+QPushButton#ChoiceCard[tone="danger"] { border-color: $danger; background: $danger_soft; }
+QPushButton#ChoiceCard[tone="accent"] { border-color: $accent; background: $accent_soft; }
+QPushButton#ChoiceCard[tone="success"] { border-color: $success; background: $success_soft; }
+QPushButton#ChoiceCard[tone="warning"] { border-color: $warning; background: $warning_soft; }
+QPushButton#ChoiceCard[tone="muted"] { border-color: $border_strong; background: $surface_active; }
+QPushButton#ChoiceCard[tone="danger"]:checked,
+QPushButton#ChoiceCard[tone="accent"]:checked,
+QPushButton#ChoiceCard[tone="success"]:checked,
+QPushButton#ChoiceCard[tone="warning"]:checked,
+QPushButton#ChoiceCard[tone="muted"]:checked { border-width: 2px; }
+QPushButton#ChoiceCard[tone="danger"] QLabel#ChoiceTitle { color: $danger; }
+QPushButton#ChoiceCard[tone="accent"] QLabel#ChoiceTitle { color: $accent; }
+QPushButton#ChoiceCard[tone="success"] QLabel#ChoiceTitle { color: $success; }
+QPushButton#ChoiceCard[tone="warning"] QLabel#ChoiceTitle { color: $warning; }
+QPushButton#ChoiceCard[tone="muted"] QLabel#ChoiceTitle { color: $text; }
 QPushButton#Ghost {
     background: transparent;
     border: 1px solid $border;

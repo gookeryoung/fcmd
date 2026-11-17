@@ -169,6 +169,19 @@ def test_installed_and_converted_buttons_use_success_color() -> None:
     assert f"background: {theme.palette.accent}" not in tag_block
 
 
+def test_mode_choice_tone_colors_are_themed() -> None:
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    for tone, color in (
+        ("danger", theme.palette.danger),
+        ("accent", theme.palette.accent),
+        ("success", theme.palette.success),
+        ("warning", theme.palette.warning),
+    ):
+        block = text.split(f'QPushButton#ChoiceCard[tone="{tone}"] {{', 1)[1].split("}", 1)[0]
+        assert f"border-color: {color}" in block
+
+
 def test_secondary_buttons_keep_visible_border() -> None:
     """次要（Ghost）按钮也要有可见边框，否则在卡片里看起来像纯文字标签。"""
     text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))

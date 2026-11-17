@@ -53,7 +53,7 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
     human_size,
 )
-from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, PageScroll, button
+from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, PageScroll, button
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -252,9 +252,11 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
 class _ChoiceCard(QPushButton):  # pragma: no cover - Qt 控件
     """可选项方块：标题 + 下方说明，整块可点击。"""
 
-    def __init__(self, title: str, description: str, parent: QWidget | None = None) -> None:
+    def __init__(self, title: str, description: str, *, tone: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("ChoiceCard")
+        if tone:
+            self.setProperty("tone", tone)
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -284,6 +286,7 @@ class _ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
         *,
         current: str = "",
         columns: int = 4,
+        tones: dict[str, str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -296,7 +299,7 @@ class _ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
         grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(6)
         for index, (key, title, description) in enumerate(options):
-            card = _ChoiceCard(title, description, self)
+            card = _ChoiceCard(title, description, tone=(tones or {}).get(key, ""), parent=self)
             card.clicked.connect(lambda _checked=False, key=key: self._select(key))
             self._group.addButton(card)
             self._buttons[key] = card
@@ -346,6 +349,13 @@ _MODE_TITLES: dict[str, str] = {
     "max-context": "超长上下文 192K",
     "low-vram": "省显存",
 }
+_MODE_TONE: dict[str, str] = {
+    "speed": "danger",
+    "balanced": "accent",
+    "long": "success",
+    "max-context": "warning",
+    "low-vram": "muted",
+}
 _MODE_NOTES: dict[str, str] = {
     "speed": "Q4_K_M / 64K，并发槽优先，适合持续吞吐",
     "balanced": "Q5_K_M / 64K，按显存与上下文自动调优",
@@ -384,7 +394,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state = state
         self._syncing_tune = False
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
-        self._health_target = "settings"
         self._build()
         self._wire()
         self.on_models_changed()
@@ -402,15 +411,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.scroll = PageScroll(self)
         layout = self.scroll.body
         outer.addWidget(self.scroll, 1)
-
-        health_row = QHBoxLayout()
-        self.health_label = HintLabel("正在检测运行环境…")
-        self.health_button = button("去处理")
-        self.health_button.setEnabled(False)
-        self.health_button.clicked.connect(lambda: self.state.navigate(self._health_target))
-        health_row.addWidget(self.health_label, 1)
-        health_row.addWidget(self.health_button)
-        layout.addLayout(health_row)
 
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
@@ -440,7 +440,13 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.params_card.body.addWidget(form)
 
         self.params_card.body.addWidget(QLabel("运行模式（档位 + 调优）", self.params_card))
-        self.mode_choice = _ChoiceGroup(_mode_options(), current="balanced", columns=3, parent=self.params_card)
+        self.mode_choice = _ChoiceGroup(
+            _mode_options(),
+            current="balanced",
+            columns=3,
+            tones=_MODE_TONE,
+            parent=self.params_card,
+        )
         self.params_card.body.addWidget(self.mode_choice)
 
         self.advanced = Collapsible("高级参数（留空回落档位默认）", expanded=False, parent=self.params_card)
@@ -1099,32 +1105,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.fill_params_button,
         ):
             widget.setEnabled(not busy)
-
-    def update_health(self, issue: str | None, engine_missing: bool, port_busy: bool) -> None:
-        """把最近一次扫描结果汇总为一条状态；异常时提供跳转入口。"""
-        target = "settings"
-        parts: list[str] = []
-        if engine_missing:
-            parts.append("引擎未安装（设置 → 引擎）")
-        if issue:
-            parts.append(issue)
-            if issue.startswith("模型目录中未找到"):
-                target = "models"
-        if self.state.gpu_mib is None:
-            parts.append("未检测到 NVIDIA GPU，显存适配不可用")
-        if port_busy:
-            parts.append(f"默认端口 {self.port_edit.text()} 已被占用")
-            target = "run"
-        if parts:
-            self._health_target = target
-            self.health_label.setText("注意：" + "；".join(parts))
-            label = {"settings": "去设置", "models": "去模型页", "run": "去运行页"}[target]
-            self.health_button.setText(label)
-            self.health_button.setEnabled(True)
-        else:
-            self.health_label.setText("环境检查通过：引擎、模型目录、GPU 与默认端口均可用。")
-            self.health_button.setText("去处理")
-            self.health_button.setEnabled(False)
 
     def apply_recommendation(self, recommendation: Any) -> None:
         """把推荐行的模型与启动配置带入运行页。"""
