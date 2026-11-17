@@ -65,7 +65,6 @@ from fcmd.apps.locllm.llmdown import (
     scan_local_models,
     search_models,
     select_source,
-    sort_by_popularity,
 )
 from fcmd.gui.qt.widgets import (
     Card,
@@ -91,8 +90,6 @@ __all__ = ["ModelCenterPage"]
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
 _MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _locllmw_models.DEFAULT_MODEL_FILTER
-_SORT_LABELS = _locllmw_models._SORT_LABELS
-_SORT_KEYS = _locllmw_models._SORT_KEYS
 _TAB_NAMES = _locllmw_models.MODEL_TAB_NAMES
 _DEFAULT_TAB = _locllmw_models.DEFAULT_MODEL_TAB
 
@@ -113,7 +110,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     toggleRequested = Signal(object)
     downloadRequested = Signal(str)
 
-    def __init__(self, item: ModelSummary, parent: QWidget | None = None) -> None:
+    def __init__(self, item: ModelSummary, parent: QWidget | None = None, *, installed: bool = False) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
         self.repo = item.repo
@@ -147,6 +144,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         left.addWidget(sub)
         header_row.addLayout(left, 1)
 
+        if installed:
+            badge = QLabel("✓ 已安装", header)
+            badge.setObjectName("InstalledBadge")
+            badge.setToolTip("该仓库已在本地模型目录中")
+            header_row.addWidget(badge, 0)
         stats = QLabel(metrics, header)
         stats.setObjectName("Hint")
         stats.setWordWrap(False)
@@ -284,7 +286,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._result_items: tuple[ModelSummary, ...] = ()
         self._expanded_row: _ModelItemRow | None = None
         self._page = 1
-        self._sort_key = "default"
         self._filter_key = _DEFAULT_FILTER
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
         self._detail_generation = 0
@@ -294,6 +295,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._active_repo: str | None = None
         self._bridge: _ProgressBridge | None = None
         self._download_target = _llmconfig.models_dir()
+        self._installed_repos: set[str] = set()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -319,11 +321,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             filters.addWidget(chip)
             self.filter_buttons[key] = chip
         filters.addStretch(1)
-        filters.addWidget(QLabel("排序"))
-        self.sort_combo = QComboBox(browse)
-        self.sort_combo.addItems(list(_SORT_LABELS.values()))
-        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        filters.addWidget(self.sort_combo)
         browse_layout.addLayout(filters)
 
         nav = QHBoxLayout()
@@ -371,6 +368,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.detail_view = _ModelDetailView(self)
         self.detail_view.setVisible(False)
 
+        self.refresh_installed()
         self.filter_buttons[_DEFAULT_FILTER].setChecked(True)
         self.start_search(1)
 
@@ -380,6 +378,15 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_key = key
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == key), "")
         self.start_search(1)
+
+    def refresh_installed(self) -> None:
+        """重新扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。"""
+        try:
+            models = scan_local_models(_llmconfig.models_dir())
+        except OSError:
+            self._installed_repos = set()
+        else:
+            self._installed_repos = {model.repo.casefold() for model in models}
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -402,7 +409,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._filter_query,
             self._page,
             _PAGE_SIZE,
-            self._sort_key,
+            "default",
             on_done=self._render_search,
             on_error=self._search_error,
             on_finished=self._search_finished,
@@ -425,10 +432,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._render_results()
         self._expand_repo(repo)
 
-    def _on_sort_changed(self, _index: int) -> None:
-        self._sort_key = _SORT_KEYS.get(self.sort_combo.currentText(), "default")
-        self.start_search(1)
-
     def _render_results(self) -> None:
         result = self._last_result
         if result is None:
@@ -437,7 +440,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
         if self._filter_key == "local":
             items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
-        items = sort_by_popularity(items)
+        items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),
             items[0].repo if items else None,
@@ -451,7 +454,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         for item in items:
             list_item = QListWidgetItem(self.models)
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            row = _ModelItemRow(item, self.models)
+            installed = item.repo.casefold() in self._installed_repos
+            row = _ModelItemRow(item, self.models, installed=installed)
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
@@ -670,6 +674,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.download_bar.setValue(100)
         self.download_text.setText(f"下载完成：{self._active_repo or target}")
         self._log(f"下载完成: {target}")
+        self.refresh_installed()
+        self._render_results()
         self.downloadFinished.emit()
 
     def _download_error(self, repo: str, message: str) -> None:
@@ -1612,6 +1618,7 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
 
     def refresh_config(self) -> None:
         """模型目录变化后刷新已安装列表与转换 / 量化环境。"""
+        self.browse.refresh_installed()
         self.installed.refresh()
         self.convert.refresh_env()
         if self.tabs.currentIndex() == _TAB_NAMES.index("量化"):

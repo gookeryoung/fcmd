@@ -27,12 +27,15 @@ from fcmd.apps.locllm._locllmw_models import (
     filter_by_local_fit,
     filter_models,
     local_row,
+    matches_filter,
     model_item_lines,
     model_row,
+    model_score,
     open_path,
     parse_patterns,
     settings_from_dict,
     settings_to_dict,
+    sort_browse_items,
     sort_models,
 )
 from fcmd.apps.locllm.llmdown import LocalModel, ModelInfo, ModelSummary
@@ -192,6 +195,37 @@ class TestBrowseHelpers:
         repos = [item.repo for item in filter_by_local_fit(items, 200)]
         assert repos == ["BAAI/embed", "Qwen/vl", "Qwen/unknown"]
         assert filter_by_local_fit(items, 0) == items
+
+    def test_model_score_is_bounded_and_rewards_popularity(self) -> None:
+        low = ModelSummary(repo="Qwen/low", downloads=1, stars=0)
+        high = ModelSummary(repo="Qwen/high", downloads=1_000_000, stars=10_000)
+        assert 0 <= model_score(low) < model_score(high) <= 100
+
+    def test_matches_filter_uses_tasks_tags_and_repo(self) -> None:
+        assert matches_filter(ModelSummary(repo="Qwen/Coder", tasks=("代码生成",)), "code")
+        assert matches_filter(ModelSummary(repo="Qwen/vl", tags=("vision",)), "vision")
+        assert not matches_filter(ModelSummary(repo="Qwen/chat", tasks=("文本生成",)), "video")
+        assert matches_filter(ModelSummary(repo="Qwen/chat"), "all")
+
+    def test_sort_browse_items_pins_installed_category_matches_then_scores(self) -> None:
+        installed_code = ModelSummary(repo="local/coder", tasks=("代码生成",), downloads=1)
+        installed_vision = ModelSummary(repo="local/vision", tasks=("视觉问答",), downloads=1_000_000, stars=10_000)
+        other = ModelSummary(repo="Qwen/chat", tasks=("文本生成",), downloads=500_000, stars=1_000)
+        free_code = ModelSummary(repo="Qwen/coder2", tasks=("代码生成",), downloads=100_000, stars=100)
+        items = (installed_vision, other, free_code, installed_code)
+        installed = {"local/coder", "local/vision"}
+        repos = [item.repo for item in sort_browse_items(items, installed, "code")]
+        assert repos == ["local/coder", "local/vision", "Qwen/chat", "Qwen/coder2"]
+
+    def test_sort_browse_items_pins_all_installed_for_all_filter(self) -> None:
+        installed_low = ModelSummary(repo="local/low", downloads=1)
+        installed_high = ModelSummary(repo="local/high", downloads=1_000_000)
+        free = ModelSummary(repo="Qwen/free", downloads=500_000)
+        repos = [
+            item.repo
+            for item in sort_browse_items((free, installed_low, installed_high), {"local/low", "local/high"}, "all")
+        ]
+        assert repos == ["local/high", "local/low", "Qwen/free"]
 
     def test_filter_models_all(self) -> None:
         items = self._items()

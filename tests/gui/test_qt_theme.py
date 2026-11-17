@@ -158,6 +158,14 @@ def test_tab_pane_and_nested_tables_are_flat() -> None:
     assert "background: transparent" in nested_block
 
 
+def test_installed_badge_uses_success_color() -> None:
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    block = text.split("QLabel#InstalledBadge {", 1)[1].split("}", 1)[0]
+    assert f"color: {theme.palette.success}" in block
+    assert f"border: 1px solid {theme.palette.success}" in block
+
+
 def test_secondary_buttons_keep_visible_border() -> None:
     """次要（Ghost）按钮也要有可见边框，否则在卡片里看起来像纯文字标签。"""
     text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))

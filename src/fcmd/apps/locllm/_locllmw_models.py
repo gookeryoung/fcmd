@@ -6,6 +6,7 @@ Qt 子页（``_locllmw_qt_center.py``）复用这里的口径，本模块不创�
 
 from __future__ import annotations
 
+import math
 import re
 import subprocess
 import sys
@@ -34,12 +35,15 @@ __all__ = [
     "filter_by_local_fit",
     "filter_models",
     "local_row",
+    "matches_filter",
     "model_item_lines",
     "model_row",
+    "model_score",
     "open_path",
     "parse_patterns",
     "settings_from_dict",
     "settings_to_dict",
+    "sort_browse_items",
     "sort_models",
 ]
 
@@ -75,6 +79,16 @@ MODEL_FILTERS: tuple[tuple[str, str, str], ...] = (
     ("audio", "音频", "audio"),
 )
 DEFAULT_MODEL_FILTER = "local"
+
+#: 分类筛选命中的关键词：用于判断已安装模型是否属于当前类别（置顶条件）。
+_FILTER_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "chat": ("chat", "instruct", "conversation", "对话", "文本生成"),
+    "code": ("code", "coder", "coding", "编程", "代码生成"),
+    "vision": ("vision", "vl", "visual", "image", "multimodal", "看图", "视觉", "图像"),
+    "reasoning": ("reasoning", "think", "r1", "qwq", "推理", "思考"),
+    "video": ("video", "视频"),
+    "audio": ("audio", "speech", "voice", "asr", "tts", "音频", "语音"),
+}
 _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw", "s", "se", "sw", "w"]]] = {
     "repo": ("模型", 180, "w"),
     "series": ("系列", 112, "w"),
@@ -164,6 +178,47 @@ def model_item_lines(item: ModelSummary) -> tuple[str, str, str]:
         if part
     )
     return item.repo, subtitle or "-", metrics or "-"
+
+
+def model_score(item: ModelSummary) -> int:
+    """浏览排序评分：下载量 60 + 星标 40，按对数压缩到 0-100。"""
+    downloads = math.log10(item.downloads + 1) if item.downloads > 0 else 0.0
+    stars = math.log10(item.stars + 1) if item.stars > 0 else 0.0
+    return round(min(downloads, 6.0) / 6.0 * 60 + min(stars, 4.0) / 4.0 * 40)
+
+
+def matches_filter(item: ModelSummary, filter_key: str) -> bool:
+    """模型是否属于指定用途分类；``all`` / ``local`` / 空串视为全部符合。"""
+    if filter_key in ("", "all", "local"):
+        return True
+    keywords = _FILTER_KEYWORDS.get(filter_key, ())
+    haystack = " ".join((item.repo, item.name, *item.tasks, *item.tags)).casefold()
+    return any(keyword.casefold() in haystack for keyword in keywords)
+
+
+def sort_browse_items(
+    items: tuple[ModelSummary, ...],
+    installed_repos: set[str],
+    filter_key: str,
+) -> tuple[ModelSummary, ...]:
+    """已安装且匹配当前分类的模型置顶，其余统一按评分从高到低排序。"""
+    installed = {repo.casefold() for repo in installed_repos}
+
+    def pinned(item: ModelSummary) -> bool:
+        return item.repo.casefold() in installed and matches_filter(item, filter_key)
+
+    return tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                not pinned(item),
+                -model_score(item),
+                -item.downloads,
+                -item.stars,
+                item.repo.casefold(),
+            ),
+        )
+    )
 
 
 def filter_by_local_fit(items: tuple[ModelSummary, ...], capacity_bytes: int) -> tuple[ModelSummary, ...]:

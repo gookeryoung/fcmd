@@ -207,10 +207,13 @@ def test_fit_state_for_prefers_running() -> None:
 
 def test_model_item_row_expands_inline_detail() -> None:
     """浏览结果行展开后，详情区直接挂在行下方（不再需要右侧面板）。"""
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication, QLabel
 
     QApplication.instance() or QApplication([])
     row = _ModelItemRow(ModelSummary(repo="Qwen/demo"))
+    installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True)
+    assert installed_row.findChild(QLabel, "InstalledBadge") is not None
+    assert row.findChild(QLabel, "InstalledBadge") is None
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()
     assert row.expand_button.text() == "展开"
