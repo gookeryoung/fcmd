@@ -405,8 +405,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
         nav.setSpacing(6)
-        self.page_label = hint_label("正在加载…", wrap=False)
-        nav.addWidget(self.page_label, 1)
+        nav.addStretch(1)
         self.prev_button = button("上一页")
         self.prev_button.clicked.connect(lambda: self.start_search(self._page - 1))
         self.next_button = button("下一页")
@@ -535,7 +534,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         self._page = max(1, page)
         self._searching = True
-        self.page_label.setText(f"正在加载第 {self._page} 页…")
+        self.state.status(f"正在加载第 {self._page} 页…")
         submit(
             search_models,
             self._filter_query,
@@ -551,7 +550,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._searching = False
 
     def _search_error(self, message: str) -> None:
-        self.page_label.setText("加载失败")
+        self.state.status("模型列表加载失败")
         self._log(f"模型列表加载失败: {message}")
 
     def _render_search(self, result: ModelSearch) -> None:
@@ -569,7 +568,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if result is None:
             return
         items = result.items
-        filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
         if self._filter_key == "local":
             items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
         items = _locllmw_models.merge_installed_items(items, self._installed_models, self._filter_key)
@@ -611,8 +609,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.models.sync_row_widths()
         self._sync_download_buttons()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
-        matched = f" · 本页显示 {len(items)} 个" if self._filter_key == "local" else ""
-        self.page_label.setText(f"{filter_label} · 第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
+        self.state.status(f"{result.page}/{pages}")
         self.prev_button.setEnabled(result.page > 1)
         self.next_button.setEnabled(result.page < pages)
         if selected is not None:
@@ -621,7 +618,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                     self.models.setCurrentRow(row)
                     break
         if not items:
-            self.page_label.setText(f"{filter_label} · 当前页没有匹配的模型，可切换筛选或翻页")
+            self._log("当前页没有匹配的模型，可切换筛选或翻页")
 
     # -- 详情 ---------------------------------------------------------- #
     def _on_model_selected(self, current: int) -> None:
@@ -699,7 +696,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.current_info = None
         self.detail_view.reset(repo)
         self._update_row_height(self._expanded_row)
-        self.page_label.setText(f"正在加载 {repo} …")
         submit(
             self._detail_work,
             repo,
@@ -716,7 +712,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         self.detail_view.set_error(f"详情加载失败：{message}")
         self._update_row_height(self._expanded_row)
-        self.page_label.setText(f"{repo} 详情加载失败")
         self._log(f"详情加载失败 {repo}: {message}")
 
     def _render_detail(self, generation: int, info: ModelInfo) -> None:
@@ -725,7 +720,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.current_info = info
         self.detail_view.render(info)
         self._update_row_height(self._expanded_row)
-        self.page_label.setText(f"已加载 {info.summary.repo}")
         self._log(f"已加载模型详情: {info.summary.repo}")
 
     def _log(self, message: str) -> None:
