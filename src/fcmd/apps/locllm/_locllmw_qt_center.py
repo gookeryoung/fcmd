@@ -1,11 +1,9 @@
-"""locllmw（Qt）模型中心：ModelScope 浏览 / 下载 / 已安装 / 转换 / 量化五个子页。
+"""locllmw（Qt）模型中心：ModelScope 浏览器 / 已安装 / 转换 / 量化四个子页。
 
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，展开行显示详情元数据；
-- **下载**：目标目录（唯一模型目录）、下载源、并发、SHA256 校验、包含 / 排除掩码、
-  汇总 / 单文件进度、失败记录与重试、日志；
+- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，行内提供下载按钮，展开显示详情元数据，底部右侧显示下载进度；
 - **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
 - **转换**：HF safetensors → GGUF（刷新模型列表、精度 / 解释器 / 脚本 / 引擎 tag、
   输出位置与覆盖开关、计划预览、进度与日志）；
@@ -20,7 +18,6 @@
 from __future__ import annotations
 
 import math
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,7 +36,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -93,11 +89,8 @@ if TYPE_CHECKING:
 __all__ = ["ModelCenterPage"]
 
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
-_MAX_WORKERS = _locllmw_models._MAX_WORKERS
 _MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _locllmw_models.DEFAULT_MODEL_FILTER
-_SOURCE_LABELS = _locllmw_models._SOURCE_LABELS
-_SOURCE_KEYS = _locllmw_models._SOURCE_KEYS
 _SORT_LABELS = _locllmw_models._SORT_LABELS
 _SORT_KEYS = _locllmw_models._SORT_KEYS
 _TAB_NAMES = _locllmw_models.MODEL_TAB_NAMES
@@ -118,6 +111,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     """
 
     toggleRequested = Signal(object)
+    downloadRequested = Signal(str)
 
     def __init__(self, item: ModelSummary, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -159,6 +153,9 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
+        self.download_button = button("下载")
+        self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
+        header_row.addWidget(self.download_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
@@ -185,6 +182,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self.setProperty("selected", "true" if selected else "false")
         self.style().unpolish(self)
         self.style().polish(self)
+
+    def set_download_state(self, *, busy: bool, active: bool) -> None:
+        """下载中禁用所有下载按钮，当前行显示「下载中…」。"""
+        self.download_button.setEnabled(not busy)
+        self.download_button.setText("下载中…" if active else "下载")
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -286,7 +288,7 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     """浏览页：筛选条、自定义结果行与行内展开的详情元数据。"""
 
-    repoSelected = Signal(str)
+    downloadFinished = Signal()
 
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -302,6 +304,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
         self._detail_generation = 0
         self._searching = False
+        self._downloading = False
+        self._stop_requested = False
+        self._active_repo: str | None = None
+        self._bridge: _ProgressBridge | None = None
+        self._download_target = _llmconfig.models_dir()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -358,9 +365,27 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.models.itemDoubleClicked.connect(self._on_item_double_clicked)
         layout.addWidget(self.models, 1)
 
+        self.download_status = QWidget(self)
+        status_row = QHBoxLayout(self.download_status)
+        status_row.setContentsMargins(2, 0, 2, 0)
+        status_row.setSpacing(8)
+        status_row.addStretch(1)
+        self.download_text = hint_label("", wrap=False)
+        status_row.addWidget(self.download_text)
+        self.download_bar = QProgressBar(self.download_status)
+        self.download_bar.setRange(0, 100)
+        self.download_bar.setFixedWidth(220)
+        status_row.addWidget(self.download_bar)
+        self.stop_download_button = link_button("停止", tooltip="停止当前下载")
+        self.stop_download_button.clicked.connect(self.stop_download)
+        self.stop_download_button.setVisible(False)
+        status_row.addWidget(self.stop_download_button)
+        self.download_status.setVisible(False)
+        layout.addWidget(self.download_status)
+
         self.detail_view = _ModelDetailView(self)
         self.detail_view.setVisible(False)
-        self.detail_view.downloadRequested.connect(self.repoSelected.emit)
+        self.detail_view.downloadRequested.connect(self.start_download)
 
         self.filter_buttons[_DEFAULT_FILTER].setChecked(True)
         self.start_search(1)
@@ -444,9 +469,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             row = _ModelItemRow(item, self.models)
             row.toggleRequested.connect(self._on_row_toggle)
+            row.downloadRequested.connect(self.start_download)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
+        self._sync_download_buttons()
         pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
         matched = f" · 本页显示 {len(items)} 个" if self._filter_key == "local" else ""
         self.page_label.setText(f"{filter_label} · 第 {result.page} / {pages} 页（共 {result.total:,} 条{matched}）")
@@ -569,198 +596,43 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def _log(self, message: str) -> None:
         self.state.logLine.emit(message)
 
-
-class _DownloadPanel(QWidget):  # pragma: no cover - Qt 控件
-    """下载页：参数、进度、失败记录与日志。"""
-
-    def __init__(self, state: LocllmState, browse: _BrowsePanel, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.state = state
-        self.browse = browse
-        self._settings = _locllmw_models.settings_from_dict(state.settings.download)
-        self._downloading = False
-        self._stop_requested = False
-        self._failures: list[tuple[str, str, str]] = []
-        self._target = _llmconfig.models_dir()
-        self._bridge: _ProgressBridge | None = None
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        current = Card("当前模型")
-        self.selected_repo = QLabel("未选择模型", current)
-        self.selected_repo.setObjectName("Value")
-        current.body.addWidget(self.selected_repo)
-        current.body.addWidget(hint_label("在「浏览」页选中模型后，到此页配置下载参数并开始下载"))
-        layout.addWidget(current)
-        browse.repoSelected.connect(self._on_repo_selected)
-
-        settings = Card("下载设置")
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(6)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
-        grid.addWidget(QLabel("模型目录"), 0, 0, Qt.AlignmentFlag.AlignRight)
-        self.dest = QLineEdit(str(_llmconfig.models_dir()), settings)
-        self.dest.setReadOnly(True)
-        grid.addWidget(self.dest, 0, 1, 1, 3)
-        grid.addWidget(QLabel("下载源"), 1, 0, Qt.AlignmentFlag.AlignRight)
-        self.source = QComboBox(settings)
-        self.source.addItems(list(_SOURCE_LABELS.values()))
-        self.source.setCurrentText(_SOURCE_LABELS.get(self._settings.source, "ModelScope"))
-        grid.addWidget(self.source, 1, 1)
-        grid.addWidget(QLabel("并发"), 1, 2, Qt.AlignmentFlag.AlignRight)
-        self.workers = QSpinBox(settings)
-        self.workers.setRange(1, _MAX_WORKERS)
-        self.workers.setValue(self._settings.workers)
-        grid.addWidget(self.workers, 1, 3)
-        self.verify = QCheckBox("校验 SHA256", settings)
-        self.verify.setChecked(self._settings.verify)
-        grid.addWidget(self.verify, 1, 4)
-        grid.addWidget(QLabel("包含掩码"), 2, 0, Qt.AlignmentFlag.AlignRight)
-        self.include = QLineEdit(self._settings.include, settings)
-        grid.addWidget(self.include, 2, 1, 1, 3)
-        grid.addWidget(QLabel("排除掩码"), 3, 0, Qt.AlignmentFlag.AlignRight)
-        self.exclude = QLineEdit(self._settings.exclude, settings)
-        grid.addWidget(self.exclude, 3, 1, 1, 3)
-        settings.body.addLayout(grid)
-        layout.addWidget(settings)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self.download_button = button("下载", kind="primary")
-        self.download_button.clicked.connect(self.start_download)
-        actions.addWidget(self.download_button)
-        self.stop_button = button("停止", kind="danger")
-        self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self.stop_download)
-        actions.addWidget(self.stop_button)
-        self.retry_button = button("重试下载")
-        self.retry_button.setEnabled(False)
-        self.retry_button.clicked.connect(self.start_download)
-        actions.addWidget(self.retry_button)
-        actions.addStretch(1)
-        open_target = button("打开目标目录")
-        open_target.clicked.connect(self.open_target)
-        actions.addWidget(open_target)
-        layout.addLayout(actions)
-
-        progress = Card("进度")
-        progress_grid = QGridLayout()
-        progress_grid.setContentsMargins(0, 0, 0, 0)
-        progress_grid.setHorizontalSpacing(8)
-        progress_grid.setVerticalSpacing(4)
-        progress_grid.setColumnStretch(1, 1)
-        progress_grid.addWidget(QLabel("总进度"), 0, 0, Qt.AlignmentFlag.AlignRight)
-        self.overall_bar = QProgressBar(progress)
-        self.overall_bar.setRange(0, 100)
-        progress_grid.addWidget(self.overall_bar, 0, 1)
-        self.overall_text = hint_label("-", wrap=False)
-        progress_grid.addWidget(self.overall_text, 0, 2)
-        progress_grid.addWidget(QLabel("当前文件"), 1, 0, Qt.AlignmentFlag.AlignRight)
-        self.file_bar = QProgressBar(progress)
-        self.file_bar.setRange(0, 100)
-        progress_grid.addWidget(self.file_bar, 1, 1)
-        self.file_text = hint_label("-", wrap=False)
-        progress_grid.addWidget(self.file_text, 1, 2)
-        progress.body.addLayout(progress_grid)
-        layout.addWidget(progress)
-
-        failed = Card("失败记录")
-        self.failures = make_table(
-            ("时间", "模型", "原因"), widths=(100, 220, 420), stretch_columns=(2,), parent=failed
-        )
-        self.failures.setMinimumHeight(80)
-        failed.body.addWidget(self.failures)
-        fail_bar = QHBoxLayout()
-        fail_bar.setContentsMargins(0, 0, 0, 0)
-        fail_bar.setSpacing(6)
-        retry = button("重试选中")
-        retry.clicked.connect(self.retry_failure)
-        fail_bar.addWidget(retry)
-        clear = button("清空记录")
-        clear.clicked.connect(self.clear_failures)
-        fail_bar.addWidget(clear)
-        self.failure_hint = hint_label("暂无失败记录")
-        fail_bar.addWidget(self.failure_hint, 1)
-        failed.body.addLayout(fail_bar)
-        layout.addWidget(failed)
-
-        log_card = Card("日志")
-        self.log_view = LogView(height=110, parent=log_card)
-        log_card.body.addWidget(self.log_view)
-        layout.addWidget(log_card, 1)
-
-    # -- 设置持久化 ---------------------------------------------------- #
-    def settings_dict(self) -> dict[str, Any]:
-        return _locllmw_models.settings_to_dict(
-            _locllmw_models.DownloadGuiSettings(
-                source=_SOURCE_KEYS.get(self.source.currentText(), "modelscope"),
-                workers=min(max(self.workers.value(), 1), _MAX_WORKERS),
-                verify=self.verify.isChecked(),
-                include=self.include.text(),
-                exclude=self.exclude.text(),
-            )
-        )
-
-    def _save_settings(self) -> None:
-        self.state.settings.download = self.settings_dict()
-        self.state.persist()
-
-    def refresh_config(self) -> None:
-        """模型目录变化后同步目标目录与已下载列表。"""
-        self.dest.setText(str(_llmconfig.models_dir()))
-        self._target = _llmconfig.models_dir()
-
-    def _on_repo_selected(self, repo: str) -> None:
-        if repo:
-            self.selected_repo.setText(repo)
-            self._target = _llmconfig.models_dir()
-
     # -- 下载 ---------------------------------------------------------- #
-    def _log(self, message: str) -> None:
-        self.log_view.append(message)
-        self.state.logLine.emit(message)
+    def _sync_download_buttons(self) -> None:
+        for index in range(self.models.count()):
+            row = self.models.itemWidget(self.models.item(index))
+            if isinstance(row, _ModelItemRow):
+                row.set_download_state(busy=self._downloading, active=row.repo == self._active_repo)
 
-    def start_download(self) -> None:
-        if self._downloading:
+    def start_download(self, repo: str) -> None:
+        """下载指定仓库到模型目录，进度显示在列表底部右侧。"""
+        if self._downloading or not repo:
             return
-        repo = self.browse.current_repo
-        if not repo:
-            self._log("请先在「浏览」页选择一个模型")
-            return
-        source = _SOURCE_KEYS.get(self.source.currentText(), "modelscope")
+        settings = _locllmw_models.settings_from_dict(self.state.settings.download)
         dest = _llmconfig.models_dir()
-        self._save_settings()
         self._downloading = True
         self._stop_requested = False
-        self.download_button.setEnabled(False)
-        self.retry_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
-        self.overall_bar.setValue(0)
-        self.file_bar.setValue(0)
-        self.overall_text.setText("-")
-        self.file_text.setText("-")
-        self._target = dest / repo
-        self._log(f"开始下载 {repo} -> {self._target}")
-        self._log(f"下载源: {source}，并发: {self.workers.value()}")
+        self._active_repo = repo
+        self._download_target = dest / repo
+        self.download_status.setVisible(True)
+        self.download_bar.setValue(0)
+        self.download_text.setText(f"准备下载 {repo}…")
+        self.stop_download_button.setEnabled(True)
+        self.stop_download_button.setVisible(True)
+        self._sync_download_buttons()
+        self._log(f"开始下载 {repo} -> {self._download_target}")
         self._bridge = _ProgressBridge(self)
         self._bridge.progress.connect(self._on_progress)
         submit(
             self._download_work,
             repo,
             dest,
-            source,
-            self.include.text(),
-            self.exclude.text(),
-            self.workers.value(),
-            self.verify.isChecked(),
+            settings.source,
+            settings.include,
+            settings.exclude,
+            settings.workers,
+            settings.verify,
             on_done=self._download_done,
-            on_error=self._download_error,
+            on_error=lambda message: self._download_error(repo, message),
             on_finished=self._download_finished,
         )
 
@@ -774,18 +646,18 @@ class _DownloadPanel(QWidget):  # pragma: no cover - Qt 控件
         workers: int,
         verify: bool,
     ) -> str:
-        self._log_safe(f"获取 {repo} 的 {source} 文件清单…")
+        self._log(f"获取 {repo} 的 {source} 文件清单…")
         selection = select_source(repo, source)  # type: ignore[arg-type]
-        self._log_safe(f"选用源 {selection.source}，仓库共 {len(selection.files)} 个文件")
+        self._log(f"选用源 {selection.source}，仓库共 {len(selection.files)} 个文件")
         selected = filter_files(
             list(selection.files),
             _locllmw_models.parse_patterns(include),
             _locllmw_models.parse_patterns(exclude),
         )
         if not selected:
-            raise ModelToolError("过滤后没有文件，请检查包含 / 排除掩码")
+            raise ModelToolError("过滤后没有文件，请检查设置中的包含 / 排除掩码")
         target = dest / repo
-        self._log_safe(f"待下载 {len(selected)} 个文件，目标 {target}")
+        self._log(f"待下载 {len(selected)} 个文件，目标 {target}")
         download_files(
             repo,
             selected,
@@ -798,113 +670,57 @@ class _DownloadPanel(QWidget):  # pragma: no cover - Qt 控件
         )
         return str(target)
 
-    def _log_safe(self, message: str) -> None:
-        """工作线程内追加日志：经状态栏日志通道排队回主线程。"""
-        self.state.logLine.emit(message)
-
     def _emit_progress(self, event: ProgressEvent) -> None:
         if self._bridge is not None:
             self._bridge.progress.emit(event)
 
     def _on_progress(self, event: ProgressEvent) -> None:
-        if event.task == "总进度":
-            self.overall_bar.setValue(round(100 * event.completed / max(event.total, 1)))
-            self.overall_text.setText(f"{human_size(event.completed)} / {human_size(event.total)}")
+        if event.task != "总进度":
             return
-        self.file_bar.setValue(round(100 * event.completed / max(event.total, 1)))
-        if event.state == "start":
-            self.file_text.setText(event.task)
-            self._log(f"开始: {event.task}")
+        self.download_bar.setValue(round(100 * event.completed / max(event.total, 1)))
+        self.download_text.setText(
+            f"下载 {self._active_repo or '-'} · {human_size(event.completed)} / {human_size(event.total)}"
+        )
 
     def _download_done(self, target: str) -> None:
-        self.overall_bar.setValue(100)
+        self.download_bar.setValue(100)
+        self.download_text.setText(f"下载完成：{self._active_repo or target}")
         self._log(f"下载完成: {target}")
-        self._refresh_after_download()
+        self.downloadFinished.emit()
 
-    def _download_error(self, message: str) -> None:
-        self._record_failure(message)
-        self._log(f"下载失败: {message}")
-        QMessageBox.warning(self, "下载未完成", message)
-        if self.browse.current_repo:
-            self.retry_button.setEnabled(True)
+    def _download_error(self, repo: str, message: str) -> None:
+        self.download_text.setText(f"下载失败：{repo} · {message}")
+        self._log(f"下载失败 {repo}: {message}")
 
     def _download_finished(self) -> None:
         self._downloading = False
-        self.download_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-
-    def _refresh_after_download(self) -> None:
-        panel = getattr(self, "_installed_panel", None)
-        if panel is not None:
-            panel.refresh()
+        self._active_repo = None
+        self.stop_download_button.setVisible(False)
+        self._sync_download_buttons()
 
     def stop_download(self) -> None:
         if not self._downloading:
             return
         self._stop_requested = True
-        self.stop_button.setEnabled(False)
-        self._log("正在停止…")
-
-    def open_target(self) -> None:
-        target = self._target if self._target.is_dir() else _llmconfig.models_dir()
-        if not target.is_dir():
-            QMessageBox.warning(self, "目录不存在", f"目录不存在:\n{target}")
-            return
-        try:
-            _locllmw_models.open_path(target)
-        except OSError as exc:
-            QMessageBox.critical(self, "打开目录失败", str(exc))
-
-    # -- 失败记录 ------------------------------------------------------ #
-    def _record_failure(self, message: str) -> None:
-        repo = self.browse.current_repo or "-"
-        stamp = time.strftime("%H:%M:%S")
-        self._failures.append((stamp, repo, message))
-        del self._failures[:-20]
-        self.failures.insertRow(self.failures.rowCount())
-        row = self.failures.rowCount() - 1
-        self.failures.setItem(row, 0, make_table_item(stamp))
-        self.failures.setItem(row, 1, make_table_item(repo))
-        self.failures.setItem(row, 2, make_table_item(message))
-        self.failure_hint.setText(f"最近 {len(self._failures)} 次失败，选中后点「重试选中」可重下")
-
-    def retry_failure(self) -> None:
-        row = self.failures.currentRow()
-        if row < 0:
-            self.failure_hint.setText("先在失败记录里选中一行")
-            return
-        cell = self.failures.item(row, 1)
-        repo = cell.text() if cell is not None else "-"
-        if not repo or repo == "-":
-            self.failure_hint.setText("该记录没有可重试的模型名")
-            return
-        self.browse.current_repo = repo
-        self.selected_repo.setText(repo)
-        self._log(f"重试下载 {repo}")
-        self.start_download()
-
-    def clear_failures(self) -> None:
-        self._failures.clear()
-        self.failures.setRowCount(0)
-        self.failure_hint.setText("暂无失败记录")
+        self.stop_download_button.setEnabled(False)
+        self.download_text.setText(f"正在停止 {self._active_repo or ''}…")
+        self._log("正在停止下载…")
 
     def close(self) -> bool:
-        if self._downloading and not self._ask(
-            "下载进行中", "下载尚未完成，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？"
-        ):
-            return False
-        self._stop_requested = True
-        return True
-
-    def _ask(self, title: str, question: str) -> bool:
+        """关窗前确认进行中的下载，返回 ``False`` 表示用户取消关闭。"""
+        if not self._downloading:
+            return True
         answer = QMessageBox.question(
             self,
-            title,
-            question,
+            "下载进行中",
+            "下载尚未完成，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
-        return answer == QMessageBox.StandardButton.Yes
+        if answer != QMessageBox.StandardButton.Yes:
+            return False
+        self._stop_requested = True
+        return True
 
 
 class _InstalledPanel(QWidget):  # pragma: no cover - Qt 控件
@@ -1765,7 +1581,7 @@ class _QuantPanel(QWidget):  # pragma: no cover - Qt 控件
 
 
 class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
-    """模型中心的五个子页；宿主窗口提供运行模型树的适配回调。"""
+    """模型中心的四个子页；宿主窗口提供运行模型树的适配回调。"""
 
     def __init__(
         self,
@@ -1777,21 +1593,17 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
         super().__init__(parent)
         self.state = state
         self.browse = _BrowsePanel(state, self)
-        self.download = _DownloadPanel(state, self.browse, self)
         self.installed = _InstalledPanel(state, fit_resolver, self)
-        self.download._installed_panel = self.installed
         self.convert = _ConvertPanel(self)
         self.quant = _QuantPanel(self)
         self.tabs = QTabWidget(self)
-        for name, page in zip(
-            _TAB_NAMES, (self.browse, self.download, self.installed, self.convert, self.quant), strict=True
-        ):
+        for name, page in zip(_TAB_NAMES, (self.browse, self.installed, self.convert, self.quant), strict=True):
             self.tabs.addTab(page, name)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tabs)
         self.tabs.setCurrentIndex(_TAB_NAMES.index(_DEFAULT_TAB))
-        self.browse.repoSelected.connect(self._on_repo_selected)
+        self.browse.downloadFinished.connect(self.installed.refresh)
         self.installed.repoActivated.connect(self._open_repo)
         self.card = self.installed.card
         self.tree = self.installed.tree
@@ -1810,21 +1622,12 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
             self.quant._env_loaded = True
             self.quant.refresh_env()
 
-    def _on_repo_selected(self, repo: str) -> None:
-        if repo:
-            self.download.selected_repo.setText(repo)
-
     def _open_repo(self, repo: str) -> None:
         self.tabs.setCurrentIndex(_TAB_NAMES.index("浏览"))
         self.browse.open_repo(repo)
 
-    def settings_dict(self) -> dict[str, Any]:
-        """导出下载参数，供窗口写回 ``locllmw.json``。"""
-        return self.download.settings_dict()
-
     def refresh_config(self) -> None:
-        """模型目录变化后同步下载目标与已安装列表，并刷新转换 / 量化环境。"""
-        self.download.refresh_config()
+        """模型目录变化后刷新已安装列表与转换 / 量化环境。"""
         self.installed.refresh()
         self.convert.refresh_env()
         if self.tabs.currentIndex() == _TAB_NAMES.index("量化"):
@@ -1832,5 +1635,4 @@ class ModelCenterPage(QWidget):  # pragma: no cover - Qt 控件
 
     def close(self) -> bool:
         """确认并停止下载 / 转换 / 量化任务；返回 ``False`` 表示用户取消关闭。"""
-        self.download._save_settings()
-        return self.download.close()
+        return self.browse.close()

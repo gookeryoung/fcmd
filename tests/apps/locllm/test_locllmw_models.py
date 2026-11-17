@@ -48,7 +48,7 @@ class TestModelTabLayout:
     """子页顺序与默认页由常量统一声明，防止只改创建顺序却留下索引硬编码。"""
 
     def test_tab_order(self) -> None:
-        assert MODEL_TAB_NAMES == ("浏览", "下载", "已安装", "转换", "量化")
+        assert MODEL_TAB_NAMES == ("浏览", "已安装", "转换", "量化")
 
     def test_default_tab_is_browse(self) -> None:
         assert DEFAULT_MODEL_TAB == "浏览"

@@ -1,4 +1,4 @@
-"""locllmw（Qt）设置页：存储、引擎与「关于与诊断」。
+"""locllmw（Qt）设置页：存储、下载参数、引擎与「关于与诊断」。
 
 目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.locllm._llmconfig`），
 引擎根目录单独登记；改动即时写配置并通知其它页刷新（``configChanged``）。
@@ -10,9 +10,21 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
-from fcmd.apps.locllm import _llmconfig, llmenv
+from fcmd.apps.locllm import _llmconfig, _locllmw_models, llmenv
 from fcmd.apps.locllm import _locllmw_settings as settings_logic
 from fcmd.apps.locllm._locllmw_models import open_path
 from fcmd.apps.locllm.llmbase import EngineInfo, ServeError
@@ -42,7 +54,7 @@ def engine_rows_values(engines: list[EngineInfo]) -> list[tuple[str, str, str]]:
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
-    """设置页：存储目录、引擎根目录与运行状态、关于与诊断。"""
+    """设置页：存储目录、下载参数、引擎根目录与运行状态、关于与诊断。"""
 
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -55,6 +67,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         layout = scroll.body
         outer.addWidget(scroll)
         layout.addWidget(self._build_storage())
+        layout.addWidget(self._build_download())
         layout.addWidget(self._build_engines())
         layout.addWidget(self._build_about(), 1)
         self.refresh()
@@ -82,6 +95,64 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.models_path.reset.clicked.connect(lambda: self._save_path("models_dir", None))
         self.models_open.clicked.connect(lambda: open_path(llmenv.models_dir()))
         return card
+
+    # ------------------------------------------------------------------ #
+    # 下载
+    # ------------------------------------------------------------------ #
+    def _build_download(self) -> Card:
+        """下载参数：源、并发、校验与包含 / 排除掩码；目标仍是模型目录。"""
+        card = Card("下载")
+        settings = _locllmw_models.settings_from_dict(self.state.settings.download)
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        grid.addWidget(QLabel("下载源"), 0, 0, Qt.AlignmentFlag.AlignRight)
+        self.download_source = QComboBox(card)
+        self.download_source.addItems(list(_locllmw_models._SOURCE_LABELS.values()))
+        self.download_source.setCurrentText(_locllmw_models._SOURCE_LABELS.get(settings.source, "ModelScope"))
+        grid.addWidget(self.download_source, 0, 1)
+        grid.addWidget(QLabel("并发"), 0, 2, Qt.AlignmentFlag.AlignRight)
+        self.download_workers = QSpinBox(card)
+        self.download_workers.setRange(1, _locllmw_models._MAX_WORKERS)
+        self.download_workers.setValue(settings.workers)
+        grid.addWidget(self.download_workers, 0, 3)
+        self.download_verify = QCheckBox("校验 SHA256", card)
+        self.download_verify.setChecked(settings.verify)
+        grid.addWidget(self.download_verify, 0, 4)
+        grid.addWidget(QLabel("包含掩码"), 1, 0, Qt.AlignmentFlag.AlignRight)
+        self.download_include = QLineEdit(settings.include, card)
+        self.download_include.setPlaceholderText("如 *.gguf，留空表示全部")
+        grid.addWidget(self.download_include, 1, 1, 1, 3)
+        grid.addWidget(QLabel("排除掩码"), 2, 0, Qt.AlignmentFlag.AlignRight)
+        self.download_exclude = QLineEdit(settings.exclude, card)
+        self.download_exclude.setPlaceholderText("如 *.bin，留空表示不排除")
+        grid.addWidget(self.download_exclude, 2, 1, 1, 3)
+        card.body.addLayout(grid)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.download_save = button("保存下载设置")
+        self.download_save.clicked.connect(self._save_download)
+        row.addWidget(self.download_save)
+        row.addWidget(hint_label("下载目标固定为上方模型目录；参数在模型列表点击「下载」时生效。"))
+        row.addStretch(1)
+        card.body.addLayout(row)
+        return card
+
+    def _save_download(self) -> None:
+        settings = _locllmw_models.DownloadGuiSettings(
+            source=_locllmw_models._SOURCE_KEYS.get(self.download_source.currentText(), "modelscope"),
+            workers=min(max(self.download_workers.value(), 1), _locllmw_models._MAX_WORKERS),
+            verify=self.download_verify.isChecked(),
+            include=self.download_include.text(),
+            exclude=self.download_exclude.text(),
+        )
+        self.state.settings.download = _locllmw_models.settings_to_dict(settings)
+        self.state.persist()
+        self.state.log("已保存下载设置")
+        self.state.status("下载设置已保存")
 
     # ------------------------------------------------------------------ #
     # 引擎

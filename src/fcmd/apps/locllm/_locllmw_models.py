@@ -84,7 +84,7 @@ _MODEL_COLUMNS: dict[str, tuple[str, int, Literal["center", "e", "n", "ne", "nw"
 }
 
 # 子页顺序是唯一来源：控件创建、默认选中与测试都从这里派生，避免散落的索引常量。
-MODEL_TAB_NAMES: tuple[str, ...] = ("浏览", "下载", "已安装", "转换", "量化")
+MODEL_TAB_NAMES: tuple[str, ...] = ("浏览", "已安装", "转换", "量化")
 DEFAULT_MODEL_TAB = "浏览"
 
 
