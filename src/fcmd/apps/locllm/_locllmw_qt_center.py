@@ -1048,6 +1048,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._active_repo = None
         self.stop_download_button.setVisible(False)
         self.state.persist()
+        # 成功 / 失败 / 手动停止都会走到这里：重新扫描 .part 大小并刷新进度标签。
+        self.refresh_installed()
+        self._render_results()
         self._sync_download_buttons()
 
     def stop_download(self) -> None:
