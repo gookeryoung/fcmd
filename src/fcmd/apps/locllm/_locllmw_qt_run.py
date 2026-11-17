@@ -71,6 +71,7 @@ __all__ = [
     "parse_int",
     "parse_optional_int",
     "plan_lines",
+    "startup_args_tail",
 ]
 
 
@@ -96,6 +97,20 @@ def parse_optional_int(text: str, label: str) -> int | None:
 def parse_custom_args(text: str) -> tuple[str, ...]:
     """按 shell 规则拆分自定义启动参数；空串返回空元组。"""
     return tuple(shlex.split(text.strip())) if text.strip() else ()
+
+
+def startup_args_tail(argv: Sequence[str]) -> tuple[str, ...]:
+    """去掉可执行文件、``-m <模型>`` 与可选的 ``--mmproj <视觉塔>``，只保留启动参数。"""
+    rest = list(argv[3:] if len(argv) >= 3 and argv[1] == "-m" else argv[1:])
+    args: list[str] = []
+    index = 0
+    while index < len(rest):
+        if rest[index] == "--mmproj":
+            index += 2
+            continue
+        args.append(rest[index])
+        index += 1
+    return tuple(args)
 
 
 def memory_guard(plan: LaunchPlan, usage: tuple[int, int] | None, available_memory: int | None = None) -> str:
@@ -612,7 +627,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         except ServeError as exc:
             self._error("参数错误", str(exc))
             return
-        tail = base.argv()[2:]
+        tail = startup_args_tail(base.argv())
         self.extra_args_edit.setPlainText(shlex.join(tail))
         self._refresh_command_preview()
         self.state.status("已填入当前启动参数")
@@ -629,7 +644,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """按当前表单构造启动计划；重复填入的参数不二次追加。"""
         base = build_plan_from(self._workflow(extra_args=""))
         custom = parse_custom_args(self.extra_args_edit.toPlainText())
-        if custom and custom == tuple(base.argv()[2:]):
+        if custom and custom == startup_args_tail(base.argv()):
             return base
         return build_plan_from(self._workflow())
 

@@ -44,6 +44,7 @@ from fcmd.apps.locllm._locllmw_qt_run import (
     parse_optional_int,
     pick_model,
     plan_lines,
+    startup_args_tail,
 )
 from fcmd.apps.locllm._locllmw_qt_settings import engine_rows_values
 from fcmd.apps.locllm._locllmw_recommend import Recommendation
@@ -117,6 +118,21 @@ def test_model_combo_text_truncates_long_names() -> None:
     assert "…" in text
     assert "Qwen3-Coder" in text
     assert len(text.split("  (")[0]) == 30
+
+
+def test_startup_args_tail_drops_executable_and_model() -> None:
+    argv = [
+        "llama-server",
+        "-m",
+        "D:/models/demo.gguf",
+        "-ngl",
+        "99",
+        "--mmproj",
+        "D:/models/vision.gguf",
+        "-c",
+        "65536",
+    ]
+    assert startup_args_tail(argv) == ("-ngl", "99", "-c", "65536")
 
 
 def test_parse_custom_args_splits_shell_like_text() -> None:
