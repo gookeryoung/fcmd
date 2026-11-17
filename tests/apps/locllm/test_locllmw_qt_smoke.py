@@ -95,6 +95,23 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     assert settings_page.models_path.value()
 
 
+def test_loading_bar_sits_right_in_status_bar(window: Any) -> None:
+    """加载提示放在状态栏右侧，不覆盖左侧状态文字。"""
+    assert window.statusBar().isAncestorOf(window.loading_bar)
+    window.set_status("环境就绪")
+    window.show_loading("正在加载第 1 页…")
+    assert window.loading_bar.is_running()
+    assert window.loading_bar.text_label.text() == "正在加载第 1 页…"
+    assert window.status_text() == "环境就绪"
+    window.show_loading("正在扫描本地模型…")
+    assert window.loading_bar.text_label.text() == "正在扫描本地模型…"
+    window.show_loading("")
+    assert not window.loading_bar.is_running()
+    assert window.status_text() == "环境就绪"
+    window.show_page("models")
+    assert not hasattr(window.page("models").browse, "loading")
+
+
 def test_models_page_name_filter_is_debounced(window: Any) -> None:
     """上一页左侧的名称过滤框只在停止输入后重建列表。"""
     window.show_page("models")

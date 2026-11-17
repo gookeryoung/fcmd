@@ -132,6 +132,7 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     busyChanged = Signal(bool)
     navigateRequested = Signal(str)
     serveModelRequested = Signal(object)
+    loadingTextChanged = Signal(str)
 
     def __init__(self, settings_path: Path | None = None) -> None:
         super().__init__()
@@ -173,6 +174,10 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     def request_serve_model(self, path: Path) -> None:
         """请求窗口切到运行页并启动指定模型（模型页快捷启动用）。"""
         self.serveModelRequested.emit(path)
+
+    def show_loading(self, text: str) -> None:
+        """在状态栏右侧显示 / 更新加载提示；空串收起（窗口负责渲染）。"""
+        self.loadingTextChanged.emit(text)
 
     def remember_quant_choice(self, path: Path) -> None:
         """记住用户启动过的量化精度（按仓库保存），供模型页快捷启动默认选中。

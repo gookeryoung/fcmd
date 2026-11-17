@@ -30,6 +30,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.theme_menu import ThemeMenu
+from fcmd.gui.qt.widgets import LoadingBar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -157,6 +158,8 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         self.status_label = QLabel("就绪", self)
         self.statusBar().addWidget(self.status_label, 1)
+        self.loading_bar = LoadingBar("加载中…", self)
+        self.statusBar().addPermanentWidget(self.loading_bar, 0)
         self.nav.changed.connect(self.show_page)
         self.nav.enable_shortcuts(self)
         self._build_menu()
@@ -242,6 +245,16 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def status_text(self) -> str:
         """当前状态栏文字。"""
         return self.status_label.text()
+
+    def show_loading(self, text: str) -> None:
+        """在状态栏右侧显示 / 更新加载提示；空串收起。左侧状态文字保持可见。"""
+        if not text:
+            self.loading_bar.stop()
+            return
+        if self.loading_bar.is_running():
+            self.loading_bar.set_text(text)
+        else:
+            self.loading_bar.start(text)
 
     def settings(self) -> dict[str, Any]:
         """读取窗口设置文件原始内容（缺失字段按空处理）。"""

@@ -83,6 +83,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.statusText.connect(self.set_status)
         self.state.navigateRequested.connect(self.show_page)
         self.state.serveModelRequested.connect(self._serve_model)
+        self.state.loadingTextChanged.connect(self.show_loading)
         self.state.logLine.connect(self.monitor_page.log_view.append)
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)

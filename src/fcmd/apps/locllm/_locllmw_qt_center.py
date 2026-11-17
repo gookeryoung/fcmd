@@ -63,7 +63,6 @@ from fcmd.apps.locllm.llmdown import (
 )
 from fcmd.gui.qt.widgets import (
     ElidedLabel,
-    LoadingBar,
     RowListWidget,
     button,
     hint_label,
@@ -468,9 +467,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         filters.addStretch(1)
         browse_layout.addLayout(filters)
 
-        self.loading = LoadingBar("正在加载模型列表…", self)
-        browse_layout.addWidget(self.loading)
-
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
         nav.setSpacing(6)
@@ -663,14 +659,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def _begin_loading(self, key: str, text: str) -> None:
         """登记一项加载任务；同一时刻只显示一个加载条，任务结束才收起。"""
         self._loading_tasks[key] = text
-        self.loading.start(text)
+        self.state.show_loading(text)
 
     def _end_loading(self, key: str) -> None:
         self._loading_tasks.pop(key, None)
         if self._loading_tasks:
-            self.loading.set_text(next(reversed(self._loading_tasks.values())))
+            self.state.show_loading(next(reversed(self._loading_tasks.values())))
         else:
-            self.loading.stop()
+            self.state.show_loading("")
 
     def _default_quant(self, repo_key: str) -> str:
         """快捷启动默认精度：持久化的上次启动精度 → 上次运行模型 → 首个量化文件。"""
