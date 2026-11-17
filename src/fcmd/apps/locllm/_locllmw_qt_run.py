@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
@@ -355,42 +354,21 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         outer.addWidget(self._build_action_bar())
 
     def _build_action_bar(self) -> QFrame:
-        """固定底部动作栏：服务动作一行、查看类动作一行，滚动内容时始终可见。"""
+        """固定底部动作栏：只保留启动 / 停止选中 / 停止全部三个大按钮。"""
         bar = QFrame(self)
         bar.setObjectName("ActionBar")
-        column = QVBoxLayout(bar)
-        column.setContentsMargins(0, 8, 0, 0)
-        column.setSpacing(6)
-
-        service_row = QHBoxLayout()
-        service_row.setSpacing(6)
+        row = QHBoxLayout(bar)
+        row.setContentsMargins(0, 8, 0, 0)
+        row.setSpacing(8)
         self.start_button = button("启动服务", kind="primary")
+        self.start_button.setObjectName("RunPrimary")
         self.stop_selected_button = button("停止选中服务")
+        self.stop_selected_button.setObjectName("RunAction")
         self.stop_all_button = button("停止全部服务", kind="danger")
-        self.status_button = button("刷新进程状态", kind="ghost")
-        for widget in (
-            self.start_button,
-            self.stop_selected_button,
-            self.stop_all_button,
-            self.status_button,
-        ):
-            service_row.addWidget(widget)
-        service_row.addStretch(1)
-        self.progress = QProgressBar(bar)
-        self.progress.setRange(0, 0)
-        self.progress.setFixedWidth(160)
-        self.progress.setVisible(False)
-        service_row.addWidget(self.progress)
-        column.addLayout(service_row)
-
-        view_row = QHBoxLayout()
-        view_row.setSpacing(6)
-        self.browser_button = button("打开浏览器", kind="ghost")
-        self.logs_button = button("查看日志", kind="ghost")
-        view_row.addWidget(self.browser_button)
-        view_row.addWidget(self.logs_button)
-        view_row.addStretch(1)
-        column.addLayout(view_row)
+        self.stop_all_button.setObjectName("RunDanger")
+        for widget in (self.start_button, self.stop_selected_button, self.stop_all_button):
+            row.addWidget(widget)
+        row.addStretch(1)
         return bar
 
     def _wire(self) -> None:
@@ -404,9 +382,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.start_button.clicked.connect(self.start)
         self.stop_selected_button.clicked.connect(self.stop_selected)
         self.stop_all_button.clicked.connect(self.stop_all)
-        self.status_button.clicked.connect(self.refresh_status)
-        self.browser_button.clicked.connect(self.open_browser)
-        self.logs_button.clicked.connect(lambda: self.state.navigate("monitor"))
         for widget in (
             self.name_combo,
             self.profile_combo,
@@ -1071,14 +1046,12 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.start_button,
             self.stop_selected_button,
             self.stop_all_button,
-            self.status_button,
             self.browse_button,
             self.clear_button,
             self.save_params_button,
             self.fill_params_button,
         ):
             widget.setEnabled(not busy)
-        self.progress.setVisible(busy)
 
     def update_health(self, issue: str | None, engine_missing: bool, port_busy: bool) -> None:
         """把最近一次扫描结果汇总为一条状态；异常时提供跳转入口。"""

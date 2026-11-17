@@ -153,6 +153,23 @@ QPushButton#Primary:disabled { background: $surface_hover; color: $muted; border
 QPushButton#Danger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#Danger:hover { background: $danger; color: $on_accent; }
 QPushButton#Danger:disabled { color: $muted; border-color: $border; background: transparent; }
+QPushButton#RunPrimary, QPushButton#RunAction, QPushButton#RunDanger {
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0 22px;
+    border-radius: 8px;
+    font-size: ${font_heading}pt;
+    font-weight: 600;
+}
+QPushButton#RunPrimary { background: $accent; color: $on_accent; border-color: $accent; }
+QPushButton#RunPrimary:hover { background: $accent_hover; border-color: $accent_hover; }
+QPushButton#RunPrimary:pressed { background: $accent_pressed; }
+QPushButton#RunPrimary:disabled { background: $surface_hover; color: $muted; border-color: $border; }
+QPushButton#RunAction { background: $surface_hover; color: $text; border-color: $border; }
+QPushButton#RunAction:hover { background: $surface_active; border-color: $border_strong; }
+QPushButton#RunDanger { color: $danger; border-color: $danger; background: transparent; }
+QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
+QPushButton#RunDanger:disabled { color: $muted; border-color: $border; background: transparent; }
 QPushButton#Ghost {
     background: transparent;
     border: 1px solid $border;

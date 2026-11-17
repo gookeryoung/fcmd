@@ -204,9 +204,18 @@ def test_run_page_keeps_action_bar_visible(window: Any) -> None:
     window.resize(1040, 780)
     window.run_page.advanced.set_expanded(True)
     QApplication.processEvents()
-    button = window.run_page.start_button
-    assert not button.isHidden()
-    assert button.mapTo(window, button.rect().bottomLeft()).y() <= window.height()
+    run = window.run_page
+    assert [run.start_button.text(), run.stop_selected_button.text(), run.stop_all_button.text()] == [
+        "启动服务",
+        "停止选中服务",
+        "停止全部服务",
+    ]
+    assert not hasattr(run, "status_button")
+    assert not hasattr(run, "browser_button")
+    assert not hasattr(run, "logs_button")
+    assert run.start_button.sizeHint().height() >= 40
+    assert not run.start_button.isHidden()
+    assert run.start_button.mapTo(window, run.start_button.rect().bottomLeft()).y() <= window.height()
 
 
 def test_chat_input_buttons_share_one_row(window: Any) -> None:
