@@ -180,6 +180,82 @@ class TestRecommend:
         assert rows[0].prompt_tps != "n/a"
 
 
+class TestScore:
+    """评分规则：显存余量 40 / 上下文 25 / KV 15 / 解码速度 20，合计 100。"""
+
+    @staticmethod
+    def _score(**overrides: object) -> tuple[int, tuple[int, int, int, int]]:
+        kwargs: dict[str, object] = {
+            "profile": "balanced",
+            "context": 65536,
+            "kv_type": "f16",
+            "model_bytes": 4 * 1024**3,
+            "gpu_mib": 32000,
+            "decode_tps": 40.0,
+        }
+        kwargs.update(overrides)
+        return recommend.score_recommendation(**kwargs)  # type: ignore[arg-type]
+
+    def test_small_model_with_headroom_scores_full_marks(self) -> None:
+        total, parts = self._score()
+        assert parts == (40, 25, 15, 20)
+        assert total == 100
+
+    def test_total_equals_sum_of_parts(self) -> None:
+        for gpu_mib in (None, 8000, 16000, 32000):
+            for context in (4096, 16384, 65536):
+                total, parts = self._score(gpu_mib=gpu_mib, context=context)
+                assert total == sum(parts)
+                assert 0 <= total <= 100
+
+    def test_tight_vram_lowers_fit_score(self) -> None:
+        loose, _ = self._score(model_bytes=2 * 1024**3)
+        tight, tight_parts = self._score(model_bytes=26 * 1024**3)
+        assert tight < loose
+        assert tight_parts[0] < 40
+
+    def test_context_shrink_lowers_context_score(self) -> None:
+        _, full = self._score(context=65536)
+        _, shrunk = self._score(context=8192)
+        assert full[1] == 25
+        assert 0 < shrunk[1] < 25
+
+    def test_kv_downgrade_lowers_kv_score(self) -> None:
+        _, f16 = self._score(kv_type="f16")
+        _, q8 = self._score(kv_type="q8_0")
+        assert f16[2] == 15
+        assert q8[2] < f16[2]
+
+    def test_slow_decode_lowers_perf_score(self) -> None:
+        _, fast = self._score(decode_tps=40.0)
+        _, slow = self._score(decode_tps=4.0)
+        assert fast[3] == 20
+        assert slow[3] == 4
+
+    def test_cpu_only_keeps_neutral_fit_score(self) -> None:
+        _, parts = self._score(gpu_mib=None, decode_tps=3.0)
+        assert parts[0] == round(recommend._CPU_FIT_RATIO * recommend.SCORE_WEIGHT_FIT)
+
+    def test_band_thresholds(self) -> None:
+        assert recommend.score_band(100) == "excellent"
+        assert recommend.score_band(80) == "excellent"
+        assert recommend.score_band(79) == "good"
+        assert recommend.score_band(65) == "good"
+        assert recommend.score_band(64) == "fair"
+        assert recommend.score_band(50) == "fair"
+        assert recommend.score_band(49) == "limited"
+        assert recommend.score_band(0) == "limited"
+
+    def test_recommend_attaches_score(self, tmp_path: Path) -> None:
+        entry = _entry(tmp_path, "model.gguf", 5 * 1024**3)
+        row = recommend.recommend([entry], _snapshot(gpu_mib=32000))[0]
+        assert row.score == sum(row.score_parts)
+        assert row.score_band == recommend.score_band(row.score)
+        assert row.score_text == f"评分 {row.score}/100"
+        assert row.score_detail.startswith("显存 ")
+        assert "KV " in row.score_detail and "性能 " in row.score_detail
+
+
 class TestHardwareDetection:
     def test_detect_cpu_name_reads_proc_cpuinfo(self, monkeypatch: pytest.MonkeyPatch) -> None:
         class _FakePath:

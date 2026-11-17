@@ -3,7 +3,9 @@
 输入是 ``llmenv`` 扫描出的 :class:`ModelEntry` 列表、硬件快照与已记录的实测
 结果；输出按「整卡显存能放下」筛选后的推荐行。性能在没有实测数据时按参考
 机器的基准线性外推并明确标注「预测」；同一模型已有性能测试结果时改用实测
-值并标注「实测」。本模块不依赖 Tk，可直接单测。
+值并标注「实测」。每条推荐另按「显存余量 / 上下文 / KV 精度 / 解码速度」
+四个维度打出 0-100 分（:func:`score_recommendation`），供概览页用颜色区分。
+本模块不依赖 Tk，可直接单测。
 """
 
 from __future__ import annotations
@@ -17,9 +19,13 @@ from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
 from fcmd.apps.locllm.llmbase import DEFAULT_PROFILE, PROFILES, ModelEntry
 
 __all__ = [
+    "SCORE_BANDS",
+    "SCORE_PART_NAMES",
     "Recommendation",
     "predict_performance",
     "recommend",
+    "score_band",
+    "score_recommendation",
 ]
 
 #: 参考机器：RTX 5090 D 32GB + Qwen3-Coder-30B-A3B Q5_K_M（ADR 0015 实测）
@@ -38,6 +44,30 @@ _TUNING_LABEL_FACTORS = (("并发吞吐", 0.93), ("长上下文", 0.75), ("省�
 
 _MIN_CONTEXT = 4096
 
+#: 评分权重（合计 100）：显存余量 40 / 上下文 25 / KV 精度 15 / 解码速度 20
+SCORE_WEIGHT_FIT = 40
+SCORE_WEIGHT_CONTEXT = 25
+SCORE_WEIGHT_KV = 15
+SCORE_WEIGHT_PERF = 20
+
+#: 评分明细显示名，顺序与 ``Recommendation.score_parts`` 一致
+SCORE_PART_NAMES = ("显存", "上下文", "KV", "性能")
+
+_FIT_COMFORT_RATIO = 0.55
+"""预计占用不超过显卡的 55% 算显存满分；正好用满（100%）得 0 分。"""
+
+_CPU_FIT_RATIO = 0.55
+"""CPU 推理不受显存约束，显存维度给中性值，靠性能维度拉开差距。"""
+
+_COMFORT_DECODE_TPS = 20.0
+"""解码 ≥ 20 tok/s 算舒适线，性能维度满分。"""
+
+_KV_QUALITY = {"f16": 1.0, "q8_0": 0.7, "q4_0": 0.4}
+"""KV 缓存精度相对 f16 的质量系数（精度越低，长上下文越容易丢细节）。"""
+
+SCORE_BANDS = ((80, "excellent"), (65, "good"), (50, "fair"), (0, "limited"))
+"""评分档位（从高到低）：≥80 极佳、≥65 合适、≥50 可用、其余勉强。"""
+
 
 @dataclass(frozen=True, slots=True)
 class Recommendation:
@@ -55,6 +85,9 @@ class Recommendation:
     prompt_tps: float
     measured: bool
     basis: str
+    score: int
+    score_parts: tuple[int, int, int, int]
+    """评分明细，顺序见 :data:`SCORE_PART_NAMES`，各项之和等于 ``score``。"""
 
     @property
     def config_text(self) -> str:
@@ -69,6 +102,76 @@ class Recommendation:
         """性能摘要：解码 / 预填充 + 来源标记。"""
         source = "实测" if self.measured else "预测"
         return f"解码 {self.decode_tps:.0f} tok/s · 预填充 {self.prompt_tps:.0f} tok/s（{source}）"
+
+    @property
+    def score_band(self) -> str:
+        """评分档位 id（``excellent`` / ``good`` / ``fair`` / ``limited``）。"""
+        return score_band(self.score)
+
+    @property
+    def score_text(self) -> str:
+        """评分摘要，例如 ``评分 78/100``。"""
+        return f"评分 {self.score}/100"
+
+    @property
+    def score_detail(self) -> str:
+        """评分明细，例如 ``显存 33 · 上下文 25 · KV 15 · 性能 12``。"""
+        return " · ".join(f"{name} {value}" for name, value in zip(SCORE_PART_NAMES, self.score_parts, strict=True))
+
+
+def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def score_band(score: int) -> str:
+    """把 0-100 的评分映射到档位 id（用于配色）。"""
+    for threshold, band in SCORE_BANDS:
+        if score >= threshold:
+            return band
+    return "limited"  # pragma: no cover - SCORE_BANDS 末项为 0，正常走不到
+
+
+def score_recommendation(  # noqa: PLR0913 - 评分维度由推荐流程逐项透传
+    *,
+    profile: str,
+    context: int,
+    kv_type: str,
+    model_bytes: int,
+    gpu_mib: int | None,
+    decode_tps: float,
+) -> tuple[int, tuple[int, int, int, int]]:
+    """给一条推荐打分，返回 ``(总分, (显存, 上下文, KV, 性能))``。
+
+    四个维度各自归一到 0-1 后按权重取整，总分等于四项之和（便于界面展示明细）：
+
+    - 显存余量（40）：预计占用 ≤55% 显存得满分，用满 100% 得 0 分；
+      CPU 推理没有显存约束，给 55% 的中性分。
+    - 上下文（25）：实际上下文 / 档位默认上下文，被压缩得越狠分越低。
+    - KV 精度（15）：相对档位默认 KV 精度的质量系数（f16 1.0 / q8_0 0.7 / q4_0 0.4）。
+    - 解码速度（20）：解码 tok/s / 舒适线 20 tok/s，达到或超过舒适线得满分。
+
+    评分只反映「这份配置在当前机器上有多合适」，不代表模型能力；实测与预测
+    只在 ``basis`` / 性能文本里区分。
+    """
+    wanted = PROFILES.get(profile)
+    default_context = wanted.context if wanted is not None else max(context, 1)
+    default_kv = wanted.kv_type if wanted is not None else "f16"
+    if gpu_mib:
+        needed = llmmodel.estimate_vram(model_bytes, context, kv_type)
+        ratio = needed / (gpu_mib * 1024 * 1024)
+        fit = _clamp((1.0 - ratio) / (1.0 - _FIT_COMFORT_RATIO))
+    else:
+        fit = _CPU_FIT_RATIO
+    ctx = _clamp(context / default_context)
+    kv = _clamp(_KV_QUALITY.get(kv_type, 0.4) / _KV_QUALITY.get(default_kv, 1.0))
+    perf = _clamp(decode_tps / _COMFORT_DECODE_TPS)
+    parts = (
+        round(fit * SCORE_WEIGHT_FIT),
+        round(ctx * SCORE_WEIGHT_CONTEXT),
+        round(kv * SCORE_WEIGHT_KV),
+        round(perf * SCORE_WEIGHT_PERF),
+    )
+    return sum(parts), parts
 
 
 def _gpu_factor(gpu_mib: int | None) -> float:
@@ -174,6 +277,14 @@ def recommend(
             if isinstance(prompt_value, (int, float)):
                 prompt = float(prompt_value)
         basis = f"{(entry.tags and ' / '.join(entry.tags)) or '通用'} · {'性能测试实测' if is_measured else '按参考机器外推'}"
+        score, score_parts = score_recommendation(
+            profile=profile,
+            context=context,
+            kv_type=kv_type,
+            model_bytes=entry.size,
+            gpu_mib=gpu_mib,
+            decode_tps=decode,
+        )
         recommendations.append(
             Recommendation(
                 model=entry,
@@ -188,6 +299,8 @@ def recommend(
                 prompt_tps=prompt,
                 measured=is_measured,
                 basis=basis,
+                score=score,
+                score_parts=score_parts,
             )
         )
         if len(recommendations) >= limit:

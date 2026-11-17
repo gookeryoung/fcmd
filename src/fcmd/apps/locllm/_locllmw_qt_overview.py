@@ -44,10 +44,24 @@ __all__ = [
     "OverviewPage",
     "RecommendationList",
     "RecommendationRow",
+    "ScoreBadge",
     "recommendation_params_html",
     "recommendation_perf_html",
+    "score_band_label",
     "usage_gauge_texts",
 ]
+
+_SCORE_BAND_LABELS = {
+    "excellent": "极佳",
+    "good": "合适",
+    "fair": "可用",
+    "limited": "勉强",
+}
+
+
+def score_band_label(band: str) -> str:
+    """评分档位的中文名（未知档位退化为原值）。"""
+    return _SCORE_BAND_LABELS.get(band, band)
 
 
 def recommendation_params_html(recommendation: Recommendation) -> str:
@@ -76,19 +90,49 @@ def recommendation_perf_html(recommendation: Recommendation) -> str:
     return f"解码 <b>{rec.decode_tps:.0f}</b> tok/s · 预填充 <b>{prompt_text}</b> tok/s · <b>{source}</b>"
 
 
+class ScoreBadge(QLabel):  # pragma: no cover - Qt 控件
+    """左侧圆形评分框：环框与数字颜色随评分档位变化（配色取自 QSS 主题）。
+
+    只负责展示：档位 id 写到动态属性 ``band``，具体颜色由
+    ``QLabel#ScoreBadge[band="…"]`` 样式规则决定，切主题时自动跟随。
+    """
+
+    _SIZE = 44
+
+    def __init__(self, recommendation: Recommendation, parent: QWidget | None = None) -> None:
+        super().__init__(str(recommendation.score), parent)
+        band = recommendation.score_band
+        self.setObjectName("ScoreBadge")
+        self.setProperty("band", band)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setFixedSize(self._SIZE, self._SIZE)
+        summary = f"{recommendation.score_text}（{score_band_label(band)}）"
+        self.setToolTip(f"{summary}\n{recommendation.score_detail}")
+        self.setAccessibleName(summary)
+
+
 class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
-    """单条推荐的自定义列表行：模型名大字，配置 / 性能小字补充。"""
+    """单条推荐的自定义列表行：左侧评分圆框，模型名大字，配置 / 性能小字补充。
+
+    行边框颜色跟评分档位一致（QSS 按 ``band`` 属性上色），选中时边框改为主色。
+    """
 
     def __init__(self, recommendation: Recommendation, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.recommendation = recommendation
         self.setObjectName("RecommendationRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.setToolTip(recommendation.basis)
+        self.setProperty("band", recommendation.score_band)
+        self.setToolTip(
+            f"{recommendation.basis}\n{recommendation.score_text}（{score_band_label(recommendation.score_band)}）"
+            f" · {recommendation.score_detail}"
+        )
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(12, 8, 12, 8)
         outer.setSpacing(12)
+        self.score_badge = ScoreBadge(recommendation, self)
+        outer.addWidget(self.score_badge, 0)
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(3)

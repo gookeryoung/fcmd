@@ -327,12 +327,26 @@ QFrame#RecommendationRow {
     border: 1px solid $border;
     border-radius: 8px;
 }
+QFrame#RecommendationRow[band="excellent"] { border-color: $success; }
+QFrame#RecommendationRow[band="good"] { border-color: $accent; }
+QFrame#RecommendationRow[band="fair"] { border-color: $warning; }
+QFrame#RecommendationRow[band="limited"] { border-color: $danger; }
 QFrame#RecommendationRow:hover { background: $surface_hover; border-color: $border_strong; }
 QFrame#RecommendationRow[selected="true"] {
     background: $surface_active;
     border-color: $accent;
 }
 QLabel#RecommendationName { font-size: ${font_heading}pt; font-weight: 600; }
+QLabel#ScoreBadge {
+    border: 2px solid $border;
+    border-radius: 22px;
+    font-size: ${font_heading}pt;
+    font-weight: 700;
+}
+QLabel#ScoreBadge[band="excellent"] { color: $on_accent; background: $success; border-color: $success; }
+QLabel#ScoreBadge[band="good"] { color: $on_accent; background: $accent; border-color: $accent; }
+QLabel#ScoreBadge[band="fair"] { color: $on_accent; background: $warning; border-color: $warning; }
+QLabel#ScoreBadge[band="limited"] { color: $on_accent; background: $danger; border-color: $danger; }
 """
 )
 

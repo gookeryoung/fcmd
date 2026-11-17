@@ -91,6 +91,8 @@ def _recommendation(tmp_path: Path) -> Recommendation:
         prompt_tps=20.0,
         measured=False,
         basis="代码 · 按参考机器外推",
+        score=78,
+        score_parts=(28, 25, 15, 10),
     )
 
 
@@ -210,3 +212,36 @@ def test_recommendation_list_uses_custom_row(overview: Any, tmp_path: Path) -> N
     assert text == row.model.path.name
     assert page._recommend_list.currentRow() == 0
     assert card.property("selected") == "true"
+
+
+def test_recommendation_row_shows_score_badge_with_band(overview: Any, tmp_path: Path) -> None:
+    """推荐行左侧有圆形评分框，行与评分框的配色档位跟评分一致。"""
+    from fcmd.apps.locllm._locllmw_qt_overview import ScoreBadge, score_band_label
+
+    _state_obj, page = overview
+    row = _recommendation(tmp_path)
+    page._recommendations = (row,)
+    page._render_recommendations()
+
+    card = page._recommend_list.itemWidget(page._recommend_list.item(0))
+    assert card is not None
+    badge = card.findChild(ScoreBadge, "ScoreBadge")
+    assert badge is not None
+    assert badge.text() == str(row.score)
+    assert badge.property("band") == row.score_band == "good"
+    assert card.property("band") == row.score_band
+    assert score_band_label(row.score_band) == "合适"
+    tooltip = card.toolTip()
+    assert row.score_text in tooltip
+    assert row.score_detail in tooltip
+
+
+def test_score_badge_band_colors_follow_theme() -> None:
+    """评分框与推荐行的配色规则写进主题 QSS，切主题时一起生效。"""
+    from fcmd.gui import theme as _guitheme
+    from fcmd.gui.qt import theme as _qt_theme
+
+    qss = _qt_theme.stylesheet(_guitheme.resolve_theme(_guitheme.DEFAULT_THEME_NAME))
+    for band in ("excellent", "good", "fair", "limited"):
+        assert f'QFrame#RecommendationRow[band="{band}"]' in qss
+        assert f'QLabel#ScoreBadge[band="{band}"]' in qss

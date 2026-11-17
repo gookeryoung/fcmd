@@ -427,6 +427,8 @@ def test_recommendation_html_highlights_name_params_and_perf() -> None:
         prompt_tps=16200.0,
         measured=True,
         basis="代码 · 实测",
+        score=90,
+        score_parts=(40, 25, 15, 10),
     )
 
     params = recommendation_params_html(recommendation)
