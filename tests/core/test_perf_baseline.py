@@ -52,8 +52,6 @@ _GUI_BUILD_SCRIPT = (
     "w.close()\n"
 )
 
-_TK_PROBE_SCRIPT = "import tkinter\nr=tkinter.Tk()\nr.destroy()\nprint(0)\n"
-
 _QT_PROBE_SCRIPT = (
     "import os\n"
     "os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')\n"
@@ -181,11 +179,6 @@ def _probe(script: str) -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
-
-
-def _tk_available() -> bool:
-    """探测当前环境是否可创建 Tk 根窗口（无显示/无 tkinter 时返回 False）。"""
-    return _probe(_TK_PROBE_SCRIPT)
 
 
 def _qt_available() -> bool:

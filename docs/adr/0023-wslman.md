@@ -344,7 +344,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 
 ### D10 GUI（`wslmanw`）
 
-- 复用 `fcmd.gui.window.create_root` / `start_worker` / `create_log` 与
+- 复用 `fcmd.gui.qt.toolwindow` / `workers` / `widgets.LogView` 与
   `fcmd.gui.theme`；设置持久化 `~/.fcmd/ui/wslmanw.json`（`fcmd.gui.config`）。
 - 布局：左侧发行版表（名称 / 状态 / 版本 / 默认 / 占用），右侧详情（BasePath、
   默认用户、vhdx 路径与大小、`.wslconfig` 摘要），底部日志与进度条；
@@ -354,7 +354,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 - 破坏性操作：`unregister` 要求**手动输入发行版名**匹配才启用按钮，并展示
   BasePath 与占用；`shutdown` 需勾选「我明白会停止全部发行版」；两者用错误色按钮。
 - 弹窗位置：所有 Toplevel（安装本地镜像、注销确认、关闭全部）用
-  `fcmd.gui.window.center_over_parent` 居中到父窗口；固定尺寸弹窗显式传
+  Qt 对话框按父窗口居中；固定尺寸弹窗显式传
   `width` / `height`，自动布局弹窗省略后按请求尺寸定位，不再交给窗口管理器摆放。
 - GUI 与 CLI 调同一套 `_transfer` / `_source` / `_distro` 函数，不复制业务判断。
 

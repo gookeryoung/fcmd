@@ -2,7 +2,7 @@
 
 - 状态：已落地（locllmw 等整窗分页；原环境窗口、引擎窗口与转换 / 量化窗口已并入 locllmw，见 0031）
 - 日期：2026-11-14
-- 关联：`src/fcmd/gui/sidebar.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
+- 关联：`src/fcmd/gui/qt/sidebar.py`、`src/fcmd/gui/pages.py`、`src/fcmd/gui/theme.py`、[ADR 0013](0013-gui-toolkit-feasibility.md)、[ADR 0016](0016-llmdown-model-browser.md)
 
 ## 背景
 
@@ -20,7 +20,7 @@ locllmw 原先与其他整窗工具一样，用顶部
 
 ## 决策
 
-### 1. `fcmd.gui.sidebar.SidebarNav` 作为唯一分页容器
+### 1. `fcmd.gui.qt.sidebar.SidebarNav` 作为唯一分页容器
 
 - 结构：左侧固定宽度导航栏（可选标题 + 页按钮 + 当前页提示），右侧页面区
   同一时刻只 `grid` 一个页面；导航栏用 `grid_propagate(False)` 固定宽度。
@@ -72,8 +72,8 @@ locllmw 原先与其他整窗工具一样，用顶部
 - `tests/gui/test_sidebar.py`：key / 索引解析、越界与非法类型、循环切换。
 - `tests/gui/test_theme.py`：5 个新样式在四套主题下存在；
   选中页前景与底色对比度、muted 与 surface 对比度均 ≥ 4.5。
-- Tk 控件部分标注 `pragma: no cover`（CI 无显示环境），本地可用
-  `Tk()` 冒烟：建窗、切页、快捷键绑定、销毁。
+- 纯逻辑（key 解析、循环切换）在 :mod:`fcmd.gui.pages`，Qt 控件（`SidebarNav`）标注
+  `pragma: no cover`（CI 无显示环境），离屏冒烟覆盖建窗、切页与快捷键绑定。
 
 ## 落地状态与交接
 

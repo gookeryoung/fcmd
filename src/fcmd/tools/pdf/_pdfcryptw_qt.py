@@ -52,7 +52,7 @@ class _CryptBridge(QObject):  # pragma: no cover - Qt 信号桥
     event = Signal(object)
 
 
-def _run_worker(  # noqa: PLR0913, PLR0917 - 任务参数逐项显式传递，便于与 Tk 版行为对照
+def _run_worker(  # noqa: PLR0913, PLR0917 - 任务参数逐项显式传递，便于便于对照既有行为
     directory: Path,
     password: str,
     workers: int,

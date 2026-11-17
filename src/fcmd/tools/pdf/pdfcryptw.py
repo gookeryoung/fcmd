@@ -19,7 +19,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 from fcmd.tools.pdf.pdfcrypt import DEFAULT_WORKERS
 
 __all__ = [

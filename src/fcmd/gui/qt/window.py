@@ -1,14 +1,13 @@
 """Qt 窗口骨架：侧边栏导航 + 页面栈 + 状态栏 + 主题菜单 + 窗口记忆。
 
-Tk 基座（:mod:`fcmd.gui.window`）负责「创建根窗口 / 菜单 / 日志区 / 后台线程」，
-本模块在 Qt 下提供等价骨架，并把窗口位置与大小继续写进
-``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``（与 Tk 窗口共用同一套设置文件与校验）。
+Qt 窗口骨架负责「导航 / 菜单 / 状态栏 / 日志区 / 后台任务」，
+并把窗口位置与大小继续写进
+``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``（与旧版本设置文件互读）。
 
 页面按需构建：登记时只给工厂函数，首次切到该页才实例化，冷启动不付全量
 页面的构造成本（locllmw 模型页 / 设置页会扫描目录、探测引擎）。
 
-几何字符串沿用 Tk 的 ``WxH+X+Y`` 格式，因此同一个设置文件在 Tk 与 Qt
-窗口之间可以直接互读；解析与格式化是纯函数，便于单测。
+几何字符串沿用 ``WxH+X+Y`` 格式，解析与格式化是纯函数（:mod:`fcmd.gui.geometry`），便于单测。
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _geometry
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.theme_menu import ThemeMenu
 
@@ -69,13 +68,13 @@ def parse_geometry(text: str | None) -> tuple[int, int, int, int] | None:
 
 
 def format_geometry(width: int, height: int, x: int, y: int) -> str:
-    """把窗口矩形格式化为 Tk 兼容的 ``WxH+X+Y``（负数坐标写成 ``+-`` 形式）。"""
+    """把窗口矩形格式化为 ``WxH+X+Y``（负数坐标写成 ``+-`` 形式）。"""
     sign_x = "+" if x >= 0 else "-"
     sign_y = "+" if y >= 0 else "-"
     return f"{max(width, 0)}x{max(height, 0)}{sign_x}{abs(x)}{sign_y}{abs(y)}"
 
 
-def resolve_geometry_text(  # noqa: PLR0913 - 与 Tk 版 resolve_geometry 参数对齐
+def resolve_geometry_text(  # noqa: PLR0913 - 与 geometry.resolve_geometry 参数对齐
     saved: str | None,
     screen_width: int,
     screen_height: int,
@@ -85,7 +84,7 @@ def resolve_geometry_text(  # noqa: PLR0913 - 与 Tk 版 resolve_geometry 参数
     min_height: int,
 ) -> str:
     """恢复记忆位置，越界 / 非法时回落到默认尺寸（按屏幕夹紧）。"""
-    return _guiwindow.resolve_geometry(
+    return _geometry.resolve_geometry(
         saved,
         screen_width,
         screen_height,

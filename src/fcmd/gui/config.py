@@ -1,6 +1,6 @@
 """GUI 工具共享的设置持久化骨架（不注册工具）。
 
-全部 Tk 窗口工具（llm 的 5 个窗口、img2icow / videoconvw / ncmconvertw、
+全部 GUI 窗口工具（llm 的 5 个窗口、img2icow / videoconvw / ncmconvertw、
 img2pdfw / pdfcryptw / pdfsplitw、reshackw / checksum / alarmclock、
 regexvalidatew、docdiffw）的设置文件统一位于
 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``，读写流程与 geometry 校验完全一致。
@@ -37,7 +37,7 @@ def config_path(name: str) -> Path:
 
 
 def valid_geometry(text: str | None) -> str | None:
-    """校验 Tk geometry 字符串（``WxH`` 或 ``WxH+X+Y``），非法时返回 ``None``。"""
+    """校验 geometry 字符串（``WxH`` 或 ``WxH+X+Y``），非法时返回 ``None``。"""
     if text is not None and _GEOMETRY_RE.fullmatch(text):
         return text
     return None

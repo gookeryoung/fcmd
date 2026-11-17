@@ -153,7 +153,7 @@ class _ScanOutcome:
 def service_name_from_model(path: Path) -> str:
     """按模型文件名生成服务名：去掉量化后缀，把非法字符转为 ``-``。
 
-    Tk 与 Qt 两个前端共用这一口径，切换前端后服务名保持一致。
+    各前端共用这一口径，服务名保持一致。
     """
     stem = _QUANT_SUFFIX_RE.sub("", path.stem)
     cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", stem).strip("-._")

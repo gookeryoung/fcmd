@@ -9,7 +9,7 @@
 走 :func:`fcmd.gui.qt.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
 关窗时取消进行中的任务。
 
-设置文件：``${FCMD_HOME:-~/.fcmd}/ui/wslmanw.json``（与 Tk 版同名字段互读）。
+设置文件：``${FCMD_HOME:-~/.fcmd}/ui/wslmanw.json``（与旧设置文件同名字段互读）。
 """
 
 from __future__ import annotations

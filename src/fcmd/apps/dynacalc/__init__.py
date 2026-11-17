@@ -3,7 +3,7 @@
 只做参数化、模板化、调度与结果汇总，不做物理求解、三维前处理或网格生成：
 
 - :mod:`fcmd.apps.dynacalc.dynacalc` —— CLI（``fcmd dynacalc ...``）；
-- :mod:`fcmd.apps.dynacalc.dynacalcw` —— Tk GUI（``fcmd dynacalcw``）。
+- :mod:`fcmd.apps.dynacalc.dynacalcw` —— Qt GUI（``fcmd dynacalcw``）。
 
 纯逻辑模块（下划线开头，不注册为工具）：
 ``_params``（参数表与矩阵）、``_model``（``dynacalc-model/1`` 模型映射）、

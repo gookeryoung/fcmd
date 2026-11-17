@@ -1,6 +1,6 @@
 """cmderw 的纯逻辑补充：回收站删除、通配选择、快速过滤、目录统计、菜单状态。
 
-下划线前缀使其不参与 :mod:`fcmd` 的工具发现；窗口层 ``app.py`` 只做 Tk
+下划线前缀使其不参与 :mod:`fcmd` 的工具发现；窗口层（``_cmder_qt*.py``）只做 Qt
 装配，这里保持无 UI 依赖、可单测。口径见 ADR 0005 的 D1–D14。
 """
 
@@ -1823,7 +1823,7 @@ def resolve_color_style(rules: Sequence[ColorRule], subject: ColorSubject, now: 
 
 
 def normalize_color(value: Any) -> str:
-    """仅接受 ``#rrggbb``；其余值视为未设置，避免 Tk 颜色异常。"""
+    """仅接受 ``#rrggbb``；其余值视为未设置，避免无效颜色。"""
     if not isinstance(value, str):
         return ""
     text = value.strip().lower()

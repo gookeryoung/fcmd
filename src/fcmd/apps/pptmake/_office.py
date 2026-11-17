@@ -2,7 +2,7 @@
 
 LibreOffice 是可选的外部依赖，本模块只负责探测与调用，不下载、不安装：
 未检测到 ``soffice`` 时抛出带有中文说明的 :class:`OfficeError`，调用方回退到
-Tk 画布预览。
+Qt 画布预览。
 """
 
 from __future__ import annotations

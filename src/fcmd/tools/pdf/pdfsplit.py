@@ -6,7 +6,7 @@
 * 每份页数：按固定页数切分。
 * 页码范围：提取指定页组成新 PDF，支持 ``1,3-5,7-`` 语法。
 
-CLI 与 Tk 窗口版（:mod:`fcmd.tools.pdf.pdfsplitw`）共用本模块的纯函数。
+CLI 与窗口版（:mod:`fcmd.tools.pdf.pdfsplitw`）共用本模块的纯函数。
 
 示例
 ----

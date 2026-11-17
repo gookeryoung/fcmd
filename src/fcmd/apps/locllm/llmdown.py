@@ -152,7 +152,7 @@ class DownloadCancelled(ModelToolError):
 class _ReporterProgress:
     """把 rich Progress 的最小接口转成 :class:`ProgressEvent` 回调。
 
-    Tk 等前端无需依赖 rich，即可拿到整体 / 单文件进度。
+    GUI 等前端无需依赖 rich，即可拿到整体 / 单文件进度。
     """
 
     def __init__(self, reporter: Callable[[ProgressEvent], None]) -> None:
@@ -320,7 +320,7 @@ class LocalModel:
 
 @dataclass(frozen=True, slots=True)
 class ProgressEvent:
-    """下载进度事件；供 Tk 等自定义前端复用同一套下载实现。"""
+    """下载进度事件；供 GUI 等自定义前端复用同一套下载实现。"""
 
     task: str
     state: Literal["start", "update", "done"]
@@ -1015,7 +1015,7 @@ def download_files(  # noqa: PLR0913, PLR0917
     Parameters
     ----------
     reporter:
-        自定义进度回调；传入时不再渲染 rich 进度条（供 Tk 等前端使用）。
+        自定义进度回调；传入时不再渲染 rich 进度条（供 GUI 等前端使用）。
     should_stop:
         返回 ``True`` 时尽快停止下载，已写入的 ``.part`` 保留以便续传。
 

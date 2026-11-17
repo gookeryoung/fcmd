@@ -63,7 +63,7 @@ CLI 编辑默认只预演，必须显式 `--apply` 才落盘；GUI 编辑对话�
 | `peview.py` | CLI 注册与输出 |
 | `pevieww.py` + `_pevieww_qt.py` | Qt 窗口、设置持久化（`~/.fcmd/ui/pevieww.json`） |
 
-`pevieww.py` 复用 `fcmd.gui.window` / `theme` / `config`，不另起窗口骨架。
+`pevieww.py` 复用 `fcmd.gui.qt.toolwindow` / `theme` / `config`，不另起窗口骨架。
 
 ### D4 编辑安全边界
 

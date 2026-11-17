@@ -169,7 +169,7 @@ ELFORM=14 的轴对称假定（对称轴位置、`r ≥ 0`、厚度取实厚）�
 
 | 顺序 | 工作 | 状态 |
 |---|---|---|
-| 1 | CLI + Tk GUI + 单元测试（现有闭环） | 已完成 |
+| 1 | CLI + Qt GUI + 单元测试（现有闭环） | 已完成 |
 | 2 | 模板族拆分：`3d-ale` 保持 + `axisymmetric-2d` 新增，纯函数渲染测试 | 已完成 |
 | 3 | 网格包读取与校验模块（§6.1）+ 单元测试 | 已完成 |
 | 4 | deck 组装：`*PART` / `*SECTION_SHELL` 映射、`*INITIAL_DETONATION`、`*DATABASE_HISTORY_NODE`、`*INCLUDE` | 已完成 |
@@ -243,7 +243,7 @@ ELFORM=14 以 x 轴为对称轴一致。dynacalc 侧据此确认：
 ### 8.3 排期与落地状态
 
 §6.3 的顺序与内容不变，当前进度见其状态列：模板族拆分、网格包校验、deck 组装与档间误差
-比较已完成并有测试覆盖；CLI 已接 `--mesh-root` / `--dimension` / `--mesh-level`，Tk GUI
+比较已完成并有测试覆盖；CLI 已接 `--mesh-root` / `--dimension` / `--mesh-level`，Qt GUI
 挂接留到最后一步。
 
 另：`extent` 用 `z_start_mm` / `z_end_mm`、`detonation` 用 `x`，两套命名并存（模型坐标 vs

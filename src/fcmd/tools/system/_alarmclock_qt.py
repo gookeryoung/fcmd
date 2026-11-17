@@ -226,7 +226,7 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         self.refresh_status(now)
 
     def refresh_status(self, now: datetime) -> None:
-        """有闹钟时显示目标时间与剩余时长（与 Tk 版同一文案）。"""
+        """有闹钟时显示目标时间与剩余时长（与既有文案一致）。"""
         if not self._state.armed:
             return
         assert self._state.target is not None

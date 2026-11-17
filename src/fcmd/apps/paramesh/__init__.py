@@ -3,7 +3,7 @@
 公开模块：
 
 - :mod:`fcmd.apps.paramesh.paramesh` —— CLI（``fcmd paramesh ...``）
-- :mod:`fcmd.apps.paramesh.parameshw` —— Tk 网格预览器（``fcmd parameshw``）
+- :mod:`fcmd.apps.paramesh.parameshw` —— Qt 网格预览器（``fcmd parameshw``）
 
 输入只读取 ``dynacalc-model/1`` 中影响网格的几何与分布场（见
 ``docs/dynacalc-model-contract.md``），输出二维轴对称（r–z）三档网格、

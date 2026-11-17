@@ -31,7 +31,7 @@ _PERCENT_RE = re.compile(r"(\d{1,3})%\|")
 
 
 # ---------------------------------------------------------------------- #
-# 纯逻辑：可独立测试，不创建 Tk
+# 纯逻辑：可独立测试，不创建窗口
 # ---------------------------------------------------------------------- #
 def _progress_percent(line: str) -> int | None:
     """从 tqdm 进度行（如 `` 45%|████▌ |``）提取百分比，非进度行返回 ``None``。"""
@@ -102,7 +102,7 @@ def _find_convertible(root: Path) -> list[tuple[Path, int]]:
 
 @dataclass(frozen=True, slots=True)
 class _ConvertForm:
-    """主线程快照的表单值；后台线程不得直接读取 Tk 变量。"""
+    """主线程快照的表单值；后台线程不得直接读取界面控件。"""
 
     source: str
     output: str

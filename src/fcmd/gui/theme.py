@@ -1,139 +1,55 @@
-"""Tk 窗口共享主题：主题注册表、调色板、字号阶梯、间距与 ttk 样式（不注册工具）。
+"""GUI 主题注册表：调色板 / 字号阶梯 / 间距 / 几何规则与主题持久化。
 
-设计原则：
+本模块只保存**主题数据与纯函数**（四套内置主题、别名、`ui/theme.json` 读写、
+调色板 token 校验、字体挑选与相对亮度），不导入任何 GUI 工具包：
 
-- 只用标准库 ``tkinter`` / ``ttk``，不引入第三方 GUI 依赖。
-- 窗口侧只需在 ``Tk()`` 创建后调用 :func:`apply_theme`，删掉该调用即退回
-  系统默认外观，不影响任何业务逻辑。
-- :func:`apply_theme` 幂等：重复调用只会覆盖同名样式与 option，不会叠加。
-- 内置四套主题：深色科技蓝（默认）、浅色、高对比、接近原生。主题选择
-  持久化到 ``${FCMD_HOME:-~/.fcmd}/ui/theme.json``，窗口启动时读取；
-  文件缺失、JSON 损坏、主题名非法或调色板缺 token 都安全回退默认主题。
-- 经典控件（Text / Menu / Listbox / Entry / Canvas）通过 ``option_add``
-  同步主题色。Windows 标题栏（``dwmapi`` / DWM 属性）不在本模块范围。
-
-本模块位于 :mod:`fcmd.gui`，不参与 :mod:`fcmd.tools` 的工具发现。
+- Qt 侧 :mod:`fcmd.gui.qt.theme` 把 :class:`Palette` 翻译成 QSS / QPalette；
+- CI（不装 PySide6）也能直接单测主题解析与持久化；
+- 窗口几何与主题选择互不影响，主题文件位于
+  ``${FCMD_HOME:-~/.fcmd}/ui/theme.json``。
 """
 
 from __future__ import annotations
 
-import contextlib
 import re
-import sys
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, fields
 from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, Final, cast
+from typing import TYPE_CHECKING, Final
 
 from fcmd.gui import config as _guiconfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
-    from tkinter import Misc
 
 __all__ = [
-    "BODY_FONT",
+    "CJK_TEXT_SAMPLE",
     "DEFAULT_THEME_NAME",
     "FONTS",
     "GEOMETRY_RULES",
-    "HEADING_FONT",
-    "MONO_FONT",
+    "MONO_FONT_CANDIDATES",
     "PALETTE",
-    "SMALL_FONT",
     "SPACING",
-    "STYLE_NAMES",
     "THEMES",
     "THEME_ALIASES",
-    "THEME_NAME",
+    "UI_FONT_CANDIDATES",
     "FontScale",
     "GeometryRules",
     "Palette",
     "Spacing",
     "Theme",
-    "apply_dark_titlebar",
-    "apply_theme",
-    "can_render_cjk",
-    "classic_options",
-    "dpi_scale",
-    "enable_dpi_awareness",
-    "font_plan",
     "font_renders_cjk",
-    "install_theme_switcher",
     "is_dark_palette",
     "load_theme",
     "missing_palette_tokens",
     "pick_font_family",
-    "proportional_geometry",
     "read_theme_name",
     "relative_luminance",
     "resolve_theme",
     "save_theme",
-    "scale_spacing",
     "theme_config_path",
     "theme_names",
-    "tk_dpi_scale",
-    "ttk_style_specs",
-    "ui_font_family",
 ]
-
-THEME_NAME: Final[str] = "clam"
-"""ttk 主题名：``clam`` 允许自定义背景/边框，系统主题（vista/aqua）会忽略这些选项。"""
-
-UI_FONT_CANDIDATES: Final[tuple[str, ...]] = (
-    "Microsoft YaHei UI",
-    "Microsoft YaHei",
-    "Segoe UI Variable Text",
-    "Segoe UI",
-    "PingFang SC",
-    "Noto Sans CJK SC",
-    "Noto Sans SC",
-    "Source Han Sans SC",
-    "Source Han Sans CN",
-    "WenQuanYi Micro Hei",
-    "WenQuanYi Zen Hei",
-    "Droid Sans Fallback",
-    "WenQuanYi Bitmap Song",
-    "DejaVu Sans",
-    "Noto Sans",
-    "Liberation Sans",
-    "Ubuntu",
-)
-"""界面字体候选，按优先级排列。
-
-Windows 中文环境首选微软雅黑 UI，macOS 用苹方；Linux / WSL 依次回落到 Noto、
-思源黑体与文泉驿。末尾的 ``WenQuanYi Bitmap Song`` 是 ``xfonts-wqy`` 提供的
-X11 核心位图字体：uv 独立构建的 Python 自带未启用 Xft 的 Tk，只能看到 X11
-核心字体，此时它是唯一能显示中文的候选（见 README「WSL / Linux 中文乱码」）。
-"""
-
-MONO_FONT_CANDIDATES: Final[tuple[str, ...]] = (
-    "Cascadia Mono",
-    "Cascadia Code",
-    "Consolas",
-    "JetBrains Mono",
-    "Source Code Pro",
-    "Noto Sans Mono CJK SC",
-    "Sarasa Mono SC",
-    "WenQuanYi Micro Hei Mono",
-    "WenQuanYi Zen Hei Mono",
-    "DejaVu Sans Mono",
-    "Liberation Mono",
-    "WenQuanYi Bitmap Song",
-    "Courier New",
-)
-"""等宽字体候选，用于日志/代码类控件。
-
-CJK 等宽字体排在拉丁等宽字体之后：Xft 环境下拉丁字体可通过回退显示中文，
-而只有 X11 核心字体时（Tk 未启用 Xft）仍需 ``WenQuanYi Bitmap Song`` 兜底。
-"""
-
-CJK_TEXT_SAMPLE: Final[str] = "中文测试"
-"""字体中文覆盖检测样本；Tk 缺少对应字形时 ``Font.measure`` 返回 0。"""
-
-BODY_FONT: Final[str] = "FcmdBodyFont"
-SMALL_FONT: Final[str] = "FcmdSmallFont"
-HEADING_FONT: Final[str] = "FcmdHeadingFont"
-MONO_FONT: Final[str] = "FcmdMonoFont"
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,6 +133,47 @@ class Theme:
     native: bool = False
     description: str = ""
 
+
+UI_FONT_CANDIDATES: Final[tuple[str, ...]] = (
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    "Segoe UI Variable Text",
+    "Segoe UI",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    "Noto Sans SC",
+    "Source Han Sans SC",
+    "Source Han Sans CN",
+    "WenQuanYi Micro Hei",
+    "WenQuanYi Zen Hei",
+    "Droid Sans Fallback",
+    "WenQuanYi Bitmap Song",
+    "DejaVu Sans",
+    "Noto Sans",
+    "Liberation Sans",
+    "Ubuntu",
+)
+"""界面字体候选，按优先级排列；Qt 侧用 ``QFontDatabase`` 挑第一个可用族。"""
+
+MONO_FONT_CANDIDATES: Final[tuple[str, ...]] = (
+    "Cascadia Mono",
+    "Cascadia Code",
+    "Consolas",
+    "JetBrains Mono",
+    "Source Code Pro",
+    "Noto Sans Mono CJK SC",
+    "Sarasa Mono SC",
+    "WenQuanYi Micro Hei Mono",
+    "WenQuanYi Zen Hei Mono",
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "WenQuanYi Bitmap Song",
+    "Courier New",
+)
+"""等宽字体候选，用于日志 / 代码类控件。"""
+
+CJK_TEXT_SAMPLE: Final[str] = "中文测试"
+"""字体中文覆盖检测样本；缺字形时宽度测量返回 0。"""
 
 PALETTE: Final[Palette] = Palette()
 FONTS: Final[FontScale] = FontScale()
@@ -317,7 +274,7 @@ _NATIVE = Theme(
         stripe="#eef1f5",
     ),
     native=True,
-    description="浅灰系统色 + 蓝色强调，保留系统 ttk 观感，主题化收敛到字体与强调色。",
+    description="浅灰系统色 + 蓝色强调，保留系统原生观感，主题化收敛到字体与强调色。",
 )
 
 THEMES: Final[Mapping[str, Theme]] = MappingProxyType(
@@ -332,100 +289,6 @@ THEME_ALIASES: Final[Mapping[str, str]] = MappingProxyType(
 
 _THEME_SETTINGS_KEY: Final[str] = "theme"
 _HEX_COLOR_RE: Final[re.Pattern[str]] = re.compile(r"^#[0-9a-fA-F]{6}$")
-
-
-@dataclass(frozen=True, slots=True)
-class FontSpec:
-    """一个具名字体（Tk named font）的目标配置。"""
-
-    name: str
-    size: int
-    weight: str = "normal"
-    mono: bool = False
-
-
-@dataclass(frozen=True, slots=True)
-class StyleSpec:
-    """单个 ttk 样式的 ``configure`` 选项与状态映射。"""
-
-    configure: dict[str, object]
-    map: dict[str, list[tuple[str, object]]] = field(default_factory=dict)
-
-
-STYLE_NAMES: Final[tuple[str, ...]] = (
-    "TFrame",
-    "TLabelframe",
-    "TLabelframe.Label",
-    "TLabel",
-    "Title.TLabel",
-    "Muted.TLabel",
-    "Hint.TLabel",
-    "TButton",
-    "Accent.TButton",
-    "Danger.TButton",
-    "TEntry",
-    "TSpinbox",
-    "TCombobox",
-    "TCheckbutton",
-    "TRadiobutton",
-    "TProgressbar",
-    "TScrollbar",
-    "Treeview",
-    "Treeview.Heading",
-    "Active.Treeview",
-    "TNotebook",
-    "TNotebook.Tab",
-    "Sidebar.TFrame",
-    "SidebarTitle.TLabel",
-    "SidebarHint.TLabel",
-    "Sidebar.TButton",
-    "SidebarActive.TButton",
-    "TSeparator",
-    "Toolbutton",
-)
-"""本主题会覆盖的 ttk 样式名；单测据此校验键存在性，窗口可据此选中强调/危险按钮。"""
-
-CLASSIC_OPTION_PATTERNS: Final[tuple[str, ...]] = (
-    "*Background",
-    "*Foreground",
-    "*Font",
-    "*selectBackground",
-    "*selectForeground",
-    "*insertBackground",
-    "*highlightBackground",
-    "*highlightColor",
-    "*Text.background",
-    "*Text.foreground",
-    "*Text.insertBackground",
-    "*Text.selectBackground",
-    "*Text.selectForeground",
-    "*Text.font",
-    "*Text.relief",
-    "*Text.borderWidth",
-    "*Text.highlightThickness",
-    "*Menu.background",
-    "*Menu.foreground",
-    "*Menu.activeBackground",
-    "*Menu.activeForeground",
-    "*Menu.selectColor",
-    "*Menu.font",
-    "*Menu.borderWidth",
-    "*Menu.relief",
-    "*Listbox.background",
-    "*Listbox.foreground",
-    "*Listbox.selectBackground",
-    "*Listbox.selectForeground",
-    "*Button.font",
-    "*Entry.background",
-    "*Entry.foreground",
-    "*Entry.insertBackground",
-    "*Entry.selectBackground",
-    "*Entry.selectForeground",
-    "*Canvas.background",
-    "*Canvas.highlightBackground",
-    "*Canvas.highlightColor",
-)
-"""``option_add`` 兜底的经典控件选项清单（Text / Menu / Listbox / Entry / Button / Canvas）。"""
 
 
 def theme_names() -> tuple[str, ...]:
@@ -492,7 +355,7 @@ def pick_font_family(
     """从候选列表里挑第一个系统可用字体族，均不可用时返回首个候选。
 
     参数:
-        available: 当前 Tk 环境报告的字体族集合（``font.families()``）。
+        available: 当前 GUI 环境报告的字体族集合。
         candidates: 按优先级排列的候选字体族。
 
     返回:
@@ -509,516 +372,10 @@ def pick_font_family(
 def font_renders_cjk(measure: Callable[[str], int]) -> bool:
     """按字体宽度测量回调判断能否显示中文。
 
-    Tk 找不到字形时 ``Font.measure`` 返回 0，此时窗口里的中文会显示为方块
-    （WSL 下 uv 独立构建的 Python 自带未启用 Xft 的 Tk 就是这种情况）。
+    缺字形时宽度测量返回 0，此时窗口里的中文会显示为方块
+    （用于检测系统字体是否覆盖中文，例如 CI 的最小字体环境）。
     """
     return measure(CJK_TEXT_SAMPLE) > 0
-
-
-def can_render_cjk(root: Misc) -> bool:  # pragma: no cover - 需要真实 Tk 窗口
-    """检查主题正文字体（``BODY_FONT``）能否渲染中文，供窗口启动时自检。"""
-    from tkinter import font as tkfont
-
-    body = tkfont.nametofont(BODY_FONT, root=root)
-    return font_renders_cjk(body.measure)
-
-
-def ui_font_family(root: Misc) -> str:  # pragma: no cover - 需要真实 Tk 窗口
-    """返回主题正文字体实际使用的族名，供需要自定义字号/字重的控件复用。
-
-    直接写死 ``"Microsoft YaHei"`` 之类的族名在 Linux / WSL 上不存在，会被 Tk
-    替换成不含中文字形的默认字体；需要局部放大或加粗时应基于本函数取族名。
-    """
-    from tkinter import font as tkfont
-
-    return str(tkfont.nametofont(BODY_FONT, root=root).actual("family"))
-
-
-def font_plan(scale: FontScale = FONTS) -> tuple[FontSpec, ...]:
-    """返回需要配置的具名字体清单（自定义字体 + Tk 默认字体）。"""
-    return (
-        FontSpec(BODY_FONT, scale.body),
-        FontSpec(SMALL_FONT, scale.small),
-        FontSpec(HEADING_FONT, scale.heading, weight="bold"),
-        FontSpec(MONO_FONT, scale.body, mono=True),
-        FontSpec("TkDefaultFont", scale.body),
-        FontSpec("TkTextFont", scale.body),
-        FontSpec("TkMenuFont", scale.body),
-        FontSpec("TkHeadingFont", scale.heading, weight="bold"),
-    )
-
-
-def ttk_style_specs(
-    palette: Palette = PALETTE,
-    spacing: Spacing = SPACING,
-    *,
-    native: bool = False,
-) -> dict[str, StyleSpec]:
-    """构造全部 ttk 样式定义（纯数据，便于单测与窗口侧复用）。
-
-    ``native`` 为真表示沿用系统 ttk 主题（Windows 上是 ``vista``）。该主题的
-    ``Button.button`` 由系统原生绘制，``background`` / ``bordercolor`` 等选项
-    全部失效，只有 ``foreground`` 生效；因此强调 / 危险按钮若继续按填充色配
-    ``on_accent`` 前景，会退化成「系统浅色底 + 白字」。此时改为系统按钮底色 +
-    语义色文字，保证可读且保留原生观感；其他主题仍使用填充式按钮。
-    """
-    accent_bg = palette.surface if native else palette.accent
-    accent_fg = palette.accent if native else palette.on_accent
-    accent_active_bg = palette.surface_hover if native else palette.accent_hover
-    accent_pressed_bg = palette.surface_active if native else palette.accent_pressed
-    accent_fg_map: list[tuple[str, object]] = (
-        [("active", palette.accent_hover), ("pressed", palette.accent_pressed), ("disabled", palette.muted)]
-        if native
-        else [("disabled", palette.muted)]
-    )
-    danger_bg = palette.surface if native else palette.danger
-    danger_fg = palette.danger if native else palette.on_accent
-    sidebar_active_bg = palette.surface if native else palette.surface_active
-    sidebar_active_fg = palette.accent if native else palette.text
-    return {
-        "TFrame": StyleSpec({"background": palette.background}),
-        "TLabelframe": StyleSpec(
-            {
-                "background": palette.background,
-                "bordercolor": palette.border,
-                "borderwidth": 1,
-                "relief": "solid",
-            }
-        ),
-        "TLabelframe.Label": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.muted,
-                "font": HEADING_FONT,
-            }
-        ),
-        "TLabel": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.text,
-                "font": BODY_FONT,
-            }
-        ),
-        "Title.TLabel": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.text,
-                "font": HEADING_FONT,
-            }
-        ),
-        "Muted.TLabel": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.muted,
-                "font": BODY_FONT,
-            }
-        ),
-        "Hint.TLabel": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.muted,
-                "font": SMALL_FONT,
-            }
-        ),
-        "TButton": StyleSpec(
-            {
-                "background": palette.surface,
-                "foreground": palette.text,
-                "bordercolor": palette.border,
-                "focuscolor": palette.accent,
-                "font": BODY_FONT,
-                "padding": (spacing.sm, spacing.xs),
-                "relief": "flat",
-            },
-            {
-                "background": [("active", palette.surface_hover), ("pressed", palette.surface_active)],
-                "foreground": [("disabled", palette.muted)],
-            },
-        ),
-        "Accent.TButton": StyleSpec(
-            {
-                "background": accent_bg,
-                "foreground": accent_fg,
-                "bordercolor": palette.accent,
-                "focuscolor": palette.accent if native else palette.on_accent,
-                "font": BODY_FONT,
-                "padding": (spacing.sm, spacing.xs),
-                "relief": "flat",
-            },
-            {
-                "background": [
-                    ("active", accent_active_bg),
-                    ("pressed", accent_pressed_bg),
-                    ("disabled", palette.surface),
-                ],
-                "foreground": accent_fg_map,
-            },
-        ),
-        "Danger.TButton": StyleSpec(
-            {
-                "background": danger_bg,
-                "foreground": danger_fg,
-                "bordercolor": palette.danger,
-                "focuscolor": palette.danger if native else palette.on_accent,
-                "font": BODY_FONT,
-                "padding": (spacing.sm, spacing.xs),
-                "relief": "flat",
-            },
-            {
-                "background": [
-                    ("active", palette.surface_active),
-                    ("pressed", palette.surface_active),
-                    ("disabled", palette.surface),
-                ],
-                "foreground": [("active", palette.danger), ("pressed", palette.danger), ("disabled", palette.muted)],
-            },
-        ),
-        "TEntry": StyleSpec(
-            {
-                "fieldbackground": palette.surface,
-                "foreground": palette.text,
-                "insertcolor": palette.cursor,
-                "bordercolor": palette.border,
-                "lightcolor": palette.surface,
-                "darkcolor": palette.surface,
-                "padding": (spacing.sm, spacing.xs),
-            },
-            {
-                "bordercolor": [("focus", palette.accent)],
-                "foreground": [("disabled", palette.muted)],
-                "fieldbackground": [("readonly", palette.background), ("disabled", palette.background)],
-            },
-        ),
-        "TSpinbox": StyleSpec(
-            {
-                "fieldbackground": palette.surface,
-                "foreground": palette.text,
-                "insertcolor": palette.cursor,
-                "bordercolor": palette.border,
-                "lightcolor": palette.surface,
-                "darkcolor": palette.surface,
-                "arrowcolor": palette.muted,
-                "padding": (spacing.sm, spacing.xs),
-            },
-            {
-                "bordercolor": [("focus", palette.accent)],
-                "foreground": [("disabled", palette.muted)],
-                "fieldbackground": [("readonly", palette.background), ("disabled", palette.background)],
-                "arrowcolor": [("disabled", palette.border)],
-            },
-        ),
-        "TCombobox": StyleSpec(
-            {
-                "fieldbackground": palette.surface,
-                "background": palette.surface,
-                "foreground": palette.text,
-                "arrowcolor": palette.muted,
-                "bordercolor": palette.border,
-                "padding": (spacing.sm, spacing.xs),
-            },
-            {
-                "bordercolor": [("focus", palette.accent)],
-                "fieldbackground": [("readonly", palette.surface)],
-                "foreground": [("disabled", palette.muted)],
-            },
-        ),
-        "TCheckbutton": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.text,
-                "focuscolor": palette.accent,
-                "indicatorbackground": palette.surface,
-                "indicatorforeground": palette.text,
-                "upperbordercolor": palette.border_strong,
-                "lowerbordercolor": palette.border,
-                "font": BODY_FONT,
-            },
-            {
-                "background": [("active", palette.background)],
-                "foreground": [("active", palette.accent_hover), ("disabled", palette.muted)],
-                "indicatorbackground": [
-                    ("disabled", palette.background),
-                    ("selected", palette.accent),
-                    ("pressed", palette.surface_active),
-                ],
-                "indicatorforeground": [
-                    ("disabled", palette.muted),
-                    ("selected", palette.on_accent),
-                ],
-            },
-        ),
-        "TRadiobutton": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.text,
-                "focuscolor": palette.accent,
-                "indicatorbackground": palette.surface,
-                "indicatorforeground": palette.text,
-                "upperbordercolor": palette.border_strong,
-                "lowerbordercolor": palette.border,
-                "font": BODY_FONT,
-            },
-            {
-                "background": [("active", palette.background)],
-                "foreground": [("active", palette.accent_hover), ("disabled", palette.muted)],
-                "indicatorbackground": [
-                    ("disabled", palette.background),
-                    ("selected", palette.accent),
-                    ("pressed", palette.surface_active),
-                ],
-                "indicatorforeground": [
-                    ("disabled", palette.muted),
-                    ("selected", palette.on_accent),
-                ],
-            },
-        ),
-        "TProgressbar": StyleSpec(
-            {
-                "background": palette.accent,
-                "troughcolor": palette.surface,
-                "bordercolor": palette.border,
-                "thickness": spacing.sm,
-            }
-        ),
-        "TScrollbar": StyleSpec(
-            {
-                "background": palette.muted,
-                "troughcolor": palette.background,
-                "bordercolor": palette.background,
-                "arrowcolor": palette.muted,
-                "gripcount": 0,
-            },
-            {"background": [("active", palette.accent)]},
-        ),
-        "Treeview": StyleSpec(
-            {
-                "background": palette.surface,
-                "fieldbackground": palette.surface,
-                "foreground": palette.text,
-                "font": BODY_FONT,
-                "rowheight": spacing.lg + spacing.xs,
-                "bordercolor": palette.border_strong,
-            },
-            {
-                "background": [("selected", palette.select_bg)],
-                "foreground": [("selected", palette.select_fg)],
-            },
-        ),
-        "Treeview.Heading": StyleSpec(
-            {
-                "background": palette.surface_hover,
-                "foreground": palette.text,
-                "font": BODY_FONT,
-                "relief": "solid",
-                "bordercolor": palette.border_strong,
-                "borderwidth": 1,
-                "padding": (spacing.sm, spacing.xs),
-            }
-        ),
-        "Active.Treeview": StyleSpec(
-            {
-                "background": palette.surface,
-                "fieldbackground": palette.surface,
-                "foreground": palette.text,
-                "font": BODY_FONT,
-                "rowheight": spacing.lg + spacing.xs,
-                "bordercolor": palette.accent,
-                "borderwidth": max(1, spacing.hairline),
-                "relief": "solid",
-            },
-            {
-                "background": [("selected", palette.select_bg)],
-                "foreground": [("selected", palette.select_fg)],
-            },
-        ),
-        "TNotebook": StyleSpec({"background": palette.background, "bordercolor": palette.border}),
-        "TNotebook.Tab": StyleSpec(
-            {
-                "background": palette.background,
-                "foreground": palette.muted,
-                "font": BODY_FONT,
-                "padding": (spacing.md, spacing.xs),
-            },
-            {
-                "background": [("selected", palette.surface)],
-                "foreground": [("selected", palette.text), ("active", palette.accent_hover)],
-            },
-        ),
-        "TSeparator": StyleSpec({"background": palette.border}),
-        "Sidebar.TFrame": StyleSpec({"background": palette.surface, "bordercolor": palette.border}),
-        "SidebarTitle.TLabel": StyleSpec(
-            {"background": palette.surface, "foreground": palette.text, "font": HEADING_FONT}
-        ),
-        "SidebarHint.TLabel": StyleSpec(
-            {"background": palette.surface, "foreground": palette.muted, "font": SMALL_FONT}
-        ),
-        "Sidebar.TButton": StyleSpec(
-            {
-                "background": palette.surface,
-                "foreground": palette.muted,
-                "bordercolor": palette.surface,
-                "focuscolor": palette.accent,
-                "font": BODY_FONT,
-                "padding": (spacing.md, spacing.sm),
-                "relief": "flat",
-                "anchor": "w",
-            },
-            {
-                "background": [("active", palette.surface_hover), ("pressed", palette.surface_active)],
-                "foreground": [("active", palette.text), ("disabled", palette.muted)],
-            },
-        ),
-        "SidebarActive.TButton": StyleSpec(
-            {
-                "background": sidebar_active_bg,
-                "foreground": sidebar_active_fg,
-                "bordercolor": palette.accent,
-                "focuscolor": palette.accent,
-                "font": BODY_FONT,
-                "padding": (spacing.md, spacing.sm),
-                "relief": "flat",
-                "anchor": "w",
-            },
-            {
-                "background": [("active", sidebar_active_bg), ("pressed", sidebar_active_bg)],
-                "foreground": [("active", sidebar_active_fg), ("disabled", palette.muted)],
-            },
-        ),
-        "Toolbutton": StyleSpec(
-            {
-                "background": palette.surface,
-                "foreground": palette.text,
-                "bordercolor": palette.surface,
-                "focuscolor": palette.accent,
-                "font": BODY_FONT,
-                "padding": (spacing.sm, spacing.xs),
-                "relief": "flat",
-                "anchor": "w",
-            },
-            {
-                "background": [("active", palette.surface_hover), ("pressed", palette.surface_active)],
-                "foreground": [("disabled", palette.muted)],
-            },
-        ),
-    }
-
-
-def classic_options(palette: Palette = PALETTE) -> dict[str, str]:
-    """返回 ``option_add`` 的经典控件兜底配置（Text / Menu / Listbox / Entry / Button / Canvas）。
-
-    值为 Tk option 字符串：字体用具名字体，颜色用调色板色值。
-    """
-    return {
-        "*Background": palette.background,
-        "*Foreground": palette.text,
-        "*Font": BODY_FONT,
-        "*selectBackground": palette.select_bg,
-        "*selectForeground": palette.select_fg,
-        "*insertBackground": palette.cursor,
-        "*highlightBackground": palette.border,
-        "*highlightColor": palette.accent,
-        "*Text.background": palette.log_bg,
-        "*Text.foreground": palette.log_fg,
-        "*Text.insertBackground": palette.cursor,
-        "*Text.selectBackground": palette.select_bg,
-        "*Text.selectForeground": palette.select_fg,
-        "*Text.font": MONO_FONT,
-        "*Text.relief": "flat",
-        "*Text.borderWidth": "0",
-        "*Text.highlightThickness": "0",
-        "*Menu.background": palette.surface,
-        "*Menu.foreground": palette.text,
-        "*Menu.activeBackground": palette.accent,
-        "*Menu.activeForeground": palette.on_accent,
-        "*Menu.selectColor": palette.accent,
-        "*Menu.font": BODY_FONT,
-        "*Menu.borderWidth": "1",
-        "*Menu.relief": "flat",
-        "*Listbox.background": palette.surface,
-        "*Listbox.foreground": palette.text,
-        "*Listbox.selectBackground": palette.select_bg,
-        "*Listbox.selectForeground": palette.select_fg,
-        "*Button.font": BODY_FONT,
-        "*Entry.background": palette.surface,
-        "*Entry.foreground": palette.text,
-        "*Entry.insertBackground": palette.cursor,
-        "*Entry.selectBackground": palette.select_bg,
-        "*Entry.selectForeground": palette.select_fg,
-        "*Canvas.background": palette.surface,
-        "*Canvas.highlightBackground": palette.border,
-        "*Canvas.highlightColor": palette.accent,
-    }
-
-
-def proportional_geometry(
-    screen_width: int,
-    screen_height: int,
-    rules: GeometryRules = GEOMETRY_RULES,
-) -> tuple[int, int]:
-    """按屏幕分辨率与比例计算窗口初始宽高，并夹在 ``min`` / ``max`` 之间。
-
-    参数:
-        screen_width: 屏幕可用宽度（像素）。
-        screen_height: 屏幕可用高度（像素）。
-        rules: 比例与最小/最大像素限制，默认见 :data:`GEOMETRY_RULES`。
-
-    返回:
-        ``(宽, 高)``，均为夹紧后的整数像素。
-    """
-    width = min(max(round(screen_width * rules.width_ratio), rules.min_width), rules.max_width)
-    height = min(max(round(screen_height * rules.height_ratio), rules.min_height), rules.max_height)
-    return width, height
-
-
-DPI_AWARENESS_PER_MONITOR: Final[int] = 2
-
-DPI_BASELINE: Final[float] = 96.0
-"""间距基准 DPI：Windows 100% 缩放时为 96。"""
-
-MAX_SPACING_SCALE: Final[float] = 2.0
-"""间距缩放上限，避免 4K 高缩放下的边缘留白过大。"""
-
-
-def dpi_scale(fpixels_per_inch: float | str) -> float:
-    """把每英寸像素数折算成相对 96 DPI 的间距缩放比（1.0–2.0）。
-
-    125% 缩放（120 ppi）返回 1.25，150%（144 ppi）返回 1.5；非法值或
-    低于基准的值统一返回 1.0，保证 100% 缩放下间距与旧版完全一致。
-    """
-    try:
-        value = float(fpixels_per_inch)
-    except (TypeError, ValueError):
-        return 1.0
-    if value <= DPI_BASELINE:
-        return 1.0
-    return min(value / DPI_BASELINE, MAX_SPACING_SCALE)
-
-
-def scale_spacing(spacing: Spacing = SPACING, factor: float = 1.0) -> Spacing:
-    """按缩放比放大间距阶梯的每个像素值（四舍五入，且不小于 1px）。
-
-    字号用磅值时 Tk 会跟随 DPI 自动放大，间距若保持固定像素就会出现
-    「字变大、间距不变」的拥挤观感；本函数让两者同步。
-    """
-    if factor == 1.0:
-        return spacing
-    return replace(
-        spacing,
-        hairline=max(1, round(spacing.hairline * factor)),
-        xxs=max(1, round(spacing.xxs * factor)),
-        xs=max(1, round(spacing.xs * factor)),
-        sm=max(1, round(spacing.sm * factor)),
-        md=max(1, round(spacing.md * factor)),
-        lg=max(1, round(spacing.lg * factor)),
-        xl=max(1, round(spacing.xl * factor)),
-    )
-
-
-def tk_dpi_scale(root: Misc) -> float:  # pragma: no cover - 需要真实 Tk 窗口
-    """按 ``winfo_fpixels('1i')`` 计算当前窗口的间距缩放比；取不到时返回 1.0。"""
-    with contextlib.suppress(Exception):
-        return dpi_scale(float(root.winfo_fpixels("1i")))
-    return 1.0
 
 
 def relative_luminance(color: str) -> float:
@@ -1040,246 +397,3 @@ def is_dark_palette(palette: Palette = PALETTE) -> bool:
         return relative_luminance(palette.background) < 0.5
     except ValueError:
         return False
-
-
-_DWMWA_IMMERSIVE_DARK_MODE: Final[tuple[int, ...]] = (20, 19)
-"""``DwmSetWindowAttribute`` 的深色模式属性号：Win10 20H1 起为 20，旧版本为 19。"""
-
-
-def apply_dark_titlebar(window: Any, *, dark: bool = True) -> bool:
-    """把 Windows 顶层窗口的标题栏切到深色（失败静默，不影响窗口启动）。
-
-    Tk 8.6 不提供标题栏配色，只能对系统 DWM 属性下手：属性 20 用于 Windows 10
-    20H1 及以后，19 用于更早版本。非 Windows、缺少 ``dwmapi`` 或调用失败都返回
-    ``False``，调用方可忽略返回值。
-    """
-    if sys.platform != "win32":
-        return False
-    windll = _load_windll()
-    if windll is None:
-        return False
-    handle = _top_level_handle(window, windll)
-    if handle is None:
-        return False
-    import ctypes
-
-    value = ctypes.c_int(1 if dark else 0)
-    for attribute in _DWMWA_IMMERSIVE_DARK_MODE:
-        with contextlib.suppress(AttributeError, OSError):
-            result = windll.dwmapi.DwmSetWindowAttribute(
-                handle,
-                attribute,
-                ctypes.byref(value),
-                ctypes.sizeof(value),
-            )
-            if result == 0:
-                return True
-    return False
-
-
-def _top_level_handle(window: Any, windll: Any) -> int | None:
-    """取窗口的顶层 HWND：``winfo_id`` 返回子窗口句柄，需再向上找父窗口。"""
-    with contextlib.suppress(AttributeError, TypeError, ValueError):
-        handle = int(window.winfo_id())
-        with contextlib.suppress(AttributeError, OSError):
-            parent = int(windll.user32.GetParent(handle))
-            if parent:
-                handle = parent
-        return handle or None
-    return None
-
-
-def enable_dpi_awareness() -> bool:
-    """在创建 ``Tk()`` 之前声明进程 DPI 感知；成功应用返回 ``True``。
-
-    只在 Windows 生效：优先 ``SetProcessDpiAwareness``（Per-Monitor），失败
-    再退回 ``SetProcessDPIAware``（System）。非 Windows、缺少 API 或调用失败
-    都静默返回 ``False``，窗口照常启动，不抛异常。
-    """
-    if sys.platform != "win32":
-        return False
-    return _apply_win32_dpi_awareness(_load_windll())
-
-
-def _load_windll() -> Any:
-    """惰性加载 ``ctypes.windll``；非 Windows 或缺少 ctypes 时返回 ``None``。"""
-    try:
-        import ctypes
-    except ImportError:  # pragma: no cover - CPython 全平台都自带 ctypes
-        return None
-    return getattr(ctypes, "windll", None)
-
-
-def _apply_win32_dpi_awareness(windll: Any | None) -> bool:
-    """依次尝试 shcore / user32 两种 DPI 声明方式，任一成功即返回 ``True``。"""
-    if windll is None:
-        return False
-    with contextlib.suppress(AttributeError, OSError):
-        if windll.shcore.SetProcessDpiAwareness(DPI_AWARENESS_PER_MONITOR) == 0:
-            return True
-    try:
-        return bool(windll.user32.SetProcessDPIAware())
-    except (AttributeError, OSError):
-        return False
-
-
-@dataclass(frozen=True, slots=True)
-class _TkModules:
-    """惰性导入的 tkinter 三件套，便于单测注入替身。"""
-
-    tk: Any
-    ttk: Any
-    tkfont: Any
-
-
-def _load_tk_modules() -> _TkModules:
-    """惰性导入 tkinter / ttk / font，避免无显示环境下的顶层导入开销。"""
-    import tkinter as tk
-    from tkinter import font as tkfont
-    from tkinter import ttk
-
-    return _TkModules(tk=tk, ttk=ttk, tkfont=tkfont)
-
-
-def _apply_named_fonts(
-    tkfont: Any,
-    root: Misc,
-    ui_family: str,
-    mono_family: str,
-    scale: FontScale,
-) -> None:
-    """创建或更新主题具名字体；已存在的（Tk 默认字体）就地 configure。
-
-    ``tkinter.font.Font`` 在 Python 对象被回收时会删除同名具名字体，因此新建的
-    字体必须挂在 ``root`` 上持有引用；否则 ``apply_theme`` 返回后字体立即消失，
-    ttk 样式只能回退到系统默认字体（WSL 无 Xft 时即表现为中文全部变成方块）。
-    """
-    existing = set(tkfont.names(root))
-    kept = list(vars(root).get("_fcmd_named_fonts", ()))
-    for spec in font_plan(scale):
-        options = {
-            "family": mono_family if spec.mono else ui_family,
-            "size": spec.size,
-            "weight": spec.weight,
-        }
-        if spec.name in existing:
-            tkfont.nametofont(spec.name, root=root).configure(**options)
-        else:
-            kept.append(tkfont.Font(root=root, name=spec.name, **options))
-    vars(root)["_fcmd_named_fonts"] = kept
-
-
-def _resolve_requested_theme(
-    theme: str | Theme | None,
-    palette: Palette | None,
-    scale: FontScale | None,
-    spacing: Spacing | None,
-) -> Theme:
-    """把 ``apply_theme`` 的入参归一化为最终主题（含显式覆盖）。"""
-    resolved = load_theme() if theme is None else (theme if isinstance(theme, Theme) else resolve_theme(theme))
-    if palette is not None or scale is not None or spacing is not None:
-        resolved = replace(
-            resolved,
-            palette=palette or resolved.palette,
-            fonts=scale or resolved.fonts,
-            spacing=spacing or resolved.spacing,
-        )
-    return resolved
-
-
-def apply_theme(
-    root: Misc,
-    theme: str | Theme | None = None,
-    *,
-    palette: Palette | None = None,
-    scale: FontScale | None = None,
-    spacing: Spacing | None = None,
-) -> Theme:
-    """给 Tk 根窗口应用 fcmd 主题（幂等，窗口构建前调用），返回最终主题。
-
-    参数:
-        root: 已创建的 ``Tk()`` / ``Toplevel`` 根窗口。
-        theme: 主题 id、:class:`Theme` 或 ``None``（读取持久化配置）。
-        palette: 显式覆盖调色板（测试或特殊窗口使用）。
-        scale: 显式覆盖字号阶梯。
-        spacing: 显式覆盖间距阶梯。
-
-    返回:
-        实际应用的主题；窗口侧据此获取 ``palette`` / ``spacing``。
-    """
-    resolved = _resolve_requested_theme(theme, palette, scale, spacing)
-    if spacing is None:
-        # 未显式指定间距时按当前窗口 DPI 缩放：96 DPI 下与旧版完全一致。
-        resolved = replace(resolved, spacing=scale_spacing(resolved.spacing, tk_dpi_scale(root)))
-    modules = _load_tk_modules()
-    families = tuple(modules.tkfont.families(root))
-    ui_family = pick_font_family(families)
-    mono_family = pick_font_family(families, MONO_FONT_CANDIDATES)
-    _apply_named_fonts(modules.tkfont, root, ui_family, mono_family, resolved.fonts)
-
-    style = modules.ttk.Style(root)
-    if not resolved.native:
-        with contextlib.suppress(modules.tk.TclError):
-            style.theme_use(THEME_NAME)
-    for name, spec in ttk_style_specs(resolved.palette, resolved.spacing, native=resolved.native).items():
-        style.configure(name, **spec.configure)
-        if spec.map:
-            style.map(name, **spec.map)
-
-    with contextlib.suppress(modules.tk.TclError):
-        root.configure({"background": resolved.palette.background})
-    for pattern, value in classic_options(resolved.palette).items():
-        root.option_add(pattern, value)
-    return resolved
-
-
-def install_theme_switcher(
-    root: Misc,
-    *,
-    on_apply: Callable[[Theme], None] | None = None,
-) -> None:  # pragma: no cover - 需要真实 Tk 窗口
-    """在窗口菜单栏追加“主题”菜单；选择后立即重设样式并保存配置。
-
-    ``apply_theme`` 幂等，因此切换主题不需要重开窗口。窗口若把主题色写进了
-    自建 tag / Canvas，可传 ``on_apply`` 在样式更新后再刷新这些控件。
-    """
-    import tkinter as tk
-
-    try:
-        menu_path = str(root.cget("menu"))
-    except tk.TclError:
-        menu_path = ""
-    if menu_path:
-        menubar = root.nametowidget(menu_path)
-    else:
-        menubar = tk.Menu(root)
-        cast(Any, root).configure(menu=menubar)
-
-    try:
-        end = menubar.index("end")
-    except tk.TclError:
-        end = None
-    if end is not None:
-        for index in range(int(end) + 1):
-            try:
-                if menubar.entrycget(index, "label") == "主题":
-                    return
-            except tk.TclError:
-                continue
-
-    current = tk.StringVar(master=root, value=read_theme_name())
-    theme_menu = tk.Menu(menubar, tearoff=False)
-
-    def _choose() -> None:
-        chosen = save_theme(current.get())
-        applied = apply_theme(root, chosen)
-        apply_dark_titlebar(root, dark=is_dark_palette(applied.palette))
-        if on_apply is not None:
-            on_apply(applied)
-
-    for theme in THEMES.values():
-        theme_menu.add_radiobutton(label=theme.label, value=theme.name, variable=current, command=_choose)
-    menubar.add_cascade(label="主题", menu=theme_menu)
-    view = cast(Any, root)
-    view._fcmd_theme_var = current
-    view._fcmd_theme_menu = theme_menu

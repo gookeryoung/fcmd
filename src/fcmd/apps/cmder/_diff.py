@@ -1,6 +1,6 @@
 """cmderw 文本内容比较的纯逻辑：按行并排 diff、统计与读取上限。
 
-Tk 层只负责把 :class:`DiffRow` 渲染成两列只读文本并着色。
+界面层只负责把 :class:`DiffRow` 渲染成两列只读文本并着色。
 """
 
 from __future__ import annotations

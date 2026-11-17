@@ -61,7 +61,7 @@ Total Commander 允许把压缩包当目录浏览（Enter / Ctrl+PageDown 进入
 
 - 列表读取集中在 `read_archive_members`，解压集中在 `extract_archive_members`；
   写入集中在 `_archwrite`（新增 / 删除 / 改名 / 校验），新增格式时只扩展
-  格式判定与这两个模块，不在 Tk 层散落分支。
+  格式判定与这两个模块，不在界面层散落分支。
 - 归档视图是面板运行期状态（`FilePanel.archive` / `archive_prefix`），不进入设置文件；
   写入选项（压缩级别 / 密码）同样只在窗口生命周期内有效。
 - 7z / rar 若将来需要浏览或写入，先评估外部工具输出解析的稳定性，再扩展本 ADR。

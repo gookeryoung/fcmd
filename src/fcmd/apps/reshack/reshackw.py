@@ -41,7 +41,7 @@ from fcmd.apps.reshack._core import (
     zoom_out,
 )
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 
 __all__ = [
     "FIT_MAX_UPSCALE",

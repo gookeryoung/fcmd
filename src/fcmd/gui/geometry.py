@@ -1,6 +1,6 @@
 """窗口几何纯函数：``WxH+X+Y`` 解析 / 格式化、越界夹紧与居中计算。
 
-不导入任何 GUI 库，CI（无 Tk / 无 PySide6）可直接单测；Tk 与 Qt 窗口骨架、
+不导入任何 GUI 库，CI（无 PySide6）可直接单测；各窗口骨架、
 各工具窗口的设置读写都复用同一套口径，因此同一个 ``ui/*.json`` 里的
 ``geometry`` 字段可以在任意前端之间互读。
 
@@ -49,7 +49,7 @@ def parse_geometry(text: str | None) -> tuple[int, int, int, int] | None:
 
 
 def format_geometry(width: int, height: int, x: int, y: int) -> str:
-    """把窗口矩形格式化为 Tk 兼容的 ``WxH+X+Y``（负数坐标写成 ``+-`` 形式）。"""
+    """把窗口矩形格式化为 ``WxH+X+Y``（负数坐标写成 ``+-`` 形式）。"""
     sign_x = "+" if x >= 0 else "-"
     sign_y = "+" if y >= 0 else "-"
     return f"{max(width, 0)}x{max(height, 0)}{sign_x}{abs(x)}{sign_y}{abs(y)}"

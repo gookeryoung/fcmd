@@ -232,7 +232,7 @@ def images_to_pdf(  # noqa: PLR0913, PLR0917  参数由 CLI 与 GUI 共享，保
 
     ``page_size="auto"`` 时每页沿用原图像素尺寸；指定固定页面尺寸时按
     ``dpi`` 换算页面像素并等比缩放居中。``normalize=True`` 会先按 EXIF
-    方向校正图片。CLI 与 Tk GUI 共用此函数，保证两条入口结果一致。
+    方向校正图片。CLI 与 GUI 共用此函数，保证两条入口结果一致。
 
     Raises
     ------

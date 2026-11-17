@@ -4,7 +4,7 @@
 中的 ``(tool, subcommand)`` 组合才会被暴露为 MCP tool。白名单外的调用被
 适配器主动拒绝，而非依赖上层路由决定。
 
-与 :mod:`fcmd.cli._schema` 的 ``GUI_TOOLS`` 互补：GUI_TOOLS 过滤 Tk 入口，
+与 :mod:`fcmd.cli._schema` 的 ``GUI_TOOLS`` 互补：GUI_TOOLS 过滤 GUI 入口，
 本清单过滤"机器不应触达"的能力（破坏性写操作、交互式、需要 TTY、无机读
 输出等）。两个集合**不交**——GUI_TOOLS 不在本清单里。
 

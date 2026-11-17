@@ -64,7 +64,7 @@ class _ConvertBridge(QObject):  # pragma: no cover - Qt 信号桥
     event = Signal(object)
 
 
-def _run_conversion(  # noqa: PLR0913, PLR0917 - 转换参数逐项显式传递，与 Tk 版行为对照
+def _run_conversion(  # noqa: PLR0913, PLR0917 - 转换参数逐项显式传递，便于对照既有行为
     input_path: Path,
     output_path: Path,
     page_size: str,

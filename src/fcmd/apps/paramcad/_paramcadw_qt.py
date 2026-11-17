@@ -297,7 +297,7 @@ class ParamcadWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         heading: bool = False,
         small: bool = False,
     ) -> None:
-        """按 Tk 风格的锚点绘制单行文字（nw / ne / sw / center）。"""
+        """按画布风格的锚点绘制单行文字（nw / ne / sw / center）。"""
         palette = self.theme().palette
         font = QFont(painter.font())
         font.setBold(heading)

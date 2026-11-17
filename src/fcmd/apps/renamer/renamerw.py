@@ -41,7 +41,7 @@ from fcmd.apps.renamer._core import (
     rules_to_json,
 )
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

@@ -1,7 +1,6 @@
 """Qt 单页工具窗口骨架：菜单 / 状态栏 / 几何记忆 / 主题 / 日志。
 
-Tk 侧各工具窗口都复制同一套骨架（``create_root`` + ``build_menu`` +
-``create_log``），Qt 侧收敛到这里。分页窗口继续用
+各单页工具窗口共用这一套骨架（菜单 / 状态栏 / 几何记忆 / 主题 / 日志）。分页窗口继续用
 :class:`fcmd.gui.qt.window.QtMainWindow`，单页工具继承本类：
 
     class DemoWindow(QtToolWindow):
@@ -9,8 +8,8 @@ Tk 侧各工具窗口都复制同一套骨架（``create_root`` + ``build_menu``
             super().__init__(title="示例", config_name="demo")
             self.add(QLabel("内容"))
 
-设置文件、geometry 字符串与 Tk 版完全共用（``ui/<name>.json``、``WxH+X+Y``），
-迁移期两个前端可以互读同一个文件。
+设置文件与 geometry 字符串沿用 ``ui/<name>.json`` 与 ``WxH+X+Y``，
+与旧版本设置文件互读。
 """
 
 from __future__ import annotations

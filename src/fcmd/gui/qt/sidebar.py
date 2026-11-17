@@ -1,11 +1,11 @@
 """Qt 侧边栏分页导航：左侧导航栏 + 右侧页面栈。
 
-与 Tk 版 :class:`fcmd.gui.sidebar.SidebarNav` 同名的能力：标题、页按钮、
+分页导航能力：标题、页按钮、
 当前页提示与快捷键循环切换。窗口只负责提供页面内容，导航栏只管「选中哪一页」：
 
 - ``add(key, label, hint)`` 登记页面（顺序即导航顺序）；
 - ``select(key)`` 切换页面并发出 :attr:`SidebarNav.changed`；
-- ``Alt+1..9`` 直达、``Alt+↓ / Alt+↑`` 循环，键位与 Tk 版一致；
+- ``Alt+1..9`` 直达、``Alt+↓ / Alt+↑`` 循环；
 - ``set_collapsed(True)`` 折叠为窄栏（只显示首字与 tooltip），再次调用展开。
 
 页按钮用 ``QPushButton`` 而不是 ``QToolButton``：前者支持 QSS 的
@@ -13,7 +13,7 @@
 会按文本收缩成小方块，看起来「宽度显示不全」）。折叠状态经
 :attr:`SidebarNav.collapsedChanged` 交给窗口持久化。
 
-纯逻辑（key 解析、循环切换）复用 :mod:`fcmd.gui.sidebar` 的模块级函数，
+纯逻辑（key 解析、循环切换）复用 :mod:`fcmd.gui.pages` 的模块级函数，
 CI 无显示环境也能单测。
 """
 
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.gui.sidebar import next_page, resolve_page_key
+from fcmd.gui.pages import next_page, resolve_page_key
 
 __all__ = ["COLLAPSED_WIDTH", "EXPANDED_WIDTH", "SidebarNav", "next_page", "resolve_page_key"]
 

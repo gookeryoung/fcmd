@@ -37,7 +37,7 @@
 
 `_rules.py` / `_engine.py` / `_report.py` / `_config.py` 只依赖标准库，不导入 Tk，
 不注册工具；CLI 与 GUI 共用同一套扫描、报告与配置逻辑。GUI 复用
-`fcmd.gui.window` / `theme` / `config`，不另起窗口骨架。
+`fcmd.gui.qt.toolwindow` / `theme` / `config`，不另起窗口骨架。
 
 ### D2 规则模型与表达式
 

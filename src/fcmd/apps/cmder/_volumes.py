@@ -1,7 +1,7 @@
 """cmderw 卷 / 挂载点枚举与剩余空间格式化的纯逻辑。
 
 Windows 通过 ``GetLogicalDrives`` 取盘符位图，Linux 解析 ``/proc/mounts``
-并跳过伪文件系统；剩余空间统一走 ``shutil.disk_usage``，便于脱离 Tk 单测。
+并跳过伪文件系统；剩余空间统一走 ``shutil.disk_usage``，便于脱离 GUI 单测。
 """
 
 from __future__ import annotations

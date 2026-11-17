@@ -158,7 +158,7 @@ DESCRIPTIONS: dict[str, str] = {
     "casetool": "转 snake_case",
     "checksum": "校验和计算器窗口版（Qt）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，计算字符串或文件的十六进制摘要，可选用期望值做忽略大小写的校验比对；设置持久化到 ~/.fcmd/ui/checksum.json",
     "clr": "清屏（跨平台）",
-    "cmderw": "双面板文件管理器窗口版（Tk，Total Commander 风格）：左右面板独立导航与历史，F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 多重命名工具，Space 统计大小，每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，复制/移动进入串行传输队列（逐项进度、按项取消、失败重试），Ctrl+Shift+C 只读比较与预演式目录同步，Ctrl+Q 快速查看、Ctrl+F8 目录树、Ctrl+Enter 命令行、配置→颜色规则，Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，复用 archivex/hashing/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json",
+    "cmderw": "双面板文件管理器窗口版（Qt，Total Commander 风格）：左右面板独立导航与历史，F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择，Ctrl+S 快速过滤，Ctrl+M 多重命名工具，Space 统计大小，每面板多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab），Ctrl+D 书签，Alt+Down 历史跳转，复制/移动进入串行传输队列（逐项进度、按项取消、失败重试），Ctrl+Shift+C 只读比较与预演式目录同步，Ctrl+Q 快速查看、Ctrl+F8 目录树、Ctrl+Enter 命令行、配置→颜色规则，Alt+F5 打包、Alt+F9 解压，搜索结果可直接复制/移动/删除/加入选择，复用 archivex/hashing/filesearch 能力，设置持久化到 ~/.fcmd/ui/cmderw.json",
     "codetool": "Base64 编解码",
     "colortool": "HEX 转 RGB",
     "convtool": "长度换算",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "bb5dc354317a4ac3046c08c091cd174e"
+DIGEST = "e53131dc85e8a88979c4e9f3949ace97"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

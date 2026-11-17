@@ -16,7 +16,7 @@ core            基础能力（toolkit / execution / orchestration / context / d
 gui             展示基座（tkinter 窗口骨架 / 主题 / UI 设置持久化），只依赖标准库
 infras          基础件：编解码、换算、哈希、加解密、文本/数据/文件/系统/网络/文件过滤等纯函数
 tools/<域>      业务实现（每域一份实现，含 CLI / GUI 入口）
-apps            独立桌面应用（Tk GUI，与 tools 同为工具发现根，可复用 gui / tools / infras）
+apps            独立桌面应用（Qt GUI，与 tools 同为工具发现根，可复用 gui / tools / infras）
 cli             组合根：参数解析、工具发现、内建命令
 ```
 

@@ -1,6 +1,6 @@
 """Qt 后台任务与定时器：把阻塞调用移出 GUI 线程，结果回投主线程。
 
-Tk 基座用「daemon 线程 + ``queue.Queue`` + ``root.after`` 轮询」。Qt 下等价
+旧版基座用「daemon 线程 + ``queue.Queue`` + 定时轮询」。Qt 下等价
 做法是 ``QThreadPool`` + 信号：信号跨线程投递由 Qt 排队到 GUI 线程执行，
 不需要自己写轮询，也不会在窗口销毁后回调到已释放的控件（连接随控件失效）。
 
@@ -15,7 +15,7 @@ Tk 基座用「daemon 线程 + ``queue.Queue`` + ``root.after`` 轮询」。Qt �
 
 - 异常在任务线程内捕获并转成字符串交给 ``on_error``，不会让进程崩溃；
 - 任务对象在完成前保持强引用，避免 ``QRunnable`` 被回收；
-- ``periodic`` 用 ``QTimer`` 实现固定间隔回调，间隔与 Tk 版的 ``after`` 一致。
+- ``periodic`` 用 ``QTimer`` 实现固定间隔回调，语义与旧版的轮询一致。
 """
 
 from __future__ import annotations

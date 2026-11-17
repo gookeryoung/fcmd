@@ -183,7 +183,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         return panel
 
     def _install_menu_actions(self) -> None:
-        """把文件 / 视图动作插入骨架菜单，位置与 Tk 版一致。"""
+        """把文件 / 视图动作插入骨架菜单，位置与迁移前的窗口一致。"""
         from PySide6.QtGui import QAction
 
         file_menu = self._menu("文件")

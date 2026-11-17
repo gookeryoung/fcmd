@@ -9,7 +9,7 @@
    产出按路径排序的 :class:`ScanResult`；支持进度回调与取消；
 3. 单文件处理 :func:`scan_file` —— 读取上限、二进制判定、编码回退、逐行匹配。
 
-本模块只依赖标准库，不导入 Tk，也不参与工具发现；CLI 与 Tk 窗口共用。
+本模块只依赖标准库，不导入 GUI 库，也不参与工具发现；CLI 与 Qt 窗口共用。
 """
 
 from __future__ import annotations

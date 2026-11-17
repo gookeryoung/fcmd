@@ -6,7 +6,7 @@
 * 加密输出 ``<原名>.enc.pdf``
 * 解密输出 ``<原名>.dec.pdf``
 
-CLI 与 Tk 窗口版（:mod:`fcmd.tools.pdf.pdfcryptw`）共用本模块的纯函数，
+CLI 与窗口版（:mod:`fcmd.tools.pdf.pdfcryptw`）共用本模块的纯函数，
 保证两条入口的加密参数（128 位 AES）与结果一致。
 
 示例

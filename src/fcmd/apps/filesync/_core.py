@@ -11,7 +11,7 @@
 4. :func:`execute_plan` —— 执行复制 / 删除，逐项收集错误，支持 ``dry_run``
    与进度回调。
 
-本模块只依赖标准库，不导入 Tk，也不参与工具发现；CLI 与 Tk 窗口共用。
+本模块只依赖标准库，不导入 GUI 库，也不参与工具发现；CLI 与 Qt 窗口共用。
 """
 
 from __future__ import annotations

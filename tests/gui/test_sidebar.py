@@ -1,4 +1,4 @@
-"""``fcmd.gui.sidebar`` 的纯逻辑测试：key 解析与循环切换。
+"""``fcmd.gui.pages`` 的纯逻辑测试：key 解析与循环切换。
 
 Tk 控件部分标注 ``pragma: no cover``（CI 无显示环境），这里只覆盖不依赖
 Tk 的函数，保证迁移窗口时 ``select`` / 快捷键的语义稳定。
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from fcmd.gui import sidebar as _guisidebar
+from fcmd.gui import pages as _guisidebar
 
 
 class TestResolvePageKey:

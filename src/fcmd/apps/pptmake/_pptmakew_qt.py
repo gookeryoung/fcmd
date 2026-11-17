@@ -89,7 +89,7 @@ def _pen(color: str, width: float = 1.0) -> QPen:
 
 
 def _paint_primitive(painter: QPainter, primitive: Any, view: preview.Viewport) -> None:
-    """把一个设计图元画到画布坐标；几何与 Tk 版保持同一套换算。"""
+    """把一个设计图元画到画布坐标；几何与既有换算口径一致。"""
     scale = view.scale
     if isinstance(primitive, Rect):
         x, y = view.to_canvas(primitive.x, primitive.y)

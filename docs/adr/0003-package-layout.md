@@ -30,7 +30,7 @@
 
 ### D4 展示基座独立成 `fcmd/gui`
 
-`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`。依据：三者只依赖标准库 tkinter，被十余个窗口复用，不属于任何业务域；`tools/` 是发现命名空间，共享代码靠 `_` 前缀躲扫描是设计破损信号。
+`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`。依据：主题 / 设置 / 几何长期被十余个窗口复用，不属于任何业务域（tkinter 依赖已在 0034 全部移除）；`tools/` 是发现命名空间，共享代码靠 `_` 前缀躲扫描是设计破损信号。
 
 窗口本身默认与业务同域（`<tool>w.py`）；独立桌面应用（如 `cmder`，命令 `cmderw`）归 `fcmd/apps/`，与 `fcmd.tools` 同为工具发现根。共享模型与运行时的多模块应用族（如本地 LLM 工具族 `apps/locllm/`，命令名不变）同样归 `apps/<应用>/`，见 [ADR 0026](0026-locllm-app-migration.md)。
 
@@ -48,9 +48,9 @@
 - B1：新增 `tests/test_layout.py`，五条断言全绿。
 - B2：移除 TOML DSL 后，`dsl/actions/` 与 `dsl/toolcmd/` 一并删除；纯计算按主题迁入 `fcmd/infras/`，命令外壳迁入 `fcmd/tools/<域>/`。
 - B4：`tools/data`、`tools/hash` 两个单文件域提为顶层模块，`_manifest_data` 布局指纹同步重生成。
-- B5：`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`，测试镜像迁至 `tests/gui/`；布局指纹不含下划线模块，清单无需重生成。
+- B5：`tools/_guiwindow.py` / `_guitheme.py` / `_guiconfig.py` → `fcmd/gui/window.py` / `theme.py` / `config.py`，测试镜像迁至 `tests/gui/`；布局指纹不含下划线模块，清单无需重生成（0034 后 `window.py` 已删除，几何纯函数在 `fcmd/gui/geometry.py`）。
 - B6：独立应用包 `cmder`（命令 `cmderw`，实现模块统一 `_` 前缀）迁至 `fcmd/apps/`，测试迁至 `tests/apps/cmder/`；工具发现与静态清单的扫描根同步扩展为 `tools` + `apps`。
-- B7：`reshack`（CLI）与 `reshackw`（Tk GUI）迁入 `fcmd/apps/reshack/`，共用 `_core.py`，测试迁至 `tests/apps/reshack/`；应用包支持逐公开模块注册多个命令。
+- B7：`reshack`（CLI）与 `reshackw`（Qt GUI）迁入 `fcmd/apps/reshack/`，共用 `_core.py`，测试迁至 `tests/apps/reshack/`；应用包支持逐公开模块注册多个命令。
 
 ## 交接
 

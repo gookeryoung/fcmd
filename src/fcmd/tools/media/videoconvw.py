@@ -20,7 +20,7 @@ from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,

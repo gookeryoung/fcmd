@@ -36,7 +36,7 @@ from typing import Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 from fcmd.infras.system import shell_profile_path
 
 __all__ = [

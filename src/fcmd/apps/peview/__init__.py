@@ -3,7 +3,7 @@
 公开模块：
 
 - :mod:`fcmd.apps.peview.peview` —— CLI（``fcmd peview ...``）
-- :mod:`fcmd.apps.peview.pevieww` —— Tk 查看器（``fcmd pevieww``）
+- :mod:`fcmd.apps.peview.pevieww` —— Qt 查看器（``fcmd pevieww``）
 
 解析、展示、编辑校验分别在 ``_reader`` / ``_pe`` / ``_report`` / ``_edit`` /
 ``_view`` 中实现，均为纯逻辑模块。

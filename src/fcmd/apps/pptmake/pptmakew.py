@@ -24,7 +24,7 @@ import fcmd
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _tokens as tokens
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

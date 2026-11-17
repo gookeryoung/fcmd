@@ -29,7 +29,7 @@ Total Commander 允许把常用的外部命令挂到开始菜单、按钮栏与�
 - `%L`：全部选中项完整路径，分隔与引号规则同 `%S`。
 - `%%`：输出字面 `%`。
 - 其它 `%X` 与结尾孤立 `%` 抛 `PlaceholderError`（带原文与位置），不静默丢弃；
-  Tk 层把错误显示出来并放弃本次执行。
+  界面层把错误显示出来并放弃本次执行。
 
 ### 3. 执行
 
@@ -55,7 +55,7 @@ Total Commander 允许把常用的外部命令挂到开始菜单、按钮栏与�
 
 ## 交接
 
-- 占位符与命令模型全部在 `_commands.py`，Tk 层只做上下文收集、入口重建与执行。
+- 占位符与命令模型全部在 `_commands.py`，界面层（`_cmder_qt_dialogs.UserCommandsDialog`）只做上下文收集、入口重建与执行。
 - 新增占位符时同时更新 `PLACEHOLDERS`、本 ADR 与 `TestUserCommands`，并保持
   「未知占位符报错而非空串」的口径。
 - 用户命令与命令行栏共享 `_run_shell` / `_command_finished`，不要再写第二套执行器。

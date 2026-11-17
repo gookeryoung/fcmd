@@ -44,7 +44,7 @@ PAGES = (
     ("monitor", "监测", "指标、负载、日志与性能测试"),
     ("settings", "设置", "存储、引擎与关于"),
 )
-"""侧边栏页面顺序与提示；与 Tk 版的七页口径一致。"""
+"""侧边栏页面顺序与提示；与既有七页口径一致。"""
 
 
 def create_application(argv: Sequence[str] | None = None) -> QApplication:

@@ -1,4 +1,4 @@
-"""cmder —— 双面板文件管理器（Tk GUI，Total Commander 风格）。
+"""cmder —— 双面板文件管理器（Qt GUI，Total Commander 风格）。
 
 应用包目录名为 ``cmder``，对外命令仍为 ``cmderw``（GUI 应用）；由
 ``__tool_name__`` 显式声明，避免工具名随目录名变化。应用入口在

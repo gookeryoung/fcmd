@@ -1,6 +1,6 @@
 # 0034 全量 GUI 迁移到 Qt（PySide6）：共享层先行与分批迁移
 
-- 状态：生效（B0–B6 已落地：共享层、21 个工具窗口全部 Qt 化、locllmw 的 Tk 回退已删除；B7 cmderw 为独立阶段，尚未开始）
+- 状态：已全部落地（B0–B7：共享层、21 个工具窗口、locllmw 与 cmderw 全部 Qt 化；Tk 窗口代码与共享层已删除）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线）、0033（locllmw 迁移与 Qt 基座）、0025（侧边栏导航）
 
@@ -13,8 +13,8 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 |---|---|
 | C1 | CLI 行为、输出契约、打包入口（`pyproject.toml [project.scripts]`）不变 |
 | C2 | 每个批次结束时应用可实际启动；不合并「半迁移不可用」的中间态 |
-| C3 | 纯逻辑、设置与 geometry 测试保持原口径；窗口胶水不追求覆盖率（与 Tk 窗口一致） |
-| C4 | 主题、窗口设置、geometry 文件与 Tk 版共用（`${FCMD_HOME:-~/.fcmd}/ui/*.json`） |
+| C3 | 纯逻辑、设置与 geometry 测试保持原口径；窗口胶水不追求覆盖率 |
+| C4 | 主题、窗口设置与 geometry 文件继续使用 `${FCMD_HOME:-~/.fcmd}/ui/*.json` |
 | C5 | Qt 只在创建窗口的路径上导入，CLI `--help` / 启动快路径不加载 PySide6 |
 
 ## 现状盘点（迁移起点：Tk 21 个工具窗口 + 1 个旗舰；下表为迁移前口径）
@@ -44,9 +44,10 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 | `apps/wslman/wslmanw.py` | 1753 | 多分页 + 下载 + 终端 | B5 |
 | `apps/cmder/app.py` | 8735 | 双面板文件管理器 + 缩略图 + 队列 | B7（独立阶段，见 D1） |
 
-Tk 共享层 `src/fcmd/gui/{window,theme,sidebar}.py` 目前只服务 cmderw（B7）；
+Tk 共享层（`fcmd/gui/window.py` / `sidebar.py` 与 `theme.py` 的 ttk 渲染部分）已删除；
 Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已落地），
-几何纯函数统一在 `fcmd/gui/geometry.py`。
+几何纯函数统一在 `fcmd/gui/geometry.py`，分页纯函数在 `fcmd/gui/pages.py`，
+主题注册表（调色板 / 持久化）保留在 `fcmd/gui/theme.py`。
 
 ## 目标结构（B0 共享层）
 
@@ -82,24 +83,28 @@ Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已�
 | B3 | 5 个中型表格 / 树 | 批量列表滚动流畅；操作按钮固定底栏，不随列表压缩 |
 | B4 | 4 个大型表格 / 树 | 5000+ 行列表刷新不阻塞 GUI 线程；报告 / 导出路径可用 |
 | B5 | `wslmanw`（多分页 + 下载 + 终端） | 分页完整迁移；终端与下载不阻塞 GUI |
-| B6 | 收尾：locllmw 的 Tk 回退删除、alarmclock / checksum Qt 化 | README / CHANGELOG、体积与运行期开销实测、Tk 共享层去留评估（保留给 cmderw） |
-| B7 | `cmderw` 独立阶段（不在本轮逐应用队列内）；**当前唯一剩余 Tk 代码** | 先迁外壳 + 双面板；列表虚拟化 / 缩略图队列单独评估后再定 |
+| B6 | 收尾：locllmw 回退删除、alarmclock / checksum Qt 化 | README / CHANGELOG、体积与运行期开销实测 |
+| B7 | `cmderw` 独立阶段（已完成） | 外壳 + 双面板、缩略图后台解码、队列与全部对话框迁到 Qt；Tk 实现删除 |
 
 每批独立提交、可独立回退；批次内每迁完一个应用即可单独启动验收，不攒到最后。
-B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk 实现改坏。
+B7 与 B1–B6 平行排期，迁移期间任何一批的提交都不应把 cmderw 改坏。
 
-进度：B0–B6 已完成；B7（cmderw）为独立阶段，尚未开始。
+进度：B0–B7 已全部完成。
 
 - B1 六个应用（pdfcryptw / img2icow / docdiffw / parameshw / paramcadw / img2pdfw）、
   B2 五个应用（pevieww / pdfsplitw / dynacalcw / regexvalidatew / filesyncw）、
   B3 六个应用（ncmconvertw / mirrortoolw / videoconvw / reshackw / devmanw / renamerw）、
-  B4 四个应用（pptmakew / envw / filescanw / wslmanw）各自单独提交，Tk 实现已删除，
+  B4 四个应用（pptmakew / envw / filescanw / wslmanw）各自单独提交，旧实现已删除，
   GUI 入口统一委托 ``_<tool>w_qt.py``；
 - locllmw 的 P2 已落地：模型页补齐 ModelScope 浏览 / 下载、已安装仓库、转换与量化向导，
   `--ui tk` 与全部 Tk 模块（`locllmw.LocllmWindow`、`_locllmw_ui` / `_locllmw_bench` /
   `_locllmw_chat` / `_locllmw_monitor` / `_locllmw_overview` / `_locllmw_settings` /
   `_locllmw_models` / `_locllmw_convert` 的 Tk 类）已删除（见 0033）；
-- B6 收尾还包含 `alarmclock` / `checksum` 两个 Tk 工具窗口的 Qt 化；
+- B6 收尾还包含 `alarmclock` / `checksum` 两个工具窗口的 Qt 化；
+- B7 已完成：`cmderw` 拆为 `_cmder_qt.py`（窗口 / 菜单 / 队列 / 命令行）、
+  `_cmder_qt_panels.py`（双面板 / 缩略图 / 快速查看）与 `_cmder_qt_dialogs.py`
+  （多重命名 / 搜索 / 比较 / 同步 / 用户命令 / 颜色规则等 17 个对话框），
+  `app.py` 只保留纯逻辑（设置、扫描、排序、历史、传输计划、归档成员、预览与格式化）；
 - 断言 Tk 内部实现的入口测试已改写为 Qt 等价断言（对话页服务选择、概览页已加载服务、
   量化勾选、闹钟时钟与提醒、校验和比较等），纯逻辑与设置测试保持原样；
 - 共享层同时落地统一控件高度基准（L8）：按钮 / 单行输入 / 下拉 / 数值框按字体行高
@@ -122,7 +127,7 @@ B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk �
 
 - 纯逻辑（省略算法、列宽分配、分栏尺寸解析、设置迁移）进 `tests/gui/` 普通单测。
 - Qt 窗口冒烟用 `QT_QPA_PLATFORM=offscreen`，断言页面可构建、关键控件存在、几何可回写；
-  Qt 控件胶水与 Tk 窗口同口径，不加覆盖率断言。
+  Qt 控件胶水与其它 GUI 窗口同口径，不加覆盖率断言。
 - `pyrefly.toml` 对 Qt 绑定模块的排除沿用 0033 的做法（CI 的 lint job 不装 PySide6）；
   新增模块按 `src/fcmd/tools/*/*_qt.py` / `src/fcmd/apps/*/*_qt*.py` 归入排除。
 - 每批至少 `make flow`；收尾跑 `make check`（含覆盖率与 linux 类型检查）。
@@ -133,7 +138,7 @@ B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk �
 
 1. `pip install --no-cache-dir .` 前后的 `site-packages` 字节数；
 2. fspack/便携包 zip 体积（Windows）；
-3. 冷启动到首帧：Tk 窗口与 Qt 窗口各 5 次中位数；
+3. 冷启动到首帧：各窗口 5 次中位数；
 4. 常驻 RSS：空窗口与 5000 行列表各 3 次中位数。
 
 迁移完成前不预填数字，避免与最终实现不符。
@@ -143,12 +148,12 @@ B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk �
 | 编号 | 结论 | 落实方式 |
 |---|---|---|
 | D1 | cmderw（8,735 行）**不纳入本轮**逐应用迁移，拆为独立阶段 B7 | 先迁外壳 + 双面板；列表虚拟化 / 缩略图队列在 B7 内单独评估。B1–B6 不触碰 `apps/cmder/app.py` 的 Tk 实现 |
-| D2 | 应用迁完即删除 Tk 窗口代码，不留双份实现 | locllmw 的 `--ui tk` 随 P2 收尾一并删除；当前唯一保留 Tk 的是 cmderw（B7） |
+| D2 | 应用迁完即删除 Tk 窗口代码，不留双份实现 | locllmw 的 `--ui tk` 与 cmderw 的 Tk 实现均已删除；仓库不再包含 Tk 窗口 |
 | D3 | 现有窗口测试**只改写断言 Tk 内部实现**的用例 | 改为对 Qt 的等价行为断言；纯逻辑、设置、geometry 记忆等测试不动，不放宽条件、不删用例 |
 
 ## 交接
 
 - 新增窗口：继承 `QtToolWindow`（单页）或 `QtMainWindow`（分页），不要各自复制菜单 / 状态栏 / 几何逻辑。
 - 后台动作一律 `gui.qt.workers.submit(...)`；禁止在 GUI 线程做扫描 / 转换 / 网络。
-- 设置文件沿用 `fcmd.gui.config`，字段与 Tk 版保持同名同义，便于回退期互读。
+- 设置文件沿用 `fcmd.gui.config`，字段与旧版保持同名同义，便于读取历史文件。
 - 迁移一个应用时同步更新其模块 docstring 与工具 `help` 文本中的「Tk」字样。

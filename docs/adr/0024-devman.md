@@ -374,7 +374,7 @@ exit /b %ERRORLEVEL%
 
 ### D12 GUI（`devmanw`，P2）
 
-- 复用 `fcmd.gui.window` 的 `create_root` / `start_worker` / `create_log` 与
+- 复用 `fcmd.gui.qt.toolwindow` / `workers` / `widgets.LogView` 与
   `fcmd.gui.theme`；设置持久化 `~/.fcmd/ui/devmanw.json`（`fcmd.gui.config`）。
 - 分页（沿用 locllmw 的分页经验，避免表单堆叠）：
   「已安装」版本表（工具 / 版本 / 活动 / 大小 / 完整性）＋切换按钮；
@@ -407,7 +407,7 @@ exit /b %ERRORLEVEL%
 | 阶段 | 内容 | 验收 |
 |---|---|---|
 | P1（本轮） | `_errors` / `_paths` / `_state` / `_net` / `_archive` / `_toolchain` / `_node` / `_python` / `_env` / `_ops` + 全部 CLI 子命令 + 入口注册 + 清单重生成 | 单测覆盖纯逻辑与错误路径（假 `Fetcher` / `Runner` / `EnvStore`）；`--json` 信封、退出码、`--dry-run` 零调用断言；真机隔离验证通过 |
-| P2 | `devmanw` Tk 窗口 | 复用 `fcmd.gui`；后台安装可取消、失败可回滚；破坏性操作二次确认 |
+| P2 | `devmanw` Qt 窗口 | 复用 `fcmd.gui`；后台安装可取消、失败可回滚；破坏性操作二次确认 |
 | 后续（不在 v1） | Linux/macOS、后台升级检查、npm 全局包纳管 | 另立 ADR |
 
 P1 真机验证（`%TEMP%\devman-verify-<ts>` 作 root，不碰任何既有安装）：

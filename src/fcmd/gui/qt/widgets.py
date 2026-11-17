@@ -8,7 +8,7 @@
 - 卡片统一用 ``QGroupBox#Card``，标题由主题 QSS 上色；
 - 数值 / 说明类文字用 ``HintLabel``（次要色）与 ``value_label``（强调）；
 - 日志区固定 ``QPlainTextEdit#Log`` + 工具条（复制 / 清空 / 导出），
-  与 Tk 基座的 ``create_log`` 行为对齐；
+  与既有日志区行为对齐；
 - 全部控件类标注 ``pragma: no cover``（CI 无显示环境，不追求控件覆盖率）。
 """
 
@@ -177,7 +177,7 @@ class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
 
 
 class HintLabel(QLabel):  # pragma: no cover - Qt 控件
-    """次要说明文字，``text`` 可随时替换（替代 Tk 的 ``StringVar`` 提示行）。"""
+    """次要说明文字，``text`` 可随时替换（替代旧版的可变提示行）。"""
 
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(text, parent)

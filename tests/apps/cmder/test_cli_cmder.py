@@ -95,7 +95,6 @@ from fcmd.apps.cmder.app import (
     validate_name,
 )
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.gui import window as _guiwindow
 
 
 # ============================================================================ #
@@ -106,18 +105,18 @@ def test_tool_registered() -> None:
     assert set(_TOOL_REGISTRY["cmderw"]) == {None}
 
 
-def test_run_gui_delegates_to_window_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    """run_gui 把窗口工厂与标题交给统一运行器。"""
-    captured: list[tuple[Any, str]] = []
+def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """run_gui 把设置路径与启动请求交给 Qt 入口。"""
+    import types
 
-    def fake_run_window(factory: Any, message: str) -> None:
-        captured.append((factory, message))
-
-    monkeypatch.setattr(_guiwindow, "run_window", fake_run_window)
-    cmderw.run_gui()
-    factory, message = captured[0]
-    assert callable(factory)
-    assert message == "双面板文件管理器"
+    calls: list[tuple[object, object]] = []
+    fake = types.ModuleType("fcmd.apps.cmder._cmder_qt")
+    fake.run_qt = lambda settings_path=None, launch=None: calls.append((settings_path, launch))  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.cmder._cmder_qt", fake)
+    request = LaunchRequest(left="/data")
+    path = tmp_path / "cmderw.json"
+    cmderw.run_gui(path, request)
+    assert calls == [(path, request)]
 
 
 def test_launch_cmd_passes_paths(monkeypatch: pytest.MonkeyPatch) -> None:

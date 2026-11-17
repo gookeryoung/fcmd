@@ -22,7 +22,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 
 __all__ = [
     "DEFAULT_GEOMETRY",

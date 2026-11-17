@@ -34,7 +34,7 @@ from fcmd.apps.filesync._core import (
     normalize_sync_mode,
 )
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import window as _guiwindow
+from fcmd.gui import geometry as _guiwindow
 
 __all__ = [
     "DEFAULT_GEOMETRY",

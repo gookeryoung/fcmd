@@ -5,7 +5,7 @@
 
 所有读取都经过 :mod:`fcmd.apps.peview._reader` 的边界检查；递归层级与表项
 数量设上限并检测循环，损坏文件统一抛 :class:`PEError`，错误信息带文件偏移。
-本模块不做任何写入，Tk 与 CLI 只消费这里的数据模型。
+本模块不做任何写入，GUI 与 CLI 只消费这里的数据模型。
 """
 
 from __future__ import annotations

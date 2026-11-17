@@ -15,7 +15,7 @@
 | [0010](0010-cmderw-user-commands.md) | cmderw 用户命令与外部工具入口 | 生效（N1–N2） |
 | [0011](0011-cmderw-p2-enhancements.md) | cmderw 搜索过滤、卷栏、属性、预览与队列调度 | 生效（N3–N7） |
 | [0012](0012-cmderw-p3-file-tools.md) | cmderw P3 文件工具：归档写入、分卷、重复文件、包内搜索与标签交互 | 生效（P3） |
-| [0013](0013-gui-toolkit-feasibility.md) | GUI 技术路线：不自研 C++ 绑定（研究结论，落地选择见 0033 / 0034） | 生效（研究结论） |
+| [0013](0013-gui-toolkit-feasibility.md) | GUI 技术路线：不自研 C++ 绑定（研究结论，落地选择见 0033 / 0034） | 生效（研究结论；Tk 实现已按 0034 全部移除） |
 | [0014](0014-batch-renamer.md) | 批量重命名：规则流水线 + 正则重排 / 搬移 | 已落地（v1） |
 | [0015](0015-llm-serve-tuning.md) | llmserve 启动参数调优策略（基准实测） | 已落地 |
 | [0016](0016-llmdown-model-browser.md) | llmdown 模型浏览器：ModelScope 搜索 / 详情 / 下载管理 | 已落地（v1） |
@@ -36,4 +36,4 @@
 | [0031](0031-localllm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`；设置页两分页（存储 / 引擎）+ 关于与诊断，引擎页承接原引擎管理窗口 | 已落地 |
 | [0032](0032-locllmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
 | [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt（PySide6）：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）、七页与模型下载 / 转换 / 量化向导重构；PySide2 不可行的依据 | 生效（已全部落地，Tk 实现已删除） |
-| [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B6 分批 | 生效（B0–B6 已落地；B7 cmderw 待实施） |
+| [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B7 分批 | 已落地（全部窗口 Qt 化，Tk 代码已删除） |

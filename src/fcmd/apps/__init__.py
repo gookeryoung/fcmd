@@ -1,4 +1,4 @@
-"""fcmd.apps —— 独立桌面应用（Tk 图形界面）。
+"""fcmd.apps —— 独立桌面应用（Qt 图形界面）。
 
 与 ``fcmd.tools`` 同为工具发现根：每个子包即一个应用。包内默认逐公开模块
 注册，模块名即工具名（如 ``fcmd.apps.reshack`` 的 ``reshack`` /

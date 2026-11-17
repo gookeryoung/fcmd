@@ -1,7 +1,7 @@
 """Qt 主题：把 :mod:`fcmd.gui.theme` 的调色板翻译成 QSS 与 QPalette。
 
-与 Tk 基座共用同一份 :class:`fcmd.gui.theme.Theme`（四套内置主题、别名与
-``${FCMD_HOME:-~/.fcmd}/ui/theme.json`` 持久化），因此 Tk 窗口与 Qt 窗口的
+与主题注册表共用同一份 :class:`fcmd.gui.theme.Theme`（四套内置主题、别名与
+``${FCMD_HOME:-~/.fcmd}/ui/theme.json`` 持久化），因此各 GUI 窗口的
 配色、字号阶梯与切换方式保持一致：Qt 侧只负责把语义色板映射到控件样式。
 
 设计约定：
