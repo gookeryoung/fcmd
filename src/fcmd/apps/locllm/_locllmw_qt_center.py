@@ -115,6 +115,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
         self.repo = item.repo
         self._expanded = False
+        self._installed = installed
         self.setObjectName("ModelItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
@@ -144,11 +145,6 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         left.addWidget(sub)
         header_row.addLayout(left, 1)
 
-        if installed:
-            badge = QLabel("✓ 已安装", header)
-            badge.setObjectName("InstalledBadge")
-            badge.setToolTip("该仓库已在本地模型目录中")
-            header_row.addWidget(badge, 0)
         stats = QLabel(metrics, header)
         stats.setObjectName("Hint")
         stats.setWordWrap(False)
@@ -156,7 +152,13 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
         self.download_button = button("下载")
-        self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
+        if installed:
+            self.download_button.setObjectName("InstalledButton")
+            self.download_button.setText("✓ 已安装")
+            self.download_button.setEnabled(False)
+            self.download_button.setToolTip("该模型已在本地模型目录中")
+        else:
+            self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
         header_row.addWidget(self.download_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
@@ -186,7 +188,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self.style().polish(self)
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
-        """下载中禁用所有下载按钮，当前行显示「下载中…」。"""
+        """已安装行保持绿色勾选态；其余行下载中禁用，当前行显示「下载中…」。"""
+        if self._installed:
+            self.download_button.setEnabled(False)
+            self.download_button.setText("✓ 已安装")
+            return
         self.download_button.setEnabled(not busy)
         self.download_button.setText("下载中…" if active else "下载")
 

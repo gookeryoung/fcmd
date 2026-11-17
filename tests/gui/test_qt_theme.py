@@ -158,10 +158,10 @@ def test_tab_pane_and_nested_tables_are_flat() -> None:
     assert "background: transparent" in nested_block
 
 
-def test_installed_badge_uses_success_color() -> None:
+def test_installed_button_uses_success_color() -> None:
     theme = _guitheme.resolve_theme("dark-blue")
     text = _qt_theme.stylesheet(theme)
-    block = text.split("QLabel#InstalledBadge {", 1)[1].split("}", 1)[0]
+    block = text.split("QPushButton#InstalledButton {", 1)[1].split("}", 1)[0]
     assert f"color: {theme.palette.success}" in block
     assert f"border: 1px solid {theme.palette.success}" in block
 
