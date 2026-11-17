@@ -123,7 +123,9 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._raw_settings = _guiconfig.read_settings(settings_path) or {}
         self._build()
         self._update_action_states()
-        QTimer.singleShot(0, self.refresh)
+        # 绑定 self 作为上下文：窗口在定时器触发前被销毁时自动取消，
+        # 避免测试里跨用例触发已删除的 C++ 对象（Qt 会直接 abort）
+        QTimer.singleShot(0, self, self.refresh)
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -254,7 +256,9 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.set_status(f"{label}…")
         self._progress.setRange(0, 0)
         self._set_buttons(False)
-        bridge = _TaskBridge(self)
+        # 不挂到窗口下：窗口可能在后台任务结束前销毁，桥对象由任务参数保活，
+        # 避免 worker 线程向已删除的 QObject 发信号（Qt 会堆损坏 / abort）
+        bridge = _TaskBridge()
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(_work_task, work, bridge, on_error=self._on_worker_error)

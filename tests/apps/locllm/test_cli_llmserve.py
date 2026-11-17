@@ -180,6 +180,97 @@ def _plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, home: Path, model_fil
     return llmserve.make_plan("qwen", home=home, model=model_file)
 
 
+class TestFlashAttnSyntax:
+    """``--flash-attn`` 在新旧引擎上的语法差异。"""
+
+    def test_old_engine_uses_boolean_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        exe = tmp_path / "llama-server"
+        exe.write_text("", encoding="utf-8")
+        llmbase._flash_attn_style_cached.cache_clear()
+        monkeypatch.setattr(
+            llmbase,
+            "run_command",
+            lambda *args, **kwargs: llmbase.CommandResult(0, "-fa, --flash-attn  enable Flash Attention", ""),
+        )
+        assert llmbase.flash_attn_argv(exe, "on") == ["--flash-attn"]
+        assert llmbase.flash_attn_argv(exe, "auto") == ["--flash-attn"]
+
+    def test_new_engine_passes_value(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        exe = tmp_path / "llama-server"
+        exe.write_text("", encoding="utf-8")
+        llmbase._flash_attn_style_cached.cache_clear()
+        monkeypatch.setattr(
+            llmbase,
+            "run_command",
+            lambda *args, **kwargs: llmbase.CommandResult(
+                0, "-fa,   --flash-attn [on|off|auto]  set Flash Attention use", ""
+            ),
+        )
+        assert llmbase.flash_attn_argv(exe, "on") == ["--flash-attn", "on"]
+        assert llmbase.flash_attn_argv(exe, "auto") == ["--flash-attn", "auto"]
+
+    def test_off_and_empty_emit_nothing(self, tmp_path: Path) -> None:
+        exe = tmp_path / "llama-server"
+        exe.write_text("", encoding="utf-8")
+        assert llmbase.flash_attn_argv(exe, "off") == []
+        assert llmbase.flash_attn_argv(exe, "") == []
+
+    def test_backend_uses_detected_style(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+    ) -> None:
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        monkeypatch.setattr(llmbase, "flash_attn_argv", lambda exe, value: ["--flash-attn", value])
+        argv = plan.argv()
+        assert argv[argv.index("--flash-attn") + 1] == plan.tuning.flash_attn
+
+
+class TestEngineExitDiagnostics:
+    """引擎启动即退出时的诊断文案：旧引擎不认识新模型架构。"""
+
+    def test_unknown_architecture_from_log(self) -> None:
+        text = "llama_model_load: error loading model: unknown model architecture: 'qwen3moe'"
+        assert llmserve._unknown_architecture(text) == "qwen3moe"
+        assert llmserve._unknown_architecture("all good") is None
+
+    def test_engine_exit_error_suggests_upgrade(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+    ) -> None:
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        plan.log.parent.mkdir(parents=True, exist_ok=True)
+        plan.log.write_text(
+            "llama_model_load: error loading model: unknown model architecture: 'qwen3moe'\n",
+            encoding="utf-8",
+        )
+        error = llmserve._engine_exit_error(plan, 3221226505)
+        text = str(error)
+        assert "qwen3moe" in text
+        assert "llmengine install" in text
+        assert str(plan.log) in text
+
+    def test_engine_exit_error_keeps_log_tail(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+    ) -> None:
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        plan.log.parent.mkdir(parents=True, exist_ok=True)
+        plan.log.write_text("boom: cannot allocate memory\n", encoding="utf-8")
+        text = str(llmserve._engine_exit_error(plan, 1))
+        assert "引擎启动后立即退出" in text
+        assert "boom" in text
+        assert str(plan.log) in text
+
+
 class TestHelpers:
     def test_human_size(self) -> None:
         assert llmbase.human_size(0) == "0 B"

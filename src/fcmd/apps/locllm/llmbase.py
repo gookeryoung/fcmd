@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import codecs
+import functools
 import locale
 import re
 import shlex
@@ -275,6 +276,46 @@ class Backend(Protocol):
         ...
 
 
+@functools.lru_cache(maxsize=8)
+def _flash_attn_style_cached(exe: str, _mtime: float) -> bool:
+    """探测引擎的 ``--flash-attn`` 语法：``True`` 表示需要取值（on/off/auto）。
+
+    缓存键包含可执行文件路径与修改时间，升级引擎后自动失效。探测走
+    ``llama-server --help``：新版帮助是 ``--flash-attn [on|off|auto]``，
+    旧版（如 b5019）是布尔开关 ``--flash-attn``。
+    """
+    result = run_command([exe, "--help"], timeout=15.0)
+    text = f"{result.stdout}\n{result.stderr}"
+    return "--flash-attn [" in text or "--flash-attn <" in text
+
+
+def flash_attn_requires_value(exe: Path) -> bool:
+    """引擎的 ``--flash-attn`` 是否需要取值（探测失败时按旧版布尔开关处理）。"""
+    try:
+        mtime = exe.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return _flash_attn_style_cached(str(exe), mtime)
+
+
+def flash_attn_argv(exe: Path, value: str) -> list[str]:
+    """按引擎语法生成 FlashAttention 参数。
+
+    新旧 llama.cpp 对 ``--flash-attn`` 的解析不同：
+
+    - 旧版（build ≤ 5xxx）：布尔开关，``--flash-attn``；
+    - 新版（当前的官方构建）：必须取值，``--flash-attn on|off|auto``。
+
+    传错会让引擎在参数解析阶段直接退出（``unknown value for --flash-attn``），
+    因此这里按引擎探测结果生成，而不是固定一种写法。``off`` 不传参数。
+    """
+    if not value or value == "off":
+        return []
+    if flash_attn_requires_value(exe):
+        return ["--flash-attn", value]
+    return ["--flash-attn"]
+
+
 @dataclass(frozen=True, slots=True)
 class LlamaCppBackend:
     """llama.cpp ``llama-server`` 后端。"""
@@ -301,12 +342,8 @@ class LlamaCppBackend:
             "-np",
             str(parallel),
         ]
-        # llama.cpp 的 --flash-attn 在不同构建间语法不一致：旧版（如 b5019）是布尔开关，
-        # 新版才接受 on/off/auto 取值。默认值 on 用无参形式，两代引擎都能启动。
-        if tuning.flash_attn == "on":
-            args.append("--flash-attn")
-        elif tuning.flash_attn and tuning.flash_attn != "off":
-            args += ["--flash-attn", tuning.flash_attn]
+        # --flash-attn 的语法随 llama.cpp 构建变化，按引擎探测结果生成参数
+        args += flash_attn_argv(plan.engine.exe, tuning.flash_attn)
         args += [
             "-ctk",
             plan.effective_kv_type,

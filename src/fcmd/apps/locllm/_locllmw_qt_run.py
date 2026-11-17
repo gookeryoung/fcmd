@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.locllm import _llmtune, llmbase, llmenv, llmmodel, llmserve
+from fcmd.apps.locllm import _llmtune, llmbase, llmengine, llmenv, llmmodel, llmserve
 from fcmd.apps.locllm._llmgguf import detect_precision
 from fcmd.apps.locllm._locllmw_monitor import _busy_advice, _fit_advice, _probe_web_ui
 from fcmd.apps.locllm._locllmw_ui import _HINT_PLACEHOLDER, service_name_from_model
@@ -658,9 +658,16 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         base = http_base_url(self.host_edit.text().strip() or DEFAULT_HOST, port)
         alias = self.alias_edit.text().strip() or path.stem
         tuning = self.tuning()
+        try:
+            engine = llmengine.resolve_engine()
+        except ServeError:
+            engine_text = "未找到引擎（设置 → 引擎 安装）"
+        else:
+            engine_text = f"{engine.tag} · {engine.exe}"
         lines = [
             f"标签: {' · '.join(tags) or '未识别'} | {advice}",
             f"精度: {self._precision_detail(path)}",
+            f"引擎: {engine_text}",
             f"接入: {base}/v1，model={alias}",
             f"调优: {tuning.label} · {tuning.detail}",
             self.effective_tuning_text(tuning),

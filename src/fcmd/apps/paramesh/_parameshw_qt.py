@@ -115,7 +115,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._apply_config_file(config_file)
         initial = model_file or (self._model_path if self._model_path and self._model_path.is_file() else None)
         if initial is not None:
-            QTimer.singleShot(60, lambda: self._load_path(initial))
+            QTimer.singleShot(60, self, lambda: self._load_path(initial))
 
     # ------------------------------------------------------------------ #
     # 构建

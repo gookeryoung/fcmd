@@ -455,7 +455,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _new_bridge(self) -> _FilesyncBridge:
         """创建并连接后台事件桥（任务结束前保持引用）。"""
-        bridge = _FilesyncBridge(self)
+        bridge = _FilesyncBridge()
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         return bridge

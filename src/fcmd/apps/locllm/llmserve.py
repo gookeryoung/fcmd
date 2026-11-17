@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import subprocess
 import time
 from collections.abc import Callable, Sequence
@@ -327,6 +328,37 @@ def _tail_text(path: Path, lines: int = 20) -> str:
 _MMPROJ_FAILURE_MARKERS = ("mmproj", "projector", "clip vision")
 
 
+_UNKNOWN_ARCH_RE = re.compile(r"unknown model architecture: '([^']+)'")
+"""引擎不认识模型架构时的日志特征（旧版 llama.cpp 加载新架构模型）。"""
+
+
+def _unknown_architecture(text: str) -> str | None:
+    """从引擎日志里提取不支持的模型架构名（没有则返回 ``None``）。"""
+    match = _UNKNOWN_ARCH_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _engine_exit_error(plan: LaunchPlan, code: int) -> ServeError:
+    """把「引擎启动后立即退出」翻译成可操作的错误信息。
+
+    旧版 llama.cpp 遇到新架构（如 ``qwen3moe``）时会在加载阶段退出，日志里写
+    ``unknown model architecture``。这时换启动参数没有意义，必须升级引擎，
+    因此错误信息直接给出升级命令与日志位置，而不是只贴一段日志尾部。
+    """
+    tail = _tail_text(plan.log, 12)
+    missing = _unknown_architecture(tail)
+    if missing is not None:
+        return ServeError(
+            f"当前引擎不支持该模型架构 {missing!r}（引擎 {plan.engine.tag}）："
+            "请升级 llama.cpp 引擎后重试，例如 `fcmd llmengine install b12211` 再 "
+            "`fcmd llmengine use b12211`；"
+            f"引擎日志: {plan.log}"
+        )
+    return ServeError(
+        f"引擎启动后立即退出（退出码 {format_returncode(code)}）。引擎日志: {plan.log}\n日志尾部:\n{tail}"
+    )
+
+
 def _mmproj_failure(plan: LaunchPlan) -> bool:
     """日志是否表明视觉塔加载失败（仅在有 mmproj 时判定）。"""
     if plan.mmproj is None:
@@ -370,10 +402,7 @@ def _launch_once(  # noqa: PLR0913
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            raise ServeError(
-                f"引擎启动后立即退出（退出码 {format_returncode(int(proc.returncode or 0))}）。"
-                f"日志尾部:\n{_tail_text(plan.log)}"
-            )
+            raise _engine_exit_error(plan, int(proc.returncode or 0))
         if probe(plan.host, plan.port, plan.api_key):
             state = ServeState(
                 name=plan.name,
@@ -398,7 +427,10 @@ def _launch_once(  # noqa: PLR0913
 
     with contextlib.suppress(ServeError):
         _terminate(pid, create_time, 5.0)
-    raise ServeError(f"健康检查超时（{wait_s:.0f}s）：{http_base_url(plan.host, plan.port)}/health")
+    raise ServeError(
+        f"健康检查超时（{wait_s:.0f}s）：{http_base_url(plan.host, plan.port)}/health。"
+        f"模型可能仍在加载，可加大等待秒数；引擎日志: {plan.log}"
+    )
 
 
 def launch(  # noqa: PLR0913
