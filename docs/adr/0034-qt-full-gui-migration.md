@@ -1,6 +1,6 @@
 # 0034 全量 GUI 迁移到 Qt（PySide6）：共享层先行与分批迁移
 
-- 状态：生效（B0 共享层、B1 六个单页工具、B2 五个表单窗口、B3 五个中型表格 / 树窗口已落地；B4 进行中，pptmakew / envw 已完成；B5–B7 待实施；D1–D3 已拍板）
+- 状态：生效（B0–B6 已落地：共享层、21 个工具窗口全部 Qt 化、locllmw 的 Tk 回退已删除；B7 cmderw 为独立阶段，尚未开始）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线）、0033（locllmw 迁移与 Qt 基座）、0025（侧边栏导航）
 
@@ -17,7 +17,7 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 | C4 | 主题、窗口设置、geometry 文件与 Tk 版共用（`${FCMD_HOME:-~/.fcmd}/ui/*.json`） |
 | C5 | Qt 只在创建窗口的路径上导入，CLI `--help` / 启动快路径不加载 PySide6 |
 
-## 现状盘点（Tk 剩余 21 个工具窗口 + 1 个旗舰）
+## 现状盘点（迁移起点：Tk 21 个工具窗口 + 1 个旗舰；下表为迁移前口径）
 
 | 模块 | 行数 | 形态 | 批次 |
 |---|---:|---|---|
@@ -44,8 +44,9 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 | `apps/wslman/wslmanw.py` | 1753 | 多分页 + 下载 + 终端 | B5 |
 | `apps/cmder/app.py` | 8735 | 双面板文件管理器 + 缩略图 + 队列 | B7（独立阶段，见 D1） |
 
-Tk 共享层 `src/fcmd/gui/{window,theme,sidebar,config}.py` 共约 2,036 行，保留给 Tk 回退期；
-Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已落地）。
+Tk 共享层 `src/fcmd/gui/{window,theme,sidebar}.py` 目前只服务 cmderw（B7）；
+Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已落地），
+几何纯函数统一在 `fcmd/gui/geometry.py`。
 
 ## 目标结构（B0 共享层）
 
@@ -81,24 +82,30 @@ Qt 侧复用 `fcmd/gui/qt/{theme,sidebar,window,widgets,workers}.py`（0033 已�
 | B3 | 5 个中型表格 / 树 | 批量列表滚动流畅；操作按钮固定底栏，不随列表压缩 |
 | B4 | 4 个大型表格 / 树 | 5000+ 行列表刷新不阻塞 GUI 线程；报告 / 导出路径可用 |
 | B5 | `wslmanw`（多分页 + 下载 + 终端） | 分页完整迁移；终端与下载不阻塞 GUI |
-| B6 | 收尾 | README / CHANGELOG、体积与运行期开销实测、Tk 共享层去留评估 |
-| B7 | `cmderw` 独立阶段（不在本轮逐应用队列内） | 先迁外壳 + 双面板；列表虚拟化 / 缩略图队列单独评估后再定 |
+| B6 | 收尾：locllmw 的 Tk 回退删除、alarmclock / checksum Qt 化 | README / CHANGELOG、体积与运行期开销实测、Tk 共享层去留评估（保留给 cmderw） |
+| B7 | `cmderw` 独立阶段（不在本轮逐应用队列内）；**当前唯一剩余 Tk 代码** | 先迁外壳 + 双面板；列表虚拟化 / 缩略图队列单独评估后再定 |
 
 每批独立提交、可独立回退；批次内每迁完一个应用即可单独启动验收，不攒到最后。
 B7 与 B1–B6 平行排期，任何一批的提交都不应把 cmderw 的 Tk 实现改坏。
 
-进度：B0、B1、B2、B3 已完成；B4 进行中（pptmakew、envw 已完成并单独提交，pptmakew
-的预览画布与缩略图共用同一份绘制列表，envw 的读写后端与设置保持原样）。B3 六个应用（ncmconvertw / mirrortoolw / videoconvw /
-reshackw / devmanw / renamerw）各自单独提交。B1 六个应用（pdfcryptw / img2icow /
-docdiffw / parameshw / paramcadw / img2pdfw）与 B2 五个应用（pevieww / pdfsplitw / dynacalcw /
-regexvalidatew / filesyncw）各自单独提交，Tk 实现已删除，GUI 入口统一委托
-``_<tool>w_qt.py``；断言 Tk 内部实现的入口测试已改写为 Qt 等价断言，纯逻辑
-与设置测试保持原样。共享层同时落地统一控件高度基准（L8）：按钮 / 单行输入 /
-下拉 / 数值框按字体行高推导逻辑像素，高 DPI 下随缩放同比换算；Tk 侧
-``ttk_style_specs`` 原本就对这几类控件用同一套 padding 并按 DPI 缩放，
-尚未迁移的窗口迁移后自动收敛到 Qt 基准，locllmw 的 Tk 回退沿用 ttk 基准。
-另：单页工具窗口的内容统一放进纵向滚动页面，窗口缩矮到内容最小高度以下时
-改为整页滚动，不再把表格 / 工具栏压出卡片边界（B4 期间的回溯修复）。
+进度：B0–B6 已完成；B7（cmderw）为独立阶段，尚未开始。
+
+- B1 六个应用（pdfcryptw / img2icow / docdiffw / parameshw / paramcadw / img2pdfw）、
+  B2 五个应用（pevieww / pdfsplitw / dynacalcw / regexvalidatew / filesyncw）、
+  B3 六个应用（ncmconvertw / mirrortoolw / videoconvw / reshackw / devmanw / renamerw）、
+  B4 四个应用（pptmakew / envw / filescanw / wslmanw）各自单独提交，Tk 实现已删除，
+  GUI 入口统一委托 ``_<tool>w_qt.py``；
+- locllmw 的 P2 已落地：模型页补齐 ModelScope 浏览 / 下载、已安装仓库、转换与量化向导，
+  `--ui tk` 与全部 Tk 模块（`locllmw.LocllmWindow`、`_locllmw_ui` / `_locllmw_bench` /
+  `_locllmw_chat` / `_locllmw_monitor` / `_locllmw_overview` / `_locllmw_settings` /
+  `_locllmw_models` / `_locllmw_convert` 的 Tk 类）已删除（见 0033）；
+- B6 收尾还包含 `alarmclock` / `checksum` 两个 Tk 工具窗口的 Qt 化；
+- 断言 Tk 内部实现的入口测试已改写为 Qt 等价断言（对话页服务选择、概览页已加载服务、
+  量化勾选、闹钟时钟与提醒、校验和比较等），纯逻辑与设置测试保持原样；
+- 共享层同时落地统一控件高度基准（L8）：按钮 / 单行输入 / 下拉 / 数值框按字体行高
+  推导逻辑像素，高 DPI 下随缩放同比换算；
+- 单页工具窗口的内容统一放进纵向滚动页面，窗口缩矮到内容最小高度以下时改为整页滚动，
+  不再把表格 / 工具栏压出卡片边界（B4 期间的回溯修复）。
 
 ## 每应用交付时的布局适配点
 
@@ -136,7 +143,7 @@ regexvalidatew / filesyncw）各自单独提交，Tk 实现已删除，GUI 入�
 | 编号 | 结论 | 落实方式 |
 |---|---|---|
 | D1 | cmderw（8,735 行）**不纳入本轮**逐应用迁移，拆为独立阶段 B7 | 先迁外壳 + 双面板；列表虚拟化 / 缩略图队列在 B7 内单独评估。B1–B6 不触碰 `apps/cmder/app.py` 的 Tk 实现 |
-| D2 | Tk 回退**只保留给 locllmw**（`--ui tk`）；其余应用迁完直接切 Qt | 各应用迁完即删除 Tk 窗口代码，不留双份实现；不新增 `--ui tk` 参数 |
+| D2 | 应用迁完即删除 Tk 窗口代码，不留双份实现 | locllmw 的 `--ui tk` 随 P2 收尾一并删除；当前唯一保留 Tk 的是 cmderw（B7） |
 | D3 | 现有窗口测试**只改写断言 Tk 内部实现**的用例 | 改为对 Qt 的等价行为断言；纯逻辑、设置、geometry 记忆等测试不动，不放宽条件、不删用例 |
 
 ## 交接

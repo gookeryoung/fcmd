@@ -28,7 +28,7 @@
 | `_preview.py` | 纯逻辑预览几何：截面、轴向剖面、分布曲线（不依赖 Tk） |
 | `_export.py` | `dynacalc-model/1` 导出、解析、校验、指纹（唯一格式边界） |
 | `paramcad.py` | CLI：`example` / `inspect` / `export` / `digest` / `contract` |
-| `paramcadw.py` | Tk 预览窗口，复用 `fcmd.gui` 主题与设置持久化 |
+| `paramcadw.py` + `_paramcadw_qt.py` | Qt 预览窗口，复用 `fcmd.gui` 主题与设置持久化 |
 
 协作约束：本阶段不修改共享工具注册表，也不重生成 `_manifest_data.py`；工具发现走
 动态路径，注册与清单由后续统一处理。不触碰 `src/fcmd/apps/dynacalc/` 内任何文件。
@@ -93,7 +93,7 @@
 全部默认 TBD。`validate_model` 只检查真实矛盾（如间隙不小于内腔半径），不把
 TBD 当错误。
 
-### D5 预览实现：几何与绘制分离，只用 Tk
+### D5 预览实现：几何与绘制分离，绘制用 Qt `QPainter`
 
 `_preview.py` 只产出点列与标注，`paramcadw` 只负责把点画到 `tk.Canvas`；不引入任何
 外部图形库，也没有显示器时仍可单测。

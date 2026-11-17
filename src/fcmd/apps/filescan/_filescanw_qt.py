@@ -1,13 +1,13 @@
 """filescanw 的 Qt 主窗口与入口。
 
-三个分页与 Tk 版等价：**扫描**（目录、选项、后缀白名单、配置导入导出、缓存）、
+三个分页与迁移前的窗口等价：**扫描**（目录、选项、后缀白名单、配置导入导出、缓存）、
 **结果**（按文件聚合命中、规则 / 路径筛选、打码导出）、**规则**（规则表、表达式
 校验与规则集导入导出）。扫描在 ``QThreadPool`` 中执行，进度经信号回投主线程，
 取消走 :class:`CancelToken`，关窗时置位取消并等待线程池收尾。
 
 扫描参数、规则集、设置与报告格式全部复用 :mod:`fcmd.apps.filescan` 的纯逻辑；
 本模块只做控件编排与信号连接。窗口设置继续写
-``${FCMD_HOME:-~/.fcmd}/ui/filescanw.json``，与 Tk 版同名字段互读。
+``${FCMD_HOME:-~/.fcmd}/ui/filescanw.json``，与旧设置文件同名字段互读。
 """
 
 from __future__ import annotations

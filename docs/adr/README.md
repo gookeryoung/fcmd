@@ -15,7 +15,7 @@
 | [0010](0010-cmderw-user-commands.md) | cmderw 用户命令与外部工具入口 | 生效（N1–N2） |
 | [0011](0011-cmderw-p2-enhancements.md) | cmderw 搜索过滤、卷栏、属性、预览与队列调度 | 生效（N3–N7） |
 | [0012](0012-cmderw-p3-file-tools.md) | cmderw P3 文件工具：归档写入、分卷、重复文件、包内搜索与标签交互 | 生效（P3） |
-| [0013](0013-gui-toolkit-feasibility.md) | GUI 技术路线：不自研 C++ 绑定，优先优化 Tk 路径 | 生效（研究结论） |
+| [0013](0013-gui-toolkit-feasibility.md) | GUI 技术路线：不自研 C++ 绑定（研究结论，落地选择见 0033 / 0034） | 生效（研究结论） |
 | [0014](0014-batch-renamer.md) | 批量重命名：规则流水线 + 正则重排 / 搬移 | 已落地（v1） |
 | [0015](0015-llm-serve-tuning.md) | llmserve 启动参数调优策略（基准实测） | 已落地 |
 | [0016](0016-llmdown-model-browser.md) | llmdown 模型浏览器：ModelScope 搜索 / 详情 / 下载管理 | 已落地（v1） |
@@ -23,8 +23,8 @@
 | [0018](0018-peview.md) | peview：PE 文件查看与安全编辑 | 设计中（分阶段落地） |
 | [0019](0019-filescan.md) | filescan：目录敏感内容扫描（规则表达式 / 后缀白名单 / 并行扫描 / 打码报告 / 性能基准） | 已实施 |
 | [0020](0020-dynacalc.md) | dynacalc：装药密度—尺寸—工艺缺陷→爆轰传递参数化算例（矩阵 / 模型映射 / deck 生成 / 调度 / 汇总 / 门控） | 已实施 |
-| [0021](0021-paramcad.md) | paramcad：参数化建模与几何预览（几何两态推导 / 分布场 / 缺陷参数 / Tk 预览 / 模型导出） | 最小原型已落地 |
-| [0022](0022-paramesh.md) | paramesh：参数化模型到仿真网格（尺度策略 / 区域与边界 / 质量指标 / 网格包交接契约 / Tk 预览） | 最小原型已落地 |
+| [0021](0021-paramcad.md) | paramcad：参数化建模与几何预览（几何两态推导 / 分布场 / 缺陷参数 / Qt 预览 / 模型导出） | 最小原型已落地 |
+| [0022](0022-paramesh.md) | paramesh：参数化模型到仿真网格（尺度策略 / 区域与边界 / 质量指标 / 网格包交接契约 / Qt 预览） | 最小原型已落地 |
 | [0023](0023-wslman.md) | wslman：Windows 上的 WSL 发行版管理（注册表 / `.wslconfig` 解析 / 导出导入 / 下载源降级 / 终端启动 / 双读输出） | P1 已落地（只读 CLI） |
 | [0024](0024-devman.md) | devman：Windows 开发环境管理（node/python 多版本安装、切换、卸载、冲突检测） | 已实施（P1 CLI 已落地，P2 GUI 待实施） |
 | [0025](0025-sidebar-page-navigation.md) | GUI 侧边栏分页导航（`SidebarNav`）：locllmw 等整窗分页（原环境、引擎、转换 / 量化窗口已并入 locllmw，见 0031） | 已落地 |
@@ -35,5 +35,5 @@
 | [0030](0030-locllmw-models-page.md) | locllmw 模型页：整合 llmdownw 的浏览 / 已安装 / 下载，移除独立窗口工具 | 已落地 |
 | [0031](0031-localllm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`；设置页两分页（存储 / 引擎）+ 关于与诊断，引擎页承接原引擎管理窗口 | 已落地 |
 | [0032](0032-locllmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
-| [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt（PySide6）：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）与七页重构；PySide2 不可行的依据与分期 | 生效（P0/P1 已落地，P2 待迁移） |
-| [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B6 分批 | 生效（B0 已落地，B1–B6 待实施） |
+| [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt（PySide6）：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）、七页与模型下载 / 转换 / 量化向导重构；PySide2 不可行的依据 | 生效（已全部落地，Tk 实现已删除） |
+| [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B6 分批 | 生效（B0–B6 已落地；B7 cmderw 待实施） |

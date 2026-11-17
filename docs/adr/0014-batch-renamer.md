@@ -16,7 +16,7 @@
 
 ## 决策
 
-### 1. 独立 `fcmd.apps.renamer` 包，CLI 与 Tk 共用纯逻辑
+### 1. 独立 `fcmd.apps.renamer` 包，CLI 与 Qt 共用纯逻辑
 
 ```
 src/fcmd/apps/renamer/
@@ -27,7 +27,7 @@ src/fcmd/apps/renamer/
 ```
 
 `_core` 不依赖 `fcmd.gui`，CLI 可在无显示环境使用；窗口只做表单与渲染，所有
-求值与执行都调用 `_core`。Tk 类标注 `pragma: no cover`，与 0013 的 GUI 口径一致。
+求值与执行都调用 `_core`。Qt 窗口类标注 `pragma: no cover`，与 0013 的 GUI 口径一致。
 
 ### 2. 规则是有序流水线，作用于名称主干或扩展名
 

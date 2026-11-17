@@ -14,7 +14,7 @@
 约束：
 
 - 扫描只读，绝不写被扫文件；报告默认打码，显式开关才输出原文；
-- 规则解析/求值、目录遍历、匹配与报告必须可单测，Tk 层只做展示；
+- 规则解析/求值、目录遍历、匹配与报告必须可单测，界面层只做展示；
 - 目录深度遵守 ADR 0003（`fcmd/apps/filescan/<模块>.py`，不建子包）；
 - 大目录要能中断，单文件读取有上限与编码容错；
 - 不新增第三方依赖。
@@ -33,7 +33,7 @@
 | `_report.py` | 文本 / JSON / CSV 报告、按规则与路径过滤、打码 |
 | `_config.py` | 扫描配置的导入 / 导出、逐字段容错与版本兼容 |
 | `filescan.py` | CLI：`scan` / `run` / `rules`（list·export·validate） |
-| `filescanw.py` | Tk 窗口、设置持久化（`~/.fcmd/ui/filescanw.json`） |
+| `filescanw.py` + `_filescanw_qt.py` | Qt 窗口、设置持久化（`~/.fcmd/ui/filescanw.json`） |
 
 `_rules.py` / `_engine.py` / `_report.py` / `_config.py` 只依赖标准库，不导入 Tk，
 不注册工具；CLI 与 GUI 共用同一套扫描、报告与配置逻辑。GUI 复用

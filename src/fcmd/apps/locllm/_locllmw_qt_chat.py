@@ -5,7 +5,7 @@ API Key，也可直接填任意 OpenAI 兼容地址。流式回复在后台线�
 思考型模型的 ``reasoning_content`` 以灰色斜体单独展示，正文按增量追加。
 对话状态保存在页面控件中，切页不丢失；关闭窗口时取消进行中的生成。
 
-连接参数复用 Tk 版的 ``format_session_markdown`` 与 :class:`ChatSession`，
+连接参数复用既有的 ``format_session_markdown`` 与 :class:`ChatSession`，
 Qt 侧只负责把回调转成信号与富文本追加。
 """
 
@@ -376,7 +376,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.persist()
 
     def export_markdown(self) -> None:
-        """把当前对话导出为 Markdown（复用 Tk 版的格式化函数）。"""
+        """把当前对话导出为 Markdown（复用既有格式化函数）。"""
         messages: list[ChatMessage] = self._session.messages if self._session is not None else []
         if not messages:
             self.status.setText("尚无对话内容可导出")

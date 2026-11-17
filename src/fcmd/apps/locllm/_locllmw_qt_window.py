@@ -5,8 +5,8 @@
 首屏不可见），概览、运行、监测三页建窗即构建：前者要展示硬件缓存，运行页
 要出模型列表，监测页要在整个会话期间接收日志。
 
-``run_qt`` 负责创建 ``QApplication``、应用主题并进入事件循环；Tk 回退入口
-仍在 :mod:`fcmd.apps.locllm.locllmw`（``--ui tk``）。
+``run_qt`` 负责创建 ``QApplication``、应用主题并进入事件循环；
+:mod:`fcmd.apps.locllm.locllmw` 只保留工具注册与启动委托。
 """
 
 from __future__ import annotations

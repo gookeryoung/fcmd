@@ -1,6 +1,6 @@
 """locllmw（Qt）监测页：实时性能、系统负载、GPU、性能测试与日志。
 
-采样沿用 Tk 版口径：服务运行时每秒抓一次 ``/metrics`` 并按时间窗口平滑
+采样沿用既有口径：服务运行时每秒抓一次 ``/metrics`` 并按时间窗口平滑
 token 速率（:class:`fcmd.apps.locllm._locllmw_monitor.RateWindow`），同时用
 ``psutil`` / ``nvidia-smi`` 采样系统负载；服务未运行时只采系统负载。
 

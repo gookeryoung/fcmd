@@ -106,7 +106,7 @@ fcmd completion --shell fish | source         # fish
 
 ### GUI 主题
 
-所有 Tk 窗口与 Qt 窗口（`locllmw`）共用同一份主题注册表，内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
+所有 GUI 窗口共用同一份主题注册表（`fcmd.gui.theme` 保存调色板 / 字号 / 持久化，`fcmd.gui.qt.theme` 负责翻译成 QSS），内置 `dark-blue`（深色科技蓝，默认）、`light`、`high-contrast`、`native`（接近原生）。每个窗口菜单栏的「主题」菜单可直接选择，**立即生效**并写入 `${FCMD_HOME:-~/.fcmd}/ui/theme.json`；也可手动编辑该文件（下次启动生效）：
 
 ```json
 { "theme": "light" }
@@ -114,15 +114,15 @@ fcmd completion --shell fish | source         # fish
 
 删除该文件、写入非法主题名或 JSON 损坏时，窗口启动会自动回退到 `dark-blue`，不会影响工具本身运行。
 
-`native` 沿用系统 ttk 主题（Windows 为 `vista`），系统原生按钮不接受自定义背景色，因此「强调 / 危险」按钮改用系统按钮底色 + 蓝色 / 红色文字区分语义，避免出现浅底白字；其余主题仍是填充式按钮。
+`native` 贴近系统原生配色（Qt Fusion + 系统调色板），其余主题保持填充式按钮与统一圆角。
 
-高 DPI（125% / 150%）下间距阶梯会随 `winfo_fpixels('1i')` 按比例放大（96 DPI 为基准，上限 2 倍），避免「字变大、间距不变」；深色主题在 Windows 上同时把标题栏切到深色（`dwmapi`，失败静默）。`cmderw` 的详细列表另有斑马纹交替行与活动面板焦点环，均跟随主题热切换。
+高 DPI（125% / 150%）下 Qt 自动按逻辑像素缩放，按钮 / 输入框 / 下拉 / 数值框的高度统一由字体行高推导（`gui/qt/theme.py` 的 `CONTROL_HEIGHT_EXTRA`），避免「字变大、控件不变」；`cmderw` 仍在 Tk 上，其标题栏深色与间距阶梯沿用旧路径。
 
 窗口设置统一以原子方式写入（临时文件 + 替换），并在每次有效写入前保留一份同名 `.bak` 备份。主文件缺失、损坏或顶层不是对象时，读取会自动回退到 `.bak`。
 
 #### WSL / Linux 中文乱码
 
-窗口里的中文显示为方块（乱码）时，说明当前 Python 自带的 Tk 看不到可用中文字体：uv 安装的独立构建 Python（python-build-standalone）自带 Tk 未启用 Xft，只能枚举 X11 核心字体，fontconfig 中的 Noto CJK 等 TrueType 字体对它不可见。为这种 Python 补一套 X11 核心中文字体即可：
+`cmderw`（仍为 Tk 窗口）里的中文显示为方块（乱码）时，说明当前 Python 自带的 Tk 看不到可用中文字体：uv 安装的独立构建 Python（python-build-standalone）自带 Tk 未启用 Xft，只能枚举 X11 核心字体，fontconfig 中的 Noto CJK 等 TrueType 字体对它不可见。为这种 Python 补一套 X11 核心中文字体即可：
 
 ```bash
 sudo apt install xfonts-wqy   # X11 核心中文字体（文泉驿位图）
@@ -166,7 +166,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `folderback` | - | 文件夹备份（自动清理旧备份） |
 | `folderzip` | - | 压缩当前目录下所有子文件夹 |
 | `hashfile` | - | 文件哈希计算（md5/sha256/sha1，支持目录批量） |
-| `checksum` | - | 校验和计算器（Tk GUI：字符串/文件 + MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s + 期望值比较，设置持久化到 `~/.fcmd/ui/checksum.json`） |
+| `checksum` | - | 校验和计算器（Qt：字符串/文件 + MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s + 期望值比较，设置持久化到 `~/.fcmd/ui/checksum.json`） |
 | `pathtool` | - | 路径处理（show/rel/norm/diff） |
 | `archivex` | - | 归档解压（zip/tar/gz/bz2，跨平台） |
 | `zipencrypt` | - | ZIP AES-256 加密（pyzipper，批量；需 7-Zip/WinRAR 等支持 AES 的解压器），依赖 `fcmd[archive]` |
@@ -191,7 +191,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `randtool` | - | 随机生成（password/number/string/bytes） |
 | `regextool` | - | 正则表达式（match/find/replace/split） |
 | `regexvalidate` | - | 正则校验（匹配/全匹配/findall/分组与正则特征分析，支持 ignorecase/multiline/dotall） |
-| `regexvalidatew` | - | 正则校验器窗口版（Tk：实时校验、20 个典型示例、历史记录与语法帮助，设置持久化到 `~/.fcmd/ui/regexvalidate.json`） |
+| `regexvalidatew` | - | 正则校验器窗口版（Qt：实时校验、20 个典型示例、历史记录与语法帮助，设置持久化到 `~/.fcmd/ui/regexvalidate.json`） |
 | `stattool` | - | 统计工具（mean/median/stddev/variance/summarize） |
 | `textdiff` | - | 文本比较（行级 diff，统一格式输出） |
 | `timetool` | - | 时间工具（now/parse/unix/fromunix/convert） |
@@ -213,11 +213,11 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `img2pdf` | - | 图片合并为 PDF（文件/目录输入、A3/A4/A5/B5/letter/legal 页面、DPI 与 EXIF 方向校正，Pillow 随主包安装） |
-| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Tk，文件/目录批量、页面尺寸与 DPI 可调、进度与日志） |
+| `img2pdfw` | - | 图片转 PDF 转换器窗口版（Qt，文件/目录批量、页面尺寸与 DPI 可调、进度与日志） |
 | `pdfcrypt` | - | PDF 批量加密/解密（扫描目录、按加密状态筛选、并发处理；加密输出 `.enc.pdf`，解密输出 `.dec.pdf`），依赖 `fcmd[pdf]` |
-| `pdfcryptw` | - | PDF 加密解密窗口版（Tk，目录与密码输入、递归与并发可调、进度与日志），依赖 `fcmd[pdf]` |
+| `pdfcryptw` | - | PDF 加密解密窗口版（Qt，目录与密码输入、递归与并发可调、进度与日志），依赖 `fcmd[pdf]` |
 | `pdfsplit` | - | PDF 分割（按份数 / 每份页数 / 页码范围提取，支持 `1,3-5,7-` 语法），依赖 `fcmd[pdf]` |
-| `pdfsplitw` | - | PDF 分割窗口版（Tk，三种模式、进度与日志），依赖 `fcmd[pdf]` |
+| `pdfsplitw` | - | PDF 分割窗口版（Qt，三种模式、进度与日志），依赖 `fcmd[pdf]` |
 | `pdftool` | - | PDF 处理（merge/split/compress/encrypt/decrypt/extract/ocr/attach/compare/layout 等 18 子命令），依赖 `fcmd[pdf]`，OCR 需 `fcmd[ocr]`；产出文件的子命令支持目录批处理（`--recursive` / `--skip-existing` / `--silent`） |
 
 ### 办公文档（可选依赖）
@@ -225,7 +225,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `docdiff` | - | 对比两个 doc/docx 文档（调用本机 Word 生成带修订标记的对比文档，标题、original/revised 模式与是否显示修订可设），依赖 Windows + Word + `fcmd[win32]` |
-| `docdiffw` | - | 文档对比窗口版（Tk，旧/新文档与输出选择、标题/模式/显示修订设置、后台对比与日志，设置持久化），依赖 Windows + Word + `fcmd[win32]` |
+| `docdiffw` | - | 文档对比窗口版（Qt，旧/新文档与输出选择、标题/模式/显示修订设置、后台对比与日志，设置持久化），依赖 Windows + Word + `fcmd[win32]` |
 | `pptmake` | - | PPT 模板生成（`presets`/`init`/`inspect`/`export`/`import`；十三种版式 + 四套风格 + 四种装饰，模板 JSON 导入导出，可渲染为 `.pptx` 或从 `.pptx` 反向导入主题与文字），导出依赖 `fcmd[ppt]` |
 | `pptmakew` | - | PPT 模板设计器窗口版（Qt，页面列表与布局库、QPainter 实时预览与缩略图、六个语义色自定义、模板 JSON / PPTX 双向导入导出，设置持久化到 `~/.fcmd/ui/pptmakew.json`），导出依赖 `fcmd[ppt]` |
 
@@ -234,17 +234,17 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | 工具 | 别名 | 说明 |
 |------|------|------|
 | `img2ico` | - | 图像/SVG 转 ICO/ICNS（多尺寸、质量档位、目录批量），SVG 输入依赖 `fcmd[svg]` |
-| `img2icow` | - | 图像转 ICO 转换器窗口版（Tk，单文件/目录批量、尺寸与质量可调），SVG 输入依赖 `fcmd[svg]` |
-| `ncmconvertw` | - | NCM 音乐解锁转换器窗口版（Tk，批量添加/目录导入、后台逐文件解锁为 mp3/flac、进度与失败明细），依赖 `fcmd[crypto]` |
+| `img2icow` | - | 图像转 ICO 转换器窗口版（Qt，单文件/目录批量、尺寸与质量可调），SVG 输入依赖 `fcmd[svg]` |
+| `ncmconvertw` | - | NCM 音乐解锁转换器窗口版（Qt，批量添加/目录导入、后台逐文件解锁为 mp3/flac、进度与失败明细），依赖 `fcmd[crypto]` |
 | `imagetool` | `imaget` | 图片处理（resize/crop/rotate/flip/convert/watermark/compress/info/exif/histogram/colors，Pillow 随主包安装） |
 | `videoconv` | - | 视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif；编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持 `*`/`**` 通配符批量），依赖系统 ffmpeg |
-| `videoconvw` | - | 视频转换器窗口版（Tk，文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断），依赖系统 ffmpeg |
+| `videoconvw` | - | 视频转换器窗口版（Qt，文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断），依赖系统 ffmpeg |
 
 ### 系统与进程
 
 | 工具 | 别名 | 说明 |
 |------|------|------|
-| `alarmclock` | - | Tk 定时提醒（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
+| `alarmclock` | - | 定时提醒（Qt）（数字时钟 + `HH:MM:SS` 闹钟 + 分钟快捷延时 + 到点置顶闪烁提醒 + 每天重复，设置持久化到 `~/.fcmd/ui/alarmclock.json`） |
 | `cmderw` | - | 双面板文件管理器窗口版（Tk，Total Commander 风格：顶部菜单栏按文件/选中/视图/工具/命令/配置/帮助分组、按选择数与面板状态动态启用；左右面板独立历史与多标签页（Ctrl+T/Ctrl+W/Ctrl+Tab，至少保留一个标签；支持锁定、关闭其他、重命名标签与选择记忆）、Ctrl+D 书签、Alt+Down 历史跳转、Alt+Left/Alt+Right 后退/前进，视图→同步浏览（Ctrl+Shift+S，一侧导航对侧按相同相对动作跟随）、视图→分支视图（Ctrl+B，递归平铺文件并显示相对路径，复制保留结构）、文件/右键「打开方式…」（最近程序持久化），F5 复制/F6 移动进入传输队列（逐项进度/按项取消/失败重试，可暂停恢复、任务内并行 1–8），Ctrl+Shift+C 目录比较（仅文件名/按大小/按时间（2 秒容差）/按内容，包含与排除掩码、仅比较文件）与预演式目录同步（左→右/右→左/双向镜像，总是覆盖/仅较新覆盖/跳过冲突，逐项勾选与全选/反选，复制入队、删除走回收站，执行后结果窗口），Ctrl+Q 内嵌快速查看（文本/图片/PE 与二进制，限读并提示截断；编码自动探测与手动切换、十六进制视图、图片缩放与适应窗口）、Ctrl+F8 只读目录树（跟随活动面板）、视图模式（Ctrl+F1 简要 / Ctrl+F2 详细 / Ctrl+Shift+F1 缩略图，每个标签独立记忆模式与列宽，详细列顺序固定、宽度可拖拽并持久化；缩略图异步加载 + Canvas 虚拟化 + 内存 LRU，PNG/GIF/PPM/JPEG/BMP/WebP/TIFF/ICO 统一由 Pillow 解码，非图片、超大或解码失败的文件显示类型徽标）、Ctrl+Enter 命令行栏（上下键历史与草稿恢复、Tab 补全首个路径/命令 token，删除类命令二次确认）、配置→颜色规则（按掩码/大小/类型/时间，持久化），F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，Num+/Num- 按掩码选择、Ctrl+S 快速过滤、定义过滤器（包含/排除掩码持久化）、Ctrl+M 多重命名工具（名称/扩展名掩码与日期时间占位符、普通/正则查找替换、大小写、计数器排序与补零、可勾选预览并标出冲突/非法/超长/覆盖、预设保存加载删除并持久化，分支视图可用）、Space 统计大小、「查找重复文件…」（大小预筛 + 哈希确认，可删除或移动），Ctrl+H 显示隐藏文件（菜单勾选同步），Alt+F5 打包/Alt+F9 解压、压缩包浏览与写入（Enter 进入、Backspace 逐级退出，F3/快速查看临时解压，F5/F6 按包内结构导出；zip/tar 可新增/删除/改名并设置压缩级别 0–9 与 zip AES-256 密码，7z/rar 仍只读）、文件分割/合并（按大小或份数、`.sha256` 校验）、Ctrl+F 搜索（区分大小写/整词/按大小与时间范围过滤，结果落入可排序临时面板并可直接复制/移动/删除/加入选择；归档视图内搜索成员名与内容，流式读取并跳过加密/超大成员）、路径栏卷下拉（盘符/挂载点与剩余空间，点击切换）、哈希与属性（批量修改时间戳、Windows 只读/隐藏切换）、用户命令（配置→用户命令…增删改/上下移/试运行，`%P`/`%T`/`%N`/`%S`/`%L` 占位符展开，可挂菜单/工具栏/右键并持久化）、生成与校验校验文件（`.sha256`/`.sha1`/`.md5`/`.sfv`，逐项列 OK/FAIL 与原因）、两个文本文件并排只读比较（增删改着色、行号对齐、同步滚动）、配置→主题（内置调色板写入设置，重开生效，非法值回落默认）、启动参数 `--left`/`--right`/`--select`（相对路径与非法路径容错），复用 archivex / infras.hashing / infras.fs，设置持久化到 `~/.fcmd/ui/cmderw.json`） |
 | `envw` | - | 环境变量编辑器窗口版（Qt，参考 Rapid Environment Editor：用户/系统/当前进程作用域、搜索、新建/编辑/删除/重命名、PATH 逐条路径编辑、变量引用展开预览、JSON 备份恢复，设置持久化到 `~/.fcmd/ui/envw.json`） |
 | `fonttool` | - | 推荐字体按需安装与管理（list/status/install/remove）：默认 Cascadia Code + Noto Sans SC，下载后校验 SHA256 并保存 OFL 许可证，安装到当前用户字体目录，不内置进发行包 |
@@ -256,17 +256,17 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
 | `reshack` | - | PE 资源查看与修改（list/extract/replace/export-all；Icon/Bitmap 导出自动补 ICO/BMP 头，替换前自动备份，依赖 `fcmd[pe]`） |
-| `reshackw` | - | PE 资源编辑器窗口版（Tk：资源树 + 文本/十六进制/图像预览（图像支持缩放/适应窗口、Ctrl+滚轮及右键复制/保存）+ 导出（Icon/Bitmap 自动补 ICO/BMP 头）/替换/全部导出，设置持久化到 `~/.fcmd/ui/reshackw.json`，依赖 `fcmd[pe]`） |
+| `reshackw` | - | PE 资源编辑器窗口版（Qt：资源树 + 文本/十六进制/图像预览（图像支持缩放/适应窗口、Ctrl+滚轮及右键复制/保存）+ 导出（Icon/Bitmap 自动补 ICO/BMP 头）/替换/全部导出，设置持久化到 `~/.fcmd/ui/reshackw.json`，依赖 `fcmd[pe]`） |
 | `peview` | - | PE 文件解析与安全编辑（stdlib，无第三方依赖）：info/headers/sections/directories/imports/exports/resources/relocations/debug/hex/check/fields；`edit` 默认预演，`--apply` 才写入并自动备份 `<文件名>.backup[N]`、写后重解析校验，结构性字段一律拒绝 |
-| `pevieww` | - | PE 查看/编辑窗口版（Tk：分类树 + 详情 + 十六进制视图，字段编辑对话框常驻风险说明并要求确认，写入前自动备份、写后自校验，设置持久化到 `~/.fcmd/ui/pevieww.json`） |
+| `pevieww` | - | PE 查看/编辑窗口版（Qt：分类树 + 详情 + 十六进制视图，字段编辑对话框常驻风险说明并要求确认，写入前自动备份、写后自校验，设置持久化到 `~/.fcmd/ui/pevieww.json`） |
 | `filesync` | - | 文件夹比较与同步（参考 FreeFileSync）：`compare` 按时间与大小/仅大小/内容比较左右目录，`sync` 支持双向/镜像/更新三种模式；包含/排除通配符与跳过隐藏文件，`--preview` 预览，冲突项（时间相同但内容不同）自动跳过 |
-| `filesyncw` | - | 文件夹比较与同步窗口版（Tk：左右目录选择、比较/同步模式与过滤、差异表与计划动作着色、后台比较与逐项同步进度、预演不写盘、冲突跳过、JSON 配置载入/保存，设置持久化到 `~/.fcmd/ui/filesyncw.json`） |
+| `filesyncw` | - | 文件夹比较与同步窗口版（Qt：左右目录选择、比较/同步模式与过滤、差异表与计划动作着色、后台比较与逐项同步进度、预演不写盘、冲突跳过、JSON 配置载入/保存，设置持久化到 `~/.fcmd/ui/filesyncw.json`） |
 | `filescan` | - | 目录敏感内容扫描：关键词/正则规则与 and·or·not 表达式组合，后缀白名单（默认常见文本后缀，`--force-ext` 可强制扫描名单外后缀）、并行扫描与取消、按文件聚合命中并默认打码，支持文本/JSON/CSV 报告、规则集 JSON 导入导出、扫描配置复用（`scan --save-config` / `run --config`）与重复扫描缓存（`--no-cache` 关闭、`--clear-cache` 清理，报告区分实扫/复用）；统计区分「范围外」与「读取后跳过」，0 命中时给出白名单/规则诊断 |
-| `filescanw` | - | 敏感内容扫描窗口版（Tk：目录列表与扫描选项、可编辑后缀白名单、扫描配置导入/导出、扫描缓存开关与清理、规则表与表达式编辑、后台进度/取消、命中树与规则/路径筛选、打码导出，设置持久化到 `~/.fcmd/ui/filescanw.json`） |
+| `filescanw` | - | 敏感内容扫描窗口版（Qt：目录列表与扫描选项、可编辑后缀白名单、扫描配置导入/导出、扫描缓存开关与清理、规则表与表达式编辑、后台进度/取消、命中树与规则/路径筛选、打码导出，设置持久化到 `~/.fcmd/ui/filescanw.json`） |
 | `renamer` | - | 批量重命名（规则流水线）：`replace` 正则替换、`reorder` 用 `{0}/{1}/{name}` 重排捕获片段、`move` 把匹配文本搬到开头/结尾/锚点/指定位置，另有 `insert`/`case`/`sequence`；规则用 JSON 或 `@文件` 传入，`preview` 预览、`apply` 两阶段执行（支持互换与仅大小写改名），预览标记未变化/非法/冲突 |
 | `renamerw` | - | 批量重命名窗口版（Qt：目标文件/目录列表、规则表增删改与上下移、正则/重排/搬移/插入/大小写/计数器表单、旧名→新名预览与冲突着色、两阶段执行与本次撤销、规则 JSON 导入导出；「帮助 → 使用帮助」内置规则说明与五组典型示例，可一键载入，详见 [src/fcmd/apps/renamer/help/renamerw.md](src/fcmd/apps/renamer/help/renamerw.md)，设置持久化到 `~/.fcmd/ui/renamerw.json`） |
 | `dynacalc` | - | 装药密度/尺寸/工艺缺陷 → 爆轰传递的参数化算例（不做物理求解）：YAML 参数矩阵（主矩阵 48 组 + 五项补充组 + 典型工况 01/02/03）与 `dynacalc-model/1` 模型映射（几何/拉拔/密度场/间隙/脱粘），按 LS-DYNA 关键字模板生成可复现 deck，调度求解（`--plan-only`、假求解器、并发/超时/重试/续跑），回收 glstat/matsum/history 输出 CSV/JSON/文本汇总与两工况对比，四项工程门控（阈值可配，属工程建议值）；一键演示 `fcmd dynacalc demo`（示例参数 → 生成 → 假求解 → 汇总 → 对比 → 门控，可接 paramcad 模型与 paramesh 网格，最短命令见 [docs/cli.md](docs/cli.md)）；不含任何真实配方或材料参数，未填项一律 TBD，详见 [docs/adr/0020-dynacalc.md](docs/adr/0020-dynacalc.md) 与 [docs/dynacalc-model-contract.md](docs/dynacalc-model-contract.md) |
-| `dynacalcw` | - | 参数化算例窗口版（Tk：参数/模型/输出/模板/求解器选择，工况清单预览，生成 deck、dry-run、执行、作业状态、汇总与门控，设置持久化到 `~/.fcmd/ui/dynacalcw.json`） |
+| `dynacalcw` | - | 参数化算例窗口版（Qt：参数/模型/输出/模板/求解器选择，工况清单预览，生成 deck、dry-run、执行、作业状态、汇总与门控，设置持久化到 `~/.fcmd/ui/dynacalcw.json`） |
 | `iptool` | - | IP 地址工具（parse/subnet/validate） |
 | `nettool` | - | HTTP 客户端（GET/POST/HEAD，状态码/响应头） |
 | `urlcheck` | - | URL 可访问性与访问速度检测（HEAD/GET 探测 + 并发测速排序，供镜像源选优） |
@@ -288,7 +288,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `llmmodel` | - | 模型扫描独立命令（`list`/`find`/`vram`；列出 GGUF、按量化定位文件、估算显存占用） |
 | `llmqnt` | - | GGUF 量化（调用 `llama-quantize` 批量生成 Q2_K…Q8_0 与 IQ1_S…IQ4_XS 共 25 种量化版本；默认 Q4_K_M/Q5_K_M，输出到模型目录下的 `converted` 子目录，自动去掉输入文件 `-F16` 后缀，已存在输出默认跳过，`--overwrite` 强制重跑，`--out-dir` 指定输出目录，`--quantize-exe` / `FCMD_LLAMA_QUANTIZE` / 已装引擎 / PATH 依次解析量化器） |
 | `llmserve` | - | 服务生命周期独立命令（`plan`/`start`/`stop`/`status`/`logs`；打印启动计划与显存估算、拉起引擎等待 `/health`、停止进程树、查看状态与日志；OpenAI 模型别名默认取 GGUF 文件名，可用 `--alias` 覆盖；`--tune auto/default/throughput/long-context/low-vram` 按实测预设调整 batch、并发槽、HTTP 线程与 KV 类型） |
-| `locllmw` | - | LocLLM：本地 LLM 服务管理窗口（Qt/PySide6 默认，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 监测 / 设置；迁移期保留 Tk 回退 `locllmw --ui tk`，两者共用同一份配置与窗口设置）：概览页展示 CPU / GPU / 内存与模型所在盘（可修改，首次检测写入配置并支持重新检测），用占用条实时显示显存与内存使用，按硬件推荐模型与启动配置（性能分预测 / 实测，性能测试后优先用实测值），并列出运行中的服务（打开 Web UI / 查看日志 / 复制地址与 API Key / 停止）；模型页按一级子目录分组列出 GGUF，识别精度并在选中后给出标签、接入地址、调优与显存适配建议；运行页配置服务名 / 档位 / 监听地址 / 端口 / 线程与调优策略（自动 / 默认 / 并发吞吐 / 长上下文 / 省显存，切换后同步高级参数），高级参数含上下文 / KV / ubatch / 别名 / 并发槽 / HTTP 线程 / API Key / 等待就绪；整卡放不下的模型标红加删除线为「硬件不足」，仅当前余量不足的标橙为「需释放显存」，显存释放后自动重算；可预览启动计划（含显存估算与命令）、后台启动与停止（支持全部服务）、查看状态与日志、在浏览器打开服务地址；对话页支持服务回填、流式回复、思考过程单独展示、新对话与导出 Markdown；监测页每秒采样 `/metrics` 并按 10s 滑动窗口平滑 token/s，展示 CPU / 内存 / 交换 / 服务进程与 GPU 利用率、显存、温度、功耗、风扇、频率，性能测试支持短对话 / 长输出 / 代码补全 / 长上下文 8K / 32K / 并发 4 路，可调重复次数 / 超时 / 输出上限并导出 CSV；设置页统一模型目录与引擎根目录（单一来源）、显示已安装引擎并可切换默认引擎；实验室页集中说明代理 / 画图 / 视频 / 音频规划。窗口位置与大小记忆到 `~/.fcmd/ui/locllmw.json`；模型在线搜索下载与转换 / 量化向导仍在 Tk 版（`--ui tk`）或对应 CLI（`llmdown` / `llmconvert`） |
+| `locllmw` | - | LocLLM：本地 LLM 服务管理窗口（Qt/PySide6 默认，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 监测 / 设置；与 CLI 共用同一份配置与窗口设置）：概览页展示 CPU / GPU / 内存与模型所在盘（可修改，首次检测写入配置并支持重新检测），用占用条实时显示显存与内存使用，按硬件推荐模型与启动配置（性能分预测 / 实测，性能测试后优先用实测值），并列出运行中的服务（打开 Web UI / 查看日志 / 复制地址与 API Key / 停止）；模型页按一级子目录分组列出 GGUF，识别精度并在选中后给出标签、接入地址、调优与显存适配建议；运行页配置服务名 / 档位 / 监听地址 / 端口 / 线程与调优策略（自动 / 默认 / 并发吞吐 / 长上下文 / 省显存，切换后同步高级参数），高级参数含上下文 / KV / ubatch / 别名 / 并发槽 / HTTP 线程 / API Key / 等待就绪；整卡放不下的模型标红加删除线为「硬件不足」，仅当前余量不足的标橙为「需释放显存」，显存释放后自动重算；可预览启动计划（含显存估算与命令）、后台启动与停止（支持全部服务）、查看状态与日志、在浏览器打开服务地址；对话页支持服务回填、流式回复、思考过程单独展示、新对话与导出 Markdown；监测页每秒采样 `/metrics` 并按 10s 滑动窗口平滑 token/s，展示 CPU / 内存 / 交换 / 服务进程与 GPU 利用率、显存、温度、功耗、风扇、频率，性能测试支持短对话 / 长输出 / 代码补全 / 长上下文 8K / 32K / 并发 4 路，可调重复次数 / 超时 / 输出上限并导出 CSV；设置页统一模型目录与引擎根目录（单一来源）、显示已安装引擎并可切换默认引擎；实验室页集中说明代理 / 画图 / 视频 / 音频规划。窗口位置与大小记忆到 `~/.fcmd/ui/locllmw.json`；模型页含 ModelScope 在线搜索 / 下载、已安装仓库管理、转换与量化向导（也可用 `fcmd llmdown` / `fcmd llmconvert`） |
 
 **启动排错**：若模型启动失败且引擎日志出现 `unknown model architecture: 'xxx'`，说明当前 llama.cpp
 引擎版本过旧、不认识该模型架构（例如 Qwen3-MoE 的 `qwen3moe`），换启动参数无效；请用
@@ -304,7 +304,7 @@ Windows / macOS 以及启用 Xft 的系统 Python（`python3-tk`）可直接使�
 | `devman` | - | Windows 开发环境管理（首批 node / python）：`list`/`versions`/`install`/`uninstall`/`use`/`upgrade`/`init`/`uninit`/`env`/`exec`/`doctor`；装进独立根目录、多版本共存、切换只改活动版本文件；`install`/`init` 默认把 shim 目录写入 HKCU 用户 PATH（`--no-path` 关闭，遮蔽已有 node/python 需 `--allow-shadow`），`uninit` / 卸掉最后一个版本按记录精确回滚 PATH 条目，不碰既有 node/python/conda/venv，改动均支持 `--dry-run` 与 `--yes`，详见 [docs/adr/0024-devman.md](docs/adr/0024-devman.md) |
 | `envdev` | - | 开发环境一键配置（分组入口 lang/app/mirror/check/all，镜像按服务（pip/conda/rustup/cargo/go/maven/npm）独立自动选优：以真实构件实测下载吞吐排序并可识别限速/门户页，避免误选「延迟低但被限速」的镜像；另含教育网镜像探测（动态拉取 MirrorZ 列表）与 `mirror --service <服务>` 测速、`--apply` 自动应用，以及工具链安装，Linux 含系统依赖） |
 | `mirrortool` | - | 镜像源独立入口（薄壳，实现与 `envdev mirror` 共用）：教育网镜像站点探测；`--service <服务>` 对 pip/conda/rustup/cargo/go/maven/npm 实测下载吞吐排序并推荐最快镜像，`--apply` 立即写入对应服务配置 |
-| `mirrortoolw` | - | 镜像搜索与配置窗口版（Tk）：服务镜像测速排序与一键应用、MirrorZ 教育网镜像站点探测二合一；结果按镜像名/地址实时过滤，展示延迟与实测吞吐并高亮推荐项，配置位置随服务切换提示，设置持久化到 `~/.fcmd/ui/mirrortoolw.json` |
+| `mirrortoolw` | - | 镜像搜索与配置窗口版（Qt）：服务镜像测速排序与一键应用、MirrorZ 教育网镜像站点探测二合一；结果按镜像名/地址实时过滤，展示延迟与实测吞吐并高亮推荐项，配置位置随服务切换提示，设置持久化到 `~/.fcmd/ui/mirrortoolw.json` |
 | `setenv` | - | 设置当前进程环境变量（支持 `--default` 仅在未设置时写入） |
 | `sshcopyid` | - | SSH 公钥部署到远程服务器（依赖 sshpass） |
 
@@ -509,7 +509,7 @@ src/fcmd/
     _entry.py    #   console script 通用入口（按 argv[0] 推断工具名）
     _manifest.py #   静态工具清单读取（快路径：只加载目标工具）
     _manifest_data.py  # 生成文件，勿手改
-  gui/           # 展示基座（不参与工具发现）：Tk 窗口骨架 / 主题 / UI 设置持久化
+  gui/           # 展示基座（不参与工具发现）：Qt 窗口骨架 / 主题 / UI 设置持久化 / 几何纯函数
     qt/          #   Qt（PySide6）基座：主题 QSS / 侧边栏 / 窗口骨架 / 后台任务 / 控件
   apps/          # 独立桌面应用（自动发现；如 cmder、filesync、locllm）
   tools/         # 业务实现（自动发现）

@@ -31,7 +31,7 @@
 | `_package.py` | `paramesh-mesh/1` 网格包、清单、指纹与交接契约草案 |
 | `_preview.py` | 纯逻辑线框与视图变换（不依赖 Tk） |
 | `paramesh.py` | CLI：`example` / `check` / `generate` / `report` / `contract` |
-| `parameshw.py` | Tk 预览窗口，复用 `fcmd.gui` 主题与设置持久化 |
+| `parameshw.py` + `_parameshw_qt.py` | Qt 预览窗口，复用 `fcmd.gui` 主题与设置持久化 |
 
 协作约束：本阶段不修改共享工具注册表，也不重生成 `_manifest_data.py`；不触碰
 `src/fcmd/apps/dynacalc/` 与 `src/fcmd/apps/paramcad/` 内任何文件。工具发现走动态

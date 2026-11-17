@@ -3,6 +3,18 @@
 本文件记录 fcmd 的版本变更，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 变更
+
+- GUI 全面迁移到 Qt（PySide6），移除全部 Tk 工具窗口：
+  - `filescanw`：扫描 / 结果 / 规则三页改为 Qt，白名单与规则编辑、后台扫描进度与取消保持原有口径；
+  - `wslmanw`：发行版表 + 详情 / 下载 / 日志分页，3 秒运行状态轮询、下载源选择与安装本地镜像对话框迁到 Qt；
+  - `locllmw`：模型页补齐 ModelScope 浏览 / 下载、已安装仓库、转换与量化向导，移除 `--ui tk` 与全部 Tk 模块；
+  - `alarmclock` / `checksum`：数字时钟提醒与校验和计算器改为 Qt 窗口；
+  - 断言 Tk 内部实现的测试改写为 Qt 等价断言，纯逻辑与设置测试保持原样。
+- 新增 `fcmd.gui.geometry` 纯函数模块，Tk / Qt 窗口与设置统一复用 `WxH+X+Y` 解析、夹紧与居中算法。
+
 ## [0.3.12] - 2026-11-11
 
 ### 新增

@@ -17,7 +17,7 @@ Windows 上管理 WSL 发行版目前只能拼 `wsl.exe` 子命令，痛点集�
 4. **破坏性操作没有护栏**：`--unregister` 直接删虚拟磁盘、`--shutdown` 会连带
    停掉 Docker Desktop 与其他发行版，误触代价高。
 
-`wslman`（CLI）与 `wslmanw`（Tk GUI）只做一件事：把上述能力收敛成一套可脚本化、
+`wslman`（CLI）与 `wslmanw`（Qt GUI）只做一件事：把上述能力收敛成一套可脚本化、
 可机读、默认安全的外壳；**不替代** WSL 本身，不管理发行版内部的包与配置。
 
 非目标（v1 明确不做）：
@@ -48,7 +48,7 @@ Windows 上管理 WSL 发行版目前只能拼 `wsl.exe` 子命令，痛点集�
 | `_terminal.py` | `wt.exe` / `conhost` 回退的 argv 构造与启动 |
 | `_config.py` | `~/.fcmd/wslman.json` 读写与字段级容错 |
 | `wslman.py` | CLI 子命令注册与双读输出 |
-| `wslmanw.py` | Tk 窗口，复用 `fcmd.gui` 主题与设置持久化 |
+| `wslmanw.py` + `_wslmanw_qt.py` | Qt 窗口，复用 `fcmd.gui` 主题与设置持久化 |
 
 协作约束（本轮生效）：**不修改** `pyproject.toml`、`cli/_manifest_data.py`、
 `uv.lock`、`core/exit_codes.py`，也不碰其他应用包。入口注册与清单重生成由统一
@@ -381,7 +381,7 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
 - `backups.dir` 默认为空字符串 = **必须显式指定**备份目录，不提供隐式默认，避免
   悄悄写满系统盘；`doctor` 只给推荐目录与卷剩余空间，不代填；
 - 写入复用 `fcmd.gui.config.write_settings`（该模块只依赖标准库，原子的临时文件 +
-  `.bak`），CLI 不因此引入 tkinter。
+  `.bak`），CLI 不因此引入 GUI 依赖。
 
 ### D12 环境探测与无 WSL 环境
 

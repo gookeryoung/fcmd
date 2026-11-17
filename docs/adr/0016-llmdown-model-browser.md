@@ -30,7 +30,7 @@
 
 `_http_json` 扩展为可指定方法与 JSON 体，仍统一把网络 / 解析错误转换为
 `ModelToolError`。搜索与详情都返回不可变 dataclass（`ModelSummary` /
-`ModelSearch` / `ModelInfo`），Tk 层只做渲染，不在 UI 里解析 JSON。
+`ModelSearch` / `ModelInfo`），界面层只做渲染，不在 UI 里解析 JSON。
 
 ### 2. 下载核心增加进度回调与取消，不复制一套下载逻辑
 
@@ -41,10 +41,10 @@
 - `should_stop: Callable[[], bool]`：在每个文件开始、流式分块与哈希校验循环中检查，
   触发后抛 `DownloadCancelled`，**保留 `.part`** 以便下次续传。
 
-CLI 不传这两个参数时行为与原来完全一致。Tk 窗口通过队列把事件送回主线程，
+CLI 不传这两个参数时行为与原来完全一致。Qt 页面通过信号把事件送回主线程，
 避免跨线程操作控件。
 
-### 3. Tk 窗口布局与交互
+### 3. Qt 页面布局与交互
 
 原 `llmdownw` 已并入 `locllmw` 的「模型」页（见 [ADR 0030](0030-locllmw-models-page.md)），
 页面内部用嵌套 Notebook 分为「浏览 / 已安装 / 下载」三个子页，避免搜索、详情、
@@ -122,7 +122,7 @@ Hugging Face 下载 / 点赞、Open LLM Leaderboard、LMArena 等国际开源社
 
 窗口位置、目标目录、下载源、并发、校验开关与包含 / 排除掩码保存到
 `locllmw.json` 的 `download` 字段；非法值逐项回退默认，与 0013 的 GUI
-口径一致。Tk 类标注 `pragma: no cover`，测试只覆盖纯函数与注册。
+口径一致。Qt 窗口类标注 `pragma: no cover`，测试只覆盖纯函数与注册。
 
 ## 备选方案与取舍
 

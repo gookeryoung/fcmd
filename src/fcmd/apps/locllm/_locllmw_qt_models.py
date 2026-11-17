@@ -2,7 +2,7 @@
 
 列表按「模型目录里的一级子目录」折叠分组：有运行中实例的组排在最前，
 默认只展开运行中与当前选中模型所在的组，避免一次铺开上百个 GGUF。
-行内状态沿用 Tk 版口径（:func:`fcmd.apps.locllm._locllmw_monitor._fit_state`）：
+行内状态沿用既有口径（:func:`fcmd.apps.locllm._locllmw_monitor._fit_state`）：
 红色加删除线 = 硬件不足，橙色 = 需释放显存。
 
 ``ModelTree`` 同时被运行页复用（运行页需要就地挑模型），因此把它做成独立

@@ -63,7 +63,7 @@ Windows 上并存多套 Node.js / Python 是常态，但现有做法各有缺口
 | `_env.py` | `which` / PATH 顺序、用户环境变量读写协议、shim 文本生成、shell 激活片段、冲突检测 |
 | `_ops.py` | `install` / `uninstall` / `use` / `upgrade` 的状态机：预检、锁、回滚、dry-run 计划 |
 | `devman.py` | CLI 子命令注册与双读输出 |
-| `devmanw.py` | Tk 窗口（P2） |
+| `devmanw.py` + `_devmanw_qt.py` | Qt 窗口（P2） |
 
 入口注册（P1 写入 `pyproject.toml [project.scripts]`）：
 
@@ -369,7 +369,7 @@ exit /b %ERRORLEVEL%
 ```
 
 - 写入复用 `fcmd.gui.config.write_settings` 的「临时文件 + `os.replace` + `.bak`」口径
-  （该模块只依赖标准库，CLI 不因此引入 tkinter）；
+  （该模块只依赖标准库，CLI 不因此引入 GUI 依赖）；
 - `path_previous_user_path` 只用于 `doctor` 展示与人工排查，不在 `uninit` 时整体回滚。
 
 ### D12 GUI（`devmanw`，P2）

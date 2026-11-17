@@ -1,6 +1,6 @@
 """locllmw（Qt）设置页：存储、引擎与「关于与诊断」。
 
-目录口径与 Tk 版完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.locllm._llmconfig`），
+目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.locllm._llmconfig`），
 引擎根目录单独登记；改动即时写配置并通知其它页刷新（``configChanged``）。
 引擎安装 / 切换仍复用 :mod:`fcmd.apps.locllm.llmengine` 的既有实现，页面只做展示与
 「设为默认」这类轻动作，重活留给 ``fcmd llmengine``。

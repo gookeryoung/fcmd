@@ -266,7 +266,7 @@ run:
 | `_results.py` | glstat/matsum/history 解析、指标提取、CSV/JSON/文本报告、两工况对比 |
 | `_gates.py` | 门控检查与声明文案 |
 | `dynacalc.py` | CLI 注册与输出 |
-| `dynacalcw.py` | Tk 窗口、设置持久化（`~/.fcmd/ui/dynacalcw.json`） |
+| `dynacalcw.py` + `_dynacalcw_qt.py` | Qt 窗口、设置持久化（`~/.fcmd/ui/dynacalcw.json`） |
 
 依赖方向：应用只依赖标准库 + `fcmd.gui` + `fcmd.console` + `pyyaml`。
 `_params` / `_model` / `_template` / `_results` / `_gates` 为纯逻辑模块，不导入 Tk。
@@ -279,7 +279,7 @@ run:
 - 端到端（假求解器）：`example → generate（48 组）→ dry-run → run --fake → report
   → gates`。48 组真实起子进程的用例超过 0.5 s，按项目约定标记 `slow`；主门禁保留
   小规模（2 组）同路径用例。
-- 窗口类 `dynacalcw` 的 Tk 类标 `pragma: no cover`，设置读写与行格式化函数单测。
+- 窗口类 `dynacalcw` 的 Qt 类标 `pragma: no cover`，设置读写与行格式化函数单测。
 - 改动后重生成 `fcmd/cli/_manifest_data.py`，`make check-fast` 必过，收尾 `make test`。
 
 ## 不变量

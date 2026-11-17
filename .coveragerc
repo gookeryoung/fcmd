@@ -7,6 +7,7 @@ omit =
     src/fcmd/gui/qt/*
     src/fcmd/apps/locllm/_locllmw_qt_*.py
     src/fcmd/*/*/_*w_qt.py
+    src/fcmd/*/*/_*_qt.py
 source = fcmd
 
 [report]

@@ -28,7 +28,7 @@ def png_path(size: int) -> Path:
 
 
 def ico_path() -> Path:
-    """返回多尺寸 ``.ico`` 路径（Windows 任务栏 / Tk 回退窗口使用）。"""
+    """返回多尺寸 ``.ico`` 路径（Windows 任务栏 / Qt 窗口使用）。"""
     return ICON_DIR / "locllmw.ico"
 
 

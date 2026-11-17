@@ -1,6 +1,6 @@
 """locllmw（Qt）模型中心：ModelScope 浏览 / 下载 / 已安装 / 转换 / 量化五个子页。
 
-页面口径与原 Tk 版一致，只是把控件换成 Qt 并把后台任务统一走
+页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
 - **浏览**：ModelScope 搜索（类别 / 系列 / 排序 / 翻页）、模型详情与文件清单；
@@ -116,7 +116,7 @@ class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
 
 
 def _task_text(exc: BaseException) -> str:
-    """后台异常转可读文案（含类型名），与 Tk 版日志口径一致。"""
+    """后台异常转可读文案（含类型名），与既有日志口径一致。"""
     return (
         str(exc)
         if isinstance(exc, (ModelToolError, ServeError, OSError, ValueError))

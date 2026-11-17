@@ -15,7 +15,7 @@ cmderw 的快速查看对 PE 只给出「二进制 + MZ」提示，无法定位�
 
 约束：
 
-- 纯逻辑与 Tk 分离，解析 / 校验 / 写回全部可单测；
+- 纯逻辑与 Qt 分离，解析 / 校验 / 写回全部可单测；
 - 不新增第三方依赖，不引入 `pefile`（避免「没装 extras 就打不开」）；
 - 目录深度遵守 ADR 0003（`fcmd/apps/<应用>/<模块>.py`，不建子包）；
 - 编辑必须默认安全：备份、写后自校验、拒绝结构性改动、失败不留半成品。
@@ -61,7 +61,7 @@ CLI 编辑默认只预演，必须显式 `--apply` 才落盘；GUI 编辑对话�
 | `_edit.py` | 可编辑字段白名单、值校验、备份、原子写、写后重解析校验 |
 | `_view.py` | GUI 纯逻辑：分类树节点、详情行、十六进制视图、节点→文件偏移 |
 | `peview.py` | CLI 注册与输出 |
-| `pevieww.py` | Tk 窗口、设置持久化（`~/.fcmd/ui/pevieww.json`） |
+| `pevieww.py` + `_pevieww_qt.py` | Qt 窗口、设置持久化（`~/.fcmd/ui/pevieww.json`） |
 
 `pevieww.py` 复用 `fcmd.gui.window` / `theme` / `config`，不另起窗口骨架。
 
@@ -105,7 +105,7 @@ CLI 编辑默认只预演，必须显式 `--apply` 才落盘；GUI 编辑对话�
 
 - 测试内用合成 PE32 / PE32+ 夹具覆盖正常解析、截断 / 越界 / 循环资源等损坏输入；
 - `_reader` / `_pe` / `_report` / `_edit` / `_view` 覆盖率与现有水平一致（≈100%），
-  设置持久化函数同样单测；Tk 窗口类不纳入覆盖率；
+  设置持久化函数同样单测；Qt 窗口类不纳入覆盖率；
 - 改动后按 ADR 0003 在干净工作区重生成 `fcmd/cli/_manifest_data.py`；
 - `make check-fast` 必过，收尾 `make test` 全绿。
 
