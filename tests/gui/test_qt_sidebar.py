@@ -14,6 +14,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QEvent, QPointF, Qt
+from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPixmap
 from PySide6.QtWidgets import QApplication, QSizePolicy
 
 from fcmd.gui.qt.sidebar import COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
@@ -109,3 +111,34 @@ def test_set_hint_updates_current_page(nav: Any) -> None:
     nav.set_hint("overview", "新的提示")
     assert nav.hint("overview") == "新的提示"
     assert nav.hint_label.text() == "新的提示"
+
+
+def test_collapsed_keeps_icon_and_click_expands() -> None:
+    """折叠后保留应用图标（居中）并作为展开入口，折叠按钮隐藏。"""
+    application = QApplication.instance() or QApplication([])
+    pixmap = QPixmap(24, 24)
+    pixmap.fill(QColor("#336699"))
+    nav = SidebarNav(title="LocLLM", icon=QIcon(pixmap))
+    try:
+        nav.add("overview", "概览")
+        nav.show()
+        application.processEvents()
+        nav.set_collapsed(True)
+        application.processEvents()
+        assert nav.icon_label is not None
+        assert not nav.icon_label.isHidden()
+        assert nav.icon_label.geometry().center().x() == nav.rect().center().x()
+        assert nav.toggle_button.isHidden()
+        assert "展开侧边栏" in nav.icon_label.toolTip()
+        event = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            QPointF(1, 1),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        assert nav.eventFilter(nav.icon_label, event) is True
+        assert not nav.is_collapsed()
+        assert not nav.toggle_button.isHidden()
+    finally:
+        nav.deleteLater()

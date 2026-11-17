@@ -230,7 +230,7 @@ def test_scan_result_auto_selects_a_startable_model(window: Any, tmp_path: Path)
 
 
 def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
-    """窗口图标来自 assets/icons，侧边栏标题左侧显示同一图标（折叠时隐藏）。"""
+    """窗口图标来自 assets/icons：展开时在标题左侧，折叠后居中显示并可点击展开。"""
     assert window.nav.title_label.text() == "LocLLM"
     assert window.windowTitle().startswith("LocLLM")
     assert not window.windowIcon().isNull()
@@ -238,31 +238,20 @@ def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
     icon_label = window.nav.icon_label
     assert icon_label is not None
     window.nav.set_collapsed(True)
-    assert icon_label.isHidden()
+    assert not icon_label.isHidden()
+    assert window.nav.toggle_button.isHidden()
     window.nav.set_collapsed(False)
     assert not icon_label.isHidden()
+    assert not window.nav.toggle_button.isHidden()
 
 
 def test_overview_actions_are_text_links(window: Any) -> None:
-    """「修改 / 重新检测」是文字链接（无按钮边框），且重新检测在硬件信息标题旁。"""
+    """「重新检测」是文字链接（无按钮边框），位于硬件信息标题旁。"""
     overview = window.overview
     assert overview._detect_button.text() == "重新检测"
     assert overview._detect_button.objectName() == "Link"
-    assert overview._modify_link.text() == "修改"
-    assert overview._modify_link.objectName() == "Link"
-
-
-def test_overview_model_dir_row_is_single_line(window: Any) -> None:
-    """概览「模型目录」只显示设置的目录 + 剩余空间（单行，不随选中模型变化）。"""
-    from fcmd.apps.locllm import llmenv
-    from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
-
-    window.state.hardware = HardwareSnapshot(model_root=str(llmenv.models_dir()))
-    window.overview.refresh_hardware()
-    text = window.overview._hardware_values["model_disk"].text()
-    assert "\n" not in text
-    assert str(llmenv.models_dir()) in text
-    assert "剩余" in text
+    assert "model_disk" not in overview._hardware_values
+    assert "model_free" not in overview._hardware_values
 
 
 def test_overview_gauges_paint_event_runs(window: Any) -> None:

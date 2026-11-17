@@ -15,20 +15,16 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
-from fcmd.apps.locllm import llmenv
-from fcmd.apps.locllm._locllmw_hardware import disk_for_path
 from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
-    ElidedLabel,
     PageScroll,
     button,
     hint_label,
@@ -223,24 +219,6 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         grid.addWidget(memory_value, 2, 1)
         self._hardware_values["memory"] = memory_value
 
-        disk_value = ElidedLabel("检测中…", parent=card)
-        disk_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        free_value = QLabel("", card)
-        free_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        modify = link_button("修改", tooltip="到设置页修改模型目录")
-        modify.clicked.connect(lambda: self.state.navigate("settings"))
-        self._modify_link = modify
-        grid.addWidget(row_label("模型目录"), 3, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        disk_row = QHBoxLayout()
-        disk_row.setContentsMargins(0, 0, 0, 0)
-        disk_row.setSpacing(8)
-        disk_row.addWidget(disk_value, 1, Qt.AlignmentFlag.AlignVCenter)
-        disk_row.addWidget(free_value, 0, Qt.AlignmentFlag.AlignVCenter)
-        disk_row.addWidget(modify, 0, Qt.AlignmentFlag.AlignVCenter)
-        grid.addLayout(disk_row, 3, 1)
-        self._hardware_values["model_disk"] = disk_value
-        self._hardware_values["model_free"] = free_value
-
         gauges = QHBoxLayout()
         gauges.setContentsMargins(0, 0, 0, 0)
         gauges.setSpacing(8)
@@ -314,13 +292,6 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
                 memory_detail,
             )
         )
-        models_dir = llmenv.models_dir()
-        disk = disk_for_path(models_dir, snapshot.disks)
-        path_text = str(models_dir)
-        free_text = f"剩余 {human_size(disk.free) if disk is not None else '未知'}"
-        self._hardware_values["model_disk"].setText(path_text)
-        self._hardware_values["model_disk"].setToolTip(f"{path_text} · {free_text}")
-        self._hardware_values["model_free"].setText(free_text)
         self._detected_label.setText("")
 
     def apply_sample(self, sample: object) -> None:

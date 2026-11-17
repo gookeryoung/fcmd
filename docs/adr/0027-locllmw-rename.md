@@ -34,7 +34,7 @@
 
 | 分页 | key | 内容 | 状态 |
 |---|---|---|---|
-| 概览 | `overview` | 硬件信息（含显存 / 内存环形占用表）、模型目录只读摘要、智能推荐（见 [ADR 0028](0028-locllmw-overview.md)） | 已落地 |
+| 概览 | `overview` | 硬件信息（含显存 / 内存环形占用表）、智能推荐（见 [ADR 0028](0028-locllmw-overview.md)） | 已落地 |
 | 模型 | `models` | 浏览 / 已安装 / 下载 / 转换与量化（整合原 llmdownw，见 [ADR 0030](0030-locllmw-models-page.md)） | 已落地 |
 | 运行 | `run` | GGUF 模型选择、档位 / 上下文 / KV / batch / 线程等启动参数、分组操作栏、启动计划预览与页内进度 | 已落地 |
 | 对话 | `chat` | 服务选择、流式会话、思考过程、图片附件（整合原 llmchatw，见 [ADR 0029](0029-locllmw-chat-page.md)） | 已落地 |
