@@ -112,10 +112,14 @@ def test_apply_recommendation_emits_and_navigates(overview: Any, tmp_path: Path)
 
 
 def test_apply_recommendation_requires_selection(overview: Any) -> None:
-    _state_obj, page = overview
+    state, page = overview
+    messages: list[str] = []
+    state.statusText.connect(messages.append)
     page._recommendations = ()
     page.apply_recommendation()
-    assert "先在推荐列表中选择一行" in page._recommend_status.text()
+    assert any("先在推荐列表中选择一行" in text for text in messages)
+    assert page._apply_button.text() == "启动服务"
+    assert not hasattr(page, "_recommend_status")
 
 
 def _entries(tmp_path: Path, count: int) -> list[ModelEntry]:

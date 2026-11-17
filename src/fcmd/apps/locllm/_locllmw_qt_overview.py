@@ -408,10 +408,10 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._recommend_list.itemActivated.connect(lambda _item: self.apply_recommendation())
         card.body.addWidget(self._recommend_list, 1)
         row = QHBoxLayout()
-        self._recommend_status = hint_label("等待硬件检测与模型扫描…")
-        self._apply_button = button("用此配置启动")
+        row.addStretch(1)
+        self._apply_button = button("启动服务", kind="primary")
+        self._apply_button.setToolTip("把选中推荐行的模型与参数带入运行页")
         self._apply_button.clicked.connect(self.apply_recommendation)
-        row.addWidget(self._recommend_status, 1)
         row.addWidget(self._apply_button)
         card.body.addLayout(row)
         return card
@@ -508,22 +508,17 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._recommendations = rows
         self._render_recommendations()
         if not rows:
-            self._recommend_status.setText(
+            self.state.status(
                 "未检测到可用模型：先在「模型」页刷新，或在「设置 → 存储」中登记模型目录。"
                 if not self.state.models
                 else "当前模型都放不进整卡显存：建议换更小量化，或释放显存后重新检测。"
             )
-            return
-        self._recommend_status.setText(
-            "候选优先取显存放得下的最大模型，行内按评分从高到低排序；选中一行点「用此配置启动」把模型与参数带入运行页。"
-            "解码速度为「预测」时来自参考机器外推，跑过性能测试后同一模型自动切换为「实测」。"
-        )
 
     def apply_recommendation(self) -> None:
         """把推荐行的模型与启动配置带到运行页。"""
         row = self._recommend_list.currentRow()
         if row < 0 or row >= len(self._recommendations):
-            self._recommend_status.setText("先在推荐列表中选择一行，再点「用此配置启动」。")
+            self.state.status("先在推荐列表中选择一行，再点「启动服务」。")
             return
         recommendation = self._recommendations[row]
         self.state.recommendationApplied.emit(recommendation)
