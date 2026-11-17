@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontDatabase, QResizeEvent
+from PySide6.QtGui import QFont, QFontDatabase, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -61,6 +61,7 @@ __all__ = [
     "make_splitter",
     "make_table",
     "make_table_item",
+    "mono_font",
     "mono_label",
     "splitter_sizes",
     "value_label",
@@ -92,6 +93,13 @@ def value_label(text: str = "") -> QLabel:  # pragma: no cover - Qt 控件
     label.setObjectName("Value")
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return label
+
+
+def mono_font(point_size: int = 9) -> QFont:  # pragma: no cover - Qt 控件
+    """系统等宽字体，字号不小于 ``point_size``（日志 / 代码 / 十六进制视图共用）。"""
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    font.setPointSize(max(font.pointSize(), point_size))
+    return font
 
 
 def mono_label(text: str = "") -> QLabel:  # pragma: no cover - Qt 控件
@@ -404,9 +412,7 @@ class LogView(QWidget):  # pragma: no cover - Qt 控件
         self.view.setMinimumHeight(height)
         self.view.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         layout.addWidget(self.view, 1)
-        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setPointSize(max(font.pointSize(), 9))
-        self.view.setFont(font)
+        self.view.setFont(mono_font())
         self.clear_button.clicked.connect(self.clear)
         self.copy_button.clicked.connect(self.copy_all)
         self.export_button.clicked.connect(self._export)

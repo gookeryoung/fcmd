@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -48,14 +47,10 @@ PAGES = (
 
 
 def create_application(argv: Sequence[str] | None = None) -> QApplication:
-    """创建（或复用）``QApplication``：应用名与组织名写进 Qt 设置根。"""
-    existing = QApplication.instance()
-    if existing is not None:
-        return existing  # type: ignore[return-value]
-    app = QApplication(list(argv) if argv is not None else list(sys.argv))
-    app.setApplicationName("locllmw")
-    app.setOrganizationName("fcmd")
-    return app
+    """创建（或复用）``QApplication``（委托共享工厂，保留本模块旧入口）。"""
+    from fcmd.gui.qt.app import create_application as shared_create_application
+
+    return shared_create_application("locllmw", argv)
 
 
 class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环

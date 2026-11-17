@@ -43,7 +43,6 @@ __version__ = "0.1.0"
 _DESCRIPTION = "数字时钟 + 定时提醒（Qt）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复"
 
 DIGITAL_FORMAT = "%H:%M:%S"
-CLOCK_FONT = ("Consolas", 44, "bold italic")
 DIGITAL_BORDER_COLORS = ("#00aa00", "#eecc00", "#aa00aa", "#c0e0b0")
 BLINK_BG_COLORS = ("#baf1ba", "#f8ccc3", "#aab4f0", "#efaec0")
 BLINK_INTERVAL = 300

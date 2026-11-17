@@ -33,6 +33,7 @@ __all__ = [
     "detect_format",
     "extract_archive",
     "list_archive",
+    "try_detect_format",
 ]
 
 # 归档扩展名（按优先级匹配，长扩展名在前避免 .tar.gz 被截为 .gz）
@@ -66,6 +67,14 @@ _TAR_EXTS: frozenset[str] = frozenset(
         ".txz",
     }
 )
+
+
+def try_detect_format(filepath: Path) -> str | None:
+    """检测归档格式；不支持的扩展名返回 ``None``（调用方按只读/可写降级）。"""
+    try:
+        return detect_format(filepath)
+    except ValueError:
+        return None
 
 
 def detect_format(filepath: Path) -> str:  # noqa: PLR0911

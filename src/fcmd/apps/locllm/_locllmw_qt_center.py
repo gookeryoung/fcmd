@@ -47,13 +47,10 @@ from fcmd.apps.locllm import (
     _locllmw_convert,
     _locllmw_models,
     llmconvert,
-    llmengine,
     llmenv,
-    llmmodel,
     llmqnt,
 )
 from fcmd.apps.locllm._llmgguf import GgufPrecision, detect_precision, quantize_input_error
-from fcmd.apps.locllm._llmgguf_cache import PrecisionCache
 from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
 from fcmd.apps.locllm.llmdown import (
     LocalModel,
@@ -1166,42 +1163,17 @@ class _ConvertPanel(QWidget):  # pragma: no cover - Qt 控件
             on_finished=lambda: self.refresh_button.setEnabled(True),
         )
 
-    def _scan_env(self) -> tuple[list[tuple[Path, int]], list[ModelEntry], dict[str, GgufPrecision], str | None]:
-        root = _llmconfig.models_dir()
-        convertible = _locllmw_convert._find_convertible(root)
-        entries: list[ModelEntry] = []
-        precisions: dict[str, GgufPrecision] = {}
-        try:
-            if root.is_dir():
-                entries = llmmodel.scan_models(root)
-        except OSError:
-            entries = []
-        store = PrecisionCache()
-        for entry in entries:
-            try:
-                precision = store.get(entry.path) or detect_precision(entry.path, tensors=False)
-            except OSError:
-                continue
-            precisions[llmenv.path_key(entry.path)] = precision
-            store.remember(entry.path, precision)
-        store.save()
-        tag: str | None = None
-        try:
-            tag = llmengine.resolve_engine().tag
-        except ServeError:
-            tag = None
-        return convertible, entries, precisions, tag
+    @staticmethod
+    def _scan_env() -> _locllmw_convert.ModelEnv:
+        return _locllmw_convert.scan_model_env()
 
     def _env_error(self, message: str) -> None:
         self.models_hint.setText(f"扫描模型目录失败: {message}")
 
-    def _apply_env(
-        self, payload: tuple[list[tuple[Path, int]], list[ModelEntry], dict[str, GgufPrecision], str | None]
-    ) -> None:
-        convertible, _entries, _precisions, tag = payload
-        if tag and not self.tag.text().strip():
-            self.tag.setText(tag)
-        self._apply_convertible(convertible)
+    def _apply_env(self, env: _locllmw_convert.ModelEnv) -> None:
+        if env.tag and not self.tag.text().strip():
+            self.tag.setText(env.tag)
+        self._apply_convertible(env.convertible)
         self._refresh_existing()
 
     def _apply_convertible(self, convertible: list[tuple[Path, int]]) -> None:
@@ -1557,46 +1529,15 @@ class _QuantPanel(QWidget):  # pragma: no cover - Qt 控件
             value.setText("检测中…")
         submit(self._scan_env, on_done=self._apply_env, on_error=self._env_error)
 
-    def _scan_env(self) -> tuple[dict[str, str], list[ModelEntry], dict[str, GgufPrecision]]:
-        info = {"engine": "-", "quantizer": "-", "version": "-"}
-        try:
-            engine = llmengine.resolve_engine()
-        except ServeError as exc:
-            info["engine"] = f"未找到（{exc}）"
-        else:
-            info["engine"] = f"{engine.tag} · {engine.exe}"
-            try:
-                info["version"] = llmengine.probe_version(engine)
-            except ServeError:
-                info["version"] = "-"
-        try:
-            info["quantizer"] = str(llmqnt.resolve_quantize_exe())
-        except llmqnt.QuantizeError as exc:
-            info["quantizer"] = f"未找到（{exc}）"
-        root = _llmconfig.models_dir()
-        entries: list[ModelEntry] = []
-        try:
-            if root.is_dir():
-                entries = llmmodel.scan_models(root)
-        except OSError:
-            entries = []
-        precisions: dict[str, GgufPrecision] = {}
-        store = PrecisionCache()
-        for entry in entries:
-            try:
-                precision = store.get(entry.path) or detect_precision(entry.path, tensors=False)
-            except OSError:
-                continue
-            precisions[llmenv.path_key(entry.path)] = precision
-            store.remember(entry.path, precision)
-        store.save()
-        return info, entries, precisions
+    @staticmethod
+    def _scan_env() -> _locllmw_convert.ModelEnv:
+        return _locllmw_convert.scan_model_env()
 
     def _env_error(self, message: str) -> None:
         self.info_values["engine"].setText(f"检测失败（{message}）")
 
-    def _apply_env(self, payload: tuple[dict[str, str], list[ModelEntry], dict[str, GgufPrecision]]) -> None:
-        info, entries, precisions = payload
+    def _apply_env(self, env: _locllmw_convert.ModelEnv) -> None:
+        info, entries, precisions = env.info, env.entries, env.precisions
         for key, value in info.items():
             if key in self.info_values:
                 self.info_values[key].setText(value or "-")

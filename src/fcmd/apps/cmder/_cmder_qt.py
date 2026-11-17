@@ -82,7 +82,6 @@ __all__ = ["CmderQtWindow", "run_qt"]
 
 DEFAULT_SIZE = (1240, 760)
 MIN_SIZE = (960, 600)
-_TERMINAL_HEIGHT = 520
 
 
 class _QueueBridge(QObject):

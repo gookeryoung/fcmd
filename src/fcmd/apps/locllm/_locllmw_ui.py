@@ -24,7 +24,6 @@ from fcmd.apps.locllm.llmbase import (
 )
 from fcmd.apps.locllm.llmserve import DEFAULT_NAME
 
-_MODEL_PLACEHOLDER = "未选择（按档位自动在模型目录中查找）"
 _HINT_PLACEHOLDER = "选择模型后显示能力标签（代码/推理/对话/视觉/数学/重排/嵌入/通用）、硬件适配与最佳实践建议"
 _QUANT_SUFFIX_RE = re.compile(r"[-_.](?:I?Q\d+(?:_[A-Za-z0-9]+)*|BF16|F16|F32)$", re.IGNORECASE)
 

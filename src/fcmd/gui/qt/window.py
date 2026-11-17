@@ -12,7 +12,6 @@ Qt 窗口骨架负责「导航 / 菜单 / 状态栏 / 日志区 / 后台任务�
 
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
@@ -27,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import geometry as _geometry
+from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.theme_menu import ThemeMenu
 
@@ -46,33 +45,6 @@ __all__ = [
     "restore_geometry",
 ]
 
-_GEOMETRY_RE = re.compile(r"^(?P<width>\d+)x(?P<height>\d+)(?:(?P<sign_x>[+-])(?P<x>\d+)(?P<sign_y>[+-])(?P<y>\d+))?$")
-
-
-def parse_geometry(text: str | None) -> tuple[int, int, int, int] | None:
-    """解析 ``WxH+X+Y``；缺少位置时按左上角 ``0,0`` 处理，非法文本返回 ``None``。"""
-    if not isinstance(text, str):
-        return None
-    match = _GEOMETRY_RE.fullmatch(text.strip())
-    if match is None:
-        return None
-    width = int(match["width"])
-    height = int(match["height"])
-    if width <= 0 or height <= 0:
-        return None
-    if match["x"] is None:
-        return width, height, 0, 0
-    x = int(match["x"]) if match["sign_x"] == "+" else -int(match["x"])
-    y = int(match["y"]) if match["sign_y"] == "+" else -int(match["y"])
-    return width, height, x, y
-
-
-def format_geometry(width: int, height: int, x: int, y: int) -> str:
-    """把窗口矩形格式化为 ``WxH+X+Y``（负数坐标写成 ``+-`` 形式）。"""
-    sign_x = "+" if x >= 0 else "-"
-    sign_y = "+" if y >= 0 else "-"
-    return f"{max(width, 0)}x{max(height, 0)}{sign_x}{abs(x)}{sign_y}{abs(y)}"
-
 
 def resolve_geometry_text(  # noqa: PLR0913 - 与 geometry.resolve_geometry 参数对齐
     saved: str | None,
@@ -84,7 +56,7 @@ def resolve_geometry_text(  # noqa: PLR0913 - 与 geometry.resolve_geometry 参�
     min_height: int,
 ) -> str:
     """恢复记忆位置，越界 / 非法时回落到默认尺寸（按屏幕夹紧）。"""
-    return _geometry.resolve_geometry(
+    return resolve_geometry(
         saved,
         screen_width,
         screen_height,
@@ -372,9 +344,3 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def is_closing(self) -> bool:
         """窗口是否正在关闭（后台线程回调可据此提前返回）。"""
         return self._closing
-
-
-def qt_exec(window: QtMainWindow) -> int:  # pragma: no cover - 需要 Qt 事件循环
-    """显示窗口并进入事件循环。"""
-    window.show()
-    return int(QApplication.instance().exec())

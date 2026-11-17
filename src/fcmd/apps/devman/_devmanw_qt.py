@@ -16,7 +16,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -53,6 +53,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter
+from fcmd.gui.qt.workers import EventBridge as _TaskBridge
 from fcmd.gui.qt.workers import submit
 
 __all__ = ["DevmanWindow", "run_qt"]
@@ -68,12 +69,6 @@ _AVAILABLE_WIDTHS = (200, 84, 90, 70)
 
 _Emit = Callable[[tuple[Any, ...]], None]
 _Work = Callable[[Callable[[str], None], Callable[[int, int], None], _Emit], str]
-
-
-class _TaskBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台任务 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 def _work_task(work: _Work, bridge: _TaskBridge) -> None:

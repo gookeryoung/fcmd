@@ -117,3 +117,11 @@ class TestCenteredGeometry:
             )
             == "2000x1200+0+0"
         )
+
+
+def test_size_from_geometry_parses_and_falls_back() -> None:
+    """默认窗口尺寸从 geometry 解析；非法值回落到给定默认。"""
+    assert _guiwindow.size_from_geometry("1120x760+10+20") == (1120, 760)
+    assert _guiwindow.size_from_geometry("800x600") == (800, 600)
+    assert _guiwindow.size_from_geometry(None, default=(900, 700)) == (900, 700)
+    assert _guiwindow.size_from_geometry("bad", default=(640, 480)) == (640, 480)

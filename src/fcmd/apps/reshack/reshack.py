@@ -24,13 +24,13 @@ import contextlib
 import importlib
 import shutil
 import struct
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.infras.text import display_width, pad_display
 
 __all__ = [
     "PE_EXTENSIONS",
@@ -289,28 +289,18 @@ def format_file_info(info: PEFileInfo) -> str:
     )
 
 
-def _display_width(text: str) -> int:
-    """按终端显示宽度计数（中文等宽字符按 2 列计）。"""
-    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
-
-
-def _pad(text: str, width: int) -> str:
-    """按终端显示宽度左对齐填充。"""
-    return text + " " * max(0, width - _display_width(text))
-
-
 def format_resource_table(resources: list[ResourceEntry]) -> str:
     """格式化资源列表为对齐表格文本。"""
     if not resources:
         return "(该文件没有资源)"
-    header = _pad("类型", 18) + _pad("名称", 8) + _pad("语言", 8) + _pad("大小", 12) + "RVA"
-    lines = [header, "-" * _display_width(header)]
+    header = pad_display("类型", 18) + pad_display("名称", 8) + pad_display("语言", 8) + pad_display("大小", 12) + "RVA"
+    lines = [header, "-" * display_width(header)]
     for resource in sorted(resources, key=lambda item: (item.type_id, item.name_id, item.language_id)):
         lines.append(
-            _pad(resource.type_name, 18)
-            + _pad(str(resource.name_id), 8)
-            + _pad(str(resource.language_id), 8)
-            + _pad(format_file_size(resource.size), 12)
+            pad_display(resource.type_name, 18)
+            + pad_display(str(resource.name_id), 8)
+            + pad_display(str(resource.language_id), 8)
+            + pad_display(format_file_size(resource.size), 12)
             + f"0x{resource.offset:X}"
         )
     return "\n".join(lines)

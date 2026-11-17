@@ -25,9 +25,6 @@ __all__ = ["format_session_markdown"]
 
 _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
 _CUSTOM = "自定义"
-_UNAVAILABLE = "不可用"
-#: 单条消息允许的图片数量上限
-_MAX_IMAGES = 4
 
 
 def _state_available(state: ServeState) -> bool:

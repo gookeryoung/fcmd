@@ -15,8 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFontDatabase, QImage, QPixmap
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -70,7 +70,8 @@ from fcmd.apps.reshack.reshackw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter
+from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter, mono_font
+from fcmd.gui.qt.workers import EventBridge as _TaskBridge
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -84,12 +85,6 @@ _TREE_HEADERS = ("名称", "类型", "大小", "语言")
 _TREE_WIDTHS = (200, 120, 90, 70)
 _PE_FILTER = "PE 文件 (*.exe *.dll *.sys *.ocx *.scr *.cpl *.ax *.acm *.drv);;所有文件 (*.*)"
 _RESIZE_DEBOUNCE_MS = 100
-
-
-class _TaskBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台加载 / 替换 / 导出线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 def _work_load(path: Path, bridge: _TaskBridge) -> None:
@@ -850,9 +845,7 @@ def _preview_edit(parent: QWidget, *, wrap: bool = True) -> QPlainTextEdit:
     widget = QPlainTextEdit(parent)
     widget.setReadOnly(True)
     widget.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth if wrap else QPlainTextEdit.LineWrapMode.NoWrap)
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    font.setPointSize(max(font.pointSize(), 9))
-    widget.setFont(font)
+    widget.setFont(mono_font())
     return widget
 
 

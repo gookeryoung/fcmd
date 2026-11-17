@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontDatabase
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -49,9 +49,10 @@ from fcmd.apps.peview.pevieww import (
     load_settings,
     save_settings,
 )
+from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import ElidedLabel, apply_splitter_sizes, button, hint_label, splitter_sizes
+from fcmd.gui.qt.widgets import ElidedLabel, apply_splitter_sizes, button, hint_label, mono_font, splitter_sizes
 
 __all__ = ["PeviewWindow", "run_qt"]
 
@@ -59,26 +60,12 @@ _PE_FILTER = "PE 文件 (*.exe *.dll *.sys *.ocx *.cpl *.scr *.efi);;所有文�
 _DEFAULT_SPLIT = (320, 820)
 
 
-def _settings_size() -> tuple[int, int]:
-    """从 ``DEFAULT_GEOMETRY`` 解析默认窗口尺寸。"""
-    width, rest = DEFAULT_GEOMETRY.split("x", 1)
-    height = rest.split("+", 1)[0]
-    return int(width), int(height)
-
-
-def _mono_font() -> QFont:
-    """等宽字体（十六进制视图与日志共用系统固定字宽字形）。"""
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    font.setPointSize(max(font.pointSize(), 9))
-    return font
-
-
 def _text_view(parent: QWidget, *, wrap: bool = True, mono: bool = False) -> QPlainTextEdit:
     """只读文本视图；``wrap=False`` 时靠水平滚动条查看长行。"""
     view = QPlainTextEdit(parent)
     view.setReadOnly(True)
     if mono:
-        view.setFont(_mono_font())
+        view.setFont(mono_font())
     view.setLineWrapMode(
         QPlainTextEdit.LineWrapMode.WidgetWidth if wrap else QPlainTextEdit.LineWrapMode.NoWrap,
     )
@@ -199,7 +186,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._pe: PEImage | None = None
         self._current_file: Path | None = None
         self._hex_offset = 0
-        size = _settings_size()
+        size = size_from_geometry(DEFAULT_GEOMETRY)
         super().__init__(
             title=f"PE 查看器 v{__version__}",
             config_name="pevieww",

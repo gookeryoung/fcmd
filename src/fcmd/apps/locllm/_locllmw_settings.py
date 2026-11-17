@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -40,7 +39,6 @@ _DEFAULT = "默认"
 _AUTO = "自动保存"
 
 _VARIANTS = ("cuda", "cpu")
-_OFFLINE_PLACEHOLDER = "尚未选择离线包（zip 文件或包含 zip 的目录）"
 _KIND_LABELS = {
     "engine": "引擎",
     "cudart": "CUDA 运行库",
@@ -48,14 +46,6 @@ _KIND_LABELS = {
     "unknown": "未知",
     "invalid": "无效",
 }
-
-#: 设置页可编辑的目录项：配置键 → (行标题, 选择对话框标题)
-_EDITABLE: dict[str, tuple[str, str]] = {
-    "models_dir": ("模型目录", "选择模型目录（仅支持单一目录）"),
-    "engines_root": ("引擎根目录", "选择 llama.cpp 引擎根目录"),
-}
-
-TaskFunc = Callable[[Callable[[str, int, int | None], None]], tuple[str, str | None]]
 
 
 # ---------------------------------------------------------------------- #

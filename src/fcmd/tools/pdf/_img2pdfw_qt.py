@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,9 +25,11 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
+from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.pdf.img2pdf import collect_pdf_images, images_to_pdf, resolve_pdf_output
 from fcmd.tools.pdf.img2pdfw import (
@@ -50,18 +51,6 @@ from fcmd.tools.pdf.img2pdfw import (
 __all__ = ["Img2PdfWindow", "run_qt"]
 
 _IMAGE_FILTER = "图片文件 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff *.ico);;所有文件 (*.*)"
-
-
-def _default_size() -> tuple[int, int]:
-    """从 ``DEFAULT_GEOMETRY`` 解析默认窗口尺寸。"""
-    width, rest = DEFAULT_GEOMETRY.split("x", 1)
-    return int(width), int(rest.split("+", 1)[0])
-
-
-class _ConvertBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台转换线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 def _run_conversion(  # noqa: PLR0913, PLR0917 - 转换参数逐项显式传递，便于对照既有行为
@@ -104,7 +93,7 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         super().__init__(
             title=f"图片转 PDF 转换器 v{__version__}",
             config_name="img2pdfw",
-            default_size=_default_size(),
+            default_size=size_from_geometry(DEFAULT_GEOMETRY),
             min_size=(MIN_WIDTH, MIN_HEIGHT),
             persist=self._persist,
             scroll=True,

@@ -50,6 +50,7 @@ from fcmd.apps.paramesh.parameshw import (
     region_color,
     save_settings,
 )
+from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import LogView, apply_splitter_sizes, button, splitter_sizes
@@ -57,13 +58,6 @@ from fcmd.gui.qt.widgets import LogView, apply_splitter_sizes, button, splitter_
 __all__ = ["ParameshWindow", "run_qt"]
 
 _DEFAULT_SPLIT = (800, 380)
-
-
-def _settings_size() -> tuple[int, int]:
-    """从 ``DEFAULT_GEOMETRY`` 解析默认窗口尺寸。"""
-    width, rest = DEFAULT_GEOMETRY.split("x", 1)
-    height = rest.split("+", 1)[0]
-    return int(width), int(height)
 
 
 class _PreviewCanvas(QWidget):  # pragma: no cover - Qt 控件
@@ -105,7 +99,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         super().__init__(
             title=f"网格预览 v{__version__}",
             config_name="paramesh",
-            default_size=_settings_size(),
+            default_size=size_from_geometry(DEFAULT_GEOMETRY),
             min_size=(MIN_WIDTH, MIN_HEIGHT),
             persist=self._persist,
         )

@@ -22,7 +22,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, override
 
 from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QIcon, QPixmap
+from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -58,7 +58,7 @@ from fcmd.apps.cmder._ops import (
 )
 from fcmd.apps.cmder._tabs import tab_bar_label
 from fcmd.apps.cmder._volumes import enumerate_volumes
-from fcmd.gui.qt.widgets import button, hint_label
+from fcmd.gui.qt.widgets import button, hint_label, mono_font
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -84,9 +84,7 @@ class QuickView(QWidget):
         self.text = QPlainTextEdit(self)
         self.text.setReadOnly(True)
         self.text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        font = QFont("Consolas")
-        font.setPointSize(9)
-        self.text.setFont(font)
+        self.text.setFont(mono_font())
         self.stack.addWidget(self.text)
         self.image_scroll = QScrollArea(self)
         self.image_scroll.setWidgetResizable(True)

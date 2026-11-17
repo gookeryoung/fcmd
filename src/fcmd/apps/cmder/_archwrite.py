@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from fcmd.tools.archive.archivex import detect_format
+from fcmd.tools.archive.archivex import try_detect_format
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
@@ -61,7 +61,6 @@ _TAR_SUFFIXES: tuple[str, ...] = (
     ".txz",
 )
 
-_AES_COMPRESS_TYPE = 99
 _ENCRYPTED_FLAG = 0x1
 
 
@@ -80,20 +79,12 @@ def normalize_level(level: object) -> int:
     return max(MIN_COMPRESSION_LEVEL, min(MAX_COMPRESSION_LEVEL, level))
 
 
-def _archive_format(path: Path) -> str | None:
-    """复用 :func:`fcmd.tools.archive.archivex.detect_format`；不支持的格式返回 ``None``。"""
-    try:
-        return detect_format(path)
-    except ValueError:
-        return None
-
-
 def _is_zip(path: Path) -> bool:
-    return _archive_format(path) == "zip"
+    return try_detect_format(path) == "zip"
 
 
 def _is_tar(path: Path) -> bool:
-    return _archive_format(path) == "tar"
+    return try_detect_format(path) == "tar"
 
 
 def archive_editable(path: Path) -> bool:

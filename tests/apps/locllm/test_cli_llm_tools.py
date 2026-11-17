@@ -894,3 +894,60 @@ def test_msvc_runtime_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
     assert check.status == "warn"
     assert "MSVCP140" in check.detail
+
+
+def test_scan_model_env_collects_engine_and_precisions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """转换 / 量化子页共用一次环境扫描：引擎、量化器、可转换目录与精度。"""
+    from types import SimpleNamespace
+
+    from fcmd.apps.locllm import _locllmw_convert as convert
+    from fcmd.apps.locllm._llmgguf import GgufPrecision
+
+    models = tmp_path / "models"
+    models.mkdir()
+    engine = SimpleNamespace(tag="b4000", exe=tmp_path / "llama-server.exe")
+    monkeypatch.setattr(convert._llmconfig, "models_dir", lambda: models)
+    monkeypatch.setattr(convert.llmengine, "resolve_engine", lambda: engine)
+    monkeypatch.setattr(convert.llmengine, "probe_version", lambda _engine: "b4000-test")
+    monkeypatch.setattr(convert.llmqnt, "resolve_quantize_exe", lambda: tmp_path / "llama-quantize.exe")
+    monkeypatch.setattr(convert, "_find_convertible", lambda _root: [(tmp_path / "hf", 1024)])
+    monkeypatch.setattr(
+        convert,
+        "_detect_precisions",
+        lambda _entries: {"k": GgufPrecision(label="F16 全量，未量化", quantized=False, source="filename")},
+    )
+
+    env = convert.scan_model_env()
+
+    assert env.tag == "b4000"
+    assert env.info["engine"].startswith("b4000 · ")
+    assert env.info["version"] == "b4000-test"
+    assert env.info["quantizer"].endswith("llama-quantize.exe")
+    assert env.convertible == [(tmp_path / "hf", 1024)]
+    assert set(env.precisions) == {"k"}
+
+
+def test_scan_model_env_survives_missing_engine_and_quantizer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """引擎 / 量化器缺失时状态文案降级，扫描结果仍返回。"""
+    from fcmd.apps.locllm import _locllmw_convert as convert
+    from fcmd.apps.locllm.llmbase import ServeError
+
+    monkeypatch.setattr(convert._llmconfig, "models_dir", lambda: tmp_path / "missing")
+
+    def no_engine() -> None:
+        raise ServeError("没有引擎")
+
+    def no_quantizer() -> None:
+        raise convert.llmqnt.QuantizeError("没有量化器")
+
+    monkeypatch.setattr(convert.llmengine, "resolve_engine", no_engine)
+    monkeypatch.setattr(convert.llmqnt, "resolve_quantize_exe", no_quantizer)
+    monkeypatch.setattr(convert, "_detect_precisions", lambda _entries: {})
+
+    env = convert.scan_model_env()
+
+    assert env.tag is None
+    assert "未找到" in env.info["engine"]
+    assert "未找到" in env.info["quantizer"]
+    assert env.entries == []
+    assert env.convertible == []

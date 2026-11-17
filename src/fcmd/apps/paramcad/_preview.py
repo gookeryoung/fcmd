@@ -12,7 +12,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from fcmd.apps.paramcad._fields import DENSITY_AXES, Field
+from fcmd.apps.paramcad._fields import Field
 from fcmd.apps.paramcad._model import TubeModel
 
 __all__ = [
@@ -393,9 +393,3 @@ def distribution_curves(model: TubeModel, *, samples: int = 51) -> tuple[Curve, 
                 )
             )
     return tuple(curves)
-
-
-def field_axes(fields: tuple[Field, ...]) -> tuple[str, ...]:
-    """返回模型实际给出的密度轴（按契约固定顺序）。"""
-    present = {item.axis for item in fields}
-    return tuple(axis for axis in DENSITY_AXES if axis in present)

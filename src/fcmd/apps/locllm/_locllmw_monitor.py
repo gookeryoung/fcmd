@@ -23,8 +23,6 @@ _FIT_RUNNING = "运行中"
 
 #: token 速率平滑窗口（秒）：窗口内累计 token 数 ÷ 经过时间，避免逐秒差值剧烈跳变
 RATE_WINDOW_SECONDS = 10.0
-#: 建窗后首次系统采样的延迟（毫秒）：先让窗口完成布局与首绘，再启动采样线程
-MONITOR_START_DELAY_MS = 500
 #: ``nvidia-smi --query-gpu`` 查询字段（顺序与解析逻辑对应）
 _GPU_FIELDS = (
     "uuid",

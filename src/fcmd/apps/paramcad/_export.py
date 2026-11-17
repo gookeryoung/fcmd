@@ -88,10 +88,6 @@ def _number(item: Quantity) -> float | str:
     return TBD_TEXT if item.value is None else float(item.value)
 
 
-def _optional_number(value: float | None) -> float | str:
-    return TBD_TEXT if value is None else float(value)
-
-
 def _wall_circumferential_document(item: CircumferentialWall) -> dict[str, Any] | None:
     """``wall_thickness.circumferential``；``kind: tbd`` 归一为整节省略。"""
     if item.kind == "tbd":

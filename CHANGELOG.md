@@ -18,7 +18,15 @@
   - 删除 Tk 共享层（`fcmd.gui.window` / `fcmd.gui.sidebar` 与 `theme.py` 的 ttk 渲染），
     新增 `fcmd.gui.pages`，主题注册表保留为纯数据模块；
   - 断言 Tk 内部实现的测试改写为 Qt 等价断言，纯逻辑与设置测试保持原样。
-- 新增 `fcmd.gui.geometry` 纯函数模块，Tk / Qt 窗口与设置统一复用 `WxH+X+Y` 解析、夹紧与居中算法。
+- 新增 `fcmd.gui.geometry` 纯函数模块，各窗口与设置统一复用 `WxH+X+Y` 解析、夹紧与居中算法。
+
+### 重构
+
+- 清理迁移后遗留的死代码与常量（cmder / locllmw / alarmclock / paramcad / envdev 等）。
+- 合并重复实现：Qt 后台事件桥统一为 `EventBridge`、等宽字体统一为 `mono_font()`、
+  终端显示宽度填充统一到 `infras.text`、窗口默认尺寸统一走 `geometry.size_from_geometry`、
+  压缩包格式探测统一为 `archivex.try_detect_format`、locllmw 转换 / 量化共用一次
+  `scan_model_env()`；cmder 的大小格式化复用卷容量格式化。
 
 ## [0.3.12] - 2026-11-11
 

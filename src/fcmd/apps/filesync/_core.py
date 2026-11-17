@@ -20,11 +20,12 @@ import fnmatch
 import os
 import re
 import shutil
-import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from fcmd.infras.text import display_width, pad_display
 
 __all__ = [
     "ACTION_COPY_LTR",
@@ -746,16 +747,6 @@ def format_size(size: int) -> str:
     return f"{size / (1024 * 1024 * 1024):.1f} GB"
 
 
-def _display_width(text: str) -> int:
-    """按终端显示宽度计数（中文等宽字符按 2 列计）。"""
-    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
-
-
-def _pad(text: str, width: int) -> str:
-    """按显示宽度左对齐填充。"""
-    return text + " " * max(0, width - _display_width(text))
-
-
 _SIDE_TEXT: dict[str, str] = {"left": "左侧", "right": "右侧", "": "扫描"}
 
 
@@ -792,17 +783,23 @@ def format_compare_report(result: CompareResult, *, show_equal: bool = False) ->
     if not visible:
         lines.append("(没有差异)" if result.items else "(两侧均为空)")
     else:
-        header = _pad("状态", 10) + _pad("相对路径", 42) + _pad("左侧大小", 12) + _pad("右侧大小", 12) + "说明"
+        header = (
+            pad_display("状态", 10)
+            + pad_display("相对路径", 42)
+            + pad_display("左侧大小", 12)
+            + pad_display("右侧大小", 12)
+            + "说明"
+        )
         lines.append(header)
-        lines.append("-" * _display_width(header))
+        lines.append("-" * display_width(header))
         for item in visible:
             left_size = format_size(item.left.size) if item.left is not None else "-"
             right_size = format_size(item.right.size) if item.right is not None else "-"
             lines.append(
-                _pad(item.category_text, 10)
-                + _pad(item.relative, 42)
-                + _pad(left_size, 12)
-                + _pad(right_size, 12)
+                pad_display(item.category_text, 10)
+                + pad_display(item.relative, 42)
+                + pad_display(left_size, 12)
+                + pad_display(right_size, 12)
                 + item.detail
             )
     if result.errors:

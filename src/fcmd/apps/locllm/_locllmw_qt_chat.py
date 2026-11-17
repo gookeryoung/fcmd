@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.locllm import llmenv
-from fcmd.apps.locllm._locllmw_chat import _CUSTOM, format_session_markdown
+from fcmd.apps.locllm._locllmw_chat import _CUSTOM, _first_available, _state_available, format_session_markdown
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_ALIAS,
     DEFAULT_API_KEY,
@@ -40,7 +40,6 @@ from fcmd.apps.locllm.llmbase import (
     http_base_url,
 )
 from fcmd.apps.locllm.llmchat import ChatMessage, ChatSession
-from fcmd.apps.locllm.llmserve import process_alive
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, button
 from fcmd.gui.qt.workers import submit
@@ -57,14 +56,9 @@ def service_labels(states: list[ServeState]) -> list[tuple[str, ServeState]]:
     """生成服务下拉项：每个已登记服务都标注「运行中 / 已退出」。"""
     options: list[tuple[str, ServeState]] = []
     for state in states:
-        suffix = "（运行中）" if process_alive(state.pid, state.create_time) else "（已退出）"
+        suffix = "（运行中）" if _state_available(state) else "（已退出）"
         options.append((f"{state.name}{suffix}", state))
     return options
-
-
-def _first_available(states: list[ServeState]) -> ServeState | None:
-    """第一个进程仍在运行的服务；没有可用服务时返回 ``None``。"""
-    return next((state for state in states if process_alive(state.pid, state.create_time)), None)
 
 
 def endpoint_from_form(base_url: str, api_key: str, model: str) -> Endpoint:
@@ -230,7 +224,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             self.status.setText("自定义地址：脱离已登记服务，直接按下方地址与模型接入")
             return
         self._apply_state(state)
-        if process_alive(state.pid, state.create_time):
+        if _state_available(state):
             self._append_text(f"[服务] 已切换到 {state.name}：{state.base_url}\n\n", "info")
         else:
             self._append_text(f"[错误] 服务 {state.name} 不可用：{state.base_url}\n\n", "error")
@@ -244,7 +238,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _report_state(self, state: ServeState) -> None:
         """状态栏文案：运行中 / 进程已退出。"""
-        if process_alive(state.pid, state.create_time):
+        if _state_available(state):
             self.status.setText(f"已选择服务 {state.name}（运行中）")
         else:
             self.status.setText(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")

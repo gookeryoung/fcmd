@@ -32,9 +32,6 @@ _DIGITS = string.digits
 # 安全符号集：排除易混淆字符（引号/反斜杠/反引号）
 _SYMBOLS = "!@#$%^&*()-_=+[]{}<>?"
 
-_DEFAULT_PASSWORD_LENGTH = 16
-_DEFAULT_STRING_LENGTH = 16
-
 
 def generate_password(length: int = 16, symbols: bool = True) -> str:
     """生成强密码，至少包含大小写字母与数字各一个。"""

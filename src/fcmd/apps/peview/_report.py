@@ -9,10 +9,10 @@
 
 from __future__ import annotations
 
-import unicodedata
 from typing import TYPE_CHECKING
 
 from fcmd.apps.peview._reader import compute_checksum
+from fcmd.infras.text import display_width, pad_display
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -317,15 +317,6 @@ def format_section_characteristics(value: int) -> str:
 # ---------------------------------------------------------------------- #
 # 表格
 # ---------------------------------------------------------------------- #
-def _display_width(text: str) -> int:
-    """按终端显示宽度计数（中文等宽字符按 2 列计）。"""
-    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
-
-
-def _pad(text: str, width: int, align: str) -> str:
-    """按显示宽度填充到 ``width`` 列。"""
-    padding = max(0, width - _display_width(text))
-    return (" " * padding + text) if align == "right" else (text + " " * padding)
 
 
 def format_table(headers: Sequence[str], rows: Sequence[Sequence[str]], aligns: Sequence[str] | None = None) -> str:
@@ -334,13 +325,14 @@ def format_table(headers: Sequence[str], rows: Sequence[Sequence[str]], aligns: 
         return "(无)"
     alignments = list(aligns or ["left"] * len(headers))
     widths = [
-        max(_display_width(str(cell)) for cell in (headers[index], *(row[index] for row in rows)))
+        max(display_width(str(cell)) for cell in (headers[index], *(row[index] for row in rows)))
         for index in range(len(headers))
     ]
-    line = "  ".join(_pad(str(headers[index]), widths[index], "left") for index in range(len(headers)))
+    line = "  ".join(pad_display(str(headers[index]), widths[index], "left") for index in range(len(headers)))
     separator = "  ".join("-" * width for width in widths)
     body = [
-        "  ".join(_pad(str(cell), widths[index], alignments[index]) for index, cell in enumerate(row)) for row in rows
+        "  ".join(pad_display(str(cell), widths[index], alignments[index]) for index, cell in enumerate(row))
+        for row in rows
     ]
     return "\n".join((line, separator, *body))
 

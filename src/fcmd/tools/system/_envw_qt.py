@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFontDatabase
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -33,7 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item
+from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item, mono_font
 from fcmd.tools.system import envw
 from fcmd.tools.system.envw import (
     MIN_HEIGHT,
@@ -431,7 +431,7 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         widget = QPlainTextEdit()
         widget.setReadOnly(True)
         widget.setMaximumHeight(64)
-        widget.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        widget.setFont(mono_font())
         widget.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         return widget
 

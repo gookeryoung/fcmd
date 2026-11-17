@@ -55,7 +55,6 @@ ALIGN_CENTER = "center"
 ALIGN_RIGHT = "right"
 ANCHOR_TOP = "top"
 ANCHOR_MIDDLE = "middle"
-ANCHOR_BOTTOM = "bottom"
 
 
 @dataclass(frozen=True, slots=True)

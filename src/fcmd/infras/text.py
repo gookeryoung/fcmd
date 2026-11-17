@@ -15,6 +15,7 @@ import filecmp
 import math
 import operator as op
 import re
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ __all__ = [
     "convert_case",
     "count_text",
     "diff_stats",
+    "display_width",
     "eval_expr",
     "factorial_value",
     "find_all",
@@ -110,6 +112,17 @@ def build_ascii_table(start: int = PRINTABLE_START, end: int = PRINTABLE_END) ->
 # ============================================================================
 # padtool
 # ============================================================================
+
+
+def display_width(text: str) -> int:
+    """终端显示宽度：东亚宽字符（中文 / 全角）按 2 列，其余按 1 列。"""
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
+
+
+def pad_display(text: str, width: int, align: str = "left") -> str:
+    """按终端显示宽度填充空格；``align`` 取 ``left`` / ``right``。"""
+    padding = max(0, width - display_width(text))
+    return (" " * padding + text) if align == "right" else (text + " " * padding)
 
 
 def align_left(text: str, width: int) -> str:

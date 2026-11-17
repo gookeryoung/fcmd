@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, PathRow, button, hint_label
@@ -51,13 +52,6 @@ __all__ = ["PdfSplitWindow", "run_qt"]
 
 DEFAULT_SIZE = (880, 700)
 _PDF_FILTER = "PDF 文件 (*.pdf);;所有文件 (*.*)"
-
-
-def _settings_size() -> tuple[int, int]:
-    """从 ``DEFAULT_GEOMETRY`` 解析默认窗口尺寸。"""
-    width, rest = DEFAULT_GEOMETRY.split("x", 1)
-    height = rest.split("+", 1)[0]
-    return int(width), int(height)
 
 
 class _PdfInputRow(PathRow):  # pragma: no cover - Qt 控件
@@ -171,7 +165,7 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         super().__init__(
             title=f"PDF 分割 v{__version__}",
             config_name="pdfsplitw",
-            default_size=_settings_size(),
+            default_size=size_from_geometry(DEFAULT_GEOMETRY),
             min_size=(MIN_WIDTH, MIN_HEIGHT),
             persist=self._persist,
             scroll=True,

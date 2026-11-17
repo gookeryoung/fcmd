@@ -29,7 +29,17 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
 
-__all__ = ["TaskSignals", "periodic", "submit"]
+__all__ = ["EventBridge", "TaskSignals", "periodic", "submit"]
+
+
+class EventBridge(QObject):  # pragma: no cover - Qt 信号桥
+    """通用后台事件桥：工作线程 ``emit`` 元组，界面按 kind 分发。
+
+    各窗口原先各复制一份 ``_TaskBridge`` / ``_ConvertBridge``（都是
+    ``QObject + Signal(object)``），统一收敛到这里。
+    """
+
+    event = Signal(object)
 
 
 class TaskSignals(QObject):  # pragma: no cover - Qt 信号对象
@@ -93,11 +103,6 @@ def submit(
     task.signals.finished.connect(_cleanup)
     QThreadPool.globalInstance().start(task)
     return task
-
-
-def pending_count() -> int:
-    """尚未完成的任务数（测试与调试用）。"""
-    return len(_PENDING)
 
 
 def periodic(owner: QObject, interval_ms: int, callback: Callable[[], None]) -> QTimer:  # pragma: no cover

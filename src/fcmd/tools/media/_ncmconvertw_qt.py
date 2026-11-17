@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -34,6 +34,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, button
+from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
@@ -55,12 +56,6 @@ __all__ = ["NcmConvertWindow", "run_qt"]
 DEFAULT_SIZE = (860, 640)
 
 _OUTPUT_HINT = "留空时解锁到每个 NCM 文件所在目录，文件名为 <原名>.<格式>"
-
-
-class _ConvertBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台转换线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 class _OutputRow(QWidget):  # pragma: no cover - Qt 控件

@@ -32,7 +32,6 @@ __all__ = [
     "resolve_key",
 ]
 
-_UNSTABLE_RE = re.compile(r"[ab]|rc|dev", re.IGNORECASE)
 _VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 
 

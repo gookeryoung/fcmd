@@ -12,7 +12,7 @@ Success / Danger 色区分匹配与不匹配，深浅主题一致。
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QFontDatabase
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -27,9 +27,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, apply_splitter_sizes, button, hint_label, splitter_sizes
+from fcmd.gui.qt.widgets import Card, apply_splitter_sizes, button, hint_label, mono_font, splitter_sizes
 from fcmd.tools.text.regexvalidate import PatternValidationError, RegexValidator, build_flags, format_validator_report
 from fcmd.tools.text.regexvalidatew import (
     DEFAULT_GEOMETRY,
@@ -53,20 +54,6 @@ __all__ = ["RegexValidateWindow", "run_qt"]
 DEFAULT_SPLIT = (200, 260)
 
 
-def _settings_size() -> tuple[int, int]:
-    """从 ``DEFAULT_GEOMETRY`` 解析默认窗口尺寸。"""
-    width, rest = DEFAULT_GEOMETRY.split("x", 1)
-    height = rest.split("+", 1)[0]
-    return int(width), int(height)
-
-
-def _mono_font() -> QFont:
-    """系统固定字宽字体（正则、文本与结果共用）。"""
-    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-    font.setPointSize(max(font.pointSize(), 9))
-    return font
-
-
 class _HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
     """正则语法帮助对话框（只读、可滚动）。"""
 
@@ -79,7 +66,7 @@ class _HelpDialog(QDialog):  # pragma: no cover - 需要 Qt 事件循环
         layout.setSpacing(8)
         view = QPlainTextEdit(REGEX_HELP_TEXT, self)
         view.setReadOnly(True)
-        view.setFont(_mono_font())
+        view.setFont(mono_font())
         layout.addWidget(view, 1)
         close = button("关闭")
         close.clicked.connect(self.accept)
@@ -100,7 +87,7 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         super().__init__(
             title=f"正则校验器 v{__version__}",
             config_name="regexvalidate",
-            default_size=_settings_size(),
+            default_size=size_from_geometry(DEFAULT_GEOMETRY),
             min_size=(MIN_WIDTH, MIN_HEIGHT),
             persist=self._persist,
         )
@@ -125,7 +112,7 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         self._splitter.setChildrenCollapsible(False)
         text_card = Card("测试文本", self._splitter)
         self._text = QPlainTextEdit(self._settings.test_string, text_card)
-        self._text.setFont(_mono_font())
+        self._text.setFont(mono_font())
         self._text.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._text.setMinimumHeight(120)
         text_card.body.addWidget(self._text)
@@ -133,7 +120,7 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         result_card = Card("校验结果", self._splitter)
         self._result = QPlainTextEdit(result_card)
         self._result.setReadOnly(True)
-        self._result.setFont(_mono_font())
+        self._result.setFont(mono_font())
         self._result.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self._result.setMinimumHeight(120)
         self._result.setPlainText("请输入正则表达式")
@@ -155,7 +142,7 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         pattern_row.setSpacing(6)
         pattern_row.addWidget(QLabel("模式", card))
         self._pattern = QLineEdit(self._settings.pattern, card)
-        self._pattern.setFont(_mono_font())
+        self._pattern.setFont(mono_font())
         self._pattern.setPlaceholderText(r"例如 ^1[3-9]\d{9}$")
         self._pattern.textChanged.connect(self._on_change)
         pattern_row.addWidget(self._pattern, 1)

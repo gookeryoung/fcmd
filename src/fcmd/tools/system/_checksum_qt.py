@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QFontDatabase, QTextCursor
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button
+from fcmd.gui.qt.widgets import Card, button, mono_font
 from fcmd.tools.system.checksum import (
     ALGORITHMS,
     DEFAULT_ALGORITHM,
@@ -135,9 +135,7 @@ class ChecksumQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         result = Card("结果")
         self.result = QTextEdit(result)
         self.result.setReadOnly(True)
-        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setPointSize(max(font.pointSize(), 9))
-        self.result.setFont(font)
+        self.result.setFont(mono_font())
         self.result.setMinimumHeight(120)
         self.result.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         result.body.addWidget(self.result)

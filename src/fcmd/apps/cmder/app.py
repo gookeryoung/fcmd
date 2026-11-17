@@ -56,12 +56,7 @@ from fcmd.apps.cmder._launch import LaunchRequest
 from fcmd.apps.cmder._ops import (
     COLUMN_SORT,
     DEFAULT_VIEW_MODE,
-    PANEL_COLUMNS,
-    THUMBNAIL_GAP,
     THUMBNAIL_TILE_SIZE,
-    VIEW_MODE_BRIEF,
-    VIEW_MODE_DETAILED,
-    VIEW_MODE_THUMBNAILS,
     ColorRule,
     TrashReport,
     branch_relative_path,
@@ -97,6 +92,7 @@ from fcmd.apps.cmder._tabs import (
     normalize_selection,
     normalize_tab_title,
 )
+from fcmd.apps.cmder._volumes import format_bytes as _format_bytes
 from fcmd.gui import config as _guiconfig
 from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
@@ -106,7 +102,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ARCHIVE_SUFFIXES",
-    "COLUMNS",
     "COLUMN_SORT",
     "DEFAULT_GEOMETRY",
     "DEFAULT_SORT_KEY",
@@ -198,12 +193,8 @@ DEFAULT_GEOMETRY = "1240x760+60+40"
 MIN_WIDTH = 960
 MIN_HEIGHT = 600
 MAX_HISTORY = 50
-POLL_INTERVAL_MS = 100
 DEFAULT_SORT_KEY = "name"
 SORT_KEYS: tuple[str, ...] = ("name", "size", "mtime", "type")
-
-#: 面板列定义：(列 id, 标题, 宽度)，顺序固定，仅宽度可拖拽调整。
-COLUMNS: tuple[tuple[str, str, int], ...] = PANEL_COLUMNS
 
 #: 归档扩展名（长的在前，供界面推导默认解压目录）
 ARCHIVE_SUFFIXES: tuple[str, ...] = (
@@ -225,42 +216,12 @@ ARCHIVE_SUFFIXES: tuple[str, ...] = (
 
 _HIDDEN_ATTRIBUTE = 0x2
 _MAX_PREVIEW_LINES = 500
-_MAX_ERROR_DETAILS = 10
-_QUICK_IMAGE_LIMIT = 32 * 1024 * 1024
 #: 分支视图：递归深度与条目上限，避免误入超深目录树时卡死界面。
 BRANCH_MAX_DEPTH = 32
 BRANCH_MAX_ENTRIES = 20000
-_COMMAND_HINT_LIMIT = 8
-_SORT_MENU_CHOICES: tuple[tuple[str, str, str], ...] = (
-    ("名称", "name", "name"),
-    ("扩展名", "attr", "type"),
-    ("大小", "size", "size"),
-    ("修改时间", "mtime", "mtime"),
-)
-_VIEW_MODE_CHOICES: tuple[tuple[str, str], ...] = (
-    ("简要列表\tCtrl+F1", VIEW_MODE_BRIEF),
-    ("详细列表\tCtrl+F2", VIEW_MODE_DETAILED),
-    ("缩略图\tCtrl+Shift+F1", VIEW_MODE_THUMBNAILS),
-)
-
-#: 缩略图：后台线程数、单文件读取上限、主线程应用节奏、滚动防抖与网格尺寸。
-#: 解码单张约 20 ms（4 线程约 200 张/秒），主线程每 60 ms 最多创建 8 个
-#: PhotoImage（约 130 张/秒），两者相当时界面不会被一次性创建图像卡住。
-_THUMB_WORKERS = 4
+#: 缩略图：单文件读取上限与目标尺寸（后台解码由 Qt 面板调用）。
 _THUMB_READ_LIMIT = 8 * 1024 * 1024
-_THUMB_POLL_MS = 60
-_THUMB_APPLY_PER_TICK = 8
-_THUMB_REDRAW_MS = 80
 _THUMB_TILE = THUMBNAIL_TILE_SIZE
-_THUMB_LABEL_HEIGHT = 20
-_THUMB_PAD = THUMBNAIL_GAP
-_THUMB_CELL_WIDTH = _THUMB_TILE + 2 * _THUMB_PAD
-_THUMB_CELL_HEIGHT = _THUMB_TILE + _THUMB_LABEL_HEIGHT + 2 * _THUMB_PAD
-
-#: 面板刷新：后台扫描结果轮询间隔，以及主线程每次空闲插入的行数
-#: （实测每千行约 13 ms，1000 行可让单次回调保持在 16 ms 以内）。
-_SCAN_POLL_MS = 20
-_INSERT_CHUNK = 1000
 
 
 def _decode_thumbnail_with_pillow(data: bytes, tile_size: int) -> bytes | None:
@@ -960,24 +921,11 @@ class PanelScanChannel:
         return self._results.empty()
 
 
-def _compact_number(value: float) -> str:
-    """去掉一位小数格式里多余的 ``.0``。"""
-    text = f"{value:.1f}"
-    return text[:-2] if text.endswith(".0") else text
-
-
 def format_size(size: int, *, is_dir: bool = False) -> str:
-    """人类可读的大小文本；目录显示 ``<DIR>``。"""
+    """人类可读的大小文本；目录显示 ``<DIR>``（与卷容量格式化同一口径）。"""
     if is_dir:
         return "<DIR>"
-    if size < 1024:
-        return f"{size} B"
-    value = float(size)
-    for unit in ("KB", "MB", "GB", "TB", "PB"):
-        value /= 1024.0
-        if value < 1024.0:
-            return f"{_compact_number(value)} {unit}"
-    return f"{_compact_number(value)} PB"
+    return _format_bytes(size)
 
 
 def format_mtime(timestamp: float) -> str:

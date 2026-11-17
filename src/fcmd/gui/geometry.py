@@ -25,6 +25,7 @@ __all__ = [
     "format_geometry",
     "parse_geometry",
     "resolve_geometry",
+    "size_from_geometry",
 ]
 
 _GEOMETRY_RE = re.compile(r"^(?P<width>\d+)x(?P<height>\d+)(?:(?P<sign_x>[+-])(?P<x>\d+)(?P<sign_y>[+-])(?P<y>\d+))?$")
@@ -53,6 +54,12 @@ def format_geometry(width: int, height: int, x: int, y: int) -> str:
     sign_x = "+" if x >= 0 else "-"
     sign_y = "+" if y >= 0 else "-"
     return f"{max(width, 0)}x{max(height, 0)}{sign_x}{abs(x)}{sign_y}{abs(y)}"
+
+
+def size_from_geometry(text: str | None, *, default: tuple[int, int] = (900, 700)) -> tuple[int, int]:
+    """从 ``WxH+X+Y`` 取宽高；缺失或非法时返回 ``default``。"""
+    rect = parse_geometry(text)
+    return (rect[0], rect[1]) if rect is not None else default
 
 
 def clamp_saved_geometry(

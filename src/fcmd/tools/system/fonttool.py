@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.infras.text import display_width, pad_display
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -652,28 +653,18 @@ def collect_status(
     return tuple(statuses)
 
 
-def _display_width(text: str) -> int:
-    """按终端显示宽度计数（中文等宽字符按 2 列计）。"""
-    import unicodedata
-
-    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
-
-
-def _pad(text: str, width: int) -> str:
-    """按终端显示宽度左对齐填充。"""
-    return text + " " * max(0, width - _display_width(text))
-
-
 def format_font_table(specs: Sequence[FontSpec]) -> str:
     """格式化可安装字体表格（ID / 字体 / 类型 / 大小 / 许可证）。"""
-    header = _pad("ID", 16) + _pad("字体", 18) + _pad("类型", 8) + _pad("大小", 12) + "许可证"
-    lines = [header, "-" * _display_width(header)]
+    header = (
+        pad_display("ID", 16) + pad_display("字体", 18) + pad_display("类型", 8) + pad_display("大小", 12) + "许可证"
+    )
+    lines = [header, "-" * display_width(header)]
     for spec in specs:
         lines.append(
-            _pad(spec.font_id, 16)
-            + _pad(spec.label, 18)
-            + _pad(KIND_LABELS.get(spec.kind, spec.kind), 8)
-            + _pad(format_size(spec.size), 12)
+            pad_display(spec.font_id, 16)
+            + pad_display(spec.label, 18)
+            + pad_display(KIND_LABELS.get(spec.kind, spec.kind), 8)
+            + pad_display(format_size(spec.size), 12)
             + spec.license_name
         )
     return "\n".join(lines)

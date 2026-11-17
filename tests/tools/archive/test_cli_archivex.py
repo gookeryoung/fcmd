@@ -30,6 +30,7 @@ from fcmd.tools.archive.archivex import (
     detect_format,
     extract_archive,
     list_archive,
+    try_detect_format,
 )
 
 
@@ -105,6 +106,11 @@ class TestDetectFormat:
         """不支持的扩展名抛 ValueError。"""
         with pytest.raises(ValueError, match="不支持的归档格式"):
             detect_format(Path("a.iso"))
+
+    def test_try_detect_format_returns_none_for_unsupported(self) -> None:
+        """``try_detect_format`` 对不支持格式返回 ``None``，供只读浏览降级。"""
+        assert try_detect_format(Path("a.ZIP")) == "zip"
+        assert try_detect_format(Path("a.iso")) is None
 
 
 # ============================================================================ #

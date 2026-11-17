@@ -35,7 +35,6 @@ from fcmd.gui.qt.widgets import Card, button, hint_label
 from fcmd.tools.system.alarmclock import (
     BLINK_BG_COLORS,
     BLINK_INTERVAL,
-    DEFAULT_GEOMETRY,
     DELAY_STEPS,
     DIGITAL_BORDER_COLORS,
     DIGITAL_FORMAT,
@@ -328,11 +327,6 @@ class AlarmClockQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         if self._tick_timer.isActive():
             self._tick_timer.stop()
         super().closeEvent(event)
-
-
-def _default_geometry() -> str:
-    """默认窗口 geometry（测试与文档引用）。"""
-    return DEFAULT_GEOMETRY
 
 
 def run_qt(settings_path: Path | None = None) -> None:

@@ -18,13 +18,65 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from fcmd.apps.locllm import _llmconfig, llmconvert
-from fcmd.apps.locllm.llmbase import human_size
+from fcmd.apps.locllm import _llmconfig, llmconvert, llmengine, llmmodel, llmqnt
+from fcmd.apps.locllm._llmgguf import GgufPrecision
+from fcmd.apps.locllm._locllmw_ui import _detect_precisions
+from fcmd.apps.locllm.llmbase import ModelEntry, ServeError, human_size
 
 __all__ = [
+    "ModelEnv",
     "default_output_path",
     "output_path_from_form",
+    "scan_model_env",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class ModelEnv:
+    """转换 / 量化页共用的环境快照。
+
+    一次扫描同时给出引擎与量化器状态、可转换 HF 目录、已配置 GGUF 与精度，
+    避免两个子页各自重复读盘与探测。
+    """
+
+    info: dict[str, str]
+    tag: str | None
+    convertible: list[tuple[Path, int]]
+    entries: list[ModelEntry]
+    precisions: dict[str, GgufPrecision]
+
+
+def scan_model_env() -> ModelEnv:
+    """扫描模型目录、引擎与量化器状态（阻塞，供线程池调用）。"""
+    info = {"engine": "-", "quantizer": "-", "version": "-"}
+    tag: str | None = None
+    try:
+        engine = llmengine.resolve_engine()
+    except ServeError as exc:
+        info["engine"] = f"未找到（{exc}）"
+    else:
+        tag = engine.tag
+        info["engine"] = f"{engine.tag} · {engine.exe}"
+        try:
+            info["version"] = llmengine.probe_version(engine)
+        except ServeError:
+            info["version"] = "-"
+    try:
+        info["quantizer"] = str(llmqnt.resolve_quantize_exe())
+    except llmqnt.QuantizeError as exc:
+        info["quantizer"] = f"未找到（{exc}）"
+
+    root = _llmconfig.models_dir()
+    convertible = _find_convertible(root)
+    entries: list[ModelEntry] = []
+    try:
+        if root.is_dir():
+            entries = llmmodel.scan_models(root)
+    except OSError:
+        entries = []
+    precisions = _detect_precisions(entries)
+    return ModelEnv(info=info, tag=tag, convertible=convertible, entries=entries, precisions=precisions)
+
 
 _SCRIPT_PLACEHOLDER = "留空自动获取与引擎 tag 匹配的 llama.cpp 源码"
 _PERCENT_RE = re.compile(r"(\d{1,3})%\|")

@@ -623,7 +623,7 @@ def test_chat_page_refresh_selects_first_available(monkeypatch: pytest.MonkeyPat
     dead = _state("dead")
     alive = replace(_state("alive"), pid=1234)
     monkeypatch.setattr(llmenv, "list_states", lambda: [dead, alive])
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_chat.process_alive", lambda pid, created: pid == alive.pid)
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_chat.process_alive", lambda pid, created: pid == alive.pid)
 
     chat_page.refresh_services()
 
@@ -636,7 +636,7 @@ def test_chat_page_refresh_selects_first_available(monkeypatch: pytest.MonkeyPat
 def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
     state = _state("dead")
     monkeypatch.setattr(llmenv, "list_states", lambda: [state])
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_chat.process_alive", lambda pid, created: False)
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_chat.process_alive", lambda pid, created: False)
 
     chat_page.refresh_services()
 
@@ -658,7 +658,7 @@ def test_chat_page_refresh_without_services(monkeypatch: pytest.MonkeyPatch, cha
 def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
     alive = _state("alive")
     monkeypatch.setattr(llmenv, "list_states", lambda: [alive])
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_chat.process_alive", lambda pid, created: True)
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_chat.process_alive", lambda pid, created: True)
 
     chat_page._manual_choice = True  # 手动选择「自定义」后不再自动跳回可用服务
     chat_page.refresh_services()
@@ -670,7 +670,7 @@ def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch, 
 def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
     state = _state("dead")
     monkeypatch.setattr(llmenv, "list_states", lambda: [state])
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_chat.process_alive", lambda pid, created: False)
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_chat.process_alive", lambda pid, created: False)
 
     chat_page.refresh_services()
     chat_page.service_combo.setCurrentIndex(0)  # 手动切到自定义，再切回「已退出」服务

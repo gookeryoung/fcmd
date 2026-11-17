@@ -32,7 +32,6 @@ _MAVEN_PROBE_URLS: dict[str, str] = {
 _MAVEN_SETTINGS_PATH: Path = Path.home() / ".m2" / "settings.xml"
 
 _SDKMAN_INSTALL_URL: str = "https://get.sdkman.io"
-_SDKMAN_CANDIDATE_URL: str = "https://get.sdkman.io/candidates"
 
 _MAVEN_SETTINGS_TEMPLATE: str = """<?xml version="1.0" encoding="UTF-8"?>
 <settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"

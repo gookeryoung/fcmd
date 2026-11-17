@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
+from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.img2icow import (
     QUALITY_CHOICES,
@@ -43,12 +43,6 @@ DEFAULT_SIZE = (880, 640)
 MIN_SIZE = (760, 560)
 
 _IMAGE_FILTER = "图像文件 (*.svg *.png *.jpg *.jpeg *.gif *.bmp *.webp *.tif *.tiff);;所有文件 (*.*)"
-
-
-class _ConvertBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台转换线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 def _run_conversion(

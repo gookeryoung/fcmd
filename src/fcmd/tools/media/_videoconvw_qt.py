@@ -18,7 +18,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -38,6 +38,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, LogView, button, hint_label
+from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
@@ -78,12 +79,6 @@ VIDEO_CODEC_CHOICES: tuple[str, ...] = ("libx264", "libx265", "libvpx-vp9", "mpe
 AUDIO_CODEC_CHOICES: tuple[str, ...] = ("aac", "mp3", "opus", "libvorbis", "ac3", "flac")
 
 _AUDIO_FILTER = "音频文件 (*.mp3 *.wav *.aac *.flac *.ogg *.m4a *.wma);;所有文件 (*.*)"
-
-
-class _ConvertBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台转换线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 def _work_convert(
