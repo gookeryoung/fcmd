@@ -1,8 +1,9 @@
-"""ncmconvertw - NCM 音乐解锁转换器（Tk GUI）。
+"""ncmconvertw - NCM 音乐解锁转换器（Qt GUI 入口与解密核心）。
 
 交互参考 ``Majjcom/ncmppGui``：选择输出目录，添加或从目录导入 ``.ncm``
 文件，点击「开始转换」批量解锁为原始音频（通常为 ``.mp3`` / ``.flac``）。
-转换在后台线程逐文件执行，进度、成功与失败明细实时回传日志区。
+窗口在 :mod:`fcmd.tools.media._ncmconvertw_qt`，本模块负责 NCM 容器解析、
+解密流程与设置读写，CI 无显示环境也能单测。
 
 NCM 容器格式与解密流程参考 ``ncmppGui`` 的 ``ncmdump.cpp``：AES-128-ECB
 解出密钥流与元数据，再用 RC4 变体密钥盒逐字节异或还原音频。设置（上次
@@ -22,20 +23,16 @@ import binascii
 import contextlib
 import io
 import json
-import queue
 import re
-import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import fcmd
 from fcmd.gui import config as _guiconfig
-from fcmd.gui import theme as _guitheme
 from fcmd.gui import window as _guiwindow
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
     from typing import BinaryIO
 
 __all__ = [
@@ -62,7 +59,7 @@ __all__ = [
 __version__ = "0.1.0"
 
 _DESCRIPTION = (
-    "NCM 音乐解锁转换器窗口版（Tk）：批量添加/导入 .ncm 文件，后台逐文件解锁为 mp3/flac，"
+    "NCM 音乐解锁转换器窗口版（Qt）：批量添加/导入 .ncm 文件，后台逐文件解锁为 mp3/flac，"
     "进度与失败明细实时回传，设置持久化到 ~/.fcmd/ui/ncmconvertw.json，依赖 fcmd[crypto]"
 )
 
@@ -400,381 +397,19 @@ def decrypt_ncm(source: Path, output_dir: Path | None = None) -> Path:
 
 
 # ---------------------------------------------------------------------- #
-# Tk 界面
+# GUI 入口
 # ---------------------------------------------------------------------- #
-class NcmConvertWindow:  # pragma: no cover - Tk 窗口不纳入单元覆盖（CI 无显示环境）
-    """Tk NCM 转换器主窗口。"""
-
-    def __init__(self, settings_path: Path | None = None) -> None:
-        import tkinter as tk
-        from tkinter import filedialog, messagebox, ttk
-
-        self._tk = tk
-        self._filedialog = filedialog
-        self._messagebox = messagebox
-        self._ttk = ttk
-        self._settings_path = settings_path
-        self._settings = load_settings(settings_path)
-        self._files: list[Path] = []
-        self._queue: queue.Queue[tuple[Any, ...]] = queue.Queue()
-        self._worker: threading.Thread | None = None
-        self._cancel = threading.Event()
-        self._running = False
-        self._closing = False
-
-        self.root, self._theme = _guiwindow.create_root(
-            title=f"NCM 转换器 v{__version__}",
-            saved_geometry=self._settings.geometry,
-            default_geometry=DEFAULT_GEOMETRY,
-            min_width=MIN_WIDTH,
-            min_height=MIN_HEIGHT,
-            on_close=self.close,
-        )
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=3)
-        self.root.rowconfigure(3, weight=2)
-
-        self._output_dir_var = tk.StringVar(value=self._settings.output_dir)
-        self._status_var = tk.StringVar(value="就绪")
-        self._count_var = tk.StringVar(value="共 0 个文件")
-        self._last_dir = self._settings.last_input_dir
-
-        self._build_menu()
-        self._build_widgets()
-        _guitheme.install_theme_switcher(self.root)
-
-    # ------------------------------------------------------------------ #
-    # 界面构建
-    # ------------------------------------------------------------------ #
-    def _build_menu(self) -> None:
-        _guiwindow.build_menu(self.root, on_close=self.close, on_about=self._show_about)
-
-    def _build_widgets(self) -> None:
-        ttk = self._ttk
-        spacing = self._theme.spacing
-
-        io_frame = ttk.LabelFrame(self.root, text="输出设置", padding=spacing.sm)
-        io_frame.grid(row=0, column=0, sticky="ew", padx=spacing.md, pady=(spacing.md, spacing.xs))
-        io_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(io_frame, text="输出目录：").grid(row=0, column=0, sticky="w")
-        ttk.Entry(io_frame, textvariable=self._output_dir_var).grid(
-            row=0, column=1, sticky="ew", padx=(spacing.xs, spacing.sm)
-        )
-        self._browse_output_button = ttk.Button(io_frame, text="浏览…", command=self._browse_output_dir)
-        self._browse_output_button.grid(row=0, column=2)
-        ttk.Label(
-            io_frame,
-            text="留空时解锁到每个 NCM 文件所在目录，文件名为 <原名>.<格式>",
-            foreground=self._theme.palette.muted,
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(spacing.sm, 0))
-
-        files_frame = ttk.LabelFrame(self.root, text="待转换的 NCM 文件", padding=spacing.sm)
-        files_frame.grid(row=1, column=0, sticky="nsew", padx=spacing.md, pady=spacing.xs)
-        files_frame.columnconfigure(0, weight=1)
-        files_frame.rowconfigure(1, weight=1)
-
-        toolbar = ttk.Frame(files_frame)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, spacing.xs))
-        self._add_files_button = ttk.Button(toolbar, text="添加文件…", command=self._add_files)
-        self._add_files_button.pack(side="left")
-        self._import_dir_button = ttk.Button(toolbar, text="导入目录…", command=self._import_dir)
-        self._import_dir_button.pack(side="left", padx=(spacing.xs, 0))
-        self._remove_button = ttk.Button(toolbar, text="移除选中", command=self._remove_selected)
-        self._remove_button.pack(side="left", padx=(spacing.sm, 0))
-        self._clear_button = ttk.Button(toolbar, text="清空", command=self._clear_files, style="Danger.TButton")
-        self._clear_button.pack(side="right")
-
-        list_frame = ttk.Frame(files_frame)
-        list_frame.grid(row=1, column=0, sticky="nsew")
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-        self._listbox = self._tk.Listbox(list_frame, selectmode="extended", activestyle="none", exportselection=False)
-        list_scroll = ttk.Scrollbar(list_frame, orient="vertical", command=self._listbox.yview)
-        self._listbox.configure(yscrollcommand=list_scroll.set)
-        self._listbox.grid(row=0, column=0, sticky="nsew")
-        list_scroll.grid(row=0, column=1, sticky="ns")
-
-        action_frame = ttk.Frame(self.root)
-        action_frame.grid(row=2, column=0, sticky="ew", padx=spacing.md, pady=(spacing.xs, 0))
-        action_frame.columnconfigure(1, weight=1)
-        self._convert_button = ttk.Button(
-            action_frame, text="开始转换", command=self._start_conversion, style="Accent.TButton"
-        )
-        self._convert_button.grid(row=0, column=0)
-        self._progress = ttk.Progressbar(action_frame, mode="determinate", maximum=1, value=0)
-        self._progress.grid(row=0, column=1, sticky="ew", padx=spacing.md)
-        self._status_label = ttk.Label(
-            action_frame, textvariable=self._status_var, foreground=self._theme.palette.muted
-        )
-        self._status_label.grid(row=0, column=2, sticky="e")
-
-        log_frame = ttk.LabelFrame(self.root, text="日志", padding=spacing.sm)
-        log_frame.grid(row=3, column=0, sticky="nsew", padx=spacing.md, pady=(spacing.xs, spacing.xs))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
-        self._log_text = _guiwindow.create_log(log_frame, height=8, grid=True)
-
-        footer = ttk.Frame(self.root)
-        footer.grid(row=4, column=0, sticky="ew", padx=spacing.md, pady=(0, spacing.sm))
-        footer.columnconfigure(1, weight=1)
-        ttk.Label(footer, textvariable=self._count_var, foreground=self._theme.palette.muted).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(footer, text="仅支持 .ncm 文件，依赖 fcmd[crypto]", foreground=self._theme.palette.muted).grid(
-            row=0, column=2, sticky="e"
-        )
-
-        self._append_log("添加 .ncm 文件或导入目录后点击「开始转换」。")
-
-    # ------------------------------------------------------------------ #
-    # 交互
-    # ------------------------------------------------------------------ #
-    def _show_about(self) -> None:
-        """关于对话框。"""
-        self._messagebox.showinfo(
-            "关于",
-            f"NCM 转换器 v{__version__}\n\n"
-            "解密 NCM 容器并还原为原始音频（mp3/flac）\n"
-            "支持批量添加、目录导入与失败明细\n"
-            "依赖 cryptography（pip install fcmd[crypto]）",
-        )
-
-    def _browse_output_dir(self) -> None:
-        """选择输出目录。"""
-        directory = self._filedialog.askdirectory(title="选择输出目录", initialdir=self._last_dir or None)
-        if directory:
-            self._output_dir_var.set(directory)
-            self._last_dir = directory
-
-    def _add_files(self) -> None:
-        """选择一个或多个 NCM 文件加入列表。"""
-        filenames = self._filedialog.askopenfilenames(
-            title="选择 NCM 文件",
-            initialdir=self._last_dir or None,
-            filetypes=[("NCM 文件", "*.ncm"), ("所有文件", "*.*")],
-        )
-        if not filenames:
-            return
-        self._last_dir = str(Path(filenames[0]).parent)
-        self._add_paths(Path(name) for name in filenames)
-
-    def _import_dir(self) -> None:
-        """导入目录下（不递归）的全部 NCM 文件。"""
-        directory = self._filedialog.askdirectory(title="选择包含 NCM 文件的目录", initialdir=self._last_dir or None)
-        if not directory:
-            return
-        self._last_dir = directory
-        try:
-            found = collect_ncm_files(Path(directory).expanduser())
-        except NcmError as exc:
-            self._append_log(f"错误：{exc}")
-            self._messagebox.showerror("导入失败", str(exc))
-            return
-        if not found:
-            self._append_log(f"目录中没有 .ncm 文件：{directory}")
-            return
-        self._add_paths(found)
-
-    def _add_paths(self, paths: Iterable[Path]) -> None:
-        """把合法 NCM 文件去重后加入列表并刷新界面。"""
-        known = {str(path) for path in self._files}
-        added = 0
-        ignored = 0
-        for path in paths:
-            if path.suffix.lower() != ".ncm":
-                ignored += 1
-                continue
-            text = str(path)
-            if text in known:
-                continue
-            known.add(text)
-            self._files.append(path)
-            added += 1
-        self._refresh_list()
-        if added:
-            self._append_log(f"已添加 {added} 个文件")
-        if ignored:
-            self._append_log(f"已忽略 {ignored} 个非 .ncm 文件")
-
-    def _remove_selected(self) -> None:
-        """移除列表中选中的文件。"""
-        selected = list(self._listbox.curselection())
-        if not selected:
-            return
-        for index in reversed(selected):
-            del self._files[index]
-        self._refresh_list()
-        self._append_log(f"已移除 {len(selected)} 个文件")
-
-    def _clear_files(self) -> None:
-        """清空待转换列表。"""
-        if not self._files:
-            return
-        count = len(self._files)
-        self._files.clear()
-        self._refresh_list()
-        self._append_log(f"已清空 {count} 个文件")
-
-    def _refresh_list(self) -> None:
-        """按 ``self._files`` 重绘文件列表与计数。"""
-        self._listbox.delete(0, "end")
-        for path in self._files:
-            self._listbox.insert("end", str(path))
-        self._count_var.set(f"共 {len(self._files)} 个文件")
-
-    def _append_log(self, message: str) -> None:
-        """向只读日志区追加带时间戳的一行并滚动到底部。"""
-        _guiwindow.append_log(self._log_text, message, timestamp=True)
-
-    def _set_busy(self, busy: bool) -> None:
-        """转换期间禁用输入控件，避免重复提交或改列表。"""
-        self._running = busy
-        state = "disabled" if busy else "normal"
-        for button in (
-            self._add_files_button,
-            self._import_dir_button,
-            self._remove_button,
-            self._clear_button,
-            self._browse_output_button,
-            self._convert_button,
-        ):
-            button.configure(state=state)
-
-    # ------------------------------------------------------------------ #
-    # 转换（后台线程 + 队列回传，避免阻塞 Tk 主循环）
-    # ------------------------------------------------------------------ #
-    def _start_conversion(self) -> None:
-        """校验输出目录与文件列表，启动后台转换线程。"""
-        if self._running:
-            return
-        if not self._files:
-            self._messagebox.showwarning("提醒", "没有输入的文件")
-            return
-
-        raw_output = self._output_dir_var.get().strip()
-        output_dir = Path(raw_output).expanduser() if raw_output else None
-        if output_dir is not None:
-            if not output_dir.exists():
-                self._messagebox.showerror("错误", "输出目录不存在")
-                return
-            if not output_dir.is_dir():
-                self._messagebox.showerror("错误", "不是目录")
-                return
-
-        self._cancel = threading.Event()
-        self._queue = queue.Queue()
-        self._progress.configure(maximum=len(self._files), value=0)
-        self._status_var.set("正在转换…")
-        self._status_label.configure(foreground=self._theme.palette.muted)
-        self._set_busy(True)
-        location = str(output_dir) if output_dir is not None else "各文件所在目录"
-        self._append_log(f"开始转换 {len(self._files)} 个文件，输出到：{location}")
-
-        self._worker = _guiwindow.start_worker(
-            self.root,
-            self._run_conversion,
-            (list(self._files), output_dir),
-            self._poll_queue,
-        )
-
-    def _run_conversion(self, files: list[Path], output_dir: Path | None) -> None:
-        """后台线程：逐文件解锁并把进度 / 结果写入队列。"""
-        total = len(files)
-        succeeded = 0
-        failed = 0
-        for index, path in enumerate(files, 1):
-            if self._cancel.is_set():
-                self._queue.put(("cancelled", index - 1, total))
-                break
-            try:
-                target = decrypt_ncm(path, output_dir)
-            except (NcmError, OSError) as exc:
-                failed += 1
-                self._queue.put(("error", path.name, str(exc)))
-            else:
-                succeeded += 1
-                self._queue.put(("log", f"[{index}/{total}] {path.name} → {target}"))
-            self._queue.put(("progress", index, total, path.name))
-        self._queue.put(("done", succeeded, failed, total))
-
-    def _poll_queue(self) -> None:
-        """在主线程消费后台事件，更新进度条、日志与状态。"""
-        while True:
-            try:
-                event = self._queue.get_nowait()
-            except queue.Empty:
-                break
-
-            kind = event[0]
-            if kind == "progress":
-                _, done, total, _name = event
-                self._progress.configure(maximum=max(total, 1), value=done)
-                self._status_var.set(f"{done}/{total}")
-            elif kind == "log":
-                self._append_log(event[1])
-            elif kind == "error":
-                _, name, message = event
-                self._append_log(f"失败：{name}：{message}")
-            elif kind == "cancelled":
-                _, done, total = event
-                self._append_log(f"已中止：完成 {done}/{total}")
-            elif kind == "done":
-                _, succeeded, failed, total = event
-                self._finish(succeeded, failed, total)
-                return
-
-        if self._running:
-            self.root.after(_guiwindow.WORKER_INTERVAL_MS, self._poll_queue)
-
-    def _finish(self, succeeded: int, failed: int, total: int) -> None:
-        """转换结束：恢复控件、更新状态并提示汇总结果。"""
-        self._set_busy(False)
-        self._worker = None
-        self._progress.configure(value=total)
-        if failed:
-            self._status_var.set(f"完成：成功 {succeeded}，失败 {failed}")
-            self._status_label.configure(foreground=self._theme.palette.danger)
-            self._append_log(f"转换结束：成功 {succeeded}，失败 {failed}，共 {total} 个")
-            self._messagebox.showwarning("完成", f"解锁已完成，但 {failed} 个文件失败，详见日志。")
-        else:
-            self._status_var.set("✓ 全部完成")
-            self._status_label.configure(foreground=self._theme.palette.success)
-            self._append_log(f"转换结束：全部成功，共 {succeeded} 个")
-            self._messagebox.showinfo("完成", "解锁已完成")
-
-    # ------------------------------------------------------------------ #
-    # 生命周期
-    # ------------------------------------------------------------------ #
-    def close(self) -> None:
-        """关闭窗口：运行中先确认，随后保存设置并销毁窗口。"""
-        if self._closing:
-            return
-        if self._running:
-            confirmed = self._messagebox.askyesno("确认", "转换正在进行中，确定要退出吗？")
-            if not confirmed:
-                return
-            self._cancel.set()
-            if self._worker is not None:
-                self._worker.join(timeout=2)
-        self._closing = True
-        save_settings(
-            NcmConvertSettings(
-                output_dir=self._output_dir_var.get(),
-                last_input_dir=self._last_dir,
-                geometry=self.root.winfo_geometry(),
-            ),
-            self._settings_path,
-        )
-        self.root.destroy()
-
-
 def run_gui(settings_path: Path | None = None) -> None:
-    """创建并运行 Tk 主窗口（先声明 DPI 感知，再创建 Tk）。"""
-    _guiwindow.run_window(lambda: NcmConvertWindow(settings_path), "NCM 转换器")
+    """启动 Qt 窗口（高 DPI 与主题由 ``gui.qt.app`` 统一处理）。"""
+    try:
+        from fcmd.tools.media._ncmconvertw_qt import run_qt
+    except ImportError as exc:  # pragma: no cover - 安装完整时不会触发
+        raise SystemExit("未安装 Qt 前端：pip install 'PySide6-Essentials'") from exc
+
+    run_qt(settings_path)
 
 
-@fcmd.tool("ncmconvertw", help="打开 NCM 转换器窗口（Tk）", description=_DESCRIPTION)
+@fcmd.tool("ncmconvertw", help="打开 NCM 转换器窗口（Qt）", description=_DESCRIPTION)
 def launch_cmd() -> None:
     """打开 NCM 转换器窗口。"""
     run_gui()
