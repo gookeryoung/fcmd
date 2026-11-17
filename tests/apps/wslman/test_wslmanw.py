@@ -1,11 +1,13 @@
 """wslmanw（P5）测试：设置往返、窗口几何、确认开关、列表/详情口径与启动入口。
 
-真实 Tk 窗口不在单测范围内（窗口类标 ``pragma: no cover``）；这里只覆盖
-纯函数与入口接线，保证 GUI 与 CLI 共用同一套口径。
+Qt 窗口类不进单测（``pragma: no cover``，离屏冒烟见 ``test_wslmanw_qt.py``）；
+这里只覆盖纯函数与入口接线，保证 GUI 与 CLI 共用同一套口径。
 """
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -14,7 +16,6 @@ from fcmd.apps.wslman import wslmanw
 from fcmd.apps.wslman._distro import Distro
 from fcmd.apps.wslman._errors import not_found
 from fcmd.core.toolkit import _TOOL_REGISTRY
-from fcmd.gui import window as _guiwindow
 
 
 def _distro(**overrides: object) -> Distro:
@@ -291,17 +292,14 @@ def test_error_text_formats_wslman_errors() -> None:
     assert wslmanw._error_text(RuntimeError("boom")) == "RuntimeError: boom"
 
 
-def test_run_gui_delegates_to_shared_runner(monkeypatch: pytest.MonkeyPatch) -> None:
-    recorded: dict[str, object] = {}
-
-    def fake_run_window(factory: object, message: str) -> None:
-        recorded["factory"] = factory
-        recorded["message"] = message
-
-    monkeypatch.setattr(_guiwindow, "run_window", fake_run_window)
-    wslmanw.run_gui()
-    assert recorded["factory"] is wslmanw.WslmanWindow
-    assert recorded["message"] == "WSL 管理"
+def test_run_gui_delegates_to_qt_entry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    calls: list[object] = []
+    fake = types.ModuleType("fcmd.apps.wslman._wslmanw_qt")
+    fake.run_qt = lambda settings_path=None: calls.append(settings_path)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fcmd.apps.wslman._wslmanw_qt", fake)
+    path = tmp_path / "settings.json"
+    wslmanw.run_gui(path)
+    assert calls == [path]
 
 
 def test_launch_cmd_calls_run_gui(monkeypatch: pytest.MonkeyPatch) -> None:
