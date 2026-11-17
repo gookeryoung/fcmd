@@ -263,3 +263,13 @@ def test_overview_model_dir_row_is_single_line(window: Any) -> None:
     assert "\n" not in text
     assert str(llmenv.models_dir()) in text
     assert "剩余" in text
+
+
+def test_overview_gauges_paint_event_runs(window: Any) -> None:
+    """环形仪表直接调用 paintEvent 不抛异常（回归：QPalette 必须从 QtGui 导入）。"""
+    from PySide6.QtGui import QPaintEvent
+
+    gauge = window.overview._gpu_gauge
+    gauge.set_usage(42.0, "1.0 / 24.0 GB")
+    gauge.paintEvent(QPaintEvent(gauge.rect()))
+    assert gauge._percent == 42.0

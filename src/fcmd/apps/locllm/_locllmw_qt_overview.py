@@ -111,8 +111,7 @@ class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
 
     def paintEvent(self, event: object) -> None:  # noqa: ARG002 - Qt 事件签名
         from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QFont, QPainter, QPen
-        from PySide6.QtWidgets import QPalette
+        from PySide6.QtGui import QFont, QPainter, QPalette, QPen
 
         palette = self.palette()
         text_color = palette.color(QPalette.ColorRole.WindowText)
