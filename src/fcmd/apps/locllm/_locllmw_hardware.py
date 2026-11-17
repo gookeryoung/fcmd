@@ -108,24 +108,26 @@ def detect_memory_gen(runner: Runner = run_command) -> str:
 
     取第一根内存条的 ``SMBIOSMemoryType`` 代码映射代数；查询失败或代码未知时
     返回空串（界面不显示代数）。``runner`` 可注入供单测使用。
+    分支写成「是 Windows 才进入」而非提前返回：``os.name`` 在按平台推断类型时
+    会被窄化成字面量，提前返回会让后续代码判成不可达，触发 unbound-name 误报。
     """
-    if os.name != "nt":
-        return ""
-    result = runner(
-        [
-            "powershell",
-            "-NoProfile",
-            "-Command",
-            "(Get-CimInstance Win32_PhysicalMemory | Select-Object -First 1).SMBIOSMemoryType",
-        ]
-    )
-    if result.returncode != 0:
-        return ""
-    try:
-        code = int(float(result.stdout.strip()))
-    except ValueError:
-        return ""
-    return SMBIOS_MEMORY_TYPES.get(code, "")
+    if os.name == "nt":
+        result = runner(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "(Get-CimInstance Win32_PhysicalMemory | Select-Object -First 1).SMBIOSMemoryType",
+            ]
+        )
+        if result.returncode != 0:
+            return ""
+        try:
+            code = int(float(result.stdout.strip()))
+        except ValueError:
+            return ""
+        return SMBIOS_MEMORY_TYPES.get(code, "")
+    return ""
 
 
 def _disk_infos() -> tuple[DiskInfo, ...]:
