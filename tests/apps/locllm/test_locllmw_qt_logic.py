@@ -227,7 +227,7 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert row.detail_host.isHidden()
 
 
-def test_model_detail_view_reset_and_readme() -> None:
+def test_model_detail_view_reset_and_metadata() -> None:
     from PySide6.QtWidgets import QApplication
 
     QApplication.instance() or QApplication([])
@@ -235,13 +235,12 @@ def test_model_detail_view_reset_and_readme() -> None:
     view.reset("Qwen/demo")
     assert view.repo == "Qwen/demo"
     assert not view.download_button.isEnabled()
-    assert "正在加载 Qwen/demo 的 README" in view.readme.toPlainText()
+    assert not hasattr(view, "readme")
     view.set_error("网络错误")
     assert view.error.text() == "网络错误"
     assert not view.error.isHidden()
-    view.render(ModelInfo(summary=ModelSummary(repo="Qwen/demo"), readme="# 标题\n\n正文"))
-    assert "标题" in view.readme.toPlainText()
-    assert "正文" in view.readme.toPlainText()
+    view.render(ModelInfo(summary=ModelSummary(repo="Qwen/demo", chinese_name="示例")))
+    assert view.meta_values["中文名"].text() == "示例"
     assert view.download_button.isEnabled()
 
 

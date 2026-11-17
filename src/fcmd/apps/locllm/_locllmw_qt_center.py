@@ -3,7 +3,7 @@
 页面口径与迁移前的窗口一致，只是把控件换成 Qt 并把后台任务统一走
 :func:`fcmd.gui.qt.workers.submit`：
 
-- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，展开行显示详情 / README；
+- **浏览**：ModelScope 在线浏览（适合本机 / 全部 / 对话 / 编程 / 看图 / 推理 / 视频 / 音频筛选 + 排序 / 翻页）、自定义结果行，展开行显示详情元数据；
 - **下载**：目标目录（唯一模型目录）、下载源、并发、SHA256 校验、包含 / 排除掩码、
   汇总 / 单文件进度、失败记录与重试、日志；
 - **已安装**：模型仓库列表（扫描 / 打开 / 确认后删除）与运行用 GGUF 分组树；
@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QTabWidget,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -114,7 +113,7 @@ class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
 class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
 
-    行本身只放关键内容；展开后在行下方显示详细信息与 README，不再占用
+    行本身只放关键内容；展开后在行下方显示详细信息，不再占用
     右侧面板，列表可以铺满整页宽度。
     """
 
@@ -160,7 +159,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
-        self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息与 README")
+        self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
         outer.addWidget(header)
@@ -189,10 +188,10 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
-    """展开行里的详情：详细信息与 README 直接可见。
+    """展开行里的详情：模型元数据与「前往下载」。
 
-    README 用只读富文本视图渲染 Markdown，固定高度内部滚动，避免单个模型
-    把列表行撑得过高；同一个实例在行之间复用，展开哪一行就挂到哪一行下面。
+    同一个实例在行之间复用，展开哪一行就挂到哪一行下面；不展示 README
+    与文件清单，保持列表项展开后的内容紧凑。
     """
 
     downloadRequested = Signal(str)
@@ -256,15 +255,6 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.meta_grid.setColumnStretch(1, 1)
         layout.addLayout(self.meta_grid)
 
-        layout.addWidget(QLabel("README", self))
-        self.readme = QTextBrowser(self)
-        self.readme.setObjectName("Readme")
-        self.readme.setFrameShape(QFrame.Shape.NoFrame)
-        self.readme.setOpenExternalLinks(True)
-        self.readme.setMinimumHeight(160)
-        self.readme.setMaximumHeight(320)
-        layout.addWidget(self.readme)
-
     def reset(self, repo: str) -> None:
         """切换模型时清空旧内容，等后台详情回填。"""
         self.repo = repo
@@ -273,7 +263,6 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.error.setText("")
         for value in self.meta_values.values():
             value.setText("-")
-        self.readme.setPlainText(f"正在加载 {repo} 的 README…")
 
     def set_error(self, message: str) -> None:
         self.error.setText(message)
@@ -284,7 +273,7 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             self.downloadRequested.emit(self.repo)
 
     def render(self, info: ModelInfo) -> None:
-        """回填仓库详情与 README（Markdown 会渲染成富文本）。"""
+        """回填仓库元数据。"""
         self.repo = info.summary.repo
         self.download_button.setEnabled(True)
         self.error.setVisible(False)
@@ -292,14 +281,10 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         for name, value in _locllmw_models.detail_pairs(info):
             if name in self.meta_values:
                 self.meta_values[name].setText(value)
-        if info.readme:
-            self.readme.setMarkdown(info.readme)
-        else:
-            self.readme.setPlainText("（该模型未提供 README）")
 
 
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
-    """浏览页：筛选条、自定义结果行与行内展开的详情 / README。"""
+    """浏览页：筛选条、自定义结果行与行内展开的详情元数据。"""
 
     repoSelected = Signal(str)
 
@@ -544,7 +529,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 return
 
     def load_repo(self, repo: str) -> None:
-        """加载仓库详情与 README；世代号防止旧请求覆盖新选择。"""
+        """加载仓库详情元数据；世代号防止旧请求覆盖新选择。"""
         self._detail_generation += 1
         generation = self._detail_generation
         self.current_repo = repo
