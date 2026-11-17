@@ -248,6 +248,11 @@ QPlainTextEdit#Log, QTextEdit#Log {
     border: 1px solid $border;
     border-radius: 6px;
 }
+QPlainTextEdit#Readme {
+    background: transparent;
+    color: $text;
+    border: none;
+}
 
 QTableView, QTreeView, QListView, QTreeWidget, QTableWidget {
     background: $surface;

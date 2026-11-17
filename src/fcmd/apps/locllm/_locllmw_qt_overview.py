@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QProgressBar,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -46,7 +45,7 @@ from fcmd.gui.qt.workers import submit
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
 
-__all__ = ["OverviewPage", "loaded_row_values", "usage_texts"]
+__all__ = ["OverviewPage", "loaded_row_values", "usage_gauge_texts"]
 
 RECOMMEND_COLUMNS = ("推荐模型", "启动配置", "性能", "依据")
 LOADED_COLUMNS = ("服务", "已加载模型", "档位 / ctx", "地址")
@@ -57,27 +56,25 @@ def loaded_row_values(state: ServeState) -> tuple[str, str, str, str]:
     return (state.name, Path(state.model).name, f"{state.profile} / ctx {state.context}", state.base_url)
 
 
-def usage_texts(sample: LoadSample) -> tuple[str, float, str, float]:
-    """把采样换算成（显存文案, 显存百分比, 内存文案, 内存百分比）。"""
+def usage_gauge_texts(sample: LoadSample) -> tuple[float, str, float, str]:
+    """把采样换算成（显存百分比, 显存简报, 内存百分比, 内存简报），供环形占用表显示。
+
+    简报只保留「已用 / 总量」，百分比画在环心，完整细节由环下小字说明。
+    """
     gpu = sample.gpu
     if gpu is not None and gpu.memory_used is not None and gpu.memory_total:
         percent = min(max(gpu.memory_used / gpu.memory_total * 100, 0.0), 100.0)
-        free = max(gpu.memory_total - gpu.memory_used, 0.0)
-        gpu_text = f"{gpu.memory_used / 1024:.1f} / {gpu.memory_total / 1024:.1f} GB（{percent:.1f} %，剩余 {free / 1024:.1f} GB）"
+        gpu_brief = f"{gpu.memory_used / 1024:.1f} / {gpu.memory_total / 1024:.1f} GB"
     else:
         percent = 0.0
-        gpu_text = "未检测到 NVIDIA GPU" if gpu is None else "暂不可用"
+        gpu_brief = "未检测到 NVIDIA GPU" if gpu is None else "暂不可用"
     if sample.memory_total:
         memory_percent = min(max(sample.memory_percent, 0.0), 100.0)
-        free = max(sample.memory_total - sample.memory_used, 0)
-        memory_text = (
-            f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}"
-            f"（{memory_percent:.1f} %，剩余 {human_size(free)}）"
-        )
+        memory_brief = f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}"
     else:
         memory_percent = 0.0
-        memory_text = "暂不可用"
-    return gpu_text, percent, memory_text, memory_percent
+        memory_brief = "暂不可用"
+    return percent, gpu_brief, memory_percent, memory_brief
 
 
 def model_disk_text(models_dir: Path, disk: DiskInfo | None) -> str:
@@ -88,6 +85,79 @@ def model_disk_text(models_dir: Path, disk: DiskInfo | None) -> str:
     """
     free = human_size(disk.free) if disk is not None else "未知"
     return f"{models_dir} · 剩余 {free}"
+
+
+class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
+    """环形占用表：环心画百分比，环随占用变色（>=90% 告警色），环下标注说明。
+
+    颜色取自应用 QPalette（主题切换自动跟随）：主色用 ``Highlight``，
+    底环用 ``Mid``，告警用 ``BrightText``，说明文字用 ``PlaceholderText``。
+    """
+
+    _DIAMETER = 76
+    _PEN_WIDTH = 7
+
+    def __init__(self, caption: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._caption = caption
+        self._percent = 0.0
+        self._detail = "等待采样…"
+        self.setFixedSize(128, 136)
+
+    def set_usage(self, percent: float, detail: str) -> None:
+        self._percent = max(0.0, min(percent, 100.0))
+        self._detail = detail
+        self.update()
+
+    def paintEvent(self, event: object) -> None:  # noqa: ARG002 - Qt 事件签名
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QFont, QPainter, QPen
+        from PySide6.QtWidgets import QPalette
+
+        palette = self.palette()
+        text_color = palette.color(QPalette.ColorRole.WindowText)
+        muted_color = palette.color(QPalette.ColorRole.PlaceholderText)
+        ring_color = palette.color(QPalette.ColorRole.Mid)
+        value_color = (
+            palette.color(QPalette.ColorRole.BrightText)
+            if self._percent >= 90.0
+            else palette.color(QPalette.ColorRole.Highlight)
+        )
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        ring_rect = QRectF((self.width() - self._DIAMETER) / 2, 4, self._DIAMETER, self._DIAMETER)
+        pen = QPen(ring_color, self._PEN_WIDTH)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(ring_rect, 0, 360 * 16)
+        span = int(360 * 16 * self._percent / 100)
+        if span > 0:
+            pen.setColor(value_color)
+            painter.setPen(pen)
+            painter.drawArc(ring_rect, 90 * 16, -span)
+
+        percent_font = QFont()
+        percent_font.setPointSize(11)
+        percent_font.setBold(True)
+        painter.setFont(percent_font)
+        painter.setPen(text_color)
+        painter.drawText(ring_rect, Qt.AlignmentFlag.AlignCenter, f"{self._percent:.0f}%")
+
+        caption_font = QFont()
+        caption_font.setBold(True)
+        painter.setFont(caption_font)
+        caption_rect = QRectF(0, ring_rect.bottom() + 4, self.width(), 18)
+        painter.drawText(caption_rect, Qt.AlignmentFlag.AlignCenter, self._caption)
+
+        detail_font = QFont()
+        detail_font.setPointSize(8)
+        painter.setFont(detail_font)
+        metrics = painter.fontMetrics()
+        elided = metrics.elidedText(self._detail, Qt.TextElideMode.ElideRight, self.width() - 4)
+        detail_rect = QRectF(0, caption_rect.bottom(), self.width(), 16)
+        painter.setPen(muted_color)
+        painter.drawText(detail_rect, Qt.AlignmentFlag.AlignCenter, elided)
 
 
 class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
@@ -120,12 +190,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build_hardware(self) -> Card:
-        """硬件卡片：标题旁「重新检测」，各行「标签 / 内容」按网格对齐。
+        """硬件卡片：左侧「标签 / 主值」信息行，右侧显存 / 内存环形占用表。
 
-        布局分层：主值（型号 / 容量，大字加粗）独占一行；显卡与内存的占用条
-        + 采样文案另起一行，避免与大字混排错乱。「修改」与「重新检测」都是
-        文字链接（`QPushButton#Link`），不占按钮高度；模型目录用单行省略
-        标签（完整路径在 tooltip），修改链接紧贴在目录文本后。
+        左右分栏：主值（型号 / 容量，大字加粗）独占一行保持层次；占用可视化
+        不再混排在文字行里，改为右侧两个环形仪表，环心百分比、环下简报。
+        「修改」与「重新检测」都是文字链接（`QPushButton#Link`），不占按钮
+        高度；模型目录用单行省略标签（完整路径在 tooltip）。
         """
         card = Card()
         header = QHBoxLayout()
@@ -142,62 +212,39 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         card.body.addLayout(header)
 
         self._hardware_values: dict[str, QLabel] = {}
-        self._usage_bars: dict[str, QProgressBar] = {}
-        self._usage_labels: dict[str, QLabel] = {}
+        self._gpu_gauge = UsageGauge("显存占用", card)
+        self._mem_gauge = UsageGauge("内存占用", card)
 
         def row_label(text: str) -> QLabel:
             label = QLabel(text, card)
             label.setObjectName("Hint")
             return label
 
-        def usage_row(parent: QWidget) -> QHBoxLayout:
-            row = QHBoxLayout()
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            bar = QProgressBar(parent)
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setTextVisible(False)
-            bar.setFixedWidth(160)
-            text = hint_label("等待采样…", wrap=False)
-            row.addWidget(bar, 0, Qt.AlignmentFlag.AlignVCenter)
-            row.addWidget(text, 0, Qt.AlignmentFlag.AlignVCenter)
-            row.addStretch(1)
-            return row
-
-        def value_label(parent: QWidget) -> QLabel:
-            value = QLabel("检测中…", parent)
+        def value_label() -> QLabel:
+            value = QLabel("检测中…", card)
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             return value
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(10)
-        grid.setVerticalSpacing(4)
+        grid.setVerticalSpacing(8)
         grid.setColumnStretch(1, 1)
         grid.setColumnMinimumWidth(0, 48)
 
-        gpu_value = value_label(card)
-        gpu_usage = usage_row(card)
-        self._usage_bars["gpu"] = gpu_usage.itemAt(0).widget()
-        self._usage_labels["gpu"] = gpu_usage.itemAt(1).widget()
-        grid.addWidget(row_label("显卡"), 0, 0, 2, 1, Qt.AlignmentFlag.AlignRight)
+        gpu_value = value_label()
+        grid.addWidget(row_label("显卡"), 0, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(gpu_value, 0, 1)
-        grid.addLayout(gpu_usage, 1, 1)
         self._hardware_values["gpu"] = gpu_value
 
-        cpu_value = value_label(card)
-        grid.addWidget(row_label("处理器"), 2, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(cpu_value, 2, 1)
+        cpu_value = value_label()
+        grid.addWidget(row_label("处理器"), 1, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(cpu_value, 1, 1)
         self._hardware_values["cpu"] = cpu_value
 
-        memory_value = value_label(card)
-        memory_usage = usage_row(card)
-        self._usage_bars["memory"] = memory_usage.itemAt(0).widget()
-        self._usage_labels["memory"] = memory_usage.itemAt(1).widget()
-        grid.addWidget(row_label("内存"), 3, 0, 2, 1, Qt.AlignmentFlag.AlignRight)
-        grid.addWidget(memory_value, 3, 1)
-        grid.addLayout(memory_usage, 4, 1)
+        memory_value = value_label()
+        grid.addWidget(row_label("内存"), 2, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(memory_value, 2, 1)
         self._hardware_values["memory"] = memory_value
 
         disk_value = ElidedLabel("检测中…", parent=card)
@@ -206,17 +253,28 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         modify = link_button("修改", tooltip="到设置页修改模型目录")
         modify.clicked.connect(lambda: self.state.navigate("settings"))
         self._modify_link = modify
+        grid.addWidget(row_label("模型目录"), 3, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         disk_row = QHBoxLayout()
         disk_row.setContentsMargins(0, 0, 0, 0)
         disk_row.setSpacing(8)
         disk_row.addWidget(disk_value, 0, Qt.AlignmentFlag.AlignVCenter)
         disk_row.addWidget(modify, 0, Qt.AlignmentFlag.AlignVCenter)
         disk_row.addStretch(1)
-        grid.addWidget(row_label("模型目录"), 5, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addLayout(disk_row, 5, 1)
+        grid.addLayout(disk_row, 3, 1)
         self._hardware_values["model_disk"] = disk_value
 
-        card.body.addLayout(grid)
+        gauges = QHBoxLayout()
+        gauges.setContentsMargins(0, 0, 0, 0)
+        gauges.setSpacing(8)
+        gauges.addWidget(self._gpu_gauge, 0, Qt.AlignmentFlag.AlignVCenter)
+        gauges.addWidget(self._mem_gauge, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        content = QHBoxLayout()
+        content.setContentsMargins(0, 4, 0, 0)
+        content.setSpacing(16)
+        content.addLayout(grid, 1)
+        content.addLayout(gauges)
+        card.body.addLayout(content)
         return card
 
     def _build_recommendations(self) -> Card:
@@ -310,14 +368,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._detected_label.setText("")
 
     def apply_sample(self, sample: object) -> None:
-        """用系统采样刷新显存 / 内存占用条。"""
+        """用系统采样刷新右侧显存 / 内存环形占用表。"""
         if not isinstance(sample, LoadSample):
             return
-        gpu_text, gpu_percent, memory_text, memory_percent = usage_texts(sample)
-        self._usage_bars["gpu"].setValue(int(gpu_percent))
-        self._usage_bars["memory"].setValue(int(memory_percent))
-        self._usage_labels["gpu"].setText(gpu_text)
-        self._usage_labels["memory"].setText(memory_text)
+        gpu_percent, gpu_brief, memory_percent, memory_brief = usage_gauge_texts(sample)
+        self._gpu_gauge.set_usage(gpu_percent, gpu_brief)
+        self._mem_gauge.set_usage(memory_percent, memory_brief)
 
     # ------------------------------------------------------------------ #
     # 推荐

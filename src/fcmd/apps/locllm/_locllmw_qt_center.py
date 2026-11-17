@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -197,23 +198,25 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         split = make_splitter(sizes=(460, 520), parent=self)
         layout.addWidget(split, 1)
         list(_MODEL_COLUMNS)
+        list_card = Card("", split)
         self.models = make_table(
             [title for title, _width, _anchor in _MODEL_COLUMNS.values()],
             widths=[width for _title, width, _anchor in _MODEL_COLUMNS.values()],
             stretch_columns=(0,),
-            parent=split,
+            parent=list_card,
         )
+        self.models.setFrameShape(QFrame.Shape.NoFrame)
         self.models.setMinimumHeight(200)
         self.models.itemSelectionChanged.connect(self._on_model_selected)
         self.models.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
-        split.addWidget(self.models)
+        list_card.body.addWidget(self.models)
+        split.addWidget(list_card)
 
-        right = make_splitter(Qt.Orientation.Vertical, sizes=(280, 220), parent=split)
+        right = make_splitter(Qt.Orientation.Vertical, sizes=(260, 230, 200), parent=split)
         split.addWidget(right)
 
-        detail = QWidget(right)
-        detail_layout = QVBoxLayout(detail)
-        detail_layout.setContentsMargins(6, 0, 0, 0)
+        detail = Card("", right)
+        detail_layout = detail.body
         detail_layout.setSpacing(4)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
@@ -268,14 +271,16 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.meta_grid.setColumnStretch(0, 1)
         self.meta_grid.setColumnStretch(1, 1)
         detail_layout.addLayout(self.meta_grid)
+        right.addWidget(detail)
 
-        readme_card = Card("README", detail)
+        readme_card = Card("README", right)
         self.readme = QPlainTextEdit(readme_card)
+        self.readme.setObjectName("Readme")
+        self.readme.setFrameShape(QFrame.Shape.NoFrame)
         self.readme.setReadOnly(True)
         self.readme.setMinimumHeight(90)
         readme_card.body.addWidget(self.readme)
-        detail_layout.addWidget(readme_card, 1)
-        right.addWidget(detail)
+        right.addWidget(readme_card)
 
         files_card = Card("文件清单", right)
         self.files = make_table(
@@ -284,6 +289,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             stretch_columns=(0,),
             parent=files_card,
         )
+        self.files.setFrameShape(QFrame.Shape.NoFrame)
         self.files.setMinimumHeight(120)
         files_card.body.addWidget(self.files)
         self.files_hint = hint_label("")

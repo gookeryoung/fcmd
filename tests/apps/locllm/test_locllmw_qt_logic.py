@@ -27,7 +27,7 @@ from fcmd.apps.locllm._locllmw_qt_models import (
     ordered_groups,
 )
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
-from fcmd.apps.locllm._locllmw_qt_overview import loaded_row_values, model_disk_text, usage_texts
+from fcmd.apps.locllm._locllmw_qt_overview import loaded_row_values, model_disk_text, usage_gauge_texts
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
     memory_guard,
@@ -207,26 +207,26 @@ def test_loaded_row_values() -> None:
     assert values[3] == "http://127.0.0.1:8080"
 
 
-def test_usage_texts_with_gpu_and_memory() -> None:
+def test_usage_gauge_texts_with_gpu_and_memory() -> None:
     sample = LoadSample(
         memory_used=8 * 1024**3,
         memory_total=32 * 1024**3,
         memory_percent=25.0,
         gpu=GpuSample(name="RTX", memory_used=4096.0, memory_total=8192.0),
     )
-    gpu_text, gpu_percent, memory_text, memory_percent = usage_texts(sample)
-    assert "4.0 / 8.0 GB" in gpu_text
+    gpu_percent, gpu_brief, memory_percent, memory_brief = usage_gauge_texts(sample)
+    assert gpu_brief == "4.0 / 8.0 GB"
     assert gpu_percent == pytest.approx(50.0)
-    assert "25.0 %" in memory_text
+    assert memory_brief.startswith("8.00 GB / 32.00 GB")
     assert memory_percent == pytest.approx(25.0)
 
 
-def test_usage_texts_without_gpu() -> None:
+def test_usage_gauge_texts_without_gpu() -> None:
     sample = LoadSample(memory_used=0, memory_total=0, memory_percent=0.0, gpu=None)
-    gpu_text, gpu_percent, memory_text, memory_percent = usage_texts(sample)
-    assert gpu_text == "未检测到 NVIDIA GPU"
+    gpu_percent, gpu_brief, memory_percent, memory_brief = usage_gauge_texts(sample)
+    assert gpu_brief == "未检测到 NVIDIA GPU"
     assert gpu_percent == 0.0
-    assert memory_text == "暂不可用"
+    assert memory_brief == "暂不可用"
     assert memory_percent == 0.0
 
 
