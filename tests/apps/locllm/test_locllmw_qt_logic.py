@@ -27,7 +27,11 @@ from fcmd.apps.locllm._locllmw_qt_models import (
     ordered_groups,
 )
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
-from fcmd.apps.locllm._locllmw_qt_overview import usage_gauge_texts
+from fcmd.apps.locllm._locllmw_qt_overview import (
+    recommendation_params_html,
+    recommendation_perf_html,
+    usage_gauge_texts,
+)
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
     memory_guard,
@@ -37,6 +41,7 @@ from fcmd.apps.locllm._locllmw_qt_run import (
     plan_lines,
 )
 from fcmd.apps.locllm._locllmw_qt_settings import engine_rows_values
+from fcmd.apps.locllm._locllmw_recommend import Recommendation
 from fcmd.apps.locllm.llmbase import EngineInfo, LaunchPlan, ModelEntry, Profile, ServeError, ServeState, Tuning
 
 
@@ -405,3 +410,33 @@ def test_pick_model_falls_back_to_largest_when_quant_missing(tmp_path: Path) -> 
 
 def test_pick_model_returns_none_for_empty_list() -> None:
     assert pick_model(None, [], "Q5_K_M") is None
+
+
+def test_recommendation_html_highlights_name_params_and_perf() -> None:
+    """推荐行参数 / 性能 HTML：关键数值加粗，性能标注来源。"""
+    recommendation = Recommendation(
+        model=ModelEntry(root=Path("/models"), path=Path("/models/qwen3-8b-Q5_K_M.gguf"), size=5 * 1024**3),
+        profile="coder",
+        context=32768,
+        kv_type="q8_0",
+        batch=512,
+        ubatch=256,
+        parallel=2,
+        tuning="并发吞吐",
+        decode_tps=42.4,
+        prompt_tps=16200.0,
+        measured=True,
+        basis="代码 · 实测",
+    )
+
+    params = recommendation_params_html(recommendation)
+    assert "档位 <b>coder</b>" in params
+    assert "上下文 <b>32K</b>" in params
+    assert "KV <b>q8_0</b>" in params
+    assert "并行 <b>2</b>" in params
+    assert "调优 <b>并发吞吐</b>" in params
+
+    perf = recommendation_perf_html(recommendation)
+    assert "解码 <b>42</b> tok/s" in perf
+    assert "预填充 <b>16.2k</b> tok/s" in perf
+    assert "<b>实测</b>" in perf

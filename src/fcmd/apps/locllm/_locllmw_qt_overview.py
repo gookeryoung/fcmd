@@ -12,9 +12,12 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -29,16 +32,86 @@ from fcmd.gui.qt.widgets import (
     button,
     hint_label,
     link_button,
-    make_table,
-    make_table_item,
 )
 
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
 
-__all__ = ["OverviewPage", "usage_gauge_texts"]
+__all__ = [
+    "OverviewPage",
+    "RecommendationRow",
+    "recommendation_params_html",
+    "recommendation_perf_html",
+    "usage_gauge_texts",
+]
 
-RECOMMEND_COLUMNS = ("推荐模型", "启动配置", "性能", "依据")
+
+def recommendation_params_html(recommendation: Recommendation) -> str:
+    """推荐行的参数摘要：小字正文，关键参数用 ``<b>`` 加粗。"""
+    rec = recommendation
+    common = (
+        f"档位 <b>{rec.profile}</b>",
+        f"上下文 <b>{rec.context // 1024}K</b>",
+        f"KV <b>{rec.kv_type}</b>",
+        f"并行 <b>{rec.parallel}</b>",
+    )
+    tuning = (
+        f"batch <b>{rec.batch}</b>",
+        f"ubatch <b>{rec.ubatch}</b>",
+        f"调优 <b>{rec.tuning}</b>",
+    )
+    return " · ".join(common) + "<br>" + " · ".join(tuning)
+
+
+def recommendation_perf_html(recommendation: Recommendation) -> str:
+    """推荐行的性能摘要：小字，数值与来源加粗。"""
+    rec = recommendation
+    source = "实测" if rec.measured else "预测"
+    prompt = rec.prompt_tps / 1000
+    prompt_text = f"{prompt:.1f}k" if prompt >= 1 else f"{rec.prompt_tps:.0f}"
+    return f"解码 <b>{rec.decode_tps:.0f}</b> tok/s · 预填充 <b>{prompt_text}</b> tok/s · <b>{source}</b>"
+
+
+class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
+    """单条推荐的自定义列表行：模型名大字，配置 / 性能小字补充。"""
+
+    def __init__(self, recommendation: Recommendation, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.recommendation = recommendation
+        self.setObjectName("RecommendationRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setToolTip(recommendation.basis)
+
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(12, 8, 12, 8)
+        outer.setSpacing(12)
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(3)
+        name = QLabel(recommendation.model.path.name, self)
+        name.setObjectName("RecommendationName")
+        name.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        name.setToolTip(str(recommendation.model.path))
+        left.addWidget(name)
+        params = QLabel(recommendation_params_html(recommendation), self)
+        params.setObjectName("Hint")
+        params.setTextFormat(Qt.TextFormat.RichText)
+        params.setWordWrap(False)
+        left.addWidget(params)
+        outer.addLayout(left, 1)
+
+        perf = QLabel(recommendation_perf_html(recommendation), self)
+        perf.setObjectName("Hint")
+        perf.setTextFormat(Qt.TextFormat.RichText)
+        perf.setWordWrap(False)
+        perf.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        outer.addWidget(perf, 0)
+
+    def set_selected(self, selected: bool) -> None:
+        """切换选中态边框（列表当前行变化时由页面同步）。"""
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 def usage_gauge_texts(sample: LoadSample) -> tuple[float, str, float, str]:
@@ -235,10 +308,16 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _build_recommendations(self) -> Card:
         card = Card("智能推荐（按显存筛选；性能测试后优先用实测值）")
-        self._recommend_table = make_table(RECOMMEND_COLUMNS, widths=(260, 320, 300, 160), stretch_columns=(0, 1, 2))
-        self._recommend_table.setMinimumHeight(110)
-        self._recommend_table.doubleClicked.connect(lambda _index: self.apply_recommendation())
-        card.body.addWidget(self._recommend_table)
+        self._recommend_list = QListWidget(card)
+        self._recommend_list.setObjectName("RecommendationList")
+        self._recommend_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
+        self._recommend_list.setSpacing(4)
+        self._recommend_list.setMinimumHeight(120)
+        self._recommend_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._recommend_list.currentRowChanged.connect(self._on_recommendation_selected)
+        self._recommend_list.itemDoubleClicked.connect(lambda _item: self.apply_recommendation())
+        self._recommend_list.itemActivated.connect(lambda _item: self.apply_recommendation())
+        card.body.addWidget(self._recommend_list)
         row = QHBoxLayout()
         self._recommend_status = hint_label("等待硬件检测与模型扫描…")
         self._apply_button = button("用此配置启动")
@@ -247,6 +326,26 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         row.addWidget(self._apply_button)
         card.body.addLayout(row)
         return card
+
+    def _render_recommendations(self) -> None:
+        """按 ``self._recommendations`` 重建自定义列表行。"""
+        self._recommend_list.clear()
+        for recommendation in self._recommendations:
+            item = QListWidgetItem(self._recommend_list)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            row = RecommendationRow(recommendation, self._recommend_list)
+            item.setSizeHint(row.sizeHint())
+            self._recommend_list.addItem(item)
+            self._recommend_list.setItemWidget(item, row)
+        if self._recommendations:
+            self._recommend_list.setCurrentRow(0)
+
+    def _on_recommendation_selected(self, current: int) -> None:
+        for index in range(self._recommend_list.count()):
+            item = self._recommend_list.item(index)
+            row = self._recommend_list.itemWidget(item)
+            if isinstance(row, RecommendationRow):
+                row.set_selected(index == current)
 
     # ------------------------------------------------------------------ #
     # 硬件
@@ -309,11 +408,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         """按当前模型清单 + 硬件快照重算推荐行。"""
         rows = recommend(self.state.models, self.state.hardware, self.state.measured)
         self._recommendations = rows
-        self._recommend_table.setRowCount(len(rows))
-        for index, row in enumerate(rows):
-            values = (row.model.path.name, row.config_text, row.performance_text, row.basis)
-            for column, text in enumerate(values):
-                self._recommend_table.setItem(index, column, make_table_item(text))
+        self._render_recommendations()
         if not rows:
             self._recommend_status.setText(
                 "未检测到可用模型：先在「模型」页刷新，或在「设置 → 存储」中登记模型目录。"
@@ -328,9 +423,9 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
 
     def apply_recommendation(self) -> None:
         """把推荐行的模型与启动配置带到运行页。"""
-        row = self._recommend_table.currentRow()
+        row = self._recommend_list.currentRow()
         if row < 0 or row >= len(self._recommendations):
-            self._recommend_status.setText("先在推荐表中选择一行，再点「用此配置启动」。")
+            self._recommend_status.setText("先在推荐列表中选择一行，再点「用此配置启动」。")
             return
         recommendation = self._recommendations[row]
         self.state.recommendationApplied.emit(recommendation)

@@ -98,16 +98,12 @@ def test_apply_recommendation_emits_and_navigates(overview: Any, tmp_path: Path)
     state, page = overview
     row = _recommendation(tmp_path)
     page._recommendations = (row,)
-    page._recommend_table.setRowCount(1)
-    from fcmd.gui.qt.widgets import make_table_item
-
-    for column, text in enumerate(("coder", "8K", "q8_0", "预测")):
-        page._recommend_table.setItem(0, column, make_table_item(text))
+    page._render_recommendations()
     applied: list[Any] = []
     navigated: list[str] = []
     state.recommendationApplied.connect(applied.append)
     state.navigateRequested.connect(navigated.append)
-    page._recommend_table.selectRow(0)
+    page._recommend_list.setCurrentRow(0)
     page.apply_recommendation()
     assert applied == [row]
     assert navigated == ["run"]
@@ -117,7 +113,7 @@ def test_apply_recommendation_requires_selection(overview: Any) -> None:
     _state_obj, page = overview
     page._recommendations = ()
     page.apply_recommendation()
-    assert "先在推荐表中选择一行" in page._recommend_status.text()
+    assert "先在推荐列表中选择一行" in page._recommend_status.text()
 
 
 def _entries(tmp_path: Path, count: int) -> list[ModelEntry]:
@@ -191,3 +187,25 @@ def test_default_open_groups_only_running_and_selected(tmp_path: Path) -> None:
     assert _locllmw_ui._default_open_groups(groups, running_keys, None) == {"run"}
     assert _locllmw_ui._default_open_groups(groups, set(), selected.path) == {"pick"}
     assert _locllmw_ui._default_open_groups(groups, running_keys, selected.path) == {"run", "pick"}
+
+
+def test_recommendation_list_uses_custom_row(overview: Any, tmp_path: Path) -> None:
+    """推荐区使用自定义行：模型名独立大字标签，参数 / 性能作为小字补充。"""
+    from PySide6.QtWidgets import QLabel
+
+    from fcmd.apps.locllm._locllmw_qt_overview import RecommendationRow
+
+    _state_obj, page = overview
+    row = _recommendation(tmp_path)
+    page._recommendations = (row,)
+    page._render_recommendations()
+
+    item = page._recommend_list.item(0)
+    assert item is not None
+    card = page._recommend_list.itemWidget(item)
+    assert isinstance(card, RecommendationRow)
+    name = card.findChild(QLabel, "RecommendationName")
+    assert name is not None
+    assert name.text() == row.model.path.name
+    assert page._recommend_list.currentRow() == 0
+    assert card.property("selected") == "true"

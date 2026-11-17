@@ -320,6 +320,19 @@ QFrame#ActionBar {
 }
 QSplitter::handle { background: $border; }
 QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
+QListWidget#RecommendationList { background: transparent; border: none; outline: 0; }
+QListWidget#RecommendationList::item { background: transparent; border: none; padding: 0; }
+QFrame#RecommendationRow {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: 8px;
+}
+QFrame#RecommendationRow:hover { background: $surface_hover; border-color: $border_strong; }
+QFrame#RecommendationRow[selected="true"] {
+    background: $surface_active;
+    border-color: $accent;
+}
+QLabel#RecommendationName { font-size: ${font_heading}pt; font-weight: 600; }
 """
 )
 
