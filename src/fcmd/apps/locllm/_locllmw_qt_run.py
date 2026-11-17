@@ -441,7 +441,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         profile = PROFILES.get(self.profile_combo.currentText().strip(), PROFILES[DEFAULT_PROFILE])
         return pick_model(self.state.selected_model, self.state.models, profile.quant)
 
-    def _workflow(self) -> dict[str, Any]:
+    def _workflow(self, *, extra_args: str | None = None) -> dict[str, Any]:
         return {
             "name": self.name_combo.currentText(),
             "profile": self.profile_combo.currentText(),
@@ -456,7 +456,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             "parallel": self.parallel_edit.text(),
             "threads_http": self.threads_http_edit.text(),
             "api_key": self.api_key_edit.text(),
-            "extra_args": self.extra_args_edit.toPlainText(),
+            "extra_args": self.extra_args_edit.toPlainText() if extra_args is None else extra_args,
             "model": self._resolved_model(),
             "gpu_mib": self.state.gpu_mib,
         }
@@ -492,29 +492,16 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.log(f"已保存启动参数: {path or '（未选择模型）'}")
 
     def _fill_params(self) -> None:
-        path = self.state.selected_model or self._resolved_model()
-        key = llmenv.path_key(path) if path is not None else ""
-        saved = (self.state.settings.run_params or {}).get(key)
-        if not isinstance(saved, dict):
-            self.state.status("当前模型还没有保存参数")
+        """把当前表单生成的启动参数填入自定义参数框，与命令预览保持一致。"""
+        try:
+            base = build_plan_from(self._workflow(extra_args=""))
+        except ServeError as exc:
+            self._error("参数错误", str(exc))
             return
-        self.name_combo.setCurrentText(str(saved.get("name", self.name_combo.currentText())))
-        self.profile_combo.setCurrentText(str(saved.get("profile", self.profile_combo.currentText())))
-        self.host_edit.setText(str(saved.get("host", self.host_edit.text())))
-        self.port_edit.setText(str(saved.get("port", self.port_edit.text())))
-        self.threads_edit.setText(str(saved.get("threads", self.threads_edit.text())))
-        self.tune_combo.setCurrentText(str(saved.get("tune", self.tune_combo.currentText())))
-        self.ctx_edit.setText(str(saved.get("ctx", self.ctx_edit.text())))
-        self.kv_combo.setCurrentText(str(saved.get("kv", self.kv_combo.currentText())))
-        self.ubatch_edit.setText(str(saved.get("ubatch", self.ubatch_edit.text())))
-        self.alias_edit.setText(str(saved.get("alias", self.alias_edit.text())))
-        self.parallel_edit.setText(str(saved.get("parallel", self.parallel_edit.text())))
-        self.threads_http_edit.setText(str(saved.get("threads_http", self.threads_http_edit.text())))
-        self.api_key_edit.setText(str(saved.get("api_key", self.api_key_edit.text())))
-        self.wait_edit.setText(str(saved.get("wait", self.wait_edit.text())))
-        self.extra_args_edit.setPlainText(str(saved.get("extra_args", "")))
+        tail = base.argv()[2:]
+        self.extra_args_edit.setPlainText(shlex.join(tail))
         self._refresh_command_preview()
-        self.state.status("已填入保存的启动参数")
+        self.state.status("已填入当前启动参数")
 
     def _refresh_command_preview(self) -> None:
         try:
@@ -525,7 +512,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.command_preview.setPlainText(format_command(plan.argv()))
 
     def build_plan(self) -> LaunchPlan:
-        """按当前表单构造启动计划。"""
+        """按当前表单构造启动计划；重复填入的参数不二次追加。"""
+        base = build_plan_from(self._workflow(extra_args=""))
+        custom = parse_custom_args(self.extra_args_edit.toPlainText())
+        if custom and custom == tuple(base.argv()[2:]):
+            return base
         return build_plan_from(self._workflow())
 
     def profile_context(self) -> tuple[str, int, str]:

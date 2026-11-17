@@ -134,6 +134,12 @@ def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     command = run.command_preview.toPlainText()
     assert "demo-Q4_K_XL.gguf" in command
     assert "--model" in command or "-m" in command
+    run._fill_params()
+    custom = run.extra_args_edit.toPlainText()
+    assert "-ngl 99" in custom
+    assert "--alias" in custom and "--host 127.0.0.1" in custom
+    # 与预览一致：填入完整参数后不会在命令里重复追加一遍
+    assert run.command_preview.toPlainText().count("-ngl") == 1
 
 
 def test_theme_switch_persists(window: Any, tmp_path: Path) -> None:
