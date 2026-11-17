@@ -104,7 +104,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     downloadRequested = Signal(str)
     convertRequested = Signal(str)
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - 行状态位由列表统一透传
         self,
         item: ModelSummary,
         parent: QWidget | None = None,
@@ -112,6 +112,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         installed: bool = False,
         convertible: bool = False,
         converted: bool = False,
+        convert_blocked: str = "",
     ) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
@@ -120,6 +121,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self._installed = installed
         self._convertible = convertible
         self._converted = converted
+        self._convert_blocked = convert_blocked
         self.setObjectName("ModelItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
@@ -164,6 +166,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
                 self.convert_button.setToolTip("已存在转换后的 GGUF")
             else:
                 self.convert_button.clicked.connect(lambda: self.convertRequested.emit(self.repo))
+            header_row.addWidget(self.convert_button, 0)
+        elif convert_blocked:
+            self.convert_button = button("不可转换")
+            self.convert_button.setEnabled(False)
+            self.convert_button.setToolTip(convert_blocked)
             header_row.addWidget(self.convert_button, 0)
         self.download_button = button("下载")
         if installed:
@@ -217,6 +224,10 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         if self._converted:
             self.convert_button.setEnabled(False)
             self.convert_button.setText("已转换")
+            return
+        if self._convert_blocked:
+            self.convert_button.setEnabled(False)
+            self.convert_button.setText("不可转换")
             return
         self.convert_button.setEnabled(not busy)
         self.convert_button.setText("转换中…" if active else "转换")
@@ -329,6 +340,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
         self._convertible: dict[str, tuple[Path, Path, bool]] = {}
+        self._convert_blocked: dict[str, str] = {}
         self._converting = False
         self._convert_active_repo: str | None = None
 
@@ -422,6 +434,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._installed_models = {}
             self._installed_repos = set()
             self._convertible = {}
+            self._convert_blocked = {}
         else:
             self._installed_models = {
                 model.repo.casefold(): ModelSummary(
@@ -433,11 +446,16 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             }
             self._installed_repos = set(self._installed_models)
             self._convertible = {}
+            self._convert_blocked = {}
             for model in models:
-                if not llmconvert.is_hf_safetensors_dir(model.path):
-                    continue
-                output = _locllmw_convert.default_output_path(model.path)
-                self._convertible[model.repo.casefold()] = (model.path, output, output.is_file())
+                key = model.repo.casefold()
+                if llmconvert.is_hf_safetensors_dir(model.path):
+                    output = _locllmw_convert.default_output_path(model.path)
+                    self._convertible[key] = (model.path, output, output.is_file())
+                elif (model.path / "model_index.json").is_file():
+                    self._convert_blocked[key] = (
+                        "diffusers 多组件模型（model_index.json），当前仅支持单目录 HF transformers safetensors"
+                    )
 
     def _local_capacity(self) -> int:
         """本机可承载的整仓体积（显存与系统内存取较大者，未知时为 0）。"""
@@ -515,6 +533,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 installed=installed,
                 convertible=convert_info is not None,
                 converted=bool(convert_info and convert_info[2]),
+                convert_blocked=self._convert_blocked.get(key, ""),
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)

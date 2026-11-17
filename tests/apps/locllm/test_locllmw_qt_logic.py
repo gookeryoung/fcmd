@@ -224,6 +224,10 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert converted_row.convert_button.text() == "已转换"
     assert converted_row.convert_button.objectName() == "ConvertedButton"
     assert not converted_row.convert_button.isEnabled()
+    blocked_row = _ModelItemRow(ModelSummary(repo="Qwen/image"), convert_blocked="diffusers 多组件模型")
+    assert blocked_row.convert_button is not None
+    assert blocked_row.convert_button.text() == "不可转换"
+    assert not blocked_row.convert_button.isEnabled()
     assert row.download_button.text() == "下载"
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()

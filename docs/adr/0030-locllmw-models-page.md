@@ -81,7 +81,9 @@ Card，只保留结果行的卡片边框；QTabWidget 内容区改为无边透�
   `convert` 字段，修改后自动保存。
 - 可转换模型在浏览列表行内提供「转换」按钮；默认输出为
   `<models_dir>/converted/<源目录名>/<源目录名>.gguf`，输出已存在时按钮显示
-  「已转换」并禁用。
+  「已转换」并禁用。diffusers 多组件目录（如含 `model_index.json` 的
+  Qwen-Image 管线）不属于单目录 HF transformers 模型，按钮显示「不可转换」
+  并在 tooltip 说明原因。
 - 量化保留为模型页子页，承载输入模型、量化类型、输出目录、覆盖策略、量化器环境、
   进度与日志；转换与量化都调用 `llmconvert` / `llmqnt` 的核心函数，不在 GUI 重写命令。
 
