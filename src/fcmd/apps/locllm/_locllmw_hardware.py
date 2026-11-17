@@ -89,7 +89,7 @@ def detect_cpu_name() -> str:
                 value, _ = winreg.QueryValueEx(key, "ProcessorNameString")
             if isinstance(value, str) and value.strip():
                 return value.strip()
-        except OSError:
+        except (OSError, ImportError):
             pass
     try:
         text = Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore")

@@ -81,6 +81,21 @@ class TestHardwareSnapshot:
     def test_detect_cpu_name_never_empty(self) -> None:
         assert hardware.detect_cpu_name().strip()
 
+    def test_detect_cpu_name_tolerates_missing_winreg(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """非 Windows 上注入 nt 平台时没有 winreg，应回落到其它来源而不是抛错。"""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "winreg":
+                raise ImportError("no winreg")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        monkeypatch.setattr(hardware.os, "name", "nt")
+        assert hardware.detect_cpu_name().strip()
+
     def test_detect_hardware_uses_runner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # 内存代数查询仅在 Windows 分支可达：CI（Linux）注入 nt 平台走同一逻辑。
         monkeypatch.setattr(hardware.os, "name", "nt")
