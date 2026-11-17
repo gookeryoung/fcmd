@@ -255,13 +255,14 @@ def test_overview_actions_are_text_links(window: Any) -> None:
 
 
 def test_overview_gauges_paint_event_runs(window: Any) -> None:
-    """环形仪表直接调用 paintEvent 不抛异常（回归：QPalette 必须从 QtGui 导入）。"""
+    """环形仪表在不同余量档位下重绘不抛异常（回归：QPalette 必须从 QtGui 导入）。"""
     from PySide6.QtGui import QPaintEvent
 
     gauge = window.overview._gpu_gauge
-    gauge.set_usage(42.0, "1.0 / 24.0 GB")
-    gauge.paintEvent(QPaintEvent(gauge.rect()))
-    assert gauge._percent == 42.0
+    for percent in (42.0, 72.0, 92.0):
+        gauge.set_usage(percent, "1.0 / 24.0 GB")
+        gauge.paintEvent(QPaintEvent(gauge.rect()))
+        assert gauge._percent == percent
 
 
 def test_recommendation_list_fills_width_without_clipping(window: Any) -> None:

@@ -39,6 +39,7 @@ from fcmd.gui.qt.widgets import (
 
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
+    from fcmd.gui.theme import Theme
 
 __all__ = [
     "OverviewPage",
@@ -48,8 +49,19 @@ __all__ = [
     "recommendation_params_html",
     "recommendation_perf_html",
     "score_band_label",
+    "usage_band",
+    "usage_color",
     "usage_gauge_texts",
 ]
+
+_USAGE_BANDS = ((85.0, "critical"), (60.0, "tight"), (0.0, "comfortable"))
+"""内存 / 显存使用率档位（从高到低）：≥85% 告急、≥60% 偏紧、其余充足。"""
+
+_USAGE_BAND_LABELS = {
+    "critical": "余量告急",
+    "tight": "余量偏紧",
+    "comfortable": "余量充足",
+}
 
 _SCORE_BAND_LABELS = {
     "excellent": "极佳",
@@ -62,6 +74,24 @@ _SCORE_BAND_LABELS = {
 def score_band_label(band: str) -> str:
     """评分档位的中文名（未知档位退化为原值）。"""
     return _SCORE_BAND_LABELS.get(band, band)
+
+
+def usage_band(percent: float) -> str:
+    """把内存 / 显存使用率映射到余量档位（用于环形仪表配色）。"""
+    for threshold, band in _USAGE_BANDS:
+        if percent >= threshold:
+            return band
+    return "comfortable"
+
+
+def usage_color(theme: Theme, percent: float) -> str:
+    """按余量档位返回仪表颜色：充足绿 / 偏紧琥珀 / 告急红（取自当前主题）。"""
+    palette = theme.palette
+    return {
+        "critical": palette.danger,
+        "tight": palette.warning,
+        "comfortable": palette.success,
+    }[usage_band(percent)]
 
 
 def recommendation_params_html(recommendation: Recommendation) -> str:
@@ -188,10 +218,11 @@ def usage_gauge_texts(sample: LoadSample) -> tuple[float, str, float, str]:
 
 
 class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
-    """环形占用表：环心画百分比，环随占用变色（>=90% 告警色），环下标注说明。
+    """环形占用表：环心画百分比，环与百分比按剩余档位变色，环下标注说明。
 
-    颜色取自应用 QPalette（主题切换自动跟随）：主色用 ``Highlight``，
-    底环用 ``Mid``，告警用 ``BrightText``，说明文字用 ``PlaceholderText``。
+    余量档位见 :func:`usage_band`：≥85% 用告警红、≥60% 用琥珀、其余用绿色；
+    颜色取当前主题的 ``success`` / ``warning`` / ``danger``，切主题自动跟随。
+    底环与说明文字仍用 ``QPalette`` 的 ``Mid`` / ``PlaceholderText``。
     """
 
     _DIAMETER = 76
@@ -207,21 +238,19 @@ class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
     def set_usage(self, percent: float, detail: str) -> None:
         self._percent = max(0.0, min(percent, 100.0))
         self._detail = detail
+        band = _USAGE_BAND_LABELS[usage_band(self._percent)]
+        self.setToolTip(f"{self._caption} {self._percent:.0f}% · {band}")
         self.update()
 
     def paintEvent(self, event: object) -> None:  # noqa: ARG002 - Qt 事件签名
         from PySide6.QtCore import QRectF
-        from PySide6.QtGui import QFont, QPainter, QPalette, QPen
+        from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen
 
         palette = self.palette()
         text_color = palette.color(QPalette.ColorRole.WindowText)
         muted_color = palette.color(QPalette.ColorRole.PlaceholderText)
         ring_color = palette.color(QPalette.ColorRole.Mid)
-        value_color = (
-            palette.color(QPalette.ColorRole.BrightText)
-            if self._percent >= 90.0
-            else palette.color(QPalette.ColorRole.Highlight)
-        )
+        value_color = QColor(usage_color(_qt_theme.load_theme(), self._percent))
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -240,12 +269,13 @@ class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
         percent_font.setPointSize(11)
         percent_font.setBold(True)
         painter.setFont(percent_font)
-        painter.setPen(text_color)
+        painter.setPen(value_color)
         painter.drawText(ring_rect, Qt.AlignmentFlag.AlignCenter, f"{self._percent:.0f}%")
 
         caption_font = QFont()
         caption_font.setBold(True)
         painter.setFont(caption_font)
+        painter.setPen(text_color)
         caption_rect = QRectF(0, ring_rect.bottom() + 4, self.width(), 18)
         painter.drawText(caption_rect, Qt.AlignmentFlag.AlignCenter, self._caption)
 

@@ -30,6 +30,8 @@ from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
 from fcmd.apps.locllm._locllmw_qt_overview import (
     recommendation_params_html,
     recommendation_perf_html,
+    usage_band,
+    usage_color,
     usage_gauge_texts,
 )
 from fcmd.apps.locllm._locllmw_qt_run import (
@@ -225,6 +227,25 @@ def test_usage_gauge_texts_without_gpu() -> None:
     assert gpu_percent == 0.0
     assert memory_brief == "暂不可用"
     assert memory_percent == 0.0
+
+
+def test_usage_band_thresholds() -> None:
+    """余量档位：≥85% 告急、≥60% 偏紧、其余充足。"""
+    assert usage_band(0.0) == "comfortable"
+    assert usage_band(59.9) == "comfortable"
+    assert usage_band(60.0) == "tight"
+    assert usage_band(84.9) == "tight"
+    assert usage_band(85.0) == "critical"
+    assert usage_band(100.0) == "critical"
+
+
+def test_usage_color_follows_theme_palette() -> None:
+    from fcmd.gui import theme as _guitheme
+
+    theme = _guitheme.resolve_theme("dark-blue")
+    assert usage_color(theme, 20.0) == theme.palette.success
+    assert usage_color(theme, 70.0) == theme.palette.warning
+    assert usage_color(theme, 92.0) == theme.palette.danger
 
 
 def test_service_labels_marks_dead_service(monkeypatch: pytest.MonkeyPatch) -> None:
