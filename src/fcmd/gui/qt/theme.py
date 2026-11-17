@@ -177,6 +177,20 @@ QPushButton#RunAction:hover { background: $surface_active; border-color: $border
 QPushButton#RunDanger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
 QPushButton#RunDanger:disabled { color: $muted; border-color: $border; background: transparent; }
+QFrame#ChatSidebar {
+    background: $surface;
+    border: none;
+    border-right: 1px solid $border;
+    border-radius: 0;
+}
+QListWidget#ChatHistory { background: transparent; border: none; outline: 0; }
+QListWidget#ChatHistory::item {
+    color: $muted;
+    padding: 8px 10px;
+    border-radius: 6px;
+}
+QListWidget#ChatHistory::item:hover { background: $surface_hover; color: $text; }
+QListWidget#ChatHistory::item:selected { background: $surface_active; color: $text; }
 QPushButton#ChoiceCard {
     background: $surface;
     border: 1px solid $border;

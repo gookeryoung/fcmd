@@ -255,12 +255,23 @@ def test_run_page_has_no_bottom_action_bar(window: Any) -> None:
 
 
 def test_chat_input_buttons_share_one_row(window: Any) -> None:
-    """对话页输入区按钮横排，避免四个按钮纵向堆叠溢出窗口。"""
+    """对话页输入区按钮横排，新对话入口移入左侧历史栏。"""
     window.show_page("chat")
     chat = window.page("chat")
-    buttons = [chat.send_button, chat.stop_button, chat.reset_button, chat.export_button]
+    buttons = [chat.send_button, chat.stop_button, chat.export_button]
     tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in buttons}
     assert len(tops) == 1
+    assert chat.new_chat_button.text() == "＋ 新对话"
+
+
+def test_chat_history_lists_conversations_and_switches(window: Any) -> None:
+    window.show_page("chat")
+    chat = window.page("chat")
+    chat._append_text("你：第一段", "user")
+    chat.new_conversation()
+    assert chat.history_list.count() == 2
+    chat.history_list.setCurrentRow(0)
+    assert "第一段" in chat.transcript.toPlainText()
 
 
 def test_scan_result_auto_selects_a_startable_model(window: Any, tmp_path: Path) -> None:

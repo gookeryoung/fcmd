@@ -11,6 +11,7 @@ Qt 侧只负责把回调转成信号与富文本追加。
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
@@ -19,8 +20,10 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLineEdit,
+    QListWidget,
     QPlainTextEdit,
     QTextEdit,
     QVBoxLayout,
@@ -73,6 +76,17 @@ def endpoint_from_form(base_url: str, api_key: str, model: str) -> Endpoint:
     return Endpoint(url, api_key.strip() or DEFAULT_API_KEY, model.strip())
 
 
+@dataclass
+class _Conversation:
+    """一个对话历史条目：会话、已渲染块与思考状态。"""
+
+    title: str = "新对话"
+    session: ChatSession | None = None
+    blocks: list[tuple[str, str]] = field(default_factory=list)
+    assistant_started: bool = False
+    reasoning_started: bool = False
+
+
 class _ChatBridge(QObject):  # pragma: no cover - Qt 信号桥
     """后台生成线程 → GUI 的增量信号桥。"""
 
@@ -88,10 +102,9 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
-        self._session: ChatSession | None = None
+        self._conversations: list[_Conversation] = [_Conversation()]
+        self._active = 0
         self._running = False
-        self._assistant_started = False
-        self._reasoning_started = False
         self._services: list[tuple[str, ServeState]] = []
         self._manual_choice = False
         self._bridge = _ChatBridge(self)
@@ -107,9 +120,31 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # 构建
     # ------------------------------------------------------------------ #
     def _build(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(8)
+
+        sidebar = QFrame(self)
+        sidebar.setObjectName("ChatSidebar")
+        sidebar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        sidebar.setFixedWidth(210)
+        side = QVBoxLayout(sidebar)
+        side.setContentsMargins(8, 8, 8, 8)
+        side.setSpacing(8)
+        self.new_chat_button = button("＋ 新对话", kind="primary")
+        self.new_chat_button.clicked.connect(self.new_conversation)
+        side.addWidget(self.new_chat_button)
+        self.history_list = QListWidget(sidebar)
+        self.history_list.setObjectName("ChatHistory")
+        self.history_list.currentRowChanged.connect(self._select_conversation)
+        side.addWidget(self.history_list, 1)
+        outer.addWidget(sidebar)
+
+        right = QWidget(self)
+        layout = QVBoxLayout(right)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+        outer.addWidget(right, 1)
 
         connection = Card("对话服务")
         service_row = QHBoxLayout()
@@ -170,17 +205,16 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.send_button = button("发送", kind="primary")
         self.stop_button = button("停止", kind="danger")
         self.stop_button.setEnabled(False)
-        self.reset_button = button("新对话", kind="ghost")
         self.export_button = button("导出记录", kind="ghost")
-        for widget in (self.send_button, self.stop_button, self.reset_button, self.export_button):
+        for widget in (self.send_button, self.stop_button, self.export_button):
             buttons.addWidget(widget)
         input_area.addLayout(buttons)
         layout.addLayout(input_area)
 
         self.send_button.clicked.connect(self.send)
         self.stop_button.clicked.connect(self.stop)
-        self.reset_button.clicked.connect(self.reset)
         self.export_button.clicked.connect(self.export_markdown)
+        self._refresh_history()
 
     # ------------------------------------------------------------------ #
     # 服务选择
@@ -269,10 +303,64 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         return super().eventFilter(obj, event)
 
     # ------------------------------------------------------------------ #
+    # 对话历史
+    # ------------------------------------------------------------------ #
+    def _conversation(self) -> _Conversation:
+        return self._conversations[self._active]
+
+    def _refresh_history(self) -> None:
+        self.history_list.blockSignals(True)
+        self.history_list.clear()
+        for conversation in self._conversations:
+            self.history_list.addItem(conversation.title)
+        self.history_list.setCurrentRow(self._active)
+        self.history_list.blockSignals(False)
+
+    def _select_conversation(self, row: int) -> None:
+        if row < 0 or row == self._active:
+            return
+        if self._running:
+            self._refresh_history()
+            self.status.setText("正在生成，停止后才能切换对话")
+            return
+        self._active = row
+        self._render_conversation()
+        self.status.setText("已切换对话")
+
+    def _render_conversation(self) -> None:
+        self.transcript.clear()
+        for kind, text in self._conversation().blocks:
+            self._insert_text(text, kind)
+
+    def new_conversation(self) -> None:
+        """新建一个空白对话；空对话不重复创建。"""
+        if self._running:
+            self.status.setText("正在生成，停止后才能新建对话")
+            return
+        current = self._conversation()
+        if not current.blocks and current.session is None:
+            self._render_conversation()
+            self.status.setText("已开始新对话")
+            return
+        self._conversations.append(_Conversation())
+        self._active = len(self._conversations) - 1
+        self._refresh_history()
+        self.transcript.clear()
+        self.status.setText("已开始新对话")
+
+    def _set_title_from_prompt(self, prompt: str) -> None:
+        conversation = self._conversation()
+        if conversation.title != "新对话":
+            return
+        title = prompt.splitlines()[0].strip()[:24] or "新对话"
+        conversation.title = title
+        self._refresh_history()
+
+    # ------------------------------------------------------------------ #
     # 发送 / 停止
     # ------------------------------------------------------------------ #
     def send(self) -> None:
-        """发送一轮提问，流式把回复写入对话区。"""
+        """发送一轮提问，流式把回复写入当前对话。"""
         if self._running:
             return
         prompt = self.input_edit.toPlainText().strip()
@@ -287,8 +375,9 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         except (ServeError, ValueError) as exc:
             self.status.setText(f"参数错误：{exc}")
             return
-        if self._session is None or self._session.endpoint != endpoint:
-            self._session = ChatSession(
+        conversation = self._conversation()
+        if conversation.session is None or conversation.session.endpoint != endpoint:
+            conversation.session = ChatSession(
                 endpoint=endpoint,
                 system=self.system_edit.text().strip() or None,
                 max_tokens=max_tokens,
@@ -296,18 +385,22 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
                 top_p=top_p,
             )
         else:
-            self._session.max_tokens = max_tokens
-            self._session.temperature = temperature
-            self._session.top_p = top_p
+            conversation.session.max_tokens = max_tokens
+            conversation.session.temperature = temperature
+            conversation.session.top_p = top_p
         self.input_edit.clear()
+        self._set_title_from_prompt(prompt)
         self._append_text(f"你：{prompt}\n", "user")
-        self._append_text("助手：", "assistant")
+        conversation.assistant_started = False
+        conversation.reasoning_started = False
         self._running = True
         self.send_button.setEnabled(False)
         self.stop_button.setEnabled(True)
+        self.history_list.setEnabled(False)
+        self.new_chat_button.setEnabled(False)
         self.status.setText("正在生成…")
         submit(
-            self._session.ask,
+            conversation.session.ask,
             prompt,
             on_delta=self._bridge.delta.emit,
             on_reasoning=self._bridge.reasoning.emit,
@@ -317,41 +410,43 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
 
     def stop(self) -> None:
         """停止当前流式生成。"""
-        if self._session is not None:
-            self._session.cancel()
+        session = self._conversation().session
+        if session is not None:
+            session.cancel()
         self.status.setText("正在停止…")
 
-    def _on_done(self, _reply: str) -> None:
-        self._append_text("\n\n", "assistant")
+    def _finish_running(self) -> None:
         self._running = False
         self.send_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+        self.history_list.setEnabled(True)
+        self.new_chat_button.setEnabled(True)
+
+    def _on_done(self, _reply: str) -> None:
+        conversation = self._conversation()
+        if conversation.assistant_started or conversation.reasoning_started:
+            self._append_text("\n\n", "assistant")
+        self._finish_running()
         self.status.setText("生成完成")
 
     def _on_failed(self, message: str) -> None:
         self._append_text(f"\n[失败] {message}\n\n", "error")
-        self._running = False
-        self.send_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        self._finish_running()
         self.status.setText("生成失败：" + message)
 
     def reset(self) -> None:
-        """清空对话历史与记录。"""
-        if self._session is not None:
-            self._session.reset()
-        self.transcript.clear()
-        self._assistant_started = False
-        self._reasoning_started = False
-        self.status.setText("已开始新对话")
+        """清空当前对话并开一个新的空对话。"""
+        self.new_conversation()
 
     def is_running(self) -> bool:
         """是否有生成在进行中。"""
         return self._running
 
     def close(self) -> None:
-        """窗口关闭时取消生成。"""
-        if self._session is not None:
-            self._session.cancel()
+        """窗口关闭时取消所有对话中正在进行的生成。"""
+        for conversation in self._conversations:
+            if conversation.session is not None:
+                conversation.session.cancel()
 
     # ------------------------------------------------------------------ #
     # 文本追加
@@ -376,24 +471,30 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             fmt.setFont(font)
         return fmt
 
-    def _append_text(self, text: str, kind: str) -> None:
+    def _insert_text(self, text: str, kind: str) -> None:
         cursor = self.transcript.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(text, self._format(kind))
         self.transcript.setTextCursor(cursor)
         self.transcript.ensureCursorVisible()
 
+    def _append_text(self, text: str, kind: str) -> None:
+        self._conversation().blocks.append((kind, text))
+        self._insert_text(text, kind)
+
     def _append_delta(self, text: str) -> None:
-        if not self._assistant_started:
-            prefix = "\n\n助手：" if self._reasoning_started else "助手："
+        conversation = self._conversation()
+        if not conversation.assistant_started:
+            prefix = "\n\n助手：" if conversation.reasoning_started else "助手："
             self._append_text(prefix, "assistant")
-            self._assistant_started = True
+            conversation.assistant_started = True
         self._append_text(text, "assistant")
 
     def _append_reasoning(self, text: str) -> None:
-        if not self._reasoning_started:
+        conversation = self._conversation()
+        if not conversation.reasoning_started:
             self._append_text("助手（思考）：\n", "reasoning")
-            self._reasoning_started = True
+            conversation.reasoning_started = True
         self._append_text(text, "reasoning")
 
     # ------------------------------------------------------------------ #
@@ -405,7 +506,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
 
     def export_markdown(self) -> None:
         """把当前对话导出为 Markdown（复用既有格式化函数）。"""
-        messages: list[ChatMessage] = self._session.messages if self._session is not None else []
+        session = self._conversation().session
+        messages: list[ChatMessage] = session.messages if session is not None else []
         if not messages:
             self.status.setText("尚无对话内容可导出")
             return
