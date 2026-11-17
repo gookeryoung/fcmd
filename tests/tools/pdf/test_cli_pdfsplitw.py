@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -193,28 +195,19 @@ class TestGuiEntry:
     """GUI 启动入口（不真正创建窗口）。"""
 
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """tkinter 不可用时打印错误并退出。"""
+        """Qt 前端不可导入时提示安装并退出。"""
+        monkeypatch.setitem(sys.modules, "fcmd.tools.pdf._pdfsplitw_qt", None)
+        with pytest.raises(SystemExit, match="Qt"):
+            pdfsplitw.run_gui()
 
-        def fake_window(_path: Path | None) -> None:
-            raise ImportError("no tkinter")
-
-        monkeypatch.setattr(pdfsplitw, "PdfSplitWindow", fake_window)
-        pdfsplitw.run_gui()  # 不应抛出
-
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """正常创建窗口后进入 mainloop。"""
-        calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(pdfsplitw, "PdfSplitWindow", lambda _path: _Window())
+    def test_run_gui_delegates_to_qt_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """正常路径把启动交给 Qt 入口（窗口与事件循环由该模块负责）。"""
+        calls: list[bool] = []
+        fake = types.ModuleType("fcmd.tools.pdf._pdfsplitw_qt")
+        fake.run_qt = lambda: calls.append(True)  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "fcmd.tools.pdf._pdfsplitw_qt", fake)
         pdfsplitw.run_gui()
-        assert calls == ["mainloop"]
+        assert calls == [True]
 
     def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[bool] = []
