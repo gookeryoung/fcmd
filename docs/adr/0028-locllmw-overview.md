@@ -42,10 +42,10 @@
 
 ### 3. 智能推荐与性能口径
 
-- 纯逻辑在 `_locllmw_recommend.py`：先筛选能整卡放下的模型（显存不足时自动
-  降 KV 或收缩上下文；仍放不下则跳过），再按评分从高到低取前 3 条；评分相同
-  时按模型大小从大到小、再按路径排序。档位优先取模型能力标签（代码 / 推理 /
-  对话等），启动参数用 `_llmtune.resolve("auto", ...)`。
+- 纯逻辑在 `_locllmw_recommend.py`：按模型大小从大到小筛选能整卡放下的模型
+  （显存不足时自动降 KV 或收缩上下文；仍放不下则跳过），凑满 3 条后按评分
+  从高到低展示；评分相同时按模型大小从大到小、再按路径排序。档位优先取模型
+  能力标签（代码 / 推理 / 对话等），启动参数用 `_llmtune.resolve("auto", ...)`。
 - 性能预测以 ADR 0015 的参考机器（RTX 5090 D 32GB + Qwen3-Coder-30B-A3B
   Q5_K_M，单请求解码 250 tok/s、8K 预填充 16.2k tok/s）为基准，按模型大小
   与显存比例外推，并叠加调优策略折减；无 GPU 时按 CPU 大幅折减。
@@ -110,7 +110,7 @@
 
 - `tests/apps/locllm/test_locllmw_overview.py`：快照序列化 / 非法输入、最长
   挂载点匹配、磁盘格式化、注入 runner 的硬件检测、性能预测单调性、
-  推荐筛选 / 按评分降序 / 实测覆盖 / CPU-only / limit。
+  推荐筛选 / 候选按大小取大 / 展示按评分降序 / 实测覆盖 / CPU-only / limit。
 - `tests/apps/locllm/test_cli_llmserve.py`：配置读写覆盖 hardware / measured。
 - `tests/apps/locllm/test_locllmw_ui.py`：模型目录扫描的错误分类（不存在 /
   无权限 / 其它 `OSError` / 空目录 / 正常）、推荐配置带入运行页的参数覆盖顺序。

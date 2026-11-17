@@ -163,12 +163,12 @@ class TestRecommend:
         assert len(recommend.recommend(entries, _snapshot(), limit=2)) == 2
         assert recommend.recommend([], _snapshot()) == ()
 
-    def test_limit_keeps_highest_scores(self, tmp_path: Path) -> None:
+    def test_limit_picks_largest_fitting_then_sorts_by_score(self, tmp_path: Path) -> None:
         entries = [_entry(tmp_path, f"m{i}.gguf", (i + 1) * 1024**3) for i in range(5)]
         rows = recommend.recommend(entries, _snapshot(), limit=2)
-        all_rows = recommend.recommend(entries, _snapshot(), limit=len(entries))
-        assert [row.score for row in rows] == [row.score for row in all_rows[:2]]
-        assert all(rows[i].score >= rows[i + 1].score for i in range(len(rows) - 1))
+        # 先取最大的两个能放下的模型（m3 / m4），再按评分降序排列。
+        assert {row.model.path.name for row in rows} == {"m3.gguf", "m4.gguf"}
+        assert [row.score for row in rows] == sorted((row.score for row in rows), reverse=True)
 
     def test_unknown_tag_falls_through_to_known_profile(self, tmp_path: Path) -> None:
         entry = _entry(tmp_path, "model.gguf", 1024**3, ("未知标签", "代码"))

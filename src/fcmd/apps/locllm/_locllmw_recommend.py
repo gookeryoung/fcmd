@@ -4,8 +4,8 @@
 结果；输出按「整卡显存能放下」筛选后的推荐行。性能在没有实测数据时按参考
 机器的基准线性外推并明确标注「预测」；同一模型已有性能测试结果时改用实测
 值并标注「实测」。每条推荐另按「显存余量 / 上下文 / KV 精度 / 解码速度」
-四个维度打出 0-100 分（:func:`score_recommendation`），结果按评分从高到低
-排序并取前 ``limit`` 条，供概览页用颜色区分档位。本模块不依赖 Tk，可直接单测。
+四个维度打出 0-100 分（:func:`score_recommendation`），候选按模型大小筛选后
+按评分从高到低展示，供概览页用颜色区分档位。本模块不依赖 Tk，可直接单测。
 """
 
 from __future__ import annotations
@@ -252,17 +252,18 @@ def recommend(
     *,
     limit: int = 3,
 ) -> tuple[Recommendation, ...]:
-    """从能放入显存的模型中按评分从高到低返回最多 ``limit`` 条推荐。
+    """从能放入显存的模型里取最大的 ``limit`` 个，再按评分从高到低排序。
 
-    评分相同时按模型大小从大到小、再按路径排序，保证结果稳定。显存未知
-    （CPU 推理）时仍给出推荐，但性能按 CPU 折减预测；没有模型时返回空。
+    候选集先按模型大小从大到小筛选（选能力更强的模型），展示顺序再按评分降序；
+    评分相同时按模型大小从大到小、再按路径排序。显存未知（CPU 推理）时仍给出
+    推荐，但性能按 CPU 折减预测；没有模型时返回空。
     """
     if not models:
         return ()
     measured = measured or {}
     gpu_mib = hardware.gpu_mib if hardware is not None else None
     recommendations: list[Recommendation] = []
-    for entry in models:
+    for entry in sorted(models, key=lambda item: (-item.size, str(item.path))):
         chosen = _choose_config(entry, gpu_mib)
         if chosen is None:
             continue
@@ -304,5 +305,7 @@ def recommend(
                 score_parts=score_parts,
             )
         )
+        if len(recommendations) >= limit:
+            break
     recommendations.sort(key=lambda row: (-row.score, -row.model.size, str(row.model.path)))
-    return tuple(recommendations[:limit])
+    return tuple(recommendations)
