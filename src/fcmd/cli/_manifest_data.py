@@ -256,7 +256,7 @@ DESCRIPTIONS: dict[str, str] = {
     "urlcheck": "检测单个 URL 可访问性与延迟",
     "urltool": "解析 URL 各组成部分",
     "videoconv": "视频格式转换（mp4/mkv/avi/mov/wmv/flv/webm/gif）：编码器、比特率、帧率、缩放、CRF、预设与外部音轨可配，支持通配符批量，依赖系统 ffmpeg",
-    "videoconvw": "视频转换器窗口版（Tk）：文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断，设置持久化到 ~/.fcmd/ui/videoconvw.json，依赖系统 ffmpeg",
+    "videoconvw": "视频转换器窗口版（Qt）：文件/输出目录选择、格式与编码参数可视化、进度与日志实时回传、可中断，设置持久化到 ~/.fcmd/ui/videoconvw.json，依赖系统 ffmpeg",
     "websave": "保存网页内容（主页及相关子页面，含图片/CSS/JS）",
     "which": "查找可执行命令路径（跨平台）",
     "writefile": "写入文本内容到文件",
@@ -395,7 +395,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "fe0be68b0a813f9f208dc9091e902c10"
+DIGEST = "ae94c025ad1bb53a06fca0cabf808daf"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

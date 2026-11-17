@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -206,25 +208,19 @@ class TestGuiEntry:
     """GUI 启动入口（不真正创建窗口）。"""
 
     def test_run_gui_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def fake_window(_path: Path | None) -> None:
-            raise ImportError("no tkinter")
+        """缺少 Qt 前端时提示安装并退出，不抛堆栈。"""
+        monkeypatch.setitem(sys.modules, "fcmd.tools.media._videoconvw_qt", None)
+        with pytest.raises(SystemExit, match="Qt"):
+            videoconvw.run_gui()
 
-        monkeypatch.setattr(videoconvw, "VideoConvWindow", fake_window)
-        videoconvw.run_gui()  # 不应抛出
-
-    def test_run_gui_starts_mainloop(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        calls: list[str] = []
-
-        class _Root:
-            def mainloop(self) -> None:
-                calls.append("mainloop")
-
-        class _Window:
-            root = _Root()
-
-        monkeypatch.setattr(videoconvw, "VideoConvWindow", lambda _path: _Window())
-        videoconvw.run_gui()
-        assert calls == ["mainloop"]
+    def test_run_gui_delegates_to_qt_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """正常路径把启动交给 Qt 入口，并转发自定义设置路径。"""
+        calls: list[Path | None] = []
+        fake = types.ModuleType("fcmd.tools.media._videoconvw_qt")
+        fake.run_qt = lambda settings_path=None: calls.append(settings_path)  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "fcmd.tools.media._videoconvw_qt", fake)
+        videoconvw.run_gui(Path("custom.json"))
+        assert calls == [Path("custom.json")]
 
     def test_launch_cmd_calls_run_gui(self, monkeypatch: pytest.MonkeyPatch) -> None:
         calls: list[bool] = []
