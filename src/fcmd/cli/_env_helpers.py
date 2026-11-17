@@ -11,7 +11,7 @@ import platform
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 __all__ = ["collect_optional_deps_status", "platform_string"]
 
@@ -39,9 +39,15 @@ def platform_string() -> str:
     """
     if sys.platform != "win32":
         return platform.platform()
-    winver = sys.getwindowsversion()
+    # ``sys.getwindowsversion`` 是 Windows-only API：pyrefly 在 Linux 上按非 Windows
+    # typeshed 解析会报 missing-attribute，而在 Windows 上又会把 pyrefly: ignore
+    # 判成 unused-ignore（同一行两个平台结论相反）。这里在平台边界把它当 Any 取，
+    # 两种平台都能通过静态检查，运行期行为不变（函数开头已排除非 Windows）。
+    winver = cast("Any", sys).getwindowsversion()
     table = "_WIN32_CLIENT_RELEASES" if winver.product_type == 1 else "_WIN32_SERVER_RELEASES"
-    releases = getattr(platform, table, None)
+    # 表名是运行期拼接的字符串，getattr 无法静态求值（pyrefly 只会取到默认值 None），
+    # 这里按 CPython 的实际结构收窄；取不到时仍走下面的回退分支。
+    releases = cast("list[tuple[tuple[int, int, int], str]]", getattr(platform, table, None) or [])
     if not releases:
         return platform.platform()
     current = (winver.major, winver.minor, winver.build)
