@@ -857,11 +857,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _service_status_text(self, path: Path) -> str:
         """只有正在运行的服务才返回状态；未运行不占用下拉项文本。"""
-        state = self.state.state_for_model(path)
-        if state is None:
-            return ""
-        alive = llmserve.process_alive(state.pid, state.create_time)
-        return "● 已启动" if alive else ""
+        return "● 已启动" if self.state.is_running(path) else ""
 
     def _paint_combo_status(self, index: int, path: Path) -> None:
         status = self._service_status_text(path)
