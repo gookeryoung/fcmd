@@ -10,12 +10,8 @@
 但若不落文字，后续只会有「有人说要拆」而没有依据。本 ADR 只记录这些暂缓项与
 重新评估的触发条件，不改变任何既有决策。
 
-审计量化基线（2026-11-11 复核，括号内为 2026-11-10 原始审计值）：`src` 237 文件 /
-77,114 行（167 / 50,432），`tests` 181 文件 / 58,024 行（142 / 50,235），108 个工具（98），
-`# noqa` 133 处（113；其中 `PLR0913`+`PLR0917` 81 处，原 102），`# pragma: no cover`
-228 处（156），测试 `monkeypatch.setattr` 1,063 处（1,036）。原审计的
-「2,144 函数 / 5,546 分支点」「20 个 GUI 类 7,946 行 = `src` 的 15.8%」本次未逐项复核，
-后续判断收益时以文件数、行数、工具数与三类计数为准。
+审计基线（2026-11-19 复核）：`src` 381 文件 / 117,231 行，`tests` 304 文件 / 93,433 行。
+后续判断收益时以文件数、行数与 `# noqa` / `# pragma: no cover` 的增减为准。
 
 ## 决策
 
@@ -36,7 +32,10 @@
 
 - 新增暂缓项时按同样格式补一节（内容 / 触发条件 / 为何暂缓），并登记到
   `docs/adr/README.md` 索引（本 ADR 已登记）。
-- 已在本轮完成的中等项：M1（`_require_pypdf` 收敛进 `pdfbase`）、M2（`_pair_row`
-  收敛进 `fcmd/gui/window.py`）、M4（DSL 移除后 `toolcmd` 体积问题不再存在）。
-- 仍待决策：M3（测试内重复 fixture 上收 `tests/helpers.py`）、M6（`ttk_style_specs`
-  275 行拆表驱动）。
+- 已完成 / 已消失：M1（`_require_pypdf` 收敛进 `pdfbase`）、M2（`_pair_row` 随 Tk
+  共享层删除而消失，见 0034）、M4（DSL 移除后 `toolcmd` 体积问题不再存在）、
+  M6（`ttk_style_specs` 随 Tk 移除而删除）。
+- 仍待决策：M3（各 Qt 测试文件重复的 `home` / `window` fixture 上收
+  `tests/conftest.py`；`create_application` 与主题应用已缓存，收益主要在减少样板）。
+- 独立立项：目录比较 / 同步引擎合并见 [0035](0035-cmder-filesync-compare-unify.md)
+  （不属于本 ADR 的暂缓项）。

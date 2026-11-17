@@ -37,3 +37,4 @@
 | [0032](0032-locllmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
 | [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt（PySide6）：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）、七页与模型下载 / 转换 / 量化向导重构；PySide2 不可行的依据 | 生效（已全部落地，Tk 实现已删除） |
 | [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B7 分批 | 已落地（全部窗口 Qt 化，Tk 代码已删除） |
+| [0035](0035-cmder-filesync-compare-unify.md) | 目录比较 / 同步引擎统一：cmderw 与 filesync 共用 filesync `_core`，分 P0–P3 独立实施 | 设计中（独立阶段，未实施） |
