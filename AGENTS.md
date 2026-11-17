@@ -24,6 +24,7 @@
 ## 代码改动（L2）执行链
 
 - 每次改完代码必须依次执行：`make check-fast` → `make test` → 项目文档更新 → `make push`
+- 慢测试（子进程 / 真实 IO / 超时等待，单用例常驻 > 0.5s）标 `@pytest.mark.slow`：`make test` 默认跳过，`make test-all` / `make cov` 全跑
 - 任一步失败就修，修完重跑，全过才算完成
 
 ## 开工前（换会话 / 换 agent 必读）

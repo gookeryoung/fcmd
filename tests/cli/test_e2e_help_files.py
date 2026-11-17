@@ -26,7 +26,9 @@ TOOLS = [
 ]
 
 
-@pytest.mark.e2e_smoke
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_smoke, pytest.mark.slow]
+
+
 @pytest.mark.parametrize("tool", TOOLS)
 def test_tool_help_exists(fcmd: Callable[..., CmdResult], tool: str) -> None:
     """工具 --help 不崩溃，退出码 0 或 1。"""

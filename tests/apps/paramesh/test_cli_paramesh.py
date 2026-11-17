@@ -75,6 +75,7 @@ def test_generate_selected_level(tmp_path: Path, capsys: pytest.CaptureFixture[s
     assert (packages[0] / "manifest.json").is_file()
 
 
+@pytest.mark.slow
 def test_generate_all_levels_share_geometry(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     model = tmp_path / "model.yaml"
     paramesh.example(model)

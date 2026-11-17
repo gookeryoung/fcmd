@@ -39,6 +39,7 @@ def test_run_missing_executable() -> None:
     assert "找不到可执行文件" in str(info.value)
 
 
+@pytest.mark.slow
 def test_run_timeout() -> None:
     with pytest.raises(DevmanError) as info:
         _runner.SubprocessRunner().run([sys.executable, "-c", "import time; time.sleep(5)"], timeout_s=1)

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import weakref
 from dataclasses import asdict
 from string import Template
 from typing import TYPE_CHECKING, Any
@@ -60,6 +61,12 @@ CONTROL_HEIGHT_EXTRA = 9
 
 _CONTROL_PAD_X_BUTTON = "0.9em"
 _CONTROL_PAD_X_INPUT = "0.45em"
+
+_APPLIED: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
+"""已应用主题的应用实例 → 主题 id；重复应用同一主题时直接返回。"""
+
+_FAMILIES: weakref.WeakKeyDictionary[Any, tuple[str, ...]] = weakref.WeakKeyDictionary()
+"""按应用缓存 ``QFontDatabase.families()``：字体枚举在部分平台上需要数百毫秒。"""
 
 
 def control_height(theme: Theme) -> int:
@@ -403,7 +410,12 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     """
     from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics
 
-    families = QFontDatabase.families()
+    if _APPLIED.get(app) == theme.name:
+        return
+    families = _FAMILIES.get(app)
+    if families is None:
+        families = tuple(QFontDatabase.families())
+        _FAMILIES[app] = families
     family = pick_font_family(families)
     mono = pick_font_family(families, MONO_FONT_CANDIDATES)
     app.setStyle("Fusion")
@@ -414,3 +426,4 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     app.setFont(font)
     height = QFontMetrics(font).height() + CONTROL_HEIGHT_EXTRA
     app.setStyleSheet(stylesheet(theme, font_family=family, mono_family=mono, control_height_px=height))
+    _APPLIED[app] = theme.name

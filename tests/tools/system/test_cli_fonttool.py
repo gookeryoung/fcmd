@@ -110,6 +110,9 @@ def _manifest_entry(spec: FontSpec, path: Path, target_dir: Path) -> InstalledFo
 # ============================================================================ #
 # 注册验证
 # ============================================================================ #
+pytestmark = pytest.mark.slow
+
+
 def test_tool_registered() -> None:
     """fonttool 应注册 list / status / install / remove 四个子命令。"""
     assert {"list", "status", "install", "remove"} <= set(fx.list_subcommands("fonttool"))

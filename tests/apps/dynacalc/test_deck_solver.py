@@ -188,6 +188,7 @@ class TestRunJobs:
         assert job.attempts == 2
         assert "失败" in job.error or "exit" in job.error.lower() or job.error
 
+    @pytest.mark.slow
     def test_timeout(self, generated: tuple[Path, Manifest], monkeypatch: pytest.MonkeyPatch) -> None:
         root, manifest = generated
         monkeypatch.setenv("DYNACALC_FAKE_DELAY_MS", "2000")

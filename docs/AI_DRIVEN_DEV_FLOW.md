@@ -67,6 +67,9 @@
 命令链：`make test` → `make cov`（阈值 95%）。覆盖率口径固定于
 [.coveragerc](../.coveragerc)（`fail_under = 95`，仅统计 `fcmd`），**不得注水**。
 
+慢测试标记：单个用例常驻 > 0.5s（子进程 / 真实 IO / 超时等待 / 大文件生成）时加
+`@pytest.mark.slow`；`make test` 默认跳过慢测试，`make test-all` 与 `make cov` 全跑。
+
 ### E 集成门禁与文档
 
 `make check`（check-fast + pyrefly linux + cov）。

@@ -15,8 +15,9 @@ import pytest
 
 from tests.conftest import CmdResult
 
+pytestmark = [pytest.mark.e2e, pytest.mark.slow]
 
-@pytest.mark.e2e
+
 class TestYamlWorkflow:
     """``fcmd yaml`` DAG 执行端到端。"""
 

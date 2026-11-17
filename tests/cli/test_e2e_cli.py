@@ -12,8 +12,9 @@ import pytest
 
 from tests.conftest import CmdResult
 
+pytestmark = [pytest.mark.e2e, pytest.mark.e2e_smoke, pytest.mark.slow]
 
-@pytest.mark.e2e_smoke
+
 class TestCliEntry:
     """CLI 主入口行为。"""
 

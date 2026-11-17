@@ -8,7 +8,7 @@ PYTEST_JOBS := 8  # pytest-xdist worker count; 8 by default on Windows to avoid 
 # Override with: make push REMOTES="origin codeup"
 REMOTES = $(shell git remote)
 
-.PHONY: help sync build b clean c test cov lint typecheck typecheck-ci check check-docs check-fast flow gitkeep-check adr-check prek tox pub bump patch minor major push bench-filescan bench-startup
+.PHONY: help sync build b clean c test test-all cov lint typecheck typecheck-ci check check-docs check-fast flow gitkeep-check adr-check prek tox pub bump patch minor major push bench-filescan bench-startup
 
 help: ## Show this help
 	@uv run python -c "import re,sys;ms=[(m.group(1),m.group(2).strip()) for f in sys.argv[1:] for l in open(f,encoding='utf-8') if (m:=re.match(r'^([a-zA-Z][\w -]*):.*?##\s*(.*)',l))];[print(f'  {n:<14} {d}') for n,d in ms]" $(MAKEFILE_LIST)
@@ -25,8 +25,11 @@ clean c: ## Remove build artifacts and caches
 	find src tests -type d -name __pycache__ -exec rm -rf {} +
 	find src tests -type f -name "*.py[oc]" -delete
 
-test: ## Run tests (no coverage)
+test: ## Run fast tests (skips @pytest.mark.slow)
 	uv run pytest -m "not slow" -n $(PYTEST_JOBS)
+
+test-all: ## Run all tests including @pytest.mark.slow
+	uv run pytest -n $(PYTEST_JOBS)
 
 cov: ## Run tests and generate an HTML coverage report
 	uv run pytest --cov --cov-report=term --cov-fail-under=$(COV_THRESHOLD) --cov-report=html -n $(PYTEST_JOBS)
