@@ -44,6 +44,7 @@ from fcmd.apps.locllm._locllmw_qt_run import (
     parse_optional_int,
     pick_model,
     plan_lines,
+    sanitize_custom_args,
     startup_args_tail,
 )
 from fcmd.apps.locllm._locllmw_qt_settings import engine_rows_values
@@ -118,6 +119,12 @@ def test_model_combo_text_truncates_long_names() -> None:
     assert "…" in text
     assert "Qwen3-Coder" in text
     assert len(text.split("  (")[0]) == 30
+
+
+def test_sanitize_custom_args_drops_model_flags() -> None:
+    assert sanitize_custom_args(
+        ("D:/models/demo.gguf", "-ngl", "99", "-m", "x.gguf", "--model", "y.gguf", "--mmproj", "z.gguf")
+    ) == ("-ngl", "99")
 
 
 def test_startup_args_tail_drops_executable_and_model() -> None:

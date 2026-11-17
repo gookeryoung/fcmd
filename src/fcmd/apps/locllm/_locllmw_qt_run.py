@@ -71,6 +71,7 @@ __all__ = [
     "parse_int",
     "parse_optional_int",
     "plan_lines",
+    "sanitize_custom_args",
     "startup_args_tail",
 ]
 
@@ -97,6 +98,24 @@ def parse_optional_int(text: str, label: str) -> int | None:
 def parse_custom_args(text: str) -> tuple[str, ...]:
     """按 shell 规则拆分自定义启动参数；空串返回空元组。"""
     return tuple(shlex.split(text.strip())) if text.strip() else ()
+
+
+def sanitize_custom_args(args: Sequence[str]) -> tuple[str, ...]:
+    """移除自定义参数里误带入的模型 / mmproj 参数，避免与内置 ``-m`` 冲突。"""
+    cleaned: list[str] = []
+    skip_next = False
+    for token in args:
+        if skip_next:
+            skip_next = False
+            continue
+        lowered = token.casefold()
+        if lowered in ("-m", "--model", "--mmproj"):
+            skip_next = True
+            continue
+        if not cleaned and not lowered.startswith("-") and lowered.endswith(".gguf"):
+            continue
+        cleaned.append(token)
+    return tuple(cleaned)
 
 
 def startup_args_tail(argv: Sequence[str]) -> tuple[str, ...]:
@@ -570,6 +589,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         profile = PROFILES.get(self._mode_profile(), PROFILES[DEFAULT_PROFILE])
         return pick_model(self.state.selected_model, self.state.models, profile.quant)
 
+    def _custom_args(self) -> tuple[str, ...]:
+        return sanitize_custom_args(parse_custom_args(self.extra_args_edit.toPlainText()))
+
     def _workflow(self, *, extra_args: str | None = None) -> dict[str, Any]:
         return {
             "name": self.name_combo.currentText(),
@@ -585,7 +607,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             "parallel": self.parallel_edit.text(),
             "threads_http": self.threads_http_edit.text(),
             "api_key": self.api_key_edit.text(),
-            "extra_args": self.extra_args_edit.toPlainText() if extra_args is None else extra_args,
+            "extra_args": shlex.join(self._custom_args()) if extra_args is None else extra_args,
             "model": self._resolved_model(),
             "gpu_mib": self.state.gpu_mib,
         }
@@ -643,7 +665,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def build_plan(self) -> LaunchPlan:
         """按当前表单构造启动计划；重复填入的参数不二次追加。"""
         base = build_plan_from(self._workflow(extra_args=""))
-        custom = parse_custom_args(self.extra_args_edit.toPlainText())
+        custom = self._custom_args()
         if custom and custom == startup_args_tail(base.argv()):
             return base
         return build_plan_from(self._workflow())
