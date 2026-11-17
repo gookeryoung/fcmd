@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "OverviewPage",
+    "RecommendationList",
     "RecommendationRow",
     "recommendation_params_html",
     "recommendation_perf_html",
@@ -213,6 +215,28 @@ class UsageGauge(QWidget):  # pragma: no cover - Qt 控件
         painter.drawText(detail_rect, Qt.AlignmentFlag.AlignCenter, elided)
 
 
+class RecommendationList(QListWidget):  # pragma: no cover - Qt 控件
+    """推荐列表：自定义行宽度始终跟随视口，避免反复拖宽 / 拖窄后行宽度残留。
+
+    ``QListWidget.setItemWidget`` 挂上去的行只在 item rect 变大时被 Qt 重新
+    摆正；窗口反复拖拉后行会保留上一次的更大宽度，右半部分（性能摘要）被
+    推到视口之外，看起来就是「右侧显示不正常」。这里在每次尺寸变化后按
+    当前可视区域重新摆正每行几何。
+    """
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.sync_row_widths()
+
+    def sync_row_widths(self) -> None:
+        """把每行自定义控件的几何对齐到列表当前可视区域。"""
+        for index in range(self.count()):
+            item = self.item(index)
+            widget = self.itemWidget(item)
+            if widget is not None:
+                widget.setGeometry(self.visualRect(self.indexFromItem(item)))
+
+
 class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     """概览页：硬件与模型目录 → 智能推荐。"""
 
@@ -313,7 +337,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _build_recommendations(self) -> Card:
         card = Card("智能推荐（按显存筛选；性能测试后优先用实测值）")
-        self._recommend_list = QListWidget(card)
+        self._recommend_list = RecommendationList(card)
         self._recommend_list.setObjectName("RecommendationList")
         self._recommend_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._recommend_list.setSpacing(4)
@@ -344,6 +368,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             # 把行撑到视口之外导致右侧内容被裁。
             item.setSizeHint(QSize(0, row.sizeHint().height()))
             self._recommend_list.setItemWidget(item, row)
+        self._recommend_list.sync_row_widths()
         if self._recommendations:
             self._recommend_list.setCurrentRow(0)
 

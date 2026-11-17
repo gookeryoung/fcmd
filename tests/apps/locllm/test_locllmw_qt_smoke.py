@@ -266,7 +266,7 @@ def test_overview_gauges_paint_event_runs(window: Any) -> None:
 
 def test_recommendation_list_fills_width_without_clipping(window: Any) -> None:
     """推荐列表宽度跟随视口（长模型名不撑宽），高度随卡片扩展且不出现内层滚动。"""
-    from pathlib import Path
+    from PySide6.QtWidgets import QApplication
 
     from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
     from fcmd.apps.locllm.llmbase import ModelEntry
@@ -288,7 +288,6 @@ def test_recommendation_list_fills_width_without_clipping(window: Any) -> None:
     window.state.models = models
     window.overview.refresh_recommendations()
     window.show()
-    from PySide6.QtWidgets import QApplication
 
     QApplication.processEvents()
     recommend_list = window.overview._recommend_list
@@ -300,3 +299,45 @@ def test_recommendation_list_fills_width_without_clipping(window: Any) -> None:
         widget = recommend_list.itemWidget(item)
         assert widget is not None
         assert widget.width() <= recommend_list.viewport().width()
+
+
+def test_recommendation_rows_follow_width_when_resized_repeatedly(window: Any) -> None:
+    """反复拖宽 / 拖窄窗口后，每行仍贴合视口（回归：右侧内容被旧宽度挤出视口）。"""
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    window.state.hardware = HardwareSnapshot(
+        gpu="RTX 4090",
+        gpu_mib=24576,
+        cpu="Intel i9",
+        cpu_cores=24,
+        cpu_threads=32,
+        memory_total=64 * 1024**3,
+    )
+    root = Path(window.state.settings_path or "")
+    window.state.models = [
+        ModelEntry(
+            root=root,
+            path=root / f"Qwen3-Coder-30B-A3B-Instruct-very-long-model-name-{index}-Q5_K_M.gguf",
+            size=5 * 1024**3,
+            tags=("代码",),
+        )
+        for index in range(3)
+    ]
+    window.overview.refresh_recommendations()
+    window.show()
+    QApplication.processEvents()
+
+    recommend_list = window.overview._recommend_list
+    model = recommend_list.model()
+    for width in (1500, 1000, 1600, 1200, 1400, 1000):
+        window.resize(width, 800)
+        QApplication.processEvents()
+        for index in range(recommend_list.count()):
+            widget = recommend_list.itemWidget(recommend_list.item(index))
+            assert widget is not None
+            rect = recommend_list.visualRect(model.index(index, 0))
+            assert widget.width() == rect.width()
+            assert widget.width() <= recommend_list.viewport().width()
