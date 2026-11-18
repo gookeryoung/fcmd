@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -21,6 +21,8 @@ __all__ = [
 MIN_QUEUE_PARALLEL = 1
 MAX_QUEUE_PARALLEL = 8
 DEFAULT_QUEUE_PARALLEL = 1
+
+T = TypeVar("T")
 
 
 class PauseGate:
@@ -53,7 +55,7 @@ def clamp_parallel(value: int) -> int:
     return max(MIN_QUEUE_PARALLEL, min(MAX_QUEUE_PARALLEL, value))
 
 
-def parallel_map[T](items: Sequence[T], worker: Callable[[T], None], *, parallel: int) -> None:
+def parallel_map(items: Sequence[T], worker: Callable[[T], None], *, parallel: int) -> None:
     """按并行上限执行 ``worker``；``worker`` 需自行处理业务异常。"""
     limit = clamp_parallel(parallel)
     if limit <= 1 or len(items) <= 1:

@@ -15,8 +15,9 @@ import urllib.request
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Protocol, override
+from typing import Any, Protocol
 
+from fcmd._compat import override
 from fcmd.apps.wslman._errors import WslmanError, check_failed, invalid_argument, not_found, runtime_error
 from fcmd.apps.wslman._mirrors import Candidate
 from fcmd.apps.wslman._transfer import ProgressReporter, atomic_replace, part_path, sha256_file
@@ -214,7 +215,9 @@ class _HTTPSOnlyRedirect(urllib.request.HTTPRedirectHandler):
     max_redirections = 5
 
     @override
-    def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+    def redirect_request(  # noqa: PLR0913, PLR0917 - urllib 回调签名
+        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> Any:
         if urllib.parse.urlparse(newurl).scheme.casefold() != "https":
             raise urllib.error.HTTPError(newurl, code, "只允许 HTTPS 重定向", headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)

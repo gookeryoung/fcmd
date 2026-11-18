@@ -15,13 +15,13 @@ from __future__ import annotations
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 
 __all__ = ["FolderInfo", "FolderKind", "ImportPlan", "copy_import", "inspect_folder", "plan_import"]
 
 
-class FolderKind(StrEnum):
+class FolderKind(str, Enum):
     """导入文件夹的类型：决定可选操作（直接导入 / 导入并转换）。"""
 
     TENSORS = "tensors"

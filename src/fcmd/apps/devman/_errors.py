@@ -7,7 +7,9 @@
 
 from __future__ import annotations
 
-from typing import Literal, override
+from typing import Literal
+
+from fcmd._compat import override
 
 __all__ = [
     "BUSY",

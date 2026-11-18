@@ -2,17 +2,29 @@
 authors = [ {name = "fcmd"} ]
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
-dependencies = [ "pillow>=10", "psutil>=6.0", "pyyaml>=6.0.1", "rich>=13.9", "PySide6-Essentials>=6.9" ]
+dependencies = [
+    "pillow>=10",
+    "psutil>=6.0",
+    "pyyaml>=6.0.1",
+    "rich>=13.9",
+    "PySide6-Essentials>=6.9; python_version >= '3.11'",
+    "PySide2>=5.15.2.1; python_version < '3.11'",
+    "tomli>=2.0; python_version < '3.11'",
+    "typing-extensions>=4.12; python_version < '3.12'",
+]
 description = "Rapid Python tools collection"
 keywords = [ "cli", "dag", "scheduler", "task", "tools", "workflow" ]
 license = {text = "MIT"}
 name = "fcmd"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 version = "0.3.13"
 
 [project.scripts]

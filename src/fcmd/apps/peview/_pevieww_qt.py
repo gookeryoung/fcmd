@@ -201,7 +201,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         initial = file or (Path(self._settings.file_path).expanduser() if self._settings.file_path else None)
         if initial is not None and initial.is_file():
-            QTimer.singleShot(60, self, lambda: self._load_file(initial))
+            QTimer.singleShot(60, lambda: self._load_file(initial))
 
     # ------------------------------------------------------------------ #
     # 构建

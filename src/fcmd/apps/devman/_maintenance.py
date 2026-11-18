@@ -13,6 +13,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from fcmd._compat import is_junction
 from fcmd.apps.devman import _env, _state, _toolchain
 from fcmd.apps.devman._errors import invalid_argument
 from fcmd.apps.devman._paths import TOOLS, Layout
@@ -50,7 +51,7 @@ def path_size(path: Path) -> tuple[int, int]:
             continue
         for entry in entries:
             try:
-                if entry.is_symlink() or entry.is_junction():
+                if entry.is_symlink() or is_junction(entry):
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     stack.append(Path(entry.path))

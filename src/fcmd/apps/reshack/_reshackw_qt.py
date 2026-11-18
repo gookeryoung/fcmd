@@ -178,7 +178,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._settings.file_path:
             path = Path(self._settings.file_path).expanduser()
             if is_pe_file(path):
-                QTimer.singleShot(50, self, lambda: self._start_load(path))
+                QTimer.singleShot(50, lambda: self._start_load(path))
 
     # ------------------------------------------------------------------ #
     # 构建

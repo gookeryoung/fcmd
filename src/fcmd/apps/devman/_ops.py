@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from fcmd._compat import is_junction
 from fcmd.apps.devman import _bun, _deno, _env, _go, _install, _jdk, _maintenance, _node, _project, _python
 from fcmd.apps.devman._errors import (
     BUSY,
@@ -1193,7 +1194,7 @@ def doctor_payload(  # noqa: PLR0912 - 诊断项按类别线性展开，便于�
         if not root.is_dir():
             continue
         for entry in root.iterdir():
-            alias = entry.is_symlink() or os.path.isjunction(entry)
+            alias = entry.is_symlink() or is_junction(entry)
             if entry.name.startswith((".staging-", ".trash-")) or (
                 entry.is_dir() and not entry.name.startswith(".") and not alias and not (entry / MARKER_NAME).is_file()
             ):

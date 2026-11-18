@@ -135,7 +135,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._raw_settings = _guiconfig.read_settings(settings_path) or {}
         self._build()
         self._append_log("选择输入视频并设置转换参数后点击「开始转换」。")
-        QTimer.singleShot(50, self, self._start_ffmpeg_check)
+        QTimer.singleShot(50, self._start_ffmpeg_check)
 
     # ------------------------------------------------------------------ #
     # 构建

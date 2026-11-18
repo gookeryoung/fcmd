@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -48,7 +49,7 @@ class SubprocessRunner:
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout_s,
-                env=dict(env) if env is not None else None,
+                env={**os.environ, **dict(env)} if env is not None else None,
                 stdin=subprocess.DEVNULL,
                 check=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

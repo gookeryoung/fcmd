@@ -11,7 +11,6 @@ import json
 import os
 import subprocess
 import sys
-import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +20,7 @@ import pytest
 
 from fcmd.cli import _discovery
 from fcmd.core import toolkit
+from fcmd.infras import _toml as tomllib
 
 _ROOT = Path(__file__).resolve().parents[2]
 

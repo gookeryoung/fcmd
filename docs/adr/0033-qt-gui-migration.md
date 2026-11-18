@@ -20,8 +20,8 @@
 
 | 编号 | 决策 | 被否决的方案（原因） | 代码落点 |
 |---|---|---|---|
-| D1 | 使用 **PySide6**，不使用 PySide2 | **PySide2 不可行**：最后版本 5.15.2.1 只提供 cp36–cp310 wheel，且无 `win_amd64` / `linux_x86_64` 现代平台轮子；本项目要求 Python ≥ 3.13（`uv pip install PySide2` 直接无解）。PyQt6 为 GPL/商业许可，与 MIT 分发不一致 | `pyproject.toml` → `dependencies` 含 `PySide6-Essentials>=6.9` |
-| D2 | Qt 依赖进入**基础依赖**（`pip install fcmd` 即可用 locllmw） | 作为可选 extra：默认入口会因缺依赖不可用，用户需额外记忆一个 extra；代价是安装体积增加约 200 MB，接受该代价 | `pyproject.toml` → `dependencies` |
+| D1 | Python ≥3.11 使用 **PySide6**；Python 3.10 使用 **PySide2**（见 [0036](0036-python310-pyside2.md)） | 全部 Python 版本只装 PySide6：3.10 上也能跑，但无法满足「3.10 明确走 PySide2」的兼容要求 | `pyproject.toml` 按 `python_version` 标记依赖；`fcmd.gui.qt._pyside_compat` 做运行时映射 |
+| D2 | Qt 依赖进入**基础依赖**（`pip install fcmd` 即可用 locllmw） | 作为可选 extra：默认入口会因缺依赖不可用，用户需额外记忆一个 extra；代价是安装体积增加约 200 MB，接受该代价 | `pyproject.toml` → `dependencies`（PySide6 / PySide2 择一） |
 | D3 | 主题注册表与调色板只在 `fcmd.gui.theme` 维护一份（四套主题、别名、`ui/theme.json`） | 另建 Qt 专用主题：两套配色/字号必然漂移 | `fcmd/gui/qt/theme.py` 只做 `Palette → QSS/QPalette` 翻译 |
 | D4 | 窗口设置统一为 `ui/locllmw.json` + `WxH+X+Y` 几何 + `LocllmSettings` | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | `_locllmw_winsettings`；`fcmd.gui.qt.window` 复用 `fcmd.gui.config` / `fcmd.gui.geometry` |
 | D5 | 后台任务用线程池 + 信号，不用 `QThread` 子类 | 每任务一个 `QThread`：线程生命周期与窗口销毁耦合，易悬空 | `fcmd/gui/qt/workers.py`（`submit` / `periodic`） |
@@ -85,12 +85,12 @@
 
 ## 已知取舍
 
-- 发布物 / 安装体积：`PySide6-Essentials` 进入基础依赖，wheel 安装与便携 zip 均增加约 150–200 MB；
+- 发布物 / 安装体积：PySide6 / PySide2 进入基础依赖，wheel 安装与便携 zip 均增加约 150–200 MB；
   这是「默认入口开箱可用」换来的代价（D2）。
 - 覆盖率：Qt 控件胶水不追求覆盖率，纯逻辑由普通单测覆盖。
 - 对话页暂不支持图片附件；需要时用 `fcmd llmchat --image`。
-- `PySide6-Essentials` 只含 QtCore/QtGui/QtWidgets 等基础模块，够 locllmw 使用；引入 WebEngine/Charts
-  等 Addons 时才需要额外依赖。
+- PySide6-Essentials（≥3.11）/ PySide2（3.10）只含 QtCore/QtGui/QtWidgets 等基础模块，够 locllmw 使用；
+  引入 WebEngine/Charts 等 Addons 时才需要额外依赖。
 
 ## 交接
 

@@ -287,7 +287,7 @@ class TransferLock:
 
     def _stale(self) -> bool:
         try:
-            return time.time() - self.path.stat().st_mtime > self.stale_s
+            return time.time() - self.path.stat().st_mtime >= self.stale_s
         except OSError:
             return False
 

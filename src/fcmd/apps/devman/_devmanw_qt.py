@@ -131,7 +131,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         super().showEvent(event)
         if self._initial_refresh_pending:
             self._initial_refresh_pending = False
-            QTimer.singleShot(0, self, self.refresh)
+            QTimer.singleShot(0, self.refresh)
 
     # ------------------------------------------------------------------ #
     # 构建

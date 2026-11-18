@@ -19,6 +19,11 @@ from pathlib import Path
 
 import pytest
 
+# Python 3.10 上把 PySide6 导入映射到 PySide2；测试文件的 importorskip 也能命中。
+from fcmd.gui.qt._pyside_compat import install as _install_qt_compat
+
+_install_qt_compat()
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _builtin_tools_registered() -> None:

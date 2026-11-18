@@ -24,8 +24,9 @@ from __future__ import annotations
 import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
-from itertools import batched
 from pathlib import Path
+
+from fcmd._compat import batched
 
 __all__ = [
     "MergeInput",

@@ -120,7 +120,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         # 内边距把图标裁掉一圈，高 DPI 下也不会发虚。
         from PySide6.QtCore import QSize
 
-        label.setPixmap(icon.pixmap(QSize(28, 28), self.devicePixelRatioF()))
+        label.setPixmap(icon.pixmap(QSize(28, 28)))
         label.setFixedSize(28, 28)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setToolTip(self.windowTitle())

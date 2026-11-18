@@ -10,10 +10,11 @@ PyMuPDF 2.x 会硬依赖 onnxruntime / pymupdf-layout / pymupdf4llm，发布物�
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 from packaging.requirements import Requirement
+
+from fcmd.infras import _toml as tomllib
 
 PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 

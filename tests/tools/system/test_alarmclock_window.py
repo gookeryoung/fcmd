@@ -10,9 +10,11 @@ import json
 import os
 from datetime import datetime as _RealDatetime
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
 import pytest
+
+from fcmd._compat import override
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

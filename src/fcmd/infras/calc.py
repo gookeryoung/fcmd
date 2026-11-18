@@ -17,7 +17,7 @@ import base64
 import secrets
 import statistics
 import string
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -155,7 +155,7 @@ _DEFAULT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 def resolve_tz(name: str):
     """解析时区名（``UTC`` 或 IANA 名称），无效时抛 ``ValueError``。"""
     if name.upper() == "UTC":
-        return UTC
+        return timezone.utc
     try:
         return ZoneInfo(name)
     except KeyError as exc:
@@ -164,7 +164,7 @@ def resolve_tz(name: str):
 
 def now_utc() -> datetime:
     """当前 UTC 时间（aware）。"""
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def now_local() -> datetime:

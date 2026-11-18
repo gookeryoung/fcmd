@@ -46,7 +46,7 @@ concurrency:
 env:
   UV_DEFAULT_INDEX: https://pypi.org/simple
   FSPACK_VERSION: "0.6.12"
-  # 与 pyproject.toml 的 requires-python（>=3.13）保持一致。
+  # 便携包统一用 3.13 构建（PySide6）；requires-python 已放宽到 >=3.10。
   PACK_PY_VERSION: "3.13.14"
 
 jobs:

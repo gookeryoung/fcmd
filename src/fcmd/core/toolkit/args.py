@@ -114,7 +114,7 @@ class ToolSpec:
 def _resolve_hints(func: Callable[..., Any]) -> dict[str, Any]:
     """解析函数的类型注解（``from __future__ import annotations`` 的字符串注解求值）。
 
-    项目要求 Python >= 3.13，``typing.get_type_hints`` 已能处理 PEP 604 / PEP 585
+    项目要求 Python >= 3.10，``typing.get_type_hints`` 已能处理 PEP 604 / PEP 585
     泛型语法，不再需要 Python 3.8 时代的逐参数 ``eval`` 回退。
     """
     return typing.get_type_hints(func)

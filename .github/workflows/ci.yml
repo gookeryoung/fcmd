@@ -72,13 +72,13 @@ jobs:
         run: uv run pyrefly check -j 0
 
   test:
-    name: Test (Python 3.13 & 3.14)
+    name: Test (Python 3.10 / 3.13 / 3.14)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.13", "3.14"]
+        python-version: ["3.10", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v7
 
@@ -91,8 +91,8 @@ jobs:
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
 
-      # PySide6 的 Linux wheel 依赖系统 GL/EGL 与输入库；runner 默认没有 libEGL，
-      # 导入 PySide6 会直接 ImportError（即使只跑离屏 Qt 测试）。
+      # PySide2 / PySide6 的 Linux wheel 都依赖系统 GL/EGL 与输入库；runner 默认
+      # 没有 libEGL，导入 Qt 绑定会直接 ImportError（即使只跑离屏 Qt 测试）。
       # 缓存 .deb 到工作区目录而非 /var/cache/apt/archives：后者里的 lock（root 所有）
       # 与 partial/（_apt 所有）对 runner 用户无读权限，post 阶段 tar 会 Permission
       # denied 退出码 2，导致缓存从未保存成功。

@@ -13,10 +13,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, override
+from typing import Any
 
 import pytest
 
+from fcmd._compat import override
 from fcmd.core.toolkit import _TOOL_REGISTRY
 from fcmd.tools.office import docdiff
 from fcmd.tools.office.docdiff import (

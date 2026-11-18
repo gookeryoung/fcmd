@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TypeAlias
 
 from fcmd.apps.paramcad._quantity import DENSITY_UNIT, ParamcadError
 
@@ -170,7 +170,7 @@ class MeasuredProfile:
         return self.points
 
 
-type Profile = AnalyticProfile | MeasuredProfile
+Profile: TypeAlias = AnalyticProfile | MeasuredProfile
 
 
 @dataclass(frozen=True, slots=True)

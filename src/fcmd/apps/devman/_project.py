@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +14,7 @@ from fcmd.apps.devman._errors import DevmanError
 from fcmd.apps.devman._paths import TOOLS
 from fcmd.apps.devman._state import write_atomic
 from fcmd.apps.devman._toolchain import parse_spec
+from fcmd.infras import _toml as tomllib
 
 __all__ = [
     "PROJECT_FILE",

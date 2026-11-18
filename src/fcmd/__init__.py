@@ -22,6 +22,9 @@ from typing import Any
 
 from fcmd._lazyload import lazy_dir, lazy_getattr
 from fcmd.core.hooks import register_discovery_hook
+from fcmd.gui.qt._pyside_compat import install as _install_qt_compat
+
+_install_qt_compat()
 
 __version__ = "0.3.13"
 

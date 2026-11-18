@@ -1,6 +1,6 @@
 extend-exclude = ["build", "dist"]
 line-length    = 120
-target-version = "py313"
+target-version = "py310"
 
 [lint]
 ignore = [

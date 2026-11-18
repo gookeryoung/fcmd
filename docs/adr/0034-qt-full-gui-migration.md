@@ -128,7 +128,7 @@ B7 与 B1–B6 平行排期，迁移期间任何一批的提交都不应把 cmde
 - 纯逻辑（省略算法、列宽分配、分栏尺寸解析、设置迁移）进 `tests/gui/` 普通单测。
 - Qt 窗口冒烟用 `QT_QPA_PLATFORM=offscreen`，断言页面可构建、关键控件存在、几何可回写；
   Qt 控件胶水与其它 GUI 窗口同口径，不加覆盖率断言。
-- `pyrefly.toml` 对 Qt 绑定模块的排除沿用 0033 的做法（CI 的 lint job 不装 PySide6）；
+- `pyrefly.toml` 对 Qt 绑定模块的排除沿用 0033 的做法（Qt 胶水不做类型检查）；
   新增模块按 `src/fcmd/tools/*/*_qt.py` / `src/fcmd/apps/*/*_qt*.py` 归入排除。
 - 每批至少 `make flow`；收尾跑 `make check`（含覆盖率与 linux 类型检查）。
 

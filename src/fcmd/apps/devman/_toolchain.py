@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fcmd._compat import is_junction
 from fcmd.apps.devman._errors import INCOMPLETE_INSTALL, invalid_argument, not_found
 from fcmd.apps.devman._paths import Layout, normalize_tool
 from fcmd.apps.devman._state import MARKER_SCHEMA, read_marker
@@ -169,7 +169,7 @@ def list_installed(layout: Layout, tool: str) -> list[Installed]:
             if item.is_dir()
             and not item.name.startswith(".")
             # uv 会在安装目录里放 <impl>-<major>.<minor> 的 junction 别名，不算版本
-            and not (item.is_symlink() or os.path.isjunction(item))
+            and not (item.is_symlink() or is_junction(item))
         ]
     except FileNotFoundError:
         return []

@@ -651,7 +651,10 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
         return
     families = _FAMILIES.get(app)
     if families is None:
-        families = tuple(QFontDatabase.families())
+        try:
+            families = tuple(QFontDatabase.families())
+        except TypeError:  # PySide2 / Qt5：families 是实例方法
+            families = tuple(QFontDatabase().families())
         _FAMILIES[app] = families
     family = pick_font_family(families)
     mono = pick_font_family(families, MONO_FONT_CANDIDATES)

@@ -7,6 +7,9 @@
 
 ### 变更
 
+- Python 版本要求放宽到 ≥3.10：3.11+ 继续使用 PySide6，3.10 使用 PySide2；新增运行时
+  绑定映射与 3.10 标准库兼容垫片（`tomllib` / `StrEnum` / `datetime.UTC` / `itertools.batched` /
+  `typing.override` / `Path.is_junction`），CI 与 tox 矩阵加入 3.10。
 - GUI 全面迁移到 Qt（PySide6），移除全部 Tk 工具窗口：
   - `filescanw`：扫描 / 结果 / 规则三页改为 Qt，白名单与规则编辑、后台扫描进度与取消保持原有口径；
   - `wslmanw`：发行版表 + 详情 / 下载 / 日志分页，3 秒运行状态轮询、下载源选择与安装本地镜像对话框迁到 Qt；

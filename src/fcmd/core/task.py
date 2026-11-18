@@ -23,13 +23,13 @@ from collections.abc import Callable, Coroutine, Generator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-T = TypeVar("T", default=Any)
+T = TypeVar("T")
 
 # 任务可调用对象可以是同步或异步的。显式保留联合类型，让类型检查器理解两种形态。
 TaskFn = Callable[..., T] | Callable[..., Coroutine[Any, Any, T]]
@@ -188,7 +188,7 @@ class TaskStatus(Enum):
 
 
 @dataclass
-class TaskResult[T]:
+class TaskResult(Generic[T]):
     """运行期间产生的可变单任务记录。
 
     参数
@@ -244,7 +244,7 @@ class TaskEvent:
 # TaskSpec
 # ---------------------------------------------------------------------- #
 @dataclass(frozen=True)
-class TaskSpec[T]:
+class TaskSpec(Generic[T]):
     """单个 DAG 节点的不可变描述。
 
     参数

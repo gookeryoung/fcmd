@@ -13,10 +13,11 @@ import urllib.error
 import urllib.request
 from email.message import Message
 from pathlib import Path
-from typing import Any, override
+from typing import Any
 
 import pytest
 
+from fcmd._compat import override
 from fcmd.apps.wslman import _images, _source, _transfer
 from fcmd.apps.wslman import wslman as wslman_module
 from fcmd.apps.wslman._config import WslmanConfig

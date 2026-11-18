@@ -39,6 +39,10 @@ def platform_string() -> str:
     """
     if sys.platform != "win32":
         return platform.platform()
+    # Python 3.10 的 ``_WIN32_*_RELEASES`` 是 ``(major, minor) -> name`` 字典，
+    # 3.11+ 才改为 ``((major, minor, build), name)`` 列表；旧解释器直接走标准库。
+    if sys.version_info < (3, 11):
+        return platform.platform()
     # ``sys.getwindowsversion`` 是 Windows-only API：pyrefly 在 Linux 上按非 Windows
     # typeshed 解析会报 missing-attribute，而在 Windows 上又会把 pyrefly: ignore
     # 判成 unused-ignore（同一行两个平台结论相反）。这里在平台边界把它当 Any 取，

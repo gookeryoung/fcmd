@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
 
 from fcmd.cli.main import FcmdApp, _build_parser, main
+from fcmd.infras import _toml as tomllib
 
 
 def test_cli_parser_version() -> None:

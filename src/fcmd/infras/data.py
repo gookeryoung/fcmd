@@ -14,10 +14,11 @@ import configparser
 import copy
 import csv
 import json
-import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+
+from fcmd.infras import _toml as tomllib
 
 __all__ = [
     "csv_to_json",
