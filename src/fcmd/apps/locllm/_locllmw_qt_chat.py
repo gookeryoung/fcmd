@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QListWidget,
+    QMessageBox,
     QPlainTextEdit,
     QTextEdit,
     QVBoxLayout,
@@ -140,6 +141,18 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.history_list.setObjectName("ChatHistory")
         self.history_list.currentRowChanged.connect(self._select_conversation)
         side.addWidget(self.history_list, 1)
+        history_actions = QHBoxLayout()
+        history_actions.setContentsMargins(0, 0, 0, 0)
+        history_actions.setSpacing(6)
+        self.delete_chat_button = button("删除", kind="ghost")
+        self.delete_chat_button.setToolTip("删除当前选中的对话")
+        self.delete_chat_button.clicked.connect(self.delete_conversation)
+        self.clear_chats_button = button("清空全部", kind="ghost")
+        self.clear_chats_button.setToolTip("删除全部对话记录")
+        self.clear_chats_button.clicked.connect(self.clear_conversations)
+        history_actions.addWidget(self.delete_chat_button)
+        history_actions.addWidget(self.clear_chats_button)
+        side.addLayout(history_actions)
         outer.addWidget(sidebar)
 
         right = QWidget(self)
@@ -348,6 +361,44 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         for kind, text in self._conversation().blocks:
             self._insert_text(text, kind)
 
+    def delete_conversation(self) -> None:
+        """删除当前选中的对话；删掉最后一个时回到空白新对话。"""
+        if self._running:
+            self.status.setText("正在生成，停止后才能清理对话")
+            return
+        if not self._conversations:
+            return
+        index = self._active
+        self._conversations.pop(index)
+        if not self._conversations:
+            self._conversations = [_Conversation()]
+            self._active = 0
+            self._refresh_history()
+            self.transcript.clear()
+        else:
+            self._active = min(index, len(self._conversations) - 1)
+            self._refresh_history()
+            self._render_conversation()
+        self.status.setText("已删除当前对话")
+
+    def clear_conversations(self) -> None:
+        """清空全部对话记录（需确认）；完成后回到空白新对话。"""
+        if self._running:
+            self.status.setText("正在生成，停止后才能清理对话")
+            return
+        answer = QMessageBox.question(
+            self,
+            "清空全部对话",
+            f"将删除全部 {len(self._conversations)} 个对话记录，确定继续？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._conversations = [_Conversation()]
+        self._active = 0
+        self._refresh_history()
+        self.transcript.clear()
+        self.status.setText("已清空全部对话")
+
     def new_conversation(self) -> None:
         """新建一个空白对话；空对话不重复创建。"""
         if self._running:
@@ -414,6 +465,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.stop_button.setEnabled(True)
         self.history_list.setEnabled(False)
         self.new_chat_button.setEnabled(False)
+        self.delete_chat_button.setEnabled(False)
+        self.clear_chats_button.setEnabled(False)
         self.status.setText("正在生成…")
         submit(
             conversation.session.ask,
@@ -437,6 +490,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.stop_button.setEnabled(False)
         self.history_list.setEnabled(True)
         self.new_chat_button.setEnabled(True)
+        self.delete_chat_button.setEnabled(True)
+        self.clear_chats_button.setEnabled(True)
 
     def _on_done(self, _reply: str) -> None:
         conversation = self._conversation()

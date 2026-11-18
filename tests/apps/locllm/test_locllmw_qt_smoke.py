@@ -157,6 +157,51 @@ def test_models_page_fresh_cache_skips_network(window: Any, tmp_path: Path, monk
     assert browse._search_work not in submitted
 
 
+def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """历史对话支持删除当前与清空全部；运行中禁止清理。"""
+    from fcmd.apps.locllm._locllmw_qt_chat import _Conversation
+
+    window.show_page("chat")
+    chat = window.page("chat")
+    chat._conversations = [_Conversation(title="一"), _Conversation(title="二"), _Conversation(title="三")]
+    chat._active = 1
+    chat._refresh_history()
+    chat.delete_chat_button.click()
+    assert [item.title for item in chat._conversations] == ["一", "三"]
+    assert chat._active == 1
+    assert chat.status.text() == "已删除当前对话"
+    chat.delete_chat_button.click()
+    assert [item.title for item in chat._conversations] == ["一"]
+    chat.delete_chat_button.click()
+    assert len(chat._conversations) == 1
+    assert chat._conversations[0].title == "新对话"
+    assert chat.transcript.toPlainText() == ""
+
+    chat._conversations = [_Conversation(title="甲"), _Conversation(title="乙")]
+    chat._active = 0
+    chat._refresh_history()
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kw: QMessageBox.StandardButton.No)
+    chat.clear_chats_button.click()
+    assert len(chat._conversations) == 2
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kw: QMessageBox.StandardButton.Yes)
+    chat.clear_chats_button.click()
+    assert len(chat._conversations) == 1
+    assert chat._conversations[0].title == "新对话"
+    assert chat.status.text() == "已清空全部对话"
+
+    chat._conversations = [_Conversation(title="一"), _Conversation(title="二")]
+    chat._active = 0
+    chat._refresh_history()
+    chat._running = True
+    try:
+        chat.delete_chat_button.click()
+        chat.clear_chats_button.click()
+        assert len(chat._conversations) == 2
+        assert "停止后才能清理" in chat.status.text()
+    finally:
+        chat._running = False
+
+
 def test_models_manual_update_forces_refresh_and_shows_time(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """顶部更新按钮强制刷新并重扫本地；成功后状态栏常驻更新时间。"""
     window.show_page("models")
