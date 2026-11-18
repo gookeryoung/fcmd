@@ -158,6 +158,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         startable: bool = False,
         default_quant: str = "",
         serve_path: Path | None = None,
+        downloadable: bool = True,
         incomplete: bool = False,
         progress_text: str = "",
     ) -> None:
@@ -167,6 +168,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self.serve_path = serve_path
         self._expanded = False
         self._installed = installed
+        self._downloadable = downloadable
         self._convertible = convertible
         self._converted = converted
         self._convert_blocked = convert_blocked
@@ -269,13 +271,18 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.start_button.clicked.connect(lambda: self.startRequested.emit(self.repo))
             header_row.addWidget(self.start_button, 0)
         self.download_button = button("继续下载" if incomplete else "下载")
-        if installed and not incomplete:
+        if not downloadable:
+            self.download_button.setText("仅本地")
+            self.download_button.setEnabled(False)
+            self.download_button.setToolTip("本地目录名不是「组织/模型」，无法匹配远程仓库；请在在线列表搜索原仓库")
+        elif installed and not incomplete:
             self.download_button.setObjectName("InstalledButton")
             self.download_button.setText("下载其他量化")
             self.download_button.setToolTip("仓库已有本地文件；可继续选择其他量化（如 UD-Q4_K_XL）")
         elif incomplete:
             self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
-        self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
+        if downloadable:
+            self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
         header_row.addWidget(self.download_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
@@ -306,6 +313,10 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
         """下载中禁用；已安装行仍可下载其它量化，文案与普通行区分。"""
+        if not self._downloadable:
+            self.download_button.setEnabled(False)
+            self.download_button.setText("仅本地")
+            return
         self.download_button.setEnabled(not busy)
         if self._installed and not self._incomplete:
             self.download_button.setText("下载中…" if active else "下载其他量化")
@@ -986,6 +997,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             serve_path = next((path for label, path in quantized if label == default_quant), None)
             if serve_path is None and quantized:
                 serve_path = quantized[0][1]
+            repo_parts = item.repo.split("/")
+            downloadable = len(repo_parts) == 2 and all(repo_parts)
             row = _ModelItemRow(
                 item,
                 self.models,
@@ -1001,6 +1014,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 serve_path=serve_path,
                 incomplete=incomplete,
                 progress_text=progress_text,
+                downloadable=downloadable,
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
