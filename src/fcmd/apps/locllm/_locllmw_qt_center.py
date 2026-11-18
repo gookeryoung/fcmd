@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -46,6 +47,7 @@ from fcmd.apps.locllm import (
     llmqnt,
 )
 from fcmd.apps.locllm._llmgguf import detect_precision, quantize_input_error
+from fcmd.apps.locllm._locllmw_import import ImportPlan, copy_import, plan_import
 from fcmd.apps.locllm._locllmw_list_cache import ModelListCache, cache_key
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
@@ -470,6 +472,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.update_button.setToolTip("强制刷新当前页并重新扫描本地模型（绕过列表缓存）")
         self.update_button.clicked.connect(self.manual_update)
         filters.addWidget(self.update_button)
+        self.import_button = button("导入模型", kind="ghost")
+        self.import_button.setToolTip("导入 GGUF 文件或包含可转换模型的文件夹")
+        self.import_button.clicked.connect(self._on_import_clicked)
+        filters.addWidget(self.import_button)
         browse_layout.addLayout(filters)
 
         nav = QHBoxLayout()
@@ -702,6 +708,86 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.state.status("正在更新模型列表…")
         self.refresh_installed()
         self.start_search(self._page, force=True)
+
+    # -- 导入 ---------------------------------------------------------- #
+    def _on_import_clicked(self) -> None:
+        menu = QMenu(self)
+        file_action = menu.addAction("导入 GGUF 文件…")
+        file_action.triggered.connect(self._pick_gguf_files)
+        dir_action = menu.addAction("导入模型文件夹…")
+        dir_action.triggered.connect(self._pick_model_folder)
+        menu.exec(QCursor.pos())
+
+    def _pick_gguf_files(self) -> None:
+        paths, _selected = QFileDialog.getOpenFileNames(
+            self,
+            "导入 GGUF 模型",
+            "",
+            "GGUF 模型 (*.gguf);;所有文件 (*.*)",
+        )
+        if paths:
+            self.start_import([Path(path) for path in paths])
+
+    def _pick_model_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "导入模型文件夹")
+        if path:
+            self.start_import([Path(path)])
+
+    def start_import(self, sources: list[Path]) -> None:
+        """把选中的 GGUF / 文件夹复制进模型目录，完成后刷新本地标识。"""
+        try:
+            plans = plan_import(sources, _llmconfig.models_dir())
+        except (OSError, ValueError) as exc:
+            self.state.status(f"无法导入：{exc}")
+            QMessageBox.warning(self, "无法导入模型", str(exc))
+            return
+        if not plans:
+            return
+        conflicts = [plan for plan in plans if plan.target.exists()]
+        if conflicts and not self._confirm_import_overwrite(conflicts):
+            return
+        self._begin_loading("import", f"正在导入 {len(plans)} 项模型…")
+        self.state.status(f"正在导入 {len(plans)} 项模型…")
+        self._log("开始导入：" + "、".join(str(plan.source) for plan in plans))
+        submit(
+            self._import_work,
+            plans,
+            on_done=self._import_done,
+            on_error=self._import_error,
+            on_finished=self._import_finished,
+        )
+
+    def _confirm_import_overwrite(self, conflicts: list[ImportPlan]) -> bool:
+        names = "、".join(plan.target.name for plan in conflicts[:5])
+        more = f" 等 {len(conflicts)} 项" if len(conflicts) > 5 else ""
+        answer = QMessageBox.question(
+            self,
+            "目标已存在",
+            f"模型目录中已存在：{names}{more}\n继续将覆盖同名文件并合并目录，确定导入？",
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    @staticmethod
+    def _import_work(plans: tuple[ImportPlan, ...]) -> tuple[str, ...]:
+        """后台线程：逐项复制，返回导入后的目标路径。"""
+        copied: list[str] = []
+        for plan in plans:
+            copied.append(str(copy_import(plan, overwrite=True)))
+        return tuple(copied)
+
+    def _import_done(self, targets: tuple[str, ...]) -> None:
+        self.state.status(f"已导入 {len(targets)} 项模型，可继续转换或启动")
+        self._log("已导入模型：" + "、".join(targets))
+
+    def _import_error(self, message: str) -> None:
+        self.state.status(f"导入失败：{message}")
+        self._log(f"导入失败: {message}")
+        QMessageBox.warning(self, "导入失败", message)
+
+    def _import_finished(self) -> None:
+        self._end_loading("import")
+        self.refresh_installed()
+        self.state.refresh_models()
 
     def start_search(self, page: int, *, force: bool = False) -> None:
         """按当前筛选拉取指定页；命中新鲜缓存时直接展示，``force`` 跳过缓存。"""

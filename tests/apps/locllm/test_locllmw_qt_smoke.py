@@ -202,6 +202,24 @@ def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: py
         chat._running = False
 
 
+def test_models_import_button_submits_copy(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """更新模型右侧提供导入模型按钮，GGUF 导入走后台复制并刷新本地标识。"""
+    from fcmd.apps.locllm import _locllmw_qt_center as center
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    assert browse.update_button.text() == "更新模型"
+    assert browse.import_button.text() == "导入模型"
+    source = tmp_path / "import-src" / "demo-Q4_K_M.gguf"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"GGUF")
+    calls: list[object] = []
+    monkeypatch.setattr(center, "submit", lambda fn, *args, **kwargs: calls.append(fn))
+    browse.start_import([source])
+    assert calls == [browse._import_work]
+    assert "import" in window.state._loading_tasks
+
+
 def test_models_manual_update_forces_refresh_and_shows_time(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """顶部更新按钮强制刷新并重扫本地；成功后状态栏常驻更新时间。"""
     window.show_page("models")
