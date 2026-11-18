@@ -370,7 +370,7 @@ HELP: dict[str, str] = {
     "pyprof": "pyprof 子命令\n+--------------------------------------------------------------+\n| 子命令 | 说明                                                |\n|--------+-----------------------------------------------------|\n| load   | 分析已有 .prof/.pstats 文件，生成 HTML 性能报告     |\n| module | 以 python -m 方式运行模块并分析，生成 HTML 性能报告 |\n| run    | 运行并分析 Python 脚本，生成 HTML 性能报告          |\n+--------------------------------------------------------------+\n",
     "randtool": "randtool 子命令\n+---------------------------------------+\n| 子命令   | 说明                       |\n|----------+----------------------------|\n| bytes    | 生成随机字节               |\n| number   | 生成随机整数               |\n| password | 生成强密码                 |\n| string   | 生成自定义字符集随机字符串 |\n+---------------------------------------+\n",
     "regextool": "regextool 子命令\n+--------------------------+\n| 子命令  | 说明           |\n|---------+----------------|\n| find    | 查找所有匹配   |\n| match   | 匹配正则表达式 |\n| replace | 替换匹配       |\n| split   | 按正则分割     |\n+--------------------------+\n",
-    "regexvalidate": "usage: regexvalidate [-h] [--ignorecase] [--multiline] [--dotall] [--dry-run]\n                     [-q] [--strategy STRATEGY]\n                     pattern text\n\n校验文本与正则是否匹配\n\npositional arguments:\n  pattern              正则表达式\n  text                 待校验的文本\n\noptions:\n  -h, --help           show this help message and exit\n  --ignorecase         忽略大小写（re.IGNORECASE）\n  --multiline          多行模式（re.MULTILINE，^ / $ 匹配每行）\n  --dotall             DOTALL 模式（re.DOTALL，. 匹配换行）\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
+    "regexvalidate": "usage: regexvalidate [-h] [--ignorecase] [--multiline] [--dotall]\n                     [--json-output] [--dry-run] [-q] [--strategy STRATEGY]\n                     pattern text\n\n校验文本与正则是否匹配\n\npositional arguments:\n  pattern               正则表达式\n  text                  待校验的文本\n\noptions:\n  -h, --help            show this help message and exit\n  --ignorecase          忽略大小写（re.IGNORECASE）\n  --multiline           多行模式（re.MULTILINE，^ / $ 匹配每行）\n  --dotall              DOTALL 模式（re.DOTALL，. 匹配换行）\n  --json-output, --json\n                        json_output\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "regexvalidatew": "usage: regexvalidatew [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开正则校验器窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "renamer": "renamer 子命令\n+------------------------------+\n| 子命令  | 说明               |\n|---------+--------------------|\n| apply   | 执行批量重命名     |\n| preview | 预览批量重命名结果 |\n+------------------------------+\n",
     "renamerw": "usage: renamerw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开批量重命名窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
@@ -534,7 +534,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "97e7a0503f8a72886fba24fb893b9ca7"
+DIGEST = "898bf8fa960f0db6b6d315382b11a152"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

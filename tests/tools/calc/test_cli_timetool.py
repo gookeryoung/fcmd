@@ -261,7 +261,7 @@ class TestTimetoolCLI:
     def test_parse_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """格式不匹配打印错误。"""
         code = run_tool("timetool", ["parse", "not a time"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "解析失败" in out
 
@@ -284,7 +284,7 @@ class TestTimetoolCLI:
     def test_unix_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """格式不匹配打印错误。"""
         code = run_tool("timetool", ["unix", "not a time"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "解析失败" in out
 
@@ -334,7 +334,7 @@ class TestTimetoolCLI:
             "timetool",
             ["convert", "12:30:00", "Invalid/Zone", "--format", "%H:%M:%S"],
         )
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         # 错误信息或无效时区
         assert "Invalid" in out or "无效" in out or "不支持" in out
@@ -345,7 +345,7 @@ class TestTimetoolCLI:
             "timetool",
             ["convert", "not a time", "UTC", "--format", "%H:%M:%S"],
         )
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "解析失败" in out
 
@@ -365,6 +365,6 @@ class TestTimetoolCLI:
             "timetool",
             ["convert", "12:30:00", "UTC", "--from-tz", "Invalid/Zone", "--format", "%H:%M:%S"],
         )
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效或不可用的时区" in out

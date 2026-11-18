@@ -204,7 +204,7 @@ class TestRegextoolCLI:
     def test_match_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """match 无效正则提示。"""
         code = run_tool("regextool", ["match", r"[unclosed", "abc"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效的正则表达式" in out
 
@@ -246,20 +246,20 @@ class TestRegextoolCLI:
     def test_split_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """split 无效正则提示。"""
         code = run_tool("regextool", ["split", r"[unclosed", "abc"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效的正则表达式" in out
 
     def test_find_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """find 无效正则异常提示。"""
         code = run_tool("regextool", ["find", r"[unclosed", "abc"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效的正则表达式" in out
 
     def test_replace_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """replace 无效正则异常提示。"""
         code = run_tool("regextool", ["replace", r"[unclosed", "#", "abc"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "无效的正则表达式" in out

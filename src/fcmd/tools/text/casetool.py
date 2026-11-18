@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import fcmd as fx
+from fcmd.core.result import emit_result
 from fcmd.infras import text as textinfra
 
 __all__: list[str] = []
+
+
+def _convert(subcommand: str, fn: Callable[[str], str], text: str, json_output: bool) -> None:
+    """执行命名风格转换并输出。"""
+    result = fn(text)
+    if json_output:
+        emit_result("casetool", subcommand, {"result": result})
+        return
+    print(result)
 
 
 @fx.tool(
@@ -14,9 +26,9 @@ __all__: list[str] = []
     help="转 snake_case",
     param_help={"text": "待转换的字符串"},
 )
-def snake(text: str) -> None:
+def snake(text: str, json_output: bool = False) -> None:
     """转换为 snake_case。"""
-    print(textinfra.to_snake(text))
+    _convert("snake", textinfra.to_snake, text, json_output)
 
 
 @fx.tool(
@@ -25,9 +37,9 @@ def snake(text: str) -> None:
     help="转 camelCase",
     param_help={"text": "待转换的字符串"},
 )
-def camel(text: str) -> None:
+def camel(text: str, json_output: bool = False) -> None:
     """转换为 camelCase。"""
-    print(textinfra.to_camel(text))
+    _convert("camel", textinfra.to_camel, text, json_output)
 
 
 @fx.tool(
@@ -36,9 +48,9 @@ def camel(text: str) -> None:
     help="转 PascalCase",
     param_help={"text": "待转换的字符串"},
 )
-def pascal(text: str) -> None:
+def pascal(text: str, json_output: bool = False) -> None:
     """转换为 PascalCase。"""
-    print(textinfra.to_pascal(text))
+    _convert("pascal", textinfra.to_pascal, text, json_output)
 
 
 @fx.tool(
@@ -47,6 +59,6 @@ def pascal(text: str) -> None:
     help="转 kebab-case",
     param_help={"text": "待转换的字符串"},
 )
-def kebab(text: str) -> None:
+def kebab(text: str, json_output: bool = False) -> None:
     """转换为 kebab-case。"""
-    print(textinfra.to_kebab(text))
+    _convert("kebab", textinfra.to_kebab, text, json_output)

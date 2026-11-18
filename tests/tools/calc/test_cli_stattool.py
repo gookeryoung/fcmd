@@ -295,9 +295,9 @@ class TestStattoolCLI:
             assert key in out
 
     def test_mean_nonexistent(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        """mean 文件不存在提示。"""
+        """mean 文件不存在提示，退出码为契约码 4。"""
         code = run_tool("stattool", ["mean", str(tmp_path / "no.txt")])
-        assert code == 0
+        assert code == 4
         out = capsys.readouterr().out
         assert "文件不存在" in out
 
@@ -306,7 +306,7 @@ class TestStattoolCLI:
         path = tmp_path / "data.txt"
         _write_data(path, "1\nabc\n3\n")
         code = run_tool("stattool", ["mean", str(path)])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "数据解析失败" in out
         assert "第 2 行" in out
@@ -316,7 +316,7 @@ class TestStattoolCLI:
         path = tmp_path / "data.txt"
         _write_data(path, "42\n")
         code = run_tool("stattool", ["stddev", str(path)])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "至少 2 个数据点" in out
 
@@ -351,7 +351,7 @@ class TestStattoolCLI:
     ) -> None:
         """子命令文件不存在时打印错误且不输出结果。"""
         code = run_tool("stattool", [subcommand, str(tmp_path / "no.txt")])
-        assert code == 0
+        assert code == 4
         out = capsys.readouterr().out
         assert "文件不存在" in out
 
@@ -376,6 +376,6 @@ class TestStattoolCLI:
         path = tmp_path / "data.txt"
         _write_data(path, data)
         code = run_tool("stattool", [subcommand, str(path)])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert expected in out

@@ -276,34 +276,34 @@ class TestTxttoolCLI:
         f = tmp_path / "a.txt"
         f.write_text("hello", encoding="utf-8")
         code = run_tool("txttool", ["case", str(f), "--mode", "invalid"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "不支持的模式" in out
 
     def test_count_file_not_exist(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """文件不存在时打印提示。"""
         code = run_tool("txttool", ["count", str(tmp_path / "nonexistent")])
-        assert code == 0
+        assert code == 4
         out = capsys.readouterr().out
         assert "文件不存在" in out
 
     def test_sort_file_not_exist(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """排序时文件不存在应打印提示。"""
         code = run_tool("txttool", ["sort", str(tmp_path / "nonexistent")])
-        assert code == 0
+        assert code == 4
         out = capsys.readouterr().out
         assert "文件不存在" in out
 
     def test_unique_file_not_exist(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """去重时文件不存在应打印提示。"""
         code = run_tool("txttool", ["unique", str(tmp_path / "nonexistent")])
-        assert code == 0
+        assert code == 4
         out = capsys.readouterr().out
         assert "文件不存在" in out
 
     def test_case_file_not_exist(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         """大小写转换时文件不存在应打印提示。"""
         code = run_tool("txttool", ["case", str(tmp_path / "nonexistent")])
-        assert code == 0
+        assert code == 4
         out = capsys.readouterr().out
         assert "文件不存在" in out

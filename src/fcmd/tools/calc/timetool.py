@@ -5,8 +5,37 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import fcmd as fx
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import calc
+
+
+def _emit(subcommand: str, value: str | int, json_output: bool) -> None:
+    """按输出模式呈现时间结果。"""
+    if json_output:
+        emit_result("timetool", subcommand, {"result": value})
+        return
+    print(value)
+
+
+def _parse_or_report(time: str, format: str, subcommand: str, json_output: bool) -> datetime | None:
+    """解析时间字符串；失败时呈现错误并返回 ``None``。"""
+    try:
+        return calc.parse_time(time, format)
+    except ValueError as exc:
+        report_error(
+            "timetool",
+            subcommand,
+            code="INVALID_ARGUMENT",
+            message=f"解析失败: {exc}",
+            field="time",
+            expected=format,
+            hint="确认时间字符串与 --format 的格式一致",
+            json_output=json_output,
+        )
+        return None
 
 
 @fx.tool(
@@ -18,10 +47,10 @@ from fcmd.infras import calc
         "format": "strftime 格式（默认 %%Y-%%m-%%d %%H:%%M:%%S）",
     },
 )
-def timetool_now(utc: bool = False, format: str = calc._DEFAULT_TIME_FORMAT) -> None:
+def timetool_now(utc: bool = False, format: str = calc._DEFAULT_TIME_FORMAT, json_output: bool = False) -> None:
     """显示当前时间（now）子命令。"""
     dt = calc.now_utc() if utc else calc.now_local()
-    print(calc.format_time(dt, format))
+    _emit("now", calc.format_time(dt, format), json_output)
 
 
 @fx.tool(
@@ -33,14 +62,12 @@ def timetool_now(utc: bool = False, format: str = calc._DEFAULT_TIME_FORMAT) -> 
         "format": "strftime 格式（默认 %%Y-%%m-%%d %%H:%%M:%%S）",
     },
 )
-def timetool_parse(time: str, format: str = calc._DEFAULT_TIME_FORMAT) -> None:
+def timetool_parse(time: str, format: str = calc._DEFAULT_TIME_FORMAT, json_output: bool = False) -> None:
     """解析时间字符串（parse）子命令。"""
-    try:
-        dt = calc.parse_time(time, format)
-    except ValueError as exc:
-        print(f"解析失败: {exc}")
+    dt = _parse_or_report(time, format, "parse", json_output)
+    if dt is None:
         return
-    print(calc.format_time(dt, format))
+    _emit("parse", calc.format_time(dt, format), json_output)
 
 
 @fx.tool(
@@ -52,14 +79,12 @@ def timetool_parse(time: str, format: str = calc._DEFAULT_TIME_FORMAT) -> None:
         "format": "strftime 格式（默认 %%Y-%%m-%%d %%H:%%M:%%S）",
     },
 )
-def timetool_unix(time: str, format: str = calc._DEFAULT_TIME_FORMAT) -> None:
+def timetool_unix(time: str, format: str = calc._DEFAULT_TIME_FORMAT, json_output: bool = False) -> None:
     """转 Unix 时间戳（unix）子命令。"""
-    try:
-        dt = calc.parse_time(time, format)
-    except ValueError as exc:
-        print(f"解析失败: {exc}")
+    dt = _parse_or_report(time, format, "unix", json_output)
+    if dt is None:
         return
-    print(calc.to_unix(dt))
+    _emit("unix", calc.to_unix(dt), json_output)
 
 
 @fx.tool(
@@ -71,10 +96,10 @@ def timetool_unix(time: str, format: str = calc._DEFAULT_TIME_FORMAT) -> None:
         "format": "strftime 格式（默认 %%Y-%%m-%%d %%H:%%M:%%S）",
     },
 )
-def timetool_fromunix(ts: int, format: str = calc._DEFAULT_TIME_FORMAT) -> None:
+def timetool_fromunix(ts: int, format: str = calc._DEFAULT_TIME_FORMAT, json_output: bool = False) -> None:
     """Unix 时间戳转时间（fromunix）子命令。"""
     dt = calc.from_unix(ts)
-    print(calc.format_time(dt, format))
+    _emit("fromunix", calc.format_time(dt, format), json_output)
 
 
 @fx.tool(
@@ -93,23 +118,38 @@ def timetool_convert(
     target_tz: str,
     format: str = calc._DEFAULT_TIME_FORMAT,
     from_tz: str = "",
+    json_output: bool = False,
 ) -> None:
     """时区转换（convert）子命令。"""
-    try:
-        dt = calc.parse_time(time, format)
-    except ValueError as exc:
-        print(f"解析失败: {exc}")
+    dt = _parse_or_report(time, format, "convert", json_output)
+    if dt is None:
         return
     if from_tz:
         try:
             src_tz = calc.resolve_tz(from_tz)
         except ValueError as exc:
-            print(f"错误: {exc}")
+            report_error(
+                "timetool",
+                "convert",
+                code="INVALID_ARGUMENT",
+                message=str(exc),
+                field="from_tz",
+                expected="IANA 时区名（如 Asia/Shanghai）或 UTC",
+                json_output=json_output,
+            )
             return
         dt = dt.replace(tzinfo=src_tz)
     try:
         converted = calc.convert_timezone(dt, target_tz)
     except ValueError as exc:
-        print(f"错误: {exc}")
+        report_error(
+            "timetool",
+            "convert",
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="target_tz",
+            expected="IANA 时区名（如 Asia/Shanghai）或 UTC",
+            json_output=json_output,
+        )
         return
-    print(calc.format_time(converted, format))
+    _emit("convert", calc.format_time(converted, format), json_output)

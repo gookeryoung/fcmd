@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import fcmd
-from fcmd.console import print_error
+from fcmd.core.result import emit_result, report_error
 
 __all__ = [
     "FLAG_CHOICES",
@@ -180,14 +181,40 @@ def format_report(pattern: str, text: str, flags: int = 0) -> str:
     return format_validator_report(RegexValidator(pattern, flags), text)
 
 
+def build_report_data(validator: RegexValidator, text: str) -> dict[str, Any]:
+    """生成与多行报告同源的结构化结果（``--json`` 用）。"""
+    result = validator.validate(text)
+    matches = [
+        {
+            "value": match.group(0),
+            "span": list(match.span()),
+            "groups": list(match.groups()),
+            "groupdict": match.groupdict(),
+        }
+        for match in validator.iterate(text)
+    ]
+    return {
+        "pattern": validator.pattern,
+        "text": text,
+        "flags": describe_flags(validator.flags),
+        "is_valid": result.is_valid,
+        "count": result.count,
+        "matches": matches,
+        "fullmatch": validator.compiled.fullmatch(text) is not None,
+        "findall": validator.compiled.findall(text),
+        "analysis": analyze_pattern(validator.pattern),
+    }
+
+
 @fcmd.tool("regexvalidate", help="校验文本与正则是否匹配", description=_DESCRIPTION)
-def check_cmd(
+def check_cmd(  # noqa: PLR0913 - CLI 参数逐个映射，保持扁平签名
     pattern: str,
     text: str,
     *,
     ignorecase: bool = False,
     multiline: bool = False,
     dotall: bool = False,
+    json_output: bool = False,
 ) -> None:
     """校验文本与正则表达式是否匹配。
 
@@ -206,13 +233,23 @@ def check_cmd(
     """
     flags = build_flags(ignorecase=ignorecase, multiline=multiline, dotall=dotall)
     try:
-        print(format_report(pattern, text, flags))
+        validator = RegexValidator(pattern, flags)
     except PatternValidationError as exc:
-        print_error(
-            str(exc),
+        report_error(
+            "regexvalidate",
+            None,
             code="INVALID_ARGUMENT",
+            message=str(exc),
+            field="pattern",
+            expected="合法的正则表达式",
             hint="修正正则语法或去掉不支持的构造后重试",
+            json_output=json_output,
         )
+        return
+    if json_output:
+        emit_result("regexvalidate", None, build_report_data(validator, text))
+        return
+    print(format_validator_report(validator, text))
 
 
 @fcmd.main("regexvalidate")

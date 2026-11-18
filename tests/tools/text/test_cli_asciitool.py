@@ -192,7 +192,7 @@ class TestAsciitoolCLI:
     def test_char_multiple_raises(self, capsys: pytest.CaptureFixture[str]) -> None:
         """char 多字符提示。"""
         code = run_tool("asciitool", ["char", "abc"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "char 要求单个字符" in out
 
@@ -207,7 +207,7 @@ class TestAsciitoolCLI:
     def test_code_invalid(self, capsys: pytest.CaptureFixture[str]) -> None:
         """code 超范围提示。"""
         code = run_tool("asciitool", ["code", "-1"])
-        assert code == 0
+        assert code == 3
         out = capsys.readouterr().out
         assert "code 超出合法范围" in out
 

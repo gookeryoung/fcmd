@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -28,16 +29,22 @@ def _run_ok(tool: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> d
     return payload
 
 
-def _run_err(tool: str, argv: list[str], capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
+def _run_err(
+    tool: str,
+    argv: list[str],
+    capsys: pytest.CaptureFixture[str],
+    *,
+    exit_code: int = 3,
+) -> dict[str, Any]:
     """运行 ``--json`` 失败路径并返回解析后的 stderr 信封。"""
     code = run_tool(tool, [*argv, "--json"])
     captured = capsys.readouterr()
-    assert code == 3
+    assert code == exit_code
     assert captured.out == ""
     payload = json.loads(captured.err)
     assert payload["schema"] == "fcmd-error/1"
     assert payload["ok"] is False
-    assert payload["exit_code"] == 3
+    assert payload["exit_code"] == exit_code
     return payload
 
 
@@ -123,3 +130,107 @@ def test_calcdate_compare_json(capsys: pytest.CaptureFixture[str]) -> None:
 def test_calcdate_add_json_invalid(capsys: pytest.CaptureFixture[str]) -> None:
     payload = _run_err("calcdate", ["add", "invalid", "5"], capsys)
     assert payload["code"] == "INVALID_ARGUMENT"
+
+
+# ---------------------------------------------------------------------- #
+# P1b：统计与文本工具
+# ---------------------------------------------------------------------- #
+def test_stattool_mean_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = tmp_path / "data.txt"
+    data.write_text("1\n2\n3\n4\n5\n", encoding="utf-8")
+    payload = _run_ok("stattool", ["mean", str(data)], capsys)
+    assert payload["data"] == {"result": 3.0}
+
+
+def test_stattool_summarize_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    data = tmp_path / "data.txt"
+    data.write_text("1\n2\n3\n", encoding="utf-8")
+    payload = _run_ok("stattool", ["summarize", str(data)], capsys)
+    assert payload["data"]["count"] == 3
+    assert payload["data"]["mean"] == 2.0
+
+
+def test_stattool_missing_file_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_err("stattool", ["mean", str(tmp_path / "no.txt")], capsys, exit_code=4)
+    assert payload["code"] == "FILE_NOT_FOUND"
+
+
+def test_timetool_parse_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("timetool", ["parse", "2026-07-29 12:30:00"], capsys)
+    assert payload["data"] == {"result": "2026-07-29 12:30:00"}
+
+
+def test_timetool_parse_json_invalid(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_err("timetool", ["parse", "not a time"], capsys)
+    assert payload["code"] == "INVALID_ARGUMENT"
+    assert payload["field"] == "time"
+
+
+def test_colortool_hex2rgb_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("colortool", ["hex2rgb", "#ff5733"], capsys)
+    assert payload["data"] == {"result": [255, 87, 51]}
+
+
+def test_colortool_rgb2hex_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("colortool", ["rgb2hex", "255", "87", "51"], capsys)
+    assert payload["data"] == {"result": "#ff5733"}
+
+
+def test_asciitool_char_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("asciitool", ["char", "A"], capsys)
+    assert payload["data"] == {"char": "A", "code": 65, "hex": "0x41"}
+
+
+def test_asciitool_table_json_range(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("asciitool", ["table", "--start", "48", "--end", "49"], capsys)
+    assert [entry["code"] for entry in payload["data"]["entries"]] == [48, 49]
+
+
+def test_casetool_snake_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("casetool", ["snake", "Hello World"], capsys)
+    assert payload["data"] == {"result": "hello_world"}
+
+
+def test_txttool_count_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    f = tmp_path / "a.txt"
+    f.write_text("one two\nthree\n", encoding="utf-8")
+    payload = _run_ok("txttool", ["count", str(f)], capsys)
+    assert payload["data"] == {"lines": 2, "words": 3, "chars": 14}
+
+
+def test_txttool_missing_file_json(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_err("txttool", ["count", str(tmp_path / "no.txt")], capsys, exit_code=4)
+    assert payload["code"] == "FILE_NOT_FOUND"
+
+
+def test_regextool_match_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("regextool", ["match", r"\d+", "123abc"], capsys)
+    assert payload["data"]["result"]["match"] == "123"
+
+
+def test_regextool_find_json_no_match(capsys: pytest.CaptureFixture[str]) -> None:
+    """无匹配不是错误：``result`` 为空列表。"""
+    payload = _run_ok("regextool", ["find", r"\d+", "abc"], capsys)
+    assert payload["data"] == {"result": []}
+
+
+def test_regextool_invalid_pattern_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_err("regextool", ["match", r"[unclosed", "abc"], capsys)
+    assert payload["code"] == "INVALID_ARGUMENT"
+    assert payload["field"] == "pattern"
+
+
+def test_regexvalidate_json(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_ok("regexvalidate", [r"\d+", "abc123"], capsys)
+    data = payload["data"]
+    assert data["pattern"] == r"\d+"
+    assert data["is_valid"] is True
+    assert data["count"] == 1
+    assert data["matches"][0]["value"] == "123"
+    assert data["fullmatch"] is False
+
+
+def test_regexvalidate_json_invalid_pattern(capsys: pytest.CaptureFixture[str]) -> None:
+    payload = _run_err("regexvalidate", ["[bad", "x"], capsys)
+    assert payload["code"] == "INVALID_ARGUMENT"
+    assert payload["field"] == "pattern"
