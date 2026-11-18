@@ -81,7 +81,7 @@ jobs:
         include:
           # PySide2 + xdist 在 Linux 退出阶段会卡住 worker；3.10 串行跑（用例量 < 1 万，仍在超时内）。
           - python-version: "3.10"
-            pytest_args: "-p no:xdist"
+            pytest_args: '-p no:xdist -o addopts=""'
           - python-version: "3.13"
             pytest_args: "-n auto"
           - python-version: "3.14"
