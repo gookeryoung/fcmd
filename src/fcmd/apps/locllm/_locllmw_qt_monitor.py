@@ -62,6 +62,7 @@ from fcmd.gui.qt.widgets import (
     PageScroll,
     button,
     hint_label,
+    link_button,
     make_table,
     make_table_item,
 )
@@ -199,24 +200,59 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         layout = scroll.body
         outer.addWidget(scroll)
 
-        metrics_card = Card(f"实时性能（服务运行中每 1s 采样 /metrics，速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑）")
+        target_card = Card("监测目标")
+        target_row = QHBoxLayout()
+        target_row.setContentsMargins(0, 0, 0, 0)
+        target_row.setSpacing(8)
+        self._target_label = QLabel("未选择运行中的服务：仅采样系统负载", target_card)
+        self._target_label.setObjectName("Value")
+        self._target_label.setWordWrap(True)
+        self._refresh_services_button = link_button("刷新服务", tooltip="重新读取已登记服务")
+        self._refresh_services_button.clicked.connect(self.state.refresh_services)
+        target_row.addWidget(self._target_label, 1)
+        target_row.addWidget(self._refresh_services_button)
+        target_card.body.addLayout(target_row)
+
+        target_status = QHBoxLayout()
+        target_status.setContentsMargins(0, 0, 0, 0)
+        target_status.setSpacing(8)
+        self._monitor_badge = QLabel("等待采样…", target_card)
+        self._monitor_badge.setObjectName("Hint")
+        self._last_sample_label = hint_label("最近采样：-", wrap=False)
+        target_status.addWidget(self._monitor_badge)
+        target_status.addStretch(1)
+        target_status.addWidget(self._last_sample_label)
+        target_card.body.addLayout(target_status)
+        target_card.body.addWidget(
+            hint_label(
+                f"每 1s 采样服务 /metrics 与系统负载；速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑。服务未运行时仅采样系统负载。",
+                wrap=True,
+            )
+        )
+        layout.addWidget(target_card)
+
+        metrics_card = Card("实时性能")
         self._metrics = MetricGrid(METRIC_KEYS, columns=4, parent=metrics_card)
         metrics_card.body.addWidget(self._metrics)
         layout.addWidget(metrics_card)
 
-        load_card = Card("系统负载（每 1s 采样；服务运行时额外显示服务进程指标）")
-        self._load = MetricGrid(LOAD_KEYS, columns=4, parent=load_card)
+        load_gpu = QHBoxLayout()
+        load_gpu.setContentsMargins(0, 0, 0, 0)
+        load_gpu.setSpacing(8)
+        load_card = Card("系统负载")
+        self._load = MetricGrid(LOAD_KEYS, columns=2, parent=load_card)
         load_card.body.addWidget(self._load)
-        layout.addWidget(load_card)
+        load_gpu.addWidget(load_card, 1)
 
-        gpu_card = Card("GPU 负载（nvidia-smi，每 1s 采样；服务运行时额外显示服务显存）")
+        gpu_card = Card("GPU 负载")
         self._gpu_name = QLabel("检测中…", gpu_card)
-        self._gpu_name.setObjectName("Value")
+        self._gpu_name.setObjectName("Hint")
         self._gpu_name.setWordWrap(True)
         gpu_card.body.addWidget(self._gpu_name)
-        self._gpu = MetricGrid(GPU_KEYS, columns=4, parent=gpu_card)
+        self._gpu = MetricGrid(GPU_KEYS, columns=2, parent=gpu_card)
         gpu_card.body.addWidget(self._gpu)
-        layout.addWidget(gpu_card)
+        load_gpu.addWidget(gpu_card, 1)
+        layout.addLayout(load_gpu)
 
         self._bench = Collapsible("性能测试（短对话 / 长输出 / 代码补全 / 长上下文 / 并发）", expanded=False)
         self._build_bench(self._bench.content)
@@ -318,10 +354,26 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         self._sync_target()
 
     def _sync_target(self) -> None:
-        """服务列表变化后重置速率窗口，避免新旧服务 token 计数相减成负数。"""
+        """服务列表变化后重置速率窗口，并同步监测目标 / 状态标签。"""
         self._rates = RateWindow(self._window)
-        if not self.state.alive_states:
+        target = self._current_state()
+        if target is None:
+            self._target_label.setText("未选择运行中的服务：仅采样系统负载")
             self._metrics.set_value("monitor", "服务未运行（仅采样系统负载）")
+            self._set_monitor_badge("仅系统负载", "warning")
+            return
+        self._target_label.setText(f"服务：{target.name} · {target.base_url}")
+        self._set_monitor_badge("等待采样…", "hint")
+
+    def _set_monitor_badge(self, text: str, tone: str) -> None:
+        """状态徽标：沿用主题的 Success / Warning / Danger 语义色。"""
+        self._monitor_badge.setText(text)
+        names = {"success": "Success", "warning": "Warning", "danger": "Danger"}
+        name = names.get(tone, "Hint")
+        if self._monitor_badge.objectName() != name:
+            self._monitor_badge.setObjectName(name)
+            self._monitor_badge.style().unpolish(self._monitor_badge)
+            self._monitor_badge.style().polish(self._monitor_badge)
 
     def _current_state(self) -> ServeState | None:
         alive = self.state.alive_states
@@ -348,15 +400,18 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         self._load.set_values(_format_load(load))
         self._gpu.set_values(_format_gpu(load.gpu))
         self._gpu_name.setText(_format_gpu(load.gpu)["gpu_name"])
+        self._last_sample_label.setText(f"最近采样：{time.strftime('%H:%M:%S')}")
         self.state.sampleUpdated.emit(load)
         self._sync_free_vram(load.gpu)
         if metrics is None:
             if error is not None:
                 self._metrics.set_value("monitor", "采样失败: " + error[:60])
+                self._set_monitor_badge("采样失败", "danger")
             else:
                 for key in ("gen_rate", "prompt_rate", "processing", "deferred", "kv", "predicted", "prompt"):
                     self._metrics.set_value(key, "-")
                 self._metrics.set_value("monitor", "服务未运行（仅采样系统负载）")
+                self._set_monitor_badge("仅系统负载", "warning")
             return
         gen_rate, prompt_rate = self._rates.update(time.monotonic(), metrics.predicted_tokens, metrics.prompt_tokens)
         self._metrics.set_values(
@@ -371,6 +426,7 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
                 "monitor": "监控中",
             }
         )
+        self._set_monitor_badge("监控中", "success")
 
     def _sync_free_vram(self, gpu: GpuSample | None) -> None:
         """用实时 GPU 采样更新可用显存（服务停止释放显存后自动恢复「可用」）。"""

@@ -439,6 +439,21 @@ def test_sidebar_collapsed_state_restored(monkeypatch: pytest.MonkeyPatch, tmp_p
         win.close()
 
 
+def test_monitor_page_has_target_summary_and_status_badge(window: Any) -> None:
+    """监测页参照概览：顶部目标摘要 + 状态徽标 + 最近采样时间。"""
+    window.show_page("monitor")
+    page = window.page("monitor")
+    assert page._target_label.text().startswith("未选择")
+    assert page._refresh_services_button.text() == "刷新服务"
+    assert page._monitor_badge.text() == "仅系统负载"
+    assert page._monitor_badge.objectName() == "Warning"
+    assert page._last_sample_label.text().startswith("最近采样：")
+    page._set_monitor_badge("监控中", "success")
+    assert page._monitor_badge.objectName() == "Success"
+    page._set_monitor_badge("采样失败", "danger")
+    assert page._monitor_badge.objectName() == "Danger"
+
+
 def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll

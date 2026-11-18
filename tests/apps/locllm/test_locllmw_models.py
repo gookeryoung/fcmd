@@ -42,7 +42,7 @@ from fcmd.apps.locllm._locllmw_models import (
     sort_browse_items,
     sort_models,
 )
-from fcmd.apps.locllm.llmdown import LocalModel, ModelInfo, ModelSummary
+from fcmd.apps.locllm.llmdown import LocalModel, ModelInfo, ModelSummary, format_timestamp
 from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
@@ -120,7 +120,7 @@ class TestFormatting:
             "发布方 Qwen · 文本生成、视觉问答",
             "2.00 KB",
         )
-        assert model_published_text(summary) == "发布 2023-11-15"
+        assert model_published_text(summary) == f"发布 {format_timestamp(summary.updated)}"
 
     def test_model_item_lines_empty(self) -> None:
         assert model_item_lines(ModelSummary(repo="Qwen/demo")) == ("demo", "发布方 Qwen", "-")
