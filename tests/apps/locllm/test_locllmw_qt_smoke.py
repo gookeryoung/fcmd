@@ -595,6 +595,26 @@ def test_bench_moves_to_help_menu(window: Any) -> None:
     dialog.close()
 
 
+def test_model_quant_options_falls_back_source(monkeypatch: pytest.MonkeyPatch, window: Any) -> None:
+    """显式源读取清单失败时切到 auto 重试，避免直接报「读取清单失败」。"""
+    from fcmd.apps.locllm import _locllmw_qt_center as center
+    from fcmd.apps.locllm.llmdown import ModelFile, ModelToolError, SourceSelection
+
+    selection = SourceSelection("modelscope", (ModelFile("model-UD-Q4_K_XL.gguf", 1),))
+    calls: list[str] = []
+
+    def fake(repo: str, source: str, *_args: Any, **_kwargs: Any) -> SourceSelection:
+        calls.append(source)
+        if source == "hf-mirror":
+            raise ModelToolError("清单读取失败: HTTP 429")
+        return selection
+
+    monkeypatch.setattr(center, "select_source", fake)
+    options = center._BrowsePanel._quant_options_work("org/model", "hf-mirror")
+    assert calls == ["hf-mirror", "auto"]
+    assert options[0].label == "UD-Q4_K_XL"
+
+
 def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """下载前按量化选择：唯一选项直接下载，多选项弹列表。"""
     from fcmd.apps.locllm.llmdown import ModelFile, QuantOption

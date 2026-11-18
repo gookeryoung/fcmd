@@ -1168,13 +1168,20 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     @staticmethod
     def _quant_options_work(repo: str, source: str) -> tuple[QuantOption, ...]:
-        selection = select_source(repo, source)  # type: ignore[arg-type]
+        """读取量化清单；显式源失败时自动切到双源选优重试一次。"""
+        try:
+            selection = select_source(repo, source)  # type: ignore[arg-type]
+        except ModelToolError:
+            if source == "auto":
+                raise
+            selection = select_source(repo, "auto")
         return quant_options(list(selection.files))
 
     def _quant_options_error(self, repo: str, message: str) -> None:
         self._listing_quant = False
         self._sync_download_buttons()
-        self.state.status(f"{repo} · 读取量化清单失败")
+        self.download_text.setText(f"读取清单失败：{message[:160]}")
+        self.state.status(f"{repo} · 读取清单失败")
         self._log(f"读取量化清单失败 {repo}: {message}")
 
     def _choose_quant(self, repo: str, options: tuple[QuantOption, ...]) -> None:
