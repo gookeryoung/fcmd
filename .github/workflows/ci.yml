@@ -78,7 +78,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.13", "3.14"]
+        include:
+          # PySide2 + xdist 在 Linux 退出阶段会卡住 worker；3.10 串行跑（用例量 < 1 万，仍在超时内）。
+          - python-version: "3.10"
+            pytest_args: "-p no:xdist"
+          - python-version: "3.13"
+            pytest_args: "-n auto"
+          - python-version: "3.14"
+            pytest_args: "-n auto"
     steps:
       - uses: actions/checkout@v7
 
@@ -128,4 +135,4 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         # xdist 并行：本机 8 核约 15–20s，GitHub 2 核 runner 也能把 8k+ 测试
         # 压到数分钟内，避免串行跑满 15m 超时；loadfile 已在 pytest.ini addopts。
-        run: uv run pytest -n auto -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
+        run: uv run pytest ${{ matrix.pytest_args }} -m "not slow" --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
