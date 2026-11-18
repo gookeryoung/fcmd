@@ -559,9 +559,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             filters.addWidget(chip)
             self.filter_buttons[key] = chip
         filters.addStretch(1)
-        self.cleanup_button = button("清理", kind="ghost")
-        self.cleanup_button.setToolTip("清理未完成下载 / 空目录 / 模型列表缓存")
-        self.cleanup_button.clicked.connect(self._open_cleanup_menu)
+        self.cleanup_button = button("模型管理", kind="ghost")
+        self.cleanup_button.setToolTip("查看已下载 / 未完成模型，支持多选移除与残留清理")
+        self.cleanup_button.clicked.connect(self._open_model_manager)
         filters.addWidget(self.cleanup_button)
         self.update_button = button("更新模型", kind="ghost")
         self.update_button.setToolTip("强制刷新当前页并重新扫描本地模型（绕过列表缓存）")
@@ -730,73 +730,19 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         }
         self.state.persist()
 
-    def _open_cleanup_menu(self) -> None:
-        models_root = _llmconfig.models_dir()
-        try:
-            partial = sum(1 for path in models_root.rglob("*.part") if path.is_file())
-        except OSError:
-            partial = 0
-        menu = QMenu(self)
-        partial_action = menu.addAction(f"清理未完成下载（{partial} 个 .part）")
-        partial_action.setEnabled(partial > 0)
-        partial_action.triggered.connect(self._cleanup_partial_files)
-        empty_action = menu.addAction("清理空模型目录")
-        empty_action.triggered.connect(self._cleanup_empty_dirs)
-        menu.addSeparator()
-        cache_action = menu.addAction("清理模型列表缓存")
-        cache_action.triggered.connect(self._cleanup_list_cache)
-        menu.exec(QCursor.pos())
+    def _open_model_manager(self) -> None:
+        """打开模型管理对话框：扫描已下载 / 未完成模型并批量处理。"""
+        from fcmd.apps.locllm._locllmw_qt_model_manager import ModelManagerDialog
 
-    def _cleanup_partial_files(self) -> None:
-        """删除模型目录下的 .part 残留（需确认；下载任务进行中时禁用）。"""
-        if self._downloading or self._converting or self._quantizing:
-            self.state.status("任务进行中，暂不能清理")
-            return
-        models_root = _llmconfig.models_dir()
-        try:
-            targets = [path for path in models_root.rglob("*.part") if path.is_file()]
-        except OSError as exc:
-            self._log(f"清理未完成下载失败: {exc}")
-            return
-        if not targets:
-            self.state.status("没有未完成下载")
-            return
-        answer = QMessageBox.question(
-            self,
-            "清理未完成下载",
-            f"将删除 {len(targets)} 个 .part 文件，相关模型需要重新下载。\n确定继续？",
+        dialog = ModelManagerDialog(
+            _llmconfig.models_dir(),
+            on_changed=self._model_manager_changed,
+            on_clear_cache=self._cleanup_list_cache,
+            parent=self,
         )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        removed = 0
-        for path in targets:
-            try:
-                path.unlink()
-                removed += 1
-            except OSError:
-                continue
-        self._log(f"已清理 {removed} 个未完成下载文件")
-        self.state.status(f"已清理 {removed} 个 .part 文件")
-        self.refresh_installed()
-        self._render_results()
+        dialog.exec()
 
-    def _cleanup_empty_dirs(self) -> None:
-        """自底向上删除模型目录下的空目录（保留模型根目录）。"""
-        models_root = _llmconfig.models_dir()
-        if not models_root.is_dir():
-            return
-        removed = 0
-        dirs = sorted(
-            (path for path in models_root.rglob("*") if path.is_dir()), key=lambda p: len(p.parts), reverse=True
-        )
-        for path in dirs:
-            try:
-                path.rmdir()
-                removed += 1
-            except OSError:
-                continue
-        self._log(f"已清理 {removed} 个空模型目录")
-        self.state.status(f"已清理 {removed} 个空目录")
+    def _model_manager_changed(self) -> None:
         self.refresh_installed()
         self._render_results()
 

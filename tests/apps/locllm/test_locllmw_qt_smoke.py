@@ -310,8 +310,26 @@ def test_models_page_delete_and_cleanup(window: Any, monkeypatch: pytest.MonkeyP
     page.delete_model("Qwen/demo")
     assert not target.exists()
 
-    page._cleanup_partial_files()
+    from fcmd.apps.locllm._locllmw_qt_model_manager import ModelManagerDialog
+    from fcmd.apps.locllm.llmdown import scan_local_models
+
+    dialog = ModelManagerDialog(models)
+    dialog._render(scan_local_models(models))
+    assert dialog._table.rowCount() == 1
+    assert "未完成" in dialog._table.item(0, 3).text()
+    dialog._cleanup_partial()
     assert not part.exists()
+
+    first = models / "Qwen" / "first"
+    second = models / "Qwen" / "second"
+    for directory in (first, second):
+        directory.mkdir(parents=True)
+        (directory / "model.gguf").write_bytes(b"x")
+    dialog._render(scan_local_models(models))
+    dialog._table.selectAll()
+    dialog._remove_selected()
+    assert not first.exists()
+    assert not second.exists()
 
 
 def test_models_page_source_owner_and_group_controls(window: Any) -> None:
@@ -321,6 +339,7 @@ def test_models_page_source_owner_and_group_controls(window: Any) -> None:
     assert browse.source_combo.currentData() == "online"
     assert browse.owner_combo.itemText(0) == "全部发布方"
     assert browse.group_check.text() == "同名折叠"
+    assert browse.cleanup_button.text() == "模型管理"
 
 
 def test_models_page_name_filter_is_debounced(window: Any) -> None:
