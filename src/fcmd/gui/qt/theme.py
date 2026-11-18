@@ -134,6 +134,11 @@ QLabel#MeterValue { font-size: ${font_small}pt; font-weight: 600; }
 QLabel#MeterValue[band="success"] { color: $success; }
 QLabel#MeterValue[band="warning"] { color: $warning; }
 QLabel#MeterValue[band="danger"] { color: $danger; }
+QFrame#LoadBlock {
+    background: $background;
+    border: 1px solid $border;
+    border-radius: 6px;
+}
 QLabel#StatusTag {
     border-radius: 9px;
     padding: 1px 8px;

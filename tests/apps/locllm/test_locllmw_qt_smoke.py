@@ -480,13 +480,16 @@ def test_service_log_moves_to_help_menu(window: Any) -> None:
     dialog.close()
 
 
-def test_monitor_load_cards_and_rate_display(window: Any) -> None:
-    """GPU / CPU / 内存三张负载卡：格图 + 占用率 + 次要参数；tok/s 为主视觉。"""
+def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
+    """占用情况在概览硬件卡：GPU / CPU / 内存格图 + 显存 / 交换副条；监测页只留 tok/s。"""
     from fcmd.apps.locllm import llmserve
     from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
 
     window.show_page("monitor")
     page = window.page("monitor")
+    overview = window.overview
+    assert not hasattr(page, "_gpu_bar")
+    assert not hasattr(overview, "_gpu_gauge")
     sample = LoadSample(
         cpu=41.0,
         cpu_freq=3600.0,
@@ -515,20 +518,20 @@ def test_monitor_load_cards_and_rate_display(window: Any) -> None:
     )
     page._apply_sample((sample, None, None))
 
-    assert page._gpu_percent.text() == "73 %"
-    assert page._cpu_percent.text() == "41 %"
-    assert page._mem_percent.text() == "41 %"
-    assert page._gpu_bar.percent() == 73.0
-    assert page._cpu_bar.percent() == 41.0
-    assert page._mem_bar.percent() == 41.0
-    assert page._gpu_percent.property("band") == "warning"
-    assert page._cpu_percent.property("band") == "success"
-    assert page._gpu_vram_bar.percent() == pytest.approx(18000 / 24576 * 100)
-    assert page._gpu_vram_value.text() == "73.2 %"
-    assert page._swap_bar.percent() == 25.0
-    assert page._swap_value.text() == "25.0 %"
-    assert page._gpu_metrics.value("gpu_temp") == "62 °C"
-    assert "41.0 %" in page._mem_metrics.value("memory")
+    assert overview._gpu_percent.text() == "73 %"
+    assert overview._cpu_percent.text() == "41 %"
+    assert overview._mem_percent.text() == "41 %"
+    assert overview._gpu_bar.percent() == 73.0
+    assert overview._cpu_bar.percent() == 41.0
+    assert overview._mem_bar.percent() == 41.0
+    assert overview._gpu_percent.property("band") == "warning"
+    assert overview._cpu_percent.property("band") == "success"
+    assert overview._gpu_vram_bar.percent() == pytest.approx(18000 / 24576 * 100)
+    assert overview._gpu_vram_value.text() == "73.2 %"
+    assert overview._swap_bar.percent() == 25.0
+    assert overview._swap_value.text() == "25.0 %"
+    assert overview._gpu_metrics.value("gpu_temp") == "62 °C"
+    assert "41.0 %" in overview._mem_metrics.value("memory")
 
     # 服务指标：生成 tok/s 单独大字展示，其余进次要网格。
     metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
@@ -778,17 +781,6 @@ def test_overview_actions_are_text_links(window: Any) -> None:
     assert overview._detect_button.objectName() == "Link"
     assert "model_disk" not in overview._hardware_values
     assert "model_free" not in overview._hardware_values
-
-
-def test_overview_gauges_paint_event_runs(window: Any) -> None:
-    """环形仪表在不同余量档位下重绘不抛异常（回归：QPalette 必须从 QtGui 导入）。"""
-    from PySide6.QtGui import QPaintEvent
-
-    gauge = window.overview._gpu_gauge
-    for percent in (42.0, 72.0, 92.0):
-        gauge.set_usage(percent, "1.0 / 24.0 GB")
-        gauge.paintEvent(QPaintEvent(gauge.rect()))
-        assert gauge._percent == percent
 
 
 def test_recommendation_list_fills_width_without_clipping(window: Any) -> None:

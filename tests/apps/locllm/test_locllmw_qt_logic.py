@@ -18,16 +18,13 @@ pytest.importorskip("PySide6")
 
 from fcmd.apps.locllm import llmbase, llmserve
 from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
-from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
+from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
 from fcmd.apps.locllm._locllmw_qt_chat import endpoint_from_form, service_labels
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
 from fcmd.apps.locllm._locllmw_qt_overview import (
     recommendation_params_html,
     recommendation_perf_html,
-    usage_band,
-    usage_color,
-    usage_gauge_texts,
 )
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
@@ -306,48 +303,6 @@ def test_model_detail_view_reset_and_metadata() -> None:
 # ---------------------------------------------------------------------- #
 # 概览 / 对话 / 设置行渲染
 # ---------------------------------------------------------------------- #
-def test_usage_gauge_texts_with_gpu_and_memory() -> None:
-    sample = LoadSample(
-        memory_used=8 * 1024**3,
-        memory_total=32 * 1024**3,
-        memory_percent=25.0,
-        gpu=GpuSample(name="RTX", memory_used=4096.0, memory_total=8192.0),
-    )
-    gpu_percent, gpu_brief, memory_percent, memory_brief = usage_gauge_texts(sample)
-    assert gpu_brief == "4.0 / 8.0 GB"
-    assert gpu_percent == pytest.approx(50.0)
-    assert memory_brief.startswith("8.00 GB / 32.00 GB")
-    assert memory_percent == pytest.approx(25.0)
-
-
-def test_usage_gauge_texts_without_gpu() -> None:
-    sample = LoadSample(memory_used=0, memory_total=0, memory_percent=0.0, gpu=None)
-    gpu_percent, gpu_brief, memory_percent, memory_brief = usage_gauge_texts(sample)
-    assert gpu_brief == "未检测到 NVIDIA GPU"
-    assert gpu_percent == 0.0
-    assert memory_brief == "暂不可用"
-    assert memory_percent == 0.0
-
-
-def test_usage_band_thresholds() -> None:
-    """余量档位：≥85% 告急、≥60% 偏紧、其余充足。"""
-    assert usage_band(0.0) == "comfortable"
-    assert usage_band(59.9) == "comfortable"
-    assert usage_band(60.0) == "tight"
-    assert usage_band(84.9) == "tight"
-    assert usage_band(85.0) == "critical"
-    assert usage_band(100.0) == "critical"
-
-
-def test_usage_color_follows_theme_palette() -> None:
-    from fcmd.gui import theme as _guitheme
-
-    theme = _guitheme.resolve_theme("dark-blue")
-    assert usage_color(theme, 20.0) == theme.palette.success
-    assert usage_color(theme, 70.0) == theme.palette.warning
-    assert usage_color(theme, 92.0) == theme.palette.danger
-
-
 def test_service_labels_marks_dead_service(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fcmd.apps.locllm._locllmw_chat.process_alive", lambda pid, created: pid == 1)
     labels = service_labels([_state(pid=1), _state(name="dead", pid=2)])

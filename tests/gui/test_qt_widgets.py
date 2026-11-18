@@ -100,7 +100,7 @@ def test_segment_fill_rounds_and_clamps() -> None:
 
 
 def test_segment_band_thresholds() -> None:
-    """负载档位与概览环形仪表一致：≥85 告急、≥60 偏紧、其余充足。"""
+    """负载档位与概览硬件卡一致：≥85 告急、≥60 偏紧、其余充足。"""
     assert segment_band(None) == "idle"
     assert segment_band(0.0) == "success"
     assert segment_band(59.9) == "success"

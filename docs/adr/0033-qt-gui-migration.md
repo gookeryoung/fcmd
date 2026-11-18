@@ -50,7 +50,7 @@
 
 | 页面 | Qt 实现 | 复用逻辑 |
 |---|---|---|
-| 概览 | `_locllmw_qt_overview`：硬件卡（环形显存 / 内存占用表）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` |
+| 概览 | `_locllmw_qt_overview`：硬件卡（规格 + GPU / CPU / 内存负载格图）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` |
 | 模型 | `_locllmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
 | 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
