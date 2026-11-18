@@ -46,6 +46,7 @@ from fcmd.apps.locllm import (
     llmqnt,
 )
 from fcmd.apps.locllm._llmgguf import detect_precision, quantize_input_error
+from fcmd.apps.locllm._locllmw_list_cache import ModelListCache, cache_key
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     LocalModel,
@@ -421,8 +422,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
         self._detail_generation = 0
         self._searching = False
+        self._list_cache = ModelListCache()
         self._scanning_installed = False
-        self._loading_tasks: dict[str, str] = {}
         self._downloading = False
         self._stop_requested = False
         self._active_repo: str | None = None
@@ -658,15 +659,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     # -- 加载提示 ------------------------------------------------------ #
     def _begin_loading(self, key: str, text: str) -> None:
         """登记一项加载任务；同一时刻只显示一个加载条，任务结束才收起。"""
-        self._loading_tasks[key] = text
-        self.state.show_loading(text)
+        self.state.begin_loading(key, text)
 
     def _end_loading(self, key: str) -> None:
-        self._loading_tasks.pop(key, None)
-        if self._loading_tasks:
-            self.state.show_loading(next(reversed(self._loading_tasks.values())))
-        else:
-            self.state.show_loading("")
+        self.state.end_loading(key)
 
     def _default_quant(self, repo_key: str) -> str:
         """快捷启动默认精度：持久化的上次启动精度 → 上次运行模型 → 首个量化文件。"""
@@ -695,15 +691,26 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         return max(gpu_bytes, memory_bytes)
 
     def start_search(self, page: int) -> None:
-        """按当前筛选拉取指定页；筛选关键字为空时浏览全部模型。"""
+        """按当前筛选拉取指定页；命中新鲜缓存时直接展示，不再请求网络。"""
         if self._searching:
             return
-        self._page = max(1, page)
+        target = max(1, page)
+        key = cache_key(self._filter_query, target, _PAGE_SIZE, "default")
+        cached = self._list_cache.get(key)
+        self._page = target
+        if cached is not None:
+            self._render_search(cached.search)
+            if cached.fresh:
+                self._log(f"模型列表命中缓存（{cached.age:.0f}s 前）：{self._filter_query or '全部'}")
+                return
         self._searching = True
-        self.state.status(f"正在加载第 {self._page} 页…")
-        self._begin_loading("search", f"正在加载第 {self._page} 页…")
+        text = f"正在加载第 {self._page} 页…" if cached is None else f"正在刷新第 {self._page} 页…"
+        self.state.status(text)
+        self._begin_loading("search", text)
         submit(
-            search_models,
+            self._search_work,
+            self._list_cache,
+            key,
             self._filter_query,
             self._page,
             _PAGE_SIZE,
@@ -712,6 +719,20 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             on_error=self._search_error,
             on_finished=self._search_finished,
         )
+
+    @staticmethod
+    def _search_work(  # noqa: PLR0913, PLR0917 - 缓存键与请求参数成组透传
+        cache: ModelListCache,
+        key: str,
+        keyword: str,
+        page: int,
+        page_size: int,
+        sort: str,
+    ) -> ModelSearch:
+        """后台线程：请求网络并把结果写入缓存，避免 GUI 线程落盘。"""
+        result = search_models(keyword, page, page_size, sort)
+        cache.put(key, result)
+        return result
 
     def _search_finished(self) -> None:
         self._searching = False

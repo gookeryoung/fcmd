@@ -69,8 +69,8 @@
 | 场景 | 行为 |
 |---|---|
 | 切到模型页 | 本地目录扫描与在线列表搜索都放线程池；`QtMainWindow` 状态栏右侧的 `LoadingBar` 显示当前任务（正在扫描本地模型 / 正在加载第 N 页）与已用时（每 100ms 刷新），任务全部结束才收起；左侧状态文字不被覆盖 |
-| 概览页硬件检测 | 检测期间在概览页首显示同一 `LoadingBar`（正在检测硬件 + 已用时），完成或失败后收起 |
-| 其它后台加载 | 需要挂在状态栏的页面用 `LocllmState.show_loading(text)` → `QtMainWindow.show_loading` 渲染右侧加载条；页面内加载继续复用 `fcmd.gui.qt.widgets.LoadingBar`；多项任务由调用方合并说明，避免多个进度条抢位 |
+| 概览页硬件检测 | 与模型页共用状态栏右侧加载条：`LocllmState.begin_loading("hardware", …)` / `end_loading("hardware")`，完成或失败后收起，不再占用概览页内容区 |
+| 其它后台加载 | 统一用 `LocllmState.begin_loading(key, text)` / `end_loading(key)` → `QtMainWindow.loading_bar`；状态层按 key 聚合，多任务并存时显示最近开始的说明，任务结束回退到仍进行中的任务，避免互相覆盖 |
 
 ## 测试与门禁
 
@@ -108,8 +108,8 @@
   采样 / 生成 / 下载线程必须在这里停掉。
 - 窗口位置与大小：`geometry` 存客户区（`QWidget.geometry()`，不含标题栏与边框），
   恢复走 `restore_geometry` 的 `setGeometry`，两侧同一口径，避免每次启动叠加窗口装饰导致窗口漂移。
-- 后台加载：需要等待的场景用 `LoadingBar`（说明 + 不知道总量的忙碌动画 + 已用时），
-  不要把阻塞扫描留在页面构造函数里；跨页 / 全局任务优先挂到状态栏右侧
-  （`LocllmState.show_loading`），避免在内容区顶部盖住标题或分页控件。
+- 后台加载：需要等待的场景统一挂到状态栏右侧（`LocllmState.begin_loading` /
+  `end_loading`，窗口用 `LoadingBar` 渲染说明 + 忙碌动画 + 已用时）；不要把阻塞
+  扫描留在页面构造函数里，也不要在内容区顶部放大段进度条盖住标题或分页控件。
 - 复测：`QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/locllm/test_locllmw_qt_smoke.py`；
   真实窗口用 `uv run fcmd locllmw`（`PySide6-Essentials` 随 fcmd 安装）。

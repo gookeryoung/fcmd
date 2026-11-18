@@ -153,6 +153,7 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
         self.alive_states: list[ServeState] = []
         self.busy = False
         self.closing = False
+        self._loading_tasks: dict[str, str] = {}
         self.scanning = False
         self.detecting = False
 
@@ -175,9 +176,20 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
         """请求窗口切到运行页并启动指定模型（模型页快捷启动用）。"""
         self.serveModelRequested.emit(path)
 
-    def show_loading(self, text: str) -> None:
-        """在状态栏右侧显示 / 更新加载提示；空串收起（窗口负责渲染）。"""
+    def begin_loading(self, key: str, text: str) -> None:
+        """登记一项加载任务并显示最近开始的说明；同一说明供状态栏右侧渲染。"""
+        self._loading_tasks[key] = text
         self.loadingTextChanged.emit(text)
+
+    def end_loading(self, key: str) -> None:
+        """结束一项加载任务；还有其它任务时回退到上一条说明，否则收起。"""
+        if key not in self._loading_tasks:
+            return
+        self._loading_tasks.pop(key, None)
+        if self._loading_tasks:
+            self.loadingTextChanged.emit(next(reversed(self._loading_tasks.values())))
+        else:
+            self.loadingTextChanged.emit("")
 
     def remember_quant_choice(self, path: Path) -> None:
         """记住用户启动过的量化精度（按仓库保存），供模型页快捷启动默认选中。

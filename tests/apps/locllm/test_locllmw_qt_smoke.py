@@ -108,8 +108,45 @@ def test_loading_bar_sits_right_in_status_bar(window: Any) -> None:
     window.show_loading("")
     assert not window.loading_bar.is_running()
     assert window.status_text() == "环境就绪"
+    # 多任务共用状态栏右端：后开始的显示，结束后回退到仍在进行的任务。
+    window.state.begin_loading("hardware", "正在检测硬件…")
+    window.state.begin_loading("search", "正在加载第 1 页…")
+    assert window.loading_bar.text_label.text() == "正在加载第 1 页…"
+    window.state.end_loading("search")
+    assert window.loading_bar.text_label.text() == "正在检测硬件…"
+    window.state.end_loading("hardware")
+    assert not window.loading_bar.is_running()
+    assert not hasattr(window.overview, "loading")
     window.show_page("models")
     assert not hasattr(window.page("models").browse, "loading")
+
+
+def test_models_page_fresh_cache_skips_network(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """新鲜缓存命中时直接展示缓存页，不再提交在线搜索任务。"""
+    from fcmd.apps.locllm import _locllmw_list_cache as cache_mod
+    from fcmd.apps.locllm import _locllmw_qt_center as center
+    from fcmd.apps.locllm.llmdown import ModelSearch, ModelSummary
+
+    cache_path = tmp_path / "cache.json"
+    monkeypatch.setattr(cache_mod, "default_cache_path", lambda: cache_path)
+    key = cache_mod.cache_key("", 1, 30, "default")
+    cache_mod.ModelListCache(cache_path).put(
+        key,
+        ModelSearch((ModelSummary(repo="org/cached"),), total=1, page=1, page_size=30),
+    )
+    submitted: list[object] = []
+    real_submit = center.submit
+
+    def _record(fn: Any, *args: Any, **kwargs: Any) -> Any:
+        submitted.append(fn)
+        return real_submit(fn, *args, **kwargs)
+
+    monkeypatch.setattr(center, "submit", _record)
+    window.show_page("models")
+    browse = window.page("models").browse
+    assert browse._last_result is not None
+    assert browse._last_result.items[0].repo == "org/cached"
+    assert browse._search_work not in submitted
 
 
 def test_models_page_name_filter_is_debounced(window: Any) -> None:
