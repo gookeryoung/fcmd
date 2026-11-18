@@ -454,6 +454,27 @@ def test_monitor_page_has_target_summary_and_status_badge(window: Any) -> None:
     assert page._monitor_badge.objectName() == "Danger"
 
 
+def test_monitor_layout_keeps_status_and_bench_compact(window: Any) -> None:
+    """监测页布局：状态与目标标题同排，场景表与参数并排，结果表保底高度。"""
+    window.show()
+    window.show_page("monitor")
+    window.resize(1180, 820)
+    QApplication.processEvents()
+    page = window.page("monitor")
+    page._bench.set_expanded(True)
+    QApplication.processEvents()
+
+    def top(widget: Any) -> int:
+        return widget.mapTo(page, widget.rect().topLeft()).y()
+
+    # 状态徽标与最近采样属于标题行，不再各占一整行。
+    assert top(page._monitor_badge) == top(page._last_sample_label)
+    # 场景表与参数栏左右分栏：参数控件落在场景表的纵向范围内。
+    table_top = top(page._scenario_table)
+    assert table_top <= top(page._repeat_spin) < table_top + page._scenario_table.height()
+    assert page._bench_table.minimumHeight() >= 160
+
+
 def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll

@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -57,6 +56,7 @@ from fcmd.apps.locllm.llmbase import Endpoint, ServeError, ServeState
 from fcmd.gui.qt.widgets import (
     Card,
     Collapsible,
+    FormGrid,
     LogView,
     MetricGrid,
     PageScroll,
@@ -65,6 +65,7 @@ from fcmd.gui.qt.widgets import (
     link_button,
     make_table,
     make_table_item,
+    value_label,
 )
 from fcmd.gui.qt.workers import periodic, submit
 
@@ -200,49 +201,71 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         layout = scroll.body
         outer.addWidget(scroll)
 
-        target_card = Card("监测目标")
+        layout.addWidget(self._build_target())
+        layout.addWidget(self._build_metrics())
+        layout.addLayout(self._build_load_gpu())
+
+        self._bench = Collapsible("性能测试（短对话 / 长输出 / 代码补全 / 长上下文 / 并发）", expanded=False)
+        self._build_bench(self._bench.content)
+        layout.addWidget(self._bench)
+
+        layout.addWidget(self._build_log(), 1)
+
+    def _build_target(self) -> Card:
+        """监测目标卡片：标题行放状态徽标与最近采样，正文只留目标与刷新入口。
+
+        与概览页硬件卡片一致：``SectionTitle`` + 右侧轻量状态，状态不再单独占行；
+        页面变窄时目标地址换行，徽标 / 时间贴右保持一眼可见。
+        """
+        card = Card(parent=self)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel("监测目标", card)
+        title.setObjectName("SectionTitle")
+        self._monitor_badge = QLabel("等待采样…", card)
+        self._monitor_badge.setObjectName("Hint")
+        self._last_sample_label = hint_label("最近采样：-", wrap=False)
+        header.addWidget(title)
+        header.addWidget(self._monitor_badge)
+        header.addStretch(1)
+        header.addWidget(self._last_sample_label)
+        card.body.addLayout(header)
+
         target_row = QHBoxLayout()
         target_row.setContentsMargins(0, 0, 0, 0)
         target_row.setSpacing(8)
-        self._target_label = QLabel("未选择运行中的服务：仅采样系统负载", target_card)
-        self._target_label.setObjectName("Value")
+        self._target_label = value_label("未选择运行中的服务：仅采样系统负载")
         self._target_label.setWordWrap(True)
         self._refresh_services_button = link_button("刷新服务", tooltip="重新读取已登记服务")
         self._refresh_services_button.clicked.connect(self.state.refresh_services)
         target_row.addWidget(self._target_label, 1)
         target_row.addWidget(self._refresh_services_button)
-        target_card.body.addLayout(target_row)
-
-        target_status = QHBoxLayout()
-        target_status.setContentsMargins(0, 0, 0, 0)
-        target_status.setSpacing(8)
-        self._monitor_badge = QLabel("等待采样…", target_card)
-        self._monitor_badge.setObjectName("Hint")
-        self._last_sample_label = hint_label("最近采样：-", wrap=False)
-        target_status.addWidget(self._monitor_badge)
-        target_status.addStretch(1)
-        target_status.addWidget(self._last_sample_label)
-        target_card.body.addLayout(target_status)
-        target_card.body.addWidget(
+        card.body.addLayout(target_row)
+        card.body.addWidget(
             hint_label(
                 f"每 1s 采样服务 /metrics 与系统负载；速率按 {RATE_WINDOW_SECONDS:.0f}s 窗口平滑。服务未运行时仅采样系统负载。",
                 wrap=True,
             )
         )
-        layout.addWidget(target_card)
+        return card
 
-        metrics_card = Card("实时性能")
-        self._metrics = MetricGrid(METRIC_KEYS, columns=4, parent=metrics_card)
-        metrics_card.body.addWidget(self._metrics)
-        layout.addWidget(metrics_card)
+    def _build_metrics(self) -> Card:
+        """实时性能：与概览页一致的四列指标网格，一行展示服务侧核心指标。"""
+        card = Card("实时性能")
+        self._metrics = MetricGrid(METRIC_KEYS, columns=4, parent=card)
+        card.body.addWidget(self._metrics)
+        return card
 
-        load_gpu = QHBoxLayout()
-        load_gpu.setContentsMargins(0, 0, 0, 0)
-        load_gpu.setSpacing(8)
+    def _build_load_gpu(self) -> QHBoxLayout:
+        """系统负载与 GPU 双栏：各两列指标，窄窗时也不挤压成单列长列表。"""
+        pair = QHBoxLayout()
+        pair.setContentsMargins(0, 0, 0, 0)
+        pair.setSpacing(8)
         load_card = Card("系统负载")
         self._load = MetricGrid(LOAD_KEYS, columns=2, parent=load_card)
         load_card.body.addWidget(self._load)
-        load_gpu.addWidget(load_card, 1)
+        pair.addWidget(load_card, 1)
 
         gpu_card = Card("GPU 负载")
         self._gpu_name = QLabel("检测中…", gpu_card)
@@ -251,20 +274,27 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         gpu_card.body.addWidget(self._gpu_name)
         self._gpu = MetricGrid(GPU_KEYS, columns=2, parent=gpu_card)
         gpu_card.body.addWidget(self._gpu)
-        load_gpu.addWidget(gpu_card, 1)
-        layout.addLayout(load_gpu)
+        pair.addWidget(gpu_card, 1)
+        return pair
 
-        self._bench = Collapsible("性能测试（短对话 / 长输出 / 代码补全 / 长上下文 / 并发）", expanded=False)
-        self._build_bench(self._bench.content)
-        layout.addWidget(self._bench)
-
-        log_card = Card("服务日志")
-        self.log_view = LogView(height=240, parent=log_card)
-        log_card.body.addWidget(self.log_view)
-        layout.addWidget(log_card, 1)
+    def _build_log(self) -> Card:
+        """服务日志：复用统一日志组件（工具条自带复制 / 清空 / 导出）。"""
+        card = Card("服务日志")
+        self.log_view = LogView(height=220, parent=card)
+        card.body.addWidget(self.log_view)
+        return card
 
     def _build_bench(self, parent: QWidget) -> None:
+        """性能测试分区：场景与参数并排，操作行与结果标题分行，结果表保底可见。
+
+        参照运行页 / 设置页的表单布局：参数用右对齐标签的两列表单，与场景表
+        左右分栏，避免「场景表 + 参数卡片 + 操作行」各占一整行把结果表挤出视口。
+        """
         body = self._bench.body
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(12)
 
         self._scenario_table = QTableWidget(len(SCENARIOS), 5, parent)
         self._scenario_table.setHorizontalHeaderLabels(["选", "场景", "输入", "输出上限", "说明"])
@@ -291,25 +321,25 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
             for column, text in enumerate(values, start=1):
                 self._scenario_table.setItem(row, column, make_table_item(text))
         self._scenario_table.horizontalHeader().setStretchLastSection(True)
+        # 与参数栏并排后表格变窄：勾选 / 场景 / 输入 / 输出固定窄列，说明列吃剩余宽度。
+        for column, width in enumerate((44, 108, 96, 92)):
+            self._scenario_table.setColumnWidth(column, width)
+        self._scenario_table.setMinimumWidth(380)
         self._scenario_table.setMaximumHeight(190)
-        body.addWidget(self._scenario_table)
+        top.addWidget(self._scenario_table, 3)
 
-        params = Card("测试参数", parent)
-        grid = QGridLayout()
+        params = FormGrid(parent)
+        params.setMinimumWidth(280)
         self._repeat_spin = QSpinBox(params)
         self._repeat_spin.setRange(1, 20)
         self._repeat_spin.setValue(1)
         self._timeout_edit = QLineEdit("180", params)
         self._tokens_edit = QLineEdit("", params)
         self._tokens_edit.setPlaceholderText("留空按场景")
-        grid.addWidget(hint_label("重复次数", wrap=False), 0, 0)
-        grid.addWidget(self._repeat_spin, 0, 1)
-        grid.addWidget(hint_label("请求超时（秒）", wrap=False), 0, 2)
-        grid.addWidget(self._timeout_edit, 0, 3)
-        grid.addWidget(hint_label("输出上限", wrap=False), 1, 0)
-        grid.addWidget(self._tokens_edit, 1, 1)
-        params.body.addLayout(grid)
-        body.addWidget(params)
+        params.add_pair("重复次数", self._repeat_spin, "请求超时（秒）", self._timeout_edit)
+        params.add_row("输出上限", self._tokens_edit)
+        top.addWidget(params, 2, Qt.AlignmentFlag.AlignTop)
+        body.addLayout(top)
 
         actions = QHBoxLayout()
         self._bench_start = button("开始测试", kind="primary")
@@ -318,12 +348,23 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         self._bench_clear = button("清空结果", kind="ghost")
         self._bench_copy = button("复制 CSV", kind="ghost")
         self._bench_export = button("导出 CSV", kind="ghost")
-        for widget in (self._bench_start, self._bench_stop, self._bench_clear, self._bench_copy, self._bench_export):
-            actions.addWidget(widget)
+        actions.addWidget(self._bench_start)
+        actions.addWidget(self._bench_stop)
         actions.addStretch(1)
-        self._bench_status = hint_label("选择场景后点击「开始测试」")
-        actions.addWidget(self._bench_status)
+        for widget in (self._bench_clear, self._bench_copy, self._bench_export):
+            actions.addWidget(widget)
         body.addLayout(actions)
+
+        result_header = QHBoxLayout()
+        result_header.setContentsMargins(0, 0, 0, 0)
+        result_header.setSpacing(8)
+        result_title = QLabel("测试结果", parent)
+        result_title.setObjectName("SectionTitle")
+        self._bench_status = hint_label("选择场景后点击「开始测试」", wrap=False)
+        result_header.addWidget(result_title)
+        result_header.addStretch(1)
+        result_header.addWidget(self._bench_status)
+        body.addLayout(result_header)
 
         self._bench_table = make_table(
             RESULT_COLUMNS,
@@ -331,7 +372,7 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
             stretch_columns=(0, 7),
             parent=parent,
         )
-        self._bench_table.setMinimumHeight(140)
+        self._bench_table.setMinimumHeight(160)
         body.addWidget(self._bench_table)
         body.addWidget(
             hint_label(
