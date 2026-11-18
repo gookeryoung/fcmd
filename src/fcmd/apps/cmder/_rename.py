@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcmd.apps.cmder._ops import RenameItem, RenamePlan, validate_name
+from fcmd.infras.fs import CASE_MODES, split_name
+from fcmd.infras.fs import apply_case as _apply_case
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -39,7 +41,6 @@ __all__ = [
     "split_name",
 ]
 
-CASE_MODES = ("keep", "lower", "upper", "title", "sentence")
 RENAME_SORT_KEYS = ("name", "created", "modified")
 RENAME_PRESET_LIMIT = 50
 _NAME_MAX_LENGTH = 255
@@ -133,16 +134,6 @@ class _MaskValues:
     moment: datetime
 
 
-def split_name(name: str, is_dir: bool = False) -> tuple[str, str]:
-    """拆成不含点的名称与扩展名；目录视为没有扩展名。"""
-    if is_dir:
-        return name, ""
-    index = name.rfind(".")
-    if index <= 0:
-        return name, ""
-    return name[:index], name[index + 1 :]
-
-
 def _fragment_value(token: str, stem: str, offset: int) -> str | None:
     fragment = re.fullmatch(r"N(\d+)-(\d+)", token)
     if fragment is None:
@@ -226,18 +217,11 @@ def apply_find_replace(
 
 
 def apply_case(text: str, mode: str) -> str:
-    """大小写转换；``sentence`` 只把首字母转大写，其余保持。"""
-    if mode == "keep":
-        return text
-    if mode == "lower":
-        return text.lower()
-    if mode == "upper":
-        return text.upper()
-    if mode == "title":
-        return text.title()
-    if mode == "sentence":
-        return text[:1].upper() + text[1:]
-    raise MaskError(f"未知的大小写模式：{mode}")
+    """大小写转换；``sentence`` 只把首字母转大写，未知模式抛 :class:`MaskError`。"""
+    try:
+        return _apply_case(text, mode)
+    except ValueError as exc:
+        raise MaskError(str(exc)) from exc
 
 
 def order_inputs(inputs: Sequence[RenameInput], sort_key: str) -> list[RenameInput]:

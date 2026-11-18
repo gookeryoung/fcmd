@@ -20,10 +20,11 @@ from __future__ import annotations
 
 import os
 import re
-import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from fcmd.infras.fs import CASE_MODES, apply_case, split_name, two_phase_rename
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -87,8 +88,6 @@ ANCHOR_BEFORE = "before"
 ANCHOR_AFTER = "after"
 ANCHOR_INDEX = "index"
 
-CASE_MODES = ("keep", "lower", "upper", "title", "sentence")
-
 SORT_KEYS = ("name", "modified", "created")
 SORT_NAME = "name"
 SORT_MODIFIED = "modified"
@@ -101,7 +100,6 @@ STATUS_CONFLICT = "conflict"
 
 _NAME_MAX_LENGTH = 255
 _INVALID_NAME_RE = re.compile(r'[<>:"|?*\x00-\x1f]')
-_TEMP_PREFIX = ".fcmd-renamer-"
 _STR_FIELDS = ("kind", "pattern", "replacement", "field", "anchor", "anchor_text", "mode", "text")
 _BOOL_FIELDS = ("ignore_case",)
 _INT_FIELDS = ("occurrence", "position", "start", "step", "digits")
@@ -252,16 +250,6 @@ class RenameReport:
 # ---------------------------------------------------------------------- #
 # 规则求值
 # ---------------------------------------------------------------------- #
-def split_name(name: str, is_dir: bool = False) -> tuple[str, str]:
-    """拆成不含点的名称与扩展名；目录视为没有扩展名。"""
-    if is_dir:
-        return name, ""
-    index = name.rfind(".")
-    if index <= 0:
-        return name, ""
-    return name[:index], name[index + 1 :]
-
-
 def join_name(stem: str, ext: str) -> str:
     """拼接名称主干与扩展名；空扩展名不补点。"""
     return stem if not ext else f"{stem}.{ext}"
@@ -433,17 +421,10 @@ def _apply_insert(text: str, rule: RenameRule) -> str:
 
 def _apply_case(text: str, rule: RenameRule) -> str:
     """大小写转换；``sentence`` 只把首字母转大写。"""
-    if rule.mode == "keep":
-        return text
-    if rule.mode == "lower":
-        return text.lower()
-    if rule.mode == "upper":
-        return text.upper()
-    if rule.mode == "title":
-        return text.title()
-    if rule.mode == "sentence":
-        return text[:1].upper() + text[1:]
-    raise RuleError(f"未知的大小写模式：{rule.mode}")
+    try:
+        return apply_case(text, rule.mode)
+    except ValueError as exc:
+        raise RuleError(str(exc)) from exc
 
 
 def _apply_sequence(text: str, rule: RenameRule, position: int) -> str:
@@ -767,54 +748,8 @@ def undo_report(report: RenameReport) -> RenameReport:
 
 def _two_phase_rename(pairs: Sequence[tuple[Path, Path]]) -> RenameReport:
     """两阶段改名：先全部改临时名，再改目标名；失败时尽力回滚。"""
-    report = RenameReport()
-    prepared: list[tuple[Path, Path, Path]] = []
-    token = uuid.uuid4().hex[:8]
-    for index, (source, target) in enumerate(pairs):
-        if not source.exists() and not source.is_symlink():
-            report.errors.append((source, "源路径不存在"))
-            report.errors.extend(_rollback(prepared, ()))
-            return report
-        temp = source.with_name(f"{_TEMP_PREFIX}{token}-{index}")
-        try:
-            source.rename(temp)
-        except OSError as exc:
-            report.errors.append((source, f"移动到临时名失败：{exc}"))
-            report.errors.extend(_rollback(prepared, ()))
-            return report
-        prepared.append((source, target, temp))
-    finalized: list[tuple[Path, Path, Path]] = []
-    for source, target, temp in prepared:
-        try:
-            temp.rename(target)
-        except OSError as exc:
-            report.errors.append((source, f"重命名失败：{exc}"))
-            report.errors.extend(_rollback(prepared, finalized))
-            return report
-        finalized.append((source, target, temp))
-        report.completed.append((source, target))
-    return report
-
-
-def _rollback(
-    prepared: Sequence[tuple[Path, Path, Path]],
-    finalized: Sequence[tuple[Path, Path, Path]],
-) -> list[tuple[Path, str]]:
-    """回滚：已到目标名的先退回临时名，再把所有临时名退回原名。"""
-    errors: list[tuple[Path, str]] = []
-    for _source, target, temp in reversed(finalized):
-        try:
-            target.rename(temp)
-        except OSError as exc:
-            errors.append((target, f"回滚到临时名失败：{exc}"))
-    for source, _target, temp in prepared:
-        if not (temp.exists() or temp.is_symlink()):
-            continue
-        try:
-            temp.rename(source)
-        except OSError as exc:
-            errors.append((source, f"回滚原名失败：{exc}"))
-    return errors
+    completed, errors = two_phase_rename(list(pairs))
+    return RenameReport(completed=completed, errors=errors)
 
 
 # ---------------------------------------------------------------------- #
