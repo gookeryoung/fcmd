@@ -33,9 +33,14 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     抛 ServeError 弹出模态错误框（模态框无人点击会让测试永久挂死）。
     模态弹窗整体打桩兜底：任何错误分支都不允许在测试里阻塞主线程。
     """
+    from fcmd.apps.locllm import _locllmw_qt_center as center
+    from fcmd.apps.locllm.llmdown import ModelSearch
+
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
     monkeypatch.setattr(qt_state.LocllmState, "refresh_models", lambda self, port=None: None)
     monkeypatch.setattr(qt_state.LocllmState, "detect_hardware", lambda self, on_done=None: None)
+    # 模型页构造时会拉 ModelScope 列表；测试不能留真实网络线程（PySide2 退出阶段会等它）。
+    monkeypatch.setattr(center, "search_models", lambda *_args, **_kw: ModelSearch((), 0, 1, 30))
     monkeypatch.setattr(
         qt_state.llmserve.llmengine,
         "resolve_engine",
