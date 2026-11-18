@@ -266,6 +266,14 @@ def test_model_item_row_expands_inline_detail() -> None:
     blocked_quant_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_blocked=True)
     assert blocked_quant_row.quant_button is None
     assert "不可量化" in {label.text() for label in blocked_quant_row.findChildren(QLabel, "StatusTag")}
+    many_tags_row = _ModelItemRow(
+        ModelSummary(repo="Qwen/demo"),
+        quant_tags=("Q2_K", "Q3_K_M", "Q4_K_M", "Q5_K_M", "Q6_K", "Q8_0"),
+    )
+    many_tag_texts = {label.text() for label in many_tags_row.findChildren(QLabel, "QuantTag")}
+    assert "+2" in many_tag_texts
+    assert len(many_tag_texts) == 5
+
     partial_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), incomplete=True, progress_text="已下载 42%")
     assert partial_row.download_button.text() == "继续下载"
     assert partial_row.download_button.isEnabled()

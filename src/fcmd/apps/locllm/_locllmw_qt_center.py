@@ -214,30 +214,6 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             owner_label.setObjectName("OwnerTag")
             owner_label.setToolTip(f"发布方 {owner}")
             name_row.addWidget(owner_label, 0)
-        if installed and not incomplete:
-            name_row.addWidget(StatusTag("已安装", tone="success", parent=header), 0)
-        elif incomplete:
-            name_row.addWidget(StatusTag("部分下载", tone="warning", parent=header), 0)
-        if not downloadable:
-            name_row.addWidget(StatusTag("仅本地", tone="muted", parent=header), 0)
-        if any(tag.upper().startswith("UD-") for tag in quant_tags):
-            name_row.addWidget(StatusTag("UD", tone="accent", parent=header), 0)
-        if same_name > 1:
-            name_row.addWidget(StatusTag(f"同名 {same_name}", tone="muted", parent=header), 0)
-        if converted:
-            name_row.addWidget(StatusTag("已转换", tone="success", parent=header), 0)
-        elif convert_blocked:
-            blocked_tag = StatusTag("不可转换", tone="warning", parent=header)
-            blocked_tag.setToolTip(convert_blocked)
-            name_row.addWidget(blocked_tag, 0)
-        if quant_blocked:
-            name_row.addWidget(StatusTag("不可量化", tone="warning", parent=header), 0)
-        published = _locllmw_models.model_published_text(item)
-        if published:
-            published_label = QLabel(published, header)
-            published_label.setObjectName("Hint")
-            published_label.setToolTip(f"模型发布时间：{_locllmw_models.format_timestamp(item.updated)}")
-            name_row.addWidget(published_label, 0)
         left.addLayout(name_row)
         note_row = QHBoxLayout()
         note_row.setContentsMargins(0, 0, 0, 0)
@@ -249,7 +225,36 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         sub.setToolTip(subtitle)
         note_row.addWidget(sub, 0)
-        for tag in quant_tags:
+        published = _locllmw_models.model_published_text(item)
+        if published:
+            published_label = QLabel(published, header)
+            published_label.setObjectName("Hint")
+            published_label.setToolTip(f"模型发布时间：{_locllmw_models.format_timestamp(item.updated)}")
+            note_row.addWidget(published_label, 0)
+        note_row.addStretch(1)
+        if installed and not incomplete:
+            note_row.addWidget(StatusTag("已安装", tone="success", parent=header), 0)
+        elif incomplete:
+            note_row.addWidget(StatusTag("部分下载", tone="warning", parent=header), 0)
+        if not downloadable:
+            note_row.addWidget(StatusTag("仅本地", tone="muted", parent=header), 0)
+        if any(tag.upper().startswith("UD-") for tag in quant_tags):
+            note_row.addWidget(StatusTag("UD", tone="accent", parent=header), 0)
+        if same_name > 1:
+            note_row.addWidget(StatusTag(f"同名 {same_name}", tone="muted", parent=header), 0)
+        if converted:
+            note_row.addWidget(StatusTag("已转换", tone="success", parent=header), 0)
+        elif convert_blocked:
+            blocked_tag = StatusTag("不可转换", tone="warning", parent=header)
+            blocked_tag.setToolTip(convert_blocked)
+            note_row.addWidget(blocked_tag, 0)
+        if quant_blocked:
+            note_row.addWidget(StatusTag("不可量化", tone="warning", parent=header), 0)
+        visible_tags = list(quant_tags)
+        if default_quant in visible_tags:
+            visible_tags.remove(default_quant)
+            visible_tags.insert(0, default_quant)
+        for tag in visible_tags[:4]:
             chip = QLabel(tag, header)
             if tag == default_quant:
                 chip.setText(f"{tag} · 上次启动")
@@ -258,12 +263,17 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
                 chip.setToolTip(f"已量化精度 {tag}")
             chip.setObjectName("QuantTag")
             note_row.addWidget(chip, 0)
+        hidden_tags = visible_tags[4:]
+        if hidden_tags:
+            hidden_chip = QLabel(f"+{len(hidden_tags)}", header)
+            hidden_chip.setObjectName("QuantTag")
+            hidden_chip.setToolTip("其他量化：" + "、".join(hidden_tags))
+            note_row.addWidget(hidden_chip, 0)
         if incomplete and progress_text:
             progress = QLabel(progress_text, header)
             progress.setObjectName("DownloadProgress")
             progress.setToolTip(progress_text)
             note_row.addWidget(progress, 0)
-        note_row.addStretch(1)
         left.addLayout(note_row)
         header_row.addLayout(left, 1)
 
