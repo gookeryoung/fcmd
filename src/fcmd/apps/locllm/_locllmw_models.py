@@ -242,7 +242,7 @@ def quant_precision_label(path: Path) -> str:
     precision = detect_precision(path, tensors=False)
     if precision.quantized is not True:
         return ""
-    return precision.filename_label or precision.label.removesuffix(" 量化")
+    return precision.raw_label or precision.filename_label or precision.label.removesuffix(" 量化")
 
 
 def model_score(item: ModelSummary) -> int:

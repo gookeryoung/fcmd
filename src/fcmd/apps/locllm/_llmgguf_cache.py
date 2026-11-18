@@ -62,6 +62,8 @@ def _entry_payload(precision: GgufPrecision) -> dict[str, Any]:
         "filename_quantized": precision.filename_quantized,
         "expected_bytes": precision.expected_bytes,
         "actual_bytes": precision.actual_bytes,
+        "raw_label": precision.raw_label,
+        "dynamic": precision.dynamic,
     }
 
 
@@ -80,6 +82,8 @@ def _entry_from_payload(raw: Any) -> _Entry:
         filename_quantized=raw.get("filename_quantized"),
         expected_bytes=raw.get("expected_bytes"),
         actual_bytes=raw.get("actual_bytes"),
+        raw_label=raw.get("raw_label"),
+        dynamic=bool(raw.get("dynamic", False)),
     )
     return _Entry(mtime_ns=int(raw["mtime_ns"]), size=int(raw["size"]), precision=precision)
 

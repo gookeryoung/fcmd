@@ -340,6 +340,11 @@ class TestQuantQuickStart:
         path.write_bytes(b"x")
         assert quant_precision_label(path) == "Q4_K_M"
 
+    def test_quant_precision_label_keeps_ud_dynamic_name(self, tmp_path: Path) -> None:
+        path = tmp_path / "model-UD-Q4_K_XL.gguf"
+        path.write_bytes(b"x")
+        assert quant_precision_label(path) == "UD-Q4_K_XL"
+
     def test_quant_precision_label_ignores_full_precision(self, tmp_path: Path) -> None:
         path = tmp_path / "model-F16.gguf"
         path.write_bytes(b"x")

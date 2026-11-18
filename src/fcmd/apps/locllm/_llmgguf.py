@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Literal
 
+from fcmd.apps.locllm._llmquant import parse_quant_tag
 from fcmd.apps.locllm.llmbase import human_size
 
 __all__ = ["GGUF_META_LIMIT", "GgufPrecision", "detect_precision", "quantize_input_error"]
@@ -162,10 +163,14 @@ class GgufPrecision:
     filename_quantized: bool | None = None
     expected_bytes: int | None = None
     actual_bytes: int | None = None
+    raw_label: str | None = None
+    dynamic: bool = False
 
     @property
     def mismatch(self) -> bool:
-        """文件名标注与实测精度类别是否不一致。"""
+        """文件名标注与实测精度类别是否不一致（UD 动态量化元数据为基础类型，属预期）。"""
+        if self.dynamic:
+            return False
         return (
             self.quantized is not None
             and self.filename_quantized is not None
@@ -339,6 +344,7 @@ def detect_precision(path: Path, *, tensors: bool = True) -> GgufPrecision:
     except OSError:
         actual_bytes = None
     marker = _filename_marker(target.stem)
+    tag = parse_quant_tag(target.name)
 
     try:
         meta = _read_meta(target, tensors=tensors)
@@ -366,6 +372,8 @@ def detect_precision(path: Path, *, tensors: bool = True) -> GgufPrecision:
                 filename_quantized=marker[0] if marker is not None else None,
                 expected_bytes=meta.expected_bytes,
                 actual_bytes=actual_bytes,
+                raw_label=tag.raw if tag is not None else None,
+                dynamic=tag.dynamic if tag is not None else False,
             )
         if meta.tensor_type is not None:
             quantized = meta.tensor_type not in _FULL_TENSOR_TYPES
@@ -377,6 +385,8 @@ def detect_precision(path: Path, *, tensors: bool = True) -> GgufPrecision:
                 filename_quantized=marker[0] if marker is not None else None,
                 expected_bytes=meta.expected_bytes,
                 actual_bytes=actual_bytes,
+                raw_label=tag.raw if tag is not None else None,
+                dynamic=tag.dynamic if tag is not None else False,
             )
 
     if marker is not None:
@@ -388,6 +398,8 @@ def detect_precision(path: Path, *, tensors: bool = True) -> GgufPrecision:
             filename_label=name,
             filename_quantized=quantized,
             actual_bytes=actual_bytes,
+            raw_label=tag.raw if tag is not None else None,
+            dynamic=tag.dynamic if tag is not None else False,
         )
     return GgufPrecision(label="精度未知", quantized=None, source="unknown", actual_bytes=actual_bytes)
 

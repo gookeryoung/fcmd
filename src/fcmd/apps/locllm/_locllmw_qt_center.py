@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidgetItem,
@@ -60,14 +61,17 @@ from fcmd.apps.locllm._locllmw_list_cache import ModelListCache, cache_key
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
     LocalModel,
+    ModelFile,
     ModelInfo,
     ModelSearch,
     ModelSummary,
     ModelToolError,
     ProgressEvent,
+    QuantOption,
     download_files,
     fetch_model_info,
     filter_files,
+    quant_options,
     scan_local_models,
     search_models,
     select_source,
@@ -448,6 +452,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._list_cache = ModelListCache()
         self._scanning_installed = False
         self._downloading = False
+        self._listing_quant = False
         self._stop_requested = False
         self._active_repo: str | None = None
         self._bridge: _ProgressBridge | None = None
@@ -1132,7 +1137,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         for index in range(self.models.count()):
             row = self.models.itemWidget(self.models.item(index))
             if isinstance(row, _ModelItemRow):
-                busy = self._downloading or self._converting or self._quantizing
+                busy = self._downloading or self._converting or self._quantizing or self._listing_quant
                 row.set_download_state(
                     busy=busy,
                     active=self._downloading and row.repo == self._active_repo,
@@ -1148,11 +1153,63 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 running = row.serve_path is not None and self.state.is_running(row.serve_path)
                 row.set_serve_state(busy=busy or self.state.busy, running=running)
 
-    def start_download(self, repo: str) -> None:
-        """下载指定仓库到模型目录，进度显示在列表底部右侧。"""
+    def _begin_quant_choice(self, repo: str, source: str) -> None:
+        """后台读取文件清单，稍后弹出量化选择（不阻塞 GUI）。"""
+        self._listing_quant = True
+        self._sync_download_buttons()
+        self.download_status.setVisible(True)
+        self.download_bar.setValue(0)
+        self.download_text.setText(f"读取 {repo} 的量化清单…")
+        self._log(f"读取 {repo} 的量化清单…")
+        submit(
+            self._quant_options_work,
+            repo,
+            source,
+            on_done=lambda options: self._choose_quant(repo, options),
+            on_error=lambda message: self._quant_options_error(repo, message),
+        )
+
+    @staticmethod
+    def _quant_options_work(repo: str, source: str) -> tuple[QuantOption, ...]:
+        selection = select_source(repo, source)  # type: ignore[arg-type]
+        return quant_options(list(selection.files))
+
+    def _quant_options_error(self, repo: str, message: str) -> None:
+        self._listing_quant = False
+        self._sync_download_buttons()
+        self.state.status(f"{repo} · 读取量化清单失败")
+        self._log(f"读取量化清单失败 {repo}: {message}")
+
+    def _choose_quant(self, repo: str, options: tuple[QuantOption, ...]) -> None:
+        """量化选择：唯一选项直接下载，多选项弹出列表，无量化回退全量。"""
+        self._listing_quant = False
+        self._sync_download_buttons()
+        if not options:
+            self.start_download(repo, files=())
+            return
+        if len(options) == 1:
+            self._log(f"{repo} 只有一个量化 {options[0].label}，直接下载")
+            self.start_download(repo, files=options[0].files)
+            return
+        labels = [option.display for option in options]
+        choice, accepted = QInputDialog.getItem(self, "选择量化", "下载哪个量化：", labels, 0, False)
+        if not accepted or not choice:
+            self.download_text.setText("已取消量化选择")
+            self._log(f"已取消下载 {repo}：未选择量化")
+            return
+        index = labels.index(choice)
+        option = options[index]
+        self._log(f"选择下载 {repo} · {option.label}")
+        self.start_download(repo, files=option.files)
+
+    def start_download(self, repo: str, files: tuple[ModelFile, ...] | None = None) -> None:
+        """下载指定仓库到模型目录；未指定量化时先读取文件清单让用户选择。"""
         if self._downloading or self._converting or self._quantizing or not repo:
             return
         settings = _locllmw_models.settings_from_dict(self.state.settings.download)
+        if files is None and not settings.include.strip() and not settings.exclude.strip():
+            self._begin_quant_choice(repo, settings.source)
+            return
         dest = _llmconfig.models_dir()
         self._downloading = True
         self._stop_requested = False
@@ -1176,6 +1233,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             settings.exclude,
             settings.workers,
             settings.verify,
+            tuple(file.path for file in files) if files is not None else (),
             on_done=self._download_done,
             on_error=lambda message: self._download_error(repo, message),
             on_finished=self._download_finished,
@@ -1190,6 +1248,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         exclude: str,
         workers: int,
         verify: bool,
+        only_paths: tuple[str, ...] = (),
     ) -> str:
         self._log(f"获取 {repo} 的 {source} 文件清单…")
         selection = select_source(repo, source)  # type: ignore[arg-type]
@@ -1199,6 +1258,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             _locllmw_models.parse_patterns(include),
             _locllmw_models.parse_patterns(exclude),
         )
+        if only_paths:
+            wanted = set(only_paths)
+            selected = [file for file in selected if file.path in wanted]
         if not selected:
             raise ModelToolError("过滤后没有文件，请检查设置中的包含 / 排除掩码")
         target = dest / repo

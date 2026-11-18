@@ -403,6 +403,11 @@ class TestModel:
         mmproj.write_bytes(b"y" * 99999)
         assert llmmodel.find_model("Q5_K_M", models_root=model_file.parent.parent) == model_file.resolve()
 
+    def test_ud_xl_matches_base_quant(self, tmp_path: Path) -> None:
+        path = tmp_path / "model-UD-Q4_K_XL.gguf"
+        path.write_bytes(b"x" * 16)
+        assert llmmodel.find_model("Q4_K_M", models_root=tmp_path) == path.resolve()
+
     def test_no_match_lists_available(self, model_file: Path) -> None:
         with pytest.raises(ServeError, match="未找到量化 Q8_0"):
             llmmodel.find_model("Q8_0", models_root=model_file.parent.parent)

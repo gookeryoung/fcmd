@@ -37,6 +37,7 @@ from urllib.parse import quote
 
 import fcmd
 from fcmd.apps.locllm import _llmconfig
+from fcmd.apps.locllm._llmquant import QuantTag, parse_quant_tag
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.console import Table, get_console
 
@@ -53,6 +54,7 @@ __all__ = [
     "ModelSummary",
     "ModelTask",
     "ProgressEvent",
+    "QuantOption",
     "SourceSelection",
     "delete_local_model",
     "download_files",
@@ -61,8 +63,10 @@ __all__ = [
     "fetch_tasks",
     "filter_by_series",
     "filter_files",
+    "find_quant_option",
     "format_timestamp",
     "model_series",
+    "quant_options",
     "scan_local_models",
     "search_models",
     "select_source",
@@ -220,6 +224,33 @@ class ModelFile:
     path: str
     size: int
     sha256: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class QuantOption:
+    """仓库内的一个已量化 GGUF 选项（可能含多个分片与 mmproj）。"""
+
+    label: str
+    family: str
+    dynamic: bool
+    files: tuple[ModelFile, ...]
+    total_size: int
+
+    @property
+    def shards(self) -> int:
+        """GGUF 分片数（不含 mmproj）。"""
+        return sum(1 for file in self.files if "mmproj" not in file.path.lower())
+
+    @property
+    def display(self) -> str:
+        """列表项文本：``UD-Q4_K_XL · 18.6 GB · 3 分片 · 动态``。"""
+        size = human_size(self.total_size)
+        parts = [self.label, size]
+        if self.shards > 1:
+            parts.append(f"{self.shards} 分片")
+        if self.dynamic:
+            parts.append("动态")
+        return " · ".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -801,6 +832,94 @@ def filter_files(
     return selected
 
 
+def quant_options(files: list[ModelFile]) -> tuple[QuantOption, ...]:
+    """把远端文件按量化标签聚合为可下载选项（分片 + mmproj）。
+
+    只聚合已量化的 GGUF（含 ``UD-`` 动态变体）；没有量化标签的文件
+    （README / safetensors / F16 全量）不进入选项，供调用方回退到旧的全量过滤。
+    """
+    mmproj = [
+        file for file in files if file.path.lower().endswith(".gguf") and "mmproj" in Path(file.path).name.lower()
+    ]
+    groups: dict[str, list[ModelFile]] = {}
+    tags: dict[str, QuantTag] = {}
+    for file in files:
+        if not file.path.lower().endswith(".gguf") or "mmproj" in Path(file.path).name.lower():
+            continue
+        tag = parse_quant_tag(file.path)
+        if tag is None:
+            continue
+        groups.setdefault(tag.raw, []).append(file)
+        tags[tag.raw] = tag
+    options: list[QuantOption] = []
+    for label, shard_files in groups.items():
+        tag = tags[label]
+        selected = sorted([*shard_files, *mmproj], key=lambda item: item.path)
+        options.append(
+            QuantOption(
+                label=label,
+                family=tag.family,
+                dynamic=tag.dynamic,
+                files=tuple(selected),
+                total_size=sum(item.size for item in selected),
+            )
+        )
+    return tuple(sorted(options, key=lambda option: (-option.total_size, option.label)))
+
+
+def find_quant_option(options: tuple[QuantOption, ...], requested: str) -> QuantOption | None:
+    """按显式量化名选择选项：先精确匹配，再允许同族动态 XL 兜底。"""
+    wanted = parse_quant_tag(requested)
+    for option in options:
+        if wanted is not None and option.label.casefold() == wanted.raw.casefold():
+            return option
+    if wanted is None:
+        return None
+    candidates = [
+        option
+        for option in options
+        if option.family == wanted.family
+        and (not wanted.variant or option.label.upper().endswith(f"_{wanted.variant}"))
+    ]
+    if candidates:
+        return max(candidates, key=lambda option: option.total_size)
+    dynamic = [option for option in options if option.family == wanted.family and option.dynamic]
+    return max(dynamic, key=lambda option: option.total_size) if dynamic else None
+
+
+def select_download_files(  # noqa: PLR0913 - 下载选择参数成组传入
+    files: list[ModelFile],
+    *,
+    include: list[str] | None = None,
+    exclude: list[str] | None = None,
+    quant: str | None = None,
+    file: str | None = None,
+    all_quants: bool = False,
+) -> list[ModelFile]:
+    """按量化 / 指定文件 / 旧 include-exclude 规则选择下载文件。"""
+    if file is not None:
+        wanted = file.replace("\\", "/")
+        selected = [item for item in files if item.path == wanted or item.path.endswith("/" + wanted)]
+        if not selected:
+            raise ModelToolError(f"仓库中没有文件: {file}")
+        return selected
+    options = quant_options(files)
+    if quant is not None:
+        option = find_quant_option(options, quant)
+        if option is None:
+            available = ", ".join(option.label for option in options) or "无"
+            raise ModelToolError(f"未找到量化 {quant}；可选: {available}")
+        return list(option.files)
+    if all_quants or include or exclude:
+        return filter_files(files, include, exclude)
+    if len(options) == 1:
+        return list(options[0].files)
+    if len(options) > 1:
+        available = ", ".join(option.label for option in options)
+        raise ModelToolError(f"仓库有多个量化：{available}；请用 --quant 指定，或用 --all-quants 全部下载")
+    return filter_files(files, include, exclude)
+
+
 # ---------------------------------------------------------------------- #
 # 源选择与测速
 # ---------------------------------------------------------------------- #
@@ -1344,6 +1463,9 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     revision: str | None = None,
     include: list[str] | None = None,
     exclude: list[str] | None = None,
+    quant: str | None = None,
+    file: str | None = None,
+    all_quants: bool = False,
     workers: int = 4,
     verify: bool = True,
 ) -> None:
@@ -1363,6 +1485,12 @@ def download_cmd(  # noqa: PLR0913, PLR0917
         仅下载匹配的 glob（空格分隔多个），如 ``*.safetensors``。
     exclude:
         排除匹配的 glob。
+    quant:
+        只下载指定量化（如 ``UD-Q4_K_XL``）；仓库只有一个量化时可省略。
+    file:
+        只下载指定文件（仓库内路径或文件名）。
+    all_quants:
+        下载全部量化 / 文件（兼容旧行为）。
     workers:
         并发下载文件数（默认 4）。
     verify:
@@ -1371,7 +1499,14 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     repo = _normalize_repo(repo)
     selection = select_source(repo, source, revision)
     _print_selection(selection)
-    selected = filter_files(list(selection.files), include, exclude)
+    selected = select_download_files(
+        list(selection.files),
+        include=include,
+        exclude=exclude,
+        quant=quant,
+        file=file,
+        all_quants=all_quants,
+    )
     if not selected:
         raise ModelToolError("过滤后没有文件，请检查 --include / --exclude")
 

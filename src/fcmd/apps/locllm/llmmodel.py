@@ -13,6 +13,7 @@ from pathlib import Path
 
 import fcmd
 from fcmd.apps.locllm import llmenv
+from fcmd.apps.locllm._llmquant import exact_quant_match, matches_profile
 from fcmd.apps.locllm.llmbase import (
     DEFAULT_PROFILE,
     KV_BYTES_PER_TOKEN_FP16,
@@ -197,7 +198,7 @@ def scan_models(
             if key in seen:
                 continue
             seen.add(key)
-            profiles = tuple(name for name, prof in PROFILES.items() if prof.quant.lower() in path.name.lower())
+            profiles = tuple(name for name, prof in PROFILES.items() if matches_profile(path, prof.quant))
             entries.append(
                 ModelEntry(
                     root=resolved_root,
@@ -236,20 +237,21 @@ def find_model(
         if not directory.is_dir():
             raise ServeError(
                 f"模型目录不存在: {directory}；先下载模型："
-                f"fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* --dest {directory}"
+                f"fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --quant {quant} --dest {directory}"
             )
 
     entries = scan_models(directory)
-    matched = [entry for entry in entries if quant.lower() in entry.path.name.lower()]
+    matched = [entry for entry in entries if matches_profile(entry.path, quant)]
     if not matched:
         available = sorted({entry.path.name for entry in entries})[:5]
         hint = f"；已发现: {', '.join(available)}" if available else ""
         raise ServeError(
             f"在 {directory} 未找到量化 {quant} 的 GGUF{hint}；"
-            f"可执行 fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --include *{quant}* "
+            f"可执行 fcmd llmdown download unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF --quant {quant} "
             f"--dest {directory}"
         )
-    return max(matched, key=lambda entry: entry.size).path
+    exact = [entry for entry in matched if exact_quant_match(entry.path, quant)]
+    return max(exact or matched, key=lambda entry: entry.size).path
 
 
 #: 自动配对视觉塔的最低分；低于该值视为“无匹配”，避免误配
@@ -467,7 +469,7 @@ def list_cmd(models_root: Path | None = None) -> None:
 
     get_console().print("各档位将选用的模型:")
     for name, profile in PROFILES.items():
-        matched = [entry for entry in entries if profile.quant.lower() in entry.path.name.lower()]
+        matched = [entry for entry in entries if matches_profile(entry.path, profile.quant)]
         quant = f"{profile.quant:<7}"
         if matched:
             chosen = max(matched, key=lambda entry: entry.size)

@@ -44,10 +44,13 @@ from fcmd.apps.locllm.llmdown import (
     file_url,
     filter_by_series,
     filter_files,
+    find_quant_option,
     format_timestamp,
     model_series,
+    quant_options,
     scan_local_models,
     search_models,
+    select_download_files,
     select_source,
     series_matches,
     series_options,
@@ -253,6 +256,40 @@ class TestHelpers:
         assert [f.path for f in filter_files(files, ["*.safetensors"])] == ["a.safetensors"]
         assert [f.path for f in filter_files(files, exclude=["*.md"])] == ["a.safetensors", "b.json"]
         assert filter_files(files, ["*.bin"]) == []
+
+    def test_quant_options_group_shards_and_mmproj(self) -> None:
+        files = [
+            ModelFile("org/model-UD-Q4_K_XL-00001-of-00002.gguf", 10),
+            ModelFile("org/model-UD-Q4_K_XL-00002-of-00002.gguf", 10),
+            ModelFile("org/model-Q5_K_M.gguf", 20),
+            ModelFile("org/mmproj-F16.gguf", 3),
+            ModelFile("README.md", 1),
+        ]
+        options = {option.label: option for option in quant_options(files)}
+        assert set(options) == {"UD-Q4_K_XL", "Q5_K_M"}
+        ud = options["UD-Q4_K_XL"]
+        assert ud.dynamic is True
+        assert ud.shards == 2
+        assert {file.path for file in ud.files} == {
+            "org/model-UD-Q4_K_XL-00001-of-00002.gguf",
+            "org/model-UD-Q4_K_XL-00002-of-00002.gguf",
+            "org/mmproj-F16.gguf",
+        }
+
+    def test_select_download_files_quant_and_ambiguity(self) -> None:
+        files = [
+            ModelFile("model-UD-Q4_K_XL.gguf", 10),
+            ModelFile("model-Q5_K_M.gguf", 20),
+        ]
+        selected = select_download_files(files, quant="UD-Q4_K_XL")
+        assert [file.path for file in selected] == ["model-UD-Q4_K_XL.gguf"]
+        with pytest.raises(ModelToolError, match="多个量化"):
+            select_download_files(files)
+        assert len(select_download_files(files, all_quants=True)) == 2
+
+    def test_find_quant_option_falls_back_to_same_family(self) -> None:
+        options = quant_options([ModelFile("model-UD-Q4_K_XL.gguf", 10)])
+        assert find_quant_option(options, "Q4_K_M") is options[0]
 
 
 # ---------------------------------------------------------------------- #
@@ -627,6 +664,26 @@ class TestCli:
         monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
         with pytest.raises(ModelToolError, match="过滤后没有文件"):
             llmdown.download_cmd("Qwen/demo", include=["*.json"])
+
+    def test_download_quant_via_run_tool(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        captured: dict[str, Any] = {}
+        selection = SourceSelection(
+            "modelscope",
+            (ModelFile("model-UD-Q4_K_XL.gguf", 2), ModelFile("model-Q5_K_M.gguf", 3)),
+        )
+
+        def _fake_download(repo: str, files: list[ModelFile], dest: Path, *args: Any) -> None:
+            captured.update(repo=repo, files=files, dest=dest)
+
+        monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "models"))
+        monkeypatch.setattr(llmdown, "select_source", lambda *a, **k: selection)
+        monkeypatch.setattr(llmdown, "download_files", _fake_download)
+        code = run_tool("llmdown", ["download", "Qwen/demo", "--quant", "UD-Q4_K_XL"])
+        assert code == 0
+        assert [file.path for file in captured["files"]] == ["model-UD-Q4_K_XL.gguf"]
+        assert "总大小" in capsys.readouterr().out
 
     def test_search_via_run_tool(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         result = ModelSearch(

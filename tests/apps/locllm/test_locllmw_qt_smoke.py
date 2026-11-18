@@ -595,6 +595,32 @@ def test_bench_moves_to_help_menu(window: Any) -> None:
     dialog.close()
 
 
+def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """下载前按量化选择：唯一选项直接下载，多选项弹列表。"""
+    from fcmd.apps.locllm.llmdown import ModelFile, QuantOption
+
+    window.show_page("models")
+    page = window.page("models").browse
+    calls: list[tuple[str, tuple[ModelFile, ...] | None]] = []
+    monkeypatch.setattr(page, "start_download", lambda repo, files=None: calls.append((repo, files)))
+    ud = QuantOption(
+        "UD-Q4_K_XL",
+        "Q4_K",
+        True,
+        (ModelFile("model-UD-Q4_K_XL.gguf", 10),),
+        10,
+    )
+    q5 = QuantOption("Q5_K_M", "Q5_K", False, (ModelFile("model-Q5_K_M.gguf", 20),), 20)
+    page._choose_quant("org/demo", (ud,))
+    assert calls[-1] == ("org/demo", ud.files)
+
+    from PySide6.QtWidgets import QInputDialog
+
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *_args, **_kwargs: (q5.display, True))
+    page._choose_quant("org/demo", (ud, q5))
+    assert calls[-1] == ("org/demo", q5.files)
+
+
 def test_overview_scrolls_only_recommendation_list(window: Any) -> None:
     """概览不再整页滚动：页面高度不足时只由推荐列表内部滚动。"""
     from fcmd.gui.qt.widgets import PageScroll

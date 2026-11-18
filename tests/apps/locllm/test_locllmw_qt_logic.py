@@ -383,6 +383,14 @@ def test_pick_model_matches_profile_quant_first(tmp_path: Path) -> None:
     assert pick_model(None, entries, "Q5_K_M") == tmp_path / "b-Q5_K_M.gguf"
 
 
+def test_pick_model_ud_xl_matches_base_profile(tmp_path: Path) -> None:
+    entries = [
+        _model(tmp_path, "a-UD-Q4_K_XL.gguf", 100),
+        _model(tmp_path, "b-Q5_K_M.gguf", 20),
+    ]
+    assert pick_model(None, entries, "Q4_K_M") == tmp_path / "a-UD-Q4_K_XL.gguf"
+
+
 def test_pick_model_falls_back_to_largest_when_quant_missing(tmp_path: Path) -> None:
     entries = [_model(tmp_path, "a-Q4_K_XL.gguf", 10), _model(tmp_path, "b-IQ4_XS.gguf", 30)]
     assert pick_model(None, entries, "Q5_K_M") == tmp_path / "b-IQ4_XS.gguf"

@@ -88,6 +88,16 @@ def _write_gguf(  # noqa: PLR0913
     path.write_bytes(bytes(buffer))
 
 
+def test_ud_dynamic_keeps_raw_label_and_suppresses_mismatch(tmp_path: Path) -> None:
+    path = tmp_path / "Qwen3-Coder-30B-UD-Q4_K_XL.gguf"
+    _write_gguf(path, file_type=15, tensors=[("w", (100,), 12, 0)])
+
+    result = detect_precision(path)
+    assert result.raw_label == "UD-Q4_K_XL"
+    assert result.dynamic is True
+    assert result.mismatch is False
+
+
 def test_f16_full_precision_is_not_flagged_as_quantized(tmp_path: Path) -> None:
     path = tmp_path / "Qwen3-Coder-30B-A3B-Instruct-f16.gguf"
     _write_gguf(path, file_type=1, tensors=[("w", (100,), 1, 0), ("norm", (10,), 0, 200)])

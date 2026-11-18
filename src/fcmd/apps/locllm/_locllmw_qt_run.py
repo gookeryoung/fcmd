@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.locllm import _llmtune, _locllmw_recommend, llmbase, llmenv, llmmodel, llmserve
+from fcmd.apps.locllm._llmquant import matches_profile
 from fcmd.apps.locllm._locllmw_monitor import _busy_advice, _fit_advice, _probe_web_ui
 from fcmd.apps.locllm._locllmw_ui import service_name_from_model
 from fcmd.apps.locllm.llmbase import (
@@ -244,8 +245,7 @@ def pick_model(
         return selected
     if not models:
         return None
-    wanted = quant.lower()
-    matched = [entry for entry in models if wanted in entry.path.name.lower()]
+    matched = [entry for entry in models if matches_profile(entry.path, quant)]
     pool = matched or list(models)
     return max(pool, key=lambda entry: entry.size).path
 
