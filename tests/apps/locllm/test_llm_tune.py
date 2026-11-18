@@ -90,7 +90,7 @@ class TestBackendArgs:
     def test_throughput_flags(self, tmp_path: Path) -> None:
         plan = _plan(tmp_path, tuning=_llmtune.preset("throughput"))
         argv = plan.argv()
-        assert argv[argv.index("-np") + 1] == "4"
+        assert argv[argv.index("-np") + 1] == "1"
         assert argv[argv.index("-b") + 1] == "4096"
         assert argv[argv.index("--threads-http") + 1] == "8"
         assert argv[argv.index("--cache-reuse") + 1] == "256"
@@ -149,9 +149,9 @@ class TestSyncAdvancedFields:
         assert (synced.kv_auto, synced.ubatch_auto) == (True, True)
         assert (synced.parallel_value, synced.threads_http_value) == ("", "")
 
-    def test_throughput_fills_parallel_and_threads_http(self) -> None:
+    def test_throughput_fills_threads_http_but_keeps_parallel_default(self) -> None:
         synced = self._sync(_llmtune.preset("throughput"))
-        assert (synced.parallel_value, synced.parallel_auto) == ("4", True)
+        assert (synced.parallel_value, synced.parallel_auto) == ("", False)
         assert (synced.threads_http_value, synced.threads_http_auto) == ("8", True)
         assert (synced.kv_value, synced.ubatch_value) == ("", "")
 
@@ -199,8 +199,8 @@ class TestMakePlanTune:
     def test_tune_is_applied(self, env: tuple[Path, Path]) -> None:
         model, home = env
         plan = llmserve.make_plan("qwen", home=home, model=model, tune="throughput")
-        assert plan.tuning.parallel == 4
-        assert plan.argv()[plan.argv().index("-np") + 1] == "4"
+        assert plan.tuning.parallel == 1
+        assert plan.argv()[plan.argv().index("-np") + 1] == "1"
 
     def test_auto_uses_supplied_gpu_memory(self, env: tuple[Path, Path]) -> None:
         model, home = env

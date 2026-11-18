@@ -552,6 +552,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.alias_edit = QLineEdit("", self.advanced.content)
         adv_form.add_pair("ubatch", self.ubatch_edit, "模型别名（留空自动）", self.alias_edit)
         self.parallel_edit = QLineEdit("", self.advanced.content)
+        self.parallel_edit.setPlaceholderText("默认 1")
         self.threads_http_edit = QLineEdit("", self.advanced.content)
         adv_form.add_pair("并发槽（-np）", self.parallel_edit, "HTTP 线程", self.threads_http_edit)
         self.api_key_edit = QLineEdit(DEFAULT_API_KEY, self.advanced.content)

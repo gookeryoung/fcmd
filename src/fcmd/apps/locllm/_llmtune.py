@@ -43,10 +43,10 @@ _PRESETS: dict[str, Tuning] = {
     "throughput": Tuning(
         name="throughput",
         label="并发吞吐",
-        detail="4 个并发槽 + 8 个 HTTP 线程，实测并发吞吐约 2.4 倍，单请求约 -7%",
+        detail="HTTP 线程 8、并发槽默认 1（需要多路并发时手动调大并发槽）",
         batch=4096,
         ubatch=None,
-        parallel=4,
+        parallel=1,
         cache_reuse=256,
         threads_http=8,
     ),
