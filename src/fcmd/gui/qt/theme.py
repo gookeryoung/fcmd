@@ -140,13 +140,13 @@ QFrame#LoadBlock {
     border-radius: 6px;
 }
 QLabel#OwnerTag {
-    color: $accent;
-    background: $accent_soft;
-    border: 1px solid $accent;
+    color: $muted;
+    background: $surface_hover;
+    border: 1px solid $border;
     border-radius: 8px;
     padding: 0 6px;
     font-size: ${font_small}pt;
-    font-weight: 600;
+    font-weight: 500;
 }
 QLabel#StatusTag {
     border-radius: 9px;

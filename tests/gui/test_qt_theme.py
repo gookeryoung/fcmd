@@ -37,6 +37,17 @@ def test_restart_button_disabled_state_is_distinct() -> None:
     assert disabled != enabled
 
 
+def test_owner_tag_differs_from_quant_tag() -> None:
+    """发布方标签用中性色，量化精度标签保留强调色，避免两种胶囊混淆。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    owner = text.split("QLabel#OwnerTag {", 1)[1].split("}", 1)[0]
+    quant = text.split("QLabel#QuantTag {", 1)[1].split("}", 1)[0]
+    assert owner != quant
+    assert theme.palette.muted in owner
+    assert theme.palette.accent in quant
+
+
 def test_stylesheet_contains_expected_selectors() -> None:
     theme = _guitheme.resolve_theme("dark-blue")
     text = _qt_theme.stylesheet(theme)
