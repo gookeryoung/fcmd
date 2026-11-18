@@ -72,16 +72,15 @@ jobs:
         run: uv run pyrefly check -j 0
 
   test:
-    name: Test (Python 3.10 / 3.13 / 3.14)
+    name: Test (Python ${{ matrix.python-version }} shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # 临时调试：只跑 3.10，串行；详细输出与线程栈 dump 在 Run tests 里加。
-          - python-version: "3.10"
-            pytest_args: '-p no:xdist -o addopts=""'
+        # 临时调试：3.10 同时起三份（模拟三格矩阵并发），每份连跑两轮全量。
+        python-version: ["3.10"]
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
 
@@ -138,7 +137,7 @@ jobs:
           free -m
           for i in 1 2; do
             echo "=== run $i start $(date -u +%H:%M:%S) ==="
-            timeout -k 5 280 uv run pytest ${{ matrix.pytest_args }} \
+            timeout -k 5 280 uv run pytest -p no:xdist -o addopts="" \
               -o faulthandler_timeout=45 -v -m "not slow" \
               --cov=fcmd --cov-fail-under=95 --cov-report=term-missing
             echo "=== run $i exit=$? $(date -u +%H:%M:%S) ==="
