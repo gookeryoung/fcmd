@@ -51,7 +51,7 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kw: QMessageBox.StandardButton.No)
     create_application([])
     win = LocllmWindow(tmp_path / "ui" / "locllmw.json")
-    win.monitor_page.stop()
+    win.overview.stop()
     yield win
     win.close()
 
@@ -86,7 +86,7 @@ def test_status_reflects_scan_result(window: Any) -> None:
 
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
-    assert keys == ("overview", "models", "run", "chat", "lab", "monitor", "settings")
+    assert keys == ("overview", "models", "run", "chat", "lab", "settings")
     for key in keys:
         window.show_page(key)
         assert window.current_page() == key
@@ -431,7 +431,7 @@ def test_sidebar_collapsed_state_restored(monkeypatch: pytest.MonkeyPatch, tmp_p
     settings_path.write_text(json.dumps({"sidebar_collapsed": True}), encoding="utf-8")
     create_application([])
     win = LocllmWindow(settings_path)
-    win.monitor_page.stop()
+    win.overview.stop()
     try:
         assert win.nav.is_collapsed()
         assert win.sidebar_action.isChecked()
@@ -439,26 +439,8 @@ def test_sidebar_collapsed_state_restored(monkeypatch: pytest.MonkeyPatch, tmp_p
         win.close()
 
 
-def test_monitor_page_has_target_summary_and_status_badge(window: Any) -> None:
-    """监测页参照概览：顶部目标摘要 + 状态徽标 + 最近采样时间。"""
-    window.show_page("monitor")
-    page = window.page("monitor")
-    assert page._target_label.text().startswith("未选择")
-    assert page._refresh_services_button.text() == "刷新服务"
-    assert page._monitor_badge.text() == "仅系统负载"
-    assert page._monitor_badge.tone() == "warning"
-    assert page._monitor_badge.objectName() == "StatusTag"
-    assert page._last_sample_label.text().startswith("最近采样：")
-    page._set_monitor_badge("监控中", "success")
-    assert page._monitor_badge.tone() == "success"
-    page._set_monitor_badge("采样失败", "danger")
-    assert page._monitor_badge.tone() == "danger"
-
-
 def test_service_log_moves_to_help_menu(window: Any) -> None:
     """服务日志入口在「帮助 → 服务日志…」，日志窗口回放缓冲并实时追加。"""
-    window.show_page("monitor")
-    assert not hasattr(window.page("monitor"), "log_view")
     texts = [action.text() for action in window.help_menu.actions() if not action.isSeparator()]
     assert texts[-3:] == ["性能测试…", "服务日志…", "关于"]
 
@@ -480,16 +462,12 @@ def test_service_log_moves_to_help_menu(window: Any) -> None:
     dialog.close()
 
 
-def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
-    """占用情况在概览硬件卡：GPU / CPU / 内存格图 + 显存 / 交换副条；监测页只留 tok/s。"""
+def test_overview_load_blocks_and_rate_display(window: Any) -> None:
+    """概览硬件卡：GPU / CPU / 内存格图 + 关键信息 + 实时 tok/s。"""
     from fcmd.apps.locllm import llmserve
     from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
 
-    window.show_page("monitor")
-    page = window.page("monitor")
     overview = window.overview
-    assert not hasattr(page, "_gpu_bar")
-    assert not hasattr(page, "_gen_rate_label")
     assert not hasattr(overview, "_gpu_gauge")
     assert overview._recommend_list.parent().title() == "智能推荐"
     # 负载块不再支持展开：标题后直接用小字提示关键信息。
@@ -524,7 +502,7 @@ def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
             process_memory=15000.0,
         ),
     )
-    page._apply_sample((sample, None, None))
+    overview._apply_sample((sample, None, None))
 
     assert overview._gpu_percent.text() == "73 %"
     assert overview._cpu_percent.text() == "41 %"
@@ -543,7 +521,7 @@ def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
 
     # 服务指标：生成 tok/s 单独大字展示，其余进次要网格。
     metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
-    page._apply_sample((sample, metrics, None))
+    overview._apply_sample((sample, metrics, None))
     assert overview._gen_rate_label.objectName() == "RateValue"
     assert overview._gen_rate_label.text() == "0.0"
     assert overview._performance_metrics.value("prompt_rate") == "0.0 tok/s"
@@ -553,18 +531,21 @@ def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
     assert overview._performance_badge.tone() == "success"
 
 
-def test_monitor_layout_keeps_status_in_header(window: Any) -> None:
-    """监测页状态徽标与最近采样属于标题行，不再各占一整行。"""
+def test_overview_load_blocks_fit_min_width(window: Any) -> None:
+    """窗口宽度最小时三块负载仍在视口内，不出现横向溢出。"""
+    from PySide6.QtWidgets import QFrame
+
     window.show()
-    window.show_page("monitor")
-    window.resize(1180, 820)
+    window.resize(1040, 700)
+    window.show_page("overview")
     QApplication.processEvents()
-    page = window.page("monitor")
-
-    def top(widget: Any) -> int:
-        return widget.mapTo(page, widget.rect().topLeft()).y()
-
-    assert top(page._monitor_badge) == top(page._last_sample_label)
+    page = window.overview
+    blocks = [widget for widget in page.findChildren(QFrame) if widget.objectName() == "LoadBlock"]
+    assert len(blocks) == 3
+    for block in blocks:
+        assert block.isVisible()
+        right = block.mapTo(page, block.rect().topRight()).x()
+        assert right <= page.width()
 
 
 def test_bench_moves_to_help_menu(window: Any) -> None:
@@ -572,10 +553,6 @@ def test_bench_moves_to_help_menu(window: Any) -> None:
     from fcmd.apps.locllm.llmbase import ServeState
 
     window.show()
-    window.show_page("monitor")
-    page = window.page("monitor")
-    assert not hasattr(page, "_bench")
-    assert not hasattr(page, "_bench_table")
     window.resize(1180, 820)
     QApplication.processEvents()
 
@@ -622,7 +599,7 @@ def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll
 
-    for key in ("overview", "run", "monitor", "settings", "lab"):
+    for key in ("overview", "run", "settings", "lab"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key

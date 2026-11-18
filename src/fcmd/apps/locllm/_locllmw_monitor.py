@@ -1,7 +1,7 @@
 """locllmw 的运行监控：GPU / 系统负载采样、格式化、速率平滑与适配建议。
 
 从 :mod:`fcmd.apps.locllm.locllmw` 拆出；``locllmw`` 仍 re-export 这些纯函数与
-Qt 监测页所需的常量 / 采样函数，既有导入路径不变。
+概览页采样与格式化所需的常量 / 纯函数，既有导入路径不变。
 """
 
 from __future__ import annotations

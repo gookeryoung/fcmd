@@ -27,7 +27,7 @@
 - CLI `llmserve` 不改名，二者职责分离：`llmserve` 负责脚本化的启动计划与进程
   生命周期，`locllmw` 负责本机窗口化的本地 LLM 工作台。
 
-### 2. 七页侧边栏信息架构
+### 2. 六页侧边栏信息架构
 
 侧边栏复用 [ADR 0025](0025-sidebar-page-navigation.md) 的 `SidebarNav`。多模态能力
 尚未落地时合并为一个「实验室」入口，不再让空壳页各占一个主导航项：
@@ -39,7 +39,6 @@
 | 运行 | `run` | 顶部模型下拉选择（已启动项绿色标记、默认上次运行模型、按模型持久化参数）+ 启动 / 停止 / 重启按钮、整合档位与调优的运行模式方块（速度红 / 均衡蓝 / 长上下文 128K 绿 / 超长上下文 192K 琥珀 / 省显存灰）、带说明的 KV 方块选项、启动参数、启动命令预览、自定义启动参数与保存 / 填入 | 已落地 |
 | 对话 | `chat` | 服务选择、流式会话、思考过程、图片附件（整合原 llmchatw，见 [ADR 0029](0029-locllmw-chat-page.md)） | 已落地 |
 | 实验室 | `lab` | 代理 / 画图 / 视频 / 音频四项规划中的卡片式说明 | 规划中（合并占位） |
-| 监测 | `monitor` | 顶部监测目标摘要（服务 / 胶囊状态标签 / 最近采样）；每秒采样 `/metrics` 与系统负载，性能 / 占用展示在概览系统信息 | 已落地 |
 | 设置 | `settings` | 存储（模型目录 / 引擎根目录 / 服务目录 / 配置文件）、引擎安装与日志（见 [ADR 0031](0031-localllm-config-unification.md)） | 已落地 |
 
 约定：
@@ -76,7 +75,7 @@
 - 工具发现与清单：`locllmw` 条目指向 `fcmd.apps.locllm.locllmw`；`fcmd llmserve`
   行为不变。
 - 窗口冒烟：真实 Tk 下创建窗口，导航 key 为
-  `overview/models/run/chat/lab/monitor/settings`，切页与关闭正常。
+  `overview/models/run/chat/lab/settings`，切页与关闭正常。
 - 全量测试：`tests/apps/locllm` 与 manifest / GUI 用例通过。
 
 ## 交接

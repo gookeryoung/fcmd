@@ -2,15 +2,16 @@
 
 硬件快照首次检测后写入 ``locllmw.json``，之后读缓存展示并支持重新检测；
 推荐行由 :mod:`fcmd.apps.locllm._locllmw_recommend` 纯逻辑计算，性能默认标注
-「预测」，同一模型跑过性能测试后改用实测值。占用条跟随监测页的系统采样刷新，
-服务未启动时也能看到显存 / 内存占用。
+「预测」，同一模型跑过性能测试后改用实测值。页面自身每秒采样系统负载与服务
+`/metrics`，服务未启动时也能看到显存 / 内存占用。
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import time
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -23,15 +24,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.apps.locllm import llmserve
 from fcmd.apps.locllm._locllmw_monitor import (
+    RATE_WINDOW_SECONDS,
+    GpuSample,
     LoadSample,
+    RateWindow,
     _format_gpu,
     _format_load,
+    _sample_load,
     gpu_memory_percent,
     swap_percent,
 )
 from fcmd.apps.locllm._locllmw_recommend import Recommendation, recommend
-from fcmd.apps.locllm.llmbase import human_size
+from fcmd.apps.locllm.llmbase import ServeError, ServeState, human_size
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
@@ -46,6 +52,7 @@ from fcmd.gui.qt.widgets import (
     link_button,
     segment_band,
 )
+from fcmd.gui.qt.workers import periodic, submit
 
 if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
@@ -189,6 +196,33 @@ class RecommendationList(RowListWidget):  # pragma: no cover - Qt 控件
     """推荐列表：复用自定义行列表的行宽同步，右侧性能摘要不会被挤出视口。"""
 
 
+def sample_once(state: ServeState | None) -> tuple[LoadSample, llmserve.ServeMetrics | None, str | None]:
+    """采样一次系统负载与服务指标（阻塞，供线程池调用）。
+
+    ``state`` 为 ``None`` 时只采系统负载；服务指标抓取失败时把原因放在第三个
+    返回值里，由界面显示「采样失败」而不是抛异常。
+    """
+    process = _attach_process(state.pid) if state is not None else None
+    load = _sample_load(state.pid if state is not None else 0, process)
+    if state is None:
+        return load, None, None
+    try:
+        metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
+    except ServeError as exc:
+        return load, None, str(exc)
+    return load, metrics, None
+
+
+def _attach_process(pid: int) -> Any | None:
+    """绑定服务进程用于 CPU / 内存 / 运行时长采样；进程已退出时返回 ``None``。"""
+    import psutil
+
+    try:
+        return psutil.Process(pid)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
 class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     """概览页：硬件与模型目录 → 智能推荐。"""
 
@@ -196,6 +230,11 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         super().__init__(parent)
         self.state = state
         self._recommendations: tuple[Recommendation, ...] = ()
+        self._target_name = ""
+        self._window = RATE_WINDOW_SECONDS
+        self._rates = RateWindow()
+        self._inflight = False
+        self._timer: QTimer | None = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -208,10 +247,10 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         state.hardwareChanged.connect(lambda _snapshot: self.refresh_hardware())
         state.hardwareFailed.connect(self._on_hardware_failed)
         state.modelsChanged.connect(lambda _outcome: self.refresh_recommendations())
-        state.sampleUpdated.connect(self.apply_sample)
-        state.performanceChanged.connect(self.apply_performance)
+        state.servicesChanged.connect(lambda _states: self._sync_target())
         self.refresh_hardware()
         self.refresh_recommendations()
+        self._timer = periodic(self, 1000, self._tick)
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -219,7 +258,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     def _build_hardware(self) -> Card:
         """规格与实时占用：上方硬件规格，下方 GPU / CPU / 内存三块负载条。
 
-        占用来自监测页每秒的系统采样（``sampleUpdated``）：分段格图 + 百分比；
+        占用来自概览页每秒的系统采样：分段格图 + 百分比；
         GPU 显存、内存交换作为副条并排显示。顶部只保留「重新检测」文字链接与
         检测状态，不放标题 / 说明文案。
         """
@@ -247,6 +286,8 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
 
         def value_label() -> QLabel:
             value = QLabel("检测中…", card)
+            value.setWordWrap(True)
+            value.setMinimumWidth(0)
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             return value
 
@@ -293,7 +334,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     def _build_performance(self, parent: QWidget) -> QWidget:
         """系统信息右侧的实时性能：生成 tok/s 主视觉 + 服务 / 请求次要指标。
 
-        数据来自监测页每秒采样算出的 ``performanceChanged``；这里只负责展示，
+        数据由概览页每秒采样计算；这里只负责展示，
         与左侧规格共用一行，避免系统信息卡片右侧留白。
         """
         panel = QWidget(parent)
@@ -326,7 +367,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         value_row.addStretch(1)
         layout.addLayout(value_row)
 
-        self._performance_metrics = MetricGrid(_PERFORMANCE_METRICS, columns=3, parent=panel)
+        self._performance_metrics = MetricGrid(_PERFORMANCE_METRICS, columns=2, parent=panel)
         layout.addWidget(self._performance_metrics)
         layout.addStretch(1)
         return panel
@@ -463,10 +504,56 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         )
         self._detected_label.setText("")
 
-    def apply_sample(self, sample: object) -> None:
-        """用系统采样刷新 GPU / CPU / 内存负载块（关键信息小字 + 主格图）。"""
-        if not isinstance(sample, LoadSample):
+    # ------------------------------------------------------------------ #
+    # 采样
+    # ------------------------------------------------------------------ #
+    def set_target_name(self, name: str) -> None:
+        """指定要采样的服务名（运行页切服务时同步）。"""
+        self._target_name = name
+        self._sync_target()
+
+    def _sync_target(self) -> None:
+        """服务列表变化后重置速率窗口，并给出等待 / 仅系统负载占位。"""
+        self._rates = RateWindow(self._window)
+        if self._current_state() is None:
+            self._set_performance(None, None, None, "服务未运行（仅系统负载）", "warning")
             return
+        self._set_performance(None, None, None, "等待采样…", "muted")
+
+    def _current_state(self) -> ServeState | None:
+        alive = self.state.alive_states
+        if not alive:
+            return None
+        for state in alive:
+            if state.name == self._target_name:
+                return state
+        return alive[0]
+
+    def _tick(self) -> None:
+        """每秒投递一次采样；上一轮未完成时跳过，避免任务堆叠。"""
+        if self._inflight or self.state.closing:
+            return
+        self._inflight = True
+        submit(sample_once, self._current_state(), on_done=self._apply_sample, on_finished=self._sample_finished)
+
+    def _sample_finished(self) -> None:
+        self._inflight = False
+
+    def _apply_sample(self, payload: tuple[LoadSample, Any, str | None]) -> None:
+        load, metrics, error = payload
+        self._apply_system_sample(load)
+        self._sync_free_vram(load.gpu)
+        if metrics is None:
+            if error is not None:
+                self._set_performance(None, None, None, "采样失败: " + error[:60], "danger")
+            else:
+                self._set_performance(None, None, None, "服务未运行（仅系统负载）", "warning")
+            return
+        gen_rate, prompt_rate = self._rates.update(time.monotonic(), metrics.predicted_tokens, metrics.prompt_tokens)
+        self._set_performance(gen_rate, prompt_rate, metrics, "监控中", "success")
+
+    def _apply_system_sample(self, sample: LoadSample) -> None:
+        """用系统采样刷新 GPU / CPU / 内存负载块（关键信息小字 + 主格图）。"""
         gpu = sample.gpu
         gpu_values = _format_gpu(gpu)
         gpu_vram = gpu_memory_percent(gpu)
@@ -496,20 +583,53 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._set_hint(self._mem_hint, memory_parts)
         self._apply_load_block(self._mem_percent, self._mem_bar, sample.memory_percent if sample.memory_total else None)
 
+    def _set_performance(
+        self,
+        gen_rate: float | None,
+        prompt_rate: float | None,
+        metrics: llmserve.ServeMetrics | None,
+        status: str,
+        tone: str,
+    ) -> None:
+        """刷新右侧实时性能：tok/s 大字、次要指标与状态标签。"""
+        self._gen_rate_label.setText("-" if gen_rate is None else f"{gen_rate:.1f}")
+        if metrics is None:
+            self._performance_metrics.set_values({key: "-" for _label, key in _PERFORMANCE_METRICS})
+        else:
+            self._performance_metrics.set_values(
+                {
+                    "prompt_rate": "-" if prompt_rate is None else f"{prompt_rate:.1f} tok/s",
+                    "processing": f"{metrics.processing:.0f}",
+                    "deferred": f"{metrics.deferred:.0f}",
+                    "kv": f"{metrics.kv_usage * 100:.1f} %",
+                    "predicted": f"{metrics.predicted_tokens:.0f}",
+                    "prompt": f"{metrics.prompt_tokens:.0f}",
+                }
+            )
+        self._performance_badge.set_status(status, tone)
+
+    def _sync_free_vram(self, gpu: GpuSample | None) -> None:
+        """用实时 GPU 采样更新可用显存（服务停止释放显存后自动恢复「可用」）。"""
+        if gpu is None or gpu.memory_used is None or gpu.memory_total is None:
+            return
+        free = int(max(gpu.memory_total - gpu.memory_used, 0))
+        if self.state.gpu_free_mib is not None and abs(free - self.state.gpu_free_mib) < 256:
+            return
+        self.state.gpu_free_mib = free
+        if self.state.gpu_mib is None:
+            self.state.gpu_mib = int(gpu.memory_total)
+        self.state.sampleCapacityChanged.emit()
+
+    def stop(self) -> None:
+        """窗口关闭时停止采样定时器。"""
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+
     @staticmethod
     def _set_hint(label: QLabel, parts: list[str]) -> None:
         """拼接标题后的小字关键信息；占位 ``-`` 不参与拼接。"""
         label.setText(" · ".join(part for part in parts if part and part != "-"))
-
-    def apply_performance(self, payload: object) -> None:
-        """刷新系统信息右侧的实时性能（监测页采样信号驱动）。"""
-        if not isinstance(payload, dict):
-            return
-        gen_rate = payload.get("gen_rate", "-")
-        self._gen_rate_label.setText(str(gen_rate))
-        self._performance_metrics.set_values({key: str(payload.get(key, "-")) for _label, key in _PERFORMANCE_METRICS})
-        tone = str(payload.get("tone", "muted"))
-        self._performance_badge.set_status(str(payload.get("monitor", "等待采样…")), tone)
 
     def _apply_load_block(self, percent_label: QLabel, bar: SegmentBar, percent: float | None) -> None:
         """刷新一块负载：占用率文字与主格图同步。"""

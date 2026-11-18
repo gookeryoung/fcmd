@@ -21,10 +21,10 @@ from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
 from fcmd.apps.locllm._locllmw_monitor import LoadSample
 from fcmd.apps.locllm._locllmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
 from fcmd.apps.locllm._locllmw_qt_chat import endpoint_from_form, service_labels
-from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
 from fcmd.apps.locllm._locllmw_qt_overview import (
     recommendation_params_html,
     recommendation_perf_html,
+    sample_once,
 )
 from fcmd.apps.locllm._locllmw_qt_run import (
     build_plan_from,
@@ -333,7 +333,7 @@ def test_engine_rows_values() -> None:
 # 采样封装
 # ---------------------------------------------------------------------- #
 def test_sample_once_without_service(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_monitor._sample_load", lambda pid, process: LoadSample())
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_overview._sample_load", lambda pid, process: LoadSample())
     load, metrics, error = sample_once(None)
     assert isinstance(load, LoadSample)
     assert metrics is None
@@ -341,8 +341,8 @@ def test_sample_once_without_service(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sample_once_reports_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_monitor._attach_process", lambda pid: None)
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_monitor._sample_load", lambda pid, process: LoadSample())
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_overview._attach_process", lambda pid: None)
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_overview._sample_load", lambda pid, process: LoadSample())
     metrics = llmserve.ServeMetrics(prompt_tokens=5, predicted_tokens=4, processing=1, deferred=2, kv_usage=0.5)
     monkeypatch.setattr(llmserve, "fetch_metrics", lambda host, port, api_key: metrics)
     _load, metrics, error = sample_once(_state())
@@ -352,8 +352,8 @@ def test_sample_once_reports_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_sample_once_reports_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_monitor._attach_process", lambda pid: None)
-    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_monitor._sample_load", lambda pid, process: LoadSample())
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_overview._attach_process", lambda pid: None)
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_overview._sample_load", lambda pid, process: LoadSample())
 
     def boom(*_args: Any, **_kwargs: Any) -> Any:
         raise ServeError("connection refused")

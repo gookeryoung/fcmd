@@ -845,7 +845,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         return default_service_name()
 
     def service_name(self) -> str:
-        """当前应使用的服务名（供监测页等外部页面读取）。"""
+        """当前应使用的服务名（供概览采样等外部逻辑读取）。"""
         return self._service_name()
 
     def _on_model_action(self) -> None:
@@ -1266,21 +1266,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.state.log(f"无法打开浏览器，请手动访问: {url}")
             self._error("打开失败", f"无法打开浏览器，请手动访问: {url}")
 
-    def show_logs(self) -> None:
-        """切到监测页并附上日志尾部。"""
-        self.state.navigate("monitor")
-        name = self._service_name()
-        try:
-            content = llmserve.read_log(name, 50)
-        except ServeError as exc:
-            self._error("日志不可用", str(exc))
-            return
-        self.state.log(f"日志尾部（{name}）:")
-        self.state.log(content)
-
-    # ------------------------------------------------------------------ #
-    # 共享状态回调
-    # ------------------------------------------------------------------ #
     def _on_models_changed_signal(self, _outcome: object) -> None:
         """``modelsChanged`` 槽：忽略扫描结果，直接刷新列表（结果已在共享状态里）。"""
         self.on_models_changed()
