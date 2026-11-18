@@ -405,9 +405,11 @@ CREATE TABLE meta   (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE entries (
     cache_key TEXT NOT NULL, path TEXT NOT NULL,
     size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL,
+    stored_at INTEGER NOT NULL,
     encoding TEXT NOT NULL, has_hit INTEGER NOT NULL, matches TEXT NOT NULL,
     PRIMARY KEY (cache_key, path)
 );
+CREATE INDEX entries_stored_at ON entries(stored_at);
 ```
 
 选它的理由：并发写有成熟的事务与锁语义（索引文件需要自己实现原子替换与合并）；
@@ -424,6 +426,15 @@ CREATE TABLE entries (
 - 不做全量内容哈希：哈希需要完整读盘，等于把「省一次读」变成「再读一次」；
 - `has_hit` 区分「实扫过但无命中」（也缓存，避免每次重读）与「命中但无明细」
   （表达式级命中、无正向规则明细），后者不会被误算进 `hit_files`。
+
+**有效期与容量（防止无限增长）：**
+
+- `stored_at` 记录写入时间（epoch 秒）；查询只认 `stored_at >= now - CACHE_TTL_SECONDS`
+  （默认 7 天）的条目，过期视同未命中，下次扫描重扫并刷新；
+- 写入时顺带删除过期行；条目总数超过 `CACHE_MAX_ENTRIES`（默认 10 万）时按
+  `stored_at` 最旧优先裁剪，单文件体积随之有界；
+- 表结构版本升到 2：打开时按 `meta.schema` 判定，版本不符则删表按当前结构重建
+  （旧条目一次性失效，不尝试逐列迁移）。
 
 **指纹口径（`cache_fingerprint`）：**
 

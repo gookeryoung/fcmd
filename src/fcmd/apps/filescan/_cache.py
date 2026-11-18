@@ -3,11 +3,14 @@
 设计口径：
 
 - **存储**：单文件 SQLite（默认 ``${FCMD_HOME:-~/.fcmd}/cache/filescan-cache.db``），
-  表 ``entries(cache_key, path, size, mtime_ns, encoding, matches)``，主键
-  ``(cache_key, path)``；``cache_key`` 是规则与命中相关选项的指纹，不同配置共存。
+  表 ``entries(cache_key, path, size, mtime_ns, stored_at, encoding, has_hit, matches)``，
+  主键 ``(cache_key, path)``；``cache_key`` 是规则与命中相关选项的指纹，不同配置共存。
 - **复用条件**：同一路径的 ``size`` 与 ``mtime_ns`` 都与缓存一致，且 ``cache_key``
   一致才复用；文件内容变化若同时改变大小或修改时间即失效（缓存不做全量内容
   哈希，避免把复用变成又一次读盘）。
+- **有效期与容量**：条目写入后 :data:`CACHE_TTL_SECONDS`（默认 7 天）内有效，
+  过期视同未命中；写入时顺带删除过期条目，并在总数超过 :data:`CACHE_MAX_ENTRIES`
+  （默认 10 万条）时按 ``stored_at`` 最旧优先裁剪，避免缓存无限增长。
 - **并发安全**：只有扫描的主进程打开连接并读写，进程池 / 线程池的 worker 只
   返回结果、不接触数据库；WAL + ``busy_timeout`` 允许多个扫描进程同时存在，
   写冲突超时即降级为「本次不写缓存」，不影响扫描。
@@ -25,6 +28,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,30 +44,43 @@ if TYPE_CHECKING:
     from fcmd.apps.filescan._rules import RuleSet
 
 __all__ = [
+    "CACHE_MAX_ENTRIES",
     "CACHE_SCHEMA_VERSION",
+    "CACHE_TTL_SECONDS",
     "ScanCache",
     "cache_fingerprint",
     "default_cache_path",
 ]
 
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 """缓存表结构版本；与文件内记录不一致时重建。"""
 
-_SCHEMA = """
+CACHE_TTL_SECONDS = 7 * 24 * 3600
+"""条目有效期（秒）：写入超过该时长的条目不参与复用，由下一次扫描重扫并刷新。"""
+
+CACHE_MAX_ENTRIES = 100_000
+"""条目总数上限；写入后超出时按 ``stored_at`` 最旧优先删除。"""
+
+_META_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+"""
+
+_ENTRIES_SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
     cache_key TEXT NOT NULL,
     path TEXT NOT NULL,
     size INTEGER NOT NULL,
     mtime_ns INTEGER NOT NULL,
+    stored_at INTEGER NOT NULL,
     encoding TEXT NOT NULL,
     has_hit INTEGER NOT NULL,
     matches TEXT NOT NULL,
     PRIMARY KEY (cache_key, path)
 );
+CREATE INDEX IF NOT EXISTS entries_stored_at ON entries(stored_at);
 """
 
 _BUSY_TIMEOUT_MS = 5000
@@ -76,6 +93,11 @@ _LOOKUP_BATCH = 400
 def default_cache_path() -> Path:
     """返回默认缓存文件路径：``${FCMD_HOME:-~/.fcmd}/cache/filescan-cache.db``。"""
     return fcmd_home() / "cache" / "filescan-cache.db"
+
+
+def _now() -> int:
+    """当前 epoch 秒；独立成函数便于测试模拟时间流逝。"""
+    return int(time.time())
 
 
 def _fingerprint_payload(ruleset: RuleSet, options: ScanOptions, mask: bool) -> dict[str, Any]:
@@ -171,12 +193,15 @@ class ScanCache:
                 self._disable(f"缓存不可用（{exc}），本次不使用缓存")
 
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
-        """建表并校验结构版本；版本不符时清空重建。"""
-        conn.executescript(_SCHEMA)
+        """建表并校验结构版本；版本不符时删表按新结构重建。"""
+        # 先只建 meta 读取版本号：旧版 entries 可能缺列，直接建索引会报错。
+        conn.executescript(_META_SCHEMA)
         row = conn.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
         if row is not None and row[0] != str(CACHE_SCHEMA_VERSION):
-            conn.execute("DELETE FROM entries")
-            conn.execute("DELETE FROM meta")
+            # 旧版本表结构可能缺列，DROP 后按当前结构重建，旧条目一并失效。
+            conn.execute("DROP TABLE IF EXISTS entries")
+            conn.execute("DROP TABLE IF EXISTS meta")
+        conn.executescript(_META_SCHEMA + _ENTRIES_SCHEMA)
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES('schema', ?)",
             (str(CACHE_SCHEMA_VERSION),),
@@ -242,14 +267,15 @@ class ScanCache:
 
         def action(conn: sqlite3.Connection) -> dict[Path, FileHit | None]:
             found: dict[Path, FileHit | None] = {}
+            cutoff = _now() - CACHE_TTL_SECONDS
             for start in range(0, len(items), _LOOKUP_BATCH):
                 batch = items[start : start + _LOOKUP_BATCH]
                 keys = [_path_key(path) for path, _size, _mtime in batch]
                 placeholders = ",".join("?" * len(keys))
                 rows = conn.execute(
                     "SELECT path, size, mtime_ns, encoding, has_hit, matches FROM entries "
-                    f"WHERE cache_key = ? AND path IN ({placeholders})",
-                    [cache_key, *keys],
+                    f"WHERE cache_key = ? AND stored_at >= ? AND path IN ({placeholders})",
+                    [cache_key, cutoff, *keys],
                 ).fetchall()
                 stored = {row[0]: row for row in rows}
                 for path, size, mtime_ns in batch:
@@ -270,28 +296,43 @@ class ScanCache:
         return result if isinstance(result, dict) else {}
 
     def store_many(self, cache_key: str, items: Sequence[tuple[Path, int, int, FileHit | None]]) -> None:
-        """批量写入扫描结果；``hit=None`` 表示「实扫过且无命中」，同样缓存。"""
+        """批量写入扫描结果；``hit=None`` 表示「实扫过且无命中」，同样缓存。
+
+        写入后顺带删除过期条目，并在总数超过 :data:`CACHE_MAX_ENTRIES` 时按
+        ``stored_at`` 最旧优先裁剪。
+        """
         if not self._conn or not cache_key or not items:
             return
+        now = _now()
         rows = [
             (
                 cache_key,
                 _path_key(path),
                 size,
                 mtime_ns,
+                now,
                 "" if hit is None else hit.encoding,
                 int(hit is not None),
                 "[]" if hit is None else _matches_to_json(hit.matches),
             )
             for path, size, mtime_ns, hit in items
         ]
+        cutoff = now - CACHE_TTL_SECONDS
 
         def action(conn: sqlite3.Connection) -> None:
             conn.executemany(
-                "INSERT OR REPLACE INTO entries(cache_key, path, size, mtime_ns, encoding, has_hit, matches) "
-                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO entries(cache_key, path, size, mtime_ns, stored_at, encoding, has_hit, matches) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
+            conn.execute("DELETE FROM entries WHERE stored_at < ?", (cutoff,))
+            excess = int(conn.execute("SELECT COUNT(*) FROM entries").fetchone()[0]) - CACHE_MAX_ENTRIES
+            if excess > 0:
+                conn.execute(
+                    "DELETE FROM entries WHERE rowid IN ("
+                    "SELECT rowid FROM entries ORDER BY stored_at ASC, rowid ASC LIMIT ?)",
+                    (excess,),
+                )
             conn.commit()
 
         self._run(action)

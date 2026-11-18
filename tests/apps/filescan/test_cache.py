@@ -9,9 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from fcmd.apps.filescan import _cache as cache_module
 from fcmd.apps.filescan import _engine
 from fcmd.apps.filescan._cache import (
     CACHE_SCHEMA_VERSION,
+    CACHE_TTL_SECONDS,
     ScanCache,
     cache_fingerprint,
     default_cache_path,
@@ -266,6 +268,64 @@ def test_schema_version_mismatch_rebuilds_entries(cache: ScanCache, tmp_path: Pa
     assert reopened.lookup_many("k", [(tmp_path / "a.txt", 3, 4)]) == {}
     assert reopened.clear() == 0
     reopened.close()
+
+
+def test_expired_entry_is_not_reused(cache: ScanCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """超过 TTL 的条目视同未命中；重新写入后恢复可用。"""
+    target = tmp_path / "a.txt"
+    cache.store_many("k", [(target, 3, 4, None)])
+    later = cache_module._now() + CACHE_TTL_SECONDS + 1
+    monkeypatch.setattr(cache_module, "_now", lambda: later)
+    assert cache.lookup_many("k", [(target, 3, 4)]) == {}
+
+    cache.store_many("k", [(target, 3, 4, None)])
+    assert cache.lookup_many("k", [(target, 3, 4)]) == {target: None}
+
+
+def test_store_prunes_expired_entries(cache: ScanCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """写入新结果时顺带删除已过期条目，缓存不会留下永远用不到的行。"""
+    cache.store_many("old", [(tmp_path / "a.txt", 3, 4, None)])
+    later = cache_module._now() + CACHE_TTL_SECONDS + 1
+    monkeypatch.setattr(cache_module, "_now", lambda: later)
+    cache.store_many("new", [(tmp_path / "b.txt", 5, 6, None)])
+    assert cache.clear() == 1
+
+
+def test_store_trims_oldest_entries_to_capacity(
+    cache: ScanCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """条目数超过上限时按写入时间最旧优先裁剪。"""
+    monkeypatch.setattr(cache_module, "CACHE_MAX_ENTRIES", 2)
+    files = [tmp_path / f"f{index}.txt" for index in range(3)]
+    cache.store_many("k", [(path, index + 1, index + 1, None) for index, path in enumerate(files)])
+
+    assert cache.lookup_many("k", [(files[0], 1, 1)]) == {}
+    assert cache.lookup_many("k", [(files[1], 2, 2)]) == {files[1]: None}
+    assert cache.lookup_many("k", [(files[2], 3, 3)]) == {files[2]: None}
+    assert cache.clear() == 2
+
+
+def test_legacy_schema_without_stored_at_is_rebuilt(tmp_path: Path) -> None:
+    """旧版本表结构（缺 ``stored_at``）在打开时删表重建，读写恢复正常。"""
+    path = tmp_path / "cache" / "filescan.db"
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(str(path)) as conn:
+        conn.executescript(
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+            "CREATE TABLE entries (cache_key TEXT NOT NULL, path TEXT NOT NULL, size INTEGER NOT NULL,"
+            " mtime_ns INTEGER NOT NULL, encoding TEXT NOT NULL, has_hit INTEGER NOT NULL,"
+            " matches TEXT NOT NULL, PRIMARY KEY (cache_key, path));"
+            "INSERT INTO meta(key, value) VALUES('schema', '1');"
+        )
+        conn.commit()
+
+    store = ScanCache(path)
+    assert store.enabled
+    target = tmp_path / "a.txt"
+    assert store.lookup_many("k", [(target, 1, 1)]) == {}
+    store.store_many("k", [(target, 1, 1, None)])
+    assert store.lookup_many("k", [(target, 1, 1)]) == {target: None}
+    store.close()
 
 
 def test_unusable_path_disables_cache_without_raising(tmp_path: Path) -> None:
