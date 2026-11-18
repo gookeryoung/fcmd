@@ -269,10 +269,10 @@ def test_load_cache_rejects_wrong_shapes_and_skips_bad_entries(tmp_path: Path) -
 
 
 def test_save_cache_swallows_write_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    def boom(self: Path, *args: object, **kwargs: object) -> int:
+    def boom(*args: object, **kwargs: object) -> None:
         raise OSError("只读目录")
 
-    monkeypatch.setattr(Path, "write_text", boom)
+    monkeypatch.setattr(_images, "write_json_atomic", boom)
 
     _images.save_cache((), 1.0, tmp_path / "cache.json")
     assert not (tmp_path / "cache.json").exists()

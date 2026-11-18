@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from fcmd.apps.locllm._llmgguf import GgufPrecision, PrecisionSource
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.infras.system import fcmd_home
 
 __all__ = ["GGUF_CACHE_SCHEMA_VERSION", "PrecisionCache", "default_cache_path"]
@@ -129,10 +129,7 @@ class PrecisionCache:
             },
         }
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temporary = self.path.with_name(self.path.name + ".tmp")
-            temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
-            temporary.replace(self.path)
+            write_json_atomic(self.path, payload, indent=None, sort_keys=True)
         except OSError:
             return
         self._dirty = False
@@ -140,7 +137,7 @@ class PrecisionCache:
     def _load(self) -> None:
         """读取缓存文件；结构或版本不符时保持空缓存。"""
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            raw = read_json_file(self.path)
         except (OSError, ValueError):
             return
         if not isinstance(raw, dict) or raw.get("version") != GGUF_CACHE_SCHEMA_VERSION:

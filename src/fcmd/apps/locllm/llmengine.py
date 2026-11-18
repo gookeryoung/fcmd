@@ -37,6 +37,7 @@ from fcmd.apps.locllm.llmbase import (
     run_command,
 )
 from fcmd.console import Table, get_console
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
     "ZipInspection",
@@ -293,8 +294,8 @@ def _read_marker(directory: Path) -> dict[str, Any]:
     if not marker.is_file():
         return {}
     try:
-        data = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = read_json_file(marker)
+    except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -369,8 +370,8 @@ def current_engine_tag(root: Path) -> str | None:
     if not marker.is_file():
         return None
     try:
-        data = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = read_json_file(marker)
+    except (OSError, ValueError):
         return None
     tag = data.get("tag") if isinstance(data, dict) else None
     return str(tag) if tag else None
@@ -577,7 +578,7 @@ def _write_engine_marker(target: Path, tag: str, exe: Path, source: str, prepend
         "path_prepend": list(prepend),
         "installed_at": now_iso(),
     }
-    (target / ENGINE_MARKER).write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(target / ENGINE_MARKER, payload)
 
 
 def list_engines(home: Path | None = None) -> list[EngineInfo]:
@@ -605,9 +606,7 @@ def use_engine(tag: str, home: Path | None = None) -> EngineInfo:
     if info is None:
         raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmengine install --tag {tag}")
     root.mkdir(parents=True, exist_ok=True)
-    (root / CURRENT_MARKER).write_text(
-        json.dumps({"tag": tag, "updated_at": now_iso()}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    write_json_atomic(root / CURRENT_MARKER, {"tag": tag, "updated_at": now_iso()})
     return info
 
 

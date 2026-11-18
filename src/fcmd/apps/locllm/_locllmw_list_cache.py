@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import threading
 import time
 from collections.abc import Callable
@@ -24,6 +23,7 @@ from typing import Any
 
 from fcmd.apps.locllm import _llmconfig
 from fcmd.apps.locllm.llmdown import ModelSearch, ModelSummary
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
     "DEFAULT_MAX_ENTRIES",
@@ -108,7 +108,7 @@ class ModelListCache:
             return
         self._loaded = True
         try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            raw = read_json_file(self.path)
         except (OSError, ValueError):
             return
         entries = raw.get("entries") if isinstance(raw, dict) else None
@@ -132,10 +132,7 @@ class ModelListCache:
             "entries": {key: _entry_to_dict(at, search) for key, (at, search) in self._entries.items()},
         }
         with contextlib.suppress(OSError):
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.path.with_suffix(self.path.suffix + ".tmp")
-            temp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-            temp.replace(self.path)
+            write_json_atomic(self.path, payload, indent=None, separators=(",", ":"))
 
 
 def _entry_to_dict(at: float, search: ModelSearch) -> dict[str, Any]:

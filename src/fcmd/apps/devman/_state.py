@@ -7,9 +7,6 @@
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +14,7 @@ from typing import Any
 
 from fcmd.apps.devman._errors import runtime_error
 from fcmd.apps.devman._paths import TOOLS, Layout
+from fcmd.infras.jsonio import read_json_file, write_json_atomic, write_text_atomic
 
 __all__ = [
     "CONFIG_SCHEMA",
@@ -49,20 +47,14 @@ def now_iso() -> str:
 
 
 def write_atomic(path: Path, text: str) -> None:
-    """原子写入文本：同目录临时文件 + ``os.replace``。
+    """原子写入文本，并把 ``OSError`` 映射成 devman 的可见错误。
 
-    与 ``fcmd.gui.config.write_settings`` 的区别：本函数把 ``OSError`` 抛给调用方，
+    与 ``fcmd.gui.config.write_settings`` 的区别：本函数把失败抛给调用方，
     由命令层决定报错文案；devman 的状态写入失败必须可见，不能静默吞掉。
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    tmp = Path(tmp_name)
     try:
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
-        tmp.replace(path)
+        write_text_atomic(path, text)
     except OSError as exc:
-        tmp.unlink(missing_ok=True)
         raise runtime_error(f"写入 {path} 失败：{exc}", hint="检查目录权限后重试", code="ROOT_NOT_WRITABLE") from exc
 
 
@@ -90,7 +82,7 @@ class Config:
 def _read_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """读取对象型 JSON；缺失返回 ``(None, None)``，损坏返回 ``(None, 原因)``。"""
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = read_json_file(path)
     except FileNotFoundError:
         return None, None
     except (OSError, ValueError) as exc:
@@ -212,7 +204,7 @@ def load_state(layout: Layout) -> tuple[State, list[str]]:
 
 def save_state(layout: Layout, state: State) -> None:
     """写入状态文件（原子替换）。"""
-    write_atomic(layout.state_file, json.dumps(state.to_data(), ensure_ascii=False, indent=2) + "\n")
+    write_json_atomic(layout.state_file, state.to_data())
 
 
 def active_version(layout: Layout, tool: str) -> str | None:
@@ -241,7 +233,7 @@ def remove_active(layout: Layout, tool: str) -> None:
 def read_marker(version_dir: Path) -> dict[str, Any] | None:
     """读取安装标记；缺失 / 损坏 / 非对象返回 ``None``。"""
     try:
-        raw = json.loads((version_dir / MARKER_NAME).read_text(encoding="utf-8"))
+        raw = read_json_file(version_dir / MARKER_NAME)
     except (OSError, ValueError):
         return None
     return raw if isinstance(raw, dict) else None
@@ -249,4 +241,4 @@ def read_marker(version_dir: Path) -> dict[str, Any] | None:
 
 def write_marker(version_dir: Path, payload: dict[str, Any]) -> None:
     """写安装标记（必须在版本目录原子落位之后调用）。"""
-    write_atomic(version_dir / MARKER_NAME, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    write_json_atomic(version_dir / MARKER_NAME, payload)

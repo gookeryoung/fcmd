@@ -24,6 +24,7 @@ from typing import Any
 
 from fcmd.apps.wslman._decode import OnlineRow
 from fcmd.apps.wslman._errors import runtime_error
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.infras.system import fcmd_home
 
 __all__ = [
@@ -280,8 +281,8 @@ def merge_entries(cli_rows: Sequence[OnlineRow], manifest_entries: Sequence[Imag
 def load_cache(path: Path | None = None) -> ImageCache | None:
     """读取缓存；文件缺失、损坏或结构不符时返回 ``None``。"""
     try:
-        raw = json.loads((path or cache_path()).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        raw = read_json_file(path or cache_path())
+    except (OSError, ValueError):
         return None
     if not isinstance(raw, Mapping) or raw.get("schema") != CACHE_SCHEMA:
         return None
@@ -338,8 +339,7 @@ def save_cache(
         "entries": [entry.to_cache_data() for entry in entries],
     }
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        write_json_atomic(target, payload)
     except OSError:
         return
 

@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Literal
 
@@ -45,6 +44,7 @@ from fcmd.apps.locllm._llmconfig import (
 )
 from fcmd.apps.locllm.llmbase import DEFAULT_NAME, ServeError, ServeState, validate_name
 from fcmd.console import Table, get_console
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
     "client_env",
@@ -89,7 +89,7 @@ def save_state(state: ServeState, home: Path | None = None) -> Path:
     """写入状态文件（自动创建目录）。"""
     path = state_path(state.name, home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state.to_dict(), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, state.to_dict())
     return path
 
 
@@ -101,7 +101,7 @@ def load_state(name: str, home: Path | None = None, *, missing_ok: bool = False)
             return None
         raise ServeError(f"服务 {name!r} 未启动（状态文件不存在: {path}）")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json_file(path)
         return ServeState(
             name=str(data["name"]),
             pid=int(data["pid"]),
@@ -119,7 +119,7 @@ def load_state(name: str, home: Path | None = None, *, missing_ok: bool = False)
             mmproj=str(data.get("mmproj", "")),
             vision=bool(data.get("vision", False)),
         )
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, KeyError, TypeError, ValueError) as exc:
         raise ServeError(f"状态文件损坏: {path}（{exc}）") from exc
 
 

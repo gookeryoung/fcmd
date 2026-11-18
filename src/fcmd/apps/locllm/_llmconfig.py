@@ -44,12 +44,12 @@ API 都不再存在。
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.infras.system import fcmd_home
 
 __all__ = [
@@ -108,7 +108,7 @@ def config_path(home: Path | None = None) -> Path:
 def _read_json(path: Path) -> dict[str, Any] | None:
     """读取 JSON 对象；缺失、损坏或非对象时返回 ``None``。"""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = read_json_file(path)
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -117,8 +117,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     """写入 JSON 对象（自动创建父目录）；任一写操作都会让配置缓存失效。"""
     _LOAD_CACHE.clear()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    write_json_atomic(path, data)
 
 
 # ---------------------------------------------------------------------- #

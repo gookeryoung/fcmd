@@ -33,7 +33,6 @@ fcmd 的 GUI 窗口需要好看的中英文字体，但把字体打进发行包�
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 import shutil
 import subprocess
@@ -47,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 import fcmd
 from fcmd.console import print_error
 from fcmd.infras.hashing import compute_file_hash
+from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.infras.system import fcmd_home, format_bytes
 from fcmd.infras.text import display_width, pad_display
 
@@ -358,7 +358,7 @@ def load_manifest(path: Path | None = None) -> dict[str, InstalledFont]:
     """读取安装清单；文件缺失、JSON 损坏或条目非法时返回空字典 / 跳过该条。"""
     target = path or manifest_path()
     try:
-        raw = json.loads(target.read_text(encoding="utf-8"))
+        raw = read_json_file(target)
     except (OSError, ValueError):
         return {}
     if not isinstance(raw, dict):
@@ -386,14 +386,11 @@ def load_manifest(path: Path | None = None) -> dict[str, InstalledFont]:
 
 
 def save_manifest(manifest: Mapping[str, InstalledFont], path: Path | None = None) -> None:
-    """原子写入安装清单（临时文件 + ``os.replace``）。"""
+    """原子写入安装清单。"""
     target = path or manifest_path()
+    payload = {"version": 1, "fonts": {font_id: asdict(entry) for font_id, entry in manifest.items()}}
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"version": 1, "fonts": {font_id: asdict(entry) for font_id, entry in manifest.items()}}
-        temporary = target.with_name(target.name + ".tmp")
-        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(target)
+        write_json_atomic(target, payload)
     except OSError as exc:
         raise FontToolError(f"写入安装清单失败: {target}: {exc}") from exc
 
