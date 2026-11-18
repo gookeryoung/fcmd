@@ -216,9 +216,9 @@ def test_model_item_row_expands_inline_detail() -> None:
     QApplication.instance() or QApplication([])
     row = _ModelItemRow(ModelSummary(repo="Qwen/demo"))
     installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True)
-    assert installed_row.download_button.text() == "✓ 已安装"
+    assert installed_row.download_button.text() == "下载其他量化"
     assert installed_row.download_button.objectName() == "InstalledButton"
-    assert not installed_row.download_button.isEnabled()
+    assert installed_row.download_button.isEnabled()
     convertible_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), convertible=True)
     assert convertible_row.convert_button is not None
     assert convertible_row.convert_button.text() == "转换"

@@ -271,13 +271,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self.download_button = button("继续下载" if incomplete else "下载")
         if installed and not incomplete:
             self.download_button.setObjectName("InstalledButton")
-            self.download_button.setText("✓ 已安装")
-            self.download_button.setEnabled(False)
-            self.download_button.setToolTip("该模型已在本地模型目录中")
-        else:
-            if incomplete:
-                self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
-            self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
+            self.download_button.setText("下载其他量化")
+            self.download_button.setToolTip("仓库已有本地文件；可继续选择其他量化（如 UD-Q4_K_XL）")
+        elif incomplete:
+            self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
+        self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
         header_row.addWidget(self.download_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
@@ -307,12 +305,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self.style().polish(self)
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
-        """已安装行保持绿色勾选态；其余行下载中禁用，当前行显示「下载中…」。"""
-        if self._installed:
-            self.download_button.setEnabled(False)
-            self.download_button.setText("✓ 已安装")
-            return
+        """下载中禁用；已安装行仍可下载其它量化，文案与普通行区分。"""
         self.download_button.setEnabled(not busy)
+        if self._installed and not self._incomplete:
+            self.download_button.setText("下载中…" if active else "下载其他量化")
+            return
         self.download_button.setText("下载中…" if active else ("继续下载" if self._incomplete else "下载"))
 
     def set_convert_state(self, *, busy: bool, active: bool) -> None:
