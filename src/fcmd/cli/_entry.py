@@ -35,14 +35,27 @@ def run_named() -> None:
 
     工具名优先按生成清单只加载目标工具（:func:`fcmd.cli._discovery.resolve_tool_fast`），
     与 ``fcmd <tool>`` 走同一快路径；清单未命中 / 过期时才回退全量发现。
+    工具级 ``--help`` 与 ``fcmd <tool> --help`` 一样优先输出固化文本
+    （见 :func:`fcmd.cli._manifest.help_text`），不导入工具模块。
     """
+    args = sys.argv[1:]
+    name = infer_tool_name(sys.argv[0])
+    if args[:1] in (["-h"], ["--help"]):
+        # 先试 argv[0]，再退回加载器 exe 名（runpy 入口会改写 argv[0]）
+        from fcmd.cli._manifest import help_text
+
+        text = help_text(name, args) or help_text(infer_tool_name(sys.executable), args)
+        if text is not None:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            sys.exit(0)
+
     # 懒导入避免 cli 包级循环（_discovery 函数内懒导入本包）
     from fcmd.cli._discovery import ensure_tools_discovered, resolve_tool, resolve_tool_fast
     from fcmd.console import print_error
     from fcmd.core.exit_codes import ExitCode
     from fcmd.core.toolkit import run_tool
 
-    name = infer_tool_name(sys.argv[0])
     resolved = resolve_tool_fast(name)
     if resolved is None:
         # runpy 入口（fspack 打包包装器以 run_module(alter_sys=True) 执行本模块）

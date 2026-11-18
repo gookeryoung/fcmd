@@ -17,22 +17,31 @@
 
 列表路径额外要求 :func:`tool_digest`（工具源码内容指纹）与生成期一致：
 描述与别名都写在这些文件里，只校验布局会列出过期文案。
+
+``fcmd <tool> --help`` 同理：生成期把每个工具的顶层帮助文本按「非终端、
+80 列宽」渲染后固化进清单，运行期 :func:`help_text` 命中即原样输出，省去
+导入工具模块、argparse 与 rich 的固定成本；终端交互（需要颜色）、宽度或
+解释器/平台与生成期不一致时一律回退真实渲染路径。
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
+import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import NamedTuple
 
 from fcmd._lazylog import LazyLogger
 
 __all__ = [
+    "HELP_WIDTH",
     "SCHEMA",
     "ToolEntry",
     "aliases_for",
     "clear_cache",
+    "help_text",
     "list_rows",
     "load",
     "load_strict",
@@ -50,7 +59,11 @@ _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 # 清单格式版本：与 ``_manifest_data.SCHEMA`` 不一致时视为过期。
 # 3：工具清单只覆盖 Python 模块，移除重名集合与 TOML 文件指纹。
 # 4：新增工具数与子命令总数（``fcmd env`` 据此免去全量发现）。
-SCHEMA = 4
+# 5：新增工具级 ``--help`` 固化文本及其生成环境（解释器 / 平台 / 宽度）。
+SCHEMA = 5
+
+#: 固化帮助文本的渲染宽度（rich 在非终端下的默认宽度）
+HELP_WIDTH = 80
 
 
 class ToolEntry(NamedTuple):
@@ -77,6 +90,19 @@ _cache: _Manifest | None = None
 
 _strict_loaded = False
 _strict_cache: _Manifest | None = None
+
+
+class _HelpPayload(NamedTuple):
+    """固化帮助文本及其生成环境（``_manifest_data`` 中 HELP/PY_VERSION/... 的快照）。"""
+
+    width: int
+    python: tuple[int, int]
+    platform: str
+    texts: dict[str, str]
+
+
+_help_loaded = False
+_help_cache: _HelpPayload | None = None
 
 # 目录扫描结果缓存（包根 → 文件列表）。严格校验的布局与内容指纹需要同一份
 # 列表，扫描一次即可；``clear_cache`` 或包根变化（测试替换 ``_PACKAGE_ROOT``）
@@ -219,6 +245,90 @@ def load_strict() -> _Manifest | None:
     return _strict_cache
 
 
+def help_text(name: str, argv: Sequence[str]) -> str | None:
+    """返回 ``fcmd <tool> --help`` 的固化输出；不可用时返回 ``None``。
+
+    只覆盖「参数恰为 ``-h`` / ``--help``、输出重定向到非终端、宽度 80、
+    解释器与平台均与生成期一致、清单严格校验通过」的情形：此时 rich 会
+    剥离样式并使用固定宽度，渲染结果与生成期逐字相同。终端交互（需要
+    颜色）、子命令帮助、宽度 / 版本 / 平台不一致时返回 ``None``，调用方
+    回退真实渲染路径，保证输出始终与实跑一致。
+
+    清单的内容指纹校验（:func:`load_strict`）同样适用：工具源码改动后
+    帮助文案可能过期，必须回退。
+    """
+    if list(argv) not in (["-h"], ["--help"]):
+        return None
+    if sys.stdout.isatty():
+        return None
+    payload = _help_data()
+    if payload is None or not _help_available(payload):
+        return None
+    manifest = load_strict()
+    if manifest is None:
+        return None
+    entry = manifest.tools.get(manifest.aliases.get(name, name))
+    if entry is None or entry.kind != "python":
+        return None
+    return payload.texts.get(entry.name)
+
+
+def _help_available(payload: _HelpPayload | None) -> bool:
+    """固化帮助是否适用于当前输出环境（宽度 / 解释器 / 平台均与生成期一致）。"""
+    if payload is None:
+        return False
+    if payload.width != _console_width():
+        return False
+    return payload.python == sys.version_info[:2] and payload.platform == sys.platform
+
+
+def _help_data() -> _HelpPayload | None:
+    """导入固化的帮助文本快照（进程内缓存，缺失 / 损坏返回 ``None``）。"""
+    global _help_loaded, _help_cache  # noqa: PLW0603 - 帮助快照为模块级单例
+    if not _help_loaded:
+        _help_loaded = True
+        _help_cache = _build_help()
+    return _help_cache
+
+
+def _build_help() -> _HelpPayload | None:
+    """从生成文件读取 HELP / PY_VERSION / PLATFORM / HELP_WIDTH。"""
+    import importlib
+
+    try:
+        data = importlib.import_module("fcmd.cli._manifest_data")
+        return _HelpPayload(
+            int(data.HELP_WIDTH),
+            (int(data.PY_VERSION[0]), int(data.PY_VERSION[1])),
+            str(data.PLATFORM),
+            dict(data.HELP),
+        )
+    except Exception as exc:  # 快照缺失 / 结构不符只影响速度：回退真实渲染
+        logger.debug("工具帮助固化数据不可用，回退真实渲染: %s", exc)
+        return None
+
+
+def _console_width() -> int:
+    """按 rich 的宽度算法计算当前输出宽度（非终端下即 ``COLUMNS`` 或 80）。
+
+    rich 依次尝试 ``os.get_terminal_size``（Windows 只探测 stdout/stderr，
+    POSIX 还包含 stdin），随后用 ``COLUMNS`` 覆盖，最终回退 80。固化帮助
+    只在算出的宽度恰为 :data:`HELP_WIDTH` 时可用。
+    """
+    width = 0
+    streams = (1, 2) if sys.platform == "win32" else (0, 1, 2)
+    for fd in streams:
+        try:
+            width, _ = os.get_terminal_size(fd)
+        except (AttributeError, ValueError, OSError):
+            continue
+        break
+    columns = os.environ.get("COLUMNS")
+    if columns is not None and columns.isdigit():
+        width = int(columns)
+    return width or HELP_WIDTH
+
+
 def _build() -> _Manifest | None:
     """导入生成文件并校验版本与新鲜度。"""
     import importlib
@@ -249,11 +359,14 @@ def _build() -> _Manifest | None:
 def clear_cache() -> None:
     """清空清单缓存（供测试在替换清单 / 目录布局后重新加载）。"""
     global _loaded, _cache, _strict_loaded, _strict_cache, _scan_cache  # noqa: PLW0603 - 模块级单例
+    global _help_loaded, _help_cache  # noqa: PLW0603 - 模块级单例
     _loaded = False
     _cache = None
     _strict_loaded = False
     _strict_cache = None
     _scan_cache = None
+    _help_loaded = False
+    _help_cache = None
 
 
 def list_rows() -> list[tuple[str, list[str], str]] | None:
@@ -298,6 +411,37 @@ def _literal(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _render_help_texts(tools: dict[str, ToolEntry]) -> dict[str, str]:
+    """按运行时同一条路径渲染各工具的顶层 ``--help``（非终端、固定宽度）。
+
+    走真实实现（:func:`fcmd.core.toolkit.run_tool`）而不是另写渲染逻辑，
+    保证固化文本与实跑输出逐字一致；``redirect_stdout`` 让 rich 按非终端
+    处理（剥离样式），``COLUMNS`` 固定为 :data:`HELP_WIDTH`。
+    """
+    import contextlib
+    import io
+
+    from fcmd.core.toolkit import run_tool
+
+    saved = os.environ.get("COLUMNS")
+    os.environ["COLUMNS"] = str(HELP_WIDTH)
+    texts: dict[str, str] = {}
+    try:
+        for name, entry in sorted(tools.items()):
+            if entry.kind != "python":
+                continue
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                run_tool(name, ["--help"])
+            texts[name] = buffer.getvalue()
+    finally:
+        if saved is None:
+            os.environ.pop("COLUMNS", None)
+        else:
+            os.environ["COLUMNS"] = saved
+    return texts
+
+
 def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
     """按当前全量发现结果重写 :mod:`fcmd.cli._manifest_data`。
 
@@ -339,6 +483,8 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
     if digest is None:  # pragma: no cover - 仅源码目录不可读时触发
         raise RuntimeError("无法计算工具源码指纹，清单未生成")
 
+    help_texts = _render_help_texts(tools)
+
     lines = [
         '"""静态工具清单（生成文件，勿手改）。',
         "",
@@ -346,15 +492,29 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
         "工具规范名 → ``ToolEntry``（模块路径）、别名表、工具描述，以及候选",
         "工具模块布局与源码内容指纹（新鲜度校验用）。``fcmd <tool>`` 快路径",
         "据此只加载目标工具，``fcmd`` 列表快路径据此直接取名字 / 别名 / 描述、",
-        "不导入任何工具模块；清单缺失 / 过期 / 与布局或内容指纹不一致时一律",
-        "回退全量发现（见 :mod:`fcmd.cli._manifest`）。",
+        "``fcmd <tool> --help`` 据此直接写出固化帮助，均不导入工具模块；清单",
+        "缺失 / 过期 / 与布局或内容指纹不一致时一律回退全量发现（见",
+        ":mod:`fcmd.cli._manifest`）。",
         '"""',
         "",
         "from __future__ import annotations",
         "",
         "from fcmd.cli._manifest import ToolEntry",
         "",
-        '__all__ = ["ALIASES", "DESCRIPTIONS", "DIGEST", "LAYOUT", "SCHEMA", "SUBCOMMAND_TOTAL", "TOOLS", "TOOL_COUNT"]',
+        "__all__ = [",
+        '    "ALIASES",',
+        '    "DESCRIPTIONS",',
+        '    "DIGEST",',
+        '    "HELP",',
+        '    "HELP_WIDTH",',
+        '    "LAYOUT",',
+        '    "PLATFORM",',
+        '    "PY_VERSION",',
+        '    "SCHEMA",',
+        '    "SUBCOMMAND_TOTAL",',
+        '    "TOOLS",',
+        '    "TOOL_COUNT",',
+        "]",
         "",
         "# 清单格式版本（与 fcmd.cli._manifest.SCHEMA 比对，不一致即视为过期）",
         f"SCHEMA = {SCHEMA}",
@@ -379,6 +539,18 @@ def regenerate() -> None:  # pragma: no cover - 仅开发者显式执行
     lines.extend(f"    {_literal(name)}: {_literal(text)}," for name, text in sorted(descriptions.items()))
     lines += [
         "}",
+        "",
+        "# 各工具顶层 --help 的固化输出（非终端、固定宽度渲染，命中即原样写出）",
+        "HELP: dict[str, str] = {",
+    ]
+    lines.extend(f"    {_literal(name)}: {_literal(text)}," for name, text in sorted(help_texts.items()))
+    lines += [
+        "}",
+        "",
+        "# 固化帮助的生成环境：解释器版本 / 平台 / 渲染宽度（不一致时回退真实渲染）",
+        f"PY_VERSION = ({sys.version_info[0]}, {sys.version_info[1]})",
+        f"PLATFORM = {_literal(sys.platform)}",
+        f"HELP_WIDTH = {HELP_WIDTH}",
         "",
         "# 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）",
         "LAYOUT: tuple[str, ...] = (",

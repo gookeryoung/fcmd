@@ -62,6 +62,24 @@ print(json.dumps({
 """
 
 
+# 子进程内按「非终端、80 列宽」渲染各工具顶层 --help（末尾一行 JSON）
+_HELP_SCRIPT = """
+import contextlib, io, json, os
+os.environ["COLUMNS"] = "80"
+from fcmd.cli._discovery import ensure_tools_discovered
+from fcmd.core.toolkit import _TOOL_REGISTRY, run_tool
+
+ensure_tools_discovered()
+texts = {}
+for name in sorted(_TOOL_REGISTRY):
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        run_tool(name, ["--help"])
+    texts[name] = buffer.getvalue()
+print(json.dumps(texts))
+"""
+
+
 @pytest.fixture(autouse=True)
 def _reset_manifest_cache() -> Iterator[None]:
     """每个用例前后清空清单缓存（用例可能 patch 布局 / 清单模块）。"""
@@ -543,3 +561,215 @@ def test_drop_module_specs_removes_only_matching_entries(monkeypatch: pytest.Mon
     _discovery._drop_module_specs("fcmd.tools.broken")
 
     assert registry == {"alpha": {"keep": keep}}
+
+
+# ---------------------------------------------------------------------- #
+# 工具级 --help 固化文本
+# ---------------------------------------------------------------------- #
+def _help_payload(**overrides: Any) -> Any:
+    """构造帮助快照（默认值即「当前环境可用」）。"""
+    from fcmd.cli import _manifest
+
+    fields: dict[str, Any] = {
+        "width": _manifest.HELP_WIDTH,
+        "python": sys.version_info[:2],
+        "platform": sys.platform,
+        "texts": {"stattool": "cached help\n"},
+    }
+    fields.update(overrides)
+    return _manifest._HelpPayload(**fields)
+
+
+def test_help_text_matches_runtime(tmp_path: Path) -> None:
+    """清单固化帮助与实跑渲染逐字一致（同解释器 / 平台 / 80 列）。"""
+    data = _data()
+    if sys.platform != data.PLATFORM:
+        pytest.skip(f"固化帮助由 {data.PLATFORM} 生成，仅在生成平台启用")
+    if tuple(data.PY_VERSION) != sys.version_info[:2]:
+        pytest.skip(f"固化帮助由 Python {data.PY_VERSION} 生成，仅在该版本启用")
+
+    proc = _run_py(_HELP_SCRIPT, tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    rendered = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert rendered == data.HELP
+    assert data.HELP_WIDTH == 80
+
+
+def test_help_text_hits_for_canonical_and_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    """规范名与别名都命中同一条固化帮助。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 80)
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_help_data", _help_payload)
+    monkeypatch.setattr(
+        _manifest,
+        "load_strict",
+        lambda: _manifest._Manifest(
+            {"stattool": _manifest.ToolEntry("stattool", "python", "fcmd.tools.stats.stattool")},
+            {"st": "stattool"},
+            {},
+            "digest",
+            1,
+            1,
+        ),
+    )
+
+    assert _manifest.help_text("stattool", ["--help"]) == "cached help\n"
+    assert _manifest.help_text("st", ["-h"]) == "cached help\n"
+
+
+def test_help_text_rejects_non_help_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """非「恰好 -h/--help」的调用一律回退（子命令帮助等）。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest, "_help_data", lambda: pytest.fail("非帮助参数不应读取快照"))
+
+    assert _manifest.help_text("stattool", []) is None
+    assert _manifest.help_text("stattool", ["--help", "x"]) is None
+    assert _manifest.help_text("stattool", ["b", "--help"]) is None
+
+
+def test_help_text_rejects_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """终端输出需要颜色，回退真实渲染。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: True))
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_text_rejects_unavailable_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """快照缺失（旧清单 / 损坏）时回退。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_help_data", lambda: None)
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_text_rejects_width_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """渲染宽度不是 80（如 COLUMNS=120）时回退，保证排版一致。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_help_data", _help_payload)
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 120)
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_text_rejects_env_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    """解释器版本 / 平台与生成期不一致时回退。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 80)
+    monkeypatch.setattr(_manifest, "_help_data", lambda: _help_payload(python=(3, 7)))
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+    monkeypatch.setattr(_manifest, "_help_data", lambda: _help_payload(platform="other-os"))
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_text_rejects_stale_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    """清单严格校验不通过（源码已改未重生成）时回退。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 80)
+    monkeypatch.setattr(_manifest, "_help_data", _help_payload)
+    monkeypatch.setattr(_manifest, "load_strict", lambda: None)
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_text_rejects_unknown_or_non_python(monkeypatch: pytest.MonkeyPatch) -> None:
+    """未登记工具与非 Python 工具（导入失败）都回退。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 80)
+    monkeypatch.setattr(_manifest, "_help_data", _help_payload)
+
+    unknown = _manifest._Manifest({}, {}, {}, "digest", 0, 0)
+    monkeypatch.setattr(_manifest, "load_strict", lambda: unknown)
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+    broken = _manifest._Manifest({"stattool": _manifest.ToolEntry("stattool", "unknown", "")}, {}, {}, "digest", 1, 0)
+    monkeypatch.setattr(_manifest, "load_strict", lambda: broken)
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_text_missing_entry_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """快照里没有该工具文本时回退。"""
+    import io
+
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 80)
+    monkeypatch.setattr(_manifest, "_help_data", lambda: _help_payload(texts={}))
+    manifest = _manifest._Manifest(
+        {"stattool": _manifest.ToolEntry("stattool", "python", "fcmd.tools.stats.stattool")}, {}, {}, "d", 1, 1
+    )
+    monkeypatch.setattr(_manifest, "load_strict", lambda: manifest)
+    assert _manifest.help_text("stattool", ["--help"]) is None
+
+
+def test_help_data_returns_none_on_broken_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """生成文件缺字段 / 不可导入时快照不可用（不抛异常）。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setitem(sys.modules, "fcmd.cli._manifest_data", None)
+    assert _manifest._help_data() is None
+
+
+def test_console_width_uses_columns_and_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """宽度算法与 rich 一致：终端尺寸 → COLUMNS 覆盖 → 80 兜底。"""
+    from fcmd.cli import _manifest
+
+    monkeypatch.setattr(_manifest.os, "get_terminal_size", lambda fd: os.terminal_size((91, 25)))
+    monkeypatch.delenv("COLUMNS", raising=False)
+    assert _manifest._console_width() == 91
+
+    monkeypatch.setenv("COLUMNS", "57")
+    assert _manifest._console_width() == 57
+
+
+def test_console_width_falls_back_to_80(monkeypatch: pytest.MonkeyPatch) -> None:
+    """无终端且 COLUMNS 非法时回退 80。"""
+    from fcmd.cli import _manifest
+
+    def _raise(_fd: int) -> Any:
+        raise OSError("not a terminal")
+
+    monkeypatch.setattr(_manifest.os, "get_terminal_size", _raise)
+    monkeypatch.setenv("COLUMNS", "abc")
+    assert _manifest._console_width() == 80
+
+
+def test_fcmd_app_tool_help_writes_manifest_text(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``fcmd <tool> --help`` 命中固化文本：不做全量发现、输出逐字一致。"""
+    from fcmd.cli import _discovery, _manifest
+    from fcmd.cli.main import FcmdApp
+
+    data = _data()
+    if sys.platform != data.PLATFORM or tuple(data.PY_VERSION) != sys.version_info[:2]:
+        pytest.skip("固化帮助仅在生成平台/解释器启用")
+
+    monkeypatch.setattr(_manifest, "_console_width", lambda: 80)
+    monkeypatch.setattr(_discovery, "resolve_tool_fast", lambda name: pytest.fail("不应导入工具模块"))
+    assert FcmdApp(["pymake", "--help"]).run() == 0
+    assert capsys.readouterr().out == data.HELP["pymake"]

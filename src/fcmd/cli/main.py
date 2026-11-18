@@ -18,7 +18,9 @@
 
 ``fcmd <tool>`` 先按生成清单 :mod:`fcmd.cli._manifest` 只加载目标工具；
 清单未命中 / 过期时回退 :func:`fcmd.cli._discovery.ensure_tools_discovered`
-全量扫描。工具列表（无参 / ``--help``）同样优先走清单快路径，清单不可用 /
+全量扫描。工具级 ``--help`` 同样优先输出清单固化的帮助文本（非终端 80 列
+时命中，见 :func:`fcmd.cli._manifest.help_text`），不导入工具模块。
+工具列表（无参 / ``--help``）同样优先走清单快路径，清单不可用 /
 过期时回退全量发现。内建命令不再统一做全量发现：需要全量注册表的命令
 （``info`` / ``completion`` / ``env`` / ``doctor``）在各自入口自行触发，
 ``graph`` 只按清单解析目标工具，``yaml`` / ``profiler`` 完全不触发发现。
@@ -97,6 +99,17 @@ class FcmdApp:
             return run_builtin(first, self._argv[1:])
 
         rest = self._argv[1:]
+        if rest and rest[0] in ("-h", "--help"):
+            # 工具级帮助优先走固化文本（清单严格校验 + 非终端 80 列时命中），
+            # 免去导入工具模块 / argparse / rich 的固定成本；未命中照常回退。
+            from fcmd.cli._manifest import help_text
+
+            text = help_text(first, rest)
+            if text is not None:
+                sys.stdout.write(text)
+                sys.stdout.flush()
+                return 0
+
         resolved = resolve_tool_fast(first)
         if resolved is None:
             ensure_tools_discovered()

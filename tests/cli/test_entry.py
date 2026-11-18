@@ -35,6 +35,7 @@ def test_run_named_forwards_to_run_tool(monkeypatch: pytest.MonkeyPatch, capsys:
         seen["argv"] = argv
         return 0
 
+    monkeypatch.setattr("fcmd.cli._manifest.help_text", lambda _name, _argv: None)
     monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda name: name)
     monkeypatch.setattr("fcmd.core.toolkit.run_tool", fake_run_tool)
     monkeypatch.setattr(sys, "argv", [r"C:\Scripts\clr.exe", "--help"])
@@ -43,6 +44,44 @@ def test_run_named_forwards_to_run_tool(monkeypatch: pytest.MonkeyPatch, capsys:
     assert exc_info.value.code == 0
     assert seen == {"name": "clr", "argv": ["--help"]}
     assert capsys.readouterr().out == ""
+
+
+def test_run_named_help_fast_path_writes_cached_text(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """工具级 --help 命中固化文本时直接写出，不导入工具模块、不做发现。"""
+
+    def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("固化帮助命中时不应导入工具模块或做发现")
+
+    monkeypatch.setattr("fcmd.cli._manifest.help_text", lambda name, _argv: "cached help\n" if name == "clr" else None)
+    monkeypatch.setattr(discovery_mod, "resolve_tool_fast", _boom)
+    monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", _boom)
+    monkeypatch.setattr(sys, "argv", [r"C:\Scripts\clr.exe", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        run_named()
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == "cached help\n"
+
+
+def test_run_named_help_fast_path_uses_executable_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """runpy 入口（argv[0] 为模块路径）时按加载器 exe 名命中固化帮助。"""
+    calls: list[str] = []
+
+    def fake_help(name: str, _argv: list[str]) -> str | None:
+        calls.append(name)
+        return "img2ico help\n" if name == "img2ico" else None
+
+    monkeypatch.setattr("fcmd.cli._manifest.help_text", fake_help)
+    monkeypatch.setattr(sys, "argv", [r"F:\app\dist\src\fcmd\cli\_entry.py", "--help"])
+    monkeypatch.setattr(sys, "executable", r"F:\app\dist\img2ico.exe")
+    with pytest.raises(SystemExit) as exc_info:
+        run_named()
+    assert exc_info.value.code == 0
+    assert capsys.readouterr().out == "img2ico help\n"
+    assert calls == ["_entry", "img2ico"]
 
 
 def test_run_named_manifest_fast_path_skips_discovery(
@@ -59,6 +98,7 @@ def test_run_named_manifest_fast_path_skips_discovery(
     def _boom() -> None:
         raise AssertionError("<tool>.exe 入口不应触发全量发现")
 
+    monkeypatch.setattr("fcmd.cli._manifest.help_text", lambda _name, _argv: None)
     monkeypatch.setattr(discovery_mod, "resolve_tool_fast", lambda name: name if name == "stattool" else None)
     monkeypatch.setattr(discovery_mod, "ensure_tools_discovered", _boom)
     monkeypatch.setattr(discovery_mod, "resolve_tool", _boom)
