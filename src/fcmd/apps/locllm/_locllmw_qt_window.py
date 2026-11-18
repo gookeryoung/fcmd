@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
 
 from fcmd.apps.locllm._locllmw_icon import window_icon
@@ -76,6 +77,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._chat_page: Any = None
         self._models_page: Any = None
         self._settings_page: Any = None
+        self._log_dialog: Any = None
 
         for key, label, hint in PAGES:
             self.add_page(key, label, hint=hint, factory=self._factory(key))
@@ -86,7 +88,6 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.loadingTextChanged.connect(self.show_loading)
         self.state.modelsUpdatedAtChanged.connect(self._show_models_updated_at)
         self._show_models_updated_at(self.state.models_updated_at or "")
-        self.state.logLine.connect(self.monitor_page.log_view.append)
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
         self.state.modelsChanged.connect(self._on_models_changed)
@@ -103,6 +104,29 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         else:
             self.overview.refresh_hardware()
         self.monitor_page.set_target_name(self.run_page.service_name())
+
+    # ------------------------------------------------------------------ #
+    # 菜单 / 日志
+    # ------------------------------------------------------------------ #
+    def _build_menu(self) -> None:
+        """共享菜单 + 「帮助 → 服务日志…」（放在「关于」之前）。"""
+        super()._build_menu()
+        action = QAction("服务日志…", self)
+        action.setShortcut("Ctrl+Shift+L")
+        action.triggered.connect(self.show_service_log)
+        self.help_menu.insertAction(self.about_action, action)
+        self.help_menu.insertSeparator(self.about_action)
+        self.service_log_action = action
+
+    def show_service_log(self) -> None:
+        """打开（或聚焦）服务日志窗口；历史来自 ``LocllmState`` 缓冲。"""
+        if self._log_dialog is None:
+            from fcmd.apps.locllm._locllmw_qt_log import ServiceLogDialog
+
+            self._log_dialog = ServiceLogDialog(self.state, self)
+        self._log_dialog.show()
+        self._log_dialog.raise_()
+        self._log_dialog.activateWindow()
 
     # ------------------------------------------------------------------ #
     # 页面工厂
@@ -201,6 +225,8 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return False
         if self._chat_page is not None:
             self._chat_page.close()
+        if self._log_dialog is not None:
+            self._log_dialog.close()
         self.run_page.persist_params()
         self.monitor_page.stop()
         self.state.closing = True

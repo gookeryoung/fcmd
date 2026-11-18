@@ -326,10 +326,11 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.theme_menu = ThemeMenu(self, self._theme)
         self.theme_menu.attach(view_menu.addMenu("主题"))
 
-        help_menu = self.menuBar().addMenu("帮助")
-        about_action = QAction("关于", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
+        # 子窗口可在「关于」之前插入自己的帮助项（如 locllmw 的「服务日志…」）。
+        self.help_menu = self.menuBar().addMenu("帮助")
+        self.about_action = QAction("关于", self)
+        self.about_action.triggered.connect(self._show_about)
+        self.help_menu.addAction(self.about_action)
 
     def set_theme(self, theme: Theme) -> None:
         """切换主题：立即重设 QPalette / QSS 并持久化选择。"""

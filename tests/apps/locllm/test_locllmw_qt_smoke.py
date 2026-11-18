@@ -454,6 +454,31 @@ def test_monitor_page_has_target_summary_and_status_badge(window: Any) -> None:
     assert page._monitor_badge.objectName() == "Danger"
 
 
+def test_service_log_moves_to_help_menu(window: Any) -> None:
+    """服务日志入口在「帮助 → 服务日志…」，日志窗口回放缓冲并实时追加。"""
+    window.show_page("monitor")
+    assert not hasattr(window.page("monitor"), "log_view")
+    texts = [action.text() for action in window.help_menu.actions() if not action.isSeparator()]
+    assert texts[-2:] == ["服务日志…", "关于"]
+
+    window.state.log("启动前日志")
+    window.service_log_action.trigger()
+    QApplication.processEvents()
+    dialog = window._log_dialog
+    assert dialog is not None
+    assert dialog.isVisible()
+    assert "启动前日志" in dialog.log_view.text()
+
+    window.state.log("运行中日志")
+    QApplication.processEvents()
+    assert "运行中日志" in dialog.log_view.text()
+
+    dialog.log_view.clear_button.click()
+    assert dialog.log_view.text() == ""
+    assert window.state.log_text() == ""
+    dialog.close()
+
+
 def test_monitor_load_cards_and_rate_display(window: Any) -> None:
     """GPU / CPU / 内存三张负载卡：格图 + 占用率 + 次要参数；tok/s 为主视觉。"""
     from fcmd.apps.locllm import llmserve

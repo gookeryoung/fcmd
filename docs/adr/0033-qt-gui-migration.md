@@ -52,11 +52,14 @@
 |---|---|---|
 | 概览 | `_locllmw_qt_overview`：硬件卡（环形显存 / 内存占用表）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` |
 | 模型 | `_locllmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
-| 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停、浏览器/日志 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
+| 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
 | 实验室 | `_locllmw_qt_lab`：四张规划卡片 | — |
-| 监测 | `_locllmw_qt_monitor`：`/metrics` + 系统负载 + GPU + 性能测试 + 日志 | `_locllmw_monitor` / `_locllmw_bench` |
+| 监测 | `_locllmw_qt_monitor`：`/metrics` + 系统负载 + GPU + 性能测试 | `_locllmw_monitor` / `_locllmw_bench` |
 | 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
+
+服务日志不占分页：顶部「帮助 → 服务日志…」打开 `_locllmw_qt_log` 非模态对话框，
+历史来自 `LocllmState.log_buffer`（最近 1000 行），打开后继续接收 `logLine`。
 
 ### 模型页浏览与行内操作（C5）
 

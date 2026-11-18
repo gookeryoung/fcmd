@@ -123,6 +123,13 @@ def test_segment_bar_tracks_percent() -> None:
     assert bar.toolTip() == "等待采样"
 
 
+def test_segment_bar_paints_before_first_sample() -> None:
+    """首帧（尚未采样）也能绘制，不能因档位 idle 抛 KeyError。"""
+    bar = SegmentBar(segments=12, height=10)
+    bar.resize(240, 10)
+    assert not bar.grab().isNull()
+
+
 def test_card_title_is_plain_label_inside_frame() -> None:
     card = Card("硬件信息")
     assert card.title() == "硬件信息"

@@ -6,7 +6,7 @@ Qt 窗口把「跨页共享的数据」放在这里，页面只订阅信号、�
 - :attr:`LocllmState.hardwareChanged`：硬件检测完成（含失败原因）；
 - :attr:`LocllmState.servicesChanged`：运行中的服务列表变化（启动 / 停止后刷新）；
 - :attr:`LocllmState.selectionChanged`：当前选中模型变化，运行页据此回填服务名；
-- :attr:`LocllmState.statusText` / :attr:`locLine`：状态栏与监测页日志；
+- :attr:`LocllmState.statusText` / :attr:`logLine`：状态栏与服务日志窗口；
 - :attr:`LocllmState.navigateRequested`：跨页跳转（「去设置」这类入口）；
 - :attr:`LocllmState.sampleUpdated` / :attr:`sampleCapacityChanged`：系统采样与
   显存余量变化（概览占用条、模型列表的「需释放显存」标注随之刷新）；
@@ -19,6 +19,7 @@ Qt 窗口把「跨页共享的数据」放在这里，页面只订阅信号、�
 from __future__ import annotations
 
 import contextlib
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -155,6 +156,7 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
         self.alive_states: list[ServeState] = []
         self.busy = False
         self.closing = False
+        self.log_buffer: deque[str] = deque(maxlen=1000)
         self._loading_tasks: dict[str, str] = {}
         self.scanning = False
         self.detecting = False
@@ -163,8 +165,17 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     # 通道
     # ------------------------------------------------------------------ #
     def log(self, message: str) -> None:
-        """写监测页日志。"""
+        """写服务日志：缓冲一份供「帮助 → 服务日志…」回放，同时广播给已打开的窗口。"""
+        self.log_buffer.append(message)
         self.logLine.emit(message)
+
+    def log_text(self) -> str:
+        """当前缓冲的服务日志（换行拼接，供日志窗口首次打开时回放）。"""
+        return "\n".join(self.log_buffer)
+
+    def clear_log(self) -> None:
+        """清空服务日志缓冲（日志窗口点「清空」时同步）。"""
+        self.log_buffer.clear()
 
     def status(self, text: str) -> None:
         """更新状态栏。"""

@@ -1125,7 +1125,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._log(f"已加载模型详情: {info.summary.repo}")
 
     def _log(self, message: str) -> None:
-        self.state.logLine.emit(message)
+        self.state.log(message)
 
     # -- 下载 ---------------------------------------------------------- #
     def _sync_download_buttons(self) -> None:

@@ -58,7 +58,6 @@ from fcmd.gui.qt.widgets import (
     Card,
     Collapsible,
     FormGrid,
-    LogView,
     MetricGrid,
     PageScroll,
     SegmentBar,
@@ -214,8 +213,7 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         self._bench = Collapsible("性能测试（短对话 / 长输出 / 代码补全 / 长上下文 / 并发）", expanded=False)
         self._build_bench(self._bench.content)
         layout.addWidget(self._bench)
-
-        layout.addWidget(self._build_log(), 1)
+        layout.addStretch(1)
 
     def _build_target(self) -> Card:
         """监测目标卡片：标题行放状态徽标与最近采样，正文只留目标与刷新入口。
@@ -342,13 +340,6 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         card.body.addWidget(details)
         card.body.addStretch(1)
         return card, percent, bar, details
-
-    def _build_log(self) -> Card:
-        """服务日志：复用统一日志组件（工具条自带复制 / 清空 / 导出）。"""
-        card = Card("服务日志")
-        self.log_view = LogView(height=220, parent=card)
-        card.body.addWidget(self.log_view)
-        return card
 
     def _build_bench(self, parent: QWidget) -> None:
         """性能测试分区：场景与参数并排，操作行与结果标题分行，结果表保底可见。

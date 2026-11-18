@@ -352,12 +352,15 @@ class SegmentBar(QWidget):  # pragma: no cover - Qt 控件
         palette = self.palette()
         track = palette.color(QPalette.ColorRole.Mid)
         theme_palette = _qt_theme.load_theme().palette
+        band = segment_band(self._percent)
         fill = QColor(
             {
                 "danger": theme_palette.danger,
                 "warning": theme_palette.warning,
                 "success": theme_palette.success,
-            }[segment_band(self._percent)]
+                # 尚未采样时全格为空，颜色只作占位，避免首帧 KeyError。
+                "idle": theme_palette.success,
+            }[band]
         )
         gap = 2.0
         segment_width = (self.width() - gap * (self._segments - 1)) / self._segments
