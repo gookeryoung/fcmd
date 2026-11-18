@@ -47,7 +47,14 @@ from fcmd.apps.locllm import (
     llmqnt,
 )
 from fcmd.apps.locllm._llmgguf import detect_precision, quantize_input_error
-from fcmd.apps.locllm._locllmw_import import ImportPlan, copy_import, plan_import
+from fcmd.apps.locllm._locllmw_import import (
+    FolderInfo,
+    FolderKind,
+    ImportPlan,
+    copy_import,
+    inspect_folder,
+    plan_import,
+)
 from fcmd.apps.locllm._locllmw_list_cache import ModelListCache, cache_key
 from fcmd.apps.locllm.llmbase import human_size
 from fcmd.apps.locllm.llmdown import (
@@ -443,6 +450,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._quantized_files: dict[str, tuple[tuple[str, Path], ...]] = {}
         self._quantizing = False
         self._quant_active_repo: str | None = None
+        self._pending_convert: str | None = None
+        self._import_convert = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -656,6 +665,13 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._quant_candidates = snapshot.quant_candidates
         self._quant_tags = snapshot.quant_tags
         self._quantized_files = snapshot.quantized
+        pending = self._pending_convert
+        self._pending_convert = None
+        if pending:
+            if pending.casefold() in self._convertible:
+                self.start_convert(pending)
+            else:
+                self._log(f"导入完成，但未检测到可自动转换的 safetensors：{pending}")
         if self._last_result is not None and not self._searching:
             self._render_results()
 
@@ -730,10 +746,44 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def _pick_model_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "导入模型文件夹")
-        if path:
-            self.start_import([Path(path)])
+        if not path:
+            return
+        try:
+            info = inspect_folder(Path(path))
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "无法识别文件夹", str(exc))
+            return
+        proceed, convert = self._ask_folder_import(info)
+        if proceed:
+            self.start_import([Path(path)], convert=convert)
 
-    def start_import(self, sources: list[Path]) -> None:
+    def _ask_folder_import(self, info: FolderInfo) -> tuple[bool, bool]:
+        """按文件夹类型给出不同选项，返回 ``(是否导入, 是否导入后转换)``。"""
+        box = QMessageBox(self)
+        box.setWindowTitle("导入模型文件夹")
+        healthy = info.kind in (FolderKind.TENSORS, FolderKind.MIXED, FolderKind.GGUF)
+        box.setIcon(QMessageBox.Icon.Information if healthy else QMessageBox.Icon.Warning)
+        box.setText(f"检测到：{info.label}")
+        box.setInformativeText(info.hint)
+        convert_button = None
+        if info.can_convert:
+            convert_button = box.addButton("导入并转换", QMessageBox.ButtonRole.AcceptRole)
+            import_button = box.addButton("仅导入", QMessageBox.ButtonRole.ActionRole)
+        elif info.kind is FolderKind.GGUF:
+            import_button = box.addButton("导入", QMessageBox.ButtonRole.AcceptRole)
+        else:
+            import_button = box.addButton("仍然导入", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("取消", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(import_button)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is convert_button:
+            return True, True
+        if clicked is import_button:
+            return True, False
+        return False, False
+
+    def start_import(self, sources: list[Path], *, convert: bool = False) -> None:
         """把选中的 GGUF / 文件夹复制进模型目录，完成后刷新本地标识。"""
         try:
             plans = plan_import(sources, _llmconfig.models_dir())
@@ -746,6 +796,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         conflicts = [plan for plan in plans if plan.target.exists()]
         if conflicts and not self._confirm_import_overwrite(conflicts):
             return
+        self._import_convert = convert
         self._begin_loading("import", f"正在导入 {len(plans)} 项模型…")
         self.state.status(f"正在导入 {len(plans)} 项模型…")
         self._log("开始导入：" + "、".join(str(plan.source) for plan in plans))
@@ -776,6 +827,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         return tuple(copied)
 
     def _import_done(self, targets: tuple[str, ...]) -> None:
+        convert = self._import_convert
+        self._import_convert = False
+        if convert and len(targets) == 1:
+            self._pending_convert = Path(targets[0]).name
         self.state.status(f"已导入 {len(targets)} 项模型，可继续转换或启动")
         self._log("已导入模型：" + "、".join(targets))
 

@@ -202,6 +202,32 @@ def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: py
         chat._running = False
 
 
+def test_models_folder_import_uses_detected_type(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """选择文件夹后先识别类型，再按类型提供的选项决定是否导入并转换。"""
+    from PySide6.QtWidgets import QFileDialog
+
+    from fcmd.apps.locllm._locllmw_import import FolderKind
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    folder = tmp_path / "hf-model"
+    folder.mkdir()
+    (folder / "model.safetensors").write_bytes(b"x")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kw: str(folder))
+    seen: list[FolderKind] = []
+
+    def _ask(info: object) -> tuple[bool, bool]:
+        seen.append(info.kind)  # type: ignore[attr-defined]
+        return True, True
+
+    monkeypatch.setattr(browse, "_ask_folder_import", _ask)
+    calls: list[tuple[list[Path], bool]] = []
+    monkeypatch.setattr(browse, "start_import", lambda paths, *, convert=False: calls.append((paths, convert)))
+    browse._pick_model_folder()
+    assert seen == [FolderKind.TENSORS]
+    assert calls == [([folder], True)]
+
+
 def test_models_import_button_submits_copy(window: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """更新模型右侧提供导入模型按钮，GGUF 导入走后台复制并刷新本地标识。"""
     from fcmd.apps.locllm import _locllmw_qt_center as center

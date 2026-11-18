@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.apps.locllm._locllmw_import import copy_import, plan_import
+from fcmd.apps.locllm._locllmw_import import FolderKind, copy_import, inspect_folder, plan_import
 
 
 def _gguf(path: Path) -> Path:
@@ -67,3 +67,55 @@ def test_copy_requires_overwrite_for_existing_target(tmp_path: Path) -> None:
     plan.source.write_bytes(b"GGUF2")
     copy_import(plan, overwrite=True)
     assert plan.target.read_bytes() == b"GGUF2"
+
+
+def test_inspect_folder_detects_gguf(tmp_path: Path) -> None:
+    folder = tmp_path / "gguf-model"
+    _gguf(folder / "model-Q4_K_M.gguf")
+    info = inspect_folder(folder)
+    assert info.kind is FolderKind.GGUF
+    assert "可直接启动" in info.label
+    assert not info.can_convert
+
+
+def test_inspect_folder_detects_tensors(tmp_path: Path) -> None:
+    folder = tmp_path / "hf-model"
+    folder.mkdir()
+    (folder / "model.safetensors").write_bytes(b"x")
+    info = inspect_folder(folder)
+    assert info.kind is FolderKind.TENSORS
+    assert "tensors" in info.label
+    assert info.can_convert
+
+
+def test_inspect_folder_detects_mixed(tmp_path: Path) -> None:
+    folder = tmp_path / "mixed-model"
+    folder.mkdir()
+    (folder / "model.safetensors").write_bytes(b"x")
+    (folder / "model-Q4_K_M.gguf").write_bytes(b"x")
+    info = inspect_folder(folder)
+    assert info.kind is FolderKind.MIXED
+    assert info.can_convert
+
+
+def test_inspect_folder_detects_diffusers_as_not_convertible(tmp_path: Path) -> None:
+    folder = tmp_path / "diffusers-model"
+    folder.mkdir()
+    (folder / "model_index.json").write_text("{}", encoding="utf-8")
+    (folder / "model.safetensors").write_bytes(b"x")
+    info = inspect_folder(folder)
+    assert info.kind is FolderKind.DIFFUSERS
+    assert not info.can_convert
+
+
+def test_inspect_folder_unknown(tmp_path: Path) -> None:
+    folder = tmp_path / "empty"
+    folder.mkdir()
+    info = inspect_folder(folder)
+    assert info.kind is FolderKind.UNKNOWN
+    assert not info.can_convert
+
+
+def test_inspect_folder_rejects_missing_directory(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="不是有效文件夹"):
+        inspect_folder(tmp_path / "missing")

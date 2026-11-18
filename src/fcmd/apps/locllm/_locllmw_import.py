@@ -15,9 +15,74 @@ from __future__ import annotations
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
-__all__ = ["ImportPlan", "copy_import", "plan_import"]
+__all__ = ["FolderInfo", "FolderKind", "ImportPlan", "copy_import", "inspect_folder", "plan_import"]
+
+
+class FolderKind(StrEnum):
+    """导入文件夹的类型：决定可选操作（直接导入 / 导入并转换）。"""
+
+    TENSORS = "tensors"
+    GGUF = "gguf"
+    MIXED = "mixed"
+    DIFFUSERS = "diffusers"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class FolderInfo:
+    """文件夹检测结果：类型、展示名、说明与是否支持导入后转换。"""
+
+    kind: FolderKind
+    label: str
+    hint: str
+    can_convert: bool
+
+
+def inspect_folder(path: Path) -> FolderInfo:
+    """识别文件夹是 HF tensors、GGUF、二者混合、diffusers 还是未知类型。"""
+    folder = Path(path).expanduser()
+    if not folder.is_dir():
+        raise ValueError(f"不是有效文件夹：{path}")
+    has_index = (folder / "model_index.json").is_file()
+    has_tensors = next(folder.rglob("*.safetensors"), None) is not None
+    has_gguf = next(folder.rglob("*.gguf"), None) is not None
+    if has_index:
+        return FolderInfo(
+            FolderKind.DIFFUSERS,
+            "diffusers 多组件模型（不可转换）",
+            "包含 model_index.json，当前只支持单目录 HF transformers safetensors；仍可导入留档。",
+            False,
+        )
+    if has_tensors and has_gguf:
+        return FolderInfo(
+            FolderKind.MIXED,
+            "GGUF + HF safetensors（tensors，可选转换）",
+            "同时包含 GGUF 与 tensors：可直接启动 GGUF，也可把 tensors 转换为 GGUF。",
+            True,
+        )
+    if has_tensors:
+        return FolderInfo(
+            FolderKind.TENSORS,
+            "HF safetensors（tensors，可转换为 GGUF）",
+            "导入后可用行内「转换」生成 GGUF，或选择「导入并转换」立即开始。",
+            True,
+        )
+    if has_gguf:
+        return FolderInfo(
+            FolderKind.GGUF,
+            "GGUF（可直接启动）",
+            "导入后可直接在运行页选择并启动，无需转换。",
+            False,
+        )
+    return FolderInfo(
+        FolderKind.UNKNOWN,
+        "未识别到 GGUF / safetensors（unknown）",
+        "未找到 GGUF 或 safetensors 文件，仍可导入，但不会出现在可启动模型列表中。",
+        False,
+    )
 
 
 @dataclass(frozen=True, slots=True)
