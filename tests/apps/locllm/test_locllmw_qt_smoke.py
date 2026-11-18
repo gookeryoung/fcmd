@@ -186,6 +186,7 @@ def test_chat_parameter_icon_buttons_toggle_sections(window: Any) -> None:
     """连接 / 生成参数入口是刷新右侧的图标按钮，点击展开对应分区。"""
     window.show_page("chat")
     chat = window.page("chat")
+    assert chat.new_chat_button.objectName() == "RunPrimary"
     assert chat.connection_button.text() == "🔗"
     assert chat.generation_button.text() == "⚙"
     assert not chat.connection_section.is_expanded()

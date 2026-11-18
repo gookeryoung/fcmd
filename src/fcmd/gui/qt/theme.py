@@ -284,10 +284,11 @@ QToolButton#IconButton {
     border: 1px solid $border;
     border-radius: 6px;
     color: $muted;
-    min-width: 30px;
-    max-width: 30px;
-    min-height: 30px;
-    max-height: 30px;
+    padding: 0;
+    min-width: $control_height;
+    max-width: $control_height;
+    min-height: $control_height;
+    max-height: $control_height;
     font-size: ${font_heading}pt;
 }
 QToolButton#IconButton:hover { background: $surface_hover; color: $text; }

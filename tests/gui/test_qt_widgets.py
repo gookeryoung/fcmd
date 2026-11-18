@@ -105,6 +105,25 @@ def test_path_row_commits_on_editing_finished() -> None:
     assert seen == ["D:/models2"]
 
 
+def test_icon_button_height_matches_default_button() -> None:
+    """图标按钮高度跟随刷新等普通按钮，右侧工具栏不出现高矮不一。"""
+    from PySide6.QtWidgets import QHBoxLayout, QWidget
+
+    container = QWidget()
+    layout = QHBoxLayout(container)
+    refresh = button("刷新")
+    icon = icon_button("⚙", tooltip="生成参数")
+    layout.addWidget(refresh)
+    layout.addWidget(icon)
+    container.show()
+    QApplication.processEvents()
+    try:
+        assert icon.height() == refresh.height()
+        assert icon.width() == icon.height()
+    finally:
+        container.deleteLater()
+
+
 def test_icon_button_is_square_and_checkable() -> None:
     """图标按钮用字形作图标，可作展开 / 收起开关。"""
     widget = icon_button("⚙", tooltip="生成参数", checkable=True)

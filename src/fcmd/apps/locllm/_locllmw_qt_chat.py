@@ -132,6 +132,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         side.setContentsMargins(8, 8, 8, 8)
         side.setSpacing(8)
         self.new_chat_button = button("＋ 新对话", kind="primary")
+        # 与运行页顶部「启动服务」同一尺寸（40px 高、标题字号、更大的左右内边距）。
+        self.new_chat_button.setObjectName("RunPrimary")
         self.new_chat_button.clicked.connect(self.new_conversation)
         side.addWidget(self.new_chat_button)
         self.history_list = QListWidget(sidebar)
