@@ -21,15 +21,18 @@ from fcmd.apps.locllm._locllmw_models import (
     DEFAULT_MODEL_FILTER,
     MODEL_FILTERS,
     DownloadGuiSettings,
+    dedupe_by_repo,
     detail_pairs,
     filter_by_local_fit,
     filter_by_name,
     filter_models,
     format_models_updated,
+    group_same_name,
     local_row,
     matches_filter,
     merge_installed_items,
     model_item_lines,
+    model_owner,
     model_published_text,
     model_row,
     model_score,
@@ -117,15 +120,36 @@ class TestFormatting:
         )
         assert model_item_lines(summary) == (
             "demo",
-            "发布方 Qwen · 文本生成、视觉问答",
+            "文本生成、视觉问答",
             "2.00 KB",
         )
         assert model_published_text(summary) == f"发布 {format_timestamp(summary.updated)}"
 
     def test_model_item_lines_empty(self) -> None:
-        assert model_item_lines(ModelSummary(repo="Qwen/demo")) == ("demo", "发布方 Qwen", "-")
+        assert model_item_lines(ModelSummary(repo="Qwen/demo")) == ("demo", "-", "-")
         assert model_item_lines(ModelSummary(repo="")) == ("", "其他", "-")
         assert model_published_text(ModelSummary(repo="Qwen/demo")) == ""
+
+    def test_model_owner_and_dedupe(self) -> None:
+        assert model_owner(ModelSummary(repo="unsloth/demo")) == "unsloth"
+        items = (
+            ModelSummary(repo="unsloth/demo", name="demo"),
+            ModelSummary(repo="UNSLOTH/DEMO", name="demo"),
+            ModelSummary(repo="Qwen/demo", name="demo"),
+        )
+        assert [item.repo for item in dedupe_by_repo(items)] == ["unsloth/demo", "Qwen/demo"]
+
+    def test_group_same_name_prefers_installed_then_score(self) -> None:
+        installed = ModelSummary(repo="org/demo", name="demo", downloads=1, stars=1)
+        popular = ModelSummary(repo="other/demo", name="demo", downloads=9999, stars=9999)
+        grouped = group_same_name((popular, installed), {"org/demo"})
+        assert grouped == ((installed, 2),)
+
+    def test_sort_by_name_and_size(self) -> None:
+        large = ModelSummary(repo="b/large", name="large", storage_size=100)
+        small = ModelSummary(repo="a/small", name="small", storage_size=10)
+        assert [item.repo for item in sort_browse_items((large, small), set(), "all", "size")] == ["b/large", "a/small"]
+        assert [item.repo for item in sort_browse_items((large, small), set(), "all", "name")] == ["b/large", "a/small"]
 
     def test_local_row(self) -> None:
         path = Path("/models/Qwen/demo")

@@ -10,7 +10,7 @@ import math
 import re
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -33,15 +33,18 @@ __all__ = [
     "MODEL_FILTERS",
     "MODEL_SORTS",
     "DownloadGuiSettings",
+    "dedupe_by_repo",
     "detail_pairs",
     "filter_by_local_fit",
     "filter_by_name",
     "filter_models",
     "format_models_updated",
+    "group_same_name",
     "local_row",
     "matches_filter",
     "merge_installed_items",
     "model_item_lines",
+    "model_owner",
     "model_row",
     "model_score",
     "open_path",
@@ -93,6 +96,8 @@ MODEL_SORTS: tuple[tuple[str, str], ...] = (
     ("created", "按发布时间"),
     ("modified", "按更新时间"),
     ("stars", "按星标"),
+    ("size", "按体积"),
+    ("name", "按名称"),
     ("default", "综合评分"),
 )
 DEFAULT_MODEL_SORT = "downloads"
@@ -179,19 +184,56 @@ def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
     )
 
 
+def model_owner(item: ModelSummary) -> str:
+    """仓库发布方（优先元数据，其次从 ``组织/模型`` 推导）。"""
+    return item.owner or (item.repo.split("/", 1)[0] if "/" in item.repo else "")
+
+
+def dedupe_by_repo(items: Sequence[ModelSummary]) -> tuple[ModelSummary, ...]:
+    """按 ``repo`` 大小写不敏感去重，保留首次出现的摘要。"""
+    seen: set[str] = set()
+    result: list[ModelSummary] = []
+    for item in items:
+        key = item.repo.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return tuple(result)
+
+
+def group_same_name(
+    items: Sequence[ModelSummary],
+    installed_repos: set[str],
+) -> tuple[tuple[ModelSummary, int], ...]:
+    """按模型名折叠同名仓库，优先已安装、其次综合评分最高。
+
+    返回 ``(代表仓库, 同名数量)``；调用方用于「同名折叠」视图。
+    """
+    installed = {repo.casefold() for repo in installed_repos}
+    groups: dict[str, list[ModelSummary]] = {}
+    for item in items:
+        key = (item.name or item.repo.rsplit("/", 1)[-1]).casefold()
+        groups.setdefault(key, []).append(item)
+    chosen: list[tuple[ModelSummary, int]] = []
+    for group in groups.values():
+        group.sort(key=lambda item: (item.repo.casefold() not in installed, -model_score(item), -item.downloads))
+        chosen.append((group[0], len(group)))
+    return tuple(sorted(chosen, key=lambda pair: pair[0].repo.casefold()))
+
+
 def model_item_lines(item: ModelSummary) -> tuple[str, str, str]:
     """浏览列表自定义行的关键内容：``(模型名, 发布方 / 系列 / 任务, 体积)``。
 
     发布机构从名称移到下方描述；名称只保留模型名，避免行首被 ``组织/`` 占满。
     """
-    owner = item.owner or (item.repo.split("/", 1)[0] if "/" in item.repo else "")
+    owner = model_owner(item)
     title = item.name or item.repo.rsplit("/", 1)[-1]
     series = model_series(item)
     duplicate_series = bool(owner and series.casefold() == owner.casefold())
     subtitle = " · ".join(
         part
         for part in (
-            f"发布方 {owner}" if owner else "",
             "" if duplicate_series else series,
             "、".join(item.tasks),
         )
@@ -295,6 +337,10 @@ def sort_browse_items(
             return (-item.updated, -item.downloads, item.repo.casefold())
         if sort_key == "stars":
             return (-item.stars, -item.downloads, item.repo.casefold())
+        if sort_key == "size":
+            return (-item.storage_size, -item.downloads, item.repo.casefold())
+        if sort_key == "name":
+            return (item.name.casefold(), -item.downloads, item.repo.casefold())
         return (-model_score(item), -item.downloads, -item.stars, item.repo.casefold())
 
     return tuple(sorted(items, key=lambda item: (not pinned(item), *order(item))))

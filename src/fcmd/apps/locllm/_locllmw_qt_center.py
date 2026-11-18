@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -79,6 +80,7 @@ from fcmd.apps.locllm.llmdown import (
 from fcmd.gui.qt.widgets import (
     ElidedLabel,
     RowListWidget,
+    StatusTag,
     button,
     hint_label,
     link_button,
@@ -160,11 +162,16 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         serve_path: Path | None = None,
         downloadable: bool = True,
         incomplete: bool = False,
+        owner: str = "",
+        size_text: str | None = None,
+        same_name: int = 1,
         progress_text: str = "",
     ) -> None:
         super().__init__(parent)
         title, subtitle, metrics = _locllmw_models.model_item_lines(item)
         self.repo = item.repo
+        if size_text:
+            metrics = size_text
         self.serve_path = serve_path
         self._expanded = False
         self._installed = installed
@@ -198,6 +205,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         name.setObjectName("ModelItemName")
         name.setToolTip(item.repo)
         name_row.addWidget(name, 1)
+        if owner:
+            owner_label = QLabel(owner, header)
+            owner_label.setObjectName("OwnerTag")
+            owner_label.setToolTip(f"发布方 {owner}")
+            name_row.addWidget(owner_label, 0)
         published = _locllmw_models.model_published_text(item)
         if published:
             published_label = QLabel(published, header)
@@ -215,6 +227,16 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         sub.setToolTip(subtitle)
         note_row.addWidget(sub, 0)
+        if installed and not incomplete:
+            note_row.addWidget(StatusTag("已安装", tone="success", parent=header), 0)
+        elif incomplete:
+            note_row.addWidget(StatusTag("部分下载", tone="warning", parent=header), 0)
+        if not downloadable:
+            note_row.addWidget(StatusTag("仅本地", tone="muted", parent=header), 0)
+        if any(tag.upper().startswith("UD-") for tag in quant_tags):
+            note_row.addWidget(StatusTag("UD", tone="accent", parent=header), 0)
+        if same_name > 1:
+            note_row.addWidget(StatusTag(f"同名 {same_name}", tone="muted", parent=header), 0)
         for tag in quant_tags:
             chip = QLabel(tag, header)
             if tag == default_quant:
@@ -455,6 +477,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._filter_key = _DEFAULT_FILTER
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
         self._sort_key = _DEFAULT_SORT
+        self._source_filter = "online"
+        self._owner_filter = ""
+        self._group_same = False
         self._detail_generation = 0
         self._searching = False
         self._list_cache = ModelListCache()
@@ -520,8 +545,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.name_filter = QLineEdit(self)
         self.name_filter.setPlaceholderText("按名称筛选当前页…")
         self.name_filter.setClearButtonEnabled(True)
-        self.name_filter.setMinimumWidth(320)
-        self.name_filter.setMaximumWidth(460)
+        self.name_filter.setMinimumWidth(220)
+        self.name_filter.setMaximumWidth(320)
         self.name_filter.textChanged.connect(self._on_name_filter_changed)
         nav.addWidget(self.name_filter)
         self.sort_combo = QComboBox(self)
@@ -530,6 +555,20 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.sort_combo.setCurrentIndex(max(self.sort_combo.findData(self._sort_key), 0))
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         nav.addWidget(self.sort_combo)
+        self.source_combo = QComboBox(self)
+        for key, label in (("online", "在线"), ("installed", "已下载"), ("all", "全部来源")):
+            self.source_combo.addItem(label, key)
+        self.source_combo.setCurrentIndex(max(self.source_combo.findData(self._source_filter), 0))
+        self.source_combo.currentIndexChanged.connect(self._on_source_changed)
+        nav.addWidget(self.source_combo)
+        self.owner_combo = QComboBox(self)
+        self.owner_combo.addItem("全部发布方", "")
+        self.owner_combo.currentIndexChanged.connect(self._on_owner_changed)
+        nav.addWidget(self.owner_combo)
+        self.group_check = QCheckBox("同名折叠", self)
+        self.group_check.setToolTip("同名仓库只保留一个代表行；取消勾选查看全部")
+        self.group_check.toggled.connect(lambda _checked: self._render_results())
+        nav.addWidget(self.group_check)
         nav.addStretch(1)
         self._name_filter = ""
         self._filter_timer = QTimer(self)
@@ -606,6 +645,35 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         self._sort_key = key
         self.start_search(1)
+
+    def _on_source_changed(self, _index: int) -> None:
+        key = self.source_combo.currentData()
+        if isinstance(key, str):
+            self._source_filter = key
+            self._render_results()
+
+    def _on_owner_changed(self, _index: int) -> None:
+        owner = self.owner_combo.currentData()
+        if isinstance(owner, str):
+            self._owner_filter = owner
+            self._render_results()
+
+    def _refresh_owner_combo(self, items: tuple[ModelSummary, ...]) -> None:
+        current = self._owner_filter
+        owners = sorted(
+            {_locllmw_models.model_owner(item) for item in items if _locllmw_models.model_owner(item)}, key=str.casefold
+        )
+        self.owner_combo.blockSignals(True)
+        self.owner_combo.clear()
+        self.owner_combo.addItem("全部发布方", "")
+        for owner in owners:
+            self.owner_combo.addItem(owner, owner)
+        index = self.owner_combo.findData(current)
+        if index < 0:
+            self._owner_filter = ""
+            index = 0
+        self.owner_combo.setCurrentIndex(index)
+        self.owner_combo.blockSignals(False)
 
     def refresh_installed(self) -> None:
         """后台扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。
@@ -952,17 +1020,38 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._render_results()
         self._expand_repo(repo)
 
-    def _render_results(self) -> None:
+    def _render_results(self) -> None:  # noqa: PLR0912 - 列表组合筛选集中在一处
         result = self._last_result
         if result is None:
             return
-        items = result.items
         filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
+        installed_items = tuple(self._installed_models.values())
+        if self._source_filter == "installed":
+            base = list(installed_items)
+        elif self._source_filter == "online":
+            base = list(result.items)
+        else:
+            present = {item.repo.casefold() for item in result.items}
+            base = list(result.items) + [
+                summary for key, summary in self._installed_models.items() if key not in present
+            ]
         if self._filter_key == "local":
-            items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
-        items = _locllmw_models.merge_installed_items(items, self._installed_models, self._filter_key)
-        items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key, self._sort_key)
+            base = list(_locllmw_models.filter_by_local_fit(tuple(base), self._local_capacity()))
+        elif self._filter_key not in ("all", ""):
+            base = [item for item in base if _locllmw_models.matches_filter(item, self._filter_key)]
+        items = _locllmw_models.dedupe_by_repo(base)
+        self._refresh_owner_combo(items)
+        if self._owner_filter:
+            items = tuple(
+                item for item in items if _locllmw_models.model_owner(item).casefold() == self._owner_filter.casefold()
+            )
         items = _locllmw_models.filter_by_name(items, self._name_filter)
+        items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key, self._sort_key)
+        same_name_counts: dict[str, int] = {}
+        if self._group_same:
+            grouped = _locllmw_models.group_same_name(items, self._installed_repos)
+            same_name_counts = {item.repo.casefold(): count for item, count in grouped}
+            items = tuple(item for item, _count in grouped)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),
             items[0].repo if items else None,
@@ -1015,6 +1104,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 incomplete=incomplete,
                 progress_text=progress_text,
                 downloadable=downloadable,
+                owner=_locllmw_models.model_owner(item),
+                size_text=human_size(self._installed_models[key].storage_size)
+                if installed and key in self._installed_models and self._installed_models[key].storage_size
+                else None,
+                same_name=same_name_counts.get(key, 1),
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
@@ -1025,11 +1119,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
         self._sync_download_buttons()
-        pages = max(1, math.ceil(result.total / result.page_size)) if result.total else 1
+        local_view = self._source_filter == "installed"
+        pages = 1 if local_view else max(1, math.ceil(result.total / result.page_size)) if result.total else 1
         matched = f" · 名称筛选 {len(items)} 条" if self._name_filter else ""
-        self.state.status(f"{filter_label} · {result.page}/{pages} · 共 {result.total:,} 条{matched}")
-        self.prev_button.setEnabled(result.page > 1)
-        self.next_button.setEnabled(result.page < pages)
+        source_label = self.source_combo.currentText()
+        total_text = f"已下载 {len(items)} 个" if local_view else f"{result.page}/{pages} · 共 {result.total:,} 条"
+        self.state.status(f"{filter_label} · {source_label} · {total_text}{matched}")
+        self.prev_button.setEnabled(not local_view and result.page > 1)
+        self.next_button.setEnabled(not local_view and result.page < pages)
         if selected is not None:
             for row, item in enumerate(items):
                 if item.repo == selected:

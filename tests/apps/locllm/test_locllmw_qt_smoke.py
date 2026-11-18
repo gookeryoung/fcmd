@@ -269,13 +269,22 @@ def test_models_manual_update_forces_refresh_and_shows_time(window: Any, monkeyp
     assert window.state.settings.models_updated_at
 
 
+def test_models_page_source_owner_and_group_controls(window: Any) -> None:
+    """模型页提供来源 / 发布方过滤与同名折叠，默认只显示在线结果。"""
+    window.show_page("models")
+    browse = window.page("models").browse
+    assert browse.source_combo.currentData() == "online"
+    assert browse.owner_combo.itemText(0) == "全部发布方"
+    assert browse.group_check.text() == "同名折叠"
+
+
 def test_models_page_name_filter_is_debounced(window: Any) -> None:
     """上一页左侧的名称过滤框只在停止输入后重建列表。"""
     window.show_page("models")
     browse = window.page("models").browse
     assert browse.name_filter.placeholderText().startswith("按名称筛选")
     assert browse.name_filter.isClearButtonEnabled()
-    assert browse.name_filter.minimumWidth() >= 320
+    assert browse.name_filter.minimumWidth() >= 220
     assert browse.sort_combo.currentData() == "downloads"
     assert [browse.sort_combo.itemData(i) for i in range(browse.sort_combo.count())][:2] == [
         "downloads",

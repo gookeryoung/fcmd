@@ -215,6 +215,9 @@ def test_model_item_row_expands_inline_detail() -> None:
 
     QApplication.instance() or QApplication([])
     row = _ModelItemRow(ModelSummary(repo="Qwen/demo"))
+    owner_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), owner="Qwen", installed=True)
+    owner_labels = [label for label in owner_row.findChildren(QLabel) if label.objectName() == "OwnerTag"]
+    assert [label.text() for label in owner_labels] == ["Qwen"]
     installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True)
     assert installed_row.download_button.text() == "下载其他量化"
     local_only = _ModelItemRow(ModelSummary(repo="Qwen3.8-27B"), installed=True, downloadable=False)
