@@ -115,7 +115,10 @@ class TestHardwareSnapshot:
         assert snapshot.model_root == str(tmp_path)
 
     def test_detect_memory_gen_maps_smbios_code(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(hardware.os, "name", "nt")
+        # 只替换模块内的 os，不改全局 os.name：测试失败时 pytest 会在调用阶段
+        # （monkeypatch 尚未回滚）渲染报告，届时 pathlib 会按 os.name 选 WindowsPath，
+        # 在 Linux 上直接抛 NotImplementedError 变成 INTERNALERROR / worker 崩溃。
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="nt"))
         for code, expected in ((20, "DDR"), (21, "DDR2"), (24, "DDR3"), (26, "DDR4"), (34, "DDR5")):
             runner = lambda argv, code=code: CommandResult(0, f"{code}\n")  # noqa: E731
             assert hardware.detect_memory_gen(runner) == expected
@@ -126,7 +129,7 @@ class TestHardwareSnapshot:
         assert hardware.detect_memory_gen(lambda argv: CommandResult(0, "35\n")) == ""
 
     def test_detect_memory_gen_skips_non_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(hardware.os, "name", "posix")
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="posix"))
         assert hardware.detect_memory_gen(lambda argv: CommandResult(0, "34\n")) == ""
 
 
