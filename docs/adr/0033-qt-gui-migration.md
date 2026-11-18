@@ -56,7 +56,7 @@
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
 | 实验室 | `_locllmw_qt_lab`：四张规划卡片 | — |
 | 监测 | `_locllmw_qt_monitor`：`/metrics` + 系统负载 + GPU + 性能测试 + 日志 | `_locllmw_monitor` / `_locllmw_bench` |
-| 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎、关于与诊断 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
+| 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
 
 ### 模型页浏览与行内操作（C5）
 

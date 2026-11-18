@@ -1,4 +1,4 @@
-"""locllmw 设置页：存储 / 引擎两页配置 + 关于与诊断。
+"""locllmw 设置页：存储 / 引擎配置与引擎安装 / 体检。
 
 所有目录解析都委托给 :mod:`fcmd.apps.locllm._llmconfig`，页面不保存私有默认值；
 修改直接写入权威 ``config.json``。「引擎」页等价承载原独立引擎窗口的能力：
@@ -9,15 +9,11 @@
 from __future__ import annotations
 
 import os
-import platform
 from dataclasses import dataclass
 from pathlib import Path
 
-import fcmd
 from fcmd.apps.locllm import _llmconfig, llmengine
 from fcmd.apps.locllm.llmbase import Check, EngineInfo, EngineVariant, ServeError, human_size
-from fcmd.gui import config as _guiconfig
-from fcmd.gui.qt._pyside_compat import binding_version
 
 __all__ = [
     "EngineStatus",
@@ -32,13 +28,11 @@ __all__ = [
     "installed_engines",
     "migration_note",
     "select_engine",
-    "ui_rows",
 ]
 
 _ENV = "环境变量"
 _CONFIG = "配置"
 _DEFAULT = "默认"
-_AUTO = "自动保存"
 
 _VARIANTS = ("cuda", "cpu")
 _KIND_LABELS = {
@@ -51,7 +45,7 @@ _KIND_LABELS = {
 
 
 # ---------------------------------------------------------------------- #
-# 纯逻辑：存储 / 引擎 / 关于
+# 纯逻辑：存储 / 引擎
 # ---------------------------------------------------------------------- #
 def _source(env_name: str, config_key: str, home: Path | None = None) -> str:
     """来源标注：环境变量 > 配置 > 默认（显式 home 时忽略环境变量）。"""
@@ -73,22 +67,6 @@ def directory_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
 def engine_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
     """返回「引擎」页根目录 ``(项目, 路径, 来源)``。"""
     return [("引擎根目录", str(_llmconfig.engines_root(home)), _source("FCMD_ENGINES", "engines_root", home))]
-
-
-def ui_rows() -> list[tuple[str, str, str]]:
-    """返回「关于与诊断」折叠区：程序 / Python / PySide 版本与配置文件（只读）。"""
-    path = _guiconfig.config_path("locllmw")
-    settings = _guiconfig.read_settings(path) or {}
-    geometry = settings.get("geometry")
-    geometry_text = geometry if isinstance(geometry, str) and geometry.strip() else "未保存（使用默认尺寸）"
-    return [
-        ("程序版本", fcmd.__version__, _AUTO),
-        ("Python 版本", platform.python_version(), _AUTO),
-        ("PySide 版本", binding_version(), _AUTO),
-        ("配置文件", str(_llmconfig.config_path()), _AUTO),
-        ("窗口配置文件", str(path), _AUTO),
-        ("窗口位置与大小", geometry_text, _AUTO),
-    ]
 
 
 def migration_note(home: Path | None = None) -> str:

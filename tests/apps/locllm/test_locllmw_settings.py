@@ -1,9 +1,8 @@
-"""locllmw 设置页纯逻辑测试：目录 / 引擎 / 界面三页与写入行为。"""
+"""locllmw 设置页纯逻辑测试：目录 / 引擎与写入行为。"""
 
 from __future__ import annotations
 
 import json
-import platform
 from pathlib import Path
 from typing import cast
 
@@ -73,33 +72,6 @@ def test_engine_rows_marks_config(home: Path, tmp_path: Path) -> None:
     target = tmp_path / "engines"
     _write_config(home, {"engines_root": str(target)})
     assert settings_page.engine_rows(home) == [("引擎根目录", str(target), "配置")]
-
-
-# ---------------------------------------------------------------------- #
-# 界面组
-# ---------------------------------------------------------------------- #
-def test_ui_rows_default_geometry(home: Path) -> None:
-    rows = {label: value for label, value, _source in settings_page.ui_rows()}
-    assert rows["窗口配置文件"] == str(home / "ui" / "locllmw.json")
-    assert rows["窗口位置与大小"] == "未保存（使用默认尺寸）"
-    assert rows["程序版本"]
-    assert rows["配置文件"] == str(_llmconfig.config_path())
-
-
-def test_ui_rows_reads_saved_geometry(home: Path) -> None:
-    path = home / "ui" / "locllmw.json"
-    path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"geometry": "1024x768+10+20"}), encoding="utf-8")
-    rows = {label: value for label, value, _source in settings_page.ui_rows()}
-    assert rows["窗口位置与大小"] == "1024x768+10+20"
-
-
-def test_ui_rows_includes_runtime_versions(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """「关于与诊断」展示当前 Python 与 PySide 绑定版本。"""
-    monkeypatch.setattr(settings_page, "binding_version", lambda: "PySide6 9.9.9")
-    rows = {label: value for label, value, _source in settings_page.ui_rows()}
-    assert rows["Python 版本"] == platform.python_version()
-    assert rows["PySide 版本"] == "PySide6 9.9.9"
 
 
 # ---------------------------------------------------------------------- #

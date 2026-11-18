@@ -1,4 +1,4 @@
-"""locllmw（Qt）设置页：存储、下载参数、引擎与「关于与诊断」。
+"""locllmw（Qt）设置页：存储、下载参数、模型转换与引擎。
 
 目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.locllm._llmconfig`），
 引擎根目录单独登记；改动即时写配置并通知其它页刷新（``configChanged``）。
@@ -32,7 +32,6 @@ from fcmd.apps.locllm.llmbase import EngineInfo, ServeError
 from fcmd.gui.qt.widgets import (
     Card,
     HintLabel,
-    KeyValueGrid,
     PageScroll,
     PathRow,
     button,
@@ -55,7 +54,7 @@ def engine_rows_values(engines: list[EngineInfo]) -> list[tuple[str, str, str]]:
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
-    """设置页：存储目录、下载参数、引擎根目录与运行状态、关于与诊断。"""
+    """设置页：存储目录、下载参数、模型转换、引擎根目录与运行状态。"""
 
     def __init__(self, state: LocllmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -71,7 +70,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(self._build_download())
         layout.addWidget(self._build_convert())
         layout.addWidget(self._build_engines())
-        layout.addWidget(self._build_about(), 1)
+        layout.addStretch(1)
         self.refresh()
 
     # ------------------------------------------------------------------ #
@@ -269,28 +268,10 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         return card
 
     # ------------------------------------------------------------------ #
-    # 关于
-    # ------------------------------------------------------------------ #
-    def _build_about(self) -> Card:
-        card = Card("关于与诊断")
-        self.about_grid = KeyValueGrid(("项目", "值", "来源"), card)
-        card.body.addWidget(self.about_grid)
-        row = QHBoxLayout()
-        self.config_open = button("打开配置文件", kind="ghost")
-        self.refresh_about = button("刷新", kind="ghost")
-        row.addWidget(self.config_open)
-        row.addWidget(self.refresh_about)
-        row.addStretch(1)
-        card.body.addLayout(row)
-        self.config_open.clicked.connect(lambda: open_path(_llmconfig.config_path()))
-        self.refresh_about.clicked.connect(self.refresh)
-        return card
-
-    # ------------------------------------------------------------------ #
     # 刷新与保存
     # ------------------------------------------------------------------ #
     def refresh(self) -> None:
-        """重新读取配置、引擎列表与诊断信息。"""
+        """重新读取配置与引擎列表。"""
         directories = settings_logic.directory_rows()
         for _name, path, source in directories:
             self.models_path.set_value(path)
@@ -301,7 +282,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         note = settings_logic.migration_note()
         self.migration_note.setText(note)
         self.migration_note.setVisible(bool(note))
-        self.about_grid.set_rows(settings_logic.ui_rows())
         self.refresh_engines()
 
     def refresh_engines(self) -> None:
