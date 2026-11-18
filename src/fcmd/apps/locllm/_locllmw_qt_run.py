@@ -515,6 +515,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_action_button.setObjectName("RunPrimary")
         self.model_action_button.clicked.connect(self._on_model_action)
         model_row.addWidget(self.model_action_button)
+        self.restart_button = button("重启服务", kind="ghost", tooltip="按当前参数停止并重新启动服务")
+        self.restart_button.setObjectName("RunAction")
+        self.restart_button.setEnabled(False)
+        self.restart_button.clicked.connect(self.restart_selected)
+        model_row.addWidget(self.restart_button)
         self.model_card.body.addLayout(model_row)
         layout.addWidget(self.model_card)
 
@@ -866,6 +871,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_action_button.style().unpolish(self.model_action_button)
         self.model_action_button.style().polish(self.model_action_button)
         self.model_action_button.setEnabled(not busy and has_model)
+        # 重启只在服务已运行时可用；任务进行中禁用，避免停止 / 启动竞争。
+        self.restart_button.setEnabled(not busy and running)
 
     @staticmethod
     def _load_state_safe(name: str) -> ServeState | None:
@@ -1115,6 +1122,52 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             on_error=lambda message: self._error("停止失败", message),
             on_finished=lambda: self.state.set_busy(False),
         )
+
+    def restart_selected(self) -> None:
+        """停止当前服务后按当前参数重新启动（按钮仅在服务运行时可用）。"""
+        if self.state.busy:
+            self.state.log("已有任务正在进行，请等待完成")
+            return
+        current = self._selected_service_state()
+        if current is None or not llmserve.process_alive(current.pid, current.create_time):
+            self.state.status("当前模型没有运行中的服务")
+            self.state.log("当前模型没有运行中的服务，无法重启")
+            self._refresh_action_states()
+            return
+        self.state.log(f"正在重启服务 {current.name}…")
+        self.state.status(f"正在重启 {current.name}…")
+        self.state.set_busy(True)
+        submit(
+            self._stop_worker,
+            (current.name,),
+            on_done=self._on_restart_stopped,
+            on_error=self._on_restart_failed,
+            # busy 保持到 start() 接管，避免停止与启动之间按钮可点。
+        )
+
+    def _on_restart_stopped(self, payload: tuple[list[StopResult], list[str]]) -> None:
+        """重启第一步结束：旧服务已停就按当前表单参数重新启动。"""
+        results, failures = payload
+        for result in results:
+            if result.was_running:
+                self.state.log(f"已停止服务 {result.state.name}")
+        self.state.refresh_services()
+        if failures:
+            self.state.set_busy(False)
+            self.state.status("重启失败")
+            self._error("重启失败", "\n".join(failures))
+            self._refresh_action_states()
+            return
+        self.state.log("旧服务已停止，正在按当前参数启动…")
+        self.state.set_busy(False)  # start() 内部会再次置 busy
+        self.start()
+
+    def _on_restart_failed(self, message: str) -> None:
+        """重启第一步失败（停止异常）：解除 busy 并报告原因。"""
+        self.state.set_busy(False)
+        self.state.status("重启失败")
+        self._error("重启失败", message)
+        self._refresh_action_states()
 
     @staticmethod
     def _stop_worker(names: tuple[str, ...]) -> tuple[list[StopResult], list[str]]:

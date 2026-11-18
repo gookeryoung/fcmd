@@ -559,6 +559,92 @@ def test_run_page_has_no_bottom_action_bar(window: Any) -> None:
     assert not hasattr(run, "logs_button")
 
 
+def test_run_page_restart_button_only_enabled_while_running(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """重启按钮在「启动服务」右侧，只在服务运行且空闲时可用。"""
+    from fcmd.apps.locllm.llmbase import ModelEntry, ServeState
+
+    model_path = tmp_path / "demo.gguf"
+    model_path.write_bytes(b"\0")
+    window.state.models = [ModelEntry(root=tmp_path, path=model_path, size=1)]
+    window.state.selected_model = model_path
+    window.state.alive_states = [
+        ServeState(
+            name="demo",
+            pid=1234,
+            create_time=0.0,
+            host="127.0.0.1",
+            port=8080,
+            model=str(model_path),
+            profile="balanced",
+            context=4096,
+            engine="",
+            alias="demo",
+            api_key="",
+            log="",
+            started_at="",
+        )
+    ]
+    monkeypatch.setattr("fcmd.apps.locllm._locllmw_qt_run.llmserve.process_alive", lambda *_args, **_kw: True)
+    page = window.run_page
+    page._refresh_action_states()
+    assert page.restart_button.text() == "重启服务"
+    assert page.model_action_button.text() == "停止服务"
+    assert page.restart_button.isEnabled()
+    assert page.restart_button.objectName() == "RunAction"
+
+    window.state.set_busy(True)
+    assert not page.restart_button.isEnabled()
+    window.state.set_busy(False)
+
+    no_states: list[ServeState] = []
+    window.state.alive_states = no_states
+    page._refresh_action_states()
+    assert not page.restart_button.isEnabled()
+
+
+def test_run_page_restart_stops_then_starts(window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """重启先停旧服务，停止成功后再按当前参数启动。"""
+    from fcmd.apps.locllm import _locllmw_qt_run as run_mod
+    from fcmd.apps.locllm.llmbase import ModelEntry, ServeState
+
+    model_path = tmp_path / "demo.gguf"
+    model_path.write_bytes(b"\0")
+    window.state.models = [ModelEntry(root=tmp_path, path=model_path, size=1)]
+    window.state.selected_model = model_path
+    window.state.alive_states = [
+        ServeState(
+            name="demo",
+            pid=1234,
+            create_time=0.0,
+            host="127.0.0.1",
+            port=8080,
+            model=str(model_path),
+            profile="balanced",
+            context=4096,
+            engine="",
+            alias="demo",
+            api_key="",
+            log="",
+            started_at="",
+        )
+    ]
+    monkeypatch.setattr(run_mod.llmserve, "process_alive", lambda *_args, **_kw: True)
+    calls: list[tuple[Any, tuple[Any, ...]]] = []
+    monkeypatch.setattr(run_mod, "submit", lambda fn, *args, **_kw: calls.append((fn, args)))
+    page = window.run_page
+    page.restart_selected()
+    assert calls and calls[0][1] == (("demo",),)
+    assert window.state.busy
+
+    started: list[bool] = []
+    monkeypatch.setattr(page, "start", lambda: started.append(True) or None)
+    page._on_restart_stopped(([], []))
+    assert started == [True]
+    assert not window.state.busy
+
+
 def test_chat_input_buttons_share_one_row(window: Any) -> None:
     """对话页输入区按钮横排，新对话入口移入左侧历史栏。"""
     window.show_page("chat")
