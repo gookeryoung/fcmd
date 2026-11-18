@@ -75,6 +75,7 @@ def test_window_builds_with_defaults(home: Path) -> None:
         assert window._start_button.isEnabled()
         assert not window._stop_button.isEnabled()
         assert window._status_label.text() == "就绪"
+        assert window._status_label.tone() == "muted"
         assert window.status_text() == "正在检测 ffmpeg…"
     finally:
         window.deleteLater()
@@ -298,7 +299,7 @@ def test_worker_success_event(home: Path, tmp_path: Path, monkeypatch: pytest.Mo
 
         assert window._progress.value() == 100
         assert window._status_label.text() == "✓ 转换成功"
-        assert window._status_label.objectName() == "Success"
+        assert window._status_label.tone() == "success"
         assert "转换中 4.0s / 10.0s" in window._log.text()
         assert "ffmpeg 输出行" in window._log.text()
         assert window._start_button.isEnabled()
@@ -321,7 +322,7 @@ def test_worker_failure_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> No
         _work_convert(Path("in.mp4"), Path("out.mp4"), VideoOptions(), threading.Event(), bridge)
 
         assert window._status_label.text() == "✗ 转换失败或已取消"
-        assert window._status_label.objectName() == "Danger"
+        assert window._status_label.tone() == "danger"
         assert "转换失败或已取消，详见日志" in window._log.text()
         assert warnings == ["转换失败或已取消，详见日志与命令行输出"]
         assert window._start_button.isEnabled()
@@ -344,7 +345,7 @@ def test_worker_exception_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
         _work_convert(Path("in.mp4"), Path("out.mp4"), VideoOptions(), threading.Event(), bridge)
 
         assert "后台异常：boom" in window._log.text()
-        assert window._status_label.objectName() == "Danger"
+        assert window._status_label.tone() == "danger"
     finally:
         window.deleteLater()
 

@@ -446,12 +446,13 @@ def test_monitor_page_has_target_summary_and_status_badge(window: Any) -> None:
     assert page._target_label.text().startswith("未选择")
     assert page._refresh_services_button.text() == "刷新服务"
     assert page._monitor_badge.text() == "仅系统负载"
-    assert page._monitor_badge.objectName() == "Warning"
+    assert page._monitor_badge.tone() == "warning"
+    assert page._monitor_badge.objectName() == "StatusTag"
     assert page._last_sample_label.text().startswith("最近采样：")
     page._set_monitor_badge("监控中", "success")
-    assert page._monitor_badge.objectName() == "Success"
+    assert page._monitor_badge.tone() == "success"
     page._set_monitor_badge("采样失败", "danger")
-    assert page._monitor_badge.objectName() == "Danger"
+    assert page._monitor_badge.tone() == "danger"
 
 
 def test_service_log_moves_to_help_menu(window: Any) -> None:
@@ -522,6 +523,10 @@ def test_monitor_load_cards_and_rate_display(window: Any) -> None:
     assert page._mem_bar.percent() == 41.0
     assert page._gpu_percent.property("band") == "warning"
     assert page._cpu_percent.property("band") == "success"
+    assert page._gpu_vram_bar.percent() == pytest.approx(18000 / 24576 * 100)
+    assert page._gpu_vram_value.text() == "73.2 %"
+    assert page._swap_bar.percent() == 25.0
+    assert page._swap_value.text() == "25.0 %"
     assert page._gpu_metrics.value("gpu_temp") == "62 °C"
     assert "41.0 %" in page._mem_metrics.value("memory")
 

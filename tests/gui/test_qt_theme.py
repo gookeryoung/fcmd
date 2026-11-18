@@ -27,6 +27,16 @@ def test_stylesheet_substitutes_every_palette_token(name: str) -> None:
         assert getattr(theme.palette, item.name) in text
 
 
+def test_restart_button_disabled_state_is_distinct() -> None:
+    """重启按钮（RunAction）禁用态必须显式覆盖常态配色。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    enabled = text.split("QPushButton#RunAction {", 1)[1].split("}", 1)[0]
+    disabled = text.split("QPushButton#RunAction:disabled {", 1)[1].split("}", 1)[0]
+    assert "background" in disabled
+    assert "color" in disabled
+    assert disabled != enabled
+
+
 def test_stylesheet_contains_expected_selectors() -> None:
     theme = _guitheme.resolve_theme("dark-blue")
     text = _qt_theme.stylesheet(theme)
@@ -35,6 +45,8 @@ def test_stylesheet_contains_expected_selectors() -> None:
         "QLabel#CardTitle",
         "QLabel#RateValue",
         "QLabel#LoadValue",
+        "QLabel#MeterValue",
+        "QLabel#StatusTag",
         "QPushButton#Primary",
         "QPushButton#Danger",
         "QPushButton#NavButton",

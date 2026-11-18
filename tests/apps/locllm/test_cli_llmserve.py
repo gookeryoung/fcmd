@@ -2336,6 +2336,17 @@ class TestServewSamples:
         assert values["memory"] == "-"
         assert values["swap"] == "-"
 
+    def test_gpu_memory_and_swap_percent(self) -> None:
+        from fcmd.apps.locllm._locllmw_monitor import gpu_memory_percent, swap_percent
+
+        assert gpu_memory_percent(None) is None
+        assert gpu_memory_percent(locllmw.GpuSample(name="GPU")) is None
+        assert gpu_memory_percent(locllmw.GpuSample(name="GPU", memory_used=50.0, memory_total=100.0)) == 50.0
+        assert gpu_memory_percent(locllmw.GpuSample(name="GPU", memory_used=200.0, memory_total=100.0)) == 100.0
+        assert swap_percent(locllmw.LoadSample()) is None
+        assert swap_percent(locllmw.LoadSample(swap_used=25, swap_total=100)) == 25.0
+        assert swap_percent(locllmw.LoadSample(swap_used=200, swap_total=100)) == 100.0
+
     def test_format_gpu(self) -> None:
         gpu = locllmw.GpuSample(
             name="NVIDIA RTX 5090 D",

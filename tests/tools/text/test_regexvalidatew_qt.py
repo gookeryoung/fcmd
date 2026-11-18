@@ -32,8 +32,8 @@ def test_window_builds_with_empty_pattern(home: Path) -> None:
     """空正则时提示输入，结果区只读且不换行。"""
     window = RegexValidateWindow()
     try:
-        assert window._status.text() == "校验结果："
-        assert window._status.objectName() == "Hint"
+        assert window._status.text() == "待校验"
+        assert window._status.tone() == "muted"
         assert window._result.toPlainText() == "请输入正则表达式"
         assert window._result.isReadOnly()
         assert window._result.lineWrapMode() == QPlainTextEdit.LineWrapMode.NoWrap
@@ -51,8 +51,8 @@ def test_startup_refresh_from_settings(home: Path) -> None:
     window = RegexValidateWindow()
     try:
         assert window._pattern.text() == r"\d+"
-        assert window._status.text() == "校验结果：✓ 匹配"
-        assert window._status.objectName() == "Success"
+        assert window._status.text() == "✓ 匹配"
+        assert window._status.tone() == "success"
         assert "1" in window._result.toPlainText()
     finally:
         window.deleteLater()
@@ -63,7 +63,7 @@ def test_invalid_pattern_shows_danger(home: Path) -> None:
     window = RegexValidateWindow()
     try:
         window._pattern.setText("[")
-        assert window._status.objectName() == "Danger"
+        assert window._status.tone() == "danger"
         assert window._result.toPlainText()
     finally:
         window.deleteLater()
@@ -76,7 +76,7 @@ def test_example_selection_fills_inputs(home: Path) -> None:
         window._example_combo.setCurrentIndex(1)
         assert window._pattern.text().startswith("^1[3-9]")
         assert window._text.toPlainText() == "13812345678"
-        assert window._status.objectName() == "Success"
+        assert window._status.tone() == "success"
     finally:
         window.deleteLater()
 
@@ -117,7 +117,7 @@ def test_history_selection_restores_inputs(home: Path) -> None:
         assert window._pattern.text() == "A+"
         assert window._text.toPlainText() == "AAA"
         assert window._ignorecase.isChecked()
-        assert window._status.objectName() == "Success"
+        assert window._status.tone() == "success"
     finally:
         window.deleteLater()
 

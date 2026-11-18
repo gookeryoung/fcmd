@@ -35,6 +35,7 @@ from fcmd.gui.qt.widgets import (
     MetricGrid,
     PathRow,
     SegmentBar,
+    StatusTag,
     button,
     icon_button,
     segment_band,
@@ -121,6 +122,22 @@ def test_segment_bar_tracks_percent() -> None:
     bar.set_percent(None)
     assert bar.percent() is None
     assert bar.toolTip() == "等待采样"
+
+
+def test_status_tag_tone_and_status() -> None:
+    """状态标签：默认 muted，set_tone 未知值回落，set_status 一次写文案与色。"""
+    tag = StatusTag("未连接")
+    assert tag.objectName() == "StatusTag"
+    assert tag.tone() == "muted"
+    tag.set_tone("success")
+    assert tag.tone() == "success"
+    tag.set_tone("not-a-tone")
+    assert tag.tone() == "muted"
+    tag.set_status("运行中", "success")
+    assert tag.text() == "运行中"
+    assert tag.tone() == "success"
+    tag.set_status("已退出")
+    assert tag.tone() == "success"
 
 
 def test_segment_bar_paints_before_first_sample() -> None:

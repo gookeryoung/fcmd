@@ -630,7 +630,9 @@ def test_chat_page_refresh_selects_first_available(monkeypatch: pytest.MonkeyPat
     assert chat_page.service_combo.currentText() == "alive（运行中）"
     assert chat_page.url_edit.text() == alive.base_url
     assert chat_page.model_edit.text() == alive.alias
-    assert chat_page.status.text() == "已选择服务 alive（运行中）"
+    assert chat_page.status.text() == "已选择服务 alive"
+    assert chat_page.service_tag.text() == "运行中"
+    assert chat_page.service_tag.tone() == "success"
 
 
 def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
@@ -643,6 +645,8 @@ def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch, chat_pag
     labels = [chat_page.service_combo.itemText(index) for index in range(chat_page.service_combo.count())]
     assert labels == [_locllmw_chat._CUSTOM, "dead（已退出）"]
     assert chat_page.status.text() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
+    assert chat_page.service_tag.text() == "已退出"
+    assert chat_page.service_tag.tone() == "danger"
 
 
 def test_chat_page_refresh_without_services(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
@@ -689,6 +693,8 @@ def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch, c
 
     assert chat_page.url_edit.text() == state.base_url
     assert chat_page.status.text() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
+    assert chat_page.service_tag.text() == "已退出"
+    assert chat_page.service_tag.tone() == "danger"
     assert "[错误] 服务 dead 不可用" in chat_page.transcript.toPlainText()
 
 

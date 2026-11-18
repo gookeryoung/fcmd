@@ -130,6 +130,23 @@ QLabel#LoadValue[band="warning"] { color: $warning; }
 QLabel#LoadValue[band="danger"] { color: $danger; }
 QLabel#RateValue { color: $accent; font-size: ${font_title}pt; font-weight: 700; }
 QLabel#RateUnit { color: $muted; font-size: ${font_body}pt; }
+QLabel#MeterValue { font-size: ${font_small}pt; font-weight: 600; }
+QLabel#MeterValue[band="success"] { color: $success; }
+QLabel#MeterValue[band="warning"] { color: $warning; }
+QLabel#MeterValue[band="danger"] { color: $danger; }
+QLabel#StatusTag {
+    border-radius: 9px;
+    padding: 1px 8px;
+    font-size: ${font_small}pt;
+    font-weight: 600;
+    color: $muted;
+    background: $surface_hover;
+    border: 1px solid $border;
+}
+QLabel#StatusTag[tone="success"] { color: $success; background: $success_soft; border-color: $success; }
+QLabel#StatusTag[tone="warning"] { color: $warning; background: $warning_soft; border-color: $warning; }
+QLabel#StatusTag[tone="danger"] { color: $danger; background: $danger_soft; border-color: $danger; }
+QLabel#StatusTag[tone="accent"] { color: $accent; background: $accent_soft; border-color: $accent; }
 QLabel#Danger { color: $danger; }
 QLabel#Warning { color: $warning; }
 QLabel#Success { color: $success; }
@@ -180,6 +197,9 @@ QPushButton#RunPrimary:pressed { background: $accent_pressed; }
 QPushButton#RunPrimary:disabled { background: $surface_hover; color: $muted; border-color: $border; }
 QPushButton#RunAction { background: $surface_hover; color: $text; border-color: $border; }
 QPushButton#RunAction:hover { background: $surface_active; border-color: $border_strong; }
+QPushButton#RunAction:pressed { background: $border; }
+/* 禁用态必须覆盖 #RunAction 的常态配色：只靠全局 QPushButton:disabled 会被 ID 选择器盖掉。 */
+QPushButton#RunAction:disabled { background: $surface; color: $muted; border-color: $border; }
 QPushButton#RunDanger { color: $danger; border-color: $danger; background: transparent; }
 QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
 QPushButton#RunDanger:disabled { color: $muted; border-color: $border; background: transparent; }

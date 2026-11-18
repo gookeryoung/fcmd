@@ -191,6 +191,20 @@ def _format_duration(seconds: float) -> str:
     return f"{secs}s"
 
 
+def gpu_memory_percent(gpu: GpuSample | None) -> float | None:
+    """GPU 显存占用率（0–100）；无 GPU 或总量未知时返回 ``None``。"""
+    if gpu is None or gpu.memory_used is None or not gpu.memory_total:
+        return None
+    return min(max(gpu.memory_used / gpu.memory_total * 100, 0.0), 100.0)
+
+
+def swap_percent(sample: LoadSample) -> float | None:
+    """内存交换占用率（0–100）；未配置交换分区时返回 ``None``。"""
+    if not sample.swap_total:
+        return None
+    return min(max(sample.swap_used / sample.swap_total * 100, 0.0), 100.0)
+
+
 def _format_load(sample: LoadSample) -> dict[str, str]:
     """把系统负载采样格式化为面板显示文本。"""
     memory = (

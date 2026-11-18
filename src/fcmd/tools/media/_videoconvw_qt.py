@@ -38,7 +38,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, LogView, button, hint_label
+from fcmd.gui.qt.widgets import Card, LogView, StatusTag, button, hint_label
 from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.videoconv import (
@@ -251,8 +251,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._stop_button = button("停止", kind="danger")
         self._stop_button.setEnabled(False)
         self._stop_button.clicked.connect(self._stop_conversion)
-        self._status_label = QLabel("就绪", row)
-        self._status_label.setObjectName("Hint")
+        self._status_label = StatusTag("就绪", tone="muted", parent=row)
         self._reset_button = button("重置设置")
         self._reset_button.clicked.connect(self._reset_settings)
         layout.addWidget(self._start_button)
@@ -294,11 +293,8 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _set_status(self, text: str, kind: str = "Hint") -> None:
         """更新动作行状态标签，并按 Hint / Success / Danger 切换语义色。"""
-        self._status_label.setText(text)
-        if self._status_label.objectName() != kind:
-            self._status_label.setObjectName(kind)
-            self._status_label.style().unpolish(self._status_label)
-            self._status_label.style().polish(self._status_label)
+        tone = {"Success": "success", "Warning": "warning", "Danger": "danger"}.get(kind, "muted")
+        self._status_label.set_status(text, tone)
 
     def _browse_input(self) -> None:
         """选择输入视频文件，并把输出目录同步到它所在目录。"""
@@ -530,7 +526,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     def set_theme(self, theme: Theme) -> None:
         """切换主题后按当前状态刷新语义色标签。"""
         super().set_theme(theme)
-        if hasattr(self, "_status_label") and self._status_label.objectName() != "Hint":
+        if hasattr(self, "_status_label"):
             self._status_label.style().unpolish(self._status_label)
             self._status_label.style().polish(self._status_label)
 

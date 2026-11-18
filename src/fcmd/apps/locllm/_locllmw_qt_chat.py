@@ -45,7 +45,7 @@ from fcmd.apps.locllm.llmbase import (
 )
 from fcmd.apps.locllm.llmchat import ChatMessage, ChatSession
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, button, icon_button
+from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, StatusTag, button, icon_button
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -169,6 +169,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.service_combo.setEditable(False)
         self.service_combo.currentIndexChanged.connect(lambda _index: self._on_service_changed())
         service_row.addWidget(self.service_combo, 1)
+        self.service_tag = StatusTag("未连接", tone="muted", parent=connection)
+        service_row.addWidget(self.service_tag)
         self.refresh_button = button("刷新", kind="ghost")
         self.refresh_button.clicked.connect(self.refresh_services)
         service_row.addWidget(self.refresh_button)
@@ -275,6 +277,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.service_combo.blockSignals(False)
         state = self._selected_state()
         if state is None:
+            self.service_tag.set_status("未连接", "muted")
             self.status.setText(
                 "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
                 if not states
@@ -296,6 +299,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._manual_choice = True
         state = self._selected_state()
         if state is None:
+            self.service_tag.set_status("自定义", "accent")
             self.status.setText("自定义地址：脱离已登记服务，直接按下方地址与模型接入")
             return
         self._apply_state(state)
@@ -314,8 +318,10 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _report_state(self, state: ServeState) -> None:
         """状态栏文案：运行中 / 进程已退出。"""
         if _state_available(state):
-            self.status.setText(f"已选择服务 {state.name}（运行中）")
+            self.service_tag.set_status("运行中", "success")
+            self.status.setText(f"已选择服务 {state.name}")
         else:
+            self.service_tag.set_status("已退出", "danger")
             self.status.setText(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:

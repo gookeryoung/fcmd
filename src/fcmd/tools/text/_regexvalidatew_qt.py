@@ -31,7 +31,15 @@ from fcmd import __version__
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, apply_splitter_sizes, button, hint_label, mono_font, splitter_sizes
+from fcmd.gui.qt.widgets import (
+    Card,
+    StatusTag,
+    apply_splitter_sizes,
+    button,
+    hint_label,
+    mono_font,
+    splitter_sizes,
+)
 from fcmd.tools.text.regexvalidate import PatternValidationError, RegexValidator, build_flags, format_validator_report
 from fcmd.tools.text.regexvalidatew import (
     DEFAULT_GEOMETRY,
@@ -185,12 +193,13 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         return card
 
     def _build_status_row(self) -> QHBoxLayout:
-        """状态标签（Success / Danger 语义色）+ 右侧提示。"""
+        """校验结果胶囊标签（成功 / 失败语义色）+ 右侧提示。"""
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        self._status = QLabel("校验结果：", self)
-        self._status.setObjectName("Hint")
-        row.addWidget(self._status, 1)
+        row.addWidget(hint_label("校验结果", wrap=False))
+        self._status = StatusTag("待校验", tone="muted", parent=self)
+        row.addWidget(self._status)
+        row.addStretch(1)
         row.addWidget(hint_label("输入时自动校验", wrap=False))
         return row
 
@@ -244,18 +253,11 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         """写入只读结果区，并按匹配结果切换状态标签语义色。"""
         self._result.setPlainText(text)
         if ok is None:
-            self._status.setText("校验结果：")
-            name = "Hint"
+            self._status.set_status("待校验", "muted")
         elif ok:
-            self._status.setText("校验结果：✓ 匹配")
-            name = "Success"
+            self._status.set_status("✓ 匹配", "success")
         else:
-            self._status.setText("校验结果：✗ 不匹配")
-            name = "Danger"
-        if self._status.objectName() != name:
-            self._status.setObjectName(name)
-            self._status.style().unpolish(self._status)
-            self._status.style().polish(self._status)
+            self._status.set_status("✗ 不匹配", "danger")
 
     def _on_change(self, *_args: object) -> None:
         """输入变化：立即校验，并延迟记录历史。"""

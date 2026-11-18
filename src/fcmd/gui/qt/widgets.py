@@ -61,6 +61,7 @@ __all__ = [
     "PathRow",
     "RowListWidget",
     "SegmentBar",
+    "StatusTag",
     "apply_splitter_sizes",
     "button",
     "hint_label",
@@ -125,6 +126,44 @@ def value_label(text: str = "") -> QLabel:  # pragma: no cover - Qt 控件
     label.setObjectName("Value")
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return label
+
+
+_STATUS_TONES = frozenset({"muted", "success", "warning", "danger", "accent"})
+
+
+class StatusTag(QLabel):  # pragma: no cover - Qt 控件
+    """状态标签（胶囊）：短状态文本 + 语义色背景，用于「运行中 / 监控中 / 成功」等。
+
+    与 ``Hint`` 的区别是自带底色与边框，能在卡片标题行、工具行里作为独立状态块；
+    配色按 ``tone`` 动态属性由 QSS 决定，切主题后自动跟随。
+    """
+
+    def __init__(self, text: str = "", *, tone: str = "muted", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setObjectName("StatusTag")
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        self.set_tone(tone)
+
+    def tone(self) -> str:
+        """当前语义色：``muted`` / ``success`` / ``warning`` / ``danger`` / ``accent``。"""
+        return str(self.property("tone") or "muted")
+
+    def set_tone(self, tone: str) -> None:
+        """切换语义色；未知值回落到 ``muted``。"""
+        normalized = tone if tone in _STATUS_TONES else "muted"
+        if self.property("tone") == normalized:
+            return
+        self.setProperty("tone", normalized)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+    def set_status(self, text: str, tone: str | None = None) -> None:
+        """一次写入文案与可选语义色（状态刷新最常用）。"""
+        self.setText(text)
+        if tone is not None:
+            self.set_tone(tone)
 
 
 def mono_font(point_size: int = 9) -> QFont:  # pragma: no cover - Qt 控件
