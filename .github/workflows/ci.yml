@@ -121,12 +121,18 @@ jobs:
 
       - name: Install Qt runtime libraries
         run: |
-          # 命中缓存时把 .deb 放回 apt 缓存目录，apt 直接安装不再重复下载
+          packages="libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1"
+          # 命中缓存时把 .deb 放回 apt 缓存目录；runner 镜像大多已预装这些库，
+          # 直接 install 即可（命中本地 .deb 缓存时不用联网），不再每次都跑
+          # apt-get update（实测该步 7~31s，大头是拉取索引）。只有失败
+          # （索引过期 / 缓存没覆盖某个包）才更新索引重试。
           if compgen -G ".apt-cache/*.deb" > /dev/null; then
             sudo cp -a .apt-cache/*.deb /var/cache/apt/archives/
           fi
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1
+          if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packages; then
+            sudo apt-get update
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packages
+          fi
           # 只拷 .deb（lock/partial 对 runner 用户无权限），并归还所有权供 actions/cache 打包
           mkdir -p .apt-cache
           sudo cp -a /var/cache/apt/archives/*.deb .apt-cache/
