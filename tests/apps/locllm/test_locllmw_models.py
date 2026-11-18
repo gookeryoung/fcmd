@@ -30,6 +30,7 @@ from fcmd.apps.locllm._locllmw_models import (
     matches_filter,
     merge_installed_items,
     model_item_lines,
+    model_published_text,
     model_row,
     model_score,
     open_path,
@@ -115,14 +116,16 @@ class TestFormatting:
             storage_size=2048,
         )
         assert model_item_lines(summary) == (
-            "Qwen/demo",
-            "Qwen · 文本生成、视觉问答",
+            "demo",
+            "发布方 Qwen · 文本生成、视觉问答",
             "2.00 KB",
         )
+        assert model_published_text(summary) == "发布 2023-11-15"
 
     def test_model_item_lines_empty(self) -> None:
-        assert model_item_lines(ModelSummary(repo="Qwen/demo")) == ("Qwen/demo", "Qwen", "-")
+        assert model_item_lines(ModelSummary(repo="Qwen/demo")) == ("demo", "发布方 Qwen", "-")
         assert model_item_lines(ModelSummary(repo="")) == ("", "其他", "-")
+        assert model_published_text(ModelSummary(repo="Qwen/demo")) == ""
 
     def test_local_row(self) -> None:
         path = Path("/models/Qwen/demo")
@@ -234,6 +237,19 @@ class TestBrowseHelpers:
             for item in sort_browse_items((free, installed_low, installed_high), {"local/low", "local/high"}, "all")
         ]
         assert repos == ["local/high", "local/low", "Qwen/free"]
+
+    def test_sort_browse_items_downloads_descending(self) -> None:
+        low = ModelSummary(repo="a/low", downloads=10)
+        high = ModelSummary(repo="a/high", downloads=1000)
+        mid = ModelSummary(repo="a/mid", downloads=100)
+        repos = [item.repo for item in sort_browse_items((low, high, mid), set(), "all", "downloads")]
+        assert repos == ["a/high", "a/mid", "a/low"]
+
+    def test_sort_browse_items_published_descending(self) -> None:
+        old = ModelSummary(repo="a/old", downloads=1000, updated=100)
+        new = ModelSummary(repo="a/new", downloads=10, updated=200)
+        repos = [item.repo for item in sort_browse_items((old, new), set(), "all", "created")]
+        assert repos == ["a/new", "a/old"]
 
     def test_filter_models_all(self) -> None:
         items = self._items()

@@ -29,7 +29,9 @@ from fcmd.apps.locllm.llmdown import (
 
 __all__ = [
     "DEFAULT_MODEL_FILTER",
+    "DEFAULT_MODEL_SORT",
     "MODEL_FILTERS",
+    "MODEL_SORTS",
     "DownloadGuiSettings",
     "detail_pairs",
     "filter_by_local_fit",
@@ -84,6 +86,16 @@ MODEL_FILTERS: tuple[tuple[str, str, str], ...] = (
     ("audio", "音频", "audio"),
 )
 DEFAULT_MODEL_FILTER = "local"
+
+#: 浏览页排序选项：(key, 显示名)；默认按下载量倒排。
+MODEL_SORTS: tuple[tuple[str, str], ...] = (
+    ("downloads", "按下载量"),
+    ("created", "按发布时间"),
+    ("modified", "按更新时间"),
+    ("stars", "按星标"),
+    ("default", "综合评分"),
+)
+DEFAULT_MODEL_SORT = "downloads"
 
 #: 分类筛选命中的关键词：用于判断已安装模型是否属于当前类别（置顶条件）。
 _FILTER_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -168,10 +180,31 @@ def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
 
 
 def model_item_lines(item: ModelSummary) -> tuple[str, str, str]:
-    """浏览列表自定义行的关键内容：``(仓库名, 系列 / 任务, 体积)``。"""
-    subtitle = " · ".join(part for part in (model_series(item), "、".join(item.tasks)) if part)
+    """浏览列表自定义行的关键内容：``(模型名, 发布方 / 系列 / 任务, 体积)``。
+
+    发布机构从名称移到下方描述；名称只保留模型名，避免行首被 ``组织/`` 占满。
+    """
+    owner = item.owner or (item.repo.split("/", 1)[0] if "/" in item.repo else "")
+    title = item.name or item.repo.rsplit("/", 1)[-1]
+    series = model_series(item)
+    duplicate_series = bool(owner and series.casefold() == owner.casefold())
+    subtitle = " · ".join(
+        part
+        for part in (
+            f"发布方 {owner}" if owner else "",
+            "" if duplicate_series else series,
+            "、".join(item.tasks),
+        )
+        if part
+    )
     metrics = human_size(item.storage_size) if item.storage_size else ""
-    return item.repo, subtitle or "-", metrics or "-"
+    return title, subtitle or "-", metrics or "-"
+
+
+def model_published_text(item: ModelSummary) -> str:
+    """名称旁的发布时间标签；无有效时间时返回空串。"""
+    stamp = format_timestamp(item.updated)
+    return "" if stamp == "-" else f"发布 {stamp}"
 
 
 def repo_for_model_path(path: Path, models_root: Path) -> str:
@@ -247,25 +280,24 @@ def sort_browse_items(
     items: tuple[ModelSummary, ...],
     installed_repos: set[str],
     filter_key: str,
+    sort_key: str = "default",
 ) -> tuple[ModelSummary, ...]:
-    """已安装且匹配当前分类的模型置顶，其余统一按评分从高到低排序。"""
+    """已安装且匹配当前分类的模型置顶，其余按 ``sort_key`` 倒排。"""
     installed = {repo.casefold() for repo in installed_repos}
 
     def pinned(item: ModelSummary) -> bool:
         return item.repo.casefold() in installed and matches_filter(item, filter_key)
 
-    return tuple(
-        sorted(
-            items,
-            key=lambda item: (
-                not pinned(item),
-                -model_score(item),
-                -item.downloads,
-                -item.stars,
-                item.repo.casefold(),
-            ),
-        )
-    )
+    def order(item: ModelSummary) -> tuple[object, ...]:
+        if sort_key == "downloads":
+            return (-item.downloads, -item.stars, item.repo.casefold())
+        if sort_key in ("created", "modified"):
+            return (-item.updated, -item.downloads, item.repo.casefold())
+        if sort_key == "stars":
+            return (-item.stars, -item.downloads, item.repo.casefold())
+        return (-model_score(item), -item.downloads, -item.stars, item.repo.casefold())
+
+    return tuple(sorted(items, key=lambda item: (not pinned(item), *order(item))))
 
 
 def filter_by_name(items: tuple[ModelSummary, ...], query: str) -> tuple[ModelSummary, ...]:

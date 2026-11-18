@@ -24,6 +24,7 @@ from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
+    QComboBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -99,6 +100,8 @@ def quantize_menu_items(existing: Iterable[str]) -> tuple[tuple[str, str, bool],
 
 _PAGE_SIZE = _locllmw_models._PAGE_SIZE
 _FILTER_DEBOUNCE_MS = 250
+_DEFAULT_SORT = _locllmw_models.DEFAULT_MODEL_SORT
+_MODEL_SORTS = _locllmw_models.MODEL_SORTS
 _MODEL_FILTERS = _locllmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _locllmw_models.DEFAULT_MODEL_FILTER
 
@@ -182,10 +185,20 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(3)
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
         name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=header)
         name.setObjectName("ModelItemName")
         name.setToolTip(item.repo)
-        left.addWidget(name)
+        name_row.addWidget(name, 1)
+        published = _locllmw_models.model_published_text(item)
+        if published:
+            published_label = QLabel(published, header)
+            published_label.setObjectName("Hint")
+            published_label.setToolTip(f"模型发布时间：{_locllmw_models.format_timestamp(item.updated)}")
+            name_row.addWidget(published_label, 0)
+        left.addLayout(name_row)
         note_row = QHBoxLayout()
         note_row.setContentsMargins(0, 0, 0, 0)
         note_row.setSpacing(6)
@@ -429,6 +442,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._page = 1
         self._filter_key = _DEFAULT_FILTER
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
+        self._sort_key = _DEFAULT_SORT
         self._detail_generation = 0
         self._searching = False
         self._list_cache = ModelListCache()
@@ -493,9 +507,16 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.name_filter = QLineEdit(self)
         self.name_filter.setPlaceholderText("按名称筛选当前页…")
         self.name_filter.setClearButtonEnabled(True)
-        self.name_filter.setMaximumWidth(260)
+        self.name_filter.setMinimumWidth(320)
+        self.name_filter.setMaximumWidth(460)
         self.name_filter.textChanged.connect(self._on_name_filter_changed)
         nav.addWidget(self.name_filter)
+        self.sort_combo = QComboBox(self)
+        for key, label in _MODEL_SORTS:
+            self.sort_combo.addItem(label, key)
+        self.sort_combo.setCurrentIndex(max(self.sort_combo.findData(self._sort_key), 0))
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        nav.addWidget(self.sort_combo)
         nav.addStretch(1)
         self._name_filter = ""
         self._filter_timer = QTimer(self)
@@ -565,6 +586,13 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         self._name_filter = text
         self._render_results()
+
+    def _on_sort_changed(self, _index: int) -> None:
+        key = self.sort_combo.currentData()
+        if not isinstance(key, str) or key == self._sort_key:
+            return
+        self._sort_key = key
+        self.start_search(1)
 
     def refresh_installed(self) -> None:
         """后台扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。
@@ -849,7 +877,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if self._searching:
             return
         target = max(1, page)
-        key = cache_key(self._filter_query, target, _PAGE_SIZE, "default")
+        key = cache_key(self._filter_query, target, _PAGE_SIZE, self._sort_key)
         cached = self._list_cache.get(key)
         self._page = target
         if cached is not None:
@@ -868,7 +896,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._filter_query,
             self._page,
             _PAGE_SIZE,
-            "default",
+            self._sort_key,
             on_done=self._search_online_done,
             on_error=self._search_error,
             on_finished=self._search_finished,
@@ -920,7 +948,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if self._filter_key == "local":
             items = _locllmw_models.filter_by_local_fit(items, self._local_capacity())
         items = _locllmw_models.merge_installed_items(items, self._installed_models, self._filter_key)
-        items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key)
+        items = _locllmw_models.sort_browse_items(items, self._installed_repos, self._filter_key, self._sort_key)
         items = _locllmw_models.filter_by_name(items, self._name_filter)
         selected = next(
             (item.repo for item in items if item.repo == self.current_repo),

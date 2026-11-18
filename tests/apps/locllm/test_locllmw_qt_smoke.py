@@ -142,7 +142,7 @@ def test_models_page_fresh_cache_skips_network(window: Any, tmp_path: Path, monk
 
     cache_path = tmp_path / "cache.json"
     monkeypatch.setattr(cache_mod, "default_cache_path", lambda: cache_path)
-    key = cache_mod.cache_key("", 1, 30, "default")
+    key = cache_mod.cache_key("", 1, 30, "downloads")
     cache_mod.ModelListCache(cache_path).put(
         key,
         ModelSearch((ModelSummary(repo="org/cached"),), total=1, page=1, page_size=30),
@@ -275,6 +275,12 @@ def test_models_page_name_filter_is_debounced(window: Any) -> None:
     browse = window.page("models").browse
     assert browse.name_filter.placeholderText().startswith("按名称筛选")
     assert browse.name_filter.isClearButtonEnabled()
+    assert browse.name_filter.minimumWidth() >= 320
+    assert browse.sort_combo.currentData() == "downloads"
+    assert [browse.sort_combo.itemData(i) for i in range(browse.sort_combo.count())][:2] == [
+        "downloads",
+        "created",
+    ]
     assert browse._filter_timer.isSingleShot()
     assert browse._filter_timer.interval() == 250
     browse.name_filter.setText("qwen")
