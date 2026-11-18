@@ -53,8 +53,6 @@ __all__ = [
     "presets_command",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "PPT 模板生成器：内置十三种版式与四套风格，支持模板 JSON 导入导出，并可直接渲染为 .pptx 演示文稿"
 
 StyleName = Literal["aurora", "porcelain", "graphite", "coral"]

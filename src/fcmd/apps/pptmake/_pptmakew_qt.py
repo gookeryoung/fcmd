@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.pptmake import _core as core
 from fcmd.apps.pptmake import _office
 from fcmd.apps.pptmake import _preview as preview
@@ -56,7 +57,6 @@ from fcmd.apps.pptmake.pptmakew import (
     MIN_WIDTH,
     STYLE_OPTIONS,
     PptmakeSettings,
-    __version__,
     load_settings,
     safe_filename,
     save_settings,

@@ -38,8 +38,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "图像转 ICO 转换器窗口版（Qt）：支持 SVG/PNG/JPG/GIF/BMP/WebP/TIFF 单文件或目录批量转换，"
     "自定义多尺寸与质量档位，自动保持宽高比并居中透明填充；"

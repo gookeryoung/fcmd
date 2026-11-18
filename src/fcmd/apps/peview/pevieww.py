@@ -38,8 +38,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "PE 查看器窗口版（Qt）：按分类浏览 DOS/NT/可选头、数据目录、节表、导入导出、资源、"
     "重定位、调试与签名，详情与十六进制联动；设置持久化到 ~/.fcmd/ui/pevieww.json"

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.reshack._core import (
     TEXT_PREVIEW_LIMIT,
     clamp_zoom,
@@ -62,7 +63,6 @@ from fcmd.apps.reshack.reshackw import (
     MIN_WIDTH,
     RECENT_LIMIT,
     ReshackSettings,
-    __version__,
     add_recent_file,
     load_settings,
     save_settings,

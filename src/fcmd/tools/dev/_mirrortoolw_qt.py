@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
@@ -46,7 +47,6 @@ from fcmd.tools.dev.mirrortoolw import (
     SOURCE_LABELS,
     MirrorResult,
     MirrorToolSettings,
-    __version__,
     apply_service_mirror,
     config_location,
     filter_results,

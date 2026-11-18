@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.paramesh import paramesh as _cli
 from fcmd.apps.paramesh._config import LEVELS, MeshConfig, load_config, parse_config
 from fcmd.apps.paramesh._errors import ParameshError
@@ -45,7 +46,6 @@ from fcmd.apps.paramesh.parameshw import (
     MIN_WIDTH,
     MIN_ZOOM,
     Settings,
-    __version__,
     load_settings,
     region_color,
     save_settings,

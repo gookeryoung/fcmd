@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from fcmd import __version__
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
@@ -39,7 +40,6 @@ from fcmd.tools.pdf.img2pdfw import (
     MIN_WIDTH,
     PAGE_SIZE_OPTIONS,
     Img2PdfSettings,
-    __version__,
     default_output_path,
     format_page_size,
     load_settings,

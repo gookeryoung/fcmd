@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
@@ -40,7 +41,6 @@ from fcmd.tools.pdf.pdfsplitw import (
     MODE_LABELS,
     MODES,
     PdfSplitSettings,
-    __version__,
     default_output_path,
     load_settings,
     normalize_mode,

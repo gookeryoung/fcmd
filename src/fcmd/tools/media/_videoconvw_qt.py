@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
@@ -61,7 +62,6 @@ from fcmd.tools.media.videoconvw import (
     MIN_HEIGHT,
     MIN_WIDTH,
     VideoConvSettings,
-    __version__,
     load_settings,
     parse_frame_rate,
     parse_scale,

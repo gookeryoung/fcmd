@@ -39,8 +39,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "正则校验器窗口版（Qt）：实时校验正则与文本，展示匹配位置/捕获组/全匹配/findall，"
     "内置 20 个典型示例，支持 ignorecase/multiline/dotall 标志、历史记录与语法帮助；"

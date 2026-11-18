@@ -54,8 +54,6 @@ __all__ = [
     "validate_documents",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "对比两个 doc/docx 文件（Windows + Microsoft Word + pywin32）：调用 Word 的 CompareDocuments "
     "生成带修订标记的对比文档，可设置标题、对比模式与是否显示变更；依赖 fcmd[win32]"

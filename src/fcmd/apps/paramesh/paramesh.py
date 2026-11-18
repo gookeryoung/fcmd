@@ -44,8 +44,6 @@ if TYPE_CHECKING:
 
 __all__ = ["check", "contract", "example", "generate", "report"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "参数化模型 → 二维轴对称仿真网格：三档尺度、局部加密、质量报告与 LS-DYNA "
     "网格片段；不做求解与材料参数，不在契约未定稿前写入 deck"

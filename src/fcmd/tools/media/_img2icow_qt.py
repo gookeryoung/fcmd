@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
 )
 
+from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
@@ -30,7 +31,6 @@ from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.img2icow import (
     QUALITY_CHOICES,
     Img2IcoSettings,
-    __version__,
     load_settings,
     normalize_quality,
     parse_sizes_text,

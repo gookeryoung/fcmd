@@ -53,8 +53,6 @@ from fcmd.core.result import emit_result, report_error
 
 __all__ = ["apply_command", "load_rules", "preview_command"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "批量重命名（规则流水线）：replace 正则替换、reorder 捕获组重排、move 把匹配文本搬到开头/结尾/锚点、"
     "insert / case / sequence；规则用 JSON 或 @文件传入，preview 预览、apply 两阶段执行"

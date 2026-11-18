@@ -43,8 +43,6 @@ __all__ = [
     "sections",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "PE 文件查看（DOS/NT/可选头、节表、数据目录、导入导出、资源、重定位、签名与 overlay，"
     "含十六进制视图和一致性检查）；编辑需显式 --apply 且写入前自动备份"

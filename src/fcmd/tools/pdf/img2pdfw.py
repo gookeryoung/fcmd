@@ -37,8 +37,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "图片转 PDF 转换器窗口版（Qt）：支持图片文件或目录批量、页面尺寸（A3/A4/A5/B5/letter/legal）"
     "与 DPI 设置、EXIF 方向校正；设置持久化到 ~/.fcmd/ui/img2pdfw.json"

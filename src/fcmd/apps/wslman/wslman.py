@@ -111,8 +111,6 @@ __all__ = [
     "unregister",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "Windows 上的 WSL 发行版管理：读取 Lxss 注册表与 .wslconfig，列出/查看发行版并诊断环境；"
     "只读命令不会启动发行版，也不写注册表与配置文件"

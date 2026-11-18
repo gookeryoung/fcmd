@@ -42,8 +42,6 @@ __all__ = [
     "verify_checksum",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "校验和计算器窗口版（Qt）：选择 MD5/SHA1/SHA256/SHA384/SHA512/Blake2b/Blake2s，"
     "计算字符串或文件的十六进制摘要，可选用期望值做忽略大小写的校验比对；"

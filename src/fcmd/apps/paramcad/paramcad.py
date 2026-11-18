@@ -29,8 +29,6 @@ if TYPE_CHECKING:
 
 __all__ = ["contract", "digest", "example", "export", "inspect"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "参数化建模与几何预览：管坯几何、拉拔工艺、密度分布与缺陷参数 → dynacalc-model/1 "
     "模型描述；不求解、不生成网格、不输出关键字"

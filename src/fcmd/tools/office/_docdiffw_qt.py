@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
@@ -46,7 +47,6 @@ from fcmd.tools.office.docdiffw import (
     MIN_HEIGHT,
     MIN_WIDTH,
     DocDiffSettings,
-    __version__,
     load_settings,
     save_settings,
 )

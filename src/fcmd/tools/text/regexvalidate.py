@@ -31,8 +31,6 @@ __all__ = [
     "format_validator_report",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "正则校验（匹配/全匹配/findall/分组与特征分析，支持 ignorecase/multiline/dotall 标志）"
 
 # 标志名 → re 标志常量（界面展示与标志构建共用的唯一定义）

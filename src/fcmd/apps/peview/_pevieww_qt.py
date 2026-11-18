@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.peview import _edit, _report, _view
 from fcmd.apps.peview._pe import PEImage, load_pe
 from fcmd.apps.peview._reader import PEError
@@ -44,7 +45,6 @@ from fcmd.apps.peview.pevieww import (
     MIN_HEIGHT,
     MIN_WIDTH,
     PeviewSettings,
-    __version__,
     add_recent_file,
     load_settings,
     save_settings,

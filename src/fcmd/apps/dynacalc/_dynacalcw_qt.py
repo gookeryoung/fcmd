@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.dynacalc._gates import evaluate, format_gate_report
 from fcmd.apps.dynacalc._mesh import scan_mesh_root
 from fcmd.apps.dynacalc._model import load_models
@@ -37,7 +38,6 @@ from fcmd.apps.dynacalc._solver import config_for_manifest, run_jobs
 from fcmd.apps.dynacalc._template import generate_decks, load_manifest, load_template
 from fcmd.apps.dynacalc.dynacalcw import (
     DynacalcSettings,
-    __version__,
     case_rows,
     generation_summary,
     job_rows,

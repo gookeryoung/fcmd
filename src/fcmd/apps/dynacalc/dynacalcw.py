@@ -32,8 +32,6 @@ __all__ = [
     "save_settings",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "dynacalc 的 Qt 窗口：选参数/模型、预览清单、生成 deck、dry-run、执行、查看作业与门控"
 
 

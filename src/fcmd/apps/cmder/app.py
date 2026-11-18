@@ -175,8 +175,6 @@ __all__ = [
     "validate_name",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "双面板文件管理器窗口版（Qt，Total Commander 风格）：左右面板独立导航与历史，"
     "F5 复制/F6 移动/F7 新建/F8 删除到回收站/Shift+F8 永久删除/F2 重命名/F3 查看，"

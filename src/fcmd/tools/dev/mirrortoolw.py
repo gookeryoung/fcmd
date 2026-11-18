@@ -50,8 +50,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "镜像搜索与配置窗口版（Qt）：按服务（pip/conda/rustup/cargo/go/maven/npm）"
     "实测下载吞吐排序并一键应用镜像，或探测 MirrorZ 教育网镜像站点；"

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, PathRow, button, hint_label
@@ -35,7 +36,6 @@ from fcmd.tools.pdf.pdfcryptw import (
     MIN_WIDTH,
     MIN_WORKERS,
     PdfCryptSettings,
-    __version__,
     load_settings,
     parse_workers,
     save_settings,

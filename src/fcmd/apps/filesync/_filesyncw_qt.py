@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.filesync._core import (
     ACTION_NONE,
     ACTION_TEXT,
@@ -59,7 +60,6 @@ from fcmd.apps.filesync.filesyncw import (
     MIN_WIDTH,
     SYNC_CHOICES,
     FilesyncSettings,
-    __version__,
     load_settings,
     mode_label,
     mode_value,

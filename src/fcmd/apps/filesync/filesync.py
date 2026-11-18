@@ -44,8 +44,6 @@ from fcmd.core.result import emit_result, report_error
 
 __all__ = ["compare_command", "sync_command"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "文件夹比较与同步（参考 FreeFileSync）：compare 按时间/大小/内容比较两侧，"
     "sync 支持双向/镜像/更新三种模式，可用 --preview 预览，冲突项自动跳过"

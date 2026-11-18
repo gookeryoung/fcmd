@@ -55,8 +55,6 @@ __all__ = [
     "resource_type_name",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "PE 资源查看与修改（列出/导出/替换/全部导出）；替换写入前自动备份，依赖 fcmd[pe]"
 
 PE_EXTENSIONS = frozenset({".exe", ".dll", ".sys", ".ocx", ".scr", ".cpl", ".ax", ".acm", ".drv"})

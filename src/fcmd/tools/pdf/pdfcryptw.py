@@ -36,8 +36,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "PDF 批量加密解密窗口版（Qt）：选择目录、输入密码，一键加密或解密，"
     "支持递归子目录与并发线程；设置持久化到 ~/.fcmd/ui/pdfcryptw.json（不含密码）"

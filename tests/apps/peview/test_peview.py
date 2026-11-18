@@ -167,10 +167,6 @@ def test_edit_reports_problems(pe32_file: Path, tmp_path: Path, capsys: pytest.C
     assert "校验和不一致" in output
 
 
-def test_version() -> None:
-    assert peview.__version__ == "0.1.0"
-
-
 class TestPeviewJson:
     """``--json`` 增量输出：默认人读文本保持不变，JSON 与文本同源。"""
 

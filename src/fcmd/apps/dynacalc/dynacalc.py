@@ -90,8 +90,6 @@ __all__ = [
     "template_command",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "装药密度—尺寸—工艺缺陷→爆轰传递的参数化算例：YAML 参数矩阵 + dynacalc-model/1 模型映射，"
     "批量生成 LS-DYNA 关键字 deck，调度求解（支持 dry-run 与假求解器），回收 glstat/matsum/history "

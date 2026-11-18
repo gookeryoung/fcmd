@@ -38,8 +38,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "文档对比工具窗口版（Qt）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与"
     "是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，"

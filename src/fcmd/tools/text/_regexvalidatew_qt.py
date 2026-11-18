@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
@@ -41,7 +42,6 @@ from fcmd.tools.text.regexvalidatew import (
     REGEX_HELP_TEXT,
     RegexHistoryEntry,
     RegexValidateSettings,
-    __version__,
     example_label,
     history_label,
     load_settings,

@@ -36,8 +36,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "PDF 分割窗口版（Qt）：按份数 / 每份页数 / 页码范围三种模式分割或提取页面，"
     "进度与日志实时回传；设置持久化到 ~/.fcmd/ui/pdfsplitw.json"

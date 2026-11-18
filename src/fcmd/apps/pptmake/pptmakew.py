@@ -45,8 +45,6 @@ __all__ = [
     "slide_label",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "PPT 模板设计器（Qt）：十三种布局、四套风格、六个语义色实时预览，"
     "模板 JSON 与 PPTX 双向导入导出；设置持久化到 ~/.fcmd/ui/pptmakew.json"

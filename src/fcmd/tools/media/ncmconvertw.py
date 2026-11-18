@@ -56,8 +56,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "NCM 音乐解锁转换器窗口版（Qt）：批量添加/导入 .ncm 文件，后台逐文件解锁为 mp3/flac，"
     "进度与失败明细实时回传，设置持久化到 ~/.fcmd/ui/ncmconvertw.json，依赖 fcmd[crypto]"

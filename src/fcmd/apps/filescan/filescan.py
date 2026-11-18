@@ -68,8 +68,6 @@ from fcmd.console import print_error
 
 __all__ = ["rules_command", "run_command", "scan_command"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "目录敏感内容扫描：关键词/正则与 and·or·not 表达式组合判定，按文件聚合命中行，默认打码，可导出文本/JSON/CSV"
 )

@@ -15,8 +15,6 @@ from fcmd.gui import config as _guiconfig
 
 __all__ = ["CanvasMap", "Settings", "load_settings", "run_gui", "save_settings"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "参数化建模预览（Qt）：二维截面、轴向剖面与密度 / 壁厚分布曲线；数据可导出为 dynacalc-model/1 模型描述"
 
 DEFAULT_GEOMETRY = "1120x720"

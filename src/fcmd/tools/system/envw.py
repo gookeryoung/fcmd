@@ -74,8 +74,6 @@ __all__ = [
     "write_profile_variables",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "环境变量编辑器窗口版（Qt，参考 Rapid Environment Editor）：用户 / 系统 / 当前进程三作用域，"
     "搜索、新建、编辑、删除与重命名，PATH 逐条路径编辑，变量引用展开预览，JSON 备份与恢复；"

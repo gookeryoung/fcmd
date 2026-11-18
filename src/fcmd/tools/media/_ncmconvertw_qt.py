@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
@@ -41,7 +42,6 @@ from fcmd.tools.media.ncmconvertw import (
     MIN_WIDTH,
     NcmConvertSettings,
     NcmError,
-    __version__,
     collect_ncm_files,
     decrypt_ncm,
     load_settings,

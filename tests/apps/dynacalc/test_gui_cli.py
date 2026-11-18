@@ -64,7 +64,6 @@ class TestSettings:
         assert job_rows(tmp_path / "out")[0][1] == "读取失败"
 
     def test_tool_registration(self) -> None:
-        assert dynacalcw.__version__ == "0.1.0"
         assert list_subcommands("dynacalc") == [
             "compare",
             "demo",

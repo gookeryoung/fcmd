@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item, mono_font
 from fcmd.tools.system import envw
@@ -317,7 +318,7 @@ class EnvQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._variables: dict[str, str] = {}
         self._original: dict[str, str] = {}
         super().__init__(
-            title=f"环境变量编辑器 v{envw.__version__}",
+            title=f"环境变量编辑器 v{__version__}",
             config_name="envw",
             default_size=DEFAULT_SIZE,
             min_size=(MIN_WIDTH, MIN_HEIGHT),

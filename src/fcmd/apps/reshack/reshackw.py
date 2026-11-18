@@ -71,8 +71,6 @@ __all__ = [
     "zoom_out",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "PE 资源编辑器窗口版（Qt）：按类型展示资源树，支持文本/十六进制/图像预览（图像可缩放/适应窗口，"
     "右键复制到剪贴板或另存为 PNG/ICO/BMP）、单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、"

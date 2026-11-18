@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.renamer._core import (
     ANCHOR_AFTER,
     ANCHOR_BEFORE,
@@ -70,7 +71,6 @@ from fcmd.apps.renamer.renamerw import (
     SORT_TEXT,
     STATUS_TEXT,
     RenamerSettings,
-    __version__,
     _label_value,
     load_settings,
     rule_to_row,

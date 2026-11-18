@@ -17,8 +17,6 @@ from fcmd.gui import config as _guiconfig
 
 __all__ = ["Settings", "load_settings", "run_gui", "save_settings"]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "二维轴对称网格预览（Qt）：按区域着色线框、局部放大、质量摘要与三档网格包导出"
 
 DEFAULT_GEOMETRY = "1180x720"

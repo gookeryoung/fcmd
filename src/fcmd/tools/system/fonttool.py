@@ -86,8 +86,6 @@ __all__ = [
     "user_font_dir",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "推荐字体按需安装与管理（list/status/install/remove）：默认 Cascadia Code + Noto Sans SC，"
     "下载后校验 SHA256 并保存 OFL 许可证，安装在当前用户字体目录，不内置进 fcmd"

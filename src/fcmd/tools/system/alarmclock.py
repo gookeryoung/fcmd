@@ -38,8 +38,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = "数字时钟 + 定时提醒（Qt）：按 HH:MM:SS 设定闹钟或按分钟快捷延时，到点弹出置顶闪烁提醒窗口，支持每天重复"
 
 DIGITAL_FORMAT = "%H:%M:%S"

@@ -44,8 +44,6 @@ __all__ = [
     "valid_geometry",
 ]
 
-__version__ = "0.1.0"
-
 _DESCRIPTION = (
     "视频转换器窗口版（Qt）：文件/输出目录选择、格式与编码参数可视化、"
     "进度与日志实时回传、可中断，设置持久化到 ~/.fcmd/ui/videoconvw.json，依赖系统 ffmpeg"

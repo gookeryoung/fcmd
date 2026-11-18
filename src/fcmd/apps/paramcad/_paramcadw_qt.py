@@ -39,13 +39,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd import __version__
 from fcmd.apps.paramcad import _export, _preview
 from fcmd.apps.paramcad._model import TubeModel, format_summary
 from fcmd.apps.paramcad._quantity import ParamcadError
 from fcmd.apps.paramcad.paramcadw import (
     CanvasMap,
     Settings,
-    __version__,
     load_settings,
     save_settings,
 )
