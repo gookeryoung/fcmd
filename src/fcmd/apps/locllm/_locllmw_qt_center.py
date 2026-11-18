@@ -214,6 +214,24 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             owner_label.setObjectName("OwnerTag")
             owner_label.setToolTip(f"发布方 {owner}")
             name_row.addWidget(owner_label, 0)
+        if installed and not incomplete:
+            name_row.addWidget(StatusTag("已安装", tone="success", parent=header), 0)
+        elif incomplete:
+            name_row.addWidget(StatusTag("部分下载", tone="warning", parent=header), 0)
+        if not downloadable:
+            name_row.addWidget(StatusTag("仅本地", tone="muted", parent=header), 0)
+        if any(tag.upper().startswith("UD-") for tag in quant_tags):
+            name_row.addWidget(StatusTag("UD", tone="accent", parent=header), 0)
+        if same_name > 1:
+            name_row.addWidget(StatusTag(f"同名 {same_name}", tone="muted", parent=header), 0)
+        if converted:
+            name_row.addWidget(StatusTag("已转换", tone="success", parent=header), 0)
+        elif convert_blocked:
+            blocked_tag = StatusTag("不可转换", tone="warning", parent=header)
+            blocked_tag.setToolTip(convert_blocked)
+            name_row.addWidget(blocked_tag, 0)
+        if quant_blocked:
+            name_row.addWidget(StatusTag("不可量化", tone="warning", parent=header), 0)
         published = _locllmw_models.model_published_text(item)
         if published:
             published_label = QLabel(published, header)
@@ -231,16 +249,6 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         sub.setToolTip(subtitle)
         note_row.addWidget(sub, 0)
-        if installed and not incomplete:
-            note_row.addWidget(StatusTag("已安装", tone="success", parent=header), 0)
-        elif incomplete:
-            note_row.addWidget(StatusTag("部分下载", tone="warning", parent=header), 0)
-        if not downloadable:
-            note_row.addWidget(StatusTag("仅本地", tone="muted", parent=header), 0)
-        if any(tag.upper().startswith("UD-") for tag in quant_tags):
-            note_row.addWidget(StatusTag("UD", tone="accent", parent=header), 0)
-        if same_name > 1:
-            note_row.addWidget(StatusTag(f"同名 {same_name}", tone="muted", parent=header), 0)
         for tag in quant_tags:
             chip = QLabel(tag, header)
             if tag == default_quant:
@@ -266,29 +274,14 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
         self.convert_button: Any = None
-        if convertible:
-            self.convert_button = button("已转换" if converted else "转换")
-            if converted:
-                self.convert_button.setObjectName("ConvertedButton")
-                self.convert_button.setEnabled(False)
-                self.convert_button.setToolTip("已存在转换后的 GGUF")
-            else:
-                self.convert_button.clicked.connect(lambda: self.convertRequested.emit(self.repo))
-            header_row.addWidget(self.convert_button, 0)
-        elif convert_blocked:
-            self.convert_button = button("不可转换")
-            self.convert_button.setEnabled(False)
-            self.convert_button.setToolTip(convert_blocked)
+        if convertible and not converted:
+            self.convert_button = button("转换")
+            self.convert_button.clicked.connect(lambda: self.convertRequested.emit(self.repo))
             header_row.addWidget(self.convert_button, 0)
         self.quant_button: Any = None
         if quantizable:
             self.quant_button = button("量化")
             self.quant_button.clicked.connect(lambda: self.quantizeRequested.emit(self.repo))
-            header_row.addWidget(self.quant_button, 0)
-        elif quant_blocked:
-            self.quant_button = button("不可量化")
-            self.quant_button.setEnabled(False)
-            self.quant_button.setToolTip("当前模型没有可量化的全量精度 GGUF")
             header_row.addWidget(self.quant_button, 0)
         self.start_button: Any = None
         if startable:
@@ -296,20 +289,17 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.start_button.setToolTip("选择量化精度并启动服务；默认使用上次启动过的精度")
             self.start_button.clicked.connect(lambda: self.startRequested.emit(self.repo))
             header_row.addWidget(self.start_button, 0)
-        self.download_button = button("继续下载" if incomplete else "下载")
-        if not downloadable:
-            self.download_button.setText("仅本地")
-            self.download_button.setEnabled(False)
-            self.download_button.setToolTip("本地目录名不是「组织/模型」，无法匹配远程仓库；请在在线列表搜索原仓库")
-        elif installed and not incomplete:
-            self.download_button.setObjectName("InstalledButton")
-            self.download_button.setText("下载其他量化")
-            self.download_button.setToolTip("仓库已有本地文件；可继续选择其他量化（如 UD-Q4_K_XL）")
-        elif incomplete:
-            self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
+        self.download_button: Any = None
         if downloadable:
+            self.download_button = button("继续下载" if incomplete else "下载")
+            if installed and not incomplete:
+                self.download_button.setObjectName("InstalledButton")
+                self.download_button.setText("下载其他量化")
+                self.download_button.setToolTip("仓库已有本地文件；可继续选择其他量化（如 UD-Q4_K_XL）")
+            elif incomplete:
+                self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
             self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
-        header_row.addWidget(self.download_button, 0)
+            header_row.addWidget(self.download_button, 0)
         self.delete_button: Any = None
         if deletable:
             self.delete_button = button("删除", kind="danger")
@@ -345,9 +335,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
         """下载中禁用；已安装行仍可下载其它量化，文案与普通行区分。"""
-        if not self._downloadable:
-            self.download_button.setEnabled(False)
-            self.download_button.setText("仅本地")
+        if self.download_button is None:
             return
         self.download_button.setEnabled(not busy)
         if self._installed and not self._incomplete:

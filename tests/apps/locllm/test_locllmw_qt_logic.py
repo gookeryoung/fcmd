@@ -223,8 +223,8 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert installed_row.delete_button is not None
     assert installed_row.delete_button.text() == "删除"
     local_only = _ModelItemRow(ModelSummary(repo="Qwen3.8-27B"), installed=True, downloadable=False)
-    assert local_only.download_button.text() == "仅本地"
-    assert not local_only.download_button.isEnabled()
+    assert local_only.download_button is None
+    assert "仅本地" in {label.text() for label in local_only.findChildren(QLabel, "StatusTag")}
     assert installed_row.download_button.objectName() == "InstalledButton"
     assert installed_row.download_button.isEnabled()
     convertible_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), convertible=True)
@@ -232,14 +232,11 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert convertible_row.convert_button.text() == "转换"
     assert convertible_row.convert_button.isEnabled()
     converted_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), convertible=True, converted=True)
-    assert converted_row.convert_button is not None
-    assert converted_row.convert_button.text() == "已转换"
-    assert converted_row.convert_button.objectName() == "ConvertedButton"
-    assert not converted_row.convert_button.isEnabled()
+    assert converted_row.convert_button is None
+    assert "已转换" in {label.text() for label in converted_row.findChildren(QLabel, "StatusTag")}
     blocked_row = _ModelItemRow(ModelSummary(repo="Qwen/image"), convert_blocked="diffusers 多组件模型")
-    assert blocked_row.convert_button is not None
-    assert blocked_row.convert_button.text() == "不可转换"
-    assert not blocked_row.convert_button.isEnabled()
+    assert blocked_row.convert_button is None
+    assert "不可转换" in {label.text() for label in blocked_row.findChildren(QLabel, "StatusTag")}
     quantized_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_tags=("Q4_K_M", "Q5_K_M"))
     assert quantized_row.findChild(QLabel, "QuantTag") is not None
     start_row = _ModelItemRow(
@@ -267,9 +264,8 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert quantizable_row.quant_button.text() == "量化"
     assert quantizable_row.quant_button.isEnabled()
     blocked_quant_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), quant_blocked=True)
-    assert blocked_quant_row.quant_button is not None
-    assert blocked_quant_row.quant_button.text() == "不可量化"
-    assert not blocked_quant_row.quant_button.isEnabled()
+    assert blocked_quant_row.quant_button is None
+    assert "不可量化" in {label.text() for label in blocked_quant_row.findChildren(QLabel, "StatusTag")}
     partial_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), incomplete=True, progress_text="已下载 42%")
     assert partial_row.download_button.text() == "继续下载"
     assert partial_row.download_button.isEnabled()
