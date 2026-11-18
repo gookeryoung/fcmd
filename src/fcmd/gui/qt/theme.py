@@ -465,7 +465,7 @@ QFrame#RecommendationRow[band="excellent"][selected="true"] { background: $succe
 QFrame#RecommendationRow[band="good"][selected="true"] { background: $accent_soft_strong; }
 QFrame#RecommendationRow[band="fair"][selected="true"] { background: $warning_soft_strong; }
 QFrame#RecommendationRow[band="limited"][selected="true"] { background: $danger_soft_strong; }
-QFrame#ModelItemRow[selected="true"] { background: $accent_soft_strong; }
+QFrame#ModelItemRow[selected="true"] { background: $accent_soft_strong; border-color: $select_bg; }
 QLabel#RecommendationName, QLabel#ModelItemName { font-size: ${font_heading}pt; font-weight: 600; }
 QPushButton#InstalledButton, QPushButton#ConvertedButton {
     color: $success;

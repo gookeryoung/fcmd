@@ -197,6 +197,8 @@ def test_selected_states_use_deeper_soft_backgrounds() -> None:
         block = text.split(f"\n{selector} {{", 1)[1].split("}", 1)[0]
         assert "_soft_strong" not in block
         assert "background:" in block
+    model_block = text.split('\nQFrame#ModelItemRow[selected="true"] {', 1)[1].split("}", 1)[0]
+    assert f"border-color: {theme.palette.select_bg}" in model_block
     for tone in ("danger", "accent", "success", "warning"):
         block = text.split(f'QPushButton#ChoiceCard[tone="{tone}"]:checked {{', 1)[1].split("}", 1)[0]
         assert "background:" in block
