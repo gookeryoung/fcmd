@@ -94,12 +94,12 @@ class TestHardwareSnapshot:
             return real_import(name, *args, **kwargs)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        monkeypatch.setattr(hardware.os, "name", "nt")
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="nt"))
         assert hardware.detect_cpu_name().strip()
 
     def test_detect_hardware_uses_runner(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 内存代数查询仅在 Windows 分支可达：CI（Linux）注入 nt 平台走同一逻辑。
-        monkeypatch.setattr(hardware.os, "name", "nt")
+        # 内存代数查询仅在 Windows 分支可达：只替换模块内的 os，不改全局 os.name。
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="nt"))
 
         def runner(argv: list[str]) -> CommandResult:
             assert argv[0] in ("nvidia-smi", "powershell")

@@ -53,9 +53,12 @@ def is_junction(path: object) -> bool:
     target = Path(path)  # type: ignore[arg-type]
     if os.name != "nt":
         return False
+    info = None
     try:
         info = os.lstat(target)
     except OSError:
+        return False
+    if info is None:  # pragma: no cover - 静态检查收窄
         return False
     reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
     return bool(getattr(info, "st_file_attributes", 0) & reparse) and target.is_dir() and not target.is_symlink()
