@@ -143,6 +143,7 @@ def test_format_size() -> None:
 def test_decode_text_prefers_bom_and_falls_back() -> None:
     assert decode_text(codecs.BOM_UTF8 + "中文".encode())[0] == "utf-8-sig"
     assert decode_text("中文".encode("utf-16"))[0] == "utf-16"
+    assert decode_text(codecs.BOM_UTF32_LE + "中文".encode("utf-32-le"))[0] == "utf-32"
     assert decode_text("中文".encode("gb18030")) == ("gb18030", "中文")
     assert decode_text(b"caf\xe9 ok")[0] == "latin-1"
     assert decode_text(b"caf\xe9 ok", ("utf-8",)) == ("utf-8", "caf\ufffd ok")

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import codecs
 import math
+
+from fcmd.infras.textio import decode_text, detect_encoding, has_text_bom
 
 __all__ = [
     "ENCODINGS",
@@ -23,37 +24,6 @@ ENCODINGS = ("auto", "utf-8", "utf-8-sig", "gb18030", "utf-16", "latin-1")
 
 ZOOM_MAX = 16
 """图片最大缩小倍率（``PhotoImage.subsample`` 的整数参数）。"""
-
-_FALLBACK_ENCODINGS = ("utf-8", "gb18030")
-
-
-def has_text_bom(data: bytes) -> bool:
-    """是否以 UTF-8 / UTF-16 BOM 开头（用于把 UTF-16 文本从二进制中区分出来）。"""
-    return data.startswith((codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE))
-
-
-def detect_encoding(data: bytes) -> str:
-    """按 BOM 与可解码性探测编码；无法判定时回退 ``latin-1``。"""
-    if data.startswith(codecs.BOM_UTF8):
-        return "utf-8-sig"
-    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        return "utf-16"
-    for encoding in _FALLBACK_ENCODINGS:
-        try:
-            data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-        return encoding
-    return "latin-1"
-
-
-def decode_text(data: bytes, encoding: str = "auto") -> str:
-    """解码字节；``auto`` 时先探测，未知编码抛 ``ValueError``。"""
-    name = detect_encoding(data) if encoding == "auto" else encoding
-    try:
-        return data.decode(name, errors="replace")
-    except LookupError as exc:
-        raise ValueError(f"未知编码：{encoding}") from exc
 
 
 def hex_dump(data: bytes, limit: int = 4096) -> str:

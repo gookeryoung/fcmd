@@ -19,6 +19,9 @@ class TestDetectEncoding:
     def test_utf16_bom(self) -> None:
         assert preview.detect_encoding(codecs.BOM_UTF16_LE + "x".encode("utf-16-le")) == "utf-16"
 
+    def test_utf32_bom(self) -> None:
+        assert preview.detect_encoding(codecs.BOM_UTF32_LE + "x".encode("utf-32-le")) == "utf-32"
+
     def test_gb18030_when_not_utf8(self) -> None:
         data = "中文".encode("gb18030")
         assert preview.detect_encoding(data) == "gb18030"
@@ -29,6 +32,7 @@ class TestDetectEncoding:
     def test_has_text_bom(self) -> None:
         assert preview.has_text_bom(codecs.BOM_UTF8 + b"x")
         assert preview.has_text_bom(codecs.BOM_UTF16_LE + b"x")
+        assert preview.has_text_bom(codecs.BOM_UTF32_LE + b"x")
         assert not preview.has_text_bom(b"plain")
 
 

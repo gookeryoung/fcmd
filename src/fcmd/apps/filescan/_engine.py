@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import codecs
 import contextlib
 import os
 import threading
@@ -45,6 +44,7 @@ from fcmd.apps.filescan._rules import (
     resolve_expression,
 )
 from fcmd.infras.system import format_bytes
+from fcmd.infras.textio import detect_encoding, has_text_bom
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -92,14 +92,6 @@ _PROCESS_MAX_CHUNK = 64
 
 DEFAULT_ENCODINGS: tuple[str, ...] = ("utf-8", "gb18030", "latin-1")
 """编码候选：BOM 优先，其余按顺序尝试，最后以 latin-1 兜底。"""
-
-_BOM_ENCODINGS: tuple[tuple[bytes, str], ...] = (
-    (codecs.BOM_UTF32_LE, "utf-32"),
-    (codecs.BOM_UTF32_BE, "utf-32"),
-    (codecs.BOM_UTF8, "utf-8-sig"),
-    (codecs.BOM_UTF16_LE, "utf-16"),
-    (codecs.BOM_UTF16_BE, "utf-16"),
-)
 
 REASON_SYMLINK = "符号链接（未跟随）"
 REASON_BINARY = "二进制文件"
@@ -632,7 +624,7 @@ def walk_files(
 # ---------------------------------------------------------------------- #
 def _looks_binary(raw: bytes) -> bool:
     """BOM 开头的文本不算二进制；其余按前缀是否含 ``\\x00`` 判定。"""
-    if any(raw.startswith(bom) for bom, _encoding in _BOM_ENCODINGS):
+    if has_text_bom(raw):
         return False
     return b"\x00" in raw[:BINARY_SNIFF_SIZE]
 
@@ -645,21 +637,12 @@ def decode_text(raw: bytes, encodings: Sequence[str] = DEFAULT_ENCODINGS) -> tup
     tuple[str, str]
         ``(编码名, 文本)``
     """
-    for bom, encoding in _BOM_ENCODINGS:
-        if raw.startswith(bom):
-            try:
-                return encoding, raw.decode(encoding)
-            except UnicodeDecodeError:
-                break
     candidates = tuple(encodings) or DEFAULT_ENCODINGS
-    for encoding in candidates:
-        try:
-            return encoding, raw.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-    fallback = candidates[-1]
+    encoding = detect_encoding(raw, candidates, candidates[-1])
     try:
-        return fallback, raw.decode(fallback, errors="replace")
+        return encoding, raw.decode(encoding)
+    except UnicodeDecodeError:
+        return encoding, raw.decode(encoding, errors="replace")
     except LookupError:
         return "utf-8", raw.decode("utf-8", errors="replace")
 
