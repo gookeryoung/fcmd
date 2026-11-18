@@ -269,6 +269,51 @@ def test_models_manual_update_forces_refresh_and_shows_time(window: Any, monkeyp
     assert window.state.settings.models_updated_at
 
 
+def test_models_page_view_options_restored_and_persisted(window: Any) -> None:
+    """来源 / 排序 / 同名折叠等列表选项从设置恢复，修改后写回设置。"""
+    window.state.settings.model_view = {
+        "filter": "all",
+        "sort": "name",
+        "source": "installed",
+        "owner": "",
+        "group_same": True,
+    }
+    window.show_page("models")
+    browse = window.page("models").browse
+    assert browse.filter_buttons["all"].isChecked()
+    assert browse.sort_combo.currentData() == "name"
+    assert browse.source_combo.currentData() == "installed"
+    assert browse.group_check.isChecked()
+
+    browse.group_check.setChecked(False)
+    assert window.state.settings.model_view["group_same"] is False
+    browse.source_combo.setCurrentIndex(browse.source_combo.findData("online"))
+    assert window.state.settings.model_view["source"] == "online"
+
+
+def test_models_page_delete_and_cleanup(window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """模型页支持删除本地模型与清理 .part 残留。"""
+    from fcmd.apps.locllm import _llmconfig
+
+    models = tmp_path / "models"
+    target = models / "Qwen" / "demo"
+    target.mkdir(parents=True)
+    (target / "model.gguf").write_bytes(b"x")
+    part = models / "Qwen" / "other" / "model.gguf.part"
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"partial")
+    monkeypatch.setattr(_llmconfig, "models_dir", lambda: models)
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes)
+
+    window.show_page("models")
+    page = window.page("models").browse
+    page.delete_model("Qwen/demo")
+    assert not target.exists()
+
+    page._cleanup_partial_files()
+    assert not part.exists()
+
+
 def test_models_page_source_owner_and_group_controls(window: Any) -> None:
     """模型页提供来源 / 发布方过滤与同名折叠，默认只显示在线结果。"""
     window.show_page("models")

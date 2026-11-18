@@ -50,6 +50,7 @@ class LocllmSettings:
     models_updated_at: str | None = None
     chat_settings_open: bool = False
     sidebar_collapsed: bool = False
+    model_view: dict[str, Any] | None = None
 
 
 def config_path() -> Path:
@@ -109,6 +110,13 @@ def load_settings(path: Path | None = None) -> LocllmSettings:  # noqa: PLR0912 
         sidebar_collapsed = raw.get("sidebar_collapsed")
         if isinstance(sidebar_collapsed, bool):
             settings.sidebar_collapsed = sidebar_collapsed
+        model_view = raw.get("model_view")
+        if isinstance(model_view, dict):
+            settings.model_view = {
+                str(key): value
+                for key, value in model_view.items()
+                if isinstance(value, (str, bool)) and (not isinstance(value, str) or value.strip() or key == "owner")
+            }
     return settings
 
 
@@ -128,6 +136,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "models_updated_at": settings.models_updated_at,
             "chat_settings_open": settings.chat_settings_open,
             "sidebar_collapsed": settings.sidebar_collapsed,
+            "model_view": settings.model_view,
         },
         path or config_path(),
     )

@@ -69,6 +69,7 @@ from fcmd.apps.locllm.llmdown import (
     ModelToolError,
     ProgressEvent,
     QuantOption,
+    delete_local_model,
     download_files,
     fetch_model_info,
     filter_files,
@@ -144,6 +145,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
     convertRequested = Signal(str)
     quantizeRequested = Signal(str)
     startRequested = Signal(str)
+    deleteRequested = Signal(str)
 
     def __init__(  # noqa: PLR0912, PLR0913 - 行状态位由列表统一透传
         self,
@@ -165,6 +167,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         owner: str = "",
         size_text: str | None = None,
         same_name: int = 1,
+        deletable: bool = False,
         progress_text: str = "",
     ) -> None:
         super().__init__(parent)
@@ -176,6 +179,7 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self._expanded = False
         self._installed = installed
         self._downloadable = downloadable
+        self._deletable = deletable
         self._convertible = convertible
         self._converted = converted
         self._convert_blocked = convert_blocked
@@ -306,6 +310,12 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         if downloadable:
             self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
         header_row.addWidget(self.download_button, 0)
+        self.delete_button: Any = None
+        if deletable:
+            self.delete_button = button("删除", kind="danger")
+            self.delete_button.setToolTip("删除本地模型目录（不可恢复）")
+            self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self.repo))
+            header_row.addWidget(self.delete_button, 0)
         self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
@@ -344,6 +354,11 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
             self.download_button.setText("下载中…" if active else "下载其他量化")
             return
         self.download_button.setText("下载中…" if active else ("继续下载" if self._incomplete else "下载"))
+
+    def set_delete_state(self, *, busy: bool) -> None:
+        """删除按钮随其它任务统一禁用，避免删除正在下载 / 转换的目录。"""
+        if self.delete_button is not None:
+            self.delete_button.setEnabled(not busy)
 
     def set_convert_state(self, *, busy: bool, active: bool) -> None:
         """转换中禁用按钮；已转换行保持不可点击的「已转换」。"""
@@ -474,12 +489,27 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._result_items: tuple[ModelSummary, ...] = ()
         self._expanded_row: _ModelItemRow | None = None
         self._page = 1
-        self._filter_key = _DEFAULT_FILTER
-        self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == _DEFAULT_FILTER), "")
-        self._sort_key = _DEFAULT_SORT
-        self._source_filter = "online"
-        self._owner_filter = ""
-        self._group_same = False
+        view = state.settings.model_view or {}
+        filter_key = view.get("filter")
+        self._filter_key = (
+            filter_key
+            if isinstance(filter_key, str) and any(key == filter_key for key, _label, _q in _MODEL_FILTERS)
+            else _DEFAULT_FILTER
+        )
+        self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == self._filter_key), "")
+        sort_key = view.get("sort")
+        self._sort_key = (
+            sort_key
+            if isinstance(sort_key, str) and any(key == sort_key for key, _label in _MODEL_SORTS)
+            else _DEFAULT_SORT
+        )
+        source = view.get("source")
+        self._source_filter = (
+            source if isinstance(source, str) and source in {"online", "installed", "all"} else "online"
+        )
+        owner = view.get("owner")
+        self._owner_filter = owner if isinstance(owner, str) else ""
+        self._group_same = view.get("group_same") is True
         self._detail_generation = 0
         self._searching = False
         self._list_cache = ModelListCache()
@@ -529,6 +559,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             filters.addWidget(chip)
             self.filter_buttons[key] = chip
         filters.addStretch(1)
+        self.cleanup_button = button("清理", kind="ghost")
+        self.cleanup_button.setToolTip("清理未完成下载 / 空目录 / 模型列表缓存")
+        self.cleanup_button.clicked.connect(self._open_cleanup_menu)
+        filters.addWidget(self.cleanup_button)
         self.update_button = button("更新模型", kind="ghost")
         self.update_button.setToolTip("强制刷新当前页并重新扫描本地模型（绕过列表缓存）")
         self.update_button.clicked.connect(self.manual_update)
@@ -567,7 +601,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         nav.addWidget(self.owner_combo)
         self.group_check = QCheckBox("同名折叠", self)
         self.group_check.setToolTip("同名仓库只保留一个代表行；取消勾选查看全部")
-        self.group_check.toggled.connect(lambda _checked: self._render_results())
+        self.group_check.setChecked(self._group_same)
+        self.group_check.toggled.connect(self._on_group_toggled)
         nav.addWidget(self.group_check)
         nav.addStretch(1)
         self._name_filter = ""
@@ -616,7 +651,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.detail_view.setVisible(False)
 
         self.refresh_installed()
-        self.filter_buttons[_DEFAULT_FILTER].setChecked(True)
+        self.filter_buttons[self._filter_key].setChecked(True)
         self.start_search(1)
         self.state.busyChanged.connect(lambda _busy: self._sync_download_buttons())
         self.state.servicesChanged.connect(lambda _states: self._sync_download_buttons())
@@ -626,6 +661,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         """切换浏览筛选：分类指标走服务端关键字，适合本机在本地按容量过滤。"""
         self._filter_key = key
         self._filter_query = next((query for name, _label, query in _MODEL_FILTERS if name == key), "")
+        self._persist_view_options()
         self.start_search(1)
 
     def _on_name_filter_changed(self, _text: str) -> None:
@@ -644,18 +680,21 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         if not isinstance(key, str) or key == self._sort_key:
             return
         self._sort_key = key
+        self._persist_view_options()
         self.start_search(1)
 
     def _on_source_changed(self, _index: int) -> None:
         key = self.source_combo.currentData()
         if isinstance(key, str):
             self._source_filter = key
+            self._persist_view_options()
             self._render_results()
 
     def _on_owner_changed(self, _index: int) -> None:
         owner = self.owner_combo.currentData()
         if isinstance(owner, str):
             self._owner_filter = owner
+            self._persist_view_options()
             self._render_results()
 
     def _refresh_owner_combo(self, items: tuple[ModelSummary, ...]) -> None:
@@ -674,6 +713,142 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             index = 0
         self.owner_combo.setCurrentIndex(index)
         self.owner_combo.blockSignals(False)
+
+    def _on_group_toggled(self, checked: bool) -> None:
+        self._group_same = checked
+        self._persist_view_options()
+        self._render_results()
+
+    def _persist_view_options(self) -> None:
+        """把列表视图选项写回 locllmw.json，避免每次启动重新选择。"""
+        self.state.settings.model_view = {
+            "filter": self._filter_key,
+            "sort": self._sort_key,
+            "source": self._source_filter,
+            "owner": self._owner_filter,
+            "group_same": self._group_same,
+        }
+        self.state.persist()
+
+    def _open_cleanup_menu(self) -> None:
+        models_root = _llmconfig.models_dir()
+        try:
+            partial = sum(1 for path in models_root.rglob("*.part") if path.is_file())
+        except OSError:
+            partial = 0
+        menu = QMenu(self)
+        partial_action = menu.addAction(f"清理未完成下载（{partial} 个 .part）")
+        partial_action.setEnabled(partial > 0)
+        partial_action.triggered.connect(self._cleanup_partial_files)
+        empty_action = menu.addAction("清理空模型目录")
+        empty_action.triggered.connect(self._cleanup_empty_dirs)
+        menu.addSeparator()
+        cache_action = menu.addAction("清理模型列表缓存")
+        cache_action.triggered.connect(self._cleanup_list_cache)
+        menu.exec(QCursor.pos())
+
+    def _cleanup_partial_files(self) -> None:
+        """删除模型目录下的 .part 残留（需确认；下载任务进行中时禁用）。"""
+        if self._downloading or self._converting or self._quantizing:
+            self.state.status("任务进行中，暂不能清理")
+            return
+        models_root = _llmconfig.models_dir()
+        try:
+            targets = [path for path in models_root.rglob("*.part") if path.is_file()]
+        except OSError as exc:
+            self._log(f"清理未完成下载失败: {exc}")
+            return
+        if not targets:
+            self.state.status("没有未完成下载")
+            return
+        answer = QMessageBox.question(
+            self,
+            "清理未完成下载",
+            f"将删除 {len(targets)} 个 .part 文件，相关模型需要重新下载。\n确定继续？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        removed = 0
+        for path in targets:
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                continue
+        self._log(f"已清理 {removed} 个未完成下载文件")
+        self.state.status(f"已清理 {removed} 个 .part 文件")
+        self.refresh_installed()
+        self._render_results()
+
+    def _cleanup_empty_dirs(self) -> None:
+        """自底向上删除模型目录下的空目录（保留模型根目录）。"""
+        models_root = _llmconfig.models_dir()
+        if not models_root.is_dir():
+            return
+        removed = 0
+        dirs = sorted(
+            (path for path in models_root.rglob("*") if path.is_dir()), key=lambda p: len(p.parts), reverse=True
+        )
+        for path in dirs:
+            try:
+                path.rmdir()
+                removed += 1
+            except OSError:
+                continue
+        self._log(f"已清理 {removed} 个空模型目录")
+        self.state.status(f"已清理 {removed} 个空目录")
+        self.refresh_installed()
+        self._render_results()
+
+    def _cleanup_list_cache(self) -> None:
+        self._list_cache.clear()
+        self._log("已清理模型列表缓存")
+        self.state.status("模型列表缓存已清理")
+
+    def delete_model(self, repo: str) -> None:
+        """删除本地模型目录；只允许模型根目录内的安全路径。"""
+        if self._downloading or self._converting or self._quantizing or self._listing_quant:
+            self.state.status("任务进行中，暂不能删除模型")
+            return
+        models_root = _llmconfig.models_dir()
+        target = models_root.joinpath(*repo.split("/"))
+        answer = QMessageBox.question(
+            self,
+            "删除本地模型",
+            f"将删除本地模型目录（不可恢复）：\n{target}\n\n如果服务正在使用该模型，请先停止服务。确定继续？",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            delete_local_model(models_root, repo)
+        except ModelToolError as exc:
+            self._log(f"删除模型失败 {repo}: {exc}")
+            self.state.status(f"删除失败：{exc}")
+            QMessageBox.critical(self, "删除失败", str(exc))
+            return
+        key = repo.casefold()
+        for mapping in (
+            self._installed_models,
+            self._partial_models,
+            self._convertible,
+            self._convert_blocked,
+            self._quant_candidates,
+            self._quant_tags,
+            self._quantized_files,
+        ):
+            mapping.pop(key, None)
+        self._installed_repos.discard(key)
+        choices = dict(self.state.settings.quant_choice or {})
+        choices.pop(key, None)
+        self.state.settings.quant_choice = choices or None
+        last_model = self.state.settings.last_model
+        if last_model and Path(last_model).is_relative_to(target):
+            self.state.settings.last_model = None
+        self.state.persist()
+        self._log(f"已删除本地模型 {repo} -> {target}")
+        self.state.status(f"已删除本地模型 {repo}")
+        self.refresh_installed()
+        self._render_results()
 
     def refresh_installed(self) -> None:
         """后台扫描模型目录，记录已安装仓库（用于勾选标志与置顶）。
@@ -1109,12 +1284,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 if installed and key in self._installed_models and self._installed_models[key].storage_size
                 else None,
                 same_name=same_name_counts.get(key, 1),
+                deletable=installed or incomplete,
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
             row.convertRequested.connect(self.start_convert)
             row.quantizeRequested.connect(self._on_quantize_requested)
             row.startRequested.connect(self._on_quick_serve)
+            row.deleteRequested.connect(self.delete_model)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -1260,6 +1437,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 )
                 running = row.serve_path is not None and self.state.is_running(row.serve_path)
                 row.set_serve_state(busy=busy or self.state.busy, running=running)
+                row.set_delete_state(busy=busy or self.state.busy)
 
     def _begin_quant_choice(self, repo: str, source: str) -> None:
         """后台读取文件清单，稍后弹出量化选择（不阻塞 GUI）。"""

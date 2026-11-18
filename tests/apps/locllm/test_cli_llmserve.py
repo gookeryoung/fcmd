@@ -2638,6 +2638,17 @@ class TestServewSettings:
         path.write_text('{"sidebar_collapsed": 1}', encoding="utf-8")
         assert locllmw.load_settings(path).sidebar_collapsed is False
 
+    def test_model_view_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        view = {"filter": "all", "sort": "name", "source": "installed", "owner": "unsloth", "group_same": True}
+        locllmw.save_settings(locllmw.LocllmSettings(model_view=view), path)
+        assert locllmw.load_settings(path).model_view == view
+
+    def test_load_ignores_non_dict_model_view(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"model_view": ["bad"]}', encoding="utf-8")
+        assert locllmw.load_settings(path).model_view is None
+
     def test_quant_choice_roundtrip(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         locllmw.save_settings(locllmw.LocllmSettings(quant_choice={"org/model": "Q4_K_M"}), path)

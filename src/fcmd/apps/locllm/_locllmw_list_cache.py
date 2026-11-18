@@ -100,6 +100,14 @@ class ModelListCache:
             self._trim_locked()
             self._save_locked()
 
+    def clear(self) -> None:
+        """清空内存与磁盘缓存（模型页「清理」菜单使用）。"""
+        with self._lock:
+            self._entries.clear()
+            self._loaded = True
+            with contextlib.suppress(OSError):
+                self.path.unlink(missing_ok=True)
+
     # ------------------------------------------------------------------ #
     # 内部
     # ------------------------------------------------------------------ #

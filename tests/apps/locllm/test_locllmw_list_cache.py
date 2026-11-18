@@ -95,6 +95,16 @@ def test_invalid_entry_fields_are_dropped(tmp_path: Path) -> None:
     assert [item.repo for item in hit.search.items] == ["ok/model"]
 
 
+def test_clear_removes_memory_and_disk(tmp_path: Path) -> None:
+    cache = ModelListCache(tmp_path / "cache.json")
+    search = ModelSearch(items=(ModelSummary(repo="Qwen/demo"),), total=1, page=1, page_size=30)
+    cache.put("k", search)
+    assert (tmp_path / "cache.json").exists()
+    cache.clear()
+    assert cache.get("k") is None
+    assert not (tmp_path / "cache.json").exists()
+
+
 def test_oldest_entries_are_trimmed(tmp_path: Path) -> None:
     now = [100.0]
     cache = ModelListCache(tmp_path / "list.json", max_entries=2, clock=lambda: now[0])

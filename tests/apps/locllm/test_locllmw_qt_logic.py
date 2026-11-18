@@ -218,8 +218,10 @@ def test_model_item_row_expands_inline_detail() -> None:
     owner_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), owner="Qwen", installed=True)
     owner_labels = [label for label in owner_row.findChildren(QLabel) if label.objectName() == "OwnerTag"]
     assert [label.text() for label in owner_labels] == ["Qwen"]
-    installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True)
+    installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True, deletable=True)
     assert installed_row.download_button.text() == "下载其他量化"
+    assert installed_row.delete_button is not None
+    assert installed_row.delete_button.text() == "删除"
     local_only = _ModelItemRow(ModelSummary(repo="Qwen3.8-27B"), installed=True, downloadable=False)
     assert local_only.download_button.text() == "仅本地"
     assert not local_only.download_button.isEnabled()
