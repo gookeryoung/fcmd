@@ -84,6 +84,8 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.navigateRequested.connect(self.show_page)
         self.state.serveModelRequested.connect(self._serve_model)
         self.state.loadingTextChanged.connect(self.show_loading)
+        self.state.modelsUpdatedAtChanged.connect(self._show_models_updated_at)
+        self._show_models_updated_at(self.state.models_updated_at or "")
         self.state.logLine.connect(self.monitor_page.log_view.append)
         self.state.sampleCapacityChanged.connect(self.run_page.update_service_and_fit)
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
@@ -175,6 +177,12 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """折叠状态属于窗口设置，随 ``locllmw.json`` 一起持久化。"""
         self.state.settings.sidebar_collapsed = collapsed
         self.state.persist()
+
+    def _show_models_updated_at(self, stamp: str) -> None:
+        """状态栏常驻显示模型列表最近更新时间。"""
+        from fcmd.apps.locllm._locllmw_models import format_models_updated
+
+        self.set_status_note(format_models_updated(stamp))
 
     def _serve_model(self, path: object) -> None:
         """模型页快捷启动：切到运行页并选中该模型后立即启动。"""

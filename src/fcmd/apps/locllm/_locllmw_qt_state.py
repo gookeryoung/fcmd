@@ -133,11 +133,13 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     navigateRequested = Signal(str)
     serveModelRequested = Signal(object)
     loadingTextChanged = Signal(str)
+    modelsUpdatedAtChanged = Signal(str)
 
     def __init__(self, settings_path: Path | None = None) -> None:
         super().__init__()
         self.settings_path = settings_path
         self.settings: LocllmSettings = load_settings(settings_path)
+        self.models_updated_at: str | None = self.settings.models_updated_at
         self.hardware: HardwareSnapshot | None = (
             snapshot_from_dict(self.settings.hardware) if self.settings.hardware else None
         )
@@ -190,6 +192,16 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
             self.loadingTextChanged.emit(next(reversed(self._loading_tasks.values())))
         else:
             self.loadingTextChanged.emit("")
+
+    def mark_models_updated(self) -> None:
+        """记录模型列表最近一次成功更新的时间（ISO），落盘并通知窗口。"""
+        from fcmd.apps.locllm.llmbase import now_iso
+
+        stamp = now_iso()
+        self.models_updated_at = stamp
+        self.settings.models_updated_at = stamp
+        self.persist()
+        self.modelsUpdatedAtChanged.emit(stamp)
 
     def remember_quant_choice(self, path: Path) -> None:
         """记住用户启动过的量化精度（按仓库保存），供模型页快捷启动默认选中。

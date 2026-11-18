@@ -158,6 +158,10 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
         self.status_label = QLabel("就绪", self)
         self.statusBar().addWidget(self.status_label, 1)
+        self.status_note = QLabel("", self)
+        self.status_note.setObjectName("Hint")
+        self.status_note.setVisible(False)
+        self.statusBar().addPermanentWidget(self.status_note, 0)
         self.loading_bar = LoadingBar("加载中…", self)
         self.statusBar().addPermanentWidget(self.loading_bar, 0)
         self.nav.changed.connect(self.show_page)
@@ -245,6 +249,11 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def status_text(self) -> str:
         """当前状态栏文字。"""
         return self.status_label.text()
+
+    def set_status_note(self, text: str) -> None:
+        """状态栏左侧文字与右侧加载条之间的常驻备注（如模型更新时间）。"""
+        self.status_note.setText(text)
+        self.status_note.setVisible(bool(text))
 
     def show_loading(self, text: str) -> None:
         """在状态栏右侧显示 / 更新加载提示；空串收起。左侧状态文字保持可见。"""

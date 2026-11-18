@@ -2,8 +2,8 @@
 
 Qt 窗口（``_locllmw_qt_window.py``）使用这一份设置模型，文件固定为
 ``${FCMD_HOME:-~/.fcmd}/ui/locllmw.json``，保存窗口位置、硬件缓存、性能实测、
-下载参数、按模型保存的启动参数与上次启动的量化精度。解析与校验都是纯逻辑，
-不依赖任何 GUI 工具包。
+下载参数、按模型保存的启动参数、上次启动的量化精度与模型列表更新时间。解析与
+校验都是纯逻辑，不依赖任何 GUI 工具包。
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ class LocllmSettings:
     run_params: dict[str, dict[str, Any]] | None = None
     quant_choice: dict[str, str] | None = None
     last_model: str | None = None
+    models_updated_at: str | None = None
     chat_settings_open: bool = False
     sidebar_collapsed: bool = False
 
@@ -59,7 +60,7 @@ def config_path() -> Path:
 valid_geometry = _guiconfig.valid_geometry
 
 
-def load_settings(path: Path | None = None) -> LocllmSettings:
+def load_settings(path: Path | None = None) -> LocllmSettings:  # noqa: PLR0912 - 逐字段校验并回退
     """读取设置；文件缺失、JSON 损坏或 geometry 非法时回退默认值。"""
     raw = _guiconfig.read_settings(path or config_path())
     settings = LocllmSettings()
@@ -99,6 +100,9 @@ def load_settings(path: Path | None = None) -> LocllmSettings:
         last_model = raw.get("last_model")
         if isinstance(last_model, str) and last_model.strip():
             settings.last_model = last_model
+        models_updated_at = raw.get("models_updated_at")
+        if isinstance(models_updated_at, str) and models_updated_at.strip():
+            settings.models_updated_at = models_updated_at
         chat_settings_open = raw.get("chat_settings_open")
         if isinstance(chat_settings_open, bool):
             settings.chat_settings_open = chat_settings_open
@@ -121,6 +125,7 @@ def save_settings(settings: LocllmSettings, path: Path | None = None) -> None:
             "run_params": settings.run_params,
             "quant_choice": settings.quant_choice,
             "last_model": settings.last_model,
+            "models_updated_at": settings.models_updated_at,
             "chat_settings_open": settings.chat_settings_open,
             "sidebar_collapsed": settings.sidebar_collapsed,
         },

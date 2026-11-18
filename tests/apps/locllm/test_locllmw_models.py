@@ -25,6 +25,7 @@ from fcmd.apps.locllm._locllmw_models import (
     filter_by_local_fit,
     filter_by_name,
     filter_models,
+    format_models_updated,
     local_row,
     matches_filter,
     merge_installed_items,
@@ -289,6 +290,13 @@ def test_filter_by_name_matches_repo_name_and_chinese_name() -> None:
     assert [item.repo for item in filter_by_name(items, "深度")] == ["deepseek/DeepSeek-R1"]
     assert filter_by_name(items, "   ") == items
     assert filter_by_name(items, "missing") == ()
+
+
+def test_format_models_updated_handles_iso_and_invalid() -> None:
+    assert format_models_updated("2026-11-18T07:37:00+08:00") == "更新于 2026-11-18 07:37"
+    assert format_models_updated(None) == ""
+    assert format_models_updated("") == ""
+    assert format_models_updated("not-a-time") == ""
 
 
 class TestQuantQuickStart:

@@ -149,6 +149,24 @@ def test_models_page_fresh_cache_skips_network(window: Any, tmp_path: Path, monk
     assert browse._search_work not in submitted
 
 
+def test_models_manual_update_forces_refresh_and_shows_time(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """顶部更新按钮强制刷新并重扫本地；成功后状态栏常驻更新时间。"""
+    window.show_page("models")
+    browse = window.page("models").browse
+    assert browse.update_button.text() == "更新模型"
+    calls: list[object] = []
+    monkeypatch.setattr(browse, "refresh_installed", lambda: calls.append("scan"))
+    monkeypatch.setattr(browse, "start_search", lambda page, *, force=False: calls.append((page, force)))
+    browse._searching = False
+    browse._page = 3
+    browse.update_button.click()
+    assert calls == ["scan", (3, True)]
+    window.state.mark_models_updated()
+    assert not window.status_note.isHidden()
+    assert window.status_note.text().startswith("更新于 ")
+    assert window.state.settings.models_updated_at
+
+
 def test_models_page_name_filter_is_debounced(window: Any) -> None:
     """上一页左侧的名称过滤框只在停止输入后重建列表。"""
     window.show_page("models")

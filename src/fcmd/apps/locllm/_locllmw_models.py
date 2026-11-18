@@ -12,6 +12,7 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -34,6 +35,7 @@ __all__ = [
     "filter_by_local_fit",
     "filter_by_name",
     "filter_models",
+    "format_models_updated",
     "local_row",
     "matches_filter",
     "merge_installed_items",
@@ -196,6 +198,17 @@ def repo_for_model_path(path: Path, models_root: Path) -> str:
     if len(parts) == 2:
         return parts[0]
     return ""
+
+
+def format_models_updated(value: str | None) -> str:
+    """把 ISO 时间格式化为状态栏短文本；空 / 非法值返回空串。"""
+    if not value:
+        return ""
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return ""
+    return f"更新于 {moment:%Y-%m-%d %H:%M}"
 
 
 def quant_precision_label(path: Path) -> str:

@@ -2629,6 +2629,16 @@ class TestServewSettings:
         path.write_text('{"quant_choice": {"a": "Q4_K_M", "b": 1, "c": ""}}', encoding="utf-8")
         assert locllmw.load_settings(path).quant_choice == {"a": "Q4_K_M"}
 
+    def test_models_updated_at_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        locllmw.save_settings(locllmw.LocllmSettings(models_updated_at="2026-11-18T07:37:00+08:00"), path)
+        assert locllmw.load_settings(path).models_updated_at == "2026-11-18T07:37:00+08:00"
+
+    def test_load_ignores_invalid_models_updated_at(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"models_updated_at": 123}', encoding="utf-8")
+        assert locllmw.load_settings(path).models_updated_at is None
+
     def test_roundtrip_hardware_and_measured(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         settings = locllmw.LocllmSettings(

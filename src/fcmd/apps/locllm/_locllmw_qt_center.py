@@ -466,6 +466,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             filters.addWidget(chip)
             self.filter_buttons[key] = chip
         filters.addStretch(1)
+        self.update_button = button("更新模型", kind="ghost")
+        self.update_button.setToolTip("强制刷新当前页并重新扫描本地模型（绕过列表缓存）")
+        self.update_button.clicked.connect(self.manual_update)
+        filters.addWidget(self.update_button)
         browse_layout.addLayout(filters)
 
         nav = QHBoxLayout()
@@ -690,8 +694,17 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         memory_bytes = int(memory * 0.8) if memory else 0
         return max(gpu_bytes, memory_bytes)
 
-    def start_search(self, page: int) -> None:
-        """按当前筛选拉取指定页；命中新鲜缓存时直接展示，不再请求网络。"""
+    def manual_update(self) -> None:
+        """手动更新：强制刷新当前页并重新扫描本地模型。"""
+        if self._searching:
+            self.state.status("模型列表正在更新，请稍候…")
+            return
+        self.state.status("正在更新模型列表…")
+        self.refresh_installed()
+        self.start_search(self._page, force=True)
+
+    def start_search(self, page: int, *, force: bool = False) -> None:
+        """按当前筛选拉取指定页；命中新鲜缓存时直接展示，``force`` 跳过缓存。"""
         if self._searching:
             return
         target = max(1, page)
@@ -700,7 +713,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._page = target
         if cached is not None:
             self._render_search(cached.search)
-            if cached.fresh:
+            if cached.fresh and not force:
                 self._log(f"模型列表命中缓存（{cached.age:.0f}s 前）：{self._filter_query or '全部'}")
                 return
         self._searching = True
@@ -715,10 +728,15 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             self._page,
             _PAGE_SIZE,
             "default",
-            on_done=self._render_search,
+            on_done=self._search_online_done,
             on_error=self._search_error,
             on_finished=self._search_finished,
         )
+
+    def _search_online_done(self, result: ModelSearch) -> None:
+        """在线请求成功：记录更新时间后渲染（缓存命中不走这里）。"""
+        self.state.mark_models_updated()
+        self._render_search(result)
 
     @staticmethod
     def _search_work(  # noqa: PLR0913, PLR0917 - 缓存键与请求参数成组透传
