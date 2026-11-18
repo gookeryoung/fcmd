@@ -201,7 +201,7 @@ QPushButton#ChoiceCard {
     max-height: 72px;
 }
 QPushButton#ChoiceCard:hover { background: $surface_hover; border-color: $border_strong; }
-QPushButton#ChoiceCard:checked { background: $accent_soft; border-color: $accent; }
+QPushButton#ChoiceCard:checked { background: $accent_soft_strong; border-color: $accent; }
 QLabel#ChoiceTitle {
     background: transparent;
     color: $text;
@@ -223,6 +223,11 @@ QPushButton#ChoiceCard[tone="accent"]:checked,
 QPushButton#ChoiceCard[tone="success"]:checked,
 QPushButton#ChoiceCard[tone="warning"]:checked,
 QPushButton#ChoiceCard[tone="muted"]:checked { border-width: 2px; }
+QPushButton#ChoiceCard[tone="danger"]:checked { background: $danger_soft_strong; }
+QPushButton#ChoiceCard[tone="accent"]:checked { background: $accent_soft_strong; }
+QPushButton#ChoiceCard[tone="success"]:checked { background: $success_soft_strong; }
+QPushButton#ChoiceCard[tone="warning"]:checked { background: $warning_soft_strong; }
+QPushButton#ChoiceCard[tone="muted"]:checked { background: $border; }
 QPushButton#ChoiceCard[tone="danger"] QLabel#ChoiceTitle { color: $danger; }
 QPushButton#ChoiceCard[tone="accent"] QLabel#ChoiceTitle { color: $accent; }
 QPushButton#ChoiceCard[tone="success"] QLabel#ChoiceTitle { color: $success; }
@@ -250,7 +255,7 @@ QPushButton#FilterChip {
 }
 QPushButton#FilterChip:hover { border-color: $border_strong; color: $text; }
 QPushButton#FilterChip:checked {
-    background: $accent_soft;
+    background: $accent_soft_strong;
     border-color: $accent;
     color: $text;
 }
@@ -292,7 +297,7 @@ QToolButton#IconButton {
     font-size: ${font_heading}pt;
 }
 QToolButton#IconButton:hover { background: $surface_hover; color: $text; }
-QToolButton#IconButton:checked { background: $accent_soft; color: $accent; border-color: $accent; }
+QToolButton#IconButton:checked { background: $accent_soft_strong; color: $accent; border-color: $accent; }
 QPushButton#NavButton {
     background: transparent;
     border: none;
@@ -456,6 +461,11 @@ QFrame#RecommendationRow[band="fair"] { background: $warning_soft; border-color:
 QFrame#RecommendationRow[band="limited"] { background: $danger_soft; border-color: $danger; }
 QFrame#RecommendationRow:hover, QFrame#ModelItemRow:hover { border-width: 2px; }
 QFrame#RecommendationRow[selected="true"], QFrame#ModelItemRow[selected="true"] { border-width: 2px; }
+QFrame#RecommendationRow[band="excellent"][selected="true"] { background: $success_soft_strong; }
+QFrame#RecommendationRow[band="good"][selected="true"] { background: $accent_soft_strong; }
+QFrame#RecommendationRow[band="fair"][selected="true"] { background: $warning_soft_strong; }
+QFrame#RecommendationRow[band="limited"][selected="true"] { background: $danger_soft_strong; }
+QFrame#ModelItemRow[selected="true"] { background: $accent_soft_strong; }
 QLabel#RecommendationName, QLabel#ModelItemName { font-size: ${font_heading}pt; font-weight: 600; }
 QPushButton#InstalledButton, QPushButton#ConvertedButton {
     color: $success;
@@ -531,6 +541,8 @@ def template_tokens(
     # 评分档位的浅色底：由档位色按固定透明度派生，避免调色板里再堆一组近似色。
     for name in ("accent", "success", "warning", "danger"):
         tokens[f"{name}_soft"] = _rgba(palette[name], 16)
+        # 选中态：同一色系加深，避免只换边框、内部仍是和未选中一样的浅底。
+        tokens[f"{name}_soft_strong"] = _rgba(palette[name], 32)
     height = control_height_px if control_height_px is not None else control_height(theme)
     tokens.update(
         {

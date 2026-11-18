@@ -104,6 +104,8 @@
 - 新增后台动作：一律 `fcmd.gui.qt.workers.submit(...)`，禁止在 GUI 线程做阻塞 IO；
   长任务的日志用 `state.log`（信号自动排队回主线程）。
 - 主题：新增控件样式改 `fcmd/gui/qt/theme.py` 的 QSS 模板，色值只从 `Palette` 取。
+  选中态不能只加粗边框：卡片 / 选项 / 筛选块的内部底色改用同色系
+  `*_soft_strong`（32%），未选中仍用 `*_soft`（16%），保证深浅差异可见。
 - 关闭：`QtMainWindow.closeEvent` → `on_close()`（确认进行中任务）→ `persist(geometry)`；
   采样 / 生成 / 下载线程必须在这里停掉。
 - 窗口位置与大小：`geometry` 存客户区（`QWidget.geometry()`，不含标题栏与边框），

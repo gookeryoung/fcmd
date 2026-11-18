@@ -67,6 +67,7 @@ def test_template_tokens_derive_band_soft_colors() -> None:
         color = getattr(theme.palette, name).lstrip("#")
         red, green, blue = (int(color[index : index + 2], 16) for index in (0, 2, 4))
         assert tokens[f"{name}_soft"] == f"rgba({red}, {green}, {blue}, 16%)"
+        assert tokens[f"{name}_soft_strong"] == f"rgba({red}, {green}, {blue}, 32%)"
 
 
 def test_tiered_value_html_uses_theme_fonts_and_escapes() -> None:
@@ -180,6 +181,28 @@ def test_mode_choice_tone_colors_are_themed() -> None:
     ):
         block = text.split(f'QPushButton#ChoiceCard[tone="{tone}"] {{', 1)[1].split("}", 1)[0]
         assert f"border-color: {color}" in block
+
+
+def test_selected_states_use_deeper_soft_backgrounds() -> None:
+    """选中态不仅加粗边框，内部底色也使用同色系加深版本。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    for selector in (
+        'QFrame#RecommendationRow[band="excellent"][selected="true"]',
+        'QFrame#RecommendationRow[band="good"][selected="true"]',
+        'QFrame#RecommendationRow[band="fair"][selected="true"]',
+        'QFrame#RecommendationRow[band="limited"][selected="true"]',
+        'QFrame#ModelItemRow[selected="true"]',
+    ):
+        block = text.split(f"\n{selector} {{", 1)[1].split("}", 1)[0]
+        assert "_soft_strong" not in block
+        assert "background:" in block
+    for tone in ("danger", "accent", "success", "warning"):
+        block = text.split(f'QPushButton#ChoiceCard[tone="{tone}"]:checked {{', 1)[1].split("}", 1)[0]
+        assert "background:" in block
+        assert "_soft_strong" not in block
+    filter_block = text.split("QPushButton#FilterChip:checked {", 1)[1].split("}", 1)[0]
+    assert "background:" in filter_block
 
 
 def test_secondary_buttons_keep_visible_border() -> None:
