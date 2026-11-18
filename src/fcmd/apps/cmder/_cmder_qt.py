@@ -1073,9 +1073,7 @@ class CmderQtWindow(QMainWindow):
         if not paths:
             self.set_status("请选择要生成校验文件的文件")
             return
-        algorithm, accepted = self.ask_text(
-            "生成校验文件", "算法（sha256 / sha512 / sha1 / md5 / crc32）", "sha256"
-        )
+        algorithm, accepted = self.ask_text("生成校验文件", "算法（sha256 / sha512 / sha1 / md5 / crc32）", "sha256")
         if not accepted:
             return
         from fcmd.infras import checksum as _checksum
