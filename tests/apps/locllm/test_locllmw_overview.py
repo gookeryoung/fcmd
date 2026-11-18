@@ -298,7 +298,8 @@ class TestHardwareDetection:
                 return "processor\t: 0\nmodel name\t: Test CPU 9000\n"
 
         monkeypatch.setattr(hardware, "Path", _FakePath)
-        monkeypatch.setattr(hardware.os, "name", "posix")
+        # 替换模块内的 os 引用而非全局 os.name，理由见 test_detect_memory_gen_maps_smbios_code。
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="posix"))
         assert hardware.detect_cpu_name() == "Test CPU 9000"
 
     def test_detect_cpu_name_falls_back_to_platform(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -310,7 +311,7 @@ class TestHardwareDetection:
                 raise OSError("no /proc")
 
         monkeypatch.setattr(hardware, "Path", _FakePath)
-        monkeypatch.setattr(hardware.os, "name", "posix")
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="posix"))
         monkeypatch.setattr(hardware.platform, "processor", lambda: "")
         monkeypatch.setattr(hardware.platform, "machine", lambda: "x86_64")
         assert hardware.detect_cpu_name() == "x86_64"
@@ -332,7 +333,7 @@ class TestHardwareDetection:
             SimpleNamespace(HKEY_LOCAL_MACHINE=0, OpenKey=_open_key),
         )
         monkeypatch.setattr(hardware, "Path", _FakePath)
-        monkeypatch.setattr(hardware.os, "name", "nt")
+        monkeypatch.setattr(hardware, "os", SimpleNamespace(name="nt"))
         monkeypatch.setattr(hardware.platform, "processor", lambda: "AMD Test")
         assert hardware.detect_cpu_name() == "AMD Test"
 
