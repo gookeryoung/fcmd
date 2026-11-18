@@ -775,8 +775,9 @@ def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
 
 
 def test_overview_actions_are_text_links(window: Any) -> None:
-    """「重新检测」是文字链接（无按钮边框），位于硬件信息标题旁。"""
+    """「重新检测」是文字链接（无按钮边框），位于系统信息标题行右侧。"""
     overview = window.overview
+    assert overview._hardware_title.text() == "系统信息"
     assert overview._detect_button.text() == "重新检测"
     assert overview._detect_button.objectName() == "Link"
     assert "model_disk" not in overview._hardware_values

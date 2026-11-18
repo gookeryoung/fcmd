@@ -1,4 +1,4 @@
-"""locllmw（Qt）概览页：硬件信息、占用条、智能推荐与运行中的服务。
+"""locllmw（Qt）概览页：系统信息、实时占用格图、智能推荐与运行中的服务。
 
 硬件快照首次检测后写入 ``locllmw.json``，之后读缓存展示并支持重新检测；
 推荐行由 :mod:`fcmd.apps.locllm._locllmw_recommend` 纯逻辑计算，性能默认标注
@@ -235,9 +235,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
+        self._hardware_title = QLabel("系统信息", card)
+        self._hardware_title.setObjectName("SectionTitle")
         self._detect_button = link_button("重新检测", tooltip="重新检测 CPU / GPU / 内存")
         self._detect_button.clicked.connect(self._detect)
         self._detected_label = hint_label("", wrap=False)
+        header.addWidget(self._hardware_title)
         header.addStretch(1)
         header.addWidget(self._detected_label)
         header.addWidget(self._detect_button)
