@@ -194,3 +194,9 @@ Qt 使用原生 `windows` 平台插件。每个窗口独立进程，冷启动口
 - 后台动作一律 `gui.qt.workers.submit(...)`；禁止在 GUI 线程做扫描 / 转换 / 网络。
 - 设置文件沿用 `fcmd.gui.config`，字段与旧版保持同名同义，便于读取历史文件。
 - 迁移一个应用时同步更新其模块 docstring 与工具 `help` 文本中的「Tk」字样。
+- 提交 `eff8c36`（`feat(locllm): 新增引擎兼容性与启动错误诊断`）除 `llmbase.py` / `llmserve.py` /
+  `tests/apps/locllm/test_cli_llmserve.py` 三项主题改动外，还含并行会话的附带改动：README 6 行、
+  locllmw 图标 9 个、devman / filesync / paramcad / paramesh / peview / reshack / videoconvw 各 1 行
+  QTimer 生命周期、`src/fcmd/cli/_manifest_data.py` 1 行。已定**不改写历史**：该提交之后另有 161 个提交，
+  拆分需要 rebase 全部重写，收益不抵与并行会话提交冲突的风险。回滚 locllmw 启动修复时按
+  `llmbase.py` / `llmserve.py` / `test_cli_llmserve.py` 挑拣，不要整体 revert 该提交。
