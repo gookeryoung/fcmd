@@ -52,15 +52,9 @@ def compute_file_hash(file_path: Path, algorithm: str, chunk_size: int = CHUNK_S
 
 
 def iter_directory_files(directory: Path) -> Iterator[Path]:
-    """遍历目录下需要哈希的文件（跳过常见忽略目录与 .pyc/.pyo）。"""
-    # 延迟导入：仅目录哈希场景需要
-    from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS, DEFAULT_IGNORE_SPEC, should_skip_parts
+    """遍历目录下需要哈希的文件（跳过常见忽略目录与 .pyc/.pyo），按路径排序。"""
+    # 延迟导入：仅目录哈希场景需要，避免 hashfile 单文件路径付出导入成本
+    from fcmd.infras.filefilter import DEFAULT_IGNORE_EXTS
+    from fcmd.infras.fs import iter_files
 
-    for file_path in sorted(directory.rglob("*")):
-        if not file_path.is_file():
-            continue
-        if should_skip_parts(file_path.parts, DEFAULT_IGNORE_SPEC):
-            continue
-        if file_path.suffix in DEFAULT_IGNORE_EXTS:
-            continue
-        yield file_path
+    return iter(sorted(iter_files(directory, exclude_exts=DEFAULT_IGNORE_EXTS), key=str))

@@ -31,6 +31,10 @@ __all__ = [
 
 DEFAULT_ALGORITHM = "sha256"
 
+# 并行哈希的最大线程数：``hashlib`` 计算时释放 GIL，SSD 上多线程接近线性提速；
+# 机械盘/小目录由 min(total) 自动收敛，避免过度并发。
+_MAX_HASH_WORKERS = 8
+
 
 @dataclass(frozen=True)
 class DuplicateGroup:
@@ -82,6 +86,38 @@ def _collect_files(roots: Sequence[Path]) -> list[Path]:
     return files
 
 
+def _hash_candidates(
+    files: Sequence[Path],
+    algorithm: str,
+    progress: Callable[[int, int, str], None] | None,
+) -> dict[Path, str]:
+    """并发计算候选文件哈希，返回 ``路径 → 摘要``（读取失败的文件省略）。
+
+    ``hashlib`` 在计算时释放 GIL，线程池即可获得接近线性的多核提速；进度
+    回调仍在调用线程（主线程）触发，``done`` 单调递增、``total`` 与串行一致。
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    total = len(files)
+    workers = max(1, min(_MAX_HASH_WORKERS, os.cpu_count() or 1, total))
+    digests: dict[Path, str] = {}
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(hashing.compute_file_hash, path, algorithm): path for path in files}
+        for future in as_completed(futures):
+            file_path = futures[future]
+            try:
+                digest = future.result()
+            except OSError:
+                done += 1
+                continue
+            digests[file_path] = digest
+            done += 1
+            if progress is not None:
+                progress(done, total, file_path.name)
+    return digests
+
+
 def find_duplicates(
     roots: Sequence[Path],
     *,
@@ -104,21 +140,18 @@ def find_duplicates(
             continue
         buckets.setdefault(size, []).append(file_path)
     candidates = {size: items for size, items in buckets.items() if len(items) > 1}
-    total = sum(len(items) for items in candidates.values())
+    ordered_sizes = sorted(candidates, reverse=True)
+    digests = _hash_candidates(
+        [file_path for size in ordered_sizes for file_path in candidates[size]], algorithm, progress
+    )
     groups: list[DuplicateGroup] = []
-    done = 0
-    for size in sorted(candidates, reverse=True):
+    for size in ordered_sizes:
         by_digest: dict[str, list[Path]] = {}
         for file_path in candidates[size]:
-            try:
-                digest = hashing.compute_file_hash(file_path, algorithm)
-            except OSError:
-                done += 1
+            digest = digests.get(file_path)
+            if digest is None:
                 continue
             by_digest.setdefault(digest, []).append(file_path)
-            done += 1
-            if progress is not None:
-                progress(done, total, file_path.name)
         for digest, paths in by_digest.items():
             if len(paths) > 1:
                 ordered = tuple(sorted(paths, key=str))

@@ -150,6 +150,12 @@ class TestReadTextLines:
         lines = read_text_lines(f)
         assert len(lines) >= 1
 
+    def test_limit_reads_only_prefix(self, tmp_path: Path) -> None:
+        """``limit`` 只读取前 N 行（内容搜索避免大文件全量读入）。"""
+        f = tmp_path / "a.txt"
+        f.write_text("l1\nl2\nl3\nl4\n", encoding="utf-8")
+        assert read_text_lines(f, limit=2) == ["l1\n", "l2\n"]
+
 
 # ============================================================================ #
 # search_by_name
@@ -170,6 +176,26 @@ class TestSearchByName:
         (tmp_path / "a.py").touch()
         (tmp_path / "sub" / "b.py").touch()
         assert sorted(p.name for p in search_by_name(tmp_path, "*.py")) == ["a.py", "b.py"]
+
+    def test_ignored_root_returns_empty(self, tmp_path: Path) -> None:
+        """根目录本身命中忽略规则时不返回任何结果（与原全路径过滤一致）。"""
+        ignored = tmp_path / ".git"
+        ignored.mkdir()
+        (ignored / "a.py").touch()
+        assert search_by_name(ignored, "*.py") == []
+
+    def test_symlink_dir_not_recursed(self, tmp_path: Path) -> None:
+        """符号链接目录只作为条目本身，不向下递归（与 rglob 一致）。"""
+        real = tmp_path / "real"
+        real.mkdir()
+        (real / "inner.py").touch()
+        link = tmp_path / "link"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError):  # pragma: no cover - Windows 无权限
+            pytest.skip("当前环境不支持创建符号链接")
+        names = sorted(p.name for p in search_by_name(tmp_path, "*.py"))
+        assert names == ["inner.py"]
 
     def test_include_dirs(self, tmp_path: Path) -> None:
         """include_dirs=True 包含目录。"""

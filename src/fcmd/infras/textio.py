@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import codecs
+import itertools
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -77,13 +78,16 @@ def is_binary_file(path: Path) -> bool:
     return b"\x00" in chunk
 
 
-def read_text_lines(path: Path, *, binary_message: str = "二进制文件") -> list[str]:
-    """读取文本文件所有行（保留行尾），utf-8 失败时回退为 replace。"""
+def read_text_lines(path: Path, *, binary_message: str = "二进制文件", limit: int | None = None) -> list[str]:
+    """读取文本文件的行（保留行尾），utf-8 失败时回退为 replace。
+
+    ``limit`` 非空时最多读取前 ``limit`` 行，避免超长文件一次性读入内存。
+    """
     if is_binary_file(path):
         raise ValueError(f"{binary_message}: {path}")
     try:
         with path.open("r", encoding="utf-8") as f:
-            return f.readlines()
+            return f.readlines() if limit is None else list(itertools.islice(f, limit))
     except UnicodeDecodeError:
         with path.open("r", encoding="utf-8", errors="replace") as f:
-            return f.readlines()
+            return f.readlines() if limit is None else list(itertools.islice(f, limit))

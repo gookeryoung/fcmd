@@ -7,12 +7,13 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 import re
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from fcmd.infras.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_skip_parts
 from fcmd.infras.textio import read_text_lines
@@ -24,6 +25,7 @@ __all__ = [
     "clear_date_prefixes",
     "compile_content_pattern",
     "file_timestamp",
+    "iter_files",
     "normalize_path",
     "path_diff",
     "path_parts",
@@ -45,6 +47,75 @@ __all__ = [
 # ============================================================================ #
 # 内容搜索单文件最大读取行数，避免大文件内存爆炸
 _MAX_LINES_PER_FILE = 100_000
+
+
+class _WalkEntry(NamedTuple):
+    """单条遍历结果（``path`` 为字符串，避免为未命中的条目构造 ``Path``）。"""
+
+    path: str
+    name: str
+    is_dir: bool
+    is_file: bool
+
+
+def _walk(directory: Path, spec: IgnoreSpec) -> Iterator[_WalkEntry]:
+    """深度优先遍历目录，命中忽略规则的目录整棵剪枝。
+
+    与 ``Path.rglob("*")`` 的语义对齐：跟随符号链接判定条目类型
+    （``is_dir`` / ``is_file``），但不递归进入符号链接目录；目录读取失败
+    时跳过该子树（与 ``pathlib`` 的处理一致）。忽略规则按目录名逐级判定，
+    因此剪枝与原「遍历后按全部路径组件过滤」结果相同。
+    """
+    if should_skip_parts(directory.parts, spec):
+        return
+    stack: list[str] = [str(directory)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as scanner:
+                entries = list(scanner)
+        except OSError:
+            continue
+        for entry in entries:
+            if should_skip_parts((entry.name,), spec):
+                continue
+            try:
+                is_dir = entry.is_dir()
+            except OSError:  # pragma: no cover - 目录项在遍历中被删除等竞态
+                is_dir = False
+            if is_dir:
+                try:
+                    is_link = entry.is_symlink()
+                except OSError:  # pragma: no cover - 同上
+                    is_link = False
+                if not is_link:
+                    stack.append(entry.path)
+                yield _WalkEntry(entry.path, entry.name, True, False)
+                continue
+            try:
+                is_file = entry.is_file()
+            except OSError:  # pragma: no cover - 同上
+                is_file = False
+            yield _WalkEntry(entry.path, entry.name, False, is_file)
+
+
+def iter_files(
+    directory: Path,
+    spec: IgnoreSpec = DEFAULT_IGNORE_SPEC,
+    *,
+    exclude_exts: frozenset[str] = frozenset(),
+) -> Iterator[Path]:
+    """遍历目录下的普通文件（跳过忽略规则与 ``exclude_exts`` 扩展名）。
+
+    遍历顺序不保证；需要稳定顺序的调用方自行排序。
+    """
+    for entry in _walk(directory, spec):
+        if entry.is_dir or not entry.is_file:
+            continue
+        path = Path(entry.path)
+        if exclude_exts and path.suffix in exclude_exts:
+            continue
+        yield path
 
 
 def _ensure_directory(directory: Path) -> None:
@@ -78,15 +149,13 @@ def search_by_name(
         return fnmatch.fnmatchcase(name.casefold(), pattern.casefold())
 
     results: list[Path] = []
-    for path in directory.rglob("*"):
-        if should_skip_parts(path.parts, spec):
+    for entry in _walk(directory, spec):
+        if entry.is_dir:
+            if include_dirs and matches(entry.name):
+                results.append(Path(entry.path))
             continue
-        if path.is_dir():
-            if include_dirs and matches(path.name):
-                results.append(path)
-            continue
-        if matches(path.name):
-            results.append(path)
+        if matches(entry.name):
+            results.append(Path(entry.path))
     results.sort(key=str)
     return results
 
@@ -119,20 +188,21 @@ def search_by_content(  # noqa: PLR0913 - 搜索开关由 CLI/GUI 直接透传
     else:
         spec = IgnoreSpec.from_iterable(ignore_dirs)
     results: list[tuple[Path, int, str]] = []
-    for path in sorted(directory.rglob("*")):
-        if not path.is_file():
+    for entry in _walk(directory, spec):
+        if entry.is_dir or not entry.is_file:
             continue
-        if should_skip_parts(path.parts, spec):
+        if extension and Path(entry.name).suffix != extension:
             continue
-        if extension and path.suffix != extension:
-            continue
+        path = Path(entry.path)
         try:
-            lines = read_text_lines(path)
+            lines = read_text_lines(path, limit=_MAX_LINES_PER_FILE)
         except ValueError:
             continue
-        for idx, raw in enumerate(lines[:_MAX_LINES_PER_FILE], start=1):
+        for idx, raw in enumerate(lines, start=1):
             if regex.search(raw):
                 results.append((path, idx, raw.rstrip("\r\n")))
+    # 遍历顺序与 rglob 不同，按路径排序还原「文件 → 行号」的稳定输出顺序
+    results.sort(key=lambda item: str(item[0]))
     return results
 
 
