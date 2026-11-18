@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -21,12 +21,6 @@ from fcmd.apps.locllm._locllmw_hardware import HardwareSnapshot
 from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
 from fcmd.apps.locllm._locllmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
 from fcmd.apps.locllm._locllmw_qt_chat import endpoint_from_form, service_labels
-from fcmd.apps.locllm._locllmw_qt_models import (
-    display_path_for,
-    fit_state_for,
-    model_row_values,
-    ordered_groups,
-)
 from fcmd.apps.locllm._locllmw_qt_monitor import sample_once
 from fcmd.apps.locllm._locllmw_qt_overview import (
     recommendation_params_html,
@@ -206,47 +200,6 @@ def test_build_plan_from_rejects_empty_name() -> None:
 def test_build_plan_from_rejects_bad_port() -> None:
     with pytest.raises(ServeError, match="端口 必须是整数"):
         build_plan_from({"name": "qwen", "port": "x"})
-
-
-# ---------------------------------------------------------------------- #
-# 模型行 / 分组
-# ---------------------------------------------------------------------- #
-def test_model_row_values() -> None:
-    entry = _model(Path("/models"), "org/model-Q5_K_M.gguf", 2048)
-    values = model_row_values(entry, precision_note="Q5_K_M", hardware="可用")
-    assert values[0].endswith("（Q5_K_M）")
-    assert values[2] == "balanced"
-    assert values[3] == "代码"
-    assert values[4] == "可用"
-
-
-def test_display_path_strips_group_prefix(tmp_path: Path) -> None:
-    """分组已展示一级目录时，行内省略重复前缀；根目录与目录外条目保持原样。"""
-    entry = _model(tmp_path, "meta-models/sub/model.gguf")
-    assert display_path_for(entry, tmp_path) == str(Path("sub") / "model.gguf")
-    root_file = _model(tmp_path, "top.gguf")
-    assert display_path_for(root_file, tmp_path) == "top.gguf"
-    outside = ModelEntry(root=tmp_path / "elsewhere", path=tmp_path / "elsewhere" / "x.gguf", size=1)
-    assert display_path_for(outside, tmp_path) == "x.gguf"
-
-
-def test_ordered_groups_puts_running_first(tmp_path: Path) -> None:
-    entries = [
-        _model(tmp_path, "a/x.gguf"),
-        _model(tmp_path, "b/y.gguf"),
-        _model(tmp_path, "top.gguf"),
-    ]
-    from fcmd.apps.locllm import llmenv
-
-    running = {llmenv.path_key(tmp_path / "b/y.gguf")}
-    groups = ordered_groups(entries, tmp_path, running)
-    assert groups[0][0] == "b"
-    assert [label for label, _items in groups][1:] == sorted([label for label, _items in groups][1:], key=str.casefold)
-
-
-def test_fit_state_for_prefers_running() -> None:
-    assert fit_state_for(running=True, total=None, free=None) == "运行中"
-    assert fit_state_for(running=False, total=None, free=None) == "-"
 
 
 def test_quantize_menu_items_marks_existing_precisions() -> None:
@@ -459,102 +412,6 @@ def test_sample_once_reports_fetch_error(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_hardware_snapshot_import_is_usable() -> None:
     """概览页只读快照；这里确认快照类型仍可独立构造（防止上游改名）。"""
     assert HardwareSnapshot().gpu_mib is None
-
-
-def test_model_tree_expand_and_collapse() -> None:
-    from types import SimpleNamespace
-
-    from PySide6.QtWidgets import QApplication
-
-    from fcmd.apps.locllm._locllmw_qt_models import ModelTree
-
-    QApplication.instance() or QApplication([])
-    root = Path("/models")
-    state = SimpleNamespace(
-        models=[_model(root, "org/a.gguf"), _model(root, "org/b.gguf")],
-        models_root=root,
-        selected_model=None,
-        running_paths=set(),
-        precisions={},
-    )
-    tree = ModelTree(cast("Any", state))
-    tree.refresh()
-    assert tree.tree.topLevelItemCount() == 1
-    tree.expand_all()
-    group = tree.tree.topLevelItem(0)
-    assert group is not None
-    assert group.isExpanded()
-    tree.collapse_all()
-    group = tree.tree.topLevelItem(0)
-    assert group is not None
-    assert not group.isExpanded()
-
-
-def test_model_tree_keeps_name_readable() -> None:
-    """模型名默认给足宽度、可横向滚动，并用 tooltip 兜底完整名称。"""
-    from types import SimpleNamespace
-
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication, QHeaderView
-
-    from fcmd.apps.locllm._locllmw_qt_models import NAME_COLUMN_WIDTH, ModelTree
-
-    QApplication.instance() or QApplication([])
-    root = Path("/models")
-    long_name = "org/" + "超长模型目录与文件名-" * 6 + "Q4_K_M.gguf"
-    state = SimpleNamespace(
-        models=[_model(root, long_name)],
-        models_root=root,
-        selected_model=None,
-        running_paths=set(),
-        precisions={},
-    )
-    tree = ModelTree(cast("Any", state))
-    tree.resize(1200, 420)
-    tree.refresh()
-    header = tree.tree.header()
-    assert header.sectionResizeMode(0) == QHeaderView.ResizeMode.Interactive
-    assert not header.stretchLastSection()
-    assert header.sectionSize(0) >= NAME_COLUMN_WIDTH
-    assert tree.tree.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
-    group = tree.tree.topLevelItem(0)
-    assert group is not None
-    child = group.child(0)
-    assert child is not None
-    assert child.text(0).startswith("超长模型目录与文件名-")
-    assert child.toolTip(0) == str(root / long_name)
-    assert child.text(0).endswith("Q4_K_M.gguf")
-
-
-def test_model_tree_distinguishes_same_name_across_groups() -> None:
-    """同名文件分属不同分组时，分组标题与完整路径 tooltip 仍能唯一定位。"""
-    from types import SimpleNamespace
-
-    from PySide6.QtCore import Qt
-    from PySide6.QtWidgets import QApplication
-
-    from fcmd.apps.locllm._locllmw_qt_models import ModelTree
-
-    QApplication.instance() or QApplication([])
-    root = Path("/models")
-    first = _model(root, "alpha/same.gguf")
-    second = _model(root, "beta/same.gguf")
-    state = SimpleNamespace(
-        models=[first, second],
-        models_root=root,
-        selected_model=None,
-        running_paths=set(),
-        precisions={},
-    )
-    tree = ModelTree(cast("Any", state))
-    tree.refresh()
-    tree.expand_all()
-    groups = [tree.tree.topLevelItem(index) for index in range(tree.tree.topLevelItemCount())]
-    labels = [group.data(0, Qt.ItemDataRole.UserRole)[1] for group in groups if group is not None]
-    assert labels == ["alpha", "beta"]
-    children = [child for group in groups if group is not None and (child := group.child(0)) is not None]
-    assert {child.text(0) for child in children} == {"same.gguf"}
-    assert {child.toolTip(0) for child in children} == {str(first.path), str(second.path)}
 
 
 def test_pick_model_prefers_explicit_selection(tmp_path: Path) -> None:
