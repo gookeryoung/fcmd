@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import contextlib
 import gzip
-import hashlib
 import json
 import os
 import shutil
@@ -22,6 +21,7 @@ from typing import TextIO
 
 from fcmd.apps.wslman._disk import format_bytes, volume_info
 from fcmd.apps.wslman._errors import WslmanError, check_failed, not_found, runtime_error
+from fcmd.infras.hashing import compute_file_hash
 
 __all__ = [
     "ArchiveInfo",
@@ -53,11 +53,8 @@ def part_path(target: Path) -> Path:
 
 
 def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(chunk_size), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    """计算文件 SHA256（小写十六进制）；默认 1 MiB 分块，适合大镜像。"""
+    return compute_file_hash(path, "sha256", chunk_size)
 
 
 def atomic_replace(part: Path, final: Path) -> None:

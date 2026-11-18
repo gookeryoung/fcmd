@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
+
+from fcmd.infras.hashing import compute_file_hash
 
 __all__ = [
     "FetchError",
@@ -56,11 +57,7 @@ class Fetcher(Protocol):
 
 def sha256_file(path: Path) -> str:
     """流式计算文件 sha256（小写十六进制）。"""
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        while chunk := stream.read(_CHUNK):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return compute_file_hash(path, "sha256", _CHUNK)
 
 
 class _RestartDownload(Exception):

@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 import os
 import re
 import shutil
@@ -19,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
+
+from fcmd.infras.hashing import compute_file_hash
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -938,15 +939,6 @@ def _name_allowed(name: str, options: CompareOptions) -> bool:
     return not (options.exclude_mask and matches_mask(name, options.exclude_mask))
 
 
-def _hash_file(path: Path) -> str:
-    """流式 SHA256；只读打开，不产生临时文件。"""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _compare_symlinks(
     left: _CompareNode,
     right: _CompareNode,
@@ -972,7 +964,7 @@ def _compare_contents(
 ) -> tuple[bool, str]:
     """按 SHA256 比较内容；读取失败如实记录。"""
     try:
-        if _hash_file(left.path) == _hash_file(right.path):
+        if compute_file_hash(left.path, "sha256") == compute_file_hash(right.path, "sha256"):
             return True, ""
     except OSError as exc:
         errors.append((left.path, str(exc)))

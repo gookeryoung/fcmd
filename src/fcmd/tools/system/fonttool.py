@@ -33,7 +33,6 @@ fcmd 的 GUI 窗口需要好看的中英文字体，但把字体打进发行包�
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import json
 import os
 import shutil
@@ -47,6 +46,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.infras.hashing import compute_file_hash
 from fcmd.infras.text import display_width, pad_display
 
 if TYPE_CHECKING:
@@ -320,11 +320,7 @@ def license_path(target_dir: Path, spec: FontSpec) -> Path:
 # ---------------------------------------------------------------------- #
 def sha256_file(path: Path) -> str:
     """分块计算文件 SHA256（支持大字体文件，不整体载入内存）。"""
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(_CHUNK_SIZE), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return compute_file_hash(path, "sha256", _CHUNK_SIZE)
 
 
 def file_matches(path: Path, spec: FontSpec) -> bool:
