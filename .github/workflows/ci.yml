@@ -43,6 +43,10 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+          # lint 的依赖集合（lint extra）与测试 job（test + agent extra）不同，
+          # 共用同一个缓存 key 会互相顶掉（GitHub 缓存按 key 不可覆盖，先写者生效），
+          # 每次都要补下对方缺的包，因此分开存。
+          cache-suffix: lint
 
       - name: Sync dependencies
         env:
@@ -94,6 +98,10 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+          # 按 Python 版本分键：3.10 装 PySide2（157MB wheel），3.13 / 3.14 装
+          # PySide6，依赖集合互不相同。共用 key 时只有先写入的格子能命中，
+          # 其余格子仍要补下自己的 Qt 绑定（实测单次 6~7 分钟）。
+          cache-suffix: py${{ matrix.python-version }}
 
       - name: Set up Python ${{ matrix.python-version }}
         run: uv python install ${{ matrix.python-version }}
