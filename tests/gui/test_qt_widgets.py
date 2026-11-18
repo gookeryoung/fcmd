@@ -27,7 +27,19 @@ from PySide6.QtWidgets import (
 
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, Collapsible, LoadingBar, LogView, MetricGrid, PathRow, button, icon_button
+from fcmd.gui.qt.widgets import (
+    Card,
+    Collapsible,
+    LoadingBar,
+    LogView,
+    MetricGrid,
+    PathRow,
+    SegmentBar,
+    button,
+    icon_button,
+    segment_band,
+    segment_fill,
+)
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
 
@@ -74,6 +86,41 @@ def test_single_line_controls_share_height() -> None:
     assert len({control.height() for control in controls}) == 1
     expected = _qt_theme.runtime_control_height(QApplication.instance()) + 2
     assert controls[0].height() == expected
+
+
+def test_segment_fill_rounds_and_clamps() -> None:
+    """格图点亮数：四舍五入、非零至少一格、不超过总格数。"""
+    assert segment_fill(None, 20) == 0
+    assert segment_fill(0.0, 20) == 0
+    assert segment_fill(0.1, 20) == 1
+    assert segment_fill(50.0, 20) == 10
+    assert segment_fill(100.0, 20) == 20
+    assert segment_fill(120.0, 20) == 20
+
+
+def test_segment_band_thresholds() -> None:
+    """负载档位与概览环形仪表一致：≥85 告急、≥60 偏紧、其余充足。"""
+    assert segment_band(None) == "idle"
+    assert segment_band(0.0) == "success"
+    assert segment_band(59.9) == "success"
+    assert segment_band(60.0) == "warning"
+    assert segment_band(84.9) == "warning"
+    assert segment_band(85.0) == "danger"
+    assert segment_band(100.0) == "danger"
+
+
+def test_segment_bar_tracks_percent() -> None:
+    bar = SegmentBar(segments=10, height=10)
+    bar.set_percent(37.0)
+    assert bar.percent() == 37.0
+    assert "37.0%" in bar.toolTip()
+    bar.set_percent(-5.0)
+    assert bar.percent() == 0.0
+    bar.set_percent(120.0)
+    assert bar.percent() == 100.0
+    bar.set_percent(None)
+    assert bar.percent() is None
+    assert bar.toolTip() == "等待采样"
 
 
 def test_card_title_is_plain_label_inside_frame() -> None:

@@ -454,6 +454,62 @@ def test_monitor_page_has_target_summary_and_status_badge(window: Any) -> None:
     assert page._monitor_badge.objectName() == "Danger"
 
 
+def test_monitor_load_cards_and_rate_display(window: Any) -> None:
+    """GPU / CPU / 内存三张负载卡：格图 + 占用率 + 次要参数；tok/s 为主视觉。"""
+    from fcmd.apps.locllm import llmserve
+    from fcmd.apps.locllm._locllmw_monitor import GpuSample, LoadSample
+
+    window.show_page("monitor")
+    page = window.page("monitor")
+    sample = LoadSample(
+        cpu=41.0,
+        cpu_freq=3600.0,
+        memory_used=13 * 1024**3,
+        memory_total=32 * 1024**3,
+        memory_percent=41.0,
+        swap_used=2 * 1024**3,
+        swap_total=8 * 1024**3,
+        process_cpu=12.5,
+        process_rss=5 * 1024**3,
+        process_threads=12,
+        process_uptime=65.0,
+        gpu=GpuSample(
+            name="NVIDIA GeForce RTX 4090",
+            index="0",
+            utilization=73.0,
+            memory_used=18000.0,
+            memory_total=24576.0,
+            temperature=62.0,
+            power_draw=210.0,
+            power_limit=450.0,
+            fan=45.0,
+            clock_mhz=2520.0,
+            process_memory=15000.0,
+        ),
+    )
+    page._apply_sample((sample, None, None))
+
+    assert page._gpu_percent.text() == "73 %"
+    assert page._cpu_percent.text() == "41 %"
+    assert page._mem_percent.text() == "41 %"
+    assert page._gpu_bar.percent() == 73.0
+    assert page._cpu_bar.percent() == 41.0
+    assert page._mem_bar.percent() == 41.0
+    assert page._gpu_percent.property("band") == "warning"
+    assert page._cpu_percent.property("band") == "success"
+    assert page._gpu_metrics.value("gpu_temp") == "62 °C"
+    assert "41.0 %" in page._mem_metrics.value("memory")
+
+    # 服务指标：生成 tok/s 单独大字展示，其余进次要网格。
+    metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
+    page._apply_sample((sample, metrics, None))
+    assert page._gen_rate_label.objectName() == "RateValue"
+    assert page._gen_rate_label.text() == "0.0"
+    assert page._metrics.value("prompt_rate") == "0.0 tok/s"
+    assert page._metrics.value("processing") == "1"
+    assert page._metrics.value("kv") == "18.0 %"
+
+
 def test_monitor_layout_keeps_status_and_bench_compact(window: Any) -> None:
     """监测页布局：状态与目标标题同排，场景表与参数并排，结果表保底高度。"""
     window.show()

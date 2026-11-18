@@ -124,6 +124,12 @@ QLabel#Title { font-size: ${font_title}pt; font-weight: 600; }
 QLabel#SectionTitle { font-size: ${font_heading}pt; font-weight: 600; }
 QLabel#Hint { color: $muted; font-size: ${font_small}pt; }
 QLabel#Value { font-weight: 600; }
+QLabel#LoadValue { font-size: ${font_heading}pt; font-weight: 600; }
+QLabel#LoadValue[band="success"] { color: $success; }
+QLabel#LoadValue[band="warning"] { color: $warning; }
+QLabel#LoadValue[band="danger"] { color: $danger; }
+QLabel#RateValue { color: $accent; font-size: ${font_title}pt; font-weight: 700; }
+QLabel#RateUnit { color: $muted; font-size: ${font_body}pt; }
 QLabel#Danger { color: $danger; }
 QLabel#Warning { color: $warning; }
 QLabel#Success { color: $success; }

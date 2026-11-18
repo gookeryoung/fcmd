@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QElapsedTimer, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QFontDatabase, QResizeEvent
+from PySide6.QtCore import QElapsedTimer, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPalette, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.layout import parse_sizes, serialize_sizes
 
 if TYPE_CHECKING:
@@ -59,6 +60,7 @@ __all__ = [
     "PageScroll",
     "PathRow",
     "RowListWidget",
+    "SegmentBar",
     "apply_splitter_sizes",
     "button",
     "hint_label",
@@ -69,6 +71,8 @@ __all__ = [
     "make_table_item",
     "mono_font",
     "mono_label",
+    "segment_band",
+    "segment_fill",
     "splitter_sizes",
     "value_label",
 ]
@@ -282,6 +286,92 @@ class FormGrid(QWidget):  # pragma: no cover - Qt 控件
     def row_count(self) -> int:
         """已占用的行数（供测试与调试）。"""
         return self._row
+
+
+_LOAD_BAND_THRESHOLDS = ((85.0, "danger"), (60.0, "warning"), (0.0, "success"))
+
+
+def segment_band(percent: float | None) -> str:
+    """占用率档位：≥85% 告急（danger）、≥60% 偏紧（warning）、其余充足（success）。
+
+    未采样时返回 ``idle``，由调用方保留默认文字色，不误导为「充足」。
+    """
+    if percent is None:
+        return "idle"
+    for threshold, band in _LOAD_BAND_THRESHOLDS:
+        if percent >= threshold:
+            return band
+    return "success"
+
+
+def segment_fill(percent: float | None, segments: int) -> int:
+    """把 0–100 占用率换算为点亮的格数：非零至少点亮 1 格，上限 ``segments``。"""
+    if percent is None or segments <= 0:
+        return 0
+    clamped = min(max(float(percent), 0.0), 100.0)
+    if clamped <= 0:
+        return 0
+    return min(max(round(clamped * segments / 100), 1), segments)
+
+
+class SegmentBar(QWidget):  # pragma: no cover - Qt 控件
+    """分段负载条（格图）：按占用率点亮格子，颜色随档位（充足 / 偏紧 / 告急）变化。
+
+    用固定格数而不是连续进度条：低负载时也能一眼看出「用了几成」，格与格之间
+    留缝，和概览页环形仪表的余量分档配色（绿 / 琥珀 / 红）保持一致。
+    """
+
+    def __init__(
+        self,
+        *,
+        segments: int = 24,
+        height: int = 12,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._segments = max(int(segments), 1)
+        self._percent: float | None = None
+        self.setFixedHeight(height)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAccessibleName("负载条")
+        self.setToolTip("等待采样")
+
+    def set_percent(self, percent: float | None) -> None:
+        """写入 0–100 占用率；``None`` 表示尚未采样（全部格子保持空）。"""
+        self._percent = None if percent is None else min(max(float(percent), 0.0), 100.0)
+        self.setToolTip("等待采样" if self._percent is None else f"占用率 {self._percent:.1f}%")
+        self.update()
+
+    def percent(self) -> float | None:
+        """当前占用率（供测试与调用方读取）。"""
+        return self._percent
+
+    def paintEvent(self, event: object) -> None:  # noqa: ARG002 - Qt 事件签名
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        palette = self.palette()
+        track = palette.color(QPalette.ColorRole.Mid)
+        theme_palette = _qt_theme.load_theme().palette
+        fill = QColor(
+            {
+                "danger": theme_palette.danger,
+                "warning": theme_palette.warning,
+                "success": theme_palette.success,
+            }[segment_band(self._percent)]
+        )
+        gap = 2.0
+        segment_width = (self.width() - gap * (self._segments - 1)) / self._segments
+        if segment_width <= 0:
+            return
+        lit = segment_fill(self._percent, self._segments)
+        painter.setPen(Qt.PenStyle.NoPen)
+        for index in range(self._segments):
+            painter.setBrush(fill if index < lit else track)
+            painter.drawRoundedRect(
+                QRectF(index * (segment_width + gap), 0.0, segment_width, float(self.height())),
+                2.0,
+                2.0,
+            )
 
 
 class MetricGrid(QWidget):  # pragma: no cover - Qt 控件

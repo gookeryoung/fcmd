@@ -33,6 +33,8 @@ def test_stylesheet_contains_expected_selectors() -> None:
     for selector in (
         "QFrame#Card",
         "QLabel#CardTitle",
+        "QLabel#RateValue",
+        "QLabel#LoadValue",
         "QPushButton#Primary",
         "QPushButton#Danger",
         "QPushButton#NavButton",

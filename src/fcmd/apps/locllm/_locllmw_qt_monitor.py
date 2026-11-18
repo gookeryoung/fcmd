@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -60,11 +61,13 @@ from fcmd.gui.qt.widgets import (
     LogView,
     MetricGrid,
     PageScroll,
+    SegmentBar,
     button,
     hint_label,
     link_button,
     make_table,
     make_table_item,
+    segment_band,
     value_label,
 )
 from fcmd.gui.qt.workers import periodic, submit
@@ -74,8 +77,8 @@ if TYPE_CHECKING:
 
 __all__ = ["MonitorPage", "sample_once"]
 
-METRIC_KEYS = (
-    ("生成速率", "gen_rate"),
+#: 实时性能的次要指标；生成 tok/s 单独用大字号展示，不放进网格
+SECONDARY_METRIC_KEYS = (
     ("提示速率", "prompt_rate"),
     ("处理中请求", "processing"),
     ("排队请求", "deferred"),
@@ -84,24 +87,27 @@ METRIC_KEYS = (
     ("累计提示 tokens", "prompt"),
     ("采样状态", "monitor"),
 )
-LOAD_KEYS = (
-    ("CPU", "cpu"),
-    ("频率", "cpu_freq"),
-    ("内存", "memory"),
-    ("交换", "swap"),
-    ("服务 CPU", "proc_cpu"),
-    ("服务内存", "proc_mem"),
-    ("线程", "proc_threads"),
-    ("运行时长", "uptime"),
-)
-GPU_KEYS = (
-    ("使用率", "gpu_util"),
+#: GPU 卡片：主格图显示利用率，其余参数放次要文字行
+GPU_DETAIL_KEYS = (
     ("显存", "gpu_vram"),
     ("服务显存", "gpu_proc_vram"),
     ("温度", "gpu_temp"),
     ("功耗", "gpu_power"),
     ("风扇", "gpu_fan"),
     ("核心频率", "gpu_clock"),
+)
+#: CPU 卡片：主格图显示总利用率，其余为频率与服务进程占用
+CPU_DETAIL_KEYS = (
+    ("频率", "cpu_freq"),
+    ("服务 CPU", "proc_cpu"),
+    ("线程", "proc_threads"),
+)
+#: 内存卡片：主格图显示内存占用率，其余为已用 / 交换 / 服务驻留与运行时长
+MEMORY_DETAIL_KEYS = (
+    ("已用", "memory"),
+    ("交换", "swap"),
+    ("服务内存", "proc_mem"),
+    ("运行时长", "uptime"),
 )
 
 
@@ -251,31 +257,91 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         return card
 
     def _build_metrics(self) -> Card:
-        """实时性能：与概览页一致的四列指标网格，一行展示服务侧核心指标。"""
+        """实时性能：生成 tok/s 做主视觉，其余服务指标用次要小字网格。"""
         card = Card("实时性能")
-        self._metrics = MetricGrid(METRIC_KEYS, columns=4, parent=card)
-        card.body.addWidget(self._metrics)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(16)
+
+        primary = QVBoxLayout()
+        primary.setContentsMargins(0, 0, 0, 0)
+        primary.setSpacing(0)
+        primary.addWidget(hint_label(f"生成速率（{RATE_WINDOW_SECONDS:.0f}s 平滑）", wrap=False))
+        value_row = QHBoxLayout()
+        value_row.setContentsMargins(0, 0, 0, 0)
+        value_row.setSpacing(6)
+        self._gen_rate_label = QLabel("-", card)
+        self._gen_rate_label.setObjectName("RateValue")
+        self._gen_rate_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        unit = QLabel("tok/s", card)
+        unit.setObjectName("RateUnit")
+        value_row.addWidget(self._gen_rate_label, 0, Qt.AlignmentFlag.AlignBottom)
+        value_row.addWidget(unit, 0, Qt.AlignmentFlag.AlignBottom)
+        value_row.addStretch(1)
+        primary.addLayout(value_row)
+        row.addLayout(primary, 0)
+
+        divider = QFrame(card)
+        divider.setFrameShape(QFrame.Shape.VLine)
+        divider.setFrameShadow(QFrame.Shadow.Plain)
+        row.addWidget(divider)
+
+        self._metrics = MetricGrid(SECONDARY_METRIC_KEYS, columns=3, parent=card)
+        row.addWidget(self._metrics, 1)
+        card.body.addLayout(row)
         return card
 
     def _build_load_gpu(self) -> QHBoxLayout:
-        """系统负载与 GPU 双栏：各两列指标，窄窗时也不挤压成单列长列表。"""
+        """GPU / CPU / 内存三张卡片：分段格图 + 占用率 + 次要参数。"""
         pair = QHBoxLayout()
         pair.setContentsMargins(0, 0, 0, 0)
         pair.setSpacing(8)
-        load_card = Card("系统负载")
-        self._load = MetricGrid(LOAD_KEYS, columns=2, parent=load_card)
-        load_card.body.addWidget(self._load)
-        pair.addWidget(load_card, 1)
 
-        gpu_card = Card("GPU 负载")
-        self._gpu_name = QLabel("检测中…", gpu_card)
+        self._gpu_name = QLabel("检测中…")
         self._gpu_name.setObjectName("Hint")
         self._gpu_name.setWordWrap(True)
-        gpu_card.body.addWidget(self._gpu_name)
-        self._gpu = MetricGrid(GPU_KEYS, columns=2, parent=gpu_card)
-        gpu_card.body.addWidget(self._gpu)
+        gpu_card, self._gpu_percent, self._gpu_bar, self._gpu_metrics = self._build_load_card(
+            "GPU", GPU_DETAIL_KEYS, note=self._gpu_name
+        )
         pair.addWidget(gpu_card, 1)
+        cpu_card, self._cpu_percent, self._cpu_bar, self._cpu_metrics = self._build_load_card("CPU", CPU_DETAIL_KEYS)
+        pair.addWidget(cpu_card, 1)
+        mem_card, self._mem_percent, self._mem_bar, self._mem_metrics = self._build_load_card(
+            "内存", MEMORY_DETAIL_KEYS
+        )
+        pair.addWidget(mem_card, 1)
         return pair
+
+    def _build_load_card(
+        self,
+        title: str,
+        keys: tuple[tuple[str, str], ...],
+        *,
+        note: QWidget | None = None,
+    ) -> tuple[Card, QLabel, SegmentBar, MetricGrid]:
+        """单张负载卡：标题 + 右侧占用率，下面是格图与次要参数。"""
+        card = Card(parent=self)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        heading = QLabel(title, card)
+        heading.setObjectName("SectionTitle")
+        percent = QLabel("-", card)
+        percent.setObjectName("LoadValue")
+        percent.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        header.addWidget(heading)
+        header.addStretch(1)
+        header.addWidget(percent)
+        card.body.addLayout(header)
+
+        bar = SegmentBar(parent=card)
+        card.body.addWidget(bar)
+        if note is not None:
+            card.body.addWidget(note)
+        details = MetricGrid(keys, columns=1, parent=card)
+        card.body.addWidget(details)
+        card.body.addStretch(1)
+        return card, percent, bar, details
 
     def _build_log(self) -> Card:
         """服务日志：复用统一日志组件（工具条自带复制 / 清空 / 导出）。"""
@@ -400,6 +466,7 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         target = self._current_state()
         if target is None:
             self._target_label.setText("未选择运行中的服务：仅采样系统负载")
+            self._gen_rate_label.setText("-")
             self._metrics.set_value("monitor", "服务未运行（仅采样系统负载）")
             self._set_monitor_badge("仅系统负载", "warning")
             return
@@ -438,26 +505,50 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _apply_sample(self, payload: tuple[LoadSample, Any, str | None]) -> None:
         load, metrics, error = payload
-        self._load.set_values(_format_load(load))
-        self._gpu.set_values(_format_gpu(load.gpu))
-        self._gpu_name.setText(_format_gpu(load.gpu)["gpu_name"])
+        load_values = _format_load(load)
+        gpu_values = _format_gpu(load.gpu)
+        gpu = load.gpu
+        self._gpu_name.setText(gpu_values["gpu_name"])
+        self._apply_load_card(
+            self._gpu_percent,
+            self._gpu_bar,
+            self._gpu_metrics,
+            None if gpu is None else gpu.utilization,
+            {key: gpu_values[key] for _label, key in GPU_DETAIL_KEYS},
+        )
+        self._apply_load_card(
+            self._cpu_percent,
+            self._cpu_bar,
+            self._cpu_metrics,
+            load.cpu,
+            {key: load_values[key] for _label, key in CPU_DETAIL_KEYS},
+        )
+        self._apply_load_card(
+            self._mem_percent,
+            self._mem_bar,
+            self._mem_metrics,
+            load.memory_percent if load.memory_total else None,
+            {key: load_values[key] for _label, key in MEMORY_DETAIL_KEYS},
+        )
         self._last_sample_label.setText(f"最近采样：{time.strftime('%H:%M:%S')}")
         self.state.sampleUpdated.emit(load)
         self._sync_free_vram(load.gpu)
         if metrics is None:
+            self._gen_rate_label.setText("-")
+            for _label, key in SECONDARY_METRIC_KEYS:
+                if key != "monitor":
+                    self._metrics.set_value(key, "-")
             if error is not None:
                 self._metrics.set_value("monitor", "采样失败: " + error[:60])
                 self._set_monitor_badge("采样失败", "danger")
             else:
-                for key in ("gen_rate", "prompt_rate", "processing", "deferred", "kv", "predicted", "prompt"):
-                    self._metrics.set_value(key, "-")
                 self._metrics.set_value("monitor", "服务未运行（仅采样系统负载）")
                 self._set_monitor_badge("仅系统负载", "warning")
             return
         gen_rate, prompt_rate = self._rates.update(time.monotonic(), metrics.predicted_tokens, metrics.prompt_tokens)
+        self._gen_rate_label.setText(f"{gen_rate:.1f}")
         self._metrics.set_values(
             {
-                "gen_rate": f"{gen_rate:.1f} tok/s",
                 "prompt_rate": f"{prompt_rate:.1f} tok/s",
                 "processing": f"{metrics.processing:.0f}",
                 "deferred": f"{metrics.deferred:.0f}",
@@ -468,6 +559,28 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
             }
         )
         self._set_monitor_badge("监控中", "success")
+
+    def _apply_load_card(
+        self,
+        percent_label: QLabel,
+        bar: SegmentBar,
+        details: MetricGrid,
+        percent: float | None,
+        values: dict[str, str],
+    ) -> None:
+        """刷新一张负载卡：占用率文字 / 格图 / 次要参数一起更新。"""
+        percent_label.setText("-" if percent is None else f"{percent:.0f} %")
+        self._set_load_band(percent_label, segment_band(percent))
+        bar.set_percent(percent)
+        details.set_values(values)
+
+    def _set_load_band(self, label: QLabel, band: str) -> None:
+        """按档位切换占用率文字颜色（QSS 按 ``band`` 属性上色）。"""
+        if label.property("band") == band:
+            return
+        label.setProperty("band", band)
+        label.style().unpolish(label)
+        label.style().polish(label)
 
     def _sync_free_vram(self, gpu: GpuSample | None) -> None:
         """用实时 GPU 采样更新可用显存（服务停止释放显存后自动恢复「可用」）。"""
