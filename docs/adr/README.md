@@ -39,3 +39,4 @@
 | [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B7 分批 | 已落地（全部窗口 Qt 化，Tk 代码已删除） |
 | [0035](0035-cmder-filesync-compare-unify.md) | 目录比较 / 同步引擎统一：cmderw 与 filesync 共用 filesync `_core`，分 P0–P3 独立实施 | 设计中（独立阶段，未实施） |
 | [0036](0036-python310-pyside2.md) | Python 3.10 支持与 PySide2 兼容：按版本选择 Qt 绑定、运行时兼容层与 CI/tox 矩阵 | 已落地 |
+| [0037](0037-unified-result-envelope.md) | 统一结果信封（`--json`）：框架用法错误机读化、MCP 白名单对齐、只读工具分期接入 | P0 / P1 已落地（P2 / P3 待办） |

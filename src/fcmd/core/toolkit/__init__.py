@@ -61,7 +61,7 @@ from typing import Any, Literal, cast
 from ..dag import Graph, GraphDefaults
 from ..errors import FcmdError
 from ..exit_codes import ExitCode
-from ..result import reset_error_state
+from ..result import emit_error, reset_error_state
 from ..task import RetryPolicy, TaskSpec
 from .args import (
     ToolExitCode,
@@ -86,6 +86,7 @@ from .exec import (
     _execute_tool_tasks,
     _has_function_logic,  # noqa: F401  重新导出供测试 import
     _is_aggregate,  # noqa: F401  重新导出供测试 import
+    _json_requested,
     _parse_tool_args,
     _print_subcommands,  # noqa: F401  重新导出供测试 import
     _print_task_summary,  # noqa: F401  重新导出供测试 import
@@ -288,13 +289,13 @@ def run_tool(name: str, argv: Sequence[str]) -> int:
         :class:`ToolExitCode` 值（0=成功 / 1=失败 / 130=中断）
     """
     if name not in _TOOL_REGISTRY:
+        hint = "运行 fcmd --help 查看可用工具列表"
+        if _json_requested(argv):
+            emit_error(name, None, code="UNKNOWN_TOOL", message=f"工具 {name!r} 未注册", hint=hint)
+            return int(ExitCode.USAGE)
         from fcmd.console import print_error
 
-        print_error(
-            f"工具 {name!r} 未注册",
-            code="UNKNOWN_TOOL",
-            hint="运行 fcmd --help 查看可用工具列表",
-        )
+        print_error(f"工具 {name!r} 未注册", code="UNKNOWN_TOOL", hint=hint)
         return int(ExitCode.USAGE)
 
     reset_error_state()

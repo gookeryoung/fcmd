@@ -9,7 +9,9 @@
 输出等）。两个集合**不交**——GUI_TOOLS 不在本清单里。
 
 首批范围：只读工具，优先已实现 ``--json`` 的子命令（机器有稳定输出）。
-写操作第二批再评估接入，不在本清单中。
+``force_json`` 由 :data:`_JSON_READY` 推导：未接入 ``--json`` 的子命令不会被
+注入该 flag（先与真实能力对齐），接入后再加入集合。写操作第二批再评估接入，
+不在本清单中。
 """
 
 from __future__ import annotations
@@ -18,6 +20,49 @@ from typing import Literal
 
 ToolMeta = Literal["read", "write", "network"]
 """子命令的能力侧写：决定 MCP annotations 与未来闸门策略。"""
+
+_JSON_READY: frozenset[tuple[str, str | None]] = frozenset(
+    {
+        # 内建
+        ("info", None),
+        ("env", None),
+        ("doctor", None),
+        # 文件搜索
+        ("filesearch", "content"),
+        ("filesearch", "name"),
+        ("sysinfo", None),
+        ("hashfile", "f"),
+        ("hashfile", "d"),
+        ("textdiff", "file"),
+        ("textdiff", "dir"),
+        ("filesync", "compare"),
+        ("renamer", "preview"),
+        ("csvtool", "show"),
+        # PE 只读中已接入 --json 的部分
+        ("peview", "info"),
+        ("peview", "sections"),
+        ("peview", "imports"),
+        ("peview", "check"),
+        # WSL
+        ("wslman", "list"),
+        ("wslman", "status"),
+        ("wslman", "info"),
+        ("wslman", "doctor"),
+        ("wslman", "backups"),
+        ("wslman", "available"),
+        ("wslman", "config"),
+        ("wslman", "export"),
+        ("wslman", "import"),
+        ("wslman", "unregister"),
+        ("wslman", "shutdown"),
+        ("wslman", "backup-remove"),
+    }
+)
+"""已接入 ``--json`` 的 ``(tool, subcommand)``；适配器只对这些条目强制注入。
+
+新增工具接入 ``json_output`` 后把 key 加进来；未接入的条目不加，避免 MCP 调用
+因 ``unrecognized arguments: --json`` 直接失败（由 ``test_mcp_adapter`` 守卫）。
+"""
 
 
 class AgentWhitelistEntry:
@@ -35,9 +80,9 @@ class AgentWhitelistEntry:
         True 表示内建命令（``info`` / ``env`` / ``doctor`` / ``graph``），
         不走 ``@fcmd.tool`` 注册，需要在适配器里单独路由到 cli._builtins。
     force_json:
-        是否由适配器强制注入 ``--json``。默认 True；个别子命令机读开关
-        叫 ``--format json`` 而非 ``--json`` 时仍为 True（适配器内部
-        决定实际注入的 flag）。
+        是否由适配器强制注入 ``--json``。未显式传入时按 :data:`_JSON_READY`
+        推导：目标子命令已接入 ``json_output`` 才为 True。需要固定的例外
+        （原样输出本身即机读格式）显式写 ``force_json=False``。
     notes:
         自由文本备注（写在 MCP tool description 末尾）。
     """
@@ -60,7 +105,7 @@ class AgentWhitelistEntry:
         meta: ToolMeta = "read",
         *,
         builtin: bool = False,
-        force_json: bool = True,
+        force_json: bool | None = None,
         notes: str = "",
         plan_flag: str | None = None,
         apply_flag: str | None = None,
@@ -69,7 +114,7 @@ class AgentWhitelistEntry:
         self.subcommand = subcommand
         self.meta = meta
         self.builtin = builtin
-        self.force_json = force_json
+        self.force_json = (self.key in _JSON_READY) if force_json is None else force_json
         self.notes = notes
         # write 工具专用：adapter 两段式确认协议用
         self.plan_flag = plan_flag  # plan 阶段注入的 preview/dry-run flag；None=不注入

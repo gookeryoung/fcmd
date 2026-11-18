@@ -80,6 +80,27 @@ def test_whitelist_entries_exist_in_registry() -> None:
         assert entry.subcommand in subs, f"{entry.tool} 的子命令 {entry.subcommand!r} 不存在，有: {list(subs.keys())}"
 
 
+def test_whitelist_force_json_targets_support_json() -> None:
+    """守卫：`force_json=True` 的条目必须真的接受 `--json`。
+
+    否则适配器注入的 `--json` 会触发 argparse 的
+    ``unrecognized arguments: --json``，MCP 调用直接失败。
+    """
+    from fcmd.cli._discovery import load_tool_subs, resolve_tool
+    from fcmd.core.toolkit import param_schema
+
+    for entry in AGENT_WHITELIST:
+        if not entry.force_json or entry.builtin:
+            continue
+        name = resolve_tool(entry.tool)
+        subs = load_tool_subs(name) if name else None
+        spec = subs.get(entry.subcommand) if subs else None
+        assert spec is not None, f"{entry.tool_name} 无法解析到 ToolSpec"
+        assert any(p["name"] == "json_output" for p in param_schema(spec)), (
+            f"{entry.tool_name} 声明了 force_json=True，但目标子命令不接受 --json"
+        )
+
+
 def test_whitelist_index() -> None:
     index = build_whitelist_index()
     assert len(index) == len(AGENT_WHITELIST)

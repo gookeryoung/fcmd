@@ -49,6 +49,26 @@ if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查，运行期不导入 
 __all__ = ["FcmdApp", "main"]
 
 
+def _unknown_tool_exit(first: str, rest: Sequence[str]) -> int:
+    """未知工具：机读模式输出错误信封，否则打印候选提示；返回用法错误码。"""
+    from fcmd.core.exit_codes import ExitCode
+    from fcmd.core.toolkit.exec import _json_requested
+
+    if _json_requested(rest):
+        from fcmd.core.result import emit_error
+
+        emit_error(
+            first,
+            None,
+            code="UNKNOWN_TOOL",
+            message=f"未知工具: {first}",
+            hint="运行 fcmd --help 查看可用工具列表",
+        )
+    else:
+        print_unknown_tool(first)
+    return int(ExitCode.USAGE)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """构建参数解析器（保留 P0 兼容）。
 
@@ -115,10 +135,7 @@ class FcmdApp:
             ensure_tools_discovered()
             resolved = resolve_tool(first)
         if resolved is None:
-            from fcmd.core.exit_codes import ExitCode
-
-            print_unknown_tool(first)
-            return int(ExitCode.USAGE)
+            return _unknown_tool_exit(first, rest)
 
         return self._run_tool(resolved, rest)
 
@@ -174,24 +191,34 @@ class FcmdApp:
         error = import_tool_module(tool_name)
         if error is not None:
             # OSError：原生动态库缺失，与 ImportError 同样友好报错
-            from fcmd.console import print_error
             from fcmd.core.exit_codes import ExitCode
+            from fcmd.core.toolkit.exec import _json_requested
 
-            print_error(
-                f"加载工具 {tool_name!r} 失败: {error}",
-                code="RUNTIME_ERROR",
-                hint="检查该工具的依赖是否安装（pip install fcmd[<extra>]）后重试",
-            )
+            message = f"加载工具 {tool_name!r} 失败: {error}"
+            hint = "检查该工具的依赖是否安装（pip install fcmd[<extra>]）后重试"
+            if _json_requested(argv):
+                from fcmd.core.result import emit_error
+
+                emit_error(tool_name, None, code="RUNTIME_ERROR", message=message, hint=hint)
+            else:
+                from fcmd.console import print_error
+
+                print_error(message, code="RUNTIME_ERROR", hint=hint)
             return int(ExitCode.FAILURE)
         if tool_name not in _TOOL_MODULES and tool_name not in _TOOL_REGISTRY:
-            from fcmd.console import print_error
             from fcmd.core.exit_codes import ExitCode
+            from fcmd.core.toolkit.exec import _json_requested
 
-            print_error(
-                f"工具 {tool_name!r} 无模块映射",
-                code="RUNTIME_ERROR",
-                hint="这是 fcmd 安装不完整；重装 fcmd 后重试",
-            )
+            message = f"工具 {tool_name!r} 无模块映射"
+            hint = "这是 fcmd 安装不完整；重装 fcmd 后重试"
+            if _json_requested(argv):
+                from fcmd.core.result import emit_error
+
+                emit_error(tool_name, None, code="RUNTIME_ERROR", message=message, hint=hint)
+            else:
+                from fcmd.console import print_error
+
+                print_error(message, code="RUNTIME_ERROR", hint=hint)
             return int(ExitCode.FAILURE)
 
         return run_tool(tool_name, argv)
