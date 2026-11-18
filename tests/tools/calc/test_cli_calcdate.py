@@ -209,10 +209,10 @@ def test_cli_add_negative(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_cli_add_invalid_date(capsys: pytest.CaptureFixture[str]) -> None:
-    """CLI add 非法日期打印错误（捕获异常后 return，退出码 0）。"""
+    """CLI add 非法日期打印错误，按契约返回输入非法退出码 3。"""
     code = run_tool("calcdate", ["add", "invalid", "5"])
     captured = capsys.readouterr()
-    assert code == 0  # 现有工具模式：捕获异常后 return，framework 返回 0
+    assert code == 3
     assert "错误" in captured.out
 
 
@@ -228,7 +228,7 @@ def test_cli_workdays_invalid_date(capsys: pytest.CaptureFixture[str]) -> None:
     """CLI workdays 非法日期打印错误。"""
     code = run_tool("calcdate", ["workdays", "invalid", "2026-01-01"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 3
     assert "错误" in captured.out
 
 
@@ -252,7 +252,7 @@ def test_cli_diff_invalid_date(capsys: pytest.CaptureFixture[str]) -> None:
     """CLI diff 非法日期打印错误。"""
     code = run_tool("calcdate", ["diff", "invalid", "2026-01-01"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 3
     assert "错误" in captured.out
 
 
@@ -284,5 +284,5 @@ def test_cli_compare_invalid_date(capsys: pytest.CaptureFixture[str]) -> None:
     """CLI compare 非法日期打印错误。"""
     code = run_tool("calcdate", ["compare", "invalid", "2026-01-01"])
     captured = capsys.readouterr()
-    assert code == 0
+    assert code == 3
     assert "错误" in captured.out

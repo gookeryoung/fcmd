@@ -5,8 +5,32 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import fcmd as fx
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import calc
+
+
+def _run(subcommand: str, fn: Callable[..., Any], *args: object, json_output: bool = False) -> None:
+    """执行日期计算并输出；``ValueError`` 转为统一错误行（退出码 3）。"""
+    try:
+        result = fn(*args)
+    except ValueError as exc:
+        report_error(
+            "calcdate",
+            subcommand,
+            code="INVALID_ARGUMENT",
+            message=str(exc),
+            hint="确认日期格式为 YYYY-MM-DD 且是真实存在的日期",
+            json_output=json_output,
+        )
+        return
+    if json_output:
+        emit_result("calcdate", subcommand, {"result": result})
+        return
+    print(result)
 
 
 @fx.tool(
@@ -18,14 +42,9 @@ from fcmd.infras import calc
         "days": "偏移天数（正数加、负数减）",
     },
 )
-def calcdate_add(date: str, days: int) -> None:
+def calcdate_add(date: str, days: int, json_output: bool = False) -> None:
     """日期加减天数并打印结果。"""
-    try:
-        result = calc.add_days(date, days)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
-    print(result)
+    _run("add", calc.add_days, date, days, json_output=json_output)
 
 
 @fx.tool(
@@ -37,14 +56,9 @@ def calcdate_add(date: str, days: int) -> None:
         "end": "结束日期（YYYY-MM-DD）",
     },
 )
-def calcdate_workdays(start: str, end: str) -> None:
+def calcdate_workdays(start: str, end: str, json_output: bool = False) -> None:
     """计算两个日期之间的工作日数（排除周末）。"""
-    try:
-        result = calc.count_workdays(start, end)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
-    print(result)
+    _run("workdays", calc.count_workdays, start, end, json_output=json_output)
 
 
 @fx.tool(
@@ -56,14 +70,9 @@ def calcdate_workdays(start: str, end: str) -> None:
         "date2": "第二个日期（YYYY-MM-DD）",
     },
 )
-def calcdate_diff(date1: str, date2: str) -> None:
+def calcdate_diff(date1: str, date2: str, json_output: bool = False) -> None:
     """计算两个日期的差值天数（date2 - date1）。"""
-    try:
-        result = calc.date_diff(date1, date2)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
-    print(result)
+    _run("diff", calc.date_diff, date1, date2, json_output=json_output)
 
 
 @fx.tool(
@@ -75,11 +84,6 @@ def calcdate_diff(date1: str, date2: str) -> None:
         "date2": "第二个日期（YYYY-MM-DD）",
     },
 )
-def calcdate_compare(date1: str, date2: str) -> None:
+def calcdate_compare(date1: str, date2: str, json_output: bool = False) -> None:
     """比较两个日期的先后关系。"""
-    try:
-        result = calc.compare_dates(date1, date2)
-    except ValueError as exc:
-        print(f"错误: {exc}")
-        return
-    print(result)
+    _run("compare", calc.compare_dates, date1, date2, json_output=json_output)

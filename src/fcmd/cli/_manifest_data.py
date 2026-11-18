@@ -534,7 +534,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "05f7c166f88dc4d944ec40cf7bc05ecf"
+DIGEST = "97e7a0503f8a72886fba24fb893b9ca7"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

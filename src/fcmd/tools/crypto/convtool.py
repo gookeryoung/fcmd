@@ -9,20 +9,32 @@ from collections.abc import Callable
 from typing import Any
 
 import fcmd as fx
-from fcmd.console import print_error
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import codec
 
 
-def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> None:
-    """执行换算并打印结果；``ValueError`` 转为统一错误行（退出码 3）。"""
+def _convert(
+    subcommand: str,
+    fn: Callable[..., float],
+    *args: Any,
+    json_output: bool = False,
+    **kwargs: Any,
+) -> None:
+    """执行换算并输出结果；``ValueError`` 转为统一错误行（退出码 3）。"""
     try:
         result = fn(*args, **kwargs)
     except ValueError as error:
-        print_error(
-            str(error),
+        report_error(
+            "convtool",
+            subcommand,
             code="INVALID_ARGUMENT",
+            message=str(error),
             hint="检查数值范围与单位拼写（源/目标单位需在支持列表内）",
+            json_output=json_output,
         )
+        return
+    if json_output:
+        emit_result("convtool", subcommand, {"result": result})
         return
     print(result)
 
@@ -37,9 +49,9 @@ def _print_conversion(fn: Callable[..., float], *args: Any, **kwargs: Any) -> No
         "to_unit": "目标单位",
     },
 )
-def convtool_length(value: float, from_unit: str, to_unit: str) -> None:
+def convtool_length(value: float, from_unit: str, to_unit: str, json_output: bool = False) -> None:
     """长度换算。"""
-    _print_conversion(codec.convert_length, value, from_unit, to_unit)
+    _convert("length", codec.convert_length, value, from_unit, to_unit, json_output=json_output)
 
 
 @fx.tool(
@@ -52,9 +64,9 @@ def convtool_length(value: float, from_unit: str, to_unit: str) -> None:
         "to_unit": "目标单位",
     },
 )
-def convtool_weight(value: float, from_unit: str, to_unit: str) -> None:
+def convtool_weight(value: float, from_unit: str, to_unit: str, json_output: bool = False) -> None:
     """重量换算。"""
-    _print_conversion(codec.convert_weight, value, from_unit, to_unit)
+    _convert("weight", codec.convert_weight, value, from_unit, to_unit, json_output=json_output)
 
 
 @fx.tool(
@@ -67,9 +79,9 @@ def convtool_weight(value: float, from_unit: str, to_unit: str) -> None:
         "to_unit": "目标单位（C/F/K）",
     },
 )
-def convtool_temp(value: float, from_unit: str, to_unit: str) -> None:
+def convtool_temp(value: float, from_unit: str, to_unit: str, json_output: bool = False) -> None:
     """温度换算。"""
-    _print_conversion(codec.convert_temperature, value, from_unit, to_unit)
+    _convert("temp", codec.convert_temperature, value, from_unit, to_unit, json_output=json_output)
 
 
 @fx.tool(
@@ -88,6 +100,7 @@ def convtool_datasize(
     from_unit: str,
     to_unit: str,
     base: str = "binary",
+    json_output: bool = False,
 ) -> None:
     """数据大小换算。"""
-    _print_conversion(codec.convert_datasize, value, from_unit, to_unit, base=base)
+    _convert("datasize", codec.convert_datasize, value, from_unit, to_unit, json_output=json_output, base=base)

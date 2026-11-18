@@ -6,7 +6,17 @@
 from __future__ import annotations
 
 import fcmd as fx
+from fcmd.core.result import emit_result
 from fcmd.infras import hashing
+
+
+def _hash(subcommand: str, algorithm: str, text: str, json_output: bool) -> None:
+    """计算哈希：JSON 模式输出含 ``algorithm`` / ``digest`` 的信封。"""
+    digest = hashing.hash_text(text, algorithm)
+    if json_output:
+        emit_result("hashtool", subcommand, {"algorithm": algorithm, "digest": digest})
+        return
+    print(digest)
 
 
 @fx.tool(
@@ -15,9 +25,9 @@ from fcmd.infras import hashing
     help="计算 MD5 哈希",
     param_help={"text": "待哈希的字符串"},
 )
-def hashtool_md5(text: str) -> None:
+def hashtool_md5(text: str, json_output: bool = False) -> None:
     """计算字符串的 MD5 哈希。"""
-    print(hashing.hash_text(text, "md5"))
+    _hash("md5", "md5", text, json_output)
 
 
 @fx.tool(
@@ -26,9 +36,9 @@ def hashtool_md5(text: str) -> None:
     help="计算 SHA1 哈希",
     param_help={"text": "待哈希的字符串"},
 )
-def hashtool_sha1(text: str) -> None:
+def hashtool_sha1(text: str, json_output: bool = False) -> None:
     """计算字符串的 SHA1 哈希。"""
-    print(hashing.hash_text(text, "sha1"))
+    _hash("sha1", "sha1", text, json_output)
 
 
 @fx.tool(
@@ -37,9 +47,9 @@ def hashtool_sha1(text: str) -> None:
     help="计算 SHA256 哈希",
     param_help={"text": "待哈希的字符串"},
 )
-def hashtool_sha256(text: str) -> None:
+def hashtool_sha256(text: str, json_output: bool = False) -> None:
     """计算字符串的 SHA256 哈希。"""
-    print(hashing.hash_text(text, "sha256"))
+    _hash("sha256", "sha256", text, json_output)
 
 
 @fx.tool(
@@ -48,6 +58,6 @@ def hashtool_sha256(text: str) -> None:
     help="计算 SHA512 哈希",
     param_help={"text": "待哈希的字符串"},
 )
-def hashtool_sha512(text: str) -> None:
+def hashtool_sha512(text: str, json_output: bool = False) -> None:
     """计算字符串的 SHA512 哈希。"""
-    print(hashing.hash_text(text, "sha512"))
+    _hash("sha512", "sha512", text, json_output)

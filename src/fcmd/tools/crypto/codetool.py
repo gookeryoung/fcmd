@@ -8,8 +8,16 @@ from __future__ import annotations
 import binascii
 
 import fcmd as fx
-from fcmd.console import print_error
+from fcmd.core.result import emit_result, report_error
 from fcmd.infras import codec
+
+
+def _emit(subcommand: str, value: str, json_output: bool) -> None:
+    """按输出模式呈现编解码结果。"""
+    if json_output:
+        emit_result("codetool", subcommand, {"result": value})
+        return
+    print(value)
 
 
 @fx.tool(
@@ -21,19 +29,24 @@ from fcmd.infras import codec
         "decode": "为 True 时解码，否则编码（默认 False）",
     },
 )
-def codetool_base64(text: str, decode: bool = False) -> None:
+def codetool_base64(text: str, decode: bool = False, json_output: bool = False) -> None:
     """对文本执行 Base64 编码或解码。"""
-    if decode:
-        try:
-            print(codec.decode_base64(text))
-        except (binascii.Error, UnicodeDecodeError) as exc:
-            print_error(
-                f"Base64 解码失败: {exc}",
-                code="INVALID_ARGUMENT",
-                hint="确认输入是合法的 Base64 文本（长度与字符集正确）",
-            )
-    else:
-        print(codec.encode_base64(text))
+    if not decode:
+        _emit("base64", codec.encode_base64(text), json_output)
+        return
+    try:
+        value = codec.decode_base64(text)
+    except (binascii.Error, UnicodeDecodeError) as exc:
+        report_error(
+            "codetool",
+            "base64",
+            code="INVALID_ARGUMENT",
+            message=f"Base64 解码失败: {exc}",
+            hint="确认输入是合法的 Base64 文本（长度与字符集正确）",
+            json_output=json_output,
+        )
+        return
+    _emit("base64", value, json_output)
 
 
 @fx.tool(
@@ -45,9 +58,9 @@ def codetool_base64(text: str, decode: bool = False) -> None:
         "decode": "为 True 时解码，否则编码（默认 False）",
     },
 )
-def codetool_url(text: str, decode: bool = False) -> None:
+def codetool_url(text: str, decode: bool = False, json_output: bool = False) -> None:
     """对文本执行 URL 编码或解码。"""
-    print(codec.decode_url(text) if decode else codec.encode_url(text))
+    _emit("url", codec.decode_url(text) if decode else codec.encode_url(text), json_output)
 
 
 @fx.tool(
@@ -59,19 +72,24 @@ def codetool_url(text: str, decode: bool = False) -> None:
         "decode": "为 True 时解码，否则编码（默认 False）",
     },
 )
-def codetool_hex(text: str, decode: bool = False) -> None:
+def codetool_hex(text: str, decode: bool = False, json_output: bool = False) -> None:
     """对文本执行十六进制编码或解码。"""
-    if decode:
-        try:
-            print(codec.decode_hex(text))
-        except (ValueError, UnicodeDecodeError) as exc:
-            print_error(
-                f"Hex 解码失败: {exc}",
-                code="INVALID_ARGUMENT",
-                hint="确认输入是合法的十六进制文本（偶数个 0-9a-f 字符）",
-            )
-    else:
-        print(codec.encode_hex(text))
+    if not decode:
+        _emit("hex", codec.encode_hex(text), json_output)
+        return
+    try:
+        value = codec.decode_hex(text)
+    except (ValueError, UnicodeDecodeError) as exc:
+        report_error(
+            "codetool",
+            "hex",
+            code="INVALID_ARGUMENT",
+            message=f"Hex 解码失败: {exc}",
+            hint="确认输入是合法的十六进制文本（偶数个 0-9a-f 字符）",
+            json_output=json_output,
+        )
+        return
+    _emit("hex", value, json_output)
 
 
 @fx.tool(
@@ -80,9 +98,9 @@ def codetool_hex(text: str, decode: bool = False) -> None:
     help="ROT13 转换",
     param_help={"text": "待转换的文本"},
 )
-def codetool_rot13(text: str) -> None:
+def codetool_rot13(text: str, json_output: bool = False) -> None:
     """对文本执行 ROT13 转换。"""
-    print(codec.rot13(text))
+    _emit("rot13", codec.rot13(text), json_output)
 
 
 @fx.tool(
@@ -94,6 +112,6 @@ def codetool_rot13(text: str) -> None:
         "decode": "为 True 时反转义，否则转义（默认 False）",
     },
 )
-def codetool_html(text: str, decode: bool = False) -> None:
+def codetool_html(text: str, decode: bool = False, json_output: bool = False) -> None:
     """对文本执行 HTML 转义或反转义。"""
-    print(codec.unescape_html(text) if decode else codec.escape_html(text))
+    _emit("html", codec.unescape_html(text) if decode else codec.escape_html(text), json_output)
