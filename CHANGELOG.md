@@ -23,6 +23,14 @@
   - 断言 Tk 内部实现的测试改写为 Qt 等价断言，纯逻辑与设置测试保持原样。
 - 新增 `fcmd.gui.geometry` 纯函数模块，各窗口与设置统一复用 `WxH+X+Y` 解析、夹紧与居中算法。
 
+### 修复
+
+- `locllmw` / `llmserve` 启动兼容性：
+  - `--flash-attn` 按引擎 `--help` 探测语法（旧版布尔开关 / 新版 `on|off|auto`），
+    按可执行文件路径与修改时间缓存，升级引擎后自动失效，不再因参数解析失败让引擎直接退出；
+  - 引擎日志出现 `unknown model architecture: 'xxx'` 时，启动失败提示直接给出升级命令与日志路径，
+    而不是只贴一段日志尾部。
+
 ### 重构
 
 - 清理迁移后遗留的死代码与常量（cmder / locllmw / alarmclock / paramcad / envdev 等）。
