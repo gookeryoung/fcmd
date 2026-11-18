@@ -84,8 +84,11 @@ jobs:
       matrix:
         include:
           # PySide2 + xdist 在 Linux 退出阶段会卡住 worker；3.10 串行跑（用例量 < 1 万，仍在超时内）。
+          # 3.10 偶发「pytest 长时间无输出」：pytest-timeout 的 30s 是信号实现，主线程
+          # 阻塞在 Qt / C 层时不会触发。faulthandler 用独立 C 线程计时，超时立刻 dump
+          # 全部线程栈并退出，把卡死现场留在日志里；只做诊断，不放宽任何门槛。
           - python-version: "3.10"
-            pytest_args: '-p no:xdist -o addopts=""'
+            pytest_args: '-p no:xdist -o addopts="" -o faulthandler_timeout=120'
           - python-version: "3.13"
             pytest_args: "-n auto"
           - python-version: "3.14"
