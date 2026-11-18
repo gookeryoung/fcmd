@@ -8,7 +8,7 @@
 规则集以 JSON 保存（见 :func:`ruleset_to_mapping`），加载时严格校验字段、
 正则与表达式引用，错误信息带规则名或位置，不静默丢弃。
 
-本模块只依赖标准库，不导入 Tk，也不参与工具发现。
+本模块只依赖标准库，不导入 GUI 框架，也不参与工具发现。
 """
 
 from __future__ import annotations

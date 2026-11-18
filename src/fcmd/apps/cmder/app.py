@@ -854,7 +854,7 @@ class PanelScanResult:
 
 
 def run_panel_scan(request: PanelScanRequest) -> PanelScanResult:
-    """执行一次面板扫描（线程内调用，不触碰 Tk），异常折算为结果里的 ``error``。"""
+    """执行一次面板扫描（线程内调用，不触碰 GUI 控件），异常折算为结果里的 ``error``。"""
     try:
         entries, truncated = scan_panel_entries(
             request.directory,

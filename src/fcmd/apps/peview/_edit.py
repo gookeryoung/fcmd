@@ -11,7 +11,7 @@
 - 任一步失败都删除临时文件，原文件保持原样；写入带 Authenticode 签名的文件
   必须显式确认（CLI ``--allow-signature-break`` / GUI 勾选）。
 
-本模块不依赖 Tk，CLI 与 GUI 共用同一套计划与写入流程。
+本模块不依赖 GUI 框架，CLI 与 GUI 共用同一套计划与写入流程。
 """
 
 from __future__ import annotations

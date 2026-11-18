@@ -16,7 +16,7 @@ fcmd 的 GUI 窗口需要好看的中英文字体，但把字体打进发行包�
 记录精确删除字体与许可证文件。
 
 注意：Windows / macOS 与启用 Xft 的 Linux Python（系统 ``python3-tk``）可直接
-使用这些字体。部分独立构建的 Python 自带 Tk 未启用 Xft，只识别 X11 核心字体（GUI 已改用 Qt，本提示仅针对旧版 Tk 前端），
+使用这些字体。部分独立构建的 Python 自带 Tk 未启用 Xft，只识别 X11 核心字体，
 安装 TTF 后仍可能看不到；这类环境请改用系统 Python，或安装 ``xfonts-wqy``
 作为兜底（见 README「WSL / Linux 中文乱码」）。
 
@@ -682,7 +682,7 @@ def platform_hint(system: str | None = None) -> str:
     plat = system or sys.platform
     if plat.startswith("linux"):
         return (
-            "提示：旧版 Tk 前端在部分独立构建的 Python 下看不到新字体；GUI 已改用 Qt，通常无需该兜底；"
+            "提示：部分独立构建的 Python 自带的 Tk 未启用 Xft，看不到新字体；"
             "请改用系统 Python（python3-tk，启用 Xft），或安装 xfonts-wqy 作为兜底。"
         )
     return ""

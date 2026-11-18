@@ -25,7 +25,7 @@ __all__ = [
 ]
 
 # 纯窗口入口：没有 headless 模式，模型调用会弹窗阻塞或在无显示环境报错。
-# locllmw 已迁到 Qt（PySide6，见 docs/adr/0033），其余仍为 Tk。
+# GUI 已统一为 Qt（PySide6），见 docs/adr/0034-qt-full-gui-migration.md。
 # 静态清单见 docs/analysis/2026-11-13-small-model-tooling-gaps.md §2.1。
 GUI_TOOLS: frozenset[str] = frozenset(
     {

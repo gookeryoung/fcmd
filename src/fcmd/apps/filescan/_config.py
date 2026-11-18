@@ -30,7 +30,7 @@
 - **向前兼容**：未知字段忽略，缺字段按默认值补齐；``version`` 高于本程序支持的
   版本时给出提示但仍尽力加载。
 
-本模块只依赖标准库与同包的 ``_engine`` / ``_rules``，不导入 Tk。
+本模块只依赖标准库与同包的 ``_engine`` / ``_rules``，不导入 GUI 框架。
 """
 
 from __future__ import annotations
