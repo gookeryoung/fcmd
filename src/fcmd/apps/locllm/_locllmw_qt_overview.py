@@ -43,7 +43,6 @@ from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
     MetricGrid,
-    PageScroll,
     RowListWidget,
     SegmentBar,
     StatusTag,
@@ -235,14 +234,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._rates = RateWindow()
         self._inflight = False
         self._timer: QTimer | None = None
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        scroll = PageScroll(self)
-        layout = scroll.body
-        outer.addWidget(scroll)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setSpacing(8)
         layout.addWidget(self._build_hardware())
         layout.addWidget(self._build_recommendations(), 1)
+        layout.addLayout(self._build_recommend_actions())
 
         state.hardwareChanged.connect(lambda _snapshot: self.refresh_hardware())
         state.hardwareFailed.connect(self._on_hardware_failed)
@@ -418,7 +415,12 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._recommend_list.itemDoubleClicked.connect(lambda _item: self.apply_recommendation())
         self._recommend_list.itemActivated.connect(lambda _item: self.apply_recommendation())
         card.body.addWidget(self._recommend_list, 1)
+        return card
+
+    def _build_recommend_actions(self) -> QHBoxLayout:
+        """启动按钮放在推荐列表卡片之外，避免列表滚动区同时承载操作。"""
         row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         row.addStretch(1)
         self._apply_button = button("启动服务", kind="primary")
         # 与运行页顶部启停按钮同一尺寸（40px 高、更大的左右内边距与字号）。
@@ -426,8 +428,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._apply_button.setToolTip("把选中推荐行的模型与参数带入运行页")
         self._apply_button.clicked.connect(self.apply_recommendation)
         row.addWidget(self._apply_button)
-        card.body.addLayout(row)
-        return card
+        return row
 
     def _render_recommendations(self) -> None:
         """按 ``self._recommendations`` 重建自定义列表行。"""

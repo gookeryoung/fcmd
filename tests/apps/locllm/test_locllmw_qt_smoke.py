@@ -595,11 +595,22 @@ def test_bench_moves_to_help_menu(window: Any) -> None:
     dialog.close()
 
 
+def test_overview_scrolls_only_recommendation_list(window: Any) -> None:
+    """概览不再整页滚动：页面高度不足时只由推荐列表内部滚动。"""
+    from fcmd.gui.qt.widgets import PageScroll
+
+    window.show_page("overview")
+    overview = window.overview
+    assert overview.findChild(PageScroll) is None
+    assert not overview._recommend_list.parentWidget().isAncestorOf(overview._apply_button)
+    assert overview._apply_button.parentWidget() is overview
+
+
 def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll
 
-    for key in ("overview", "run", "settings", "lab"):
+    for key in ("run", "settings", "lab"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key
