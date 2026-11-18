@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fcmd.infras.system import format_bytes
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -70,24 +72,6 @@ class Volume:
     def label(self) -> str:
         """菜单显示文本：挂载点 + 剩余 / 总容量。"""
         return f"{self.mount}  —  {format_bytes(self.free)} 可用 / {format_bytes(self.total)}"
-
-
-def _compact_number(value: float) -> str:
-    """去掉一位小数格式里多余的 ``.0``。"""
-    text = f"{value:.1f}"
-    return text[:-2] if text.endswith(".0") else text
-
-
-def format_bytes(size: int) -> str:
-    """把字节数格式化为 ``512 B`` / ``1.5 GB`` 形式。"""
-    if size < 1024:
-        return f"{size} B"
-    value = float(size)
-    for unit in ("KB", "MB", "GB", "TB", "PB"):
-        value /= 1024.0
-        if value < 1024.0:
-            return f"{_compact_number(value)} {unit}"
-    return f"{_compact_number(value)} PB"
 
 
 def volume_for(mount: Path, *, usage: Callable[[Path], tuple[int, int, int]] = shutil.disk_usage) -> Volume | None:

@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 import fcmd
 from fcmd.console import print_error
 from fcmd.infras.hashing import compute_file_hash
-from fcmd.infras.system import fcmd_home
+from fcmd.infras.system import fcmd_home, format_bytes
 from fcmd.infras.text import display_width, pad_display
 
 if TYPE_CHECKING:
@@ -293,13 +293,8 @@ def _report_font_error(exc: FontToolError) -> None:
     )
 
 
-def format_size(size: int) -> str:
-    """把字节数格式化为 ``N B`` / ``N.N KB`` / ``N.N MB``。"""
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"
+# 字节数格式化的统一口径见 fcmd.infras.system.format_bytes。
+format_size = format_bytes
 
 
 def license_path(target_dir: Path, spec: FontSpec) -> Path:

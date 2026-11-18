@@ -920,11 +920,11 @@ class TestListingAndFormatting:
     def test_format_size(self) -> None:
         assert format_size(0) == "0 B"
         assert format_size(512) == "512 B"
-        assert format_size(1024) == "1 KB"
+        assert format_size(1024) == "1.0 KB"
         assert format_size(1536) == "1.5 KB"
-        assert format_size(1024**2) == "1 MB"
-        assert format_size(1024**3) == "1 GB"
-        assert format_size(1024**6) == "1024 PB"
+        assert format_size(1024**2) == "1.0 MB"
+        assert format_size(1024**3) == "1.0 GB"
+        assert format_size(1024**6) == "1024.0 PB"
         assert format_size(0, is_dir=True) == "<DIR>"
 
     def test_format_mtime(self) -> None:

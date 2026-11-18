@@ -12,12 +12,12 @@ from fcmd.apps.cmder import _volumes as volumes
 class TestFormatBytes:
     def test_bytes_and_units(self) -> None:
         assert volumes.format_bytes(512) == "512 B"
-        assert volumes.format_bytes(1024) == "1 KB"
+        assert volumes.format_bytes(1024) == "1.0 KB"
         assert volumes.format_bytes(1536) == "1.5 KB"
-        assert volumes.format_bytes(5 * 1024**3) == "5 GB"
+        assert volumes.format_bytes(5 * 1024**3) == "5.0 GB"
 
     def test_petabyte_fallback(self) -> None:
-        assert volumes.format_bytes(1024**6) == "1024 PB"
+        assert volumes.format_bytes(1024**6) == "1024.0 PB"
 
 
 class TestVolumeFor:
@@ -33,7 +33,7 @@ class TestVolumeFor:
 
     def test_label_contains_free_and_total(self, tmp_path: Path) -> None:
         volume = volumes.Volume(mount=tmp_path, total=2048, free=1024)
-        assert volume.label == f"{tmp_path}  —  1 KB 可用 / 2 KB"
+        assert volume.label == f"{tmp_path}  —  1.0 KB 可用 / 2.0 KB"
 
 
 class TestWindowsDriveRoots:

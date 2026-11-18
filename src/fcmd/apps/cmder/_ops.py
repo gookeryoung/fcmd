@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote
 
 from fcmd.infras.hashing import compute_file_hash
+from fcmd.infras.system import format_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -1599,15 +1600,6 @@ class PreviewResult:
     size: int = 0
 
 
-def _human_size(size: int) -> str:
-    """字节数转可读文本。"""
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"
-
-
 def _image_kind(data: bytes, suffix: str) -> str:
     """按魔数与扩展名识别图片格式；非图片返回空串。"""
     for magic, name in _IMAGE_MAGIC:
@@ -1674,7 +1666,7 @@ def _preview_payload(data: bytes, size: int, suffix: str, hex_limit: int) -> Pre
     if image:
         return PreviewResult(
             PREVIEW_IMAGE,
-            note=f"图片（{image}，{_human_size(size)}）",
+            note=f"图片（{image}，{format_bytes(size)}）",
             size=size,
         )
     text = _decode_text(data)
@@ -1682,13 +1674,13 @@ def _preview_payload(data: bytes, size: int, suffix: str, hex_limit: int) -> Pre
         note = "PE/可执行文件" if data.startswith(b"MZ") else "二进制文件"
         truncated = size > len(data)
         if truncated:
-            note += f"；已截断：仅显示前 {_human_size(len(data))}（共 {_human_size(size)}）"
+            note += f"；已截断：仅显示前 {format_bytes(len(data))}（共 {format_bytes(size)}）"
         return PreviewResult(PREVIEW_BINARY, text=_hex_dump(data, hex_limit), note=note, truncated=truncated, size=size)
 
     truncated = size > len(data)
     note = "文本"
     if truncated:
-        note += f"；已截断：仅显示前 {_human_size(len(data))}（共 {_human_size(size)}）"
+        note += f"；已截断：仅显示前 {format_bytes(len(data))}（共 {format_bytes(size)}）"
     return PreviewResult(PREVIEW_TEXT, text=text, note=note, truncated=truncated, size=size)
 
 

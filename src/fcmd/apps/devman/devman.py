@@ -13,6 +13,7 @@ from fcmd.apps.devman import _env, _ops
 from fcmd.apps.devman._errors import DevmanError, invalid_argument, not_found, runtime_error
 from fcmd.apps.devman._paths import TOOLS
 from fcmd.core.result import emit_result, record_error, report_error
+from fcmd.infras.system import format_bytes
 
 __all__ = ["main"]
 
@@ -648,26 +649,17 @@ def doctor(root: str = "", *, json_output: bool = False) -> None:
     _finish(subcommand, payload, json_output=json_output, render=_human_doctor, ok=bool(payload.get("ok")))
 
 
-def _format_bytes(value: int) -> str:
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
-    size = float(value)
-    index = 0
-    while size >= 1024 and index < len(units) - 1:
-        size /= 1024
-        index += 1
-    return f"{int(size)} B" if index == 0 else f"{size:.1f} {units[index]}"
-
-
 def _human_size(payload: dict[str, Any]) -> None:
     for tool, data in (payload.get("tools") or {}).items():
-        print(f"{tool}: {_format_bytes(data['bytes'])}（{len(data['versions'])} 个版本）")
+        print(f"{tool}: {format_bytes(data['bytes'], binary=True)}（{len(data['versions'])} 个版本）")
         for item in data["versions"]:
-            print(f"  {item['version']:<14} {_format_bytes(item['bytes']):>10}  {item['status']}")
+            size_text = format_bytes(item["bytes"], binary=True)
+            print(f"  {item['version']:<14} {size_text:>10}  {item['status']}")
     cache = payload.get("cache") or {}
     shims = payload.get("shims") or {}
-    print(f"缓存: {_format_bytes(cache.get('bytes', 0))}  {cache.get('dir')}")
-    print(f"shim: {_format_bytes(shims.get('bytes', 0))}  {shims.get('dir')}")
-    print(f"合计: {_format_bytes(payload.get('total_bytes', 0))}")
+    print(f"缓存: {format_bytes(cache.get('bytes', 0), binary=True)}  {cache.get('dir')}")
+    print(f"shim: {format_bytes(shims.get('bytes', 0), binary=True)}  {shims.get('dir')}")
+    print(f"合计: {format_bytes(payload.get('total_bytes', 0), binary=True)}")
 
 
 def _human_verify(payload: dict[str, Any]) -> None:

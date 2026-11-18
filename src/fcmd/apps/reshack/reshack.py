@@ -30,6 +30,7 @@ from typing import Any
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.infras.system import format_bytes
 from fcmd.infras.text import display_width, pad_display
 
 __all__ = [
@@ -203,13 +204,8 @@ def export_payload(resource: ResourceEntry) -> bytes:
     return resource.data
 
 
-def format_file_size(size: int) -> str:
-    """把字节数格式化为 ``N B`` / ``N.N KB`` / ``N.N MB``。"""
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"
+# 字节数格式化的统一口径见 fcmd.infras.system.format_bytes。
+format_file_size = format_bytes
 
 
 def is_pe_file(path: Path) -> bool:

@@ -44,6 +44,7 @@ from fcmd.apps.filescan._rules import (
     positive_rule_ids,
     resolve_expression,
 )
+from fcmd.infras.system import format_bytes
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -458,13 +459,8 @@ def normalize_exts(items: Sequence[str]) -> tuple[str, ...]:
 
 
 def format_size(size: int) -> str:
-    """把字节数格式化为人类可读文本。"""
-    value = float(size)
-    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
-        if value < 1024 or unit == "TiB":
-            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
-        value /= 1024
-    return f"{value:.1f} TiB"
+    """把字节数格式化为人类可读文本（IEC 单位）。"""
+    return format_bytes(size, binary=True)
 
 
 def _matches_ext(name: str, exts: Sequence[str]) -> bool:

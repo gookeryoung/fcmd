@@ -218,8 +218,8 @@ class TestFormatBytes:
     @pytest.mark.parametrize(
         ("size", "expected"),
         [
-            (0, "0.0 B"),
-            (512, "512.0 B"),
+            (0, "0 B"),
+            (512, "512 B"),
             (1024, "1.0 KB"),
             (1536, "1.5 KB"),
             (1024**2, "1.0 MB"),
@@ -229,3 +229,17 @@ class TestFormatBytes:
     def test_format(self, size: int, expected: str) -> None:
         """字节按 1024 进制格式化为人类可读字符串。"""
         assert format_bytes(size) == expected
+
+    @pytest.mark.parametrize(
+        ("size", "expected"),
+        [
+            (0, "0 B"),
+            (512, "512 B"),
+            (1536, "1.5 KiB"),
+            (1024**2, "1.0 MiB"),
+            (2 * 1024**3, "2.0 GiB"),
+        ],
+    )
+    def test_format_binary(self, size: int, expected: str) -> None:
+        """``binary=True`` 时使用 IEC 单位。"""
+        assert format_bytes(size, binary=True) == expected

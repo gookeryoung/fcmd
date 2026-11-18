@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from fcmd.infras.system import format_bytes as _format_bytes
+
 __all__ = ["VolumeInfo", "distro_disk_bytes", "format_bytes", "recommended_backup_dir", "volume_info"]
 
 _WALK_BUDGET_S = 5.0
@@ -104,18 +106,8 @@ def _walk_size(root: Path, budget_s: float) -> tuple[int | None, bool]:
 
 
 def format_bytes(value: int | None, *, estimated: bool = False) -> str:
-    """人类可读大小；未知返回 ``未知``。"""
+    """人类可读大小（IEC 单位）；未知返回 ``未知``，估算值带 ``≈`` 前缀。"""
     if value is None:
         return "未知"
-    units = ("B", "KiB", "MiB", "GiB", "TiB")
-    size = float(value)
-    unit = units[0]
-    for candidate in units:
-        unit = candidate
-        if size < 1024 or candidate == units[-1]:
-            break
-        size /= 1024
-    prefix = "≈" if estimated else ""
-    if unit == "B":
-        return f"{prefix}{int(size)} B"
-    return f"{prefix}{size:.1f} {unit}"
+    text = _format_bytes(value, binary=True)
+    return f"≈{text}" if estimated else text

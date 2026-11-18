@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from fcmd.infras.system import format_bytes
 from fcmd.infras.text import display_width, pad_display
 
 __all__ = [
@@ -736,15 +737,8 @@ def execute_plan(
 # ---------------------------------------------------------------------- #
 # 文本输出
 # ---------------------------------------------------------------------- #
-def format_size(size: int) -> str:
-    """把字节数格式化为 ``N B`` / ``N.N KB`` / ``N.N MB`` / ``N.N GB``。"""
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    if size < 1024 * 1024 * 1024:
-        return f"{size / (1024 * 1024):.1f} MB"
-    return f"{size / (1024 * 1024 * 1024):.1f} GB"
+# 字节数格式化的统一口径见 fcmd.infras.system.format_bytes。
+format_size = format_bytes
 
 
 _SIDE_TEXT: dict[str, str] = {"left": "左侧", "right": "右侧", "": "扫描"}

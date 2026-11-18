@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from fcmd.apps.peview._reader import compute_checksum
+from fcmd.infras.system import format_bytes
 from fcmd.infras.text import display_width, pad_display
 
 if TYPE_CHECKING:
@@ -342,13 +343,8 @@ def _rows(*pairs: tuple[str, str]) -> str:
     return format_table(("字段", "值"), [(label, value) for label, value in pairs])
 
 
-def format_size(size: int) -> str:
-    """把字节数格式化为 ``N B`` / ``N.N KB`` / ``N.N MB``。"""
-    if size < 1024:
-        return f"{size} B"
-    if size < 1024 * 1024:
-        return f"{size / 1024:.1f} KB"
-    return f"{size / (1024 * 1024):.1f} MB"
+# 字节数格式化的统一口径见 fcmd.infras.system.format_bytes。
+format_size = format_bytes
 
 
 # ---------------------------------------------------------------------- #
