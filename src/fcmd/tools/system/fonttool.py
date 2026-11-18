@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.infras.download import download_file
 from fcmd.infras.hashing import compute_file_hash
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 from fcmd.infras.system import fcmd_home, format_bytes
@@ -321,12 +322,8 @@ def file_matches(path: Path, spec: FontSpec) -> bool:
 
 
 def _download(url: str, target: Path) -> None:
-    """下载 ``url`` 到 ``target``（流式写入，失败由调用方清理残留文件）。"""
-    import urllib.request
-
-    request = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    with urllib.request.urlopen(request, timeout=_DOWNLOAD_TIMEOUT) as response, target.open("wb") as handle:
-        shutil.copyfileobj(response, handle, length=_CHUNK_SIZE)
+    """下载 ``url`` 到 ``target``（先写 ``.part``，成功后原子落位）。"""
+    download_file(url, target, timeout=_DOWNLOAD_TIMEOUT, user_agent=_USER_AGENT)
 
 
 def _fetch_text(url: str) -> str:

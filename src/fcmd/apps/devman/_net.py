@@ -10,6 +10,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
+from fcmd.infras.download import write_stream
 from fcmd.infras.hashing import compute_file_hash
 
 __all__ = [
@@ -158,11 +159,7 @@ class UrllibFetcher:
                 total = offset + length
                 done = offset
                 with partial.open("ab" if offset else "wb") as sink:
-                    while chunk := source.read(_CHUNK):
-                        sink.write(chunk)
-                        done += len(chunk)
-                        if progress is not None:
-                            progress(done, total)
+                    write_stream(source, sink, progress=progress, done=done, total=total)
 
         def action() -> None:
             try:
