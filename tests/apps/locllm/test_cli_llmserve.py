@@ -1187,7 +1187,10 @@ class TestEngine:
         assert llmengine.resolve_engine("b5", home).path_prepend == ()
 
     def test_asset_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(llmengine.os, "name", "nt")
+        # 只替换模块内的 os 引用，不改全局 os.name（否则失败报告渲染时 pathlib 会选错 Path 实现）。
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(llmengine, "os", SimpleNamespace(name="nt"))
         assert llmengine.engine_asset_names("b1", "cuda") == [
             "llama-b1-bin-win-cuda-13.5-x64.zip",
             "cudart-llama-bin-win-cuda-13.5-x64.zip",

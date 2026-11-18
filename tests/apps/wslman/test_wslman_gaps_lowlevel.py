@@ -142,11 +142,13 @@ def test_registry_import_failure_degrades_to_unavailable(monkeypatch: pytest.Mon
 
 def test_volume_filesystem_failure_returns_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import ctypes
+    from types import SimpleNamespace
 
     def boom(size: int) -> object:
         raise OSError("kernel32 不可用")
 
-    monkeypatch.setattr(_transfer.os, "name", "nt")
+    # 只替换模块内的 os 引用，不改全局 os.name（否则失败报告渲染时 pathlib 会选错 Path 实现）。
+    monkeypatch.setattr(_transfer, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(ctypes, "create_unicode_buffer", boom)
 
     assert _transfer._volume_filesystem(tmp_path) is None
