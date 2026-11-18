@@ -117,7 +117,7 @@ class TestFormatting:
         assert model_item_lines(summary) == (
             "Qwen/demo",
             "Qwen · 文本生成、视觉问答",
-            "下载 1,234 · 2.00 KB",
+            "2.00 KB",
         )
 
     def test_model_item_lines_empty(self) -> None:

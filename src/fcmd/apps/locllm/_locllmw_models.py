@@ -168,16 +168,9 @@ def model_row(item: ModelSummary) -> tuple[str, str, str, str, str]:
 
 
 def model_item_lines(item: ModelSummary) -> tuple[str, str, str]:
-    """浏览列表自定义行的关键内容：``(仓库名, 系列 / 任务, 下载 / 体积)``。"""
+    """浏览列表自定义行的关键内容：``(仓库名, 系列 / 任务, 体积)``。"""
     subtitle = " · ".join(part for part in (model_series(item), "、".join(item.tasks)) if part)
-    metrics = " · ".join(
-        part
-        for part in (
-            f"下载 {item.downloads:,}" if item.downloads else "",
-            human_size(item.storage_size) if item.storage_size else "",
-        )
-        if part
-    )
+    metrics = human_size(item.storage_size) if item.storage_size else ""
     return item.repo, subtitle or "-", metrics or "-"
 
 
