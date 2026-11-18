@@ -41,6 +41,14 @@ class TestAlgorithmMapping:
         for suffix, algorithm in checksum.SUFFIX_ALGORITHMS.items():
             assert checksum.ALGORITHM_SUFFIXES[algorithm] == suffix
 
+    def test_algorithm_for_digest_infers_by_length(self) -> None:
+        assert checksum.algorithm_for_digest("0" * 8) == "crc32"
+        assert checksum.algorithm_for_digest("0" * 32) == "md5"
+        assert checksum.algorithm_for_digest("0" * 40) == "sha1"
+        assert checksum.algorithm_for_digest("0" * 64) == "sha256"
+        assert checksum.algorithm_for_digest("0" * 128) == "sha512"
+        assert checksum.algorithm_for_digest("0" * 10) is None
+
 
 class TestGenerate:
     def test_build_manifest_sha256_uses_relative_paths(self, tmp_path: Path) -> None:

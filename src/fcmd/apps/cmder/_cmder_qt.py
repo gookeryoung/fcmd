@@ -1073,31 +1073,34 @@ class CmderQtWindow(QMainWindow):
         if not paths:
             self.set_status("请选择要生成校验文件的文件")
             return
-        algorithm, accepted = self.ask_text("生成校验文件", "算法（sha256 / sha1 / md5）", "sha256")
+        algorithm, accepted = self.ask_text(
+            "生成校验文件", "算法（sha256 / sha512 / sha1 / md5 / crc32）", "sha256"
+        )
         if not accepted:
             return
-        algorithm = algorithm.strip().lower() or "sha256"
+        from fcmd.infras import checksum as _checksum
+
+        try:
+            algorithm = _checksum.normalize_algorithm(algorithm)
+        except ValueError as exc:
+            self.show_error("生成失败", str(exc))
+            return
+        base = paths[0].parent
         chosen, _ = QFileDialog.getSaveFileName(
-            self, "保存校验文件", str(paths[0].parent / f"{algorithm}.txt"), "校验文件 (*.txt *.sha256 *.sfv)"
+            self,
+            "保存校验文件",
+            str(base / _checksum.manifest_name(base, algorithm)),
+            "校验文件 (*.sha256 *.sha512 *.sha1 *.md5 *.sfv *.txt)",
         )
         if not chosen:
             return
-        from fcmd.infras import hashing
-
-        lines: list[str] = []
         try:
-            for path in paths:
-                digest = hashing.compute_file_hash(path, algorithm)
-                lines.append(f"{digest}  {path.name}")
+            text = _checksum.build_manifest(paths, base, algorithm)
+            Path(chosen).write_text(text, encoding="utf-8")
         except (OSError, ValueError) as exc:
             self.show_error("生成失败", str(exc))
             return
-        try:
-            Path(chosen).write_text("\n".join(lines) + "\n", encoding="utf-8")
-        except OSError as exc:
-            self.show_error("写入失败", str(exc))
-            return
-        self.set_status(f"已生成 {len(lines)} 条校验（{algorithm}）→ {chosen}")
+        self.set_status(f"已生成 {len(paths)} 条校验（{algorithm}）→ {chosen}")
 
     def verify_checksum_file(self) -> None:
         entries = self.active.selected_entries()
@@ -1105,29 +1108,27 @@ class CmderQtWindow(QMainWindow):
             self.set_status("请选择校验文件")
             return
         source = entries[0].path
-        from fcmd.infras import hashing
+        from fcmd.infras import checksum as _checksum
 
-        lines: list[str] = []
         try:
-            for raw in source.read_text(encoding="utf-8", errors="replace").splitlines():
-                parts = raw.strip().split(None, 1)
-                if len(parts) != 2:
-                    continue
-                digest, name = parts[0], parts[1].lstrip("*")
-                target = source.parent / name
-                if not target.is_file():
-                    lines.append(f"MISSING  {name}")
-                    continue
-                algorithm = {32: "md5", 40: "sha1", 64: "sha256"}.get(len(digest))
-                if algorithm is None:
-                    lines.append(f"SKIP     {name}（未知摘要长度）")
-                    continue
-                actual = hashing.compute_file_hash(target, algorithm)
-                lines.append(("OK       " if actual == digest.casefold() else "FAIL     ") + name)
+            text = source.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:
             self.show_error("校验失败", str(exc))
             return
-        self.show_text("校验结果", "\n".join(lines) or "（没有可校验的行）")
+        algorithm = _checksum.algorithm_for_suffix(source.suffix)
+        if algorithm is None:
+            for line in text.splitlines():
+                parts = line.split()
+                if not parts:
+                    continue
+                algorithm = _checksum.algorithm_for_digest(parts[0]) or _checksum.algorithm_for_digest(parts[-1])
+                if algorithm is not None:
+                    break
+        if algorithm is None:
+            self.show_text("校验结果", "（无法从后缀或摘要长度判断算法）")
+            return
+        report = _checksum.verify_manifest(text, source.parent, algorithm)
+        self.show_text("校验结果", _checksum.report_text(report))
 
     # ------------------------------------------------------------------ #
     # 分割 / 合并 / 重复文件

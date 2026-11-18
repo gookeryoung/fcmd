@@ -26,6 +26,7 @@ __all__ = [
     "ChecksumResult",
     "ParsedManifest",
     "VerifyReport",
+    "algorithm_for_digest",
     "algorithm_for_suffix",
     "build_manifest",
     "compute_crc32",
@@ -50,6 +51,7 @@ SUFFIX_ALGORITHMS: dict[str, str] = {
 ALGORITHM_SUFFIXES: dict[str, str] = {algorithm: suffix for suffix, algorithm in SUFFIX_ALGORITHMS.items()}
 
 _DIGEST_LENGTHS = {"md5": 32, "sha1": 40, "sha256": 64, "sha512": 128, "crc32": 8}
+_LENGTH_ALGORITHMS = {length: algorithm for algorithm, length in _DIGEST_LENGTHS.items()}
 _HASH_LINE = re.compile(r"^([0-9A-Fa-f]+)[ \t]+\*?(.+)$")
 _CRC_LINE = re.compile(r"^(.+?)[ \t]+([0-9A-Fa-f]{8})$")
 
@@ -67,6 +69,15 @@ def normalize_algorithm(raw: str) -> str:
 def algorithm_for_suffix(suffix: str) -> str | None:
     """按校验文件后缀返回算法；未知后缀返回 ``None``。"""
     return SUFFIX_ALGORITHMS.get(suffix.lower())
+
+
+def algorithm_for_digest(digest: str) -> str | None:
+    """按摘要长度推断算法；未知长度返回 ``None``。
+
+    供文件名后缀不可靠（例如 ``.txt``）时兜底：8→crc32、32→md5、40→sha1、
+    64→sha256、128→sha512。
+    """
+    return _LENGTH_ALGORITHMS.get(len(digest.strip()))
 
 
 def compute_crc32(path: Path) -> str:
