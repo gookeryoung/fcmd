@@ -14,6 +14,7 @@ from pathlib import Path
 __all__ = [
     "backup_folder",
     "collect_system_info",
+    "fcmd_home",
     "format_bytes",
     "kill_processes",
     "persist_env",
@@ -22,6 +23,12 @@ __all__ = [
     "which_commands",
     "write_text_file",
 ]
+
+
+def fcmd_home() -> Path:
+    """返回 ``${FCMD_HOME:-~/.fcmd}``；环境变量里的 ``~`` 会被展开。"""
+    raw = os.environ.get("FCMD_HOME")
+    return Path(raw).expanduser() if raw else Path.home() / ".fcmd"
 
 
 def kill_processes(names: list[str]) -> list[str]:

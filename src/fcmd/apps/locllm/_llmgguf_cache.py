@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from fcmd.apps.locllm._llmgguf import GgufPrecision, PrecisionSource
+from fcmd.infras.system import fcmd_home
 
 __all__ = ["GGUF_CACHE_SCHEMA_VERSION", "PrecisionCache", "default_cache_path"]
 
@@ -35,9 +36,7 @@ _SOURCES = frozenset({"metadata", "tensors", "filename", "unknown"})
 
 def default_cache_path() -> Path:
     """默认缓存文件：``${FCMD_HOME:-~/.fcmd}/cache/gguf-precision.json``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "cache" / "gguf-precision.json"
+    return fcmd_home() / "cache" / "gguf-precision.json"
 
 
 def _path_key(path: Path) -> str:

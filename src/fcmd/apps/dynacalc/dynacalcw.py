@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -19,6 +18,7 @@ from typing import Any
 import fcmd
 from fcmd.apps.dynacalc._solver import load_jobs
 from fcmd.console import print_error
+from fcmd.infras.system import fcmd_home
 
 __all__ = [
     "DynacalcSettings",
@@ -58,8 +58,7 @@ class DynacalcSettings:
 
 def config_path() -> Path:
     """``${FCMD_HOME:-~/.fcmd}/ui/dynacalcw.json``。"""
-    home = os.environ.get("FCMD_HOME") or str(Path.home() / ".fcmd")
-    return Path(home) / "ui" / "dynacalcw.json"
+    return fcmd_home() / "ui" / "dynacalcw.json"
 
 
 _TEXT_FIELDS = ("params", "model", "out", "template", "solver", "mesh_root", "mesh_level")

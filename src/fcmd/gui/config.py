@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcmd.gui.geometry import clamp_geometry, valid_geometry
+from fcmd.infras.system import fcmd_home
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -27,9 +27,7 @@ __all__ = ["clamp_geometry", "config_path", "read_settings", "valid_geometry", "
 
 def config_path(name: str) -> Path:
     """返回 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "ui" / f"{name}.json"
+    return fcmd_home() / "ui" / f"{name}.json"
 
 
 def read_settings(path: Path) -> dict[str, Any] | None:

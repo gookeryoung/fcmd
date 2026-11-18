@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, Final, cast
 import fcmd
 from fcmd.console import print_error
 from fcmd.infras.hashing import compute_file_hash
+from fcmd.infras.system import fcmd_home
 from fcmd.infras.text import display_width, pad_display
 
 if TYPE_CHECKING:
@@ -215,13 +216,6 @@ class RemoveReport:
 # ---------------------------------------------------------------------- #
 # 路径与字体清单
 # ---------------------------------------------------------------------- #
-def fcmd_home(env: Mapping[str, str] | None = None) -> Path:
-    """返回 ``FCMD_HOME``（默认 ``~/.fcmd``）。"""
-    values = os.environ if env is None else env
-    raw = values.get("FCMD_HOME")
-    return Path(raw) if raw else Path.home() / ".fcmd"
-
-
 def manifest_path() -> Path:
     """返回安装清单路径：``${FCMD_HOME:-~/.fcmd}/fonts/manifest.json``。"""
     return fcmd_home() / "fonts" / "manifest.json"

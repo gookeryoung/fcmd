@@ -160,6 +160,11 @@ class TestPaths:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         assert fcmd_home() == tmp_path / ".fcmd"
 
+    def test_fcmd_home_expands_tilde(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FCMD_HOME 里的 ``~`` 会展开为用户主目录。"""
+        monkeypatch.setenv("FCMD_HOME", "~/custom")
+        assert fcmd_home() == Path("~/custom").expanduser()
+
 
 # ============================================================================ #
 # 字体清单解析与格式化

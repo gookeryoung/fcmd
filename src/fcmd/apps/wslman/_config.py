@@ -6,13 +6,13 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from fcmd.gui import config as _gui_config
+from fcmd.infras.system import fcmd_home
 
 __all__ = ["WslmanConfig", "default_path", "load_config", "parse_config"]
 
@@ -37,9 +37,7 @@ class WslmanConfig:
 
 
 def default_path() -> Path:
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "wslman.json"
+    return fcmd_home() / "wslman.json"
 
 
 def load_config(path: Path | None = None) -> WslmanConfig:

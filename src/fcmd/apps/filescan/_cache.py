@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from fcmd.apps.filescan._engine import FileHit, RuleMatch
 from fcmd.apps.filescan._rules import ruleset_to_mapping
+from fcmd.infras.system import fcmd_home
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -74,9 +75,7 @@ _LOOKUP_BATCH = 400
 
 def default_cache_path() -> Path:
     """返回默认缓存文件路径：``${FCMD_HOME:-~/.fcmd}/cache/filescan-cache.db``。"""
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "cache" / "filescan-cache.db"
+    return fcmd_home() / "cache" / "filescan-cache.db"
 
 
 def _fingerprint_payload(ruleset: RuleSet, options: ScanOptions, mask: bool) -> dict[str, Any]:

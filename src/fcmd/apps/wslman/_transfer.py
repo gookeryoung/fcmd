@@ -22,6 +22,7 @@ from typing import TextIO
 from fcmd.apps.wslman._disk import format_bytes, volume_info
 from fcmd.apps.wslman._errors import WslmanError, check_failed, not_found, runtime_error
 from fcmd.infras.hashing import compute_file_hash
+from fcmd.infras.system import fcmd_home
 
 __all__ = [
     "ArchiveInfo",
@@ -230,9 +231,7 @@ class ProgressReporter:
 # 并发锁
 # ---------------------------------------------------------------------- #
 def default_lock_dir() -> Path:
-    home = os.environ.get("FCMD_HOME")
-    base = Path(home) if home else Path.home() / ".fcmd"
-    return base / "locks"
+    return fcmd_home() / "locks"
 
 
 def _safe_name(name: str) -> str:

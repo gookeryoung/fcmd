@@ -50,6 +50,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from fcmd.infras.system import fcmd_home
+
 __all__ = [
     "PRODUCTS_DIRNAME",
     "config_path",
@@ -83,12 +85,6 @@ _SERVE_KEYS = ("serve",)
 # ---------------------------------------------------------------------- #
 # 基础路径
 # ---------------------------------------------------------------------- #
-def fcmd_home() -> Path:
-    """``FCMD_HOME``（默认 ``~/.fcmd``）。"""
-    raw = os.environ.get("FCMD_HOME")
-    return Path(raw).expanduser() if raw else Path.home() / ".fcmd"
-
-
 def home_dir(home: Path | None = None) -> Path:
     """显式 ``home`` 优先，否则回落到 :func:`fcmd_home`。"""
     return home if home is not None else fcmd_home()
