@@ -20,6 +20,7 @@ import zipfile
 from collections import namedtuple
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
@@ -1188,8 +1189,6 @@ class TestEngine:
 
     def test_asset_names(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 只替换模块内的 os 引用，不改全局 os.name（否则失败报告渲染时 pathlib 会选错 Path 实现）。
-        from types import SimpleNamespace
-
         monkeypatch.setattr(llmengine, "os", SimpleNamespace(name="nt"))
         assert llmengine.engine_asset_names("b1", "cuda") == [
             "llama-b1-bin-win-cuda-13.5-x64.zip",
@@ -1198,7 +1197,8 @@ class TestEngine:
         assert llmengine.engine_asset_names("b1", "cpu") == ["llama-b1-bin-win-cpu-x64.zip"]
 
     def test_asset_names_non_windows(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(llmengine.os, "name", "posix")
+        # 同上：只替换模块内的 os 引用，避免全局 os.name 影响 pathlib / psutil 的平台分支。
+        monkeypatch.setattr(llmengine, "os", SimpleNamespace(name="posix"))
         with pytest.raises(ServeError, match="非 Windows"):
             llmengine.engine_asset_names("b1")
 
@@ -2877,7 +2877,8 @@ class TestServeMiscBranches:
             captured["kwargs"] = kwargs
             return _FakeProc(os.getpid())
 
-        monkeypatch.setattr(llmserve.os, "name", "posix")
+        # 只替换模块内的 os 引用，不改全局 os.name：后者会让 psutil 按 POSIX 分支导入而失败。
+        monkeypatch.setattr(llmserve, "os", SimpleNamespace(name="posix"))
 
         state = llmserve._launch_once(
             plan,
