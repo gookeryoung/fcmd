@@ -79,13 +79,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # PySide2 + xdist 在 Linux 退出阶段会卡住 worker；3.10 串行跑（用例量 < 1 万，仍在超时内）。
+          # 临时调试：只跑 3.10，串行 + 详细输出 + 单测超时 90s 打印线程栈。
           - python-version: "3.10"
-            pytest_args: '-p no:xdist -o addopts=""'
-          - python-version: "3.13"
-            pytest_args: "-n auto"
-          - python-version: "3.14"
-            pytest_args: "-n auto"
+            pytest_args: '-p no:xdist -o addopts="" -v -o faulthandler_timeout=90'
     steps:
       - uses: actions/checkout@v7
 
