@@ -437,4 +437,33 @@ def test_recommendation_html_highlights_name_params_and_perf() -> None:
     perf = recommendation_perf_html(recommendation)
     assert "解码 <b>42</b> tok/s" in perf
     assert "预填充 <b>16.2k</b> tok/s" in perf
-    assert "<b>实测</b>" in perf
+    assert "<b>实测</b>" not in perf
+
+
+def test_recommendation_row_uses_perf_tag() -> None:
+    """概览推荐行的「预测 / 实测」是胶囊标签，不混在性能小字里。"""
+    from PySide6.QtWidgets import QLabel
+
+    from fcmd.apps.locllm._locllmw_qt_overview import RecommendationRow
+    from fcmd.apps.locllm.llmbase import ModelEntry
+
+    recommendation = Recommendation(
+        model=ModelEntry(root=Path("/models"), path=Path("/models/demo.gguf"), size=1024),
+        profile="balanced",
+        context=8192,
+        kv_type="f16",
+        batch=512,
+        ubatch=256,
+        parallel=1,
+        tuning="默认",
+        decode_tps=10.0,
+        prompt_tps=100.0,
+        measured=False,
+        basis="对话 · 预测",
+        score=70,
+        score_parts=(20, 20, 15, 15),
+    )
+    row = RecommendationRow(recommendation)
+    tags = [label for label in row.findChildren(QLabel) if label.objectName() == "StatusTag"]
+    assert [tag.text() for tag in tags] == ["预测"]
+    assert tags[0].property("tone") == "accent"

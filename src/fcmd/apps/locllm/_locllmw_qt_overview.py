@@ -109,10 +109,9 @@ def recommendation_params_html(recommendation: Recommendation) -> str:
 def recommendation_perf_html(recommendation: Recommendation) -> str:
     """推荐行的性能摘要：小字，数值与来源加粗。"""
     rec = recommendation
-    source = "实测" if rec.measured else "预测"
     prompt = rec.prompt_tps / 1000
     prompt_text = f"{prompt:.1f}k" if prompt >= 1 else f"{rec.prompt_tps:.0f}"
-    return f"解码 <b>{rec.decode_tps:.0f}</b> tok/s · 预填充 <b>{prompt_text}</b> tok/s · <b>{source}</b>"
+    return f"解码 <b>{rec.decode_tps:.0f}</b> tok/s · 预填充 <b>{prompt_text}</b> tok/s"
 
 
 class ScoreBadge(QLabel):  # pragma: no cover - Qt 控件
@@ -161,11 +160,22 @@ class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(3)
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
         name = ElidedLabel(recommendation.model.path.name, parent=self)
         name.setObjectName("RecommendationName")
         name.setMinimumWidth(0)
         name.setToolTip(str(recommendation.model.path))
-        left.addWidget(name)
+        self.perf_tag = StatusTag(
+            "实测" if recommendation.measured else "预测",
+            tone="success" if recommendation.measured else "accent",
+            parent=self,
+        )
+        self.perf_tag.setToolTip("性能来自本地实测" if recommendation.measured else "性能按参考机器外推")
+        name_row.addWidget(name, 1)
+        name_row.addWidget(self.perf_tag, 0)
+        left.addLayout(name_row)
         params = QLabel(recommendation_params_html(recommendation), self)
         params.setObjectName("Hint")
         params.setTextFormat(Qt.TextFormat.RichText)
