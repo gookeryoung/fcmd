@@ -1431,7 +1431,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         labels = [option.display for option in options]
         choice, accepted = QInputDialog.getItem(self, "选择量化", "下载哪个量化：", labels, 0, False)
         if not accepted or not choice:
-            self.download_text.setText("已取消量化选择")
+            self.download_status.setVisible(False)
+            self.stop_download_button.setVisible(False)
+            self.download_bar.setValue(0)
+            self.download_text.clear()
+            self.state.status(f"{repo} · 已取消量化选择")
             self._log(f"已取消下载 {repo}：未选择量化")
             return
         index = labels.index(choice)

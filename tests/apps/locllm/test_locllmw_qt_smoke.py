@@ -713,6 +713,12 @@ def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPat
     page._choose_quant("org/demo", (ud, q5))
     assert calls[-1] == ("org/demo", q5.files)
 
+    page.download_status.setVisible(True)
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *_args, **_kwargs: ("", False))
+    page._choose_quant("org/demo", (ud, q5))
+    assert page.download_status.isHidden()
+    assert page.download_text.text() == ""
+
 
 def test_overview_scrolls_only_recommendation_list(window: Any) -> None:
     """概览不再整页滚动：页面高度不足时只由推荐列表内部滚动。"""
