@@ -2667,7 +2667,7 @@ class TestServewSettings:
         assert locllmw.resolve_geometry("1100x850+5000+5000", 1920, 1080) == "1100x850+820+230"
 
     def test_resolve_geometry_enforces_minimum_size(self) -> None:
-        assert locllmw.resolve_geometry("200x100+0+0", 1920, 1080) == "1000x800+0+0"
+        assert locllmw.resolve_geometry("200x100+0+0", 1920, 1080) == "1000x600+0+0"
 
     def test_resolve_geometry_falls_back_to_default_size(self) -> None:
         assert locllmw.resolve_geometry(None, 1920, 1080) == "1080x880"

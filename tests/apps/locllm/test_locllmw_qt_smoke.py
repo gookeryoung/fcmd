@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from fcmd.apps.locllm import _locllmw_qt_state as qt_state
 from fcmd.apps.locllm._locllmw_qt_window import LocllmWindow, create_application
@@ -49,6 +49,14 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     win.monitor_page.stop()
     yield win
     win.close()
+
+
+def test_window_allows_shrinking_height(window: Any) -> None:
+    """窗口高度下限放宽到 600，用户可以继续缩小而不是卡在 780。"""
+    assert window.minimumHeight() == 600
+    window.resize(1040, 600)
+    QApplication.processEvents()
+    assert window.height() == 600
 
 
 def test_first_page_is_built_immediately(window: Any) -> None:

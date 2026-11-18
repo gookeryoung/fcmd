@@ -32,7 +32,7 @@ __all__ = ["LocllmWindow", "create_application", "run_qt"]
 TITLE = "LocLLM · 本地 LLM 服务"
 NAV_TITLE = "LocLLM"
 DEFAULT_SIZE = (1180, 900)
-MIN_SIZE = (1040, 780)
+MIN_SIZE = (1040, 600)
 
 PAGES = (
     ("overview", "概览", "服务状态与快捷入口"),

@@ -108,6 +108,8 @@
   采样 / 生成 / 下载线程必须在这里停掉。
 - 窗口位置与大小：`geometry` 存客户区（`QWidget.geometry()`，不含标题栏与边框），
   恢复走 `restore_geometry` 的 `setGeometry`，两侧同一口径，避免每次启动叠加窗口装饰导致窗口漂移。
+  locllmw 主窗口高度下限放宽到 600px（`MIN_SIZE` / `MIN_HEIGHT` 同步），页面继续靠
+  `PageScroll` 吸收压缩，不靠抬高窗口下限换取布局空间。
 - 后台加载：需要等待的场景统一挂到状态栏右侧（`LocllmState.begin_loading` /
   `end_loading`，窗口用 `LoadingBar` 渲染说明 + 忙碌动画 + 已用时）；不要把阻塞
   扫描留在页面构造函数里，也不要在内容区顶部放大段进度条盖住标题或分页控件。
