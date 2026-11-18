@@ -34,19 +34,27 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 from collections.abc import Sequence
 
 from fcmd import __version__
 from fcmd.cli._common import _BUILTIN_COMMANDS, print_unknown_tool
-from fcmd.core.exit_codes import ExitCode
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查，运行期不导入 argparse
+    import argparse
 
 __all__ = ["FcmdApp", "main"]
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """构建参数解析器（保留 P0 兼容）。"""
+    """构建参数解析器（保留 P0 兼容）。
+
+    ``argparse`` 改为函数内导入：``--version`` / 工具路由等常见路径不构建
+    解析器，避免为一次导入付出约 5ms 的固定成本。
+    """
+    import argparse
+
     parser = argparse.ArgumentParser(
         prog="fcmd",
         description="极速 Python 工具集应用：DAG 任务调度 + 组合 CLI。",
@@ -94,6 +102,8 @@ class FcmdApp:
             ensure_tools_discovered()
             resolved = resolve_tool(first)
         if resolved is None:
+            from fcmd.core.exit_codes import ExitCode
+
             print_unknown_tool(first)
             return int(ExitCode.USAGE)
 
@@ -152,6 +162,7 @@ class FcmdApp:
         if error is not None:
             # OSError：原生动态库缺失，与 ImportError 同样友好报错
             from fcmd.console import print_error
+            from fcmd.core.exit_codes import ExitCode
 
             print_error(
                 f"加载工具 {tool_name!r} 失败: {error}",
@@ -161,6 +172,7 @@ class FcmdApp:
             return int(ExitCode.FAILURE)
         if tool_name not in _TOOL_MODULES and tool_name not in _TOOL_REGISTRY:
             from fcmd.console import print_error
+            from fcmd.core.exit_codes import ExitCode
 
             print_error(
                 f"工具 {tool_name!r} 无模块映射",

@@ -14,9 +14,12 @@ from __future__ import annotations
 import os
 import sys
 import time
-from collections.abc import Mapping, Sequence
 from types import ModuleType
-from typing import Any
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查，运行期不导入 typing / collections.abc
+    from collections.abc import Mapping, Sequence
+    from typing import Any
 
 __all__ = ["lazy_dir", "lazy_getattr", "slow_import_threshold_ms", "timed_import"]
 

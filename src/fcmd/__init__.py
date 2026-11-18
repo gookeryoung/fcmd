@@ -18,13 +18,23 @@
     print(report["double"])  # [2, 4, 6]
 """
 
-from typing import Any
+from __future__ import annotations
+
+import sys
 
 from fcmd._lazyload import lazy_dir, lazy_getattr
 from fcmd.core.hooks import register_discovery_hook
-from fcmd.gui.qt._pyside_compat import install as _install_qt_compat
 
-_install_qt_compat()
+if sys.version_info < (3, 11):  # pragma: no cover - 仅 Python 3.10 需要
+    # 仅 3.10 需要 PySide6 → PySide2 映射；其它版本跳过该模块导入与安装，
+    # 避免 CLI 冷启动付出 importlib.abc / importlib.util 的固定成本。
+    from fcmd.gui.qt._pyside_compat import install as _install_qt_compat
+
+    _install_qt_compat()
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查，运行期不导入 typing
+    from typing import Any
 
 __version__ = "0.3.13"
 

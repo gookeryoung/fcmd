@@ -23,9 +23,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fcmd._lazyload import lazy_dir, lazy_getattr
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查，运行期不导入 typing
+    from typing import Any
 
 __all__ = [
     "Context",
