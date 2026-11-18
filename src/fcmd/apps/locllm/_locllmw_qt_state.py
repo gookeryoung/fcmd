@@ -7,6 +7,7 @@ Qt 窗口把「跨页共享的数据」放在这里，页面只订阅信号、�
 - :attr:`LocllmState.servicesChanged`：运行中的服务列表变化（启动 / 停止后刷新）；
 - :attr:`LocllmState.selectionChanged`：当前选中模型变化，运行页据此回填服务名；
 - :attr:`LocllmState.statusText` / :attr:`logLine`：状态栏与服务日志窗口；
+- :attr:`LocllmState.performanceChanged`：监测采样算出的 tok/s 与请求队列指标（概览实时性能）；
 - :attr:`LocllmState.navigateRequested`：跨页跳转（「去设置」这类入口）；
 - :attr:`LocllmState.sampleUpdated` / :attr:`sampleCapacityChanged`：系统采样与
   显存余量变化（概览占用条、模型列表的「需释放显存」标注随之刷新）；
@@ -128,6 +129,7 @@ class LocllmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     logLine = Signal(str)
     statusText = Signal(str)
     sampleUpdated = Signal(object)
+    performanceChanged = Signal(object)
     sampleCapacityChanged = Signal()
     recommendationApplied = Signal(object)
     busyChanged = Signal(bool)

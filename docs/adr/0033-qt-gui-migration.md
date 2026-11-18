@@ -50,12 +50,12 @@
 
 | 页面 | Qt 实现 | 复用逻辑 |
 |---|---|---|
-| 概览 | `_locllmw_qt_overview`：硬件卡（规格 + GPU / CPU / 内存负载格图）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` |
+| 概览 | `_locllmw_qt_overview`：系统信息（规格 + 实时性能 + GPU / CPU / 内存负载格图）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` / `_locllmw_monitor` |
 | 模型 | `_locllmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
 | 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
 | 实验室 | `_locllmw_qt_lab`：四张规划卡片 | — |
-| 监测 | `_locllmw_qt_monitor`：`/metrics` + GPU / CPU / 内存负载卡 | `_locllmw_monitor` |
+| 监测 | `_locllmw_qt_monitor`：监测目标摘要 + `/metrics` / 系统负载采样（展示在概览系统信息） | `_locllmw_monitor` |
 | 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
 
 服务日志与性能测试不占分页：顶部「帮助」菜单打开 `_locllmw_qt_log` / `_locllmw_qt_bench`

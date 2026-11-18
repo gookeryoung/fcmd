@@ -489,7 +489,15 @@ def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
     page = window.page("monitor")
     overview = window.overview
     assert not hasattr(page, "_gpu_bar")
+    assert not hasattr(page, "_gen_rate_label")
     assert not hasattr(overview, "_gpu_gauge")
+    assert overview._recommend_list.parent().title() == "智能推荐"
+    # 负载块不再支持展开：标题后直接用小字提示关键信息。
+    for name in ("_gpu_toggle", "_cpu_toggle", "_mem_toggle", "_gpu_metrics", "_cpu_metrics", "_mem_metrics"):
+        assert not hasattr(overview, name)
+    assert overview._gpu_hint.fullText() == "等待采样…"
+    assert overview._cpu_hint.fullText() == "等待采样…"
+    assert overview._mem_hint.fullText() == "等待采样…"
     sample = LoadSample(
         cpu=41.0,
         cpu_freq=3600.0,
@@ -526,21 +534,23 @@ def test_overview_load_blocks_and_monitor_rate_display(window: Any) -> None:
     assert overview._mem_bar.percent() == 41.0
     assert overview._gpu_percent.property("band") == "warning"
     assert overview._cpu_percent.property("band") == "success"
-    assert overview._gpu_vram_bar.percent() == pytest.approx(18000 / 24576 * 100)
-    assert overview._gpu_vram_value.text() == "73.2 %"
-    assert overview._swap_bar.percent() == 25.0
-    assert overview._swap_value.text() == "25.0 %"
-    assert overview._gpu_metrics.value("gpu_temp") == "62 °C"
-    assert "41.0 %" in overview._mem_metrics.value("memory")
+    assert "显存 73%" in overview._gpu_hint.fullText()
+    assert "210 / 450 W" in overview._gpu_hint.fullText()
+    assert "频率 3600 MHz" in overview._cpu_hint.fullText()
+    assert "服务 12.5 %" in overview._cpu_hint.fullText()
+    assert overview._mem_hint.fullText().startswith("13.00 GB / 32.00 GB")
+    assert "交换 25%" in overview._mem_hint.fullText()
 
     # 服务指标：生成 tok/s 单独大字展示，其余进次要网格。
     metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
     page._apply_sample((sample, metrics, None))
-    assert page._gen_rate_label.objectName() == "RateValue"
-    assert page._gen_rate_label.text() == "0.0"
-    assert page._metrics.value("prompt_rate") == "0.0 tok/s"
-    assert page._metrics.value("processing") == "1"
-    assert page._metrics.value("kv") == "18.0 %"
+    assert overview._gen_rate_label.objectName() == "RateValue"
+    assert overview._gen_rate_label.text() == "0.0"
+    assert overview._performance_metrics.value("prompt_rate") == "0.0 tok/s"
+    assert overview._performance_metrics.value("processing") == "1"
+    assert overview._performance_metrics.value("kv") == "18.0 %"
+    assert overview._performance_badge.text() == "监控中"
+    assert overview._performance_badge.tone() == "success"
 
 
 def test_monitor_layout_keeps_status_in_header(window: Any) -> None:

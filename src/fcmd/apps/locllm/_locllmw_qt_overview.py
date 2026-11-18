@@ -40,6 +40,7 @@ from fcmd.gui.qt.widgets import (
     PageScroll,
     RowListWidget,
     SegmentBar,
+    StatusTag,
     button,
     hint_label,
     link_button,
@@ -59,24 +60,14 @@ __all__ = [
     "score_band_label",
 ]
 
-#: 硬件卡里的实时负载块：主条 + 副条（显存 / 交换）+ 次要参数
-_GPU_DETAILS = (
-    ("显存", "gpu_vram"),
-    ("服务显存", "gpu_proc_vram"),
-    ("温度", "gpu_temp"),
-    ("功耗", "gpu_power"),
-    ("风扇", "gpu_fan"),
-    ("核心频率", "gpu_clock"),
-)
-_CPU_DETAILS = (
-    ("频率", "cpu_freq"),
-    ("服务 CPU", "proc_cpu"),
-    ("线程", "proc_threads"),
-)
-_MEMORY_DETAILS = (
-    ("已用", "memory"),
-    ("服务内存", "proc_mem"),
-    ("运行时长", "uptime"),
+#: 系统信息右侧的实时性能次要指标（生成 tok/s 单独大字展示）
+_PERFORMANCE_METRICS = (
+    ("提示速率", "prompt_rate"),
+    ("处理中请求", "processing"),
+    ("排队请求", "deferred"),
+    ("KV 使用率", "kv"),
+    ("累计生成 tokens", "predicted"),
+    ("累计提示 tokens", "prompt"),
 )
 
 _SCORE_BAND_LABELS = {
@@ -218,6 +209,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         state.hardwareFailed.connect(self._on_hardware_failed)
         state.modelsChanged.connect(lambda _outcome: self.refresh_recommendations())
         state.sampleUpdated.connect(self.apply_sample)
+        state.performanceChanged.connect(self.apply_performance)
         self.refresh_hardware()
         self.refresh_recommendations()
 
@@ -279,37 +271,72 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         grid.addWidget(row_label("内存"), 2, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(memory_value, 2, 1)
         self._hardware_values["memory"] = memory_value
-        card.body.addLayout(grid)
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(16)
+        top.addLayout(grid, 1)
+        top.addWidget(self._build_performance(card), 1)
+        card.body.addLayout(top)
 
         loads = QHBoxLayout()
         loads.setContentsMargins(0, 0, 0, 0)
         loads.setSpacing(8)
-        gpu_block, self._gpu_percent, self._gpu_bar, self._gpu_metrics, gpu_meters = self._build_load_block(
-            "GPU", _GPU_DETAILS, card, extra=("显存",)
-        )
-        self._gpu_vram_bar, self._gpu_vram_value = gpu_meters["显存"]
+        gpu_block, self._gpu_percent, self._gpu_bar, self._gpu_hint = self._build_load_block("GPU", card)
         loads.addWidget(gpu_block, 1)
-        cpu_block, self._cpu_percent, self._cpu_bar, self._cpu_metrics, _cpu_meters = self._build_load_block(
-            "CPU", _CPU_DETAILS, card
-        )
+        cpu_block, self._cpu_percent, self._cpu_bar, self._cpu_hint = self._build_load_block("CPU", card)
         loads.addWidget(cpu_block, 1)
-        mem_block, self._mem_percent, self._mem_bar, self._mem_metrics, mem_meters = self._build_load_block(
-            "内存", _MEMORY_DETAILS, card, extra=("交换",)
-        )
-        self._swap_bar, self._swap_value = mem_meters["交换"]
+        mem_block, self._mem_percent, self._mem_bar, self._mem_hint = self._build_load_block("内存", card)
         loads.addWidget(mem_block, 1)
         card.body.addLayout(loads)
         return card
 
+    def _build_performance(self, parent: QWidget) -> QWidget:
+        """系统信息右侧的实时性能：生成 tok/s 主视觉 + 服务 / 请求次要指标。
+
+        数据来自监测页每秒采样算出的 ``performanceChanged``；这里只负责展示，
+        与左侧规格共用一行，避免系统信息卡片右侧留白。
+        """
+        panel = QWidget(parent)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel("实时性能", panel)
+        title.setObjectName("SectionTitle")
+        self._performance_badge = StatusTag("等待采样…", tone="muted", parent=panel)
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self._performance_badge)
+        layout.addLayout(header)
+
+        value_row = QHBoxLayout()
+        value_row.setContentsMargins(0, 0, 0, 0)
+        value_row.setSpacing(6)
+        self._gen_rate_label = QLabel("-", panel)
+        self._gen_rate_label.setObjectName("RateValue")
+        self._gen_rate_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        unit = QLabel("tok/s", panel)
+        unit.setObjectName("RateUnit")
+        value_row.addWidget(self._gen_rate_label, 0, Qt.AlignmentFlag.AlignBottom)
+        value_row.addWidget(unit, 0, Qt.AlignmentFlag.AlignBottom)
+        value_row.addWidget(hint_label("10s 平滑", wrap=False), 0, Qt.AlignmentFlag.AlignBottom)
+        value_row.addStretch(1)
+        layout.addLayout(value_row)
+
+        self._performance_metrics = MetricGrid(_PERFORMANCE_METRICS, columns=3, parent=panel)
+        layout.addWidget(self._performance_metrics)
+        layout.addStretch(1)
+        return panel
+
     def _build_load_block(
         self,
         title: str,
-        keys: tuple[tuple[str, str], ...],
         parent: QWidget,
-        *,
-        extra: tuple[str, ...] = (),
-    ) -> tuple[QFrame, QLabel, SegmentBar, MetricGrid, dict[str, tuple[SegmentBar, QLabel]]]:
-        """单个负载块：标题 + 占用率，主格图后可按需追加副指标格图。"""
+    ) -> tuple[QFrame, QLabel, SegmentBar, ElidedLabel]:
+        """单个负载块：标题 + 小字关键信息 + 占用率 + 主格图。"""
         block = QFrame(parent)
         block.setObjectName("LoadBlock")
         block.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -322,45 +349,23 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         header.setSpacing(8)
         heading = QLabel(title, block)
         heading.setObjectName("SectionTitle")
+        hint = ElidedLabel("等待采样…", parent=block)
+        hint.setObjectName("Hint")
         percent = QLabel("-", block)
         percent.setObjectName("LoadValue")
         percent.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         header.addWidget(heading)
-        header.addStretch(1)
+        header.addWidget(hint, 1)
         header.addWidget(percent)
         layout.addLayout(header)
 
         bar = SegmentBar(parent=block)
         layout.addWidget(bar)
-        meters: dict[str, tuple[SegmentBar, QLabel]] = {}
-        for caption in extra:
-            row, meter_bar, meter_value = self._build_meter_row(caption, block)
-            layout.addWidget(row)
-            meters[caption] = (meter_bar, meter_value)
-        details = MetricGrid(keys, columns=1, parent=block)
-        layout.addWidget(details)
-        return block, percent, bar, details, meters
-
-    def _build_meter_row(self, caption: str, parent: QWidget) -> tuple[QWidget, SegmentBar, QLabel]:
-        """副指标行：标签 + 分段格图 + 百分比并排，例如显存 / 交换。"""
-        row = QWidget(parent)
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        label = hint_label(caption, wrap=False)
-        label.setMinimumWidth(32)
-        bar = SegmentBar(segments=20, height=10, parent=row)
-        value = QLabel("-", row)
-        value.setObjectName("MeterValue")
-        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        value.setMinimumWidth(56)
-        layout.addWidget(label)
-        layout.addWidget(bar, 1)
-        layout.addWidget(value)
-        return row, bar, value
+        layout.addStretch(1)
+        return block, percent, bar, hint
 
     def _build_recommendations(self) -> Card:
-        card = Card("智能推荐（按评分排序；性能测试后优先用实测值）")
+        card = Card("智能推荐")
         self._recommend_list = RecommendationList(card)
         self._recommend_list.setObjectName("RecommendationList")
         self._recommend_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
@@ -459,54 +464,57 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._detected_label.setText("")
 
     def apply_sample(self, sample: object) -> None:
-        """用系统采样刷新 GPU / CPU / 内存负载块（主条 + 显存 / 交换副条）。"""
+        """用系统采样刷新 GPU / CPU / 内存负载块（关键信息小字 + 主格图）。"""
         if not isinstance(sample, LoadSample):
             return
-        load_values = _format_load(sample)
-        gpu_values = _format_gpu(sample.gpu)
         gpu = sample.gpu
-        self._apply_load_block(
-            self._gpu_percent,
-            self._gpu_bar,
-            self._gpu_metrics,
-            None if gpu is None else gpu.utilization,
-            {key: gpu_values[key] for _label, key in _GPU_DETAILS},
-        )
-        self._apply_meter(self._gpu_vram_bar, self._gpu_vram_value, gpu_memory_percent(gpu))
-        self._apply_load_block(
-            self._cpu_percent,
-            self._cpu_bar,
-            self._cpu_metrics,
-            sample.cpu,
-            {key: load_values[key] for _label, key in _CPU_DETAILS},
-        )
-        self._apply_load_block(
-            self._mem_percent,
-            self._mem_bar,
-            self._mem_metrics,
-            sample.memory_percent if sample.memory_total else None,
-            {key: load_values[key] for _label, key in _MEMORY_DETAILS},
-        )
-        self._apply_meter(self._swap_bar, self._swap_value, swap_percent(sample))
+        gpu_values = _format_gpu(gpu)
+        gpu_vram = gpu_memory_percent(gpu)
+        gpu_parts = [
+            "未检测到 GPU" if gpu is None else f"显存 {gpu_vram:.0f}%" if gpu_vram is not None else "显存 -",
+            gpu_values["gpu_power"],
+        ]
+        self._set_hint(self._gpu_hint, gpu_parts)
+        self._apply_load_block(self._gpu_percent, self._gpu_bar, None if gpu is None else gpu.utilization)
 
-    def _apply_load_block(
-        self,
-        percent_label: QLabel,
-        bar: SegmentBar,
-        details: MetricGrid,
-        percent: float | None,
-        values: dict[str, str],
-    ) -> None:
-        """刷新一块负载：占用率文字 / 主格图 / 次要参数一起更新。"""
+        load_values = _format_load(sample)
+        cpu_parts = []
+        if load_values["cpu_freq"] != "-":
+            cpu_parts.append(f"频率 {load_values['cpu_freq']}")
+        if load_values["proc_cpu"] != "-":
+            cpu_parts.append(f"服务 {load_values['proc_cpu']}")
+        self._set_hint(self._cpu_hint, cpu_parts)
+        self._apply_load_block(self._cpu_percent, self._cpu_bar, sample.cpu)
+
+        memory_parts = [
+            f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}"
+            if sample.memory_total
+            else "已用 -",
+        ]
+        swap = swap_percent(sample)
+        memory_parts.append("交换 -" if swap is None else f"交换 {swap:.0f}%")
+        self._set_hint(self._mem_hint, memory_parts)
+        self._apply_load_block(self._mem_percent, self._mem_bar, sample.memory_percent if sample.memory_total else None)
+
+    @staticmethod
+    def _set_hint(label: QLabel, parts: list[str]) -> None:
+        """拼接标题后的小字关键信息；占位 ``-`` 不参与拼接。"""
+        label.setText(" · ".join(part for part in parts if part and part != "-"))
+
+    def apply_performance(self, payload: object) -> None:
+        """刷新系统信息右侧的实时性能（监测页采样信号驱动）。"""
+        if not isinstance(payload, dict):
+            return
+        gen_rate = payload.get("gen_rate", "-")
+        self._gen_rate_label.setText(str(gen_rate))
+        self._performance_metrics.set_values({key: str(payload.get(key, "-")) for _label, key in _PERFORMANCE_METRICS})
+        tone = str(payload.get("tone", "muted"))
+        self._performance_badge.set_status(str(payload.get("monitor", "等待采样…")), tone)
+
+    def _apply_load_block(self, percent_label: QLabel, bar: SegmentBar, percent: float | None) -> None:
+        """刷新一块负载：占用率文字与主格图同步。"""
         percent_label.setText("-" if percent is None else f"{percent:.0f} %")
         self._set_band(percent_label, segment_band(percent))
-        bar.set_percent(percent)
-        details.set_values(values)
-
-    def _apply_meter(self, bar: SegmentBar, value: QLabel, percent: float | None) -> None:
-        """副指标（显存 / 交换）：百分比文字与格图同步，缺失时显示 ``-`` 并清空格图。"""
-        value.setText("-" if percent is None else f"{percent:.1f} %")
-        self._set_band(value, segment_band(percent))
         bar.set_percent(percent)
 
     def _set_band(self, label: QLabel, band: str) -> None:

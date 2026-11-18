@@ -15,9 +15,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
@@ -35,7 +34,6 @@ from fcmd.apps.locllm._locllmw_monitor import (
 from fcmd.apps.locllm.llmbase import ServeError, ServeState
 from fcmd.gui.qt.widgets import (
     Card,
-    MetricGrid,
     PageScroll,
     StatusTag,
     hint_label,
@@ -48,17 +46,6 @@ if TYPE_CHECKING:
     from fcmd.apps.locllm._locllmw_qt_state import LocllmState
 
 __all__ = ["MonitorPage", "sample_once"]
-
-#: 实时性能的次要指标；生成 tok/s 单独用大字号展示，不放进网格
-SECONDARY_METRIC_KEYS = (
-    ("提示速率", "prompt_rate"),
-    ("处理中请求", "processing"),
-    ("排队请求", "deferred"),
-    ("KV 使用率", "kv"),
-    ("累计生成 tokens", "predicted"),
-    ("累计提示 tokens", "prompt"),
-    ("采样状态", "monitor"),
-)
 
 
 def sample_once(state: ServeState | None) -> tuple[LoadSample, llmserve.ServeMetrics | None, str | None]:
@@ -115,7 +102,6 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         outer.addWidget(scroll)
 
         layout.addWidget(self._build_target())
-        layout.addWidget(self._build_metrics())
         layout.addStretch(1)
 
     def _build_target(self) -> Card:
@@ -156,41 +142,6 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         )
         return card
 
-    def _build_metrics(self) -> Card:
-        """实时性能：生成 tok/s 做主视觉，其余服务指标用次要小字网格。"""
-        card = Card("实时性能")
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(16)
-
-        primary = QVBoxLayout()
-        primary.setContentsMargins(0, 0, 0, 0)
-        primary.setSpacing(0)
-        primary.addWidget(hint_label(f"生成速率（{RATE_WINDOW_SECONDS:.0f}s 平滑）", wrap=False))
-        value_row = QHBoxLayout()
-        value_row.setContentsMargins(0, 0, 0, 0)
-        value_row.setSpacing(6)
-        self._gen_rate_label = QLabel("-", card)
-        self._gen_rate_label.setObjectName("RateValue")
-        self._gen_rate_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        unit = QLabel("tok/s", card)
-        unit.setObjectName("RateUnit")
-        value_row.addWidget(self._gen_rate_label, 0, Qt.AlignmentFlag.AlignBottom)
-        value_row.addWidget(unit, 0, Qt.AlignmentFlag.AlignBottom)
-        value_row.addStretch(1)
-        primary.addLayout(value_row)
-        row.addLayout(primary, 0)
-
-        divider = QFrame(card)
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Plain)
-        row.addWidget(divider)
-
-        self._metrics = MetricGrid(SECONDARY_METRIC_KEYS, columns=3, parent=card)
-        row.addWidget(self._metrics, 1)
-        card.body.addLayout(row)
-        return card
-
     # ------------------------------------------------------------------ #
     # 采样
     # ------------------------------------------------------------------ #
@@ -205,16 +156,32 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         target = self._current_state()
         if target is None:
             self._target_label.setText("未选择运行中的服务：仅采样系统负载")
-            self._gen_rate_label.setText("-")
-            self._metrics.set_value("monitor", "服务未运行（仅采样系统负载）")
             self._set_monitor_badge("仅系统负载", "warning")
+            self.state.performanceChanged.emit(self._empty_performance("服务未运行（仅系统负载）", "warning"))
             return
         self._target_label.setText(f"服务：{target.name} · {target.base_url}")
-        self._set_monitor_badge("等待采样…", "hint")
+        self._set_monitor_badge("等待采样…", "muted")
+        self.state.performanceChanged.emit(self._empty_performance("等待采样…", "muted"))
 
     def _set_monitor_badge(self, text: str, tone: str) -> None:
         """状态徽标：用胶囊标签显示监控 / 仅系统负载 / 采样失败。"""
         self._monitor_badge.set_status(text, tone)
+
+    @staticmethod
+    def _empty_performance(status: str, tone: str) -> dict[str, str]:
+        """无服务 / 未采样时的实时性能占位负载（概览系统信息右侧使用）。"""
+        payload = {
+            "gen_rate": "-",
+            "prompt_rate": "-",
+            "processing": "-",
+            "deferred": "-",
+            "kv": "-",
+            "predicted": "-",
+            "prompt": "-",
+        }
+        payload["monitor"] = status
+        payload["tone"] = tone
+        return payload
 
     def _current_state(self) -> ServeState | None:
         alive = self.state.alive_states
@@ -242,21 +209,17 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.sampleUpdated.emit(load)
         self._sync_free_vram(load.gpu)
         if metrics is None:
-            self._gen_rate_label.setText("-")
-            for _label, key in SECONDARY_METRIC_KEYS:
-                if key != "monitor":
-                    self._metrics.set_value(key, "-")
             if error is not None:
-                self._metrics.set_value("monitor", "采样失败: " + error[:60])
                 self._set_monitor_badge("采样失败", "danger")
+                self.state.performanceChanged.emit(self._empty_performance("采样失败: " + error[:60], "danger"))
             else:
-                self._metrics.set_value("monitor", "服务未运行（仅采样系统负载）")
                 self._set_monitor_badge("仅系统负载", "warning")
+                self.state.performanceChanged.emit(self._empty_performance("服务未运行（仅系统负载）", "warning"))
             return
         gen_rate, prompt_rate = self._rates.update(time.monotonic(), metrics.predicted_tokens, metrics.prompt_tokens)
-        self._gen_rate_label.setText(f"{gen_rate:.1f}")
-        self._metrics.set_values(
+        self.state.performanceChanged.emit(
             {
+                "gen_rate": f"{gen_rate:.1f}",
                 "prompt_rate": f"{prompt_rate:.1f} tok/s",
                 "processing": f"{metrics.processing:.0f}",
                 "deferred": f"{metrics.deferred:.0f}",
@@ -264,6 +227,7 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
                 "predicted": f"{metrics.predicted_tokens:.0f}",
                 "prompt": f"{metrics.prompt_tokens:.0f}",
                 "monitor": "监控中",
+                "tone": "success",
             }
         )
         self._set_monitor_badge("监控中", "success")
