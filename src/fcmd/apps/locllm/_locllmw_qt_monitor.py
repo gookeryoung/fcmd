@@ -1,4 +1,4 @@
-"""locllmw（Qt）监测页：实时性能、系统负载、GPU、性能测试与日志。
+"""locllmw（Qt）监测页：实时性能与系统负载（GPU / CPU / 内存）。
 
 采样沿用既有口径：服务运行时每秒抓一次 ``/metrics`` 并按时间窗口平滑
 token 速率（:class:`fcmd.apps.locllm._locllmw_monitor.RateWindow`），同时用
@@ -12,38 +12,18 @@ GUI 用 ``QTimer`` 每秒投递一个后台任务，任务未完成时跳过下�
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QMessageBox,
-    QSpinBox,
-    QTableWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from fcmd.apps.locllm import llmenv, llmserve
-from fcmd.apps.locllm._locllmw_bench import (
-    BENCH_CHECKED,
-    BENCH_UNCHECKED,
-    RESULT_COLUMNS,
-    SCENARIOS,
-    ScenarioResult,
-    checked_scenarios,
-    endpoint_from_states,
-    format_result_csv,
-    format_result_row,
-    run_scenario,
-)
+from fcmd.apps.locllm import llmserve
 from fcmd.apps.locllm._locllmw_monitor import (
     RATE_WINDOW_SECONDS,
     GpuSample,
@@ -53,19 +33,14 @@ from fcmd.apps.locllm._locllmw_monitor import (
     _format_load,
     _sample_load,
 )
-from fcmd.apps.locllm.llmbase import Endpoint, ServeError, ServeState
+from fcmd.apps.locllm.llmbase import ServeError, ServeState
 from fcmd.gui.qt.widgets import (
     Card,
-    Collapsible,
-    FormGrid,
     MetricGrid,
     PageScroll,
     SegmentBar,
-    button,
     hint_label,
     link_button,
-    make_table,
-    make_table_item,
     segment_band,
     value_label,
 )
@@ -137,46 +112,6 @@ def _attach_process(pid: int) -> Any | None:
         return None
 
 
-class _BenchBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """性能测试后台线程 → GUI 的信号桥。"""
-
-    result = Signal(object)
-    progress = Signal(int, int, str)
-    finished = Signal(bool)
-
-
-def _bench_worker(  # noqa: PLR0913, PLR0917 - 参数即测试口径，显式汇总成一次投递
-    endpoint: Endpoint,
-    scenarios: list[Any],
-    repeat: int,
-    timeout: float,
-    max_tokens: int | None,
-    cancel: Any,
-    bridge: _BenchBridge,
-) -> None:  # pragma: no cover - 线程体
-    """后台逐个执行场景，把结果与进度投回 GUI 线程。"""
-    model_path = ""
-    for state in llmenv.list_states():
-        if state.endpoint.base_url == endpoint.base_url and llmserve.process_alive(state.pid, state.create_time):
-            model_path = state.model
-            break
-    total = len(scenarios)
-    for index, scenario in enumerate(scenarios, start=1):
-        if cancel.is_set():
-            break
-        bridge.progress.emit(index, total, scenario.label)
-        result = run_scenario(
-            endpoint,
-            scenario,
-            repeat=repeat,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            cancel=cancel,
-        )
-        bridge.result.emit((result, model_path))
-    bridge.finished.emit(cancel.is_set())
-
-
 class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
     """监测页：指标 / 负载 / GPU / 性能测试 / 日志。"""
 
@@ -188,9 +123,6 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         self._rates = RateWindow()
         self._inflight = False
         self._timer: QTimer | None = None
-        self._bench_cancel: Any = None
-        self._bench_running = False
-        self._bench_rows: list[tuple[str, ...]] = []
         self._build()
         self.state.servicesChanged.connect(lambda _states: self._sync_target())
         self._timer = periodic(self, 1000, self._tick)
@@ -209,10 +141,6 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(self._build_target())
         layout.addWidget(self._build_metrics())
         layout.addLayout(self._build_load_gpu())
-
-        self._bench = Collapsible("性能测试（短对话 / 长输出 / 代码补全 / 长上下文 / 并发）", expanded=False)
-        self._build_bench(self._bench.content)
-        layout.addWidget(self._bench)
         layout.addStretch(1)
 
     def _build_target(self) -> Card:
@@ -340,108 +268,6 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         card.body.addWidget(details)
         card.body.addStretch(1)
         return card, percent, bar, details
-
-    def _build_bench(self, parent: QWidget) -> None:
-        """性能测试分区：场景与参数并排，操作行与结果标题分行，结果表保底可见。
-
-        参照运行页 / 设置页的表单布局：参数用右对齐标签的两列表单，与场景表
-        左右分栏，避免「场景表 + 参数卡片 + 操作行」各占一整行把结果表挤出视口。
-        """
-        body = self._bench.body
-
-        top = QHBoxLayout()
-        top.setContentsMargins(0, 0, 0, 0)
-        top.setSpacing(12)
-
-        self._scenario_table = QTableWidget(len(SCENARIOS), 5, parent)
-        self._scenario_table.setHorizontalHeaderLabels(["选", "场景", "输入", "输出上限", "说明"])
-        self._scenario_table.verticalHeader().setVisible(False)
-        self._scenario_table.setAlternatingRowColors(True)
-        self._scenario_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._scenario_items: list[QCheckBox] = []
-        for row, scenario in enumerate(SCENARIOS):
-            checkbox = QCheckBox(self._scenario_table)
-            checkbox.setChecked(True)
-            holder = QWidget(self._scenario_table)
-            holder_layout = QHBoxLayout(holder)
-            holder_layout.setContentsMargins(0, 0, 0, 0)
-            holder_layout.addWidget(checkbox)
-            holder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._scenario_table.setCellWidget(row, 0, holder)
-            self._scenario_items.append(checkbox)
-            values = (
-                scenario.label,
-                "默认短提示" if not scenario.prompt_tokens else f"约 {scenario.prompt_tokens} tok",
-                f"{scenario.max_tokens} tok",
-                scenario.detail,
-            )
-            for column, text in enumerate(values, start=1):
-                self._scenario_table.setItem(row, column, make_table_item(text))
-        self._scenario_table.horizontalHeader().setStretchLastSection(True)
-        # 与参数栏并排后表格变窄：勾选 / 场景 / 输入 / 输出固定窄列，说明列吃剩余宽度。
-        for column, width in enumerate((44, 108, 96, 92)):
-            self._scenario_table.setColumnWidth(column, width)
-        self._scenario_table.setMinimumWidth(380)
-        self._scenario_table.setMaximumHeight(190)
-        top.addWidget(self._scenario_table, 3)
-
-        params = FormGrid(parent)
-        params.setMinimumWidth(280)
-        self._repeat_spin = QSpinBox(params)
-        self._repeat_spin.setRange(1, 20)
-        self._repeat_spin.setValue(1)
-        self._timeout_edit = QLineEdit("180", params)
-        self._tokens_edit = QLineEdit("", params)
-        self._tokens_edit.setPlaceholderText("留空按场景")
-        params.add_pair("重复次数", self._repeat_spin, "请求超时（秒）", self._timeout_edit)
-        params.add_row("输出上限", self._tokens_edit)
-        top.addWidget(params, 2, Qt.AlignmentFlag.AlignTop)
-        body.addLayout(top)
-
-        actions = QHBoxLayout()
-        self._bench_start = button("开始测试", kind="primary")
-        self._bench_stop = button("停止", kind="danger")
-        self._bench_stop.setEnabled(False)
-        self._bench_clear = button("清空结果", kind="ghost")
-        self._bench_copy = button("复制 CSV", kind="ghost")
-        self._bench_export = button("导出 CSV", kind="ghost")
-        actions.addWidget(self._bench_start)
-        actions.addWidget(self._bench_stop)
-        actions.addStretch(1)
-        for widget in (self._bench_clear, self._bench_copy, self._bench_export):
-            actions.addWidget(widget)
-        body.addLayout(actions)
-
-        result_header = QHBoxLayout()
-        result_header.setContentsMargins(0, 0, 0, 0)
-        result_header.setSpacing(8)
-        result_title = QLabel("测试结果", parent)
-        result_title.setObjectName("SectionTitle")
-        self._bench_status = hint_label("选择场景后点击「开始测试」", wrap=False)
-        result_header.addWidget(result_title)
-        result_header.addStretch(1)
-        result_header.addWidget(self._bench_status)
-        body.addLayout(result_header)
-
-        self._bench_table = make_table(
-            RESULT_COLUMNS,
-            widths=(120, 50, 80, 80, 80, 90, 90, 200),
-            stretch_columns=(0, 7),
-            parent=parent,
-        )
-        self._bench_table.setMinimumHeight(160)
-        body.addWidget(self._bench_table)
-        body.addWidget(
-            hint_label(
-                "聚合 tok/s = 输出 tokens ÷ 墙钟（并发场景体现总吞吐）；单请求 tok/s 取服务端 decode 速率（不含 prefill）"
-            )
-        )
-
-        self._bench_start.clicked.connect(self._start_bench)
-        self._bench_stop.clicked.connect(self._stop_bench)
-        self._bench_clear.clicked.connect(self._clear_bench)
-        self._bench_copy.clicked.connect(self._copy_bench_csv)
-        self._bench_export.clicked.connect(self._export_bench_csv)
 
     # ------------------------------------------------------------------ #
     # 采样
@@ -593,113 +419,3 @@ class MonitorPage(QWidget):  # pragma: no cover - Qt 控件
         if self._timer is not None:
             self._timer.stop()
             self._timer = None
-        self._stop_bench()
-
-    # ------------------------------------------------------------------ #
-    # 性能测试
-    # ------------------------------------------------------------------ #
-    def _selected_scenarios(self) -> list[Any]:
-        rows: list[tuple[str, ...]] = []
-        for row, scenario in enumerate(SCENARIOS):
-            checked = self._scenario_items[row].isChecked()
-            rows.append((BENCH_CHECKED if checked else BENCH_UNCHECKED, scenario.label))
-        selected = checked_scenarios(rows)
-        if not selected:
-            raise ServeError("请至少勾选一个测试场景")
-        return list(selected)
-
-    def _bench_settings(self) -> tuple[int, float, int | None]:
-        repeat = int(self._repeat_spin.value())
-        try:
-            timeout = float(self._timeout_edit.text().strip() or "180")
-            raw = self._tokens_edit.text().strip()
-            max_tokens = int(raw) if raw else None
-        except ValueError as exc:
-            raise ServeError("超时必须是数字，输出上限必须是整数") from exc
-        return repeat, timeout, max_tokens
-
-    def _bench_endpoint(self) -> Endpoint:
-        name = self._target_name or ""
-        return endpoint_from_states(llmenv.list_states(), name)
-
-    def _start_bench(self) -> None:
-        if self._bench_running:
-            return
-        try:
-            scenarios = self._selected_scenarios()
-            endpoint = self._bench_endpoint()
-            repeat, timeout, max_tokens = self._bench_settings()
-        except ServeError as exc:
-            QMessageBox.critical(self, "无法开始测试", str(exc))
-            return
-        import threading
-
-        cancel = threading.Event()
-        self._bench_cancel = cancel
-        self._bench_running = True
-        self._bench_start.setEnabled(False)
-        self._bench_stop.setEnabled(True)
-        self._bench_status.setText("正在测试…")
-        bridge = _BenchBridge(self)
-        bridge.result.connect(self._on_bench_result)
-        bridge.progress.connect(self._on_bench_progress)
-        bridge.finished.connect(self._on_bench_finished)
-        submit(
-            _bench_worker,
-            endpoint,
-            scenarios,
-            repeat,
-            timeout,
-            max_tokens,
-            cancel,
-            bridge,
-        )
-
-    def _stop_bench(self) -> None:
-        if self._bench_cancel is not None:
-            self._bench_cancel.set()
-            self._bench_status.setText("正在停止…")
-
-    def _on_bench_progress(self, index: int, total: int, label: str) -> None:
-        self._bench_status.setText(f"正在测试 {index}/{total}：{label}")
-
-    def _on_bench_result(self, payload: tuple[ScenarioResult, str]) -> None:
-        result, model_path = payload
-        row = format_result_row(result)
-        self._bench_rows.append(row)
-        table_row = self._bench_table.rowCount()
-        self._bench_table.insertRow(table_row)
-        for column, text in enumerate(row):
-            self._bench_table.setItem(table_row, column, make_table_item(text))
-        self.state.record_benchmark(model_path, result)
-
-    def _on_bench_finished(self, cancelled: bool) -> None:
-        self._bench_running = False
-        self._bench_start.setEnabled(True)
-        self._bench_stop.setEnabled(False)
-        self._bench_status.setText("已停止" if cancelled else "测试完成")
-        self._bench_cancel = None
-
-    def _clear_bench(self) -> None:
-        self._bench_table.setRowCount(0)
-        self._bench_rows.clear()
-        self._bench_status.setText("选择场景后点击「开始测试」")
-
-    def _copy_bench_csv(self) -> None:
-        if not self._bench_rows:
-            self._bench_status.setText("暂无结果可复制")
-            return
-        clipboard = QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText(format_result_csv(self._bench_rows))
-        self._bench_status.setText("已复制 CSV 到剪贴板")
-
-    def _export_bench_csv(self) -> None:
-        if not self._bench_rows:
-            self._bench_status.setText("暂无结果可导出")
-            return
-        path, _ = QFileDialog.getSaveFileName(self, "导出测试结果", "locllmw-bench.csv", "CSV (*.csv)")
-        if not path:
-            return
-        Path(path).write_text(format_result_csv(self._bench_rows), encoding="utf-8")
-        self._bench_status.setText(f"已导出: {path}")

@@ -3,7 +3,10 @@
 窗口只做「壳」的工作：创建共享状态、组装七个页面、把状态信号接到状态栏与
 跨页动作，其余逻辑都在各页模块。页面按需构建（模型 / 对话 / 实验室 / 设置
 首屏不可见），概览、运行、监测三页建窗即构建：前者要展示硬件缓存，运行页
-要出模型列表，监测页要在整个会话期间接收日志。
+要出模型列表，监测页要在整个会话期间持续采样。
+
+服务日志与性能测试不占分页，从顶部「帮助」菜单以非模态窗口打开；两者都复用
+共享状态（日志缓冲 / 运行中服务），关窗不丢历史与结果。
 
 ``run_qt`` 负责创建 ``QApplication``、应用主题并进入事件循环；
 :mod:`fcmd.apps.locllm.locllmw` 只保留工具注册与启动委托。
@@ -78,6 +81,7 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._models_page: Any = None
         self._settings_page: Any = None
         self._log_dialog: Any = None
+        self._bench_dialog: Any = None
 
         for key, label, hint in PAGES:
             self.add_page(key, label, hint=hint, factory=self._factory(key))
@@ -109,14 +113,18 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 菜单 / 日志
     # ------------------------------------------------------------------ #
     def _build_menu(self) -> None:
-        """共享菜单 + 「帮助 → 服务日志…」（放在「关于」之前）。"""
+        """共享菜单 + 「帮助 → 性能测试… / 服务日志…」（放在「关于」之前）。"""
         super()._build_menu()
-        action = QAction("服务日志…", self)
-        action.setShortcut("Ctrl+Shift+L")
-        action.triggered.connect(self.show_service_log)
-        self.help_menu.insertAction(self.about_action, action)
+        bench_action = QAction("性能测试…", self)
+        bench_action.triggered.connect(self.show_bench)
+        self.help_menu.insertAction(self.about_action, bench_action)
+        log_action = QAction("服务日志…", self)
+        log_action.setShortcut("Ctrl+Shift+L")
+        log_action.triggered.connect(self.show_service_log)
+        self.help_menu.insertAction(self.about_action, log_action)
         self.help_menu.insertSeparator(self.about_action)
-        self.service_log_action = action
+        self.bench_action = bench_action
+        self.service_log_action = log_action
 
     def show_service_log(self) -> None:
         """打开（或聚焦）服务日志窗口；历史来自 ``LocllmState`` 缓冲。"""
@@ -127,6 +135,16 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log_dialog.show()
         self._log_dialog.raise_()
         self._log_dialog.activateWindow()
+
+    def show_bench(self) -> None:
+        """打开（或聚焦）性能测试窗口；被测服务来自共享状态。"""
+        if self._bench_dialog is None:
+            from fcmd.apps.locllm._locllmw_qt_bench import BenchDialog
+
+            self._bench_dialog = BenchDialog(self.state, self)
+        self._bench_dialog.show()
+        self._bench_dialog.raise_()
+        self._bench_dialog.activateWindow()
 
     # ------------------------------------------------------------------ #
     # 页面工厂
@@ -227,6 +245,9 @@ class LocllmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._chat_page.close()
         if self._log_dialog is not None:
             self._log_dialog.close()
+        if self._bench_dialog is not None:
+            self._bench_dialog.stop()
+            self._bench_dialog.close()
         self.run_page.persist_params()
         self.monitor_page.stop()
         self.state.closing = True

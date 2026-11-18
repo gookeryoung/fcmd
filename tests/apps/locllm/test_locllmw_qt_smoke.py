@@ -459,7 +459,7 @@ def test_service_log_moves_to_help_menu(window: Any) -> None:
     window.show_page("monitor")
     assert not hasattr(window.page("monitor"), "log_view")
     texts = [action.text() for action in window.help_menu.actions() if not action.isSeparator()]
-    assert texts[-2:] == ["服务日志…", "关于"]
+    assert texts[-3:] == ["性能测试…", "服务日志…", "关于"]
 
     window.state.log("启动前日志")
     window.service_log_action.trigger()
@@ -535,25 +535,69 @@ def test_monitor_load_cards_and_rate_display(window: Any) -> None:
     assert page._metrics.value("kv") == "18.0 %"
 
 
-def test_monitor_layout_keeps_status_and_bench_compact(window: Any) -> None:
-    """监测页布局：状态与目标标题同排，场景表与参数并排，结果表保底高度。"""
+def test_monitor_layout_keeps_status_in_header(window: Any) -> None:
+    """监测页状态徽标与最近采样属于标题行，不再各占一整行。"""
     window.show()
     window.show_page("monitor")
     window.resize(1180, 820)
     QApplication.processEvents()
     page = window.page("monitor")
-    page._bench.set_expanded(True)
-    QApplication.processEvents()
 
     def top(widget: Any) -> int:
         return widget.mapTo(page, widget.rect().topLeft()).y()
 
-    # 状态徽标与最近采样属于标题行，不再各占一整行。
     assert top(page._monitor_badge) == top(page._last_sample_label)
+
+
+def test_bench_moves_to_help_menu(window: Any) -> None:
+    """性能测试从帮助菜单打开独立窗口：目标 / 场景 / 参数 / 结果自适应布局。"""
+    from fcmd.apps.locllm.llmbase import ServeState
+
+    window.show()
+    window.show_page("monitor")
+    page = window.page("monitor")
+    assert not hasattr(page, "_bench")
+    assert not hasattr(page, "_bench_table")
+    window.resize(1180, 820)
+    QApplication.processEvents()
+
+    window.bench_action.trigger()
+    QApplication.processEvents()
+    dialog = window._bench_dialog
+    assert dialog is not None
+    assert dialog.isVisible()
+    assert dialog.windowTitle() == "性能测试"
+    assert dialog._bench_table.minimumHeight() >= 220
+    assert "未检测到运行中的服务" in dialog._target_hint.text()
+
+    def top(widget: Any) -> int:
+        return widget.mapTo(dialog, widget.rect().topLeft()).y()
+
     # 场景表与参数栏左右分栏：参数控件落在场景表的纵向范围内。
-    table_top = top(page._scenario_table)
-    assert table_top <= top(page._repeat_spin) < table_top + page._scenario_table.height()
-    assert page._bench_table.minimumHeight() >= 160
+    table_top = top(dialog._scenario_table)
+    assert table_top <= top(dialog._repeat_spin) < table_top + dialog._scenario_table.height()
+
+    window.state.alive_states = [
+        ServeState(
+            name="demo",
+            pid=1234,
+            create_time=0.0,
+            host="127.0.0.1",
+            port=8080,
+            model="demo.gguf",
+            profile="balanced",
+            context=4096,
+            engine="",
+            alias="demo",
+            api_key="",
+            log="",
+            started_at="",
+        )
+    ]
+    window.state.servicesChanged.emit(window.state.alive_states)
+    assert dialog._target_combo.count() == 2
+    assert dialog._target_combo.itemText(1).startswith("demo")
+    dialog.close()
 
 
 def test_pages_use_scroll_container(window: Any) -> None:

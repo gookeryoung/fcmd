@@ -55,11 +55,12 @@
 | 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
 | 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
 | 实验室 | `_locllmw_qt_lab`：四张规划卡片 | — |
-| 监测 | `_locllmw_qt_monitor`：`/metrics` + 系统负载 + GPU + 性能测试 | `_locllmw_monitor` / `_locllmw_bench` |
+| 监测 | `_locllmw_qt_monitor`：`/metrics` + GPU / CPU / 内存负载卡 | `_locllmw_monitor` |
 | 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
 
-服务日志不占分页：顶部「帮助 → 服务日志…」打开 `_locllmw_qt_log` 非模态对话框，
-历史来自 `LocllmState.log_buffer`（最近 1000 行），打开后继续接收 `logLine`。
+服务日志与性能测试不占分页：顶部「帮助」菜单打开 `_locllmw_qt_log` / `_locllmw_qt_bench`
+非模态对话框。日志历史来自 `LocllmState.log_buffer`（最近 1000 行），打开后继续接收 `logLine`；
+性能测试复用 `_locllmw_bench` 的场景与执行逻辑，被测服务从运行中服务下拉选择。
 
 ### 模型页浏览与行内操作（C5）
 
