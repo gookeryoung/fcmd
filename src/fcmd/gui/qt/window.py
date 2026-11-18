@@ -12,6 +12,7 @@ Qt 窗口骨架负责「导航 / 菜单 / 状态栏 / 日志区 / 后台任务�
 
 from __future__ import annotations
 
+import platform
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QPoint
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt._pyside_compat import binding_version
 from fcmd.gui.qt.theme_menu import ThemeMenu
 from fcmd.gui.qt.widgets import LoadingBar
 
@@ -42,11 +44,19 @@ if TYPE_CHECKING:
 
 __all__ = [
     "QtMainWindow",
+    "about_version_text",
     "format_geometry",
     "parse_geometry",
     "resolve_geometry_text",
     "restore_geometry",
 ]
+
+
+def about_version_text() -> str:
+    """关于对话框的运行时版本行：fcmd / Python / PySide。"""
+    import fcmd
+
+    return f"fcmd {fcmd.__version__}\nPython 版本：{platform.python_version()}\nPySide 版本：{binding_version()}"
 
 
 def resolve_geometry_text(  # noqa: PLR0913 - 与 geometry.resolve_geometry 参数对齐
@@ -339,14 +349,12 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.save_settings({"sidebar_collapsed": collapsed})
 
     def _show_about(self) -> None:
-        """关于对话框：版本、配置文件与当前主题。"""
+        """关于对话框：程序 / 解释器 / Qt 绑定版本、配置文件与当前主题。"""
         from PySide6.QtWidgets import QMessageBox
-
-        import fcmd
 
         box = QMessageBox(self)
         box.setWindowTitle("关于")
-        box.setText(f"fcmd {fcmd.__version__}\n配置文件：{self._settings_path}\n主题：{self._theme.label}")
+        box.setText(f"{about_version_text()}\n配置文件：{self._settings_path}\n主题：{self._theme.label}")
         icon = self.windowIcon()
         if not icon.isNull():
             box.setIconPixmap(icon.pixmap(64, 64))

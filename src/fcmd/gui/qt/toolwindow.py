@@ -23,7 +23,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.theme_menu import ThemeMenu
 from fcmd.gui.qt.widgets import LogView, PageScroll
-from fcmd.gui.qt.window import format_geometry, restore_geometry
+from fcmd.gui.qt.window import about_version_text, format_geometry, restore_geometry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -176,13 +176,11 @@ class QtToolWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return format_geometry(rect.width(), rect.height(), rect.x(), rect.y())
 
     def _show_about(self) -> None:
-        """关于对话框：版本、设置文件与当前主题。"""
-        import fcmd
-
+        """关于对话框：程序 / 解释器 / Qt 绑定版本、设置文件与当前主题。"""
         QMessageBox.information(
             self,
             "关于",
-            f"fcmd {fcmd.__version__}\n设置文件：{self._settings_path}\n主题：{self._theme.label}",
+            f"{about_version_text()}\n设置文件：{self._settings_path}\n主题：{self._theme.label}",
         )
 
     # ------------------------------------------------------------------ #

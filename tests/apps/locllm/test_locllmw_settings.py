@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import platform
 from pathlib import Path
 from typing import cast
 
@@ -91,6 +92,14 @@ def test_ui_rows_reads_saved_geometry(home: Path) -> None:
     path.write_text(json.dumps({"geometry": "1024x768+10+20"}), encoding="utf-8")
     rows = {label: value for label, value, _source in settings_page.ui_rows()}
     assert rows["窗口位置与大小"] == "1024x768+10+20"
+
+
+def test_ui_rows_includes_runtime_versions(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """「关于与诊断」展示当前 Python 与 PySide 绑定版本。"""
+    monkeypatch.setattr(settings_page, "binding_version", lambda: "PySide6 9.9.9")
+    rows = {label: value for label, value, _source in settings_page.ui_rows()}
+    assert rows["Python 版本"] == platform.python_version()
+    assert rows["PySide 版本"] == "PySide6 9.9.9"
 
 
 # ---------------------------------------------------------------------- #

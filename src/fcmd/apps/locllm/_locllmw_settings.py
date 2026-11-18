@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +17,7 @@ import fcmd
 from fcmd.apps.locllm import _llmconfig, llmengine
 from fcmd.apps.locllm.llmbase import Check, EngineInfo, EngineVariant, ServeError, human_size
 from fcmd.gui import config as _guiconfig
+from fcmd.gui.qt._pyside_compat import binding_version
 
 __all__ = [
     "EngineStatus",
@@ -74,13 +76,15 @@ def engine_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
 
 
 def ui_rows() -> list[tuple[str, str, str]]:
-    """返回「关于与诊断」折叠区：程序版本、配置文件与窗口记忆（只读）。"""
+    """返回「关于与诊断」折叠区：程序 / Python / PySide 版本与配置文件（只读）。"""
     path = _guiconfig.config_path("locllmw")
     settings = _guiconfig.read_settings(path) or {}
     geometry = settings.get("geometry")
     geometry_text = geometry if isinstance(geometry, str) and geometry.strip() else "未保存（使用默认尺寸）"
     return [
         ("程序版本", fcmd.__version__, _AUTO),
+        ("Python 版本", platform.python_version(), _AUTO),
+        ("PySide 版本", binding_version(), _AUTO),
         ("配置文件", str(_llmconfig.config_path()), _AUTO),
         ("窗口配置文件", str(path), _AUTO),
         ("窗口位置与大小", geometry_text, _AUTO),

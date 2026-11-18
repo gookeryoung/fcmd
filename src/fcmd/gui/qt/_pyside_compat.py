@@ -17,7 +17,7 @@ import importlib.util
 import sys
 from types import ModuleType
 
-__all__ = ["install"]
+__all__ = ["binding_version", "install"]
 
 _FINDER: _PySide2Finder | None = None
 
@@ -51,11 +51,27 @@ _MENU_REFS: list[object] = []
 _ACTION_REFS: list[object] = []
 
 
+def _binding_name() -> str:
+    """当前解释器实际使用的 Qt 绑定模块名：3.10 且装了 PySide2 时为 PySide2，否则 PySide6。"""
+    if sys.version_info < (3, 11) and importlib.util.find_spec("PySide2") is not None:
+        return "PySide2"
+    return "PySide6"
+
+
+def binding_version() -> str:
+    """当前 Qt 绑定及其版本（如 ``PySide6 6.9.3``）；未安装时返回 ``未安装``。"""
+    name = _binding_name()
+    try:
+        module = importlib.import_module(name)
+    except ImportError:
+        return "未安装"
+    version = str(getattr(module, "__version__", "") or "")
+    return f"{name} {version}".rstrip()
+
+
 def install() -> None:
     """Python 3.10 上启用 PySide2 兼容映射（幂等；其它版本直接返回）。"""
-    if sys.version_info >= (3, 11) or _FINDERS:
-        return
-    if importlib.util.find_spec("PySide2") is None:
+    if _FINDERS or _binding_name() != "PySide2":
         return
     finder = _PySide2Finder()
     sys.meta_path.insert(0, finder)
