@@ -1,6 +1,7 @@
 """bumpversion - 版本号自动管理工具。
 
-扫描项目内所有 ``__init__.py`` 和 ``pyproject.toml`` 文件，按 ``patch``/``minor``/``major``
+扫描项目内需要写版本号的文件（优先取 ``.bumpversion.toml`` 的 ``files`` 清单，
+缺失时回退扫描 ``__init__.py`` 与 ``pyproject.toml``），按 ``patch``/``minor``/``major``
 递增版本号并统一写入，最后执行 git add + commit + tag。
 
 采用"先读取基准、再统一写入"的两阶段策略：先读取所有文件的当前版本号取最大值作为基准，
@@ -21,6 +22,7 @@ from typing import Literal
 
 import fcmd
 from fcmd.console import print_error
+from fcmd.infras import _toml as tomllib
 from fcmd.infras.command import run_command
 from fcmd.infras.filefilter import DEFAULT_IGNORE_SPEC, IgnoreSpec, should_ignore
 from fcmd.infras.version import BumpPart, Version, parse_version
@@ -179,8 +181,26 @@ def _write_version_to_file(file_path: Path, new_version: str) -> bool:
     return True
 
 
+def _configured_version_files(root: Path) -> list[Path] | None:
+    """读取 ``.bumpversion.toml`` 的发布文件清单；没有配置或不可解析时返回 None。"""
+    config = root / ".bumpversion.toml"
+    if not config.is_file():
+        return None
+    try:
+        data = tomllib.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    entries = data.get("tool", {}).get("bumpversion", {}).get("files", [])
+    paths = [root / entry["filename"] for entry in entries if isinstance(entry, dict) and "filename" in entry]
+    return paths or None
+
+
 def _collect_version_files(root: Path) -> set[Path]:
-    """收集项目内所有包含版本号的文件。
+    """收集需要写入版本号的文件。
+
+    优先使用 ``.bumpversion.toml`` 的 ``[[tool.bumpversion.files]]`` 清单，与
+    ``make bump``（bump-my-version）保持同一份发布文件；没有该配置时回退到
+    扫描 ``__init__.py`` / ``pyproject.toml``，便于在其他项目里直接使用。
 
     Parameters
     ----------
@@ -190,8 +210,11 @@ def _collect_version_files(root: Path) -> set[Path]:
     Returns
     -------
     set[Path]
-        文件路径集合（排除虚拟环境与缓存目录）
+        已存在的文件路径集合
     """
+    configured = _configured_version_files(root)
+    if configured is not None:
+        return {path for path in configured if path.is_file()}
     all_files: set[Path] = set()
     for pattern in ("__init__.py", "pyproject.toml"):
         for file in root.rglob(pattern):

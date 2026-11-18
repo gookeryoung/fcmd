@@ -265,6 +265,27 @@ class TestBumpProjectVersion:
         # 验证文件已更新
         assert 'version = "0.1.1"' in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
 
+    def test_bump_project_uses_bumpversion_file_list(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """存在 .bumpversion.toml 时只更新清单内文件，不再全仓库扫描。"""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "pyproject.toml").write_text('version = "1.0.0"\n', encoding="utf-8")
+        (tmp_path / ".bumpversion.toml").write_text(
+            '[tool.bumpversion]\ncurrent_version = "1.0.0"\n[[tool.bumpversion.files]]\nfilename = "pyproject.toml"\n',
+            encoding="utf-8",
+        )
+        unlisted = tmp_path / "other" / "__init__.py"
+        unlisted.parent.mkdir()
+        unlisted.write_text('__version__ = "9.9.9"\n', encoding="utf-8")
+        monkeypatch.setattr("fcmd.tools.dev.bumpversion.run_command", _recording_run([]))
+
+        assert bump_project_version(part="patch") == "1.0.1"
+        assert 'version = "1.0.1"' in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+        assert unlisted.read_text(encoding="utf-8") == '__version__ = "9.9.9"\n'
+
     def test_bump_project_no_tag(
         self,
         tmp_path: Path,
