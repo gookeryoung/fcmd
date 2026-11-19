@@ -36,7 +36,7 @@ API 都不再存在。
   ``engines_root``；``serve`` → ``serve_dir``。
 * 旧工作目录键（``work_dir`` / ``download_dir`` / ``workdir`` /
   ``work_root``）与窗口设置（``ui/llmw.json``，改名前的 ``ui/locllmw.json``
-  首次访问时复制到新名字）的 ``download.dest``：读取时忽略并删除，
+  首次访问时搬迁到新名字）的 ``download.dest``：读取时忽略并删除，
   值写入 ``ignored_work_dir`` 迁移记录，供设置页与 ``llmenv show`` 提示一次。
 * ``ui/llmenvw.json`` 的 ``serve_dir`` / ``engines_root`` 并入 config.json，
   随后把该文件改名为 ``.migrated``（保留数据，不再读取）。
@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -117,10 +116,10 @@ def config_path(home: Path | None = None) -> Path:
 
 
 def ui_settings_path(home: Path | None = None) -> Path:
-    """窗口设置路径 ``${home}/ui/llmw.json``，首次访问时承接旧文件。
+    """窗口设置路径 ``${home}/ui/llmw.json``，首次访问时搬迁旧文件。
 
     改名前的 ``ui/locllmw.json`` 若存在且新文件缺失，把主文件与 ``.bak``
-    备份复制到新名字（只复制不删除，旧文件继续作为回退），避免老用户丢设置。
+    备份移动到新名字并删除旧文件；新文件已存在时不触碰旧文件。
     """
     target = home_dir(home) / "ui" / f"{UI_SETTINGS_NAME}.json"
     legacy = home_dir(home) / "ui" / f"{LEGACY_UI_SETTINGS_NAME}.json"
@@ -128,11 +127,12 @@ def ui_settings_path(home: Path | None = None) -> Path:
         return target
     with contextlib.suppress(OSError):
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(legacy, target)
+        legacy.replace(target)
         legacy_bak = legacy.with_name(legacy.name + ".bak")
         target_bak = target.with_name(target.name + ".bak")
-        if legacy_bak.is_file() and not target_bak.is_file():
-            shutil.copy2(legacy_bak, target_bak)
+        if legacy_bak.is_file():
+            target_bak.unlink(missing_ok=True)
+            legacy_bak.replace(target_bak)
     return target
 
 

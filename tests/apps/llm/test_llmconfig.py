@@ -281,7 +281,7 @@ def test_download_dest_non_string_is_dropped_without_warning(home: Path) -> None
     assert _read(legacy)["download"] == {"source": "hf"}
 
 
-def test_ui_settings_path_copies_legacy_file_and_backup(home: Path) -> None:
+def test_ui_settings_path_moves_legacy_file_and_backup(home: Path) -> None:
     legacy = home / "ui" / "locllmw.json"
     _write(legacy, {"geometry": "1200x800+0+0"})
     legacy_bak = legacy.with_name("locllmw.json.bak")
@@ -292,7 +292,7 @@ def test_ui_settings_path_copies_legacy_file_and_backup(home: Path) -> None:
     assert target == home / "ui" / "llmw.json"
     assert _read(target)["geometry"] == "1200x800+0+0"
     assert _read(target.with_name("llmw.json.bak"))["geometry"] == "1000x700+0+0"
-    assert legacy.is_file() and legacy_bak.is_file()
+    assert not legacy.exists() and not legacy_bak.exists()
 
 
 def test_ui_settings_path_keeps_existing_target(home: Path) -> None:
@@ -302,6 +302,7 @@ def test_ui_settings_path_keeps_existing_target(home: Path) -> None:
     target = _llmconfig.ui_settings_path(home)
 
     assert _read(target)["geometry"] == "800x600+0+0"
+    assert (home / "ui" / "locllmw.json").is_file()
 
 
 def test_default_models_dir_without_d_drive(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,7 +4,7 @@
 
 > 命名说明：0026–0034 涉及的应用原名为 `locllm` / `locllmw`，现包路径统一为 `apps/llm`、
 > 命令名为 `llmw`；旧命令 `locllmw` 已移除，窗口设置 `ui/locllmw.json` 会在首次访问时
-> 自动复制为 `ui/llmw.json`（ADR 文件名保留历史编号与主题名）。
+> 一次性搬迁为 `ui/llmw.json`（ADR 文件名保留历史编号与主题名）。
 
 | 编号 | 主题 | 状态 |
 |---|---|---|

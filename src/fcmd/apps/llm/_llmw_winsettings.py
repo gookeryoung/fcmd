@@ -58,7 +58,7 @@ def config_path() -> Path:
     """返回配置文件路径：``${FCMD_HOME:-~/.fcmd}/ui/llmw.json``。
 
     改名前的 ``ui/locllmw.json`` 由 :func:`_llmconfig.ui_settings_path` 一次性
-    复制到新名字，老用户的历史设置与 geometry 不丢。
+    搬迁到新名字并删除旧文件，老用户的历史设置与 geometry 不丢。
     """
     return _llmconfig.ui_settings_path()
 
