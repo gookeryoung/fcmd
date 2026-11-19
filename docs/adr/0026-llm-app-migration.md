@@ -38,7 +38,7 @@
 
 ### 2. 命令名保持不变
 
-`llmchat` / `llmserve` / `llmdown` 等**用户可见命令不改名**（`llmservew` → `locllmw` 的改名见 [ADR 0027](0027-locllmw-rename.md)），也不需要别名：
+`llmchat` / `llmserve` / `llmdown` 等**用户可见命令不改名**（`llmservew` → `locllmw` 的改名见 [ADR 0027](0027-llmw-rename.md)），也不需要别名：
 `fcmd.apps.llm` 未声明 `__tool_name__`，发现逻辑按「包内公开模块名即工具名」
 注册，迁移前后命令完全一致。改名只发生在 Python 导入路径。
 

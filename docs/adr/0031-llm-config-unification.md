@@ -3,8 +3,8 @@
 - 状态：已落地
 - 日期：2026-11-14
 - 关联：`src/fcmd/apps/llm/_llmconfig.py`、`src/fcmd/apps/llm/_llmw_settings.py`、
-  `src/fcmd/apps/llm/llmenv.py`、[ADR 0027](0027-locllmw-rename.md)、
-  [ADR 0030](0030-locllmw-models-page.md)
+  `src/fcmd/apps/llm/llmenv.py`、[ADR 0027](0027-llmw-rename.md)、
+  [ADR 0030](0030-llmw-models-page.md)
 
 ## 背景
 

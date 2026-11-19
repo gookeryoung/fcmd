@@ -3,7 +3,7 @@
 - 状态：已落地
 - 日期：2026-11-15
 - 关联：`src/fcmd/apps/llm/llmw.py`、`_llmw_ui.py`、`_llmw_chat.py`、`_llmw_convert.py`、`_llmgguf.py`、`_llmconfig.py`、
-  [ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0030](0030-locllmw-models-page.md)、[ADR 0031](0031-localllm-config-unification.md)
+  [ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0030](0030-llmw-models-page.md)、[ADR 0031](0031-llm-config-unification.md)
 
 ## 背景
 

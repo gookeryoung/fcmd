@@ -2,13 +2,13 @@
 
 - 状态：已落地
 - 日期：2026-11-14
-- 相关文档：[ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0027](0027-locllmw-rename.md)
+- 相关文档：[ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0027](0027-llmw-rename.md)
 
 ## 背景
 
 `llmchatw` 是独立的 Tk 聊天窗口：服务选择、自定义 OpenAI 兼容地址、流式回复、
 思考过程展示、图片附件与采样参数都已成熟。`locllmw` 的「对话」页从
-[ADR 0027](0027-locllmw-rename.md) 起一直是占位，用户需要在两个窗口之间来回切换：
+[ADR 0027](0027-llmw-rename.md) 起一直是占位，用户需要在两个窗口之间来回切换：
 在 `locllmw` 启动服务，再到 `llmchatw` 选服务对话。两边都读取同一份
 `llmenv` 状态，却维护两套窗口设置（`llmw.json` / `llmchatw.json`）。
 

@@ -46,7 +46,7 @@ CLI 不传这两个参数时行为与原来完全一致。Qt 页面通过信号�
 
 ### 3. Qt 页面布局与交互
 
-原 `llmdownw` 已并入 `locllmw` 的「模型」页（见 [ADR 0030](0030-locllmw-models-page.md)），
+原 `llmdownw` 已并入 `locllmw` 的「模型」页（见 [ADR 0030](0030-llmw-models-page.md)），
 页面内部用嵌套 Notebook 分为「浏览 / 已安装 / 下载」三个子页，避免搜索、详情、
 下载配置与日志挤在单页：
 

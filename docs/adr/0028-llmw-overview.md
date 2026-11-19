@@ -2,7 +2,7 @@
 
 - 状态：已落地
 - 日期：2026-11-14
-- 相关文档：[ADR 0015](0015-llm-serve-tuning.md)、[ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0027](0027-locllmw-rename.md)
+- 相关文档：[ADR 0015](0015-llm-serve-tuning.md)、[ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0027](0027-llmw-rename.md)
 
 ## 背景
 

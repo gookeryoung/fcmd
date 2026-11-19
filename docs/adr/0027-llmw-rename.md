@@ -2,7 +2,7 @@
 
 - 状态：已落地
 - 日期：2026-11-14
-- 相关文档：[ADR 0015](0015-llm-serve-tuning.md)、[ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0026](0026-locllm-app-migration.md)
+- 相关文档：[ADR 0015](0015-llm-serve-tuning.md)、[ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0026](0026-llm-app-migration.md)
 
 ## 背景
 
@@ -34,12 +34,12 @@
 
 | 分页 | key | 内容 | 状态 |
 |---|---|---|---|
-| 概览 | `overview` | 系统信息（规格 + 实时性能 tok/s + GPU / CPU / 内存负载格图、显存 / 交换副条）、智能推荐（见 [ADR 0028](0028-locllmw-overview.md)） | 已落地 |
-| 模型 | `models` | 浏览列表 + 行内下载 / 转换 / 量化（整合原 llmdownw，见 [ADR 0030](0030-locllmw-models-page.md)） | 已落地 |
+| 概览 | `overview` | 系统信息（规格 + 实时性能 tok/s + GPU / CPU / 内存负载格图、显存 / 交换副条）、智能推荐（见 [ADR 0028](0028-llmw-overview.md)） | 已落地 |
+| 模型 | `models` | 浏览列表 + 行内下载 / 转换 / 量化（整合原 llmdownw，见 [ADR 0030](0030-llmw-models-page.md)） | 已落地 |
 | 运行 | `run` | 顶部模型下拉选择（已启动项绿色标记、默认上次运行模型、按模型持久化参数）+ 启动 / 停止 / 重启按钮、整合档位与调优的运行模式方块（速度红 / 均衡蓝 / 长上下文 128K 绿 / 超长上下文 192K 琥珀 / 省显存灰）、带说明的 KV 方块选项、启动参数、启动命令预览、自定义启动参数与保存 / 填入 | 已落地 |
-| 对话 | `chat` | 服务选择、流式会话、思考过程、图片附件（整合原 llmchatw，见 [ADR 0029](0029-locllmw-chat-page.md)） | 已落地 |
+| 对话 | `chat` | 服务选择、流式会话、思考过程、图片附件（整合原 llmchatw，见 [ADR 0029](0029-llmw-chat-page.md)） | 已落地 |
 | 实验室 | `lab` | 代理 / 画图 / 视频 / 音频四项规划中的卡片式说明 | 规划中（合并占位） |
-| 设置 | `settings` | 存储（模型目录 / 引擎根目录 / 服务目录 / 配置文件）、引擎安装与日志（见 [ADR 0031](0031-localllm-config-unification.md)） | 已落地 |
+| 设置 | `settings` | 存储（模型目录 / 引擎根目录 / 服务目录 / 配置文件）、引擎安装与日志（见 [ADR 0031](0031-llm-config-unification.md)） | 已落地 |
 
 约定：
 

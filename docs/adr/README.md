@@ -4,7 +4,7 @@
 
 > 命名说明：0026–0034 涉及的应用原名为 `locllm` / `locllmw`，现包路径统一为 `apps/llm`、
 > 命令名为 `llmw`；旧命令 `locllmw` 已移除，窗口设置 `ui/locllmw.json` 会在首次访问时
-> 一次性搬迁为 `ui/llmw.json`（ADR 文件名保留历史编号与主题名）。
+> 一次性搬迁为 `ui/llmw.json`（ADR 文件名已统一为 `llm`，仅保留历史编号）。
 
 | 编号 | 主题 | 状态 |
 |---|---|---|
@@ -32,13 +32,13 @@
 | [0023](0023-wslman.md) | wslman：Windows 上的 WSL 发行版管理（注册表 / `.wslconfig` 解析 / 导出导入 / 下载源降级 / 终端启动 / 双读输出） | P1 已落地（只读 CLI） |
 | [0024](0024-devman.md) | devman：Windows 开发环境管理（node/python 多版本安装、切换、卸载、冲突检测） | 已实施（P1 CLI 已落地，P2 GUI 待实施） |
 | [0025](0025-sidebar-page-navigation.md) | GUI 侧边栏分页导航（`SidebarNav`）：locllmw 等整窗分页（原环境、引擎、转换 / 量化窗口已并入 locllmw，见 0031） | 已落地 |
-| [0026](0026-locllm-app-migration.md) | locllm：本地 LLM 工具族从 `tools/llm` 迁到 `apps/llm`，命令名不变 | 已落地 |
-| [0027](0027-locllmw-rename.md) | locllmw：`llmservew` 改名与六页侧边栏（概览 / 模型 / 运行 / 对话 / 实验室 / 设置） | 已落地（多模态合并为实验室占位） |
-| [0028](0028-locllmw-overview.md) | locllmw 概览：硬件检测 / 模型盘 / 智能推荐（预测与实测口径） | 已落地 |
-| [0029](0029-locllmw-chat-page.md) | locllmw 对话页：整合 llmchatw 的多轮流式对话，移除独立窗口工具 | 已落地 |
-| [0030](0030-locllmw-models-page.md) | locllmw 模型页：整合 llmdownw 的浏览与行内下载 / 转换 / 量化，移除独立窗口工具 | 已落地 |
-| [0031](0031-localllm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`；设置页两分页（存储 / 引擎），引擎页承接原引擎管理窗口 | 已落地 |
-| [0032](0032-locllmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
+| [0026](0026-llm-app-migration.md) | locllm：本地 LLM 工具族从 `tools/llm` 迁到 `apps/llm`，命令名不变 | 已落地 |
+| [0027](0027-llmw-rename.md) | locllmw：`llmservew` 改名与六页侧边栏（概览 / 模型 / 运行 / 对话 / 实验室 / 设置） | 已落地（多模态合并为实验室占位） |
+| [0028](0028-llmw-overview.md) | locllmw 概览：硬件检测 / 模型盘 / 智能推荐（预测与实测口径） | 已落地 |
+| [0029](0029-llmw-chat-page.md) | locllmw 对话页：整合 llmchatw 的多轮流式对话，移除独立窗口工具 | 已落地 |
+| [0030](0030-llmw-models-page.md) | locllmw 模型页：整合 llmdownw 的浏览与行内下载 / 转换 / 量化，移除独立窗口工具 | 已落地 |
+| [0031](0031-llm-config-unification.md) | localllm 配置单一来源：模型 / 工作 / 引擎 / 服务目录统一由 `_llmconfig` 解析；模型目录收敛为单一 `models_dir`；设置页两分页（存储 / 引擎），引擎页承接原引擎管理窗口 | 已落地 |
+| [0032](0032-llmw-startup-latency.md) | locllmw 启动加载速度：非首屏页延迟构建 + GGUF 精度快路径与缓存 + 配置读取缓存 | 已落地 |
 | [0033](0033-qt-gui-migration.md) | locllmw 迁移到 Qt：GUI 基座（主题 / 导航 / 窗口 / 控件 / 后台任务）、六页与模型下载 / 转换 / 量化向导重构；Qt 绑定选择见 0036 | 生效（已全部落地，Tk 实现已删除） |
 | [0034](0034-qt-full-gui-migration.md) | 全量 GUI 迁移到 Qt：共享层（应用入口 / 单页窗口 / 主题菜单 / 布局纯函数）、布局与高 DPI 规范、B0–B7 分批 | 已落地（全部窗口 Qt 化，Tk 代码已删除） |
 | [0035](0035-cmder-filesync-compare-unify.md) | 目录比较 / 同步引擎统一：cmderw 与 filesync 共用 filesync `_core`，分 P0–P3 独立实施 | 设计中（独立阶段，未实施） |
