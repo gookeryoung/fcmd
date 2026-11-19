@@ -74,10 +74,10 @@ def migration_note(home: Path | None = None) -> str:
     notes: list[str] = []
     extras = _llmconfig.models_dir_extra(home)
     if extras:
-        notes.append("旧配置中的其他模型目录已记录但不再扫描：" + "、".join(extras))
+        notes.append("旧配置的其它模型目录不再扫描：" + "、".join(extras))
     ignored = _llmconfig.ignored_work_dir(home)
     if ignored:
-        notes.append(f"旧工作目录已忽略（下载与转换产物统一使用模型目录）：{ignored}")
+        notes.append(f"旧工作目录已忽略：{ignored}")
     return "\n".join(notes)
 
 
