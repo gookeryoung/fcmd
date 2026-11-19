@@ -89,7 +89,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         card.body.addWidget(self.models_source)
         self.migration_note = HintLabel("")
         card.body.addWidget(self.migration_note)
-        card.body.addWidget(hint_label("下载与转换产物统一写入模型目录。"))
         self.models_path.committed.connect(lambda text: self._save_path("models_dir", text))
         self.models_path.reset.clicked.connect(lambda: self._save_path("models_dir", None))
         self.models_open.clicked.connect(lambda: open_path(llmenv.models_dir()))
@@ -130,7 +129,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.download_exclude.setPlaceholderText("如 *.bin，留空不排除")
         grid.addWidget(self.download_exclude, 2, 1, 1, 3)
         card.body.addLayout(grid)
-        card.body.addWidget(hint_label("目标固定为上方模型目录；修改自动保存，下载时生效。"))
         self.download_source.currentIndexChanged.connect(lambda _index: self._save_download())
         self.download_workers.valueChanged.connect(lambda _value: self._save_download())
         self.download_verify.toggled.connect(lambda _checked: self._save_download())
@@ -188,7 +186,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.convert_overwrite.setChecked(settings.overwrite)
         grid.addWidget(self.convert_overwrite, 3, 0, 1, 2)
         card.body.addLayout(grid)
-        card.body.addWidget(hint_label("可转换模型在列表显示「转换」按钮；参数自动保存。"))
         self.convert_outtype.currentIndexChanged.connect(lambda _index: self._save_convert())
         self.convert_tag.editingFinished.connect(self._save_convert)
         self.convert_python.editingFinished.connect(self._save_convert)
@@ -251,7 +248,8 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         actions.addWidget(self.refresh_engine_button)
         actions.addStretch(1)
         card.body.addLayout(actions)
-        self.engine_hint = HintLabel("安装 / 切换引擎用 `fcmd llmengine install|use <tag>`；本页只做登记与切换默认。")
+        self.engine_hint = HintLabel("")
+        self.engine_hint.setVisible(False)
         card.body.addWidget(self.engine_hint)
 
         self.engines_path.committed.connect(lambda text: self._save_path("engines_root", text))
@@ -316,10 +314,15 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             return self._engines[row]
         return None
 
+    def _set_engine_hint(self, text: str) -> None:
+        """显示引擎操作反馈；无内容时不占位。"""
+        self.engine_hint.setText(text)
+        self.engine_hint.setVisible(bool(text))
+
     def _use_engine(self) -> None:
         info = self._selected_engine()
         if info is None:
-            self.engine_hint.setText("先在已安装引擎表中选择一行")
+            self._set_engine_hint("先在已安装引擎表中选择一行")
             return
         try:
             chosen = settings_logic.select_engine(info.tag)
@@ -327,7 +330,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "切换失败", str(exc))
             return
         self.state.log(f"默认引擎已切换为 {chosen.tag} · {chosen.exe}")
-        self.engine_hint.setText(f"默认引擎：{chosen.tag} · {chosen.exe}")
+        self._set_engine_hint(f"默认引擎：{chosen.tag} · {chosen.exe}")
         self.refresh_engines()
 
     def _check_engine(self) -> None:
@@ -336,5 +339,5 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         except (OSError, ServeError) as exc:
             QMessageBox.critical(self, "体检失败", str(exc))
             return
-        self.engine_hint.setText(f"{check.name}: {check.status} · {check.detail}")
+        self._set_engine_hint(f"{check.name}: {check.status} · {check.detail}")
         self.state.log(f"引擎体检 {check.name}: {check.status} · {check.detail}")
