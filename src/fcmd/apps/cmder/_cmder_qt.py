@@ -159,9 +159,9 @@ class CmderQtWindow(QMainWindow):
         self.splitter.addWidget(self.left_panel)
         self.splitter.addWidget(self.right_panel)
         self.splitter.setSizes([580, 580])
-        self.active = self.left_panel
-        if self.settings.active == "right":
-            self.switch_panel(self.right_panel)
+        # 只记录初始活动面板，激活动作留到 _wire_panels()；那时 quick_view 已建好，
+        # set_active() 里的 _update_quick_view() 才不会踩到尚未赋值的属性。
+        self.active = self.right_panel if self.settings.active == "right" else self.left_panel
 
     def _build_quick_view(self) -> None:
         self.quick_view = QuickView(self.splitter)

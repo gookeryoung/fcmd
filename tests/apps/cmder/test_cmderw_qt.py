@@ -155,6 +155,30 @@ def test_filter_and_hidden_toggle(home: Path) -> None:
         window.close()
 
 
+def test_restores_right_panel_as_active(home: Path) -> None:
+    """保存的 active=right 必须在构造期完成激活，不能踩到尚未创建的 quick_view。"""
+    create_application("cmderw-test")
+    left, right = _panels(home)
+    core.config_path().parent.mkdir(parents=True, exist_ok=True)
+    core.config_path().write_text(
+        json.dumps(
+            {
+                "left": {"path": str(left)},
+                "right": {"path": str(right)},
+                "active": "right",
+            }
+        ),
+        encoding="utf-8",
+    )
+    window = CmderQtWindow()
+    try:
+        assert window.active is window.right_panel
+        assert window.right_panel.state.path == str(right.resolve())
+        assert window.quick_view.isVisible() is False
+    finally:
+        window.close()
+
+
 def test_settings_persisted(home: Path) -> None:
     app = create_application("cmderw-test")
     left, right = _panels(home)
