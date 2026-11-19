@@ -77,9 +77,6 @@ __all__ = [
     "save_settings",
 ]
 
-__tool_aliases__ = ["locllmw"]
-"""改名前的命令名；保留为别名，旧脚本与快捷方式继续可用。"""
-
 _DESCRIPTION = (
     "LLM——本地 LLM 服务窗口版（Qt/PySide6，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 设置；"
     "模型页含 ModelScope 浏览、下载管理、已安装仓库、转换与量化向导）："

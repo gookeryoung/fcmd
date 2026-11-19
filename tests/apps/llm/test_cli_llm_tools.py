@@ -90,6 +90,15 @@ def test_tools_registered() -> None:
     assert set(_TOOL_REGISTRY["llmdoctor"]) == {None}
 
 
+def test_locllmw_command_removed() -> None:
+    """改名后只保留 llmw，旧命令名不再注册为别名。"""
+    from fcmd.cli._discovery import aliases_for, ensure_tools_discovered
+
+    ensure_tools_discovered()
+    assert aliases_for("llmw") == []
+    assert "locllmw" not in _TOOL_REGISTRY
+
+
 # ---------------------------------------------------------------------- #
 # llmenv
 # ---------------------------------------------------------------------- #

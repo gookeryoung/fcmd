@@ -155,7 +155,6 @@ ALIASES: dict[str, str] = {
     "gitt": "gittool",
     "imaget": "imagetool",
     "jsont": "jsontool",
-    "locllmw": "llmw",
     "pipt": "piptool",
     "pm": "pymake",
     "taskk": "taskkill",
@@ -535,7 +534,7 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "3ac50e1f874fc9f64b8c4b46ec4a8881"
+DIGEST = "eeac4e4df2da84348c53ebb9f395cf30"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
 TOOL_COUNT = 116

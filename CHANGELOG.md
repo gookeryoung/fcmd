@@ -8,8 +8,8 @@
 ### 变更
 
 - 应用 `locllm` 更名为 `llm`：包目录改为 `src/fcmd/apps/llm/`，模块 `locllmw.py` 与
-  `_locllmw_*` 统一改为 `llmw.py` / `_llmw_*`；新命令名为 `llmw`，旧命令 `locllmw`
-  保留为别名，旧脚本与快捷方式继续可用；窗口设置 `~/.fcmd/ui/locllmw.json` 在首次访问时
+  `_locllmw_*` 统一改为 `llmw.py` / `_llmw_*`；命令名统一为 `llmw`（旧命令 `locllmw`
+  已移除）；窗口设置 `~/.fcmd/ui/locllmw.json` 在首次访问时
   自动复制为 `ui/llmw.json`（旧文件保留作回退），模型列表磁盘缓存改名为
   `~/.fcmd/cache/llmw-model-list.json`（缓存可重建，不做迁移）。
 - Python 版本要求放宽到 ≥3.10：3.11+ 继续使用 PySide6，3.10 使用 PySide2；新增运行时
