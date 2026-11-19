@@ -163,6 +163,6 @@ jobs:
         env:
           # 所有 Qt 测试统一走离屏平台，runner 没有 X/Wayland 显示
           QT_QPA_PLATFORM: offscreen
-        # xdist 并行：本机 8 核约 15–20s，GitHub 2 核 runner 也能把 8k+ 测试
-        # 压到数分钟内，避免串行跑满 15m 超时；loadfile 已在 pytest.ini addopts。
-        run: uv run pytest ${{ matrix.pytest_args }} -m "not slow" ${{ matrix.cov_args }}
+        # xdist 并行（worksteal 动态派发，见 pytest.ini）；打印最慢 25 个用例，
+        # 便于后续定位还能压缩的测试。
+        run: uv run pytest ${{ matrix.pytest_args }} -m "not slow" --durations=25 ${{ matrix.cov_args }}
