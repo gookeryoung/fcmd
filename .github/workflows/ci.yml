@@ -91,7 +91,10 @@ jobs:
             cov_args: ""
           - python-version: "3.13"
             pytest_args: "-n auto"
-            cov_args: "--cov=fcmd --cov-fail-under=95 --cov-report=term-missing"
+            # coverage 7.16 在 3.13 只能走 C tracer（sys.monitoring 不支持分支测量，
+            # 设 COVERAGE_CORE=sysmon 会告警回退）。实测占测试时间 ~43%（本地 n2：
+            # 53s → 76s），而 3.14 走 sysmon 只占 ~12%。门禁由 3.14 保证，3.13 只跑测试。
+            cov_args: ""
           - python-version: "3.14"
             pytest_args: "-n auto"
             cov_args: "--cov=fcmd --cov-fail-under=95 --cov-report=term-missing"
