@@ -72,6 +72,9 @@ def overview(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     state = LocllmState(tmp_path / "ui" / "locllmw.json")
     page = OverviewPage(state)
     yield state, page
+    # 先停掉 1s 采样定时器：deleteLater 在没有事件循环的 worker 里不会执行，
+    # 页面会带着活动定时器存活到后续测试，采样任务可能跨测试走到别的用例里。
+    page.stop()
     page.deleteLater()
 
 
