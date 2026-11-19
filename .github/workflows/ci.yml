@@ -129,10 +129,18 @@ jobs:
 
       - name: Install Qt runtime libraries
         run: |
-          packages="libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1"
-          # 命中缓存时把 .deb 放回 apt 缓存目录；runner 镜像大多已预装这些库，
-          # 直接 install 即可（命中本地 .deb 缓存时不用联网），不再每次都跑
-          # apt-get update（实测该步 7~31s，大头是拉取索引）。只有失败
+          # runner 镜像大多已预装这些库，先只挑出真正缺失的再装（实测 6 个里通常
+          # 只缺 libegl1 / libxkbcommon-x11-0 及其依赖，全量 install 的 dpkg 空转会白跑）。
+          packages=""
+          for pkg in libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 libdbus-1-3 libfontconfig1; do
+            dpkg -s "$pkg" > /dev/null 2>&1 || packages="$packages $pkg"
+          done
+          if [ -z "$packages" ]; then
+            echo "Qt runtime libraries already present, skip apt"
+            exit 0
+          fi
+          echo "installing:$packages"
+          # 命中缓存时把 .deb 放回 apt 缓存目录，安装时不必联网；只有失败
           # （索引过期 / 缓存没覆盖某个包）才更新索引重试。
           if compgen -G ".apt-cache/*.deb" > /dev/null; then
             sudo cp -a .apt-cache/*.deb /var/cache/apt/archives/
