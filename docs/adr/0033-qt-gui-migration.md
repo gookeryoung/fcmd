@@ -10,9 +10,9 @@
 
 | 编号 | 约束 | 落点 |
 |---|---|---|
-| C1 | 引入 Qt 依赖，locllmw 用 Qt 重写 | `pyproject.toml` 基础依赖 `PySide6-Essentials`；`src/fcmd/gui/qt/**`；`src/fcmd/apps/locllm/_locllmw_qt_*.py` |
+| C1 | 引入 Qt 依赖，locllmw 用 Qt 重写 | `pyproject.toml` 基础依赖 `PySide6-Essentials`；`src/fcmd/gui/qt/**`；`src/fcmd/apps/llm/_llmw_qt_*.py` |
 | C2 | 补齐 GUI 基础设计（窗口骨架 / 主题 / 导航 / 后台任务 / 常用控件） | `fcmd.gui.qt.window` / `theme` / `sidebar` / `workers` / `widgets` |
-| C3 | locllmw 保持既有页面能力与配置兼容 | 页面模块；`_locllmw_winsettings` 与 `locllmw.json` 口径不变 |
+| C3 | locllmw 保持既有页面能力与配置兼容 | 页面模块；`_llmw_winsettings` 与 `llmw.json` 口径不变 |
 | C4 | 门禁不退化：lint / typecheck / test / 覆盖率照旧 | `pyrefly.toml` / `.coveragerc` 的可选依赖排除；离屏冒烟测试 |
 | C5 | 不因换工具包丢失能力 | 模型页在同一 Qt 页内补齐 ModelScope 浏览 / 下载、行内转换与量化；Tk 窗口已删除 |
 
@@ -23,11 +23,11 @@
 | D1 | Python ≥3.11 使用 **PySide6**；Python 3.10 使用 **PySide2**（见 [0036](0036-python310-pyside2.md)） | 全部 Python 版本只装 PySide6：3.10 上也能跑，但无法满足「3.10 明确走 PySide2」的兼容要求 | `pyproject.toml` 按 `python_version` 标记依赖；`fcmd.gui.qt._pyside_compat` 做运行时映射 |
 | D2 | Qt 依赖进入**基础依赖**（`pip install fcmd` 即可用 locllmw） | 作为可选 extra：默认入口会因缺依赖不可用，用户需额外记忆一个 extra；代价是安装体积增加约 200 MB，接受该代价 | `pyproject.toml` → `dependencies`（PySide6 / PySide2 择一） |
 | D3 | 主题注册表与调色板只在 `fcmd.gui.theme` 维护一份（四套主题、别名、`ui/theme.json`） | 另建 Qt 专用主题：两套配色/字号必然漂移 | `fcmd/gui/qt/theme.py` 只做 `Palette → QSS/QPalette` 翻译 |
-| D4 | 窗口设置统一为 `ui/locllmw.json` + `WxH+X+Y` 几何 + `LocllmSettings` | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | `_locllmw_winsettings`；`fcmd.gui.qt.window` 复用 `fcmd.gui.config` / `fcmd.gui.geometry` |
+| D4 | 窗口设置统一为 `ui/llmw.json` + `WxH+X+Y` 几何 + `LocllmSettings` | 各写一份设置：模型目录 / 硬件快照 / 实测记录无法共享 | `_llmw_winsettings`；`fcmd.gui.qt.window` 复用 `fcmd.gui.config` / `fcmd.gui.geometry` |
 | D5 | 后台任务用线程池 + 信号，不用 `QThread` 子类 | 每任务一个 `QThread`：线程生命周期与窗口销毁耦合，易悬空 | `fcmd/gui/qt/workers.py`（`submit` / `periodic`） |
 | D6 | 页面**按需构建**（首次切页才实例化） | 建窗即构建全部页面：模型/设置页会立刻扫描目录与引擎，违背 0032 的冷启动目标 | `QtMainWindow.add_page(..., factory=)`；`LocllmWindow._factory` |
-| D7 | 纯逻辑继续放在 `_locllmw_*` 模块，Qt 页面只做编排 | 在 Qt 里重写一套扫描/适配/推荐：两套口径漂移（如「硬件不足」判定） | `_locllmw_ui` / `_locllmw_monitor` / `_locllmw_bench` / `_locllmw_recommend` / `_locllmw_settings` / `_locllmw_models` / `_locllmw_convert` |
-| D8 | Qt 模块从 **pyrefly / coverage 排除**，纯逻辑单独测试 | 在 CI 安装 PySide6：lint/test 两个 job 各多下载约 120–200 MB，违背门禁速度优先 | `pyrefly.toml` `project-excludes`；`.coveragerc` `omit`；`tests/apps/locllm/test_locllmw_qt_logic.py` |
+| D7 | 纯逻辑继续放在 `_llmw_*` 模块，Qt 页面只做编排 | 在 Qt 里重写一套扫描/适配/推荐：两套口径漂移（如「硬件不足」判定） | `_llmw_ui` / `_llmw_monitor` / `_llmw_bench` / `_llmw_recommend` / `_llmw_settings` / `_llmw_models` / `_llmw_convert` |
+| D8 | Qt 模块从 **pyrefly / coverage 排除**，纯逻辑单独测试 | 在 CI 安装 PySide6：lint/test 两个 job 各多下载约 120–200 MB，违背门禁速度优先 | `pyrefly.toml` `project-excludes`；`.coveragerc` `omit`；`tests/apps/llm/test_llmw_qt_logic.py` |
 
 ## GUI 基础设计（C2）
 
@@ -50,16 +50,16 @@
 
 | 页面 | Qt 实现 | 复用逻辑 |
 |---|---|---|
-| 概览 | `_locllmw_qt_overview`：系统信息（规格 + 实时性能 + GPU / CPU / 内存负载格图）、智能推荐 | `_locllmw_hardware` / `_locllmw_recommend` / `_locllmw_monitor` |
-| 模型 | `_locllmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_locllmw_models` / `_locllmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
-| 运行 | `_locllmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_locllmw_monitor` |
-| 对话 | `_locllmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_locllmw_chat.format_session_markdown` |
-| 实验室 | `_locllmw_qt_lab`：四张规划卡片 | — |
-| 设置 | `_locllmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_locllmw_settings` 纯逻辑 / `_llmconfig` |
+| 概览 | `_llmw_qt_overview`：系统信息（规格 + 实时性能 + GPU / CPU / 内存负载格图）、智能推荐 | `_llmw_hardware` / `_llmw_recommend` / `_llmw_monitor` |
+| 模型 | `_llmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_llmw_models` / `_llmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
+| 运行 | `_llmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_llmw_monitor` |
+| 对话 | `_llmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_llmw_chat.format_session_markdown` |
+| 实验室 | `_llmw_qt_lab`：四张规划卡片 | — |
+| 设置 | `_llmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_llmw_settings` 纯逻辑 / `_llmconfig` |
 
-服务日志与性能测试不占分页：顶部「帮助」菜单打开 `_locllmw_qt_log` / `_locllmw_qt_bench`
+服务日志与性能测试不占分页：顶部「帮助」菜单打开 `_llmw_qt_log` / `_llmw_qt_bench`
 非模态对话框。日志历史来自 `LocllmState.log_buffer`（最近 1000 行），打开后继续接收 `logLine`；
-性能测试复用 `_locllmw_bench` 的场景与执行逻辑，被测服务从运行中服务下拉选择。
+性能测试复用 `_llmw_bench` 的场景与执行逻辑，被测服务从运行中服务下拉选择。
 
 ### 模型页浏览与行内操作（C5）
 
@@ -78,13 +78,13 @@
 ## 测试与门禁
 
 - 纯逻辑（设置、硬件快照、监控采样、性能场景、分组、下载参数、转换路径）在
-  `tests/apps/locllm/` 单测；Qt 冒烟用 `QT_QPA_PLATFORM=offscreen`
-  （`test_locllmw_qt_smoke.py`），断言六页可构建、模型树 / 分页内容与几何落盘。
+  `tests/apps/llm/` 单测；Qt 冒烟用 `QT_QPA_PLATFORM=offscreen`
+  （`test_llmw_qt_smoke.py`），断言六页可构建、模型树 / 分页内容与几何落盘。
 - 断言 Tk 内部实现的用例已改写为 Qt 等价断言：对话页服务选择改为 `ChatPage`，
   概览页推荐动作改为 `OverviewPage`，量化勾选改为 `_QuantPanel`，
-  `state_tag` 改为 `_locllmw_ui.state_tag` 纯函数。
+  `state_tag` 改为 `_llmw_ui.state_tag` 纯函数。
 - `pyrefly.toml` / `.coveragerc` 继续排除 `src/fcmd/gui/qt/**` 与
-  `src/fcmd/apps/locllm/_locllmw_qt_*.py`（CI 不装 PySide6，与 `mcp_adapter` 同处理）。
+  `src/fcmd/apps/llm/_llmw_qt_*.py`（CI 不装 PySide6，与 `mcp_adapter` 同处理）。
 
 ## 已知取舍
 
@@ -119,5 +119,5 @@
 - 后台加载：需要等待的场景统一挂到状态栏右侧（`LocllmState.begin_loading` /
   `end_loading`，窗口用 `LoadingBar` 渲染说明 + 忙碌动画 + 已用时）；不要把阻塞
   扫描留在页面构造函数里，也不要在内容区顶部放大段进度条盖住标题或分页控件。
-- 复测：`QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/locllm/test_locllmw_qt_smoke.py`；
+- 复测：`QT_QPA_PLATFORM=offscreen uv run pytest tests/apps/llm/test_llmw_qt_smoke.py`；
   真实窗口用 `uv run fcmd locllmw`（`PySide6-Essentials` 随 fcmd 安装）。

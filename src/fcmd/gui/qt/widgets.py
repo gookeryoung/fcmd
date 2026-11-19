@@ -705,7 +705,7 @@ class LogView(QWidget):  # pragma: no cover - Qt 控件
             clipboard.setText(self.text())
 
     def _export(self) -> None:  # pragma: no cover - 需要真实对话框
-        path, _ = QFileDialog.getSaveFileName(self, "导出日志", "locllmw.log", "日志 (*.log);;所有文件 (*.*)")
+        path, _ = QFileDialog.getSaveFileName(self, "导出日志", "llmw.log", "日志 (*.log);;所有文件 (*.*)")
         if not path:
             return
         from pathlib import Path

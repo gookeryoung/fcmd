@@ -2,7 +2,7 @@
 
 - 状态：已落地（v1）
 - 日期：2026-11-11
-- 关联：`src/fcmd/apps/locllm/llmdown.py`、`src/fcmd/apps/locllm/_locllmw_models.py`（locllmw 模型页）、0013（GUI 技术路线）
+- 关联：`src/fcmd/apps/llm/llmdown.py`、`src/fcmd/apps/llm/_llmw_models.py`（locllmw 模型页）、0013（GUI 技术路线）
 
 ## 背景
 
@@ -121,7 +121,7 @@ Hugging Face 下载 / 点赞、Open LLM Leaderboard、LMArena 等国际开源社
 ### 7. 配置持久化
 
 窗口位置、目标目录、下载源、并发、校验开关与包含 / 排除掩码保存到
-`locllmw.json` 的 `download` 字段；非法值逐项回退默认，与 0013 的 GUI
+`llmw.json` 的 `download` 字段；非法值逐项回退默认，与 0013 的 GUI
 口径一致。Qt 窗口类标注 `pragma: no cover`，测试只覆盖纯函数与注册。
 
 ## 备选方案与取舍
@@ -139,12 +139,12 @@ Hugging Face 下载 / 点赞、Open LLM Leaderboard、LMArena 等国际开源社
 - 代码：`llmdown.py` 新增搜索 / 任务类别 / 详情 / 本地扫描 / 删除 / 进度事件与取消 /
   系列识别与知名度排序（`model_series` / `MODEL_SERIES_RANKING` /
   `series_options` / `filter_by_series` / `sort_by_popularity`）；
-  `_locllmw_models.py` 新增模型页与系列下拉、增量列表同步（`sync_tree_rows`）；
+  `_llmw_models.py` 新增模型页与系列下拉、增量列表同步（`sync_tree_rows`）；
   独立 `llmdownw` 入口已移除。
-- 测试：`tests/apps/locllm/test_cli_llmdown.py` 覆盖搜索请求体、排序取值、
+- 测试：`tests/apps/llm/test_cli_llmdown.py` 覆盖搜索请求体、排序取值、
   任务类别解析、详情解析、分页校验、本地扫描 / 删除 / 越界拒绝、进度事件与
   取消保留 `.part`、系列识别 / 排名表顺序 / 选项排序 / `--series` 过滤；
-  `test_locllmw_models.py` 覆盖独立工具移除、配置字典回退、格式化、类别过滤、
+  `test_llmw_models.py` 覆盖独立工具移除、配置字典回退、格式化、类别过滤、
   系列列排序、打开目录与增量列表同步。
 - 文档：README 工具表移除独立 `llmdownw`，模型页说明并入 `locllmw`；本 ADR 与索引。
 - 静态清单已重新生成。

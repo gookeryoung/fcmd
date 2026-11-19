@@ -10,13 +10,13 @@
 思考过程展示、图片附件与采样参数都已成熟。`locllmw` 的「对话」页从
 [ADR 0027](0027-locllmw-rename.md) 起一直是占位，用户需要在两个窗口之间来回切换：
 在 `locllmw` 启动服务，再到 `llmchatw` 选服务对话。两边都读取同一份
-`llmenv` 状态，却维护两套窗口设置（`locllmw.json` / `llmchatw.json`）。
+`llmenv` 状态，却维护两套窗口设置（`llmw.json` / `llmchatw.json`）。
 
 ## 决策
 
 ### 1. 对话能力迁入 `locllmw` 对话页
 
-- 新增 `_locllmw_chat.py` 的 `_LocllmWindowChat` mixin，从原 `ChatWindow`
+- 新增 `_llmw_chat.py` 的 `_LocllmWindowChat` mixin，从原 `ChatWindow`
   迁移连接表单、生成参数、流式对话、图片附件与停止 / 清空逻辑；
 - 页面控件由 `SidebarNav` 的 chat 页承载，字符串状态与历史保存在控件内，
   **切页不丢失**；
@@ -40,9 +40,9 @@
 
 ### 3. 移除独立工具 `llmchatw`
 
-- 删除 `src/fcmd/apps/locllm/llmchatw.py`；
+- 删除 `src/fcmd/apps/llm/llmchatw.py`；
 - 删除 `pyproject.toml` 入口、工具注册、`_schema` GUI 工具集合与静态清单条目；
-- 设置不再写 `~/.fcmd/ui/llmchatw.json`，窗口几何统一由 `locllmw.json` 管理；
+- 设置不再写 `~/.fcmd/ui/llmchatw.json`，窗口几何统一由 `llmw.json` 管理；
 - CLI `llmchat` 保留，作为脚本化对话入口；交互式对话统一进 `locllmw`。
 
 ### 4. 布局适配
@@ -79,7 +79,7 @@ top_p 使用默认值。输入区仍为 4 行，`Ctrl+Enter` 发送。思考内�
 
 ## 验证
 
-- `tests/apps/locllm/test_cli_llmchat.py`：注册表断言 `llmchatw` 已移除；
+- `tests/apps/llm/test_cli_llmchat.py`：注册表断言 `llmchatw` 已移除；
   服务刷新 / 自定义地址 / 不可用服务提示改为针对 `_LocllmWindowChat` 的纯逻辑测试。
 - 真实 Tk 冒烟：`locllmw` 创建窗口后切到「对话」页，服务下拉框填充、发送按钮
   与图片按钮可用、切页后状态保留、关闭窗口不留下线程。

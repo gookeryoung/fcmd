@@ -24,7 +24,7 @@ from fcmd.gui.qt.sidebar import COLLAPSED_WIDTH, EXPANDED_WIDTH, SidebarNav
 @pytest.fixture()
 def nav() -> Any:
     QApplication.instance() or QApplication([])
-    widget = SidebarNav(title="locllm")
+    widget = SidebarNav(title="llm")
     widget.add("overview", "概览", hint="服务状态与快捷入口")
     widget.add("run", "运行", hint="档位、上下文与启动参数")
     widget.add("settings", "设置", hint="存储、引擎与关于")
@@ -121,7 +121,7 @@ def test_collapsed_keeps_icon_and_click_expands() -> None:
     application = QApplication.instance() or QApplication([])
     pixmap = QPixmap(24, 24)
     pixmap.fill(QColor("#336699"))
-    nav = SidebarNav(title="LocLLM", icon=QIcon(pixmap))
+    nav = SidebarNav(title="LLM", icon=QIcon(pixmap))
     try:
         nav.add("overview", "概览")
         nav.show()

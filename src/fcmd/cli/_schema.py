@@ -39,7 +39,7 @@ GUI_TOOLS: frozenset[str] = frozenset(
         "filesyncw",
         "img2icow",
         "img2pdfw",
-        "locllmw",
+        "llmw",
         "mirrortoolw",
         "ncmconvertw",
         "paramcadw",

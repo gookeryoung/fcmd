@@ -2,15 +2,15 @@
 
 - 状态：已落地
 - 日期：2026-11-14
-- 关联：`src/fcmd/apps/locllm/_llmconfig.py`、`src/fcmd/apps/locllm/_locllmw_settings.py`、
-  `src/fcmd/apps/locllm/llmenv.py`、[ADR 0027](0027-locllmw-rename.md)、
+- 关联：`src/fcmd/apps/llm/_llmconfig.py`、`src/fcmd/apps/llm/_llmw_settings.py`、
+  `src/fcmd/apps/llm/llmenv.py`、[ADR 0027](0027-locllmw-rename.md)、
   [ADR 0030](0030-locllmw-models-page.md)
 
 ## 背景
 
 localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境变量读取模型与引擎
 目录；`llmdown` 未传 `--dest` 时写死 `./models`；locllmw 模型页把下载目标存在
-`locllmw.json` 的 `download.dest`（默认同样是相对工作目录的 `models`）。结果是 GUI
+`llmw.json` 的 `download.dest`（默认同样是相对工作目录的 `models`）。结果是 GUI
 下载的模型与 `llmserve` / `llmmodel` 扫描的模型目录不一致，运行页可能看不到刚下载
 的模型。
 
@@ -90,7 +90,7 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
 - `serve` → `serve_dir`；
 - `ui/llmenvw.json` 的 `serve_dir` / `engines_root` 并入配置，旧文件改名为
   `.migrated`（保留数据，不再读取）；
-- `ui/locllmw.json` 的 `download.dest` 随后移除：绝对路径记入 `ignored_work_dir`
+- `ui/llmw.json` 的 `download.dest` 随后移除：绝对路径记入 `ignored_work_dir`
   提示一次，旧的相对默认值 `models` 直接丢弃；两者都不再参与落点计算。
 
 ### 5. 设置页收敛为两个分页
@@ -131,6 +131,6 @@ localllm 工具族此前各自解析目录：`llmenv` 从 `config.json` / 环境
   `work_dir` / `FCMD_WORK` / `--work-dir` 被忽略且不生效，旧值记入
   `ignored_work_dir` 提示一次，重设模型目录时清除记录。
 - 界面：设置页为「存储 / 引擎」两页；模型目录只有一个
-  写入入口且写入前有确认；模型页不再在 `locllmw.json` 保存 `dest`；引擎管理不再
+  写入入口且写入前有确认；模型页不再在 `llmw.json` 保存 `dest`；引擎管理不再
   单独开窗。转换参数在设置页维护，转换 / 量化入口在模型浏览列表行内，共用
   `llmconvert` / `llmqnt` 与 `<models_dir>/converted/` 约定。

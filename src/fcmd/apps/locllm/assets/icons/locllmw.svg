@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="locllmw 图标：离线核心">
-  <title>locllmw — 离线核心</title>
-  <rect width="256" height="256" rx="56" fill="#12161c"/>
-  <rect x="1.5" y="1.5" width="253" height="253" rx="54.5" fill="none" stroke="#252d38" stroke-width="3"/>
-  <path d="M 155.4 52.8 A 80 80 0 0 1 155.4 203.2" fill="none" stroke="#2ee6a8" stroke-width="32" stroke-linecap="butt"/>
-  <path d="M 100.6 203.2 A 80 80 0 0 1 100.6 52.8" fill="none" stroke="#2ee6a8" stroke-width="32" stroke-linecap="butt"/>
-  <circle cx="128" cy="128" r="28" fill="#eaf2ee"/>
-</svg>

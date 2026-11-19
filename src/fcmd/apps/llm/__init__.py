@@ -1,0 +1,23 @@
+"""fcmd.apps.llm —— 本地 LLM 工具族：模型下载、量化、推理服务与工作台。
+
+应用包：包内公开模块经 `@fx.tool` 注册为顶层命令（工具名 = 模块名，
+调用方式 `fcmd <工具名>`），`_` 前缀模块只作实现拆分；本包门面不 re-export
+任何工具符号。
+
+可复用子模块（单向依赖；库函数不打印，命令行入口以同名工具注册）::
+
+    llmbase    公共基元与数据类型
+    llmenv     路径 / 配置 / 状态文件 / 客户端环境变量     → fcmd llmenv <show|add|remove|reset|list|env>
+    llmmodel   模型扫描、定位与显存估算                   → fcmd llmmodel <list|find|vram>
+    llmengine  引擎安装、切换、离线包检查与量化器定位     → fcmd llmengine <list|install|use|check|inspect>
+    llmserve   启动计划与进程生命周期                     → fcmd llmserve <plan|start|stop|status|logs>
+    llmw    本地 LLM 工作台（对话 / 模型 / 服务 / 设置）        → fcmd llmw
+    llmbench    OpenAI 兼容服务性能测试（只依赖 llmbase.Endpoint） → fcmd llmbench
+    llmchat     OpenAI 兼容服务多轮流式对话客户端                  → fcmd llmchat
+    llmconvert  HF safetensors → GGUF 转换                        → fcmd llmconvert
+    llmdoctor   运行环境体检                                      → fcmd llmdoctor
+"""
+
+from __future__ import annotations
+
+__all__: list[str] = []

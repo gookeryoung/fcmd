@@ -23,7 +23,7 @@
 - 快照字段：CPU（型号 / 核 / 线程）、内存、NVIDIA GPU 型号与显存、固定磁盘
   列表、检测时间；结构带 `schema: 1`（快照仍保留 `model_root` 字段供缓存与
   其他页面读取，概览不再展示）。
-- 首次打开且配置中没有快照时，后台检测并写入 `~/.fcmd/ui/locllmw.json`；
+- 首次打开且配置中没有快照时，后台检测并写入 `~/.fcmd/ui/llmw.json`；
   之后直接展示缓存，标题旁提供「重新检测」文字链接。检测在后台线程执行，失败只更新
   状态文案，不阻塞窗口。
 - 检测来源：`psutil`（CPU / 内存 / 磁盘）、Windows 注册表或 `/proc/cpuinfo`
@@ -49,7 +49,7 @@
 
 ### 3. 智能推荐与性能口径
 
-- 纯逻辑在 `_locllmw_recommend.py`：按模型大小从大到小筛选能整卡放下的模型
+- 纯逻辑在 `_llmw_recommend.py`：按模型大小从大到小筛选能整卡放下的模型
   （显存不足时自动降 KV 或收缩上下文；仍放不下则跳过），凑满 3 条后按评分
   从高到低展示；评分相同时按模型大小从大到小、再按路径排序。档位优先取模型
   能力标签（代码 / 推理 / 对话等），启动参数用 `_llmtune.resolve("auto", ...)`。
@@ -117,11 +117,11 @@
 
 ## 验证
 
-- `tests/apps/locllm/test_locllmw_overview.py`：快照序列化 / 非法输入、最长
+- `tests/apps/llm/test_llmw_overview.py`：快照序列化 / 非法输入、最长
   挂载点匹配、磁盘格式化、注入 runner 的硬件检测、性能预测单调性、
   推荐筛选 / 候选按大小取大 / 展示按评分降序 / 实测覆盖 / CPU-only / limit。
-- `tests/apps/locllm/test_cli_llmserve.py`：配置读写覆盖 hardware / measured。
-- `tests/apps/locllm/test_locllmw_ui.py`：模型目录扫描的错误分类（不存在 /
+- `tests/apps/llm/test_cli_llmserve.py`：配置读写覆盖 hardware / measured。
+- `tests/apps/llm/test_llmw_ui.py`：模型目录扫描的错误分类（不存在 /
   无权限 / 其它 `OSError` / 空目录 / 正常）、推荐配置带入运行页的参数覆盖顺序。
 - 离屏 Qt 冒烟：六页导航、硬件检测完成、模型扫描后推荐列表出现 3 行；健康状态条
   在正常环境显示「环境检查通过」，注入异常后按钮可跳转到对应分页；注入系统采样后

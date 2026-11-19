@@ -19,8 +19,8 @@
 
 ### 1. 改名 `llmservew` → `locllmw`
 
-- 模块：`src/fcmd/apps/locllm/llmservew.py` → `locllmw.py`；
-- 内部拆分：`_llmservew_bench/monitor/ui.py` → `_locllmw_bench/monitor/ui.py`；
+- 模块：`src/fcmd/apps/llm/llmservew.py` → `llmw.py`；
+- 内部拆分：`_llmservew_bench/monitor/ui.py` → `_llmw_bench/monitor/ui.py`；
 - 类：`ServeWindow` / `_ServeWindowUI` / `_ServeWindowBench` / `_ServeWindowMonitor`
   / `ServeSettings` → `LocllmWindow` / `_LocllmWindow*` / `LocllmSettings`；
 - 命令：`fcmd llmservew` → `fcmd locllmw`（`pyproject` 入口、工具注册、静态清单同步）；
@@ -66,17 +66,17 @@
 
 - `pyproject.toml` 入口、`fcmd.cli._manifest_data`（目标模块与描述）、README
   工具表、ADR 0015 / 0024 / 0025 / 0026 的引用统一为 `locllmw`；
-- 测试继续由 `tests/apps/locllm/test_cli_llmserve.py` 覆盖（CLI `llmserve` 与
+- 测试继续由 `tests/apps/llm/test_cli_llmserve.py` 覆盖（CLI `llmserve` 与
   窗口纯逻辑同文件），只更新模块与类名；
 - 标题与 `run_window` 文案改为「本地 LLM 服务」。
 
 ## 验证
 
-- 工具发现与清单：`locllmw` 条目指向 `fcmd.apps.locllm.locllmw`；`fcmd llmserve`
+- 工具发现与清单：`locllmw` 条目指向 `fcmd.apps.llm.locllmw`；`fcmd llmserve`
   行为不变。
 - 窗口冒烟：真实 Tk 下创建窗口，导航 key 为
   `overview/models/run/chat/lab/settings`，切页与关闭正常。
-- 全量测试：`tests/apps/locllm` 与 manifest / GUI 用例通过。
+- 全量测试：`tests/apps/llm` 与 manifest / GUI 用例通过。
 
 ## 交接
 

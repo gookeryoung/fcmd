@@ -5,7 +5,7 @@ Qt 窗口骨架负责「导航 / 菜单 / 状态栏 / 日志区 / 后台任务�
 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``（与旧版本设置文件互读）。
 
 页面按需构建：登记时只给工厂函数，首次切到该页才实例化，冷启动不付全量
-页面的构造成本（locllmw 模型页 / 设置页会扫描目录、探测引擎）。
+页面的构造成本（llmw 模型页 / 设置页会扫描目录、探测引擎）。
 
 几何字符串沿用 ``WxH+X+Y`` 格式，解析与格式化是纯函数（:mod:`fcmd.gui.geometry`），便于单测。
 """
@@ -326,7 +326,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.theme_menu = ThemeMenu(self, self._theme)
         self.theme_menu.attach(view_menu.addMenu("主题"))
 
-        # 子窗口可在「关于」之前插入自己的帮助项（如 locllmw 的「服务日志…」）。
+        # 子窗口可在「关于」之前插入自己的帮助项（如 llmw 的「服务日志…」）。
         self.help_menu = self.menuBar().addMenu("帮助")
         self.about_action = QAction("关于", self)
         self.about_action.triggered.connect(self._show_about)

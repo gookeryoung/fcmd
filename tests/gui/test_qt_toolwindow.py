@@ -25,7 +25,7 @@ from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import ElidedLabel
 from fcmd.gui.qt.window import parse_geometry
 
-_LONG_PATH = "C:/Users/demo/Projects/fcmd/src/fcmd/apps/locllm/_locllmw_qt_window.py"
+_LONG_PATH = "C:/Users/demo/Projects/fcmd/src/fcmd/apps/llm/_llmw_qt_window.py"
 
 
 @pytest.fixture()

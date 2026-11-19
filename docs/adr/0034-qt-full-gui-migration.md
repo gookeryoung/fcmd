@@ -97,9 +97,9 @@ B7 与 B1–B6 平行排期，迁移期间任何一批的提交都不应把 cmde
   B4 四个应用（pptmakew / envw / filescanw / wslmanw）各自单独提交，旧实现已删除，
   GUI 入口统一委托 ``_<tool>w_qt.py``；
 - locllmw 的 P2 已落地：模型页补齐 ModelScope 浏览 / 下载、行内转换与量化，
-  `--ui tk` 与全部 Tk 模块（`locllmw.LocllmWindow`、`_locllmw_ui` / `_locllmw_bench` /
-  `_locllmw_chat` / `_locllmw_monitor` / `_locllmw_overview` / `_locllmw_settings` /
-  `_locllmw_models` / `_locllmw_convert` 的 Tk 类）已删除（见 0033）；
+  `--ui tk` 与全部 Tk 模块（`locllmw.LocllmWindow`、`_llmw_ui` / `_llmw_bench` /
+  `_llmw_chat` / `_llmw_monitor` / `_llmw_overview` / `_llmw_settings` /
+  `_llmw_models` / `_llmw_convert` 的 Tk 类）已删除（见 0033）；
 - B6 收尾还包含 `alarmclock` / `checksum` 两个工具窗口的 Qt 化；
 - B7 已完成：`cmderw` 拆为 `_cmder_qt.py`（窗口 / 菜单 / 队列 / 命令行）、
   `_cmder_qt_panels.py`（双面板 / 缩略图 / 快速查看）与 `_cmder_qt_dialogs.py`
@@ -195,7 +195,7 @@ Qt 使用原生 `windows` 平台插件。每个窗口独立进程，冷启动口
 - 设置文件沿用 `fcmd.gui.config`，字段与旧版保持同名同义，便于读取历史文件。
 - 迁移一个应用时同步更新其模块 docstring 与工具 `help` 文本中的「Tk」字样。
 - 提交 `eff8c36`（`feat(locllm): 新增引擎兼容性与启动错误诊断`）除 `llmbase.py` / `llmserve.py` /
-  `tests/apps/locllm/test_cli_llmserve.py` 三项主题改动外，还含并行会话的附带改动：README 6 行、
+  `tests/apps/llm/test_cli_llmserve.py` 三项主题改动外，还含并行会话的附带改动：README 6 行、
   locllmw 图标 9 个、devman / filesync / paramcad / paramesh / peview / reshack / videoconvw 各 1 行
   QTimer 生命周期、`src/fcmd/cli/_manifest_data.py` 1 行。已定**不改写历史**：该提交之后另有 161 个提交，
   拆分需要 rebase 全部重写，收益不抵与并行会话提交冲突的风险。回滚 locllmw 启动修复时按

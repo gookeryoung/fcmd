@@ -2,7 +2,7 @@
 
 - 状态：已落地
 - 日期：2026-11-15
-- 关联：`src/fcmd/apps/locllm/locllmw.py`、`_locllmw_ui.py`、`_locllmw_chat.py`、`_locllmw_convert.py`、`_llmgguf.py`、`_llmconfig.py`、
+- 关联：`src/fcmd/apps/llm/llmw.py`、`_llmw_ui.py`、`_llmw_chat.py`、`_llmw_convert.py`、`_llmgguf.py`、`_llmconfig.py`、
   [ADR 0025](0025-sidebar-page-navigation.md)、[ADR 0030](0030-locllmw-models-page.md)、[ADR 0031](0031-localllm-config-unification.md)
 
 ## 背景
@@ -15,7 +15,7 @@
    会逐项读出 tokenizer 词表（单个 30B 模型数十万项字符串）。实测 13 个模型的
    目录里一轮扫描约 450 万次 `bytes.decode` + 小读，持续数秒占用 GIL，与 Tk
    主线程抢时间片，表现为窗口刚出来时卡顿；
-3. `_llmconfig.load_config` 每次都重新读盘并跑旧键迁移（还顺带读 `ui/locllmw.json`），
+3. `_llmconfig.load_config` 每次都重新读盘并跑旧键迁移（还顺带读 `ui/llmw.json`），
    窗口构造同一轮里被调用 20 余次。
 
 目标：不动功能口径，只把「看不见的页」与「可以跳过的解析」拿出冷启动关键路径。
@@ -56,9 +56,9 @@
 
 ## 测试口径
 
-- `tests/apps/locllm/test_llmconfig.py`：缓存复用（同一轮只读一次 config.json）、
+- `tests/apps/llm/test_llmconfig.py`：缓存复用（同一轮只读一次 config.json）、
   返回副本、写操作失效、外部改写可见、缺失文件缓存为空。
-- `tests/apps/locllm/test_llmgguf.py`：既有元数据数组 / 张量表测试覆盖 `_skip_string`
+- `tests/apps/llm/test_llmgguf.py`：既有元数据数组 / 张量表测试覆盖 `_skip_string`
   跳过路径与 `expected_bytes` 计算。
 - Tk 部分（延迟构建、切页触发构建）标注 `pragma: no cover`，本地用真实窗口冒烟：
   建窗 → 逐页切换 → 刷新模型列表 → 关窗。

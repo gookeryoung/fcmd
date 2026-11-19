@@ -205,7 +205,7 @@ def test_python_fast_path_imports_only_target(tmp_path: Path) -> None:
         "assert d.resolve_tool_fast('img2icow') == 'img2icow'\n"
         "assert d._TOOLS_DISCOVERED is False\n"
         "assert d._TOOL_MODULES['img2icow'] == 'fcmd.tools.media.img2icow'\n"
-        "assert 'fcmd.apps.locllm.llmchat' not in sys.modules\n"
+        "assert 'fcmd.apps.llm.llmchat' not in sys.modules\n"
         "assert 'fcmd.tools.dev.pymake' not in sys.modules\n"
         "print('ok')\n",
         tmp_path,
@@ -244,7 +244,7 @@ def test_graph_fast_path_skips_full_discovery(tmp_path: Path) -> None:
         "graph_cmd.ensure_tools_discovered = _boom\n"
         "assert graph_cmd.run(['pymake', 'tc', '--format=mermaid']) == 0\n"
         "assert 'fcmd.tools.dev.pymake' in sys.modules\n"
-        "assert 'fcmd.apps.locllm.llmchat' not in sys.modules\n"
+        "assert 'fcmd.apps.llm.llmchat' not in sys.modules\n"
         "print('ok')\n",
         tmp_path,
     )
