@@ -25,7 +25,7 @@ license = {text = "MIT"}
 name = "fcmd"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.3.13"
+version = "0.3.14"
 
 [project.scripts]
 alarmclock     = "fcmd.tools.system.alarmclock:main"

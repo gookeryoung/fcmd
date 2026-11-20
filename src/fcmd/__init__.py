@@ -36,7 +36,7 @@ TYPE_CHECKING = False
 if TYPE_CHECKING:  # pragma: no cover - 仅供类型检查，运行期不导入 typing
     from typing import Any
 
-__version__ = "0.3.13"
+__version__ = "0.3.14"
 
 __all__ = [
     "Context",
