@@ -583,7 +583,7 @@ wheels = [
 
 [[package]]
 name = "fcmd"
-version = "0.3.13"
+version = "0.3.14"
 source = { editable = "." }
 dependencies = [
     { name = "pillow", version = "12.3.0", source = { registry = "https://mirrors.cloud.tencent.com/pypi/simple" }, marker = "python_full_version < '3.11'" },
