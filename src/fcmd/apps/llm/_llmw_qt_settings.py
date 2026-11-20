@@ -81,14 +81,6 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
         name.setMaximumWidth(220)
         row.addWidget(name, 0)
 
-        variant = settings_logic.engine_variant(info)
-        category = StatusTag(variant, tone="muted" if variant == "CPU" else "accent", parent=self)
-        tooltip = f"构建类别：{variant}"
-        if info.path_prepend:
-            tooltip += "\n启动时前置到 PATH：" + "、".join(info.path_prepend)
-        category.setToolTip(tooltip)
-        row.addWidget(category, 0)
-
         exe = ElidedLabel(str(info.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
         exe.setObjectName("Hint")
         row.addWidget(exe, 1)
@@ -101,6 +93,14 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
             self.use_button.setToolTip("把该引擎设为默认引擎")
             self.use_button.clicked.connect(lambda: self.useRequested.emit(self.info.tag))
             row.addWidget(self.use_button, 0)
+
+        variant = settings_logic.engine_variant(info)
+        category = StatusTag(variant, tone="muted" if variant == "CPU" else "accent", parent=self)
+        tooltip = f"构建类别：{variant}"
+        if info.path_prepend:
+            tooltip += "\n启动时前置到 PATH：" + "、".join(info.path_prepend)
+        category.setToolTip(tooltip)
+        row.addWidget(category, 0)
         self.setMinimumHeight(self.fontMetrics().height() + 14)
 
     def set_selected(self, selected: bool) -> None:

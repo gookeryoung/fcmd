@@ -472,14 +472,17 @@ def test_settings_engine_rows_are_compact_single_line(
     assert other_row.use_button is not None
     assert other_row.use_button.text() == "设为默认"
     assert other_row.use_button.isEnabled()
+    other_widgets = [other_row.layout().itemAt(pos).widget() for pos in range(other_row.layout().count())]
+    assert other_widgets[-2] is other_row.use_button
+    assert other_widgets[-1].text() == "CPU"
     assert current_row.use_button is None
     current_labels = [label.objectName() for label in current_row.findChildren(QLabel)]
     assert "EngineItemName" in current_labels
     assert "StatusTag" in current_labels
     assert "OwnerTag" not in current_labels
     current_widgets = [current_row.layout().itemAt(pos).widget() for pos in range(current_row.layout().count())]
-    assert current_widgets[1].text() == "CPU"
-    assert current_widgets[-1].text() == "默认"
+    assert current_widgets[-2].text() == "默认"
+    assert current_widgets[-1].text() == "CPU"
 
     QApplication.processEvents()
     for index in range(page.engines_list.count()):
