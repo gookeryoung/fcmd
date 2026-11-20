@@ -18,8 +18,9 @@ name: Release
 # 仅产出跨平台 zip：本项目是 100+ 入口的 CLI 工具集，fspack 的 nsis/deb
 # 安装器只会把「默认入口」映射成唯一命令，语义不适合本项目的多入口形态。
 #
-# CI 不运行 GUI 测试：冒烟只执行 --version / --help，不创建 Tk 窗口，
-# 因此无需 Xvfb；Tk 运行期依赖通过检查 dist/runtime 内 tkinter 文件是否齐全来验证。
+# CI 不运行 GUI 测试：冒烟只执行 --version / --help，不创建 Qt 窗口，
+# 因此无需 Xvfb；Qt 运行期依赖通过检查 dist/site-packages 内 PySide6 文件是否齐全来验证。
+# 全仓已无 tkinter 依赖（ADR 0034），fspack 不再补充 Tk 运行期文件，故不做 Tk 断言。
 
 on:
   push:
@@ -217,42 +218,9 @@ jobs:
           fi
           echo "PDF 依赖策略通过: PyMuPDF $pymupdf_version，onnxruntime 未打包"
 
-      # Tk 运行期依赖检查：只查文件，不启动 GUI。
-      # Windows embed：runtime/Lib/tkinter/__init__.py
-      # Linux standalone：tkinter 纯 Python 包被压缩进 runtime/python/lib/python3XX.zip
-      - name: Assert Tk runtime bundled (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          if (-not (Get-ChildItem dist/runtime -Recurse -Filter '_tkinter*' | Select-Object -First 1)) {
-            throw '运行时缺少 _tkinter 扩展'
-          }
-          if (-not (Test-Path 'dist/runtime/Lib/tkinter/__init__.py')) { throw '运行时缺少 tkinter 包' }
-          if (-not (Test-Path 'dist/runtime/Lib/tkinter/ttk.py')) { throw '运行时缺少 tkinter.ttk' }
-          Write-Host 'tkinter 运行期依赖齐全'
-
-      - name: Assert Tk runtime bundled (Linux)
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          test -n "$(find dist/runtime -name '_tkinter*' -print -quit)"
-          if find dist/runtime -path '*/tkinter/__init__.py' -print -quit | grep -q .; then
-            echo "tkinter 包: 目录形式"
-          else
-            stdlib_zip=$(find dist/runtime -name 'python3*.zip' -print -quit)
-            test -n "$stdlib_zip"
-            python3 - "$stdlib_zip" <<'PY'
-          import sys
-          import zipfile
-
-          with zipfile.ZipFile(sys.argv[1]) as zf:
-              names = zf.namelist()
-          assert any(name.startswith("tkinter/__init__.") for name in names), "stdlib zip 内缺少 tkinter"
-          print("tkinter 包: stdlib zip")
-          PY
-          fi
-
-      # Qt 运行期依赖检查：llmw 默认前端需要 PySide6，只查文件不启动 GUI。
+      # Qt 运行期依赖检查：全部 GUI 入口依赖 PySide6，只查文件不启动 GUI。
+      # 项目源码布局为 src-layout，fspack 把项目根复制到 dist/src，
+      # 因此 fcmd 包落在 dist/src/src/fcmd/（第三方依赖才在 site-packages）。
       - name: Assert Qt runtime bundled
         shell: bash
         run: |
@@ -260,7 +228,7 @@ jobs:
           ls dist/site-packages/PySide6/QtCore* >/dev/null 2>&1 || {
             echo "::error::发布物缺少 PySide6 QtCore 扩展"; exit 1;
           }
-          test -f dist/site-packages/fcmd/apps/llm/assets/icons/llmw.ico || {
+          test -f dist/src/src/fcmd/apps/llm/assets/icons/llmw.ico || {
             echo "::error::发布物缺少 llmw 图标资源"; exit 1;
           }
           echo "PySide6 运行期依赖齐全，llmw 图标已打包"
