@@ -1300,6 +1300,17 @@ class TestEngine:
         assert info.exe.is_file()
         assert info.source == "https://example.com/engine.zip"
 
+    def test_install_uses_explicit_asset_names(self, home: Path) -> None:
+        """版本列表选中 release 后按实际资产名下载（不再推导 cuda 版本）。"""
+        payload = _zip_payload({llmengine.engine_exe_name(): b"exe"})
+        seen: list[Any] = []
+        name = "llama-b9-bin-win-vulkan-x64.zip"
+        info = llmengine.install_engine("b9", asset_names=[name], home=home, opener=_opener(payload, seen=seen))
+        assert info.exe.is_file()
+        assert [str(request.full_url) for request in seen] == [
+            f"https://github.com/ggml-org/llama.cpp/releases/download/b9/{name}"
+        ]
+
     def test_install_from_url_without_exe(self, home: Path) -> None:
         payload = _zip_payload({"readme.txt": b"nope"})
         with pytest.raises(ServeError, match="找不到"):

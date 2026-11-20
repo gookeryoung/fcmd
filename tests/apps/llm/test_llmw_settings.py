@@ -372,3 +372,10 @@ def test_format_inspection_marks_state_and_notes() -> None:
     assert "CUDA 运行库" in text
     assert "不可安装" in text
     assert "需与引擎包一起安装" in text
+
+
+def test_variant_label_maps_build_variants() -> None:
+    """版本列表与已装引擎行共用同一套构建变体显示名。"""
+    assert settings_page.variant_label("cuda") == "CUDA"
+    assert settings_page.variant_label("Vulkan") == "Vulkan"
+    assert settings_page.variant_label("custom") == "Custom"

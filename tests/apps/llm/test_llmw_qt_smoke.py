@@ -9,6 +9,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -416,6 +417,7 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert page.refresh_engine_button.parent() is engine
     assert page.models_path.browse.text() == "更改"
     assert page.engines_path.browse.text() == "更改"
+    assert page.download_engine_button.text() == "下载引擎"
     assert page.import_engine_dir_button.text() == "导入目录"
     assert page.import_engine_archive_button.text() == "导入压缩包"
     assert not hasattr(page, "add_engine_button")
@@ -1157,3 +1159,92 @@ def test_recommendation_rows_follow_width_when_resized_repeatedly(window: Any) -
             rect = recommend_list.visualRect(model.index(index, 0))
             assert widget.width() == rect.width()
             assert widget.width() <= recommend_list.viewport().width()
+
+
+def _engine_release_payload() -> list[dict[str, Any]]:
+    """引擎下载对话框用的 GitHub releases 替身（x64 引擎包 + cudart）。"""
+
+    def asset(name: str, size: int = 100) -> dict[str, Any]:
+        return {"name": name, "browser_download_url": f"https://example.com/{name}", "size": size}
+
+    return [
+        {
+            "tag_name": "b7000",
+            "published_at": "2026-01-02T03:04:05Z",
+            "assets": [
+                asset("llama-b7000-bin-win-cuda-13.5-x64.zip", 200),
+                asset("cudart-llama-bin-win-cuda-13.5-x64.zip", 50),
+                asset("llama-b7000-bin-win-cpu-x64.zip"),
+            ],
+        }
+    ]
+
+
+def test_engine_download_dialog_lists_versions_and_installs(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """版本列表可读：选版本 / 变体后按 release 实际资产名下载安装。"""
+    from fcmd.apps.llm import _llmw_qt_engine_install as install_ui
+    from fcmd.apps.llm import _llmw_settings as settings_logic
+
+    releases = install_ui.llmengine.parse_engine_releases(_engine_release_payload())
+    monkeypatch.setattr(settings_logic, "engine_releases", lambda limit=10: releases)
+    calls: list[tuple[str, str, tuple[str, ...] | None]] = []
+
+    def fake_install(
+        tag: str,
+        variant: str = "cuda",
+        home: Path | None = None,
+        on_progress: Any = None,
+        asset_names: tuple[str, ...] | None = None,
+    ) -> EngineInfo:
+        if on_progress is not None:
+            on_progress(("llama-b7000-bin-win-cuda-13.5-x64.zip", 100, 200))
+        calls.append((tag, variant, asset_names))
+        return EngineInfo(tag, Path("llama-server.exe"), "release")
+
+    monkeypatch.setattr(settings_logic, "install_online", fake_install)
+    dialog = install_ui.EngineDownloadDialog(window)
+    try:
+        deadline = time.monotonic() + 5
+        while dialog.version_combo.count() == 0 and time.monotonic() < deadline:
+            QApplication.processEvents()
+        assert dialog.version_combo.currentData() == "b7000"
+        variants = [dialog.variant_combo.itemData(index) for index in range(dialog.variant_combo.count())]
+        assert variants == ["cuda", "cpu"]
+        assert "llama-b7000-bin-win-cuda-13.5-x64.zip" in dialog.info.text()
+
+        dialog._download()
+        deadline = time.monotonic() + 5
+        while "已安装" not in dialog.status.text() and time.monotonic() < deadline:
+            QApplication.processEvents()
+        assert calls == [
+            (
+                "b7000",
+                "cuda",
+                ("llama-b7000-bin-win-cuda-13.5-x64.zip", "cudart-llama-bin-win-cuda-13.5-x64.zip"),
+            )
+        ]
+        assert dialog.progress.value() == 100
+        assert "已安装" in dialog.status.text()
+    finally:
+        dialog.close()
+
+
+def test_engine_download_dialog_reports_list_failure(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """拉取版本失败时给出提示，下载按钮保持不可用。"""
+    from fcmd.apps.llm import _llmw_qt_engine_install as install_ui
+    from fcmd.apps.llm import _llmw_settings as settings_logic
+    from fcmd.apps.llm.llmbase import ServeError
+
+    def boom(limit: int = 10) -> Any:
+        raise ServeError("offline")
+
+    monkeypatch.setattr(settings_logic, "engine_releases", boom)
+    dialog = install_ui.EngineDownloadDialog(window)
+    try:
+        deadline = time.monotonic() + 5
+        while "offline" not in dialog.status.text() and time.monotonic() < deadline:
+            QApplication.processEvents()
+        assert "获取版本列表失败" in dialog.status.text()
+        assert not dialog.download_button.isEnabled()
+    finally:
+        dialog.close()

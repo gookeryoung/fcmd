@@ -20,6 +20,7 @@ __all__ = [
     "apply_path",
     "check_engine_tag",
     "directory_rows",
+    "engine_releases",
     "engine_rows",
     "engine_status",
     "engine_variant",
@@ -30,6 +31,7 @@ __all__ = [
     "installed_engines",
     "migration_note",
     "select_engine",
+    "variant_label",
 ]
 
 _ENV = "环境变量"
@@ -37,15 +39,17 @@ _CONFIG = "配置"
 _DEFAULT = "默认"
 
 _VARIANTS = ("cuda", "cpu")
-_BACKEND_LABELS = (
-    ("cuda", "CUDA"),
-    ("cudart", "CUDA"),
-    ("vulkan", "Vulkan"),
-    ("sycl", "SYCL"),
-    ("hip", "HIP"),
-    ("metal", "Metal"),
-    ("opencl", "OpenCL"),
-)
+_VARIANT_LABELS = {
+    "cuda": "CUDA",
+    "cudart": "CUDA",
+    "cpu": "CPU",
+    "vulkan": "Vulkan",
+    "sycl": "SYCL",
+    "hip": "HIP",
+    "metal": "Metal",
+    "opencl": "OpenCL",
+}
+_BACKEND_LABELS = tuple(_VARIANT_LABELS.items())
 _KIND_LABELS = {
     "engine": "引擎",
     "cudart": "CUDA 运行库",
@@ -116,6 +120,11 @@ def installed_engines(home: Path | None = None) -> list[EngineInfo]:
     return llmengine.list_engines(home)
 
 
+def engine_releases(limit: int = 10) -> tuple[llmengine.EngineRelease, ...]:
+    """可下载的 llama.cpp 版本列表（GitHub release，新版在前）。"""
+    return llmengine.fetch_engine_releases(limit=limit)
+
+
 def _engine_file_names(info: EngineInfo) -> list[str]:
     """引擎目录及运行库目录下的文件名（小写）；目录不可读时跳过。"""
     names: list[str] = []
@@ -125,6 +134,11 @@ def _engine_file_names(info: EngineInfo) -> list[str]:
         except OSError:
             continue
     return names
+
+
+def variant_label(variant: str) -> str:
+    """构建变体的显示名（``cuda`` → ``CUDA``）；未知变体原样大写。"""
+    return _VARIANT_LABELS.get(variant.casefold(), variant.capitalize())
 
 
 def engine_variant(info: EngineInfo) -> str:
@@ -171,9 +185,20 @@ def install_online(
     variant: EngineVariant = "cuda",
     home: Path | None = None,
     on_progress: llmengine.ProgressCallback | None = None,
+    asset_names: tuple[str, ...] | None = None,
 ) -> EngineInfo:
-    """在线安装引擎；没有默认引擎时自动把新装的设为默认。"""
-    info = llmengine.install_engine(tag, variant=variant, home=home, on_progress=on_progress)
+    """在线安装引擎；没有默认引擎时自动把新装的设为默认。
+
+    ``asset_names`` 来自版本列表里选中的 release，指定后按实际资产名下载
+    （不同 release 的 CUDA 版本 / 变体可能不同）。
+    """
+    info = llmengine.install_engine(
+        tag,
+        variant=variant,
+        home=home,
+        on_progress=on_progress,
+        asset_names=asset_names,
+    )
     _ensure_current(info.tag, home)
     return info
 

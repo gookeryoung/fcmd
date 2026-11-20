@@ -2,8 +2,9 @@
 
 目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.llm._llmconfig`），
 引擎目录独立登记；改动即时写配置并通知其它页刷新（``configChanged``）。
-引擎安装 / 切换仍复用 :mod:`fcmd.apps.llm.llmengine` 的既有实现，页面只做展示与
-「设为默认」这类轻动作，重活留给 ``fcmd llmengine``。
+引擎安装 / 切换仍复用 :mod:`fcmd.apps.llm.llmengine` 的既有实现（在线下载入口是
+:class:`~fcmd.apps.llm._llmw_qt_engine_install.EngineDownloadDialog`，版本列表与
+``fcmd llmengine releases`` 同源），页面只做展示与「设为默认」这类轻动作。
 """
 
 from __future__ import annotations
@@ -291,6 +292,9 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         row.addWidget(hint_label("引擎目录", wrap=False))
         self.engines_path = PathRow(value="", directory=True, show_reset=True, browse_text="更改")
         row.addWidget(self.engines_path, 1)
+        self.download_engine_button = button("下载引擎", kind="ghost")
+        self.download_engine_button.setToolTip("从 GitHub releases 选择 llama.cpp 版本与变体，下载到引擎目录")
+        row.addWidget(self.download_engine_button)
         self.import_engine_dir_button = button("导入目录", kind="ghost")
         self.import_engine_dir_button.setToolTip("选择已编译的 llama.cpp 目录，复制到引擎目录并设为默认")
         row.addWidget(self.import_engine_dir_button)
@@ -305,7 +309,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_list.setSpacing(4)
         self.engines_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.engines_list.setToolTip("双击一行可直接设为默认引擎")
-        self.engines_empty = hint_label("还没有已安装引擎；用「导入目录」或「导入压缩包」添加。")
+        self.engines_empty = hint_label("还没有已安装引擎；用「下载引擎」「导入目录」或「导入压缩包」添加。")
         self.engines_empty.setVisible(False)
         card.body.addWidget(self.engines_list)
         card.body.addWidget(self.engines_empty)
@@ -316,6 +320,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
 
         self.engines_path.committed.connect(lambda text: self._save_path("engines_root", text))
         self.engines_path.reset.clicked.connect(lambda: self._save_path("engines_root", None))
+        self.download_engine_button.clicked.connect(self._open_engine_download)
         self.import_engine_dir_button.clicked.connect(self._import_engine_dir)
         self.import_engine_archive_button.clicked.connect(self._import_engine_archive)
         self.refresh_engine_button.clicked.connect(self.refresh)
@@ -361,7 +366,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_list.sync_row_widths()
         self.engines_list.setVisible(bool(self._engines))
         self._fit_engines_list()
-        self.engines_empty.setText("还没有已安装引擎；用「导入目录」或「导入压缩包」添加。")
+        self.engines_empty.setText("还没有已安装引擎；用「下载引擎」「导入目录」或「导入压缩包」添加。")
         self.engines_empty.setVisible(not self._engines)
 
     def _fit_engines_list(self) -> None:
@@ -444,6 +449,21 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.log(f"{action}引擎 {info.tag} · {info.exe}")
         self._set_engine_hint(f"{action}引擎：{info.tag} · {info.exe}")
         self.state.status(f"{action}引擎：{info.tag}")
+        self.refresh()
+
+    def _open_engine_download(self) -> None:
+        """打开版本列表对话框；安装成功后刷新已安装引擎列表。"""
+        from fcmd.apps.llm._llmw_qt_engine_install import EngineDownloadDialog
+
+        dialog = EngineDownloadDialog(self)
+        dialog.installed.connect(self._on_engine_downloaded)
+        dialog.exec()
+
+    def _on_engine_downloaded(self, tag: str) -> None:
+        """下载安装完成：刷新列表、写状态栏与日志。"""
+        self.state.log(f"已下载引擎：{tag}")
+        self.state.status(f"已下载引擎：{tag}")
+        self._set_engine_hint(f"已下载引擎：{tag}")
         self.refresh()
 
     def _import_engine_dir(self) -> None:

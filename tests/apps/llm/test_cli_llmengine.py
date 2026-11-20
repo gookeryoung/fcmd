@@ -8,6 +8,7 @@ import os
 import zipfile
 from pathlib import Path
 from typing import Any, cast
+from urllib.error import URLError
 
 import pytest
 
@@ -17,7 +18,113 @@ from fcmd.core.toolkit import _TOOL_REGISTRY
 
 
 def test_tool_registered() -> None:
-    assert set(_TOOL_REGISTRY["llmengine"]) == {"list", "install", "use", "check", "inspect"}
+    assert set(_TOOL_REGISTRY["llmengine"]) == {"list", "releases", "install", "use", "check", "inspect"}
+
+
+def _release_payload() -> list[Any]:
+    """构造 GitHub releases JSON 替身（含需过滤的条目）。"""
+
+    def asset(name: str, size: int = 100) -> dict[str, Any]:
+        return {"name": name, "browser_download_url": f"https://example.com/{name}", "size": size}
+
+    return [
+        {
+            "tag_name": "b7000",
+            "published_at": "2026-01-02T03:04:05Z",
+            "assets": [
+                asset("llama-b7000-bin-win-cuda-13.5-x64.zip", 200),
+                asset("cudart-llama-bin-win-cuda-13.5-x64.zip", 50),
+                asset("llama-b7000-bin-win-cpu-x64.zip"),
+                asset("llama-b7000-bin-win-vulkan-x64.zip"),
+                asset("llama-b7000-bin-win-cuda-13.5-arm64.zip"),
+                asset("llama-b7000-bin-win-cuda-13.5-x64.zip.sha256"),
+                asset("llama-b7000-source.zip"),
+                {"name": "bad", "browser_download_url": None},
+            ],
+        },
+        {"tag_name": "b6999", "published_at": "2026-01-01T00:00:00Z", "assets": [asset("llama-b6999-source.zip")]},
+        "not-a-dict",
+        {"tag_name": "b6998", "assets": []},
+        {"tag_name": "b6997", "published_at": "", "assets": [asset("llama-b6997-bin-win-cpu-x64.zip")]},
+    ]
+
+
+def test_parse_releases_filters_windows_binaries() -> None:
+    releases = llmengine.parse_engine_releases(_release_payload())
+    assert [release.tag for release in releases] == ["b7000", "b6997"]
+    first = releases[0]
+    assert first.published.startswith("2026-01-02")
+    assert first.variants(arch="x64") == ("cuda", "cpu", "vulkan")
+    assert first.variants(arch="arm64") == ("cuda",)
+    cuda = first.install_assets("cuda", arch="x64")
+    assert [asset.name for asset in cuda] == [
+        "llama-b7000-bin-win-cuda-13.5-x64.zip",
+        "cudart-llama-bin-win-cuda-13.5-x64.zip",
+    ]
+    assert [asset.runtime for asset in cuda] == [False, True]
+    assert first.install_assets("cpu", arch="arm64") == ()
+
+
+def test_parse_releases_limit() -> None:
+    assert len(llmengine.parse_engine_releases(_release_payload(), limit=1)) == 1
+    assert llmengine.parse_engine_releases("not-a-list") == ()
+
+
+def test_fetch_engine_releases_reads_github_api() -> None:
+    body = json.dumps(_release_payload()).encode("utf-8")
+    seen: list[str] = []
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    def opener(request: Any, timeout: float = 1.0) -> _Response:
+        seen.append(str(request.full_url))
+        return _Response()
+
+    releases = llmengine.fetch_engine_releases(limit=5, opener=opener)
+    assert releases[0].tag == "b7000"
+    assert seen and "per_page=5" in seen[0]
+
+
+def test_fetch_engine_releases_network_error() -> None:
+    def opener(request: Any, timeout: float = 1.0) -> Any:
+        raise URLError("offline")
+
+    with pytest.raises(ServeError, match="获取引擎版本列表失败"):
+        llmengine.fetch_engine_releases(opener=opener)
+
+
+def test_releases_cmd_lists_versions(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(
+        llmengine,
+        "fetch_engine_releases",
+        lambda limit=10: llmengine.parse_engine_releases(_release_payload()),
+    )
+    llmengine.releases_cmd(assets=True)
+    out = capsys.readouterr().out
+    assert "b7000" in out
+    assert "2026-01-02" in out
+    assert "cuda / cpu / vulkan" in out
+    assert "llama-b7000-bin-win-cuda-13.5-x64.zip" in out
+    assert "--asset" in out
+
+
+def test_releases_cmd_reports_network_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom(limit: int = 10) -> Any:
+        raise ServeError("offline")
+
+    monkeypatch.setattr(llmengine, "fetch_engine_releases", boom)
+    llmengine.releases_cmd()
+    assert "offline" in capsys.readouterr().out
 
 
 def _make_zip(path: Path, entries: dict[str, bytes]) -> Path:

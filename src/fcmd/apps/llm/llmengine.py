@@ -1,12 +1,13 @@
 """llmengine - llama.cpp 引擎探测、安装、注册、切换与量化器定位。
 
-独立命令：``fcmd llmengine <list|install|use|check|inspect>``。
+独立命令：``fcmd llmengine <list|releases|install|use|check|inspect>``。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import shutil
 import time
@@ -40,6 +41,8 @@ from fcmd.console import Table, get_console
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
+    "EngineAsset",
+    "EngineRelease",
     "ZipInspection",
     "check_engine",
     "current_engine_tag",
@@ -47,10 +50,12 @@ __all__ = [
     "engine_asset_names",
     "engine_env",
     "engine_exe_name",
+    "fetch_engine_releases",
     "inspect_zip",
     "inspect_zips",
     "install_engine",
     "list_engines",
+    "parse_engine_releases",
     "probe_version",
     "quantize_exe",
     "resolve_engine",
@@ -125,6 +130,132 @@ class ZipInspection:
     def usable(self) -> bool:
         """是否可直接作为引擎包安装。"""
         return self.valid and self.bad_member is None and self.kind == "engine"
+
+
+@dataclass(frozen=True, slots=True)
+class EngineAsset:
+    """GitHub release 里的一个 Windows 预编译 zip 资产。
+
+    ``variant`` 是构建变体（``cuda`` / ``cpu`` / ``vulkan`` / ``hip`` 等）；
+    ``runtime`` 为真表示这是 CUDA 运行库包（与引擎包一起解压到同一目录）。
+    """
+
+    name: str
+    url: str
+    size: int
+    variant: str
+    arch: str
+    runtime: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class EngineRelease:
+    """一个可安装的 llama.cpp release（版本列表条目）。"""
+
+    tag: str
+    published: str
+    assets: tuple[EngineAsset, ...]
+
+    def variants(self, arch: str | None = None) -> tuple[str, ...]:
+        """当前机器可用的构建变体（按 release 内顺序去重）。"""
+        target = arch or _host_arch()
+        seen: list[str] = []
+        for asset in self.assets:
+            if asset.runtime or asset.arch != target or asset.variant in seen:
+                continue
+            seen.append(asset.variant)
+        return tuple(seen)
+
+    def install_assets(self, variant: str, arch: str | None = None) -> tuple[EngineAsset, ...]:
+        """安装指定变体需要的资产：引擎包在前、运行库包在后。"""
+        target = arch or _host_arch()
+        picked = [asset for asset in self.assets if asset.variant == variant and asset.arch == target]
+        return tuple(sorted(picked, key=lambda asset: asset.runtime))
+
+
+#: Windows 预编译引擎包名：``llama-b7000-bin-win-cuda-13.5-x64.zip``。
+_ENGINE_ASSET_RE = re.compile(r"^llama-(?P<tag>b\d+)-bin-win-(?P<rest>.+)-(?P<arch>x64|arm64)\.zip$", re.I)
+#: CUDA 运行库包名：``cudart-llama-bin-win-cuda-13.5-x64.zip``。
+_CUDART_ASSET_RE = re.compile(r"^cudart-llama-bin-win-(?P<rest>.+)-(?P<arch>x64|arm64)\.zip$", re.I)
+_GITHUB_RELEASES_URL: Final[str] = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+
+
+def _host_arch() -> str:
+    """当前机器架构：``arm64`` / ``x64``（官方 Windows 包只区分这两种）。"""
+    return "arm64" if platform.machine().lower() in {"arm64", "aarch64"} else "x64"
+
+
+def _asset_size(raw: Any) -> int:
+    try:
+        return max(int(raw), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_asset(raw: Any) -> EngineAsset | None:
+    """把一个 GitHub asset 转成 :class:`EngineAsset`；非 Windows 预编译包返回 ``None``。"""
+    if not isinstance(raw, dict):
+        return None
+    name = raw.get("name")
+    url = raw.get("browser_download_url")
+    if not isinstance(name, str) or not isinstance(url, str):
+        return None
+    engine = _ENGINE_ASSET_RE.match(name)
+    runtime = _CUDART_ASSET_RE.match(name)
+    match = engine or runtime
+    if match is None:
+        return None
+    rest = match.group("rest")
+    variant = rest.split("-", 1)[0].lower()
+    if not variant:
+        return None
+    return EngineAsset(
+        name=name,
+        url=url,
+        size=_asset_size(raw.get("size")),
+        variant=variant,
+        arch=match.group("arch").lower(),
+        runtime=runtime is not None,
+    )
+
+
+def parse_engine_releases(payload: Any, *, limit: int = 10) -> tuple[EngineRelease, ...]:
+    """解析 GitHub releases JSON，保留带 Windows 引擎包的版本（纯函数，供测试）。"""
+    if not isinstance(payload, list):
+        return ()
+    releases: list[EngineRelease] = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        tag = entry.get("tag_name")
+        raw_assets = entry.get("assets")
+        if not isinstance(tag, str) or not tag.strip() or not isinstance(raw_assets, list):
+            continue
+        assets = tuple(asset for asset in (_parse_asset(raw) for raw in raw_assets) if asset is not None)
+        if not any(not asset.runtime for asset in assets):
+            continue
+        published = entry.get("published_at") or entry.get("created_at") or ""
+        releases.append(EngineRelease(tag.strip(), str(published), assets))
+        if len(releases) >= max(limit, 1):
+            break
+    return tuple(releases)
+
+
+def fetch_engine_releases(limit: int = 10, *, opener: Opener | None = None) -> tuple[EngineRelease, ...]:
+    """读取 llama.cpp 的 GitHub releases（版本列表）；网络失败抛 :class:`ServeError`。"""
+    from urllib.request import Request, urlopen
+
+    req = Request(
+        f"{_GITHUB_RELEASES_URL}?per_page={max(limit, 1)}",
+        headers={"User-Agent": "fcmd-llm/0.3.10", "Accept": "application/vnd.github+json"},
+    )
+    open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
+    try:
+        with open_fn(req, 30.0) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise ServeError(f"获取引擎版本列表失败：{exc}") from exc
+    return parse_engine_releases(payload, limit=limit)
 
 
 @dataclass(slots=True)
@@ -537,6 +668,7 @@ def install_engine(  # noqa: PLR0913
     url: str | None = None,
     path: Path | None = None,
     archives: Sequence[Path] | None = None,
+    asset_names: Sequence[str] | None = None,
     home: Path | None = None,
     opener: Opener | None = None,
     on_progress: ProgressCallback | None = None,
@@ -548,8 +680,9 @@ def install_engine(  # noqa: PLR0913
     为本地 ``.zip`` 压缩包时直接解压安装（压缩包保留），两种情况都不联网。
     ``archives`` 可传入多个离线包
     （引擎包 + cudart 运行库包），一次解压到同一目录。否则从 GitHub release
-    下载 Windows 预编译包（``cuda`` 变体额外下载 cudart）；目标目录内已有完整
-    zip 时直接复用。
+    下载 Windows 预编译包（``cuda`` 变体额外下载 cudart）；``asset_names`` 可指定
+    release 实际存在的资产名（版本列表选择时使用），缺省按 ``variant`` 推导；
+    目标目录内已有完整 zip 时直接复用。
 
     ``on_progress`` 仅在联网下载时回调，用于界面展示实时进度。
     """
@@ -569,7 +702,8 @@ def install_engine(  # noqa: PLR0913
         return EngineInfo(tag, cached, str(target))
 
     target.mkdir(parents=True, exist_ok=True)
-    urls = [url] if url else [_release_url(tag, name) for name in engine_asset_names(tag, variant)]
+    names = list(asset_names) if asset_names else engine_asset_names(tag, variant)
+    urls = [url] if url else [_release_url(tag, name) for name in names]
     for item in urls:
         archive = target / (item.rsplit("/", 1)[-1] or f"{tag}.zip")
         if not (archive.is_file() and zipfile.is_zipfile(archive)):
@@ -670,12 +804,13 @@ def list_cmd() -> None:
 
 
 @fcmd.tool("llmengine", subcommand="install", help="安装或注册引擎")
-def install_cmd(
+def install_cmd(  # noqa: PLR0913, PLR0917 - CLI 参数与 install_engine 对齐
     tag: str = DEFAULT_ENGINE_TAG,
     variant: EngineVariant = "cuda",
     url: str | None = None,
     path: Path | None = None,
     zips: list[Path] | None = None,
+    assets: list[str] | None = None,
 ) -> None:
     """从 GitHub release 安装引擎，或注册本地引擎目录 / zip。
 
@@ -691,13 +826,61 @@ def install_cmd(
         已编译引擎目录，或单个本地 ``.zip`` 离线包。
     zips:
         本地 zip 离线包列表（如引擎包 + cudart 运行库包），一次解压安装。
+    assets:
+        release 里实际存在的资产名（可重复）；用 ``llmengine releases --assets``
+        查到后可用于非 cuda / cpu 变体或 CUDA 版本与默认推导不同的 release。
     """
     if path is not None and zips is not None:
         raise ServeError("--path 与 --zips 不能同时使用")
-    info = install_engine(tag, variant=variant, url=url, path=path, archives=zips)
+    if assets and (url is not None or path is not None or zips is not None):
+        raise ServeError("--asset 不能与 --url / --path / --zips 同时使用")
+    info = install_engine(tag, variant=variant, url=url, path=path, archives=zips, asset_names=assets)
     get_console().print(f"引擎就绪: {info.tag} -> {info.exe}")
     if not any(item.source == "current" for item in list_engines()):
         use_engine(tag)
+
+
+@fcmd.tool("llmengine", subcommand="releases", help="列出可下载的引擎版本")
+def releases_cmd(limit: int = 10, assets: bool = False) -> None:
+    """列出 llama.cpp 官方 release 中带 Windows 预编译包的版本。
+
+    Parameters
+    ----------
+    limit:
+        最多展示多少个版本（新版在前）。
+    assets:
+        同时列出每个版本的具体 zip 资产名，供 ``install --asset`` 使用。
+    """
+    try:
+        releases = fetch_engine_releases(limit=limit)
+    except ServeError as exc:
+        get_console().print(f"[red]{exc}[/red]")
+        return
+    if not releases:
+        get_console().print("没有可下载的引擎版本（检查网络或稍后重试）")
+        return
+    table = Table(title="可下载的 llama.cpp 引擎")
+    table.add_column("TAG")
+    table.add_column("发布")
+    table.add_column("变体")
+    table.add_column("大小", justify="right", no_wrap=True)
+    for release in releases:
+        variants = release.variants()
+        first = release.install_assets(variants[0]) if variants else ()
+        table.add_row(
+            release.tag,
+            release.published[:10] or "-",
+            " / ".join(variants) or "-",
+            human_size(sum(asset.size for asset in first)),
+        )
+    get_console().print(table)
+    if assets:
+        for release in releases:
+            for asset in release.assets:
+                get_console().print(f"{release.tag}  {asset.name}  {human_size(asset.size)}")
+        get_console().print("安装指定资产：fcmd llmengine install --tag <TAG> --asset <名称> [--asset <名称>]")
+    else:
+        get_console().print("查看具体资产名：fcmd llmengine releases --assets")
 
 
 @fcmd.tool("llmengine", subcommand="inspect", help="检查 zip 离线包")
