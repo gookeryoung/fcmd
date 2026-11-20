@@ -31,6 +31,7 @@ __all__ = [
     "installed_engines",
     "migration_note",
     "select_engine",
+    "variant_hint",
     "variant_label",
 ]
 
@@ -39,16 +40,9 @@ _CONFIG = "配置"
 _DEFAULT = "默认"
 
 _VARIANTS = ("cuda", "cpu")
-_VARIANT_LABELS = {
-    "cuda": "CUDA",
-    "cudart": "CUDA",
-    "cpu": "CPU",
-    "vulkan": "Vulkan",
-    "sycl": "SYCL",
-    "hip": "HIP",
-    "metal": "Metal",
-    "opencl": "OpenCL",
-}
+_VARIANT_LABELS = {variant: label for variant, (label, _hint) in llmengine.ENGINE_VARIANTS.items()}
+#: 变体用途提示：版本列表 / 引擎行 tooltip 共用，帮助用户从众多构建里做选择。
+_VARIANT_HINTS = {variant: hint for variant, (_label, hint) in llmengine.ENGINE_VARIANTS.items()}
 _BACKEND_LABELS = tuple(_VARIANT_LABELS.items())
 _KIND_LABELS = {
     "engine": "引擎",
@@ -139,6 +133,11 @@ def _engine_file_names(info: EngineInfo) -> list[str]:
 def variant_label(variant: str) -> str:
     """构建变体的显示名（``cuda`` → ``CUDA``）；未知变体原样大写。"""
     return _VARIANT_LABELS.get(variant.casefold(), variant.capitalize())
+
+
+def variant_hint(variant: str) -> str:
+    """构建变体的适用说明（按显卡 / 平台选择）；未知变体给出兜底提示。"""
+    return _VARIANT_HINTS.get(variant.casefold(), "未知构建变体：按 release 资产说明选择")
 
 
 def engine_variant(info: EngineInfo) -> str:

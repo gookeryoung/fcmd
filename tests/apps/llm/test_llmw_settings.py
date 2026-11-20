@@ -379,3 +379,13 @@ def test_variant_label_maps_build_variants() -> None:
     assert settings_page.variant_label("cuda") == "CUDA"
     assert settings_page.variant_label("Vulkan") == "Vulkan"
     assert settings_page.variant_label("custom") == "Custom"
+
+
+def test_variant_hint_explains_build_choices() -> None:
+    """常见变体都有用途说明；未知变体给出兜底提示。"""
+    assert "NVIDIA" in settings_page.variant_hint("cuda")
+    assert "Vulkan" in settings_page.variant_hint("vulkan")
+    assert "AMD" in settings_page.variant_hint("rocm")
+    assert "Intel" in settings_page.variant_hint("sycl")
+    assert "兼容" in settings_page.variant_hint("cpu")
+    assert "按 release 资产说明" in settings_page.variant_hint("custom")

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
@@ -66,6 +66,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         picker.addWidget(hint_label("变体", wrap=False))
         self.variant_combo = QComboBox(card)
         self.variant_combo.setMinimumWidth(120)
+        self.variant_combo.setToolTip("CUDA 适合 NVIDIA 显卡；Vulkan 兼容性最广；CPU 兼容兜底")
         self.variant_combo.currentIndexChanged.connect(lambda _index: self._sync_info())
         picker.addWidget(self.variant_combo, 0)
         self.refresh_button = button("刷新", kind="ghost")
@@ -74,6 +75,8 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         picker.addWidget(self.refresh_button)
         card.body.addLayout(picker)
 
+        self.variant_hint = hint_label("", wrap=True)
+        card.body.addWidget(self.variant_hint)
         self.info = HintLabel("")
         card.body.addWidget(self.info)
 
@@ -141,6 +144,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self._releases = ()
         self.version_combo.clear()
         self.variant_combo.clear()
+        self.variant_hint.setText("")
         self.info.setText("")
         self._releases_ready(False)
         self.status.setText(f"获取版本列表失败：{message}")
@@ -158,6 +162,9 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
             self.version_combo.addItem(label, release.tag)
         self.version_combo.blockSignals(False)
         if not self._releases:
+            self.variant_combo.clear()
+            self.variant_hint.setText("")
+            self.info.setText("")
             self._releases_ready(False)
             self.status.setText("没有可下载的引擎版本（检查网络或稍后重试）")
             return
@@ -181,6 +188,11 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         if release is not None:
             for variant in release.variants():
                 self.variant_combo.addItem(settings_logic.variant_label(variant), variant)
+                self.variant_combo.setItemData(
+                    self.variant_combo.count() - 1,
+                    settings_logic.variant_hint(variant),
+                    Qt.ItemDataRole.ToolTipRole,
+                )
         self.variant_combo.blockSignals(False)
         has_variant = self.variant_combo.count() > 0
         self._releases_ready(release is not None and has_variant and not self._downloading)
@@ -190,8 +202,10 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         release = self._current_release()
         variant = self.variant_combo.currentData()
         if release is None or not isinstance(variant, str):
+            self.variant_hint.setText("")
             self.info.setText("")
             return
+        self.variant_hint.setText(f"{settings_logic.variant_label(variant)}：{settings_logic.variant_hint(variant)}")
         assets = release.install_assets(variant)
         names = "、".join(asset.name for asset in assets) or "-"
         size = human_size(sum(asset.size for asset in assets)) if assets else "-"

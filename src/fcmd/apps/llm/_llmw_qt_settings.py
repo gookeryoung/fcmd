@@ -97,7 +97,7 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
 
         variant = settings_logic.engine_variant(info)
         category = StatusTag(variant, tone="muted" if variant == "CPU" else "accent", parent=self)
-        tooltip = f"构建类别：{variant}"
+        tooltip = f"构建类别：{variant}\n{settings_logic.variant_hint(variant)}"
         if info.path_prepend:
             tooltip += "\n启动时前置到 PATH：" + "、".join(info.path_prepend)
         category.setToolTip(tooltip)

@@ -41,6 +41,7 @@ from fcmd.console import Table, get_console
 from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
+    "ENGINE_VARIANTS",
     "EngineAsset",
     "EngineRelease",
     "ZipInspection",
@@ -177,18 +178,20 @@ class EngineRelease:
 _ENGINE_ASSET_RE = re.compile(r"^llama-(?P<tag>b\d+)-bin-win-(?P<rest>.+)-(?P<arch>x64|arm64)\.zip$", re.I)
 #: CUDA 运行库包名：``cudart-llama-bin-win-cuda-13.5-x64.zip``。
 _CUDART_ASSET_RE = re.compile(r"^cudart-llama-bin-win-(?P<rest>.+)-(?P<arch>x64|arm64)\.zip$", re.I)
-#: 变体下拉的默认顺序：先 GPU 加速，最后 CPU 兜底。
-_VARIANT_ORDER: Final[dict[str, int]] = {
-    "cuda": 0,
-    "vulkan": 1,
-    "rocm": 2,
-    "hip": 3,
-    "sycl": 4,
-    "openvino": 5,
-    "metal": 6,
-    "opencl": 7,
-    "cpu": 8,
+#: 构建变体的显示名与用途说明（引擎下载 UI 与 ``fcmd llmengine releases`` 共用）。
+ENGINE_VARIANTS: Final[dict[str, tuple[str, str]]] = {
+    "cuda": ("CUDA", "NVIDIA 显卡；自带 CUDA 运行库，有 NVIDIA GPU 时首选"),
+    "vulkan": ("Vulkan", "任意支持 Vulkan 的显卡（NVIDIA / AMD / Intel），兼容性优先"),
+    "rocm": ("ROCm", "AMD 显卡（ROCm 运行时，需匹配驱动版本）"),
+    "hip": ("HIP", "AMD 显卡（HIP 构建，通常随 ROCm 包提供）"),
+    "sycl": ("SYCL", "Intel Arc 独显 / 集显（oneAPI / SYCL）"),
+    "openvino": ("OpenVINO", "Intel CPU / GPU / NPU（OpenVINO 加速）"),
+    "metal": ("Metal", "Apple Silicon（macOS Metal）"),
+    "opencl": ("OpenCL", "老显卡 / 其它平台（OpenCL 兼容兜底）"),
+    "cpu": ("CPU", "仅 CPU 或显卡不兼容时使用，兼容性最好但速度最慢"),
 }
+#: 变体下拉的默认顺序：先 GPU 加速，最后 CPU 兜底。
+_VARIANT_ORDER: Final[dict[str, int]] = {variant: index for index, variant in enumerate(ENGINE_VARIANTS)}
 _GITHUB_RELEASES_URL: Final[str] = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
 #: 国内可用的 GitHub 镜像前缀（默认优选）；环境变量 ``FCMD_GITHUB_MIRROR`` 可覆盖，
 #: 设为 ``direct`` / ``none`` / 空串时只用 GitHub 直连。
@@ -952,10 +955,16 @@ def releases_cmd(limit: int = 10, assets: bool = False) -> None:
         table.add_row(
             release.tag,
             release.published[:10] or "-",
-            " / ".join(variants) or "-",
+            " / ".join(ENGINE_VARIANTS.get(variant, (variant, ""))[0] for variant in variants) or "-",
             human_size(sum(asset.size for asset in first)),
         )
     get_console().print(table)
+    present = {variant for release in releases for variant in release.variants()}
+    if present:
+        get_console().print("变体说明：")
+        for variant, (label, hint) in ENGINE_VARIANTS.items():
+            if variant in present:
+                get_console().print(f"  {label}：{hint}")
     if assets:
         for release in releases:
             for asset in release.assets:

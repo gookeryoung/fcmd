@@ -156,7 +156,9 @@ def test_releases_cmd_lists_versions(monkeypatch: pytest.MonkeyPatch, capsys: py
     out = capsys.readouterr().out
     assert "b7000" in out
     assert "2026-01-02" in out
-    assert "cuda / vulkan / cpu" in out
+    assert "CUDA / Vulkan / CPU" in out
+    assert "变体说明" in out
+    assert "NVIDIA" in out
     assert "llama-b7000-bin-win-cuda-13.5-x64.zip" in out
     assert "--asset" in out
 

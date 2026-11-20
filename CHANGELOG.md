@@ -39,7 +39,9 @@
 - `llmengine` 新增 `releases` 子命令列出可下载的 llama.cpp 版本（含变体与大小，
   `--assets` 展开资产名），`install --asset` 可按选中资产下载安装；
   `llmw` 设置页引擎卡片新增「下载引擎」对话框：版本 / 变体列表、实时下载进度，
-  安装后刷新引擎列表，尚无默认引擎时自动设为默认。
+  安装后刷新引擎列表，尚无默认引擎时自动设为默认；版本 / 变体下拉附用途说明
+  （CUDA / Vulkan / ROCm / HIP / SYCL / OpenVINO / Metal / OpenCL / CPU），
+  已安装引擎的类别胶囊 tooltip 同样带说明，`llmengine releases` 输出变体说明。
 - `llmengine` 下载默认优先国内镜像（`gh-proxy.com` / `gh-proxy.net`），失败按顺序回退
   下一镜像与 GitHub 直连；可用 `FCMD_GITHUB_MIRROR` 覆盖（`direct` 表示只用直连）。
   版本列表 / 下载请求都带连接与读取超时，全部失败时一次回报完整地址列表；

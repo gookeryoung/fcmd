@@ -19,6 +19,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
 from fcmd.apps.llm import _llmw_qt_state as qt_state
@@ -485,6 +486,8 @@ def test_settings_engine_rows_are_compact_single_line(
     current_widgets = [current_row.layout().itemAt(pos).widget() for pos in range(current_row.layout().count())]
     assert current_widgets[-2].text() == "默认"
     assert current_widgets[-1].text() == "CPU"
+    assert "构建类别：CPU" in current_widgets[-1].toolTip()
+    assert "兼容性最好" in current_widgets[-1].toolTip()
 
     QApplication.processEvents()
     for index in range(page.engines_list.count()):
@@ -1211,6 +1214,8 @@ def test_engine_download_dialog_lists_versions_and_installs(window: Any, monkeyp
         variants = [dialog.variant_combo.itemData(index) for index in range(dialog.variant_combo.count())]
         assert variants == ["cuda", "cpu"]
         assert "llama-b7000-bin-win-cuda-13.5-x64.zip" in dialog.info.text()
+        assert "NVIDIA" in dialog.variant_hint.text()
+        assert "NVIDIA" in str(dialog.variant_combo.itemData(0, Qt.ItemDataRole.ToolTipRole))
 
         dialog._download()
         deadline = time.monotonic() + 5
