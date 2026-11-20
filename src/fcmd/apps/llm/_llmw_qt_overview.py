@@ -45,6 +45,7 @@ from fcmd.gui.qt.widgets import (
     MetricGrid,
     RowListWidget,
     SegmentBar,
+    SelectionRow,
     StatusTag,
     button,
     hint_label,
@@ -136,7 +137,7 @@ class ScoreBadge(QLabel):  # pragma: no cover - Qt 控件
         self.setAccessibleName(summary)
 
 
-class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
+class RecommendationRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     """单条推荐的自定义列表行：左侧评分圆框，模型名大字，配置 / 性能小字补充。
 
     行边框与底色按评分档位区分色系（QSS 按 ``band`` 属性上色），选中只加粗边框。
@@ -194,12 +195,6 @@ class RecommendationRow(QFrame):  # pragma: no cover - Qt 控件
         perf.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         perf.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         outer.addWidget(perf, 0)
-
-    def set_selected(self, selected: bool) -> None:
-        """切换选中态边框（列表当前行变化时由页面同步）。"""
-        self.setProperty("selected", "true" if selected else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
 
 
 class RecommendationList(RowListWidget):  # pragma: no cover - Qt 控件

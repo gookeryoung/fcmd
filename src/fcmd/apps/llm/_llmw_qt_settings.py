@@ -42,6 +42,7 @@ from fcmd.gui.qt.widgets import (
     PageScroll,
     PathRow,
     RowListWidget,
+    SelectionRow,
     StatusTag,
     button,
     hint_label,
@@ -59,7 +60,7 @@ def engine_rows_values(engines: list[EngineInfo]) -> list[tuple[str, str, str]]:
     return [(info.tag, info.source or "-", str(info.exe)) for info in engines]
 
 
-class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
+class _EngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     """已安装引擎行：单行紧凑布局（标签 + 状态 + 可执行文件 + 行内动作）。"""
 
     useRequested = Signal(str)
@@ -103,12 +104,6 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
         category.setToolTip(tooltip)
         row.addWidget(category, 0)
         self.setMinimumHeight(self.fontMetrics().height() + 14)
-
-    def set_selected(self, selected: bool) -> None:
-        """切换选中态边框（列表当前行变化时由页面同步）。"""
-        self.setProperty("selected", "true" if selected else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件

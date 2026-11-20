@@ -81,6 +81,7 @@ from fcmd.apps.llm.llmdown import (
 from fcmd.gui.qt.widgets import (
     ElidedLabel,
     RowListWidget,
+    SelectionRow,
     StatusTag,
     button,
     hint_label,
@@ -127,7 +128,7 @@ class _InstalledSnapshot:
     quantized: dict[str, tuple[tuple[str, Path], ...]]
 
 
-class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
+class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
 
     行本身只放关键内容；展开后在行下方显示详细信息，不再占用
@@ -330,12 +331,6 @@ class _ModelItemRow(QFrame):  # pragma: no cover - Qt 控件
         self._expanded = expanded
         self.detail_host.setVisible(expanded)
         self.expand_button.setText("收起" if expanded else "展开")
-
-    def set_selected(self, selected: bool) -> None:
-        """切换选中态边框（列表当前行变化时由页面同步）。"""
-        self.setProperty("selected", "true" if selected else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
         """下载中禁用；已安装行仍可下载其它量化，文案与普通行区分。"""

@@ -65,6 +65,7 @@ __all__ = [
     "ProgressRow",
     "RowListWidget",
     "SegmentBar",
+    "SelectionRow",
     "StatusTag",
     "apply_splitter_sizes",
     "button",
@@ -212,6 +213,20 @@ class RowListWidget(QListWidget):  # pragma: no cover - Qt 控件
             widget = self.itemWidget(item)
             if widget is not None:
                 widget.setGeometry(self.visualRect(self.indexFromItem(item)))
+
+
+class SelectionRow:
+    """自定义行控件的选中态 mixin。
+
+    与 QSS 的 ``[selected="true"]`` 选择器配套：列表当前行变化时由页面调用，
+    切换动态属性并立即重新抛光，无需重建控件。
+    """
+
+    def set_selected(self: QWidget, selected: bool) -> None:
+        """切换选中态边框（列表当前行变化时由页面同步）。"""
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class Card(QFrame):  # pragma: no cover - Qt 控件

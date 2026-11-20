@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDoubleSpinBox,
+    QFrame,
     QLineEdit,
     QPushButton,
     QSpinBox,
@@ -38,6 +39,7 @@ from fcmd.gui.qt.widgets import (
     PathRow,
     ProgressRow,
     SegmentBar,
+    SelectionRow,
     StatusTag,
     button,
     icon_button,
@@ -293,6 +295,18 @@ def test_progress_row_keeps_actions_and_optional_bar() -> None:
         assert status_only.label.text() == "测试完成"
     finally:
         status_only.deleteLater()
+
+
+def test_selection_row_toggles_property() -> None:
+    """行控件选中态由 mixin 统一切换 selected 动态属性。"""
+    row = QFrame()
+    try:
+        SelectionRow.set_selected(row, True)
+        assert row.property("selected") == "true"
+        SelectionRow.set_selected(row, False)
+        assert row.property("selected") == "false"
+    finally:
+        row.deleteLater()
 
 
 def test_loading_bar_tracks_elapsed_and_stops() -> None:
