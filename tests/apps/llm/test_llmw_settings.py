@@ -74,6 +74,32 @@ def test_engine_rows_marks_config(home: Path, tmp_path: Path) -> None:
     assert settings_page.engine_rows(home) == [("引擎目录", str(target), "配置")]
 
 
+def test_engine_variant_detects_cuda_dll(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engine"
+    engine_dir.mkdir()
+    (engine_dir / "ggml-cuda.dll").write_bytes(b"")
+    info = EngineInfo("b1", engine_dir / "llama-server.exe", str(tmp_path / "custom"))
+    assert settings_page.engine_variant(info) == "CUDA"
+
+
+def test_engine_variant_falls_back_to_cpu(tmp_path: Path) -> None:
+    engine_dir = tmp_path / "engine"
+    engine_dir.mkdir()
+    info = EngineInfo("b1", engine_dir / "llama-server.exe", str(tmp_path / "llama-b1-bin-win-cpu-x64.zip"))
+    assert settings_page.engine_variant(info) == "CPU"
+
+
+def test_engine_variant_uses_source_and_runtime_hint(tmp_path: Path) -> None:
+    info = EngineInfo(
+        "b1",
+        tmp_path / "missing" / "llama-server.exe",
+        str(tmp_path / "llama-b1-bin-win-cuda-x64.zip"),
+    )
+    assert settings_page.engine_variant(info) == "CUDA"
+    runtime = EngineInfo("b2", tmp_path / "missing" / "llama-server.exe", str(tmp_path), (str(tmp_path),))
+    assert settings_page.engine_variant(runtime) == "CUDA"
+
+
 # ---------------------------------------------------------------------- #
 # 迁移提示
 # ---------------------------------------------------------------------- #

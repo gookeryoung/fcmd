@@ -80,19 +80,23 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
         name.setObjectName("EngineItemName")
         name.setMaximumWidth(220)
         row.addWidget(name, 0)
-        if current:
-            row.addWidget(StatusTag("默认", tone="success", parent=self), 0)
+
+        variant = settings_logic.engine_variant(info)
+        category = StatusTag(variant, tone="muted" if variant == "CPU" else "accent", parent=self)
+        tooltip = f"构建类别：{variant}"
         if info.path_prepend:
-            runtime = StatusTag("运行库", tone="accent", parent=self)
-            runtime.setToolTip("启动时前置到 PATH：" + "、".join(info.path_prepend))
-            row.addWidget(runtime, 0)
+            tooltip += "\n启动时前置到 PATH：" + "、".join(info.path_prepend)
+        category.setToolTip(tooltip)
+        row.addWidget(category, 0)
 
         exe = ElidedLabel(str(info.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
         exe.setObjectName("Hint")
         row.addWidget(exe, 1)
 
         self.use_button = None
-        if not current:
+        if current:
+            row.addWidget(StatusTag("默认", tone="success", parent=self), 0)
+        else:
             self.use_button = button("设为默认")
             self.use_button.setToolTip("把该引擎设为默认引擎")
             self.use_button.clicked.connect(lambda: self.useRequested.emit(self.info.tag))

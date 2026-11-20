@@ -459,6 +459,9 @@ def test_settings_engine_rows_are_compact_single_line(
     assert "EngineItemName" in current_labels
     assert "StatusTag" in current_labels
     assert "OwnerTag" not in current_labels
+    current_widgets = [current_row.layout().itemAt(pos).widget() for pos in range(current_row.layout().count())]
+    assert current_widgets[1].text() == "CPU"
+    assert current_widgets[-1].text() == "默认"
 
     QApplication.processEvents()
     for index in range(page.engines_list.count()):

@@ -22,6 +22,7 @@ __all__ = [
     "directory_rows",
     "engine_rows",
     "engine_status",
+    "engine_variant",
     "inspect_offline",
     "install_archives",
     "install_offline",
@@ -36,6 +37,15 @@ _CONFIG = "配置"
 _DEFAULT = "默认"
 
 _VARIANTS = ("cuda", "cpu")
+_BACKEND_LABELS = (
+    ("cuda", "CUDA"),
+    ("cudart", "CUDA"),
+    ("vulkan", "Vulkan"),
+    ("sycl", "SYCL"),
+    ("hip", "HIP"),
+    ("metal", "Metal"),
+    ("opencl", "OpenCL"),
+)
 _KIND_LABELS = {
     "engine": "引擎",
     "cudart": "CUDA 运行库",
@@ -104,6 +114,34 @@ class EngineStatus:
 def installed_engines(home: Path | None = None) -> list[EngineInfo]:
     """已安装引擎（按 tag 降序，当前引擎 ``source`` 为 ``current``）。"""
     return llmengine.list_engines(home)
+
+
+def _engine_file_names(info: EngineInfo) -> list[str]:
+    """引擎目录及运行库目录下的文件名（小写）；目录不可读时跳过。"""
+    names: list[str] = []
+    for directory in (info.exe.parent, *(Path(item) for item in info.path_prepend)):
+        try:
+            names.extend(item.name.lower() for item in directory.iterdir() if item.is_file())
+        except OSError:
+            continue
+    return names
+
+
+def engine_variant(info: EngineInfo) -> str:
+    """推断引擎构建类别：优先看目录内后端 DLL，其次看来源文件名，默认 CPU。"""
+    names = _engine_file_names(info)
+    for token, label in _BACKEND_LABELS:
+        if any(token in name for name in names):
+            return label
+    source = Path(info.source or "").name.lower()
+    for token, label in _BACKEND_LABELS:
+        if token in source:
+            return label
+    if info.path_prepend:
+        return "CUDA"
+    if "cpu" in source:
+        return "CPU"
+    return "CPU"
 
 
 def engine_status(home: Path | None = None) -> EngineStatus:
