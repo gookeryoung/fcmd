@@ -85,8 +85,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.models_open = button("打开", kind="ghost")
         row.addWidget(self.models_open)
         card.body.addLayout(row)
-        self.models_source = hint_label("来源：默认")
-        card.body.addWidget(self.models_source)
         self.migration_note = HintLabel("")
         card.body.addWidget(self.migration_note)
         self.models_path.committed.connect(lambda text: self._save_path("models_dir", text))
@@ -229,8 +227,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_open = button("打开", kind="ghost")
         row.addWidget(self.engines_open)
         card.body.addLayout(row)
-        self.engines_source = hint_label("来源：默认")
-        card.body.addWidget(self.engines_source)
         self.engine_status_label = QLabel("-", card)
         self.engine_status_label.setObjectName("Value")
         self.engine_status_label.setWordWrap(True)
@@ -266,12 +262,10 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     def refresh(self) -> None:
         """重新读取配置与引擎列表。"""
         directories = settings_logic.directory_rows()
-        for _name, path, source in directories:
+        for _name, path, _source in directories:
             self.models_path.set_value(path)
-            self.models_source.setText(f"来源：{source}")
-        for _name, path, source in settings_logic.engine_rows():
+        for _name, path, _source in settings_logic.engine_rows():
             self.engines_path.set_value(path)
-            self.engines_source.setText(f"来源：{source}")
         note = settings_logic.migration_note()
         self.migration_note.setText(note)
         self.migration_note.setVisible(bool(note))

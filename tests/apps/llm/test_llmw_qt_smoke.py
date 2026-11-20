@@ -332,6 +332,14 @@ def test_models_page_delete_and_cleanup(window: Any, monkeypatch: pytest.MonkeyP
     assert not second.exists()
 
 
+def test_settings_has_no_source_hint(window: Any) -> None:
+    """设置页不再显示「来源：配置 / 环境变量」说明。"""
+    window.show_page("settings")
+    page = window.page("settings")
+    assert not hasattr(page, "models_source")
+    assert not hasattr(page, "engines_source")
+
+
 def test_models_page_source_owner_and_group_controls(window: Any) -> None:
     """模型页提供来源 / 发布方过滤与同名折叠，默认只显示在线结果。"""
     window.show_page("models")
