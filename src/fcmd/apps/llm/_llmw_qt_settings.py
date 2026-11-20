@@ -12,16 +12,19 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidgetItem,
+    QMenu,
     QMessageBox,
     QSpinBox,
     QVBoxLayout,
@@ -34,13 +37,15 @@ from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
 from fcmd.gui.qt.widgets import (
     Card,
+    ElidedLabel,
     HintLabel,
     PageScroll,
     PathRow,
+    RowListWidget,
+    StatusTag,
     button,
     hint_label,
-    make_table,
-    make_table_item,
+    link_button,
 )
 
 if TYPE_CHECKING:
@@ -48,12 +53,75 @@ if TYPE_CHECKING:
 
 __all__ = ["SettingsPage", "engine_rows_values"]
 
-ENGINE_COLUMNS = ("标签", "来源", "llama-server")
-
 
 def engine_rows_values(engines: list[EngineInfo]) -> list[tuple[str, str, str]]:
-    """已安装引擎表的行（与 :data:`ENGINE_COLUMNS` 对应）。"""
+    """已安装引擎的 ``(标签, 来源, llama-server)`` 摘要（供测试与调试）。"""
     return [(info.tag, info.source or "-", str(info.exe)) for info in engines]
+
+
+class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
+    """已安装引擎行：与模型列表行同构（标签大字 + 路径小字 + 右侧动作）。"""
+
+    useRequested = Signal(str)
+
+    def __init__(self, info: EngineInfo, *, current: bool, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.info = info
+        self.setObjectName("EngineRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", "false")
+        self.setToolTip(f"{info.tag}\n{info.exe}")
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 8, 12, 8)
+        row.setSpacing(12)
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(3)
+
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
+        name = ElidedLabel(info.tag, parent=self)
+        name.setObjectName("EngineItemName")
+        name_row.addWidget(name, 1)
+        if current:
+            name_row.addWidget(StatusTag("当前默认", tone="success", parent=self), 0)
+        if info.path_prepend:
+            runtime = StatusTag("自带运行库", tone="accent", parent=self)
+            runtime.setToolTip("启动时前置到 PATH：" + "、".join(info.path_prepend))
+            name_row.addWidget(runtime, 0)
+        left.addLayout(name_row)
+
+        note_row = QHBoxLayout()
+        note_row.setContentsMargins(0, 0, 0, 0)
+        note_row.setSpacing(6)
+        exe = ElidedLabel(str(info.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
+        exe.setObjectName("Hint")
+        note_row.addWidget(exe, 1)
+        source_text = info.source or ""
+        source_label = QLabel(Path(source_text).name or source_text or "-", self)
+        source_label.setObjectName("OwnerTag")
+        source_label.setToolTip(f"来源：{source_text or '-'}")
+        note_row.addWidget(source_label, 0)
+        left.addLayout(note_row)
+        row.addLayout(left, 1)
+
+        self.use_button = button("当前默认" if current else "设为默认")
+        if current:
+            self.use_button.setObjectName("InstalledButton")
+            self.use_button.setEnabled(False)
+            self.use_button.setToolTip("该引擎已是默认引擎")
+        else:
+            self.use_button.setToolTip("把该引擎设为默认引擎")
+            self.use_button.clicked.connect(lambda: self.useRequested.emit(self.info.tag))
+        row.addWidget(self.use_button, 0)
+
+    def set_selected(self, selected: bool) -> None:
+        """切换选中态边框（列表当前行变化时由页面同步）。"""
+        self.setProperty("selected", "true" if selected else "false")
+        self.style().unpolish(self)
+        self.style().polish(self)
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
@@ -222,37 +290,61 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     # 引擎
     # ------------------------------------------------------------------ #
     def _build_engines(self) -> Card:
-        card = Card("引擎")
+        """引擎：状态 + 已安装列表 + 少量动作，标题行右侧只留轻量入口。"""
+        card = Card()
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+        title = QLabel("引擎", card)
+        title.setObjectName("SectionTitle")
+        self.engine_status_tag = StatusTag("检测中…", tone="muted", parent=card)
+        self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
+        self.check_engine_button = link_button("体检", tooltip="执行 llama-server --version 体检当前引擎")
+        header.addWidget(title)
+        header.addWidget(self.engine_status_tag)
+        header.addStretch(1)
+        header.addWidget(self.refresh_engine_button)
+        header.addWidget(self.check_engine_button)
+        card.body.addLayout(header)
+
         row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(hint_label("引擎根目录", wrap=False))
         self.engines_path = PathRow(value="", directory=True, show_reset=True)
         row.addWidget(self.engines_path, 1)
         self.engines_open = button("打开", kind="ghost")
         row.addWidget(self.engines_open)
         card.body.addLayout(row)
-        self.engine_status_label = QLabel("-", card)
-        self.engine_status_label.setObjectName("Value")
-        self.engine_status_label.setWordWrap(True)
+
+        self.engine_status_label = hint_label("", wrap=True)
         card.body.addWidget(self.engine_status_label)
 
-        self.engines_table = make_table(ENGINE_COLUMNS, widths=(120, 120, 420), stretch_columns=(2,))
-        self.engines_table.setMinimumHeight(120)
-        card.body.addWidget(self.engines_table)
+        self.engines_list = RowListWidget(card)
+        self.engines_list.setObjectName("EngineList")
+        self.engines_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
+        self.engines_list.setSpacing(4)
+        self.engines_list.setMinimumHeight(160)
+        self.engines_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.engines_list.setToolTip("双击一行可直接设为默认引擎")
+        self.engines_empty = hint_label("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
+        self.engines_empty.setVisible(False)
+        card.body.addWidget(self.engines_list)
+        card.body.addWidget(self.engines_empty)
+
         actions = QHBoxLayout()
-        self.use_engine_button = button("设为默认")
-        self.switch_engine_dir_button = button("切换目录", kind="ghost")
-        self.switch_engine_dir_button.setToolTip("选择已编译的 llama.cpp 目录并注册为默认引擎")
-        self.import_engine_zip_button = button("导入压缩包", kind="ghost")
-        self.import_engine_zip_button.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
-        self.check_engine_button = button("体检当前引擎", kind="ghost")
-        self.refresh_engine_button = button("刷新", kind="ghost")
-        actions.addWidget(self.use_engine_button)
-        actions.addWidget(self.switch_engine_dir_button)
-        actions.addWidget(self.import_engine_zip_button)
-        actions.addWidget(self.check_engine_button)
-        actions.addWidget(self.refresh_engine_button)
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(8)
+        self.add_engine_button = button("添加引擎", kind="ghost")
+        add_menu = QMenu(self.add_engine_button)
+        switch_action = add_menu.addAction("从目录添加…")
+        switch_action.setToolTip("选择已编译的 llama.cpp 目录并注册为引擎")
+        archive_action = add_menu.addAction("从压缩包导入…")
+        archive_action.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
+        self.add_engine_button.setMenu(add_menu)
+        actions.addWidget(self.add_engine_button)
         actions.addStretch(1)
         card.body.addLayout(actions)
+
         self.engine_hint = HintLabel("")
         self.engine_hint.setVisible(False)
         card.body.addWidget(self.engine_hint)
@@ -260,11 +352,12 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_path.committed.connect(lambda text: self._save_path("engines_root", text))
         self.engines_path.reset.clicked.connect(lambda: self._save_path("engines_root", None))
         self.engines_open.clicked.connect(lambda: open_path(_llmconfig.engines_root()))
-        self.use_engine_button.clicked.connect(self._use_engine)
-        self.switch_engine_dir_button.clicked.connect(self._switch_engine_dir)
-        self.import_engine_zip_button.clicked.connect(self._import_engine_archive)
+        switch_action.triggered.connect(self._switch_engine_dir)
+        archive_action.triggered.connect(self._import_engine_archive)
         self.check_engine_button.clicked.connect(self._check_engine)
         self.refresh_engine_button.clicked.connect(self.refresh)
+        self.engines_list.currentRowChanged.connect(self._on_engine_row_selected)
+        self.engines_list.itemDoubleClicked.connect(self._on_engine_double_clicked)
         return card
 
     # ------------------------------------------------------------------ #
@@ -283,21 +376,51 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.refresh_engines()
 
     def refresh_engines(self) -> None:
-        """刷新引擎摘要与已安装列表。"""
+        """刷新引擎状态标签、摘要与已安装引擎列表。"""
         try:
             status = settings_logic.engine_status()
             self._engines = settings_logic.installed_engines()
         except (OSError, ServeError) as exc:
+            self.engine_status_tag.set_status("不可用", "danger")
             self.engine_status_label.setText(f"引擎信息不可用：{exc}")
+            self.engines_list.clear()
+            self.engines_empty.setText(f"引擎信息不可用：{exc}")
+            self.engines_empty.setVisible(True)
             return
-        self.engine_status_label.setText(
-            f"当前引擎：{status.current}\n根目录：{status.root}\n已安装：{status.installed} 个"
-        )
-        rows = engine_rows_values(self._engines)
-        self.engines_table.setRowCount(len(rows))
-        for index, values in enumerate(rows):
-            for column, text in enumerate(values):
-                self.engines_table.setItem(index, column, make_table_item(text))
+        current = next((info for info in self._engines if info.source == "current"), None)
+        if current is not None:
+            self.engine_status_tag.set_status(f"当前 {current.tag}", "success")
+            self.engine_status_tag.setToolTip(str(current.exe))
+        else:
+            self.engine_status_tag.set_status("未设置默认引擎", "warning")
+            self.engine_status_tag.setToolTip(status.current)
+        self.engine_status_label.setText(f"已安装 {status.installed} 个引擎")
+
+        self.engines_list.clear()
+        for info in self._engines:
+            list_item = QListWidgetItem(self.engines_list)
+            list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            row = _EngineRow(info, current=info.source == "current", parent=self.engines_list)
+            row.useRequested.connect(self._use_engine_tag)
+            list_item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self.engines_list.setItemWidget(list_item, row)
+        self.engines_list.sync_row_widths()
+        self.engines_empty.setText("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
+        self.engines_empty.setVisible(not self._engines)
+
+    def _on_engine_row_selected(self, current: int) -> None:
+        """同步脚本行的选中态（只加粗边框，不影响内容）。"""
+        for index in range(self.engines_list.count()):
+            item = self.engines_list.item(index)
+            row = self.engines_list.itemWidget(item)
+            if isinstance(row, _EngineRow):
+                row.set_selected(index == current)
+
+    def _on_engine_double_clicked(self, item: QListWidgetItem) -> None:
+        """双击引擎行直接设为默认。"""
+        index = self.engines_list.row(item)
+        if 0 <= index < len(self._engines):
+            self._use_engine_tag(self._engines[index].tag)
 
     def _save_path(self, key: str, value: str | None) -> None:
         """写入目录项并通知其它页（模型目录变化会触发重新扫描）。"""
@@ -313,28 +436,20 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         if key == "models_dir":
             self.state.refresh_models()
 
-    def _selected_engine(self) -> EngineInfo | None:
-        row = self.engines_table.currentRow()
-        if 0 <= row < len(self._engines):
-            return self._engines[row]
-        return None
-
     def _set_engine_hint(self, text: str) -> None:
         """显示引擎操作反馈；无内容时不占位。"""
         self.engine_hint.setText(text)
         self.engine_hint.setVisible(bool(text))
 
-    def _use_engine(self) -> None:
-        info = self._selected_engine()
-        if info is None:
-            self._set_engine_hint("先在已安装引擎表中选择一行")
-            return
+    def _use_engine_tag(self, tag: str) -> None:
+        """把指定 tag 的引擎设为默认，并刷新列表。"""
         try:
-            chosen = settings_logic.select_engine(info.tag)
+            chosen = settings_logic.select_engine(tag)
         except (OSError, ServeError) as exc:
             QMessageBox.critical(self, "切换失败", str(exc))
             return
         self.state.log(f"默认引擎已切换为 {chosen.tag} · {chosen.exe}")
+        self.state.status(f"默认引擎：{chosen.tag}")
         self._set_engine_hint(f"默认引擎：{chosen.tag} · {chosen.exe}")
         self.refresh_engines()
 

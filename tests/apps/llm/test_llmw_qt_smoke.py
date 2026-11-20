@@ -362,6 +362,59 @@ def test_settings_engine_directory_and_archive_actions(
     assert calls[-1] == ("custom", "已导入")
 
 
+def test_settings_engine_panel_is_compact(window: Any) -> None:
+    """引擎卡片：状态标签 + 轻量链接 + 合并后的「添加引擎」菜单。"""
+    window.show_page("settings")
+    page = window.page("settings")
+    assert page.engine_status_tag.text()
+    assert page.refresh_engine_button.text() == "刷新"
+    assert page.check_engine_button.text() == "体检"
+    assert page.add_engine_button.menu() is not None
+    actions = [action.text() for action in page.add_engine_button.menu().actions()]
+    assert actions == ["从目录添加…", "从压缩包导入…"]
+    assert page.engines_list.objectName() == "EngineList"
+    assert not hasattr(page, "engines_table")
+    assert not hasattr(page, "use_engine_button")
+    assert not hasattr(page, "switch_engine_dir_button")
+    assert not hasattr(page, "import_engine_zip_button")
+
+
+def test_settings_engine_rows_follow_model_list_style(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """已安装引擎按模型列表行展示：大字标签 + 路径 + 行内「设为默认」。"""
+    from fcmd.apps.llm import _llmw_settings as settings_logic
+    from fcmd.apps.llm.llmbase import EngineInfo
+
+    engines = [
+        EngineInfo("b2", tmp_path / "b2" / "llama-server.exe", str(tmp_path / "source")),
+        EngineInfo("b1", tmp_path / "b1" / "llama-server.exe", "current"),
+    ]
+    monkeypatch.setattr(settings_logic, "installed_engines", lambda: engines)
+    monkeypatch.setattr(
+        settings_logic,
+        "engine_status",
+        lambda: settings_logic.EngineStatus(tmp_path / "engines", "b1 · llama-server.exe", 2),
+    )
+    window.show_page("settings")
+    page = window.page("settings")
+    page.refresh_engines()
+    assert page.engines_list.count() == 2
+    other_row = page.engines_list.itemWidget(page.engines_list.item(0))
+    current_row = page.engines_list.itemWidget(page.engines_list.item(1))
+    assert other_row.objectName() == "EngineRow"
+    assert other_row.use_button.text() == "设为默认"
+    assert other_row.use_button.isEnabled()
+    assert current_row.use_button.text() == "当前默认"
+    assert not current_row.use_button.isEnabled()
+    assert page.engine_status_tag.text() == "当前 b1"
+
+    selected: list[str] = []
+    monkeypatch.setattr(settings_logic, "select_engine", lambda tag: selected.append(tag) or engines[0])
+    other_row.use_button.click()
+    assert selected == ["b2"]
+
+
 def test_settings_has_no_source_hint(window: Any) -> None:
     """设置页不再显示「来源：配置 / 环境变量」说明。"""
     window.show_page("settings")
