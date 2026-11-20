@@ -163,6 +163,24 @@ def test_models_page_fresh_cache_skips_network(window: Any, tmp_path: Path, monk
     assert browse._search_work not in submitted
 
 
+def test_models_category_chips_switch_filter(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """分类 chip 点击后切换到对应筛选（PySide2 下 ``clicked`` 重载要求槽函数可零参调用）。"""
+    from fcmd.apps.llm import _llmw_models
+    from fcmd.apps.llm import _llmw_qt_center as center
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    submitted: list[object] = []
+    monkeypatch.setattr(center, "submit", lambda fn, *args, **kwargs: submitted.append(fn))
+    for key, _label, query in _llmw_models.MODEL_FILTERS:
+        browse.filter_buttons[key].click()
+        QApplication.processEvents()
+        assert browse._filter_key == key
+        assert browse._filter_query == query
+        assert browse.filter_buttons[key].isChecked()
+    assert submitted and submitted[0] == browse._search_work
+
+
 def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """历史对话支持删除当前与清空全部；运行中禁止清理。"""
     from fcmd.apps.llm._llmw_qt_chat import _Conversation

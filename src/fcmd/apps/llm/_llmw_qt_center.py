@@ -552,7 +552,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             chip.setObjectName("FilterChip")
             chip.setCheckable(True)
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.clicked.connect(lambda _checked, key=key: self._on_filter_changed(key))
+            # ``_checked`` 必须有默认值：PySide2 会按「可零参调用」挑 ``clicked()`` 重载，
+            # 缺省会导致点击分类时报 ``missing argument '_checked'``。
+            chip.clicked.connect(lambda _checked=False, key=key: self._on_filter_changed(key))
             self.filter_group.addButton(chip)
             filters.addWidget(chip)
             self.filter_buttons[key] = chip
