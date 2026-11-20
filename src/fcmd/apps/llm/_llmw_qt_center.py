@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -86,7 +86,7 @@ from fcmd.gui.qt.widgets import (
     hint_label,
     link_button,
 )
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import ProgressBridge, submit
 
 if TYPE_CHECKING:
     from typing import Any
@@ -111,12 +111,6 @@ _DEFAULT_SORT = _llmw_models.DEFAULT_MODEL_SORT
 _MODEL_SORTS = _llmw_models.MODEL_SORTS
 _MODEL_FILTERS = _llmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _llmw_models.DEFAULT_MODEL_FILTER
-
-
-class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """下载进度信号（工作线程 → 主线程）。"""
-
-    progress = Signal(object)
 
 
 @dataclass(frozen=True)
@@ -516,7 +510,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._listing_quant = False
         self._stop_requested = False
         self._active_repo: str | None = None
-        self._bridge: _ProgressBridge | None = None
+        self._bridge: ProgressBridge | None = None
         self._download_target = _llmconfig.models_dir()
         self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
@@ -1465,7 +1459,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.stop_download_button.setVisible(True)
         self._sync_download_buttons()
         self._log(f"开始下载 {repo} -> {self._download_target}")
-        self._bridge = _ProgressBridge(self)
+        self._bridge = ProgressBridge(self)
         self._bridge.progress.connect(self._on_progress)
         submit(
             self._download_work,
@@ -1557,7 +1551,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.stop_download_button.setVisible(False)
         self._sync_download_buttons()
         self._log(f"开始转换 {source} -> {output}")
-        self._bridge = _ProgressBridge(self)
+        self._bridge = ProgressBridge(self)
         self._bridge.progress.connect(self._on_convert_progress)
         form = _llmw_convert._ConvertForm(
             source=str(source),
@@ -1708,7 +1702,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.stop_download_button.setVisible(False)
         self._sync_download_buttons()
         self._log(f"开始量化 {source} -> {quant}")
-        self._bridge = _ProgressBridge(self)
+        self._bridge = ProgressBridge(self)
         self._bridge.progress.connect(self._on_quant_progress)
         submit(
             self._quant_work,

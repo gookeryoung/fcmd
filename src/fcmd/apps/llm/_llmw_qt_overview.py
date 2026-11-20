@@ -49,6 +49,7 @@ from fcmd.gui.qt.widgets import (
     button,
     hint_label,
     link_button,
+    section_header,
     segment_band,
 )
 from fcmd.gui.qt.workers import periodic, submit
@@ -270,16 +271,10 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         检测状态，不放标题 / 说明文案。
         """
         card = Card()
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-        self._hardware_title = QLabel("系统信息", card)
-        self._hardware_title.setObjectName("SectionTitle")
+        header, self._hardware_title = section_header("系统信息", card)
         self._detect_button = link_button("重新检测", tooltip="重新检测 CPU / GPU / 内存")
         self._detect_button.clicked.connect(self._detect)
         self._detected_label = hint_label("", wrap=False)
-        header.addWidget(self._hardware_title)
-        header.addStretch(1)
         header.addWidget(self._detected_label)
         header.addWidget(self._detect_button)
         card.body.addLayout(header)

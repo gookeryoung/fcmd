@@ -20,6 +20,7 @@ from PySide6.QtCore import QElapsedTimer, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPalette, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -49,6 +50,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Card",
+    "ChoiceCard",
+    "ChoiceGroup",
     "Collapsible",
     "ElidedLabel",
     "FormGrid",
@@ -72,6 +75,7 @@ __all__ = [
     "make_table_item",
     "mono_font",
     "mono_label",
+    "section_header",
     "segment_band",
     "segment_fill",
     "splitter_sizes",
@@ -340,6 +344,102 @@ class FormGrid(QWidget):  # pragma: no cover - Qt 控件
     def row_count(self) -> int:
         """已占用的行数（供测试与调试）。"""
         return self._row
+
+
+def section_header(title: str, parent: QWidget | None = None) -> tuple[QHBoxLayout, QLabel]:
+    """卡片内的分节标题行：``SectionTitle`` 标签 + 弹性空白。
+
+    返回 ``(布局, 标题标签)``，调用方把布局加进 ``Card.body`` 后继续往布局右侧
+    追加状态 / 动作控件。与直接使用 ``Card`` 标题的区别是保留 ``SectionTitle``
+    的标题字号，避免改变既有卡片的视觉层级。
+    """
+    header = QHBoxLayout()
+    header.setContentsMargins(0, 0, 0, 0)
+    header.setSpacing(8)
+    label = QLabel(title, parent)
+    label.setObjectName("SectionTitle")
+    header.addWidget(label)
+    header.addStretch(1)
+    return header, label
+
+
+class ChoiceCard(QPushButton):  # pragma: no cover - Qt 控件
+    """可选项方块：标题 + 下方说明，整块可点击。"""
+
+    def __init__(self, title: str, description: str, *, tone: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("ChoiceCard")
+        if tone:
+            self.setProperty("tone", tone)
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setMinimumHeight(72)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(2)
+        title_label = QLabel(title, self)
+        title_label.setObjectName("ChoiceTitle")
+        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        desc_label = QLabel(description, self)
+        desc_label.setObjectName("ChoiceHint")
+        desc_label.setWordWrap(True)
+        desc_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        layout.addWidget(title_label)
+        layout.addWidget(desc_label)
+
+
+class ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
+    """一组互斥的方块选项，``key()`` / ``set_key()`` 读写当前值。"""
+
+    changed = Signal(str)
+
+    def __init__(
+        self,
+        options: Sequence[tuple[str, str, str]],
+        *,
+        current: str = "",
+        columns: int = 4,
+        tones: dict[str, str] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._current = current
+        self._buttons: dict[str, ChoiceCard] = {}
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(6)
+        for index, (key, title, description) in enumerate(options):
+            card = ChoiceCard(title, description, tone=(tones or {}).get(key, ""), parent=self)
+            card.clicked.connect(lambda _checked=False, key=key: self._select(key))
+            self._group.addButton(card)
+            self._buttons[key] = card
+            row, column = divmod(index, columns)
+            grid.addWidget(card, row, column)
+        for column in range(columns):
+            grid.setColumnStretch(column, 1)
+        self.set_key(current, emit=False)
+
+    def key(self) -> str:
+        return self._current
+
+    def set_key(self, key: str, *, emit: bool = False) -> None:
+        card = self._buttons.get(key)
+        if card is None:
+            return
+        self._current = key
+        card.setChecked(True)
+        if emit:
+            self.changed.emit(key)
+
+    def _select(self, key: str) -> None:
+        if key == self._current:
+            return
+        self._current = key
+        self.changed.emit(key)
 
 
 _LOAD_BAND_THRESHOLDS = ((85.0, "danger"), (60.0, "warning"), (0.0, "success"))

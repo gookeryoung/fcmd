@@ -124,9 +124,16 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def show_service_log(self) -> None:
         """打开（或聚焦）服务日志窗口；历史来自 ``LlmState`` 缓冲。"""
         if self._log_dialog is None:
-            from fcmd.apps.llm._llmw_qt_log import ServiceLogDialog
+            from fcmd.gui.qt.logdialog import LogDialog
 
-            self._log_dialog = ServiceLogDialog(self.state, self)
+            self._log_dialog = LogDialog(
+                "服务日志",
+                text=self.state.log_text(),
+                append=self.state.logLine,
+                on_clear=self.state.clear_log,
+                hint="汇总服务启动 / 停止、模型扫描与下载等操作；复制、清空、导出见日志工具条。",
+                parent=self,
+            )
         self._log_dialog.show()
         self._log_dialog.raise_()
         self._log_dialog.activateWindow()

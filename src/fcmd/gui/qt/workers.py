@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from typing import Any
 
-__all__ = ["EventBridge", "TaskSignals", "periodic", "submit", "submit_daemon"]
+__all__ = ["EventBridge", "ProgressBridge", "TaskSignals", "periodic", "submit", "submit_daemon"]
 
 
 class EventBridge(QObject):  # pragma: no cover - Qt 信号桥
@@ -44,6 +44,16 @@ class EventBridge(QObject):  # pragma: no cover - Qt 信号桥
     """
 
     event = Signal(object)
+
+
+class ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
+    """单值进度桥：工作线程 ``emit`` ``(done, total)`` 或百分比对象。
+
+    适合只需「一条进度」的下载 / 转换窗口；多种事件混合的场景继续用
+    :class:`EventBridge`。
+    """
+
+    progress = Signal(object)
 
 
 class TaskSignals(QObject):  # pragma: no cover - Qt 信号对象

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
@@ -18,18 +18,12 @@ from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm import llmengine
 from fcmd.apps.llm.llmbase import EngineInfo, human_size
 from fcmd.gui.qt.widgets import Card, HintLabel, button, hint_label
-from fcmd.gui.qt.workers import submit_daemon
+from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
 
 __all__ = ["EngineDownloadDialog"]
 
 _RELEASE_LIMIT = 15
 """版本列表拉取条数：新版在前，15 个足够覆盖常用引擎 tag。"""
-
-
-class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """下载进度信号（工作线程 → 主线程）。"""
-
-    progress = Signal(object)
 
 
 class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
@@ -47,7 +41,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self._fetching = False
         self._downloading = False
         self._closed = False
-        self._bridge: _ProgressBridge | None = None
+        self._bridge: ProgressBridge | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -229,7 +223,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self.refresh_button.setEnabled(False)
         self.progress.setRange(0, 0)
         self.status.setText(f"正在下载 {release.tag}（{settings_logic.variant_label(variant)}）…")
-        bridge = _ProgressBridge(self)
+        bridge = ProgressBridge(self)
         bridge.progress.connect(self._on_progress)
         self._bridge = bridge
 

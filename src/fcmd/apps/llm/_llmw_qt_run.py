@@ -14,20 +14,16 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QComboBox,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
-    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -59,7 +55,7 @@ from fcmd.apps.llm.llmbase import (
     human_size,
 )
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, PageScroll, button
+from fcmd.gui.qt.widgets import Card, ChoiceGroup, Collapsible, FormGrid, PageScroll, button
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -337,85 +333,6 @@ class _ModelCombo(QComboBox):  # pragma: no cover - Qt 控件
         self.setItemDelegate(_ModelItemDelegate(self))
 
 
-class _ChoiceCard(QPushButton):  # pragma: no cover - Qt 控件
-    """可选项方块：标题 + 下方说明，整块可点击。"""
-
-    def __init__(self, title: str, description: str, *, tone: str = "", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("ChoiceCard")
-        if tone:
-            self.setProperty("tone", tone)
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.setMinimumHeight(72)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 6, 10, 6)
-        layout.setSpacing(2)
-        title_label = QLabel(title, self)
-        title_label.setObjectName("ChoiceTitle")
-        title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        desc_label = QLabel(description, self)
-        desc_label.setObjectName("ChoiceHint")
-        desc_label.setWordWrap(True)
-        desc_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        layout.addWidget(title_label)
-        layout.addWidget(desc_label)
-
-
-class _ChoiceGroup(QWidget):  # pragma: no cover - Qt 控件
-    """一组互斥的方块选项，``key()`` / ``set_key()`` 读写当前值。"""
-
-    changed = Signal(str)
-
-    def __init__(
-        self,
-        options: Sequence[tuple[str, str, str]],
-        *,
-        current: str = "",
-        columns: int = 4,
-        tones: dict[str, str] | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._current = current
-        self._buttons: dict[str, _ChoiceCard] = {}
-        self._group = QButtonGroup(self)
-        self._group.setExclusive(True)
-        grid = QGridLayout(self)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(6)
-        for index, (key, title, description) in enumerate(options):
-            card = _ChoiceCard(title, description, tone=(tones or {}).get(key, ""), parent=self)
-            card.clicked.connect(lambda _checked=False, key=key: self._select(key))
-            self._group.addButton(card)
-            self._buttons[key] = card
-            row, column = divmod(index, columns)
-            grid.addWidget(card, row, column)
-        for column in range(columns):
-            grid.setColumnStretch(column, 1)
-        self.set_key(current, emit=False)
-
-    def key(self) -> str:
-        return self._current
-
-    def set_key(self, key: str, *, emit: bool = False) -> None:
-        card = self._buttons.get(key)
-        if card is None:
-            return
-        self._current = key
-        card.setChecked(True)
-        if emit:
-            self.changed.emit(key)
-
-    def _select(self, key: str) -> None:
-        if key == self._current:
-            return
-        self._current = key
-        self.changed.emit(key)
-
-
 _MODE_PROFILE: dict[str, str] = {
     "speed": "speed",
     "balanced": "balanced",
@@ -533,7 +450,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.params_card.body.addWidget(form)
 
         self.params_card.body.addWidget(QLabel("运行模式（档位 + 调优）", self.params_card))
-        self.mode_choice = _ChoiceGroup(
+        self.mode_choice = ChoiceGroup(
             _mode_options(),
             current="balanced",
             columns=3,
@@ -546,7 +463,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         adv_form = FormGrid(self.advanced.content)
         self.ctx_edit = QLineEdit("", self.advanced.content)
         adv_form.add_row("上下文", self.ctx_edit)
-        self.kv_choice = _ChoiceGroup(_kv_options(), current="", columns=4, parent=self.advanced.content)
+        self.kv_choice = ChoiceGroup(_kv_options(), current="", columns=4, parent=self.advanced.content)
         adv_form.add_row("KV", self.kv_choice)
         self.ubatch_edit = QLineEdit("", self.advanced.content)
         self.alias_edit = QLineEdit("", self.advanced.content)

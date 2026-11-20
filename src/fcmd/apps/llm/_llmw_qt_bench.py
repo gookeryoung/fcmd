@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QSpinBox,
@@ -54,6 +53,7 @@ from fcmd.gui.qt.widgets import (
     link_button,
     make_table,
     make_table_item,
+    section_header,
 )
 from fcmd.gui.qt.workers import submit
 
@@ -142,16 +142,11 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
     def _build_target(self) -> Card:
         """被测服务：与页面卡片一致，标题行右侧放选择框与刷新入口。"""
         card = Card(parent=self)
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-        title = QLabel("测试目标", card)
-        title.setObjectName("SectionTitle")
+        header, self._target_title = section_header("测试目标", card)
         self._target_combo = QComboBox(card)
         self._target_combo.setMinimumWidth(320)
         self._refresh_services_button = link_button("刷新服务", tooltip="重新读取已登记服务")
         self._refresh_services_button.clicked.connect(self.state.refresh_services)
-        header.addWidget(title)
         header.addWidget(self._target_combo, 1)
         header.addWidget(self._refresh_services_button)
         card.body.addLayout(header)
@@ -236,14 +231,8 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
 
     def _build_results(self) -> Card:
         card = Card(parent=self)
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-        title = QLabel("测试结果", card)
-        title.setObjectName("SectionTitle")
+        header, self._results_title = section_header("测试结果", card)
         self._bench_status = hint_label("选择场景后点击「开始测试」", wrap=False)
-        header.addWidget(title)
-        header.addStretch(1)
         header.addWidget(self._bench_status)
         card.body.addLayout(header)
 
