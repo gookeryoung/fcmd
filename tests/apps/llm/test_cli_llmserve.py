@@ -1307,6 +1307,33 @@ class TestEngine:
         name = "llama-b9-bin-win-vulkan-x64.zip"
         info = llmengine.install_engine("b9", asset_names=[name], home=home, opener=_opener(payload, seen=seen))
         assert info.exe.is_file()
+        expected = f"https://github.com/ggml-org/llama.cpp/releases/download/b9/{name}"
+        assert [str(request.full_url) for request in seen] == [f"https://gh-proxy.com/{expected}"]
+
+    def test_install_falls_back_when_mirror_fails(self, home: Path) -> None:
+        """国内镜像不可用时按顺序回退下一镜像 / GitHub 直连。"""
+        payload = _zip_payload({llmengine.engine_exe_name(): b"exe"})
+        seen: list[str] = []
+
+        def opener(request: Any, timeout: float = 1.0) -> Any:
+            seen.append(str(request.full_url))
+            if len(seen) == 1:
+                raise URLError("mirror blocked")
+            return _opener(payload)(request, timeout)
+
+        name = "llama-b9-bin-win-cpu-x64.zip"
+        info = llmengine.install_engine("b9", asset_names=[name], home=home, opener=opener)
+        assert info.exe.is_file()
+        assert seen[0].startswith("https://gh-proxy.com/")
+        assert seen[1].startswith("https://gh-proxy.net/")
+
+    def test_install_uses_direct_url_when_mirror_disabled(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``FCMD_GITHUB_MIRROR=direct`` 时只请求 GitHub 原始地址。"""
+        payload = _zip_payload({llmengine.engine_exe_name(): b"exe"})
+        seen: list[Any] = []
+        monkeypatch.setenv("FCMD_GITHUB_MIRROR", "direct")
+        name = "llama-b9-bin-win-cpu-x64.zip"
+        llmengine.install_engine("b9", asset_names=[name], home=home, opener=_opener(payload, seen=seen))
         assert [str(request.full_url) for request in seen] == [
             f"https://github.com/ggml-org/llama.cpp/releases/download/b9/{name}"
         ]

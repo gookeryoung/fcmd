@@ -1248,3 +1248,28 @@ def test_engine_download_dialog_reports_list_failure(window: Any, monkeypatch: p
         assert not dialog.download_button.isEnabled()
     finally:
         dialog.close()
+
+
+def test_engine_download_dialog_can_close_while_fetching(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """拉取版本列表卡住时也能立即关窗（不等待后台线程）。"""
+    import threading
+
+    from fcmd.apps.llm import _llmw_qt_engine_install as install_ui
+    from fcmd.apps.llm import _llmw_settings as settings_logic
+
+    gate = threading.Event()
+    monkeypatch.setattr(settings_logic, "engine_releases", lambda limit=10: gate.wait(5) and ())
+    dialog = install_ui.EngineDownloadDialog(window)
+    try:
+        dialog.show()
+        QApplication.processEvents()
+        dialog.close()
+        assert dialog._closed
+    finally:
+        gate.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.01)
+            if dialog._fetching is False:
+                break

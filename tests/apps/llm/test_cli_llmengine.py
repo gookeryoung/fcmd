@@ -54,7 +54,7 @@ def test_parse_releases_filters_windows_binaries() -> None:
     assert [release.tag for release in releases] == ["b7000", "b6997"]
     first = releases[0]
     assert first.published.startswith("2026-01-02")
-    assert first.variants(arch="x64") == ("cuda", "cpu", "vulkan")
+    assert first.variants(arch="x64") == ("cuda", "vulkan", "cpu")
     assert first.variants(arch="arm64") == ("cuda",)
     cuda = first.install_assets("cuda", arch="x64")
     assert [asset.name for asset in cuda] == [
@@ -90,7 +90,52 @@ def test_fetch_engine_releases_reads_github_api() -> None:
 
     releases = llmengine.fetch_engine_releases(limit=5, opener=opener)
     assert releases[0].tag == "b7000"
-    assert seen and "per_page=5" in seen[0]
+    assert seen and "per_page=10" in seen[0]
+
+
+def test_mirror_candidates_prefer_domestic_and_allow_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """默认国内镜像优先；``FCMD_GITHUB_MIRROR`` 可改为自定义前缀或只用直连。"""
+    monkeypatch.delenv("FCMD_GITHUB_MIRROR", raising=False)
+    candidates = llmengine._mirror_candidates("https://api.github.com/repos/a/b")
+    assert candidates[0] == "https://gh-proxy.com/https://api.github.com/repos/a/b"
+    assert candidates[-1] == "https://api.github.com/repos/a/b"
+    assert llmengine._mirror_candidates("https://example.com/a.zip") == ["https://example.com/a.zip"]
+
+    monkeypatch.setenv("FCMD_GITHUB_MIRROR", "direct")
+    assert llmengine._mirror_candidates("https://api.github.com/x") == ["https://api.github.com/x"]
+
+    monkeypatch.setenv("FCMD_GITHUB_MIRROR", "https://mirror.example")
+    assert llmengine._mirror_candidates("https://api.github.com/x") == [
+        "https://mirror.example/https://api.github.com/x",
+        "https://api.github.com/x",
+    ]
+
+
+def test_fetch_engine_releases_falls_back_to_direct() -> None:
+    """首个镜像失败后继续尝试下一镜像，最后回退 GitHub 直连。"""
+    body = json.dumps(_release_payload()).encode("utf-8")
+    seen: list[str] = []
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+        def read(self) -> bytes:
+            return body
+
+    def opener(request: Any, timeout: float = 1.0) -> _Response:
+        seen.append(str(request.full_url))
+        if "gh-proxy.com" in seen[-1] or "gh-proxy.net" in seen[-1] or "ghproxy.net" in seen[-1]:
+            raise URLError("mirror blocked")
+        return _Response()
+
+    releases = llmengine.fetch_engine_releases(limit=5, opener=opener)
+    assert releases[0].tag == "b7000"
+    assert seen[0].startswith("https://gh-proxy.com/")
+    assert seen[-1].startswith("https://api.github.com/")
 
 
 def test_fetch_engine_releases_network_error() -> None:
@@ -111,7 +156,7 @@ def test_releases_cmd_lists_versions(monkeypatch: pytest.MonkeyPatch, capsys: py
     out = capsys.readouterr().out
     assert "b7000" in out
     assert "2026-01-02" in out
-    assert "cuda / cpu / vulkan" in out
+    assert "cuda / vulkan / cpu" in out
     assert "llama-b7000-bin-win-cuda-13.5-x64.zip" in out
     assert "--asset" in out
 

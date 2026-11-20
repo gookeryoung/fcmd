@@ -157,14 +157,14 @@ class EngineRelease:
     assets: tuple[EngineAsset, ...]
 
     def variants(self, arch: str | None = None) -> tuple[str, ...]:
-        """当前机器可用的构建变体（按 release 内顺序去重）。"""
+        """当前机器可用的构建变体；GPU 变体优先，CPU 兜底，未知变体按出现顺序垫后。"""
         target = arch or _host_arch()
         seen: list[str] = []
         for asset in self.assets:
             if asset.runtime or asset.arch != target or asset.variant in seen:
                 continue
             seen.append(asset.variant)
-        return tuple(seen)
+        return tuple(sorted(seen, key=lambda variant: _VARIANT_ORDER.get(variant, len(_VARIANT_ORDER))))
 
     def install_assets(self, variant: str, arch: str | None = None) -> tuple[EngineAsset, ...]:
         """安装指定变体需要的资产：引擎包在前、运行库包在后。"""
@@ -177,7 +177,55 @@ class EngineRelease:
 _ENGINE_ASSET_RE = re.compile(r"^llama-(?P<tag>b\d+)-bin-win-(?P<rest>.+)-(?P<arch>x64|arm64)\.zip$", re.I)
 #: CUDA 运行库包名：``cudart-llama-bin-win-cuda-13.5-x64.zip``。
 _CUDART_ASSET_RE = re.compile(r"^cudart-llama-bin-win-(?P<rest>.+)-(?P<arch>x64|arm64)\.zip$", re.I)
+#: 变体下拉的默认顺序：先 GPU 加速，最后 CPU 兜底。
+_VARIANT_ORDER: Final[dict[str, int]] = {
+    "cuda": 0,
+    "vulkan": 1,
+    "rocm": 2,
+    "hip": 3,
+    "sycl": 4,
+    "openvino": 5,
+    "metal": 6,
+    "opencl": 7,
+    "cpu": 8,
+}
 _GITHUB_RELEASES_URL: Final[str] = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+#: 国内可用的 GitHub 镜像前缀（默认优选）；环境变量 ``FCMD_GITHUB_MIRROR`` 可覆盖，
+#: 设为 ``direct`` / ``none`` / 空串时只用 GitHub 直连。
+_GITHUB_MIRROR_PREFIXES: Final[tuple[str, ...]] = (
+    "https://gh-proxy.com/",
+    "https://gh-proxy.net/",
+    "https://ghproxy.net/",
+)
+_GITHUB_HOSTS: Final[frozenset[str]] = frozenset({"github.com", "api.github.com", "objects.githubusercontent.com"})
+_RELEASE_TIMEOUT: Final[float] = 6.0
+_DOWNLOAD_TIMEOUT: Final[float] = 20.0
+
+
+def _mirror_prefixes() -> tuple[str, ...]:
+    """生效的镜像前缀（未设环境变量时用内置国内优选）。"""
+    raw = os.environ.get("FCMD_GITHUB_MIRROR")
+    if raw is None:
+        return _GITHUB_MIRROR_PREFIXES
+    prefixes: list[str] = []
+    for item in raw.split(","):
+        value = item.strip()
+        if not value or value.lower() in {"direct", "none", "off"}:
+            continue
+        prefixes.append(value if value.endswith("/") else f"{value}/")
+    return tuple(prefixes)
+
+
+def _mirror_candidates(url: str) -> list[str]:
+    """给 GitHub / API 地址加国内镜像前缀；非 GitHub 地址与直连原样保留。"""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or parts.hostname not in _GITHUB_HOSTS:
+        return [url]
+    candidates = [f"{prefix}{url}" for prefix in _mirror_prefixes()]
+    candidates.append(url)
+    return list(dict.fromkeys(candidates))
 
 
 def _host_arch() -> str:
@@ -242,19 +290,34 @@ def parse_engine_releases(payload: Any, *, limit: int = 10) -> tuple[EngineRelea
 
 
 def fetch_engine_releases(limit: int = 10, *, opener: Opener | None = None) -> tuple[EngineRelease, ...]:
-    """读取 llama.cpp 的 GitHub releases（版本列表）；网络失败抛 :class:`ServeError`。"""
+    """读取 llama.cpp 的 GitHub releases（版本列表）；网络失败抛 :class:`ServeError`。
+
+    默认先试国内镜像（``gh-proxy.com`` / ``gh-proxy.net``），失败再直连 GitHub；
+    所有地址都失败时一次报错，最多等待 ``_RELEASE_TIMEOUT`` × 候选数。
+    """
     from urllib.request import Request, urlopen
 
-    req = Request(
-        f"{_GITHUB_RELEASES_URL}?per_page={max(limit, 1)}",
-        headers={"User-Agent": "fcmd-llm/0.3.10", "Accept": "application/vnd.github+json"},
-    )
     open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
-    try:
-        with open_fn(req, 30.0) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (OSError, ValueError, UnicodeDecodeError) as exc:
-        raise ServeError(f"获取引擎版本列表失败：{exc}") from exc
+    # GitHub 会过滤掉无 Windows 资产的 release（含源码包 / 预览版），多取一些再截断，
+    # 避免 ``--limit 1`` 这类请求因首选条目被过滤而显示「没有可下载版本」。
+    page_size = min(max(limit * 2, 10), 100)
+    base = f"{_GITHUB_RELEASES_URL}?per_page={page_size}"
+    errors: list[str] = []
+    payload: Any = None
+    for candidate in _mirror_candidates(base):
+        req = Request(
+            candidate,
+            headers={"User-Agent": "fcmd-llm/0.3.10", "Accept": "application/vnd.github+json"},
+        )
+        try:
+            with open_fn(req, _RELEASE_TIMEOUT) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError) as exc:
+            errors.append(f"{candidate}（{exc}）")
+            continue
+        break
+    if payload is None:
+        raise ServeError("获取引擎版本列表失败：" + "；".join(errors))
     return parse_engine_releases(payload, limit=limit)
 
 
@@ -566,31 +629,50 @@ def _content_length(resp: Any) -> int | None:
         return None
 
 
+def _download_once(
+    url: str,
+    dest: Path,
+    opener: Opener | None,
+    on_progress: ProgressCallback | None,
+) -> int:
+    """单次下载（不重试）：失败时抛出 ``OSError`` 交由调用方换镜像。"""
+    from urllib.request import Request, urlopen
+
+    req = Request(url, headers={"User-Agent": "fcmd-llm/0.3.10"})
+    open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
+    with open_fn(req, _DOWNLOAD_TIMEOUT) as resp, dest.open("wb") as out:
+        expected = _content_length(resp)
+        if on_progress is not None:
+            on_progress(dest.name, 0, expected)
+        received = 0
+        while chunk := resp.read(CHUNK_SIZE):
+            out.write(chunk)
+            received += len(chunk)
+            if on_progress is not None:
+                on_progress(dest.name, received, expected)
+    return received
+
+
 def _download(
     url: str,
     dest: Path,
     opener: Opener | None = None,
     on_progress: ProgressCallback | None = None,
 ) -> int:
-    """下载 URL 到文件，返回字节数；``on_progress`` 报告实时进度。"""
-    from urllib.request import Request, urlopen
+    """下载 URL 到文件，返回字节数；GitHub 地址按国内镜像优先、失败回退直连。
 
-    req = Request(url, headers={"User-Agent": "fcmd-llm/0.3.10"})
-    open_fn = opener or (lambda request, timeout: urlopen(request, timeout=timeout))
-    try:
-        with open_fn(req, 60.0) as resp, dest.open("wb") as out:
-            expected = _content_length(resp)
-            if on_progress is not None:
-                on_progress(dest.name, 0, expected)
-            received = 0
-            while chunk := resp.read(CHUNK_SIZE):
-                out.write(chunk)
-                received += len(chunk)
-                if on_progress is not None:
-                    on_progress(dest.name, received, expected)
-    except OSError as exc:
-        raise ServeError(f"下载失败: {url}（{exc}）") from exc
-    return received
+    镜像来自 :data:`_GITHUB_MIRROR_PREFIXES` / ``FCMD_GITHUB_MIRROR``；每次尝试
+    都有连接 / 读取超时，全部失败时抛出一次带完整地址列表的 :class:`ServeError`，
+    避免界面停在「正在下载」且无法退出。
+    """
+    errors: list[str] = []
+    for candidate in _mirror_candidates(url):
+        try:
+            return _download_once(candidate, dest, opener, on_progress)
+        except OSError as exc:
+            errors.append(f"{candidate}（{exc}）")
+            dest.unlink(missing_ok=True)
+    raise ServeError("下载失败: " + "；".join(errors))
 
 
 def _extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:

@@ -8,7 +8,10 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
 
 from fcmd.apps.llm import _llmw_settings as settings_logic
@@ -43,6 +46,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self._releases: tuple[llmengine.EngineRelease, ...] = ()
         self._fetching = False
         self._downloading = False
+        self._closed = False
         self._bridge: _ProgressBridge | None = None
 
         layout = QVBoxLayout(self)
@@ -84,12 +88,19 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self.download_button.setToolTip("下载选中版本到引擎目录；尚无默认引擎时自动设为默认")
         self.download_button.clicked.connect(self._download)
         actions.addWidget(self.download_button)
+        self.close_button = button("关闭", kind="ghost")
+        self.close_button.clicked.connect(self.reject)
+        actions.addWidget(self.close_button)
         card.body.addLayout(actions)
 
         self.status = hint_label("正在获取版本列表…", wrap=False)
         card.body.addWidget(self.status)
         card.body.addWidget(
-            hint_label("版本来自 GitHub releases；安装到设置页的引擎目录，已下载的完整 zip 会直接复用。")
+            hint_label(
+                "版本来自 GitHub releases，默认优先国内镜像（gh-proxy.com / gh-proxy.net），失败自动回退 GitHub；"
+                "可用环境变量 FCMD_GITHUB_MIRROR 覆盖（设为 direct 只用 GitHub）。"
+                "安装到设置页的引擎目录，已下载的完整 zip 会直接复用。"
+            )
         )
 
         self._releases_ready(False)
@@ -98,6 +109,15 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 版本列表
     # ------------------------------------------------------------------ #
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """关窗不等待后台任务：断开进度信号，网络请求按自身超时收尾。"""
+        self._closed = True
+        if self._bridge is not None:
+            with contextlib.suppress(RuntimeError, TypeError):
+                self._bridge.progress.disconnect(self._on_progress)
+            self._bridge = None
+        super().closeEvent(event)
+
     def refresh(self) -> None:
         """后台拉取版本列表；重复点击在请求完成前忽略。"""
         if self._fetching or self._downloading:
@@ -115,6 +135,8 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
 
     def _fetch_failed(self, message: str) -> None:
         self._fetching = False
+        if self._closed:
+            return
         self.refresh_button.setEnabled(True)
         self._releases = ()
         self.version_combo.clear()
@@ -125,6 +147,8 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
 
     def _render_releases(self, releases: tuple[llmengine.EngineRelease, ...]) -> None:
         self._fetching = False
+        if self._closed:
+            return
         self.refresh_button.setEnabled(True)
         self._releases = tuple(releases)
         self.version_combo.blockSignals(True)
@@ -206,6 +230,8 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         )
 
     def _on_progress(self, event: object) -> None:
+        if self._closed:
+            return
         if not (isinstance(event, tuple) and len(event) == 3):
             return
         name, received, total = event
@@ -220,18 +246,24 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
             self.status.setText(f"正在下载 {name}：{human_size(received)}")
 
     def _installed(self, info: EngineInfo) -> None:
+        if self._closed:
+            return
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
         self.status.setText(f"已安装 {info.tag}：{info.exe}")
         self.installed.emit(info.tag)
 
     def _failed(self, message: str) -> None:
+        if self._closed:
+            return
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
         self.status.setText(f"下载失败：{message}")
 
     def _finished(self) -> None:
         self._downloading = False
+        if self._closed:
+            return
         self._bridge = None
         self.refresh_button.setEnabled(True)
         self._releases_ready(bool(self._releases))
