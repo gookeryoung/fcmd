@@ -1300,6 +1300,13 @@ class TestEngine:
         assert info.exe.is_file()
         assert info.source == "https://example.com/engine.zip"
 
+    def test_install_from_url_does_not_need_windows(self, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """显式 --url / asset 安装不依赖官方预编译包名（非 Windows 也能走 URL）。"""
+        monkeypatch.setattr(llmengine, "os", SimpleNamespace(name="posix"))
+        payload = _zip_payload({llmengine.engine_exe_name(): b"exe"})
+        info = llmengine.install_engine("b9", url="https://example.com/engine.zip", home=home, opener=_opener(payload))
+        assert info.exe.is_file()
+
     def test_install_uses_explicit_asset_names(self, home: Path) -> None:
         """版本列表选中 release 后按实际资产名下载（不再推导 cuda 版本）。"""
         payload = _zip_payload({llmengine.engine_exe_name(): b"exe"})

@@ -787,8 +787,11 @@ def install_engine(  # noqa: PLR0913
         return EngineInfo(tag, cached, str(target))
 
     target.mkdir(parents=True, exist_ok=True)
-    names = list(asset_names) if asset_names else engine_asset_names(tag, variant)
-    urls = [url] if url else [_release_url(tag, name) for name in names]
+    if url:
+        urls = [url]
+    else:
+        names = list(asset_names) if asset_names else engine_asset_names(tag, variant)
+        urls = [_release_url(tag, name) for name in names]
     for item in urls:
         archive = target / (item.rsplit("/", 1)[-1] or f"{tag}.zip")
         if not (archive.is_file() and zipfile.is_zipfile(archive)):

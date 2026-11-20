@@ -18,7 +18,7 @@ from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm import llmengine
 from fcmd.apps.llm.llmbase import EngineInfo, human_size
 from fcmd.gui.qt.widgets import Card, HintLabel, button, hint_label
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import submit_daemon
 
 __all__ = ["EngineDownloadDialog"]
 
@@ -129,7 +129,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self.refresh_button.setEnabled(False)
         self.download_button.setEnabled(False)
         self.status.setText("正在获取版本列表…")
-        submit(
+        submit_daemon(
             settings_logic.engine_releases,
             _RELEASE_LIMIT,
             on_done=self._render_releases,
@@ -237,7 +237,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
             """把下载回调的三元组打包成一个对象，再经信号投递到主线程。"""
             bridge.progress.emit((name, received, total))
 
-        submit(
+        submit_daemon(
             settings_logic.install_online,
             release.tag,
             variant,
