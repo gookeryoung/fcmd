@@ -290,7 +290,11 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     # 引擎
     # ------------------------------------------------------------------ #
     def _build_engines(self) -> Card:
-        """引擎：状态 + 已安装列表 + 少量动作，标题行右侧只留轻量入口。"""
+        """引擎卡片紧凑排版：标题行承载状态标签与全部入口，正文只剩目录行与列表。
+
+        不设独立摘要行（数量并入状态标签 tooltip），不设底部动作行（「添加引擎」
+        并入标题行）；列表高度随已安装引擎数量伸缩，空态 / 错误态由同一提示行承接。
+        """
         card = Card()
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
@@ -298,11 +302,20 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         title = QLabel("引擎", card)
         title.setObjectName("SectionTitle")
         self.engine_status_tag = StatusTag("检测中…", tone="muted", parent=card)
+        self.add_engine_button = button("添加引擎", kind="ghost")
+        self.add_engine_button.setToolTip("从目录或压缩包导入引擎")
+        add_menu = QMenu(self.add_engine_button)
+        switch_action = add_menu.addAction("从目录添加…")
+        switch_action.setToolTip("选择已编译的 llama.cpp 目录并注册为引擎")
+        archive_action = add_menu.addAction("从压缩包导入…")
+        archive_action.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
+        self.add_engine_button.setMenu(add_menu)
         self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
         self.check_engine_button = link_button("体检", tooltip="执行 llama-server --version 体检当前引擎")
         header.addWidget(title)
         header.addWidget(self.engine_status_tag)
         header.addStretch(1)
+        header.addWidget(self.add_engine_button)
         header.addWidget(self.refresh_engine_button)
         header.addWidget(self.check_engine_button)
         card.body.addLayout(header)
@@ -316,34 +329,16 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         row.addWidget(self.engines_open)
         card.body.addLayout(row)
 
-        self.engine_status_label = hint_label("", wrap=True)
-        card.body.addWidget(self.engine_status_label)
-
         self.engines_list = RowListWidget(card)
         self.engines_list.setObjectName("EngineList")
         self.engines_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
         self.engines_list.setSpacing(4)
-        self.engines_list.setMinimumHeight(160)
         self.engines_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.engines_list.setToolTip("双击一行可直接设为默认引擎")
         self.engines_empty = hint_label("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
         self.engines_empty.setVisible(False)
         card.body.addWidget(self.engines_list)
         card.body.addWidget(self.engines_empty)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(8)
-        self.add_engine_button = button("添加引擎", kind="ghost")
-        add_menu = QMenu(self.add_engine_button)
-        switch_action = add_menu.addAction("从目录添加…")
-        switch_action.setToolTip("选择已编译的 llama.cpp 目录并注册为引擎")
-        archive_action = add_menu.addAction("从压缩包导入…")
-        archive_action.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
-        self.add_engine_button.setMenu(add_menu)
-        actions.addWidget(self.add_engine_button)
-        actions.addStretch(1)
-        card.body.addLayout(actions)
 
         self.engine_hint = HintLabel("")
         self.engine_hint.setVisible(False)
@@ -376,25 +371,25 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.refresh_engines()
 
     def refresh_engines(self) -> None:
-        """刷新引擎状态标签、摘要与已安装引擎列表。"""
+        """刷新状态标签与已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""
         try:
             status = settings_logic.engine_status()
             self._engines = settings_logic.installed_engines()
         except (OSError, ServeError) as exc:
             self.engine_status_tag.set_status("不可用", "danger")
-            self.engine_status_label.setText(f"引擎信息不可用：{exc}")
+            self.engine_status_tag.setToolTip(f"引擎信息不可用：{exc}")
             self.engines_list.clear()
+            self.engines_list.setVisible(False)
             self.engines_empty.setText(f"引擎信息不可用：{exc}")
             self.engines_empty.setVisible(True)
             return
         current = next((info for info in self._engines if info.source == "current"), None)
         if current is not None:
             self.engine_status_tag.set_status(f"当前 {current.tag}", "success")
-            self.engine_status_tag.setToolTip(str(current.exe))
+            self.engine_status_tag.setToolTip(f"{current.exe}\n已安装 {status.installed} 个引擎")
         else:
             self.engine_status_tag.set_status("未设置默认引擎", "warning")
-            self.engine_status_tag.setToolTip(status.current)
-        self.engine_status_label.setText(f"已安装 {status.installed} 个引擎")
+            self.engine_status_tag.setToolTip(f"{status.current}\n已安装 {status.installed} 个引擎")
 
         self.engines_list.clear()
         for info in self._engines:
@@ -405,6 +400,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.engines_list.setItemWidget(list_item, row)
         self.engines_list.sync_row_widths()
+        self.engines_list.setVisible(bool(self._engines))
         self.engines_empty.setText("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
         self.engines_empty.setVisible(not self._engines)
 

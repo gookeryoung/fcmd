@@ -377,6 +377,36 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert not hasattr(page, "use_engine_button")
     assert not hasattr(page, "switch_engine_dir_button")
     assert not hasattr(page, "import_engine_zip_button")
+    assert not hasattr(page, "engine_status_label")
+
+
+def test_settings_engine_empty_and_error_states(window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """无引擎时列表收起、提示行承接；检测失败时状态标签转 danger。"""
+    from fcmd.apps.llm import _llmw_settings as settings_logic
+
+    monkeypatch.setattr(settings_logic, "installed_engines", lambda: [])
+    monkeypatch.setattr(
+        settings_logic,
+        "engine_status",
+        lambda: settings_logic.EngineStatus(tmp_path / "engines", "", 0),
+    )
+    window.show_page("settings")
+    page = window.page("settings")
+    page.refresh_engines()
+    assert page.engine_status_tag.text() == "未设置默认引擎"
+    assert page.engine_status_tag.tone() == "warning"
+    assert not page.engines_list.isVisibleTo(page)
+    assert page.engines_empty.isVisibleTo(page)
+
+    def broken_status() -> object:
+        raise OSError("boom")
+
+    monkeypatch.setattr(settings_logic, "engine_status", broken_status)
+    page.refresh_engines()
+    assert page.engine_status_tag.text() == "不可用"
+    assert page.engine_status_tag.tone() == "danger"
+    assert "boom" in page.engines_empty.text()
+    assert not page.engines_list.isVisibleTo(page)
 
 
 def test_settings_engine_rows_follow_model_list_style(
