@@ -23,6 +23,7 @@ __all__ = [
     "engine_rows",
     "engine_status",
     "inspect_offline",
+    "install_archives",
     "install_offline",
     "install_online",
     "installed_engines",
@@ -172,6 +173,15 @@ def install_offline(
         info = llmengine.install_engine(target, archives=[source], home=home)
     _ensure_current(target, home)
     return info, target
+
+
+def install_archives(tag: str, archives: list[Path], home: Path | None = None) -> EngineInfo:
+    """从多个本地 zip 安装引擎（引擎包 + cudart 等），没有默认引擎时设为默认。"""
+    if not archives:
+        raise ServeError("未指定任何压缩包")
+    info = llmengine.install_engine(tag, archives=archives, home=home)
+    _ensure_current(info.tag, home)
+    return info
 
 
 def _ensure_current(tag: str, home: Path | None = None) -> None:

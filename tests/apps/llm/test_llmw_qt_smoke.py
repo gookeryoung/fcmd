@@ -332,6 +332,36 @@ def test_models_page_delete_and_cleanup(window: Any, monkeypatch: pytest.MonkeyP
     assert not second.exists()
 
 
+def test_settings_engine_directory_and_archive_actions(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """设置页支持切换 llama.cpp 目录与导入本地 zip。"""
+    from PySide6.QtWidgets import QFileDialog, QInputDialog
+
+    from fcmd.apps.llm import _llmw_settings as settings_logic
+    from fcmd.apps.llm.llmbase import EngineInfo
+
+    window.show_page("settings")
+    page = window.page("settings")
+    fake = EngineInfo("custom", tmp_path / "llama-server.exe", str(tmp_path))
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(page, "_after_engine_install", lambda info, action: calls.append((info.tag, action)))
+    monkeypatch.setattr(settings_logic, "install_offline", lambda tag, source: (fake, tag))
+    monkeypatch.setattr(settings_logic, "install_archives", lambda tag, archives: fake)
+    monkeypatch.setattr(settings_logic, "inspect_offline", lambda source: [])
+    monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("custom", True))
+
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: str(tmp_path))
+    page._switch_engine_dir()
+    assert calls[-1] == ("custom", "已切换")
+
+    archive = tmp_path / "llama-b1-bin-win-cpu-x64.zip"
+    archive.write_bytes(b"zip")
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", lambda *_args, **_kwargs: ([str(archive)], ""))
+    page._import_engine_archive()
+    assert calls[-1] == ("custom", "已导入")
+
+
 def test_settings_has_no_source_hint(window: Any) -> None:
     """设置页不再显示「来源：配置 / 环境变量」说明。"""
     window.show_page("settings")

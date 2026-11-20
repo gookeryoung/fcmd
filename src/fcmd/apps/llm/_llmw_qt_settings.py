@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -237,9 +240,15 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         card.body.addWidget(self.engines_table)
         actions = QHBoxLayout()
         self.use_engine_button = button("设为默认")
+        self.switch_engine_dir_button = button("切换目录", kind="ghost")
+        self.switch_engine_dir_button.setToolTip("选择已编译的 llama.cpp 目录并注册为默认引擎")
+        self.import_engine_zip_button = button("导入压缩包", kind="ghost")
+        self.import_engine_zip_button.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
         self.check_engine_button = button("体检当前引擎", kind="ghost")
         self.refresh_engine_button = button("刷新", kind="ghost")
         actions.addWidget(self.use_engine_button)
+        actions.addWidget(self.switch_engine_dir_button)
+        actions.addWidget(self.import_engine_zip_button)
         actions.addWidget(self.check_engine_button)
         actions.addWidget(self.refresh_engine_button)
         actions.addStretch(1)
@@ -252,6 +261,8 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_path.reset.clicked.connect(lambda: self._save_path("engines_root", None))
         self.engines_open.clicked.connect(lambda: open_path(_llmconfig.engines_root()))
         self.use_engine_button.clicked.connect(self._use_engine)
+        self.switch_engine_dir_button.clicked.connect(self._switch_engine_dir)
+        self.import_engine_zip_button.clicked.connect(self._import_engine_archive)
         self.check_engine_button.clicked.connect(self._check_engine)
         self.refresh_engine_button.clicked.connect(self.refresh)
         return card
@@ -326,6 +337,77 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.log(f"默认引擎已切换为 {chosen.tag} · {chosen.exe}")
         self._set_engine_hint(f"默认引擎：{chosen.tag} · {chosen.exe}")
         self.refresh_engines()
+
+    def _ask_engine_tag(self, default: str) -> str | None:
+        """询问引擎标签并做安全校验（只允许单级目录名）。"""
+        text, accepted = QInputDialog.getText(self, "引擎标签", "标签（用于引擎目录名）：", text=default)
+        if not accepted:
+            return None
+        tag = text.strip()
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", tag):
+            QMessageBox.warning(
+                self, "标签不合法", "标签只能包含字母、数字、点、下划线和短横线，且不能包含路径分隔符。"
+            )
+            return None
+        return tag
+
+    def _after_engine_install(self, info: EngineInfo, action: str) -> None:
+        """注册 / 安装成功后切换默认引擎并刷新列表。"""
+        try:
+            settings_logic.select_engine(info.tag)
+        except (OSError, ServeError) as exc:
+            QMessageBox.critical(self, "切换失败", str(exc))
+            return
+        self.state.log(f"{action}引擎 {info.tag} · {info.exe}")
+        self._set_engine_hint(f"{action}引擎：{info.tag} · {info.exe}")
+        self.state.status(f"{action}引擎：{info.tag}")
+        self.refresh()
+
+    def _switch_engine_dir(self) -> None:
+        """选择已编译 llama.cpp 目录，注册并设为默认引擎。"""
+        chosen = QFileDialog.getExistingDirectory(self, "选择 llama.cpp 目录")
+        if not chosen:
+            return
+        source = Path(chosen)
+        tag = self._ask_engine_tag(source.name or "local")
+        if tag is None:
+            return
+        try:
+            info, _actual = settings_logic.install_offline(tag, source)
+        except (OSError, ServeError) as exc:
+            QMessageBox.critical(self, "切换失败", str(exc))
+            return
+        self._after_engine_install(info, "已切换")
+
+    def _import_engine_archive(self) -> None:
+        """选择一个或多个本地 zip，解压安装并设为默认引擎。"""
+        paths, _selected = QFileDialog.getOpenFileNames(
+            self,
+            "选择 llama.cpp 压缩包",
+            "",
+            "压缩包 (*.zip);;所有文件 (*.*)",
+        )
+        if not paths:
+            return
+        archives = [Path(path) for path in paths]
+        default = archives[0].stem
+        try:
+            for archive in archives:
+                inferred = next((item.tag for item in settings_logic.inspect_offline(archive) if item.tag), None)
+                if inferred:
+                    default = inferred
+                    break
+        except (OSError, ServeError):
+            pass
+        tag = self._ask_engine_tag(default)
+        if tag is None:
+            return
+        try:
+            info = settings_logic.install_archives(tag, archives)
+        except (OSError, ServeError) as exc:
+            QMessageBox.critical(self, "导入失败", str(exc))
+            return
+        self._after_engine_install(info, "已导入")
 
     def _check_engine(self) -> None:
         try:
