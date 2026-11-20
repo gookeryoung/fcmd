@@ -1,8 +1,8 @@
 """llmw 设置页：存储 / 引擎配置与引擎安装 / 体检。
 
 所有目录解析都委托给 :mod:`fcmd.apps.llm._llmconfig`，页面不保存私有默认值；
-修改直接写入权威 ``config.json``。「引擎」页等价承载原独立引擎窗口的能力：
-引擎根目录、已安装引擎列表与默认切换、在线下载、离线包检查 / 安装、运行体检，
+修改直接写入权威 ``config.json``。独立的引擎卡片（位于存储下方）承载原引擎窗口的能力：
+引擎目录、已安装引擎列表与默认切换、在线下载、离线包检查 / 安装、运行体检，
 全部调用 :mod:`fcmd.apps.llm.llmengine`（与 ``fcmd llmengine`` 同一套逻辑）。
 """
 
@@ -66,8 +66,8 @@ def directory_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
 
 
 def engine_rows(home: Path | None = None) -> list[tuple[str, str, str]]:
-    """返回「引擎」页根目录 ``(项目, 路径, 来源)``。"""
-    return [("引擎根目录", str(_llmconfig.engines_root(home)), _source("FCMD_ENGINES", "engines_root", home))]
+    """返回「引擎」卡片中的引擎目录 ``(项目, 路径, 来源)``。"""
+    return [("引擎目录", str(_llmconfig.engines_root(home)), _source("FCMD_ENGINES", "engines_root", home))]
 
 
 def migration_note(home: Path | None = None) -> str:
@@ -94,7 +94,7 @@ def apply_path(key: str, value: str | None, home: Path | None = None) -> Path:
 
 @dataclass(frozen=True)
 class EngineStatus:
-    """引擎页摘要：根目录、当前引擎描述、已安装数量。"""
+    """引擎摘要：根目录、当前引擎描述、已安装数量。"""
 
     root: Path
     current: str
@@ -107,7 +107,7 @@ def installed_engines(home: Path | None = None) -> list[EngineInfo]:
 
 
 def engine_status(home: Path | None = None) -> EngineStatus:
-    """读取引擎页摘要；当前引擎无法解析时给出原因文案。"""
+    """读取引擎摘要；当前引擎无法解析时给出原因文案。"""
     infos = installed_engines(home)
     try:
         current = llmengine.resolve_engine(home=home)

@@ -59,6 +59,11 @@ WINDOWS: tuple[tuple[str, str], ...] = (
     ("fcmd.tools.text._regexvalidatew_qt", "RegexValidateWindow"),
 )
 
+# 走共享 ``run_window`` 的单页工具入口；cmder / llm 自行建应用，单独覆盖。
+ENTRY_MODULES: tuple[str, ...] = tuple(
+    module for module, _class in WINDOWS if module not in {"fcmd.apps.cmder._cmder_qt", "fcmd.apps.llm._llmw_qt_window"}
+)
+
 
 @pytest.fixture()
 def app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> QApplication:
@@ -87,6 +92,31 @@ def _self_members(cls: type) -> tuple[set[str], set[str]]:
         else:
             reads.add(node.attr)
     return reads, writes
+
+
+@pytest.mark.parametrize("module_name", ENTRY_MODULES, ids=ENTRY_MODULES)
+def test_run_qt_entrypoints_match_shared_runner(monkeypatch: pytest.MonkeyPatch, module_name: str) -> None:
+    """各窗口 ``run_qt`` 必须以 ``run_window`` 的真实签名调用共享入口。
+
+    ``run_window`` 的 ``app_name`` 是仅关键字参数；入口若按位置传参，会到用户
+    真正打开窗口时才抛 ``TypeError``。这里用同名同签名的打桩函数逐项调用入口，
+    在不进入事件循环的前提下挡住调用签名回归。
+    """
+    import importlib
+
+    from fcmd.gui.qt import app as qt_app
+
+    calls: list[str] = []
+
+    def fake_run_window(factory: Any, *, app_name: str, argv: Any = None) -> int:
+        calls.append(app_name)
+        return 0
+
+    module = importlib.import_module(module_name)
+    monkeypatch.setattr(qt_app, "run_window", fake_run_window)
+    monkeypatch.setattr(module, "run_window", fake_run_window, raising=False)
+    module.run_qt()
+    assert len(calls) == 1
 
 
 @pytest.mark.parametrize(("module_name", "class_name"), WINDOWS, ids=[name for _, name in WINDOWS])

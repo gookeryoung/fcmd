@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 from pathlib import Path
@@ -17,7 +18,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
 
 from fcmd.apps.llm import _llmw_qt_state as qt_state
 from fcmd.apps.llm._llmw_qt_window import LlmWindow, create_application
@@ -363,13 +364,34 @@ def test_settings_engine_directory_and_archive_actions(
 
 
 def test_settings_engine_panel_is_compact(window: Any) -> None:
-    """引擎卡片：状态标签 + 轻量链接 + 合并后的「添加引擎」菜单。"""
+    """引擎独立成卡片且位于存储下方：状态标签 + 轻量链接 + 合并后的「添加引擎」菜单。"""
+    from fcmd.gui.qt.widgets import Card
+
+    def card_of(widget: Any) -> Card:
+        card = widget.parent()
+        while card is not None and not isinstance(card, Card):
+            card = card.parent()
+        assert card is not None
+        return card
+
     window.show_page("settings")
     page = window.page("settings")
-    assert page.engine_status_tag.text()
+    storage = card_of(page.models_path)
+    engine = card_of(page.engines_path)
+    assert storage.title_label.text() == "存储"
+    assert engine.title_label.text() == "引擎"
+    assert engine is not storage
+    assert not storage.isAncestorOf(page.engines_path)
+    assert [card.title_label.text() for card in page.findChildren(Card)] == [
+        "存储",
+        "引擎",
+        "下载",
+        "模型转换",
+    ]
     assert page.refresh_engine_button.text() == "刷新"
-    assert page.check_engine_button.text() == "体检"
     assert page.add_engine_button.menu() is not None
+    assert not hasattr(page, "engine_status_tag")
+    assert not hasattr(page, "check_engine_button")
     actions = [action.text() for action in page.add_engine_button.menu().actions()]
     assert actions == ["从目录添加…", "从压缩包导入…"]
     assert page.engines_list.objectName() == "EngineList"
@@ -380,39 +402,30 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert not hasattr(page, "engine_status_label")
 
 
-def test_settings_engine_empty_and_error_states(window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """无引擎时列表收起、提示行承接；检测失败时状态标签转 danger。"""
+def test_settings_engine_empty_and_error_states(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """无引擎时列表收起、提示行承接；读取失败时提示行直接显示错误。"""
     from fcmd.apps.llm import _llmw_settings as settings_logic
 
     monkeypatch.setattr(settings_logic, "installed_engines", lambda: [])
-    monkeypatch.setattr(
-        settings_logic,
-        "engine_status",
-        lambda: settings_logic.EngineStatus(tmp_path / "engines", "", 0),
-    )
     window.show_page("settings")
     page = window.page("settings")
     page.refresh_engines()
-    assert page.engine_status_tag.text() == "未设置默认引擎"
-    assert page.engine_status_tag.tone() == "warning"
     assert not page.engines_list.isVisibleTo(page)
     assert page.engines_empty.isVisibleTo(page)
 
-    def broken_status() -> object:
+    def broken_engines() -> object:
         raise OSError("boom")
 
-    monkeypatch.setattr(settings_logic, "engine_status", broken_status)
+    monkeypatch.setattr(settings_logic, "installed_engines", broken_engines)
     page.refresh_engines()
-    assert page.engine_status_tag.text() == "不可用"
-    assert page.engine_status_tag.tone() == "danger"
     assert "boom" in page.engines_empty.text()
     assert not page.engines_list.isVisibleTo(page)
 
 
-def test_settings_engine_rows_follow_model_list_style(
+def test_settings_engine_rows_are_compact_single_line(
     window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """已安装引擎按模型列表行展示：大字标签 + 路径 + 行内「设为默认」。"""
+    """已安装引擎为紧凑单行：标签 + 状态 + 路径 + 行内「设为默认」。"""
     from fcmd.apps.llm import _llmw_settings as settings_logic
     from fcmd.apps.llm.llmbase import EngineInfo
 
@@ -421,11 +434,6 @@ def test_settings_engine_rows_follow_model_list_style(
         EngineInfo("b1", tmp_path / "b1" / "llama-server.exe", "current"),
     ]
     monkeypatch.setattr(settings_logic, "installed_engines", lambda: engines)
-    monkeypatch.setattr(
-        settings_logic,
-        "engine_status",
-        lambda: settings_logic.EngineStatus(tmp_path / "engines", "b1 · llama-server.exe", 2),
-    )
     window.show_page("settings")
     page = window.page("settings")
     page.refresh_engines()
@@ -433,11 +441,21 @@ def test_settings_engine_rows_follow_model_list_style(
     other_row = page.engines_list.itemWidget(page.engines_list.item(0))
     current_row = page.engines_list.itemWidget(page.engines_list.item(1))
     assert other_row.objectName() == "EngineRow"
+    assert other_row.use_button is not None
     assert other_row.use_button.text() == "设为默认"
     assert other_row.use_button.isEnabled()
-    assert current_row.use_button.text() == "当前默认"
-    assert not current_row.use_button.isEnabled()
-    assert page.engine_status_tag.text() == "当前 b1"
+    assert current_row.use_button is None
+    current_labels = [label.objectName() for label in current_row.findChildren(QLabel)]
+    assert "EngineItemName" in current_labels
+    assert "StatusTag" in current_labels
+    assert "OwnerTag" not in current_labels
+
+    QApplication.processEvents()
+    for index in range(page.engines_list.count()):
+        row = page.engines_list.itemWidget(page.engines_list.item(index))
+        widgets = [row.layout().itemAt(pos).widget() for pos in range(row.layout().count())]
+        for left, right in itertools.pairwise(widgets):
+            assert left.geometry().right() < right.geometry().left(), "引擎行内文字控件重叠"
 
     selected: list[str] = []
     monkeypatch.setattr(settings_logic, "select_engine", lambda tag: selected.append(tag) or engines[0])

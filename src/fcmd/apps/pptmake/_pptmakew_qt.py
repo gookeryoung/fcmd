@@ -1048,4 +1048,4 @@ def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
     from fcmd.gui.qt.app import run_window
 
-    run_window(lambda: PptmakeQtWindow(settings_path), "PPT 模板设计器")
+    run_window(lambda: PptmakeQtWindow(settings_path), app_name="PPT 模板设计器")

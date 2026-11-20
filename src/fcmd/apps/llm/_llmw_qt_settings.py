@@ -1,7 +1,7 @@
-"""llmw（Qt）设置页：存储、下载参数、模型转换与引擎。
+"""llmw（Qt）设置页：存储、引擎、下载参数与模型转换。
 
 目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.llm._llmconfig`），
-引擎根目录单独登记；改动即时写配置并通知其它页刷新（``configChanged``）。
+引擎目录独立登记；改动即时写配置并通知其它页刷新（``configChanged``）。
 引擎安装 / 切换仍复用 :mod:`fcmd.apps.llm.llmengine` 的既有实现，页面只做展示与
 「设为默认」这类轻动作，重活留给 ``fcmd llmengine``。
 """
@@ -60,7 +60,7 @@ def engine_rows_values(engines: list[EngineInfo]) -> list[tuple[str, str, str]]:
 
 
 class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
-    """已安装引擎行：与模型列表行同构（标签大字 + 路径小字 + 右侧动作）。"""
+    """已安装引擎行：单行紧凑布局（标签 + 状态 + 可执行文件 + 行内动作）。"""
 
     useRequested = Signal(str)
 
@@ -70,52 +70,35 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
         self.setObjectName("EngineRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setProperty("selected", "false")
-        self.setToolTip(f"{info.tag}\n{info.exe}")
+        source = info.source or "-"
+        self.setToolTip(f"{info.tag}\n{info.exe}\n来源：{source}")
 
         row = QHBoxLayout(self)
-        row.setContentsMargins(12, 8, 12, 8)
-        row.setSpacing(12)
-        left = QVBoxLayout()
-        left.setContentsMargins(0, 0, 0, 0)
-        left.setSpacing(3)
+        row.setContentsMargins(10, 4, 10, 4)
+        row.setSpacing(8)
 
-        name_row = QHBoxLayout()
-        name_row.setContentsMargins(0, 0, 0, 0)
-        name_row.setSpacing(8)
-        name = ElidedLabel(info.tag, parent=self)
+        name = QLabel(info.tag, self)
         name.setObjectName("EngineItemName")
-        name_row.addWidget(name, 1)
+        name.setMaximumWidth(220)
+        row.addWidget(name, 0)
         if current:
-            name_row.addWidget(StatusTag("当前默认", tone="success", parent=self), 0)
+            row.addWidget(StatusTag("默认", tone="success", parent=self), 0)
         if info.path_prepend:
-            runtime = StatusTag("自带运行库", tone="accent", parent=self)
+            runtime = StatusTag("运行库", tone="accent", parent=self)
             runtime.setToolTip("启动时前置到 PATH：" + "、".join(info.path_prepend))
-            name_row.addWidget(runtime, 0)
-        left.addLayout(name_row)
+            row.addWidget(runtime, 0)
 
-        note_row = QHBoxLayout()
-        note_row.setContentsMargins(0, 0, 0, 0)
-        note_row.setSpacing(6)
         exe = ElidedLabel(str(info.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
         exe.setObjectName("Hint")
-        note_row.addWidget(exe, 1)
-        source_text = info.source or ""
-        source_label = QLabel(Path(source_text).name or source_text or "-", self)
-        source_label.setObjectName("OwnerTag")
-        source_label.setToolTip(f"来源：{source_text or '-'}")
-        note_row.addWidget(source_label, 0)
-        left.addLayout(note_row)
-        row.addLayout(left, 1)
+        row.addWidget(exe, 1)
 
-        self.use_button = button("当前默认" if current else "设为默认")
-        if current:
-            self.use_button.setObjectName("InstalledButton")
-            self.use_button.setEnabled(False)
-            self.use_button.setToolTip("该引擎已是默认引擎")
-        else:
+        self.use_button = None
+        if not current:
+            self.use_button = button("设为默认")
             self.use_button.setToolTip("把该引擎设为默认引擎")
             self.use_button.clicked.connect(lambda: self.useRequested.emit(self.info.tag))
-        row.addWidget(self.use_button, 0)
+            row.addWidget(self.use_button, 0)
+        self.setMinimumHeight(self.fontMetrics().height() + 14)
 
     def set_selected(self, selected: bool) -> None:
         """切换选中态边框（列表当前行变化时由页面同步）。"""
@@ -125,7 +108,7 @@ class _EngineRow(QFrame):  # pragma: no cover - Qt 控件
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
-    """设置页：存储目录、下载参数、模型转换、引擎根目录与运行状态。"""
+    """设置页：存储、引擎（目录与已安装列表）、下载参数与模型转换。"""
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -138,9 +121,9 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         layout = scroll.body
         outer.addWidget(scroll)
         layout.addWidget(self._build_storage())
+        layout.addWidget(self._build_engines())
         layout.addWidget(self._build_download())
         layout.addWidget(self._build_convert())
-        layout.addWidget(self._build_engines())
         layout.addStretch(1)
         self.refresh()
 
@@ -148,6 +131,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     # 存储
     # ------------------------------------------------------------------ #
     def _build_storage(self) -> Card:
+        """存储卡片：只放模型目录与迁移提示；引擎独立成卡片紧随其后。"""
         card = Card("存储")
         row = QHBoxLayout()
         row.addWidget(hint_label("模型目录", wrap=False))
@@ -290,18 +274,15 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     # 引擎
     # ------------------------------------------------------------------ #
     def _build_engines(self) -> Card:
-        """引擎卡片紧凑排版：标题行承载状态标签与全部入口，正文只剩目录行与列表。
+        """引擎卡片（位于存储下方）：添加入口在左、刷新在右上角，正文为目录行与列表。
 
-        不设独立摘要行（数量并入状态标签 tooltip），不设底部动作行（「添加引擎」
-        并入标题行）；列表高度随已安装引擎数量伸缩，空态 / 错误态由同一提示行承接。
+        不设状态摘要行，不设底部动作行；列表高度随已安装引擎数量伸缩，
+        空态 / 错误态由同一提示行承接。
         """
-        card = Card()
+        card = Card("引擎")
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = QLabel("引擎", card)
-        title.setObjectName("SectionTitle")
-        self.engine_status_tag = StatusTag("检测中…", tone="muted", parent=card)
         self.add_engine_button = button("添加引擎", kind="ghost")
         self.add_engine_button.setToolTip("从目录或压缩包导入引擎")
         add_menu = QMenu(self.add_engine_button)
@@ -311,18 +292,14 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         archive_action.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
         self.add_engine_button.setMenu(add_menu)
         self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
-        self.check_engine_button = link_button("体检", tooltip="执行 llama-server --version 体检当前引擎")
-        header.addWidget(title)
-        header.addWidget(self.engine_status_tag)
-        header.addStretch(1)
         header.addWidget(self.add_engine_button)
+        header.addStretch(1)
         header.addWidget(self.refresh_engine_button)
-        header.addWidget(self.check_engine_button)
         card.body.addLayout(header)
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(hint_label("引擎根目录", wrap=False))
+        row.addWidget(hint_label("引擎目录", wrap=False))
         self.engines_path = PathRow(value="", directory=True, show_reset=True)
         row.addWidget(self.engines_path, 1)
         self.engines_open = button("打开", kind="ghost")
@@ -349,7 +326,6 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_open.clicked.connect(lambda: open_path(_llmconfig.engines_root()))
         switch_action.triggered.connect(self._switch_engine_dir)
         archive_action.triggered.connect(self._import_engine_archive)
-        self.check_engine_button.clicked.connect(self._check_engine)
         self.refresh_engine_button.clicked.connect(self.refresh)
         self.engines_list.currentRowChanged.connect(self._on_engine_row_selected)
         self.engines_list.itemDoubleClicked.connect(self._on_engine_double_clicked)
@@ -371,25 +347,16 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.refresh_engines()
 
     def refresh_engines(self) -> None:
-        """刷新状态标签与已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""
+        """刷新已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""
         try:
-            status = settings_logic.engine_status()
             self._engines = settings_logic.installed_engines()
         except (OSError, ServeError) as exc:
-            self.engine_status_tag.set_status("不可用", "danger")
-            self.engine_status_tag.setToolTip(f"引擎信息不可用：{exc}")
+            self._engines = []
             self.engines_list.clear()
             self.engines_list.setVisible(False)
             self.engines_empty.setText(f"引擎信息不可用：{exc}")
             self.engines_empty.setVisible(True)
             return
-        current = next((info for info in self._engines if info.source == "current"), None)
-        if current is not None:
-            self.engine_status_tag.set_status(f"当前 {current.tag}", "success")
-            self.engine_status_tag.setToolTip(f"{current.exe}\n已安装 {status.installed} 个引擎")
-        else:
-            self.engine_status_tag.set_status("未设置默认引擎", "warning")
-            self.engine_status_tag.setToolTip(f"{status.current}\n已安装 {status.installed} 个引擎")
 
         self.engines_list.clear()
         for info in self._engines:
@@ -401,8 +368,21 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             self.engines_list.setItemWidget(list_item, row)
         self.engines_list.sync_row_widths()
         self.engines_list.setVisible(bool(self._engines))
+        self._fit_engines_list()
         self.engines_empty.setText("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
         self.engines_empty.setVisible(not self._engines)
+
+    def _fit_engines_list(self) -> None:
+        """把列表高度收到内容高度，超过 6 行后再出现滚动条。"""
+        count = self.engines_list.count()
+        if count == 0:
+            self.engines_list.setFixedHeight(0)
+            return
+        heights = [self.engines_list.sizeHintForRow(index) for index in range(count)]
+        spacing = self.engines_list.spacing()
+        content = sum(heights) + spacing * (count + 2) + 2
+        cap = max(heights) * 6 + spacing * 8 + 2
+        self.engines_list.setFixedHeight(min(content, cap))
 
     def _on_engine_row_selected(self, current: int) -> None:
         """同步脚本行的选中态（只加粗边框，不影响内容）。"""
@@ -425,7 +405,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "保存失败", str(exc))
             return
-        label = "模型目录" if key == "models_dir" else "引擎根目录"
+        label = "模型目录" if key == "models_dir" else "引擎目录"
         self.state.log(f"已自动保存{label}: {resolved}")
         self.state.status(f"已自动保存{label}：{resolved}")
         self.refresh()
@@ -519,12 +499,3 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         self._after_engine_install(info, "已导入")
-
-    def _check_engine(self) -> None:
-        try:
-            check = settings_logic.check_engine_tag(None)
-        except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "体检失败", str(exc))
-            return
-        self._set_engine_hint(f"{check.name}: {check.status} · {check.detail}")
-        self.state.log(f"引擎体检 {check.name}: {check.status} · {check.detail}")

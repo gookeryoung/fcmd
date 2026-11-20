@@ -65,13 +65,13 @@ def test_directory_rows_ignores_fcmd_work(home: Path, tmp_path: Path, monkeypatc
 # 引擎组
 # ---------------------------------------------------------------------- #
 def test_engine_rows_default(home: Path) -> None:
-    assert settings_page.engine_rows(home) == [("引擎根目录", str(home / "engines" / "llama.cpp"), "默认")]
+    assert settings_page.engine_rows(home) == [("引擎目录", str(home / "engines" / "llama.cpp"), "默认")]
 
 
 def test_engine_rows_marks_config(home: Path, tmp_path: Path) -> None:
     target = tmp_path / "engines"
     _write_config(home, {"engines_root": str(target)})
-    assert settings_page.engine_rows(home) == [("引擎根目录", str(target), "配置")]
+    assert settings_page.engine_rows(home) == [("引擎目录", str(target), "配置")]
 
 
 # ---------------------------------------------------------------------- #

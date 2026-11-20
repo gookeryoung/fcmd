@@ -1278,4 +1278,4 @@ def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
     from fcmd.gui.qt.app import run_window
 
-    run_window(lambda: WslmanQtWindow(settings_path), "WSL 管理")
+    run_window(lambda: WslmanQtWindow(settings_path), app_name="WSL 管理")

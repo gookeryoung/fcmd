@@ -1242,4 +1242,4 @@ def run_qt(settings_path: Path | None = None) -> None:
     """创建并运行 Qt 主窗口。"""
     from fcmd.gui.qt.app import run_window
 
-    run_window(lambda: FilescanQtWindow(settings_path), "敏感内容扫描")
+    run_window(lambda: FilescanQtWindow(settings_path), app_name="敏感内容扫描")
