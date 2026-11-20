@@ -19,13 +19,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
 )
 
 from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
+from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
 from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.img2icow import (
@@ -107,11 +106,11 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         actions.addWidget(self._convert_button)
         self.add_layout(actions)
 
-        self._progress = QProgressBar(self)
+        self._progress_row = ProgressRow(parent=self)
+        self._progress = self._progress_row.bar
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
-        self._progress.setTextVisible(False)
-        self.add(self._progress)
+        self.add(self._progress_row)
 
         self._log = self.add_log(height=160)
         self._log.append("选择输入图像或目录，填写尺寸后点击「开始转换」。")

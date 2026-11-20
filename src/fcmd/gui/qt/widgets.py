@@ -62,6 +62,7 @@ __all__ = [
     "MetricGrid",
     "PageScroll",
     "PathRow",
+    "ProgressRow",
     "RowListWidget",
     "SegmentBar",
     "StatusTag",
@@ -767,6 +768,51 @@ class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
     def _tick(self) -> None:
         seconds = self._clock.elapsed() / 1000
         self.elapsed_label.setText(f"{seconds:.1f}s")
+
+
+class ProgressRow(QWidget):  # pragma: no cover - Qt 控件
+    """进度条 + 可选状态文字 + 右侧动作区。
+
+    下载 / 转换 / 批处理窗口的通用底栏：``bar`` 由调用方控制确定 / 不定进度，
+    ``add_action`` 依次追加按钮；``show_bar=False`` 时只保留状态文字，供只需要
+    一行状态提示（如性能测试）的窗口复用同一布局。
+    """
+
+    def __init__(
+        self,
+        text: str = "",
+        *,
+        show_bar: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        self.label = hint_label(text, wrap=False)
+        self.label.setVisible(bool(text))
+        self.bar = QProgressBar(self)
+        self.bar.setTextVisible(False)
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.bar.setMinimumWidth(120)
+        self.bar.setVisible(show_bar)
+        self._actions = QHBoxLayout()
+        self._actions.setContentsMargins(0, 0, 0, 0)
+        self._actions.setSpacing(8)
+        row.addWidget(self.label, 0)
+        row.addWidget(self.bar, 1)
+        row.addLayout(self._actions, 0)
+
+    def set_text(self, text: str) -> None:
+        """更新状态文字；空文本时收起标签。"""
+        self.label.setText(text)
+        self.label.setVisible(bool(text))
+
+    def add_action(self, widget: QWidget) -> QWidget:
+        """把按钮追加到右侧动作区，返回该控件便于链式使用。"""
+        self._actions.addWidget(widget)
+        return widget
 
 
 class LogView(QWidget):  # pragma: no cover - Qt 控件

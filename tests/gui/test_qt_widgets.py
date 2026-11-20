@@ -30,15 +30,18 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
+    ChoiceGroup,
     Collapsible,
     LoadingBar,
     LogView,
     MetricGrid,
     PathRow,
+    ProgressRow,
     SegmentBar,
     StatusTag,
     button,
     icon_button,
+    section_header,
     segment_band,
     segment_fill,
 )
@@ -240,6 +243,56 @@ def test_collapsible_set_title_updates_toggle() -> None:
     assert section.toggle.text() == "文件清单（2 个 · 4.00 KB）"
     section.set_expanded(True)
     assert section.is_expanded()
+
+
+def test_section_header_keeps_section_title_contract() -> None:
+    """分节标题继续使用 SectionTitle，右侧留给状态 / 动作控件。"""
+    card = Card()
+    header, label = section_header("系统信息", card)
+    try:
+        assert label.text() == "系统信息"
+        assert label.objectName() == "SectionTitle"
+        assert header.count() == 2
+    finally:
+        card.deleteLater()
+
+
+def test_choice_group_selects_and_emits() -> None:
+    """互斥选项组读写当前 key，程序化切换可按需发出 changed。"""
+    group = ChoiceGroup((("a", "甲", "说明 A"), ("b", "乙", "说明 B")), current="a")
+    seen: list[str] = []
+    group.changed.connect(seen.append)
+    try:
+        assert group.key() == "a"
+        group.set_key("b")
+        assert group.key() == "b"
+        assert seen == []
+        group.set_key("a", emit=True)
+        assert seen == ["a"]
+        group.set_key("missing")
+        assert group.key() == "a"
+    finally:
+        group.deleteLater()
+
+
+def test_progress_row_keeps_actions_and_optional_bar() -> None:
+    """进度行可挂动作按钮；纯状态场景可隐藏进度条。"""
+    row = ProgressRow("就绪")
+    action = button("下载")
+    try:
+        assert row.label.text() == "就绪"
+        assert not row.bar.isHidden()
+        row.add_action(action)
+        row.set_text("")
+        assert row.label.isHidden()
+    finally:
+        row.deleteLater()
+    status_only = ProgressRow("测试完成", show_bar=False)
+    try:
+        assert status_only.bar.isHidden()
+        assert status_only.label.text() == "测试完成"
+    finally:
+        status_only.deleteLater()
 
 
 def test_loading_bar_tracks_elapsed_and_stops() -> None:

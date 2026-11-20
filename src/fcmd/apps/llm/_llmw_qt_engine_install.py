@@ -12,12 +12,12 @@ import contextlib
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QProgressBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QVBoxLayout, QWidget
 
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm import llmengine
 from fcmd.apps.llm.llmbase import EngineInfo, human_size
-from fcmd.gui.qt.widgets import Card, HintLabel, button, hint_label
+from fcmd.gui.qt.widgets import Card, HintLabel, ProgressRow, button, hint_label
 from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
 
 __all__ = ["EngineDownloadDialog"]
@@ -74,21 +74,16 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self.info = HintLabel("")
         card.body.addWidget(self.info)
 
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(8)
-        self.progress = QProgressBar(card)
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        actions.addWidget(self.progress, 1)
+        self.progress_row = ProgressRow(parent=card)
+        self.progress = self.progress_row.bar
         self.download_button = button("下载并安装", kind="primary")
         self.download_button.setToolTip("下载选中版本到引擎目录；尚无默认引擎时自动设为默认")
         self.download_button.clicked.connect(self._download)
-        actions.addWidget(self.download_button)
+        self.progress_row.add_action(self.download_button)
         self.close_button = button("关闭", kind="ghost")
         self.close_button.clicked.connect(self.reject)
-        actions.addWidget(self.close_button)
-        card.body.addLayout(actions)
+        self.progress_row.add_action(self.close_button)
+        card.body.addWidget(self.progress_row)
 
         self.status = hint_label("正在获取版本列表…", wrap=False)
         card.body.addWidget(self.status)

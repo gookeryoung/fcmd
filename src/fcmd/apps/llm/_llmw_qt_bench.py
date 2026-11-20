@@ -48,6 +48,7 @@ from fcmd.gui.qt.widgets import (
     Card,
     FormGrid,
     PageScroll,
+    ProgressRow,
     button,
     hint_label,
     link_button,
@@ -232,8 +233,9 @@ class BenchDialog(QDialog):  # pragma: no cover - Qt 控件
     def _build_results(self) -> Card:
         card = Card(parent=self)
         header, self._results_title = section_header("测试结果", card)
-        self._bench_status = hint_label("选择场景后点击「开始测试」", wrap=False)
-        header.addWidget(self._bench_status)
+        self._bench_progress = ProgressRow("选择场景后点击「开始测试」", show_bar=False, parent=card)
+        self._bench_status = self._bench_progress.label
+        header.addWidget(self._bench_progress)
         card.body.addLayout(header)
 
         self._bench_table = make_table(
