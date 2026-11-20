@@ -292,6 +292,20 @@ def test_install_offline_directory_without_zips_registers_path(
     assert seen == [tmp_path]
 
 
+def test_install_offline_copy_directory(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    info = EngineInfo("b7", Path("x.exe"))
+    seen: list[tuple[Path | None, bool]] = []
+
+    def fake_install(tag: str, **kwargs: object) -> EngineInfo:
+        seen.append((cast("Path | None", kwargs.get("path")), bool(kwargs.get("copy"))))
+        return info
+
+    monkeypatch.setattr(llmengine, "install_engine", fake_install)
+    monkeypatch.setattr(llmengine, "list_engines", lambda _home=None: [EngineInfo("b1", Path("y.exe"), "current")])
+    assert settings_page.install_offline("b7", tmp_path, home, copy_directory=True) == (info, "b7")
+    assert seen == [(tmp_path, True)]
+
+
 def test_install_offline_infers_tag(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     archive = tmp_path / "engine.zip"
     archive.write_bytes(b"x")

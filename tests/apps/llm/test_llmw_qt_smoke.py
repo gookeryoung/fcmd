@@ -336,7 +336,7 @@ def test_models_page_delete_and_cleanup(window: Any, monkeypatch: pytest.MonkeyP
 def test_settings_engine_directory_and_archive_actions(
     window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """设置页支持切换 llama.cpp 目录与导入本地 zip。"""
+    """设置页支持导入 llama.cpp 目录（复制）与导入本地 zip。"""
     from PySide6.QtWidgets import QFileDialog, QInputDialog
 
     from fcmd.apps.llm import _llmw_settings as settings_logic
@@ -346,15 +346,21 @@ def test_settings_engine_directory_and_archive_actions(
     page = window.page("settings")
     fake = EngineInfo("custom", tmp_path / "llama-server.exe", str(tmp_path))
     calls: list[tuple[str, str]] = []
+    copies: list[bool] = []
     monkeypatch.setattr(page, "_after_engine_install", lambda info, action: calls.append((info.tag, action)))
-    monkeypatch.setattr(settings_logic, "install_offline", lambda tag, source: (fake, tag))
+    monkeypatch.setattr(
+        settings_logic,
+        "install_offline",
+        lambda tag, source, **kwargs: copies.append(bool(kwargs.get("copy_directory"))) or (fake, tag),
+    )
     monkeypatch.setattr(settings_logic, "install_archives", lambda tag, archives: fake)
     monkeypatch.setattr(settings_logic, "inspect_offline", lambda source: [])
     monkeypatch.setattr(QInputDialog, "getText", lambda *_args, **_kwargs: ("custom", True))
 
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *_args, **_kwargs: str(tmp_path))
-    page._switch_engine_dir()
-    assert calls[-1] == ("custom", "已切换")
+    page._import_engine_dir()
+    assert copies == [True]
+    assert calls[-1] == ("custom", "已导入")
 
     archive = tmp_path / "llama-b1-bin-win-cpu-x64.zip"
     archive.write_bytes(b"zip")
@@ -364,7 +370,7 @@ def test_settings_engine_directory_and_archive_actions(
 
 
 def test_settings_engine_panel_is_compact(window: Any) -> None:
-    """引擎独立成卡片且位于存储下方：状态标签 + 轻量链接 + 合并后的「添加引擎」菜单。"""
+    """引擎独立成卡片且位于存储下方：导入按钮在目录行、刷新在右上角。"""
     from fcmd.gui.qt.widgets import Card
 
     def card_of(widget: Any) -> Card:
@@ -389,11 +395,15 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
         "模型转换",
     ]
     assert page.refresh_engine_button.text() == "刷新"
-    assert page.add_engine_button.menu() is not None
+    assert page.refresh_engine_button.parent() is engine
+    assert page.models_path.browse.text() == "更改"
+    assert page.engines_path.browse.text() == "更改"
+    assert page.import_engine_dir_button.text() == "导入目录"
+    assert page.import_engine_archive_button.text() == "导入压缩包"
+    assert not hasattr(page, "add_engine_button")
+    assert not hasattr(page, "engines_open")
     assert not hasattr(page, "engine_status_tag")
     assert not hasattr(page, "check_engine_button")
-    actions = [action.text() for action in page.add_engine_button.menu().actions()]
-    assert actions == ["从目录添加…", "从压缩包导入…"]
     assert page.engines_list.objectName() == "EngineList"
     assert not hasattr(page, "engines_table")
     assert not hasattr(page, "use_engine_button")

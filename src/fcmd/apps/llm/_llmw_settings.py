@@ -151,10 +151,12 @@ def install_offline(
     home: Path | None = None,
     *,
     infer_tag: bool = False,
+    copy_directory: bool = False,
 ) -> tuple[EngineInfo, str]:
-    """安装离线包或登记已编译引擎目录，返回 ``(引擎信息, 实际使用的 tag)``。
+    """安装离线包或导入已编译引擎目录，返回 ``(引擎信息, 实际使用的 tag)``。
 
-    ``source`` 为目录时优先安装目录内全部 zip，没有 zip 则按已编译引擎目录登记；
+    ``source`` 为目录时默认优先安装目录内全部 zip，没有 zip 则按已编译引擎目录
+    登记；``copy_directory=True`` 时直接把整个目录复制到引擎根目录下。
     为 zip 时直接解压安装。``infer_tag`` 为真且包内能推断出 tag 时用它替换入参。
     """
     target = tag
@@ -163,12 +165,15 @@ def install_offline(
         if inferred:
             target = inferred
     if source.is_dir():
-        zips = sorted(item for item in source.glob("*.zip") if item.is_file())
-        info = (
-            llmengine.install_engine(target, archives=zips, home=home)
-            if zips
-            else llmengine.install_engine(target, path=source, home=home)
-        )
+        if copy_directory:
+            info = llmengine.install_engine(target, path=source, home=home, copy=True)
+        else:
+            zips = sorted(item for item in source.glob("*.zip") if item.is_file())
+            info = (
+                llmengine.install_engine(target, archives=zips, home=home)
+                if zips
+                else llmengine.install_engine(target, path=source, home=home)
+            )
     else:
         info = llmengine.install_engine(target, archives=[source], home=home)
     _ensure_current(target, home)

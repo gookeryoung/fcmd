@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QLineEdit,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -154,6 +155,16 @@ def test_card_title_is_plain_label_inside_frame() -> None:
     card.setTitle("")
     assert card.title() == ""
     assert card.title_label.isHidden()
+
+
+def test_card_title_action_shares_title_row() -> None:
+    """标题动作（如刷新）与标题同行，右侧靠齐，不额外占一行。"""
+    card = Card("引擎")
+    action = QPushButton("刷新")
+    card.add_title_action(action)
+    assert card.title_row is not None
+    assert card.title_row.indexOf(action) >= 0
+    assert card.title_row.itemAt(card.title_row.count() - 1).widget() is action
 
 
 def test_card_body_accepts_widgets() -> None:

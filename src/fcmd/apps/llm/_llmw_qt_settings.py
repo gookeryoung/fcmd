@@ -24,14 +24,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidgetItem,
-    QMenu,
     QMessageBox,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from fcmd.apps.llm import _llmconfig, _llmw_convert, _llmw_models, llmconvert, llmenv
+from fcmd.apps.llm import _llmw_convert, _llmw_models, llmconvert, llmenv
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
@@ -135,7 +134,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         card = Card("存储")
         row = QHBoxLayout()
         row.addWidget(hint_label("模型目录", wrap=False))
-        self.models_path = PathRow(value="", directory=True, show_reset=True)
+        self.models_path = PathRow(value="", directory=True, show_reset=True, browse_text="更改")
         row.addWidget(self.models_path, 1)
         self.models_open = button("打开", kind="ghost")
         row.addWidget(self.models_open)
@@ -274,36 +273,26 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     # 引擎
     # ------------------------------------------------------------------ #
     def _build_engines(self) -> Card:
-        """引擎卡片（位于存储下方）：添加入口在左、刷新在右上角，正文为目录行与列表。
+        """引擎卡片（位于存储下方）：刷新与标题同行，目录行右侧是导入动作。
 
         不设状态摘要行，不设底部动作行；列表高度随已安装引擎数量伸缩，
         空态 / 错误态由同一提示行承接。
         """
         card = Card("引擎")
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(8)
-        self.add_engine_button = button("添加引擎", kind="ghost")
-        self.add_engine_button.setToolTip("从目录或压缩包导入引擎")
-        add_menu = QMenu(self.add_engine_button)
-        switch_action = add_menu.addAction("从目录添加…")
-        switch_action.setToolTip("选择已编译的 llama.cpp 目录并注册为引擎")
-        archive_action = add_menu.addAction("从压缩包导入…")
-        archive_action.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
-        self.add_engine_button.setMenu(add_menu)
         self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
-        header.addWidget(self.add_engine_button)
-        header.addStretch(1)
-        header.addWidget(self.refresh_engine_button)
-        card.body.addLayout(header)
+        card.add_title_action(self.refresh_engine_button)
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(hint_label("引擎目录", wrap=False))
-        self.engines_path = PathRow(value="", directory=True, show_reset=True)
+        self.engines_path = PathRow(value="", directory=True, show_reset=True, browse_text="更改")
         row.addWidget(self.engines_path, 1)
-        self.engines_open = button("打开", kind="ghost")
-        row.addWidget(self.engines_open)
+        self.import_engine_dir_button = button("导入目录", kind="ghost")
+        self.import_engine_dir_button.setToolTip("选择已编译的 llama.cpp 目录，复制到引擎目录并设为默认")
+        row.addWidget(self.import_engine_dir_button)
+        self.import_engine_archive_button = button("导入压缩包", kind="ghost")
+        self.import_engine_archive_button.setToolTip("从本地 llama.cpp / cudart zip 离线包安装引擎")
+        row.addWidget(self.import_engine_archive_button)
         card.body.addLayout(row)
 
         self.engines_list = RowListWidget(card)
@@ -312,7 +301,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_list.setSpacing(4)
         self.engines_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.engines_list.setToolTip("双击一行可直接设为默认引擎")
-        self.engines_empty = hint_label("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
+        self.engines_empty = hint_label("还没有已安装引擎；用「导入目录」或「导入压缩包」添加。")
         self.engines_empty.setVisible(False)
         card.body.addWidget(self.engines_list)
         card.body.addWidget(self.engines_empty)
@@ -323,9 +312,8 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
 
         self.engines_path.committed.connect(lambda text: self._save_path("engines_root", text))
         self.engines_path.reset.clicked.connect(lambda: self._save_path("engines_root", None))
-        self.engines_open.clicked.connect(lambda: open_path(_llmconfig.engines_root()))
-        switch_action.triggered.connect(self._switch_engine_dir)
-        archive_action.triggered.connect(self._import_engine_archive)
+        self.import_engine_dir_button.clicked.connect(self._import_engine_dir)
+        self.import_engine_archive_button.clicked.connect(self._import_engine_archive)
         self.refresh_engine_button.clicked.connect(self.refresh)
         self.engines_list.currentRowChanged.connect(self._on_engine_row_selected)
         self.engines_list.itemDoubleClicked.connect(self._on_engine_double_clicked)
@@ -369,7 +357,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.engines_list.sync_row_widths()
         self.engines_list.setVisible(bool(self._engines))
         self._fit_engines_list()
-        self.engines_empty.setText("还没有已安装引擎；用「添加引擎」从目录或压缩包导入。")
+        self.engines_empty.setText("还没有已安装引擎；用「导入目录」或「导入压缩包」添加。")
         self.engines_empty.setVisible(not self._engines)
 
     def _fit_engines_list(self) -> None:
@@ -454,8 +442,8 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.status(f"{action}引擎：{info.tag}")
         self.refresh()
 
-    def _switch_engine_dir(self) -> None:
-        """选择已编译 llama.cpp 目录，注册并设为默认引擎。"""
+    def _import_engine_dir(self) -> None:
+        """选择已编译 llama.cpp 目录，复制到引擎目录并设为默认引擎。"""
         chosen = QFileDialog.getExistingDirectory(self, "选择 llama.cpp 目录")
         if not chosen:
             return
@@ -464,11 +452,11 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         if tag is None:
             return
         try:
-            info, _actual = settings_logic.install_offline(tag, source)
+            info, _actual = settings_logic.install_offline(tag, source, copy_directory=True)
         except (OSError, ServeError) as exc:
-            QMessageBox.critical(self, "切换失败", str(exc))
+            QMessageBox.critical(self, "导入失败", str(exc))
             return
-        self._after_engine_install(info, "已切换")
+        self._after_engine_install(info, "已导入")
 
     def _import_engine_archive(self) -> None:
         """选择一个或多个本地 zip，解压安装并设为默认引擎。"""

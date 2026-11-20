@@ -494,8 +494,8 @@ def _install_from_archives(tag: str, archives: Sequence[Path], target: Path) -> 
     return EngineInfo(tag, exe, str(sources[0]))
 
 
-def _install_from_path(tag: str, path: Path, target: Path) -> EngineInfo:
-    """注册已编译引擎目录，或解压单个本地 zip 离线包。"""
+def _install_from_path(tag: str, path: Path, target: Path, *, copy: bool = False) -> EngineInfo:
+    """注册已编译引擎目录、复制目录，或解压单个本地 zip 离线包。"""
     source = path.expanduser()
     if source.is_file():
         if source.suffix.lower() != ".zip":
@@ -509,10 +509,22 @@ def _install_from_path(tag: str, path: Path, target: Path) -> EngineInfo:
         return EngineInfo(tag, exe, str(source))
     if not source.is_dir():
         raise ServeError(f"引擎目录不存在: {source}")
-    exe = _engine_exe_in(source)
-    if exe is None:
+    source_exe = _engine_exe_in(source)
+    if source_exe is None:
         raise ServeError(f"目录内找不到 {engine_exe_name()}: {source}")
-    target.mkdir(parents=True, exist_ok=True)
+    if copy and source.resolve() != target.resolve():
+        if target.resolve().is_relative_to(source.resolve()):
+            raise ServeError(f"目标引擎目录位于源目录内，无法复制: {target}")
+        try:
+            shutil.copytree(source, target, dirs_exist_ok=True)
+        except OSError as exc:
+            raise ServeError(f"复制引擎目录失败: {source} -> {target}（{exc}）") from exc
+        exe = _engine_exe_in(target)
+        if exe is None:
+            raise ServeError(f"复制后仍找不到 {engine_exe_name()}: {target}")
+    else:
+        target.mkdir(parents=True, exist_ok=True)
+        exe = source_exe
     prepend = _detect_path_prepend(exe)
     _write_engine_marker(target, tag, exe, str(source), prepend)
     return EngineInfo(tag, exe, str(source), prepend)
@@ -528,11 +540,13 @@ def install_engine(  # noqa: PLR0913
     home: Path | None = None,
     opener: Opener | None = None,
     on_progress: ProgressCallback | None = None,
+    copy: bool = False,
 ) -> EngineInfo:
     """安装或注册 llama.cpp 引擎。
 
-    ``path`` 为已编译引擎目录时只登记不复制；为本地 ``.zip`` 压缩包时直接解压
-    安装（压缩包保留），两种情况都不联网。``archives`` 可传入多个离线包
+    ``path`` 为已编译引擎目录时默认只登记不复制，``copy=True`` 时复制到引擎目录；
+    为本地 ``.zip`` 压缩包时直接解压安装（压缩包保留），两种情况都不联网。
+    ``archives`` 可传入多个离线包
     （引擎包 + cudart 运行库包），一次解压到同一目录。否则从 GitHub release
     下载 Windows 预编译包（``cuda`` 变体额外下载 cudart）；目标目录内已有完整
     zip 时直接复用。
@@ -548,7 +562,7 @@ def install_engine(  # noqa: PLR0913
             raise ServeError("未指定任何离线包")
         return _install_from_archives(tag, archives, target)
     if path is not None:
-        return _install_from_path(tag, path, target)
+        return _install_from_path(tag, path, target, copy=copy)
 
     cached = _engine_exe_in(target) if target.exists() else None
     if cached is not None:

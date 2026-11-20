@@ -1220,6 +1220,15 @@ class TestEngine:
         assert info.exe == source / llmengine.engine_exe_name()
         assert (llmenv.engines_root(home) / "local" / "engine.json").is_file()
 
+    def test_install_from_path_copy(self, home: Path, tmp_path: Path) -> None:
+        source = _engine_dir(tmp_path)
+        info = llmengine.install_engine("copy", path=source, home=home, copy=True)
+        target = llmenv.engines_root(home) / "copy"
+        assert info.exe == target / llmengine.engine_exe_name()
+        assert info.exe.is_file()
+        assert (target / "engine.json").is_file()
+        assert source.is_dir()
+
     def test_install_path_detects_vendor(self, home: Path, tmp_path: Path) -> None:
         source = _engine_dir(tmp_path)
         vendor = tmp_path / "vendor" / "cuda13"

@@ -230,6 +230,8 @@ class Card(QFrame):  # pragma: no cover - Qt 控件
         self.title_label.setWordWrap(True)
         self.title_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.title_label.setVisible(bool(title))
+        self._frame = frame
+        self.title_row: QHBoxLayout | None = None
         frame.addWidget(self.title_label)
         self.body = QVBoxLayout()
         self.body.setContentsMargins(0, 0, 0, 0)
@@ -244,6 +246,19 @@ class Card(QFrame):  # pragma: no cover - Qt 控件
         """更新标题；空串时隐藏标题行，只留正文。"""
         self.title_label.setText(title)
         self.title_label.setVisible(bool(title))
+
+    def add_title_action(self, widget: QWidget) -> None:
+        """把控件放到标题行右侧；首次调用时把标题标签改成「标题 + 动作」横排。"""
+        if self.title_row is None:
+            self.title_row = QHBoxLayout()
+            self.title_row.setContentsMargins(0, 0, 0, 0)
+            self.title_row.setSpacing(8)
+            index = self._frame.indexOf(self.title_label)
+            self._frame.removeWidget(self.title_label)
+            self.title_row.addWidget(self.title_label)
+            self.title_row.addStretch(1)
+            self._frame.insertLayout(index, self.title_row)
+        self.title_row.addWidget(widget)
 
 
 class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
@@ -483,18 +498,19 @@ class KeyValueGrid(QWidget):  # pragma: no cover - Qt 控件
 
 
 class PathRow(QWidget):  # pragma: no cover - Qt 控件
-    """路径输入行：输入框 + 「浏览…」+「恢复默认」按钮。"""
+    """路径输入行：输入框 + 选择按钮（默认「浏览…」）+「恢复默认」按钮。"""
 
     changed = Signal(str)
     committed = Signal(str)
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         value: str = "",
         placeholder: str = "",
         directory: bool = True,
         show_reset: bool = False,
+        browse_text: str = "浏览…",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -507,7 +523,7 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
         self.edit.textChanged.connect(self.changed.emit)
         self.edit.editingFinished.connect(lambda: self.committed.emit(self.value()))
         layout.addWidget(self.edit, 1)
-        self.browse = button("浏览…")
+        self.browse = button(browse_text)
         self.browse.clicked.connect(self._pick)
         layout.addWidget(self.browse)
         self.reset = button("恢复默认", kind="ghost") if show_reset else None
