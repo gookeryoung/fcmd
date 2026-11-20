@@ -232,12 +232,17 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         bridge = _ProgressBridge(self)
         bridge.progress.connect(self._on_progress)
         self._bridge = bridge
+
+        def _report(name: str, received: int, total: int | None) -> None:
+            """把下载回调的三元组打包成一个对象，再经信号投递到主线程。"""
+            bridge.progress.emit((name, received, total))
+
         submit(
             settings_logic.install_online,
             release.tag,
             variant,
             asset_names=tuple(asset.name for asset in assets),
-            on_progress=bridge.progress.emit,
+            on_progress=_report,
             on_done=self._installed,
             on_error=self._failed,
             on_finished=self._finished,

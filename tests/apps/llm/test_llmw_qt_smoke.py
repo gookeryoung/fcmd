@@ -1200,7 +1200,7 @@ def test_engine_download_dialog_lists_versions_and_installs(window: Any, monkeyp
         asset_names: tuple[str, ...] | None = None,
     ) -> EngineInfo:
         if on_progress is not None:
-            on_progress(("llama-b7000-bin-win-cuda-13.5-x64.zip", 100, 200))
+            on_progress("llama-b7000-bin-win-cuda-13.5-x64.zip", 100, 200)
         calls.append((tag, variant, asset_names))
         return EngineInfo(tag, Path("llama-server.exe"), "release")
 
