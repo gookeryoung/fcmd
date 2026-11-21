@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CONTROL_HEIGHT_EXTRA",
     "MONO_FONT_CANDIDATES",
+    "RUN_CONTROL_HEIGHT_EXTRA",
     "UI_FONT_CANDIDATES",
     "active_theme",
     "apply_theme",
@@ -60,6 +61,13 @@ CONTROL_HEIGHT_EXTRA = 9
 单行件的总高 = 字体行高 + 边框（上下各 1px）+ 呼吸空间。9pt 字体行高 12px，
 加 9 得到内容高 21px，再加 2px 边框即 23px，与按钮 / 输入框 / 下拉 / 数值框
 实测一致。数值固定为逻辑像素，高 DPI 下由 Qt 按缩放因子换算成设备像素。
+"""
+
+RUN_CONTROL_HEIGHT_EXTRA = 6
+"""主要动作按钮（启动 / 停止服务、新对话）相对常规单行控件的加高量（逻辑像素）。
+
+主按钮只保留“比常规按钮稍大”的层级感：高度比常规控件高 6px，配合更宽的
+左右内边距与强调色，不再写死 40px 的大按钮尺寸。
 """
 
 _CONTROL_PAD_X_BUTTON = "0.9em"
@@ -214,17 +222,15 @@ QPushButton#Danger:hover { background: $danger; color: $on_accent; }
 QPushButton#Danger:disabled { color: $muted; border-color: $border; background: transparent; }
 QComboBox#ModelCombo[running="true"] { color: $success; border-color: $success; font-weight: 600; }
 QComboBox#ModelCombo {
-    min-height: 40px;
-    max-height: 40px;
+    min-height: $run_control_height;
+    max-height: $run_control_height;
     padding: 0 10px;
-    font-size: ${font_heading}pt;
 }
 QPushButton#RunPrimary, QPushButton#RunAction, QPushButton#RunDanger {
-    min-height: 40px;
-    max-height: 40px;
-    padding: 0 22px;
-    border-radius: 8px;
-    font-size: ${font_heading}pt;
+    min-height: $run_control_height;
+    max-height: $run_control_height;
+    padding: 0 16px;
+    border-radius: 7px;
     font-weight: 600;
 }
 QPushButton#RunPrimary { background: $accent; color: $on_accent; border-color: $accent; }
@@ -687,6 +693,7 @@ def template_tokens(
             "font_title": str(theme.fonts.title),
             "radius": str(_RADIUS),
             "control_height": f"{height}px",
+            "run_control_height": f"{height + RUN_CONTROL_HEIGHT_EXTRA}px",
             "control_pad_x": _CONTROL_PAD_X_BUTTON,
             "control_pad_x_input": _CONTROL_PAD_X_INPUT,
             "font_family": font_family or pick_font_family((), UI_FONT_CANDIDATES),

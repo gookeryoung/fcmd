@@ -423,7 +423,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         row.setContentsMargins(0, 0, 0, 0)
         row.addStretch(1)
         self._apply_button = button("启动服务", kind="primary")
-        # 与运行页顶部启停按钮同一尺寸（40px 高、更大的左右内边距与字号）。
+        # 与运行页顶部启停按钮同一尺寸：只比常规按钮略高，左右内边距更宽。
         self._apply_button.setObjectName("RunPrimary")
         self._apply_button.setToolTip("把选中推荐行的模型与参数带入运行页")
         self._apply_button.clicked.connect(self.apply_recommendation)

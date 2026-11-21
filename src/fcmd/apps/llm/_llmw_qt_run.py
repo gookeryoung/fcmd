@@ -422,7 +422,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         model_row = QHBoxLayout()
         self.model_combo = _ModelCombo(self.model_card)
         self.model_combo.setObjectName("ModelCombo")
-        self.model_combo.setFixedHeight(40)
         self.model_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self.model_combo.setMinimumContentsLength(8)
         self.model_combo.addItem("（未选择，按档位自动查找）", None)

@@ -21,12 +21,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLabel, QMessageBox
+from PySide6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton
 
 from fcmd.apps.llm import _llmw_qt_state as qt_state
 from fcmd.apps.llm._llmw_qt_window import LlmWindow, create_application
 from fcmd.apps.llm.llmbase import EngineInfo
 from fcmd.gui import theme as _guitheme
+from fcmd.gui.qt import theme as _qt_theme
 
 
 @pytest.fixture()
@@ -54,6 +55,8 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     monkeypatch.setattr(QMessageBox, "critical", lambda *_args, **_kw: shown.append("critical") or None)
     monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kw: QMessageBox.StandardButton.No)
     create_application([])
+    # 与其它 Qt 窗口测试一致：显式应用主题，控件尺寸断言不依赖测试执行顺序。
+    _qt_theme.apply_theme(QApplication.instance(), _guitheme.resolve_theme("dark-blue"))
     win = LlmWindow(tmp_path / "ui" / "llmw.json")
     win.overview.stop()
     yield win
@@ -676,7 +679,11 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     assert page.model_combo.count() == 1
     assert "small.gguf" in page.model_combo.itemText(0)
     assert "未启动" not in page.model_combo.itemText(0)
-    assert page.model_combo.minimumHeight() >= 40
+    # 下拉与主按钮同高，且只比常规按钮略高（不再写死 40px）。
+    assert page.model_combo.minimumHeight() == page.model_action_button.minimumHeight()
+    normal = QPushButton("普通按钮")
+    normal.ensurePolished()
+    assert 0 < normal.minimumHeight() < page.model_combo.minimumHeight()
     assert not hasattr(page, "manage_models_button")
     assert not hasattr(page, "browse_button")
     assert not hasattr(page, "clear_button")

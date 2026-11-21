@@ -131,6 +131,21 @@ def test_template_tokens_accept_measured_control_height() -> None:
         assert "max-height: 30px" in block
 
 
+def test_run_buttons_are_slightly_taller_than_regular_controls() -> None:
+    """主按钮（启动 / 停止服务、新对话）只比常规控件略高，不再写死 40px 的大尺寸。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    run_height = 30 + _qt_theme.RUN_CONTROL_HEIGHT_EXTRA
+    assert _qt_theme.template_tokens(theme, control_height_px=30)["run_control_height"] == f"{run_height}px"
+    text = _qt_theme.stylesheet(theme, control_height_px=30)
+    button_block = text.split("QPushButton#RunPrimary, QPushButton#RunAction, QPushButton#RunDanger {", 1)[1]
+    button_block = button_block.split("}", 1)[0]
+    combo_block = text.split("QComboBox#ModelCombo {", 1)[1].split("}", 1)[0]
+    for block in (button_block, combo_block):
+        assert f"min-height: {run_height}px" in block
+        assert f"max-height: {run_height}px" in block
+    assert "40px" not in button_block
+
+
 def test_pick_font_family_prefers_available_candidate_case_insensitively() -> None:
     available = {"consolas", "Microsoft YaHei UI"}
     assert _qt_theme.pick_font_family(available) == "Microsoft YaHei UI"
