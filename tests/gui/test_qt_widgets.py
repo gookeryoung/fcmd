@@ -450,3 +450,22 @@ def test_fit_dialog_to_content_removes_bottom_blank() -> None:
     assert dialog.height() < 200
     assert abs(dialog.height() - dialog.sizeHint().height()) <= 4
     dialog.deleteLater()
+
+
+def test_card_title_with_action_stays_one_line() -> None:
+    """卡片标题带动作（如「刷新」）时标题不换行：长标题也在同一行。"""
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.gui.qt.widgets import Card, button
+
+    app = QApplication.instance() or QApplication([])
+    card = Card("推理引擎（llama.cpp）")
+    card.add_title_action(button("刷新", kind="ghost"))
+    card.resize(520, 160)
+    card.show()
+    app.processEvents()
+    metrics = card.title_label.fontMetrics()
+    assert card.title_label.wordWrap() is False
+    assert card.title_label.height() < metrics.height() * 2
+    card.close()
+    card.deleteLater()

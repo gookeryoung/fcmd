@@ -130,7 +130,7 @@ def test_status_bar_follows_current_page(window: Any) -> None:
 
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
-    assert keys == ("overview", "models", "run", "chat", "lab", "settings")
+    assert keys == ("overview", "models", "run", "chat", "settings")
     for key in keys:
         window.show_page(key)
         assert window.current_page() == key
@@ -244,6 +244,12 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     window.show_page("run")
     run = window.run_page
     assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == ["对话", "编程", "画图"]
+    # 页签用胶囊样式：去掉 QTabBar 基线（多余横条），页签与内容同底色衔接。
+    bar = run.tabs.tabBar()
+    assert run.tabs.objectName() == "RunTabs"
+    assert bar.objectName() == "RunTabBar"
+    assert bar.drawBase() is False
+    assert bar.expanding() is False
     # 对话 / 编程共用同一套启动参数表单，切页签时整页搬家。
     assert run.service_page.parent() is run.chat_tab
     run.tabs.setCurrentIndex(1)
@@ -543,17 +549,6 @@ def test_paint_auto_pair_fills_model_and_components(window: Any, tmp_path: Path)
     assert section.role_combos["llm"].currentData() == str(encoder)
     components = components_from_settings(run.paint_settings())
     _llmpaint.validate_components(components)  # 不应再抛「请选择主模型 / 缺少组件」
-
-
-def test_lab_page_drops_paint_card(window: Any) -> None:
-    """实验室只保留代理 / 视频 / 音频三张规划卡，画图已并入对话页。"""
-    from fcmd.apps.llm._llmw_qt_lab import LAB_CARDS
-    from fcmd.gui.qt.widgets import Card
-
-    window.show_page("lab")
-    titles = [card.title_label.text() for card in window.page("lab").findChildren(Card)]
-    assert titles == ["代理", "视频", "音频"]
-    assert [title for title, _summary, _commands in LAB_CARDS] == ["代理", "视频", "音频"]
 
 
 def test_generated_pages_expose_core_widgets(window: Any) -> None:
@@ -1676,7 +1671,7 @@ def test_pages_use_scroll_container(window: Any) -> None:
     from fcmd.gui.qt.widgets import PageScroll
 
     # 对话页是 splitter + 正文阅读区，不走整页滚动容器。
-    for key in ("run", "settings", "lab"):
+    for key in ("run", "settings"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key
@@ -2121,9 +2116,20 @@ def test_engine_download_dialog_lists_versions_and_installs(window: Any, monkeyp
     monkeypatch.setattr(settings_logic, "install_online", fake_install)
     dialog = install_ui.EngineDownloadDialog(window)
     try:
+        # 版本列表回来之前不显示空白下拉 / 空行：加载条在跑、下拉显示占位、信息行收起。
+        assert dialog.loading.is_running()
+        assert dialog.version_combo.currentIndex() == -1
+        assert "正在获取版本列表" in dialog.version_combo.placeholderText()
+        assert dialog.variant_hint.isHidden()
+        assert dialog.info.isHidden()
+        assert dialog.status.isHidden()
+        # 进度条 / 下载并安装 / 关闭那一行在获取版本期间整体隐藏。
+        assert dialog.progress_row.isHidden()
         deadline = time.monotonic() + 5
         while dialog.version_combo.count() == 0 and time.monotonic() < deadline:
             QApplication.processEvents()
+        assert not dialog.loading.is_running()
+        assert not dialog.progress_row.isHidden()
         assert dialog.version_combo.currentData() == "b7000"
         variants = [dialog.variant_combo.itemData(index) for index in range(dialog.variant_combo.count())]
         assert variants == ["cuda", "cpu"]

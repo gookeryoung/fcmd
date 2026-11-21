@@ -482,6 +482,15 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         # 能力标签区分），画图页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
         self.tabs = QTabWidget(self)
         self.tabs.setDocumentMode(True)
+        self.tabs.setObjectName("RunTabs")
+        # 药丸式页签：去掉 QTabBar 的整条基线（「多余横条」），透明底 + 圆角选中块，
+        # 页签与内容同底色衔接；不参与等宽分配，三个页签靠左紧凑排列。
+        tab_bar = self.tabs.tabBar()
+        tab_bar.setObjectName("RunTabBar")
+        tab_bar.setDrawBase(False)
+        tab_bar.setExpanding(False)
+        tab_bar.setUsesScrollButtons(False)
+        tab_bar.setElideMode(Qt.TextElideMode.ElideNone)
         outer.addWidget(self.tabs, 1)
 
         self.service_page = QWidget(self.tabs)

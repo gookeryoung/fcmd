@@ -246,10 +246,11 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         grid.addWidget(QLabel("转换脚本"), 2, 0, Qt.AlignmentFlag.AlignRight)
         self.convert_script = QLineEdit(settings.script, card)
         self.convert_script.setPlaceholderText(_llmw_convert._SCRIPT_PLACEHOLDER)
-        grid.addWidget(self.convert_script, 2, 1, 1, 2)
+        grid.addWidget(self.convert_script, 2, 1, 1, 3)
         pick_script = button("浏览…")
         pick_script.clicked.connect(self._pick_convert_script)
-        grid.addWidget(pick_script, 2, 3)
+        # 按钮列不参与拉伸，避免被网格拉成整列宽。
+        grid.addWidget(pick_script, 2, 4)
         self.convert_overwrite = QCheckBox("覆盖已存在的输出文件", card)
         self.convert_overwrite.setChecked(settings.overwrite)
         grid.addWidget(self.convert_overwrite, 3, 0, 1, 2)

@@ -17,7 +17,15 @@ from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QVBoxLayout, QWid
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm import llmengine
 from fcmd.apps.llm.llmbase import EngineInfo, human_size
-from fcmd.gui.qt.widgets import Card, HintLabel, ProgressRow, button, fit_dialog_to_content, hint_label
+from fcmd.gui.qt.widgets import (
+    Card,
+    HintLabel,
+    LoadingBar,
+    ProgressRow,
+    button,
+    fit_dialog_to_content,
+    hint_label,
+)
 from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
 
 __all__ = ["EngineDownloadDialog"]
@@ -54,11 +62,13 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         picker.addWidget(hint_label("版本", wrap=False))
         self.version_combo = QComboBox(card)
         self.version_combo.setMinimumWidth(220)
+        self.version_combo.setPlaceholderText("正在获取版本列表…")
         self.version_combo.currentIndexChanged.connect(lambda _index: self._sync_variants())
         picker.addWidget(self.version_combo, 1)
         picker.addWidget(hint_label("变体", wrap=False))
         self.variant_combo = QComboBox(card)
         self.variant_combo.setMinimumWidth(120)
+        self.variant_combo.setPlaceholderText("选择变体")
         self.variant_combo.setToolTip("CUDA 适合 NVIDIA 显卡；Vulkan 兼容性最广；CPU 兼容兜底")
         self.variant_combo.currentIndexChanged.connect(lambda _index: self._sync_info())
         picker.addWidget(self.variant_combo, 0)
@@ -68,9 +78,15 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         picker.addWidget(self.refresh_button)
         card.body.addLayout(picker)
 
+        # 版本列表还没回来时不要显示「空白下拉 + 空行」：加载条填住信息区，
+        # 下拉框显示占位文案，窗口一开始就看起来是在加载而不是空的。
+        self.loading = LoadingBar("正在获取版本列表…", card)
+        card.body.addWidget(self.loading)
         self.variant_hint = hint_label("", wrap=True)
+        self.variant_hint.setVisible(False)
         card.body.addWidget(self.variant_hint)
         self.info = HintLabel("")
+        self.info.setVisible(False)
         card.body.addWidget(self.info)
 
         self.progress_row = ProgressRow(parent=card)
@@ -84,7 +100,8 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self.progress_row.add_action(self.close_button)
         card.body.addWidget(self.progress_row)
 
-        self.status = hint_label("正在获取版本列表…", wrap=False)
+        self.status = hint_label("", wrap=False)
+        self.status.setVisible(False)
         card.body.addWidget(self.status)
         mirror_hint = hint_label(
             "版本来自 GitHub releases（默认国内镜像，失败回退 GitHub）；"
@@ -103,6 +120,12 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
     def _fit(self) -> None:
         """内容变化后重新贴合高度（版本 / 变体信息会换行，高度不定）。"""
         fit_dialog_to_content(self, min_width=640)
+
+    def _set_status(self, text: str) -> None:
+        """状态行：空文本时收起，并重新贴合高度。"""
+        self.status.setText(text)
+        self.status.setVisible(bool(text))
+        self._fit()
 
     # ------------------------------------------------------------------ #
     # 版本列表
@@ -123,7 +146,12 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         self._fetching = True
         self.refresh_button.setEnabled(False)
         self.download_button.setEnabled(False)
-        self.status.setText("正在获取版本列表…")
+        self.loading.start("正在获取版本列表…")
+        self.variant_hint.setVisible(False)
+        self.info.setVisible(False)
+        # 版本没回来之前不显示进度条 / 下载安装 / 关闭按钮那一行，避免误以为可下载。
+        self.progress_row.setVisible(False)
+        self._set_status("")
         submit_daemon(
             settings_logic.engine_releases,
             _RELEASE_LIMIT,
@@ -136,38 +164,45 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         if self._closed:
             return
         self.refresh_button.setEnabled(True)
+        self.loading.stop()
+        self.progress_row.setVisible(True)
         self._releases = ()
         self.version_combo.clear()
         self.variant_combo.clear()
         self.variant_hint.setText("")
+        self.variant_hint.setVisible(False)
         self.info.setText("")
+        self.info.setVisible(False)
         self._releases_ready(False)
-        self.status.setText(f"获取版本列表失败：{message}")
-        self._fit()
+        self._set_status(f"获取版本列表失败：{message}")
 
     def _render_releases(self, releases: tuple[llmengine.EngineRelease, ...]) -> None:
         self._fetching = False
         if self._closed:
             return
         self.refresh_button.setEnabled(True)
+        self.loading.stop()
+        self.progress_row.setVisible(True)
         self._releases = tuple(releases)
         self.version_combo.blockSignals(True)
         self.version_combo.clear()
         for release in self._releases:
             label = f"{release.tag} · {release.published[:10] or '未知日期'}"
             self.version_combo.addItem(label, release.tag)
+        if self._releases:
+            self.version_combo.setCurrentIndex(0)
         self.version_combo.blockSignals(False)
         if not self._releases:
             self.variant_combo.clear()
             self.variant_hint.setText("")
+            self.variant_hint.setVisible(False)
             self.info.setText("")
+            self.info.setVisible(False)
             self._releases_ready(False)
-            self.status.setText("没有可下载的引擎版本（检查网络或稍后重试）")
-            self._fit()
+            self._set_status("没有可下载的引擎版本（检查网络或稍后重试）")
             return
         self._sync_variants()
-        self.status.setText("选择版本与变体后下载")
-        self._fit()
+        self._set_status("选择版本与变体后下载")
 
     def _releases_ready(self, ready: bool) -> None:
         self.version_combo.setEnabled(ready)
@@ -191,6 +226,8 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
                     settings_logic.variant_hint(variant),
                     Qt.ItemDataRole.ToolTipRole,
                 )
+        if self.variant_combo.count() > 0 and self.variant_combo.currentIndex() < 0:
+            self.variant_combo.setCurrentIndex(0)
         self.variant_combo.blockSignals(False)
         has_variant = self.variant_combo.count() > 0
         self._releases_ready(release is not None and has_variant and not self._downloading)
@@ -201,13 +238,17 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
         variant = self.variant_combo.currentData()
         if release is None or not isinstance(variant, str):
             self.variant_hint.setText("")
+            self.variant_hint.setVisible(False)
             self.info.setText("")
+            self.info.setVisible(False)
             return
         self.variant_hint.setText(f"{settings_logic.variant_label(variant)}：{settings_logic.variant_hint(variant)}")
+        self.variant_hint.setVisible(True)
         assets = release.install_assets(variant)
         names = "、".join(asset.name for asset in assets) or "-"
         size = human_size(sum(asset.size for asset in assets)) if assets else "-"
         self.info.setText(f"发布 {release.published[:10] or '-'} · {size}\n{names}")
+        self.info.setVisible(True)
         self.download_button.setEnabled(bool(assets) and not self._downloading)
 
     # ------------------------------------------------------------------ #
@@ -220,13 +261,13 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
             return
         assets = release.install_assets(variant)
         if not assets:
-            self.status.setText("该版本没有可用的安装资产")
+            self._set_status("该版本没有可用的安装资产")
             return
         self._downloading = True
         self._releases_ready(False)
         self.refresh_button.setEnabled(False)
         self.progress.setRange(0, 0)
-        self.status.setText(f"正在下载 {release.tag}（{settings_logic.variant_label(variant)}）…")
+        self._set_status(f"正在下载 {release.tag}（{settings_logic.variant_label(variant)}）…")
         bridge = ProgressBridge(self)
         bridge.progress.connect(self._on_progress)
         self._bridge = bridge
@@ -267,7 +308,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
             return
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
-        self.status.setText(f"已安装 {info.tag}：{info.exe}")
+        self._set_status(f"已安装 {info.tag}：{info.exe}")
         self.installed.emit(info.tag)
 
     def _failed(self, message: str) -> None:
@@ -275,7 +316,7 @@ class EngineDownloadDialog(QDialog):  # pragma: no cover - Qt 控件
             return
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.status.setText(f"下载失败：{message}")
+        self._set_status(f"下载失败：{message}")
 
     def _finished(self) -> None:
         self._downloading = False

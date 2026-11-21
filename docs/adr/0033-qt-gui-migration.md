@@ -1,6 +1,6 @@
 # 0033 locllmw 迁移到 Qt（PySide6）：GUI 基座与分页重构
 
-- 状态：已落地（GUI 基座、六页分页、模型行内下载 / 转换 / 量化全部为 Qt；Tk 实现已删除）
+- 状态：已落地（GUI 基座、五页分页、模型行内下载 / 转换 / 量化全部为 Qt；Tk 实现已删除）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线研究）、0025（侧边栏分页导航）、0027 / 0028 / 0029 / 0030 / 0031（locllmw 既有分页与配置）、0032（启动速度）、0034（全量 GUI 迁移）
 
@@ -54,7 +54,6 @@
 | 模型 | `_llmw_qt_center`（浏览页，行内下载 / 转换 / 量化） | `_llmw_models` / `_llmw_convert` / `llmdown` / `llmconvert` / `llmqnt` |
 | 运行 | `_llmw_qt_run`：参数表单、调优联动、计划预览、启停与重启 | `llmserve` / `llmmodel` / `_llmtune` / `_llmw_monitor` |
 | 对话 | `_llmw_qt_chat`：服务回填（含进程退出提示）、流式回复、思考过程、新对话、导出 Markdown | `llmchat.ChatSession` / `_llmw_chat.format_session_markdown` |
-| 实验室 | `_llmw_qt_lab`：四张规划卡片 | — |
 | 设置 | `_llmw_qt_settings`：模型目录、下载参数、转换参数、引擎根目录与已安装引擎 | `_llmw_settings` 纯逻辑 / `_llmconfig` |
 
 服务日志与性能测试不占分页：顶部「帮助」菜单打开 `_llmw_qt_log` / `_llmw_qt_bench`
@@ -79,7 +78,7 @@
 
 - 纯逻辑（设置、硬件快照、监控采样、性能场景、分组、下载参数、转换路径）在
   `tests/apps/llm/` 单测；Qt 冒烟用 `QT_QPA_PLATFORM=offscreen`
-  （`test_llmw_qt_smoke.py`），断言六页可构建、模型树 / 分页内容与几何落盘。
+  （`test_llmw_qt_smoke.py`），断言五页可构建、模型树 / 分页内容与几何落盘。
 - 断言 Tk 内部实现的用例已改写为 Qt 等价断言：对话页服务选择改为 `ChatPage`，
   概览页推荐动作改为 `OverviewPage`，量化勾选改为 `_QuantPanel`，
   `state_tag` 改为 `_llmw_ui.state_tag` 纯函数。

@@ -2,7 +2,7 @@
 
 - 状态：已落地
 - 日期：2026-11-24
-- 关联：[0027](0027-llmw-rename.md)（llmw 六页侧边栏）、[0029](0029-llmw-chat-page.md)（对话页）、
+- 关联：[0027](0027-llmw-rename.md)（llmw 五页侧边栏）、[0029](0029-llmw-chat-page.md)（对话页）、
   [0031](0031-llm-config-unification.md)（配置单一来源）、[0038](0038-shared-qt-widget-boundaries.md)（Qt 共享控件边界）
 
 ## 背景
@@ -20,7 +20,7 @@
 
 | 编号 | 决策 | 落点 |
 |---|---|---|
-| D1 | 取消独立画图页，侧边栏回到六页 | `_llmw_qt_window.py` |
+| D1 | 取消独立画图页，侧边栏回到五页 | `_llmw_qt_window.py` |
 | D2 | 对话页 composer 增加「画图」启用项：勾选后发送即按画图配置出图 | `_llmw_qt_chat.py` |
 | D3 | 画图配置拆成两段：采样 / 输出（:class:`PaintSampleSection`）嵌对话的「模型与生成配置」窗口；引擎 / 模型组件（:class:`PaintEngineSection`）放运行页「画图」页签 | `_llmw_qt_paint.py` |
 | D4 | 运行页按用途分「对话 / 编程 / 画图」；画图页签只配启动参数与启停（启停样式对齐对话 / 编程的模型卡片） | `_llmw_qt_run.py` |
@@ -158,7 +158,7 @@ src/fcmd/apps/llm/
 - `tests/apps/llm/test_llmw_qt_logic.py`：画图模块级纯函数（设置解析、额外参数、
   组件 / 请求、命令预览、进度 / 尺寸预设 / 配置摘要、扫描根与出图目录、
   变体说明、`startup_args_tail` 尾部参数与「填入当前参数」去重）；
-- `tests/apps/llm/test_llmw_qt_smoke.py`：六页导航（无画图页）、对话页「画图」开关
+- `tests/apps/llm/test_llmw_qt_smoke.py`：五页导航（无画图页）、对话页「画图」开关
   切换占位提示与持久化、缺模型时发送只报错不派后台任务、画图配置控件挂在对话
   配置弹窗里、运行页「对话 / 编程 / 画图」三页签（对话 / 编程共享表单随页签搬家、
   画图页签含选模型（无「未找到」占位项、无状态胶囊 / 细节行）+ 启停 + 加载方式

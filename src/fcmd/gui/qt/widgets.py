@@ -458,6 +458,9 @@ class Card(QFrame):  # pragma: no cover - Qt 控件
             self.title_row.setSpacing(8)
             index = self._frame.indexOf(self.title_label)
             self._frame.removeWidget(self.title_label)
+            # 标题行带动作时标题不换行：QLabel 的 wordWrap sizeHint 会把
+            # 「推理引擎（llama.cpp）」拆成两行，卡片标题应当单行显示。
+            self.title_label.setWordWrap(False)
             self.title_row.addWidget(self.title_label)
             self.title_row.addStretch(1)
             self._frame.insertLayout(index, self.title_row)

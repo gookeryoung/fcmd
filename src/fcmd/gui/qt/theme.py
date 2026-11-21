@@ -553,6 +553,25 @@ QTabBar::tab {
 }
 QTabBar::tab:selected { background: $surface_active; color: $text; font-weight: 600; }
 QTabBar::tab:hover { color: $text; }
+/* 运行页「对话 / 编程 / 画图」：药丸页签，无整条基线，与内容同底色衔接。 */
+QTabWidget#RunTabs::pane { border: none; background: transparent; top: 4px; }
+QTabBar#RunTabBar { background: transparent; border: none; }
+QTabBar#RunTabBar::tab {
+    background: transparent;
+    color: $muted;
+    border: 1px solid transparent;
+    border-radius: 13px;
+    padding: 3px 14px;
+    margin: 0 6px 4px 0;
+    min-height: 22px;
+}
+QTabBar#RunTabBar::tab:selected {
+    background: $surface_active;
+    color: $text;
+    border-color: $border;
+    font-weight: 600;
+}
+QTabBar#RunTabBar::tab:hover:!selected { background: $surface_hover; color: $text; }
 
 QProgressBar {
     background: $surface_hover;
