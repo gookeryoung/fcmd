@@ -44,3 +44,4 @@
 | [0035](0035-cmder-filesync-compare-unify.md) | 目录比较 / 同步引擎统一：cmderw 与 filesync 共用 filesync `_core`，分 P0–P3 独立实施 | 设计中（独立阶段，未实施） |
 | [0036](0036-python310-pyside2.md) | Python 3.10 支持与 PySide2 兼容：按版本选择 Qt 绑定、运行时兼容层与 CI/tox 矩阵 | 已落地 |
 | [0037](0037-unified-result-envelope.md) | 统一结果信封（`--json`）：框架用法错误机读化、MCP 白名单对齐、只读工具分期接入 | P0 / P1 已落地（P2 / P3 待办） |
+| [0038](0038-shared-qt-widget-boundaries.md) | Qt 共享控件的抽象边界：不做 InfoRowCard 基类与 TaskDialog，ChoiceCard / StatusTag / LogDialog / ProgressRow 的适用范围 | 生效（边界已确定） |
