@@ -133,7 +133,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._settings_path = settings_path
             self._raw_settings = _guiconfig.read_settings(settings_path) or {}
         self._build()
-        self._append_log("添加 .ncm 文件或导入目录后点击「开始转换」。")
+        self._log.append_timestamped("添加 .ncm 文件或导入目录后点击「开始转换」。")
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -218,12 +218,6 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     # ------------------------------------------------------------------ #
     # 交互
     # ------------------------------------------------------------------ #
-    def _append_log(self, message: str) -> None:
-        """追加一行带时间戳的日志。"""
-        from datetime import datetime
-
-        self._log.append(f"{datetime.now():%H:%M:%S} {message}")
-
     def _add_files(self) -> None:
         """选择一个或多个 NCM 文件加入列表。"""
         filenames, _ = QFileDialog.getOpenFileNames(
@@ -246,11 +240,11 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         try:
             found = collect_ncm_files(Path(directory).expanduser())
         except NcmError as exc:
-            self._append_log(f"错误：{exc}")
+            self._log.append_timestamped(f"错误：{exc}")
             QMessageBox.critical(self, "导入失败", str(exc))
             return
         if not found:
-            self._append_log(f"目录中没有 .ncm 文件：{directory}")
+            self._log.append_timestamped(f"目录中没有 .ncm 文件：{directory}")
             return
         self._add_paths(found)
 
@@ -271,9 +265,9 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             added += 1
         self._refresh_list()
         if added:
-            self._append_log(f"已添加 {added} 个文件")
+            self._log.append_timestamped(f"已添加 {added} 个文件")
         if ignored:
-            self._append_log(f"已忽略 {ignored} 个非 .ncm 文件")
+            self._log.append_timestamped(f"已忽略 {ignored} 个非 .ncm 文件")
 
     def _remove_selected(self) -> None:
         """移除列表中选中的文件。"""
@@ -283,7 +277,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         for row in rows:
             del self._files[row]
         self._refresh_list()
-        self._append_log(f"已移除 {len(rows)} 个文件")
+        self._log.append_timestamped(f"已移除 {len(rows)} 个文件")
 
     def _clear_files(self) -> None:
         """清空待转换列表。"""
@@ -292,7 +286,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         count = len(self._files)
         self._files.clear()
         self._refresh_list()
-        self._append_log(f"已清空 {count} 个文件")
+        self._log.append_timestamped(f"已清空 {count} 个文件")
 
     def _refresh_list(self) -> None:
         """按 ``self._files`` 重绘列表与计数。"""
@@ -344,7 +338,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._set_busy(True)
         self.set_status("正在转换…")
         location = str(output_dir) if output_dir is not None else "各文件所在目录"
-        self._append_log(f"开始转换 {len(self._files)} 个文件，输出到：{location}")
+        self._log.append_timestamped(f"开始转换 {len(self._files)} 个文件，输出到：{location}")
 
         bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
@@ -360,7 +354,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _on_worker_error(self, message: str) -> None:
         """线程池兜底异常：记日志并恢复界面。"""
-        self._append_log(f"错误：{message}")
+        self._log.append_timestamped(f"错误：{message}")
         self.set_status("转换失败")
         self._finish_busy()
 
@@ -372,14 +366,14 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._progress.setValue(done)
             self.set_status(f"{done}/{total}")
         elif kind == "log":
-            self._append_log(str(event[1]))
+            self._log.append_timestamped(str(event[1]))
         elif kind == "error":
             _, name, message = event
-            self._append_log(f"失败：{name}：{message}")
+            self._log.append_timestamped(f"失败：{name}：{message}")
         elif kind == "cancelled":
             _, done, total = event
             self._cancelled = True
-            self._append_log(f"已中止：完成 {done}/{total}")
+            self._log.append_timestamped(f"已中止：完成 {done}/{total}")
         elif kind == "done":
             _, succeeded, failed, total = event
             self._finish(succeeded, failed, total)
@@ -390,15 +384,15 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._progress.setValue(total)
         if self._cancelled:
             self.set_status(f"已中止：成功 {succeeded}，失败 {failed}")
-            self._append_log(f"已中止：成功 {succeeded}，失败 {failed}，共 {total} 个")
+            self._log.append_timestamped(f"已中止：成功 {succeeded}，失败 {failed}，共 {total} 个")
             return
         if failed:
             self.set_status(f"完成：成功 {succeeded}，失败 {failed}")
-            self._append_log(f"转换结束：成功 {succeeded}，失败 {failed}，共 {total} 个")
+            self._log.append_timestamped(f"转换结束：成功 {succeeded}，失败 {failed}，共 {total} 个")
             QMessageBox.warning(self, "完成", f"解锁已完成，但 {failed} 个文件失败，详见日志。")
         else:
             self.set_status("✓ 全部完成")
-            self._append_log(f"转换结束：全部成功，共 {succeeded} 个")
+            self._log.append_timestamped(f"转换结束：全部成功，共 {succeeded} 个")
             QMessageBox.information(self, "完成", "解锁已完成")
 
     def _finish_busy(self) -> None:

@@ -164,9 +164,6 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         ):
             widget.setEnabled(not busy)
 
-    def _append_log(self, message: str) -> None:
-        self._log.append(message)
-
     # ------------------------------------------------------------------ #
     # 处理
     # ------------------------------------------------------------------ #
@@ -180,17 +177,17 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             password = validate_password(self._password.text())
             workers = parse_workers(self._workers.value())
         except ValueError as exc:
-            self._append_log(f"错误：{exc}")
+            self._log.append(f"错误：{exc}")
             return
         if len(password) < MIN_PASSWORD_LENGTH:
-            self._append_log(f"警告：密码长度小于 {MIN_PASSWORD_LENGTH} 字符，建议使用更强的密码")
+            self._log.append(f"警告：密码长度小于 {MIN_PASSWORD_LENGTH} 字符，建议使用更强的密码")
 
         action = "解密" if decrypt else "加密"
         self._set_busy(True)
         self._progress.setRange(0, 1)
         self._progress.setValue(0)
         self.set_status(f"正在{action}…")
-        self._append_log(f"{action}目录：{directory}；线程：{workers}")
+        self._log.append(f"{action}目录：{directory}；线程：{workers}")
 
         bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
@@ -201,17 +198,17 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """在主线程消费后台事件，更新进度条、日志与状态。"""
         kind = event[0]
         if kind == "message":
-            self._append_log(event[1])
+            self._log.append(event[1])
         elif kind == "progress":
             _, done, total, name, ok, error = event
             self._progress.setRange(0, max(total, 1))
             self._progress.setValue(done)
             if ok:
-                self._append_log(f"[{done}/{total}] 完成：{name}")
+                self._log.append(f"[{done}/{total}] 完成：{name}")
             else:
-                self._append_log(f"[{done}/{total}] 失败：{name}（{error}）")
+                self._log.append(f"[{done}/{total}] 失败：{name}（{error}）")
         elif kind == "empty":
-            self._append_log(event[1])
+            self._log.append(event[1])
             self.set_status("没有待处理文件")
             self._finish()
             QMessageBox.information(self, "提示", event[1])
@@ -219,11 +216,11 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             _, action, succeeded, failed = event
             self._progress.setValue(self._progress.maximum())
             self.set_status(f"{action}完成：成功 {succeeded}，失败 {failed}")
-            self._append_log(f"{action}汇总：成功 {succeeded} 个，失败 {failed} 个")
+            self._log.append(f"{action}汇总：成功 {succeeded} 个，失败 {failed} 个")
             self._finish()
             QMessageBox.information(self, f"{action}完成", f"成功 {succeeded} 个，失败 {failed} 个")
         elif kind == "error":
-            self._append_log(f"错误：{event[1]}")
+            self._log.append(f"错误：{event[1]}")
             self.set_status("处理失败")
             self._finish()
             QMessageBox.critical(self, "处理失败", event[1])

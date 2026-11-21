@@ -132,7 +132,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self.add(self._build_results_card(), 3)
         self.add(self._build_progress())
         self.add(self._build_log_card(), 2)
-        self._append_log("选择服务镜像或教育网站点，点击「开始测速」；测速完成后可应用推荐镜像。")
+        self._log.append_timestamped("选择服务镜像或教育网站点，点击「开始测速」；测速完成后可应用推荐镜像。")
 
     def _build_controls_card(self) -> Card:
         card = Card("测速目标", self)
@@ -233,12 +233,6 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     # ------------------------------------------------------------------ #
     # 交互
     # ------------------------------------------------------------------ #
-    def _append_log(self, message: str) -> None:
-        """追加一行带时间戳的日志。"""
-        from datetime import datetime
-
-        self._log.append(f"{datetime.now():%H:%M:%S} {message}")
-
     def _selected_service(self) -> str:
         """把服务下拉框的显示名映射回服务 key；无匹配时返回空串。"""
         label = self._service_combo.currentText()
@@ -318,12 +312,12 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         try:
             timeout = normalize_timeout(self._timeout_spin.value())
         except ValueError as exc:
-            self._append_log(f"错误：{exc}")
+            self._log.append_timestamped(f"错误：{exc}")
             return
         mode = MODE_SERVICE if self._mode_service.isChecked() else MODE_SITES
         service = self._selected_service()
         if mode == MODE_SERVICE and not service:
-            self._append_log("错误：请选择服务")
+            self._log.append_timestamped("错误：请选择服务")
             return
         source = self._selected_source()
 
@@ -334,11 +328,13 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._start_progress()
         if mode == MODE_SERVICE:
             self.set_status(f"正在测速 {SERVICE_LABELS[service]}…")
-            self._append_log(f"测速服务：{SERVICE_LABELS[service]}；超时 {timeout:g} 秒")
-            self._append_log(f"配置位置：{config_location(service)}")
+            self._log.append_timestamped(f"测速服务：{SERVICE_LABELS[service]}；超时 {timeout:g} 秒")
+            self._log.append_timestamped(f"配置位置：{config_location(service)}")
         else:
             self.set_status("正在探测教育网镜像站点…")
-            self._append_log(f"探测教育网镜像站点；超时 {timeout:g} 秒；来源 {self._source_combo.currentText()}")
+            self._log.append_timestamped(
+                f"探测教育网镜像站点；超时 {timeout:g} 秒；来源 {self._source_combo.currentText()}"
+            )
 
         self._submit(_work_probe, mode, service, timeout, source)
 
@@ -371,8 +367,8 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._bridge = None
             for line in str(text).splitlines():
                 if line.strip():
-                    self._append_log(line.strip())
-            self._append_log(f"已应用 {SERVICE_LABELS[service]} 镜像: {mirror}")
+                    self._log.append_timestamped(line.strip())
+            self._log.append_timestamped(f"已应用 {SERVICE_LABELS[service]} 镜像: {mirror}")
             self.set_status(f"已应用 {mirror}")
         elif kind == "error":
             self._finish_error(str(event[1]))
@@ -385,13 +381,13 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._bridge = None
         self._render_rows()
         reachable = sum(1 for row in rows if row.ok)
-        self._append_log(f"{summary}，可达 {reachable} 个")
+        self._log.append_timestamped(f"{summary}，可达 {reachable} 个")
         best = recommend_mirror(rows)
         if best is None:
-            self._append_log("全部不可达，请检查网络或更换来源后重试")
+            self._log.append_timestamped("全部不可达，请检查网络或更换来源后重试")
             self.set_status("全部不可达")
             return
-        self._append_log(f"推荐镜像: {best}（按实测吞吐与延迟排序）")
+        self._log.append_timestamped(f"推荐镜像: {best}（按实测吞吐与延迟排序）")
         self.set_status(f"完成：推荐 {best}")
 
     def _finish_error(self, message: str) -> None:
@@ -399,7 +395,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._stop_progress()
         self._set_busy(False)
         self._bridge = None
-        self._append_log(f"错误：{message}")
+        self._log.append_timestamped(f"错误：{message}")
         self.set_status("操作失败")
         QMessageBox.critical(self, "操作失败", message)
 
@@ -462,7 +458,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         cell = self._table.item(table_row, 0) if table_row >= 0 else None
         mirror = cell.data(Qt.ItemDataRole.UserRole) if cell is not None else None
         if not mirror:
-            self._append_log("请先在结果表中选择一个镜像")
+            self._log.append_timestamped("请先在结果表中选择一个镜像")
             return
         self._start_apply(self._last_service, str(mirror))
 
@@ -472,17 +468,17 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         best = recommend_mirror(self._rows)
         if best is None:
-            self._append_log("没有可达镜像可应用，请先测速或更换来源")
+            self._log.append_timestamped("没有可达镜像可应用，请先测速或更换来源")
             return
         self._start_apply(self._last_service, best)
 
     def _check_applicable(self) -> bool:
         """检查当前状态是否允许应用配置（服务模式 + 已有测速结果）。"""
         if not self._mode_service.isChecked():
-            self._append_log("教育网站点探测为只读，不支持应用配置")
+            self._log.append_timestamped("教育网站点探测为只读，不支持应用配置")
             return False
         if not self._last_service:
-            self._append_log("请先完成一次服务镜像测速")
+            self._log.append_timestamped("请先完成一次服务镜像测速")
             return False
         return True
 
@@ -493,7 +489,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._set_busy(True)
         self._start_progress()
         self.set_status(f"正在应用 {mirror}…")
-        self._append_log(f"开始应用 {SERVICE_LABELS[service]} 镜像: {mirror}")
+        self._log.append_timestamped(f"开始应用 {SERVICE_LABELS[service]} 镜像: {mirror}")
         self._submit(_work_apply, service, mirror)
 
     # ------------------------------------------------------------------ #

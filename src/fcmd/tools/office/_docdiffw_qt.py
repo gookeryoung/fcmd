@@ -152,7 +152,7 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.add_layout(actions)
 
         self._log = self.add_log(height=200)
-        self._append_log("选择旧文档与新文档后点击「开始对比」。")
+        self._log.append_timestamped("选择旧文档与新文档后点击「开始对比」。")
 
     def _build_documents_card(self) -> Card:
         """旧 / 新 / 输出三行，输出留空时按标题与时间戳自动命名。"""
@@ -194,12 +194,6 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """当前标题（空时回退默认标题）。"""
         return self._title.text().strip() or DEFAULT_TITLE
 
-    def _append_log(self, message: str) -> None:
-        """追加一行带时间戳的日志。"""
-        from datetime import datetime
-
-        self._log.append(f"{datetime.now():%H:%M:%S} {message}")
-
     # ------------------------------------------------------------------ #
     # 对比
     # ------------------------------------------------------------------ #
@@ -225,14 +219,14 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         raw_old = self._old_row.value()
         raw_new = self._new_row.value()
         if not raw_old or not raw_new:
-            self._append_log("错误：请选择旧文档与新文档")
+            self._log.append_timestamped("错误：请选择旧文档与新文档")
             return None
         old_doc = Path(raw_old).expanduser()
         new_doc = Path(raw_new).expanduser()
         try:
             validate_documents(old_doc, new_doc)
         except DocDiffError as exc:
-            self._append_log(f"错误：{exc}")
+            self._log.append_timestamped(f"错误：{exc}")
             return None
         return old_doc, new_doc
 
@@ -248,7 +242,7 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         try:
             compare_mode = normalize_compare_mode(self._compare_mode.currentText())
         except ValueError as exc:
-            self._append_log(f"错误：{exc}")
+            self._log.append_timestamped(f"错误：{exc}")
             return
 
         title = self._current_title()
@@ -259,10 +253,12 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log.clear()
         self._set_busy(True)
         self.set_status("正在对比…")
-        self._append_log(f"旧文档：{old_doc}")
-        self._append_log(f"新文档：{new_doc}")
-        self._append_log(f"输出：{preview}")
-        self._append_log(f"对比模式：{compare_mode}；显示修订：{'是' if self._show_changes.isChecked() else '否'}")
+        self._log.append_timestamped(f"旧文档：{old_doc}")
+        self._log.append_timestamped(f"新文档：{new_doc}")
+        self._log.append_timestamped(f"输出：{preview}")
+        self._log.append_timestamped(
+            f"对比模式：{compare_mode}；显示修订：{'是' if self._show_changes.isChecked() else '否'}"
+        )
 
         bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
@@ -283,12 +279,12 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         kind = event[0]
         if kind == "done":
             target = event[1]
-            self._append_log(f"对比完成：{target}")
+            self._log.append_timestamped(f"对比完成：{target}")
             self.set_status("对比完成")
             self._finish()
             QMessageBox.information(self, "对比完成", f"已生成对比文档：\n{target}")
         elif kind == "error":
-            self._append_log(f"错误：{event[1]}")
+            self._log.append_timestamped(f"错误：{event[1]}")
             self.set_status("对比失败")
             self._finish()
             QMessageBox.critical(self, "对比失败", event[1])

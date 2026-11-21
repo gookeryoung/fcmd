@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -940,6 +941,10 @@ class LogView(QWidget):  # pragma: no cover - Qt 控件
         self.view.appendPlainText(message)
         bar = self.view.verticalScrollBar()
         bar.setValue(bar.maximum())
+
+    def append_timestamped(self, message: str) -> None:
+        """追加一行 ``HH:MM:SS`` 前缀的日志（工具窗口的常用格式）。"""
+        self.append(f"{datetime.now():%H:%M:%S} {message}")
 
     def text(self) -> str:
         """全部日志文本。"""

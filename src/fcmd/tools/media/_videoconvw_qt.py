@@ -132,7 +132,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             self._settings_path = settings_path
             self._raw_settings = _guiconfig.read_settings(settings_path) or {}
         self._build()
-        self._append_log("选择输入视频并设置转换参数后点击「开始转换」。")
+        self._log.append_timestamped("选择输入视频并设置转换参数后点击「开始转换」。")
         QTimer.singleShot(50, self._start_ffmpeg_check)
 
     # ------------------------------------------------------------------ #
@@ -279,12 +279,6 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
     # ------------------------------------------------------------------ #
     # 交互
     # ------------------------------------------------------------------ #
-    def _append_log(self, message: str) -> None:
-        """追加一行带时间戳的日志。"""
-        from datetime import datetime
-
-        self._log.append(f"{datetime.now():%H:%M:%S} {message}")
-
     def _set_status(self, text: str, kind: str = "Hint") -> None:
         """更新动作行状态标签，并按 Hint / Success / Danger 切换语义色。"""
         tone = {"Success": "success", "Warning": "warning", "Danger": "danger"}.get(kind, "muted")
@@ -355,10 +349,10 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         """在状态栏显示 ffmpeg 版本或缺失提示。"""
         if version:
             self.set_status(f"✓ {version}")
-            self._append_log(f"ffmpeg 可用：{version}")
+            self._log.append_timestamped(f"ffmpeg 可用：{version}")
         else:
             self.set_status("✗ 未找到 ffmpeg，请安装并加入 PATH")
-            self._append_log("警告：未找到 ffmpeg，转换功能不可用")
+            self._log.append_timestamped("警告：未找到 ffmpeg，转换功能不可用")
 
     # ------------------------------------------------------------------ #
     # 转换
@@ -394,8 +388,8 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         output_dir = Path(raw_output_dir).expanduser() if raw_output_dir else None
         output_path = build_output_path(input_path, output_dir, options.output_format)
 
-        self._append_log(f"输入：{input_path}")
-        self._append_log(f"输出：{output_path}")
+        self._log.append_timestamped(f"输入：{input_path}")
+        self._log.append_timestamped(f"输出：{output_path}")
         self._cancel = threading.Event()
         self._progress.setValue(0)
         self._set_status("正在转换…")
@@ -416,7 +410,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _on_worker_error(self, message: str) -> None:
         """线程池兜底异常：记日志、恢复界面。"""
-        self._append_log(f"错误：{message}")
+        self._log.append_timestamped(f"错误：{message}")
         self._set_status("✗ 转换失败", "Danger")
         self._set_busy(False)
         self._bridge = None
@@ -428,9 +422,9 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             _, percent, message = event
             self._progress.setValue(percent)
             self._set_status(f"进度：{percent}% - {message}")
-            self._append_log(message)
+            self._log.append_timestamped(message)
         elif kind == "log":
-            self._append_log(str(event[1]))
+            self._log.append_timestamped(str(event[1]))
         elif kind == "done":
             _, success, output_path = event
             self._finish(bool(success), output_path)
@@ -442,11 +436,11 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         if success:
             self._progress.setValue(100)
             self._set_status("✓ 转换成功", "Success")
-            self._append_log(f"转换成功：{output_path}")
+            self._log.append_timestamped(f"转换成功：{output_path}")
             QMessageBox.information(self, "转换完成", f"视频已生成：\n{output_path}")
         else:
             self._set_status("✗ 转换失败或已取消", "Danger")
-            self._append_log("转换失败或已取消，详见日志")
+            self._log.append_timestamped("转换失败或已取消，详见日志")
             QMessageBox.warning(self, "转换失败", "转换失败或已取消，详见日志与命令行输出")
 
     def _stop_conversion(self) -> None:
@@ -455,7 +449,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         self._cancel.set()
         self._set_status("正在停止…")
-        self._append_log("已请求中止转换")
+        self._log.append_timestamped("已请求中止转换")
 
     def _reset_settings(self) -> None:
         """把界面参数恢复为默认值（不改变输入/输出路径）。"""
@@ -470,7 +464,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._preset_combo.setCurrentText(DEFAULT_PRESET)
         self._remove_audio_check.setChecked(False)
         self._audio_edit.clear()
-        self._append_log("转换参数已重置为默认值")
+        self._log.append_timestamped("转换参数已重置为默认值")
 
     # ------------------------------------------------------------------ #
     # 生命周期

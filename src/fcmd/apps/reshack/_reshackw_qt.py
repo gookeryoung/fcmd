@@ -173,7 +173,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._build()
         self._refresh_recent_menu()
         self._set_busy(False)
-        self._append_log("打开 PE 文件（exe/dll/sys）后，在左侧选择资源查看预览。")
+        self._log.append_timestamped("打开 PE 文件（exe/dll/sys）后，在左侧选择资源查看预览。")
         if self._settings.file_path:
             path = Path(self._settings.file_path).expanduser()
             if is_pe_file(path):
@@ -363,12 +363,6 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     # 基础交互
     # ------------------------------------------------------------------ #
-    def _append_log(self, message: str) -> None:
-        """向日志区追加带时间戳的一行。"""
-        from datetime import datetime
-
-        self._log.append(f"{datetime.now():%H:%M:%S} {message}")
-
     def _set_status(self, text: str, kind: str = "") -> None:
         """更新状态栏，并按 Success / Danger 切换语义色（空串恢复默认）。"""
         self.status_label.setText(text)
@@ -460,7 +454,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         self._set_busy(True)
         self._set_status(f"正在加载 {path.name}…")
-        self._append_log(f"打开 {path}")
+        self._log.append_timestamped(f"打开 {path}")
         self._start_task(_work_load, (path,))
 
     def _start_task(self, target: Any, args: tuple[Any, ...]) -> None:
@@ -486,7 +480,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._set_busy(False)
         self._bridge = None
         self._set_status("操作失败", "Danger")
-        self._append_log(f"错误：{message}")
+        self._log.append_timestamped(f"错误：{message}")
         QMessageBox.critical(self, "操作失败", message)
 
     def _apply_loaded(self, event: tuple[Any, ...]) -> None:
@@ -504,7 +498,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._settings.recent_files = add_recent_file(self._settings.recent_files, path)
         save_settings(self._settings, self._settings_path)
         self._refresh_recent_menu()
-        self._append_log(f"已加载 {len(resources)} 个资源")
+        self._log.append_timestamped(f"已加载 {len(resources)} 个资源")
         self._set_status(f"{path.name}：{len(resources)} 个资源")
         self._bridge = None
         self._set_busy(False)
@@ -513,7 +507,9 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         _, old_size, new_size, backup, info, resources = event
         self._populate_tree(resources)
         self._update_file_info(info)
-        self._append_log(f"已替换资源：{format_file_size(old_size)} -> {format_file_size(new_size)}，备份 {backup}")
+        self._log.append_timestamped(
+            f"已替换资源：{format_file_size(old_size)} -> {format_file_size(new_size)}，备份 {backup}"
+        )
         self._set_status("资源替换完成", "Success")
         self._bridge = None
         self._set_busy(False)
@@ -521,7 +517,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _apply_exported(self, event: tuple[Any, ...]) -> None:
         _, directory, exported, total = event
-        self._append_log(f"已导出 {exported}/{total} 个资源 -> {directory}")
+        self._log.append_timestamped(f"已导出 {exported}/{total} 个资源 -> {directory}")
         self._set_status(f"已导出 {exported}/{total} 个资源", "Success")
         self._bridge = None
         self._set_busy(False)
@@ -548,7 +544,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         except OSError as exc:
             QMessageBox.critical(self, "导出失败", str(exc))
             return
-        self._append_log(f"已导出 {resource.type_name} #{resource.name_id} -> {output}")
+        self._log.append_timestamped(f"已导出 {resource.type_name} #{resource.name_id} -> {output}")
         self._set_status(f"已导出 {output.name}")
 
     def _replace_selected(self) -> None:
@@ -627,7 +623,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.setWindowTitle(f"PE 资源编辑器 v{__version__} - {info.path.name}")
         bits = "64 位" if info.is_64bit else "32 位"
         kind = "DLL" if info.is_dll else "EXE"
-        self._append_log(f"{kind} / {info.machine} / {bits} / {info.subsystem}")
+        self._log.append_timestamped(f"{kind} / {info.machine} / {bits} / {info.subsystem}")
 
     def _clear_preview(self) -> None:
         self._text_preview.setPlainText("")
@@ -687,7 +683,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._preview_image is None:
             return
         if copy_image_to_clipboard(self._preview_image):
-            self._append_log("已复制预览图像到剪贴板")
+            self._log.append_timestamped("已复制预览图像到剪贴板")
             self._set_status("图像已复制到剪贴板", "Success")
         else:
             QMessageBox.warning(self, "复制失败", "无法写入剪贴板（需要 Windows 并安装 Pillow）。")
@@ -717,7 +713,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, "保存失败", str(exc))
             return
-        self._append_log(f"已保存预览图像 -> {output}")
+        self._log.append_timestamped(f"已保存预览图像 -> {output}")
         self._set_status(f"已保存 {output.name}")
 
     def _show_image_message(self, message: str) -> None:

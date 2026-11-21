@@ -166,7 +166,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.add(self._build_folders_card())
         self.add(self._build_options_card())
         self.add(self._build_results_splitter(), 1)
-        self._append_log("选择左右目录后点击「比较」，确认结果与计划再执行「同步」。")
+        self._log.append_timestamped("选择左右目录后点击「比较」，确认结果与计划再执行「同步」。")
 
     def _build_folders_card(self) -> Card:
         """左右目录两行，右侧「交换左右」纵向居中。"""
@@ -349,12 +349,6 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             return None
         return left, right, self._collect_options()
 
-    def _append_log(self, message: str) -> None:
-        """追加一行带时间戳的日志。"""
-        from datetime import datetime
-
-        self._log.append(f"{datetime.now():%H:%M:%S} {message}")
-
     def _set_busy(self, busy: bool) -> None:
         """运行期间禁用动作按钮，避免重复提交。"""
         self._busy = busy
@@ -374,7 +368,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log.clear()
         self._set_busy(True)
         self.set_status("正在比较…")
-        self._append_log("正在比较…")
+        self._log.append_timestamped("正在比较…")
         bridge = self._new_bridge()
         submit(_work_compare, left, right, options, self._sync_mode(), bridge, on_error=self._on_worker_error)
 
@@ -401,7 +395,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log.clear()
         self._set_busy(True)
         self.set_status("正在同步…")
-        self._append_log("正在同步…")
+        self._log.append_timestamped("正在同步…")
         bridge = self._new_bridge()
         submit(
             _work_sync,
@@ -431,22 +425,22 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         payload = event[1] if len(event) > 1 else None
         if kind == "progress" and isinstance(payload, tuple):
             done, total, action = payload
-            self._append_log(f"[{done}/{total}] {action.action_text} {action.relative}")
+            self._log.append_timestamped(f"[{done}/{total}] {action.action_text} {action.relative}")
         elif kind == "compare_done" and isinstance(payload, tuple):
             result, plan = payload
             self._apply_result(result, plan)
-            self._append_log(f"比较完成：{self._summary(result, plan)}")
+            self._log.append_timestamped(f"比较完成：{self._summary(result, plan)}")
             self.set_status("比较完成")
             self._finish()
         elif kind == "sync_done" and isinstance(payload, tuple):
             result, plan, report = payload
             self._apply_result(result, plan)
-            self._append_log(format_sync_report(report))
+            self._log.append_timestamped(format_sync_report(report))
             self.set_status("同步完成（有失败）" if report.errors else "同步完成")
             self._finish()
         elif kind == "error" and payload is not None:
             message = str(payload)
-            self._append_log(f"错误：{message}")
+            self._log.append_timestamped(f"错误：{message}")
             self.set_status("操作失败")
             self._finish()
             QMessageBox.critical(self, "操作失败", message)
@@ -537,7 +531,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._exclude.setText(loaded.exclude)
         self._skip_hidden.setChecked(loaded.skip_hidden)
         self._show_equal.setChecked(loaded.show_equal)
-        self._append_log(f"已载入配置：{selected}")
+        self._log.append_timestamped(f"已载入配置：{selected}")
 
     def _save_profile(self) -> None:
         """把当前左右目录与选项保存到 JSON 文件。"""
@@ -547,7 +541,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if not Path(selected).suffix:
             selected = f"{selected}.json"
         save_settings(self._current_settings(self._settings.geometry), Path(selected))
-        self._append_log(f"已保存配置：{selected}")
+        self._log.append_timestamped(f"已保存配置：{selected}")
 
     # ------------------------------------------------------------------ #
     # 生命周期
