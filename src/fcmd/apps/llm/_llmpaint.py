@@ -431,6 +431,7 @@ def pending_downloads(roots: Iterable[Path]) -> tuple[Path, ...]:
 
     这类文件不是可用模型（sd-server 无法加载），但把名字列出来能说清「为什么
     启动不了」，比只报「请选择主模型」有用得多。按文件大小降序返回。
+    最终文件已存在的 ``.part`` 是遗留分片，不算未完成，避免误报下载中。
     """
     found: list[tuple[int, Path]] = []
     for root in roots:
@@ -440,6 +441,8 @@ def pending_downloads(roots: Iterable[Path]) -> tuple[Path, ...]:
         for path in directory.rglob("*.part"):
             try:
                 if not path.is_file():
+                    continue
+                if path.with_name(path.name[: -len(".part")]).is_file():
                     continue
                 found.append((path.stat().st_size, path))
             except OSError:  # pragma: no cover - 扫描期间文件被删除

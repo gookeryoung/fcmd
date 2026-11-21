@@ -974,6 +974,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _send_paint(self, prompt: str) -> None:
         """用当前画图配置出图，结果作为图片消息追加到当前对话。"""
         settings = self.paint_settings()
+        # 提示词来自 composer，不在持久化设置里：校验与出图都用这一份。
+        settings["prompt"] = prompt
         try:
             _llmpaint.validate_components(components_from_settings(settings))
             _llmpaint.validate_request(request_from_settings(settings))

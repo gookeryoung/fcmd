@@ -108,7 +108,7 @@ __all__ = [
 def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) -> None:
     """改写按钮文字并按新文案更新图标（保留原色调，未命中时清空图标）。
 
-    动态文案（启动 / 停止服务、下载其他量化、转换中等）不能只 ``setText``：
+    动态文案（启动 / 停止服务、下载中…、转换中等）不能只 ``setText``：
     否则图标还停在创建时那个动作上，看起来与文字不匹配。
     """
     from PySide6.QtGui import QIcon

@@ -237,17 +237,15 @@ def test_model_item_row_expands_inline_detail() -> None:
     owner_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), owner="Qwen", installed=True)
     owner_labels = [label for label in owner_row.findChildren(QLabel) if label.objectName() == "OwnerTag"]
     assert [label.text() for label in owner_labels] == ["Qwen"]
-    installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True, deletable=True)
-    assert installed_row.download_button.text() == "下载其他量化"
-    assert installed_row.download_button.property("fcmdIconName") == "download"
-    assert installed_row.download_button.property("fcmdIconTone") == "success"
-    assert installed_row.delete_button is not None
-    assert installed_row.delete_button.text() == "删除"
+    installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True)
+    assert installed_row.download_button is None
+    assert not hasattr(installed_row, "delete_button")
     local_only = _ModelItemRow(ModelSummary(repo="Qwen3.8-27B"), installed=True, downloadable=False)
     assert local_only.download_button is None
+    assert local_only.downloadable is False
+    assert installed_row.downloadable is True
     assert "仅本地" in {label.text() for label in local_only.findChildren(QLabel, "StatusTag")}
-    assert installed_row.download_button.objectName() == "InstalledButton"
-    assert installed_row.download_button.isEnabled()
+    assert "已安装" in {label.text() for label in installed_row.findChildren(QLabel, "StatusTag")}
     convertible_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), convertible=True)
     assert convertible_row.convert_button is not None
     assert convertible_row.convert_button.text() == "转换"
@@ -295,7 +293,9 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert "+2" in many_tag_texts
     assert len(many_tag_texts) == 5
 
-    partial_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), incomplete=True, progress_text="已下载 42%")
+    partial_row = _ModelItemRow(
+        ModelSummary(repo="Qwen/demo"), installed=True, incomplete=True, progress_text="已下载 42%"
+    )
     assert partial_row.download_button.text() == "继续下载"
     assert partial_row.download_button.isEnabled()
     progress = partial_row.findChild(QLabel, "DownloadProgress")
@@ -355,6 +355,47 @@ def test_model_detail_view_reset_and_metadata() -> None:
     view._files_failed("Qwen/demo", "超时")
     assert view.files_table.rowCount() == 0
     assert "超时" in view.files_status.text()
+
+
+def test_model_detail_view_downloads_selected_files() -> None:
+    from PySide6.QtWidgets import QApplication
+
+    from fcmd.apps.llm.llmdown import ModelFile
+
+    QApplication.instance() or QApplication([])
+    picked: list[tuple[str, tuple[ModelFile, ...]]] = []
+    view = _ModelDetailView(lambda _repo: [], lambda repo, files: picked.append((repo, files)))
+    view.reset("Qwen/demo")
+    view._files_ready(
+        "Qwen/demo",
+        [
+            ModelFile("split_files/diffusion_models/model-Q4_K_M.gguf", 1024),
+            ModelFile("split_files/vae/ae.safetensors", 2048),
+        ],
+    )
+    assert view.files_download_button.isEnabled() is False
+    view.files_table.selectRow(1)
+    assert view.files_download_button.isEnabled() is True
+    view.files_download_button.click()
+    assert len(picked) == 1
+    assert picked[0][0] == "Qwen/demo"
+    assert [file.path for file in picked[0][1]] == ["split_files/vae/ae.safetensors"]
+
+
+def test_model_detail_view_skips_online_files_for_local_only() -> None:
+    """仅本地模型不读在线文件清单，也不弹下载按钮。"""
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    loads: list[str] = []
+    view = _ModelDetailView(lambda repo: loads.append(repo) or [])
+    view.reset("Qwen3.8-27B", online=False)
+    assert "仅本地" in view.error.text()
+    view._ensure_files()
+    assert loads == []
+    assert view.files_table.rowCount() == 0
+    assert "仅本地" in view.files_status.text()
+    assert view.files_download_button.isHidden() is True
 
 
 # ---------------------------------------------------------------------- #
@@ -691,6 +732,8 @@ def test_paint_pending_downloads_lists_part_files(tmp_path: Path) -> None:
     small.write_bytes(b"x" * 4)
     big.write_bytes(b"x" * 64)
     (tmp_path / "done.gguf").write_bytes(b"x" * 8)
+    # 最终文件已存在的遗留分片不算未完成。
+    (tmp_path / "done.gguf.part").write_bytes(b"x" * 8)
     assert pending_downloads([tmp_path]) == (big, small)
     assert pending_downloads([tmp_path / "missing"]) == ()
 

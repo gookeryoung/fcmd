@@ -76,7 +76,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 - `tone` 必须与文字配色一致：`button()` 自动按变体映射（primary → `on_accent`、
   danger → `danger`、ghost → `muted`，其余 `text`）；侧边栏页图标选中用 `accent`、
   未选中用 `muted`；行卡展开箭头与图标按钮用 `muted`。
-- 动态改按钮文案（启动 / 停止服务、下载其他量化、转换 / 量化中、已启动等）必须用
+- 动态改按钮文案（启动 / 停止服务、下载中…、转换 / 量化中、已启动等）必须用
   `widgets.set_button_text()`：它按新文案重新推断图标并沿用 / 覆盖色调，避免图标
   停留在创建时的旧动作；`InstalledButton` 等绿色变体显式传 `tone="success"`。
 - 新增按钮 / 侧边栏项时优先复用上面两条入口，不手工 `setIcon(QIcon(path))`。

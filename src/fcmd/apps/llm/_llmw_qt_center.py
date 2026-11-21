@@ -156,7 +156,6 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     convertRequested = Signal(str)
     quantizeRequested = Signal(str)
     startRequested = Signal(str)
-    deleteRequested = Signal(str)
 
     def __init__(  # noqa: PLR0912, PLR0913 - 行状态位由列表统一透传
         self,
@@ -178,7 +177,6 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         owner: str = "",
         size_text: str | None = None,
         same_name: int = 1,
-        deletable: bool = False,
         progress_text: str = "",
     ) -> None:
         super().__init__(parent)
@@ -188,9 +186,7 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             metrics = size_text
         self.serve_path = serve_path
         self._expanded = False
-        self._installed = installed
         self._downloadable = downloadable
-        self._deletable = deletable
         self._convertible = convertible
         self._converted = converted
         self._convert_blocked = convert_blocked
@@ -311,22 +307,13 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.start_button.clicked.connect(lambda: self.startRequested.emit(self.repo))
             header_row.addWidget(self.start_button, 0)
         self.download_button: Any = None
-        if downloadable:
+        # 已安装且无 .part 的模型视为已全部下载完成：不再显示下载按钮。
+        if downloadable and not (installed and not incomplete):
             self.download_button = button("继续下载" if incomplete else "下载")
-            if installed and not incomplete:
-                self.download_button.setObjectName("InstalledButton")
-                set_button_text(self.download_button, "下载其他量化", tone="success")
-                self.download_button.setToolTip("仓库已有本地文件；可继续选择其他量化（如 UD-Q4_K_XL）")
-            elif incomplete:
+            if incomplete:
                 self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
             self.download_button.clicked.connect(lambda: self.downloadRequested.emit(self.repo))
             header_row.addWidget(self.download_button, 0)
-        self.delete_button: Any = None
-        if deletable:
-            self.delete_button = button("删除", kind="danger")
-            self.delete_button.setToolTip("删除本地模型目录（不可恢复）")
-            self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self.repo))
-            header_row.addWidget(self.delete_button, 0)
         self.expand_button = icon_button("", tooltip="展开详细信息")
         self.expand_button.setIconSize(QSize(16, 16))
         _set_icon(self.expand_button, "chevron-down", tone="muted")
@@ -345,6 +332,11 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     def is_expanded(self) -> bool:
         return self._expanded
 
+    @property
+    def downloadable(self) -> bool:
+        """能否对应到远程仓库；仅本地条目为 False，详情不读在线清单。"""
+        return self._downloadable
+
     def set_expanded(self, expanded: bool) -> None:
         """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
         self._expanded = expanded
@@ -354,22 +346,14 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
-        """下载中禁用；已安装行仍可下载其它量化，文案与普通行区分。"""
+        """下载中禁用；未完成显示「继续下载」，未安装显示「下载」。"""
         if self.download_button is None:
             return
         self.download_button.setEnabled(not busy)
-        if self._installed and not self._incomplete:
-            set_button_text(self.download_button, "下载中…" if active else "下载其他量化", tone="success")
-            return
         set_button_text(
             self.download_button,
             "下载中…" if active else ("继续下载" if self._incomplete else "下载"),
         )
-
-    def set_delete_state(self, *, busy: bool) -> None:
-        """删除按钮随其它任务统一禁用，避免删除正在下载 / 转换的目录。"""
-        if self.delete_button is not None:
-            self.delete_button.setEnabled(not busy)
 
     def set_convert_state(self, *, busy: bool, active: bool) -> None:
         """转换中禁用按钮；已转换行保持不可点击的「已转换」。"""
@@ -418,13 +402,17 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
     def __init__(
         self,
         load_files: Callable[[str], list[ModelFile]] | None = None,
+        download_files: Callable[[str, tuple[ModelFile, ...]], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.repo: str | None = None
         self._load_files = load_files
+        self._download_files = download_files
         self._files_repo: str | None = None
         self._files_loading = False
+        self._online = True
+        self._files: dict[str, ModelFile] = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 10)
         layout.setSpacing(6)
@@ -496,30 +484,53 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.files_table.verticalHeader().setVisible(False)
         self.files_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.files_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.files_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.files_table.setAlternatingRowColors(True)
         self.files_table.setShowGrid(False)
         header = self.files_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.files_table.setFixedHeight(220)
+        self.files_table.itemSelectionChanged.connect(self._sync_files_actions)
         files_layout.addWidget(self.files_table)
+
+        files_actions = QHBoxLayout()
+        files_actions.setContentsMargins(0, 0, 0, 0)
+        files_actions.addWidget(hint_label("Ctrl / Shift 多选后可单独下载（如 VAE / 文本编码器）", wrap=False))
+        files_actions.addStretch(1)
+        self.files_download_button = button("下载所选", kind="ghost")
+        self.files_download_button.setToolTip("只下载文件列表里选中的文件，不影响已下载的量化")
+        self.files_download_button.setVisible(False)
+        self.files_download_button.clicked.connect(self._download_selected)
+        files_actions.addWidget(self.files_download_button)
+        files_layout.addLayout(files_actions)
         self.tabs.addTab(files_page, "文件列表")
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
     # ------------------------------------------------------------------ #
     # 详细信息
     # ------------------------------------------------------------------ #
-    def reset(self, repo: str) -> None:
-        """切换模型时清空旧内容，等后台详情回填；文件清单按需重新拉取。"""
+    def reset(self, repo: str, online: bool = True) -> None:
+        """切换模型时清空旧内容，等后台详情回填；文件清单按需重新拉取。
+
+        ``online=False``（仅本地模型）时不读在线清单：仓库名可能只是本地目录名，
+        请求必然失败，文件列表只提示「仅本地」而不报错。
+        """
         self.repo = repo
+        self._online = online
         self.error.setVisible(False)
         self.error.setText("")
+        if not online:
+            self.error.setText("仅本地模型：无法确定远程仓库，不读取在线详情与文件清单。")
+            self.error.setVisible(True)
         for value in self.meta_values.values():
             value.setText("-")
         self._files_repo = None
+        self._files = {}
         self.files_table.setRowCount(0)
         self.files_status.setText("")
         self.files_status.setVisible(False)
+        self._sync_files_actions()
         if self.tabs.currentIndex() == 1:
             self._ensure_files()
 
@@ -550,6 +561,14 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         repo = self.repo
         if not repo or self._files_loading or self._files_repo == repo:
             return
+        if not self._online:
+            self._files = {}
+            self.files_table.setRowCount(0)
+            self.files_status.setText("仅本地模型：无法确定远程仓库，不读取在线文件清单。")
+            self.files_status.setVisible(True)
+            self._sync_files_actions()
+            self.heightChanged.emit()
+            return
         if self._load_files is None:
             self.files_status.setText("当前没有可用的文件清单来源。")
             self.files_status.setVisible(True)
@@ -573,6 +592,7 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         if repo != self.repo:
             return
         self.files_table.setRowCount(0)
+        self._files = {}
         total = 0
         for file in files:
             row = self.files_table.rowCount()
@@ -580,6 +600,7 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             name = QTableWidgetItem(str(file.path))
             name.setToolTip(str(file.path))
             self.files_table.setItem(row, 0, name)
+            self._files[str(file.path)] = file
             size = int(getattr(file, "size", 0) or 0)
             total += size
             size_item = QTableWidgetItem(human_size(size) if size else "-")
@@ -588,16 +609,44 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         summary = f"共 {len(files)} 个文件" + (f" · 合计 {human_size(total)}" if total else "")
         self.files_status.setText(summary)
         self.files_status.setVisible(True)
+        self._sync_files_actions()
         self.heightChanged.emit()
 
     def _files_failed(self, repo: str, message: str) -> None:
         if repo != self.repo:
             return
         self._files_repo = None
+        self._files = {}
         self.files_table.setRowCount(0)
         self.files_status.setText(f"读取文件清单失败：{message}")
         self.files_status.setVisible(True)
+        self._sync_files_actions()
         self.heightChanged.emit()
+
+    def _selected_files(self) -> tuple[ModelFile, ...]:
+        """文件列表当前选中的文件（按行号排序，路径从 ``_files`` 映射取回）。"""
+        model = self.files_table.selectionModel()
+        rows = sorted({index.row() for index in model.selectedRows()}) if model is not None else []
+        selected: list[ModelFile] = []
+        for row in rows:
+            item = self.files_table.item(row, 0)
+            file = self._files.get(item.text()) if item is not None else None
+            if file is not None:
+                selected.append(file)
+        return tuple(selected)
+
+    def _sync_files_actions(self) -> None:
+        """有在线清单来源且选中了文件时才允许「下载所选」。"""
+        available = self._online and self._download_files is not None and bool(self._files)
+        self.files_download_button.setVisible(self._online and self._download_files is not None)
+        self.files_download_button.setEnabled(available and bool(self._selected_files()))
+
+    def _download_selected(self) -> None:
+        repo = self.repo
+        files = self._selected_files()
+        if not repo or not files or self._download_files is None:
+            return
+        self._download_files(repo, files)
 
 
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
@@ -643,6 +692,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._seen_items: dict[str, ModelSummary] = {}
         self._list_cache = ModelListCache()
         self._scanning_installed = False
+        self._rescan_installed = False
         self._downloading = False
         self._listing_quant = False
         self._stop_requested = False
@@ -784,7 +834,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.download_status.setVisible(False)
         layout.addWidget(self.download_status)
 
-        self.detail_view = _ModelDetailView(self._load_repo_files, self)
+        self.detail_view = _ModelDetailView(self._load_repo_files, self._download_selected_files, self)
         self.detail_view.heightChanged.connect(self._on_detail_height_changed)
         self.detail_view.setVisible(False)
 
@@ -945,8 +995,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
         扫描可能遍历大量 GGUF 头与转换产物，放到线程池执行；完成后一次性
         套用快照并重绘当前结果，切页 / 下载完成时界面不会被同步扫描卡住。
+        扫描进行中再次请求（典型场景：刚下完一个模型）先记下标记，
+        当前扫描结束后立即重扫，避免应用下载前的旧快照而停在未下载状态。
         """
         if self._scanning_installed:
+            self._rescan_installed = True
             return
         self._scanning_installed = True
         self._begin_loading("installed", "正在扫描本地模型…")
@@ -1058,6 +1111,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def _installed_finished(self) -> None:
         self._scanning_installed = False
         self._end_loading("installed")
+        if self._rescan_installed:
+            # 下载完成 / 切页发生在扫描途中：旧快照不含新文件，结束后续一次。
+            self._rescan_installed = False
+            self.refresh_installed()
 
     # -- 加载提示 ------------------------------------------------------ #
     def _begin_loading(self, key: str, text: str) -> None:
@@ -1408,14 +1465,12 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 if installed and key in self._installed_models and self._installed_models[key].storage_size
                 else None,
                 same_name=same_name_counts.get(key, 1),
-                deletable=installed or incomplete,
             )
             row.toggleRequested.connect(self._on_row_toggle)
             row.downloadRequested.connect(self.start_download)
             row.convertRequested.connect(self.start_convert)
             row.quantizeRequested.connect(self._on_quantize_requested)
             row.startRequested.connect(self._on_quick_serve)
-            row.deleteRequested.connect(self.delete_model)
             list_item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.models.setItemWidget(list_item, row)
         self.models.sync_row_widths()
@@ -1463,6 +1518,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 errors.append(f"{candidate}: {exc}")
         raise ModelToolError("；".join(errors[-2:]) or "两个源都不可用")
 
+    def _download_selected_files(self, repo: str, files: tuple[ModelFile, ...]) -> None:
+        """按文件列表里选中的文件下载（VAE / 文本编码器等非量化权重）。"""
+        self._log(f"按文件列表下载 {repo} 的 {len(files)} 个文件")
+        self.start_download(repo, files=files)
+
     def _on_detail_height_changed(self) -> None:
         """详情页签内容变化（切页签 / 文件清单加载完）后重算展开行高度。"""
         if self._expanded_row is not None:
@@ -1486,7 +1546,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._expanded_row = row
         self._update_row_height(row)
         if self.current_repo != row.repo:
-            self.load_repo(row.repo)
+            self.load_repo(row.repo, online=row.downloadable)
 
     def _expand_repo(self, repo: str) -> None:
         for index in range(self.models.count()):
@@ -1524,14 +1584,20 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 self.models.sync_row_widths()
                 return
 
-    def load_repo(self, repo: str) -> None:
-        """加载仓库详情元数据；世代号防止旧请求覆盖新选择。"""
+    def load_repo(self, repo: str, online: bool = True) -> None:
+        """加载仓库详情元数据；世代号防止旧请求覆盖新选择。
+
+        ``online=False``（仅本地模型）时不发任何网络请求，详情只标出仅本地。
+        """
         self._detail_generation += 1
         generation = self._detail_generation
         self.current_repo = repo
         self.current_info = None
-        self.detail_view.reset(repo)
+        self.detail_view.reset(repo, online=online)
         self._update_row_height(self._expanded_row)
+        if not online:
+            self._log(f"{repo} 是仅本地模型，跳过在线详情与文件清单")
+            return
         submit(
             self._detail_work,
             repo,
@@ -1581,7 +1647,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 )
                 running = row.serve_path is not None and self.state.is_running(row.serve_path)
                 row.set_serve_state(busy=busy or self.state.busy, running=running)
-                row.set_delete_state(busy=busy or self.state.busy)
 
     def _begin_quant_choice(self, repo: str, source: str) -> None:
         """后台读取文件清单，稍后弹出量化选择（不阻塞 GUI）。"""
@@ -1618,27 +1683,28 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._log(f"读取量化清单失败 {repo}: {message}")
 
     def _choose_quant(self, repo: str, options: tuple[QuantOption, ...]) -> None:
-        """量化选择：唯一选项直接下载，多选项弹出列表，无量化回退全量。"""
+        """下载选择：默认整仓全部文件，也可在弹窗里只下某个量化。"""
         self._listing_quant = False
         self._sync_download_buttons()
         if not options:
+            self._log(f"{repo} 没有量化选项，下载整仓")
             self.start_download(repo, files=())
             return
-        if len(options) == 1:
-            self._log(f"{repo} 只有一个量化 {options[0].label}，直接下载")
-            self.start_download(repo, files=options[0].files)
-            return
-        labels = [option.display for option in options]
-        choice, accepted = QInputDialog.getItem(self, "选择量化", "下载哪个量化：", labels, 0, False)
+        labels = ["全部文件（整仓，避免漏项）", *(option.display for option in options)]
+        choice, accepted = QInputDialog.getItem(self, "选择下载内容", "下载哪些文件：", labels, 0, False)
         if not accepted or not choice:
             self.download_status.setVisible(False)
             self.stop_download_button.setVisible(False)
             self.download_bar.setValue(0)
             self.download_text.clear()
-            self.state.status(f"{repo} · 已取消量化选择")
-            self._log(f"已取消下载 {repo}：未选择量化")
+            self.state.status(f"{repo} · 已取消下载")
+            self._log(f"已取消下载 {repo}：未选择下载内容")
             return
-        index = labels.index(choice)
+        if choice == labels[0]:
+            self._log(f"下载 {repo} 全部文件")
+            self.start_download(repo, files=())
+            return
+        index = labels.index(choice) - 1
         option = options[index]
         self._log(f"选择下载 {repo} · {option.label}")
         self.start_download(repo, files=option.files)
@@ -1695,15 +1761,20 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._log(f"获取 {repo} 的 {source} 文件清单…")
         selection = select_source(repo, source)  # type: ignore[arg-type]
         self._log(f"选用源 {selection.source}，仓库共 {len(selection.files)} 个文件")
-        selected = filter_files(
-            list(selection.files),
-            _llmw_models.parse_patterns(include),
-            _llmw_models.parse_patterns(exclude),
-        )
         if only_paths:
+            # 显式选中文件（文件列表 / 量化选项）优先于设置里的包含 / 排除掩码，
+            # 否则选中的 VAE / 文本编码器可能被掩码过滤掉。
             wanted = set(only_paths)
-            selected = [file for file in selected if file.path in wanted]
+            selected = [file for file in selection.files if file.path in wanted]
+        else:
+            selected = filter_files(
+                list(selection.files),
+                _llmw_models.parse_patterns(include),
+                _llmw_models.parse_patterns(exclude),
+            )
         if not selected:
+            if only_paths:
+                raise ModelToolError("选中的文件已不在仓库清单里，请刷新后重试")
             raise ModelToolError("过滤后没有文件，请检查设置中的包含 / 排除掩码")
         target = dest / repo
         self._log(f"待下载 {len(selected)} 个文件，目标 {target}")
@@ -1964,8 +2035,6 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.download_bar.setValue(100)
         self.download_text.setText(f"下载完成：{self._active_repo or target}")
         self._log(f"下载完成: {target}")
-        self.refresh_installed()
-        self._render_results()
         self.downloadFinished.emit()
 
     def _download_error(self, repo: str, message: str) -> None:
@@ -1977,7 +2046,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._active_repo = None
         self.stop_download_button.setVisible(False)
         self.state.persist()
-        # 成功 / 失败 / 手动停止都会走到这里：重新扫描 .part 大小并刷新进度标签。
+        # 成功 / 失败 / 手动停止都会走到这里：重扫模型目录（成功后行会切到
+        # 已下载 / 已安装状态；中途结束则重算 .part 进度），再重绘当前结果。
         self.refresh_installed()
         self._render_results()
         self._sync_download_buttons()

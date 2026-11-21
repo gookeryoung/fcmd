@@ -764,6 +764,89 @@ def _has_direct_file(path: Path) -> bool:
     return any(entry.is_file() and not entry.is_symlink() for entry in path.iterdir())
 
 
+_MANIFEST_NAME = ".fcmd-download.json"
+"""下载完成记录：每个文件的期望大小 / sha256 与完成时间。"""
+
+_MANIFEST_VERSION = 1
+
+
+def download_manifest_path(dest: Path) -> Path:
+    """下载完成记录路径（位于模型目录内，随目录一起删除）。"""
+    return dest / _MANIFEST_NAME
+
+
+def read_download_manifest(dest: Path) -> dict[str, Any] | None:
+    """读取下载完成记录；文件缺失、损坏或格式不符时返回 ``None``。"""
+    try:
+        data = json.loads(download_manifest_path(dest).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and isinstance(data.get("files"), dict) else None
+
+
+def write_download_manifest(  # noqa: PLR0913, PLR0917 - 记录字段成组传入
+    dest: Path,
+    repo: str,
+    source: str,
+    revision: str | None,
+    files: Sequence[ModelFile],
+    digests: dict[str, str] | None = None,
+) -> Path:
+    """全部文件下载成功后写入完成记录（大小 + sha256），供下次启动判定已完成。"""
+    digests = digests or {}
+    entries: dict[str, dict[str, Any]] = {}
+    for file in files:
+        target = dest / file.path
+        try:
+            size = target.stat().st_size
+        except OSError:
+            size = int(file.size or 0)
+        entries[file.path] = {
+            "size": size,
+            "sha256": (digests.get(file.path) or file.sha256 or "").lower(),
+        }
+    payload = {
+        "version": _MANIFEST_VERSION,
+        "repo": repo,
+        "source": source,
+        "revision": _source_revision(source, revision),
+        "completed_at": datetime.now().isoformat(timespec="seconds"),
+        "files": entries,
+    }
+    path = download_manifest_path(dest)
+    tmp = path.with_name(path.name + ".tmp")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+    return path
+
+
+def manifest_files_complete(dest: Path, manifest: dict[str, Any] | None) -> bool:
+    """记录里的文件是否都在且大小一致（启动时快速判定，不重算 sha256）。"""
+    files = (manifest or {}).get("files")
+    if not isinstance(files, dict) or not files:
+        return False
+    for rel_path, info in files.items():
+        if not isinstance(info, dict):
+            return False
+        target = dest / str(rel_path)
+        if not target.is_file():
+            return False
+        expected = info.get("size")
+        if isinstance(expected, int) and expected > 0:
+            try:
+                if target.stat().st_size != expected:
+                    return False
+            except OSError:
+                return False
+    return True
+
+
+def _is_stale_part(path: Path) -> bool:
+    """``*.part`` 是否是遗留分片（同名最终文件已存在时视为已完成）。"""
+    return path.name.endswith(".part") and path.with_name(path.name[: -len(".part")]).is_file()
+
+
 def scan_local_models(root: Path) -> list[LocalModel]:
     """扫描 ``root`` 下已下载的模型目录。
 
@@ -791,17 +874,21 @@ def scan_local_models(root: Path) -> list[LocalModel]:
             partial = 0
             weights = 0
             for item in model_dir.rglob("*"):
-                if item.is_symlink() or not item.is_file():
+                if item.is_symlink() or not item.is_file() or _is_stale_part(item):
                     continue
                 try:
-                    size += item.stat().st_size
+                    item_size = item.stat().st_size
                 except OSError:
                     continue
+                size += item_size
                 files += 1
                 if item.name.endswith(".part"):
                     partial += 1
                 elif item.suffix.casefold() in _WEIGHT_SUFFIXES:
                     weights += 1
+            # 有完成记录且记录里的文件都在、大小一致：忽略残留 .part，直接算已完成。
+            if partial and manifest_files_complete(model_dir, read_download_manifest(model_dir)):
+                partial = 0
             if files:
                 found.append(LocalModel(repo, model_dir, size, files, partial, weights))
     return found
@@ -882,15 +969,45 @@ def filter_files(
     return selected
 
 
+_COMPANION_SUFFIXES = frozenset({".safetensors", ".ckpt", ".sft", ".pth"})
+"""随量化一起下载的组件权重后缀（GGUF 之外的 VAE / 文本编码器）。"""
+
+_COMPANION_ROLES = frozenset({"vae", "llm", "clip_l", "clip_g", "t5xxl"})
+"""组件角色：只有这些角色会随量化 GGUF 自动下载。"""
+
+
+def companion_files(files: Sequence[ModelFile]) -> list[ModelFile]:
+    """挑出随量化一起下载的组件权重（VAE / CLIP / T5 / 文本编码器）。
+
+    Comfy-Org 等仓库把扩散模型拆成 ``diffusion_models`` + ``vae`` +
+    ``text_encoders``，只拉量化 GGUF 会缺 VAE / 文本编码器而无法运行。这里按
+    :func:`fcmd.apps.llm._llmpaint.classify_role` 的角色识别（父目录优先）补上
+    这些组件，同时排除未量化主模型（体积与 GGUF 重复）和 LoRA 等可选权重。
+    """
+    # 惰性导入：画图侧的扫描逻辑较重，不能让下载命令的冷启动连带加载
+    from fcmd.apps.llm._llmpaint import classify_role
+
+    selected: list[ModelFile] = []
+    for file in files:
+        path = Path(file.path)
+        if path.suffix.lower() not in _COMPANION_SUFFIXES or "mmproj" in path.name.lower():
+            continue
+        if classify_role(path) in _COMPANION_ROLES:
+            selected.append(file)
+    return selected
+
+
 def quant_options(files: list[ModelFile]) -> tuple[QuantOption, ...]:
-    """把远端文件按量化标签聚合为可下载选项（分片 + mmproj）。
+    """把远端文件按量化标签聚合为可下载选项（分片 + mmproj + 组件权重）。
 
     只聚合已量化的 GGUF（含 ``UD-`` 动态变体）；没有量化标签的文件
-    （README / safetensors / F16 全量）不进入选项，供调用方回退到旧的全量过滤。
+    （README / 未量化 safetensors / F16 全量）不进入选项，供调用方回退到旧的全量过滤。
+    每个选项额外带上仓库里的 VAE / 文本编码器组件，避免只下分片导致模型跑不起来。
     """
     mmproj = [
         file for file in files if file.path.lower().endswith(".gguf") and "mmproj" in Path(file.path).name.lower()
     ]
+    companions = companion_files(files)
     groups: dict[str, list[ModelFile]] = {}
     tags: dict[str, QuantTag] = {}
     for file in files:
@@ -904,7 +1021,7 @@ def quant_options(files: list[ModelFile]) -> tuple[QuantOption, ...]:
     options: list[QuantOption] = []
     for label, shard_files in groups.items():
         tag = tags[label]
-        selected = sorted([*shard_files, *mmproj], key=lambda item: item.path)
+        selected = sorted([*shard_files, *mmproj, *companions], key=lambda item: item.path)
         options.append(
             QuantOption(
                 label=label,
@@ -946,27 +1063,27 @@ def select_download_files(  # noqa: PLR0913 - 下载选择参数成组传入
     file: str | None = None,
     all_quants: bool = False,
 ) -> list[ModelFile]:
-    """按量化 / 指定文件 / 旧 include-exclude 规则选择下载文件。"""
+    """按量化 / 指定文件 / 旧 include-exclude 规则选择下载文件。
+
+    未显式指定 ``quant`` / ``file`` 时默认整仓下载：量化选项只覆盖 GGUF 分片与
+    VAE / 文本编码器组件，仓库里的配置、分词器、LoRA 等文件可能被漏掉，
+    ``include`` / ``exclude`` 仍可用来做旧口径的超集过滤。
+    """
     if file is not None:
         wanted = file.replace("\\", "/")
         selected = [item for item in files if item.path == wanted or item.path.endswith("/" + wanted)]
         if not selected:
             raise ModelToolError(f"仓库中没有文件: {file}")
         return selected
-    options = quant_options(files)
     if quant is not None:
+        options = quant_options(files)
         option = find_quant_option(options, quant)
         if option is None:
             available = ", ".join(option.label for option in options) or "无"
             raise ModelToolError(f"未找到量化 {quant}；可选: {available}")
         return list(option.files)
-    if all_quants or include or exclude:
-        return filter_files(files, include, exclude)
-    if len(options) == 1:
-        return list(options[0].files)
-    if len(options) > 1:
-        available = ", ".join(option.label for option in options)
-        raise ModelToolError(f"仓库有多个量化：{available}；请用 --quant 指定，或用 --all-quants 全部下载")
+    # ``all_quants`` 与新默认一致（整仓），保留参数仅为兼容旧调用 / 命令行。
+    _ = all_quants
     return filter_files(files, include, exclude)
 
 
@@ -1056,6 +1173,15 @@ def _part_path(final: Path) -> Path:
     return final.with_name(final.name + ".part")
 
 
+def _cleanup_stale_parts(dest: Path, files: Sequence[ModelFile]) -> None:
+    """删除最终文件旁遗留的 ``.part``；仍在下载（最终文件不存在）的不动。"""
+    for file in files:
+        final = dest / file.path
+        part = _part_path(final)
+        if final.is_file() and part.is_file():
+            part.unlink(missing_ok=True)
+
+
 def _check_stop(should_stop: Callable[[], bool] | None) -> None:
     """外部要求取消时抛出 :class:`DownloadCancelled`。"""
     if should_stop is not None and should_stop():
@@ -1125,10 +1251,15 @@ def _download_one(  # noqa: PLR0913, PLR0917
     file_task: Any,
     overall_task: Any,
     should_stop: Callable[[], bool] | None = None,
-) -> None:
-    """下载单个文件：主源失败回退兜底源，完成后校验并原子替换。"""
+) -> str:
+    """下载单个文件：主源失败回退兜底源，完成后校验并原子替换。
+
+    返回该文件的校验码：优先用刚算出的 sha256，清单没给时为空串
+    （完成记录只按大小判定）。
+    """
     _check_stop(should_stop)
     final.parent.mkdir(parents=True, exist_ok=True)
+    digest = file.sha256
     urls = [file_url(repo, selection.source, revision, file.path)]
     if selection.fallback:
         urls.append(file_url(repo, selection.fallback, revision, file.path))
@@ -1164,8 +1295,10 @@ def _download_one(  # noqa: PLR0913, PLR0917
         if actual.lower() != file.sha256.lower():
             part.unlink(missing_ok=True)
             raise ModelToolError("sha256 校验失败，已删除损坏的 .part 文件")
+        digest = actual
 
     part.replace(final)
+    return digest
 
 
 def download_files(  # noqa: PLR0913, PLR0917
@@ -1208,6 +1341,7 @@ def download_files(  # noqa: PLR0913, PLR0917
     total = sum(f.size for f in files)
     pending: list[tuple[ModelFile, Path, Path, int]] = []
     done_bytes = 0
+    digests: dict[str, str] = {file.path: file.sha256 for file in files if file.sha256}
     for file in files:
         final = dest / file.path
         if final.is_file() and (not file.size or final.stat().st_size == file.size):
@@ -1222,6 +1356,10 @@ def download_files(  # noqa: PLR0913, PLR0917
         pending.append((file, final, part, start))
 
     if not pending:
+        # 文件都已存在：补写完成记录并清掉同名最终文件旁遗留的 .part，
+        # 下次启动就不会再误判成「未完成」。
+        _cleanup_stale_parts(dest, files)
+        write_download_manifest(dest, repo, selection.source, revision, files, digests)
         if reporter is None:
             console.print("[green]全部文件已存在，无需下载[/green]")
         return
@@ -1263,7 +1401,9 @@ def download_files(  # noqa: PLR0913, PLR0917
             for future in as_completed(futures):
                 path = futures[future]
                 try:
-                    future.result()
+                    digest = future.result()
+                    if digest:
+                        digests[path] = digest
                 except DownloadCancelled:
                     cancelled = True
                 except (ModelToolError, OSError) as exc:
@@ -1275,6 +1415,8 @@ def download_files(  # noqa: PLR0913, PLR0917
         raise DownloadCancelled("下载已取消（已保留 .part 以便续传）")
     if failures:
         raise ModelToolError(f"{len(failures)} 个文件下载失败：" + "；".join(failures))
+    _cleanup_stale_parts(dest, files)
+    write_download_manifest(dest, repo, selection.source, revision, files, digests)
 
 
 # ---------------------------------------------------------------------- #
@@ -1536,11 +1678,11 @@ def download_cmd(  # noqa: PLR0913, PLR0917
     exclude:
         排除匹配的 glob。
     quant:
-        只下载指定量化（如 ``UD-Q4_K_XL``）；仓库只有一个量化时可省略。
+        只下载指定量化（如 ``UD-Q4_K_XL``，含同仓库的 VAE / 文本编码器组件）。
     file:
         只下载指定文件（仓库内路径或文件名）。
     all_quants:
-        下载全部量化 / 文件（兼容旧行为）。
+        兼容旧命令：未指定 ``--quant`` / ``--file`` 时本来就下载整仓，此开关已无额外作用。
     workers:
         并发下载文件数（默认 4）。
     verify:

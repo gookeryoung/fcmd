@@ -276,16 +276,44 @@ class TestHelpers:
             "org/mmproj-F16.gguf",
         }
 
-    def test_select_download_files_quant_and_ambiguity(self) -> None:
+    def test_quant_options_include_companion_weights(self) -> None:
+        files = [
+            ModelFile("split_files/diffusion_models/model-Q4_K_M.gguf", 10),
+            ModelFile("split_files/vae/ae.safetensors", 3),
+            ModelFile("split_files/text_encoders/clip_l.safetensors", 4),
+            ModelFile("split_files/diffusion_models/model.safetensors", 100),
+            ModelFile("split_files/loras/style.safetensors", 5),
+        ]
+        (option,) = quant_options(files)
+        assert [file.path for file in option.files] == [
+            "split_files/diffusion_models/model-Q4_K_M.gguf",
+            "split_files/text_encoders/clip_l.safetensors",
+            "split_files/vae/ae.safetensors",
+        ]
+        assert option.total_size == 17
+        # 显式量化下载与默认下载都带上组件权重。
+        selected = select_download_files(files, quant="Q4_K_M")
+        assert {file.path for file in selected} == {file.path for file in option.files}
+
+    def test_select_download_files_defaults_to_whole_repo(self) -> None:
         files = [
             ModelFile("model-UD-Q4_K_XL.gguf", 10),
             ModelFile("model-Q5_K_M.gguf", 20),
+            ModelFile("split_files/vae/ae.safetensors", 3),
         ]
         selected = select_download_files(files, quant="UD-Q4_K_XL")
-        assert [file.path for file in selected] == ["model-UD-Q4_K_XL.gguf"]
-        with pytest.raises(ModelToolError, match="多个量化"):
-            select_download_files(files)
-        assert len(select_download_files(files, all_quants=True)) == 2
+        # 量化选项带上了同仓库的 VAE 组件。
+        assert [file.path for file in selected] == [
+            "model-UD-Q4_K_XL.gguf",
+            "split_files/vae/ae.safetensors",
+        ]
+        # 未指定量化 / 文件时默认整仓，避免漏掉配置、分词器等文件。
+        assert [file.path for file in select_download_files(files)] == [file.path for file in files]
+        assert [file.path for file in select_download_files(files, all_quants=True)] == [file.path for file in files]
+        assert [file.path for file in select_download_files(files, include=["*.gguf"])] == [
+            "model-UD-Q4_K_XL.gguf",
+            "model-Q5_K_M.gguf",
+        ]
 
     def test_find_quant_option_falls_back_to_same_family(self) -> None:
         options = quant_options([ModelFile("model-UD-Q4_K_XL.gguf", 10)])
@@ -577,6 +605,43 @@ class TestDownloadFiles:
         file = ModelFile("sub/a.bin", len(content))
         download_files("Qwen/demo", [file], tmp_path, SourceSelection("modelscope", (file,)), workers=1)
         assert (tmp_path / "sub" / "a.bin").read_bytes() == content
+
+    def test_manifest_records_checksums_and_cleans_stale_part(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """下载完成后写入大小 / sha256 完成记录，并清掉同名最终文件旁的遗留 .part。"""
+        content = b"abc"
+        digest = hashlib.sha256(content).hexdigest()
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _download_urlopen({"https://www.modelscope.cn/models/Qwen/demo/resolve/master/sub/a.bin": content}),
+        )
+        final = tmp_path / "sub" / "a.bin"
+        stale = llmdown._part_path(final)
+        stale.parent.mkdir(parents=True)
+        stale.write_bytes(b"x")
+        file = ModelFile("sub/a.bin", len(content), digest)
+        download_files("Qwen/demo", [file], tmp_path, SourceSelection("modelscope", (file,)), workers=1)
+        manifest = llmdown.read_download_manifest(tmp_path)
+        assert manifest is not None
+        assert manifest["repo"] == "Qwen/demo"
+        assert manifest["files"]["sub/a.bin"] == {"size": len(content), "sha256": digest}
+        assert not stale.exists()
+
+    def test_all_existing_writes_manifest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """旧目录已下全但缺少完成记录时补写，下次启动不再误判为下载中。"""
+        final = tmp_path / "a.bin"
+        final.write_bytes(b"1234")
+        stale = llmdown._part_path(final)
+        stale.write_bytes(b"12")
+        monkeypatch.setattr("urllib.request.urlopen", lambda *_a, **_k: pytest.fail("不应发起下载"))
+        file = ModelFile("a.bin", 4)
+        download_files("Qwen/demo", [file], tmp_path, SourceSelection("modelscope", (file,)))
+        assert "全部文件已存在" in capsys.readouterr().out
+        assert not stale.exists()
+        assert llmdown.manifest_files_complete(tmp_path, llmdown.read_download_manifest(tmp_path))
 
     def test_oversized_part_restarts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         content = b"abc"
@@ -1132,6 +1197,33 @@ class TestLocalModels:
         assert item.partial == 1
         assert item.weights == 2  # a.bin / b.bin；.part 不计入可用权重
         assert item.complete is False
+
+    def test_scan_ignores_stale_part_with_final_file(self, tmp_path: Path) -> None:
+        """最终文件旁的遗留 .part 不算未完成，启动时直接显示已完成。"""
+        model = tmp_path / "Qwen" / "demo"
+        model.mkdir(parents=True)
+        (model / "a.gguf").write_bytes(b"1234")
+        (model / "a.gguf.part").write_bytes(b"1")
+
+        item = scan_local_models(tmp_path)[0]
+
+        assert item.files == 1
+        assert item.partial == 0
+        assert item.complete is True
+
+    def test_scan_manifest_overrides_leftover_part(self, tmp_path: Path) -> None:
+        """完成记录覆盖的文件都在且大小一致时，其它残留 .part 不再阻挡已完成状态。"""
+        model = tmp_path / "Qwen" / "demo"
+        model.mkdir(parents=True)
+        (model / "a.gguf").write_bytes(b"1234")
+        (model / "b.gguf.part").write_bytes(b"1")
+        file = ModelFile("a.gguf", 4)
+        llmdown.write_download_manifest(model, "Qwen/demo", "modelscope", None, [file])
+
+        item = scan_local_models(tmp_path)[0]
+
+        assert item.partial == 0
+        assert item.complete is True
 
     def test_scan_single_level_layout(self, tmp_path: Path) -> None:
         """手工整理的一级模型目录（文件直接放在目录下）也要能被列出。"""

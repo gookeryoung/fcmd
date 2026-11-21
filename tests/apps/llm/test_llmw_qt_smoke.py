@@ -42,6 +42,9 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     from fcmd.apps.llm.llmdown import ModelSearch
 
     monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    # Windows 默认模型目录是 D:/models（开发者本机路径），测试必须隔离，
+    # 否则画图页会扫到真实模型，断言随本机环境漂移。
+    monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "models"))
     monkeypatch.setattr(qt_state.LlmState, "refresh_models", lambda self, port=None: None)
     monkeypatch.setattr(qt_state.LlmState, "detect_hardware", lambda self, on_done=None: None)
     # 模型页构造时会拉 ModelScope 列表；测试不能留真实网络线程（PySide2 退出阶段会等它）。
@@ -1250,7 +1253,7 @@ def test_model_quant_options_falls_back_source(monkeypatch: pytest.MonkeyPatch, 
 
 
 def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """下载前按量化选择：唯一选项直接下载，多选项弹列表。"""
+    """下载默认整仓全部文件；弹窗里仍可只选一个量化。"""
     from fcmd.apps.llm.llmdown import ModelFile, QuantOption
 
     window.show_page("models")
@@ -1265,11 +1268,27 @@ def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPat
         10,
     )
     q5 = QuantOption("Q5_K_M", "Q5_K", False, (ModelFile("model-Q5_K_M.gguf", 20),), 20)
-    page._choose_quant("org/demo", (ud,))
-    assert calls[-1] == ("org/demo", ud.files)
+    # 没有量化选项时直接整仓下载。
+    page._choose_quant("org/demo", ())
+    assert calls[-1] == ("org/demo", ())
 
     from PySide6.QtWidgets import QInputDialog
 
+    labels_seen: list[list[str]] = []
+
+    def _default_item(
+        _parent: Any, _title: str, _label: str, labels: list[str], index: int = 0, _editable: bool = False
+    ) -> tuple[str, bool]:
+        labels_seen.append(list(labels))
+        return labels[index], True
+
+    monkeypatch.setattr(QInputDialog, "getItem", _default_item)
+    # 只有一个量化时也弹窗，默认选中「全部文件」。
+    page._choose_quant("org/demo", (ud,))
+    assert labels_seen[-1][0].startswith("全部文件")
+    assert calls[-1] == ("org/demo", ())
+
+    # 显式选择具体量化时只下该量化（含组件）。
     monkeypatch.setattr(QInputDialog, "getItem", lambda *_args, **_kwargs: (q5.display, True))
     page._choose_quant("org/demo", (ud, q5))
     assert calls[-1] == ("org/demo", q5.files)
@@ -1279,6 +1298,45 @@ def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPat
     page._choose_quant("org/demo", (ud, q5))
     assert page.download_status.isHidden()
     assert page.download_text.text() == ""
+
+
+def test_local_only_model_skips_online_detail(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """仅本地模型展开详情时不发详情 / 清单请求，只提示仅本地。"""
+    from fcmd.apps.llm import _llmw_qt_center as center
+
+    window.show_page("models")
+    page = window.page("models").browse
+    submitted: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(center, "submit", lambda *args, **_kwargs: submitted.append(args))
+    page.load_repo("Qwen3.8-27B", online=False)
+    assert submitted == []
+    assert page.current_info is None
+    assert "仅本地" in page.detail_view.error.text()
+
+    page.load_repo("Qwen/demo")
+    assert submitted
+
+
+def test_refresh_installed_requeues_after_inflight_scan(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """扫描途中下载完成：结束后续扫一次，确保行切到已下载状态。"""
+    from fcmd.apps.llm import _llmw_qt_center as center
+
+    window.show_page("models")
+    page = window.page("models").browse
+    calls: list[tuple[Any, ...]] = []
+    monkeypatch.setattr(center, "submit", lambda *args, **_kwargs: calls.append(args))
+    monkeypatch.setattr(page, "_begin_loading", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(page, "_end_loading", lambda *_args, **_kwargs: None)
+    page._scanning_installed = True
+    page._rescan_installed = False
+    page.refresh_installed()
+    assert page._rescan_installed is True
+    assert calls == []
+    page._scanning_installed = False
+    page._installed_finished()
+    assert page._scanning_installed is True
+    assert page._rescan_installed is False
+    assert len(calls) == 1
 
 
 def test_overview_scrolls_only_recommendation_list(window: Any) -> None:
