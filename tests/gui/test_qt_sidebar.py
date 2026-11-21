@@ -116,6 +116,24 @@ def test_set_hint_updates_tooltips_only(nav: Any) -> None:
     assert not hasattr(nav, "hint_label")
 
 
+def test_collapsed_without_icon_keeps_toggle_to_expand(nav: Any) -> None:
+    """没有应用图标时折叠按钮保留为展开入口，避免只能靠快捷键 / 菜单展开。"""
+    application = QApplication.instance() or QApplication([])
+    nav.add("models", "模型")
+    nav.show()
+    application.processEvents()
+    nav.set_collapsed(True)
+    application.processEvents()
+    assert nav.toggle_button.isHidden() is False
+    assert nav.toggle_button.icon().isNull() is False
+    assert nav.toggle_button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
+    assert "展开侧边栏" in nav.toggle_button.toolTip()
+    nav.toggle_button.click()
+    assert not nav.is_collapsed()
+    assert not nav.title_label.isHidden()
+    assert nav.toggle_button.icon().isNull() is False
+
+
 def test_collapsed_keeps_icon_and_click_expands() -> None:
     """折叠后保留应用图标（居中）并作为展开入口，折叠按钮隐藏。"""
     application = QApplication.instance() or QApplication([])

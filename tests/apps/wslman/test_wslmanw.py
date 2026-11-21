@@ -103,7 +103,24 @@ def test_settings_mapping_is_json_friendly() -> None:
         "download_dir": r"D:\WSL",
         "mirror": "auto",
         "sidebar_collapsed": False,
+        "image_filter": "all",
+        "image_sort": "name",
+        "image_source": "all",
     }
+
+
+def test_image_view_options_fall_back_on_bad_values() -> None:
+    """镜像页筛选 / 排序 / 来源只接受登记过的取值，非法值逐项回落默认。"""
+    settings = wslmanw.settings_from_mapping(
+        {"image_filter": "installed", "image_sort": "status", "image_source": "manifest"}
+    )
+    assert (settings.image_filter, settings.image_sort, settings.image_source) == (
+        "installed",
+        "status",
+        "manifest",
+    )
+    broken = wslmanw.settings_from_mapping({"image_filter": "bogus", "image_sort": 42, "image_source": "nope"})
+    assert (broken.image_filter, broken.image_sort, broken.image_source) == ("all", "name", "all")
 
 
 def test_poll_interval_is_fixed_three_seconds() -> None:
@@ -124,7 +141,11 @@ def test_image_rows_and_details() -> None:
         ),
         installed=True,
     )
-    assert wslmanw.image_row(entry) == ("Ubuntu", "Ubuntu", "aarch64/x86_64", "sha256 · 已安装")
+    title, subtitle, metrics = wslmanw.image_item_lines(entry)
+    assert title == "Ubuntu"
+    assert subtitle == "Ubuntu · aarch64/x86_64 · CLI · 清单"
+    assert metrics == "可直链下载"
+    assert wslmanw.image_marks(entry) == (("已安装", "success"), ("sha256", "muted"))
     details = dict(wslmanw.image_details(entry))
     assert details["下载来源"] == "CLI 安装（wsl --install）、官方清单 URL"
     assert details["校验和"] == "有 sha256"
@@ -132,8 +153,82 @@ def test_image_rows_and_details() -> None:
     assert "无 sha256" in details["下载地址"]
 
     store = wslmanw._images.ImageEntry(name="OracleLinux_9_5", friendly_name="", sources=("store",))
-    assert wslmanw.image_row(store) == ("OracleLinux_9_5", "-", "任意", "")
+    assert wslmanw.image_item_lines(store) == ("OracleLinux_9_5", "任意架构 · Store", "仅 wsl --install")
+    assert wslmanw.image_marks(store) == ()
     assert dict(wslmanw.image_details(store))["下载地址"].startswith("无直接下载地址")
+
+    unverified = wslmanw._images.ImageEntry(
+        name="Debian",
+        friendly_name="Debian",
+        sources=("manifest",),
+        downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/debian.wsl"),),
+        backed_up=True,
+    )
+    assert wslmanw.image_marks(unverified) == (("已备份", "accent"), ("无 sha256", "warning"))
+
+    assert wslmanw.image_source_text(wslmanw._images.ImageEntry(name="X", friendly_name="", sources=())) == "未知"
+
+
+def _image(
+    name: str, *, friendly: str = "", download: bool = True, installed: bool = False
+) -> wslmanw._images.ImageEntry:
+    downloads = (wslmanw._images.ImageDownload("x86_64", f"https://e/{name}.wsl"),) if download else ()
+    return wslmanw._images.ImageEntry(
+        name=name,
+        friendly_name=friendly,
+        sources=("cli", "manifest") if download else ("store",),
+        downloads=downloads,
+        installed=installed,
+    )
+
+
+def test_filter_images_by_query_status_and_source() -> None:
+    entries = (
+        _image("Ubuntu", friendly="Ubuntu 24.04", installed=True),
+        _image("Debian", friendly="Debian GNU/Linux"),
+        _image("OracleLinux", friendly="Oracle Linux", download=False),
+    )
+    assert [entry.name for entry in wslmanw.filter_images(entries)] == ["Ubuntu", "Debian", "OracleLinux"]
+    assert [entry.name for entry in wslmanw.filter_images(entries, query="gnu")] == ["Debian"]
+    assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="download")] == ["Ubuntu", "Debian"]
+    assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="install")] == ["OracleLinux"]
+    assert [entry.name for entry in wslmanw.filter_images(entries, filter_key="installed")] == ["Ubuntu"]
+    assert [entry.name for entry in wslmanw.filter_images(entries, source="store")] == ["OracleLinux"]
+    assert wslmanw.filter_images(entries, filter_key="backed_up") == ()
+
+
+def test_sort_images_and_counts() -> None:
+    # 友好名与名称排序结果相反，才能区分两种排序真的生效。
+    entries = (
+        _image("ubuntu", friendly="Alpha"),
+        _image("Debian", friendly="Zulu", installed=True),
+    )
+    assert [entry.name for entry in wslmanw.sort_images(entries)] == ["Debian", "ubuntu"]
+    assert [entry.name for entry in wslmanw.sort_images(entries, "friendly")] == ["ubuntu", "Debian"]
+    assert [entry.name for entry in wslmanw.sort_images(entries, "status")] == ["Debian", "ubuntu"]
+    # 未知排序值回落按名称，不让旧设置文件把列表弄乱。
+    assert [entry.name for entry in wslmanw.sort_images(entries, "legacy")] == ["Debian", "ubuntu"]
+
+    entries = (
+        _image("ubuntu", friendly="Alpha"),
+        _image("Debian", friendly="Zulu"),
+        _image("Oracle", download=False),
+    )
+    counts = wslmanw.image_counts(entries)
+    assert counts == {"all": 3, "download": 2, "install": 1, "installed": 0, "backed_up": 0}
+    status = wslmanw.image_status_text(entries, 2, filter_key="download", source="manifest", note="cli+清单 · 10:00")
+    assert "共 3 个镜像" in status
+    assert "可直链下载 2 个" in status
+    assert "官方清单" in status
+    assert "显示 2 个" in status
+    assert status.endswith("cli+清单 · 10:00")
+
+
+def test_image_status_text_explains_empty_filter_result() -> None:
+    entries = (_image("Ubuntu"),)
+    status = wslmanw.image_status_text(entries, 0, filter_key="installed")
+    assert "没有匹配项" in status
+    assert "没有匹配项" not in wslmanw.image_status_text((), 0)
 
 
 def test_pick_download_prefers_matching_arch(monkeypatch: pytest.MonkeyPatch) -> None:

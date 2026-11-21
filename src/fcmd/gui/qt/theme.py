@@ -488,13 +488,13 @@ QFrame#ActionBar {
 }
 QSplitter::handle { background: $border; }
 QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
-QListWidget#RecommendationList, QListWidget#ModelResultList, QListWidget#EngineList { background: transparent; border: none; outline: 0; }
-QListWidget#RecommendationList::item, QListWidget#ModelResultList::item, QListWidget#EngineList::item {
+QListWidget#RecommendationList, QListWidget#ModelResultList, QListWidget#ImageResultList, QListWidget#EngineList { background: transparent; border: none; outline: 0; }
+QListWidget#RecommendationList::item, QListWidget#ModelResultList::item, QListWidget#ImageResultList::item, QListWidget#EngineList::item {
     background: transparent;
     border: none;
     padding: 0;
 }
-QFrame#RecommendationRow, QFrame#ModelItemRow, QFrame#EngineRow {
+QFrame#RecommendationRow, QFrame#ModelItemRow, QFrame#ImageItemRow, QFrame#EngineRow {
     background: $surface;
     border: 1px solid $border;
     border-radius: 8px;
@@ -503,8 +503,8 @@ QFrame#RecommendationRow[band="excellent"] { background: $success_soft; border-c
 QFrame#RecommendationRow[band="good"] { background: $accent_soft; border-color: $accent; }
 QFrame#RecommendationRow[band="fair"] { background: $warning_soft; border-color: $warning; }
 QFrame#RecommendationRow[band="limited"] { background: $danger_soft; border-color: $danger; }
-QFrame#RecommendationRow:hover, QFrame#ModelItemRow:hover, QFrame#EngineRow:hover { border-width: 2px; }
-QFrame#RecommendationRow[selected="true"], QFrame#ModelItemRow[selected="true"], QFrame#EngineRow[selected="true"] {
+QFrame#RecommendationRow:hover, QFrame#ModelItemRow:hover, QFrame#ImageItemRow:hover, QFrame#EngineRow:hover { border-width: 2px; }
+QFrame#RecommendationRow[selected="true"], QFrame#ModelItemRow[selected="true"], QFrame#ImageItemRow[selected="true"], QFrame#EngineRow[selected="true"] {
     border-width: 2px;
 }
 QFrame#RecommendationRow[band="excellent"][selected="true"] { background: $success_soft_strong; }
@@ -512,8 +512,9 @@ QFrame#RecommendationRow[band="good"][selected="true"] { background: $accent_sof
 QFrame#RecommendationRow[band="fair"][selected="true"] { background: $warning_soft_strong; }
 QFrame#RecommendationRow[band="limited"][selected="true"] { background: $danger_soft_strong; }
 QFrame#ModelItemRow[selected="true"] { background: $accent_soft_strong; border-color: $select_bg; }
+QFrame#ImageItemRow[selected="true"] { background: $accent_soft_strong; border-color: $select_bg; }
 QFrame#EngineRow[selected="true"] { background: $accent_soft_strong; border-color: $select_bg; }
-QLabel#RecommendationName, QLabel#ModelItemName, QLabel#EngineItemName { font-size: ${font_heading}pt; font-weight: 600; }
+QLabel#RecommendationName, QLabel#ModelItemName, QLabel#ImageItemName, QLabel#EngineItemName { font-size: ${font_heading}pt; font-weight: 600; }
 QPushButton#InstalledButton, QPushButton#ConvertedButton {
     color: $success;
     background: $success_soft;

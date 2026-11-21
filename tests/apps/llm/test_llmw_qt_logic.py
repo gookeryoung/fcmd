@@ -282,16 +282,18 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert row.download_button.text() == "下载"
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()
-    assert row.expand_button.text() == "展开"
+    assert row.expand_button.icon().isNull() is False
+    assert row.expand_button.toolTip() == "展开详细信息"
     assert not hasattr(row, "files_button")
     assert row.detail_host.isHidden()
     row.set_expanded(True)
     assert row.is_expanded()
-    assert row.expand_button.text() == "收起"
+    assert row.expand_button.toolTip() == "收起详细信息"
     assert not row.detail_host.isHidden()
     row.set_expanded(False)
     assert not row.is_expanded()
-    assert row.expand_button.text() == "展开"
+    assert row.expand_button.icon().isNull() is False
+    assert row.expand_button.toolTip() == "展开详细信息"
     assert not hasattr(row, "files_button")
     assert row.detail_host.isHidden()
 

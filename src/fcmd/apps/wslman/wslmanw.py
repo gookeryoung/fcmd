@@ -13,7 +13,7 @@ import ntpath
 import platform
 import unicodedata
 import urllib.parse
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -38,9 +38,15 @@ __all__ = [
     "detail_lines",
     "distro_row",
     "elide_name",
+    "filter_images",
+    "image_counts",
     "image_details",
     "image_filename",
-    "image_row",
+    "image_item_lines",
+    "image_marks",
+    "image_sort_key",
+    "image_source_text",
+    "image_status_text",
     "load_settings",
     "main",
     "pick_download",
@@ -49,6 +55,7 @@ __all__ = [
     "settings_from_mapping",
     "settings_to_mapping",
     "shutdown_confirm_enabled",
+    "sort_images",
     "summary_text",
     "text_units",
     "unregister_confirm_enabled",
@@ -67,6 +74,39 @@ _SOURCE_LABELS = {
     "store": "Store 包（wsl --install）",
 }
 """下载来源的展示文案；与 :mod:`fcmd.apps.wslman._images` 的 sources 取值一一对应。"""
+
+_SOURCE_SHORT = {"cli": "CLI", "manifest": "清单", "store": "Store"}
+"""列表「来源」列的短文案；详情区用 ``_SOURCE_LABELS`` 的完整说明。"""
+
+IMAGE_FILTERS: tuple[tuple[str, str], ...] = (
+    ("all", "全部"),
+    ("download", "可直链下载"),
+    ("install", "仅安装"),
+    ("installed", "已安装"),
+    ("backed_up", "已备份"),
+)
+"""镜像页的筛选按钮：``download`` 有可直链归档，``install`` 只能走 ``wsl --install``。"""
+
+DEFAULT_IMAGE_FILTER = "all"
+
+IMAGE_SORTS: tuple[tuple[str, str], ...] = (
+    ("name", "按名称"),
+    ("friendly", "按友好名"),
+    ("status", "已安装优先"),
+)
+"""镜像页排序选项；默认按名称，与 llmw 模型列表的「排序下拉」同构。"""
+
+DEFAULT_IMAGE_SORT = "name"
+
+IMAGE_SOURCES: tuple[tuple[str, str], ...] = (
+    ("all", "全部来源"),
+    ("manifest", "官方清单"),
+    ("cli", "CLI 清单"),
+    ("store", "Store 包"),
+)
+"""镜像页来源筛选；``all`` 之外的值对应 ``ImageEntry.sources`` 的元素。"""
+
+DEFAULT_IMAGE_SOURCE = "all"
 
 POLL_INTERVAL_MS = 3000
 """固定 3 秒轮询运行状态（不做成设置项）。
@@ -207,6 +247,9 @@ class WslmanwSettings:
     download_dir: str = ""
     mirror: str = "auto"
     sidebar_collapsed: bool = False
+    image_filter: str = DEFAULT_IMAGE_FILTER
+    image_sort: str = DEFAULT_IMAGE_SORT
+    image_source: str = DEFAULT_IMAGE_SOURCE
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -215,6 +258,9 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "download_dir": settings.download_dir,
         "mirror": settings.mirror,
         "sidebar_collapsed": settings.sidebar_collapsed,
+        "image_filter": settings.image_filter,
+        "image_sort": settings.image_sort,
+        "image_source": settings.image_source,
     }
 
 
@@ -227,7 +273,16 @@ def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
         download_dir=_str(raw, "download_dir"),
         mirror=mirror if mirror in _mirrors.identifiers() else "auto",
         sidebar_collapsed=collapsed is True,
+        image_filter=_choice(raw, "image_filter", IMAGE_FILTERS, DEFAULT_IMAGE_FILTER),
+        image_sort=_choice(raw, "image_sort", IMAGE_SORTS, DEFAULT_IMAGE_SORT),
+        image_source=_choice(raw, "image_source", IMAGE_SOURCES, DEFAULT_IMAGE_SOURCE),
     )
+
+
+def _choice(raw: Mapping[str, Any], key: str, options: Sequence[tuple[str, str]], default: str) -> str:
+    """只接受 ``options`` 里登记过的取值，非法 / 缺失时回落 ``default``。"""
+    value = _str(raw, key)
+    return value if any(ident == value for ident, _label in options) else default
 
 
 def _str(raw: Mapping[str, Any], key: str) -> str:
@@ -288,14 +343,116 @@ def detail_lines(distro: Distro, size: int | None, estimated: bool) -> list[str]
     return [f"{label}: {value}" for label, value in detail_fields(distro, size, estimated)]
 
 
-def image_row(entry: _images.ImageEntry) -> tuple[str, str, str, str]:
-    """下载页列表一行：名称、友好名、架构、标记（sha256 / 已安装 / 已备份）。"""
-    marks = " · ".join(
-        label
-        for label, flag in (("sha256", entry.has_sha256), ("已安装", entry.installed), ("已备份", entry.backed_up))
-        if flag
-    )
-    return (entry.name, entry.friendly_name or "-", "/".join(entry.arches) or "任意", marks)
+def image_source_text(entry: _images.ImageEntry) -> str:
+    """列表「来源」列：把 ``sources`` 折成短文案（``CLI`` / ``清单`` / ``Store``）。"""
+    return " · ".join(_SOURCE_SHORT.get(source, source) for source in entry.sources) or "未知"
+
+
+def image_item_lines(entry: _images.ImageEntry) -> tuple[str, str, str]:
+    """列表行三段文案（与 llmw 的 ``model_item_lines`` 同构）：标题、副标题、右侧关键状态。
+
+    行卡只承载关键信息；完整字段与下载地址在行内展开区显示，不再占用右侧面板。
+    """
+    arches = "/".join(entry.arches) or "任意架构"
+    subtitle = " · ".join(part for part in (entry.friendly_name, arches, image_source_text(entry)) if part)
+    metrics = "可直链下载" if entry.downloads else "仅 wsl --install"
+    return entry.name, subtitle or "—", metrics
+
+
+def image_marks(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
+    """行内状态胶囊 ``(文案, 色调)``：已安装 / 已备份 / 有 sha256 / 缺摘要。"""
+    marks: list[tuple[str, str]] = []
+    if entry.installed:
+        marks.append(("已安装", "success"))
+    if entry.backed_up:
+        marks.append(("已备份", "accent"))
+    if entry.has_sha256:
+        marks.append(("sha256", "muted"))
+    elif entry.downloads:
+        marks.append(("无 sha256", "warning"))
+    return tuple(marks)
+
+
+def filter_images(
+    entries: Sequence[_images.ImageEntry],
+    *,
+    query: str = "",
+    filter_key: str = DEFAULT_IMAGE_FILTER,
+    source: str = DEFAULT_IMAGE_SOURCE,
+) -> tuple[_images.ImageEntry, ...]:
+    """按名称搜索、状态筛选与来源筛选收窄镜像列表（大小写不敏感）。"""
+    text = query.strip().casefold()
+    selected: list[_images.ImageEntry] = []
+    for entry in entries:
+        if source != "all" and source not in entry.sources:
+            continue
+        if filter_key == "download" and not entry.downloads:
+            continue
+        if filter_key == "install" and entry.downloads:
+            continue
+        if filter_key == "installed" and not entry.installed:
+            continue
+        if filter_key == "backed_up" and not entry.backed_up:
+            continue
+        if text and text not in entry.name.casefold() and text not in entry.friendly_name.casefold():
+            continue
+        selected.append(entry)
+    return tuple(selected)
+
+
+def image_sort_key(key: str) -> Callable[[_images.ImageEntry], Any]:
+    """排序键函数：未知 key 回落到按名称，避免设置文件里的旧值让列表失序。"""
+    if key == "friendly":
+        return lambda entry: (entry.friendly_name or entry.name).casefold()
+    if key == "status":
+        return lambda entry: (not entry.installed, not entry.backed_up, entry.name.casefold())
+    return lambda entry: entry.name.casefold()
+
+
+def sort_images(entries: Sequence[_images.ImageEntry], key: str = DEFAULT_IMAGE_SORT) -> tuple[_images.ImageEntry, ...]:
+    """稳定排序；同键时保留来源合并顺序（CLI 清单在前）。"""
+    return tuple(sorted(entries, key=image_sort_key(key)))
+
+
+def image_counts(entries: Sequence[_images.ImageEntry]) -> dict[str, int]:
+    """各筛选口径的条目数，供状态行显示「已安装 N / 可直链 M」。"""
+    counts = {ident: 0 for ident, _label in IMAGE_FILTERS}
+    counts["all"] = len(entries)
+    for entry in entries:
+        if entry.downloads:
+            counts["download"] += 1
+        else:
+            counts["install"] += 1
+        if entry.installed:
+            counts["installed"] += 1
+        if entry.backed_up:
+            counts["backed_up"] += 1
+    return counts
+
+
+def image_status_text(
+    entries: Sequence[_images.ImageEntry],
+    shown: int,
+    *,
+    filter_key: str = DEFAULT_IMAGE_FILTER,
+    source: str = DEFAULT_IMAGE_SOURCE,
+    note: str = "",
+) -> str:
+    """镜像页状态行：总量、当前筛选、显示条数与本地状态，末尾附缓存 / 来源备注。"""
+    counts = image_counts(entries)
+    parts = [f"共 {counts['all']} 个镜像"]
+    if filter_key != "all":
+        label = next((label for ident, label in IMAGE_FILTERS if ident == filter_key), filter_key)
+        parts.append(f"{label} {counts.get(filter_key, 0)} 个")
+    if source != "all":
+        parts.append(next((label for ident, label in IMAGE_SOURCES if ident == source), source))
+    parts.append(f"显示 {shown} 个")
+    parts.append(f"已安装 {counts['installed']}")
+    parts.append(f"可直链 {counts['download']}")
+    text = " · ".join(parts)
+    if shown == 0 and counts["all"]:
+        text += "（没有匹配项，可调整筛选或搜索词）"
+    return f"{text} · {note}" if note else text
 
 
 def mirror_choices(entry: _images.ImageEntry) -> str:

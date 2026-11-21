@@ -6,8 +6,10 @@
 - ``add(key, label, hint)`` 登记页面（顺序即导航顺序）；
 - ``select(key)`` 切换页面并发出 :attr:`SidebarNav.changed`；
 - ``Alt+1..9`` 直达、``Alt+↓ / Alt+↑`` 循环；
-- ``set_collapsed(True)`` 折叠为窄栏（页名首字 + 应用图标 + tooltip），再次调用展开；
-  折叠态点击应用图标也可展开。
+- ``set_collapsed(True)`` 折叠为窄栏（页名首字 + 应用图标 / 展开按钮 + tooltip），再次调用展开；
+  折叠态点击应用图标（无图标时点展开按钮）也可展开。折叠 / 展开按钮使用
+  :mod:`fcmd.gui.qt.icons` 的 ``chevron-left`` / ``chevron-right`` 线性图标，不再用
+  ``«`` / ``»`` 字形。
 
 页按钮用 ``QPushButton`` 而不是 ``QToolButton``：前者支持 QSS 的
 ``text-align: left`` 且默认横向可扩展，能铺满侧边栏宽度（``QToolButton``
@@ -20,7 +22,7 @@ CI 无显示环境也能单测。
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QButtonGroup,
@@ -35,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui.pages import next_page, resolve_page_key
+from fcmd.gui.qt.icons import icon as _icon
 
 __all__ = ["COLLAPSED_WIDTH", "EXPANDED_WIDTH", "SidebarNav", "next_page", "resolve_page_key"]
 
@@ -92,7 +95,9 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.title_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.toggle_button = QToolButton(self)
         self.toggle_button.setObjectName("SidebarToggle")
-        self.toggle_button.setText("«")
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.toggle_button.setIconSize(QSize(16, 16))
+        self.toggle_button.setIcon(_icon("chevron-left"))
         self.toggle_button.setToolTip("折叠侧边栏（Ctrl+Shift+B）")
         self.toggle_button.setAutoRaise(True)
         self.toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -118,8 +123,6 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         label = QLabel(self)
         # 用资源里实际存在的 24px 尺寸并按屏幕缩放比取图：避免 Qt 缩放 + 标签
         # 内边距把图标裁掉一圈，高 DPI 下也不会发虚。
-        from PySide6.QtCore import QSize
-
         label.setPixmap(icon.pixmap(QSize(28, 28)))
         label.setFixedSize(28, 28)
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -212,17 +215,19 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.set_collapsed(not self._collapsed)
 
     def set_collapsed(self, collapsed: bool) -> None:
-        """折叠成窄栏（只显示页名首字 + 应用图标 + tooltip）或恢复展开态。
+        """折叠成窄栏（只显示页名首字 + 应用图标 / 展开按钮 + tooltip）或恢复展开态。
 
-        折叠时隐藏标题，按钮文本退化为首字，标题左侧的图标保留并居中，
-        点击图标即可展开；展开时还原完整页名，图标回到标题左侧。
+        折叠时隐藏标题，按钮文本退化为首字；有应用图标时图标居中并作为展开入口，
+        折叠按钮隐藏；没有图标时保留折叠按钮（``chevron-right`` 图标）作为唯一可见的展开入口，
+        避免鼠标用户只能靠快捷键 / 菜单才能展开。展开时还原完整页名。
         重复设置同一状态只同步宽度，不重复发信号。
         """
         changed = collapsed != self._collapsed
         self._collapsed = collapsed
         self._apply_width()
         self.title_label.setVisible(not collapsed)
-        self.toggle_button.setVisible(not collapsed)
+        # 折叠且没有图标时，折叠按钮是唯一可见的展开入口，必须保留。
+        self.toggle_button.setVisible(not collapsed or self.icon_label is None)
         if self.icon_label is not None:
             self.icon_label.setVisible(True)
             self.icon_label.setCursor(Qt.CursorShape.PointingHandCursor if collapsed else Qt.CursorShape.ArrowCursor)
@@ -230,7 +235,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
                 "展开侧边栏（Ctrl+Shift+B）" if collapsed else (self.title_label.text() or self.windowTitle())
             )
         self._header.setAlignment(Qt.AlignmentFlag.AlignHCenter if collapsed else Qt.AlignmentFlag.AlignLeft)
-        self.toggle_button.setText("»" if collapsed else "«")
+        self.toggle_button.setIcon(_icon("chevron-right" if collapsed else "chevron-left"))
         self.toggle_button.setToolTip("展开侧边栏（Ctrl+Shift+B）" if collapsed else "折叠侧边栏（Ctrl+Shift+B）")
         for key, button in self._buttons.items():
             button.setText(self._labels[key][:1] if collapsed else self._labels[key])

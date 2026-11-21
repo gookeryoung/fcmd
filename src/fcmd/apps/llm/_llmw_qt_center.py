@@ -78,6 +78,7 @@ from fcmd.apps.llm.llmdown import (
     search_models,
     select_source,
 )
+from fcmd.gui.qt.icons import icon as _icon
 from fcmd.gui.qt.widgets import (
     ElidedLabel,
     RowListWidget,
@@ -86,6 +87,7 @@ from fcmd.gui.qt.widgets import (
     button,
     confirm,
     hint_label,
+    icon_button,
     link_button,
 )
 from fcmd.gui.qt.workers import ProgressBridge, submit
@@ -312,7 +314,10 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.delete_button.setToolTip("删除本地模型目录（不可恢复）")
             self.delete_button.clicked.connect(lambda: self.deleteRequested.emit(self.repo))
             header_row.addWidget(self.delete_button, 0)
-        self.expand_button = link_button("展开", tooltip="展开 / 收起详细信息")
+        self.expand_button = icon_button("", tooltip="展开详细信息")
+        self.expand_button.setIconSize(QSize(16, 16))
+        self.expand_button.setIcon(_icon("chevron-down"))
+        self.expand_button.setAccessibleName("展开详情")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
         outer.addWidget(header)
@@ -331,7 +336,9 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
         self._expanded = expanded
         self.detail_host.setVisible(expanded)
-        self.expand_button.setText("收起" if expanded else "展开")
+        self.expand_button.setIcon(_icon("chevron-up" if expanded else "chevron-down"))
+        self.expand_button.setToolTip("收起详细信息" if expanded else "展开详细信息")
+        self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
     def set_download_state(self, *, busy: bool, active: bool) -> None:
         """下载中禁用；已安装行仍可下载其它量化，文案与普通行区分。"""

@@ -8,7 +8,8 @@
 :class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..3`` 切换与窗口
 几何记忆都由基座提供），右侧按「发行版 / 镜像 / 日志」分页，每页拿满整个
 内容区，不再把详情、下载与日志挤进同一个底部标签页。发行版页用一个纵向
-分栏把列表与详情分开；镜像页沿用列表 / 详情横向分栏。后台任务一律走
+分栏把列表与详情分开；镜像页参考 llmw 模型列表：自定义行卡铺满整页，
+详情与下载地址通过行内「展开」就地显示，不再占用右侧面板。后台任务一律走
 :func:`fcmd.gui.qt.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
 关窗时取消进行中的任务。
 
@@ -22,18 +23,20 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QAbstractItemView,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -51,14 +54,20 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
 from fcmd.apps.wslman._transfer import sha256_file
+from fcmd.gui.qt.icons import icon as _icon
 from fcmd.gui.qt.widgets import (
     Card,
     Collapsible,
+    ElidedLabel,
     HintLabel,
     LogView,
+    RowListWidget,
+    SelectionRow,
+    StatusTag,
     button,
     confirm,
     hint_label,
+    icon_button,
     make_splitter,
     make_table,
     make_table_item,
@@ -94,6 +103,144 @@ class _LogBridge(QObject):  # pragma: no cover - Qt 信号桥
     message = Signal(str)
 
 
+class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
+    """镜像列表行卡：与 llmw 模型行同构（大标题 + 小字副标题 + 右侧关键状态）。
+
+    行内只放关键内容，详情与下载地址在行下方就地展开，列表铺满整页宽度，
+    不再占用右侧详情面板。
+    """
+
+    toggleRequested = Signal(object)
+    downloadRequested = Signal(str)
+
+    def __init__(self, entry: ImageEntry, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.entry = entry
+        self._expanded = False
+        self.setObjectName("ImageItemRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", "false")
+        self.setToolTip(entry.name)
+
+        title, subtitle, metrics = w.image_item_lines(entry)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QWidget(self)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(12, 8, 12, 8)
+        header_row.setSpacing(12)
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(3)
+        name = ElidedLabel(title, mode=Qt.TextElideMode.ElideMiddle, parent=header)
+        name.setObjectName("ImageItemName")
+        name.setToolTip(entry.name)
+        left.addWidget(name)
+        note_row = QHBoxLayout()
+        note_row.setContentsMargins(0, 0, 0, 0)
+        note_row.setSpacing(6)
+        note = QLabel(subtitle, header)
+        note.setObjectName("Hint")
+        note.setWordWrap(False)
+        note.setToolTip(subtitle)
+        note_row.addWidget(note, 0)
+        note_row.addStretch(1)
+        for text, tone in w.image_marks(entry):
+            note_row.addWidget(StatusTag(text, tone=tone, parent=header), 0)
+        left.addLayout(note_row)
+        header_row.addLayout(left, 1)
+
+        stats = QLabel(metrics, header)
+        stats.setObjectName("Hint")
+        stats.setWordWrap(False)
+        stats.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        stats.setToolTip(metrics)
+        header_row.addWidget(stats, 0)
+
+        self.download_button = button("下载" if entry.downloads else "安装", kind="primary")
+        self.download_button.setToolTip(
+            "下载归档；可在下方勾选「下载后立即安装」" if entry.downloads else w._DOWNLOAD_HINT
+        )
+        self.download_button.clicked.connect(lambda: self.downloadRequested.emit(entry.name))
+        header_row.addWidget(self.download_button, 0)
+        self.expand_button = icon_button("", tooltip="展开详情与下载地址")
+        self.expand_button.setIconSize(QSize(16, 16))
+        self.expand_button.setIcon(_icon("chevron-down"))
+        self.expand_button.setAccessibleName("展开详情")
+        self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
+        header_row.addWidget(self.expand_button, 0)
+        outer.addWidget(header)
+
+        self.detail_host = QWidget(self)
+        self.detail_host.setVisible(False)
+        self.detail_layout = QVBoxLayout(self.detail_host)
+        self.detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.detail_layout.setSpacing(0)
+        outer.addWidget(self.detail_host)
+
+    def is_expanded(self) -> bool:
+        return self._expanded
+
+    def set_expanded(self, expanded: bool) -> None:
+        """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
+        self._expanded = expanded
+        self.detail_host.setVisible(expanded)
+        self.expand_button.setIcon(_icon("chevron-up" if expanded else "chevron-down"))
+        self.expand_button.setToolTip("收起详情" if expanded else "展开详情与下载地址")
+        self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
+
+    def set_download_state(self, *, busy: bool) -> None:
+        self.download_button.setEnabled(not busy)
+
+
+class _ImageDetailView(QWidget):  # pragma: no cover - Qt 控件
+    """展开行里的镜像详情：短字段网格 + 可换行的下载地址。
+
+    同一个实例在行之间复用：展开哪一行就挂到哪一行的 ``detail_layout`` 下。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 0, 12, 10)
+        layout.setSpacing(6)
+        separator = QFrame(self)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        layout.addWidget(separator)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(2)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(3, 1)
+        self.values: dict[str, QLabel] = {}
+        for index, label in enumerate(w._IMAGE_DETAIL_FIELDS):
+            row, column = divmod(index, 2)
+            grid.addWidget(hint_label(f"{label}：", wrap=False), row, column * 2, Qt.AlignmentFlag.AlignTop)
+            value = QLabel("—", self)
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            grid.addWidget(value, row, column * 2 + 1, Qt.AlignmentFlag.AlignTop)
+            self.values[label] = value
+        layout.addLayout(grid)
+        layout.addWidget(hint_label("下载地址", wrap=False))
+        self.url = QPlainTextEdit(self)
+        self.url.setReadOnly(True)
+        self.url.setMinimumHeight(72)
+        self.url.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        layout.addWidget(self.url)
+
+    def render(self, entry: ImageEntry) -> None:
+        """回填选中条目的详情；未知字段统一显示 ``—``。"""
+        values = dict(w.image_details(entry))
+        for label, widget in self.values.items():
+            widget.setText(values.get(label, "—"))
+        self.url.setPlainText(values.get("下载地址", "—"))
+
+
 class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 日志）+ 后台任务。"""
 
@@ -106,6 +253,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.sizes: dict[str, tuple[int | None, bool]] = {}
         self._rows: list[tuple[str, ...]] = []
         self.image_entries: tuple[ImageEntry, ...] = ()
+        self._image_filter_key = self.settings.image_filter
+        self._images_note = ""
         self._busy = False
         self._label = ""
         self._cancel = threading.Event()
@@ -244,11 +393,34 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return card
 
     def _build_images_page(self) -> QWidget:
-        """镜像页：搜索 / 下载源、清单与详情分栏、下载动作与高级选项。"""
+        """镜像页：筛选条 + 搜索 / 排序 / 来源，清单与详情横向分栏、下载动作与高级选项。"""
         page = QWidget(self)
         body = QVBoxLayout(page)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(8)
+
+        filters = QHBoxLayout()
+        filters.setContentsMargins(0, 0, 0, 0)
+        filters.setSpacing(6)
+        self.image_filter_group = QButtonGroup(self)
+        self.image_filter_group.setExclusive(True)
+        self.image_filter_buttons: dict[str, QPushButton] = {}
+        for key, label in w.IMAGE_FILTERS:
+            chip = button(label)
+            chip.setObjectName("FilterChip")
+            chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            # ``_checked`` 必须有默认值：PySide 会按「可零参调用」挑 ``clicked()`` 重载。
+            chip.clicked.connect(lambda _checked=False, key=key: self._on_image_filter_changed(key))
+            self.image_filter_group.addButton(chip)
+            filters.addWidget(chip)
+            self.image_filter_buttons[key] = chip
+        filters.addStretch(1)
+        self.images_refresh = button("刷新清单", kind="ghost")
+        self.images_refresh.setToolTip("跳过 30 分钟缓存，重新获取 wsl --list --online 与官方清单")
+        self.images_refresh.clicked.connect(lambda: self._load_images(force=True))
+        filters.addWidget(self.images_refresh)
+        body.addLayout(filters)
 
         search_row = QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
@@ -256,8 +428,21 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         search_row.addWidget(QLabel("搜索"))
         self.image_search = QLineEdit(self)
         self.image_search.setClearButtonEnabled(True)
+        self.image_search.setPlaceholderText("按名称 / 友好名过滤…")
         self.image_search.textChanged.connect(self._schedule_image_filter)
         search_row.addWidget(self.image_search, 1)
+        self.image_sort = QComboBox(self)
+        for key, label in w.IMAGE_SORTS:
+            self.image_sort.addItem(label, key)
+        self.image_sort.setCurrentIndex(max(self.image_sort.findData(self.settings.image_sort), 0))
+        self.image_sort.currentIndexChanged.connect(self._on_image_sort_changed)
+        search_row.addWidget(self.image_sort)
+        self.image_source = QComboBox(self)
+        for key, label in w.IMAGE_SOURCES:
+            self.image_source.addItem(label, key)
+        self.image_source.setCurrentIndex(max(self.image_source.findData(self.settings.image_source), 0))
+        self.image_source.currentIndexChanged.connect(self._on_image_source_changed)
+        search_row.addWidget(self.image_source)
         search_row.addWidget(QLabel("下载源"))
         self.mirror_ids = _mirrors.identifiers()
         self.mirror = QComboBox(self)
@@ -270,29 +455,32 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.images_status = hint_label("打开本页时自动获取镜像清单")
         body.addWidget(self.images_status)
 
-        split = make_splitter(sizes=(520, 380), parent=page)
-        split.setMinimumHeight(300)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        self.image_table = make_table(
-            ("名称", "友好名", "架构", "标记"),
-            widths=(150, 190, 90, 130),
-            stretch_columns=(1,),
-            parent=split,
-        )
-        self.image_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.image_table.itemSelectionChanged.connect(self._show_image_details)
-        self.image_table.cellDoubleClicked.connect(lambda _row, _column: self._download())
-        split.addWidget(self.image_table)
-        split.addWidget(self._build_image_detail(split))
-        self._image_split = split
-        body.addWidget(split, 1)
+        # 列表铺满整页：详情通过行内展开显示（与 llmw 模型列表同构），不再占用右侧面板。
+        self.image_list = RowListWidget(page)
+        self.image_list.setObjectName("ImageResultList")
+        self.image_list.setSpacing(4)
+        self.image_list.setMinimumHeight(260)
+        self.image_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
+        self.image_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.image_list.currentRowChanged.connect(self._on_image_selected)
+        self.image_list.itemDoubleClicked.connect(self._on_image_double_clicked)
+        self.image_detail_view = _ImageDetailView(page)
+        self.image_detail_view.setVisible(False)
+        self._expanded_row: _ImageItemRow | None = None
+        body.addWidget(self.image_list, 1)
+
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(150)
+        self._filter_timer.timeout.connect(self._render_images)
+        self.image_filter_buttons[self._image_filter_key].setChecked(True)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(6)
-        self._download_button = button("开始下载", kind="primary")
-        self._download_button.clicked.connect(self._download)
+        self._download_button = button("下载选中镜像", kind="primary")
+        self._download_button.clicked.connect(self._download_selected)
+        self._download_button.setEnabled(False)
         actions.addWidget(self._download_button)
         self._cancel_button = button("取消")
         self._cancel_button.clicked.connect(self._cancel_task)
@@ -328,32 +516,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.advanced.body.addLayout(form)
         body.addWidget(self.advanced)
         return page
-
-    def _build_image_detail(self, parent: QWidget) -> QWidget:
-        """镜像详情：短字段网格 + 可换行的只读下载地址。"""
-        detail = QWidget(parent)
-        detail_grid = QGridLayout(detail)
-        detail_grid.setContentsMargins(8, 0, 0, 0)
-        detail_grid.setHorizontalSpacing(8)
-        detail_grid.setVerticalSpacing(4)
-        detail_grid.setColumnStretch(1, 1)
-        self.image_detail_values: dict[str, QLabel] = {}
-        for row, label in enumerate(w._IMAGE_DETAIL_FIELDS):
-            detail_grid.addWidget(hint_label(label, wrap=False), row, 0, Qt.AlignmentFlag.AlignTop)
-            value = QLabel("—", detail)
-            value.setWordWrap(True)
-            value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            detail_grid.addWidget(value, row, 1)
-            self.image_detail_values[label] = value
-        url_row = len(w._IMAGE_DETAIL_FIELDS)
-        detail_grid.addWidget(hint_label("下载地址", wrap=False), url_row, 0, Qt.AlignmentFlag.AlignTop)
-        self.image_url = QPlainTextEdit(detail)
-        self.image_url.setReadOnly(True)
-        self.image_url.setMinimumHeight(72)
-        self.image_url.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-        detail_grid.addWidget(self.image_url, url_row, 1)
-        detail_grid.setRowStretch(url_row, 1)
-        return detail
 
     def _build_log_page(self) -> QWidget:
         """日志页：任务日志独占整页，复制 / 清空 / 导出沿用共享工具条。"""
@@ -424,12 +586,19 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._closing:
             return
         self._update_action_states()
+        self._update_image_actions()
 
     def _set_buttons(self, enabled: bool) -> None:
         for widget in self._buttons:
             widget.setEnabled(enabled)
+        if hasattr(self, "image_list"):
+            for index in range(self.image_list.count()):
+                row = self.image_list.itemWidget(self.image_list.item(index))
+                if isinstance(row, _ImageItemRow):
+                    row.set_download_state(busy=not enabled)
         if enabled:
             self._update_action_states()
+            self._update_image_actions()
 
     def _cancel_task(self) -> None:
         if self._busy:
@@ -789,11 +958,23 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         fallback = load_config().download_dir.strip()
         return fallback or str(Path.home() / "Downloads")
 
-    def _download(self) -> None:
+    def _download_selected(self) -> None:
         entry = self._selected_image()
         if entry is None:
             QMessageBox.critical(self, "下载", "请先在列表中选择镜像")
             return
+        self._download_payload(entry)
+
+    def _download_entry(self, name: str) -> None:
+        """行内「下载 / 安装」按钮：先聚焦该行，再复用同一套下载流程。"""
+        for index in range(self.image_list.count()):
+            row = self.image_list.itemWidget(self.image_list.item(index))
+            if isinstance(row, _ImageItemRow) and row.entry.name == name:
+                self.image_list.setCurrentRow(index)
+                self._download_payload(row.entry)
+                return
+
+    def _download_payload(self, entry: ImageEntry) -> None:
         directory_text = self.download_dir.text().strip()
         expected = self.expected_sha.text().strip() or None
         install_after = self.install_after.isChecked()
@@ -886,24 +1067,31 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if 0 <= self.mirror.currentIndex() < len(self.mirror_ids):
             self.set_status(f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
 
-    def _load_images(self) -> None:
-        if self._images_busy or self.image_entries or self._closing:
+    def _load_images(self, *, force: bool = False) -> None:
+        if self._images_busy or self._closing:
+            return
+        if self.image_entries and not force:
             return
         self._images_busy = True
-        self.images_status.setText("正在获取镜像清单…（wsl --list --online 首次较慢，可用缓存兜底）")
+        self.images_status.setText(
+            "正在刷新镜像清单…（跳过缓存，重新拉取 wsl --list --online 与官方清单）"
+            if force
+            else "正在获取镜像清单…（wsl --list --online 首次较慢，可用缓存兜底）"
+        )
         submit(
-            self._images_worker,
+            lambda: self._images_worker(force),
             on_done=self._apply_images,
             on_error=self._images_error,
             on_finished=lambda: setattr(self, "_images_busy", False),
         )
 
     @staticmethod
-    def _images_worker() -> tuple[Any, tuple[ImageEntry, ...]]:
+    def _images_worker(force: bool = False) -> tuple[Any, tuple[ImageEntry, ...]]:
         env = cli._build_environment()
         catalog = _images.collect_images(
             fetch_cli=lambda: cli._online_rows(env),
             fetch_manifest=cli._manifest_images,
+            force=force,
         )
         entries = _images.mark_local_state(
             catalog.entries,
@@ -920,61 +1108,144 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         catalog, entries = payload
         self.image_entries = entries
         stamp = time.strftime("%H:%M", time.localtime(catalog.fetched_at))
-        marks = f"{len(entries)} 个镜像 · {(catalog.sources and '+'.join(catalog.sources)) or '缓存'} · {stamp}"
+        note = f"{(catalog.sources and '+'.join(catalog.sources)) or '缓存'} · {stamp}"
         if catalog.from_cache:
-            marks += "（过期缓存）" if catalog.stale else "（缓存）"
-        self.images_status.setText(marks)
+            note += "（过期缓存）" if catalog.stale else "（缓存）"
+        self._images_note = note
         for warning in catalog.warnings:
             self._log(f"[镜像列表] {warning}")
         self._render_images()
 
     def _render_images(self) -> None:
-        query = self.image_search.text().strip().casefold()
+        filter_key = self._image_filter_key
+        source = self.image_source.currentData()
+        sort_key = self.image_sort.currentData()
+        query = self.image_search.text().strip()
         keep = self._selected_image()
-        self.image_table.setRowCount(0)
-        rows = [
-            entry
-            for entry in self.image_entries
-            if not query or query in entry.name.casefold() or query in entry.friendly_name.casefold()
-        ]
-        self.image_table.setRowCount(len(rows))
-        for row, entry in enumerate(rows):
-            for column, text in enumerate(w.image_row(entry)):
-                item = make_table_item(text)
-                if column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, entry.name)
-                self.image_table.setItem(row, column, item)
+        rows = w.sort_images(
+            w.filter_images(self.image_entries, query=query, filter_key=filter_key, source=source or "all"),
+            sort_key if isinstance(sort_key, str) else w.DEFAULT_IMAGE_SORT,
+        )
+        self._detach_image_detail()
+        self.image_list.clear()
+        for entry in rows:
+            item = QListWidgetItem(self.image_list)
+            row = _ImageItemRow(entry, self.image_list)
+            row.toggleRequested.connect(self._on_image_toggle)
+            row.downloadRequested.connect(self._download_entry)
+            row.set_download_state(busy=self._busy)
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self.image_list.setItemWidget(item, row)
+        self.image_list.sync_row_widths()
+        self.images_status.setText(
+            w.image_status_text(
+                self.image_entries,
+                len(rows),
+                filter_key=filter_key,
+                source=source or "all",
+                note=self._images_note,
+            )
+        )
+        target = None
         if keep is not None:
-            for row in range(self.image_table.rowCount()):
-                item = self.image_table.item(row, 0)
-                if item is not None and item.data(Qt.ItemDataRole.UserRole) == keep.name:
-                    self.image_table.selectRow(row)
-                    break
-        self._show_image_details()
+            target = next((index for index, entry in enumerate(rows) if entry.name == keep.name), None)
+        if target is None and rows:
+            target = 0
+        if target is not None:
+            self.image_list.setCurrentRow(target)
+        self._update_image_actions()
+
+    def _on_image_filter_changed(self, key: str) -> None:
+        """切换筛选按钮：只重绘列表，不重新拉取在线清单。"""
+        if key == self._image_filter_key:
+            return
+        self._image_filter_key = key
+        self._persist_image_view()
+        self._render_images()
+
+    def _on_image_sort_changed(self, _index: int) -> None:
+        self._persist_image_view()
+        self._render_images()
+
+    def _on_image_source_changed(self, _index: int) -> None:
+        self._persist_image_view()
+        self._render_images()
+
+    def _persist_image_view(self) -> None:
+        """筛选 / 排序 / 来源立即写回设置，下次启动恢复上次视角。"""
+        self._persist_settings(self.geometry_text())
 
     def _schedule_image_filter(self) -> None:
         if self._filter_timer is not None:
-            self._filter_timer.stop()
-        self._filter_timer = QTimer(self)
-        self._filter_timer.setSingleShot(True)
-        self._filter_timer.setInterval(150)
-        self._filter_timer.timeout.connect(self._render_images)
-        self._filter_timer.start()
+            self._filter_timer.start()
+
+    def _on_image_selected(self, current: int) -> None:
+        for index in range(self.image_list.count()):
+            widget = self.image_list.itemWidget(self.image_list.item(index))
+            if isinstance(widget, _ImageItemRow):
+                widget.set_selected(index == current)
+        self._update_image_actions()
+
+    def _on_image_double_clicked(self, item: QListWidgetItem) -> None:
+        row = self.image_list.itemWidget(item)
+        if isinstance(row, _ImageItemRow):
+            self._on_image_toggle(row)
+
+    def _on_image_toggle(self, row: _ImageItemRow) -> None:
+        """展开一行并在行下方挂详情；同一时间只展开一行。"""
+        self._focus_image_row(row)
+        if row.is_expanded():
+            row.set_expanded(False)
+            self.image_detail_view.setVisible(False)
+            self._expanded_row = None
+            self._update_image_row_height(row)
+            return
+        if self._expanded_row is not None and self._expanded_row is not row:
+            self._expanded_row.set_expanded(False)
+            self._update_image_row_height(self._expanded_row)
+        self.image_detail_view.render(row.entry)
+        row.detail_layout.addWidget(self.image_detail_view)
+        self.image_detail_view.setVisible(True)
+        row.set_expanded(True)
+        self._expanded_row = row
+        self._update_image_row_height(row)
+
+    def _focus_image_row(self, row: _ImageItemRow) -> None:
+        for index in range(self.image_list.count()):
+            if self.image_list.itemWidget(self.image_list.item(index)) is row:
+                self.image_list.setCurrentRow(index)
+                return
+
+    def _update_image_row_height(self, row: _ImageItemRow | None) -> None:
+        if row is None:
+            return
+        layout = row.layout()
+        if layout is not None:
+            layout.activate()
+        for index in range(self.image_list.count()):
+            item = self.image_list.item(index)
+            if self.image_list.itemWidget(item) is row:
+                item.setSizeHint(QSize(0, row.sizeHint().height()))
+                self.image_list.sync_row_widths()
+                return
+
+    def _detach_image_detail(self) -> None:
+        """列表重建前把复用的详情控件从旧行摘下来，避免随旧行一起销毁。"""
+        self.image_detail_view.setParent(None)
+        self.image_detail_view.setVisible(False)
+        if self._expanded_row is not None:
+            self._expanded_row.set_expanded(False)
+            self._expanded_row = None
 
     def _selected_image(self) -> ImageEntry | None:
-        row = self.image_table.currentRow()
-        if row < 0:
-            return None
-        item = self.image_table.item(row, 0)
-        name = item.data(Qt.ItemDataRole.UserRole) if item is not None else None
-        return next((entry for entry in self.image_entries if entry.name == name), None)
+        item = self.image_list.currentItem()
+        row = self.image_list.itemWidget(item) if item is not None else None
+        return row.entry if isinstance(row, _ImageItemRow) else None
 
-    def _show_image_details(self) -> None:
-        entry = self._selected_image()
-        values = dict(w.image_details(entry)) if entry is not None else {}
-        for label, widget in self.image_detail_values.items():
-            widget.setText(values.get(label, "—"))
-        self.image_url.setPlainText(values.get("下载地址", "—"))
+    def _update_image_actions(self) -> None:
+        if not hasattr(self, "_download_button"):
+            return
+        self._download_button.setEnabled(not self._busy and self._selected_image() is not None)
 
     # ------------------------------------------------------------------ #
     # 注销 / 关闭全部
@@ -1027,6 +1298,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 download_dir=self.download_dir.text().strip(),
                 mirror=self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto",
                 sidebar_collapsed=self.nav.is_collapsed(),
+                image_filter=self._image_filter_key,
+                image_sort=self.image_sort.currentData() or w.DEFAULT_IMAGE_SORT,
+                image_source=self.image_source.currentData() or w.DEFAULT_IMAGE_SOURCE,
             ),
             self._own_settings_path,
         )

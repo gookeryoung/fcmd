@@ -73,6 +73,14 @@ def _text(table: QTableWidget, row: int, column: int) -> str:
     return item.text()
 
 
+def _image_row(window: _wslmanw_qt.WslmanQtWindow, index: int) -> _wslmanw_qt._ImageItemRow:
+    item = window.image_list.item(index)
+    assert item is not None
+    widget = window.image_list.itemWidget(item)
+    assert isinstance(widget, _wslmanw_qt._ImageItemRow)
+    return widget
+
+
 def _wait_idle(window: _wslmanw_qt.WslmanQtWindow, timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     app = QApplication.instance()
@@ -140,15 +148,78 @@ def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> N
             friendly_name="Ubuntu 24.04",
             sources=("cli",),
             downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/ubuntu.wsl"),),
+            installed=True,
         )
-        other = wslmanw._images.ImageEntry(name="Debian", friendly_name="Debian", sources=("cli",))
+        other = wslmanw._images.ImageEntry(name="Debian", friendly_name="Debian", sources=("store",))
         window.image_entries = (entry, other)
         window._render_images()
-        assert window.image_table.rowCount() == 2
-        window.image_search.setText("debian")
+        assert window.image_list.count() == 2
+        assert _image_row(window, 0).entry.name == "Debian"
+        assert _image_row(window, 1).entry.name == "Ubuntu"
+        assert window.image_list.currentRow() == 0
+        window.image_search.setText("Ubuntu 24")
         window._render_images()
-        assert window.image_table.rowCount() == 1
-        assert _text(window.image_table, 0, 0) == "Debian"
+        assert window.image_list.count() == 1
+        assert _image_row(window, 0).entry.name == "Ubuntu"
+
+        # 筛选按钮：只重绘，不重新拉取清单。
+        window.image_search.clear()
+        window.image_filter_buttons["installed"].click()
+        assert window.image_list.count() == 1
+        assert _image_row(window, 0).entry.name == "Ubuntu"
+        window.image_filter_buttons["install"].click()
+        assert window.image_list.count() == 1
+        assert _image_row(window, 0).entry.name == "Debian"
+        window.image_filter_buttons["all"].click()
+
+        # 来源筛选与排序下拉。
+        window.image_source.setCurrentIndex(window.image_source.findData("store"))
+        assert window.image_list.count() == 1
+        assert _image_row(window, 0).entry.name == "Debian"
+        window.image_source.setCurrentIndex(window.image_source.findData("all"))
+        window.image_sort.setCurrentIndex(window.image_sort.findData("friendly"))
+        assert _image_row(window, 0).entry.name == "Debian"
+        assert "共 2 个镜像" in window.images_status.text()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_image_rows_expand_inline_detail(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像行参考 llmw 模型行：详情在行内展开，同一时间只展开一行，不再占用右侧面板。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        first = wslmanw._images.ImageEntry(
+            name="Debian",
+            friendly_name="Debian GNU/Linux",
+            sources=("manifest",),
+            downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/debian.wsl", "a" * 64),),
+        )
+        second = wslmanw._images.ImageEntry(name="Ubuntu", friendly_name="Ubuntu", sources=("cli",))
+        window.image_entries = (first, second)
+        window._render_images()
+        row = _image_row(window, 0)
+        row.expand_button.click()
+        assert row.is_expanded() is True
+        assert not window.image_detail_view.isHidden()
+        assert window.image_detail_view.values["名称"].text() == "Debian"
+        assert "debian.wsl" in window.image_detail_view.url.toPlainText()
+
+        # 展开另一行时先收起旧行。
+        other = _image_row(window, 1)
+        other.expand_button.click()
+        assert row.is_expanded() is False
+        assert other.is_expanded() is True
+        assert window.image_detail_view.values["名称"].text() == "Ubuntu"
+
+        other.expand_button.click()
+        assert other.is_expanded() is False
+        assert window.image_detail_view.isHidden()
+        # 双击行与点「展开」等价。
+        row.expand_button.click()
+        assert row.is_expanded() is True
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
@@ -159,6 +230,9 @@ def test_settings_persisted(home: Path) -> None:
     try:
         window.download_dir.setText(r"D:\WSL\downloads")
         window.mirror.setCurrentIndex(window.mirror_ids.index("ustc"))
+        window.image_filter_buttons["installed"].click()
+        window.image_source.setCurrentIndex(window.image_source.findData("manifest"))
+        window.image_sort.setCurrentIndex(window.image_sort.findData("status"))
         window._persist_settings("980x660+10+20")
     finally:
         window._poll.stop()  # type: ignore[union-attr]
@@ -167,6 +241,9 @@ def test_settings_persisted(home: Path) -> None:
     assert raw["geometry"] == "980x660+10+20"
     assert raw["download_dir"] == r"D:\WSL\downloads"
     assert raw["mirror"] == "ustc"
+    assert raw["image_filter"] == "installed"
+    assert raw["image_source"] == "manifest"
+    assert raw["image_sort"] == "status"
 
 
 def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
@@ -181,7 +258,7 @@ def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
         # 三页控件建窗即存在（设置落盘与下载动作都直接读镜像页控件）；
         # 页面本身仍由共享骨架在首次切换时挂进页面栈。
         assert window._table.rowCount() >= 0
-        assert window.image_table.columnCount() == 4
+        assert window.image_list.count() == 0
         window.nav.set_collapsed(True)
         window._persist_settings("1160x760+0+0")
     finally:
@@ -202,7 +279,7 @@ def test_prebuilt_pages_stay_hidden_until_shown(home: Path) -> None:
         bar = window.menuBar()
         assert bar.geometry().top() == 0
         assert bar.geometry().height() > 0
-        assert not window.image_table.isVisible()
+        assert not window.image_list.isVisible()
         assert not window._log_view.isVisible()
         hit = window.childAt(30, bar.height() // 2)
         node = hit

@@ -202,6 +202,33 @@ def test_collect_images_uses_fresh_cache_without_network(tmp_path: Path) -> None
     assert catalog.fetched_at == 1_700_000_000
 
 
+def test_collect_images_force_bypasses_fresh_cache(tmp_path: Path) -> None:
+    """GUI「刷新清单」传 ``force=True``：即使 TTL 内也要重新拉取两个在线源。"""
+    cache = tmp_path / "cache.json"
+    _images.save_cache(_images.parse_distribution_info(_MANIFEST), 1_700_000_000, cache, ("cli", "manifest"))
+    calls: list[str] = []
+
+    def fetch_cli() -> tuple[OnlineRow, ...]:
+        calls.append("cli")
+        return (OnlineRow("Ubuntu", "Ubuntu"),)
+
+    def fetch_manifest() -> tuple[_images.ImageEntry, ...]:
+        calls.append("manifest")
+        return _images.parse_distribution_info(_MANIFEST)
+
+    catalog = _images.collect_images(
+        fetch_cli=fetch_cli,
+        fetch_manifest=fetch_manifest,
+        now=lambda: 1_700_000_000.0 + 1,
+        cache_file=cache,
+        force=True,
+    )
+
+    assert calls == ["cli", "manifest"]
+    assert catalog.from_cache is False
+    assert catalog.stale is False
+
+
 def test_collect_images_all_sources_fail_uses_cache(tmp_path: Path) -> None:
     cache = tmp_path / "cache.json"
     _images.save_cache(_images.parse_distribution_info(_MANIFEST), 1_600_000_000, cache)

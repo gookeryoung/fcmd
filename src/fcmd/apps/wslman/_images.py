@@ -352,13 +352,14 @@ def _age_text(seconds: float) -> str:
     return f"{seconds / 86400:.1f} 天"
 
 
-def collect_images(
+def collect_images(  # noqa: PLR0913 - 两个源函数、时钟、缓存、fatal 与 force 均为显式注入
     *,
     fetch_cli: Callable[[], Sequence[OnlineRow]],
     fetch_manifest: Callable[[], Sequence[ImageEntry]],
     now: Callable[[], float] = time.time,
     cache_file: Path | None = None,
     fatal: Callable[[Exception], bool] | None = None,
+    force: bool = False,
 ) -> ImageCatalog:
     """并发无关的编排：两个源各自失败不影响另一个，必要时用缓存补齐。
 
@@ -369,12 +370,13 @@ def collect_images(
     - 全部失败且没有缓存：抛出 CLI 的原错误，保留既有退出码语义。
 
     ``fatal`` 用来把「不算抓取失败」的错误（例如 WSL 未启用）直接上抛，
-    避免被当成可降级的单源故障。
+    避免被当成可降级的单源故障。``force`` 跳过「新鲜缓存直接命中」的短路（GUI
+    的「刷新清单」用它绕过 30 分钟 TTL），缓存仍会在单源失败时用于补齐。
     """
     warnings: list[str] = []
     cache = load_cache(cache_file)
     current = now()
-    if cache is not None and cache.entries and current - cache.fetched_at <= CACHE_TTL_SECONDS:
+    if not force and cache is not None and cache.entries and current - cache.fetched_at <= CACHE_TTL_SECONDS:
         # 命中 TTL：直接复用上次结果，不再拉起 wsl.exe 也不再下载清单。
         return ImageCatalog(
             entries=cache.entries,
