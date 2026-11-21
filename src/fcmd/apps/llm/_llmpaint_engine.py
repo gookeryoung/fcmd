@@ -36,11 +36,13 @@ from fcmd.infras.jsonio import read_json_file, write_json_atomic
 
 __all__ = [
     "SD_EXE",
+    "VC_RUNTIME_DLLS",
     "SdAsset",
     "SdEngine",
     "SdRelease",
     "check_sd_engine",
     "current_sd_tag",
+    "ensure_vc_runtime",
     "fetch_sd_releases",
     "install_sd_engine",
     "list_sd_engines",
@@ -56,6 +58,8 @@ __all__ = [
 
 SD_REPO = "leejet/stable-diffusion.cpp"
 SD_EXE = "sd-server"
+VC_RUNTIME_DLLS: Final[tuple[str, ...]] = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+"""sd-server 依赖的 MSVC 运行库；系统自带 2015 版（14.0）会与新版构建不兼容。"""
 _SD_EXE_NAMES: Final[tuple[str, ...]] = ("sd-server.exe", "sd-server")
 _SD_RELEASES_URL: Final[str] = "https://api.github.com/repos/leejet/stable-diffusion.cpp/releases"
 _RELEASE_TIMEOUT: Final[float] = 6.0
@@ -444,6 +448,42 @@ def sd_engine_env(engine: SdEngine) -> dict[str, str] | None:
     env = os.environ.copy()
     env["PATH"] = os.pathsep.join([*engine.path_prepend, env.get("PATH", "")])
     return env
+
+
+def _vc_runtime_sources() -> tuple[Path, ...]:
+    """本机可能携带新版 MSVC 运行库的目录（Visual Studio IDE / VC Redist）。"""
+    roots = [Path(value) for value in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")) if value]
+    patterns = (
+        "Microsoft Visual Studio/*/*/Common7/IDE",
+        "Microsoft Visual Studio/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT",
+    )
+    found: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            found.extend(path for path in root.glob(pattern) if path.is_dir())
+    return tuple(found)
+
+
+def ensure_vc_runtime(target: Path, *, sources: Sequence[Path] | None = None) -> tuple[str, ...]:
+    """确保引擎目录带新版 MSVC 运行库，返回仍缺失的 DLL 名。
+
+    stable-diffusion.cpp 的 Windows 构建使用 MSVC 2022；系统只有 VC++ 2015
+    （``msvcp140.dll 14.0``）时 sd-server 会在加载阶段 ``c0000005`` 崩溃且日志为空。
+    这里优先从本机 Visual Studio / VC Redist 目录复制同名 DLL 到引擎目录；
+    找不到时返回缺失列表，由启动层提示安装最新 VC++ 运行库。
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    missing = [name for name in VC_RUNTIME_DLLS if not (target / name).is_file()]
+    if not missing:
+        return ()
+    for directory in sources if sources is not None else _vc_runtime_sources():
+        if all((directory / name).is_file() for name in missing):
+            for name in missing:
+                shutil.copy2(directory / name, target / name)
+            return ()
+    return tuple(missing)
 
 
 def missing_cuda_runtime(engine: SdEngine) -> tuple[str, ...]:

@@ -402,6 +402,17 @@ class TestValidate:
         model = _weight(tmp_path / "sdxl.safetensors", 4)
         _llmpaint.validate_components(_llmpaint.PaintComponents(model=model))
 
+    def test_components_require_llm_and_vae_for_zimage(self, tmp_path: Path) -> None:
+        """Z-Image / Qwen-Image 缺 VAE 或文本编码器时启动前给出明确错误。"""
+        model = _weight(tmp_path / "z_image_turbo-Q8_0.gguf", 4)
+        with pytest.raises(ServeError, match="缺少必需组件"):
+            _llmpaint.validate_components(_llmpaint.PaintComponents(model=model))
+        vae = _weight(tmp_path / "ae.safetensors", 4)
+        llm = _weight(tmp_path / "Qwen3-4B-Instruct-Q8_0.gguf", 4)
+        with pytest.raises(ServeError, match="文本编码器"):
+            _llmpaint.validate_components(_llmpaint.PaintComponents(model=model, vae=vae))
+        _llmpaint.validate_components(_llmpaint.PaintComponents(model=model, vae=vae, llm=llm))
+
     def test_components_invalid(self, tmp_path: Path) -> None:
         with pytest.raises(ServeError, match="主模型"):
             _llmpaint.validate_components(_llmpaint.PaintComponents())
@@ -476,6 +487,23 @@ class TestImages:
 # ---------------------------------------------------------------------- #
 # stable-diffusion.cpp 引擎
 # ---------------------------------------------------------------------- #
+def test_ensure_vc_runtime_copies_from_local_source(tmp_path: Path) -> None:
+    """引擎目录缺 MSVC 运行库时，从本机 Visual Studio / VC Redist 复制。"""
+    source = tmp_path / "vs"
+    source.mkdir()
+    for name in _llmpaint_engine.VC_RUNTIME_DLLS:
+        (source / name).write_bytes(b"x")
+    target = tmp_path / "engine"
+    assert _llmpaint_engine.ensure_vc_runtime(target, sources=[source]) == ()
+    assert all((target / name).is_file() for name in _llmpaint_engine.VC_RUNTIME_DLLS)
+
+
+def test_ensure_vc_runtime_reports_missing_without_source(tmp_path: Path) -> None:
+    """找不到可复制的运行库时返回缺失列表，启动层据此给出安装提示。"""
+    target = tmp_path / "engine"
+    assert _llmpaint_engine.ensure_vc_runtime(target, sources=[]) == _llmpaint_engine.VC_RUNTIME_DLLS
+
+
 def test_locmodel_engine_is_detected_as_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """LocModel 的完整引擎可作为缺运行库时的兜底。"""
     root = tmp_path / "LocalAppData" / "LocModel" / "engines" / "sd"

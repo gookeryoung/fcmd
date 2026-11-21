@@ -39,6 +39,7 @@ __all__ = [
     "gallery",
     "is_diffusion_weight",
     "is_mmproj",
+    "missing_required_slots",
     "save_images",
     "scan_assets",
     "server_flags",
@@ -128,6 +129,19 @@ _PARENT_ROLES: tuple[tuple[str, str], ...] = (
 )
 
 _ENCODER_PAIRS: dict[str, str] = {"l": "clip_l", "g": "clip_g"}
+
+#: 这些家族的扩散模型必须同时提供独立 VAE / 文本编码器；缺一个 sd-server 会启动即退出。
+_REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
+    "z-image": ("llm", "vae"),
+    "qwen-image": ("llm", "vae"),
+    "minimax-h3": ("llm", "vae"),
+    "hidream": ("llm", "vae"),
+    "hunyuan-image": ("llm", "vae"),
+}
+_COMPANION_HINTS: dict[str, str] = {
+    "vae": "Comfy-Org 对应仓库的 split_files/vae 或 vae 目录",
+    "llm": "Qwen3 / Mistral 文本编码器（GGUF 或 safetensors）",
+}
 
 _LLM_ENCODER_KEYWORDS: tuple[str, ...] = (
     "qwen3",
@@ -438,6 +452,15 @@ def build_payload(request: PaintRequest) -> dict[str, object]:
     return payload
 
 
+def missing_required_slots(components: PaintComponents) -> tuple[str, ...]:
+    """返回当前主模型家族仍缺少的必需组件（``llm`` / ``vae``）。"""
+    if components.model is None:
+        return ()
+    family = detect_family(components.model)
+    required = _REQUIRED_SLOTS.get(family, ())
+    return tuple(role for role in required if getattr(components, role, None) is None)
+
+
 def validate_components(components: PaintComponents) -> None:
     """校验组件选择；不合法时抛 :class:`ServeError`。"""
     if components.model is None:
@@ -446,6 +469,14 @@ def validate_components(components: PaintComponents) -> None:
         raise ServeError(f"主模型不存在: {components.model}")
     if components.mode not in {"auto", "checkpoint", "diffusion"}:
         raise ServeError(f"未知的加载方式: {components.mode!r}")
+    missing = missing_required_slots(components)
+    if missing:
+        labels = {"vae": "VAE", "llm": "文本编码器 (--llm)"}
+        detail = "；".join(f"{labels.get(role, role)}：{_COMPANION_HINTS.get(role, '')}" for role in missing)
+        raise ServeError(
+            f"主模型 {components.model.name} 缺少必需组件："
+            f"{'、'.join(labels.get(role, role) for role in missing)}。 可下载：{detail}"
+        )
     for label, path in (
         ("VAE", components.vae),
         ("CLIP-L", components.clip_l),

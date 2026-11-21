@@ -104,6 +104,13 @@ src/fcmd/apps/llm/
 - 画图页设置持久化到 `ui/llmw.json` 的 `paint` 字段（引擎 tag、组件、参数、输出目录、
   自动启动、端口），由 `_llmw_winsettings.load_settings` / `save_settings` 逐字段校验；
 - `pyproject.toml` 注册 `llmpaint`，`cli/_manifest_data.py` 重新生成后包含全部子命令。
+- MSVC 运行库：sd.cpp 使用 MSVC 2022 构建，系统只有 VC++ 2015（`msvcp140.dll 14.0`）
+  时 sd-server 会在加载阶段 `c0000005` 崩溃且日志为空；启动前从本机 Visual Studio /
+  VC Redist 复制新版 `msvcp140` / `vcruntime140` / `vcruntime140_1`，找不到时提示安装最新
+  VC++ 2015-2022 Redistributable。
+- Z-Image / Qwen-Image / MiniMax-H3 / HiDream / HunyuanImage 等家族要求独立 VAE 与
+  LLM 文本编码器；启动前校验缺失组件并给出对应 Comfy-Org 仓库路径提示，避免
+  sd-server 以「VAE tensor not in model metadata」启动即退出。
 - 引擎安装对齐 LocModel 的做法：CUDA 引擎包与 `cudart-sd-bin-win-cu12-x64.zip` 一起
   解压；本地导入会优先带上同目录 cudart 包，GUI 支持多选 zip / 直接导入已编译引擎
   目录（可直接指向 LocModel 的 `engines/sd/<tag>`）；缺少 `cublas64_12.dll` 等

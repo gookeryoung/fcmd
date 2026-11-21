@@ -20,6 +20,7 @@ from typing import Any
 from fcmd.apps.llm import _llmconfig, _llmpaint, llmserve
 from fcmd.apps.llm._llmpaint_engine import (
     SdEngine,
+    ensure_vc_runtime,
     missing_cuda_runtime,
     resolve_sd_engine,
     sd_engine_env,
@@ -315,6 +316,13 @@ def launch_paint(
     sleep: Callable[[float], None] = time.sleep,
 ) -> PaintState:
     """拉起 ``sd-server`` 并等待健康检查通过。"""
+    missing_vc = ensure_vc_runtime(plan.engine.exe.parent)
+    if missing_vc:
+        raise ServeError(
+            "画图引擎缺少 MSVC 运行库："
+            + "、".join(missing_vc)
+            + "。请安装最新 Microsoft Visual C++ 2015-2022 Redistributable（x64）后重试。"
+        )
     missing = missing_cuda_runtime(plan.engine)
     if missing:
         raise ServeError(
