@@ -503,7 +503,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.send_button = icon_button("", tooltip="发送（Ctrl+Enter）")
         self.send_button.setObjectName("ChatSend")
         self.send_button.setFixedSize(34, 34)
-        _set_icon(self.send_button, "send", tone="on_accent")
+        # 与齿轮图标按钮同一无边框风格，只用 accent 图标色表达主操作。
+        _set_icon(self.send_button, "send", tone="accent")
         self.send_button.setAccessibleName("发送")
         buttons.addWidget(self.send_button)
         input_area.addLayout(buttons)
@@ -865,7 +866,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             self.send_button.setAccessibleName("停止生成")
         else:
             self.send_button.setObjectName("ChatSend")
-            _set_icon(self.send_button, "send", tone="on_accent")
+            _set_icon(self.send_button, "send", tone="accent")
             self.send_button.setToolTip("发送（Ctrl+Enter）")
             self.send_button.setAccessibleName("发送")
         self.send_button.style().unpolish(self.send_button)

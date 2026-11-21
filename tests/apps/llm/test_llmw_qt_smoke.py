@@ -1136,6 +1136,8 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     assert chat.send_button.objectName() == "ChatSend"
     assert chat.send_button.text() == ""
     assert chat.send_button.icon().isNull() is False
+    # 无边框风格：图标用 accent 色表达主操作，不靠实心背景块。
+    assert chat.send_button.property("fcmdIconTone") == "accent"
     assert chat.send_button.size().width() == chat.send_button.size().height() == 34
     assert chat.model_combo.height() == 34
 

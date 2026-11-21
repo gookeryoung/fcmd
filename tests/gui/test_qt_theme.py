@@ -131,6 +131,20 @@ def test_template_tokens_accept_measured_control_height() -> None:
         assert "max-height: 30px" in block
 
 
+def test_chat_send_button_is_borderless_like_settings() -> None:
+    """发送按钮与设置齿轮同为无边框透明底，用图标色与 hover 底色区分主次。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    shared = text.split("\nQToolButton#ChatIconButton, QToolButton#ChatStop, QToolButton#ChatSend {", 1)[1]
+    assert "border: none" in shared.split("}", 1)[0]
+    send_block = text.split("\nQToolButton#ChatSend {", 1)[1].split("}", 1)[0]
+    icon_block = text.split("\nQToolButton#ChatIconButton {", 1)[1].split("}", 1)[0]
+    for block in (send_block, icon_block):
+        assert "border" not in block
+        assert "background: transparent" in block
+    hover_block = text.split("QToolButton#ChatSend:hover {", 1)[1].split("}", 1)[0]
+    assert "background:" in hover_block
+
+
 def test_run_buttons_are_slightly_taller_than_regular_controls() -> None:
     """主按钮（启动 / 停止服务、新对话）只比常规控件略高，不再写死 40px 的大尺寸。"""
     theme = _guitheme.resolve_theme("dark-blue")

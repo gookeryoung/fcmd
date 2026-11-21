@@ -318,10 +318,11 @@ QToolButton#ChatIconButton:hover { background: $surface_hover; }
 QToolButton#ChatStop { background: transparent; }
 QToolButton#ChatStop:hover { background: $danger_soft; }
 QToolButton#ChatStop:disabled { background: transparent; }
-QToolButton#ChatSend { background: $accent; }
-QToolButton#ChatSend:hover { background: $accent_hover; }
-QToolButton#ChatSend:pressed { background: $accent_pressed; }
-QToolButton#ChatSend:disabled { background: $surface_hover; }
+/* 发送按钮与设置齿轮同为无边框透明底：只靠图标色与 hover 底色区分主次。 */
+QToolButton#ChatSend { background: transparent; }
+QToolButton#ChatSend:hover { background: $accent_soft; }
+QToolButton#ChatSend:pressed { background: $accent_soft_strong; }
+QToolButton#ChatSend:disabled { background: transparent; }
 QPushButton#ChoiceCard {
     background: $surface;
     border: 1px solid $border;
