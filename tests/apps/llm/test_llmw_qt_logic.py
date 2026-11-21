@@ -322,17 +322,39 @@ def test_model_item_row_expands_inline_detail() -> None:
 def test_model_detail_view_reset_and_metadata() -> None:
     from PySide6.QtWidgets import QApplication
 
+    from fcmd.apps.llm.llmdown import ModelFile
+
     QApplication.instance() or QApplication([])
-    view = _ModelDetailView()
+    view = _ModelDetailView(lambda _repo: [])
     view.reset("Qwen/demo")
     assert view.repo == "Qwen/demo"
     assert not hasattr(view, "download_button")
     assert not hasattr(view, "readme")
+    # 详情分页：右侧「文件列表」与「详细信息」并列。
+    assert [view.tabs.tabText(index) for index in range(view.tabs.count())] == ["详细信息", "文件列表"]
+    assert view.files_table.objectName() == "ModelFiles"
+    assert view.files_table.columnCount() == 2
     view.set_error("网络错误")
     assert view.error.text() == "网络错误"
     assert not view.error.isHidden()
     view.render(ModelInfo(summary=ModelSummary(repo="Qwen/demo", chinese_name="示例")))
     assert view.meta_values["中文名"].text() == "示例"
+
+    # 文件清单：路径 + 大小两列，合计写进状态行。
+    view._files_ready(
+        "Qwen/demo",
+        [
+            ModelFile("model-Q4_K_M.gguf", 2 * 1024 * 1024 * 1024),
+            ModelFile("split_files/vae/ae.safetensors", 320 * 1024 * 1024),
+        ],
+    )
+    assert view.files_table.rowCount() == 2
+    assert view.files_table.item(0, 0).text() == "model-Q4_K_M.gguf"
+    assert view.files_table.item(1, 1).text() == "320.00 MB"
+    assert "共 2 个文件" in view.files_status.text()
+    view._files_failed("Qwen/demo", "超时")
+    assert view.files_table.rowCount() == 0
+    assert "超时" in view.files_status.text()
 
 
 # ---------------------------------------------------------------------- #

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -38,6 +40,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -71,6 +76,7 @@ from fcmd.apps.llm.llmdown import (
     QuantOption,
     delete_local_model,
     download_files,
+    fetch_files,
     fetch_model_info,
     filter_files,
     quant_options,
@@ -400,15 +406,25 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
-    """展开行里的详情：模型元数据。
+    """展开行里的详情：「详细信息」与「文件列表」两个页签。
 
-    同一个实例在行之间复用，展开哪一行就挂到哪一行下面；不展示 README
-    与文件清单，保持列表项展开后的内容紧凑。
+    同一个实例在行之间复用，展开哪一行就挂到哪一行下面；元数据先展示，文件
+    清单在第一次切到「文件列表」时才后台读取（仓库文件可能上百个，不拖慢展开）。
+    ``heightChanged`` 供列表在页签高度变化时重算展开行高度。
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    heightChanged = Signal()
+
+    def __init__(
+        self,
+        load_files: Callable[[str], list[ModelFile]] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self.repo: str | None = None
+        self._load_files = load_files
+        self._files_repo: str | None = None
+        self._files_loading = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 10)
         layout.setSpacing(6)
@@ -420,7 +436,14 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         self.error.setVisible(False)
         layout.addWidget(self.error)
 
-        layout.addWidget(QLabel("详细信息", self))
+        self.tabs = QTabWidget(self)
+        self.tabs.setDocumentMode(True)
+        layout.addWidget(self.tabs)
+
+        meta_page = QWidget(self.tabs)
+        meta_layout = QVBoxLayout(meta_page)
+        meta_layout.setContentsMargins(0, 6, 0, 0)
+        meta_layout.setSpacing(4)
         self.meta_grid = QGridLayout()
         self.meta_grid.setContentsMargins(0, 0, 0, 0)
         self.meta_grid.setHorizontalSpacing(10)
@@ -448,7 +471,7 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             cell = QHBoxLayout()
             cell.setContentsMargins(0, 0, 0, 0)
             cell.addWidget(hint_label(f"{name}：", wrap=False))
-            value = QLabel("-", self)
+            value = QLabel("-", meta_page)
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             value.setWordWrap(True)
             cell.addWidget(value, 1)
@@ -456,19 +479,54 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
             self.meta_values[name] = value
         self.meta_grid.setColumnStretch(0, 1)
         self.meta_grid.setColumnStretch(1, 1)
-        layout.addLayout(self.meta_grid)
+        meta_layout.addLayout(self.meta_grid)
+        meta_layout.addStretch(1)
+        self.tabs.addTab(meta_page, "详细信息")
 
+        files_page = QWidget(self.tabs)
+        files_layout = QVBoxLayout(files_page)
+        files_layout.setContentsMargins(0, 6, 0, 0)
+        files_layout.setSpacing(4)
+        self.files_status = hint_label("", wrap=True)
+        self.files_status.setVisible(False)
+        files_layout.addWidget(self.files_status)
+        self.files_table = QTableWidget(0, 2, files_page)
+        self.files_table.setObjectName("ModelFiles")
+        self.files_table.setHorizontalHeaderLabels(["文件", "大小"])
+        self.files_table.verticalHeader().setVisible(False)
+        self.files_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.files_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.files_table.setAlternatingRowColors(True)
+        self.files_table.setShowGrid(False)
+        header = self.files_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.files_table.setFixedHeight(220)
+        files_layout.addWidget(self.files_table)
+        self.tabs.addTab(files_page, "文件列表")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    # ------------------------------------------------------------------ #
+    # 详细信息
+    # ------------------------------------------------------------------ #
     def reset(self, repo: str) -> None:
-        """切换模型时清空旧内容，等后台详情回填。"""
+        """切换模型时清空旧内容，等后台详情回填；文件清单按需重新拉取。"""
         self.repo = repo
         self.error.setVisible(False)
         self.error.setText("")
         for value in self.meta_values.values():
             value.setText("-")
+        self._files_repo = None
+        self.files_table.setRowCount(0)
+        self.files_status.setText("")
+        self.files_status.setVisible(False)
+        if self.tabs.currentIndex() == 1:
+            self._ensure_files()
 
     def set_error(self, message: str) -> None:
         self.error.setText(message)
         self.error.setVisible(True)
+        self.heightChanged.emit()
 
     def render(self, info: ModelInfo) -> None:
         """回填仓库元数据。"""
@@ -478,6 +536,68 @@ class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
         for name, value in _llmw_models.detail_pairs(info):
             if name in self.meta_values:
                 self.meta_values[name].setText(value)
+        self.heightChanged.emit()
+
+    # ------------------------------------------------------------------ #
+    # 文件列表
+    # ------------------------------------------------------------------ #
+    def _on_tab_changed(self, index: int) -> None:
+        if index == 1:
+            self._ensure_files()
+        self.heightChanged.emit()
+
+    def _ensure_files(self) -> None:
+        repo = self.repo
+        if not repo or self._files_loading or self._files_repo == repo:
+            return
+        if self._load_files is None:
+            self.files_status.setText("当前没有可用的文件清单来源。")
+            self.files_status.setVisible(True)
+            return
+        self._files_loading = True
+        self._files_repo = repo
+        self.files_status.setText(f"正在读取 {repo} 的文件清单…")
+        self.files_status.setVisible(True)
+        submit(
+            self._load_files,
+            repo,
+            on_done=lambda files: self._files_ready(repo, files),
+            on_error=lambda message: self._files_failed(repo, message),
+            on_finished=self._files_finished,
+        )
+
+    def _files_finished(self) -> None:
+        self._files_loading = False
+
+    def _files_ready(self, repo: str, files: list[ModelFile]) -> None:
+        if repo != self.repo:
+            return
+        self.files_table.setRowCount(0)
+        total = 0
+        for file in files:
+            row = self.files_table.rowCount()
+            self.files_table.insertRow(row)
+            name = QTableWidgetItem(str(file.path))
+            name.setToolTip(str(file.path))
+            self.files_table.setItem(row, 0, name)
+            size = int(getattr(file, "size", 0) or 0)
+            total += size
+            size_item = QTableWidgetItem(human_size(size) if size else "-")
+            size_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.files_table.setItem(row, 1, size_item)
+        summary = f"共 {len(files)} 个文件" + (f" · 合计 {human_size(total)}" if total else "")
+        self.files_status.setText(summary)
+        self.files_status.setVisible(True)
+        self.heightChanged.emit()
+
+    def _files_failed(self, repo: str, message: str) -> None:
+        if repo != self.repo:
+            return
+        self._files_repo = None
+        self.files_table.setRowCount(0)
+        self.files_status.setText(f"读取文件清单失败：{message}")
+        self.files_status.setVisible(True)
+        self.heightChanged.emit()
 
 
 class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
@@ -664,7 +784,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.download_status.setVisible(False)
         layout.addWidget(self.download_status)
 
-        self.detail_view = _ModelDetailView(self)
+        self.detail_view = _ModelDetailView(self._load_repo_files, self)
+        self.detail_view.heightChanged.connect(self._on_detail_height_changed)
         self.detail_view.setVisible(False)
 
         self.refresh_installed()
@@ -1330,6 +1451,22 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         row = self.models.itemWidget(item)
         if isinstance(row, _ModelItemRow):
             self._on_row_toggle(row)
+
+    def _load_repo_files(self, repo: str) -> list[ModelFile]:
+        """读取仓库文件清单：先按设置里的下载源，失败再换另一个源。"""
+        source = _llmw_models.settings_from_dict(self.state.settings.download).source
+        errors: list[str] = []
+        for candidate in dict.fromkeys((source, "modelscope", "hf-mirror")):
+            try:
+                return fetch_files(repo, candidate)
+            except ModelToolError as exc:
+                errors.append(f"{candidate}: {exc}")
+        raise ModelToolError("；".join(errors[-2:]) or "两个源都不可用")
+
+    def _on_detail_height_changed(self) -> None:
+        """详情页签内容变化（切页签 / 文件清单加载完）后重算展开行高度。"""
+        if self._expanded_row is not None:
+            self._update_row_height(self._expanded_row)
 
     def _on_row_toggle(self, row: _ModelItemRow) -> None:
         """展开一行并在行下方挂详情；同一时间只展开一行。"""
