@@ -14,7 +14,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from fcmd.apps.llm import _llmconfig
 from fcmd.apps.llm.llmbase import ServeError, human_size
@@ -32,9 +32,11 @@ __all__ = [
     "build_model_args",
     "build_payload",
     "classify_role",
+    "companion_repos",
     "decode_image",
     "describe_asset",
     "detect_family",
+    "download_companion_weights",
     "effective_mode",
     "gallery",
     "is_diffusion_weight",
@@ -43,6 +45,7 @@ __all__ = [
     "pending_downloads",
     "save_images",
     "scan_assets",
+    "select_companion_files",
     "server_flags",
     "suggest_components",
     "validate_components",
@@ -329,6 +332,98 @@ def scan_assets(roots: Iterable[Path], *, min_bytes: int = MIN_WEIGHT_BYTES) -> 
     assets.sort(key=lambda item: (order.get(item.role, len(order)), -item.size, str(item.path)))
     roots = tuple(dict.fromkeys(root.resolve() for root in resolved_roots))
     return PaintAssets(tuple(assets), roots)
+
+
+#: 缺失组件可从哪些仓库补齐（按优先级尝试）。仓库名对应 Comfy-Org 的
+#: ``split_files`` 打包仓库与官方仓库，模型页搜不到时也能直接按仓库清单取文件。
+_COMPANION_REPOS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("z-image", "vae"): ("Comfy-Org/z_image_turbo", "Tongyi-MAI/Z-Image-Turbo"),
+    ("z-image", "llm"): ("Comfy-Org/z_image_turbo",),
+    ("qwen-image", "vae"): ("Comfy-Org/Qwen-Image_ComfyUI", "Qwen/Qwen-Image"),
+    ("qwen-image", "llm"): ("Comfy-Org/Qwen-Image_ComfyUI",),
+    ("flux", "vae"): ("Comfy-Org/flux1-dev", "black-forest-labs/FLUX.1-dev"),
+    ("sd3", "vae"): ("Comfy-Org/stable-diffusion-3.5-fp8",),
+    ("hidream", "vae"): ("Comfy-Org/HiDream-I1_ComfyUI",),
+    ("hunyuan-image", "vae"): ("Comfy-Org/HunyuanImage-2.1_ComfyUI",),
+    ("minimax-h3", "vae"): ("Comfy-Org/MiniMax-H3-Image_ComfyUI",),
+}
+"""缺失组件的候选仓库：(家族, 角色) → 仓库列表（优先 Comfy-Org 打包仓库）。"""
+
+
+def companion_repos(family: str, role: str) -> tuple[str, ...]:
+    """某家族某角色可用的下载仓库（没有登记时返回空）。"""
+    return _COMPANION_REPOS.get((family, role), ())
+
+
+def select_companion_files(files: Sequence[Any], role: str) -> tuple[Any, ...]:
+    """从仓库文件清单里挑出组件权重（VAE 取名字最匹配的最小文件）。
+
+    ``files`` 只需提供 ``path`` / ``size`` 属性（与 ``llmdown.ModelFile`` 一致）。
+    """
+    weights = [file for file in files if str(file.path).lower().endswith(WEIGHT_EXTENSIONS)]
+    pool: list[Any] = []
+    if role == "vae":
+        pool = [file for file in weights if "vae" in Path(str(file.path)).name.lower()]
+        if not pool:
+            pool = [file for file in weights if Path(str(file.path)).name.lower() == "ae.safetensors"]
+    elif role == "llm":
+        pool = [file for file in weights if "text_encoder" in str(file.path).lower()]
+    if not pool:
+        return ()
+    pool.sort(key=lambda file: (int(getattr(file, "size", 0) or 0), str(file.path)))
+    return (pool[0],)
+
+
+def download_companion_weights(
+    family: str,
+    roles: Sequence[str],
+    dest_root: Path,
+    *,
+    sources: Sequence[str] = ("hf-mirror", "modelscope"),
+) -> tuple[Path, ...]:
+    """把缺失组件（VAE / 文本编码器）下载到模型目录，返回写入的文件路径。
+
+    模型页按仓库名检索，VAE 常放在 ``split_files/vae`` 子目录里、搜不到；这里直接
+    按 :data:`_COMPANION_REPOS` 的候选仓库拉文件清单，挑出角色对应的权重再下载。
+    """
+    from fcmd.apps.llm import llmdown
+
+    written: list[Path] = []
+    for role in roles:
+        repos = companion_repos(family, role)
+        if not repos:
+            raise ServeError(
+                f"{FAMILIES.get(family, FAMILIES['unknown']).label} 没有可自动下载的 {role} 仓库，请手动下载"
+            )
+        errors: list[str] = []
+        done = False
+        for repo in repos:
+            for source in sources:
+                try:
+                    files = llmdown.fetch_files(repo, source)
+                except Exception as exc:  # 网络 / 仓库不存在：换下一个候选
+                    errors.append(f"{repo}（{source}）：{exc}")
+                    continue
+                chosen = select_companion_files(files, role)
+                if not chosen:
+                    errors.append(f"{repo}（{source}）：清单里没有 {role} 权重")
+                    continue
+                dest = Path(dest_root) / repo.split("/")[-1]
+                selection = llmdown.SourceSelection(source=source, files=tuple(files))
+                try:
+                    llmdown.download_files(repo, list(chosen), dest, selection, reporter=lambda _event: None)
+                except Exception as exc:  # 下载失败：换候选仓库 / 源
+                    errors.append(f"{repo}（{source}）：{exc}")
+                    continue
+                written.extend(dest / str(file.path) for file in chosen)
+                done = True
+                break
+            if done:
+                break
+        if not done:
+            detail = "；".join(errors[-3:]) if errors else "没有可用候选仓库"
+            raise ServeError(f"下载 {role} 失败：{detail}")
+    return tuple(written)
 
 
 def pending_downloads(roots: Iterable[Path]) -> tuple[Path, ...]:

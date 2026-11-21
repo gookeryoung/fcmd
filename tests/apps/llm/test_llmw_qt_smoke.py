@@ -246,6 +246,32 @@ def test_paint_tab_entry_rescans_diffusion_models(window: Any, monkeypatch: pyte
     assert calls == ["paint"]
 
 
+def test_paint_missing_component_offers_download(window: Any, tmp_path: Path) -> None:
+    """缺 VAE 且家族有候选仓库时，画图配置里露出「下载缺失的 VAE…」。"""
+    from fcmd.apps.llm import _llmpaint
+
+    main = tmp_path / "z_image_turbo-Q8_0.gguf"
+    main.write_bytes(b"x" * 16)
+    asset = _llmpaint.PaintAsset(main, "diffusion", "z-image", 16)
+    window.show_page("run")
+    run = window.run_page
+    for _ in range(5):
+        QApplication.processEvents()
+    run.tabs.setCurrentIndex(2)
+    section = run.paint_engine_section
+    section._settings["model_dir"] = str(tmp_path)
+    section._apply_assets(_llmpaint.PaintAssets((asset,), (tmp_path,)))
+    section.model_combo.setCurrentIndex(section.model_combo.findData(str(main)))
+    QApplication.processEvents()
+    assert not section.download_button.isHidden()
+    assert "VAE" in section.download_button.text()
+
+    # 额外参数里给了 --vae / --llm 后不再算缺失，按钮收起。
+    section.extra_edit.setText(f"--vae {tmp_path / 'my-vae.safetensors'} --llm {tmp_path / 'enc.gguf'}")
+    QApplication.processEvents()
+    assert section.download_button.isHidden()
+
+
 def test_paint_missing_model_hint_points_to_incomplete_download(window: Any, tmp_path: Path) -> None:
     """没有可用扩散模型时，画图卡片提示去继续下载（并列出 ``*.part`` 文件）。"""
     from fcmd.apps.llm import _llmpaint
@@ -1397,7 +1423,7 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     assert len(tops) == 1
     assert all(widget.size().width() == widget.size().height() == 30 for widget in actions)
     assert all(widget.icon().isNull() is False for widget in actions)
-    # 与右侧 composer 一致的圆角容器：三个动作等宽铺满，不再挤在左侧。
+    # 无边框操作条：三个动作等宽铺满，hover 才显底色，不与正文抢视线。
     assert chat.history_actions.objectName() == "ChatSidebarActions"
     assert all(widget.parent() is chat.history_actions for widget in actions)
     widths = {widget.width() for widget in actions}

@@ -452,8 +452,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.history_list.setMinimumWidth(0)
         self.history_list.currentRowChanged.connect(self._select_conversation)
         side.addWidget(self.history_list, 1)
-        # 底部操作条：与右侧 composer 同为圆角容器 + 透明图标按钮，三个动作等宽
-        # 铺满一行（而不是挤在左侧），和输入区的工具行视觉上对称。
+        # 底部操作条：无边框透明底，三个图标按钮等宽铺满一行，不抢正文视线。
         self.history_actions = QFrame(sidebar)
         self.history_actions.setObjectName("ChatSidebarActions")
         self.history_actions.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)

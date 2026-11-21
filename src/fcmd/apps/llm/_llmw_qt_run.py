@@ -654,6 +654,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             model_combo=paint_combo,
         )
         self.paint_engine_section.changed.connect(self._on_paint_engine_changed)
+        self.paint_engine_section.statusRequested.connect(self.state.status)
         model_row.addWidget(self.paint_engine_section.model_combo, 1)
         self.paint_action_button = button("启动服务", kind="primary")
         self.paint_action_button.setObjectName("RunPrimary")

@@ -414,6 +414,22 @@ class TestValidate:
             _llmpaint.validate_components(_llmpaint.PaintComponents(model=model, vae=vae))
         _llmpaint.validate_components(_llmpaint.PaintComponents(model=model, vae=vae, llm=llm))
 
+    def test_companion_component_selection(self, tmp_path: Path) -> None:
+        """VAE 自动下载：按名字挑组件文件，忽略主模型 / 文档；未知家族直接报错。"""
+        from types import SimpleNamespace
+
+        files = [
+            SimpleNamespace(path="split_files/diffusion_models/z_image_turbo_bf16.safetensors", size=12_000_000_000),
+            SimpleNamespace(path="split_files/vae/z_image_vae.safetensors", size=300_000_000),
+            SimpleNamespace(path="split_files/vae/README.md", size=120),
+        ]
+        chosen = _llmpaint.select_companion_files(files, "vae")
+        assert [item.path for item in chosen] == ["split_files/vae/z_image_vae.safetensors"]
+        assert _llmpaint.companion_repos("z-image", "vae")
+        assert _llmpaint.companion_repos("unknown", "vae") == ()
+        with pytest.raises(ServeError, match="没有可自动下载"):
+            _llmpaint.download_companion_weights("unknown", ("vae",), tmp_path)
+
     def test_components_extra_args_satisfy_missing_slots(self, tmp_path: Path) -> None:
         """额外参数里显式给了 --vae / --llm 时不再判缺，允许用户自己指定路径。"""
         model = _weight(tmp_path / "z_image_turbo-Q8_0.gguf", 4)

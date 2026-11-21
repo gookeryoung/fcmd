@@ -145,12 +145,12 @@ def test_chat_send_button_is_borderless_like_settings() -> None:
     assert "background:" in hover_block
 
 
-def test_chat_sidebar_actions_use_composer_style_frame() -> None:
-    """对话列表底部操作条与 composer 同为圆角容器，图标按钮圆角更小。"""
+def test_chat_sidebar_actions_are_borderless() -> None:
+    """对话列表底部操作条不包描边容器，只留透明图标键，避免与正文抢视线。"""
     text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
     frame = text.split("\nQFrame#ChatSidebarActions {", 1)[1].split("}", 1)[0]
-    assert "border-radius: 10px" in frame
-    assert "border: 1px solid" in frame
+    assert "border: none" in frame
+    assert "background: transparent" in frame
     inner = text.split("QFrame#ChatSidebarActions QToolButton#ChatIconButton {", 1)[1].split("}", 1)[0]
     assert "border-radius: 7px" in inner
 

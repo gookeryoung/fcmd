@@ -320,11 +320,10 @@ QToolButton#ChatIconButton, QToolButton#ChatStop, QToolButton#ChatSend {
 }
 QToolButton#ChatIconButton { background: transparent; }
 QToolButton#ChatIconButton:hover { background: $surface_hover; }
-/* 对话列表底部操作条：与 composer 同款圆角容器，图标按钮等宽铺满。 */
+/* 对话列表底部操作条：不再包描边容器，只留三个透明图标键，避免与正文抢视线。 */
 QFrame#ChatSidebarActions {
-    background: $background;
-    border: 1px solid $border;
-    border-radius: 10px;
+    background: transparent;
+    border: none;
 }
 QFrame#ChatSidebarActions QToolButton#ChatIconButton { border-radius: 7px; }
 QToolButton#ChatStop { background: transparent; }

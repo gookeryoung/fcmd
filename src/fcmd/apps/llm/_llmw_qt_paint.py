@@ -50,7 +50,7 @@ from fcmd.gui.qt.widgets import (
     link_button,
     mono_label,
 )
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import submit, submit_daemon
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -407,6 +407,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
 
     changed = Signal()
     assetsLoaded = Signal()
+    statusRequested = Signal(str)
 
     _KEYS = (
         "port",
@@ -460,6 +461,11 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         family_row.addWidget(self.family_label, 1)
         self.suggest_button = button("自动配对", kind="ghost", tooltip="按主模型家族填满 VAE / 文本编码器槽位")
         family_row.addWidget(self.suggest_button)
+        self.download_button = button("下载缺失组件…", kind="ghost")
+        self.download_button.setToolTip("从 Comfy-Org / 官方仓库直接下载缺失的 VAE / 文本编码器")
+        self.download_button.setVisible(False)
+        self.download_button.clicked.connect(self._download_missing)
+        family_row.addWidget(self.download_button)
         layout.addLayout(family_row)
 
         models_form = FormGrid(self)
@@ -547,6 +553,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             self.mode_combo.setCurrentIndex(max(index, 0))
             self._apply_component_selection()
             self._update_preview()
+            self._refresh_component_actions()
         finally:
             self._loading = False
 
@@ -576,6 +583,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         if self._loading:
             return
         self._update_preview()
+        self._refresh_component_actions()
         self.changed.emit()
 
     # ------------------------------------------------------------------ #
@@ -612,6 +620,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             self.model_combo.setCurrentIndex(1)
         self._apply_component_selection()
         self._update_preview()
+        self._refresh_component_actions()
         self.assetsLoaded.emit()
 
     def _fill_combo(
@@ -697,6 +706,64 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
                 continue
             self._select_path(combo, str(value))
         self._on_changed()
+
+    def _missing_roles(self) -> tuple[str, ...]:
+        """当前主模型家族还缺哪些必需组件（已选 / 已用额外参数补齐的不算）。"""
+        settings = {**self._settings, **self.settings()}
+        components = components_from_settings(parse_paint_settings(settings))
+        return _llmpaint.missing_required_slots(components)
+
+    def _refresh_component_actions(self) -> None:
+        """缺组件且能自动下载时露出「下载缺失组件…」，否则收起。"""
+        if self._loading:
+            return
+        components = components_from_settings(parse_paint_settings({**self._settings, **self.settings()}))
+        missing = self._missing_roles()
+        family = _llmpaint.detect_family(components.model) if components.model is not None else ""
+        roles = tuple(role for role in missing if _llmpaint.companion_repos(family, role))
+        if not roles:
+            self.download_button.setVisible(False)
+            return
+        labels = {"vae": "VAE", "llm": "文本编码器"}
+        names = "、".join(labels.get(role, role) for role in roles)
+        self.download_button.setText(f"下载缺失的 {names}…")
+        self.download_button.setToolTip(f"从 Comfy-Org / 官方仓库下载：{names}")
+        self.download_button.setVisible(True)
+
+    def _download_missing(self) -> None:
+        """后台下载缺失组件到模型目录，完成后重扫资产并自动配对。"""
+        components = components_from_settings(parse_paint_settings({**self._settings, **self.settings()}))
+        missing = self._missing_roles()
+        family = _llmpaint.detect_family(components.model) if components.model is not None else ""
+        roles = tuple(role for role in missing if _llmpaint.companion_repos(family, role))
+        if not roles:
+            return
+        labels = {"vae": "VAE", "llm": "文本编码器"}
+        names = "、".join(labels.get(role, role) for role in roles)
+        self.download_button.setEnabled(False)
+        self.statusRequested.emit(f"正在下载 {names}…（Comfy-Org / 官方仓库）")
+        dest = model_roots(self._settings)[0]
+        submit_daemon(
+            _llmpaint.download_companion_weights,
+            family,
+            roles,
+            dest,
+            on_done=self._download_done,
+            on_error=self._download_failed,
+            on_finished=self._download_finished,
+        )
+
+    def _download_done(self, paths: tuple[Path, ...]) -> None:
+        names = "、".join(path.name for path in paths)
+        self.statusRequested.emit(f"已下载组件：{names}（正在重扫模型）")
+        self.refresh_assets()
+
+    def _download_failed(self, message: str) -> None:
+        self.statusRequested.emit(f"下载组件失败：{message.splitlines()[0]}")
+
+    def _download_finished(self) -> None:
+        self.download_button.setEnabled(True)
+        self._refresh_component_actions()
 
     def missing_model_hint(self) -> str:
         """没有可用主模型时的提示（含未下载完成的文件）；有模型时返回空串。"""
