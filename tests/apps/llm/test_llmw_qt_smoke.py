@@ -213,6 +213,27 @@ def test_chat_config_contains_paint_sample_settings(window: Any) -> None:
     page.config_dialog.close()
 
 
+def test_chat_config_dialog_starts_compact(window: Any) -> None:
+    """配置窗口默认贴合内容：画图采样分区收起，展开时才长高。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show_page("chat")
+    page = window.page("chat")
+    page.open_config()
+    QApplication.processEvents()
+    dialog = page.config_dialog
+    assert page.paint_collapsible.is_expanded() is False
+    assert dialog.height() <= 500
+    assert page.paint_section.isVisibleTo(dialog) is False
+
+    page.paint_collapsible.set_expanded(True)
+    QApplication.processEvents()
+    assert page.paint_collapsible.is_expanded() is True
+    assert dialog.height() > 500
+    assert page.paint_section.isVisibleTo(dialog) is True
+    dialog.close()
+
+
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     """运行页分「对话 / 编程 / 画图」：对话与编程共用参数，画图页签只配启动参数与启停。"""
     window.show_page("run")
@@ -1769,7 +1790,6 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     # 无边框风格：图标用 accent 色表达主操作，不靠实心背景块。
     assert chat.send_button.property("fcmdIconTone") == "accent"
     assert chat.send_button.size().width() == chat.send_button.size().height() == 34
-    assert chat.model_combo.height() == 34
 
     actions = [chat.copy_chat_button, chat.delete_chat_button, chat.clear_chats_button]
     tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in actions}
@@ -1783,24 +1803,6 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     assert len(widths) == 1
     assert chat.new_chat_button.text() == "新对话"
     assert chat.new_chat_button.icon().isNull() is False
-
-
-def test_chat_model_combo_uses_custom_popup_menu(window: Any) -> None:
-    """模型选择不是原生下拉：非编辑、圆角菜单、当前项带勾选。"""
-    window.show_page("chat")
-    chat = window.page("chat")
-    combo = chat.model_combo
-    assert combo.isEditable() is False
-    combo.clear()
-    combo.addItems(["alpha", "beta"])
-    combo.setCurrentIndex(1)
-    menu = combo.model_menu()
-    assert menu.objectName() == "ChatModelMenu"
-    actions = menu.actions()
-    assert [action.text() for action in actions] == ["alpha", "beta"]
-    assert [action.isChecked() for action in actions] == [False, True]
-    actions[0].trigger()
-    assert combo.currentIndex() == 0
 
 
 def test_chat_send_stop_toggle_uses_one_button(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1888,21 +1890,51 @@ def test_chat_sidebar_can_collapse_and_restore(window: Any) -> None:
     assert chat.sidebar_toggle.property("fcmdIconName") == "chevron-left"
 
 
-def test_chat_composer_puts_model_selector_left_of_send(window: Any) -> None:
-    """对话框底部工具行：模型选择与配置在发送按钮左侧。"""
+def test_chat_sidebar_toggle_shares_page_title_row(window: Any) -> None:
+    """对话列表收起键挂在页标题同一行：正文不再为它单独让出一行高度。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show()
+    window.show_page("chat")
+    QApplication.processEvents()
+    chat = window.page("chat")
+    toggle = chat.sidebar_toggle
+    # 控件归主窗口标题行所有，不再属于对话页正文布局。
+    assert toggle.window() is window
+    assert toggle.parent() is not chat
+    assert window.header_actions.indexOf(toggle) >= 0
+    toggle_top = toggle.mapTo(window, toggle.rect().topLeft()).y()
+    title_top = window.page_title.mapTo(window, window.page_title.rect().topLeft()).y()
+    assert abs(toggle_top - title_top) <= 2
+    # 正文紧跟标题（提示行）之后：中间没有额外的动作行。
+    hint_bottom = window.page_hint.mapTo(window, window.page_hint.rect().bottomLeft()).y()
+    transcript_top = chat.transcript.mapTo(window, chat.transcript.rect().topLeft()).y()
+    assert 0 <= transcript_top - hint_bottom <= 16
+
+    # 切到其它页时收起键隐藏且不占位；切回恢复。
+    window.show_page("overview")
+    QApplication.processEvents()
+    assert toggle.isHidden()
+    window.show_page("chat")
+    QApplication.processEvents()
+    assert not toggle.isHidden()
+
+
+def test_chat_composer_puts_config_left_of_send(window: Any) -> None:
+    """对话框底部工具行：接入配置在发送按钮左侧（不再有模型胶囊）。"""
     from PySide6.QtWidgets import QApplication
 
     window.show_page("chat")
     window.show()
     QApplication.processEvents()
     chat = window.page("chat")
-    model_pos = chat.model_combo.mapTo(chat, chat.model_combo.rect().topLeft())
+    assert not hasattr(chat, "model_combo")
     config_pos = chat.config_button.mapTo(chat, chat.config_button.rect().topLeft())
     chat_pos = chat.chat_toggle.mapTo(chat, chat.chat_toggle.rect().topLeft())
     paint_pos = chat.paint_toggle.mapTo(chat, chat.paint_toggle.rect().topLeft())
     send_pos = chat.send_button.mapTo(chat, chat.send_button.rect().topLeft())
-    assert abs(model_pos.y() - send_pos.y()) <= 2
-    assert model_pos.x() < config_pos.x() < chat_pos.x() < paint_pos.x() < send_pos.x()
+    assert abs(config_pos.y() - send_pos.y()) <= 2
+    assert config_pos.x() < chat_pos.x() < paint_pos.x() < send_pos.x()
     assert chat.transcript.objectName() == "ChatTranscript"
     assert chat.input_edit.objectName() == "ChatInput"
 

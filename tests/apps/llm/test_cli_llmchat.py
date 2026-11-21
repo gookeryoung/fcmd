@@ -796,24 +796,49 @@ def test_settings_tolerates_bad_chat_history(tmp_path: Path) -> None:
     assert fallback.chat_active == 0
 
 
-def test_chat_model_combo_lists_aliases_and_syncs(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
-    """发送左侧模型下拉列出已登记服务的模型名，并与连接参数双向同步。"""
-    states = [replace(_state("a"), alias="alpha"), replace(_state("b"), alias="beta")]
-    monkeypatch.setattr(llmenv, "list_states", lambda: states)
-    monkeypatch.setattr("fcmd.apps.llm._llmw_chat.process_alive", lambda pid, created: True)
+def test_chat_registered_service_hides_manual_connection(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
+    """已登记服务的地址 / 模型 / Key 来自运行页：默认只读展示，不展开手填表单。"""
+    alive = replace(_state("alive"), pid=1234, alias="alpha")
+    monkeypatch.setattr(llmenv, "list_states", lambda: [alive])
+    monkeypatch.setattr("fcmd.apps.llm._llmw_chat.process_alive", lambda pid, created: pid == alive.pid)
 
     chat_page.refresh_services()
-    labels = [chat_page.model_combo.itemText(index) for index in range(chat_page.model_combo.count())]
-    assert "alpha" in labels
-    assert "beta" in labels
 
-    chat_page.model_combo.setCurrentText("beta")
-    assert chat_page.model_edit.text() == "beta"
-    assert chat_page.service_combo.currentText().startswith("b（")
-    assert chat_page.url_edit.text() == _state("b").base_url
+    assert chat_page.custom_check.isChecked() is False
+    assert chat_page.connection_box.isHidden() is True
+    summary = chat_page.connection_summary.text()
+    assert alive.base_url in summary
+    assert "alpha" in summary
+    assert "运行页" in summary
+    assert chat_page.model_edit.text() == "alpha"
 
-    chat_page.model_edit.setText("custom-model")
-    assert chat_page.model_combo.currentText() == "custom-model"
+
+def test_chat_custom_mode_reveals_connection_form(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
+    """勾选自定义接入：切到「自定义」并展开地址 / 模型 / Key；取消回到已登记服务。"""
+    alive = replace(_state("alive"), pid=1234, alias="alpha")
+    monkeypatch.setattr(llmenv, "list_states", lambda: [alive])
+    monkeypatch.setattr("fcmd.apps.llm._llmw_chat.process_alive", lambda pid, created: pid == alive.pid)
+    chat_page.refresh_services()
+
+    chat_page.custom_check.setChecked(True)
+    assert chat_page.service_combo.currentText() == _llmw_chat._CUSTOM
+    assert chat_page.connection_box.isHidden() is False
+    assert "自定义" in chat_page.connection_summary.text()
+
+    chat_page.custom_check.setChecked(False)
+    assert chat_page.service_combo.currentText() == "alive（运行中）"
+    assert chat_page.connection_box.isHidden() is True
+
+
+def test_chat_custom_mode_is_forced_without_services(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
+    """没有已登记服务时只能自定义接入：表单展开，不能把地址输入框藏掉。"""
+    monkeypatch.setattr(llmenv, "list_states", lambda: [])
+    chat_page.refresh_services()
+    assert chat_page.custom_check.isChecked() is True
+    assert chat_page.connection_box.isHidden() is False
+    chat_page.custom_check.setChecked(False)  # 无服务可回退：仍保持自定义
+    assert chat_page.custom_check.isChecked() is True
+    assert chat_page.connection_box.isHidden() is False
 
 
 class _ReasoningTwiceSession:

@@ -288,31 +288,6 @@ QPlainTextEdit#ChatInput {
     border: none;
     padding: 4px 2px;
 }
-QComboBox#ChatModelCombo {
-    background: transparent;
-    border: none;
-    border-radius: 8px;
-    padding: 0 26px 0 10px;
-    min-height: 34px;
-    max-height: 34px;
-}
-QComboBox#ChatModelCombo:hover { background: $surface_hover; }
-QComboBox#ChatModelCombo::drop-down { border: none; width: 0; }
-QComboBox#ChatModelCombo::down-arrow { image: none; width: 0; height: 0; }
-QMenu#ChatModelMenu {
-    background: $surface;
-    border: 1px solid $border;
-    border-radius: 12px;
-    padding: 6px;
-}
-QMenu#ChatModelMenu::item {
-    padding: 8px 28px 8px 14px;
-    border-radius: 8px;
-    min-width: 180px;
-}
-QMenu#ChatModelMenu::item:selected { background: $surface_hover; }
-QMenu#ChatModelMenu::item:checked { color: $accent; font-weight: 600; }
-QMenu#ChatModelMenu::indicator { width: 0; height: 0; }
 QToolButton#ChatIconButton, QToolButton#ChatStop, QToolButton#ChatSend {
     border: none;
     border-radius: 9px;

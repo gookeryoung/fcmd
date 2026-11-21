@@ -163,12 +163,25 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(16, 12, 16, 8)
         right_layout.setSpacing(8)
+        # 页标题行：左侧可挂页面级动作（如对话页的侧栏收起键），标题紧随其后，
+        # 避免页面再单独占一行放动作、浪费正文高度。
         self.page_title = QLabel("", right)
         self.page_title.setObjectName("SectionTitle")
         self.page_hint = QLabel("", right)
         self.page_hint.setObjectName("Hint")
-        right_layout.addWidget(self.page_title)
+        self.header_actions = QHBoxLayout()
+        self.header_actions.setContentsMargins(0, 0, 0, 0)
+        self.header_actions.setSpacing(6)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(6)
+        title_row.addLayout(self.header_actions)
+        title_row.addWidget(self.page_title)
+        title_row.addStretch(1)
+        right_layout.addLayout(title_row)
         right_layout.addWidget(self.page_hint)
+        self._header_owner = ""
+        self._header_actions_by_page: dict[str, list[QWidget]] = {}
         self.stack = QStackedWidget(right)
         right_layout.addWidget(self.stack, 1)
         layout.addWidget(right, 1)
@@ -219,6 +232,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if key not in self._factories:
             return
         page = self._build_if_needed(key)
+        self._mount_header_actions(key)
         if self.stack.currentWidget() is page and self._current == key:
             return
         self._current = key
@@ -245,7 +259,29 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             placeholder.deleteLater()
         else:  # pragma: no cover - 占位控件总存在，防御分支
             self.stack.addWidget(page)
+        self._register_header_actions(key, page)
         return page
+
+    def _register_header_actions(self, key: str, page: QWidget) -> None:
+        """收集页面通过 ``header_widgets()`` 提供的标题行动作（先隐藏）。"""
+        provide = getattr(page, "header_widgets", None)
+        if not callable(provide):
+            return
+        widgets = [widget for widget in provide() if isinstance(widget, QWidget)]
+        self._header_actions_by_page[key] = widgets
+        for widget in widgets:
+            widget.setVisible(False)
+            self.header_actions.addWidget(widget, 0)
+
+    def _mount_header_actions(self, key: str) -> None:
+        """只显示当前页的标题行动作；其它页的隐藏且不占位。"""
+        if self._header_owner == key:
+            return
+        for widget in self._header_actions_by_page.get(self._header_owner, []):
+            widget.setVisible(False)
+        self._header_owner = key
+        for widget in self._header_actions_by_page.get(key, []):
+            widget.setVisible(True)
 
     def _index_of(self, key: str) -> int:
         """页面在栈中的索引（与导航登记顺序一致）。"""

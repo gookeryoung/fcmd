@@ -18,19 +18,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
     QKeyEvent,
-    QPainter,
-    QPen,
     QTextCharFormat,
     QTextCursor,
     QTextImageFormat,
 )
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFrame,
@@ -39,7 +38,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QTextEdit,
@@ -71,6 +69,7 @@ from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
+    Collapsible,
     FormGrid,
     PageScroll,
     StatusTag,
@@ -240,88 +239,22 @@ class _ChatBridge(QObject):  # pragma: no cover - Qt 信号桥
     failed = Signal(str)
 
 
-class _ChatModelCombo(QComboBox):  # pragma: no cover - Qt 控件
-    """模型选择器：非编辑、无原生下拉框行为，点开为上浮的圆角菜单。
-
-    DSH 一类对话产品的模型选择是「当前模型胶囊 + 弹出菜单」，而不是传统
-    QComboBox 的下拉列表（带输入框 / 系统箭头 / 向下弹层）。这里保留 QComboBox
-    的 item API 便于程序化更新，但 ``showPopup`` 换成自绘 QMenu：选项带当前项
-    勾选、圆角、无边框，并在输入框上方弹出，避免遮挡对话框。
-    """
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setEditable(False)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._menu: QMenu | None = None
-
-    def model_menu(self) -> QMenu:
-        """构造当前模型列表菜单（供 showPopup 与测试复用）。"""
-        menu = QMenu(self)
-        menu.setObjectName("ChatModelMenu")
-        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        menu.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
-        current = self.currentIndex()
-        for index in range(self.count()):
-            action = menu.addAction(self.itemText(index))
-            action.setCheckable(True)
-            action.setChecked(index == current)
-            action.triggered.connect(lambda _checked=False, row=index: self.setCurrentIndex(row))
-        return menu
-
-    def showPopup(self) -> None:
-        """在模型胶囊上方弹出菜单；不再调用 QComboBox 的原生下拉列表。"""
-        menu = self.model_menu()
-        self._menu = menu
-        menu.adjustSize()
-        anchor = self.mapToGlobal(QPoint(0, 0))
-        screen = QApplication.screenAt(anchor) or QApplication.primaryScreen()
-        y = anchor.y() - menu.height() - 6
-        x = anchor.x()
-        if screen is not None:
-            available = screen.availableGeometry()
-            x = min(max(x, available.left()), available.right() - menu.width())
-            y = max(y, available.top())
-        menu.popup(QPoint(x, y))
-
-    def hidePopup(self) -> None:
-        """关闭自绘菜单（QComboBox 内部调用时保持兼容）。"""
-        if self._menu is not None:
-            self._menu.hide()
-            self._menu = None
-
-    def paintEvent(self, event: object) -> None:
-        """在右侧画一个细 chevron，替代系统下拉箭头。"""
-        super().paintEvent(event)  # type: ignore[arg-type]
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(self.palette().color(self.foregroundRole()))
-        pen.setWidthF(1.4)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        center_x = self.width() - 13
-        center_y = self.height() // 2
-        painter.drawLine(center_x - 4, center_y - 2, center_x, center_y + 2)
-        painter.drawLine(center_x, center_y + 2, center_x + 4, center_y - 2)
-        painter.end()
-
-
 class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
     """模型、生成参数与画图配置的独立窗口。
 
-    对话页本身只保留「模型下拉 + ⚙」入口，对话与画图配置都不占正文区域；
-    修改即时生效，关闭窗口不需要额外保存步骤。
+    对话框里只保留 ⚙ 入口，对话与画图配置都不占正文区域；选中已登记服务时
+    地址 / 模型 / API Key 由运行页启动配置回填并只读展示，勾选「自定义接入」才
+    展开手填（外部 OpenAI 兼容服务）。修改即时生效，关闭窗口不需要额外保存步骤。
     """
 
     def __init__(self, owner: ChatPage) -> None:
         super().__init__(owner)
         self.setWindowTitle("模型与生成配置")
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
-        scroll = PageScroll(self, margins=(0, 0, 4, 0))
-        scroll.setMinimumHeight(520)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
+        scroll = PageScroll(self, margins=(0, 0, 4, 4))
         layout.addWidget(scroll, 1)
         body = scroll.body
 
@@ -337,14 +270,21 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         service_row.addWidget(owner.refresh_button)
         body.addLayout(service_row)
 
-        connection_form = FormGrid(self)
-        owner.model_edit = QLineEdit(DEFAULT_ALIAS, self)
-        owner.url_edit = QLineEdit(_DEFAULT_URL, self)
-        owner.api_key_edit = QLineEdit(DEFAULT_API_KEY, self)
-        connection_form.add_row("模型", owner.model_edit)
-        connection_form.add_row("服务地址", owner.url_edit)
-        connection_form.add_row("API Key", owner.api_key_edit)
-        body.addWidget(connection_form)
+        # 默认「已登记服务」：地址 / 模型 / API Key 由运行页的启动配置决定，这里只读展示；
+        # 只有接外部 OpenAI 兼容服务时才展开三个输入框，避免与运行页重复配置。
+        owner.connection_summary = hint_label("", wrap=True)
+        body.addWidget(owner.connection_summary)
+        owner.custom_check = QCheckBox("自定义接入（外部 OpenAI 兼容服务）", self)
+        owner.custom_check.setToolTip("勾选后手填服务地址 / 模型名 / API Key；取消则使用所选已登记服务的配置")
+        body.addWidget(owner.custom_check)
+        owner.connection_box = FormGrid(self)
+        owner.model_edit = QLineEdit(DEFAULT_ALIAS, owner.connection_box)
+        owner.url_edit = QLineEdit(_DEFAULT_URL, owner.connection_box)
+        owner.api_key_edit = QLineEdit(DEFAULT_API_KEY, owner.connection_box)
+        owner.connection_box.add_row("模型", owner.model_edit)
+        owner.connection_box.add_row("服务地址", owner.url_edit)
+        owner.connection_box.add_row("API Key", owner.api_key_edit)
+        body.addWidget(owner.connection_box)
 
         body.addWidget(_dialog_title("生成参数", self))
         settings_form = FormGrid(self)
@@ -356,26 +296,32 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         settings_form.add_pair("输出上限", owner.max_tokens_edit, "temperature", owner.temperature_edit)
         body.addWidget(settings_form)
 
-        # 画图采样 / 输出进对话配置；模型与引擎配置在运行页「画图」页签。
-        body.addWidget(_dialog_title("画图（采样 / 输出）", self))
+        # 画图采样 / 输出默认折叠：日常打开配置多半只改连接 / 生成参数，
+        # 展开后再调尺寸 / 步数 / 输出目录，窗口就不会一上来占满半个屏幕。
         owner.paint_section = PaintSampleSection(owner.paint_settings(), self)
         owner.paint_section.changed.connect(owner._on_paint_settings_changed)
-        body.addWidget(owner.paint_section)
-        body.addStretch(1)
+        owner.paint_collapsible = Collapsible("画图（采样 / 输出，展开调整）", expanded=False, parent=self)
+        owner.paint_collapsible.body.addWidget(owner.paint_section)
+        owner.paint_collapsible.toggle.toggled.connect(self._resize_for_paint)
+        body.addWidget(owner.paint_collapsible)
 
-        layout.addWidget(
-            hint_label(
-                "修改即时生效；对话历史按各自对话保存的模型与参数继续。画图模型 / 引擎配置在运行页「画图」页签。",
-                wrap=True,
-            )
-        )
         footer = QHBoxLayout()
         footer.addStretch(1)
         close_button = button("关闭")
         close_button.clicked.connect(self.close)
         footer.addWidget(close_button)
         layout.addLayout(footer)
-        self.resize(660, 780)
+        # 初始高度贴合内容（连接 / 生成参数两段）；展开画图分区时再长高，
+        # 屏幕放不下才交给滚动区。
+        self.resize(640, 430)
+
+    def _resize_for_paint(self, expanded: bool) -> None:
+        """展开 / 收起画图分区时调整窗口高度（不超出屏幕可用区域的 90%）。"""
+        target = 660 if expanded else 430
+        screen = self.screen()
+        if screen is not None:
+            target = min(target, int(screen.availableGeometry().height() * 0.9))
+        self.resize(self.width(), max(self.minimumHeight(), target))
 
 
 class ChatPage(QWidget):  # pragma: no cover - Qt 控件
@@ -400,7 +346,6 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._bridge.failed.connect(self._on_failed)
         self._build()
         self.state.servicesChanged.connect(lambda _states: self.refresh_services())
-        self.state.modelsChanged.connect(lambda _outcome: self._refresh_model_choices())
         self.refresh_services()
         self._restore_session_form()
 
@@ -491,16 +436,12 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         # 否则 Qt 按 sizeHint 分配，侧栏实际会撑到 300px 以上。
         self._splitter.setSizes([0 if self._sidebar_collapsed else self._sidebar_width, 760])
 
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(6)
+        # 收起 / 展开键挂到主窗口的页标题行（``header_widgets``），不再在正文上方
+        # 单独占一行，正文高度全部留给对话内容。
         self.sidebar_toggle = icon_button("", tooltip="收起对话列表")
         self.sidebar_toggle.setObjectName("ChatIconButton")
         self.sidebar_toggle.setFixedSize(28, 28)
         self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
-        top_row.addWidget(self.sidebar_toggle, 0)
-        top_row.addStretch(1)
-        layout.addLayout(top_row)
         self._sync_sidebar_toggle()
 
         # 对话区不再套卡片边框：正文直接铺在页面底色上，更接近主流对话产品的阅读区。
@@ -509,7 +450,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.transcript.setReadOnly(True)
         layout.addWidget(self.transcript, 1)
 
-        # 输入区（对话框）：大圆角卡片 + 底部工具行，模型选择放在发送按钮左侧。
+        # 输入区（对话框）：大圆角卡片 + 底部工具行（模型 / 接入在 ⚙ 里，不再放模型胶囊）。
         composer = QFrame(self)
         composer.setObjectName("ChatComposer")
         composer.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -525,15 +466,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         input_area.addWidget(self.input_edit)
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
-        self.model_combo = _ChatModelCombo(composer)
-        self.model_combo.setObjectName("ChatModelCombo")
-        self.model_combo.setMinimumWidth(200)
-        self.model_combo.setMaximumWidth(300)
-        self.model_combo.setFixedHeight(34)
-        self.model_combo.setToolTip("选择当前对话使用的模型（可输入自定义模型名）")
-        self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
-        buttons.addWidget(self.model_combo, 0)
-        self.config_button = icon_button("", tooltip="模型与生成配置（服务地址 / API Key / 采样参数）")
+        self.config_button = icon_button("", tooltip="模型与生成配置（服务 / 模型 / API Key / 采样参数）")
         self.config_button.setObjectName("ChatIconButton")
         self.config_button.setFixedSize(34, 34)
         _set_icon(self.config_button, "settings", tone="muted")
@@ -564,7 +497,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.chat_toggle.toggled.connect(self._on_chat_toggled)
         self.paint_toggle.toggled.connect(self._on_paint_toggled)
         buttons.addStretch(1)
-        # 工具行与模型下拉统一 34px 高；发送 / 停止合并到同一个图标按钮。
+        # 工具行按钮统一 34px 高；发送 / 停止合并到同一个图标按钮。
         self.send_button = icon_button("", tooltip="发送（Ctrl+Enter）")
         self.send_button.setObjectName("ChatSend")
         self.send_button.setFixedSize(34, 34)
@@ -575,11 +508,11 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         input_area.addLayout(buttons)
         layout.addWidget(composer)
 
-        # 模型 / 连接 / 生成参数收进独立配置窗口，只保留对话框里的「模型 + ⚙」入口。
+        # 模型 / 连接 / 生成参数收进独立配置窗口，对话框里只留 ⚙ 入口。
         self.config_dialog = _ChatConfigDialog(self)
         self.service_combo.currentIndexChanged.connect(lambda _index: self._on_service_changed())
         self.refresh_button.clicked.connect(self.refresh_services)
-        self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
+        self.custom_check.toggled.connect(self._on_custom_toggled)
         self.config_button.clicked.connect(self.open_config)
         self.send_button.clicked.connect(self._on_send_or_stop)
         self._sync_paint_placeholder()
@@ -618,7 +551,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
                 current = self._services[0][0]
         self.service_combo.setCurrentText(current)
         self.service_combo.blockSignals(False)
-        self._refresh_model_choices()
+        self._sync_connection_mode()
         state = self._selected_state()
         if state is None:
             self.service_tag.set_status("未连接", "muted")
@@ -638,54 +571,45 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
                 return state
         return None
 
-    def _refresh_model_choices(self) -> None:
-        """把已登记服务的模型名填进输入框左侧的模型下拉（保留当前自定义值）。"""
-        current = self.model_edit.text().strip()
-        names: list[str] = []
-        for _label, state in self._services:
-            alias = state.alias.strip()
-            if alias and alias not in names:
-                names.append(alias)
-        if current and current not in names:
-            names.insert(0, current)
-        self.model_combo.blockSignals(True)
-        self.model_combo.clear()
-        self.model_combo.addItems(names)
-        self.model_combo.setCurrentText(current or (names[0] if names else DEFAULT_ALIAS))
-        self.model_combo.blockSignals(False)
+    def _first_registered_index(self) -> int:
+        """第一个已登记服务在服务下拉里的索引（0 是「自定义」；没有则 -1）。"""
+        return 1 if self._services else -1
 
-    def _on_model_combo_changed(self, text: str) -> None:
-        """选择模型：同步模型名；命中已登记服务时一并切换服务地址。"""
-        model = text.strip()
-        if not model:
+    def _sync_connection_mode(self) -> None:
+        """按所选服务切换接入方式：已登记服务隐藏手填项，自定义接入才展开。"""
+        state = self._selected_state()
+        custom = state is None
+        self.custom_check.blockSignals(True)
+        self.custom_check.setChecked(custom)
+        self.custom_check.blockSignals(False)
+        self.connection_box.setVisible(custom)
+        if state is None:
+            self.connection_summary.setText(
+                "接入方式：自定义 —— 手填服务地址 / 模型名 / API Key（外部 OpenAI 兼容服务）"
+            )
             return
-        if model != self.model_edit.text():
-            self.model_edit.setText(model)
-        for index, (_label, state) in enumerate(self._services, start=1):
-            if state.alias.strip() != model or self.service_combo.currentIndex() == index:
-                continue
-            # 静默切换服务（不触发「已切换到…」正文提示），避免污染对话记录。
-            self.service_combo.blockSignals(True)
-            self.service_combo.setCurrentIndex(index)
-            self.service_combo.blockSignals(False)
+        self.connection_summary.setText(
+            f"已登记服务 {state.name} → {state.base_url} · 模型 {state.alias or '-'}"
+            "（连接参数来自运行页，不在这里重复填写）"
+        )
+
+    def _on_custom_toggled(self, checked: bool) -> None:
+        """勾选自定义接入：服务下拉切到「自定义」；取消则回到第一个已登记服务。"""
+        if checked:
             self._manual_choice = True
-            self._apply_state(state)
-            self._report_state(state)
+            if self.service_combo.currentText() != _CUSTOM:
+                self.service_combo.blockSignals(True)
+                self.service_combo.setCurrentText(_CUSTOM)
+                self.service_combo.blockSignals(False)
+            self._sync_connection_mode()
+            self._set_status("接入方式：自定义（手填地址 / 模型名 / API Key）")
             return
-
-    def _sync_model_combo(self) -> None:
-        """连接参数变化（服务回填 / 恢复历史）时反向同步模型下拉。"""
-        text = self.model_edit.text()
-        if self.model_combo.currentText() == text:
+        index = self._first_registered_index()
+        if index < 0:
+            # 没有已登记服务时无法切回自动模式：保持展开，避免把地址输入框藏起来。
+            self._sync_connection_mode()
             return
-        index = self.model_combo.findText(text)
-        self.model_combo.blockSignals(True)
-        if index >= 0:
-            self.model_combo.setCurrentIndex(index)
-        elif text.strip():
-            self.model_combo.addItem(text)
-            self.model_combo.setCurrentIndex(self.model_combo.count() - 1)
-        self.model_combo.blockSignals(False)
+        self.service_combo.setCurrentIndex(index)
 
     def open_config(self) -> None:
         """显示独立的模型 / 生成参数配置窗口（非模态，不阻塞对话）。"""
@@ -696,6 +620,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _on_service_changed(self) -> None:
         """选中已登记服务时回填地址 / 模型 / API Key，并提示进程是否仍在运行。"""
         self._manual_choice = True
+        self._sync_connection_mode()
         state = self._selected_state()
         if state is None:
             self.service_tag.set_status("自定义", "accent")
@@ -1102,6 +1027,10 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.settings.chat_sidebar_width = self._sidebar_width
         self.state.settings.chat_sidebar_collapsed = self._sidebar_collapsed
         self.state.persist()
+
+    def header_widgets(self) -> tuple[QWidget, ...]:
+        """页标题行动作：对话列表收起 / 展开键（与页面标题同一行）。"""
+        return (self.sidebar_toggle,)
 
     def _sync_sidebar_toggle(self) -> None:
         """展开 / 收起键的图标与提示跟随状态。"""
