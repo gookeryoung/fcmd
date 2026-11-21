@@ -140,9 +140,10 @@ _REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
     "hunyuan-image": ("llm", "vae"),
 }
 _COMPANION_HINTS: dict[str, str] = {
-    "vae": "Comfy-Org 对应仓库的 split_files/vae 或 vae 目录",
-    "llm": "Qwen3 / Mistral 文本编码器（GGUF 或 safetensors）",
+    "vae": "「模型」页分类切到「画图」搜同名家族的 VAE（Comfy-Org 仓库的 split_files/vae 或 vae 目录）",
+    "llm": "Qwen3 / Mistral 文本编码器（GGUF 或 safetensors，搜同一仓库的 text_encoders）",
 }
+_COMPANION_FLAGS: dict[str, str] = {"vae": "--vae", "llm": "--llm"}
 
 _LLM_ENCODER_KEYWORDS: tuple[str, ...] = (
     "qwen3",
@@ -482,13 +483,27 @@ def build_payload(request: PaintRequest) -> dict[str, object]:
     return payload
 
 
+def _extra_arg_sets(extra_args: Sequence[str], flag: str) -> bool:
+    """额外参数里是否已经给了某个启动选项（``--vae path`` 或 ``--vae=path``）。"""
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in extra_args)
+
+
 def missing_required_slots(components: PaintComponents) -> tuple[str, ...]:
-    """返回当前主模型家族仍缺少的必需组件（``llm`` / ``vae``）。"""
+    """返回当前主模型家族仍缺少的必需组件（``llm`` / ``vae``）。
+
+    已用「额外参数」手动给出 ``--vae`` / ``--llm`` 时不再判缺——允许用户自己指定
+    组件路径，而不是被下拉框卡住。
+    """
     if components.model is None:
         return ()
     family = detect_family(components.model)
     required = _REQUIRED_SLOTS.get(family, ())
-    return tuple(role for role in required if getattr(components, role, None) is None)
+    return tuple(
+        role
+        for role in required
+        if getattr(components, role, None) is None
+        and not _extra_arg_sets(components.extra_args, _COMPANION_FLAGS[role])
+    )
 
 
 def validate_components(components: PaintComponents) -> None:
@@ -505,9 +520,12 @@ def validate_components(components: PaintComponents) -> None:
     if missing:
         labels = {"vae": "VAE", "llm": "文本编码器 (--llm)"}
         detail = "；".join(f"{labels.get(role, role)}：{_COMPANION_HINTS.get(role, '')}" for role in missing)
+        family = FAMILIES.get(detect_family(components.model), FAMILIES["unknown"])
         raise ServeError(
-            f"主模型 {components.model.name} 缺少必需组件："
-            f"{'、'.join(labels.get(role, role) for role in missing)}。 可下载：{detail}"
+            f"主模型 {components.model.name}（{family.label}）缺少必需组件："
+            f"{'、'.join(labels.get(role, role) for role in missing)}。"
+            f"可下载：{detail}。也可以在「额外参数」里用 "
+            f"{'/'.join(_COMPANION_FLAGS[role] for role in missing)} 直接指定本地路径。"
         )
     for label, path in (
         ("VAE", components.vae),

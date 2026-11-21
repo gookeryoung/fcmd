@@ -86,6 +86,7 @@ PAINT_FILTER_QUERY = "图像生成"
 PAINT_SEARCH_TERMS: tuple[str, ...] = (
     "Qwen-Image-2.1",
     "Qwen-Image",
+    "Z-Image",
     "MiniMax-H3-Image",
     "FLUX",
     "HiDream",

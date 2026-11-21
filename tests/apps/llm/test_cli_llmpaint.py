@@ -414,6 +414,28 @@ class TestValidate:
             _llmpaint.validate_components(_llmpaint.PaintComponents(model=model, vae=vae))
         _llmpaint.validate_components(_llmpaint.PaintComponents(model=model, vae=vae, llm=llm))
 
+    def test_components_extra_args_satisfy_missing_slots(self, tmp_path: Path) -> None:
+        """额外参数里显式给了 --vae / --llm 时不再判缺，允许用户自己指定路径。"""
+        model = _weight(tmp_path / "z_image_turbo-Q8_0.gguf", 4)
+        vae = _weight(tmp_path / "z_image_vae.safetensors", 4)
+        llm = _weight(tmp_path / "Qwen3-4B-Instruct-Q8_0.gguf", 4)
+        components = _llmpaint.PaintComponents(
+            model=model,
+            extra_args=("--vae", str(vae), "--llm", str(llm)),
+        )
+        assert _llmpaint.missing_required_slots(components) == ()
+        _llmpaint.validate_components(components)
+
+    def test_missing_components_error_is_actionable(self, tmp_path: Path) -> None:
+        """缺 VAE 的错误要写清家族、下载入口与额外参数兜底。"""
+        model = _weight(tmp_path / "z_image_turbo-Q8_0.gguf", 4)
+        with pytest.raises(ServeError) as excinfo:
+            _llmpaint.validate_components(_llmpaint.PaintComponents(model=model))
+        message = str(excinfo.value)
+        assert "Z-Image" in message
+        assert "「模型」页" in message
+        assert "--vae" in message
+
     def test_components_invalid(self, tmp_path: Path) -> None:
         with pytest.raises(ServeError, match="主模型"):
             _llmpaint.validate_components(_llmpaint.PaintComponents())

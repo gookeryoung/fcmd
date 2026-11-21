@@ -72,6 +72,10 @@
     （`PaintEngineSection`：加载方式、组件、CPU 卸载 / VAE 分块 / Diffusion FA、
     额外参数、命令预览、服务端口 / 自动启动）。启停按钮的文案 / 配色 / 禁用逻辑
     与 LLM 模型卡片一致（`RunPrimary` / `RunDanger` + `set_button_text`）。
+- 组件校验与「去下载」路径：Z-Image / Qwen-Image / MiniMax-H3 / HiDream /
+  HunyuanImage 必须带独立 VAE 与文本编码器；缺组件时错误文案写明家族、到「模型」页
+  切「画图」分类下载（该分类并行检索含 Z-Image），并提示可用「额外参数」的
+  ``--vae`` / ``--llm`` 直接指定本地路径（给了就不再判缺）。
 - 引擎管理统一在设置页：新增「画图引擎（sd.cpp）」卡片，布局对齐推理引擎
   （llama.cpp）卡片——标题行右侧「刷新」、目录行「引擎目录 + 路径 + 打开 / 安装引擎…」、
   已安装引擎一律紧凑单行（版本号 + 可执行文件 + 「默认 / 设为默认」+ 后端胶囊；

@@ -239,6 +239,7 @@ class TestBrowseHelpers:
         assert matches_filter(ModelSummary(repo="black-forest-labs/FLUX.1-dev"), "paint")
         assert matches_filter(ModelSummary(repo="Qwen/Qwen-Image", tasks=("文生图",)), "paint")
         assert matches_filter(ModelSummary(repo="Qwen/Qwen-Image-2.1"), "paint")
+        assert matches_filter(ModelSummary(repo="Tongyi/Z-Image-Turbo"), "paint")
         assert matches_filter(ModelSummary(repo="MiniMax/MiniMax-H3-Image"), "paint")
         assert matches_filter(ModelSummary(repo="HiDream/HiDream-I1"), "paint")
         assert not matches_filter(ModelSummary(repo="Qwen/chat"), "paint")
