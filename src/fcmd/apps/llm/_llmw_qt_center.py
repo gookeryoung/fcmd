@@ -75,6 +75,7 @@ from fcmd.apps.llm.llmdown import (
     ProgressEvent,
     QuantOption,
     delete_local_model,
+    describe_selection,
     download_files,
     fetch_files,
     fetch_model_info,
@@ -1511,7 +1512,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         """读取仓库文件清单：先按设置里的下载源，失败再换另一个源。"""
         source = _llmw_models.settings_from_dict(self.state.settings.download).source
         errors: list[str] = []
-        for candidate in dict.fromkeys((source, "modelscope", "hf-mirror")):
+        candidates = ("modelscope", "hf-mirror") if source == "auto" else (source, "modelscope", "hf-mirror")
+        for candidate in dict.fromkeys(candidates):
             try:
                 return fetch_files(repo, candidate)
             except ModelToolError as exc:
@@ -1760,7 +1762,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     ) -> str:
         self._log(f"获取 {repo} 的 {source} 文件清单…")
         selection = select_source(repo, source)  # type: ignore[arg-type]
-        self._log(f"选用源 {selection.source}，仓库共 {len(selection.files)} 个文件")
+        choice = describe_selection(selection)
+        self._log(f"{choice}，仓库共 {len(selection.files)} 个文件")
+        self.state.status(choice)
         if only_paths:
             # 显式选中文件（文件列表 / 量化选项）优先于设置里的包含 / 排除掩码，
             # 否则选中的 VAE / 文本编码器可能被掩码过滤掉。

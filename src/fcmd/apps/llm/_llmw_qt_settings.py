@@ -198,7 +198,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _save_download(self) -> None:
         settings = _llmw_models.DownloadGuiSettings(
-            source=_llmw_models._SOURCE_KEYS.get(self.download_source.currentText(), "modelscope"),
+            source=_llmw_models._SOURCE_KEYS.get(self.download_source.currentText(), "auto"),
             workers=min(max(self.download_workers.value(), 1), _llmw_models._MAX_WORKERS),
             verify=self.download_verify.isChecked(),
             include=self.download_include.text(),

@@ -57,6 +57,7 @@ __all__ = [
     "QuantOption",
     "SourceSelection",
     "delete_local_model",
+    "describe_selection",
     "download_files",
     "fetch_files",
     "fetch_model_info",
@@ -1148,6 +1149,21 @@ def select_source(
     chosen = next((src for src, probe in probes if probe.ok), _SOURCES[0])
     fallback = next((src for src in _SOURCES if src != chosen and src in manifests), None)
     return SourceSelection(chosen, tuple(manifests[chosen]), fallback, tuple(p for _, p in probes))
+
+
+def describe_selection(selection: SourceSelection) -> str:
+    """选源说明：``auto`` 时附带各源实测吞吐，供 GUI 日志 / 状态栏复用。"""
+    parts: list[str] = []
+    for probe in selection.probes:
+        host = probe.url.split("/")[2]
+        label = _SOURCE_BY_HOST.get(host, host)
+        if probe.ok:
+            parts.append(f"{label} {probe.throughput_kbps / 1024:.1f} MB/s")
+        else:
+            parts.append(f"{label} 不可用")
+    fallback = f"（失败回退 {selection.fallback}）" if selection.fallback else ""
+    detail = f"；实测 {'，'.join(parts)}" if parts else ""
+    return f"选用源 {selection.source}{fallback}{detail}"
 
 
 def _print_selection(selection: SourceSelection) -> None:

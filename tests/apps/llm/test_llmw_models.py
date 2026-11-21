@@ -59,6 +59,8 @@ class TestRegistration:
 class TestSettings:
     def test_defaults(self) -> None:
         assert settings_from_dict(None) == DownloadGuiSettings()
+        assert DownloadGuiSettings().source == "auto"
+        assert DownloadGuiSettings().workers == 8
 
     def test_roundtrip(self) -> None:
         settings = DownloadGuiSettings(
@@ -80,14 +82,24 @@ class TestSettings:
                 "exclude": "*.bin",
             }
         )
-        assert settings.source == "modelscope"
-        assert settings.workers == 16
+        assert settings.source == "auto"
+        assert settings.workers == 8
         assert settings.verify is True
         assert settings.include == ""
         assert settings.exclude == "*.bin"
 
     def test_bool_workers_rejected(self) -> None:
-        assert settings_from_dict({"workers": True}).workers == 4
+        assert settings_from_dict({"workers": True}).workers == 8
+
+    def test_legacy_modelscope_default_migrates_to_auto(self) -> None:
+        """升级前固定 ModelScope 的旧配置一次性迁到自动测速，避免仍被单源限速。"""
+        settings = settings_from_dict({"source": "modelscope", "workers": 4})
+        assert settings.source == "auto"
+        assert settings.workers == 4
+
+    def test_explicit_modelscope_kept_after_marker(self) -> None:
+        raw = settings_to_dict(DownloadGuiSettings(source="modelscope"))
+        assert settings_from_dict(raw).source == "modelscope"
 
 
 class TestFormatting:

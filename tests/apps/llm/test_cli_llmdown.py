@@ -315,6 +315,15 @@ class TestHelpers:
             "model-Q5_K_M.gguf",
         ]
 
+    def test_describe_selection_includes_probe_throughput(self) -> None:
+        probes = (_probe("https://hf-mirror.com/a.bin", throughput=102400), _probe("https://x/ms", ok=False))
+        selection = llmdown.SourceSelection("hf-mirror", (), "modelscope", probes)
+        text = llmdown.describe_selection(selection)
+        assert "选用源 hf-mirror" in text
+        assert "100.0 MB/s" in text
+        assert "modelscope 不可用" not in text  # 主机名不在已知表时显示原始 host
+        assert "失败回退 modelscope" in text
+
     def test_find_quant_option_falls_back_to_same_family(self) -> None:
         options = quant_options([ModelFile("model-UD-Q4_K_XL.gguf", 10)])
         assert find_quant_option(options, "Q4_K_M") is options[0]

@@ -60,7 +60,7 @@ __all__ = [
 ]
 
 _PAGE_SIZE = 30
-_MAX_WORKERS = 16
+_MAX_WORKERS = 8
 _SOURCES = ("modelscope", "hf-mirror", "auto")
 _SOURCE_LABELS = {"modelscope": "ModelScope", "hf-mirror": "hf-mirror", "auto": "自动测速"}
 _SOURCE_KEYS: dict[str, Literal["modelscope", "hf-mirror", "auto"]] = {
@@ -174,8 +174,8 @@ class DownloadGuiSettings:
     ``models_dir``，本结构只保存下载源与并发等参数。
     """
 
-    source: str = "modelscope"
-    workers: int = 4
+    source: str = "auto"
+    workers: int = 8
     verify: bool = True
     include: str = ""
     exclude: str = ""
@@ -189,6 +189,10 @@ def settings_from_dict(raw: object) -> DownloadGuiSettings:
     source = raw.get("source")
     if isinstance(source, str) and source in _SOURCES:
         settings.source = source
+    # 旧版 GUI 默认固定 ModelScope（不测速 / 无兜底）：没有新标记时一次性迁移到
+    # 自动测速，避免升级后仍被单源限速卡住。
+    if "source_probe" not in raw and settings.source == "modelscope":
+        settings.source = "auto"
     workers = raw.get("workers")
     if isinstance(workers, int) and not isinstance(workers, bool):
         settings.workers = min(max(workers, 1), _MAX_WORKERS)
@@ -206,6 +210,7 @@ def settings_to_dict(settings: DownloadGuiSettings) -> dict[str, Any]:
     """把下载参数转换为可写入 JSON 的字典。"""
     return {
         "source": settings.source,
+        "source_probe": True,
         "workers": settings.workers,
         "verify": settings.verify,
         "include": settings.include,
