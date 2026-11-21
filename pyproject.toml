@@ -151,7 +151,7 @@ yamtool        = "fcmd.cli._entry:run_named"
 zipencrypt     = "fcmd.tools.archive.zipencrypt:main"
 
 [project.optional-dependencies]
-agent = [ "mcp>=1.0,<2" ]
+agent = [ "mcp>=1.0,<3" ]
 archive = [ "pyzipper>=0.3.6" ]
 color = [ "coloraide>=2.9" ]
 crypto = [ "cryptography>=43" ]
