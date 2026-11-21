@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -291,6 +292,44 @@ def test_prebuilt_pages_stay_hidden_until_shown(home: Path) -> None:
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.close()
+        window.deleteLater()
+
+
+def test_image_catalog_load_uses_daemon_thread(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像页拉清单走守护线程：关窗时不能被 ``wsl --list --online`` / 网络下载卡住进程退出。
+
+    回归 ``QThreadPool`` 版本：窗口能关，但进程要等任务结束才退（网络卡住时等同退不出）。
+    """
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_collect(**_kwargs: object) -> object:
+        started.set()
+        release.wait(5)
+        raise RuntimeError("模拟断网")
+
+    monkeypatch.setattr(_wslmanw_qt._images, "collect_images", slow_collect)
+    before = {id(thread) for thread in threading.enumerate()}
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("images")
+        assert started.wait(5)
+        new_threads = [thread for thread in threading.enumerate() if id(thread) not in before]
+        assert any(thread.name == "fcmd-daemon-task" and thread.daemon for thread in new_threads)
+        # 放行后台任务，等回调跑完再销毁窗口，避免信号投递到已析构的控件。
+        release.set()
+        deadline = time.monotonic() + 5
+        app = QApplication.instance()
+        while window._images_busy and time.monotonic() < deadline:
+            if app is not None:
+                app.processEvents()
+            time.sleep(0.01)
+        assert window._images_busy is False
+    finally:
+        release.set()
+        window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
 
 

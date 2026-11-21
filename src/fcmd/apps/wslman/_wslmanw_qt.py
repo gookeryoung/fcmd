@@ -73,7 +73,7 @@ from fcmd.gui.qt.widgets import (
     make_table_item,
 )
 from fcmd.gui.qt.window import QtMainWindow
-from fcmd.gui.qt.workers import periodic, submit
+from fcmd.gui.qt.workers import periodic, submit, submit_daemon
 
 if TYPE_CHECKING:
     from typing import Any
@@ -1078,7 +1078,10 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             if force
             else "正在获取镜像清单…（wsl --list --online 首次较慢，可用缓存兜底）"
         )
-        submit(
+        # 拉清单要跑 ``wsl --list --online`` 再下载官方 JSON，网络不好时会长时间阻塞；
+        # 放进 ``QThreadPool`` 会让进程在关窗后仍等任务结束（窗口关了进程却退不出），
+        # 因此走守护线程：结果回来前关窗，进程可以直接退出。
+        submit_daemon(
             lambda: self._images_worker(force),
             on_done=self._apply_images,
             on_error=self._images_error,
