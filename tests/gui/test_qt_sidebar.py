@@ -197,3 +197,23 @@ def test_toggle_sits_at_sidebar_bottom(nav: Any) -> None:
     assert nav.toggle_button.geometry().top() > last_button.geometry().bottom()
     assert nav.toggle_button.width() == nav.width()
     assert last_button.width() == nav.width()
+
+
+def test_page_icon_is_shown_and_collapses_to_icon_only() -> None:
+    """登记图标后：展开态图标 + 文字，折叠态只留图标（不再显示首字）。"""
+    application = QApplication.instance() or QApplication([])
+    nav = SidebarNav(title="LLM")
+    try:
+        nav.add("chat", "对话", icon="chat")
+        button = nav.button("chat")
+        assert button is not None
+        assert button.icon().isNull() is False
+        assert button.text() == "对话"
+        nav.set_collapsed(True)
+        application.processEvents()
+        assert button.text() == ""
+        assert button.icon().isNull() is False
+        nav.set_collapsed(False)
+        assert button.text() == "对话"
+    finally:
+        nav.deleteLater()

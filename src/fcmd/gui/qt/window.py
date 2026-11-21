@@ -181,9 +181,17 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     # 页面
     # ------------------------------------------------------------------ #
-    def add_page(self, key: str, label: str, *, hint: str = "", factory: Callable[[], QWidget]) -> None:
+    def add_page(
+        self,
+        key: str,
+        label: str,
+        *,
+        hint: str = "",
+        factory: Callable[[], QWidget],
+        icon: str | None = None,
+    ) -> None:
         """登记页面；首次切到该页时才调用 ``factory`` 构建内容。"""
-        self.nav.add(key, label, hint=hint)
+        self.nav.add(key, label, hint=hint, icon=icon)
         self._factories[key] = factory
         placeholder = QWidget(self)
         placeholder.setObjectName("PageBody")

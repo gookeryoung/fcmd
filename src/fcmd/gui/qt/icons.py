@@ -8,6 +8,10 @@
 - ``chevrons-left`` / ``chevrons-right``：更紧凑的双箭头（预留）；
 - ``panel-left-close`` / ``panel-left-open``：带面板边框的折叠 / 展开（预留）。
 
+除侧边栏页面图标外，还内置 ``refresh`` / ``download`` / ``upload`` / ``save`` /
+``folder`` / ``search`` / ``trash`` / ``send`` / ``convert`` 等按钮动作图标；
+:func:`icon_for_text` 按按钮文案推断图标，``fcmd.gui.qt.widgets.button`` 默认调用它。
+
 配色跟随 ``QApplication`` 调色板的 ``WindowText``（:func:`default_color`），
 ``fcmd.gui.qt.theme.apply_theme`` 已把语义色写进同一份调色板，因此深浅主题下
 都能保持对比度；调用方也可以显式传 ``color`` 覆盖。
@@ -24,11 +28,13 @@ if TYPE_CHECKING:
     from PySide6.QtGui import QIcon, QPixmap
 
 __all__ = [
+    "BUTTON_ICON_KEYWORDS",
     "DEFAULT_COLOR",
     "ICON_BODIES",
     "ICON_SIZE",
     "default_color",
     "icon",
+    "icon_for_text",
     "pixmap",
     "svg",
 ]
@@ -58,8 +64,140 @@ ICON_BODIES: dict[str, str] = {
         'a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>'
         '<circle cx="12" cy="12" r="3"/>'
     ),
+    # 页面 / 侧边栏
+    "overview": (
+        '<rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/>'
+        '<rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/>'
+    ),
+    "models": (
+        '<path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4'
+        'a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"/>'
+        '<path d="M12 22V12"/><path d="m3.29 7 8.71 5 8.71-5"/><path d="m7.5 4.27 9 5.15"/>'
+    ),
+    "run": '<polygon points="6 3 20 12 6 21 6 3"/>',
+    "chat": '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+    "paint": (
+        '<path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/>'
+        '<path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02'
+        ' 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/>'
+    ),
+    "lab": (
+        '<path d="M10 2v7.53a2 2 0 0 1-.21.9L4.72 20.55a1 1 0 0 0 .9 1.45h12.76'
+        'a1 1 0 0 0 .9-1.45l-5.07-10.12A2 2 0 0 1 14 9.53V2"/>'
+        '<path d="M8.5 2h7"/><path d="M7 16h10"/>'
+    ),
+    "images": (
+        '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="8" cy="8" r="2"/>'
+        '<path d="m21 15-3.09-3.09a2 2 0 0 0-2.83 0L6 21"/>'
+    ),
+    "distros": (
+        '<path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91'
+        'a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/>'
+        '<path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/>'
+        '<path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>'
+    ),
+    "log": (
+        '<path d="M15 12h-5"/><path d="M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/>'
+        '<path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5'
+        'a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>'
+    ),
+    # 通用动作
+    "plus": '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    "refresh": ('<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'),
+    "trash": (
+        '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>'
+        '<path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
+    ),
+    "download": (
+        '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+        '<polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>'
+    ),
+    "upload": (
+        '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>'
+        '<polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>'
+    ),
+    "save": (
+        '<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5'
+        'a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>'
+        '<path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'
+    ),
+    "export": (
+        '<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M4 7V4a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2h-4"/>'
+        '<path d="m9 15 3 3 3-3"/><path d="M12 21v-6"/>'
+    ),
+    "folder": (
+        '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9'
+        'A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'
+    ),
+    "search": '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    "scan": (
+        '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/>'
+        '<path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/>'
+    ),
+    "stop": '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+    "send": (
+        '<path d="M14.54 21.69a.5.5 0 0 0 .94-.02l6.5-19a.5.5 0 0 0-.64-.64l-19 6.5'
+        'a.5.5 0 0 0-.02.94l7.93 3.18a2 2 0 0 1 1.11 1.11z"/>'
+        '<path d="m21.85 2.15-10.94 10.94"/>'
+    ),
+    "copy": (
+        '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>'
+        '<path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'
+    ),
+    "check": '<path d="M20 6 9 17l-5-5"/>',
+    "reset": ('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'),
+    "convert": (
+        '<path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94'
+        "A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0l1.58 6.14A2 2 0 0 0 15.5 9.94"
+        "l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14"
+        'a.5.5 0 0 1-.96 0z"/>'
+    ),
 }
 """图标名 → Lucide 图形片段（24×24 viewBox，描边由 :func:`svg` 统一补齐）。"""
+
+BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("新对话", "plus"),
+    ("重新检测", "refresh"),
+    ("重新扫描", "refresh"),
+    ("重新加载", "refresh"),
+    ("关闭全部", "stop"),
+    ("刷新", "refresh"),
+    ("保存", "save"),
+    ("删除", "trash"),
+    ("清空", "trash"),
+    ("下载", "download"),
+    ("导入", "upload"),
+    ("导出", "export"),
+    ("打开", "folder"),
+    ("浏览", "folder"),
+    ("选择", "folder"),
+    ("目录", "folder"),
+    ("启动", "run"),
+    ("运行", "run"),
+    ("停止", "stop"),
+    ("发送", "send"),
+    ("搜索", "search"),
+    ("扫描", "scan"),
+    ("检测", "scan"),
+    ("新建", "plus"),
+    ("添加", "plus"),
+    ("复制", "copy"),
+    ("转换", "convert"),
+    ("量化", "convert"),
+    ("重置", "reset"),
+    ("确定", "check"),
+    ("应用", "check"),
+)
+"""按钮文案 → 图标名；按关键词长度降序匹配，``button()`` 用它自动挂图标。"""
+
+
+def icon_for_text(text: str) -> str | None:
+    """按按钮文案推断图标名；没有命中时返回 ``None``（保持纯文字按钮）。"""
+    for keyword, name in sorted(BUTTON_ICON_KEYWORDS, key=lambda item: len(item[0]), reverse=True):
+        if keyword in text:
+            return name
+    return None
+
 
 _SVG_TEMPLATE = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" '

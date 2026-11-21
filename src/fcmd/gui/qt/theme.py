@@ -372,6 +372,7 @@ QPushButton#NavButton {
     max-height: 36px;
     font-size: ${font_heading}pt;
 }
+QPushButton#NavButton[collapsed="true"] { padding: 0; text-align: center; }
 QPushButton#NavButton:hover { background: $surface_hover; color: $text; }
 QPushButton#NavButton:checked {
     background: $surface_active;

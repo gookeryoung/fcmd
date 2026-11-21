@@ -87,10 +87,10 @@ DEFAULT_SIZE = (1160, 760)
 TITLE = "WSL · 发行版管理"
 NAV_TITLE = "WSL"
 
-PAGES: tuple[tuple[str, str, str], ...] = (
-    ("distros", "发行版", "列表、详情、启动停止、导出与注销"),
-    ("images", "镜像", "在线镜像清单、下载源与本地安装"),
-    ("log", "日志", "启动、导出、安装与下载的任务日志"),
+PAGES: tuple[tuple[str, str, str, str], ...] = (
+    ("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
+    ("images", "镜像", "在线镜像清单、下载源与本地安装", "images"),
+    ("log", "日志", "启动、导出、安装与下载的任务日志", "log"),
 )
 """侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""
 
@@ -286,10 +286,10 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             "images": self._build_images_page,
             "log": self._build_log_page,
         }
-        for key, label, hint in PAGES:
+        for key, label, hint, icon in PAGES:
             page = builders[key]()
             page.hide()
-            self.add_page(key, label, hint=hint, factory=lambda page=page: page)
+            self.add_page(key, label, hint=hint, icon=icon, factory=lambda page=page: page)
         self.hover_label = HintLabel("")
         self.hover_label.setTextFormat(Qt.TextFormat.PlainText)
         self.hover_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)

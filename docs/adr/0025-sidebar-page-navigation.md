@@ -30,7 +30,8 @@ locllmw 原先与其他整窗工具一样，用顶部
   文字靠 12px 内边距对齐。这样箭头不会和 LOGO 抢顶部位置，60px 窄栏里也能一眼看到展开入口。
   没有传图标的窗口（如 `wslmanw`）同样使用底部按钮。图标来自
   `fcmd.gui.qt.icons`，不再用 `«` / `»` 字形。
-- 页面用**字符串 key** 标识：`add(key, label, hint=...) -> 页面控件`，
+- 页面用**字符串 key** 标识：`add(key, label, hint=..., icon=...) -> 页面控件`；
+  带图标时展开态「图标 + 文字」、折叠态只显示图标（见 ADR 0038 的 D7），
   `select(target)` 接受 key / 索引 / 页面控件，`step(delta)` 循环切换，
   `keys()` / `selected()` 读取状态。
 - `on_change(key)` 只在**真正切页**时回调；首个页面自动选中但不回调，

@@ -72,6 +72,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._keys: list[str] = []
         self._labels: dict[str, str] = {}
         self._hints: dict[str, str] = {}
+        self._icons: dict[str, str | None] = {}
         self._buttons: dict[str, QPushButton] = {}
         self._collapsed = False
         self._group = QButtonGroup(self)
@@ -140,8 +141,12 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 页面登记与切换
     # ------------------------------------------------------------------ #
-    def add(self, key: str, label: str, *, hint: str = "") -> None:
-        """登记一页；``key`` 必须唯一，重复登记抛 ``KeyError``。"""
+    def add(self, key: str, label: str, *, hint: str = "", icon: str | None = None) -> None:
+        """登记一页；``key`` 必须唯一，重复登记抛 ``KeyError``。
+
+        ``icon`` 传 :mod:`fcmd.gui.qt.icons` 的图标名；折叠态只显示图标、隐藏首字，
+        展开态图标在文字左侧。未传时保持纯文字（折叠显示首字）。
+        """
         if key in self._buttons:
             raise KeyError(f"页面已存在: {key}")
         button = QPushButton(label, self)
@@ -151,6 +156,10 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setToolTip(hint)
+        button.setProperty("collapsed", "false" if not self._collapsed else "true")
+        if icon:
+            button.setIcon(_icon(icon))
+            button.setIconSize(QSize(16, 16))
         button.clicked.connect(lambda _checked=False, page_key=key: self.select(page_key))
         self._button_layout.addWidget(button)
         self._group.addButton(button)
@@ -158,8 +167,9 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._keys.append(key)
         self._labels[key] = label
         self._hints[key] = hint
+        self._icons[key] = icon
         if self._collapsed:
-            button.setText(label[:1])
+            button.setText("" if icon else label[:1])
         if self._current is None:
             self._current = key
             button.setChecked(True)
@@ -247,7 +257,11 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.toggle_button.style().unpolish(self.toggle_button)
         self.toggle_button.style().polish(self.toggle_button)
         for key, button in self._buttons.items():
-            button.setText(self._labels[key][:1] if collapsed else self._labels[key])
+            short = "" if self._icons.get(key) else self._labels[key][:1]
+            button.setText(short if collapsed else self._labels[key])
+            button.setProperty("collapsed", "true" if collapsed else "false")
+            button.style().unpolish(button)
+            button.style().polish(button)
         self._sync_tooltips()
         if changed:
             self.collapsedChanged.emit(collapsed)

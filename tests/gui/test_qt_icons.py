@@ -59,3 +59,14 @@ def test_icon_pixels_are_centered_and_not_clipped() -> None:
     assert bottom - top > image.height() * 0.2
     assert abs((left + right) / 2 - image.width() / 2) < image.width() * 0.1
     assert abs((top + bottom) / 2 - image.height() / 2) < image.height() * 0.1
+
+
+def test_icon_for_text_maps_common_actions() -> None:
+    """按钮文案到公共图标的映射：常见动作自动命中，未知文案保持纯文字。"""
+    assert icons.icon_for_text("刷新") == "refresh"
+    assert icons.icon_for_text("重新检测") == "refresh"
+    assert icons.icon_for_text("开始转换") == "convert"
+    assert icons.icon_for_text("＋ 新对话") == "plus"
+    assert icons.icon_for_text("启动服务") == "run"
+    assert icons.icon_for_text("取消") is None
+    assert icons.icon_for_text("关于") is None

@@ -24,6 +24,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D4 | `StatusTag` 用于需要语义色的状态块；`objectName("Success"/"Danger")` 属于主题契约，不强行替换 | reshack 等 |
 | D5 | `LogDialog` 只服务「独立日志窗口」；页面内日志继续用 `LogView` | 各工具窗口 |
 | D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、devman、llmw 下载区 |
+| D7 | 图标统一走 `fcmd.gui.qt.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
 
 ### D1 为什么不做 InfoRowCard 基类
 
@@ -56,6 +57,19 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 - `LogDialog` 承载「窗口外回放日志」；页面内嵌日志用 `Card + LogView` 即可，不额外包对话框。
 - 进度条若与按钮、计数或说明文字共享同一行，`ProgressRow` 的「文字 + 进度 + 右侧动作」
   三段结构反而不匹配，保留原布局。
+
+### D7 公共图标
+
+- `fcmd.gui.qt.icons` 是唯一图标来源：SVG 以 `currentColor` 渲染，颜色取应用调色板
+  正文色，跟随深浅主题；尺寸默认 16px，按屏幕缩放比生成高 DPI 位图。
+- 图标名使用 Lucide 语义名（`overview` / `models` / `run` / `chat` / `lab` /
+  `settings` / `refresh` / `download` / `trash` / `folder` / `search` / `send` 等），
+  新增图标只需往 `ICON_BODIES` 加 24×24 图形片段。
+- `SidebarNav.add(..., icon=...)`：展开态图标 + 文字，折叠态只显示图标（不再用首字）；
+  `QtMainWindow.add_page(..., icon=...)` 负责透传。
+- `widgets.button()` 未显式给 `icon` 时按按钮文案自动推断（`icon_for_text`），
+  传图标名可覆盖、传空串可禁用；图标不改变按钮文字，既有文案与快捷键口径不变。
+- 新增按钮 / 侧边栏项时优先复用上面两条入口，不手工 `setIcon(QIcon(path))`。
 
 ## 后果
 

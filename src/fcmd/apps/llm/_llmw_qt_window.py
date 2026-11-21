@@ -38,12 +38,12 @@ DEFAULT_SIZE = (1180, 900)
 MIN_SIZE = (1040, 600)
 
 PAGES = (
-    ("overview", "概览", "系统信息、实时性能与智能推荐"),
-    ("models", "模型", "GGUF 模型与显存适配"),
-    ("run", "运行", "档位、上下文与启动参数"),
-    ("chat", "对话", "多轮流式对话"),
-    ("lab", "实验室", "代理 / 画图 / 视频 / 音频规划"),
-    ("settings", "设置", "存储、引擎、下载与转换"),
+    ("overview", "概览", "系统信息、实时性能与智能推荐", "overview"),
+    ("models", "模型", "GGUF 模型与显存适配", "models"),
+    ("run", "运行", "档位、上下文与启动参数", "run"),
+    ("chat", "对话", "多轮流式对话", "chat"),
+    ("lab", "实验室", "代理 / 画图 / 视频 / 音频规划", "lab"),
+    ("settings", "设置", "存储、引擎、下载与转换", "settings"),
 )
 """侧边栏页面顺序与提示；系统采样与实时性能已并入概览页。"""
 
@@ -80,8 +80,8 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log_dialog: Any = None
         self._bench_dialog: Any = None
 
-        for key, label, hint in PAGES:
-            self.add_page(key, label, hint=hint, factory=self._factory(key))
+        for key, label, hint, icon in PAGES:
+            self.add_page(key, label, hint=hint, icon=icon, factory=self._factory(key))
 
         self.state.statusText.connect(self.set_status)
         self.state.navigateRequested.connect(self.show_page)
