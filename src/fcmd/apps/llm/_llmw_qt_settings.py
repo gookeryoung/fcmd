@@ -1,4 +1,4 @@
-"""llmw（Qt）设置页：存储、引擎、下载参数与模型转换。
+"""llmw（Qt）设置页：存储、引擎（llama.cpp / sd.cpp）、下载参数与模型转换。
 
 目录口径与 CLI 完全一致：模型目录只有 ``models_dir`` 一个来源（:mod:`fcmd.apps.llm._llmconfig`），
 引擎目录独立登记；改动即时写配置并通知其它页刷新（``configChanged``）。
@@ -121,6 +121,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         outer.addWidget(scroll)
         layout.addWidget(self._build_storage())
         layout.addWidget(self._build_engines())
+        layout.addWidget(self._build_paint_engine())
         layout.addWidget(self._build_download())
         layout.addWidget(self._build_convert())
         layout.addStretch(1)
@@ -145,6 +146,13 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.models_path.reset.clicked.connect(lambda: self._save_path("models_dir", None))
         self.models_open.clicked.connect(lambda: open_path(llmenv.models_dir()))
         return card
+
+    def _build_paint_engine(self) -> Card:
+        """画图引擎（sd.cpp）卡片：与 llama.cpp 引擎并列，安装 / 设为默认都在设置页。"""
+        from fcmd.apps.llm._llmw_qt_paint import PaintEngineCard
+
+        self.paint_engine_card = PaintEngineCard(self)
+        return self.paint_engine_card
 
     # ------------------------------------------------------------------ #
     # 下载
@@ -337,6 +345,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.migration_note.setText(note)
         self.migration_note.setVisible(bool(note))
         self.refresh_engines()
+        self.paint_engine_card.refresh()
 
     def refresh_engines(self) -> None:
         """刷新已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""

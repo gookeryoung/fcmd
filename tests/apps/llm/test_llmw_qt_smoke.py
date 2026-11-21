@@ -189,25 +189,33 @@ def test_chat_config_contains_paint_sample_settings(window: Any) -> None:
     page.config_dialog.close()
 
 
-def test_run_page_paint_tab_holds_engine_entry(window: Any) -> None:
-    """运行页分「服务 / 画图」两页，画图引擎与画图服务都在画图页签里。"""
+def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
+    """运行页分「对话 / 编程 / 画图」：对话与编程共用参数，画图页签只配启动参数与启停。"""
     window.show_page("run")
     run = window.run_page
-    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == ["服务", "画图"]
-    assert run.paint_card.title() == "画图引擎（sd.cpp）"
-    assert run.paint_service_card.title() == "画图服务"
-    assert run.paint_engine_tag.text().startswith("引擎")
-    assert run.paint_service_tag.text() in {
-        "服务未启动",
-        "已退出（残留状态）",
-    } or run.paint_service_tag.text().startswith("运行中")
-    assert run.paint_install_button.text() == "安装引擎…"
-    assert run.paint_config_card.title() == "画图引擎配置"
-    assert run.paint_start_button.text() == "启动服务"
-    # 模型与组件控件在运行页的画图引擎配置里，而不是对话配置里。
+    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == ["对话", "编程", "画图"]
+    # 对话 / 编程共用同一套启动参数表单，切页签时整页搬家。
+    assert run.service_page.parent() is run.chat_tab
+    run.tabs.setCurrentIndex(1)
+    QApplication.processEvents()
+    assert run.service_page.parent() is run.code_tab
+    run.tabs.setCurrentIndex(0)
+    QApplication.processEvents()
+    assert run.service_page.parent() is run.chat_tab
+
+    # 画图页签：选模型 + 启停按钮，配置在下面的「启动参数」卡片。
+    assert run.paint_model_card.title() == "选择模型"
+    assert run.paint_config_card.title() == "启动参数"
+    assert run.paint_action_button.text() in {"启动服务", "停止服务"}
+    assert run.paint_restart_button.text() == "重启服务"
+    assert not hasattr(run, "paint_install_button")
+    assert not hasattr(run, "paint_card")
     section = run.paint_engine_section
     for widget in (section.port, section.model_combo, section.auto_start, section.preview_label):
         assert widget.window() is window
+    # 主模型下拉搬进「选择模型」卡片（不留在参数表单里）。
+    assert section._show_model is False
+    assert section.model_combo.window() is window
     assert section.settings()["port"] == 1234
     run.refresh_paint()
     assert "paint" not in tuple(window.nav.keys())
@@ -612,6 +620,7 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert [card.title_label.text() for card in page.findChildren(Card)] == [
         "存储",
         "引擎",
+        "画图引擎（sd.cpp）",
         "下载",
         "模型转换",
     ]

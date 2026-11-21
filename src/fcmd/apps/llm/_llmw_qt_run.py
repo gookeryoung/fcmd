@@ -1,8 +1,10 @@
-"""llmw（Qt）运行页：启动参数、计划预览、服务启停与模型选择。
+"""llmw（Qt）运行页：对话 / 编程 / 画图三个用途页签的启动参数与服务启停。
 
-运行页的表单与动作迁移自原窗口：参数校验、调优策略联动、
-显存余量检查与启动计划文本都放在模块级纯函数里（``parse_int`` /
-``memory_guard`` / ``plan_lines``），GUI 类只负责取值与展示，便于单测。
+对话 / 编程页签共用同一套 llama.cpp 启动参数表单（模型候选按能力标签区分），
+画图页签配置 sd.cpp 的扩散模型与启动参数；引擎安装 / 设为默认统一在设置页。
+参数校验、调优策略联动、显存余量检查与启动计划文本都放在模块级纯函数里
+（``parse_int`` / ``memory_guard`` / ``plan_lines``），GUI 类只负责取值与展示，
+便于单测。
 
 后台动作（启动 / 停止）通过 :func:`fcmd.gui.qt.workers.submit` 执行，
 按钮状态由共享状态的 ``busyChanged`` 统一驱动，避免任务期间重复点击。
@@ -36,7 +38,6 @@ from PySide6.QtWidgets import (
 
 from fcmd.apps.llm import (
     _llmpaint,
-    _llmpaint_engine,
     _llmpaint_server,
     _llmtune,
     _llmw_recommend,
@@ -456,6 +457,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._syncing_tune = False
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
+        self._usage = "chat"
+        self._paint_busy = False
         self._paint_save_timer = QTimer(self)
         self._paint_save_timer.setSingleShot(True)
         self._paint_save_timer.setInterval(400)
@@ -475,20 +478,32 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
 
-        # 运行页按分页组织：「服务」放 llama.cpp 的启动参数 / 计划，「画图」放
-        # sd.cpp 引擎安装 / 默认引擎切换与画图服务启停。
+        # 运行页按用途分页：对话 / 编程共用同一套 llama.cpp 启动参数（模型候选按
+        # 能力标签区分），画图页签配 sd.cpp；引擎安装 / 默认引擎统一归设置页。
         self.tabs = QTabWidget(self)
         self.tabs.setDocumentMode(True)
         outer.addWidget(self.tabs, 1)
 
-        service_page = QWidget(self.tabs)
-        service_layout = QVBoxLayout(service_page)
+        self.service_page = QWidget(self.tabs)
+        self.scroll = PageScroll(self.service_page)
+        service_layout = QVBoxLayout(self.service_page)
         service_layout.setContentsMargins(0, 0, 0, 0)
         service_layout.setSpacing(6)
-        self.tabs.addTab(service_page, "服务")
-        self.scroll = PageScroll(service_page)
-        layout = self.scroll.body
         service_layout.addWidget(self.scroll, 1)
+        layout = self.scroll.body
+
+        self.chat_tab = QWidget(self.tabs)
+        self.chat_tab_layout = QVBoxLayout(self.chat_tab)
+        self.chat_tab_layout.setContentsMargins(0, 0, 0, 0)
+        self.chat_tab_layout.setSpacing(6)
+        self.code_tab = QWidget(self.tabs)
+        self.code_tab_layout = QVBoxLayout(self.code_tab)
+        self.code_tab_layout.setContentsMargins(0, 0, 0, 0)
+        self.code_tab_layout.setSpacing(6)
+        self.tabs.addTab(self.chat_tab, "对话")
+        self.tabs.addTab(self.code_tab, "编程")
+        self._service_layouts = {"chat": self.chat_tab_layout, "code": self.code_tab_layout}
+        self._mount_service_page("chat")
 
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
@@ -582,129 +597,109 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_scroll = PageScroll(paint_page)
         paint_layout.addWidget(self.paint_scroll, 1)
         self._build_paint_tab(self.paint_scroll.body)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _mount_service_page(self, usage: str) -> None:
+        """把共享的启动参数页挂到当前用途的页签（对话 / 编程同一套表单）。"""
+        self._usage = usage
+        for target in self._service_layouts.values():
+            target.removeWidget(self.service_page)
+        self._service_layouts[usage].addWidget(self.service_page, 1)
+
+    def _on_tab_changed(self, index: int) -> None:
+        """切换页签：对话 / 编程换模型候选并同步该模型的启动参数；画图只刷新状态。"""
+        if index >= 2:
+            self.refresh_paint()
+            return
+        usage = "chat" if index == 0 else "code"
+        if usage == self._usage:
+            return
+        self._persist_current_params()
+        self._mount_service_page(usage)
+        self.on_models_changed()
+        candidates = [entry.path for entry in self._usage_models()]
+        current = self.state.selected_model
+        if current is not None and candidates and current not in candidates:
+            self.state.select_model(candidates[0], update_name=True)
+        label = "编程" if usage == "code" else "对话"
+        self.state.status(f"已切到「{label}」启动参数")
+
+    def _usage_models(self) -> list[ModelEntry]:
+        """当前用途的模型候选：编程只看「代码」标签，对话排除纯代码模型；空时回退全部。"""
+        if self._usage == "code":
+            rows = [entry for entry in self.state.models if "代码" in llmmodel.detect_model_tags(entry.path.name)]
+        else:
+            rows = [entry for entry in self.state.models if "代码" not in llmmodel.detect_model_tags(entry.path.name)]
+        return rows or list(self.state.models)
 
     def _build_paint_tab(self, layout: QVBoxLayout) -> None:
-        """画图分页：sd.cpp 引擎安装 / 默认引擎切换与画图服务启停。"""
-        self.paint_card = Card("画图引擎（sd.cpp）")
-        paint_row = QHBoxLayout()
-        paint_row.setContentsMargins(0, 0, 0, 0)
-        paint_row.setSpacing(8)
-        self.paint_engine_tag = StatusTag("引擎检查中…", parent=self.paint_card)
-        self.paint_service_tag = StatusTag("服务未启动", parent=self.paint_card)
-        paint_row.addWidget(self.paint_engine_tag)
-        paint_row.addWidget(self.paint_service_tag)
-        paint_row.addStretch(1)
-        self.paint_refresh_button = button("刷新", kind="ghost", tooltip="重新读取画图引擎与 sd-server 状态")
-        self.paint_refresh_button.clicked.connect(self.refresh_paint)
-        self.paint_install_button = button("安装引擎…", kind="ghost")
-        self.paint_install_button.setToolTip("下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录")
-        self.paint_install_button.clicked.connect(self._install_paint_engine)
-        paint_row.addWidget(self.paint_refresh_button)
-        paint_row.addWidget(self.paint_install_button)
-        self.paint_card.body.addLayout(paint_row)
-        self.paint_card.body.addWidget(
-            hint_label(
-                "画图在「对话」页切到「画图」模式后用提示词出图；采样 / 输出目录在对话页 ⚙ 里，模型与加载参数在本页下方配置。",
-                wrap=True,
-            )
-        )
-        self.paint_engine_rows = QVBoxLayout()
-        self.paint_engine_rows.setContentsMargins(0, 0, 0, 0)
-        self.paint_engine_rows.setSpacing(4)
-        self.paint_card.body.addLayout(self.paint_engine_rows)
-        layout.addWidget(self.paint_card)
+        """画图页签：与对话 / 编程一致——顶部选模型 + 启停，下面只配启动参数。
 
-        # 画图引擎配置（模型 / 组件 / 额外参数）在运行页，对话页只留采样 / 输出。
-        self.paint_config_card = Card("画图引擎配置")
+        引擎安装 / 设为默认在设置页；这里决定「用哪个扩散模型、怎么加载、哪个端口」，
+        启停按钮的文案与配色对齐 LLM 服务的模型卡片。
+        """
+        self.paint_model_card = Card("选择模型")
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.setSpacing(8)
         self.paint_engine_section = PaintEngineSection(
             parse_paint_settings(self.state.settings.paint),
-            self.paint_config_card,
+            self.paint_model_card,
+            show_model=False,
         )
         self.paint_engine_section.changed.connect(self._on_paint_engine_changed)
-        self.paint_config_card.body.addWidget(self.paint_engine_section)
-        layout.addWidget(self.paint_config_card)
-
-        self.paint_service_card = Card("画图服务")
-        service_row = QHBoxLayout()
-        service_row.setContentsMargins(0, 0, 0, 0)
-        service_row.setSpacing(8)
-        self.paint_start_button = button("启动服务", kind="ghost")
-        self.paint_start_button.setToolTip("按对话配置里的模型 / 端口 / 参数启动 sd-server")
-        self.paint_start_button.clicked.connect(self._start_paint_service)
-        self.paint_stop_button = button("停止服务", kind="ghost")
-        self.paint_stop_button.setToolTip("停止 sd-server（释放显存）")
-        self.paint_stop_button.clicked.connect(self._stop_paint_service)
-        service_row.addWidget(self.paint_start_button)
-        service_row.addWidget(self.paint_stop_button)
-        service_row.addStretch(1)
-        self.paint_service_card.body.addLayout(service_row)
-        self.paint_service_card.body.addWidget(
+        model_row.addWidget(self.paint_engine_section.model_combo, 1)
+        self.paint_service_tag = StatusTag("服务未启动", parent=self.paint_model_card)
+        model_row.addWidget(self.paint_service_tag, 0)
+        self.paint_action_button = button("启动服务", kind="primary")
+        self.paint_action_button.setObjectName("RunPrimary")
+        self.paint_action_button.setToolTip("按本页启动参数启动 sd-server")
+        self.paint_action_button.clicked.connect(self._on_paint_action)
+        model_row.addWidget(self.paint_action_button)
+        self.paint_restart_button = button("重启服务", kind="ghost", tooltip="按当前参数停止并重新启动画图服务")
+        self.paint_restart_button.setObjectName("RunAction")
+        self.paint_restart_button.setEnabled(False)
+        self.paint_restart_button.clicked.connect(self._restart_paint_service)
+        model_row.addWidget(self.paint_restart_button)
+        self.paint_model_card.body.addLayout(model_row)
+        self.paint_model_card.body.addWidget(
             hint_label(
-                "默认按本页「画图引擎配置」的模型 / 端口启动；对话页生成时也会按组件指纹自动启停（自动启动可在上面关闭）。",
+                "画图在「对话」页切到「画图」模式后用提示词出图；采样 / 输出目录在对话页 ⚙ 里，"
+                "引擎安装 / 设为默认在设置页。",
                 wrap=True,
             )
         )
-        layout.addWidget(self.paint_service_card)
+        layout.addWidget(self.paint_model_card)
+
+        self.paint_config_card = Card("启动参数")
+        self.paint_config_card.body.addWidget(self.paint_engine_section)
+        layout.addWidget(self.paint_config_card)
         layout.addStretch(1)
 
     # ------------------------------------------------------------------ #
-    # 画图引擎
+    # 画图服务
     # ------------------------------------------------------------------ #
     def refresh_paint(self) -> None:
-        """刷新 sd.cpp 引擎 / 画图服务状态（只读本地目录与状态文件）。"""
-        try:
-            engines = _llmpaint_engine.list_sd_engines()
-            current = _llmpaint_engine.current_sd_tag()
-        except OSError:
-            engines, current = [], None
-        if not engines:
-            self.paint_engine_tag.set_status("引擎未安装", "warning")
-        else:
-            tag = current if current and any(engine.tag == current for engine in engines) else engines[0].tag
-            self.paint_engine_tag.set_status(f"引擎 {tag}", "accent")
-        self._render_paint_engines(engines)
+        """刷新画图服务状态与启停按钮（只读状态文件）。"""
         state, alive = _llmpaint_server.status()
         self.paint_service_tag.set_status(*paint_service_label(state, alive))
+        self._refresh_paint_actions(alive)
 
-    def _render_paint_engines(self, engines: Sequence[_llmpaint_engine.SdEngine]) -> None:
-        """重建已安装引擎列表：tag + 后端 + 可执行文件 + 「当前 / 设为默认」。"""
-        while self.paint_engine_rows.count():
-            item = self.paint_engine_rows.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        if not engines:
-            self.paint_engine_rows.addWidget(hint_label("尚未安装画图引擎：点右上「安装引擎…」下载或导入。", wrap=True))
-            return
-        for engine in engines:
-            row_widget = QWidget(self.paint_card)
-            row = QHBoxLayout(row_widget)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            name = QLabel(engine.tag, row_widget)
-            name.setObjectName("Value")
-            row.addWidget(name)
-            if engine.backend:
-                row.addWidget(StatusTag(engine.backend, tone="accent", parent=row_widget))
-            row.addWidget(hint_label(engine.exe.name, wrap=False), 1)
-            if engine.source == "current":
-                row.addWidget(StatusTag("当前", tone="success", parent=row_widget))
-            else:
-                pick_button = button("设为默认", kind="ghost")
-                pick_button.clicked.connect(lambda _checked=False, tag=engine.tag: self._use_paint_engine(tag))
-                row.addWidget(pick_button)
-            self.paint_engine_rows.addWidget(row_widget)
-
-    def _use_paint_engine(self, tag: str) -> None:
-        """把指定 tag 设为默认画图引擎。"""
-        try:
-            _llmpaint_engine.use_sd_engine(tag)
-        except (OSError, ServeError) as exc:
-            self._error("切换画图引擎失败", str(exc))
-            return
-        self.state.status(f"画图引擎已切换为 {tag}")
-        self.state.log(f"画图引擎已切换为 {tag}")
-        self.refresh_paint()
+    def _refresh_paint_actions(self, alive: bool | None = None) -> None:
+        """按运行状态切换「启动 / 停止」与重启按钮：与 LLM 模型卡片同一口径。"""
+        if alive is None:
+            _state, alive = _llmpaint_server.status()
+        busy = self.state.busy or self._paint_busy
+        set_button_text(
+            self.paint_action_button,
+            "停止服务" if alive else "启动服务",
+            tone="danger" if alive else "on_accent",
+        )
+        self.paint_action_button.setObjectName("RunDanger" if alive else "RunPrimary")
+        self.paint_action_button.style().unpolish(self.paint_action_button)
+        self.paint_action_button.style().polish(self.paint_action_button)
+        self.paint_action_button.setEnabled(not busy)
+        self.paint_restart_button.setEnabled(not busy and alive)
 
     def paint_settings(self) -> dict[str, Any]:
         """完整画图配置：本页引擎配置 + 已保存的采样 / 输出 + 启用标记。"""
@@ -726,6 +721,14 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def _persist_paint(self) -> None:
         self.state.settings.paint = self.paint_settings()
         self.state.persist()
+
+    def _on_paint_action(self) -> None:
+        """同一个按钮：画图服务空闲时启动，运行中则停止。"""
+        _state, alive = _llmpaint_server.status()
+        if alive:
+            self._stop_paint_service()
+        else:
+            self._start_paint_service()
 
     def _start_paint_service(self) -> None:
         """按当前画图配置启动 / 复用 sd-server。"""
@@ -766,6 +769,29 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
             self.state.log("已停止画图服务")
         self.refresh_paint()
 
+    def _restart_paint_service(self) -> None:
+        """按当前参数停止并重新启动画图服务。"""
+        settings = self.paint_settings()
+        try:
+            _llmpaint.validate_components(components_from_settings(settings))
+        except ServeError as exc:
+            self._error("重启画图服务失败", str(exc))
+            return
+        self._set_paint_busy(True)
+        self.state.status("正在重启画图服务…")
+        submit_daemon(
+            self._restart_paint_work,
+            settings,
+            on_done=lambda _started: self._paint_started(True),
+            on_error=self._paint_failed,
+            on_finished=self._paint_finished,
+        )
+
+    @staticmethod
+    def _restart_paint_work(settings: dict[str, Any]) -> bool:
+        _llmpaint_server.stop_paint()
+        return start_paint_service(settings)
+
     def _paint_failed(self, message: str) -> None:
         self.state.log(f"画图服务操作失败：{message}")
         self._error("画图服务", message)
@@ -775,20 +801,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._set_paint_busy(False)
 
     def _set_paint_busy(self, busy: bool) -> None:
-        self.paint_start_button.setEnabled(not busy)
-        self.paint_stop_button.setEnabled(not busy)
-
-    def _install_paint_engine(self) -> None:
-        """打开画图引擎安装对话框；安装完成后刷新状态。"""
-        from fcmd.apps.llm._llmw_qt_paint_engine import PaintEngineDialog
-
-        dialog = PaintEngineDialog(self)
-        dialog.installed.connect(self._paint_engine_installed)
-        dialog.exec()
-
-    def _paint_engine_installed(self, tag: str) -> None:
-        self.refresh_paint()
-        self.state.status(f"画图引擎已就绪：{tag}")
+        self._paint_busy = busy
+        self._refresh_paint_actions()
 
     def _wire(self) -> None:
         self.kv_choice.changed.connect(lambda _key: self._mark_manual("kv"))
@@ -1120,7 +1134,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         current = self.state.selected_model
         self.model_combo.blockSignals(True)
         self.model_combo.clear()
-        for entry in self.state.models:
+        for entry in self._usage_models():
             self.model_combo.addItem(
                 model_combo_text(entry, status=self._service_status_text(entry.path)), str(entry.path)
             )
