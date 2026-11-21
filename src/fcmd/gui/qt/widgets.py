@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QElapsedTimer, QRectF, Qt, QTimer, Signal
@@ -61,6 +62,7 @@ __all__ = [
     "LogView",
     "MetricGrid",
     "PageScroll",
+    "PathField",
     "PathRow",
     "ProgressRow",
     "RowListWidget",
@@ -675,6 +677,68 @@ class PathRow(QWidget):  # pragma: no cover - Qt 控件
         if path:
             self.edit.setText(path)
             self.committed.emit(self.value())
+
+
+class PathField(QWidget):  # pragma: no cover - Qt 控件
+    """带路径提示的输入行：输入框 + 浏览按钮 + 第二行省略路径。
+
+    与 :class:`PathRow` 的区别是下方多一行 ``ElidedLabel``，用于表单里显示
+    完整路径或「未选择 / 留空为 …」说明。需要保存对话框、扩展名过滤或自定义
+    提示文案时，继承本类覆写 :meth:`_pick` / :meth:`_refresh_hint`。
+    """
+
+    def __init__(  # noqa: PLR0913 - 控件构造参数逐项显式，便于按行替换
+        self,
+        *,
+        value: str = "",
+        placeholder: str = "",
+        directory: bool = True,
+        browse_text: str = "浏览…",
+        title: str = "选择文件",
+        pattern: str = "",
+        hint_object_name: str = "Mono",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._directory = directory
+        self._title = title
+        self._pattern = pattern
+        layout = QGridLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(2)
+        self.edit = QLineEdit(value, self)
+        self.edit.setPlaceholderText(placeholder)
+        layout.addWidget(self.edit, 0, 0)
+        self.browse = button(browse_text)
+        self.browse.clicked.connect(self._pick)
+        layout.addWidget(self.browse, 0, 1)
+        self.hint = ElidedLabel("", parent=self)
+        self.hint.setObjectName(hint_object_name)
+        layout.addWidget(self.hint, 1, 0, 1, 2)
+        layout.setColumnStretch(0, 1)
+        self.edit.textChanged.connect(self._refresh_hint)
+        self._refresh_hint(self.edit.text())
+
+    def value(self) -> str:
+        """当前输入文本（去首尾空白）。"""
+        return self.edit.text().strip()
+
+    def set_value(self, text: str) -> None:
+        """写入输入文本。"""
+        self.edit.setText(text)
+
+    def _refresh_hint(self, text: str) -> None:
+        self.hint.setText(str(Path(text).expanduser()) if text.strip() else "未选择")
+
+    def _pick(self) -> None:  # pragma: no cover - 需要真实对话框
+        if self._directory:
+            chosen = QFileDialog.getExistingDirectory(self, self._title, self.value())
+        else:
+            filters = f"{self._pattern};;所有文件 (*.*)" if self._pattern else "所有文件 (*.*)"
+            chosen, _ = QFileDialog.getOpenFileName(self, self._title, self.value(), filters)
+        if chosen:
+            self.edit.setText(chosen)
 
 
 class Collapsible(QWidget):  # pragma: no cover - Qt 控件

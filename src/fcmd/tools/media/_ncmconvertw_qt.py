@@ -19,10 +19,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -34,7 +32,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, button
+from fcmd.gui.qt.widgets import Card, PathField, button
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
@@ -57,40 +55,23 @@ DEFAULT_SIZE = (860, 640)
 _OUTPUT_HINT = "留空时解锁到每个 NCM 文件所在目录，文件名为 <原名>.<格式>"
 
 
-class _OutputRow(QWidget):  # pragma: no cover - Qt 控件
-    """输出目录行：输入框 + 浏览按钮 + 整行省略提示。"""
+class _OutputRow(PathField):  # pragma: no cover - Qt 控件
+    """输出目录行：输入框 + 浏览按钮 + 留空说明。"""
 
     def __init__(self, *, value: str = "", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QGridLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setHorizontalSpacing(6)
-        layout.setVerticalSpacing(2)
-        self.edit = QLineEdit(value, self)
-        self.edit.setPlaceholderText("留空时输出到各 NCM 文件所在目录")
-        layout.addWidget(self.edit, 0, 0)
-        self.browse = button("浏览…")
-        self.browse.clicked.connect(self._pick)
-        layout.addWidget(self.browse, 0, 1)
-        self.hint = ElidedLabel("", parent=self)
-        self.hint.setObjectName("Hint")
-        layout.addWidget(self.hint, 1, 0, 1, 2)
-        layout.setColumnStretch(0, 1)
-        self.edit.textChanged.connect(self._refresh_hint)
-        self._refresh_hint(self.edit.text())
-
-    def value(self) -> str:
-        """当前输入文本（去首尾空白）。"""
-        return self.edit.text().strip()
-
-    def set_value(self, text: str) -> None:
-        """写入输入文本。"""
-        self.edit.setText(text)
+        super().__init__(
+            value=value,
+            placeholder="留空时输出到各 NCM 文件所在目录",
+            title="选择输出目录",
+            hint_object_name="Hint",
+            parent=parent,
+        )
 
     def _refresh_hint(self, text: str) -> None:
         if text.strip():
-            self.hint.setText(str(Path(text).expanduser()))
-            self.hint.setToolTip(str(Path(text).expanduser()))
+            shown = str(Path(text).expanduser())
+            self.hint.setText(shown)
+            self.hint.setToolTip(shown)
         else:
             self.hint.setText(_OUTPUT_HINT)
             self.hint.setToolTip("")

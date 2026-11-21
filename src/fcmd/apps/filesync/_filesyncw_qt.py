@@ -71,7 +71,7 @@ from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import (
     Card,
-    ElidedLabel,
+    PathField,
     button,
     make_splitter,
     make_table,
@@ -92,46 +92,6 @@ _TAG_COLORS: dict[str, str] = {
     CATEGORY_CONFLICT: "danger",
 }
 """结果行的语义色：取调色板同名字段，切换主题后重新渲染即跟随。"""
-
-
-class _FolderRow(QWidget):  # pragma: no cover - Qt 控件
-    """一行目录输入：输入框 + 浏览按钮 + 整行省略路径提示。"""
-
-    def __init__(self, *, value: str = "", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QGridLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setHorizontalSpacing(6)
-        layout.setVerticalSpacing(2)
-        self.edit = QLineEdit(value, self)
-        self.edit.setPlaceholderText("选择文件夹")
-        layout.addWidget(self.edit, 0, 0)
-        self.browse = button("浏览…")
-        self.browse.clicked.connect(self._pick)
-        layout.addWidget(self.browse, 0, 1)
-        self.hint = ElidedLabel("", parent=self)
-        self.hint.setObjectName("Mono")
-        layout.addWidget(self.hint, 1, 0, 1, 2)
-        layout.setColumnStretch(0, 1)
-        self.edit.textChanged.connect(self._refresh_hint)
-        self._refresh_hint(self.edit.text())
-
-    def value(self) -> str:
-        """当前输入文本（去首尾空白）。"""
-        return self.edit.text().strip()
-
-    def set_value(self, text: str) -> None:
-        """写入输入文本。"""
-        self.edit.setText(text)
-
-    def _refresh_hint(self, text: str) -> None:
-        self.hint.setText(str(Path(text).expanduser()) if text.strip() else "未选择")
-
-    def _pick(self) -> None:
-        """选择目录并写回输入框。"""
-        directory = QFileDialog.getExistingDirectory(self, "选择文件夹", self.value())
-        if directory:
-            self.edit.setText(directory)
 
 
 def _work_compare(
@@ -214,8 +174,18 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
-        self._left_row = _FolderRow(value=self._settings.left, parent=card)
-        self._right_row = _FolderRow(value=self._settings.right, parent=card)
+        self._left_row = PathField(
+            value=self._settings.left,
+            placeholder="选择文件夹",
+            title="选择文件夹",
+            parent=card,
+        )
+        self._right_row = PathField(
+            value=self._settings.right,
+            placeholder="选择文件夹",
+            title="选择文件夹",
+            parent=card,
+        )
         grid.addWidget(QLabel("左侧：", card), 0, 0)
         grid.addWidget(self._left_row, 0, 1)
         grid.addWidget(QLabel("右侧：", card), 1, 0)

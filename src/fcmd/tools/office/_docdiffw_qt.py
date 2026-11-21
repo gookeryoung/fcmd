@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QGridLayout,
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
@@ -29,7 +28,7 @@ from PySide6.QtWidgets import (
 from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
+from fcmd.gui.qt.widgets import Card, FormGrid, PathField, button, hint_label
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.office.docdiff import (
     COMPARE_MODES,
@@ -57,7 +56,7 @@ DEFAULT_SIZE = (900, 620)
 _WORD_FILTER = "Word 文档 (*.doc *.docx);;所有文件 (*.*)"
 
 
-class _FileRow(QWidget):  # pragma: no cover - Qt 控件
+class _FileRow(PathField):  # pragma: no cover - Qt 控件
     """一行文件输入：输入框 + 浏览按钮 + 省略路径提示。"""
 
     def __init__(
@@ -69,36 +68,14 @@ class _FileRow(QWidget):  # pragma: no cover - Qt 控件
         placeholder: str = "",
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
         self._save = save
         self._title_provider = title_provider
-        layout = QGridLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setHorizontalSpacing(6)
-        layout.setVerticalSpacing(2)
-        self.edit = QLineEdit(value, self)
-        self.edit.setPlaceholderText(placeholder)
-        layout.addWidget(self.edit, 0, 0)
-        self.browse = button("浏览…")
-        self.browse.clicked.connect(self._pick)
-        layout.addWidget(self.browse, 0, 1)
-        self.hint = ElidedLabel("", parent=self)
-        self.hint.setObjectName("Mono")
-        layout.addWidget(self.hint, 1, 0, 1, 2)
-        layout.setColumnStretch(0, 1)
-        self.edit.textChanged.connect(self._refresh_hint)
-        self._refresh_hint(self.edit.text())
-
-    def value(self) -> str:
-        """当前输入文本（去首尾空白）。"""
-        return self.edit.text().strip()
-
-    def set_value(self, text: str) -> None:
-        """写入输入文本。"""
-        self.edit.setText(text)
-
-    def _refresh_hint(self, text: str) -> None:
-        self.hint.setText(str(Path(text).expanduser()) if text.strip() else "未选择")
+        super().__init__(
+            value=value,
+            placeholder=placeholder,
+            directory=False,
+            parent=parent,
+        )
 
     def _pick(self) -> None:
         """浏览：保存模式选目标文件，其余选已有文档。"""

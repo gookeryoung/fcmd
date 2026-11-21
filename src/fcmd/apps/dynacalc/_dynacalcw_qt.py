@@ -16,7 +16,6 @@ from typing import Any
 
 from PySide6.QtWidgets import (
     QCheckBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -46,66 +45,21 @@ from fcmd.apps.dynacalc.dynacalcw import (
 )
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, LogView, button, make_table, make_table_item
+from fcmd.gui.qt.widgets import (
+    Card,
+    FormGrid,
+    LogView,
+    PathField,
+    button,
+    make_table,
+    make_table_item,
+)
 from fcmd.gui.qt.workers import EventBridge, submit
 
 __all__ = ["DynacalcWindow", "run_qt"]
 
 DEFAULT_SIZE = (1180, 780)
 MIN_SIZE = (980, 640)
-
-
-class _PathInput(QWidget):  # pragma: no cover - Qt 控件
-    """路径输入：文本框 + 选择按钮 + 完整路径省略提示。"""
-
-    def __init__(  # noqa: PLR0913 - 控件构造参数逐项显式，便于按行替换
-        self,
-        *,
-        value: str = "",
-        placeholder: str = "",
-        directory: bool = False,
-        pattern: str = "",
-        title: str = "选择文件",
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._directory = directory
-        self._pattern = pattern
-        self._title = title
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
-        self.edit = QLineEdit(value, self)
-        self.edit.setPlaceholderText(placeholder)
-        row.addWidget(self.edit, 1)
-        self.browse = button("选择…")
-        self.browse.clicked.connect(self._pick)
-        row.addWidget(self.browse)
-        layout.addLayout(row)
-        self.hint = ElidedLabel("", parent=self)
-        self.hint.setObjectName("Mono")
-        layout.addWidget(self.hint)
-        self.edit.textChanged.connect(self._refresh_hint)
-        self._refresh_hint(value)
-
-    def value(self) -> str:
-        """当前输入文本（去首尾空白）。"""
-        return self.edit.text().strip()
-
-    def _refresh_hint(self, text: str) -> None:
-        self.hint.setText(str(Path(text).expanduser()) if text.strip() else "未选择")
-
-    def _pick(self) -> None:
-        if self._directory:
-            chosen = QFileDialog.getExistingDirectory(self, self._title, self.value())
-        else:
-            filters = f"{self._pattern};;所有文件 (*.*)" if self._pattern else "所有文件 (*.*)"
-            chosen, _ = QFileDialog.getOpenFileName(self, self._title, self.value(), filters)
-        if chosen:
-            self.edit.setText(chosen)
 
 
 def _work_generate(  # noqa: PLR0913, PLR0917 - 输入在 GUI 线程一次性收集，逐项显式传入
@@ -247,54 +201,62 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """七行路径 + 一行求解参数；长路径各有省略提示。"""
         card = Card("输入", self)
         grid = FormGrid(card)
-        self._params = _PathInput(
+        self._params = PathField(
             value=self._settings.params,
             placeholder="参数表 YAML",
             pattern="*.yaml *.yml",
             title="选择参数文件",
+            directory=False,
+            browse_text="选择…",
             parent=card,
         )
         grid.add_row("参数文件", self._params)
-        self._model = _PathInput(
+        self._model = PathField(
             value=self._settings.model,
             placeholder="模型描述 YAML（可选）",
             pattern="*.yaml *.yml",
             title="选择模型描述",
+            directory=False,
+            browse_text="选择…",
             parent=card,
         )
         grid.add_row("模型描述", self._model)
-        self._out = _PathInput(
+        self._out = PathField(
             value=self._settings.out,
             placeholder="输出根目录",
-            directory=True,
             title="选择输出根目录",
+            browse_text="选择…",
             parent=card,
         )
         grid.add_row("输出目录", self._out)
-        self._template = _PathInput(
+        self._template = PathField(
             value=self._settings.template,
             placeholder="deck 模板（可选）",
             pattern="*.k *.txt",
             title="选择 deck 模板",
+            directory=False,
+            browse_text="选择…",
             parent=card,
         )
         grid.add_row("模板", self._template)
-        self._mesh_root = _PathInput(
+        self._mesh_root = PathField(
             value=self._settings.mesh_root,
             placeholder="网格根目录（可选）",
-            directory=True,
             title="选择网格根目录（meshes）",
+            browse_text="选择…",
             parent=card,
         )
         grid.add_row("网格根目录", self._mesh_root)
         self._mesh_level = QLineEdit(self._settings.mesh_level, card)
         self._mesh_level.setPlaceholderText("网格档位（可选，如 coarse）")
         grid.add_row("网格档位", self._mesh_level)
-        self._solver = _PathInput(
+        self._solver = PathField(
             value=self._settings.solver,
             placeholder="LS-DYNA 可执行文件（可选）",
             pattern="*.exe",
             title="选择 LS-DYNA 可执行文件",
+            directory=False,
+            browse_text="选择…",
             parent=card,
         )
         grid.add_row("求解器", self._solver)
