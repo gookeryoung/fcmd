@@ -316,7 +316,8 @@ def launch_paint(
     sleep: Callable[[float], None] = time.sleep,
 ) -> PaintState:
     """拉起 ``sd-server`` 并等待健康检查通过。"""
-    missing_vc = ensure_vc_runtime(plan.engine.exe.parent)
+    # MSVC 运行库只在 Windows 上存在；其他平台跳过这项预检。
+    missing_vc = ensure_vc_runtime(plan.engine.exe.parent) if os.name == "nt" else ()
     if missing_vc:
         raise ServeError(
             "画图引擎缺少 MSVC 运行库："

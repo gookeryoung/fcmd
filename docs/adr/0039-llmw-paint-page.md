@@ -84,6 +84,22 @@ Diffusers / ComfyUI 需要 Python 运行时与额外依赖，ComfyUI 的图工�
 画图是 llmw 的独立能力入口，与「对话 / 模型 / 运行」同级更符合使用频率；实验室页保留
 代理 / 视频 / 音频三张规划卡，不再包含画图。
 
+### 页面布局（对齐对话页）
+
+画图页不再用多张带标题的卡片堆叠，改为与对话页一致的扁平结构：
+
+- 顶栏是一条平铺工具行：引擎 / 服务胶囊标签、带「端口」前缀的端口输入框、安装引擎与
+  服务启停按钮；不再单独放「端口」文字标签。
+- 左侧是提示词 composer（复用 `ChatComposer` / `ChatInput` 样式），把提示词、负面提示词
+  与底部工具行（自动启动、进度条、生成 / 中断）收进一个圆角输入区；去掉「生成期间可
+  点中断」这类重复说明行。
+- 参数与模型表单直接铺在页面底色上，不再套「参数」「模型」卡片标题；族信息只保留
+  「家族 · 大小」，文件名由主模型下拉承担；额外参数收进输入框占位提示。
+- 右侧是结果区：工具行（自动配对 / 保存到… / 打开输出目录）+ 大图预览 + 最近图库；
+  输出目录只写进按钮 tooltip，图库标题在无图时隐藏，不再单独占一行路径文字。
+- 生成 / 启停 / 扫描等状态提示统一写到底部状态栏（`state.page_status("paint", …)`），
+  切到其它页再切回时恢复，与对话页口径一致。
+
 ## 落地
 
 ```
@@ -105,9 +121,9 @@ src/fcmd/apps/llm/
   自动启动、端口），由 `_llmw_winsettings.load_settings` / `save_settings` 逐字段校验；
 - `pyproject.toml` 注册 `llmpaint`，`cli/_manifest_data.py` 重新生成后包含全部子命令。
 - MSVC 运行库：sd.cpp 使用 MSVC 2022 构建，系统只有 VC++ 2015（`msvcp140.dll 14.0`）
-  时 sd-server 会在加载阶段 `c0000005` 崩溃且日志为空；启动前从本机 Visual Studio /
-  VC Redist 复制新版 `msvcp140` / `vcruntime140` / `vcruntime140_1`，找不到时提示安装最新
-  VC++ 2015-2022 Redistributable。
+  时 sd-server 会在加载阶段 `c0000005` 崩溃且日志为空；启动前（仅 Windows）从本机
+  Visual Studio / VC Redist 复制新版 `msvcp140` / `vcruntime140` / `vcruntime140_1`，
+  找不到时提示安装最新 VC++ 2015-2022 Redistributable。
 - Z-Image / Qwen-Image / MiniMax-H3 / HiDream / HunyuanImage 等家族要求独立 VAE 与
   LLM 文本编码器；启动前校验缺失组件并给出对应 Comfy-Org 仓库路径提示，避免
   sd-server 以「VAE tensor not in model metadata」启动即退出。
@@ -120,11 +136,12 @@ src/fcmd/apps/llm/
 
 - `tests/apps/llm/test_cli_llmpaint.py`：资产识别、参数构建、引擎 release 解析与假 zip
   安装、状态读写、健康双探针、`txt2img` 成功 / 500 / 未知字段重试、CLI 各子命令；
-  另覆盖 `qwen-image-2.1` / `MiniMax-H3-Image` 的父目录家族识别与扫描可见性；
+  生命周期用例用 fixture 屏蔽宿主 MSVC 运行库状态，另单独覆盖缺 VC++ / CUDA 运行库的
+  启动拒绝；另覆盖 `qwen-image-2.1` / `MiniMax-H3-Image` 的父目录家族识别与扫描可见性；
 - `tests/apps/llm/test_llmw_qt_logic.py`：画图页模块级纯函数（设置解析、额外参数、
   组件 / 请求、命令预览、服务标签、进度与尺寸预设、扫描根与出图目录、变体说明）；
 - `tests/apps/llm/test_llmw_qt_smoke.py`：七页导航、切到画图页不崩、实验室页不再含
-  「画图」卡片；
+  「画图」卡片，画图失败提示落在窗口底部状态栏；
 - `make check-fast` / `make test` / `make cov`（覆盖率 ≥95%）全绿。
 
 ## 交接与后续

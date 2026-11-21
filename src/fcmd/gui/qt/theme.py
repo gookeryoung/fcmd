@@ -278,6 +278,11 @@ QFrame#ChatComposer {
     border: 1px solid $border;
     border-radius: 16px;
 }
+QLabel#PaintPreview {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: ${radius}px;
+}
 QPlainTextEdit#ChatInput {
     background: transparent;
     border: none;

@@ -124,7 +124,7 @@ def test_paint_page_reports_missing_model(window: Any, monkeypatch: pytest.Monke
     monkeypatch.setattr(QMessageBox, "critical", lambda *_args, **_kw: shown.append("critical") or None)
     page.generate_button.click()
     assert shown == ["critical"]
-    assert page.status.text().startswith("失败：")
+    assert window.status_text().startswith("失败：")
     assert not page._running
     page.close()
 

@@ -921,6 +921,11 @@ class TestTxt2Img:
 
 
 class TestLifecycle:
+    @pytest.fixture(autouse=True)
+    def _vc_runtime_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """隔离宿主机的 MSVC 运行库状态：默认视为已就绪，避免机器差异影响生命周期用例。"""
+        monkeypatch.setattr(_llmpaint_server, "ensure_vc_runtime", lambda target, *, sources=None: ())
+
     def test_stop_without_state(self, tmp_path: Path) -> None:
         result = _llmpaint_server.stop_paint(tmp_path)
         assert result.state is None
@@ -954,6 +959,12 @@ class TestLifecycle:
     def test_start_rejects_busy_port(self, tmp_path: Path) -> None:
         with pytest.raises(ServeError, match="端口"):
             _llmpaint_server.start_paint(_plan(tmp_path), home=tmp_path, port_in_use=lambda port, host: True)
+
+    def test_launch_rejects_missing_vc_runtime(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """缺 MSVC 运行库时启动前提示安装 VC++ 运行库。"""
+        monkeypatch.setattr(_llmpaint_server, "ensure_vc_runtime", lambda target, *, sources=None: ("msvcp140.dll",))
+        with pytest.raises(ServeError, match="MSVC 运行库"):
+            _llmpaint_server.launch_paint(_plan(tmp_path), home=tmp_path)
 
     def test_launch_rejects_missing_cuda_runtime(self, tmp_path: Path) -> None:
         """CUDA 引擎缺运行库时不再让子进程直接崩溃，启动前给出可操作提示。"""
