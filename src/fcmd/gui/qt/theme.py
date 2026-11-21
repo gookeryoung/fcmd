@@ -620,7 +620,7 @@ QListWidget#RecommendationList::item, QListWidget#ModelResultList::item, QListWi
     border: none;
     padding: 0;
 }
-QFrame#RecommendationRow, QFrame#ModelItemRow, QFrame#ImageItemRow, QFrame#EngineRow {
+QFrame#RecommendationRow, QFrame#RunningModelRow, QFrame#ModelItemRow, QFrame#ImageItemRow, QFrame#EngineRow {
     background: $surface;
     border: 1px solid $border;
     border-radius: 8px;

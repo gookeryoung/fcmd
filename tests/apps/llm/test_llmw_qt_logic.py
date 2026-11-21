@@ -18,15 +18,23 @@ pytest.importorskip("PySide6")
 
 from fcmd.apps.llm import llmbase, llmserve
 from fcmd.apps.llm._llmpaint_engine import SdEngine, engine_backend, engine_version
-from fcmd.apps.llm._llmpaint_server import PaintProbe, PaintState, PortOccupant
 from fcmd.apps.llm._llmw_hardware import HardwareSnapshot
 from fcmd.apps.llm._llmw_monitor import LoadSample
 from fcmd.apps.llm._llmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
 from fcmd.apps.llm._llmw_qt_chat import endpoint_from_form, service_labels
 from fcmd.apps.llm._llmw_qt_overview import (
+    PaintSample,
+    paint_running_subtitle,
+    paint_running_title,
+    paint_sample_text,
+    performance_metrics_text,
+    performance_rate_text,
     recommendation_params_html,
     recommendation_perf_html,
-    sample_once,
+    running_model_subtitle,
+    running_model_title,
+    sample_overview,
+    sample_paint,
 )
 from fcmd.apps.llm._llmw_qt_paint import (
     command_preview,
@@ -39,8 +47,6 @@ from fcmd.apps.llm._llmw_qt_paint import (
     parse_extra_args,
     parse_paint_settings,
     request_from_settings,
-    service_detail,
-    service_label,
     settings_summary,
     size_preset,
 )
@@ -434,26 +440,31 @@ def test_engine_rows_values() -> None:
 # ---------------------------------------------------------------------- #
 # 采样封装
 # ---------------------------------------------------------------------- #
-def test_sample_once_without_service(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sample_overview_without_services(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview._sample_load", lambda pid, process: LoadSample())
-    load, metrics, error = sample_once(None)
+    monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview.sample_paint", lambda: PaintSample(None, False))
+    load, rows, paint = sample_overview([])
     assert isinstance(load, LoadSample)
-    assert metrics is None
-    assert error is None
+    assert rows == ()
+    assert isinstance(paint, PaintSample)
+    assert paint.alive is False and paint.progress is None
 
 
-def test_sample_once_reports_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sample_overview_reports_each_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview.sample_paint", lambda: PaintSample(None, False))
     monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview._attach_process", lambda pid: None)
     monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview._sample_load", lambda pid, process: LoadSample())
     metrics = llmserve.ServeMetrics(prompt_tokens=5, predicted_tokens=4, processing=1, deferred=2, kv_usage=0.5)
     monkeypatch.setattr(llmserve, "fetch_metrics", lambda host, port, api_key: metrics)
-    _load, metrics, error = sample_once(_state())
-    assert metrics is not None
-    assert metrics.predicted_tokens == 4
-    assert error is None
+    _load, rows, _paint = sample_overview([_state(), _state(name="coder", port=8081, model="/models/coder.gguf")])
+    assert [row.name for row in rows] == ["qwen", "coder"]
+    assert all(row.metrics is not None and row.error is None for row in rows)
+    assert rows[0].metrics is not None
+    assert rows[0].metrics.predicted_tokens == 4
 
 
-def test_sample_once_reports_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sample_overview_reports_fetch_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview.sample_paint", lambda: PaintSample(None, False))
     monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview._attach_process", lambda pid: None)
     monkeypatch.setattr("fcmd.apps.llm._llmw_qt_overview._sample_load", lambda pid, process: LoadSample())
 
@@ -461,9 +472,65 @@ def test_sample_once_reports_fetch_error(monkeypatch: pytest.MonkeyPatch) -> Non
         raise ServeError("connection refused")
 
     monkeypatch.setattr(llmserve, "fetch_metrics", boom)
-    _load, metrics, error = sample_once(_state())
-    assert metrics is None
-    assert error == "connection refused"
+    _load, rows, _paint = sample_overview([_state()])
+    assert rows[0].metrics is None
+    assert rows[0].error == "connection refused"
+
+
+def test_sample_paint_reads_status_and_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """画图服务采样：只读登记状态 + 生成进度；服务未运行时不算运行中。"""
+    from dataclasses import replace
+    from unittest.mock import patch
+
+    from fcmd.apps.llm._llmpaint_server import PaintState
+
+    with patch("fcmd.apps.llm._llmpaint_server.status", return_value=(None, False)):
+        assert sample_paint() == PaintSample(None, False, None)
+
+    state = PaintState(
+        pid=1,
+        create_time=0.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="master-1094",
+        exe="sd-server",
+        model="/models/z_image_turbo.gguf",
+        components={},
+        fingerprint=(),
+        log="sd-server.log",
+        started_at="2026-01-01T00:00:00",
+    )
+    with (
+        patch("fcmd.apps.llm._llmpaint_server.status", return_value=(state, True)),
+        patch("fcmd.apps.llm._llmpaint_server.fetch_progress", return_value={"progress": 0.42}),
+    ):
+        painted = sample_paint()
+    assert painted.state is state and painted.alive is True
+    assert painted.progress == pytest.approx(0.42)
+    assert paint_running_title(state) == "z_image_turbo.gguf"
+    assert paint_running_title(replace(state, model="")) == "画图服务"
+    assert paint_running_subtitle(state) == "画图 · http://127.0.0.1:1234 · master-1094"
+    assert paint_sample_text(None).startswith("sd.cpp 画图服务")
+    assert "空闲" in paint_sample_text(0.0)
+    assert "42%" in paint_sample_text(0.42)
+
+
+def test_running_model_performance_helpers() -> None:
+    """运行中模型行：标题 / 副标题 / tok/s 与性能摘要的纯文本口径。"""
+    state = _state(model="D:/models/qwen.gguf")
+    assert running_model_title(state) == "qwen.gguf"
+    assert running_model_title(_state(model="")) == "qwen"
+    subtitle = running_model_subtitle(state)
+    assert "qwen" in subtitle and "127.0.0.1:8080" in subtitle and "balanced" in subtitle
+    assert performance_rate_text(None) == "-"
+    assert performance_rate_text(12.34) == "12.3"
+    assert performance_metrics_text(None, None) == "等待采样…"
+    metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
+    text = performance_metrics_text(metrics, 5.5)
+    assert "预填充 5.5 tok/s" in text
+    assert "处理中 1" in text and "排队 0" in text
+    assert "KV 18.0%" in text
+    assert "tokens 12045 / 9302" in text
 
 
 def test_hardware_snapshot_import_is_usable() -> None:
@@ -701,66 +768,6 @@ def test_paint_filled_tail_is_not_appended_twice() -> None:
     filled = parse_paint_settings({**base, "extra_args": format_extra_args(paint_args_tail(base))})
     assert components_from_settings(filled).extra_args == ()
     assert command_preview(filled) == command_preview(base)
-
-
-def test_paint_service_label_states() -> None:
-    """服务标签覆盖未启动 / 运行中 / 残留状态三种语义色。"""
-    state = PaintState(
-        pid=1,
-        create_time=0.0,
-        host="127.0.0.1",
-        port=1234,
-        engine_tag="master-1106-532d2c1",
-        exe="sd-server",
-        model="/models/sdxl.safetensors",
-        components={},
-        fingerprint=(),
-        log="sd-server.log",
-        started_at="2026-01-01T00:00:00",
-    )
-    assert service_label(None, False) == ("服务未启动", "muted")
-    assert service_label(state, True) == ("运行中 · master-1106-532d2c1", "success")
-    assert service_label(state, False) == ("已退出（残留状态）", "warning")
-    # 端口探针：状态文件丢失 / 外部启动 / 端口被其它程序占用。
-    assert service_label(None, False, reachable=True, port_open=True) == ("运行中（未登记）", "warning")
-    assert service_label(None, False, port_open=True) == ("端口被占用", "warning")
-
-
-def test_paint_service_detail_lines() -> None:
-    """细节行：登记运行显示地址 / pid / 模型；未登记时列出占用端口的进程。"""
-    state = PaintState(
-        pid=4321,
-        create_time=0.0,
-        host="127.0.0.1",
-        port=1234,
-        engine_tag="master-1106-532d2c1",
-        exe="sd-server",
-        model="/models/z_image_turbo.gguf",
-        components={},
-        fingerprint=(),
-        log="sd-server.log",
-        started_at="2026-01-01T00:00:00",
-    )
-    tracked = service_detail(PaintProbe(state, True, True, True))
-    assert "http://127.0.0.1:1234" in tracked
-    assert "pid=4321" in tracked
-    assert "z_image_turbo.gguf" in tracked
-
-    occupants = tuple(PortOccupant(pid, "sd-server.exe") for pid in range(10, 16))
-    unregistered = service_detail(PaintProbe(None, False, True, True, occupants))
-    assert "没有登记" in unregistered
-    assert "sd-server.exe pid=10" in unregistered
-    assert "等 6 个进程" in unregistered  # limit 之外的只给数量
-    assert "停止服务" in unregistered
-
-    busy = service_detail(PaintProbe(None, False, False, True, (PortOccupant(9, "python.exe"),)))
-    assert "端口 1234 已被其它程序占用" in busy
-    assert "fcmd portcheck c 1234" in busy
-    assert "python.exe pid=9" in busy
-
-    stale = service_detail(PaintProbe(state, False, False, False))
-    assert "残留状态" in stale
-    assert "启动后会在这里显示" in service_detail(PaintProbe(None, False, False, False))
 
 
 def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,14 +1,17 @@
-"""llmw（Qt）概览页：系统信息、实时占用格图、智能推荐与运行中的服务。
+"""llmw（Qt）概览页：系统信息、实时占用格图、运行中的模型与智能推荐。
 
 硬件快照首次检测后写入 ``llmw.json``，之后读缓存展示并支持重新检测；
 推荐行由 :mod:`fcmd.apps.llm._llmw_recommend` 纯逻辑计算，性能默认标注
-「预测」，同一模型跑过性能测试后改用实测值。页面自身每秒采样系统负载与服务
-`/metrics`，服务未启动时也能看到显存 / 内存占用。
+「预测」，同一模型跑过性能测试后改用实测值。系统信息卡片右侧是 GPU / CPU / 内存
+实时格图，底部「运行中的模型」逐个列出运行中服务并绑定各自的 `/metrics` 实时性能；
+服务未启动时也能看到显存 / 内存占用。
 """
 
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -24,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import llmserve
+from fcmd.apps.llm import _llmpaint_server, llmserve
 from fcmd.apps.llm._llmw_monitor import (
     RATE_WINDOW_SECONDS,
     GpuSample,
@@ -42,7 +45,6 @@ from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
-    MetricGrid,
     RowListWidget,
     SegmentBar,
     SelectionRow,
@@ -56,27 +58,30 @@ from fcmd.gui.qt.widgets import (
 from fcmd.gui.qt.workers import periodic, submit
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from fcmd.apps.llm._llmw_qt_state import LlmState
 
 __all__ = [
     "OverviewPage",
+    "PaintSample",
     "RecommendationList",
     "RecommendationRow",
+    "RunningModelRow",
     "ScoreBadge",
+    "ServiceSample",
+    "paint_running_subtitle",
+    "paint_running_title",
+    "paint_sample_text",
+    "performance_metrics_text",
+    "performance_rate_text",
     "recommendation_params_html",
     "recommendation_perf_html",
+    "running_model_subtitle",
+    "running_model_title",
+    "sample_overview",
     "score_band_label",
 ]
-
-#: 系统信息右侧的实时性能次要指标（生成 tok/s 单独大字展示）
-_PERFORMANCE_METRICS = (
-    ("提示速率", "prompt_rate"),
-    ("处理中请求", "processing"),
-    ("排队请求", "deferred"),
-    ("KV 使用率", "kv"),
-    ("累计生成 tokens", "predicted"),
-    ("累计提示 tokens", "prompt"),
-)
 
 _SCORE_BAND_LABELS = {
     "excellent": "极佳",
@@ -114,6 +119,36 @@ def recommendation_perf_html(recommendation: Recommendation) -> str:
     prompt = rec.prompt_tps / 1000
     prompt_text = f"{prompt:.1f}k" if prompt >= 1 else f"{rec.prompt_tps:.0f}"
     return f"解码 <b>{rec.decode_tps:.0f}</b> tok/s · 预填充 <b>{prompt_text}</b> tok/s"
+
+
+def running_model_title(state: ServeState) -> str:
+    """运行中模型行的标题：模型文件名，缺路径时回退服务名。"""
+    return Path(state.model).name if state.model else state.name
+
+
+def running_model_subtitle(state: ServeState) -> str:
+    """运行中模型行的副标题：服务名 · 接入地址 · 档位。"""
+    return f"{state.name} · {state.base_url} · {state.profile}"
+
+
+def performance_rate_text(rate: float | None) -> str:
+    """解码速率的展示文本（tok/s 大字旁边的数值）。"""
+    return "-" if rate is None else f"{rate:.1f}"
+
+
+def performance_metrics_text(
+    metrics: llmserve.ServeMetrics | None,
+    prompt_rate: float | None,
+) -> str:
+    """运行中模型的一行性能摘要：预填充 / 请求队列 / KV / 累计 tokens。"""
+    if metrics is None:
+        return "等待采样…"
+    prompt = "-" if prompt_rate is None else f"{prompt_rate:.1f}"
+    return (
+        f"预填充 {prompt} tok/s · 处理中 {metrics.processing:.0f} · 排队 {metrics.deferred:.0f}"
+        f" · KV {metrics.kv_usage * 100:.1f}%"
+        f" · tokens {metrics.predicted_tokens:.0f} / {metrics.prompt_tokens:.0f}"
+    )
 
 
 class ScoreBadge(QLabel):  # pragma: no cover - Qt 控件
@@ -201,21 +236,154 @@ class RecommendationList(RowListWidget):  # pragma: no cover - Qt 控件
     """推荐列表：复用自定义行列表的行宽同步，右侧性能摘要不会被挤出视口。"""
 
 
-def sample_once(state: ServeState | None) -> tuple[LoadSample, llmserve.ServeMetrics | None, str | None]:
-    """采样一次系统负载与服务指标（阻塞，供线程池调用）。
+class RunningModelRow(QFrame):  # pragma: no cover - Qt 控件
+    """运行中的模型：模型 / 服务信息 + 该模型自己的实时性能（每秒刷新）。
 
-    ``state`` 为 ``None`` 时只采系统负载；服务指标抓取失败时把原因放在第三个
-    返回值里，由界面显示「采样失败」而不是抛异常。
+    实时性能不挂在全局面板上，而是跟随每个运行中的模型：左侧模型名与服务地址，
+    右侧解码 tok/s 大字；下方一行小字是预填充 / 请求队列 / KV / tokens。
+    画图（sd.cpp）服务没有 token 指标：``show_rate=False`` 时只保留状态与小字，
+    用小字显示生成进度。
     """
-    process = _attach_process(state.pid) if state is not None else None
-    load = _sample_load(state.pid if state is not None else 0, process)
-    if state is None:
-        return load, None, None
-    try:
-        metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
-    except ServeError as exc:
-        return load, None, str(exc)
-    return load, metrics, None
+
+    def __init__(
+        self,
+        title: str,
+        subtitle: str,
+        *,
+        show_rate: bool = True,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("RunningModelRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(10, 6, 10, 6)
+        outer.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(2)
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(8)
+        self.name_label = ElidedLabel(title, parent=self)
+        self.name_label.setObjectName("RecommendationName")
+        self.name_label.setToolTip(title)
+        self.status_tag = StatusTag("等待采样…", tone="muted", parent=self)
+        name_row.addWidget(self.name_label, 1)
+        name_row.addWidget(self.status_tag, 0)
+        left.addLayout(name_row)
+        self.subtitle_label = ElidedLabel(subtitle, parent=self)
+        self.subtitle_label.setObjectName("Hint")
+        left.addWidget(self.subtitle_label)
+        outer.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(2)
+        rate_row = QHBoxLayout()
+        rate_row.setContentsMargins(0, 0, 0, 0)
+        rate_row.setSpacing(4)
+        self.rate_label = QLabel("-", self)
+        self.rate_label.setObjectName("RateValue")
+        self.rate_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        rate_row.addStretch(1)
+        self.rate_unit = QLabel("tok/s", self)
+        rate_row.addWidget(self.rate_label, 0, Qt.AlignmentFlag.AlignBottom)
+        rate_row.addWidget(self.rate_unit, 0, Qt.AlignmentFlag.AlignBottom)
+        right.addLayout(rate_row)
+        if not show_rate:
+            self.rate_label.hide()
+            self.rate_unit.hide()
+        self.metrics_label = ElidedLabel(performance_metrics_text(None, None), parent=self)
+        self.metrics_label.setObjectName("Hint")
+        self.metrics_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        right.addWidget(self.metrics_label)
+        outer.addLayout(right, 1)
+
+    def set_performance(  # noqa: PLR0913 - 与全局性能面板同一组指标
+        self,
+        gen_rate: float | None,
+        prompt_rate: float | None,
+        metrics: llmserve.ServeMetrics | None,
+        status: str,
+        tone: str,
+        *,
+        detail: str = "",
+    ) -> None:
+        """刷新本行的 tok/s、性能摘要与状态胶囊。"""
+        self.rate_label.setText(performance_rate_text(gen_rate))
+        self.metrics_label.setText(detail or performance_metrics_text(metrics, prompt_rate))
+        self.status_tag.set_status(status, tone)
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceSample:
+    """一个运行中服务的采样结果（指标或失败原因）。"""
+
+    name: str
+    metrics: llmserve.ServeMetrics | None
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PaintSample:
+    """画图（sd.cpp）服务的采样结果：只要登记状态与生成进度。"""
+
+    state: _llmpaint_server.PaintState | None
+    alive: bool
+    progress: float | None = None
+
+
+def paint_sample_text(progress: float | None) -> str:
+    """画图服务行的小字：引擎 + 生成进度（没进度时说明空闲 / 等待采样）。"""
+    if progress is None:
+        return "sd.cpp 画图服务 · 暂无生成进度"
+    if progress <= 0:
+        return "sd.cpp 画图服务 · 空闲"
+    return f"sd.cpp 画图服务 · 生成进度 {progress * 100:.0f}%"
+
+
+def paint_running_title(state: _llmpaint_server.PaintState) -> str:
+    """画图模型行标题：主模型文件名，未记录时回退「画图服务」。"""
+    return Path(state.model).name if state.model else "画图服务"
+
+
+def paint_running_subtitle(state: _llmpaint_server.PaintState) -> str:
+    """画图模型行副标题：画图 · 地址 · 引擎。"""
+    return f"画图 · {state.base_url} · {state.engine_tag or 'sd.cpp'}"
+
+
+def sample_paint() -> PaintSample:
+    """读取画图服务登记状态与生成进度（阻塞；不可达时进度为 ``None``）。"""
+    state, alive = _llmpaint_server.status()
+    progress = None
+    if state is not None and alive:
+        progress = _llmpaint_server.progress_value(_llmpaint_server.fetch_progress(state.host, state.port))
+    return PaintSample(state=state, alive=alive, progress=progress)
+
+
+def sample_overview(
+    states: Sequence[ServeState],
+) -> tuple[LoadSample, tuple[ServiceSample, ...], PaintSample]:
+    """采样一次系统负载 + 每个运行中服务 + 画图服务的指标（阻塞，供线程池调用）。
+
+    系统负载绑定第一个运行中服务（用于 CPU 副条的服务进程占用 / GPU 进程显存）；
+    每个服务的指标单独抓取，失败时把原因放在 :class:`ServiceSample` 里，
+    由界面显示「采样失败」而不是抛异常。
+    """
+    first = states[0] if states else None
+    process = _attach_process(first.pid) if first is not None else None
+    load = _sample_load(first.pid if first is not None else 0, process)
+    rows: list[ServiceSample] = []
+    for state in states:
+        try:
+            metrics = llmserve.fetch_metrics(state.host, state.port, state.api_key)
+        except ServeError as exc:
+            rows.append(ServiceSample(state.name, None, str(exc)))
+        else:
+            rows.append(ServiceSample(state.name, metrics, None))
+    return load, tuple(rows), sample_paint()
 
 
 def _attach_process(pid: int) -> Any | None:
@@ -229,15 +397,17 @@ def _attach_process(pid: int) -> Any | None:
 
 
 class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
-    """概览页：硬件与模型目录 → 智能推荐。"""
+    """概览页：系统信息（规格 + 实时格图 + 运行中的模型）→ 智能推荐。"""
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
         self._recommendations: tuple[Recommendation, ...] = ()
-        self._target_name = ""
         self._window = RATE_WINDOW_SECONDS
-        self._rates = RateWindow()
+        self._rates: dict[str, RateWindow] = {}
+        self._paint_sample: PaintSample | None = None
+        self._paint_row: RunningModelRow | None = None
+        self._paint_key = ""
         self._inflight = False
         self._timer: QTimer | None = None
         layout = QVBoxLayout(self)
@@ -250,9 +420,10 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         state.hardwareChanged.connect(lambda _snapshot: self.refresh_hardware())
         state.hardwareFailed.connect(self._on_hardware_failed)
         state.modelsChanged.connect(lambda _outcome: self.refresh_recommendations())
-        state.servicesChanged.connect(lambda _states: self._sync_target())
+        state.servicesChanged.connect(self._on_services_changed)
         self.refresh_hardware()
         self.refresh_recommendations()
+        self._on_services_changed(self.state.alive_states)
         self._timer = periodic(self, 1000, self._tick)
 
     # ------------------------------------------------------------------ #
@@ -314,10 +485,14 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         top = QHBoxLayout()
         top.setContentsMargins(0, 0, 0, 0)
         top.setSpacing(16)
-        top.addLayout(grid, 1)
-        top.addWidget(self._build_performance(card), 1)
+        top.addLayout(grid, 2)
+        top.addLayout(self._build_loads(card), 3)
         card.body.addLayout(top)
+        card.body.addWidget(self._build_running_models(card))
+        return card
 
+    def _build_loads(self, parent: QWidget) -> QHBoxLayout:
+        """GPU / CPU / 内存三块实时负载：放在原「实时性能」所在位置（规格右侧）。"""
         loads = QHBoxLayout()
         loads.setContentsMargins(0, 0, 0, 0)
         loads.setSpacing(8)
@@ -328,7 +503,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             self._gpu_hint,
             self._vram_hint,
             self._vram_bar,
-        ) = self._build_load_block("GPU", card)
+        ) = self._build_load_block("GPU", parent)
         loads.addWidget(gpu_block, 1)
         (
             cpu_block,
@@ -337,7 +512,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             self._cpu_hint,
             self._cpu_proc_hint,
             self._cpu_proc_bar,
-        ) = self._build_load_block("CPU", card)
+        ) = self._build_load_block("CPU", parent)
         loads.addWidget(cpu_block, 1)
         (
             mem_block,
@@ -346,51 +521,38 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             self._mem_hint,
             self._swap_hint,
             self._swap_bar,
-        ) = self._build_load_block("内存", card)
+        ) = self._build_load_block("内存", parent)
         loads.addWidget(mem_block, 1)
-        card.body.addLayout(loads)
-        return card
+        return loads
 
-    def _build_performance(self, parent: QWidget) -> QWidget:
-        """系统信息右侧的实时性能：生成 tok/s 主视觉 + 服务 / 请求次要指标。
-
-        数据由概览页每秒采样计算；这里只负责展示，
-        与左侧规格共用一行，避免系统信息卡片右侧留白。
-        """
-        panel = QWidget(parent)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
+    def _build_running_models(self, parent: QWidget) -> QWidget:
+        """系统信息底部「运行中的模型」：每个运行中服务一行，绑定各自的实时性能。"""
+        container = QWidget(parent)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(6)
         header = QHBoxLayout()
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
-        title = QLabel("实时性能", panel)
+        title = QLabel("运行中的模型", container)
         title.setObjectName("SectionTitle")
-        self._performance_badge = StatusTag("等待采样…", tone="muted", parent=panel)
+        self._running_badge = StatusTag("未运行", tone="muted", parent=container)
         header.addWidget(title)
         header.addStretch(1)
-        header.addWidget(self._performance_badge)
+        header.addWidget(self._running_badge)
         layout.addLayout(header)
-
-        value_row = QHBoxLayout()
-        value_row.setContentsMargins(0, 0, 0, 0)
-        value_row.setSpacing(6)
-        self._gen_rate_label = QLabel("-", panel)
-        self._gen_rate_label.setObjectName("RateValue")
-        self._gen_rate_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        unit = QLabel("tok/s", panel)
-        unit.setObjectName("RateUnit")
-        value_row.addWidget(self._gen_rate_label, 0, Qt.AlignmentFlag.AlignBottom)
-        value_row.addWidget(unit, 0, Qt.AlignmentFlag.AlignBottom)
-        value_row.addWidget(hint_label("10s 平滑", wrap=False), 0, Qt.AlignmentFlag.AlignBottom)
-        value_row.addStretch(1)
-        layout.addLayout(value_row)
-
-        self._performance_metrics = MetricGrid(_PERFORMANCE_METRICS, columns=2, parent=panel)
-        layout.addWidget(self._performance_metrics)
-        layout.addStretch(1)
-        return panel
+        self._running_empty = hint_label(
+            "当前没有运行中的服务：在运行页启动模型后，这里显示各自的解码 / 预填充速率与请求指标。",
+            wrap=True,
+        )
+        layout.addWidget(self._running_empty)
+        self._running_host = QVBoxLayout()
+        self._running_host.setContentsMargins(0, 0, 0, 0)
+        self._running_host.setSpacing(4)
+        layout.addLayout(self._running_host)
+        self._running_rows: dict[str, RunningModelRow] = {}
+        self._running_states: tuple[ServeState, ...] = ()
+        return container
 
     def _build_load_block(
         self,
@@ -549,50 +711,125 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 采样
     # ------------------------------------------------------------------ #
-    def set_target_name(self, name: str) -> None:
-        """指定要采样的服务名（运行页切服务时同步）。"""
-        self._target_name = name
-        self._sync_target()
+    def _on_services_changed(self, states: Sequence[ServeState] | None = None) -> None:
+        """服务列表变化：重建「运行中的模型」行，并丢掉已退出服务的速率窗口。"""
+        current = tuple(self.state.alive_states if states is None else states)
+        self._running_states = current
+        alive_names = {state.name for state in current}
+        self._rates = {name: window for name, window in self._rates.items() if name in alive_names}
+        self._rebuild_running_models()
 
-    def _sync_target(self) -> None:
-        """服务列表变化后重置速率窗口，并给出等待 / 仅系统负载占位。"""
-        self._rates = RateWindow(self._window)
-        if self._current_state() is None:
-            self._set_performance(None, None, None, "服务未运行（仅系统负载）", "warning")
+    def _rebuild_running_models(self) -> None:
+        """按当前运行中服务 + 画图服务重建行（行内数值由每秒采样刷新）。"""
+        while self._running_host.count():
+            item = self._running_host.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._running_rows = {}
+        for state in self._running_states:
+            row = RunningModelRow(running_model_title(state), running_model_subtitle(state), parent=self)
+            row.set_performance(None, None, None, "等待采样…", "muted")
+            self._running_host.addWidget(row)
+            self._running_rows[state.name] = row
+        self._paint_row = None
+        self._paint_key = ""
+        paint = self._paint_sample
+        if paint is not None and paint.alive and paint.state is not None:
+            self._paint_key = self._paint_identity(paint.state)
+            self._paint_row = RunningModelRow(
+                paint_running_title(paint.state),
+                paint_running_subtitle(paint.state),
+                show_rate=False,
+                parent=self,
+            )
+            self._paint_row.set_performance(
+                None,
+                None,
+                None,
+                "运行中",
+                "success",
+                detail=paint_sample_text(paint.progress),
+            )
+            self._running_host.addWidget(self._paint_row)
+        self._refresh_running_badge()
+
+    def _refresh_running_badge(self) -> None:
+        total = len(self._running_rows) + (1 if self._paint_row is not None else 0)
+        self._running_empty.setVisible(total == 0)
+        self._running_badge.set_status(f"{total} 个运行中" if total else "未运行", "success" if total else "muted")
+
+    @staticmethod
+    def _paint_identity(state: _llmpaint_server.PaintState) -> str:
+        """画图行身份：模型 / 地址 / 引擎任一变化都要重建行。"""
+        return f"{state.model}|{state.base_url}|{state.engine_tag}"
+
+    def _sync_paint_row(self, paint: PaintSample) -> None:
+        """画图服务状态：运行中显示成一行（重启应用后按 server.json 恢复），否则移除。"""
+        self._paint_sample = paint
+        running = paint.alive and paint.state is not None
+        identity = self._paint_identity(paint.state) if running and paint.state is not None else ""
+        if identity != self._paint_key or (not running and self._paint_row is not None):
+            self._rebuild_running_models()
             return
-        self._set_performance(None, None, None, "等待采样…", "muted")
-
-    def _current_state(self) -> ServeState | None:
-        alive = self.state.alive_states
-        if not alive:
-            return None
-        for state in alive:
-            if state.name == self._target_name:
-                return state
-        return alive[0]
+        if self._paint_row is not None:
+            self._paint_row.set_performance(
+                None,
+                None,
+                None,
+                "运行中" if running else "服务未运行",
+                "success" if running else "warning",
+                detail=paint_sample_text(paint.progress) if running else "",
+            )
 
     def _tick(self) -> None:
         """每秒投递一次采样；上一轮未完成时跳过，避免任务堆叠。"""
         if self._inflight or self.state.closing:
             return
         self._inflight = True
-        submit(sample_once, self._current_state(), on_done=self._apply_sample, on_finished=self._sample_finished)
+        submit(
+            sample_overview,
+            tuple(self._running_states),
+            on_done=self._apply_sample,
+            on_finished=self._sample_finished,
+        )
 
     def _sample_finished(self) -> None:
         self._inflight = False
 
-    def _apply_sample(self, payload: tuple[LoadSample, Any, str | None]) -> None:
-        load, metrics, error = payload
+    def _apply_sample(self, payload: tuple[LoadSample, tuple[ServiceSample, ...], PaintSample]) -> None:
+        """系统负载刷格图，每个服务指标刷自己那一行的实时性能。"""
+        load, rows, paint = payload
         self._apply_system_sample(load)
         self._sync_free_vram(load.gpu)
-        if metrics is None:
-            if error is not None:
-                self._set_performance(None, None, None, "采样失败: " + error[:60], "danger")
-            else:
-                self._set_performance(None, None, None, "服务未运行（仅系统负载）", "warning")
-            return
-        gen_rate, prompt_rate = self._rates.update(time.monotonic(), metrics.predicted_tokens, metrics.prompt_tokens)
-        self._set_performance(gen_rate, prompt_rate, metrics, "监控中", "success")
+        self._sync_paint_row(paint)
+        now = time.monotonic()
+        seen: set[str] = set()
+        for sample in rows:
+            seen.add(sample.name)
+            row = self._running_rows.get(sample.name)
+            if row is None:
+                continue
+            if sample.metrics is None:
+                row.set_performance(
+                    None,
+                    None,
+                    None,
+                    "采样失败" if sample.error else "服务未运行",
+                    "danger" if sample.error else "warning",
+                    detail="" if not sample.error else f"采样失败：{sample.error[:80]}",
+                )
+                continue
+            window = self._rates.setdefault(sample.name, RateWindow(self._window))
+            gen_rate, prompt_rate = window.update(
+                now,
+                sample.metrics.predicted_tokens,
+                sample.metrics.prompt_tokens,
+            )
+            row.set_performance(gen_rate, prompt_rate, sample.metrics, "监控中", "success")
+        for name, row in self._running_rows.items():
+            if name not in seen:
+                row.set_performance(None, None, None, "服务未运行", "warning")
 
     def _apply_system_sample(self, sample: LoadSample) -> None:
         """用系统采样刷新 GPU / CPU / 内存负载块（主格图 + 副条 + 小字）。"""
@@ -622,31 +859,6 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._set_hint(self._swap_hint, [self._swap_text(sample, swap)])
         self._apply_load_block(self._mem_percent, self._mem_bar, sample.memory_percent if sample.memory_total else None)
         self._swap_bar.set_percent(swap)
-
-    def _set_performance(
-        self,
-        gen_rate: float | None,
-        prompt_rate: float | None,
-        metrics: llmserve.ServeMetrics | None,
-        status: str,
-        tone: str,
-    ) -> None:
-        """刷新右侧实时性能：tok/s 大字、次要指标与状态标签。"""
-        self._gen_rate_label.setText("-" if gen_rate is None else f"{gen_rate:.1f}")
-        if metrics is None:
-            self._performance_metrics.set_values({key: "-" for _label, key in _PERFORMANCE_METRICS})
-        else:
-            self._performance_metrics.set_values(
-                {
-                    "prompt_rate": "-" if prompt_rate is None else f"{prompt_rate:.1f} tok/s",
-                    "processing": f"{metrics.processing:.0f}",
-                    "deferred": f"{metrics.deferred:.0f}",
-                    "kv": f"{metrics.kv_usage * 100:.1f} %",
-                    "predicted": f"{metrics.predicted_tokens:.0f}",
-                    "prompt": f"{metrics.prompt_tokens:.0f}",
-                }
-            )
-        self._performance_badge.set_status(status, tone)
 
     def _sync_free_vram(self, gpu: GpuSample | None) -> None:
         """用实时 GPU 采样更新可用显存（服务停止释放显存后自动恢复「可用」）。"""

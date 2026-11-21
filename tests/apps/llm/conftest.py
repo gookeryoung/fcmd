@@ -1,7 +1,7 @@
 """llm 测试的进程内 Qt 清理。
 
 概览页用 ``QThreadPool`` 采样系统负载，采样链路会调 ``nvidia-smi``
-（``_llmw_qt_overview.sample_once`` → ``_sample_load`` → ``_sample_gpu``）。
+（``_llmw_qt_overview.sample_overview`` → ``_sample_load`` → ``_sample_gpu``）。
 窗口/页面销毁不会取消已投递的任务，任务可能在上一个测试结束后才执行到
 ``subprocess.run``：此时若下一个测试把 ``subprocess.run`` 换成了假实现
 （例如 ``tests/tools/dev/test_cli_autofmt.py``），残留调用会落进那个测试的

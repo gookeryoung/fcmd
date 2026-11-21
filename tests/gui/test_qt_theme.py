@@ -58,6 +58,7 @@ def test_stylesheet_contains_expected_selectors() -> None:
         "QLabel#LoadValue",
         "QLabel#MeterValue",
         "QLabel#StatusTag",
+        "QFrame#RunningModelRow",
         "QPushButton#Primary",
         "QPushButton#Danger",
         "QPushButton#NavButton",

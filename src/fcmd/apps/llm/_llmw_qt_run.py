@@ -49,13 +49,12 @@ from fcmd.apps.llm import (
 from fcmd.apps.llm._llmquant import matches_profile
 from fcmd.apps.llm._llmw_monitor import _busy_advice, _fit_advice, _probe_web_ui
 from fcmd.apps.llm._llmw_qt_paint import (
+    MODEL_RUNNING_ROLE,
     PaintEngineSection,
     components_from_settings,
     parse_paint_settings,
-    service_detail,
     start_paint_service,
 )
-from fcmd.apps.llm._llmw_qt_paint import service_label as paint_service_label
 from fcmd.apps.llm._llmw_ui import service_name_from_model
 from fcmd.apps.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -81,10 +80,8 @@ from fcmd.gui.qt.widgets import (
     Card,
     ChoiceGroup,
     Collapsible,
-    ElidedLabel,
     FormGrid,
     PageScroll,
-    StatusTag,
     button,
     set_button_text,
 )
@@ -317,7 +314,7 @@ def build_plan_from(values: dict[str, Any]) -> LaunchPlan:
     )
 
 
-_MODEL_RUNNING_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+_MODEL_RUNNING_ROLE = MODEL_RUNNING_ROLE
 
 
 class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
@@ -665,8 +662,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_engine_section.statusRequested.connect(self.state.status)
         self.paint_engine_section.saveRequested.connect(self._save_paint_params)
         model_row.addWidget(self.paint_engine_section.model_combo, 1)
-        self.paint_service_tag = StatusTag("服务未启动", parent=self.paint_model_card)
-        model_row.addWidget(self.paint_service_tag, 0)
         self.paint_action_button = button("启动服务", kind="primary")
         self.paint_action_button.setObjectName("RunPrimary")
         self.paint_action_button.setToolTip("按本页启动参数启动 sd-server")
@@ -678,13 +673,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_restart_button.clicked.connect(self._restart_paint_service)
         model_row.addWidget(self.paint_restart_button)
         self.paint_model_card.body.addLayout(model_row)
-        # 状态标签只说「在跑 / 未登记 / 端口被占」，细节（地址 / pid / 模型 / 占用进程）
-        # 放在下面一行小字：显存被占用时能直接对上是哪个 sd-server。
-        self.paint_service_detail = ElidedLabel("", parent=self.paint_model_card)
-        self.paint_service_detail.setObjectName("Hint")
-        self.paint_model_card.body.addWidget(self.paint_service_detail)
-        # 提示信息统一写到底部状态栏（切到画图页签 / 扫描完成 / 缺模型时刷新）。
+        # 运行状态只看启停按钮文案 + 模型下拉的「✓ 已启动」标记（与对话 / 编程一致），
+        # 不再在模型行右侧放状态胶囊，也不在下方占一行说明；明细在概览页。
         self.paint_engine_section.assetsLoaded.connect(self._report_paint_hint)
+        self.paint_engine_section.assetsLoaded.connect(self._refresh_paint_marker)
         layout.addWidget(self.paint_model_card)
 
         self.paint_config_card = Card("启动参数")
@@ -739,22 +731,21 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._apply_paint_status(probe)
 
     def _apply_paint_status(self, probe: _llmpaint_server.PaintProbe) -> None:
-        """把探针结果写进状态标签 / 细节行，并同步启停按钮。"""
-        tag = getattr(self, "paint_service_tag", None)
-        if tag is not None:
-            tag.set_status(
-                *paint_service_label(
-                    probe.state,
-                    probe.alive,
-                    reachable=probe.reachable,
-                    port_open=probe.port_open,
-                )
-            )
-        detail = getattr(self, "paint_service_detail", None)
-        if detail is not None:
-            port = int(self.paint_settings().get("port") or _llmpaint_server.DEFAULT_PORT)
-            detail.setText(service_detail(probe, port=port))
+        """记录探针结果，并同步模型下拉标记与启停按钮（运行状态只看这两处）。"""
+        self._paint_probe = probe
+        self._refresh_paint_marker()
         self._refresh_paint_actions(probe.alive, probe=probe)
+
+    def _refresh_paint_marker(self) -> None:
+        """把「运行中的扩散模型」标记到画图下拉（与对话 / 编程的「✓ 已启动」一致）。"""
+        section = getattr(self, "paint_engine_section", None)
+        if section is None:
+            return
+        probe = self._paint_probe
+        model = ""
+        if probe is not None and probe.alive and probe.state is not None:
+            model = probe.state.model
+        section.set_running_model(model)
 
     def _refresh_paint_actions(
         self,

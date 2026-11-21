@@ -95,7 +95,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.state.recommendationApplied.connect(self.run_page.apply_recommendation)
         self.state.modelsChanged.connect(self._on_models_changed)
         self.nav.collapsedChanged.connect(self._persist_sidebar_collapsed)
-        self.state.selectionChanged.connect(lambda *_args: self.overview.set_target_name(self.run_page.service_name()))
 
         self.set_status("正在读取服务与模型目录…")
         self.state.refresh_services()
@@ -104,7 +103,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.state.detect_hardware()
         else:
             self.overview.refresh_hardware()
-        self.overview.set_target_name(self.run_page.service_name())
 
     # ------------------------------------------------------------------ #
     # 菜单 / 日志

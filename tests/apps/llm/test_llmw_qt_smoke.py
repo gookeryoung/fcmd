@@ -227,11 +227,11 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     QApplication.processEvents()
     assert run.service_page.parent() is run.chat_tab
 
-    # 画图页签：选模型 + 状态标签 + 启停按钮，配置在下面的「启动参数」卡片。
+    # 画图页签：选模型 + 启停按钮，配置在下面的「启动参数」卡片。
     assert run.paint_model_card.title() == "选择模型"
-    # 状态标签 + 细节行：显存被占 / 外部启动时能看到地址、pid 与占用进程。
-    assert run.paint_service_tag.text() in {"服务未启动", "运行中（未登记）", "端口被占用", "已退出（残留状态）"}
-    assert run.paint_service_detail.fullText()
+    # 运行状态只看按钮文案 + 下拉「✓ 已启动」标记：不再放状态胶囊 / 小字说明。
+    assert not hasattr(run, "paint_service_tag")
+    assert not hasattr(run, "paint_service_detail")
     assert run.paint_config_card.title() == "启动参数"
     assert run.paint_action_button.text() in {"启动服务", "停止服务"}
     assert run.paint_restart_button.text() == "重启服务"
@@ -282,8 +282,48 @@ def test_paint_model_combo_has_no_placeholder(window: Any, tmp_path: Path) -> No
     assert section.model_combo.count() == 0
 
 
-def test_paint_status_shows_unregistered_service(window: Any) -> None:
-    """状态文件丢失 / 服务由外部启动：标签 / 细节行仍能看到端口、pid 与占用进程。"""
+def test_paint_model_combo_marks_running_model(window: Any, tmp_path: Path) -> None:
+    """画图下拉与对话 / 编程一致：运行中的扩散模型显示「✓ 已启动」并置绿。"""
+    from fcmd.apps.llm import _llmpaint, _llmpaint_server
+
+    main = tmp_path / "sdxl.safetensors"
+    main.write_bytes(b"x" * 16)
+    asset = _llmpaint.PaintAsset(main, "checkpoint", "sdxl", 16)
+    window.show_page("run")
+    run = window.run_page
+    section = run.paint_engine_section
+    section._apply_assets(_llmpaint.PaintAssets((asset,), (tmp_path,)))
+    base = section.model_combo.itemText(0)
+    assert "已启动" not in base
+
+    state = _llmpaint_server.PaintState(
+        pid=4321,
+        create_time=0.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="master-1094",
+        exe="sd-server",
+        model=str(main),
+        components={},
+        fingerprint=(),
+        log="sd-server.log",
+        started_at="",
+    )
+    run._paint_probe = _llmpaint_server.PaintProbe(state, True, True, True)
+    run._refresh_paint_marker()
+    assert section.model_combo.itemText(0) == f"{base} · ✓ 已启动"
+    assert section.model_combo.property("running") == "true"
+    assert bool(section.model_combo.itemData(0, int(Qt.ItemDataRole.UserRole) + 1)) is True
+
+    # 服务退出后标记撤回，文案恢复（状态文件残留 / 端口探针都不会影响）。
+    run._paint_probe = _llmpaint_server.PaintProbe(None, False, False, False)
+    run._refresh_paint_marker()
+    assert section.model_combo.itemText(0) == base
+    assert section.model_combo.property("running") == "false"
+
+
+def test_paint_status_controls_buttons_only(window: Any) -> None:
+    """状态文件丢失 / 服务由外部启动：只反映在启停按钮上（不再渲染状态胶囊 / 细节行）。"""
     from fcmd.apps.llm import _llmpaint_server
 
     window.show_page("run")
@@ -300,26 +340,20 @@ def test_paint_status_shows_unregistered_service(window: Any) -> None:
     run._paint_probe_seq += 1
     seq = run._paint_probe_seq
     run._paint_probed(seq, probe)
-    assert run.paint_service_tag.text() == "运行中（未登记）"
-    detail = run.paint_service_detail.fullText()
-    assert "127.0.0.1:1234" in detail
-    assert "sd-server.exe pid=4321" in detail
     assert run.paint_action_button.text() == "停止服务"
     # 重启只对已登记的服务开放，避免无状态可停时盲重启。
     assert not run.paint_restart_button.isEnabled()
 
-    # 端口被其它程序占用：提示换端口 / 查占用进程。
+    # 端口被其它程序占用（健康探针不通）：仍按「未运行」显示启动按钮。
     run._paint_probed(
         seq,
         _llmpaint_server.PaintProbe(None, False, False, True, (_llmpaint_server.PortOccupant(9, "python.exe"),)),
     )
-    assert run.paint_service_tag.text() == "端口被占用"
-    assert "fcmd portcheck c" in run.paint_service_detail.fullText()
     assert run.paint_action_button.text() == "启动服务"
 
     # 陈旧探针结果不允许覆盖新状态。
     run._paint_probed(0, probe)
-    assert run.paint_service_tag.text() == "端口被占用"
+    assert run.paint_action_button.text() == "启动服务"
 
 
 def test_paint_save_params_persists_immediately(window: Any, tmp_path: Path) -> None:
@@ -1225,6 +1259,7 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     """概览硬件卡：GPU / CPU / 内存格图 + 关键信息 + 实时 tok/s。"""
     from fcmd.apps.llm import llmserve
     from fcmd.apps.llm._llmw_monitor import GpuSample, LoadSample
+    from fcmd.apps.llm._llmw_qt_overview import PaintSample
 
     overview = window.overview
     assert not hasattr(overview, "_gpu_gauge")
@@ -1264,7 +1299,7 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
             process_memory=15000.0,
         ),
     )
-    overview._apply_sample((sample, None, None))
+    overview._apply_sample((sample, (), PaintSample(None, False)))
 
     assert overview._gpu_percent.text() == "73 %"
     assert overview._cpu_percent.text() == "41 %"
@@ -1287,19 +1322,85 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     assert overview._mem_hint.fullText().startswith("13.00 GB / 32.00 GB")
     assert overview._swap_hint.fullText() == "交换 2.00 GB / 8.00 GB（25%）"
 
-    # 服务指标：生成 tok/s 单独大字展示，其余进次要网格。
+    # 运行中的模型：每个服务一行，实时性能绑定到该行（不再有全局实时性能面板）。
+    from fcmd.apps.llm._llmw_qt_overview import ServiceSample
+    from fcmd.apps.llm.llmbase import ServeState
+
+    assert not hasattr(overview, "_performance_badge")
+    assert overview._running_badge.text() == "未运行"
+    assert not overview._running_empty.isHidden()
+    state = ServeState(
+        name="qwen",
+        pid=1234,
+        create_time=0.0,
+        host="127.0.0.1",
+        port=8080,
+        model="/models/qwen.gguf",
+        profile="balanced",
+        context=65536,
+        engine="b1",
+        alias="qwen",
+        api_key="",
+        log="",
+        started_at="",
+    )
+    overview._on_services_changed([state])
+    assert overview._running_badge.text() == "1 个运行中"
+    assert overview._running_empty.isHidden()
+    row = overview._running_rows["qwen"]
+    assert row.rate_label.objectName() == "RateValue"
     metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
-    overview._apply_sample((sample, metrics, None))
-    assert overview._gen_rate_label.objectName() == "RateValue"
-    assert overview._gen_rate_label.text() == "0.0"
-    assert overview._performance_metrics.value("prompt_rate") == "0.0 tok/s"
-    assert overview._performance_metrics.value("processing") == "1"
-    assert overview._performance_metrics.value("kv") == "18.0 %"
-    assert overview._performance_badge.text() == "监控中"
-    assert overview._performance_badge.tone() == "success"
+    overview._apply_sample((sample, (ServiceSample("qwen", metrics, None),), PaintSample(None, False)))
+    assert row.rate_label.text() == "0.0"
+    assert "预填充 0.0 tok/s" in row.metrics_label.fullText()
+    assert "处理中 1" in row.metrics_label.fullText()
+    assert "KV 18.0%" in row.metrics_label.fullText()
+    assert row.status_tag.text() == "监控中"
+    assert row.status_tag.tone() == "success"
+
+    # 采样失败：同一行显示失败原因，不把旧速率留着。
+    overview._apply_sample(
+        (LoadSample(cpu=5.0), (ServiceSample("qwen", None, "connection refused"),), PaintSample(None, False))
+    )
+    assert row.status_tag.text() == "采样失败"
+    assert row.status_tag.tone() == "danger"
+    assert "connection refused" in row.metrics_label.fullText()
+
+    # 画图（sd.cpp）模型也显示在「运行中的模型」：没有 token 指标，用生成进度表示。
+    from fcmd.apps.llm._llmpaint_server import PaintState
+
+    paint_state = PaintState(
+        pid=4321,
+        create_time=0.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="master-1094",
+        exe="sd-server",
+        model="/models/z_image_turbo.gguf",
+        components={},
+        fingerprint=(),
+        log="sd-server.log",
+        started_at="",
+    )
+    # 服务停止后行销毁，回到空态提示。
+    overview._on_services_changed([])
+    assert overview._running_badge.text() == "未运行"
+    assert not overview._running_empty.isHidden()
+    assert overview._running_rows == {}
+
+    overview._apply_sample((sample, (), PaintSample(paint_state, True, 0.42)))
+    assert overview._paint_row is not None
+    assert overview._paint_row.name_label.fullText() == "z_image_turbo.gguf"
+    assert overview._paint_row.rate_label.isHidden()
+    assert "生成进度 42%" in overview._paint_row.metrics_label.fullText()
+    assert overview._running_badge.text() == "1 个运行中"
+    # 画图服务退出：行移除，回到空态。
+    overview._apply_sample((sample, (), PaintSample(None, False)))
+    assert overview._paint_row is None
+    assert overview._running_badge.text() == "未运行"
 
     # 无 GPU / 无服务 / 无交换：副条清空并给出对应提示，不留上半轮的旧值。
-    overview._apply_sample((LoadSample(cpu=5.0), None, None))
+    overview._apply_sample((LoadSample(cpu=5.0), (), PaintSample(None, False)))
     assert overview._vram_bar.percent() is None
     assert overview._vram_hint.fullText() == "未检测到 GPU（CPU 推理）"
     assert overview._gpu_hint.fullText() == ""

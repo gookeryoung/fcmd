@@ -52,7 +52,6 @@ from fcmd.gui.qt.widgets import (
     button,
     hint_label,
     link_button,
-    mono_label,
 )
 from fcmd.gui.qt.workers import submit, submit_daemon
 
@@ -78,8 +77,6 @@ __all__ = [
     "parse_extra_args",
     "parse_paint_settings",
     "request_from_settings",
-    "service_detail",
-    "service_label",
     "settings_summary",
     "size_preset",
     "start_paint_service",
@@ -119,6 +116,11 @@ MODES: tuple[tuple[str, str], ...] = (
 """加载方式：(数据值, 显示名)。"""
 
 _MODE_KEYS = frozenset(key for key, _label in MODES)
+
+MODEL_RUNNING_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+"""下拉项「运行中」标记：与运行页对话 / 编程的模型下拉共用同一角色。"""
+MODEL_BASE_TEXT_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+"""下拉项基础文案：追回 / 去掉「✓ 已启动」后缀时以它为准。"""
 _MODE_NOTES: dict[str, str] = {
     "auto": "按主模型家族自动判断 checkpoint / diffusion",
     "checkpoint": "单文件权重，用 -m 加载",
@@ -369,55 +371,6 @@ def command_preview(settings: dict[str, Any]) -> str:
     return format_command(argv)
 
 
-def service_label(
-    state: _llmpaint_server.PaintState | None,
-    alive: bool,
-    *,
-    reachable: bool = False,
-    port_open: bool = False,
-) -> tuple[str, str]:
-    """服务状态标签：(文案, 语义色)。
-
-    ``reachable`` / ``port_open`` 来自端口探针：状态文件丢失、服务由 CLI / 旧版本
-    启动或残留时，标签仍能反映「端口上有服务在跑」，而不是一律显示未启动。
-    """
-    if state is not None and alive:
-        return f"运行中 · {state.engine_tag or 'sd.cpp'}", "success"
-    if reachable:
-        return "运行中（未登记）", "warning"
-    if state is not None:
-        return "已退出（残留状态）", "warning"
-    if port_open:
-        return "端口被占用", "warning"
-    return "服务未启动", "muted"
-
-
-def service_detail(
-    probe: _llmpaint_server.PaintProbe,
-    *,
-    host: str = _llmpaint_server.DEFAULT_HOST,
-    port: int = _llmpaint_server.DEFAULT_PORT,
-    limit: int = 4,
-) -> str:
-    """状态标签下方的一行说明：地址 / pid / 模型，或「显存被谁占着」。"""
-    state = probe.state
-    if state is not None and probe.alive:
-        model = Path(state.model).name if state.model else "未记录"
-        return f"{state.base_url} · pid={state.pid} · 模型 {model} · 引擎 {state.engine_tag or '未知'}"
-    occupants = "、".join(f"{item.name or '未知进程'} pid={item.pid}" for item in probe.occupants[:limit])
-    if len(probe.occupants) > limit:
-        occupants += f" 等 {len(probe.occupants)} 个进程"
-    if probe.reachable:
-        detail = f"{host}:{port} 有画图服务在监听，但本工具没有登记（CLI / 旧版本遗留），显存已被占用"
-        return f"{detail}：{occupants}。点「停止服务」可结束这些 sd-server。" if occupants else f"{detail}。"
-    if state is not None:
-        return "状态文件还在但进程已退出；重启服务会清理残留状态。"
-    if probe.port_open:
-        detail = f"端口 {port} 已被其它程序占用；换端口或先停止占用进程（fcmd portcheck c {port}）"
-        return f"{detail}：{occupants}。" if occupants else f"{detail}。"
-    return "启动后会在这里显示地址、pid、模型与引擎。"
-
-
 def format_progress(payload: Any) -> str:
     """进度响应 → 百分比文本；服务不支持进度时返回空串。"""
     value = _llmpaint_server.progress_value(payload)
@@ -596,11 +549,12 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         options_row.addStretch(1)
         layout.addLayout(options_row)
 
+        # 模型名 / 大小 / 家族已在主模型下拉与命令预览里，不再单独占一行文字；
+        # 这里只留「自动配对 / 下载缺失组件」两个动作。
         family_row = QHBoxLayout()
         family_row.setContentsMargins(0, 0, 0, 0)
         family_row.setSpacing(8)
-        self.family_label = mono_label("未选择主模型")
-        family_row.addWidget(self.family_label, 1)
+        family_row.addStretch(1)
         self.suggest_button = button("自动配对", kind="ghost", tooltip="按主模型家族填满 VAE / 文本编码器槽位")
         family_row.addWidget(self.suggest_button)
         self.download_button = button("下载缺失组件…", kind="ghost")
@@ -736,7 +690,8 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         )
 
     def _assets_failed(self, message: str) -> None:
-        self.family_label.setText(f"扫描模型失败：{message}")
+        """扫描失败进底部状态栏（不再在参数卡里占一行文字）。"""
+        self.statusRequested.emit(f"扫描模型失败：{message}")
 
     def _apply_assets(self, assets: _llmpaint.PaintAssets) -> None:
         self._assets = assets
@@ -781,7 +736,9 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         for path in paths:
             asset = self._assets.get(path)
             suffix = f" · {asset.role_label}" if asset is not None and show_role else ""
-            combo.addItem(f"{path.name}{suffix}", str(path))
+            label = f"{path.name}{suffix}"
+            combo.addItem(label, str(path))
+            combo.setItemData(combo.count() - 1, label, MODEL_BASE_TEXT_ROLE)
             detail = f"{path}\n{human_size(asset.size)}" if asset is not None else str(path)
             combo.setItemData(combo.count() - 1, detail, Qt.ItemDataRole.ToolTipRole)
         index = combo.findData(previous) if isinstance(previous, str) and previous else -1
@@ -793,10 +750,36 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         combo.blockSignals(True)
         asset = self._assets.get(path)
         suffix = f" · {asset.role_label}" if asset is not None and show_role else ""
-        combo.addItem(f"{path.name}{suffix}", str(path))
+        label = f"{path.name}{suffix}"
+        combo.addItem(label, str(path))
+        combo.setItemData(combo.count() - 1, label, MODEL_BASE_TEXT_ROLE)
         combo.setItemData(combo.count() - 1, str(path), Qt.ItemDataRole.ToolTipRole)
         combo.setCurrentIndex(combo.count() - 1)
         combo.blockSignals(False)
+
+    def set_running_model(self, model: str) -> None:
+        """标记正在运行的扩散模型：追加「✓ 已启动」并置绿（与对话 / 编程同款）。
+
+        ``model`` 为空表示没有登记的画图服务；有服务时按路径键（Windows 大小写
+        不敏感）匹配下拉项，运行项在弹层里绘制绿色文字与边框，当前选中项把
+        下拉框本身置绿（``ModelCombo[running="true"]``）。
+        """
+        key = _llmconfig.path_key(Path(model)) if model.strip() else ""
+        combo = self.model_combo
+        for index in range(combo.count()):
+            data = combo.itemData(index)
+            base = combo.itemData(index, MODEL_BASE_TEXT_ROLE)
+            running = bool(key) and isinstance(data, str) and bool(data) and _llmconfig.path_key(Path(data)) == key
+            combo.setItemData(index, running, MODEL_RUNNING_ROLE)
+            if isinstance(base, str) and base:
+                combo.setItemText(index, f"{base} · ✓ 已启动" if running else base)
+        selected = combo.currentData()
+        running_selected = (
+            bool(key) and isinstance(selected, str) and bool(selected) and (_llmconfig.path_key(Path(selected)) == key)
+        )
+        combo.setProperty("running", "true" if running_selected else "false")
+        combo.style().unpolish(combo)
+        combo.style().polish(combo)
 
     def _apply_component_selection(self) -> None:
         """按设置恢复主模型与各组件选中项。"""
@@ -819,13 +802,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         return Path(data).expanduser() if isinstance(data, str) and data else None
 
     def _on_model_changed(self) -> None:
-        """主模型变化：刷新家族提示，并给空槽位补默认组件。"""
-        path = self._combo_path(self.model_combo)
-        asset = self._assets.get(path) if path is not None else None
-        if asset is None:
-            self.family_label.setText("未选择主模型")
-        else:
-            self.family_label.setText(f"{asset.family_label} · {human_size(asset.size)}")
+        """主模型变化：给空槽位补默认组件（大小等信息留在下拉项的 tooltip 里）。"""
         self._suggest(only_empty=True)
         self._on_changed()
 
