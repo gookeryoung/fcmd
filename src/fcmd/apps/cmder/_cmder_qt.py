@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QSplitter,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -70,7 +69,7 @@ from fcmd.apps.cmder._volumes import enumerate_volumes
 from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.theme_menu import ThemeMenu
-from fcmd.gui.qt.widgets import button, confirm, hint_label
+from fcmd.gui.qt.widgets import button, confirm, hint_label, make_splitter
 from fcmd.gui.qt.window import restore_geometry
 from fcmd.gui.qt.workers import submit
 
@@ -144,8 +143,7 @@ class CmderQtWindow(QMainWindow):
         self.toolbar_row.setContentsMargins(0, 0, 0, 0)
         self.toolbar_row.setSpacing(4)
         layout.addLayout(self.toolbar_row)
-        self.splitter = QSplitter(Qt.Orientation.Horizontal, central)
-        self.splitter.setChildrenCollapsible(False)
+        self.splitter = make_splitter(Qt.Orientation.Horizontal, parent=central)
         layout.addWidget(self.splitter, 1)
         self.setCentralWidget(central)
         self.status_label = QLabel("就绪", self)

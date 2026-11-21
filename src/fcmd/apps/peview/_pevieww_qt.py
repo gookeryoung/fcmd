@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QScrollArea,
-    QSplitter,
     QTabWidget,
     QTreeWidget,
     QTreeWidgetItem,
@@ -52,7 +51,15 @@ from fcmd.apps.peview.pevieww import (
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import ElidedLabel, apply_splitter_sizes, button, hint_label, mono_font, splitter_sizes
+from fcmd.gui.qt.widgets import (
+    ElidedLabel,
+    apply_splitter_sizes,
+    button,
+    hint_label,
+    make_splitter,
+    mono_font,
+    splitter_sizes,
+)
 
 __all__ = ["PeviewWindow", "run_qt"]
 
@@ -225,8 +232,7 @@ class PeviewWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         toolbar_layout.addWidget(self._path_label, 1)
         self.add(toolbar)
 
-        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._splitter.setChildrenCollapsible(False)
+        self._splitter = make_splitter(Qt.Orientation.Horizontal, parent=self)
         self._tree = QTreeWidget(self._splitter)
         self._tree.setHeaderHidden(True)
         self._tree.setUniformRowHeights(True)

@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QPlainTextEdit,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +36,7 @@ from fcmd.gui.qt.widgets import (
     apply_splitter_sizes,
     button,
     hint_label,
+    make_splitter,
     mono_font,
     splitter_sizes,
 )
@@ -116,8 +116,7 @@ class RegexValidateWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件�
         self.add(self._build_pattern_card())
         self.add_layout(self._build_status_row())
 
-        self._splitter = QSplitter(Qt.Orientation.Vertical, self)
-        self._splitter.setChildrenCollapsible(False)
+        self._splitter = make_splitter(Qt.Orientation.Vertical, parent=self)
         text_card = Card("测试文本", self._splitter)
         self._text = QPlainTextEdit(self._settings.test_string, text_card)
         self._text.setFont(mono_font())

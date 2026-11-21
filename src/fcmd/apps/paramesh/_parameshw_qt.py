@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSizePolicy,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -53,7 +52,13 @@ from fcmd.apps.paramesh.parameshw import (
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import LogView, apply_splitter_sizes, button, splitter_sizes
+from fcmd.gui.qt.widgets import (
+    LogView,
+    apply_splitter_sizes,
+    button,
+    make_splitter,
+    splitter_sizes,
+)
 
 __all__ = ["ParameshWindow", "run_qt"]
 
@@ -144,8 +149,7 @@ class ParameshWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         toolbar_layout.addStretch(1)
         self.add(toolbar)
 
-        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._splitter.setChildrenCollapsible(False)
+        self._splitter = make_splitter(Qt.Orientation.Horizontal, parent=self)
         self._canvas = _PreviewCanvas(self, self._splitter)
         self._splitter.addWidget(self._canvas)
         self._splitter.addWidget(self._build_side_panel())

@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSizePolicy,
-    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -51,7 +50,13 @@ from fcmd.apps.paramcad.paramcadw import (
 )
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import LogView, apply_splitter_sizes, button, splitter_sizes
+from fcmd.gui.qt.widgets import (
+    LogView,
+    apply_splitter_sizes,
+    button,
+    make_splitter,
+    splitter_sizes,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -136,8 +141,7 @@ class ParamcadWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         toolbar_layout.addStretch(1)
         self.add(toolbar)
 
-        self._splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        self._splitter.setChildrenCollapsible(False)
+        self._splitter = make_splitter(Qt.Orientation.Horizontal, parent=self)
         self._tabs = QTabWidget(self._splitter)
         self._tabs.setDocumentMode(True)
         self._section_canvas = _PreviewCanvas(self, "section", self._tabs)
