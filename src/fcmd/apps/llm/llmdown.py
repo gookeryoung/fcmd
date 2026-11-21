@@ -26,7 +26,7 @@ import json
 import re
 import shutil
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
@@ -577,6 +577,48 @@ def search_models(
         raise ModelToolError(f"ModelScope 模型列表格式异常{f': {message}' if message else ''}")
     items = tuple(_summary_from_item(item) for item in raw_items if isinstance(item, dict) and item.get("Name"))
     return ModelSearch(items, _as_int(model.get("TotalCount")), page, page_size)
+
+
+def search_models_multi(
+    keywords: Sequence[str],
+    page: int = 1,
+    page_size: int = 20,
+    sort: str = "default",
+    timeout: float = _MANIFEST_TIMEOUT,
+) -> ModelSearch:
+    """并行搜索多个关键字并按 repo 去重合并。
+
+    分类页需要同时覆盖多个英文家族名（``Qwen-Image`` / ``MiniMax-H3-Image`` /
+    ``FLUX`` …），单个中文关键字会漏掉官方仓库。每个关键字只取少量结果再合并，
+    保证第一页各家族都有代表；单个关键字失败不影响其它关键字，全部失败才抛错。
+    """
+    terms = tuple(dict.fromkeys(term.strip() for term in keywords if term.strip()))
+    if not terms:
+        return search_models("", page, page_size, sort, timeout)
+    per_term = max(4, page_size // max(1, len(terms)))
+    results: list[ModelSearch] = []
+    errors: list[Exception] = []
+    with ThreadPoolExecutor(max_workers=min(8, len(terms))) as pool:
+        futures = {pool.submit(search_models, term, page, per_term, sort, timeout): term for term in terms}
+        for future in as_completed(futures):
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                errors.append(exc)
+    if not results:
+        raise errors[0]
+    merged: list[ModelSummary] = []
+    seen: set[str] = set()
+    total = 0
+    for result in results:
+        total += result.total
+        for item in result.items:
+            key = item.repo.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(item)
+    return ModelSearch(tuple(merged[:page_size]), total, page, page_size)
 
 
 def fetch_tasks(timeout: float = _MANIFEST_TIMEOUT) -> tuple[ModelTask, ...]:

@@ -811,6 +811,35 @@ class TestSearchModels:
         assert item.downloads == 123
         assert item.storage_size == 4096
 
+    def test_search_models_multi_merges_and_dedupes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """多关键字并行搜索：按关键字顺序去重合并，第一页各家族都有代表。"""
+        from fcmd.apps.llm import llmdown as module
+
+        calls: list[str] = []
+
+        def fake(keyword: str, page: int = 1, page_size: int = 20, sort: str = "default", timeout: float = 30):
+            calls.append(keyword)
+            return ModelSearch(
+                items=(
+                    ModelSummary(repo=f"{keyword}/official", storage_size=1024**3),
+                    ModelSummary(repo="shared/duplicate", storage_size=1024**3),
+                ),
+                total=2,
+                page=page,
+                page_size=page_size,
+            )
+
+        monkeypatch.setattr(module, "search_models", fake)
+        result = module.search_models_multi(("Qwen-Image", "FLUX"), page=1, page_size=10)
+        assert sorted(calls) == ["FLUX", "Qwen-Image"]
+        assert [item.repo for item in result.items] == [
+            "Qwen-Image/official",
+            "shared/duplicate",
+            "FLUX/official",
+        ]
+        assert result.total == 4
+        assert result.page == 1
+
     def test_invalid_pagination(self) -> None:
         with pytest.raises(ModelToolError, match="分页参数非法"):
             search_models(page=0)

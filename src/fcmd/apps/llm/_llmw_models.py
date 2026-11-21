@@ -80,13 +80,28 @@ _ALL_TASKS = "全部类别"
 _ALL_SERIES = "全部系列"
 
 #: 浏览页顶部筛选：(key, 显示名, 服务端搜索关键字)；关键字为空表示浏览全部。
+PAINT_FILTER_QUERY = "图像生成"
+"""画图分类的展示关键字（仅用于状态 / 缓存键），真正检索走多关键字合并。"""
+
+PAINT_SEARCH_TERMS: tuple[str, ...] = (
+    "Qwen-Image-2.1",
+    "Qwen-Image",
+    "MiniMax-H3-Image",
+    "FLUX",
+    "HiDream",
+    "Kolors",
+    "HunyuanImage",
+    "Stable Diffusion",
+)
+"""画图分类并行检索的家族关键字；覆盖官方仓库与主流社区实现。"""
+
 MODEL_FILTERS: tuple[tuple[str, str, str], ...] = (
     ("local", "适合本机", ""),
     ("all", "全部", ""),
     ("chat", "对话", "chat"),
     ("code", "编程", "coder"),
     ("vision", "看图", "vision"),
-    ("paint", "画图", "图像生成"),
+    ("paint", "画图", PAINT_FILTER_QUERY),
     ("reasoning", "推理", "reasoning"),
     ("video", "视频", "video"),
     ("audio", "音频", "audio"),

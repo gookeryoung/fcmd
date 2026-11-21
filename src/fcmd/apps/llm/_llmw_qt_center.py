@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -76,6 +76,7 @@ from fcmd.apps.llm.llmdown import (
     quant_options,
     scan_local_models,
     search_models,
+    search_models_multi,
     select_source,
 )
 from fcmd.gui.qt.icons import set_icon as _set_icon
@@ -92,6 +93,7 @@ from fcmd.gui.qt.widgets import (
     set_button_text,
 )
 from fcmd.gui.qt.workers import ProgressBridge, submit
+from fcmd.infras.download import SpeedMeter, format_eta, format_speed
 
 if TYPE_CHECKING:
     from typing import Any
@@ -109,6 +111,9 @@ def quantize_menu_items(existing: Iterable[str]) -> tuple[tuple[str, str, bool],
     done = {tag.casefold() for tag in existing}
     return tuple((quant, desc, quant.casefold() in done) for quant, desc in llmqnt.QUANT_TYPES.items())
 
+
+_SEEN_LIMIT = 600
+"""浏览过程中记住的条目上限（约 20 页），避免长时间使用后内存无限增长。"""
 
 _PAGE_SIZE = _llmw_models._PAGE_SIZE
 _FILTER_DEBOUNCE_MS = 250
@@ -514,6 +519,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._usable_repos: set[str] = set()
         self._detail_generation = 0
         self._searching = False
+        self._pending_search: tuple[int, bool] | None = None
+        self._seen_items: dict[str, ModelSummary] = {}
         self._list_cache = ModelListCache()
         self._scanning_installed = False
         self._downloading = False
@@ -522,6 +529,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._active_repo: str | None = None
         self._bridge: ProgressBridge | None = None
         self._download_target = _llmconfig.models_dir()
+        self._download_speed = SpeedMeter()
         self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
         self._partial_models: dict[str, LocalModel] = {}
@@ -1095,6 +1103,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     def start_search(self, page: int, *, force: bool = False) -> None:
         """按当前筛选拉取指定页；命中新鲜缓存时直接展示，``force`` 跳过缓存。"""
         if self._searching:
+            # 切换分类时上一页请求还没回来：记下最新目标，等它结束后再拉，
+            # 不能直接 return，否则 chip 切了但列表仍是旧分类 / 空列表。
+            self._pending_search = (max(1, page), force)
             return
         target = max(1, page)
         key = cache_key(self._filter_query, target, _PAGE_SIZE, self._sort_key)
@@ -1137,25 +1148,45 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         sort: str,
     ) -> ModelSearch:
         """后台线程：请求网络并把结果写入缓存，避免 GUI 线程落盘。"""
-        result = search_models(keyword, page, page_size, sort)
+        if keyword == _llmw_models.PAINT_FILTER_QUERY:
+            # 画图分类不能只查一个中文关键字：官方 Qwen-Image 等仓库往往不命中，
+            # 反而会搜到个人转存。按家族并行查英文关键字再合并。
+            result = search_models_multi(_llmw_models.PAINT_SEARCH_TERMS, page, page_size, sort)
+        else:
+            result = search_models(keyword, page, page_size, sort)
         cache.put(key, result)
         return result
 
     def _search_finished(self) -> None:
         self._searching = False
         self._end_loading("search")
+        if self._pending_search is not None:
+            page, force = self._pending_search
+            self._pending_search = None
+            self.start_search(page, force=force)
 
     def _search_error(self, message: str) -> None:
         self.state.status("模型列表加载失败")
         self._log(f"模型列表加载失败: {message}")
 
+    def _remember_items(self, items: Sequence[ModelSummary]) -> None:
+        """记住已浏览过的条目：切到「全部 / 适合本机」时不能把刚看到的模型弄丢。"""
+        for item in items:
+            self._seen_items[item.repo.casefold()] = item
+        overflow = len(self._seen_items) - _SEEN_LIMIT
+        for key in list(self._seen_items)[: max(0, overflow)]:
+            del self._seen_items[key]
+
     def _render_search(self, result: ModelSearch) -> None:
+        self._remember_items(result.items)
         self._last_result = result
         self._render_results()
 
     def open_repo(self, repo: str) -> None:
         """直接打开 ``组织/模型``：生成单行结果并就地展开详情。"""
-        self._last_result = ModelSearch(items=(ModelSummary(repo=repo),), total=1)
+        item = ModelSummary(repo=repo)
+        self._remember_items((item,))
+        self._last_result = ModelSearch(items=(item,), total=1)
         self._render_results()
         self._expand_repo(repo)
 
@@ -1165,13 +1196,16 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             return
         filter_label = next((label for key, label, _query in _MODEL_FILTERS if key == self._filter_key), "")
         installed_items = tuple(self._installed_models.values())
+        present = {item.repo.casefold() for item in result.items}
+        # 分类搜索各拉各的关键字页；把浏览过的条目并回来，保证「全部 / 适合本机」
+        # 至少包含刚在「画图 / 编程 / …」里看到的模型，不会一切分类就消失。
+        remembered = [summary for key, summary in self._seen_items.items() if key not in present]
         if self._source_filter == "installed":
             base = list(installed_items)
         elif self._source_filter == "online":
-            base = list(result.items)
+            base = [*result.items, *remembered]
         else:
-            present = {item.repo.casefold() for item in result.items}
-            base = list(result.items) + [
+            base = [*result.items, *remembered] + [
                 summary for key, summary in self._installed_models.items() if key not in present
             ]
         if self._filter_key == "local":
@@ -1487,6 +1521,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._download_target = dest / repo
         self.download_status.setVisible(True)
         self.download_bar.setValue(0)
+        self._download_speed.reset()
         self.download_text.setText(f"准备下载 {repo}…")
         self.stop_download_button.setEnabled(True)
         self.stop_download_button.setVisible(True)
@@ -1559,9 +1594,15 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             totals = dict(self.state.settings.download_totals or {})
             totals[self._active_repo.casefold()] = event.total
             self.state.settings.download_totals = totals
-        self.download_text.setText(
-            f"下载 {self._active_repo or '-'} · {human_size(event.completed)} / {human_size(event.total)}"
+        speed = self._download_speed.update(event.completed)
+        eta = self._download_speed.eta(event.total, done=event.completed)
+        size_text = (
+            f"{human_size(event.completed)} / {human_size(event.total)}"
+            if event.total > 0
+            else human_size(event.completed)
         )
+        eta_text = f" · 剩余 {format_eta(eta)}" if eta is not None else ""
+        self.download_text.setText(f"下载 {self._active_repo or '-'} · {size_text} · {format_speed(speed)}{eta_text}")
 
     def start_convert(self, repo: str) -> None:
         """把已安装的 HF safetensors 模型转换为 GGUF，进度复用底部状态区。"""

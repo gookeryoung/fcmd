@@ -215,6 +215,68 @@ def test_models_category_chips_switch_filter(window: Any, monkeypatch: pytest.Mo
     assert submitted and submitted[0] == browse._search_work
 
 
+def test_category_switch_while_searching_queues_latest_query(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """上一页请求未返回时切换分类：排队最新查询，不能静默丢弃导致列表为空 / 串类。"""
+    from fcmd.apps.llm import _llmw_qt_center as center
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    submitted: list[object] = []
+    monkeypatch.setattr(center, "submit", lambda fn, *args, **kwargs: submitted.append(fn))
+    browse._searching = True
+    browse._pending_search = None
+    browse._filter_key = "paint"
+    browse._filter_query = "图像生成"
+    browse.start_search(1, force=True)
+    assert submitted == []
+    assert browse._pending_search == (1, True)
+    browse._search_finished()
+    QApplication.processEvents()
+    assert submitted and submitted[0] == browse._search_work
+    assert browse._pending_search is None
+
+
+def test_paint_search_uses_multi_keyword_merger(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """画图分类走多关键字合并，保证 Qwen-Image / MiniMax 等官方仓库都能命中。"""
+    from fcmd.apps.llm import _llmw_models
+    from fcmd.apps.llm import _llmw_qt_center as center
+    from fcmd.apps.llm.llmdown import ModelSearch
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    calls: list[tuple[str, ...]] = []
+
+    def fake_multi(keywords, page=1, page_size=20, sort="default", timeout=30):
+        calls.append(tuple(keywords))
+        return ModelSearch((), 0, page, page_size)
+
+    monkeypatch.setattr(center, "search_models_multi", fake_multi)
+    browse._search_work(browse._list_cache, "k", _llmw_models.PAINT_FILTER_QUERY, 1, 30, "default")
+    assert calls == [_llmw_models.PAINT_SEARCH_TERMS]
+
+
+def test_all_and_local_keep_seen_category_items(window: Any) -> None:
+    """「画图」里看到的模型切回「全部 / 适合本机」后不能消失。"""
+    from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    paint = ModelSummary(repo="Qwen/Qwen-Image-2.1", storage_size=20 * 1024**3)
+    chat = ModelSummary(repo="Qwen/Qwen3-7B", storage_size=8 * 1024**3)
+    browse._remember_items((paint,))
+    browse._last_result = ModelSearch((chat,), 1, 1, 30)
+    browse._source_filter = "online"
+    for key in ("all", "local"):
+        browse._filter_key = key
+        browse._render_results()
+        repos = [item.repo for item in browse._result_items]
+        assert paint.repo in repos and chat.repo in repos, key
+    # 具体分类仍然只显示命中的模型。
+    browse._filter_key = "paint"
+    browse._render_results()
+    assert [item.repo for item in browse._result_items] == [paint.repo]
+
+
 def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """历史对话支持删除当前与清空全部；运行中禁止清理。"""
     from fcmd.apps.llm._llmw_qt_chat import _Conversation

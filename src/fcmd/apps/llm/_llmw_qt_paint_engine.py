@@ -20,6 +20,7 @@ from fcmd.apps.llm import _llmpaint_engine, llmengine
 from fcmd.apps.llm.llmbase import human_size
 from fcmd.gui.qt.widgets import Card, HintLabel, ProgressRow, button, hint_label
 from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
+from fcmd.infras.download import SpeedMeter, format_eta, format_speed
 
 __all__ = ["PaintEngineDialog", "variant_note"]
 
@@ -57,6 +58,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         self._installing = False
         self._closed = False
         self._bridge: ProgressBridge | None = None
+        self._download_speed = SpeedMeter()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -268,6 +270,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         self.refresh_button.setEnabled(False)
         self.local_button.setEnabled(False)
         self.progress.setRange(0, 0)
+        self._download_speed.reset()
         bridge = ProgressBridge(self)
         bridge.progress.connect(self._on_progress)
         self._bridge = bridge
@@ -295,13 +298,19 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         name, received, total = event
         if not isinstance(name, str) or not isinstance(received, int):
             return
+        speed = self._download_speed.update(received)
         if isinstance(total, int) and total > 0:
             self.progress.setRange(0, 100)
             self.progress.setValue(min(received * 100 // total, 100))
-            self.status.setText(f"正在下载 {name}：{human_size(received)} / {human_size(total)}")
+            eta = self._download_speed.eta(total, done=received)
+            eta_text = f" · 剩余 {format_eta(eta)}" if eta is not None else ""
+            self.status.setText(
+                f"正在下载 {name}：{human_size(received)} / {human_size(total)} · {format_speed(speed)}{eta_text}"
+            )
         else:
             self.progress.setRange(0, 0)
-            self.status.setText(f"正在下载 {name}：{human_size(received)}")
+            eta_text = ""
+            self.status.setText(f"正在下载 {name}：{human_size(received)} · {format_speed(speed)}{eta_text}")
 
     def _installed(self, engine: _llmpaint_engine.SdEngine) -> None:
         if self._closed:

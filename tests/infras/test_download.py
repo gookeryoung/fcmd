@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from fcmd.infras.download import download_file, write_stream
+from fcmd.infras.download import SpeedMeter, download_file, format_eta, format_speed, write_stream
 
 
 class _FakeResponse:
@@ -69,3 +69,34 @@ def test_download_file_cleans_partial_on_failure(tmp_path: Path, monkeypatch: py
     with pytest.raises(OSError):
         download_file("https://example.com/font.ttf", target)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_speed_meter_estimates_smoothed_speed_and_eta() -> None:
+    """按单调时钟采样速度：首帧无速度，后续平滑；ETA 由剩余字节 / 速度得到。"""
+    meter = SpeedMeter(smoothing=0.5, min_interval=0.1)
+    assert meter.update(0, now=0.0) == 0
+    first = meter.update(2 * 1024 * 1024, now=1.0)
+    assert first == pytest.approx(2 * 1024 * 1024)
+    second = meter.update(4 * 1024 * 1024, now=2.0)
+    assert second == pytest.approx(2 * 1024 * 1024)
+    assert meter.eta(10 * 1024 * 1024, done=4 * 1024 * 1024) == pytest.approx(3.0)
+
+    meter.update(1 * 1024 * 1024, now=3.0)  # 进度回退：重置采样
+    assert meter.speed == 0.0
+    assert meter.eta(10 * 1024 * 1024) is None
+
+
+def test_speed_meter_ignores_too_short_intervals() -> None:
+    meter = SpeedMeter(min_interval=0.5)
+    meter.update(0, now=0.0)
+    assert meter.update(1024, now=0.1) == 0.0
+    assert meter.update(1024, now=0.6) > 0
+
+
+def test_format_speed_and_eta() -> None:
+    assert format_speed(0) == "--"
+    assert format_speed(2 * 1024 * 1024) == "2.00 MB/s"
+    assert format_eta(None) == ""
+    assert format_eta(12) == "12s"
+    assert format_eta(125) == "2m05s"
+    assert format_eta(3725) == "1h02m"
