@@ -86,6 +86,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self.add_page(key, label, hint=hint, icon=icon, factory=self._factory(key))
 
         self.state.statusText.connect(self.set_status)
+        self.state.pageStatus.connect(self.set_page_status)
         self.state.navigateRequested.connect(self.show_page)
         self.state.serveModelRequested.connect(self._serve_model)
         self.state.loadingTextChanged.connect(self.show_loading)

@@ -127,6 +127,7 @@ class LlmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
     selectionChanged = Signal(object, bool)
     logLine = Signal(str)
     statusText = Signal(str)
+    pageStatus = Signal(str, str)
     sampleCapacityChanged = Signal()
     recommendationApplied = Signal(object)
     busyChanged = Signal(bool)
@@ -156,6 +157,7 @@ class LlmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
         self.busy = False
         self.closing = False
         self.log_buffer: deque[str] = deque(maxlen=1000)
+        self.page_statuses: dict[str, str] = {}
         self._loading_tasks: dict[str, str] = {}
         self.scanning = False
         self.detecting = False
@@ -177,8 +179,13 @@ class LlmState(QObject):  # pragma: no cover - 依赖 Qt 事件循环
         self.log_buffer.clear()
 
     def status(self, text: str) -> None:
-        """更新状态栏。"""
+        """更新状态栏（落在当前页面）。"""
         self.statusText.emit(text)
+
+    def page_status(self, page: str, text: str) -> None:
+        """更新指定页面的状态栏文字；页面不在前台时先记下，切回时再显示。"""
+        self.page_statuses[page] = text
+        self.pageStatus.emit(page, text)
 
     def navigate(self, key: str) -> None:
         """请求窗口切页。"""

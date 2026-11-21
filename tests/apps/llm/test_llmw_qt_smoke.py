@@ -91,6 +91,19 @@ def test_status_reflects_scan_result(window: Any) -> None:
     assert "引擎未安装" in status
 
 
+def test_status_bar_follows_current_page(window: Any) -> None:
+    """状态栏按页面隔离：切页显示该页自己的状态，切回时恢复。"""
+    window.show_page("chat")
+    chat_status = window.status_text()
+    assert "没有已登记的服务" in chat_status
+    window.set_status("已复制当前对话内容")
+    window.show_page("overview")
+    assert window.status_text() == window.page_status("overview")
+    assert window.status_text() != "已复制当前对话内容"
+    window.show_page("chat")
+    assert window.status_text() == "已复制当前对话内容"
+
+
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
     assert keys == ("overview", "models", "run", "chat", "paint", "lab", "settings")
@@ -135,7 +148,7 @@ def test_generated_pages_expose_core_widgets(window: Any) -> None:
     chat = window.page("chat")
     assert chat.service_combo.count() >= 1
     chat.reset()
-    assert "新对话" in chat.status.text()
+    assert "新对话" in window.status_text()
     window.show_page("settings")
     settings_page = window.page("settings")
     settings_page.refresh()
@@ -299,7 +312,7 @@ def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: py
     chat.delete_chat_button.click()
     assert [item.title for item in chat._conversations] == ["一", "三"]
     assert chat._active == 1
-    assert chat.status.text() == "已删除当前对话"
+    assert window.status_text() == "已删除当前对话"
     chat.delete_chat_button.click()
     assert [item.title for item in chat._conversations] == ["一"]
     chat.delete_chat_button.click()
@@ -317,7 +330,7 @@ def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: py
     chat.clear_chats_button.click()
     assert len(chat._conversations) == 1
     assert chat._conversations[0].title == "新对话"
-    assert chat.status.text() == "已清空全部对话"
+    assert window.status_text() == "已清空全部对话"
 
     chat._conversations = [_Conversation(title="一"), _Conversation(title="二")]
     chat._active = 0
@@ -327,7 +340,7 @@ def test_chat_history_supports_single_and_all_clear(window: Any, monkeypatch: py
         chat.delete_chat_button.click()
         chat.clear_chats_button.click()
         assert len(chat._conversations) == 2
-        assert "停止后才能清理" in chat.status.text()
+        assert "停止后才能清理" in window.status_text()
     finally:
         chat._running = False
 
@@ -1201,7 +1214,7 @@ def test_chat_copy_action_copies_transcript(window: Any) -> None:
     clipboard = QApplication.clipboard()
     assert clipboard is not None
     assert "第一段" in clipboard.text()
-    assert chat.status.text() == "已复制当前对话内容"
+    assert window.status_text() == "已复制当前对话内容"
 
 
 def test_chat_sidebar_width_is_resizable_and_persisted(window: Any) -> None:

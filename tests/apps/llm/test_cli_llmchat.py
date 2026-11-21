@@ -630,7 +630,7 @@ def test_chat_page_refresh_selects_first_available(monkeypatch: pytest.MonkeyPat
     assert chat_page.service_combo.currentText() == "alive（运行中）"
     assert chat_page.url_edit.text() == alive.base_url
     assert chat_page.model_edit.text() == alive.alias
-    assert chat_page.status.text() == "已选择服务 alive"
+    assert chat_page.state.page_statuses["chat"] == "已选择服务 alive"
     assert chat_page.service_tag.text() == "运行中"
     assert chat_page.service_tag.tone() == "success"
 
@@ -644,7 +644,7 @@ def test_chat_page_refresh_unavailable(monkeypatch: pytest.MonkeyPatch, chat_pag
 
     labels = [chat_page.service_combo.itemText(index) for index in range(chat_page.service_combo.count())]
     assert labels == [_llmw_chat._CUSTOM, "dead（已退出）"]
-    assert chat_page.status.text() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
+    assert chat_page.state.page_statuses["chat"] == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
     assert chat_page.service_tag.text() == "已退出"
     assert chat_page.service_tag.tone() == "danger"
 
@@ -656,7 +656,7 @@ def test_chat_page_refresh_without_services(monkeypatch: pytest.MonkeyPatch, cha
 
     labels = [chat_page.service_combo.itemText(index) for index in range(chat_page.service_combo.count())]
     assert labels == [_llmw_chat._CUSTOM]
-    assert chat_page.status.text() == "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
+    assert chat_page.state.page_statuses["chat"] == "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
 
 
 def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
@@ -668,7 +668,7 @@ def test_chat_page_refresh_keeps_manual_custom(monkeypatch: pytest.MonkeyPatch, 
     chat_page.refresh_services()
 
     assert chat_page.service_combo.currentText() == _llmw_chat._CUSTOM
-    assert chat_page.status.text() == "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
+    assert chat_page.state.page_statuses["chat"] == "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
 
 
 def test_chat_page_ctrl_enter_sends(chat_page: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -692,7 +692,7 @@ def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch, c
     chat_page.service_combo.setCurrentIndex(1)
 
     assert chat_page.url_edit.text() == state.base_url
-    assert chat_page.status.text() == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
+    assert chat_page.state.page_statuses["chat"] == "服务 dead 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」"
     assert chat_page.service_tag.text() == "已退出"
     assert chat_page.service_tag.tone() == "danger"
     assert "[错误] 服务 dead 不可用" in chat_page.transcript.toPlainText()

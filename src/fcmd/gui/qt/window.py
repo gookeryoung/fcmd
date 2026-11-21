@@ -3,6 +3,8 @@
 Qt 窗口骨架负责「导航 / 菜单 / 状态栏 / 日志区 / 后台任务」，
 并把窗口位置与大小继续写进
 ``${FCMD_HOME:-~/.fcmd}/ui/<name>.json``（与旧版本设置文件互读）。
+状态栏左侧文字按页面隔离：每个页面记录自己的状态文案，切页时恢复，
+而不是让上一页的提示一直留在底部；右侧仍是全局的加载条与常驻备注。
 
 页面按需构建：登记时只给工厂函数，首次切到该页才实例化，冷启动不付全量
 页面的构造成本（llmw 模型页 / 设置页会扫描目录、探测引擎）。
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
     from fcmd.gui.theme import Theme
 
 __all__ = [
+    "DEFAULT_STATUS",
     "QtMainWindow",
     "about_version_text",
     "format_geometry",
@@ -50,6 +53,10 @@ __all__ = [
     "resolve_geometry_text",
     "restore_geometry",
 ]
+
+
+DEFAULT_STATUS = "就绪"
+"""页面还没有任何状态时的兜底文字。"""
 
 
 def about_version_text() -> str:
@@ -131,6 +138,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._persist = persist
         self._factories: dict[str, Callable[[], QWidget]] = {}
         self._built: dict[str, QWidget] = {}
+        self._page_status: dict[str, str] = {}
         self._current = ""
         self._closing = False
         self._theme: Theme = _qt_theme.load_theme()
@@ -166,7 +174,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         layout.addWidget(right, 1)
         self.setCentralWidget(central)
 
-        self.status_label = QLabel("就绪", self)
+        self.status_label = QLabel(DEFAULT_STATUS, self)
         self.statusBar().addWidget(self.status_label, 1)
         self.status_note = QLabel("", self)
         self.status_note.setObjectName("Hint")
@@ -217,6 +225,7 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.stack.setCurrentWidget(page)
         self.page_title.setText(self.nav.label(key))
         self.page_hint.setText(self.nav.hint(key))
+        self._sync_status()
         if self.nav.selected() != key:
             self.nav.select(key)
         page.setFocus()
@@ -261,8 +270,22 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # 状态栏 / 设置
     # ------------------------------------------------------------------ #
     def set_status(self, text: str) -> None:
-        """更新状态栏文字。"""
-        self.status_label.setText(text)
+        """更新当前页面的状态栏文字（切走再切回时恢复该页自己的文字）。"""
+        self.set_page_status(self._current, text)
+
+    def set_page_status(self, key: str, text: str) -> None:
+        """记录某个页面的状态栏文字；仅供当前页立即显示。"""
+        self._page_status[key] = text
+        if key == self._current:
+            self.status_label.setText(text)
+
+    def page_status(self, key: str) -> str:
+        """返回某页面已记录的状态栏文字（未记录时为默认「就绪」）。"""
+        return self._page_status.get(key, DEFAULT_STATUS)
+
+    def _sync_status(self) -> None:
+        """按当前页刷新状态栏左侧文字。"""
+        self.status_label.setText(self.page_status(self._current))
 
     def status_text(self) -> str:
         """当前状态栏文字。"""

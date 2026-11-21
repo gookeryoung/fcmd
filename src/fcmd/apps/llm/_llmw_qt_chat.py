@@ -1,9 +1,10 @@
 """llmw（Qt）对话页：整合原 llmchatw 的多轮流式对话。
 
-页面上只保留对话列表、状态行、正文与底部对话框；服务下拉、地址 / 模型 /
+页面上只保留对话列表、正文与底部对话框；服务下拉、地址 / 模型 /
 API Key 与生成参数收进独立的「模型与生成配置」窗口（点对话框左下角齿轮打开），
-不占用对话区域。流式回复在后台线程读取，思考型模型的 ``reasoning_content``
-以灰色斜体单独展示，正文按增量追加。
+不占用对话区域。对话状态（服务是否登记 / 生成进度 / 历史操作结果）统一写到
+窗口底部状态栏，切到其它页再切回时仍然可见。流式回复在后台线程读取，
+思考型模型的 ``reasoning_content`` 以灰色斜体单独展示，正文按增量追加。
 对话列表 / 已渲染内容 / 多轮 ``ChatSession`` 会落盘到 ``llmw.json`` 的
 ``chat_history`` / ``chat_active``，重启后恢复最近 20 个对话并可继续追问；
 关闭窗口时取消进行中的生成，并再落盘一次最新历史。
@@ -31,7 +32,6 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPlainTextEdit,
-    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -54,7 +54,6 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     FormGrid,
-    HintLabel,
     StatusTag,
     button,
     hint_label,
@@ -456,9 +455,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.sidebar_toggle.setFixedSize(28, 28)
         self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
         top_row.addWidget(self.sidebar_toggle, 0)
-        self.status = HintLabel("未开始对话")
-        self.status.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        top_row.addWidget(self.status, 1)
+        top_row.addStretch(1)
         layout.addLayout(top_row)
         self._sync_sidebar_toggle()
 
@@ -523,6 +520,10 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 服务选择
     # ------------------------------------------------------------------ #
+    def _set_status(self, text: str) -> None:
+        """状态统一写到窗口底部状态栏（归属对话页，切走再切回仍可见）。"""
+        self.state.page_status("chat", text)
+
     def refresh_services(self) -> None:
         """按最新状态刷新服务下拉项，默认选中第一个可用服务并刷新状态提示。"""
         try:
@@ -552,7 +553,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         state = self._selected_state()
         if state is None:
             self.service_tag.set_status("未连接", "muted")
-            self.status.setText(
+            self._set_status(
                 "没有已登记的服务：去「运行」页启动，或点「刷新服务列表」"
                 if not states
                 else "未选择已登记服务：可直接填写下方地址接入其它 OpenAI 兼容服务"
@@ -629,7 +630,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         state = self._selected_state()
         if state is None:
             self.service_tag.set_status("自定义", "accent")
-            self.status.setText("自定义地址：脱离已登记服务，直接按下方地址与模型接入")
+            self._set_status("自定义地址：脱离已登记服务，直接按下方地址与模型接入")
             return
         self._apply_state(state)
         if _state_available(state):
@@ -648,10 +649,10 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         """状态栏文案：运行中 / 进程已退出。"""
         if _state_available(state):
             self.service_tag.set_status("运行中", "success")
-            self.status.setText(f"已选择服务 {state.name}")
+            self._set_status(f"已选择服务 {state.name}")
         else:
             self.service_tag.set_status("已退出", "danger")
-            self.status.setText(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
+            self._set_status(f"服务 {state.name} 的进程已退出：去「运行」页重新启动，或点「刷新服务列表」")
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
         """Ctrl+Enter 发送；其余事件交给父类。"""
@@ -718,12 +719,12 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             return
         if self._running:
             self._refresh_history()
-            self.status.setText("正在生成，停止后才能切换对话")
+            self._set_status("正在生成，停止后才能切换对话")
             return
         self._active = row
         self._render_conversation()
         self._restore_session_form()
-        self.status.setText("已切换对话")
+        self._set_status("已切换对话")
         self._persist_history()
 
     def _render_conversation(self) -> None:
@@ -734,7 +735,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def delete_conversation(self) -> None:
         """删除当前选中的对话；删掉最后一个时回到空白新对话。"""
         if self._running:
-            self.status.setText("正在生成，停止后才能清理对话")
+            self._set_status("正在生成，停止后才能清理对话")
             return
         if not self._conversations:
             return
@@ -749,13 +750,13 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             self._active = min(index, len(self._conversations) - 1)
             self._refresh_history()
             self._render_conversation()
-        self.status.setText("已删除当前对话")
+        self._set_status("已删除当前对话")
         self._persist_history()
 
     def clear_conversations(self) -> None:
         """清空全部对话记录（需确认）；完成后回到空白新对话。"""
         if self._running:
-            self.status.setText("正在生成，停止后才能清理对话")
+            self._set_status("正在生成，停止后才能清理对话")
             return
         answer = QMessageBox.question(
             self,
@@ -768,24 +769,24 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._active = 0
         self._refresh_history()
         self.transcript.clear()
-        self.status.setText("已清空全部对话")
+        self._set_status("已清空全部对话")
         self._persist_history()
 
     def new_conversation(self) -> None:
         """新建一个空白对话；空对话不重复创建。"""
         if self._running:
-            self.status.setText("正在生成，停止后才能新建对话")
+            self._set_status("正在生成，停止后才能新建对话")
             return
         current = self._conversation()
         if not current.blocks and current.session is None:
             self._render_conversation()
-            self.status.setText("已开始新对话")
+            self._set_status("已开始新对话")
             return
         self._conversations.append(_Conversation())
         self._active = len(self._conversations) - 1
         self._refresh_history()
         self.transcript.clear()
-        self.status.setText("已开始新对话")
+        self._set_status("已开始新对话")
         self._persist_history()
 
     def _set_title_from_prompt(self, prompt: str) -> None:
@@ -806,7 +807,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             return
         prompt = self.input_edit.toPlainText().strip()
         if not prompt:
-            self.status.setText("提示词不能为空")
+            self._set_status("提示词不能为空")
             return
         try:
             endpoint = endpoint_from_form(self.url_edit.text(), self.api_key_edit.text(), self.model_edit.text())
@@ -814,7 +815,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             temperature = float(self.temperature_edit.text().strip() or "0.7")
             top_p = 0.9
         except (ServeError, ValueError) as exc:
-            self.status.setText(f"参数错误：{exc}")
+            self._set_status(f"参数错误：{exc}")
             return
         conversation = self._conversation()
         if conversation.session is None or conversation.session.endpoint != endpoint:
@@ -840,7 +841,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.new_chat_button.setEnabled(False)
         self.delete_chat_button.setEnabled(False)
         self.clear_chats_button.setEnabled(False)
-        self.status.setText("正在生成…")
+        self._set_status("正在生成…")
         submit(
             conversation.session.ask,
             prompt,
@@ -877,7 +878,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         session = self._conversation().session
         if session is not None:
             session.cancel()
-        self.status.setText("正在停止…")
+        self._set_status("正在停止…")
 
     def _finish_running(self) -> None:
         self._running = False
@@ -892,13 +893,13 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         if conversation.assistant_started or conversation.reasoning_started:
             self._append_text("\n\n", "assistant")
         self._finish_running()
-        self.status.setText("生成完成")
+        self._set_status("生成完成")
         self._persist_history()
 
     def _on_failed(self, message: str) -> None:
         self._append_text(f"\n[失败] {message}\n\n", "error")
         self._finish_running()
-        self.status.setText("生成失败：" + message)
+        self._set_status("生成失败：" + message)
         self._persist_history()
 
     def reset(self) -> None:
@@ -1006,9 +1007,9 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         """复制当前对话正文到剪贴板。"""
         text = self.transcript.toPlainText()
         if not text.strip():
-            self.status.setText("当前对话为空，没有可复制的内容")
+            self._set_status("当前对话为空，没有可复制的内容")
             return
         clipboard = QApplication.clipboard()
         if clipboard is not None:
             clipboard.setText(text)
-            self.status.setText("已复制当前对话内容")
+            self._set_status("已复制当前对话内容")

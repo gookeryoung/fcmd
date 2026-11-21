@@ -38,7 +38,7 @@
 | `app.py` | `QApplication` 复用、高 DPI 舍入（PassThrough）、主题应用、`run_window(factory)` |
 | `theme.py` | `Palette → QSS` / `QPalette`、字体挑选、主题持久化；纯函数可单测 |
 | `sidebar.py` | 左侧导航（`SidebarNav`）：页登记、`Alt+1..9`、`Alt+↑/↓` 循环 |
-| `window.py` | `QtMainWindow`：导航 + `QStackedWidget` + 状态栏 + 主题 / 关于菜单 + 几何记忆 |
+| `window.py` | `QtMainWindow`：导航 + `QStackedWidget` + 状态栏（左侧文字按页面隔离，切页恢复）+ 主题 / 关于菜单 + 几何记忆 |
 | `toolwindow.py` | `QtToolWindow`：单页工具窗口骨架（文件 / 视图 / 帮助菜单、状态栏、几何记忆、关闭落盘） |
 | `widgets.py` | `Card` / `PageScroll` / `Collapsible` / `FormGrid` / `MetricGrid` / `KeyValueGrid` / `PathRow` / `LogView` / `LoadingBar` / `ElidedLabel` / `make_table` / `QSplitter` 辅助 |
 | `layout.py` | 纯函数：中间省略、按比例分配列宽、分栏尺寸读写（不导入 Qt） |
