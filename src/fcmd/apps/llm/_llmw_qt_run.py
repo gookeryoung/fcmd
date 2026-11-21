@@ -82,7 +82,6 @@ from fcmd.gui.qt.widgets import (
     FormGrid,
     PageScroll,
     button,
-    hint_label,
     set_button_text,
 )
 from fcmd.gui.qt.workers import submit, submit_daemon
@@ -608,6 +607,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """切换页签：对话 / 编程换模型候选并同步该模型的启动参数；画图只刷新状态。"""
         if index >= 2:
             self.refresh_paint()
+            self._report_paint_hint()
             return
         usage = "chat" if index == 0 else "code"
         if usage == self._usage:
@@ -663,19 +663,30 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_restart_button.clicked.connect(self._restart_paint_service)
         model_row.addWidget(self.paint_restart_button)
         self.paint_model_card.body.addLayout(model_row)
-        self.paint_model_card.body.addWidget(
-            hint_label(
-                "画图在「对话」页切到「画图」模式后用提示词出图；采样 / 输出目录在对话页 ⚙ 里，"
-                "引擎安装 / 设为默认在设置页。",
-                wrap=True,
-            )
-        )
+        # 提示信息统一写到底部状态栏（切到画图页签 / 扫描完成 / 缺模型时刷新），
+        # 不再在「选择模型」下方占一行说明。
+        self.paint_engine_section.assetsLoaded.connect(self._report_paint_hint)
         layout.addWidget(self.paint_model_card)
 
         self.paint_config_card = Card("启动参数")
         self.paint_config_card.body.addWidget(self.paint_engine_section)
         layout.addWidget(self.paint_config_card)
         layout.addStretch(1)
+
+    @staticmethod
+    def _paint_default_hint() -> str:
+        return (
+            "画图在「对话」页切到「画图」模式后用提示词出图；采样 / 输出目录在对话页 ⚙ 里，"
+            "引擎安装 / 设为默认在设置页。"
+        )
+
+    def _report_paint_hint(self) -> None:
+        """把画图说明 / 缺模型提示写到底部状态栏（只在本页签可见时刷新）。"""
+        if self.tabs.currentIndex() != 2:
+            return
+        section = getattr(self, "paint_engine_section", None)
+        hint = section.missing_model_hint() if section is not None else ""
+        self.state.status(hint or self._paint_default_hint())
 
     # ------------------------------------------------------------------ #
     # 画图服务
@@ -710,13 +721,15 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         return parse_paint_settings(settings)
 
     def refresh_paint_assets(self) -> None:
-        """模型目录变化后重扫扩散模型（画图页签里的下拉）。"""
+        """模型目录变化后重扫扩散模型（画图页签里的下拉）并刷新提示。"""
         self.paint_engine_section.refresh_assets()
+        self._report_paint_hint()
 
     def _on_paint_engine_changed(self) -> None:
-        """引擎配置改动：合并写回 paint 设置，延迟落盘。"""
+        """引擎配置改动：合并写回 paint 设置，延迟落盘，并刷新未选模型提示。"""
         self.state.settings.paint = self.paint_settings()
         self._paint_save_timer.start()
+        self._report_paint_hint()
 
     def _persist_paint(self) -> None:
         self.state.settings.paint = self.paint_settings()

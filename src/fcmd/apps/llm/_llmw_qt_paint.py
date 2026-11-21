@@ -406,6 +406,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
     """
 
     changed = Signal()
+    assetsLoaded = Signal()
 
     _KEYS = (
         "port",
@@ -611,6 +612,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             self.model_combo.setCurrentIndex(1)
         self._apply_component_selection()
         self._update_preview()
+        self.assetsLoaded.emit()
 
     def _fill_combo(
         self,
@@ -695,6 +697,16 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
                 continue
             self._select_path(combo, str(value))
         self._on_changed()
+
+    def missing_model_hint(self) -> str:
+        """没有可用主模型时的提示（含未下载完成的文件）；有模型时返回空串。"""
+        if self._assets.main_models():
+            return ""
+        pending = _llmpaint.pending_downloads(model_roots(self._settings))
+        if pending:
+            names = "、".join(path.name for path in pending[:3])
+            return f"未找到可用的扩散主模型；发现未下载完成的文件：{names}。去「模型」页继续下载后再启动服务。"
+        return "未找到扩散主模型：去「模型」页下载扩散模型，或在设置里登记模型目录后再启动服务。"
 
     def _update_preview(self) -> None:
         self.preview_label.setText(command_preview(parse_paint_settings(self._settings)))

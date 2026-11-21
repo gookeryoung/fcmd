@@ -223,6 +223,36 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     assert "paint" not in tuple(window.nav.keys())
 
 
+def test_paint_missing_model_hint_points_to_incomplete_download(window: Any, tmp_path: Path) -> None:
+    """没有可用扩散模型时，画图卡片提示去继续下载（并列出 ``*.part`` 文件）。"""
+    from fcmd.apps.llm import _llmpaint
+
+    window.show_page("run")
+    run = window.run_page
+    for _ in range(5):
+        QApplication.processEvents()
+    run.tabs.setCurrentIndex(2)
+    QApplication.processEvents()
+    section = run.paint_engine_section
+    section._settings["model_dir"] = str(tmp_path)
+    section._apply_assets(_llmpaint.PaintAssets((), (tmp_path,)))
+    assert "未找到扩散主模型" in window.status_text()
+
+    partial = tmp_path / "z_image_turbo-Q4_K.gguf.part"
+    partial.write_bytes(b"x" * 16)
+    section._apply_assets(_llmpaint.PaintAssets((), (tmp_path,)))
+    assert "z_image_turbo-Q4_K.gguf.part" in window.status_text()
+    assert "继续下载" in window.status_text()
+
+    # 有可用主模型时回到常态说明，不再报缺模型。
+    main = tmp_path / "z_image_turbo-Q4_K.gguf"
+    main.write_bytes(b"x" * 16)
+    asset = _llmpaint.PaintAsset(main, "diffusion", "z-image", 16 * 1024 * 1024)
+    section._apply_assets(_llmpaint.PaintAssets((asset,), (tmp_path,)))
+    assert "未找到" not in window.status_text()
+    assert not hasattr(run, "paint_hint")
+
+
 def test_paint_auto_pair_fills_model_and_components(window: Any, tmp_path: Path) -> None:
     """自动配对：主模型为空时先填模型再补组件，配对后组件能通过启动校验。"""
 

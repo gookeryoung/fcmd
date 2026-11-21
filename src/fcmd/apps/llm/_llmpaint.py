@@ -40,6 +40,7 @@ __all__ = [
     "is_diffusion_weight",
     "is_mmproj",
     "missing_required_slots",
+    "pending_downloads",
     "save_images",
     "scan_assets",
     "server_flags",
@@ -329,6 +330,28 @@ def scan_assets(roots: Iterable[Path], *, min_bytes: int = MIN_WEIGHT_BYTES) -> 
     return PaintAssets(tuple(assets), roots)
 
 
+def pending_downloads(roots: Iterable[Path]) -> tuple[Path, ...]:
+    """扫描根目录里未下载完成的权重（``*.part``），用于提示继续下载。
+
+    这类文件不是可用模型（sd-server 无法加载），但把名字列出来能说清「为什么
+    启动不了」，比只报「请选择主模型」有用得多。按文件大小降序返回。
+    """
+    found: list[tuple[int, Path]] = []
+    for root in roots:
+        directory = root.expanduser()
+        if not directory.is_dir():
+            continue
+        for path in directory.rglob("*.part"):
+            try:
+                if not path.is_file():
+                    continue
+                found.append((path.stat().st_size, path))
+            except OSError:  # pragma: no cover - 扫描期间文件被删除
+                continue
+    found.sort(key=lambda item: (-item[0], str(item[1])))
+    return tuple(path for _size, path in found)
+
+
 def suggest_components(assets: PaintAssets, model: Path | None = None) -> PaintComponents:
     """按家族槽位给出默认组件（每个槽位优先同家族中最大的文件）。"""
     if model is not None:
@@ -471,7 +494,9 @@ def missing_required_slots(components: PaintComponents) -> tuple[str, ...]:
 def validate_components(components: PaintComponents) -> None:
     """校验组件选择；不合法时抛 :class:`ServeError`。"""
     if components.model is None:
-        raise ServeError("请选择主模型（checkpoint 或 diffusion model）")
+        raise ServeError(
+            "请选择主模型（checkpoint 或 diffusion model）：在运行 →「画图」页选择，或去「模型」页下载扩散模型"
+        )
     if not components.model.is_file():
         raise ServeError(f"主模型不存在: {components.model}")
     if components.mode not in {"auto", "checkpoint", "diffusion"}:

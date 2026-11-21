@@ -658,6 +658,21 @@ def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert output_dir({"output_dir": str(tmp_path / "mine")}) == tmp_path / "mine"
 
 
+def test_paint_pending_downloads_lists_part_files(tmp_path: Path) -> None:
+    """未下载完成的 ``*.part`` 文件单独列出（按大小降序），用于启动失败时的提示。"""
+    from fcmd.apps.llm._llmpaint import pending_downloads
+
+    small = tmp_path / "a" / "z_image_turbo-Q4_K.gguf.part"
+    big = tmp_path / "b" / "MiniMax-H3-Turbo.tar.part"
+    small.parent.mkdir(parents=True)
+    big.parent.mkdir(parents=True)
+    small.write_bytes(b"x" * 4)
+    big.write_bytes(b"x" * 64)
+    (tmp_path / "done.gguf").write_bytes(b"x" * 8)
+    assert pending_downloads([tmp_path]) == (big, small)
+    assert pending_downloads([tmp_path / "missing"]) == ()
+
+
 def test_paint_suggest_components_prefers_same_family() -> None:
     """自动配对优先同家族组件：避免把别的家族 VAE / 文本编码器配上导致启动即退出。"""
     from fcmd.apps.llm._llmpaint import PaintAsset, PaintAssets, suggest_components
