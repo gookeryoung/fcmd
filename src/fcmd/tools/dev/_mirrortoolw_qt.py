@@ -24,7 +24,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
     QRadioButton,
     QWidget,
 )
@@ -33,7 +32,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, button, make_table, make_table_item
+from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, ProgressRow, button, make_table, make_table_item
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.dev.mirrortoolw import (
     DEFAULT_TIMEOUT,
@@ -221,12 +220,10 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         card.body.addWidget(self._table)
         return card
 
-    def _build_progress(self) -> QProgressBar:
-        self._progress = QProgressBar(self)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(False)
-        return self._progress
+    def _build_progress(self) -> ProgressRow:
+        self._progress_row = ProgressRow(parent=self)
+        self._progress = self._progress_row.bar
+        return self._progress_row
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)

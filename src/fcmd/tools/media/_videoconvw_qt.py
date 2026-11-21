@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
     QSpinBox,
     QWidget,
 )
@@ -38,7 +37,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, LogView, StatusTag, button, hint_label
+from fcmd.gui.qt.widgets import Card, LogView, ProgressRow, StatusTag, button, hint_label
 from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
 from fcmd.gui.qt.workers import submit
 from fcmd.tools.media.videoconv import (
@@ -260,12 +259,10 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         layout.addWidget(self._reset_button)
         return row
 
-    def _build_progress(self) -> QProgressBar:
-        self._progress = QProgressBar(self)
-        self._progress.setRange(0, 100)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(False)
-        return self._progress
+    def _build_progress(self) -> ProgressRow:
+        self._progress_row = ProgressRow(parent=self)
+        self._progress = self._progress_row.bar
+        return self._progress_row
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)

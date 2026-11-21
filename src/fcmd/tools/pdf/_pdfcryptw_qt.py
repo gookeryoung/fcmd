@@ -19,14 +19,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
     QSpinBox,
 )
 
 from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, PathRow, button, hint_label
+from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, PathRow, ProgressRow, button, hint_label
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfcrypt import MIN_PASSWORD_LENGTH, collect_pdf_files, process_files, validate_password
 from fcmd.tools.pdf.pdfcryptw import (
@@ -137,11 +136,9 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         actions.addWidget(self._encrypt_button)
         self.add_layout(actions)
 
-        self._progress = QProgressBar(self)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(False)
-        self.add(self._progress)
+        self._progress_row = ProgressRow(parent=self)
+        self._progress = self._progress_row.bar
+        self.add(self._progress_row)
 
         self._log = self.add_log(height=180)
         self._log.append("选择目录、输入密码后点击「加密」或「解密」。")

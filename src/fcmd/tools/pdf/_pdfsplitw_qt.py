@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
     QRadioButton,
     QSpinBox,
     QWidget,
@@ -30,7 +29,7 @@ from fcmd import __version__
 from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, PathRow, button, hint_label
+from fcmd.gui.qt.widgets import Card, ElidedLabel, PathRow, ProgressRow, button, hint_label
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfsplit import split_by_parts, split_by_range, split_by_size
 from fcmd.tools.pdf.pdfsplitw import (
@@ -183,11 +182,9 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         actions.addWidget(self._start_button)
         self.add_layout(actions)
 
-        self._progress = QProgressBar(self)
-        self._progress.setRange(0, 1)
-        self._progress.setValue(0)
-        self._progress.setTextVisible(False)
-        self.add(self._progress)
+        self._progress_row = ProgressRow(parent=self)
+        self._progress = self._progress_row.bar
+        self.add(self._progress_row)
 
         self._log = self.add_log(height=200)
         self._append_log("选择 PDF、设置输出目录与分割模式后点击「开始分割」。")
