@@ -52,8 +52,10 @@ from fcmd.apps.llm._llmw_qt_paint import (
     PaintEngineSection,
     components_from_settings,
     parse_paint_settings,
+    service_detail,
     start_paint_service,
 )
+from fcmd.apps.llm._llmw_qt_paint import service_label as paint_service_label
 from fcmd.apps.llm._llmw_ui import service_name_from_model
 from fcmd.apps.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -79,8 +81,10 @@ from fcmd.gui.qt.widgets import (
     Card,
     ChoiceGroup,
     Collapsible,
+    ElidedLabel,
     FormGrid,
     PageScroll,
+    StatusTag,
     button,
     set_button_text,
 )
@@ -456,6 +460,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
         self._usage = "chat"
         self._paint_busy = False
+        self._paint_probe: _llmpaint_server.PaintProbe | None = None
+        self._paint_probe_seq = 0
         self._paint_save_timer = QTimer(self)
         self._paint_save_timer.setSingleShot(True)
         self._paint_save_timer.setInterval(400)
@@ -637,7 +643,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """画图页签：与对话 / 编程一致——顶部选模型 + 启停，下面只配启动参数。
 
         引擎安装 / 设为默认在设置页；这里决定「用哪个扩散模型、怎么加载、哪个端口」，
-        启停按钮的文案与配色对齐 LLM 服务的模型卡片。
+        下方启动参数卡与「对话 / 编程」同构：加载方式方块、运行选项胶囊、高级参数
+        折叠区、只读命令预览与自定义启动参数（保存 / 填入）。启停按钮的文案与配色
+        对齐 LLM 服务的模型卡片。
         """
         self.paint_model_card = Card("选择模型")
         model_row = QHBoxLayout()
@@ -655,7 +663,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         )
         self.paint_engine_section.changed.connect(self._on_paint_engine_changed)
         self.paint_engine_section.statusRequested.connect(self.state.status)
+        self.paint_engine_section.saveRequested.connect(self._save_paint_params)
         model_row.addWidget(self.paint_engine_section.model_combo, 1)
+        self.paint_service_tag = StatusTag("服务未启动", parent=self.paint_model_card)
+        model_row.addWidget(self.paint_service_tag, 0)
         self.paint_action_button = button("启动服务", kind="primary")
         self.paint_action_button.setObjectName("RunPrimary")
         self.paint_action_button.setToolTip("按本页启动参数启动 sd-server")
@@ -667,8 +678,12 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_restart_button.clicked.connect(self._restart_paint_service)
         model_row.addWidget(self.paint_restart_button)
         self.paint_model_card.body.addLayout(model_row)
-        # 提示信息统一写到底部状态栏（切到画图页签 / 扫描完成 / 缺模型时刷新），
-        # 不再在「选择模型」下方占一行说明。
+        # 状态标签只说「在跑 / 未登记 / 端口被占」，细节（地址 / pid / 模型 / 占用进程）
+        # 放在下面一行小字：显存被占用时能直接对上是哪个 sd-server。
+        self.paint_service_detail = ElidedLabel("", parent=self.paint_model_card)
+        self.paint_service_detail.setObjectName("Hint")
+        self.paint_model_card.body.addWidget(self.paint_service_detail)
+        # 提示信息统一写到底部状态栏（切到画图页签 / 扫描完成 / 缺模型时刷新）。
         self.paint_engine_section.assetsLoaded.connect(self._report_paint_hint)
         layout.addWidget(self.paint_model_card)
 
@@ -696,25 +711,83 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # 画图服务
     # ------------------------------------------------------------------ #
     def refresh_paint(self) -> None:
-        """刷新画图服务的启停按钮状态（只读状态文件）。"""
-        _state, alive = _llmpaint_server.status()
-        self._refresh_paint_actions(alive)
+        """刷新画图服务状态：状态文件（同步）+ 端口探针（后台）→ 标签 / 按钮。"""
+        state, alive = _llmpaint_server.status()
+        self._apply_paint_status(_llmpaint_server.PaintProbe(state, alive, alive, alive))
+        if self.tabs.currentIndex() == 2:
+            self._probe_paint()
 
-    def _refresh_paint_actions(self, alive: bool | None = None) -> None:
-        """按运行状态切换「启动 / 停止」与重启按钮：与 LLM 模型卡片同一口径。"""
+    def _probe_paint(self) -> None:
+        """后台探测端口 / 健康检查：状态文件丢失或外部启动的服务也能看到。"""
+        settings = self.paint_settings()
+        port = int(settings.get("port") or _llmpaint_server.DEFAULT_PORT)
+        self._paint_probe_seq += 1
+        seq = self._paint_probe_seq
+        submit(
+            _llmpaint_server.probe_paint,
+            host=_llmpaint_server.DEFAULT_HOST,
+            port=port,
+            on_done=lambda probe: self._paint_probed(seq, probe),
+            on_error=lambda _message: None,
+        )
+
+    def _paint_probed(self, seq: int, probe: _llmpaint_server.PaintProbe) -> None:
+        """端口探针回到主线程：只采用最后一次探测结果，避免旧结果覆盖新状态。"""
+        if seq != self._paint_probe_seq:
+            return
+        self._paint_probe = probe
+        self._apply_paint_status(probe)
+
+    def _apply_paint_status(self, probe: _llmpaint_server.PaintProbe) -> None:
+        """把探针结果写进状态标签 / 细节行，并同步启停按钮。"""
+        tag = getattr(self, "paint_service_tag", None)
+        if tag is not None:
+            tag.set_status(
+                *paint_service_label(
+                    probe.state,
+                    probe.alive,
+                    reachable=probe.reachable,
+                    port_open=probe.port_open,
+                )
+            )
+        detail = getattr(self, "paint_service_detail", None)
+        if detail is not None:
+            port = int(self.paint_settings().get("port") or _llmpaint_server.DEFAULT_PORT)
+            detail.setText(service_detail(probe, port=port))
+        self._refresh_paint_actions(probe.alive, probe=probe)
+
+    def _refresh_paint_actions(
+        self,
+        alive: bool | None = None,
+        *,
+        probe: _llmpaint_server.PaintProbe | None = None,
+    ) -> None:
+        """按运行状态切换「启动 / 停止」与重启按钮：与 LLM 模型卡片同一口径。
+
+        ``alive`` 只看本工具登记的进程；端口上探测到未登记的服务（``probe.reachable``）
+        也算「在跑」——按钮才能用来结束显存占用。重启只对已登记服务开放。
+        """
         if alive is None:
             _state, alive = _llmpaint_server.status()
+        if probe is None:
+            probe = self._paint_probe
+        reachable = bool(probe.reachable) if probe is not None else False
+        running = alive or reachable
         busy = self.state.busy or self._paint_busy
         set_button_text(
             self.paint_action_button,
-            "停止服务" if alive else "启动服务",
-            tone="danger" if alive else "on_accent",
+            "停止服务" if running else "启动服务",
+            tone="danger" if running else "on_accent",
         )
-        self.paint_action_button.setObjectName("RunDanger" if alive else "RunPrimary")
+        self.paint_action_button.setObjectName("RunDanger" if running else "RunPrimary")
         self.paint_action_button.style().unpolish(self.paint_action_button)
         self.paint_action_button.style().polish(self.paint_action_button)
         self.paint_action_button.setEnabled(not busy)
         self.paint_restart_button.setEnabled(not busy and alive)
+        section = getattr(self, "paint_engine_section", None)
+        if section is not None:
+            section.save_params_button.setEnabled(not busy)
+            section.fill_params_button.setEnabled(not busy)
 
     def paint_settings(self) -> dict[str, Any]:
         """完整画图配置：本页引擎配置 + 已保存的采样 / 输出 + 启用标记。"""
@@ -739,13 +812,66 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.settings.paint = self.paint_settings()
         self.state.persist()
 
+    def _save_paint_params(self) -> None:
+        """画图页签「保存参数」：把当前启动参数立即写进 llmw.json（全局只一份）。"""
+        self.state.settings.paint = self.paint_settings()
+        self.state.persist()
+        self.state.status("画图启动参数已保存")
+        self.state.log("已保存画图启动参数")
+
     def _on_paint_action(self) -> None:
-        """同一个按钮：画图服务空闲时启动，运行中则停止。"""
+        """同一个按钮：服务空闲时启动，已登记进程则停止，未登记服务则结束残留。"""
         _state, alive = _llmpaint_server.status()
         if alive:
             self._stop_paint_service()
+            return
+        probe = self._paint_probe
+        if probe is not None and probe.reachable:
+            self._stop_untracked_paint()
+            return
+        self._start_paint_service()
+
+    def _stop_untracked_paint(self) -> None:
+        """结束端口上未登记的画图服务（状态文件丢失 / CLI / 旧版本遗留）。"""
+        port = int(self.paint_settings().get("port") or _llmpaint_server.DEFAULT_PORT)
+        probe = self._paint_probe
+        pids = [
+            item.pid
+            for item in (probe.occupants if probe is not None else ())
+            if _llmpaint_server.is_paint_process_name(item.name)
+        ]
+        if not pids:
+            self._error(
+                "停止画图服务失败",
+                f"端口 {port} 上的服务没有登记，也没找到可结束的 sd-server；用 fcmd portcheck c {port} 查看占用进程。",
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "停止画图服务",
+            f"端口 {port} 上的画图服务未登记（pid {', '.join(map(str, pids))}），仍要结束这些 sd-server 吗？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._set_paint_busy(True)
+        self.state.status("正在停止未登记的画图服务…")
+        submit_daemon(
+            _llmpaint_server.stop_orphans,
+            port,
+            on_done=self._paint_orphans_stopped,
+            on_error=self._paint_failed,
+            on_finished=self._paint_finished,
+        )
+
+    def _paint_orphans_stopped(self, pids: tuple[int, ...]) -> None:
+        if pids:
+            self.state.status(f"已停止 {len(pids)} 个未登记的画图服务（pid {', '.join(map(str, pids))}）")
+            self.state.log(f"已停止未登记的画图服务：{pids}")
         else:
-            self._start_paint_service()
+            self.state.status("端口上没有可停止的 sd-server")
+        self.refresh_paint()
 
     def _start_paint_service(self) -> None:
         """按当前画图配置启动 / 复用 sd-server。"""
@@ -1534,6 +1660,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.save_params_button.setEnabled(not busy)
         self.fill_params_button.setEnabled(not busy)
         self._refresh_action_states()
+        self._refresh_paint_actions()
 
     def apply_recommendation(self, recommendation: Any) -> None:
         """把推荐行的模型与启动配置带入运行页。"""

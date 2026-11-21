@@ -18,7 +18,7 @@ pytest.importorskip("PySide6")
 
 from fcmd.apps.llm import llmbase, llmserve
 from fcmd.apps.llm._llmpaint_engine import SdEngine, engine_backend, engine_version
-from fcmd.apps.llm._llmpaint_server import PaintState
+from fcmd.apps.llm._llmpaint_server import PaintProbe, PaintState, PortOccupant
 from fcmd.apps.llm._llmw_hardware import HardwareSnapshot
 from fcmd.apps.llm._llmw_monitor import LoadSample
 from fcmd.apps.llm._llmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
@@ -39,10 +39,12 @@ from fcmd.apps.llm._llmw_qt_paint import (
     parse_extra_args,
     parse_paint_settings,
     request_from_settings,
+    service_detail,
     service_label,
     settings_summary,
     size_preset,
 )
+from fcmd.apps.llm._llmw_qt_paint import startup_args_tail as paint_args_tail
 from fcmd.apps.llm._llmw_qt_paint_engine import variant_note
 from fcmd.apps.llm._llmw_qt_run import (
     build_plan_from,
@@ -665,6 +667,42 @@ def test_paint_command_preview_uses_family_and_flags() -> None:
     assert "--diffusion-model" not in sdxl
 
 
+def test_paint_startup_args_tail_skips_executable_and_model() -> None:
+    """尾部参数只留监听 / 组件 / 开关：不含可执行文件与主模型路径（可回贴自定义参数）。"""
+    settings = parse_paint_settings(
+        {
+            "model": "/models/flux1-dev.safetensors",
+            "vae": "/models/ae.safetensors",
+            "port": 4321,
+            "vae_tiling": True,
+        }
+    )
+    tail = paint_args_tail(settings)
+    assert tail[:2] == ("--listen-ip", "127.0.0.1")
+    assert "--listen-port" in tail
+    assert "4321" in tail
+    assert "--vae" in tail
+    assert "--vae-tiling" in tail
+    assert "sd-server" not in tail
+    assert "--diffusion-model" not in tail
+    assert not any("flux1-dev" in item for item in tail)
+
+
+def test_paint_filled_tail_is_not_appended_twice() -> None:
+    """把「当前参数」原样贴回自定义参数时：组件不二次追加，命令预览保持不变。"""
+    base = parse_paint_settings(
+        {
+            "model": "/models/flux1-dev.safetensors",
+            "vae": "/models/ae.safetensors",
+            "port": 4321,
+            "vae_tiling": True,
+        }
+    )
+    filled = parse_paint_settings({**base, "extra_args": format_extra_args(paint_args_tail(base))})
+    assert components_from_settings(filled).extra_args == ()
+    assert command_preview(filled) == command_preview(base)
+
+
 def test_paint_service_label_states() -> None:
     """服务标签覆盖未启动 / 运行中 / 残留状态三种语义色。"""
     state = PaintState(
@@ -683,6 +721,46 @@ def test_paint_service_label_states() -> None:
     assert service_label(None, False) == ("服务未启动", "muted")
     assert service_label(state, True) == ("运行中 · master-1106-532d2c1", "success")
     assert service_label(state, False) == ("已退出（残留状态）", "warning")
+    # 端口探针：状态文件丢失 / 外部启动 / 端口被其它程序占用。
+    assert service_label(None, False, reachable=True, port_open=True) == ("运行中（未登记）", "warning")
+    assert service_label(None, False, port_open=True) == ("端口被占用", "warning")
+
+
+def test_paint_service_detail_lines() -> None:
+    """细节行：登记运行显示地址 / pid / 模型；未登记时列出占用端口的进程。"""
+    state = PaintState(
+        pid=4321,
+        create_time=0.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="master-1106-532d2c1",
+        exe="sd-server",
+        model="/models/z_image_turbo.gguf",
+        components={},
+        fingerprint=(),
+        log="sd-server.log",
+        started_at="2026-01-01T00:00:00",
+    )
+    tracked = service_detail(PaintProbe(state, True, True, True))
+    assert "http://127.0.0.1:1234" in tracked
+    assert "pid=4321" in tracked
+    assert "z_image_turbo.gguf" in tracked
+
+    occupants = tuple(PortOccupant(pid, "sd-server.exe") for pid in range(10, 16))
+    unregistered = service_detail(PaintProbe(None, False, True, True, occupants))
+    assert "没有登记" in unregistered
+    assert "sd-server.exe pid=10" in unregistered
+    assert "等 6 个进程" in unregistered  # limit 之外的只给数量
+    assert "停止服务" in unregistered
+
+    busy = service_detail(PaintProbe(None, False, False, True, (PortOccupant(9, "python.exe"),)))
+    assert "端口 1234 已被其它程序占用" in busy
+    assert "fcmd portcheck c 1234" in busy
+    assert "python.exe pid=9" in busy
+
+    stale = service_detail(PaintProbe(state, False, False, False))
+    assert "残留状态" in stale
+    assert "启动后会在这里显示" in service_detail(PaintProbe(None, False, False, False))
 
 
 def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

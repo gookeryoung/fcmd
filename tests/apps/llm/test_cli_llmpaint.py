@@ -876,6 +876,113 @@ class TestState:
         assert _llmpaint_server.status(tmp_path / "empty") == (None, False)
 
 
+class TestProbe:
+    """端口探针 / 占用进程 / 残留进程清理：状态文件丢失也能看到服务。"""
+
+    def test_probe_tracked_service_skips_occupants(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        state = _state(tmp_path)
+        _llmpaint_server.save_state(state, tmp_path)
+        monkeypatch.setattr(_llmpaint_server.llmserve, "process_alive", lambda pid, create_time=0.0: True)
+        probe = _llmpaint_server.probe_paint(
+            tmp_path,
+            health=lambda host, port: True,
+            port_in_use=lambda port, host: True,
+            occupants=lambda port: pytest.fail("已登记服务不需要查占用进程"),
+        )
+        assert (probe.state, probe.alive, probe.reachable, probe.port_open) == (state, True, True, True)
+        assert probe.occupants == ()
+
+    def test_probe_untracked_service_lists_occupants(self, tmp_path: Path) -> None:
+        probe = _llmpaint_server.probe_paint(
+            tmp_path / "empty",
+            health=lambda host, port: True,
+            occupants=lambda port: (_llmpaint_server.PortOccupant(4321, "sd-server.exe"),),
+        )
+        assert probe.state is None
+        assert probe.alive is False
+        assert probe.reachable is True and probe.port_open is True
+        assert probe.occupants == (_llmpaint_server.PortOccupant(4321, "sd-server.exe"),)
+
+    def test_probe_port_open_but_unhealthy(self, tmp_path: Path) -> None:
+        probe = _llmpaint_server.probe_paint(
+            tmp_path / "empty",
+            health=lambda host, port: False,
+            port_in_use=lambda port, host: True,
+            occupants=lambda port: (_llmpaint_server.PortOccupant(9, "python.exe"),),
+        )
+        assert probe.reachable is False and probe.port_open is True
+        assert probe.occupants[0].name == "python.exe"
+
+    def test_probe_defaults(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(_llmpaint_server, "check_paint_health", lambda host, port, timeout=2.0: False)
+        monkeypatch.setattr("fcmd.infras.net.is_port_in_use", lambda port, host: False)
+        probe = _llmpaint_server.probe_paint(tmp_path / "empty")
+        assert (probe.reachable, probe.port_open, probe.occupants) == (False, False, ())
+
+    def test_port_occupants_dedupes_and_names(self) -> None:
+        conns = [
+            SimpleNamespace(laddr=SimpleNamespace(port=1234), pid=10),
+            SimpleNamespace(laddr=SimpleNamespace(port=1234), pid=10),
+            SimpleNamespace(laddr=None, pid=11),
+            SimpleNamespace(laddr=SimpleNamespace(port=9), pid=12),
+            SimpleNamespace(laddr=SimpleNamespace(port=1234), pid=None),
+            # TIME_WAIT 残留 / pid=0（Windows 上看不到属主）不算占用者。
+            SimpleNamespace(laddr=SimpleNamespace(port=1234), pid=10, status="TIME_WAIT"),
+            SimpleNamespace(laddr=SimpleNamespace(port=1234), pid=0),
+        ]
+        rows = _llmpaint_server.port_occupants(
+            1234,
+            connections=lambda: conns,
+            process_name=lambda pid: "sd-server.exe",
+        )
+        assert rows == (_llmpaint_server.PortOccupant(10, "sd-server.exe"),)
+
+    def test_port_occupants_via_psutil(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import psutil
+
+        conns = [SimpleNamespace(laddr=SimpleNamespace(port=1234), pid=99)]
+        monkeypatch.setattr(psutil, "net_connections", lambda kind="tcp": conns)
+        monkeypatch.setattr(psutil, "Process", lambda pid: SimpleNamespace(name=lambda: "sd-server.exe"))
+        assert _llmpaint_server.port_occupants(1234) == (_llmpaint_server.PortOccupant(99, "sd-server.exe"),)
+        monkeypatch.setattr(psutil, "net_connections", lambda kind="tcp": (_ for _ in ()).throw(OSError("no")))
+        assert _llmpaint_server.port_occupants(1234) == ()
+
+    def test_stop_orphans_only_kills_paint_processes(self) -> None:
+        killed: list[int] = []
+        pids = _llmpaint_server.stop_orphans(
+            1234,
+            occupants=lambda port: (
+                _llmpaint_server.PortOccupant(1, "sd-server.exe"),
+                _llmpaint_server.PortOccupant(2, "python.exe"),
+            ),
+            terminator=lambda pid, create_time, timeout: killed.append(pid),
+            create_time=lambda pid: 0.0,
+        )
+        assert pids == (1,)
+        assert killed == [1]
+
+    def test_stop_orphans_defaults_use_port_occupants(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        killed: list[int] = []
+        monkeypatch.setattr(
+            _llmpaint_server,
+            "port_occupants",
+            lambda port: (_llmpaint_server.PortOccupant(7, "sd-server"),),
+        )
+        monkeypatch.setattr(_llmpaint_server.llmserve, "process_create_time", lambda pid: 1.0)
+        monkeypatch.setattr(
+            _llmpaint_server.llmserve,
+            "terminate_process",
+            lambda pid, create_time, timeout: killed.append(pid),
+        )
+        assert _llmpaint_server.stop_orphans(1234) == (7,)
+        assert killed == [7]
+
+    def test_is_paint_process_name(self) -> None:
+        assert _llmpaint_server.is_paint_process_name("sd-server.exe")
+        assert _llmpaint_server.is_paint_process_name("C:/x/sd-server")
+        assert not _llmpaint_server.is_paint_process_name("python.exe")
+
+
 class TestHealth:
     def test_health_first_probe(self) -> None:
         assert _llmpaint_server.check_paint_health("127.0.0.1", 1234, _opener(b"", 200)) is True

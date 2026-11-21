@@ -38,6 +38,7 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     抛 ServeError 弹出模态错误框（模态框无人点击会让测试永久挂死）。
     模态弹窗整体打桩兜底：任何错误分支都不允许在测试里阻塞主线程。
     """
+    from fcmd.apps.llm import _llmpaint_server
     from fcmd.apps.llm import _llmw_qt_center as center
     from fcmd.apps.llm.llmdown import ModelSearch
 
@@ -47,6 +48,12 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "models"))
     monkeypatch.setattr(qt_state.LlmState, "refresh_models", lambda self, port=None: None)
     monkeypatch.setattr(qt_state.LlmState, "detect_hardware", lambda self, on_done=None: None)
+    # 画图状态探针默认打桩：冒烟测试不连真实端口（本机可能有服务在跑）。
+    monkeypatch.setattr(
+        _llmpaint_server,
+        "probe_paint",
+        lambda *_args, **_kwargs: _llmpaint_server.PaintProbe(None, False, False, False),
+    )
     # 模型页构造时会拉 ModelScope 列表；测试不能留真实网络线程（PySide2 退出阶段会等它）。
     monkeypatch.setattr(center, "search_models", lambda *_args, **_kw: ModelSearch((), 0, 1, 30))
     monkeypatch.setattr(
@@ -64,6 +71,20 @@ def window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
     win.overview.stop()
     yield win
     win.close()
+
+
+def drain_background_tasks(limit: int = 200) -> None:
+    """等已提交的后台任务与回调全部落地。
+
+    ``xdist`` 并行下固定次数的 ``processEvents`` 可能在线程完成前就退出，残留的
+    扩散模型扫描回调会把测试注入的资产覆盖成空结果。
+    """
+    from fcmd.gui.qt import workers
+
+    for _ in range(limit):
+        QApplication.processEvents()
+        if not workers._PENDING:
+            return
 
 
 def test_window_allows_shrinking_height(window: Any) -> None:
@@ -206,24 +227,145 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     QApplication.processEvents()
     assert run.service_page.parent() is run.chat_tab
 
-    # 画图页签：选模型 + 启停按钮，配置在下面的「启动参数」卡片。
+    # 画图页签：选模型 + 状态标签 + 启停按钮，配置在下面的「启动参数」卡片。
     assert run.paint_model_card.title() == "选择模型"
-    # 启动按钮左侧不再放「服务未启动」胶囊，状态只看按钮文案。
-    assert not hasattr(run, "paint_service_tag")
+    # 状态标签 + 细节行：显存被占 / 外部启动时能看到地址、pid 与占用进程。
+    assert run.paint_service_tag.text() in {"服务未启动", "运行中（未登记）", "端口被占用", "已退出（残留状态）"}
+    assert run.paint_service_detail.fullText()
     assert run.paint_config_card.title() == "启动参数"
     assert run.paint_action_button.text() in {"启动服务", "停止服务"}
     assert run.paint_restart_button.text() == "重启服务"
     assert not hasattr(run, "paint_install_button")
     assert not hasattr(run, "paint_card")
     section = run.paint_engine_section
-    for widget in (section.port, section.model_combo, section.auto_start, section.preview_label):
+    for widget in (section.port, section.model_combo, section.auto_start, section.command_preview):
         assert widget.window() is window
+    # 参数卡与对话 / 编程同构：加载方式方块 + 运行选项胶囊 + 只读命令预览。
+    from fcmd.gui.qt.widgets import ChoiceGroup, ToggleChip
+
+    assert isinstance(section.mode_choice, ChoiceGroup)
+    for key in ("auto", "checkpoint", "diffusion"):
+        section.mode_choice.set_key(key)
+        assert section.settings()["mode"] == key
+    for chip in (section.auto_start, section.offload_to_cpu, section.vae_tiling, section.diffusion_fa):
+        assert isinstance(chip, ToggleChip)
+        assert chip.isCheckable()
+    assert section.command_preview.objectName() == "Log"
+    assert section.command_preview.isReadOnly()
     # 主模型下拉搬进「选择模型」卡片（不留在参数表单里）。
     assert section._show_model is False
     assert section.model_combo.window() is window
     assert section.settings()["port"] == 1234
     run.refresh_paint()
     assert "paint" not in tuple(window.nav.keys())
+
+
+def test_paint_model_combo_has_no_placeholder(window: Any, tmp_path: Path) -> None:
+    """主模型下拉不再插「（未找到扩散模型）」占位项：有模型时第一项就是模型。"""
+    from fcmd.apps.llm import _llmpaint
+
+    main = tmp_path / "sdxl.safetensors"
+    main.write_bytes(b"x" * 16)
+    asset = _llmpaint.PaintAsset(main, "checkpoint", "sdxl", 16)
+    window.show_page("run")
+    section = window.run_page.paint_engine_section
+    section._apply_assets(_llmpaint.PaintAssets((asset,), (tmp_path,)))
+    labels = [section.model_combo.itemText(index) for index in range(section.model_combo.count())]
+    assert labels == ["sdxl.safetensors"]
+    assert all("未找到" not in label for label in labels)
+    assert section.model_combo.currentData() == str(main)
+
+    # 没有模型时下拉是空的（提示写在底部状态栏，不占第一项）。
+    # 清掉已保存的选择，避免「保留已保存路径」逻辑补回一条。
+    section._settings["model"] = ""
+    section._apply_assets(_llmpaint.PaintAssets((), (tmp_path,)))
+    assert section.model_combo.count() == 0
+
+
+def test_paint_status_shows_unregistered_service(window: Any) -> None:
+    """状态文件丢失 / 服务由外部启动：标签 / 细节行仍能看到端口、pid 与占用进程。"""
+    from fcmd.apps.llm import _llmpaint_server
+
+    window.show_page("run")
+    run = window.run_page
+    run.tabs.setCurrentIndex(2)
+    probe = _llmpaint_server.PaintProbe(
+        state=None,
+        alive=False,
+        reachable=True,
+        port_open=True,
+        occupants=(_llmpaint_server.PortOccupant(4321, "sd-server.exe"),),
+    )
+    # 手动推进探针序号：丢弃页签切换时还在排队的后台探针回调。
+    run._paint_probe_seq += 1
+    seq = run._paint_probe_seq
+    run._paint_probed(seq, probe)
+    assert run.paint_service_tag.text() == "运行中（未登记）"
+    detail = run.paint_service_detail.fullText()
+    assert "127.0.0.1:1234" in detail
+    assert "sd-server.exe pid=4321" in detail
+    assert run.paint_action_button.text() == "停止服务"
+    # 重启只对已登记的服务开放，避免无状态可停时盲重启。
+    assert not run.paint_restart_button.isEnabled()
+
+    # 端口被其它程序占用：提示换端口 / 查占用进程。
+    run._paint_probed(
+        seq,
+        _llmpaint_server.PaintProbe(None, False, False, True, (_llmpaint_server.PortOccupant(9, "python.exe"),)),
+    )
+    assert run.paint_service_tag.text() == "端口被占用"
+    assert "fcmd portcheck c" in run.paint_service_detail.fullText()
+    assert run.paint_action_button.text() == "启动服务"
+
+    # 陈旧探针结果不允许覆盖新状态。
+    run._paint_probed(0, probe)
+    assert run.paint_service_tag.text() == "端口被占用"
+
+
+def test_paint_save_params_persists_immediately(window: Any, tmp_path: Path) -> None:
+    """画图「保存参数」立即写入 llmw.json：不等延迟定时器 / 页签切换。"""
+    window.show_page("run")
+    section = window.run_page.paint_engine_section
+    section.port.setValue(4321)
+    section.offload_to_cpu.setChecked(True)
+    section.save_params_button.click()
+    assert window.state.settings.paint["port"] == 4321
+    assert window.state.settings.paint["offload_to_cpu"] is True
+    saved = json.loads((tmp_path / "ui" / "llmw.json").read_text(encoding="utf-8"))
+    assert saved["paint"]["port"] == 4321
+    assert saved["paint"]["offload_to_cpu"] is True
+    assert window.status_text().startswith("画图启动参数已保存")
+
+
+def test_paint_fill_params_matches_command_preview(window: Any, tmp_path: Path) -> None:
+    """「填入当前参数」写入监听 / 组件 / 开关；预览与组件去重后不重复追加。"""
+    from fcmd.apps.llm import _llmpaint
+    from fcmd.apps.llm._llmw_qt_paint import components_from_settings
+
+    main = tmp_path / "z_image_turbo-Q8_0.gguf"
+    main.write_bytes(b"x" * 16)
+    asset = _llmpaint.PaintAsset(main, "diffusion", "z-image", 16)
+    window.show_page("run")
+    run = window.run_page
+    run.tabs.setCurrentIndex(2)
+    section = run.paint_engine_section
+    drain_background_tasks()  # 切页签会重扫扩散模型：等它落地再注入测试资产
+    section._settings["model_dir"] = str(tmp_path)
+    section._apply_assets(_llmpaint.PaintAssets((asset,), (tmp_path,)))
+    section.model_combo.setCurrentIndex(section.model_combo.findData(str(main)))
+    section.vae_tiling.setChecked(True)
+    before = section.command_preview.toPlainText()
+    assert "--vae-tiling" in before
+
+    section.fill_params_button.click()
+    text = section.extra_args_edit.toPlainText()
+    assert "--listen-ip" in text
+    assert "--listen-port" in text
+    assert "--vae-tiling" in text
+    assert str(main) not in text  # 主模型路径不重复填进自定义参数
+    assert text.count("--listen-port") == 1
+    assert section.command_preview.toPlainText() == before
+    assert components_from_settings(run.paint_settings()).extra_args == ()
 
 
 def test_model_download_finished_rescans_paint_assets(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -270,7 +412,7 @@ def test_paint_missing_component_offers_download(window: Any, tmp_path: Path) ->
     assert "VAE" in section.download_button.text()
 
     # 额外参数里给了 --vae / --llm 后不再算缺失，按钮收起。
-    section.extra_edit.setText(f"--vae {tmp_path / 'my-vae.safetensors'} --llm {tmp_path / 'enc.gguf'}")
+    section.extra_args_edit.setPlainText(f"--vae {tmp_path / 'my-vae.safetensors'} --llm {tmp_path / 'enc.gguf'}")
     QApplication.processEvents()
     assert section.download_button.isHidden()
 
@@ -326,14 +468,13 @@ def test_paint_auto_pair_fills_model_and_components(window: Any, tmp_path: Path)
     window.show_page("run")
     run = window.run_page
     section = run.paint_engine_section
-    # 先让构造时的后台扫描回调落地，再注入测试资产，避免被空扫描结果覆盖。
-    for _ in range(5):
-        QApplication.processEvents()
+    # 先等构造时的后台扫描回调落地，再注入测试资产，避免被空扫描结果覆盖。
+    drain_background_tasks()
     section._apply_assets(assets)
-    assert section.model_combo.count() > 1
+    assert section.model_combo.count() > 0
 
     # 模拟「主模型 / 组件都没选」的状态，点自动配对应当补齐。
-    section.model_combo.setCurrentIndex(0)
+    section.model_combo.setCurrentIndex(-1)
     for combo in section.role_combos.values():
         combo.setCurrentIndex(0)
     section.suggest_button.click()

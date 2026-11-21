@@ -43,17 +43,19 @@
 - 画图设置按使用位置拆成两个分区控件，读写的仍是同一份 `paint` 字段：
   - `PaintSampleSection`（对话配置窗口）：尺寸 / 步数 / CFG / 采样器 / 调度器 /
     种子 / 批量 / 输出目录，即"这次怎么画、存到哪"；
-  - `PaintEngineSection`（运行页「画图」页签）：服务端口 / 自动启动、模型与组件
-    （加载方式 / 主模型 / VAE / CLIP / T5 / 文本编码器 / CPU 卸载 / VAE 分块 /
-    Diffusion FA / 额外参数 / 命令预览 / 自动配对），即"用哪个模型、怎么加载"。
+  - `PaintEngineSection`（运行页「画图」页签）：服务端口、加载方式方块选项
+    （自动 / Checkpoint / Diffusion）、运行选项胶囊（自动启动 / CPU 卸载 / VAE 分块 /
+    Diffusion FA）、高级参数折叠区里的主模型与 VAE / CLIP-L / CLIP-G / T5-XXL /
+    文本编码器、只读命令预览、自定义启动参数（保存 / 填入），即"用哪个模型、怎么加载"。
 - 资产扫描在后台线程执行；未扫描完成前组合框沿用已保存路径，避免误清空；
   切到「画图」页签会重扫一次，模型页下载完成（``browse.downloadFinished``）也会
   立即重扫——扩散权重不进 LLM 模型列表，不能只依赖 ``modelsChanged``；
   已保存主模型不在扫描结果里时补一条下拉项，任何一次信号触发都不会把 model 回落成空。
-- 画图页签的说明统一写到底部状态栏（切到画图页签 / 扫描完成 / 缺模型时刷新），
-  「选择模型」下方不再占一行小字。没有可用扩散主模型时为可执行提示：无候选时提示
-  去「模型」页下载或在设置里登记目录；扫描到 ``*.part``（未下载完成）时列出文件名
-  并提示继续下载——启动失败不再只报「请选择主模型」。
+- 画图页签的操作说明统一写到底部状态栏（切到画图页签 / 扫描完成 / 缺模型时刷新）；
+  「选择模型」下方只保留一行服务状态细节（地址 / pid / 占用进程），不再写操作说明。
+  没有可用扩散主模型时为可执行提示：无候选时提示去「模型」页下载或在设置里登记
+  目录；扫描到 ``*.part``（未下载完成）时列出文件名并提示继续下载——启动失败不再
+  只报「请选择主模型」。
 - 「自动配对」先补主模型（未选模型时取扫描到的第一个扩散模型），再按家族补
   VAE / 文本编码器；组件优先同家族，只有其它家族时才回退到该角色第一个候选——
   避免配到不兼容的 VAE / 文本编码器导致 sd-server 启动即退出。
@@ -68,11 +70,36 @@
     模型，任一用途无候选时回退全部；切页签会先持久化当前模型参数，再按新用途
     自动选中候选模型（参数按模型分开保存）。
   - 画图页签与对话 / 编程同构：顶部「选择模型」卡片（扩散模型下拉，与 LLM 模型
-    下拉同一套自绘弹层；「启动服务 / 停止服务」主按钮 + 「重启服务」，不再额外放
-    服务状态胶囊——状态只看按钮文案），下方「启动参数」卡片
-    （`PaintEngineSection`：加载方式、组件、CPU 卸载 / VAE 分块 / Diffusion FA、
-    额外参数、命令预览、服务端口 / 自动启动）。启停按钮的文案 / 配色 / 禁用逻辑
-    与 LLM 模型卡片一致（`RunPrimary` / `RunDanger` + `set_button_text`）。
+    下拉同一套自绘弹层，**不插「（未找到扩散模型）」占位项**——没有模型时下拉为空，
+    提示只写底部状态栏；右侧状态标签 `StatusTag` + 下面一行 `ElidedLabel` 细节）、
+    「启动服务 / 停止服务」主按钮 + 「重启服务」，下方「启动参数」卡片与共享表单同构：
+    服务端口 → 加载方式 `ChoiceGroup` 方块（自动 / Checkpoint / Diffusion，带说明与
+    语义色）→ 运行选项 `ToggleChip` 胶囊（自动启动 / CPU 卸载 / VAE 分块 /
+    Diffusion FA）→「高级参数（模型组件，留空自动配对）」折叠区（主模型 / VAE /
+    CLIP-L / CLIP-G / T5-XXL / 文本编码器；自动配对与下载缺失组件仍在折叠区外）
+    → 只读命令预览（`QPlainTextEdit#Log`，固定 64px）→ 自定义启动参数
+    （多行输入 + 「保存参数」「填入当前参数」）。启停按钮的文案 / 配色 / 禁用逻辑
+    与 LLM 模型卡片一致（`RunPrimary` / `RunDanger` + `set_button_text`）；
+    「保存参数」按用户确认保存为全局画图参数并立即落盘（画图服务同时只有一个），
+    「填入当前参数」把监听 / 组件 / 开关参数写进自定义参数框：`startup_args_tail`
+    去掉可执行文件与主模型参数，组件构造发现已填入的当前参数时不再二次追加，
+    命令预览、真实启动命令与填入内容始终是同一条命令。
+- 服务状态可见且能对上显存占用：`server.json` 只记录本工具拉起的进程，进程被外部
+  启动 / 状态文件丢失时不能显示「未启动」了事（实际场景：端口上残留多个 sd-server，
+  显存被占 14GB 而界面空白）。因此 `_llmpaint_server.probe_paint` 在状态文件之外
+  追加端口探针（`/health` → `/sdapi/v1/sd-models` 回退）与占用进程查询，返回
+  `PaintProbe`（state / alive / reachable / port_open / occupants）；运行页在后台线程
+  探测后刷新标签与细节行：
+  - 已登记且存活 →「运行中 · 引擎」+ 地址 / pid / 模型 / 引擎；
+  - 端口可达但未登记 →「运行中（未登记）」+ 占用端口的 sd-server pid，按钮变
+    「停止服务」，确认后用 `stop_orphans` 只结束进程名为 `sd-server*` 的残留进程；
+  - 端口被其它程序占用 →「端口被占用」+ `fcmd portcheck c <port>` 兜底提示。
+  探针结果带序号，旧回调不能覆盖新状态；重启按钮仍只对已登记服务开放。
+- 端口占用检测修 Windows 抢绑：`infras.net.is_port_in_use` 原先无条件设
+  `SO_REUSEADDR`，在 Windows 上可绑定已被同类监听占用的端口 → 恒返回「空闲」，
+  `start_server` / `start_paint` 的端口校验失效，重复启动的服务各自加载模型
+  （显存叠加、还都能响应健康检查）。现仅在 POSIX 设 `SO_REUSEADDR`（避开
+  TIME_WAIT 且不会绕过 LISTEN），Windows 保持独占语义。
 - 组件校验与「补齐」路径：Z-Image / Qwen-Image / MiniMax-H3 / HiDream /
   HunyuanImage 必须带独立 VAE 与文本编码器。VAE 往往藏在仓库的 ``split_files/vae``
   子目录里，按仓库名搜索找不到——因此画图配置在缺组件时直接露出「下载缺失的 VAE…」：
@@ -97,8 +124,8 @@
 src/fcmd/apps/llm/
 ├─ _llmpaint.py                # 纯逻辑：资产识别、组件/请求、参数与结果处理
 ├─ _llmpaint_engine.py         # sd.cpp 引擎：release 解析、安装、切换、检查
-├─ _llmpaint_server.py         # sd-server：计划、状态、健康检查、txt2img 客户端
-├─ _llmw_qt_paint.py           # 纯逻辑 + generate_images / start_paint_service + PaintConfigSection
+├─ _llmpaint_server.py         # sd-server：计划、状态、健康检查、端口探针 / 残留清理、txt2img 客户端
+├─ _llmw_qt_paint.py           # 纯逻辑 + generate_images / start_paint_service + PaintEngineSection
 ├─ _llmw_qt_paint_engine.py    # 引擎下载 / 导入对话框（运行页调用）
 ├─ _llmw_qt_chat.py            # 「画图」开关 + 图片消息 + 画图配置分区
 ├─ _llmw_qt_run.py             # 画图引擎状态 / 安装入口
@@ -117,13 +144,18 @@ src/fcmd/apps/llm/
 - `tests/apps/llm/test_cli_llmpaint.py`：资产识别、参数构建、引擎 release 解析与假 zip
   安装、状态读写、健康双探针、`txt2img` 成功 / 500 / 未知字段重试、CLI 各子命令；
 - `tests/apps/llm/test_llmw_qt_logic.py`：画图模块级纯函数（设置解析、额外参数、
-  组件 / 请求、命令预览、服务标签、进度 / 尺寸预设 / 配置摘要、扫描根与出图目录、
-  变体说明）；
+  组件 / 请求、命令预览、服务标签与状态细节行、进度 / 尺寸预设 / 配置摘要、扫描根与出图目录、
+  变体说明、`startup_args_tail` 尾部参数与「填入当前参数」去重）；
 - `tests/apps/llm/test_llmw_qt_smoke.py`：六页导航（无画图页）、对话页「画图」开关
   切换占位提示与持久化、缺模型时发送只报错不派后台任务、画图配置控件挂在对话
   配置弹窗里、运行页「对话 / 编程 / 画图」三页签（对话 / 编程共享表单随页签搬家、
-  画图页签含选模型 + 启停 + 启动参数）、设置页含「画图引擎（sd.cpp）」卡片
-  （模型组件控件只在运行页，采样 / 输出只在对话配置）；
+  画图页签含选模型 + 状态标签 / 细节行 + 启停 + 加载方式方块 / 运行选项胶囊 /
+  只读命令预览）、画图主模型下拉无「未找到」占位项、端口可达但未登记时显示
+  「运行中（未登记）」并可结束残留 sd-server、画图「保存参数」立即落盘与「填入
+  当前参数」不重复追加、设置页含「画图引擎（sd.cpp）」卡片（模型组件控件只在
+  运行页，采样 / 输出只在对话配置）；
+- `tests/tools/net/test_cli_portcheck.py`：端口占用检测（含对端 `SO_REUSEADDR` 监听
+  的 Windows 抢绑回归）。
 - `make check-fast` / `make test` / `make cov`（覆盖率 ≥95%）全绿。
 
 ## 交接与后续

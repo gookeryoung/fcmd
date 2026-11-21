@@ -39,23 +39,29 @@ __all__ = [
     "DEFAULT_HOST",
     "DEFAULT_PORT",
     "PaintPlan",
+    "PaintProbe",
     "PaintState",
     "PaintStopResult",
+    "PortOccupant",
     "check_paint_health",
     "default_out_dir",
     "fetch_progress",
     "fingerprint",
     "interrupt",
+    "is_paint_process_name",
     "launch_paint",
     "load_state",
     "log_path",
     "make_paint_plan",
     "plan_argv",
+    "port_occupants",
+    "probe_paint",
     "progress_value",
     "save_state",
     "start_paint",
     "state_path",
     "status",
+    "stop_orphans",
     "stop_paint",
     "txt2img",
 ]
@@ -105,6 +111,30 @@ class PaintStopResult:
 
     state: PaintState | None
     stopped: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PortOccupant:
+    """监听指定端口的进程（pid / 进程名；拿不到名字时为空串）。"""
+
+    pid: int
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class PaintProbe:
+    """画图服务探针：状态文件 + 端口监听 / 健康检查 + 端口占用进程。
+
+    ``state`` / ``alive`` 只描述「本工具登记并拉起的进程」；``reachable`` /
+    ``port_open`` 额外覆盖 ``server.json`` 丢失、服务由 CLI / 旧版本启动或残留的
+    情况——这正是「显存被占了却看不到服务」的场景。
+    """
+
+    state: PaintState | None
+    alive: bool
+    reachable: bool
+    port_open: bool
+    occupants: tuple[PortOccupant, ...] = ()
 
 
 def state_path(home: Path | None = None) -> Path:
@@ -436,6 +466,103 @@ def status(home: Path | None = None) -> tuple[PaintState | None, bool]:
     if state is None:
         return None, False
     return state, llmserve.process_alive(state.pid, state.create_time)
+
+
+def is_paint_process_name(name: str) -> bool:
+    """进程名是否画图引擎（``sd-server`` / ``sd-server.exe``）。"""
+    return Path(name).name.lower().startswith("sd-server")
+
+
+def port_occupants(
+    port: int,
+    *,
+    connections: Callable[[], Any] | None = None,
+    process_name: Callable[[int], str] | None = None,
+) -> tuple[PortOccupant, ...]:
+    """查询监听指定端口的进程（跨平台，基于 psutil；失败返回空元组）。"""
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil 是核心依赖
+        return ()
+
+    try:
+        rows = (connections or (lambda: psutil.net_connections(kind="tcp")))()
+    except (psutil.AccessDenied, OSError):
+        return ()
+
+    def _name(pid: int) -> str:
+        if process_name is not None:
+            return process_name(pid)
+        try:
+            return psutil.Process(pid).name()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return ""
+
+    found: dict[int, PortOccupant] = {}
+    for conn in rows:
+        laddr = getattr(conn, "laddr", None)
+        pid = getattr(conn, "pid", None)
+        if laddr is None or getattr(laddr, "port", None) != port:
+            continue
+        # 只看 LISTEN：TIME_WAIT / 已建立连接不是端口占用者（Windows 上 pid 还会是 0）。
+        if getattr(conn, "status", "LISTEN") not in {"LISTEN", psutil.CONN_LISTEN}:
+            continue
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0 or pid in found:
+            continue
+        found[pid] = PortOccupant(pid=pid, name=_name(pid))
+    return tuple(found[pid] for pid in sorted(found))
+
+
+def probe_paint(  # noqa: PLR0913 - 与 start_paint 对齐的可注入入口参数
+    home: Path | None = None,
+    *,
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    timeout: float = 0.6,
+    health: Callable[[str, int], bool] | None = None,
+    port_in_use: Callable[[int, str], bool] | None = None,
+    occupants: Callable[[int], tuple[PortOccupant, ...]] | None = None,
+) -> PaintProbe:
+    """探测画图服务：登记状态 + 端口是否在监听 + 谁在占用（供 GUI 显示）。
+
+    只做只读探测；网络 / psutil 调用都可注入，便于离网测试。健康探针超时
+    故意收短（默认 0.6s），避免卡住调用方（GUI 还会放到后台线程里跑）。
+    """
+    state, alive = status(home)
+    probe_health = health or (lambda h, p: check_paint_health(h, p, timeout=timeout))
+    reachable = probe_health(host, port)
+    if port_in_use is None:
+        from fcmd.infras.net import is_port_in_use
+
+        port_in_use = is_port_in_use
+    port_open = reachable or port_in_use(port, host)
+    found: tuple[PortOccupant, ...] = ()
+    if port_open and not alive:
+        found = (occupants or port_occupants)(port)
+    return PaintProbe(state=state, alive=alive, reachable=reachable, port_open=port_open, occupants=found)
+
+
+def stop_orphans(
+    port: int,
+    *,
+    occupants: Callable[[int], tuple[PortOccupant, ...]] | None = None,
+    terminator: Callable[[int, float, float], None] | None = None,
+    create_time: Callable[[int], float] | None = None,
+) -> tuple[int, ...]:
+    """结束监听该端口的残留画图进程（仅 ``sd-server``），返回被终止的 pid。
+
+    只认进程名，避免误杀同端口上的其它服务；找不到残留进程时返回空元组。
+    """
+    rows = (occupants or port_occupants)(port)
+    stop = terminator or llmserve.terminate_process
+    created = create_time or llmserve.process_create_time
+    stopped: list[int] = []
+    for row in rows:
+        if not is_paint_process_name(row.name):
+            continue
+        stop(row.pid, created(row.pid), 5.0)
+        stopped.append(row.pid)
+    return tuple(stopped)
 
 
 def _post(

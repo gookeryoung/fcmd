@@ -2,8 +2,9 @@
 
 画图不再有独立页面：对话页勾选「画图」后用提示词出图；采样 / 输出嵌进对话页的
 「模型与生成配置」窗口（:class:`PaintSampleSection`），引擎安装 / 默认引擎（:class:`PaintEngineCard`）放在设置页，
-模型组件配置（:class:`PaintEngineSection`）放在运行页「画图」页签。
-资产扫描、组件配对、启动参数、请求载荷与出图保存都在
+模型组件配置（:class:`PaintEngineSection`）放在运行页「画图」页签，与「对话 / 编程」
+同构：加载方式方块选项、运行选项胶囊开关、高级参数折叠区、只读命令预览与自定义
+启动参数（保存 / 填入）。资产扫描、组件配对、启动参数、请求载荷与出图保存都在
 :mod:`fcmd.apps.llm._llmpaint` / ``_llmpaint_server`` / ``_llmpaint_engine``
 （与 ``fcmd llmpaint`` 共用），这里只做设置解析、服务调用与 Qt 控件。
 
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -39,12 +41,14 @@ from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import ServeError, format_command, human_size
 from fcmd.gui.qt.widgets import (
     Card,
+    ChoiceGroup,
     Collapsible,
     ElidedLabel,
     FormGrid,
     RowListWidget,
     SelectionRow,
     StatusTag,
+    ToggleChip,
     button,
     hint_label,
     link_button,
@@ -74,10 +78,12 @@ __all__ = [
     "parse_extra_args",
     "parse_paint_settings",
     "request_from_settings",
+    "service_detail",
     "service_label",
     "settings_summary",
     "size_preset",
     "start_paint_service",
+    "startup_args_tail",
 ]
 
 SIZE_PRESETS: tuple[tuple[str, int, int], ...] = (
@@ -111,6 +117,25 @@ MODES: tuple[tuple[str, str], ...] = (
     ("diffusion", "Diffusion"),
 )
 """加载方式：(数据值, 显示名)。"""
+
+_MODE_KEYS = frozenset(key for key, _label in MODES)
+_MODE_NOTES: dict[str, str] = {
+    "auto": "按主模型家族自动判断 checkpoint / diffusion",
+    "checkpoint": "单文件权重，用 -m 加载",
+    "diffusion": "分离式权重，用 --diffusion-model 加载",
+}
+_MODE_TONES: dict[str, str] = {"auto": "accent", "checkpoint": "success", "diffusion": "warning"}
+
+
+def _mode_options() -> list[tuple[str, str, str]]:
+    """加载方式选项：(键, 标题, 说明)，供 ChoiceGroup 与回填校验共用。"""
+    return [(key, label, _MODE_NOTES[key]) for key, label in MODES]
+
+
+def _mode_key(value: str) -> str:
+    """持久化值 → 选项键；未知值回落「自动」。"""
+    return value if value in _MODE_KEYS else "auto"
+
 
 ROLE_COMBOS: tuple[tuple[str, str], ...] = (
     ("vae", "VAE"),
@@ -247,8 +272,12 @@ def _engine_tag(settings: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def components_from_settings(settings: dict[str, Any]) -> _llmpaint.PaintComponents:
-    """按页面设置构造 sd-server 的模型组件集合。"""
+def _base_components(
+    settings: dict[str, Any],
+    *,
+    extra_args: Sequence[str] = (),
+) -> _llmpaint.PaintComponents:
+    """按页面设置构造组件集合；``extra_args`` 显式传入，便于构造不含额外参数的基线。"""
     return _llmpaint.PaintComponents(
         model=_path_value(settings.get("model")),
         vae=_path_value(settings.get("vae")),
@@ -257,12 +286,40 @@ def components_from_settings(settings: dict[str, Any]) -> _llmpaint.PaintCompone
         t5xxl=_path_value(settings.get("t5xxl")),
         llm=_path_value(settings.get("llm")),
         lora=_path_value(settings.get("lora")),
-        mode=str(settings.get("mode") or "auto"),
-        extra_args=tuple(settings.get("extra_args") or ()),
+        mode=_mode_key(str(settings.get("mode") or "auto")),
+        extra_args=tuple(extra_args),
         offload_to_cpu=bool(settings.get("offload_to_cpu")),
         vae_tiling=bool(settings.get("vae_tiling")),
         diffusion_fa=bool(settings.get("diffusion_fa")),
     )
+
+
+def startup_args_tail(settings: dict[str, Any]) -> tuple[str, ...]:
+    """去掉可执行文件与主模型参数（``-m`` / ``--diffusion-model``），保留其余启动参数。"""
+    parsed = parse_paint_settings(settings)
+    components = _base_components(parsed)
+    argv = [
+        "--listen-ip",
+        _llmpaint_server.DEFAULT_HOST,
+        "--listen-port",
+        str(int(parsed.get("port") or _llmpaint_server.DEFAULT_PORT)),
+        *_llmpaint.build_model_args(components),
+    ]
+    if components.model is not None:
+        flag = "-m" if _llmpaint.effective_mode(components) == "checkpoint" else "--diffusion-model"
+        if flag in argv:
+            index = argv.index(flag)
+            del argv[index : index + 2]
+    return tuple(argv)
+
+
+def components_from_settings(settings: dict[str, Any]) -> _llmpaint.PaintComponents:
+    """按页面设置构造 sd-server 的模型组件集合；已填入的当前参数不二次追加。"""
+    parsed = parse_paint_settings(settings)
+    extra = tuple(parsed.get("extra_args") or ())
+    if extra and extra == startup_args_tail(parsed):
+        extra = ()
+    return _base_components(parsed, extra_args=extra)
 
 
 def request_from_settings(settings: dict[str, Any]) -> _llmpaint.PaintRequest:
@@ -299,25 +356,66 @@ def output_dir(settings: dict[str, Any]) -> Path:
 
 def command_preview(settings: dict[str, Any]) -> str:
     """sd-server 启动命令预览（组件参数在启动时加载）。"""
-    port = int(settings.get("port") or _llmpaint_server.DEFAULT_PORT)
+    parsed = parse_paint_settings(settings)
+    port = int(parsed.get("port") or _llmpaint_server.DEFAULT_PORT)
     argv = [
         "sd-server",
         "--listen-ip",
         _llmpaint_server.DEFAULT_HOST,
         "--listen-port",
         str(port),
-        *_llmpaint.build_model_args(components_from_settings(settings)),
+        *_llmpaint.build_model_args(components_from_settings(parsed)),
     ]
     return format_command(argv)
 
 
-def service_label(state: _llmpaint_server.PaintState | None, alive: bool) -> tuple[str, str]:
-    """服务状态标签：(文案, 语义色)。"""
-    if state is None:
-        return "服务未启动", "muted"
-    if alive:
+def service_label(
+    state: _llmpaint_server.PaintState | None,
+    alive: bool,
+    *,
+    reachable: bool = False,
+    port_open: bool = False,
+) -> tuple[str, str]:
+    """服务状态标签：(文案, 语义色)。
+
+    ``reachable`` / ``port_open`` 来自端口探针：状态文件丢失、服务由 CLI / 旧版本
+    启动或残留时，标签仍能反映「端口上有服务在跑」，而不是一律显示未启动。
+    """
+    if state is not None and alive:
         return f"运行中 · {state.engine_tag or 'sd.cpp'}", "success"
-    return "已退出（残留状态）", "warning"
+    if reachable:
+        return "运行中（未登记）", "warning"
+    if state is not None:
+        return "已退出（残留状态）", "warning"
+    if port_open:
+        return "端口被占用", "warning"
+    return "服务未启动", "muted"
+
+
+def service_detail(
+    probe: _llmpaint_server.PaintProbe,
+    *,
+    host: str = _llmpaint_server.DEFAULT_HOST,
+    port: int = _llmpaint_server.DEFAULT_PORT,
+    limit: int = 4,
+) -> str:
+    """状态标签下方的一行说明：地址 / pid / 模型，或「显存被谁占着」。"""
+    state = probe.state
+    if state is not None and probe.alive:
+        model = Path(state.model).name if state.model else "未记录"
+        return f"{state.base_url} · pid={state.pid} · 模型 {model} · 引擎 {state.engine_tag or '未知'}"
+    occupants = "、".join(f"{item.name or '未知进程'} pid={item.pid}" for item in probe.occupants[:limit])
+    if len(probe.occupants) > limit:
+        occupants += f" 等 {len(probe.occupants)} 个进程"
+    if probe.reachable:
+        detail = f"{host}:{port} 有画图服务在监听，但本工具没有登记（CLI / 旧版本遗留），显存已被占用"
+        return f"{detail}：{occupants}。点「停止服务」可结束这些 sd-server。" if occupants else f"{detail}。"
+    if state is not None:
+        return "状态文件还在但进程已退出；重启服务会清理残留状态。"
+    if probe.port_open:
+        detail = f"端口 {port} 已被其它程序占用；换端口或先停止占用进程（fcmd portcheck c {port}）"
+        return f"{detail}：{occupants}。" if occupants else f"{detail}。"
+    return "启动后会在这里显示地址、pid、模型与引擎。"
 
 
 def format_progress(payload: Any) -> str:
@@ -397,17 +495,21 @@ def start_paint_service(settings: dict[str, Any]) -> bool:
 
 
 class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
-    """画图引擎配置：服务端口 / 自动启动、模型与组件、额外参数与命令预览。
+    """画图启动参数：加载方式方块、运行选项胶囊、模型组件、命令预览与自定义参数。
 
-    嵌在运行页的「画图」页签：引擎安装 / 默认引擎列表在同一个页签的其它卡片，
-    这里决定「用哪个模型、怎么加载」。每次改动发 :attr:`changed`，由运行页延迟
-    写盘到 ``ui/llmw.json`` 的 ``paint`` 字段；资产扫描在后台线程完成，扫描期间
-    沿用已保存的路径，避免误清空模型选择。
+    布局与运行页「对话 / 编程」的启动参数卡同构：服务端口 → 加载方式（ChoiceGroup）
+    → 运行选项（ToggleChip）→ 模型组件（Collapsible + 下拉）→ 只读命令预览
+    （``QPlainTextEdit#Log``）→ 自定义启动参数 + 「保存参数 / 填入当前参数」。
+
+    每次改动发 :attr:`changed`，由运行页延迟写盘到 ``ui/llmw.json`` 的 ``paint``
+    字段；「保存参数」立即发 :attr:`saveRequested`，由运行页马上落盘。资产扫描在
+    后台线程完成，扫描期间沿用已保存的路径，避免误清空模型选择。
     """
 
     changed = Signal()
     assetsLoaded = Signal()
     statusRequested = Signal(str)
+    saveRequested = Signal()
 
     _KEYS = (
         "port",
@@ -449,10 +551,50 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         self.port.setRange(1, 65535)
         self.port.setToolTip("sd-server 监听端口（默认 1234，避开 llama-server 的 8080）")
         service_form.add_row("服务端口", self.port)
-        self.auto_start = QCheckBox("生成前自动启动 / 重启服务", self)
-        self.auto_start.setToolTip("模型或参数变化时自动按新指纹重启（FLUX 等大模型首次加载较慢）")
-        service_form.add_row("自动启动", self.auto_start)
         layout.addWidget(service_form)
+
+        layout.addWidget(QLabel("加载方式", self))
+        self.mode_choice = ChoiceGroup(
+            _mode_options(),
+            current="auto",
+            columns=3,
+            tones=_MODE_TONES,
+            parent=self,
+        )
+        layout.addWidget(self.mode_choice)
+
+        layout.addWidget(QLabel("运行选项（可多选）", self))
+        options_row = QHBoxLayout()
+        options_row.setContentsMargins(0, 0, 0, 0)
+        options_row.setSpacing(6)
+        self.auto_start = ToggleChip(
+            "自动启动",
+            icon="run",
+            tooltip="生成前自动启动 / 重启服务：模型或参数变化时按新指纹重启（FLUX 等大模型首次加载较慢）",
+            parent=self,
+        )
+        self.offload_to_cpu = ToggleChip(
+            "CPU 卸载",
+            icon="models",
+            tooltip="--offload-to-cpu：显存不足时把部分权重放到内存（更慢）",
+            parent=self,
+        )
+        self.vae_tiling = ToggleChip(
+            "VAE 分块",
+            icon="images",
+            tooltip="--vae-tiling：大图解码时降低显存峰值",
+            parent=self,
+        )
+        self.diffusion_fa = ToggleChip(
+            "Diffusion FA",
+            icon="convert",
+            tooltip="--diffusion-fa：启用 flash attention 加速",
+            parent=self,
+        )
+        for chip in (self.auto_start, self.offload_to_cpu, self.vae_tiling, self.diffusion_fa):
+            options_row.addWidget(chip)
+        options_row.addStretch(1)
+        layout.addLayout(options_row)
 
         family_row = QHBoxLayout()
         family_row.setContentsMargins(0, 0, 0, 0)
@@ -468,46 +610,41 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         family_row.addWidget(self.download_button)
         layout.addLayout(family_row)
 
-        models_form = FormGrid(self)
-        self.mode_combo = QComboBox(models_form)
-        for key, label in MODES:
-            self.mode_combo.addItem(label, key)
-        models_form.add_row("加载方式", self.mode_combo)
-        self.model_combo = model_combo if model_combo is not None else QComboBox(models_form)
+        self.advanced = Collapsible("高级参数（模型组件，留空自动配对）", expanded=False, parent=self)
+        components_form = FormGrid(self.advanced.content)
+        self.model_combo = model_combo if model_combo is not None else QComboBox(self.advanced.content)
         if show_model:
-            models_form.add_row("主模型", self.model_combo)
+            components_form.add_row("主模型", self.model_combo)
         self.role_combos: dict[str, QComboBox] = {}
         for role, label in ROLE_COMBOS:
-            combo = QComboBox(models_form)
+            combo = QComboBox(self.advanced.content)
             self.role_combos[role] = combo
-            models_form.add_row(label, combo)
-        layout.addWidget(models_form)
+            components_form.add_row(label, combo)
+        self.advanced.body.addWidget(components_form)
+        layout.addWidget(self.advanced)
 
-        options_row = QHBoxLayout()
-        options_row.setContentsMargins(0, 0, 0, 0)
-        options_row.setSpacing(10)
-        self.offload_to_cpu = QCheckBox("CPU 卸载", self)
-        self.offload_to_cpu.setToolTip("--offload-to-cpu：显存不足时把部分权重放到内存（更慢）")
-        self.vae_tiling = QCheckBox("VAE 分块", self)
-        self.vae_tiling.setToolTip("--vae-tiling：大图解码时降低显存峰值")
-        self.diffusion_fa = QCheckBox("Diffusion FA", self)
-        self.diffusion_fa.setToolTip("--diffusion-fa：启用 flash attention 加速")
-        for widget in (self.offload_to_cpu, self.vae_tiling, self.diffusion_fa):
-            options_row.addWidget(widget)
-        options_row.addStretch(1)
-        layout.addLayout(options_row)
+        layout.addWidget(QLabel("启动命令预览", self))
+        self.command_preview = QPlainTextEdit(self)
+        self.command_preview.setObjectName("Log")
+        self.command_preview.setReadOnly(True)
+        self.command_preview.setFixedHeight(64)
+        layout.addWidget(self.command_preview)
 
-        self.extra_edit = QLineEdit(self)
-        self.extra_edit.setPlaceholderText("额外参数（可选，例如 --clip-on-cpu）")
-        self.extra_edit.setToolTip("原样追加到 sd-server；按空白分隔，含空格的值用双引号包裹")
-        layout.addWidget(self.extra_edit)
-
-        self.preview_collapse = Collapsible("命令预览", parent=self)
-        self.preview_label = mono_label("")
-        self.preview_label.setWordWrap(True)
-        self.preview_label.setObjectName("Hint")
-        self.preview_collapse.body.addWidget(self.preview_label)
-        layout.addWidget(self.preview_collapse)
+        layout.addWidget(QLabel("自定义启动参数", self))
+        self.extra_args_edit = QPlainTextEdit(self)
+        self.extra_args_edit.setFixedHeight(56)
+        self.extra_args_edit.setPlaceholderText("每行或空格分隔，例如：--clip-on-cpu --vae-tiling")
+        self.extra_args_edit.setToolTip("原样追加到 sd-server；按空白分隔，含空格的值用双引号包裹")
+        layout.addWidget(self.extra_args_edit)
+        params_actions = QHBoxLayout()
+        params_actions.setContentsMargins(0, 0, 0, 0)
+        params_actions.setSpacing(6)
+        self.save_params_button = button("保存参数")
+        self.fill_params_button = button("填入当前参数", tooltip="把监听 / 组件 / 开关参数写进上面的自定义参数框")
+        params_actions.addWidget(self.save_params_button)
+        params_actions.addWidget(self.fill_params_button)
+        params_actions.addStretch(1)
+        layout.addLayout(params_actions)
 
         self._wire()
         self._apply()
@@ -522,12 +659,12 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             {
                 "port": self.port.value(),
                 "auto_start": self.auto_start.isChecked(),
-                "mode": str(self.mode_combo.currentData() or "auto"),
+                "mode": _mode_key(self.mode_choice.key()),
                 "model": self._combo_value(self.model_combo, "model"),
                 "offload_to_cpu": self.offload_to_cpu.isChecked(),
                 "vae_tiling": self.vae_tiling.isChecked(),
                 "diffusion_fa": self.diffusion_fa.isChecked(),
-                "extra_args": parse_extra_args(self.extra_edit.text()),
+                "extra_args": parse_extra_args(self.extra_args_edit.toPlainText()),
             }
         )
         for role, _label in ROLE_COMBOS:
@@ -548,9 +685,8 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             self.offload_to_cpu.setChecked(bool(settings["offload_to_cpu"]))
             self.vae_tiling.setChecked(bool(settings["vae_tiling"]))
             self.diffusion_fa.setChecked(bool(settings["diffusion_fa"]))
-            self.extra_edit.setText(format_extra_args(tuple(settings["extra_args"])))
-            index = self.mode_combo.findData(str(settings["mode"]))
-            self.mode_combo.setCurrentIndex(max(index, 0))
+            self.mode_choice.set_key(_mode_key(str(settings["mode"])))
+            self.extra_args_edit.setPlainText(format_extra_args(tuple(settings["extra_args"])))
             self._apply_component_selection()
             self._update_preview()
             self._refresh_component_actions()
@@ -566,14 +702,16 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
     def _wire(self) -> None:
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.suggest_button.clicked.connect(lambda: self._suggest(only_empty=False))
+        self.save_params_button.clicked.connect(self._save_params)
+        self.fill_params_button.clicked.connect(self._fill_params)
+        self.mode_choice.changed.connect(lambda _key: self._on_changed())
         for signal in (
             self.port.valueChanged,
             self.auto_start.toggled,
-            self.mode_combo.currentIndexChanged,
             self.offload_to_cpu.toggled,
             self.vae_tiling.toggled,
             self.diffusion_fa.toggled,
-            self.extra_edit.textChanged,
+            self.extra_args_edit.textChanged,
         ):
             signal.connect(self._on_changed)
         for combo in self.role_combos.values():
@@ -606,7 +744,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         self._fill_combo(
             self.model_combo,
             [asset.path for asset in assets.main_models()],
-            placeholder="（未找到扩散模型）",
+            placeholder=None,
             show_role=False,
         )
         for role, combo in self.role_combos.items():
@@ -615,9 +753,9 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         if saved_model and self.model_combo.findData(saved_model) < 0:
             # 已保存的主模型不在本次扫描结果里（目录被移除 / 扫描根不含它）时补一条，
             # 避免任何一次信号触发都把 model 回落成空值导致无法启动服务。
-            self._add_combo_item(self.model_combo, Path(saved_model), placeholder_first=True)
-        if not saved_model and self.model_combo.count() > 1:
-            self.model_combo.setCurrentIndex(1)
+            self._add_combo_item(self.model_combo, Path(saved_model))
+        if not saved_model and self.model_combo.count() > 0:
+            self.model_combo.setCurrentIndex(0)
         self._apply_component_selection()
         self._update_preview()
         self._refresh_component_actions()
@@ -628,14 +766,18 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         combo: QComboBox,
         paths: Sequence[Path],
         *,
-        placeholder: str,
+        placeholder: str | None,
         show_role: bool = True,
     ) -> None:
-        """重建下拉：首项为占位，其余按「文件名 · 角色」列出；保留原选中项。"""
+        """重建下拉：``placeholder`` 非空时首项为占位（主模型不再插「未找到…」占位），
+
+        其余按「文件名 · 角色」列出；保留原选中项。
+        """
         previous = combo.currentData()
         combo.blockSignals(True)
         combo.clear()
-        combo.addItem(placeholder, "")
+        if placeholder is not None:
+            combo.addItem(placeholder, "")
         for path in paths:
             asset = self._assets.get(path)
             suffix = f" · {asset.role_label}" if asset is not None and show_role else ""
@@ -646,11 +788,11 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         combo.setCurrentIndex(index if index >= 0 else 0)
         combo.blockSignals(False)
 
-    def _add_combo_item(self, combo: QComboBox, path: Path, *, placeholder_first: bool = False) -> None:
+    def _add_combo_item(self, combo: QComboBox, path: Path, *, show_role: bool = True) -> None:
         """给下拉补一条自定义路径（保留已保存但不在扫描结果里的选择）。"""
         combo.blockSignals(True)
         asset = self._assets.get(path)
-        suffix = f" · {asset.role_label}" if asset is not None and not placeholder_first else ""
+        suffix = f" · {asset.role_label}" if asset is not None and show_role else ""
         combo.addItem(f"{path.name}{suffix}", str(path))
         combo.setItemData(combo.count() - 1, str(path), Qt.ItemDataRole.ToolTipRole)
         combo.setCurrentIndex(combo.count() - 1)
@@ -776,7 +918,23 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         return "未找到扩散主模型：去「模型」页下载扩散模型，或在设置里登记模型目录后再启动服务。"
 
     def _update_preview(self) -> None:
-        self.preview_label.setText(command_preview(parse_paint_settings(self._settings)))
+        """刷新命令预览：非回填阶段合并实时控件值，避免「先刷预览、后同步设置」的滞后。"""
+        settings = self._settings if self._loading else {**self._settings, **self.settings()}
+        self.command_preview.setPlainText(command_preview(parse_paint_settings(settings)))
+
+    def _save_params(self) -> None:
+        """「保存参数」：把当前启动参数交给运行页立即落盘（画图参数全局只有一份）。"""
+        self.saveRequested.emit()
+
+    def _fill_params(self) -> None:
+        """「填入当前参数」：写进自定义参数框；与预览相同的内容不会二次追加。"""
+        settings = {**self._settings, **self.settings()}
+        if not str(settings.get("model") or "").strip():
+            self.statusRequested.emit("参数未就绪：请先选择主模型")
+            return
+        self.extra_args_edit.setPlainText(format_extra_args(startup_args_tail(settings)))
+        self._update_preview()
+        self.statusRequested.emit("已填入当前启动参数")
 
 
 class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件

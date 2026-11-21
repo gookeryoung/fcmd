@@ -102,6 +102,15 @@ class TestPortcheck:
             port = srv.getsockname()[1]
             assert is_port_in_use(port) is True
 
+    def test_is_port_in_use_detects_reuseaddr_listener(self) -> None:
+        """对端监听套接字带 SO_REUSEADDR 时仍能探测到占用（Windows 抢绑回归）。"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv.bind(("127.0.0.1", 0))
+            srv.listen(1)
+            port = srv.getsockname()[1]
+            assert is_port_in_use(port) is True
+
     def test_check_port_free(self, capsys: pytest.CaptureFixture[str]) -> None:
         """check_port 打印空闲状态。"""
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
