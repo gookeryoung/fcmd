@@ -73,6 +73,7 @@ from fcmd.gui.qt.widgets import (
     Card,
     PathField,
     button,
+    confirm,
     make_splitter,
     make_table,
 )
@@ -383,14 +384,11 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         dry_run = self._dry_run.isChecked()
         if not dry_run:
             label = mode_label(mode, SYNC_MODE_TEXT)
-            answer = QMessageBox.question(
+            if not confirm(
                 self,
                 "确认同步",
                 f"将按「{label}」模式同步：\n{left}\n↔ {right}\n\n可能覆盖或删除文件，是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
+            ):
                 return
         self._log.clear()
         self._set_busy(True)
@@ -564,14 +562,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """运行中关闭时先确认。"""
         if not self._busy:
             return True
-        answer = QMessageBox.question(
-            self,
-            "退出",
-            "任务正在运行，确定退出？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
+        return confirm(self, "退出", "任务正在运行，确定退出？")
 
     def _persist(self, geometry: str) -> None:
         """关闭时写回目录、模式、过滤与窗口 geometry。"""

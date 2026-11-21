@@ -84,6 +84,7 @@ from fcmd.gui.qt.widgets import (
     SelectionRow,
     StatusTag,
     button,
+    confirm,
     hint_label,
     link_button,
 )
@@ -1778,14 +1779,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         """关窗前确认进行中的下载，返回 ``False`` 表示用户取消关闭。"""
         if not self._downloading:
             return True
-        answer = QMessageBox.question(
+        if not confirm(
             self,
             "下载进行中",
             "下载尚未完成，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        ):
             return False
         self._stop_requested = True
         return True

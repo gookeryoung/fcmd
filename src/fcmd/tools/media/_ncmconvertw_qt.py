@@ -32,7 +32,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, PathField, button
+from fcmd.gui.qt.widgets import Card, PathField, button, confirm
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
@@ -407,14 +407,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         """运行中关闭时先确认；确认后通知后台尽快停止。"""
         if not self._running:
             return True
-        answer = QMessageBox.question(
-            self,
-            "确认",
-            "转换正在进行中，确定要退出吗？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
+        if not confirm(self, "确认", "转换正在进行中，确定要退出吗？"):
             return False
         self._cancel.set()
         return True

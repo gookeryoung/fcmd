@@ -70,7 +70,7 @@ from fcmd.apps.reshack.reshackw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_splitter, mono_font
+from fcmd.gui.qt.widgets import Card, button, confirm, hint_label, make_splitter, mono_font
 from fcmd.gui.qt.workers import EventBridge, submit
 
 if TYPE_CHECKING:
@@ -560,17 +560,17 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         except OSError as exc:
             QMessageBox.critical(self, "读取失败", str(exc))
             return
-        answer = QMessageBox.question(
-            self,
-            "确认替换",
-            f"类型: {resource.type_name} ({resource.type_id})\n"
-            f"名称: {resource.name_id}，语言: {resource.language_id}\n"
-            f"原大小: {format_file_size(resource.size)}，新大小: {format_file_size(len(new_data))}\n\n"
-            "将自动生成 .backup 备份后写入，继续？",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes or self._busy:
+        if (
+            not confirm(
+                self,
+                "确认替换",
+                f"类型: {resource.type_name} ({resource.type_id})\n"
+                f"名称: {resource.name_id}，语言: {resource.language_id}\n"
+                f"原大小: {format_file_size(resource.size)}，新大小: {format_file_size(len(new_data))}\n\n"
+                "将自动生成 .backup 备份后写入，继续？",
+            )
+            or self._busy
+        ):
             return
         self._set_busy(True)
         self._set_status("正在替换资源…")

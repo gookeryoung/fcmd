@@ -76,6 +76,7 @@ from fcmd.gui.qt.widgets import (
     Card,
     PageScroll,
     button,
+    confirm,
     hint_label,
     make_table,
     make_table_item,
@@ -739,7 +740,7 @@ class FilescanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             if len(targets) > 5:
                 preview += " 等"
             prompt = f"确认删除选中的 {len(targets)} 个类型（共 {total_exts} 个后缀）？\n\n{preview}"
-        if not self._ask("删除类型", prompt):
+        if not confirm(self, "删除类型", prompt):
             return
         kept = [row for index, row in enumerate(rows) if index not in selected]
         self._refresh_whitelist_table(kept)
@@ -829,7 +830,7 @@ class FilescanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
             return
         rule = self.ruleset.find(rule_id)
         name = rule.name if rule is not None else rule_id
-        if not self._ask("删除规则", f"确定删除规则 {rule_id}（{name}）？"):
+        if not confirm(self, "删除规则", f"确定删除规则 {rule_id}（{name}）？"):
             return
         try:
             new_set = self.ruleset.remove_rule(rule_id)
@@ -850,12 +851,12 @@ class FilescanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         )
 
     def _load_builtin(self) -> None:
-        if self.ruleset.rules and not self._ask("载入内置规则", "当前规则将被内置规则覆盖，继续？"):
+        if self.ruleset.rules and not confirm(self, "载入内置规则", "当前规则将被内置规则覆盖，继续？"):
             return
         self._sync_ruleset(builtin_ruleset(), message="已载入内置敏感规则")
 
     def _clear_rules(self) -> None:
-        if not self._ask("清空规则", "确定清空全部规则与表达式？"):
+        if not confirm(self, "清空规则", "确定清空全部规则与表达式？"):
             return
         self._sync_ruleset(replace(self.ruleset, rules=(), expression=""), message="规则已清空")
 
@@ -1215,16 +1216,6 @@ class FilescanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
             QThreadPool.globalInstance().waitForDone(3000)
         return True
-
-    def _ask(self, title: str, question: str) -> bool:
-        answer = QMessageBox.question(
-            self,
-            title,
-            question,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
 
     # 结果页筛选：进入结果页后由「应用筛选」按钮触发；筛选条件在切页时也自动套用一次
     def _on_tab_changed(self, index: int) -> None:

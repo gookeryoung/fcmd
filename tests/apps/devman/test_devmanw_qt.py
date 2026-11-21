@@ -420,7 +420,7 @@ def test_uninstall_confirm_cancel(home: Path, monkeypatch: pytest.MonkeyPatch) -
     window = DevmanWindow()
     try:
         _select_installed(window)
-        monkeypatch.setattr(_devmanw_qt, "_confirm", lambda *_a, **_k: False)
+        monkeypatch.setattr(_devmanw_qt, "confirm", lambda *_a, **_k: False)
         monkeypatch.setattr(window, "_start", lambda label, _work: calls.append(label))
         window.uninstall_selected()
         assert calls == []
@@ -433,7 +433,7 @@ def test_uninstall_confirm_accepts(home: Path, monkeypatch: pytest.MonkeyPatch) 
     window = DevmanWindow()
     try:
         _select_installed(window, "20.11.1")
-        monkeypatch.setattr(_devmanw_qt, "_confirm", lambda *_a, **_k: True)
+        monkeypatch.setattr(_devmanw_qt, "confirm", lambda *_a, **_k: True)
         captured: dict[str, Any] = {}
         monkeypatch.setattr(window, "_start", lambda label, work: captured.update(label=label, work=work))
         window.uninstall_selected()
@@ -494,7 +494,7 @@ def test_path_actions_confirm_and_start(home: Path, monkeypatch: pytest.MonkeyPa
     window = DevmanWindow()
     try:
         window._apply_snapshot(_snapshot())
-        monkeypatch.setattr(_devmanw_qt, "_confirm", lambda *_a, **_k: True)
+        monkeypatch.setattr(_devmanw_qt, "confirm", lambda *_a, **_k: True)
         labels: list[str] = []
         monkeypatch.setattr(window, "_start", lambda label, _work: labels.append(label))
         window.init_path()
@@ -509,9 +509,9 @@ def test_shadow_gate_needs_confirmation(home: Path, monkeypatch: pytest.MonkeyPa
     window = DevmanWindow()
     try:
         window.path_state = {"shadowed": {"node": [r"C:\node\node.exe"]}, "registered": False}
-        monkeypatch.setattr(_devmanw_qt, "_confirm", lambda *_a, **_k: True)
+        monkeypatch.setattr(_devmanw_qt, "confirm", lambda *_a, **_k: True)
         assert window._shadow_gate() is True
-        monkeypatch.setattr(_devmanw_qt, "_confirm", lambda *_a, **_k: False)
+        monkeypatch.setattr(_devmanw_qt, "confirm", lambda *_a, **_k: False)
         assert window._shadow_gate() is None
         window.path_state = {"shadowed": {}, "registered": False}
         assert window._shadow_gate() is False

@@ -81,7 +81,15 @@ from fcmd.apps.renamer.renamerw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_splitter, make_table, make_table_item
+from fcmd.gui.qt.widgets import (
+    Card,
+    button,
+    confirm,
+    hint_label,
+    make_splitter,
+    make_table,
+    make_table_item,
+)
 
 __all__ = ["RenamerWindow", "run_qt"]
 
@@ -659,7 +667,7 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if not plan.changes:
             QMessageBox.information(self, "没有可执行项", "当前没有状态为「可执行」的改名。")
             return
-        if not _confirm(self, "确认改名", f"将改名 {len(plan.changes)} 项，继续？"):
+        if not confirm(self, "确认改名", f"将改名 {len(plan.changes)} 项，继续？"):
             return
         report = execute_plan(plan)
         self._last_report = report
@@ -773,7 +781,7 @@ class RenamerWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _apply_example(self, example: Example) -> bool:
         """把示例规则写入规则表；已有规则时先确认覆盖。"""
-        if self._rules and not _confirm(
+        if self._rules and not confirm(
             self, "载入示例", f"用示例「{example.name}」替换当前 {len(self._rules)} 条规则？"
         ):
             return False
@@ -812,18 +820,6 @@ def _set_combo(combo: QComboBox, labels: dict[str, str], value: str) -> None:
     index = combo.findText(labels.get(value, value))
     if index >= 0:
         combo.setCurrentIndex(index)
-
-
-def _confirm(parent: QWidget, title: str, text: str) -> bool:
-    """是 / 否确认框，默认焦点在「否」。"""
-    answer = QMessageBox.question(
-        parent,
-        title,
-        text,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
-    )
-    return answer == QMessageBox.StandardButton.Yes
 
 
 def run_qt(settings_path: Path | None = None) -> None:

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -72,6 +73,7 @@ __all__ = [
     "StatusTag",
     "apply_splitter_sizes",
     "button",
+    "confirm",
     "hint_label",
     "icon_button",
     "link_button",
@@ -118,6 +120,18 @@ def icon_button(text: str, *, tooltip: str = "", checkable: bool = False) -> QTo
     widget.setCursor(Qt.CursorShape.PointingHandCursor)
     widget.setToolTip(tooltip)
     return widget
+
+
+def confirm(parent: QWidget, title: str, text: str) -> bool:
+    """是 / 否确认框，默认焦点在「否」。"""
+    answer = QMessageBox.question(
+        parent,
+        title,
+        text,
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        QMessageBox.StandardButton.No,
+    )
+    return answer == QMessageBox.StandardButton.Yes
 
 
 def hint_label(text: str = "", *, wrap: bool = True) -> QLabel:  # pragma: no cover - Qt 控件

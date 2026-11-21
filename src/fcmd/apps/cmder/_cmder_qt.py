@@ -70,7 +70,7 @@ from fcmd.apps.cmder._volumes import enumerate_volumes
 from fcmd.gui import geometry as _geometry
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.theme_menu import ThemeMenu
-from fcmd.gui.qt.widgets import button, hint_label
+from fcmd.gui.qt.widgets import button, confirm, hint_label
 from fcmd.gui.qt.window import restore_geometry
 from fcmd.gui.qt.workers import submit
 
@@ -432,17 +432,6 @@ class CmderQtWindow(QMainWindow):
         dialog.setDetailedText("")
         dialog.exec()
 
-    def ask(self, title: str, question: str) -> bool:
-        """是 / 否确认。"""
-        answer = QMessageBox.question(
-            self,
-            title,
-            question,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
-
     def ask_text(self, title: str, label: str, default: str = "") -> tuple[str, bool]:
         """单行输入框。"""
         return QInputDialog.getText(self, title, label, text=default)
@@ -496,7 +485,7 @@ class CmderQtWindow(QMainWindow):
         if self.closing:
             event.accept()
             return
-        if self._queue_running and not self.ask("传输进行中", "队列仍有任务在执行，取消并退出？"):
+        if self._queue_running and not confirm(self, "传输进行中", "队列仍有任务在执行，取消并退出？"):
             event.ignore()
             return
         self.closing = True
@@ -741,7 +730,7 @@ class CmderQtWindow(QMainWindow):
         if self.active.archive is not None:
             return self._remove_archive_members()
         action = "永久删除" if permanent else "移入回收站"
-        if not self.ask(action, f"确定{action} {len(paths)} 项？"):
+        if not confirm(self, action, f"确定{action} {len(paths)} 项？"):
             return False
         try:
             if permanent:
@@ -1003,7 +992,7 @@ class CmderQtWindow(QMainWindow):
                 paths,
                 self.active.archive_prefix,
                 options=self.archive_options,
-                replace=self.ask("覆盖同名成员", "成员已存在时是否覆盖？"),
+                replace=confirm(self, "覆盖同名成员", "成员已存在时是否覆盖？"),
             )
         except (OSError, ValueError) as exc:
             self.show_error("加入压缩包失败", str(exc))
@@ -1016,7 +1005,7 @@ class CmderQtWindow(QMainWindow):
         if self.active.archive is None:
             return False
         names = [entry.archive_member for entry in self.active.selected_entries() if entry.archive_member]
-        if not names or not self.ask("删除成员", f"从压缩包删除 {len(names)} 个成员？"):
+        if not names or not confirm(self, "删除成员", f"从压缩包删除 {len(names)} 个成员？"):
             return False
         try:
             count = _archwrite.remove_members(self.active.archive, names, options=self.archive_options)

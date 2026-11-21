@@ -52,7 +52,7 @@ from fcmd.apps.devman.devmanw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_splitter
+from fcmd.gui.qt.widgets import Card, button, confirm, hint_label, make_splitter
 from fcmd.gui.qt.workers import EventBridge, submit
 
 __all__ = ["DevmanWindow", "run_qt"]
@@ -567,7 +567,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if total <= 1:
             lines.append("这是最后一个版本，卸载后会从用户 PATH 移除 devman 写入的条目。")
         lines.append("已打开的终端不受影响。继续？")
-        if not _confirm(self, "卸载版本", "\n".join(lines)):
+        if not confirm(self, "卸载版本", "\n".join(lines)):
             return
 
         def work(
@@ -631,7 +631,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             detail = "；".join(f"{tool}: {', '.join(items)}" for tool, items in shadowed.items())
             lines.append(f"前置后会在新终端里遮蔽现有命令：\n{detail}")
         lines.append("写入后需要重开终端才生效。继续？")
-        if not _confirm(self, "写入用户 PATH", "\n\n".join(lines)):
+        if not confirm(self, "写入用户 PATH", "\n\n".join(lines)):
             return
 
         def work(
@@ -656,7 +656,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             f"并从用户 PATH 精确移除 devman 写入的 {len(recorded)} 个条目；其余 PATH 内容不受影响。",
             "已打开的终端不受影响。继续？",
         ]
-        if not _confirm(self, "移除 PATH 集成", "\n\n".join(lines)):
+        if not confirm(self, "移除 PATH 集成", "\n\n".join(lines)):
             return
 
         def work(
@@ -682,7 +682,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         message = (
             f"devman 的 shim 目录会前置到用户 PATH，在新终端里遮蔽现有命令：\n\n{detail}\n\n确认要接管这些命令吗？"
         )
-        return True if _confirm(self, "会遮蔽现有命令", message) else None
+        return True if confirm(self, "会遮蔽现有命令", message) else None
 
     # ------------------------------------------------------------------ #
     # 生命周期
@@ -696,7 +696,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         """任务进行中关闭时先确认。"""
         if not self._busy:
             return True
-        return _confirm(self, "任务进行中", f"「{self._label}」仍在执行，直接退出？")
+        return confirm(self, "任务进行中", f"「{self._label}」仍在执行，直接退出？")
 
     def _persist(self, geometry: str) -> None:
         save_settings(
@@ -736,18 +736,6 @@ def _row_iid(item: QTreeWidgetItem | None) -> str | None:
         return None
     data = item.data(0, Qt.ItemDataRole.UserRole)
     return str(data.get("iid")) if isinstance(data, dict) else None
-
-
-def _confirm(parent: QWidget, title: str, text: str) -> bool:
-    """是 / 否确认框，默认焦点在「否」。"""
-    answer = QMessageBox.question(
-        parent,
-        title,
-        text,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
-    )
-    return answer == QMessageBox.StandardButton.Yes
 
 
 def run_qt(root_dir: str = "") -> None:

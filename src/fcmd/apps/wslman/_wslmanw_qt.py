@@ -57,6 +57,7 @@ from fcmd.gui.qt.widgets import (
     LogView,
     PageScroll,
     button,
+    confirm,
     hint_label,
     make_splitter,
     make_table,
@@ -573,7 +574,7 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         distro = self._selected()
         if distro is None:
             return
-        if not self._ask("停止发行版", f"停止 {distro.name}？正在运行的任务会被中断。"):
+        if not confirm(self, "停止发行版", f"停止 {distro.name}？正在运行的任务会被中断。"):
             return
 
         def work(_cancel: threading.Event) -> str:
@@ -967,7 +968,7 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         )
 
     def _on_close(self) -> bool:
-        if self._busy and not self._ask("任务进行中", "有任务正在执行，取消并退出？"):
+        if self._busy and not confirm(self, "任务进行中", "有任务正在执行，取消并退出？"):
             return False
         self._cancel.set()
         self._closing = True
@@ -977,16 +978,6 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             if timer is not None:
                 timer.stop()
         return True
-
-    def _ask(self, title: str, question: str) -> bool:
-        answer = QMessageBox.question(
-            self,
-            title,
-            question,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
 
 
 class _UnregisterDialog(QDialog):  # pragma: no cover - 模态对话框
@@ -1243,7 +1234,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
             QMessageBox.critical(self, "安装本地镜像", "请选择安装目录")
             return
         replace = self.replace.isChecked()
-        if replace and not self._ask("替换发行版", f"替换 {name} 会先注销现有发行版（运行中会先停止），继续？"):
+        if replace and not confirm(self, "替换发行版", f"替换 {name} 会先注销现有发行版（运行中会先停止），继续？"):
             return
         backup: Path | None = None
         if replace and load_config().require_backup_on_replace:
@@ -1262,16 +1253,6 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
     def payload(self) -> tuple[Path, str, Path, bool, Path | None] | None:
         """确认后的安装参数；取消时为 ``None``。"""
         return self._payload
-
-    def _ask(self, title: str, question: str) -> bool:
-        answer = QMessageBox.question(
-            self,
-            title,
-            question,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        return answer == QMessageBox.StandardButton.Yes
 
 
 def run_qt(settings_path: Path | None = None) -> None:
