@@ -64,6 +64,8 @@ Diffusers / ComfyUI 需要 Python 运行时与额外依赖，ComfyUI 的图工�
   `<repo>/model.safetensors`、`<repo>/model-Q4_K_M.gguf` 这类通用文件名，家族信息只在
   仓库目录名里（`qwen-image-2.1` / `MiniMax-H3-Image`），不回看父目录会把主流模型
   误判为未知权重而直接从画图下拉里消失；
+- 同一扩散仓库里的 Qwen / Mistral GGUF 识别为 `llm` 文本编码器，普通聊天仓库里的
+  同名文件仍为 `unknown`，避免模型页把聊天模型误判成扩散权重；
 - 家族只用于预选槽位与加载方式（checkpoint 用 `-m`，diffusion 用 `--diffusion-model`），
   不强制必填；页面允许手动改选，并用「额外参数」原样追加到启动命令；
 - `llmmodel.scan_models` 惰性调用 `is_diffusion_weight` 跳过扩散权重与文本编码器 GGUF，
@@ -102,6 +104,10 @@ src/fcmd/apps/llm/
 - 画图页设置持久化到 `ui/llmw.json` 的 `paint` 字段（引擎 tag、组件、参数、输出目录、
   自动启动、端口），由 `_llmw_winsettings.load_settings` / `save_settings` 逐字段校验；
 - `pyproject.toml` 注册 `llmpaint`，`cli/_manifest_data.py` 重新生成后包含全部子命令。
+- 引擎安装对齐 LocModel 的做法：CUDA 引擎包与 `cudart-sd-bin-win-cu12-x64.zip` 一起
+  解压；本地导入会优先带上同目录 cudart 包，GUI 支持多选 zip / 直接导入已编译引擎
+  目录（可直接指向 LocModel 的 `engines/sd/<tag>`）；缺少 `cublas64_12.dll` 等
+  运行库时启动前给出明确提示，而不是让 sd-server 静默崩溃。
 
 ## 验证
 

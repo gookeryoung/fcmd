@@ -44,6 +44,8 @@ __all__ = [
     "fetch_sd_releases",
     "install_sd_engine",
     "list_sd_engines",
+    "locmodel_sd_engine",
+    "missing_cuda_runtime",
     "parse_sd_releases",
     "pick_default_variant",
     "resolve_sd_engine",
@@ -61,7 +63,9 @@ _TAG_RE: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 #: 引擎包：``sd-master-1106-532d2c1-bin-win-cuda12-x64.zip``。
 _ENGINE_ASSET_RE: Final[re.Pattern[str]] = re.compile(
-    r"^sd-(?P<tag>master-\d+-[0-9a-f]+)-bin-win-(?P<variant>cuda\d+|vulkan|cpu|rocm-[\d.]+)-x64\.zip$",
+    # 新版资产名省略 release 序号（``sd-master-532d2c1-...``），旧版是
+    # ``sd-master-1106-532d2c1-...``；两种都要能解析，否则版本列表为空。
+    r"^sd-(?P<tag>master-(?:\d+-)?[0-9a-f]+)-bin-win-(?P<variant>cuda\d*|vulkan|cpu|rocm-[\d.]+)-x64\.zip$",
     re.IGNORECASE,
 )
 #: CUDA 运行库包：``cudart-sd-bin-win-cu12-x64.zip``。
@@ -355,8 +359,43 @@ def list_sd_engines(home: Path | None = None) -> list[SdEngine]:
     return infos
 
 
-def resolve_sd_engine(tag: str | None = None, home: Path | None = None) -> SdEngine:
-    """解析要使用的画图引擎：``FCMD_SD_SERVER`` → 指定 tag → current → 最新安装 → PATH。"""
+def locmodel_sd_engine(home: Path | None = None) -> SdEngine | None:
+    """探测 LocModel 已安装的 sd.cpp 引擎（``%LOCALAPPDATA%/LocModel/engines/sd``）。
+
+    只作为**缺失运行库时的兜底**：LocModel 的引擎目录自带 cublas / cudart，
+    用户无需重复下载；找不到或结构不合法时返回 ``None``。
+    """
+    del home
+    local = os.environ.get("LOCALAPPDATA")
+    if not local:
+        return None
+    root = Path(local) / "LocModel" / "engines" / "sd"
+    marker = root / "engine.json"
+    try:
+        raw = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    server = raw.get("server_path")
+    if not isinstance(server, str) or not server.strip():
+        return None
+    exe = Path(server)
+    if not exe.is_file():
+        return None
+    tag = str(raw.get("tag") or root.name)
+    backend = str(raw.get("variant") or "")
+    return SdEngine(tag, exe, "LocModel", backend, _detect_path_prepend(exe))
+
+
+def resolve_sd_engine(  # noqa: PLR0911, PLR0912 - 按优先级逐层回退
+    tag: str | None = None, home: Path | None = None
+) -> SdEngine:
+    """解析要使用的画图引擎：``FCMD_SD_SERVER`` → 指定 tag → current → 最新安装 → LocModel → PATH。
+
+    fcmd 自己的引擎若缺少 CUDA 运行库（cublas / cudart），优先回退到 LocModel
+    已安装的完整引擎，避免 sd-server 在加载阶段直接崩溃。
+    """
     env_raw = os.environ.get("FCMD_SD_SERVER")
     if env_raw:
         exe = Path(env_raw).expanduser()
@@ -377,16 +416,24 @@ def resolve_sd_engine(tag: str | None = None, home: Path | None = None) -> SdEng
         if info is not None:
             return info
 
+    broken: SdEngine | None = None
     if root.is_dir():
         for directory in sorted(root.iterdir(), reverse=True):
             if directory.is_dir():
                 info = _engine_info(directory)
-                if info is not None:
+                if info is None:
+                    continue
+                if not missing_cuda_runtime(info):
                     return info
-
+                broken = broken or info
     which = shutil.which(SD_EXE)
     if which:
         return SdEngine("system", Path(which), "PATH", "", _detect_path_prepend(Path(which)))
+    fallback = locmodel_sd_engine(home)
+    if fallback is not None and not missing_cuda_runtime(fallback):
+        return fallback
+    if broken is not None:
+        return broken
     raise ServeError("未找到 stable-diffusion.cpp 引擎：先执行 fcmd llmpaint engine-install")
 
 
@@ -397,6 +444,21 @@ def sd_engine_env(engine: SdEngine) -> dict[str, str] | None:
     env = os.environ.copy()
     env["PATH"] = os.pathsep.join([*engine.path_prepend, env.get("PATH", "")])
     return env
+
+
+def missing_cuda_runtime(engine: SdEngine) -> tuple[str, ...]:
+    """CUDA 构建缺少的 runtime DLL：返回缺失文件名（非 CUDA 引擎返回空）。
+
+    stable-diffusion.cpp 的 CUDA zip 与 ``cudart-sd-bin-win-cu12-x64.zip`` 是两个
+    资产；只解压引擎包时 ``cublas64_12.dll`` / ``cudart64_12.dll`` 缺失，进程会在
+    加载阶段直接崩溃且日志为空，很难排查。安装 / 启动前显式检查并给出可操作提示。
+    """
+    directory = engine.exe.parent
+    if not (directory / "ggml-cuda.dll").is_file():
+        return ()
+    return tuple(
+        name for name in ("cublas64_12.dll", "cublasLt64_12.dll", "cudart64_12.dll") if not (directory / name).is_file()
+    )
 
 
 def check_sd_engine(engine: SdEngine, runner: Runner = run_command) -> Check:
@@ -421,6 +483,22 @@ def _tag_from_source(path: Path | None, url: str | None, archives: Sequence[Path
     if url:
         return url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".zip") or "sd-local"
     return ""
+
+
+def _with_sibling_cudart(archives: Sequence[Path]) -> list[Path]:
+    """本地 CUDA 引擎 zip 旁边如果有 cudart 包，自动一起解压。"""
+    resolved = [item.expanduser() for item in archives]
+    names = {item.name.casefold() for item in resolved}
+    if any("cudart" in name for name in names):
+        return resolved
+    if not any("cuda" in item.name.casefold() for item in resolved):
+        return resolved
+    for directory in {item.parent for item in resolved}:
+        for candidate in directory.glob("cudart-sd-bin-win-*-x64.zip"):
+            if candidate.is_file():
+                resolved.append(candidate)
+                break
+    return resolved
 
 
 def _install_from_archives(
@@ -455,7 +533,7 @@ def _install_from_path(tag: str, path: Path, target: Path, *, backend: str) -> S
     if source.is_file():
         if source.suffix.lower() != ".zip":
             raise ServeError(f"仅支持注册引擎目录或本地 .zip 压缩包: {source}")
-        return _install_from_archives(tag, [source], target, backend=backend)
+        return _install_from_archives(tag, _with_sibling_cudart([source]), target, backend=backend)
     if not source.is_dir():
         raise ServeError(f"引擎目录不存在: {source}")
     source_exe = _engine_exe_in(source)
@@ -519,7 +597,7 @@ def install_sd_engine(  # noqa: PLR0913 - 安装入口参数较多，与 llmengi
     backend = "" if variant == "auto" else variant
 
     if archives is not None:
-        engine = _install_from_archives(resolved_tag, archives, target, backend=backend)
+        engine = _install_from_archives(resolved_tag, _with_sibling_cudart(archives), target, backend=backend)
     elif path is not None:
         engine = _install_from_path(resolved_tag, path, target, backend=backend)
     elif url:

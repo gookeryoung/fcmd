@@ -10,6 +10,7 @@ import itertools
 import json
 import os
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -246,7 +247,13 @@ def test_paint_search_uses_multi_keyword_merger(window: Any, monkeypatch: pytest
     browse = window.page("models").browse
     calls: list[tuple[str, ...]] = []
 
-    def fake_multi(keywords, page=1, page_size=20, sort="default", timeout=30):
+    def fake_multi(
+        keywords: Sequence[str],
+        page: int = 1,
+        page_size: int = 20,
+        sort: str = "default",
+        timeout: float = 30,
+    ) -> ModelSearch:
         calls.append(tuple(keywords))
         return ModelSearch((), 0, page, page_size)
 

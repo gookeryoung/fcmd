@@ -129,6 +129,23 @@ _PARENT_ROLES: tuple[tuple[str, str], ...] = (
 
 _ENCODER_PAIRS: dict[str, str] = {"l": "clip_l", "g": "clip_g"}
 
+_LLM_ENCODER_KEYWORDS: tuple[str, ...] = (
+    "qwen3",
+    "qwen2.5",
+    "qwen2-",
+    "qwen2-vl",
+    "qwen3-vl",
+    "mistral",
+    "llama",
+)
+"""可能作为扩散模型文本编码器的 LLM 家族关键字（仅在同一仓库已识别为扩散家族时生效）。"""
+
+
+def _llm_encoder_hint(name: str) -> bool:
+    """文件名是否像扩散模型用的 LLM 文本编码器（Qwen / Mistral / Llama）。"""
+    normalized = _normalized(name)
+    return any(token in normalized for token in _LLM_ENCODER_KEYWORDS)
+
 
 def _encoder_role(name: str) -> AssetRole | None:
     """从文件名识别文本编码器子类型（CLIP-L / CLIP-G / T5）。
@@ -210,6 +227,10 @@ def classify_role(path: Path) -> AssetRole:  # noqa: PLR0911 - 角色分支各�
     if "lora" in name:
         return "lora"
     family = detect_family(path)
+    # Qwen / Mistral 等 LLM 只有位于已识别的扩散模型仓库里才当作文本编码器；
+    # 普通的聊天模型仓库保持 unknown，避免被 llmmodel.scan_models 当成扩散权重跳过。
+    if family != "unknown" and _llm_encoder_hint(name):
+        return "llm"
     if family != "unknown":
         return "diffusion" if FAMILIES[family].mode == "diffusion" else "checkpoint"
     return "unknown"

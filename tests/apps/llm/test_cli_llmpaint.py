@@ -220,6 +220,8 @@ class TestClassifyRole:
             (Path("sdxl-base.safetensors"), "checkpoint"),
             (Path("models/qwen-image-2.1/model.safetensors"), "diffusion"),
             (Path("models/MiniMax-H3-Image/model-Q4_K_M.gguf"), "diffusion"),
+            (Path("models/42ailab/Z-Image-Turbo-GGUF/Qwen3-4B-Instruct-2507-Q8_0.gguf"), "llm"),
+            (Path("models/Qwen3.8-27B/Qwen3.8-27B-Q4_K_M.gguf"), "unknown"),
             (Path("whatever.safetensors"), "unknown"),
         ],
     )
@@ -474,6 +476,24 @@ class TestImages:
 # ---------------------------------------------------------------------- #
 # stable-diffusion.cpp 引擎
 # ---------------------------------------------------------------------- #
+def test_locmodel_engine_is_detected_as_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """LocModel 的完整引擎可作为缺运行库时的兜底。"""
+    root = tmp_path / "LocalAppData" / "LocModel" / "engines" / "sd"
+    exe = root / "master-1094" / "sd-server.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"x")
+    (root / "engine.json").write_text(
+        json.dumps({"tag": "master-1094", "variant": "cuda", "server_path": str(exe)}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "LocalAppData"))
+    engine = _llmpaint_engine.locmodel_sd_engine()
+    assert engine is not None
+    assert engine.exe == exe
+    assert engine.tag == "master-1094"
+    assert engine.source == "LocModel"
+
+
 class TestSdReleases:
     def test_parse_filters_windows_assets(self) -> None:
         releases = _llmpaint_engine.parse_sd_releases(_sd_payload())
@@ -491,6 +511,49 @@ class TestSdReleases:
             "sd-master-1106-532d2c1-bin-win-vulkan-x64.zip"
         ]
         assert releases[1].published == ""
+
+    def test_parse_accepts_current_asset_name_without_sequence(self) -> None:
+        """新版资产名 ``sd-master-532d2c1-...`` 也要能解析，否则版本列表为空。"""
+        payload = [
+            {
+                "tag_name": "master-1106-532d2c1",
+                "assets": [
+                    {"name": "sd-master-532d2c1-bin-win-cuda12-x64.zip", "browser_download_url": "https://e/a.zip"},
+                    {"name": "cudart-sd-bin-win-cu12-x64.zip", "browser_download_url": "https://e/b.zip"},
+                ],
+            }
+        ]
+        release = _llmpaint_engine.parse_sd_releases(payload)[0]
+        assert release.tag == "master-1106-532d2c1"
+        assert [asset.name for asset in release.install_assets("cuda12")] == [
+            "sd-master-532d2c1-bin-win-cuda12-x64.zip",
+            "cudart-sd-bin-win-cu12-x64.zip",
+        ]
+
+    def test_local_cuda_zip_picks_up_sibling_cudart(self, tmp_path: Path) -> None:
+        """本地只选 CUDA 引擎 zip 时，同目录 cudart 包要自动一起解压。"""
+        engine_zip = tmp_path / "sd-master-532d2c1-bin-win-cuda12-x64.zip"
+        runtime_zip = tmp_path / "cudart-sd-bin-win-cu12-x64.zip"
+        engine_zip.write_bytes(b"x")
+        runtime_zip.write_bytes(b"x")
+        picked = _llmpaint_engine._with_sibling_cudart([engine_zip])
+        assert [path.name for path in picked] == [engine_zip.name, runtime_zip.name]
+        assert _llmpaint_engine._with_sibling_cudart([engine_zip, runtime_zip]) == [engine_zip, runtime_zip]
+
+    def test_missing_cuda_runtime_is_reported(self, tmp_path: Path) -> None:
+        """CUDA 引擎缺 cublas / cudart 时启动前给出明确错误。"""
+        exe = tmp_path / "sd-server.exe"
+        exe.write_bytes(b"x")
+        (tmp_path / "ggml-cuda.dll").write_bytes(b"x")
+        engine = SdEngine("t", exe, "test", "cuda12", ())
+        assert set(_llmpaint_engine.missing_cuda_runtime(engine)) == {
+            "cublas64_12.dll",
+            "cublasLt64_12.dll",
+            "cudart64_12.dll",
+        }
+        for name in ("cublas64_12.dll", "cublasLt64_12.dll", "cudart64_12.dll"):
+            (tmp_path / name).write_bytes(b"x")
+        assert _llmpaint_engine.missing_cuda_runtime(engine) == ()
 
     def test_parse_limit_and_invalid_payload(self) -> None:
         assert len(_llmpaint_engine.parse_sd_releases(_sd_payload(), limit=1)) == 1
@@ -608,7 +671,8 @@ class TestInstallEngine:
                 "x", path=tmp_path, archives=[tmp_path / "a.zip"], home=tmp_path / "home"
             )
 
-    def test_use_and_resolve_errors(self, tmp_path: Path) -> None:
+    def test_use_and_resolve_errors(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("LOCALAPPDATA", raising=False)
         home = tmp_path / "home"
         with pytest.raises(ServeError, match="未安装"):
             _llmpaint_engine.use_sd_engine("absent", home)
@@ -862,6 +926,14 @@ class TestLifecycle:
     def test_start_rejects_busy_port(self, tmp_path: Path) -> None:
         with pytest.raises(ServeError, match="端口"):
             _llmpaint_server.start_paint(_plan(tmp_path), home=tmp_path, port_in_use=lambda port, host: True)
+
+    def test_launch_rejects_missing_cuda_runtime(self, tmp_path: Path) -> None:
+        """CUDA 引擎缺运行库时不再让子进程直接崩溃，启动前给出可操作提示。"""
+        plan = _plan(tmp_path)
+        plan.engine.exe.write_bytes(b"x")
+        (tmp_path / "ggml-cuda.dll").write_bytes(b"x")
+        with pytest.raises(ServeError, match="CUDA 运行库"):
+            _llmpaint_server.launch_paint(plan, home=tmp_path)
 
     def test_launch_waits_for_health(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         class _Proc:

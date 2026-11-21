@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Any
 
 from fcmd.apps.llm import _llmconfig, _llmpaint, llmserve
-from fcmd.apps.llm._llmpaint_engine import SdEngine, resolve_sd_engine, sd_engine_env
+from fcmd.apps.llm._llmpaint_engine import (
+    SdEngine,
+    missing_cuda_runtime,
+    resolve_sd_engine,
+    sd_engine_env,
+)
 from fcmd.apps.llm.llmbase import (
     Opener,
     ServeError,
@@ -310,6 +315,14 @@ def launch_paint(
     sleep: Callable[[float], None] = time.sleep,
 ) -> PaintState:
     """拉起 ``sd-server`` 并等待健康检查通过。"""
+    missing = missing_cuda_runtime(plan.engine)
+    if missing:
+        raise ServeError(
+            "画图引擎缺少 CUDA 运行库："
+            + "、".join(missing)
+            + "。请重新安装引擎（同时选择 cudart-sd-bin-win-*-x64.zip），"
+            "或用「导入引擎目录」指向 LocModel 等已带运行库的引擎目录。"
+        )
     plan.log.parent.mkdir(parents=True, exist_ok=True)
     argv = plan_argv(plan)
     kwargs: dict[str, Any] = {

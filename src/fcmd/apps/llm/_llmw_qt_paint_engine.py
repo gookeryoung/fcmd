@@ -255,10 +255,26 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
     def _install_local(self) -> None:
         if self._installing:
             return
-        chosen, _filter = QFileDialog.getOpenFileName(self, "选择 sd.cpp 引擎 zip", "", "Zip 压缩包 (*.zip)")
+        chosen, _filter = QFileDialog.getOpenFileNames(
+            self,
+            "选择 sd.cpp 引擎包（可同时选引擎 + cudart）",
+            "",
+            "Zip 压缩包 (*.zip)",
+        )
         if not chosen:
             return
-        self.status.setText(f"正在导入 {Path(chosen).name}…")
+        paths = tuple(Path(item) for item in chosen)
+        label = paths[0].name if len(paths) == 1 else f"{paths[0].name} 等 {len(paths)} 个包"
+        self.status.setText(f"正在导入 {label}…")
+        self._start_install(None, archives=paths)
+
+    def _install_directory(self) -> None:
+        if self._installing:
+            return
+        chosen = QFileDialog.getExistingDirectory(self, "选择 sd.cpp 引擎目录")
+        if not chosen:
+            return
+        self.status.setText(f"正在注册引擎目录 {Path(chosen).name}…")
         self._start_install(None, path=Path(chosen))
 
     def _start_install(self, tag: str | None, **kwargs: Any) -> None:
