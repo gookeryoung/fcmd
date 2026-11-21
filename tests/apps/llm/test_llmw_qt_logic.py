@@ -300,6 +300,8 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert partial_row.download_button.isEnabled()
     progress = partial_row.findChild(QLabel, "DownloadProgress")
     assert progress is not None and progress.text() == "已下载 42%"
+    partial_row.set_download_state(busy=True, active=False, queued=True)
+    assert partial_row.download_button.text() == "排队中…"
     assert row.download_button.text() == "下载"
     assert row.repo == "Qwen/demo"
     assert not row.is_expanded()

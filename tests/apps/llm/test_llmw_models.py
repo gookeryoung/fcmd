@@ -61,11 +61,13 @@ class TestSettings:
         assert settings_from_dict(None) == DownloadGuiSettings()
         assert DownloadGuiSettings().source == "auto"
         assert DownloadGuiSettings().workers == 8
+        assert DownloadGuiSettings().parallel == 2
 
     def test_roundtrip(self) -> None:
         settings = DownloadGuiSettings(
             source="hf-mirror",
             workers=8,
+            parallel=3,
             verify=False,
             include="*.safetensors",
             exclude="*.md",
@@ -77,6 +79,7 @@ class TestSettings:
             {
                 "source": "unknown",
                 "workers": 999,
+                "parallel": 99,
                 "verify": "yes",
                 "include": 1,
                 "exclude": "*.bin",
@@ -84,6 +87,7 @@ class TestSettings:
         )
         assert settings.source == "auto"
         assert settings.workers == 8
+        assert settings.parallel == 4
         assert settings.verify is True
         assert settings.include == ""
         assert settings.exclude == "*.bin"

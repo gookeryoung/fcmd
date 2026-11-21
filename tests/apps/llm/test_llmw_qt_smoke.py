@@ -1300,6 +1300,59 @@ def test_model_download_quant_chooser(window: Any, monkeypatch: pytest.MonkeyPat
     assert page.download_text.text() == ""
 
 
+def test_model_download_parallel_and_queue(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """多模型并行：达到并发上限后排队，完成一个自动启动下一个，同仓库不重复入队。"""
+    from fcmd.apps.llm import _llmw_qt_center as center
+
+    window.show_page("models")
+    page = window.page("models").browse
+    settings = dict(page.state.settings.download or {})
+    settings.update({"source": "auto", "workers": 8, "parallel": 2, "verify": True, "include": "", "exclude": ""})
+    page.state.settings.download = settings
+    page._jobs.clear()
+    page._queued.clear()
+    started: list[str] = []
+
+    def _fake_start(repo: str, _files: tuple[Any, ...], _settings: Any) -> None:
+        started.append(repo)
+        page._jobs[repo.casefold()] = center._DownloadJob(
+            repo,
+            Path("D:/tmp") / repo,
+            center.ProgressBridge(page),
+            center.SpeedMeter(),
+        )
+
+    monkeypatch.setattr(page, "_start_job", _fake_start)
+    page.start_download("org/a", files=())
+    page.start_download("org/b", files=())
+    page.start_download("org/c", files=())
+    assert started == ["org/a", "org/b"]
+    assert [repo for repo, _files in page._queued] == ["org/c"]
+    page.start_download("org/a", files=())
+    assert started == ["org/a", "org/b"]
+    page._jobs.pop("org/a")
+    page._drain_queue()
+    assert started == ["org/a", "org/b", "org/c"]
+    assert page._queued == []
+    page._jobs.clear()
+
+
+def test_start_job_splits_parallel_workers(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """并行下载时按并发上限分摊每个模型的连接数，避免总连接数翻倍。"""
+    from fcmd.apps.llm import _llmw_qt_center as center
+    from fcmd.apps.llm._llmw_models import DownloadGuiSettings
+
+    window.show_page("models")
+    page = window.page("models").browse
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(center, "submit", lambda *args, **_kwargs: captured.setdefault("args", args))
+    page._jobs.clear()
+    page._start_job("org/a", (), DownloadGuiSettings(source="auto", workers=8, parallel=2))
+    assert captured["args"][6] == 4  # fn/repo/dest/source/include/exclude/workers
+    assert "org/a" in page._jobs
+    page._jobs.clear()
+
+
 def test_local_only_model_skips_online_detail(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     """仅本地模型展开详情时不发详情 / 清单请求，只提示仅本地。"""
     from fcmd.apps.llm import _llmw_qt_center as center

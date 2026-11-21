@@ -180,6 +180,12 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.download_verify = QCheckBox("校验 SHA256", card)
         self.download_verify.setChecked(settings.verify)
         grid.addWidget(self.download_verify, 0, 4)
+        grid.addWidget(QLabel("同时下载", card), 0, 5, Qt.AlignmentFlag.AlignRight)
+        self.download_parallel = QSpinBox(card)
+        self.download_parallel.setRange(1, _llmw_models._MAX_PARALLEL)
+        self.download_parallel.setValue(settings.parallel)
+        self.download_parallel.setToolTip("同时下载的模型数量；超出上限会排队，连接数按并发分摊")
+        grid.addWidget(self.download_parallel, 0, 6)
         grid.addWidget(QLabel("包含掩码"), 1, 0, Qt.AlignmentFlag.AlignRight)
         self.download_include = QLineEdit(settings.include, card)
         self.download_include.setPlaceholderText("如 *.gguf，留空为全部")
@@ -192,6 +198,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.download_source.currentIndexChanged.connect(lambda _index: self._save_download())
         self.download_workers.valueChanged.connect(lambda _value: self._save_download())
         self.download_verify.toggled.connect(lambda _checked: self._save_download())
+        self.download_parallel.valueChanged.connect(lambda _value: self._save_download())
         self.download_include.editingFinished.connect(self._save_download)
         self.download_exclude.editingFinished.connect(self._save_download)
         return card
@@ -200,6 +207,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         settings = _llmw_models.DownloadGuiSettings(
             source=_llmw_models._SOURCE_KEYS.get(self.download_source.currentText(), "auto"),
             workers=min(max(self.download_workers.value(), 1), _llmw_models._MAX_WORKERS),
+            parallel=min(max(self.download_parallel.value(), 1), _llmw_models._MAX_PARALLEL),
             verify=self.download_verify.isChecked(),
             include=self.download_include.text(),
             exclude=self.download_exclude.text(),

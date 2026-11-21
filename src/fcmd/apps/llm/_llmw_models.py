@@ -61,6 +61,7 @@ __all__ = [
 
 _PAGE_SIZE = 30
 _MAX_WORKERS = 8
+_MAX_PARALLEL = 4
 _SOURCES = ("modelscope", "hf-mirror", "auto")
 _SOURCE_LABELS = {"modelscope": "ModelScope", "hf-mirror": "hf-mirror", "auto": "自动测速"}
 _SOURCE_KEYS: dict[str, Literal["modelscope", "hf-mirror", "auto"]] = {
@@ -176,6 +177,7 @@ class DownloadGuiSettings:
 
     source: str = "auto"
     workers: int = 8
+    parallel: int = 2
     verify: bool = True
     include: str = ""
     exclude: str = ""
@@ -196,6 +198,9 @@ def settings_from_dict(raw: object) -> DownloadGuiSettings:
     workers = raw.get("workers")
     if isinstance(workers, int) and not isinstance(workers, bool):
         settings.workers = min(max(workers, 1), _MAX_WORKERS)
+    parallel = raw.get("parallel")
+    if isinstance(parallel, int) and not isinstance(parallel, bool):
+        settings.parallel = min(max(parallel, 1), _MAX_PARALLEL)
     verify = raw.get("verify")
     if isinstance(verify, bool):
         settings.verify = verify
@@ -212,6 +217,7 @@ def settings_to_dict(settings: DownloadGuiSettings) -> dict[str, Any]:
         "source": settings.source,
         "source_probe": True,
         "workers": settings.workers,
+        "parallel": settings.parallel,
         "verify": settings.verify,
         "include": settings.include,
         "exclude": settings.exclude,

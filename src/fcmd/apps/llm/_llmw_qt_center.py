@@ -145,6 +145,19 @@ class _InstalledSnapshot:
     usable: set[str]
 
 
+@dataclass
+class _DownloadJob:
+    """一个进行中的仓库下载任务（支持多个仓库并行下载）。"""
+
+    repo: str
+    target: Path
+    bridge: ProgressBridge
+    speed: SpeedMeter
+    completed: int = 0
+    total: int = 0
+    stop_requested: bool = False
+
+
 class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     """浏览结果行：与概览推荐行同构（大标题 + 小字副标题 + 右侧关键数值）。
 
@@ -346,15 +359,18 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.expand_button.setToolTip("收起详细信息" if expanded else "展开详细信息")
         self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
-    def set_download_state(self, *, busy: bool, active: bool) -> None:
-        """下载中禁用；未完成显示「继续下载」，未安装显示「下载」。"""
+    def set_download_state(self, *, busy: bool, active: bool, queued: bool = False) -> None:
+        """下载中禁用；未完成显示「继续下载」，未安装显示「下载」，排队时显示「排队中…」。"""
         if self.download_button is None:
             return
         self.download_button.setEnabled(not busy)
-        set_button_text(
-            self.download_button,
-            "下载中…" if active else ("继续下载" if self._incomplete else "下载"),
-        )
+        if active:
+            text = "下载中…"
+        elif queued:
+            text = "排队中…"
+        else:
+            text = "继续下载" if self._incomplete else "下载"
+        set_button_text(self.download_button, text)
 
     def set_convert_state(self, *, busy: bool, active: bool) -> None:
         """转换中禁用按钮；已转换行保持不可点击的「已转换」。"""
@@ -694,13 +710,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._list_cache = ModelListCache()
         self._scanning_installed = False
         self._rescan_installed = False
-        self._downloading = False
-        self._listing_quant = False
-        self._stop_requested = False
-        self._active_repo: str | None = None
+        self._jobs: dict[str, _DownloadJob] = {}
+        self._queued: list[tuple[str, tuple[ModelFile, ...]]] = []
+        self._listing_repo: str | None = None
         self._bridge: ProgressBridge | None = None
-        self._download_target = _llmconfig.models_dir()
-        self._download_speed = SpeedMeter()
         self._installed_models: dict[str, ModelSummary] = {}
         self._installed_repos: set[str] = set()
         self._partial_models: dict[str, LocalModel] = {}
@@ -948,7 +961,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def delete_model(self, repo: str) -> None:
         """删除本地模型目录；只允许模型根目录内的安全路径。"""
-        if self._downloading or self._converting or self._quantizing or self._listing_quant:
+        if self._jobs or self._converting or self._quantizing or self._listing_repo is not None:
             self.state.status("任务进行中，暂不能删除模型")
             return
         models_root = _llmconfig.models_dir()
@@ -1631,28 +1644,40 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     # -- 下载 ---------------------------------------------------------- #
     def _sync_download_buttons(self) -> None:
+        """逐行同步按钮：只有正在下载 / 排队的那一行禁用下载，转换 / 量化仍全局互斥。"""
+        jobs = self._jobs
+        queued = {repo.casefold() for repo, _files in self._queued}
+        busy_global = bool(jobs) or self._converting or self._quantizing or self._listing_repo is not None
         for index in range(self.models.count()):
             row = self.models.itemWidget(self.models.item(index))
             if isinstance(row, _ModelItemRow):
-                busy = self._downloading or self._converting or self._quantizing or self._listing_quant
+                key = row.repo.casefold()
+                job = jobs.get(key)
                 row.set_download_state(
-                    busy=busy,
-                    active=self._downloading and row.repo == self._active_repo,
+                    busy=self._converting
+                    or self._quantizing
+                    or self._listing_repo == row.repo
+                    or job is not None
+                    or key in queued,
+                    active=job is not None,
+                    queued=key in queued and job is None,
                 )
                 row.set_convert_state(
-                    busy=busy,
+                    busy=busy_global,
                     active=self._converting and row.repo == self._convert_active_repo,
                 )
                 row.set_quant_state(
-                    busy=busy,
+                    busy=busy_global,
                     active=self._quantizing and row.repo == self._quant_active_repo,
                 )
                 running = row.serve_path is not None and self.state.is_running(row.serve_path)
-                row.set_serve_state(busy=busy or self.state.busy, running=running)
+                row.set_serve_state(busy=busy_global or self.state.busy, running=running)
 
     def _begin_quant_choice(self, repo: str, source: str) -> None:
         """后台读取文件清单，稍后弹出量化选择（不阻塞 GUI）。"""
-        self._listing_quant = True
+        if self._listing_repo is not None:
+            return
+        self._listing_repo = repo
         self._sync_download_buttons()
         self.download_status.setVisible(True)
         self.download_bar.setValue(0)
@@ -1678,7 +1703,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         return quant_options(list(selection.files))
 
     def _quant_options_error(self, repo: str, message: str) -> None:
-        self._listing_quant = False
+        if self._listing_repo == repo:
+            self._listing_repo = None
         self._sync_download_buttons()
         self.download_text.setText(f"读取清单失败：{message[:160]}")
         self.state.status(f"{repo} · 读取清单失败")
@@ -1686,7 +1712,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def _choose_quant(self, repo: str, options: tuple[QuantOption, ...]) -> None:
         """下载选择：默认整仓全部文件，也可在弹窗里只下某个量化。"""
-        self._listing_quant = False
+        if self._listing_repo == repo:
+            self._listing_repo = None
         self._sync_download_buttons()
         if not options:
             self._log(f"{repo} 没有量化选项，下载整仓")
@@ -1695,10 +1722,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         labels = ["全部文件（整仓，避免漏项）", *(option.display for option in options)]
         choice, accepted = QInputDialog.getItem(self, "选择下载内容", "下载哪些文件：", labels, 0, False)
         if not accepted or not choice:
-            self.download_status.setVisible(False)
-            self.stop_download_button.setVisible(False)
-            self.download_bar.setValue(0)
-            self.download_text.clear()
+            self._update_download_summary()
             self.state.status(f"{repo} · 已取消下载")
             self._log(f"已取消下载 {repo}：未选择下载内容")
             return
@@ -1712,28 +1736,48 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.start_download(repo, files=option.files)
 
     def start_download(self, repo: str, files: tuple[ModelFile, ...] | None = None) -> None:
-        """下载指定仓库到模型目录；未指定量化时先读取文件清单让用户选择。"""
-        if self._downloading or self._converting or self._quantizing or not repo:
+        """下载指定仓库到模型目录；未指定量化时先读取文件清单让用户选择。
+
+        支持多仓库并行：正在下载的数量达到 ``download.parallel`` 上限时先排队，
+        完成一个后自动开始下一个；同一仓库不会重复入队。
+        """
+        if self._converting or self._quantizing or not repo:
+            return
+        key = repo.casefold()
+        if key in self._jobs or any(queued.casefold() == key for queued, _ in self._queued):
+            self._log(f"{repo} 已在下载任务 / 队列中")
             return
         settings = _llmw_models.settings_from_dict(self.state.settings.download)
         if files is None and not settings.include.strip() and not settings.exclude.strip():
             self._begin_quant_choice(repo, settings.source)
             return
+        selected = tuple(files) if files is not None else ()
+        if len(self._jobs) >= max(1, settings.parallel):
+            self._queued.append((repo, selected))
+            self._log(f"{repo} 已加入下载队列（并发上限 {settings.parallel}）")
+            self.state.status(f"{repo} 已排队，等待空闲下载位…")
+            self._update_download_summary()
+            self._sync_download_buttons()
+            return
+        self._start_job(repo, selected, settings)
+
+    def _start_job(
+        self,
+        repo: str,
+        files: tuple[ModelFile, ...],
+        settings: _llmw_models.DownloadGuiSettings,
+    ) -> None:
+        """创建并启动一个下载任务（``files`` 为空表示按设置 / 整仓下载）。"""
         dest = _llmconfig.models_dir()
-        self._downloading = True
-        self._stop_requested = False
-        self._active_repo = repo
-        self._download_target = dest / repo
-        self.download_status.setVisible(True)
-        self.download_bar.setValue(0)
-        self._download_speed.reset()
-        self.download_text.setText(f"准备下载 {repo}…")
-        self.stop_download_button.setEnabled(True)
-        self.stop_download_button.setVisible(True)
+        key = repo.casefold()
+        job = _DownloadJob(repo=repo, target=dest / repo, bridge=ProgressBridge(self), speed=SpeedMeter())
+        job.bridge.progress.connect(lambda event, job=job: self._on_progress(job, event))
+        self._jobs[key] = job
+        # 多个模型并行时按上限分摊 workers，避免总连接数成倍膨胀。
+        per_job = max(2, settings.workers // max(1, settings.parallel))
+        self._log(f"开始下载 {repo} -> {job.target}（并发文件 {per_job}）")
+        self._update_download_summary()
         self._sync_download_buttons()
-        self._log(f"开始下载 {repo} -> {self._download_target}")
-        self._bridge = ProgressBridge(self)
-        self._bridge.progress.connect(self._on_progress)
         submit(
             self._download_work,
             repo,
@@ -1741,12 +1785,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             settings.source,
             settings.include,
             settings.exclude,
-            settings.workers,
+            per_job,
             settings.verify,
-            tuple(file.path for file in files) if files is not None else (),
-            on_done=self._download_done,
-            on_error=lambda message: self._download_error(repo, message),
-            on_finished=self._download_finished,
+            tuple(file.path for file in files),
+            should_stop=lambda job=job: job.stop_requested,
+            reporter=job.bridge.progress.emit,
+            on_done=lambda target, key=key: self._download_done(key, target),
+            on_error=lambda message, key=key: self._download_error(key, message),
+            on_finished=lambda key=key: self._download_finished(key),
         )
 
     def _download_work(  # noqa: PLR0913, PLR0917 - 下载参数成组传入
@@ -1759,6 +1805,9 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         workers: int,
         verify: bool,
         only_paths: tuple[str, ...] = (),
+        *,
+        should_stop: Callable[[], bool] | None = None,
+        reporter: Callable[[ProgressEvent], None] | None = None,
     ) -> str:
         self._log(f"获取 {repo} 的 {source} 文件清单…")
         selection = select_source(repo, source)  # type: ignore[arg-type]
@@ -1789,36 +1838,62 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             selection,
             workers=workers,
             verify=verify,
-            reporter=self._emit_progress,
-            should_stop=lambda: self._stop_requested,
+            reporter=reporter,
+            should_stop=should_stop,
         )
         return str(target)
 
-    def _emit_progress(self, event: ProgressEvent) -> None:
-        if self._bridge is not None:
-            self._bridge.progress.emit(event)
-
-    def _on_progress(self, event: ProgressEvent) -> None:
+    def _on_progress(self, job: _DownloadJob, event: ProgressEvent) -> None:
         if event.task != "总进度":
             return
-        self.download_bar.setValue(round(100 * event.completed / max(event.total, 1)))
-        if self._active_repo and event.total > 0:
+        job.completed = event.completed
+        job.total = event.total
+        if event.total > 0:
             totals = dict(self.state.settings.download_totals or {})
-            totals[self._active_repo.casefold()] = event.total
+            totals[job.repo.casefold()] = event.total
             self.state.settings.download_totals = totals
-        speed = self._download_speed.update(event.completed)
-        eta = self._download_speed.eta(event.total, done=event.completed)
-        size_text = (
-            f"{human_size(event.completed)} / {human_size(event.total)}"
-            if event.total > 0
-            else human_size(event.completed)
-        )
+        job.speed.update(event.completed)
+        self._update_download_summary()
+
+    def _update_download_summary(self) -> None:
+        """汇总所有并行任务：底部显示总进度 / 总速度 / 排队数。"""
+        jobs = list(self._jobs.values())
+        if not jobs:
+            self.download_bar.setValue(0)
+            self.download_text.clear()
+            self.download_status.setVisible(False)
+            self.stop_download_button.setVisible(False)
+            self.stop_download_button.setEnabled(True)
+            return
+        completed = sum(job.completed for job in jobs)
+        total = sum(job.total for job in jobs)
+        speed = sum(job.speed.speed for job in jobs)
+        if total > 0:
+            self.download_bar.setValue(min(100, round(100 * completed / total)))
+        size_text = f"{human_size(completed)} / {human_size(total)}" if total > 0 else human_size(completed)
+        eta = (total - completed) / speed if total > completed and speed > 0 else None
         eta_text = f" · 剩余 {format_eta(eta)}" if eta is not None else ""
-        self.download_text.setText(f"下载 {self._active_repo or '-'} · {size_text} · {format_speed(speed)}{eta_text}")
+        queue_text = f" · 排队 {len(self._queued)}" if self._queued else ""
+        prefix = f"下载 {jobs[0].repo}" if len(jobs) == 1 else f"下载 {len(jobs)} 个模型"
+        self.download_status.setVisible(True)
+        self.download_text.setText(f"{prefix} · {size_text} · {format_speed(speed)}{eta_text}{queue_text}")
+        self.stop_download_button.setVisible(True)
+        self.stop_download_button.setEnabled(any(not job.stop_requested for job in jobs))
+        self.stop_download_button.setToolTip("停止全部下载" if len(jobs) > 1 else "停止当前下载")
+
+    def _drain_queue(self) -> None:
+        """有空闲下载位时从队列取下一个任务。"""
+        if not self._queued:
+            return
+        settings = _llmw_models.settings_from_dict(self.state.settings.download)
+        limit = max(1, settings.parallel)
+        while self._queued and len(self._jobs) < limit:
+            repo, files = self._queued.pop(0)
+            self._start_job(repo, files, settings)
 
     def start_convert(self, repo: str) -> None:
         """把已安装的 HF safetensors 模型转换为 GGUF，进度复用底部状态区。"""
-        if self._converting or self._downloading or self._quantizing or not repo:
+        if self._converting or bool(self._jobs) or self._quantizing or not repo:
             return
         info = self._convertible.get(repo.casefold())
         if info is None:
@@ -1903,7 +1978,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
     # -- 快捷启动 ------------------------------------------------------ #
     def _on_quick_serve(self, repo: str) -> None:
         """选择量化精度后快捷启动；只有一个精度时直接启动。"""
-        if self._quantizing or self._downloading or self._converting:
+        if self._quantizing or bool(self._jobs) or self._converting:
             return
         files = self._quantized_files.get(repo.casefold(), ())
         if not files:
@@ -1935,7 +2010,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def _on_quantize_requested(self, repo: str) -> None:
         """点击「量化」后弹出精度选项，选中后立即开始单精度量化。"""
-        if self._quantizing or self._downloading or self._converting:
+        if self._quantizing or bool(self._jobs) or self._converting:
             return
         if repo.casefold() not in self._quant_candidates:
             return
@@ -1954,7 +2029,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
 
     def start_quantize(self, repo: str, quant: str) -> None:
         """对指定仓库中最大的全量 GGUF 执行一次量化。"""
-        if self._quantizing or self._downloading or self._converting:
+        if self._quantizing or bool(self._jobs) or self._converting:
             return
         if quant.casefold() in {tag.casefold() for tag in self._quant_tags.get(repo.casefold(), ())}:
             self.state.status(f"{repo} · {quant} 已量化，无需重复执行")
@@ -2035,46 +2110,56 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._quant_active_repo = None
         self._sync_download_buttons()
 
-    def _download_done(self, target: str) -> None:
-        self.download_bar.setValue(100)
-        self.download_text.setText(f"下载完成：{self._active_repo or target}")
-        self._log(f"下载完成: {target}")
+    def _download_done(self, key: str, target: str) -> None:
+        job = self._jobs.get(key)
+        repo = job.repo if job is not None else key
+        self._log(f"下载完成 {repo}: {target}")
         self.downloadFinished.emit()
 
-    def _download_error(self, repo: str, message: str) -> None:
-        self.download_text.setText(f"下载失败：{repo} · {message}")
+    def _download_error(self, key: str, message: str) -> None:
+        job = self._jobs.get(key)
+        repo = job.repo if job is not None else key
         self._log(f"下载失败 {repo}: {message}")
+        self.state.status(f"{repo} · 下载失败：{message[:120]}")
 
-    def _download_finished(self) -> None:
-        self._downloading = False
-        self._active_repo = None
-        self.stop_download_button.setVisible(False)
+    def _download_finished(self, key: str) -> None:
+        job = self._jobs.pop(key, None)
+        if job is not None:
+            self._log(f"下载结束 {job.repo}")
         self.state.persist()
         # 成功 / 失败 / 手动停止都会走到这里：重扫模型目录（成功后行会切到
         # 已下载 / 已安装状态；中途结束则重算 .part 进度），再重绘当前结果。
         self.refresh_installed()
         self._render_results()
         self._sync_download_buttons()
+        self._drain_queue()
+        self._update_download_summary()
 
     def stop_download(self) -> None:
-        if not self._downloading:
+        if not self._jobs:
             return
-        self._stop_requested = True
+        for job in self._jobs.values():
+            job.stop_requested = True
+        if self._queued:
+            self._queued.clear()
+            self._sync_download_buttons()
         self.stop_download_button.setEnabled(False)
-        self.download_text.setText(f"正在停止 {self._active_repo or ''}…")
+        self.download_text.setText("正在停止下载…")
         self._log("正在停止下载…")
 
     def close(self) -> bool:
         """关窗前确认进行中的下载，返回 ``False`` 表示用户取消关闭。"""
-        if not self._downloading:
+        if not self._jobs:
             return True
         if not confirm(
             self,
             "下载进行中",
-            "下载尚未完成，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？",
+            f"还有 {len(self._jobs)} 个模型在下载，关闭窗口将停止下载（已下载部分保留为 .part）。确实关闭？",
         ):
             return False
-        self._stop_requested = True
+        for job in self._jobs.values():
+            job.stop_requested = True
+        self._queued.clear()
         return True
 
 
