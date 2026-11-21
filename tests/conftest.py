@@ -108,7 +108,9 @@ def fcmd(tmp_path: Path, tmp_home: Path) -> Callable[..., CmdResult]:
 
         merged_env = dict(os.environ)
         merged_env["HOME"] = str(tmp_home)
-        merged_env.setdefault("PYTHONIOENCODING", "utf-8")
+        # 强制覆盖：父进程可能带着 PYTHONIOENCODING=cp936（Windows 中文环境），
+        # 子进程若沿用会输出 GBK 字节，与下方 encoding="utf-8" 解码不一致。
+        merged_env["PYTHONIOENCODING"] = "utf-8"
         if env:
             merged_env.update(env)
 

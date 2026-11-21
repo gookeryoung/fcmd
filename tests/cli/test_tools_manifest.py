@@ -94,7 +94,8 @@ def _run_py(code: str, tmp_path: Path) -> subprocess.CompletedProcess[str]:
     """在隔离子进程中执行代码（``FCMD_HOME`` 指向不存在的目录）。"""
     env = dict(os.environ)
     env["FCMD_HOME"] = str(tmp_path / "fcmd_home")
-    env.setdefault("PYTHONIOENCODING", "utf-8")
+    # 强制覆盖父进程可能设置的 PYTHONIOENCODING=cp936，与下方 utf-8 解码保持一致。
+    env["PYTHONIOENCODING"] = "utf-8"
     return subprocess.run(
         [sys.executable, "-c", code],
         cwd=str(_ROOT),
