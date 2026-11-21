@@ -29,8 +29,7 @@ from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
-from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.pdf.img2pdf import collect_pdf_images, images_to_pdf, resolve_pdf_output
 from fcmd.tools.pdf.img2pdfw import (
     DEFAULT_DPI,
@@ -58,7 +57,7 @@ def _run_conversion(  # noqa: PLR0913, PLR0917 - 转换参数逐项显式传递�
     page_size: str,
     dpi: int,
     normalize: bool,
-    bridge: _ConvertBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行图片合并，把进度与结果投回界面。"""
 
@@ -88,7 +87,7 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
-        self._bridge: _ConvertBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"图片转 PDF 转换器 v{__version__}",
             config_name="img2pdfw",
@@ -278,7 +277,7 @@ class Img2PdfWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log.append(f"输出：{output_path}")
         self._log.append(f"页面尺寸：{page_size}；DPI：{dpi}")
 
-        bridge = _ConvertBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(

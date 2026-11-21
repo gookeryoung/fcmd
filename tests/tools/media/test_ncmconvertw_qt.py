@@ -24,8 +24,9 @@ from PySide6.QtWidgets import QMessageBox
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 from fcmd.tools.media import _ncmconvertw_qt
-from fcmd.tools.media._ncmconvertw_qt import NcmConvertWindow, _ConvertBridge, _work_convert
+from fcmd.tools.media._ncmconvertw_qt import NcmConvertWindow, _work_convert
 from fcmd.tools.media.ncmconvertw import NcmError, config_path
 
 
@@ -158,7 +159,7 @@ def test_worker_success_flow(home: Path, tmp_path: Path, monkeypatch: pytest.Mon
     try:
         window._add_paths([tmp_path / "a.ncm"])
         window._set_busy(True)
-        bridge = _ConvertBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_convert([tmp_path / "a.ncm"], tmp_path / "out", threading.Event(), bridge)
 
@@ -184,7 +185,7 @@ def test_worker_failure_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     window = NcmConvertWindow()
     try:
         window._set_busy(True)
-        bridge = _ConvertBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_convert([Path("x.ncm")], None, threading.Event(), bridge)
         assert window.status_text() == "完成：成功 0，失败 1"
@@ -200,7 +201,7 @@ def test_worker_cancelled_before_start(home: Path) -> None:
     cancel.set()
     window = NcmConvertWindow()
     try:
-        bridge = _ConvertBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_convert([Path("a.ncm")], None, cancel, bridge)
         assert window.status_text() == "已中止：成功 0，失败 0"

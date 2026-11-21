@@ -71,8 +71,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter, mono_font
-from fcmd.gui.qt.workers import EventBridge as _TaskBridge
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 
 if TYPE_CHECKING:
     from fcmd.gui.theme import Theme
@@ -87,7 +86,7 @@ _PE_FILTER = "PE 文件 (*.exe *.dll *.sys *.ocx *.scr *.cpl *.ax *.acm *.drv);;
 _RESIZE_DEBOUNCE_MS = 100
 
 
-def _work_load(path: Path, bridge: _TaskBridge) -> None:
+def _work_load(path: Path, bridge: EventBridge) -> None:
     """线程池里打开 PE 文件并读取资源列表。"""
     pe = PEFile()
     try:
@@ -107,7 +106,7 @@ def _work_replace(  # noqa: PLR0913, PLR0917 - 线程池参数需与 PEFile 接�
     name_id: int,
     new_data: bytes,
     language_id: int,
-    bridge: _TaskBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里替换单个资源并刷新资源列表。"""
     try:
@@ -120,7 +119,7 @@ def _work_replace(  # noqa: PLR0913, PLR0917 - 线程池参数需与 PEFile 接�
     bridge.event.emit(("replaced", old_size, new_size, backup, info, resources))
 
 
-def _work_export_all(pe: PEFile, target: Path, bridge: _TaskBridge) -> None:
+def _work_export_all(pe: PEFile, target: Path, bridge: EventBridge) -> None:
     """线程池里导出全部资源。"""
     try:
         exported, total, directory = pe.export_all(target)
@@ -155,7 +154,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._zoom = 1.0
         self._fit_mode = False
         self._busy = False
-        self._bridge: _TaskBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"PE 资源编辑器 v{__version__}",
             config_name="reshackw",
@@ -467,7 +466,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _start_task(self, target: Any, args: tuple[Any, ...]) -> None:
         """创建信号桥并提交后台任务。"""
-        bridge = _TaskBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(target, *args, bridge, on_error=self._on_worker_error)

@@ -53,8 +53,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter
-from fcmd.gui.qt.workers import EventBridge as _TaskBridge
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 
 __all__ = ["DevmanWindow", "run_qt"]
 
@@ -71,7 +70,7 @@ _Emit = Callable[[tuple[Any, ...]], None]
 _Work = Callable[[Callable[[str], None], Callable[[int, int], None], _Emit], str]
 
 
-def _work_task(work: _Work, bridge: _TaskBridge) -> None:
+def _work_task(work: _Work, bridge: EventBridge) -> None:
     """线程池里执行编排函数，把日志、进度、终态逐条投回界面。"""
 
     def emit_log(text: str) -> None:
@@ -105,7 +104,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._label = ""
         self._syncing = False
         self._last_warnings: tuple[str, ...] = ()
-        self._bridge: _TaskBridge | None = None
+        self._bridge: EventBridge | None = None
         self._initial_refresh_pending = True
         super().__init__(
             title="开发环境管理 - devman",
@@ -268,7 +267,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._set_buttons(False)
         # 不挂到窗口下：窗口可能在后台任务结束前销毁，桥对象由任务参数保活，
         # 避免 worker 线程向已删除的 QObject 发信号（Qt 会堆损坏 / abort）
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(_work_task, work, bridge, on_error=self._on_worker_error)

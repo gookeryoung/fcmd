@@ -35,8 +35,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, button
-from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
     MIN_WIDTH,
@@ -107,7 +106,7 @@ def _work_convert(
     files: list[Path],
     output_dir: Path | None,
     cancel: threading.Event,
-    bridge: _ConvertBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里逐文件解锁，进度与结果逐条投回界面。"""
     total = len(files)
@@ -140,7 +139,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._running = False
         self._cancelled = False
         self._cancel = threading.Event()
-        self._bridge: _ConvertBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"NCM 转换器 v{__version__}",
             config_name="ncmconvertw",
@@ -368,7 +367,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         location = str(output_dir) if output_dir is not None else "各文件所在目录"
         self._append_log(f"开始转换 {len(self._files)} 个文件，输出到：{location}")
 
-        bridge = _ConvertBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(

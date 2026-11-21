@@ -24,10 +24,10 @@ from PySide6.QtWidgets import QMessageBox
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 from fcmd.tools.media import _videoconvw_qt
 from fcmd.tools.media._videoconvw_qt import (
     VideoConvWindow,
-    _ConvertBridge,
     _work_convert,
 )
 from fcmd.tools.media.videoconv import (
@@ -253,7 +253,7 @@ def test_start_submits_worker(home: Path, tmp_path: Path, monkeypatch: pytest.Mo
         assert output_path == tmp_path / "out" / "in_converted.mp4"
         assert isinstance(options, VideoOptions)
         assert cancel is window._cancel
-        assert isinstance(bridge, _ConvertBridge)
+        assert isinstance(bridge, EventBridge)
         assert window._running
         assert not window._start_button.isEnabled()
         assert window._stop_button.isEnabled()
@@ -293,7 +293,7 @@ def test_worker_success_event(home: Path, tmp_path: Path, monkeypatch: pytest.Mo
     window = VideoConvWindow()
     try:
         window._set_busy(True)
-        bridge = _ConvertBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_convert(Path("in.mp4"), Path("out.mp4"), VideoOptions(), threading.Event(), bridge)
 
@@ -317,7 +317,7 @@ def test_worker_failure_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> No
     window = VideoConvWindow()
     try:
         window._set_busy(True)
-        bridge = _ConvertBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_convert(Path("in.mp4"), Path("out.mp4"), VideoOptions(), threading.Event(), bridge)
 
@@ -340,7 +340,7 @@ def test_worker_exception_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(_videoconvw_qt, "run_conversion", _fail)
     window = VideoConvWindow()
     try:
-        bridge = _ConvertBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_convert(Path("in.mp4"), Path("out.mp4"), VideoOptions(), threading.Event(), bridge)
 

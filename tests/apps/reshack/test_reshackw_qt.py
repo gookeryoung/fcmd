@@ -25,7 +25,6 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 from fcmd.apps.reshack import _reshackw_qt
 from fcmd.apps.reshack._reshackw_qt import (
     ReshackWindow,
-    _TaskBridge,
     _work_export_all,
     _work_load,
     _work_replace,
@@ -35,6 +34,7 @@ from fcmd.apps.reshack.reshackw import config_path
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 
 
 @pytest.fixture()
@@ -325,7 +325,7 @@ def test_replace_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None
         pe = _FakePE([_resource(3, 1, data=b"new")])
         window._pe = cast(Any, pe)
         window._set_busy(True)
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_replace(cast(Any, pe), 3, 1, b"new", 0, bridge)
 
@@ -347,7 +347,7 @@ def test_export_all_event_flow(home: Path, tmp_path: Path, monkeypatch: pytest.M
     try:
         pe = _FakePE()
         window._set_busy(True)
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_export_all(cast(Any, pe), tmp_path / "app_resources", bridge)
 
@@ -377,7 +377,7 @@ def test_start_load_submits_worker(home: Path, monkeypatch: pytest.MonkeyPatch) 
         window._start_load(Path("app.exe"))
         assert captured["fn"] is _work_load
         assert captured["args"][0] == Path("app.exe")
-        assert isinstance(captured["args"][1], _TaskBridge)
+        assert isinstance(captured["args"][1], EventBridge)
         assert captured["kwargs"]["on_error"] == window._on_worker_error
         assert window._busy is True
         assert not window._open_button.isEnabled()
@@ -394,7 +394,7 @@ def test_load_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     window = ReshackWindow()
     try:
         window._set_busy(True)
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_load(Path("app.exe"), bridge)
 
@@ -417,7 +417,7 @@ def test_load_event_flow_closes_previous_pe(home: Path, monkeypatch: pytest.Monk
     window = ReshackWindow()
     try:
         window._pe = cast(Any, old)
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_load(Path("app.exe"), bridge)
         assert old.closed is True
@@ -434,7 +434,7 @@ def test_load_pe_error_shows_message(home: Path, monkeypatch: pytest.MonkeyPatch
     window = ReshackWindow()
     try:
         window._set_busy(True)
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_load(Path("bad.exe"), bridge)
         assert errors == ["not a PE"]

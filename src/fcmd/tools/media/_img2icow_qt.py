@@ -25,8 +25,7 @@ from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, ProgressRow, button, hint_label
-from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.img2icow import (
     QUALITY_CHOICES,
     Img2IcoSettings,
@@ -49,7 +48,7 @@ def _run_conversion(
     output_path: Path | None,
     sizes: list[int],
     quality: str,
-    bridge: _ConvertBridge,
+    bridge: EventBridge,
 ) -> None:
     """在线程池里执行转换，把进度与结果投回界面。"""
     from fcmd.infras.media import convert_images
@@ -78,7 +77,7 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
-        self._bridge: _ConvertBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"图像转 ICO 转换器 v{__version__}",
             config_name="img2icow",
@@ -268,7 +267,7 @@ class Img2IcoWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log.append(f"输入：{input_path}")
         self._log.append(f"尺寸：{', '.join(str(size) for size in sizes)}；质量：{quality}")
 
-        bridge = _ConvertBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(_run_conversion, input_path, output_path, sizes, quality, bridge)

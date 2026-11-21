@@ -38,8 +38,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, LogView, ProgressRow, StatusTag, button, hint_label
-from fcmd.gui.qt.workers import EventBridge as _ConvertBridge
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,
@@ -85,7 +84,7 @@ def _work_convert(
     output_path: Path,
     options: VideoOptions,
     cancel: threading.Event,
-    bridge: _ConvertBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行一次转换，把进度、日志与结果逐条投回界面。"""
 
@@ -119,7 +118,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._settings_override = settings_path
         self._running = False
         self._cancel = threading.Event()
-        self._bridge: _ConvertBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"视频转换器 v{__version__}",
             config_name="videoconvw",
@@ -404,7 +403,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._set_status("正在转换…")
         self._set_busy(True)
 
-        bridge = _ConvertBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(

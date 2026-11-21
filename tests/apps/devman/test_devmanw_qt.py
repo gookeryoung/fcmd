@@ -21,12 +21,13 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QMessageBox
 
 from fcmd.apps.devman import _devmanw_qt
-from fcmd.apps.devman._devmanw_qt import DevmanWindow, _TaskBridge, _work_task
+from fcmd.apps.devman._devmanw_qt import DevmanWindow, _work_task
 from fcmd.apps.devman._paths import TOOLS
 from fcmd.apps.devman.devmanw import config_path, version_iid
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 
 
 @pytest.fixture()
@@ -278,7 +279,7 @@ def test_work_task_streams_log_progress_snapshot(home: Path) -> None:
         window._busy = True
         window._label = "刷新"
         window._set_buttons(False)
-        bridge = _TaskBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
 
         def work(
