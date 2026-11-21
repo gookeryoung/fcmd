@@ -107,7 +107,7 @@ class _EngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
-    """设置页：存储、引擎（目录与已安装列表）、下载参数与模型转换。"""
+    """设置页：存储、推理引擎（llama.cpp）、画图引擎（sd.cpp）、下载参数与模型转换。"""
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -148,7 +148,7 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         return card
 
     def _build_paint_engine(self) -> Card:
-        """画图引擎（sd.cpp）卡片：与 llama.cpp 引擎并列，安装 / 设为默认都在设置页。"""
+        """画图引擎（sd.cpp）卡片：与推理引擎（llama.cpp）卡片同构，安装 / 设为默认都在设置页。"""
         from fcmd.apps.llm._llmw_qt_paint import PaintEngineCard
 
         self.paint_engine_card = PaintEngineCard(self)
@@ -281,12 +281,12 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
     # 引擎
     # ------------------------------------------------------------------ #
     def _build_engines(self) -> Card:
-        """引擎卡片（位于存储下方）：刷新与标题同行，目录行右侧是导入动作。
+        """推理引擎（llama.cpp）卡片（位于存储下方）：刷新与标题同行，目录行右侧是导入动作。
 
         不设状态摘要行，不设底部动作行；列表高度随已安装引擎数量伸缩，
         空态 / 错误态由同一提示行承接。
         """
-        card = Card("引擎")
+        card = Card("推理引擎（llama.cpp）")
         self.refresh_engine_button = link_button("刷新", tooltip="重新读取已安装引擎与默认引擎")
         card.add_title_action(self.refresh_engine_button)
 

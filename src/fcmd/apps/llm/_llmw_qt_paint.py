@@ -17,15 +17,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidgetItem,
     QMessageBox,
     QSpinBox,
     QVBoxLayout,
@@ -40,6 +42,8 @@ from fcmd.gui.qt.widgets import (
     Collapsible,
     ElidedLabel,
     FormGrid,
+    RowListWidget,
+    SelectionRow,
     StatusTag,
     button,
     hint_label,
@@ -886,12 +890,64 @@ class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件
             QMessageBox.critical(self, "打开失败", f"无法打开目录：{target}\n{exc}")
 
 
-class PaintEngineCard(Card):  # pragma: no cover - Qt 控件
-    """画图引擎（sd.cpp）卡片：引擎状态、目录、安装入口与已安装引擎列表。
+class _PaintEngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
+    """已安装画图引擎行：单行紧凑布局（标签 + 可执行文件 + 默认 / 后端）。"""
 
-    引擎管理归设置页（与 llama.cpp 引擎卡片并列）；运行页只配置启动参数。
-    安装走 ``PaintEngineDialog``（版本 / 变体下载、本地 zip / 目录导入），列表行
-    右侧「设为默认」写 ``current.json``，卡片自己负责刷新。
+    useRequested = Signal(str)
+
+    def __init__(
+        self,
+        engine: _llmpaint_engine.SdEngine,
+        *,
+        current: bool,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.engine = engine
+        self.setObjectName("EngineRow")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setProperty("selected", "false")
+        self.setToolTip(f"{engine.tag}\n{engine.exe}\n后端：{engine.backend or '-'}")
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 4, 10, 4)
+        row.setSpacing(8)
+
+        name = QLabel(_llmpaint_engine.engine_version(engine.tag), self)
+        name.setObjectName("EngineItemName")
+        name.setMaximumWidth(220)
+        name.setToolTip(f"引擎 tag：{engine.tag}")
+        row.addWidget(name, 0)
+
+        exe = ElidedLabel(str(engine.exe), mode=Qt.TextElideMode.ElideMiddle, parent=self)
+        exe.setObjectName("Hint")
+        row.addWidget(exe, 1)
+
+        self.use_button = None
+        if current:
+            row.addWidget(StatusTag("默认", tone="success", parent=self), 0)
+        else:
+            self.use_button = button("设为默认")
+            self.use_button.setToolTip("把该引擎设为默认画图引擎")
+            self.use_button.clicked.connect(lambda: self.useRequested.emit(self.engine.tag))
+            row.addWidget(self.use_button, 0)
+
+        backend_tag = _llmpaint_engine.engine_backend(engine)
+        label = _llmpaint_engine.variant_label(backend_tag) if backend_tag else "sd.cpp"
+        tone = "muted" if backend_tag in {"", "cpu"} else "accent"
+        backend = StatusTag(label, tone=tone, parent=self)
+        backend.setToolTip(f"构建后端：{backend_tag or '未标注'}")
+        row.addWidget(backend, 0)
+        self.setMinimumHeight(self.fontMetrics().height() + 14)
+
+
+class PaintEngineCard(Card):  # pragma: no cover - Qt 控件
+    """画图引擎（sd.cpp）卡片：与设置页的推理引擎（llama.cpp）卡片同构。
+
+    共同点：标题行右侧「刷新」、目录行右侧动作按钮、已安装引擎一律用紧凑单行
+    （标签 + 可执行文件 + 「默认 / 设为默认」+ 后端胶囊），列表高度随内容伸缩、
+    超过 6 行才滚动，空态由提示行承接。安装走 ``PaintEngineDialog``（版本 / 变体
+    下载、本地 zip / 目录导入），「设为默认」写 ``current.json``。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -901,76 +957,91 @@ class PaintEngineCard(Card):  # pragma: no cover - Qt 控件
 
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
+        row.setSpacing(6)
         row.addWidget(hint_label("引擎目录", wrap=False))
         self.root_label = ElidedLabel(str(_llmconfig.paint_engines_root()), parent=self)
         self.root_label.setObjectName("Hint")
         row.addWidget(self.root_label, 1)
         self.open_button = button("打开", kind="ghost")
+        self.open_button.setToolTip("在文件管理器中打开画图引擎目录")
+        row.addWidget(self.open_button)
         self.install_button = button("安装引擎…", kind="ghost")
         self.install_button.setToolTip("下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录")
-        row.addWidget(self.open_button)
         row.addWidget(self.install_button)
         self.body.addLayout(row)
 
-        self.engine_tag = StatusTag("引擎检查中…", parent=self)
-        self.body.addWidget(self.engine_tag)
+        self.engines_list = RowListWidget(self)
+        self.engines_list.setObjectName("PaintEngineList")
+        self.engines_list.setSelectionMode(RowListWidget.SelectionMode.SingleSelection)
+        self.engines_list.setSpacing(4)
+        self.engines_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.engines_list.setToolTip("双击一行可直接设为默认画图引擎")
+        self.body.addWidget(self.engines_list)
+        self.engines_empty = hint_label("还没有已安装画图引擎；点「安装引擎…」下载或导入。")
+        self.engines_empty.setVisible(False)
+        self.body.addWidget(self.engines_empty)
 
-        self.rows = QVBoxLayout()
-        self.rows.setContentsMargins(0, 0, 0, 0)
-        self.rows.setSpacing(4)
-        self.body.addLayout(self.rows)
-
+        self._engines: list[_llmpaint_engine.SdEngine] = []
         self.open_button.clicked.connect(self._open_root)
         self.install_button.clicked.connect(self.install)
         self.refresh_button.clicked.connect(self.refresh)
+        self.engines_list.currentRowChanged.connect(self._on_row_selected)
+        self.engines_list.itemDoubleClicked.connect(self._on_double_clicked)
         self.refresh()
 
     def refresh(self) -> None:
-        """刷新引擎状态与已安装列表（只读本地目录）。"""
+        """刷新已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""
         try:
-            engines = _llmpaint_engine.list_sd_engines()
-            current = _llmpaint_engine.current_sd_tag()
-        except OSError:
-            engines, current = [], None
-        if not engines:
-            self.engine_tag.set_status("引擎未安装", "warning")
-        else:
-            tag = current if current and any(engine.tag == current for engine in engines) else engines[0].tag
-            self.engine_tag.set_status(f"引擎 {tag}", "accent")
-        self._render(engines)
-
-    def _render(self, engines: Sequence[_llmpaint_engine.SdEngine]) -> None:
-        """重建已安装引擎列表：tag + 后端 + 可执行文件 + 「当前 / 设为默认」。"""
-        while self.rows.count():
-            item = self.rows.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        if not engines:
-            self.rows.addWidget(hint_label("尚未安装画图引擎：点右侧「安装引擎…」下载或导入。", wrap=True))
+            self._engines = _llmpaint_engine.list_sd_engines()
+        except OSError as exc:
+            self._engines = []
+            self.engines_list.clear()
+            self.engines_list.setVisible(False)
+            self.engines_empty.setText(f"画图引擎信息不可用：{exc}")
+            self.engines_empty.setVisible(True)
             return
-        for engine in engines:
-            row_widget = QWidget(self)
-            row = QHBoxLayout(row_widget)
-            row.setContentsMargins(0, 0, 0, 0)
-            row.setSpacing(8)
-            name = QLabel(engine.tag, row_widget)
-            name.setObjectName("Value")
-            row.addWidget(name)
-            if engine.backend:
-                row.addWidget(StatusTag(engine.backend, tone="accent", parent=row_widget))
-            row.addWidget(hint_label(engine.exe.name, wrap=False), 1)
-            if engine.source == "current":
-                row.addWidget(StatusTag("当前", tone="success", parent=row_widget))
-            else:
-                pick_button = button("设为默认", kind="ghost")
-                pick_button.clicked.connect(lambda _checked=False, tag=engine.tag: self._use(tag))
-                row.addWidget(pick_button)
-            self.rows.addWidget(row_widget)
+
+        self.engines_list.clear()
+        for engine in self._engines:
+            list_item = QListWidgetItem(self.engines_list)
+            list_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            row = _PaintEngineRow(engine, current=engine.source == "current", parent=self.engines_list)
+            row.useRequested.connect(self._use)
+            list_item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self.engines_list.setItemWidget(list_item, row)
+        self.engines_list.sync_row_widths()
+        self.engines_list.setVisible(bool(self._engines))
+        self._fit_list()
+        self.engines_empty.setText("还没有已安装画图引擎；点「安装引擎…」下载或导入。")
+        self.engines_empty.setVisible(not self._engines)
+
+    def _fit_list(self) -> None:
+        """把列表高度收到内容高度，超过 6 行后再出现滚动条（与推理引擎一致）。"""
+        count = self.engines_list.count()
+        if count == 0:
+            self.engines_list.setFixedHeight(0)
+            return
+        heights = [self.engines_list.sizeHintForRow(index) for index in range(count)]
+        spacing = self.engines_list.spacing()
+        content = sum(heights) + spacing * (count + 2) + 2
+        cap = max(heights) * 6 + spacing * 8 + 2
+        self.engines_list.setFixedHeight(min(content, cap))
+
+    def _on_row_selected(self, current: int) -> None:
+        """同步行选中态（只加粗边框，不影响内容）。"""
+        for index in range(self.engines_list.count()):
+            row = self.engines_list.itemWidget(self.engines_list.item(index))
+            if isinstance(row, _PaintEngineRow):
+                row.set_selected(index == current)
+
+    def _on_double_clicked(self, item: QListWidgetItem) -> None:
+        """双击引擎行直接设为默认。"""
+        index = self.engines_list.row(item)
+        if 0 <= index < len(self._engines):
+            self._use(self._engines[index].tag)
 
     def install(self) -> None:
-        """打开画图引擎安装对话框；安装完成后刷新状态。"""
+        """打开画图引擎安装对话框；安装完成后刷新列表。"""
         from fcmd.apps.llm._llmw_qt_paint_engine import PaintEngineDialog
 
         dialog = PaintEngineDialog(self)

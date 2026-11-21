@@ -42,6 +42,8 @@ __all__ = [
     "SdRelease",
     "check_sd_engine",
     "current_sd_tag",
+    "engine_backend",
+    "engine_version",
     "ensure_vc_runtime",
     "fetch_sd_releases",
     "install_sd_engine",
@@ -248,6 +250,29 @@ def variant_label(variant: str) -> str:
     if prefix == "cuda":
         return f"CUDA {variant[4:]}" if variant.lower().startswith("cuda") else "CUDA"
     return variant
+
+
+def engine_version(tag: str) -> str:
+    """引擎展示用版本号。
+
+    release 资产名会带上一串构建信息（``sd-master-532d2c1-bin-win-cuda12-x64``），
+    直接显示 tag 又长又看不出重点；这里只取 ``master-...`` 这段版本号。不是资产名
+    形式的自定义 tag（本地目录 / 用户指定）原样返回。
+    """
+    match = _ENGINE_ASSET_RE.match(f"{tag}.zip")
+    return match.group("tag") if match else tag
+
+
+def engine_backend(engine: SdEngine) -> str:
+    """引擎后端标识（``cuda12`` / ``vulkan`` / ``cpu`` / ``rocm-x``）。
+
+    ``engine.json`` 里没记 backend（早期安装或本地注册）时从 tag 反推，
+    仍识别不出的返回空串，由调用方回退显示 ``sd.cpp``。
+    """
+    if engine.backend:
+        return engine.backend
+    match = _ENGINE_ASSET_RE.match(f"{engine.tag}.zip")
+    return match.group("variant").lower() if match else ""
 
 
 def _validate_tag(tag: str) -> str:

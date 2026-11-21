@@ -328,13 +328,17 @@ QToolButton#ChatSend { background: transparent; }
 QToolButton#ChatSend:hover { background: $accent_soft; }
 QToolButton#ChatSend:pressed { background: $accent_soft_strong; }
 QToolButton#ChatSend:disabled { background: transparent; }
-/* 对话 / 画图模式胶囊：元宝式全圆角开关，选中回到强调色系。 */
+/* 对话 / 画图模式胶囊：元宝式全圆角开关，选中回到强调色系。
+   左右内边距与文字 / 图标排布由 ToggleChip 自绘，避免 QToolButton 自带 label
+   布局在选中态偏左；这里只负责底色、圆角与选中 / 悬停配色。 */
 QToolButton#ToggleChip {
     background: $surface_hover;
     border: none;
     border-radius: 15px;
-    padding: 0 12px;
+    padding: 0;
     color: $muted;
+    /* QSS 的 min / max-height 算内容高：必须同时把通用 QToolButton 的
+       上下 padding 归零，否则胶囊会被撑到 30 + 8 = 38px，圆角不再成胶囊。 */
     min-height: 30px;
     max-height: 30px;
     font-weight: 500;
@@ -343,7 +347,6 @@ QToolButton#ToggleChip:hover { background: $surface_active; color: $text; }
 QToolButton#ToggleChip:checked {
     background: $accent_soft;
     color: $accent;
-    font-weight: 600;
 }
 QToolButton#ToggleChip:checked:hover { background: $accent_soft_strong; }
 QPushButton#ChoiceCard {

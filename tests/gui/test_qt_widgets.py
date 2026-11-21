@@ -245,6 +245,46 @@ def test_toggle_chip_is_pill_with_icon_and_checkable() -> None:
         chip.deleteLater()
 
 
+def test_toggle_chip_keeps_capsule_height_and_symmetric_padding() -> None:
+    """胶囊应用 QSS 后仍是 30px 高（圆角才成胶囊），内容左右留白等宽。
+
+    QSS ``min-height`` 算的是内容高度：通用 ``QToolButton`` 的上下 padding
+    不归零会把胶囊撑到 38px，既不是胶囊也比同行 34px 按钮高，看起来发歪。
+    """
+    chip = ToggleChip("对话", icon="chat")
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    layout.addWidget(chip)
+    layout.addStretch(1)
+    try:
+        host.show()
+        QApplication.processEvents()
+        # 上屏后 QSS 才会把 min / max-height 换成控件约束，这里必须仍是 30。
+        assert chip.height() == 30
+        assert chip.minimumHeight() == 30
+        assert chip.maximumHeight() == 30
+        hint = chip.sizeHint()
+        expected = 2 * 12 + chip.iconSize().width() + 6 + chip.fontMetrics().horizontalAdvance("对话")
+        assert hint.width() == expected
+        assert hint.height() == 30
+        assert chip.minimumSizeHint() == hint
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+def test_toggle_chip_content_color_follows_theme_tokens() -> None:
+    """自绘内容色与 QSS 语义色一致：选中 accent、未选中 muted。"""
+    theme = _qt_theme.active_theme()
+    chip = ToggleChip("对话", icon="chat")
+    try:
+        assert chip._content_color().name() == theme.palette.muted
+        chip.setChecked(True)
+        assert chip._content_color().name() == theme.palette.accent
+    finally:
+        chip.deleteLater()
+
+
 def test_collapsible_can_hide_header() -> None:
     """入口移到外部图标按钮时，分区内置标题隐藏但仍可程序化展开。"""
     section = Collapsible("连接参数", header=False)

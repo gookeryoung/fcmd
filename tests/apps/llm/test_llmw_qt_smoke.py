@@ -614,12 +614,12 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     storage = card_of(page.models_path)
     engine = card_of(page.engines_path)
     assert storage.title_label.text() == "存储"
-    assert engine.title_label.text() == "引擎"
+    assert engine.title_label.text() == "推理引擎（llama.cpp）"
     assert engine is not storage
     assert not storage.isAncestorOf(page.engines_path)
     assert [card.title_label.text() for card in page.findChildren(Card)] == [
         "存储",
-        "引擎",
+        "推理引擎（llama.cpp）",
         "画图引擎（sd.cpp）",
         "下载",
         "模型转换",
@@ -641,6 +641,23 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert not hasattr(page, "switch_engine_dir_button")
     assert not hasattr(page, "import_engine_zip_button")
     assert not hasattr(page, "engine_status_label")
+
+
+def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
+    """画图引擎卡片对齐推理引擎：刷新在标题行、目录行动作、单行列表 + 空态提示。"""
+    window.show_page("settings")
+    card = window.page("settings").paint_engine_card
+    assert card.title() == "画图引擎（sd.cpp）"
+    assert card.refresh_button.text() == "刷新"
+    assert card.refresh_button.parent() is card
+    assert card.root_label.objectName() == "Hint"
+    assert card.open_button.text() == "打开"
+    assert card.install_button.text() == "安装引擎…"
+    assert card.engines_list.objectName() == "PaintEngineList"
+    assert card.engines_empty.text().startswith("还没有已安装画图引擎")
+    # 旧的状态胶囊 / 自绘行布局已移除，改为与推理引擎一致的列表行。
+    assert not hasattr(card, "engine_tag")
+    assert not hasattr(card, "rows")
 
 
 def test_settings_engine_empty_and_error_states(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -25,7 +25,7 @@
 | D3 | 画图配置拆成两段：采样 / 输出（:class:`PaintSampleSection`）嵌对话的「模型与生成配置」窗口；引擎 / 模型组件（:class:`PaintEngineSection`）放运行页「画图」页签 | `_llmw_qt_paint.py` |
 | D4 | 运行页按用途分「对话 / 编程 / 画图」；画图页签只配启动参数与启停（启停样式对齐对话 / 编程的模型卡片） | `_llmw_qt_run.py` |
 | D5 | 出图结果作为图片消息写进当前对话（历史记录保存路径，重开时按路径重绘） | `_llmw_qt_chat.py` |
-| D6 | sd.cpp 引擎安装 / 设为默认移到设置页的「画图引擎（sd.cpp）」卡片 | `_llmw_qt_paint.PaintEngineCard` + `_llmw_qt_settings.py` |
+| D6 | sd.cpp 引擎安装 / 设为默认移到设置页的「画图引擎（sd.cpp）」卡片，UI 与推理引擎（llama.cpp）卡片同构 | `_llmw_qt_paint.PaintEngineCard` + `_llmw_qt_settings.py` |
 | D7 | 设置仍持久化在 `ui/llmw.json` 的 `paint` 字段，新增 `enabled` 表示对话页勾选状态 | `_llmw_winsettings.py` / `_llmw_qt_paint.py` |
 
 ### D2 / D5 交互
@@ -61,9 +61,13 @@
     （`PaintEngineSection`：加载方式、组件、CPU 卸载 / VAE 分块 / Diffusion FA、
     额外参数、命令预览、服务端口 / 自动启动）。启停按钮的文案 / 配色 / 禁用逻辑
     与 LLM 模型卡片一致（`RunPrimary` / `RunDanger` + `set_button_text`）。
-- 引擎管理统一在设置页：新增「画图引擎（sd.cpp）」卡片（引擎目录 / 打开 /
-  安装引擎… / 引擎状态 / 已安装列表与「设为默认」），安装对话框沿用
-  `PaintEngineDialog`（版本 / 变体下载、本地 zip / 目录导入）；运行页不再放安装
+- 引擎管理统一在设置页：新增「画图引擎（sd.cpp）」卡片，布局对齐推理引擎
+  （llama.cpp）卡片——标题行右侧「刷新」、目录行「引擎目录 + 路径 + 打开 / 安装引擎…」、
+  已安装引擎一律紧凑单行（版本号 + 可执行文件 + 「默认 / 设为默认」+ 后端胶囊；
+  版本号取 release 资产名里的 ``master-...``，后端胶囊优先读 ``engine.json`` 的
+  backend，缺失时从 tag 反推 ``cuda12`` / ``vulkan`` / ``cpu`` / ``rocm-x``）、
+  列表高度随内容伸缩且超过 6 行才滚动、空态由提示行承接；安装对话框沿用
+  `PaintEngineDialog`（版本 / 变体下载、本地 zip / 目录导入）。运行页不再放安装
   入口，只配置启动参数。
 - 画图服务仍由 `_llmpaint_server` 管理（单实例、状态 `paint/server.json`、
   默认端口 1234），生成前按组件指纹自动启停（对话配置里的「自动启动」可关闭）。

@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from fcmd.apps.llm import llmbase, llmserve
+from fcmd.apps.llm._llmpaint_engine import SdEngine, engine_backend, engine_version
 from fcmd.apps.llm._llmpaint_server import PaintState
 from fcmd.apps.llm._llmw_hardware import HardwareSnapshot
 from fcmd.apps.llm._llmw_monitor import LoadSample
@@ -655,6 +656,20 @@ def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert model_roots({"model_dir": str(tmp_path / "extra")}) == [tmp_path / "extra"]
     assert output_dir({}) == tmp_path / "paint" / "out"
     assert output_dir({"output_dir": str(tmp_path / "mine")}) == tmp_path / "mine"
+
+
+def test_paint_engine_version_and_backend_labels() -> None:
+    """引擎展示名只取版本号，后端优先读 marker、缺失时从资产 tag 反推。"""
+    exe = Path("sd-server.exe")
+    release = SdEngine("sd-master-532d2c1-bin-win-cuda12-x64", exe)
+    assert engine_version(release.tag) == "master-532d2c1"
+    assert engine_backend(release) == "cuda12"
+    older = SdEngine("sd-master-1106-abc123-bin-win-vulkan-x64", exe, backend="vulkan")
+    assert engine_version(older.tag) == "master-1106-abc123"
+    assert engine_backend(older) == "vulkan"
+    assert engine_version("master-1106-abc123") == "master-1106-abc123"
+    assert engine_backend(SdEngine("my-local", exe)) == ""
+    assert engine_version("my-local") == "my-local"
 
 
 def test_paint_engine_variant_note() -> None:

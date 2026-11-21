@@ -154,6 +154,9 @@ def test_mode_chips_are_rounded_pills() -> None:
     assert "border-radius: 15px" in block
     assert "min-height: 30px" in block
     assert "max-height: 30px" in block
+    # 通用 QToolButton 的上下 padding 必须归零，否则 QSS min-height 是内容高，
+    # 胶囊会被撑到 38px（不再是胶囊，比同行 34px 按钮还高）。
+    assert "padding: 0" in block
     checked = text.split("\nQToolButton#ToggleChip:checked {", 1)[1].split("}", 1)[0]
     assert f"color: {theme.palette.accent}" in checked
     assert "background:" in checked

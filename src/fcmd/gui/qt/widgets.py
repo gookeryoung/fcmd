@@ -18,8 +18,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QElapsedTimer, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPainter, QPalette, QResizeEvent
+from PySide6.QtCore import QElapsedTimer, QEvent, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QEnterEvent,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPaintEvent,
+    QPalette,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -38,6 +48,9 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStyle,
+    QStyleOptionToolButton,
+    QStylePainter,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -168,7 +181,15 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
     参考元宝等对话产品输入区的模式开关：未选中是浅灰胶囊，悬停加深；选中回到
     强调色系。图标色调随选中状态在 ``muted`` / ``accent`` 间切换，主题切换后由
     :func:`fcmd.gui.qt.icons.refresh_icons` 按记录色调重绘。
+
+    QSS 只负责底色 / 圆角 / hover 与选中态；图标与文字由 :meth:`paintEvent`
+    按 ``_H_PADDING`` 均分左右留白后整体居中——QToolButton 自带排布会把 QSS
+    ``padding`` 和图标位置分开计算，胶囊内容会偏左、右侧留白偏大。
     """
+
+    _HEIGHT = 30
+    _H_PADDING = 12
+    _ICON_GAP = 6
 
     def __init__(
         self,
@@ -184,20 +205,82 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.setText(text)
-        self.setFixedHeight(30)
+        self.setFixedHeight(self._HEIGHT)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._icon_name = icon
         if tooltip:
             self.setToolTip(tooltip)
         self._refresh_icon()
         self.toggled.connect(lambda _checked: self._refresh_icon())
 
+    def sizeHint(self) -> QSize:
+        """左右等宽内边距 + 图标 + 间距 + 文字，宽度不随选中态变化。"""
+        metrics = self.fontMetrics()
+        icon_width = self.iconSize().width() if not self.icon().isNull() else 0
+        gap = self._ICON_GAP if icon_width else 0
+        width = 2 * self._H_PADDING + icon_width + gap + metrics.horizontalAdvance(self.text())
+        return QSize(width, self._HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:
+        """布局压缩时也不低于内容宽度，避免文字贴边。"""
+        return self.sizeHint()
+
+    def paintEvent(self, _event: QPaintEvent) -> None:
+        """样式只画 QSS 底色；图标与文字按同一垂直中心整体居中。"""
+        painter = QStylePainter(self)
+        option = QStyleOptionToolButton()
+        self.initStyleOption(option)
+        option.text = ""
+        option.icon = QIcon()
+        option.toolButtonStyle = Qt.ToolButtonStyle.ToolButtonIconOnly
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
+
+        metrics = painter.fontMetrics()
+        icon = self.icon()
+        icon_size = self.iconSize()
+        icon_width = icon_size.width() if not icon.isNull() else 0
+        gap = self._ICON_GAP if icon_width else 0
+        text = self.text()
+        x = (self.width() - icon_width - gap - metrics.horizontalAdvance(text)) // 2
+        if icon_width:
+            painter.drawPixmap(x, (self.height() - icon_size.height()) // 2, icon.pixmap(icon_size))
+            x += icon_width + gap
+        painter.setPen(self._content_color())
+        # 用文字实际墨迹框（去掉字体上下 leading）居中，避免 CJK 比图标偏低。
+        bounds = metrics.tightBoundingRect(text)
+        painter.drawText(x, (self.height() - bounds.height()) // 2 - bounds.top(), text)
+
+    def _content_color(self) -> QColor:
+        """内容色与 QSS 语义色一致：选中 accent、悬停 text、其余 muted。"""
+        palette = _qt_theme.active_theme().palette
+        if self.isChecked():
+            return QColor(palette.accent)
+        if self.underMouse():
+            return QColor(palette.text)
+        return QColor(palette.muted)
+
+    def enterEvent(self, event: QEnterEvent) -> None:
+        """悬停时文字转正文色，图标同步换 tone。"""
+        self._refresh_icon()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: QEvent) -> None:
+        self._refresh_icon()
+        super().leaveEvent(event)
+
     def _refresh_icon(self) -> None:
-        """按选中状态切换图标色调（未选中 muted、选中 accent）。"""
+        """按选中 / 悬停状态切换图标色调，与自绘文字色保持一致。"""
         if not self._icon_name:
             return
         from fcmd.gui.qt.icons import set_icon
 
-        set_icon(self, self._icon_name, tone="accent" if self.isChecked() else "muted")
+        if self.isChecked():
+            tone = "accent"
+        elif self.underMouse():
+            tone = "text"
+        else:
+            tone = "muted"
+        set_icon(self, self._icon_name, tone=tone)
 
 
 def confirm(parent: QWidget, title: str, text: str) -> bool:
