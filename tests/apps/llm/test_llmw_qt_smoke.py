@@ -1033,6 +1033,23 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     assert chat.new_chat_button.text() == "＋ 新对话"
 
 
+def test_chat_composer_puts_model_selector_left_of_send(window: Any) -> None:
+    """对话框底部工具行：模型选择在发送按钮左侧，历史栏显示条数。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show_page("chat")
+    window.show()
+    QApplication.processEvents()
+    chat = window.page("chat")
+    model_pos = chat.model_combo.mapTo(chat, chat.model_combo.rect().topLeft())
+    send_pos = chat.send_button.mapTo(chat, chat.send_button.rect().topLeft())
+    assert abs(model_pos.y() - send_pos.y()) <= 2
+    assert model_pos.x() < send_pos.x()
+    assert chat.history_count.text().endswith("个")
+    assert chat.transcript.objectName() == "ChatTranscript"
+    assert chat.input_edit.objectName() == "ChatInput"
+
+
 def test_chat_history_lists_conversations_and_switches(window: Any) -> None:
     window.show_page("chat")
     chat = window.page("chat")

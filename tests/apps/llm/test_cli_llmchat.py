@@ -698,6 +698,124 @@ def test_chat_page_select_unavailable_service(monkeypatch: pytest.MonkeyPatch, c
     assert "[错误] 服务 dead 不可用" in chat_page.transcript.toPlainText()
 
 
+def _history_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Path]:
+    from fcmd.apps.llm._llmw_qt_chat import ChatPage
+    from fcmd.apps.llm._llmw_qt_state import LlmState
+    from fcmd.gui.qt.app import create_application
+
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    create_application("llmw-chat-history")
+    monkeypatch.setattr(llmenv, "list_states", lambda: [])
+    path = tmp_path / "ui" / "llmw.json"
+    return ChatPage(LlmState(path)), path
+
+
+def test_chat_history_persists_across_reopen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """关闭再打开对话页后，对话标题、内容与选中项都从 llmw.json 恢复。"""
+    from fcmd.apps.llm._llmw_qt_chat import ChatPage
+    from fcmd.apps.llm._llmw_qt_state import LlmState
+
+    page, path = _history_page(tmp_path, monkeypatch)
+    page._append_text("你：第一段\n", "user")
+    page._set_title_from_prompt("第一段")
+    page.new_conversation()
+    page._append_text("你：第二段\n", "user")
+    page._set_title_from_prompt("第二段")
+    page.close()
+    page.deleteLater()
+
+    reopened = ChatPage(LlmState(path))
+    try:
+        assert [item.title for item in reopened._conversations] == ["第一段", "第二段"]
+        assert reopened._active == 1
+        assert "第二段" in reopened.transcript.toPlainText()
+        assert reopened.history_list.count() == 2
+    finally:
+        reopened.close()
+        reopened.deleteLater()
+
+
+def test_chat_session_and_form_restore_after_reopen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """多轮上下文（messages / 连接参数）也要恢复，重新打开后能继续追问。"""
+    from fcmd.apps.llm._llmw_qt_chat import ChatPage
+    from fcmd.apps.llm._llmw_qt_state import LlmState
+
+    page, path = _history_page(tmp_path, monkeypatch)
+    endpoint = Endpoint("http://127.0.0.1:9999", "sk-test", "demo-model")
+    session = ChatSession(endpoint=endpoint, system="sys", max_tokens=512, temperature=0.3, top_p=0.8)
+    session.messages = [
+        ChatMessage("system", "sys"),
+        ChatMessage("user", "q"),
+        ChatMessage("assistant", "a"),
+    ]
+    conversation = page._conversation()
+    conversation.title = "带上下文"
+    conversation.session = session
+    page._persist_history()
+    page.close()
+    page.deleteLater()
+
+    reopened = ChatPage(LlmState(path))
+    try:
+        restored = reopened._conversation()
+        assert restored.title == "带上下文"
+        assert restored.session is not None
+        assert restored.session.endpoint == endpoint
+        assert [message.content for message in restored.session.messages] == ["sys", "q", "a"]
+        assert reopened.url_edit.text() == endpoint.base_url
+        assert reopened.model_edit.text() == endpoint.model
+        assert reopened.api_key_edit.text() == endpoint.api_key
+        assert reopened.max_tokens_edit.text() == "512"
+        assert reopened.system_edit.text() == "sys"
+    finally:
+        reopened.close()
+        reopened.deleteLater()
+
+
+def test_history_payload_keeps_recent_conversations() -> None:
+    from fcmd.apps.llm._llmw_qt_chat import MAX_SAVED_CONVERSATIONS, _Conversation, history_payload
+
+    conversations = [_Conversation(title=str(index)) for index in range(MAX_SAVED_CONVERSATIONS + 5)]
+    payload, active = history_payload(conversations, len(conversations) - 1)
+    assert len(payload) == MAX_SAVED_CONVERSATIONS
+    assert payload[0]["title"] == "5"
+    assert active == MAX_SAVED_CONVERSATIONS - 1
+
+
+def test_settings_tolerates_bad_chat_history(tmp_path: Path) -> None:
+    from fcmd.apps.llm._llmw_winsettings import LlmSettings, load_settings, save_settings
+
+    path = tmp_path / "llmw.json"
+    save_settings(LlmSettings(chat_history=[{"title": "x"}], chat_active=2), path)
+    loaded = load_settings(path)
+    assert loaded.chat_history == [{"title": "x"}]
+    assert loaded.chat_active == 2
+    path.write_text(json.dumps({"chat_history": "bad", "chat_active": True}), encoding="utf-8")
+    fallback = load_settings(path)
+    assert fallback.chat_history is None
+    assert fallback.chat_active == 0
+
+
+def test_chat_model_combo_lists_aliases_and_syncs(monkeypatch: pytest.MonkeyPatch, chat_page: Any) -> None:
+    """发送左侧模型下拉列出已登记服务的模型名，并与连接参数双向同步。"""
+    states = [replace(_state("a"), alias="alpha"), replace(_state("b"), alias="beta")]
+    monkeypatch.setattr(llmenv, "list_states", lambda: states)
+    monkeypatch.setattr("fcmd.apps.llm._llmw_chat.process_alive", lambda pid, created: True)
+
+    chat_page.refresh_services()
+    labels = [chat_page.model_combo.itemText(index) for index in range(chat_page.model_combo.count())]
+    assert "alpha" in labels
+    assert "beta" in labels
+
+    chat_page.model_combo.setCurrentText("beta")
+    assert chat_page.model_edit.text() == "beta"
+    assert chat_page.service_combo.currentText().startswith("b（")
+    assert chat_page.url_edit.text() == _state("b").base_url
+
+    chat_page.model_edit.setText("custom-model")
+    assert chat_page.model_combo.currentText() == "custom-model"
+
+
 class _ReasoningTwiceSession:
     def ask(self, prompt: str, *, on_delta: Any, on_reasoning: Any) -> None:
         assert prompt == "hi"

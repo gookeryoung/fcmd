@@ -3,7 +3,9 @@
 服务下拉框读取 :mod:`fcmd.apps.llm.llmenv` 登记的服务并回填地址 / 模型 /
 API Key，也可直接填任意 OpenAI 兼容地址。流式回复在后台线程读取，
 思考型模型的 ``reasoning_content`` 以灰色斜体单独展示，正文按增量追加。
-对话状态保存在页面控件中，切页不丢失；关闭窗口时取消进行中的生成。
+对话列表 / 已渲染内容 / 多轮 ``ChatSession`` 会落盘到 ``llmw.json`` 的
+``chat_history`` / ``chat_active``，重启后恢复最近 20 个对话并可继续追问；
+关闭窗口时取消进行中的生成，并再落盘一次最新历史。
 
 连接参数复用既有的 ``format_session_markdown`` 与 :class:`ChatSession`，
 Qt 侧只负责把回调转成信号与富文本追加。
@@ -12,7 +14,7 @@ Qt 侧只负责把回调转成信号与富文本追加。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
@@ -22,8 +24,10 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QTextEdit,
@@ -43,7 +47,7 @@ from fcmd.apps.llm.llmbase import (
     ServeState,
     http_base_url,
 )
-from fcmd.apps.llm.llmchat import ChatMessage, ChatSession
+from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, StatusTag, button, icon_button
 from fcmd.gui.qt.workers import submit
@@ -51,9 +55,22 @@ from fcmd.gui.qt.workers import submit
 if TYPE_CHECKING:
     from fcmd.apps.llm._llmw_qt_state import LlmState
 
-__all__ = ["ChatPage", "endpoint_from_form", "service_labels"]
+__all__ = [
+    "MAX_SAVED_CONVERSATIONS",
+    "ChatPage",
+    "conversation_from_data",
+    "conversation_to_data",
+    "endpoint_from_form",
+    "history_payload",
+    "service_labels",
+]
 
 _DEFAULT_URL = http_base_url(DEFAULT_HOST, DEFAULT_PORT)
+
+MAX_SAVED_CONVERSATIONS = 20
+"""最多持久化的对话条数；超出时保留最近 N 个，避免 llmw.json 无限膨胀。"""
+
+_CHAT_ROLES: tuple[str, ...] = ("system", "user", "assistant")
 
 
 def service_labels(states: list[ServeState]) -> list[tuple[str, ServeState]]:
@@ -88,6 +105,95 @@ class _Conversation:
     reasoning_started: bool = False
 
 
+def conversation_to_data(conversation: _Conversation) -> dict[str, Any]:
+    """把一个对话（标题 / 已渲染块 / 会话历史）转成可写入 JSON 的结构。"""
+    data: dict[str, Any] = {
+        "title": conversation.title,
+        "blocks": [[kind, text] for kind, text in conversation.blocks],
+    }
+    session = conversation.session
+    if session is not None:
+        data["session"] = {
+            "endpoint": {
+                "base_url": session.endpoint.base_url,
+                "api_key": session.endpoint.api_key,
+                "model": session.endpoint.model,
+            },
+            "system": session.system,
+            "max_tokens": session.max_tokens,
+            "temperature": session.temperature,
+            "top_p": session.top_p,
+            "messages": [{"role": message.role, "content": message.content} for message in session.messages],
+        }
+    return data
+
+
+def _number(value: Any, default: float) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return float(value)
+
+
+def conversation_from_data(raw: Any) -> _Conversation | None:
+    """从 JSON 结构恢复对话；结构不合法时返回 ``None``，不让单个坏条目拖垮历史。"""
+    if not isinstance(raw, dict):
+        return None
+    title = raw.get("title")
+    conversation = _Conversation(
+        title=title.strip() if isinstance(title, str) and title.strip() else "新对话",
+        blocks=[
+            (item[0], item[1])
+            for item in raw.get("blocks") or []
+            if isinstance(item, (list, tuple))
+            and len(item) == 2
+            and isinstance(item[0], str)
+            and isinstance(item[1], str)
+        ],
+    )
+    session_raw = raw.get("session")
+    if not isinstance(session_raw, dict):
+        return conversation
+    endpoint_raw = session_raw.get("endpoint")
+    if not isinstance(endpoint_raw, dict):
+        return conversation
+    base_url = endpoint_raw.get("base_url")
+    api_key = endpoint_raw.get("api_key")
+    model = endpoint_raw.get("model")
+    if not all(isinstance(value, str) and value.strip() for value in (base_url, api_key, model)):
+        return conversation
+    system = session_raw.get("system")
+    session = ChatSession(
+        endpoint=Endpoint(cast("str", base_url), cast("str", api_key), cast("str", model)),
+        system=system if isinstance(system, str) and system.strip() else None,
+        max_tokens=max(1, int(_number(session_raw.get("max_tokens"), 2048))),
+        temperature=_number(session_raw.get("temperature"), 0.7),
+        top_p=_number(session_raw.get("top_p"), 0.9),
+    )
+    messages: list[ChatMessage] = []
+    for item in session_raw.get("messages") or []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in _CHAT_ROLES and isinstance(content, str):
+            messages.append(ChatMessage(cast("ChatRole", role), content))
+    session.messages = messages
+    conversation.session = session
+    return conversation
+
+
+def history_payload(
+    conversations: list[_Conversation],
+    active: int,
+) -> tuple[list[dict[str, Any]], int]:
+    """裁剪到最近 :data:`MAX_SAVED_CONVERSATIONS` 条，并把选中下标换算到裁剪后的列表。"""
+    kept = conversations[-MAX_SAVED_CONVERSATIONS:]
+    offset = len(conversations) - len(kept)
+    index = active - offset
+    index = min(max(index, 0), len(kept) - 1) if kept else 0
+    return [conversation_to_data(conversation) for conversation in kept], index
+
+
 class _ChatBridge(QObject):  # pragma: no cover - Qt 信号桥
     """后台生成线程 → GUI 的增量信号桥。"""
 
@@ -103,8 +209,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.state = state
-        self._conversations: list[_Conversation] = [_Conversation()]
-        self._active = 0
+        self._conversations, self._active = self._restore_history()
         self._running = False
         self._services: list[tuple[str, ServeState]] = []
         self._manual_choice = False
@@ -115,7 +220,9 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._bridge.failed.connect(self._on_failed)
         self._build()
         self.state.servicesChanged.connect(lambda _states: self.refresh_services())
+        self.state.modelsChanged.connect(lambda _outcome: self._refresh_model_choices())
         self.refresh_services()
+        self._restore_session_form()
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -128,7 +235,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         sidebar = QFrame(self)
         sidebar.setObjectName("ChatSidebar")
         sidebar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        sidebar.setFixedWidth(210)
+        sidebar.setFixedWidth(240)
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(8, 8, 8, 8)
         side.setSpacing(8)
@@ -137,8 +244,19 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.new_chat_button.setObjectName("RunPrimary")
         self.new_chat_button.clicked.connect(self.new_conversation)
         side.addWidget(self.new_chat_button)
+        history_header = QHBoxLayout()
+        history_header.setContentsMargins(2, 2, 2, 0)
+        history_title = QLabel("对话记录")
+        history_title.setObjectName("SectionTitle")
+        self.history_count = QLabel("")
+        self.history_count.setObjectName("Hint")
+        history_header.addWidget(history_title)
+        history_header.addStretch(1)
+        history_header.addWidget(self.history_count)
+        side.addLayout(history_header)
         self.history_list = QListWidget(sidebar)
         self.history_list.setObjectName("ChatHistory")
+        self.history_list.setSpacing(2)
         self.history_list.currentRowChanged.connect(self._select_conversation)
         side.addWidget(self.history_list, 1)
         history_actions = QHBoxLayout()
@@ -161,7 +279,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         layout.setSpacing(8)
         outer.addWidget(right, 1)
 
-        connection = Card("对话服务")
+        connection = Card()
         service_row = QHBoxLayout()
         service_row.setContentsMargins(0, 0, 0, 0)
         service_row.setSpacing(8)
@@ -216,36 +334,52 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         connection.body.addWidget(self.settings_section)
         layout.addWidget(connection)
 
-        transcript_card = Card("对话")
-        self.transcript = QTextEdit(transcript_card)
+        # 对话区不再套卡片边框：正文直接铺在页面底色上，更接近主流对话产品的阅读区。
+        self.transcript = QTextEdit(self)
+        self.transcript.setObjectName("ChatTranscript")
         self.transcript.setReadOnly(True)
-        transcript_card.body.addWidget(self.transcript, 1)
-        layout.addWidget(transcript_card, 1)
+        layout.addWidget(self.transcript, 1)
 
-        input_area = QVBoxLayout()
+        # 输入区（对话框）：大圆角卡片 + 底部工具行，模型选择放在发送按钮左侧。
+        composer = QFrame(self)
+        composer.setObjectName("ChatComposer")
+        composer.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        input_area = QVBoxLayout(composer)
+        input_area.setContentsMargins(10, 8, 10, 8)
         input_area.setSpacing(6)
-        self.input_edit = QPlainTextEdit(self)
+        self.input_edit = QPlainTextEdit(composer)
+        self.input_edit.setObjectName("ChatInput")
         self.input_edit.setPlaceholderText("输入问题，Ctrl+Enter 发送")
-        self.input_edit.setMinimumHeight(72)
+        self.input_edit.setMinimumHeight(64)
         self.input_edit.setMaximumHeight(120)
         self.input_edit.installEventFilter(self)
         input_area.addWidget(self.input_edit)
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
+        self.model_combo = QComboBox(composer)
+        self.model_combo.setObjectName("ChatModelCombo")
+        self.model_combo.setEditable(True)
+        self.model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.model_combo.setMinimumWidth(200)
+        self.model_combo.setToolTip("选择当前对话使用的模型（可输入自定义模型名）")
+        self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
+        self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
+        buttons.addWidget(self.model_combo, 0)
         buttons.addStretch(1)
         self.send_button = button("发送", kind="primary")
         self.stop_button = button("停止", kind="danger")
         self.stop_button.setEnabled(False)
         self.export_button = button("导出记录", kind="ghost")
-        for widget in (self.send_button, self.stop_button, self.export_button):
+        for widget in (self.export_button, self.stop_button, self.send_button):
             buttons.addWidget(widget)
         input_area.addLayout(buttons)
-        layout.addLayout(input_area)
+        layout.addWidget(composer)
 
         self.send_button.clicked.connect(self.send)
         self.stop_button.clicked.connect(self.stop)
         self.export_button.clicked.connect(self.export_markdown)
         self._refresh_history()
+        self._render_conversation()
 
     # ------------------------------------------------------------------ #
     # 服务选择
@@ -275,6 +409,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
                 current = self._services[0][0]
         self.service_combo.setCurrentText(current)
         self.service_combo.blockSignals(False)
+        self._refresh_model_choices()
         state = self._selected_state()
         if state is None:
             self.service_tag.set_status("未连接", "muted")
@@ -293,6 +428,50 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             if candidate == label:
                 return state
         return None
+
+    def _refresh_model_choices(self) -> None:
+        """把已登记服务的模型名填进输入框左侧的模型下拉（保留当前自定义值）。"""
+        current = self.model_edit.text().strip()
+        names: list[str] = []
+        for _label, state in self._services:
+            alias = state.alias.strip()
+            if alias and alias not in names:
+                names.append(alias)
+        if current and current not in names:
+            names.insert(0, current)
+        self.model_combo.blockSignals(True)
+        self.model_combo.clear()
+        self.model_combo.addItems(names)
+        self.model_combo.setCurrentText(current or (names[0] if names else DEFAULT_ALIAS))
+        self.model_combo.blockSignals(False)
+
+    def _on_model_combo_changed(self, text: str) -> None:
+        """选择模型：同步模型名；命中已登记服务时一并切换服务地址。"""
+        model = text.strip()
+        if not model:
+            return
+        if model != self.model_edit.text():
+            self.model_edit.setText(model)
+        for index, (_label, state) in enumerate(self._services, start=1):
+            if state.alias.strip() != model or self.service_combo.currentIndex() == index:
+                continue
+            # 静默切换服务（不触发「已切换到…」正文提示），避免污染对话记录。
+            self.service_combo.blockSignals(True)
+            self.service_combo.setCurrentIndex(index)
+            self.service_combo.blockSignals(False)
+            self._manual_choice = True
+            self._apply_state(state)
+            self._report_state(state)
+            return
+
+    def _sync_model_combo(self) -> None:
+        """连接参数变化（服务回填 / 恢复历史）时反向同步模型下拉。"""
+        text = self.model_edit.text()
+        if self.model_combo.currentText() == text:
+            return
+        self.model_combo.blockSignals(True)
+        self.model_combo.setCurrentText(text)
+        self.model_combo.blockSignals(False)
 
     def _on_service_changed(self) -> None:
         """选中已登记服务时回填地址 / 模型 / API Key，并提示进程是否仍在运行。"""
@@ -343,13 +522,47 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _conversation(self) -> _Conversation:
         return self._conversations[self._active]
 
+    def _restore_history(self) -> tuple[list[_Conversation], int]:
+        """从 ``llmw.json`` 恢复对话列表与选中下标；没有可用记录时给一个空对话。"""
+        conversations = [
+            conversation
+            for item in self.state.settings.chat_history or []
+            if (conversation := conversation_from_data(item)) is not None
+        ]
+        if not conversations:
+            return [_Conversation()], 0
+        active = self.state.settings.chat_active
+        return conversations, active if 0 <= active < len(conversations) else len(conversations) - 1
+
+    def _persist_history(self) -> None:
+        """把当前对话列表与选中项写回 ``llmw.json``（只保留最近 N 条）。"""
+        payload, active = history_payload(self._conversations, self._active)
+        self.state.settings.chat_history = payload
+        self.state.settings.chat_active = active
+        self.state.persist()
+
+    def _restore_session_form(self) -> None:
+        """切回带会话的对话时，把连接参数与采样参数同步回表单，便于继续追问。"""
+        session = self._conversation().session
+        if session is None:
+            return
+        self.url_edit.setText(session.endpoint.base_url)
+        self.api_key_edit.setText(session.endpoint.api_key)
+        self.model_edit.setText(session.endpoint.model)
+        self.max_tokens_edit.setText(str(session.max_tokens))
+        self.temperature_edit.setText(str(session.temperature))
+        self.system_edit.setText(session.system or "")
+
     def _refresh_history(self) -> None:
         self.history_list.blockSignals(True)
         self.history_list.clear()
         for conversation in self._conversations:
-            self.history_list.addItem(conversation.title)
+            item = QListWidgetItem(conversation.title)
+            item.setToolTip(conversation.title)
+            self.history_list.addItem(item)
         self.history_list.setCurrentRow(self._active)
         self.history_list.blockSignals(False)
+        self.history_count.setText(f"{len(self._conversations)} 个")
 
     def _select_conversation(self, row: int) -> None:
         if row < 0 or row == self._active:
@@ -360,7 +573,9 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             return
         self._active = row
         self._render_conversation()
+        self._restore_session_form()
         self.status.setText("已切换对话")
+        self._persist_history()
 
     def _render_conversation(self) -> None:
         self.transcript.clear()
@@ -386,6 +601,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             self._refresh_history()
             self._render_conversation()
         self.status.setText("已删除当前对话")
+        self._persist_history()
 
     def clear_conversations(self) -> None:
         """清空全部对话记录（需确认）；完成后回到空白新对话。"""
@@ -404,6 +620,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._refresh_history()
         self.transcript.clear()
         self.status.setText("已清空全部对话")
+        self._persist_history()
 
     def new_conversation(self) -> None:
         """新建一个空白对话；空对话不重复创建。"""
@@ -420,6 +637,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._refresh_history()
         self.transcript.clear()
         self.status.setText("已开始新对话")
+        self._persist_history()
 
     def _set_title_from_prompt(self, prompt: str) -> None:
         conversation = self._conversation()
@@ -428,6 +646,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         title = prompt.splitlines()[0].strip()[:24] or "新对话"
         conversation.title = title
         self._refresh_history()
+        self._persist_history()
 
     # ------------------------------------------------------------------ #
     # 发送 / 停止
@@ -505,11 +724,13 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             self._append_text("\n\n", "assistant")
         self._finish_running()
         self.status.setText("生成完成")
+        self._persist_history()
 
     def _on_failed(self, message: str) -> None:
         self._append_text(f"\n[失败] {message}\n\n", "error")
         self._finish_running()
         self.status.setText("生成失败：" + message)
+        self._persist_history()
 
     def reset(self) -> None:
         """清空当前对话并开一个新的空对话。"""
@@ -520,10 +741,11 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         return self._running
 
     def close(self) -> None:
-        """窗口关闭时取消所有对话中正在进行的生成。"""
+        """窗口关闭时取消进行中的生成，并把最新对话历史落盘。"""
         for conversation in self._conversations:
             if conversation.session is not None:
                 conversation.session.cancel()
+        self._persist_history()
 
     # ------------------------------------------------------------------ #
     # 文本追加

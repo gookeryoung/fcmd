@@ -229,8 +229,30 @@ QListWidget#ChatHistory::item {
     padding: 8px 10px;
     border-radius: 6px;
 }
+QListWidget#ChatHistory::item {
+    min-height: 26px;
+}
 QListWidget#ChatHistory::item:hover { background: $surface_hover; color: $text; }
 QListWidget#ChatHistory::item:selected { background: $surface_active; color: $text; }
+QTextEdit#ChatTranscript {
+    background: transparent;
+    border: none;
+    padding: 4px 6px;
+}
+QFrame#ChatComposer {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: 10px;
+}
+QPlainTextEdit#ChatInput {
+    background: transparent;
+    border: none;
+    padding: 4px 2px;
+}
+QComboBox#ChatModelCombo {
+    min-height: 30px;
+    max-width: 280px;
+}
 QPushButton#ChoiceCard {
     background: $surface;
     border: 1px solid $border;

@@ -52,6 +52,8 @@ class LlmSettings:
     chat_settings_open: bool = False
     sidebar_collapsed: bool = False
     model_view: dict[str, Any] | None = None
+    chat_history: list[dict[str, Any]] | None = None
+    chat_active: int = 0
 
 
 def config_path() -> Path:
@@ -122,6 +124,12 @@ def load_settings(path: Path | None = None) -> LlmSettings:  # noqa: PLR0912 - é
                 for key, value in model_view.items()
                 if isinstance(value, (str, bool)) and (not isinstance(value, str) or value.strip() or key == "owner")
             }
+        chat_history = raw.get("chat_history")
+        if isinstance(chat_history, list):
+            settings.chat_history = [dict(item) for item in chat_history if isinstance(item, dict)]
+        chat_active = raw.get("chat_active")
+        if isinstance(chat_active, int) and not isinstance(chat_active, bool) and chat_active >= 0:
+            settings.chat_active = chat_active
     return settings
 
 
@@ -142,6 +150,8 @@ def save_settings(settings: LlmSettings, path: Path | None = None) -> None:
             "chat_settings_open": settings.chat_settings_open,
             "sidebar_collapsed": settings.sidebar_collapsed,
             "model_view": settings.model_view,
+            "chat_history": settings.chat_history,
+            "chat_active": settings.chat_active,
         },
         path or config_path(),
     )
