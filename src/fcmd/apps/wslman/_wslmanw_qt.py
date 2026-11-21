@@ -130,6 +130,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         )
         # 三页都很轻（表格 + 表单），建窗即构造：镜像页的控件也是设置持久化与
         # 下载动作的读取来源，延迟构建会让「没切到镜像页就关窗」时缺控件。
+        # 但提前构造的页在未插入页面栈前是主窗口的子控件，默认可见并落在 (0,0)，
+        # 会把页内容画到菜单栏上；先 hide，等共享页面栈切换时再 show。
         builders = {
             "distros": self._build_distros_page,
             "images": self._build_images_page,
@@ -137,6 +139,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         }
         for key, label, hint in PAGES:
             page = builders[key]()
+            page.hide()
             self.add_page(key, label, hint=hint, factory=lambda page=page: page)
         self.hover_label = HintLabel("")
         self.hover_label.setTextFormat(Qt.TextFormat.PlainText)

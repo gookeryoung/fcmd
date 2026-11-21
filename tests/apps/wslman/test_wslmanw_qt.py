@@ -191,6 +191,32 @@ def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
     assert raw["sidebar_collapsed"] is True
 
 
+def test_prebuilt_pages_stay_hidden_until_shown(home: Path) -> None:
+    """提前构造的页面在进入页面栈前必须隐藏，否则会以 (0,0) 画到菜单栏上。"""
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        window.show()
+        _wait_idle(window)
+        QApplication.processEvents()
+
+        bar = window.menuBar()
+        assert bar.geometry().top() == 0
+        assert bar.geometry().height() > 0
+        assert not window.image_table.isVisible()
+        assert not window._log_view.isVisible()
+        hit = window.childAt(30, bar.height() // 2)
+        node = hit
+        while node is not None and node is not window:
+            if node is bar:
+                break
+            node = node.parentWidget()
+        assert node is bar, f"菜单栏区域被 {hit!r} 覆盖"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.close()
+        window.deleteLater()
+
+
 def test_close_asks_when_task_running(home: Path) -> None:
     window = _wslmanw_qt.WslmanQtWindow()
     try:
