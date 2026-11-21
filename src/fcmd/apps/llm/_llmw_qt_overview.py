@@ -262,7 +262,8 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         """规格与实时占用：上方硬件规格，下方 GPU / CPU / 内存三块负载条。
 
         占用来自概览页每秒的系统采样：分段格图 + 百分比；
-        GPU 显存、内存交换作为副条并排显示。顶部只保留「重新检测」文字链接与
+        GPU 块的利用率与显存各占一条格图（显存条上方带已用 / 总量小字），
+        内存交换作为标题后的小字提示。顶部只保留「重新检测」文字链接与
         检测状态，不放标题 / 说明文案。
         """
         card = Card()
@@ -319,7 +320,14 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         loads = QHBoxLayout()
         loads.setContentsMargins(0, 0, 0, 0)
         loads.setSpacing(8)
-        gpu_block, self._gpu_percent, self._gpu_bar, self._gpu_hint = self._build_load_block("GPU", card)
+        (
+            gpu_block,
+            self._gpu_percent,
+            self._gpu_bar,
+            self._gpu_hint,
+            self._vram_hint,
+            self._vram_bar,
+        ) = self._build_gpu_block(card)
         loads.addWidget(gpu_block, 1)
         cpu_block, self._cpu_percent, self._cpu_bar, self._cpu_hint = self._build_load_block("CPU", card)
         loads.addWidget(cpu_block, 1)
@@ -375,6 +383,38 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         parent: QWidget,
     ) -> tuple[QFrame, QLabel, SegmentBar, ElidedLabel]:
         """单个负载块：标题 + 小字关键信息 + 占用率 + 主格图。"""
+        block, layout, hint, percent = self._load_block_shell(title, parent)
+        bar = SegmentBar(parent=block)
+        layout.addWidget(bar)
+        layout.addStretch(1)
+        return block, percent, bar, hint
+
+    def _build_gpu_block(
+        self,
+        parent: QWidget,
+    ) -> tuple[QFrame, QLabel, SegmentBar, ElidedLabel, ElidedLabel, SegmentBar]:
+        """GPU 块：利用率与显存各一条格图，两条格图在同一块内并列展示。
+
+        显存占用不再挤进标题后的小字：它有独立的小字标签（已用 / 总量 / 百分比）
+        和自己的格图，与利用率的高低可以同时比较；标题后只留功耗等其它信息。
+        """
+        block, layout, hint, percent = self._load_block_shell("GPU", parent)
+        util_bar = SegmentBar(parent=block)
+        layout.addWidget(util_bar)
+        vram_hint = ElidedLabel("等待采样…", parent=block)
+        vram_hint.setObjectName("Hint")
+        layout.addWidget(vram_hint)
+        vram_bar = SegmentBar(parent=block)
+        layout.addWidget(vram_bar)
+        layout.addStretch(1)
+        return block, percent, util_bar, hint, vram_hint, vram_bar
+
+    @staticmethod
+    def _load_block_shell(
+        title: str,
+        parent: QWidget,
+    ) -> tuple[QFrame, QVBoxLayout, ElidedLabel, QLabel]:
+        """负载块外壳：底板 + 标题行（标题 / 小字提示 / 占用率），格图由调用方追加。"""
         block = QFrame(parent)
         block.setObjectName("LoadBlock")
         block.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -396,11 +436,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         header.addWidget(hint, 1)
         header.addWidget(percent)
         layout.addLayout(header)
-
-        bar = SegmentBar(parent=block)
-        layout.addWidget(bar)
-        layout.addStretch(1)
-        return block, percent, bar, hint
+        return block, layout, hint, percent
 
     def _build_recommendations(self) -> Card:
         card = Card("智能推荐")
@@ -558,12 +594,10 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         gpu = sample.gpu
         gpu_values = _format_gpu(gpu)
         gpu_vram = gpu_memory_percent(gpu)
-        gpu_parts = [
-            "未检测到 GPU" if gpu is None else f"显存 {gpu_vram:.0f}%" if gpu_vram is not None else "显存 -",
-            gpu_values["gpu_power"],
-        ]
-        self._set_hint(self._gpu_hint, gpu_parts)
+        self._set_hint(self._gpu_hint, [gpu_values["gpu_power"]])
+        self._set_hint(self._vram_hint, [self._vram_text(gpu, gpu_vram)])
         self._apply_load_block(self._gpu_percent, self._gpu_bar, None if gpu is None else gpu.utilization)
+        self._vram_bar.set_percent(gpu_vram)
 
         load_values = _format_load(sample)
         cpu_parts = []
@@ -631,6 +665,17 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
     def _set_hint(label: QLabel, parts: list[str]) -> None:
         """拼接标题后的小字关键信息；占位 ``-`` 不参与拼接。"""
         label.setText(" · ".join(part for part in parts if part and part != "-"))
+
+    @staticmethod
+    def _vram_text(gpu: GpuSample | None, percent: float | None) -> str:
+        """显存格图上方的说明文字：已用 / 总量 + 百分比，无 GPU 时给出提示。"""
+        if gpu is None:
+            return "未检测到 GPU（CPU 推理）"
+        if gpu.memory_used is None or not gpu.memory_total or percent is None:
+            return "显存 -"
+        used = human_size(int(gpu.memory_used * 1024 * 1024))
+        total = human_size(int(gpu.memory_total * 1024 * 1024))
+        return f"显存 {used} / {total}（{percent:.0f}%）"
 
     def _apply_load_block(self, percent_label: QLabel, bar: SegmentBar, percent: float | None) -> None:
         """刷新一块负载：占用率文字与主格图同步。"""

@@ -859,6 +859,7 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     for name in ("_gpu_toggle", "_cpu_toggle", "_mem_toggle", "_gpu_metrics", "_cpu_metrics", "_mem_metrics"):
         assert not hasattr(overview, name)
     assert overview._gpu_hint.fullText() == "等待采样…"
+    assert overview._vram_hint.fullText() == "等待采样…"
     assert overview._cpu_hint.fullText() == "等待采样…"
     assert overview._mem_hint.fullText() == "等待采样…"
     sample = LoadSample(
@@ -893,11 +894,14 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     assert overview._cpu_percent.text() == "41 %"
     assert overview._mem_percent.text() == "41 %"
     assert overview._gpu_bar.percent() == 73.0
+    # 显存独立一条格图与利用率并列，不再挤在标题后的小字里。
+    assert overview._vram_bar.percent() == pytest.approx(18000 / 24576 * 100)
+    assert overview._vram_hint.fullText() == "显存 17.58 GB / 24.00 GB（73%）"
     assert overview._cpu_bar.percent() == 41.0
     assert overview._mem_bar.percent() == 41.0
     assert overview._gpu_percent.property("band") == "warning"
     assert overview._cpu_percent.property("band") == "success"
-    assert "显存 73%" in overview._gpu_hint.fullText()
+    assert "显存" not in overview._gpu_hint.fullText()
     assert "210 / 450 W" in overview._gpu_hint.fullText()
     assert "频率 3600 MHz" in overview._cpu_hint.fullText()
     assert "服务 12.5 %" in overview._cpu_hint.fullText()
