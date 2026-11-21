@@ -330,20 +330,27 @@ def scan_assets(roots: Iterable[Path], *, min_bytes: int = MIN_WEIGHT_BYTES) -> 
 
 
 def suggest_components(assets: PaintAssets, model: Path | None = None) -> PaintComponents:
-    """按家族槽位给出默认组件（每个槽位取同角色中最大的文件）。"""
+    """按家族槽位给出默认组件（每个槽位优先同家族中最大的文件）。"""
     if model is not None:
         selected = assets.get(model)
         main_path = selected.path if selected is not None else model
-        family = FAMILIES.get(selected.family if selected is not None else detect_family(model), FAMILIES["unknown"])
+        family_key = selected.family if selected is not None else detect_family(model)
+        family = FAMILIES.get(family_key, FAMILIES["unknown"])
     else:
         main = next(iter(assets.main_models()), None)
         if main is None:
             return PaintComponents()
         main_path = main.path
-        family = FAMILIES.get(main.family, FAMILIES["unknown"])
+        family_key = main.family
+        family = FAMILIES.get(family_key, FAMILIES["unknown"])
     chosen: dict[str, Path] = {}
     for role in family.slots:
-        candidate = next(iter(assets.by_role(role)), None)
+        candidates = assets.by_role(role)
+        # 组件同样可能来自多个家族（例如同时装了 SDXL 与 Qwen-Image 的 VAE）：
+        # 先挑同家族的，避免「自动配对」把不兼容的 VAE / 文本编码器配上去导致
+        # sd-server 启动即退出；同家族没有时才回退到该角色的第一个候选。
+        same_family = [asset for asset in candidates if asset.family == family_key]
+        candidate = (same_family or list(candidates))[0] if candidates else None
         if candidate is not None:
             chosen[role] = candidate.path
     return PaintComponents(

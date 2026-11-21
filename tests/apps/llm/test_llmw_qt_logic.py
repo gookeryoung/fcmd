@@ -658,6 +658,22 @@ def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert output_dir({"output_dir": str(tmp_path / "mine")}) == tmp_path / "mine"
 
 
+def test_paint_suggest_components_prefers_same_family() -> None:
+    """自动配对优先同家族组件：避免把别的家族 VAE / 文本编码器配上导致启动即退出。"""
+    from fcmd.apps.llm._llmpaint import PaintAsset, PaintAssets, suggest_components
+
+    root = Path("/models")
+    main = PaintAsset(root / "qwen-image/model.safetensors", "diffusion", "qwen-image", 3)
+    sdxl_vae = PaintAsset(root / "sdxl/vae.safetensors", "vae", "sdxl", 9)
+    qwen_vae = PaintAsset(root / "qwen-image/vae.safetensors", "vae", "qwen-image", 1)
+    assets = PaintAssets((main, sdxl_vae, qwen_vae), (root,))
+    suggestion = suggest_components(assets, main.path)
+    assert suggestion.vae == qwen_vae.path
+    # 只有别的家族时回退到该角色的第一个候选，而不是留空。
+    fallback = suggest_components(PaintAssets((main, sdxl_vae), (root,)), main.path)
+    assert fallback.vae == sdxl_vae.path
+
+
 def test_paint_engine_version_and_backend_labels() -> None:
     """引擎展示名只取版本号，后端优先读 marker、缺失时从资产 tag 反推。"""
     exe = Path("sd-server.exe")

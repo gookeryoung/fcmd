@@ -208,6 +208,7 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         self.setFixedHeight(self._HEIGHT)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._icon_name = icon
+        self._hovered = False
         if tooltip:
             self.setToolTip(tooltip)
         self._refresh_icon()
@@ -255,16 +256,18 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
         palette = _qt_theme.active_theme().palette
         if self.isChecked():
             return QColor(palette.accent)
-        if self.underMouse():
+        if self._hovered:
             return QColor(palette.text)
         return QColor(palette.muted)
 
     def enterEvent(self, event: QEnterEvent) -> None:
         """悬停时文字转正文色，图标同步换 tone。"""
+        self._hovered = True
         self._refresh_icon()
         super().enterEvent(event)
 
     def leaveEvent(self, event: QEvent) -> None:
+        self._hovered = False
         self._refresh_icon()
         super().leaveEvent(event)
 
@@ -276,7 +279,7 @@ class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
 
         if self.isChecked():
             tone = "accent"
-        elif self.underMouse():
+        elif self._hovered:
             tone = "text"
         else:
             tone = "muted"

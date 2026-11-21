@@ -54,7 +54,6 @@ from fcmd.apps.llm._llmw_qt_paint import (
     parse_paint_settings,
     start_paint_service,
 )
-from fcmd.apps.llm._llmw_qt_paint import service_label as paint_service_label
 from fcmd.apps.llm._llmw_ui import service_name_from_model
 from fcmd.apps.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -82,7 +81,6 @@ from fcmd.gui.qt.widgets import (
     Collapsible,
     FormGrid,
     PageScroll,
-    StatusTag,
     button,
     hint_label,
     set_button_text,
@@ -642,15 +640,18 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         model_row = QHBoxLayout()
         model_row.setContentsMargins(0, 0, 0, 0)
         model_row.setSpacing(8)
+        paint_combo = _ModelCombo(self.paint_model_card)
+        paint_combo.setObjectName("ModelCombo")
+        paint_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        paint_combo.setMinimumContentsLength(8)
         self.paint_engine_section = PaintEngineSection(
             parse_paint_settings(self.state.settings.paint),
             self.paint_model_card,
             show_model=False,
+            model_combo=paint_combo,
         )
         self.paint_engine_section.changed.connect(self._on_paint_engine_changed)
         model_row.addWidget(self.paint_engine_section.model_combo, 1)
-        self.paint_service_tag = StatusTag("服务未启动", parent=self.paint_model_card)
-        model_row.addWidget(self.paint_service_tag, 0)
         self.paint_action_button = button("启动服务", kind="primary")
         self.paint_action_button.setObjectName("RunPrimary")
         self.paint_action_button.setToolTip("按本页启动参数启动 sd-server")
@@ -680,9 +681,8 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     # 画图服务
     # ------------------------------------------------------------------ #
     def refresh_paint(self) -> None:
-        """刷新画图服务状态与启停按钮（只读状态文件）。"""
-        state, alive = _llmpaint_server.status()
-        self.paint_service_tag.set_status(*paint_service_label(state, alive))
+        """刷新画图服务的启停按钮状态（只读状态文件）。"""
+        _state, alive = _llmpaint_server.status()
         self._refresh_paint_actions(alive)
 
     def _refresh_paint_actions(self, alive: bool | None = None) -> None:

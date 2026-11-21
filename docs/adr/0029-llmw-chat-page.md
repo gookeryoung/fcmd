@@ -61,7 +61,10 @@
   齿轮右侧是「对话 / 画图」两枚 30px 高全圆角胶囊开关（`ToggleChip`，参考元宝
   输入区的模式开关）：图标 + 文字，未选中为浅灰底、选中为淡强调色底 + 强调色
   文字，互斥切换发送内容（对话即普通问答、画图走 sd.cpp 出图），图标色调随
-  选中状态在 muted / accent 间同步；旧的「画图」勾选框不再保留。
+  选中状态在 muted / accent 间同步；旧的「画图」勾选框不再保留。胶囊的图标与
+  文字由控件自绘（QSS 只负责底色 / 圆角 / 悬停与选中态）：左右留白固定相等、
+  内容整体居中，且 QSS `padding` 必须归零——通用 `QToolButton` 的上下内边距会
+  把 QSS `min-height` 的内容高撑成 38px，胶囊变高、不再是正胶囊。
   发送 / 停止合并成同一个 34×34 无边框图标按钮（与齿轮同为透明底，hover 显淡
   色底）：空闲为 accent 发送图标，生成中切换为 danger 停止图标与提示，不再
   单独放停止 / 导出文字按钮；
@@ -119,7 +122,8 @@
   生成参数展开状态仍写入 `chat_settings_open`。
 - 模式胶囊：`tests/apps/llm/test_llmw_qt_smoke.py` 断言「对话 / 画图」互斥切换、
   占位提示与 `paint.enabled` 落盘；`tests/gui/test_qt_widgets.py` 验证胶囊图标
-  色调切换，`tests/gui/test_qt_theme.py` 固定全圆角与强调色选中态样式。
+  色调切换、上屏后高度仍为 30px、内容宽度按左右等宽留白计算、内容色随主题
+  token；`tests/gui/test_qt_theme.py` 固定全圆角、padding 归零与强调色选中态样式。
 - 全量测试与 `make check-fast` 通过。
 
 ## 交接

@@ -205,6 +205,8 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
 
     # 画图页签：选模型 + 启停按钮，配置在下面的「启动参数」卡片。
     assert run.paint_model_card.title() == "选择模型"
+    # 启动按钮左侧不再放「服务未启动」胶囊，状态只看按钮文案。
+    assert not hasattr(run, "paint_service_tag")
     assert run.paint_config_card.title() == "启动参数"
     assert run.paint_action_button.text() in {"启动服务", "停止服务"}
     assert run.paint_restart_button.text() == "重启服务"
@@ -219,6 +221,45 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     assert section.settings()["port"] == 1234
     run.refresh_paint()
     assert "paint" not in tuple(window.nav.keys())
+
+
+def test_paint_auto_pair_fills_model_and_components(window: Any, tmp_path: Path) -> None:
+    """自动配对：主模型为空时先填模型再补组件，配对后组件能通过启动校验。"""
+
+    from fcmd.apps.llm import _llmpaint
+    from fcmd.apps.llm._llmw_qt_paint import components_from_settings
+
+    def weight(rel: str) -> Path:
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("wb") as handle:
+            handle.truncate(2 * 1024 * 1024)
+        return path
+
+    main = weight("Qwen-Image-2.1/model.safetensors")
+    vae = weight("vae/qwen_image_vae.safetensors")
+    encoder = weight("text_encoders/Qwen2.5-VL-7B-Instruct-Q4_K_M.gguf")
+    assets = _llmpaint.scan_assets([tmp_path])
+
+    window.show_page("run")
+    run = window.run_page
+    section = run.paint_engine_section
+    # 先让构造时的后台扫描回调落地，再注入测试资产，避免被空扫描结果覆盖。
+    for _ in range(5):
+        QApplication.processEvents()
+    section._apply_assets(assets)
+    assert section.model_combo.count() > 1
+
+    # 模拟「主模型 / 组件都没选」的状态，点自动配对应当补齐。
+    section.model_combo.setCurrentIndex(0)
+    for combo in section.role_combos.values():
+        combo.setCurrentIndex(0)
+    section.suggest_button.click()
+    assert section.model_combo.currentData() == str(main)
+    assert section.role_combos["vae"].currentData() == str(vae)
+    assert section.role_combos["llm"].currentData() == str(encoder)
+    components = components_from_settings(run.paint_settings())
+    _llmpaint.validate_components(components)  # 不应再抛「请选择主模型 / 缺少组件」
 
 
 def test_lab_page_drops_paint_card(window: Any) -> None:

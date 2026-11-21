@@ -430,6 +430,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         parent: QWidget | None = None,
         *,
         show_model: bool = True,
+        model_combo: QComboBox | None = None,
     ) -> None:
         super().__init__(parent)
         self._show_model = show_model
@@ -465,7 +466,7 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         for key, label in MODES:
             self.mode_combo.addItem(label, key)
         models_form.add_row("加载方式", self.mode_combo)
-        self.model_combo = QComboBox(models_form)
+        self.model_combo = model_combo if model_combo is not None else QComboBox(models_form)
         if show_model:
             models_form.add_row("主模型", self.model_combo)
         self.role_combos: dict[str, QComboBox] = {}
@@ -601,7 +602,12 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         )
         for role, combo in self.role_combos.items():
             self._fill_combo(combo, [asset.path for asset in assets.by_role(role)], placeholder="（不指定）")
-        if not str(self._settings.get("model") or "") and self.model_combo.count() > 1:
+        saved_model = str(self._settings.get("model") or "")
+        if saved_model and self.model_combo.findData(saved_model) < 0:
+            # 已保存的主模型不在本次扫描结果里（目录被移除 / 扫描根不含它）时补一条，
+            # 避免任何一次信号触发都把 model 回落成空值导致无法启动服务。
+            self._add_combo_item(self.model_combo, Path(saved_model), placeholder_first=True)
+        if not saved_model and self.model_combo.count() > 1:
             self.model_combo.setCurrentIndex(1)
         self._apply_component_selection()
         self._update_preview()
@@ -627,6 +633,16 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
             combo.setItemData(combo.count() - 1, detail, Qt.ItemDataRole.ToolTipRole)
         index = combo.findData(previous) if isinstance(previous, str) and previous else -1
         combo.setCurrentIndex(index if index >= 0 else 0)
+        combo.blockSignals(False)
+
+    def _add_combo_item(self, combo: QComboBox, path: Path, *, placeholder_first: bool = False) -> None:
+        """给下拉补一条自定义路径（保留已保存但不在扫描结果里的选择）。"""
+        combo.blockSignals(True)
+        asset = self._assets.get(path)
+        suffix = f" · {asset.role_label}" if asset is not None and not placeholder_first else ""
+        combo.addItem(f"{path.name}{suffix}", str(path))
+        combo.setItemData(combo.count() - 1, str(path), Qt.ItemDataRole.ToolTipRole)
+        combo.setCurrentIndex(combo.count() - 1)
         combo.blockSignals(False)
 
     def _apply_component_selection(self) -> None:
@@ -661,11 +677,16 @@ class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
         self._on_changed()
 
     def _suggest(self, *, only_empty: bool) -> None:
-        """按家族槽位给出建议组件；``only_empty`` 时只补空槽位。"""
+        """按家族槽位给出建议组件；``only_empty`` 时只补空槽位。
+
+        主模型还没选时，「自动配对」先把资产里第一个扩散模型填上，再按家族补
+        VAE / 文本编码器——否则配对点了没反应，启动服务仍报「请选择主模型」。
+        """
         path = self._combo_path(self.model_combo)
-        if path is None:
-            return
         suggestion = _llmpaint.suggest_components(self._assets, path)
+        if suggestion.model is not None and path is None:
+            self._select_path(self.model_combo, str(suggestion.model))
+            path = suggestion.model
         for role, combo in self.role_combos.items():
             value = getattr(suggestion, role, None)
             if value is None:

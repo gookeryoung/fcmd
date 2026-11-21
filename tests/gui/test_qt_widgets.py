@@ -15,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -274,11 +275,17 @@ def test_toggle_chip_keeps_capsule_height_and_symmetric_padding() -> None:
 
 
 def test_toggle_chip_content_color_follows_theme_tokens() -> None:
-    """自绘内容色与 QSS 语义色一致：选中 accent、未选中 muted。"""
+    """自绘内容色与 QSS 语义色一致：选中 accent、悬停 text、未选中 muted。"""
     theme = _qt_theme.active_theme()
     chip = ToggleChip("对话", icon="chat")
     try:
         assert chip._content_color().name() == theme.palette.muted
+        QApplication.sendEvent(chip, QEvent(QEvent.Type.Enter))
+        assert chip._content_color().name() == theme.palette.text
+        assert chip.property("fcmdIconTone") == "text"
+        QApplication.sendEvent(chip, QEvent(QEvent.Type.Leave))
+        assert chip._content_color().name() == theme.palette.muted
+        assert chip.property("fcmdIconTone") == "muted"
         chip.setChecked(True)
         assert chip._content_color().name() == theme.palette.accent
     finally:
