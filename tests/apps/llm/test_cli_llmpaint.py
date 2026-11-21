@@ -17,6 +17,7 @@ import os
 import zipfile
 from email.message import Message
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -966,6 +967,8 @@ class TestLifecycle:
         # Ensure the sd-server.exe exists so we can proceed to VC runtime check
         plan.engine.exe.parent.mkdir(parents=True, exist_ok=True)
         plan.engine.exe.write_bytes(b"x")
+        # VC 预检只在 Windows 分支执行：只替换模块内的 os 引用，不改全局 os.name。
+        monkeypatch.setattr(_llmpaint_server, "os", SimpleNamespace(name="nt"))
         monkeypatch.setattr(_llmpaint_server, "ensure_vc_runtime", lambda target, *, sources=None: ("msvcp140.dll",))
         with pytest.raises(ServeError, match="MSVC 运行库"):
             _llmpaint_server.launch_paint(plan, home=tmp_path)
