@@ -39,13 +39,18 @@ def test_pages_are_registered_in_order(nav: Any) -> None:
 
 
 def test_buttons_expand_to_fill_sidebar_width(nav: Any) -> None:
-    """页按钮横向铺满侧栏；纵向高度交给共享样式统一，不在按钮上单独写死。"""
+    """页按钮横向铺满侧栏（左右不留边距），底部按钮也一样。"""
+    application = QApplication.instance() or QApplication([])
     button = nav.button("run")
     assert button is not None
     assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
     assert button.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
     assert button.minimumHeight() == 0
+    nav.show()
+    application.processEvents()
     assert nav.width() == EXPANDED_WIDTH
+    assert button.width() == nav.width()
+    assert nav.toggle_button.width() == nav.width()
 
 
 def test_collapse_and_expand(nav: Any) -> None:
@@ -134,8 +139,8 @@ def test_collapsed_without_icon_keeps_toggle_to_expand(nav: Any) -> None:
     assert nav.toggle_button.icon().isNull() is False
 
 
-def test_collapsed_keeps_icon_and_click_expands() -> None:
-    """折叠后保留应用图标（居中）并作为展开入口，折叠按钮隐藏。"""
+def test_collapsed_keeps_icon_and_shows_expand_button() -> None:
+    """折叠后保留应用图标（居中），并在图标下方给出始终可见的展开按钮。"""
     application = QApplication.instance() or QApplication([])
     pixmap = QPixmap(24, 24)
     pixmap.fill(QColor("#336699"))
@@ -149,8 +154,11 @@ def test_collapsed_keeps_icon_and_click_expands() -> None:
         assert nav.icon_label is not None
         assert not nav.icon_label.isHidden()
         assert nav.icon_label.geometry().center().x() == nav.rect().center().x()
-        assert nav.toggle_button.isHidden()
+        assert not nav.toggle_button.isHidden()
+        assert nav.toggle_button.geometry().top() >= nav.icon_label.geometry().bottom()
+        assert nav.toggle_button.icon().isNull() is False
         assert "展开侧边栏" in nav.icon_label.toolTip()
+        assert "展开侧边栏" in nav.toggle_button.toolTip()
         event = QMouseEvent(
             QEvent.Type.MouseButtonRelease,
             QPointF(1, 1),
@@ -161,5 +169,31 @@ def test_collapsed_keeps_icon_and_click_expands() -> None:
         assert nav.eventFilter(nav.icon_label, event) is True
         assert not nav.is_collapsed()
         assert not nav.toggle_button.isHidden()
+        # 收起后按钮回到侧栏底部，与页按钮同款整行按钮且不带文字。
+        assert nav.toggle_button.text() == ""
+        last_button = nav.button("overview")
+        assert last_button is not None
+        assert nav.toggle_button.geometry().top() > last_button.geometry().bottom()
+        # 与页按钮同款整行按钮：横向铺满、同一个 objectName 尺寸契约。
+        assert nav.toggle_button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
     finally:
         nav.deleteLater()
+
+
+def test_toggle_sits_at_sidebar_bottom(nav: Any) -> None:
+    """折叠 / 展开入口固定在侧栏底部，不占标题 / LOGO 所在行。"""
+    application = QApplication.instance() or QApplication([])
+    nav.show()
+    application.processEvents()
+    assert nav.toggle_button.text() == ""
+    last_button = nav.button("settings")
+    assert last_button is not None
+    assert nav.toggle_button.geometry().top() > last_button.geometry().bottom()
+    assert nav.toggle_button.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Expanding
+    assert nav.toggle_button.width() == nav.width()
+    nav.set_collapsed(True)
+    application.processEvents()
+    assert nav.toggle_button.text() == ""
+    assert nav.toggle_button.geometry().top() > last_button.geometry().bottom()
+    assert nav.toggle_button.width() == nav.width()
+    assert last_button.width() == nav.width()

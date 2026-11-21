@@ -342,7 +342,7 @@ QPushButton#NavButton {
     background: transparent;
     border: none;
     border-left: 3px solid transparent;
-    border-radius: 8px;
+    border-radius: 0;
     color: $muted;
     text-align: left;
     padding: 0 12px;
@@ -360,12 +360,13 @@ QPushButton#NavButton:checked {
 QToolButton#SidebarToggle {
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-left: 3px solid transparent;
+    border-radius: 0;
     color: $muted;
-    padding: 0 8px;
-    min-height: 30px;
-    max-height: 30px;
-    font-size: ${font_heading}pt;
+    text-align: left;
+    padding: 0 12px;
+    min-height: 36px;
+    max-height: 36px;
 }
 QToolButton#SidebarToggle:hover { background: $surface_hover; color: $text; }
 

@@ -23,11 +23,13 @@ locllmw 原先与其他整窗工具一样，用顶部
 ### 1. `fcmd.gui.qt.sidebar.SidebarNav` 作为唯一分页容器
 
 - 结构：左侧固定宽度导航栏（可选应用图标 + 标题 + 页按钮），右侧页面区；页面提示只作为按钮 tooltip 与窗口标题栏说明，不在侧边栏底部占一行。
-- 折叠：窄栏只显示页名首字、tooltip 与应用图标；有图标时图标居中并作为展开入口，
-  折叠按钮隐藏，避免 60px 宽度内两个控件互相挤压。没有传图标的窗口（如
-  `wslmanw`）折叠后改为保留折叠按钮（`chevron-right` 图标）作为唯一可见的
-  展开入口，不再出现「只能靠快捷键 / 菜单展开」的陷阱。折叠 / 展开按钮统一
-  使用 `fcmd.gui.qt.icons` 内置的线性图标，不再用 `«` / `»` 字形。
+- 折叠：窄栏只显示页名首字与 tooltip，顶部标题区只留应用图标（无图标窗口留空）；
+  折叠 / 展开按钮固定在**侧栏最底部**，外观与上方页按钮一致：横向铺满整栏、
+  无文字、相同的 36px 高度 / hover 底色，只用 ``chevron-left`` / ``chevron-right``
+  图标区分方向。页按钮同样左右不留边距（选中底色与左侧强调条贴到侧栏边缘），
+  文字靠 12px 内边距对齐。这样箭头不会和 LOGO 抢顶部位置，60px 窄栏里也能一眼看到展开入口。
+  没有传图标的窗口（如 `wslmanw`）同样使用底部按钮。图标来自
+  `fcmd.gui.qt.icons`，不再用 `«` / `»` 字形。
 - 页面用**字符串 key** 标识：`add(key, label, hint=...) -> 页面控件`，
   `select(target)` 接受 key / 索引 / 页面控件，`step(delta)` 循环切换，
   `keys()` / `selected()` 读取状态。
@@ -81,9 +83,10 @@ locllmw 原先与其他整窗工具一样，用顶部
 ## 落地状态与交接
 
 - 已完成：组件、主题样式、5 个窗口迁移、单测与 ADR 口径。
-- 折叠态：有应用图标时保留图标并居中显示，点击图标展开
-  （`test_collapsed_keeps_icon_and_click_expands`）；没有图标时保留折叠按钮（`»`）
-  作为展开入口（`test_collapsed_without_icon_keeps_toggle_to_expand`）。
+- 折叠态：应用图标居中显示，展开按钮固定在侧栏底部且与页按钮同款（整行 / 无文字）；
+  点击图标或底部箭头都能展开（`test_collapsed_keeps_icon_and_shows_expand_button`）；
+  没有图标时底部箭头依然可用（`test_collapsed_without_icon_keeps_toggle_to_expand`）；
+  位置与铺满宽度由 `test_toggle_sits_at_sidebar_bottom` 覆盖。
 - 视觉回归点：侧边栏默认宽 220px、折叠宽 60px；页按钮字号取 heading、
   高度 36px，保证文字与点击区域足够大。长页名加宽而不是换行。
 - 下一步（未做）：若调整 `SidebarNav` 的折叠交互，需同步检查 `wslmanw` 等

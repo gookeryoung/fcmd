@@ -3,13 +3,14 @@
 分页导航能力：标题、页按钮与快捷键循环切换；
 页面提示只用于按钮 tooltip 与窗口右侧标题栏，不再在侧边栏底部占一行。窗口只负责提供页面内容，导航栏只管「选中哪一页」：
 
-- ``add(key, label, hint)`` 登记页面（顺序即导航顺序）；
+- ``add(key, label, hint)`` 登记页面（顺序即导航顺序）；页按钮与底部按钮都铺满整栏宽度，
+  选中底色与左侧强调条贴到侧栏边缘，文字靠 12px 内边距对齐；
 - ``select(key)`` 切换页面并发出 :attr:`SidebarNav.changed`；
 - ``Alt+1..9`` 直达、``Alt+↓ / Alt+↑`` 循环；
-- ``set_collapsed(True)`` 折叠为窄栏（页名首字 + 应用图标 / 展开按钮 + tooltip），再次调用展开；
-  折叠态点击应用图标（无图标时点展开按钮）也可展开。折叠 / 展开按钮使用
-  :mod:`fcmd.gui.qt.icons` 的 ``chevron-left`` / ``chevron-right`` 线性图标，不再用
-  ``«`` / ``»`` 字形。
+- ``set_collapsed(True)`` 折叠为窄栏（页名首字 + 应用图标），再次调用展开；
+  折叠 / 展开按钮固定在最底部，外观与页按钮一致（同款整行按钮、无文字），
+  顶部只留 LOGO / 标题，不再挤在同一行。按钮使用 :mod:`fcmd.gui.qt.icons` 的
+  ``chevron-left`` / ``chevron-right`` 线性图标，不再用 ``«`` / ``»`` 字形。
 
 页按钮用 ``QPushButton`` 而不是 ``QToolButton``：前者支持 QSS 的
 ``text-align: left`` 且默认横向可扩展，能铺满侧边栏宽度（``QToolButton``
@@ -27,6 +28,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -77,18 +79,17 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._current: str | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 12, 10, 14)
+        # 左右不留边距：页按钮与底部按钮都铺满侧栏整宽（内边距交给各自的 padding）。
+        layout.setContentsMargins(0, 12, 0, 14)
         layout.setSpacing(6)
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 8)
-        header.setSpacing(8)
-        self._header = header
+        self._header = QGridLayout()
+        self._header.setContentsMargins(12, 0, 12, 8)
+        self._header.setHorizontalSpacing(8)
+        self._header.setVerticalSpacing(4)
         self.icon_label = self._build_icon(icon)
         if self.icon_label is not None:
             self.icon_label.setToolTip(title)
             self.icon_label.installEventFilter(self)
-        if self.icon_label is not None:
-            header.addWidget(self.icon_label)
         self.title_label = QLabel(title, self)
         self.title_label.setObjectName("Title")
         self.title_label.setContentsMargins(2 if self.icon_label is not None else 6, 0, 0, 0)
@@ -96,20 +97,27 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.toggle_button = QToolButton(self)
         self.toggle_button.setObjectName("SidebarToggle")
         self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.toggle_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.toggle_button.setIconSize(QSize(16, 16))
         self.toggle_button.setIcon(_icon("chevron-left"))
         self.toggle_button.setToolTip("折叠侧边栏（Ctrl+Shift+B）")
         self.toggle_button.setAutoRaise(True)
         self.toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.toggle_button.clicked.connect(self.toggle)
-        header.addWidget(self.title_label, 1)
-        header.addWidget(self.toggle_button)
-        layout.addLayout(header)
+        self._header_widgets: tuple[QWidget, ...] = tuple(
+            widget for widget in (self.icon_label, self.title_label) if widget is not None
+        )
+        layout.addLayout(self._header)
         self._button_layout = QVBoxLayout()
         self._button_layout.setSpacing(5)
         self._button_layout.setContentsMargins(0, 0, 0, 0)
         layout.addLayout(self._button_layout)
         layout.addStretch(1)
+        # 折叠 / 展开放在侧栏最底部：窄栏顶部只留应用图标，避免箭头与 LOGO 抢位置。
+        self._footer = QHBoxLayout()
+        self._footer.setContentsMargins(0, 6, 0, 0)
+        layout.addLayout(self._footer)
+        self._arrange_controls(collapsed=False)
         self.setFixedWidth(self._expanded_width)
         if collapsed:
             self.set_collapsed(True)
@@ -215,33 +223,63 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.set_collapsed(not self._collapsed)
 
     def set_collapsed(self, collapsed: bool) -> None:
-        """折叠成窄栏（只显示页名首字 + 应用图标 / 展开按钮 + tooltip）或恢复展开态。
+        """折叠成窄栏（页名首字 + 应用图标）或恢复展开态。
 
-        折叠时隐藏标题，按钮文本退化为首字；有应用图标时图标居中并作为展开入口，
-        折叠按钮隐藏；没有图标时保留折叠按钮（``chevron-right`` 图标）作为唯一可见的展开入口，
-        避免鼠标用户只能靠快捷键 / 菜单才能展开。展开时还原完整页名。
+        折叠时隐藏标题，页按钮文本退化为首字，标题区只留居中的应用图标；
+        折叠 / 展开按钮固定在侧栏最底部，外观与页按钮一致（整行、无文字、同款
+        hover），不再和 LOGO 抢顶部位置，也不再依赖「点图标」这种隐形入口。
         重复设置同一状态只同步宽度，不重复发信号。
         """
         changed = collapsed != self._collapsed
         self._collapsed = collapsed
         self._apply_width()
         self.title_label.setVisible(not collapsed)
-        # 折叠且没有图标时，折叠按钮是唯一可见的展开入口，必须保留。
-        self.toggle_button.setVisible(not collapsed or self.icon_label is None)
+        self._arrange_controls(collapsed)
         if self.icon_label is not None:
             self.icon_label.setVisible(True)
             self.icon_label.setCursor(Qt.CursorShape.PointingHandCursor if collapsed else Qt.CursorShape.ArrowCursor)
             self.icon_label.setToolTip(
                 "展开侧边栏（Ctrl+Shift+B）" if collapsed else (self.title_label.text() or self.windowTitle())
             )
-        self._header.setAlignment(Qt.AlignmentFlag.AlignHCenter if collapsed else Qt.AlignmentFlag.AlignLeft)
         self.toggle_button.setIcon(_icon("chevron-right" if collapsed else "chevron-left"))
         self.toggle_button.setToolTip("展开侧边栏（Ctrl+Shift+B）" if collapsed else "折叠侧边栏（Ctrl+Shift+B）")
+        self.toggle_button.setProperty("collapsed", "true" if collapsed else "false")
+        self.toggle_button.style().unpolish(self.toggle_button)
+        self.toggle_button.style().polish(self.toggle_button)
         for key, button in self._buttons.items():
             button.setText(self._labels[key][:1] if collapsed else self._labels[key])
         self._sync_tooltips()
         if changed:
             self.collapsedChanged.emit(collapsed)
+
+    def _arrange_controls(self, collapsed: bool) -> None:
+        """按折叠状态重排标题区与底部按钮。
+
+        - 标题区：展开为「图标 + 标题」，折叠为只有居中的图标；
+        - 底部：与页按钮同款的整行图标按钮（无文字），折叠时换方向箭头。
+        箭头固定在侧栏最底部，顶部保持只放 LOGO / 标题，避免两者在窄栏里抢位置。
+        """
+        for widget in self._header_widgets:
+            self._header.removeWidget(widget)
+        for column in range(2):
+            self._header.setColumnStretch(column, 0)
+        if collapsed:
+            if self.icon_label is not None:
+                self._header.addWidget(self.icon_label, 0, 0, Qt.AlignmentFlag.AlignHCenter)
+            self._header.setColumnStretch(0, 1)
+        else:
+            column = 0
+            if self.icon_label is not None:
+                self._header.addWidget(self.icon_label, 0, column)
+                column += 1
+            self._header.addWidget(self.title_label, 0, column)
+            self._header.setColumnStretch(column, 1)
+
+        self._footer.removeWidget(self.toggle_button)
+        # 与上方页按钮同款整行按钮：图标 + 无文字，hover / 高度 / 圆角完全一致。
+        self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.toggle_button.setText("")
+        self._footer.addWidget(self.toggle_button, 1)
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
         """折叠态点击图标展开侧边栏。"""

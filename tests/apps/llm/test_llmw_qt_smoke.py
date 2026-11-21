@@ -1060,7 +1060,7 @@ def test_scan_result_auto_selects_a_startable_model(window: Any, tmp_path: Path)
 
 
 def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
-    """窗口图标来自 assets/icons：展开时在标题左侧，折叠后居中显示并可点击展开。"""
+    """窗口图标来自 assets/icons：展开时在标题左侧；折叠后图标居中、箭头按钮在下方且可见。"""
     assert window.nav.title_label.text() == "LLM"
     assert window.windowTitle().startswith("LLM")
     assert not window.windowIcon().isNull()
@@ -1069,10 +1069,12 @@ def test_window_and_sidebar_use_packaged_icon(window: Any) -> None:
     assert icon_label is not None
     window.nav.set_collapsed(True)
     assert not icon_label.isHidden()
-    assert window.nav.toggle_button.isHidden()
+    assert not window.nav.toggle_button.isHidden()
+    assert window.nav.toggle_button.property("collapsed") == "true"
     window.nav.set_collapsed(False)
     assert not icon_label.isHidden()
     assert not window.nav.toggle_button.isHidden()
+    assert window.nav.toggle_button.property("collapsed") == "false"
 
 
 def test_overview_actions_are_text_links(window: Any) -> None:
