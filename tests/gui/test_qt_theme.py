@@ -145,6 +145,16 @@ def test_chat_send_button_is_borderless_like_settings() -> None:
     assert "background:" in hover_block
 
 
+def test_chat_sidebar_actions_use_composer_style_frame() -> None:
+    """对话列表底部操作条与 composer 同为圆角容器，图标按钮圆角更小。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    frame = text.split("\nQFrame#ChatSidebarActions {", 1)[1].split("}", 1)[0]
+    assert "border-radius: 10px" in frame
+    assert "border: 1px solid" in frame
+    inner = text.split("QFrame#ChatSidebarActions QToolButton#ChatIconButton {", 1)[1].split("}", 1)[0]
+    assert "border-radius: 7px" in inner
+
+
 def test_mode_chips_are_rounded_pills() -> None:
     """对话 / 画图模式胶囊：无边框、全圆角，选中用淡强调色底与强调色文字。"""
     theme = _guitheme.resolve_theme("dark-blue")

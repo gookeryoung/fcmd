@@ -1372,8 +1372,13 @@ def test_chat_input_buttons_share_one_row(window: Any) -> None:
     actions = [chat.copy_chat_button, chat.delete_chat_button, chat.clear_chats_button]
     tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in actions}
     assert len(tops) == 1
-    assert all(widget.size().width() == widget.size().height() == 28 for widget in actions)
+    assert all(widget.size().width() == widget.size().height() == 30 for widget in actions)
     assert all(widget.icon().isNull() is False for widget in actions)
+    # 与右侧 composer 一致的圆角容器：三个动作等宽铺满，不再挤在左侧。
+    assert chat.history_actions.objectName() == "ChatSidebarActions"
+    assert all(widget.parent() is chat.history_actions for widget in actions)
+    widths = {widget.width() for widget in actions}
+    assert len(widths) == 1
     assert chat.new_chat_button.text() == "新对话"
     assert chat.new_chat_button.icon().isNull() is False
 
