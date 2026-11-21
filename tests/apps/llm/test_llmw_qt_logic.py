@@ -116,16 +116,17 @@ def test_parse_int_and_optional_int() -> None:
         parse_optional_int("x", "上下文")
 
 
-def test_model_combo_text_truncates_long_names() -> None:
+def test_model_combo_text_keeps_full_name_and_honors_explicit_limit() -> None:
     entry = ModelEntry(
         root=Path("/models"),
         path=Path("/models/Qwen3-Coder-30B-A3B-Instruct-Q5_K_M.gguf"),
         size=20 * 1024**3,
     )
     text = model_combo_text(entry)
-    assert "…" in text
-    assert "Qwen3-Coder" in text
-    assert len(text.split("  (")[0]) == 30
+    assert "Qwen3-Coder-30B-A3B-Instruct-Q5_K_M.gguf" in text
+    assert "…" not in text
+    # 仍可按调用方给的 limit 显式截断（不依赖窗口宽度）。
+    assert len(model_combo_text(entry, limit=30).split("  (")[0]) == 30
 
 
 def test_sanitize_custom_args_drops_model_flags() -> None:

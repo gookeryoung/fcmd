@@ -712,6 +712,21 @@ def test_run_page_model_combo_selects_model(window: Any) -> None:
     window.state.set_busy(False)
 
 
+def test_run_page_model_combo_keeps_full_long_name(window: Any) -> None:
+    """模型下拉项保存完整文件名：宽度由控件按实际空间省略，不再预截断到 30 字。"""
+    from fcmd.apps.llm.llmbase import ModelEntry
+
+    root = Path("/models")
+    name = "Qwen3-Coder-30B-A3B-Instruct-Q5_K_M-very-long-model-name.gguf"
+    model = ModelEntry(root=root, path=root / name, size=1024**3)
+    window.state.models = [model]
+    window.state.models_root = root
+    window.run_page.on_models_changed()
+    text = window.run_page.model_combo.itemText(0)
+    assert name in text
+    assert "…" not in text
+
+
 def test_run_page_form_defaults(window: Any, tmp_path: Path) -> None:
     run = window.run_page
     assert run.mode_choice.key() == "balanced"

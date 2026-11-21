@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QPen
+from PySide6.QtGui import QColor, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -26,7 +26,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QStyle,
     QStyledItemDelegate,
+    QStyleOptionComboBox,
     QStyleOptionViewItem,
+    QStylePainter,
     QVBoxLayout,
     QWidget,
 )
@@ -246,10 +248,10 @@ def pick_model(
     return max(pool, key=lambda entry: entry.size).path
 
 
-def model_combo_text(entry: ModelEntry, *, status: str = "", limit: int = 30) -> str:
-    """模型下拉项的紧凑文本：截断长文件名，并可附带启动状态。"""
+def model_combo_text(entry: ModelEntry, *, status: str = "", limit: int | None = None) -> str:
+    """模型下拉项文本：默认不预截断，由控件按实际宽度省略；``limit`` 可显式截断。"""
     name = entry.path.name
-    if len(name) > limit:
+    if limit is not None and len(name) > limit:
         name = name[: limit - 1] + "…"
     text = f"{name}  ({human_size(entry.size)})"
     return f"{text}  · {status}" if status else text
@@ -324,13 +326,39 @@ class _ModelItemDelegate(QStyledItemDelegate):  # pragma: no cover - Qt 控件
 
     def sizeHint(self, option: QStyleOptionViewItem, index: Any) -> QSize:
         size = super().sizeHint(option, index)
-        return QSize(size.width(), 34)
+        # 长文件名不再把弹出层撑到屏幕外；宽度不够时由 paint 里的省略号处理。
+        return QSize(min(size.width(), 640), 34)
 
 
 class _ModelCombo(QComboBox):  # pragma: no cover - Qt 控件
+    """模型下拉框：当前项按实际宽度省略，宽度足够时完整显示。"""
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setItemDelegate(_ModelItemDelegate(self))
+
+    def paintEvent(self, _event: QPaintEvent) -> None:
+        """自绘当前项：把完整文本按编辑区宽度做 ElideRight，不再固定截断。"""
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        text = option.currentText
+        option.currentText = ""
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        edit_rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            self,
+        )
+        elided = self.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, max(edit_rect.width(), 0))
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.drawText(
+            edit_rect,
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            elided,
+        )
+        painter.end()
 
 
 _MODE_PROFILE: dict[str, str] = {
