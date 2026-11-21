@@ -145,6 +145,22 @@ def test_chat_send_button_is_borderless_like_settings() -> None:
     assert "background:" in hover_block
 
 
+def test_mode_chips_are_rounded_pills() -> None:
+    """对话 / 画图模式胶囊：无边框、全圆角，选中用淡强调色底与强调色文字。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    block = text.split("\nQToolButton#ToggleChip {", 1)[1].split("}", 1)[0]
+    assert "border: none" in block
+    assert "border-radius: 15px" in block
+    assert "min-height: 30px" in block
+    assert "max-height: 30px" in block
+    checked = text.split("\nQToolButton#ToggleChip:checked {", 1)[1].split("}", 1)[0]
+    assert f"color: {theme.palette.accent}" in checked
+    assert "background:" in checked
+    hover = text.split("QToolButton#ToggleChip:checked:hover {", 1)[1].split("}", 1)[0]
+    assert "background:" in hover
+
+
 def test_run_buttons_are_slightly_taller_than_regular_controls() -> None:
     """主按钮（启动 / 停止服务、新对话）只比常规控件略高，不再写死 40px 的大尺寸。"""
     theme = _guitheme.resolve_theme("dark-blue")

@@ -31,7 +31,6 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
     QComboBox,
     QDialog,
     QFrame,
@@ -51,7 +50,7 @@ from PySide6.QtWidgets import (
 from fcmd.apps.llm import _llmpaint, llmenv
 from fcmd.apps.llm._llmw_chat import _CUSTOM, _first_available, _state_available
 from fcmd.apps.llm._llmw_qt_paint import (
-    PaintConfigSection,
+    PaintSampleSection,
     components_from_settings,
     generate_images,
     parse_paint_settings,
@@ -75,6 +74,7 @@ from fcmd.gui.qt.widgets import (
     FormGrid,
     PageScroll,
     StatusTag,
+    ToggleChip,
     button,
     hint_label,
     icon_button,
@@ -356,15 +356,18 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         settings_form.add_pair("输出上限", owner.max_tokens_edit, "temperature", owner.temperature_edit)
         body.addWidget(settings_form)
 
-        # 画图配置（sd.cpp）合并进对话配置：对话页勾选「画图」即按这里的模型出图。
-        body.addWidget(_dialog_title("画图（sd.cpp）", self))
-        owner.paint_section = PaintConfigSection(owner.paint_settings(), self)
+        # 画图采样 / 输出进对话配置；模型与引擎配置在运行页「画图」页签。
+        body.addWidget(_dialog_title("画图（采样 / 输出）", self))
+        owner.paint_section = PaintSampleSection(owner.paint_settings(), self)
         owner.paint_section.changed.connect(owner._on_paint_settings_changed)
         body.addWidget(owner.paint_section)
         body.addStretch(1)
 
         layout.addWidget(
-            hint_label("修改即时生效；对话历史按各自对话保存的模型与参数继续，画图配置仅此一处。", wrap=True)
+            hint_label(
+                "修改即时生效；对话历史按各自对话保存的模型与参数继续。画图模型 / 引擎配置在运行页「画图」页签。",
+                wrap=True,
+            )
         )
         footer = QHBoxLayout()
         footer.addStretch(1)
@@ -534,11 +537,30 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         _set_icon(self.config_button, "settings", tone="muted")
         self.config_button.setAccessibleName("模型与生成配置")
         buttons.addWidget(self.config_button, 0)
-        # 画图启用项：勾选后发送即按画图配置出图，配置在 ⚙ 里。
-        self.paint_check = QCheckBox("画图", composer)
-        self.paint_check.setToolTip("用提示词生成图片（sd.cpp）；模型 / 采样 / 输出在 ⚙ 配置里")
-        self.paint_check.toggled.connect(self._on_paint_toggled)
-        buttons.addWidget(self.paint_check, 0)
+        # 对话 / 画图模式：参考元宝输入区的圆角胶囊开关，互斥选择发送内容。
+        self.chat_toggle = ToggleChip(
+            "对话",
+            icon="chat",
+            tooltip="发送文字问题，由所选模型回答",
+            parent=composer,
+        )
+        self.chat_toggle.setAccessibleName("对话")
+        buttons.addWidget(self.chat_toggle, 0)
+        self.paint_toggle = ToggleChip(
+            "画图",
+            icon="paint",
+            tooltip="用提示词生成图片（sd.cpp）；采样 / 输出在 ⚙ 配置里，模型在运行页「画图」页签",
+            parent=composer,
+        )
+        self.paint_toggle.setAccessibleName("画图")
+        buttons.addWidget(self.paint_toggle, 0)
+        # 恢复上次模式：上次启用画图则选中「画图」，否则默认「对话」；
+        # 初始状态先于信号连接，避免启动时多写一次盘 / 闪一条状态。
+        paint_enabled = bool(self._paint_settings.get("enabled"))
+        self.paint_toggle.setChecked(paint_enabled)
+        self.chat_toggle.setChecked(not paint_enabled)
+        self.chat_toggle.toggled.connect(self._on_chat_toggled)
+        self.paint_toggle.toggled.connect(self._on_paint_toggled)
         buttons.addStretch(1)
         # 工具行与模型下拉统一 34px 高；发送 / 停止合并到同一个图标按钮。
         self.send_button = icon_button("", tooltip="发送（Ctrl+Enter）")
@@ -558,7 +580,6 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
         self.config_button.clicked.connect(self.open_config)
         self.send_button.clicked.connect(self._on_send_or_stop)
-        self.paint_check.setChecked(bool(self._paint_settings.get("enabled")))
         self._sync_paint_placeholder()
         self._refresh_history()
         self._render_conversation()
@@ -858,7 +879,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         if not prompt:
             self._set_status("提示词不能为空")
             return
-        if self.paint_check.isChecked():
+        if self.paint_toggle.isChecked():
             self._send_paint(prompt)
             return
         try:
@@ -901,39 +922,52 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # 画图
     # ------------------------------------------------------------------ #
     def paint_settings(self) -> dict[str, Any]:
-        """当前画图配置（含启用标记）：弹窗已建好时以控件为准，否则用已保存值。"""
+        """完整画图配置：运行页的引擎 / 模型设置 + 对话页的采样 / 输出 + 启用标记。"""
+        settings = parse_paint_settings(getattr(self.state.settings, "paint", None))
         section = getattr(self, "paint_section", None)
-        settings = section.settings() if section is not None else dict(self._paint_settings)
-        enabled = self.paint_check.isChecked() if hasattr(self, "paint_check") else bool(settings.get("enabled"))
-        settings["enabled"] = enabled
+        if section is not None:
+            settings.update(section.settings())
+        settings["enabled"] = (
+            self.paint_toggle.isChecked() if hasattr(self, "paint_toggle") else bool(settings.get("enabled"))
+        )
         self._paint_settings = settings
         return settings
 
+    def _on_chat_toggled(self, checked: bool) -> None:
+        """「对话」胶囊：与「画图」互斥，始终保留一个模式。"""
+        if checked:
+            if self.paint_toggle.isChecked():
+                self.paint_toggle.setChecked(False)
+        elif not self.paint_toggle.isChecked():
+            self.chat_toggle.setChecked(True)
+
     def _on_paint_toggled(self, checked: bool) -> None:
-        """「画图」勾选框：切换输入提示并持久化启用状态。"""
-        self._paint_settings = {**self._paint_settings, "enabled": checked}
+        """「画图」胶囊：切换输入提示并持久化启用状态。"""
+        if checked:
+            if self.chat_toggle.isChecked():
+                self.chat_toggle.setChecked(False)
+        elif not self.chat_toggle.isChecked():
+            # 两个都不选中时补回「对话」，避免模式为空。
+            self.chat_toggle.setChecked(True)
+        self._paint_settings = self.paint_settings()
         self._sync_paint_placeholder()
         self._persist_paint()
         self._set_status("已启用画图：发送提示词即生成图片" if checked else "已关闭画图：发送即对话")
 
     def _sync_paint_placeholder(self) -> None:
-        if self.paint_check.isChecked():
+        if self.paint_toggle.isChecked():
             self.input_edit.setPlaceholderText("输入画图提示词，Ctrl+Enter 生成图片")
         else:
             self.input_edit.setPlaceholderText("输入问题，Ctrl+Enter 发送")
 
     def _on_paint_settings_changed(self) -> None:
-        """配置弹窗里的画图参数变化：延迟写盘，避免逐字符 IO。"""
-        self._paint_settings = self.paint_section.settings()
+        """配置弹窗里的画图采样参数变化：延迟写盘，避免逐字符 IO。"""
+        self._paint_settings = self.paint_settings()
         self._paint_save_timer.start()
 
     def _persist_paint(self) -> None:
         self.state.settings.paint = dict(self._paint_settings)
         self.state.persist()
-
-    def refresh_paint_assets(self) -> None:
-        """模型目录变化后重扫扩散模型（配置弹窗里的下拉）。"""
-        self.paint_section.refresh_assets()
 
     def _send_paint(self, prompt: str) -> None:
         """用当前画图配置出图，结果作为图片消息追加到当前对话。"""

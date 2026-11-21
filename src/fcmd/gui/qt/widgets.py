@@ -71,6 +71,7 @@ __all__ = [
     "SegmentBar",
     "SelectionRow",
     "StatusTag",
+    "ToggleChip",
     "apply_splitter_sizes",
     "button",
     "confirm",
@@ -159,6 +160,44 @@ def icon_button(text: str, *, tooltip: str = "", checkable: bool = False) -> QTo
     widget.setCursor(Qt.CursorShape.PointingHandCursor)
     widget.setToolTip(tooltip)
     return widget
+
+
+class ToggleChip(QToolButton):  # pragma: no cover - Qt 控件
+    """圆角胶囊开关：图标 + 文字，选中时淡强调色底与强调色文字。
+
+    参考元宝等对话产品输入区的模式开关：未选中是浅灰胶囊，悬停加深；选中回到
+    强调色系。图标色调随选中状态在 ``muted`` / ``accent`` 间切换，主题切换后由
+    :func:`fcmd.gui.qt.icons.refresh_icons` 按记录色调重绘。
+    """
+
+    def __init__(
+        self,
+        text: str,
+        *,
+        icon: str = "",
+        tooltip: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("ToggleChip")
+        self.setCheckable(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.setText(text)
+        self.setFixedHeight(30)
+        self._icon_name = icon
+        if tooltip:
+            self.setToolTip(tooltip)
+        self._refresh_icon()
+        self.toggled.connect(lambda _checked: self._refresh_icon())
+
+    def _refresh_icon(self) -> None:
+        """按选中状态切换图标色调（未选中 muted、选中 accent）。"""
+        if not self._icon_name:
+            return
+        from fcmd.gui.qt.icons import set_icon
+
+        set_icon(self, self._icon_name, tone="accent" if self.isChecked() else "muted")
 
 
 def confirm(parent: QWidget, title: str, text: str) -> bool:

@@ -1,14 +1,15 @@
 """llmw 画图配置：sd.cpp 文生图的纯逻辑、服务调用与配置分区。
 
-画图不再有独立页面：对话页勾选「画图」后用提示词出图，画图配置嵌进对话页的
-「模型与生成配置」窗口（:class:`PaintConfigSection`），引擎安装 / 状态放在运行页。
+画图不再有独立页面：对话页勾选「画图」后用提示词出图；采样 / 输出嵌进对话页的
+「模型与生成配置」窗口（:class:`PaintSampleSection`），引擎安装 / 默认引擎 / 模型组件
+配置（:class:`PaintEngineSection`）放在运行页「画图」页签。
 资产扫描、组件配对、启动参数、请求载荷与出图保存都在
 :mod:`fcmd.apps.llm._llmpaint` / ``_llmpaint_server`` / ``_llmpaint_engine``
 （与 ``fcmd llmpaint`` 共用），这里只做设置解析、服务调用与 Qt 控件。
 
 模块级函数都是纯逻辑（解析设置、构造组件 / 请求、命令预览），供测试直接断言；
-:class:`PaintConfigSection` 与 :func:`generate_images` / :func:`start_paint_service`
-是 GUI / 服务胶水（``pragma: no cover``）。
+:class:`PaintEngineSection` / :class:`PaintSampleSection` 与 :func:`generate_images` /
+:func:`start_paint_service` 是 GUI / 服务胶水（``pragma: no cover``）。
 """
 
 from __future__ import annotations
@@ -23,7 +24,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QSpinBox,
@@ -52,7 +52,8 @@ __all__ = [
     "MODES",
     "SAMPLERS",
     "SIZE_PRESETS",
-    "PaintConfigSection",
+    "PaintEngineSection",
+    "PaintSampleSection",
     "command_preview",
     "components_from_settings",
     "default_settings",
@@ -386,22 +387,33 @@ def start_paint_service(settings: dict[str, Any]) -> bool:
     return True
 
 
-def _section_label(text: str, parent: QWidget) -> QLabel:
-    """分区里的小节标题（与配置窗口的分节标题同一套字号 / 颜色）。"""
-    label = QLabel(text, parent)
-    label.setObjectName("SectionTitle")
-    return label
+class PaintEngineSection(QWidget):  # pragma: no cover - Qt 控件
+    """画图引擎配置：服务端口 / 自动启动、模型与组件、额外参数与命令预览。
 
-
-class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
-    """画图配置分区：服务、模型与组件、采样参数、输出目录。
-
-    嵌进对话页的「模型与生成配置」窗口；引擎（sd.cpp 版本 / 安装）在运行页。
-    每次改动发 :attr:`changed`，由对话页负责刷新摘要与延迟写盘；组合框的资产
-    扫描在后台线程完成，扫描期间沿用已保存的路径，避免误清空模型选择。
+    嵌在运行页的「画图」页签：引擎安装 / 默认引擎列表在同一个页签的其它卡片，
+    这里决定「用哪个模型、怎么加载」。每次改动发 :attr:`changed`，由运行页延迟
+    写盘到 ``ui/llmw.json`` 的 ``paint`` 字段；资产扫描在后台线程完成，扫描期间
+    沿用已保存的路径，避免误清空模型选择。
     """
 
     changed = Signal()
+
+    _KEYS = (
+        "port",
+        "auto_start",
+        "mode",
+        "model",
+        "vae",
+        "clip_l",
+        "clip_g",
+        "t5xxl",
+        "llm",
+        "lora",
+        "offload_to_cpu",
+        "vae_tiling",
+        "diffusion_fa",
+        "extra_args",
+    )
 
     def __init__(self, settings: dict[str, Any], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -413,7 +425,6 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        layout.addWidget(_section_label("画图服务", self))
         service_form = FormGrid(self)
         self.port = QSpinBox(self)
         self.port.setRange(1, 65535)
@@ -424,7 +435,6 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
         service_form.add_row("自动启动", self.auto_start)
         layout.addWidget(service_form)
 
-        layout.addWidget(_section_label("模型与组件", self))
         family_row = QHBoxLayout()
         family_row.setContentsMargins(0, 0, 0, 0)
         family_row.setSpacing(8)
@@ -474,75 +484,6 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
         self.preview_collapse.body.addWidget(self.preview_label)
         layout.addWidget(self.preview_collapse)
 
-        layout.addWidget(_section_label("采样参数", self))
-        params_form = FormGrid(self)
-        self.preset_combo = QComboBox(params_form)
-        self.preset_combo.addItem("自定义", None)
-        for label, preset_width, preset_height in SIZE_PRESETS:
-            self.preset_combo.addItem(label, (preset_width, preset_height))
-        params_form.add_row("尺寸预设", self.preset_combo)
-
-        size_row = QWidget(params_form)
-        size_layout = QHBoxLayout(size_row)
-        size_layout.setContentsMargins(0, 0, 0, 0)
-        size_layout.setSpacing(6)
-        self.width = QSpinBox(size_row)
-        self.width.setRange(64, 4096)
-        self.width.setSingleStep(8)
-        self.width.setToolTip("宽度：64–4096，8 的倍数")
-        self.height = QSpinBox(size_row)
-        self.height.setRange(64, 4096)
-        self.height.setSingleStep(8)
-        self.height.setToolTip("高度：64–4096，8 的倍数")
-        size_layout.addWidget(self.width, 1)
-        size_layout.addWidget(hint_label("×", wrap=False))
-        size_layout.addWidget(self.height, 1)
-        params_form.add_row("宽 × 高", size_row)
-
-        self.steps = QSpinBox(params_form)
-        self.steps.setRange(1, 150)
-        self.cfg = QDoubleSpinBox(params_form)
-        self.cfg.setRange(0.0, 30.0)
-        self.cfg.setSingleStep(0.5)
-        self.cfg.setDecimals(1)
-        params_form.add_pair("步数", self.steps, "CFG 引导", self.cfg)
-
-        self.sampler = QComboBox(params_form)
-        self.sampler.setEditable(True)
-        self.sampler.addItems(list(SAMPLERS))
-        self.scheduler = QLineEdit(params_form)
-        self.scheduler.setPlaceholderText("留空用引擎默认")
-        params_form.add_pair("采样器", self.sampler, "调度器", self.scheduler)
-
-        seed_row = QWidget(params_form)
-        seed_layout = QHBoxLayout(seed_row)
-        seed_layout.setContentsMargins(0, 0, 0, 0)
-        seed_layout.setSpacing(6)
-        self.seed = QSpinBox(seed_row)
-        self.seed.setRange(0, 2_147_483_647)
-        self.random_seed = QCheckBox("随机", seed_row)
-        self.random_seed.setToolTip("勾选时使用 -1（每次随机），取消后可固定种子复现")
-        seed_layout.addWidget(self.seed)
-        seed_layout.addWidget(self.random_seed)
-        seed_layout.addStretch(1)
-        self.batch = QSpinBox(params_form)
-        self.batch.setRange(1, 8)
-        params_form.add_pair("种子", seed_row, "批量", self.batch)
-        layout.addWidget(params_form)
-
-        layout.addWidget(_section_label("输出目录", self))
-        output_row = QHBoxLayout()
-        output_row.setContentsMargins(0, 0, 0, 0)
-        output_row.setSpacing(8)
-        self.output_label = ElidedLabel("", parent=self)
-        self.output_label.setObjectName("Hint")
-        output_row.addWidget(self.output_label, 1)
-        self.save_to_button = button("更改…", kind="ghost")
-        self.output_button = button("打开目录", kind="ghost")
-        output_row.addWidget(self.save_to_button)
-        output_row.addWidget(self.output_button)
-        layout.addLayout(output_row)
-
         self._wire()
         self._apply()
         self.refresh_assets()
@@ -551,22 +492,13 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
     # 设置读写
     # ------------------------------------------------------------------ #
     def settings(self) -> dict[str, Any]:
-        """收集当前控件值（未扫描资产前沿用已保存路径，避免误清空）。"""
-        settings = dict(self._settings)
-        settings.update(
+        """只返回引擎相关字段：与对话页的采样设置合并后才是完整画图配置。"""
+        self._settings.update(
             {
                 "port": self.port.value(),
                 "auto_start": self.auto_start.isChecked(),
                 "mode": str(self.mode_combo.currentData() or "auto"),
                 "model": self._combo_value(self.model_combo, "model"),
-                "width": self.width.value(),
-                "height": self.height.value(),
-                "steps": self.steps.value(),
-                "cfg_scale": self.cfg.value(),
-                "sampler": self.sampler.currentText().strip(),
-                "scheduler": self.scheduler.text().strip(),
-                "seed": -1 if self.random_seed.isChecked() else self.seed.value(),
-                "batch": self.batch.value(),
                 "offload_to_cpu": self.offload_to_cpu.isChecked(),
                 "vae_tiling": self.vae_tiling.isChecked(),
                 "diffusion_fa": self.diffusion_fa.isChecked(),
@@ -574,31 +506,20 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
             }
         )
         for role, _label in ROLE_COMBOS:
-            settings[role] = self._combo_value(self.role_combos[role], role)
-        return parse_paint_settings(settings)
+            self._settings[role] = self._combo_value(self.role_combos[role], role)
+        return {key: self._settings[key] for key in self._KEYS}
 
     def set_settings(self, settings: dict[str, Any]) -> None:
-        """外部改写设置（如切换对话恢复）后回填控件，不回发 ``changed``。"""
-        self._settings = parse_paint_settings(settings)
+        """外部改写设置后回填控件，不回发 ``changed``。"""
+        self._settings.update(parse_paint_settings(settings))
         self._apply()
 
     def _apply(self) -> None:
-        """把 ``self._settings`` 回填到控件（组合框选中项等资产扫描完再补）。"""
         settings = self._settings
         self._loading = True
         try:
             self.port.setValue(int(settings["port"]))
             self.auto_start.setChecked(bool(settings["auto_start"]))
-            self.width.setValue(int(settings["width"]))
-            self.height.setValue(int(settings["height"]))
-            self.steps.setValue(int(settings["steps"]))
-            self.cfg.setValue(float(settings["cfg_scale"]))
-            self.sampler.setCurrentText(str(settings["sampler"]))
-            self.scheduler.setText(str(settings["scheduler"]))
-            seed = int(settings["seed"])
-            self.random_seed.setChecked(seed < 0)
-            self.seed.setValue(0 if seed < 0 else seed)
-            self.batch.setValue(int(settings["batch"]))
             self.offload_to_cpu.setChecked(bool(settings["offload_to_cpu"]))
             self.vae_tiling.setChecked(bool(settings["vae_tiling"]))
             self.diffusion_fa.setChecked(bool(settings["diffusion_fa"]))
@@ -606,11 +527,7 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
             index = self.mode_combo.findData(str(settings["mode"]))
             self.mode_combo.setCurrentIndex(max(index, 0))
             self._apply_component_selection()
-            self._sync_preset()
-            self._refresh_output_label()
             self._update_preview()
-            # 输出目录可能来自外部改写，刷新命令预览后再回填一次状态。
-            self._settings = self.settings()
         finally:
             self._loading = False
 
@@ -621,26 +538,11 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
         return "" if self._assets_loaded else str(self._settings.get(key) or "")
 
     def _wire(self) -> None:
-        self.random_seed.toggled.connect(self.seed.setDisabled)
-        self.width.valueChanged.connect(self._sync_preset)
-        self.height.valueChanged.connect(self._sync_preset)
-        self.preset_combo.currentIndexChanged.connect(self._apply_preset)
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         self.suggest_button.clicked.connect(lambda: self._suggest(only_empty=False))
-        self.save_to_button.clicked.connect(self._pick_output_dir)
-        self.output_button.clicked.connect(self._open_output_dir)
         for signal in (
             self.port.valueChanged,
             self.auto_start.toggled,
-            self.width.valueChanged,
-            self.height.valueChanged,
-            self.steps.valueChanged,
-            self.cfg.valueChanged,
-            self.seed.valueChanged,
-            self.random_seed.toggled,
-            self.batch.valueChanged,
-            self.sampler.currentTextChanged,
-            self.scheduler.textChanged,
             self.mode_combo.currentIndexChanged,
             self.offload_to_cpu.toggled,
             self.vae_tiling.toggled,
@@ -662,10 +564,8 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def refresh_assets(self) -> None:
         """后台重新扫描扩散模型与组件（模型目录变化时由窗口调用）。"""
-        settings = self.settings()
-        self._settings = settings
         submit(
-            lambda: _llmpaint.scan_assets(model_roots(settings)),
+            lambda: _llmpaint.scan_assets(model_roots(self._settings)),
             on_done=self._apply_assets,
             on_error=self._assets_failed,
         )
@@ -758,6 +658,171 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
             self._select_path(combo, str(value))
         self._on_changed()
 
+    def _update_preview(self) -> None:
+        self.preview_label.setText(command_preview(parse_paint_settings(self._settings)))
+
+
+class PaintSampleSection(QWidget):  # pragma: no cover - Qt 控件
+    """单次出图的采样参数与输出目录。
+
+    嵌进对话页的「模型与生成配置」窗口：引擎 / 模型组件在运行页，这里只决定
+    「这次怎么画、存到哪」。改动发 :attr:`changed`，由对话页延迟写盘。
+    """
+
+    changed = Signal()
+
+    _KEYS = ("width", "height", "steps", "cfg_scale", "sampler", "scheduler", "seed", "batch", "output_dir")
+
+    def __init__(self, settings: dict[str, Any], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._settings = parse_paint_settings(settings)
+        self._loading = False
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        params_form = FormGrid(self)
+        self.preset_combo = QComboBox(params_form)
+        self.preset_combo.addItem("自定义", None)
+        for label, preset_width, preset_height in SIZE_PRESETS:
+            self.preset_combo.addItem(label, (preset_width, preset_height))
+        params_form.add_row("尺寸预设", self.preset_combo)
+
+        size_row = QWidget(params_form)
+        size_layout = QHBoxLayout(size_row)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        size_layout.setSpacing(6)
+        self.width = QSpinBox(size_row)
+        self.width.setRange(64, 4096)
+        self.width.setSingleStep(8)
+        self.width.setToolTip("宽度：64–4096，8 的倍数")
+        self.height = QSpinBox(size_row)
+        self.height.setRange(64, 4096)
+        self.height.setSingleStep(8)
+        self.height.setToolTip("高度：64–4096，8 的倍数")
+        size_layout.addWidget(self.width, 1)
+        size_layout.addWidget(hint_label("×", wrap=False))
+        size_layout.addWidget(self.height, 1)
+        params_form.add_row("宽 × 高", size_row)
+
+        self.steps = QSpinBox(params_form)
+        self.steps.setRange(1, 150)
+        self.cfg = QDoubleSpinBox(params_form)
+        self.cfg.setRange(0.0, 30.0)
+        self.cfg.setSingleStep(0.5)
+        self.cfg.setDecimals(1)
+        params_form.add_pair("步数", self.steps, "CFG 引导", self.cfg)
+
+        self.sampler = QComboBox(params_form)
+        self.sampler.setEditable(True)
+        self.sampler.addItems(list(SAMPLERS))
+        self.scheduler = QLineEdit(params_form)
+        self.scheduler.setPlaceholderText("留空用引擎默认")
+        params_form.add_pair("采样器", self.sampler, "调度器", self.scheduler)
+
+        seed_row = QWidget(params_form)
+        seed_layout = QHBoxLayout(seed_row)
+        seed_layout.setContentsMargins(0, 0, 0, 0)
+        seed_layout.setSpacing(6)
+        self.seed = QSpinBox(seed_row)
+        self.seed.setRange(0, 2_147_483_647)
+        self.random_seed = QCheckBox("随机", seed_row)
+        self.random_seed.setToolTip("勾选时使用 -1（每次随机），取消后可固定种子复现")
+        seed_layout.addWidget(self.seed)
+        seed_layout.addWidget(self.random_seed)
+        seed_layout.addStretch(1)
+        self.batch = QSpinBox(params_form)
+        self.batch.setRange(1, 8)
+        params_form.add_pair("种子", seed_row, "批量", self.batch)
+        layout.addWidget(params_form)
+
+        output_row = QHBoxLayout()
+        output_row.setContentsMargins(0, 0, 0, 0)
+        output_row.setSpacing(8)
+        self.output_label = ElidedLabel("", parent=self)
+        self.output_label.setObjectName("Hint")
+        output_row.addWidget(self.output_label, 1)
+        self.save_to_button = button("更改…", kind="ghost")
+        self.output_button = button("打开目录", kind="ghost")
+        output_row.addWidget(self.save_to_button)
+        output_row.addWidget(self.output_button)
+        layout.addLayout(output_row)
+
+        self._wire()
+        self._apply()
+
+    # ------------------------------------------------------------------ #
+    # 设置读写
+    # ------------------------------------------------------------------ #
+    def settings(self) -> dict[str, Any]:
+        """只返回采样 / 输出字段：与运行页的引擎设置合并后才是完整画图配置。"""
+        self._loading = True
+        try:
+            self._settings.update(
+                {
+                    "width": self.width.value(),
+                    "height": self.height.value(),
+                    "steps": self.steps.value(),
+                    "cfg_scale": self.cfg.value(),
+                    "sampler": self.sampler.currentText().strip(),
+                    "scheduler": self.scheduler.text().strip(),
+                    "seed": -1 if self.random_seed.isChecked() else self.seed.value(),
+                    "batch": self.batch.value(),
+                }
+            )
+        finally:
+            self._loading = False
+        return {key: self._settings[key] for key in self._KEYS}
+
+    def set_settings(self, settings: dict[str, Any]) -> None:
+        """外部改写设置后回填控件，不回发 ``changed``。"""
+        self._settings.update(parse_paint_settings(settings))
+        self._apply()
+
+    def _apply(self) -> None:
+        settings = self._settings
+        self._loading = True
+        try:
+            self.width.setValue(int(settings["width"]))
+            self.height.setValue(int(settings["height"]))
+            self.steps.setValue(int(settings["steps"]))
+            self.cfg.setValue(float(settings["cfg_scale"]))
+            self.sampler.setCurrentText(str(settings["sampler"]))
+            self.scheduler.setText(str(settings["scheduler"]))
+            seed = int(settings["seed"])
+            self.random_seed.setChecked(seed < 0)
+            self.seed.setValue(0 if seed < 0 else seed)
+            self.batch.setValue(int(settings["batch"]))
+            self._sync_preset()
+            self._refresh_output_label()
+        finally:
+            self._loading = False
+
+    def _wire(self) -> None:
+        self.random_seed.toggled.connect(self.seed.setDisabled)
+        self.width.valueChanged.connect(self._sync_preset)
+        self.height.valueChanged.connect(self._sync_preset)
+        self.preset_combo.currentIndexChanged.connect(self._apply_preset)
+        self.save_to_button.clicked.connect(self._pick_output_dir)
+        self.output_button.clicked.connect(self._open_output_dir)
+        for signal in (
+            self.width.valueChanged,
+            self.height.valueChanged,
+            self.steps.valueChanged,
+            self.cfg.valueChanged,
+            self.seed.valueChanged,
+            self.random_seed.toggled,
+            self.batch.valueChanged,
+            self.sampler.currentTextChanged,
+            self.scheduler.textChanged,
+        ):
+            signal.connect(self._on_changed)
+
+    def _on_changed(self, *_args: Any) -> None:
+        if self._loading:
+            return
+        self.changed.emit()
+
     # ------------------------------------------------------------------ #
     # 联动与输出
     # ------------------------------------------------------------------ #
@@ -785,9 +850,6 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
         self.width.setValue(int(width))
         self.height.setValue(int(height))
 
-    def _update_preview(self) -> None:
-        self.preview_label.setText(command_preview(self.settings()))
-
     def _refresh_output_label(self) -> None:
         path = output_dir(self._settings)
         self.output_label.setText(f"输出目录：{path}")
@@ -798,12 +860,12 @@ class PaintConfigSection(QWidget):  # pragma: no cover - Qt 控件
         chosen = QFileDialog.getExistingDirectory(self, "选择出图目录", str(output_dir(self._settings)))
         if not chosen:
             return
-        self._settings = parse_paint_settings({**self._settings, "output_dir": chosen})
+        self._settings["output_dir"] = chosen
         self._refresh_output_label()
         self.changed.emit()
 
     def _open_output_dir(self) -> None:
-        target = output_dir(self.settings())
+        target = output_dir(self._settings)
         try:
             target.mkdir(parents=True, exist_ok=True)
             open_path(target)

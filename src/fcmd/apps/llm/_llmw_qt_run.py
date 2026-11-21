@@ -14,7 +14,7 @@ import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QPaintEvent, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -48,6 +48,7 @@ from fcmd.apps.llm import (
 from fcmd.apps.llm._llmquant import matches_profile
 from fcmd.apps.llm._llmw_monitor import _busy_advice, _fit_advice, _probe_web_ui
 from fcmd.apps.llm._llmw_qt_paint import (
+    PaintEngineSection,
     components_from_settings,
     parse_paint_settings,
     start_paint_service,
@@ -455,6 +456,10 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self._syncing_tune = False
         self._active_param_key: str | None = None
         self._tune_auto = {"kv": False, "ubatch": False, "parallel": False, "threads_http": False}
+        self._paint_save_timer = QTimer(self)
+        self._paint_save_timer.setSingleShot(True)
+        self._paint_save_timer.setInterval(400)
+        self._paint_save_timer.timeout.connect(self._persist_paint)
         self._build()
         self._wire()
         self.on_models_changed()
@@ -599,7 +604,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_card.body.addLayout(paint_row)
         self.paint_card.body.addWidget(
             hint_label(
-                "画图在「对话」页勾选「画图」后用提示词出图；模型 / 采样 / 输出目录在对话页 ⚙ →「画图」。",
+                "画图在「对话」页切到「画图」模式后用提示词出图；采样 / 输出目录在对话页 ⚙ 里，模型与加载参数在本页下方配置。",
                 wrap=True,
             )
         )
@@ -608,6 +613,16 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_engine_rows.setSpacing(4)
         self.paint_card.body.addLayout(self.paint_engine_rows)
         layout.addWidget(self.paint_card)
+
+        # 画图引擎配置（模型 / 组件 / 额外参数）在运行页，对话页只留采样 / 输出。
+        self.paint_config_card = Card("画图引擎配置")
+        self.paint_engine_section = PaintEngineSection(
+            parse_paint_settings(self.state.settings.paint),
+            self.paint_config_card,
+        )
+        self.paint_engine_section.changed.connect(self._on_paint_engine_changed)
+        self.paint_config_card.body.addWidget(self.paint_engine_section)
+        layout.addWidget(self.paint_config_card)
 
         self.paint_service_card = Card("画图服务")
         service_row = QHBoxLayout()
@@ -625,7 +640,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.paint_service_card.body.addLayout(service_row)
         self.paint_service_card.body.addWidget(
             hint_label(
-                "默认按对话配置的模型 / 端口启动；对话页生成时也会按组件指纹自动启停（可在对话配置里关闭自动启动）。",
+                "默认按本页「画图引擎配置」的模型 / 端口启动；对话页生成时也会按组件指纹自动启停（自动启动可在上面关闭）。",
                 wrap=True,
             )
         )
@@ -691,9 +706,30 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.state.log(f"画图引擎已切换为 {tag}")
         self.refresh_paint()
 
-    def _start_paint_service(self) -> None:
-        """按对话配置里的画图设置启动 / 复用 sd-server。"""
+    def paint_settings(self) -> dict[str, Any]:
+        """完整画图配置：本页引擎配置 + 已保存的采样 / 输出 + 启用标记。"""
         settings = parse_paint_settings(self.state.settings.paint)
+        section = getattr(self, "paint_engine_section", None)
+        if section is not None:
+            settings.update(section.settings())
+        return parse_paint_settings(settings)
+
+    def refresh_paint_assets(self) -> None:
+        """模型目录变化后重扫扩散模型（画图页签里的下拉）。"""
+        self.paint_engine_section.refresh_assets()
+
+    def _on_paint_engine_changed(self) -> None:
+        """引擎配置改动：合并写回 paint 设置，延迟落盘。"""
+        self.state.settings.paint = self.paint_settings()
+        self._paint_save_timer.start()
+
+    def _persist_paint(self) -> None:
+        self.state.settings.paint = self.paint_settings()
+        self.state.persist()
+
+    def _start_paint_service(self) -> None:
+        """按当前画图配置启动 / 复用 sd-server。"""
+        settings = self.paint_settings()
         try:
             _llmpaint.validate_components(components_from_settings(settings))
         except ServeError as exc:

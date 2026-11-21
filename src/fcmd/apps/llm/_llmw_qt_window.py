@@ -217,7 +217,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._settings_page.refresh()
         if self._chat_page is not None:
             self._chat_page.refresh_services()
-            self._chat_page.refresh_paint_assets()
+        self.run_page.refresh_paint_assets()
 
     def _persist_sidebar_collapsed(self, collapsed: bool) -> None:
         """折叠状态属于窗口设置，随 ``llmw.json`` 一起持久化。"""

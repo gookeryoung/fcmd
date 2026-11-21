@@ -114,12 +114,14 @@ def test_window_builds_all_pages(window: Any) -> None:
 
 
 def test_chat_paint_toggle_and_missing_model(window: Any) -> None:
-    """对话页「画图」启用项：勾选即按画图配置出图，缺模型时只报错不派后台任务。"""
+    """对话页「画图」模式胶囊：选中即按画图配置出图，缺模型时只报错不派后台任务。"""
     window.show_page("chat")
     page = window.page("chat")
-    assert not page.paint_check.isChecked()
-    page.paint_check.setChecked(True)
+    assert page.chat_toggle.isChecked()
+    assert not page.paint_toggle.isChecked()
+    page.paint_toggle.setChecked(True)
     QApplication.processEvents()
+    assert not page.chat_toggle.isChecked()
     assert page.input_edit.placeholderText().startswith("输入画图提示词")
     assert window.state.settings.paint["enabled"] is True
     assert window.status_text().startswith("已启用画图")
@@ -130,14 +132,46 @@ def test_chat_paint_toggle_and_missing_model(window: Any) -> None:
     assert "画图失败" in page.transcript.toPlainText()
     assert "主模型" in page.transcript.toPlainText()
     assert window.status_text().startswith("画图参数错误")
-    # 关掉画图后回到对话提示词。
-    page.paint_check.setChecked(False)
+    # 切回对话后回到对话提示词，互斥组保持始终有一个选中。
+    page.paint_toggle.setChecked(False)
+    assert page.chat_toggle.isChecked()
     assert page.input_edit.placeholderText().startswith("输入问题")
     assert window.state.settings.paint["enabled"] is False
 
 
-def test_chat_config_contains_paint_settings(window: Any) -> None:
-    """画图配置融入对话配置弹窗：服务 / 模型 / 采样 / 输出控件都在弹窗里。"""
+def test_chat_mode_chips_are_rounded_exclusive_toggles(window: Any) -> None:
+    """对话 / 画图为元宝式圆角胶囊：图标 + 文字，互斥切换并同步图标色调。"""
+    window.show_page("chat")
+    chat = window.page("chat")
+    assert chat.chat_toggle.objectName() == "ToggleChip"
+    assert chat.paint_toggle.objectName() == "ToggleChip"
+    for chip, icon, tone in (
+        (chat.chat_toggle, "chat", "accent"),
+        (chat.paint_toggle, "paint", "muted"),
+    ):
+        assert chip.isCheckable()
+        assert chip.height() == 30
+        assert chip.text()
+        assert chip.icon().isNull() is False
+        assert chip.property("fcmdIconName") == icon
+        assert chip.property("fcmdIconTone") == tone
+
+    chat.paint_toggle.click()
+    assert chat.paint_toggle.isChecked()
+    assert not chat.chat_toggle.isChecked()
+    assert chat.paint_toggle.property("fcmdIconTone") == "accent"
+    assert chat.chat_toggle.property("fcmdIconTone") == "muted"
+    assert window.state.settings.paint["enabled"] is True
+
+    chat.chat_toggle.click()
+    assert chat.chat_toggle.isChecked()
+    assert not chat.paint_toggle.isChecked()
+    assert window.state.settings.paint["enabled"] is False
+    assert window.status_text().startswith("已关闭画图")
+
+
+def test_chat_config_contains_paint_sample_settings(window: Any) -> None:
+    """对话配置只留画图采样 / 输出；模型与引擎配置在运行页「画图」页签。"""
     window.show_page("chat")
     page = window.page("chat")
     assert not page.config_dialog.isVisible()
@@ -145,18 +179,13 @@ def test_chat_config_contains_paint_settings(window: Any) -> None:
     QApplication.processEvents()
     assert page.config_dialog.isVisible()
     section = page.paint_section
-    for widget in (
-        section.port,
-        section.model_combo,
-        section.width,
-        section.auto_start,
-        section.output_label,
-    ):
+    for widget in (section.width, section.steps, section.sampler, section.output_label):
         assert widget.window() is page.config_dialog
-    assert "sd-server" in section.preview_label.text()
+    # 引擎 / 模型组件不在对话配置里。
+    for name in ("port", "model_combo", "auto_start", "preview_label"):
+        assert not hasattr(section, name), name
     section.width.setValue(1024)
     assert section.settings()["width"] == 1024
-    assert section.preview_label.text().startswith("sd-server")
     page.config_dialog.close()
 
 
@@ -173,7 +202,13 @@ def test_run_page_paint_tab_holds_engine_entry(window: Any) -> None:
         "已退出（残留状态）",
     } or run.paint_service_tag.text().startswith("运行中")
     assert run.paint_install_button.text() == "安装引擎…"
+    assert run.paint_config_card.title() == "画图引擎配置"
     assert run.paint_start_button.text() == "启动服务"
+    # 模型与组件控件在运行页的画图引擎配置里，而不是对话配置里。
+    section = run.paint_engine_section
+    for widget in (section.port, section.model_combo, section.auto_start, section.preview_label):
+        assert widget.window() is window
+    assert section.settings()["port"] == 1234
     run.refresh_paint()
     assert "paint" not in tuple(window.nav.keys())
 
@@ -1359,9 +1394,11 @@ def test_chat_composer_puts_model_selector_left_of_send(window: Any) -> None:
     chat = window.page("chat")
     model_pos = chat.model_combo.mapTo(chat, chat.model_combo.rect().topLeft())
     config_pos = chat.config_button.mapTo(chat, chat.config_button.rect().topLeft())
+    chat_pos = chat.chat_toggle.mapTo(chat, chat.chat_toggle.rect().topLeft())
+    paint_pos = chat.paint_toggle.mapTo(chat, chat.paint_toggle.rect().topLeft())
     send_pos = chat.send_button.mapTo(chat, chat.send_button.rect().topLeft())
     assert abs(model_pos.y() - send_pos.y()) <= 2
-    assert model_pos.x() < config_pos.x() < send_pos.x()
+    assert model_pos.x() < config_pos.x() < chat_pos.x() < paint_pos.x() < send_pos.x()
     assert chat.transcript.objectName() == "ChatTranscript"
     assert chat.input_edit.objectName() == "ChatInput"
 

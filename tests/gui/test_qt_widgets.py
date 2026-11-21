@@ -41,6 +41,7 @@ from fcmd.gui.qt.widgets import (
     SegmentBar,
     SelectionRow,
     StatusTag,
+    ToggleChip,
     button,
     icon_button,
     section_header,
@@ -222,6 +223,26 @@ def test_icon_button_is_square_and_checkable() -> None:
         assert widget.objectName() == "IconButton"
     finally:
         widget.deleteLater()
+
+
+def test_toggle_chip_is_pill_with_icon_and_checkable() -> None:
+    """模式胶囊：固定 30px 高（全圆角）、图标随选中状态在 muted / accent 间切换。"""
+    chip = ToggleChip("画图", icon="paint", tooltip="生成图片")
+    try:
+        assert chip.objectName() == "ToggleChip"
+        assert chip.text() == "画图"
+        assert chip.toolTip() == "生成图片"
+        assert chip.isCheckable()
+        assert chip.height() == 30
+        assert chip.icon().isNull() is False
+        assert chip.property("fcmdIconName") == "paint"
+        assert chip.property("fcmdIconTone") == "muted"
+        chip.setChecked(True)
+        assert chip.property("fcmdIconTone") == "accent"
+        chip.setChecked(False)
+        assert chip.property("fcmdIconTone") == "muted"
+    finally:
+        chip.deleteLater()
 
 
 def test_collapsible_can_hide_header() -> None:
