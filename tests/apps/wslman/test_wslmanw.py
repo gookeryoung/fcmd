@@ -66,6 +66,8 @@ def test_settings_from_mapping_tolerates_bad_values() -> None:
         "download_dir": 42,
     }
     assert wslmanw.settings_from_mapping(raw) == wslmanw.WslmanwSettings(geometry=None)
+    assert wslmanw.settings_from_mapping({"sidebar_collapsed": True}).sidebar_collapsed is True
+    assert wslmanw.settings_from_mapping({"sidebar_collapsed": "yes"}).sidebar_collapsed is False
 
 
 def test_removed_fields_are_ignored() -> None:
@@ -100,6 +102,7 @@ def test_settings_mapping_is_json_friendly() -> None:
         "geometry": "900x600",
         "download_dir": r"D:\WSL",
         "mirror": "auto",
+        "sidebar_collapsed": False,
     }
 
 
@@ -178,8 +181,8 @@ def test_resolve_geometry_clamps_to_screen_and_minimum() -> None:
 
 
 def test_default_window_matches_new_layout() -> None:
-    """列表占满宽度、详情移入笔记本后的默认与最小尺寸。"""
-    assert wslmanw.DEFAULT_GEOMETRY == "980x660"
+    """侧边栏 + 三页布局的默认尺寸；最小尺寸保证表格与详情不被压扁。"""
+    assert wslmanw.DEFAULT_GEOMETRY == "1160x760"
     assert (wslmanw.MIN_WIDTH, wslmanw.MIN_HEIGHT) == (900, 600)
 
 

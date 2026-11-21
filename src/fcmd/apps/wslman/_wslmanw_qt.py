@@ -4,9 +4,12 @@
 :mod:`fcmd.apps.wslman._source` 的共享实现（导出、预检、注销前备份、镜像下载），
 与 CLI 共用同一套口径；界面负责列表 / 详情 / 下载 / 日志四块内容与任务编排。
 
-布局：顶部工具栏固定（按危险等级分组），中间发行版表与下方分页放同一根
-``QSplitter``（尺寸可拖动且写入设置），分页为详情 / 下载 / 日志。后台任务一律
-走 :func:`fcmd.gui.qt.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
+布局与 llmw 对齐：复用共享 :class:`fcmd.gui.qt.window.QtMainWindow` 的左侧
+:class:`~fcmd.gui.qt.sidebar.SidebarNav` 导航（折叠、``Alt+1..3`` 切换与窗口
+几何记忆都由基座提供），右侧按「发行版 / 镜像 / 日志」分页，每页拿满整个
+内容区，不再把详情、下载与日志挤进同一个底部标签页。发行版页用一个纵向
+分栏把列表与详情分开；镜像页沿用列表 / 详情横向分栏。后台任务一律走
+:func:`fcmd.gui.qt.workers.submit`，运行状态每 3 秒轮询一次（最小化时暂停），
 关窗时取消进行中的任务。
 
 设置文件：``${FCMD_HOME:-~/.fcmd}/ui/wslmanw.json``（与旧设置文件同名字段互读）。
@@ -35,7 +38,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -49,13 +51,11 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
 from fcmd.apps.wslman._transfer import sha256_file
-from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import (
     Card,
     Collapsible,
     HintLabel,
     LogView,
-    PageScroll,
     button,
     confirm,
     hint_label,
@@ -63,6 +63,7 @@ from fcmd.gui.qt.widgets import (
     make_table,
     make_table_item,
 )
+from fcmd.gui.qt.window import QtMainWindow
 from fcmd.gui.qt.workers import periodic, submit
 
 if TYPE_CHECKING:
@@ -72,7 +73,17 @@ if TYPE_CHECKING:
 
 __all__ = ["WslmanQtWindow", "run_qt"]
 
-DEFAULT_SIZE = (980, 660)
+DEFAULT_SIZE = (1160, 760)
+
+TITLE = "WSL · 发行版管理"
+NAV_TITLE = "WSL"
+
+PAGES: tuple[tuple[str, str, str], ...] = (
+    ("distros", "发行版", "列表、详情、启动停止、导出与注销"),
+    ("images", "镜像", "在线镜像清单、下载源与本地安装"),
+    ("log", "日志", "启动、导出、安装与下载的任务日志"),
+)
+"""侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""
 
 _COLUMN_KEYS: tuple[str, ...] = tuple(key for key, _title, _minimum, _maximum in w._COLUMNS)
 
@@ -83,8 +94,8 @@ class _LogBridge(QObject):  # pragma: no cover - Qt 信号桥
     message = Signal(str)
 
 
-class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """WSL 发行版管理：发行版表 + 详情 / 下载 / 日志分页 + 后台任务。"""
+class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
+    """WSL 发行版管理：侧边栏分页（发行版 / 镜像 / 日志）+ 后台任务。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self._own_settings_path = settings_path
@@ -104,37 +115,84 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._bridge: _LogBridge | None = None
         self._poll: QTimer | None = None
         self._filter_timer: QTimer | None = None
+        self._buttons: list[QPushButton] = []
+        self._button_by_text: dict[str, QPushButton] = {}
         super().__init__(
-            title="WSL 管理",
+            title=TITLE,
             config_name=w.SETTINGS_NAME,
+            nav_title=NAV_TITLE,
             default_size=DEFAULT_SIZE,
             min_size=(w.MIN_WIDTH, w.MIN_HEIGHT),
             on_close=self._on_close,
             persist=self._persist_settings,
+            sidebar_collapsed=self.settings.sidebar_collapsed,
+            settings_path=settings_path,
         )
-        self._build_widgets()
+        # 三页都很轻（表格 + 表单），建窗即构造：镜像页的控件也是设置持久化与
+        # 下载动作的读取来源，延迟构建会让「没切到镜像页就关窗」时缺控件。
+        builders = {
+            "distros": self._build_distros_page,
+            "images": self._build_images_page,
+            "log": self._build_log_page,
+        }
+        for key, label, hint in PAGES:
+            page = builders[key]()
+            self.add_page(key, label, hint=hint, factory=lambda page=page: page)
+        self.hover_label = HintLabel("")
+        self.hover_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.hover_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.statusBar().insertWidget(0, self.hover_label, 1)
         self._schedule_poll()
         self.refresh()
+
+    def show_page(self, key: str) -> None:
+        """切页：首次进入镜像页时拉取在线清单（等价于旧版切到「下载」标签）。"""
+        super().show_page(key)
+        if key == "images":
+            self._load_images()
 
     # ------------------------------------------------------------------ #
     # 构建
     # ------------------------------------------------------------------ #
-    def _build_widgets(self) -> None:
+    def _build_distros_page(self) -> QWidget:
+        """发行版页：动作行 + 纵向分栏（列表 / 详情）。"""
+        page = QWidget(self)
+        body = QVBoxLayout(page)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+        body.addLayout(self._build_distro_actions(page))
+
+        split = make_splitter(Qt.Orientation.Vertical, sizes=(430, 250), parent=page)
+        split.setMinimumHeight(300)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 1)
+        self._table_card = Card("发行版", split)
+        self._table = make_table(
+            [title for _key, title, _minimum, _maximum in w._COLUMNS],
+            widths=[minimum for _key, _title, minimum, _maximum in w._COLUMNS],
+            parent=self._table_card,
+        )
+        self._table.setMinimumHeight(150)
+        self._table.itemSelectionChanged.connect(self._show_details)
+        self._table.cellDoubleClicked.connect(lambda _row, _column: self._open_selected())
+        self._table_card.body.addWidget(self._table)
+        split.addWidget(self._table_card)
+        split.addWidget(self._build_detail_card(split))
+        body.addWidget(split, 1)
+        return page
+
+    def _build_distro_actions(self, page: QWidget) -> QHBoxLayout:
+        """发行版动作行：按「终端 / 启停 → 导出 → 危险操作」分组。"""
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(4)
-        self._buttons: list[QPushButton] = []
-        self._button_by_text: dict[str, QPushButton] = {}
         groups: tuple[tuple[tuple[str, Any, str], ...], ...] = (
             (
                 ("打开终端", self._open_selected, "primary"),
                 ("启动", self._start_selected, ""),
                 ("停止", self._terminate_selected, ""),
             ),
-            (
-                ("导出", self._export_selected, ""),
-                ("安装本地镜像…", self._install_local, ""),
-            ),
+            (("导出", self._export_selected, ""),),
             (
                 ("注销", self._unregister, "danger"),
                 ("关闭全部", self._shutdown, "danger"),
@@ -142,7 +200,7 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         )
         for index, group in enumerate(groups):
             if index:
-                separator = QLabel("│", self)
+                separator = QLabel("│", page)
                 separator.setObjectName("Hint")
                 toolbar.addWidget(separator)
             for text, handler, kind in group:
@@ -154,36 +212,11 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         toolbar.addStretch(1)
         self.start_button = self._button_by_text["启动"]
         self.stop_button = self._button_by_text["停止"]
-        self.add_layout(toolbar)
+        return toolbar
 
-        self._table_card = Card("发行版")
-        self._table = make_table(
-            [title for _key, title, _minimum, _maximum in w._COLUMNS],
-            widths=[minimum for _key, _title, minimum, _maximum in w._COLUMNS],
-            parent=self._table_card,
-        )
-        self._table.setMinimumHeight(160)
-        self._table.itemSelectionChanged.connect(self._show_details)
-        self._table.cellDoubleClicked.connect(lambda _row, _column: self._open_selected())
-        self._table_card.body.addWidget(self._table)
-        self.add(self._table_card, 1)
-
-        self.tabs = QTabWidget(self)
-        self.tabs.setMinimumHeight(230)
-        self.tabs.addTab(self._build_detail_tab(), "详情")
-        self.tabs.addTab(self._build_download_tab(), "下载")
-        self._log_view = LogView(height=120, parent=self.tabs)
-        self.tabs.addTab(self._log_view, "日志")
-        self.tabs.currentChanged.connect(self._on_tab_changed)
-        self.add(self.tabs)
-
-        self.hover_label = HintLabel("")
-        self.hover_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.hover_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.statusBar().insertWidget(0, self.hover_label, 1)
-
-    def _build_detail_tab(self) -> QWidget:
-        page = PageScroll(margins=(0, 0, 4, 8))
+    def _build_detail_card(self, parent: QWidget) -> Card:
+        """详情卡：9 个字段分左右两组，可随窗口宽度换行。"""
+        card = Card("详情", parent)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(12)
@@ -195,20 +228,25 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             group, row = divmod(index, w._DETAIL_ROWS)
             column = group * 2
             grid.addWidget(hint_label(label, wrap=False), row, column, Qt.AlignmentFlag.AlignTop)
-            value = QLabel("—", page)
+            value = QLabel("—", card)
             value.setWordWrap(True)
             value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             grid.addWidget(value, row, column + 1, Qt.AlignmentFlag.AlignTop)
             self.detail_values[label] = value
-        page.body.addLayout(grid)
+        card.body.addLayout(grid)
         self.detail_hint = hint_label("选择上方列表中的发行版查看详情")
-        page.body.addWidget(self.detail_hint)
-        page.body.addStretch(1)
-        return page
+        card.body.addWidget(self.detail_hint)
+        card.body.addStretch(1)
+        card.setMinimumHeight(170)
+        return card
 
-    def _build_download_tab(self) -> QWidget:
-        page = PageScroll(margins=(0, 0, 4, 8))
-        body = page.body
+    def _build_images_page(self) -> QWidget:
+        """镜像页：搜索 / 下载源、清单与详情分栏、下载动作与高级选项。"""
+        page = QWidget(self)
+        body = QVBoxLayout(page)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+
         search_row = QHBoxLayout()
         search_row.setContentsMargins(0, 0, 0, 0)
         search_row.setSpacing(6)
@@ -229,8 +267,10 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.images_status = hint_label("打开本页时自动获取镜像清单")
         body.addWidget(self.images_status)
 
-        split = make_splitter(sizes=(520, 360), parent=page)
-        split.setMinimumHeight(240)
+        split = make_splitter(sizes=(520, 380), parent=page)
+        split.setMinimumHeight(300)
+        split.setStretchFactor(0, 3)
+        split.setStretchFactor(1, 2)
         self.image_table = make_table(
             ("名称", "友好名", "架构", "标记"),
             widths=(150, 190, 90, 130),
@@ -241,8 +281,54 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.image_table.itemSelectionChanged.connect(self._show_image_details)
         self.image_table.cellDoubleClicked.connect(lambda _row, _column: self._download())
         split.addWidget(self.image_table)
+        split.addWidget(self._build_image_detail(split))
+        self._image_split = split
+        body.addWidget(split, 1)
 
-        detail = QWidget(split)
+        actions = QHBoxLayout()
+        actions.setContentsMargins(0, 0, 0, 0)
+        actions.setSpacing(6)
+        self._download_button = button("开始下载", kind="primary")
+        self._download_button.clicked.connect(self._download)
+        actions.addWidget(self._download_button)
+        self._cancel_button = button("取消")
+        self._cancel_button.clicked.connect(self._cancel_task)
+        actions.addWidget(self._cancel_button)
+        self.install_after = QCheckBox("下载后立即安装", self)
+        actions.addWidget(self.install_after)
+        separator = QLabel("│", page)
+        separator.setObjectName("Hint")
+        actions.addWidget(separator)
+        install_local = button("安装本地镜像…")
+        install_local.clicked.connect(self._install_local)
+        actions.addWidget(install_local)
+        self._buttons.append(install_local)
+        self._button_by_text["安装本地镜像…"] = install_local
+        actions.addStretch(1)
+        body.addLayout(actions)
+        body.addWidget(hint_label(w._DOWNLOAD_HINT))
+
+        self.advanced = Collapsible("高级：下载目录 / 校验", parent=page)
+        self.download_dir = QLineEdit(self.settings.download_dir, self.advanced.content)
+        self.download_dir.setPlaceholderText("留空时使用 wslman.json 的 download_dir 或系统下载目录")
+        self.expected_sha = QLineEdit("", self.advanced.content)
+        self.expected_sha.setPlaceholderText("可选：期望的 sha256（留空用官方清单）")
+        form = QGridLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(8)
+        form.setVerticalSpacing(6)
+        form.setColumnStretch(1, 1)
+        form.addWidget(QLabel("下载目录"), 0, 0)
+        form.addWidget(self.download_dir, 0, 1)
+        form.addWidget(QLabel("期望 sha256"), 1, 0)
+        form.addWidget(self.expected_sha, 1, 1)
+        self.advanced.body.addLayout(form)
+        body.addWidget(self.advanced)
+        return page
+
+    def _build_image_detail(self, parent: QWidget) -> QWidget:
+        """镜像详情：短字段网格 + 可换行的只读下载地址。"""
+        detail = QWidget(parent)
         detail_grid = QGridLayout(detail)
         detail_grid.setContentsMargins(8, 0, 0, 0)
         detail_grid.setHorizontalSpacing(8)
@@ -264,41 +350,19 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.image_url.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         detail_grid.addWidget(self.image_url, url_row, 1)
         detail_grid.setRowStretch(url_row, 1)
-        split.addWidget(detail)
-        self._image_split = split
-        body.addWidget(split)
+        return detail
 
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self._download_button = button("开始下载", kind="primary")
-        self._download_button.clicked.connect(self._download)
-        actions.addWidget(self._download_button)
-        self._cancel_button = button("取消")
-        self._cancel_button.clicked.connect(self._cancel_task)
-        actions.addWidget(self._cancel_button)
-        self.install_after = QCheckBox("下载后立即安装", self)
-        actions.addWidget(self.install_after)
-        actions.addWidget(hint_label(w._DOWNLOAD_HINT))
-        actions.addStretch(1)
-        body.addLayout(actions)
-
-        self.advanced = Collapsible("高级：下载目录 / 校验", parent=page)
-        self.download_dir = QLineEdit(self.settings.download_dir, self.advanced.content)
-        self.download_dir.setPlaceholderText("留空时使用 wslman.json 的 download_dir 或系统下载目录")
-        self.expected_sha = QLineEdit("", self.advanced.content)
-        self.expected_sha.setPlaceholderText("可选：期望的 sha256（留空用官方清单）")
-        form = QGridLayout()
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setHorizontalSpacing(8)
-        form.setVerticalSpacing(6)
-        form.setColumnStretch(1, 1)
-        form.addWidget(QLabel("下载目录"), 0, 0)
-        form.addWidget(self.download_dir, 0, 1)
-        form.addWidget(QLabel("期望 sha256"), 1, 0)
-        form.addWidget(self.expected_sha, 1, 1)
-        self.advanced.body.addLayout(form)
-        body.addWidget(self.advanced)
+    def _build_log_page(self) -> QWidget:
+        """日志页：任务日志独占整页，复制 / 清空 / 导出沿用共享工具条。"""
+        page = QWidget(self)
+        body = QVBoxLayout(page)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(8)
+        card = Card("任务日志", page)
+        self._log_view = LogView(height=200, parent=card)
+        card.body.addWidget(self._log_view, 1)
+        card.body.addWidget(hint_label("汇总启动 / 停止、导出、安装与下载操作；复制、清空、导出见日志工具条。"))
+        body.addWidget(card, 1)
         return page
 
     # ------------------------------------------------------------------ #
@@ -819,10 +883,6 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         if 0 <= self.mirror.currentIndex() < len(self.mirror_ids):
             self.set_status(f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
 
-    def _on_tab_changed(self, index: int) -> None:
-        if self.tabs.tabText(index) == "下载":
-            self._load_images()
-
     def _load_images(self) -> None:
         if self._images_busy or self.image_entries or self._closing:
             return
@@ -963,6 +1023,7 @@ class WslmanQtWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
                 geometry=geometry,
                 download_dir=self.download_dir.text().strip(),
                 mirror=self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto",
+                sidebar_collapsed=self.nav.is_collapsed(),
             ),
             self._own_settings_path,
         )

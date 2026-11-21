@@ -169,6 +169,28 @@ def test_settings_persisted(home: Path) -> None:
     assert raw["mirror"] == "ustc"
 
 
+def test_sidebar_pages_and_collapsed_state_persisted(home: Path) -> None:
+    """侧边栏复用共享导航：三页登记、默认停在发行版页，折叠状态随设置落盘。"""
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert window.nav.keys() == ("distros", "images", "log")
+        assert window.nav.selected() == "distros"
+        assert window.current_page() == "distros"
+        assert window.page_title.text() == "发行版"
+        # 三页控件建窗即存在（设置落盘与下载动作都直接读镜像页控件）；
+        # 页面本身仍由共享骨架在首次切换时挂进页面栈。
+        assert window._table.rowCount() >= 0
+        assert window.image_table.columnCount() == 4
+        window.nav.set_collapsed(True)
+        window._persist_settings("1160x760+0+0")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+    raw = json.loads(_guiconfig.config_path(wslmanw.SETTINGS_NAME).read_text(encoding="utf-8"))
+    assert raw["sidebar_collapsed"] is True
+
+
 def test_close_asks_when_task_running(home: Path) -> None:
     window = _wslmanw_qt.WslmanQtWindow()
     try:

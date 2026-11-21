@@ -55,7 +55,7 @@ __all__ = [
 ]
 
 SETTINGS_NAME = "wslmanw"
-DEFAULT_GEOMETRY = "980x660"
+DEFAULT_GEOMETRY = "1160x760"
 MIN_WIDTH = 900
 MIN_HEIGHT = 600
 
@@ -206,6 +206,7 @@ class WslmanwSettings:
     geometry: str | None = None
     download_dir: str = ""
     mirror: str = "auto"
+    sidebar_collapsed: bool = False
 
 
 def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
@@ -213,16 +214,19 @@ def settings_to_mapping(settings: WslmanwSettings) -> dict[str, object]:
         "geometry": settings.geometry,
         "download_dir": settings.download_dir,
         "mirror": settings.mirror,
+        "sidebar_collapsed": settings.sidebar_collapsed,
     }
 
 
 def settings_from_mapping(raw: Mapping[str, Any]) -> WslmanwSettings:
     # 旧版本写过 manifest_url / download_source / auto_refresh：按未知字段忽略。
     mirror = _str(raw, "mirror")
+    collapsed = raw.get("sidebar_collapsed")
     return WslmanwSettings(
         geometry=_guiconfig.valid_geometry(_str(raw, "geometry")),
         download_dir=_str(raw, "download_dir"),
         mirror=mirror if mirror in _mirrors.identifiers() else "auto",
+        sidebar_collapsed=collapsed is True,
     )
 
 
