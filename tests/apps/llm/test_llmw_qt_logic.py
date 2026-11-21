@@ -39,6 +39,7 @@ from fcmd.apps.llm._llmw_qt_paint import (
     parse_paint_settings,
     request_from_settings,
     service_label,
+    settings_summary,
     size_preset,
 )
 from fcmd.apps.llm._llmw_qt_paint_engine import variant_note
@@ -628,6 +629,25 @@ def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert size_preset(512, 512) == "512 × 512"
     assert size_preset(832, 1216) == "832 × 1216（竖）"
     assert size_preset(520, 512) == "自定义"
+
+    # 配置摘要：模型名取文件名，尺寸 / 步数 / 采样器依次拼接，批量 >1 才出现。
+    assert settings_summary(default_settings()) == "未选模型 · 512×512 · 25 步 · euler_a"
+    summary = settings_summary(
+        parse_paint_settings(
+            {
+                "model": "/models/qwen-image.gguf",
+                "width": 1024,
+                "height": 768,
+                "steps": 30,
+                "sampler": "dpm2",
+                "batch": 2,
+            }
+        )
+    )
+    assert summary == "qwen-image.gguf · 1024×768 · 30 步 · dpm2 · 批量 2"
+    assert (
+        settings_summary(parse_paint_settings({"model": "/models/x.gguf", "sampler": ""})) == "x.gguf · 512×512 · 25 步"
+    )
 
     monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "models"))
     monkeypatch.setenv("FCMD_PAINT_DIR", str(tmp_path / "paint"))

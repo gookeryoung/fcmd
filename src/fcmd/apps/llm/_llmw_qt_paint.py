@@ -3,8 +3,9 @@
 页面只做编排：模型扫描、组件配对、启动参数、请求载荷与出图保存都在
 :mod:`fcmd.apps.llm._llmpaint` / ``_llmpaint_server`` / ``_llmpaint_engine``
 （与 ``fcmd llmpaint`` 共用），这里负责控件、线程投递与设置持久化。
-页面采用与对话页一致的扁平布局：左侧提示词 composer 与参数 / 模型表单，
-右侧大图预览与最近图库；状态提示写进窗口底部状态栏。
+页面采用与对话页一致的扁平布局：提示词 composer 与结果预览并排，引擎 / 服务 /
+模型组件 / 采样参数 / 输出目录收进 ``⚙ 画图配置`` 弹窗（与对话页的「模型与生成
+配置」同构），页面不再堆叠参数表单；状态提示写进窗口底部状态栏。
 
 模块级函数都是纯逻辑（解析设置、构造组件 / 请求、命令预览），供测试直接断言；
 :class:`PaintPage` 是需要 Qt 事件循环的 GUI 胶水（``pragma: no cover``）。
@@ -20,6 +21,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -37,14 +39,17 @@ from PySide6.QtWidgets import (
 from fcmd.apps.llm import _llmconfig, _llmpaint, _llmpaint_engine, _llmpaint_server
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm.llmbase import ServeError, format_command, human_size
+from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     Collapsible,
+    ElidedLabel,
     FormGrid,
     PageScroll,
     ProgressRow,
     StatusTag,
     button,
     hint_label,
+    icon_button,
     mono_label,
 )
 from fcmd.gui.qt.workers import submit, submit_daemon
@@ -70,6 +75,7 @@ __all__ = [
     "parse_paint_settings",
     "request_from_settings",
     "service_label",
+    "settings_summary",
     "size_preset",
 ]
 
@@ -326,8 +332,250 @@ def size_preset(width: int, height: int) -> str:
     return "自定义"
 
 
+def settings_summary(settings: dict[str, Any]) -> str:
+    """composer 里的配置摘要（模型名 · 尺寸 · 步数 · 采样器）。
+
+    参数全部收进配置弹窗后，页面只靠这一行小字说明「下次生成用什么」；
+    模型未选时直接提示去弹窗里选，不隐去当前尺寸 / 步数。
+    """
+    model = str(settings.get("model") or "")
+    name = Path(model).name if model.strip() else "未选模型"
+    parts = [name, f"{int(settings.get('width') or 512)}×{int(settings.get('height') or 512)}"]
+    parts.append(f"{int(settings.get('steps') or 25)} 步")
+    sampler = str(settings.get("sampler") or "").strip()
+    if sampler:
+        parts.append(sampler)
+    batch = int(settings.get("batch") or 1)
+    if batch > 1:
+        parts.append(f"批量 {batch}")
+    return " · ".join(parts)
+
+
+def _dialog_title(text: str, parent: QWidget) -> QLabel:
+    """配置窗口里的分节标题（与页面 SectionTitle 同一套字号 / 颜色）。"""
+    label = QLabel(text, parent)
+    label.setObjectName("SectionTitle")
+    return label
+
+
+class _PaintConfigDialog(QDialog):  # pragma: no cover - Qt 控件
+    """画图配置窗口：引擎与服务、模型与组件、采样参数、输出目录。
+
+    与对话页的「模型与生成配置」同构：画图页只留一个「⚙」入口，控件建在这里并挂
+    到 ``owner`` 上供页面逻辑复用（回填 / 收集 / 命令预览不改），修改即时生效，
+    关闭窗口不需要额外保存步骤。
+    """
+
+    def __init__(self, owner: PaintPage) -> None:
+        super().__init__(owner)
+        self.setWindowTitle("画图配置")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
+        scroll = PageScroll(self, margins=(0, 0, 4, 0))
+        scroll.setMinimumHeight(480)
+        layout.addWidget(scroll, 1)
+        body = scroll.body
+
+        # 引擎与服务
+        body.addWidget(_dialog_title("引擎与服务", self))
+        engine_row = QHBoxLayout()
+        engine_row.setContentsMargins(0, 0, 0, 0)
+        engine_row.setSpacing(8)
+        owner.engine_status = hint_label("引擎检查中…", wrap=False)
+        engine_row.addWidget(owner.engine_status, 1)
+        owner.install_button = button("安装引擎…", kind="ghost")
+        owner.install_button.setToolTip("下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录")
+        owner.install_button.clicked.connect(owner._install_engine)
+        engine_row.addWidget(owner.install_button)
+        body.addLayout(engine_row)
+
+        service_form = FormGrid(self)
+        owner.port = QSpinBox(self)
+        owner.port.setRange(1, 65535)
+        owner.port.setToolTip("sd-server 监听端口（默认 1234，避开 llama-server 的 8080）")
+        owner.port.valueChanged.connect(lambda _value: owner._update_preview())
+        service_form.add_row("服务端口", owner.port)
+        owner.auto_start = QCheckBox("生成前自动启动 / 重启服务", self)
+        owner.auto_start.setToolTip("模型或参数变化时自动按新指纹重启（FLUX 等大模型首次加载较慢）")
+        service_form.add_row("自动启动", owner.auto_start)
+        body.addWidget(service_form)
+
+        service_row = QHBoxLayout()
+        service_row.setContentsMargins(0, 0, 0, 0)
+        service_row.setSpacing(8)
+        owner.start_button = button("启动服务", kind="ghost")
+        owner.start_button.setToolTip("按当前模型与参数启动 sd-server")
+        owner.start_button.clicked.connect(owner._start_service)
+        owner.stop_button = button("停止服务", kind="ghost")
+        owner.stop_button.clicked.connect(owner._stop_service)
+        service_row.addWidget(owner.start_button)
+        service_row.addWidget(owner.stop_button)
+        service_row.addStretch(1)
+        body.addLayout(service_row)
+
+        # 模型与组件
+        body.addWidget(_dialog_title("模型与组件", self))
+        family_row = QHBoxLayout()
+        family_row.setContentsMargins(0, 0, 0, 0)
+        family_row.setSpacing(8)
+        owner.family_label = mono_label("未选择主模型")
+        family_row.addWidget(owner.family_label, 1)
+        owner.suggest_button = button("自动配对", kind="ghost")
+        owner.suggest_button.setToolTip("按主模型家族填满 VAE / 文本编码器槽位")
+        owner.suggest_button.clicked.connect(lambda: owner._suggest(only_empty=False))
+        family_row.addWidget(owner.suggest_button)
+        body.addLayout(family_row)
+
+        models_form = FormGrid(self)
+        owner.mode_combo = QComboBox(models_form)
+        for key, label in MODES:
+            owner.mode_combo.addItem(label, key)
+        models_form.add_row("加载方式", owner.mode_combo)
+        owner.model_combo = QComboBox(models_form)
+        owner.model_combo.currentIndexChanged.connect(lambda _index: owner._on_model_changed())
+        models_form.add_row("主模型", owner.model_combo)
+        owner.role_combos: dict[str, QComboBox] = {}
+        for role, label in ROLE_COMBOS:
+            combo = QComboBox(models_form)
+            combo.currentIndexChanged.connect(lambda _index: owner._update_preview())
+            owner.role_combos[role] = combo
+            models_form.add_row(label, combo)
+        body.addWidget(models_form)
+
+        options_row = QHBoxLayout()
+        options_row.setContentsMargins(0, 0, 0, 0)
+        options_row.setSpacing(10)
+        owner.offload_to_cpu = QCheckBox("CPU 卸载", self)
+        owner.offload_to_cpu.setToolTip("--offload-to-cpu：显存不足时把部分权重放到内存（更慢）")
+        owner.vae_tiling = QCheckBox("VAE 分块", self)
+        owner.vae_tiling.setToolTip("--vae-tiling：大图解码时降低显存峰值")
+        owner.diffusion_fa = QCheckBox("Diffusion FA", self)
+        owner.diffusion_fa.setToolTip("--diffusion-fa：启用 flash attention 加速")
+        for widget in (owner.offload_to_cpu, owner.vae_tiling, owner.diffusion_fa):
+            widget.toggled.connect(lambda _checked: owner._update_preview())
+            options_row.addWidget(widget)
+        options_row.addStretch(1)
+        body.addLayout(options_row)
+
+        owner.extra_edit = QLineEdit(self)
+        owner.extra_edit.setPlaceholderText("额外参数（可选，例如 --clip-on-cpu）")
+        owner.extra_edit.setToolTip("原样追加到 sd-server；按空白分隔，含空格的值用双引号包裹")
+        owner.extra_edit.textChanged.connect(lambda _text: owner._update_preview())
+        body.addWidget(owner.extra_edit)
+
+        owner.preview_collapse = Collapsible("命令预览", parent=self)
+        owner.preview_label = mono_label("")
+        owner.preview_label.setWordWrap(True)
+        owner.preview_label.setObjectName("Hint")
+        owner.preview_collapse.body.addWidget(owner.preview_label)
+        body.addWidget(owner.preview_collapse)
+
+        # 采样参数
+        body.addWidget(_dialog_title("采样参数", self))
+        params_form = FormGrid(self)
+        owner.preset_combo = QComboBox(params_form)
+        owner.preset_combo.addItem("自定义", None)
+        for label, width, height in SIZE_PRESETS:
+            owner.preset_combo.addItem(label, (width, height))
+        owner.preset_combo.currentIndexChanged.connect(lambda _index: owner._apply_preset())
+        params_form.add_row("尺寸预设", owner.preset_combo)
+
+        size_row = QWidget(params_form)
+        size_layout = QHBoxLayout(size_row)
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        size_layout.setSpacing(6)
+        owner.width = QSpinBox(size_row)
+        owner.width.setRange(64, 4096)
+        owner.width.setSingleStep(8)
+        owner.width.setToolTip("宽度：64–4096，8 的倍数")
+        owner.height = QSpinBox(size_row)
+        owner.height.setRange(64, 4096)
+        owner.height.setSingleStep(8)
+        owner.height.setToolTip("高度：64–4096，8 的倍数")
+        owner.width.valueChanged.connect(lambda _value: owner._sync_preset())
+        owner.height.valueChanged.connect(lambda _value: owner._sync_preset())
+        size_layout.addWidget(owner.width, 1)
+        size_layout.addWidget(hint_label("×", wrap=False))
+        size_layout.addWidget(owner.height, 1)
+        params_form.add_row("宽 × 高", size_row)
+
+        owner.steps = QSpinBox(params_form)
+        owner.steps.setRange(1, 150)
+        owner.cfg = QDoubleSpinBox(params_form)
+        owner.cfg.setRange(0.0, 30.0)
+        owner.cfg.setSingleStep(0.5)
+        owner.cfg.setDecimals(1)
+        params_form.add_pair("步数", owner.steps, "CFG 引导", owner.cfg)
+
+        owner.sampler = QComboBox(params_form)
+        owner.sampler.setEditable(True)
+        owner.sampler.addItems(list(SAMPLERS))
+        owner.scheduler = QLineEdit(params_form)
+        owner.scheduler.setPlaceholderText("留空用引擎默认")
+        params_form.add_pair("采样器", owner.sampler, "调度器", owner.scheduler)
+
+        seed_row = QWidget(params_form)
+        seed_layout = QHBoxLayout(seed_row)
+        seed_layout.setContentsMargins(0, 0, 0, 0)
+        seed_layout.setSpacing(6)
+        owner.seed = QSpinBox(seed_row)
+        owner.seed.setRange(0, 2_147_483_647)
+        owner.random_seed = QCheckBox("随机", seed_row)
+        owner.random_seed.setToolTip("勾选时使用 -1（每次随机），取消后可固定种子复现")
+        owner.random_seed.toggled.connect(owner.seed.setDisabled)
+        seed_layout.addWidget(owner.seed)
+        seed_layout.addWidget(owner.random_seed)
+        seed_layout.addStretch(1)
+        owner.batch = QSpinBox(params_form)
+        owner.batch.setRange(1, 8)
+        params_form.add_pair("种子", seed_row, "批量", owner.batch)
+        body.addWidget(params_form)
+
+        # 输出目录
+        body.addWidget(_dialog_title("输出目录", self))
+        output_row = QHBoxLayout()
+        output_row.setContentsMargins(0, 0, 0, 0)
+        output_row.setSpacing(8)
+        owner.output_label = ElidedLabel("", parent=self)
+        owner.output_label.setObjectName("Hint")
+        output_row.addWidget(owner.output_label, 1)
+        owner.save_to_button = button("更改…", kind="ghost")
+        owner.save_to_button.clicked.connect(owner._pick_output_dir)
+        owner.output_button = button("打开目录", kind="ghost")
+        owner.output_button.clicked.connect(owner._open_output_dir)
+        output_row.addWidget(owner.save_to_button)
+        output_row.addWidget(owner.output_button)
+        body.addLayout(output_row)
+        body.addStretch(1)
+
+        # 参数控件不在页面上，改动必须及时回显到顶栏摘要与命令预览。
+        for signal in (
+            owner.width.valueChanged,
+            owner.height.valueChanged,
+            owner.steps.valueChanged,
+            owner.cfg.valueChanged,
+            owner.seed.valueChanged,
+            owner.batch.valueChanged,
+            owner.sampler.currentTextChanged,
+            owner.scheduler.textChanged,
+            owner.mode_combo.currentIndexChanged,
+            owner.random_seed.toggled,
+        ):
+            signal.connect(lambda *_args: owner._update_preview())
+
+        layout.addWidget(hint_label("修改即时生效；生成前会按当前模型与参数自动启停 sd-server。", wrap=True))
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        close_button = button("关闭")
+        close_button.clicked.connect(self.close)
+        footer.addWidget(close_button)
+        layout.addLayout(footer)
+        self.resize(660, 760)
+
+
 class PaintPage(QWidget):  # pragma: no cover - Qt 控件
-    """画图页：提示词 / 采样参数 + 模型组件 + 结果预览与最近图库。"""
+    """画图页：提示词 composer + 结果预览；配置项收进「⚙ 画图配置」弹窗。"""
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -344,20 +592,16 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         self._progress_ok = False
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        scroll = PageScroll(self)
-        outer.addWidget(scroll)
-        layout = scroll.body
-        layout.addWidget(self._build_toolbar())
+        outer.setContentsMargins(0, 0, 0, 8)
+        outer.setSpacing(8)
+        outer.addWidget(self._build_toolbar())
 
         columns = QGridLayout()
         columns.setSpacing(12)
         left = QVBoxLayout()
         left.setSpacing(10)
         left.addWidget(self._build_prompt_card())
-        left.addWidget(self._build_params_card())
-        left.addWidget(self._build_models_card())
+        left.addWidget(self._build_gallery_card())
         left.addStretch(1)
         right = QVBoxLayout()
         right.setSpacing(8)
@@ -366,8 +610,11 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         columns.addLayout(right, 0, 1)
         columns.setColumnStretch(0, 3)
         columns.setColumnStretch(1, 4)
-        layout.addLayout(columns)
-        layout.addStretch(1)
+        outer.addLayout(columns, 1)
+
+        # 引擎 / 服务 / 模型组件 / 采样参数 / 输出目录全收进独立配置窗口，
+        # 页面上只保留状态标签、composer 里的「⚙」入口与结果预览。
+        self.config_dialog = _PaintConfigDialog(self)
 
         self._poll = QTimer(self)
         self._poll.setInterval(1500)
@@ -384,7 +631,7 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
     # 布局
     # ------------------------------------------------------------------ #
     def _build_toolbar(self) -> QWidget:
-        """顶栏：引擎 / 服务状态、端口与安装、启停（不套卡片，与对话页工具行一致）。"""
+        """顶栏：引擎 / 服务胶囊标签 + 当前配置摘要；设置入口在 composer 左侧。"""
         bar = QWidget(self)
         row = QHBoxLayout(bar)
         row.setContentsMargins(0, 0, 0, 0)
@@ -393,28 +640,14 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         self.service_tag = StatusTag("服务未启动", parent=bar)
         row.addWidget(self.engine_tag)
         row.addWidget(self.service_tag)
-        row.addStretch(1)
-        self.port = QSpinBox(bar)
-        self.port.setRange(1, 65535)
-        self.port.setPrefix("端口 ")
-        self.port.setMaximumWidth(120)
-        self.port.setToolTip("sd-server 监听端口（默认 1234，避开 llama-server 的 8080）")
-        self.port.valueChanged.connect(lambda _value: self._update_preview())
-        row.addWidget(self.port)
-        self.install_button = button("安装引擎…", kind="ghost")
-        self.install_button.setToolTip("下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录")
-        self.install_button.clicked.connect(self._install_engine)
-        self.start_button = button("启动服务", kind="ghost")
-        self.start_button.setToolTip("按当前模型与参数启动 sd-server")
-        self.start_button.clicked.connect(self._start_service)
-        self.stop_button = button("停止服务", kind="ghost")
-        self.stop_button.clicked.connect(self._stop_service)
-        for widget in (self.install_button, self.start_button, self.stop_button):
-            row.addWidget(widget)
+        self.summary_label = ElidedLabel("停用", parent=bar)
+        self.summary_label.setObjectName("Hint")
+        self.summary_label.setToolTip("当前配置摘要：模型 · 尺寸 · 步数 · 采样器（点对话框里的 ⚙ 修改）")
+        row.addWidget(self.summary_label, 1)
         return bar
 
     def _build_prompt_card(self) -> QWidget:
-        """提示词输入区：复用对话页的圆角 composer（无边框输入 + 底部工具行）。"""
+        """提示词输入区：复用对话页的圆角 composer（⚙ 入口 + 进度 + 生成 / 中断）。"""
         composer = QFrame(self)
         composer.setObjectName("ChatComposer")
         composer.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -435,9 +668,14 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
 
         tools = QHBoxLayout()
         tools.setSpacing(8)
-        self.auto_start = QCheckBox("自动启动", composer)
-        self.auto_start.setToolTip("生成前自动启动服务；模型 / 参数变化时自动重启（FLUX 等大模型首次加载较慢）")
-        tools.addWidget(self.auto_start)
+        # 与对话页的 ⚙ 入口同尺寸：引擎 / 模型 / 采样 / 输出都在弹窗里。
+        self.config_button = icon_button("", tooltip="画图配置（引擎 / 模型 / 采样 / 输出目录）")
+        self.config_button.setObjectName("ChatIconButton")
+        self.config_button.setFixedSize(34, 34)
+        _set_icon(self.config_button, "settings", tone="muted")
+        self.config_button.setAccessibleName("画图配置")
+        self.config_button.clicked.connect(self.open_config)
+        tools.addWidget(self.config_button, 0)
         self.progress_row = ProgressRow(parent=composer)
         self.progress = self.progress_row.bar
         self.generate_button = button("生成", kind="primary")
@@ -452,143 +690,25 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         body.addLayout(tools)
         return composer
 
-    def _build_params_card(self) -> QWidget:
-        """采样参数：直接铺在页面底色上，表单标签已足够说明，不再套卡片标题。"""
-        form = FormGrid(self)
-        self.preset_combo = QComboBox(form)
-        self.preset_combo.addItem("自定义", None)
-        for label, width, height in SIZE_PRESETS:
-            self.preset_combo.addItem(label, (width, height))
-        self.preset_combo.currentIndexChanged.connect(lambda _index: self._apply_preset())
-        form.add_row("尺寸预设", self.preset_combo)
-
-        size_row = QWidget(form)
-        size_layout = QHBoxLayout(size_row)
-        size_layout.setContentsMargins(0, 0, 0, 0)
-        size_layout.setSpacing(6)
-        self.width = QSpinBox(size_row)
-        self.width.setRange(64, 4096)
-        self.width.setSingleStep(8)
-        self.width.setToolTip("宽度：64–4096，8 的倍数")
-        self.height = QSpinBox(size_row)
-        self.height.setRange(64, 4096)
-        self.height.setSingleStep(8)
-        self.height.setToolTip("高度：64–4096，8 的倍数")
-        self.width.valueChanged.connect(lambda _value: self._sync_preset())
-        self.height.valueChanged.connect(lambda _value: self._sync_preset())
-        size_layout.addWidget(self.width, 1)
-        size_layout.addWidget(hint_label("×", wrap=False))
-        size_layout.addWidget(self.height, 1)
-        form.add_row("宽 × 高", size_row)
-
-        self.steps = QSpinBox(form)
-        self.steps.setRange(1, 150)
-        self.cfg = QDoubleSpinBox(form)
-        self.cfg.setRange(0.0, 30.0)
-        self.cfg.setSingleStep(0.5)
-        self.cfg.setDecimals(1)
-        form.add_pair("步数", self.steps, "CFG 引导", self.cfg)
-
-        self.sampler = QComboBox(form)
-        self.sampler.setEditable(True)
-        self.sampler.addItems(list(SAMPLERS))
-        self.scheduler = QLineEdit(form)
-        self.scheduler.setPlaceholderText("留空用引擎默认")
-        form.add_pair("采样器", self.sampler, "调度器", self.scheduler)
-
-        seed_row = QWidget(form)
-        seed_layout = QHBoxLayout(seed_row)
-        seed_layout.setContentsMargins(0, 0, 0, 0)
-        seed_layout.setSpacing(6)
-        self.seed = QSpinBox(seed_row)
-        self.seed.setRange(0, 2_147_483_647)
-        self.random_seed = QCheckBox("随机", seed_row)
-        self.random_seed.setToolTip("勾选时使用 -1（每次随机），取消后可固定种子复现")
-        self.random_seed.toggled.connect(self.seed.setDisabled)
-        seed_layout.addWidget(self.seed)
-        seed_layout.addWidget(self.random_seed)
-        seed_layout.addStretch(1)
-        self.batch = QSpinBox(form)
-        self.batch.setRange(1, 8)
-        form.add_pair("种子", seed_row, "批量", self.batch)
-        return form
-
-    def _build_models_card(self) -> QWidget:
-        """模型与组件：族信息 + 下拉 + 选项，平铺在页面底色上。"""
-        holder = QWidget(self)
-        body = QVBoxLayout(holder)
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(6)
-        self.family_label = mono_label("未选择主模型")
-        body.addWidget(self.family_label)
-        form = FormGrid(holder)
-        self.mode_combo = QComboBox(form)
-        for key, label in MODES:
-            self.mode_combo.addItem(label, key)
-        form.add_row("加载方式", self.mode_combo)
-        self.model_combo = QComboBox(form)
-        self.model_combo.setMinimumWidth(240)
-        self.model_combo.currentIndexChanged.connect(lambda _index: self._on_model_changed())
-        form.add_row("主模型", self.model_combo)
-        self.role_combos: dict[str, QComboBox] = {}
-        for role, label in ROLE_COMBOS:
-            combo = QComboBox(form)
-            combo.currentIndexChanged.connect(lambda _index: self._update_preview())
-            self.role_combos[role] = combo
-            form.add_row(label, combo)
-        body.addWidget(form)
-
-        self.offload_to_cpu = QCheckBox("CPU 卸载", holder)
-        self.offload_to_cpu.setToolTip("--offload-to-cpu：显存不足时把部分权重放到内存（更慢）")
-        self.vae_tiling = QCheckBox("VAE 分块", holder)
-        self.vae_tiling.setToolTip("--vae-tiling：大图解码时降低显存峰值")
-        self.diffusion_fa = QCheckBox("Diffusion FA", holder)
-        self.diffusion_fa.setToolTip("--diffusion-fa：启用 flash attention 加速")
-        for widget in (self.offload_to_cpu, self.vae_tiling, self.diffusion_fa):
-            widget.toggled.connect(lambda _checked: self._update_preview())
-        body.addLayout(self._row(self.offload_to_cpu, self.vae_tiling, self.diffusion_fa))
-
-        self.extra_edit = QLineEdit(holder)
-        self.extra_edit.setPlaceholderText("额外参数（可选，例如 --clip-on-cpu）")
-        self.extra_edit.setToolTip("原样追加到 sd-server；按空白分隔，含空格的值用双引号包裹")
-        self.extra_edit.textChanged.connect(lambda _text: self._update_preview())
-        body.addWidget(self.extra_edit)
-
-        self.preview_collapse = Collapsible("命令预览", parent=holder)
-        self.preview_label = mono_label("")
-        self.preview_label.setWordWrap(True)
-        self.preview_label.setObjectName("Hint")
-        self.preview_collapse.body.addWidget(self.preview_label)
-        body.addWidget(self.preview_collapse)
-        return holder
-
     def _build_result_card(self) -> QWidget:
-        """出图结果：工具行 + 大图预览 + 最近图库，不再另设标题与输出路径行。"""
+        """出图结果：大图预览；操作按钮（自动配对 / 目录）在配置弹窗里。"""
         holder = QWidget(self)
         body = QVBoxLayout(holder)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(8)
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(6)
-        header.addStretch(1)
-        self.output_button = button("打开输出目录", kind="ghost")
-        self.output_button.clicked.connect(self._open_output_dir)
-        self.suggest_button = button("自动配对", kind="ghost")
-        self.suggest_button.setToolTip("按主模型家族填满 VAE / 文本编码器槽位")
-        self.suggest_button.clicked.connect(lambda: self._suggest(only_empty=False))
-        self.save_to_button = button("保存到…", kind="ghost")
-        self.save_to_button.clicked.connect(self._pick_output_dir)
-        header.addWidget(self.suggest_button)
-        header.addWidget(self.save_to_button)
-        header.addWidget(self.output_button)
-        body.addLayout(header)
-
         self.preview = QLabel("尚未生成", holder)
         self.preview.setObjectName("PaintPreview")
         self.preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview.setMinimumHeight(360)
         body.addWidget(self.preview, 1)
+        return holder
+
+    def _build_gallery_card(self) -> QWidget:
+        """最近出图：放在 composer 下方，无图时整块隐藏，不占预览区高度。"""
+        holder = QWidget(self)
+        body = QVBoxLayout(holder)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(6)
         self.gallery_title = hint_label("最近出图")
         self.gallery_title.setVisible(False)
         body.addWidget(self.gallery_title)
@@ -597,15 +717,11 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         body.addLayout(self.gallery_grid)
         return holder
 
-    @staticmethod
-    def _row(*widgets: QWidget) -> QHBoxLayout:
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(10)
-        for widget in widgets:
-            row.addWidget(widget)
-        row.addStretch(1)
-        return row
+    def open_config(self) -> None:
+        """显示独立的画图配置窗口（非模态，不阻塞生成）。"""
+        self.config_dialog.show()
+        self.config_dialog.raise_()
+        self.config_dialog.activateWindow()
 
     # ------------------------------------------------------------------ #
     # 设置读写
@@ -799,9 +915,11 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         self._engines = list(engines)
         if not engines:
             self.engine_tag.set_status("引擎未安装", "warning")
+            self.engine_status.setText("引擎未安装：点右侧「安装引擎…」下载或导入 sd.cpp")
             return
         tag = current if current and any(engine.tag == current for engine in engines) else engines[0].tag
         self.engine_tag.set_status(f"引擎 {tag}", "accent")
+        self.engine_status.setText(f"当前引擎：{tag}")
 
     def _set_status(self, text: str) -> None:
         """状态统一写到窗口底部状态栏（归属画图页，切走再切回仍可见）。"""
@@ -837,15 +955,19 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
         self.height.setValue(int(height))
 
     def _update_preview(self) -> None:
+        """刷新配置弹窗里的启动命令预览与顶栏的配置摘要。"""
         if not hasattr(self, "preview_label"):
             return
-        self.preview_label.setText(command_preview(self._collect_settings()))
+        settings = self._collect_settings()
+        self.preview_label.setText(command_preview(settings))
+        self.summary_label.setText(settings_summary(settings))
 
     def _refresh_output_label(self) -> None:
-        """输出目录不再占一行；写入按钮 tooltip，保留可发现性。"""
+        """输出目录写在配置弹窗的路径行；按钮 tooltip 保留完整路径。"""
         path = output_dir(self._settings)
+        self.output_label.setText(f"输出目录：{path}")
         self.output_button.setToolTip(f"打开输出目录：{path}")
-        self.save_to_button.setToolTip(f"保存到…（当前：{path}）")
+        self.save_to_button.setToolTip(f"更改输出目录（当前：{path}）")
 
     # ------------------------------------------------------------------ #
     # 出图
@@ -1159,6 +1281,7 @@ class PaintPage(QWidget):  # pragma: no cover - Qt 控件
             return
         self._closed = True
         self._poll.stop()
+        self.config_dialog.close()
         self._settings = self._collect_settings()
         self._persist()
         owns_service = self._auto_started or bool(self._start_flag.get("value"))

@@ -129,6 +129,35 @@ def test_paint_page_reports_missing_model(window: Any, monkeypatch: pytest.Monke
     page.close()
 
 
+def test_paint_config_lives_in_dialog(window: Any) -> None:
+    """画图页只留 composer + 预览 + 状态行；引擎 / 模型 / 采样 / 输出收进配置弹窗。"""
+    window.show_page("paint")
+    page = window.page("paint")
+    assert page.config_button.toolTip().startswith("画图配置")
+    assert not page.config_dialog.isVisible()
+    assert page.config_dialog.windowTitle() == "画图配置"
+    # 配置控件挂在弹窗上，页面正文不再有参数 / 模型表单与引擎安装入口。
+    for widget in (
+        page.port,
+        page.width,
+        page.model_combo,
+        page.auto_start,
+        page.install_button,
+        page.start_button,
+        page.output_label,
+    ):
+        assert widget.window() is page.config_dialog
+    assert page.preview.window() is window
+    assert page.summary_label.fullText().endswith("512×512 · 25 步 · euler_a")
+
+    page.open_config()
+    QApplication.processEvents()
+    assert page.config_dialog.isVisible()
+    page.width.setValue(1024)
+    assert page.summary_label.fullText().startswith("未选模型 · 1024×512")
+    page.config_dialog.close()
+
+
 def test_lab_page_drops_paint_card(window: Any) -> None:
     """实验室只保留代理 / 视频 / 音频三张规划卡，画图已迁入独立页。"""
     from fcmd.apps.llm._llmw_qt_lab import LAB_CARDS
