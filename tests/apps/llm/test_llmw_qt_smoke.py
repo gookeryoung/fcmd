@@ -160,17 +160,20 @@ def test_chat_config_contains_paint_settings(window: Any) -> None:
     page.config_dialog.close()
 
 
-def test_run_page_holds_paint_engine_entry(window: Any) -> None:
-    """画图引擎（sd.cpp）状态与安装入口在运行页，画图页不再存在。"""
+def test_run_page_paint_tab_holds_engine_entry(window: Any) -> None:
+    """运行页分「服务 / 画图」两页，画图引擎与画图服务都在画图页签里。"""
     window.show_page("run")
     run = window.run_page
+    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == ["服务", "画图"]
     assert run.paint_card.title() == "画图引擎（sd.cpp）"
+    assert run.paint_service_card.title() == "画图服务"
     assert run.paint_engine_tag.text().startswith("引擎")
     assert run.paint_service_tag.text() in {
         "服务未启动",
         "已退出（残留状态）",
     } or run.paint_service_tag.text().startswith("运行中")
     assert run.paint_install_button.text() == "安装引擎…"
+    assert run.paint_start_button.text() == "启动服务"
     run.refresh_paint()
     assert "paint" not in tuple(window.nav.keys())
 

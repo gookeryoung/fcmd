@@ -23,7 +23,7 @@
 | D1 | 取消独立画图页，侧边栏回到六页 | `_llmw_qt_window.py` |
 | D2 | 对话页 composer 增加「画图」启用项：勾选后发送即按画图配置出图 | `_llmw_qt_chat.py` |
 | D3 | 画图配置（服务 / 模型组件 / 采样 / 输出）作为分区嵌入对话的「模型与生成配置」窗口 | `_llmw_qt_paint.PaintConfigSection` |
-| D4 | 画图引擎（sd.cpp）状态与「安装引擎…」移到运行页的「画图引擎（sd.cpp）」卡片 | `_llmw_qt_run.py` + `_llmw_qt_paint_engine.py` |
+| D4 | 运行页改为「服务 / 画图」分页；画图引擎（sd.cpp）状态、安装 / 设为默认与画图服务启停收进「画图」页签 | `_llmw_qt_run.py` + `_llmw_qt_paint_engine.py` |
 | D5 | 出图结果作为图片消息写进当前对话（历史记录保存路径，重开时按路径重绘） | `_llmw_qt_chat.py` |
 | D6 | 设置仍持久化在 `ui/llmw.json` 的 `paint` 字段，新增 `enabled` 表示对话页勾选状态 | `_llmw_winsettings.py` / `_llmw_qt_paint.py` |
 
@@ -47,9 +47,12 @@
 
 ### D4 引擎
 
-- 运行页新增「画图引擎（sd.cpp）」卡片：引擎状态（已安装 tag / 未安装）、
-  sd-server 服务状态、「刷新」与「安装引擎…」入口；安装对话框沿用
-  `PaintEngineDialog`（版本 / 变体下载、本地 zip / 目录导入）。
+- 运行页按分页组织：「服务」页签放 llama.cpp 的模型选择 / 启动参数 / 计划预览，
+  「画图」页签放 sd.cpp 的引擎与画图服务。
+- 「画图」页签包含两张卡片：**画图引擎（sd.cpp）**（引擎 / 服务状态胶囊、刷新、
+  安装引擎…、已安装引擎列表按 tag 列出并可直接「设为默认」）与**画图服务**
+  （「启动服务 / 停止服务」，按对话配置里的模型 / 端口启动 sd-server）；安装对话框
+  沿用 `PaintEngineDialog`（版本 / 变体下载、本地 zip / 目录导入）。
 - 画图服务仍由 `_llmpaint_server` 管理（单实例、状态 `paint/server.json`、
   默认端口 1234），生成前按组件指纹自动启停（对话配置里的「自动启动」可关闭）。
 
@@ -83,7 +86,7 @@ src/fcmd/apps/llm/
   变体说明）；
 - `tests/apps/llm/test_llmw_qt_smoke.py`：六页导航（无画图页）、对话页「画图」开关
   切换占位提示与持久化、缺模型时发送只报错不派后台任务、画图配置控件挂在对话
-  配置弹窗里、运行页含画图引擎卡片；
+  配置弹窗里、运行页「服务 / 画图」两页签且画图页签含引擎与画图服务卡片；
 - `make check-fast` / `make test` / `make cov`（覆盖率 ≥95%）全绿。
 
 ## 交接与后续
