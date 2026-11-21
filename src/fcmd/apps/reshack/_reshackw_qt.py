@@ -70,7 +70,7 @@ from fcmd.apps.reshack.reshackw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter, mono_font
+from fcmd.gui.qt.widgets import Card, button, hint_label, make_splitter, mono_font
 from fcmd.gui.qt.workers import EventBridge, submit
 
 if TYPE_CHECKING:
@@ -303,8 +303,7 @@ class ReshackWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)
-        self._log = LogView(height=90, parent=card)
-        card.body.addWidget(self._log)
+        self._log = card.add_log(height=90)
         return card
 
     def _build_extra_menu(self) -> None:

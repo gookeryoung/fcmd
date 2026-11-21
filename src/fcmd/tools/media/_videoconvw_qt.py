@@ -37,7 +37,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, LogView, ProgressRow, StatusTag, button, hint_label
+from fcmd.gui.qt.widgets import Card, ProgressRow, StatusTag, button, hint_label
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.videoconv import (
     DEFAULT_AUDIO_BITRATE,
@@ -265,9 +265,7 @@ class VideoConvWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)
-        self._log = LogView(height=150, parent=card)
-        self._log.setMinimumHeight(110)
-        card.body.addWidget(self._log)
+        self._log = card.add_log(height=150, minimum_height=110)
         return card
 
     def _build_footer(self) -> QWidget:

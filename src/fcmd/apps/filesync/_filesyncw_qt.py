@@ -72,7 +72,6 @@ from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
-    LogView,
     button,
     make_splitter,
     make_table,
@@ -295,9 +294,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         results.body.addWidget(self._table)
 
         log_card = Card("日志", self)
-        self._log = LogView(height=140, parent=log_card)
-        self._log.setMinimumHeight(110)
-        log_card.body.addWidget(self._log)
+        self._log = log_card.add_log(height=140, minimum_height=110)
 
         splitter = make_splitter(Qt.Orientation.Vertical, sizes=(520, 200), parent=self)
         splitter.addWidget(results)

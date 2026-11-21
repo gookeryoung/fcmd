@@ -32,7 +32,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, ProgressRow, button, make_table, make_table_item
+from fcmd.gui.qt.widgets import Card, ElidedLabel, ProgressRow, button, make_table, make_table_item
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.dev.mirrortoolw import (
     DEFAULT_TIMEOUT,
@@ -227,9 +227,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)
-        self._log = LogView(height=120, parent=card)
-        self._log.setMinimumHeight(90)
-        card.body.addWidget(self._log)
+        self._log = card.add_log(height=120, minimum_height=90)
         return card
 
     # ------------------------------------------------------------------ #

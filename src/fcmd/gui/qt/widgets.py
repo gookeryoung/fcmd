@@ -280,6 +280,18 @@ class Card(QFrame):  # pragma: no cover - Qt 控件
             self._frame.insertLayout(index, self.title_row)
         self.title_row.addWidget(widget)
 
+    def add_log(self, *, height: int = 140, minimum_height: int = 0) -> LogView:
+        """在卡片正文里追加带工具条的日志区并返回。
+
+        分栏页面（表格 + 日志）需要独立的「日志」卡；这里统一构造，
+        避免各窗口重复 ``Card("日志") + LogView + body.addWidget``。
+        """
+        view = LogView(height=height, parent=self)
+        if minimum_height:
+            view.setMinimumHeight(minimum_height)
+        self.body.addWidget(view)
+        return view
+
 
 class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
     """纵向滚动页面：内容高于窗口时滚动，而不是把控件压扁 / 裁掉。

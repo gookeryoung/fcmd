@@ -34,7 +34,7 @@ from fcmd import __version__
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, button
+from fcmd.gui.qt.widgets import Card, ElidedLabel, button
 from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.media.ncmconvertw import (
     MIN_HEIGHT,
@@ -217,9 +217,7 @@ class NcmConvertWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)
-        self._log = LogView(height=140, parent=card)
-        self._log.setMinimumHeight(100)
-        card.body.addWidget(self._log)
+        self._log = card.add_log(height=140, minimum_height=100)
         return card
 
     def _build_footer(self) -> QWidget:

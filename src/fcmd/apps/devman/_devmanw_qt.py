@@ -52,7 +52,7 @@ from fcmd.apps.devman.devmanw import (
 from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
-from fcmd.gui.qt.widgets import Card, LogView, button, hint_label, make_splitter
+from fcmd.gui.qt.widgets import Card, button, hint_label, make_splitter
 from fcmd.gui.qt.workers import EventBridge, submit
 
 __all__ = ["DevmanWindow", "run_qt"]
@@ -244,8 +244,7 @@ class DevmanWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def _build_log_card(self) -> Card:
         card = Card("日志", self)
-        self._log_view = LogView(height=110, parent=card)
-        card.body.addWidget(self._log_view)
+        self._log_view = card.add_log(height=110)
         return card
 
     # ------------------------------------------------------------------ #
