@@ -962,9 +962,13 @@ class TestLifecycle:
 
     def test_launch_rejects_missing_vc_runtime(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """缺 MSVC 运行库时启动前提示安装 VC++ 运行库。"""
+        plan = _plan(tmp_path)
+        # Ensure the sd-server.exe exists so we can proceed to VC runtime check
+        plan.engine.exe.parent.mkdir(parents=True, exist_ok=True)
+        plan.engine.exe.write_bytes(b"x")
         monkeypatch.setattr(_llmpaint_server, "ensure_vc_runtime", lambda target, *, sources=None: ("msvcp140.dll",))
         with pytest.raises(ServeError, match="MSVC 运行库"):
-            _llmpaint_server.launch_paint(_plan(tmp_path), home=tmp_path)
+            _llmpaint_server.launch_paint(plan, home=tmp_path)
 
     def test_launch_rejects_missing_cuda_runtime(self, tmp_path: Path) -> None:
         """CUDA 引擎缺运行库时不再让子进程直接崩溃，启动前给出可操作提示。"""
