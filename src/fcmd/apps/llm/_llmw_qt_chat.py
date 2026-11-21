@@ -1,8 +1,9 @@
 """llmw（Qt）对话页：整合原 llmchatw 的多轮流式对话。
 
-服务下拉框读取 :mod:`fcmd.apps.llm.llmenv` 登记的服务并回填地址 / 模型 /
-API Key，也可直接填任意 OpenAI 兼容地址。流式回复在后台线程读取，
-思考型模型的 ``reasoning_content`` 以灰色斜体单独展示，正文按增量追加。
+页面上只保留对话列表、状态行、正文与底部对话框；服务下拉、地址 / 模型 /
+API Key 与生成参数收进独立的「模型与生成配置」窗口（点对话框左下角齿轮打开），
+不占用对话区域。流式回复在后台线程读取，思考型模型的 ``reasoning_content``
+以灰色斜体单独展示，正文按增量追加。
 对话列表 / 已渲染内容 / 多轮 ``ChatSession`` 会落盘到 ``llmw.json`` 的
 ``chat_history`` / ``chat_active``，重启后恢复最近 20 个对话并可继续追问；
 关闭窗口时取消进行中的生成，并再落盘一次最新历史。
@@ -16,11 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -49,7 +51,8 @@ from fcmd.apps.llm.llmbase import (
 )
 from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.widgets import Card, Collapsible, FormGrid, HintLabel, StatusTag, button, icon_button
+from fcmd.gui.qt.icons import icon as _icon
+from fcmd.gui.qt.widgets import FormGrid, HintLabel, StatusTag, button, hint_label, icon_button
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -182,6 +185,13 @@ def conversation_from_data(raw: Any) -> _Conversation | None:
     return conversation
 
 
+def _dialog_title(text: str, parent: QWidget) -> QLabel:
+    """配置窗口里的小节标题（与页面 SectionTitle 同一套字号 / 颜色）。"""
+    label = QLabel(text, parent)
+    label.setObjectName("SectionTitle")
+    return label
+
+
 def history_payload(
     conversations: list[_Conversation],
     active: int,
@@ -201,6 +211,61 @@ class _ChatBridge(QObject):  # pragma: no cover - Qt 信号桥
     reasoning = Signal(str)
     done = Signal(str)
     failed = Signal(str)
+
+
+class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
+    """模型与生成参数的独立配置窗口。
+
+    对话页本身只保留「模型下拉 + ⚙」入口，配置项不占正文 / 对话框区域；
+    修改即时生效，关闭窗口不需要额外保存步骤。
+    """
+
+    def __init__(self, owner: ChatPage) -> None:
+        super().__init__(owner)
+        self.setWindowTitle("模型与生成配置")
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        layout.addWidget(_dialog_title("模型配置", self))
+        service_row = QHBoxLayout()
+        service_row.setSpacing(8)
+        owner.service_combo = QComboBox(self)
+        owner.service_combo.setEditable(False)
+        service_row.addWidget(owner.service_combo, 1)
+        owner.service_tag = StatusTag("未连接", tone="muted", parent=self)
+        service_row.addWidget(owner.service_tag)
+        owner.refresh_button = button("刷新", kind="ghost")
+        service_row.addWidget(owner.refresh_button)
+        layout.addLayout(service_row)
+
+        connection_form = FormGrid(self)
+        owner.model_edit = QLineEdit(DEFAULT_ALIAS, self)
+        owner.url_edit = QLineEdit(_DEFAULT_URL, self)
+        owner.api_key_edit = QLineEdit(DEFAULT_API_KEY, self)
+        connection_form.add_row("模型", owner.model_edit)
+        connection_form.add_row("服务地址", owner.url_edit)
+        connection_form.add_row("API Key", owner.api_key_edit)
+        layout.addWidget(connection_form)
+
+        layout.addWidget(_dialog_title("生成参数", self))
+        settings_form = FormGrid(self)
+        owner.system_edit = QLineEdit("", self)
+        owner.system_edit.setPlaceholderText("系统提示（留空不发送）")
+        owner.max_tokens_edit = QLineEdit("2048", self)
+        owner.temperature_edit = QLineEdit("0.7", self)
+        settings_form.add_row("系统提示", owner.system_edit)
+        settings_form.add_pair("输出上限", owner.max_tokens_edit, "temperature", owner.temperature_edit)
+        layout.addWidget(settings_form)
+
+        layout.addWidget(hint_label("修改即时生效；对话历史按各自对话保存的模型与参数继续。", wrap=True))
+        footer = QHBoxLayout()
+        footer.addStretch(1)
+        close_button = button("关闭")
+        close_button.clicked.connect(self.close)
+        footer.addWidget(close_button)
+        layout.addLayout(footer)
 
 
 class ChatPage(QWidget):  # pragma: no cover - Qt 控件
@@ -279,60 +344,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         layout.setSpacing(8)
         outer.addWidget(right, 1)
 
-        connection = Card()
-        service_row = QHBoxLayout()
-        service_row.setContentsMargins(0, 0, 0, 0)
-        service_row.setSpacing(8)
-        self.service_combo = QComboBox(connection)
-        self.service_combo.setEditable(False)
-        self.service_combo.currentIndexChanged.connect(lambda _index: self._on_service_changed())
-        service_row.addWidget(self.service_combo, 1)
-        self.service_tag = StatusTag("未连接", tone="muted", parent=connection)
-        service_row.addWidget(self.service_tag)
-        self.refresh_button = button("刷新", kind="ghost")
-        self.refresh_button.clicked.connect(self.refresh_services)
-        service_row.addWidget(self.refresh_button)
-        self.connection_button = icon_button("🔗", tooltip="连接参数（自动回填，可自定义）", checkable=True)
-        self.generation_button = icon_button("⚙", tooltip="生成参数", checkable=True)
-        service_row.addWidget(self.connection_button)
-        service_row.addWidget(self.generation_button)
-        connection.body.addLayout(service_row)
         self.status = HintLabel("未开始对话")
-        connection.body.addWidget(self.status)
-
-        self.connection_section = Collapsible("连接参数（自动回填，可自定义）", expanded=False, header=False)
-        form = FormGrid(self.connection_section.content)
-        self.model_edit = QLineEdit(DEFAULT_ALIAS, self.connection_section.content)
-        self.url_edit = QLineEdit(_DEFAULT_URL, self.connection_section.content)
-        self.api_key_edit = QLineEdit(DEFAULT_API_KEY, self.connection_section.content)
-        form.add_row("模型", self.model_edit)
-        form.add_row("服务地址", self.url_edit)
-        form.add_row("API Key", self.api_key_edit)
-        self.connection_section.body.addWidget(form)
-        connection.body.addWidget(self.connection_section)
-
-        self.settings_section = Collapsible(
-            "生成参数",
-            expanded=bool(self.state.settings.chat_settings_open),
-            header=False,
-        )
-        self.connection_button.setChecked(self.connection_section.is_expanded())
-        self.generation_button.setChecked(self.settings_section.is_expanded())
-        self.connection_button.toggled.connect(self.connection_section.set_expanded)
-        self.generation_button.toggled.connect(self.settings_section.set_expanded)
-        self.connection_section.toggle.toggled.connect(self.connection_button.setChecked)
-        self.settings_section.toggle.toggled.connect(self.generation_button.setChecked)
-        settings_form = FormGrid(self.settings_section.content)
-        self.system_edit = QLineEdit("", self.settings_section.content)
-        self.system_edit.setPlaceholderText("系统提示（留空不发送）")
-        settings_form.add_row("系统提示", self.system_edit)
-        self.max_tokens_edit = QLineEdit("2048", self.settings_section.content)
-        self.temperature_edit = QLineEdit("0.7", self.settings_section.content)
-        settings_form.add_pair("输出上限", self.max_tokens_edit, "temperature", self.temperature_edit)
-        self.settings_section.body.addWidget(settings_form)
-        self.settings_section.toggle.toggled.connect(self._on_settings_toggled)
-        connection.body.addWidget(self.settings_section)
-        layout.addWidget(connection)
+        layout.addWidget(self.status)
 
         # 对话区不再套卡片边框：正文直接铺在页面底色上，更接近主流对话产品的阅读区。
         self.transcript = QTextEdit(self)
@@ -363,8 +376,12 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.setMinimumWidth(200)
         self.model_combo.setToolTip("选择当前对话使用的模型（可输入自定义模型名）")
         self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
-        self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
         buttons.addWidget(self.model_combo, 0)
+        self.config_button = icon_button("", tooltip="模型与生成配置（服务地址 / API Key / 采样参数）")
+        self.config_button.setIconSize(QSize(16, 16))
+        self.config_button.setIcon(_icon("settings"))
+        self.config_button.setAccessibleName("模型与生成配置")
+        buttons.addWidget(self.config_button, 0)
         buttons.addStretch(1)
         self.send_button = button("发送", kind="primary")
         self.stop_button = button("停止", kind="danger")
@@ -375,6 +392,12 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         input_area.addLayout(buttons)
         layout.addWidget(composer)
 
+        # 模型 / 连接 / 生成参数收进独立配置窗口，只保留对话框里的「模型 + ⚙」入口。
+        self.config_dialog = _ChatConfigDialog(self)
+        self.service_combo.currentIndexChanged.connect(lambda _index: self._on_service_changed())
+        self.refresh_button.clicked.connect(self.refresh_services)
+        self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
+        self.config_button.clicked.connect(self.open_config)
         self.send_button.clicked.connect(self.send)
         self.stop_button.clicked.connect(self.stop)
         self.export_button.clicked.connect(self.export_markdown)
@@ -472,6 +495,12 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.blockSignals(True)
         self.model_combo.setCurrentText(text)
         self.model_combo.blockSignals(False)
+
+    def open_config(self) -> None:
+        """显示独立的模型 / 生成参数配置窗口（非模态，不阻塞对话）。"""
+        self.config_dialog.show()
+        self.config_dialog.raise_()
+        self.config_dialog.activateWindow()
 
     def _on_service_changed(self) -> None:
         """选中已登记服务时回填地址 / 模型 / API Key，并提示进程是否仍在运行。"""
@@ -799,10 +828,6 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     # 设置与导出
     # ------------------------------------------------------------------ #
-    def _on_settings_toggled(self, checked: bool) -> None:
-        self.state.settings.chat_settings_open = checked
-        self.state.persist()
-
     def export_markdown(self) -> None:
         """把当前对话导出为 Markdown（复用既有格式化函数）。"""
         session = self._conversation().session

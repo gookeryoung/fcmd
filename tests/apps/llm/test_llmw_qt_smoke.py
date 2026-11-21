@@ -541,22 +541,20 @@ def test_models_page_name_filter_is_debounced(window: Any) -> None:
     assert browse._name_filter == "qwen"
 
 
-def test_chat_parameter_icon_buttons_toggle_sections(window: Any) -> None:
-    """连接 / 生成参数入口是刷新右侧的图标按钮，点击展开对应分区。"""
+def test_chat_config_button_opens_separate_dialog(window: Any) -> None:
+    """模型 / 生成参数收进独立配置窗口，不占用对话页正文与对话框区域。"""
     window.show_page("chat")
     chat = window.page("chat")
     assert chat.new_chat_button.objectName() == "RunPrimary"
-    assert chat.connection_button.text() == "🔗"
-    assert chat.generation_button.text() == "⚙"
-    assert not chat.connection_section.is_expanded()
-    chat.connection_button.click()
-    assert chat.connection_section.is_expanded()
-    chat.connection_button.click()
-    assert not chat.connection_section.is_expanded()
-    chat.generation_button.click()
-    assert chat.settings_section.is_expanded()
-    chat.generation_button.click()
-    assert not chat.settings_section.is_expanded()
+    assert chat.config_button.icon().isNull() is False
+    # 对话页内不再出现配置表单，配置控件都在独立窗口里。
+    assert chat.config_dialog.isAncestorOf(chat.url_edit)
+    assert chat.config_dialog.isAncestorOf(chat.system_edit)
+    assert not chat.isAncestorOf(chat.url_edit)
+    chat.config_button.click()
+    assert chat.config_dialog.isVisible()
+    chat.config_dialog.close()
+    assert not chat.config_dialog.isVisible()
 
 
 def test_run_page_model_combo_selects_model(window: Any) -> None:
@@ -1042,9 +1040,10 @@ def test_chat_composer_puts_model_selector_left_of_send(window: Any) -> None:
     QApplication.processEvents()
     chat = window.page("chat")
     model_pos = chat.model_combo.mapTo(chat, chat.model_combo.rect().topLeft())
+    config_pos = chat.config_button.mapTo(chat, chat.config_button.rect().topLeft())
     send_pos = chat.send_button.mapTo(chat, chat.send_button.rect().topLeft())
     assert abs(model_pos.y() - send_pos.y()) <= 2
-    assert model_pos.x() < send_pos.x()
+    assert model_pos.x() < config_pos.x() < send_pos.x()
     assert chat.history_count.text().endswith("个")
     assert chat.transcript.objectName() == "ChatTranscript"
     assert chat.input_edit.objectName() == "ChatInput"
