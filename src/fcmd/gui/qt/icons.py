@@ -22,7 +22,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QIcon, QPixmap
@@ -36,6 +36,8 @@ __all__ = [
     "icon",
     "icon_for_text",
     "pixmap",
+    "refresh_icons",
+    "set_icon",
     "svg",
 ]
 
@@ -264,3 +266,36 @@ def icon(name: str, *, size: int = ICON_SIZE, color: str | None = None) -> QIcon
     from PySide6.QtGui import QIcon
 
     return QIcon(pixmap(name, size=size, color=color))
+
+
+ICON_NAME_PROPERTY = "fcmdIconName"
+ICON_SIZE_PROPERTY = "fcmdIconSize"
+
+
+def set_icon(widget: Any, name: str, *, size: int = ICON_SIZE) -> None:
+    """给控件设置公共图标，并记住图标名供主题切换时重绘。
+
+    图标是位图（按当前调色板着色），主题切换后必须重新生成；这里把
+    ``(名称, 尺寸)`` 写到控件动态属性，:func:`refresh_icons` 据此逐个重绘。
+    """
+    from PySide6.QtCore import QSize
+
+    widget.setIcon(icon(name, size=size))
+    widget.setIconSize(QSize(size, size))
+    widget.setProperty(ICON_NAME_PROPERTY, name)
+    widget.setProperty(ICON_SIZE_PROPERTY, int(size))
+
+
+def refresh_icons() -> None:
+    """按当前应用调色板重绘所有通过 :func:`set_icon` 挂上的图标。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in app.allWidgets():
+        name = widget.property(ICON_NAME_PROPERTY)
+        if not isinstance(name, str) or not name:
+            continue
+        size = widget.property(ICON_SIZE_PROPERTY)
+        set_icon(widget, name, size=int(size) if isinstance(size, int) and size > 0 else ICON_SIZE)

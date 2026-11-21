@@ -10,9 +10,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QPushButton
 
+from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import icons
+from fcmd.gui.qt import theme as _qt_theme
 
 
 def test_svg_uses_current_color_and_known_body() -> None:
@@ -70,3 +72,37 @@ def test_icon_for_text_maps_common_actions() -> None:
     assert icons.icon_for_text("启动服务") == "run"
     assert icons.icon_for_text("取消") is None
     assert icons.icon_for_text("关于") is None
+
+
+def _first_opaque_color(widget: QPushButton) -> str:
+    image = widget.icon().pixmap(16, 16).toImage()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.alpha() > 200:
+                return color.name()
+    return ""
+
+
+def test_set_icon_recolors_when_theme_changes() -> None:
+    """图标按调色板着色：切主题后 refresh_icons 要重绘，避免深底深色看不清。"""
+    app = QApplication.instance() or QApplication([])
+    _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))
+    widget = QPushButton()
+    try:
+        icons.set_icon(widget, "refresh")
+        assert widget.property("fcmdIconName") == "refresh"
+        assert widget.iconSize().width() == 16
+        dark = _first_opaque_color(widget)
+        assert dark
+
+        _qt_theme.apply_theme(app, _guitheme.resolve_theme("light"))
+        light = _first_opaque_color(widget)
+        assert light
+        assert light != dark
+
+        _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))
+        assert _first_opaque_color(widget) == dark
+    finally:
+        widget.deleteLater()
+        icons.refresh_icons()

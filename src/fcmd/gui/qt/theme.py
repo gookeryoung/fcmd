@@ -732,6 +732,11 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     mono = pick_font_family(families, MONO_FONT_CANDIDATES)
     app.setStyle("Fusion")
     app.setPalette(_qt_palette(theme, app))
+    # 公共图标是按调色板着色的位图：切主题后必须按新正文色重绘，否则深色图标
+    # 落在深色背景上会看不清。
+    from fcmd.gui.qt.icons import refresh_icons
+
+    refresh_icons()
     font = QFont(family)
     font.setPointSize(theme.fonts.body)
     font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)

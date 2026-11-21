@@ -69,6 +69,9 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
   `QtMainWindow.add_page(..., icon=...)` 负责透传。
 - `widgets.button()` 未显式给 `icon` 时按按钮文案自动推断（`icon_for_text`），
   传图标名可覆盖、传空串可禁用；图标不改变按钮文字，既有文案与快捷键口径不变。
+- 图标是按调色板着色的位图，主题切换后必须重绘：统一用 `icons.set_icon(widget, name)`
+  挂图标（同时记录 `fcmdIconName` / `fcmdIconSize`），`apply_theme` 会调用
+  `refresh_icons()` 按新调色板重绘，避免深色背景上留下深色图标。
 - 新增按钮 / 侧边栏项时优先复用上面两条入口，不手工 `setIcon(QIcon(path))`。
 
 ## 后果

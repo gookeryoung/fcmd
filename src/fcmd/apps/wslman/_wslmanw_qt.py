@@ -54,7 +54,7 @@ from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
 from fcmd.apps.wslman._terminal import LaunchError, SubprocessLauncher, build_command
 from fcmd.apps.wslman._transfer import sha256_file
-from fcmd.gui.qt.icons import icon as _icon
+from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     Card,
     Collapsible,
@@ -167,7 +167,7 @@ class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         header_row.addWidget(self.download_button, 0)
         self.expand_button = icon_button("", tooltip="展开详情与下载地址")
         self.expand_button.setIconSize(QSize(16, 16))
-        self.expand_button.setIcon(_icon("chevron-down"))
+        _set_icon(self.expand_button, "chevron-down")
         self.expand_button.setAccessibleName("展开详情")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
@@ -187,7 +187,7 @@ class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
         self._expanded = expanded
         self.detail_host.setVisible(expanded)
-        self.expand_button.setIcon(_icon("chevron-up" if expanded else "chevron-down"))
+        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down")
         self.expand_button.setToolTip("收起详情" if expanded else "展开详情与下载地址")
         self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 

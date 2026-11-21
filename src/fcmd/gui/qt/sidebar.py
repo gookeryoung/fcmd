@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.gui.pages import next_page, resolve_page_key
-from fcmd.gui.qt.icons import icon as _icon
+from fcmd.gui.qt.icons import set_icon as _set_icon
 
 __all__ = ["COLLAPSED_WIDTH", "EXPANDED_WIDTH", "SidebarNav", "next_page", "resolve_page_key"]
 
@@ -100,7 +100,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.toggle_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.toggle_button.setIconSize(QSize(16, 16))
-        self.toggle_button.setIcon(_icon("chevron-left"))
+        _set_icon(self.toggle_button, "chevron-left")
         self.toggle_button.setToolTip("折叠侧边栏（Ctrl+Shift+B）")
         self.toggle_button.setAutoRaise(True)
         self.toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -158,8 +158,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         button.setToolTip(hint)
         button.setProperty("collapsed", "false" if not self._collapsed else "true")
         if icon:
-            button.setIcon(_icon(icon))
-            button.setIconSize(QSize(16, 16))
+            _set_icon(button, icon)
         button.clicked.connect(lambda _checked=False, page_key=key: self.select(page_key))
         self._button_layout.addWidget(button)
         self._group.addButton(button)
@@ -251,7 +250,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
             self.icon_label.setToolTip(
                 "展开侧边栏（Ctrl+Shift+B）" if collapsed else (self.title_label.text() or self.windowTitle())
             )
-        self.toggle_button.setIcon(_icon("chevron-right" if collapsed else "chevron-left"))
+        _set_icon(self.toggle_button, "chevron-right" if collapsed else "chevron-left")
         self.toggle_button.setToolTip("展开侧边栏（Ctrl+Shift+B）" if collapsed else "折叠侧边栏（Ctrl+Shift+B）")
         self.toggle_button.setProperty("collapsed", "true" if collapsed else "false")
         self.toggle_button.style().unpolish(self.toggle_button)

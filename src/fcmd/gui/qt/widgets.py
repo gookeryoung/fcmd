@@ -102,16 +102,12 @@ def button(
     ``icon`` 为图标名（见 :mod:`fcmd.gui.qt.icons`）；省略时按按钮文案自动推断，
     传空串可显式禁用图标。图标不改变按钮文字，便于保留既有文案与测试口径。
     """
-    from PySide6.QtCore import QSize
-
-    from fcmd.gui.qt.icons import icon as _icon
-    from fcmd.gui.qt.icons import icon_for_text
+    from fcmd.gui.qt.icons import icon_for_text, set_icon
 
     widget = QPushButton(text)
     name = icon_for_text(text) if icon is None else icon
     if name:
-        widget.setIcon(_icon(name))
-        widget.setIconSize(QSize(16, 16))
+        set_icon(widget, name)
     if kind:
         widget.setObjectName(kind.capitalize())
     if tooltip:

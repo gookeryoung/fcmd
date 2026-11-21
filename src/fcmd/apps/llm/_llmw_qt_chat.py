@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QEvent, QObject, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -51,7 +51,7 @@ from fcmd.apps.llm.llmbase import (
 )
 from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
-from fcmd.gui.qt.icons import icon as _icon
+from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import FormGrid, HintLabel, StatusTag, button, hint_label, icon_button
 from fcmd.gui.qt.workers import submit
 
@@ -378,8 +378,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
         buttons.addWidget(self.model_combo, 0)
         self.config_button = icon_button("", tooltip="模型与生成配置（服务地址 / API Key / 采样参数）")
-        self.config_button.setIconSize(QSize(16, 16))
-        self.config_button.setIcon(_icon("settings"))
+        _set_icon(self.config_button, "settings")
         self.config_button.setAccessibleName("模型与生成配置")
         buttons.addWidget(self.config_button, 0)
         buttons.addStretch(1)
