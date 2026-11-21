@@ -105,6 +105,7 @@ ICON_BODIES: dict[str, str] = {
     ),
     # 通用动作
     "plus": '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    "x": '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
     "refresh": ('<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>'),
     "trash": (
         '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>'

@@ -1116,17 +1116,129 @@ def test_run_page_restart_stops_then_starts(window: Any, monkeypatch: pytest.Mon
 
 
 def test_chat_input_buttons_share_one_row(window: Any) -> None:
-    """对话页输入区按钮横排，新对话入口移入左侧历史栏。"""
+    """对话页输入区与历史栏功能键尺寸统一，发送仅图标。"""
     window.show_page("chat")
     chat = window.page("chat")
-    buttons = [chat.send_button, chat.stop_button, chat.export_button]
-    tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in buttons}
+    assert chat.send_button.objectName() == "ChatSend"
+    assert chat.send_button.text() == ""
+    assert chat.send_button.icon().isNull() is False
+    assert chat.send_button.size().width() == chat.send_button.size().height() == 34
+    assert chat.model_combo.height() == 34
+
+    actions = [chat.copy_chat_button, chat.delete_chat_button, chat.clear_chats_button]
+    tops = {widget.mapTo(chat, widget.rect().topLeft()).y() for widget in actions}
     assert len(tops) == 1
-    assert chat.new_chat_button.text() == "＋ 新对话"
+    assert all(widget.size().width() == widget.size().height() == 28 for widget in actions)
+    assert all(widget.icon().isNull() is False for widget in actions)
+    assert chat.new_chat_button.text() == "新对话"
+    assert chat.new_chat_button.icon().isNull() is False
+
+
+def test_chat_model_combo_uses_custom_popup_menu(window: Any) -> None:
+    """模型选择不是原生下拉：非编辑、圆角菜单、当前项带勾选。"""
+    window.show_page("chat")
+    chat = window.page("chat")
+    combo = chat.model_combo
+    assert combo.isEditable() is False
+    combo.clear()
+    combo.addItems(["alpha", "beta"])
+    combo.setCurrentIndex(1)
+    menu = combo.model_menu()
+    assert menu.objectName() == "ChatModelMenu"
+    actions = menu.actions()
+    assert [action.text() for action in actions] == ["alpha", "beta"]
+    assert [action.isChecked() for action in actions] == [False, True]
+    actions[0].trigger()
+    assert combo.currentIndex() == 0
+
+
+def test_chat_send_stop_toggle_uses_one_button(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """发送 / 停止合并：空闲点击发送，生成中点击停止，图标同步切换。"""
+    window.show_page("chat")
+    chat = window.page("chat")
+    calls: list[str] = []
+    monkeypatch.setattr(chat, "send", lambda: calls.append("send"))
+    monkeypatch.setattr(chat, "stop", lambda: calls.append("stop"))
+    chat.send_button.click()
+    assert calls == ["send"]
+    assert chat.send_button.property("fcmdIconName") == "send"
+    chat._running = True
+    chat._sync_send_button()
+    assert chat.send_button.objectName() == "ChatStop"
+    assert chat.send_button.property("fcmdIconName") == "stop"
+    chat.send_button.click()
+    assert calls[-1] == "stop"
+    chat._running = False
+    chat._sync_send_button()
+    assert chat.send_button.objectName() == "ChatSend"
+    assert chat.send_button.property("fcmdIconName") == "send"
+
+
+def test_chat_copy_action_copies_transcript(window: Any) -> None:
+    """历史栏底部的复制键把当前对话正文写入剪贴板。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show_page("chat")
+    chat = window.page("chat")
+    chat._append_text("你：第一段\n", "user")
+    chat.copy_chat_button.click()
+    clipboard = QApplication.clipboard()
+    assert clipboard is not None
+    assert "第一段" in clipboard.text()
+    assert chat.status.text() == "已复制当前对话内容"
+
+
+def test_chat_sidebar_width_is_resizable_and_persisted(window: Any) -> None:
+    """对话侧边栏不再固定宽度：可拖动展开 / 收窄，关闭时记住宽度。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show_page("chat")
+    chat = window.page("chat")
+    splitter = chat._splitter
+    assert splitter.orientation() == Qt.Orientation.Horizontal
+    assert splitter.objectName() == "ChatSplitter"
+    assert splitter.handleWidth() == 4
+    assert chat.sidebar.minimumWidth() == 120
+    assert chat.sidebar.maximumWidth() == 480
+    assert chat._sidebar_width == 120
+    assert chat.sidebar.width() == 120
+    assert chat.history_list.textElideMode() == Qt.TextElideMode.ElideRight
+    assert chat.history_list.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    window.show()
+    QApplication.processEvents()
+
+    splitter.setSizes([320, 600])
+    QApplication.processEvents()
+    expected = min(max(splitter.sizes()[0], 180), 480)
+    assert expected > 300
+    chat.close()
+    assert chat.state.settings.chat_sidebar_width == expected
+
+
+def test_chat_sidebar_can_collapse_and_restore(window: Any) -> None:
+    """对话列表可收起：正文占满宽度，只留小展开键，状态写入设置。"""
+    from PySide6.QtWidgets import QApplication
+
+    window.show_page("chat")
+    window.show()
+    QApplication.processEvents()
+    chat = window.page("chat")
+    assert not chat.sidebar.isHidden()
+    assert chat.sidebar_toggle.width() == 28
+    chat.sidebar_toggle.click()
+    QApplication.processEvents()
+    assert chat.sidebar.isHidden()
+    assert chat.state.settings.chat_sidebar_collapsed is True
+    assert chat.sidebar_toggle.property("fcmdIconName") == "chevron-right"
+    chat.sidebar_toggle.click()
+    QApplication.processEvents()
+    assert not chat.sidebar.isHidden()
+    assert chat.state.settings.chat_sidebar_collapsed is False
+    assert chat.sidebar_toggle.property("fcmdIconName") == "chevron-left"
 
 
 def test_chat_composer_puts_model_selector_left_of_send(window: Any) -> None:
-    """对话框底部工具行：模型选择在发送按钮左侧，历史栏显示条数。"""
+    """对话框底部工具行：模型选择与配置在发送按钮左侧。"""
     from PySide6.QtWidgets import QApplication
 
     window.show_page("chat")
@@ -1138,7 +1250,6 @@ def test_chat_composer_puts_model_selector_left_of_send(window: Any) -> None:
     send_pos = chat.send_button.mapTo(chat, chat.send_button.rect().topLeft())
     assert abs(model_pos.y() - send_pos.y()) <= 2
     assert model_pos.x() < config_pos.x() < send_pos.x()
-    assert chat.history_count.text().endswith("个")
     assert chat.transcript.objectName() == "ChatTranscript"
     assert chat.input_edit.objectName() == "ChatInput"
 

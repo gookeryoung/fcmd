@@ -832,3 +832,24 @@ def test_ask_and_print_writes_thinking_marker_once(monkeypatch: pytest.MonkeyPat
     llmchat._ask_and_print(cast(Any, _ReasoningTwiceSession()), "hi")
 
     assert written == ["思考中…", "\n", "AI> ", "a", "b", "\n"]
+
+
+def test_chat_sidebar_width_settings_clamped(tmp_path: Path) -> None:
+    """侧边栏宽度写入 llmw.json，并夹在 180–480 之间。"""
+    from fcmd.apps.llm._llmw_winsettings import LlmSettings, load_settings, save_settings
+
+    path = tmp_path / "llmw.json"
+    save_settings(LlmSettings(chat_sidebar_width=999), path)
+    assert load_settings(path).chat_sidebar_width == 480
+    save_settings(LlmSettings(chat_sidebar_width=10), path)
+    assert load_settings(path).chat_sidebar_width == 120
+    assert LlmSettings().chat_sidebar_width == 120
+    for legacy in (160, 200, 240):
+        save_settings(LlmSettings(chat_sidebar_width=legacy), path)
+        assert load_settings(path).chat_sidebar_width == 120
+    save_settings(LlmSettings(chat_sidebar_width=300), path)
+    assert load_settings(path).chat_sidebar_width == 300
+    save_settings(LlmSettings(chat_sidebar_collapsed=True), path)
+    assert load_settings(path).chat_sidebar_collapsed is True
+    path.write_text('{"chat_sidebar_collapsed": "yes"}', encoding="utf-8")
+    assert load_settings(path).chat_sidebar_collapsed is False

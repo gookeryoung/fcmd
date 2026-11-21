@@ -242,20 +242,26 @@ QPushButton#RunDanger:disabled { color: $muted; border-color: $border; backgroun
 QFrame#ChatSidebar {
     background: $surface;
     border: none;
-    border-right: 1px solid $border;
     border-radius: 0;
 }
-QListWidget#ChatHistory { background: transparent; border: none; outline: 0; }
+QSplitter#ChatSplitter::handle { background: transparent; }
+QSplitter#ChatSplitter::handle:hover { background: $accent_soft; }
+QListWidget#ChatHistory { background: transparent; border: none; outline: 0; padding: 0; }
 QListWidget#ChatHistory::item {
     color: $muted;
-    padding: 8px 10px;
-    border-radius: 6px;
-}
-QListWidget#ChatHistory::item {
-    min-height: 26px;
+    padding: 0 12px;
+    min-height: 36px;
+    max-height: 36px;
+    border-left: 3px solid transparent;
+    border-radius: 0;
 }
 QListWidget#ChatHistory::item:hover { background: $surface_hover; color: $text; }
-QListWidget#ChatHistory::item:selected { background: $surface_active; color: $text; }
+QListWidget#ChatHistory::item:selected {
+    background: $surface_active;
+    color: $accent;
+    border-left: 3px solid $accent;
+    font-weight: 600;
+}
 QTextEdit#ChatTranscript {
     background: transparent;
     border: none;
@@ -264,7 +270,7 @@ QTextEdit#ChatTranscript {
 QFrame#ChatComposer {
     background: $surface;
     border: 1px solid $border;
-    border-radius: 10px;
+    border-radius: 16px;
 }
 QPlainTextEdit#ChatInput {
     background: transparent;
@@ -272,9 +278,44 @@ QPlainTextEdit#ChatInput {
     padding: 4px 2px;
 }
 QComboBox#ChatModelCombo {
-    min-height: 30px;
-    max-width: 280px;
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 0 26px 0 10px;
+    min-height: 34px;
+    max-height: 34px;
 }
+QComboBox#ChatModelCombo:hover { background: $surface_hover; }
+QComboBox#ChatModelCombo::drop-down { border: none; width: 0; }
+QComboBox#ChatModelCombo::down-arrow { image: none; width: 0; height: 0; }
+QMenu#ChatModelMenu {
+    background: $surface;
+    border: 1px solid $border;
+    border-radius: 12px;
+    padding: 6px;
+}
+QMenu#ChatModelMenu::item {
+    padding: 8px 28px 8px 14px;
+    border-radius: 8px;
+    min-width: 180px;
+}
+QMenu#ChatModelMenu::item:selected { background: $surface_hover; }
+QMenu#ChatModelMenu::item:checked { color: $accent; font-weight: 600; }
+QMenu#ChatModelMenu::indicator { width: 0; height: 0; }
+QToolButton#ChatIconButton, QToolButton#ChatStop, QToolButton#ChatSend {
+    border: none;
+    border-radius: 9px;
+    padding: 0;
+}
+QToolButton#ChatIconButton { background: transparent; }
+QToolButton#ChatIconButton:hover { background: $surface_hover; }
+QToolButton#ChatStop { background: transparent; }
+QToolButton#ChatStop:hover { background: $danger_soft; }
+QToolButton#ChatStop:disabled { background: transparent; }
+QToolButton#ChatSend { background: $accent; }
+QToolButton#ChatSend:hover { background: $accent_hover; }
+QToolButton#ChatSend:pressed { background: $accent_pressed; }
+QToolButton#ChatSend:disabled { background: $surface_hover; }
 QPushButton#ChoiceCard {
     background: $surface;
     border: 1px solid $border;

@@ -8,7 +8,6 @@ API Key 与生成参数收进独立的「模型与生成配置」窗口（点对
 ``chat_history`` / ``chat_active``，重启后恢复最近 20 个对话并可继续追问；
 关闭窗口时取消进行中的生成，并再落盘一次最新历史。
 
-连接参数复用既有的 ``format_session_markdown`` 与 :class:`ChatSession`，
 Qt 侧只负责把回调转成信号与富文本追加。
 """
 
@@ -17,28 +16,29 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QEvent, QObject, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from fcmd.apps.llm import llmenv
-from fcmd.apps.llm._llmw_chat import _CUSTOM, _first_available, _state_available, format_session_markdown
+from fcmd.apps.llm._llmw_chat import _CUSTOM, _first_available, _state_available
 from fcmd.apps.llm.llmbase import (
     DEFAULT_ALIAS,
     DEFAULT_API_KEY,
@@ -52,7 +52,15 @@ from fcmd.apps.llm.llmbase import (
 from fcmd.apps.llm.llmchat import ChatMessage, ChatRole, ChatSession
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.icons import set_icon as _set_icon
-from fcmd.gui.qt.widgets import FormGrid, HintLabel, StatusTag, button, hint_label, icon_button
+from fcmd.gui.qt.widgets import (
+    FormGrid,
+    HintLabel,
+    StatusTag,
+    button,
+    hint_label,
+    icon_button,
+    make_splitter,
+)
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -213,6 +221,72 @@ class _ChatBridge(QObject):  # pragma: no cover - Qt 信号桥
     failed = Signal(str)
 
 
+class _ChatModelCombo(QComboBox):  # pragma: no cover - Qt 控件
+    """模型选择器：非编辑、无原生下拉框行为，点开为上浮的圆角菜单。
+
+    DSH 一类对话产品的模型选择是「当前模型胶囊 + 弹出菜单」，而不是传统
+    QComboBox 的下拉列表（带输入框 / 系统箭头 / 向下弹层）。这里保留 QComboBox
+    的 item API 便于程序化更新，但 ``showPopup`` 换成自绘 QMenu：选项带当前项
+    勾选、圆角、无边框，并在输入框上方弹出，避免遮挡对话框。
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setEditable(False)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._menu: QMenu | None = None
+
+    def model_menu(self) -> QMenu:
+        """构造当前模型列表菜单（供 showPopup 与测试复用）。"""
+        menu = QMenu(self)
+        menu.setObjectName("ChatModelMenu")
+        menu.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        menu.setWindowFlags(Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        current = self.currentIndex()
+        for index in range(self.count()):
+            action = menu.addAction(self.itemText(index))
+            action.setCheckable(True)
+            action.setChecked(index == current)
+            action.triggered.connect(lambda _checked=False, row=index: self.setCurrentIndex(row))
+        return menu
+
+    def showPopup(self) -> None:
+        """在模型胶囊上方弹出菜单；不再调用 QComboBox 的原生下拉列表。"""
+        menu = self.model_menu()
+        self._menu = menu
+        menu.adjustSize()
+        anchor = self.mapToGlobal(QPoint(0, 0))
+        screen = QApplication.screenAt(anchor) or QApplication.primaryScreen()
+        y = anchor.y() - menu.height() - 6
+        x = anchor.x()
+        if screen is not None:
+            available = screen.availableGeometry()
+            x = min(max(x, available.left()), available.right() - menu.width())
+            y = max(y, available.top())
+        menu.popup(QPoint(x, y))
+
+    def hidePopup(self) -> None:
+        """关闭自绘菜单（QComboBox 内部调用时保持兼容）。"""
+        if self._menu is not None:
+            self._menu.hide()
+            self._menu = None
+
+    def paintEvent(self, event: object) -> None:
+        """在右侧画一个细 chevron，替代系统下拉箭头。"""
+        super().paintEvent(event)  # type: ignore[arg-type]
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(self.palette().color(self.foregroundRole()))
+        pen.setWidthF(1.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        center_x = self.width() - 13
+        center_y = self.height() // 2
+        painter.drawLine(center_x - 4, center_y - 2, center_x, center_y + 2)
+        painter.drawLine(center_x, center_y + 2, center_x + 4, center_y - 2)
+        painter.end()
+
+
 class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
     """模型与生成参数的独立配置窗口。
 
@@ -295,57 +369,98 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _build(self) -> None:
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(8)
+        outer.setSpacing(0)
+        # 侧边栏宽度可拖动：默认记住上次宽度，向左收窄、向右展开；
+        # 与右侧对话区之间放共享 splitter，不再写死固定宽度。
+        self._sidebar_width = max(120, self.state.settings.chat_sidebar_width)
+        self._sidebar_collapsed = self.state.settings.chat_sidebar_collapsed
+        self._splitter = make_splitter(
+            Qt.Orientation.Horizontal,
+            sizes=(0 if self._sidebar_collapsed else self._sidebar_width, 760),
+            parent=self,
+        )
+        self._splitter.setObjectName("ChatSplitter")
+        self._splitter.setHandleWidth(4)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        outer.addWidget(self._splitter, 1)
 
-        sidebar = QFrame(self)
+        sidebar = QFrame(self._splitter)
         sidebar.setObjectName("ChatSidebar")
         sidebar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        sidebar.setFixedWidth(240)
+        sidebar.setMinimumWidth(120)
+        sidebar.setMaximumWidth(480)
+        sidebar.setVisible(not self._sidebar_collapsed)
+        self.sidebar = sidebar
         side = QVBoxLayout(sidebar)
         side.setContentsMargins(8, 8, 8, 8)
         side.setSpacing(8)
-        self.new_chat_button = button("＋ 新对话", kind="primary")
+        self.new_chat_button = button("新对话", kind="primary")
         # 与运行页顶部「启动服务」同一尺寸（40px 高、标题字号、更大的左右内边距）。
         self.new_chat_button.setObjectName("RunPrimary")
         self.new_chat_button.clicked.connect(self.new_conversation)
         side.addWidget(self.new_chat_button)
-        history_header = QHBoxLayout()
-        history_header.setContentsMargins(2, 2, 2, 0)
-        history_title = QLabel("对话记录")
-        history_title.setObjectName("SectionTitle")
-        self.history_count = QLabel("")
-        self.history_count.setObjectName("Hint")
-        history_header.addWidget(history_title)
-        history_header.addStretch(1)
-        history_header.addWidget(self.history_count)
-        side.addLayout(history_header)
         self.history_list = QListWidget(sidebar)
         self.history_list.setObjectName("ChatHistory")
         self.history_list.setSpacing(2)
+        # 对话列表只占最小宽度：长标题右侧省略（tooltip 保留全名），不出现横向滚动条，
+        # 也不让内容把侧栏撑宽；用户仍可拖动 splitter 展开。
+        self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.history_list.setWordWrap(False)
+        self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.history_list.setMinimumWidth(0)
         self.history_list.currentRowChanged.connect(self._select_conversation)
         side.addWidget(self.history_list, 1)
         history_actions = QHBoxLayout()
         history_actions.setContentsMargins(0, 0, 0, 0)
         history_actions.setSpacing(6)
-        self.delete_chat_button = button("删除", kind="ghost")
-        self.delete_chat_button.setToolTip("删除当前选中的对话")
+        self.copy_chat_button = icon_button("", tooltip="复制当前对话内容")
+        self.copy_chat_button.setObjectName("ChatIconButton")
+        self.copy_chat_button.setFixedSize(28, 28)
+        _set_icon(self.copy_chat_button, "copy", tone="muted")
+        self.copy_chat_button.setAccessibleName("复制当前对话")
+        self.copy_chat_button.clicked.connect(self.copy_transcript)
+        self.delete_chat_button = icon_button("", tooltip="删除当前选中的对话")
+        self.delete_chat_button.setObjectName("ChatIconButton")
+        self.delete_chat_button.setFixedSize(28, 28)
+        _set_icon(self.delete_chat_button, "trash", tone="danger")
+        self.delete_chat_button.setAccessibleName("删除当前对话")
         self.delete_chat_button.clicked.connect(self.delete_conversation)
-        self.clear_chats_button = button("清空全部", kind="ghost")
-        self.clear_chats_button.setToolTip("删除全部对话记录")
+        self.clear_chats_button = icon_button("", tooltip="清空全部对话记录")
+        self.clear_chats_button.setObjectName("ChatIconButton")
+        self.clear_chats_button.setFixedSize(28, 28)
+        _set_icon(self.clear_chats_button, "x", tone="danger")
+        self.clear_chats_button.setAccessibleName("清空全部对话")
         self.clear_chats_button.clicked.connect(self.clear_conversations)
+        history_actions.addWidget(self.copy_chat_button)
         history_actions.addWidget(self.delete_chat_button)
         history_actions.addWidget(self.clear_chats_button)
+        history_actions.addStretch(1)
         side.addLayout(history_actions)
-        outer.addWidget(sidebar)
+        self._splitter.addWidget(sidebar)
 
-        right = QWidget(self)
+        right = QWidget(self._splitter)
         layout = QVBoxLayout(right)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 0, 0, 0)
         layout.setSpacing(8)
-        outer.addWidget(right, 1)
+        self._splitter.addWidget(right)
+        # 构造 splitter 时还没有子控件，sizes 会被忽略；加完两侧后重新套一次，
+        # 否则 Qt 按 sizeHint 分配，侧栏实际会撑到 300px 以上。
+        self._splitter.setSizes([0 if self._sidebar_collapsed else self._sidebar_width, 760])
 
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
+        self.sidebar_toggle = icon_button("", tooltip="收起对话列表")
+        self.sidebar_toggle.setObjectName("ChatIconButton")
+        self.sidebar_toggle.setFixedSize(28, 28)
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
+        top_row.addWidget(self.sidebar_toggle, 0)
         self.status = HintLabel("未开始对话")
-        layout.addWidget(self.status)
+        self.status.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        top_row.addWidget(self.status, 1)
+        layout.addLayout(top_row)
+        self._sync_sidebar_toggle()
 
         # 对话区不再套卡片边框：正文直接铺在页面底色上，更接近主流对话产品的阅读区。
         self.transcript = QTextEdit(self)
@@ -358,8 +473,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         composer.setObjectName("ChatComposer")
         composer.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         input_area = QVBoxLayout(composer)
-        input_area.setContentsMargins(10, 8, 10, 8)
-        input_area.setSpacing(6)
+        input_area.setContentsMargins(12, 10, 12, 10)
+        input_area.setSpacing(8)
         self.input_edit = QPlainTextEdit(composer)
         self.input_edit.setObjectName("ChatInput")
         self.input_edit.setPlaceholderText("输入问题，Ctrl+Enter 发送")
@@ -369,25 +484,28 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         input_area.addWidget(self.input_edit)
         buttons = QHBoxLayout()
         buttons.setSpacing(6)
-        self.model_combo = QComboBox(composer)
+        self.model_combo = _ChatModelCombo(composer)
         self.model_combo.setObjectName("ChatModelCombo")
-        self.model_combo.setEditable(True)
-        self.model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.model_combo.setMinimumWidth(200)
+        self.model_combo.setMaximumWidth(300)
+        self.model_combo.setFixedHeight(34)
         self.model_combo.setToolTip("选择当前对话使用的模型（可输入自定义模型名）")
         self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
         buttons.addWidget(self.model_combo, 0)
         self.config_button = icon_button("", tooltip="模型与生成配置（服务地址 / API Key / 采样参数）")
+        self.config_button.setObjectName("ChatIconButton")
+        self.config_button.setFixedSize(34, 34)
         _set_icon(self.config_button, "settings", tone="muted")
         self.config_button.setAccessibleName("模型与生成配置")
         buttons.addWidget(self.config_button, 0)
         buttons.addStretch(1)
-        self.send_button = button("发送", kind="primary")
-        self.stop_button = button("停止", kind="danger")
-        self.stop_button.setEnabled(False)
-        self.export_button = button("导出记录", kind="ghost")
-        for widget in (self.export_button, self.stop_button, self.send_button):
-            buttons.addWidget(widget)
+        # 工具行与模型下拉统一 34px 高；发送 / 停止合并到同一个图标按钮。
+        self.send_button = icon_button("", tooltip="发送（Ctrl+Enter）")
+        self.send_button.setObjectName("ChatSend")
+        self.send_button.setFixedSize(34, 34)
+        _set_icon(self.send_button, "send", tone="on_accent")
+        self.send_button.setAccessibleName("发送")
+        buttons.addWidget(self.send_button)
         input_area.addLayout(buttons)
         layout.addWidget(composer)
 
@@ -397,9 +515,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.refresh_button.clicked.connect(self.refresh_services)
         self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
         self.config_button.clicked.connect(self.open_config)
-        self.send_button.clicked.connect(self.send)
-        self.stop_button.clicked.connect(self.stop)
-        self.export_button.clicked.connect(self.export_markdown)
+        self.send_button.clicked.connect(self._on_send_or_stop)
         self._refresh_history()
         self._render_conversation()
 
@@ -491,8 +607,13 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         text = self.model_edit.text()
         if self.model_combo.currentText() == text:
             return
+        index = self.model_combo.findText(text)
         self.model_combo.blockSignals(True)
-        self.model_combo.setCurrentText(text)
+        if index >= 0:
+            self.model_combo.setCurrentIndex(index)
+        elif text.strip():
+            self.model_combo.addItem(text)
+            self.model_combo.setCurrentIndex(self.model_combo.count() - 1)
         self.model_combo.blockSignals(False)
 
     def open_config(self) -> None:
@@ -590,7 +711,6 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             self.history_list.addItem(item)
         self.history_list.setCurrentRow(self._active)
         self.history_list.blockSignals(False)
-        self.history_count.setText(f"{len(self._conversations)} 个")
 
     def _select_conversation(self, row: int) -> None:
         if row < 0 or row == self._active:
@@ -714,8 +834,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         conversation.assistant_started = False
         conversation.reasoning_started = False
         self._running = True
-        self.send_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
+        self._sync_send_button()
         self.history_list.setEnabled(False)
         self.new_chat_button.setEnabled(False)
         self.delete_chat_button.setEnabled(False)
@@ -730,6 +849,28 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             on_error=self._bridge.failed.emit,
         )
 
+    def _on_send_or_stop(self) -> None:
+        """同一个按钮：空闲时发送，生成中变为停止。"""
+        if self._running:
+            self.stop()
+        else:
+            self.send()
+
+    def _sync_send_button(self) -> None:
+        """把发送 / 停止状态同步到同一个图标按钮。"""
+        if self._running:
+            self.send_button.setObjectName("ChatStop")
+            _set_icon(self.send_button, "stop", tone="danger")
+            self.send_button.setToolTip("停止生成")
+            self.send_button.setAccessibleName("停止生成")
+        else:
+            self.send_button.setObjectName("ChatSend")
+            _set_icon(self.send_button, "send", tone="on_accent")
+            self.send_button.setToolTip("发送（Ctrl+Enter）")
+            self.send_button.setAccessibleName("发送")
+        self.send_button.style().unpolish(self.send_button)
+        self.send_button.style().polish(self.send_button)
+
     def stop(self) -> None:
         """停止当前流式生成。"""
         session = self._conversation().session
@@ -739,8 +880,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _finish_running(self) -> None:
         self._running = False
-        self.send_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        self._sync_send_button()
         self.history_list.setEnabled(True)
         self.new_chat_button.setEnabled(True)
         self.delete_chat_button.setEnabled(True)
@@ -768,11 +908,45 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         """是否有生成在进行中。"""
         return self._running
 
+    def toggle_sidebar(self) -> None:
+        """收起 / 展开对话列表：收起后正文占满宽度，只留一个小展开键。"""
+        if self._sidebar_collapsed:
+            self._sidebar_collapsed = False
+            self.sidebar.setVisible(True)
+            self._splitter.setSizes([self._sidebar_width, max(400, self.width() - self._sidebar_width)])
+        else:
+            sizes = self._splitter.sizes()
+            if sizes and sizes[0] > 0:
+                self._sidebar_width = min(max(sizes[0], 120), 480)
+            self._sidebar_collapsed = True
+            self.sidebar.setVisible(False)
+        self._sync_sidebar_toggle()
+        self.state.settings.chat_sidebar_width = self._sidebar_width
+        self.state.settings.chat_sidebar_collapsed = self._sidebar_collapsed
+        self.state.persist()
+
+    def _sync_sidebar_toggle(self) -> None:
+        """展开 / 收起键的图标与提示跟随状态。"""
+        if self._sidebar_collapsed:
+            _set_icon(self.sidebar_toggle, "chevron-right", tone="muted")
+            self.sidebar_toggle.setToolTip("展开对话列表")
+            self.sidebar_toggle.setAccessibleName("展开对话列表")
+        else:
+            _set_icon(self.sidebar_toggle, "chevron-left", tone="muted")
+            self.sidebar_toggle.setToolTip("收起对话列表")
+            self.sidebar_toggle.setAccessibleName("收起对话列表")
+
     def close(self) -> None:
         """窗口关闭时取消进行中的生成，并把最新对话历史落盘。"""
         for conversation in self._conversations:
             if conversation.session is not None:
                 conversation.session.cancel()
+        if not self._sidebar_collapsed:
+            sizes = self._splitter.sizes()
+            if sizes and sizes[0] > 0:
+                self._sidebar_width = min(max(sizes[0], 120), 480)
+        self.state.settings.chat_sidebar_width = self._sidebar_width
+        self.state.settings.chat_sidebar_collapsed = self._sidebar_collapsed
         self._persist_history()
 
     # ------------------------------------------------------------------ #
@@ -825,30 +999,15 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._append_text(text, "reasoning")
 
     # ------------------------------------------------------------------ #
-    # 设置与导出
+    # 复制
     # ------------------------------------------------------------------ #
-    def export_markdown(self) -> None:
-        """把当前对话导出为 Markdown（复用既有格式化函数）。"""
-        session = self._conversation().session
-        messages: list[ChatMessage] = session.messages if session is not None else []
-        if not messages:
-            self.status.setText("尚无对话内容可导出")
-            return
-        text = format_session_markdown(
-            messages,
-            model=self.model_edit.text().strip(),
-            base_url=self.url_edit.text().strip(),
-        )
-        path, _ = QFileDialog.getSaveFileName(self, "导出对话记录", "llmw-chat.md", "Markdown (*.md)")
-        if not path:
-            return
-        from pathlib import Path
-
-        Path(path).write_text(text, encoding="utf-8")
-        self.status.setText(f"已导出: {path}")
-
     def copy_transcript(self) -> None:
-        """复制对话区全部文本。"""
+        """复制当前对话正文到剪贴板。"""
+        text = self.transcript.toPlainText()
+        if not text.strip():
+            self.status.setText("当前对话为空，没有可复制的内容")
+            return
         clipboard = QApplication.clipboard()
         if clipboard is not None:
-            clipboard.setText(self.transcript.toPlainText())
+            clipboard.setText(text)
+            self.status.setText("已复制当前对话内容")

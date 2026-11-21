@@ -50,6 +50,8 @@ class LlmSettings:
     last_model: str | None = None
     models_updated_at: str | None = None
     chat_settings_open: bool = False
+    chat_sidebar_width: int = 120
+    chat_sidebar_collapsed: bool = False
     sidebar_collapsed: bool = False
     model_view: dict[str, Any] | None = None
     chat_history: list[dict[str, Any]] | None = None
@@ -115,6 +117,15 @@ def load_settings(path: Path | None = None) -> LlmSettings:  # noqa: PLR0912 - �
         chat_settings_open = raw.get("chat_settings_open")
         if isinstance(chat_settings_open, bool):
             settings.chat_settings_open = chat_settings_open
+        chat_sidebar_width = raw.get("chat_sidebar_width")
+        if isinstance(chat_sidebar_width, int) and not isinstance(chat_sidebar_width, bool):
+            # 旧版本的默认宽度（160 / 200 / 240）迁移到新的紧凑默认值，
+            # 避免升级后每次打开仍是很宽的侧栏；用户显式拖动过的其它宽度保留。
+            width = 120 if chat_sidebar_width in {160, 200, 240} else chat_sidebar_width
+            settings.chat_sidebar_width = min(max(width, 120), 480)
+        chat_sidebar_collapsed = raw.get("chat_sidebar_collapsed")
+        if isinstance(chat_sidebar_collapsed, bool):
+            settings.chat_sidebar_collapsed = chat_sidebar_collapsed
         sidebar_collapsed = raw.get("sidebar_collapsed")
         if isinstance(sidebar_collapsed, bool):
             settings.sidebar_collapsed = sidebar_collapsed
@@ -152,6 +163,8 @@ def save_settings(settings: LlmSettings, path: Path | None = None) -> None:
             "last_model": settings.last_model,
             "models_updated_at": settings.models_updated_at,
             "chat_settings_open": settings.chat_settings_open,
+            "chat_sidebar_width": settings.chat_sidebar_width,
+            "chat_sidebar_collapsed": settings.chat_sidebar_collapsed,
             "sidebar_collapsed": settings.sidebar_collapsed,
             "model_view": settings.model_view,
             "chat_history": settings.chat_history,
