@@ -24,11 +24,11 @@ from PySide6.QtWidgets import QMessageBox
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 from fcmd.tools.dev import _mirrortoolw_qt
 from fcmd.tools.dev._mirrortoolw_qt import (
     _THROUGHPUT_COLUMN,
     MirrorToolWindow,
-    _ProbeBridge,
     _work_apply,
     _work_probe,
 )
@@ -221,7 +221,7 @@ def test_worker_service_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> No
     try:
         window._set_busy(True)
         window._start_progress()
-        bridge = _ProbeBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_probe(MODE_SERVICE, "pip", 3.0, "auto", bridge)
 
@@ -241,7 +241,7 @@ def test_worker_sites_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(_mirrortoolw_qt, "probe_sites", lambda timeout, source: (_rows(), "内置列表"))
     window = MirrorToolWindow()
     try:
-        bridge = _ProbeBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_probe(MODE_SITES, "", 3.0, "auto", bridge)
 
@@ -265,7 +265,7 @@ def test_worker_error_event(home: Path, monkeypatch: pytest.MonkeyPatch) -> None
     try:
         window._set_busy(True)
         window._start_progress()
-        bridge = _ProbeBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_probe(MODE_SERVICE, "pip", 3.0, "auto", bridge)
 
@@ -343,7 +343,7 @@ def test_apply_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     try:
         window._set_busy(True)
         window._start_progress()
-        bridge = _ProbeBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_apply("pip", "nju", bridge)
 
@@ -367,7 +367,7 @@ def test_apply_event_error(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_mirrortoolw_qt, "apply_service_mirror", _fail)
     window = MirrorToolWindow()
     try:
-        bridge = _ProbeBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_apply("pip", "x", bridge)
 

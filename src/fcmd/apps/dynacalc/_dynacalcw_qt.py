@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -48,18 +47,12 @@ from fcmd.apps.dynacalc.dynacalcw import (
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, LogView, button, make_table, make_table_item
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 
 __all__ = ["DynacalcWindow", "run_qt"]
 
 DEFAULT_SIZE = (1180, 780)
 MIN_SIZE = (980, 640)
-
-
-class _DynacalcBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台任务 → GUI 的事件桥；跨线程自动排队。"""
-
-    event = Signal(object)
 
 
 class _PathInput(QWidget):  # pragma: no cover - Qt 控件
@@ -123,7 +116,7 @@ def _work_generate(  # noqa: PLR0913, PLR0917 - 输入在 GUI 线程一次性收
     only: list[str],
     mesh_root: Path | None,
     mesh_level: str,
-    bridge: _DynacalcBridge,
+    bridge: EventBridge,
 ) -> None:
     """加载输入并生成 deck，结果与摘要经信号桥回传。"""
     try:
@@ -158,7 +151,7 @@ def _work_run(  # noqa: PLR0913, PLR0917 - 求解参数在 GUI 线程一次性�
     fake: bool,
     only: list[str],
     dry_run: bool,
-    bridge: _DynacalcBridge,
+    bridge: EventBridge,
 ) -> None:
     """按输出目录执行或预演作业调度。"""
     try:
@@ -181,7 +174,7 @@ def _work_run(  # noqa: PLR0913, PLR0917 - 求解参数在 GUI 线程一次性�
     bridge.event.emit(("text", f"{head}：{len(report.jobs)} 个作业，失败 {len(report.failed())}", False))
 
 
-def _work_report(out: Path, bridge: _DynacalcBridge) -> None:
+def _work_report(out: Path, bridge: EventBridge) -> None:
     """汇总全部结果并回传文本报告。"""
     try:
         manifest = load_manifest(out)
@@ -192,7 +185,7 @@ def _work_report(out: Path, bridge: _DynacalcBridge) -> None:
     bridge.event.emit(("text", text, False))
 
 
-def _work_gates(out: Path, bridge: _DynacalcBridge) -> None:
+def _work_gates(out: Path, bridge: EventBridge) -> None:
     """执行工程门控检查并回传报告（日志页先清空）。"""
     try:
         manifest = load_manifest(out)
@@ -208,7 +201,7 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def __init__(self) -> None:
         self._settings = load_settings()
-        self._bridge: _DynacalcBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"dynacalc v{__version__} - 装药密度/尺寸/缺陷 → 爆轰传递",
             config_name="dynacalcw",
@@ -395,9 +388,9 @@ class DynacalcWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             raise ValueError("请选择输出根目录")
         return Path(text)
 
-    def _bridge_for_task(self) -> _DynacalcBridge:
+    def _bridge_for_task(self) -> EventBridge:
         """每个任务用独立信号桥，任务结束即可随引用释放。"""
-        bridge = _DynacalcBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         return bridge

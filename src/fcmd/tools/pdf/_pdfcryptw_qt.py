@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -28,7 +27,7 @@ from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, PathRow, button, hint_label
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfcrypt import MIN_PASSWORD_LENGTH, collect_pdf_files, process_files, validate_password
 from fcmd.tools.pdf.pdfcryptw import (
     MAX_WORKERS,
@@ -46,19 +45,13 @@ __all__ = ["PdfCryptWindow", "run_qt"]
 DEFAULT_SIZE = (860, 680)
 
 
-class _CryptBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台线程 → GUI 的事件桥；跨线程自动排队到 GUI 线程。"""
-
-    event = Signal(object)
-
-
 def _run_worker(  # noqa: PLR0913, PLR0917 - 任务参数逐项显式传递，便于便于对照既有行为
     directory: Path,
     password: str,
     workers: int,
     decrypt: bool,
     recursive: bool,
-    bridge: _CryptBridge,
+    bridge: EventBridge,
 ) -> None:
     """筛选待处理 PDF 并批量加解密，把进度事件逐条投回界面。"""
     action = "解密" if decrypt else "加密"
@@ -86,7 +79,7 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
-        self._bridge: _CryptBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"PDF 加密解密 v{__version__}",
             config_name="pdfcryptw",
@@ -202,7 +195,7 @@ class PdfCryptWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.set_status(f"正在{action}…")
         self._append_log(f"{action}目录：{directory}；线程：{workers}")
 
-        bridge = _CryptBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(_run_worker, directory, password, workers, decrypt, self._recursive.isChecked(), bridge)

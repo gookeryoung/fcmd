@@ -15,7 +15,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -31,7 +30,7 @@ from fcmd import __version__
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, FormGrid, button, hint_label
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.office.docdiff import (
     COMPARE_MODES,
     DEFAULT_TITLE,
@@ -56,12 +55,6 @@ __all__ = ["DocDiffWindow", "run_qt"]
 DEFAULT_SIZE = (900, 620)
 
 _WORD_FILTER = "Word 文档 (*.doc *.docx);;所有文件 (*.*)"
-
-
-class _DocDiffBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台对比线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 class _FileRow(QWidget):  # pragma: no cover - Qt 控件
@@ -130,7 +123,7 @@ def _run_comparison(  # noqa: PLR0913, PLR0917 - 参数与 CLI 一一对应
     title: str,
     show_changes: bool,
     compare_mode: CompareMode,
-    bridge: _DocDiffBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行对比并把结果投回界面。"""
     try:
@@ -154,7 +147,7 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
-        self._bridge: _DocDiffBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"文档对比工具 v{__version__}",
             config_name="docdiffw",
@@ -294,7 +287,7 @@ class DocDiffWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._append_log(f"输出：{preview}")
         self._append_log(f"对比模式：{compare_mode}；显示修订：{'是' if self._show_changes.isChecked() else '否'}")
 
-        bridge = _DocDiffBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(

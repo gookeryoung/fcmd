@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -34,7 +34,7 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, LogView, button, make_table, make_table_item
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.dev.mirrortoolw import (
     DEFAULT_TIMEOUT,
     MAX_TIMEOUT,
@@ -70,18 +70,12 @@ _TABLE_WIDTHS = (50, 120, 420, 150, 90, 110)
 _THROUGHPUT_COLUMN = 5
 
 
-class _ProbeBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台探测 / 应用线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
-
-
 def _work_probe(
     mode: str,
     service: str,
     timeout: float,
     source: str,
-    bridge: _ProbeBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行服务测速或站点探测。"""
     try:
@@ -95,7 +89,7 @@ def _work_probe(
         bridge.event.emit(("error", str(exc)))
 
 
-def _work_apply(service: str, mirror: str, bridge: _ProbeBridge) -> None:
+def _work_apply(service: str, mirror: str, bridge: EventBridge) -> None:
     """线程池里写入服务镜像配置。"""
     try:
         text = apply_service_mirror(service, mirror)
@@ -114,7 +108,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
         self._rows: list[MirrorResult] = []
         self._last_service = ""
         self._busy = False
-        self._bridge: _ProbeBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"镜像搜索与配置 v{__version__}",
             config_name="mirrortoolw",
@@ -355,7 +349,7 @@ class MirrorToolWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循�
 
     def _submit(self, worker: Any, *args: Any) -> None:
         """创建信号桥并提交后台任务。"""
-        bridge = _ProbeBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(worker, *args, bridge, on_error=self._on_worker_error)

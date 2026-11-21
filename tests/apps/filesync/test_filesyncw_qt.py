@@ -17,7 +17,6 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from fcmd.apps.filesync._core import SYNC_MIRROR, SYNC_TWO_WAY
 from fcmd.apps.filesync._filesyncw_qt import (
     FilesyncWindow,
-    _FilesyncBridge,
     _work_compare,
     _work_sync,
 )
@@ -25,6 +24,7 @@ from fcmd.apps.filesync.filesyncw import config_path
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 
 
 @pytest.fixture()
@@ -127,7 +127,7 @@ def test_compare_renders_rows_and_summary(home: Path, trees: tuple[Path, Path]) 
     window = FilesyncWindow()
     try:
         _prepare(window, left, right)
-        bridge = _FilesyncBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_compare(left, right, window._collect_options(), SYNC_TWO_WAY, bridge)
 
@@ -150,7 +150,7 @@ def test_show_equal_toggle_reveals_equal_rows(home: Path, trees: tuple[Path, Pat
     window = FilesyncWindow()
     try:
         _prepare(window, left, right)
-        bridge = _FilesyncBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_compare(left, right, window._collect_options(), SYNC_TWO_WAY, bridge)
         window._show_equal.setChecked(True)
@@ -165,7 +165,7 @@ def test_sync_dry_run_writes_nothing(home: Path, trees: tuple[Path, Path]) -> No
     window = FilesyncWindow()
     try:
         _prepare(window, left, right)
-        bridge = _FilesyncBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_sync(left, right, window._collect_options(), SYNC_TWO_WAY, True, bridge)
         assert not (right / "a.txt").exists()
@@ -182,7 +182,7 @@ def test_sync_mirror_executes_plan(home: Path, trees: tuple[Path, Path]) -> None
     window = FilesyncWindow()
     try:
         _prepare(window, left, right)
-        bridge = _FilesyncBridge()
+        bridge = EventBridge()
         bridge.event.connect(window._on_event)
         _work_sync(left, right, window._collect_options(), SYNC_MIRROR, False, bridge)
         assert (right / "a.txt").read_text(encoding="utf-8") == "alpha"

@@ -13,9 +13,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from fcmd.apps.dynacalc._dynacalcw_qt import DynacalcWindow, _DynacalcBridge, _work_generate
+from fcmd.apps.dynacalc._dynacalcw_qt import DynacalcWindow, _work_generate
 from fcmd.apps.dynacalc.dynacalcw import config_path
 from fcmd.gui.qt.app import create_application
+from fcmd.gui.qt.workers import EventBridge
 
 
 @pytest.fixture()
@@ -131,7 +132,7 @@ def test_close_persists_form(home: Path, tmp_path: Path) -> None:
 def test_worker_generate_emits_cases_and_summary(home: Path, small_params: Path, tmp_path: Path) -> None:
     """后台生成函数依次发出清单与摘要事件。"""
     events: list[tuple[Any, ...]] = []
-    bridge = _DynacalcBridge()
+    bridge = EventBridge()
     bridge.event.connect(events.append)
     _work_generate(small_params, tmp_path / "out", None, [], [], None, "", bridge)
     assert events[0][0] == "cases"

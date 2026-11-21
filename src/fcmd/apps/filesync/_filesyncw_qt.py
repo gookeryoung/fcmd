@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -77,7 +77,7 @@ from fcmd.gui.qt.widgets import (
     make_splitter,
     make_table,
 )
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 
 __all__ = ["FilesyncWindow", "run_qt"]
 
@@ -93,12 +93,6 @@ _TAG_COLORS: dict[str, str] = {
     CATEGORY_CONFLICT: "danger",
 }
 """结果行的语义色：取调色板同名字段，切换主题后重新渲染即跟随。"""
-
-
-class _FilesyncBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台比较 / 同步线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
 
 
 class _FolderRow(QWidget):  # pragma: no cover - Qt 控件
@@ -146,7 +140,7 @@ def _work_compare(
     right: Path,
     options: CompareOptions,
     mode: str,
-    bridge: _FilesyncBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行比较并生成计划。"""
     try:
@@ -164,7 +158,7 @@ def _work_sync(  # noqa: PLR0913, PLR0917 - 参数与界面选项一一对应
     options: CompareOptions,
     mode: str,
     dry_run: bool,
-    bridge: _FilesyncBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行比较 + 同步，逐项进度投回界面。"""
     try:
@@ -190,7 +184,7 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._busy = False
         self._result: CompareResult | None = None
         self._plan: SyncPlan | None = None
-        self._bridge: _FilesyncBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"filesync - 文件夹比较与同步 v{__version__}",
             config_name="filesyncw",
@@ -453,9 +447,9 @@ class FilesyncWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
             on_error=self._on_worker_error,
         )
 
-    def _new_bridge(self) -> _FilesyncBridge:
+    def _new_bridge(self) -> EventBridge:
         """创建并连接后台事件桥（任务结束前保持引用）。"""
-        bridge = _FilesyncBridge()
+        bridge = EventBridge()
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         return bridge

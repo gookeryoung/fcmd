@@ -14,7 +14,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import (
     QFileDialog,
     QGridLayout,
@@ -32,7 +31,7 @@ from fcmd.gui.geometry import size_from_geometry
 from fcmd.gui.qt.app import run_window
 from fcmd.gui.qt.toolwindow import QtToolWindow
 from fcmd.gui.qt.widgets import Card, ElidedLabel, PathRow, button, hint_label
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import EventBridge, submit
 from fcmd.tools.pdf.pdfsplit import split_by_parts, split_by_range, split_by_size
 from fcmd.tools.pdf.pdfsplitw import (
     DEFAULT_GEOMETRY,
@@ -116,12 +115,6 @@ class _OutputRow(QWidget):  # pragma: no cover - Qt 控件
             self.edit.setText(path)
 
 
-class _SplitBridge(QObject):  # pragma: no cover - Qt 信号桥
-    """后台分割线程 → GUI 的事件桥。"""
-
-    event = Signal(object)
-
-
 def _run_split(  # noqa: PLR0913, PLR0917 - 参数由界面校验结果一次性传入，保持显式
     input_path: Path,
     output_dir: Path,
@@ -130,7 +123,7 @@ def _run_split(  # noqa: PLR0913, PLR0917 - 参数由界面校验结果一次性
     parts: int,
     size: int,
     pages: str,
-    bridge: _SplitBridge,
+    bridge: EventBridge,
 ) -> None:
     """线程池里执行分割，把进度事件逐条投回界面。"""
 
@@ -161,7 +154,7 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
     def __init__(self) -> None:
         self._settings = load_settings()
         self._busy = False
-        self._bridge: _SplitBridge | None = None
+        self._bridge: EventBridge | None = None
         super().__init__(
             title=f"PDF 分割 v{__version__}",
             config_name="pdfsplitw",
@@ -380,7 +373,7 @@ class PdfSplitWindow(QtToolWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._append_log(f"输入：{input_path}")
         self._append_log(f"模式：{MODE_LABELS[mode]}；输出目录：{output_dir}")
 
-        bridge = _SplitBridge(self)
+        bridge = EventBridge(self)
         bridge.event.connect(self._on_event)
         self._bridge = bridge
         submit(_run_split, input_path, output_dir, output_path, mode, parts, size, pages, bridge)
