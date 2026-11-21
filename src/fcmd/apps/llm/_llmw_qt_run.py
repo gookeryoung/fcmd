@@ -606,6 +606,9 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
     def _on_tab_changed(self, index: int) -> None:
         """切换页签：对话 / 编程换模型候选并同步该模型的启动参数；画图只刷新状态。"""
         if index >= 2:
+            # 进入画图页签就重扫一次扩散模型：下载 / 转换刚完成的模型不必等
+            # 其它页面的信号（扩散权重不进 LLM 模型列表）。
+            self.refresh_paint_assets()
             self.refresh_paint()
             self._report_paint_hint()
             return

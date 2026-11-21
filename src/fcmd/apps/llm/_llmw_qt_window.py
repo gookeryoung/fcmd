@@ -169,8 +169,19 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         from fcmd.apps.llm._llmw_qt_center import ModelCenterPage
 
         page = ModelCenterPage(self.state)
+        page.browse.downloadFinished.connect(self._on_download_finished)
         self._models_page = page
         return page
+
+    def _on_download_finished(self) -> None:
+        """模型下载完成：立刻重扫画图资产，并刷新 LLM 模型列表。
+
+        扩散权重不进 LLM 模型列表，``refresh_models`` 发出的 ``modelsChanged`` 能
+        带动画图资产扫描；这里额外直接刷一次，保证「刚下完就切到运行 → 画图」
+        能看到新模型，而不必等到下一次全局刷新。
+        """
+        self.run_page.refresh_paint_assets()
+        self.state.refresh_models()
 
     def _build_chat_page(self) -> QWidget:
         from fcmd.apps.llm._llmw_qt_chat import ChatPage

@@ -223,6 +223,29 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     assert "paint" not in tuple(window.nav.keys())
 
 
+def test_model_download_finished_rescans_paint_assets(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """模型下载完成立即重扫画图资产：扩散权重不进 LLM 列表，不能只等 modelsChanged。"""
+    window.show_page("models")
+    run = window.run_page
+    calls: list[str] = []
+    monkeypatch.setattr(run, "refresh_paint_assets", lambda: calls.append("paint"))
+    window.page("models").browse.downloadFinished.emit()
+    assert calls == ["paint"]
+
+
+def test_paint_tab_entry_rescans_diffusion_models(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """切到画图页签会重扫扩散模型，刚下载完的模型不必等其它页面的信号。"""
+    window.show_page("run")
+    run = window.run_page
+    run.tabs.setCurrentIndex(1)
+    QApplication.processEvents()
+    calls: list[str] = []
+    monkeypatch.setattr(run, "refresh_paint_assets", lambda: calls.append("paint"))
+    run.tabs.setCurrentIndex(2)
+    QApplication.processEvents()
+    assert calls == ["paint"]
+
+
 def test_paint_missing_model_hint_points_to_incomplete_download(window: Any, tmp_path: Path) -> None:
     """没有可用扩散模型时，画图卡片提示去继续下载（并列出 ``*.part`` 文件）。"""
     from fcmd.apps.llm import _llmpaint
