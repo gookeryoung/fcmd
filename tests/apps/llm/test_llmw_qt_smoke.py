@@ -222,14 +222,19 @@ def test_chat_config_dialog_starts_compact(window: Any) -> None:
     page.open_config()
     QApplication.processEvents()
     dialog = page.config_dialog
+    from fcmd.gui.qt.widgets import PageScroll
+
+    # 不再用滚动区：窗口高度直接跟随内容。
+    assert dialog.findChild(PageScroll) is None
     assert page.paint_collapsible.is_expanded() is False
-    assert dialog.height() <= 500
+    collapsed = dialog.height()
+    assert collapsed < 420
     assert page.paint_section.isVisibleTo(dialog) is False
 
     page.paint_collapsible.set_expanded(True)
     QApplication.processEvents()
     assert page.paint_collapsible.is_expanded() is True
-    assert dialog.height() > 500
+    assert dialog.height() > collapsed
     assert page.paint_section.isVisibleTo(dialog) is True
     dialog.close()
 
@@ -1670,7 +1675,8 @@ def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll
 
-    for key in ("run", "settings", "chat", "lab"):
+    # 对话页是 splitter + 正文阅读区，不走整页滚动容器。
+    for key in ("run", "settings", "lab"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key
@@ -2124,6 +2130,11 @@ def test_engine_download_dialog_lists_versions_and_installs(window: Any, monkeyp
         assert "llama-b7000-bin-win-cuda-13.5-x64.zip" in dialog.info.text()
         assert "NVIDIA" in dialog.variant_hint.text()
         assert "NVIDIA" in str(dialog.variant_combo.itemData(0, Qt.ItemDataRole.ToolTipRole))
+        # 高度贴合内容：不再写死 660×280，也没有滚动区。
+        from fcmd.gui.qt.widgets import PageScroll, fit_dialog_to_content  # noqa: F401
+
+        assert dialog.findChild(PageScroll) is None
+        assert abs(dialog.height() - dialog.sizeHint().height()) <= 4
 
         dialog._download()
         deadline = time.monotonic() + 5

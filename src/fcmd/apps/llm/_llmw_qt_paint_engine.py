@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QFileDialog, QHBoxLayout, QVBo
 
 from fcmd.apps.llm import _llmpaint_engine, llmengine
 from fcmd.apps.llm.llmbase import human_size
-from fcmd.gui.qt.widgets import Card, HintLabel, ProgressRow, button, hint_label
+from fcmd.gui.qt.widgets import Card, HintLabel, ProgressRow, button, fit_dialog_to_content, hint_label
 from fcmd.gui.qt.workers import ProgressBridge, submit_daemon
 from fcmd.infras.download import SpeedMeter, format_eta, format_speed
 
@@ -51,7 +51,6 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         super().__init__(parent)
         self.setWindowTitle("安装画图引擎")
         self.setModal(True)
-        self.resize(680, 320)
         self._releases: tuple[_llmpaint_engine.SdRelease, ...] = ()
         self._gpu: Any = None
         self._fetching = False
@@ -61,10 +60,10 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         self._download_speed = SpeedMeter()
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(6)
         card = Card("stable-diffusion.cpp 引擎", self)
-        layout.addWidget(card, 1)
+        layout.addWidget(card)
 
         picker = QHBoxLayout()
         picker.setContentsMargins(0, 0, 0, 0)
@@ -107,17 +106,23 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
 
         self.status = hint_label("正在获取版本列表…", wrap=False)
         card.body.addWidget(self.status)
-        card.body.addWidget(
-            hint_label(
-                "版本来自 GitHub releases，默认优先国内镜像，失败自动回退 GitHub；"
-                "可用环境变量 FCMD_GITHUB_MIRROR 覆盖（设为 direct 只用 GitHub）。"
-                "安装目录由 FCMD_SD_ENGINES / 配置项 sd_engines_root 决定，默认 ~/.fcmd/engines/sd.cpp。"
-                "Linux / macOS 目前只支持从本地 zip 或目录导入。"
-            )
+        mirror_hint = hint_label(
+            "版本来自 GitHub releases（默认国内镜像，失败回退 GitHub）；"
+            "FCMD_GITHUB_MIRROR 可覆盖，本地 zip / 目录走「从本地 zip 安装…」。"
         )
+        mirror_hint.setToolTip(
+            "镜像失败自动回退 GitHub；设 FCMD_GITHUB_MIRROR=direct 只用 GitHub；"
+            "安装目录由 FCMD_SD_ENGINES / 配置项 sd_engines_root 决定。"
+        )
+        card.body.addWidget(mirror_hint)
 
         self._releases_ready(False)
         self.refresh()
+        self._fit()
+
+    def _fit(self) -> None:
+        """内容变化后重新贴合高度（版本 / 变体信息会换行，高度不定）。"""
+        fit_dialog_to_content(self, min_width=660)
 
     # ------------------------------------------------------------------ #
     # 版本列表
@@ -167,6 +172,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         self.info.setText("")
         self._releases_ready(False)
         self.status.setText(f"获取版本列表失败：{message}")
+        self._fit()
 
     def _render_releases(self, payload: tuple[tuple[_llmpaint_engine.SdRelease, ...], Any]) -> None:
         self._fetching = False
@@ -188,9 +194,11 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
             self.info.setText("")
             self._releases_ready(False)
             self.status.setText("没有可下载的引擎版本（检查网络或稍后重试）")
+            self._fit()
             return
         self._sync_variants()
         self.status.setText("选择版本与变体后下载")
+        self._fit()
 
     def _releases_ready(self, ready: bool) -> None:
         self.version_combo.setEnabled(ready)

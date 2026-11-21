@@ -70,12 +70,11 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     Collapsible,
+    ElidedLabel,
     FormGrid,
-    PageScroll,
     StatusTag,
     ToggleChip,
     button,
-    hint_label,
     icon_button,
     make_splitter,
 )
@@ -251,14 +250,11 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         super().__init__(owner)
         self.setWindowTitle("模型与生成配置")
         self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(6)
-        scroll = PageScroll(self, margins=(0, 0, 4, 4))
-        layout.addWidget(scroll, 1)
-        body = scroll.body
+        # 不再套滚动区：窗口按内容高度自适应，正常使用（含展开画图采样）不出现滚动条。
+        body = QVBoxLayout(self)
+        body.setContentsMargins(12, 10, 12, 10)
+        body.setSpacing(6)
 
-        body.addWidget(_dialog_title("模型配置", self))
         service_row = QHBoxLayout()
         service_row.setSpacing(8)
         owner.service_combo = QComboBox(self)
@@ -272,11 +268,16 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
 
         # 默认「已登记服务」：地址 / 模型 / API Key 由运行页的启动配置决定，这里只读展示；
         # 只有接外部 OpenAI 兼容服务时才展开三个输入框，避免与运行页重复配置。
-        owner.connection_summary = hint_label("", wrap=True)
-        body.addWidget(owner.connection_summary)
-        owner.custom_check = QCheckBox("自定义接入（外部 OpenAI 兼容服务）", self)
+        # 勾选项与一行摘要共用一行（摘要过长中间省略，完整内容进 tooltip）。
+        access_row = QHBoxLayout()
+        access_row.setSpacing(8)
+        owner.custom_check = QCheckBox("自定义接入", self)
         owner.custom_check.setToolTip("勾选后手填服务地址 / 模型名 / API Key；取消则使用所选已登记服务的配置")
-        body.addWidget(owner.custom_check)
+        access_row.addWidget(owner.custom_check, 0)
+        owner.connection_summary = ElidedLabel("", parent=self)
+        owner.connection_summary.setObjectName("Hint")
+        access_row.addWidget(owner.connection_summary, 1)
+        body.addLayout(access_row)
         owner.connection_box = FormGrid(self)
         owner.model_edit = QLineEdit(DEFAULT_ALIAS, owner.connection_box)
         owner.url_edit = QLineEdit(_DEFAULT_URL, owner.connection_box)
@@ -310,18 +311,18 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         close_button = button("关闭")
         close_button.clicked.connect(self.close)
         footer.addWidget(close_button)
-        layout.addLayout(footer)
-        # 初始高度贴合内容（连接 / 生成参数两段）；展开画图分区时再长高，
-        # 屏幕放不下才交给滚动区。
-        self.resize(640, 430)
+        body.addLayout(footer)
+        owner.custom_check.toggled.connect(lambda _checked: self._fit_to_content())
+        self._fit_to_content()
 
-    def _resize_for_paint(self, expanded: bool) -> None:
-        """展开 / 收起画图分区时调整窗口高度（不超出屏幕可用区域的 90%）。"""
-        target = 660 if expanded else 430
-        screen = self.screen()
-        if screen is not None:
-            target = min(target, int(screen.availableGeometry().height() * 0.9))
-        self.resize(self.width(), max(self.minimumHeight(), target))
+    def _fit_to_content(self) -> None:
+        """窗口高度严格贴合内容：不出现滚动条，也不裁掉控件。"""
+        self.layout().activate()
+        self.adjustSize()
+
+    def _resize_for_paint(self, _expanded: bool) -> None:
+        """展开 / 收起画图分区后重新贴合内容高度。"""
+        self._fit_to_content()
 
 
 class ChatPage(QWidget):  # pragma: no cover - Qt 控件
@@ -584,14 +585,14 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.custom_check.blockSignals(False)
         self.connection_box.setVisible(custom)
         if state is None:
+            self.connection_summary.setText("手填服务地址 / 模型名 / API Key（外部 OpenAI 兼容服务）")
+        else:
             self.connection_summary.setText(
-                "接入方式：自定义 —— 手填服务地址 / 模型名 / API Key（外部 OpenAI 兼容服务）"
+                f"已登记服务 {state.name} → {state.base_url} · 模型 {state.alias or '-'}（连接参数来自运行页）"
             )
-            return
-        self.connection_summary.setText(
-            f"已登记服务 {state.name} → {state.base_url} · 模型 {state.alias or '-'}"
-            "（连接参数来自运行页，不在这里重复填写）"
-        )
+        dialog = getattr(self, "config_dialog", None)
+        if dialog is not None:
+            dialog._fit_to_content()
 
     def _on_custom_toggled(self, checked: bool) -> None:
         """勾选自定义接入：服务下拉切到「自定义」；取消则回到第一个已登记服务。"""

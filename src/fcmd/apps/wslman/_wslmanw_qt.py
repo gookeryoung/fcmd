@@ -66,6 +66,7 @@ from fcmd.gui.qt.widgets import (
     StatusTag,
     button,
     confirm,
+    fit_dialog_to_content,
     hint_label,
     icon_button,
     make_splitter,
@@ -1427,7 +1428,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
     def __init__(self, owner: WslmanQtWindow, entries: tuple[ImageEntry, ...]) -> None:
         super().__init__(owner)
         self.setWindowTitle("安装本地镜像")
-        self.setMinimumSize(820, 620)
+        self.setMinimumWidth(820)
         self._entries = entries
         self._archives: dict[int, Any] = {}
         self._payload: tuple[Path, str, Path, bool, Path | None] | None = None
@@ -1499,6 +1500,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
         footer.addStretch(1)
         outer.addLayout(footer)
         self._scan()
+        fit_dialog_to_content(self, min_width=820)
 
     def _scan(self) -> None:
         self.table.setRowCount(0)

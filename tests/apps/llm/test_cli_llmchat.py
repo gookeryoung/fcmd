@@ -806,7 +806,7 @@ def test_chat_registered_service_hides_manual_connection(monkeypatch: pytest.Mon
 
     assert chat_page.custom_check.isChecked() is False
     assert chat_page.connection_box.isHidden() is True
-    summary = chat_page.connection_summary.text()
+    summary = chat_page.connection_summary.fullText()
     assert alive.base_url in summary
     assert "alpha" in summary
     assert "运行页" in summary
@@ -823,7 +823,7 @@ def test_chat_custom_mode_reveals_connection_form(monkeypatch: pytest.MonkeyPatc
     chat_page.custom_check.setChecked(True)
     assert chat_page.service_combo.currentText() == _llmw_chat._CUSTOM
     assert chat_page.connection_box.isHidden() is False
-    assert "自定义" in chat_page.connection_summary.text()
+    assert "手填服务地址" in chat_page.connection_summary.fullText()
 
     chat_page.custom_check.setChecked(False)
     assert chat_page.service_combo.currentText() == "alive（运行中）"

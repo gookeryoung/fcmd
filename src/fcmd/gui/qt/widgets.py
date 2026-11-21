@@ -33,6 +33,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -88,6 +89,7 @@ __all__ = [
     "apply_splitter_sizes",
     "button",
     "confirm",
+    "fit_dialog_to_content",
     "hint_label",
     "icon_button",
     "link_button",
@@ -502,6 +504,21 @@ class PageScroll(QScrollArea):  # pragma: no cover - Qt 控件
         self.body.setContentsMargins(*margins)
         self.body.setSpacing(8)
         self.setWidget(container)
+
+
+def fit_dialog_to_content(dialog: QDialog, *, min_width: int | None = None) -> None:
+    """把对话框高度收到内容高度（去掉底部空白，避免出现多余滚动条）。
+
+    对话框不再写死 ``resize(w, h)``：表单 / 进度这类内容自适应的窗口先按布局
+    求出 ``sizeHint``，再让窗口贴合它；宽度保持当前值（可传 ``min_width`` 兜底）。
+    表格 / 日志为主、确实需要用户拖高的窗口不要调用它。
+    """
+    if min_width is not None:
+        dialog.setMinimumWidth(min_width)
+    layout = dialog.layout()
+    if layout is not None:
+        layout.activate()
+    dialog.adjustSize()
 
 
 class HintLabel(QLabel):  # pragma: no cover - Qt 控件

@@ -433,3 +433,20 @@ def test_set_button_text_updates_icon_and_tone() -> None:
         assert widget.property("fcmdIconName") == "check"
     finally:
         widget.deleteLater()
+
+
+def test_fit_dialog_to_content_removes_bottom_blank() -> None:
+    """对话框按内容高度贴合：不写死大尺寸，也不留下底部空白。"""
+    from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout
+
+    from fcmd.gui.qt.widgets import fit_dialog_to_content
+
+    dialog = QDialog()
+    layout = QVBoxLayout(dialog)
+    layout.addWidget(QLabel("内容"))
+    dialog.resize(600, 600)
+    fit_dialog_to_content(dialog, min_width=520)
+    assert dialog.width() >= 520
+    assert dialog.height() < 200
+    assert abs(dialog.height() - dialog.sizeHint().height()) <= 4
+    dialog.deleteLater()

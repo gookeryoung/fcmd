@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QAbstractItemView, QDialog, QHBoxLayout, QLabel, Q
 
 from fcmd.apps.llm.llmbase import human_size
 from fcmd.apps.llm.llmdown import LocalModel, ModelToolError, delete_local_model, scan_local_models
-from fcmd.gui.qt.widgets import Card, button, hint_label, make_table, make_table_item
+from fcmd.gui.qt.widgets import Card, button, fit_dialog_to_content, hint_label, make_table, make_table_item
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -45,7 +45,6 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
 
         self.setWindowTitle("模型管理")
         self.setModal(True)
-        self.resize(980, 620)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -100,6 +99,7 @@ class ModelManagerDialog(QDialog):  # pragma: no cover - Qt 控件
         card.body.addWidget(hint_label("多选后点「移除选中」；未完成模型可只清理 .part 后继续下载。"))
 
         self.refresh()
+        fit_dialog_to_content(self, min_width=900)
 
     # ------------------------------------------------------------------ #
     # 扫描 / 渲染
