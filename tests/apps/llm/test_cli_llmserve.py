@@ -2703,6 +2703,17 @@ class TestServewSettings:
         path.write_text('{"model_view": ["bad"]}', encoding="utf-8")
         assert llmw.load_settings(path).model_view is None
 
+    def test_paint_settings_roundtrip(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        paint = {"model": "/models/sdxl.safetensors", "width": 768, "auto_start": False}
+        llmw.save_settings(llmw.LlmSettings(paint=paint), path)
+        assert llmw.load_settings(path).paint == paint
+
+    def test_load_ignores_non_dict_paint(self, tmp_path: Path) -> None:
+        path = tmp_path / "ui.json"
+        path.write_text('{"paint": "bad"}', encoding="utf-8")
+        assert llmw.load_settings(path).paint is None
+
     def test_quant_choice_roundtrip(self, tmp_path: Path) -> None:
         path = tmp_path / "ui.json"
         llmw.save_settings(llmw.LlmSettings(quant_choice={"org/model": "Q4_K_M"}), path)

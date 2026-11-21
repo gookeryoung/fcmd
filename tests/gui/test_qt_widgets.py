@@ -46,6 +46,7 @@ from fcmd.gui.qt.widgets import (
     section_header,
     segment_band,
     segment_fill,
+    set_button_text,
 )
 
 _BUTTON_KINDS = ("", "primary", "danger", "ghost")
@@ -348,3 +349,19 @@ def test_button_attaches_shared_icon_automatically() -> None:
     assert forced.icon().isNull() is False
     disabled_icon = button("刷新", icon="")
     assert disabled_icon.icon().isNull() is True
+
+
+def test_set_button_text_updates_icon_and_tone() -> None:
+    """动态改文案时同步换图标与色调：启动 → 停止要换成 stop + danger。"""
+    widget = button("启动服务", kind="primary")
+    try:
+        assert widget.property("fcmdIconName") == "run"
+        assert widget.property("fcmdIconTone") == "on_accent"
+        set_button_text(widget, "停止服务", tone="danger")
+        assert widget.text() == "停止服务"
+        assert widget.property("fcmdIconName") == "stop"
+        assert widget.property("fcmdIconTone") == "danger"
+        set_button_text(widget, "已启动", tone="text")
+        assert widget.property("fcmdIconName") == "check"
+    finally:
+        widget.deleteLater()

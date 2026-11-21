@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QPushButton
 from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt import icons
 from fcmd.gui.qt import theme as _qt_theme
+from fcmd.gui.qt.widgets import button
 
 
 def test_svg_uses_current_color_and_known_body() -> None:
@@ -79,7 +80,7 @@ def _first_opaque_color(widget: QPushButton) -> str:
     for y in range(image.height()):
         for x in range(image.width()):
             color = image.pixelColor(x, y)
-            if color.alpha() > 200:
+            if color.alpha() == 255:
                 return color.name()
     return ""
 
@@ -106,3 +107,22 @@ def test_set_icon_recolors_when_theme_changes() -> None:
     finally:
         widget.deleteLater()
         icons.refresh_icons()
+
+
+def test_button_icons_follow_variant_tones() -> None:
+    """图标与按钮文字同色：主按钮 on_accent、危险按钮 danger、次要按钮 muted。"""
+    from fcmd.gui.qt.theme import active_theme
+
+    app = QApplication.instance() or QApplication([])
+    _qt_theme.apply_theme(app, _guitheme.resolve_theme("dark-blue"))
+    palette = active_theme().palette
+    primary = button("启动服务", kind="primary")
+    danger = button("删除", kind="danger")
+    ghost = button("刷新", kind="ghost")
+    try:
+        assert _first_opaque_color(primary) == palette.on_accent
+        assert _first_opaque_color(danger) == palette.danger
+        assert _first_opaque_color(ghost) == palette.muted
+    finally:
+        for widget in (primary, danger, ghost):
+            widget.deleteLater()

@@ -333,6 +333,10 @@ class ModelInfo:
     inference: str = ""
 
 
+_WEIGHT_SUFFIXES: tuple[str, ...] = (".gguf", ".safetensors", ".ckpt", ".sft", ".pth", ".bin")
+"""可执行 / 可转换的权重后缀；只有配置或说明文件的目录视为无效模型。"""
+
+
 @dataclass(frozen=True, slots=True)
 class LocalModel:
     """本地目标目录下已下载（或部分下载）的一个模型目录。"""
@@ -342,6 +346,7 @@ class LocalModel:
     size: int
     files: int
     partial: int = 0
+    weights: int = 0
 
     @property
     def complete(self) -> bool:
@@ -742,6 +747,7 @@ def scan_local_models(root: Path) -> list[LocalModel]:
             size = 0
             files = 0
             partial = 0
+            weights = 0
             for item in model_dir.rglob("*"):
                 if item.is_symlink() or not item.is_file():
                     continue
@@ -752,8 +758,10 @@ def scan_local_models(root: Path) -> list[LocalModel]:
                 files += 1
                 if item.name.endswith(".part"):
                     partial += 1
+                elif item.suffix.casefold() in _WEIGHT_SUFFIXES:
+                    weights += 1
             if files:
-                found.append(LocalModel(repo, model_dir, size, files, partial))
+                found.append(LocalModel(repo, model_dir, size, files, partial, weights))
     return found
 
 

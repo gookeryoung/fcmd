@@ -1101,6 +1101,7 @@ class TestLocalModels:
         assert item.size == 7
         assert item.files == 3
         assert item.partial == 1
+        assert item.weights == 2  # a.bin / b.bin；.part 不计入可用权重
         assert item.complete is False
 
     def test_scan_single_level_layout(self, tmp_path: Path) -> None:

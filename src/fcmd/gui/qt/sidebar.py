@@ -100,7 +100,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self.toggle_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.toggle_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.toggle_button.setIconSize(QSize(16, 16))
-        _set_icon(self.toggle_button, "chevron-left")
+        _set_icon(self.toggle_button, "chevron-left", tone="muted")
         self.toggle_button.setToolTip("折叠侧边栏（Ctrl+Shift+B）")
         self.toggle_button.setAutoRaise(True)
         self.toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -158,7 +158,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         button.setToolTip(hint)
         button.setProperty("collapsed", "false" if not self._collapsed else "true")
         if icon:
-            _set_icon(button, icon)
+            _set_icon(button, icon, tone="muted")
         button.clicked.connect(lambda _checked=False, page_key=key: self.select(page_key))
         self._button_layout.addWidget(button)
         self._group.addButton(button)
@@ -173,6 +173,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
             self._current = key
             button.setChecked(True)
         self._sync_tooltips()
+        self._sync_page_icon_tones()
 
     def keys(self) -> tuple[str, ...]:
         """按登记顺序返回页面 key。"""
@@ -213,7 +214,15 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
             return
         self._current = key
         self._buttons[key].setChecked(True)
+        self._sync_page_icon_tones()
         self.changed.emit(key)
+
+    def _sync_page_icon_tones(self) -> None:
+        """页图标跟随文字配色：选中页用 accent，其余用 muted。"""
+        for key, button in self._buttons.items():
+            name = self._icons.get(key)
+            if name:
+                _set_icon(button, name, tone="accent" if key == self._current else "muted")
 
     def set_hint(self, key: str, hint: str) -> None:
         """更新页面提示（供按钮 tooltip 与窗口标题栏使用，不在侧边栏显示）。"""
@@ -250,7 +259,7 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
             self.icon_label.setToolTip(
                 "展开侧边栏（Ctrl+Shift+B）" if collapsed else (self.title_label.text() or self.windowTitle())
             )
-        _set_icon(self.toggle_button, "chevron-right" if collapsed else "chevron-left")
+        _set_icon(self.toggle_button, "chevron-right" if collapsed else "chevron-left", tone="muted")
         self.toggle_button.setToolTip("展开侧边栏（Ctrl+Shift+B）" if collapsed else "折叠侧边栏（Ctrl+Shift+B）")
         self.toggle_button.setProperty("collapsed", "true" if collapsed else "false")
         self.toggle_button.style().unpolish(self.toggle_button)

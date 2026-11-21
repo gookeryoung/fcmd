@@ -88,6 +88,7 @@ TOOLS: dict[str, ToolEntry] = {
     "llmengine": ToolEntry("llmengine", "python", "fcmd.apps.llm.llmengine"),
     "llmenv": ToolEntry("llmenv", "python", "fcmd.apps.llm.llmenv"),
     "llmmodel": ToolEntry("llmmodel", "python", "fcmd.apps.llm.llmmodel"),
+    "llmpaint": ToolEntry("llmpaint", "python", "fcmd.apps.llm.llmpaint"),
     "llmqnt": ToolEntry("llmqnt", "python", "fcmd.apps.llm.llmqnt"),
     "llmserve": ToolEntry("llmserve", "python", "fcmd.apps.llm.llmserve"),
     "llmw": ToolEntry("llmw", "python", "fcmd.apps.llm.llmw"),
@@ -219,9 +220,10 @@ DESCRIPTIONS: dict[str, str] = {
     "llmengine": "列出已安装引擎",
     "llmenv": "显示目录布局与当前生效的模型目录",
     "llmmodel": "列出模型目录中的 GGUF 文件",
+    "llmpaint": "列出本地扩散模型与组件",
     "llmqnt": "GGUF 量化：调用 llama-quantize 批量生成多种量化版本",
     "llmserve": "打印启动计划（命令 + 显存估算），不启动",
-    "llmw": "LLM——本地 LLM 服务窗口版（Qt/PySide6，侧边栏分页：概览 / 模型 / 运行 / 对话 / 实验室 / 设置；模型页含 ModelScope 浏览、下载管理、已安装仓库、转换与量化向导）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，并在概览页实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标（系统负载在服务未启动时也持续采样展示）；「帮助 → 性能测试…」提供短对话 / 长输出 / 代码补全 / 长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/llmw.json",
+    "llmw": "LLM——本地 LLM 服务窗口版（Qt/PySide6，侧边栏分页：概览 / 模型 / 运行 / 对话 / 画图 / 实验室 / 设置；模型页含 ModelScope 浏览、下载管理、已安装仓库、转换与量化向导；画图页托管 stable-diffusion.cpp 的 sd-server：安装或导入画图引擎、扫描扩散模型并配对 VAE / 文本编码器、按提示词与尺寸 / 步数 / CFG / 采样器生成 PNG 并保存到出图目录、展示最近图库）：列出已配置的可选模型并内置能力标签（代码/推理/对话/视觉等）与最佳实践提示，按整卡与当前可用显存分别标注“硬件不足”（标红加删除线）与“需释放显存”（标橙）并给出建议，配置档位/端口/上下文等参数，预览启动计划，后台启动与停止 llama.cpp 服务，查看状态与日志，并在概览页实时采样 /metrics 展示平滑后的 token/s 与请求队列状态，同时展示 CPU / 内存 / 交换 / 服务进程等系统负载以及 GPU 利用率、显存、温度、功耗等关键指标（系统负载在服务未启动时也持续采样展示）；「帮助 → 性能测试…」提供短对话 / 长输出 / 代码补全 / 长上下文 8K / 长上下文 32K / 并发 4 路等典型场景，可调重复次数、超时与输出上限，后台批量实测延迟与 token 吞吐并按场景汇总聚合吞吐；窗口位置与大小记忆到 ~/.fcmd/ui/llmw.json",
     "lscalc": "运行 LS-DYNA SMP 单机计算",
     "mathtool": "求值数学表达式",
     "mirrortool": "镜像站点探测 / 指定服务镜像测速与自动选取",
@@ -339,6 +341,7 @@ HELP: dict[str, str] = {
     "llmengine": "llmengine 子命令\n+---------------------------------+\n| 子命令   | 说明                 |\n|----------+----------------------|\n| check    | 验证引擎可运行       |\n| inspect  | 检查 zip 离线包      |\n| install  | 安装或注册引擎       |\n| list     | 列出已安装引擎       |\n| releases | 列出可下载的引擎版本 |\n| use      | 切换默认引擎         |\n+---------------------------------+\n",
     "llmenv": "llmenv 子命令\n+-------------------------------------------------+\n| 子命令 | 说明                                   |\n|--------+----------------------------------------|\n| add    | 设置模型目录（单一目录，已存在则替换） |\n| env    | 输出服务的 OPENAI_* 环境变量           |\n| list   | 列出已登记的服务状态                   |\n| remove | 清除已登记的模型目录，回到默认目录     |\n| reset  | 清空模型目录配置，回到默认目录         |\n| show   | 显示目录布局与当前生效的模型目录       |\n+-------------------------------------------------+\n",
     "llmmodel": "llmmodel 子命令\n+-------------------------------------+\n| 子命令 | 说明                       |\n|--------+----------------------------|\n| find   | 按量化类型定位 GGUF 文件   |\n| list   | 列出模型目录中的 GGUF 文件 |\n| vram   | 估算指定 GGUF 的显存占用   |\n+-------------------------------------+\n",
+    "llmpaint": "llmpaint 子命令\n+-----------------------------------------+\n| 子命令         | 说明                   |\n|----------------+------------------------|\n| engine-check   | 验证画图引擎可运行     |\n| engine-install | 安装或注册画图引擎     |\n| engine-list    | 列出已安装画图引擎     |\n| engine-use     | 切换默认画图引擎       |\n| gen            | 用本地模型生成图片     |\n| models         | 列出本地扩散模型与组件 |\n| serve          | 启动画图服务           |\n| status         | 查看画图服务状态       |\n| stop           | 停止画图服务           |\n+-----------------------------------------+\n",
     "llmqnt": "usage: llmqnt [-h] [--quants [QUANTS ...]] [--out-dir OUT_DIR]\n              [--quantize-exe QUANTIZE_EXE] [--overwrite] [--dry-run] [-q]\n              [--strategy STRATEGY]\n              input_file\n\n批量量化 GGUF（默认 Q4_K_M / Q5_K_M）\n\npositional arguments:\n  input_file            输入的 F16 GGUF 文件路径。\n\noptions:\n  -h, --help            show this help message and exit\n  --quants [QUANTS ...]\n                        量化类型列表（空格分隔多个），如 Q4_K_M Q5_K_M；默认两者。\n  --out-dir OUT_DIR     输出目录；默认写入模型目录的 converted 子目录。\n  --quantize-exe QUANTIZE_EXE\n                        llama-quantize 可执行文件；默认按环境变量 / 引擎 / PATH 查找。\n  --overwrite           覆盖已存在的量化输出。\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "llmserve": "llmserve 子命令\n+--------------------------------------------------+\n| 子命令 | 说明                                    |\n|--------+-----------------------------------------|\n| logs   | 查看服务日志末尾若干行                  |\n| plan   | 打印启动计划（命令 + 显存估算），不启动 |\n| start  | 启动推理服务（等待健康检查通过）        |\n| status | 查看服务状态（不指定 name 时列出全部）  |\n| stop   | 停止推理服务并清理状态                  |\n+--------------------------------------------------+\n",
     "llmw": "usage: llmw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开本地 LLM 服务窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
@@ -426,6 +429,7 @@ LAYOUT: tuple[str, ...] = (
     "apps/llm/llmengine.py",
     "apps/llm/llmenv.py",
     "apps/llm/llmmodel.py",
+    "apps/llm/llmpaint.py",
     "apps/llm/llmqnt.py",
     "apps/llm/llmserve.py",
     "apps/llm/llmw.py",
@@ -534,11 +538,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "d4d4dad0b88c977bf201220095fc9be5"
+DIGEST = "d72490719f4ebd8a63bc739ce2cce47c"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
-TOOL_COUNT = 116
-SUBCOMMAND_TOTAL = 406
+TOOL_COUNT = 117
+SUBCOMMAND_TOTAL = 415
 
 
 if __name__ == "__main__":  # pragma: no cover

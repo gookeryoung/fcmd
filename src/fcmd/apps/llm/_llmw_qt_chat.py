@@ -378,7 +378,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_combo.currentTextChanged.connect(self._on_model_combo_changed)
         buttons.addWidget(self.model_combo, 0)
         self.config_button = icon_button("", tooltip="模型与生成配置（服务地址 / API Key / 采样参数）")
-        _set_icon(self.config_button, "settings")
+        _set_icon(self.config_button, "settings", tone="muted")
         self.config_button.setAccessibleName("模型与生成配置")
         buttons.addWidget(self.config_button, 0)
         buttons.addStretch(1)

@@ -30,6 +30,7 @@ from fcmd.apps.llm.llmdown import (
 __all__ = [
     "DEFAULT_MODEL_FILTER",
     "DEFAULT_MODEL_SORT",
+    "MIN_ONLINE_MODEL_BYTES",
     "MODEL_FILTERS",
     "MODEL_SORTS",
     "DownloadGuiSettings",
@@ -40,6 +41,7 @@ __all__ = [
     "filter_models",
     "format_models_updated",
     "group_same_name",
+    "is_usable_item",
     "local_row",
     "matches_filter",
     "merge_installed_items",
@@ -84,11 +86,19 @@ MODEL_FILTERS: tuple[tuple[str, str, str], ...] = (
     ("chat", "对话", "chat"),
     ("code", "编程", "coder"),
     ("vision", "看图", "vision"),
+    ("paint", "画图", "图像生成"),
     ("reasoning", "推理", "reasoning"),
     ("video", "视频", "video"),
     ("audio", "音频", "audio"),
 )
 DEFAULT_MODEL_FILTER = "local"
+
+MIN_ONLINE_MODEL_BYTES = 1024 * 1024
+"""在线模型的最小体积：`StorageSize` 小于 1 MiB 的条目视为个人上传的空壳 / 垃圾模型。
+
+体积为 0 表示接口没给出大小（未知），保留而不是误杀；只有明确小于 1 MiB 的
+在线仓库才判为无效。「隐藏无效」开启时这些条目连同无法下载的 repo 一起被过滤。
+"""
 
 #: 浏览页排序选项：(key, 显示名)；默认按下载量倒排。
 MODEL_SORTS: tuple[tuple[str, str], ...] = (
@@ -107,6 +117,24 @@ _FILTER_KEYWORDS: dict[str, tuple[str, ...]] = {
     "chat": ("chat", "instruct", "conversation", "对话", "文本生成"),
     "code": ("code", "coder", "coding", "编程", "代码生成"),
     "vision": ("vision", "vl", "visual", "image", "multimodal", "看图", "视觉", "图像"),
+    "paint": (
+        "diffusion",
+        "stable-diffusion",
+        "sdxl",
+        "sd3",
+        "flux",
+        "qwen-image",
+        "z-image",
+        "minimax",
+        "minimax-h3-image",
+        "h3-image",
+        "hidream",
+        "kolors",
+        "hunyuan-image",
+        "文生图",
+        "画图",
+        "图像生成",
+    ),
     "reasoning": ("reasoning", "think", "r1", "qwq", "推理", "思考"),
     "video": ("video", "视频"),
     "audio": ("audio", "speech", "voice", "asr", "tts", "音频", "语音"),
@@ -292,6 +320,21 @@ def model_score(item: ModelSummary) -> int:
     downloads = math.log10(item.downloads + 1) if item.downloads > 0 else 0.0
     stars = math.log10(item.stars + 1) if item.stars > 0 else 0.0
     return round(min(downloads, 6.0) / 6.0 * 60 + min(stars, 4.0) / 4.0 * 40)
+
+
+def is_usable_item(item: ModelSummary, usable_repos: set[str]) -> bool:
+    """模型条目是否「有效」：可下载的在线仓库，或本地目录里确有可用权重。
+
+    - 在线结果要求 ``组织/模型`` 两段式 repo（否则无法构造下载 / 缓存键）；
+    - 仅本地条目要求目录内有 GGUF / safetensors 等权重文件，或仍有 ``.part``
+      未完成下载（此时保留是为了让用户继续下载）。
+    只有 README / 配置文件 / 空目录的「假模型」会被过滤掉。
+    """
+    parts = item.repo.split("/")
+    if len(parts) == 2 and all(parts):
+        # KB 级仓库基本都是个人上传的说明 / 空壳；0 表示接口未给体积，按未知保留。
+        return not (0 < item.storage_size < MIN_ONLINE_MODEL_BYTES)
+    return item.repo.casefold() in usable_repos
 
 
 def matches_filter(item: ModelSummary, filter_key: str) -> bool:

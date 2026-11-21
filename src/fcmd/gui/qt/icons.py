@@ -188,6 +188,8 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("量化", "convert"),
     ("重置", "reset"),
     ("确定", "check"),
+    ("已启动", "check"),
+    ("已转换", "check"),
     ("应用", "check"),
 )
 """按钮文案 → 图标名；按关键词长度降序匹配，``button()`` 用它自动挂图标。"""
@@ -270,20 +272,38 @@ def icon(name: str, *, size: int = ICON_SIZE, color: str | None = None) -> QIcon
 
 ICON_NAME_PROPERTY = "fcmdIconName"
 ICON_SIZE_PROPERTY = "fcmdIconSize"
+ICON_TONE_PROPERTY = "fcmdIconTone"
 
 
-def set_icon(widget: Any, name: str, *, size: int = ICON_SIZE) -> None:
-    """给控件设置公共图标，并记住图标名供主题切换时重绘。
+def tone_color(tone: str) -> str:
+    """主题语义色 → 十六进制颜色；未知 / 读取失败时回落正文色。
 
-    图标是位图（按当前调色板着色），主题切换后必须重新生成；这里把
-    ``(名称, 尺寸)`` 写到控件动态属性，:func:`refresh_icons` 据此逐个重绘。
+    ``tone`` 取 :class:`fcmd.gui.theme.Palette` 的字段名（``text`` / ``muted`` /
+    ``accent`` / ``on_accent`` / ``danger`` 等），保证图标与按钮文字的配色一致：
+    主操作按钮用 ``on_accent``，危险按钮用 ``danger``，次要按钮用 ``muted``。
+    """
+    try:
+        from fcmd.gui.qt.theme import active_theme
+
+        palette = active_theme().palette
+    except Exception:  # pragma: no cover - 无 Qt / 主题未初始化
+        return default_color()
+    return str(getattr(palette, tone, palette.text))
+
+
+def set_icon(widget: Any, name: str, *, size: int = ICON_SIZE, tone: str = "text") -> None:
+    """给控件设置公共图标，并记住图标名 / 尺寸 / 语义色供主题切换时重绘。
+
+    图标是位图，主题切换后必须重新生成；``tone`` 决定它与哪类文字配色一致
+    （主按钮 ``on_accent``、危险按钮 ``danger``、次要按钮 ``muted``）。
     """
     from PySide6.QtCore import QSize
 
-    widget.setIcon(icon(name, size=size))
+    widget.setIcon(icon(name, size=size, color=tone_color(tone)))
     widget.setIconSize(QSize(size, size))
     widget.setProperty(ICON_NAME_PROPERTY, name)
     widget.setProperty(ICON_SIZE_PROPERTY, int(size))
+    widget.setProperty(ICON_TONE_PROPERTY, tone)
 
 
 def refresh_icons() -> None:
@@ -298,4 +318,10 @@ def refresh_icons() -> None:
         if not isinstance(name, str) or not name:
             continue
         size = widget.property(ICON_SIZE_PROPERTY)
-        set_icon(widget, name, size=int(size) if isinstance(size, int) and size > 0 else ICON_SIZE)
+        tone = widget.property(ICON_TONE_PROPERTY)
+        set_icon(
+            widget,
+            name,
+            size=int(size) if isinstance(size, int) and size > 0 else ICON_SIZE,
+            tone=tone if isinstance(tone, str) and tone else "text",
+        )

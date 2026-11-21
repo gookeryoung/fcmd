@@ -85,9 +85,30 @@ __all__ = [
     "section_header",
     "segment_band",
     "segment_fill",
+    "set_button_text",
     "splitter_sizes",
     "value_label",
 ]
+
+
+def set_button_text(widget: QPushButton, text: str, *, tone: str | None = None) -> None:
+    """改写按钮文字并按新文案更新图标（保留原色调，未命中时清空图标）。
+
+    动态文案（启动 / 停止服务、下载其他量化、转换中等）不能只 ``setText``：
+    否则图标还停在创建时那个动作上，看起来与文字不匹配。
+    """
+    from PySide6.QtGui import QIcon
+
+    from fcmd.gui.qt.icons import ICON_NAME_PROPERTY, icon_for_text, set_icon
+
+    widget.setText(text)
+    name = icon_for_text(text)
+    if name:
+        mapped = tone if tone is not None else widget.property("fcmdIconTone")
+        set_icon(widget, name, tone=mapped if isinstance(mapped, str) and mapped else "text")
+        return
+    widget.setIcon(QIcon())
+    widget.setProperty(ICON_NAME_PROPERTY, None)
 
 
 def button(
@@ -107,7 +128,10 @@ def button(
     widget = QPushButton(text)
     name = icon_for_text(text) if icon is None else icon
     if name:
-        set_icon(widget, name)
+        # 图标配色跟随按钮变体：主按钮用 on_accent、危险按钮用 danger、
+        # 次要按钮用 muted，避免图标与文字一深一浅。
+        tone = {"primary": "on_accent", "danger": "danger", "ghost": "muted"}.get(kind, "text")
+        set_icon(widget, name, tone=tone)
     if kind:
         widget.setObjectName(kind.capitalize())
     if tooltip:

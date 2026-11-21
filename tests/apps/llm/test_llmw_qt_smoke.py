@@ -89,11 +89,38 @@ def test_status_reflects_scan_result(window: Any) -> None:
 
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
-    assert keys == ("overview", "models", "run", "chat", "lab", "settings")
+    assert keys == ("overview", "models", "run", "chat", "paint", "lab", "settings")
     for key in keys:
         window.show_page(key)
         assert window.current_page() == key
         assert window.page(key) is not None
+
+
+def test_paint_page_reports_missing_model(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """画图页：无引擎 / 无模型时给出安装与选择提示，生成失败不往后台派任务。"""
+    window.show_page("paint")
+    page = window.page("paint")
+    assert page.engine_tag.text() == "引擎未安装"
+    assert page.service_tag.text() == "服务未启动"
+    assert "sd-server" in page.preview_label.text()
+    shown: list[str] = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *_args, **_kw: shown.append("critical") or None)
+    page.generate_button.click()
+    assert shown == ["critical"]
+    assert page.status.text().startswith("失败：")
+    assert not page._running
+    page.close()
+
+
+def test_lab_page_drops_paint_card(window: Any) -> None:
+    """实验室只保留代理 / 视频 / 音频三张规划卡，画图已迁入独立页。"""
+    from fcmd.apps.llm._llmw_qt_lab import LAB_CARDS
+    from fcmd.gui.qt.widgets import Card
+
+    window.show_page("lab")
+    titles = [card.title_label.text() for card in window.page("lab").findChildren(Card)]
+    assert titles == ["代理", "视频", "音频"]
+    assert [title for title, _summary, _commands in LAB_CARDS] == ["代理", "视频", "音频"]
 
 
 def test_generated_pages_expose_core_widgets(window: Any) -> None:
@@ -180,6 +207,11 @@ def test_models_category_chips_switch_filter(window: Any, monkeypatch: pytest.Mo
         assert browse._filter_key == key
         assert browse._filter_query == query
         assert browse.filter_buttons[key].isChecked()
+    assert browse.valid_check.isChecked() is True
+    browse.valid_check.click()
+    assert browse._valid_only is False
+    browse.valid_check.click()
+    assert browse._valid_only is True
     assert submitted and submitted[0] == browse._search_work
 
 
@@ -911,7 +943,7 @@ def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll
 
-    for key in ("run", "settings", "lab"):
+    for key in ("run", "settings", "paint", "lab"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key

@@ -19,6 +19,7 @@ import pytest
 
 from fcmd.apps.llm._llmw_models import (
     DEFAULT_MODEL_FILTER,
+    MIN_ONLINE_MODEL_BYTES,
     MODEL_FILTERS,
     DownloadGuiSettings,
     dedupe_by_repo,
@@ -28,6 +29,7 @@ from fcmd.apps.llm._llmw_models import (
     filter_models,
     format_models_updated,
     group_same_name,
+    is_usable_item,
     local_row,
     matches_filter,
     merge_installed_items,
@@ -207,7 +209,7 @@ class TestBrowseHelpers:
         labels = [label for _key, label, _query in MODEL_FILTERS]
         assert len(set(keys)) == len(keys)
         assert DEFAULT_MODEL_FILTER in keys
-        assert labels == ["适合本机", "全部", "对话", "编程", "看图", "推理", "视频", "音频"]
+        assert labels == ["适合本机", "全部", "对话", "编程", "看图", "画图", "推理", "视频", "音频"]
 
     def test_filter_by_local_fit_keeps_fitting_and_unknown_sizes(self) -> None:
         items = (*self._items(), ModelSummary(repo="Qwen/unknown"))
@@ -220,9 +222,26 @@ class TestBrowseHelpers:
         high = ModelSummary(repo="Qwen/high", downloads=1_000_000, stars=10_000)
         assert 0 <= model_score(low) < model_score(high) <= 100
 
+    def test_is_usable_item_hides_fake_local_models(self) -> None:
+        """在线仓库有两段 repo 即有效；仅本地条目必须有可用权重或 .part。"""
+        assert is_usable_item(ModelSummary(repo="Qwen/demo"), set())
+        assert not is_usable_item(ModelSummary(repo="Unsloth"), set())
+        assert is_usable_item(ModelSummary(repo="Unsloth"), {"unsloth"})
+        # KB 级个人上传仓库隐藏；未知体积（0）保留，正常体积保留。
+        assert not is_usable_item(ModelSummary(repo="someone/junk", storage_size=4096), set())
+        assert not is_usable_item(ModelSummary(repo="someone/junk", storage_size=MIN_ONLINE_MODEL_BYTES - 1), set())
+        assert is_usable_item(ModelSummary(repo="Qwen/demo", storage_size=0), set())
+        assert is_usable_item(ModelSummary(repo="Qwen/demo", storage_size=MIN_ONLINE_MODEL_BYTES), set())
+
     def test_matches_filter_uses_tasks_tags_and_repo(self) -> None:
         assert matches_filter(ModelSummary(repo="Qwen/Coder", tasks=("代码生成",)), "code")
         assert matches_filter(ModelSummary(repo="Qwen/vl", tags=("vision",)), "vision")
+        assert matches_filter(ModelSummary(repo="black-forest-labs/FLUX.1-dev"), "paint")
+        assert matches_filter(ModelSummary(repo="Qwen/Qwen-Image", tasks=("文生图",)), "paint")
+        assert matches_filter(ModelSummary(repo="Qwen/Qwen-Image-2.1"), "paint")
+        assert matches_filter(ModelSummary(repo="MiniMax/MiniMax-H3-Image"), "paint")
+        assert matches_filter(ModelSummary(repo="HiDream/HiDream-I1"), "paint")
+        assert not matches_filter(ModelSummary(repo="Qwen/chat"), "paint")
         assert not matches_filter(ModelSummary(repo="Qwen/chat", tasks=("文本生成",)), "video")
         assert matches_filter(ModelSummary(repo="Qwen/chat"), "all")
 

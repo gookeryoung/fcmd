@@ -32,6 +32,7 @@ __all__ = [
     "CONTROL_HEIGHT_EXTRA",
     "MONO_FONT_CANDIDATES",
     "UI_FONT_CANDIDATES",
+    "active_theme",
     "apply_theme",
     "control_height",
     "load_theme",
@@ -73,6 +74,9 @@ _FAMILIES: weakref.WeakKeyDictionary[Any, tuple[str, ...]] = weakref.WeakKeyDict
 _RUNTIME_HEIGHTS: weakref.WeakKeyDictionary[Any, int] = weakref.WeakKeyDictionary()
 """已应用主题的应用实例 → :func:`apply_theme` 实测写入样式表的单行控件高度。"""
 
+_ACTIVE_THEMES: weakref.WeakKeyDictionary[Any, Theme] = weakref.WeakKeyDictionary()
+"""已应用主题的应用实例 → 当前生效的 Theme（图标重绘等运行时查询用）。"""
+
 
 def runtime_control_height(app: Any) -> int:
     """返回 :func:`apply_theme` 实际写进样式表的单行控件高度（逻辑像素）。
@@ -81,6 +85,24 @@ def runtime_control_height(app: Any) -> int:
     不能用纯估算的 :func:`control_height` 代替；主题未应用时返回 0。
     """
     return _RUNTIME_HEIGHTS.get(app, 0)
+
+
+def active_theme(app: Any = None) -> Theme:
+    """返回当前实际生效的主题。
+
+    与 :func:`load_theme` 的区别：后者读持久化配置，运行时切换主题后配置可能尚未
+    落盘（或测试里直接 ``apply_theme`` 了另一套主题），这里优先返回
+    :func:`apply_theme` 记录的真实主题。
+    """
+    if app is None:
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+    if app is not None:
+        theme = _ACTIVE_THEMES.get(app)
+        if theme is not None:
+            return theme
+    return load_theme()
 
 
 def control_height(theme: Theme) -> int:
@@ -732,6 +754,7 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     mono = pick_font_family(families, MONO_FONT_CANDIDATES)
     app.setStyle("Fusion")
     app.setPalette(_qt_palette(theme, app))
+    _ACTIVE_THEMES[app] = theme
     # 公共图标是按调色板着色的位图：切主题后必须按新正文色重绘，否则深色图标
     # 落在深色背景上会看不清。
     from fcmd.gui.qt.icons import refresh_icons

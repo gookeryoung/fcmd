@@ -177,17 +177,26 @@ def model_advice(tags: Sequence[str]) -> str:
     return "；".join(parts)
 
 
+def _is_diffusion_weight(path: Path) -> bool:
+    """是否属于扩散模型 / 组件权重（惰性导入，避免扫描模块循环依赖）。"""
+    try:
+        from fcmd.apps.llm._llmpaint import is_diffusion_weight
+    except ImportError:  # pragma: no cover - 循环导入兜底
+        return False
+    return is_diffusion_weight(path)
+
+
 def scan_models(
     root: Path | None = None,
     home: Path | None = None,
 ) -> list[ModelEntry]:
-    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj、按大小降序）。"""
+    """递归扫描模型目录，返回 GGUF 清单（忽略 mmproj 与扩散权重，按大小降序）。"""
     entries: list[ModelEntry] = []
     seen: set[str] = set()
     resolved_root = (root if root is not None else llmenv.models_dir(home=home)).expanduser()
     if resolved_root.is_dir():
         for path in resolved_root.rglob("*.gguf"):
-            if "mmproj" in path.name.lower():
+            if "mmproj" in path.name.lower() or _is_diffusion_weight(path):
                 continue
             try:
                 size = path.stat().st_size

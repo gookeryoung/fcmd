@@ -7,9 +7,11 @@ llmqnt / llmserve / llmdoctor / llmw 等）都从这里解析目录与配置，�
 配置文件为 ``${FCMD_HOME:-~/.fcmd}/serve/config.json``（``FCMD_CONFIG`` 可
 覆盖），权威键::
 
-    models_dir    str        唯一的模型目录
-    engines_root  str        llama.cpp 引擎根目录
-    serve_dir     str        服务状态与日志目录
+    models_dir       str     唯一的模型目录
+    engines_root     str     llama.cpp 引擎根目录
+    serve_dir        str     服务状态与日志目录
+    paint_dir        str     画图工作目录（状态 / 日志 / 出图）
+    sd_engines_root  str     stable-diffusion.cpp 引擎根目录
 
 模型目录只支持单一目录；下载的模型直接写入模型目录，转换等产物写入其中的
 固定子目录 :data:`PRODUCTS_DIRNAME`（``converted``）。设置页与所有 CLI 读取点
@@ -22,6 +24,8 @@ llmqnt / llmserve / llmdoctor / llmw 等）都从这里解析目录与配置，�
     模型目录：--models-root → FCMD_MODELS → models_dir → 默认目录
     引擎目录：               FCMD_ENGINES → engines_root → ${home}/engines/llama.cpp
     服务目录：               FCMD_SERVE_DIR → serve_dir  → ${home}/serve
+    画图目录：               FCMD_PAINT_DIR → paint_dir  → ${home}/paint
+    SD 引擎目录：            FCMD_SD_ENGINES → sd_engines_root → ${home}/engines/sd.cpp
 
 工作目录概念已移除：``work_dir`` 键、``FCMD_WORK`` 环境变量与 ``work_dir``
 API 都不再存在。
@@ -68,6 +72,8 @@ __all__ = [
     "load_config",
     "models_dir",
     "models_dir_extra",
+    "paint_dir",
+    "paint_engines_root",
     "path_key",
     "products_dir",
     "save_config",
@@ -404,3 +410,27 @@ def serve_dir(home: Path | None = None) -> Path:
     if isinstance(configured, str) and configured.strip():
         return Path(configured.strip()).expanduser()
     return home_dir(home) / "serve"
+
+
+def paint_dir(home: Path | None = None) -> Path:
+    """画图工作目录：状态、日志与默认出图目录。"""
+    if home is None:
+        override = _env_path("FCMD_PAINT_DIR")
+        if override is not None:
+            return override
+    configured = load_config(home).get("paint_dir")
+    if isinstance(configured, str) and configured.strip():
+        return Path(configured.strip()).expanduser()
+    return home_dir(home) / "paint"
+
+
+def paint_engines_root(home: Path | None = None) -> Path:
+    """stable-diffusion.cpp 引擎根目录（FCMD_SD_ENGINES → 配置 → 默认）。"""
+    if home is None:
+        override = _env_path("FCMD_SD_ENGINES")
+        if override is not None:
+            return override
+    configured = load_config(home).get("sd_engines_root")
+    if isinstance(configured, str) and configured.strip():
+        return Path(configured.strip()).expanduser()
+    return home_dir(home) / "engines" / "sd.cpp"

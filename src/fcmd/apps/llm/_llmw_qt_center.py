@@ -89,6 +89,7 @@ from fcmd.gui.qt.widgets import (
     hint_label,
     icon_button,
     link_button,
+    set_button_text,
 )
 from fcmd.gui.qt.workers import ProgressBridge, submit
 
@@ -129,6 +130,7 @@ class _InstalledSnapshot:
     quant_candidates: dict[str, tuple[Path, ...]]
     quant_tags: dict[str, tuple[str, ...]]
     quantized: dict[str, tuple[tuple[str, Path], ...]]
+    usable: set[str]
 
 
 class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
@@ -302,7 +304,7 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.download_button = button("继续下载" if incomplete else "下载")
             if installed and not incomplete:
                 self.download_button.setObjectName("InstalledButton")
-                self.download_button.setText("下载其他量化")
+                set_button_text(self.download_button, "下载其他量化", tone="success")
                 self.download_button.setToolTip("仓库已有本地文件；可继续选择其他量化（如 UD-Q4_K_XL）")
             elif incomplete:
                 self.download_button.setToolTip("继续下载未完成的文件（.part 保留）")
@@ -316,7 +318,7 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             header_row.addWidget(self.delete_button, 0)
         self.expand_button = icon_button("", tooltip="展开详细信息")
         self.expand_button.setIconSize(QSize(16, 16))
-        _set_icon(self.expand_button, "chevron-down")
+        _set_icon(self.expand_button, "chevron-down", tone="muted")
         self.expand_button.setAccessibleName("展开详情")
         self.expand_button.clicked.connect(lambda: self.toggleRequested.emit(self))
         header_row.addWidget(self.expand_button, 0)
@@ -336,7 +338,7 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         """展开 / 收起详情区（行高由页面按新尺寸更新）。"""
         self._expanded = expanded
         self.detail_host.setVisible(expanded)
-        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down")
+        _set_icon(self.expand_button, "chevron-up" if expanded else "chevron-down", tone="muted")
         self.expand_button.setToolTip("收起详细信息" if expanded else "展开详细信息")
         self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
@@ -346,9 +348,12 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             return
         self.download_button.setEnabled(not busy)
         if self._installed and not self._incomplete:
-            self.download_button.setText("下载中…" if active else "下载其他量化")
+            set_button_text(self.download_button, "下载中…" if active else "下载其他量化", tone="success")
             return
-        self.download_button.setText("下载中…" if active else ("继续下载" if self._incomplete else "下载"))
+        set_button_text(
+            self.download_button,
+            "下载中…" if active else ("继续下载" if self._incomplete else "下载"),
+        )
 
     def set_delete_state(self, *, busy: bool) -> None:
         """删除按钮随其它任务统一禁用，避免删除正在下载 / 转换的目录。"""
@@ -361,14 +366,14 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             return
         if self._converted:
             self.convert_button.setEnabled(False)
-            self.convert_button.setText("已转换")
+            set_button_text(self.convert_button, "已转换", tone="success")
             return
         if self._convert_blocked:
             self.convert_button.setEnabled(False)
-            self.convert_button.setText("不可转换")
+            set_button_text(self.convert_button, "不可转换")
             return
         self.convert_button.setEnabled(not busy)
-        self.convert_button.setText("转换中…" if active else "转换")
+        set_button_text(self.convert_button, "转换中…" if active else "转换")
 
     def set_quant_state(self, *, busy: bool, active: bool) -> None:
         """量化中禁用按钮；无候选时保持不可量化的禁用态。"""
@@ -376,17 +381,17 @@ class _ModelItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             return
         if self._quant_blocked:
             self.quant_button.setEnabled(False)
-            self.quant_button.setText("不可量化")
+            set_button_text(self.quant_button, "不可量化")
             return
         self.quant_button.setEnabled(not busy)
-        self.quant_button.setText("量化中…" if active else "量化")
+        set_button_text(self.quant_button, "量化中…" if active else "量化")
 
     def set_serve_state(self, *, busy: bool, running: bool) -> None:
         """快捷启动按钮：任务进行中禁用，已运行时显示「已启动」。"""
         if self.start_button is None:
             return
         self.start_button.setEnabled(not busy and not running)
-        self.start_button.setText("已启动" if running else "启动服务")
+        set_button_text(self.start_button, "已启动" if running else "启动服务")
 
 
 class _ModelDetailView(QWidget):  # pragma: no cover - Qt 控件
@@ -505,6 +510,8 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         owner = view.get("owner")
         self._owner_filter = owner if isinstance(owner, str) else ""
         self._group_same = view.get("group_same") is True
+        self._valid_only = view.get("valid_only") is not False
+        self._usable_repos: set[str] = set()
         self._detail_generation = 0
         self._searching = False
         self._list_cache = ModelListCache()
@@ -601,6 +608,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self.group_check.setChecked(self._group_same)
         self.group_check.toggled.connect(self._on_group_toggled)
         nav.addWidget(self.group_check)
+        self.valid_check = QCheckBox("隐藏无效", self)
+        self.valid_check.setToolTip("隐藏 KB 级空壳、无可用权重且无法继续下载、或 repo 非组织/模型 的无效条目")
+        self.valid_check.setChecked(self._valid_only)
+        self.valid_check.toggled.connect(self._on_valid_toggled)
+        nav.addWidget(self.valid_check)
         nav.addStretch(1)
         self._name_filter = ""
         self._filter_timer = QTimer(self)
@@ -716,6 +728,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         self._persist_view_options()
         self._render_results()
 
+    def _on_valid_toggled(self, checked: bool) -> None:
+        self._valid_only = checked
+        self._persist_view_options()
+        self._render_results()
+
     def _persist_view_options(self) -> None:
         """把列表视图选项写回 llmw.json，避免每次启动重新选择。"""
         self.state.settings.model_view = {
@@ -724,6 +741,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             "source": self._source_filter,
             "owner": self._owner_filter,
             "group_same": self._group_same,
+            "valid_only": self._valid_only,
         }
         self.state.persist()
 
@@ -816,7 +834,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         try:
             models = scan_local_models(_llmconfig.models_dir())
         except OSError:
-            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {}, {})
+            return _InstalledSnapshot({}, set(), {}, {}, {}, {}, {}, {}, set())
         installed = {
             model.repo.casefold(): ModelSummary(
                 repo=model.repo,
@@ -871,6 +889,7 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 quant_candidates[key] = tuple(full)
             if tags:
                 quant_tags[key] = tuple(tags)
+        usable = {model.repo.casefold() for model in models if model.weights > 0 or model.partial > 0}
         return _InstalledSnapshot(
             installed,
             set(installed),
@@ -880,12 +899,14 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
             quant_candidates,
             quant_tags,
             {repo: tuple(entries) for repo, entries in quantized.items()},
+            usable,
         )
 
     def _apply_installed(self, snapshot: _InstalledSnapshot) -> None:
         """套用扫描结果；若已有结果行则就地重绘已安装 / 可转换 / 可量化标志。"""
         self._installed_models = snapshot.models
         self._installed_repos = snapshot.repos
+        self._usable_repos = snapshot.usable
         self._partial_models = snapshot.partial
         self._convertible = snapshot.convertible
         self._convert_blocked = snapshot.blocked
@@ -1164,6 +1185,11 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
                 item for item in items if _llmw_models.model_owner(item).casefold() == self._owner_filter.casefold()
             )
         items = _llmw_models.filter_by_name(items, self._name_filter)
+        hidden = 0
+        if self._valid_only:
+            before = len(items)
+            items = tuple(item for item in items if _llmw_models.is_usable_item(item, self._usable_repos))
+            hidden = before - len(items)
         items = _llmw_models.sort_browse_items(items, self._installed_repos, self._filter_key, self._sort_key)
         same_name_counts: dict[str, int] = {}
         if self._group_same:
@@ -1242,6 +1268,10 @@ class _BrowsePanel(QWidget):  # pragma: no cover - Qt 控件
         local_view = self._source_filter == "installed"
         pages = 1 if local_view else max(1, math.ceil(result.total / result.page_size)) if result.total else 1
         matched = f" · 名称筛选 {len(items)} 条" if self._name_filter else ""
+        if hidden:
+            matched += f" · 已隐藏无效 {hidden} 个"
+        if hidden:
+            matched += f" · 已隐藏无效 {hidden} 个"
         source_label = self.source_combo.currentText()
         total_text = f"已下载 {len(items)} 个" if local_view else f"{result.page}/{pages} · 共 {result.total:,} 条"
         self.state.status(f"{filter_label} · {source_label} · {total_text}{matched}")

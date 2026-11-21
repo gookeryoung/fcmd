@@ -55,8 +55,10 @@ __all__ = [
     "process_alive",
     "process_create_time",
     "read_log",
+    "spawn_flags",
     "start_server",
     "stop_server",
+    "terminate_process",
 ]
 
 #: llama.cpp ``/metrics`` 中与实时性能相关的指标名
@@ -288,6 +290,16 @@ def _creation_flags() -> int:
         return 0
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     return flags | getattr(subprocess, "DETACHED_PROCESS", 0)
+
+
+def spawn_flags() -> int:
+    """公开包装：子进程创建标志（其他服务复用）。"""
+    return _creation_flags()
+
+
+def terminate_process(pid: int, create_time: float, timeout: float = 10.0) -> None:
+    """公开包装：终止进程树（其他服务复用）。"""
+    _terminate(pid, create_time, timeout)
 
 
 def _default_popen(argv: list[str], **kwargs: Any) -> Any:

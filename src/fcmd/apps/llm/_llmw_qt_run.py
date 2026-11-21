@@ -55,7 +55,7 @@ from fcmd.apps.llm.llmbase import (
     human_size,
 )
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, ChoiceGroup, Collapsible, FormGrid, PageScroll, button
+from fcmd.gui.qt.widgets import Card, ChoiceGroup, Collapsible, FormGrid, PageScroll, button, set_button_text
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -784,7 +784,11 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         selected = self._selected_service_state()
         running = selected is not None and llmserve.process_alive(selected.pid, selected.create_time)
         has_model = self.state.selected_model is not None or bool(self.state.models)
-        self.model_action_button.setText("停止服务" if running else "启动服务")
+        set_button_text(
+            self.model_action_button,
+            "停止服务" if running else "启动服务",
+            tone="danger" if running else "on_accent",
+        )
         self.model_action_button.setObjectName("RunDanger" if running else "RunPrimary")
         self.model_action_button.style().unpolish(self.model_action_button)
         self.model_action_button.style().polish(self.model_action_button)

@@ -48,14 +48,17 @@ __all__ = [
     "check_engine",
     "current_engine_tag",
     "detect_gpu",
+    "download_file",
     "engine_asset_names",
     "engine_env",
     "engine_exe_name",
+    "extract_zip",
     "fetch_engine_releases",
     "inspect_zip",
     "inspect_zips",
     "install_engine",
     "list_engines",
+    "mirror_candidates",
     "parse_engine_releases",
     "probe_version",
     "quantize_exe",
@@ -229,6 +232,11 @@ def _mirror_candidates(url: str) -> list[str]:
     candidates = [f"{prefix}{url}" for prefix in _mirror_prefixes()]
     candidates.append(url)
     return list(dict.fromkeys(candidates))
+
+
+def mirror_candidates(url: str) -> list[str]:
+    """公开包装：GitHub 地址的镜像候选（国内优先，直连兜底）。"""
+    return _mirror_candidates(url)
 
 
 def _host_arch() -> str:
@@ -688,6 +696,21 @@ def _extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:
     finally:
         if remove:
             archive.unlink(missing_ok=True)
+
+
+def download_file(
+    url: str,
+    dest: Path,
+    opener: Opener | None = None,
+    on_progress: ProgressCallback | None = None,
+) -> int:
+    """公开包装：下载 URL 到文件（GitHub 地址按国内镜像优先、失败回退直连）。"""
+    return _download(url, dest, opener, on_progress)
+
+
+def extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:
+    """公开包装：解压 zip 到目标目录（其他引擎安装器复用）。"""
+    _extract_zip(archive, target, remove=remove)
 
 
 def _install_from_archives(tag: str, archives: Sequence[Path], target: Path) -> EngineInfo:

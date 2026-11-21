@@ -17,6 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from fcmd.apps.llm import llmbase, llmserve
+from fcmd.apps.llm._llmpaint_server import PaintState
 from fcmd.apps.llm._llmw_hardware import HardwareSnapshot
 from fcmd.apps.llm._llmw_monitor import LoadSample
 from fcmd.apps.llm._llmw_qt_center import _ModelDetailView, _ModelItemRow, quantize_menu_items
@@ -26,6 +27,21 @@ from fcmd.apps.llm._llmw_qt_overview import (
     recommendation_perf_html,
     sample_once,
 )
+from fcmd.apps.llm._llmw_qt_paint import (
+    command_preview,
+    components_from_settings,
+    default_settings,
+    format_extra_args,
+    format_progress,
+    model_roots,
+    output_dir,
+    parse_extra_args,
+    parse_paint_settings,
+    request_from_settings,
+    service_label,
+    size_preset,
+)
+from fcmd.apps.llm._llmw_qt_paint_engine import variant_note
 from fcmd.apps.llm._llmw_qt_run import (
     build_plan_from,
     memory_guard,
@@ -220,6 +236,8 @@ def test_model_item_row_expands_inline_detail() -> None:
     assert [label.text() for label in owner_labels] == ["Qwen"]
     installed_row = _ModelItemRow(ModelSummary(repo="Qwen/demo"), installed=True, deletable=True)
     assert installed_row.download_button.text() == "下载其他量化"
+    assert installed_row.download_button.property("fcmdIconName") == "download"
+    assert installed_row.download_button.property("fcmdIconTone") == "success"
     assert installed_row.delete_button is not None
     assert installed_row.delete_button.text() == "删除"
     local_only = _ModelItemRow(ModelSummary(repo="Qwen3.8-27B"), installed=True, downloadable=False)
@@ -473,3 +491,155 @@ def test_recommendation_row_uses_perf_tag() -> None:
     tags = [label for label in row.findChildren(QLabel) if label.objectName() == "StatusTag"]
     assert [tag.text() for tag in tags] == ["预测"]
     assert tags[0].property("tone") == "accent"
+
+
+def test_paint_settings_defaults_and_coercion() -> None:
+    """画图页设置：非法类型回退默认，数值夹到合法区间，字符串去空白。"""
+    assert parse_paint_settings(None) == default_settings()
+    settings = parse_paint_settings(
+        {
+            "model": "  /models/sdxl.safetensors  ",
+            "width": 100,
+            "height": 9999,
+            "steps": 0,
+            "cfg_scale": 99,
+            "seed": -5,
+            "batch": 99,
+            "port": 0,
+            "auto_start": False,
+            "vae_tiling": "yes",
+            "extra_args": "--clip-on-cpu --foo bar",
+            "mode": " diffusion ",
+        }
+    )
+    assert settings["model"] == "/models/sdxl.safetensors"
+    assert settings["width"] == 100
+    assert settings["height"] == 4096
+    assert settings["steps"] == 1
+    assert settings["cfg_scale"] == 30.0
+    assert settings["seed"] == -1
+    assert settings["batch"] == 8
+    assert settings["port"] == 1
+    assert settings["auto_start"] is False
+    assert settings["vae_tiling"] is False
+    assert settings["extra_args"] == ("--clip-on-cpu", "--foo", "bar")
+    assert settings["mode"] == "diffusion"
+    assert parse_paint_settings({"extra_args": ["--a", "", 1]})["extra_args"] == ("--a",)
+
+
+def test_paint_extra_args_roundtrip() -> None:
+    """额外参数：双引号保留含空格的值，写回时再补引号。"""
+    args = parse_extra_args('--foo "C:\\my models\\vae.safetensors" --bar')
+    assert args == ("--foo", "C:\\my models\\vae.safetensors", "--bar")
+    assert format_extra_args(args) == '--foo "C:\\my models\\vae.safetensors" --bar'
+    assert parse_extra_args("  ") == ()
+    assert format_extra_args(()) == ""
+
+
+def test_paint_components_and_request_from_settings() -> None:
+    """设置 → 组件 / 请求：路径扩展、seed=-1 与采样器原样传递。"""
+    settings = parse_paint_settings(
+        {
+            "model": "/models/flux1-dev.safetensors",
+            "vae": "/models/ae.safetensors",
+            "t5xxl": "/models/t5xxl.safetensors",
+            "mode": "auto",
+            "offload_to_cpu": True,
+            "extra_args": "--clip-on-cpu",
+            "prompt": "a fox",
+            "negative": "blurry",
+            "width": 768,
+            "height": 512,
+            "steps": 20,
+            "cfg_scale": 3.5,
+            "seed": -1,
+            "sampler": "euler",
+            "scheduler": "karras",
+            "batch": 2,
+        }
+    )
+    components = components_from_settings(settings)
+    assert components.model == Path("/models/flux1-dev.safetensors")
+    assert components.vae == Path("/models/ae.safetensors")
+    assert components.t5xxl == Path("/models/t5xxl.safetensors")
+    assert components.offload_to_cpu is True
+    assert components.extra_args == ("--clip-on-cpu",)
+
+    request = request_from_settings(settings)
+    assert (request.prompt, request.negative) == ("a fox", "blurry")
+    assert (request.width, request.height) == (768, 512)
+    assert (request.steps, request.cfg_scale) == (20, 3.5)
+    assert (request.seed, request.sampler, request.scheduler, request.batch) == (-1, "euler", "karras", 2)
+
+
+def test_paint_command_preview_uses_family_and_flags() -> None:
+    """命令预览：FLUX 走 --diffusion-model，SDXL 走 -m，并带上优化开关与端口。"""
+    flux = parse_paint_settings(
+        {
+            "model": "/models/flux1-dev.safetensors",
+            "vae": "/models/ae.safetensors",
+            "port": 4321,
+            "vae_tiling": True,
+            "extra_args": "--clip-on-cpu",
+        }
+    )
+    preview = command_preview(flux)
+    assert "--listen-port 4321" in preview
+    assert "--diffusion-model" in preview
+    assert "--vae" in preview
+    assert "--vae-tiling" in preview
+    assert "--clip-on-cpu" in preview
+
+    sdxl = command_preview(parse_paint_settings({"model": "/models/sdxl-base.safetensors"}))
+    # 路径在 Windows 上会规范化为反斜杠并由 shlex 加引号，这里只校验槽位与文件名
+    assert "-m " in sdxl
+    assert "sdxl-base.safetensors" in sdxl
+    assert "--diffusion-model" not in sdxl
+
+
+def test_paint_service_label_states() -> None:
+    """服务标签覆盖未启动 / 运行中 / 残留状态三种语义色。"""
+    state = PaintState(
+        pid=1,
+        create_time=0.0,
+        host="127.0.0.1",
+        port=1234,
+        engine_tag="master-1106-532d2c1",
+        exe="sd-server",
+        model="/models/sdxl.safetensors",
+        components={},
+        fingerprint=(),
+        log="sd-server.log",
+        started_at="2026-01-01T00:00:00",
+    )
+    assert service_label(None, False) == ("服务未启动", "muted")
+    assert service_label(state, True) == ("运行中 · master-1106-532d2c1", "success")
+    assert service_label(state, False) == ("已退出（残留状态）", "warning")
+
+
+def test_paint_format_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """进度文本、尺寸预设、扫描根与出图目录的默认 / 覆盖行为。"""
+    assert format_progress({"progress": 0.42}) == "42%"
+    assert format_progress({"progress": 42}) == "42%"
+    assert format_progress({}) == ""
+    assert format_progress(None) == ""
+
+    assert size_preset(512, 512) == "512 × 512"
+    assert size_preset(832, 1216) == "832 × 1216（竖）"
+    assert size_preset(520, 512) == "自定义"
+
+    monkeypatch.setenv("FCMD_MODELS", str(tmp_path / "models"))
+    monkeypatch.setenv("FCMD_PAINT_DIR", str(tmp_path / "paint"))
+    assert model_roots({}) == [tmp_path / "models", tmp_path / "models" / "converted"]
+    assert model_roots({"model_dir": str(tmp_path / "extra")}) == [tmp_path / "extra"]
+    assert output_dir({}) == tmp_path / "paint" / "out"
+    assert output_dir({"output_dir": str(tmp_path / "mine")}) == tmp_path / "mine"
+
+
+def test_paint_engine_variant_note() -> None:
+    """变体说明按前缀归并（cuda12 / rocm-6.0 与自定义构建）。"""
+    assert "NVIDIA" in variant_note("cuda12")
+    assert "兼容性最广" in variant_note("vulkan")
+    assert "ROCm" in variant_note("rocm-6.0")
+    assert "兜底" in variant_note("cpu")
+    assert variant_note("metal") == "自定义构建"

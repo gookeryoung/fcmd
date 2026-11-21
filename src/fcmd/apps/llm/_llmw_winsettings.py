@@ -2,8 +2,8 @@
 
 Qt 窗口（``_llmw_qt_window.py``）使用这一份设置模型，文件固定为
 ``${FCMD_HOME:-~/.fcmd}/ui/llmw.json``，保存窗口位置、硬件缓存、性能实测、
-下载参数、按模型保存的启动参数、上次启动的量化精度与模型列表更新时间。解析与
-校验都是纯逻辑，不依赖任何 GUI 工具包。
+下载参数、按模型保存的启动参数、上次启动的量化精度、画图页设置与模型列表
+更新时间。解析与校验都是纯逻辑，不依赖任何 GUI 工具包。
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ class LlmSettings:
     model_view: dict[str, Any] | None = None
     chat_history: list[dict[str, Any]] | None = None
     chat_active: int = 0
+    paint: dict[str, Any] | None = None
 
 
 def config_path() -> Path:
@@ -130,6 +131,9 @@ def load_settings(path: Path | None = None) -> LlmSettings:  # noqa: PLR0912 - �
         chat_active = raw.get("chat_active")
         if isinstance(chat_active, int) and not isinstance(chat_active, bool) and chat_active >= 0:
             settings.chat_active = chat_active
+        paint = raw.get("paint")
+        if isinstance(paint, dict):
+            settings.paint = paint
     return settings
 
 
@@ -152,6 +156,7 @@ def save_settings(settings: LlmSettings, path: Path | None = None) -> None:
             "model_view": settings.model_view,
             "chat_history": settings.chat_history,
             "chat_active": settings.chat_active,
+            "paint": settings.paint,
         },
         path or config_path(),
     )

@@ -217,3 +217,35 @@ def test_page_icon_is_shown_and_collapses_to_icon_only() -> None:
         assert button.text() == "对话"
     finally:
         nav.deleteLater()
+
+
+def _icon_color(button: Any) -> str:
+    image = button.icon().pixmap(16, 16).toImage()
+    for y in range(image.height()):
+        for x in range(image.width()):
+            color = image.pixelColor(x, y)
+            if color.alpha() == 255:
+                return color.name()
+    return ""
+
+
+def test_page_icon_tone_follows_selection() -> None:
+    """页图标与页名同色：选中页 accent，其余 muted。"""
+    from fcmd.gui.qt.theme import active_theme
+
+    QApplication.instance() or QApplication([])
+    nav = SidebarNav(title="LLM")
+    try:
+        nav.add("overview", "概览", icon="overview")
+        nav.add("run", "运行", icon="run")
+        palette = active_theme().palette
+        overview = nav.button("overview")
+        run = nav.button("run")
+        assert overview is not None and run is not None
+        assert _icon_color(overview) == palette.accent
+        assert _icon_color(run) == palette.muted
+        nav.select("run")
+        assert _icon_color(run) == palette.accent
+        assert _icon_color(overview) == palette.muted
+    finally:
+        nav.deleteLater()
