@@ -20,8 +20,8 @@
 
 画图功能拆分：``llmpaint`` 为纯逻辑（资产识别 / 参数构建 / 结果处理），
 ``_llmpaint_engine`` 管 sd.cpp 引擎安装与切换，``_llmpaint_server`` 管
-``sd-server`` 状态与 HTTP 客户端，``_llmw_qt_paint`` / ``_llmw_qt_paint_engine``
-为画图页与引擎对话框。
+``sd-server`` 状态与 HTTP 客户端，``_llmw_qt_paint`` 为对话页的画图配置分区与服务调用，
+``_llmw_qt_paint_engine`` 为运行页打开的引擎安装对话框。
 """
 
 from __future__ import annotations

@@ -33,9 +33,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import _llmtune, _llmw_recommend, llmbase, llmenv, llmmodel, llmserve
+from fcmd.apps.llm import (
+    _llmpaint_engine,
+    _llmpaint_server,
+    _llmtune,
+    _llmw_recommend,
+    llmbase,
+    llmenv,
+    llmmodel,
+    llmserve,
+)
 from fcmd.apps.llm._llmquant import matches_profile
 from fcmd.apps.llm._llmw_monitor import _busy_advice, _fit_advice, _probe_web_ui
+from fcmd.apps.llm._llmw_qt_paint import service_label as paint_service_label
 from fcmd.apps.llm._llmw_ui import service_name_from_model
 from fcmd.apps.llm.llmbase import (
     DEFAULT_API_KEY,
@@ -57,7 +67,17 @@ from fcmd.apps.llm.llmbase import (
     human_size,
 )
 from fcmd.gui.qt import theme as _qt_theme
-from fcmd.gui.qt.widgets import Card, ChoiceGroup, Collapsible, FormGrid, PageScroll, button, set_button_text
+from fcmd.gui.qt.widgets import (
+    Card,
+    ChoiceGroup,
+    Collapsible,
+    FormGrid,
+    PageScroll,
+    StatusTag,
+    button,
+    hint_label,
+    set_button_text,
+)
 from fcmd.gui.qt.workers import submit
 
 if TYPE_CHECKING:
@@ -433,6 +453,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.on_models_changed()
         self._refresh_command_preview()
         self._refresh_action_states()
+        self.refresh_paint()
 
     # ------------------------------------------------------------------ #
     # 构建
@@ -528,7 +549,62 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.params_card.body.addLayout(params_actions)
         layout.addWidget(self.params_card)
 
+        self.paint_card = Card("画图引擎（sd.cpp）")
+        paint_row = QHBoxLayout()
+        paint_row.setContentsMargins(0, 0, 0, 0)
+        paint_row.setSpacing(8)
+        self.paint_engine_tag = StatusTag("引擎检查中…", parent=self.paint_card)
+        self.paint_service_tag = StatusTag("服务未启动", parent=self.paint_card)
+        paint_row.addWidget(self.paint_engine_tag)
+        paint_row.addWidget(self.paint_service_tag)
+        paint_row.addStretch(1)
+        self.paint_refresh_button = button("刷新", kind="ghost", tooltip="重新读取画图引擎与 sd-server 状态")
+        self.paint_refresh_button.clicked.connect(self.refresh_paint)
+        self.paint_install_button = button("安装引擎…", kind="ghost")
+        self.paint_install_button.setToolTip("下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录")
+        self.paint_install_button.clicked.connect(self._install_paint_engine)
+        paint_row.addWidget(self.paint_refresh_button)
+        paint_row.addWidget(self.paint_install_button)
+        self.paint_card.body.addLayout(paint_row)
+        self.paint_card.body.addWidget(
+            hint_label(
+                "画图在「对话」页勾选「画图」后用提示词出图；模型 / 采样 / 输出目录在对话页 ⚙ →「画图」。",
+                wrap=True,
+            )
+        )
+        layout.addWidget(self.paint_card)
+
         layout.addStretch(1)
+
+    # ------------------------------------------------------------------ #
+    # 画图引擎
+    # ------------------------------------------------------------------ #
+    def refresh_paint(self) -> None:
+        """刷新 sd.cpp 引擎 / 画图服务状态（只读本地目录与状态文件）。"""
+        try:
+            engines = _llmpaint_engine.list_sd_engines()
+            current = _llmpaint_engine.current_sd_tag()
+        except OSError:
+            engines, current = [], None
+        if not engines:
+            self.paint_engine_tag.set_status("引擎未安装", "warning")
+        else:
+            tag = current if current and any(engine.tag == current for engine in engines) else engines[0].tag
+            self.paint_engine_tag.set_status(f"引擎 {tag}", "accent")
+        state, alive = _llmpaint_server.status()
+        self.paint_service_tag.set_status(*paint_service_label(state, alive))
+
+    def _install_paint_engine(self) -> None:
+        """打开画图引擎安装对话框；安装完成后刷新状态。"""
+        from fcmd.apps.llm._llmw_qt_paint_engine import PaintEngineDialog
+
+        dialog = PaintEngineDialog(self)
+        dialog.installed.connect(self._paint_engine_installed)
+        dialog.exec()
+
+    def _paint_engine_installed(self, tag: str) -> None:
+        self.refresh_paint()
+        self.state.status(f"画图引擎已就绪：{tag}")
 
     def _wire(self) -> None:
         self.kv_choice.changed.connect(lambda _key: self._mark_manual("kv"))

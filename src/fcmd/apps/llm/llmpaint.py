@@ -1,7 +1,7 @@
 """llmpaint - 本地文生图（stable-diffusion.cpp）。
 
 独立命令：``fcmd llmpaint <models|gen|serve|stop|status|engine-*>``。
-与 ``llmw`` 画图页共用 ``_llmpaint*`` 的纯逻辑、引擎安装与服务管理。
+与 ``llmw`` 对话页的画图能力共用 ``_llmpaint*`` 的纯逻辑、引擎安装与服务管理。
 """
 
 from __future__ import annotations

@@ -1,9 +1,10 @@
 """llmw 的 Qt 主窗口与入口。
 
-窗口只做「壳」的工作：创建共享状态、组装七个页面、把状态信号接到状态栏与
-跨页动作，其余逻辑都在各页模块。页面按需构建（模型 / 对话 / 画图 / 实验室 /
+窗口只做「壳」的工作：创建共享状态、组装六个页面、把状态信号接到状态栏与
+跨页动作，其余逻辑都在各页模块。页面按需构建（模型 / 对话 / 实验室 /
 设置首屏不可见），概览、运行两页建窗即构建：前者要展示硬件缓存并持续采样，
-运行页要出模型列表。
+运行页要出模型列表。画图不再是独立页：在对话页勾选「画图」出图，
+画图引擎的安装 / 状态在运行页。
 
 服务日志与性能测试不占分页，从顶部「帮助」菜单以非模态窗口打开；两者都复用
 共享状态（日志缓冲 / 运行中服务），关窗不丢历史与结果。
@@ -41,8 +42,7 @@ PAGES = (
     ("overview", "概览", "系统信息、实时性能与智能推荐", "overview"),
     ("models", "模型", "GGUF 模型与显存适配", "models"),
     ("run", "运行", "档位、上下文与启动参数", "run"),
-    ("chat", "对话", "多轮流式对话", "chat"),
-    ("paint", "画图", "本地扩散模型文生图（sd.cpp）", "paint"),
+    ("chat", "对话", "多轮流式对话 / 画图（sd.cpp）", "chat"),
     ("lab", "实验室", "代理 / 视频 / 音频规划", "lab"),
     ("settings", "设置", "存储、引擎、下载与转换", "settings"),
 )
@@ -57,7 +57,7 @@ def create_application(argv: Sequence[str] | None = None) -> QApplication:
 
 
 class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
-    """llmw 主窗口：共享状态 + 七个页面 + 状态栏 / 日志通道。"""
+    """llmw 主窗口：共享状态 + 六个页面 + 状态栏 / 日志通道。"""
 
     def __init__(self, settings_path: Path | None = None) -> None:
         self.state = LlmState(settings_path)
@@ -76,7 +76,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self.overview = OverviewPage(self.state)
         self.run_page = RunPage(self.state)
         self._chat_page: Any = None
-        self._paint_page: Any = None
         self._models_page: Any = None
         self._settings_page: Any = None
         self._log_dialog: Any = None
@@ -161,7 +160,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             "models": self._build_models_page,
             "run": lambda: self.run_page,
             "chat": self._build_chat_page,
-            "paint": self._build_paint_page,
             "lab": self._build_lab_page,
             "settings": self._build_settings_page,
         }
@@ -185,13 +183,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         from fcmd.apps.llm._llmw_qt_lab import LabPage
 
         return LabPage(self.state)
-
-    def _build_paint_page(self) -> QWidget:
-        from fcmd.apps.llm._llmw_qt_paint import PaintPage
-
-        page = PaintPage(self.state)
-        self._paint_page = page
-        return page
 
     def _build_settings_page(self) -> QWidget:
         from fcmd.apps.llm._llmw_qt_settings import SettingsPage
@@ -226,8 +217,7 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             self._settings_page.refresh()
         if self._chat_page is not None:
             self._chat_page.refresh_services()
-        if self._paint_page is not None:
-            self._paint_page.refresh_assets()
+            self._chat_page.refresh_paint_assets()
 
     def _persist_sidebar_collapsed(self, collapsed: bool) -> None:
         """折叠状态属于窗口设置，随 ``llmw.json`` 一起持久化。"""
@@ -257,8 +247,6 @@ class LlmWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return False
         if self._chat_page is not None:
             self._chat_page.close()
-        if self._paint_page is not None:
-            self._paint_page.close()
         if self._log_dialog is not None:
             self._log_dialog.close()
         if self._bench_dialog is not None:

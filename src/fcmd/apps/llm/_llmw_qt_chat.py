@@ -15,12 +15,23 @@ Qt 侧只负责把回调转成信号与富文本追加。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QKeyEvent, QPainter, QPen, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QKeyEvent,
+    QPainter,
+    QPen,
+    QTextCharFormat,
+    QTextCursor,
+    QTextImageFormat,
+)
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFrame,
@@ -37,8 +48,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import llmenv
+from fcmd.apps.llm import _llmpaint, llmenv
 from fcmd.apps.llm._llmw_chat import _CUSTOM, _first_available, _state_available
+from fcmd.apps.llm._llmw_qt_paint import (
+    PaintConfigSection,
+    components_from_settings,
+    generate_images,
+    parse_paint_settings,
+    request_from_settings,
+    settings_summary,
+)
 from fcmd.apps.llm.llmbase import (
     DEFAULT_ALIAS,
     DEFAULT_API_KEY,
@@ -54,13 +73,14 @@ from fcmd.gui import theme as _guitheme
 from fcmd.gui.qt.icons import set_icon as _set_icon
 from fcmd.gui.qt.widgets import (
     FormGrid,
+    PageScroll,
     StatusTag,
     button,
     hint_label,
     icon_button,
     make_splitter,
 )
-from fcmd.gui.qt.workers import submit
+from fcmd.gui.qt.workers import submit, submit_daemon
 
 if TYPE_CHECKING:
     from fcmd.apps.llm._llmw_qt_state import LlmState
@@ -287,21 +307,25 @@ class _ChatModelCombo(QComboBox):  # pragma: no cover - Qt 控件
 
 
 class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
-    """模型与生成参数的独立配置窗口。
+    """模型、生成参数与画图配置的独立窗口。
 
-    对话页本身只保留「模型下拉 + ⚙」入口，配置项不占正文 / 对话框区域；
+    对话页本身只保留「模型下拉 + ⚙」入口，对话与画图配置都不占正文区域；
     修改即时生效，关闭窗口不需要额外保存步骤。
     """
 
     def __init__(self, owner: ChatPage) -> None:
         super().__init__(owner)
         self.setWindowTitle("模型与生成配置")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(620)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
+        scroll = PageScroll(self, margins=(0, 0, 4, 0))
+        scroll.setMinimumHeight(520)
+        layout.addWidget(scroll, 1)
+        body = scroll.body
 
-        layout.addWidget(_dialog_title("模型配置", self))
+        body.addWidget(_dialog_title("模型配置", self))
         service_row = QHBoxLayout()
         service_row.setSpacing(8)
         owner.service_combo = QComboBox(self)
@@ -311,7 +335,7 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         service_row.addWidget(owner.service_tag)
         owner.refresh_button = button("刷新", kind="ghost")
         service_row.addWidget(owner.refresh_button)
-        layout.addLayout(service_row)
+        body.addLayout(service_row)
 
         connection_form = FormGrid(self)
         owner.model_edit = QLineEdit(DEFAULT_ALIAS, self)
@@ -320,9 +344,9 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         connection_form.add_row("模型", owner.model_edit)
         connection_form.add_row("服务地址", owner.url_edit)
         connection_form.add_row("API Key", owner.api_key_edit)
-        layout.addWidget(connection_form)
+        body.addWidget(connection_form)
 
-        layout.addWidget(_dialog_title("生成参数", self))
+        body.addWidget(_dialog_title("生成参数", self))
         settings_form = FormGrid(self)
         owner.system_edit = QLineEdit("", self)
         owner.system_edit.setPlaceholderText("系统提示（留空不发送）")
@@ -330,15 +354,25 @@ class _ChatConfigDialog(QDialog):  # pragma: no cover - Qt 控件
         owner.temperature_edit = QLineEdit("0.7", self)
         settings_form.add_row("系统提示", owner.system_edit)
         settings_form.add_pair("输出上限", owner.max_tokens_edit, "temperature", owner.temperature_edit)
-        layout.addWidget(settings_form)
+        body.addWidget(settings_form)
 
-        layout.addWidget(hint_label("修改即时生效；对话历史按各自对话保存的模型与参数继续。", wrap=True))
+        # 画图配置（sd.cpp）合并进对话配置：对话页勾选「画图」即按这里的模型出图。
+        body.addWidget(_dialog_title("画图（sd.cpp）", self))
+        owner.paint_section = PaintConfigSection(owner.paint_settings(), self)
+        owner.paint_section.changed.connect(owner._on_paint_settings_changed)
+        body.addWidget(owner.paint_section)
+        body.addStretch(1)
+
+        layout.addWidget(
+            hint_label("修改即时生效；对话历史按各自对话保存的模型与参数继续，画图配置仅此一处。", wrap=True)
+        )
         footer = QHBoxLayout()
         footer.addStretch(1)
         close_button = button("关闭")
         close_button.clicked.connect(self.close)
         footer.addWidget(close_button)
         layout.addLayout(footer)
+        self.resize(660, 780)
 
 
 class ChatPage(QWidget):  # pragma: no cover - Qt 控件
@@ -351,6 +385,11 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._running = False
         self._services: list[tuple[str, ServeState]] = []
         self._manual_choice = False
+        self._paint_settings = parse_paint_settings(getattr(self.state.settings, "paint", None))
+        self._paint_save_timer = QTimer(self)
+        self._paint_save_timer.setSingleShot(True)
+        self._paint_save_timer.setInterval(400)
+        self._paint_save_timer.timeout.connect(self._persist_paint)
         self._bridge = _ChatBridge(self)
         self._bridge.delta.connect(self._append_delta)
         self._bridge.reasoning.connect(self._append_reasoning)
@@ -495,6 +534,11 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         _set_icon(self.config_button, "settings", tone="muted")
         self.config_button.setAccessibleName("模型与生成配置")
         buttons.addWidget(self.config_button, 0)
+        # 画图启用项：勾选后发送即按画图配置出图，配置在 ⚙ 里。
+        self.paint_check = QCheckBox("画图", composer)
+        self.paint_check.setToolTip("用提示词生成图片（sd.cpp）；模型 / 采样 / 输出在 ⚙ 配置里")
+        self.paint_check.toggled.connect(self._on_paint_toggled)
+        buttons.addWidget(self.paint_check, 0)
         buttons.addStretch(1)
         # 工具行与模型下拉统一 34px 高；发送 / 停止合并到同一个图标按钮。
         self.send_button = icon_button("", tooltip="发送（Ctrl+Enter）")
@@ -514,6 +558,8 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self.model_edit.textChanged.connect(lambda _text: self._sync_model_combo())
         self.config_button.clicked.connect(self.open_config)
         self.send_button.clicked.connect(self._on_send_or_stop)
+        self.paint_check.setChecked(bool(self._paint_settings.get("enabled")))
+        self._sync_paint_placeholder()
         self._refresh_history()
         self._render_conversation()
 
@@ -730,7 +776,10 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _render_conversation(self) -> None:
         self.transcript.clear()
         for kind, text in self._conversation().blocks:
-            self._insert_text(text, kind)
+            if kind == "image":
+                self._insert_image(Path(text))
+            else:
+                self._insert_text(text, kind)
 
     def delete_conversation(self) -> None:
         """删除当前选中的对话；删掉最后一个时回到空白新对话。"""
@@ -802,12 +851,15 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     # 发送 / 停止
     # ------------------------------------------------------------------ #
     def send(self) -> None:
-        """发送一轮提问，流式把回复写入当前对话。"""
+        """发送一轮提问：勾选「画图」时按画图配置出图，否则流式对话。"""
         if self._running:
             return
         prompt = self.input_edit.toPlainText().strip()
         if not prompt:
             self._set_status("提示词不能为空")
+            return
+        if self.paint_check.isChecked():
+            self._send_paint(prompt)
             return
         try:
             endpoint = endpoint_from_form(self.url_edit.text(), self.api_key_edit.text(), self.model_edit.text())
@@ -835,13 +887,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         self._append_text(f"你：{prompt}\n", "user")
         conversation.assistant_started = False
         conversation.reasoning_started = False
-        self._running = True
-        self._sync_send_button()
-        self.history_list.setEnabled(False)
-        self.new_chat_button.setEnabled(False)
-        self.delete_chat_button.setEnabled(False)
-        self.clear_chats_button.setEnabled(False)
-        self._set_status("正在生成…")
+        self._begin_generation("正在生成…")
         submit(
             conversation.session.ask,
             prompt,
@@ -850,6 +896,88 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
             on_done=self._bridge.done.emit,
             on_error=self._bridge.failed.emit,
         )
+
+    # ------------------------------------------------------------------ #
+    # 画图
+    # ------------------------------------------------------------------ #
+    def paint_settings(self) -> dict[str, Any]:
+        """当前画图配置（含启用标记）：弹窗已建好时以控件为准，否则用已保存值。"""
+        section = getattr(self, "paint_section", None)
+        settings = section.settings() if section is not None else dict(self._paint_settings)
+        enabled = self.paint_check.isChecked() if hasattr(self, "paint_check") else bool(settings.get("enabled"))
+        settings["enabled"] = enabled
+        self._paint_settings = settings
+        return settings
+
+    def _on_paint_toggled(self, checked: bool) -> None:
+        """「画图」勾选框：切换输入提示并持久化启用状态。"""
+        self._paint_settings = {**self._paint_settings, "enabled": checked}
+        self._sync_paint_placeholder()
+        self._persist_paint()
+        self._set_status("已启用画图：发送提示词即生成图片" if checked else "已关闭画图：发送即对话")
+
+    def _sync_paint_placeholder(self) -> None:
+        if self.paint_check.isChecked():
+            self.input_edit.setPlaceholderText("输入画图提示词，Ctrl+Enter 生成图片")
+        else:
+            self.input_edit.setPlaceholderText("输入问题，Ctrl+Enter 发送")
+
+    def _on_paint_settings_changed(self) -> None:
+        """配置弹窗里的画图参数变化：延迟写盘，避免逐字符 IO。"""
+        self._paint_settings = self.paint_section.settings()
+        self._paint_save_timer.start()
+
+    def _persist_paint(self) -> None:
+        self.state.settings.paint = dict(self._paint_settings)
+        self.state.persist()
+
+    def refresh_paint_assets(self) -> None:
+        """模型目录变化后重扫扩散模型（配置弹窗里的下拉）。"""
+        self.paint_section.refresh_assets()
+
+    def _send_paint(self, prompt: str) -> None:
+        """用当前画图配置出图，结果作为图片消息追加到当前对话。"""
+        settings = self.paint_settings()
+        try:
+            _llmpaint.validate_components(components_from_settings(settings))
+            _llmpaint.validate_request(request_from_settings(settings))
+        except ServeError as exc:
+            self._append_text(f"[画图失败] {exc}\n\n", "error")
+            self._set_status(f"画图参数错误：{exc}")
+            return
+        self._paint_settings = settings
+        self._persist_paint()
+        self.input_edit.clear()
+        self._set_title_from_prompt(prompt)
+        self._append_text(f"你：{prompt}\n", "user")
+        self._begin_generation(f"正在生成图片…（{settings_summary(settings)}）")
+        self.state.log(f"画图请求：{prompt[:60]}")
+        submit_daemon(
+            generate_images,
+            settings,
+            on_done=self._paint_done,
+            on_error=self._paint_failed,
+            on_finished=self._paint_finished,
+        )
+
+    def _paint_done(self, result: tuple[list[Path], bool]) -> None:
+        paths, _started = result
+        self._append_text("助手（图片）：\n", "assistant")
+        for path in paths:
+            self._append_image(path)
+        self._append_text("\n", "assistant")
+        self._set_status(f"已生成 {len(paths)} 张 · {paths[0].parent}")
+        self.state.log("画图完成：" + "、".join(str(path) for path in paths))
+        self._persist_history()
+
+    def _paint_failed(self, message: str) -> None:
+        self._append_text(f"\n[画图失败] {message}\n\n", "error")
+        self._set_status("画图失败：" + message.splitlines()[0])
+        self.state.log(f"画图失败：{message}")
+        self._persist_history()
+
+    def _paint_finished(self) -> None:
+        self._finish_running()
 
     def _on_send_or_stop(self) -> None:
         """同一个按钮：空闲时发送，生成中变为停止。"""
@@ -879,6 +1007,16 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
         if session is not None:
             session.cancel()
         self._set_status("正在停止…")
+
+    def _begin_generation(self, status: str) -> None:
+        """进入生成状态：锁住发送 / 历史操作，避免中途切换对话。"""
+        self._running = True
+        self._sync_send_button()
+        self.history_list.setEnabled(False)
+        self.new_chat_button.setEnabled(False)
+        self.delete_chat_button.setEnabled(False)
+        self.clear_chats_button.setEnabled(False)
+        self._set_status(status)
 
     def _finish_running(self) -> None:
         self._running = False
@@ -949,6 +1087,7 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
                 self._sidebar_width = min(max(sizes[0], 120), 480)
         self.state.settings.chat_sidebar_width = self._sidebar_width
         self.state.settings.chat_sidebar_collapsed = self._sidebar_collapsed
+        self._persist_paint()
         self._persist_history()
 
     # ------------------------------------------------------------------ #
@@ -984,6 +1123,25 @@ class ChatPage(QWidget):  # pragma: no cover - Qt 控件
     def _append_text(self, text: str, kind: str) -> None:
         self._conversation().blocks.append((kind, text))
         self._insert_text(text, kind)
+
+    def _append_image(self, path: Path) -> None:
+        """追加一条图片消息（历史里只存路径，重开对话时按路径重绘）。"""
+        self._conversation().blocks.append(("image", str(path)))
+        self._insert_image(path)
+
+    def _insert_image(self, path: Path) -> None:
+        cursor = self.transcript.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not path.is_file():
+            cursor.insertText(f"[图片已不存在] {path}\n", self._format("error"))
+        else:
+            image = QTextImageFormat()
+            image.setName(str(path))
+            image.setWidth(320)
+            cursor.insertImage(image)
+            cursor.insertText("\n", self._format("assistant"))
+        self.transcript.setTextCursor(cursor)
+        self.transcript.ensureCursorVisible()
 
     def _append_delta(self, text: str) -> None:
         conversation = self._conversation()

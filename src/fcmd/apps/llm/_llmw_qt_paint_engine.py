@@ -3,7 +3,7 @@
 版本列表来自 ``leejet/stable-diffusion.cpp`` 的 GitHub releases（与
 ``fcmd llmpaint engine-install`` 同一份解析逻辑）；默认变体按本机 GPU 选择
 （N 卡 → CUDA 并附带 cudart 运行库，否则 Vulkan / CPU）。安装完成后把引擎设为
-默认并通知画图页刷新状态。
+默认并刷新运行页的「画图引擎」卡片。
 """
 
 from __future__ import annotations

@@ -106,60 +106,77 @@ def test_status_bar_follows_current_page(window: Any) -> None:
 
 def test_window_builds_all_pages(window: Any) -> None:
     keys = window.nav.keys()
-    assert keys == ("overview", "models", "run", "chat", "paint", "lab", "settings")
+    assert keys == ("overview", "models", "run", "chat", "lab", "settings")
     for key in keys:
         window.show_page(key)
         assert window.current_page() == key
         assert window.page(key) is not None
 
 
-def test_paint_page_reports_missing_model(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    """画图页：无引擎 / 无模型时给出安装与选择提示，生成失败不往后台派任务。"""
-    window.show_page("paint")
-    page = window.page("paint")
-    assert page.engine_tag.text() == "引擎未安装"
-    assert page.service_tag.text() == "服务未启动"
-    assert "sd-server" in page.preview_label.text()
-    shown: list[str] = []
-    monkeypatch.setattr(QMessageBox, "critical", lambda *_args, **_kw: shown.append("critical") or None)
-    page.generate_button.click()
-    assert shown == ["critical"]
-    assert window.status_text().startswith("失败：")
+def test_chat_paint_toggle_and_missing_model(window: Any) -> None:
+    """对话页「画图」启用项：勾选即按画图配置出图，缺模型时只报错不派后台任务。"""
+    window.show_page("chat")
+    page = window.page("chat")
+    assert not page.paint_check.isChecked()
+    page.paint_check.setChecked(True)
+    QApplication.processEvents()
+    assert page.input_edit.placeholderText().startswith("输入画图提示词")
+    assert window.state.settings.paint["enabled"] is True
+    assert window.status_text().startswith("已启用画图")
+
+    page.input_edit.setPlainText("一只在雪地里的红狐狸")
+    page.send()
     assert not page._running
-    page.close()
+    assert "画图失败" in page.transcript.toPlainText()
+    assert "主模型" in page.transcript.toPlainText()
+    assert window.status_text().startswith("画图参数错误")
+    # 关掉画图后回到对话提示词。
+    page.paint_check.setChecked(False)
+    assert page.input_edit.placeholderText().startswith("输入问题")
+    assert window.state.settings.paint["enabled"] is False
 
 
-def test_paint_config_lives_in_dialog(window: Any) -> None:
-    """画图页只留 composer + 预览 + 状态行；引擎 / 模型 / 采样 / 输出收进配置弹窗。"""
-    window.show_page("paint")
-    page = window.page("paint")
-    assert page.config_button.toolTip().startswith("画图配置")
+def test_chat_config_contains_paint_settings(window: Any) -> None:
+    """画图配置融入对话配置弹窗：服务 / 模型 / 采样 / 输出控件都在弹窗里。"""
+    window.show_page("chat")
+    page = window.page("chat")
     assert not page.config_dialog.isVisible()
-    assert page.config_dialog.windowTitle() == "画图配置"
-    # 配置控件挂在弹窗上，页面正文不再有参数 / 模型表单与引擎安装入口。
-    for widget in (
-        page.port,
-        page.width,
-        page.model_combo,
-        page.auto_start,
-        page.install_button,
-        page.start_button,
-        page.output_label,
-    ):
-        assert widget.window() is page.config_dialog
-    assert page.preview.window() is window
-    assert page.summary_label.fullText().endswith("512×512 · 25 步 · euler_a")
-
     page.open_config()
     QApplication.processEvents()
     assert page.config_dialog.isVisible()
-    page.width.setValue(1024)
-    assert page.summary_label.fullText().startswith("未选模型 · 1024×512")
+    section = page.paint_section
+    for widget in (
+        section.port,
+        section.model_combo,
+        section.width,
+        section.auto_start,
+        section.output_label,
+    ):
+        assert widget.window() is page.config_dialog
+    assert "sd-server" in section.preview_label.text()
+    section.width.setValue(1024)
+    assert section.settings()["width"] == 1024
+    assert section.preview_label.text().startswith("sd-server")
     page.config_dialog.close()
 
 
+def test_run_page_holds_paint_engine_entry(window: Any) -> None:
+    """画图引擎（sd.cpp）状态与安装入口在运行页，画图页不再存在。"""
+    window.show_page("run")
+    run = window.run_page
+    assert run.paint_card.title() == "画图引擎（sd.cpp）"
+    assert run.paint_engine_tag.text().startswith("引擎")
+    assert run.paint_service_tag.text() in {
+        "服务未启动",
+        "已退出（残留状态）",
+    } or run.paint_service_tag.text().startswith("运行中")
+    assert run.paint_install_button.text() == "安装引擎…"
+    run.refresh_paint()
+    assert "paint" not in tuple(window.nav.keys())
+
+
 def test_lab_page_drops_paint_card(window: Any) -> None:
-    """实验室只保留代理 / 视频 / 音频三张规划卡，画图已迁入独立页。"""
+    """实验室只保留代理 / 视频 / 音频三张规划卡，画图已并入对话页。"""
     from fcmd.apps.llm._llmw_qt_lab import LAB_CARDS
     from fcmd.gui.qt.widgets import Card
 
@@ -1095,7 +1112,7 @@ def test_pages_use_scroll_container(window: Any) -> None:
     """长页面必须放进滚动容器：窗口变矮时滚动而不是压扁控件（模型列表自身滚动）。"""
     from fcmd.gui.qt.widgets import PageScroll
 
-    for key in ("run", "settings", "paint", "lab"):
+    for key in ("run", "settings", "chat", "lab"):
         window.show_page(key)
         page = window.page(key)
         assert page.findChild(PageScroll) is not None, key

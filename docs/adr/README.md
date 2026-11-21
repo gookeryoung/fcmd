@@ -45,4 +45,4 @@
 | [0036](0036-python310-pyside2.md) | Python 3.10 支持与 PySide2 兼容：按版本选择 Qt 绑定、运行时兼容层与 CI/tox 矩阵 | 已落地 |
 | [0037](0037-unified-result-envelope.md) | 统一结果信封（`--json`）：框架用法错误机读化、MCP 白名单对齐、只读工具分期接入 | P0 / P1 已落地（P2 / P3 待办） |
 | [0038](0038-shared-qt-widget-boundaries.md) | Qt 共享控件的抽象边界：不做 InfoRowCard 基类与 TaskDialog，ChoiceCard / StatusTag / LogDialog / ProgressRow 的适用范围 | 生效（边界已确定） |
-| [0039](0039-llmw-paint-page.md) | llmw 画图页：托管 stable-diffusion.cpp 的本地文生图（引擎安装 / 资产配对 / sd-server 生命周期 / `llmpaint` CLI） | 已落地（首期最小闭环） |
+| [0040](0040-llmw-paint-in-chat.md) | llmw 画图并入对话：取消独立画图页，对话页「画图」开关 + 画图配置合并进对话配置窗口，画图引擎安装 / 状态移到运行页 | 已落地 |
