@@ -861,7 +861,9 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     assert overview._gpu_hint.fullText() == "等待采样…"
     assert overview._vram_hint.fullText() == "等待采样…"
     assert overview._cpu_hint.fullText() == "等待采样…"
+    assert overview._cpu_proc_hint.fullText() == "等待采样…"
     assert overview._mem_hint.fullText() == "等待采样…"
+    assert overview._swap_hint.fullText() == "等待采样…"
     sample = LoadSample(
         cpu=41.0,
         cpu_freq=3600.0,
@@ -899,14 +901,17 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     assert overview._vram_hint.fullText() == "显存 17.58 GB / 24.00 GB（73%）"
     assert overview._cpu_bar.percent() == 41.0
     assert overview._mem_bar.percent() == 41.0
+    # 三块统一为「主格图 + 副条」：CPU 副条是服务进程 CPU，内存副条是交换分区。
+    assert overview._cpu_proc_bar.percent() == 12.5
+    assert overview._swap_bar.percent() == pytest.approx(25.0)
     assert overview._gpu_percent.property("band") == "warning"
     assert overview._cpu_percent.property("band") == "success"
     assert "显存" not in overview._gpu_hint.fullText()
     assert "210 / 450 W" in overview._gpu_hint.fullText()
-    assert "频率 3600 MHz" in overview._cpu_hint.fullText()
-    assert "服务 12.5 %" in overview._cpu_hint.fullText()
+    assert overview._cpu_hint.fullText() == "频率 3600 MHz"
+    assert overview._cpu_proc_hint.fullText() == "服务 12.5 %"
     assert overview._mem_hint.fullText().startswith("13.00 GB / 32.00 GB")
-    assert "交换 25%" in overview._mem_hint.fullText()
+    assert overview._swap_hint.fullText() == "交换 2.00 GB / 8.00 GB（25%）"
 
     # 服务指标：生成 tok/s 单独大字展示，其余进次要网格。
     metrics = llmserve.ServeMetrics(prompt_tokens=9302, predicted_tokens=12045, processing=1, deferred=0, kv_usage=0.18)
@@ -918,6 +923,16 @@ def test_overview_load_blocks_and_rate_display(window: Any) -> None:
     assert overview._performance_metrics.value("kv") == "18.0 %"
     assert overview._performance_badge.text() == "监控中"
     assert overview._performance_badge.tone() == "success"
+
+    # 无 GPU / 无服务 / 无交换：副条清空并给出对应提示，不留上半轮的旧值。
+    overview._apply_sample((LoadSample(cpu=5.0), None, None))
+    assert overview._vram_bar.percent() is None
+    assert overview._vram_hint.fullText() == "未检测到 GPU（CPU 推理）"
+    assert overview._gpu_hint.fullText() == ""
+    assert overview._cpu_proc_bar.percent() is None
+    assert overview._cpu_proc_hint.fullText() == "服务 -（未运行）"
+    assert overview._swap_bar.percent() is None
+    assert overview._swap_hint.fullText() == "未配置交换分区"
 
 
 def test_overview_load_blocks_fit_min_width(window: Any) -> None:

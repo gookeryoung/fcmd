@@ -262,8 +262,9 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         """规格与实时占用：上方硬件规格，下方 GPU / CPU / 内存三块负载条。
 
         占用来自概览页每秒的系统采样：分段格图 + 百分比；
-        GPU 块的利用率与显存各占一条格图（显存条上方带已用 / 总量小字），
-        内存交换作为标题后的小字提示。顶部只保留「重新检测」文字链接与
+        三块的排版统一：主格图是设备占用，下方副条是该设备上另一个维度
+        （GPU 显存 / 服务进程 CPU / 内存交换），副条上方用小字标出数值。
+        标题后只留功耗、频率等其它信息，顶部只保留「重新检测」文字链接与
         检测状态，不放标题 / 说明文案。
         """
         card = Card()
@@ -327,11 +328,25 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
             self._gpu_hint,
             self._vram_hint,
             self._vram_bar,
-        ) = self._build_gpu_block(card)
+        ) = self._build_load_block("GPU", card)
         loads.addWidget(gpu_block, 1)
-        cpu_block, self._cpu_percent, self._cpu_bar, self._cpu_hint = self._build_load_block("CPU", card)
+        (
+            cpu_block,
+            self._cpu_percent,
+            self._cpu_bar,
+            self._cpu_hint,
+            self._cpu_proc_hint,
+            self._cpu_proc_bar,
+        ) = self._build_load_block("CPU", card)
         loads.addWidget(cpu_block, 1)
-        mem_block, self._mem_percent, self._mem_bar, self._mem_hint = self._build_load_block("内存", card)
+        (
+            mem_block,
+            self._mem_percent,
+            self._mem_bar,
+            self._mem_hint,
+            self._swap_hint,
+            self._swap_bar,
+        ) = self._build_load_block("内存", card)
         loads.addWidget(mem_block, 1)
         card.body.addLayout(loads)
         return card
@@ -381,33 +396,23 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self,
         title: str,
         parent: QWidget,
-    ) -> tuple[QFrame, QLabel, SegmentBar, ElidedLabel]:
-        """单个负载块：标题 + 小字关键信息 + 占用率 + 主格图。"""
+    ) -> tuple[QFrame, QLabel, SegmentBar, ElidedLabel, ElidedLabel, SegmentBar]:
+        """单个负载块：标题 + 小字关键信息 + 占用率 + 主格图 + 副条（小字 + 格图）。
+
+        三块用同一套排版：主格图对应标题右侧的大字占用率；副条对应「另一个
+        维度」的占用（GPU 显存 / 服务进程 CPU / 内存交换），条上方用小字标出
+        具体数值，不必再从标题后的小字里换算。
+        """
         block, layout, hint, percent = self._load_block_shell(title, parent)
         bar = SegmentBar(parent=block)
         layout.addWidget(bar)
+        extra_hint = ElidedLabel("等待采样…", parent=block)
+        extra_hint.setObjectName("Hint")
+        layout.addWidget(extra_hint)
+        extra_bar = SegmentBar(parent=block)
+        layout.addWidget(extra_bar)
         layout.addStretch(1)
-        return block, percent, bar, hint
-
-    def _build_gpu_block(
-        self,
-        parent: QWidget,
-    ) -> tuple[QFrame, QLabel, SegmentBar, ElidedLabel, ElidedLabel, SegmentBar]:
-        """GPU 块：利用率与显存各一条格图，两条格图在同一块内并列展示。
-
-        显存占用不再挤进标题后的小字：它有独立的小字标签（已用 / 总量 / 百分比）
-        和自己的格图，与利用率的高低可以同时比较；标题后只留功耗等其它信息。
-        """
-        block, layout, hint, percent = self._load_block_shell("GPU", parent)
-        util_bar = SegmentBar(parent=block)
-        layout.addWidget(util_bar)
-        vram_hint = ElidedLabel("等待采样…", parent=block)
-        vram_hint.setObjectName("Hint")
-        layout.addWidget(vram_hint)
-        vram_bar = SegmentBar(parent=block)
-        layout.addWidget(vram_bar)
-        layout.addStretch(1)
-        return block, percent, util_bar, hint, vram_hint, vram_bar
+        return block, percent, bar, hint, extra_hint, extra_bar
 
     @staticmethod
     def _load_block_shell(
@@ -590,7 +595,7 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._set_performance(gen_rate, prompt_rate, metrics, "监控中", "success")
 
     def _apply_system_sample(self, sample: LoadSample) -> None:
-        """用系统采样刷新 GPU / CPU / 内存负载块（关键信息小字 + 主格图）。"""
+        """用系统采样刷新 GPU / CPU / 内存负载块（主格图 + 副条 + 小字）。"""
         gpu = sample.gpu
         gpu_values = _format_gpu(gpu)
         gpu_vram = gpu_memory_percent(gpu)
@@ -600,23 +605,23 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         self._vram_bar.set_percent(gpu_vram)
 
         load_values = _format_load(sample)
-        cpu_parts = []
-        if load_values["cpu_freq"] != "-":
-            cpu_parts.append(f"频率 {load_values['cpu_freq']}")
-        if load_values["proc_cpu"] != "-":
-            cpu_parts.append(f"服务 {load_values['proc_cpu']}")
-        self._set_hint(self._cpu_hint, cpu_parts)
+        self._set_hint(self._cpu_hint, [] if load_values["cpu_freq"] == "-" else [f"频率 {load_values['cpu_freq']}"])
+        self._set_hint(self._cpu_proc_hint, [self._proc_cpu_text(sample)])
         self._apply_load_block(self._cpu_percent, self._cpu_bar, sample.cpu)
+        self._cpu_proc_bar.set_percent(None if sample.process_cpu is None else max(sample.process_cpu, 0.0))
 
-        memory_parts = [
-            f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}"
-            if sample.memory_total
-            else "已用 -",
-        ]
+        self._set_hint(
+            self._mem_hint,
+            [
+                f"{human_size(sample.memory_used)} / {human_size(sample.memory_total)}"
+                if sample.memory_total
+                else "已用 -"
+            ],
+        )
         swap = swap_percent(sample)
-        memory_parts.append("交换 -" if swap is None else f"交换 {swap:.0f}%")
-        self._set_hint(self._mem_hint, memory_parts)
+        self._set_hint(self._swap_hint, [self._swap_text(sample, swap)])
         self._apply_load_block(self._mem_percent, self._mem_bar, sample.memory_percent if sample.memory_total else None)
+        self._swap_bar.set_percent(swap)
 
     def _set_performance(
         self,
@@ -676,6 +681,22 @@ class OverviewPage(QWidget):  # pragma: no cover - Qt 控件
         used = human_size(int(gpu.memory_used * 1024 * 1024))
         total = human_size(int(gpu.memory_total * 1024 * 1024))
         return f"显存 {used} / {total}（{percent:.0f}%）"
+
+    @staticmethod
+    def _proc_cpu_text(sample: LoadSample) -> str:
+        """副条说明：服务进程 CPU（单核基准，与 psutil 口径一致）。"""
+        if sample.process_cpu is None:
+            return "服务 -（未运行）"
+        return f"服务 {sample.process_cpu:.1f} %"
+
+    @staticmethod
+    def _swap_text(sample: LoadSample, percent: float | None) -> str:
+        """副条说明：交换分区已用 / 总量 + 百分比，未配置时给出提示。"""
+        if not sample.swap_total or percent is None:
+            return "未配置交换分区"
+        used = human_size(sample.swap_used)
+        total = human_size(sample.swap_total)
+        return f"交换 {used} / {total}（{percent:.0f}%）"
 
     def _apply_load_block(self, percent_label: QLabel, bar: SegmentBar, percent: float | None) -> None:
         """刷新一块负载：占用率文字与主格图同步。"""
