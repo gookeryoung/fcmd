@@ -195,3 +195,167 @@ def test_port_type_mismatch_rejected() -> None:
     flow.links = [FlowLink("a", "files", "b", "text")]
     with pytest.raises(FlowError, match="没有输出端口"):
         flow.validate(_registry())
+
+
+# --------------------------------------------------------------------------- #
+# 内置节点（不连真实服务：健康检查 / HTTP 客户端全部打桩）
+# --------------------------------------------------------------------------- #
+def _node_run(
+    node_type: str, inputs: dict[str, Any] | None = None, params: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    from fcmd.apps.llm._llmw_flow import FlowContext
+
+    definition = default_registry().require(node_type)
+    return definition.run(FlowContext(), inputs or {}, params or {})
+
+
+def test_text_input_node() -> None:
+    from fcmd.apps.llm._llmw_flow_nodes import TEXT_INPUT
+
+    assert _node_run(TEXT_INPUT, params={"text": "你好"}) == {"text": "你好"}
+
+
+def test_llm_chat_node_success_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.apps.llm import _llmw_flow_nodes as nodes
+
+    with pytest.raises(FlowError, match="提示词为空"):
+        _node_run(nodes.LLM_CHAT, {"prompt": "  "})
+    monkeypatch.setattr(nodes.llmserve, "check_health", lambda *_args, **_kwargs: False)
+    with pytest.raises(FlowError, match="未就绪"):
+        _node_run(nodes.LLM_CHAT, {"prompt": "hi"})
+
+    class _Session:
+        def __init__(self, endpoint: Any, **kwargs: Any) -> None:
+            self.endpoint = endpoint
+            self.kwargs = kwargs
+
+        def ask(self, prompt: str) -> str:
+            return f"回答:{prompt}"
+
+    monkeypatch.setattr(nodes.llmserve, "check_health", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(nodes.llmchat, "ChatSession", _Session)
+    result = _node_run(
+        nodes.LLM_CHAT,
+        {"prompt": "hi"},
+        {"host": "127.0.0.1", "port": 8080, "system": "sys", "max_tokens": 16, "temperature": 0.2},
+    )
+    assert result == {"text": "回答:hi"}
+    with pytest.raises(FlowError, match="必须是整数"):
+        _node_run(nodes.LLM_CHAT, {"prompt": "hi"}, {"port": "bad"})
+
+
+def test_image_txt2img_node_success_and_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.apps.llm import _llmw_flow_nodes as nodes
+
+    with pytest.raises(FlowError, match="提示词为空"):
+        _node_run(nodes.IMAGE_TXT2IMG, {"prompt": ""})
+    monkeypatch.setattr(nodes._llmpaint_server, "check_paint_health", lambda *_args, **_kwargs: False)
+    with pytest.raises(FlowError, match="未就绪"):
+        _node_run(nodes.IMAGE_TXT2IMG, {"prompt": "cat"})
+
+    captured: dict[str, Any] = {}
+
+    def _txt2img(host: str, port: int, payload: dict[str, Any]) -> list[str]:
+        captured.update(host=host, port=port, payload=payload)
+        return ["base64-image"]
+
+    monkeypatch.setattr(nodes._llmpaint_server, "check_paint_health", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(nodes._llmpaint_server, "txt2img", _txt2img)
+    result = _node_run(
+        nodes.IMAGE_TXT2IMG,
+        {"prompt": "cat", "negative": "blur"},
+        {"width": 768, "height": 512, "steps": 12, "cfg_scale": 5.5, "batch": 2},
+    )
+    assert result == {"images": ["base64-image"]}
+    assert captured["payload"]["prompt"] == "cat"
+    assert captured["payload"]["negative_prompt"] == "blur"
+    with pytest.raises(FlowError, match="必须是数字"):
+        _node_run(nodes.IMAGE_TXT2IMG, {"prompt": "cat"}, {"cfg_scale": "bad"})
+
+
+def test_image_save_and_text_save_nodes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fcmd.apps.llm import _llmw_flow_nodes as nodes
+
+    with pytest.raises(FlowError, match="没有可保存"):
+        _node_run(nodes.IMAGE_SAVE, {"images": []})
+    with pytest.raises(FlowError, match="输出目录"):
+        _node_run(nodes.IMAGE_SAVE, {"images": ["x"]}, {"directory": ""})
+
+    target = tmp_path / "out"
+    monkeypatch.setattr(nodes._llmpaint, "save_images", lambda items, directory: [directory / "a.png"])
+    assert _node_run(nodes.IMAGE_SAVE, {"images": ["x"]}, {"directory": str(target)}) == {
+        "files": [str(target / "a.png")]
+    }
+
+    with pytest.raises(FlowError, match="保存路径"):
+        _node_run(nodes.TEXT_SAVE, {"text": "x"}, {"path": ""})
+    text_path = tmp_path / "nested" / "answer.md"
+    assert _node_run(nodes.TEXT_SAVE, {"text": "hello"}, {"path": str(text_path)}) == {"files": [str(text_path)]}
+    assert text_path.read_text(encoding="utf-8") == "hello"
+
+
+def test_registry_and_model_errors() -> None:
+    from fcmd.apps.llm._llmw_flow import FlowContext, FlowLink, FlowNode, NodeRegistry
+
+    registry = NodeRegistry()
+    definition = default_registry().require("text.input")
+    registry.register(definition)
+    with pytest.raises(FlowError, match="重复"):
+        registry.register(definition)
+    with pytest.raises(FlowError, match="未知节点"):
+        registry.require("missing")
+    assert registry.by_category()
+    assert registry.get("missing") is None
+    assert FlowContext().cancel is None
+
+    with pytest.raises(FlowError, match="节点必须是对象"):
+        FlowNode.from_dict([])
+    with pytest.raises(FlowError, match="缺少 id"):
+        FlowNode.from_dict({"type": "x"})
+    with pytest.raises(FlowError, match="缺少 type"):
+        FlowNode.from_dict({"id": "n1"})
+    with pytest.raises(FlowError, match="连线必须是对象"):
+        FlowLink.from_dict([])
+    with pytest.raises(FlowError, match="连线字段不完整"):
+        FlowLink.from_dict({"source": "a"})
+
+    duplicate = FlowGraph("x", "重复")
+    duplicate.nodes = [FlowNode("n1", "text.input"), FlowNode("n1", "text.input")]
+    with pytest.raises(FlowError, match="节点 id 重复"):
+        duplicate.validate_ids()
+    empty = FlowGraph("x", "空")
+    with pytest.raises(FlowError, match="工作流为空"):
+        empty.validate(default_registry())
+    bad_link = FlowGraph("x", "坏连线")
+    bad_link.nodes = [FlowNode("n1", "text.input")]
+    bad_link.links = [FlowLink("n1", "text", "missing", "prompt")]
+    with pytest.raises(FlowError, match="不存在的节点"):
+        bad_link.validate_ids()
+    with pytest.raises(FlowError, match="不存在的节点"):
+        bad_link.validate(default_registry())
+    with pytest.raises(FlowError, match="JSON 对象"):
+        FlowGraph.from_dict([])
+    with pytest.raises(FlowError, match="缺少名称"):
+        FlowGraph.from_dict({"schema_version": 1})
+    unknown = FlowGraph.from_steps("未知", [("missing", {}), ("text.input", {})])
+    with pytest.raises(FlowError, match="未注册"):
+        unknown.rechain(default_registry())
+
+
+def test_executor_events_text_outputs_and_store_errors(tmp_path: Path) -> None:
+    from fcmd.apps.llm._llmw_flow import NodeEvent, load_flow, save_flow
+
+    events: list[NodeEvent] = []
+    result = execute(_chain(), registry=_registry(), on_event=events.append)
+    assert [event.kind for event in events] == ["start", "done", "start", "done", "start", "done"]
+    assert result.text_outputs() == ["hi", "HI"]
+
+    with pytest.raises(FlowError, match="id 非法"):
+        save_flow(FlowGraph("!!!", "坏 id"), home=tmp_path)
+    with pytest.raises(FlowError, match="不存在"):
+        load_flow(tmp_path / "missing.json")
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json", encoding="utf-8")
+    with pytest.raises(FlowError, match="读取工作流失败"):
+        load_flow(bad)
+    assert list_flows(tmp_path) == []
