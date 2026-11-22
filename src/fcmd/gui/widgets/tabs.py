@@ -17,6 +17,15 @@ _BADGE_SIZE = 16
 _BADGE_EXTRA_WIDTH = 18
 """带徽标的页签额外预留的宽度：徽标画在页签右端，不与文字重叠。"""
 
+_BADGE_RIGHT_INSET = 9
+"""徽标距页签矩形右端的留白：QSS 给页签留了 6px 右外边距，再加 3px 呼吸空间。
+
+只按 3px 摆放会让徽标压在选中页签的圆角边框上（运行页「画图」页签最明显）。
+"""
+
+_BADGE_BOTTOM_INSET = 4
+"""页签 QSS 的下外边距（像素）：徽标垂直居中时扣掉，否则整体偏下。"""
+
 
 def _badge_colors() -> tuple[QColor, QColor]:
     """徽标配色：半透明强调色底 + 强调色数字（跟随当前主题）。"""
@@ -81,6 +90,16 @@ class PillTabBar(QTabBar):  # pragma: no cover - Qt 控件
             size.setWidth(size.width() + _BADGE_EXTRA_WIDTH)
         return size
 
+    def _badge_rect(self, index: int) -> QRectF:
+        """徽标矩形：扣掉页签 QSS 的右 / 下外边距，圆点落在页签内部。"""
+        rect = self.tabRect(index)
+        return QRectF(
+            rect.right() - _BADGE_SIZE - _BADGE_RIGHT_INSET,
+            rect.center().y() - _BADGE_SIZE / 2 - _BADGE_BOTTOM_INSET / 2 + 0.5,
+            _BADGE_SIZE,
+            _BADGE_SIZE,
+        )
+
     def paintEvent(self, event: QPaintEvent) -> None:
         super().paintEvent(event)
         if not self._badges:
@@ -96,15 +115,9 @@ class PillTabBar(QTabBar):  # pragma: no cover - Qt 控件
         for index, count in self._badges.items():
             if not 0 <= index < self.count():
                 continue
-            rect = self.tabRect(index)
-            if rect.isNull():
+            if self.tabRect(index).isNull():
                 continue
-            circle = QRectF(
-                rect.right() - _BADGE_SIZE - 3,
-                rect.center().y() - _BADGE_SIZE / 2 + 0.5,
-                _BADGE_SIZE,
-                _BADGE_SIZE,
-            )
+            circle = self._badge_rect(index)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(fill)
             painter.drawEllipse(circle)

@@ -257,6 +257,31 @@ def test_pill_tab_bar_badge_reserves_width_and_paints() -> None:
         tabs.deleteLater()
 
 
+def test_pill_tab_bar_badge_stays_inside_pill() -> None:
+    """徽标要落在页签内部：扣掉 QSS 的右 / 下外边距，不压在圆角边框上。"""
+    from PySide6.QtWidgets import QTabWidget
+
+    tabs = QTabWidget()
+    try:
+        pill_tabs(tabs)
+        tabs.addTab(QWidget(), "画图")
+        bar = tabs.tabBar()
+        tabs.resize(360, 120)
+        tabs.show()
+        QApplication.processEvents()
+        bar.set_badge(0, 3)
+        QApplication.processEvents()
+
+        rect = bar.tabRect(0)
+        circle = bar._badge_rect(0)
+        assert rect.contains(circle.toRect())
+        assert circle.right() <= rect.right() - 6  # 6px 右外边距
+        assert circle.bottom() <= rect.bottom() - 4  # 4px 下外边距
+        assert abs(circle.center().y() - (rect.top() + rect.bottom() - 4) / 2) < 1.5
+    finally:
+        tabs.deleteLater()
+
+
 def test_pill_tabs_share_one_theme_contract() -> None:
     """``pill_tabs`` 统一药丸页签：无基线、不拉伸、容器名可换成行卡专用底色。"""
     from PySide6.QtWidgets import QTabWidget
