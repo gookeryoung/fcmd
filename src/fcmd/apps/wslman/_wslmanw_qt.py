@@ -461,6 +461,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._image_filter_key = self.settings.image_filter
         self._images_note = ""
         self._busy = False
+        self._refresh_pending = False
         self._label = ""
         self._cancel = threading.Event()
         self._status_busy = False
@@ -955,6 +956,12 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if self._closing:
             return
         self._update_action_states()
+        if self._refresh_pending:
+            # 任务收尾前发起的列表刷新（``_task_done`` 里的 ``refresh()``）会被忙态挡下。
+            # 这里改走轻量状态刷新而不是再起一个「刷新」任务：窗口保持空闲，只重读
+            # ``wsl -l -v`` 并就地更新行卡，默认胶囊在任务结束后立刻换行。
+            self._refresh_pending = False
+            QTimer.singleShot(0, self._request_status)
 
     def _set_buttons(self, enabled: bool) -> None:
         for widget in self._buttons:
@@ -1084,6 +1091,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     # ------------------------------------------------------------------ #
     def refresh(self) -> None:
         if self._busy:
+            self._refresh_pending = True
             return
         self._start("刷新", self._load)
 

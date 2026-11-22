@@ -1530,3 +1530,30 @@ def test_image_manager_exports_deletes_and_cleans_cache(
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()
+
+
+def test_refresh_requested_during_task_runs_after_finish(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """任务收尾前发起的刷新不能丢：设为默认后默认胶囊立刻换行，不等 3 秒轮询。"""
+    current = {"view": _view(_distro("Ubuntu", default=True), _distro("Debian", "stopped", default=False))}
+    monkeypatch.setattr(cli, "_view", lambda env: current["view"])
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        assert _distro_row(window, 0).default_tag.isHidden() is False
+        assert _distro_row(window, 1).default_tag.isHidden() is True
+
+        current["view"] = _view(_distro("Ubuntu", default=False), _distro("Debian", "stopped", default=True))
+        window._busy = True
+        window.refresh()
+        assert window._refresh_pending is True
+        window._task_finished()
+        QApplication.processEvents()
+        _wait_idle(window)
+
+        assert window._refresh_pending is False
+        assert _distro_row(window, 0).default_tag.isHidden() is True
+        assert _distro_row(window, 1).default_tag.isHidden() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
