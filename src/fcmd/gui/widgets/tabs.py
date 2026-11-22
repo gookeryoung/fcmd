@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPaintEvent
-from PySide6.QtWidgets import QTabBar, QTabWidget, QWidget
+from PySide6.QtCore import QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPaintEvent
+from PySide6.QtWidgets import QStyle, QStyleOptionTab, QTabBar, QTabWidget, QWidget
 
 from fcmd.gui import style as _qt_theme
 
@@ -40,6 +40,15 @@ def _badge_colors() -> tuple[QColor, QColor]:
     return fill, text
 
 
+def _label_colors() -> tuple[QColor, QColor]:
+    """页签文字配色：选中 / hover 用正文色，其余用次要色（与 QSS 契约一致）。"""
+    try:
+        palette = _qt_theme.active_theme().palette
+        return QColor(palette.text), QColor(palette.muted)
+    except Exception:  # pragma: no cover - 无主题 / 早期构造
+        return QColor("#1f2937"), QColor("#5f6f82")
+
+
 def badge_text(count: int) -> str:
     """徽标文案：三位数封顶为 ``99``，避免圆点被撑破。"""
     return "99" if count > 99 else str(count)
@@ -49,7 +58,8 @@ class PillTabBar(QTabBar):  # pragma: no cover - Qt 控件
     """药丸页签栏：支持在页签右侧画半透明圆形数量徽标。
 
     ``pill_tabs`` 会装好这一类型；调用方只需 ``tabBar().set_badge(index, count)``。
-    徽标不改变页签文字：宽度由 :meth:`tabSizeHint` 预留，绘制在页签右端。
+    带徽标的页签由 :meth:`tabSizeHint` 在右侧预留宽度，文字区随之自适应收窄，
+    文字与无徽标的相邻页签保持同一边距；徽标画在预留区的右端。
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -100,12 +110,47 @@ class PillTabBar(QTabBar):  # pragma: no cover - Qt 控件
             _BADGE_SIZE,
         )
 
-    def paintEvent(self, event: QPaintEvent) -> None:
-        super().paintEvent(event)
-        if not self._badges:
-            return
+    def _label_rect(self, option: QStyleOptionTab, index: int) -> QRect:
+        """页签文字的绘制区域：带徽标时把右侧预留区让出来，文字停在原位。
+
+        Qt 默认把文字居中到整个页签：带徽标的页签加宽后文字会被向右推半个
+        徽标宽度，和相邻页签对不齐。这里先取主题 QSS 的文字区，再减掉徽标预留
+        宽度，始终把文字居中在「不含徽标」的那一段。
+        """
+        rect = self.style().subElementRect(QStyle.SubElement.SE_TabBarTabText, option, self)
+        if self._badges.get(index):
+            rect.setRight(rect.right() - _BADGE_EXTRA_WIDTH)
+        return rect
+
+    def _paint_label(self, painter: QPainter, option: QStyleOptionTab, index: int) -> None:
+        """按主题契约重画页签文字：带徽标时绕开 Qt 的整页签居中。"""
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        text_color, muted = _label_colors()
+        font = QFont(self.font())
+        if selected:
+            font.setWeight(QFont.Weight.DemiBold)  # 对应 QSS 的 font-weight: 600
+        rect = self._label_rect(option, index)
+        if not option.icon.isNull():
+            icon_rect = QRect(
+                rect.left(),
+                rect.center().y() - option.iconSize.height() // 2,
+                option.iconSize.width(),
+                option.iconSize.height(),
+            )
+            icon = option.icon.pixmap(
+                option.iconSize, QIcon.Mode.Normal, QIcon.State.On if selected else QIcon.State.Off
+            )
+            painter.drawPixmap(icon_rect, icon)
+            rect.setLeft(icon_rect.right() + 4)
+        text = QFontMetrics(font).elidedText(self.tabText(index), self.elideMode(), rect.width())
+        painter.setFont(font)
+        painter.setPen(text_color if (selected or hovered) else muted)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+    def _paint_badges(self, painter: QPainter) -> None:
+        """在页签右端画数量徽标（半透明圆底 + 强调色数字）。"""
         fill, text_color = _badge_colors()
-        painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         font = QFont(self.font())
         font.setBold(True)
@@ -123,6 +168,20 @@ class PillTabBar(QTabBar):  # pragma: no cover - Qt 控件
             painter.drawEllipse(circle)
             painter.setPen(text_color)
             painter.drawText(circle, Qt.AlignmentFlag.AlignCenter, badge_text(count))
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        if not self._badges:
+            # 没有徽标时完全交给 Qt：零改动，避免影响其它页签容器。
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        for index in range(self.count()):
+            option = QStyleOptionTab()
+            self.initStyleOption(option, index)
+            self.style().drawControl(QStyle.ControlElement.CE_TabBarTabShape, option, painter, self)
+            self._paint_label(painter, option, index)
+        self._paint_badges(painter)
+        painter.end()
 
 
 def pill_tabs(tabs: QTabWidget, *, object_name: str = "PillTabs") -> QTabWidget:  # pragma: no cover - Qt 控件

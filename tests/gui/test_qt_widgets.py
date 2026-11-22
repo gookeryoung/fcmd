@@ -282,6 +282,35 @@ def test_pill_tab_bar_badge_stays_inside_pill() -> None:
         tabs.deleteLater()
 
 
+def test_pill_tab_bar_badge_keeps_text_position() -> None:
+    """带徽标的页签让出右侧徽标区：文字区宽度 / 左边距与无徽标时一致。"""
+    from PySide6.QtWidgets import QStyleOptionTab, QTabWidget
+
+    tabs = QTabWidget()
+    try:
+        pill_tabs(tabs)
+        tabs.addTab(QWidget(), "画图")
+        bar = tabs.tabBar()
+        tabs.resize(360, 120)
+        tabs.show()
+        QApplication.processEvents()
+
+        def label_rect() -> object:
+            option = QStyleOptionTab()
+            bar.initStyleOption(option, 0)
+            return bar._label_rect(option, 0)
+
+        plain = label_rect()
+        bar.set_badge(0, 3)
+        QApplication.processEvents()
+        badged = label_rect()
+        assert badged.left() == plain.left()
+        assert badged.width() == plain.width()
+        assert badged.right() < bar.tabRect(0).right() - 16  # 右侧确实留出徽标位
+    finally:
+        tabs.deleteLater()
+
+
 def test_pill_tabs_share_one_theme_contract() -> None:
     """``pill_tabs`` 统一药丸页签：无基线、不拉伸、容器名可换成行卡专用底色。"""
     from PySide6.QtWidgets import QTabWidget
