@@ -835,7 +835,8 @@ def test_paint_search_uses_multi_keyword_merger(window: Any, monkeypatch: pytest
 
     monkeypatch.setattr(center, "search_models_multi", fake_multi)
     browse._search_work(browse._list_cache, "k", _llmw_models.PAINT_FILTER_QUERY, 1, 30, "default")
-    assert calls == [_llmw_models.PAINT_SEARCH_TERMS]
+    browse._search_work(browse._list_cache, "k2", _llmw_models.TEXT_FILTER_QUERY, 1, 30, "default")
+    assert calls == [_llmw_models.IMAGE_SEARCH_TERMS, _llmw_models.TEXT_SEARCH_TERMS]
 
 
 def test_all_and_local_keep_seen_category_items(window: Any) -> None:

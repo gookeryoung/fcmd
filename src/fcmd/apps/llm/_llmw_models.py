@@ -38,6 +38,8 @@ __all__ = [
     "MIN_ONLINE_MODEL_BYTES",
     "MODEL_FILTERS",
     "MODEL_SORTS",
+    "MULTI_SEARCH_TERMS",
+    "TEXT_SEARCH_TERMS",
     "USAGE_KEYS",
     "DownloadGuiSettings",
     "dedupe_by_repo",
@@ -93,8 +95,15 @@ _ALL_TASKS = "全部类别"
 _ALL_SERIES = "全部系列"
 
 #: 浏览页顶部筛选：(key, 显示名, 服务端搜索关键字)；关键字为空表示浏览全部。
+#:
+#: 分类按「能力域」收敛为文本 / 图像 / 视频 / 音频四类：对话、编程、推理都是
+#: 文本生成能力（细分由模型标签体现），看图与画图都是图像域（理解 / 生成），
+#: 不再各占一个互相交叉的 chip。
 PAINT_FILTER_QUERY = "图像生成"
-"""画图分类的展示关键字（仅用于状态 / 缓存键），真正检索走多关键字合并。"""
+"""图像分类的展示关键字（仅用于状态 / 缓存键），真正检索走多关键字合并。"""
+
+TEXT_FILTER_QUERY = "文本对话"
+"""文本分类的展示关键字（仅用于状态 / 缓存键），真正检索走多关键字合并。"""
 
 PAINT_SEARCH_TERMS: tuple[str, ...] = (
     "Qwen-Image-2.1",
@@ -108,16 +117,25 @@ PAINT_SEARCH_TERMS: tuple[str, ...] = (
     "HunyuanImage",
     "Stable Diffusion",
 )
-"""画图分类并行检索的家族关键字；覆盖官方仓库与主流社区实现。"""
+"""图像分类并行检索的生成模型家族关键字；覆盖官方仓库与主流社区实现。"""
+
+TEXT_SEARCH_TERMS: tuple[str, ...] = ("chat", "instruct", "coder", "reasoning")
+"""文本分类并行检索的关键字：通用对话 / 指令 / 编程 / 推理四类代表。"""
+
+IMAGE_SEARCH_TERMS: tuple[str, ...] = (*PAINT_SEARCH_TERMS, "vision", "Qwen-VL", "OCR")
+"""图像分类并行检索：生成家族 + 视觉理解代表（看图与画图合并检索）。"""
+
+MULTI_SEARCH_TERMS: dict[str, tuple[str, ...]] = {
+    TEXT_FILTER_QUERY: TEXT_SEARCH_TERMS,
+    PAINT_FILTER_QUERY: IMAGE_SEARCH_TERMS,
+}
+"""需要并行检索的分类：展示关键字 → 真正请求的关键字列表。"""
 
 MODEL_FILTERS: tuple[tuple[str, str, str], ...] = (
     ("local", "适合本机", ""),
     ("all", "全部", ""),
-    ("chat", "对话", "chat"),
-    ("code", "编程", "coder"),
-    ("vision", "看图", "vision"),
-    ("paint", "画图", PAINT_FILTER_QUERY),
-    ("reasoning", "推理", "reasoning"),
+    ("text", "文本", TEXT_FILTER_QUERY),
+    ("image", "图像", PAINT_FILTER_QUERY),
     ("video", "视频", "video"),
     ("audio", "音频", "audio"),
 )
@@ -499,15 +517,15 @@ def _is_vision(item: ModelSummary) -> bool:
 _MEDIA_MATCHERS = {"paint": _is_paint, "video": _is_video, "audio": _is_audio, "vision": _is_vision}
 """需要任务名精确判断的媒体 / 视觉分类。"""
 
+_FILTER_GROUPS: dict[str, tuple[str, ...]] = {
+    "text": ("chat", "code", "reasoning"),
+    "image": ("vision", "paint"),
+}
+"""浏览页合并分类：能力域 → 内部细分（运行页仍按内部 key 区分用途）。"""
 
-def matches_filter(item: ModelSummary, filter_key: str) -> bool:
-    """模型是否属于指定用途分类；``all`` / ``local`` / 空串视为全部符合。
 
-    媒体类优先于「对话」：画图 / 视频 / 音频任务里常带「文本生成」前缀，
-    只看关键词会把它们混进对话列表（Qwen-Image、Wan 视频等）。
-    """
-    if filter_key in ("", "all", "local"):
-        return True
+def _matches_single(item: ModelSummary, filter_key: str) -> bool:
+    """单个内部细分（对话 / 编程 / 推理 / 看图 / 画图 / 视频 / 音频）是否命中。"""
     matcher = _MEDIA_MATCHERS.get(filter_key)
     if matcher is not None:
         return matcher(item)
@@ -517,6 +535,23 @@ def matches_filter(item: ModelSummary, filter_key: str) -> bool:
             return False
         return _task_match(item, _CHAT_TASKS) or _keyword_match(haystack, _FILTER_KEYWORDS.get("chat", ()))
     return _keyword_match(haystack, _FILTER_KEYWORDS.get(filter_key, ()))
+
+
+def matches_filter(item: ModelSummary, filter_key: str) -> bool:
+    """模型是否属于指定分类；``all`` / ``local`` / 空串视为全部符合。
+
+    浏览页的 ``text`` / ``image`` 是能力域：文本 = 对话 / 编程 / 推理；
+    图像 = 看图 / 画图。媒体类优先于「对话」：画图 / 视频 / 音频任务里常带
+    「文本生成」前缀，只看关键词会把它们混进文本列表（Qwen-Image、Wan 视频等）。
+    """
+    if filter_key in ("", "all", "local"):
+        return True
+    group = _FILTER_GROUPS.get(filter_key)
+    if group is not None:
+        if filter_key == "text" and (_is_paint(item) or _is_video(item) or _is_audio(item)):
+            return False
+        return any(_matches_single(item, key) for key in group)
+    return _matches_single(item, filter_key)
 
 
 def matches_category(name: str, filter_key: str) -> bool:

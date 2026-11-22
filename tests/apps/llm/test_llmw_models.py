@@ -278,7 +278,7 @@ class TestBrowseHelpers:
         labels = [label for _key, label, _query in MODEL_FILTERS]
         assert len(set(keys)) == len(keys)
         assert DEFAULT_MODEL_FILTER in keys
-        assert labels == ["适合本机", "全部", "对话", "编程", "看图", "画图", "推理", "视频", "音频"]
+        assert labels == ["适合本机", "全部", "文本", "图像", "视频", "音频"]
 
     def test_filter_by_local_fit_keeps_fitting_and_unknown_sizes(self) -> None:
         items = (*self._items(), ModelSummary(repo="Qwen/unknown"))
@@ -377,6 +377,25 @@ class TestBrowseHelpers:
         assert not matches_filter(ModelSummary(repo="Qwen/chat"), "paint")
         assert not matches_filter(ModelSummary(repo="Qwen/chat", tasks=("文本生成",)), "video")
         assert matches_filter(ModelSummary(repo="Qwen/chat"), "all")
+
+    def test_matches_filter_text_group_merges_chat_code_reasoning(self) -> None:
+        """「文本」= 对话 / 编程 / 推理：三者共用同一个分类，媒体不得混入。"""
+        chat = ModelSummary(repo="Qwen/Qwen3-8B", tasks=("文本生成",))
+        code = ModelSummary(repo="Qwen/CodeQwen1.5", tasks=("文本生成",), tags=("code",))
+        reasoning = ModelSummary(repo="deepseek/R1", tasks=("文本生成",), tags=("reasoning",))
+        for item in (chat, code, reasoning):
+            assert matches_filter(item, "text") is True
+        assert matches_filter(ModelSummary(repo="Qwen/Qwen-Image", tasks=("文本生成图片",)), "text") is False
+        assert matches_filter(ModelSummary(repo="Wan/Wan2.2", tasks=("文本生成视频",)), "text") is False
+
+    def test_matches_filter_image_group_merges_vision_and_paint(self) -> None:
+        """「图像」= 看图理解 / 画图生成；视频仍归视频分类。"""
+        paint = ModelSummary(repo="Qwen/Qwen-Image", tasks=("文本生成图片",))
+        vision = ModelSummary(repo="Qwen/Qwen-VL", tags=("vision",))
+        video = ModelSummary(repo="Wan/Wan2.2", tasks=("文本生成视频",))
+        assert matches_filter(paint, "image") is True
+        assert matches_filter(vision, "image") is True
+        assert matches_filter(video, "image") is False
 
     def test_matches_filter_keeps_media_out_of_chat(self) -> None:
         """「文本生成」不能按子串命中「文本生成图片 / 视频」；媒体分类优先。"""

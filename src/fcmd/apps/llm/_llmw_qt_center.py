@@ -127,6 +127,17 @@ _MODEL_SORTS = _llmw_models.MODEL_SORTS
 _MODEL_FILTERS = _llmw_models.MODEL_FILTERS
 _DEFAULT_FILTER = _llmw_models.DEFAULT_MODEL_FILTER
 
+_FILTER_ALIASES = {"chat": "text", "code": "text", "reasoning": "text", "vision": "image", "paint": "image"}
+"""旧分类 key → 合并后的能力域：已保存的筛选设置平滑迁移。"""
+
+_FILTER_HINTS = {
+    "text": "对话 / 编程 / 推理（文本生成能力）",
+    "image": "看图理解 / 图像生成",
+    "video": "视频生成",
+    "audio": "语音 / 音频",
+}
+"""分类 chip 的 tooltip：说明合并后的能力域包含哪些细分。"""
+
 
 @dataclass(frozen=True)
 class _InstalledSnapshot:
@@ -729,6 +740,8 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
         self._page = 1
         view = state.settings.model_view or {}
         filter_key = view.get("filter")
+        if isinstance(filter_key, str):
+            filter_key = _FILTER_ALIASES.get(filter_key, filter_key)
         self._filter_key = (
             filter_key
             if isinstance(filter_key, str) and any(key == filter_key for key, _label, _q in _MODEL_FILTERS)
@@ -797,6 +810,9 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
             # ``_checked`` 必须有默认值：PySide2 会按「可零参调用」挑 ``clicked()`` 重载，
             # 缺省会导致点击分类时报 ``missing argument '_checked'``。
             chip.clicked.connect(lambda _checked=False, key=key: self._on_filter_changed(key))
+            hint = _FILTER_HINTS.get(key)
+            if hint:
+                chip.setToolTip(hint)
             self.filter_group.addButton(chip)
             filters.addWidget(chip)
             self.filter_buttons[key] = chip
@@ -1409,10 +1425,11 @@ class _BrowsePanel(RowDetailMixin, AppPage):  # pragma: no cover - Qt 控件
         sort: str,
     ) -> ModelSearch:
         """后台线程：请求网络并把结果写入缓存，避免 GUI 线程落盘。"""
-        if keyword == _llmw_models.PAINT_FILTER_QUERY:
-            # 画图分类不能只查一个中文关键字：官方 Qwen-Image 等仓库往往不命中，
-            # 反而会搜到个人转存。按家族并行查英文关键字再合并。
-            result = search_models_multi(_llmw_models.PAINT_SEARCH_TERMS, page, page_size, sort)
+        terms = _llmw_models.MULTI_SEARCH_TERMS.get(keyword)
+        if terms is not None:
+            # 文本 / 图像是合并分类：单一中文关键字往往漏掉官方仓库或偏向某一类，
+            # 按细分并行检索后合并，再由 matches_filter 在本地精确归类。
+            result = search_models_multi(terms, page, page_size, sort)
         else:
             result = search_models(keyword, page, page_size, sort)
         cache.put(key, result)
