@@ -330,10 +330,21 @@ def check_paint_health(host: str, port: int, opener: Opener | None = None, *, ti
     return False
 
 
+def _failure_tail(path: Path, lines: int = 20) -> str:
+    """优先取引擎日志里的 ``[E]`` 行：尾部往往全是单个张量校验噪声。"""
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    errors = [line for line in content if "[E]" in line]
+    selected = errors[-lines:] if errors else content[-lines:]
+    return "\n".join(selected)
+
+
 def _engine_exit_error(plan: PaintPlan, code: int) -> ServeError:
-    tail = _tail_text(plan.log, 12)
+    tail = _failure_tail(plan.log)
     return ServeError(
-        f"画图引擎启动后立即退出（退出码 {format_returncode(code)}）。引擎日志: {plan.log}\n日志尾部:\n{tail}"
+        f"画图引擎启动后立即退出（退出码 {format_returncode(code)}）。引擎日志: {plan.log}\n关键日志:\n{tail}"
     )
 
 

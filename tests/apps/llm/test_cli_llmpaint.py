@@ -175,6 +175,8 @@ class TestDetectFamily:
             ("sd3-medium.safetensors", "sd3"),
             ("flux1-dev.safetensors", "flux"),
             ("FLUX.1-schnell.gguf", "flux"),
+            ("flux-2-klein-9b.safetensors", "flux2"),
+            ("FLUX.2-dev", "flux2"),
             ("qwen-image-edit.safetensors", "qwen-image"),
             ("qwen-image-2.1.safetensors", "qwen-image"),
             ("MiniMax-H3-Image-Q4_K_M.gguf", "minimax-h3"),
@@ -265,6 +267,15 @@ class TestScanAssets:
         assert [item.path.name for item in assets.by_role("vae")] == ["sdxl-vae.safetensors"]
         assert assets.roots == (tmp_path.resolve(),)
 
+    def test_scan_skips_sharded_weights(self, tmp_path: Path) -> None:
+        """model-0000X-of-0000Y 分片不能被当成可加载的单个文本编码器。"""
+        _weight(tmp_path / "text_encoder" / "model-00001-of-00004.safetensors", 20)
+        _weight(tmp_path / "text_encoder" / "model-00002-of-00004.safetensors", 20)
+        _weight(tmp_path / "vae" / "diffusion_pytorch_model.safetensors", 10)
+        assets = _llmpaint.scan_assets([tmp_path], min_bytes=1)
+        names = [asset.path.name for asset in assets.assets]
+        assert names == ["diffusion_pytorch_model.safetensors"]
+
     def test_scan_missing_root(self, tmp_path: Path) -> None:
         assets = _llmpaint.scan_assets([tmp_path / "absent"])
         assert assets.assets == ()
@@ -309,6 +320,21 @@ class TestSuggestComponents:
         assert components.t5xxl is not None
         assert components.vae is not None
         assert _llmpaint.effective_mode(components) == "diffusion"
+
+    def test_flux2_requires_single_encoder_and_vae(self, tmp_path: Path) -> None:
+        """FLUX.2 必需单文件文本编码器 + VAE，且不能跨家族配 Qwen-Image 组件。"""
+        repo = tmp_path / "repo"
+        model = _weight(repo / "diffusion_models" / "flux-2-klein-9b.safetensors", 20)
+        _weight(repo / "vae" / "qwen_image_vae.safetensors", 5)
+        _weight(repo / "text_encoders" / "qwen3vl_8b.safetensors", 5)
+        assets = _llmpaint.scan_assets([tmp_path], min_bytes=1)
+        components = _llmpaint.suggest_components(assets, model)
+        assert components.model == model.resolve()
+        assert components.vae is None  # 跨家族 VAE 不兜底
+        assert components.llm is not None  # 单文件文本编码器允许兜底
+        assert _llmpaint.missing_required_slots(components) == ("vae",)
+        with pytest.raises(ServeError, match=r"FLUX\.2"):
+            _llmpaint.validate_components(components)
 
     def test_explicit_model_and_empty(self, tmp_path: Path) -> None:
         model = _weight(tmp_path / "checkpoints" / "sdxl.safetensors", 4)
@@ -356,6 +382,14 @@ class TestBuildArgs:
         args = _llmpaint.build_model_args(components)
         assert args[:4] == ["--diffusion-model", "flux.safetensors", "--clip_l", "clip_l.safetensors"]
         assert args[-3:] == ["--offload-to-cpu", "--vae-tiling", "--diffusion-fa"]
+
+    def test_flux2_adds_vae_format(self) -> None:
+        components = _llmpaint.PaintComponents(
+            model=Path("FLUX.2-klein-9B/flux-2-klein-9b.safetensors"),
+            vae=Path("vae.safetensors"),
+        )
+        args = _llmpaint.build_model_args(components)
+        assert args[-2:] == ["--vae-format", "flux2"]
 
     def test_no_model(self) -> None:
         assert _llmpaint.build_model_args(_llmpaint.PaintComponents()) == []
@@ -460,6 +494,14 @@ class TestValidate:
         assert "Z-Image" in message
         assert "「模型」页" in message
         assert "--vae" in message
+
+    def test_sharded_encoder_is_rejected(self, tmp_path: Path) -> None:
+        model = _weight(tmp_path / "FLUX.2-klein-9B" / "flux-2-klein-9b.safetensors", 8)
+        vae = _weight(tmp_path / "vae" / "flux2-vae.safetensors", 4)
+        shard = _weight(tmp_path / "text_encoder" / "model-00003-of-00004.safetensors", 4)
+        components = _llmpaint.PaintComponents(model=model, vae=vae, llm=shard)
+        with pytest.raises(ServeError, match="分片权重"):
+            _llmpaint.validate_components(components)
 
     def test_components_invalid(self, tmp_path: Path) -> None:
         with pytest.raises(ServeError, match="主模型"):

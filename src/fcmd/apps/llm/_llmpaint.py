@@ -61,6 +61,9 @@ WEIGHT_EXTENSIONS = (".gguf", ".safetensors", ".ckpt", ".sft", ".pth")
 MIN_WEIGHT_BYTES = 1024 * 1024
 """小于 1 MiB 的文件视为占位 / 损坏，不进入候选。"""
 
+_SHARD_RE = re.compile(r"-\d{5}-of-\d{5}\.(?:safetensors|ckpt|sft|pth|gguf)$", re.IGNORECASE)
+"""分片权重（``model-00003-of-00004.safetensors``）；sd-server 不能单独加载其中一片。"""
+
 ROLE_LABELS: dict[str, str] = {
     "checkpoint": "Checkpoint",
     "diffusion": "扩散模型",
@@ -90,6 +93,7 @@ FAMILIES: dict[str, Family] = {
     "sdxl": Family("sdxl", "SDXL", "checkpoint", ("vae",)),
     "sd3": Family("sd3", "SD 3.x", "diffusion", ("clip_l", "clip_g", "t5xxl", "vae")),
     "flux": Family("flux", "FLUX", "diffusion", ("clip_l", "t5xxl", "vae", "llm")),
+    "flux2": Family("flux2", "FLUX.2", "diffusion", ("llm", "vae")),
     "qwen-image": Family("qwen-image", "Qwen-Image", "diffusion", ("llm", "vae")),
     "z-image": Family("z-image", "Z-Image", "diffusion", ("llm", "vae")),
     "minimax-h3": Family("minimax-h3", "MiniMax H3", "diffusion", ("llm", "vae")),
@@ -107,6 +111,7 @@ _FAMILY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("hidream", ("hidream",)),
     ("hunyuan-image", ("hunyuan-image", "hunyuanimage")),
     ("kolors", ("kolors",)),
+    ("flux2", ("flux2", "flux-2", "flux.2", "flux-2-klein")),
     ("flux", ("flux",)),
     ("sdxl", ("sdxl", "sd-xl", "pony", "illustrious", "noobai")),
     ("sd3", ("sd3", "stable-diffusion-3")),
@@ -141,10 +146,11 @@ _REQUIRED_SLOTS: dict[str, tuple[str, ...]] = {
     "minimax-h3": ("llm", "vae"),
     "hidream": ("llm", "vae"),
     "hunyuan-image": ("llm", "vae"),
+    "flux2": ("llm", "vae"),
 }
 _COMPANION_HINTS: dict[str, str] = {
     "vae": "「模型」页分类切到「画图」搜同名家族的 VAE（Comfy-Org 仓库的 split_files/vae 或 vae 目录）",
-    "llm": "Qwen3 / Mistral 文本编码器（GGUF 或 safetensors，搜同一仓库的 text_encoders）",
+    "llm": "Qwen3 / Mistral 文本编码器（GGUF 或单文件 safetensors；model-*-of-*.safetensors 分片不能直接加载）",
 }
 _COMPANION_FLAGS: dict[str, str] = {"vae": "--vae", "llm": "--llm"}
 
@@ -310,7 +316,7 @@ def scan_assets(roots: Iterable[Path], *, min_bytes: int = MIN_WEIGHT_BYTES) -> 
             continue
         for extension in WEIGHT_EXTENSIONS:
             for path in root.rglob(f"*{extension}"):
-                if is_mmproj(path):
+                if is_mmproj(path) or _SHARD_RE.search(path.name):
                     continue
                 try:
                     size = path.stat().st_size
@@ -342,6 +348,8 @@ _COMPANION_REPOS: dict[tuple[str, str], tuple[str, ...]] = {
     ("qwen-image", "vae"): ("Comfy-Org/Qwen-Image_ComfyUI", "Qwen/Qwen-Image"),
     ("qwen-image", "llm"): ("Comfy-Org/Qwen-Image_ComfyUI",),
     ("flux", "vae"): ("Comfy-Org/flux1-dev", "black-forest-labs/FLUX.1-dev"),
+    ("flux2", "vae"): ("Comfy-Org/FLUX.2-dev_ComfyUI", "black-forest-labs/FLUX.2-dev"),
+    ("flux2", "llm"): ("Comfy-Org/FLUX.2-dev_ComfyUI", "black-forest-labs/FLUX.2-dev"),
     ("sd3", "vae"): ("Comfy-Org/stable-diffusion-3.5-fp8",),
     ("hidream", "vae"): ("Comfy-Org/HiDream-I1_ComfyUI",),
     ("hunyuan-image", "vae"): ("Comfy-Org/HunyuanImage-2.1_ComfyUI",),
@@ -472,7 +480,13 @@ def suggest_components(assets: PaintAssets, model: Path | None = None) -> PaintC
         # 先挑同家族的，避免「自动配对」把不兼容的 VAE / 文本编码器配上去导致
         # sd-server 启动即退出；同家族没有时才回退到该角色的第一个候选。
         same_family = [asset for asset in candidates if asset.family == family_key]
-        candidate = (same_family or list(candidates))[0] if candidates else None
+        pool = same_family
+        # FLUX.2 的 VAE 是独立 latent 格式（需 --vae-format flux2），跨家族 VAE
+        # 一定 shape 不匹配；没有同家族 VAE 时宁可不配，也不要静默配错。
+        # 文本编码器允许跨家族兜底（Qwen3 / Mistral 单文件可被引擎接受）。
+        if not pool and not (family_key == "flux2" and role == "vae"):
+            pool = list(candidates)
+        candidate = pool[0] if pool else None
         if candidate is not None:
             chosen[role] = candidate.path
     return PaintComponents(
@@ -550,8 +564,15 @@ def build_model_args(components: PaintComponents) -> list[str]:
 
 
 def server_flags(components: PaintComponents) -> list[str]:
-    """显存 / 画质相关的可选开关。"""
+    """显存 / 画质相关的可选开关；FLUX.2 需要显式 VAE latent 格式。"""
     flags: list[str] = []
+    if (
+        components.vae is not None
+        and components.model is not None
+        and detect_family(components.model) == "flux2"
+        and not _extra_arg_sets(components.extra_args, "--vae-format")
+    ):
+        flags.extend(["--vae-format", "flux2"])
     if components.offload_to_cpu:
         flags.append("--offload-to-cpu")
     if components.vae_tiling:
@@ -635,6 +656,11 @@ def validate_components(components: PaintComponents) -> None:
     ):
         if path is not None and not path.is_file():
             raise ServeError(f"{label} 文件不存在: {path}")
+        if path is not None and _SHARD_RE.search(path.name):
+            raise ServeError(
+                f"{label} 是分片权重（{path.name}），sd-server 需要单文件 / 合并后的权重；"
+                "请选择合并版 safetensors 或 GGUF 文本编码器"
+            )
 
 
 def validate_request(request: PaintRequest) -> None:
