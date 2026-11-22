@@ -17,10 +17,12 @@
 - `wslmanw` 发行版列表改为行卡（对齐 llmw 模型列表）：行内给名称 / 版本 / 占用 /
   状态与默认胶囊 / 启动停止按钮，详情（BasePath、虚拟磁盘、占用量、默认用户、来源）
   通过行内「展开」就地显示，移除下方的表格 + 详情分栏；状态轮询改为就地刷新行内状态。
-- `wslmanw` 发行版页按 llmw 模型列表重做行卡视觉：列表自身不再带外框（与 `ModelResultList`
-  同口径的透明无边框列表），行卡继承共享 `ItemRow` 但**不画边框**，只用底色 / 圆角 / hover
-  与选中底色区分；副标题只留版本，磁盘占用（估算值带 `≈`）移到右侧数值位，与 llmw 模型行
-  「左侧标题 / 副标题 + 右侧数值与动作」的结构对齐。
+- `wslmanw` 发行版页完全对齐 llmw 模型列表的视觉：列表自身透明无外框（与
+  `ModelResultList` 同口径）；行卡用共享契约 `QFrame[itemRow="true"]`（1px 边框 + 8px
+  圆角的卡片、hover / 选中 2px 边框、选中底为半透明的 `accent_soft_strong`），不再按
+  `ModelItemRow` / `ImageItemRow` / `DistroItemRow` 分别开 QSS 规则；副标题只留版本，
+  磁盘占用（估算值带 `≈`）移到右侧数值位，与 llmw 模型行「左侧标题 / 副标题 + 右侧
+  数值与动作」的结构对齐。
 - 可展开行卡的骨架抽成共享 `fcmd.gui.qt.widgets.ItemRow`（标题 + 副标题 / 状态胶囊 +
   右侧数值与动作 + 行内展开区，提供 `add_tag` / `add_note_widget` / `set_metrics` /
   `add_action` 插槽）：llmw 模型浏览行、`wslmanw` 发行版行与镜像行都改为继承它，

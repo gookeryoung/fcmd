@@ -309,15 +309,14 @@ def test_selected_states_use_deeper_soft_backgrounds() -> None:
         'QFrame#RecommendationRow[band="good"][selected="true"]',
         'QFrame#RecommendationRow[band="fair"][selected="true"]',
         'QFrame#RecommendationRow[band="limited"][selected="true"]',
-        'QFrame#ModelItemRow[selected="true"]',
+        'QFrame[itemRow="true"][selected="true"]',
     ):
         block = _rule(text, selector)
         assert "_soft_strong" not in block
         assert "background:" in block
-    model_block = _rule(text, 'QFrame#ModelItemRow[selected="true"]')
-    assert f"border-color: {theme.palette.select_bg}" in model_block
-    distro_block = _rule(text, 'QFrame#DistroItemRow[selected="true"]')
-    assert f"background: {_qt_theme.template_tokens(theme)['accent_soft_strong']}" in distro_block
+    row_block = _rule(text, 'QFrame[itemRow="true"][selected="true"]')
+    assert f"border-color: {theme.palette.select_bg}" in row_block
+    assert f"background: {_qt_theme.template_tokens(theme)['accent_soft_strong']}" in row_block
     for tone in ("danger", "accent", "success", "warning"):
         block = text.split(f'QPushButton#ChoiceCard[tone="{tone}"]:checked {{', 1)[1].split("}", 1)[0]
         assert "background:" in block
@@ -326,20 +325,34 @@ def test_selected_states_use_deeper_soft_backgrounds() -> None:
     assert "background:" in filter_block
 
 
-def test_distro_rows_are_frameless_like_llmw_list() -> None:
-    """发行版列表与 llmw 模型列表同口径：列表自身无外框，行卡不画边框。"""
-    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+def test_item_row_appearance_is_one_shared_contract() -> None:
+    """可展开行卡只有一份外观契约：按 itemRow 属性选，不为各应用分别开对象名。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    palette = theme.palette
+    # 列表透明无外框（各应用的 list 同口径）。
     list_block = _rule(text, "QListWidget#DistroResultList")
     assert "border: none" in list_block
     assert "background: transparent" in list_block
     item_block = _rule(text, "QListWidget#DistroResultList::item")
     assert "border: none" in item_block
-    row_block = _rule(text, "QFrame#DistroItemRow {")
-    assert "border: none" in row_block
+
+    # 行卡：1px 边框 + 8px 圆角，hover / 选中 2px 边框，选中底为半透明 accent 加深色。
+    row_block = _rule(text, 'QFrame[itemRow="true"]')
+    assert f"background: {palette.surface}" in row_block
+    assert f"border: 1px solid {palette.border}" in row_block
     assert "border-radius: 8px" in row_block
-    # 行卡结构仍与 llmw 模型行一致：标题字号同阶梯。
-    name_block = _rule(text, "QLabel#DistroItemName")
+    assert "border-width: 2px" in _rule(text, 'QFrame[itemRow="true"]:hover')
+    selected_block = _rule(text, 'QFrame[itemRow="true"][selected="true"]')
+    assert "border-width: 2px" in selected_block
+    assert f"background: {_qt_theme.template_tokens(theme)['accent_soft_strong']}" in selected_block
+    assert f"border-color: {palette.select_bg}" in selected_block
+    # 标题字号同阶梯。
+    name_block = _rule(text, "QLabel#ItemRowName")
     assert "font-weight: 600" in name_block
+    # 不再按应用 / 子类分别维护行卡样式。
+    for stale in ("QFrame#ModelItemRow", "QFrame#ImageItemRow", "QFrame#DistroItemRow", "QLabel#ModelItemName"):
+        assert stale not in text
 
 
 def test_secondary_buttons_keep_visible_border() -> None:

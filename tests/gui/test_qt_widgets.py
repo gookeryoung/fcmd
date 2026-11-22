@@ -401,8 +401,12 @@ def test_selection_row_toggles_property() -> None:
 
 def test_item_row_builds_slots_and_expands() -> None:
     """``ItemRow`` 提供行卡骨架：标题 / 副标题 / 标签 / 动作 / 行内展开区。"""
-    row = ItemRow("Ubuntu", "v2 · 2.0 GB", object_name="TestItemRow")
+    row = ItemRow("Ubuntu", "v2 · 2.0 GB")
     try:
+        # 共享外观契约：所有应用的行卡同为 ItemRow + itemRow 属性 + ItemRowName 标题。
+        assert row.objectName() == "ItemRow"
+        assert row.property("itemRow") == "true"
+        assert row.title_label.objectName() == "ItemRowName"
         assert row.title_label.text() == "Ubuntu"
         assert row.sub_label.text() == "v2 · 2.0 GB"
         assert row.property("selected") == "false"

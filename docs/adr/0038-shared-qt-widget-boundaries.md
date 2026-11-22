@@ -43,16 +43,18 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
   `add_action`（右侧动作，始终在展开箭头之前）；
 - 展开态：`is_expanded` / `set_expanded` 只管详情区显隐与箭头图标，`detail_layout` 由页面
   把复用的详情视图挂进来，「同一时间只展开一行」仍由页面保证；
-- 外观：`object_name` / `name_object_name` / `elide` / `expand_hint` 由调用方给出，
-  QSS 契约（`#ModelItemRow` / `#DistroItemRow` / `#ImageItemRow` 等）不变。
+- 外观：只有一份共享契约，不按应用 / 子类分别开对象名——行卡挂动态属性
+  `itemRow="true"`（主题里所有行卡规则都用它选），标题统一 `QLabel#ItemRowName`；
+  `elide` / `expand_hint` 这类纯展示差异仍由调用方给出。应用要额外样式可再设
+  objectName，不会丢掉共享外观。
 
 业务渲染与状态位留在各自行里：模型行的量化精度 / 下载转换按钮，发行版行的启停与
 默认胶囊，镜像行的下载 / 安装动作。基类参数只覆盖骨架本身，不是三张行卡的并集。
 
-同一骨架可以搭配不同的主题契约：llmw 模型行是带 1px 边框的卡片（`QFrame#ModelItemRow`，
-hover / 选中加粗边框），wslmanw 发行版行不画外边框（`QFrame#DistroItemRow` 只有底色 /
-圆角，hover 换底色、选中用 `accent_soft_strong`），列表自身也透明无边框。骨架不带样式，
-两种外观都由主题 QSS 决定。
+主题 QSS 把可展开行卡统一成「1px 边框 + 8px 圆角的卡片，hover / 选中加粗边框，选中底
+用半透明的 `accent_soft_strong`」：llmw 模型行、wslmanw 发行版行与镜像行都只靠
+`QFrame[itemRow="true"]` 这一组选择器取样式，列表自身透明无边框。新增可展开行卡
+（任何应用）直接继承 `ItemRow` 就得到同一套外观，不需要改主题、也不需要新增对象名。
 
 ### D8 为什么统一状态栏
 

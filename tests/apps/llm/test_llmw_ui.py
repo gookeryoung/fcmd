@@ -253,10 +253,10 @@ def test_score_badge_band_colors_follow_theme() -> None:
     for band in ("excellent", "good", "fair", "limited"):
         assert f'QFrame#RecommendationRow[band="{band}"]' in qss
         assert f'QLabel#ScoreBadge[band="{band}"]' in qss
-    # 浏览页模型行复用同一套自定义行样式，去掉表格列后仍保持卡片边框 / 选中态。
+    # 浏览页模型行用共享行卡契约（itemRow 属性），各应用的展开行共用这一份样式。
     assert "QListWidget#ModelResultList" in qss
-    assert "QFrame#ModelItemRow" in qss
-    assert 'QFrame#ModelItemRow[selected="true"]' in qss
+    assert 'QFrame[itemRow="true"]' in qss
+    assert 'QFrame[itemRow="true"][selected="true"]' in qss
     # 每个档位的整行底色由档位色派生（rgba），行与评分框共用同一色系。
     for band in ("excellent", "good", "fair", "limited"):
         block = qss.split(f'QFrame#RecommendationRow[band="{band}"] {{', 1)[1].split("}", 1)[0]

@@ -195,8 +195,6 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
         super().__init__(
             title,
             subtitle,
-            object_name="ModelItemRow",
-            name_object_name="ModelItemName",
             elide=Qt.TextElideMode.ElideMiddle,
             expand_hint="展开详细信息",
             collapse_hint="收起详细信息",

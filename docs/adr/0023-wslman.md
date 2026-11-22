@@ -358,9 +358,10 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   同一时间只展开一行），不再占用下方分栏；工具栏保留打开终端 / 启动 / 停止 / 导出 /
   注销 / 关闭全部，作用于当前选中行。状态轮询只就地刷新行内状态 / 占用 / 按钮，
   名单不变时不重建列表，选中行与滚动位置不受影响。
-  视觉上不画外边框：列表自身透明无边框（`QListWidget#DistroResultList`，与
-  `ModelResultList` 同口径），行卡也只靠底色 / 圆角 / hover 与选中底色区分
-  （`QFrame#DistroItemRow` 无 `border`）。
+  视觉上与 llmw 模型行完全一致，用的是共享行卡契约（`QFrame[itemRow="true"]`，见
+  ADR 0038）：1px 边框 + 8px 圆角的卡片，hover / 选中加粗边框，选中底用半透明的
+  `accent_soft_strong`；列表自身透明无边框（`QListWidget#DistroResultList`，与
+  `ModelResultList` 同口径）。
   镜像页沿用同一套口径：自定义行卡（名称 + 友好名 / 架构 / 来源
   副标题 + 已安装 / 已备份 / sha256 胶囊 + 右侧下载或安装按钮）铺满整页宽度，
   详情与下载地址通过行内「展开」（`chevron-down` / `chevron-up` 图标）就地显示

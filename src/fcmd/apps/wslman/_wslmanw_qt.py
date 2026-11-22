@@ -153,14 +153,7 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         estimated: bool,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(
-            distro.name,
-            "",
-            object_name="DistroItemRow",
-            name_object_name="DistroItemName",
-            elide=Qt.TextElideMode.ElideRight,
-            parent=parent,
-        )
+        super().__init__(distro.name, "", parent=parent)
         self.distro = distro
         self.size = size
         self.estimated = estimated
@@ -259,8 +252,6 @@ class _ImageItemRow(ItemRow):  # pragma: no cover - Qt 控件
         super().__init__(
             title,
             subtitle,
-            object_name="ImageItemRow",
-            name_object_name="ImageItemName",
             elide=Qt.TextElideMode.ElideMiddle,
             expand_hint="展开详情与下载地址",
             collapse_hint="收起详情",

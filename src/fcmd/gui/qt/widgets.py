@@ -452,17 +452,20 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
     子类只写自己的业务渲染与状态位；追加控件用 ``add_title_widget``（标题右侧，
     如发布方）、``add_note_widget``（副标题之后、拉伸之前）、``add_tag``（拉伸之后
     的状态胶囊 / 进度小字，追加顺序即显示顺序）、``add_action``（拉伸之后、箭头之前）。
+
+    外观是**一份**共享契约，不按应用 / 子类分别开对象名：行卡挂动态属性
+    ``itemRow="true"``（主题里所有行卡规则都用它选），标题标签统一
+    ``QLabel#ItemRowName``。应用想加自己的样式再另外设 objectName，不会丢掉
+    共享行卡外观。
     """
 
     toggleRequested = Signal(object)
 
-    def __init__(  # noqa: PLR0913 - 行卡骨架的可选项由调用方显式给出
+    def __init__(  # noqa: PLR0913 - 骨架的可选项由调用方显式给出
         self,
         title: str = "",
         subtitle: str = "",
         *,
-        object_name: str,
-        name_object_name: str = "",
         elide: Qt.TextElideMode = Qt.TextElideMode.ElideRight,
         expand_hint: str = "展开详情",
         collapse_hint: str = "收起详情",
@@ -473,8 +476,10 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self._expand_hint = expand_hint
         self._collapse_hint = collapse_hint
         self.metrics_label: QLabel | None = None
-        self.setObjectName(object_name)
+        self.setObjectName("ItemRow")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        # 共享行卡外观的选择器：所有应用的可展开行卡共用这一条契约。
+        self.setProperty("itemRow", "true")
         self.setProperty("selected", "false")
 
         outer = QVBoxLayout(self)
@@ -493,8 +498,7 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.title_row.setContentsMargins(0, 0, 0, 0)
         self.title_row.setSpacing(8)
         self.title_label = ElidedLabel(title, mode=elide, parent=self.header)
-        if name_object_name:
-            self.title_label.setObjectName(name_object_name)
+        self.title_label.setObjectName("ItemRowName")
         self.title_label.setToolTip(title)
         self.title_row.addWidget(self.title_label, 1)
         self.left.addLayout(self.title_row)

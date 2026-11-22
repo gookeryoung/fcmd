@@ -630,8 +630,10 @@ QListWidget#DistroResultList::item, QListWidget#EngineList::item {
     border: none;
     padding: 0;
 }
-QFrame#RecommendationRow, QFrame#RunningModelRow, QFrame#ModelItemRow, QFrame#ImageItemRow,
-QFrame#EngineRow {
+/* 行卡外观：可展开行卡（共享 `ItemRow`）用 itemRow 属性选，不按应用分别开对象名；
+   概览推荐 / 运行中模型 / 引擎行是另一类紧凑行卡，沿用各自的对象名。 */
+QFrame#RecommendationRow, QFrame#RunningModelRow, QFrame#EngineRow,
+QFrame[itemRow="true"] {
     background: $surface;
     border: 1px solid $border;
     border-radius: 8px;
@@ -640,27 +642,24 @@ QFrame#RecommendationRow[band="excellent"] { background: $success_soft; border-c
 QFrame#RecommendationRow[band="good"] { background: $accent_soft; border-color: $accent; }
 QFrame#RecommendationRow[band="fair"] { background: $warning_soft; border-color: $warning; }
 QFrame#RecommendationRow[band="limited"] { background: $danger_soft; border-color: $danger; }
-QFrame#RecommendationRow:hover, QFrame#ModelItemRow:hover, QFrame#ImageItemRow:hover,
-QFrame#EngineRow:hover { border-width: 2px; }
-QFrame#RecommendationRow[selected="true"], QFrame#ModelItemRow[selected="true"],
-QFrame#ImageItemRow[selected="true"], QFrame#EngineRow[selected="true"] {
+QFrame#RecommendationRow:hover, QFrame#EngineRow:hover,
+QFrame[itemRow="true"]:hover { border-width: 2px; }
+QFrame#RecommendationRow[selected="true"], QFrame#EngineRow[selected="true"],
+QFrame[itemRow="true"][selected="true"] {
     border-width: 2px;
 }
 QFrame#RecommendationRow[band="excellent"][selected="true"] { background: $success_soft_strong; }
 QFrame#RecommendationRow[band="good"][selected="true"] { background: $accent_soft_strong; }
 QFrame#RecommendationRow[band="fair"][selected="true"] { background: $warning_soft_strong; }
 QFrame#RecommendationRow[band="limited"][selected="true"] { background: $danger_soft_strong; }
-QFrame#ModelItemRow[selected="true"], QFrame#ImageItemRow[selected="true"],
-QFrame#EngineRow[selected="true"] {
+QFrame#EngineRow[selected="true"], QFrame[itemRow="true"][selected="true"] {
     background: $accent_soft_strong;
     border-color: $select_bg;
 }
-/* 发行版行卡：结构同 llmw 模型行，但不画外边框，只用底色 / 圆角与选中底区分。 */
-QFrame#DistroItemRow { background: $surface; border: none; border-radius: 8px; }
-QFrame#DistroItemRow:hover { background: $surface_hover; }
-QFrame#DistroItemRow[selected="true"] { background: $accent_soft_strong; }
-QLabel#RecommendationName, QLabel#ModelItemName, QLabel#ImageItemName,
-QLabel#DistroItemName, QLabel#EngineItemName { font-size: ${font_heading}pt; font-weight: 600; }
+QLabel#RecommendationName, QLabel#ItemRowName, QLabel#EngineItemName {
+    font-size: ${font_heading}pt;
+    font-weight: 600;
+}
 QPushButton#InstalledButton, QPushButton#ConvertedButton {
     color: $success;
     background: $success_soft;
