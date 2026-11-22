@@ -289,7 +289,7 @@ BREAKAWAY_FROM_JOB = getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000
 """Windows：允许子进程脱离父进程所在的 Job Object。"""
 
 
-def _in_job() -> bool:
+def _in_job() -> bool:  # pragma: no cover - Windows ctypes，Linux CI 不执行
     """当前进程是否在 Windows Job Object 中（终端 / IDE / 测试启动器常见）。
 
     必须显式声明 64 位 HANDLE 签名：``ctypes`` 默认按 C ``int`` 传参，
@@ -301,7 +301,10 @@ def _in_job() -> bool:
     try:
         import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        windll_cls = getattr(ctypes, "WinDLL", None)
+        if windll_cls is None:  # pragma: no cover - 非 Windows 解释器
+            return False
+        kernel32 = windll_cls("kernel32", use_last_error=True)
         kernel32.GetCurrentProcess.restype = ctypes.c_void_p
         kernel32.IsProcessInJob.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
         kernel32.IsProcessInJob.restype = ctypes.c_bool

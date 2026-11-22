@@ -3163,12 +3163,16 @@ class TestServeMiscBranches:
 
 def test_spawn_flags_include_breakaway_when_in_job(monkeypatch: pytest.MonkeyPatch) -> None:
     """父进程在 Job 中时必须带 ``CREATE_BREAKAWAY_FROM_JOB``，否则退出应用会带走服务。"""
+    from types import SimpleNamespace
+
     from fcmd.apps.llm import llmserve
 
+    monkeypatch.setattr(llmserve, "os", SimpleNamespace(name="nt"))
     monkeypatch.setattr(llmserve, "_in_job", lambda: True)
     flags = llmserve.spawn_flags()
     assert flags & llmserve.BREAKAWAY_FROM_JOB
-    assert flags & subprocess.DETACHED_PROCESS
+    if os.name == "nt":
+        assert flags & getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Job Object 仅 Windows")
