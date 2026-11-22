@@ -9,8 +9,13 @@
 - ``panel-left-close`` / ``panel-left-open``：带面板边框的折叠 / 展开（预留）。
 
 除侧边栏页面图标外，还内置 ``refresh`` / ``download`` / ``upload`` / ``save`` /
-``folder`` / ``search`` / ``trash`` / ``send`` / ``convert`` 等按钮动作图标；
-:func:`icon_for_text` 按按钮文案推断图标，``fcmd.gui.qt.widgets.button`` 默认调用它。
+``folder`` / ``search`` / ``trash`` / ``send`` / ``convert`` / ``export`` / ``disc``
+ 等按钮动作图标；:func:`icon_for_text` 按按钮文案推断图标，
+``fcmd.gui.qt.widgets.button`` 默认调用它。
+
+语义区分：``export`` 是「文件 + 向下箭头」（导出到文件）、``download`` 是「托盘 + 向下
+箭头」（从网上下载）、``disc`` 是磁盘／盘位（WSL 镜像这类磁盘映像），
+``images`` 是相册（图片）。三者不要互相借用，否则按钮 / 页面图标会表意错位。
 
 配色跟随 ``QApplication`` 调色板的 ``WindowText``（:func:`default_color`），
 ``fcmd.gui.qt.theme.apply_theme`` 已把语义色写进同一份调色板，因此深浅主题下
@@ -84,7 +89,7 @@ ICON_BODIES: dict[str, str] = {
         ' 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/>'
     ),
     "images": (
-        '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="8" cy="8" r="2"/>'
+        '<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/>'
         '<path d="m21 15-3.09-3.09a2 2 0 0 0-2.83 0L6 21"/>'
     ),
     "distros": (
@@ -120,8 +125,19 @@ ICON_BODIES: dict[str, str] = {
         '<path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'
     ),
     "export": (
-        '<path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M4 7V4a2 2 0 0 1 2-2h8l6 6v10a2 2 0 0 1-2 2h-4"/>'
-        '<path d="m9 15 3 3 3-3"/><path d="M12 21v-6"/>'
+        # Lucide ``file-down``：完整的文件轮廓 + 向下箭头（导出 = 落盘）。
+        # 旧路径轮廓开口、只画出一条折线，渲染出来是个残缺的文件形。
+        '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/>'
+        '<path d="M14 2v4a2 2 0 0 0 2 2h4"/>'
+        '<path d="M12 18v-6"/><path d="m9 15 3 3 3-3"/>'
+    ),
+    "disc": (
+        # Lucide ``hard-drive``：磁盘/盘位。给「镜像」这类磁盘映像页面用，
+        # 不用照片图标（``images``）以免语义错位。
+        '<line x1="22" x2="2" y1="12" y2="12"/>'
+        '<path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89'
+        'A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>'
+        '<line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>'
     ),
     "folder": (
         '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9'
@@ -166,6 +182,7 @@ BUTTON_ICON_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("下载", "download"),
     ("导入", "upload"),
     ("导出", "export"),
+    ("镜像", "disc"),
     ("打开", "folder"),
     ("浏览", "folder"),
     ("选择", "folder"),

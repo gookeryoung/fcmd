@@ -90,7 +90,7 @@ NAV_TITLE = "WSL"
 
 PAGES: tuple[tuple[str, str, str, str], ...] = (
     ("distros", "发行版", "列表、详情、启动停止、导出与注销", "distros"),
-    ("images", "镜像", "在线镜像清单、下载源与本地安装", "images"),
+    ("images", "镜像", "在线镜像清单、下载源与本地安装", "disc"),
     ("log", "日志", "启动、导出、安装与下载的任务日志", "log"),
 )
 """侧边栏页面顺序与提示；与 llmw 相同，左侧导航由共享 ``SidebarNav`` 提供。"""

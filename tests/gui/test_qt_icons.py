@@ -71,6 +71,11 @@ def test_icon_for_text_maps_common_actions() -> None:
     assert icons.icon_for_text("开始转换") == "convert"
     assert icons.icon_for_text("＋ 新对话") == "plus"
     assert icons.icon_for_text("启动服务") == "run"
+    assert icons.icon_for_text("导出") == "export"
+    assert icons.icon_for_text("导出报告…") == "export"
+    # 「下载选中镜像」优先命中的是下载；只有镜像语境才用磁盘图标
+    assert icons.icon_for_text("下载选中镜像") == "download"
+    assert icons.icon_for_text("安装本地镜像…") == "disc"
     assert icons.icon_for_text("取消") is None
     assert icons.icon_for_text("关于") is None
 
@@ -126,3 +131,41 @@ def test_button_icons_follow_variant_tones() -> None:
     finally:
         for widget in (primary, danger, ghost):
             widget.deleteLater()
+
+
+def test_export_icon_is_a_complete_file_shape() -> None:
+    """导出图标必须是「闭合文件轮廓 + 向下箭头」。
+
+    回归：旧路径只画了一条开口折线（``M4 7V4…``），渲染出来是个残缺图形，
+    界面上「导出」按钮的图标看起来像坏图。
+    """
+    body = icons.ICON_BODIES["export"]
+    # 文件轮廓从左下起笔并闭合，右侧带折角
+    assert "M15 2H6" in body
+    assert body.count("Z") == 1
+    assert 'd="M14 2v4a2 2 0 0 0 2 2h4"' in body
+    # 向下的导出箭头
+    assert "M12 18v-6" in body
+    assert "m9 15 3 3 3-3" in body
+
+
+def test_disc_icon_exists_for_disk_image_pages() -> None:
+    """「镜像」（磁盘映像）用 hard-drive 图标，不再借用照片图标 ``images``。"""
+    assert "disc" in icons.ICON_BODIES
+    QApplication.instance() or QApplication([])
+    image = icons.pixmap("disc", size=16)
+    assert not image.isNull()
+
+    from fcmd.apps.wslman._wslmanw_qt import PAGES as WSL_PAGES
+
+    page_icons = {key: icon for key, _label, _hint, icon in WSL_PAGES}
+    assert page_icons["images"] == "disc"
+
+
+def test_page_icons_are_all_registered() -> None:
+    """侧边栏页面图标必须在 ``ICON_BODIES`` 里登记，避免运行期 KeyError / 空图标。"""
+    from fcmd.apps.llm._llmw_qt_window import PAGES as LLM_PAGES
+    from fcmd.apps.wslman._wslmanw_qt import PAGES as WSL_PAGES
+
+    for key, _label, _hint, icon in (*LLM_PAGES, *WSL_PAGES):
+        assert icon in icons.ICON_BODIES, f"页面 {key} 的图标 {icon!r} 未登记"
