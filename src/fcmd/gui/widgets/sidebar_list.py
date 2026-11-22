@@ -16,7 +16,15 @@ from typing import Any
 
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
-from PySide6.QtWidgets import QListWidget, QListWidgetItem, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import (
+    QListWidget,
+    QListWidgetItem,
+    QSizePolicy,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QWidget,
+)
 
 from fcmd.gui import style as _qt_theme
 
@@ -44,7 +52,11 @@ class SidebarEntry:
 
 
 class _SidebarDelegate(QStyledItemDelegate):
-    """自绘条目：圆角选中底 + 两行标题 / 副标题 + 右侧摘要。"""
+    """自绘条目：可选圆角选中底 + 两行标题 / 副标题 + 右侧摘要。"""
+
+    def __init__(self, parent: QWidget | None = None, *, highlight_background: bool = True) -> None:
+        super().__init__(parent)
+        self._highlight_background = highlight_background
 
     ROW_HEIGHT = 34
     ROW_HEIGHT_WITH_SUBTITLE = 48
@@ -80,14 +92,15 @@ class _SidebarDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         enabled = bool(index.data(ENABLED_ROLE) is not False)
-        if selected:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(palette.surface_active))
-            painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
-        elif hovered:
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(palette.surface_hover))
-            painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+        if self._highlight_background:
+            if selected:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(palette.surface_active))
+                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
+            elif hovered:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(palette.surface_hover))
+                painter.drawRoundedRect(rect, self.RADIUS, self.RADIUS)
 
         title_font = QFont(option.font)
         title_font.setPointSize(theme.fonts.body)
@@ -108,7 +121,13 @@ class _SidebarDelegate(QStyledItemDelegate):
         top = content.top() + max((content.height() - total_height) // 2, 0)
         title_rect = QRect(content.left(), top, title_width, title_height)
         painter.setFont(title_font)
-        painter.setPen(QColor(palette.text if (selected or hovered) else palette.muted))
+        if selected and not self._highlight_background:
+            title_color = palette.accent
+        elif selected or hovered:
+            title_color = palette.text
+        else:
+            title_color = palette.muted
+        painter.setPen(QColor(title_color))
         text = title_metrics.elidedText(title, Qt.TextElideMode.ElideRight, title_width)
         painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, text)
         if meta:
@@ -150,10 +169,11 @@ class SidebarList(QListWidget):  # pragma: no cover - Qt 控件
     ``currentRowChanged`` 等原生 API 不变，接入成本低。
     """
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, highlight_background: bool = True) -> None:
         super().__init__(parent)
         self.setObjectName("SidebarList")
         self.setMouseTracking(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setUniformItemSizes(False)
         self.setSpacing(0)
         self.setFrameShape(QListWidget.Shape.NoFrame)
@@ -162,7 +182,7 @@ class SidebarList(QListWidget):  # pragma: no cover - Qt 控件
         self.setWordWrap(False)
         self.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        self.setItemDelegate(_SidebarDelegate(self))
+        self.setItemDelegate(_SidebarDelegate(self, highlight_background=highlight_background))
 
     # ------------------------------------------------------------------ #
     # 数据

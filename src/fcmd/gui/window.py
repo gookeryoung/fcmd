@@ -167,8 +167,11 @@ class QtMainWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: n
         # 避免页面再单独占一行放动作、浪费正文高度。
         self.page_title = QLabel("", right)
         self.page_title.setObjectName("SectionTitle")
+        # 页标题下的描述行不再展示：页面提示保留在 PageSpec / 侧边栏 tooltip，
+        # 标题行只保留标题与页面动作，正文更紧凑（与简洁侧边栏风格一致）。
         self.page_hint = QLabel("", right)
         self.page_hint.setObjectName("Hint")
+        self.page_hint.hide()
         self.header_actions = QHBoxLayout()
         self.header_actions.setContentsMargins(0, 0, 0, 0)
         self.header_actions.setSpacing(6)
@@ -179,7 +182,6 @@ class QtMainWindow(LogChannelMixin, WindowShellMixin, QMainWindow):  # pragma: n
         title_row.addWidget(self.page_title)
         title_row.addStretch(1)
         right_layout.addLayout(title_row)
-        right_layout.addWidget(self.page_hint)
         self._header_owner = ""
         self._header_actions_by_page: dict[str, list[QWidget]] = {}
         self.stack = QStackedWidget(right)

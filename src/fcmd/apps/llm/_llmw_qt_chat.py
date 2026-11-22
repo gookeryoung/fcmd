@@ -390,7 +390,7 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self.new_chat_button.setObjectName("RunPrimary")
         self.new_chat_button.clicked.connect(self.new_conversation)
         side.addWidget(self.new_chat_button)
-        self.history_list = SidebarList(sidebar)
+        self.history_list = SidebarList(sidebar, highlight_background=False)
         # 公共侧边栏列表：圆角选中底、长标题右侧省略（tooltip 保留全名），
         # 不出现横向滚动条，也不让内容把侧栏撑宽；用户仍可拖动 splitter 展开。
         self.history_list.setMinimumWidth(0)

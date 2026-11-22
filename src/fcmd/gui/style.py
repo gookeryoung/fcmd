@@ -265,7 +265,7 @@ QPushButton#RunDanger { color: $danger; border-color: $danger; background: trans
 QPushButton#RunDanger:hover { background: $danger; color: $on_accent; }
 QPushButton#RunDanger:disabled { color: $muted; border-color: $border; background: transparent; }
 QFrame#ChatSidebar {
-    background: $surface;
+    background: transparent;
     border: none;
     border-radius: 0;
 }

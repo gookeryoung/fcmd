@@ -2409,10 +2409,11 @@ def test_chat_sidebar_toggle_shares_page_title_row(window: Any) -> None:
     toggle_top = toggle.mapTo(window, toggle.rect().topLeft()).y()
     title_top = window.page_title.mapTo(window, window.page_title.rect().topLeft()).y()
     assert abs(toggle_top - title_top) <= 2
-    # 正文紧跟标题（提示行）之后：中间没有额外的动作行。
-    hint_bottom = window.page_hint.mapTo(window, window.page_hint.rect().bottomLeft()).y()
+    # 页标题下的描述已移除：正文紧跟标题行，中间没有额外的说明 / 动作行。
+    assert window.page_hint.isVisible() is False
+    title_bottom = window.page_title.mapTo(window, window.page_title.rect().bottomLeft()).y()
     transcript_top = chat.transcript.mapTo(window, chat.transcript.rect().topLeft()).y()
-    assert 0 <= transcript_top - hint_bottom <= 16
+    assert 0 <= transcript_top - title_bottom <= 24
 
     # 切到其它页时收起键隐藏且不占位；切回恢复。
     window.show_page("overview")
