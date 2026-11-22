@@ -333,6 +333,26 @@ def test_sidebar_badge_restores_paint_only_after_restart(
         restarted.deleteLater()
 
 
+def test_storage_card_removes_directory_and_persists_config(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """公共存储卡支持移除目录：组件信号 → llmw 落盘 models_dirs。"""
+    from fcmd.apps.llm import _llmconfig
+    from fcmd.gui.widgets import storage as storage_module
+
+    first = tmp_path / "models-a"
+    second = tmp_path / "models-b"
+    _llmconfig.set_models_dirs([first, second])
+    monkeypatch.delenv("FCMD_MODELS", raising=False)
+    window.show_page("settings")
+    page = window.page("settings")
+    page.refresh()
+    monkeypatch.setattr(storage_module, "confirm", lambda *_args, **_kwargs: True)
+    page.storage_card._remove(str(second))
+    assert _llmconfig.configured_models_dirs() == [first]
+    assert page.storage_card.roots() == [first]
+
+
 def test_flow_page_builds_with_builtin_templates(window: Any) -> None:
     """工作流页首次打开：内置模板落盘、节点卡片可编辑、运行按钮可用。"""
     window.show_page("flow")

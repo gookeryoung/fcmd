@@ -28,19 +28,19 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from fcmd.apps.llm import _llmw_convert, _llmw_models, _llmw_storage, llmconvert, llmengine, llmenv
+from fcmd.apps.llm import _llmconfig, _llmw_convert, _llmw_models, _llmw_storage, llmconvert, llmengine, llmenv
 from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
 from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
-from fcmd.apps.llm._llmw_qt_storage import StorageGrid
 from fcmd.apps.llm.llmbase import EngineInfo, ServeError
 from fcmd.gui.page import AppPage
 from fcmd.gui.widgets import (
     Card,
-    HintLabel,
+    DiskLocation,
     PageScroll,
     PathRow,
     StatusTag,
+    StorageCard,
     button,
     confirm,
     hint_label,
@@ -84,76 +84,49 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     # 存储
     # ------------------------------------------------------------------ #
     def _build_storage(self) -> Card:
-        """存储卡片：Steam 式磁盘卡并排展示全部模型目录，末尾为添加卡。"""
-        card = Card("存储")
-        header = QHBoxLayout()
-        header.addWidget(hint_label("模型目录（首个为下载与转换产物落点，可添加多个）", wrap=False))
-        header.addStretch(1)
-        self.storage_add_button = button("添加目录", kind="ghost", icon="plus")
-        self.storage_add_button.clicked.connect(self._add_model_dir)
-        header.addWidget(self.storage_add_button)
-        card.body.addLayout(header)
-        self.storage_grid = StorageGrid(card)
-        self.storage_grid.addRequested.connect(self._add_model_dir)
-        self.storage_grid.openRequested.connect(lambda path: open_path(Path(path)))
-        self.storage_grid.removeRequested.connect(self._remove_model_dir)
-        self.storage_grid.primaryRequested.connect(self._make_primary_dir)
-        card.body.addWidget(self.storage_grid)
-        self.migration_note = HintLabel("")
-        card.body.addWidget(self.migration_note)
+        """存储卡片：公共 :class:`StorageCard`，多模型目录增删 / 设为主目录。"""
+        locations = _llmw_storage.locations()
+        card = StorageCard(
+            [location.path for location in locations],
+            title="存储",
+            hint="模型目录（首个为下载与转换产物落点，可添加多个）",
+            add_text="添加模型目录",
+            primary_label="下载目标",
+            dialog_title="添加模型目录",
+            remove_title="移除模型目录",
+            locations=lambda roots: [_disk_location(location) for location in _llmw_storage.locations_for(roots)],
+            open_path=open_path,
+            parent=self,
+        )
+        card.changed.connect(self._on_storage_changed)
+        card.message.connect(self._on_storage_message)
+        self.storage_card = card
+        # 兼容既有测试 / 页内访问路径。
+        self.storage_add_button = card.add_button
+        self.storage_grid = card.grid
+        self.migration_note = card.note_label
+        self._refresh_migration_note()
         return card
 
-    # -- 存储动作 ------------------------------------------------------ #
-    def _add_model_dir(self) -> None:
-        """选择并登记一个新模型目录；重复目录不会重复添加。"""
-        chosen = QFileDialog.getExistingDirectory(self, "添加模型目录", str(Path.home()))
-        if not chosen:
-            return
+    def _on_storage_message(self, message: str) -> None:
+        self.status(message)
+        self.state.log(message)
+
+    def _on_storage_changed(self, roots: object) -> None:
+        """公共存储卡片变更：落盘模型目录列表并触发模型重扫。"""
+        paths = [Path(str(item)) for item in roots] if isinstance(roots, list) else []
         try:
-            locations = _llmw_storage.add_location(chosen)
+            _llmconfig.set_models_dirs(paths)
         except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "添加失败", str(exc))
+            QMessageBox.critical(self, "保存失败", str(exc))
+            self.storage_card.set_roots([location.path for location in _llmw_storage.locations()])
             return
-        self.state.log(f"已添加模型目录: {chosen}")
-        self.status(f"已添加模型目录：{chosen}")
-        self._apply_storage(locations)
+        self._refresh_migration_note()
         self.state.refresh_models()
 
-    def _remove_model_dir(self, path: str) -> None:
-        """从列表移除模型目录（不删磁盘文件）；至少保留一个目录。"""
-        if len(_llmw_storage.locations()) <= 1:
-            self.status("至少要保留一个模型目录")
-            return
-        message = f"从列表移除以下目录？\n{path}\n\n磁盘文件不会被删除。"
-        if not confirm(self, "移除模型目录", message):
-            return
-        try:
-            locations = _llmw_storage.remove_location(path)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "移除失败", str(exc))
-            return
-        self.state.log(f"已移除模型目录: {path}")
-        self.status(f"已移除模型目录：{path}")
-        self._apply_storage(locations)
-        self.state.refresh_models()
-
-    def _make_primary_dir(self, path: str) -> None:
-        """把目录设为主目录：下载与转换产物写入这里，扫描顺序随之提前。"""
-        try:
-            locations = _llmw_storage.make_primary(path)
-        except (OSError, ValueError) as exc:
-            QMessageBox.critical(self, "切换失败", str(exc))
-            return
-        self.state.log(f"主模型目录已切换为: {path}")
-        self.status(f"主模型目录：{path}")
-        self._apply_storage(locations)
-
-    def _apply_storage(self, locations: list[_llmw_storage.StorageLocation]) -> None:
-        """重绘存储卡片并刷新迁移提示（写配置的副作用已由调用方完成）。"""
-        self.storage_grid.set_locations(locations)
+    def _refresh_migration_note(self) -> None:
         note = settings_logic.migration_note()
-        self.migration_note.setText(note)
-        self.migration_note.setVisible(bool(note))
+        self.storage_card.set_note(note)
 
     def _build_paint_engine(self) -> Card:
         """sd.cpp 引擎卡片：画图 / 视频 / 音频共用一张（同目录、同安装、同一个默认 tag）。
@@ -459,12 +432,10 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
     # ------------------------------------------------------------------ #
     def refresh(self) -> None:
         """重新读取配置与引擎列表。"""
-        self._apply_storage(_llmw_storage.locations())
+        self.storage_card.set_roots([location.path for location in _llmw_storage.locations()])
         for _name, path, _source in settings_logic.engine_rows():
             self.engines_path.set_value(path)
-        note = settings_logic.migration_note()
-        self.migration_note.setText(note)
-        self.migration_note.setVisible(bool(note))
+        self._refresh_migration_note()
         self.refresh_engines()
         self.refresh_engine_cards()
         self._refresh_convert_engine_options(self._convert_tag_text())
@@ -646,3 +617,18 @@ class SettingsPage(AppPage):  # pragma: no cover - Qt 控件
         self.state.log(f"已导入转换源码包：{dest}")
         self.status(f"已导入转换源码包：{dest.name}")
         self._set_engine_hint(f"转换源码已就绪：{dest}")
+
+
+def _disk_location(location: _llmw_storage.StorageLocation) -> DiskLocation:
+    """llmw 目录模型 → 公共磁盘卡展示模型（保留盘符 / 文件系统 / 下载目标文案）。"""
+    return DiskLocation(
+        path=location.path,
+        label=location.disk_label,
+        fstype=location.fstype,
+        total=location.total,
+        free=location.free,
+        exists=location.exists,
+        primary=location.primary,
+        path_text=_llmw_storage.display_path(location.path),
+        primary_label="下载目标",
+    )

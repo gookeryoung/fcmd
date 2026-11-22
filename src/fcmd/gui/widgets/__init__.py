@@ -59,7 +59,15 @@ from fcmd.gui.widgets.metrics import (
 )
 from fcmd.gui.widgets.rows import ItemRow, RowDetailMixin, RowListWidget, SelectionRow
 from fcmd.gui.widgets.splitter import apply_splitter_sizes, make_splitter, splitter_sizes
-from fcmd.gui.widgets.storage import DiskAddTile, DiskGrid, DiskLocation, DiskTile
+from fcmd.gui.widgets.storage import (
+    DiskAddTile,
+    DiskGrid,
+    DiskLocation,
+    DiskTile,
+    StorageCard,
+    StorageRoots,
+    default_disk_locations,
+)
 from fcmd.gui.widgets.tables import make_table, make_table_item
 from fcmd.gui.widgets.tabs import PillTabBar, badge_text, pill_tabs, tab_widget
 from fcmd.gui.widgets.text import (
@@ -100,11 +108,14 @@ __all__ = [
     "SegmentBar",
     "SelectionRow",
     "StatusTag",
+    "StorageCard",
+    "StorageRoots",
     "ToggleChip",
     "apply_splitter_sizes",
     "badge_text",
     "button",
     "confirm",
+    "default_disk_locations",
     "fit_dialog_to_content",
     "hint_label",
     "icon_button",

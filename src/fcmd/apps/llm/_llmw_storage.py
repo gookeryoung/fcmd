@@ -21,6 +21,7 @@ __all__ = [
     "add_location",
     "drive_label",
     "locations",
+    "locations_for",
     "make_primary",
     "remove_location",
 ]
@@ -96,10 +97,13 @@ def _location(path: Path, *, primary: bool, disks: Sequence[DiskInfo]) -> Storag
 
 def locations(home: Path | None = None) -> list[StorageLocation]:
     """当前全部模型目录（首个标记为主目录）及各自分区容量。"""
+    return locations_for(_llmconfig.models_dirs(home=home))
+
+
+def locations_for(paths: Sequence[Path]) -> list[StorageLocation]:
+    """把任意目录列表整理为带磁盘信息的展示模型（首个为主目录）。"""
     disks = disk_infos()
-    return [
-        _location(path, primary=index == 0, disks=disks) for index, path in enumerate(_llmconfig.models_dirs(home=home))
-    ]
+    return [_location(path, primary=index == 0, disks=disks) for index, path in enumerate(paths)]
 
 
 def add_location(value: str | Path, home: Path | None = None) -> list[StorageLocation]:

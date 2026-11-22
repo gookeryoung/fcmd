@@ -71,6 +71,7 @@ ADR 0031 把模型目录收敛为单一 `models_dir`，只保留一个下载落�
 
 ## 交接
 
-- 磁盘卡片的展示 / 信号已抽成共享组件 `fcmd.gui.widgets.storage.DiskGrid`
-  （`DiskLocation` + `DiskTile` + `DiskAddTile`）；llmw 的 `_llmw_qt_storage.py` 只做
-  `StorageLocation → DiskLocation` 适配，后续其它应用的目录设置可直接复用。
+- 多目录设置已抽成共享组件 `fcmd.gui.widgets.StorageCard`：内部 `StorageRoots`
+  负责去重 / 添加 / 移除 / 设为主目录（至少保留一个目录，移除只从列表删、不删磁盘
+  文件），`DiskGrid` 负责磁盘卡展示；变更只发 `changed`，由宿主落盘。
+  llmw 设置页直接使用 `StorageCard`，`_llmw_storage.py` 只保留目录模型与磁盘信息。

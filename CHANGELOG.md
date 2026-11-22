@@ -7,6 +7,10 @@
 
 ### 变更
 
+- 多存储目录设置抽成公共组件 `gui/widgets.StorageCard`：`StorageRoots` 统一
+  去重 / 添加 / 移除 / 设为主目录（至少保留一个目录，移除不删磁盘文件），
+  变更只发 `changed`，宿主负责落盘；llmw 设置页改为直接复用并删除
+  `_llmw_qt_storage.py` 适配层。
 - llmw 设置页的磁盘卡片抽成共享 UI 组件 `gui/widgets/storage.py`：
   `DiskGrid` / `DiskTile` / `DiskAddTile` / `DiskLocation` 只负责展示与
   打开 / 移除 / 设为主目录信号，任意应用的目录列表可复用；llmw 侧保留
