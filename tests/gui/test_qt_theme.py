@@ -464,3 +464,18 @@ def test_apply_theme_reapplies_when_only_overrides_change() -> None:
     _qt_theme.apply_theme(app, tuned)
     assert _qt_theme.active_theme(app).palette.accent == "#ff7a00"
     assert base.palette.accent in app.styleSheet() or "#ff7a00" in app.styleSheet()
+
+
+def test_selected_row_ghost_button_border_stays_visible() -> None:
+    """选中行卡里的 Ghost 按钮（如实例行「配置」）改用强调色边框，不能与深色底融在一起。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    selector = 'QFrame[itemRow="true"][selected="true"] QPushButton#Ghost {'
+    block = text.split(selector, 1)[1].split("}", 1)[0]
+    assert f"border-color: {theme.palette.accent}" in block
+    assert f"color: {theme.palette.text}" in block
+    hover = text.split(
+        'QFrame[itemRow="true"][selected="true"] QPushButton#Ghost:hover {',
+        1,
+    )[1].split("}", 1)[0]
+    assert f"border-color: {theme.palette.accent_hover}" in hover

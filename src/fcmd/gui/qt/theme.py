@@ -404,6 +404,25 @@ QPushButton#Ghost:hover {
 }
 QPushButton#Ghost:pressed { background: $surface_active; }
 QPushButton#Ghost:disabled { color: $muted; border-color: $border; background: transparent; }
+/* 选中行卡底色更深，Ghost 默认的 border 与底色接近；换成强调色边框，保证配置等
+   次要动作在选中行里仍能看见边框。这是行卡 + Ghost 的公共契约，各应用无需重复写。 */
+QFrame#RecommendationRow[selected="true"] QPushButton#Ghost,
+QFrame#EngineRow[selected="true"] QPushButton#Ghost,
+QFrame[itemRow="true"][selected="true"] QPushButton#Ghost {
+    border-color: $accent;
+    color: $text;
+}
+QFrame#RecommendationRow[selected="true"] QPushButton#Ghost:hover,
+QFrame#EngineRow[selected="true"] QPushButton#Ghost:hover,
+QFrame[itemRow="true"][selected="true"] QPushButton#Ghost:hover {
+    border-color: $accent_hover;
+    background: $surface_hover;
+}
+QFrame#RecommendationRow[selected="true"] QPushButton#Ghost:disabled,
+QFrame#EngineRow[selected="true"] QPushButton#Ghost:disabled,
+QFrame[itemRow="true"][selected="true"] QPushButton#Ghost:disabled {
+    border-color: $border_strong;
+}
 QPushButton#FilterChip {
     background: $surface;
     border: 1px solid $border;
