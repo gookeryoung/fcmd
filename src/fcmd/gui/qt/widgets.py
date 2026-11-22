@@ -1005,12 +1005,17 @@ class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
     最后开始的那条说明。
     """
 
-    def __init__(self, text: str = "加载中…", parent: QWidget | None = None) -> None:
+    def __init__(self, text: str = "加载中…", parent: QWidget | None = None, *, compact: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("LoadingBar")
         row = QHBoxLayout(self)
-        row.setContentsMargins(10, 6, 10, 6)
-        row.setSpacing(10)
+        # 紧凑模式给状态栏用：不要上下留白、进度条压细，整条底栏保持一行高。
+        if compact:
+            row.setContentsMargins(8, 0, 8, 0)
+            row.setSpacing(8)
+        else:
+            row.setContentsMargins(10, 6, 10, 6)
+            row.setSpacing(10)
         self.text_label = QLabel(text, self)
         self.text_label.setObjectName("LoadingText")
         self.elapsed_label = QLabel("0.0s", self)
@@ -1019,7 +1024,9 @@ class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
         self.bar = QProgressBar(self)
         self.bar.setRange(0, 0)  # 0/0 = 忙碌态，不显示百分比
         self.bar.setTextVisible(False)
-        self.bar.setMinimumWidth(160)
+        self.bar.setMinimumWidth(120 if compact else 160)
+        if compact:
+            self.bar.setFixedHeight(6)
         row.addWidget(self.text_label, 0)
         row.addWidget(self.bar, 1)
         row.addWidget(self.elapsed_label, 0)

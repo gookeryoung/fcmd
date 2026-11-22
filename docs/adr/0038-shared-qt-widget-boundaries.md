@@ -8,7 +8,7 @@
 
 Qt 迁移后，`gui/qt/` 已沉淀 `Card` / `PageScroll` / `FormGrid` / `LogView` / `StatusTag` /
 `ProgressRow` / `ChoiceCard` / `ChoiceGroup` / `SelectionRow` / `LogDialog` / `EventBridge` /
-`ProgressBridge` 等共享件。P0–P2 已把 llmw 内部的重复拼装收敛到这些共享件，并推广到
+`ProgressBridge` / `WindowStatusBar` 等共享件。P0–P2 已把 llmw 内部的重复拼装收敛到这些共享件，并推广到
 img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 
 继续推广时，剩下候选都涉及「抽基类」「换可见交互」或「新建通用对话框」。这类改动
@@ -25,6 +25,21 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D5 | `LogDialog` 只服务「独立日志窗口」；页面内日志继续用 `LogView` | 各工具窗口 |
 | D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、devman、llmw 下载区 |
 | D7 | 图标统一走 `fcmd.gui.qt.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
+| D8 | 底部状态栏统一用 `WindowStatusBar`：单行高度（文字与页内补充都是 `ElidedLabel`，加载条用 `compact`），文字 / 页内补充按分页隔离，任务消息写回「发起任务的那一页」 | `gui/qt/statusbar.py`、`QtMainWindow`、wslmanw |
+
+### D8 为什么统一状态栏
+
+各窗口此前各自往 `QStatusBar` 里塞控件：换行标签（选中项摘要 / 长文案）会把底栏撑成
+两三行，页内信息（如选中发行版的摘要）也不会随分页切换消失，任务完成提示还会写到
+「用户切过去的那一页」上。`WindowStatusBar` 把这三件事收进一个组件：
+
+- 高度恒为一行：主文字 / 页内补充都用 `ElidedLabel`（垂直 Fixed、超长中间省略 + tooltip），
+  加载条用 `LoadingBar(compact=True)`（无上下留白、6px 细进度条）；
+- 文字按分页隔离：`set_page_text` / `set_page_detail` + `set_page`，切页恢复该页自己的文案；
+- 右侧常驻：`set_note`（更新于 …）+ `show_loading` 不挤占左侧文字。
+
+`QtMainWindow` 只做转发（`set_status` / `set_page_status` / `set_status_detail` / `status_text`），
+窗口不再直接操作 `statusBar()` 的子控件。
 
 ### D1 为什么不做 InfoRowCard 基类
 

@@ -14,7 +14,7 @@ import platform
 import unicodedata
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -355,8 +355,17 @@ def image_item_lines(entry: _images.ImageEntry) -> tuple[str, str, str]:
     """
     arches = "/".join(entry.arches) or "任意架构"
     subtitle = " · ".join(part for part in (entry.friendly_name, arches, image_source_text(entry)) if part)
-    metrics = "可直链下载" if entry.downloads else "仅 wsl --install"
+    metrics = image_action_text(entry)
     return entry.name, subtitle or "—", metrics
+
+
+def image_action_text(entry: _images.ImageEntry) -> str:
+    """右侧关键状态：已安装 / 可安装（本地已有归档）/ 可下载 / 仅 ``wsl --install``。"""
+    if entry.installed:
+        return "已安装"
+    if entry.downloaded:
+        return "可安装"
+    return "可下载" if entry.downloads else "仅 wsl --install"
 
 
 def image_marks(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
@@ -364,6 +373,8 @@ def image_marks(entry: _images.ImageEntry) -> tuple[tuple[str, str], ...]:
     marks: list[tuple[str, str]] = []
     if entry.installed:
         marks.append(("已安装", "success"))
+    elif entry.downloaded:
+        marks.append(("已下载", "accent"))
     if entry.backed_up:
         marks.append(("已备份", "accent"))
     if entry.has_sha256:
@@ -518,6 +529,33 @@ class LocalArchive:
     arch: str
     source: str
     expected_sha256: str | None = None
+
+
+def mark_downloaded(entries: Sequence[_images.ImageEntry], directory: Path) -> tuple[_images.ImageEntry, ...]:
+    """按下载目录里的归档标注「已下载」，并记住归档路径供行内「安装」直接用。
+
+    同一发行版有多个架构时优先本机架构（:func:`pick_download`）；归档命名既认
+    官方 URL 原名，也认 CLI 的 ``名称-架构.tar``（:func:`match_archive`）。
+    """
+    found: dict[str, Path] = {}
+    for path in local_archives(directory):
+        matched = match_archive(path, entries)
+        if matched is None:
+            continue
+        entry, download = matched
+        key = entry.name.casefold()
+        preferred = pick_download(entry).arch
+        current = found.get(key)
+        if current is None or download.arch == preferred:
+            found[key] = path
+    return tuple(
+        replace(
+            entry,
+            downloaded=entry.name.casefold() in found,
+            archive=str(found[entry.name.casefold()]) if entry.name.casefold() in found else "",
+        )
+        for entry in entries
+    )
 
 
 def local_archives(directory: Path) -> tuple[Path, ...]:

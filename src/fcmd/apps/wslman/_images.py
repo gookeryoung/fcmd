@@ -84,6 +84,8 @@ class ImageEntry:
     downloads: tuple[ImageDownload, ...] = ()
     installed: bool = False
     backed_up: bool = False
+    downloaded: bool = False
+    archive: str = ""
 
     @property
     def arches(self) -> tuple[str, ...]:
@@ -102,14 +104,18 @@ class ImageEntry:
             "has_sha256": self.has_sha256,
             "installed": self.installed,
             "backed_up": self.backed_up,
+            "downloaded": self.downloaded,
+            "archive": self.archive,
             "downloads": [download.to_data() for download in self.downloads],
         }
 
     def to_cache_data(self) -> dict[str, object]:
-        """缓存只存来源信息；已安装 / 已备份是本地状态，读取时重算。"""
+        """缓存只存来源信息；已安装 / 已备份 / 已下载是本地状态，读取时重算。"""
         data = self.to_data()
         data.pop("installed")
         data.pop("backed_up")
+        data.pop("downloaded")
+        data.pop("archive")
         return data
 
 

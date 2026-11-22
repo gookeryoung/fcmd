@@ -17,7 +17,7 @@ dependencies = [
     "PySide6-Essentials>=6.9; python_version >= '3.11'",
     "PySide2>=5.15.2.1; python_version < '3.11'",
     "tomli>=2.0; python_version < '3.11'",
-    "typing-extensions>=4.12; python_version < '3.12'",
+    "typing-extensions>=4.12; python_version < '3.12'"
 ]
 description = "Rapid Python tools collection"
 keywords = [ "cli", "dag", "scheduler", "task", "tools", "workflow" ]
@@ -163,11 +163,11 @@ dev = [
     "tox>=4.25.0"
 ]
 filecheck = [ "puremagic>=1.28" ]
-full      = [ "fcmd[img,pdf,ocr,svg,crypto,archive,filecheck,color,pe,ppt,win32]" ]
-img       = [ "pillow>=10" ]
-lint      = [ "pyrefly>=1.1.1", "ruff>=0.8.0" ]
-ocr       = [ "fcmd[img]", "pytesseract>=0.3.13" ]
-office    = [ "fcmd[img,pdf,ocr,svg,ppt]" ]
+full = [ "fcmd[img,pdf,ocr,svg,crypto,archive,filecheck,color,pe,ppt,win32]" ]
+img = [ "pillow>=10" ]
+lint = [ "pyrefly>=1.1.1", "ruff>=0.8.0" ]
+ocr = [ "fcmd[img]", "pytesseract>=0.3.13" ]
+office = [ "fcmd[img,pdf,ocr,svg,ppt]" ]
 pdf = [ "pymupdf>=1.23,<2", "pypdf>=5.9.0" ]
 pe = [ "pefile>=2024.8.26" ]
 ppt = [ "python-pptx>=1.0" ]

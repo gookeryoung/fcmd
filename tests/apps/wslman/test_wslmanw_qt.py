@@ -108,7 +108,7 @@ def test_lists_distros_and_details(home: Path, monkeypatch: pytest.MonkeyPatch) 
         window._table.selectRow(0)
         assert window.detail_values["名称"].text() == "Ubuntu"
         assert window.detail_values["虚拟磁盘"].text().endswith("ext4.vhdx")
-        assert window.hover_label.text().startswith("Ubuntu")
+        assert window.status_detail_text().startswith("Ubuntu")
         assert window.start_button.isEnabled() is False
         assert window.stop_button.isEnabled() is True
         window._table.selectRow(1)
@@ -451,12 +451,8 @@ def test_images_note_text_covers_online_and_cache() -> None:
     assert isinstance(stamp, str) and stamp
 
 
-def test_images_page_keeps_bottom_actions_unsqueezed(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """回归：窗口压到最小高度时底部动作行 / 状态行不被列表压扁重叠。
-
-    原实现把「下载提示」「动作行」放在可换行标签 + 拉伸列表之间，矮窗口下
-    Qt 会把换行标签压到一行、动作行压到按钮最小高度以下，视觉上叠在一起。
-    """
+def test_images_page_has_no_bottom_action_bar(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像页不再有底部动作条：下载 / 安装 / 取消都在行内，窗口压到最小也不重叠。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     # 布局用例不碰网络：切页时的后台刷新交给专门的两个用例覆盖。
     monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
@@ -470,18 +466,18 @@ def test_images_page_keeps_bottom_actions_unsqueezed(home: Path, monkeypatch: py
         window.show_page("images")
         QApplication.processEvents()
 
+        # 底部「下载选中 / 取消 / 下载后立即安装」已移除
+        for name in ("_download_button", "_cancel_button", "install_after"):
+            assert not hasattr(window, name), name
         assert window.image_list.height() >= 200
         assert window.images_status.height() == window.images_status.sizeHint().height()
-        for widget in (
-            window._download_button,
-            window._cancel_button,
-            window.install_after,
-            window.image_install_local,
-            window.images_refresh,
-        ):
+        for widget in (window.image_install_local, window.images_refresh):
             assert widget.height() >= widget.sizeHint().height(), widget.objectName() or widget
-        # 列表底边严格在动作行之上（不重叠）
-        assert window.image_list.geometry().bottom() < window._download_button.geometry().top()
+        # 行内动作按钮同样不被压扁
+        for index in range(window.image_list.count()):
+            row = _image_row(window, index)
+            if row.download_button is not None:
+                assert row.download_button.height() >= row.download_button.sizeHint().height()
     finally:
         window.hide()
         window._poll.stop()  # type: ignore[union-attr]
@@ -573,6 +569,185 @@ def test_images_page_has_no_advanced_collapsible(home: Path, monkeypatch: pytest
         assert page is not None
         assert page.findChildren(Collapsible) == []
         assert not hasattr(window, "advanced")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 底部状态栏：单行高度 + 消息归属发起任务的分页
+# ---------------------------------------------------------------------- #
+def test_statusbar_is_single_line(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """状态栏恒为一行高：选中摘要、清单状态、加载条都不会把它撑高。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu-24.04")))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.resize(1040, 600)
+        window.show()
+        QApplication.processEvents()
+        single = window.statusBar().sizeHint().height()
+        assert window.statusBar().height() == single
+
+        # 发行版页：选中摘要走「页内补充」，不换行、不撑高
+        window._table.selectRow(0)
+        QApplication.processEvents()
+        assert window.status_detail_text()
+        assert window.statusBar().height() == single
+
+        # 镜像页：长状态 + 加载条同样保持一行
+        window.show_page("images")
+        window.set_status("共 120 个镜像 · 显示 120 个 · 已安装 12 · cli+manifest · 更新于 12:00")
+        window.show_loading("正在获取镜像清单…")
+        QApplication.processEvents()
+        assert window.loading_bar.is_running()
+        assert window.statusBar().height() == single
+    finally:
+        window.hide()
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_status_messages_follow_their_page(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """任务消息写回发起任务的分页；切到别的页不会看到它。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("images")
+        # 在镜像页发起任务，然后切到日志页：完成提示应停在镜像页
+        window._task_page = "images"
+        window.show_page("log")
+        window._set_task_status("下载完成")
+        assert window.status_text() == "就绪"
+        assert window.page_status("images") == "下载完成"
+
+        window.show_page("images")
+        assert window.status_text() == "下载完成"
+
+        # 设置页的改动只写设置页
+        window.show_page("log")
+        window._on_download_dir_committed("")
+        assert window.page_status("settings").startswith("下载目录")
+        assert window.status_text() == "就绪"
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_distro_summary_only_on_distros_page(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """选中发行版的摘要不跨页残留：切走后页内补充清空。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro("Ubuntu")))
+    monkeypatch.setattr(_wslmanw_qt, "distro_disk_bytes", lambda *args: (2048, False))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window._table.selectRow(0)
+        QApplication.processEvents()
+        assert window.status_detail_text().startswith("Ubuntu")
+        window.show_page("images")
+        assert window.status_detail_text() == ""
+        window.show_page("distros")
+        assert window.status_detail_text().startswith("Ubuntu")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+# ---------------------------------------------------------------------- #
+# 行内动作：下载 / 安装 / 已安装（底部动作条已移除）
+# ---------------------------------------------------------------------- #
+def test_image_row_actions_follow_state(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """行内按钮随状态变：未下载「下载」→ 已下载「安装」→ 已安装无按钮。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        plain = _image_entry("Ubuntu")
+        downloaded = wslmanw._images.ImageEntry(
+            name="Debian",
+            friendly_name="Debian",
+            sources=("cli", "manifest"),
+            downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/debian.wsl"),),
+            downloaded=True,
+            archive=r"D:\WSL\debian.wsl",
+        )
+        installed = wslmanw._images.ImageEntry(
+            name="Alpine",
+            friendly_name="Alpine",
+            sources=("store",),
+            installed=True,
+        )
+        # 行内按钮的槽在渲染时绑定，先把窗口级动作换成记录器，避免真的开始下载。
+        downloads: list[str] = []
+        installs: list[str] = []
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_download_entry", lambda self, name: downloads.append(name))
+        monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_install_entry", lambda self, name: installs.append(name))
+        entries = (plain, downloaded, installed)
+        window._apply_images((_catalog(entries), entries))
+
+        rows = {_image_row(window, index).entry.name: _image_row(window, index) for index in range(3)}
+        row_plain, row_downloaded, row_installed = rows["Ubuntu"], rows["Debian"], rows["Alpine"]
+        assert row_plain.download_button is not None
+        assert row_plain.download_button.text() == "下载"
+        assert row_downloaded.download_button is not None
+        assert row_downloaded.download_button.text() == "安装"
+        assert row_installed.download_button is None
+
+        # 行内标签：已下载 / 已安装
+        marks = [tag.text() for tag in row_downloaded.findChildren(_wslmanw_qt.StatusTag)]
+        assert "已下载" in marks
+        installed_marks = [tag.text() for tag in row_installed.findChildren(_wslmanw_qt.StatusTag)]
+        assert "已安装" in installed_marks
+        assert "已下载" not in installed_marks
+
+        # 点击分别走「下载」与「安装」两条路径
+        row_plain.download_button.click()
+        row_downloaded.download_button.click()
+        assert downloads == ["Ubuntu"]
+        assert installs == ["Debian"]
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_install_entry_opens_dialog_with_preset_archive(
+    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """行内「安装」把已下载的归档预选进「安装本地镜像」对话框。"""
+    archive = tmp_path / "ubuntu.wsl"
+    archive.write_bytes(b"x")
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        entry = wslmanw._images.ImageEntry(
+            name="Ubuntu",
+            friendly_name="Ubuntu",
+            sources=("cli", "manifest"),
+            downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/ubuntu.wsl"),),
+            downloaded=True,
+            archive=str(archive),
+        )
+        window._apply_images((_catalog((entry,)), (entry,)))
+        seen: list[Path | None] = []
+
+        class _FakeDialog:
+            def __init__(self, _owner: Any, _entries: Any, *, preset: Path | None = None) -> None:
+                seen.append(preset)
+
+            def exec(self) -> int:  # 取消：不发起安装，只验证预选路径
+                return 0
+
+        monkeypatch.setattr(_wslmanw_qt, "_InstallLocalDialog", _FakeDialog)
+        window._install_entry("Ubuntu")
+        assert seen == [archive]
     finally:
         window._poll.stop()  # type: ignore[union-attr]
         window.deleteLater()

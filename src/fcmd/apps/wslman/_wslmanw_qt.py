@@ -36,7 +36,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidgetItem,
@@ -62,7 +61,6 @@ from fcmd.gui.qt.widgets import (
     Card,
     ElidedLabel,
     FormGrid,
-    HintLabel,
     LogView,
     PageScroll,
     PathRow,
@@ -139,6 +137,8 @@ class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
     toggleRequested = Signal(object)
     downloadRequested = Signal(str)
+    installRequested = Signal(str)
+    cancelRequested = Signal()
 
     def __init__(self, entry: ImageEntry, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -186,12 +186,15 @@ class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         stats.setToolTip(metrics)
         header_row.addWidget(stats, 0)
 
-        self.download_button = button("下载" if entry.downloads else "安装", kind="primary")
-        self.download_button.setToolTip(
-            "下载归档；可在下方勾选「下载后立即安装」" if entry.downloads else w._DOWNLOAD_HINT
-        )
-        self.download_button.clicked.connect(lambda: self.downloadRequested.emit(entry.name))
-        header_row.addWidget(self.download_button, 0)
+        # 每行自带动作按钮：未下载 →「下载」；已下载未安装 →「安装」；已安装 → 无按钮。
+        # 下载 / 安装进行中时该行按钮变成「取消」，不再依赖页面底部的动作条。
+        self.action = self._action_kind(entry)
+        self.download_button: QPushButton | None = None
+        if self.action:
+            self.download_button = button(self._action_text(), kind="primary")
+            self.download_button.setToolTip(self._action_tooltip())
+            self.download_button.clicked.connect(self._on_action)
+            header_row.addWidget(self.download_button, 0)
         self.expand_button = icon_button("", tooltip="展开详情与下载地址")
         self.expand_button.setIconSize(QSize(16, 16))
         _set_icon(self.expand_button, "chevron-down", tone="muted")
@@ -218,7 +221,42 @@ class _ImageItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.expand_button.setToolTip("收起详情" if expanded else "展开详情与下载地址")
         self.expand_button.setAccessibleName("收起详情" if expanded else "展开详情")
 
-    def set_download_state(self, *, busy: bool) -> None:
+    @staticmethod
+    def _action_kind(entry: ImageEntry) -> str:
+        """``""``（无需动作）/ ``download`` / ``install``。"""
+        if entry.installed:
+            return ""
+        if entry.downloaded:
+            return "install"
+        return "download" if entry.downloads else "install"
+
+    def _action_text(self) -> str:
+        return "安装" if self.action == "install" else "下载"
+
+    def _action_tooltip(self) -> str:
+        if self.action == "install":
+            if self.entry.downloaded:
+                return f"用已下载的镜像包安装：{self.entry.archive}" if self.entry.archive else "用已下载的镜像包安装"
+            return w._DOWNLOAD_HINT
+        return "下载镜像归档；完成后该行变为「已下载」，可直接安装"
+
+    def _on_action(self) -> None:
+        if self.action == "install":
+            self.installRequested.emit(self.entry.name)
+        else:
+            self.downloadRequested.emit(self.entry.name)
+
+    def set_download_state(self, *, busy: bool, active: bool = False) -> None:
+        """任务进行中：正在跑的这一行按钮变「取消」，其它行禁用。"""
+        if self.download_button is None:
+            return
+        if busy and active:
+            self.download_button.setText("取消")
+            self.download_button.setToolTip("取消本次任务（已下载的部分按配置保留 .part）")
+            self.download_button.setEnabled(True)
+            return
+        self.download_button.setText(self._action_text())
+        self.download_button.setToolTip(self._action_tooltip())
         self.download_button.setEnabled(not busy)
 
 
@@ -288,6 +326,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._status_busy = False
         self._images_busy = False
         self._images_from_cache = False
+        self._states_busy = False
+        self._active_entry = ""
+        self._task_page = ""
         self._closing = False
         self._bridge: _LogBridge | None = None
         self._poll: QTimer | None = None
@@ -319,10 +360,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             page = builders[key]()
             page.hide()
             self.add_page(key, label, hint=hint, icon=icon, factory=lambda page=page: page)
-        self.hover_label = HintLabel("")
-        self.hover_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.hover_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.statusBar().insertWidget(0, self.hover_label, 1)
         self._schedule_poll()
         self.refresh()
 
@@ -541,23 +578,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._filter_timer.timeout.connect(self._render_images)
         self.image_filter_buttons[self._image_filter_key].setChecked(True)
 
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(6)
-        self._download_button = button("下载选中镜像", kind="primary")
-        self._download_button.setToolTip(w._DOWNLOAD_HINT)
-        self._download_button.clicked.connect(self._download_selected)
-        self._download_button.setEnabled(False)
-        actions.addWidget(self._download_button)
-        self._cancel_button = button("取消")
-        self._cancel_button.clicked.connect(self._cancel_task)
-        actions.addWidget(self._cancel_button)
-        self.install_after = QCheckBox("下载后立即安装", self)
-        self.install_after.setToolTip(f"下载完成后立即 wsl --import；{w._DOWNLOAD_HINT}")
-        actions.addWidget(self.install_after)
-        actions.addStretch(1)
-        body.addLayout(actions)
-
         return page
 
     def _build_settings_page(self) -> QWidget:
@@ -652,10 +672,13 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         self._busy = True
         self._label = label
+        # 任务消息归属于「发起它的那一页」：下载在镜像页启动，用户切到日志页时
+        # 完成提示不应写到日志页的状态栏上。
+        self._task_page = self.current_page()
         self._cancel = threading.Event()
         self._bridge = _LogBridge(self)
         self._bridge.message.connect(self._log)
-        self.set_status(f"{label}…")
+        self._set_task_status(f"{label}…")
         self._set_buttons(False)
 
         def runner(cancel: threading.Event) -> tuple[bool, str]:
@@ -678,28 +701,31 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         ok, message = payload
         if not ok:
             self._log(f"[{label}] {message}")
-            self.set_status(f"{label}失败")
+            self._set_task_status(f"{label}失败")
             QMessageBox.critical(self, label, message)
             return
         self._log(f"[{label}] {message}")
-        self.set_status(f"{label}完成")
+        self._set_task_status(f"{label}完成")
         if label == "刷新":
             self._refresh_rows()
         else:
             self.refresh()
+        # 下载 / 安装 / 注销后重扫本地状态：行内标签与动作按钮（已下载→安装、
+        # 安装完成→已安装）要立刻跟着变，不必等用户手动「更新列表」。
+        self._refresh_image_states()
 
     def _task_error(self, label: str, message: str) -> None:
         self._log(f"[{label}] 失败：{message}")
-        self.set_status(f"{label}失败")
+        self._set_task_status(f"{label}失败")
         QMessageBox.critical(self, label, message)
 
     def _task_finished(self) -> None:
         self._busy = False
+        self._active_entry = ""
         self._set_buttons(True)
         if self._closing:
             return
         self._update_action_states()
-        self._update_image_actions()
 
     def _set_buttons(self, enabled: bool) -> None:
         for widget in self._buttons:
@@ -708,15 +734,19 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             for index in range(self.image_list.count()):
                 row = self.image_list.itemWidget(self.image_list.item(index))
                 if isinstance(row, _ImageItemRow):
-                    row.set_download_state(busy=not enabled)
+                    row.set_download_state(busy=not enabled, active=row.entry.name == self._active_entry)
         if enabled:
             self._update_action_states()
-            self._update_image_actions()
+
+    def _set_task_status(self, text: str) -> None:
+        """把任务状态写到发起任务的那一页（没有记录时退回当前页）。"""
+        self.set_page_status(self._task_page or self.current_page(), text)
 
     def _cancel_task(self) -> None:
+        """取消按钮在「正在跑的那一行」里：只对进行中的任务生效。"""
         if self._busy:
             self._cancel.set()
-            self.set_status(f"{self._label}取消中…")
+            self._set_task_status(f"{self._label}取消中…")
 
     # ------------------------------------------------------------------ #
     # 运行状态轮询
@@ -753,7 +783,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _on_status_error(self, message: str) -> None:
         self._status_busy = False
         if not self._busy:
-            self.set_status(f"状态刷新失败：{message}")
+            self.set_page_status("distros", f"状态刷新失败：{message}")
 
     def _apply_status(self, view: Any) -> None:
         """只改状态列与按钮态，不重建整表：选中行与滚动位置不受影响。"""
@@ -843,14 +873,14 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             for value in self.detail_values.values():
                 value.setText("—")
             self.detail_hint.setText("选择上方列表中的发行版查看详情")
-            self.hover_label.setText("")
+            self.set_status_detail("")
             self._update_action_states()
             return
         size, estimated = self.sizes.get(distro.name, (None, False))
         for label, value in w.detail_fields(distro, size, estimated):
             self.detail_values[label].setText(value)
         self.detail_hint.setText("")
-        self.hover_label.setText(w.summary_text(distro, size, estimated))
+        self.set_status_detail(w.summary_text(distro, size, estimated))
         self._update_action_states()
 
     def _update_action_states(self) -> None:
@@ -892,7 +922,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if distro is None:
             return
         if distro.state == "running":
-            self.set_status(f"{distro.name} 已在运行")
+            self.set_page_status("distros", f"{distro.name} 已在运行")
             self._update_action_states()
             return
 
@@ -1004,6 +1034,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         if payload is None:
             return
         archive, name, target, replace, backup = payload
+        self._active_entry = name
         self._install_archive(archive, name, target, replace=replace, backup=backup)
 
     def _install_archive(self, archive: Path, name: str, target: Path, *, replace: bool, backup: Path | None) -> None:
@@ -1071,13 +1102,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         fallback = load_config().download_dir.strip()
         return fallback or str(Path.home() / "Downloads")
 
-    def _download_selected(self) -> None:
-        entry = self._selected_image()
-        if entry is None:
-            QMessageBox.critical(self, "下载", "请先在列表中选择镜像")
-            return
-        self._download_payload(entry)
-
     def _download_entry(self, name: str) -> None:
         """行内「下载 / 安装」按钮：先聚焦该行，再复用同一套下载流程。"""
         for index in range(self.image_list.count()):
@@ -1088,26 +1112,19 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 return
 
     def _download_payload(self, entry: ImageEntry) -> None:
-        directory_text = self.download_dir.value()
+        """行内「下载」：只把归档拉到下载目录；完成后行变「已下载」，再点「安装」。
+
+        安装单独成为一个动作（``_install_entry``），避免「下载 + 自动导入」把两件
+        事混在一次操作里；下载失败的半成品仍按配置保留 ``.part``。
+        """
         expected = self.expected_sha.text().strip() or None
-        install_after = self.install_after.isChecked()
         mirror_policy = self.mirror_ids[self.mirror.currentIndex()] if self.mirror.currentIndex() >= 0 else "auto"
-        install_name = entry.name
-        install_dir: Path | None = None
-        if install_after:
-            # 命名与安装位置必须在主线程问完：工作线程里不能再弹对话框。
-            chosen_name, accepted = QInputDialog.getText(self, "下载后安装", "新发行版名称", text=entry.name)
-            if not accepted or not chosen_name.strip():
-                return
-            chosen_dir = QFileDialog.getExistingDirectory(self, "选择安装目录（必须为空）")
-            if not chosen_dir:
-                return
-            install_name, install_dir = chosen_name.strip(), Path(chosen_dir)
+        directory = self._download_dir_path()
 
         def work(cancel: threading.Event) -> str:
             env = cli._build_environment()
             if not entry.downloads:
-                # 只有 CLI / Store 来源：走 wsl --install，不下载归档。
+                # 只有 CLI / Store 来源：没有归档可下载，直接走 wsl --install。
                 cli._run_step(
                     env,
                     ["--install", "-d", entry.name, "--no-launch"],
@@ -1120,7 +1137,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             from fcmd.apps.wslman import _source
 
             download = w.pick_download(entry)
-            directory = Path(directory_text) if directory_text else Path(env.config.download_dir or ".")
             target = directory / w.image_filename(entry.name, download)
             if target.exists():
                 raise invalid_argument(f"目标文件已存在：{target}", hint="换一个目录或先删除旧文件")
@@ -1137,41 +1153,52 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 expected_sha256=expected or download.sha256,
                 cancelled=cancel.is_set,
             )
-            summary = (
+            return (
                 f"已下载 {target}（{format_bytes(result_data.size)}，"
-                f"来源 {_mirrors.label(result_data.source)}，sha256 {result_data.sha256}）"
+                f"来源 {_mirrors.label(result_data.source)}，sha256 {result_data.sha256}）；"
+                "点行内「安装」导入 WSL"
             )
-            if not install_after:
-                return summary
-            if install_dir is None:  # 上面已要求选择目录，这里只做类型收窄
-                raise invalid_argument("未选择安装目录")
-            if self._bridge is not None:
-                self._bridge.message.emit(f"[下载] 下载完成，开始安装为 {install_name}…")
-            problem = cli._dir_problem(install_dir)
-            if problem:
-                raise invalid_argument(
-                    f"安装目录不可用：{problem}",
-                    hint=f'删空或换目录后重试；也可只下载，再运行 fcmd wslman import {install_name} "{target}" --dir <空目录>',
-                )
-            view = cli._view(env)
-            if view.find(install_name) is not None:
-                raise invalid_argument(
-                    f"发行版 {install_name} 已存在，未自动覆盖",
-                    hint=(
-                        f'如需替换：fcmd wslman import {install_name} "{target}" --dir "{install_dir}" '
-                        "--replace --yes --backup <备份>"
-                    ),
-                )
-            cli._run_step(
-                env,
-                ["--import", install_name, str(install_dir), str(target), "--version", "2"],
-                action=f"安装 {install_name}",
-                hint="目标目录必须为空；失败时用工具栏的「安装本地镜像…」重试",
-                timeout=3600.0,
-            )
-            return f"{summary}；已安装为 {install_name}（{install_dir}），刷新后可在列表启动"
 
+        self._active_entry = entry.name
         self._start("下载", work)
+
+    def _install_entry(self, name: str) -> None:
+        """行内「安装」：已下载的归档 → 复用「安装本地镜像」对话框；无归档 → wsl --install。"""
+        entry = self._entry_by_name(name)
+        if entry is None:
+            return
+        if entry.installed:
+            self.set_page_status("images", f"{entry.name} 已安装，无需重复安装")
+            return
+        if entry.archive and Path(entry.archive).is_file():
+            dialog = _InstallLocalDialog(self, self._catalog_entries(), preset=Path(entry.archive))
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            payload = dialog.payload()
+            if payload is None:
+                return
+            archive, chosen_name, target, replace, backup = payload
+            self._active_entry = entry.name
+            self._install_archive(archive, chosen_name, target, replace=replace, backup=backup)
+            return
+        # 没有本地归档（CLI / Store 来源，或归档已被删除）：走下载 / wsl --install 路径。
+        self._download_entry(name)
+
+    def _entry_by_name(self, name: str) -> ImageEntry | None:
+        """按发行版名（大小写不敏感）取当前列表里的条目。"""
+        key = name.casefold()
+        for entry in self.image_entries:
+            if entry.name.casefold() == key:
+                return entry
+        for index in range(self.image_list.count()):
+            row = self.image_list.itemWidget(self.image_list.item(index))
+            if isinstance(row, _ImageItemRow) and row.entry.name.casefold() == key:
+                return row.entry
+        return None
+
+    def _download_dir_path(self) -> Path:
+        """下载目录（与「安装本地镜像」扫描目录同一口径）。"""
+        return Path(self._local_start_dir())
 
     # ------------------------------------------------------------------ #
     # 镜像列表
@@ -1179,13 +1206,13 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _on_mirror_changed(self, _index: int) -> None:
         """切换下载源：立刻写回设置并提示（配置只落在设置页，镜像页不再放下拉）。"""
         if 0 <= self.mirror.currentIndex() < len(self.mirror_ids):
-            self.set_status(f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
+            self.set_page_status("settings", f"下载源：{_mirrors.label(self.mirror_ids[self.mirror.currentIndex()])}")
             self._persist_image_view()
 
     def _on_download_dir_committed(self, _text: str) -> None:
         """下载目录变更（回车 / 选目录）立即落盘，下次启动回填。"""
         self._persist_image_view()
-        self.set_status("下载目录已保存" if self.download_dir.value() else "下载目录已恢复默认")
+        self.set_page_status("settings", "下载目录已保存" if self.download_dir.value() else "下载目录已恢复默认")
 
     def _restore_images_cache(self) -> Any:
         """把上次落盘的镜像清单直接铺到列表上（不等网络），返回命中的缓存。"""
@@ -1199,12 +1226,39 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log(f"[镜像列表] 已载入本地缓存：{len(cache.entries)} 个，更新于 {_images_stamp(cache.fetched_at)}")
         return cache
 
+    def _refresh_image_states(self) -> None:
+        """重扫本地状态并重绘行（不重新拉在线清单）。
+
+        下载完成 → 行标签变「已下载」且按钮变「安装」；安装 / 注销完成 → 「已安装」
+        随之增减。只跑 ``wsl -l -v`` 与下载目录扫描，代价远小于重新联网拉清单。
+        """
+        if self._closing or self._states_busy or not self.image_entries:
+            return
+        self._states_busy = True
+        entries = self.image_entries
+
+        def worker() -> tuple[ImageEntry, ...]:
+            return self._mark_local(entries, cli._build_environment())
+
+        submit_daemon(
+            worker,
+            on_done=self._apply_image_states,
+            on_error=lambda message: self._log(f"[镜像状态] 刷新失败：{message}"),
+            on_finished=lambda: setattr(self, "_states_busy", False),
+        )
+
+    def _apply_image_states(self, entries: tuple[ImageEntry, ...]) -> None:
+        if self._closing or not entries:
+            return
+        self.image_entries = entries
+        self._render_images()
+
     def _manual_update_images(self) -> None:
         """「更新列表」按钮：绕过缓存重新拉取两个在线源（对齐 llmw「更新模型」）。"""
         if self._images_busy:
-            self.set_status("镜像清单正在更新，请稍候…")
+            self.set_page_status("images", "镜像清单正在更新，请稍候…")
             return
-        self.set_status("正在更新镜像清单…")
+        self.set_page_status("images", "正在更新镜像清单…")
         self._log("[镜像列表] 手动更新：重新获取 wsl --list --online 与官方清单")
         self._load_images(force=True)
 
@@ -1239,20 +1293,23 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             on_finished=lambda: self._set_images_busy(False),
         )
 
-    @staticmethod
-    def _images_worker(force: bool = False) -> tuple[Any, tuple[ImageEntry, ...]]:
+    def _images_worker(self, force: bool = False) -> tuple[Any, tuple[ImageEntry, ...]]:
         env = cli._build_environment()
         catalog = _images.collect_images(
             fetch_cli=lambda: cli._online_rows(env),
             fetch_manifest=cli._manifest_images,
             force=force,
         )
-        entries = _images.mark_local_state(
-            catalog.entries,
+        return catalog, self._mark_local(catalog.entries, env)
+
+    def _mark_local(self, entries: Any, env: Any) -> tuple[ImageEntry, ...]:
+        """标注本地状态：已安装 / 已备份（``wsl`` 侧）+ 已下载（下载目录里的归档）。"""
+        marked = _images.mark_local_state(
+            entries,
             installed=cli._installed_names(env),
             backups=cli._backup_names(env),
         )
-        return catalog, entries
+        return w.mark_downloaded(marked, self._download_dir_path())
 
     def _images_error(self, message: str) -> None:
         kept = "；列表仍是上一次的结果" if self.image_entries else ""
@@ -1285,7 +1342,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             row = _ImageItemRow(entry, self.image_list)
             row.toggleRequested.connect(self._on_image_toggle)
             row.downloadRequested.connect(self._download_entry)
-            row.set_download_state(busy=self._busy)
+            row.installRequested.connect(self._install_entry)
+            row.cancelRequested.connect(self._cancel_task)
+            row.set_download_state(busy=self._busy, active=entry.name == self._active_entry)
             item.setSizeHint(QSize(0, row.sizeHint().height()))
             self.image_list.setItemWidget(item, row)
         self.image_list.sync_row_widths()
@@ -1305,7 +1364,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             target = 0
         if target is not None:
             self.image_list.setCurrentRow(target)
-        self._update_image_actions()
 
     def _on_image_filter_changed(self, key: str) -> None:
         """切换筛选按钮：只重绘列表，不重新拉取在线清单。"""
@@ -1336,7 +1394,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             widget = self.image_list.itemWidget(self.image_list.item(index))
             if isinstance(widget, _ImageItemRow):
                 widget.set_selected(index == current)
-        self._update_image_actions()
 
     def _on_image_double_clicked(self, item: QListWidgetItem) -> None:
         row = self.image_list.itemWidget(item)
@@ -1393,11 +1450,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         item = self.image_list.currentItem()
         row = self.image_list.itemWidget(item) if item is not None else None
         return row.entry if isinstance(row, _ImageItemRow) else None
-
-    def _update_image_actions(self) -> None:
-        if not hasattr(self, "_download_button"):
-            return
-        self._download_button.setEnabled(not self._busy and self._selected_image() is not None)
 
     # ------------------------------------------------------------------ #
     # 注销 / 关闭全部
@@ -1573,11 +1625,18 @@ class _ShutdownDialog(QDialog):  # pragma: no cover - 模态对话框
 class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
     """安装本地镜像：扫描目录 / 选文件、查看识别结果、填名称与安装目录、可选替换。"""
 
-    def __init__(self, owner: WslmanQtWindow, entries: tuple[ImageEntry, ...]) -> None:
+    def __init__(
+        self,
+        owner: WslmanQtWindow,
+        entries: tuple[ImageEntry, ...],
+        *,
+        preset: Path | None = None,
+    ) -> None:
         super().__init__(owner)
         self.setWindowTitle("安装本地镜像")
         self.setMinimumWidth(820)
         self._entries = entries
+        self._preset = preset
         self._archives: dict[int, Any] = {}
         self._payload: tuple[Path, str, Path, bool, Path | None] | None = None
 
@@ -1653,13 +1712,29 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
     def _scan(self) -> None:
         self.table.setRowCount(0)
         self._archives.clear()
-        paths = w.local_archives(Path(self.directory.text().strip() or "."))
+        paths = list(w.local_archives(Path(self.directory.text().strip() or ".")))
+        # 行内「安装」带进来的归档一定在表里，即使它的目录与扫描目录不同。
+        if self._preset is not None and self._preset.is_file() and self._preset not in paths:
+            paths.insert(0, self._preset)
         for path in paths:
             self._add(w.inspect_archive(path, self._entries))
-        if not self._archives:
+        preset_row = self._row_of(self._preset) if self._preset is not None else None
+        if preset_row is not None:
+            self.table.selectRow(preset_row)
+        elif not self._archives:
             self._info["校验状态"].setText("该目录没有 .tar / .tar.gz / .tgz / .wsl 镜像包，可用「选择文件…」指定")
         elif self.table.rowCount():
             self.table.selectRow(0)
+
+    def _row_of(self, path: Path | None) -> int | None:
+        """归档路径在表格里的行号（用于预选行内「安装」带进来的包）。"""
+        if path is None:
+            return None
+        target = path.resolve()
+        for row, archive in self._archives.items():
+            if archive.path.resolve() == target:
+                return row
+        return None
 
     def _add(self, archive: Any) -> None:
         row = self.table.rowCount()

@@ -33,8 +33,8 @@ from fcmd.gui import config as _guiconfig
 from fcmd.gui.geometry import format_geometry, parse_geometry, resolve_geometry
 from fcmd.gui.qt import theme as _qt_theme
 from fcmd.gui.qt._pyside_compat import binding_version
+from fcmd.gui.qt.statusbar import DEFAULT_STATUS, WindowStatusBar
 from fcmd.gui.qt.theme_menu import ThemeMenu
-from fcmd.gui.qt.widgets import LoadingBar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,10 +53,6 @@ __all__ = [
     "resolve_geometry_text",
     "restore_geometry",
 ]
-
-
-DEFAULT_STATUS = "就绪"
-"""页面还没有任何状态时的兜底文字。"""
 
 
 def about_version_text() -> str:
@@ -138,7 +134,6 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._persist = persist
         self._factories: dict[str, Callable[[], QWidget]] = {}
         self._built: dict[str, QWidget] = {}
-        self._page_status: dict[str, str] = {}
         self._current = ""
         self._closing = False
         self._theme: Theme = _qt_theme.load_theme()
@@ -187,14 +182,12 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         layout.addWidget(right, 1)
         self.setCentralWidget(central)
 
-        self.status_label = QLabel(DEFAULT_STATUS, self)
-        self.statusBar().addWidget(self.status_label, 1)
-        self.status_note = QLabel("", self)
-        self.status_note.setObjectName("Hint")
-        self.status_note.setVisible(False)
-        self.statusBar().addPermanentWidget(self.status_note, 0)
-        self.loading_bar = LoadingBar("加载中…", self)
-        self.statusBar().addPermanentWidget(self.loading_bar, 0)
+        # 底部状态栏统一由共享组件提供（单行高度 + 按分页隔离文字 + 右侧备注 / 加载条）。
+        self.status_bar = WindowStatusBar(self)
+        self.setStatusBar(self.status_bar)
+        self.status_label = self.status_bar.text_label
+        self.status_note = self.status_bar.note_label
+        self.loading_bar = self.status_bar.loading_bar
         self.nav.changed.connect(self.show_page)
         self.nav.enable_shortcuts(self)
         self._build_menu()
@@ -234,6 +227,9 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         page = self._build_if_needed(key)
         self._mount_header_actions(key)
         if self.stack.currentWidget() is page and self._current == key:
+            # 首屏页在 add_page 里已经置 current：这里提前返回，但状态栏仍要
+            # 绑定当前分页，否则该页后续 set_status 不会显示。
+            self._sync_status()
             return
         self._current = key
         self.stack.setCurrentWidget(page)
@@ -311,36 +307,39 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
 
     def set_page_status(self, key: str, text: str) -> None:
         """记录某个页面的状态栏文字；仅供当前页立即显示。"""
-        self._page_status[key] = text
-        if key == self._current:
-            self.status_label.setText(text)
+        self.status_bar.set_page_text(key, text)
 
     def page_status(self, key: str) -> str:
         """返回某页面已记录的状态栏文字（未记录时为默认「就绪」）。"""
-        return self._page_status.get(key, DEFAULT_STATUS)
+        return self.status_bar.page_text(key)
+
+    def set_status_detail(self, text: str) -> None:
+        """当前页的页内补充信息（如选中项摘要）；空串收起，不跨页残留。"""
+        self.set_page_status_detail(self._current, text)
+
+    def set_page_status_detail(self, key: str, text: str) -> None:
+        """记录某页的页内补充信息；仅供当前页立即显示。"""
+        self.status_bar.set_page_detail(key, text)
+
+    def status_detail_text(self) -> str:
+        """当前页页内补充信息的完整文本。"""
+        return self.status_bar.detail_text()
 
     def _sync_status(self) -> None:
-        """按当前页刷新状态栏左侧文字。"""
-        self.status_label.setText(self.page_status(self._current))
+        """按当前页刷新状态栏：主文字与页内补充都取该页自己的记录。"""
+        self.status_bar.set_page(self._current)
 
     def status_text(self) -> str:
-        """当前状态栏文字。"""
-        return self.status_label.text()
+        """当前状态栏主文字（完整文本，不受省略影响）。"""
+        return self.status_bar.text()
 
     def set_status_note(self, text: str) -> None:
-        """状态栏左侧文字与右侧加载条之间的常驻备注（如模型更新时间）。"""
-        self.status_note.setText(text)
-        self.status_note.setVisible(bool(text))
+        """状态栏右侧常驻备注（如模型更新时间）。"""
+        self.status_bar.set_note(text)
 
     def show_loading(self, text: str) -> None:
         """在状态栏右侧显示 / 更新加载提示；空串收起。左侧状态文字保持可见。"""
-        if not text:
-            self.loading_bar.stop()
-            return
-        if self.loading_bar.is_running():
-            self.loading_bar.set_text(text)
-        else:
-            self.loading_bar.start(text)
+        self.status_bar.show_loading(text)
 
     def settings(self) -> dict[str, Any]:
         """读取窗口设置文件原始内容（缺失字段按空处理）。"""

@@ -144,7 +144,8 @@ def test_image_rows_and_details() -> None:
     title, subtitle, metrics = wslmanw.image_item_lines(entry)
     assert title == "Ubuntu"
     assert subtitle == "Ubuntu · aarch64/x86_64 · CLI · 清单"
-    assert metrics == "可直链下载"
+    # 右侧状态列说「当前能做什么」：已安装 / 可安装（已下载）/ 可下载 / 仅 wsl --install
+    assert metrics == "已安装"
     assert wslmanw.image_marks(entry) == (("已安装", "success"), ("sha256", "muted"))
     details = dict(wslmanw.image_details(entry))
     assert details["下载来源"] == "CLI 安装（wsl --install）、官方清单 URL"
@@ -165,6 +166,19 @@ def test_image_rows_and_details() -> None:
         backed_up=True,
     )
     assert wslmanw.image_marks(unverified) == (("已备份", "accent"), ("无 sha256", "warning"))
+
+    downloaded = wslmanw._images.ImageEntry(
+        name="Ubuntu-24.04",
+        friendly_name="Ubuntu 24.04",
+        sources=("cli", "manifest"),
+        downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/u24.wsl", "a" * 64),),
+        downloaded=True,
+        archive="D:/WSL/u24.wsl",
+    )
+    # 已下载未安装：状态列提示「可安装」，标签给「已下载」
+    assert wslmanw.image_action_text(downloaded) == "可安装"
+    assert wslmanw.image_marks(downloaded) == (("已下载", "accent"), ("sha256", "muted"))
+    assert wslmanw.image_action_text(_image("Plain")) == "可下载"
 
     assert wslmanw.image_source_text(wslmanw._images.ImageEntry(name="X", friendly_name="", sources=())) == "未知"
 
@@ -469,3 +483,46 @@ def test_verification_label_never_calls_unverified_files_trusted() -> None:
     assert wslmanw.verification_label("A" * 64, None) == "待校验"
     assert wslmanw.verification_label("a" * 64, "a" * 64) == "sha256 与官方清单一致"
     assert wslmanw.verification_label("a" * 64, "b" * 64) == "sha256 与官方清单不一致"
+
+
+def test_mark_downloaded_matches_archives_in_directory(tmp_path: Path) -> None:
+    """下载目录里的归档把条目标成「已下载」，并记住路径供行内「安装」使用。"""
+    ubuntu = _image("Ubuntu")
+    debian = _image("Debian")
+    # 官方 URL 原名（Debian）与 CLI 命名（Ubuntu-<arch>.tar）都认
+    (tmp_path / "debian.wsl").write_bytes(b"x")
+    (tmp_path / "Ubuntu-x86_64.tar").write_bytes(b"x")
+    marked = wslmanw.mark_downloaded((ubuntu, debian), tmp_path)
+
+    by_name = {entry.name: entry for entry in marked}
+    assert by_name["Ubuntu"].downloaded is True
+    assert by_name["Ubuntu"].archive.endswith("Ubuntu-x86_64.tar")
+    assert by_name["Debian"].downloaded is True
+    assert by_name["Debian"].archive.endswith("debian.wsl")
+    # 目录里的无关文件不影响判定
+    (tmp_path / "readme.txt").write_text("x", encoding="utf-8")
+    again = wslmanw.mark_downloaded((debian,), tmp_path)
+    assert again[0].downloaded is True
+
+
+def test_mark_downloaded_skips_installed_and_missing_dir(tmp_path: Path) -> None:
+    """已安装的条目不需要「可安装」标记；目录不存在时一律未下载。"""
+    installed = wslmanw._images.ImageEntry(
+        name="Ubuntu",
+        friendly_name="Ubuntu",
+        sources=("cli", "manifest"),
+        downloads=(wslmanw._images.ImageDownload("x86_64", "https://e/ubuntu.wsl"),),
+        installed=True,
+    )
+    plain = _image("Debian")
+    (tmp_path / "ubuntu.wsl").write_bytes(b"x")
+    (tmp_path / "debian.wsl").write_bytes(b"x")
+    marked = wslmanw.mark_downloaded((installed, plain), tmp_path)
+    # 归档在就算已下载，但「已安装」优先：标签只给已安装，行内也不再给安装按钮
+    assert marked[0].downloaded is True
+    assert wslmanw.image_marks(marked[0]) == (("已安装", "success"), ("无 sha256", "warning"))
+    assert marked[1].downloaded is True
+
+    empty = wslmanw.mark_downloaded((plain,), tmp_path / "nope")
+    assert empty[0].downloaded is False
+    assert empty[0].archive == ""
