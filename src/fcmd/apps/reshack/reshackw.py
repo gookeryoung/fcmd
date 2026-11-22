@@ -1,11 +1,12 @@
 """reshackw - Windows PE 资源查看与修改（Qt GUI）。
 
-左侧按资源类型分组展示 PE 文件（exe/dll/sys 等）的资源树，右侧提供文本 /
-十六进制 / 图像三种预览，支持导出选中资源、替换资源（写入前自动备份）以及
-全部导出。解析与写回复用 :mod:`fcmd.apps.reshack.reshack`，需安装
-``pip install fcmd[pe]``。
+侧边栏分页窗口（与 wslmanw 同构）：「资源」页平铺资源行卡（类型筛选 +
+行内展开文本 / 十六进制 / 图像预览，行内直接导出 / 替换）；「文件」页放
+文件信息、最近打开与全部导出。解析与写回复用 :mod:`fcmd.apps.reshack.reshack`，
+需安装 ``pip install fcmd[pe]``。任务日志不占分页，从「帮助 → 任务日志…」
+以非模态窗口打开。
 
-设置（上次文件、最近打开、窗口位置）保存在
+设置（上次文件、最近打开、侧边栏折叠、窗口位置）保存在
 ``${FCMD_HOME:-~/.fcmd}/ui/reshackw.json``，下次启动自动恢复。
 
 示例
@@ -72,9 +73,10 @@ __all__ = [
 ]
 
 _DESCRIPTION = (
-    "PE 资源编辑器窗口版（Qt）：按类型展示资源树，支持文本/十六进制/图像预览（图像可缩放/适应窗口，"
-    "右键复制到剪贴板或另存为 PNG/ICO/BMP）、单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、"
-    "全部导出；设置持久化到 ~/.fcmd/ui/reshackw.json，依赖 fcmd[pe]"
+    "PE 资源编辑器窗口版（Qt）：侧边栏分页（资源 / 文件），资源行卡平铺展示，"
+    "行内展开文本/十六进制/图像预览（图像可缩放/适应窗口，右键复制到剪贴板或另存为 PNG/ICO/BMP）、"
+    "单资源导出（Icon/Bitmap 自动补 ICO/BMP 头）与替换（自动备份）、全部导出；"
+    "任务日志从「帮助 → 任务日志…」打开；设置持久化到 ~/.fcmd/ui/reshackw.json，依赖 fcmd[pe]"
 )
 
 DEFAULT_GEOMETRY = "1080x720+180+120"
@@ -97,6 +99,7 @@ class ReshackSettings:
 
     file_path: str = ""
     recent_files: list[str] = field(default_factory=list)
+    sidebar_collapsed: bool = False
     geometry: str | None = None
 
 
@@ -126,6 +129,8 @@ def load_settings(path: Path | None = None) -> ReshackSettings:
         settings.recent_files = [item for item in recent if isinstance(item, str)][:RECENT_LIMIT]
     if isinstance(geometry, str) and valid_geometry(geometry):
         settings.geometry = geometry
+    if raw.get("sidebar_collapsed") is True:
+        settings.sidebar_collapsed = True
     return settings
 
 
@@ -134,6 +139,7 @@ def save_settings(settings: ReshackSettings, path: Path | None = None) -> None:
     payload = {
         "file_path": settings.file_path,
         "recent_files": settings.recent_files,
+        "sidebar_collapsed": settings.sidebar_collapsed,
         "geometry": settings.geometry,
     }
     _guiconfig.write_settings(payload, path or config_path())

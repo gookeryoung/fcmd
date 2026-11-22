@@ -268,7 +268,7 @@ Windows / macOS / Linux 下 Qt 直接使用系统字体；需要额外字体时�
 | `screenshot` | - | 跨平台截图（Windows PowerShell / macOS screencapture / Linux gnome-screenshot） |
 | `reseticoncache` | - | 重置 Windows 图标缓存（非 Windows 打印提示） |
 | `reshack` | - | PE 资源查看与修改（list/extract/replace/export-all；Icon/Bitmap 导出自动补 ICO/BMP 头，替换前自动备份，依赖 `fcmd[pe]`） |
-| `reshackw` | - | PE 资源编辑器窗口版（Qt：资源树 + 文本/十六进制/图像预览（图像支持缩放/适应窗口、Ctrl+滚轮及右键复制/保存）+ 导出（Icon/Bitmap 自动补 ICO/BMP 头）/替换/全部导出，设置持久化到 `~/.fcmd/ui/reshackw.json`，依赖 `fcmd[pe]`） |
+| `reshackw` | - | PE 资源编辑器窗口版（Qt 侧边栏分页：资源页行卡平铺 + 类型筛选 + 行内展开文本/十六进制/图像预览（图像支持缩放/适应窗口、Ctrl+滚轮及右键复制/保存），行内导出/替换；文件页放文件信息、最近打开与全部导出；任务日志从「帮助 → 任务日志…」打开；设置持久化到 `~/.fcmd/ui/reshackw.json`，依赖 `fcmd[pe]`） |
 | `peview` | - | PE 文件解析与安全编辑（stdlib，无第三方依赖）：info/headers/sections/directories/imports/exports/resources/relocations/debug/hex/check/fields；`edit` 默认预演，`--apply` 才写入并自动备份 `<文件名>.backup[N]`、写后重解析校验，结构性字段一律拒绝 |
 | `pevieww` | - | PE 查看/编辑窗口版（Qt：分类树 + 详情 + 十六进制视图，字段编辑对话框常驻风险说明并要求确认，写入前自动备份、写后自校验，设置持久化到 `~/.fcmd/ui/pevieww.json`） |
 | `filesync` | - | 文件夹比较与同步（参考 FreeFileSync）：`compare` 按时间与大小/仅大小/内容比较左右目录，`sync` 支持双向/镜像/更新三种模式；包含/排除通配符与跳过隐藏文件，`--preview` 预览，冲突项（时间相同但内容不同）自动跳过 |

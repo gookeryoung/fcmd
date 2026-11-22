@@ -1,9 +1,9 @@
 """reshackw Qt 窗口的离屏冒烟测试。
 
-覆盖默认布局、设置回填、资源树分组与选中、文本 / 十六进制 / 图像预览、
-缩放与适应、导出 / 替换 / 全部导出事件流、加载失败、忙碌态与关闭释放句柄。
-真实 PE 解析与写盘由 ``test_reshack`` / ``test_cli_*`` 覆盖，这里用假 PE
-对象验证界面编排。
+覆盖侧边栏分页（资源 / 文件）、设置回填、资源行卡平铺与类型筛选、行内展开
+预览（文本 / 十六进制 / 图像）、缩放与适应、导出 / 替换 / 全部导出事件流、
+加载失败、忙碌态、任务日志缓冲与关闭释放句柄。真实 PE 解析与写盘由
+``test_reshack`` / ``test_cli_*`` 覆盖，这里用假 PE 对象验证界面编排。
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 from fcmd.apps.reshack import _reshackw_qt
 from fcmd.apps.reshack._reshackw_qt import (
     ReshackWindow,
+    _ResourceItemRow,
     _work_export_all,
     _work_load,
     _work_replace,
@@ -63,6 +64,14 @@ def _info(path: Path) -> Any:
     return SimpleNamespace(path=path, is_64bit=True, is_dll=False, machine="x86-64", subsystem="GUI")
 
 
+def _current_row(window: ReshackWindow) -> _ResourceItemRow | None:
+    item = window._resource_list.currentItem()
+    if item is None:
+        return None
+    row = window._resource_list.itemWidget(item)
+    return row if isinstance(row, _ResourceItemRow) else None
+
+
 class _FakePE:
     """假 PEFile：只实现窗口用到的方法。"""
 
@@ -97,15 +106,15 @@ class _FakePE:
 # 构建与设置
 # ============================================================================ #
 def test_window_builds_with_defaults(home: Path) -> None:
-    """默认三页签、四列资源树、状态就绪、按钮可用。"""
+    """侧边栏两页（资源 / 文件）、三个预览页签、筛选行、按钮可用。"""
     window = ReshackWindow()
     try:
-        assert window._tree.columnCount() == 4
-        assert window._tree.topLevelItemCount() == 0
-        assert window._tabs.count() == 3
-        assert [window._tabs.tabText(i) for i in range(3)] == ["文本", "十六进制", "图像"]
-        assert window._zoom_label.text() == "100%"
-        assert window._file_hint.text() == "尚未打开文件"
+        assert window.nav.keys() == ("resources", "file")
+        assert window._resource_list.count() == 0
+        assert list(window._filter_buttons) == ["all"]
+        assert window._detail_view.tabs.count() == 3
+        assert [window._detail_view.tabs.tabText(i) for i in range(3)] == ["文本", "十六进制", "图像"]
+        assert window._detail_view.zoom_label.text() == "100%"
         assert window._open_button.isEnabled()
         assert window._export_button.isEnabled()
         assert window.status_text() == "就绪"
@@ -114,7 +123,7 @@ def test_window_builds_with_defaults(home: Path) -> None:
 
 
 def test_settings_restored_recent_menu(home: Path) -> None:
-    """最近打开菜单按设置回填，空列表显示禁用的「（空）」。"""
+    """最近打开菜单与文件页行卡按设置回填，空列表显示禁用的「（空）」。"""
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"recent_files": ["a.exe", "b.exe"]}), encoding="utf-8")
@@ -122,6 +131,10 @@ def test_settings_restored_recent_menu(home: Path) -> None:
     try:
         labels = [action.text() for action in window._recent_menu.actions()]
         assert labels == ["a.exe", "b.exe"]
+        assert window._recent_list.count() == 2
+        window.ensure_page("file")
+        row = window._recent_list.itemWidget(window._recent_list.item(0))
+        assert row is not None and row.title_label.text() == "a.exe"
     finally:
         window.deleteLater()
 
@@ -143,10 +156,10 @@ def test_custom_settings_path_isolated(home: Path, tmp_path: Path) -> None:
 
 
 # ============================================================================ #
-# 资源树与预览
+# 资源行卡与预览
 # ============================================================================ #
-def test_populate_tree_groups_and_selection(home: Path) -> None:
-    """按类型分组、分组行不可取资源，叶子行返回 ResourceEntry。"""
+def test_populate_resources_rows_and_filter(home: Path) -> None:
+    """资源平铺行卡；类型筛选后只剩对应类型，选中行返回 ResourceEntry。"""
     window = ReshackWindow()
     try:
         resources = [
@@ -154,37 +167,37 @@ def test_populate_tree_groups_and_selection(home: Path) -> None:
             _resource(3, 2),
             _resource(3, 1, language_id=1033),
         ]
-        window._populate_tree(resources)
-        assert window._tree.topLevelItemCount() == 2
-        icon_group = window._tree.topLevelItem(0)
-        assert icon_group is not None
-        assert icon_group.text(0) == "Icon (2)"
-        assert icon_group.childCount() == 2
-        manifest_group = window._tree.topLevelItem(1)
-        assert manifest_group is not None
-        assert manifest_group.text(0) == "Manifest (1)"
+        window._populate_resources(resources)
+        assert window._resource_list.count() == 3
+        assert list(window._filter_buttons) == ["all", "Icon", "Manifest"]
 
-        window._tree.setCurrentItem(icon_group)
-        assert window._selected_resource() is None
+        window._on_filter_changed("Icon")
+        assert window._resource_list.count() == 2
+        window._on_filter_changed("all")
+        assert window._resource_list.count() == 3
 
-        child = icon_group.child(0)
-        assert child is not None
-        window._tree.setCurrentItem(child)
+        window._resource_list.setCurrentRow(0)
+        row = _current_row(window)
+        assert row is not None
         selected = window._selected_resource()
         assert isinstance(selected, ResourceEntry)
         assert selected.name_id == 1
+        assert row.title_label.text() == "#1"
     finally:
         window.deleteLater()
 
 
-def test_show_preview_text_and_hex(home: Path) -> None:
-    """文本资源写入文本与十六进制页签，状态栏显示资源标识。"""
+def test_expand_row_renders_preview(home: Path) -> None:
+    """展开资源行把文本 / 十六进制预览刷进行内详情。"""
     window = ReshackWindow()
     try:
-        window._show_preview(_resource(24, 1, data=b"hello"))
-        assert window._text_preview.toPlainText() == "hello"
-        assert "68 65 6c 6c 6f" in window._hex_preview.toPlainText()
-        assert "Manifest #1" in window.status_text()
+        window._populate_resources([_resource(24, 1, data=b"hello")])
+        row = window._resource_list.itemWidget(window._resource_list.item(0))
+        assert isinstance(row, _ResourceItemRow)
+        window.toggle_row("resources", row)
+        assert row.is_expanded()
+        assert window._detail_view.text_edit.toPlainText() == "hello"
+        assert "68 65 6c 6c 6f" in window._detail_view.hex_edit.toPlainText()
     finally:
         window.deleteLater()
 
@@ -193,9 +206,12 @@ def test_show_preview_binary_and_image_failure(home: Path) -> None:
     """二进制资源提示切换页签；无法解码的图标在图像页显示失败提示。"""
     window = ReshackWindow()
     try:
-        window._show_preview(_resource(3, 1, data=b"not-an-icon"))
-        assert "二进制资源" in window._text_preview.toPlainText()
-        assert "无法解码图像" in window._image_label.text()
+        window._populate_resources([_resource(3, 1, data=b"not-an-icon")])
+        row = window._resource_list.itemWidget(window._resource_list.item(0))
+        assert isinstance(row, _ResourceItemRow)
+        window.toggle_row("resources", row)
+        assert "二进制资源" in window._detail_view.text_edit.toPlainText()
+        assert "无法解码图像" in window._detail_view.image_label.text()
         assert window._preview_image is None
     finally:
         window.deleteLater()
@@ -206,7 +222,7 @@ def test_show_image_unsupported_type(home: Path) -> None:
     window = ReshackWindow()
     try:
         window._show_image(_resource(6, 1, data=b"\x00"))
-        assert window._image_label.text() == "此资源类型不支持图像预览"
+        assert window._detail_view.image_label.text() == "此资源类型不支持图像预览"
     finally:
         window.deleteLater()
 
@@ -219,12 +235,12 @@ def test_zoom_buttons_update_label(home: Path) -> None:
         window._preview_image = image_module.new("RGB", (10, 10), "red")
         window._render_preview_image()
         window._zoom_in_image()
-        assert window._zoom_label.text() == "125%"
+        assert window._detail_view.zoom_label.text() == "125%"
         window._zoom_out_image()
-        assert window._zoom_label.text() == "100%"
+        assert window._detail_view.zoom_label.text() == "100%"
         window._zoom_in_image()
         window._reset_zoom_image()
-        assert window._zoom_label.text() == "100%"
+        assert window._detail_view.zoom_label.text() == "100%"
         assert window._fit_mode is False
     finally:
         window.deleteLater()
@@ -239,37 +255,34 @@ def test_fit_image_uses_viewport(home: Path, monkeypatch: pytest.MonkeyPatch) ->
         window._preview_image = image_module.new("RGB", (10, 10), "red")
         window._fit_image()
         assert window._fit_mode is True
-        assert window._zoom_label.text() == "50%"
+        assert window._detail_view.zoom_label.text() == "50%"
     finally:
         window.deleteLater()
 
 
 def test_copy_preview_image_success(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """复制成功时写日志并给出成功状态。"""
+    """复制成功时写日志缓冲并给出成功状态。"""
     image_module = pytest.importorskip("PIL.Image")
     monkeypatch.setattr(_reshackw_qt, "copy_image_to_clipboard", lambda _image: True)
     window = ReshackWindow()
     try:
         window._preview_image = image_module.new("RGB", (4, 4), "red")
         window._copy_preview_image()
-        assert "已复制预览图像到剪贴板" in window._log.text()
-        assert window.status_label.objectName() == "Success"
+        assert "已复制预览图像到剪贴板" in window.log_text()
+        assert window.status_text() == "图像已复制到剪贴板"
     finally:
         window.deleteLater()
 
 
-def test_save_preview_image(home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """另存为 PNG 写入指定路径。"""
-    image_module = pytest.importorskip("PIL.Image")
-    target = tmp_path / "preview.png"
-    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(target), "PNG 图像 (*.png)"))
+def test_log_channel_replay_and_clear(home: Path) -> None:
+    """日志进缓冲（带时间戳），清空后 ``log_text()`` 回空串。"""
     window = ReshackWindow()
     try:
-        window._shown_resource = _resource(3, 1)
-        window._preview_image = image_module.new("RGB", (4, 4), "red")
-        window._save_preview_image()
-        assert target.is_file()
-        assert "已保存预览图像" in window._log.text()
+        window.log("第一行")
+        text = window.log_text()
+        assert "第一行" in text and text.startswith("[")
+        window.clear_log()
+        assert window.log_text() == ""
     finally:
         window.deleteLater()
 
@@ -284,10 +297,11 @@ def test_export_selected_writes_payload(home: Path, tmp_path: Path, monkeypatch:
     monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *_a, **_k: (str(target), "资源文件 (*.ico)"))
     window = ReshackWindow()
     try:
-        monkeypatch.setattr(window, "_selected_resource", lambda: resource)
+        window._populate_resources([resource])
+        window._resource_list.setCurrentRow(0)
         window._export_selected()
         assert target.read_bytes() == export_payload(resource)
-        assert "已导出 Icon #1" in window._log.text()
+        assert "已导出 Icon #1" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -299,7 +313,7 @@ def test_export_selected_without_selection(home: Path, monkeypatch: pytest.Monke
     window = ReshackWindow()
     try:
         window._export_selected()
-        assert infos == ["请先在左侧选择资源。"]
+        assert infos == ["请先在资源页选择资源。"]
     finally:
         window.deleteLater()
 
@@ -317,7 +331,7 @@ def test_export_all_without_file(home: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_replace_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """替换成功事件刷新资源树、写日志并弹完成提示。"""
+    """替换成功事件刷新资源行卡、写日志并弹完成提示。"""
     infos: list[str] = []
     monkeypatch.setattr(QMessageBox, "information", lambda _p, _t, text, *a: infos.append(text) or None)
     window = ReshackWindow()
@@ -330,9 +344,9 @@ def test_replace_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None
         _work_replace(cast(Any, pe), 3, 1, b"new", 0, bridge)
 
         assert pe.replaced == (3, 1, b"new", 0)
-        assert window._tree.topLevelItemCount() == 1
-        assert "已替换资源" in window._log.text()
-        assert window.status_label.objectName() == "Success"
+        assert window._resource_list.count() == 1
+        assert "已替换资源" in window.log_text()
+        assert window.status_text() == "资源替换完成"
         assert infos and "app.exe.backup" in infos[0]
         assert window._busy is False
     finally:
@@ -351,7 +365,7 @@ def test_export_all_event_flow(home: Path, tmp_path: Path, monkeypatch: pytest.M
         bridge.event.connect(window._on_event)
         _work_export_all(cast(Any, pe), tmp_path / "app_resources", bridge)
 
-        assert "已导出 2/2 个资源" in window._log.text()
+        assert "已导出 2/2 个资源" in window.log_text()
         assert infos and "2/2" in infos[0]
         assert window._busy is False
     finally:
@@ -388,7 +402,7 @@ def test_start_load_submits_worker(home: Path, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_load_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """加载成功回填资源树、标题、文件提示与最近打开。"""
+    """加载成功回填资源行卡、标题、文件信息卡、最近打开与筛选行。"""
     resources = [_resource(24, 1, data=b"manifest")]
     monkeypatch.setattr(_reshackw_qt, "PEFile", lambda: _FakePE(resources))
     window = ReshackWindow()
@@ -398,10 +412,11 @@ def test_load_event_flow(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         bridge.event.connect(window._on_event)
         _work_load(Path("app.exe"), bridge)
 
-        assert window._tree.topLevelItemCount() == 1
+        assert window._resource_list.count() == 1
         assert "app.exe" in window.windowTitle()
-        assert window._file_hint.text() == "app.exe"
-        assert "已加载 1 个资源" in window._log.text()
+        assert window._info_labels["路径"].text() == "app.exe"
+        assert window._info_labels["资源数"].text() == "1"
+        assert "已加载 1 个资源" in window.log_text()
         assert window.status_text() == "app.exe：1 个资源"
         assert [action.text() for action in window._recent_menu.actions()] == ["app.exe"]
         assert window._busy is False
@@ -427,7 +442,7 @@ def test_load_event_flow_closes_previous_pe(home: Path, monkeypatch: pytest.Monk
 
 
 def test_load_pe_error_shows_message(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """PEError 转错误事件：恢复按钮、标红状态并弹错误框。"""
+    """PEError 转错误事件：恢复按钮、写日志并弹错误框。"""
     errors: list[str] = []
     monkeypatch.setattr(QMessageBox, "critical", lambda _p, _t, text, *a: errors.append(text) or None)
     monkeypatch.setattr(_reshackw_qt, "PEFile", lambda: _FakePE(error="not a PE"))
@@ -438,9 +453,9 @@ def test_load_pe_error_shows_message(home: Path, monkeypatch: pytest.MonkeyPatch
         bridge.event.connect(window._on_event)
         _work_load(Path("bad.exe"), bridge)
         assert errors == ["not a PE"]
-        assert window.status_label.objectName() == "Danger"
+        assert window.status_text() == "操作失败"
         assert window._busy is False
-        assert "错误：not a PE" in window._log.text()
+        assert "错误：not a PE" in window.log_text()
     finally:
         window.deleteLater()
 
@@ -455,7 +470,7 @@ def test_on_worker_error_direct(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
         window._on_worker_error("boom")
         assert errors == ["boom"]
         assert window._busy is False
-        assert window.status_label.objectName() == "Danger"
+        assert window.status_text() == "操作失败"
     finally:
         window.deleteLater()
 
@@ -464,7 +479,7 @@ def test_on_worker_error_direct(home: Path, monkeypatch: pytest.MonkeyPatch) -> 
 # 忙碌态与关闭
 # ============================================================================ #
 def test_busy_disables_buttons(home: Path) -> None:
-    """忙碌时禁用四个工具栏按钮，结束后恢复。"""
+    """忙碌时禁用资源页与文件页动作按钮，结束后恢复。"""
     window = ReshackWindow()
     try:
         window._set_busy(True)
@@ -472,20 +487,23 @@ def test_busy_disables_buttons(home: Path) -> None:
         assert not window._export_button.isEnabled()
         assert not window._replace_button.isEnabled()
         assert not window._export_all_button.isEnabled()
+        assert not window._file_open_button.isEnabled()
         window._set_busy(False)
         assert window._open_button.isEnabled()
         assert window._export_all_button.isEnabled()
+        assert window._file_open_button.isEnabled()
     finally:
         window.deleteLater()
 
 
 def test_close_releases_pe_and_persists(home: Path) -> None:
-    """关闭时释放 PE 句柄，并把最近打开与 geometry 写回设置。"""
+    """关闭时释放 PE 句柄，并把最近打开、侧边栏折叠与 geometry 写回设置。"""
     window = ReshackWindow()
     try:
         pe = _FakePE()
         window._pe = cast(Any, pe)
         window._settings.recent_files = ["a.exe", "b.exe"]
+        window.nav.set_collapsed(True)
         window.close()
         assert pe.closed is True
         assert window._pe is None
@@ -494,6 +512,7 @@ def test_close_releases_pe_and_persists(home: Path) -> None:
 
     raw = json.loads(config_path().read_text(encoding="utf-8"))
     assert raw["recent_files"] == ["a.exe", "b.exe"]
+    assert raw["sidebar_collapsed"] is True
     assert isinstance(raw["geometry"], str) and "x" in raw["geometry"]
 
 
