@@ -165,6 +165,9 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         if icon:
             _set_icon(button, icon, tone="muted")
         button.clicked.connect(lambda _checked=False, page_key=key: self.select(page_key))
+        # 按钮宽度由布局决定：先装徽标、后显示窗口时，按钮会再被拉宽，
+        # 必须跟着 Resize 重新摆放徽标，否则会停在布局前的默认宽度上。
+        button.installEventFilter(self)
         self._button_layout.addWidget(button)
         self._group.addButton(button)
         self._buttons[key] = button
@@ -367,10 +370,17 @@ class SidebarNav(QFrame):  # pragma: no cover - Qt 控件
         self._footer.addWidget(self.toggle_button, 1)
 
     def eventFilter(self, obj: object, event: QEvent) -> bool:
-        """折叠态点击图标展开侧边栏。"""
+        """折叠态点击图标展开侧边栏；页按钮尺寸变化时重新摆放徽标。"""
         if obj is self.icon_label and self._collapsed and event.type() == QEvent.Type.MouseButtonRelease:
             self.toggle()
             return True
+        if event.type() in (QEvent.Type.Resize, QEvent.Type.Show):
+            for key, button in self._buttons.items():
+                if button is obj:
+                    badge = self._badges.get(key)
+                    if badge is not None and badge.isVisible():
+                        self._place_badge(button, badge)
+                    break
         return super().eventFilter(obj, event)
 
     def _apply_width(self) -> None:
