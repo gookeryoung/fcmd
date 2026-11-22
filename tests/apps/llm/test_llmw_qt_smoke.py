@@ -984,7 +984,7 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
     assert [card.title_label.text() for card in page.findChildren(Card)] == [
         "存储",
         "推理引擎（llama.cpp）",
-        "引擎（sd.cpp：画图 / 视频 / 音频）",
+        "画图/视频/音频引擎(sd.cpp)",
         "下载",
         "模型转换",
     ]
@@ -1011,7 +1011,7 @@ def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
     """sd.cpp 引擎卡对齐推理引擎：刷新在标题行、目录行动作、单行列表 + 空态提示。"""
     window.show_page("settings")
     card = window.page("settings").paint_engine_card
-    assert card.title() == "引擎（sd.cpp：画图 / 视频 / 音频）"
+    assert card.title() == "画图/视频/音频引擎(sd.cpp)"
     assert card.refresh_button.text() == "刷新"
     assert card.refresh_button.parent() is card
     assert card.root_label.objectName() == "Hint"

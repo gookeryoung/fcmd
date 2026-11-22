@@ -1199,7 +1199,7 @@ class PaintEngineCard(Card):  # pragma: no cover - Qt 控件
         self,
         parent: QWidget | None = None,
         *,
-        title: str = "引擎（sd.cpp：画图 / 视频 / 音频）",
+        title: str = "画图/视频/音频引擎(sd.cpp)",
     ) -> None:
         super().__init__(title, parent)
         self.refresh_button = link_button("刷新", tooltip="重新读取已安装 sd.cpp 引擎与默认引擎")
