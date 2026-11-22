@@ -271,22 +271,8 @@ QFrame#ChatSidebar {
 }
 QSplitter#ChatSplitter::handle { background: transparent; }
 QSplitter#ChatSplitter::handle:hover { background: $accent_soft; }
-QListWidget#ChatHistory { background: transparent; border: none; outline: 0; padding: 0; }
-QListWidget#ChatHistory::item {
-    color: $muted;
-    padding: 0 12px;
-    min-height: 36px;
-    max-height: 36px;
-    border-left: 3px solid transparent;
-    border-radius: 0;
-}
-QListWidget#ChatHistory::item:hover { background: $surface_hover; color: $text; }
-QListWidget#ChatHistory::item:selected {
-    background: $surface_active;
-    color: $accent;
-    border-left: 3px solid $accent;
-    font-weight: 600;
-}
+/* 通用侧边栏列表：条目由 SidebarList 的 delegate 自绘，这里只保留透明底。 */
+QListWidget#SidebarList { background: transparent; border: none; outline: 0; padding: 0; }
 QTextEdit#ChatTranscript {
     background: transparent;
     border: none;

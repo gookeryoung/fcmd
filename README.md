@@ -136,7 +136,7 @@ fcmd completion --shell fish | source         # fish
 
 高 DPI（125% / 150%）下 Qt 自动按逻辑像素缩放，按钮 / 输入框 / 下拉 / 数值框的高度统一由字体行高推导（主题的 `metrics.control_height_extra`），避免「字变大、控件不变」。
 
-窗口外壳（设置 / 几何 / 主题 / 关闭）由 `gui/shell.py` 的 mixin 组合，分页窗口与单页窗口不再各存一份；应用页面继承 `gui/page.py` 的 `AppPage`，页面状态按 `PAGE_KEY` 写到自己的状态栏分页，不会串页。共享控件统一放在 `gui/widgets/` 包（`text` / `tables` / `buttons` / `tabs` / `rows` / `cards` / `forms` / `metrics` / `log` / `storage` / `splitter` 子模块），`from fcmd.gui.widgets import Card` 即可复用。
+窗口外壳（设置 / 几何 / 主题 / 关闭）由 `gui/shell.py` 的 mixin 组合，分页窗口与单页窗口不再各存一份；应用页面继承 `gui/page.py` 的 `AppPage`，页面状态按 `PAGE_KEY` 写到自己的状态栏分页，不会串页。共享控件统一放在 `gui/widgets/` 包（`text` / `tables` / `buttons` / `tabs` / `rows` / `cards` / `forms` / `metrics` / `log` / `storage` / `sidebar_list` / `splitter` 子模块），`from fcmd.gui.widgets import Card` 即可复用。
 
 任务日志是公共组件：窗口骨架（`QtMainWindow` / `QtToolWindow`）统一继承 `gui/logdialog.py` 的 `LogChannelMixin`，把「任务日志…」（`Ctrl+Shift+L`）挂在每个窗口的「帮助」菜单里；应用只调用 `self.log(...)` 写日志，不再在页面、页签或分栏里自建日志区。日志窗口回放最近 1000 行并支持复制 / 清空 / 导出，关闭主窗口时一并收起。
 

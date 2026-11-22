@@ -149,3 +149,9 @@
   完整文本，用于重启后的正文展示。
 - 复制键使用 `transcript.toPlainText()`（与界面展示一致）；不再提供 Markdown
   导出按钮，避免和「复制」重复占工具行。
+
+## 交接
+
+- 左侧对话历史使用公共 `fcmd.gui.widgets.SidebarList`（`SidebarEntry`）：
+  圆角选中底、标题省略、悬停 / 选中自绘，不再依赖 `QListWidget#ChatHistory` 的
+  整行方块与左侧强调条；需要分组 / 副标题 / 右侧摘要时可继续用同一组件。

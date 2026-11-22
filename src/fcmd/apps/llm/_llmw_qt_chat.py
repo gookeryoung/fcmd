@@ -36,8 +36,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QTextEdit,
@@ -73,6 +71,8 @@ from fcmd.gui.widgets import (
     Collapsible,
     ElidedLabel,
     FormGrid,
+    SidebarEntry,
+    SidebarList,
     StatusTag,
     ToggleChip,
     button,
@@ -390,14 +390,9 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self.new_chat_button.setObjectName("RunPrimary")
         self.new_chat_button.clicked.connect(self.new_conversation)
         side.addWidget(self.new_chat_button)
-        self.history_list = QListWidget(sidebar)
-        self.history_list.setObjectName("ChatHistory")
-        self.history_list.setSpacing(2)
-        # 对话列表只占最小宽度：长标题右侧省略（tooltip 保留全名），不出现横向滚动条，
-        # 也不让内容把侧栏撑宽；用户仍可拖动 splitter 展开。
-        self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.history_list.setWordWrap(False)
-        self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.history_list = SidebarList(sidebar)
+        # 公共侧边栏列表：圆角选中底、长标题右侧省略（tooltip 保留全名），
+        # 不出现横向滚动条，也不让内容把侧栏撑宽；用户仍可拖动 splitter 展开。
         self.history_list.setMinimumWidth(0)
         self.history_list.currentRowChanged.connect(self._select_conversation)
         side.addWidget(self.history_list, 1)
@@ -703,12 +698,12 @@ class ChatPage(AppPage):  # pragma: no cover - Qt 控件
         self.system_edit.setText(session.system or "")
 
     def _refresh_history(self) -> None:
+        entries = [
+            SidebarEntry(title=conversation.title, key=index, tooltip=conversation.title)
+            for index, conversation in enumerate(self._conversations)
+        ]
         self.history_list.blockSignals(True)
-        self.history_list.clear()
-        for conversation in self._conversations:
-            item = QListWidgetItem(conversation.title)
-            item.setToolTip(conversation.title)
-            self.history_list.addItem(item)
+        self.history_list.set_entries(entries)
         self.history_list.setCurrentRow(self._active)
         self.history_list.blockSignals(False)
 
