@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 from pathlib import Path
@@ -24,6 +25,7 @@ from fcmd.apps.llm.llmbase import (
     GpuInfo,
     Runner,
     ServeError,
+    ensure_vc_runtime,
     human_size,
     run_command,
 )
@@ -114,7 +116,15 @@ def _file_version(dll: Path) -> tuple[int, int, int, int] | None:  # pragma: no 
 
 
 def _check_msvc_runtime(engine: EngineInfo) -> Check:
-    """VC++ 运行库检查：Windows 10 自带的 14.0 版本会让新版 llama.cpp 工具崩溃。"""
+    """VC++ 运行库检查：Windows 10 自带的 14.0 版本会让新版 llama.cpp 工具崩溃。
+
+    先尝试把本机 VC Redist / Visual Studio 里的新版 DLL 复制到引擎目录（与
+    :func:`llmbase.ensure_vc_runtime` 一致），这样体检本身就能修好「启动即
+    ``c0000005`` 且日志为空」的引擎。
+    """
+    if os.name == "nt":
+        with contextlib.suppress(OSError):
+            ensure_vc_runtime(engine.exe.parent)
     local = engine.exe.parent / "msvcp140.dll"
     system = Path(os.environ.get("SYSTEMROOT", r"C:\Windows")) / "System32" / "msvcp140.dll"
     for dll in (local, system):

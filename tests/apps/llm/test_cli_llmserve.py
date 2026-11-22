@@ -271,6 +271,25 @@ class TestEngineExitDiagnostics:
         assert "boom" in text
         assert str(plan.log) in text
 
+    def test_access_violation_with_empty_log_hints_msvc_runtime(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        home: Path,
+        model_file: Path,
+    ) -> None:
+        """b12627 那种加载阶段 c0000005 且日志为空：提示引擎目录缺新版 MSVC 运行库。"""
+        plan = _plan(tmp_path, monkeypatch, home, model_file)
+        plan.log.parent.mkdir(parents=True, exist_ok=True)
+        plan.log.write_text("", encoding="utf-8")
+        called: list[Path] = []
+        monkeypatch.setattr(llmserve, "ensure_vc_runtime", lambda target: called.append(target) or ())
+        text = str(llmserve._engine_exit_error(plan, 0xC0000005))
+        assert "MSVC 运行库" in text
+        assert "msvcp140.dll" in text
+        assert str(plan.engine.exe.parent) in text
+        assert called == [plan.engine.exe.parent]
+
 
 class TestHelpers:
     def test_human_size(self) -> None:

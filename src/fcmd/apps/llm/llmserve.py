@@ -29,12 +29,14 @@ from fcmd.apps.llm.llmbase import (
     DEFAULT_THREADS,
     KV_SCALE,
     PROFILES,
+    VC_RUNTIME_DLLS,
     LaunchPlan,
     Opener,
     ProfileName,
     ServeError,
     ServeState,
     StopResult,
+    ensure_vc_runtime,
     format_command,
     format_returncode,
     http_base_url,
@@ -390,6 +392,9 @@ def _tail_text(path: Path, lines: int = 20) -> str:
 #: 视觉塔加载失败的日志特征（命中后去掉 ``--mmproj`` 重试一次）
 _MMPROJ_FAILURE_MARKERS = ("mmproj", "projector", "clip vision")
 
+_ACCESS_VIOLATION = 0xC0000005
+"""Windows 访问冲突退出码：引擎启动即崩溃（空日志）常见于缺新版 MSVC 运行库。"""
+
 
 _UNKNOWN_ARCH_RE = re.compile(r"unknown model architecture: '([^']+)'")
 """引擎不认识模型架构时的日志特征（旧版 llama.cpp 加载新架构模型）。"""
@@ -421,6 +426,23 @@ def _engine_exit_error(plan: LaunchPlan, code: int) -> ServeError:
         )
     return ServeError(
         f"引擎启动后立即退出（退出码 {format_returncode(code)}）。引擎日志: {plan.log}\n日志尾部:\n{tail}"
+        f"{_crash_hint(plan, code)}"
+    )
+
+
+def _crash_hint(plan: LaunchPlan, code: int) -> str:
+    """启动即崩溃且日志为空时提示 MSVC 运行库（旧版 msvcp140 会 c0000005）。"""
+    if code not in (_ACCESS_VIOLATION, _ACCESS_VIOLATION - 2**32):
+        return ""
+    directory = plan.engine.exe.parent
+    if os.name == "nt":
+        with contextlib.suppress(OSError):
+            ensure_vc_runtime(directory)
+    missing = [name for name in VC_RUNTIME_DLLS if not (directory / name).is_file()]
+    detail = f"缺 {', '.join(missing)}" if missing else f"目录 {directory} 内运行库版本过旧"
+    return (
+        f"\n引擎进程启动即崩溃（{format_returncode(code)}，常见于引擎目录的 MSVC 运行库）：{detail}；"
+        "安装最新 VC++ 2015-2022 x64 运行库，或把新版 msvcp140.dll / vcruntime140*.dll 放入引擎目录"
     )
 
 

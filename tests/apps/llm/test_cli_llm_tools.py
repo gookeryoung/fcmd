@@ -895,6 +895,7 @@ def test_msvc_runtime_engine_local_new(monkeypatch: pytest.MonkeyPatch, tmp_path
     engine_dir = tmp_path / "engine"
     engine_dir.mkdir()
     (engine_dir / "msvcp140.dll").write_bytes(b"x")
+    monkeypatch.setattr(llmdoctor, "ensure_vc_runtime", lambda target: ())
     monkeypatch.setattr(llmdoctor, "_file_version", lambda dll: (14, 51, 36231, 0))
     check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
     assert check.status == "ok"
@@ -908,6 +909,7 @@ def test_msvc_runtime_warns_on_old_system_dll(monkeypatch: pytest.MonkeyPatch, t
     system32.mkdir()
     (system32 / "msvcp140.dll").write_bytes(b"x")
     monkeypatch.setenv("SYSTEMROOT", str(tmp_path))
+    monkeypatch.setattr(llmdoctor, "ensure_vc_runtime", lambda target: ())
     monkeypatch.setattr(llmdoctor, "_file_version", lambda dll: (14, 0, 24215, 1))
     check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
     assert check.status == "warn"
@@ -918,9 +920,22 @@ def test_msvc_runtime_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     engine_dir = tmp_path / "engine"
     engine_dir.mkdir()
     monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "nowhere"))
+    monkeypatch.setattr(llmdoctor, "ensure_vc_runtime", lambda target: ())
     check = llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
     assert check.status == "warn"
     assert "MSVCP140" in check.detail
+
+
+def test_msvc_runtime_copies_local_redist(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """体检时先从本机 VC Redist 复制新版 DLL（旧引擎安装自愈），再判断版本。"""
+    engine_dir = tmp_path / "engine"
+    engine_dir.mkdir()
+    target: list[Path] = []
+    monkeypatch.setattr(llmdoctor, "ensure_vc_runtime", lambda directory: target.append(directory) or ())
+    monkeypatch.setattr(llmdoctor, "_file_version", lambda dll: (14, 51, 36231, 0))
+    (engine_dir / "msvcp140.dll").write_bytes(b"x")
+    llmdoctor._check_msvc_runtime(EngineInfo("b9", engine_dir / "llama-server.exe"))
+    assert target == [engine_dir]
 
 
 def test_scan_model_env_collects_engine_and_precisions(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -240,6 +240,20 @@ Card，只保留结果行的卡片边框；QTabWidget 内容区改为无边透�
   page, page_size, sort, at, total, payload)` + 需要检索时拆 `model_summaries`
   并给 `repo / name` 建索引，保留同样的 TTL 与陈旧先回显语义。
 
+### 8. 引擎运行库补齐（MSVC / CUDA runtime）
+
+- llama.cpp 的 Windows 预编译包依赖新版 MSVC 运行库（`msvcp140.dll` /
+  `vcruntime140*.dll`），并且只在单独的 cudart 包里带 CUDA runtime。只导入
+  `llama-b12627-bin-win-cuda-13.5-x64.zip` 这类引擎包时，目录里两者都缺；引擎会在
+  加载阶段 `c0000005` 崩溃且日志为空（b12627 连 `--version` 都跑不出），与模型无关。
+- 运行库补齐统一收在 `llmbase.ensure_vc_runtime`（sd.cpp 与 llama.cpp 共用）：
+  引擎安装 / 解压后、`resolve_engine` 解析时、`llmdoctor` 体检时都尝试从本机
+  Visual Studio / VC Redist 复制同名 DLL 到引擎目录，旧安装无需重装即可自愈。
+- CUDA runtime 缺时不静默：`llmengine.missing_cuda_runtime` 按 `ggml-cuda.dll` +
+  `cudart64_*` / `cublas64_*` / `cublasLt64_*` 判断，`probe_version` / `check_engine`
+  标出「缺 CUDA 运行库，GPU 卸载会退化为 CPU」，引导用「导入压缩包」把 cudart 包
+  解到同一目录；启动层 `c0000005` 且日志为空时追加 MSVC 运行库排查提示。
+
 ## 验证
 
 - 真实 Qt 冒烟：`locllmw` 打开后模型页直接显示浏览列表；加载 ModelScope 列表

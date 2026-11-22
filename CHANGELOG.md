@@ -7,6 +7,16 @@
 
 ### 变更
 
+- 修复「新版 llama.cpp 引擎跑不了小模型 / 启动即崩溃且日志为空」：官方 Windows 包
+  依赖新版 MSVC 运行库，但只导入引擎 zip（不带 cudart 包）时目录里没有
+  `msvcp140.dll` / `vcruntime140*.dll`，b12627 这类新构建会在加载阶段 `c0000005`
+  崩溃（连 `--version` 都跑不出），同模型在 b12470 上却正常。现在解压安装、
+  `resolve_engine` 解析与 `llmdoctor` 体检都会从本机 Visual Studio / VC Redist
+  把同名 DLL 补进引擎目录（与 sd.cpp 共用 `llmbase.ensure_vc_runtime`），旧安装
+  无需重装即可自愈。只有引擎包、没装 cudart 时不再静默退化：`probe_version` /
+  `check_engine` 标出缺 `cudart64_*` / `cublas64_*`，引导用「导入压缩包」把
+  cudart 包解到同一目录；启动崩溃（`c0000005` 且日志为空）的错误附加 MSVC
+  运行库排查提示。
 - llmw 模型页：已转换但未量化的仓库（只有 `converted/<源目录名>/<源目录名>.gguf`）
   现在也有「启动服务」，直接启动 f16 转换产物；扫描本地 GGUF 时一并扫
   `converted/<源目录名>/`，转换产物的量化变体进入精度标签 / 启动菜单，不再出现

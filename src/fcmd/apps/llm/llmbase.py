@@ -10,15 +10,17 @@ import codecs
 import contextlib
 import functools
 import locale
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Final, Literal, Protocol, cast
 
 ProfileName = Literal["speed", "balanced", "long", "max-context"]
 EngineVariant = Literal["cuda", "cpu"]
@@ -48,6 +50,45 @@ MSVC_HINT = (
     "llama-quantize 启动即崩溃通常由系统 VC++ 运行库（MSVCP140.dll）过旧导致，"
     "请安装最新 VC++ 2015-2022 x64 运行库，或将新版 msvcp140.dll 放入引擎目录"
 )
+VC_RUNTIME_DLLS: Final[tuple[str, ...]] = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
+"""引擎二进制依赖的 MSVC 运行库；系统自带 VC++ 2015（14.0）会让新构建启动即崩溃。"""
+
+
+def vc_runtime_sources() -> tuple[Path, ...]:
+    """本机可能携带新版 MSVC 运行库的目录（Visual Studio IDE / VC Redist）。"""
+    roots = [Path(value) for value in (os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")) if value]
+    patterns = (
+        "Microsoft Visual Studio/*/*/Common7/IDE",
+        "Microsoft Visual Studio/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT",
+    )
+    found: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pattern in patterns:
+            found.extend(path for path in root.glob(pattern) if path.is_dir())
+    return tuple(found)
+
+
+def ensure_vc_runtime(target: Path, *, sources: Sequence[Path] | None = None) -> tuple[str, ...]:
+    """确保引擎目录带新版 MSVC 运行库，返回仍缺失的 DLL 名。
+
+    llama.cpp / stable-diffusion.cpp 的 Windows 构建用新版 MSVC；系统只有 VC++ 2015
+    （``msvcp140.dll 14.0``）时进程会在加载阶段 ``c0000005`` 崩溃且日志为空。
+    这里优先从本机 Visual Studio / VC Redist 目录复制同名 DLL 到引擎目录；
+    找不到时返回缺失列表，由启动层提示安装最新 VC++ 运行库。
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    missing = [name for name in VC_RUNTIME_DLLS if not (target / name).is_file()]
+    if not missing:
+        return ()
+    for directory in sources if sources is not None else vc_runtime_sources():
+        if all((directory / name).is_file() for name in missing):
+            for name in missing:
+                with contextlib.suppress(OSError):
+                    shutil.copy2(directory / name, target / name)
+            return tuple(name for name in missing if not (target / name).is_file())
+    return tuple(missing)
 
 
 class ServeError(RuntimeError):

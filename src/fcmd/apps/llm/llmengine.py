@@ -25,6 +25,7 @@ from fcmd.apps.llm.llmbase import (
     CURRENT_MARKER,
     DEFAULT_ENGINE_TAG,
     ENGINE_MARKER,
+    VC_RUNTIME_DLLS,
     Check,
     CommandResult,
     EngineInfo,
@@ -33,6 +34,7 @@ from fcmd.apps.llm.llmbase import (
     Opener,
     Runner,
     ServeError,
+    ensure_vc_runtime,
     format_returncode,
     human_size,
     now_iso,
@@ -63,6 +65,7 @@ __all__ = [
     "install_engine",
     "list_engines",
     "mirror_candidates",
+    "missing_cuda_runtime",
     "parse_engine_releases",
     "probe_version",
     "quantize_exe",
@@ -78,6 +81,7 @@ ProgressCallback = Callable[[str, int, int | None], None]
 
 _SERVER_NAMES = ("llama-server.exe", "llama-server")
 _QUANTIZE_NAMES = ("llama-quantize.exe", "llama-quantize")
+_ACCESS_VIOLATION = 0xC0000005
 _CONVERT_SCRIPT = "convert_hf_to_gguf.py"
 _ENGINE_ARCHIVE_RE = re.compile(r"^llama-(?P<tag>b\d+)-bin-(?P<os>[A-Za-z0-9]+)-(?P<rest>.+)\.zip$", re.IGNORECASE)
 _VARIANTS = ("cuda", "vulkan", "sycl", "hip", "metal", "opencl", "cpu")
@@ -564,14 +568,79 @@ def run_with_engine(runner: Runner, cmd: Sequence[str], engine: EngineInfo | Non
     return runner(cmd, env=env)
 
 
+def _heal_engine(info: EngineInfo) -> EngineInfo:
+    """引擎目录缺 MSVC 运行库时就地补齐（旧安装也能在下次解析时自愈）。
+
+    llama.cpp 的 Windows 构建依赖新版 MSVC 运行库；只装引擎包、没装 cudart 包时
+    目录里没有这些 DLL，进程会在加载阶段 ``c0000005`` 崩溃且日志为空。
+    """
+    if os.name != "nt" or not info.exe.is_file():
+        return info
+    with contextlib.suppress(OSError):
+        ensure_vc_runtime(info.exe.parent)
+    return info
+
+
+def _cuda_runtime_dirs(engine: EngineInfo) -> tuple[Path, ...]:
+    """CUDA runtime DLL 可能的查找目录：引擎目录 → PATH → CUDA_PATH。
+
+    官方包把 runtime 放在单独的 cudart 包里，但很多人已装 CUDA Toolkit，此时
+    ``cudart64_*.dll`` 在 ``...\\CUDA\\v13.0\\bin\\x64`` 且已在 PATH 上，
+    llama.cpp 能正常拿到 GPU；只看引擎目录会误报「退化为 CPU」。
+    """
+    dirs: list[Path] = [engine.exe.parent]
+    dirs.extend(Path(item) for item in os.environ.get("PATH", "").split(os.pathsep) if item)
+    for key in ("CUDA_PATH", "CUDA_HOME"):
+        root = os.environ.get(key)
+        if not root:
+            continue
+        dirs.extend((Path(root) / "bin", Path(root) / "bin" / "x64"))
+    return tuple(dirs)
+
+
+def missing_cuda_runtime(engine: EngineInfo) -> tuple[str, ...]:
+    """CUDA 构建缺少的 runtime DLL；非 CUDA 引擎或能查到运行库时返回空。
+
+    官方 release 把 CUDA runtime 放在单独的 cudart 包里；引擎包只解压了一半时
+    ``ggml-cuda.dll`` 会因缺 ``cudart64_*.dll`` 加载失败，GPU 卸载退化成 CPU。
+    """
+    directory = engine.exe.parent
+    if not (directory / "ggml-cuda.dll").is_file():
+        return ()
+    dirs = _cuda_runtime_dirs(engine)
+    return tuple(
+        label
+        for label, pattern in (
+            ("cudart64_*.dll", "cudart64_*.dll"),
+            ("cublas64_*.dll", "cublas64_*.dll"),
+            ("cublasLt64_*.dll", "cublasLt64_*.dll"),
+        )
+        if not any(any(search.glob(pattern)) for search in dirs if search.is_dir())
+    )
+
+
 def probe_version(engine: EngineInfo, runner: Runner = run_command) -> str:
     """执行 ``llama-server --version`` 取首行版本信息。"""
     result = run_with_engine(runner, [str(engine.exe), "--version"], engine)
     output = (result.stdout or result.stderr).strip()
     if result.returncode != 0:
         detail = output.splitlines()[0] if output else f"退出码 {format_returncode(result.returncode)}"
-        return f"获取失败（{detail}）"
-    return output.splitlines()[0] if output else "未知"
+        return f"获取失败（{detail}）{_crash_hint(result, engine)}"
+    version = output.splitlines()[0] if output else "未知"
+    missing = missing_cuda_runtime(engine)
+    return f"{version}（缺 CUDA 运行库：{'、'.join(missing)}）" if missing else version
+
+
+def _crash_hint(result: CommandResult, engine: EngineInfo) -> str:
+    """启动即崩溃（0xC0000005）时给出 MSVC 运行库提示，空日志的崩溃很难自己排查。"""
+    crashed = result.returncode in (_ACCESS_VIOLATION, _ACCESS_VIOLATION - 2**32)
+    if not crashed:
+        return ""
+    return (
+        f"；启动即崩溃（{format_returncode(result.returncode)}），通常是引擎目录缺新版 MSVC 运行库"
+        f"（{', '.join(VC_RUNTIME_DLLS)}）：请安装最新 VC++ 2015-2022 x64 运行库，或把同名 DLL 放入 "
+        f"{engine.exe.parent}"
+    )
 
 
 def current_engine_tag(root: Path) -> str | None:
@@ -588,37 +657,41 @@ def current_engine_tag(root: Path) -> str | None:
 
 
 def resolve_engine(tag: str | None = None, home: Path | None = None) -> EngineInfo:
-    """解析要使用的引擎：``FCMD_LLAMA_SERVER`` → 指定 tag → current → 最新安装 → PATH。"""
+    """解析要使用的引擎：``FCMD_LLAMA_SERVER`` → 指定 tag → current → 最新安装 → PATH。
+
+    返回前会补全引擎目录里缺失的 MSVC 运行库（老安装也能自愈），否则新构建会在
+    加载阶段 ``c0000005`` 崩溃且日志为空。
+    """
     env_raw = os.environ.get("FCMD_LLAMA_SERVER")
     if env_raw:
         exe = Path(env_raw).expanduser()
         if not exe.is_file():
             raise ServeError(f"FCMD_LLAMA_SERVER 指向的文件不存在: {exe}")
-        return EngineInfo("env", exe, "FCMD_LLAMA_SERVER", _detect_path_prepend(exe))
+        return _heal_engine(EngineInfo("env", exe, "FCMD_LLAMA_SERVER", _detect_path_prepend(exe)))
 
     root = llmenv.engines_root(home)
     if tag:
         info = _engine_info(root / tag, tag)
         if info is None:
             raise ServeError(f"引擎 {tag!r} 未安装：fcmd llmengine install --tag {tag}")
-        return info
+        return _heal_engine(info)
 
     current = current_engine_tag(root)
     if current:
         info = _engine_info(root / current, current)
         if info is not None:
-            return info
+            return _heal_engine(info)
 
     if root.is_dir():
         for directory in sorted(root.iterdir(), reverse=True):
             if directory.is_dir():
                 info = _engine_info(directory)
                 if info is not None:
-                    return info
+                    return _heal_engine(info)
 
     which = shutil.which("llama-server")
     if which:
-        return EngineInfo("system", Path(which), "PATH")
+        return _heal_engine(EngineInfo("system", Path(which), "PATH"))
     raise ServeError("未找到 llama.cpp 引擎：先执行 fcmd llmengine install --tag " + DEFAULT_ENGINE_TAG)
 
 
@@ -692,7 +765,12 @@ def _download(
 
 
 def _extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:
-    """解压 zip 到目标目录；``remove`` 为真时解压后删除压缩包。"""
+    """解压 zip 到目标目录；``remove`` 为真时解压后删除压缩包。
+
+    解压后补齐 MSVC 运行库：官方 llama.cpp CUDA 包自身不带 ``msvcp140.dll`` /
+    ``vcruntime140*.dll``（在单独的 cudart 包里），只装引擎包时新构建会在加载
+    阶段 ``c0000005`` 崩溃且日志为空；本机有 VC++ 运行库时直接复制进去。
+    """
     try:
         with zipfile.ZipFile(archive) as bundle:
             bundle.extractall(target)
@@ -701,6 +779,9 @@ def _extract_zip(archive: Path, target: Path, *, remove: bool = True) -> None:
     finally:
         if remove:
             archive.unlink(missing_ok=True)
+    if os.name == "nt":
+        with contextlib.suppress(OSError):
+            ensure_vc_runtime(target)
 
 
 def download_file(
@@ -766,6 +847,9 @@ def _install_from_path(tag: str, path: Path, target: Path, *, copy: bool = False
         exe = _engine_exe_in(target)
         if exe is None:
             raise ServeError(f"复制后仍找不到 {engine_exe_name()}: {target}")
+        if os.name == "nt":
+            with contextlib.suppress(OSError):
+                ensure_vc_runtime(target)
     else:
         target.mkdir(parents=True, exist_ok=True)
         exe = source_exe
@@ -1013,15 +1097,26 @@ def cleanup_engines(
 
 def check_engine(engine: EngineInfo, runner: Runner = run_command) -> Check:
     """执行 ``llama-server --version`` 验证引擎可运行（能捕获 0xC0000005 崩溃）。"""
+    _heal_engine(engine)
     result = run_with_engine(runner, [str(engine.exe), "--version"], engine)
     if result.returncode == 0:
         first = (result.stdout or result.stderr).strip().splitlines()
+        missing = missing_cuda_runtime(engine)
+        if missing:
+            return Check(
+                "推理引擎",
+                "warn",
+                f"{engine.exe}（{first[0] if first else 'version ok'}）；"
+                f"缺 CUDA 运行库 {'、'.join(missing)}，GPU 卸载会退化为 CPU："
+                "用「导入压缩包」补装 cudart 包到同一引擎目录（或 llmengine install --archives）",
+            )
         return Check("推理引擎", "ok", f"{engine.exe}（{first[0] if first else 'version ok'}）")
     detail = result.stderr.strip() or result.stdout.strip() or "无输出"
     return Check(
         "推理引擎",
         "fail",
-        f"{engine.exe} --version 退出码 {format_returncode(result.returncode)}；{detail[:200]}",
+        f"{engine.exe} --version 退出码 {format_returncode(result.returncode)}；{detail[:200]}"
+        f"{_crash_hint(result, engine)}",
     )
 
 

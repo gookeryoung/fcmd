@@ -590,6 +590,84 @@ class TestEngineLookup:
         assert info.tag == "a0"
         assert info.exe == root / "a0" / llmengine.engine_exe_name()
 
+    def test_resolve_engine_heals_msvc_runtime(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """已安装的旧引擎在解析时补上 MSVC 运行库（否则新构建启动即崩溃）。"""
+        monkeypatch.delenv("FCMD_LLAMA_SERVER", raising=False)
+        root = tmp_path / "engines"
+        (root / "b7").mkdir(parents=True)
+        exe = root / "b7" / llmengine.engine_exe_name()
+        exe.write_bytes(b"x")
+        monkeypatch.setattr(llmenv, "engines_root", lambda home=None: root)
+        monkeypatch.setattr(llmengine, "current_engine_tag", lambda directory: "b7")
+        healed: list[Path] = []
+        monkeypatch.setattr(llmengine, "ensure_vc_runtime", lambda target: healed.append(target) or ())
+
+        llmengine.resolve_engine()
+
+        assert healed == [root / "b7"]
+
+    def test_extract_zip_heals_msvc_runtime(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        archive = _make_zip(tmp_path / "engine.zip", {llmengine.engine_exe_name(): b"exe"})
+        healed: list[Path] = []
+        monkeypatch.setattr(llmengine, "ensure_vc_runtime", lambda target: healed.append(target) or ())
+        target = tmp_path / "out"
+        target.mkdir()
+
+        llmengine.extract_zip(archive, target)
+
+        assert healed == [target]
+
+    def test_probe_version_appends_crash_hint(self) -> None:
+        engine = EngineInfo("b1", Path("llama-server.exe"))
+        result = llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(0xC0000005))
+        assert "MSVC 运行库" in result
+        assert "msvcp140.dll" in result
+
+    def test_probe_version_notes_missing_cuda_runtime(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.delenv("CUDA_PATH", raising=False)
+        monkeypatch.delenv("CUDA_HOME", raising=False)
+        (tmp_path / "ggml-cuda.dll").write_bytes(b"dll")
+        engine = EngineInfo("b1", tmp_path / "llama-server.exe")
+        result = llmengine.probe_version(engine, lambda *_a, **_k: CommandResult(0, "version: 1\n"))
+        assert "缺 CUDA 运行库" in result
+
+    def test_missing_cuda_runtime_labels(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.delenv("CUDA_PATH", raising=False)
+        monkeypatch.delenv("CUDA_HOME", raising=False)
+        engine = EngineInfo("b1", tmp_path / "llama-server.exe")
+        assert llmengine.missing_cuda_runtime(engine) == ()
+        (tmp_path / "ggml-cuda.dll").write_bytes(b"dll")
+        missing = llmengine.missing_cuda_runtime(engine)
+        assert "cudart64_*.dll" in missing and "cublas64_*.dll" in missing
+        (tmp_path / "cudart64_13.dll").write_bytes(b"dll")
+        missing = llmengine.missing_cuda_runtime(engine)
+        assert "cudart64_*.dll" not in missing and "cublas64_*.dll" in missing
+
+    def test_missing_cuda_runtime_accepts_system_toolkit(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """已装 CUDA Toolkit 且 PATH 上能查到 runtime 时不算缺（否则误报退化为 CPU）。"""
+        toolkit = tmp_path / "cuda" / "bin" / "x64"
+        toolkit.mkdir(parents=True)
+        for name in ("cudart64_13.dll", "cublas64_13.dll", "cublasLt64_13.dll"):
+            (toolkit / name).write_bytes(b"dll")
+        monkeypatch.setenv("PATH", str(toolkit))
+        monkeypatch.delenv("CUDA_PATH", raising=False)
+        monkeypatch.delenv("CUDA_HOME", raising=False)
+        (tmp_path / "ggml-cuda.dll").write_bytes(b"dll")
+        engine = EngineInfo("b1", tmp_path / "llama-server.exe")
+        assert llmengine.missing_cuda_runtime(engine) == ()
+
+    def test_check_engine_warns_on_missing_cuda_runtime(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+        monkeypatch.delenv("CUDA_PATH", raising=False)
+        monkeypatch.delenv("CUDA_HOME", raising=False)
+        (tmp_path / "ggml-cuda.dll").write_bytes(b"dll")
+        engine = EngineInfo("b1", tmp_path / "llama-server.exe")
+        check = llmengine.check_engine(engine, lambda *_a, **_k: CommandResult(0, "version: 1\n"))
+        assert check.status == "warn"
+        assert "cudart" in check.detail
+
     def test_resolve_engine_returns_none_when_nothing_installed(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
