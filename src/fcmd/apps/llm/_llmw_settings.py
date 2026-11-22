@@ -97,6 +97,9 @@ def apply_path(key: str, value: str | None, home: Path | None = None) -> Path:
     if key == "engines_root":
         _llmconfig.set_option("engines_root", value or None, home)
         return _llmconfig.engines_root(home)
+    if key == "sd_engines_root":
+        _llmconfig.set_option("sd_engines_root", value or None, home)
+        return _llmconfig.paint_engines_root(home)
     raise ValueError(f"未知设置项: {key}")
 
 

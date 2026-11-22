@@ -47,7 +47,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
     installed = Signal(str)
     """安装成功信号：携带引擎 tag，画图页据此刷新引擎状态。"""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, online_only: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("安装画图引擎")
         self.setModal(True)
@@ -105,6 +105,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         self.local_button = button("从本地 zip 安装…", kind="ghost")
         self.local_button.setToolTip("已有 sd.cpp 预编译包时直接导入（Windows / Linux / macOS 均可）")
         self.local_button.clicked.connect(self._install_local)
+        self.local_button.setVisible(not online_only)
         self.close_button = button("关闭", kind="ghost")
         self.close_button.clicked.connect(self.reject)
         for widget in (self.install_button, self.local_button, self.close_button):
@@ -116,7 +117,7 @@ class PaintEngineDialog(QDialog):  # pragma: no cover - Qt 控件
         card.body.addWidget(self.status)
         mirror_hint = hint_label(
             "版本来自 GitHub releases（默认国内镜像，失败回退 GitHub）；"
-            "FCMD_GITHUB_MIRROR 可覆盖，本地 zip / 目录走「从本地 zip 安装…」。"
+            "FCMD_GITHUB_MIRROR 可覆盖；本地包在设置页用「导入压缩包」。"
         )
         mirror_hint.setToolTip(
             "镜像失败自动回退 GitHub；设 FCMD_GITHUB_MIRROR=direct 只用 GitHub；"

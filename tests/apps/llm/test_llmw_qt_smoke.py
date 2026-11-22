@@ -1187,10 +1187,10 @@ def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
     assert card.title() == "画图/视频/音频引擎(sd.cpp)"
     assert card.refresh_button.text() == "刷新"
     assert card.refresh_button.parent() is card
-    assert card.root_label.objectName() == "Hint"
-    assert card.open_button is not None
-    assert card.open_button.text() == "打开"
-    assert card.install_button.text() == "安装引擎…"
+    assert card.root_widget.browse.text() == "更改"
+    assert not hasattr(card, "open_button") or card.open_button is None
+    assert card.install_button.text() == "下载引擎"
+    assert card.extra_buttons[0].text() == "导入压缩包"
     assert card.engines_list.objectName() == "PaintEngineList"
     assert card.engines_empty.text().startswith("还没有已安装 sd.cpp 引擎")
     # 旧的状态胶囊 / 自绘行布局已移除，改为与推理引擎一致的列表行。

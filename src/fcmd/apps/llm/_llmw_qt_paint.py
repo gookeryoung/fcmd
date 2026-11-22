@@ -35,14 +35,16 @@ from PySide6.QtWidgets import (
 )
 
 from fcmd.apps.llm import _llmconfig, _llmpaint, _llmpaint_engine, _llmpaint_server
+from fcmd.apps.llm import _llmw_settings as settings_logic
 from fcmd.apps.llm._llmw_models import open_path
-from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineOption
+from fcmd.apps.llm._llmw_qt_engine_card import EngineCard, EngineCardConfig, EngineDirAction, EngineOption
 from fcmd.apps.llm.llmbase import ServeError, format_command, human_size
 from fcmd.gui.qt.widgets import (
     ChoiceGroup,
     Collapsible,
     ElidedLabel,
     FormGrid,
+    PathRow,
     ToggleChip,
     button,
     hint_label,
@@ -1143,35 +1145,75 @@ def build_paint_engine_card(parent: QWidget | None = None) -> EngineCard:
         return options
 
     def install(card: EngineCard) -> None:
+        """「下载引擎」只走在线版本列表；本地包由目录行的「导入压缩包」负责。"""
         from fcmd.apps.llm._llmw_qt_paint_engine import PaintEngineDialog
 
-        dialog = PaintEngineDialog(card)
+        dialog = PaintEngineDialog(card, online_only=True)
         dialog.installed.connect(lambda _tag: (card.refresh(), card.changed.emit()))
         dialog.exec()
         card.refresh()
 
-    def open_root() -> None:
-        root = _llmconfig.paint_engines_root()
+    def import_archives(card: EngineCard) -> None:
+        paths, _filter = QFileDialog.getOpenFileNames(
+            card,
+            "选择 sd.cpp 引擎包（可同时选引擎 + cudart）",
+            "",
+            "Zip 压缩包 (*.zip);;所有文件 (*.*)",
+        )
+        if not paths:
+            return
+
+        def work() -> object:
+            return _llmpaint_engine.install_sd_engine(None, archives=tuple(Path(item) for item in paths), use=True)
+
+        submit_daemon(
+            work,
+            on_done=lambda _engine: (card.refresh(), card.changed.emit()),
+            on_error=lambda message: QMessageBox.critical(card, "导入失败", message),
+        )
+
+    root_row = PathRow(
+        value=str(_llmconfig.paint_engines_root()),
+        directory=True,
+        show_reset=True,
+        browse_text="更改",
+    )
+    holder: dict[str, EngineCard] = {}
+
+    def save_root(text: str) -> None:
         try:
-            root.mkdir(parents=True, exist_ok=True)
-            open_path(root)
-        except OSError as exc:
-            QMessageBox.critical(parent, "打开失败", f"无法打开目录：{root} / {exc}")
+            settings_logic.apply_path("sd_engines_root", text or None)
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(parent, "保存失败", str(exc))
+            return
+        if "card" in holder:
+            holder["card"].refresh()
+
+    root_row.committed.connect(save_root)
+    root_row.reset.clicked.connect(lambda: save_root(""))
 
     config = EngineCardConfig(
         title="画图/视频/音频引擎(sd.cpp)",
         list_object_name="PaintEngineList",
-        empty_text="还没有已安装 sd.cpp 引擎；点「安装引擎…」下载或导入。",
+        empty_text="还没有已安装 sd.cpp 引擎；用「下载引擎」或「导入压缩包」添加。",
         load=load,
         use=_llmpaint_engine.use_sd_engine,
         install=install,
-        install_text="安装引擎…",
-        install_tooltip="下载 stable-diffusion.cpp 预编译包，或导入本地 zip / 目录",
+        install_text="下载引擎",
+        install_tooltip="从 GitHub releases 选择 stable-diffusion.cpp 版本与变体下载到引擎目录",
         root_text=lambda: str(_llmconfig.paint_engines_root()),
-        open_root=open_root,
-        open_text="打开",
-        open_tooltip="在文件管理器中打开 sd.cpp 引擎目录",
         row_use_tooltip="把该引擎设为默认 sd.cpp 引擎（画图 / 视频 / 音频共用）",
         row_current_tooltip="画图 / 视频 / 音频共用该引擎",
+        extra_actions=(
+            EngineDirAction(
+                text="导入压缩包",
+                tooltip="从本地 sd.cpp 引擎包（zip，可含 cudart）安装",
+                callback=lambda: import_archives(holder["card"]) if "card" in holder else None,
+            ),
+        ),
+        root_widget=lambda _parent: root_row,
+        refresh_root=lambda widget: widget.set_value(str(_llmconfig.paint_engines_root())),
     )
-    return EngineCard(config, parent)
+    card = EngineCard(config, parent)
+    holder["card"] = card
+    return card

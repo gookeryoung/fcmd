@@ -157,6 +157,13 @@ def test_apply_engines_root_writes_value(home: Path, tmp_path: Path) -> None:
     assert _read(home / "serve" / "config.json")["engines_root"] == str(target)
 
 
+def test_apply_sd_engines_root_writes_value(home: Path, tmp_path: Path) -> None:
+    target = tmp_path / "sd-engines"
+    assert settings_page.apply_path("sd_engines_root", str(target), home) == target
+    assert _read(home / "serve" / "config.json")["sd_engines_root"] == str(target)
+    assert settings_page.apply_path("sd_engines_root", None, home) == home / "engines" / "sd.cpp"
+
+
 def test_apply_none_restores_defaults(home: Path, tmp_path: Path) -> None:
     _llmconfig.set_models_dir(tmp_path / "models", home)
     _llmconfig.set_option("engines_root", str(tmp_path / "engines"), home)
