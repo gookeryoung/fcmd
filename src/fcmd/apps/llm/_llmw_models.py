@@ -43,6 +43,7 @@ __all__ = [
     "group_same_name",
     "is_usable_item",
     "local_row",
+    "matches_category",
     "matches_filter",
     "merge_installed_items",
     "model_item_lines",
@@ -373,6 +374,19 @@ def matches_filter(item: ModelSummary, filter_key: str) -> bool:
     keywords = _FILTER_KEYWORDS.get(filter_key, ())
     haystack = " ".join((item.repo, item.name, *item.tasks, *item.tags)).casefold()
     return any(keyword.casefold() in haystack for keyword in keywords)
+
+
+def matches_category(name: str, filter_key: str) -> bool:
+    """本地模型名是否属于指定用途分类（运行页视频 / 音频候选筛选）。
+
+    与 :func:`matches_filter` 共用同一张分类关键字表；``all`` / ``local`` / 空串
+    视为全部符合，未登记的分类视为无匹配。
+    """
+    if filter_key in ("", "all", "local"):
+        return True
+    keywords = _FILTER_KEYWORDS.get(filter_key, ())
+    lowered = name.casefold()
+    return any(keyword.casefold() in lowered for keyword in keywords)
 
 
 def merge_installed_items(

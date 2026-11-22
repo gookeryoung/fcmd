@@ -24,7 +24,7 @@ from urllib.request import Request
 
 import pytest
 
-from fcmd.apps.llm import _llmpaint, _llmpaint_engine, _llmpaint_server, llmengine, llmpaint
+from fcmd.apps.llm import _llmconfig, _llmpaint, _llmpaint_engine, _llmpaint_server, llmengine, llmpaint
 from fcmd.apps.llm._llmpaint_engine import SdEngine
 from fcmd.apps.llm.llmbase import Check, CommandResult, GpuInfo, ServeError
 from fcmd.core.toolkit import _TOOL_REGISTRY
@@ -92,6 +92,14 @@ def _make_zip(path: Path, entries: dict[str, bytes]) -> Path:
         for name, data in entries.items():
             bundle.writestr(name, data)
     return path
+
+
+def _fake_sd_engine(home: Path, tag: str) -> Path:
+    """在 sd.cpp 引擎目录里放一个最小可解析的引擎（sd-server.exe）。"""
+    directory = home / "engines" / "sd.cpp" / tag
+    directory.mkdir(parents=True)
+    (directory / "sd-server.exe").write_bytes(b"exe")
+    return directory
 
 
 def _sd_payload() -> list[Any]:
@@ -778,6 +786,43 @@ class TestInstallEngine:
         bad = _llmpaint_engine.check_sd_engine(engine, runner=lambda argv, **kw: CommandResult(1, "", "boom"))
         assert bad.status == "fail"
         assert "boom" in bad.detail
+
+
+class TestUsageEngines:
+    """视频 / 音频复用 sd.cpp 引擎目录，只单独记录各自选中的 tag。"""
+
+    def test_default_follows_current_until_set(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        _fake_sd_engine(home, "sd-a")
+        _fake_sd_engine(home, "sd-b")
+        _llmpaint_engine.use_sd_engine("sd-a", home)
+        assert _llmpaint_engine.usage_engine_tag("video", home) == "sd-a"
+        assert _llmpaint_engine.usage_engine_tag("audio", home) == "sd-a"
+
+        _llmpaint_engine.use_sd_engine_for("video", "sd-b", home)
+        assert _llmpaint_engine.usage_engine_tag("video", home) == "sd-b"
+        assert _llmpaint_engine.usage_engine_tag("audio", home) == "sd-a"
+        # 用途切换不动全局默认。
+        assert _llmpaint_engine.current_sd_tag(home) == "sd-a"
+
+    def test_switching_back_to_default_clears_override(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        _fake_sd_engine(home, "sd-a")
+        _fake_sd_engine(home, "sd-b")
+        _llmpaint_engine.use_sd_engine("sd-a", home)
+        _llmpaint_engine.use_sd_engine_for("audio", "sd-b", home)
+        assert _llmconfig.get_option("audio_engine", home) == "sd-b"
+
+        _llmpaint_engine.use_sd_engine_for("audio", "sd-a", home)
+        assert _llmconfig.get_option("audio_engine", home) is None
+        assert _llmpaint_engine.usage_engine_tag("audio", home) == "sd-a"
+
+    def test_rejects_missing_engine_and_unknown_usage(self, tmp_path: Path) -> None:
+        home = tmp_path / "home"
+        with pytest.raises(ServeError, match="未安装"):
+            _llmpaint_engine.use_sd_engine_for("video", "absent", home)
+        with pytest.raises(ServeError, match="未知用途"):
+            _llmpaint_engine.use_sd_engine_for("paint", "sd-a", home)
 
 
 # ---------------------------------------------------------------------- #

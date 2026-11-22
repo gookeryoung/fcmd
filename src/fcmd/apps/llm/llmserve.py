@@ -354,16 +354,18 @@ def _engine_exit_error(plan: LaunchPlan, code: int) -> ServeError:
     """把「引擎启动后立即退出」翻译成可操作的错误信息。
 
     旧版 llama.cpp 遇到新架构（如 ``qwen3moe``）时会在加载阶段退出，日志里写
-    ``unknown model architecture``。这时换启动参数没有意义，必须升级引擎，
-    因此错误信息直接给出升级命令与日志位置，而不是只贴一段日志尾部。
+    ``unknown model architecture``。这时换启动参数没有意义，必须换支持该架构的
+    运行时；因此错误信息带上当前引擎 tag、查看可用版本的命令与日志位置，而不是
+    写死某个版本号（同一架构也可能根本不由 llama.cpp 支持）。
     """
     tail = _tail_text(plan.log, 12)
     missing = _unknown_architecture(tail)
     if missing is not None:
         return ServeError(
             f"当前引擎不支持该模型架构 {missing!r}（引擎 {plan.engine.tag}）："
-            "请升级 llama.cpp 引擎后重试，例如 `fcmd llmengine install b12211` 再 "
-            "`fcmd llmengine use b12211`；"
+            "若该架构需要独立运行时，请安装对应引擎；若新版 llama.cpp 已支持，"
+            "可先用 `fcmd llmengine releases` 查看可用版本，再以 "
+            "`fcmd llmengine install <版本>` 安装并用 `fcmd llmengine use <版本>` 切换；"
             f"引擎日志: {plan.log}"
         )
     return ServeError(

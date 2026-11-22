@@ -107,7 +107,7 @@ class _EngineRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
 
 class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
-    """设置页：存储、推理引擎（llama.cpp）、画图引擎（sd.cpp）、下载参数与模型转换。"""
+    """设置页：存储、推理引擎（llama.cpp）、画图 / 视频 / 音频引擎（sd.cpp）、下载参数与模型转换。"""
 
     def __init__(self, state: LlmState, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -122,9 +122,13 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(self._build_storage())
         layout.addWidget(self._build_engines())
         layout.addWidget(self._build_paint_engine())
+        layout.addWidget(self._build_usage_engine("视频引擎（sd.cpp）", "video"))
+        layout.addWidget(self._build_usage_engine("音频引擎（sd.cpp）", "audio"))
         layout.addWidget(self._build_download())
         layout.addWidget(self._build_convert())
         layout.addStretch(1)
+        for card in (self.paint_engine_card, self.video_engine_card, self.audio_engine_card):
+            card.changed.connect(self.refresh_engine_cards)
         self.refresh()
 
     # ------------------------------------------------------------------ #
@@ -153,6 +157,14 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
 
         self.paint_engine_card = PaintEngineCard(self)
         return self.paint_engine_card
+
+    def _build_usage_engine(self, title: str, usage: str) -> Card:
+        """视频 / 音频引擎卡片：复用 sd.cpp 引擎目录与安装 / 切换控件，只单独记录默认 tag。"""
+        from fcmd.apps.llm._llmw_qt_paint import PaintEngineCard
+
+        card = PaintEngineCard(self, title=title, usage=usage)
+        setattr(self, f"{usage}_engine_card", card)
+        return card
 
     # ------------------------------------------------------------------ #
     # 下载
@@ -354,7 +366,12 @@ class SettingsPage(QWidget):  # pragma: no cover - Qt 控件
         self.migration_note.setText(note)
         self.migration_note.setVisible(bool(note))
         self.refresh_engines()
-        self.paint_engine_card.refresh()
+        self.refresh_engine_cards()
+
+    def refresh_engine_cards(self) -> None:
+        """刷新画图 / 视频 / 音频三张 sd.cpp 引擎卡（共用引擎目录，默认 tag 各自独立）。"""
+        for card in (self.paint_engine_card, self.video_engine_card, self.audio_engine_card):
+            card.refresh()
 
     def refresh_engines(self) -> None:
         """刷新已安装引擎列表；空态 / 错误态由提示行承接，列表随之收起。"""

@@ -40,6 +40,7 @@ from fcmd.apps.llm import (
     _llmpaint,
     _llmpaint_server,
     _llmtune,
+    _llmw_models,
     _llmw_recommend,
     llmbase,
     llmenv,
@@ -105,6 +106,11 @@ __all__ = [
     "sanitize_custom_args",
     "startup_args_tail",
 ]
+
+_PAINT_TAB = 2
+"""运行页页签顺序：对话 / 编程 / 画图 / 视频 / 音频。"""
+_USAGE_BY_TAB: dict[int, str] = {0: "chat", 1: "code", 3: "video", 4: "audio"}
+_USAGE_LABELS = {"chat": "对话", "code": "编程", "video": "视频", "audio": "音频"}
 
 
 # ---------------------------------------------------------------------- #
@@ -512,7 +518,6 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.tabs.addTab(self.chat_tab, "对话")
         self.tabs.addTab(self.code_tab, "编程")
         self._service_layouts = {"chat": self.chat_tab_layout, "code": self.code_tab_layout}
-        self._mount_service_page("chat")
 
         self.model_card = Card("选择模型")
         model_row = QHBoxLayout()
@@ -536,25 +541,66 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         layout.addWidget(self.model_card)
 
         self.params_card = Card("启动参数")
-        form = FormGrid(self.params_card)
-        self.host_edit = QLineEdit(DEFAULT_HOST, self.params_card)
-        self.port_edit = QLineEdit(str(DEFAULT_PORT), self.params_card)
-        form.add_pair("监听地址", self.host_edit, "端口", self.port_edit)
-        self.threads_edit = QLineEdit(str(DEFAULT_THREADS), self.params_card)
-        form.add_row("线程数", self.threads_edit)
-        self.params_card.body.addWidget(form)
+        # 参数卡内容做成可替换的插槽：当前四个 LLM 用途装同一份 llama.cpp 启动
+        # 表单；视频 / 音频的本地推理后端落地后，只需在 _param_form_for 里返回
+        # 各自的引擎表单，页签 / 卡片结构与下方持久化入口都不用动。
+        self.param_host = QVBoxLayout()
+        self.param_host.setContentsMargins(0, 0, 0, 0)
+        self.param_host.setSpacing(6)
+        self.params_card.body.addLayout(self.param_host)
+        self.launch_form = self._build_launch_form(self.params_card)
+        self._install_param_form(self.launch_form)
+        layout.addWidget(self.params_card)
 
-        self.params_card.body.addWidget(QLabel("运行模式（档位 + 调优）", self.params_card))
+        layout.addStretch(1)
+
+        paint_page = QWidget(self.tabs)
+        paint_layout = QVBoxLayout(paint_page)
+        paint_layout.setContentsMargins(0, 0, 0, 0)
+        paint_layout.setSpacing(6)
+        self.tabs.addTab(paint_page, "画图")
+        self.paint_scroll = PageScroll(paint_page)
+        paint_layout.addWidget(self.paint_scroll, 1)
+        self._build_paint_tab(self.paint_scroll.body)
+        # 视频 / 音频与对话 / 编程共用同一套启动参数表单（两张卡的组织与画图页
+        # 一致），只是模型候选按分类筛选；参数卡内容由 _param_form_for 决定，
+        # 后端落地后换成独立引擎表单即可。
+        for usage, label in (("video", "视频"), ("audio", "音频")):
+            page = QWidget(self.tabs)
+            tab_layout = QVBoxLayout(page)
+            tab_layout.setContentsMargins(0, 0, 0, 0)
+            tab_layout.setSpacing(6)
+            self.tabs.addTab(page, label)
+            setattr(self, f"{usage}_tab", page)
+            self._service_layouts[usage] = tab_layout
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self._mount_service_page("chat")
+
+    def _build_launch_form(self, parent: QWidget) -> QWidget:
+        """构建 llama.cpp 启动参数表单（四个 LLM 用途共用一份实例）。"""
+        form_root = QWidget(parent)
+        form_layout = QVBoxLayout(form_root)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(6)
+        form = FormGrid(form_root)
+        self.host_edit = QLineEdit(DEFAULT_HOST, form_root)
+        self.port_edit = QLineEdit(str(DEFAULT_PORT), form_root)
+        form.add_pair("监听地址", self.host_edit, "端口", self.port_edit)
+        self.threads_edit = QLineEdit(str(DEFAULT_THREADS), form_root)
+        form.add_row("线程数", self.threads_edit)
+        form_layout.addWidget(form)
+
+        form_layout.addWidget(QLabel("运行模式（档位 + 调优）", form_root))
         self.mode_choice = ChoiceGroup(
             _mode_options(),
             current="balanced",
             columns=3,
             tones=_MODE_TONE,
-            parent=self.params_card,
+            parent=form_root,
         )
-        self.params_card.body.addWidget(self.mode_choice)
+        form_layout.addWidget(self.mode_choice)
 
-        self.advanced = Collapsible("高级参数（留空回落档位默认）", expanded=False, parent=self.params_card)
+        self.advanced = Collapsible("高级参数（留空回落档位默认）", expanded=False, parent=form_root)
         adv_form = FormGrid(self.advanced.content)
         self.ctx_edit = QLineEdit("", self.advanced.content)
         adv_form.add_row("上下文", self.ctx_edit)
@@ -571,20 +617,20 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         self.wait_edit = QLineEdit("180", self.advanced.content)
         adv_form.add_pair("API Key", self.api_key_edit, "等待就绪（秒）", self.wait_edit)
         self.advanced.body.addWidget(adv_form)
-        self.params_card.body.addWidget(self.advanced)
+        form_layout.addWidget(self.advanced)
 
-        self.params_card.body.addWidget(QLabel("启动命令预览", self.params_card))
-        self.command_preview = QPlainTextEdit(self.params_card)
+        form_layout.addWidget(QLabel("启动命令预览", form_root))
+        self.command_preview = QPlainTextEdit(form_root)
         self.command_preview.setObjectName("Log")
         self.command_preview.setReadOnly(True)
         self.command_preview.setFixedHeight(64)
-        self.params_card.body.addWidget(self.command_preview)
+        form_layout.addWidget(self.command_preview)
 
-        self.params_card.body.addWidget(QLabel("自定义启动参数", self.params_card))
-        self.extra_args_edit = QPlainTextEdit(self.params_card)
+        form_layout.addWidget(QLabel("自定义启动参数", form_root))
+        self.extra_args_edit = QPlainTextEdit(form_root)
         self.extra_args_edit.setFixedHeight(56)
         self.extra_args_edit.setPlaceholderText("每行或空格分隔，例如：--no-mmap --flash-attn on")
-        self.params_card.body.addWidget(self.extra_args_edit)
+        form_layout.addWidget(self.extra_args_edit)
         params_actions = QHBoxLayout()
         self.save_params_button = button("保存参数")
         self.save_params_button.clicked.connect(self._save_params)
@@ -593,39 +639,46 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         params_actions.addWidget(self.save_params_button)
         params_actions.addWidget(self.fill_params_button)
         params_actions.addStretch(1)
-        self.params_card.body.addLayout(params_actions)
-        layout.addWidget(self.params_card)
+        form_layout.addLayout(params_actions)
+        return form_root
 
-        layout.addStretch(1)
+    def _install_param_form(self, form: QWidget) -> None:
+        """替换「启动参数」卡的内容；旧表单移出但保留对象，便于切回时复用。"""
+        while self.param_host.count():
+            item = self.param_host.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+        self.param_host.addWidget(form)
 
-        paint_page = QWidget(self.tabs)
-        paint_layout = QVBoxLayout(paint_page)
-        paint_layout.setContentsMargins(0, 0, 0, 0)
-        paint_layout.setSpacing(6)
-        self.tabs.addTab(paint_page, "画图")
-        self.paint_scroll = PageScroll(paint_page)
-        paint_layout.addWidget(self.paint_scroll, 1)
-        self._build_paint_tab(self.paint_scroll.body)
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+    def _param_form_for(self, usage: str) -> QWidget:  # noqa: ARG002 - 后端落地前各用途共用表单
+        """按用途取参数表单。
+
+        视频 / 音频目前没有本地推理后端（ADR 0027 / 0040），先复用 llama.cpp
+        启动表单；后端落地时在这里换成各自的引擎表单即可，页面结构与按模型
+        持久化的入口保持不变。
+        """
+        return self.launch_form
 
     def _mount_service_page(self, usage: str) -> None:
-        """把共享的启动参数页挂到当前用途的页签（对话 / 编程同一套表单）。"""
+        """把启动参数页挂到当前用途的页签（对话 / 编程 / 视频 / 音频同一套表单）。"""
         self._usage = usage
         for target in self._service_layouts.values():
             target.removeWidget(self.service_page)
         self._service_layouts[usage].addWidget(self.service_page, 1)
+        self._install_param_form(self._param_form_for(usage))
 
     def _on_tab_changed(self, index: int) -> None:
-        """切换页签：对话 / 编程换模型候选并同步该模型的启动参数；画图只刷新状态。"""
-        if index >= 2:
+        """切换页签：对话 / 编程 / 视频 / 音频换模型候选并同步启动参数；画图只刷新状态。"""
+        if index == _PAINT_TAB:
             # 进入画图页签就重扫一次扩散模型：下载 / 转换刚完成的模型不必等
             # 其它页面的信号（扩散权重不进 LLM 模型列表）。
             self.refresh_paint_assets()
             self.refresh_paint()
             self._report_paint_hint()
             return
-        usage = "chat" if index == 0 else "code"
-        if usage == self._usage:
+        usage = _USAGE_BY_TAB.get(index)
+        if usage is None or usage == self._usage:
             return
         self._persist_current_params()
         self._mount_service_page(usage)
@@ -634,13 +687,14 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         current = self.state.selected_model
         if current is not None and candidates and current not in candidates:
             self.state.select_model(candidates[0], update_name=True)
-        label = "编程" if usage == "code" else "对话"
-        self.state.status(f"已切到「{label}」启动参数")
+        self.state.status(f"已切到「{_USAGE_LABELS[usage]}」启动参数")
 
     def _usage_models(self) -> list[ModelEntry]:
-        """当前用途的模型候选：编程只看「代码」标签，对话排除纯代码模型；空时回退全部。"""
+        """当前用途的模型候选：按能力标签或分类关键字筛选；空时回退全部。"""
         if self._usage == "code":
             rows = [entry for entry in self.state.models if "代码" in llmmodel.detect_model_tags(entry.path.name)]
+        elif self._usage in ("video", "audio"):
+            rows = [entry for entry in self.state.models if _llmw_models.matches_category(entry.path.name, self._usage)]
         else:
             rows = [entry for entry in self.state.models if "代码" not in llmmodel.detect_model_tags(entry.path.name)]
         return rows or list(self.state.models)
@@ -702,7 +756,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
 
     def _report_paint_hint(self) -> None:
         """把画图说明 / 缺模型提示写到底部状态栏（只在本页签可见时刷新）。"""
-        if self.tabs.currentIndex() != 2:
+        if self.tabs.currentIndex() != _PAINT_TAB:
             return
         section = getattr(self, "paint_engine_section", None)
         hint = section.missing_model_hint() if section is not None else ""
@@ -715,7 +769,7 @@ class RunPage(QWidget):  # pragma: no cover - Qt 控件
         """刷新画图服务状态：状态文件（同步）+ 端口探针（后台）→ 标签 / 按钮。"""
         state, alive = _llmpaint_server.status()
         self._apply_paint_status(_llmpaint_server.PaintProbe(state, alive, alive, alive))
-        if self.tabs.currentIndex() == 2:
+        if self.tabs.currentIndex() == _PAINT_TAB:
             self._probe_paint()
 
     def _probe_paint(self) -> None:

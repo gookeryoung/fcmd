@@ -240,10 +240,16 @@ def test_chat_config_dialog_starts_compact(window: Any) -> None:
 
 
 def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
-    """运行页分「对话 / 编程 / 画图」：对话与编程共用参数，画图页签只配启动参数与启停。"""
+    """运行页分「对话 / 编程 / 画图 / 视频 / 音频」：前四项共用参数，画图只配启动参数与启停。"""
     window.show_page("run")
     run = window.run_page
-    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == ["对话", "编程", "画图"]
+    assert [run.tabs.tabText(index) for index in range(run.tabs.count())] == [
+        "对话",
+        "编程",
+        "画图",
+        "视频",
+        "音频",
+    ]
     # 页签用胶囊样式：去掉 QTabBar 基线（多余横条），页签与内容同底色衔接。
     bar = run.tabs.tabBar()
     assert run.tabs.objectName() == "RunTabs"
@@ -255,6 +261,17 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     run.tabs.setCurrentIndex(1)
     QApplication.processEvents()
     assert run.service_page.parent() is run.code_tab
+    # 视频 / 音频与画图同构：仍是「选择模型 + 启动参数」两张卡；参数表单先复用
+    # 同一份 llama.cpp 表单，后端落地后由 _param_form_for 换成引擎表单。
+    for index, usage in ((3, "video"), (4, "audio")):
+        run.tabs.setCurrentIndex(index)
+        QApplication.processEvents()
+        tab = getattr(run, f"{usage}_tab")
+        assert run.service_page.parent() is tab
+        assert tab.isAncestorOf(run.model_card)
+        assert tab.isAncestorOf(run.params_card)
+        assert run.param_host.itemAt(0).widget() is run.launch_form
+        assert run.params_card.title() == "启动参数"
     run.tabs.setCurrentIndex(0)
     QApplication.processEvents()
     assert run.service_page.parent() is run.chat_tab
@@ -290,6 +307,28 @@ def test_run_page_usage_tabs_and_paint_service(window: Any) -> None:
     assert section.settings()["port"] == 1234
     run.refresh_paint()
     assert "paint" not in tuple(window.nav.keys())
+
+
+def test_video_audio_usage_models_filtered_by_category(window: Any, tmp_path: Path) -> None:
+    """视频 / 音频候选按分类关键字筛选本地模型；无匹配时回退全部（与编程一致）。"""
+    from fcmd.apps.llm.llmbase import ModelEntry
+
+    run = window.run_page
+    paths = (
+        tmp_path / "Qwen2.5-Video-7B.gguf",
+        tmp_path / "Qwen2-Audio-7B.gguf",
+        tmp_path / "Llama-3-8B.gguf",
+    )
+    window.state.models = [ModelEntry(tmp_path, path, 1) for path in paths]
+
+    run._usage = "video"
+    assert [entry.path.name for entry in run._usage_models()] == ["Qwen2.5-Video-7B.gguf"]
+    run._usage = "audio"
+    assert [entry.path.name for entry in run._usage_models()] == ["Qwen2-Audio-7B.gguf"]
+
+    # 没有命中时回退全部，避免页签空白。
+    window.state.models = [ModelEntry(tmp_path, paths[2], 1)]
+    assert [entry.path.name for entry in run._usage_models()] == ["Llama-3-8B.gguf"]
 
 
 def test_paint_model_combo_has_no_placeholder(window: Any, tmp_path: Path) -> None:
@@ -940,6 +979,8 @@ def test_settings_engine_panel_is_compact(window: Any) -> None:
         "存储",
         "推理引擎（llama.cpp）",
         "画图引擎（sd.cpp）",
+        "视频引擎（sd.cpp）",
+        "音频引擎（sd.cpp）",
         "下载",
         "模型转换",
     ]
@@ -977,6 +1018,56 @@ def test_settings_paint_engine_card_matches_llama_layout(window: Any) -> None:
     # 旧的状态胶囊 / 自绘行布局已移除，改为与推理引擎一致的列表行。
     assert not hasattr(card, "engine_tag")
     assert not hasattr(card, "rows")
+
+
+def test_settings_video_audio_engine_cards_reuse_sd_engines(
+    window: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """视频 / 音频卡与画图卡同构：共用 sd.cpp 目录与安装控件，默认 tag 各自独立。"""
+    from fcmd.apps.llm import _llmconfig, _llmpaint_engine
+
+    root = tmp_path / "engines" / "sd.cpp"
+    for tag in ("sd-a", "sd-b"):
+        directory = root / tag
+        directory.mkdir(parents=True)
+        (directory / "sd-server.exe").write_bytes(b"exe")
+    _llmpaint_engine.use_sd_engine("sd-a")
+
+    window.show_page("settings")
+    page = window.page("settings")
+    page.refresh_engine_cards()
+    video = page.video_engine_card
+    audio = page.audio_engine_card
+    for card, title in ((video, "视频引擎（sd.cpp）"), (audio, "音频引擎（sd.cpp）")):
+        assert card.title() == title
+        assert card.engines_list.objectName() == "PaintEngineList"
+        assert card.open_button.text() == "打开"
+        assert card.install_button.text() == "安装引擎…"
+        assert card.engines_empty.text().startswith("还没有已安装")
+        assert card.engines_list.count() == 2
+    assert _llmconfig.paint_engines_root() == root
+    # 未单独指定时跟随画图默认引擎：两卡的默认标记都落在 sd-a。
+    assert _llmpaint_engine.usage_engine_tag("video") == "sd-a"
+    assert _llmpaint_engine.usage_engine_tag("audio") == "sd-a"
+
+    def row_for(card: Any, tag: str) -> Any:
+        for index in range(card.engines_list.count()):
+            row = card.engines_list.itemWidget(card.engines_list.item(index))
+            if row.engine.tag == tag:
+                return row
+        raise AssertionError(tag)
+
+    # 视频卡「设为默认」只写 video_engine，不改画图的 current.json。
+    row_for(video, "sd-b").use_button.click()
+    assert _llmconfig.get_option("video_engine") == "sd-b"
+    assert _llmpaint_engine.current_sd_tag() == "sd-a"
+    assert _llmpaint_engine.usage_engine_tag("audio") == "sd-a"
+    assert row_for(video, "sd-b").use_button is None
+
+    # 选回默认引擎时删除用途键，回到「跟随默认」。
+    row_for(video, "sd-a").use_button.click()
+    assert _llmconfig.get_option("video_engine") is None
+    assert _llmpaint_engine.usage_engine_tag("video") == "sd-a"
 
 
 def test_settings_engine_empty_and_error_states(window: Any, monkeypatch: pytest.MonkeyPatch) -> None:
