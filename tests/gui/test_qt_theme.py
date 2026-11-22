@@ -330,15 +330,15 @@ def test_selected_states_use_deeper_soft_backgrounds() -> None:
 
 
 def test_item_row_appearance_is_one_shared_contract() -> None:
-    """可展开行卡只有一份外观契约：按 itemRow 属性选，不为各应用分别开对象名。"""
+    """可展开行卡与行列表容器只有一份外观契约：按 itemRow / rowList 属性选，不为各应用分别开对象名。"""
     theme = _guitheme.resolve_theme("dark-blue")
     text = _qt_theme.stylesheet(theme)
     palette = theme.palette
     # 列表透明无外框（各应用的 list 同口径）。
-    list_block = _rule(text, "QListWidget#DistroResultList")
+    list_block = _rule(text, 'QListWidget[rowList="true"]')
     assert "border: none" in list_block
     assert "background: transparent" in list_block
-    item_block = _rule(text, "QListWidget#DistroResultList::item")
+    item_block = _rule(text, 'QListWidget[rowList="true"]::item')
     assert "border: none" in item_block
 
     # 行卡：1px 边框 + 8px 圆角，hover / 选中 2px 边框，选中底为半透明 accent 加深色。

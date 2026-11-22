@@ -545,7 +545,15 @@ class RowListWidget(QListWidget):  # pragma: no cover - Qt 控件
     ``QListWidget.setItemWidget`` 挂上去的行只在 item rect 变大时被 Qt 重新
     摆正；窗口反复拖拉后行会保留上一次的更大宽度，右半部分被推到视口之外。
     这里在每次尺寸变化后按当前可视区域重新摆正每行几何。
+
+    外观是**一份**共享契约：构造时挂 ``rowList="true"`` 动态属性，主题按属性选
+    择器统一行列表的透明背景与条目样式（与 :class:`ItemRow` 的 ``itemRow`` 契约
+    同构），各应用不再按自己的对象名分别开样式。
     """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("rowList", "true")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

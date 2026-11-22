@@ -660,15 +660,14 @@ QFrame#ActionBar {
 }
 QSplitter::handle { background: $border; }
 QFrame#Sidebar { background: $surface; border-right: 1px solid $border; }
-QListWidget#RecommendationList, QListWidget#ModelResultList, QListWidget#ImageResultList,
-QListWidget#DistroResultList, QListWidget#EngineList { background: transparent; border: none; outline: 0; }
-QListWidget#RecommendationList::item, QListWidget#ModelResultList::item, QListWidget#ImageResultList::item,
-QListWidget#DistroResultList::item, QListWidget#EngineList::item {
+QListWidget[rowList="true"] { background: transparent; border: none; outline: 0; }
+QListWidget[rowList="true"]::item {
     background: transparent;
     border: none;
     padding: 0;
 }
 /* 行卡外观：可展开行卡（共享 `ItemRow`）用 itemRow 属性选，不按应用分别开对象名；
+   行列表容器（共享 `RowListWidget`）同理用 rowList 属性选。
    概览推荐 / 运行中模型 / 引擎行是另一类紧凑行卡，沿用各自的对象名。 */
 QFrame#RecommendationRow, QFrame#RunningModelRow, QFrame#EngineRow,
 QFrame[itemRow="true"] {

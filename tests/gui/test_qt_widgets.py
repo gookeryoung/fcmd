@@ -581,6 +581,8 @@ def test_row_detail_mixin_expands_one_row_at_a_time() -> None:
     """同一 slot 只保留一个展开行；切换行时详情控件搬到新行，收起后回到隐藏。"""
     host = _DetailHost()
     rows = RowListWidget()
+    # 共享外观契约：行列表容器按 rowList 属性选样式，与行卡的 itemRow 同构。
+    assert rows.property("rowList") == "true"
     detail = QWidget()
     first = ItemRow("A")
     second = ItemRow("B")
