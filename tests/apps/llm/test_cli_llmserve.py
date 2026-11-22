@@ -2388,8 +2388,31 @@ class TestConvertPrecheck:
 
     def test_unsupported_arch_points_to_engine_upgrade(self, tmp_path: Path) -> None:
         source = self._source(tmp_path, {"architectures": ["MysteryForCausalLM"], "model_type": "mystery"})
-        with pytest.raises(ServeError, match="不支持架构 MysteryForCausalLM"):
+        with pytest.raises(ServeError) as info:
             llmconvert.check_convert_source(source, self._repo(tmp_path))
+        message = str(info.value)
+        assert "不支持架构 MysteryForCausalLM" in message
+        assert "-GGUF" in message
+
+    def test_plan_convert_rechecks_arch_after_script_fetch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """首次转换刚下载的源码也要参与架构检查，不能等脚本跑起来才失败。"""
+        source = self._source(
+            tmp_path,
+            {"architectures": ["WeMMVideoForConditionalGeneration"], "model_type": "qwen3_5"},
+        )
+        repo = tmp_path / "fetched" / "llama.cpp"
+        conversion = repo / "conversion"
+        conversion.mkdir(parents=True)
+        (conversion / "llama.py").write_text(
+            '@ModelBase.register("LlamaForCausalLM")\nclass M:\n    pass\n', encoding="utf-8"
+        )
+        script = repo / llmconvert.CONVERT_SCRIPT
+        script.write_text("# fetched", encoding="utf-8")
+        monkeypatch.setattr(llmconvert, "ensure_convert_script", lambda **kwargs: script)
+        with pytest.raises(ServeError, match="不支持架构 WeMMVideoForConditionalGeneration"):
+            llmconvert.plan_convert(source, home=tmp_path / "home")
 
     def test_missing_tokenizer_is_reported(self, tmp_path: Path) -> None:
         source = self._source(tmp_path, {"architectures": ["GPT2LMHeadModel"]}, tokenizer=False)

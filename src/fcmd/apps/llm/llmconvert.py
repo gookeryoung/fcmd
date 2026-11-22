@@ -202,7 +202,8 @@ def check_convert_source(source: Path, repo: Path | None = None, *, tag: str | N
         where = f"引擎 {tag} 的转换脚本" if tag else "当前引擎的转换脚本"
         raise ServeError(
             f"{where}不支持架构 {arch}（该版本已注册 {len(registered)} 个架构）："
-            f"请升级引擎（fcmd llmengine install --tag <新版>）或换用已支持架构的模型"
+            f"请升级引擎（fcmd llmengine install --tag <新版>）或换用已支持架构的模型；"
+            f"若 ModelScope 已有同名 -GGUF 仓库（如 WeMM-Video-9B-GGUF），建议直接下载 GGUF 而不是转换"
         )
 
 
@@ -458,7 +459,7 @@ def ensure_convert_script(  # noqa: PLR0912, PLR0913, PLR0917 - 兼容旧调用�
     return cached
 
 
-def plan_convert(  # noqa: PLR0913, PLR0917
+def plan_convert(  # noqa: PLR0912, PLR0913, PLR0917
     source: Path,
     output: Path | None = None,
     outtype: str = "f16",
@@ -517,11 +518,18 @@ def plan_convert(  # noqa: PLR0913, PLR0917
         if quant_exe is None:
             raise ServeError("未找到 llama-quantize：安装官方 llama.cpp release 引擎，或用 FCMD_LLAMA_QUANTIZE 指定")
 
+    resolved_script = ensure_convert_script(tag=tag, script=script, home=home, on_status=on_status, cancel=cancel)
+    # 源码是刚下载 / 解压出来的：用真实转换脚本再检查一次架构支持。
+    # 首次转换前 repo 目录可能尚不存在，前置检查拿不到注册表，不能省这一步。
+    if (resolved_script.parent / "conversion").is_dir():
+        if on_status is not None:
+            on_status("正在检查 llama.cpp 转换脚本是否支持该模型架构…")
+        check_convert_source(src, resolved_script.parent, tag=resolved_tag)
     return ConvertPlan(
         source=src.resolve(),
         output=target.resolve(),
         outtype=outtype,
-        script=ensure_convert_script(tag=tag, script=script, home=home, on_status=on_status, cancel=cancel),
+        script=resolved_script,
         python=python or os.environ.get("FCMD_CONVERT_PYTHON") or sys.executable,
         quant=quant,
         quantize_exe=quant_exe,
