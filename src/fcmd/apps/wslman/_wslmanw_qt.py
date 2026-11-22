@@ -1244,7 +1244,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             target = cli._require_target(env, distro.name)
             if target.state == "running":
                 return f"{target.name} 已在运行"
-            # 用**脱离父进程**的看护进程把实例带起来：一次性命令（如 /bin/true）跑完
+            # 用后台看护进程把实例带起来（不弹控制台）：一次性命令（如 /bin/true）跑完
             # WSL 就把实例收回 Stopped，wslmanw 关闭后更会失去唯一的进程；这里让实例
             # 里常驻一个 sleep 循环，关掉 wslmanw 也不会结束实例，只有用户点「停止」
             # 或 wsl --shutdown 才会退出。

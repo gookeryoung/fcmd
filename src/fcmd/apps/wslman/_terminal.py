@@ -12,7 +12,7 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
-from typing import Protocol
+from typing import Any, Protocol
 
 __all__ = [
     "LaunchError",
@@ -26,7 +26,6 @@ __all__ = [
 ]
 
 _CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0)
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _LAUNCH_TIMEOUT_S = 5.0
 
@@ -83,18 +82,31 @@ class SubprocessLauncher:
         return process.pid
 
 
-def spawn_detached(argv: Sequence[str]) -> int:
-    """以「脱离父进程」的方式启动 ``argv``，返回 pid。
+def _hidden_startupinfo() -> Any:
+    """Windows：显式要求隐藏窗口；非 Windows / 无 ``STARTUPINFO`` 时返回 ``None``。"""
+    if not hasattr(subprocess, "STARTUPINFO"):
+        return None
+    info = subprocess.STARTUPINFO()
+    info.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+    info.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+    return info
 
-    用于实例的看护进程（``sleep`` 循环）：wslmanw 关闭后它必须继续运行，所以用
-    ``DETACHED_PROCESS`` + ``CREATE_NO_WINDOW`` 拉起并断开标准流；用户点「停止」
-    或 ``wsl --shutdown`` 才会结束它。与 :meth:`SubprocessLauncher.launch`
-    的区别是不等退出、不挂控制台窗口。
+
+def spawn_detached(argv: Sequence[str]) -> int:
+    """启动后台进程（实例的看护循环），返回 pid；不弹控制台、不等退出。
+
+    用于实例的看护进程（``sleep`` 循环）：wslmanw 关闭后它要继续运行。隐藏窗口
+    与 :class:`~fcmd.apps.wslman._runner.SubprocessRunner` 同口径 —— 只用
+    ``CREATE_NO_WINDOW``（``DETACHED_PROCESS`` 与它互斥：两个一起给时 Windows
+    会给这个控制台程序反过来建一个可见的空白控制台），再叠一层
+    ``STARTF_USESHOWWINDOW`` + ``SW_HIDE`` 兜底。Windows 不会因为父进程退出而
+    杀子进程，所以不必再靠 ``DETACHED_PROCESS`` 保活。
     """
     try:
         process = subprocess.Popen(
             list(argv),
-            creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
+            creationflags=_CREATE_NO_WINDOW,
+            startupinfo=_hidden_startupinfo(),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,

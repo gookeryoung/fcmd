@@ -100,14 +100,18 @@
   `widgets.set_button_kind`，动态动作按钮可在 `#Primary` / `#Danger` / 无变体间切换。
 - `wslmanw` 展示层把「发行版」统一改称**实例**（页面 / 标题 / 对话框 / 状态栏 / CLI 帮助文案），
   内部模型与 CLI 输出仍是发行版 / `distro`，指同一对象。
-- `wslmanw` 启动实例改用**脱离父进程**的看护循环（`wsl.exe -d <名称> --exec /bin/sh -c
-  "while :; do sleep 3600; done"`，`DETACHED_PROCESS` + 断开标准流）：关闭 wslmanw
+- `wslmanw` 启动实例改用后台看护循环（`wsl.exe -d <名称> --exec /bin/sh -c
+  "while :; do sleep 3600; done"`，`CREATE_NO_WINDOW` + `SW_HIDE` + 断开标准流）：关闭 wslmanw
   不再结束实例（此前一次性命令跑完就被 WSL 收回 Stopped），只有用户点「停止」/
   「关闭全部」或 `wsl --shutdown` 才会停。
 - 修复 `wslmanw` 启动实例立刻弹「启动失败」：启动是异步的（实测冷启动约 0.7–2.6 秒才
   从 Stopped 迁移到 Running），此前 `spawn` 完立刻用 `wsl -l -v` 断言状态，几乎必然
   误报。新增 `wslman.wait_until_running`（默认最长 20 秒、每 0.15 秒轮询一次），只有
   等够时间仍不是 Running 才按失败提示（文案注明已等待时长并提示稍后刷新）。
+- 修复启动实例后弹出一个一直黑屏的控制台：看护进程原来用 `DETACHED_PROCESS |
+  CREATE_NO_WINDOW`，两个标志互斥，Windows 反而给 `wsl.exe` 建了可见的空白控制台。
+  改为与 `_runner` 同口径的 `CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`
+  （真机枚举顶层窗口验证：启动前后无新增可见窗口，实例仍 Running）。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

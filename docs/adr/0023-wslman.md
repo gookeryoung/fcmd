@@ -357,11 +357,14 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `wslman-available.json` 缓存，镜像清单更新后只就地刷新该说明，不重建行卡。
 - 术语：`wslmanw` 展示层统一叫**实例**（即 WSL 发行版），页面 / 标题 / 对话框 / 状态文案
   都用「实例」；CLI 输出与代码模型仍是「发行版」/ `distro`，两者指同一对象。
-- 启动实例用**脱离父进程**的看护进程（`wsl.exe -d <名称> --exec /bin/sh -c
-  "while :; do sleep 3600; done"`，`DETACHED_PROCESS` + 断开标准流）：一次性命令
+- 启动实例用后台看护进程（`wsl.exe -d <名称> --exec /bin/sh -c
+  "while :; do sleep 3600; done"`，`CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW/SW_HIDE`
+  + 断开标准流，与 `_runner` 隐藏窗口同口径）：一次性命令
   （如 `/bin/true`）跑完 WSL 就把实例收回 Stopped，退出 wslmanw 后更会失去唯一进程。
   只有用户点「停止」（`wsl --terminate`）、「关闭全部」或 `wsl --shutdown` 才结束实例；
-  关闭窗口自身不终止任何实例。启动是异步的（冷启动实测 0.7–2.6 秒才从 Stopped 迁移到
+  关闭窗口自身不终止任何实例。不要用 `DETACHED_PROCESS`：它和 `CREATE_NO_WINDOW`
+  互斥，两个一起给时 Windows 反过来会给这个控制台程序建一个**可见的空白控制台**
+  （表现为启动后弹出一个一直黑屏的窗口）。启动是异步的（冷启动实测 0.7–2.6 秒才从 Stopped 迁移到
   Running），状态判定走 `wslman.wait_until_running`（20 秒上限、0.15 秒轮询），
   spawn 完立刻断言会误报「启动失败」。
 - 实例页沿用 llmw 模型列表的行卡结构与布局，骨架直接用共享 `ItemRow`（见 ADR 0038）：

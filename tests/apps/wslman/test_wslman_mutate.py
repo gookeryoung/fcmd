@@ -200,11 +200,15 @@ def test_spawn_detached_returns_pid_and_disconnects_streams(monkeypatch: pytest.
     assert recorded["stderr"] is _terminal.subprocess.DEVNULL
     flags = recorded["creationflags"]
     assert isinstance(flags, int)
-    # Windows 上是 DETACHED_PROCESS | CREATE_NO_WINDOW；CI 的 Linux 上两者都是 0。
-    expected = getattr(_terminal.subprocess, "DETACHED_PROCESS", 0) | getattr(
-        _terminal.subprocess, "CREATE_NO_WINDOW", 0
-    )
-    assert flags == expected
+    # 只用 CREATE_NO_WINDOW（与 `_runner` 同口径）：DETACHED_PROCESS 与它互斥，
+    # 两个一起给时 Windows 反而会给 wsl.exe 建一个可见的空白控制台。
+    assert flags == getattr(_terminal.subprocess, "CREATE_NO_WINDOW", 0)
+    info = recorded["startupinfo"]
+    if hasattr(_terminal.subprocess, "STARTUPINFO"):  # Windows
+        assert info is not None
+        assert getattr(info, "wShowWindow", None) == getattr(_terminal.subprocess, "SW_HIDE", 0)
+    else:
+        assert info is None
 
 
 def test_spawn_detached_reports_missing_program(monkeypatch: pytest.MonkeyPatch) -> None:
