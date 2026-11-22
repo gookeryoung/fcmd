@@ -60,8 +60,9 @@ def test_volume_info_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
 
 def test_recommended_backup_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("USERPROFILE", str(tmp_path))
-    assert _disk.recommended_backup_dir() == tmp_path / "wsl-backups"
+    """推荐 / 默认备份目录在 wslman 工作目录下（``<FCMD_HOME>/wsl/backup``）。"""
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    assert _disk.recommended_backup_dir() == tmp_path / "wsl" / "backup"
 
 
 # ---------------------------------------------------------------------- #

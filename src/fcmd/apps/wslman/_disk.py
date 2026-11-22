@@ -29,9 +29,14 @@ class VolumeInfo:
 
 
 def recommended_backup_dir() -> Path:
-    """``doctor`` 推荐的备份目录（只是建议，配置默认值仍为空）。"""
-    home = os.environ.get("USERPROFILE") or str(Path.home())
-    return Path(home) / "wsl-backups"
+    """推荐 / 默认备份目录：工作目录下的 ``backup``（``~/.fcmd/wsl/backup``）。
+
+    配置里的 ``backups.dir`` 仍可覆盖；未配置时 GUI 与 CLI 的推荐值都指向这里，
+    与下载归档、安装目录同处一个工作目录（``~/.fcmd/wsl``），便于整体备份 / 清理。
+    """
+    from fcmd.apps.wslman import _config
+
+    return _config.default_backups_dir()
 
 
 def volume_info(path: Path) -> VolumeInfo:

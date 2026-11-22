@@ -136,6 +136,18 @@ def test_config_default_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert _config.default_path() == Path("C:/Users/demo/.fcmd/wslman.json")
 
 
+def test_work_dirs_live_under_fcmd_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """默认工作目录 ~/.fcmd/wsl，下载 / 安装 / 备份各占一个子目录。"""
+    monkeypatch.setenv("FCMD_HOME", str(tmp_path))
+    root = tmp_path / "wsl"
+    assert _config.work_root() == root
+    assert _config.default_download_dir() == root / "download"
+    assert _config.default_install_root() == root / "install"
+    assert _config.default_backups_dir() == root / "backup"
+    # 显式 home 参数优先（纯函数，便于单测）
+    assert _config.work_subdir("download", tmp_path / "other") == tmp_path / "other" / "wsl" / "download"
+
+
 def test_config_missing_file_uses_defaults(tmp_path: Path) -> None:
     config = _config.load_config(tmp_path / "wslman.json")
     assert config.download_dir == ""

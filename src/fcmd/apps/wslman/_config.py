@@ -14,7 +14,18 @@ from typing import Any
 from fcmd.gui import config as _gui_config
 from fcmd.infras.system import fcmd_home
 
-__all__ = ["WslmanConfig", "default_path", "load_config", "parse_config"]
+__all__ = [
+    "WORK_DIRNAME",
+    "WslmanConfig",
+    "default_backups_dir",
+    "default_download_dir",
+    "default_install_root",
+    "default_path",
+    "load_config",
+    "parse_config",
+    "work_root",
+    "work_subdir",
+]
 
 _TERMINALS = frozenset({"auto", "wt", "conhost"})
 
@@ -36,8 +47,37 @@ class WslmanConfig:
     warnings: tuple[str, ...] = ()
 
 
+WORK_DIRNAME = "wsl"
+"""wslman 默认工作目录名：``${FCMD_HOME:-~/.fcmd}/wsl``。"""
+
+
 def default_path() -> Path:
     return fcmd_home() / "wslman.json"
+
+
+def work_root(home: Path | None = None) -> Path:
+    """wslman 默认工作目录根：``${FCMD_HOME:-~/.fcmd}/wsl``。"""
+    return (home if home is not None else fcmd_home()) / WORK_DIRNAME
+
+
+def work_subdir(name: str, home: Path | None = None) -> Path:
+    """工作目录下的用途子目录（``download`` / ``install`` / ``backup``）。"""
+    return work_root(home) / name
+
+
+def default_download_dir(home: Path | None = None) -> Path:
+    """镜像归档默认下载目录：``~/.fcmd/wsl/download``（可在设置页覆盖）。"""
+    return work_subdir("download", home)
+
+
+def default_install_root(home: Path | None = None) -> Path:
+    """默认安装目录根：``~/.fcmd/wsl/install``，每个发行版用它下面的子目录。"""
+    return work_subdir("install", home)
+
+
+def default_backups_dir(home: Path | None = None) -> Path:
+    """默认备份目录：``~/.fcmd/wsl/backup``（导出 / 备份的 ``.tar`` 落这里）。"""
+    return work_subdir("backup", home)
 
 
 def load_config(path: Path | None = None) -> WslmanConfig:

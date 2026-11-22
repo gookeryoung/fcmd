@@ -401,6 +401,22 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   `width` / `height`，自动布局弹窗省略后按请求尺寸定位，不再交给窗口管理器摆放。
 - GUI 与 CLI 调同一套 `_transfer` / `_source` / `_distro` 函数，不复制业务判断。
 
+### D10.1 默认工作目录
+
+GUI 与 CLI 的默认落盘位置统一到**一个工作目录** `${FCMD_HOME:-~/.fcmd}/wsl`，按用途细分：
+
+| 子目录 | 用途 | 覆盖方式 |
+|---|---|---|
+| `download/` | 镜像归档（`.wsl` / `.tar`）默认下载目录 | 设置页「下载目录」→ `wslmanw.json` → `wslman.json` 的 `download.dir` |
+| `install/` | 安装本地镜像的默认目录根，每个发行版一个子目录（`install/<名称>`） | 安装对话框里手改 |
+| `backup/` | 导出 / 备份的 `.tar` 默认保存位置 | `wslman.json` 的 `backups.dir`（CLI 仍要求显式 `--dir`） |
+
+- 解析函数集中在 `_config`（`work_root` / `default_download_dir` / `default_install_root` /
+  `default_backups_dir`），都接受可选 `home` 便于单测；`_disk.recommended_backup_dir()`
+  直接委托 `default_backups_dir()`，CLI 的 `doctor` 推荐与 GUI 默认因此一致。
+- 设置页新增「工作目录」卡片：根目录（带「打开」）+ 下载 / 安装 / 备份三个子目录的只读
+  展示，配合上方「下载」卡片的可覆盖下载目录，解释「默认写到哪里」。
+
 ### D11 配置
 
 `~/.fcmd/wslman.json`（CLI 与 GUI 共用），字段级容错：
@@ -421,8 +437,9 @@ argv 列表而非 shell 引号。`wt.exe` 启动失败（返回非 0 或找不�
   文件损坏 / 非 JSON / 非对象才整份回落默认（与 filescan 配置容错口径一致）；
 - **v1 `wslman config` 只读**：只展示当前 `wslman.json` / `.wslconfig` 的解析结果与
   警告，不改写任何文件；写入能力留到后续版本单独决策；
-- `backups.dir` 默认为空字符串 = **必须显式指定**备份目录，不提供隐式默认，避免
-  悄悄写满系统盘；`doctor` 只给推荐目录与卷剩余空间，不代填；
+- `backups.dir` 默认为空字符串：CLI 的 `backups` / `backup-*` 仍**必须显式指定**目录，
+  避免悄悄写满系统盘；GUI 与 `doctor` 的推荐值统一指向工作目录的 `backup`
+  （`~/.fcmd/wsl/backup`），`doctor` 只给目录与卷剩余空间，不代填配置；
 - 写入复用 `fcmd.gui.config.write_settings`（该模块只依赖标准库，原子的临时文件 +
   `.bak`），CLI 不因此引入 GUI 依赖。
 

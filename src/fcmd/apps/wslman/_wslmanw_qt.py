@@ -28,8 +28,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -53,7 +53,13 @@ from PySide6.QtWidgets import (
 from fcmd.apps.wslman import _images, _mirrors
 from fcmd.apps.wslman import wslman as cli
 from fcmd.apps.wslman import wslmanw as w
-from fcmd.apps.wslman._config import load_config
+from fcmd.apps.wslman._config import (
+    default_backups_dir,
+    default_download_dir,
+    default_install_root,
+    load_config,
+    work_root,
+)
 from fcmd.apps.wslman._disk import distro_disk_bytes, format_bytes, recommended_backup_dir
 from fcmd.apps.wslman._distro import Distro, state_label
 from fcmd.apps.wslman._errors import WslmanError, invalid_argument, runtime_error
@@ -694,14 +700,14 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         form = FormGrid(download)
         self.download_dir = PathRow(
             value=self.settings.download_dir,
-            placeholder="留空 = wslman.json 的 download_dir 或系统下载目录",
+            placeholder=f"留空 = {default_download_dir()}",
             directory=True,
             show_reset=True,
             browse_text="更改",
             parent=download,
         )
         self.download_dir.setToolTip(
-            "镜像归档的保存目录；留空时回退到 wslman.json 的 download_dir、再回退到系统下载目录"
+            "镜像归档的保存目录；留空时回退到 wslman.json 的 download_dir，再回退到工作目录的 download"
         )
         self.download_dir.committed.connect(self._on_download_dir_committed)
         self.download_dir.reset.clicked.connect(lambda: self.download_dir.set_value(""))
@@ -725,7 +731,11 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         form.add_pair("下载源", self.mirror, "校验 sha256", self.expected_sha)
         download.body.addWidget(form)
         download.body.addWidget(
-            hint_label(f"下载目录留空时回退到 wslman.json 的 download_dir 或系统下载目录；{w._DOWNLOAD_HINT}")
+            hint_label(
+                f"默认工作目录 {work_root()}：下载 / 安装 / 备份各自一个子目录（见下方「工作目录」卡片）；"
+                f"下载目录留空时回退到 wslman.json 的 download_dir，再回退到 {default_download_dir()}。"
+                f"{w._DOWNLOAD_HINT}"
+            )
         )
         layout.addWidget(download)
 
@@ -743,8 +753,55 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         files.body.addWidget(files_form)
         files.body.addWidget(hint_label("界面设置保存下载目录 / 下载源 / 筛选等；命令行配置与 wslman CLI 共用。"))
         layout.addWidget(files)
+        layout.addWidget(self._build_work_dirs())
         layout.addStretch(1)
         return page
+
+    def _build_work_dirs(self) -> Card:
+        """工作目录卡片：默认根 ``~/.fcmd/wsl`` 与下载 / 安装 / 备份三个用途子目录。"""
+        card = Card("工作目录")
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.addWidget(hint_label("根目录", wrap=False))
+        root = work_root()
+        root_label = ElidedLabel(str(root), parent=card)
+        root_label.setObjectName("Hint")
+        root_label.setToolTip(str(root))
+        row.addWidget(root_label, 1)
+        open_button = button("打开", kind="ghost")
+        open_button.setToolTip("在文件管理器中打开默认工作目录")
+        open_button.clicked.connect(lambda: self._open_work_root(root))
+        row.addWidget(open_button)
+        card.body.addLayout(row)
+
+        grid = FormGrid(card)
+        for label, path, tip in (
+            ("下载", default_download_dir(), "镜像归档（.wsl / .tar）默认保存位置"),
+            ("安装", default_install_root(), "安装本地镜像时的默认目录根，每个发行版一个子目录"),
+            ("备份", default_backups_dir(), "导出 / 备份的 .tar 默认保存位置"),
+        ):
+            value = ElidedLabel(str(path), mode=Qt.TextElideMode.ElideMiddle, parent=card)
+            value.setObjectName("Mono")
+            value.setToolTip(f"{tip}\n{path}")
+            grid.add_row(label, value)
+        card.body.addWidget(grid)
+        card.body.addWidget(
+            hint_label(
+                "下载 / 安装 / 备份默认都写在这里；下载目录可在上方「下载」卡片覆盖，备份目录可用 wslman.json 的 backups.dir 覆盖。"
+            )
+        )
+        return card
+
+    def _open_work_root(self, root: Path) -> None:
+        """打开默认工作目录（不存在时先创建）。"""
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "打开失败", f"无法创建目录：{root}\n{exc}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(root)))
+
 
     # ------------------------------------------------------------------ #
     # 任务编排
@@ -1283,11 +1340,12 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         return cache.entries if cache is not None else ()
 
     def _local_start_dir(self) -> str:
+        """下载目录：设置页 > wslmanw.json > wslman.json > 工作目录的 download。"""
         configured = self.download_dir.value() or self.settings.download_dir
         if configured:
             return configured
         fallback = load_config().download_dir.strip()
-        return fallback or str(Path.home() / "Downloads")
+        return fallback or str(default_download_dir())
 
     def _download_entry(self, name: str) -> None:
         """行内「下载 / 安装」按钮：先聚焦该行，再复用同一套下载流程。"""
@@ -1974,7 +2032,7 @@ class _InstallLocalDialog(QDialog):  # pragma: no cover - 模态对话框
                 on_done=self._info["校验状态"].setText,
             )
         self.name.setText(archive.distro)
-        self.target.setText(str(archive.path.parent / f"{archive.distro}-wsl"))
+        self.target.setText(str(default_install_root() / archive.distro))
 
     def _start(self) -> None:
         archive = self._current()

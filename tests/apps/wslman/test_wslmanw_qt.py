@@ -613,6 +613,61 @@ def test_settings_page_hosts_download_config(home: Path, monkeypatch: pytest.Mon
         window.deleteLater()
 
 
+def test_settings_work_dir_card_lists_subfolders(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """设置页「工作目录」卡片：根目录 + 下载 / 安装 / 备份三个用途子目录。"""
+    from fcmd.gui.qt.widgets import Card
+
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    monkeypatch.setattr(_wslmanw_qt.WslmanQtWindow, "_load_images", lambda self, force=False: None)
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        window.show_page("settings")
+        page = window.page("settings")
+        assert page is not None
+        titles = [card.title() for card in page.findChildren(Card)]
+        assert "工作目录" in titles
+        work = next(card for card in page.findChildren(Card) if card.title() == "工作目录")
+        values = [label.fullText() for label in work.findChildren(_wslmanw_qt.ElidedLabel)]
+        root = home / "wsl"
+        assert str(root) in values
+        assert str(root / "download") in values
+        assert str(root / "install") in values
+        assert str(root / "backup") in values
+        # 下载目录默认值也指向工作目录的 download
+        assert window.download_dir.value() == ""
+        assert window._local_start_dir() == str(root / "download")
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_install_dialog_defaults_into_work_dir(home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """「安装本地镜像」默认把发行版装到工作目录的 install/<名称>。"""
+    from fcmd.apps.wslman import _config
+
+    archive = tmp_path / "download" / "Ubuntu-24.04.wsl"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"x")
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        dialog = _wslmanw_qt._InstallLocalDialog(window, (), preset=archive)
+        try:
+            QApplication.processEvents()
+            dialog.table.selectRow(0)
+            dialog._on_select()
+            assert dialog.name.text() == "Ubuntu-24.04"
+            assert Path(dialog.target.text()) == home / "wsl" / "install" / "Ubuntu-24.04"
+            assert _config.default_install_root() == home / "wsl" / "install"
+        finally:
+            dialog.close()
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_settings_page_persists_download_dir_and_mirror(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """设置页改动立即落盘：下载目录（回车提交）与下载源（切换即保存）。"""
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
