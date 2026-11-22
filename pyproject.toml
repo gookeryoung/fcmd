@@ -32,10 +32,10 @@ requires-python = ">=3.10"
 version = "0.3.14"
 
 [project.urls]
-Changelog = "https://github.com/gookeryoung/fcmd/blob/main/CHANGELOG.md"
+Changelog     = "https://github.com/gookeryoung/fcmd/blob/main/CHANGELOG.md"
 Documentation = "https://github.com/gookeryoung/fcmd/blob/main/README.md"
-Issues = "https://github.com/gookeryoung/fcmd/issues"
-Repository = "https://github.com/gookeryoung/fcmd"
+Issues        = "https://github.com/gookeryoung/fcmd/issues"
+Repository    = "https://github.com/gookeryoung/fcmd"
 
 [project.scripts]
 alarmclock     = "fcmd.tools.system.alarmclock:main"
@@ -175,7 +175,6 @@ dev = [
 filecheck = [ "puremagic>=1.28" ]
 full = [ "fcmd[pdf,ocr,svg,crypto,archive,filecheck,color,pe,ppt,win32]" ]
 lint = [ "pyrefly>=1.1.1", "ruff>=0.8.0" ]
-# Pillow 已在主依赖里常驻，不再单独保留 img 分组；这里只补 OCR 引擎绑定。
 ocr = [ "pytesseract>=0.3.13" ]
 office = [ "fcmd[pdf,ocr,svg,ppt]" ]
 pdf = [ "pymupdf>=1.23,<2", "pypdf>=5.9.0" ]
