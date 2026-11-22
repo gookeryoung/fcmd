@@ -182,7 +182,8 @@ def test_populate_resources_rows_and_filter(home: Path) -> None:
         selected = window._selected_resource()
         assert isinstance(selected, ResourceEntry)
         assert selected.name_id == 1
-        assert row.title_label.text() == "#1"
+        assert row.title_label.text() == "Icon #1"
+        assert row.copy_text() == "Icon #1"
     finally:
         window.deleteLater()
 

@@ -235,22 +235,36 @@ class _ResourceDetailView(QWidget):  # pragma: no cover - Qt 控件
 
 
 class _ResourceItemRow(ItemRow):  # pragma: no cover - Qt 控件
-    """资源行卡：共享 :class:`ItemRow` 骨架 + 资源自己的导出 / 替换动作。
+    """资源行卡：共享 :class:`ItemRow` 骨架，编排对齐 llmw 模型行卡。
 
-    标题是资源名称（``#id``），副标题行是类型，行尾胶囊是语言；右侧数值是
-    资源大小，动作是导出 / 替换，展开箭头进预览详情。
+    标题是 ``类型 #名称``（完整定位串，复制按钮给同串），副标题行是 RVA 与语言，
+    行尾胶囊标预览形态（文本 / 图像 / 二进制），右侧数值列是资源大小，动作是
+    导出 / 替换，展开箭头进预览详情。
     """
 
     exportRequested = Signal(object)
     replaceRequested = Signal(object)
 
     def __init__(self, resource: Any, parent: QWidget | None = None) -> None:
-        super().__init__(f"#{resource.name_id}", "", expand_hint="展开预览", collapse_hint="收起预览", parent=parent)
+        title = f"{resource.type_name} #{resource.name_id}"
+        super().__init__(
+            title,
+            "",
+            elide=Qt.TextElideMode.ElideMiddle,
+            expand_hint="展开预览",
+            collapse_hint="收起预览",
+            copy_text=title,
+            parent=parent,
+        )
         self.resource = resource
-        self.setToolTip(f"{resource.type_name} #{resource.name_id}\nRVA: 0x{resource.offset:X}")
-        self.set_subtitle(resource.type_name)
-        self.language_tag = StatusTag(str(resource.language_id), tone="muted", parent=self.header)
-        self.add_tag(self.language_tag)
+        self.setToolTip(f"{title}\nRVA: 0x{resource.offset:X} · 语言 {resource.language_id}")
+        self.set_subtitle(f"RVA 0x{resource.offset:X} · 语言 {resource.language_id}")
+        if is_text_resource(resource.type_id):
+            self.add_tag(StatusTag("文本", tone="muted", parent=self.header))
+        elif resource.type_id in (RT_BITMAP, RT_ICON):
+            self.add_tag(StatusTag("图像", tone="accent", parent=self.header))
+        else:
+            self.add_tag(StatusTag("二进制", tone="muted", parent=self.header))
         self.set_metrics(format_file_size(resource.size))
         export_button = button("导出", kind="ghost")
         export_button.clicked.connect(lambda: self.exportRequested.emit(self.resource))
@@ -797,6 +811,7 @@ class ReshackWindow(RowDetailMixin, LogChannelMixin, QtMainWindow):  # pragma: n
             chip = button(label)
             chip.setObjectName("FilterChip")
             chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
             chip.clicked.connect(lambda _checked=False, key=key: self._on_filter_changed(key))
             self._filter_group.addButton(chip)
             self._filter_layout.insertWidget(self._filter_layout.count() - 1, chip)
