@@ -180,28 +180,36 @@ QFrame#LoadBlock {
     border: 1px solid $border;
     border-radius: 6px;
 }
+/* 行卡胶囊：共享高度 / 圆角 / 内边距 / 字号（见 gui/qt/widgets.py 的 rowChip 属性），
+   对象名只负责颜色语义；边框用同色系浅描边，避免一排彩色粗框抢走标题的注意力。 */
+QFrame[itemRow="true"] QLabel[rowChip="true"] {
+    min-height: 18px;
+    max-height: 18px;
+    padding: 0 7px;
+    border-radius: 9px;
+    font-size: ${font_small}pt;
+    font-weight: 600;
+}
 QLabel#OwnerTag {
     color: $muted;
-    background: $surface_hover;
+    background: $surface_active;
     border: 1px solid $border;
-    border-radius: 8px;
-    padding: 0 6px;
-    font-size: ${font_small}pt;
-    font-weight: 500;
 }
 QLabel#StatusTag {
+    min-height: 18px;
+    max-height: 18px;
+    padding: 0 7px;
     border-radius: 9px;
-    padding: 1px 8px;
     font-size: ${font_small}pt;
     font-weight: 600;
     color: $muted;
     background: $surface_hover;
     border: 1px solid $border;
 }
-QLabel#StatusTag[tone="success"] { color: $success; background: $success_soft; border-color: $success; }
-QLabel#StatusTag[tone="warning"] { color: $warning; background: $warning_soft; border-color: $warning; }
-QLabel#StatusTag[tone="danger"] { color: $danger; background: $danger_soft; border-color: $danger; }
-QLabel#StatusTag[tone="accent"] { color: $accent; background: $accent_soft; border-color: $accent; }
+QLabel#StatusTag[tone="success"] { color: $success; background: $success_soft; border-color: $success_soft_strong; }
+QLabel#StatusTag[tone="warning"] { color: $warning; background: $warning_soft; border-color: $warning_soft_strong; }
+QLabel#StatusTag[tone="danger"] { color: $danger; background: $danger_soft; border-color: $danger_soft_strong; }
+QLabel#StatusTag[tone="accent"] { color: $accent; background: $accent_soft; border-color: $accent_soft_strong; }
 QLabel#Danger { color: $danger; }
 QLabel#Warning { color: $warning; }
 QLabel#Success { color: $success; }
@@ -649,6 +657,22 @@ QFrame[itemRow="true"] {
     border: 1px solid $border;
     border-radius: 8px;
 }
+/* 行卡动作区与文字区之间的细分隔线：1px、与边框同色，只在有动作时出现。 */
+QFrame#RowActionDivider {
+    background: $border;
+    border: none;
+    margin: 0 2px;
+}
+/* 行卡右侧数值摘要：比副标题更小、加粗，与动作按钮拉开层级。 */
+QLabel#RowMetrics {
+    color: $muted;
+    background: transparent;
+    font-size: ${font_small}pt;
+    font-weight: 600;
+}
+/* 行内动作按钮收紧左右内边距：一行可能要放 2–3 个按钮 + 数值 + 箭头。 */
+QFrame[itemRow="true"] QPushButton { padding: 0 10px; }
+QFrame[itemRow="true"] QPushButton#Ghost { padding: 0 8px; }
 QFrame#RecommendationRow[band="excellent"] { background: $success_soft; border-color: $success; }
 QFrame#RecommendationRow[band="good"] { background: $accent_soft; border-color: $accent; }
 QFrame#RecommendationRow[band="fair"] { background: $warning_soft; border-color: $warning; }
@@ -685,20 +709,12 @@ QPushButton#InstalledButton:disabled, QPushButton#ConvertedButton:disabled {
 QLabel#DownloadProgress {
     color: $warning;
     background: $warning_soft;
-    border: 1px solid $warning;
-    border-radius: 7px;
-    padding: 0px 5px;
-    font-size: ${font_small}pt;
-    font-weight: 600;
+    border: 1px solid $warning_soft_strong;
 }
 QLabel#QuantTag {
     color: $accent;
     background: $accent_soft;
-    border: 1px solid $accent;
-    border-radius: 7px;
-    padding: 0px 5px;
-    font-size: ${font_small}pt;
-    font-weight: 600;
+    border: 1px solid $accent_soft_strong;
 }
 QLabel#ScoreBadge {
     border: 2px solid $border;
@@ -893,6 +909,10 @@ def apply_theme(app: Any, theme: Theme) -> None:  # pragma: no cover - 需要 Py
     # 英文 / 数字走 Cascadia Code，中文逐字回退到 CJK 字体（Qt 6 的 setFamilies）
     chain = ui_font_families(families)
     family = chain[0]
+    if family.casefold() not in {name.casefold() for name in families}:
+        # 候选字体一个都没装（如 CI 的 offscreen 空字体库）：别拿不存在的族名去
+        # 构造 QFont——Qt 会把族替换成默认字体且 families() 变空，链路口径失真。
+        family = app.font().family()
     mono = pick_font_family(families, MONO_FONT_CANDIDATES)
     app.setStyle("Fusion")
     app.setPalette(_qt_palette(theme, app))

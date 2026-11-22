@@ -359,6 +359,38 @@ def test_item_row_appearance_is_one_shared_contract() -> None:
         assert stale not in text
 
 
+def test_row_chips_share_one_box_contract() -> None:
+    """行卡胶囊（状态 / 发布方 / 量化 / 下载进度）共享高度 / 圆角 / 内边距，只按对象名区分颜色。"""
+    theme = _guitheme.resolve_theme("dark-blue")
+    text = _qt_theme.stylesheet(theme)
+    shared = _rule(text, 'QFrame[itemRow="true"] QLabel[rowChip="true"]')
+    assert "min-height: 18px" in shared
+    assert "max-height: 18px" in shared
+    assert "padding: 0 7px" in shared
+    assert "border-radius: 9px" in shared
+    # 各语义胶囊只保留颜色 / 底色 / 边框色，不再各自写一套盒模型。
+    for selector in ("QLabel#OwnerTag", "QLabel#QuantTag", "QLabel#DownloadProgress"):
+        block = _rule(text, selector)
+        assert "padding" not in block
+        assert "border-radius" not in block
+        assert "min-height" not in block
+        assert "background:" in block
+    for tone in ("success", "warning", "danger", "accent"):
+        block = _rule(text, f'QLabel#StatusTag[tone="{tone}"]')
+        # 浅描边（32% 同色）；不再用满色粗框。
+        assert "border-color: rgba(" in block
+        assert "32%" in block
+    metrics = _rule(text, "QLabel#RowMetrics")
+    assert "font-weight: 600" in metrics
+    assert "background: transparent" in metrics
+    compact = _rule(text, 'QFrame[itemRow="true"] QPushButton')
+    assert "padding: 0 10px" in compact
+    assert "QFrame#RowActionDivider" in text
+    divider = _rule(text, "QFrame#RowActionDivider")
+    assert f"background: {theme.palette.border}" in divider
+    assert "border: none" in divider
+
+
 def test_secondary_buttons_keep_visible_border() -> None:
     """次要（Ghost）按钮也要有可见边框，否则在卡片里看起来像纯文字标签。"""
     text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))

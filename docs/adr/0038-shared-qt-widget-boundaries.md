@@ -61,6 +61,19 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 `QFrame[itemRow="true"]` 这一组选择器取样式，列表自身透明无边框。新增可展开行卡
 （任何应用）直接继承 `ItemRow` 就得到同一套外观，不需要改主题、也不需要新增对象名。
 
+行内的**标签与功能键**也走同一份契约，不再各应用各写一套盒模型：
+
+- `ItemRow.add_tag` 给胶囊挂动态属性 `rowChip="true"`，主题用
+  `QFrame[itemRow="true"] QLabel[rowChip="true"]` 统一高度（18px）、圆角（9px）、
+  内边距与字号；`OwnerTag` / `StatusTag` / `QuantTag` / `DownloadProgress` 只保留
+  颜色语义，边框改用同色系浅描边（`*_soft_strong`），避免一排满色粗框抢标题；
+- `ItemRow.add_action` 在首个动作前插入 `QFrame#RowActionDivider`（1px、边框同色），
+  把「标题 / 副标题 / 胶囊」与「数值摘要 / 动作按钮 / 展开箭头」分成两区；没有动作
+  的行不显示分隔线；
+- 右侧数值摘要统一 `QLabel#RowMetrics`（小号、加粗、右对齐），与副标题区分；
+- 行内动作按钮收紧左右内边距；次要动作（转换 / 量化）用 `#Ghost`，主操作
+  （下载 / 启动服务 / 安装）保留填充色。
+
 ### D9 行卡选中态只重抛光两行
 
 行卡选中态是动态属性 + QSS（`[selected="true"]`），切换时需要 `unpolish` + `polish`

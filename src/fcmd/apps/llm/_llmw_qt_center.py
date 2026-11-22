@@ -270,12 +270,14 @@ class _ModelItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.set_metrics(metrics)
         self.convert_button: Any = None
         if convertible and not converted:
-            self.convert_button = button("转换")
+            # 次要动作（转换 / 量化）用 Ghost，主操作（启动服务 / 下载）保持填充色，
+            # 一行有多个按钮时不会互相抢焦点。
+            self.convert_button = button("转换", kind="ghost")
             self.convert_button.clicked.connect(lambda: self.convertRequested.emit(self.repo))
             self.add_action(self.convert_button)
         self.quant_button: Any = None
         if quantizable:
-            self.quant_button = button("量化")
+            self.quant_button = button("量化", kind="ghost")
             self.quant_button.clicked.connect(lambda: self.quantizeRequested.emit(self.repo))
             self.add_action(self.quant_button)
         self.start_button: Any = None

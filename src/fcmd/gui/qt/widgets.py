@@ -559,12 +559,14 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
 
         self.header = QWidget(self)
         self.header_row = QHBoxLayout(self.header)
-        self.header_row.setContentsMargins(12, 8, 12, 8)
-        self.header_row.setSpacing(12)
+        # 行卡内边距略放宽，标题 / 副标题与右侧动作之间留呼吸；动作按钮彼此靠近，
+        # 与文字区用一条细分隔线隔开（见 add_action）。
+        self.header_row.setContentsMargins(14, 9, 12, 9)
+        self.header_row.setSpacing(8)
 
         self.left = QVBoxLayout()
         self.left.setContentsMargins(0, 0, 0, 0)
-        self.left.setSpacing(3)
+        self.left.setSpacing(4)
         self.title_row = QHBoxLayout()
         self.title_row.setContentsMargins(0, 0, 0, 0)
         self.title_row.setSpacing(8)
@@ -589,6 +591,16 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
         self.note_row.addStretch(1)
         self.left.addLayout(self.note_row)
         self.header_row.addLayout(self.left, 1)
+
+        # 动作区与文字区之间的细分隔线：首次 add_action / set_metrics 时才插入，
+        # 没有动作的行不显示，避免留下一条悬空竖线。
+        self.action_divider = QFrame(self.header)
+        self.action_divider.setObjectName("RowActionDivider")
+        self.action_divider.setFrameShape(QFrame.Shape.VLine)
+        self.action_divider.setFixedWidth(1)
+        self.action_divider.setFixedHeight(20)
+        self.action_divider.setVisible(False)
+        self._action_divider_added = False
 
         self.expand_button = icon_button("", tooltip=expand_hint)
         self.expand_button.setIconSize(QSize(16, 16))
@@ -638,21 +650,33 @@ class ItemRow(SelectionRow, QFrame):  # pragma: no cover - Qt 控件
             self.note_row.setStretch(index + 1, 0)
 
     def add_tag(self, widget: QWidget) -> None:
-        """副标题行右端的状态胶囊 / 进度小字，调用顺序即显示顺序。"""
+        """副标题行右端的状态胶囊 / 进度小字，调用顺序即显示顺序。
+
+        标记 ``rowChip`` 动态属性，行卡内的胶囊（状态 / 量化 / 发布方 / 下载进度）
+        共享一套高度、圆角、内边距与字号，只按对象名区分颜色语义。
+        """
         _click_through(widget)
+        widget.setProperty("rowChip", "true")
         self.note_row.addWidget(widget, 0)
 
     def add_action(self, widget: QWidget) -> None:
-        """右侧动作按钮：始终插在展开箭头之前。"""
+        """右侧动作按钮：始终插在展开箭头之前，并在首次调用时补上动作分隔线。"""
         index = self.header_row.indexOf(self.expand_button)
-        self.header_row.insertWidget(max(index, 0), widget, 0)
+        index = max(index, 0)
+        if not self._action_divider_added:
+            self.header_row.insertWidget(index, self.action_divider, 0)
+            self.action_divider.setVisible(True)
+            self._action_divider_added = True
+            index += 1
+        self.header_row.insertWidget(index, widget, 0)
 
     def set_metrics(self, text: str) -> QLabel:
         """右侧数值 / 摘要（模型大小、镜像来源等），位于动作按钮左侧。"""
         if self.metrics_label is None:
             self.metrics_label = QLabel(text, self.header)
             _click_through(self.metrics_label)
-            self.metrics_label.setObjectName("Hint")
+            # 右侧数值摘要与副标题区分：更小、加粗、右对齐，扫读时能先看到体积 / 状态。
+            self.metrics_label.setObjectName("RowMetrics")
             self.metrics_label.setWordWrap(False)
             self.metrics_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             self.metrics_label.setToolTip(text)

@@ -449,8 +449,36 @@ def test_item_row_builds_slots_and_expands() -> None:
 
         row.set_metrics("2.0 GB")
         assert row.metrics_label is not None and row.metrics_label.text() == "2.0 GB"
+        assert row.metrics_label.objectName() == "RowMetrics"
         row.set_metrics("3.0 GB")
         assert row.metrics_label.text() == "3.0 GB"
+    finally:
+        row.deleteLater()
+
+
+def test_item_row_groups_tags_and_actions() -> None:
+    """行卡胶囊共享 rowChip 契约；动作区与文字区之间有细分隔线且不破坏插槽顺序。"""
+    row = ItemRow("Qwen/demo", "Qwen3 · 对话")
+    try:
+        tag = StatusTag("已安装", tone="success")
+        row.add_tag(tag)
+        assert tag.property("rowChip") == "true"
+
+        # 没有动作时不显示分隔线，避免悬空竖线。
+        assert row.action_divider.isHidden()
+
+        action = QPushButton("启动服务")
+        row.add_action(action)
+        assert not row.action_divider.isHidden()
+        assert row.header_row.indexOf(row.action_divider) + 1 == row.header_row.indexOf(action)
+        assert row.header_row.indexOf(action) + 1 == row.header_row.indexOf(row.expand_button)
+
+        # 再加按钮：分隔线仍只一条，动作保持紧挨展开箭头。
+        second = QPushButton("下载")
+        row.add_action(second)
+        assert row.header_row.indexOf(action) + 1 == row.header_row.indexOf(second)
+        assert row.header_row.indexOf(second) + 1 == row.header_row.indexOf(row.expand_button)
+        assert row.header_row.count() == 5  # 文字区 + 分隔线 + 两个动作 + 展开
     finally:
         row.deleteLater()
 
