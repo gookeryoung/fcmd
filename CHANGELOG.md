@@ -134,6 +134,10 @@
   显示期间仍绘制 placeholder。新增应用级事件过滤器 `gui/qt/ime.py`
   （`PlaceholderImeGuard`，`create_application` 里装一次）：组合期间临时清空占位文字，
   组合结束 / 失焦后还原；覆盖全部窗口与后续新增输入框，不需要各自处理。
+- 修复本地已有同名目录时看不到 ModelScope 官方模型（如磁盘上有 `Qwen3.8-27B`，官方
+  `Qwen/Qwen3.8-27B` 却只有一个「同名 2」的本地行）：「同名折叠」不再把本地目录条目
+  （`repo` 里没有 `/`）和远程仓库折进一组，本地目录各自独立成行，官方仓库正常显示；
+  远程仓库之间的同名折叠保持不变。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

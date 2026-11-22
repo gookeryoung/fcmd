@@ -756,6 +756,35 @@ def test_all_and_local_keep_seen_category_items(window: Any) -> None:
     assert [item.repo for item in browse._result_items] == [paint.repo]
 
 
+def test_local_directory_does_not_hide_official_model(window: Any) -> None:
+    """本地已有同名目录（Qwen3.8-27B）时，官方仓库仍要显示出来。"""
+    from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    local = ModelSummary(repo="Qwen3.8-27B", storage_size=40 * 1024**3)
+    official = ModelSummary(repo="Qwen/Qwen3.8-27B", name="Qwen3.8-27B", storage_size=40 * 1024**3)
+    browse._installed_models = {"qwen3.8-27b": local}
+    browse._installed_repos = {"qwen3.8-27b"}
+    browse._usable_repos = {"qwen3.8-27b"}
+    browse._last_result = ModelSearch((official,), 1, 1, 30)
+    browse._source_filter = "all"
+    browse._filter_key = "all"
+    browse._group_same = True
+    browse._render_results()
+
+    repos = {item.repo for item in browse._result_items}
+    assert repos == {"Qwen/Qwen3.8-27B", "Qwen3.8-27B"}
+    assert browse.models.count() == 2
+    # 官方行不能被折进本地行（否则「同名 2」只留本地那一条）。
+    rows = {}
+    for index in range(browse.models.count()):
+        row = browse.models.itemWidget(browse.models.item(index))
+        rows[row.repo] = row
+    assert "仅本地" in {tag.text() for tag in rows["Qwen3.8-27B"].findChildren(QLabel, "StatusTag")}
+    assert "仅本地" not in {tag.text() for tag in rows["Qwen/Qwen3.8-27B"].findChildren(QLabel, "StatusTag")}
+
+
 def test_convert_can_be_stopped_from_status_row(window: Any) -> None:
     """转换（含首次下载 llama.cpp 源码）可从底部状态行停止。"""
     import threading

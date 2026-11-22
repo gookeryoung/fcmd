@@ -165,6 +165,23 @@ class TestFormatting:
         grouped = group_same_name((popular, installed), {"org/demo"})
         assert grouped == ((installed, 2),)
 
+    def test_group_same_name_keeps_local_directory_separate(self) -> None:
+        """本地目录与同名官方仓库不是同一个对象：折叠不能把官方模型藏起来。"""
+        local = ModelSummary(repo="Qwen3.8-27B")
+        official = ModelSummary(repo="Qwen/Qwen3.8-27B", name="Qwen3.8-27B", downloads=10)
+        grouped = group_same_name((local, official), {"qwen3.8-27b"})
+        assert [(item.repo, count) for item, count in grouped] == [
+            ("Qwen/Qwen3.8-27B", 1),
+            ("Qwen3.8-27B", 1),
+        ]
+        # 远程仓库之间的同名折叠仍然生效（本地目录不参与）。
+        other = ModelSummary(repo="someone/Qwen3.8-27B", name="Qwen3.8-27B")
+        grouped = group_same_name((official, other, local), set())
+        assert [(item.repo, count) for item, count in grouped] == [
+            ("Qwen/Qwen3.8-27B", 2),
+            ("Qwen3.8-27B", 1),
+        ]
+
     def test_sort_by_name_and_size(self) -> None:
         large = ModelSummary(repo="b/large", name="large", storage_size=100)
         small = ModelSummary(repo="a/small", name="small", storage_size=10)

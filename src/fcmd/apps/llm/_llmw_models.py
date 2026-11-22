@@ -268,13 +268,21 @@ def group_same_name(
     """按模型名折叠同名仓库，优先已安装、其次综合评分最高。
 
     返回 ``(代表仓库, 同名数量)``；调用方用于「同名折叠」视图。
+
+    **只折叠远程仓库**（``组织/模型``）：本地目录条目（``repo`` 里没有 ``/``，例如磁盘上的
+    ``Qwen3.8-27B``）不是仓库 id，只是恰好同名的文件夹；把它和官方 ``Qwen/Qwen3.8-27B``
+    折进一组时，代表行会按「已安装优先」选中本地目录，官方模型就被藏起来（列表里只剩
+    「同名 2」的本地行）。所以本地目录各自独立成行。
     """
     installed = {repo.casefold() for repo in installed_repos}
+    chosen: list[tuple[ModelSummary, int]] = []
     groups: dict[str, list[ModelSummary]] = {}
     for item in items:
+        if "/" not in item.repo:
+            chosen.append((item, 1))
+            continue
         key = (item.name or item.repo.rsplit("/", 1)[-1]).casefold()
         groups.setdefault(key, []).append(item)
-    chosen: list[tuple[ModelSummary, int]] = []
     for group in groups.values():
         group.sort(key=lambda item: (item.repo.casefold() not in installed, -model_score(item), -item.downloads))
         chosen.append((group[0], len(group)))
