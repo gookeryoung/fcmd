@@ -230,7 +230,7 @@ def remove_cmd(path: Path) -> None:
         已登记的模型目录；未登记时拒绝，避免误清空。
     """
     target = path.expanduser()
-    configured = models_dirs()
+    configured = configured_models_dirs()
     if not any(path_key(item) == path_key(target) for item in configured):
         raise ServeError(f"当前模型目录不是 {target}，无需移除")
     after = remove_models_dir(target)

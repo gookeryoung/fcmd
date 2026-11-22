@@ -2090,7 +2090,9 @@ class _InitEnvSection(Card):  # pragma: no cover - Qt 控件
         if window is not self and isinstance(window, QDialog):
             # 行内控件显示 / 隐藏后，窗口的 minimumSizeHint 要等事件循环重算；
             # 立即 adjustSize 会读到展开时的旧值，收起后高度就回不去。
-            QTimer.singleShot(0, window, window.adjustSize)
+            # PySide2 singleShot 的 (int, QObject, Callable) 签名不支持，
+            # 用 (int, Callable) 两参数版本，lambda 捕获 window 保持引用。
+            QTimer.singleShot(0, lambda w=window: w.adjustSize())
 
     def _sync_collapsed_view(self) -> None:
         """收起：只显示已初始化情况；展开：额外显示勾选、状态与日志（动作行始终显示）。"""
