@@ -1215,6 +1215,16 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         memory_bytes = int(memory * 0.8) if memory else 0
         return max(gpu_bytes, memory_bytes)
 
+    def _installed_name_keys(self) -> set[str]:
+        """已安装模型的名称（模型名 + 目录名），用于「适合本机」时保留同名官方条目。"""
+        keys: set[str] = set()
+        for key, summary in self._installed_models.items():
+            if summary.name:
+                keys.add(summary.name.casefold())
+            keys.add(key.rsplit("/", 1)[-1])
+        keys.discard("")
+        return keys
+
     def manual_update(self) -> None:
         """手动更新：强制刷新当前页并重新扫描本地模型。"""
         if self._searching:
@@ -1454,7 +1464,13 @@ class _BrowsePanel(AppPage):  # pragma: no cover - Qt 控件
         # 名称搜索是明确意图：即使停在「适合本机」也先展示全部命中，否则官方仓库
         # 会因整仓体积（非 GGUF）被容量过滤掉，用户会以为「搜不到」。
         if self._filter_key == "local" and not self._name_filter.strip():
-            base = list(_llmw_models.filter_by_local_fit(tuple(base), self._local_capacity()))
+            base = list(
+                _llmw_models.filter_by_local_fit(
+                    tuple(base),
+                    self._local_capacity(),
+                    pinned=self._installed_name_keys(),
+                )
+            )
         elif self._filter_key not in ("all", ""):
             base = [item for item in base if _llmw_models.matches_filter(item, self._filter_key)]
         items = _llmw_models.dedupe_by_repo(base)

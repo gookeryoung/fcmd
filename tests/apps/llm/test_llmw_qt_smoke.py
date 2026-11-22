@@ -757,6 +757,33 @@ def test_all_and_local_keep_seen_category_items(window: Any) -> None:
     assert [item.repo for item in browse._result_items] == [paint.repo]
 
 
+def test_local_model_keeps_official_entry_in_local_fit_view(window: Any) -> None:
+    """「适合本机」下：已安装模型的同名官方条目不能被容量估算藏掉。"""
+    from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary
+
+    window.show_page("models")
+    browse = window.page("models").browse
+    local = ModelSummary(repo="Qwen3.8-27B", name="Qwen3.8-27B", storage_size=16 * 1024**3)
+    official = ModelSummary(repo="Qwen/Qwen3.8-27B", name="Qwen3.8-27B", storage_size=52 * 1024**3)
+    other = ModelSummary(repo="Qwen/Qwen3.8-72B", name="Qwen3.8-72B", storage_size=120 * 1024**3)
+    browse._installed_models = {"qwen3.8-27b": local}
+    browse._installed_repos = {"qwen3.8-27b"}
+    browse._usable_repos = {"qwen3.8-27b"}
+    browse._last_result = ModelSearch((official, other), 2, 1, 30)
+    browse._source_filter = "all"
+    browse._filter_key = "local"
+    browse._group_same = True
+    browse._name_filter = ""
+    # 显存 / 内存口径的容量小于官方整仓体积（52 GB）
+    browse._local_capacity = lambda: 24 * 1024**3  # type: ignore[method-assign]
+    browse._render_results()
+
+    repos = {item.repo for item in browse._result_items}
+    assert "Qwen/Qwen3.8-27B" in repos  # 同名官方条目保留
+    assert "Qwen/Qwen3.8-72B" not in repos  # 无关的超容模型仍按「适合本机」过滤
+    assert "Qwen3.8-27B" in repos  # 本地模型本身也在
+
+
 def test_local_directory_does_not_hide_official_model(window: Any) -> None:
     """本地已有同名目录（Qwen3.8-27B）时，官方仓库仍要显示出来。"""
     from fcmd.apps.llm.llmdown import ModelSearch, ModelSummary

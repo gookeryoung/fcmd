@@ -283,6 +283,21 @@ class TestBrowseHelpers:
         assert repos == ["BAAI/embed", "Qwen/vl", "Qwen/unknown"]
         assert filter_by_local_fit(items, 0) == items
 
+    def test_filter_by_local_fit_keeps_installed_same_name(self) -> None:
+        """已安装模型的同名官方条目始终保留：不能因为整仓体积被「适合本机」藏掉。"""
+        official = ModelSummary(repo="Qwen/Qwen3.8-27B", name="Qwen3.8-27B", storage_size=52 * 1024**3)
+        other = ModelSummary(repo="Qwen/Qwen3.8-72B", name="Qwen3.8-72B", storage_size=120 * 1024**3)
+        capacity = 24 * 1024**3
+        assert [item.repo for item in filter_by_local_fit((official, other), capacity)] == []
+        # 名称命中（本地目录名 / 模型名）时保留，且不影响其它超容模型
+        kept = [item.repo for item in filter_by_local_fit((official, other), capacity, pinned={"qwen3.8-27b"})]
+        assert kept == ["Qwen/Qwen3.8-27B"]
+        # 按 repo 末段匹配（本地目录名与 repo 末段同名）
+        kept = [item.repo for item in filter_by_local_fit((official,), capacity, pinned={"Qwen3.8-27B"})]
+        assert kept == ["Qwen/Qwen3.8-27B"]
+        # 容量未知时全部保留（与既有口径一致）
+        assert filter_by_local_fit((official, other), 0, pinned=()) == (official, other)
+
     def test_model_param_billions_parses_names_and_moe(self) -> None:
         assert model_param_billions("Qwen3-8B") == 8
         assert model_param_billions("Qwen3-Coder-30B-A3B-Instruct-GGUF") == 30

@@ -10,7 +10,7 @@ import math
 import re
 import subprocess
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -529,16 +529,31 @@ def local_fit_size(item: ModelSummary) -> int:
     return int(params * GGUF_BYTES_PER_PARAM * 1_000_000_000)
 
 
-def filter_by_local_fit(items: tuple[ModelSummary, ...], capacity_bytes: int) -> tuple[ModelSummary, ...]:
+def filter_by_local_fit(
+    items: tuple[ModelSummary, ...],
+    capacity_bytes: int,
+    *,
+    pinned: Iterable[str] = (),
+) -> tuple[ModelSummary, ...]:
     """筛选单模型体积不超过本机可承载容量的模型；未知容量或体积时保留。
 
     GGUF 仓库按单份量化估算（见 :func:`local_fit_size`），不会因为仓库里带齐
     Q2–Q8 全部精度而被整仓体积误判为「不适合本机」。
+
+    ``pinned`` 是**已安装模型的名称**（模型名 / 目录名，大小写不敏感）：这些名字对应的
+    条目始终保留。用户已经在用这个模型时，官方同名条目（原始权重 / GGUF 变体）的整仓
+    体积（几十 GB）会超过「显存 / 内存」口径的容量估算而被整条藏起来，但实际要下的只是
+    其中一部分量化文件——不能因为估算把官方可下载项藏掉。
     """
+    keep = {name.casefold() for name in pinned if name}
     if capacity_bytes <= 0:
         return items
     kept: list[ModelSummary] = []
     for item in items:
+        last = item.repo.rsplit("/", 1)[-1].casefold()
+        if item.name.casefold() in keep or last in keep:
+            kept.append(item)
+            continue
         size = local_fit_size(item)
         if size <= 0 or size <= capacity_bytes:
             kept.append(item)
