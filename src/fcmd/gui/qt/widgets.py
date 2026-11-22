@@ -1186,6 +1186,10 @@ class Collapsible(QWidget):  # pragma: no cover - Qt 控件
         return self.toggle.isChecked()
 
 
+_PROGRESS_STEPS = 1000
+"""确定进度条的内部刻度：与字节数解耦，避免几十 GB 的商品文件撑爆 QProgressBar 的 int 范围。"""
+
+
 class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
     """不定进度加载条：说明文字 + 忙碌动画 + 已用时（秒）。
 
@@ -1239,9 +1243,23 @@ class LoadingBar(QWidget):  # pragma: no cover - Qt 控件
         """更新说明文字（已用时不清零）。"""
         self.text_label.setText(text)
 
+    def set_progress(self, done: int, total: int | None) -> None:
+        """切到确定进度（下载等能预估总量的任务）；``total`` 未知时回到忙碌动画。
+
+        ``QProgressBar`` 的取值是 32 位 ``int``，几十 GB 的镜像字节数会溢出，所以
+        内部统一折算成 ``0.._PROGRESS_STEPS`` 的刻度，只用于画填充比例。
+        """
+        if not total or total <= 0:
+            self.bar.setRange(0, 0)
+            return
+        ratio = max(0.0, min(1.0, done / total))
+        self.bar.setRange(0, _PROGRESS_STEPS)
+        self.bar.setValue(int(ratio * _PROGRESS_STEPS))
+
     def stop(self) -> None:
-        """停止计时并收起加载条。"""
+        """停止计时并收起加载条（进度条回到忙碌态，下次复用时不会残留百分比）。"""
         self._timer.stop()
+        self.bar.setRange(0, 0)
         self.setVisible(False)
 
     def is_running(self) -> bool:

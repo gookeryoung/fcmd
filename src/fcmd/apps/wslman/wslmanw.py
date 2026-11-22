@@ -34,6 +34,7 @@ __all__ = [
     "config_path",
     "detail_fields",
     "distro_image_text",
+    "download_progress_text",
     "filter_images",
     "image_counts",
     "image_details",
@@ -386,6 +387,27 @@ def image_status_text(
     if shown == 0 and counts["all"]:
         text += "（没有匹配项，可调整筛选或搜索词）"
     return f"{text} · {note}" if note else text
+
+
+def download_progress_text(name: str, done: int, total: int | None, speed: float = 0.0) -> str:
+    """状态栏的下载进度文案：``下载 X · 42% · 1.2 GB / 2.6 GB · 3.2 MB/s · 剩余 12s``。
+
+    总量未知（服务端没给 Content-Length）时只给已下载字节与速度；速度为 0
+    （刚开始 / 断流）时速度显示 ``--`` 且不估算剩余时间。
+    """
+    from fcmd.infras.download import format_eta, format_speed
+
+    parts = [f"下载 {name}"]
+    if total and total > 0:
+        percent = max(0, min(100, int(done * 100 / total)))
+        parts.append(f"{percent}%")
+        parts.append(f"{format_bytes(done)} / {format_bytes(total)}")
+    else:
+        parts.append(format_bytes(done))
+    parts.append(format_speed(speed))
+    if total and total > done and speed > 0:
+        parts.append(f"剩余 {format_eta((total - done) / speed)}")
+    return " · ".join(parts)
 
 
 def mirror_choices(entry: _images.ImageEntry) -> str:

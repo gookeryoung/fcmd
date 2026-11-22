@@ -66,7 +66,8 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 - 高度恒为一行：主文字 / 页内补充都用 `ElidedLabel`（垂直 Fixed、超长中间省略 + tooltip），
   加载条用 `LoadingBar(compact=True)`（无上下留白、6px 细进度条）；
 - 文字按分页隔离：`set_page_text` / `set_page_detail` + `set_page`，切页恢复该页自己的文案；
-- 右侧常驻：`set_note`（更新于 …）+ `show_loading` 不挤占左侧文字。
+- 右侧常驻：`set_note`（更新于 …）+ `show_loading`（不定进度）/ `show_progress`
+  （确定进度，如下载，内部按 0..1000 折算）都不挤占左侧文字。
 
 `QtMainWindow` 只做转发（`set_status` / `set_page_status` / `set_status_detail` / `status_text`），
 窗口不再直接操作 `statusBar()` 的子控件。

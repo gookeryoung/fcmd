@@ -232,6 +232,57 @@ def test_distro_image_note_shares_the_subtitle_line(home: Path, monkeypatch: pyt
         window.deleteLater()
 
 
+def test_download_progress_lands_in_status_bar(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """下载进度写状态栏：文案带百分比 / 速度，右侧进度条切确定进度；任务结束收起。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        bar = window.statusBar()
+        assert bar.loading_bar.is_running() is False
+
+        window._busy = True
+        window._active_entry = "Ubuntu"
+        window._task_page = "images"
+        window._on_download_progress(512, 1024)
+        text = window.page_status("images")
+        assert text.startswith("下载 Ubuntu · 50% · ")
+        assert bar.loading_bar.bar.maximum() == 1000
+        assert bar.loading_bar.bar.value() == 500
+        assert bar.loading_bar.is_running() is True
+        # 右侧进度条只放短文案（百分比 + 速度），长文案留给左侧状态文字。
+        assert bar.loading_bar.text_label.text().startswith("下载 50% · ")
+
+        # 总量未知（服务器没给长度）时回到忙碌动画，文案只给已下载字节。
+        window._on_download_progress(2048, None)
+        assert "下载 Ubuntu · 2.0 KiB · " in window.page_status("images")
+        assert bar.loading_bar.bar.maximum() == 0
+
+        window._busy = False
+        window._active_entry = ""
+        window._task_finished()
+        assert bar.loading_bar.is_running() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
+def test_task_shows_status_bar_loading_until_finished(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """任何后台任务进行中状态栏右侧都有加载条，任务结束自动收起。"""
+    monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
+    window = _wslmanw_qt.WslmanQtWindow()
+    try:
+        _wait_idle(window)
+        bar = window.statusBar()
+        window._start("导出", lambda cancel: "已完成")
+        assert bar.loading_bar.is_running() is True
+        _wait_idle(window)
+        assert bar.loading_bar.is_running() is False
+    finally:
+        window._poll.stop()  # type: ignore[union-attr]
+        window.deleteLater()
+
+
 def test_image_rows_and_filter(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cli, "_view", lambda env: _view(_distro()))
     window = _wslmanw_qt.WslmanQtWindow()

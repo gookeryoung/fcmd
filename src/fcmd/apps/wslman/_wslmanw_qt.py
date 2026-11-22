@@ -83,6 +83,7 @@ from fcmd.gui.qt.widgets import (
 )
 from fcmd.gui.qt.window import QtMainWindow
 from fcmd.gui.qt.workers import periodic, submit, submit_daemon
+from fcmd.infras.download import SpeedMeter, format_speed
 
 if TYPE_CHECKING:
     from typing import Any
@@ -135,6 +136,12 @@ class _LogBridge(QObject):  # pragma: no cover - Qt 信号桥
     """后台任务的日志行信号（跨线程排队到主线程）。"""
 
     message = Signal(str)
+
+
+class _ProgressBridge(QObject):  # pragma: no cover - Qt 信号桥
+    """下载进度信号：``(累计字节, 总量 / None)``，跨线程排队到主线程刷新状态栏。"""
+
+    changed = Signal(int, object)
 
 
 def _state_tone(state: str) -> str:
@@ -420,6 +427,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._log_lines: list[str] = []
         self._log_dialog: Any = None
         self._bridge: _LogBridge | None = None
+        self._download_meter = SpeedMeter()
+        self._progress_bridge: _ProgressBridge | None = None
         self._poll: QTimer | None = None
         self._filter_timer: QTimer | None = None
         self._buttons: list[QPushButton] = []
@@ -435,6 +444,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             sidebar_collapsed=self.settings.sidebar_collapsed,
             settings_path=settings_path,
         )
+        self._progress_bridge = _ProgressBridge(self)
+        self._progress_bridge.changed.connect(self._on_download_progress)
         # 四页都很轻（表格 + 表单），建窗即构造：镜像页 / 设置页的控件是设置持久化
         # 与下载动作的读取来源，延迟构建会让「没切到该页就关窗」时缺控件。
         # 但提前构造的页在未插入页面栈前是主窗口的子控件，默认可见并落在 (0,0)，
@@ -802,7 +813,6 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(root)))
 
-
     # ------------------------------------------------------------------ #
     # 任务编排
     # ------------------------------------------------------------------ #
@@ -820,6 +830,9 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         self._bridge.message.connect(self._log)
         self._set_task_status(f"{label}…")
         self._set_buttons(False)
+        # 任务进行中在状态栏右侧显示加载条；可预估总量的下载会切成确定进度。
+        self._download_meter.reset()
+        self.show_loading(f"{label}…")
 
         def runner(cancel: threading.Event) -> tuple[bool, str]:
             try:
@@ -862,6 +875,8 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _task_finished(self) -> None:
         self._busy = False
         self._active_entry = ""
+        self.show_loading("")
+        self._download_meter.reset()
         self._set_buttons(True)
         if self._closing:
             return
@@ -888,6 +903,23 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
     def _set_task_status(self, text: str) -> None:
         """把任务状态写到发起任务的那一页（没有记录时退回当前页）。"""
         self.set_page_status(self._task_page or self.current_page(), text)
+
+    def _on_download_progress(self, done: int, total: object) -> None:
+        """下载进度：状态栏写「百分比 · 已下载 / 总量 · 速度 · 剩余」，右侧进度条同步。
+
+        进度信号从下载线程排队过来，``SpeedMeter`` 在主线程里按墙钟采样，数字平滑
+        不抖；``start_page`` 固定写镜像页，用户切到别的页看日志时不会被进度文案刷屏。
+        """
+        total_bytes = total if isinstance(total, int) and total > 0 else None
+        self._download_meter.update(done)
+        speed = self._download_meter.speed
+        self.set_page_status("images", w.download_progress_text(self._active_entry or "镜像", done, total_bytes, speed))
+        # 右侧进度条用短文案：百分比 + 速度，长文案会把进度条挤窄。
+        if total_bytes:
+            brief = f"下载 {min(100, int(done * 100 / total_bytes))}% · {format_speed(speed)}"
+        else:
+            brief = f"下载 {format_bytes(done)} · {format_speed(speed)}"
+        self.show_progress(brief, done, total_bytes)
 
     def _cancel_task(self) -> None:
         """取消按钮在「正在跑的那一行」里：只对进行中的任务生效。"""
@@ -1397,6 +1429,7 @@ class WslmanQtWindow(QtMainWindow):  # pragma: no cover - 需要 Qt 事件循环
                 ),
                 expected_sha256=expected or download.sha256,
                 cancelled=cancel.is_set,
+                progress=self._progress_bridge.changed.emit,
             )
             return (
                 f"已下载 {target}（{format_bytes(result_data.size)}，"

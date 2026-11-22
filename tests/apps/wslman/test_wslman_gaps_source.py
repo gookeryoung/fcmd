@@ -127,6 +127,28 @@ def _candidates() -> tuple[_mirrors.Candidate, ...]:
     )
 
 
+def test_download_mirrored_forwards_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """镜像下载把 ``progress`` 透传给底层 ``download``：GUI 换源续传后进度仍连续。"""
+    target = tmp_path / "u.tar"
+    seen: list[object] = []
+
+    def fake_progress(done: int, total: int | None) -> None:
+        seen.append((done, total))
+
+    def fake_download(url: str, path: Path, **kwargs: object) -> _source.DownloadResult:
+        callback = kwargs.get("progress")
+        assert callable(callback)
+        callback(3, 6)
+        return _source.DownloadResult(path=path, sha256="a" * 64, size=6, verified=False, resumed=False)
+
+    monkeypatch.setattr(_source, "download", fake_download)
+
+    result = _source.download_mirrored(target, candidates=_candidates()[:1], progress=fake_progress)
+
+    assert result.size == 6
+    assert seen == [(3, 6)]
+
+
 def test_download_mirrored_retries_until_attempts_exhaust_then_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -133,3 +133,18 @@ class WindowStatusBar(QStatusBar):  # pragma: no cover - Qt 控件
             self.loading_bar.set_text(text)
         else:
             self.loading_bar.start(text)
+
+    def show_progress(self, text: str, done: int, total: int | None) -> None:
+        """右侧加载条切到确定进度（下载等可预估总量的任务）；空 ``text`` 收起。
+
+        说明文字通常写成「下载 Ubuntu · 42% · 3.2 MB/s」，进度条按 ``done / total``
+        填充；``total`` 未知时退回忙碌动画。
+        """
+        if not text:
+            self.loading_bar.stop()
+            return
+        if self.loading_bar.is_running():
+            self.loading_bar.set_text(text)
+        else:
+            self.loading_bar.start(text)
+        self.loading_bar.set_progress(done, total)

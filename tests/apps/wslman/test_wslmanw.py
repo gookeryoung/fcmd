@@ -245,6 +245,20 @@ def test_image_status_text_explains_empty_filter_result() -> None:
     assert "没有匹配项" not in wslmanw.image_status_text((), 0)
 
 
+def test_download_progress_text_shows_percent_speed_and_eta() -> None:
+    """状态栏下载文案：百分比 + 已下载 / 总量 + 速度 + 剩余时间；总量未知时只给已下载。"""
+    text = wslmanw.download_progress_text("Ubuntu", 512, 1024, 256.0)
+    assert text == "下载 Ubuntu · 50% · 512 B / 1.0 KiB · 256 B/s · 剩余 2s"
+    # 刚开始 / 断流（速度 0）不估算剩余时间，速度显示 --
+    assert wslmanw.download_progress_text("Ubuntu", 0, 1024, 0.0) == ("下载 Ubuntu · 0% · 0 B / 1.0 KiB · --")
+    # 总量未知：只给已下载字节与速度
+    assert wslmanw.download_progress_text("Ubuntu", 2048, None, 1024.0) == ("下载 Ubuntu · 2.0 KiB · 1.00 KB/s")
+    # 已下完：100% 且不再写剩余时间
+    done = wslmanw.download_progress_text("Ubuntu", 1024, 1024, 512.0)
+    assert "100%" in done
+    assert "剩余" not in done
+
+
 def test_pick_download_prefers_matching_arch(monkeypatch: pytest.MonkeyPatch) -> None:
     entry = wslmanw._images.ImageEntry(
         name="Ubuntu",

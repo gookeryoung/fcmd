@@ -467,6 +467,32 @@ def test_loading_bar_tracks_elapsed_and_stops() -> None:
         bar.deleteLater()
 
 
+def test_loading_bar_determinate_progress() -> None:
+    """能预估总量时切确定进度：按字节填充；stop 后回到忙碌态，不残留百分比。"""
+    bar = LoadingBar("下载中…")
+    try:
+        bar.start("下载 Ubuntu…")
+        bar.set_progress(256, 1024)
+        assert bar.bar.minimum() == 0
+        assert bar.bar.maximum() == 1000
+        assert bar.bar.value() == 250
+        bar.set_progress(9999, 1024)  # 超额（服务端总量不准）时夹在满格
+        assert bar.bar.value() == 1000
+        # 几十 GB 的镜像也不会撑爆 QProgressBar 的 int 范围（按比例折算）
+        bar.set_progress(30 * 1024**3, 60 * 1024**3)
+        assert bar.bar.maximum() == 1000
+        assert bar.bar.value() == 500
+        bar.set_progress(512, None)  # 总量未知：回到忙碌动画
+        assert bar.bar.maximum() == 0
+        bar.set_progress(128, 0)
+        assert bar.bar.maximum() == 0
+        bar.set_progress(128, 256)
+        bar.stop()
+        assert bar.bar.maximum() == 0
+    finally:
+        bar.deleteLater()
+
+
 def test_log_view_roundtrip() -> None:
     view = LogView(height=80)
     view.append("第一行")

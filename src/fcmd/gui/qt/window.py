@@ -341,6 +341,10 @@ class QtMainWindow(QMainWindow):  # pragma: no cover - 需要 Qt 事件循环
         """在状态栏右侧显示 / 更新加载提示；空串收起。左侧状态文字保持可见。"""
         self.status_bar.show_loading(text)
 
+    def show_progress(self, text: str, done: int, total: int | None) -> None:
+        """在状态栏右侧显示确定进度（下载进度 / 速度等）；空串收起。"""
+        self.status_bar.show_progress(text, done, total)
+
     def settings(self) -> dict[str, Any]:
         """读取窗口设置文件原始内容（缺失字段按空处理）。"""
         return dict(self._raw_settings)

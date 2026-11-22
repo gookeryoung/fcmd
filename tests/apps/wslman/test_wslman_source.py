@@ -188,6 +188,36 @@ def test_download_fresh_success(tmp_path: Path) -> None:
     assert len(requests) == 1
 
 
+def test_download_reports_progress_with_total(tmp_path: Path) -> None:
+    """``progress`` 回调给 GUI 用：开局报一次起点，结束时报满总量。"""
+    body = b"ubuntu" * 10
+    opener, _requests = _opener(_FakeResponse(body, headers={"Content-Length": str(len(body))}))
+    target = tmp_path / "u.tar"
+    events: list[tuple[int, int | None]] = []
+
+    _source.download(
+        "https://example.com/u.tar", target, opener=opener, progress=lambda done, total: events.append((done, total))
+    )
+
+    assert events[0] == (0, len(body))
+    assert events[-1] == (len(body), len(body))
+
+
+def test_download_progress_unknown_total(tmp_path: Path) -> None:
+    """服务端不给 Content-Length 时总量为 None，GUI 只用已下载字节。"""
+    body = b"ubuntu"
+    opener, _requests = _opener(_FakeResponse(body))
+    target = tmp_path / "u.tar"
+    events: list[tuple[int, int | None]] = []
+
+    _source.download(
+        "https://example.com/u.tar", target, opener=opener, progress=lambda done, total: events.append((done, total))
+    )
+
+    assert events[0] == (0, None)
+    assert events[-1] == (len(body), None)
+
+
 def test_download_resume_and_range_headers(tmp_path: Path) -> None:
     target = tmp_path / "u.tar"
     part = _transfer.part_path(target)

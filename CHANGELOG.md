@@ -46,6 +46,13 @@
   新增 `stretch` 参数，可让某块小字吃掉剩余宽度。
 - `wslmanw` 行内启动按钮不再停留在禁用态：任务结束后立刻按当前状态恢复（此前要等下一次
   3 秒状态轮询，首屏刷新后「启动」会先以灰色禁用样式显示一段时间）。
+- `wslmanw` 下载进度进状态栏：镜像下载在状态栏右侧显示确定进度条 + 短文案
+  （百分比 / 速度），左侧状态文字给出完整口径「下载 X · 42% · 1.2 GB / 2.6 GB ·
+  3.2 MB/s · 剩余 12s」；其它后台任务（导出 / 注销 / 安装）在任务期间显示加载条，
+  结束自动收起。`_source.download` / `download_mirrored` 新增 `progress` 回调
+  （CLI 不传不受影响），`LoadingBar.set_progress` / `WindowStatusBar.show_progress` /
+  `QtMainWindow.show_progress` 支持确定进度（内部按 0..1000 折算，避免几十 GB
+  文件撑爆 QProgressBar 的 int 范围）。
 - 依赖分组整理：Pillow 已是主包常驻依赖，移除冗余的 `img` extra（`ocr` / `office` / `full`
   不再转发该分组；`pip install fcmd[img]` 退化为无作用的多余分组名）。`fcmd env` / `fcmd doctor`
   的可选依赖报告覆盖全部 extra（pdf / ocr / svg / crypto / archive / filecheck / color / pe / ppt），

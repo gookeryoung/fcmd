@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import platform
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,6 +36,9 @@ __all__ = [
     "find_entry",
     "parse_manifest",
 ]
+
+ProgressCallback = Callable[[int, int | None], None]
+"""下载进度回调：``(累计已写字节, 总量或 None)``；CLI 不传，GUI 用它在状态栏显示进度。"""
 
 _MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 _CHUNK = 1024 * 1024
@@ -309,11 +313,15 @@ def download(  # noqa: PLR0912, PLR0913
     chunk: int = _CHUNK,
     label: str = "下载",
     cancelled: Callable[[], bool] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> DownloadResult:
     """下载到 ``<target>.part``，支持 Range 续传，校验后原子改名。
 
     摘要不匹配时删除本次 ``.part`` 并以 ``CHECK_FAILED`` 退出；用户已有文件
     （``--source file``）不会走这里，因此不会被误删。
+
+    ``progress(done, total)`` 按约 0.1 秒的节奏回报累计字节数与总量（总量未知
+    时为 ``None``），GUI 用它显示进度 / 速度；CLI 不传就保持原来的 stderr 进度。
     """
     target = Path(target)
     part = part_path(target)
@@ -354,6 +362,10 @@ def download(  # noqa: PLR0912, PLR0913
             )
             reporter = ProgressReporter(part, total, label=label)
             reporter.start()
+            written = start
+            last_report = 0.0
+            if progress is not None:
+                progress(written, total)
             try:
                 with part.open("ab" if resumed else "wb") as handle:
                     while True:
@@ -363,8 +375,16 @@ def download(  # noqa: PLR0912, PLR0913
                         if not data:
                             break
                         handle.write(data)
+                        written += len(data)
+                        if progress is not None:
+                            now = time.monotonic()
+                            if now - last_report >= _PROGRESS_INTERVAL_S:
+                                last_report = now
+                                progress(written, total)
             finally:
                 reporter.stop()
+            if progress is not None:
+                progress(written, total)
         finally:
             close = getattr(response, "close", None)
             if callable(close):
@@ -413,6 +433,9 @@ def download(  # noqa: PLR0912, PLR0913
     )
 
 
+_PROGRESS_INTERVAL_S = 0.1
+"""进度回调的最小间隔：GUI 状态栏按 10 Hz 刷新足够顺滑，又不至于刷爆事件队列。"""
+
 _MAX_RESUME_ATTEMPTS = 6
 """同一来源断流后最多续传几次；每次只要有字节推进就继续，避免坏网络下一遍遍从头下。"""
 
@@ -425,6 +448,7 @@ def download_mirrored(  # noqa: PLR0913
     label: str = "下载",
     cancelled: Callable[[], bool] | None = None,
     opener: _Opener | None = None,
+    progress: ProgressCallback | None = None,
 ) -> DownloadResult:
     """按候选顺序下载：国内镜像优先，失败或校验不过就换下一个，官方源兜底。
 
@@ -446,6 +470,7 @@ def download_mirrored(  # noqa: PLR0913
                     opener=opener,
                     label=label,
                     cancelled=cancelled,
+                    progress=progress,
                 )
             except KeyboardInterrupt:
                 raise
