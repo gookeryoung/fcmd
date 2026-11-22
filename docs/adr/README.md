@@ -30,7 +30,6 @@
 | [0021](0021-paramcad.md) | paramcad：参数化建模与几何预览（几何两态推导 / 分布场 / 缺陷参数 / Qt 预览 / 模型导出） | 最小原型已落地 |
 | [0022](0022-paramesh.md) | paramesh：参数化模型到仿真网格（尺度策略 / 区域与边界 / 质量指标 / 网格包交接契约 / Qt 预览） | 最小原型已落地 |
 | [0023](0023-wslman.md) | wslman：Windows 上的 WSL 发行版管理（注册表 / `.wslconfig` 解析 / 导出导入 / 下载源降级 / 终端启动 / 双读输出） | P1 已落地（只读 CLI） |
-| [0024](0024-devman.md) | devman：Windows 开发环境管理（node/python 多版本安装、切换、卸载、冲突检测） | 已实施（P1 CLI 已落地，P2 GUI 待实施） |
 | [0025](0025-sidebar-page-navigation.md) | GUI 侧边栏分页导航（`SidebarNav`）：locllmw 等整窗分页（原环境、引擎、转换 / 量化窗口已并入 locllmw，见 0031） | 已落地 |
 | [0026](0026-llm-app-migration.md) | locllm：本地 LLM 工具族从 `tools/llm` 迁到 `apps/llm`，命令名不变 | 已落地 |
 | [0027](0027-llmw-rename.md) | locllmw：`llmservew` 改名与五页侧边栏（概览 / 模型 / 运行 / 对话 / 设置） | 已落地（实验室占位页已移除） |

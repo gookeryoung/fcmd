@@ -47,8 +47,6 @@ TOOLS: dict[str, ToolEntry] = {
     "convtool": ToolEntry("convtool", "python", "fcmd.tools.crypto.convtool"),
     "cryptool": ToolEntry("cryptool", "python", "fcmd.tools.crypto.cryptool"),
     "csvtool": ToolEntry("csvtool", "python", "fcmd.tools.data.csvtool"),
-    "devman": ToolEntry("devman", "python", "fcmd.apps.devman.devman"),
-    "devmanw": ToolEntry("devmanw", "python", "fcmd.apps.devman.devmanw"),
     "docdiff": ToolEntry("docdiff", "python", "fcmd.tools.office.docdiff"),
     "docdiffw": ToolEntry("docdiffw", "python", "fcmd.tools.office.docdiffw"),
     "dockercmd": ToolEntry("dockercmd", "python", "fcmd.tools.dev.dockercmd"),
@@ -179,8 +177,6 @@ DESCRIPTIONS: dict[str, str] = {
     "convtool": "长度换算",
     "cryptool": "生成加密密钥",
     "csvtool": "预览 CSV 前几行",
-    "devman": "列出已安装版本、活动版本与外部 node/python 探测结果",
-    "devmanw": "devman 的 Qt 图形界面：按工具查看已安装 / 活动 / 可用版本，安装、卸载、切换、升级与 PATH 集成",
     "docdiff": "对比两个 doc/docx 文件（Windows + Microsoft Word + pywin32）：调用 Word 的 CompareDocuments 生成带修订标记的对比文档，可设置标题、对比模式与是否显示变更；依赖 fcmd[win32]",
     "docdiffw": "文档对比工具窗口版（Qt）：选择旧/新 doc/docx 文档，设置标题、original/revised 对比模式与是否显示修订，调用本机 Word 生成对比文档；设置持久化到 ~/.fcmd/ui/docdiffw.json，依赖 Windows + Word + fcmd[win32]",
     "dockercmd": "Docker 镜像仓库登录工具",
@@ -300,8 +296,6 @@ HELP: dict[str, str] = {
     "convtool": "convtool 子命令\n+-------------------------+\n| 子命令   | 说明         |\n|----------+--------------|\n| datasize | 数据大小换算 |\n| length   | 长度换算     |\n| temp     | 温度换算     |\n| weight   | 重量换算     |\n+-------------------------+\n",
     "cryptool": "cryptool 子命令\n+------------------------+\n| 子命令  | 说明         |\n|---------+--------------|\n| decrypt | 解密文本     |\n| encrypt | 加密文本     |\n| genkey  | 生成加密密钥 |\n+------------------------+\n",
     "csvtool": "csvtool 子命令\n+-----------------------------+\n| 子命令    | 说明            |\n|-----------+-----------------|\n| from-json | JSON 转 CSV     |\n| merge     | 合并多个 CSV    |\n| select    | 按列筛选 CSV    |\n| show      | 预览 CSV 前几行 |\n| to-json   | CSV 转 JSON     |\n+-----------------------------+\n",
-    "devman": "devman 子命令\n+-----------------------------------------------------------------------------+\n| 子命令    | 说明                                                            |\n|-----------+-----------------------------------------------------------------|\n| doctor    | 只读诊断：根目录、活动版本、shim、残留、外部环境                |\n| env       | 打印把活动版本加入当前 shell PATH 的片段                        |\n| exec      | 在活动版本环境下执行命令（只在子进程内改 PATH）                 |\n| export    | 导出锁文件（已安装版本 + 活动版本 + 校验信息），便于新机复现    |\n| init      | 生成 shim 并把 shim 目录写入用户 PATH（--no-path 只生成 shim）  |\n| install   | 安装指定版本的 node / python（默认把 shim 目录写入用户 PATH）   |\n| list      | 列出已安装版本、活动版本与外部 node/python 探测结果             |\n| repair    | 修复可自动处理的问题：重建 shim、清安装残留、清空失效活动版本   |\n| restore   | 按锁文件补齐缺失版本并切换活动版本（新机复现），需要 --yes      |\n| size      | 统计各版本目录、下载缓存与 shim 的磁盘占用                      |\n| uninit    | 删除 shim 并精确移除 devman 写入的用户 PATH 条目（--no-path     |\n|           | 保留 PATH）                                                     |\n| uninstall | 卸载版本（破坏性操作需要 --yes）                                |\n| upgrade   | 升级到当前版本线的最新版（或 --to 指定版本）                    |\n| use       | 切换活动版本（原子写 active/<tool>.txt）；--project             |\n|           | 只写当前目录的版本文件                                          |\n| verify    | 校验安装完整性（标记 / 可执行文件 / 活动版本 / shim /           |\n|           | 残留），有问题退出 5                                            |\n| versions  | 列出某个工具的版本（--remote 读远端索引）                       |\n+-----------------------------------------------------------------------------+\n",
-    "devmanw": "usage: devmanw [-h] [--root ROOT] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开 devman 图形界面（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --root ROOT          devman 根目录\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "docdiff": "usage: docdiff [-h] [--output OUTPUT] [--title TITLE] [--no-show-changes]\n               [--compare-mode {original,revised}] [--dry-run] [-q]\n               [--strategy STRATEGY]\n               old_doc new_doc\n\n对比两个 doc/docx 文件（Windows Word）\n\npositional arguments:\n  old_doc               旧文档路径（.doc / .docx）。\n  new_doc               新文档路径（.doc / .docx）。\n\noptions:\n  -h, --help            show this help message and exit\n  --output OUTPUT       对比结果输出路径；省略时输出到新文档同目录，自动命名 <标题>@<时间戳>.docx。\n  --title TITLE         对比结果标题，用于自动生成文件名。\n  --no-show-changes     关闭 默认在结果中显示修订标记（使用 --no-show-changes 关闭）。\n  --compare-mode {original,revised}\n                        对比模式：original 以原文档为基础，revised 以修订文档为基础。\n  --dry-run             仅打印执行计划，不执行\n  -q, --quiet           减少输出\n  --strategy STRATEGY   执行策略 (sequential/thread/async/dependency)\n",
     "docdiffw": "usage: docdiffw [-h] [--dry-run] [-q] [--strategy STRATEGY]\n\n打开文档对比窗口（Qt）\n\noptions:\n  -h, --help           show this help message and exit\n  --dry-run            仅打印执行计划，不执行\n  -q, --quiet          减少输出\n  --strategy STRATEGY  执行策略 (sequential/thread/async/dependency)\n",
     "dockercmd": "dockercmd 子命令\n+-------------------------------+\n| 子命令 | 说明                 |\n|--------+----------------------|\n| login  | 登录 Docker 镜像仓库 |\n+-------------------------------+\n",
@@ -412,8 +406,6 @@ HELP_WIDTH = 80
 # 生成时的 fcmd/tools 候选模块布局（相对 fcmd 包，用于检测清单过期）
 LAYOUT: tuple[str, ...] = (
     "apps/cmder/app.py",
-    "apps/devman/devman.py",
-    "apps/devman/devmanw.py",
     "apps/dynacalc/dynacalc.py",
     "apps/dynacalc/dynacalcw.py",
     "apps/filescan/filescan.py",
@@ -538,11 +530,11 @@ LAYOUT: tuple[str, ...] = (
 )
 
 # 工具源码内容指纹（列表快路径的严格校验）
-DIGEST = "06420d6f5322f940df01dd841b6c2496"
+DIGEST = "0f93a0d16bb3b1f845a9d58b70accee6"
 
 # 工具数与子命令总数（fcmd env 直接取用，免去导入全部工具模块）
-TOOL_COUNT = 117
-SUBCOMMAND_TOTAL = 415
+TOOL_COUNT = 115
+SUBCOMMAND_TOTAL = 398
 
 
 if __name__ == "__main__":  # pragma: no cover

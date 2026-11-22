@@ -7,6 +7,9 @@
 
 ### 变更
 
+- 移除 `devman` 与 `devmanw`：删除开发环境管理工具（node / python 多版本安装、切换、
+  卸载与 PATH 集成，含其 Qt 窗口）、对应测试与入口注册，ADR 0024 同步删除；`fcmd`
+  工具总数与 `_manifest_data` 清单重生成。
 - sd.cpp 引擎卡补齐管理入口：与推理引擎共用 `EngineCard` 与 `EngineManageDialog`，
   支持备份（`<引擎根>/backups/sd-<tag>-<时间>.zip`）、删除（默认引擎需先切换）与清理
   下载缓存（zip / .part / 临时解压目录，`backups/` 保留）；sd.cpp 无转换源码，管理

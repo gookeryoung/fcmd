@@ -23,7 +23,7 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 | D3 | `ChoiceCard` 只用于「卡片式单选」；pdfsplit、mirrortool、checksum 继续用 `QRadioButton` | 上述工具窗口 |
 | D4 | `StatusTag` 用于需要语义色的状态块；`objectName("Success"/"Danger")` 属于主题契约，不强行替换 | reshack 等 |
 | D5 | `LogDialog` 只服务「独立日志窗口」；页面内日志继续用 `LogView` | 各工具窗口 |
-| D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、devman、llmw 下载区 |
+| D6 | `ProgressRow` 用于独立进度行；与按钮 / 文字同处一行的进度条保留窗口自己的布局 | ncmconvert、filescan、llmw 下载区 |
 | D7 | 图标统一走 `fcmd.gui.qt.icons`（内置 Lucide 线性图标），不引入外部图标包 | 侧边栏、按钮、行卡展开 / 收起 |
 | D9 | 行卡选中态走 `RowListWidget.sync_selection()`：只重抛光「旧 / 新」两行，`set_selected` 状态未变时空操作 | 共享 `ItemRow` 的所有列表（wslmanw 发行版 / 镜像、llmw 模型 / 推荐 / 引擎） |
 | D9 | 输入法组合期间的占位文字统一由应用级事件过滤器处理（`gui/qt/ime.py` 的 `PlaceholderImeGuard`），不在各输入框重复实现 | `create_application`、llmw 对话输入框等 |

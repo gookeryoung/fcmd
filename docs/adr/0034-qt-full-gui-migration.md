@@ -1,6 +1,6 @@
 # 0034 全量 GUI 迁移到 Qt（PySide6）：共享层先行与分批迁移
 
-- 状态：已全部落地（B0–B7：共享层、21 个工具窗口、locllmw 与 cmderw 全部 Qt 化；Tk 窗口代码与共享层已删除；B6 体积与运行期开销已填报）
+- 状态：已全部落地（B0–B7：共享层、20 个工具窗口、locllmw 与 cmderw 全部 Qt 化；Tk 窗口代码与共享层已删除；B6 体积与运行期开销已填报）
 - 日期：2026-11-17
 - 关联：0013（GUI 技术路线）、0033（locllmw 迁移与 Qt 基座）、0025（侧边栏导航）
 
@@ -17,7 +17,7 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 | C4 | 主题、窗口设置与 geometry 文件继续使用 `${FCMD_HOME:-~/.fcmd}/ui/*.json` |
 | C5 | Qt 只在创建窗口的路径上导入，CLI `--help` / 启动快路径不加载 PySide6 |
 
-## 现状盘点（迁移起点：Tk 21 个工具窗口 + 1 个旗舰；下表为迁移前口径）
+## 现状盘点（迁移起点：Tk 20 个工具窗口 + 1 个旗舰；下表为迁移前口径）
 
 | 模块 | 行数 | 形态 | 批次 |
 |---|---:|---|---|
@@ -36,7 +36,6 @@ cmderw（双面板旗舰）不纳入本轮逐应用迁移，见 B7。约束：
 | `tools/dev/mirrortoolw.py` | 809 | 搜索 + 结果表 + 配置 | B3 |
 | `tools/media/videoconvw.py` | 827 | 批量列表 + 选项 + 进度 | B3 |
 | `apps/reshack/reshackw.py` | 926 | 资源树 + 编辑表 | B3 |
-| `apps/devman/devmanw.py` | 946 | 版本树 + 操作 + 日志 | B3 |
 | `apps/renamer/renamerw.py` | 1021 | 规则列表 + 预览表 | B3 |
 | `apps/pptmake/pptmakew.py` | 1261 | 多分页设计器 + 预览 | B4 |
 | `tools/system/envw.py` | 1331 | 变量树 + 编辑对话框 | B4 |
@@ -94,7 +93,7 @@ B7 与 B1–B6 平行排期，迁移期间任何一批的提交都不应把 cmde
 
 - B1 六个应用（pdfcryptw / img2icow / docdiffw / parameshw / paramcadw / img2pdfw）、
   B2 五个应用（pevieww / pdfsplitw / dynacalcw / regexvalidatew / filesyncw）、
-  B3 六个应用（ncmconvertw / mirrortoolw / videoconvw / reshackw / devmanw / renamerw）、
+  B3 五个应用（ncmconvertw / mirrortoolw / videoconvw / reshackw / renamerw）、
   B4 四个应用（pptmakew / envw / filescanw / wslmanw）各自单独提交，旧实现已删除，
   GUI 入口统一委托 ``_<tool>w_qt.py``；
 - locllmw 的 P2 已落地：模型页补齐 ModelScope 浏览 / 下载、行内转换与量化，

@@ -33,7 +33,6 @@ from fcmd.gui.qt.toolwindow import QtToolWindow
 # (模块, 类名)；构造参数一律用默认值，等价于用户首次 / 常规启动。
 WINDOWS: tuple[tuple[str, str], ...] = (
     ("fcmd.apps.cmder._cmder_qt", "CmderQtWindow"),
-    ("fcmd.apps.devman._devmanw_qt", "DevmanWindow"),
     ("fcmd.apps.dynacalc._dynacalcw_qt", "DynacalcWindow"),
     ("fcmd.apps.filescan._filescanw_qt", "FilescanQtWindow"),
     ("fcmd.apps.filesync._filesyncw_qt", "FilesyncWindow"),
