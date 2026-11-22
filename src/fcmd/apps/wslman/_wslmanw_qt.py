@@ -174,7 +174,9 @@ class _DistroItemRow(ItemRow):  # pragma: no cover - Qt 控件
         self.estimated = estimated
         self.setToolTip(f"{distro.name}\n{distro.base_path or '未知'}")
         self.set_title(distro.name)
-        self.set_subtitle(f"v{distro.version or '未知'} · {format_bytes(size, estimated=estimated)}")
+        # 与 llmw 模型行同构：左侧副标题只放简短口径（版本），右侧数值放磁盘占用。
+        self.set_subtitle(f"v{distro.version or '未知'}")
+        self.set_metrics(format_bytes(size, estimated=estimated))
         self.state_tag.set_status(state_label(distro), _state_tone(distro.state))
         self.default_tag.setVisible(distro.default)
         can_start, can_stop = w.action_states(distro.state)

@@ -109,7 +109,10 @@ def test_lists_distros_as_rows_with_toolbar_actions(home: Path, monkeypatch: pyt
         assert _distro_row(window, 0).distro.name == "Ubuntu"
         assert isinstance(_distro_row(window, 0), _wslmanw_qt.ItemRow)
         assert _distro_row(window, 1).state_tag.text() == "已停止"
-        assert _distro_row(window, 0).sub_label.text().startswith("v2 · ")
+        # 与 llmw 模型行同构：副标题只放版本，右侧数值放磁盘占用。
+        assert _distro_row(window, 0).sub_label.text() == "v2"
+        metrics = _distro_row(window, 0).metrics_label
+        assert metrics is not None and metrics.text() == "2.0 KiB"
 
         window.distro_list.setCurrentRow(0)
         assert window.status_detail_text().startswith("Ubuntu")

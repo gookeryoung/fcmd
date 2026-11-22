@@ -49,6 +49,11 @@ img2ico、pdf 系列、videoconvw、mirrortool 等窗口。
 业务渲染与状态位留在各自行里：模型行的量化精度 / 下载转换按钮，发行版行的启停与
 默认胶囊，镜像行的下载 / 安装动作。基类参数只覆盖骨架本身，不是三张行卡的并集。
 
+同一骨架可以搭配不同的主题契约：llmw 模型行是带 1px 边框的卡片（`QFrame#ModelItemRow`，
+hover / 选中加粗边框），wslmanw 发行版行不画外边框（`QFrame#DistroItemRow` 只有底色 /
+圆角，hover 换底色、选中用 `accent_soft_strong`），列表自身也透明无边框。骨架不带样式，
+两种外观都由主题 QSS 决定。
+
 ### D8 为什么统一状态栏
 
 各窗口此前各自往 `QStatusBar` 里塞控件：换行标签（选中项摘要 / 长文案）会把底栏撑成

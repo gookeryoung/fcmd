@@ -267,6 +267,20 @@ def test_mode_choice_tone_colors_are_themed() -> None:
         assert f"border-color: {color}" in block
 
 
+def _rule(text: str, selector: str) -> str:
+    """取 QSS 中选中该选择器的全部声明块（同一选择器可能出现在多条规则里）。"""
+    blocks = []
+    start = 0
+    while True:
+        try:
+            index = text.index(selector, start)
+        except ValueError:
+            break
+        blocks.append(text[index:].split("{", 1)[1].split("}", 1)[0])
+        start = index + len(selector)
+    return "\n".join(blocks)
+
+
 def test_selected_states_use_deeper_soft_backgrounds() -> None:
     """选中态不仅加粗边框，内部底色也使用同色系加深版本。"""
     theme = _guitheme.resolve_theme("dark-blue")
@@ -278,17 +292,35 @@ def test_selected_states_use_deeper_soft_backgrounds() -> None:
         'QFrame#RecommendationRow[band="limited"][selected="true"]',
         'QFrame#ModelItemRow[selected="true"]',
     ):
-        block = text.split(f"\n{selector} {{", 1)[1].split("}", 1)[0]
+        block = _rule(text, selector)
         assert "_soft_strong" not in block
         assert "background:" in block
-    model_block = text.split('\nQFrame#ModelItemRow[selected="true"] {', 1)[1].split("}", 1)[0]
+    model_block = _rule(text, 'QFrame#ModelItemRow[selected="true"]')
     assert f"border-color: {theme.palette.select_bg}" in model_block
+    distro_block = _rule(text, 'QFrame#DistroItemRow[selected="true"]')
+    assert f"background: {_qt_theme.template_tokens(theme)['accent_soft_strong']}" in distro_block
     for tone in ("danger", "accent", "success", "warning"):
         block = text.split(f'QPushButton#ChoiceCard[tone="{tone}"]:checked {{', 1)[1].split("}", 1)[0]
         assert "background:" in block
         assert "_soft_strong" not in block
     filter_block = text.split("QPushButton#FilterChip:checked {", 1)[1].split("}", 1)[0]
     assert "background:" in filter_block
+
+
+def test_distro_rows_are_frameless_like_llmw_list() -> None:
+    """发行版列表与 llmw 模型列表同口径：列表自身无外框，行卡不画边框。"""
+    text = _qt_theme.stylesheet(_guitheme.resolve_theme("dark-blue"))
+    list_block = _rule(text, "QListWidget#DistroResultList")
+    assert "border: none" in list_block
+    assert "background: transparent" in list_block
+    item_block = _rule(text, "QListWidget#DistroResultList::item")
+    assert "border: none" in item_block
+    row_block = _rule(text, "QFrame#DistroItemRow {")
+    assert "border: none" in row_block
+    assert "border-radius: 8px" in row_block
+    # 行卡结构仍与 llmw 模型行一致：标题字号同阶梯。
+    name_block = _rule(text, "QLabel#DistroItemName")
+    assert "font-weight: 600" in name_block
 
 
 def test_secondary_buttons_keep_visible_border() -> None:
